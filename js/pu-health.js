@@ -52,6 +52,12 @@
       status: 'new'
     });
     writeJson(STORE_KEY, pending.slice(-MAX_PENDING));
+    /* ★ 방금 장애가 났다 — 이제 «열린 것이 있다»는 것을 안다.
+       평소에는 세어 보지 않아 조용하지만(모르면 안 띄운다), 여기서는 확실히
+       아니까 그 자리에서 빨간불을 켠다. 관리자 화면이 아니면 paintAdminBadge 가
+       알아서 넘긴다 — 여기서 관리자인지 따지지 않는다(판단은 한 곳에서만). */
+    knownOpen = (knownOpen || 0) + 1;
+    paintAdminBadge(window.document.getElementById('pu-health-admin-badge'));
     flush();
     return true;
   }
@@ -96,21 +102,31 @@
     return list.sort(function (a, b) { return Number(b.createdAt || 0) - Number(a.createdAt || 0); });
   }
 
-  /* ── 단추 색은 «아는 것»만 말한다 (대표 제보 2026-08-23) ──
-     「장애알림 없는데 왜 빨간색 왼쪽아래 경고인가」.
-     전에는 관리자면 무조건 빨갛게 띄웠다 — 처리할 알림이 0건이어도 늘 빨갰다.
-     늘 켜져 있는 빨간불은 아무것도 알려 주지 못한다. 진짜 장애가 생겨도
-     달라지는 것이 없어 «구별이 안 된다» — 이 저장소가 이미 겪은 실수다
-     (금액 경고를 상시등으로 만들었다가 아무도 안 보게 된 일).
-     그래서 평소에는 조용한 회색 단추로 두고, «열어 본 수»가 1건이라도 있을 때만
-     빨갛게 켠다. 색이 뜻을 갖는다.
-     ⚠ 여기서 미리 세어 두지는 않는다 — 그러려면 장애 이력 전체(지금 191건·156KB)를
-       띄울 때마다 내려받아야 한다. 그 값을 싸게 알려면 «열린 건수»만 담는 작은 자리가
-       따로 있어야 하고, 그건 규칙(콘솔)에 새 경로를 여는 일이라 대표 확인이 필요하다. */
-  var HEALTH_QUIET = 'position:fixed;left:max(12px,env(safe-area-inset-left));bottom:max(12px,env(safe-area-inset-bottom));z-index:2147483646;border:1px solid #cbd5e1;border-radius:999px;padding:8px 13px;background:#fff;color:#475569;font:700 12px/1.2 system-ui,sans-serif;box-shadow:0 3px 12px #0002;cursor:pointer;opacity:.85;';
+  /* ── 장애가 없으면 화면에 «아무것도» 없다 (대표 지시 2026-08-23, 두 번째) ──
+     「장애알림 표시가 장애가 없을경우 필요없다 … 이 문구 없애달라」
+     「장애알림 글자 왜 안없어지냐 피시와 폰에서 여전히 나온다」
+
+     처음엔 관리자면 늘 빨간 단추를 띄웠다. 다음엔 0건이면 감추되 «아직 안 세어
+     봤을 때»는 조용한 회색 단추를 남겼다 — 그런데 세는 것은 «눌렀을 때»뿐이라,
+     실제로는 그 회색 단추가 모든 화면에 늘 떠 있었다. 고친 게 아니라 색만 바꾼 것이다.
+
+     이제 규칙은 하나다: 열린 건이 «1건 이상인 것을 아는 때»에만 뜬다.
+       · 모른다(null)  → 안 뜬다
+       · 0건            → 안 뜬다
+       · 1건 이상       → 빨갛게 뜬다
+     늘 켜져 있는 등은 아무것도 알려 주지 못한다 — 이 저장소가 금액 경고에서
+     이미 겪은 실수다. 이제 빨간불이 뜨면 그 자체로 «지금 무슨 일이 있다»는 뜻이 된다.
+
+     ⚠ 그러면 평소에 관리자는 어떻게 들여다보나 — 포털(enter.html)의 [⚙ 설정]
+       안에 「시스템 장애 알림」 줄을 두었다. 늘 떠 있는 단추를 하나 더 만드는
+       대신, 이미 있는 관리자 서랍에 넣는다. 화면을 한 뼘도 차지하지 않는다.
+     ⚠ 미리 세어 두지 않는 까닭 — 그러려면 장애 이력 전체(지금 191건·156KB)를
+       화면을 띄울 때마다 내려받아야 한다. 싸게 알려면 «열린 건수»만 담는 작은
+       자리가 따로 있어야 하고, 그건 규칙(콘솔)에 새 경로를 여는 일이라 대표 확인이
+       필요하다. 그때까지는 «모르면 조용히 있는다»가 옳다. */
   var HEALTH_ALARM = 'position:fixed;left:max(12px,env(safe-area-inset-left));bottom:max(12px,env(safe-area-inset-bottom));z-index:2147483646;border:0;border-radius:999px;padding:10px 14px;background:#b42318;color:#fff;font:800 12px/1.2 system-ui,sans-serif;box-shadow:0 6px 22px #0003;cursor:pointer;';
 
-  /* 아는 열린 건수. null = 아직 안 열어 봐서 «모른다»(모를 때는 조용히 둔다). */
+  /* 아는 열린 건수. null = 아직 안 세어 봐서 «모른다». 모르면 안 띄운다. */
   var knownOpen = null;
   /* 총괄관리자로 확인됐는가 — 이 값이 참일 때만 단추가 뜬다.
      예전에는 monitorAdmin 이 직접 hidden 을 만졌는데, 그러면 「0건이라 감췄다」를
@@ -119,25 +135,15 @@
 
   function paintAdminBadge(badge) {
     if (!badge) return;
-    /* ★ 장애가 없으면 «아무것도 안 띄운다» (대표 지시 2026-08-23)
-       「장애가 없을 경우 필요없다 … 이 문구 없애달라」.
-       세어 보니 0건이면 「장애 알림 없음」이라고 적어 두었는데, 그 줄이 하루 종일
-       화면 구석을 차지한다. 없다는 말을 늘 하고 있을 까닭이 없다 — 치운다.
-       ⚠ 「모름」과 「0건」은 다르다. 아직 안 세어 봤을 때(null)는 조용한 단추를
-         남긴다 — 그것마저 감추면 눌러서 확인할 길이 사라진다. */
     /* 보이고 감추는 판단은 «여기 한 곳»에서만 한다. 두 곳에서 하면 서로 되돌린다
-       — monitorAdmin 이 hidden=false 로 덮어써 0건인데도 다시 뜨는 식이다. */
-    if (!isAdminUser || knownOpen === 0) { badge.hidden = true; return; }
+       — monitorAdmin 이 hidden=false 로 덮어써 0건인데도 다시 뜨는 식이다.
+       ★ knownOpen > 0 «만» 띄운다. null(모름)도 0 과 똑같이 감춘다 —
+         !== 0 으로 적으면 모름일 때 또 떠서 처음 문제로 되돌아간다. */
+    if (!isAdminUser || !(knownOpen > 0)) { badge.hidden = true; return; }
     badge.hidden = false;
-    if (knownOpen === null) {
-      badge.style.cssText = HEALTH_QUIET;
-      badge.textContent = '장애 알림';
-      badge.title = '눌러서 처리할 장애 알림이 있는지 봅니다';
-    } else {
-      badge.style.cssText = HEALTH_ALARM;
-      badge.textContent = '⚠ 장애 알림 ' + knownOpen;
-      badge.title = '처리할 장애 알림이 ' + knownOpen + '건 있습니다';
-    }
+    badge.style.cssText = HEALTH_ALARM;
+    badge.textContent = '⚠ 장애 알림 ' + knownOpen;
+    badge.title = '처리할 장애 알림이 ' + knownOpen + '건 있습니다';
   }
 
   function ensureAdminBadge(app) {
@@ -158,10 +164,14 @@
      오류 한 건이 생길 때마다 과거 이력까지 다시 내려온다. 평소에는 읽지 않고,
      총괄관리자가 단추를 눌렀을 때 한 번만 최근 미처리 목록을 가져온다. */
   function showAdminPanel(app) {
+    app = app || activeApp();
+    if (!app) return Promise.resolve(false);
     var badge = ensureAdminBadge(app);
     badge.disabled = true;
     badge.textContent = '장애 알림 불러오는 중…';
-    app.database().ref('systemAlerts').once('value').then(function (alertsSnapshot) {
+    /* ★ 결과를 돌려준다 — 포털 [⚙ 설정] 의 「시스템 장애 알림」 줄이 이걸 기다렸다가
+       제 단추에 「불러오는 중…」 을 띄운다. 안 돌려주면 부르는 쪽이 끝을 모른다. */
+    return app.database().ref('systemAlerts').once('value').then(function (alertsSnapshot) {
       adminAlerts = flattenAlerts(alertsSnapshot.val());
       knownOpen = adminAlerts.length;      // 이제 «안다» — 색이 뜻을 갖는다
       renderAdminPanel(app);
@@ -173,6 +183,7 @@
     }).then(function () {
       badge.disabled = false;
       paintAdminBadge(badge);
+      return knownOpen;
     });
   }
 
@@ -269,6 +280,8 @@
     return true;
   }
 
-  window.PUHealth = { install: install, report: enqueue, flush: flush, _flattenAlerts: flattenAlerts };
+  /* openAdminPanel — 늘 떠 있는 단추 없이도 관리자가 들여다볼 수 있는 유일한 문.
+     포털 [⚙ 설정] 안의 「시스템 장애 알림」 줄이 이것을 부른다. */
+  window.PUHealth = { install: install, report: enqueue, flush: flush, openAdminPanel: showAdminPanel, _flattenAlerts: flattenAlerts };
   install();
 })(typeof window !== 'undefined' ? window : null);

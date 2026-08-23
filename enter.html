@@ -16,7 +16,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js"></script>
 <script src="js/pu-resilience.js?v=1"></script>
-<script src="js/pu-health.js?v=2"></script>
+<script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=1"></script>
 <script src="js/pu-backup.js?v=1"></script>
 <script src="js/pu-dev-automation.js?v=1"></script>
@@ -521,6 +521,16 @@ body.portal-mode #moreFab{display:flex;}
 .cfg-stat{font-size:.72rem;color:#64748b;}
 /* 그 밖의 설정 — 대표가 직접 항목을 늘릴 수 있는 자유 칸 */
 .cfg-extra{margin-top:18px;padding-top:14px;border-top:1px dashed #dfe4ef;}
+/* 설정 서랍 안의 관리자 연장 한 줄 — 늘 떠 있던 단추를 치우고 여기로 옮긴 것들.
+   화면에는 한 뼘도 차지하지 않고, 서랍을 열었을 때만 보인다. */
+.cfg-tool{display:flex;align-items:center;gap:10px;justify-content:space-between;
+  border:1px solid #e2e8f0;border-radius:8px;padding:9px 11px;margin:0 0 10px;}
+.cfg-tool b{display:block;font-size:.78rem;color:#1e293b;}
+.cfg-tool span{display:block;font-size:.7rem;color:#64748b;line-height:1.5;margin-top:2px;}
+.cfg-tool button{flex:0 0 auto;border:1px solid #cbd5e1;background:#fff;color:#475569;
+  border-radius:7px;padding:7px 12px;font-size:.74rem;font-weight:700;cursor:pointer;white-space:nowrap;}
+.cfg-tool button:hover{border-color:#2563eb;color:#2563eb;}
+.cfg-tool button:disabled{opacity:.55;cursor:default;}
 .cfg-extra-hd{display:flex;align-items:center;gap:8px;margin-bottom:4px;}
 .cfg-extra-hd b{font-size:.8rem;color:#334155;}
 #cfgAdd{margin-left:auto;padding:5px 11px;border:1.5px solid #dfe4ef;background:#fff;border-radius:8px;font-size:.72rem;font-weight:700;color:#1e40af;cursor:pointer;font-family:inherit;}
@@ -857,6 +867,19 @@ body.portal-mode #moreFab{display:flex;}
     <div class="bd">
       <p class="cfg-note">여기서 저장하면 <b>모든 프로그램이 이 값을 함께</b> 씁니다.
         각 프로그램에 따로 넣어둔 값이 있으면 그쪽이 우선합니다.</p>
+
+      <!-- ── 시스템 장애 알림 ────────────────────────────────────────
+           왼쪽 아래에 «늘» 떠 있던 「장애 알림」 단추를 치웠다(대표 지시 2026-08-23).
+           장애가 실제로 있을 때만 그 자리에 빨갛게 뜬다 — 없으면 어느 화면에도 없다.
+           대신 평소에 들여다보는 문을 여기 하나 남긴다. 서랍 안이라 화면을
+           차지하지 않고, 이미 총괄관리자만 여는 곳이라 권한도 그대로다. -->
+      <div class="cfg-tool">
+        <div>
+          <b>시스템 장애 알림</b>
+          <span>장애가 생기면 화면 왼쪽 아래에 빨갛게 뜹니다. 평소에 지난 것까지 보려면 여기서 여세요.</span>
+        </div>
+        <button type="button" id="cfgHealth">열어보기</button>
+      </div>
 
       <label for="cfgGemini">Gemini API 키 <span class="cfg-free">무료</span></label>
       <div class="cfg-row">
@@ -2406,6 +2429,8 @@ body.portal-mode #moreFab{display:flex;}
     if(!sgIsAdmin()) return;
     CFG_FIELDS.forEach(function(f){ $(f[0]).value = ''; });
     $('cfgStat').textContent = '불러오는 중…';
+    // 지난번에 눌러 본 결과(「없음」·「열어보기 (3)」)가 남아 있지 않게 되돌린다
+    var _h = $('cfgHealth'); if(_h){ _h.disabled = false; _h.textContent = '열어보기'; }
     $('cfgModal').style.display = 'flex';
     try{ _cfgDrag.reset(); }catch(_){}   // 지난번에 옮겨둔 위치는 초기화 — 항상 가운데서 열림
     db.ref(CFG_PATH).once('value').then(function(s){
@@ -3439,6 +3464,23 @@ body.portal-mode #moreFab{display:flex;}
   });
   // 시스템 설정(관리자)
   $('cfgFab').addEventListener('click', cfgOpen);
+
+  /* 「시스템 장애 알림」 열어보기 — 늘 떠 있던 단추를 치운 뒤 남은 «유일한 문».
+     이력 전체를 한 번 읽으므로 몇 초 걸린다 — 단추에 진행 상태를 적어 둔다.
+     (아무 말 없이 멈춰 있으면 「눌렀는데 왜 안 되나」가 된다) */
+  var _cfgHealth = $('cfgHealth');
+  if(_cfgHealth) _cfgHealth.addEventListener('click', function(){
+    if(!(window.PUHealth && window.PUHealth.openAdminPanel)){
+      _cfgHealth.textContent = '아직 준비 안 됨'; return;
+    }
+    _cfgHealth.disabled = true; _cfgHealth.textContent = '불러오는 중…';
+    Promise.resolve(window.PUHealth.openAdminPanel()).then(function(n){
+      /* 창이 「처리할 장애 알림이 없습니다」를 보여주지만, 창을 닫고 나서도
+         방금 본 결과가 남아 있어야 두 번 누르지 않는다. */
+      _cfgHealth.textContent = (n > 0) ? ('열어보기 (' + n + ')') : '없음';
+    }).catch(function(){ _cfgHealth.textContent = '불러오기 실패 — 다시'; })
+      .then(function(){ _cfgHealth.disabled = false; });
+  });
 
   // ══════════ ⋯ 더보기 — 흩어진 단추를 한 곳으로 ══════════
   //  폰에서만 동작한다. PC는 자리가 넉넉해 지금 그대로 둔다.
