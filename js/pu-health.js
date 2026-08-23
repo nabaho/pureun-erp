@@ -112,21 +112,31 @@
 
   /* 아는 열린 건수. null = 아직 안 열어 봐서 «모른다»(모를 때는 조용히 둔다). */
   var knownOpen = null;
+  /* 총괄관리자로 확인됐는가 — 이 값이 참일 때만 단추가 뜬다.
+     예전에는 monitorAdmin 이 직접 hidden 을 만졌는데, 그러면 「0건이라 감췄다」를
+     곧바로 되돌려 버린다. 판단은 paintAdminBadge 한 곳으로 모은다. */
+  var isAdminUser = false;
 
   function paintAdminBadge(badge) {
     if (!badge) return;
+    /* ★ 장애가 없으면 «아무것도 안 띄운다» (대표 지시 2026-08-23)
+       「장애가 없을 경우 필요없다 … 이 문구 없애달라」.
+       세어 보니 0건이면 「장애 알림 없음」이라고 적어 두었는데, 그 줄이 하루 종일
+       화면 구석을 차지한다. 없다는 말을 늘 하고 있을 까닭이 없다 — 치운다.
+       ⚠ 「모름」과 「0건」은 다르다. 아직 안 세어 봤을 때(null)는 조용한 단추를
+         남긴다 — 그것마저 감추면 눌러서 확인할 길이 사라진다. */
+    /* 보이고 감추는 판단은 «여기 한 곳»에서만 한다. 두 곳에서 하면 서로 되돌린다
+       — monitorAdmin 이 hidden=false 로 덮어써 0건인데도 다시 뜨는 식이다. */
+    if (!isAdminUser || knownOpen === 0) { badge.hidden = true; return; }
+    badge.hidden = false;
     if (knownOpen === null) {
       badge.style.cssText = HEALTH_QUIET;
       badge.textContent = '장애 알림';
       badge.title = '눌러서 처리할 장애 알림이 있는지 봅니다';
-    } else if (knownOpen > 0) {
+    } else {
       badge.style.cssText = HEALTH_ALARM;
       badge.textContent = '⚠ 장애 알림 ' + knownOpen;
       badge.title = '처리할 장애 알림이 ' + knownOpen + '건 있습니다';
-    } else {
-      badge.style.cssText = HEALTH_QUIET;
-      badge.textContent = '장애 알림 없음';
-      badge.title = '처리할 장애 알림이 없습니다';
     }
   }
 
@@ -228,8 +238,8 @@
     app.database().ref('uid_roles/' + user.uid).once('value').then(function (snapshot) {
       var role = snapshot.val() || {};
       if (!role.isAdmin) return;
-      var badge = ensureAdminBadge(app);   // 색·글자는 paintAdminBadge 가 정한다
-      badge.hidden = false;
+      isAdminUser = true;
+      ensureAdminBadge(app);   // 보임·색·글자는 모두 paintAdminBadge 가 정한다
     }).catch(function () {});
   }
 
