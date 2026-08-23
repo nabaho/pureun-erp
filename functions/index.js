@@ -21,6 +21,7 @@ const {
   githubRequest,
 } = require("./dev-automation");
 const { homepageUrl } = require("./homepage-fetch");
+const HanaMessage = require("./hana-message");
 
 if (!getApps().length) initializeApp();
 
@@ -1435,5 +1436,226 @@ exports.readHomepage = functions
       res.json({ path: req.body.path, html: html, readAt: Date.now() });
     } catch (err) {
       res.status(err.status || 500).json({ error: err.message || "홈페이지를 읽지 못했습니다." });
+    }
+  });
+
+/* 하나은행·하나카드 거래문자 연결
+   - 푸른 계정 비밀번호를 휴대폰 앱에 저장하지 않는다.
+   - ERP에서 5분짜리 연결번호를 만든 뒤 휴대폰 한 대에 전용 보안키를 발급한다.
+   - 원문 문자는 저장하지 않고 거래일시·금액·입출금·적요만 보관한다. */
+const HANA_PAIR_TTL_MS = 5 * 60 * 1000;
+const HANA_MESSAGE_PACKAGES = new Set([
+  "com.samsung.android.messaging",
+  "com.google.android.apps.messaging",
+]);
+
+function hanaJson(res, status, value) {
+  res.status(status).json(value);
+}
+
+function hanaHash(value) {
+  return crypto.createHash("sha256").update(String(value || ""), "utf8").digest("hex");
+}
+
+function hanaDeviceKey(value) {
+  return hanaHash(String(value || "").trim()).slice(0, 40);
+}
+
+function hanaSafeEqual(left, right) {
+  const a = Buffer.from(String(left || ""), "utf8");
+  const b = Buffer.from(String(right || ""), "utf8");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+async function requireFinanceStaff(req) {
+  const decoded = await requireStaff(req);
+  const snap = await getDatabase().ref(`uid_roles/${decoded.uid}`).once("value");
+  const role = snap.val() || {};
+  if (role.isAdmin !== true && role.fin !== true) {
+    const error = new Error("재무 담당자 또는 총괄관리자만 연결할 수 있습니다.");
+    error.status = 403;
+    throw error;
+  }
+  return decoded;
+}
+
+async function requireHanaDevice(req, body) {
+  const match = /^Device\s+(.+)$/i.exec(String(req.headers.authorization || ""));
+  const uid = String(body.uid || "").trim();
+  const deviceId = String(body.deviceId || "").trim();
+  if (!match || !uid || !deviceId || deviceId.length > 200) {
+    const error = new Error("휴대폰 연결정보가 올바르지 않습니다.");
+    error.status = 401;
+    throw error;
+  }
+  const ref = getDatabase().ref(`hanaSmsBridge/devices/${uid}/${hanaDeviceKey(deviceId)}`);
+  const snap = await ref.once("value");
+  const device = snap.val() || {};
+  if (device.disabled === true || !device.tokenHash || !hanaSafeEqual(device.tokenHash, hanaHash(match[1]))) {
+    const error = new Error("휴대폰 연결이 만료되었거나 해제되었습니다.");
+    error.status = 401;
+    throw error;
+  }
+  ref.child("lastSeenAt").set(Date.now()).catch(() => {});
+  return { uid, deviceId, device };
+}
+
+exports.hanaMessageBridge = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 30, memory: "256MB" })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { hanaJson(res, 405, { ok: false, error: "POST 요청만 허용됩니다." }); return; }
+
+    const body = (req.body && typeof req.body === "object") ? req.body : {};
+    const action = String(body.action || "").trim();
+    const db = getDatabase();
+
+    try {
+      if (action === "pairClaim") {
+        const code = String(body.code || "").replace(/\D/g, "");
+        const deviceId = String(body.deviceId || "").trim();
+        const deviceName = String(body.deviceName || "권형하 휴대폰").trim().slice(0, 60);
+        if (!/^\d{8}$/.test(code) || !deviceId || deviceId.length > 200) {
+          hanaJson(res, 400, { ok: false, error: "8자리 연결번호와 휴대폰 정보가 필요합니다." }); return;
+        }
+        const pairRef = db.ref(`hanaSmsBridge/pairs/${hanaHash(code)}`);
+        const pairSnap = await pairRef.once("value");
+        const pair = pairSnap.val() || {};
+        if (!pair.uid || Number(pair.expiresAt || 0) < Date.now()) {
+          await pairRef.remove().catch(() => {});
+          hanaJson(res, 410, { ok: false, error: "연결번호가 만료되었습니다. ERP에서 다시 발급해 주세요." }); return;
+        }
+        const currentPair = await db.ref(`hanaSmsBridge/pairByUid/${pair.uid}`).once("value");
+        if (String(currentPair.val() || "") !== hanaHash(code)) {
+          await pairRef.remove().catch(() => {});
+          hanaJson(res, 410, { ok: false, error: "새 연결번호가 발급되었습니다. 가장 최근 번호를 입력해 주세요." }); return;
+        }
+        const token = crypto.randomBytes(32).toString("base64url");
+        const deviceKey = hanaDeviceKey(deviceId);
+        await db.ref(`hanaSmsBridge/devices/${pair.uid}`).set({
+          [deviceKey]: {
+            tokenHash: hanaHash(token),
+            deviceName,
+            pairedAt: Date.now(),
+            lastSeenAt: Date.now(),
+            disabled: false,
+          },
+        });
+        await pairRef.remove();
+        await db.ref(`hanaSmsBridge/pairByUid/${pair.uid}`).remove();
+        hanaJson(res, 200, { ok: true, uid: pair.uid, deviceToken: token, deviceName }); return;
+      }
+
+      if (action === "ingest") {
+        const linked = await requireHanaDevice(req, body);
+        const packageName = String(body.packageName || "").trim();
+        if (!HANA_MESSAGE_PACKAGES.has(packageName)) {
+          hanaJson(res, 400, { ok: false, ignored: true, reason: "unsupported_message_app" }); return;
+        }
+        const title = String(body.title || "").slice(0, 200);
+        const text = String(body.text || "").slice(0, 1200);
+        const parsed = HanaMessage.parseHanaMessage(`${title}\n${text}`);
+        if (!parsed.ok) {
+          hanaJson(res, 200, { ok: true, ignored: true, reason: parsed.reason }); return;
+        }
+        const tx = parsed.transaction;
+        const inboxRef = db.ref(`hanaSmsBridge/inbox/${linked.uid}/${tx.id}`);
+        const existing = await inboxRef.once("value");
+        if (existing.exists()) {
+          hanaJson(res, 200, { ok: true, duplicate: true, id: tx.id }); return;
+        }
+        await inboxRef.set({
+          id: tx.id,
+          src: tx.src,
+          type: tx.type,
+          date: tx.date,
+          amount: tx.amount,
+          balance: tx.balance || 0,
+          memo: tx.memo,
+          note: tx.note,
+          rawHash: tx.rawHash,
+          status: "pending",
+          receivedAt: Date.now(),
+          deviceName: String(linked.device.deviceName || "권형하 휴대폰").slice(0, 60),
+        });
+        hanaJson(res, 200, { ok: true, saved: true, id: tx.id }); return;
+      }
+
+      const staff = await requireFinanceStaff(req);
+      const base = db.ref(`hanaSmsBridge`);
+
+      if (action === "pairStart") {
+        const code = String(crypto.randomInt(10000000, 100000000));
+        const expiresAt = Date.now() + HANA_PAIR_TTL_MS;
+        const codeHash = hanaHash(code);
+        const oldPair = await base.child(`pairByUid/${staff.uid}`).once("value");
+        const oldHash = String(oldPair.val() || "");
+        const updates = {};
+        if (/^[a-f0-9]{64}$/.test(oldHash)) updates[`pairs/${oldHash}`] = null;
+        updates[`pairs/${codeHash}`] = { uid: staff.uid, createdAt: Date.now(), expiresAt };
+        updates[`pairByUid/${staff.uid}`] = codeHash;
+        await base.update(updates);
+        hanaJson(res, 200, { ok: true, code, expiresAt }); return;
+      }
+
+      if (action === "pairStatus") {
+        const snap = await base.child(`devices/${staff.uid}`).once("value");
+        const devices = Object.values(snap.val() || {}).map((d) => ({
+          deviceName: String(d.deviceName || "휴대폰"),
+          pairedAt: Number(d.pairedAt || 0),
+          lastSeenAt: Number(d.lastSeenAt || 0),
+          disabled: d.disabled === true,
+        }));
+        hanaJson(res, 200, { ok: true, devices }); return;
+      }
+
+      if (action === "pairReset") {
+        // 휴대폰 연결만 해제한다. 아직 ERP로 가져오지 않은 거래와 이미 가져온
+        // 이력은 회계자료이므로 기기 재연결 과정에서 함께 지우면 안 된다.
+        const activePair = await base.child(`pairByUid/${staff.uid}`).once("value");
+        const activeHash = String(activePair.val() || "");
+        const updates = {};
+        updates[`devices/${staff.uid}`] = null;
+        updates[`pairByUid/${staff.uid}`] = null;
+        if (/^[a-f0-9]{64}$/.test(activeHash)) updates[`pairs/${activeHash}`] = null;
+        await base.update(updates);
+        hanaJson(res, 200, { ok: true }); return;
+      }
+
+      if (action === "list") {
+        const snap = await base.child(`inbox/${staff.uid}`).orderByChild("receivedAt").limitToLast(200).once("value");
+        const items = Object.values(snap.val() || {})
+          .filter((x) => x && x.status === "pending")
+          .sort((a, b) => Number(a.receivedAt || 0) - Number(b.receivedAt || 0))
+          .map((x) => ({
+            id: String(x.id || ""), src: x.src === "card" ? "card" : "bank",
+            type: x.type === "expense" ? "expense" : "income", date: String(x.date || ""),
+            amount: Number(x.amount || 0), balance: Number(x.balance || 0), memo: String(x.memo || ""),
+            note: String(x.note || ""), receivedAt: Number(x.receivedAt || 0),
+          }));
+        hanaJson(res, 200, { ok: true, items }); return;
+      }
+
+      if (action === "ack") {
+        const ids = Array.isArray(body.ids) ? body.ids.slice(0, 200).map(String) : [];
+        const batchId = String(body.batchId || "").slice(0, 120);
+        const updates = {};
+        ids.forEach((id) => {
+          if (/^[a-f0-9]{64}$/.test(id)) {
+            updates[`${id}/status`] = "imported";
+            updates[`${id}/batchId`] = batchId;
+            updates[`${id}/importedAt`] = Date.now();
+          }
+        });
+        if (Object.keys(updates).length) await base.child(`inbox/${staff.uid}`).update(updates);
+        hanaJson(res, 200, { ok: true, count: ids.length }); return;
+      }
+
+      hanaJson(res, 400, { ok: false, error: "알 수 없는 작업입니다." });
+    } catch (err) {
+      console.error("hanaMessageBridge:", action || "(없음)", String((err && err.message) || err));
+      hanaJson(res, err.status || 500, { ok: false, error: err.message || "문자 연결을 처리하지 못했습니다." });
     }
   });
