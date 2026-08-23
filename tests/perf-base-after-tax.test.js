@@ -27,7 +27,7 @@ const grab = (from, to) => src.slice(src.indexOf(from), src.indexOf(to));
 const ctx = { console:console };
 ctx.window = ctx;
 vm.createContext(ctx);
-vm.runInContext(grab('function erpWithholdTax(amount, kind, rate){', '// 차감 옵션 입력 컴포넌트'), ctx);
+vm.runInContext(grab('function erpWithholdTax(amount, kind, rate){', '\nfunction calcPerfShares('), ctx);
 // calcPerfShares 가 기대는 바깥 함수들 — 요율 15%, 사람 한 명으로 고정해 셈만 본다
 vm.runInContext([
   'function getMgrRates(){ return {}; }',

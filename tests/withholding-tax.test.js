@@ -24,7 +24,7 @@ ctx.window = ctx;
 vm.createContext(ctx);
 const grab = (from, to) => src.slice(src.indexOf(from), src.indexOf(to));
 // 세는 함수와 그것을 쓰는 calcDeductions 를 함께 들여온다
-vm.runInContext(grab('function erpWithholdTax(amount, kind, rate){', '// 차감 옵션 입력 컴포넌트'), ctx);
+vm.runInContext(grab('function erpWithholdTax(amount, kind, rate){', '\nfunction calcPerfShares('), ctx);
 
 console.log('\n[① 기타소득 8.8% — 필요경비 60% 가 이미 들어 있는 실효세율]');
 /* 법: 지급액×40%(소득금액) × 20%(소득세) + 지방세(소득세의 10%) = 지급액 × 8.8% */
