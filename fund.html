@@ -4219,7 +4219,10 @@ var CARD_TARGETS={
   info:{ t:'기금 정보', mode:'fill', kinds:['biz'], help:'info.card',
     map:[['c','fd-name','기금법인명'],['bz','fd-tax_id_no','고유번호'],
          ['ceo','fd-chairman','대표자'],['ad','fd-address','소재지'],['ct','fd-phone','전화']] },
-  site:{ t:'참여사업장', mode:'make', kinds:['biz','card'], help:'site.card',
+  /* need:'c' — 회사 이름이 있는 것만 보여 준다.
+     명함첩에는 회사 없는 개인 명함(변호사·아나운서·관장 …)이 많은데,
+     참여사업장은 «회사»라 그런 명함으로는 만들 수 없다. 목록에 올리면 방해만 된다. */
+  site:{ t:'참여사업장', mode:'make', kinds:['biz','card'], help:'site.card', need:'c', width:900,
     map:[['c','name'],['ceo','ceo'],['bz','biz_no'],['cno','corp_no'],['bt','biz_type'],['ad','address'],
          ['n','_c_name'],['ti','_c_position'],['m','_c_mobile'],['e','_c_email']] }
 };
@@ -4230,7 +4233,8 @@ function openCardPick(key){
     +'<span class="muted" style="font-size:11.5px">'+esc(T.t)+'</span>'+hlp(T.help)+'</div>'
     +'<input id="cardq" class="search" style="width:100%" placeholder="회사·사람 이름 또는 번호로 찾기" oninput="renderCardPick()">'
     +'<div id="cardbody" style="max-height:56vh;overflow:auto;margin-top:10px">'+loadingHTML('기업정보함을 읽는 중…')+'</div>'
-    +'<p class="muted" style="font-size:11px;margin:8px 0 0">'+(T.mode==='make'?'고르면 <b>채워진 창</b>이 열림':'<b>빈 칸만</b> 채움 · 저장은 따로')+'</p>');
+    +'<p class="muted" style="font-size:11px;margin:8px 0 0">'+(T.mode==='make'?'고르면 <b>채워진 창</b>이 열림':'<b>빈 칸만</b> 채움 · 저장은 따로')+'</p>'
+    ,{width:T.width||640});   // 칸이 많은 목록은 넓게 — 좁으면 회사 이름이 세로로 깨진다
   loadCardIdx().then(function(){ if($('cardbody')) renderCardPick(); })
     .catch(function(e){ var b=$('cardbody');
       if(b) b.innerHTML='<div class="msg err">기업정보함을 읽지 못했습니다: '+esc((e&&e.message)||e)
@@ -4243,10 +4247,21 @@ function renderCardPick(){
   var norm=_cardNorm;
   var list=(_cardIdx||[]).filter(function(r){
     if(T.kinds.indexOf(r.k)<0) return false;                       // 이 자리에서 쓸 종류만
+    if(T.need && !String(r[T.need]||'').trim()) return false;      // 그 자리에 꼭 필요한 칸이 빈 것은 제외
     if(!q) return true;
     return norm(r.c).indexOf(norm(q))>=0 || norm(r.n).indexOf(norm(q))>=0
       || String(r.bz||'').replace(/\D/g,'').indexOf(q.replace(/\D/g,''))>=0;
   });
+  /* 같은 회사의 명함이 여러 장이면 목록이 회사 하나로 도배된다 —
+     사업자등록증 한 장 + 명함은 회사당 한 장만 남긴다(사람은 창에서 바꿀 수 있다). */
+  if(T.mode==='make'){
+    var seen={};
+    list=list.filter(function(r){
+      if(r.k==='biz') return true;
+      var k=norm(r.c); if(!k) return true;
+      if(seen[k]) return false; seen[k]=1; return true;
+    });
+  }
   // 지금 기금 이름과 닮은 것을 위로, 그다음 사업자등록증을 명함보다 위로
   var f=funds[_cardPick.fid]||{}, key=norm(f.name||f.short_name||'');
   list=list.slice().sort(function(a,b2){
@@ -4262,19 +4277,22 @@ function renderCardPick(){
   if(!list.length){ b.innerHTML='<div class="muted" style="padding:18px 4px;text-align:center">'
     +(q?'찾는 이름이 없습니다.':'기업정보함에 등록된 자료가 없습니다.')+'</div>'; return; }
   var many=T.kinds.length>1;
-  b.innerHTML='<div style="overflow-x:auto"><table><thead><tr>'
-    +(many?'<th>종류</th>':'')+'<th>회사</th>'+(many?'<th>사람</th>':'')
-    +'<th>번호</th><th>대표자</th><th class="mo">소재지</th><th></th></tr></thead><tbody>'
+  /* 칸이 좁으면 「주식회사 나래산업」이 한 글자씩 세로로 깨진다 —
+     각 칸의 최소 폭을 정하고, 줄바꿈은 소재지 한 곳에서만 말줄임으로 처리한다. */
+  var nw='white-space:nowrap';
+  b.innerHTML='<div style="overflow-x:auto"><table style="table-layout:auto;min-width:100%"><thead><tr>'
+    +(many?'<th style="'+nw+'">종류</th>':'')+'<th style="'+nw+'">회사</th>'+(many?'<th style="'+nw+'">담당자</th>':'')
+    +'<th style="'+nw+'">사업자번호</th><th style="'+nw+'">대표자</th><th class="mo">소재지</th><th></th></tr></thead><tbody>'
     +list.slice(0,80).map(function(r){
       var e=cardEffective(r);   // 명함이면 같은 회사 사업자등록증으로 빈 칸을 메운 값
       return '<tr>'
-        +(many?'<td>'+(r.k==='biz'?'<span class="chip ok" style="font-size:10px">사업자등록증</span>'
+        +(many?'<td style="'+nw+'">'+(r.k==='biz'?'<span class="chip ok" style="font-size:10px">사업자</span>'
                                  :'<span class="chip" style="font-size:10px">명함</span>')+'</td>':'')
-        +'<td style="font-weight:700">'+esc(r.c||'—')+'</td>'
-        +(many?'<td>'+esc(r.n||'')+(r.ti?' <span class="muted" style="font-size:11px">'+esc(r.ti)+'</span>':'')+'</td>':'')
-        +'<td>'+esc(e.bz||'—')+'</td><td>'+esc(e.ceo||'—')+'</td>'
-        +'<td class="muted mo" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(e.ad||'—')+'</td>'
-        +'<td><button class="primary" onclick="applyCard(\''+r._id+'\')" style="padding:3px 10px">'
+        +'<td style="font-weight:700;'+nw+'">'+esc(r.c||'—')+'</td>'
+        +(many?'<td style="'+nw+'">'+(r.n?esc(r.n)+(r.ti?' <span class="muted" style="font-size:11px">'+esc(r.ti)+'</span>':''):'—')+'</td>':'')
+        +'<td style="'+nw+'">'+esc(e.bz||'—')+'</td><td style="'+nw+'">'+esc(e.ceo||'—')+'</td>'
+        +'<td class="muted mo" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;'+nw+'" title="'+esc(e.ad||'')+'">'+esc(e.ad||'—')+'</td>'
+        +'<td style="'+nw+'"><button class="primary" onclick="applyCard(\''+r._id+'\')" style="padding:3px 10px">'
         +(T.mode==='make'?'추가':'당겨오기')+'</button></td></tr>';
     }).join('')+'</tbody></table></div>'
     +(list.length>80?'<p class="muted" style="font-size:11px;margin:6px 0 0">'+list.length+'건 중 80건만 표시 — 검색으로 좁히세요.</p>':'');

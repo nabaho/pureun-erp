@@ -272,3 +272,72 @@ test('담당은 한 줄 — 부담당이 전폭 한 줄을 먹지 않는다', ()
   // 모달(담당자 지정)은 다른 클래스라 건드리지 않았는지
   assert.match(SRC, /\.mgr-sub:checked/, '모달의 담당 저장이 깨졌다');
 });
+
+/* 목록 걸러내기 — 화면에 «쓸 수 있는 것»만 올라와야 한다.
+   2026-08-23 대표 지적: 참여사업장 고르는 창에 회사 없는 개인 명함
+   (관장·아나운서·변호사 …)이 줄줄이 올라왔다. 그런 명함으로는 사업장을 만들 수 없다. */
+function pickList(idx, key) {
+  const box = {};
+  const out = { html: '' };
+  new Function('IDX', 'OUT', 'Q', [
+    grabDecl('CARD_TARGETS'),
+    'var _cardIdx=IDX;',
+    'var _cardPick={fid:"F1",key:"' + key + '"};',
+    'var funds={F1:{name:"가짜공동근로복지기금"}};',
+    'var body={ set innerHTML(v){ OUT.html=v; } };',
+    'function $(id){ return id==="cardbody"?body:(id==="cardq"?{value:Q}:null); }',
+    'function esc(s){ return String(s==null?"":s); }',
+    grabFn('_cardNorm'), grabFn('cardEffective'), grabFn('renderCardPick'),
+    'this.render=renderCardPick;'
+  ].join('\n')).call(box, idx, out, '');
+  box.render();
+  return out.html;
+}
+
+const NOISE = [
+  { _id: 'b1', k: 'biz', c: '주식회사 나래산업', bz: '125-86-09231', ceo: '전영범', ad: '경기도 평택시 청북읍' },
+  { _id: 'n1', k: 'card', c: '', n: '한성욱', ti: '관장', ad: '충남 공주시' },
+  { _id: 'n2', k: 'card', c: '', n: '하윤수', ti: '대표 / 공인노무사', ad: '인천시 부평구' },
+  { _id: 'n3', k: 'card', c: '', n: '김미숙', ti: '아나운서' },
+  { _id: 'n4', k: 'card', c: '', n: '이인재' },
+  { _id: 'n5', k: 'card', c: '', n: '김경호', ti: '변호사', ad: '충남 서산시' }
+];
+
+test('참여사업장 목록에는 회사 없는 개인 명함이 올라오지 않는다', () => {
+  const html = pickList(NOISE, 'site');
+  assert.ok(html.includes('주식회사 나래산업'), '쓸 수 있는 사업자등록증이 빠졌다');
+  ['한성욱', '하윤수', '김미숙', '이인재', '김경호'].forEach(n => {
+    assert.ok(!html.includes(n), '회사 없는 개인 명함이 올라왔다: ' + n);
+  });
+});
+
+test('회사가 있는 명함은 남고, 같은 회사 명함이 여러 장이면 한 장만 올라온다', () => {
+  const idx = [
+    { _id: 'b1', k: 'biz', c: '㈜가나다', bz: '000-00-00000', ceo: '홍길동' },
+    { _id: 'c1', k: 'card', c: '㈜가나다', n: '김하나', ti: '과장' },
+    { _id: 'c2', k: 'card', c: '가나다', n: '이두울', ti: '대리' },      // 같은 회사(표기만 다름)
+    { _id: 'c3', k: 'card', c: '㈜라마바', n: '박세엣', ti: '팀장' },
+    { _id: 'x1', k: 'card', c: '', n: '개인명함' }
+  ];
+  const html = pickList(idx, 'site');
+  assert.ok(html.includes('㈜가나다'), '사업자등록증이 빠졌다');
+  assert.ok(html.includes('㈜라마바'), '회사 있는 명함이 빠졌다');
+  assert.ok(!html.includes('개인명함'), '회사 없는 명함이 올라왔다');
+  const people = ['김하나', '이두울'].filter(n => html.includes(n));
+  assert.equal(people.length, 1, '같은 회사 명함이 여러 장 올라왔다: ' + people.join(','));
+});
+
+test('기금 정보 목록은 사업자등록증만 — 명함은 아예 안 나온다', () => {
+  const html = pickList(NOISE.concat([{ _id: 'c9', k: 'card', c: '어떤회사', n: '아무개' }]), 'info');
+  assert.ok(html.includes('주식회사 나래산업'));
+  assert.ok(!html.includes('아무개'), '기금 정보에는 명함이 필요 없다');
+});
+
+test('회사 이름이 세로로 깨지지 않게 줄바꿈을 막는다', () => {
+  const html = pickList(NOISE, 'site');
+  assert.ok(html.includes('white-space:nowrap'), '칸이 좁으면 한 글자씩 세로로 깨진다');
+  // 소재지만 말줄임(나머지는 그대로 보여야 한다)
+  assert.match(html, /text-overflow:ellipsis/, '긴 소재지를 말줄임하지 않으면 표가 넘친다');
+  assert.match(SRC, /width:T\.width\|\|640/, '칸 많은 목록을 넓게 여는 설정이 없다');
+  assert.match(SRC, /need:'c', width:900/, '참여사업장 목록이 좁게 열린다');
+});
