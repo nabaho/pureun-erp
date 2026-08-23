@@ -88,11 +88,14 @@ function noConst(src) { return String(src).replace(/(^|\n)const /g, '$1var '); }
 function rowDeps() {
   return [
     constLine('DONE_STATUS'), constObj('STATUS_TEXT'), constSource('GROUPS'),
-    constLine('OWN_LABEL'), constLine('OWN_CLS'), constLine('OWN_SHORT'), constLine('GROUP_UNIT'),
+    constLine('OWN_LABEL'), constLine('OWN_CLS'), constLine('GROUP_UNIT'),
     fnSource('todayString'), fnSource('keptOf'), fnSource('rosterMarkOf'),
     fnSource('memberRows'), fnSource('pageIdsOf'), fnSource('pageRows'), fnSource('rowsOf'),
     fnSource('needsAttentionRow'), fnSource('statOf'),
-    fnSource('ownMinis'), fnSource('chkMinis'), fnSource('cardCount'), fnSource('dashHtml'),
+    fnSource('statusChip'), fnSource('cardCount'), fnSource('dashHtml'),
+    /* 할 일 목록 — 안내 띠가 «한 줄짜리 할 일»로 바뀌었다(5차 지시) */
+    fnSource('rowsWith'), fnSource('someNames'), fnSource('seeBtns'), fnSource('jobCard'),
+    fnSource('noteOneLine'), fnSource('readPageBtn'),
     fnSource('visibleRows'), fnSource('chipsHtml'),
     /* 자문사현황 — 목록은 푸른ERP 업체관리에서 읽고, 올렸는지는 사람이 표시한다 */
     constLine('POSTED_TEXT'), constLine('PARTNER_PATH'),
@@ -422,7 +425,7 @@ test('다 읽었으면 겁주는 띠를 띄우지 않는다', () => {
 });
 
 test('읽기 실패 띠·명부 경고·저장 실패 띠가 화면에 실제로 그려진다', () => {
-  const banners = fnSource('bannersHtml');
+  const banners = fnSource('jobsOf') + '\n' + fnSource('bannersHtml');
   ['App.dataErr', 'App.staffErr', 'App.saveErr'].forEach(f => {
     assert.ok(banners.indexOf(f) >= 0, f + ' 를 화면에 안 그리면 담아둬도 아무도 못 본다');
   });
@@ -565,7 +568,7 @@ test('★ 쪽 화면이 «왜» 붙여넣기를 안 주는지 한국어로 적�
   const ctx = pageBox();
   ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '가나다' }, pages: {}, dirty: false };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
-    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.match(h, /대조/, '대조용이라는 말이 없습니다');
   assert.match(h, /지도|표|구획/, '무엇이 사라지는지 안 적혀 있습니다');
@@ -576,7 +579,7 @@ test('★ 쪽 화면에서 홈페이지 관리자 화면으로 갈 길을 준다
   const ctx = pageBox();
   ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '가나다' }, pages: {}, dirty: false };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
-    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.ok(h.indexOf(ctx.PuHomeExport.editUrl('page', 'inquiry')) >= 0,
     '홈페이지에서 이 쪽을 열 길이 없습니다');
@@ -636,9 +639,11 @@ test('★ 겹친 글 번호를 빨간 띠로 알린다', () => {
   ctx.esc = escStub();
   /* 띠가 대시보드와 «같은 판단»을 쓴다 — 명부만 보고 아는 것을 띠에도 적기 때문이다 */
   run(ctx, noConst(constSource('PAGE_IDS')) + '\n' + rowDeps()
-    + fnSource('leftoverGoBtns') + '\n' + fnSource('bannersHtml'));
+    + fnSource('leftoverGoBtns') + '\n' + fnSource('jobsOf') + '\n' + fnSource('bannersHtml'));
   const h = ctx.bannersHtml();
-  assert.match(h, /bar bad/, '빨간 띠가 아닙니다');
+  /* 할 일 하나로 뜬다(5차 지시로 띠 → 한 줄 할 일). 색 대신 왼쪽 선으로 급함을 표시하며,
+     빨강(기본 .job)이라야 한다 — 이건 남의 글을 덮을 수 있는 사고다. */
+  assert.match(h, /class="job\s*"/, '가장 급한 할 일인데 급함 표시가 아닙니다');
   assert.match(h, /권형하/);
   assert.match(h, /신입 노무사/);
 });
@@ -857,7 +862,7 @@ test('★ done 사람의 이름 잔존도 배너로 알린다 — toRemove 가 0
   ctx.PAGE_LABEL = { greeting: '인사말' };
   ctx.esc = escStub();
   run(ctx, noConst(constSource('PAGE_IDS')) + '\n' + rowDeps()
-    + fnSource('leftoverGoBtns') + '\n' + fnSource('bannersHtml'));
+    + fnSource('leftoverGoBtns') + '\n' + fnSource('jobsOf') + '\n' + fnSource('bannersHtml'));
   const h = ctx.bannersHtml();
   assert.match(h, /나간사람/, 'toRemove 가 0명이라고 done 사람의 이름 잔존을 안 보여 줍니다');
   /* 이름이 남은 «그 쪽»으로 바로 갈 수 있어야 한다 — 알려만 주고 찾아 들어가게 두지 않는다 */
@@ -920,7 +925,7 @@ test('★ 쪽 안내에 「대조 기준 저장」만으로는 안 바뀌고 「
   const ctx = pageBox();
   ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '가나다' }, pages: {}, dirty: false };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
-    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.match(h, /대조 기준 저장만으로는/, '저장만으로는 딱지가 안 바뀐다는 말이 없습니다');
   assert.match(h, /한 번 더 눌러야/, '홈페이지 다시 확인을 «한 번 더» 눌러야 한다는 말이 없습니다');
@@ -1085,7 +1090,7 @@ test('★ 홈페이지를 읽었으면 쪽 글이 «줄마다 번호와 함께»
     pageLines: { inquiry: ['천안본사', '충남 천안시 서북구 원두정8길 6, 301호(두정빌딩)', 'T. 041-556-0035'] }
   };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
-    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.deepEqual(numbersIn(h).slice(0, 3), [1, 2, 3], '줄마다 번호가 붙지 않았습니다');
   assert.ok(h.indexOf('천안본사') >= 0);
@@ -1097,7 +1102,7 @@ test('★ 홈페이지를 아직 안 읽었으면 «빈 줄»이 아니라 그 �
   ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '뭉쳐 있는 대조 기준 글자' },
               pages: {}, dirty: false, pageLines: {}, pageConfig: {} };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
-    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.match(h, /홈페이지 다시 확인/, '어떻게 하면 줄 모양으로 보이는지 안 적혀 있습니다');
   assert.equal(numbersIn(h).length, 0, '못 읽은 것을 빈 줄로 지어내 보여 줬습니다');
@@ -1111,7 +1116,7 @@ test('★ 줄 꾸밈(소제목·구획번호)이 «자료»에 섞이지 않는�
     pageLines: { work1: ['자문서비스', '01', '법률자문', '최신 노동관계법령에 대한 자문과 상담을 수행합니다.'] }
   };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
-    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.equal(ctx.App.draft.text, 기준, '보여 주기만 해야 하는데 초안(자료)이 바뀌었습니다');
   assert.ok(h.indexOf(ctx.esc(기준)) >= 0, '대조 기준 글자 칸이 원문 그대로가 아닙니다');
@@ -1304,7 +1309,7 @@ test('★ 「분리」가 홈페이지 쪽을 지우는 것이 아니라고 화�
               pageLines: {}, pageConfig: {} };
   ctx.PAGE_LABEL = { work1: '자문서비스' };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
-    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.match(h, /분리/, '분리하는 길이 화면에 없습니다');
   assert.match(h, /지우지 않습니다|지우는 것이 아닙니다/,
@@ -1739,12 +1744,14 @@ test('★ 갈래는 대시보드 카드로 고른다 — 카드가 우리 자료
   assert.match(h, /App\.go\(/, '카드를 눌러도 옮겨갈 수 없습니다');
   assert.ok(h.indexOf('자문사현황') >= 0, '자문사현황 자리가 없습니다');
 
-  /* ★ 확인을 안 눌렀으면 «대조 안 함»이라고 적어야 한다.
-     이것을 「이상 없음」이나 「같음」으로 적으면 안 본 것이 깨끗한 것으로 읽힌다. */
+  /* ★ 확인을 안 눌렀고 손댈 것도 없으면 «대조 안 함»이라고 적어야 한다.
+     이것을 「이상 없음」으로 적으면 안 본 것이 깨끗한 것으로 읽힌다. */
   assert.ok(h.indexOf('대조 안 함') >= 0, '확인 전인데 그 사실을 안 적었습니다');
-  assert.ok(h.indexOf('홈페이지와 같음') < 0, '확인 전에 「홈페이지와 같음」이라고 적었습니다');
-  /* 명부만 보고 아는 것은 확인 전에도 적힌다 */
-  assert.match(h, /퇴사/, '명부상 퇴사를 확인 전에는 안 적었습니다');
+  assert.ok(h.indexOf('이상 없음') < 0 || h.indexOf('대조 안 함') >= 0,
+    '확인 전에 「이상 없음」이라고 적었습니다');
+  /* ★ 명부만 보고 아는 것도 확인 전에 카드에 반영된다 — 나간사람이 명부상 퇴사라
+     구성원 카드는 «할 일»이 있다고 적어야 한다(5차 지시로 세부는 목록으로 옮겼다). */
+  assert.match(h, /할 일/, '명부상 퇴사자가 있는데 확인 전 카드가 조용합니다');
 
   // 목록 칸이 예전(268~290px)보다 넓어졌는지 — 값을 박지 않고 «더 넓어졌는가»만 본다
   const m = /\.list\s*\{[^}]*width\s*:\s*(\d+)px/.exec(css);
@@ -1785,6 +1792,111 @@ test('★ 「손댈 것」 딱지에 적힌 수와 눌러서 나온 줄 수가 �
   assert.ok(이름들.indexOf('임혜미') < 0, '내려간 사람이 아직 손댈 것으로 남습니다');
   assert.ok(이름들.indexOf('박성수') >= 0, '홈페이지에 남은 퇴사자가 손댈 것에서 빠졌습니다');
   assert.equal(s.hot, 2, '박성수(퇴사+홈페이지에 남음)를 두 번 셌거나 조현범을 빠뜨렸습니다');
+});
+
+/* ══════ 딱지 이름 (5차에서 고친 버그) ══════
+   ★ 카드에 「none 1」이 그대로 찍혀 있었다. 명부 딱지의 실제 이름이 none·dup 인데
+     화면이 다른 이름으로 적어 두어, 이름을 못 찾아 «열쇠 글자»가 나온 것이다.
+     그 바람에 「명부에 없음」이 할 일에도 안 잡혔다. 같은 실수가 다시 나지 않게 못 박는다. */
+test('★ 명부 딱지의 모든 종류에 한국어 이름이 있다 — 열쇠 글자가 화면에 찍히지 않는다', () => {
+  const ctx = box();
+  run(ctx, noConst(constLine('OWN_LABEL')) + '\n' + noConst(constLine('OWN_CLS'))
+    + '\n' + expose('OWN_LABEL') + expose('OWN_CLS'));
+  const today = '2026-08-23';
+  /* 부품이 실제로 돌려주는 kind 를 «돌려서» 모은다 — 손으로 적으면 또 어긋난다 */
+  const kinds = [
+    ctx.PuHomeDiff.rosterMark('없는사람', [{ name: '다른사람', leftAt: '', left: false }], today),
+    ctx.PuHomeDiff.rosterMark('겹친이름', [{ name: '겹친이름', leftAt: '', left: false },
+                                         { name: '겹친이름', leftAt: '', left: false }], today),
+    ctx.PuHomeDiff.rosterMark('나간사람', [{ name: '나간사람', leftAt: '2026-06-30', left: true }], today)
+  ].filter(Boolean).map(m => m.kind);
+  assert.ok(kinds.length >= 3, '명부 딱지 종류를 다 못 만들었습니다: ' + kinds.join(','));
+  const labels = plain(ctx.OWN_LABEL), cls = plain(ctx.OWN_CLS);
+  kinds.forEach(k => {
+    assert.ok(labels[k], '명부 딱지 「' + k + '」 에 한국어 이름이 없습니다 — 화면에 열쇠 글자가 찍힙니다');
+    assert.ok(cls[k], '명부 딱지 「' + k + '」 에 색이 없습니다');
+    assert.ok(!/^[a-z]+$/.test(labels[k]), '「' + k + '」 의 이름이 아직 영문 열쇠입니다: ' + labels[k]);
+  });
+});
+
+test('★ 명부에 없는 사람도 할 일에 잡힌다 — 목록에만 보이고 할 일에서 빠지지 않는다', () => {
+  const ctx = rosterBox([{ name: '권형하', leftAt: '' }], null);   // 조현범은 명부에 없다
+  ctx.App.members = { '190': { name: '권형하' }, '322': { name: '조현범' } };
+  ctx.App.pages = {}; ctx.App.pageConfig = {}; ctx.App.checking = false;
+  ctx.App.dataErr = ''; ctx.App.staffErr = ''; ctx.App.saveErr = ''; ctx.App.checkMsg = '';
+  ctx.App.companiesErr = ''; ctx.App.companies = []; ctx.App.partners = {};
+  run(ctx, fnSource('rowsWith') + '\n' + fnSource('someNames') + '\n' + fnSource('seeBtns') + '\n'
+    + fnSource('leftoverGoBtns') + '\n' + fnSource('jobCard') + '\n' + fnSource('jobsOf') + '\n'
+    + fnSource('bannersHtml') + '\n' + fnSource('todoCount'));
+  const 목록 = ctx.rowsHtml();
+  assert.match(목록, /명부에 없음/, '목록에 「명부에 없음」이 안 붙었습니다');
+  const 할일 = ctx.bannersHtml();
+  assert.match(할일, /명부에 없는 사람/, '목록에는 보이는데 할 일에서 빠졌습니다');
+  assert.ok(ctx.todoCount() > 0, '할 일 수가 0 입니다');
+  /* 열쇠 글자가 «보이는 글»로 새 나오면 안 된다. 단추의 걸러 보기 열쇠(own:none)는
+     보이는 글이 아니라 괜찮다 — 딱지·제목 자리에 찍혔는지만 본다. */
+  const 열쇠노출 = /(?:mini|pill)[^>]*>\s*(?:none|dup)\b/;
+  assert.ok(!열쇠노출.test(할일), '할 일 딱지에 열쇠 글자(none/dup)가 찍혔습니다');
+  assert.ok(!열쇠노출.test(ctx.dashHtml()), '카드 딱지에 열쇠 글자(none/dup)가 찍혔습니다');
+  assert.ok(!열쇠노출.test(ctx.chipsHtml()), '걸러 보기 딱지에 열쇠 글자가 찍혔습니다');
+});
+
+/* ══════ 화면 정리 (5차 지시) ══════ */
+test('★ 카드는 «상태 한 마디»만 적는다 — 딱지를 넷씩 붙이지 않는다', () => {
+  const ctx = rosterBox([
+    { name: '박성수', leftAt: '2026-06-30' }, { name: '임혜미', leftAt: '2026-05-22' }
+  ], null);
+  ctx.App.members = {
+    '193': { name: '박성수' }, '281': { name: '임혜미' },
+    '320': { name: '장한돌', keepOnSite: { at: 'x', by: 'y', why: '지사장' } },
+    '322': { name: '조현범' }
+  };
+  ctx.App.pages = {}; ctx.App.pageConfig = {};
+  const card = ctx.dashHtml();
+  /* 구성원 카드 한 장에 딱지가 하나뿐이라야 한다 — 지금 화면에서 넷이 붙어 있었다 */
+  const 첫카드 = card.slice(0, card.indexOf('</button>'));
+  const 딱지수 = (첫카드.match(/class="mini/g) || []).length;
+  assert.equal(딱지수, 1, '카드 한 장에 딱지가 ' + 딱지수 + '개입니다 — 한 마디만 적기로 했습니다');
+  /* 세부는 목록의 걸러 보기 딱지에 있어야 한다 — 어디에도 없으면 정보가 사라진 것이다 */
+  const chips = ctx.chipsHtml();
+  assert.match(chips, /퇴사/, '카드에서 뺀 「퇴사」가 걸러 보기 딱지에도 없습니다');
+  assert.match(chips, /남김/, '카드에서 뺀 「남김」이 걸러 보기 딱지에도 없습니다');
+});
+
+test('★ 늘 뜨는 설명은 «접어» 둔다 — 쪽마다 네 줄을 다시 읽지 않는다', () => {
+  const ctx = pageBox();
+  ctx.App = { draft: { kind: 'page', key: 'work1', text: '한 줄로 이어진 글자' },
+              pages: {}, dirty: false, pageLines: {}, pageConfig: {}, reading: '' };
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('noteOneLine') + '\n'
+    + fnSource('readPageBtn') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
+    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+  const h = ctx.pageEdit(ctx.App.draft);
+  /* 이유를 «없애지» 않았다 — 접어 두었을 뿐이다. 펼치면 그대로 나온다. */
+  assert.match(h, /<details/, '접어 두는 곳이 없습니다 — 설명이 그대로 펼쳐져 있습니다');
+  assert.match(h, /지도·표·구획/, '접어 두면서 이유까지 없앴습니다');
+  /* 붙여넣기를 안 준다는 «결론»은 접지 않고 한 줄로 보인다 */
+  assert.match(h, /대조만/, '무엇을 하는 갈래인지 한 줄로 안 적혀 있습니다');
+});
+
+test('★ 홈페이지 줄을 «저장 없이» 다시 읽을 수 있다 — 새로 접속해도 볼 수 있다', () => {
+  /* 줄 목록은 저장하지 않는다(보여주기 전용). 그래서 새로 접속하면 확인 시각은 남아 있는데
+     줄 목록은 비어, 어떻게 보이는지 볼 방법이 없었다. 쪽마다 읽어오는 단추가 있어야 한다. */
+  const ctx = pageBox();
+  ctx.App = { draft: { kind: 'page', key: 'work1', text: '뭉친 글자' },
+              pages: {}, dirty: false, pageLines: {}, pageConfig: {}, reading: '' };
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('noteOneLine') + '\n'
+    + fnSource('readPageBtn') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
+    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+  const h = ctx.pageEdit(ctx.App.draft);
+  assert.match(h, /readOnePage\('work1'\)/, '이 쪽만 읽어오는 단추가 없습니다');
+  /* 읽은 뒤에는 줄마다 «생김새»가 달라야 한다 — 일률적이면 어디가 제목인지 모른다 */
+  ctx.App.pageLines = { work1: ['자문서비스', '01', 'T. 041-556-0035', '최신 노동관계법령에 대한 자문과 상담'] };
+  const h2 = ctx.pageEdit(ctx.App.draft);
+  assert.match(h2, /class="l head"/, '쪽 제목 줄이 본문과 같은 모양입니다');
+  assert.match(h2, /class="l sec"/, '구획번호(01) 줄이 본문과 같은 모양입니다');
+  assert.match(h2, /class="l tel"/, '연락처 줄이 본문과 같은 모양입니다');
+  /* 꾸밈은 CSS 로만 — 줄 글자에 표시를 덧붙이면 홈페이지로 흘러간다 */
+  assert.match(h2, />\s*01\s*</, '구획번호 줄의 글자가 원문 그대로가 아닙니다');
 });
 
 /* ══════ 대조 기준 글자를 «줄로» 보기 (5차 지시) ══════
@@ -1864,11 +1976,18 @@ function partnerBox() {
 test('★ 자문사현황은 «대조 못 함»이라고 말한다 — 「같음」으로 뭉개지 않는다', () => {
   const ctx = partnerBox();
   const card = ctx.dashHtml();
-  assert.ok(card.indexOf('대조 못 함') >= 0, '왜 대조가 없는지 카드에 안 적혀 있습니다');
   assert.ok(card.indexOf('자문사현황') >= 0, '자문사현황 카드가 없습니다');
   /* 목록 줄에 「확인 전」이 붙으면 언젠가 대조가 될 것처럼 들린다 — 그 갈래는 못 한다 */
   assert.ok(ctx.rowsHtml().indexOf('확인 전') < 0, '자문사 줄에 「확인 전」이 붙었습니다');
-  /* 대조를 눌렀다고 「홈페이지와 같음」으로 바뀌어서도 안 된다 */
+  /* ★ 카드는 «상태 한 마디»만 적는다(5차 지시). 할 일이 있으면 그것이 먼저다 —
+     삼정테크(올림인데 거래 종료)가 있으니 「할 일」이 적혀야 한다. */
+  assert.match(card, /할 일/, '손댈 것이 있는데 카드가 조용합니다');
+  /* 손댈 것이 없어지면 «못 한다»고 적어야 한다 — 「이상 없음」이면 조용히 틀린다 */
+  ctx.App.partners['co-4'] = { posted: false, by: '권형하', at: '2026-08-23' };
+  const card2 = ctx.dashHtml();
+  assert.ok(card2.indexOf('대조 못 함') >= 0,
+    '자문사현황을 「이상 없음」으로 뭉갰습니다 — 회사명이 글자로 없어 못 하는 것입니다');
+  /* 대조를 눌러도 달라지지 않는다 */
   ctx.App.check = { at: 1, members: {}, pages: {}, duplicates: [], leftovers: {} };
   assert.ok(ctx.dashHtml().indexOf('대조 못 함') >= 0,
     '대조를 누른 뒤 자문사현황이 「같음」처럼 보입니다 — 회사명이 글자로 없어 못 하는 것입니다');
