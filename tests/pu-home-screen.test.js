@@ -73,6 +73,36 @@ function box(extra) {
   return ctx;
 }
 function run(ctx, code) { vm.runInContext(code, ctx); return ctx; }
+
+/* 목록·안내 띠·대시보드 카드가 «같은 판단»을 함께 쓴다 (4차 지시로 갈래를 한 규격으로
+   세웠다 — 카드의 빨간 점과 「손댈 것」 딱지가 서로 다른 답을 내면 안 되니까).
+   그래서 검사도 그 묶음을 통째로 싣는다. 이름을 검사마다 못 박는 대신 여기 한 곳에만
+   적어 둔다 — 함수 하나 이름이 바뀔 때 검사 열넷이 같이 깨지지 않게. */
+/* 상자 안에서는 const 를 var 로 눕힌다.
+   ★ 검사가 자료 덩어리를 여러 갈래로 떼어 오다 보면 같은 이름이 두 번 실릴 수 있다
+     (constSource 가 한 줄짜리 배열에서 다음 「];」까지 함께 떠 오기 때문이다).
+     const 는 두 번 선언되면 상자가 통째로 안 돈다 — var 면 덮어써져 그냥 돈다.
+     화면 코드를 고치는 것이 아니라 «검사 상자에서만» 눕힌다. */
+function noConst(src) { return String(src).replace(/(^|\n)const /g, '$1var '); }
+
+function rowDeps() {
+  return [
+    constLine('DONE_STATUS'), constObj('STATUS_TEXT'), constSource('GROUPS'),
+    constLine('OWN_LABEL'), constLine('OWN_CLS'), constLine('GROUP_UNIT'),
+    fnSource('todayString'), fnSource('keptOf'), fnSource('rosterMarkOf'),
+    fnSource('memberRows'), fnSource('pageIdsOf'), fnSource('pageRows'), fnSource('rowsOf'),
+    fnSource('needsAttentionRow'), fnSource('statOf'),
+    fnSource('ownMinis'), fnSource('chkMinis'), fnSource('dashHtml'),
+    fnSource('visibleRows'), fnSource('chipsHtml')
+  ].map(noConst).join('\n') + '\n';
+}
+
+/* 목록에 그려진 «줄 번호»만 읽는다.
+   ★ 아무 숫자나 긁으면 안 된다 — 걸러 보기 딱지에도 건수가 붙어 있어(「손댈 것 3」)
+     그것까지 번호로 세면 검사가 엉뚱한 것을 지키게 된다. */
+function rowNumbers(html) {
+  return [...String(html).matchAll(/class="num"[^>]*>\s*(\d+)\s*</g)].map(m => Number(m[1]));
+}
 function plain(v) { return JSON.parse(JSON.stringify(v)); }
 const tick = () => new Promise(r => setTimeout(r, 0));
 
@@ -594,11 +624,14 @@ test('★ 겹친 글 번호를 빨간 띠로 알린다', () => {
   const ctx = box();
   ctx.App = {
     check: null, checkMsg: '', dataErr: '', staffErr: '', saveErr: '',
+    staff: null, pages: {}, pageConfig: {}, checking: false, group: 'members',
     members: { '190': { name: '권형하', srl: '190' }, 'new-1': { name: '신입 노무사', srl: '190' } }
   };
   ctx.PAGE_LABEL = {};
   ctx.esc = escStub();
-  run(ctx, fnSource('bannersHtml'));
+  /* 띠가 대시보드와 «같은 판단»을 쓴다 — 명부만 보고 아는 것을 띠에도 적기 때문이다 */
+  run(ctx, noConst(constSource('PAGE_IDS')) + '\n' + rowDeps()
+    + fnSource('leftoverGoBtns') + '\n' + fnSource('bannersHtml'));
   const h = ctx.bannersHtml();
   assert.match(h, /bar bad/, '빨간 띠가 아닙니다');
   assert.match(h, /권형하/);
@@ -749,11 +782,13 @@ test('★ 퇴사자를 내리고 나면 갈래 탭의 빨간 점이 사라진다
     check: { members: { '190': { name: '나간사람', status: 'done', reason: '퇴사 처리 끝' } } },
     members: { '190': { name: '나간사람', srl: '190', position1: '', position2: '' } }
   };
-  run(ctx, constLine('DONE_STATUS') + '\n' + fnSource('todayString') + '\n'
-    + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
-    + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
-    + fnSource('pageIdsOf') + '\n' + fnSource('rowsOf') + '\n' + fnSource('needsWork'));
-  assert.equal(ctx.needsWork('members'), false, '할 일이 없는데 빨간 점이 남습니다');
+  ctx.App.pages = {}; ctx.App.pageConfig = {};
+  run(ctx, noConst(constSource('PAGE_IDS')) + '\n' + rowDeps());
+  assert.equal(ctx.statOf('members').hot, 0, '할 일이 없는데 빨간 점이 남습니다');
+  /* 「손댈 것」 딱지로 걸러 봐도 한 줄도 없어야 한다 — 점과 딱지가 같은 판단을 써야 한다 */
+  ctx.App.filter = 'todo';
+  assert.equal(ctx.visibleRows('members').length, 0, '점은 꺼졌는데 「손댈 것」에는 줄이 남습니다');
+  ctx.App.filter = '';
 });
 
 test('「내려감」 딱지에 화면에 보일 이름이 있다', () => {
@@ -811,13 +846,17 @@ test('★ done 사람의 이름 잔존도 배너로 알린다 — toRemove 가 0
       leftovers: { '나간사람': [{ path: 'greeting', count: 1 }] }
     },
     checkMsg: '', dataErr: '', staffErr: '', saveErr: '',
+    staff: null, pages: {}, pageConfig: {}, checking: false, group: 'members',
     members: { '190': { name: '나간사람', srl: '190' } }
   };
   ctx.PAGE_LABEL = { greeting: '인사말' };
   ctx.esc = escStub();
-  run(ctx, fnSource('bannersHtml'));
+  run(ctx, noConst(constSource('PAGE_IDS')) + '\n' + rowDeps()
+    + fnSource('leftoverGoBtns') + '\n' + fnSource('bannersHtml'));
   const h = ctx.bannersHtml();
   assert.match(h, /나간사람/, 'toRemove 가 0명이라고 done 사람의 이름 잔존을 안 보여 줍니다');
+  /* 이름이 남은 «그 쪽»으로 바로 갈 수 있어야 한다 — 알려만 주고 찾아 들어가게 두지 않는다 */
+  assert.match(h, /인사말/, '이름이 남은 쪽이 어디인지 안 적혀 있습니다');
   assert.ok(!/홈페이지에서 내리는 법/.test(h), '이미 내려간 사람인데 «내리는 법» 안내가 뜹니다');
 });
 
@@ -924,15 +963,13 @@ function cfgBox(cfg) {
     group: 'work', pick: '', pageConfig: {}, pages: {}, members: {}, check: null, staff: null,
     pageLines: {}, draft: null, dirty: false, lineFormat: 'plain', render() {}
   };
-  run(ctx, constSource('PAGE_IDS') + '\n' + constObj('STATUS_TEXT') + '\n'
+  ctx.App.filter = '';        // 걸러 보기 — 목록이 이 상태를 본다
+  run(ctx, noConst(constSource('PAGE_IDS')) + '\n' + rowDeps()
     + fnSource('isPageName') + '\n' + fnSource('syncPageConfig') + '\n'
     + fnSource('savePageConfig') + '\n' + fnSource('refuseIfPageConfigUnread') + '\n'
     + fnSource('addPage') + '\n'
     + fnSource('canDetachPage') + '\n' + fnSource('detachPage') + '\n'
-    + fnSource('pageIdsOf') + '\n' + fnSource('todayString') + '\n'
-    + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
-    + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
-    + fnSource('rowsOf') + '\n' + fnSource('firstPickOf') + '\n' + fnSource('loadDraft') + '\n'
+    + fnSource('firstPickOf') + '\n' + fnSource('loadDraft') + '\n'
     + fnSource('rosterPillHtml') + '\n' + fnSource('listHtml') + '\n'
     + expose('PAGE_IDS') + expose('PAGE_LABEL') + expose('DEFAULT_PAGES'));
   ctx.syncPageConfig(cfg);
@@ -956,7 +993,7 @@ test('★ 구성원 목록에 1부터 번호가 붙는다', () => {
     '195': { name: '박한별', position2: '공인노무사' }
   };
   const h = ctx.listHtml();
-  assert.deepEqual(numbersIn(h), [1, 2, 3], '구성원 목록에 1·2·3 번호가 없습니다');
+  assert.deepEqual(rowNumbers(h), [1, 2, 3], '구성원 목록에 1·2·3 번호가 없습니다');
   ['권형하', '박성수', '박한별'].forEach(n =>
     assert.ok(h.indexOf(n) >= 0, n + ' 이(가) 목록에서 사라졌습니다'));
 });
@@ -964,13 +1001,13 @@ test('★ 구성원 목록에 1부터 번호가 붙는다', () => {
 test('★ 쪽 목록에도 번호가 붙는다 (쪽을 추가하면 다음 번호로 이어진다)', () => {
   const ctx = cfgBox(null);
   ctx.App.group = 'work';
-  assert.deepEqual(numbersIn(ctx.listHtml()), [1, 2, 3, 4, 5, 6], '기본 주요업무 6쪽에 번호가 없습니다');
+  assert.deepEqual(rowNumbers(ctx.listHtml()), [1, 2, 3, 4, 5, 6], '기본 주요업무 6쪽에 번호가 없습니다');
 
   const cfg = Object.assign({}, plain(ctx.DEFAULT_PAGES));
   cfg.work6 = { label: '중대재해 대응', order: 99 };
   ctx.syncPageConfig(cfg);
   const after = ctx.listHtml();
-  assert.deepEqual(numbersIn(after), [1, 2, 3, 4, 5, 6, 7], '추가한 쪽이 7번으로 안 이어집니다');
+  assert.deepEqual(rowNumbers(after), [1, 2, 3, 4, 5, 6, 7], '추가한 쪽이 7번으로 안 이어집니다');
   assert.ok(after.indexOf('중대재해 대응') >= 0, '추가한 쪽의 보일 이름이 목록에 없습니다');
 });
 
@@ -1676,26 +1713,69 @@ test('★ 머리띠와 갈래 탭이 위에 붙어 있다', () => {
   assert.match(css, /position\s*:\s*sticky/, '굴리면 머리띠와 갈래가 사라집니다');
 });
 
-test('★ 갈래가 왼쪽 기둥이 아니라 «상단 탭»이다 — 목록이 그만큼 넓어진다', () => {
+/* 4차 지시 — 갈래를 «탭»에서 «대시보드 카드»로 바꿨다. 지킬 것은 배치 이름이 아니라
+   ① 다섯 갈래를 다 고를 수 있는가 ② 카드가 우리 자료 경고와 대조 결과를 «갈라» 적는가
+   ③ 확인 전에 「이상 없음」처럼 보이지 않는가 다. 픅셀·마크업은 못 박지 않는다. */
+test('★ 갈래는 대시보드 카드로 고른다 — 카드가 우리 자료와 대조 결과를 갈라 적는다', () => {
   const ctx = box();
   ctx.esc = escStub();
-  ctx.App = { group: 'members', members: {}, pages: {}, check: null, staff: null };
+  ctx.App = { group: 'members', check: null, staff: [{ name: '나간사람', leftAt: '2026-06-30', left: true }],
+    members: { '190': { name: '나간사람', srl: '190' } }, pages: {}, pageConfig: {} };
   // constSource('PAGE_IDS') 는 GROUPS 까지 함께 떼어 온다 (PAGE_IDS 가 한 줄짜리라
-  // 다음 「\n];」까지 물려 온다). GROUPS 를 따로 넣으면 두 번 선언돼 터진다.
-  run(ctx, constSource('PAGE_IDS') + '\n'
-    + constLine('DONE_STATUS') + '\n' + fnSource('todayString') + '\n'
-    + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
-    + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n' + fnSource('pageIdsOf') + '\n'
-    + fnSource('rowsOf') + '\n' + fnSource('needsWork') + '\n' + fnSource('gtabsHtml'));
-  const h = ctx.gtabsHtml();
+  // 다음 「\n];」까지 물려 온다) — rowDeps 와 겹쳐도 var 로 눕혀 두었으니 괜찮다.
+  run(ctx, noConst(constSource('PAGE_IDS')) + '\n' + rowDeps());
+  const h = ctx.dashHtml();
   ['구성원 소개', '주요업무', '오시는길', '인사말'].forEach(label =>
-    assert.ok(h.indexOf(label) >= 0, '갈래 「' + label + '」 이 상단 탭에 없습니다'));
-  assert.match(h, /App\.go\(/, '갈래를 눌러도 옮겨갈 수 없습니다');
+    assert.ok(h.indexOf(label) >= 0, '갈래 「' + label + '」 을 고를 수 없습니다'));
+  assert.match(h, /App\.go\(/, '카드를 눌러도 옮겨갈 수 없습니다');
+  assert.ok(h.indexOf('자문사현황') >= 0, '자문사현황 자리가 없습니다');
+
+  /* ★ 확인을 안 눌렀으면 «대조 안 함»이라고 적어야 한다.
+     이것을 「이상 없음」이나 「같음」으로 적으면 안 본 것이 깨끗한 것으로 읽힌다. */
+  assert.ok(h.indexOf('대조 안 함') >= 0, '확인 전인데 그 사실을 안 적었습니다');
+  assert.ok(h.indexOf('홈페이지와 같음') < 0, '확인 전에 「홈페이지와 같음」이라고 적었습니다');
+  /* 명부만 보고 아는 것은 확인 전에도 적힌다 */
+  assert.match(h, /퇴사/, '명부상 퇴사를 확인 전에는 안 적었습니다');
+
   // 목록 칸이 예전(268~290px)보다 넓어졌는지 — 값을 박지 않고 «더 넓어졌는가»만 본다
   const m = /\.list\s*\{[^}]*width\s*:\s*(\d+)px/.exec(css);
   assert.ok(m, '목록 칸 너비가 정해져 있지 않습니다');
   assert.ok(Number(m[1]) >= 340,
-    '목록 칸이 3차 지시(268 → 360px)만큼 넓어지지 않았습니다: ' + m[1] + 'px');
+    '목록 칸이 3차·4차 지시(268 → 390px)만큼 넓어지지 않았습니다: ' + m[1] + 'px');
+  // 4차 지시 — 폭을 묶어 두면 넓은 화면에서 양옆이 통째로 남는다
+  assert.ok(!/main\s*\{[^}]*max-width/.test(css),
+    'main 에 max-width 가 남아 있습니다 — 화면 전체를 쓰라는 지시입니다');
+});
+
+test('★ 「손댈 것」 딱지에 적힌 수와 눌러서 나온 줄 수가 같다', () => {
+  /* 딱지에 3 이라 적혀 있는데 눌러 보니 5줄이면 어느 쪽이 맞는지 알 수 없다.
+     ★ 겹쳐 세지 않는 것까지 함께 지킨다 — 박성수처럼 «명부 퇴사»이면서 «홈페이지에도
+       남은» 사람은 한 사람이다. ③+④ 를 더하면 두 번 세어져 딱지와 줄 수가 어긋난다. */
+  const ctx = rosterBox([
+    { name: '박성수', leftAt: '2026-06-30', left: true },
+    { name: '임혜미', leftAt: '2026-05-22', left: true }
+  ], {
+    at: 1, duplicates: [], leftovers: {},
+    members: { '193': { name: '박성수', status: 'toRemove' },
+               '281': { name: '임혜미', status: 'done' },
+               '322': { name: '조현범', status: 'same' } },
+    pages: {}
+  });
+  ctx.App.members = { '193': { name: '박성수' }, '281': { name: '임혜미' }, '322': { name: '조현범' } };
+
+  const s = ctx.statOf('members');
+  ctx.App.filter = 'todo';
+  assert.equal(ctx.visibleRows('members').length, s.hot,
+    '딱지에 적힌 「손댈 것」 수와 걸러 나온 줄 수가 다릅니다');
+  ctx.App.filter = '';
+
+  /* 퇴사 처리를 «끝낸» 사람(내려감)은 손댈 것이 아니다 */
+  ctx.App.filter = 'todo';
+  const 이름들 = ctx.visibleRows('members').map(r => r.name);
+  ctx.App.filter = '';
+  assert.ok(이름들.indexOf('임혜미') < 0, '내려간 사람이 아직 손댈 것으로 남습니다');
+  assert.ok(이름들.indexOf('박성수') >= 0, '홈페이지에 남은 퇴사자가 손댈 것에서 빠졌습니다');
+  assert.equal(s.hot, 2, '박성수(퇴사+홈페이지에 남음)를 두 번 셌거나 조현범을 빠뜨렸습니다');
 });
 
 test('★ 편집칸의 머리와 발이 고정돼 가운데만 구른다', () => {
@@ -1796,7 +1876,7 @@ test('★ 목록 머리에 「구성원 몇 명 · 퇴사 몇」이 적힌다', 
   assert.match(h, /구성원[^0-9]*5명/, '구성원이 몇 명인지 목록 머리에 없습니다');
   assert.match(h, /퇴사[^0-9]*3/, '명부상 퇴사가 몇 명인지 목록 머리에 없습니다');
   // 머리에 적은 숫자가 «목록 번호»로 새 나가면 안 된다
-  assert.deepEqual(numbersIn(h), [1, 2, 3, 4, 5], '목록 번호가 흔들렸습니다');
+  assert.deepEqual(rowNumbers(h), [1, 2, 3, 4, 5], '목록 번호가 흔들렸습니다');
 });
 
 test('★ 명부에 없는 사람은 「명부에 없음」으로 밝힌다', () => {
@@ -1883,18 +1963,19 @@ test('★ 명부를 못 읽으면 편집칸 머리 띠를 지어내지 않는다
   assert.ok(h.indexOf('명부: ') < 0, '명부를 못 읽었는데 명부 띠를 띄웠습니다');
 });
 
-test('★ 확인을 안 눌러도 명부상 퇴사자가 있으면 갈래 탭에 빨간 점이 켜진다', () => {
+test('★ 확인을 안 눌러도 명부상 퇴사자가 있으면 카드에 빨간 점이 켜진다', () => {
   const ctx = rosterBox([{ name: '박성수', leftAt: '2026-06-30' }], null);
   ctx.App.members = { '193': { name: '박성수' } };
-  run(ctx, constLine('DONE_STATUS') + '\n' + fnSource('needsWork'));
-  assert.equal(ctx.needsWork('members'), true, '확인 전에는 퇴사자가 있어도 조용합니다');
+  ctx.App.pages = {}; ctx.App.pageConfig = {};
+  const hot = () => ctx.statOf('members').hot;
+  assert.equal(hot() > 0, true, '확인 전에는 퇴사자가 있어도 조용합니다');
 
   // 이미 내려간 사람(done)에게는 켜지지 않는다 — 손댈 것이 없다
   ctx.App.check = { members: { '193': { name: '박성수', status: 'done', reason: '퇴사 처리 끝' } } };
-  assert.equal(ctx.needsWork('members'), false, '퇴사 처리를 끝냈는데 빨간 점이 남습니다');
+  assert.equal(hot(), 0, '퇴사 처리를 끝냈는데 빨간 점이 남습니다');
 
   // 「남김」으로 둔 사람에게도 켜지지 않는다
   ctx.App.check = null;
   ctx.App.members = { '193': { name: '박성수', keepOnSite: { at: 'x', by: 'y', why: '지사장' } } };
-  assert.equal(ctx.needsWork('members'), false, '「남김」으로 둔 사람 때문에 빨간 점이 남습니다');
+  assert.equal(hot(), 0, '「남김」으로 둔 사람 때문에 빨간 점이 남습니다');
 });
