@@ -107,7 +107,8 @@ test('자료를 다 골라 두면 그 줄의 ☐ 도 켜져 있다', () => {
 
 test('보낸 메일·예약 메일 표의 머리에 전체 고르기 ☐ 가 걸려 있다', () => {
   /* 함수만 있고 아무도 안 부르면 화면에는 안 나온다. */
-  assert.ok(src.includes("pickHeadBox('sent'"), '보낸 메일 표에 걸려 있어야 한다');
+  /* 2026-08-23 대표 지시로 보낸 메일만 ☐ 를 거뒀다 — 번호만 남는다 */
+  assert.ok(!src.includes("pickHeadBox('sent'"), '보낸 메일에는 ☐ 가 없어야 한다');
   assert.ok(src.includes("pickHeadBox('sched'"), '예약 메일 표에 걸려 있어야 한다');
   assert.ok(src.includes("pickHeadLine('mat'"), '자료함 목록에 걸려 있어야 한다');
 });
