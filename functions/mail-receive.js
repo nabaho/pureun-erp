@@ -216,6 +216,22 @@ function buildCompanyIndex(companies) {
   return map;
 }
 
+/* 이 폴더에서 온 것은 주소를 안 가려도 되나 (대표 결정 2026-08-23).
+   ⚠ 2026-08-23 로그: 폴더는 제대로 찾았는데(2.급여+사무대행) 그 안의 새 메일
+   2통이 **모르는 주소라 건너뛰어졌다**(unknown:2 · took:0). 대표가 규칙으로
+   손수 갈라 둔 폴더인데 자료가 안 들어왔다.
+
+   이름에 「급여」가 든 폴더 = 대표가 급여 자료로 분류해 둔 곳 → 다 받는다.
+   받은메일함(INBOX) = 광고까지 들어오는 곳 → 아는 주소만 받는다.
+   ⚠ 모르는 폴더는 **안 믿는다** — 나중에 다른 폴더를 보게 되어도 함부로
+   담지 않는다(모르면 가리는 쪽이 안전하다). */
+function trustBox(box) {
+  var b = String(box == null ? '' : box);
+  if (!b) return false;
+  if (/^INBOX$/i.test(b)) return false;
+  return b.indexOf(MAILBOX_HINT) >= 0;
+}
+
 function companyFor(fromHeader, index) {
   const a = normEmail(senderOf(fromHeader));
   if (!a) return null;
@@ -338,5 +354,6 @@ module.exports = {
   buildKnownList, isKnownSender,
   buildCompanyIndex, companyFor, seatFor, tagFor, routeFor,
   mailConfOf, pickMailboxes, MAILBOX_HINT,
+  trustBox,
   extOf, okAttachment, sharedPendingRecord, pendingRecordFor, mailNoteOf
 };
