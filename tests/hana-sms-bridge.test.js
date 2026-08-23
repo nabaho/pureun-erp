@@ -16,7 +16,13 @@ test('ERP에 휴대폰 연결과 문자 가져오기 동작이 있다', () => {
   assert.match(erp, /hanaSmsCall\('ack'/);
   assert.match(erp, /erpBankMergeDraft/);
   assert.match(erp, /erpUploadSummary/);
-  assert.match(erp, /setTimeout\(function\(\)\{ importHanaSms\(true\); \},1800\)/);
+  /* ⚠ 못 박는 것은 «몇 ms 뒤에 어떤 글자로 부르는가» 가 아니라 규칙이다 —
+     ① 화면을 열면 스스로 한 번 가져온다 ② 그 한 번은 «조용히» 부른다.
+     예전에는 호출문을 글자 그대로 박아 두어, 자동 실행에 상태 확인을 덧붙인 것만으로
+     검사가 깨졌다. 기능이 아니라 «모양» 이 바뀐 것이었다. */
+  assert.match(erp, /useEffect\(function\(\)\{[\s\S]{0,400}?importHanaSms\(true\)/,
+    '★ 화면을 열 때 스스로 한 번 가져오지 않으면, 늘 손으로 눌러야 합니다.');
+  assert.match(erp, /hanaAutoOnce/, '★ 한 번만 돌아야 합니다 — 다시 그릴 때마다 부르면 안 됩니다.');
 });
 
 test('서버는 연결번호·기기키·중복차단·최소 거래정보만 다룬다', () => {

@@ -1648,6 +1648,21 @@ async function requireFinanceStaff(req) {
   return decoded;
 }
 
+function hanaDeviceRef(linked) {
+  return getDatabase().ref(`hanaSmsBridge/devices/${linked.uid}/${hanaDeviceKey(linked.deviceId)}`);
+}
+
+/* 휴대폰이 보냈지만 대기함에 못 들어간 문자의 «까닭»만 적어 둔다.
+   원문·금액은 남기지 않는다 — 남길 이유가 없고, 남기면 지켜야 할 것이 하나 늘어난다. */
+async function hanaNoteSkip(linked, reason) {
+  try {
+    await hanaDeviceRef(linked).child("lastSkip").set({
+      reason: String(reason || "unknown").slice(0, 60),
+      at: Date.now(),
+    });
+  } catch (err) { /* 기록에 실패해도 문자 처리를 막지 않는다 */ }
+}
+
 async function requireHanaDevice(req, body) {
   const match = /^Device\s+(.+)$/i.exec(String(req.headers.authorization || ""));
   const uid = String(body.uid || "").trim();
@@ -1721,12 +1736,17 @@ exports.hanaMessageBridge = functions
         const linked = await requireHanaDevice(req, body);
         const packageName = String(body.packageName || "").trim();
         if (!HANA_MESSAGE_PACKAGES.has(packageName)) {
+          await hanaNoteSkip(linked, "unsupported_message_app");
           hanaJson(res, 400, { ok: false, ignored: true, reason: "unsupported_message_app" }); return;
         }
         const title = String(body.title || "").slice(0, 200);
         const text = String(body.text || "").slice(0, 1200);
         const parsed = HanaMessage.parseHanaMessage(`${title}\n${text}`);
         if (!parsed.ok) {
+          /* ⚠ 걸러진 «까닭»만 남긴다 — 문자 원문은 여기서도 저장하지 않는다.
+             까닭이 안 남으면 「문자는 왔는데 ERP에 없다」를 아무도 설명할 수 없다
+             (2026-08-24 대표 물음이 바로 그것이었다). */
+          await hanaNoteSkip(linked, parsed.reason);
           hanaJson(res, 200, { ok: true, ignored: true, reason: parsed.reason }); return;
         }
         const tx = parsed.transaction;
@@ -1749,6 +1769,7 @@ exports.hanaMessageBridge = functions
           receivedAt: Date.now(),
           deviceName: String(linked.device.deviceName || "권형하 휴대폰").slice(0, 60),
         });
+        await hanaDeviceRef(linked).update({ lastOkAt: Date.now(), lastSkip: null }).catch(() => {});
         hanaJson(res, 200, { ok: true, saved: true, id: tx.id }); return;
       }
 
@@ -1775,6 +1796,9 @@ exports.hanaMessageBridge = functions
           deviceName: String(d.deviceName || "휴대폰"),
           pairedAt: Number(d.pairedAt || 0),
           lastSeenAt: Number(d.lastSeenAt || 0),
+          lastOkAt: Number(d.lastOkAt || 0),
+          lastSkip: (d.lastSkip && d.lastSkip.reason)
+            ? { reason: String(d.lastSkip.reason), at: Number(d.lastSkip.at || 0) } : null,
           disabled: d.disabled === true,
         }));
         hanaJson(res, 200, { ok: true, devices }); return;

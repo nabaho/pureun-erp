@@ -36424,6 +36424,9 @@ function FinanceLedger(props){
   var busyS=useState(false);   var busy=busyS[0];     var setBusy=busyS[1];
   var hanaBusyS=useState(false); var hanaBusy=hanaBusyS[0]; var setHanaBusy=hanaBusyS[1];
   var hanaPairS=useState(null);  var hanaPair=hanaPairS[0];  var setHanaPair=hanaPairS[1];
+  /* 휴대폰이 «붙어 있나» — 이것이 안 보여서 「문자는 왔는데 왜 안 들어오나」를
+     아무도 확인할 수 없었다(대표 물음 2026-08-24). null 은 아직 안 물어본 것. */
+  var hanaStatS=useState(null);  var hanaStat=hanaStatS[0];  var setHanaStat=hanaStatS[1];
   var fNameS=useState('');     var fName=fNameS[0];   var setFName=fNameS[1];
   var inMatchS=useState({});   var inMatch=inMatchS[0]; var setInMatch=inMatchS[1];
   var expCatS=useState({});    var expCat=expCatS[0];   var setExpCat=expCatS[1];
@@ -36728,6 +36731,24 @@ function FinanceLedger(props){
     return data;
   }
 
+  /* 걸러진 까닭을 사람 말로 — 영어 코드만 보여 주면 물어볼 곳이 없다 */
+  var HANA_SKIP_KO = {
+    not_hana_transaction:'하나 거래문자 형식이 아님',
+    security_message:'인증번호가 섞여 있어 막음',
+    missing_datetime:'날짜·시각을 못 읽음',
+    missing_amount:'금액을 못 읽음',
+    card_cancel_review_required:'카드 취소는 손으로 확인',
+    unsupported_message_app:'삼성·구글 메시지 앱이 아님',
+    empty:'내용이 비어 있음'
+  };
+  async function refreshHanaStatus(){
+    try{
+      var d = await hanaSmsCall('pairStatus');
+      var ds = Array.isArray(d.devices) ? d.devices : [];
+      setHanaStat({devices:ds});
+    }catch(e){ setHanaStat({error:e.message||'확인 실패'}); }
+  }
+
   async function startHanaSmsPair(){
     if(hanaBusy) return;
     setHanaBusy(true);
@@ -36745,6 +36766,7 @@ function FinanceLedger(props){
     try{
       await hanaSmsCall('pairReset');
       setHanaPair(null);
+      setHanaStat({devices:[]});
       showToast('휴대폰 연결을 해제했습니다');
     }catch(e){ showToast('❌ 연결을 해제하지 못했습니다: '+e.message); }
     setHanaBusy(false);
@@ -36818,7 +36840,9 @@ function FinanceLedger(props){
         : ('📱 '+items.length+'건은 이미 있는 거래라 중복으로 넣지 않았습니다'));
     }catch(e){
       if(window._erpErrLog) window._erpErrLog(e);
-      showToast('❌ 거래문자를 가져오지 못했습니다: '+e.message);
+      /* ⚠ 조용히 도는 것은 조용히 실패해야 한다 — 재무 담당이 아닌 사람이
+         거래내역을 열 때마다 붉은 알림이 뜨던 것을 막는다. */
+      if(!silent) showToast('❌ 거래문자를 가져오지 못했습니다: '+e.message);
     }
     setHanaBusy(false);
   }
@@ -36830,7 +36854,7 @@ function FinanceLedger(props){
   useEffect(function(){
     if(hanaAutoOnce.current) return;
     hanaAutoOnce.current=true;
-    var timer=setTimeout(function(){ importHanaSms(true); },1800);
+    var timer=setTimeout(function(){ importHanaSms(true).then(refreshHanaStatus, refreshHanaStatus); },1800);
     return function(){ clearTimeout(timer); };
   },[]);
   /* 묶음 하나를 «모두에게서» 지운다 — 그 묶음의 줄만 사라진다.
@@ -38197,6 +38221,44 @@ function FinanceLedger(props){
     showToast('🗑 CMS 내역을 비웠습니다');
   }
 
+  /* 「휴대폰이 붙어 있나」를 한 눈에 — 여태 이 표시가 없어서 연결이 끊겨도,
+     문자가 걸러져도 화면은 똑같아 보였다(대표 물음 2026-08-24
+     「방금 문자 왔는데 왜 연동되어 체크 안 되나」).
+     ⚠ 「없다」와 「모른다」를 갈라 적는다 — 둘을 같게 적으면 아직 안 물어본 것을
+       끊긴 것으로 잘못 읽는다. */
+  function hanaStatChip(){
+    if(!hanaStat) return null;
+    var st={fontSize:'10.5px',fontWeight:800,borderRadius:'12px',padding:'3px 8px',
+            whiteSpace:'nowrap',border:'1px solid'};
+    function chip(txt,bg,fg,bd,title){
+      return h('span',{title:title||'',style:Object.assign({},st,{background:bg,color:fg,borderColor:bd})},txt);
+    }
+    if(hanaStat.error)
+      return chip('📵 연결 상태 모름','#f8fafc','#64748b','#e2e8f0',
+        '휴대폰 연결 상태를 확인하지 못했습니다: '+hanaStat.error);
+    var ds=hanaStat.devices||[];
+    if(!ds.length)
+      return chip('📵 휴대폰 미연결','#fef2f2','#991b1b','#fecaca',
+        '연결된 휴대폰이 없어 하나 거래문자가 들어오지 않습니다. 「🔗 휴대폰 연결」을 눌러 연결번호를 받으세요.');
+    var d=ds[0];
+    function when(ms){
+      if(!ms) return '';
+      var t=new Date(ms);
+      return ('0'+(t.getMonth()+1)).slice(-2)+'-'+('0'+t.getDate()).slice(-2)
+             +' '+('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2);
+    }
+    var skip=d.lastSkip;
+    if(skip && Number(skip.at||0) > Number(d.lastOkAt||0))
+      return chip('⚠ 마지막 문자 걸러짐','#fffbeb','#854d0e','#fde68a',
+        '휴대폰은 보냈지만 대기함에 넣지 못했습니다 — '
+        +(HANA_SKIP_KO[skip.reason]||skip.reason)+' ('+when(skip.at)+')');
+    if(!d.lastOkAt)
+      return chip('📱 연결됨 · 받은 문자 없음','#eff6ff','#1e40af','#bfdbfe',
+        '휴대폰은 붙어 있는데 아직 하나 거래문자가 한 건도 안 왔습니다. 휴대폰에서 「알림 접근 허용」이 켜져 있는지 보세요.');
+    return chip('📱 연결됨 · '+when(d.lastOkAt),'#f0fdf4','#166534','#bbf7d0',
+      (d.deviceName||'휴대폰')+' · 마지막으로 들어온 거래문자 '+when(d.lastOkAt));
+  }
+
   function nbChip(txt, bg, fg, bd, title){
     return h('span',{title:title||'',
       style:{fontSize:'11.5px',fontWeight:800,color:fg,background:bg,border:'1px solid '+bd,
@@ -38263,6 +38325,7 @@ function FinanceLedger(props){
         title:'새로 받은 하나은행·하나카드 거래문자를 가져와 기존 거래내역과 자동으로 맞춥니다',
         style:{padding:'5px 9px',border:'1px solid #bbf7d0',background:'#f0fdf4',color:'#16a34a',borderRadius:'6px',fontSize:'11px',fontWeight:800,cursor:hanaBusy?'wait':'pointer',whiteSpace:'nowrap'}},
         hanaBusy?'⏳ 확인 중':'📱 문자 가져오기'),
+      hanaStatChip(),
       h('span',{className:'ld-up-sep',style:{width:'1px',height:'18px',background:'#e2e8f0'}}),
       // 드롭존 (1줄) — 폰에는 «끌어다 놓기» 가 없어 css 에서 접는다(.ld-up-drophint)
       h('span',{className:'ld-up-drophint',style:{fontSize:'17px',lineHeight:1}}, busy ? '⏳' : dragOver ? '📂' : '📥'),

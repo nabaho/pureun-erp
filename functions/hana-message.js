@@ -7,7 +7,13 @@ const crypto = require("node:crypto");
 
 const SECRET_RE = /(인증\s*번호|인증\s*코드|일회용\s*비밀번호|비밀번호|보안\s*카드|OTP|본인\s*확인|로그인\s*승인)/i;
 const CARD_RE = /(하나\s*카드|하나\s*\d{3,4}\s*(?:승인|취소)|하나카드)/i;
-const BANK_RE = /(하나\s*은행|하나\s*뱅크|하나1Q|KEB\s*하나|하나원큐)/i;
+/* ⚠ 실제 하나은행 입출금 문자는 「하나은행」이라고 안 적고 「하나 08/24 08:09」처럼
+   은행 이름을 한 글자로 줄여 보낸다(2026-08-24 대표 문자). 예전 규칙은 「은행」이라는
+   글자를 요구해서 이 형식을 통째로 버렸고, 휴대폰 쪽 거르개(HanaMessageFilter)는
+   「하나 」를 받아들이므로 «휴대폰은 보내고 서버는 조용히 버리는» 어긋남이 있었다.
+   그래서 «하나» 뒤에 빈칸이나 숫자가 오는 것도 은행으로 본다.
+   ⚠ 「하나카드」는 뒤가 한글이라 여기 안 걸린다 — 카드는 위 CARD_RE 가 먼저 잡는다. */
+const BANK_RE = /(하나\s*은행|하나\s*뱅크|하나1Q|KEB\s*하나|하나원큐|(?:^|[^가-힣])하나(?=[\s\d]))/i;
 
 function compact(value) {
   return String(value || "")
@@ -72,6 +78,51 @@ function tailMemo(text, dt, fallback) {
   return memo.slice(0, 100);
 }
 
+/* 통장 문자의 적요 — 여기서 나온 글이 업체 이름과 맞춰진다.
+   ⚠ 곁가지를 안 걷어내면 「적요 주식회사주원테」처럼 «이름표»가 이름에 붙어
+     자동 맞춤이 빗나간다(2026-08-24 대표 문자에서 실제로 그랬다).
+     계좌번호·「입금 165,000원」·잔액도 마찬가지로 이름이 아니다. */
+function scrubBank(value) {
+  return String(value || "")
+    .replace(/(?:잔액|가용액|출금\s*가능\s*금액|사용\s*가능\s*금액|사용가능액|누적)\s*[0-9,]*\s*원?/ig, " ")
+    .replace(/[0-9*]{2,}-[0-9*]{2,}(?:-[0-9*]{2,})+/g, " ")
+    .replace(/(?:입금|출금|이체)\s*(?:계좌|통장)?\s*[0-9,]*\s*원?/g, " ")
+    .replace(/[0-9][0-9,]*\s*원/g, " ")
+    .replace(/(?:^|\s)(?:적요|내용|비고|메모|받는분|보낸분)\s*[:：]?\s*/g, " ")
+    .replace(/[|·]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function bankMemo(text, dt, fallback) {
+  /* 날짜 뒤가 본문인 것이 보통이지만, 날짜를 끝에 붙여 보내는 형식도 있다 —
+     뒤가 비면 앞을 본다. 앞을 볼 때는 맨 앞 은행 이름만 떼어 낸다. */
+  let memo = scrubBank(dt ? text.slice(dt.end) : text);
+  if (!memo && dt) {
+    memo = scrubBank(text.slice(0, dt.index)
+      .replace(/^\s*하나\s*(?:은행|뱅크|1Q|원큐)?/, " "));
+  }
+  return (memo || fallback).slice(0, 100);
+}
+
+/* 입금이냐 출금이냐 — «먼저 나온 쪽»을 따른다.
+   ⚠ 그냥 「입금이 있나」로 보면 출금 문자 안의 «입금계좌» 때문에 출금이 입금으로
+     잡힌다. 돈의 방향이 뒤집히는 것이라 회계가 통째로 어긋난다. */
+function bankDirection(text) {
+  const inAt = text.indexOf("입금");
+  const outAt = text.indexOf("출금");
+  if (inAt < 0) return "expense";
+  if (outAt < 0) return "income";
+  return inAt < outAt ? "income" : "expense";
+}
+
+/* 잔액 — 통장 문자에는 늘 붙어 오는데 여태 0 으로 버렸다.
+   거래내역 표에 잔액 칸이 있고, 빠진 줄을 찾을 때 «잔액이 이어지는가»가 가장 빠른 길이다. */
+function readBalance(text) {
+  const m = /잔액\s*[:：]?\s*([0-9][0-9,]*)/.exec(text);
+  return m ? (Number(String(m[1]).replace(/,/g, "")) || 0) : 0;
+}
+
 function accountHint(text) {
   const m = /하나\s*(\d{3,4})/.exec(text);
   return m ? `****${m[1]}` : "";
@@ -92,6 +143,7 @@ function parseHanaMessage(input, options) {
 
   let src;
   let type;
+  let balance = 0;
   let memo;
   let note;
 
@@ -104,9 +156,10 @@ function parseHanaMessage(input, options) {
     note = `하나카드 문자${accountHint(text) ? ` · ${accountHint(text)}` : ""}`;
   } else if (BANK_RE.test(text) && /(입금|출금|이체)/.test(text)) {
     src = "bank";
-    type = /입금/.test(text) ? "income" : "expense";
-    memo = tailMemo(text, dt, type === "income" ? "하나은행 입금" : "하나은행 출금");
-    note = "하나은행 문자";
+    type = bankDirection(text);
+    balance = readBalance(text);
+    memo = bankMemo(text, dt, type === "income" ? "하나은행 입금" : "하나은행 출금");
+    note = `하나은행 문자${accountHint(text) ? ` · ${accountHint(text)}` : ""}`;
   } else {
     return reject("not_hana_transaction");
   }
@@ -122,7 +175,7 @@ function parseHanaMessage(input, options) {
       type,
       date: dt.date,
       amount,
-      balance: 0,
+      balance,
       memo,
       note,
     },
@@ -131,6 +184,8 @@ function parseHanaMessage(input, options) {
 
 module.exports = {
   parseHanaMessage,
+  bankMemo,
+  bankDirection,
   sha256,
   compact,
   readDateTime,
