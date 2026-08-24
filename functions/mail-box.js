@@ -258,10 +258,14 @@ function previewFrom(buf, tp) {
     /* 줄바꿈 꼬리표는 빈칸이 아니라 «줄»로 바꾼다 — 아래에서 머리줄을 줄 단위로 걷는다 */
     s = s.replace(/<\s*br\b[^>]*>/gi, '\n').replace(/<\s*\/\s*(p|div|tr|li)\s*>/gi, '\n');
     s = s.replace(/<[^>]*>/g, ' ').replace(/<[^>]*$/, ' ');
-    /* ③ 꼬리표 밖에 남은 CSS 조각(선택자 { … })도 글이 아니다 */
-    s = s.replace(/[^\s{}]+\s*\{[^{}]*\}?/g, ' ');
   }
   s = unentity(s);
+  /* ③ CSS 조각(선택자 { … })은 글이 아니다.
+     ⚠ html 뿐 아니라 «글(text/plain)» 조각에도 실려 온다 — html 을 글로 바꿔 보내는
+       메일 프로그램이 style 을 그대로 흘려 넣는다. 실제로 목록에
+       「… 감사합니다. p{margin-top:0;margin-bo」 가 남았다(2026-08-24 실측).
+       그래서 html 여부를 가리지 않고 걷는다. */
+  s = s.replace(/[^\s{}]+\s*\{[^{}]*\}?/g, ' ');
   /* 보이지 않는 글자를 걷어내고 빈칸을 하나로 */
   const clean = (x) => x.replace(/[\u0000-\u001f\u007f\u00ad\u200b-\u200f\ufeff]/g, ' ')
                         .replace(/\s+/g, ' ').trim();
@@ -279,7 +283,7 @@ function previewFrom(buf, tp) {
    표시(hi·lo)가 다 찼다고 되어 있어 다시 가져오지도 않는다 — 그러면 옛 줄은 영원히
    반쪽이다. 그래서 번호를 붙여 두고, 번호가 다르면 그 폴더만 처음부터 다시 훑는다.
    ⚠ 줄에 칸을 더할 때마다 이 번호를 올린다. 안 올리면 새 칸은 «새 메일에만» 붙는다. */
-const ROW_VER = 4;   /* 3→4: 숫자 문자(&#44048;)를 풀고, 메일 머리줄을 걷어낸다 */
+const ROW_VER = 5;   /* 4→5: 글 조각에 실려 온 CSS 도 걷는다 */
 
 function needsRefetch(sync) {
   return Number((sync || {}).ver || 0) !== ROW_VER;
