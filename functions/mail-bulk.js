@@ -84,7 +84,11 @@ function validateBulk(p) {
   return {
     ok: true,
     targets: t.ok, skipped: { bad: t.bad, dup: t.dup },
-    subject: subject, body: text, matIds: matIds,
+    subject: subject, body: text,
+    /* 서식 몫 (대표 지시 2026-08-24). 씻는 일은 보내는 층(mail-send)이 한다 —
+       여기서 또 씻으면 두 곳이 서로 다른 규칙을 갖게 된다. */
+    html: String(body.html == null ? '' : body.html),
+    matIds: matIds,
     gapMs: spacingMs(body.spacingSec),
   };
 }
@@ -112,6 +116,8 @@ function buildQueue(v, now, by, batchId) {
         cardCompany: t.company || '',
         subject: fill(v.subject, vals),
         body: fill(v.body, vals),
+        /* 서식에도 이름·회사를 채운다 — 평문만 채우면 두 몫이 다른 이름을 부른다 */
+        html: v.html ? fill(v.html, vals) : '',
         matIds: v.matIds,
       },
     };

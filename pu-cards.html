@@ -708,6 +708,40 @@ table.sbox.tight td.none{padding:26px 8px}
 .cpbody{width:100%;min-height:260px;margin-top:10px;padding:11px;border:1px solid #dde3ee;
   border-radius:10px;font-size:13px;line-height:1.75;color:#1b2536;background:#fff;font-family:inherit}
 .cpbody:focus{outline:none;border-color:#1e2a47}
+/* ── 서식 있는 본문 (대표 지시 2026-08-24) ──
+   contenteditable 은 placeholder 가 없다. 비었을 때 하얗게 두면 어디에 쓰는지 모른다. */
+.cpbody[contenteditable]{overflow:auto;white-space:pre-wrap;word-break:break-word}
+.cpbody:empty:before{content:attr(data-ph);color:#9aa6bd}
+.cpbody[contenteditable] a{color:#1a55b0}
+.cpbody.cpraw{font-family:Consolas,"Courier New",monospace;font-size:12px;white-space:pre;color:#33415e}
+/* 글자색·배경색 — 색 고르는 칸을 단추 모양 안에 숨긴다 */
+.edcolor{position:relative;cursor:pointer}
+.edcolor input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}
+/* 본문 아래 줄 — 왼쪽 예약 발송, 오른쪽 Editor/HTML/TEXT (다음메일과 같은 자리) */
+.edfoot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 2px 2px}
+.edmodes{margin-left:auto;display:flex;gap:0}
+.edmode{border:1px solid #dde3ee;background:#fff;color:#6b7896;font-size:11.5px;font-weight:700;
+  padding:4px 10px;cursor:pointer;font-family:inherit}
+.edmode:first-child{border-radius:6px 0 0 6px}
+.edmode:last-child{border-radius:0 6px 6px 0}
+.edmode+.edmode{border-left:none}
+.edmode.on{background:#eef4ff;border-color:#b9d0f5;color:#1a55b0}
+/* 주소록 단추 · 목록 (다음메일 받는사람 오른쪽) */
+.cpabbtn{flex:none;border:1px solid #dde3ee;background:#f7f9fc;color:#33415e;border-radius:7px;
+  padding:7px 12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit}
+.cpabbtn:hover{background:#eef4ff;border-color:#cfe0fb}
+.ablist{max-height:46vh;overflow:auto;border:1px solid #eef2f7;border-radius:9px;margin-bottom:10px}
+.abrow{display:flex;align-items:center;gap:9px;padding:8px 10px;border-bottom:1px solid #f2f5fa;
+  cursor:pointer;font-size:12.5px}
+.abrow:last-child{border-bottom:none}
+.abrow:hover{background:#f7f9fc}
+.abrow.on{background:#eef4ff}
+.abrow .ck{flex:none;font-size:14px;color:#5a6885}
+.abrow .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#1b2536}
+.abrow .n .c{color:#8b98b3;font-size:11.5px;margin-left:6px}
+.abrow .e{flex:none;color:#5a6885;font-size:11.5px}
+/* 첨부가 접혀 있을 때 붙은 개수 알림 — 안 보이면 붙인 줄 모르고 보낸다 */
+.cpattn{margin-left:8px;font-size:11.5px;color:#1a55b0;cursor:pointer;text-decoration:underline}
 .cphint{font-size:11.5px;color:#8b98b3;line-height:1.6;margin:7px 0 11px}
 /* 명함 상세 — 보낸 기록 */
 .sendlog{border:1px solid #e4e8f0;border-radius:12px;padding:10px 12px;margin-bottom:12px;background:#fbfcfe}
@@ -1787,7 +1821,7 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
   /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
   mailSent:false, mailDrawer:true, sentBox:{}, schedBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
   showBcc:false, draftAt:'', matPick:'', drawerQ:'', drawerOpen:{},
-  bodyFont:'맑은고딕', bodySize:'10', bodyBold:false, bodyItalic:false, drawerW:300,
+  edMode:'editor', drawerW:300,   /* 2026-08-24: 가짜였던 bodyFont/Size/Bold/Italic 없앰 */
   view:'list', vtab:'' };
 
 /* ── 데이터 계층 ── */
@@ -1864,7 +1898,6 @@ const Store = {
         /* 자료함·메일 설정을 미리 읽는다 — 이메일을 눌렀을 때 어느 방법으로 보낼지
            바로 판정하려면 설정이 이미 손에 있어야 한다 */
         loadMaterials();
-        loadBodyStyle();      /* 지난번에 고른 글꼴·크기를 그대로 */
         loadDrawerW();        /* 지난번에 맞춘 자료 서랍 넓이 */
         loadSchedBox();       /* 왼쪽 「예약한 메일」 개수용 */
         watchClassifyLog();
@@ -3014,12 +3047,24 @@ function applySetInCompose(sid){
 function grabCompose(){
   if(!_compose) return;
   const g = id => { const el=$(id); return el ? el.value : null; };
-  const t=g('cpTo'), c=g('cpCc'), s=g('cpSubj'), b=g('cpBody'), bc=g('cpBcc');
+  const t=g('cpTo'), c=g('cpCc'), s=g('cpSubj'), bc=g('cpBcc');
   if(t!==null) _compose.to=t;
   if(c!==null) _compose.cc=c;
   if(bc!==null) _compose.bcc=bc;
   if(s!==null) _compose.subject=s;
-  if(b!==null) _compose.body=b;
+  /* ── 본문 (대표 지시 2026-08-24: 서식 있는 편지) ──
+     담는 자리가 갈래마다 다르다. Editor 는 contenteditable(innerHTML), HTML·TEXT 는
+     textarea(value). ⚠ 예전에는 value 만 읽었다 — contenteditable 에서는 늘 빈 값이 온다. */
+  const raw  = $('cpBodyRaw');
+  const rich = $('cpBody');
+  if(raw){
+    /* HTML 갈래는 적은 것이 곧 서식이고, TEXT 갈래는 평문이라 서식으로 바꿔 담는다 */
+    _compose.html = (state.edMode==='html') ? String(raw.value||'') : textToHtml(raw.value||'');
+  } else if(rich){
+    _compose.html = String(rich.innerHTML||'');
+  }
+  /* 평문 몫도 «같이» 담는다 — 서식을 못 읽는 메일 프로그램에서 빈 편지가 되면 안 된다 */
+  if(typeof _compose.html === 'string') _compose.body = htmlToTextC(_compose.html);
 }
 function dropAttach(id){
   grabCompose();
@@ -3230,6 +3275,7 @@ async function bulkSendAll(){
   _sending = true; lockSendButtons(true);
   try{
     const r = await postBulkMail({ to:c.bulk, subject:c.subject, body:c.body,
+                                   html: c.html || '',   /* 묶음도 서식을 그대로 (대표 지시 2026-08-24) */
                                    matIds:c.ids, spacingSec: BULK_GAP_SEC });
     _compose = null; clearDraft();
     state.mailSent='sched'; render();
@@ -3263,7 +3309,8 @@ async function sendCompose(){
       cardId: c.cardId, to: c.to, cc: c.cc, bcc: c.bcc || '',
       toMe: !!c.toMe, oneByOne: !!c.oneByOne,
       scheduleAt: c.sendAt || 0,        /* 0 이면 지금 보낸다 */
-      subject: c.subject, body: c.body, matIds: c.ids, set: _sendMatSetName || '',
+      subject: c.subject, body: c.body, html: c.html || '',   /* 서식 몫 (대표 지시 2026-08-24) */
+      matIds: c.ids, set: _sendMatSetName || '',
       /* 보낸 메일함에 '누구에게'를 사람 이름으로 보이게 — 주소만 남으면 알아보기 어렵다 */
       toName: (state.items[c.cardId]||{}).name || (state.items[c.cardId]||{}).company || '',
       files: (c.files||[]).map(f=>({ name:f.name, dataUrl:f.dataUrl }))
@@ -4427,10 +4474,16 @@ function mailWriteHtml(){
             <button class="cpbulkoff" onclick="bulkCancel()" title="한 곳에만 보내는 보통 메일로 돌아갑니다">✕ 묶음 풀기</button>
           </div></div>` : `
         <div class="cprow" style="align-items:flex-start"><span class="cpk" style="padding-top:8px">받는사람</span>
-          <div style="flex:1;position:relative">
-            <input id="cpTo" value="${esc(c.to)}" autocomplete="off"
-              placeholder="이름·회사·이메일로 찾거나 주소를 직접 적으세요">
-            <div id="cpSug" class="cpsug"></div>
+          <div style="flex:1;position:relative;display:flex;gap:6px;align-items:flex-start">
+            <div style="flex:1;position:relative">
+              <input id="cpTo" value="${esc(c.to)}" autocomplete="off"
+                placeholder="이름·회사·이메일로 찾거나 주소를 직접 적으세요">
+              <div id="cpSug" class="cpsug"></div>
+            </div>
+            ${/* 다음메일과 같은 자리의 「주소록」. 줄 안 자동완성은 «아는 사람을 빨리»,
+                 주소록은 «훑어보며 고르는» 길이다 — 다음메일에 둘 다 있다. */''}
+            <button class="cpabbtn" onclick="openAddrBook()"
+              title="명함에서 훑어보며 고릅니다">주소록</button>
           </div></div>
         <div class="cprow"><span class="cpk cpfold" onclick="toggleBcc()"
             title="숨은참조 열기·닫기">참조 <i>${state.showBcc?'⌃':'⌄'}</i></span>
@@ -4439,41 +4492,78 @@ function mailWriteHtml(){
           <input id="cpBcc" value="${esc(c.bcc||'')}" placeholder="받는 사람에게 보이지 않습니다"></div>`:''}`}
         <div class="cprow"><span class="cpk">제목</span>
           <input id="cpSubj" value="${esc(c.subject||'')}"></div>
-        <div class="cprow" style="align-items:flex-start"><span class="cpk" style="padding-top:8px">첨부</span>
+        <div class="cprow" style="align-items:flex-start">
+          ${/* 다음메일처럼 ⌃ 로 접힌다 — 첨부가 없을 때 큰 빈 칸이 자리만 차지했다.
+               ⚠ 접혀 있어도 «붙은 것이 몇 개인지»는 보여 준다. 안 보이면 붙인 줄 모르고 보낸다. */''}
+          <span class="cpk cpfold" style="padding-top:8px" onclick="toggleAtt()"
+            title="첨부 칸 접기·펼치기">첨부 <i>${state.attFold?'⌄':'⌃'}</i></span>
           <div class="cpattwrap">
             <div class="cpattbar">
               <label class="cpfilebtn" title="한글에서 고친 계약서처럼 이번 편지에만 붙일 파일 (8MB 이하)">파일 첨부하기
                 <input type="file" multiple style="display:none" onchange="addLocalFiles(this)"></label>
               <span class="cpsize ${over?'over':''}">일반 : ${fmtMB(bytes)} / ${fmtMB(MAIL_MAX_BYTES)}${over?' — 넘었습니다' : ''}</span>
+              ${state.attFold && (c.ids.length+c.files.length)
+                ? `<span class="cpattn" onclick="toggleAtt()">붙은 것 ${c.ids.length+c.files.length}개 — 눌러서 보기</span>` : ''}
             </div>
-            <div class="cpattbox ${over?'over':''}" id="cpDrop">
+            ${state.attFold ? '' : `<div class="cpattbox ${over?'over':''}" id="cpDrop">
               ${(chipsMat+chipsLocal) || '<div class="cpdrophint">여러개의 파일을 마우스로 끌어놓으세요.</div>'}
-            </div>
+            </div>`}
           </div></div>
-        <div class="edbar">
-          <select class="edsel" onchange="setBodyStyle('font',this.value)" title="글꼴">
-            ${['맑은고딕','굴림','돋움','바탕','나눔고딕'].map(f=>
-              `<option ${state.bodyFont===f?'selected':''}>${f}</option>`).join('')}
+        ${(function(){
+          /* 다음메일과 같은 도구줄. Editor 갈래에서만 보인다 — HTML·TEXT 로 보는 중에는
+             서식 단추를 눌러도 갈 데가 없어, 눌리는 단추를 보여 주면 거짓말이 된다. */
+          const mode = state.edMode || 'editor';
+          if(mode!=='editor') return '';
+          return `<div class="edbar">
+          <select class="edsel" onchange="edCmd('fontName',this.value)" title="글꼴">
+            ${['맑은고딕','굴림','돋움','바탕','나눔고딕'].map(f=>`<option>${f}</option>`).join('')}
           </select>
-          <select class="edsel" style="width:64px" onchange="setBodyStyle('size',this.value)" title="글자 크기">
-            ${['9','10','11','12','14','16','18'].map(n=>
-              `<option value="${n}" ${String(state.bodySize)===n?'selected':''}>${n}pt</option>`).join('')}
+          <select class="edsel" style="width:64px" onchange="edFontSize(this.value)" title="글자 크기">
+            ${['9','10','11','12','14','16','18','24'].map(n=>
+              `<option value="${n}" ${n==='10'?'selected':''}>${n}pt</option>`).join('')}
           </select>
-          <span class="edsep"></span>
-          <button class="edbtn ${state.bodyBold?'on':''}" onclick="setBodyStyle('bold')" title="굵게"><b>가</b></button>
-          <button class="edbtn ${state.bodyItalic?'on':''}" onclick="setBodyStyle('italic')" title="기울임"><i>가</i></button>
+          ${ED_TOOLS.map(t=> t.sep ? '<span class="edsep"></span>'
+            : t.color
+              ? `<label class="edbtn edcolor" title="${esc(t.title)}">${t.icon}
+                  <input type="color" value="${esc(t.color)}"
+                    oninput="edCmd('${t.cmd}',this.value)"></label>`
+              : `<button class="edbtn" data-cmd="${t.cmd}" onclick="edCmd('${t.cmd}')"
+                  title="${esc(t.title)}">${t.icon}</button>`).join('')}
           <span class="edsep"></span>
           <button class="edbtn" onclick="insertSign()" title="서명을 본문 끝에 넣습니다">✍ 서명</button>
           <button class="edbtn" onclick="editSign()" title="서명 내용 고치기">서명 고치기</button>
-          <label class="mchk" style="margin-left:auto" title="정해진 때에 보냅니다">
+        </div>`;
+        })()}
+        ${(function(){
+          const mode = state.edMode || 'editor';
+          const html = composeHtml(c);
+          if(mode==='html')
+            return `<textarea id="cpBodyRaw" class="cpbody cpraw" spellcheck="false"
+              title="서식을 글자로 직접 고칩니다">${esc(html)}</textarea>`;
+          if(mode==='text')
+            return `<textarea id="cpBodyRaw" class="cpbody"
+              title="서식을 뺀 글자만 — 여기서 고치면 서식이 사라집니다">${esc(htmlToTextC(html))}</textarea>`;
+          /* ⚠ contenteditable 은 placeholder 가 없다 — 비었을 때 안내는 CSS(.cpbody:empty:before)가 낸다.
+             ⚠ 누르거나 글자를 넣을 때마다 edSyncBar 로 켜짐 표시만 새로 칠한다(화면은 안 그린다). */
+          return `<div id="cpBody" class="cpbody" contenteditable="true" spellcheck="false"
+            data-ph="여기에 내용을 적으세요"
+            onkeyup="edSyncBar()" onmouseup="edSyncBar()"
+            oninput="grabCompose()">${html}</div>`;
+        })()}
+        <div class="edfoot">
+          <label class="mchk" title="정해진 때에 보냅니다">
             <input type="checkbox" ${c.sendAt?'checked':''} onchange="toggleSchedule(this.checked)"> 예약 발송</label>
+          ${c.sendAt?`<span class="edsched">⏰ <b>${esc(fmtWhen(c.sendAt))}</b>
+            <input type="datetime-local" value="${esc(toLocalInput(c.sendAt))}" onchange="setSchedule(this.value)">
+            <span onclick="toggleSchedule(false)" title="예약 끄기">✕</span></span>`:''}
+          <span class="edmodes">
+            ${[['editor','Editor','보통 — 서식을 눌러서 꾸밉니다'],
+               ['html','HTML','서식을 글자로 직접 고칩니다'],
+               ['text','TEXT','서식을 뺀 글자만 봅니다']].map(([k,nm,tt])=>
+              `<button class="edmode ${(state.edMode||'editor')===k?'on':''}"
+                onclick="edMode('${k}')" title="${esc(tt)}">${nm}</button>`).join('')}
+          </span>
         </div>
-        <textarea id="cpBody" class="cpbody"
-          style="font-family:${esc(state.bodyFont||'맑은고딕')},sans-serif;font-size:${state.bodySize||10}pt;${
-            state.bodyBold?'font-weight:700;':''}${state.bodyItalic?'font-style:italic;':''}">${esc(c.body||'')}</textarea>
-        ${c.sendAt?`<div class="edsched">⏰ <b>${esc(fmtWhen(c.sendAt))}</b> 에 보냅니다
-          <input type="datetime-local" value="${esc(toLocalInput(c.sendAt))}" onchange="setSchedule(this.value)">
-          <span onclick="toggleSchedule(false)" title="예약 끄기">✕</span></div>`:''}
         <div class="cphint">자료함의 메일 본문 틀에서 채워졌습니다. 여기서 고쳐 보내도 <b>틀은 안 바뀝니다.</b>
           · 답장은 <b>${esc((myEmail||'').split('@')[0]||'보낸 직원')}</b> 님께 옵니다.</div>
         <button class="sm-send" onclick="sendCompose()" ${over?'disabled':''}>${c.sendAt?'예약하기':'보내기'}</button>
@@ -4643,27 +4733,184 @@ function closeDrawerPreview(){
 function toggleMailDrawer(){ grabCompose(); state.mailDrawer = (state.mailDrawer===false); renderMailPage(); }
 function toggleBcc(){ grabCompose(); state.showBcc = !state.showBcc; renderMailPage(); }
 
-/* ── 글꼴·크기·굵게 ──
-   ⚠ 보내는 글은 **글자만 있는 메일(text)** 이다. 그래서 이 설정은 **쓰는 동안
-     내 화면에서 읽기 편하라고** 있는 것이지, 받는 쪽 글씨를 바꾸지는 않는다.
-     꾸민 글로 보내려면 메일 전체를 HTML 로 바꿔야 하는데, 그러면 스팸으로
-     걸릴 확률이 올라가고 자료 목록이 깨지는 곳이 생긴다 — 지금은 안 건드린다. */
-const BODYSTYLE_LS = 'pucards_mail_bodystyle';
-function setBodyStyle(k, v){
+/* ══════ 서식 있는 본문 — 다음메일과 같은 도구줄 (대표 지시 2026-08-24) ══════
+   여기 있던 setBodyStyle 은 «가짜»였다. 도구줄 단추가 state.bodyFont 를 바꿔
+   <textarea> 의 style 에만 썼고, 보내는 글은 평문이라 받는 사람에게는 아무 영향이
+   없었다 — 옛 주석도 그렇게 적혀 있었다("내 화면에서 읽기 편하라고 있는 것").
+   이제 본문이 contenteditable 이고, 서버가 html 몫과 평문 몫을 «같이» 보낸다.
+   ⚠ 안 쓰는 함수를 남기지 않았다. 남기면 다음 사람이 그것을 고치며 「왜 안 나가나」로
+     하루를 쓴다 — 실제로 이번에 대표께 가짜 단추를 두 주 넘게 보여 드렸다. */
+
+/* 다음메일 도구줄에 있는 것들. cmd 는 브라우저에 그대로 넘기는 이름이다.
+   ⚠ 새 도구를 넣으면 functions/mail-send.js 의 HTML_OK·STYLE_OK 에도 올려야 한다.
+     안 올리면 화면에서는 되는데 «보내는 순간 서버가 지운다». */
+const ED_TOOLS = [
+  { cmd:'bold',          icon:'<b>가</b>',  title:'굵게 (Ctrl+B)' },
+  { cmd:'italic',        icon:'<i>가</i>',  title:'기울임 (Ctrl+I)' },
+  { cmd:'underline',     icon:'<u>가</u>',  title:'밑줄 (Ctrl+U)' },
+  { cmd:'strikeThrough', icon:'<s>가</s>',  title:'취소선' },
+  { cmd:'foreColor',     icon:'<b style="color:#d33">가</b>', title:'글자색', color:'#d33333' },
+  { cmd:'hiliteColor',   icon:'<b style="background:#ffef9e">가</b>', title:'배경색', color:'#ffef9e' },
+  { sep:true },
+  { cmd:'justifyLeft',   icon:'왼', title:'왼쪽 정렬' },
+  { cmd:'justifyCenter', icon:'중', title:'가운데 정렬' },
+  { cmd:'justifyRight',  icon:'우', title:'오른쪽 정렬' },
+  { sep:true },
+  { cmd:'insertOrderedList',   icon:'1.', title:'번호 목록' },
+  { cmd:'insertUnorderedList', icon:'•',  title:'글머리표' },
+  { cmd:'outdent',             icon:'⇤',  title:'내어쓰기' },
+  { cmd:'indent',              icon:'⇥',  title:'들여쓰기' },
+  { sep:true },
+  { cmd:'createLink',           icon:'URL', title:'누를 수 있는 주소 넣기' },
+  { cmd:'insertHorizontalRule', icon:'―',   title:'구분선' },
+  { cmd:'removeFormat',         icon:'✕가', title:'서식 지우기' }
+];
+
+/* 도구 한 번 누르기. ⚠ 여기서 renderMailPage 를 부르면 안 된다 — 화면을 다시 그리면
+   글자를 쓰던 자리(캐럿)가 맨 앞으로 튀어 한 글자마다 앞으로 돌아간다. */
+function edCmd(cmd, val){
+  const el = $('cpBody'); if(!el) return;
+  try{ el.focus(); }catch(_){}
+  try{
+    if(cmd==='createLink'){
+      const u = prompt('누를 수 있는 주소를 넣으세요', 'https://');
+      if(!u) return;
+      if(!/^(https?:\/\/|mailto:)/i.test(u))
+        return toast('http:// 또는 https:// 로 시작해야 합니다 — 다른 주소는 서버가 지웁니다', 7000);
+      document.execCommand('createLink', false, u);
+    } else {
+      document.execCommand(cmd, false, (val===undefined ? null : val));
+    }
+  }catch(e){ toast('이 서식은 이 브라우저에서 안 됩니다', 5000); }
+  /* 누른 결과를 «곧바로» 담는다 — 안 담으면 다음에 화면을 그릴 때 사라진다 */
   grabCompose();
-  if(k==='font') state.bodyFont = v;
-  else if(k==='size') state.bodySize = v;
-  else if(k==='bold') state.bodyBold = !state.bodyBold;
-  else if(k==='italic') state.bodyItalic = !state.bodyItalic;
-  try{ localStorage.setItem(BODYSTYLE_LS, JSON.stringify({
-    font:state.bodyFont, size:state.bodySize, bold:state.bodyBold, italic:state.bodyItalic })); }catch(_){}
+  edSyncBar();
+}
+
+/* 글자 크기 — 브라우저 명령은 1~7 만 받는다. 화면에는 pt 로 보여 주고 여기서 바꾼다. */
+const ED_PT2SIZE = { '9':1, '10':2, '11':3, '12':3, '14':4, '16':5, '18':6, '24':7 };
+function edFontSize(pt){
+  edCmd('fontSize', String(ED_PT2SIZE[String(pt)] || 3));
+}
+
+/* 켜짐 표시는 «브라우저에 물어서» 칠한다. 우리가 따로 세면, 마우스로 딴 줄을 눌렀을 때
+   실제 서식과 표시가 어긋난다(굵은 줄에 커서를 뒀는데 「굵게」가 꺼져 보인다). */
+function edSyncBar(){
+  try{
+    document.querySelectorAll('.edbtn[data-cmd]').forEach(function(b){
+      let on = false;
+      try{ on = document.queryCommandState(b.getAttribute('data-cmd')); }catch(_){}
+      b.classList.toggle('on', !!on);
+    });
+  }catch(_){}
+}
+
+/* 평문 → 서식. 옛 임시저장·자료함의 메일 틀은 평문이라 그대로 넣으면 줄바꿈이
+   다 사라져 한 줄이 된다. ⚠ & 를 «가장 먼저» 바꾼다 — 나중에 하면 &lt; 가 다시 망가진다. */
+function textToHtml(t){
+  return String(t==null?'':t)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\r\n|\r|\n/g,'<br>');
+}
+
+/* 서식 → 평문 (화면 쪽). 빈 본문인지 보고, 미리보기·목록에 쓴다.
+   ⚠ functions/mail-send.js 의 htmlToText 와 «같은 답»을 내야 한다 —
+     서버는 화면이 준 평문을 그대로 쓰므로, 어긋나면 받는 편지의 두 몫이 다른 말을 한다.
+     tests/cards-mail-editor.test.js 가 두 쪽이 같은 답을 내는지 확인한다. */
+function htmlToTextC(h){
+  /* ⚠ functions/mail-send.js 의 htmlToText 와 «한 글자도 다르지 않게» 유지한다 */
+  let s = String(h==null?'':h);
+  if(!s) return '';
+  s = s.replace(/<\s*(script|style)\b[\s\S]*?<\s*\/\s*\1\s*>/gi,'');
+  s = s.replace(/<\s*br\s*\/?\s*>/gi,'\n');
+  s = s.replace(/<\s*\/\s*(p|div|li|blockquote|tr|h[1-6])\s*>/gi,'\n');
+  s = s.replace(/<\s*hr\s*\/?\s*>/gi,'\n');
+  s = s.replace(/<[^>]*>/g,'');
+  s = s.replace(/&nbsp;/gi,' ').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>')
+       .replace(/&quot;/gi,'"').replace(/&#0*39;|&apos;/gi,"'").replace(/&amp;/gi,'&');
+  return s.replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
+}
+
+/* 본문 칸에 넣을 서식. html 이 있으면 그것을, 없으면(옛 평문) 바꿔서 넣는다. */
+function composeHtml(c){
+  const o = c || {};
+  if(typeof o.html === 'string' && o.html.trim()) return o.html;
+  return textToHtml(o.body || '');
+}
+
+/* Editor / HTML / TEXT 전환 (다음메일과 같은 자리 — 오른쪽 아래).
+   ⚠ 갈래를 바꾸기 전에 반드시 담는다. 안 담으면 쓰던 글이 날아간다. */
+function edMode(m){
+  grabCompose();
+  state.edMode = (m==='html'||m==='text') ? m : 'editor';
   renderMailPage();
 }
-function loadBodyStyle(){
-  try{ const v=JSON.parse(localStorage.getItem(BODYSTYLE_LS)||'null'); if(!v) return;
-    state.bodyFont=v.font||state.bodyFont; state.bodySize=v.size||state.bodySize;
-    state.bodyBold=!!v.bold; state.bodyItalic=!!v.italic;
-  }catch(_){}
+
+/* 첨부 칸 접기 — 다음메일도 ⌃ 로 접는다. 첨부가 없을 때 큰 빈 칸이 자리만 차지한다. */
+function toggleAtt(){ grabCompose(); state.attFold = !state.attFold; renderMailPage(); }
+
+/* ══════ 주소록 (다음메일 받는사람 오른쪽의 그 단추) ══════
+   줄 안 자동완성은 «이름을 아는 사람»을 빨리 넣는 길이고, 주소록은 «훑어보며 고르는» 길이다.
+   다음메일에 둘 다 있고, 우리는 자동완성만 있었다.
+   ⚠ 새 명단을 만들지 않는다 — 명함 그대로를 본다. 두 벌이 되면 한쪽만 낡는다. */
+const MAIL_MAX_TO = 5;                     /* 서버(mail-send.js MAX_TO)와 같은 수 */
+let _abPick = {};
+function openAddrBook(){
+  grabCompose();
+  _abPick = {};
+  state.abQ = '';
+  showPanel(addrBookHtml());
+  try{ const el=$('abQ'); if(el) el.focus(); }catch(_){}
+}
+function addrBookHtml(){
+  const q = String(state.abQ||'').trim();
+  /* 이메일이 있는 명함만 보여 준다 — 없는 사람을 고르면 보낼 때 되돌아온다 */
+  const all = Object.values(state.items||{}).filter(it=>it && it.kind==='card' && normEmail(it.email));
+  const hits = (q ? findPeople(state.items, q, 60) : all.slice(0, 60))
+    .filter(it=>normEmail(it.email));
+  const n = Object.keys(_abPick).length;
+  return `<div class="mhead"><b>📇 주소록</b>${_closeBtn()}</div>
+    <p class="setnote" style="margin:0 0 8px">명함에 이메일이 있는 사람만 나옵니다 ·
+      한 번에 <b>${MAIL_MAX_TO}명</b>까지</p>
+    <div class="mdsearch" style="margin-bottom:8px"><input id="abQ" value="${esc(state.abQ||'')}"
+      placeholder="🔍 이름·회사·이메일로 찾기"
+      oninput="state.abQ=this.value;showPanel(addrBookHtml());focusAbQ()"></div>
+    <div class="ablist">${ hits.length ? hits.map(it=>{
+        const em = normEmail(it.email), on = !!_abPick[it.id];
+        return `<div class="abrow ${on?'on':''}" onclick="abToggle('${it.id}')">
+          <span class="ck">${on?'☑':'☐'}</span>
+          <span class="n"><b>${esc(it.name||'(이름 없음)')}</b>
+            <span class="c">${esc(it.company||'')}</span></span>
+          <span class="e">${esc(em)}</span></div>`;
+      }).join('') : `<div class="cpnone" style="padding:16px 2px">${q?'찾은 사람이 없습니다':'이메일이 있는 명함이 없습니다'}</div>` }</div>
+    <button class="sm-send" ${n?'':'disabled'} onclick="addrBookAdd()">
+      ${n?`고른 ${n}명 넣기`:'고른 사람이 없습니다'}</button>`;
+}
+function focusAbQ(){ try{ const el=$('abQ'); if(el){ el.focus(); el.selectionStart=el.value.length; } }catch(_){} }
+function abToggle(id){
+  if(_abPick[id]) delete _abPick[id]; else _abPick[id]=1;
+  showPanel(addrBookHtml());
+}
+/* 고른 사람을 받는사람 칸에 넣는다. ⚠ 이미 적힌 주소와 합쳐 세어야 한다 —
+   빈 칸 기준으로만 세면 3명이 적힌 칸에 5명을 더 넣어 보낼 때 거절당한다. */
+function addrBookAdd(){
+  if(!_compose) return;
+  const have = String(_compose.to||'').split(/[,;]/).map(s=>s.trim()).filter(Boolean);
+  const add = [];
+  Object.keys(_abPick).forEach(id=>{
+    const em = normEmail((state.items[id]||{}).email);
+    if(em && have.indexOf(em) < 0 && add.indexOf(em) < 0) add.push(em);
+  });
+  if(!add.length){ dedupBg.classList.remove('open'); return toast('새로 넣을 주소가 없습니다'); }
+  const room = MAIL_MAX_TO - have.length;
+  if(room <= 0) return toast(`받는 사람은 한 번에 ${MAIL_MAX_TO}명까지입니다 — 이미 ${have.length}명이 있습니다`, 7000);
+  const take = add.slice(0, room);
+  _compose.to = have.concat(take).join(', ');
+  dedupBg.classList.remove('open');
+  renderMailPage();
+  if(add.length > take.length)
+    toast(`${MAIL_MAX_TO}명까지만 넣었습니다 — ${add.length-take.length}명은 빠졌습니다. 여러 곳에 보내려면 명함에서 골라 「묶음 발송」을 쓰세요`, 9000);
+  else toast(`${take.length}명을 넣었습니다`);
 }
 
 /* ── 서명 ──
@@ -4689,7 +4936,10 @@ function insertSign(){
   /* ⚠ 두 번 누르면 두 번 붙는다. 이미 들어 있으면 넣지 않는다. */
   if(String(_compose.body||'').includes(s.trim().split('\n')[1]||s.trim().slice(0,12)))
     return toast('서명이 이미 들어 있습니다');
-  _compose.body = String(_compose.body||'').replace(/\s*$/,'') + '\n\n' + s + '\n';
+  /* 2026-08-24: 본문이 서식(html)이 되었다. 평문에만 붙이면 화면에 안 나타난다 —
+     서식 끝에 붙이고 평문 몫은 거기서 다시 뽑는다. */
+  _compose.html = composeHtml(_compose).replace(/(\s|<br\s*\/?>)+$/i,'') + '<br><br>' + textToHtml(s);
+  _compose.body = htmlToTextC(_compose.html);
   renderMailPage();
   toast('서명을 넣었습니다');
 }
@@ -4743,7 +4993,9 @@ const DRAFT_LS = 'pucards_mail_draft';
 function draftOf(c){
   if(!c) return null;
   return { cardId:c.cardId||'', to:c.to||'', cc:c.cc||'', bcc:c.bcc||'',
-           subject:c.subject||'', body:c.body||'', ids:c.ids||[],
+           subject:c.subject||'', body:c.body||'',
+           html:c.html||'',          /* 서식 몫 — 안 담으면 이어 쓸 때 꾸민 것이 사라진다 */
+           ids:c.ids||[],
            base:c.base||{},          /* 잣대도 함께 — 이어 쓴 뒤에도 손댔는지 알 수 있게 */
            toMe:!!c.toMe, oneByOne:!!c.oneByOne,
            lostFiles:(c.files||[]).map(f=>f.name), at:Date.now() };
@@ -4806,8 +5058,11 @@ function previewMail(){
       <b>제목</b> ${esc(c.subject||'(비어 있음)')}<br>
       <b>첨부</b> ${names.length?esc(names.join(' · ')):'없음'}
     </div>
-    <pre style="white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:13px;
-      line-height:1.8;color:#1b2536;margin:0">${esc(c.body||'')}</pre>
+    ${/* 2026-08-24: 서식 그대로 보여 준다 — 받는 사람이 보는 모양이어야 미리보기다.
+          esc(평문) 을 쓰면 꾸민 것이 안 보여 「미리보기와 실제가 다르다」가 된다.
+          ⚠ 여기 넣는 서식은 우리 화면에서 만든 것이고, 보낼 때 서버가 다시 씻는다. */''}
+    <div style="white-space:normal;word-break:break-word;font-family:inherit;font-size:13px;
+      line-height:1.8;color:#1b2536;margin:0">${composeHtml(c)}</div>
     ${c.oneByOne?'<p class="setnote" style="margin-top:10px">※ 한명씩 발송 — 받는 사람마다 따로 나갑니다(서로의 주소가 안 보입니다).</p>':''}`);
 }
 /* 첨부칸에 파일을 끌어다 놓기 */
@@ -4934,6 +5189,8 @@ function resendFrom(id){
     cardId: v.cardId||'', to: v.to||'', cc:'',
     subject: v.subject || tpl.subject,
     body: v.body || tpl.body,
+    /* 서식 몫 — 없으면(옛 기록·평문 틀) composeHtml 이 평문을 바꿔 넣는다 */
+    html: v.html || '',
     ids: (v.ids||[]).filter(x=>_matMeta[x]),      /* 그 사이 지워진 자료는 뺀다 */
     files: [], picking: true
   };
