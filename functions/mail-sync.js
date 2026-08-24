@@ -331,8 +331,15 @@ async function runSync(deps, opts) {
     }
 
     /* ⑤ 셈은 «끝난 뒤 한 번만» 한다. 바퀴마다 세면 같은 폴더를 여러 번 센다 —
-       「기다리는 폴더 33개」가 「198개」로 보이면 그 숫자를 못 믿게 된다. */
-    plan.forEach((p) => { if (p.sync && p.sync.done) out.ready++; else out.waiting++; });
+       「기다리는 폴더 33개」가 「198개」로 보이면 그 숫자를 못 믿게 된다.
+       ⚠ 줄 판이 옛것인 폴더는 «다 된 것이 아니다». 지난 회차에 done 으로 적혀 있어도
+         새 칸(미리보기)이 아직 없다 — 다시 훑어야 한다. 그것까지 ready 로 세면
+         「33개 다 됐다」고 해 놓고 화면에는 셋째 줄이 없는 줄이 남는다(2026-08-24 실측:
+         일곱 폴더만 새 판인데 ready 가 33 이었다). */
+    plan.forEach((p) => {
+      const done = MB.folderDone(p.sync);
+      if (done) out.ready++; else out.waiting++;
+    });
     out.turns = turns;
 
     await db.ref(ROOT + '/meta').update({

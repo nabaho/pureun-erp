@@ -258,6 +258,15 @@ function needsRefetch(sync) {
   return Number((sync || {}).ver || 0) !== ROW_VER;
 }
 
+/* 이 폴더는 «정말» 다 됐나 — 회차 기록의 ready/waiting 이 이것으로 갈린다.
+   ⚠ done 만 보면 안 된다. 줄 판이 옛것이면 지난 회차의 done 이 그대로 남아 있어도
+     새 칸(미리보기)이 아직 없다 — 다시 훑어야 한다. 그것까지 ready 로 세면
+     「서른셋 다 됐다」고 해 놓고 화면에는 셋째 줄이 없는 줄이 남는다
+     (2026-08-24 실측: 일곱 폴더만 새 판인데 ready 가 33 이었다). */
+function folderDone(sync) {
+  return !!(sync && sync.done) && !needsRefetch(sync);
+}
+
 /* 주소 하나를 「이름」과 「주소」로. 이름이 없으면 주소를 이름 자리에도 쓴다 —
    목록에서 보낸이 칸이 비면 무엇이 왔는지 알 수 없다. */
 function oneAddr(a) {
@@ -408,6 +417,6 @@ module.exports = {
   folderKind, folderOrder, isSyncable, folderRecord,
   attCount, oneAddr, addrList, hasFlag, msgRow,
   textPartOf, decodePart, toText, previewFrom, PREVIEW_MAX,
-  ROW_VER, needsRefetch,
+  ROW_VER, needsRefetch, folderDone,
   pickToFetch, uidSet, nextSync, uidReset,
 };
