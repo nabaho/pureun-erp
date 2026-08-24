@@ -217,7 +217,8 @@ test('읽어 둔 숫자가 다른 기금·다른 해 것이면 쓰지 않는다'
 
 test('서식 화면이 장부를 읽어 오는 길이 걸려 있다', () => {
   const ex = grabFn('_docExtra');
-  assert.match(ex, /ops_asset_change/, '이 서식만 장부를 읽어야 한다');
+  assert.ok(ex.includes('DOC_NEEDS_LEDGER[kind]'), '어느 서식이 장부를 읽어야 하는지 목록으로 가려야 한다');
+  assert.ok(SRC.includes('var DOC_NEEDS_LEDGER={ops_asset_change:1'), '별지10호가 그 목록에서 빠졌다');
   assert.match(ex, /txns\/'\+fid\+'\/'\+yr/, '그 해 거래를 안 읽으면 채울 숫자가 없다');
   assert.match(ex, /bfDays\(open,bfMovesOf\(journalOf/, '별지15호와 같은 목록을 써야 한다');
   assert.match(ex, /S\._docBf=\{fid:fid,yr:yr/, '어느 기금·어느 해인지 안 적으면 남의 숫자를 쓴다');
