@@ -69,7 +69,11 @@ test('폰에서는 한 화면에 다 넣는다 — 바로가기는 헤더 안, �
   assert.match(enter, /\.pbar #homeBar\{/);
   assert.match(enter, /function moveHomeBar\(toHeader\)/);
   assert.match(enter, /moveHomeBar\(phone\.matches\)/, 'PC로 넓히면 제자리로 돌아가야 합니다');
-  assert.match(enter, /grid-template-columns:repeat\(4,1fr\)/, '한 줄 4개(대표 지시)');
+  /* ⚠ 못 박는 것은 «한 줄에 넷» 이지 그것을 적는 «글자» 가 아니다.
+     여기 repeat(4,1fr) 을 글자 그대로 박아 두었더니, 좁은 폰에서 타일이 화면 밖으로
+     나가던 것을 repeat(4,minmax(0,1fr)) 로 고치자 «멀쩡한 개선» 때문에 깨졌다
+     (2026-08-24). 1fr 은 글자보다 좁아지지 못한다는 것이 그 흠의 정체였다. */
+  assert.match(enter, /grid-template-columns:repeat\(4,[^;}]*\)/, '한 줄 4개(대표 지시)');
 });
 
 test('타일 마지막 줄이 아래 단추에 깔리지 않는다', () => {
