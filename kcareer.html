@@ -605,6 +605,12 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
   <a href="#" onclick="fbPull();return false" style="font-weight:800;color:#9B2C2C;margin-left:10px;text-decoration:underline">☁ 클라우드에서 되살리기</a>
   <a href="#" onclick="document.getElementById('fbLossNotice').style.display='none';return false" style="color:#9B2C2C;margin-left:12px;opacity:.6;font-weight:400">나중에</a>
 </div>
+<!-- 내 컴퓨터로 받아 두는 백업 재촉 — 사라지는 토스트가 아니라 안 사라지는 띠로 (2026-08-24) -->
+<div id="bkNotice" style="display:none;flex-shrink:0;background:#FFF6E0;color:#8A5A00;border-bottom:1px solid #F0D48A;padding:9px 14px;font-size:12.5px;text-align:center;font-weight:600">
+  <span id="bkMsg"></span>
+  <a href="#" onclick="backupExport();return false" style="font-weight:800;color:#8A5A00;margin-left:10px;text-decoration:underline">💾 지금 백업</a>
+  <a href="#" onclick="document.getElementById('bkNotice').style.display='none';return false" style="color:#8A5A00;margin-left:12px;opacity:.6;font-weight:400">나중에</a>
+</div>
 <div class="app">
   <aside class="sidebar">
     <div class="brand" id="brand" style="cursor:pointer">푸른노무법인 경력관리<small>푸른노무법인 · 요약 보기</small></div>
@@ -5829,7 +5835,9 @@ function reseed(){ if(!confirm('시드 데이터를 다시 불러올까요? (직
 async function backupExport(){ const dump={}; for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k&&(k.indexOf(NS)===0||k.indexOf('pf_meta_')===0||k.indexOf('pf_chunk_')===0)&&k!==NS+'api_key'&&k!==NS+'gvision_key') dump[k]=localStorage.getItem(k); }
   /* IndexedDB 첨부파일 포함 (없으면 텍스트만) */
   try{ const idbFiles=await getAllFilesFromIDB(); if(idbFiles.length) dump.__idb_files__=idbFiles; }catch(e){ console.error('IDB 백업',e); toast('⚠️ 첨부파일은 백업에 포함되지 못했습니다'); }
-  const blob=new Blob([JSON.stringify(dump)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='경력관리_백업_'+new Date().toISOString().slice(0,10)+'.json'; a.click(); set('last_backup',{d:new Date().toISOString().slice(0,10)}); toast('백업 다운로드'+(dump.__idb_files__?' (첨부 '+dump.__idb_files__.length+'개 포함)':'')); }
+  const blob=new Blob([JSON.stringify(dump)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='경력관리_백업_'+new Date().toISOString().slice(0,10)+'.json'; a.click(); set('last_backup',{d:new Date().toISOString().slice(0,10)});
+  var _bn=document.getElementById('bkNotice'); if(_bn) _bn.style.display='none';   /* 받았으니 재촉을 내린다 */
+  toast('백업 다운로드'+(dump.__idb_files__?' (첨부 '+dump.__idb_files__.length+'개 포함)':'')); }
 /* ===== localStorage 용량 관리 ===== */
 function getStorageUsageKB(){ var total=0; try{ for(var k in localStorage){ if(Object.prototype.hasOwnProperty.call(localStorage,k)&&k.indexOf(NS)===0&&!k.startsWith(NS+'pf_')) total+=((localStorage.getItem(k)||'').length+(k.length))*2; } }catch(e){} return Math.round(total/1024); }
 function getStorageFiles(){ /* 동기 폴백 — localStorage 청크만 */
@@ -5866,10 +5874,23 @@ function deleteFileOnly(id){ deleteFile(id); toast('원본 삭제됨'); checkSto
 function purgePageFiles(store){ if(!confirm('이 화면의 원본 파일을 모두 삭제합니다.\n레코드 내용(기관·날짜 등)은 유지됩니다.')) return; get(store).forEach(function(r){ deleteFile(r.id); }); toast('원본 파일 전체 삭제됨'); checkStorageQuota(); }
 function closeStorageMgr(){ document.getElementById('modalStorage').classList.remove('open'); }
 function purgeAllFiles(){ if(!confirm('모든 원본 파일을 삭제합니다.\n레코드 내용은 유지됩니다.')) return; const keys=[]; for(var k in localStorage){ if(k.startsWith(NS+'pf_')) keys.push(k); } keys.forEach(function(k){ localStorage.removeItem(k); }); Object.keys(_cache).forEach(function(k){delete _cache[k];}); toast('원본 파일 전체 삭제됨 ('+keys.length+'개)'); checkStorageQuota(); closeStorageMgr(); }
-function checkBackupReminder(){ var lb=get('last_backup'); var d=(lb&&!Array.isArray(lb)&&lb.d)?lb.d:null;
-  var total=['wiccok','cert','consult','lecture'].reduce(function(s,k){return s+get(k).length;},0); if(total===0||!d) return;
-  var days=Math.floor((Date.now()-new Date(d).getTime())/86400000);
-  if(days>=14) setTimeout(function(){ toast('마지막 백업 '+days+'일 전 — 환경설정 › 백업관리에서 백업을 권장합니다'); },1500); }
+/* ⚠ 예전에는 ①백업 기록이 아예 없으면(`!d`) 그냥 return 해서 **한 번도 백업 안 한 사람에게는
+   아무 말도 안 했고** ②알려도 1.5초 뒤 사라지는 토스트였다. 그래서 마지막 백업이 두 달 넘었는데도
+   아무도 몰랐고, 브라우저 자료가 지워졌을 때 되살릴 파일이 없었다(위촉장 197건 사고).
+   → 안 사라지는 띠 + 「지금 백업」 버튼으로 바꾼다. */
+function checkBackupReminder(){
+  var lb=get('last_backup'); var d=(lb&&!Array.isArray(lb)&&lb.d)?lb.d:null;
+  var total=FB_COUNT_KEYS.reduce(function(s,k){ return s+((get(k)||[]).length); },0);
+  if(total<20) return;                                     /* 갓 시작한 사람은 귀찮게 하지 않는다 */
+  var days=d?Math.floor((Date.now()-new Date(d).getTime())/86400000):null;
+  if(days!=null && days<14) return;
+  var el=document.getElementById('bkNotice'), msg=document.getElementById('bkMsg');
+  if(!el||!msg) return;
+  msg.textContent=(days==null)
+    ? ('💾 기록 '+total+'건이 쌓였는데 아직 내 컴퓨터로 백업한 적이 없습니다. 브라우저 자료가 지워지면 되살릴 파일이 없습니다.')
+    : ('💾 마지막 백업이 '+days+'일 전입니다 (기록 '+total+'건). 브라우저 자료가 지워지면 그 사이 작업은 되살릴 수 없습니다.');
+  el.style.display='block';
+}
 
 /* ===== 신분증 관리 (PIN 보안) ===== */
 var _idUnlocked=false, _idKey=null, _idDocs=null;
@@ -6493,6 +6514,9 @@ function fbAutoPush(){ if(!fbUid||!fbDb||!fbAutoOn()) return;
   }).catch(function(){}); }
 
 _safe(loadSeed); _safe(_cdNormalize); _safe(_puBackfill); _safe(loadCustomNav); _safe(buildNav); _safe(initTabs); _safe(()=>initDocCreate('resume')); _safe(()=>initDocStore('resume')); _safe(()=>initDocCreate('profile')); _safe(()=>initDocStore('profile')); _safe(()=>initDocCreate('certdoc')); _safe(()=>initDocStore('certdoc')); _safe(bindCareer); _safe(initApiTab); _safe(initSettings); _safe(seedStamps); _safe(fbInit);
+/* ⚠ checkBackupReminder는 만들어만 놓고 아무도 부르지 않아 백업 재촉이 한 번도 안 떴다.
+   그래서 마지막 백업이 두 달 넘도록 아무도 몰랐다 — 반드시 부팅 때 부른다. */
+_safe(checkBackupReminder);
 _safe(()=>{ document.getElementById('brand').onclick=()=>{ nav_to('page-home','홈',null); renderHome(); };
   document.getElementById('hamburger').onclick=()=>toggleSidebar();
   var _pb=document.getElementById('printBtn'); if(_pb) _pb.onclick=()=>window.print();

@@ -833,6 +833,23 @@ test('브라우저 자료가 지워져 기본 데이터로 돌아가면 크게 �
   assert.match(source.slice(i, i + 900), /onclick="fbPull\(\);return false"/);
 });
 
+test('백업 재촉은 실제로 불리고, 안 사라지는 띠로 보인다', () => {
+  // ⚠ 예전엔 만들어만 놓고 아무도 부르지 않아 한 번도 뜨지 않았다 (마지막 백업 76일 전 방치)
+  assert.match(source, /_safe\(checkBackupReminder\);/, '부팅 때 부르지 않으면 영원히 안 뜹니다');
+  assert.match(source, /id="bkNotice"/);
+  assert.match(source, /id="bkMsg"/);
+  const src = funcSource('checkBackupReminder');
+  // 한 번도 백업 안 한 사람에게도 알려야 한다 — 예전엔 !d면 그냥 return 했다
+  assert.match(src, /days==null/, '백업 기록이 없는 사람에게도 알려야 합니다');
+  assert.ok(!/if\(total===0\|\|!d\) return/.test(src), '⚠ !d로 빠져나가면 최고 위험군이 안내를 못 받습니다');
+  assert.match(src, /bkNotice/);
+  assert.match(src, /FB_COUNT_KEYS/, '모든 스토어를 세야 실제 규모가 나옵니다');
+  // 백업을 받으면 띠를 내린다
+  assert.match(funcSource('backupExport'), /bkNotice[\s\S]{0,60}display='none'/);
+  const i = source.indexOf('id="bkNotice"');
+  assert.match(source.slice(i, i + 800), /onclick="backupExport\(\);return false"/);
+});
+
 test('시드(기본 데이터) 건수 — 지금 화면과 대조할 진단 기준', () => {
   // 시드 wiccok 86건 = 위촉장 79 + 표창 7. 위촉장 탭이 79건이면 시드로 되돌아간 것이다.
   const i = source.indexOf('window.__SEED__=');
