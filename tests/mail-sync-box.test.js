@@ -142,6 +142,15 @@ test('★ 잘려서 «안 닫힌» style 안의 CSS 가 새어 나오지 않는�
   assert.equal(got.indexOf('{'), -1, 'CSS 조각이 남아 있다');
 });
 
+test('★ 글(text/plain) 조각에 실려 온 CSS 도 걷는다 — html 만 걷고 있었다', () => {
+  /* 실측 2026-08-24: 「… 감사합니다. p{margin-top:0;margin-bo」.
+     html 을 글로 바꿔 보내는 메일 프로그램이 style 을 그대로 흘려 넣는다. */
+  const t = '안녕하세요 선생님 처리 결과 알려드립니다. 감사합니다. p{margin-top:0;margin-bo';
+  const got = MB.previewFrom(Buffer.from(t), { enc: '7bit', cs: 'utf-8' });   // html: false
+  assert.equal(got.indexOf('{'), -1, '글 조각의 CSS 가 남아 있다');
+  assert.match(got, /감사합니다/, '본문까지 지워졌다');
+});
+
 test('잘린 꼬리표 꼬리도 글로 새지 않는다', () => {
   const got = MB.previewFrom(Buffer.from('<p>안녕하세요 자료 보냅니다</p><div class="x'),
                              { enc: '7bit', cs: 'utf-8', html: true });
