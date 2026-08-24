@@ -6035,7 +6035,20 @@ function saveSubsidy(){
 
 // ── 목적사업·대부 (3단계/중) ──
 var WELF_FIELDS=[['name','사업명','text'],['category','분류','sel'],['budget','예산(원)','num'],['spent','집행액(원)','num'],['beneficiaries','수혜자수','num']];
+/* ══ 목적사업·대부 — 하위 탭 둘 ══
+   목적사업은 «그 해» 것이고(welfare/{기금}/{연도}), 대부는 «여러 해에 걸친» 것이다
+   (loans/{기금}). 성격이 달라 한 표에 담을 수 없다 — 대부를 연도 아래 두면
+   이듬해에 잔액이 사라진다. */
+var WELF_SUBS=[['prog','목적사업'],['loan','대부 대장']];
+function welfSub(k){ S.welfSub=k; renderFund(); }
+function welfSubBar(){
+  if(WELF_SUBS.map(function(x){return x[0];}).indexOf(S.welfSub)<0) S.welfSub='prog';
+  return '<div class="tabs" style="margin:0">'+WELF_SUBS.map(function(x){
+    return '<div class="tab'+(S.welfSub===x[0]?' on':'')+'" onclick="welfSub(\''+x[0]+'\')">'+x[1]+'</div>';
+  }).join('')+'</div>';
+}
 function welfareTab(f){
+  if(S.welfSub==='loan') return loanTab(f);
   var key=S.fundId+'/'+S.year;
   if(S.welfFor!==key){ var _k=key; S.welfFor=_k; S.welf=null;
     fbDb.ref(NS+'/welfare/'+S.fundId+'/'+S.year).once('value').then(function(s){if(S.welfFor!==_k)return;S.welf=s.val()||{};if(S.tab==='welfare'&&S.view==='fund')renderFund();}).catch(function(){if(S.welfFor===_k)S.welfFor=null;if(S.tab==='welfare'&&S.view==='fund')renderFund();});
@@ -6047,7 +6060,7 @@ function welfareTab(f){
       +'<td style="font-weight:700">'+esc(p.name||'—')+'</td><td style="text-align:right">'+(num(p.budget)||0).toLocaleString()+'</td>'
       +'<td style="text-align:right">'+(num(p.spent)||0).toLocaleString()+'</td><td style="text-align:right">'+(num(p.beneficiaries)||'—')+'</td></tr>';
   }).join('');
-  return '<div class="panel"><div class="row"><h2>목적사업·대부</h2>'+yearSel()
+  return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2>목적사업·대부</h2>'+welfSubBar()+yearSel()
     +'<span class="stat">예산 '+bud.toLocaleString()+'원</span><span class="stat">집행 '+sp.toLocaleString()+'원</span><span class="stat">수혜 '+ben.toLocaleString()+'명</span>'
     +'<span style="flex:1"></span><button class="primary" onclick="editProg(\'\')">+ 사업 추가</button></div>'
     +'<div style="margin-top:12px">'+(arr.length?'<table><thead><tr><th>분류</th><th>사업명</th><th style="text-align:right">예산</th><th style="text-align:right">집행</th><th style="text-align:right">수혜자</th></tr></thead><tbody>'+rows+'</tbody></table>':'<div class="muted" style="padding:16px 4px">'+S.year+'년 등록된 목적사업이 없습니다.</div>')+'</div></div>';
@@ -6070,6 +6083,152 @@ function saveProg(id){
   ref.set(o).then(function(){S.welfFor=null;closeM();renderFund();}).catch(function(e){toast('실패: '+e.message,'err');});
 }
 function delProg(id){ confirmM('이 목적사업·대부 항목을 삭제할까요?',{ok:'삭제',danger:true}).then(function(ok){ if(ok) fbDb.ref(NS+'/welfare/'+S.fundId+'/'+S.year+'/'+id).remove().then(function(){S.welfFor=null;closeM();renderFund();toast('삭제되었습니다');}); }); }
+
+/* ══════════ 대부 대장 (loans/{기금}/{대부번호}) ══════════
+   근로자대부금은 여태 «자산 계정 한 줄»로만 있었다 — 별지15호 ㉗에 금액은 들어가는데
+   누가 얼마 빌려 얼마 남았는지는 어디에도 없었다(대표 검토 2026-08-24, ④).
+
+   ⚠ 연도 아래 두지 않는다. 대부는 여러 해에 걸쳐 갚는다 — 연도 아래 두면 이듬해에
+     잔액이 통째로 사라진다. 대신 «갚은 해»별로 상환액을 담는다(paid:{연도:금액}).
+   ⚠ 주민등록번호·계좌번호는 «칸 자체를 두지 않는다». 대장에 필요 없고, 한 번 담기면
+     지우기 어렵다(회사 방침 — 급여자료함·명함첩과 같은 규칙).
+   ⚠ 대부는 «기본재산»으로만 할 수 있다(근로복지기본법 제62조·정관 제5조②).
+     수익금으로 하는 목적사업과 성격이 다르다. */
+var LOAN_FIELDS=[['name','차용자','text'],['site','사업장','text'],['date','실행일','date'],
+  ['amount','대부액(원)','text'],['purpose','용도','text'],['due','상환 예정','text'],['note','비고','text']];
+
+/* 대장 합계 — 순수 계산(검사 대상).
+   잔액 = 대부액 − 갚은 것 «전부». 그 해 것만 빼면 이월된 대부가 매년 되살아난다. */
+function loanSum(list,yr){
+  var t={amount:0,paidAll:0,paidYr:0,balance:0,open:0,newAmt:0,newCnt:0};
+  (list||[]).forEach(function(l){
+    var amt=num(l.amount)||0, pays=l.paid||{}, all=0, py=0;
+    Object.keys(pays).forEach(function(y){ var v=num(pays[y])||0; all+=v; if(String(y)===String(yr)) py+=v; });
+    t.amount+=amt; t.paidAll+=all; t.paidYr+=py; t.balance+=(amt-all);
+    if(amt-all>0) t.open++;
+    if(String(l.date||'').slice(0,4)===String(yr)){ t.newAmt+=amt; t.newCnt++; }
+  });
+  return t;
+}
+function loanBal(l){
+  var pays=(l&&l.paid)||{}, all=0;
+  Object.keys(pays).forEach(function(y){ all+=num(pays[y])||0; });
+  return (num(l&&l.amount)||0)-all;
+}
+/* 대장과 «장부»를 함께 읽는다 — 대장만 보면 맞는지 알 수 없다.
+   기금이나 해가 바뀌면 다시 읽는다(다른 기금 잔액과 견주면 늘 틀리다고 나온다). */
+function loanLoad(){
+  var fid=S.fundId, yr=S.year, key=fid+'/'+yr;
+  if(S.loanFor===key) return true;
+  var _k=key; S.loanFor=_k; S.loans=null; S.loanFin=null;
+  Promise.all([
+    fbDb.ref(NS+'/loans/'+fid).once('value').then(function(sn){ return sn.val()||{}; }).catch(function(){ return {}; }),
+    fbDb.ref(NS+'/txns/'+fid+'/'+yr).once('value').then(function(sn){ var v=sn.val()||{};
+      return Object.keys(v).map(function(k){ var o=Object.assign({},v[k]); o._id=k; return o; }); }).catch(function(){ return []; })
+  ]).then(function(r){
+    if(S.loanFor!==_k) return;
+    S.loans=r[0];
+    S.loanFin=computeFin(r[1],fid,yr);
+    if(S.tab==='welfare'&&S.view==='fund') renderFund();
+  }).catch(function(){ if(S.loanFor===_k){ S.loans={}; S.loanFin=null;
+    if(S.tab==='welfare'&&S.view==='fund') renderFund(); } });
+  return false;
+}
+function loanTab(f){
+  if(!loanLoad()) return '<div class="panel">'+loadingHTML('대부 대장을 읽는 중…')+'</div>';
+  var m=S.loans||{}, yr=S.year;
+  var arr=Object.keys(m).map(function(k){ var o=Object.assign({},m[k]); o._id=k; return o; })
+    .sort(function(a,b){ return String(b.date||'').localeCompare(String(a.date||'')); });
+  var t=loanSum(arr,yr);
+  var book=S.loanFin?Math.round(S.loanFin.loan):null;      // 장부의 근로자대부금 잔액
+  var off=(book!=null)&&Math.round(t.balance)!==book;
+  var W=function(v){ return Number(Math.round(v||0)).toLocaleString(); };
+  var rows=arr.map(function(l,i){
+    var bal=loanBal(l), py=num((l.paid||{})[yr])||0;
+    return '<tr><td class="no">'+(i+1)+'</td>'
+      +'<td style="font-weight:700;white-space:nowrap">'+esc(l.name||'—')+'</td>'
+      +'<td class="mo muted" style="white-space:nowrap">'+esc(l.site||'')+'</td>'
+      +'<td style="white-space:nowrap">'+esc(l.date||'')+'</td>'
+      +'<td style="text-align:right;white-space:nowrap">'+W(l.amount)+'</td>'
+      +'<td style="text-align:right"><input value="'+esc(py||'')+'" placeholder="0" '
+        +'onchange="loanPaySet(\''+l._id+'\',this.value)" title="'+yr+'년에 갚은 돈" '
+        +'style="width:110px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px;text-align:right"></td>'
+      +'<td style="text-align:right;white-space:nowrap">'+W((num(l.amount)||0)-bal)+'</td>'
+      +'<td style="text-align:right;font-weight:700;white-space:nowrap'+(bal<0?';color:var(--danger)':'')+'">'+W(bal)+'</td>'
+      +'<td>'+(bal<=0?'<span class="chip ok" style="font-size:10px">완제</span>'
+                     :'<span class="chip warn" style="font-size:10px">잔액</span>')+'</td>'
+      +'<td><button onclick="editLoan(\''+l._id+'\')" style="padding:2px 8px;font-size:11px">편집</button></td></tr>';
+  }).join('');
+  return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2>목적사업·대부</h2>'+welfSubBar()+yearSel()+hlp('loan.book')
+    +'<span class="stat">대부 '+arr.length+'건</span>'
+    +'<span class="stat">잔액 '+W(t.balance)+'원</span>'
+    +(t.open?'<span class="stat" style="background:var(--warn-bg);color:var(--warn)">미상환 '+t.open+'건</span>':'')
+    +(t.newCnt?'<span class="stat">'+yr+'년 실행 '+t.newCnt+'건 '+W(t.newAmt)+'원</span>':'')
+    +'<span style="flex:1"></span><button class="primary" onclick="editLoan(\'\')">+ 대부 추가</button></div>'
+    /* 대장과 장부가 어긋나면 별지15호 ㉗ 도 함께 틀린다 — 둘 다 노동청에 낸다 */
+    +(off?'<div class="msg err" style="margin:10px 0;font-size:12px;line-height:1.6">'
+      +'<b>⚠ 대장 잔액이 장부와 다릅니다.</b> 대장 '+W(t.balance)+'원 · 장부(근로자대부금) '+W(book)+'원 · '
+      +'<b>차이 '+W(Math.abs(t.balance-book))+'원</b><br>'
+      +'별지15호 ㉗ 「근로자 대부」는 <b>장부</b>에서 나옵니다 — 대장이 맞다면 회계·결산에서 '
+      +'대부 실행·상환 분개를 확인해 주세요.</div>':'')
+    +(arr.length
+      ? '<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th class="no">번호</th><th>차용자</th>'
+        +'<th class="mo">사업장</th><th>실행일</th><th style="text-align:right">대부액</th>'
+        +'<th style="text-align:right">'+yr+'년 상환</th><th style="text-align:right">상환 누계</th>'
+        +'<th style="text-align:right">잔액</th><th>상태</th><th></th></tr></thead><tbody>'+rows
+        +'<tr style="font-weight:700;border-top:2px solid var(--ink)"><td colspan="4">합계</td>'
+        +'<td style="text-align:right">'+W(t.amount)+'</td><td style="text-align:right">'+W(t.paidYr)+'</td>'
+        +'<td style="text-align:right">'+W(t.paidAll)+'</td><td style="text-align:right">'+W(t.balance)+'</td>'
+        +'<td colspan="2"></td></tr></tbody></table></div>'
+      : '<div class="muted" style="padding:16px 4px">대부 대장이 비어 있습니다. '
+        +(book?'장부에는 근로자대부금 '+W(book)+'원이 있습니다 — 누구에게 빌려준 것인지 넣어 주세요.':'')+'</div>')
+    +'</div>';
+}
+function editLoan(id){
+  var l=(S.loans&&S.loans[id])||{};
+  var flds=LOAN_FIELDS.map(function(c){
+    return '<div class="fld'+(c[0]==='note'?' full':'')+'"><label>'+c[1]+'</label>'
+      +'<input id="ln-'+c[0]+'" type="'+c[2]+'" value="'+esc(l[c[0]]||'')+'"></div>';
+  }).join('');
+  showModal('<div class="row" style="margin:0 0 10px"><h2 style="margin:0">'+(id?'대부 편집':'대부 추가')+'</h2>'+hlp('loan.book')+'</div>'
+    +'<div class="grid">'+flds+'</div>'
+    +(id?'<div class="row" style="margin-top:10px"><span class="chip" style="font-size:10.5px">상환액은 대장 표에서</span></div>':'')
+    +'<div class="row" style="justify-content:flex-end;margin-top:14px">'
+    +(id?'<button onclick="delLoan(\''+id+'\')" style="margin-right:auto;color:var(--danger)">삭제</button>':'')
+    +'<button onclick="closeM()">취소</button><button class="primary" onclick="saveLoan(\''+id+'\')">저장</button></div>');
+}
+function saveLoan(id){
+  var fid=S.fundId, o={};
+  LOAN_FIELDS.forEach(function(c){ var el=$('ln-'+c[0]); if(el) o[c[0]]=String(el.value||'').trim(); });
+  if(!o.name){ toast('차용자를 입력하세요','warn'); return; }
+  if(!(num(o.amount)>0)){ toast('대부액을 입력하세요','warn'); return; }
+  o.amount=num(o.amount)||0;
+  /* 상환액은 대장 표에서 해마다 넣는다 — 여기서 통째로 덮어쓰면 지난 해 기록이 날아간다 */
+  var ref=id?fbDb.ref(NS+'/loans/'+fid+'/'+id):fbDb.ref(NS+'/loans/'+fid).push();
+  var body=id?ref.update(o):ref.set(o);
+  body.then(function(){ S.loanFor=null; closeM();
+    if(S.fundId===fid) renderFund(); toast('저장되었습니다'); })
+    .catch(function(e){ toast('저장 실패: '+e.message,'err'); });
+}
+function delLoan(id){
+  var fid=S.fundId;
+  confirmM('이 대부 기록을 지울까요?\n상환 기록도 함께 없어집니다.',{ok:'삭제',danger:true}).then(function(ok){
+    if(!ok) return;
+    fbDb.ref(NS+'/loans/'+fid+'/'+id).remove().then(function(){ S.loanFor=null; closeM();
+      if(S.fundId===fid) renderFund(); toast('삭제되었습니다'); })
+      .catch(function(e){ toast('삭제 실패: '+e.message,'err'); });
+  });
+}
+/* 그 해 상환액 — 그 «해 칸»만 건드린다(다른 해 기록은 그대로 둔다) */
+function loanPaySet(id,v){
+  var fid=S.fundId, yr=S.year, val=num(v)||0;
+  fbDb.ref(NS+'/loans/'+fid+'/'+id+'/paid/'+yr).set(val||null).then(function(){
+    if(S.loans&&S.loans[id]){ S.loans[id].paid=S.loans[id].paid||{};
+      if(val) S.loans[id].paid[yr]=val; else delete S.loans[id].paid[yr]; }
+    if(S.fundId===fid&&S.year===yr) renderFund();
+    toast('저장됨');
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
+}
 
 // ── 변경 이벤트 (3단계/중) ──
 // 단계 라벨 → 바로가기(서식 미리보기 or 해당 탭). 앞쪽 규칙이 우선 적용된다.
@@ -8755,6 +8914,12 @@ var HELP={
    +'<p><b>못 채우는 것</b> — 인가번호 · 인가일 · 설립등기일. 이 셋은 인가증·등기부에만 있으니 <b>서류 자동 입력</b>으로 넣으세요.</p>'
    +'<p><b>짝짓는 방법</b> — 이미 아는 번호(고유번호·법인등록번호)가 맞으면 그것으로, 없으면 <b>이름이 완전히 같을 때만</b> 짝짓습니다. 「충남 4호」와 「충남 40호」를 섞지 않기 위해 부분일치는 쓰지 않습니다.</p>'
    +'<p>후보가 둘 이상인 기금은 <b>건너뛰고</b> 몇 개를 건너뛰었는지 알려 줍니다. 넣기 전에 표로 보여 주고, 넣는 순간 서버 값을 다시 확인해 그 사이 채워진 칸은 건드리지 않습니다.</p>'},
+ 'loan.book':{t:'대부 대장',h:'<p>근로자에게 빌려준 돈을 <b>사람별로</b> 적어 둡니다. 여태 장부에는 「근로자대부금 ○○원」 한 줄뿐이라, 누가 얼마 빌려 얼마 남았는지 알 길이 없었습니다.</p>'
+   +'<p><b>연도와 상관없이 한 대장입니다.</b> 대부는 여러 해에 걸쳐 갚기 때문입니다. 대신 <b>갚은 해</b>별로 상환액을 넣습니다 — 표의 「○○년 상환」 칸입니다. 연도를 바꾸면 그 해 칸이 바뀝니다.</p>'
+   +'<p><b>잔액 = 대부액 − 갚은 것 전부</b>입니다(그 해 것만이 아니라 지난 해 것까지).</p>'
+   +'<p><b>장부와 대조합니다.</b> 대장 잔액 합계가 장부의 근로자대부금과 다르면 알려 줍니다 — 별지15호 ㉗ 「근로자 대부」는 <b>장부</b>에서 나오므로, 어긋난 채로 두면 노동청에 낸 숫자의 근거가 없습니다.</p>'
+   +'<p><b>대부는 기본재산으로만</b> 할 수 있습니다(근로복지기본법 제62조·정관 제5조②). 수익금으로 하는 목적사업과 성격이 다릅니다.</p>'
+   +'<p><b>주민등록번호·계좌번호는 칸을 두지 않았습니다.</b> 대장에 필요 없고, 한 번 담기면 지우기 어렵습니다.</p>'},
  'board.due':{t:'기한',h:'<p>기금 42곳의 <b>연간 일정 기한</b>을 한 화면에 폅니다 — 하나씩 열어 보지 않아도 어디가 밀렸는지 보입니다.</p>'
    +'<p><b>칸 읽는 법</b> — <b>✓</b> 완료 · <b>빨강 n일</b> 기한이 n일 지남 · <b>주황 D-n</b> n일 남음(30일 이내) · <b>·</b> 아직 여유 · <b>—</b> 그 기금에 없는 일정</p>'
    +'<p><b>회계연도를 고릅니다.</b> 한 시점에 두 해가 함께 살아 있기 때문입니다 — 2026년 8월이면 2026년 일(11·12월 기한)은 아직 안 왔고, <b>2025년 회계연도</b>의 결산·감사·별지15호 기한(2026년 2~3월)은 이미 지났습니다. 그래서 기본값이 <b>작년</b>입니다.</p>'
