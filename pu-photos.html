@@ -2293,6 +2293,54 @@ function renderInstNote() {
   el.style.display = 'block';
   syncDock();
 }
+/* ══════ 「폰 공유 목록에 넣기」를 늘 찾을 수 있게 (대표 지적 2026-08-24) ══════
+   "핸드폰에서 사진 찍은 것 공유 또는 전달하기 기능 누르면 푸른사진첩에도 같이 연결하기
+    기능 만들 수 있나. 폰 안에서 연결하도록, 그리고 동기화 쉽게 하려는 것이다."
+
+   ⚠ **이미 다 만들어져 있었다** — 매니페스트의 share_target, 그것을 받는 pu-photos-sw.js,
+     확인 화면(takeShared) 까지. 그런데 대표님이 그 기능이 있는 줄 모르셨다.
+     까닭: 설치를 권하는 배너가 **브라우저가 `beforeinstallprompt` 를 줄 때만** 뜬다.
+     그 신호는 ①이미 설치했거나 ②「나중에」로 2주 미뤘거나 ③✕로 껐으면 오지 않고,
+     그러면 **이 기능으로 가는 길이 화면에서 통째로 사라진다.**
+   → 그래서 「어떻게 올리나요」 안에 늘 둔다. 거기가 사람이 「올리는 법」을 찾는 자리다. */
+
+/* 이 기기에 앱으로 설치돼 열린 것인가 */
+function isInstalledApp() {
+  try {
+    if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
+  } catch (_) { /* 오래된 브라우저 */ }
+  return !!(navigator.standalone);          // 옛 사파리
+}
+
+/* 안내 한 덩이 — **지금 이 기기의 상태에 맞는 말만** 한다.
+   ⚠ 아이폰에서 「설치하면 공유 목록에 생깁니다」라고 하면 거짓이다. 애플이 웹앱을
+     공유 목록에 올리는 것을 막아 두었으므로, 홈 화면에 추가해도 안 뜬다. 그 사실을
+     그대로 말한다 — 헛되이 설치하고 왜 안 되는지 찾아다니게 하면 안 된다. */
+function shareSetupHtml() {
+  const apple = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
+  if (apple) {
+    return '<b>📲 폰 공유 목록</b><br>' +
+      '아이폰은 <b>애플이 막아 두어</b> 공유 목록에 웹앱을 올릴 수 없습니다.' +
+      ' 홈 화면에 추가해도 안 뜹니다 — 앱을 열어 <b>＋ 올리기</b>로 넣어 주세요.';
+  }
+  if (isInstalledApp()) {
+    return '<b>✅ 이 기기에 설치돼 있습니다</b><br>' +
+      '갤러리·카톡에서 사진을 고른 뒤 <b>공유</b> → <b>푸른사진첩</b>을 누르면 바로 들어옵니다.';
+  }
+  if (instPrompt) {
+    return '<b>📲 폰 공유 목록에 넣기</b><br>' +
+      '설치하면 갤러리·카톡의 <b>공유</b> 목록에 <b>푸른사진첩</b>이 생깁니다 —' +
+      ' 사진을 보내려고 앱을 열 필요가 없어집니다.<br>' +
+      '<button onclick="instRun()" style="margin-top:7px">설치하기</button>';
+  }
+  /* 브라우저가 설치 신호를 안 준다 — 손으로 가는 길을 알려 준다.
+     (크롬은 조건이 맞아야 신호를 주고, 한 번 거절하면 한동안 안 준다) */
+  return '<b>📲 폰 공유 목록에 넣기</b><br>' +
+    '폰 크롬에서 이 화면을 열고 <b>메뉴 ⋮</b> → <b>「앱 설치」</b>(또는 「홈 화면에 추가」)' +
+    ' 를 누르면, 갤러리·카톡의 <b>공유</b> 목록에 <b>푸른사진첩</b>이 생깁니다.';
+}
+
 function instRun() {
   if (!instPrompt) return;
   const p = instPrompt;
@@ -7703,7 +7751,10 @@ function upHelpHtml() {
     ' 고화질로 담고 PDF 도 받습니다.<br><br>' +
     '· 한 번에 <b>' + PuPhotoStore.UPLOAD_MAX + '장</b>까지<br>' +
     '· 창으로 <b>끌어다 놓거나</b> <b>Ctrl+V</b> 로도 됩니다<br>' +
-    '· 폰에서는 아래 <b>📷 카메라</b>로 바로 찍을 수 있습니다';
+    '· 폰에서는 아래 <b>📷 카메라</b>로 바로 찍을 수 있습니다<br>' +
+    /* 폰에 설치하면 갤러리 「공유」에서 바로 보낼 수 있다 — 이 기능이 있는 줄 모르고
+       계셨으므로(대표 지적 2026-08-24) 안내에 늘 둔다. 자세한 것은 아래 팝업에서. */
+    '· 폰에 <b>앱으로 설치</b>하면 갤러리 <b>공유</b> 목록에 푸른사진첩이 생깁니다';
 }
 
 /* 마우스를 올리면 펼쳐질 안내를 미리 채워 둔다 — 장수 상한(UPLOAD_MAX)이
@@ -7715,9 +7766,14 @@ function fillUpTip() {
 
 function openUpHelp() {
   $('kindPopupTitle').textContent = '어떻게 올리나요';
+  /* ⚠ 「폰 공유 목록에 넣기」를 **여기** 둔다(대표 지적 2026-08-24). 설치 배너는
+     브라우저가 신호를 줄 때만 뜨므로, 그 길이 사라지면 이 기능이 있는 줄도 모른다.
+     사람이 「올리는 법」을 찾는 자리가 여기다. */
   $('kindPopupBody').innerHTML =
     '<div style="font-size:13px;line-height:1.85;color:var(--sub)">' +
-    upHelpHtml() + '</div>';
+    upHelpHtml() +
+    '<div style="margin-top:12px;padding-top:11px;border-top:1px solid var(--line)">' +
+    shareSetupHtml() + '</div></div>';
   const ok = $('kindPopupOk');
   ok.textContent = '알겠습니다';
   ok.onclick = closeKindPopup;
