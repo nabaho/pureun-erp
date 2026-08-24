@@ -163,3 +163,38 @@ test('★ 줄을 누르면 답장이 아니라 급여데이터함으로 간다 �
   assert.match(h, /goPaydataMail\(\)/);
   assert.equal(/onclick="reply/.test(h), false, '답장 단추를 두면 두 곳이 갈라집니다');
 });
+
+/* ══════ 지난 회차에 처리한 메일 (2026-08-24 규칙 켠 첫날) ══════
+
+   규칙을 넣은 직후 목록이 **텅 비었다** — 폴더의 30통이 모두 지난 회차에 이미
+   처리돼 있었다. 이제 그것도 목록에 남는데, 담긴 결과를 알 수 없으므로
+   「안 담김」이라고 하면 거짓말이 된다. */
+
+const OLD = {
+  o1: { from: '정담 <acct@jd.kr>', subject: '지난달 급여대장', preview: '보내드립니다',
+    box: '2.급여+사무대행', at: 5000, atts: 1, took: 0, shared: false,
+    why: '지난 회차에 이미 처리했습니다', old: true }
+};
+
+test('★ 지난 회차 것은 「안 담김」이 아니라 「지난 회차 처리」로 보인다', () => {
+  const h = load({ inbox: OLD }).html();
+  assert.match(h, /지난 회차 처리/);
+  /* 「안 담김」은 칩 이름으로도 늘 있다 — 줄에 붙는 빨간 표만 본다 */
+  assert.equal(/ibtg no/.test(h), false, '담겼는지 모르는 것을 안 담긴 것으로 말하면 안 됩니다');
+});
+
+test('★ 「안 담김」 셈에 지난 회차 것을 넣지 않는다 — 없는 문제를 쫓게 된다', () => {
+  const c = load({ inbox: OLD }).counts();
+  assert.equal(c.all, 1, '목록에는 있어야 합니다');
+  assert.equal(c.none, 0, '안 담김으로 세면 안 됩니다');
+});
+
+test('「안 담김」 칩으로 걸러도 지난 회차 것은 안 나온다', () => {
+  assert.equal(load({ inbox: OLD, inboxFilter: 'none' }).rows().length, 0);
+  assert.equal(load({ inbox: OLD, inboxFilter: 'all' }).rows().length, 1);
+});
+
+test('지난 회차 것도 찾기로는 걸린다', () => {
+  assert.equal(load({ inbox: OLD, inboxQ: '급여대장' }).rows().length, 1);
+});
+

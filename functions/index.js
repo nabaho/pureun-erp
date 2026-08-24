@@ -971,18 +971,35 @@ const MAIL_LOG_KEEP = 500;
 async function payMailWriteLog(db, rows) {
   if (!rows.length) return;
   const up = {};
-  rows.forEach(function (r) { up[PAYDATA_ROOT + "/maillog/" + r.key] = r.rec; });
+  let box = {};
+  /* 먼저 지금 목록을 읽는다 — 걷어낼 것을 고르는 데도, **덮지 말 것**을
+     가리는 데도 쓴다. 한 번 읽어 둘 다 한다(같은 자리를 두 번 읽지 않는다). */
+  let read = false;
   try {
     const snap = await db.ref(PAYDATA_ROOT + "/maillog").once("value");
-    const box = (snap && snap.val()) || {};
-    const keys = Object.keys(box).filter(function (k) { return !up[PAYDATA_ROOT + "/maillog/" + k]; });
-    if (keys.length + rows.length > MAIL_LOG_KEEP) {
-      keys.sort(function (a, b) { return Number((box[a] || {}).at || 0) - Number((box[b] || {}).at || 0); })
-        .slice(0, keys.length + rows.length - MAIL_LOG_KEEP)
-        .forEach(function (k) { up[PAYDATA_ROOT + "/maillog/" + k] = null; });
-    }
+    box = (snap && snap.val()) || {};
+    read = true;
   } catch (e) {
-    console.warn("receivePaydataMail 목록 청소 건너뜀:", String((e && e.message) || e));
+    console.warn("receivePaydataMail 목록 읽기 건너뜀:", String((e && e.message) || e));
+  }
+  /* soft 는 「이미 있으면 그대로 두라」는 뜻 — 지난 회차에 처리한 메일은
+     회차마다 같은 내용을 다시 쓰게 되고, 그것이 그대로 요금이 된다.
+     ⚠ 목록을 못 읽었으면 덮어쓰지 **않는다**(있는 것을 뭉갤 수 있다). */
+  rows.forEach(function (r) {
+    if (!r.key) return;
+    if (r.soft && (!read || box[r.key])) return;
+    up[PAYDATA_ROOT + "/maillog/" + r.key] = r.rec;
+  });
+  if (!Object.keys(up).length) return;      // 적을 것이 없으면 손대지 않는다
+  /* 적을 때 함께 걷어낸다 — 따로 도는 청소는 안 도는 청소다.
+     ⚠ 세는 것은 「이번에 적는 수」가 아니라 **적은 뒤 남을 수**다.
+     rows 로 세면 덮어쓰는 것까지 새것으로 세어 멀쩡한 줄을 지운다. */
+  const keys = Object.keys(box).filter(function (k) { return !up[PAYDATA_ROOT + "/maillog/" + k]; });
+  const after = keys.length + Object.keys(up).length;
+  if (after > MAIL_LOG_KEEP) {
+    keys.sort(function (a, b) { return Number((box[a] || {}).at || 0) - Number((box[b] || {}).at || 0); })
+      .slice(0, after - MAIL_LOG_KEEP)
+      .forEach(function (k) { up[PAYDATA_ROOT + "/maillog/" + k] = null; });
   }
   await db.ref().update(up).catch(function (e) {
     console.error("receivePaydataMail 목록 적기 실패:", String((e && e.message) || e));
@@ -1223,6 +1240,24 @@ async function runPaydataMailOnce() {
       const newlyDone = [];
       const logRows = [];               // 푸른 메일 「받은 메일」 목록에 적을 줄
 
+      /* 목록 한 줄 만들기 — **세 갈래에서 함께 쓴다**(이미 처리·모르는 주소·이번에 담음).
+         ⚠ 갈래마다 따로 만들면 한 곳만 고쳐 놓고 나머지를 잊는다.
+         soft=true 는 「이미 적혀 있으면 덮지 말라」는 뜻이다. */
+      const logRowOf = function (mkey, parsed, item, who, subject, more) {
+        const m = more || {};
+        return {
+          key: mkey,
+          soft: m.soft === true,
+          rec: MR.mailLogRecord({
+            from: who, subject: subject, body: MR.bodyTextOf(parsed),
+            box: item.box, at: parsed.date ? +new Date(parsed.date) : Date.now(),
+            atts: Array.isArray(parsed.attachments) ? parsed.attachments.length : 0,
+            took: m.took || 0, seatName: m.seatName || '',
+            shared: m.shared === true, why: m.why || '', old: m.old === true
+          })
+        };
+      };
+
       for (const item of inbox) {
         let parsed;
         try {
@@ -1247,7 +1282,18 @@ async function runPaydataMailOnce() {
         /* 이미 처리한 메일이면 건너뛴다. 대표가 읽었는지는 보지 않는다. */
         const mkey = MR.mailKey(item.messageId || (parsed.messageId || ""),
           { from: sender, subject: subject, date: parsed.date ? +new Date(parsed.date) : 0 });
-        if (mkey && doneKeys[mkey]) continue;
+        if (mkey && doneKeys[mkey]) {
+          /* 이미 담은 메일이다 — 자료를 또 담지는 않는다. 그래도 **목록에는
+             있어야** 한다. 폴더에 있는데 화면에 없으면 「안 왔다」로 읽힌다
+             (규칙을 켠 첫날 폴더의 30통이 통째로 안 보였다).
+             지난 회차 결과는 알 수 없으니 그렇다고 적고, 이미 적혀 있으면
+             덮지 않는다 — 안 덮으면 회차마다 같은 것을 다시 쓴다(요금). */
+          if (mkey) {
+            logRows.push(logRowOf(mkey, parsed, item, fromText || sender, subject,
+              { old: true, why: '지난 회차에 이미 처리했습니다', soft: true }));
+          }
+          continue;
+        }
         if (mkey) newlyDone.push(mkey);
 
         /* 급여 폴더에 온 것은 주소를 안 가린다(대표 결정 2026-08-23) — 대표가
@@ -1258,6 +1304,12 @@ async function runPaydataMailOnce() {
           unknown++;
           console.log("receivePaydataMail 모르는 주소라 건너뜀:", sender || "(주소 없음)",
             "폴더:", item.box || "(모름)");
+          /* ⚠ **목록에는 남긴다.** 「보냈다는데 왜 안 보이나」가 바로 이 경우다 —
+             화면에서 까닭을 봐야 업체관리에 주소를 넣을 수 있다. */
+          if (mkey) {
+            logRows.push(logRowOf(mkey, parsed, item, fromText || sender, subject,
+              { why: '업체관리에 없는 주소라 담지 않았습니다' }));
+          }
           continue;   // 처리한 것으로 적어 둔다(위에서 newlyDone 에 넣었다)
         }
 
@@ -1316,17 +1368,10 @@ async function runPaydataMailOnce() {
            안 되는 것이 앱에서 통째로 안 보이던 것이 문제였다(대표 결정 2026-08-24). */
         if (mkey) {
           const ownRec = (payMailKnownCache.owners || {})[hereSeat] || null;
-          logRows.push({
-            key: mkey,
-            rec: MR.mailLogRecord({
-              from: fromText || sender, subject: subject,
-              body: MR.bodyTextOf(parsed),
-              box: item.box, at: parsed.date ? +new Date(parsed.date) : Date.now(),
-              atts: atts.length, took: tookHere,
-              seatName: ownRec ? (ownRec.name || '') : '',
-              shared: hereShared, why: hereWhy
-            })
-          });
+          logRows.push(logRowOf(mkey, parsed, item, fromText || sender, subject, {
+            took: tookHere, seatName: ownRec ? (ownRec.name || '') : '',
+            shared: hereShared, why: hereWhy
+          }));
         }
       }
       /* 처리한 메일을 적어 둔다 — 안 적으면 회차마다 같은 것을 다시 담는다. */
