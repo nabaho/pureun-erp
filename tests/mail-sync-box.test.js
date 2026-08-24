@@ -87,6 +87,75 @@ test('disposition 이 없는 옛 메일도 이름이 붙은 것은 첨부로 본
   assert.equal(MB.attCount(structure, 0), 1);
 });
 
+/* ── 미리보기 (폰 목록 셋째 줄) ── */
+
+test('★ 글이 든 조각을 고른다 — text/plain 이 먼저다(html 은 꼬리표를 걷어야 해서 지저분하다)', () => {
+  const st = { childNodes: [
+    { part: '1', type: 'text/plain', encoding: 'base64', parameters: { charset: 'euc-kr' } },
+    { part: '2', type: 'text/html', encoding: 'quoted-printable', parameters: { charset: 'utf-8' } },
+  ] };
+  const tp = MB.textPartOf(st, 0);
+  assert.equal(tp.part, '1');
+  assert.equal(tp.html, false);
+  assert.equal(tp.cs, 'euc-kr');
+});
+
+test('글이 html 뿐이면 그것을 쓴다', () => {
+  const st = { childNodes: [{ part: '1', type: 'text/html', encoding: '7bit' }] };
+  assert.equal(MB.textPartOf(st, 0).html, true);
+});
+
+test('★ 첨부는 미리보기로 쓰지 않는다 — 앞 800바이트를 적으면 목록이 깨진 글자로 찬다', () => {
+  const st = { childNodes: [
+    { part: '1', type: 'application/pdf', disposition: 'attachment',
+      dispositionParameters: { filename: '급여대장.pdf' } },
+  ] };
+  assert.equal(MB.textPartOf(st, 0), null);
+});
+
+test('★ 잘려 온 base64 도 깨지지 않게 읽는다 — 앞부분만 받아 오기 때문이다', () => {
+  const full = Buffer.from('안녕하세요 노무사님 자료 보내드립니다', 'utf8').toString('base64');
+  const cut = full.slice(0, full.length - 3);          // 묶음 가운데가 잘렸다
+  const got = MB.previewFrom(Buffer.from(cut), { enc: 'base64', cs: 'utf-8' });
+  assert.match(got, /^안녕하세요 노무사님/);
+});
+
+test('따옴표인용(quoted-printable)도 읽는다 — 한글 메일에 흔하다', () => {
+  const qp = '=EC=95=88=EB=85=95=ED=95=98=EC=84=B8=EC=9A=94 test';
+  assert.match(MB.previewFrom(Buffer.from(qp), { enc: 'quoted-printable', cs: 'utf-8' }), /^안녕하세요/);
+});
+
+test('html 은 꼬리표를 걷고 글만 남긴다', () => {
+  const h = '<p>안녕하세요.</p><script>steal()</script><b>자료</b>&nbsp;보냅니다';
+  const got = MB.previewFrom(Buffer.from(h), { enc: '7bit', cs: 'utf-8', html: true });
+  assert.equal(got.indexOf('<'), -1);
+  assert.equal(got.indexOf('steal'), -1);
+  assert.match(got, /안녕하세요/);
+});
+
+test('★ 인용줄(> …)은 건너뛴다 — 답장은 온통 인용으로 시작한다', () => {
+  const t = '> 이전 메일 내용입니다\n> 또 인용\n실제 답장입니다';
+  assert.equal(MB.previewFrom(Buffer.from(t), { enc: '7bit', cs: 'utf-8' }), '실제 답장입니다');
+});
+
+test('미리보기는 길이를 못 박는다 — 만 줄이 오가는 자리다', () => {
+  const long = Buffer.from('가'.repeat(500));
+  assert.ok(MB.previewFrom(long, { enc: '7bit', cs: 'utf-8' }).length <= MB.PREVIEW_MAX);
+});
+
+test('★ 줄에 칸을 더하면 판 번호가 올라간다 — 안 올리면 새 칸이 새 메일에만 붙는다', () => {
+  assert.ok(MB.ROW_VER >= 2);
+  assert.equal(MB.needsRefetch({ ver: MB.ROW_VER }), false);
+  assert.equal(MB.needsRefetch({ ver: MB.ROW_VER - 1 }), true);
+  assert.equal(MB.needsRefetch({}), true, '판 번호가 없던 옛 폴더는 다시 훑어야 한다');
+});
+
+test('미리보기를 넘기면 줄에 담긴다', () => {
+  const row = MB.msgRow({ uid: 1, envelope: {} }, '안녕하세요 자료 보냅니다');
+  assert.equal(row.p, '안녕하세요 자료 보냅니다');
+  assert.equal(MB.msgRow({ uid: 1, envelope: {} }).p, '');
+});
+
 /* ── 목록 한 줄 ── */
 
 test('★ 보낸이 이름이 없으면 주소를 이름 자리에도 쓴다 — 칸이 비면 무엇이 왔는지 모른다', () => {

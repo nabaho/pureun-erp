@@ -67,8 +67,21 @@ function fakeMail(folders, hooks) {
       };
     },
     async getMailboxLock(p) { opened = p; return { release() {} }; },
-    async *fetch(range) {
+    async *fetch(range, query) {
       fetches++;
+      /* 미리보기 — 「조각의 앞부분만」 달라고 하면 그 조각만 돌려준다(실제 IMAP 과 같게) */
+      const wantPart = query && Array.isArray(query.bodyParts) && query.bodyParts[0];
+      if (wantPart) {
+        const key = typeof wantPart === 'string' ? wantPart : wantPart.key;
+        const max = (wantPart && wantPart.maxLength) || 800;
+        for (const u of String(range).split(',').map(Number)) {
+          const m = folders[opened].msgs[String(u)];
+          if (!m || !m.__body) continue;
+          const buf = Buffer.from(String(m.__body).slice(0, max), 'utf8');
+          yield { uid: u, bodyParts: new Map([[key, buf]]) };
+        }
+        return;
+      }
       /* 「10,20,30」(낱개) 과 「10:30」(구간) 둘 다 받는다 — 실제 IMAP 과 같게 */
       const want = {};
       String(range).split(',').forEach((part) => {
@@ -86,7 +99,11 @@ function fakeMail(folders, hooks) {
       for (const u of uids) {
         i++;
         if (h.breakAt && h.breakAt(fetches, i)) throw new Error('가짜 끊김');
-        yield { uid: u, flags: new Set(), size: 1000, envelope: folders[opened].msgs[u] };
+        const m = folders[opened].msgs[u];
+        yield { uid: u, flags: new Set(), size: 1000, envelope: m,
+                bodyStructure: m.__body
+                  ? { part: '1', type: 'text/plain', encoding: '7bit', parameters: { charset: 'utf-8' } }
+                  : undefined };
       }
     },
     async search() { return Object.keys(folders[opened].msgs).map(Number); },
@@ -239,6 +256,48 @@ test('★ 옛것을 받다 끊기면 못 받은 위쪽을 건너뛰지 않는다
   for (let u = 1; u <= 1000; u++) if (got.indexOf(u) < 0) missing.push(u);
   assert.deepEqual(missing, [],
     '끊긴 구간의 위쪽이 빠졌다(' + missing.length + '통) — 표시를 옮기면 안 되는 자리다');
+});
+
+/* ══════ 미리보기 (폰 목록 셋째 줄) ══════ */
+
+test('★ 목록에 미리보기가 함께 담긴다 — 폰 목록의 셋째 줄', () => {
+  const folders = { INBOX: box(3) };
+  Object.keys(folders.INBOX.msgs).forEach((u, i) => {
+    folders.INBOX.msgs[u].__body = '안녕하세요 노무사님, ' + i + '번 자료 보내드립니다.';
+  });
+  const db = fakeDb();
+  return MS.runSync(deps(db), { client: fakeMail(folders), deadlineMs: 60000 }).then(() => {
+    const rows = db.__get(MS.ROOT + '/msgs/' + slug('INBOX'));
+    const one = rows[Object.keys(rows)[0]];
+    assert.ok(one.p, '미리보기가 안 담겼다');
+    assert.match(one.p, /안녕하세요 노무사님/);
+  });
+});
+
+test('★ 본문이 없으면 미리보기 칸을 만들지 않는다 — 빈 글자를 만 줄 적으면 그것도 값이다', async () => {
+  const db = fakeDb();
+  await MS.runSync(deps(db), { client: fakeMail({ INBOX: box(3) }), deadlineMs: 60000 });
+  const rows = db.__get(MS.ROOT + '/msgs/' + slug('INBOX'));
+  Object.keys(rows).forEach((k) => {
+    assert.ok(!rows[k].p, '본문이 없는데 미리보기 칸이 생겼다');
+  });
+});
+
+test('★ 줄 모양이 바뀌면 그 폴더를 다시 훑는다 — 안 그러면 옛 줄은 영원히 반쪽이다', async () => {
+  const folders = { INBOX: box(5) };
+  Object.keys(folders.INBOX.msgs).forEach((u) => { folders.INBOX.msgs[u].__body = '본문 ' + u; });
+  const db = fakeDb();
+  const d = deps(db);
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  /* 미리보기 없이 가져왔던 옛 상태를 손으로 만든다 — 줄에서 p 를 빼고 판 번호를 낮춘다 */
+  const base = MS.ROOT + '/msgs/' + slug('INBOX');
+  for (const k of Object.keys(db.__get(base))) await db.ref(base + '/' + k + '/p').remove();
+  await db.ref(MS.ROOT + '/sync/' + slug('INBOX')).update({ ver: 1 });
+
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  const rows = db.__get(base);
+  Object.keys(rows).forEach((k) => assert.ok(rows[k].p, k + ' 번 줄이 아직 반쪽이다'));
+  assert.equal(db.__get(MS.ROOT + '/sync/' + slug('INBOX')).ver, MB.ROW_VER);
 });
 
 /* ══════ 폴더 목록 ══════ */
