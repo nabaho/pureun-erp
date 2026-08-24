@@ -781,6 +781,77 @@ test('_cvPxPerMm 대체값은 CSS 표준(96/25.4)이다 — 임의의 픽셀 숫
     '임의의 픽셀 상수를 넣으면 쪽 수가 통째로 틀어집니다');
 });
 
+/* ===== 「자료가 사라진 것처럼 보이는」 사고 방지 (2026-08-24) ===== */
+
+test('전체 건수를 절대 숨기지 않는다 — 필터가 걸리면 전체·지금 둘 다 보여준다', () => {
+  // 표시개수가 있으면 .cnt를 숨겼더니, 원본없음 필터가 켜진 위촉장이
+  // 197건 → 79건으로만 보여 자료 유실로 오인했다.
+  const tb = funcSource('_tbExtra');
+  assert.match(tb, /c\.style\.display\s*=\s*''/, '.cnt를 다시 숨기면 같은 오인이 재발합니다');
+  assert.ok(!/pglimit-info.*none/.test(tb), '표시개수가 있을 때 .cnt를 숨기면 안 됩니다');
+  const src = funcSource('renderCareer');
+  assert.match(src, /'전체 '\+data\.length\+'건 · 지금 '\+rows\.length\+'건'/,
+    '필터가 걸리면 전체 건수와 보이는 건수를 함께 적어야 합니다');
+  // 전체 건수는 원본없음 필터를 적용한 뒤에 계산해야 narrowed 판정이 맞는다
+  const iFilter = src.indexOf('if(_noFileOnly[name]) rows=rows.filter');
+  const iCnt = src.indexOf("sec.querySelector('.cnt')");
+  assert.ok(iFilter >= 0 && iCnt > iFilter, '.cnt는 필터 적용 뒤에 써야 합니다');
+});
+
+test('한 번도 안 맞춘 기기가 클라우드를 조용히 덮지 않는다', () => {
+  const src = funcSource('fbAutoPush');
+  assert.match(src, /if\(_fbBase==null && cloudAt\)\{ fbShowNotice\(\); return; \}/,
+    '⚠ 이 가드를 지우면 폰의 시드 데이터가 PC 기록을 덮습니다');
+});
+
+test('저장·불러오기 확인창이 기록 건수를 비교해 보여준다', () => {
+  assert.match(source, /var FB_COUNT_KEYS=\[/);
+  assert.match(funcSource('_fbCounts'), /FB_COUNT_KEYS\.forEach/);
+  const pull = funcSource('fbPull');
+  assert.match(pull, /_fbCounts\(v\.ls\)/, '클라우드 건수를 세야 합니다');
+  assert.match(pull, /_fbCounts\(null\)/, '이 기기 건수도 세야 합니다');
+  assert.match(pull, /적습니다/, '줄어들면 경고해야 합니다');
+  // 예전엔 localStorage 열쇠 개수를 보여줘서 197→86을 알 수 없었다
+  assert.ok(!/Object\.keys\(v\.ls\)\.length/.test(pull), '열쇠 개수는 기록 건수가 아닙니다');
+  const push = funcSource('fbPush');
+  assert.match(push, /cloud\.total>here\.total/, '클라우드가 더 많으면 물어봐야 합니다');
+});
+
+/* ===== 메뉴·대시보드 배치 기기 간 동기화 (2026-08-24) ===== */
+
+test('배치를 바꾸면 네 곳 모두 배치 동기화를 부른다', () => {
+  ['setNavState', 'setFavState', 'setNavOrder', 'setGroupOrder'].forEach((fn) => {
+    const m = source.match(new RegExp('function ' + fn + '\\([^\\n]*'));
+    assert.ok(m, fn + '이 있어야 합니다');
+    assert.match(m[0], /navSyncPush\(\)/, fn + ' 뒤에 배치를 올려야 합니다');
+  });
+});
+
+test('배치 동기화는 배치 열쇠만 담고 기록은 건드리지 않는다', () => {
+  const p = funcSource('_navSyncPayload');
+  assert.match(p, /nav_state/);
+  assert.match(p, /favs/);
+  assert.match(p, /nav_grp_order/);
+  assert.match(p, /navOrderKey\(g\.g\)/, '그룹별 순서(nod_*)도 담아야 합니다');
+  // 기록(위촉장·실적 등)이 섞이면 배치 동기화가 자료를 덮게 된다
+  ['wiccok', 'consult', 'certdoc', 'fbGatherLS'].forEach((k) => {
+    assert.ok(!new RegExp(k).test(p), '배치 동기화에 ' + k + '가 들어가면 안 됩니다');
+  });
+  const push = funcSource('navSyncPush');
+  assert.match(push, /kcareer\/'\+fbUid\+'\/nav/, '배치는 전용 nav 노드에만 씁니다');
+  assert.match(push, /if\(_navSyncApplying\) return;/, '받아 적용하는 중에 되돌려 보내면 메아리가 됩니다');
+});
+
+test('배치 동기화는 메아리·옛 값을 걸러내고 첫 수신은 조용하다', () => {
+  const w = funcSource('navSyncWatch');
+  assert.match(w, /if\(v\.at<=_navSyncAt\) return;/, '내가 쓴 값과 옛 값은 무시해야 합니다');
+  assert.match(w, /var first=\(_navSyncAt===0\)/);
+  assert.match(w, /if\(!first\) toast\(/, '켤 때마다 알림이 뜨면 시끄럽습니다');
+  assert.match(w, /buildNav\(\)/, '받은 배치를 화면에 반영해야 합니다');
+  // 로그아웃하면 감시를 풀어야 다른 계정으로 새로 붙는다
+  assert.match(source, /_navSyncWatching=false; _navSyncAt=0;/);
+});
+
 /* ===== 한글(HWPX)로 보기 (2026-08-23) =====
    실측: 경력 122행 → HTML 미리보기 6~11쪽 vs 한글 문서 7쪽.
    쪽 수의 정답은 한글 엔진이 센 값이다. */
