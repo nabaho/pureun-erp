@@ -279,7 +279,11 @@ ok('팀 머리행이 접기를 거친다',
   && RT.indexOf("if(colHidden('team',k)) return colTH('team',k,'');") > 0);
 ok('접을 수 있는 팀 본문 칸은 모두 접기를 거친다',
   colCols('team').every(c => RT.indexOf("colTD('team','" + c[0] + "'") > 0));
-ok('팀 칩이 머리줄에 붙는다', RT.indexOf("colBtn('team')+viewChips()") > 0);
+/* 글자 그대로 박아 두면 같은 뜻으로 고쳐 써도 깨진다(이 파일이 이미 겪은 함정이다).
+   ⚠ 현황판이 생기면서 열 칩은 «표일 때만» 나온다 — 현황판에는 접을 열이 없다. */
+ok('팀 칩이 머리줄에 붙는다 (표일 때)',
+  /colBtn\('team'\)/.test(RT) && /viewChips\(\)/.test(RT)
+  && RT.indexOf("_tv==='table'?colBtn('team')") > 0);
 ok('팀도 업무명을 접으면 진행률이 기업 칸으로 내려온다',
   RT.indexOf("colHidden('team','pt')?' '+stepChip(it._id)") > 0);
 ok('팀도 다시 그린 뒤 목록 자리를 잡아 준다',
