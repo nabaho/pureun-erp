@@ -44,7 +44,7 @@ function boot(who) {
     /* 2026-08-24: 메일 아이콘으로 들어오면 «받은메일함»이 열린다(예전엔 쓰기 화면).
        열리는 화면 이름은 그대로 'mail' 로 센다 — 이 검사가 보는 것은 «메일 창이
        열렸는가»이지, 그 안 어느 칸인가가 아니다. */
-    openMailBox() { opened.push('mail'); },
+    openMailBox(id) { opened.push('box:' + (id || '')); },
     openSentBox() { opened.push('sent'); },
     openSchedBox() { opened.push('sched'); },
     switchTab(t) { opened.push('tab:' + t); }
@@ -212,7 +212,9 @@ test('★ 주소가 메일이면 저장된 화면을 이긴다 — 아이콘을 
   back.__store[back.lastScreenKey()] = c.__store[c.lastScreenKey()];
   back.location.search = '?view=mail';             // 메일 아이콘으로 들어왔다
   back.restoreLastScreen();
-  assert.deepEqual(back.opened, ['mail'], '★ 메일 아이콘을 눌렀으면 메일이 열려야 합니다.');
+  /* 2026-08-24: 메일 아이콘으로 들어오면 «받은메일함»이 열린다(예전엔 쓰기 화면).
+     칸을 안 넘기면(box:'') mbNow() 가 받은메일함을 골라 준다. */
+  assert.deepEqual(back.opened, ['box:'], '★ 메일 아이콘을 눌렀으면 메일함이 열려야 합니다.');
 });
 
 test('보통 주소로 들어오면 예전 그대로 — 마지막 보던 화면이 열린다', () => {
@@ -223,4 +225,30 @@ test('보통 주소로 들어오면 예전 그대로 — 마지막 보던 화면
   back.__store[back.lastScreenKey()] = c.__store[c.lastScreenKey()];
   back.restoreLastScreen();
   assert.deepEqual(back.opened, ['sent']);
+});
+
+/* ══════ 다음메일함 (2026-08-24) ══════ */
+
+test('★ 메일함을 보다 나갔다 들어오면 «그 칸»으로 돌아온다 — 「보낸 메일」이 열리면 안 된다', () => {
+  /* mailSent 가 'box' 인데 restoreLastScreen 의 "else if (s.mail)" 이 먼저 걸려
+     보낸 메일이 열렸다. 값이 있으면 참이 되는 자리라, 갈래를 더할 때마다 이 함정이
+     다시 생긴다 — 그래서 이 검사를 둔다. */
+  const c = boot('uid-M');
+  c.state.view = 'mail'; c.state.mailSent = 'box'; c.state.mbBox = 'INBOX-abc12345';
+  c.saveLastScreen();
+  const back = boot('uid-M');
+  back.__store[back.lastScreenKey()] = c.__store[c.lastScreenKey()];
+  back.restoreLastScreen();
+  assert.deepEqual(back.opened, ['box:INBOX-abc12345'],
+    '메일함이 아니라 딴 화면이 열립니다: ' + JSON.stringify(back.opened));
+});
+
+test('쓰기 화면을 보다 나갔으면 쓰기로 돌아온다 — 예전 그대로', () => {
+  const c = boot('uid-N');
+  c.state.view = 'mail'; c.state.mailSent = false;
+  c.saveLastScreen();
+  const back = boot('uid-N');
+  back.__store[back.lastScreenKey()] = c.__store[c.lastScreenKey()];
+  back.restoreLastScreen();
+  assert.deepEqual(back.opened, ['mail']);
 });
