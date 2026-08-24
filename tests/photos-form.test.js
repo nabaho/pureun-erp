@@ -119,11 +119,23 @@ test('★ 서식 탭이 있고 이름표가 붙는다', () => {
     'main 이 없으면 끌어다 놓기·분류 지정으로 이 칸에 못 넣습니다');
 });
 
-test('★ 새 서식은 「읽은 칸 확인」으로 눈에 띈다', () => {
+/* ⚠ 2026-08-24 대표 지시로 뜻이 바뀌었다: 「계속해서 확인 필요가 나온다 … 제대로 완전히
+   고쳐 달라」. 종전에는 서식이 **조건 없이** 할 일이라 확인필요가 서식으로 늘 찼다.
+   이제 「기업 상세로 보낼 것이 남았을 때만」 할 일이다(formTodo). */
+test('★ 보낼 것이 남은 서식은 무엇을 하라는지 적힌다', () => {
   const w = fnOf(app, 'checkWhy');
-  assert.match(w, /form'\) return '서식 — 읽은 칸 확인'/);
-  assert.ok(w.indexOf("kind === 'form'") < w.indexOf('!r.auto'),
+  assert.match(w, /form'\) return formTodo\(r\) \? '🏢 기업 상세로 아직 안 보냄 — 보내기' : ''/,
+    '★ 무엇을 하라는지 안 적으면 열어 봐야 압니다');
+  /* ⚠ **코드 꼴로 찾는다**(`if (!r.auto)`). 그냥 `!r.auto` 로 찾으면 그 줄을 설명하는
+     주석을 먼저 집어 순서가 거꾸로 나온다 — 실제로 그렇게 걸렸다. */
+  assert.ok(w.indexOf("r.kind === 'form'") < w.indexOf('if (!r.auto)'),
     'needsCheck 와 순서가 어긋나면 걸린 이유와 적힌 이유가 달라집니다');
+  /* needsCheck 도 같은 조건·같은 순서여야 한다 — 서식은 늘 auto:false 라
+     그 줄에 먼저 닿으면 이 고침이 통째로 무의미해진다. */
+  const n = fnOf(app, 'needsCheck');
+  assert.match(n, /if \(r\.kind === 'form'\) return formTodo\(r\);/);
+  assert.ok(n.indexOf("r.kind === 'form'") < n.indexOf('if (!r.auto)'),
+    '★ auto 판정이 먼저면 서식은 언제나 할 일입니다');
 });
 
 /* readRows 를 실제로 돌린다 — 화면의 표는 이것이 낸 차례를 그대로 그린다 */

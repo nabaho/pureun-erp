@@ -6990,6 +6990,46 @@ function isPayslip(it) {
      (읽은 것을 사람이 한 번 대조해야 한다 — 보고 나면 「확인했음」으로 치운다). */
 const KEEP_ONLY = { meeting: 1, contract: 1 };
 
+/* ══════ 「확인 필요」가 계속 나온다 (대표 지시 2026-08-24) ══════
+   "계속해서 확인 필요가 나온다. 실제 화면에서는 전혀 문제가 없는데 어떻게 해야 하나.
+    이 부분 제대로 완전히 고쳐 달라."
+
+   ■ 무엇이 문제였나
+   chat·timesheet·form 은 **조건 없이** 할 일이었다 — 판독이 멀쩡히 됐어도 사람이
+   한 장씩 열어 ✓ 를 눌러야 목록에서 빠졌다. 서식은 상담 한 건에 여러 장씩 나오므로
+   확인필요가 서식으로 늘 차 있었고, 그러면 **정작 손봐야 할 것이 묻힌다.**
+   2026-08-04 에도 같은 보고가 있었다("확인 필요 오류가 계속 나온다") — 그때 세운
+   원칙이 「치울 수 없는 할 일은 목록을 못 믿게 만든다」였다.
+
+   ■ 어떤 원칙으로 고치나
+   이 저장소가 이미 두 번 쓴 원칙 그대로다:
+     · 「원본이 작다」 → **기계가 값을 검산했으면 통과**(smallCheckedOk, 2026-08-23)
+     · 「업체관리에 못 넣었다」 → **사람이 할 일이 없으면 할 일이 아니다**(coTodo, 2026-08-23)
+   그래서 셋을 「**사람이 해서 달라지는 것이 있을 때만** 할 일」로 바꾼다.
+
+   ⚠ 근태표는 그대로 둔다 — 손글씨 숫자는 기계가 검산할 방법이 없다. 여기서 사람을
+     빼면 잘못 읽은 근태가 조용히 굳는다. 늘리는 쪽으로 흔들리지 말 것. */
+
+/* 서식·신청서 — 사람이 눌러서 달라지는 것이 있는가.
+   ⚠ 서식의 값이 실제로 쓰이는 곳은 **기업 상세** 하나다. 그리로 보낼 것이 남았으면
+     할 일이고(누르면 끝난다), 보냈거나 보낼 수 없으면(사업자번호를 못 읽음) 사진첩에
+     보관만 하는 서류다 — 그때 ⚠ 를 달아 두면 **아무 결과도 바꾸지 않는 할 일**이 된다.
+   ⚠ 값이 틀렸을 위험은 그대로 지킨다: 기업 상세로 «스스로» 가는 것은 기계가 번호를
+     검산한 것만이고(autoSendCoInfo), 원본이 작은 서식은 위 tooSmall 줄에서 먼저 걸린다. */
+function formTodo(read) {
+  return !!(read && read.kind === 'form' && canSendCoInfo(read));
+}
+
+/* 대화 캡처 — 뽑아 둔 할 일이 **아직 남아 있을 때만**.
+   ⚠ 이 기능의 전부가 「할 일을 뽑아 사람이 하나씩 끝낸다」다. 다 끝냈는데도 ⚠ 가
+     남으면 끝냈다는 표시가 무의미해진다. 하나도 못 뽑은 대화는 볼 것이 없다. */
+function chatTodo(read) {
+  if (!read || read.kind !== 'chat') return false;
+  const t = (read.fields && read.fields.todos) || null;
+  if (!Array.isArray(t) || !t.length) return false;
+  return t.some(function (x) { return x && !x.done; });
+}
+
 /* ══════ 왜 확인이 필요한가 (대표 보고 2026-08-10) ══════
    "확인필요 3장 클릭했는데 어떻게 하라는 건가. 상황에 대한 판단이 안 선다"
 
@@ -7016,12 +7056,14 @@ function checkWhy(it) {
   if (small && !smallCheckedOk(r)) return '원본이 작습니다(' + small + 'px) — 값을 원본과 대조';
   if (r.kind === 'other') return readAnyField(r) ? '종류를 못 가림 — 분류 지정' : '';
   if (KEEP_ONLY[r.kind]) return '';
-  /* 대화 캡처는 뽑아 둔 할 일을 사람이 한 번 봐야 한다 — 보고 나면 「확인했음」. */
-  if (r.kind === 'chat') return '대화 캡처 — 할 일 확인';
-  /* 근태표는 표를 원본과 대조해야 한다 — 손글씨 숫자는 확인 전까지 못 믿는다. */
+  /* ── 셋은 「사람이 해서 달라지는 것이 있을 때만」 (대표 지시 2026-08-24) ──
+     까닭은 위 formTodo·chatTodo 옆에 적었다. needsCheck 와 **같은 조건**을 쓴다 —
+     한쪽만 고치면 목록에는 안 보이는데 이유만 떠다닌다. */
+  if (r.kind === 'chat') return chatTodo(r) ? '대화 캡처 — 남은 할 일 확인' : '';
+  /* 근태표는 표를 원본과 대조해야 한다 — 손글씨 숫자는 기계가 검산할 방법이 없다. */
   if (r.kind === 'timesheet') return '근태표 — 표를 원본과 대조';
-  /* 서식도 읽은 칸을 한 번 봐야 한다 — 보고 나면 「확인했음」. */
-  if (r.kind === 'form') return '서식 — 읽은 칸 확인';
+  /* 서식은 기업 상세로 보낼 것이 남았을 때만 — 보냈거나 보낼 수 없으면 보관만 한다. */
+  if (r.kind === 'form') return formTodo(r) ? '🏢 기업 상세로 아직 안 보냄 — 보내기' : '';
   if (!r.auto) return '읽은 값이 미덥지 않음 — 열어서 확인';
   if (CARD_KINDS[r.kind] && !(r.filed && r.filed.id)) return '명함첩에 아직 안 감 — 보내기';
   /* ⚠ needsCheck 와 «같은 조건»(coTodo)이어야 한다 — 한쪽만 고치면 목록에는
@@ -7054,6 +7096,14 @@ function needsCheck(it) {
      정말 서류가 아닌 사진(읽은 것이 없음)은 할 일이 아니다. */
   if (r.kind === 'other') return readAnyField(r);
   if (KEEP_ONLY[r.kind]) return false;                        // 넣을 곳이 없다 — 할 일이 아니다
+  /* ── 셋은 「사람이 해서 달라지는 것이 있을 때만」 (대표 지시 2026-08-24) ──
+     ⚠ **아래 `!r.auto` 줄보다 먼저** 판정해야 한다. 서식·대화캡처는 판독기가 일부러
+       auto:false 로 준다(「자동 등록 대상이 아니다」는 뜻) — 그 줄에 먼저 닿으면
+       무조건 할 일이 되어 이 고침이 통째로 무의미해진다.
+     ⚠ checkWhy 와 «같은 조건»이다. 까닭은 formTodo·chatTodo 옆에 적었다. */
+  if (r.kind === 'form') return formTodo(r);
+  if (r.kind === 'chat') return chatTodo(r);
+  if (r.kind === 'timesheet') return true;                    // 손글씨 — 기계가 못 본다
   if (!r.auto) return true;                                   // 검증에 걸렸다
   if (CARD_KINDS[r.kind] && !(r.filed && r.filed.id)) return true;  // 아직 안 보냈다
   /* 업체관리로 «아직 안 보낸» 것은 할 일이다 — 누르면 끝난다. 다만 보냈는데
@@ -7779,7 +7829,7 @@ function unhideKind(key) {
   PuPhotoStore.setKindHidden(key, false)
     .then(function () { return loadCustomKinds(); })
     .then(function () { openAddKind(); toast && toast('분류를 되살렸습니다'); })
-    .catch(function (e) { showKindErr('kindNameErr', (e && e.message) || String(e)); });
+    .catch(function (e) { showKindErr('kindNameErr', kindErrMsg(e)); });
 }
 
 function submitRenameFixed(key) {
@@ -7789,7 +7839,7 @@ function submitRenameFixed(key) {
     return loadCustomKinds().then(function () { closeKindPopup(); });
   }).catch(function (e) {
     console.warn('[분류 이름 고치기]', e);
-    showKindErr('kindNameErr', (e && e.message) || String(e));
+    showKindErr('kindNameErr', kindErrMsg(e));
   }).then(function () { $('kindPopupOk').disabled = false; });
 }
 
@@ -7814,7 +7864,7 @@ function askDeleteFixedKind(key, label, n) {
     toast && toast('「' + label + '」 분류를 없앴습니다 — 사진 ' + n + '장은 전체사진에 그대로 있습니다');
   }).catch(function (e) {
     console.warn('[분류 삭제]', e);
-    showKindErr('kindNameErr', (e && e.message) || String(e));
+    showKindErr('kindNameErr', kindErrMsg(e));
   }).then(function () { $('kindPopupOk').disabled = false; });
 }
 
@@ -7851,7 +7901,7 @@ function askDeleteKind(id, name, n) {
     toast && toast('「' + name + '」 분류를 지웠습니다 — 사진은 그대로 있습니다');
   }).catch(function (e) {
     console.warn('[분류 지우기]', e);
-    showKindErr('kindNameErr', (e && e.message) || String(e));
+    showKindErr('kindNameErr', kindErrMsg(e));
   }).then(function () { $('kindPopupOk').disabled = false; });
 }
 
@@ -7863,7 +7913,7 @@ function submitRenameKind(id) {
     return loadCustomKinds().then(function () { closeKindPopup(); });
   }).catch(function (e) {
     console.warn('[분류 이름 고치기]', e);
-    showKindErr('kindNameErr', (e && e.message) || String(e));
+    showKindErr('kindNameErr', kindErrMsg(e));
   }).then(function () { $('kindPopupOk').disabled = false; });
 }
 
@@ -7879,8 +7929,31 @@ function submitAddKind() {
     });
   }).catch(function (e) {
     console.warn('[분류 만들기]', e);
-    showKindErr('kindNameErr', (e && e.message) || String(e));
+    showKindErr('kindNameErr', kindErrMsg(e));
   }).then(function () { $('kindPopupOk').disabled = false; });
+}
+
+/* ══════ 서버가 거부했을 때 «무엇을 해야 하나»로 바꿔 말한다 (대표 보고 2026-08-24) ══════
+   "삭제를 클릭해도 삭제가 안 된다" — 화면에 뜬 것은 `PERMISSION_DENIED: Permission denied`
+   하나였다. 영어 한 줄로는 코드가 틀린 것인지, 권한이 없는 것인지, 규칙이 빠진 것인지
+   알 수 없다 — 대표께서 할 수 있는 일이 아무것도 없다.
+
+   ⚠ 분류 이름표·숨김은 `puphotos/kindLabels` · `puphotos/kindHidden` 에 쓴다. 그런데
+     **실시간DB 규칙에 그 자리가 아예 없다**(customKinds·retention·sharedTo 만 있다).
+     `puphotos` 최상위는 열려 있지 않으므로, 자리를 적지 않으면 조용히 거부된다 —
+     저장 층에 그 경고가 이미 적혀 있는데(retentionPath 옆) 이 둘을 만들 때 놓쳤다.
+   ⚠ 규칙은 **파이어베이스 콘솔이 진짜**다. 저장소의 규칙 파일로 덮어 배포하면 사진첩·
+     성과확인이 막힌 적이 있다 — 그래서 앱이 고칠 수 없는 일이고, 붙여넣을 조각을
+     docs/firebase-rules-분류이름표-추가(붙여넣기용).json 에 따로 두었다. */
+function kindErrMsg(e) {
+  const raw = (e && e.message) || String(e || '');
+  if (/PERMISSION_DENIED|permission[_ ]denied/i.test(raw)) {
+    return '서버가 거부했습니다 — 실시간DB 규칙에 「분류 이름표」 자리가 없습니다.\n' +
+      '파이어베이스 콘솔 → Realtime Database → 규칙에 puphotos/kindLabels · kindHidden 을 ' +
+      '더해 주세요(붙여넣을 조각: docs/firebase-rules-분류이름표-추가).\n' +
+      '사진과 판독 결과는 아무것도 바뀌지 않았습니다.';
+  }
+  return raw;
 }
 
 function showKindErr(id, msg) {
@@ -7944,7 +8017,7 @@ function submitAssignKind() {
       });
     }).catch(function (e) {
       console.warn('[분류 만들기]', e);
-      showKindErr('kindNameErr', (e && e.message) || String(e));
+      showKindErr('kindNameErr', kindErrMsg(e));
     }).then(function () { $('kindPopupOk').disabled = false; });
     return;
   }

@@ -53,6 +53,12 @@ function load() {
     grab(/^const FAIL_GIVEUP = \d+;$/m, 'FAIL_GIVEUP').replace('const ', 'var '),
     grab(/function readFailKind\(read\)[\s\S]*?\n\}/, 'readFailKind'),
     grab(/function readFailAdvice\(read\)[\s\S]*?\n\}/, 'readFailAdvice'),
+    /* ⚠ 2026-08-24 — 서식·대화캡처는 「사람이 해서 달라지는 것이 있을 때만」 할 일이다.
+       **진짜 함수를 넣는다** — 가짜로 두면 그 판정이 틀려도 아래 「할 일과 이유가
+       어긋나지 않는다」가 못 잡는다. canSendCoInfo 도 함께 떠 온다(formTodo 가 쓴다). */
+    grab(/function canSendCoInfo\(read\)[\s\S]*?\n\}/, 'canSendCoInfo'),
+    grab(/function formTodo\(read\)[\s\S]*?\n\}/, 'formTodo'),
+    grab(/function chatTodo\(read\)[\s\S]*?\n\}/, 'chatTodo'),
     grab(/function checkWhy\(it\)[\s\S]*?\n\}/, 'checkWhy'),
     grab(/function needsCheck\(it\)[\s\S]*?\n\}/, 'needsCheck')
   ].join('\n');

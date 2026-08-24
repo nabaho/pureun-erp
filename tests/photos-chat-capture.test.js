@@ -103,13 +103,22 @@ test('★ 대화캡처 탭이 있고, 사람이 이 칸으로 옮길 수도 있�
     'main 이 없으면 끌어다 놓기·분류 지정으로 이 칸에 못 넣습니다');
 });
 
-test('★ 새 대화는 「할 일 확인」으로 한 번 눈에 띈다', () => {
+/* ⚠ 2026-08-24 대표 지시로 뜻이 바뀌었다: 「계속해서 확인 필요가 나온다 … 제대로 완전히
+   고쳐 달라」. 종전에는 대화캡처가 **조건 없이** 할 일이었다 — 뽑아 둔 할 일을 다 끝낸
+   뒤에도 ⚠ 가 남아, 끝냈다는 표시가 무의미해졌다. 이제 「남은 할 일이 있을 때만」이다. */
+test('★ 남은 할 일이 있는 대화는 무엇을 하라는지 적힌다', () => {
   const w = fnOf(app, 'checkWhy');
-  assert.match(w, /chat'\) return '대화 캡처 — 할 일 확인'/,
+  assert.match(w, /chat'\) return chatTodo\(r\) \? '대화 캡처 — 남은 할 일 확인' : ''/,
     '이유가 없으면 ⚠ 만 떠서 한 장씩 열어 봐야 압니다');
-  /* needsCheck 와 같은 순서여야 한다 — chat 판정이 !r.auto 보다 앞 */
-  assert.ok(w.indexOf("kind === 'chat'") < w.indexOf('!r.auto'),
+  /* needsCheck 와 같은 순서여야 한다 — chat 판정이 auto 판정보다 앞.
+     ⚠ **코드 꼴로 찾는다**(`if (!r.auto)`). 그냥 `!r.auto` 로 찾으면 그 줄을 설명하는
+       주석을 먼저 집어 순서가 거꾸로 나온다 — 실제로 그렇게 걸렸다. */
+  assert.ok(w.indexOf("r.kind === 'chat'") < w.indexOf('if (!r.auto)'),
     '순서가 어긋나면 걸린 이유와 적힌 이유가 달라집니다');
+  const n = fnOf(app, 'needsCheck');
+  assert.match(n, /if \(r\.kind === 'chat'\) return chatTodo\(r\);/);
+  assert.ok(n.indexOf("r.kind === 'chat'") < n.indexOf('if (!r.auto)'),
+    '★ auto 판정이 먼저면 대화캡처는 언제나 할 일입니다');
 });
 
 test('★ 요약과 할 일이 화면에 그려진다 — 실제로 돌려 본다', () => {
