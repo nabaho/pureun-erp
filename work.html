@@ -6225,6 +6225,91 @@ function teamCardHTML(c){
     +'<div class="tmrec">이 주 기록 '+c.rec+'/'+c.main+stale+'</div>'
   +'</div>';
 }
+/* ── 부담당 칸 정리 ──────────────────────────────────────────────
+   엑셀 이관이 「공동작업자」 칸의 글을 명부와 대조하지 않고 그대로 부담당에 담았다.
+   그래서 「- 전화번호 : 042-520-8062」·「① 노동청」·「- 조사관 : 강두환 조사관」 같은 것이
+   사람 자리에 앉아 있다. 표의 부담당 열과 깔때기 목록에 그대로 나온다.
+
+   ⚠ 「사람인가」는 ownerOptions() 로 판정한다 — 이 화면이 이미 쓰는 정의다.
+     = 재직 명부 + «주담당으로 등장하는 이름»(퇴직자가 여기 들어온다).
+     이름 모양으로 짐작하지 않는다. 「① 노동청」은 걸러도 「박은비」는 못 걸러야 하는데,
+     글자만 봐서는 「서경숙 팀장」이 사람인지 아닌지 가릴 수 없다.
+   ⚠ 지우기 전에 반드시 목록을 보여 준다. 사람을 실수로 지우면 되돌릴 길이 없다. */
+function subJunkList(){
+  var ok={};
+  ownerOptions().forEach(function(u){ if(u&&u.name) ok[u.name]=1; });
+  if(!Object.keys(ok).length) return [];        // 명부를 아직 못 읽었다 — 아무것도 판정하지 않는다
+  var m={};
+  allItems().forEach(function(it){
+    mgrSubNames(it).forEach(function(n){
+      if(ok[n]) return;
+      var e=m[n]||(m[n]={name:n,n:0,ex:''});
+      e.n++;
+      if(!e.ex) e.ex=(it.company||it.title||it.no||'').slice(0,24);
+    });
+  });
+  return Object.keys(m).map(function(k){ return m[k]; })
+    .sort(function(a,b){ return b.n-a.n||String(a.name).localeCompare(String(b.name),'ko'); });
+}
+function subJunkModal(){
+  var L=subJunkList();
+  S._sj=L;
+  if(!L.length){
+    showModal('<h2 style="margin:0 0 10px">🧹 부담당 칸 정리</h2>'
+      +'<p class="muted" style="font-size:12.5px">사람이 아닌 부담당이 없습니다.</p>'
+      +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">닫기</button></div>');
+    return;
+  }
+  var tot=L.reduce(function(s,x){ return s+x.n; },0);
+  showModal('<h2 style="margin:0 0 6px">🧹 부담당 칸 정리</h2>'
+    +'<p class="muted" style="font-size:12.5px;line-height:1.7;margin:0 0 10px">'
+    +'엑셀에서 옮겨 올 때 「공동작업자」 칸의 글이 명부와 대조 없이 <b>부담당</b>으로 들어갔습니다.<br>'
+    +'아래는 <b>명부에도 없고 주담당으로도 나온 적 없는</b> 이름입니다. '
+    +'<b style="color:var(--danger)">사람이 섞여 있지 않은지 꼭 확인하고</b> 체크를 푸세요.<br>'
+    +'지우는 것은 <b>부담당 표시뿐</b>입니다 — 업무·기록·노트는 그대로 있습니다.</p>'
+    +'<div style="background:var(--acc-soft);border:1px solid #c7d7fe;border-radius:9px;padding:9px 12px;font-size:12px;margin-bottom:10px">'
+    +'이름 <b>'+L.length+'가지</b> · 붙어 있는 자리 <b>'+tot+'군데</b></div>'
+    +'<div style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:9px">'
+    +L.map(function(x,i){
+        return '<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12.5px;'
+          +'border-bottom:1px solid var(--bg);cursor:pointer">'
+          +'<input type="checkbox" class="sjv" data-i="'+i+'" checked>'
+          +'<b style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.name)+'</b>'
+          +'<span class="muted" style="font-size:11px">'+esc(x.ex)+'</span>'
+          +'<span style="font-weight:700;color:var(--faint);font-variant-numeric:tabular-nums">'+x.n+'</span></label>';
+      }).join('')
+    +'</div>'
+    +'<div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">'
+    +'<button onclick="closeM()">그만두기</button>'
+    +'<button class="primary" onclick="subJunkRun()">체크한 것 지우기</button></div>'
+    +'<div id="sjmsg" class="muted" style="font-size:12px;margin-top:8px"></div>');
+}
+function subJunkRun(){
+  var L=S._sj||[], pick={}, nPick=0;
+  [].slice.call(document.querySelectorAll('.sjv')).forEach(function(c){
+    if(!c.checked) return;
+    var x=L[+c.getAttribute('data-i')]; if(x){ pick[x.name]=1; nPick++; }
+  });
+  var msg=$('sjmsg');
+  if(!nPick){ if(msg) msg.innerHTML='<b style="color:var(--danger)">고른 것이 없습니다.</b>'; return; }
+  var up={}, nItem=0;
+  allItems().forEach(function(it){
+    var cur=it.mgr_subs||[];
+    var left=cur.filter(function(s){ return !(s&&pick[s.name]); });
+    if(left.length===cur.length) return;
+    up[NS+'/items/'+it._id+'/mgr_subs']=left.length?left:null;
+    nItem++;
+  });
+  if(!nItem){ if(msg) msg.innerHTML='지울 것이 없습니다.'; return; }
+  if(msg) msg.textContent='지우는 중…';
+  fbDb.ref().update(up).then(function(){
+    closeM();
+    toast('🧹 부담당 '+nPick+'가지를 '+nItem+'건에서 지웠습니다');
+    renderTeam();
+  }).catch(function(e){
+    if(msg) msg.innerHTML='<b style="color:var(--danger)">지우지 못했습니다 — '+esc(e&&e.message||'')+'</b>';
+  });
+}
 function teamBoardHTML(open,wk,today){
   var cards=teamCardData(open,wk,today);
   if(!cards.length) return '<div class="tmnone">진행 중인 업무가 없습니다.</div>';
@@ -6266,6 +6351,16 @@ function renderTeam(){
     if(!isCurWeek()) h+='<div class="histbanner">🕘 <b>'+esc(weekLabel(S.week))+'</b> 열람 중'
       +'<span class="back" onclick="setWeek(null)">이번 주로 →</span></div>';
     h+=teamBoardHTML(open,wk,today);
+    /* 부담당 칸에 사람 아닌 것이 섞여 있으면 한 줄로 알린다.
+       ⚠ 안내가 아니라 «자료가 잘못됐다»는 알림이라 화면에 둔다. 정리하면 사라진다.
+       고치는 사람은 대표뿐이므로 다른 사람에게는 보이지 않는다 — 못 고칠 일을 알려 봐야
+       걱정만 남는다. */
+    if(isAdmin()){
+      var _sj=subJunkList();
+      if(_sj.length) h+='<div class="histbanner">🧹 부담당 칸에 사람이 아닌 이름 <b>'+_sj.length+'가지</b>가 '
+        +'섞여 있습니다 (엑셀에서 옮겨 올 때 들어온 연락처·기관 이름).'
+        +'<span class="back" onclick="subJunkModal()">정리하기 →</span></div>';
+    }
     app.innerHTML=h+splitClose();
     calAfter();
     return;

@@ -294,8 +294,9 @@ test('현황판이면 표를 만들지 않고 끝낸다 — 만들고 버리면 
   const i = RT.indexOf("if(_tv==='board'){");
   assert.ok(i > 0, '갈림길을 못 찾음');
   assert.ok(i < RT.indexOf('<div class="panel tbl" id="teamtbl"'), '표를 만들기 전에 갈라진다');
-  assert.match(RT.slice(i, i + 500), /teamBoardHTML\(open,wk,today\)/);
-  assert.match(RT.slice(i, i + 500), /return;/);
+  const 갈림길 = RT.slice(i, RT.indexOf('return;', i) + 7);   // 길이를 못 박지 않는다 — 안이 늘어난다
+  assert.match(갈림길, /teamBoardHTML\(open,wk,today\)/);
+  assert.match(갈림길, /return;/);
 });
 
 test('현황판에는 표의 도구를 끌고 오지 않는다 (깔때기·정렬·접기)', () => {
@@ -318,6 +319,122 @@ test('한 사람만 걸러 보는 중이면 그렇게 말하고 돌아갈 길을
   assert.match(RT, /님이 맡은 업무만 보고 있습니다 \(주담당·부담당 모두\)/);
   // 소스에서는 작은따옴표가 escape 되어 있다: setTeamView(\'board\')
   assert.match(RT, /setTeamView\(\\'board\\'\)">현황판으로 →/);
+});
+
+/* ────────────────────────────────────────────────
+   ⑥ 부담당 칸 정리 — 사람을 실수로 지우지 않는 것이 전부다
+   ──────────────────────────────────────────────── */
+function junkBox(opts){
+  opts = opts || {};
+  const log = { updated:null, toast:[], render:0, modal:'' };
+  const box = {
+    console, String, Array, Object, Number,
+    S: {}, NS: 'work_erp',
+    esc: x => String(x == null ? '' : x).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),
+    ownerOptions: () => opts.people || [],
+    allItems: () => opts.items || [],
+    mgrSubNames: (it) => ((it && it.mgr_subs) || []).map(s => s && s.name).filter(Boolean),
+    showModal(h){ log.modal = h; },
+    closeM(){},
+    toast(m){ log.toast.push(String(m)); },
+    renderTeam(){ log.render++; },
+    $: () => null,
+    fbDb: { ref(){ return { update(u){ log.updated = u; return Promise.resolve(); } }; } },
+    document: { querySelectorAll: () => (opts.checked || []) }
+  };
+  box.window = box;
+  vm.createContext(box);
+  vm.runInContext(
+    grab('subJunkList') + '\n' + grab('subJunkModal') + '\n' + grab('subJunkRun') + '\n'
+    + 'this.list=subJunkList; this.modal=subJunkModal; this.run=subJunkRun;', box);
+  box._log = log;
+  return box;
+}
+
+const 명부 = [{ name:'권형하' }, { name:'김혜민' }, { name:'임혜미' }];
+const 더러운건 = [
+  { _id:'1', company:'㈜가나', mgr_subs:[{name:'김혜민'},{name:'- 전화번호 : 042-520-8062'}] },
+  { _id:'2', company:'다라',   mgr_subs:[{name:'- 전화번호 : 042-520-8062'}] },
+  { _id:'3', company:'㈜마바', mgr_subs:[{name:'① 노동청'},{name:'임혜미'}] },
+  { _id:'4', company:'사아',   mgr_subs:[] }
+];
+
+test('명부에도 없고 주담당으로도 나온 적 없는 이름만 「사람 아님」으로 본다', () => {
+  const L = Array.from(junkBox({ people:명부, items:더러운건 }).list());
+  assert.equal(L.map(x => x.name).join(','), '- 전화번호 : 042-520-8062,① 노동청');
+});
+
+test('퇴직자도 지우지 않는다 — ownerOptions 가 주담당으로 나온 이름을 함께 준다', () => {
+  // 임혜미는 재직 명부에서 빠져도 주담당으로 등장하면 ownerOptions 에 들어온다
+  const L = Array.from(junkBox({ people:[{ name:'권형하' }, { name:'임혜미' }], items:더러운건 }).list());
+  assert.ok(L.every(x => x.name !== '임혜미'));
+});
+
+test('많이 붙은 것이 위로 — 어느 것이 큰 문제인지 먼저 보인다', () => {
+  const L = Array.from(junkBox({ people:명부, items:더러운건 }).list());
+  assert.equal(L[0].n, 2);
+  assert.equal(L[1].n, 1);
+});
+
+test('어느 업무에 붙어 있었는지 한 건을 보여 준다 — 이름만으로는 사람인지 알기 어렵다', () => {
+  const L = Array.from(junkBox({ people:명부, items:더러운건 }).list());
+  assert.equal(L[0].ex, '㈜가나');
+});
+
+test('⚠ 명부를 못 읽었으면 아무것도 판정하지 않는다 — 전원을 「사람 아님」으로 몰면 큰일', () => {
+  assert.equal(Array.from(junkBox({ people:[], items:더러운건 }).list()).length, 0);
+});
+
+test('이름 모양으로 짐작하지 않는다 — 「서경숙 팀장」도 명부에 있으면 그대로 둔다', () => {
+  const L = Array.from(junkBox({
+    people:[{ name:'서경숙 팀장' }],
+    items:[{ _id:'1', mgr_subs:[{name:'서경숙 팀장'}] }]
+  }).list());
+  assert.equal(L.length, 0);
+});
+
+test('지우기 전에 반드시 목록을 보여 준다', () => {
+  const box = junkBox({ people:명부, items:더러운건 });
+  box.modal();
+  assert.match(box._log.modal, /042-520-8062/);
+  assert.match(box._log.modal, /① 노동청/);
+  assert.match(box._log.modal, /사람이 섞여 있지 않은지 꼭 확인/);
+  assert.match(box._log.modal, /업무·기록·노트는 그대로/, '무엇이 지워지는지 분명히 한다');
+});
+
+test('체크한 것만 지운다 — 체크를 푼 이름은 그대로 남는다', () => {
+  const box = junkBox({ people:명부, items:더러운건,
+    checked:[{ checked:true, getAttribute:() => '0' }, { checked:false, getAttribute:() => '1' }] });
+  box.modal();
+  box.run();
+  const up = box._log.updated;
+  assert.ok(up, '쓰기가 없었다');
+  // 1번: 김혜민만 남는다 / 2번: 하나도 안 남아 null / 3번은 ① 노동청을 체크 안 했으니 손대지 않는다
+  assert.equal(Object.keys(up).sort().join(','), 'work_erp/items/1/mgr_subs,work_erp/items/2/mgr_subs');
+  assert.equal(Array.from(up['work_erp/items/1/mgr_subs']).map(s => s.name).join(','), '김혜민');
+  assert.equal(up['work_erp/items/2/mgr_subs'], null, '빈 배열 대신 null 로 지운다');
+});
+
+test('아무것도 안 골랐으면 지우지 않고 그렇게 말한다', () => {
+  const box = junkBox({ people:명부, items:더러운건,
+    checked:[{ checked:false, getAttribute:() => '0' }] });
+  box.modal();
+  box.run();
+  assert.equal(box._log.updated, null);
+});
+
+test('지울 것이 없으면 「없습니다」라고 하고 끝낸다', () => {
+  const box = junkBox({ people:명부, items:[{ _id:'1', mgr_subs:[{name:'김혜민'}] }] });
+  box.modal();
+  assert.match(box._log.modal, /사람이 아닌 부담당이 없습니다/);
+});
+
+test('현황판에서 그 길을 낸다 — 있을 때만, 대표에게만', () => {
+  const i = RT.indexOf("if(_tv==='board'){");
+  const 조각 = RT.slice(i, RT.indexOf('return;', i));
+  assert.match(조각, /if\(isAdmin\(\)\)\{/, '고칠 수 없는 사람에게 알려 봐야 걱정만 남는다');
+  assert.match(조각, /if\(_sj\.length\)/, '없으면 띠도 없다');
+  assert.match(조각, /subJunkModal\(\)/);
 });
 
 test('칸 모양이 CSS에 있다', () => {
