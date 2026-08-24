@@ -153,6 +153,43 @@ test('★ 인용줄(> …)은 건너뛴다 — 답장은 온통 인용으로 시
   assert.equal(MB.previewFrom(Buffer.from(t), { enc: '7bit', cs: 'utf-8' }), '실제 답장입니다');
 });
 
+test('★ 숫자 문자(&#44048;)를 글자로 푼다 — 안 풀면 「감사합니다」가 코드로 보인다', () => {
+  /* 2026-08-24 실측: 보낸메일함 줄이 「&#44048;&#49324;&#54633;&#45768;&#45796;」로 나왔다. */
+  const got = MB.previewFrom(Buffer.from('&#44048;&#49324;&#54633;&#45768;&#45796;'),
+                             { enc: '7bit', cs: 'utf-8', html: true });
+  assert.equal(got, '감사합니다');
+  assert.equal(MB.previewFrom(Buffer.from('&#xAC00;&#xB098;'),
+                             { enc: '7bit', cs: 'utf-8', html: true }), '가나');
+});
+
+test('망가진 숫자 문자에 걸려 넘어지지 않는다 — 못 알아보면 그냥 둔다', () => {
+  /* 글자로 못 바꾸는 것을 억지로 바꾸면 목록이 물음표로 찬다. 손대지 않는 것이 낫다. */
+  assert.equal(MB.unentity('&#0;').trim(), '', '쓸 수 없는 번호는 빈칸으로');
+  assert.equal(MB.unentity('&#999999999999;'), '&#999999999999;', '자릿수가 터무니없으면 그냥 둔다');
+  assert.equal(MB.unentity('&#xZZZZ;'), '&#xZZZZ;', '16진수가 아니면 그냥 둔다');
+  assert.equal(MB.unentity('&unknown;'), '&unknown;', '모르는 이름은 그냥 둔다');
+});
+
+test('★ 전달·답장의 «메일 머리줄»은 글이 아니다 — 그것부터 보이면 무슨 메일인지 모른다', () => {
+  const t = '--- Original Message ---\nFrom : "푸른노무법인"<370-6@daum.net>\n'
+          + 'To : 이혜은\nSubject : 자료\n\n실제 본문입니다';
+  assert.equal(MB.previewFrom(Buffer.from(t), { enc: '7bit', cs: 'utf-8' }), '실제 본문입니다');
+  assert.equal(MB.isHeadLine('보낸사람 : 홍길동'), true);
+  assert.equal(MB.isHeadLine('----- 원본 메시지 -----'), true);
+  assert.equal(MB.isHeadLine('안녕하세요 자료 보냅니다'), false);
+});
+
+test('머리줄밖에 없으면 그것이라도 보여 준다 — 빈 줄보다 낫다', () => {
+  const t = '--- Original Message ---\nFrom : "푸른노무법인"<370-6@daum.net>';
+  assert.ok(MB.previewFrom(Buffer.from(t), { enc: '7bit', cs: 'utf-8' }).length > 0);
+});
+
+test('html 의 <br>·</p> 는 줄로 바꾼다 — 안 그러면 머리줄을 줄 단위로 걷을 수 없다', () => {
+  const got = MB.previewFrom(Buffer.from('<p>From : 누구</p><br>실제 글입니다'),
+                             { enc: '7bit', cs: 'utf-8', html: true });
+  assert.equal(got, '실제 글입니다');
+});
+
 test('★ 인용밖에 없으면 인용이라도 보여 준다 — 빈 줄은 「본문 없는 메일」로 읽힌다', () => {
   const t = '> 이전 메일 내용입니다\n> 또 인용';
   const got = MB.previewFrom(Buffer.from(t), { enc: '7bit', cs: 'utf-8' });
