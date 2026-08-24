@@ -172,7 +172,8 @@ test('목적사업 탭 아래 하위 탭으로 들어간다', () => {
 });
 
 test('대부는 기본재산으로만 — 그것을 말해 준다', () => {
-  const h = SRC.slice(SRC.indexOf("'loan.book':{t:"), SRC.indexOf("'loan.book':{t:") + 1400);
+  const from = SRC.indexOf("'loan.book':{t:");
+  const h = SRC.slice(from, SRC.indexOf("':{t:", from + 20));   // 다음 도움말 항목 앞까지
   assert.match(h, /기본재산으로만/, '대부의 재원 제한을 안 알려 준다');
   assert.match(h, /제62조/, '근거 법령이 없다');
   assert.match(h, /주민등록번호·계좌번호는 칸을 두지 않았습니다/, '무엇을 안 담는지 말해야 한다');

@@ -138,7 +138,11 @@ test('증빙은 판독하지 않는다 — 「받았다」를 증명하는 서�
   const pick = grabFn('pickAlbumPhoto');
   const i = pick.indexOf('_pick.txn');
   assert.ok(i > 0, '거래 증빙 길이 없다');
-  const branch = pick.slice(i, i + 220);
+  /* 「잇기만 하는」 갈래는 판독 경로가 시작되는 자리에서 끝난다 — 고정 길이로 자르면
+     줄바꿈 방식(CRLF/LF)에 따라 창이 달라져 CI 에서만 깨진다. */
+  const cut = pick.indexOf("var b=$('pk-body')", i);
+  assert.ok(cut > i, '판독 경로를 못 찾았다 — 이 검사의 경계가 사라졌다');
+  const branch = pick.slice(i, cut);
   assert.ok(!/readDocInto|loadFull/.test(branch), '증빙을 판독하려 든다 — 영수증에서 채울 칸이 없다');
   assert.match(branch, /saveTxnScanRef\(/, '참조를 안 남긴다');
 });
@@ -153,7 +157,8 @@ test('연결 해제는 사진첩 사진을 지우지 않는다', () => {
 test('증빙 세기는 «출금» 거래 기준이다', () => {
   const i = SRC.indexOf('출금 거래에 붙은 영수증');
   assert.ok(i > 0, '증빙 몇 건인지 안 세어 준다');
-  const near = SRC.slice(i - 400, i + 60);
+  const from = SRC.lastIndexOf('(function(){', i);
+  const near = SRC.slice(from > 0 ? from : 0, i);
   assert.match(near, /num\(x\.withdraw\)>0/, '입금까지 세면 영원히 다 못 채운다');
   assert.ok(SRC.includes("'txn.scan':{t:"), 'ⓘ 설명이 등록되지 않았다');
 });

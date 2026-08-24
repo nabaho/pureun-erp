@@ -90,8 +90,9 @@ test('그 해 값이 안 적힌 사업장을 세어 원인을 짚어 준다', ()
 });
 
 test('현물출연도 장부 쪽에 넣는다 — ⑬만 보면 늘 모자라게 나온다', () => {
-  const panel = SRC.slice(SRC.indexOf('출연금이 사업장 명부와 어긋나는가'));
-  assert.match(panel.slice(0, 600), /contribCheck\(R\.bf\.employer\+R\.bf\.other/,
+  const from = SRC.indexOf('출연금이 사업장 명부와 어긋나는가');
+  const panel = SRC.slice(from, SRC.indexOf('contribCheck(', from) + 80);
+  assert.match(panel, /contribCheck\(R\.bf\.employer\+R\.bf\.other/,
     '⑬ 사업주 출연 + ⑮ 사업주 외의 자 출연을 함께 넘겨야 한다');
 });
 
