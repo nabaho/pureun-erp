@@ -127,16 +127,27 @@ test('코드가 숫자로 저장돼 있어도 찾는다', () => {
 /* ── 화면이 이 층을 쓰는지 ── */
 
 test('코드표를 읽을 때 껍데기를 벗긴다', () => {
-  const i = src.indexOf("firebase.database().ref('data/biz_cons_types')");
-  assert.ok(i > 0, '코드표를 읽는 곳을 찾을 수 없습니다');
-  const around = src.slice(i, i + 1400);
-  assert.match(around, /_erpConsTypes = erpUnwrapList\(/, '껍데기를 안 벗기고 있습니다');
+  /* ⚠ 2026-08-24: 코드표가 사업마다 셋(컨설팅·기금·기타)이 되면서 읽는 자리를 손으로
+     적지 않고 목록(ERP_HIST_KINDS)에서 만든다. 지킬 것은 「껍데기를 벗긴다」이지
+     그 주소가 코드에 글자로 적혀 있는가가 아니다. */
+  assert.match(src, /ERP_HIST_KINDS\.filter\(s=>s\.types\)\.map\(s=>'data\/'\+s\.types\)/,
+    '코드표를 읽는 곳을 찾을 수 없습니다');
+  assert.match(src, /_erpHistTypes\[s\.kind\] = erpUnwrapList\(/, '껍데기를 안 벗기고 있습니다');
+  assert.match(src, /_erpConsTypes = _erpHistTypes\.consulting/,
+    '옛 이름(_erpConsTypes)이 끊기면 그것을 쓰는 화면에서 코드가 그대로 나옵니다');
   assert.ok(!/_erpConsTypes = Array\.isArray\(ts\.val\(\)\)/.test(src),
     '옛 방식(껍데기를 안 벗기는 코드)이 남아 있습니다');
 });
 
-test('가져오기 목록과 이력 카드 모두 두 자리를 다 본다', () => {
-  /* 한쪽만 고치면 다른 화면에서 여전히 코드가 나온다. */
-  const n = (src.match(/erpTypeCodeOf\(rec,'consulting'\)/g) || []).length;
-  assert.ok(n >= 2, '유형 코드를 두 자리에서 읽는 곳이 ' + n + '곳뿐입니다 (가져오기·이력 둘 다 필요)');
+test('가져오기 목록과 이력 줄 모두 «제 사업의» 코드 자리를 본다', () => {
+  /* 한쪽만 고치면 다른 화면에서 여전히 코드가 나온다.
+     ⚠ 2026-08-24: 두 곳이 같은 도우미(erpHistName)를 쓰게 모았다 — 종전처럼 같은
+       삼항식을 두 벌 적어 두면 사업을 하나 더할 때 한쪽만 고쳐진다. */
+  assert.match(src, /function erpHistName\(rec, typesByKind\)/, '한 도우미로 모아야 합니다');
+  /* 두 화면이 그 도우미에 «사업별 사전»을 넘기는지 본다 — 한 곳이라도 안 넘기면
+     그 화면에서만 기금·기타사업이 「(이름 없음)」이 된다. */
+  const n = (src.match(/erpHist(?:Name|Row)\((?:rec|r), _erpHistTypes\)/g) || []).length;
+  assert.ok(n >= 2, '사업별 사전을 넘기는 곳이 ' + n + '곳뿐입니다 (가져오기·이력 둘 다 필요)');
+  assert.ok(!/erpConsTypeName\(erpTypeCodeOf\(rec,'consulting'\)\)/.test(src),
+    '옛 삼항식이 남아 있습니다 — 기금·기타사업이 「(이름 없음)」이 됩니다');
 });

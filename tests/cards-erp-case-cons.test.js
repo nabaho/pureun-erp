@@ -27,6 +27,12 @@ function loadErpCaseConsBlock(){
      loadTagHideBlock 과 같은 방식). 선언을 빼고 ctx 프로퍼티로 미리 쥐여준다. */
   const declEnd = source.indexOf('function loadErpCaseCons', at);
   assert.ok(declEnd > at, 'loadErpCaseCons 정의를 찾지 못했습니다');
+  /* ⚠ 2026-08-24: 읽는 자리를 목록(ERP_HIST_KINDS)에서 만들고, 사업자번호가 없는
+     기록은 이름(_norm)으로 색인한다 — 둘을 함께 떠야 한다. 손으로 베끼면 진짜와 어긋난다. */
+  const kindsDecl = source.match(/^const ERP_HIST_KINDS = \[[\s\S]*?\n\];$/m);
+  assert.ok(kindsDecl, 'ERP_HIST_KINDS 를 찾지 못했습니다');
+  const normDecl = source.match(/^const _norm = s => [^\n]*;$/m);
+  assert.ok(normDecl, '_norm 을 찾지 못했습니다');
 
   const calls = { onceCalls: [] };
   const ctx = {
@@ -40,31 +46,44 @@ function loadErpCaseConsBlock(){
     _erpCaseCons: null,
     _erpCaseConsLoading: false,
     _erpConsTypes: null,
+    _erpHistTypes: {},
     _erpCaseConsWaiters: []
   };
-  const code = source.slice(digitsAt, digitsEnd) + '\n' + source.slice(declEnd, end) + '\n' + source.slice(nameAt, nameEnd);
+  const code = kindsDecl[0] + '\n' + normDecl[0] + '\n'
+    + source.slice(digitsAt, digitsEnd) + '\n' + source.slice(declEnd, end) + '\n'
+    + source.slice(nameAt, nameEnd);
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
   ctx._calls = calls;
   return ctx;
 }
 
-test('loadErpCaseCons 는 data/cases/v, data/consultings/v 두 자리만 읽는다', async () => {
+/* ⚠ 2026-08-24: 대표 지시로 기금·기타사업까지 넷을 읽는다(넷 + 유형 사전 셋 = 일곱).
+   지킬 것은 「정해진 자리만 읽고, 그 밖은 안 건드린다」이지 「두 자리」라는 숫자가 아니다. */
+const ERP_READ_PATHS = ['data/biz_cons_types','data/biz_fund_types','data/biz_other_types',
+                        'data/cases/v','data/consultings/v','data/funds/v','data/other_projects/v'];
+
+test('loadErpCaseCons 는 이알피의 정해진 자리만 읽는다', async () => {
   const c = loadErpCaseConsBlock();
   c._fixtures = { 'data/cases/v': { c1:{ id:'c1', bizNo:'312-81-49225', typeName:'부당해고' } },
                   'data/consultings/v': { k1:{ id:'k1', bizNo:'312-81-49225', typeCode:'cons-ilteo' } } };
   let got = null;
   await new Promise(res => c.loadErpCaseCons(data => { got = data; res(); }));
-  assert.deepEqual(c._calls.onceCalls.sort(), ['data/biz_cons_types','data/cases/v','data/consultings/v']);
+  assert.deepEqual(c._calls.onceCalls.sort(), ERP_READ_PATHS);
   assert.equal(got.byBiz['3128149225'].length, 2);
 });
 
-test('사업자번호 10자리 미만인 기록은 색인에서 뺀다', async () => {
+test('사업자번호 10자리 미만인 기록은 «번호» 색인에서 뺀다 — 이름 색인으로 간다', async () => {
+  /* ⚠ 예전에는 통째로 버렸다. 그래서 사업자번호를 안 적은 컨설팅 건은 이력이 하나도
+     안 붙었다(대표 화면 2026-08-24). 이제 이름으로 담는다 — 다만 아무 열 자리를
+     번호로 우기지는 않는다. */
   const c = loadErpCaseConsBlock();
-  c._fixtures = { 'data/cases/v': { c1:{ id:'c1', bizNo:'123' } }, 'data/consultings/v': {} };
+  c._fixtures = { 'data/cases/v': { c1:{ id:'c1', bizNo:'123', companyName:'가나기업' } },
+                  'data/consultings/v': {} };
   let got = null;
   await new Promise(res => c.loadErpCaseCons(data => { got = data; res(); }));
-  assert.deepEqual(Object.keys(got.byBiz), []);
+  assert.deepEqual(Object.keys(got.byBiz), [], '10자리가 아닌 것을 번호 색인에 넣으면 안 된다');
+  assert.equal((got.byName['가나기업']||[]).length, 1, '이름으로는 담아야 한다');
 });
 
 test('한 번 불러온 뒤로는 다시 안 읽고 캐시를 쓴다', async () => {
@@ -72,7 +91,8 @@ test('한 번 불러온 뒤로는 다시 안 읽고 캐시를 쓴다', async () 
   c._fixtures = { 'data/cases/v': {}, 'data/consultings/v': {} };
   await new Promise(res => c.loadErpCaseCons(() => res()));
   await new Promise(res => c.loadErpCaseCons(() => res()));
-  assert.equal(c._calls.onceCalls.length, 3, '두 번째 부를 때는 실제로 안 읽어야 한다');
+  assert.equal(c._calls.onceCalls.length, ERP_READ_PATHS.length,
+    '두 번째 부를 때는 실제로 안 읽어야 한다');
 });
 
 test('클라우드 모드가 아니면 콜백에 null 을 준다', async () => {
@@ -103,7 +123,8 @@ test('조회가 도는 중에 또 부르면 기다렸다가 실제 결과를 받
   const p1 = new Promise(res => c.loadErpCaseCons(data => { firstGot.push(data); res(); }));
   const p2 = new Promise(res => c.loadErpCaseCons(data => { secondGot.push(data); res(); }));
   await Promise.all([p1, p2]);
-  assert.equal(c._calls.onceCalls.length, 3, '두 번째 요청도 실제로는 한 번만 읽어야 한다');
+  assert.equal(c._calls.onceCalls.length, ERP_READ_PATHS.length,
+    '두 번째 요청도 실제로는 한 번만 읽어야 한다');
   assert.equal(firstGot.length, 1);
   assert.notEqual(firstGot[0], null, '먼저 부른 쪽이 실제 결과를 받아야 한다');
   assert.equal(secondGot.length, 1);

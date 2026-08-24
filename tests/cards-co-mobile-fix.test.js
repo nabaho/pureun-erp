@@ -407,15 +407,18 @@ function cssRule(selector){
   return source.slice(at, source.indexOf('}', at) + 1);
 }
 
-test('★ I5 — .erphist-card 안 글자에 어두운 색이 정해져 있다 (이알피 이력 칸)', () => {
-  const rule = cssRule('.erphist-card');
-  assert.match(rule, /background:#f7f9fc/, '전제: 바탕은 밝은 색이다');
-  const m = rule.match(/color:(#[0-9a-fA-F]{3,6})/);
-  assert.ok(m, '밝은 바탕인데 글자색이 없습니다 — 폰에서 --ink(#f3f3f3)를 물려받아 흰 글씨가 됩니다');
-  assert.doesNotMatch(m[1].toLowerCase(), /^#(fff|f{6}|f3f3f3)$/, '밝은 바탕에 밝은 글자입니다');
-  /* 제목 span 과 .erphist-fee 는 색을 따로 안 갖는다 — 이 칸에서 물려받는다 */
-  assert.match(source, /<span style="font-weight:700">\$\{esc\(typeLabel\)\}<\/span>/,
-    '이력 카드 제목 span 을 찾지 못했습니다');
+test('★ I5 — 이알피 이력 칸 글자에 어두운 색이 정해져 있다', () => {
+  /* ⚠ 2026-08-24: 이력이 카드(.erphist-card)에서 줄(.cohist-row)로 바뀌었다. 지킬 것은
+     「밝은 바탕에 글자색을 반드시 정한다」이므로, 새 칸들도 함께 본다 — 안 정하면 폰에서
+     --ink(#f3f3f3)를 물려받아 흰 바탕에 흰 글씨가 된다(2026-08-16 에 겪은 그 일). */
+  ['.cohist-row', '.cohist-sum b'].forEach(sel => {
+    const rule = cssRule(sel);
+    const m = rule.match(/color:(#[0-9a-fA-F]{3,6})/);
+    assert.ok(m, sel + ' 에 글자색이 없습니다 — 폰에서 흰 바탕에 흰 글씨가 됩니다');
+    assert.doesNotMatch(m[1].toLowerCase(), /^#(fff|f{6}|f3f3f3)$/, sel + ' 은 밝은 바탕에 밝은 글자입니다');
+  });
+  /* 이름·금액 span 은 색을 따로 안 갖는다 — 줄에서 물려받는다 */
+  assert.match(source, /class="nm">\$\{esc\(row\.name\)\}<\/span>/, '이력 줄 이름 자리를 찾지 못했습니다');
 });
 
 test('★ I5 — .erpimport-row 안 사업 이름에 어두운 색이 정해져 있다 (이알피에서 가져오기)', () => {
