@@ -191,7 +191,7 @@ STD.forEach(function(ch,ci){ ch.id='c'+ci; ch.arts.forEach(function(a,ai){ a.id=
 var doc = blankDoc();
 function blankDoc(){
   return {
-    id:'', info:{ company:'', ceo:'', addr:'', biz:'', workers:'', effDate:'', rep:'' },
+    id:'', info:{ company:'', ceo:'', bizno:'', addr:'', biz:'', workers:'', effDate:'', rep:'' },
     off:{},        /* {장id 또는 조id : true} = 제외 */
     over:{},       /* {조id : {t,b}} = 표준문구 수정 */
     updatedAt:0, by:''
@@ -241,7 +241,8 @@ function renderPanel(){
   h+='<div class="hint">📌 회사정보를 입력하면 미리보기의 <b style="color:#b45309">노란 표시</b>가 자동으로 채워집니다. 조항은 회사 실정에 맞게 켜고/끄거나 <b style="color:#0E7C66">✎ 편집</b>할 수 있습니다. 최종본은 담당 노무사가 최신 개정법령에 맞게 검토하세요.</div>';
   h+='<div class="sec">회사 정보</div>';
   h+=fld('회사명(법인명)','company',i.company,'예) 주식회사 푸른');
-  h+='<div class="grid2">'+fld('대표자','ceo',i.ceo,'홍길동')+fld('업종','biz',i.biz,'예) 서비스업')+'</div>';
+  h+='<div class="grid2">'+fld('사업자등록번호','bizno',i.bizno,'000-00-00000')+fld('대표자','ceo',i.ceo,'홍길동')+'</div>';
+  h+=fld('업종','biz',i.biz,'예) 서비스업');
   h+=fld('사업장 소재지','addr',i.addr,'예) 충남 천안시 …');
   h+='<div class="grid2">'+fld('상시근로자수','workers',i.workers,'예) 25')+fldDate('시행일','effDate',i.effDate)+'</div>';
   h+=fld('근로자대표(의견청취)','rep',i.rep,'예) 근로자대표 김○○');
@@ -324,6 +325,111 @@ function toggleView(){ document.body.classList.toggle('showprev');
   b.innerHTML=document.body.classList.contains('showprev')?'✎<span class="lbl"> 편집</span>':'👁<span class="lbl"> 미리보기</span>';
 }
 
+/* ══════ 제정 이력 남기기 ══════
+   예전에는 저장할 때마다 updatedAt·by 를 «덮어써서» 「누가 언제 처음 만들었는지」가
+   남지 않았다. 취업규칙을 처음 만든 것도 개정과 마찬가지로 사건이므로,
+   규정관리가 개정 회차를 쌓는 그 자리에 「제정」 회차로 함께 쌓는다.
+   → 기업정보함·취업규칙 이력 화면이 제정과 개정을 한 줄기로 보여 준다.
+
+   자리는 규정관리와 똑같다:
+     rules_mgmt/done/{사업장키}/{회차}   회차 원본(대조표 자리는 비어 있다 — 제정이라 견줄 것이 없다)
+     rules_mgmt/index/{사업장키}/{회차}  가벼운 색인 (다른 화면이 읽는 것)
+     rules_mgmt/orig/{사업장키@회차}     제정 당시 전문 — 나중에 이 원문으로 개정 검토를 시작할 수 있다 */
+function chwSiteKey(){
+  var i=doc.info, base=(i.bizno||'').replace(/[^0-9]/g,'')||String(i.company||'');
+  return 'site_'+String(base).replace(/[.#$\[\]\/\s]/g,'_').slice(0,120);
+}
+/* 제정 회차 하나 = 이 문서를 지금 저장한 시점. 같은 시행일이면 덮어쓴다
+   (같은 날 두 번 저장했다고 회차가 둘일 수는 없다). */
+function chwRevId(){
+  var eff=String(doc.info.effDate||'').replace(/-/g,'')||'00000000';
+  return 'r'+eff+'_enact';
+}
+function chwArtTitles(){
+  var out=[], n=0;
+  STD.forEach(function(ch){
+    ch.arts.forEach(function(a){
+      if(!artOn(ch,a)) return;
+      n++;
+      if(out.length<4) out.push('제'+n+'조('+applyMergeText(curTitle(a))+')');
+    });
+  });
+  return { arts:out, total:n, more:Math.max(0,n-out.length) };
+}
+/* 저장한 사람 이름 — 로그인 계정에서 직원 이름을 찾는다(포털과 같은 규칙) */
+var CHW_NAME='';
+function chwWho(){ return CHW_NAME || (fbUser && (fbUser.displayName||fbUser.email)) || ''; }
+function chwResolveName(){
+  if(!fbDb || !fbUser || !fbUser.email) return;
+  var em=String(fbUser.email).toLowerCase();
+  var pick=function(raw){
+    var list=(raw && raw.v!==undefined)?raw.v:raw;
+    if(list && !Array.isArray(list) && typeof list==='object') list=Object.keys(list).map(function(k){return list[k];});
+    if(!Array.isArray(list)) return null;
+    return list.filter(Boolean).find(function(x){
+      return String(x.sid||'').toLowerCase().replace(/-/g,'')+'@pureun.kr'===em; })||null;
+  };
+  fbDb.ref('data/user_dir').once('value').then(function(s){
+    var a=pick(s.val()); if(a && a.name) CHW_NAME=a.name;
+  }).catch(function(){});
+}
+/* 제정 회차를 남긴다 — 회사명과 시행일이 있어야 회사·시점에 이을 수 있다 */
+function chwSaveEnactment(){
+  if(!fbDb || !fbUser) return Promise.resolve(false);
+  var i=doc.info;
+  if(!i.company || !i.effDate) return Promise.resolve(false);
+  var sk=chwSiteKey(), rev=chwRevId(), id=sk+'@'+rev;
+  var t=chwArtTitles();
+  var now=new Date().toISOString().slice(0,16).replace('T',' ');
+  var who=chwWho();
+  var common={
+    site:i.company, bizno:i.bizno||'', asof:i.effDate,
+    savedAt:now, savedBy:who, doneAt:now, doneBy:who,
+    ownerUid:fbUser.uid||'', owner:fbUser.email||'', ownerName:who,
+    enacted:true, from:'chwieop'
+  };
+  /* 회차 원본 — 규정관리 보관함이 읽는 모양 그대로. summary 가 없으면 목록이 깨진다. */
+  var rec=Object.assign({}, common, {
+    id:id, year:String(i.effDate).slice(0,4), status:'완료',
+    size:String(i.workers||''), conds:[], mode:'full', changed:t.total,
+    summary:{위반의심:0,누락:0,수동확인:0,시행예정:0},
+    items:[], addendum:'', file:'취업규칙_'+i.company+'.txt'
+  });
+  /* 색인은 서버 규칙이 칸마다 잣대를 들이대므로 «허용된 칸만» 도리지 않고 넣는다.
+     common 을 그대로 부으면 owner·enacted 가 따라붙어 규칙에 막힌다. */
+  var idx={
+    site:i.company, bizno:i.bizno||'', asof:i.effDate, kind:'제정',
+    changed:t.total, arts:t.arts, artsMore:t.more,
+    savedAt:now, savedBy:who, doneAt:now, doneBy:who,
+    ownerUid:fbUser.uid||'', ownerName:who, from:'chwieop'
+  };
+  var up={};
+  up['rules_mgmt/done/'+sk+'/'+rev]=rec;
+  up['rules_mgmt/index/'+sk+'/'+rev]=idx;
+  /* 제정 당시 전문 — 나중에 이 원문으로 개정 검토를 시작할 수 있다 */
+  up['rules_mgmt/orig/'+id]={
+    name:'취업규칙_'+i.company+'.txt', ext:'txt', text:chwFullText(),
+    b64:null, isPdf:false, truncated:false,
+    ownerUid:fbUser.uid||'', owner:fbUser.email||''
+  };
+  return fbDb.ref().update(up).then(function(){ return true; })
+    .catch(function(e){ console.warn('제정 이력 저장 실패:', (e&&e.message)||e); return false; });
+}
+/* 규정관리에 넘길 때와 같은 전문 — 두 곳이 다른 글을 넘기면 안 된다 */
+function chwFullText(){
+  var txt='취 업 규 칙\n'+(doc.info.company||'')+'\n\n', artNo=0;
+  STD.forEach(function(ch){
+    if(!chapOn(ch)) return;
+    var onArts=ch.arts.filter(function(a){ return artOn(ch,a); });
+    if(!onArts.length) return;
+    txt+=(ch.c==='부칙'?'부      칙':ch.c)+'\n';
+    onArts.forEach(function(a){ artNo++;
+      txt+='제'+artNo+'조('+applyMergeText(curTitle(a))+') '+applyMergeText(curBody(a))+'\n'; });
+    txt+='\n';
+  });
+  return txt;
+}
+
 /* ══════ 새 문서 ══════ */
 function newDoc(){ if(doc.info.company && !confirm('현재 작성 중인 내용을 지우고 새 문서를 시작할까요?')) return;
   doc=blankDoc(); renderAll(); document.body.classList.remove('showprev'); toast('새 문서를 시작합니다');
@@ -336,8 +442,14 @@ function saveDoc(){
   doc.updatedAt=Date.now(); doc.by=(fbUser&&fbUser.email)||'';
   if(!doc.id) doc.id='r'+doc.updatedAt+Math.floor(Math.random()*1000);
   if(fbDb){
-    fbDb.ref(DB_ROOT+'/docs/'+doc.id).set(doc).then(function(){ toast('💾 클라우드에 저장했습니다'); })
-      .catch(function(e){ toast('저장 실패: '+((e&&e.message)||e)); });
+    fbDb.ref(DB_ROOT+'/docs/'+doc.id).set(doc).then(function(){
+      /* 문서 자체는 덮어써도, 「누가 언제 제정했는지」는 회차로 따로 남는다 */
+      return chwSaveEnactment();
+    }).then(function(kept){
+      toast(kept ? '💾 저장했습니다 — 제정 이력에 남겼습니다'
+                 : (doc.info.effDate ? '💾 클라우드에 저장했습니다'
+                                     : '💾 저장했습니다 — 시행일을 넣으면 제정 이력에도 남습니다'));
+    }).catch(function(e){ toast('저장 실패: '+((e&&e.message)||e)); });
   } else {
     var all=lsDocs(); all[doc.id]=doc; localStorage.setItem('chwieop_docs',JSON.stringify(all)); toast('💾 이 기기에 저장했습니다');
   }
@@ -418,7 +530,8 @@ function sendToReview(){
   });
   try{
     localStorage.setItem('pureun_rules_handoff_v1',JSON.stringify({
-      name:'취업규칙_'+(co||'작성본')+'.txt', site:co, text:txt, at:new Date().toISOString()
+      name:'취업규칙_'+(co||'작성본')+'.txt', site:co, bizno:doc.info.bizno||'',
+      text:txt, at:new Date().toISOString()
     }));
     toast('규정관리로 넘깁니다 — 자동 검토가 실행됩니다');
     if(!EMBED) setTimeout(function(){ location.href='rules.html'; },600);   // 임베드면 부모(규정관리)가 전환
@@ -467,7 +580,7 @@ function fbInit(){
     if(FB_APPCHECK_KEY && firebase.appCheck){ try{ firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY),true); }catch(e){} }
     try{ if(firebase.auth().setPersistence) firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
     firebase.auth().onAuthStateChanged(function(u){
-      if(u && u.email){ fbUser=u; fbDb=firebase.database(); authOk(); }
+      if(u && u.email){ fbUser=u; fbDb=firebase.database(); chwResolveName(); authOk(); }
       else authGate();
     });
   }catch(e){ _rmSplash(); }

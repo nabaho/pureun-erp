@@ -42,6 +42,7 @@
 <script src="js/pu-lockkey.js?v=1"></script>
 <!-- AI 판독 호출기 — 열쇠는 서버가 든다(2026-08-17). 브라우저는 사진만 보낸다. -->
 <script src="js/pu-ai-call.js?v=1"></script>
+<script src="js/pu-rules-history.js?v=1"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
@@ -172,6 +173,24 @@ body.mailview #tabs,body.mailview #subbar{display:none}
 .erpmgr-box{margin:2px 0 12px;font-size:14px;font-weight:800;color:#ffd8a8;
   background:rgba(230,126,34,.16);border:1px solid rgba(230,126,34,.55);
   border-radius:9px;padding:8px 12px;line-height:1.4}
+/* ── 취업규칙 이력 (규정관리가 쌓은 것을 읽기만 한다) ── */
+.rulehist{margin:2px 0 12px}
+.rulehist .rh-t{font-size:12px;font-weight:800;color:var(--orange);margin-bottom:6px;
+  padding-bottom:5px;border-bottom:1px solid var(--line)}
+.rulehist .rh-row{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:start;
+  background:var(--row);border-radius:6px;padding:6px 9px;margin-bottom:3px}
+.rulehist .rh-k{font-size:10px;font-weight:800;padding:2px 8px;border-radius:8px;white-space:nowrap;
+  background:var(--orange-soft);color:#ffb27a;margin-top:1px}
+/* ⚠ min-width:0 이 없으면 격자 1fr 칸이 «글자 길이만큼» 벌어져 창 밖으로 밀린다
+   (요약이 안 접히는 한 줄이라 더 그렇다 — 폰에서 가로로 넘쳤다) */
+.rulehist .rh-x{font-size:11.5px;color:#e7e7e7;min-width:0}
+.rulehist .rh-line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 바뀐 조는 아랫줄로 접어 «다 보이게» 한다 — 한 줄에 밀어 넣으면 늘 잘린다 */
+.rulehist .rh-arts{display:block;color:var(--sub);font-size:10.5px;line-height:1.45;margin-top:2px;
+  white-space:normal;word-break:keep-all;overflow-wrap:anywhere}
+.rulehist .rh-go{background:none;border:none;color:var(--orange);font-size:10.5px;font-weight:800;
+  cursor:pointer;white-space:nowrap;padding:2px 4px}
+.rulehist .rh-foot{font-size:10px;color:#4b4b4b;margin-top:5px}
 .thumb{width:148px;height:88px;flex-shrink:0;border-radius:5px;background:#e9e9e9;
   display:flex;align-items:center;justify-content:center;color:#666;font-weight:800;font-size:22px;overflow:hidden}
 .thumb img{width:100%;height:100%;object-fit:cover}
@@ -2308,6 +2327,9 @@ const Store = {
             /* ⚠ loadSharedGKey() 를 뗐다(2026-08-17) — 로그인할 때마다 실시간DB 의
                열쇠를 브라우저로 내려받던 자리다. 이제 열쇠는 서버만 안다. */
             hideCardsLogin(); subscribe(); ErpMatch.load();
+            /* 취업규칙 이력 색인을 미리 받아 둔다 — 회사를 열 때 기다리지 않게.
+               못 읽어도(권한·그물) 그 칸만 빠지고 명함첩은 그대로 뜼다. */
+            if(window.PuRulesHistory)PuRulesHistory.load(this.db,()=>{ try{ refreshRulesBoxes(); }catch(_){} });
             /* 대표만 폴더를 잠글 수 있다 — 포털(enter.html)이 이미 쓰는 값을 그대로 읽는다.
                화면에서 숨기는 것은 편의일 뿐이고, 실제 차단은 규칙이 한다. */
             this.db.ref('uid_roles/'+u.uid+'/isAdmin').once('value')
@@ -8461,6 +8483,46 @@ function dupDialog(dup,kind){
 </script>
 <script>
 /* ════════════ 상세 보기 ════════════ */
+/* ══════ 취업규칙 이력 — 규정관리(rules.html)가 쌓은 회차를 «읽기만» 한다 ══════
+   여기서 고치지 않는다. 고치는 곳은 규정관리 한 곳뿐이라 두 화면이 어긋날 수 없다.
+   목록을 만드는 규칙(회사 맞추기·한 줄 요약)은 공용 읽개 js/pu-rules-history.js
+   한 벌에 있다 — 취업규칙 이력 화면도 같은 것을 본다. */
+function rulesBoxHtml(it){
+  if(!window.PuRulesHistory) return '';
+  const list = PuRulesHistory.forCompany({ bizno: it.bizno, company: it.company });
+  const id = 'rh_'+it.id;
+  if(!list.length){
+    /* 색인을 아직 못 받았으면 자리만 잡아 둔다 — 오면 refreshRulesBoxes() 가 채운다 */
+    if(!PuRulesHistory._cache()) return `<div class="rulehist" id="${id}" data-rh="${esc(it.id)}"></div>`;
+    return '';
+  }
+  const rows = list.slice(0,5).map((r,i)=>{
+    const arts = PuRulesHistory.artsOf(r);
+    return `<div class="rh-row">
+      <span class="rh-k">${esc(r.kind)}</span>
+      <span class="rh-x"><span class="rh-line" title="${esc(PuRulesHistory.lineOf(r))}">${esc(PuRulesHistory.lineOf(r))}</span>${
+        arts?`<span class="rh-arts">${esc(arts)}</span>`:''}</span>
+      <button class="rh-go" onclick="openRuleRev('${esc(r.id)}')" title="규정관리에서 이 회차의 신구대조표를 엽니다">열기 ↗</button>
+    </div>`;
+  }).join('');
+  const more = list.length>5 ? `<div class="rh-foot">외 ${list.length-5}회차 — 규정관리 📁 보관함 › 📜 이력에서 모두 봅니다</div>` : '';
+  return `<div class="rulehist" id="${id}" data-rh="${esc(it.id)}">
+    <div class="rh-t">📕 취업규칙 <span style="font-weight:600;color:var(--sub)">${list.length}회차</span></div>
+    ${rows}${more}
+    <div class="rh-foot">보기만 합니다 · 고치는 곳은 규정관리입니다</div></div>`;
+}
+/* 색인이 늦게 와도 이미 열려 있는 창을 채운다 (사진을 늦게 끼워 넣는 것과 같은 방식) */
+function refreshRulesBoxes(){
+  document.querySelectorAll('[data-rh]').forEach(el=>{
+    const it = state.items[el.dataset.rh];
+    if(!it) return;
+    const html = rulesBoxHtml(it);
+    if(html) el.outerHTML = html;
+  });
+}
+function openRuleRev(id){
+  window.open(PuRulesHistory.openUrl({ id }), '_blank');
+}
 function openDetail(id){
   /* 표에서 셀 인라인 편집 중이면 행 클릭 무시 */
   if (document.querySelector('#pcTable input.cellEdit')) return;
@@ -8503,6 +8565,7 @@ function openDetail(id){
     <div class="dsub">${esc(isCard ? [it.company,it.dept,it.title].filter(Boolean).join(' · ')
                                    : [it.ceo&&('대표자 '+it.ceo), fmtBizno(it.bizno)].filter(Boolean).join(' · '))}</div>
     ${(function(){var f=ErpMatch.full(it);return f?`<div class="erpmgr-box">🏢 푸른 거래처 · ${esc(f)}</div>`:'';})()}
+    ${rulesBoxHtml(it)}
     ${acts}
     <div id="dSendLog">${sendLogHtml(id)}</div>
     <div class="dlist">${rows||'<div class="empty" style="padding:20px">저장된 정보가 없습니다</div>'}</div>
@@ -8588,6 +8651,7 @@ function openPcDetail(id){
         </div>
       </div>
       ${(function(){var f=ErpMatch.full(it);return f?`<div class="erpmgr-box">🏢 푸른 거래처 · ${esc(f)}</div>`:'';})()}
+    ${rulesBoxHtml(it)}
       ${acts}
       <div class="pdgrid">
         ${rows || '<div class="pdrow"><div class="v" style="color:#8b98b3">저장된 정보가 없습니다</div></div>'}
