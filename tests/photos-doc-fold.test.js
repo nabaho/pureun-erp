@@ -123,6 +123,11 @@ test('★ 도구줄이 장수를 쓴다 — 실제로 돌려 본다', () => {
     gridYear: String(new Date().getFullYear()),
     viewingOther: function () { return false; },
     canSend: function () { return false; },
+    /* ⚠ 2026-08-24 — 「N장 판독」은 다시 걸어 볼 값이 있는 것만 세고(readableSel),
+       「N장 확인했음」은 확인이 필요한 것만 센다(needsCheck). 둘을 안 주면 도구줄이
+       그 자리에서 멎어 이 검사가 통째로 운다. */
+    worthRetry: function () { return true; },
+    needsCheck: function () { return false; },
     renderNeedBox() {}, renderOldBox() {}, renderBackBar() {},
     renderPhMenuBtn() {}, renderPhNeedBtn() {}, renderPayNote() {},
     $: mk
@@ -130,6 +135,7 @@ test('★ 도구줄이 장수를 쓴다 — 실제로 돌려 본다', () => {
   vm.createContext(ctx);
   vm.runInContext(fnOf(app, 'idsOf'), ctx);
   vm.runInContext(fnOf(app, 'shownCount'), ctx);
+  vm.runInContext(fnOf(app, 'readableSel'), ctx);
   vm.runInContext(fnOf(app, 'renderGridBar'), ctx);
   ctx.renderGridBar();
   assert.match(el.gridCount.textContent, /4장/,

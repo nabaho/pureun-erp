@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>판독 실패 처리 · 여러 장 한꺼번에 고르기 (목업)</title>
+<style>
+:root{ --blue:#1e40af; --ink:#101828; --sub:#5a6885; --line:#e4e8f0; --bg:#f4f6fb; }
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic","Apple SD Gothic Neo",sans-serif;
+  background:var(--bg);color:var(--ink);padding:22px 20px 70px;-webkit-text-size-adjust:100%}
+h1{font-size:20px;margin:0 0 6px}
+h2{font-size:15px;margin:30px 0 8px;padding-top:16px;border-top:2px solid #dde3ee}
+h3{font-size:13.5px;margin:18px 0 7px}
+p{font-size:13px;line-height:1.8;margin:0 0 10px;max-width:900px}
+.lead{color:var(--sub)}
+b.hl{color:#b42318}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:0 0 12px;
+  max-width:980px;box-shadow:0 4px 16px rgba(20,30,50,.05)}
+table{border-collapse:collapse;width:100%;max-width:980px;font-size:12.5px;margin:0 0 12px;background:#fff}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f6f8fd;font-weight:800;color:var(--sub);font-size:11.5px}
+td code{background:#f2f4f8;border-radius:4px;padding:1px 5px;font-size:11px}
+.bad{color:#b42318;font-weight:700}
+.ok{color:#1a7f45;font-weight:700}
+ul{font-size:13px;line-height:1.85;margin:0 0 10px;padding-left:20px;max-width:900px}
+li{margin-bottom:3px}
+.was{color:#98a3b8}
+
+/* 딱지 */
+.tag{display:inline-block;font-size:11px;font-weight:800;border-radius:6px;padding:3px 8px;white-space:nowrap}
+.t-retry{background:#fff4e0;color:#8a5a00}
+.t-reup{background:#fdecec;color:#b42318}
+.t-admin{background:#f3e9ff;color:#6b34c9}
+.t-hand{background:#eef1f6;color:#4a5670}
+.t-old{background:#fdecec;color:#b42318}
+
+/* ══════ 격자 데모 ══════ */
+.demo{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;max-width:980px}
+.bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 2px 10px;border-bottom:1px solid #eef1f6;margin-bottom:10px}
+.bar button{font-family:inherit;font-size:12px;font-weight:700;border:1px solid var(--line);background:#fff;
+  color:#33415e;border-radius:8px;padding:6px 10px;cursor:pointer;white-space:nowrap}
+.bar button.p{border-color:#9fd8bd;color:#15803d;background:#f2fbf6}
+.bar button.d{border-color:#f0b4b4;color:#b91c1c}
+.bar button.b{border-color:#b6c6ee;color:#1e40af}
+.bar .cnt{margin-left:auto;font-size:12px;font-weight:700;color:var(--sub)}
+.tip{font-size:11.5px;color:#8b98b3;background:#f8fafd;border:1px solid #eef1f6;border-radius:8px;
+  padding:6px 9px;margin:0 2px 10px}
+.tip b{color:#33415e}
+.grid{position:relative;display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px;
+  user-select:none;min-height:120px}
+.cell{position:relative;border:2px solid var(--line);border-radius:9px;background:#fbfcfe;height:104px;
+  cursor:pointer;overflow:hidden}
+.cell .ph{position:absolute;inset:8px 8px 26px;background:
+  repeating-linear-gradient(#e9edf5 0 3px, #fbfcfe 3px 7px);border-radius:4px}
+.cell .no{position:absolute;left:6px;top:5px;font-size:10px;font-weight:800;color:#a8b2c6}
+.cell .st{position:absolute;left:5px;right:5px;bottom:5px;font-size:9.5px;font-weight:800;
+  border-radius:5px;padding:2px 4px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cell.on{border-color:var(--blue);background:#eef3ff}
+.cell .ck{position:absolute;right:5px;top:5px;width:17px;height:17px;border-radius:50%;
+  border:2px solid #cdd6e6;background:#fff}
+.cell.on .ck{background:var(--blue);border-color:var(--blue)}
+.cell.on .ck:after{content:'✓';position:absolute;left:2px;top:-3px;color:#fff;font-size:11px;font-weight:900}
+.cell.anchor{box-shadow:0 0 0 3px rgba(30,64,175,.18)}
+#band{position:absolute;border:1.5px solid var(--blue);background:rgba(30,64,175,.10);
+  border-radius:3px;display:none;pointer-events:none}
+.log{font-size:11.5px;color:#8b98b3;margin-top:9px;padding:0 2px;min-height:1.6em}
+</style>
+</head>
+<body>
+
+<h1>판독이 안 될 때 · 체크를 한꺼번에 여러 개</h1>
+<p class="lead">
+대표 지시 2026-08-24: <i>“판독이 안 되는 경우 어떻게 해야 하나. 체크를 한 번에 여러 개 하고 싶을 때 어떤 기능으로
+사용해야 하나 — 쉬프트 기능 또는 마우스 일괄체크기능 등 여러 가지 검토해 달라.”</i>
+</p>
+
+<!-- ══════════════════ ① 판독 실패 ══════════════════ -->
+<h2>① 판독이 안 되는 경우</h2>
+
+<p>지금은 실패 까닭이 <b>여덟 가지</b>인데 딱지는 <b class="hl">거의 다 「판독 실패 — 다시 판독」 하나</b>입니다.
+그래서 <b>다시 눌러도 소용없는 실패</b>에도 계속 다시 누르게 됩니다 — 누를 때마다 원본을 내려받고 AI 를 부릅니다.</p>
+
+<table>
+  <thead><tr><th style="width:30%">앱이 받은 까닭</th><th style="width:14%">다시 누르면?</th><th>정리 후 딱지 · 해야 할 일</th></tr></thead>
+  <tbody>
+    <tr><td><code>AI가 잠시 바쁩니다</code> (429)</td><td class="ok">뜻 있음</td>
+        <td><span class="tag t-retry">잠시 뒤 다시</span> 분당 한도입니다. 30초 뒤 저절로 한 번 더 겁니다.</td></tr>
+    <tr><td><code>AI가 응답하지 않습니다 (오류 500·503)</code></td><td class="ok">뜻 있음</td>
+        <td><span class="tag t-retry">잠시 뒤 다시</span> 구글 쪽 일시 장애입니다.</td></tr>
+    <tr><td><code>AI가 알아볼 수 없는 답을 보냈습니다</code></td><td class="ok">뜻 있음</td>
+        <td><span class="tag t-retry">잠시 뒤 다시</span> 대개 한 번 더면 됩니다.</td></tr>
+    <tr><td><code>사진 본문을 불러오지 못했습니다</code></td><td class="bad">헛수고</td>
+        <td><span class="tag t-reup">사진을 다시 올려 주세요</span> 읽을 그림 자체가 창고에 없습니다.
+            <span class="was">(이 하나만 지금도 갈라져 있습니다)</span></td></tr>
+    <tr><td><code>AI 키가 없습니다</code> / <code>쓸 수 있는 AI 모델이 없습니다</code></td><td class="bad">헛수고</td>
+        <td><span class="tag t-admin">총괄관리자에게</span> 포털 설정에서 키·모델을 손봐야 합니다.</td></tr>
+    <tr><td><code>로그인을 확인해 주세요</code></td><td class="bad">헛수고</td>
+        <td><span class="tag t-admin">새로고침한 뒤 다시</span> 로그인이 풀렸습니다.</td></tr>
+    <tr><td><code>하루 사용량을 다 썼습니다</code> (429가 이어짐)</td><td class="bad">헛수고</td>
+        <td><span class="tag t-hand">오늘은 안 됩니다 — 내일</span> 눌러도 같은 답만 옵니다.</td></tr>
+    <tr><td>같은 까닭으로 <b>세 번</b> 실패</td><td class="bad">헛수고</td>
+        <td><span class="tag t-hand">세 번 실패 — 손으로 적어 주세요</span>
+            <b>자동 판독 대기열에서 뺍니다.</b></td></tr>
+  </tbody>
+</table>
+
+<div class="card">
+  <h3>★ 가장 중요한 것 — 세 번 실패하면 자동 판독을 멈춥니다</h3>
+  <p style="margin:0">
+  지금은 실패한 사진이 <b>계속 「안 읽은 것」으로 남아</b>, 사진첩을 열 때마다 자동 판독이 또 집어 갑니다.
+  한 장에 원본 830KB 를 내려받고 AI 를 한 번 부릅니다. 실패가 열 장이면 <b>열 때마다</b> 그만큼 나갑니다.<br>
+  실패 횟수를 세어(<code>fails</code>) 세 번이 넘으면 대기열에서 빼고, 딱지에 그 사실을 적습니다.
+  사람이 「다시 판독」을 <b>직접</b> 누르면 그때는 셈을 지우고 다시 셉니다 — 막아 두는 것이 아닙니다.
+  </p>
+</div>
+
+<h3>모아 보고 한 번에 다시 걸기</h3>
+<ul>
+  <li>확인필요 화면에 <b>「판독 실패만 <span style="color:#b42318">3</span>」</b> 칩을 둡니다 — 실패는 「원본이 작다」와
+    성격이 완전히 다른데 지금은 한 목록에 섞여 있습니다.</li>
+  <li>고른 것을 <b>「🔍 N장 판독」</b> 으로 한 번에 다시 거는 것은 <b>이미 됩니다.</b>
+    다만 <b>뜻 있는 실패만</b> 골라 걸도록, 헛수고 쪽은 그 단추에서 빼고 왜 뺐는지 말합니다.</li>
+</ul>
+
+<!-- ══════════════════ ② 여러 개 고르기 ══════════════════ -->
+<h2>② 체크를 한꺼번에 여러 개</h2>
+
+<p><b>이미 있는 것</b>부터 말씀드립니다 — 모르고 계셨을 수 있습니다.</p>
+<table>
+  <thead><tr><th style="width:34%">기능</th><th style="width:12%">지금</th><th>설명</th></tr></thead>
+  <tbody>
+    <tr><td><b>마우스로 쓸어서 고르기</b></td><td class="ok">있음</td>
+        <td>빈 곳에서 눌러 끌면 띠가 생기고 닿은 칸이 다 켜집니다. <b>Ctrl</b>=풀기, <b>Shift</b>=더하기.
+            가장자리에 닿으면 화면이 따라 내려갑니다. <span class="was">(2026-08-10 에 넣었는데 화면에 안내가 없습니다)</span></td></tr>
+    <tr><td><b>날짜·제목 묶음 통째로</b></td><td class="ok">있음</td>
+        <td>날짜 줄 왼쪽 <b>✓</b> 를 누르면 그 날 전부.</td></tr>
+    <tr><td><b>보이는 것 전부 확인 처리</b></td><td class="ok">있음</td>
+        <td>왼쪽 「⚠ 확인 처리」 칸의 단추. 다만 <b>전부</b>거나 <b>한 장</b>씩뿐입니다.</td></tr>
+    <tr><td><b>Shift+클릭으로 범위</b></td><td class="bad">없음</td>
+        <td>첫 칸 누르고 Shift+마지막 칸 = 사이 전부. <b>가장 익숙한 방식인데 빠져 있습니다.</b></td></tr>
+    <tr><td><b>고른 N장만 「✓ 확인했음」</b></td><td class="bad">없음</td>
+        <td>도구줄에 내려받기·복사·판독·삭제는 있는데 <b class="hl">✓ 가 없습니다.</b>
+            대표께서 물으신 것이 바로 이것으로 보입니다.</td></tr>
+    <tr><td><b>보이는 것 전부 고르기</b></td><td class="bad">없음</td>
+        <td>끌지 않고 한 번에.</td></tr>
+  </tbody>
+</table>
+
+<h3>정리 후 — 눌러 보십시오</h3>
+<div class="demo">
+  <div class="bar">
+    <button class="b" id="bAll">☑ 보이는 것 전부</button>
+    <button class="p" id="bAck">✓ <span id="nAck">0</span>장 확인했음</button>
+    <button class="b" id="bRead">🔍 <span id="nRead">0</span>장 판독</button>
+    <button class="d" id="bDel">🗑 <span id="nDel">0</span>장 삭제</button>
+    <button id="bClear">취소</button>
+    <span class="cnt" id="cnt">0장 골랐습니다</span>
+  </div>
+  <div class="tip">
+    <b>고르는 법 네 가지</b> · 칸을 누르면 하나 · <b>Shift+클릭</b>이면 먼저 누른 칸부터 <b>사이 전부</b> ·
+    빈 곳에서 <b>끌면</b> 쓸어서 · 날짜 줄의 <b>✓</b> 는 그 날 전부
+  </div>
+  <div class="grid" id="grid"><div id="band"></div></div>
+  <div class="log" id="log">칸을 눌러 보십시오.</div>
+</div>
+
+<h3>결이 갈리는 자리</h3>
+<ul>
+  <li><b>Shift 범위는 「보이는 차례」로 잡습니다.</b> 화면에 놓인 순서 그대로 — 저장 번호나 찍은 시각이 아닙니다.
+    눈에 보이는 것과 골라지는 것이 다르면 그게 더 나쁩니다.</li>
+  <li><b>기준 칸(anchor)은 마지막으로 «그냥» 누른 칸입니다.</b> Shift+클릭을 이어서 하면 기준은 그대로 두고 끝만
+    옮깁니다 — 범위를 늘렸다 줄일 수 있습니다.</li>
+  <li><b>접힌 문서는 쪽 전부가 함께 움직입니다.</b> 지금 규칙 그대로입니다 — 한 칸이 여섯 쪽을 대신하는데
+    한 쪽만 골라 「6장 삭제」라고 하면 사진을 잃습니다.</li>
+  <li><b>「✓ N장 확인했음」은 되돌릴 수 있습니다.</b> 사진·판독 결과는 안 건드리고 표시만 남깁니다.
+    다만 <b>몇 장인지 먼저 말하고 묻습니다</b> — 전부 확인 처리와 같은 결입니다.</li>
+  <li><b>「보이는 것 전부」는 지금 걸린 조건 안에서만</b>입니다. 확인필요만 보고 있으면 그 안에서 전부 —
+    화면에 없는 사진이 조용히 골라지면 「N장 삭제」가 거짓이 됩니다.</li>
+  <li><b>폰에서는 Shift·끌기를 안 켭니다.</b> 손가락으로 쓰는 것은 화면 넘기기입니다. 폰에는 날짜 ✓ 와
+    「전부」가 그 몫을 합니다.</li>
+</ul>
+
+<script>
+/* 표본 — 실패 까닭이 섞인 12장 */
+var STAT = {
+  ok:    ['읽었습니다','background:#eef1f6;color:#67748d'],
+  retry: ['잠시 뒤 다시','background:#fff4e0;color:#8a5a00'],
+  reup:  ['다시 올려 주세요','background:#fdecec;color:#b42318'],
+  admin: ['총괄관리자에게','background:#f3e9ff;color:#6b34c9'],
+  hand:  ['세 번 실패','background:#eef1f6;color:#4a5670'],
+  small: ['원본이 작습니다','background:#fff4e0;color:#8a5a00']
+};
+var CELLS = ['ok','retry','ok','small','reup','ok','ok','admin','ok','hand','small','ok'];
+
+var sel = new Set(), anchor = null, order = [];
+var g = document.getElementById('grid'), band = document.getElementById('band');
+
+function build(){
+  order = [];
+  var h = '<div id="band"></div>';
+  CELLS.forEach(function(s,i){
+    var id = 'c'+i; order.push(id);
+    var st = STAT[s];
+    h += '<div class="cell" data-id="'+id+'"><span class="no">'+(i+1)+'</span><span class="ck"></span>'
+       + '<div class="ph"></div><div class="st" style="'+st[1]+'">'+st[0]+'</div></div>';
+  });
+  g.innerHTML = h;
+  band = document.getElementById('band');
+  paint();
+}
+function paint(){
+  [].forEach.call(g.querySelectorAll('.cell'), function(c){
+    var id = c.getAttribute('data-id');
+    c.classList.toggle('on', sel.has(id));
+    c.classList.toggle('anchor', id === anchor);
+  });
+  var n = sel.size;
+  ['nAck','nRead','nDel'].forEach(function(k){ document.getElementById(k).textContent = n; });
+  document.getElementById('cnt').textContent = n ? n+'장 골랐습니다' : '0장 골랐습니다';
+  /* 뜻 없는 실패는 「판독」에서 뺀다 — 눌러도 같은 답만 온다 */
+  var worth = Array.from(sel).filter(function(id){
+    var k = CELLS[order.indexOf(id)];
+    return k === 'retry' || k === 'ok' || k === 'small';
+  }).length;
+  document.getElementById('nRead').textContent = worth;
+  document.getElementById('bRead').title = worth < n
+    ? '다시 눌러도 소용없는 실패 '+(n-worth)+'장은 뺐습니다'
+    : '';
+}
+function say(m){ document.getElementById('log').textContent = m; }
+
+g.addEventListener('click', function(e){
+  var c = e.target.closest('.cell'); if(!c) return;
+  var id = c.getAttribute('data-id');
+  if(e.shiftKey && anchor){
+    /* 보이는 차례로 사이 전부 — 기준(anchor)은 그대로 둔다 */
+    var a = order.indexOf(anchor), b = order.indexOf(id);
+    var lo = Math.min(a,b), hi = Math.max(a,b);
+    for(var i=lo;i<=hi;i++) sel.add(order[i]);
+    say('Shift+클릭 — '+(lo+1)+'번부터 '+(hi+1)+'번까지 '+(hi-lo+1)+'장을 골랐습니다 (기준은 '+(a+1)+'번 그대로)');
+  } else if(e.ctrlKey || e.metaKey){
+    if(sel.has(id)) sel.delete(id); else sel.add(id);
+    anchor = id;
+    say('Ctrl+클릭 — 이 칸만 켜고 끕니다');
+  } else {
+    if(sel.has(id)) sel.delete(id); else sel.add(id);
+    anchor = id;
+    say('기준 칸이 '+(order.indexOf(id)+1)+'번이 되었습니다 — 이제 Shift+클릭으로 범위를 잡을 수 있습니다');
+  }
+  paint();
+});
+
+/* 쓸어서 고르기 — 지금 앱에 이미 있는 것을 그대로 */
+var bOn=false, bMoved=false, bMode='new', bBase=null, ax=0, ay=0;
+g.addEventListener('mousedown', function(e){
+  if(e.button!==0) return;
+  if(e.target.closest('.cell')) return;
+  bOn=true; bMoved=false;
+  bMode = (e.ctrlKey||e.metaKey) ? 'off' : (e.shiftKey ? 'add' : 'new');
+  bBase = bMode==='new' ? new Set() : new Set(sel);
+  var r = g.getBoundingClientRect();
+  ax = e.clientX-r.left; ay = e.clientY-r.top;
+});
+window.addEventListener('mousemove', function(e){
+  if(!bOn) return;
+  var r = g.getBoundingClientRect();
+  var x = e.clientX-r.left, y = e.clientY-r.top;
+  if(!bMoved){
+    if(Math.abs(x-ax)<4 && Math.abs(y-ay)<4) return;
+    bMoved = true;
+    if(bMode==='new') sel.clear();
+  }
+  e.preventDefault();
+  var L=Math.min(ax,x), T=Math.min(ay,y), W=Math.abs(x-ax), H=Math.abs(y-ay);
+  band.style.display='block'; band.style.left=L+'px'; band.style.top=T+'px';
+  band.style.width=W+'px'; band.style.height=H+'px';
+  var box={left:r.left+L, top:r.top+T, right:r.left+L+W, bottom:r.top+T+H};
+  [].forEach.call(g.querySelectorAll('.cell'), function(c){
+    var id=c.getAttribute('data-id'), b=c.getBoundingClientRect();
+    var hit = !(b.right<box.left||b.left>box.right||b.bottom<box.top||b.top>box.bottom);
+    var on = hit ? (bMode!=='off') : bBase.has(id);
+    if(on) sel.add(id); else sel.delete(id);
+  });
+  paint();
+});
+window.addEventListener('mouseup', function(){
+  if(!bOn) return;
+  if(bMoved) say('쓸어서 '+sel.size+'장을 골랐습니다 · Ctrl 로 끌면 풀기, Shift 로 끌면 더하기');
+  bOn=false; band.style.display='none';
+});
+
+document.getElementById('bAll').onclick = function(){
+  order.forEach(function(id){ sel.add(id); });
+  say('보이는 '+order.length+'장을 모두 골랐습니다 — 화면에 없는 사진은 안 골립니다');
+  paint();
+};
+document.getElementById('bClear').onclick = function(){
+  sel.clear(); anchor=null; say('고르기를 풀었습니다'); paint();
+};
+document.getElementById('bAck').onclick = function(){
+  if(!sel.size){ say('먼저 고르십시오'); return; }
+  say('「'+sel.size+'장을 확인했음으로 치웁니다 — 사진은 그대로 있습니다」라고 먼저 묻습니다');
+};
+document.getElementById('bDel').onclick = function(){
+  if(!sel.size){ say('먼저 고르십시오'); return; }
+  say('「'+sel.size+'장을 휴지통으로 보냅니다」라고 먼저 묻습니다');
+};
+document.getElementById('bRead').onclick = function(){
+  var n = Number(document.getElementById('nRead').textContent);
+  say(n ? n+'장을 다시 판독합니다 — 소용없는 실패는 뺐습니다' : '다시 걸어도 뜻 있는 것이 없습니다');
+};
+build();
+</script>
+</body>
+</html>

@@ -97,9 +97,19 @@ test('★ 크게 보기가 이 안내를 실제로 부른다', () => {
 });
 
 test('★ 격자에서도 「다시 올려 주세요」로 보인다', () => {
+  /* ⚠ 2026-08-24: 실패 문구를 까닭별로 갈라 readFailAdvice 로 모았다(딱지가 거의 다
+     「판독 실패 — 다시 판독」 하나여서 헛수고 재시도를 부르던 것을 고쳤다).
+     지킬 것은 「격자에서 무엇을 해야 하는지 보인다」이므로 겨누는 자리를 옮겼다. */
   const w = fnOf('checkWhy');
-  assert.match(w, /원본이 없습니다 — 사진만 다시 올려 주세요/,
+  assert.match(w, /if \(r\.error\) return readFailAdvice\(r\);/,
+    '★ 격자 딱지가 실패 조언을 안 씁니다');
+  const a = fnOf('readFailAdvice');
+  assert.match(a, /원본이 없습니다 — 사진만 다시 올려 주세요/,
     '열어 봐야만 알면 확인 필요 목록에서 무엇을 할지 모릅니다');
-  assert.ok(w.indexOf('사진이 비었습니다 — 지워 주세요') < 0,
+  /* 본문이 없는 실패가 그 문구로 가는지 — 규칙표를 실제로 견준다 */
+  const rules = app.match(/^const READ_FAIL_RULES = \[[\s\S]*?\n\];$/m)[0];
+  assert.match(rules, /kind: 'reup',\s*re: \/본문/,
+    '★ 「본문」 실패가 「다시 올려 주세요」 갈래에 안 걸립니다');
+  assert.ok(a.indexOf('사진이 비었습니다 — 지워 주세요') < 0,
     '지우라고 하면 멀쩡한 판독 결과까지 잃습니다');
 });

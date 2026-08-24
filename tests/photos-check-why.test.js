@@ -46,10 +46,17 @@ function load() {
        남던 사고). 화면에서 **그대로 가져온다** — 여기 베껴 적으면 갈래를 늘릴 때
        검사만 옛 목록을 보게 된다. */
     grab(/^const KEEP_ONLY = \{[^}]*\};/m, 'KEEP_ONLY').replace('const ', 'var '),
+    /* ⚠ 2026-08-24 — 판독 실패는 까닭을 갈라 「무엇을 해야 하나」로 적는다.
+       **진짜 규칙표와 진짜 함수를 넣는다** — 가짜로 두면 갈래를 잘못 가려도
+       아래 「할 일과 이유가 어긋나지 않는다」가 못 잡는다. */
+    grab(/^const READ_FAIL_RULES = \[[\s\S]*?\n\];$/m, 'READ_FAIL_RULES').replace('const ', 'var '),
+    grab(/^const FAIL_GIVEUP = \d+;$/m, 'FAIL_GIVEUP').replace('const ', 'var '),
+    grab(/function readFailKind\(read\)[\s\S]*?\n\}/, 'readFailKind'),
+    grab(/function readFailAdvice\(read\)[\s\S]*?\n\}/, 'readFailAdvice'),
     grab(/function checkWhy\(it\)[\s\S]*?\n\}/, 'checkWhy'),
     grab(/function needsCheck\(it\)[\s\S]*?\n\}/, 'needsCheck')
   ].join('\n');
-  const ctx = { Number, Math, String };
+  const ctx = { Number, Math, String, RegExp, Object, Array };
   vm.createContext(ctx);
   vm.runInContext(src, ctx);
   return ctx;
