@@ -147,21 +147,27 @@ test('막대에 단추가 걸려 있고, 이름이 하는 일과 같다', () => 
 
 /* ══════ ④ 옆줄에 켜지는 것은 하나뿐 ══════ */
 
+/* 2026-08-24 대표 지시로 메일이 갈래 줄에서 빠지고, 메일 창에서는 이 줄을 아예 안 그린다.
+   그래서 「!onMail」로 가릴 일이 없어졌다 — 줄 자체가 없는 화면이기 때문이다.
+   대신 «기업 상세와 명함이 같이 켜지지 않는다»는 원래 요지는 그대로 지킨다. */
 test('기업 상세를 보는 중에는 명함·사업자가 안 켜진다', () => {
   const i = src.indexOf('const onMail = (state.view');
   const fn = src.slice(i, src.indexOf('</div></div>`;', i));
   assert.match(fn, /const onCo = \(state\.view==='co'\)/, '화면을 가리는 값이 없다');
-  assert.match(fn, /!onMail&&!onCo&&state\.tab==='card'/, '명함이 기업 상세와 같이 켜진다');
-  assert.match(fn, /!onMail&&!onCo&&state\.tab==='biz'/, '사업자가 기업 상세와 같이 켜진다');
+  assert.match(fn, /!onCo&&state\.tab==='card'/, '명함이 기업 상세와 같이 켜진다');
+  assert.match(fn, /!onCo&&state\.tab==='biz'/, '사업자가 기업 상세와 같이 켜진다');
+  assert.match(fn, /if\(!onMail\) h \+= `<div class="sidetab/,
+    '메일 창에서 갈래 줄을 안 그리는 갈림길이 없다');
 });
 
-test('네 단추의 켜짐 조건이 서로 겹치지 않는다', () => {
-  /* 조건을 실제로 돌려 본다 — 어떤 상태에서도 켜지는 것은 하나여야 한다. */
+test('세 단추의 켜짐 조건이 서로 겹치지 않는다', () => {
+  /* 조건을 실제로 돌려 본다 — 어떤 상태에서도 켜지는 것은 하나여야 한다.
+     메일·자료함 화면은 이 줄을 아예 안 그리므로 셀 것이 0개다. */
   const on = (view, tab) => {
     const onMail = (view === 'mail' || view === 'mat');
+    if (onMail) return 0;                      // 줄 자체가 없다
     const onCo = (view === 'co');
-    return [onMail, !onMail && !onCo && tab === 'card', !onMail && !onCo && tab === 'biz', onCo]
-      .filter(Boolean).length;
+    return [!onCo && tab === 'card', !onCo && tab === 'biz', onCo].filter(Boolean).length;
   };
   [['list', 'card'], ['list', 'biz'], ['mail', 'card'], ['mat', 'biz'],
    ['co', 'card'], ['co', 'biz'], ['settings', 'card']].forEach(([v, t]) => {

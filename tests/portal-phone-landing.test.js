@@ -82,10 +82,12 @@ function cut(a, b) {
      타일만 지우고 메일로 가는 길까지 막으면 그건 기능을 없앤 것이다. */
 (function () {
   const apps = cut('var APPS = [', '\n  ];');
-  ok('★ 메일 타일을 따로 두지 않는다 (한 프로그램에 문 하나)', !/key:'mail'/.test(apps));
+  /* 2026-08-24 대표 지시 「해라 포털도」로 메일 타일을 되살렸다. 08-21 에 뺀 까닭은
+     「한 프로그램이 타일 둘을 차지한다」였는데, 같은 날 옆줄을 두 창으로 나눠 메일 문에서는
+     명함 살림이 아예 안 보이게 되었다 — 이제 «다른 두 화면»이라 타일도 둘이 맞다. */
+  ok('★ 메일 타일이 있다 (대표 지시 2026-08-24)', /key:'mail'/.test(apps));
+  ok('★ 메일 타일은 메일 문으로 간다', /key:'mail'[^\n]*pu-cards\.html\?view=mail/.test(apps));
   ok('★ 기업정보함 타일은 그대로 있다', /key:'cards'[\s\S]{0,160}?url:'pu-cards\.html'/.test(apps));
-  ok('★ 기업정보함 설명에 메일을 적는다 (안 적으면 메일을 어디서 찾는지 모른다)',
-     /key:'cards'[\s\S]{0,120}?메일/.test(apps));
   /* 기능은 살아 있다 — 기업정보함 안에서 메일 화면으로 갈 수 있어야 한다.
      ⚠ 이 줄이 깨지면 「타일만 지운 것」이 아니라 「메일을 없앤 것」이다. */
   const cards = fs.readFileSync(path.join(__dirname, '..', 'pu-cards.html'), 'utf8');
