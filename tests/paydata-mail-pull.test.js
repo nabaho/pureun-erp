@@ -51,7 +51,10 @@ test('★ 잠금 시각을 못 적어도 받는 일은 한다 — 잠금 때문�
 test('★ 몇 통을 보고 몇 건을 담았는지 돌려준다', () => {
   /* 「가져왔습니다」만 하면 아무 일도 없었는지 알 수 없다 — 수를 돌려줘야
      「모르는 주소라 건너뜀 2통」 같은 것을 사람에게 말할 수 있다. */
-  assert.match(FN, /return \{ boxes: boxes, looked: inbox\.length/);
+  /* 셈은 try **밖의** scanned 에 모은다 — 2026-08-24 에 try 안에서 만든 boxes 를
+     try 를 나온 뒤 return 에서 써서, 자료를 담은 회차마다 터졌다. */
+  assert.match(FN, /const scanned = \{ boxes: \[\]/);
+  assert.match(FN, /return scanned;/);
 });
 
 /* ══════ 저장 층 ══════ */
