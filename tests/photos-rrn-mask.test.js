@@ -72,8 +72,13 @@ function runReadPhoto(masked, opts) {
     renderReadPanel: function () { },
     canSend: function () { return false; },
     canSendCo: function () { return false; },
+    /* ⚠ 2026-08-23: 판독을 마치면 기업 상세로도 «스스로» 보낸다. 여기 가짜가 없으면
+       그 줄에서 ReferenceError 로 멎어 가림 판독 검사가 통째로 운다 — 이 검사가
+       보는 것은 「사본만 판독기로 간다」이지 어디로 보내느냐가 아니다. */
+    autoSendCoInfo: function () { return false; },
     sendCards: function () { return Promise.resolve(); },
     sendCompany: function () { return Promise.resolve(); },
+    sendCoInfo: function () { return Promise.resolve(); },
     PuPhotoStore: {
       loadFull: function () { got.loaded++; return Promise.resolve(opts.full || 'data:image/jpeg;base64,ORIGINAL'); },
       photoYear: function () { return '2026'; },

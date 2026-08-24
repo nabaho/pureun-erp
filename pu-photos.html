@@ -4997,6 +4997,11 @@ function startRead(job) {
       /* 사업자등록증·중소기업확인서는 업체관리에도 간다(빈 칸만 채운다).
          명함첩 보내기와 따로 둔다 — 한쪽이 실패해도 다른 쪽은 되어야 한다. */
       if (read.auto && canSendCo(read)) return sendCompany(sibs[0].id, year, sibs[0]);
+    }).then(function () {
+      /* 기업 상세(기업정보함)에도 스스로 보낸다 — 까닭과 문턱은 autoSendCoInfo 에.
+         ⚠ 업체관리 보내기와 **따로** 둔다: 한쪽이 실패해도 다른 쪽은 되어야 한다.
+         ⚠ 여러 쪽이어도 대표 쪽 하나만 — 쪽마다 보내면 같은 업체가 쪽수만큼 쌓인다. */
+      if (autoSendCoInfo(read)) return sendCoInfo(sibs[0].id, year, sibs[0]);
     });
   }).catch(function (e) {
     console.warn('[판독]', e);
@@ -5174,25 +5179,53 @@ function canSendCoInfo(read) {
   return String(f.bizno || '').replace(/\D/g, '').length >= 10;
 }
 
-function sendCoInfo(id) {
+/* ── 기업 상세로 «스스로» 보낼 수 있는가 (대표 지시 2026-08-23) ──
+   "사진첩에 정리된 기업정보를 기업정보함 기업상세에 연결되어 자동 저장될 수 있도록"
+
+   종전에는 사람이 「🏢 기업 상세로 보내기」를 눌러야 했다. 서식 캡처가 상담 한 건에
+   여러 장씩 나오는데 장마다 누르는 것은 일이 아니다.
+
+   ⚠ 그런데 canSendCoInfo 는 «사업자번호가 열 자리인가»만 본다 — 지어낸 번호도
+     열 자리다. 그것만 보고 자동으로 밀어 넣으면 AI 가 흐린 자리를 메운 값이
+     기업정보함으로 조용히 흘러간다. 그래서 **기계가 번호를 검산한 것만**
+     스스로 보낸다(bizNoOk). 검산에 걸린 것은 단추가 그대로 남아 사람이 판단한다.
+     — 「기계 검증 통과분만 자동 입력」이라는 이 저장소의 규칙 그대로다.
+   ⚠ auto 는 보지 «않는다». 서식의 auto=false 는 「자동 등록 대상이 아니다」는 뜻이라
+     (autoOk) 그것을 함께 보면 서식은 영영 자동으로 못 간다 — 정작 이 지시가
+     가리키는 것이 서식 캡처다.
+   ⚠ 이미 있는 값은 안 덮는다 — 채우는 쪽(sendToCoInfo)이 빈 칸만 채운다.
+     그래서 자동으로 보내도 사람이 고쳐 둔 값이 지워지지 않는다. */
+function autoSendCoInfo(read) {
+  return !!(canSendCoInfo(read) && read.bizNoOk === true);
+}
+
+/* ⚠ year·job 을 받는다 (대표 지시 2026-08-23 자동 보내기) — 방금 올린 사진은
+     아직 격자 목록(gridItems)에 없다. 목록에서만 찾으면 read 가 undefined 가 되어
+     **아무 일도 안 하고 조용히 끝난다** — 자동으로 보내려는 바로 그 순간이 그때다.
+     그래서 업체관리 보내기(sendCompany)와 «같은 모양»으로 job 을 함께 받는다.
+     또 해(year)를 화면의 해로 짐작하면 다른 해 사진의 기록이 엉뚱한 자리에 적힌다. */
+function sendCoInfo(id, year, job) {
   const it = gridItems.find(function (x) { return x.id === id; });
-  const read = it && it.meta && it.meta.read;
+  const read = (it && it.meta && it.meta.read) || (job && job._read);
   if (!canSendCoInfo(read)) return Promise.resolve();
+  const yr = year || (it && it.meta && it.meta.__year) || gridYear;
   return PuDocFile.sendToCoInfo({
     fields: read.fields,
     byName: PuPhotoStore.myName() || '',
     /* 어느 사진에서 온 값인지 함께 넘긴다 — 나중에 그 서류를 다시 찾을 수 있어야 한다 */
-    photo: { year: gridYear, id: id, owner: photoOwner(id) || '' }
+    photo: { year: yr, id: id, owner: photoOwner(id) || '' }
   }).then(function (res) {
     /* ⚠ filled 가 빈 배열이면 실시간DB 가 아예 안 적는다 — 읽는 쪽은 늘 || [] 로 받는다.
        그래서 개수(n)를 숫자로 따로 남긴다. */
     read.filedInfo = { at: Date.now(), by: PuPhotoStore.myName() || '',
                        n: (res.filled || []).length, message: res.message || '' };
     if (it) it.meta = Object.assign({}, it.meta, { read: read });
+    if (job) job._read = read;
     if (viewerId === id) renderReadPanel(it);
+    renderUp();
     /* 주인 자리에 남긴다 — 남의 사진을 관리자가 보냈을 때 내 자리에 쓰면
        주인 화면에는 「아직 안 보냄」으로 남아 또 보내게 된다(업체관리와 같은 까닭). */
-    return PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id));
+    return PuPhotoStore.saveRead(yr, id, read, photoOwner(id));
   }).catch(function (e) {
     console.warn('[기업정보 보내기]', e);
     read.filedInfoError = (e && e.message) || String(e);
@@ -9601,6 +9634,10 @@ function readPhoto(id, masked) {
       if (read.auto && canSend(read)) return sendCards(pages[0].id, gridYear, null);
     }).then(function () {
       if (read.auto && canSendCo(read)) return sendCompany(pages[0].id, gridYear, null);
+    }).then(function () {
+      /* 기업 상세로도 스스로 — 다시 판독한 길에서도 같아야 한다. 한쪽에만 넣으면
+         「올릴 때는 되는데 다시 판독하면 안 된다」가 된다. */
+      if (autoSendCoInfo(read)) return sendCoInfo(pages[0].id, gridYear, null);
     });
   });
 }
