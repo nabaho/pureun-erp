@@ -198,3 +198,30 @@ test('지난 회차 것도 찾기로는 걸린다', () => {
   assert.equal(load({ inbox: OLD, inboxQ: '급여대장' }).rows().length, 1);
 });
 
+
+/* ══════ 들어가는 길 (2026-08-24 「받은 어디서 찾나 안보인다」) ══════
+
+   폰 갈래줄에만 넣어 두어 **PC 에서는 들어갈 길이 아예 없었다.** 대표가
+   쓰시는 화면이 PC 다. 화면을 늘릴 때 폰·PC 두 곳을 함께 고쳐야 한다. */
+
+test('★ PC 옆줄에 「받은 메일」 줄이 있다 — 여기가 없어 못 찾으셨다', () => {
+  const src = cut('mailSideHtml');
+  assert.match(src, /openInbox\(\)/, 'PC 옆줄에 들어갈 길이 없습니다');
+  assert.match(src, /받은 메일/);
+});
+
+test('★ PC 본문이 받은 메일을 그린다 — 폰만 그리고 있었다', () => {
+  const src = cut('renderMailPage');
+  assert.match(src, /inboxBoxHtml\(\)/, 'PC 는 눌러도 쓰기 화면이 뜹니다');
+});
+
+test('폰 갈래줄에도 그대로 있다 — 한쪽만 고치면 안 된다', () => {
+  const src = cut('renderMailMobile');
+  assert.match(src, /openInbox\(\)/);
+  assert.match(src, /inboxBoxHtml\(\)/);
+});
+
+test('나갔다 들어와도 받은 메일로 돌아온다', () => {
+  assert.match(HTML, /s\.mail === 'inbox'/, '되돌아오는 길이 없습니다');
+});
+
