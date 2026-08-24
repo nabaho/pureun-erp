@@ -4458,10 +4458,14 @@ function openSubDocPick(){
   var k=($('subdoc-kind')&&$('subdoc-kind').value)||'기타';
   openAlbumPick('','',null,k);
 }
-function openAlbumPick(zid,kind,sid,shelf){
+/* txn 을 주면 «그 거래의 증빙»을 고르는 창이 된다(판독 없이 잇기만 한다) */
+function openAlbumPick(zid,kind,sid,shelf,txn){
   if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다 — 새로고침 후 다시','err'); return; }
-  _pick={kind:kind,zid:zid,items:[],year:new Date().getFullYear(),fid:S.fundId,sid:sid||'',yr:S.year,shelf:shelf||''};
-  var _what=shelf?('서류함 · '+shelf):((sid?(_siteName(sid)+' '):'')+docZoneLabel(kind));
+  _pick={kind:kind,zid:zid,items:[],year:new Date().getFullYear(),fid:S.fundId,sid:sid||'',yr:S.year,
+         shelf:shelf||'',txn:txn||''};
+  var _tx=txn&&(S.txns||{})[txn];
+  var _what=txn?('거래 증빙 · '+((_tx&&_tx.date)||'')+' '+(((_tx&&_tx.memo)||'').slice(0,18)))
+          :shelf?('서류함 · '+shelf):((sid?(_siteName(sid)+' '):'')+docZoneLabel(kind));
   showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">🖼 사진첩에서 '+esc(_what)+' 고르기</h2>'+hlp('album.pick')
     +'<span style="flex:1"></span><select id="pk-year" onchange="albumPickLoad(+this.value)" style="padding:4px 8px;border:1px solid var(--line);border-radius:7px">'
     +[0,1,2].map(function(d){var y=new Date().getFullYear()-d;return '<option value="'+y+'">'+y+'년</option>';}).join('')+'</select></div>'
@@ -4522,6 +4526,12 @@ function pickAlbumPhoto(id){
     saveSiteScanRef(fid,_pick.yr,_pick.sid,kind,{owner:owner||'',year:year,id:id});
     return;
   }
+  /* 거래 증빙 — 영수증은 «받았다»를 증명하는 것이라 판독하지 않는다. 원본만 잇는다. */
+  if(_pick.txn){
+    closeM();
+    saveTxnScanRef(fid,_pick.yr,_pick.txn,{owner:owner||'',year:year,id:id});
+    return;
+  }
   var b=$('pk-body'); if(b) b.innerHTML=loadingHTML('원본을 가져와 판독하는 중…');
   PuPhotoStore.loadFull(year,id,owner).then(function(src){
     if(!src) throw new Error('원본을 찾지 못했습니다');
@@ -4540,6 +4550,91 @@ function pickAlbumPhoto(id){
 }
 function _dataUrlToFile(src,name){
   return fetch(src).then(function(r){ return r.blob(); }).then(function(b){ return new File([b],name,{type:b.type||'image/jpeg'}); });
+}
+/* ══════════ 월마감 — closing/{기금}/{연도}/months/{01~12} ══════════
+   연간 일정에 「매월 말 월마감」이 있는데 잠글 방법이 없었다(대표 검토 2026-08-24, ⑦).
+   잠근 달의 거래는 고칠 수 없다 — 승인·계정 지정·쪼개기·삭제·새 거래 모두 막힌다.
+   ⚠ 자물쇠는 «되돌릴 수 있다». 결산 확정과 달리 월마감은 일하는 중의 표시라,
+     잘못 잠갔다고 그 달을 통째로 다시 만들게 하면 안 된다.
+   ⚠ 자물쇠는 사람을 막는 것이지 «자료를 지키는 것»이 아니다 — 서버 규칙이 아니라
+     화면에서 막는다. 실수로 고치는 것을 막는 것이 목적이다. */
+function _monthOf(d){ var m=String(d||'').slice(5,7); return /^(0[1-9]|1[0-2])$/.test(m)?m:''; }
+function monthLocked(mm){ return !!(((S.f15Close||{}).months||{})[mm]); }
+/* 그 거래의 달이 잠겼는가 — 막는 자리마다 이 하나만 부른다 */
+function txnLocked(id){
+  var x=(S.txns||{})[id]; if(!x) return false;
+  return monthLocked(_monthOf(x.date));
+}
+function _lockStop(mm){
+  toast((+mm)+'월은 마감되어 고칠 수 없습니다 — 월마감을 풀고 고치세요','warn');
+  renderFund();
+}
+function monthLockSet(mm,on){
+  var fid=S.fundId, yr=S.year;
+  var go=function(){
+    fbDb.ref(NS+'/closing/'+fid+'/'+yr+'/months/'+mm).set(on?{at:ymd(),by:(S.user||'')}:null)
+      .then(function(){
+        S.f15For=null; _cbDirty();                 // 결산 화면·대장이 새 상태를 보게
+        if(S.fundId===fid&&S.year===yr) renderFund();
+        toast((+mm)+'월 '+(on?'마감했습니다':'마감을 풀었습니다'));
+      }).catch(function(e){ toast('실패: '+e.message,'err'); });
+  };
+  if(!on){ confirmM((+mm)+'월 마감을 풀까요?\n푼 뒤에는 그 달 거래를 다시 고칠 수 있습니다.',{ok:'풀기'})
+    .then(function(ok){ if(ok) go(); }); return; }
+  go();
+}
+/* 달마다 자물쇠 하나 — 잠근 달은 미분류가 남아 있으면 함께 알려 준다 */
+function monthLockBar(arr){
+  if(!f15Load()) return '';
+  var cnt={}, un={};
+  (arr||[]).forEach(function(x){ var m=_monthOf(x.date); if(!m) return;
+    cnt[m]=(cnt[m]||0)+1; if(!x.approved) un[m]=(un[m]||0)+1; });
+  var any=Object.keys(cnt).length;
+  if(!any) return '';
+  var ms=[]; for(var i=1;i<=12;i++){ var mm=(i<10?'0':'')+i; if(cnt[mm]) ms.push(mm); }
+  return '<div class="row" style="margin-top:8px;flex-wrap:wrap;gap:5px">'
+    +'<span class="muted" style="font-size:11.5px">월마감</span>'+hlp('close.month')
+    +ms.map(function(mm){
+      var lk=monthLocked(mm);
+      return '<button onclick="monthLockSet(\''+mm+'\','+(lk?'false':'true')+')" '
+        +'title="'+(+mm)+'월 거래 '+cnt[mm]+'건'+(un[mm]?' · 미승인 '+un[mm]+'건':'')+'" '
+        +'style="padding:2px 8px;font-size:11px'+(lk?';background:var(--ok-bg);color:var(--ok);font-weight:700':'')+'">'
+        +(lk?'🔒':'🔓')+' '+(+mm)+'월'+(un[mm]?' <span style="color:var(--warn)">'+un[mm]+'</span>':'')+'</button>';
+    }).join('')+'</div>';
+}
+
+/* ══ 거래 증빙 — txns/{기금}/{연도}/{거래}/scan = {owner,year,id,at,by} ══
+   분개는 「무엇을 샀나」를 말하지만 «그것이 사실인지»는 영수증이 말한다. 감사·세무조사에서
+   묻는 것이 그것이다. 원본은 사진첩에 그대로 두고 거래에는 참조만 남긴다 —
+   이미지를 RTDB에 넣으면 거래 목록이 통째로 느려진다(기금 서류와 같은 규칙). */
+function saveTxnScanRef(fid,yr,id,ref){
+  var o=Object.assign({at:ymd(),by:(S.user||'')},ref);
+  fbDb.ref(NS+'/txns/'+fid+'/'+yr+'/'+id+'/scan').set(o).then(function(){
+    if(S.fundId===fid&&S.year===yr&&S.txns&&S.txns[id]) S.txns[id].scan=o;
+    if(S.fundId===fid&&S.year===yr) renderFund();
+    toast('증빙을 이 거래에 연결했습니다');
+  }).catch(function(e){ toast('연결 저장 실패: '+e.message,'err'); });
+}
+function openTxnScan(id){
+  var x=(S.txns||{})[id], r=x&&x.scan; if(!r) return;
+  if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다','err'); return; }
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">거래 증빙</h2>'
+    +'<span class="muted" style="font-size:11.5px">'+esc(x.date||'')+' · '+esc((x.memo||'').slice(0,24))
+    +' · 연결 '+esc(r.at||'')+'</span>'
+    +'<span style="flex:1"></span><button onclick="unlinkTxnScan(\''+id+'\')" style="color:var(--danger)">연결 해제</button></div>'
+    +'<div id="scanBody" style="text-align:center">'+loadingHTML('사진첩에서 불러오는 중…')+'</div>');
+  _loadScanInto(r);
+}
+function unlinkTxnScan(id){
+  var fid=S.fundId, yr=S.year;
+  confirmM('이 거래와 사진첩 원본의 연결만 끊습니다.\n사진첩의 사진은 그대로 남습니다.',{ok:'연결 해제',danger:true})
+    .then(function(ok){
+      if(!ok) return;
+      fbDb.ref(NS+'/txns/'+fid+'/'+yr+'/'+id+'/scan').remove().then(function(){
+        if(S.fundId===fid&&S.year===yr&&S.txns&&S.txns[id]) delete S.txns[id].scan;
+        closeM(); if(S.fundId===fid&&S.year===yr) renderFund(); toast('연결을 끊었습니다');
+      }).catch(function(e){ toast('실패: '+e.message,'err'); });
+    });
 }
 /* 기금에 붙인 스캔 참조 — funds/{fid}/scans/{kind} = {owner,year,id,at,by} */
 function saveScanRef(fid,kind,ref){
@@ -8145,6 +8240,11 @@ function closingTab(f){
       +'<td style="text-align:right;color:#c0392b">'+(num(x.withdraw)?num(x.withdraw).toLocaleString():'')+(x.nocash&&num(x.amount)?'<span class="chip" style="font-size:10px" title="현금이 오가지 않는 대체분개 — 통장 잔액 대사에서 제외">대체 '+num(x.amount).toLocaleString()+'</span>':'')+'</td>'
       +acctCells
       +'<td style="text-align:center"><input type="checkbox"'+(x.approved?' checked':'')+' onchange="approveTxn(\''+x._id+'\',this.checked)"></td>'
+      /* 증빙 — 붙어 있으면 📎(누르면 원본), 없으면 ⬇(사진첩에서 고르기) */
+      +'<td style="text-align:center;white-space:nowrap">'
+        +(x.scan?'<button onclick="openTxnScan(\''+x._id+'\')" title="연결된 증빙 보기 — '+esc((x.scan.year||'')+'년 · '+(x.scan.at||''))+'" style="padding:2px 6px;font-size:11px">📎</button>'
+                :'<button onclick="openAlbumPick(\'\',\'\',null,\'\',\''+x._id+'\')" title="사진첩에서 영수증 고르기" style="padding:2px 6px;font-size:11px;opacity:.5">⬇</button>')
+        +'</td>'
       +'<td style="white-space:nowrap"><button onclick="splitForm(\''+x._id+'\')" style="padding:2px 6px" title="한 줄에 성격이 다른 금액이 섞여 있으면 계정별로 쪼갠다(원금+수수료)">✂</button>'
       +'<button onclick="delTxn(\''+x._id+'\')" style="padding:2px 7px">×</button></td></tr>';
   }).join('');
@@ -8156,8 +8256,16 @@ function closingTab(f){
     +'<span class="stat">거래 '+arr.length+'건</span>'
     +'<span class="stat'+(unclass?' " style="background:var(--warn-bg);color:var(--warn)':'')+'">미분류 '+unclass+'</span>'
     +'<span class="stat'+(unappr?' " style="background:var(--warn-bg);color:var(--warn)':'')+'">미승인 '+unappr+'</span>'
+    /* 증빙이 몇 건에 붙었나 — 감사·세무조사에서 묻는 것이다. 출금 거래만 센다
+       (입금은 통장이 곧 증빙이고, 영수증을 받을 상대가 없다). */
+    +(function(){ var need=arr.filter(function(x){return num(x.withdraw)>0;});
+       if(!need.length) return '';
+       var got=need.filter(function(x){return x.scan;}).length;
+       return '<span class="stat'+(got<need.length?' " style="background:var(--warn-bg);color:var(--warn)':'')
+         +'" title="출금 거래에 붙은 영수증">증빙 '+got+'/'+need.length+'</span>'; })()
     +(arr.length?(gateOk?'<span class="chip ok">✅ 결산 가능 (미분류·미승인 0)</span>':'<span class="chip warn">결산 관문: 미분류·미승인 0 필요</span>'):'')+reconChip+'</div>'
     +closeSubBar()+'</div>'
+    +monthLockBar(arr)
     +'<div id="closeBody">'+closeBodyHTML(arr,rows)+'</div>';
 }
 /* 하위 탭 본문 — 어느 장부를 보든 원천(승인 분개)은 같다 */
@@ -8172,7 +8280,7 @@ function closeBodyHTML(arr,rows){
     case 'f15':     return f15View(arr);
     default:
       return '<div class="panel">'+(arr.length
-          ? '<div style="overflow-x:auto"><table><thead><tr><th>일자</th><th>적요</th><th style="text-align:right">입금</th><th style="text-align:right">출금</th><th>차변</th><th>대변</th><th>승인</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+          ? '<div style="overflow-x:auto"><table><thead><tr><th>일자</th><th>적요</th><th style="text-align:right">입금</th><th style="text-align:right">출금</th><th>차변</th><th>대변</th><th>승인</th><th style="white-space:nowrap">증빙'+hlp('txn.scan')+'</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'
           : '<div class="muted" style="padding:16px 4px">거래가 없습니다. [📥 통장 엑셀 가져오기]로 시작하세요.</div>')+'</div>'
         +finPanel(arr);
   }
@@ -8691,6 +8799,10 @@ function addTxnForm(){
 }
 function addTxnSave(){
   var fid=S.fundId, yr=S.year;
+  /* 새 거래도 «그 거래의 달»이 잠겼으면 못 넣는다 — 마감한 달에 뒤늦게 끼워 넣으면
+     이미 낸 월계표·시산표와 어긋난다. */
+  var _nd=$('nt-date'), _nm=_monthOf(_nd&&_nd.value);
+  if(_nm&&monthLocked(_nm)){ _lockStop(_nm); return; }
   var v=function(id){ var e=$(id); return e?String(e.value||'').trim():''; };
   var date=v('nt-date'), memo=v('nt-memo');
   var dep=num(v('nt-dep'))||0, wd=num(v('nt-wd'))||0, bal=num(v('nt-bal'))||0;
@@ -8800,11 +8912,13 @@ function importBank(){
   inp.click();
 }
 function setTxnAcct(id,side,val){ var _key=S.fundId+'/'+S.year;
+  if(txnLocked(id)){ _lockStop(_monthOf((S.txns[id]||{}).date)); return; }
   fbDb.ref(NS+'/txns/'+_key+'/'+id+'/'+side).set(val)
     .then(function(){ if(S.txnsFor===_key&&S.txns&&S.txns[id])S.txns[id][side]=val; renderFund(); })
     .catch(function(e){ toast('저장 실패: '+e.message,'err'); renderFund(); }); }
 function approveTxn(id,on){
   var x=S.txns&&S.txns[id];
+  if(txnLocked(id)){ _lockStop(_monthOf((x||{}).date)); return; }
   if(on){
     if(x&&!_txnDone(x)){ toast(_splitsOf(x).length?'조각 합계를 거래금액과 맞추세요':'차변·대변 계정을 먼저 지정하세요','warn'); renderFund(); return; }
     /* 계좌 간 이체는 현금↔현금으로 상계하므로 차·대가 같은 것이 정상이다 */
@@ -8821,7 +8935,9 @@ function approveTxn(id,on){
     })
     .catch(function(e){ toast('저장 실패: '+e.message,'err'); renderFund(); });
 }
-function delTxn(id){ confirmM('이 거래를 삭제할까요?',{ok:'삭제',danger:true}).then(function(ok){ if(ok) fbDb.ref(NS+'/txns/'+S.fundId+'/'+S.year+'/'+id).remove().then(function(){S.txnsFor=null;renderFund();toast('삭제되었습니다');}).catch(function(e){toast('삭제 실패: '+e.message,'err');}); }); }
+function delTxn(id){
+  if(txnLocked(id)){ _lockStop(_monthOf(((S.txns||{})[id]||{}).date)); return; }
+  confirmM('이 거래를 삭제할까요?',{ok:'삭제',danger:true}).then(function(ok){ if(ok) fbDb.ref(NS+'/txns/'+S.fundId+'/'+S.year+'/'+id).remove().then(function(){S.txnsFor=null;renderFund();toast('삭제되었습니다');}).catch(function(e){toast('삭제 실패: '+e.message,'err');}); }); }
 
 /* ══ 거래 쪼개기 화면 ══ */
 var _splitId=null, _splitRows=[];
@@ -8876,6 +8992,7 @@ function _splitOpen(){
   _splitSumShow();
 }
 function splitSave(){
+  if(txnLocked(_splitId)){ _lockStop(_monthOf(((S.txns||{})[_splitId]||{}).date)); closeM(); return; }
   _splitRead();
   var id=_splitId, x=(S.txns||{})[id]; if(!x){ closeM(); return; }
   var total=(num(x.deposit)||0)+(num(x.withdraw)||0), isDep=(num(x.deposit)||0)>0;
@@ -8914,6 +9031,14 @@ var HELP={
    +'<p><b>못 채우는 것</b> — 인가번호 · 인가일 · 설립등기일. 이 셋은 인가증·등기부에만 있으니 <b>서류 자동 입력</b>으로 넣으세요.</p>'
    +'<p><b>짝짓는 방법</b> — 이미 아는 번호(고유번호·법인등록번호)가 맞으면 그것으로, 없으면 <b>이름이 완전히 같을 때만</b> 짝짓습니다. 「충남 4호」와 「충남 40호」를 섞지 않기 위해 부분일치는 쓰지 않습니다.</p>'
    +'<p>후보가 둘 이상인 기금은 <b>건너뛰고</b> 몇 개를 건너뛰었는지 알려 줍니다. 넣기 전에 표로 보여 주고, 넣는 순간 서버 값을 다시 확인해 그 사이 채워진 칸은 건드리지 않습니다.</p>'},
+ 'close.month':{t:'월마감',h:'<p>한 달치 거래를 다 보고 나면 <b>자물쇠</b>를 채웁니다. 잠근 달의 거래는 <b>승인·계정 지정·쪼개기·삭제·새 거래</b>가 모두 막힙니다 — 실수로 지난 달을 건드리는 것을 막습니다.</p>'
+   +'<p>단추의 숫자는 그 달의 <b>미승인 건수</b>입니다. 0 이 된 뒤에 잠그세요.</p>'
+   +'<p><b>다시 풀 수 있습니다.</b> 결산 확정과 달리 월마감은 «일하는 중»의 표시라, 잘못 잠갔다고 그 달을 다시 만들게 하지 않습니다.</p>'
+   +'<p>자물쇠는 <b>사람의 실수를 막는 것</b>이지 자료를 지키는 것이 아닙니다 — 화면에서만 막습니다.</p>'},
+ 'txn.scan':{t:'거래 증빙',h:'<p>분개는 「무엇을 샀나」를 말하지만, <b>그것이 사실인지</b>는 영수증이 말합니다. 감사·세무조사에서 묻는 것이 그것입니다.</p>'
+   +'<p>표의 <b>증빙</b> 칸에서 <b>⬇</b> 를 누르면 <b>푸른사진첩</b>에서 고릅니다. 붙은 뒤에는 <b>📎</b> 가 되고, 누르면 원본이 뜹니다.</p>'
+   +'<p><b>원본은 사진첩에 그대로 둡니다</b> — 거래에는 참조만 남습니다. 이미지를 여기 담으면 거래 목록이 통째로 느려집니다.</p>'
+   +'<p>머리줄의 <b>증빙 n/m</b> 은 <b>출금</b> 거래 기준입니다 — 입금은 통장이 곧 증빙이고 영수증을 받을 상대가 없습니다.</p>'},
  'loan.book':{t:'대부 대장',h:'<p>근로자에게 빌려준 돈을 <b>사람별로</b> 적어 둡니다. 여태 장부에는 「근로자대부금 ○○원」 한 줄뿐이라, 누가 얼마 빌려 얼마 남았는지 알 길이 없었습니다.</p>'
    +'<p><b>연도와 상관없이 한 대장입니다.</b> 대부는 여러 해에 걸쳐 갚기 때문입니다. 대신 <b>갚은 해</b>별로 상환액을 넣습니다 — 표의 「○○년 상환」 칸입니다. 연도를 바꾸면 그 해 칸이 바뀝니다.</p>'
    +'<p><b>잔액 = 대부액 − 갚은 것 전부</b>입니다(그 해 것만이 아니라 지난 해 것까지).</p>'
