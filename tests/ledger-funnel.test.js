@@ -33,7 +33,7 @@ test('★ 세는 것은 «거르기 전» 목록으로 센다', () => {
   /* 거른 뒤에 세면 「확정 가능 56」이 걸러진 수로 줄어 몇 건 남았는지 알 수 없다.
      그래서 거르기는 stCnt·readyRows 계산 «뒤» 에 와야 한다. */
   const cnt = E.indexOf('stCnt[st.state] = (stCnt[st.state]');
-  const filt = E.indexOf('incList = incList.filter(function(r){');
+  const filt = E.indexOf('if(ldStF) incList = incList.filter(');   // ★ «깔때기» 거르개만 (범위 거르개는 세기 전이 맞다)
   assert.ok(cnt > 0 && filt > 0, '두 자리를 못 찾았다');
   assert.ok(filt > cnt, '거르기가 세기보다 앞에 있다 — 숫자가 흔들린다');
   const ready = E.indexOf('readyRows.push(');
