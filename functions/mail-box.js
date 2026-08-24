@@ -17,7 +17,7 @@
       백업 한도(16MB)도 그 자리에서 넘는다.
    3. **한 회차에 다 하지 않는다.** 몇 년치 메일을 한 번에 끌면 함수가 시간 초과로
       죽고 아무것도 안 남는다. 새것은 위에서, 옛것은 아래에서 조금씩 — 회차를
-      거듭하며 만난다(backfillWindow).
+      거듭하며 만난다(pickToFetch).
    4. **폴더 이름을 못 박지 않는다.** 다음메일의 폴더 이름·차림은 계정마다 다르고
       언젠가 바뀐다. IMAP 이 알려 주는 특수용도표시(\Sent 등)를 먼저 믿고, 이름은
       거들기만 한다. 이름을 못 박으면 이름이 바뀐 날 조용히 아무것도 안 온다. */
@@ -197,44 +197,54 @@ function msgRow(msg) {
   };
 }
 
-/* ── 이번 회차에 어디를 가져올까 ──
-   두 방향으로 움직인다.
-   ① 새것 — 지난번에 본 마지막 번호(hi) 위쪽. 늘 이것이 먼저다. 대표가 기다리는 것은
-      방금 온 메일이다.
-   ② 옛것 — 지난번에 본 첫 번호(lo) 아래쪽으로 한 뭉치씩. 몇 회차 지나면 1번까지 닿는다.
-      이 방식이라 「모두 동기화」가 한 번에 안 끝나도 **매 회차마다 눈에 보이게** 늘어난다.
+/* ── 이번 바퀴에 «어느 번호»를 가져올까 ──
+   메일함이 알려 준 **실제 번호 목록**(IMAP SEARCH ALL)을 보고 고른다.
 
-   uidNext 는 「다음에 올 메일이 받을 번호」다. 그러니 지금 있는 것 중 가장 큰 번호는
-   uidNext-1 이다.
-   done 은 옛것 방향이 1번까지 닿았다는 뜻 — 이 폴더는 이제 새것만 보면 된다. */
-function backfillWindow(sync, uidNext, chunk) {
+   ⚠ 왜 목록을 받아서 고르나 — 처음에는 번호를 300씩 «훑어 내려갔다». 그런데 이 계정의
+     번호는 폴더별이 아니라 **계정 전체에서 하나씩** 매겨져 2026-08-24 현재 171,876
+     번까지 가 있고, 폴더 하나에는 그 가운데 400개만 들어 있다. 그래서 훑어 내려가면
+     거의 언제나 **빈 구간**을 열게 되어, 400통 폴더 하나를 채우는 데 430바퀴가
+     걸렸다(실측: 33개 폴더 한 회차에 345통). 목록을 받아 고르면 **두 바퀴**다.
+
+   두 방향은 그대로다.
+   ① 새것 — 지난번에 본 가장 큰 번호(hi) 위쪽. 늘 이것이 먼저다. 대표가 기다리는 것은
+      방금 온 메일이다. 보통 몇 통뿐이라 뭉치로 자르지 않는다.
+   ② 옛것 — 지난번에 본 가장 작은 번호(lo) 아래쪽에서 **큰 것부터** 한 뭉치.
+      새 것에 가까운 쪽부터 채워야 사람이 먼저 볼 것이 먼저 찬다.
+
+   done 은 옛것이 더 없다는 뜻 — 이 폴더는 이제 새것만 보면 된다.
+
+   ⚠ 이 함수가 지키는 것 하나: [lo … hi] 사이는 **빈틈이 없다.** 늘 위에서부터 이어
+     붙여 가져오기 때문이다. 그래서 「어디까지 했나」를 번호 두 개로 적어 둘 수 있다
+     (가져온 번호를 다 적어 두면 폴더마다 수만 자가 된다). */
+function pickToFetch(uids, sync, chunk) {
   const s = sync || {};
-  const next = Math.max(1, Number(uidNext || 1));
-  const top = next - 1;                       // 지금 가장 큰 번호
-  const size = Math.max(1, Number(chunk || 300));
-  const hi = Number(s.hi || 0);               // 지난번까지 본 가장 큰 번호
-  const lo = Number(s.lo || 0);               // 지난번까지 본 가장 작은 번호
+  const all = (uids || []).map(Number).filter((n) => n > 0).sort((a, b) => b - a);  // 큰 것부터
+  const size = Math.max(1, Number(chunk || 400));
+  const hi = Number(s.hi || 0);
+  const lo = Number(s.lo || 0);
+  const out = { fresh: [], back: [], done: false, total: all.length };
 
-  const out = { fresh: null, back: null, done: false };
-  if (top < 1) { out.done = true; return out; }   // 빈 폴더
+  if (!all.length) { out.done = true; return out; }
 
-  /* 처음이면 — 맨 위에서 한 뭉치. 옛것은 다음 회차부터. */
+  /* 처음이면 — 맨 위에서 한 뭉치. 옛것은 다음 바퀴부터. */
   if (!hi || !lo) {
-    const from = Math.max(1, top - size + 1);
-    out.fresh = { from: from, to: top };
-    out.done = from <= 1;
+    out.back = all.slice(0, size);
+    out.done = out.back.length >= all.length;
     return out;
   }
 
-  if (top > hi) out.fresh = { from: hi + 1, to: top };
-  if (lo > 1) {
-    const from = Math.max(1, lo - size);
-    out.back = { from: from, to: lo - 1 };
-    out.done = from <= 1;
-  } else {
-    out.done = true;
-  }
+  out.fresh = all.filter((u) => u > hi);
+  const older = all.filter((u) => u < lo);
+  out.back = older.slice(0, size);
+  out.done = older.length <= out.back.length;
   return out;
+}
+
+/* 번호 여럿을 IMAP 에 넘길 글자로. 「5,9,12」처럼 낱개로 적는다 —
+   구간(9:12)으로 줄이면 그 사이 없는 번호까지 달라고 하는 셈이라, 서버마다 답이 다르다. */
+function uidSet(uids) {
+  return (uids || []).map(Number).filter((n) => n > 0).sort((a, b) => a - b).join(',');
 }
 
 /* 회차가 끝난 뒤 적어 둘 표시. 번호가 뒤로 가는 일은 없어야 한다 —
@@ -284,5 +294,5 @@ module.exports = {
   safeKey, hash8, slugOf,
   folderKind, folderOrder, isSyncable, folderRecord,
   attCount, oneAddr, addrList, hasFlag, msgRow,
-  backfillWindow, nextSync, uidReset,
+  pickToFetch, uidSet, nextSync, uidReset,
 };

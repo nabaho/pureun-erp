@@ -68,9 +68,19 @@ function fakeMail(folders, hooks) {
     async getMailboxLock(p) { opened = p; return { release() {} }; },
     async *fetch(range) {
       fetches++;
-      const [from, to] = String(range).split(':').map(Number);
+      /* 「10,20,30」(낱개) 과 「10:30」(구간) 둘 다 받는다 — 실제 IMAP 과 같게 */
+      const want = {};
+      String(range).split(',').forEach((part) => {
+        if (part.indexOf(':') >= 0) {
+          const [a, b] = part.split(':').map(Number);
+          for (const k of Object.keys(folders[opened].msgs)) {
+            const u = Number(k);
+            if (u >= a && u <= b) want[u] = 1;
+          }
+        } else if (part) { want[Number(part)] = 1; }
+      });
       const uids = Object.keys(folders[opened].msgs).map(Number)
-        .filter((u) => u >= from && u <= to).sort((a, b) => a - b);
+        .filter((u) => want[u]).sort((a, b) => a - b);
       let i = 0;
       for (const u of uids) {
         i++;
@@ -94,6 +104,13 @@ function box(n, first) {
   const msgs = {};
   const start = first || 1;
   for (let i = 0; i < n; i++) msgs[String(start + i)] = envelope(start + i);
+  return { msgs: msgs };
+}
+/* 실제 대표 계정처럼 «흩어진» 번호 — 계정 전체에서 하나씩 매겨져 17만번대까지 가 있고
+   폴더 하나에는 그 가운데 몇백 개만 있다(실측 2026-08-24). */
+function sparseBox(n, top, gap) {
+  const msgs = {};
+  for (let i = 0; i < n; i++) msgs[String(top - i * gap)] = envelope(i);
   return { msgs: msgs };
 }
 
@@ -150,6 +167,35 @@ test('폴더가 여럿이면 돌려 세운다 — 앞 폴더만 채우고 뒤는
   assert.equal(uidsIn(db, slug('INBOX')).length, 900);
   assert.equal(uidsIn(db, slug('보낸메일함')).length, 900);
   assert.equal(uidsIn(db, slug('INBOX.1.자문사답변')).length, 500);
+});
+
+test('★ 번호가 17만번대에 흩어져 있어도 한 회차에 다 가져온다 — 실제 계정이 그렇다', () => {
+  /* 2026-08-24 실측: 33개 폴더가 번호를 171,876번까지 나눠 쓰고 있었다. 훑어 내려가는
+     방식으로는 폴더 하나에 430바퀴가 걸렸다(빈 구간을 계속 열었다). */
+  const folders = { INBOX: sparseBox(400, 171876, 37) };
+  const db = fakeDb();
+  return MS.runSync(deps(db), { client: fakeMail(folders), deadlineMs: 60000 }).then((r) => {
+    assert.equal(r.ok, true, r.err);
+    assert.equal(uidsIn(db, slug('INBOX')).length, 400, '흩어진 번호를 다 못 가져왔다');
+    assert.ok(r.turns <= 5, '바퀴가 ' + r.turns + '번이나 걸렸다 — 빈 구간을 열고 있다');
+  });
+});
+
+test('★ 없는 번호를 달라고 하지 않는다 — 목록에 있는 것만 고른다', async () => {
+  const folders = { INBOX: sparseBox(50, 100000, 1000) };
+  const db = fakeDb();
+  const asked = [];
+  const client = fakeMail(folders);
+  const realFetch = client.fetch;
+  client.fetch = function (range, q, o) { asked.push(String(range)); return realFetch.call(client, range, q, o); };
+  await MS.runSync(deps(db), { client: client, deadlineMs: 60000 });
+  const live = Object.keys(folders.INBOX.msgs);
+  asked.forEach((set) => {
+    String(set).split(',').forEach((u) => {
+      assert.ok(live.indexOf(u) >= 0, '없는 번호 ' + u + ' 를 달라고 했다');
+    });
+  });
+  assert.ok(asked.length > 0, '아무것도 안 가져왔다');
 });
 
 /* ══════ 중간에 끊겼을 때 ══════ */
