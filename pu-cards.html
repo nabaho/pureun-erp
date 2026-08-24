@@ -4632,7 +4632,7 @@ function mailWriteHtml(){
         <div class="mdh">📎 자료 서랍
           ${state.matPick?`<span class="mdcat">${esc(state.matPick)}<b onclick="pickMatCat('')" title="전체 보기">✕</b></span>`:''}</div>
         <div class="mdsearch"><input id="mdQ" value="${esc(state.drawerQ||'')}" placeholder="🔍 자료 찾기"
-          oninput="state.drawerQ=this.value;grabCompose();renderMailPage();focusDrawerQ()"></div>
+          oninput="state.drawerQ=this.value;if(!event.isComposing){grabCompose();renderMailPage();focusDrawerQ()}" oncompositionend="state.drawerQ=this.value;grabCompose();renderMailPage();focusDrawerQ()"></div>
         ${(function(){
           const sets = setList(_matSets).filter(s=>setLiveIds(s,_matMeta).length);
           if(!sets.length) return '';
@@ -4922,33 +4922,52 @@ function openAddrBook(){
   try{ const el=$('abQ'); if(el) el.focus(); }catch(_){}
 }
 function addrBookHtml(){
-  const q = String(state.abQ||'').trim();
-  /* 이메일이 있는 명함만 보여 준다 — 없는 사람을 고르면 보낼 때 되돌아온다 */
-  const all = Object.values(state.items||{}).filter(it=>it && it.kind==='card' && normEmail(it.email));
-  const hits = (q ? findPeople(state.items, q, 60) : all.slice(0, 60))
-    .filter(it=>normEmail(it.email));
-  const n = Object.keys(_abPick).length;
+  /* ⚠ 찾기 칸은 «다시 그리지 않는다» — 한글 조합이 끊긴다(내 서명과 같은 까닭).
+     결과 목록(#abList)과 아래 단추(#abAdd)만 바꾼다. */
   return `<div class="mhead"><b>📇 주소록</b>${_closeBtn()}</div>
     <p class="setnote" style="margin:0 0 8px">명함에 이메일이 있는 사람만 나옵니다 ·
       한 번에 <b>${MAIL_MAX_TO}명</b>까지</p>
     <div class="mdsearch" style="margin-bottom:8px"><input id="abQ" value="${esc(state.abQ||'')}"
       placeholder="🔍 이름·회사·이메일로 찾기"
-      oninput="state.abQ=this.value;showPanel(addrBookHtml());focusAbQ()"></div>
-    <div class="ablist">${ hits.length ? hits.map(it=>{
-        const em = normEmail(it.email), on = !!_abPick[it.id];
-        return `<div class="abrow ${on?'on':''}" onclick="abToggle('${it.id}')">
-          <span class="ck">${on?'☑':'☐'}</span>
-          <span class="n"><b>${esc(it.name||'(이름 없음)')}</b>
-            <span class="c">${esc(it.company||'')}</span></span>
-          <span class="e">${esc(em)}</span></div>`;
-      }).join('') : `<div class="cpnone" style="padding:16px 2px">${q?'찾은 사람이 없습니다':'이메일이 있는 명함이 없습니다'}</div>` }</div>
-    <button class="sm-send" ${n?'':'disabled'} onclick="addrBookAdd()">
-      ${n?`고른 ${n}명 넣기`:'고른 사람이 없습니다'}</button>`;
+      oninput="abType(this.value)"></div>
+    <div class="ablist" id="abList">${addrBookListHtml()}</div>
+    <div id="abAdd">${addrBookBtnHtml()}</div>`;
 }
-function focusAbQ(){ try{ const el=$('abQ'); if(el){ el.focus(); el.selectionStart=el.value.length; } }catch(_){} }
+/* 결과 목록만 */
+function addrBookListHtml(){
+  const q = String(state.abQ||'').trim();
+  /* 이메일이 있는 명함만 보여 준다 — 없는 사람을 고르면 보낼 때 되돌아온다 */
+  const all = Object.values(state.items||{}).filter(it=>it && it.kind==='card' && normEmail(it.email));
+  const hits = (q ? findPeople(state.items, q, 60) : all.slice(0, 60))
+    .filter(it=>normEmail(it.email));
+  if(!hits.length) return `<div class="cpnone" style="padding:16px 2px">${
+    q?'찾은 사람이 없습니다':'이메일이 있는 명함이 없습니다'}</div>`;
+  return hits.map(it=>{
+    const em = normEmail(it.email), on = !!_abPick[it.id];
+    return `<div class="abrow ${on?'on':''}" onclick="abToggle('${it.id}')">
+      <span class="ck">${on?'☑':'☐'}</span>
+      <span class="n"><b>${esc(it.name||'(이름 없음)')}</b>
+        <span class="c">${esc(it.company||'')}</span></span>
+      <span class="e">${esc(em)}</span></div>`;
+  }).join('');
+}
+/* 아래 단추만 — 고른 개수가 여기 적힌다 */
+function addrBookBtnHtml(){
+  const n = Object.keys(_abPick).length;
+  return `<button class="sm-send" ${n?'':'disabled'} onclick="addrBookAdd()">
+    ${n?`고른 ${n}명 넣기`:'고른 사람이 없습니다'}</button>`;
+}
+/* 글자를 칠 때 — 목록만 바꾼다. 찾기 칸과 초점은 손대지 않는다. */
+function abType(v){
+  state.abQ = String(v==null?'':v);
+  const el = $('abList'); if(el) el.innerHTML = addrBookListHtml();
+}
+/* 고르기 — 목록의 ☑ 와 아래 단추의 숫자가 «둘 다» 바뀐다. 한쪽만 바꾸면 어긋난다.
+   ⚠ 팝업을 통째로 다시 그리지 않는다 — 찾기 칸에 치던 한글이 끊긴다. */
 function abToggle(id){
   if(_abPick[id]) delete _abPick[id]; else _abPick[id]=1;
-  showPanel(addrBookHtml());
+  const l = $('abList'); if(l) l.innerHTML = addrBookListHtml();
+  const b = $('abAdd');  if(b) b.innerHTML = addrBookBtnHtml();
 }
 /* 고른 사람을 받는사람 칸에 넣는다. ⚠ 이미 적힌 주소와 합쳐 세어야 한다 —
    빈 칸 기준으로만 세면 3명이 적힌 칸에 5명을 더 넣어 보낼 때 거절당한다. */
@@ -5125,8 +5144,11 @@ function mySignHtml(){
   /* 사진(썸네일)이 있는 명함만 보여 준다 — 없는 것을 고르면 그림이 안 붙는다.
      ⚠ 개인 폴더 명함은 안 보여 준다. 서버는 공용 자리(pucards/thumbs)만 읽는다. */
   const pool = Object.values(state.items||{}).filter(it=>it && it.kind==='card' && it.id);
-  const hits = (q ? findPeople(state.items, q, 40) : pool.slice(0, 40)).filter(it=>it && it.kind==='card');
   const cur = rec.cardId ? (state.items[rec.cardId]||{}) : null;
+  /* ⚠ 찾기 칸은 «다시 그리지 않는다». 한글은 자모 여러 번이 모여 한 글자가 되는데
+     (조합), 글자마다 팝업을 다시 그리면 입력 칸이 새 것으로 바뀌어 조합이 끊긴다 —
+     대표 화면 2026-08-24 에 「권」을 치니 «ㄱㅜㅓㄴ» 이 남았다.
+     그래서 결과 목록(#msList)만 바꾼다(msType). */
   return `<div class="mhead"><b>✍ 내 서명 명함</b>${_closeBtn()}</div>
     <p class="setnote" style="margin:0 0 8px">한 번 고르면 <b>내가 보내는 모든 메일</b> 끝에 따라붙습니다 ·
       사람마다 따로 저장됩니다</p>
@@ -5137,18 +5159,31 @@ function mySignHtml(){
       <button class="msoff" onclick="clearMySign()" title="서명에서 명함 사진을 뺍니다">✕ 빼기</button>
     </div>` : `<p class="cpnone" style="padding:10px 2px">아직 고른 명함이 없습니다</p>`}
     <div class="mdsearch" style="margin:10px 0 8px"><input id="msQ" value="${esc(_msQ||'')}"
-      placeholder="🔍 내 이름·회사로 찾기" oninput="_msQ=this.value;showPanel(mySignHtml());focusMsQ()"></div>
-    <div class="ablist">${ hits.length ? hits.map(it=>`
-      <div class="abrow ${rec.cardId===it.id?'on':''}" onclick="pickMySign('${it.id}')">
-        <span class="ck">${rec.cardId===it.id?'☑':'☐'}</span>
-        <span class="n"><b>${esc(it.name||'(이름 없음)')}</b>
-          <span class="c">${esc(it.company||'')}</span></span>
-        <span class="e">${esc(it.title||'')}</span></div>`).join('')
-      : `<div class="cpnone" style="padding:16px 2px">${q?'찾은 명함이 없습니다':'명함이 없습니다'}</div>` }</div>
+      placeholder="🔍 내 이름·회사로 찾기" oninput="msType(this.value)"></div>
+    <div class="ablist" id="msList">${mySignListHtml()}</div>
     <p class="setnote" style="margin:8px 0 0">사진이 없는 명함을 고르면 글자 서명만 나갑니다.
       개인 폴더 명함은 쓸 수 없습니다.</p>`;
 }
-function focusMsQ(){ try{ const el=$('msQ'); if(el){ el.focus(); el.selectionStart=el.value.length; } }catch(_){} }
+/* 결과 목록만. 찾기 칸을 안 건드리므로 한글 조합이 끊기지 않는다. */
+function mySignListHtml(){
+  const rec = mySign() || {};
+  const q = String(_msQ||'').trim();
+  const pool = Object.values(state.items||{}).filter(it=>it && it.kind==='card' && it.id);
+  const hits = (q ? findPeople(state.items, q, 40) : pool.slice(0, 40)).filter(it=>it && it.kind==='card');
+  if(!hits.length) return `<div class="cpnone" style="padding:16px 2px">${
+    q?'찾은 명함이 없습니다':'명함이 없습니다'}</div>`;
+  return hits.map(it=>`
+    <div class="abrow ${rec.cardId===it.id?'on':''}" onclick="pickMySign('${it.id}')">
+      <span class="ck">${rec.cardId===it.id?'☑':'☐'}</span>
+      <span class="n"><b>${esc(it.name||'(이름 없음)')}</b>
+        <span class="c">${esc(it.company||'')}</span></span>
+      <span class="e">${esc(it.title||'')}</span></div>`).join('');
+}
+/* 글자를 칠 때 — 목록만 바꾼다. 초점도 손대지 않는다(안 건드렸으니 그럴 일이 없다). */
+function msType(v){
+  _msQ = String(v==null?'':v);
+  const el = $('msList'); if(el) el.innerHTML = mySignListHtml();
+}
 
 function pickMySign(cardId){
   const k = mySignKey(); if(!k) return;
@@ -5417,7 +5452,7 @@ function inboxBoxHtml(){
   return `
     <div class="ibtools">
       <input id="ibQ" placeholder="보낸이·제목으로 찾기" value="${esc(state.inboxQ||'')}"
-        oninput="state.inboxQ=this.value;renderMailPage()">
+        oninput="state.inboxQ=this.value;if(!event.isComposing)renderMailPage()" oncompositionend="state.inboxQ=this.value;renderMailPage()">
       ${chip('all','전체',c.all)}${chip('took','자료 담김',c.took)}
       ${chip('none','안 담김',c.none)}${chip('lost','임자 못 찾음',c.lost)}
       <span style="flex:1"></span>
@@ -5516,7 +5551,7 @@ function sentBoxHtml(){
       ${(state.sentCat||state.sentBy)?`<button class="mattab" onclick="state.sentCat='';state.sentBy='';openSentBox()">전체 보기</button>`:''}
       <div class="matsearch"><input value="${esc(state.sentQ||'')}"
         placeholder="🔍 받는사람·제목·자료 이름으로 찾기"
-        oninput="state.sentQ=this.value;renderMailPage()"></div>
+        oninput="state.sentQ=this.value;if(!event.isComposing)renderMailPage()" oncompositionend="state.sentQ=this.value;renderMailPage()"></div>
       <button class="mattab ${mine?'on':''}" onclick="state.sentMine=!state.sentMine;renderMailPage()">내가 보낸 것</button>
       <button class="mattab" onclick="openMailPage()">✏️ 새 메일</button>
     </div>

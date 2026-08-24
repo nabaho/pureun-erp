@@ -231,7 +231,8 @@ test('주소록은 명함에서 고르고, 한 번에 넣을 수 있는 수를 �
 });
 
 test('주소록은 이메일 없는 명함을 고르게 하지 않는다', () => {
-  assert.match(fnBody('addrBookHtml'), /normEmail\(/,
+  /* 2026-08-24: 한글 조합이 끊기지 않게 목록을 addrBookListHtml 로 떼어 냈다 */
+  assert.match(fnBody('addrBookListHtml'), /normEmail\(/,
     '★ 이메일 없는 사람을 고르면 「받는 사람이 없다」로 되돌아온다');
 });
 
