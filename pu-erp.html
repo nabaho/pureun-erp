@@ -16371,6 +16371,19 @@ function ContractManagement(props){
     showToast(ct.companyName + ' → ' + contractStatusInfo(newStatus).label + ' · 맨 위로 이동');
   }
 
+  /* 이관하면 업무관리에 있던 «계약» 업무도 곧바로 「이관」으로 닫혀야 한다.
+     닫아 주는 엔진(wsSyncRun)은 다른 <script> 안에 있어 여기서 직접 부를 수 없다.
+     대신 그 엔진이 이미 지켜보고 있는 신호를 여기서 찍는다.
+     ⚠ 엔진은 work_erp/items 에만 쓰고 이 신호는 건드리지 않으므로 되먹임이 없다.
+     예전에는 이 신호가 없어 «푸른이알피를 다시 열 때까지» 계약 업무가 진행중으로 남았고,
+     그 사이 이관으로 생긴 컨설팅 업무까지 들어와 같은 일이 두 건으로 보였다. */
+  function wsPingSync(){
+    try{
+      if(typeof fbDb === 'undefined' || !fbDb) return;
+      fbDb.ref('work_erp/sync_ping').set({ at:Date.now(), from:'transfer' }).catch(function(){});
+    }catch(e){}
+  }
+
   // 계약확정 → 이관 (status='transferred')
   async function doTransfer(id){
     var ct = contracts.find(function(x){return x.id===id;});
@@ -16403,6 +16416,7 @@ function ContractManagement(props){
       if(!_ok) return;
       try {
         archiveContract(Object.assign({}, ct, { transferredTo: _dupT.join(', ') }), '이관완료');
+        wsPingSync();                       // 업무관리의 계약 업무도 함께 닫히도록
         showToast('✓ 계약을 이관완료로 정리했습니다 (' + _dupT.join(', ') + ')');
       } catch(err){
         console.error('[이관완료 정리 오류]', err);
@@ -16476,6 +16490,7 @@ function ContractManagement(props){
       console.error('[archive 오류]', err);
       showToast('⚠️ 이관은 완료됐으나 상태 변경 실패: ' + (err && err.message ? err.message : ''));
     }
+    wsPingSync();                           // 업무관리의 계약 업무도 함께 닫히도록
     var summary = results.map(function(r){
       if(r.type === 'consult') return '상담 종료';
       if(r.type === 'company') return '업체: ' + r.no;
@@ -49252,6 +49267,24 @@ var _wsPendingId = null;
       });
     });
   }
+  /* 업무시트의 「끝났나」를 한 자리에서 쓴다.
+     두 군데(기준선·본줄기)에서 같은 것을 써야 하는데, 따로 적어 두면 한쪽만 고쳐져
+     「끝낸 방식」이 빠진 채 닫히는 일이 생긴다. */
+  function wsPutState(up, wid, done, pe, now){
+    var P = 'work_erp/items/' + wid + '/';
+    up[P + 'state'] = done ? 'done' : null;
+    up[P + 'done_date'] = done ? wsToday() : null;
+    // 푸른이알피 status에서 끝낸 방식을 그대로 옮긴다
+    var pw = pe.status === 'cancelled' ? 'cancel'
+           : pe.status === 'transferred' ? 'transfer' : 'done';
+    up[P + 'status'] = done ? (pw === 'cancel' ? '취소' : pw === 'transfer' ? '이관' : '종료') : '진행중';
+    if(done){
+      up[P + 'end_way'] = pw;
+      if(pw === 'transfer' && pe.transferredTo) up[P + 'end_to'] = String(pe.transferredTo);
+      if(pe.caseResult) up[P + 'end_result'] = String(pe.caseResult);
+    }
+    up[P + 'state_at'] = now;
+  }
   function wsSyncRun(onDone,onlyWid){
     if(_wsBusy){ _wsPendingId=onlyWid||null; return; } // 겹치면 마지막 변경 한 건만 뒤이어 처리
     _wsBusy = true;
@@ -49355,8 +49388,14 @@ var _wsPendingId = null;
           // 업무 요약은 마스터 레코드에 붙는 공용 정보 — 담당자 본인 것만 맞추는 진행 필드와 달리 mine 조건이 없다
           var wbr = briefTrim(w.brief), pbr = briefTrim(pe.brief), sbr = wbr;
           if(!snap.synced_at){                             // 기준선만 기록
+            /* ⚠ 처음 보는데 이미 어긋나 있으면 그대로 굳히지 않는다.
+               계약을 등록한 날 바로 이관하면 여기로 온다 — 업무관리에는 계약이 「진행중」으로
+               있는데 푸른이알피에서는 이미 「이관완료」다. 그대로 기준선을 찍으면 그 뒤로는
+               「변한 게 없다」가 되어 그 업무가 영영 진행중인 채로 굳는다.
+               원본(푸른이알피)을 정본으로 삼아 한 번 맞춰 놓고 시작한다. */
+            if(peClosed !== wsDone){ wsPutState(up, wid, peClosed, pe, now); toWs++; wsDone = peClosed; }
             up['work_erp/pesync/' + key] = { type:w.ref.type, id:w.ref.id, work_id:wid,
-              pe_closed:peClosed, ws_done:wsDone, st:wst, nt:wnt, nd:wnd, br:wbr,
+              pe_closed:peClosed, ws_done:peClosed, st:wst, nt:wnt, nd:wnd, br:wbr,
               ti:String(w.title || ''), cl:String(w.client || ''),
               cn:String((pcOf(pe) || {}).name || ''), cr:String((pcOf(pe) || {}).role || ''),
               cp:String((pcOf(pe) || {}).phone || ''),
@@ -49364,8 +49403,15 @@ var _wsPendingId = null;
             return;
           }
           var peChanged = (peClosed !== !!snap.pe_closed), wsChanged = (wsDone !== !!snap.ws_done);
+          /* 이미 굳어 버린 옛 기준선을 푼다.
+             아래 스냅샷 쓰기는 두 값을 «늘 같게» 적는다(pe_closed:want, ws_done:want).
+             그러니 스냅샷 안에서 둘이 다르다는 것은 위 기준선이 어긋난 채 찍혔다는 뜻뿐이다.
+             그때는 변화가 없어도 원본을 따라 한 번 맞춘다. */
+          var skew = (!peChanged && !wsChanged && (!!snap.pe_closed !== !!snap.ws_done));
           var want = peClosed;                             // 아무 변화 없으면 지금 상태 유지
-          if(peChanged || wsChanged){
+          if(peChanged || wsChanged || skew){
+            if(skew){ want = peClosed; }                   // 굳은 기준선 — 원본이 정본
+            else
             if(peChanged && wsChanged){
               if(peClosed === wsDone) want = peClosed;      // 양쪽이 같아졌으면 스냅샷만 갱신
               else {                                        // 충돌 — 더 최근에 바뀐 쪽을 따른다
@@ -49378,23 +49424,7 @@ var _wsPendingId = null;
                 to:String(w.end_to || ''), res:String(w.end_result || ''),
                 name:(pe.companyName || pe.title || w.ref.id) });
             }
-            if(want !== wsDone){                            // 업무시트 반영
-              up['work_erp/items/' + wid + '/state'] = want ? 'done' : null;
-              up['work_erp/items/' + wid + '/done_date'] = want ? wsToday() : null;
-              // 푸른이알피 status에서 끝낸 방식을 그대로 옮긴다
-              var pw = pe.status === 'cancelled' ? 'cancel'
-                     : pe.status === 'transferred' ? 'transfer' : 'done';
-              up['work_erp/items/' + wid + '/status'] =
-                want ? (pw === 'cancel' ? '취소' : pw === 'transfer' ? '이관' : '종료') : '진행중';
-              if(want){
-                up['work_erp/items/' + wid + '/end_way'] = pw;
-                if(pw === 'transfer' && pe.transferredTo)
-                  up['work_erp/items/' + wid + '/end_to'] = String(pe.transferredTo);
-                if(pe.caseResult) up['work_erp/items/' + wid + '/end_result'] = String(pe.caseResult);
-              }
-              up['work_erp/items/' + wid + '/state_at'] = now;
-              toWs++;
-            }
+            if(want !== wsDone){ wsPutState(up, wid, want, pe, now); toWs++; }   // 업무시트 반영
           }
           // ── 진행 필드(상태·다음 액션·다음 날짜) 양방향 ──
           var sst = wst, snt = wnt, snd = wnd, spg = (pct === null ? '' : String(pct));

@@ -161,9 +161,24 @@ ok('재개는 종료 표시만 걷어낸다 (상태를 무조건 덮지 않는�
   const i = ENG.indexOf('// 재개 — 종료 표시만 걷어낸다');
   return i > 0 && ENG.slice(i, i + 320).indexOf("status: 'progress'") > 0;
 })());
+/* 「끝났나」를 쓰는 자리는 엔진 안이 아니라 wsPutState 로 나갔다.
+   엔진이 두 군데(기준선·본줄기)에서 같은 것을 써야 하는데 따로 적어 두면 한쪽만 고쳐진다.
+   자세한 것은 tests/contract-work-dup.test.js — 거기서는 실제로 돌려 본다. */
+const PUT = (function () {
+  const i = P.indexOf('function wsPutState(');
+  if (i < 0) throw new Error('wsPutState 못 찾음');
+  let d = 0, st = false;
+  for (let j = i; j < P.length; j++) {
+    if (P[j] === '{') { d++; st = true; }
+    else if (P[j] === '}') { d--; if (st && !d) return P.slice(i, j + 1); }
+  }
+  throw new Error('wsPutState 끝 못 찾음');
+})();
 ok('푸른이알피에서 끝난 방식·결과가 업무관리로 온다',
-  ENG.indexOf("pe.status === 'cancelled' ? 'cancel'") > 0
-  && ENG.indexOf("if(pe.caseResult) up['work_erp/items/' + wid + '/end_result']") > 0);
+  PUT.indexOf("pe.status === 'cancelled' ? 'cancel'") > 0
+  && PUT.indexOf("if(pe.caseResult) up[P + 'end_result']") > 0);
+ok('엔진은 그 함수만 부른다 (같은 코드를 또 적어 두지 않는다)',
+  ENG.indexOf('wsPutState(up, wid,') > 0 && ENG.indexOf("pe.status === 'cancelled' ? 'cancel'") < 0);
 ok('푸른이알피 쓰기는 dbPatch 로만', (function () {
   const tail = ENG.slice(ENG.indexOf('toPe.forEach'));
   return tail.indexOf('dbPatch(t.store, t.id, f)') > 0 && !/fbDb\.ref\('data\//.test(ENG);
