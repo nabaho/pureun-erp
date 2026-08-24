@@ -116,11 +116,21 @@ function load() {
       assert.ok(i > 0, n + ' 를 찾지 못했습니다');
       return app.slice(i, app.indexOf(';', i) + 1);
     }).join('\n');
+  /* ⚠ 2026-08-24: 서식·대화캡처가 「사람이 해서 달라지는 것이 있을 때만」 할 일이 되어
+     formTodo·chatTodo(그리고 그것이 쓰는 canSendCoInfo)를 함께 떠야 한다 — 안 실으면
+     needsCheck 가 그 줄에서 멎어 이 파일이 통째로 운다. */
   const src = consts + '\n' +
-    ['tooSmall', 'smallCheckedOk', 'readAnyField', 'coFilledOk', 'coTodo', 'needsCheck', 'checkWhy']
+    ['tooSmall', 'smallCheckedOk', 'readAnyField', 'coFilledOk', 'coTodo',
+     'canSendCoInfo', 'formTodo', 'chatTodo', 'readFailKind', 'readFailAdvice',
+     'needsCheck', 'checkWhy']
       .map(function (n) { return fnOf(app, n); }).join('\n');
-  const c = { Math, Number, String, Object, Boolean, Date };
-  vm.createContext(c); vm.runInContext(src, c);
+  const rules = ['READ_FAIL_RULES', 'FAIL_GIVEUP'].map(function (n) {
+    const m = app.match(new RegExp('^const ' + n + ' = [\\s\\S]*?;$', 'm'));
+    assert.ok(m, n + ' 를 찾지 못했습니다');
+    return m[0];
+  }).join('\n');
+  const c = { Math, Number, String, Object, Boolean, Date, RegExp, Array };
+  vm.createContext(c); vm.runInContext(rules + '\n' + src, c);
   return c;
 }
 const S = load();
@@ -138,13 +148,29 @@ test('★ 사업자번호를 읽은 캡처에 「원본이 작다」고 하지 �
   assert.equal(S.tooSmall(x), 1525, '작다는 판정 자체는 그대로여야 합니다');
   assert.equal(S.smallCheckedOk(x.meta.read), true,
     '★ 서식의 auto=false 는 「자동 등록 대상이 아니다」는 뜻입니다 — 검증 실패가 아닙니다');
-  assert.match(S.checkWhy(x), /서식 — 읽은 칸 확인/,
+  assert.ok(S.checkWhy(x).indexOf('원본이 작습니다') < 0,
     '★ 「원본과 대조」라고 하면 있지도 않은 큰 원본을 찾아다닙니다: ' + S.checkWhy(x));
 });
 
-test('★ 그래도 할 일로는 남는다 — 8/13 결정(읽은 칸을 한 번 본다)을 뒤집지 않았다', () => {
-  assert.equal(S.needsCheck(capture()), true,
-    '★ 서식을 할 일에서 빼면 읽은 칸을 아무도 안 봅니다');
+/* ⚠⚠ 2026-08-13 결정을 **대표 지시로 뒤집었다**(2026-08-24):
+     "계속해서 확인 필요가 나온다. 실제 화면에서는 전혀 문제가 없는데 어떻게 해야 하나.
+      이 부분 제대로 완전히 고쳐 달라."
+   8/13 에는 「서식은 읽은 칸을 한 번 본다」였고, 그래서 서식이 조건 없이 할 일이었다.
+   그런데 서식은 상담 한 건에 여러 장씩 나오므로 확인필요가 서식으로 늘 차서, 정작
+   손봐야 할 것이 묻혔다. 이제 「기업 상세로 보낼 것이 남았을 때만」 할 일이다.
+   ⚠ 값이 틀렸을 위험은 그대로 지킨다 — 기업 상세로 스스로 가는 것은 기계가 번호를
+     검산한 것만이고, 원본이 작은 서식은 크기 판정에서 먼저 걸린다. */
+test('★ 보낼 것이 남은 캡처는 할 일이다 — 누르면 끝난다', () => {
+  const x = capture();
+  assert.equal(S.needsCheck(x), true, '★ 보낼 것이 남았는데 조용히 묻히면 안 됩니다');
+  assert.match(S.checkWhy(x), /기업 상세로 아직 안 보냄/);
+});
+
+test('★ 기업 상세로 보낸 캡처는 할 일이 아니다 — 치울 수 없는 할 일을 만들지 않는다', () => {
+  const x = capture({ filedInfo: { at: 1756000000000, by: '박은비', n: 5 } });
+  assert.equal(S.needsCheck(x), false,
+    '★ 보냈는데도 남으면 확인필요가 서식으로 차고 정작 손볼 것이 묻힙니다');
+  assert.equal(S.checkWhy(x), '');
 });
 
 test('★ 사업자번호를 못 읽은 캡처는 그대로 「원본이 작다」다 — 확인할 것이 없다', () => {
@@ -161,7 +187,7 @@ test('번호 체크섬에 걸린 캡처도 그대로다 — 지어낸 번호일 
 test('넉넉히 큰 캡처는 애초에 크기 판정에 안 걸린다', () => {
   const x = capture({}, 1829, 1063);
   assert.equal(S.tooSmall(x), 0);
-  assert.match(S.checkWhy(x), /서식 — 읽은 칸 확인/);
+  assert.ok(S.checkWhy(x).indexOf('원본이 작습니다') < 0);
 });
 
 test('★ 다른 갈래는 여전히 auto 를 본다 — 폐업 업체가 통과하면 안 된다', () => {

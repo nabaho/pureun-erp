@@ -34,19 +34,33 @@ function load() {
      검사만 옛 값을 보게 된다(그러면 「작은 원본」 판정이 어긋난다). */
   const minEdge = app.match(/const MIN_READ_EDGE = \{[\s\S]*?\};/);
   assert.ok(minEdge, 'MIN_READ_EDGE 를 찾지 못했습니다');
+  /* ⚠ 2026-08-24: 서식·대화캡처가 「사람이 해서 달라지는 것이 있을 때만」 할 일이 되어
+     formTodo·chatTodo(그리고 canSendCoInfo·실패 갈래)를 함께 떠야 한다 — 안 실으면
+     needsCheck 가 그 줄에서 멎어 이 표 검사가 통째로 운다. */
+  const rules = ['READ_FAIL_RULES', 'FAIL_GIVEUP'].map(function (n) {
+    const m = app.match(new RegExp('^const ' + n + ' = [\\s\\S]*?;$', 'm'));
+    assert.ok(m, n + ' 를 찾지 못했습니다');
+    return m[0];
+  }).join('\n');
   const src = [
     'const CARD_KINDS = { card: 1, bizreg: 1 };',
     'const CO_KINDS = { bizreg: 1, sme: 1 };',
     minEdge[0],
     keep[0],
+    rules,
     fnOf(app, 'readAnyField'),
     fnOf(app, 'coFilledOk'),
     fnOf(app, 'coTodo'),
     fnOf(app, 'tooSmall'),
+    fnOf(app, 'readFailKind'),
+    fnOf(app, 'readFailAdvice'),
+    fnOf(app, 'canSendCoInfo'),
+    fnOf(app, 'formTodo'),
+    fnOf(app, 'chatTodo'),
     fnOf(app, 'checkWhy'),
     fnOf(app, 'needsCheck')
   ].join('\n');
-  const ctx = {};
+  const ctx = { Object, Array, String, Number, Boolean, Math, RegExp };
   vm.createContext(ctx);
   vm.runInContext(src, ctx);
   return ctx;
@@ -69,9 +83,14 @@ const TABLE = {
   meeting:   [false, null],                    // 회의·현장 사진 — 넣을 곳이 없다
   contract:  [false, null],                    // 계약서 — 사진첩에만 보관(2026-08-15 고침)
   payslip:   [true,  /지워/],                  // 보관하지 않는 서류 — 지워야 한다
-  chat:      [true,  /할 일/],                 // 뽑아 둔 할 일을 사람이 본다
-  timesheet: [true,  /대조/],                  // 손글씨 숫자는 확인 전까지 못 믿는다
-  form:      [true,  /읽은 칸/],               // 읽은 칸을 한 번 본다
+  /* ⚠ 2026-08-24 대표 지시로 둘의 뜻이 바뀌었다 — 「조건 없이 할 일」에서
+     「사람이 해서 달라지는 것이 있을 때만」으로. 그래서 표에는 **할 일이 되는 꼴**을
+     넣고, 할 일이 아닌 꼴은 아래에 따로 못박는다. */
+  chat:      [true,  /할 일/, { fields: { company: '가야엔지니어링',
+                                          todos: [{ t: '견적서 보내기', done: false }] } }],
+  timesheet: [true,  /대조/],                  // 손글씨 숫자는 기계가 검산할 방법이 없다
+  form:      [true,  /기업 상세/, { fields: { company: '가야엔지니어링',
+                                             bizno: '312-81-49225' } }],
   card:      [true,  /명함첩/, { auto: true }],   // 잘 읽혔는데 아직 명함첩에 안 갔다
   bizreg:    [true,  /명함첩/, { auto: true }],   // 〃
   sme:       [true,  /업체관리/, { auto: true }], // 업체관리에 못 넣었다
@@ -88,6 +107,28 @@ for (const kind of Object.keys(TABLE)) {
     const w = c.checkWhy(p);
     assert.equal(!!w, want, kind + ' — 할 일 여부와 이유가 어긋납니다: "' + w + '"');
     if (why) assert.match(w, why, kind + ' 의 이유가 엉뚱합니다: "' + w + '"');
+  });
+}
+
+/* ── 「할 일이 아닌 꼴」도 표만큼 못박는다 (대표 지시 2026-08-24) ──
+   위 표는 갈래마다 한 줄뿐이라 「언제 할 일이 아닌가」를 담을 수 없다. 그 자리를
+   비워 두면 조건을 도로 「조건 없이 할 일」로 되돌려도 검사가 통과한다. */
+const NOT_TODO = [
+  ['서식 — 보낼 곳이 없다(사업자번호를 못 읽음)', 'form',
+    { fields: { docName: '통합 기술보호지원반 신청서' } }],
+  ['서식 — 기업 상세로 이미 보냈다', 'form',
+    { fields: { bizno: '312-81-49225' }, filedInfo: { at: 1756000000000, n: 4 } }],
+  ['대화캡처 — 뽑은 할 일을 다 끝냈다', 'chat',
+    { fields: { todos: [{ t: 'ㄱ', done: true }] } }],
+  ['대화캡처 — 뽑은 할 일이 하나도 없다', 'chat', { fields: {} }]
+];
+for (const [name, kind, extra] of NOT_TODO) {
+  test('★ ' + name + ' — 할 일이 아니다', () => {
+    const c = load();
+    const p = photo(kind, extra);
+    assert.equal(c.needsCheck(p), false,
+      '★ 치울 수 없는 할 일이 쌓이면 정작 손봐야 할 것이 묻힙니다');
+    assert.equal(c.checkWhy(p), '', '할 일이 아니면 이유도 없어야 합니다');
   });
 }
 
