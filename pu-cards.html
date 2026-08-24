@@ -4569,6 +4569,8 @@ function mailWriteHtml(){
           <button class="edbtn" onclick="editSign()" title="글자 서명 고치기 (전 직원 공용)">서명 고치기</button>
           <button class="edbtn" onclick="openMySign()"
             title="내 명함 사진을 한 번 골라 두면 보낼 때마다 따라갑니다 (사람마다 따로)">📇 내 명함</button>
+          ${state.isAdmin ? `<button class="edbtn" onclick="editSec()"
+            title="메일 끝에 늘 붙는 보안문구 — 대표님만 고칩니다">🔒 보안문구</button>` : ''}
         </div>`;
         })()}
         ${(function(){
@@ -4968,6 +4970,28 @@ const SIGN_DEFAULT =
   F : 041-429-0222
   E : 370-6@hanmail.net`;
 function signText(){ const c=_matMail||{}; return (c.sign==null ? SIGN_DEFAULT : String(c.sign)); }
+
+/* ── 보안문구 (대표 지시 2026-08-24) ──
+   노무법인 메일에는 근로자 개인정보·임금·징계가 담긴다. 잘못 전달됐을 때
+   「알려 주고 지워 달라」를 미리 적어 두는 것이 관례이고, 개인정보를 다루는 곳에서는
+   사실상 기본이다.
+   ⚠ 글자 서명(sign)과 «자리를 나눴다». 서명은 직원 누구나 고치므로, 섞어 두면
+     주소를 고치다가 보안문구를 지우는 일이 생긴다. 고치는 것은 대표만 한다.
+   ⚠ 효력을 단정하지 않는다("제한됩니다" 대신 "제한될 수 있습니다") — 우리가 정할
+     일이 아니고, 단정하면 오히려 다툼거리가 된다. */
+const SEC_DEFAULT =
+`※ 본 메일은 수신인으로 지정된 분만을 위한 것으로, 업무상 비밀이나 개인정보가 포함되어 있을 수 있습니다. 수신인이 아니거나 잘못 전달받으신 경우 발신자에게 알려 주시고 즉시 삭제해 주시기 바랍니다. 무단 열람·복사·배포·이용은 관련 법령에 따라 제한될 수 있습니다.`;
+function secText(){ const c=_matMail||{}; return (c.sec==null ? SEC_DEFAULT : String(c.sec)); }
+/* 고치기 — 대표만. 법적 성격이 있는 문구라 직원이 바꿀 일이 아니다. */
+function editSec(){
+  if(!state.isAdmin) return toast('보안문구는 대표님만 고칠 수 있습니다', 6000);
+  const v = prompt('메일 끝에 늘 붙는 보안문구입니다.\n비우면 안 붙습니다.', secText());
+  if(v===null) return;
+  firebase.database().ref(`${DB_ROOT}/config/matMail/sec`).set(String(v))
+    .then(()=>{ _matMail=_matMail||{}; _matMail.sec=String(v);
+      toast('보안문구를 저장했습니다 — 앞으로 보내는 메일에 붙습니다', 6000); renderMailPage(); })
+    .catch(e=>toast('저장 실패: '+((e&&e.message)||'')));
+}
 function insertSign(){
   grabCompose(); if(!_compose) return;
   const s = signText();
@@ -5026,7 +5050,15 @@ function mySign(){
 function signBlockHtml(){
   const rec = mySign();
   const txt = textToHtml(signText());
-  return (rec && rec.cardId ? SIGN_IMG + '<br>' : '') + txt;
+  /* 보안문구는 «맨 끝». 작고 흐린 글씨로 본문과 구별한다.
+     ⚠ 꾸밈은 functions/mail-send.js 의 STYLE_OK 에 있는 것만 쓴다 —
+       border 는 목록에 없어 서버가 지운다. 줄은 <hr> 로 긋는다. */
+  const sec = String(secText()||'').trim();
+  const secHtml = sec
+    ? '<hr><span style="font-size:12px;color:#8b98b3;line-height:1.6">'
+      + textToHtml(sec) + '</span>'
+    : '';
+  return (rec && rec.cardId ? SIGN_IMG + '<br>' : '') + txt + secHtml;
 }
 
 /* 화면에 보일 때는 표시를 «실제 그림»으로 바꿔 준다 — 서버가 붙이기 전이라
