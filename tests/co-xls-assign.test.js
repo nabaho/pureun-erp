@@ -179,13 +179,25 @@ test('★ 여러 담당에 걸린 세무 이메일은 넣지 않는다 — 남�
   assert.equal(P.taxMailSafe(items)['cpabong@naver.com'], false);
 });
 
-test('★ 못 넣은 세무 이메일은 까닭을 남긴다 — 빠뜨린 것과 일부러 뺀 것을 갈라야 한다', () => {
+test('★ 여러 담당에 걸린 세무 이메일도 넣는다 — 배달 규칙을 고친 뒤로는 안전하다', () => {
+  /* 처음에는 뺐다 — 배달이 「먼저 적힌 업체가 이긴다」여서 남의 칸으로 갔다.
+     2026-08-24 에 배달을 고쳤다(제목에서 사업장 찾기 → 담당 한 사람 → 공용 칸).
+     ⚠ 넣어 두면 제목에 사업장이 적힌 메일은 곧바로 임자에게 간다.
+     검사 tests/mail-shared-sender.test.js 가 그 배달을 못 박는다. */
   const its = [{ kind: 'ok', sid: 'A-004', who: '주민정', tName: '정담회계법인', tMail: 'cpabong@naver.com' }];
   const r = P.patchFor({ id: 'c1', name: '가람떡집', typeCode: '급여' }, its,
     { taxSafe: { 'cpabong@naver.com': false } });
-  assert.equal(r.patch.taxEmail, undefined, '넣으면 안 됩니다');
-  assert.equal(r.patch.taxOfficeName, '정담회계법인', '사무실 이름은 넣어야 합니다');
-  assert.ok(r.why.some(w => /여러 담당/.test(w)), '왜 뺐는지 적어야 합니다');
+  assert.equal(r.patch.taxEmail, 'cpabong@naver.com');
+  assert.equal(r.patch.taxOfficeName, '정담회계법인');
+  assert.ok(r.why.some(w => /제목으로 가른다/.test(w)), '어떻게 갈리는지 알려야 합니다');
+});
+
+test('한 담당에만 걸린 세무 이메일은 군말 없이 넣는다', () => {
+  const its = [{ kind: 'ok', sid: 'A-002', who: '신욱임', tName: '세무법인 삼륭', tMail: 'sr2900@daum.net' }];
+  const r = P.patchFor({ id: 'c9', name: '평해식품', typeCode: '급여' }, its,
+    { taxSafe: { 'sr2900@daum.net': true } });
+  assert.equal(r.patch.taxEmail, 'sr2900@daum.net');
+  assert.equal(r.why.some(w => /여러 담당/.test(w)), false);
 });
 
 /* ══════ 무엇을 쓸지 ══════ */
@@ -375,8 +387,8 @@ test('★ 붙일 곳 없는 것은 새 업체를 만들지 않는다고 적는�
   assert.match(ERP, /몰래 새 업체를 만들지 않습니다/);
 });
 
-test('★ 여러 담당에 걸린 세무 이메일은 화면에도 「안 넣음」으로 보인다', () => {
-  assert.match(ERP, /여러 담당 — 안 넣음/);
+test('★ 여러 담당에 걸린 세무 이메일은 화면에 「제목으로 가름」이라 보인다', () => {
+  assert.match(ERP, /여러 담당 — 제목으로 가름/);
 });
 
 test('★ 화면이 이 파일을 불러 쓴다 — 캐시 번호가 붙어 있다', () => {

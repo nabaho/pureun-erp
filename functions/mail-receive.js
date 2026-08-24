@@ -325,23 +325,75 @@ function mailNoteOf(o) {
 /* 주소 → 업체 지도. 업체 한 곳에 여러 주소가 적혀 있을 수 있다(대표·담당·경리).
    ⚠ buildKnownList 는 주소를 **평평하게** 모으기만 해서 어느 업체 것인지 몰랐다 —
    그래서 통과/차단에만 쓸 수 있었다. 여기서는 업체를 함께 담는다. */
-function buildCompanyIndex(companies) {
+/* 업체 자료를 배열로 편다 — {v:{id:업체}} 로도, 배열로도 온다.
+   ⚠ 제목으로 사업장을 찾는 길(coFromText)도 이 배열이 필요해 따로 뺐다. */
+function coList(companies) {
   const box = (companies && typeof companies === 'object' && companies.v !== undefined)
     ? companies.v : companies;
   let list = box;
   if (list && !Array.isArray(list) && typeof list === 'object') {
     list = Object.keys(list).map(function (k) { return list[k]; });
   }
+  return Array.isArray(list) ? list : [];
+}
+
+function buildCompanyIndex(companies) {
+  const list = coList(companies);
   const map = {};
   if (!Array.isArray(list)) return map;
   list.forEach(function (co) {
     if (!co || typeof co !== 'object') return;
     collectEmails(co).forEach(function (e) {
-      if (!e || map[e]) return;          // 먼저 적힌 업체가 이긴다
-      map[e] = co;
+      if (!e) return;
+      /* ⚠ 예전에는 「먼저 적힌 업체가 이긴다」였다. 그런데 **세무사무소 한 주소가
+         여러 사업장에 걸린다**(정담회계법인 cpabong@naver.com → 7곳). 그때
+         아무 한 곳을 골라 버리면, 담당이 다른 사람이면 남의 자료가 조용히
+         엉뚱한 사람 칸으로 간다. 걸린 곳을 **다 담아** 두고 나중에 좁힌다. */
+      const arr = (map[e] = map[e] || []);
+      const id = String(co.id || '');
+      for (let i = 0; i < arr.length; i++) {
+        if (String(arr[i].id || '') === id) return;      // 같은 업체가 두 번
+      }
+      arr.push(co);
     });
   });
   return map;
+}
+
+/* 이 주소에 걸린 업체들. 예전 모양(주소 → 업체 하나)도 받아 준다. */
+function companiesFor(fromHeader, index) {
+  const a = normEmail(senderOf(fromHeader));
+  if (!a) return [];
+  const v = index && index[a];
+  if (!v) return [];
+  return Array.isArray(v) ? v.slice() : [v];
+}
+
+/* ── 글에서 사업장 찾기 (대표 요청 2026-08-24) ──
+   회계사무소가 여러 사업장 자료를 한 주소로 보낸다. 주소만으로는 못 가리지만
+   제목·파일 이름에 사업장 이름이 적혀 있는 일이 많다.
+   ⚠ 짧은 이름은 아무 데나 걸린다(「계미」·「두끼」·「서브텍」) — 세 글자 아래는 안 본다.
+   ⚠ 두 업체가 **같은 길이**로 걸리면 아무도 안 고른다. 한쪽을 골라 보내면
+   나머지 자료가 어디 갔는지 아무도 모른다 — 공용 칸에 남기는 것이 낫다. */
+function coNameKey(v) {
+  return String(v == null ? '' : v)
+    .replace(/[㈜]/g, '').replace(/\(주\)|\(유\)/g, '')
+    .replace(/주식회사|유한회사|농업회사법인|사회복지법인|의료법인/g, '')
+    .replace(/\s+/g, '').replace(/[.,·・\-–—_'"]/g, '').toLowerCase();
+}
+
+function coFromText(text, list) {
+  const t = coNameKey(text);
+  if (!t) return null;
+  let best = null, bestLen = 0, tie = false;
+  (Array.isArray(list) ? list : []).forEach(function (co) {
+    const n = coNameKey(co && co.name);
+    if (n.length < 3) return;
+    if (t.indexOf(n) < 0) return;
+    if (n.length > bestLen) { best = co; bestLen = n.length; tie = false; }
+    else if (n.length === bestLen && best && String(best.id || '') !== String(co.id || '')) tie = true;
+  });
+  return tie ? null : best;
 }
 
 /* 이 폴더에서 온 것은 주소를 안 가려도 되나 (대표 결정 2026-08-23).
@@ -360,10 +412,11 @@ function trustBox(box) {
   return b.indexOf(MAILBOX_HINT) >= 0;
 }
 
+/* 이 주소가 **한 업체만** 가리킬 때 그 업체. 여러 곳에 걸리면 null —
+   골라 주지 않는다(누구 것인지 모르는 채로 고르면 남의 칸으로 간다). */
 function companyFor(fromHeader, index) {
-  const a = normEmail(senderOf(fromHeader));
-  if (!a) return null;
-  return (index && index[a]) || null;
+  const list = companiesFor(fromHeader, index);
+  return list.length === 1 ? list[0] : null;
 }
 
 /* ── 폴더 이름에서 사람 찾기 (대표 결정 2026-08-23) ──
@@ -445,24 +498,65 @@ function tagFor(o, company) {
 /* 이 메일 한 통을 어디로 보낼지 — 자리 하나와 까닭 한 줄.
    ⚠ 차례: **폴더가 사람을 가리키면 그것이 이긴다** > 업체관리 자동 배정.
    사람이 손으로 옮긴 것이 자동보다 뒤로 밀리면 옮긴 뜻이 없다(대표 결정 2026-08-23). */
-function routeFor(o, index, owners, box) {
+function routeFor(o, index, owners, box, companies) {
   o = o || {};
-  const co = companyFor(o.from, index);
-  const tag = tagFor(o, co);
+  const text = String(o.filename || '') + ' ' + String(o.subject || '');
 
   /* 폴더로 사람이 정해졌으면 업체를 몰라도 그 사람에게 보낸다 — 이것이
-     폴더를 만드는 가장 큰 값이다(업체관리에 주소가 없어도 임자에게 간다). */
+     폴더를 만드는 가장 큰 값이다(업체관리에 주소가 없어도 임자에게 간다).
+     ⚠ 업체를 찾기 **전에** 답한다: 사람이 손으로 옮긴 것이 자동보다 세다. */
   const byBox = seatFromBox(box, owners);
-  if (byBox) return { seat: byBox, shared: false, tag: tag, why: '', byBox: true };
+  if (byBox) {
+    const one = companiesFor(o.from, index);
+    return {
+      seat: byBox, shared: false, byBox: true, why: '',
+      tag: tagFor(o, one.length === 1 ? one[0] : coFromText(text, one.length ? one : companies))
+    };
+  }
 
-  if (!co) return { seat: '', shared: true, tag: tag, why: '업체관리에 없는 주소', byBox: false };
+  const cands = companiesFor(o.from, index);
+  let co = cands.length === 1 ? cands[0] : null;
+  let found = '';
+
+  /* 한 주소가 여러 사업장에 걸렸다(회계사무소) — 제목·파일 이름으로 좁힌다.
+     대표 요청 2026-08-24: 「회계사무소 메일도 담당자 칸으로 가게 해라」 */
+  if (!co && cands.length > 1) {
+    co = coFromText(text, cands);
+    if (co) found = '여러 사업장에 걸린 주소 — 제목에서 사업장을 찾음';
+  }
+  /* 아예 모르는 주소 — 그래도 제목에 사업장 이름이 있으면 임자를 알 수 있다.
+     여태 이런 메일은 통째로 공용 칸에 떨어져 아무도 안 챘다. */
+  if (!co && !cands.length) {
+    co = coFromText(text, companies);
+    if (co) found = '주소는 모르지만 제목에서 사업장을 찾음';
+  }
+
+  const tag = tagFor(o, co);
+
+  if (!co) {
+    /* 글로도 못 좁혔다. 걸린 곳들의 **주담당이 한 사람이면** 그 사람 칸으로
+       보낸다 — 사업장은 본인이 고른다. 아무 데도 안 가는 것보다 낫다. */
+    if (cands.length > 1) {
+      const seats = {};
+      cands.forEach(function (c) { seats[seatFor(c, owners) || ''] = 1; });
+      const only = Object.keys(seats);
+      if (only.length === 1 && only[0]) {
+        return { seat: only[0], shared: false, byBox: false, tag: tag,
+          why: '여러 사업장에 걸린 주소 — 담당이 한 사람이라 그 칸으로' };
+      }
+      return { seat: '', shared: true, byBox: false, tag: tag,
+        why: '한 주소가 담당이 다른 여러 사업장에 걸려 있음' };
+    }
+    return { seat: '', shared: true, tag: tag, why: '업체관리에 없는 주소', byBox: false };
+  }
+
   const seat = seatFor(co, owners);
   if (!seat) {
     const sid = String(co.managerMain || '');
     return { seat: '', shared: true, tag: tag, byBox: false,
       why: sid ? '주담당이 아직 급여데이터함에 들어온 적이 없음' : '업체관리에 주담당이 없음' };
   }
-  return { seat: seat, shared: false, tag: tag, why: '', byBox: false };
+  return { seat: seat, shared: false, tag: tag, why: found, byBox: false };
 }
 
 /* 담당자 대기 칸에 넣을 줄. 사람이 담은 줄과 모양이 같아야 그 화면이 그대로 그린다 —
@@ -514,7 +608,7 @@ module.exports = {
   UPLOAD_MAX, BAD_EXT,
   normEmail, senderOf, collectEmails, sidToEmail,
   buildKnownList, isKnownSender,
-  buildCompanyIndex, companyFor, seatFor, tagFor, routeFor,
+  buildCompanyIndex, coList, companyFor, companiesFor, coFromText, seatFor, tagFor, routeFor,
   mailConfOf, pickMailboxes, MAILBOX_HINT,
   trustBox,
   BODY_MAX, bodyTextOf, okBody, bodyFilename,

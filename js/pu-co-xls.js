@@ -303,8 +303,14 @@
       if (tax.tPhone && !base.taxPhone) patch.taxPhone = tax.tPhone;
       var m = String(tax.tMail || '').trim().toLowerCase();
       if (tax.tMail && !base.taxEmail) {
-        if (!o.taxSafe || o.taxSafe[m]) { patch.taxEmail = tax.tMail; }
-        else { why.push('세무 이메일은 뺌(여러 담당에 걸림)'); }
+        /* 세무 주소 하나가 여러 사업장에 걸려도 **넣는다**.
+           처음에는 뺐다 — 배달이 「먼저 적힌 업체가 이긴다」였고, 담당이 다르면
+           남의 자료가 조용히 엉뚱한 칸으로 갔다. 2026-08-24 배달 규칙을 고쳐
+           ① 제목·파일 이름에서 사업장을 찾고 ② 못 찾으면 담당이 한 사람일 때만
+           그 칸으로 ③ 아니면 공용 칸에 까닭을 적는다 — 그래서 이제 안전하다.
+           넣어 두면 제목에 사업장이 적힌 메일은 곧바로 임자에게 간다. */
+        patch.taxEmail = tax.tMail;
+        if (o.taxSafe && o.taxSafe[m] === false) why.push('세무 주소가 여러 담당에 걸림 — 제목으로 가른다');
       }
     }
 
