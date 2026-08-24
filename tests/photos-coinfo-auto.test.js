@@ -178,10 +178,31 @@ test('★ 여러 쪽이어도 대표 쪽 하나만 — 쪽마다 보내면 같�
   assert.ok(app.indexOf('sendCoInfo(pages[0].id, gridYear, null)') > 0);
 });
 
-test('이미 있는 값은 안 덮는다 — 자동이라 더욱 그래야 한다', () => {
+test('이미 있는 값은 안 덮는다 — 자동이라 더욱 그래야 한다', async () => {
+  /* ⚠ 예전에는 소스의 «한 줄»을 글자 그대로 찾았다. 2026-08-24 에 그 자리를 고치자
+     (값이 어긋날 때 알려 주려고) 뜻은 그대로인데 검사가 깨졌다.
+     그래서 «실제로 돌려» 본다 — 글자가 아니라 하는 일을 지킨다. */
+  const vm = require('node:vm');
   const file = fs.readFileSync(path.join(R, 'js', 'pu-doc-file.js'), 'utf8');
   const i = file.indexOf('function sendToCoInfo');
-  const seg = file.slice(i, i + 2000);
-  assert.match(seg, /if \(cur\[k\] != null && String\(cur\[k\]\)\.trim\(\) !== ''\) return;/,
+  const j = file.indexOf('function sendToCompany');
+  assert.ok(i > 0 && j > i, 'sendToCoInfo 를 찾지 못했습니다');
+  const writes = [];
+  const ctx = {
+    Promise, Object, String, Date, Error,
+    CARDS_ROOT: 'pucards',
+    CO_LABEL: { ceo: '대표자' },
+    bizKey: v => { const d = String(v || '').replace(/\D/g, ''); return d.length >= 10 ? d : ''; },
+    deps: { db: { ref: () => ({
+      once: () => Promise.resolve({ val: () => ({ ceo: '사람이 고친 대표자' }) }),
+      update: v => { writes.push(v); return Promise.resolve(); }
+    }) } }
+  };
+  vm.createContext(ctx);
+  vm.runInContext(file.slice(i, j), ctx);
+  await ctx.sendToCoInfo({ fields: { bizno: '134-86-05772', ceo: '기계가 읽은 대표자' } });
+  const wrote = writes[0] || {};
+  assert.equal(wrote.ceo, undefined,
     '★ 자동으로 보내면서 덮어쓰면 사람이 고쳐 둔 값이 조용히 지워집니다');
+  assert.ok(wrote['conflicts/ceo'], '덮지 않았으면 어긋났다고 알려는 줘야 한다');
 });

@@ -41,6 +41,9 @@ function loadPanelBlock(items){
     _coFolders: {},
     coList: () => items.slice(),
     coDocsHtml: () => '',
+    /* 2026-08-24: 상세 패널이 «값이 어긋난 칸»도 보여준다 — 이 검사는 그 부분을
+       안 보므로 빈 값으로 둔다(안 넣으면 coDetailPanelHtml 이 던진다). */
+    coConflictHtml: () => '',
     CO_FIELDS: [['bizno','사업자번호'],['ceo','대표자']],
     closeDetail: () => { calls.detailClosed++; },
     loadErpCaseCons: cb => cb && cb(null),
@@ -110,6 +113,9 @@ function loadPanelBlockAsync(items){
     _coFolders: {},
     coList: () => items.slice(),
     coDocsHtml: () => '',
+    /* 2026-08-24: 상세 패널이 «값이 어긋난 칸»도 보여준다 — 이 검사는 그 부분을
+       안 보므로 빈 값으로 둔다(안 넣으면 coDetailPanelHtml 이 던진다). */
+    coConflictHtml: () => '',
     CO_FIELDS: [],
     closeDetail: () => { calls.detailClosed++; },
     loadErpCaseCons: cb => { pendingCbs.push(cb); },
