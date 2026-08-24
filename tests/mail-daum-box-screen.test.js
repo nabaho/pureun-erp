@@ -137,6 +137,19 @@ test('★ 숫자는 안 읽은 통수만 — 전체 통수까지 붙으면 「�
   assert.ok(h.indexOf('>80<') < 0, '전체 통수가 옆줄에 적혀 있습니다');
 });
 
+test('★ 안읽음 셈에서 스팸함·휴지통은 뺀다 — 광고 200통이 섞이면 그 숫자가 뜻을 잃는다', () => {
+  const folders = Object.assign({}, FOLDERS, {
+    B_SPAM: { path:'스팸함', name:'스팸함', kind:'spam', order:8, total:200, unseen:200 },
+    B_TR2:  { path:'휴지통', name:'휴지통', kind:'trash', order:9, total:5, unseen:3 }
+  });
+  const c = load({ folders: folders, msgs: MSGS });
+  const h = c.mailSideHtml();
+  /* 받은메일함 4 + 내 메일함 2 = 6 이어야 한다(스팸 200·휴지통 3 은 뺀다) */
+  const m = h.match(/<em>(\d+)<\/em><span>안읽음/);
+  assert.ok(m, '안읽음 셈이 없습니다');
+  assert.equal(m[1], '6');
+});
+
 test('자료함으로 가는 길은 하나뿐이다 — 겹치면 다음에 한쪽만 고친다', () => {
   const c = load({ folders: FOLDERS, msgs: MSGS });
   const h = c.mailSideHtml();

@@ -118,42 +118,68 @@ test('날짜를 못 알아보면 0 — 목록이 1970년으로 튀지 않게', (
   assert.equal(MB.msgRow({ uid: 1, envelope: {} }).d, 0);
 });
 
-/* ── 어디를 가져올까 ──
-   몇 년치를 한 번에 끌면 함수가 죽고 아무것도 안 남는다. 새것은 위에서,
-   옛것은 아래에서 조금씩. */
+/* ── 어느 번호를 가져올까 ──
+   ⚠ 예전에는 번호를 300씩 «훑어 내려갔다». 그런데 이 계정의 번호는 폴더별이 아니라
+     계정 전체에서 하나씩 매겨져 171,876번까지 가 있고, 폴더 하나에는 그중 400개만
+     있다(실측 2026-08-24). 훑어 내려가면 거의 언제나 «빈 구간»을 열게 되어 400통
+     폴더 하나에 430바퀴가 걸렸다. 이제 메일함이 알려 준 번호 목록을 보고 고른다. */
 
-test('★ 처음이면 맨 위에서 한 뭉치만 — 통째로 끌지 않는다', () => {
-  const w = MB.backfillWindow({}, 5001, 300);
-  assert.deepEqual(w.fresh, { from: 4701, to: 5000 });
-  assert.equal(w.back, null);
-  assert.equal(w.done, false);
+test('★ 번호가 흩어져 있어도 빈 구간을 열지 않는다 — 훑어 내려가던 방식의 값이 여기서 갈린다', () => {
+  /* 번호가 17만번대에 400개만 흩어져 있다 */
+  const uids = [];
+  for (let i = 0; i < 400; i++) uids.push(171876 - i * 37);
+  const pick = MB.pickToFetch(uids, {}, 400);
+  assert.equal(pick.back.length, 400, '한 바퀴에 다 고르지 못했다');
+  assert.equal(pick.done, true, '더 볼 것이 없는데 안 끝났다고 한다');
+  /* 고른 것은 모두 «실제로 있는» 번호다 — 없는 번호를 달라고 하지 않는다 */
+  pick.back.forEach((u) => assert.ok(uids.indexOf(u) >= 0, u + ' 는 없는 번호다'));
 });
 
-test('★ 회차를 거듭하면 옛것이 1번까지 닿는다 — 그때 done', () => {
-  let sync = MB.nextSync({}, [4701, 5000], 7, false);
-  /* 한 뭉치씩 아래로 */
+test('★ 처음이면 새것에 가까운 쪽부터 한 뭉치 — 사람이 먼저 볼 것이 먼저 찬다', () => {
+  const uids = [10, 20, 30, 40, 50];
+  const pick = MB.pickToFetch(uids, {}, 3);
+  assert.deepEqual(pick.back, [50, 40, 30]);
+  assert.equal(pick.done, false);
+});
+
+test('★ 바퀴를 거듭하면 옛것까지 다 닿는다 — 그때 done', () => {
+  const uids = [];
+  for (let i = 1; i <= 950; i++) uids.push(i * 11);
+  let sync = {};
+  const got = {};
   let guard = 0;
-  while (guard++ < 100) {
-    const w = MB.backfillWindow(sync, 5001, 300);
-    if (w.done && !w.back) break;
-    const seen = [];
-    if (w.back) { seen.push(w.back.from, w.back.to); }
-    sync = MB.nextSync(sync, seen, 7, w.done);
+  while (guard++ < 50) {
+    const pick = MB.pickToFetch(uids, sync, 400);
+    const seen = pick.fresh.concat(pick.back);
+    if (!seen.length) break;
+    seen.forEach((u) => { got[u] = 1; });
+    sync = MB.nextSync(sync, seen, 7, pick.done);
+    if (pick.done) break;
   }
-  assert.ok(guard < 100, '끝나지 않았다 — 옛것 방향이 멈춰 있다');
-  assert.equal(sync.lo, 1, '1번까지 닿지 않았다');
+  assert.ok(guard < 50, '끝나지 않았다');
+  assert.equal(Object.keys(got).length, 950, '빠진 번호가 있다');
+  assert.equal(sync.done, true);
 });
 
-test('새 메일이 오면 새것 방향이 먼저 열린다', () => {
-  const w = MB.backfillWindow({ hi: 5000, lo: 4701, uv: 7 }, 5006, 300);
-  assert.deepEqual(w.fresh, { from: 5001, to: 5005 });
-  assert.ok(w.back, '옛것도 함께 이어간다');
+test('새 메일이 오면 새것을 먼저 고른다 — 뭉치로 자르지 않는다(보통 몇 통뿐이다)', () => {
+  const uids = [100, 200, 300, 400, 500];
+  const pick = MB.pickToFetch(uids, { hi: 300, lo: 200, uv: 7 }, 400);
+  assert.deepEqual(pick.fresh, [500, 400]);
+  assert.deepEqual(pick.back, [100]);
+  assert.equal(pick.done, true);
 });
 
-test('빈 폴더는 볼 것이 없다 — 회차마다 헛되게 붙지 않는다', () => {
-  const w = MB.backfillWindow({}, 1, 300);
-  assert.equal(w.fresh, null);
-  assert.equal(w.done, true);
+test('빈 폴더는 볼 것이 없다 — 바퀴마다 헛되게 붙지 않는다', () => {
+  const pick = MB.pickToFetch([], {}, 400);
+  assert.deepEqual(pick.back, []);
+  assert.deepEqual(pick.fresh, []);
+  assert.equal(pick.done, true);
+});
+
+test('★ 번호는 낱개로 적어 보낸다 — 구간으로 줄이면 없는 번호까지 달라고 하는 셈이다', () => {
+  assert.equal(MB.uidSet([30, 10, 20]), '10,20,30');
+  assert.equal(MB.uidSet([5, 0, -1, 7]), '5,7');
+  assert.equal(MB.uidSet([]), '');
 });
 
 test('★ 표시가 뒤로 가지 않는다 — 되돌아가면 같은 것을 영원히 다시 가져온다', () => {

@@ -130,21 +130,32 @@ async function runSync(deps, opts) {
         p.sync = {};
       }
 
-      const w = MB.backfillWindow(p.sync, p.st.uidNext, CHUNK);
-      /* 어느 방향인지 함께 들고 간다 — 중간에 끊겼을 때 표시를 옮겨도 되는지가
-         방향마다 다르다(아래 «끊겼을 때» 주석). */
-      const ranges = [];
-      if (w.fresh) ranges.push({ dir: 'fresh', from: w.fresh.from, to: w.fresh.to });
-      if (w.back) ranges.push({ dir: 'back', from: w.back.from, to: w.back.to });
-
-      if (ranges.length) {
-        more = true;          // 가져올 것이 있었다 — 다음 바퀴에 창을 다시 계산한다
-        let lock;
-        try { lock = await client.getMailboxLock(p.box.path, { readOnly: true }); } catch (e) {
-          console.warn('syncMailbox 폴더 잠금 실패:', p.box.path, String((e && e.message) || e));
-          continue;   /* 이 폴더는 줄에서 뺀다 — 못 여는 폴더를 계속 다시 세우면 회차가 헛돈다 */
+      let lock;
+      try { lock = await client.getMailboxLock(p.box.path, { readOnly: true }); } catch (e) {
+        console.warn('syncMailbox 폴더 잠금 실패:', p.box.path, String((e && e.message) || e));
+        continue;   /* 이 폴더는 줄에서 뺀다 — 못 여는 폴더를 계속 다시 세우면 회차가 헛돈다 */
+      }
+      try {
+        /* ── 이 폴더에 «지금 있는 번호 목록» ──
+           회차 안에서 한 번만 받는다(바퀴마다 다시 물으면 그만큼 느려진다).
+           이것이 있어야 빈 구간을 열지 않는다 — 까닭은 mail-box.js pickToFetch 머리글. */
+        if (!p.uids) {
+          try {
+            p.uids = (await client.search({ all: true }, { uid: true })) || [];
+          } catch (e) {
+            console.warn('syncMailbox 번호 목록을 못 받았습니다:', p.box.path, String((e && e.message) || e));
+            p.uids = [];
+          }
         }
-        try {
+        const pick = MB.pickToFetch(p.uids, p.sync, CHUNK);
+        /* 어느 방향인지 함께 들고 간다 — 중간에 끊겼을 때 표시를 옮겨도 되는지가
+           방향마다 다르다(아래 «끊겼을 때» 주석). */
+        const ranges = [];
+        if (pick.fresh.length) ranges.push({ dir: 'fresh', uids: pick.fresh });
+        if (pick.back.length) ranges.push({ dir: 'back', uids: pick.back });
+        if (ranges.length) more = true;   // 가져올 것이 있었다 — 다음 바퀴에 다시 고른다
+
+        {
           for (const r of ranges) {
             const seen = [];
             let batch = {};
@@ -152,7 +163,7 @@ async function runSync(deps, opts) {
             let cut = false;      // 시간·통수 한도에 걸려 중간에 끊겼나
             try {
               for await (const msg of client.fetch(
-                r.from + ':' + r.to,
+                MB.uidSet(r.uids),
                 { uid: true, envelope: true, flags: true, size: true, bodyStructure: true },
                 { uid: true }
               )) {
@@ -180,58 +191,59 @@ async function runSync(deps, opts) {
                  이미 본 것으로 표시돼 **영원히 건너뛴다.** 그냥 두면 다음 회차에 같은
                  구간을 다시 본다 — 같은 줄을 덮어쓰는 것뿐이라 해가 없다.
 
-               ⚠ 끝까지 다 본 구간은 «범위 자체»를 표시에 넣는다. 그 사이 번호가 모두
-                 지워진 구간이면 받은 것이 하나도 없는데, 그때 표시가 안 움직이면 같은
-                 빈 구간을 영원히 다시 본다(창이 멈춘다). */
+               ⚠ 끝까지 다 본 뭉치는 «달라고 한 번호 전부»를 표시에 넣는다. 그 사이
+                 지워진 번호가 있으면 받은 것이 그보다 적은데, 그때 표시가 안 움직이면
+                 같은 뭉치를 영원히 다시 본다(창이 멈춘다). */
             if (r.dir === 'back' && cut) {
               /* 표시를 옮기지 않는다 — 이번에 적은 줄은 그대로 남는다 */
             } else {
-              if (!cut) seen.push(r.from, r.to);
+              if (!cut) r.uids.forEach((u) => seen.push(u));
               const before = Number(p.sync.n || 0);
-              p.sync = MB.nextSync(p.sync, seen, p.st.uidValidity, w.done && !cut);
+              p.sync = MB.nextSync(p.sync, seen, p.st.uidValidity, pick.done && !cut);
               p.sync.n = before + n;
             }
             if (cut) break;
           }
-        } finally {
-          try { lock.release(); } catch (_) { /* 이미 놓였다 */ }
         }
-      }
 
-      /* ④ 다음메일에서 지운 것을 우리 목록에서도 뺀다.
-         ⚠ 값이 어긋날 때만, 그리고 «더 가져올 것이 없을 때만» 한다. 회차마다 폴더
-           전체를 읽으면 그것이 곧 요금이다(2026-08-16 「once 뒤 on」 사고와 같은 결).
-           통수가 우리 것과 같으면 지워진 것이 없다는 뜻이니 열어 보지 않는다. */
-      const doneAll = !more && !!p.sync.done;
-      const mismatch = doneAll && Number(p.sync.n || 0) !== Number(p.st.messages || 0);
-      const stale = nowMs() - Number(p.sync.prunedAt || 0) > PRUNE_GAP_MS;
-      if (mismatch && stale && pruned < 1 && nowMs() < deadline) {
-        pruned++;
-        try {
-          const lock2 = await client.getMailboxLock(p.box.path, { readOnly: true });
-          let live = [];
-          try { live = await client.search({ all: true }, { uid: true }); } finally {
-            try { lock2.release(); } catch (_) { /* 이미 놓였다 */ }
+        /* ④ 다음메일에서 지운 것을 우리 목록에서도 뺀다.
+           번호 목록(p.uids)이 이미 손에 있으니 따로 물어볼 것이 없다.
+           ⚠ 값이 어긋날 때만, 그리고 «더 가져올 것이 없을 때만» 한다. 바퀴마다 폴더
+             전체를 읽으면 그것이 곧 요금이다(2026-08-16 「once 뒤 on」 사고와 같은 결). */
+        const doneAll = !more && !!p.sync.done;
+        const mismatch = doneAll && Number(p.sync.n || 0) !== p.uids.length;
+        const stale = nowMs() - Number(p.sync.prunedAt || 0) > PRUNE_GAP_MS;
+        if (mismatch && stale && pruned < 1 && nowMs() < deadline) {
+          pruned++;
+          try {
+            const alive = {};
+            p.uids.forEach((u) => { alive[String(u)] = 1; });
+            const have = (await db.ref(ROOT + '/msgs/' + p.slug).once('value')).val() || {};
+            const gone = {};
+            let g = 0;
+            Object.keys(have).forEach((k) => {
+              if (!alive[k]) { gone[ROOT + '/msgs/' + p.slug + '/' + k] = null; g++; }
+            });
+            if (g) await db.ref().update(gone);
+            out.removed += g;
+            p.sync.n = p.uids.length;
+            p.sync.prunedAt = nowMs();
+          } catch (e) {
+            console.warn('syncMailbox 정리 실패:', p.box.path, String((e && e.message) || e));
           }
-          const alive = {};
-          (live || []).forEach((u) => { alive[String(u)] = 1; });
-          const have = (await db.ref(ROOT + '/msgs/' + p.slug).once('value')).val() || {};
-          const gone = {};
-          let g = 0;
-          Object.keys(have).forEach((k) => {
-            if (!alive[k]) { gone[ROOT + '/msgs/' + p.slug + '/' + k] = null; g++; }
-          });
-          if (g) await db.ref().update(gone);
-          out.removed += g;
-          p.sync.n = Object.keys(alive).length;
-          p.sync.prunedAt = nowMs();
-        } catch (e) {
-          console.warn('syncMailbox 정리 실패:', p.box.path, String((e && e.message) || e));
         }
+      } finally {
+        try { lock.release(); } catch (_) { /* 이미 놓였다 */ }
       }
 
       p.sync.at = nowMs();
-      p.sync.total = Number(p.st.messages || 0);
+      /* 통수는 «번호 목록의 길이»가 진짜다 — STATUS 가 주는 값이 서버마다 달랐다
+         (실측 2026-08-24: 열두 폴더가 나란히 400 으로 나왔다). 목록은 셀 수 있다. */
+      p.sync.total = p.uids ? p.uids.length : Number(p.st.messages || 0);
+      if (p.uids) {
+        /* 옆줄 폴더 줄이 보는 값도 같은 값으로 맞춘다 */
+        await db.ref(ROOT + '/folders/' + p.slug + '/total').set(p.uids.length);
+      }
       await db.ref(ROOT + '/sync/' + p.slug).update(p.sync);
       if (more) queue.push(p);          // 아직 남았다 — 줄 끝에 다시 세운다
     }
