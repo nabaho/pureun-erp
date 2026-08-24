@@ -54,7 +54,10 @@ function fnBody(name){
 /* 서명 덩어리를 실제로 만들어 본다 */
 function build(opt){
   const o = opt || {};
-  const ctx = { console, String, Object, RegExp };
+  /* signCardHtml 이 esc 를 쓴다 — 화면 쪽 것과 같은 규칙으로 넣어 준다 */
+  const esc = s => String(s ?? '').replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const ctx = { console, String, Object, RegExp, Array, esc };
   vm.createContext(ctx);
   const sec = src.match(/^const SEC_DEFAULT =\n`[\s\S]*?`;$/m);
   assert.ok(sec, 'SEC_DEFAULT 를 찾을 수 없습니다');
@@ -66,6 +69,8 @@ function build(opt){
     'var SIGN_IMG = \'<img src="cid:pusign">\';\n' +
     'var _matMail = ' + JSON.stringify(o.matMail || {}) + ';\n' +
     'var myEmail = ' + JSON.stringify(o.myEmail || 'a@b.com') + ';\n' +
+    /* 2026-08-24: 서명이 «글자 명함»도 낼 수 있게 되어 state.items 를 본다 */
+    'var state = { items: ' + JSON.stringify(o.items || {}) + ' };\n' +
     fnBody('textToHtml') + '\n' +
     fnBody('htmlToTextC') + '\n' +
     fnBody('signKeyC') + '\n' +
@@ -73,6 +78,8 @@ function build(opt){
     fnBody('mySign') + '\n' +
     fnBody('signText') + '\n' +
     fnBody('secText') + '\n' +
+    fnBody('signCardHtml') + '\n' +
+    fnBody('signMode') + '\n' +
     fnBody('signBlockHtml'), ctx);
   return ctx;
 }
@@ -86,8 +93,10 @@ test('★ 사진을 안 골랐어도 보안문구는 들어간다', () => {
   assert.equal(h.indexOf('cid:pusign'), -1, '사진을 안 골랐는데 표시가 들어갔다');
 });
 
-test('★ 사진을 골랐으면 사진 + 서명 + 보안문구 순서다', () => {
-  const C = build({ myEmail: 'a@b.com', matMail: { perUser: { 'a@b_com': { cardId: 'c1' } } } });
+test('★ 사진 갈래를 골랐으면 사진 + 서명 + 보안문구 순서다', () => {
+  /* 2026-08-24 부터 기본은 «글자»다 — 사진 순서를 보려면 갈래를 못 박아야 한다 */
+  const C = build({ myEmail: 'a@b.com',
+    matMail: { perUser: { 'a@b_com': { cardId: 'c1', mode: 'photo' } } } });
   const h = C.signBlockHtml();
   const img = h.indexOf('cid:pusign');
   const sign = h.indexOf('푸른노무법인');
@@ -95,6 +104,21 @@ test('★ 사진을 골랐으면 사진 + 서명 + 보안문구 순서다', () =
   assert.ok(img >= 0, '사진 표시가 없다');
   assert.ok(sign > img, '서명이 사진보다 앞에 있다');
   assert.ok(sec > sign, '★ 보안문구가 서명보다 앞에 있다 — 맨 끝이어야 한다');
+});
+
+test('★ 글자 갈래(기본)면 사진 표시 «없이» 글자 명함 + 서명 + 보안문구', () => {
+  const C = build({ myEmail: 'a@b.com',
+    matMail: { perUser: { 'a@b_com': { cardId: 'c1' } } },
+    items: { c1: { name: '권형하', company: '한국공인노무사회', companyTel: '041-556-0035' } } });
+  const h = C.signBlockHtml();
+  assert.equal(h.indexOf('cid:pusign'), -1,
+    '★ 글자 갈래인데 사진 표시가 끼었다 — 받는 화면에 빈 자리가 뜬다');
+  const card = h.indexOf('권형하');
+  const sign = h.indexOf('푸른노무법인');
+  const sec = h.indexOf('수신인');
+  assert.ok(card >= 0, '글자 명함이 없다');
+  assert.ok(sign > card && sec > sign, '차례가 어긋났다');
+  assert.ok(h.indexOf('041-556-0035') > 0, '전화가 빠졌다');
 });
 
 test('직원이 글자 서명을 바꿔도 보안문구는 남는다', () => {
