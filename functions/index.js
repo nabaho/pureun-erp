@@ -1691,6 +1691,21 @@ async function requireFinanceStaff(req) {
   return decoded;
 }
 
+async function requireTotalAdmin(req) {
+  const decoded = await requireStaff(req);
+  const snap = await getDatabase().ref(`uid_roles/${decoded.uid}/isAdmin`).once("value");
+  if (snap.val() !== true) {
+    const error = new Error("총괄관리자만 입금 확인 알림을 볼 수 있습니다.");
+    error.status = 403;
+    throw error;
+  }
+  return decoded;
+}
+
+function hanaAdminAlertKey(uid, transactionId) {
+  return hanaHash(`${String(uid || "")}:${String(transactionId || "")}`);
+}
+
 function hanaDeviceRef(linked) {
   return getDatabase().ref(`hanaSmsBridge/devices/${linked.uid}/${hanaDeviceKey(linked.deviceId)}`);
 }
@@ -1798,7 +1813,8 @@ exports.hanaMessageBridge = functions
         if (existing.exists()) {
           hanaJson(res, 200, { ok: true, duplicate: true, id: tx.id }); return;
         }
-        await inboxRef.set({
+        const receivedAt = Date.now();
+        const inboxValue = {
           id: tx.id,
           src: tx.src,
           type: tx.type,
@@ -1809,11 +1825,63 @@ exports.hanaMessageBridge = functions
           note: tx.note,
           rawHash: tx.rawHash,
           status: "pending",
-          receivedAt: Date.now(),
+          receivedAt,
           deviceName: String(linked.device.deviceName || "권형하 휴대폰").slice(0, 60),
-        });
+        };
+        const updates = {};
+        updates[`inbox/${linked.uid}/${tx.id}`] = inboxValue;
+        if (tx.type === "income") {
+          const alertKey = hanaAdminAlertKey(linked.uid, tx.id);
+          updates[`adminAlerts/${alertKey}`] = {
+            alertKey,
+            txId: tx.id,
+            linkedUid: linked.uid,
+            src: tx.src,
+            date: tx.date,
+            amount: tx.amount,
+            memo: String(tx.memo || "").slice(0, 200),
+            status: "new",
+            officeStatus: "unknown",
+            receivedAt,
+            deviceName: String(linked.device.deviceName || "권형하 휴대폰").slice(0, 60),
+          };
+        }
+        await db.ref("hanaSmsBridge").update(updates);
         await hanaDeviceRef(linked).update({ lastOkAt: Date.now(), lastSkip: null }).catch(() => {});
         hanaJson(res, 200, { ok: true, saved: true, id: tx.id }); return;
+      }
+
+      if (action === "adminAlerts") {
+        await requireTotalAdmin(req);
+        const snap = await db.ref("hanaSmsBridge/adminAlerts")
+          .orderByChild("receivedAt").limitToLast(100).once("value");
+        const items = Object.values(snap.val() || {})
+          .filter((x) => x && x.status !== "resolved")
+          .sort((a, b) => Number(b.receivedAt || 0) - Number(a.receivedAt || 0))
+          .map((x) => ({
+            alertKey: String(x.alertKey || ""), txId: String(x.txId || ""),
+            src: x.src === "card" ? "card" : "bank", date: String(x.date || ""),
+            amount: Number(x.amount || 0), memo: String(x.memo || ""),
+            status: String(x.status || "new"), officeStatus: String(x.officeStatus || "unknown"),
+            companyName: String(x.companyName || ""), matchedId: String(x.matchedId || ""),
+            receivedAt: Number(x.receivedAt || 0), deviceName: String(x.deviceName || ""),
+          }));
+        hanaJson(res, 200, { ok: true, items }); return;
+      }
+
+      if (action === "adminResolve") {
+        const admin = await requireTotalAdmin(req);
+        const alertKey = String(body.alertKey || "");
+        if (!/^[a-f0-9]{64}$/.test(alertKey)) {
+          hanaJson(res, 400, { ok: false, error: "확인할 입금 알림이 올바르지 않습니다." }); return;
+        }
+        await db.ref(`hanaSmsBridge/adminAlerts/${alertKey}`).update({
+          status: "resolved",
+          resolution: String(body.resolution || "checked").slice(0, 40),
+          resolvedAt: Date.now(),
+          resolvedBy: admin.uid,
+        });
+        hanaJson(res, 200, { ok: true }); return;
       }
 
       const staff = await requireFinanceStaff(req);
@@ -1887,6 +1955,26 @@ exports.hanaMessageBridge = functions
         });
         if (Object.keys(updates).length) await base.child(`inbox/${staff.uid}`).update(updates);
         hanaJson(res, 200, { ok: true, count: ids.length }); return;
+      }
+
+      if (action === "review") {
+        const items = Array.isArray(body.items) ? body.items.slice(0, 200) : [];
+        const updates = {};
+        items.forEach((item) => {
+          const id = String((item && item.id) || "");
+          if (!/^[a-f0-9]{64}$/.test(id)) return;
+          const alertKey = hanaAdminAlertKey(staff.uid, id);
+          const officeStatus = ["matched", "missing", "ambiguous"].includes(item.officeStatus)
+            ? item.officeStatus : "unknown";
+          updates[`${alertKey}/officeStatus`] = officeStatus;
+          updates[`${alertKey}/matchedId`] = String(item.matchedId || "").slice(0, 120);
+          updates[`${alertKey}/companyName`] = String(item.companyName || "").slice(0, 160);
+          updates[`${alertKey}/reviewedAt`] = Date.now();
+          updates[`${alertKey}/reviewedBy`] = staff.uid;
+          updates[`${alertKey}/status`] = officeStatus === "missing" ? "office_missing" : "pending_review";
+        });
+        if (Object.keys(updates).length) await base.child("adminAlerts").update(updates);
+        hanaJson(res, 200, { ok: true, count: items.length }); return;
       }
 
       hanaJson(res, 400, { ok: false, error: "알 수 없는 작업입니다." });
