@@ -8,9 +8,12 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const H = require(path.join(root, 'js', 'pu-rules-history.js'));
-const cards = fs.readFileSync(path.join(root, 'pu-cards.html'), 'utf8');
-const rules = fs.readFileSync(path.join(root, 'rules.html'), 'utf8');
-const writer = fs.readFileSync(path.join(root, 'chwieop.html'), 'utf8');
+/* 줄바꿈은 기기마다 다를 수 있다(git 이 체크아웃할 때 CRLF 로 바꾼다) —
+   글자를 대조하는 검사가 그 때문에 거짓으로 실패하지 않게 읽을 때 한 번 고른다. */
+const readSrc = f => fs.readFileSync(path.join(root, f), 'utf8').split('\r\n').join('\n');
+const cards = readSrc('pu-cards.html');
+const rules = readSrc('rules.html');
+const writer = readSrc('chwieop.html');
 
 function seed() {
   return H._seed([
@@ -145,15 +148,34 @@ test('작성기에서 규정관리로 넘길 때 사업자번호를 함께 싣�
   assert.match(rules, /SITE_BIZNO\[key\]=h\.bizno\|\|""/, '규정관리가 그것을 받는다');
 });
 
-/* 서버 규칙은 색인의 «칸마다» 잣대를 들이대고, 목록에 없는 칸이 하나라도 있으면
-   그 저장을 통째로 물리친다. 규정관리와 작성기가 넣는 칸이 규칙이 허용하는 칸과
-   정확히 같아야 한다 — 어긋나면 이력이 조용히 안 쌓인다. */
+/* 규칙 문서는 두 벌이다 — 콘솔에 통째로 붙여넣는 「전체본」과 그 한 블록만 뗀 「조각본」.
+   조각본은 전체본에서 떠온 것이므로 둘이 어긋나면 안 되고, 두 문서가 허용하는 칸이
+   코드가 넣는 칸과 정확히 같아야 한다. 하나만 어긋나도 이력이 조용히 안 쌓인다. */
+const RULES_FULL = 'docs/firebase-rules-현재적용본+취업규칙이력(붙여넣기용).json';
+const RULES_SNIP = 'docs/firebase-rules-취업규칙이력-추가(붙여넣기용).json';
+const readJson = p => JSON.parse(fs.readFileSync(path.join(root, p), 'utf8'));
+
+test('전체본과 조각본의 index 블록이 한 글자도 다르지 않다', () => {
+  const full = readJson(RULES_FULL).rules.rules_mgmt.index;
+  const snip = readJson(RULES_SNIP).index;
+  assert.deepEqual(snip, full, '조각본은 전체본에서 떠온 것이어야 한다 — 손으로 고치지 말 것');
+});
+
+test('전체본은 콘솔에 붙여넣을 수 있는 모양이고, index 는 done 옆에 있다', () => {
+  const full = readJson(RULES_FULL);
+  assert.ok(full.rules, '최상위가 rules 여야 콘솔이 받는다');
+  const mgmt = Object.keys(full.rules.rules_mgmt);
+  assert.ok(mgmt.includes('done') && mgmt.includes('index'));
+  assert.equal(mgmt.indexOf('index'), mgmt.indexOf('done') + 1, 'done 바로 뒤에 두어 사람이 나란히 본다');
+  /* 읽기는 done 과 같은 잣대여야 한다 — 이력이 회차보다 넓게 열리면 안 된다 */
+  assert.equal(full.rules.rules_mgmt.index['.read'], full.rules.rules_mgmt.done['.read']);
+});
+
 test('색인에 넣는 칸이 서버 규칙이 허용하는 칸과 정확히 같다', () => {
-  const doc = JSON.parse(fs.readFileSync(
-    path.join(root, 'docs', 'firebase-rules-취업규칙이력-추가(붙여넣기용).json'), 'utf8'));
-  const allowed = Object.keys(doc.index.$site.$rev)
-    .filter(k => !k.startsWith('.') && k !== '$기타').sort();
+  const rev = readJson(RULES_FULL).rules.rules_mgmt.index.$site.$rev;
+  const allowed = Object.keys(rev).filter(k => !k.startsWith('.') && k !== '$other').sort();
   assert.ok(allowed.length > 5, '규칙 문서에서 칸 목록을 못 읽었다');
+  assert.equal(rev.$other['.validate'], false, '목록에 없는 칸은 막아야 한다');
 
   /* 서버로 보내는 객체 리터럴에서 칸 이름만 뽑는다 — 「k:값」과 줄임꼴 「k,」 둘 다 센다.
      literal 은 «그 리터럴이 시작하는 자리»여야 한다 — 함수 첫 중괄호부터 훑으면
@@ -171,6 +193,17 @@ test('색인에 넣는 칸이 서버 규칙이 허용하는 칸과 정확히 같
 
   assert.deepEqual(fromRules, allowed, '규정관리가 넣는 칸이 규칙과 다르다');
   assert.deepEqual(fromWriter, allowed, '작성기가 넣는 칸이 규칙과 다르다');
+});
+
+test('규칙이 받아 주는 값만 코드가 넣는다 — 구분·보낸 곳은 정해진 낱말뿐', () => {
+  const rev = readJson(RULES_FULL).rules.rules_mgmt.index.$site.$rev;
+  const kinds = /\^\(([^)]+)\)\$/.exec(rev.kind['.validate'])[1].split('|');
+  assert.deepEqual(kinds.sort(), ['일부개정', '전부개정', '제정'].sort());
+  // 공용 읽개가 내는 구분이 모두 규칙에 있는 낱말이어야 한다
+  ['제정', '전부개정', '일부개정'].forEach(k => assert.ok(kinds.includes(k), k));
+  assert.equal(H.kindOf({ from: 'chwieop' }), '제정');
+  const froms = /\^\(([^)]+)\)\$/.exec(rev.from['.validate'])[1].split('|');
+  assert.deepEqual(froms.sort(), ['chwieop', 'rules']);
 });
 
 test('공용 읽개를 쓰는 화면은 그 파일을 읽고 판번호를 붙인다', () => {
