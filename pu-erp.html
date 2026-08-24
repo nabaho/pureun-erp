@@ -36906,15 +36906,37 @@ function FinanceLedger(props){
     return function(){ clearTimeout(timer); };
   },[]);
   useEffect(function(){
-    if(!_meNow().isAdmin) return;
     var requested=false;
     try{requested=(new URLSearchParams(location.search)).get('hanaAlert')==='1';}catch(_qe){}
     var stopped=false;
-    var poll=function(){if(!stopped && !document.hidden) loadHanaAdminAlerts(requested); requested=false;};
-    var timer=setTimeout(poll,700);
+    var roleWait=0;
+    var retryTimer=0;
+    /* React 화면이 먼저 뜨고 CURRENT_USER(총괄관리자 권한)가 뒤늦게 채워질 수 있다.
+       첫 순간만 보고 return 하면 이 탭에서는 입금 알림을 영원히 확인하지 않으므로,
+       권한 준비를 잠시 기다린 뒤 총괄관리자일 때만 서버를 조회한다. */
+    var poll=function(){
+      if(stopped || document.hidden) return;
+      if(!_meNow().isAdmin){
+        if(roleWait<30){
+          roleWait+=1;
+          clearTimeout(retryTimer);
+          retryTimer=setTimeout(poll,500);
+        }
+        return;
+      }
+      roleWait=30;
+      loadHanaAdminAlerts(requested);
+      requested=false;
+    };
+    var onVisible=function(){
+      if(document.hidden) return;
+      roleWait=0;
+      poll();
+    };
+    var timer=setTimeout(poll,300);
     var interval=setInterval(poll,180000);
-    document.addEventListener('visibilitychange',poll);
-    return function(){stopped=true;clearTimeout(timer);clearInterval(interval);document.removeEventListener('visibilitychange',poll);};
+    document.addEventListener('visibilitychange',onVisible);
+    return function(){stopped=true;clearTimeout(timer);clearTimeout(retryTimer);clearInterval(interval);document.removeEventListener('visibilitychange',onVisible);};
   },[]);
   /* 묶음 하나를 «모두에게서» 지운다 — 그 묶음의 줄만 사라진다.
      겹쳐서 다른 묶음에도 있던 줄은 그 묶음 몫으로 남는다(다시 합치면 살아난다). */
