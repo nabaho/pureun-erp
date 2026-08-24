@@ -150,6 +150,100 @@ function attCount(node, depth) {
   return sum;
 }
 
+/* ── 미리보기에 쓸 «본문 조각» 은 어디 있나 ──
+   구조를 보고 글이 든 부분 하나를 고른다. text/plain 이 있으면 그것이 먼저다 —
+   html 은 꼬리표를 걷어내야 해서 더 지저분해진다.
+   ⚠ 첨부는 건드리지 않는다. 첨부의 앞 800바이트를 미리보기로 적으면 목록이 깨진 글자로 찬다. */
+function textPartOf(node, depth) {
+  if (!node || (depth || 0) > 8) return null;
+  const kids = node.childNodes || node.children;
+  if (Array.isArray(kids)) {
+    let html = null;
+    for (let i = 0; i < kids.length; i++) {
+      const got = textPartOf(kids[i], (depth || 0) + 1);
+      if (!got) continue;
+      if (!got.html) return got;      // text/plain — 더 볼 것 없다
+      if (!html) html = got;
+    }
+    return html;
+  }
+  const type = String(node.type || '').toLowerCase();
+  const disp = String(node.disposition || '').toLowerCase();
+  if (disp === 'attachment') return null;
+  if (type !== 'text/plain' && type !== 'text/html') return null;
+  const part = String(node.part || '1');
+  return {
+    part: part,
+    enc: String(node.encoding || '').toLowerCase(),
+    cs: String((node.parameters && node.parameters.charset) || '').toLowerCase(),
+    html: type === 'text/html',
+  };
+}
+
+/* ── 받아 온 조각을 사람이 읽을 한 줄로 ──
+   ⚠ 앞부분만 잘라 받으므로 «끝이 잘려 있다». base64 는 4글자 묶음이라 남는 것을 버리고,
+     따옴표인용(=XX)은 잘린 자리를 지운다. 안 그러면 마지막 글자가 깨져 나온다. */
+function decodePart(buf, enc) {
+  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(String(buf || ''), 'utf8');
+  if (enc === 'base64') {
+    let t = b.toString('ascii').replace(/[^A-Za-z0-9+/=]/g, '');
+    t = t.slice(0, t.length - (t.length % 4));     // 잘린 묶음은 버린다
+    try { return Buffer.from(t, 'base64'); } catch (e) { return Buffer.alloc(0); }
+  }
+  if (enc === 'quoted-printable') {
+    const t = b.toString('latin1')
+      .replace(/=\r?\n/g, '')                      // 줄 잇기
+      .replace(/=[0-9A-Fa-f]?$/, '');              // 잘린 =X 는 버린다
+    const out = [];
+    for (let i = 0; i < t.length; i++) {
+      if (t[i] === '=' && i + 2 < t.length) {
+        const n = parseInt(t.substr(i + 1, 2), 16);
+        if (!isNaN(n)) { out.push(n); i += 2; continue; }
+      }
+      out.push(t.charCodeAt(i) & 0xff);
+    }
+    return Buffer.from(out);
+  }
+  return b;
+}
+
+/* 글자표를 골라 읽는다. 한글 메일에는 euc-kr(ks_c_5601-1987)이 아직 흔하다 —
+   utf-8 로 읽으면 통째로 깨진다. 못 읽는 글자표면 utf-8 로 되돌린다. */
+function toText(buf, charset) {
+  const cs = String(charset || 'utf-8').toLowerCase()
+    .replace('ks_c_5601-1987', 'euc-kr').replace('ksc5601', 'euc-kr');
+  try { return new TextDecoder(cs, { fatal: false }).decode(buf); } catch (e) { /* 모르는 글자표 */ }
+  try { return new TextDecoder('utf-8', { fatal: false }).decode(buf); } catch (e) { return ''; }
+}
+
+const PREVIEW_MAX = 140;
+
+function previewFrom(buf, tp) {
+  const t = tp || {};
+  let s = toText(decodePart(buf, t.enc), t.cs);
+  if (t.html) {
+    s = s.replace(/<\s*(script|style)[\s\S]*?<\s*\/\s*\1\s*>/gi, ' ')
+         .replace(/<[^>]*>/g, ' ')
+         .replace(/&nbsp;/gi, ' ').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+         .replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'");
+  }
+  /* 인용줄(> …)과 보이지 않는 글자를 걷어낸다 — 답장 메일이 온통 인용으로 시작한다 */
+  s = s.split(/\r?\n/).filter((ln) => !/^\s*>/.test(ln)).join(' ');
+  s = s.replace(/[ -​-‏﻿]/g, ' ').replace(/\s+/g, ' ').trim();
+  return s.slice(0, PREVIEW_MAX);
+}
+
+/* ── 줄 모양이 바뀌면 다시 가져와야 한다 ──
+   미리보기(p)를 더한 것처럼 «줄에 담는 것»이 바뀌면, 이미 가져온 줄에는 그 칸이 없다.
+   표시(hi·lo)가 다 찼다고 되어 있어 다시 가져오지도 않는다 — 그러면 옛 줄은 영원히
+   반쪽이다. 그래서 번호를 붙여 두고, 번호가 다르면 그 폴더만 처음부터 다시 훑는다.
+   ⚠ 줄에 칸을 더할 때마다 이 번호를 올린다. 안 올리면 새 칸은 «새 메일에만» 붙는다. */
+const ROW_VER = 2;
+
+function needsRefetch(sync) {
+  return Number((sync || {}).ver || 0) !== ROW_VER;
+}
+
 /* 주소 하나를 「이름」과 「주소」로. 이름이 없으면 주소를 이름 자리에도 쓴다 —
    목록에서 보낸이 칸이 비면 무엇이 왔는지 알 수 없다. */
 function oneAddr(a) {
@@ -175,7 +269,7 @@ function hasFlag(flags, f) {
    칸 이름을 짧게 쓴다(u·f·e·s·d…). 몇 만 줄이 오가는 자리라 칸 이름이 그대로
    요금이 된다 — 「subject」 대신 「s」면 만 줄에서 60KB 가 준다.
    ⚠ 앱(pu-cards.html)이 읽는 칸과 **같아야** 한다. 한쪽만 고치면 목록이 빈다. */
-function msgRow(msg) {
+function msgRow(msg, preview) {
   const m = msg || {};
   const env = m.envelope || {};
   const from = addrList(env.from)[0] || { n: '', e: '' };
@@ -194,6 +288,8 @@ function msgRow(msg) {
     w: hasFlag(m.flags, '\\Answered') ? 1 : 0,
     a: attCount(m.bodyStructure, 0),
     z: Number(m.size || 0),
+    /* 미리보기 — 폰 목록의 셋째 줄. 없으면 아예 칸을 안 만든다(빈 글자를 만 줄 적으면 그것도 값이다) */
+    p: String(preview || '').slice(0, PREVIEW_MAX),
   };
 }
 
@@ -297,5 +393,7 @@ module.exports = {
   safeKey, hash8, slugOf,
   folderKind, folderOrder, isSyncable, folderRecord,
   attCount, oneAddr, addrList, hasFlag, msgRow,
+  textPartOf, decodePart, toText, previewFrom, PREVIEW_MAX,
+  ROW_VER, needsRefetch,
   pickToFetch, uidSet, nextSync, uidReset,
 };

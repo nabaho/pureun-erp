@@ -28,6 +28,7 @@ const CHUNK = 400;          // 한 폴더에서 한 바퀴에 볼 통수
 const MAX_ROWS = 9000;      // 한 회차 전체 통수 — 한 줄이 250바이트쯤이니 2MB 남짓
 const MAX_TURNS = 400;      // 줄에서 꺼내 볼 횟수 — 끝나지 않는 회차를 막는 뒷그물
 const WRITE_BATCH = 250;    // 실시간DB에 한 번에 적을 줄 수
+const PREVIEW_BYTES = 800;  // 미리보기로 잘라 받을 앞부분 — base64 라도 200자는 나온다
 const PRUNE_GAP_MS = 24 * 60 * 60 * 1000;  // 통수가 그대로일 때의 그물 — 하루에 한 번
 const BODY_FULL_MAX = 2 * 1024 * 1024;     // 이보다 작으면 통째로 받아 파싱한다
 const ATT_MAX = 20 * 1024 * 1024;          // 첨부 하나를 돌려줄 상한
@@ -124,6 +125,13 @@ async function runSync(deps, opts) {
       const p = queue.shift();
       let more = false;      // 이 폴더에 아직 볼 것이 남았나 (줄 끝에 다시 세울지)
 
+      /* 줄에 담는 칸이 바뀌었으면(예: 미리보기를 더했다) 그 폴더만 처음부터 다시 훑는다.
+         적어 둔 줄은 그대로 두고 표시만 지운다 — 다시 받아 «덮어쓰면» 새 칸이 채워진다.
+         ⚠ 줄을 지우지 않는 것이 요점이다. 지우면 다시 받는 동안 목록이 비어 보인다. */
+      if (MB.needsRefetch(p.sync)) {
+        p.sync = { uv: Number(p.st.uidValidity || 0), ver: MB.ROW_VER };
+      }
+
       /* 서버가 번호를 다시 매겼다 — 지난 목록은 다른 메일을 가리킨다. 버리고 다시 시작한다. */
       if (MB.uidReset(p.sync, p.st.uidValidity)) {
         await db.ref(ROOT + '/msgs/' + p.slug).remove();
@@ -166,9 +174,11 @@ async function runSync(deps, opts) {
         {
           for (const r of ranges) {
             const seen = [];
-            let batch = {};
             let n = 0;
             let cut = false;      // 시간·통수 한도에 걸려 중간에 끊겼나
+            /* 한 뭉치를 먼저 손에 들고, 미리보기를 채운 뒤에 적는다 —
+               미리보기는 «본문 조각 번호»별로 몰아서 받아야 싸다(아래 ②). */
+            const held = [];
             try {
               for await (const msg of client.fetch(
                 MB.uidSet(r.uids),
@@ -177,14 +187,57 @@ async function runSync(deps, opts) {
               )) {
                 const row = MB.msgRow(msg);
                 if (!row.u) continue;
-                batch[ROOT + '/msgs/' + p.slug + '/' + row.u] = row;
+                held.push({ row: row, tp: MB.textPartOf(msg.bodyStructure, 0) });
                 seen.push(row.u); n++; out.rows++;
-                if (n % WRITE_BATCH === 0) { await db.ref().update(batch); batch = {}; }
                 if (nowMs() > deadline || out.rows >= MAX_ROWS) { cut = true; break; }
               }
             } catch (e) {
               cut = true;
               console.warn('syncMailbox 목록을 못 읽었습니다:', p.box.path, String((e && e.message) || e));
+            }
+
+            /* ② 미리보기 — 폰 목록의 셋째 줄(대표 화면 2026-08-24).
+               ⚠ 본문을 통째로 받지 않는다. 글이 든 «조각의 앞 800바이트»만 잘라 받는다.
+                 20MB 첨부가 붙은 메일에서도 오가는 것은 800바이트다.
+               ⚠ 조각 번호(1 · 1.1 …)가 메일마다 달라서, 같은 번호끼리 몰아 한 번에 받는다.
+                 한 뭉치에 보통 두세 번이면 끝난다.
+               ⚠ 못 받아도 그냥 간다 — 미리보기 때문에 목록이 막히면 안 된다. */
+            if (!cut && held.length) {
+              const byPart = {};
+              held.forEach((g) => {
+                if (g.tp && g.tp.part) (byPart[g.tp.part] = byPart[g.tp.part] || []).push(g);
+              });
+              for (const part of Object.keys(byPart)) {
+                if (nowMs() > deadline) break;
+                const group = byPart[part];
+                try {
+                  const got = {};
+                  for await (const m of client.fetch(
+                    MB.uidSet(group.map((g) => g.row.u)),
+                    { uid: true, bodyParts: [{ key: part, start: 0, maxLength: PREVIEW_BYTES }] },
+                    { uid: true }
+                  )) {
+                    const bp = m.bodyParts;
+                    const buf = !bp ? null : (typeof bp.get === 'function' ? bp.get(part) : bp[part]);
+                    if (buf) got[String(m.uid)] = buf;
+                  }
+                  group.forEach((g) => {
+                    const buf = got[String(g.row.u)];
+                    if (buf) g.row.p = MB.previewFrom(buf, g.tp);
+                  });
+                } catch (e) {
+                  console.warn('syncMailbox 미리보기를 못 받았습니다:', p.box.path, part,
+                    String((e && e.message) || e));
+                }
+              }
+            }
+
+            /* ③ 이제 적는다 */
+            let batch = {};
+            let w = 0;
+            for (const g of held) {
+              batch[ROOT + '/msgs/' + p.slug + '/' + g.row.u] = g.row;
+              if (++w % WRITE_BATCH === 0) { await db.ref().update(batch); batch = {}; }
             }
             if (Object.keys(batch).length) await db.ref().update(batch);
 
@@ -257,6 +310,7 @@ async function runSync(deps, opts) {
       }
 
       p.sync.at = nowMs();
+      p.sync.ver = MB.ROW_VER;
       /* 통수는 «번호 목록의 길이»가 진짜다 — STATUS 가 주는 값이 서버마다 달랐다
          (실측 2026-08-24: 열두 폴더가 나란히 400 으로 나왔다). 목록은 셀 수 있다. */
       p.sync.total = p.uids ? p.uids.length : Number(p.st.messages || 0);
