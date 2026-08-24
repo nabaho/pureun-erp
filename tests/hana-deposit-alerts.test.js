@@ -68,7 +68,10 @@ test('주기 갱신은 사용자가 읽고 있는 입금 알림창을 닫지 않
   assert.ok(start >= 0 && end > start, '포털 입금 알림 렌더링 구간을 찾을 수 있어야 한다');
   const block = portal.slice(start, end);
   assert.match(block, /modalWasOpen/);
-  assert.match(block, /portalHanaRemoveChip\(\)/);
+  /* 갱신할 때 «표시만» 다시 그린다. 2026-08-24 에 구석 알약을 걷고 푸른이알피 타일의
+     표시로 옮기면서 이름이 portalHanaRemoveChip → portalHanaPaintBadge 로 바뀌었다.
+     지키려는 것은 이름이 아니라 «읽고 있는 창은 안 건드린다» 이다 — 아래 두 줄이 그것을 본다. */
+  assert.match(block, /portalHanaPaintBadge\(\)/);
   assert.doesNotMatch(block, /portalHanaRemoveUi\(\)/);
   assert.match(block, /if\(modalWasOpen\)\{\s*showPortalHanaModal\(items\)/);
 });
