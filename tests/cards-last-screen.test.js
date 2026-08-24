@@ -41,6 +41,10 @@ function boot(who) {
        vm 안에서 this 가 없다(처음에 여기서 터졌다). */
     openMatPage() { opened.push('mat'); },
     openMailPage() { opened.push('mail'); },
+    /* 2026-08-24: 메일 아이콘으로 들어오면 «받은메일함»이 열린다(예전엔 쓰기 화면).
+       열리는 화면 이름은 그대로 'mail' 로 센다 — 이 검사가 보는 것은 «메일 창이
+       열렸는가»이지, 그 안 어느 칸인가가 아니다. */
+    openMailBox() { opened.push('mail'); },
     openSentBox() { opened.push('sent'); },
     openSchedBox() { opened.push('sched'); },
     switchTab(t) { opened.push('tab:' + t); }

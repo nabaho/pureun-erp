@@ -164,7 +164,10 @@ for(const s of CARD_SCREENS){
     const h = side(s.state);
     const i = h.indexOf('class="pcside-bottom"');
     assert.ok(i > 0, '붙박이 칸이 없다');
-    assert.ok(h.slice(i).indexOf('openMailPage()') > 0,
+    /* 2026-08-24: 이 단추는 «받은메일함»으로 간다(openMailBox). 예전에는 쓰기
+       화면(openMailPage)으로 갔는데, 메일함을 열었는데 빈 편지지가 나오는 셈이었다.
+       여기서 지키는 것은 «메일로 가는 길이 있다»는 사실이다. */
+    assert.ok(/onclick="openMail(Box|Page)\(/.test(h.slice(i)),
       '갈래 줄에서 메일을 뺐으니 여기에는 있어야 한다 — 둘 다 없으면 길이 끊긴다');
   });
 }
