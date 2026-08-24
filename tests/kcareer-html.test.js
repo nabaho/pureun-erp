@@ -817,6 +817,35 @@ test('저장·불러오기 확인창이 기록 건수를 비교해 보여준다'
   assert.match(push, /cloud\.total>here\.total/, '클라우드가 더 많으면 물어봐야 합니다');
 });
 
+test('브라우저 자료가 지워져 기본 데이터로 돌아가면 크게 알린다', () => {
+  // 위촉장 197 → 79(시드) 사고: _seeded가 지워지면 loadSeed가 조용히 기본 데이터를 깔았다
+  assert.match(source, /id="fbLossNotice"/);
+  assert.match(source, /id="fbLossMsg"/);
+  const src = funcSource('fbCheckLoss');
+  assert.match(src, /_fbCounts\(v\.ls\)/);
+  assert.match(src, /_fbCounts\(null\)/);
+  assert.match(src, /cloud\.total <= here\.total \+ 5/, '몇 건 차이로 겁주지 않아야 합니다');
+  assert.match(src, /fbLossNotice/);
+  // 로그인할 때 검사해야 의미가 있다
+  assert.match(source, /if\(typeof fbCheckLoss==='function'\)\{ try\{ fbCheckLoss\(\); \}catch\(e\)\{\} \}/);
+  // 되살리기 버튼이 붙어 있어야 한다
+  const i = source.indexOf('id="fbLossNotice"');
+  assert.match(source.slice(i, i + 900), /onclick="fbPull\(\);return false"/);
+});
+
+test('시드(기본 데이터) 건수 — 지금 화면과 대조할 진단 기준', () => {
+  // 시드 wiccok 86건 = 위촉장 79 + 표창 7. 위촉장 탭이 79건이면 시드로 되돌아간 것이다.
+  const i = source.indexOf('window.__SEED__=');
+  assert.ok(i > 0, '시드 데이터를 찾을 수 없습니다');
+  const j = source.indexOf('</script>', i);
+  const seed = JSON.parse(source.slice(i + 'window.__SEED__='.length, j).replace(/;\s*$/, ''));
+  const w = seed.wiccok || [];
+  assert.equal(w.length, 86, '시드 wiccok 건수가 바뀌면 진단 기준도 바뀝니다');
+  assert.equal(w.filter((r) => r.type === '위촉장').length, 79);
+  assert.equal(w.filter((r) => r.src || r.relPath || r.genFileId || r.origFileId).length, 0,
+    '시드에는 원본이 붙어 있지 않다 — 그래서 시드로 돌아가면 원본도 전부 사라진 것처럼 보인다');
+});
+
 /* ===== 메뉴·대시보드 배치 기기 간 동기화 (2026-08-24) ===== */
 
 test('배치를 바꾸면 네 곳 모두 배치 동기화를 부른다', () => {
