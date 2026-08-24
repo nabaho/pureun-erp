@@ -64,6 +64,11 @@ function load(over){
     _matMeta: o.matMeta || {},
     schedList: () => o.sched || [],
     staffName: b => String(b || ''),
+    /* 다음메일함 차림(2026-08-24)이 쓰는 것들 — 옆줄이 회사 주소와 폴더 목록을 본다.
+       Store 를 'demo' 로 두면 폴더를 가져오러 붙지 않는다(검사는 서버에 안 붙는다). */
+    matMailCfg: () => ({ from: '370-6@daum.net' }),
+    Store: { mode: 'demo' },
+    fmtDate: () => '2026.08.24',
     $: id => (id === 'pcSide'
       ? { set innerHTML(v){ held.html = v; }, get innerHTML(){ return held.html; } }
       : null)

@@ -156,8 +156,13 @@ test('기업 상세를 보는 중에는 명함·사업자가 안 켜진다', () 
   assert.match(fn, /const onCo = \(state\.view==='co'\)/, '화면을 가리는 값이 없다');
   assert.match(fn, /!onCo&&state\.tab==='card'/, '명함이 기업 상세와 같이 켜진다');
   assert.match(fn, /!onCo&&state\.tab==='biz'/, '사업자가 기업 상세와 같이 켜진다');
-  assert.match(fn, /if\(!onMail\) h \+= `<div class="sidetab/,
-    '메일 창에서 갈래 줄을 안 그리는 갈림길이 없다');
+  /* 2026-08-24 «다음메일함 차림»으로 바꾸면서 메일 창은 renderPCSide 맨 앞에서
+     통째로 갈라져 나간다(옆줄이 흰 바탕·내 정보·폴더로 아예 다른 틀이다).
+     그래서 갈래 줄에 「!onMail」을 붙일 일이 없어졌다 — 그 줄까지 오지 않는다.
+     여기서 지켜야 하는 것은 «메일 창에서 갈래 줄이 안 그려진다»는 사실 자체다. */
+  const side = src.slice(src.indexOf('function renderPCSide'), i + fn.length);
+  assert.match(side, /if\(onMail\)\{[\s\S]{0,300}?return;/,
+    '메일 창이 갈래 줄 앞에서 갈라져 나가지 않는다 — 명함 갈래가 메일 창에 함께 뜬다');
 });
 
 test('세 단추의 켜짐 조건이 서로 겹치지 않는다', () => {

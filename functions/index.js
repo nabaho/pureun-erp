@@ -2098,3 +2098,23 @@ exports.hanaMessageBridge = functions
       hanaJson(res, err.status || 500, { ok: false, error: err.message || "문자 연결을 처리하지 못했습니다." });
     }
   });
+
+/* ══════════ 다음메일함 통째 동기화 (대표 지시 2026-08-24) ══════════
+   "다음 370-6@daum.net 에 있는 메일을 모두 동기화 시켜달라."
+
+   ⚠ 급여자료를 줍는 receivePaydataMail 과 **다른 일**이다. 그것은 「급여자료」
+     폴더 하나에서 첨부만 담는 기계고, 이것은 메일함 자체를 앱에서 보려는 것이다.
+     두 기능이 같은 계정에 붙지만 서로를 건드리지 않는다 — 이쪽은 readOnly 라
+     읽음 표시조차 바꾸지 않는다.
+
+   실제 코드는 mail-sync.js 에 있다. index.js 를 더 키우지 않기 위해서다.
+   총괄관리자만 볼 수 있다(함수 안에서 uid_roles 로 다시 따진다). */
+const MSYNC = require("./mail-sync")({
+  functions, getDatabase, getAuth, MD, MAIL_REGION,
+  setCors, requireStaff, mailUserAsync, mailPass,
+});
+exports.syncMailbox = MSYNC.syncMailbox;
+exports.pullMailbox = MSYNC.pullMailbox;
+exports.readMailMessage = MSYNC.readMailMessage;
+exports.readMailAttachment = MSYNC.readMailAttachment;
+exports.moveMailMessages = MSYNC.moveMailMessages;
