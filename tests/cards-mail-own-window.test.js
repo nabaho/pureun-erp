@@ -188,10 +188,27 @@ test('기업정보함의 이름은 그대로다', () => {
 /* ══════ ⑤ 자료함으로 가는 단추는 하나뿐이다 ══════ */
 
 test('자료함 단추가 겹치지 않는다 — ＋ 와 「자료함 관리」는 같은 함수였다', () => {
-  const h = side({ view:'mail' });
-  const n = h.split('openMatPage()').length - 1;
+  /* 2026-08-24 대표 화면으로 자료함은 「푸른 도구」 «안»으로 들어갔다("불필요한 것 같은데").
+     그래서 접혀 있을 때는 0개, 펼쳤을 때 «정확히 하나»여야 한다.
+     여기서 지키는 것은 «겹치지 않는다»는 사실이다 — 겹치면 다음에 한쪽만 고친다. */
+  const shut = side({ view:'mail' });
+  assert.equal(shut.split('openMatPage()').length - 1, 0,
+    '접힌 「푸른 도구」 안의 단추가 밖에도 그려진다');
+  const open = side({ view:'mail', mbToolOpen:true });
+  const n = open.split('openMatPage()').length - 1;
   assert.equal(n, 1, '자료함으로 가는 단추가 ' + n + '개 있다 (하나여야 한다)');
-  assert.ok(h.indexOf('pcside-mat') < 0, '「🗂 자료함 관리」 단추가 남아 있다');
+  assert.ok(open.indexOf('pcside-mat') < 0, '「🗂 자료함 관리」 단추가 남아 있다');
+});
+
+test('★ 옆줄이 다음메일함처럼 끝난다 — 접었을 때 우리 앱 것이 안 튀어나온다', () => {
+  /* 대표 화면 2026-08-24: 자료함·아래 단추 세 줄이 다음메일함에 없는 것이라 눈에 걸렸다.
+     ⚠ 아래 단추(기업정보함으로·환경설정)는 «지우지 않는다» — 지우면 메일 창에 갇힌다.
+       단추 모양만 벗겨 조용한 글자 줄로 둔다(CSS #pcRoot.mailmode .pcside-settings). */
+  const h = side({ view:'mail' });
+  assert.ok(h.indexOf('전체 자료') < 0, '접었는데 자료함 목록이 보인다');
+  assert.ok(h.indexOf('푸른 도구') > 0, '펼칠 길이 없다');
+  assert.ok(h.indexOf('closeMailPage()') > 0, '기업정보함으로 나갈 길이 없다 — 창에 갇힌다');
+  assert.ok(h.indexOf('openSettingsPage()') > 0, '환경설정으로 갈 길이 없다');
 });
 
 /* ══════ ⑥ 환경설정은 두 창 모두에 남는다 ══════ */
