@@ -259,10 +259,22 @@
      'other' 로 굳은 사진들이었다. 사람이 한 장씩 「다시 판독」을 눌러야만
      풀리는 상태는 자동 분류라고 할 수 없다.
      ⚠ 종류를 늘리거나 프롬프트를 고치면 이 번호를 반드시 올릴 것. */
-  /* ⚠ 11 은 «물음»이 바뀐 것이 아니라 **읽는 길**이 늘었다(글자 있는 PDF 를 글자로).
-     그래도 번호를 올린다 — 그림으로 읽어 둔 옛 PDF 서류를 글자로 다시 읽으면
-     1↔7 오독이 사라지고, 다시 읽는 값이 그림 왕복보다 싸다. */
   var READ_VERSION = 11;  // …/ 9 = 모든 서류에 제목(docName) / 10 = 서식에 매출액·상시근로자수 등을 이름 붙은 키로 / 11 = 글자 있는 PDF 는 글자로 판독(그림 왕복 없음)
+
+  /* ── 「물음」이 바뀐 판 (대표 결정 2026-08-24) ──
+     READ_VERSION 은 **판독기 전체**의 판이다 — 읽는 «길»이 바뀌어도 올라간다.
+     그런데 다시 읽기는 «물음이 바뀐 때»만 값이 있다. 둘을 한 번호로 쓰면
+     길만 바꿔도 읽어 둔 것 **전부**가 다시 읽을 것이 된다.
+
+     ⚠ 실제로 그렇게 당했다: 11 은 글자 판독을 붙인 것이라 물음이 하나도 안 바뀌었는데,
+       읽어 둔 574장(카메라로 찍은 회의사진·명함까지)이 다시 읽을 차례에 들어갔다.
+       대부분은 다시 읽어도 «같은 답»이다.
+
+     그래서 물음 판을 따로 센다. 마지막으로 물음이 바뀐 것은 10 이다
+     (서식에 매출액·상시근로자수 등을 이름 붙은 키로 받기 시작한 판).
+     ⚠ 물음(PROMPT_ALL·MULTI_NOTE·TEXT_NOTE·갈래 목록·칸 이름)을 고치면 **이 번호를**
+       올린다. 읽는 길만 손대면 READ_VERSION 만 올린다. */
+  var PROMPT_VERSION = 10;
 
   function fail(message) {
     return { kind: 'other', fields: {}, bizNoOk: null, ntsChecked: false, ntsState: null, error: message };
@@ -545,7 +557,7 @@
       return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
     });
     parts.push({ text: PROMPT_ALL + (imgs.length > 1 ? MULTI_NOTE : '') });
-    return runDocParts(parts);
+    return runDocParts(parts, 'image');
   }
 
   /* ── 글자로 된 서류를 판독한다 (대표 결정 2026-08-24) ──
@@ -576,18 +588,18 @@
     if (!body) return Promise.resolve(fail('읽을 글자가 없습니다'));
     var RM = global.PuRrnMask;
     if (RM && RM.maskRrnInText) body = RM.maskRrnInText(body).text;
-    return runDocParts([{ text: PROMPT_ALL + TEXT_NOTE + '\n\n' + body }]);
+    return runDocParts([{ text: PROMPT_ALL + TEXT_NOTE + '\n\n' + body }], 'text');
   }
 
   /* 모델·재시도·키 조달·결과 다듬기 — 사진으로 보낼 때와 글자로 보낼 때가 **똑같이**
      쓴다. 두 벌로 두면 한쪽만 고쳐 놓고 다른 쪽은 옛 길로 남는다. */
-  function runDocParts(parts) {
+  function runDocParts(parts, via) {
     /* 서버 대리인이 있으면 열쇠를 아예 안 챙긴다(2026-08-17) */
     if (useProxy()) {
       return askProxy(parts).then(function (j) {
         var parsed = parseReply(j);
         if (!parsed) throw new Error('AI가 알아볼 수 없는 답을 보냈습니다');
-        return afterRead(parsed);
+        return afterRead(parsed, via);
       }).catch(function (e) {
         return fail((e && e.message) || String(e));
       });
@@ -607,7 +619,7 @@
       }).then(function (j) {
         var parsed = parseReply(j);
         if (!parsed) throw new Error('AI가 알아볼 수 없는 답을 보냈습니다');
-        return afterRead(parsed);
+        return afterRead(parsed, via);
       }).catch(function (e) {
         return fail((e && e.message) || String(e));
       });
@@ -629,7 +641,11 @@
   }
 
   /* 판독 결과 정리 + 사업자번호 검증 + (키가 있을 때만) 국세청 조회 */
-  function afterRead(parsed) {
+  /* via = 어느 길로 읽었나('text' 글자 / 'image' 그림). 결과에 함께 남긴다
+     (대표 결정 2026-08-24) — 「글자가 있는데 그림으로 읽어 둔 것」만 골라 다시 읽는
+     데 쓴다. 이 한 글자가 없으면 다시 읽을 값이 있는 것과 없는 것을 가릴 수 없어,
+     판 번호를 올릴 때마다 읽어 둔 것 «전부»가 다시 읽힌다. */
+  function afterRead(parsed, via) {
     var kind = KINDS[parsed.kind] ? parsed.kind : 'other';
     var fields = {};
     for (var k in parsed) {
@@ -639,7 +655,8 @@
       fields[k] = typeof v === 'string' ? v.trim() : v;
     }
 
-    var out = { kind: kind, fields: fields, bizNoOk: null, ntsChecked: false, ntsState: null, error: null };
+    var out = { kind: kind, fields: fields, bizNoOk: null, ntsChecked: false, ntsState: null,
+                error: null, via: (via === 'text' ? 'text' : 'image') };
 
     /* 명함에는 사업자번호가 없다 → 검증 대상이 아니므로 null 로 둔다.
        false 로 두면 화면이 '검증 실패'로 오해해 멀쩡한 명함을 사람에게 물어본다. */
@@ -805,6 +822,7 @@
     MODELS: MODELS,
     PROMPTS: { all: PROMPT_ALL },
     READ_VERSION: READ_VERSION,
+    PROMPT_VERSION: PROMPT_VERSION,
     read: read,
     readDocText: readDocText,
     readWageTable: readWageTable,

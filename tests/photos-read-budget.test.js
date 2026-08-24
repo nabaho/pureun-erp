@@ -32,7 +32,11 @@ function load(items) {
   const note = { style: {}, textContent: '' };
   const ctx = {
     Math, Object, String, Number,
-    PuDocRead: { READ_VERSION: 8 },
+    /* ⚠ 2026-08-24: 판 번호가 둘로 갈렸다. 다시 읽기는 «물음 판»을 보므로 그것도
+       줘야 한다 — 안 주면 `rv < undefined` 가 늘 거짓이 되어 **다시 읽을 것이
+       하나도 없다**고 나오고, 이 파일의 검사가 통째로 운다(그렇게 한 번 걸렸다).
+       이 파일의 표본이 rv 7(옛 판)·8(최신)이므로 물음 판도 8 로 둔다. */
+    PuDocRead: { READ_VERSION: 8, PROMPT_VERSION: 8 },
     gridItems: items || [],
     queuePhotoRead: function (id) { queued.push(id); },
     $: function (id) { return id === 'autoNote' ? note : null; },
@@ -43,6 +47,10 @@ function load(items) {
   vm.runInContext([
     constOf('AUTO_READ_MAX'), constOf('AUTO_RESTALE_MAX'),
     app.match(/^const RESTALE_SKIP = \{[^\n]*\};/m)[0].replace('const ', 'var '),
+    /* ⚠ 2026-08-24: staleRead 가 «물음 판»을 보게 되면서 readPromptVer 를 함께
+       쓴다(옛 기록에는 pv 가 없어 rv 를 대신 본다). 안 넣으면 그 자리에서 멎어
+       이 파일의 검사가 통째로 운다. */
+    fnOf('readPromptVer'),
     fnOf('neverRead'), fnOf('staleRead'), fnOf('needsRead'), fnOf('autoReadPending')
   ].join('\n'), ctx);
   return ctx;
