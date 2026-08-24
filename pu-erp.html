@@ -36786,6 +36786,8 @@ function FinanceLedger(props){
   var editPopS=useState(null);   var editPop=editPopS[0]; var setEditPop=editPopS[1]; // 4-3 비교 수정 팝업 {incomeRecord}
   var incChkS=useState({});      var incChk=incChkS[0];   var setIncChk=incChkS[1];   // 입금 행 체크 {_k: true}
   var incMonS=useState('');      var incMon=incMonS[0];   var setIncMon=incMonS[1];   // 월 필터 (''=전체, 'YYYY-MM')
+  /* 「📆 오늘」 스위치 — 오늘 들어온 것만 본다 (달 고르개와 «따로» 돈다) */
+  var _otS=useState(false);      var ldOnlyToday=_otS[0]; var setLdOnlyToday=_otS[1];
   /* ── 한 번에 그리는 행 수 ──
      통장 506행 × 후보 12개를 한꺼번에 그리면 그리기만 800ms 를 넘는다. 계산을
      캐시해도(#90) 다시 그릴 때마다 이 비용은 그대로라, 30초 하트비트마다 화면이
@@ -36793,7 +36795,7 @@ function FinanceLedger(props){
      ⚠ 합계·미처리 건수·자동 매칭·자동 정리는 전체(incAll/incList)로 계산한다 —
        화면에 덜 그리는 것일 뿐 자료를 자르는 것이 아니다. */
   var ldShowS=useState(80);      var ldShow=ldShowS[0];   var setLdShow=ldShowS[1];
-  useEffect(function(){ setLdShow(80); }, [incMon, ldTab, hideDup]);   // 달·탭을 바꾸면 처음부터
+  useEffect(function(){ setLdShow(80); }, [incMon, ldTab, hideDup, ldOnlyToday]);   // 달·탭·「오늘」을 바꾸면 처음부터
   var incVfS=useState({});       var incVf=incVfS[0];     var setIncVf=incVfS[1];     // 눈으로 확인 표시 {_k:{inv:true, work:true}}
   var candQS=useState({});       var candQ=candQS[0];     var setCandQ=candQS[1];     // 후보 검색어 {_k:'...'}
   var candKS=useState({});       var candK=candKS[0];     var setCandK=candKS[1];     // 후보 종류 필터 {_k:'cases'|''}
@@ -37892,6 +37894,18 @@ function FinanceLedger(props){
     expList=expList.filter(function(r){return String(r.date||'').slice(0,7)===incMon;});
   } else if(incMon && !_ldMonSet[incMon]) setIncMon('');
 
+  /* ── 「📆 오늘」 (대표 지시 2026-08-24) ───────────────────────────────
+     아침에 「오늘 뭐 들어왔나」를 보는 것이 가장 잦은데, 지금은 달 전체(400건)에서
+     눈으로 찾아야 했다. 오늘 것만 모아 본다.
+     ⚠ 달 고르개와 «따로» 돈다 — 지난 달을 보고 있으면 오늘 것이 그 달에 없으므로,
+       켜는 순간 이 달로 데려온다(단추에서 함께 한다). */
+  var _ldToday = todayYMD();
+  var ldTodayCnt = incAll.filter(function(r){ return String(r.date||'').slice(0,10) === _ldToday; }).length;
+  if(ldOnlyToday){
+    incList = incList.filter(function(r){ return String(r.date||'').slice(0,10) === _ldToday; });
+    expList = expList.filter(function(r){ return String(r.date||'').slice(0,10) === _ldToday; });
+  }
+
   var inMatchedCnt  = incList.filter(function(r){return !r._dup && inMatch[r._k];}).length;
   var expReadyCnt   = expList.filter(function(r){return !r._dup && expCat[r._k];}).length;
 
@@ -38974,7 +38988,8 @@ function FinanceLedger(props){
             navBtn(-1,'◀', !showAll && idx>0)),
           // 달 고르기 — 달 이름만 짧게 (상태는 옆의 배지·막대가 말해 준다)
           h('select',{key:'s',className:'ld-bar-mon',value:incMon,
-            onChange:function(e){ setIncMon(e.target.value); setIncChk({}); },
+            /* 달을 손으로 바꾸면 「📆 오늘」은 푼다 — 「지난 달 + 오늘」은 늘 빈 목록이다 */
+            onChange:function(e){ setIncMon(e.target.value); setIncChk({}); setLdOnlyToday(false); },
             style:{padding:'4px 8px',border:'1.5px solid #1e40af',borderRadius:'6px',background:'#eff6ff',
               color:'#1e40af',fontSize:'12.5px',fontWeight:800,cursor:'pointer',flexShrink:0}},
             ldMonths.length>1 && h('option',{value:''},'전체 '+ldMonths.length+'개월'),
@@ -38984,6 +38999,24 @@ function FinanceLedger(props){
             })),
           ldMonths.length>1 && h('span',{key:'n',className:'ld-bar-nav',style:{display:'flex',alignItems:'center',gap:'3px',flexShrink:0}},
             navBtn(1,'▶', !showAll && idx<ldMonths.length-1)),
+          /* ★ 「📆 오늘」 — 숫자를 함께 적어 «눌러 보기 전에» 몇 건인지 안다.
+             오늘 것이 없으면 흐리게 두고 안 눌린다 — 헛되이 누르지 않게. */
+          h('button',{key:'td',
+            onClick:function(){
+              if(!ldTodayCnt) return;
+              var on = !ldOnlyToday;
+              setLdOnlyToday(on);
+              /* 켤 때는 이 달로 데려온다 — 지난 달을 보고 있으면 오늘 것이 그 달에 없다 */
+              if(on){ var _m = _ldToday.slice(0,7); if(_ldMonSet[_m]) setIncMon(_m); }
+            },
+            title: !ldTodayCnt ? '오늘 들어온 것이 없습니다'
+              : (ldOnlyToday ? '다시 눌러 모두 보기' : ('오늘(' + _ldToday + ') 들어온 ' + ldTodayCnt + '건만 봅니다')),
+            style:{padding:'0 9px',height:'30px',borderRadius:'6px',flexShrink:0,fontSize:'11.5px',fontWeight:800,
+              cursor: ldTodayCnt ? 'pointer' : 'default', opacity: ldTodayCnt ? 1 : .45,
+              border:'1px solid ' + (ldOnlyToday ? '#1e40af' : '#cbd5e1'),
+              background: ldOnlyToday ? '#1e40af' : '#fff',
+              color: ldOnlyToday ? '#fff' : '#475569'}},
+            '📆 오늘' + (ldTodayCnt ? (' ' + ldTodayCnt) : '') + (ldOnlyToday ? ' ✕' : '')),
           // 그 달만 비우기 — 달을 골랐을 때만. 쌓아 두므로 «전부 비우기» 하나로는 못 쓴다
           incMon && h('button',{key:'delm',className:'ld-bar-delm',onClick:function(){ clearMonth(incMon); },
             title:'이 달의 '+(_ldSrc==='card'?'카드':'통장')+' 내역만 목록에서 비웁니다\n— 다른 달과 이미 확정한 건은 그대로입니다',
@@ -59310,12 +59343,19 @@ function ClosedManagement(){
     setArchive(archive.slice()); showToast('해제 - '+(labelMap[key]||'원래 모듈')+'에서 확인');
   }
 
+  /* ★ 종료일이 «안 적힌» 것만 모아 보기 (대표 지시 2026-08-24)
+     종료된 업체 100곳 가운데 94곳에 종료일이 없다. 그것들은 연도를 골라도 목록에서
+     안 빠진다 — 빠지면 영영 못 찾기 때문이다. 그래서 「2026년」 목록에 2026년이
+     아닌 것이 섞인다. 숨기지 말고 «몇 건인지 적고, 눌러서 그것만 보게» 한다. */
   function matchDate(dateStr){
     var d = (dateStr||'').slice(0,10);
+    if(undatedOnly) return !d;                      // 미상만 볼 때는 날짜 있는 것을 뺀다
     if(yearFilter !== 'all' && d.slice(0,4) !== yearFilter) return false;
     if(monthFilter !== 'all' && d.slice(5,7) !== monthFilter) return false;
     return true;
   }
+  /* 종료일이 안 적힌 것만 모아 보는 스위치 (연도 줄의 「종료일 미상 N」 알약) */
+  var _uoS = useState(false); var undatedOnly = _uoS[0]; var setUndatedOnly = _uoS[1];
   function matchQuery(fields){
     if(!query) return true;
     var qq = query.toLowerCase();
@@ -59357,6 +59397,7 @@ function ClosedManagement(){
     if(c.status !== 'closed') return false;
     if(!matchQuery([c.name, c.bizNo, c.closedReason, c.closedReasonDetail, c.note])) return false;
     var _cd = c.closedDate || c.contractEndDate || '';
+    if(undatedOnly) return !_cd;                    // 미상만 볼 때는 날짜 있는 곳을 뺀다
     if(_cd) return matchDate(_cd);
     return monthFilter === 'all'; // 종료일 미상: 월 드릴다운 시 제외, 연도/전체에서는 항상 표시
   });
@@ -59463,8 +59504,9 @@ function ClosedManagement(){
   }
 
   function renderToolbar(){
-    return h('div', { style:{ marginBottom:'10px', display:'flex', gap:'6px', alignItems:'center' } },
-      h('div', { style:{ position:'relative', flex:1 } },
+    /* 탭줄 오른쪽에 선다 — 탭을 밀어내지 않게 폭을 못 박는다(좁아지면 이쪽이 먼저 준다) */
+    return h('div', { style:{ display:'flex', gap:'6px', alignItems:'center', flex:'0 1 auto', minWidth:0 } },
+      h('div', { style:{ position:'relative', flex:'1 1 150px', minWidth:0, maxWidth:'320px' } },
         h('input', { className:'dt-search', placeholder:'🔍 업체명·사건번호·담당자·사유',
           value:query, onChange:function(e){ setQuery(e.target.value); },
           style:{ width:'100%', fontSize: window.innerWidth<=768?'14px':'12.5px',
@@ -59486,6 +59528,13 @@ function ClosedManagement(){
     );
   }
 
+  /* ★ 종료일이 «안 적힌» 건수 — 연도를 골라도 목록에서 안 빠지는 것들이다.
+     지금 자료로는 종료된 업체 100곳 중 94곳이 여기 든다. 그 사실을 화면에 적는다. */
+  var undatedCount = dbGet('companies', []).filter(function(c){
+    if(c._deleted || c.status !== 'closed') return false;
+    if(!matchQuery([c.name, c.bizNo, c.closedReason, c.closedReasonDetail, c.note])) return false;
+    return !(c.closedDate || c.contractEndDate);
+  }).length;
   var allItems_count = contractItems.length + closedCompanies.length + closedCases.length + bizItems.length;
   var curCount = { all: allItems_count, contract: contractItems.length, company: closedCompanies.length, case: closedCases.length,
     consulting: bizConsultItems.length, fund: bizFundItems.length, other: bizOtherItems.length
@@ -59550,9 +59599,35 @@ function ClosedManagement(){
     var months = ['01','02','03','04','05','06','07','08','09','10','11','12'];
     var maxMonth = Math.max.apply(null, Object.values(monthMap).concat(1));
     var MONTH_NAMES = {0:'1월',1:'2월',2:'3월',3:'4월',4:'5월',5:'6월',6:'7월',7:'8월',8:'9월',9:'10월',10:'11월',11:'12월'};
+    /* 월 12칸 — 연도 줄 «안»에 선다. 「건」 글자는 뺐다(숫자만으로 읽히고, 12칸이 한 줄에 들어간다). */
+    function monthGrid(){
+      return h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(12, 1fr)', gap:'3px', flex:'1 1 260px', minWidth:'240px' } },
+        months.map(function(m, i){
+          var cnt = monthMap[m]||0;
+          var on = monthFilter === m;
+          var hasData = cnt > 0;
+          var itemsList = monthItems[m] || [];
+          var preview = hasData
+            ? MONTH_NAMES[i]+' '+cnt+'건\n────────\n' + itemsList.slice(0,15).map(function(it){return '['+it.kind+'] '+it.name;}).join('\n') + (itemsList.length>15 ? ('\n… 외 '+(itemsList.length-15)+'건') : '')
+            : MONTH_NAMES[i]+' 데이터 없음';
+          return h('div', { key:m,
+            onClick:function(){ setMonthFilter(on ? 'all' : m); setUndatedOnly(false); },
+            title: preview,
+            style:{ cursor:'pointer', padding:'4px 2px', borderRadius:'4px', textAlign:'center', lineHeight:1.15,
+              background: on ? '#2563eb' : (hasData ? '#eff6ff' : '#f8fafc'),
+              color: on ? '#fff' : (hasData ? '#2563eb' : '#cbd5e1'),
+              border:'1px solid '+(on ? '#2563eb' : (hasData ? '#bfdbfe' : '#f8fafc')),
+              fontWeight: on||hasData ? 700 : 400 } },
+            h('div', { style:{ fontSize:'9px', opacity:0.85 } }, MONTH_NAMES[i]),
+            h('div', { style:{ fontSize:'12.5px', fontFamily:'monospace', fontWeight:700 } }, cnt)
+          );
+        })
+      );
+    }
     return h('div', { style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'8px', padding:'12px 16px', marginBottom:'12px' } },
-      h('div', { style:{ display:'flex', alignItems:'center', gap:'10px', marginBottom: yearFilter!=='all' ? '12px' : '0', flexWrap:'wrap' } },
-        h('div', { style:{ fontSize:'12px', fontWeight:700, color:'#475569' } }, '📊 종료 현황'),
+      /* ★ 한 줄에 다 세운다 (라안) — 연도 넘기기 · 월 12칸 · 미상.
+         「📊 종료 현황」 글자는 뺐다: 화면 이름이 이미 「종료관리」다. */
+      h('div', { style:{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'0', flexWrap:'wrap' } },
         // 연도 ◀▶ 스텝퍼 (안2 타임라인형)
         sortedYears.length === 0
           ? h('span', { style:{ fontSize:'11.5px', color:'#cbd5e1' } }, '등록된 데이터가 없습니다')
@@ -59560,12 +59635,23 @@ function ClosedManagement(){
               h('button', { onClick:function(){ var y = yearFilter==='all' ? (new Date().getFullYear()) : parseInt(yearFilter,10); setYearFilter(String(y-1)); setMonthFilter('all'); },
                 style:{ padding:'4px 8px', border:'1px solid #cbd5e1', borderRadius:'5px', background:'#fff', cursor:'pointer', fontSize:'13px' } }, '◀'),
               h('span', { style:{ fontWeight:700, fontSize:'13px', minWidth:'96px', textAlign:'center', color:'#1e293b' } },
-                yearFilter==='all' ? ('전체 ('+allDates.length+'건)') : (yearFilter+'년 ('+(yearMap[yearFilter]||0)+'건)')),
+                yearFilter==='all' ? ('전체 '+allDates.length+'건') : (yearFilter+'년 '+(yearMap[yearFilter]||0)+'건')),
               h('button', { onClick:function(){ var y = yearFilter==='all' ? (new Date().getFullYear()) : parseInt(yearFilter,10); setYearFilter(String(y+1)); setMonthFilter('all'); },
                 style:{ padding:'4px 8px', border:'1px solid #cbd5e1', borderRadius:'5px', background:'#fff', cursor:'pointer', fontSize:'13px' } }, '▶'),
               h('button', { onClick:function(){ setYearFilter('all'); setMonthFilter('all'); },
                 style:{ padding:'4px 10px', border:'1px solid '+(yearFilter==='all'?'#1e40af':'#cbd5e1'), borderRadius:'5px', background: yearFilter==='all'?'#1e40af':'#fff', color: yearFilter==='all'?'#fff':'#475569', cursor:'pointer', fontSize:'11.5px', fontWeight:700 } }, '전체 연도')
-            )
+            ),
+        // ★ 월 12칸을 «같은 줄» 오른쪽에 (라안) — 줄 하나를 덜 쓴다
+        yearFilter !== 'all' && monthGrid(),
+        /* ★ 종료일이 안 적힌 건수를 드러낸다 — 연도를 골라도 안 빠지는 것들이다.
+           눌러서 그것만 모아 볼 수 있다(다시 누르면 풀린다). */
+        undatedCount > 0 && h('button', { onClick:function(){ setUndatedOnly(!undatedOnly); setMonthFilter('all'); },
+          title: undatedOnly ? '다시 눌러 모두 보기'
+            : ('종료일이 안 적힌 ' + undatedCount + '건입니다.\n연도를 골라도 목록에서 빠지지 않습니다 — 빠지면 찾을 길이 없어서입니다.\n눌러서 이것만 모아 봅니다.'),
+          style:{ flexShrink:0, padding:'3px 9px', borderRadius:'16px', fontSize:'10.5px', fontWeight:700, cursor:'pointer',
+            background: undatedOnly ? '#d97706' : '#fffbeb', color: undatedOnly ? '#fff' : '#854d0e',
+            border:'1px solid ' + (undatedOnly ? '#d97706' : '#fde68a') } },
+          '종료일 미상 ' + undatedCount + (undatedOnly ? ' ✕' : ''))
       ),
       // 연도별 칩 (전체 보기 시)
       yearFilter === 'all' && sortedYears.length > 0 && h('div', { style:{ marginTop:'10px' } },
@@ -59593,43 +59679,7 @@ function ClosedManagement(){
           })
         )
       ),
-      // 월별 칩 그리드 (연도 선택 시)
-      yearFilter !== 'all' && h('div', null,
-        h('div', { style:{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'6px', marginTop:'10px' } },
-          h('button', { onClick:function(){ setYearFilter('all'); setMonthFilter('all'); },
-            style:{ padding:'4px 10px', background:'#f8fafc', color:'#475569', border:'1px solid #e2e8f0',
-              borderRadius:'16px', fontSize:'11px', fontWeight:700, cursor:'pointer' } },
-            '← 전체 연도'),
-          h('span', { style:{ fontSize:'12px', fontWeight:700, color:'#2563eb' } },
-            yearFilter+'년 '+(yearMap[yearFilter]||0)+'건'),
-          monthFilter !== 'all' && h('button', { onClick:function(){ setMonthFilter('all'); },
-            style:{ padding:'3px 9px', background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe',
-              borderRadius:'16px', fontSize:'10.5px', fontWeight:700, cursor:'pointer' } },
-            parseInt(monthFilter,10)+'월 × 해제')
-        ),
-        h('div', { style:{ display: window.innerWidth<=768?'flex':'grid', gridTemplateColumns: window.innerWidth<=768?undefined:'repeat(12, 1fr)', gap:'4px', overflowX: window.innerWidth<=768?'auto':undefined, WebkitOverflowScrolling:'touch', paddingBottom: window.innerWidth<=768?'4px':0 } },
-          months.map(function(m, i){
-            var cnt = monthMap[m]||0;
-            var on = monthFilter === m;
-            var hasData = cnt > 0;
-            var itemsList = monthItems[m] || [];
-            var preview = hasData
-              ? MONTH_NAMES[i]+' '+cnt+'건\n────────\n' + itemsList.slice(0,15).map(function(it){return '['+it.kind+'] '+it.name;}).join('\n') + (itemsList.length>15 ? '\n... 외 '+(itemsList.length-15)+'건' : '')
-              : MONTH_NAMES[i]+' 데이터 없음';
-            return h('div', { key:m,
-              onClick:function(){ setMonthFilter(on ? 'all' : m); },
-              title: preview,
-              style:{ cursor:'pointer', padding: window.innerWidth<=768?'6px 8px':'8px 4px', borderRadius:'5px', textAlign:'center', flexShrink: window.innerWidth<=768?0:undefined, minWidth: window.innerWidth<=768?'44px':undefined,
-                background: on ? '#2563eb' : (hasData ? '#eff6ff' : '#f8fafc'),
-                color: on ? '#fff' : (hasData ? '#2563eb' : '#cbd5e1'),
-                border:'1px solid '+(on ? '#2563eb' : (hasData ? '#bfdbfe' : '#f8fafc')),
-                fontWeight: on||hasData ? 700 : 400 } },
-              h('div', { style:{ fontSize:'10px', opacity:0.85 } }, MONTH_NAMES[i]),
-              h('div', { style:{ fontSize:'14px', fontFamily:'monospace', fontWeight:700, marginTop:'2px' } }, cnt+'건')
-            );
-          })
-        )
-      )
+      null
     );
   }
 
@@ -60028,10 +60078,15 @@ function ClosedManagement(){
 
 
   return h('div', { className:'page' },
-    h('div', { style:{ display:'flex', gap:'4px', marginBottom:'10px',
-      overflowX: window.innerWidth<=768?'auto':'wrap', flexWrap: window.innerWidth<=768?'nowrap':'wrap',
-      WebkitOverflowScrolling:'touch', paddingBottom: window.innerWidth<=768?'4px':'0',
-      borderBottom:'2px solid #e2e8f0' } },
+    /* ★ 탭줄 «오른쪽 빈자리»에 검색·갯수·내려받기를 얹는다 (대표 승인 라안).
+       원래 비어 있던 자리라 줄 하나를 «공짜로» 얻는다. 좁아지면 검색이 먼저 줄고,
+       더 좁으면(폰) 아래로 내려간다 — 탭은 늘 왼쪽에 남는다. */
+    h('div', { style:{ display:'flex', gap:'8px', marginBottom:'10px', alignItems:'center',
+      flexWrap:'wrap', borderBottom:'2px solid #e2e8f0',
+      paddingBottom: window.innerWidth<=768?'4px':'0' } },
+    h('div', { style:{ display:'flex', gap:'4px', flex:'1 1 auto', minWidth:0,
+      overflowX: window.innerWidth<=768?'auto':'visible', flexWrap: window.innerWidth<=768?'nowrap':'wrap',
+      WebkitOverflowScrolling:'touch' } },
       tabs.map(function(t){
         var on = activeTab === t.id;
         var _m = window.innerWidth<=768;
@@ -60041,13 +60096,12 @@ function ClosedManagement(){
             background: on?'#1e40af':'#f8fafc', color: on?'#fff':'#475569',
             border: _m?'1px solid '+( on?'#1e40af':'#cbd5e1'):'none',
             flexShrink: _m?0:undefined, whiteSpace:'nowrap', marginBottom:'0' } },
-          t.label + ' (' + t.count + ')');
+          t.label + ' ' + t.count);
       })
     ),
-    renderToolbar(),
+    renderToolbar()
+    ),
     renderSummary(),
-    h('div', { style:{ fontSize:'12px', color:'#94a3b8', marginBottom:'8px' } },
-      (yearFilter==='all' ? '전체' : yearFilter+'년' + (monthFilter!=='all' ? ' '+parseInt(monthFilter,10)+'월' : '')) + ' ' + curCount + '건' + (query ? ' (검색: "'+query+'")' : '')),
     activeTab === 'all'        && renderAll(),
     activeTab === 'contract'   && renderContract(),
     activeTab === 'company'    && renderCompany(),

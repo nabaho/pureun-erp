@@ -17,7 +17,10 @@ function eq(name, got, want){
 console.log('\n[월 넘기기]');
 ok('◀ ▶ 단추가 있다', /navBtn\(-1,'◀'/.test(src) && /navBtn\(1,'▶'/.test(src));
 ok('끝 달에서는 더 못 넘긴다', /var n=idx\+step;\s*if\(n<0\|\|n>=ldMonths\.length\) return;/.test(src));
-ok('달 고르는 목록도 있다 (달이 많아도 한 칸)', /onChange:function\(e\)\{ setIncMon\(e\.target\.value\); setIncChk\(\{\}\); \}/.test(src));
+/* 할 일을 더 넣어도 된다 — 지키는 것은 «달이 바뀌고 체크가 풀린다» 이다.
+   2026-08-24: 「📆 오늘」을 함께 푸는 줄이 들어왔다(지난 달 + 오늘 = 늘 빈 목록). */
+ok('달 고르는 목록도 있다 (달이 많아도 한 칸)',
+   /onChange:function\(e\)\{ setIncMon\(e\.target\.value\);[\s\S]{0,80}?setIncChk\(\{\}\);/.test(src));
 ok('목록에는 달 이름만 짧게 (상태는 옆 배지가 말한다)',
    /return h\('option',\{key:m,value:m\},\s*parseInt\(m\.slice\(0,4\),10\)\+'년 '\+parseInt\(m\.slice\(5\),10\)\+'월'\);/.test(src));
 ok('넘길 달 이름이 도움말로 보인다', /title:able\?\(ldMonths\[idx\+step\]\.slice\(0,4\)/.test(src));

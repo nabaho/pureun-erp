@@ -40,7 +40,7 @@ test('추천·자동정리 계산도 전체(incAll)로 돈다 — 잘린 목록�
 });
 
 test('달·탭·숨기기를 바꾸면 처음(80행)부터 다시 센다', () => {
-  assert.match(FL, /useEffect\(function\(\)\{ setLdShow\(80\); \}, \[incMon, ldTab, hideDup\]\)/);
+  assert.match(FL, /useEffect\(function\(\)\{ setLdShow\(80\); \}, \[incMon, ldTab, hideDup[^\]]*\]\)/);
 });
 
 test('더 보기는 200행씩 잇고, 남은 건수를 보여 준다', () => {
