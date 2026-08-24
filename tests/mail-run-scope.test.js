@@ -111,6 +111,7 @@ function run(mails) {
     PAYMAIL_MAX_PER_RUN: 30,
     PAYMAIL_LOOK_DAYS: 14,
     MAIL_DONE_KEEP: 3000,
+    MAIL_LOG_KEEP: 500,
     MAIL_DONE_DAYS: 120,
     MD: { loginIds: () => ['id@daum.net'] },
     ImapFlow: function () { return fakeImap(mails); },
@@ -131,7 +132,7 @@ function run(mails) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script([
-    cutFn('payMailDoneKeys'), cutFn('payMailMarkDone'),
+    cutFn('payMailDoneKeys'), cutFn('payMailMarkDone'), cutFn('payMailWriteLog'),
     cutFn('payMailStoreBody'), cutFn('payMailStoreOne'),
     cutRun(),
     'globalThis.__run = runPaydataMailOnce;'
@@ -197,4 +198,31 @@ test('★ 본문을 창고에 담는다', async () => {
   await go();
   assert.equal(saved.length, 1, '창고에 안 담았습니다');
   assert.match(saved[0], /\.txt$/);
+});
+
+test('★ 푸른 메일 「받은 메일」 목록에도 한 줄 적는다', async () => {
+  const { go, db } = run([MAIL_BODY_ONLY]);
+  await go();
+  const box = db.get('paydata/maillog') || {};
+  const rows = Object.keys(box).map(k => box[k]);
+  assert.equal(rows.length, 1, '목록을 안 적었습니다');
+  assert.match(rows[0].subject, /8월 근태자료/);
+  assert.equal(rows[0].took, 1, '몇 건 담았는지가 틀렸습니다');
+  assert.match(rows[0].preview, /김철수 22일/, '미리보기가 없습니다');
+});
+
+test('★ 자료로 안 담긴 메일도 목록에는 남는다 — 문의 메일이 통째로 안 보이면 안 된다', async () => {
+  /* 숫자가 없는 인사말 본문 — 값으로 만들 것이 없어 자료로는 안 담긴다. */
+  const ask = Object.assign({}, MAIL_BODY_ONLY, {
+    envelope: { messageId: '<ask@daum.net>' },
+    subject: '퇴직연금 불입액 문의', text: '안녕하세요 문의드립니다 확인 부탁드립니다'
+  });
+  const { go, db } = run([ask]);
+  const out = await go();
+  assert.equal(out.took, 0, '자료로 담기면 안 됩니다');
+  const box = db.get('paydata/maillog') || {};
+  const rows = Object.keys(box).map(k => box[k]);
+  assert.equal(rows.length, 1, '목록에 안 남았습니다');
+  assert.equal(rows[0].took, 0);
+  assert.match(rows[0].why, /숫자가 없어/, '왜 안 담겼는지 적어야 합니다');
 });

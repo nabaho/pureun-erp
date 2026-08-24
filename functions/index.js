@@ -962,6 +962,33 @@ const PAYMAIL_LOOK_DAYS = 14;
 const MAIL_DONE_KEEP = 3000;              // 적어 둘 기록 수
 const MAIL_DONE_DAYS = 120;               // 이보다 오래된 것은 걷어낸다
 
+/* ── 서버가 본 메일 목록 (대표 결정 2026-08-24) ──
+   푸른 메일 「받은 메일」 화면이 이것을 읽는다. 처리 목록(mailseen)과 같은
+   원칙으로 **적을 때 함께 걷어낸다** — 따로 도는 청소는 안 도는 청소다.
+   ⚠ 목록을 못 적어도 자료 담기는 이미 끝났다. 기록 때문에 자료가 막히면 안 된다. */
+const MAIL_LOG_KEEP = 500;
+
+async function payMailWriteLog(db, rows) {
+  if (!rows.length) return;
+  const up = {};
+  rows.forEach(function (r) { up[PAYDATA_ROOT + "/maillog/" + r.key] = r.rec; });
+  try {
+    const snap = await db.ref(PAYDATA_ROOT + "/maillog").once("value");
+    const box = (snap && snap.val()) || {};
+    const keys = Object.keys(box).filter(function (k) { return !up[PAYDATA_ROOT + "/maillog/" + k]; });
+    if (keys.length + rows.length > MAIL_LOG_KEEP) {
+      keys.sort(function (a, b) { return Number((box[a] || {}).at || 0) - Number((box[b] || {}).at || 0); })
+        .slice(0, keys.length + rows.length - MAIL_LOG_KEEP)
+        .forEach(function (k) { up[PAYDATA_ROOT + "/maillog/" + k] = null; });
+    }
+  } catch (e) {
+    console.warn("receivePaydataMail 목록 청소 건너뜀:", String((e && e.message) || e));
+  }
+  await db.ref().update(up).catch(function (e) {
+    console.error("receivePaydataMail 목록 적기 실패:", String((e && e.message) || e));
+  });
+}
+
 async function payMailDoneKeys(db) {
   const snap = await db.ref(PAYDATA_ROOT + "/mailseen").once("value").catch(() => null);
   return (snap && snap.val()) || {};
@@ -1194,6 +1221,7 @@ async function runPaydataMailOnce() {
       /* 이미 처리한 메일 목록 — 읽음 표시를 안 쓰므로 이것이 유일한 기준이다. */
       const doneKeys = await payMailDoneKeys(db);
       const newlyDone = [];
+      const logRows = [];               // 푸른 메일 「받은 메일」 목록에 적을 줄
 
       for (const item of inbox) {
         let parsed;
@@ -1235,6 +1263,9 @@ async function runPaydataMailOnce() {
 
         const atts = Array.isArray(parsed.attachments) ? parsed.attachments : [];
         let tookHere = 0;              // 이 메일에서 담은 첨부 수
+        /* 푸른 메일 「받은 메일」 목록에 적을 것 — 이 메일이 누구 칸으로 갔고
+           안 갔으면 왜 안 갔는지. 목록의 핵심 칸이다. */
+        let hereSeat = '', hereShared = false, hereWhy = '';
         for (const att of atts) {
           const chk = MR.okAttachment(att);
           if (!chk.ok) {
@@ -1250,6 +1281,7 @@ async function runPaydataMailOnce() {
             if (r && r.shared) { shared++; whys[r.why] = (whys[r.why] || 0) + 1; }
             else routed++;
             took++; tookHere++;
+            if (r) { hereSeat = r.seat || hereSeat; hereShared = !!r.shared; hereWhy = r.why || hereWhy; }
           } catch (e) {
             // 한 건이 막혀도 나머지는 담는다. 읽음 표시는 아래에서 한다.
             skipped++;
@@ -1267,19 +1299,40 @@ async function runPaydataMailOnce() {
                 { from: sender, subject: subject, box: item.box });
               if (r && r.shared) { shared++; whys[r.why] = (whys[r.why] || 0) + 1; }
               else routed++;
-              took++;
+              took++; tookHere++;
+              if (r) { hereSeat = r.seat || hereSeat; hereShared = !!r.shared; hereWhy = r.why || hereWhy; }
             } catch (e) {
               skipped++;
               console.error("receivePaydataMail 본문 담기 실패:", String((e && e.message) || e));
             }
           } else {
             skipped++;
+            hereWhy = bchk.why;        // 「숫자가 없어 값으로 만들 것이 없습니다」 같은 것
             console.log("receivePaydataMail 본문 건너뜀:", bchk.why);
           }
+        }
+
+        /* 목록에 한 줄 — **자료로 안 담긴 메일도 남긴다.** 문의 메일처럼 값이
+           안 되는 것이 앱에서 통째로 안 보이던 것이 문제였다(대표 결정 2026-08-24). */
+        if (mkey) {
+          const ownRec = (payMailKnownCache.owners || {})[hereSeat] || null;
+          logRows.push({
+            key: mkey,
+            rec: MR.mailLogRecord({
+              from: fromText || sender, subject: subject,
+              body: MR.bodyTextOf(parsed),
+              box: item.box, at: parsed.date ? +new Date(parsed.date) : Date.now(),
+              atts: atts.length, took: tookHere,
+              seatName: ownRec ? (ownRec.name || '') : '',
+              shared: hereShared, why: hereWhy
+            })
+          });
         }
       }
       /* 처리한 메일을 적어 둔다 — 안 적으면 회차마다 같은 것을 다시 담는다. */
       await payMailMarkDone(db, newlyDone, doneKeys);
+      /* 푸른 메일 「받은 메일」 목록 — 자료로 안 담긴 메일도 여기에는 남는다. */
+      await payMailWriteLog(db, logRows);
       scanned.looked = inbox.length;
       scanned.took = took; scanned.skipped = skipped; scanned.unknown = unknown;
       scanned.routed = routed; scanned.shared = shared;

@@ -481,6 +481,22 @@ table.sbox tr.bad td{background:#fdf4f4}
 .cpsi .e{margin-left:auto;color:#8b98b3;font-size:11.5px}
 .cpsi.off{cursor:default;opacity:.55}
 .cpsi.off:hover{background:none}
+/* ── 받은 메일 (2026-08-24) ── */
+.ibtools{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.ibtools input{border:1px solid var(--line,#E3E5EF);border-radius:8px;padding:6px 9px;font-size:12.5px;font-family:inherit;min-width:170px}
+.ibchip{font-size:11px;border:1px solid var(--line,#E3E5EF);border-radius:99px;padding:3px 9px;
+  cursor:pointer;background:#fff;font-family:inherit;color:#6B6F87}
+.ibchip.on{background:#2E3A8C;border-color:#2E3A8C;color:#fff;font-weight:700}
+.ibpull{border:1px solid #2E3A8C;background:#2E3A8C;color:#fff;font-weight:700;border-radius:8px;
+  padding:5px 11px;font-size:12.5px;cursor:pointer;font-family:inherit}
+.ibpull.sec{background:#fff;color:#23263B;border-color:var(--line,#E3E5EF);font-weight:400}
+.ibpull[disabled]{opacity:.6;cursor:default}
+.ibtg{font-size:10.5px;border-radius:99px;padding:2px 7px;font-weight:700;white-space:nowrap;display:inline-block}
+.ibtg.ok{background:#EAF6EE;color:#2E7D4F}
+.ibtg.wa{background:#FFF6E6;color:#B26A00}
+.ibtg.no{background:#FDECEC;color:#C43D3D}
+.ibnote{margin-top:9px;font-size:11.5px;color:#6B6F87;line-height:1.7}
+
 /* 보낸 메일함 표 */
 table.sbox{width:100%;border-collapse:collapse;font-size:12.5px}
 table.sbox th{text-align:left;font-weight:400;color:#5a6885;padding:7px 10px;background:#f7f9fc;
@@ -4447,13 +4463,15 @@ function renderMailMobile(){
   const tab=(fn,lb,on)=>`<button class="mmtab${on?' on':''}" onclick="${fn}">${lb}</button>`;
   el.innerHTML = `<div class="mmbar">
       <button class="mmback" onclick="closeMailPage()" title="명함 목록으로">‹ 목록</button>
+      ${tab('openInbox()','📥 받은', state.mailSent==='inbox')}
       ${tab('openMailPage()','✏️ 쓰기', !state.mailSent)}
       ${tab('openSentBox()','📤 보낸', state.mailSent===true)}
       ${tab('openSchedBox()','⏰ 예약', state.mailSent==='sched')}
       <button class="mmtab" onclick="openMatPage()" title="메일에 붙일 자료">📎 자료함</button>
     </div><div id="mmBody"></div>`;
   const body=$('mmBody'); if(!body) return;
-  body.innerHTML = state.mailSent==='sched' ? schedBoxHtml()
+  body.innerHTML = state.mailSent==='inbox' ? inboxBoxHtml()
+                 : state.mailSent==='sched' ? schedBoxHtml()
                  : state.mailSent ? sentBoxHtml() : mailWriteHtml();
   if(!state.mailSent) wireMailWrite();
 }
@@ -5289,6 +5307,127 @@ function pickPerson(id){
 }
 
 /* ── 보낸 메일함 ── */
+/* ══════ 받은 메일 (대표 결정 2026-08-24) ══════
+   푸른 메일에는 **보내는 쪽만** 있었다(쓰기·보낸·예약·자료함). 받은 메일은
+   급여데이터함 안에서만, 그것도 **자료로 담긴 것만** 보였다 — 문의 메일처럼
+   자료가 안 되는 것은 앱에서 통째로 안 보였다.
+
+   ⚠ **사본이 아니다.** 답장·삭제·읽음은 여전히 다음메일이 진짜다. 여기 목록은
+   「서버가 무엇을 보고 무엇을 담았나」는 기록이라, 본문 전문이 아니라 미리보기
+   몇 줄만 있다. 그래서 줄을 눌러도 답장 화면이 아니라 **급여데이터함**으로 간다.
+   ⚠ 서버(functions receivePaydataMail)가 paydata/maillog 에 적는다. 콘솔 규칙이
+   없으면 못 읽어 빈 목록으로 뜬다 — 그때는 고장이 아니라고 화면에 적는다. */
+var MAILLOG_PATH = 'paydata/maillog';
+
+function loadInbox(cb){
+  if(Store.mode!=='firebase'){ if(cb) cb(); return; }
+  firebase.database().ref(MAILLOG_PATH).limitToLast(300).once('value')
+    .then(s=>{ state.inbox = s.val()||{}; state.inboxErr=''; if(cb) cb(); })
+    .catch(e=>{
+      /* 규칙이 없으면 여기로 온다 — 「고장」이 아니라고 말해 줘야 한다 */
+      state.inbox = {}; state.inboxErr = (e&&e.code)||(e&&e.message)||'읽지 못했습니다';
+      console.warn('[받은메일]', state.inboxErr); if(cb) cb();
+    });
+}
+
+/* 지금 화면에 보일 줄 — 그리는 곳과 셈이 **같은 목록**을 봐야 개수가 안 어긋난다. */
+function inboxVisibleRows(){
+  const q = String(state.inboxQ||'').trim().toLowerCase().replace(/\s/g,'');
+  const f = state.inboxFilter||'all';
+  let rows = Object.entries(state.inbox||{})
+    .map(([id,v])=>Object.assign({id}, v||{}))
+    .filter(v=>v.at);
+  if(f==='took') rows = rows.filter(v=>Number(v.took||0)>0);
+  else if(f==='none') rows = rows.filter(v=>!Number(v.took||0));
+  else if(f==='lost') rows = rows.filter(v=>v.shared===true);
+  if(q){
+    rows = rows.filter(v=>{
+      const hay = ((v.from||'')+(v.subject||'')+(v.preview||'')).toLowerCase().replace(/\s/g,'');
+      return hay.indexOf(q)>=0;
+    });
+  }
+  return rows.sort((a,b)=>Number(b.at||0)-Number(a.at||0));
+}
+
+function inboxCounts(){
+  const all = Object.values(state.inbox||{}).filter(v=>v&&v.at);
+  return {
+    all: all.length,
+    took: all.filter(v=>Number(v.took||0)>0).length,
+    none: all.filter(v=>!Number(v.took||0)).length,
+    lost: all.filter(v=>v.shared===true).length
+  };
+}
+
+function inboxBoxHtml(){
+  const rows = inboxVisibleRows();
+  const c = inboxCounts();
+  const chip=(k,lb,n)=>`<button class="ibchip${(state.inboxFilter||'all')===k?' on':''}"`
+    + ` onclick="setInboxFilter('${k}')">${lb} ${n}</button>`;
+  /* 담긴 결과가 이 화면의 핵심이다 — 그 메일이 급여데이터함으로 갔는지,
+     누구 칸으로 갔는지, 안 갔으면 왜 안 갔는지. */
+  const body = rows.length ? rows.map((v,i)=>`
+    <tr>
+      <td class="numonly">${i+1}</td>
+      <td class="w">${fmtDate(v.at)}<span>${new Date(v.at||0).toTimeString().slice(0,5)}</span></td>
+      <td>${esc(v.from||'(보낸이 모름)')}</td>
+      <td><b>${esc(v.subject||'(제목 없음)')}</b><span class="e">${esc(v.preview||'')}</span></td>
+      <td>${Number(v.took||0)
+        ? `<span class="ibtg ${v.shared?'wa':'ok'}">자료 ${Number(v.took)}건</span>`
+          + `<span class="e">${v.shared?'공용 칸':(esc(v.seatName||'')+' 칸')}</span>`
+        : `<span class="ibtg no">안 담김</span><span class="e">${esc(v.why||'')}</span>`}</td>
+      <td>${esc(v.box||'')}${Number(v.atts||0)?`<span class="e">첨부 ${Number(v.atts)}개</span>`:''}</td>
+      <td class="a"><button onclick="goPaydataMail()">급여데이터함</button></td>
+    </tr>`).join('')
+    : `<tr><td colspan="7" class="none">${state.inboxErr
+        ? '아직 볼 수 없습니다 — 파이어베이스 콘솔에 규칙을 넣어야 합니다.<br>('+esc(state.inboxErr)+')'
+        : (state.inboxQ||(state.inboxFilter&&state.inboxFilter!=='all') ? '찾은 메일이 없습니다.' : '아직 서버가 본 메일이 없습니다.')}</td></tr>`;
+  return `
+    <div class="ibtools">
+      <input id="ibQ" placeholder="보낸이·제목으로 찾기" value="${esc(state.inboxQ||'')}"
+        oninput="state.inboxQ=this.value;renderMailPage()">
+      ${chip('all','전체',c.all)}${chip('took','자료 담김',c.took)}
+      ${chip('none','안 담김',c.none)}${chip('lost','임자 못 찾음',c.lost)}
+      <span style="flex:1"></span>
+      <button class="ibpull" ${state.inboxPulling?'disabled':''} onclick="inboxPull()">
+        ${state.inboxPulling?'가져오는 중…':'📥 지금 가져오기'}</button>
+      <button class="ibpull sec" onclick="openInbox()">↻ 다시 읽기</button>
+    </div>
+    <table class="dt sentt"><thead><tr>
+      <th class="numonly">#</th><th class="w">받은 때</th><th>보낸이</th><th>제목</th>
+      <th>담김</th><th>폴더</th><th class="a"></th>
+    </tr></thead><tbody>${body}</tbody></table>
+    <div class="ibnote">답장·삭제는 <b>다음메일에서</b> 하십니다 — 여기 목록은 서버가 본 기록입니다.
+      두 곳에서 지우면 어느 쪽이 맞는지 알 수 없습니다.</div>`;
+}
+
+function setInboxFilter(k){ state.inboxFilter=k; renderMailPage(); }
+function openInbox(){
+  state.view='mail'; state.mailSent='inbox'; render();
+  try{ $('pcMain').scrollTop=0; }catch(_){}
+  loadInbox(()=>{ if(state.view==='mail' && state.mailSent==='inbox'){ renderPCSide(); renderMailPage(); } });
+}
+function goPaydataMail(){ location.href = 'pu-paydata.html'; }
+
+/* 30분을 기다리지 않고 서버에 지금 보라고 시킨다 — 급여데이터함의 그 단추와 같은 함수다. */
+function inboxPull(){
+  if(state.inboxPulling) return;
+  state.inboxPulling = true; renderMailPage();
+  const done = (msg)=>{ state.inboxPulling=false; loadInbox(()=>{ renderPCSide(); renderMailPage(); if(msg) toast(msg); }); };
+  const u = firebase.auth().currentUser;
+  if(!u){ state.inboxPulling=false; renderMailPage(); toast('로그인이 필요합니다'); return; }
+  u.getIdToken().then(tok=>fetch(
+    'https://asia-northeast3-pureun-erp.cloudfunctions.net/pullPaydataMail',
+    { method:'POST', headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok }, body:'{}' }
+  )).then(r=>r.json().catch(()=>({})).then(j=>{
+    if(!j.ok) throw new Error(j.error||'가져오지 못했습니다');
+    done('새 메일 '+Number(j.looked||0)+'통을 보고 '+Number(j.took||0)+'건을 담았습니다.');
+  })).catch(e=>{
+    state.inboxPulling=false; renderMailPage();
+    toast('가져오지 못했습니다 — '+((e&&e.message)||e));
+  });
+}
+
 function loadSentBox(cb){
   if(Store.mode!=='firebase'){ if(cb) cb(); return; }
   firebase.database().ref(DB_ROOT+'/sentBox').limitToLast(300).once('value')
