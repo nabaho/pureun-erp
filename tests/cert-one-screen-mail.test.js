@@ -8,15 +8,14 @@
    5) 보낸 것도 발급 이력에 남는다. */
 const fs = require('fs');
 const path = require('path');
+const { cutFn } = require('./cut-fn');
 
 const root = path.join(__dirname, '..');
 const src = fs.readFileSync(path.join(root, 'pu-erp.html'), 'utf8').split('\r\n').join('\n');
 
-const a = src.indexOf('function Certificate(){');
-const b = src.indexOf('function CertLog(){');
-if (a < 0 || b < 0 || b < a) { console.log('FAIL 증명서 구역을 못 찾음'); process.exit(1); }
-const cert = src.slice(a, b);
-const log = src.slice(b, b + 6000);
+/* 중괄호 짝을 세어 함수를 «통째로» 뽑는다 — 글자 수로 자르면 함수 끝에 못 닿는다 */
+const cert = cutFn(src, 'function Certificate()');
+const log  = cutFn(src, 'function CertLog()');
 
 let fail = 0, total = 0;
 function ok(name, cond, hint) {
