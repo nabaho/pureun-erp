@@ -104,7 +104,12 @@ test('★ 격자에서도 형제 쪽을 모아 한 번에 읽는다', () => {
   });
   const read = [readPhotoFn()];
   assert.ok(/docPages\(id\)/.test(read[0]), 'readPhoto 가 형제 쪽을 안 모읍니다.');
-  assert.ok(/imgs\.length > 1 \? imgs : imgs\[0\]/.test(read[0]),
+  /* ⚠ 2026-08-24: 쪽이 많으면 덩이로 나눠 읽으므로 「한 장이면 배열로 안 싼다」는
+     규칙이 덩이를 만드는 층으로 옮겼다. 지킬 것은 그 규칙이지 적힌 자리가 아니다. */
+  assert.ok(/imgChunkMakers\(imgs\)/.test(read[0]), 'readPhoto 가 덩이 층을 안 씁니다.');
+  const mk = app.match(/function imgChunkMakers\([\s\S]*?\n\}/);
+  assert.ok(mk, 'imgChunkMakers 를 찾지 못했습니다.');
+  assert.ok(/g\.length > 1 \? g : g\[0\]/.test(mk[0]),
     '한 장짜리까지 배열로 보내면 「여러 쪽」이라고 잘못 말하게 됩니다.');
 });
 

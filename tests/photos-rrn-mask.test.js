@@ -91,8 +91,26 @@ function runReadPhoto(masked, opts) {
     }
   };
   vm.createContext(ctx);
-  vm.runInContext(cutFn(app, 'function readPhoto(') + '\nvar __p = readPhoto("p1", ' +
-    (masked === undefined ? 'undefined' : JSON.stringify(masked)) + ');', ctx);
+  /* ⚠ 2026-08-24: 판독이 여러 쪽을 «덩이»로 나눠 읽게 되어 readPhoto 가 덩이 층을
+     거쳐 판독기를 부른다. 그 층을 함께 실어야 한다 — 안 실으면 그 줄에서
+     ReferenceError 로 멎어 이 파일의 가림 검사가 통째로 운다(그렇게 한 번 걸렸다).
+     지킬 것은 「사본만 판독기로 간다」이므로, 층을 진짜 것으로 실어 그대로 재 본다. */
+  vm.runInContext([
+    app.match(/^const READ_CHUNK_IMG = \d+;$/m)[0],
+    app.match(/^const READ_CHUNK_TXT = \d+;$/m)[0],
+    cutFn(app, 'function chunkOf('),
+    cutFn(app, 'function mergeReads('),
+    cutFn(app, 'function runReadChunks('),
+    cutFn(app, 'function textChunkMakers('),
+    cutFn(app, 'function imgChunkMakers('),
+    cutFn(app, 'function docTextOf('),
+    cutFn(app, 'function textOfOne('),
+    app.match(/^const PDF_TEXT_MIN = \d+;$/m)[0],
+    cutFn(app, 'function pdfTextUsable('),
+    cutFn(app, 'function readPhoto('),
+    'var __p = readPhoto("p1", ' +
+      (masked === undefined ? 'undefined' : JSON.stringify(masked)) + ');'
+  ].join('\n'), ctx);
   return ctx.__p.then(function () { return got; });
 }
 

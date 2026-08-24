@@ -4080,7 +4080,19 @@ window.addEventListener('paste', function (e) {
    스캔은 대개 PDF로 나오고, 한 파일에 서류 여러 장이 들어 있는 일이 흔하다.
    첫 쪽만 받으면 나머지를 잃으므로 **쪽마다 한 건으로 갈라** 담는다.
    명함첩과 같은 판(pdf.js 3.11.174)을 쓴다 — 앱마다 다르면 캐시가 두 벌 된다. */
-const PDF_MAX_PAGES = 10;
+/* ── 한 파일에서 담는 쪽 수 상한 (2026-08-24: 10 → 50) ──
+   10쪽으로 묶어 두었던 까닭은 **판독**이었다 — 그림 열 장을 한 번에 넣으면 AI 가
+   뒤쪽을 못 본다. 그 문제는 이제 판독을 10쪽씩 «덩이»로 나눠 읽어 해결했으므로
+   (readDocChunked 참고), 담는 쪽을 10에 묶어 둘 이유가 없어졌다.
+   취업규칙·단체협약·노사협의회 규정은 보통 20~40쪽이라 10쪽에서 잘리면 뒷부분이
+   통째로 없는데도 「담았다」로 보였다.
+   ⚠ 그래도 상한은 둔다 — 한 쪽이 창고에 300~800KB 다. 50쪽이면 한 문서에 25MB 쯤.
+     책 한 권을 사진첩에 넣는 자리가 아니다. */
+const PDF_MAX_PAGES = 50;
+
+/* 한 번에 올릴 때 «펼친 쪽»의 총합 상한. 파일 개수 상한(UPLOAD_MAX)과 따로 둔다 —
+   50쪽짜리 다섯 개를 한꺼번에 고르면 250장이 되어 창고와 판독이 함께 터진다. */
+const PDF_PAGE_BUDGET = 60;
 
 function isPdf(f) {
   return f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
@@ -4258,7 +4270,10 @@ function pdfAskSet(i, v) {
      · 모으다 창을 닫으면 다음에 물어본다 — 말없이 묻히면 **안 읽힌 사진이
        조용히 쌓인다**(collecting 인 채로 남으면 아무도 안 읽어 준다).
      · 상한을 넘으면 그 자리에서 말한다 — 조용히 자르면 뒤쪽이 통째로 사라진다. */
-const COLLECT_MAX = 10;   // 한 문서에 모을 수 있는 장수. 더 넣으면 AI가 뒤쪽을 못 본다.
+/* 한 문서에 모을 수 있는 장수. 2026-08-24: 10 → 50.
+   10 이었던 까닭은 「더 넣으면 AI 가 뒤쪽을 못 본다」였다. 판독을 10쪽씩 덩이로
+   나눠 읽게 되어(readDocChunked) 그 까닭이 없어졌다. PDF 한 문서 상한과 같게 둔다. */
+const COLLECT_MAX = 50;
 let collectDoc = null;    // { group, year, n, ids[] }
 
 function startCollect() {
@@ -4455,12 +4470,25 @@ async function addFiles(fileList, isDoc, opts) {
     splitBy = ans;
   }
 
+  /* ── 펼친 쪽의 «총합» 상한 (대표 지시 2026-08-24) ──
+     한 문서는 50쪽까지 담지만, 50쪽짜리 다섯 개를 한꺼번에 고르면 250장이다.
+     ⚠ 자르는 단위는 **문서**다 — 반쯤 담긴 문서가 더 나쁘다. 「1~40쪽」만 들어간
+       취업규칙은 화면에서 멀쩡해 보이는데 뒤가 없다. 통째로 담거나 아예 안 담는다.
+     ⚠ **첫 문서는 늘 통째로 담는다.** 혼자 왔는데 예산에 안 맞아 거절하면 그 문서를
+       올릴 길이 아예 없어진다(한 문서 상한 PDF_MAX_PAGES 가 그것을 이미 지킨다). */
+  let pageUsed = 0;
+  const dropDocs = [];
   for (const x of spread) {
     const f = x.raw;
     if (!x.pdf) { files.push(f); continue; }
     {
       const r = x.pdf;
       const base = (f.name || '스캔').replace(/\.pdf$/i, '');
+      if (pageUsed && pageUsed + r.pages.length > PDF_PAGE_BUDGET) {
+        dropDocs.push(base + ' (' + r.pages.length + '쪽)');
+        continue;
+      }
+      pageUsed += r.pages.length;
       /* ── 여러 쪽짜리 스캔은 **쪽마다 따로 판독하고, 어느 문서 몇 쪽인지 남긴다**
            (대표 지시 2026-08-10: "pdf가 여러 장 업로드되는 경우 각각 한 장씩
             판독해서 기록을 남겨 달라") ──
@@ -4484,25 +4512,46 @@ async function addFiles(fileList, isDoc, opts) {
         if (!apart) {
           file.__pdfDoc = { name: base, page: p.page, total: r.total, taken: r.taken, group: gid };
         }
+        /* 문서에서 펼친 쪽이라는 표시. 아래 장수 상한이 이것을 보고 **세지 않는다** —
+           「따로 담기」를 고르면 __pdfDoc 가 없으므로 그것으로는 가릴 수 없다. */
+        file.__pdfPage = true;
         /* 안에 있던 글자를 사진에 딸려 보낸다 — 판독은 이것으로 한다(대표 결정 2026-08-24). */
         if (pdfTextUsable(p.text)) file.__pdfText = p.text;
         files.push(file);
       });
       if (r.total > r.taken) {
-        alert('「' + base + '」은 ' + r.total + '쪽입니다.\n앞 ' + PDF_MAX_PAGES +
-          '쪽까지만 담았습니다. 나머지는 따로 나눠 올려 주세요.');
+        alert('「' + base + '」은 ' + r.total + '쪽입니다.\n앞 ' + r.taken +
+          '쪽까지만 담았습니다(한 문서에 ' + PDF_MAX_PAGES + '쪽까지).\n' +
+          '나머지는 따로 나눠 올려 주세요.');
       }
     }
   }
+  if (dropDocs.length) {
+    alert('한 번에 펼칠 수 있는 쪽은 모두 ' + PDF_PAGE_BUDGET + '쪽까지입니다.\n\n' +
+      '이 문서는 **한 쪽도 안 담았습니다** — 따로 올려 주세요:\n· ' + dropDocs.join('\n· ') +
+      '\n\n반쯤 담으면 화면에서는 멀쩡해 보이는데 뒷부분이 없습니다.\n' +
+      '그래서 문서는 통째로 담거나 아예 안 담습니다.');
+  }
   if (!files.length) return;
 
-  /* 한 번에 받을 장수를 지킨다. **버리지 않고 앞에서부터 받고, 남은 것을 알려 준다** —
-     조용히 자르면 "왜 몇 장이 안 올라갔지"가 되고 그게 증빙 누락으로 이어진다. */
+  /* ── 장수 상한은 «고른 사진»에만 걸린다 (대표 지시 2026-08-24) ──
+     예전에는 문서에서 펼친 쪽까지 한데 세어 30장에서 잘랐다. 그러면 24쪽짜리
+     취업규칙에 사진 일곱 장을 함께 고른 순간 뒤쪽이 잘리는데, 안내는 「나머지
+     1장은 다시 골라 주세요」였다 — **쪽은 다시 고를 수가 없다**(그 파일을 또 올리면
+     첫 쪽부터 온다). 문서 쪽은 위에서 PDF_PAGE_BUDGET 으로 이미 지켰다.
+     ⚠ **뒤에서부터** 뺀다. 앞·뒷면 묶기(opts.pairs)와 설명(opts.caps)이 자리 번호로
+       가리키므로, 앞의 자리가 밀리면 엉뚱한 사진에 붙는다. (카메라 모드는 애초에
+       UPLOAD_MAX 에서 막히고 PDF 가 섞이지 않으므로 이 길로 오지 않는다.) */
   const MAX = PuPhotoStore.UPLOAD_MAX;
   let over = 0;
-  if (files.length > MAX) {
-    over = files.length - MAX;
-    files.length = MAX;
+  {
+    let shots = 0;
+    const kept = [];
+    for (const f of files) {
+      if (f.__pdfPage) { kept.push(f); continue; }
+      if (shots < MAX) { shots++; kept.push(f); } else over++;
+    }
+    if (over) files.splice(0, files.length, ...kept);
   }
 
   const spec = PuPhotoStore.uploadSpec(isDoc); // 크기 기준은 저장 층이 정한다
@@ -4613,7 +4662,6 @@ async function addFiles(fileList, isDoc, opts) {
     alert('한 문서에 ' + COLLECT_MAX + '장까지 모을 수 있습니다.\n' +
       '나머지 ' + overCollect + '장은 **이 문서에 안 들어갔습니다** — 따로 읽힙니다.\n' +
       '(사진은 모두 올라갔습니다)\n\n' +
-      '더 많으면 AI가 한 번에 못 보고 뒤쪽을 통째로 빠뜨립니다.\n' +
       '「✓ 다 넣었습니다」로 이 문서를 끝낸 뒤 새로 시작해 주세요.');
   }
 }
@@ -5145,15 +5193,18 @@ function docJobs(job) {
    ⚠ **모든 쪽에 글자가 있어야** 글자로 간다. 한 쪽이라도 스캔이면 그 쪽 내용이
      통째로 빠진 채 「다 읽었다」로 돌아온다 — 반쪽만 읽는 것이 그림으로 읽는 것보다
      나쁘다(빠진 줄도 모른다).
-   ⚠ 쪽 표시를 붙인다. 없으면 AI 가 두 쪽 사이를 한 줄로 이어 읽어 값이 섞인다. */
-function docTextOf(list) {
+   ⚠ 쪽 표시를 붙인다. 없으면 AI 가 두 쪽 사이를 한 줄로 이어 읽어 값이 섞인다.
+   ⚠ from = 이 묶음이 문서의 몇째 쪽부터인가(덩이로 나눠 읽을 때 쓴다). 없으면 0.
+     덩이마다 1쪽부터 다시 세면 「3쪽」이 문서에 두 번 나와 AI 가 앞뒤를 못 맞춘다. */
+function docTextOf(list, from) {
   const arr = list || [];
   if (!arr.length) return '';
+  const off = from || 0;
   const parts = [];
   for (let i = 0; i < arr.length; i++) {
     const t = textOfOne(arr[i]);
     if (!pdfTextUsable(t)) return '';
-    parts.push(arr.length > 1 ? ('--- ' + (i + 1) + '쪽 ---\n' + t) : t);
+    parts.push((arr.length > 1 || off) ? ('--- ' + (off + i + 1) + '쪽 ---\n' + t) : t);
   }
   return parts.join('\n\n');
 }
@@ -5165,6 +5216,99 @@ function textOfOne(x) {
   return '';
 }
 
+/* ══════ 여러 쪽 문서를 «덩이»로 나눠 읽고 한 벌로 합친다 (대표 지시 2026-08-24) ══════
+   한 문서에 50쪽까지 담게 되면서(PDF_MAX_PAGES 10 → 50) 한 번에 다 보낼 수 없다:
+     · 그림은 열 장을 넘기면 **AI 가 뒤쪽을 못 본다** — 넣어도 답에 안 나온다.
+     · 글자는 한 쪽 500~1,500토큰이라 50쪽을 한 번에 넣기 버겁다.
+   그래서 덩이로 나눠 **차례로** 읽고 합친다.
+   ⚠ 한 번에 하나씩 읽는다 — 한꺼번에 던지면 AI 분당 한도에 걸려 전부 막힌다.
+   ⚠ 길(글자/그림)은 **문서 통째로** 고른다. 덩이마다 달리 고르면 앞은 글자, 뒤는
+     그림이 되어 같은 문서 안에서 정확도가 갈린다. */
+const READ_CHUNK_IMG = 10;
+const READ_CHUNK_TXT = 25;
+
+function chunkOf(list, n) {
+  const arr = list || [];
+  const out = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+}
+
+/* ── 덩이 결과를 한 벌로 합친다 ──
+   ⚠ **앞 덩이가 이긴다.** 서류의 얼굴(종류·제목·업체·사업자번호)은 첫 쪽에 있고,
+     뒤쪽에는 붙임서류·다른 회사 이름이 섞여 있다. 뒤 덩이는 **빈 칸만** 채운다.
+   ⚠ pairs(문서 차례대로 뽑은 칸)만은 **이어 붙인다** — 쪽 차례를 담은 유일한 값이라
+     덮어쓰면 첫 덩이의 것만 남고 뒤쪽이 통째로 사라진다.
+   ⚠ 사업자번호 검산 결과(bizNoOk·국세청)는 **그 번호를 준 덩이의 것**을 쓴다.
+     첫 덩이에 번호가 없는데 첫 덩이의 검산 결과를 그대로 두면, 번호는 뒤에서 온 것인데
+     「검증 못 함」으로 남아 멀쩡한 서류가 확인필요로 간다.
+   ⚠ 한 덩이라도 못 읽었으면 **자동 통과를 주지 않는다**(부르는 쪽에서 auto 를 끈다).
+     반쪽만 읽고 「다 읽었다」로 넘기면 사람이 다시 볼 기회가 없어진다. */
+function mergeReads(list) {
+  const all = list || [];
+  const ok = all.filter(function (r) { return r && !r.error; });
+  if (!ok.length) return all[0] || { kind: 'other', fields: {}, error: '판독하지 못했습니다' };
+  const out = Object.assign({}, ok[0]);
+  const fields = Object.assign({}, ok[0].fields || {});
+  const pairs = [];
+  const blank = function (v) { return v === undefined || v === null || String(v).trim() === ''; };
+  ok.forEach(function (r) {
+    const f = r.fields || {};
+    Object.keys(f).forEach(function (k) {
+      if (k === 'pairs') return;
+      if (blank(f[k])) return;
+      if (blank(fields[k])) fields[k] = f[k];
+    });
+    if (Array.isArray(f.pairs)) f.pairs.forEach(function (p) { pairs.push(p); });
+  });
+  if (pairs.length) fields.pairs = pairs;
+  out.fields = fields;
+  const bz = ok.filter(function (r) { return r.fields && !blank(r.fields.bizno); })[0];
+  if (bz) { out.bizNoOk = bz.bizNoOk; out.ntsChecked = bz.ntsChecked; out.ntsState = bz.ntsState; }
+  out.chunks = all.length;
+  if (all.length > ok.length) out.partial = all.length - ok.length;
+  return out;
+}
+
+/* 덩이를 차례로 돌리고 합친다. **올릴 때 읽는 길과 다시 읽는 길이 이것을 같이 쓴다** —
+   두 벌로 두면 한쪽만 고쳐 놓고 다른 쪽은 옛 길로 남는다(글자 판독에서 이미 겪었다). */
+function runReadChunks(makers) {
+  const mk = makers || [];
+  /* 한 덩이면 예전 그대로 — 합치는 일 없이 그 결과가 답이다. */
+  if (mk.length === 1) return mk[0]();
+  const outs = [];
+  return mk.reduce(function (chain, one) {
+    return chain.then(function () {
+      /* ⚠ 한 덩이가 터져도 앞 덩이는 살린다. 통째로 던지면 마흔 쪽을 읽어 놓고
+         마지막 한 덩이 때문에 전부 버리게 된다. */
+      return one().catch(function (e) {
+        return { kind: 'other', fields: {}, error: (e && e.message) || String(e) };
+      });
+    }).then(function (r) { outs.push(r); });
+  }, Promise.resolve()).then(function () { return mergeReads(outs); });
+}
+
+/* 글자 덩이·그림 덩이를 만드는 것도 두 길이 같이 쓴다. */
+function textChunkMakers(items) {
+  return chunkOf(items, READ_CHUNK_TXT).map(function (g, ci) {
+    const from = ci * READ_CHUNK_TXT;
+    return function () { return PuDocRead.readDocText(docTextOf(g, from)); };
+  });
+}
+function imgChunkMakers(imgs) {
+  return chunkOf(imgs, READ_CHUNK_IMG).map(function (g) {
+    return function () { return PuDocRead.read(g.length > 1 ? g : g[0]); };
+  });
+}
+
+function readDocChunked(sibs, job) {
+  const list = sibs || [];
+  if (docTextOf(list)) return runReadChunks(textChunkMakers(list));
+  const imgs = list.map(function (s) { return s.full; }).filter(function (f) { return safeSrc(f); });
+  if (!imgs.length) return PuDocRead.read(job && job.full);
+  return runReadChunks(imgChunkMakers(imgs));
+}
+
 function startRead(job) {
   /* ⚠ 저장한 자리와 **같은 셈법**이어야 한다(올린 때 기준). 촬영 시각으로 세면
      2019년 사진을 오늘 올렸을 때 판독 결과를 2019년 자리에 적어 사라진다. */
@@ -5174,15 +5318,12 @@ function startRead(job) {
   /* 여러 쪽짜리는 **문서 통째로 한 번** 읽는다(대표 결정 2026-08-10) —
      쪽마다 따로 보면 조문만 있는 2쪽 이후가 죄다 빈칸으로 돌아온다. */
   const sibs = docJobs(job);
-  const imgs = sibs.map(function (s) { return s.full; }).filter(function (f) { return safeSrc(f); });
   /* ── 글자가 있으면 «글자로» 읽는다 (대표 결정 2026-08-24) ──
      그림을 보내면 AI 가 「읽어야」 하고 1↔7 오독이 생긴다. 글자는 이미 정확하다.
      ⚠ **모든 쪽에 글자가 있어야** 글자로 간다. 한 쪽이라도 스캔이면 그 쪽 내용이
-       통째로 빠지므로, 그때는 예전처럼 그림으로 읽는다(반쪽만 읽는 것이 더 나쁘다). */
-  const txt = docTextOf(sibs);
-  const src = txt
-    ? PuDocRead.readDocText(txt)
-    : PuDocRead.read(imgs.length > 1 ? imgs : (imgs[0] || job.full));
+       통째로 빠지므로, 그때는 예전처럼 그림으로 읽는다(반쪽만 읽는 것이 더 나쁘다).
+     쪽이 많으면 덩이로 나눠 읽고 합친다 — readDocChunked. */
+  const src = readDocChunked(sibs, job);
   return src.then(function (r) {
     const v = PuDocRead.autoOk(r);
     const read = {
@@ -5199,6 +5340,15 @@ function startRead(job) {
       via: r.via || 'image'
     };
     if (sibs.length > 1) read.pagesRead = sibs.length;
+    /* 몇 덩이로 나눠 읽었는지 — 「왜 이 문서만 오래 걸렸나」에 답할 수 있게. */
+    if (r.chunks > 1) read.chunks = r.chunks;
+    /* ⚠ 한 덩이라도 못 읽었으면 **자동 통과를 주지 않는다.** 앞쪽만 읽고 「다 읽었다」로
+       넘기면 사람이 다시 볼 기회가 없어진다 — 반쪽 판독이 안 읽은 것보다 나쁘다. */
+    if (r.partial) {
+      read.partial = r.partial;
+      read.auto = false;
+      read.why = r.chunks + '덩이 중 ' + r.partial + '덩이를 못 읽었습니다 — 확인해 주세요';
+    }
     job._reading = false;
     /* ⚠ 같은 답을 **모든 쪽**에 남긴다. 한 쪽에만 쓰면 나머지는 「안 읽음」으로
        남아, 다음에 화면을 열 때 같은 문서를 또 읽으러 간다. */
@@ -9836,16 +9986,19 @@ function readPhoto(id, masked) {
     const g = gridItems.find(function (x) { return x.id === p.id; });
     return !!(g && g.meta && g.meta.hasText);
   });
+  /* ⚠ 이어 붙인 글자 하나가 아니라 **쪽별 목록**을 들고 있는다 — 쪽이 많으면
+     덩이로 나눠 읽어야 하고, 나누려면 쪽 경계가 남아 있어야 한다(readDocChunked 와
+     같은 규칙). 예전에는 여기서 바로 docTextOf 로 이어 붙여 경계를 잃었다. */
   const textP = wantText
     ? Promise.all(pages.map(function (p) {
         return PuPhotoStore.loadText(photoYearOf(p.id), p.id, photoOwner(p.id))
           .then(function (t) { return { _text: t }; })
           .catch(function () { return { _text: '' }; });
-      })).then(docTextOf)
-    : Promise.resolve('');
+      }))
+    : Promise.resolve(null);
 
-  return textP.then(function (txt) {
-    if (txt) return PuDocRead.readDocText(txt);
+  return textP.then(function (tx) {
+    if (tx && docTextOf(tx)) return runReadChunks(textChunkMakers(tx));
     const source = masked
       ? Promise.resolve([masked])
       : Promise.all(pages.map(function (p) {
@@ -9855,7 +10008,7 @@ function readPhoto(id, masked) {
     return source.then(function (fulls) {
       const imgs = fulls.filter(function (f) { return safeSrc(f); });
       if (!imgs.length) throw new Error('사진 본문을 불러오지 못했습니다');
-      return PuDocRead.read(imgs.length > 1 ? imgs : imgs[0]);
+      return runReadChunks(imgChunkMakers(imgs));
     });
   }).then(function (r) {
     const v = PuDocRead.autoOk(r);
@@ -9874,6 +10027,14 @@ function readPhoto(id, masked) {
     };
     /* 몇 쪽을 함께 보고 낸 답인지 남긴다 — 「2쪽인데 왜 같은 내용인가」에 답한다. */
     if (pages.length > 1) read.pagesRead = pages.length;
+    if (r.chunks > 1) read.chunks = r.chunks;
+    /* ⚠ 올릴 때 읽는 길(startRead)과 **같은 규칙**이다 — 한 덩이라도 못 읽었으면
+       자동 통과를 주지 않는다. 한쪽만 고치면 「올릴 때는 걸리는데 다시 읽으면 통과」가 된다. */
+    if (r.partial) {
+      read.partial = r.partial;
+      read.auto = false;
+      read.why = r.chunks + '덩이 중 ' + r.partial + '덩이를 못 읽었습니다 — 확인해 주세요';
+    }
     /* ⚠ 같은 답을 **모든 쪽**에 쓴다. 한 쪽에만 쓰면 나머지는 영원히 「안 읽음」으로
        남아, 화면을 열 때마다 같은 문서를 또 읽으러 간다. */
     return pages.reduce(function (chain, p) {

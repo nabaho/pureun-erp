@@ -235,7 +235,12 @@ test('★ 상한을 넘은 장은 조용히 자르지 않고 말해 준다', () 
   assert.match(fn, /overCollect\+\+;/);
   assert.match(fn, /이 문서에 안 들어갔습니다/, '★ 조용히 빠지면 그 장이 안 읽힌 채 남습니다');
   assert.match(fn, /사진은 모두 올라갔습니다/, '사진까지 잃은 줄 알면 안 됩니다');
-  assert.match(app, /const COLLECT_MAX = 10;/);
+  /* ⚠ 숫자를 못 박지 않는다. 2026-08-24 에 10 → 50 으로 올렸는데(판독을 덩이로
+     나눠 읽게 되어 「AI 가 뒤쪽을 못 본다」는 까닭이 없어졌다) 이 줄이 숫자를
+     박아 두어 멀쩡한 고침에서 울었다. 지킬 것은 「상한이 있다」이다. */
+  const cm = app.match(/^const COLLECT_MAX = (\d+);$/m);
+  assert.ok(cm, 'COLLECT_MAX 를 찾지 못했습니다');
+  assert.ok(Number(cm[1]) > 0, '상한이 0 이면 한 장도 못 모읍니다');
 });
 
 /* ── 나중에 묶는 길도 곧바로 읽는다 (지금까지 빠져 있던 것) ── */

@@ -171,20 +171,29 @@ test('글자 판독을 내보낸다', () => {
 
 /* ══════ ④ 두 판독 길에 다 붙였다 ══════ */
 
+/* ⚠ 2026-08-24: 쪽이 많으면 «덩이»로 나눠 읽게 되어, 판독기를 부르는 줄이
+   readDocChunked / textChunkMakers / imgChunkMakers 로 옮겼다. 지킬 것은
+   「글자가 있으면 글자로 읽고, 없으면 그림으로 물러난다」이지 그 줄이 어느 함수에
+   적혀 있는가가 아니다. 그래서 겨누는 자리를 옮겼다. */
 test('★ 올린 뒤 판독하는 길에서 글자를 쓴다', () => {
-  const fn = fnOf(app, 'startRead');
-  assert.match(fn, /const txt = docTextOf\(sibs\);/);
-  assert.match(fn, /\? PuDocRead\.readDocText\(txt\)/, '★ 안 부르면 예전처럼 그림으로 갑니다');
-  assert.match(fn, /: PuDocRead\.read\(imgs\.length > 1 \? imgs : \(imgs\[0\] \|\| job\.full\)\)/,
-    '그림으로 물러나는 길이 사라졌습니다');
+  assert.match(fnOf(app, 'startRead'), /readDocChunked\(sibs, job\)/,
+    '★ 올릴 때 읽는 길이 글자·덩이 층을 안 거칩니다');
+  const fn = fnOf(app, 'readDocChunked');
+  assert.match(fn, /if \(docTextOf\(list\)\) return runReadChunks\(textChunkMakers\(list\)\);/,
+    '★ 글자가 있어도 안 쓰면 예전처럼 그림으로 갑니다');
+  assert.match(fn, /imgChunkMakers\(imgs\)/, '그림으로 물러나는 길이 사라졌습니다');
+  assert.match(fnOf(app, 'textChunkMakers'), /PuDocRead\.readDocText\(/);
+  assert.match(fnOf(app, 'imgChunkMakers'), /PuDocRead\.read\(g\.length > 1 \? g : g\[0\]\)/,
+    '한 장짜리까지 배열로 보내면 「여러 쪽」이라고 잘못 말하게 됩니다');
 });
 
 test('★ 「다시 판독」 길에서는 그림을 아예 «안 내려받는다» — 여기가 비용의 큰 몫이다', () => {
   const fn = fnOf(app, 'readPhoto');
   assert.match(fn, /PuPhotoStore\.loadText\(/, '★ 담아 둔 글자를 안 씁니다');
-  assert.match(fn, /if \(txt\) return PuDocRead\.readDocText\(txt\);/);
+  const goText = 'if (tx && docTextOf(tx)) return runReadChunks(textChunkMakers(tx));';
+  assert.ok(fn.indexOf(goText) > 0, '★ 글자로 가는 길이 없습니다');
   /* 글자로 갈 때 loadFull 이 «그 뒤»에만 있어야 한다 — 앞에 있으면 늘 내려받는다. */
-  assert.ok(fn.indexOf('if (txt) return PuDocRead.readDocText(txt);') < fn.indexOf('loadFull('),
+  assert.ok(fn.indexOf(goText) < fn.indexOf('loadFull('),
     '★ 글자로 갈 때도 그림을 내려받고 있습니다 — 아끼려던 것이 그대로 나갑니다');
 });
 

@@ -14,6 +14,7 @@ const vm = require('vm');
 const ROOT = path.join(__dirname, '..');
 const app = fs.readFileSync(path.join(ROOT, 'pu-photos.html'), 'utf8');
 const storeSrc = fs.readFileSync(path.join(ROOT, 'js', 'pu-photo-store.js'), 'utf8');
+const { cutFn } = require('./cut-fn');
 
 function loadStore() {
   const ctx = { window: {}, console, Date, Number, Math, JSON, Object, Array, String, Promise };
@@ -96,8 +97,9 @@ test('savePhoto 는 meta 의 올린 때로 해를 고른다', async () => {
 });
 
 test('한 번에 올린 묶음은 올린 시각이 하나다 — 장마다 새로 재지 않는다', () => {
-  const fn = app.slice(app.indexOf('async function addFiles('),
-    app.indexOf('async function addFiles(') + 6400);
+  /* ⚠ 고정 폭(6,400자)으로 자르고 있었다. addFiles 는 할 일이 늘 때마다 길어져
+     창이 끝에 못 닿는다 — 통째로 뽑는다(tests/cut-fn.js). */
+  const fn = cutFn(app, 'async function addFiles(');
   assert.match(fn, /const batchUpAt = Date\.now\(\);/,
     '묶음 시각을 한 번에 재지 않습니다');
   assert.match(fn, /upAt: batchUpAt,/,

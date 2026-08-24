@@ -993,7 +993,11 @@ test('한 번에 올릴 장수 상한을 지키고, 넘치면 몇 장이 남았�
   /* ⚠ 창 숫자(7200자)를 키워 쫓아가지 않는다 — addFiles 는 할 일이 늘 때마다
      길어진다. 함수를 통째로 뽑는다(tests/cut-fn.js). */
   const fn = cutFn(app, 'async function addFiles(');
-  assert.match(fn, /files\.length > MAX/, '상한을 넘겨도 그대로 받습니다');
+  /* ⚠ 2026-08-24: 상한은 «고른 사진»에만 걸린다 — 문서에서 펼친 쪽은 「다시 골라
+     주세요」가 불가능한 것이라 함께 세면 안 된다(photos-pdf-all-pages 참고).
+     지킬 것은 「상한을 넘기면 받지 않고, 몇 장이 남았는지 말한다」이다. */
+  assert.match(fn, /if \(shots < MAX\) \{ shots\+\+;[^}]*\} else over\+\+;/,
+    '상한을 넘겨도 그대로 받습니다');
   assert.match(fn, /나머지 ' \+ over \+ '장은 다시 골라/, '남은 장수를 알리지 않습니다');
   // 안내 문구의 숫자도 저장 층에서 가져온다(두 곳에 적으면 어긋난다)
   assert.match(app, /'한 번에 ' \+ PuPhotoStore\.UPLOAD_MAX \+ '장까지/);
