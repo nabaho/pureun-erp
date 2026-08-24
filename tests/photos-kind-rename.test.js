@@ -197,8 +197,9 @@ test('★ 화면: 지우기 단추는 쓰는 창에서만 뜬다', () => {
   /* 한 창을 여러 일에 돌려 쓴다 — 안 끄면 「새 분류 만들기」 창에도 남아
      무엇을 지우는지 모르는 단추가 생긴다 */
   assert.match(html, /style="display:none"[^>]*>지우기|id="kindPopupDel" style="display:none"/);
-  const at = html.indexOf('function closeKindPopup(');
-  assert.match(html.slice(at, at + 400), /showKindDelBtn\(null\)/,
+  /* ⚠ 고정 폭(400자)으로 자르고 있었는데, 창 닫는 함수에 할 일이 하나 늘자
+     끝에 못 닿아 이 검사가 엉뚱하게 울었다. 함수를 통째로 뽑는다. */
+  assert.match(cutFn(html, 'function closeKindPopup('), /showKindDelBtn\(null\)/,
     '창을 닫을 때 지우기를 안 끕니다');
 });
 

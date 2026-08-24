@@ -53,8 +53,11 @@ test('★ 쪽마다 문서 이름·쪽수를 달아 보낸다', () => {
 });
 
 test('★ 한 파일의 쪽들은 같은 묶음 번호를 쓴다', () => {
-  /* 쪽마다 새로 만들면 묶는 뜻이 사라진다 — forEach 밖에서 한 번만 만들어야 한다. */
-  const blk = app.match(/const r = await pdfToPages\(f\);[\s\S]*?\n      \}\);/);
+  /* 쪽마다 새로 만들면 묶는 뜻이 사라진다 — forEach 밖에서 한 번만 만들어야 한다.
+     ⚠ 2026-08-24: 펼치는 것을 «묻기 전»으로 옮겨 `const r = await pdfToPages(f)` 가
+       없어졌다(이제 `const r = x.pdf`). 지킬 것은 「묶음 번호를 되풀이 밖에서 한 번」
+       이지 그 한 줄의 생김새가 아니다 — 그래서 자르는 자리를 옮겼다. */
+  const blk = app.match(/const r = x\.pdf;[\s\S]*?\n      \}\);/);
   assert.ok(blk, '스캔을 쪽으로 가르는 부분을 찾지 못했습니다.');
   const made = blk[0].indexOf('PuPhotoStore.newId()');
   const loop = blk[0].indexOf('r.pages.forEach');

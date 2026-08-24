@@ -9,6 +9,7 @@ const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
 const app = fs.readFileSync(path.join(root, 'pu-photos.html'), 'utf8');
+const { cutFn } = require('./cut-fn');
 
 test('인라인 스크립트가 문법 오류 없이 파싱된다', () => {
   // 단일 파일 앱이라 문법 오류 하나로 앱 전체가 뜨지 않는다. 실행하지 않고 파싱만 검사한다.
@@ -989,7 +990,9 @@ test('파일 이름 등 바깥 문자열은 이스케이프해서 화면에 넣�
 test('한 번에 올릴 장수 상한을 지키고, 넘치면 몇 장이 남았는지 알린다', () => {
   // 조용히 자르면 "왜 몇 장이 안 올라갔지"가 되고 그게 증빙 누락으로 이어진다.
   assert.match(app, /PuPhotoStore\.UPLOAD_MAX/);
-  const fn = bodyAfter('async function addFiles(', 7200);
+  /* ⚠ 창 숫자(7200자)를 키워 쫓아가지 않는다 — addFiles 는 할 일이 늘 때마다
+     길어진다. 함수를 통째로 뽑는다(tests/cut-fn.js). */
+  const fn = cutFn(app, 'async function addFiles(');
   assert.match(fn, /files\.length > MAX/, '상한을 넘겨도 그대로 받습니다');
   assert.match(fn, /나머지 ' \+ over \+ '장은 다시 골라/, '남은 장수를 알리지 않습니다');
   // 안내 문구의 숫자도 저장 층에서 가져온다(두 곳에 적으면 어긋난다)
