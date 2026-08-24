@@ -8,6 +8,9 @@
   var APPLIED_KEY = 'pu_applied_release_v1';
   var NOTICE_KEY = 'pu_updated_notice_v1';
   var IDLE_MS = 30 * 1000;
+  /* 새 판이 나오는지 두드려 보는 횟수와 간격 (3·6·12·24초 — 다 해서 45초쯤) */
+  var PROBE_TRIES = 4;
+  var PROBE_WAIT_MS = 3000;
   var checking = false;
   var pendingVersion = null;
   var applyTimer = null;
@@ -51,6 +54,29 @@
 
   /* 실제로 갈아끼우는 부분 — 기다렸다 하는 길(applyWhenIdle)과 사람이 눌러서
      바로 하는 길(applyNow)이 함께 쓴다. 한 곳에 둬야 한쪽만 고치는 일이 없다. */
+  /* ── 갈아타기 전에 «그 판이 실제로 나오는지» 두드려 본다 (대표 제보 2026-08-24) ──
+     ★ 무슨 일이 있었나
+       새 판이 올라오면 이 코드가 곧바로 화면을 새로 열었다(?v=새커밋). 그런데
+       깃허브 페이지는 배포를 «갈아 끼우는 동안» 잠깐 오류를 낸다. 하필 그 틈에
+       열면 깃허브 오류 화면(분홍 유니콘)이 뜨고, 거기서는 우리 코드가 아예 안 도니
+       «스스로 빠져나올 수가 없다» — 사람이 직접 새로고침해야 했다.
+       (2026-08-24 오후 4:34, PR #397 배포 직후 실제로 그랬다)
+     ★ 그래서: 먼저 한 번 받아 보고, 제대로 나올 때만 옮겨 간다.
+       안 나오면 3·6·12·24초 뒤 다시 두드린다. 그래도 안 되면 «그냥 있던 화면에
+       머문다» — 옛 판이라도 도는 화면이, 갇힌 오류 화면보다 낫다.
+     ⚠ cache 를 끄지 않는다. 여기서 받아 둔 것을 곧바로 이어지는 이동이 다시 쓴다
+       (끄면 같은 파일을 두 번 받는다). */
+  function probeThenGo(target, tries) {
+    window.fetch(target, { credentials: 'same-origin' }).then(function (r) {
+      if (!r.ok) throw new Error('not ready ' + r.status);
+      window.location.replace(target);
+    }).catch(function () {
+      if (tries >= PROBE_TRIES) return;              // 조용히 물러선다 — 화면은 그대로 돈다
+      window.setTimeout(function () { probeThenGo(target, tries + 1); },
+        PROBE_WAIT_MS * Math.pow(2, tries));
+    });
+  }
+
   function doApply(version) {
     try {
       window.sessionStorage.setItem(SESSION_KEY, version.sha);
@@ -59,7 +85,10 @@
     } catch (_) {}
     var url = new URL(window.location.href);
     url.searchParams.set('v', version.shortSha || String(version.sha).slice(0, 8));
-    window.location.replace(url.toString());
+    var target = url.toString();
+    /* fetch 가 없는 아주 옛 브라우저에서는 예전처럼 그냥 간다 */
+    if (typeof window.fetch !== 'function') { window.location.replace(target); return; }
+    probeThenGo(target, 0);
   }
 
   function applyWhenIdle() {
