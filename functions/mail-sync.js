@@ -28,7 +28,7 @@ const CHUNK = 400;          // 한 폴더에서 한 바퀴에 볼 통수
 const MAX_ROWS = 9000;      // 한 회차 전체 통수 — 한 줄이 250바이트쯤이니 2MB 남짓
 const MAX_TURNS = 400;      // 줄에서 꺼내 볼 횟수 — 끝나지 않는 회차를 막는 뒷그물
 const WRITE_BATCH = 250;    // 실시간DB에 한 번에 적을 줄 수
-const PRUNE_GAP_MS = 6 * 60 * 60 * 1000;   // 지워진 메일 정리는 6시간에 한 번
+const PRUNE_GAP_MS = 24 * 60 * 60 * 1000;  // 통수가 그대로일 때의 그물 — 하루에 한 번
 const BODY_FULL_MAX = 2 * 1024 * 1024;     // 이보다 작으면 통째로 받아 파싱한다
 const ATT_MAX = 20 * 1024 * 1024;          // 첨부 하나를 돌려줄 상한
 
@@ -215,13 +215,22 @@ async function runSync(deps, opts) {
         }
 
         /* ④ 다음메일에서 지운 것을 우리 목록에서도 뺀다.
-           번호 목록(p.uids)이 이미 손에 있으니 따로 물어볼 것이 없다.
-           ⚠ 값이 어긋날 때만, 그리고 «더 가져올 것이 없을 때만» 한다. 바퀴마다 폴더
-             전체를 읽으면 그것이 곧 요금이다(2026-08-16 「once 뒤 on」 사고와 같은 결). */
+           번호 목록(p.uids)이 이미 손에 있으니 «무엇이 살아 있나»는 따로 물어볼 것이 없다.
+           비싼 것은 «우리가 무엇을 갖고 있나»다 — 그건 폴더 전체를 읽어야 안다.
+
+           ⚠ 그래서 언제 읽을지가 요금을 가른다(2026-08-16 「once 뒤 on」 사고와 같은 결).
+             ① 살아 있는 통수가 «줄었을 때» — 지운 것이 있다는 뜻이다. 이것이 흔한 경우다.
+             ② 그 밖에는 하루에 한 번만 — 지운 것과 새로 온 것이 같은 수라 통수가 그대로인
+                드문 경우를 위한 그물이다.
+           ⚠ 예전에는 「셈(n) != 살아 있는 통수」로 판정했다. 그런데 n 은 «적은 줄 수»를
+             세는 값이라 새 메일이 오고 가는 사이 조금씩 어긋난다(실측 7,379 vs 7,376).
+             그러면 판정이 «늘 참»이 되어 회차마다 폴더 하나를 통째로 읽었다. */
         const doneAll = !more && !!p.sync.done;
-        const mismatch = doneAll && Number(p.sync.n || 0) !== p.uids.length;
+        const lastN = Number(p.sync.lastN || 0);
+        const shrank = doneAll && lastN > 0 && p.uids.length < lastN;
         const stale = nowMs() - Number(p.sync.prunedAt || 0) > PRUNE_GAP_MS;
-        if (mismatch && stale && pruned < 1 && nowMs() < deadline) {
+        const mismatch = doneAll && (shrank || stale);
+        if (mismatch && pruned < 1 && nowMs() < deadline) {
           pruned++;
           try {
             const alive = {};
@@ -235,6 +244,9 @@ async function runSync(deps, opts) {
             if (g) await db.ref().update(gone);
             out.removed += g;
             p.sync.n = p.uids.length;
+            /* 이번에 «살아 있던 통수»를 적어 둔다 — 다음 회차에 이보다 줄었으면
+               지운 것이 있다는 뜻이라 그때 다시 읽는다. */
+            p.sync.lastN = p.uids.length;
             p.sync.prunedAt = nowMs();
           } catch (e) {
             console.warn('syncMailbox 정리 실패:', p.box.path, String((e && e.message) || e));

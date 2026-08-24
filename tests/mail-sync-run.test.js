@@ -29,17 +29,18 @@ function fakeDb() {
     const last = ks[ks.length - 1];
     if (v === null) delete o[last]; else o[last] = v;
   };
+  const reads = [];          // once() 로 읽은 자리 — «폴더 전체를 읽었나»를 세려고 둔다
   function ref(path) {
     const p = path === undefined ? '' : String(path);
     return {
-      once: async () => ({ val: () => get(p) }),
+      once: async () => { reads.push(p); return { val: () => get(p) }; },
       update: async (obj) => { Object.keys(obj).forEach((k) => put(p ? p + '/' + k : k, obj[k])); },
       set: async (v) => put(p, v),
       remove: async () => put(p, null),
       child: (c) => ref(p ? p + '/' + c : c),
     };
   }
-  return { ref, __data: data, __get: get };
+  return { ref, __data: data, __get: get, __reads: reads };
 }
 
 /* ── 가짜 메일함 ──
@@ -291,6 +292,37 @@ test('지워진 것이 없으면 폴더를 열어 보지 않는다 — 회차마
   await db.ref(MS.ROOT + '/sync/' + slug('INBOX')).update({ prunedAt: 0 });
   const r = await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
   assert.equal(r.removed, 0);
+});
+
+/* 폴더 전체를 몇 번 읽었나 — 이것이 곧 요금이다 */
+const fullReads = (db, path) => db.__reads.filter((p) => p === MS.ROOT + '/msgs/' + path).length;
+
+test('★ 통수가 그대로면 폴더를 다시 읽지 않는다 — 예전엔 회차마다 읽었다(요금)', async () => {
+  /* 예전 판정은 「셈(n) != 살아 있는 통수」였다. n 은 «적은 줄 수»라 새 메일이 오고 가는
+     사이 조금씩 어긋나(실측 7,379 vs 7,376) 판정이 늘 참이 되었고, 회차마다 폴더
+     하나를 통째로 읽었다. */
+  const folders = { INBOX: box(10) };
+  const db = fakeDb();
+  const d = deps(db);
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });   // 첫 회차 — 정리도 한 번 돈다
+  const before = fullReads(db, slug('INBOX'));
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  assert.equal(fullReads(db, slug('INBOX')), before,
+    '바뀐 것이 없는데 폴더를 또 읽었다 — 회차마다 이러면 그것이 요금이다');
+});
+
+test('★ 통수가 줄면 그 자리에서 정리한다 — 하루를 기다리지 않는다', async () => {
+  const folders = { INBOX: box(10) };
+  const db = fakeDb();
+  const d = deps(db);
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  const before = fullReads(db, slug('INBOX'));
+  delete folders.INBOX.msgs['5'];          // 다음메일에서 한 통 지웠다
+  const r = await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  assert.ok(fullReads(db, slug('INBOX')) > before, '통수가 줄었는데 폴더를 안 읽었다');
+  assert.equal(r.removed, 1);
+  assert.equal(uidsIn(db, slug('INBOX')).indexOf(5), -1, '지운 메일이 목록에 남아 있다');
 });
 
 /* ══════ 번호가 다시 매겨졌을 때 ══════ */
