@@ -19,6 +19,8 @@ function load(existing){
   const ctx = {
     Promise, Object, String, Date, Error,
     CARDS_ROOT: 'pucards',
+    /* 2026-08-24: 값이 어긋날 때 알림 글이 칸 이름표를 쓴다 — 잘라낸 조각 밖에 있어 넣어 준다 */
+    CO_LABEL: { ceo:'대표자', address:'소재지', applyField:'지원 희망분야' },
     bizKey: v => { const d = String(v||'').replace(/\D/g,''); return d.length>=10 ? d : ''; },
     deps: { db: { ref: p => ({
       once: () => Promise.resolve({ val: () => existing }),

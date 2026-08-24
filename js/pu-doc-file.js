@@ -399,12 +399,37 @@
     var ref = deps.db.ref(CARDS_ROOT + '/coInfo/' + key);
     return ref.once('value').then(function (s) {
       var cur = s.val() || {};
-      var add = {}, filled = [];
+      var add = {}, filled = [], clash = [];
+      var ph0 = o.photo || {};
       KEEP.forEach(function (k) {
         var v = fields[k];
         if (v == null || String(v).trim() === '') return;
-        if (cur[k] != null && String(cur[k]).trim() !== '') return;   /* 이미 있으면 그대로 둔다 */
-        add[k] = String(v).trim();
+        var got = String(v).trim();
+        var had = (cur[k] == null) ? '' : String(cur[k]).trim();
+        if (had !== '') {
+          /* ── 값이 «다를 때» (대표 지시 2026-08-24, 1순위) ──
+             값은 여전히 안 덮는다 — 사람이 고쳐 둔 것이 사라지면 안 된다.
+             그런데 예전에는 «다른 값이 와서 안 넣은 것»과 «이미 같아서 안 넣은 것»을
+             구별하지 않고 둘 다 조용히 넘어갔고, 화면에는 「이미 다 들어 있습니다」라고
+             알렸다 — 사실은 어긋난 값이 있는데 확인된 것처럼 읽혔다.
+             노무법인 계약서·신고서에 대표자·소재지가 틀리면 그대로 나간다.
+             ⚠ 다를 때만 쓴다. 같으면 한 글자도 안 쓴다 — 그래야 요금이 안 는다
+               (2026-08-23 에 줄인 실시간DB 사용량을 되돌리지 않는다).
+             ⚠ 칸 이름이 열쇠다 — 같은 칸을 다시 보내면 한 줄을 덮어쓴다. 쌓이면
+               줄이 끝없이 는다. */
+          if (had !== got) {
+            add['conflicts/' + k] = {
+              got: got, had: had,
+              doc: String(fields.docName || '').trim(),
+              by: o.byName || '', at: Date.now(),
+              photoId: String(ph0.id || ''), photoYear: String(ph0.year || ''),
+              photoOwner: String(ph0.owner || '')
+            };
+            clash.push(k);
+          }
+          return;                                                     /* 이미 있으면 그대로 둔다 */
+        }
+        add[k] = got;
         filled.push(k);
       });
       /* 어떤 사업으로 들어온 회사인지 딱지를 붙인다 — 서류이름이 곧 사업 이름이다.
@@ -430,13 +455,21 @@
         }
       }
 
-      if (!filled.length) {
-        return { ok: true, filled: [], message: '새로 채울 칸이 없습니다 — 이미 다 들어 있습니다' };
+      /* 어긋남을 사람 말로. 「이미 다 들어 있습니다」로 뭉뚱그리면 확인된 것처럼 읽힌다. */
+      var clashMsg = clash.length
+        ? '⚠ ' + clash.length + '개 칸이 기존 값과 «다릅니다» — 기업 상세에서 확인해 주세요 ('
+          + clash.map(function (k) { return CO_LABEL[k] || k; }).join(', ') + ')'
+        : '';
+      if (!filled.length && !clash.length) {
+        return { ok: true, filled: [], conflicts: 0,
+                 message: '새로 채울 칸이 없습니다 — 이미 다 들어 있습니다' };
       }
       add.at = Date.now();
       add.by = o.byName || '';
       return ref.update(add).then(function () {
-        return { ok: true, filled: filled, message: filled.length + '개 칸을 기업 상세에 넣었습니다' };
+        var msg = filled.length ? filled.length + '개 칸을 기업 상세에 넣었습니다' : '';
+        if (clashMsg) msg = msg ? (msg + '\n' + clashMsg) : clashMsg;
+        return { ok: true, filled: filled, conflicts: clash.length, message: msg };
       });
     });
   }
