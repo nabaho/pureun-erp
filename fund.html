@@ -248,6 +248,44 @@ var ANNUAL_TMPL=[
   ['RPT-03','익년 3월','운영상황보고서(별지 제15호) 제출 — 회계연도 종료 후 3개월 이내',[1,'03-31'],false],
   ['TAX-01','익년 3월','수익사업·원천세 신고 해당성 검토',[1,'03-31'],false]
 ];
+/* ══ 기한 — 오늘과 견줘 «지났는지·다가오는지» ══
+   ANNUAL_TMPL 의 기한은 [해 오프셋, 'MM-DD'] 다. 2025 «회계연도»의 [1,'03-31'] 은
+   2026-03-31 이 기한이다 — 회계연도가 끝난 «다음 해»에 내는 서류라 그렇다.
+   ⚠ 오늘 날짜는 «밖에서» 받는다. 함수 안에서 new Date() 를 부르면 검사가 날짜에
+     따라 붙었다 떨어졌다 한다(3월에만 깨지는 검사는 없느니만 못하다). */
+var DUE_SOON=30;                    // 며칠 남으면 «임박»으로 볼지
+/* 표 머리에 쓸 짧은 이름 — ANNUAL_TMPL 의 문장은 표 칸에 안 들어간다.
+   ⚠ 기한이 있는 항목은 여기 «모두» 있어야 한다(검사가 지킨다). 한쪽만 늘리면
+     새 일정이 표에서 조용히 빠진다. */
+var DUE_SHORT={'RPT-01':'사업계획·예산','CLS-01':'가결산','CLS-02':'결산 확정','AUD-01':'감사',
+  'RPT-02':'협의회 승인','RPT-03':'별지15호','TAX-01':'원천세 검토'};
+function dueDateOf(t,fy){ return (t&&t[3]) ? (fy+t[3][0])+'-'+t[3][1] : ''; }
+function dueDays(today,due){                       // 기한 − 오늘 (음수면 지났다)
+  var a=Date.parse(today+'T00:00:00'), b=Date.parse(due+'T00:00:00');
+  if(isNaN(a)||isNaN(b)) return null;
+  return Math.round((b-a)/86400000);
+}
+function dueState(due,done,today){
+  if(done) return {k:'done'};
+  if(!due) return {k:'none'};
+  var d=dueDays(today,due);
+  if(d==null) return {k:'none'};
+  if(d<0) return {k:'late',days:-d};
+  if(d<=DUE_SOON) return {k:'soon',days:d};
+  return {k:'later',days:d};
+}
+/* 한 기금의 «그 회계연도» 기한 항목들. 사내기금에 없는 일정(SUP)은 빼고 준다.
+   설립 중·지난 기금은 부르는 쪽에서 거른다 — 아직 굴러가지 않는 기금이 늘 늦은 것으로
+   잡히면 목록이 통째로 쓸모없어진다(미완비 묶음과 같은 규칙). */
+function dueItemsOf(f,fy,annualOfFund,today){
+  var done=(annualOfFund||{})[fy]||{};
+  return ANNUAL_TMPL.filter(function(t){ return t[3] && !(t[4]&&f.fund_type==='사내'); })
+    .map(function(t){
+      var due=dueDateOf(t,fy);
+      var st=dueState(due,!!(done[t[0]]&&done[t[0]].done),today);
+      return {code:t[0],what:t[2],short:DUE_SHORT[t[0]]||t[2],due:due,k:st.k,days:st.days};
+    });
+}
 var SUB_FIELDS=[['notice','공고·신청 메모','text'],['request_amount','신청액(원)','num'],
   ['decided_amount','결정액(원)','num'],['paid_date','교부·입금일','date'],['spent_amount','집행액(원)','num']];
 
@@ -932,7 +970,7 @@ function lifeBadge(f){
    기금 목록은 하나. 그룹 탭(지역/공동/사내/설립중/지난/삭제)으로 **어느 기금**을 볼지 고르고,
    보기 전환으로 **무엇을** 볼지 고른다(기본정보 / 서식 준비 / 결산).
    같은 목록에 열만 바뀌므로 기금 목록 화면을 여러 개 둘 필요가 없다. */
-var HOME_VIEWS=[['basic','기본정보'],['docs','서식 준비'],['close','결산']];
+var HOME_VIEWS=[['basic','기본정보'],['docs','서식 준비'],['close','결산'],['due','기한']];
 function homeView(v){ S.homeView=v; renderHome(); }
 /* 머리줄에 들어갈 «조각»만 돌려준다 — 제 줄을 만들지 않는다.
    보기·분류·도구를 한 줄에 모으기로 했으므로(대표 지시), 줄은 부르는 쪽이 만든다. */
@@ -987,6 +1025,7 @@ function setRegionQuick(fid,sel){
 function homeBody(list,edit,mode,secFn){
   if(S.homeView==='docs')  return docsMatrixHTML(list);
   if(S.homeView==='close') return closeMatrixHTML(list);
+  if(S.homeView==='due')   return dueMatrixHTML(list);
   if(secFn) return '<div class="panel">'+secFn(list,edit,mode)+'</div>';
   return '<div class="panel">'+fundTable(list,edit,mode)+'</div>';
 }
@@ -5060,21 +5099,35 @@ function annualTab(f){
   var done=S.annual||{};
   var items=ANNUAL_TMPL.filter(function(t){ return !(t[4] && f.fund_type==='사내'); });  // SUP는 공동만
   var nDone=items.filter(function(t){return done[t[0]]&&done[t[0]].done;}).length;
+  /* 기한은 «글자»가 아니라 «상태»다 — 오늘과 견줘 지났으면 빨강, 다가오면 주황.
+     예전에는 기한 날짜만 찍혀 있어, 지났는지는 사람이 달력을 보고 세야 했다. */
+  var today=ymd(), nLate=0;
   var rows=items.map(function(t){
     var d=done[t[0]]&&done[t[0]].done;
-    var dl=fmtDeadline(t[3]);
+    var st=dueState(dueDateOf(t,S.year),!!d,today);
+    if(st.k==='late') nLate++;
+    var dl=fmtDeadline(t[3]), tail='';
+    if(dl){
+      var col=st.k==='late'?'var(--danger)':st.k==='soon'?'var(--warn)':'var(--sub)';
+      tail=' · <span style="color:'+col+(st.k==='late'?';font-weight:700':'')+'">'+dl
+        +(st.k==='late'?' · '+st.days+'일 지남':st.k==='soon'?' · D-'+st.days:'')+'</span>';
+    }
     return '<div style="display:flex;align-items:flex-start;gap:10px;padding:9px 4px;border-bottom:1px solid var(--line)'+(d?';opacity:.55':'')+'">'
       +'<input type="checkbox"'+(d?' checked':'')+' onchange="toggleAnnual(\''+t[0]+'\',this.checked)" style="margin-top:3px">'
       +'<div style="flex:1"><div style="font-size:13px;font-weight:600'+(d?';text-decoration:line-through':'')+'">'+esc(t[2])+'</div>'
-      +'<div class="muted" style="font-size:11.5px">'+esc(t[1])+(dl?' · <span style="color:var(--warn)">'+dl+'</span>':'')+'</div></div></div>';
+      +'<div class="muted" style="font-size:11.5px">'+esc(t[1])+tail+'</div></div></div>';
   }).join('');
   return '<div class="panel"><div class="row"><h2>연간 일정</h2>'+hlp('close.report')+yearSel()
-    +'<span class="stat">진행 '+nDone+'/'+items.length+'</span><span style="flex:1"></span></div>'
+    +'<span class="stat">진행 '+nDone+'/'+items.length+'</span>'
+    +(nLate?'<span class="stat" style="background:var(--danger-bg,#fee);color:var(--danger)">기한 지남 '+nLate+'</span>':'')
+    +'<span style="flex:1"></span></div>'
     +'<div style="margin-top:10px">'+rows+'</div></div>';
 }
 function toggleAnnual(code,on){ var _key=S.fundId+'/'+S.year;
   fbDb.ref(NS+'/annual/'+_key+'/'+code).set({done:on,done_date:on?ymd():''})
-    .then(function(){ if(S.annualFor===_key){ if(!S.annual)S.annual={}; S.annual[code]={done:on}; } renderFund(); })
+    .then(function(){ if(S.annualFor===_key){ if(!S.annual)S.annual={}; S.annual[code]={done:on}; }
+      _dueDirty();                      // 기한 표가 옛 상태를 들고 있지 않게
+      renderFund(); })
     .catch(function(e){ toast('저장 실패: '+e.message,'err'); renderFund(); });
 }
 function ymd(){var d=new Date();function p(n){return(n<10?'0':'')+n;}return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
@@ -7297,6 +7350,68 @@ function yearsView(){
     +'<button onclick="printLedger(\'years\')">🖨 인쇄</button></div>'
     +'<div style="overflow-x:auto;margin-top:8px"><table><thead>'+head+'</thead><tbody>'+rows+'</tbody></table></div></div>';
 }
+/* ══ 기한 매트릭스 (기금 × 일정) — 기금 현황의 '보기: 기한' ══
+   대표 지시 2026-08-24: 「기한을 아무도 안 알려준다 — 42개를 하나씩 열어봐야 안다」.
+   연간 일정 전체를 «한 번만» 읽어 42개를 가로로 깐다(기금별 반복 조회 없음).
+   ⚠ 회계연도를 고르게 둔다. 한 시점에 두 해가 함께 살아 있기 때문이다 —
+     2026년 8월에는 2026 회계연도의 11·12월 기한이 아직 안 왔고, 2025 회계연도의
+     결산·감사·별지15호 기한(2026년 2~3월)은 이미 지났다. 기본값을 «작년»으로 두는
+     것은 그래서다: 지금 손이 가야 하는 해가 작년 회계연도다. */
+function _dueDirty(){ S.dueLoaded=0; S.dueAll=null; S.dueErr=null; }
+function dueFy(y){ S.dueFy=+y; renderHome(); }
+function dueMatrixHTML(list0){
+  if(!S.dueLoaded){
+    S.dueLoaded=1;
+    fbDb.ref(NS+'/annual').once('value').then(function(s){
+      S.dueAll=s.val()||{}; if(S.view==='home') renderHome();
+    }).catch(function(e){ S.dueLoaded=0; S.dueErr=(e&&e.message)||'권한 오류';
+      if(S.view==='home') renderHome(); });
+    return '<div class="panel">'+loadingHTML('연간 일정 확인 중…')+'</div>';
+  }
+  if(S.dueErr) return '<div class="panel"><div class="msg err">연간 일정을 읽지 못했습니다: '+esc(S.dueErr)
+    +' <button onclick="S.dueErr=null;S.dueLoaded=0;renderHome()">다시 시도</button></div></div>';
+  var today=ymd(), yNow=+today.slice(0,4);
+  if(!S.dueFy) S.dueFy=yNow-1;
+  var fy=S.dueFy, all=S.dueAll||{};
+  /* 설립 중·지난 기금은 뺀다 — 아직 굴러가지 않는 기금이 늘 늦은 것으로 잡히면
+     이 목록이 통째로 쓸모없어진다(미완비 묶음과 같은 규칙). */
+  var list=(list0||[]).filter(function(f){ return f.setup_stage!=='설립준비' && !isPast(f); });
+  var cols=ANNUAL_TMPL.filter(function(t){ return t[3]; });
+  var nLate=0,nSoon=0,nDone=0,worst=null;
+  var rows=list.map(function(f,i){
+    var its=dueItemsOf(f,fy,all[f._id],today);
+    var by={}; its.forEach(function(x){ by[x.code]=x; });
+    var tds=cols.map(function(t){
+      var x=by[t[0]];
+      if(!x) return '<td style="text-align:center;color:var(--faint)">—</td>';   // 사내기금에 없는 일정
+      var go=' onclick="goAnnual(\''+f._id+'\','+fy+')" style="text-align:center;cursor:pointer"';
+      if(x.k==='done'){ nDone++; return '<td'+go+' title="'+esc(x.what)+' · 완료"><span class="chip ok" style="font-size:10px">✓</span></td>'; }
+      if(x.k==='late'){ nLate++; if(!worst||x.days>worst.days) worst={days:x.days,name:(f.short_name||f.name),what:x.short};
+        return '<td'+go+' title="'+esc(x.what+' · 기한 '+x.due)+'"><span class="chip dg" style="font-size:10px">'+x.days+'일</span></td>'; }
+      if(x.k==='soon'){ nSoon++;
+        return '<td'+go+' title="'+esc(x.what+' · 기한 '+x.due)+'"><span class="chip warn" style="font-size:10px">D-'+x.days+'</span></td>'; }
+      return '<td'+go+' title="'+esc(x.what+' · 기한 '+x.due)+'" class="muted">·</td>';
+    }).join('');
+    return '<tr><td class="no">'+(i+1)+'</td><td style="font-weight:700;cursor:pointer;white-space:nowrap" onclick="go(\'fund\',\''+f._id+'\')">'
+      +esc(f.short_name||f.name)+'</td>'+tds+'</tr>';
+  }).join('');
+  var YS=[]; for(var y=yNow;y>=yNow-5;y--) YS.push(y);
+  return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2 style="font-size:15px">기한</h2>'+hlp('board.due')
+    +'<select onchange="dueFy(this.value)" style="padding:3px 7px;border:1px solid var(--line);border-radius:7px;font-size:12px">'
+    +YS.map(function(y){return '<option value="'+y+'"'+(y===fy?' selected':'')+'>'+y+' 회계연도</option>';}).join('')+'</select>'
+    +(nLate?'<span class="stat" style="background:var(--danger-bg,#fee);color:var(--danger)">지남 '+nLate+'</span>':'')
+    +(nSoon?'<span class="stat" style="background:var(--warn-bg);color:var(--warn)">임박 '+nSoon+'</span>':'')
+    +'<span class="stat" style="background:var(--ok-bg);color:var(--ok)">완료 '+nDone+'</span>'
+    +(worst?'<span class="muted" style="font-size:11.5px">가장 오래 밀린 것: <b>'+esc(worst.name)+'</b> '+esc(worst.what)+' '+worst.days+'일</span>':'')
+    +'<span style="flex:1"></span><button onclick="_dueDirty();renderHome()">↻ 새로고침</button></div>'
+    +(list.length
+      ? '<div style="overflow-x:auto;margin-top:8px"><table><thead><tr><th class="no">번호</th><th>기금</th>'
+        +cols.map(function(t){return '<th style="text-align:center;white-space:nowrap">'+esc(DUE_SHORT[t[0]]||t[0])
+          +'<div class="muted mo" style="font-weight:400;font-size:10px">'+esc(t[3][1])+'</div></th>';}).join('')
+        +'</tr></thead><tbody>'+rows+'</tbody></table></div>'
+      : '<div class="muted" style="padding:12px">이 분류에 운영 중인 기금이 없습니다.</div>')+'</div>';
+}
+function goAnnual(fid,yr){ S.year=+yr; S.annualFor=null; _go('fund',fid); S.tab='annual'; renderFund(); }
 /* 결산 매트릭스 (기금 × 연도) — 기금 현황의 '보기: 결산'에서 쓴다.
    closing 전체를 1회만 읽어 상태를 깐다(기금별 반복 조회 없음). */
 // 결산 데이터가 바뀌면 결산 대장 캐시를 버린다 — 확정·해제·보고서 저장 직후 대장에 바로 반영되게
@@ -8161,6 +8276,11 @@ var HELP={
    +'<p><b>못 채우는 것</b> — 인가번호 · 인가일 · 설립등기일. 이 셋은 인가증·등기부에만 있으니 <b>서류 자동 입력</b>으로 넣으세요.</p>'
    +'<p><b>짝짓는 방법</b> — 이미 아는 번호(고유번호·법인등록번호)가 맞으면 그것으로, 없으면 <b>이름이 완전히 같을 때만</b> 짝짓습니다. 「충남 4호」와 「충남 40호」를 섞지 않기 위해 부분일치는 쓰지 않습니다.</p>'
    +'<p>후보가 둘 이상인 기금은 <b>건너뛰고</b> 몇 개를 건너뛰었는지 알려 줍니다. 넣기 전에 표로 보여 주고, 넣는 순간 서버 값을 다시 확인해 그 사이 채워진 칸은 건드리지 않습니다.</p>'},
+ 'board.due':{t:'기한',h:'<p>기금 42곳의 <b>연간 일정 기한</b>을 한 화면에 폅니다 — 하나씩 열어 보지 않아도 어디가 밀렸는지 보입니다.</p>'
+   +'<p><b>칸 읽는 법</b> — <b>✓</b> 완료 · <b>빨강 n일</b> 기한이 n일 지남 · <b>주황 D-n</b> n일 남음(30일 이내) · <b>·</b> 아직 여유 · <b>—</b> 그 기금에 없는 일정</p>'
+   +'<p><b>회계연도를 고릅니다.</b> 한 시점에 두 해가 함께 살아 있기 때문입니다 — 2026년 8월이면 2026년 일(11·12월 기한)은 아직 안 왔고, <b>2025년 회계연도</b>의 결산·감사·별지15호 기한(2026년 2~3월)은 이미 지났습니다. 그래서 기본값이 <b>작년</b>입니다.</p>'
+   +'<p>칸을 누르면 그 기금의 <b>연간 일정</b>으로 갑니다. 표시는 연간 일정의 <b>체크</b>에서 옵니다 — 일을 마치면 체크해야 여기서 빠집니다.</p>'
+   +'<p><b>설립 중·지난 기금은 뺍니다</b> — 아직 굴러가지 않는 기금이 늘 늦은 것으로 잡히면 이 표가 쓸모없어집니다.</p>'},
  'home.inc':{t:'미완비 기금',h:'<p>운영 중인데 <b>기본정보 5항목</b>이 덜 찬 기금만 모았습니다.</p>'
    +'<p><b>5항목</b> — 인가번호 · 인가일 · 법인등록번호 · 설립등기일 · 고유번호</p>'
    +'<p>여기서는 <b>정보 채우기</b>가 켜진 채로 열립니다. 칸에 바로 입력하면 자동 저장되고, 다 채워지면 이 묶음에서 빠집니다.</p>'
