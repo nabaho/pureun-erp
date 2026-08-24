@@ -56,7 +56,9 @@ function loadTabsHtml(over){
     _coFolders: o.coFolders || {}, coList: () => o.cos || [],
     /* 2026-08-24: 쪽 크기 고르기가 탭 줄 안으로 옮겨 왔다 — 이 검사는 탭 칩만
        살피므로 진짜 select 는 필요 없다. 안 넣으면 renderCoFTabsHtml() 이 던진다. */
-    coSizeSelHtml: () => '' };
+    coSizeSelHtml: () => '',
+    /* 2026-08-24: 종료 토글이 탭 줄에 붙었다 — 이 검사는 탭 칩만 살피므로 0곳으로 둔다 */
+    coClosedCount: () => 0 };
   vm.createContext(ctx);
   vm.runInContext(src.slice(i, j) + '\n' + src.slice(r, rEnd), ctx);
   return ctx;
