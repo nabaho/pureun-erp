@@ -157,7 +157,11 @@ test('글자가 한 자라도 있으면 보낸다', () => {
 /* ══════ 보내는 층에 어떻게 붙었나 ══════ */
 
 test('서식이 있으면 html 몫과 평문 몫을 «같이» 보낸다', () => {
-  assert.match(DEL, /html:\s*v\.html\s*\|\|\s*undefined/,
+  /* 2026-08-24 서명 명함 사진이 붙으면서 v.html 이 signHtml 을 한 번 거친다
+     (그림을 못 찾으면 표시를 지운 것). 그래도 «보내는 값의 출발점은 v.html»이어야 한다. */
+  assert.match(DEL, /let signHtml = v\.html/,
+    '★ 보내는 서식이 validateSend 가 씻어 준 v.html 에서 나와야 한다');
+  assert.match(DEL, /html:\s*signHtml\s*\|\|\s*undefined/,
     '★ html 을 안 넘기면 서식이 그대로 버려진다');
   assert.match(DEL, /text:\s*v\.body/,
     '★ 평문 몫을 빼면 서식을 못 읽는 프로그램에서 빈 편지가 된다');

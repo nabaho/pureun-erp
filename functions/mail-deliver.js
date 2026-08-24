@@ -11,6 +11,7 @@
 
 const MS = require('./mail-send');
 const MA = require('./mail-archive');
+const SG = require('./mail-sign');
 
 const DAUM_HOST = 'smtp.daum.net';
 const DAUM_PORT = 465;
@@ -121,6 +122,34 @@ async function deliver(opts) {
   const bcc = v.bcc.slice();
   if (body.toMe && bcc.indexOf(from) < 0 && v.to.indexOf(from) < 0) bcc.push(from);
 
+  /* ── 내 서명 명함 사진 (대표 지시 2026-08-24) ──
+     본문에 표시(cid:pusign)가 있으면, «보낸 사람 것»으로 저장된 명함의 썸네일을
+     인라인 첨부로 붙인다. 표시가 없으면 한 글자도 안 건드린다.
+     ⚠ 그림을 못 찾으면 표시를 «지운다» — 빈 그림 자리(❌)가 받는 화면에 뜨면 안 된다.
+     ⚠ 무슨 일이 나도 메일은 나가야 한다. 서명 하나 때문에 발송이 멈추면 안 된다. */
+  let signHtml = v.html || '';
+  const signAtt = [];
+  try {
+    if (signHtml && SG.hasSignMark(signHtml)) {
+      const key = SG.signKey(byEmail);
+      let thumb = '';
+      if (key) {
+        const rec = (await db.ref(CARDS_ROOT + '/config/matMail/perUser/' + key).once('value')).val() || {};
+        const cardId = String(rec.cardId || '');
+        /* 열쇠에 못 쓰는 글자가 든 번호는 아예 읽지 않는다 — 경로가 어긋난다 */
+        if (cardId && !/[.#$/[\]]/.test(cardId)) {
+          thumb = (await db.ref(CARDS_ROOT + '/thumbs/' + cardId).once('value')).val() || '';
+        }
+      }
+      const att = SG.signAttachment(thumb);
+      if (att) signAtt.push(att);
+      else signHtml = SG.stripSignMark(signHtml);   // 못 찾았다 — 표시를 지운다
+    }
+  } catch (e) {
+    console.warn('mailSign', (e && e.message) || e);
+    signHtml = SG.stripSignMark(signHtml);          // 읽다 실패했다 — 그림 없이 보낸다
+  }
+
   const baseMail = {
     from: fromLine(from),
     // 답장은 보낸 직원에게 — 회사 대표주소로만 오면 누구 건인지 모른다
@@ -130,11 +159,15 @@ async function deliver(opts) {
     subject: v.subject,
     /* 서식과 평문을 «같이» 보낸다 (대표 지시 2026-08-24). 평문을 빼면 서식을 못 읽는
        메일 프로그램에서 빈 편지가 되고, 서식을 빼면 도구줄이 다시 가짜가 된다. */
-    html: v.html || undefined,
+    html: signHtml || undefined,
     text: v.body,
+    /* 서명 명함 사진은 «인라인»(cid) 으로 — 첨부 파일 목록에 따로 뜨지 않게 한다 */
     attachments: v.attachments.map((a) => ({
       filename: a.filename, content: a.content, encoding: a.encoding,
-    })),
+    })).concat(signAtt.map((a) => ({
+      filename: a.filename, content: a.content, encoding: a.encoding,
+      cid: a.cid, contentDisposition: a.contentDisposition,
+    }))),
   };
 
   // 「한명씩 발송」 — 참조·숨은참조는 첫 통에만. 매 통에 붙이면 참조받는 사람이
