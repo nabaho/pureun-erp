@@ -177,7 +177,10 @@ test('★ 뺀 것이 있으면 왜 뺐는지 말한다 — 조용히 빼면 고�
   const fn = cutFn(app, 'function readSelected(');
   assert.match(fn, /const ids = readableSel\(\);/);
   assert.match(fn, /const skipped = all\.length - ids\.length;/);
-  assert.match(fn, /if \(!ids\.length\) \{[\s\S]*?alert\(/, '하나도 없을 때 아무 말이 없습니다');
+  /* ⚠ 「alert( 이 있나」만 보면 `if (false) alert(...)` 로 되돌려도 통과한다(실제로 그랬다).
+     **조건까지** 본다 — 뺀 것이 있을 때 말하는가. */
+  assert.match(fn, /if \(!ids\.length\) \{\s*\r?\n\s*if \(skipped\) alert\(/,
+    '하나도 없을 때 아무 말이 없습니다');
   assert.match(fn, /if \(skipped\) toast\(/, '일부를 뺐을 때 아무 말이 없습니다');
   assert.match(fn, /다시 판독」을 눌러 주세요/, '★ 그래도 해 볼 길을 안 알려 줍니다');
 });

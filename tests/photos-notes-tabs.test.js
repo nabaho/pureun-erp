@@ -204,11 +204,16 @@ test('지난 것 = 보유기간 만료 + 급여서류', () => {
 });
 
 test('★ 두 걸러보기를 겹치지 않는다', () => {
+  /* ⚠ 2026-08-24: 확인필요 안에 「판독 실패만」이 생겨, 지난 것으로 넘어갈 때 그것도
+     함께 꺼야 한다. 지킬 것은 「둘이 겹치지 않는다」이므로 함께 끄는 것까지 본다. */
   const on = html.match(/function toggleOld\(\)[\s\S]*?\n\}/);
-  assert.ok(/if \(oldOnly\) needOnly = false;/.test(on[0]));
+  assert.ok(/if \(oldOnly\) \{ needOnly = false; failOnly = false; \}/.test(on[0]),
+    '지난 것으로 넘어갈 때 확인필요 걸러기를 안 끕니다');
   const nd = html.match(/function toggleNeed\(\)[\s\S]*?\n\}/);
   assert.ok(/if \(needOnly\) oldOnly = false;/.test(nd[0]),
     '둘이 겹치면 지금 무엇을 보고 있는지 알 수 없습니다.');
+  assert.ok(/failOnly = false;/.test(nd[0]),
+    '★ 확인필요를 나갔다 들어올 때 좁혀 둔 「판독 실패만」이 남으면 안 됩니다');
 });
 
 test('★ 「지금 점검하기」가 설정이 아니라 사진으로 데려간다', () => {

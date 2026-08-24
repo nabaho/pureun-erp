@@ -724,7 +724,10 @@ test('다시 판독해도 검증 통과분은 자동으로 명함첩에 간다',
   assert.ok(fn, 'readPhoto 본문을 찾을 수 없습니다');
   assert.match(fn[0], /read\.auto && canSend\(read\)/, '다시 판독 후 자동 등록이 없습니다');
   // 판독하는 길이 하나여야 두 길이 어긋나지 않는다
-  assert.match(app, /function readAgain\(\)[\s\S]{0,400}readPhoto\(id\)/);
+  /* ⚠ 고정 폭(400자)으로 잘랐다가 readAgain 에 「실패 셈 되돌리기」가 붙으며 창이
+     못 닿았다(2026-08-24). 함수를 통째로 뽑는다 — 창 숫자를 키워 쫓아가지 않는다. */
+  assert.match(cutFn(app, 'function readAgain('), /readPhoto\(id\)/,
+    '「다시 판독」이 같은 길(readPhoto)을 안 씁니다');
 });
 
 test('확인이 필요한 것만 모아 볼 수 있다', () => {
@@ -863,7 +866,13 @@ test('명함첩에 보낸 사진을 지울 때는 그 기록이 남는다고 알
 test('체크는 늘 사진 오른쪽 위에 있고, 거기를 누르면 고른다', () => {
   // 「고르기」 단계를 먼저 밟지 않아도 바로 고를 수 있어야 한다(대표 지시).
   // 체크를 누르면 고르고, 사진의 다른 곳을 누르면 열린다.
-  assert.match(app, /ev\.target\.closest\('\.ck'\)\) \{ toggleOne\(id\); return; \}/);
+  /* ⚠ 2026-08-24: Shift 를 누른 채면 범위 고르기로 간다(대표 승인 목업). 지킬 것은
+     「체크를 누르면 고른다」이므로 그 갈림길까지 함께 본다. */
+  const i = app.indexOf("if (ev.target.closest('.ck'))");
+  assert.ok(i > 0, '체크를 누르는 자리를 찾지 못했습니다');
+  const seg = app.slice(i, i + 260);
+  assert.match(seg, /else toggleOne\(id\);/, '체크를 눌러도 안 골라집니다');
+  assert.match(seg, /return;/, '체크를 눌렀는데 크게 보기까지 열립니다');
   // 체크가 숨어 있지 않아야 한다 — display:none 이면 누를 자리가 없다
   const rule = app.match(/#grid \.cell \.ck\{([^}]*)\}/);
   assert.ok(rule, '체크 규칙을 찾을 수 없습니다');
