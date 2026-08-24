@@ -70,6 +70,13 @@
      격자가 본문까지 받으면 사진 수십 장에 수십 MB를 내려받게 된다. */
   function thumbPath(year, id, owner) { return base(owner) + '/thumbs/' + year + '/' + id; }
 
+  /* PDF 안에 이미 있던 «글자» 경로 (대표 결정 2026-08-24 「글자 있는 PDF 는 글자로」).
+     ⚠ 정보(items)에 담지 «않는다». 목록을 부를 때 items 를 통째로 내려받으므로,
+       거기에 쪽마다 수천 자를 넣으면 사진첩을 열 때마다 그 글자를 다 내려받는다 —
+       줄이려던 비용이 오히려 늘어난다. 판독할 때만 이 자리를 읽는다.
+     ⚠ 본문·미리보기와 나란히 둔 까닭도 같다: 목록 읽기와 갈라 두어야 한다. */
+  function textPath(year, id, owner) { return base(owner) + '/texts/' + year + '/' + id; }
+
   /* 사진첩을 쓰는 사람 명단 — 관리자가 사람을 훑는 용도로만 쓰는 가벼운 칸.
      여기에 사진을 담지 않는다(관리자가 전 직원 사진 본문을 통째로 받는 일 방지). */
   function ownerPath(uid) { return DB_ROOT + '/owners/' + uid; }
@@ -421,6 +428,9 @@
     if (thumbUrl) extra.thumbUrl = thumbUrl;
     var u = {};
     u[metaPath(year, p.id)] = Object.assign({}, p.meta, extra);
+    /* PDF 안에 있던 글자는 «정보와 갈라» 담는다 — 까닭은 textPath 에 적었다.
+       ⚠ 빈 글자는 아예 안 적는다. 실시간DB 는 빈 값을 안 적으므로 헛 경로만 남는다. */
+    if (p.text) u[textPath(year, p.id)] = String(p.text);
     u[ownerPath(deps.uid)] = {
       name: deps.name || (p.meta && p.meta.byName) || '',
       lastAt: Date.now()
@@ -433,6 +443,9 @@
     u[metaPath(year, p.id)] = p.meta;
     u[blobPath(year, p.id)] = p.full;
     u[thumbPath(year, p.id)] = p.thumb;
+    /* 창고가 막혀 실시간DB 로 물러난 길에서도 글자를 함께 담는다 — 한쪽만 담으면
+       「창고일 때는 글자로 읽고 실시간DB일 때는 그림으로 읽는」 두 동작이 된다. */
+    if (p.text) u[textPath(year, p.id)] = String(p.text);
     /* 업로드 성공과 사용자 색인을 한 번에 저장한다. 로그인 때 touchOwner가
        일시적으로 실패해도 이 색인이 남아야 다른 휴대폰·PC의 「전체 근로자」
        화면에서 방금 올린 사진을 빠뜨리지 않고 찾을 수 있다. */
@@ -555,6 +568,9 @@
       u[metaPath(year, id, owner)] = null;
       u[blobPath(year, id, owner)] = null;
       u[thumbPath(year, id, owner)] = null;
+      /* PDF 에서 뽑아 둔 글자도 함께 비운다 — 안 비우면 사진은 없는데 글자만 남아
+         용량을 먹고, 그 글자에 사업장 정보가 그대로 들어 있다. */
+      u[textPath(year, id, owner)] = null;
       /* 같이 보던 사람의 목록에서도 뺀다 — 안 빼면 원본이 없는 유령이 남아
          「나와 공유된 사진」이 열리지 않는 사진으로 채워진다. */
       Object.keys((meta && meta.shareWith) || {}).forEach(function (who) {
@@ -1318,6 +1334,17 @@
       return withStorage(function () { return filePath(year, id, 'thumb', owner); }, legacy, owner);
     });
   }
+
+  /* PDF 안에 있던 글자를 읽어 온다 (대표 결정 2026-08-24 「글자 있는 PDF 는 글자로」).
+     ⚠ 없으면 **빈 문자열**을 준다 — 던지지 않는다. 부르는 쪽이 「글자가 없으면
+       그림으로」 물러날 수 있어야 한다. 휴지통에서 되살린 사진은 글자가 없을 수도
+       있는데(휴지통은 정보·본문·미리보기만 담는다), 그때도 판독이 멈추면 안 된다. */
+  function loadText(year, id, owner) {
+    if (!deps.db) return Promise.resolve('');
+    return readOnce(textPath(year, id, owner))
+      .then(function (t) { return (typeof t === 'string') ? t : ''; })
+      .catch(function () { return ''; });
+  }
   /* 민감 서류 원본을 **서버에서** 받아온다 — 주소를 안 남기기로 했으므로 이 길이 있어야
      관리자·공유받은 사람이 계약서를 볼 수 있다(창고 규칙은 「자기 사진만」이라 403 이다).
      ⚠ 실패하면 **조용히 넘기지 않는다.** 왜 안 보이는지 말해 줘야 「고장」으로 안 읽는다. */
@@ -1942,6 +1969,7 @@
     rememberThumbUrl: rememberThumbUrl,
     forgetThumbUrl: forgetThumbUrl,
     loadFull: loadFull,
+    loadText: loadText,
     init: init,
     getMode: getMode,
     setMode: setMode,

@@ -1498,8 +1498,11 @@ test('deletePhoto — 그 사진 하나만 건드린다', async () => {
   S.init({ uid: 'U1', db });
   await S.deletePhoto('2026', 'p1');
   // 연도나 루트를 지우면 그 해 사진이 전부 사라진다
+  /* ⚠ 2026-08-24: texts 가 늘었다(글자 있는 PDF 는 글자로 판독 — 그 글자 자리).
+     지킬 것은 「사진 하나의 자리만 건드린다」이지 자리 개수가 아니다. 새 자리를
+     여기 안 넣으면, 늘릴 때마다 이 검사가 멀쩡한 코드를 두고 운다. */
   for (const k of Object.keys(db.calls.update[0].u)) {
-    assert.match(k, /^puphotos\/(u\/U1\/)?((items|blobs|thumbs|trash)\/2026\/p1|dellog\/p1)$/, '위험한 경로입니다: ' + k);
+    assert.match(k, /^puphotos\/(u\/U1\/)?((items|blobs|thumbs|texts|trash)\/2026\/p1|dellog\/p1)$/, '위험한 경로입니다: ' + k);
   }
   assert.equal(db.calls.update[0].path, '');
 });
@@ -1727,11 +1730,18 @@ test('지우기는 내 자리만 쓴다 — 옛 자리를 건드리면 규칙에
   const outside = keys.filter(function (k) { return k.indexOf('puphotos/u/U1/') !== 0; });
   assert.deepEqual(outside, [],
     '내 자리(u/U1) 밖을 쓰고 있습니다 — 규칙에 거부돼 지우기 전체가 실패합니다: ' + outside.join(', '));
-  /* 지우기의 약속은 그대로다: 휴지통 담기 + 지운 기록 + 세 경로 비우기 */
+  /* 지우기의 약속은 그대로다: 휴지통 담기 + 지운 기록 + 그 사진의 자리 비우기 */
   assert.ok(keys.some(function (k) { return k.indexOf('/trash/') >= 0; }), '휴지통에 담지 않습니다');
   assert.ok(keys.some(function (k) { return k.indexOf('/dellog/') >= 0; }), '지운 기록을 남기지 않습니다');
+  /* ⚠ 2026-08-24: 비우는 자리가 넷이 되었다(items·blobs·thumbs + texts — 글자 있는
+     PDF 에서 뽑아 둔 글자). 개수를 못박으면 자리를 늘릴 때마다 멀쩡한 코드를 두고
+     운다. 지킬 것은 「**그 사진 하나의 자리만** 비운다」이므로 그것을 본다. */
   const nulls = keys.filter(function (k) { return db.updates[0][k] === null; });
-  assert.equal(nulls.length, 3, '사진 하나의 세 경로만 비워야 합니다: ' + nulls.join(', '));
+  assert.ok(nulls.length >= 3, '사진 자리를 안 비웁니다: ' + nulls.join(', '));
+  nulls.forEach(function (k) {
+    assert.match(k, /^puphotos\/u\/U1\/(items|blobs|thumbs|texts)\/2026\/p1$/,
+      '★ 그 사진 하나의 자리가 아닙니다 — 상위 노드를 비우면 그 해가 통째로 사라집니다: ' + k);
+  });
 });
 
 /* ── 전체 근로자 사진 (관리자 전용) ──
