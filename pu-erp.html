@@ -136,6 +136,9 @@
 <script src="js/utils.js?v=1"></script>
 <script src="js/pu-photo-store.js?v=7"></script>
 <script src="js/pu-billing.js?v=6"></script>
+<!-- 급여담당자 엑셀 → 업체관리 (대표 결정 2026-08-24). 읽고 대조하는 일은 이 파일이,
+     그리기는 아래 화면이 한다 — 검사가 이 파일을 그대로 돌린다. -->
+<script src="js/pu-co-xls.js?v=1"></script>
 <script>
 (function(){
 'use strict';
@@ -18362,6 +18365,67 @@ function CompanyManagement(){
     reader.readAsArrayBuffer(file);
   }
 
+  // ── 급여담당자 연락처 엑셀 가져오기 (대표 결정 2026-08-24) ──
+  // 사업장명 │ 담당자성명 │ 담당자연락처 │ 이메일주소 │ 세무대리인명 │ 세무담당자연락처 │ 세무 이메일주소
+  // ⚠ 담당자(우리 직원)는 **파일 이름에만** 있다 — 시트 안에는 없다.
+  // ⚠ 바로 쓰지 않는다. 무엇이 달라지는지 보여 주고 대표가 「넣기」를 눌러야 쓴다 —
+  //    주담당이 바뀌는 곳이 있어서(남의 담당을 가져오는 일) 미리 보여야 한다.
+  var _pcxS = useState(null); var pcxPlan = _pcxS[0]; var setPcxPlan = _pcxS[1];
+  var _pcxKS = useState('all'); var pcxKind = _pcxKS[0]; var setPcxKind = _pcxKS[1];
+  var _pcxSkS = useState({}); var pcxSkip = _pcxSkS[0]; var setPcxSkip = _pcxSkS[1];
+
+  function importPayContactXlsx(e){
+    var files = e.target.files ? Array.prototype.slice.call(e.target.files) : [];
+    if(!files.length) return;
+    if(typeof XLSX === 'undefined'){ showToast('엑셀 모듈 로딩중'); e.target.value=''; return; }
+    var X = window.PuCoXls;
+    if(!X){ showToast('가져오기 모듈을 못 불렀습니다 (pu-co-xls.js)'); e.target.value=''; return; }
+    var got = [], bad = [];
+    var done = 0;
+    files.forEach(function(file){
+      var reader = new FileReader();
+      reader.onload = function(ev){
+        try {
+          var wb = XLSX.read(ev.target.result, { type:'array' });
+          var grid = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header:1, defval:'' });
+          var r = X.parseGrid(grid);
+          var who = X.staffFromFileName(file.name);
+          if(r.error) bad.push(file.name + ' — ' + r.error);
+          else if(!who) bad.push(file.name + ' — 파일 이름 끝에 담당자 이름이 없습니다');
+          else got.push({ who:who, rows:r.rows, file:file.name });
+        } catch(err){ bad.push(file.name + ' — ' + (err && err.message)); }
+        if(++done === files.length) finish();
+      };
+      reader.onerror = function(){ bad.push(file.name + ' — 파일을 못 읽었습니다');
+        if(++done === files.length) finish(); };
+      reader.readAsArrayBuffer(file);
+    });
+    function finish(){
+      e.target.value = '';
+      if(bad.length) showToast('⚠️ ' + bad.join(' / '), 9000);
+      if(!got.length) return;
+      var items = X.plan(got, companies, users);
+      setPcxSkip({});
+      setPcxKind('all');
+      setPcxPlan({ files:got, items:items, safe:X.taxMailSafe(items) });
+    }
+  }
+
+  // 「넣기」를 눌렀을 때 — 건너뛴다고 한 줄은 빼고 쓴다
+  function applyPayContacts(){
+    var X = window.PuCoXls; if(!X || !pcxPlan) return;
+    var items = pcxPlan.items.map(function(it, i){
+      return pcxSkip[i] ? Object.assign({}, it, { skip:true }) : it;
+    });
+    var w = X.writes(items, companies, { taxSafe: pcxPlan.safe });
+    if(!w.length){ showToast('바뀌는 것이 없습니다'); setPcxPlan(null); return; }
+    var byId = {}; companies.forEach(function(c){ if(c && c.id) byId[c.id] = c; });
+    var recs = w.map(function(x){ return Object.assign({}, byId[x.id], x.patch); });
+    if(!coUpsertMany(recs)) return;
+    showToast('📥 업체관리에 넣었습니다: ' + w.length + '곳');
+    setPcxPlan(null);
+  }
+
   // ── 세무사무실 보수총액 신고자료 일괄요청 ──
   var taxMailS = useState(false); var taxMailModal = taxMailS[0]; var setTaxMailModal = taxMailS[1];
   var _tfeS = useState((function(){ try{ return localStorage.getItem('pureun_v6_tax_from_email')||''; }catch(e){ return ''; } })());
@@ -19380,6 +19444,13 @@ function CompanyManagement(){
         style:{ padding:'6px 12px', fontSize:'12px', fontWeight:700, borderRadius:'5px',
           background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe', cursor:'pointer', whiteSpace:'nowrap' } },
         '▽ 필터 ' + activeFilterCount + ' 풀기'),
+      // 급여담당자 엑셀 가져오기 — 담당자별 파일을 한꺼번에 놓을 수 있다
+      statusTab !== 'suboffice' && h('label', {
+        className:'erp-tip',
+        'data-tip':'담당자별 「급여담당자연락처 및 이메일주소_○○○.xlsx」 를 한꺼번에 고르십시오.\n주담당·담당자 연락처·세무사무실을 채우고, 무엇이 달라지는지 먼저 보여 드립니다.',
+        style:{ background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe', padding:'5px 10px', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap', marginRight:'6px' } },
+        '📥 급여담당자 엑셀',
+        h('input', { type:'file', accept:'.xlsx,.xls', multiple:true, onChange:importPayContactXlsx, style:{ display:'none' } })),
       // 사무대행 전용 도구 (컨텍스트)
       statusTab === 'suboffice' && h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', marginRight:'6px' } },
         h('label', { style:{ background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe', padding:'5px 10px', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
@@ -19859,6 +19930,110 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
       onClose: function(){ setEditModal(null); }
     }),
     // 중복 업체 정리 모달
+    // ★ 급여담당자 엑셀 미리보기 (대표 결정 2026-08-24)
+    //   ⚠ 바로 쓰지 않는다 — 주담당이 바뀌는 곳이 있어(남의 담당을 가져오는 일)
+    //     무엇이 달라지는지 보이고 대표가 눌러야 쓴다.
+    pcxPlan && (function(){
+      var X = window.PuCoXls;
+      var c = X.counts(pcxPlan.items);
+      var live = pcxPlan.items.map(function(it, i){
+        return pcxSkip[i] ? Object.assign({}, it, { skip:true }) : it;
+      });
+      var w = X.writes(live, companies, { taxSafe: pcxPlan.safe });
+      var nameOf = function(sid){
+        if(!sid) return '';
+        var u = users.find(function(x){ return x.sid === sid; });
+        return u ? u.name : sid;
+      };
+      var moved = w.filter(function(x){ return x.ownerFrom; });
+      var KIND = {
+        ok:   { t:'그대로', bg:'#f0fdf4', fg:'#166534' },
+        type: { t:'유형→급여', bg:'#fffbeb', fg:'#854d0e' },
+        attach:{ t:'본 업체에 붙임', bg:'#eff6ff', fg:'#2563eb' },
+        none: { t:'붙일 곳 없음', bg:'#fef2f2', fg:'#991b1b' }
+      };
+      var chip = function(k, lb, n){
+        var on = pcxKind === k;
+        return h('button', { key:k, onClick:function(){ setPcxKind(k); },
+          style:{ padding:'5px 11px', borderRadius:'99px', fontSize:'11.5px', cursor:'pointer',
+            fontWeight: on ? 700 : 500, border:'1px solid ' + (on ? '#2563eb' : '#e2e8f0'),
+            background: on ? '#2563eb' : '#fff', color: on ? '#fff' : '#475569' } },
+          lb + ' ' + n);
+      };
+      var rows = pcxPlan.items.map(function(it, i){ return { it:it, i:i }; })
+        .filter(function(r){ return pcxKind === 'all' || r.it.kind === pcxKind; });
+
+      return h('div', { onClick:function(){ setPcxPlan(null); },
+        style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' } },
+        h('div', { onClick:function(e){ e.stopPropagation(); },
+          style:{ background:'#fff', borderRadius:'12px', padding:'20px 22px', width:'1000px', maxWidth:'95vw', maxHeight:'90vh', display:'flex', flexDirection:'column', boxShadow:'0 20px 60px rgba(0,0,0,0.25)' } },
+
+          h('div', { style:{ fontWeight:800, fontSize:'16px', color:'#1e293b', marginBottom:'4px' } },
+            '📥 급여담당자 엑셀 — 넣기 전에 보십니다'),
+          h('div', { style:{ fontSize:'12px', color:'#64748b', marginBottom:'12px' } },
+            pcxPlan.files.map(function(f){ return f.who + '(' + f.rows.length + '곳)'; }).join(' · ')
+            + ' — 아직 아무것도 쓰지 않았습니다'),
+
+          h('div', { style:{ display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'10px' } },
+            chip('all', '전체', c.all), chip('ok', '그대로', c.ok || 0),
+            chip('type', '유형→급여', c.type || 0), chip('attach', '본 업체에 붙임', c.attach || 0),
+            chip('none', '붙일 곳 없음', c.none || 0)),
+
+          // 주담당이 바뀌는 곳 — 남의 담당을 가져오는 일이라 이름을 대고 보여야 한다
+          moved.length > 0 && h('div', { style:{ background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'8px', padding:'9px 12px', marginBottom:'10px', fontSize:'12px', color:'#854d0e' } },
+            h('b', null, '⚠ 주담당이 바뀌는 곳 ' + moved.length + '곳'), ' — ',
+            moved.slice(0, 6).map(function(x){
+              return (x.name + '(' + nameOf(x.ownerFrom) + '→' + nameOf(x.patch.managerMain) + ')');
+            }).join(', ') + (moved.length > 6 ? ' 외 ' + (moved.length - 6) + '곳' : '')),
+
+          c.none > 0 && h('div', { style:{ background:'#fef2f2', border:'1px solid #fecaca', borderRadius:'8px', padding:'9px 12px', marginBottom:'10px', fontSize:'12px', color:'#991b1b' } },
+            h('b', null, '붙일 곳 없는 ' + c.none + '곳은 아무것도 하지 않습니다'),
+            ' — 업체관리에 본 업체가 없습니다. 몰래 새 업체를 만들지 않습니다.'),
+
+          h('div', { style:{ flex:1, overflow:'auto', border:'1px solid #e2e8f0', borderRadius:'8px' } },
+            h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:'12px' } },
+              h('thead', null, h('tr', { style:{ background:'#f8fafc' } },
+                ['빼기','엑셀 사업장','담당','업체관리','담당자 · 이메일','세무사무실','어떻게'].map(function(t){
+                  return h('th', { key:t, style:{ padding:'6px 8px', textAlign:'left', fontSize:'11px', color:'#64748b', borderBottom:'1px solid #e2e8f0', position:'sticky', top:0, background:'#f8fafc' } }, t);
+                }))),
+              h('tbody', null, rows.map(function(r){
+                var it = r.it, K = KIND[it.kind] || KIND.none;
+                var off = !!pcxSkip[r.i] || it.kind === 'none';
+                return h('tr', { key:r.i, style:{ borderBottom:'1px solid #f8fafc', opacity: off ? 0.45 : 1 } },
+                  h('td', { style:{ padding:'5px 8px' } },
+                    it.kind !== 'none' && h('input', { type:'checkbox', checked:!!pcxSkip[r.i],
+                      title:'이 줄은 넣지 않습니다',
+                      onChange:function(){ setPcxSkip(function(p){
+                        var n = Object.assign({}, p); if(n[r.i]) delete n[r.i]; else n[r.i] = 1; return n; }); } })),
+                  h('td', { style:{ padding:'5px 8px' } }, it.site,
+                    it.inherited && h('div', { style:{ fontSize:'10.5px', color:'#2563eb' } }, '↑ ' + it.inherited + ' 에서 물려받음')),
+                  h('td', { style:{ padding:'5px 8px' } }, it.who,
+                    it.wasSid && it.wasSid !== it.sid && h('div', { style:{ fontSize:'10.5px', color:'#854d0e' } }, '지금 ' + nameOf(it.wasSid)),
+                    it.clash && h('div', { style:{ fontSize:'10.5px', color:'#991b1b' } }, '두 사람이 겹침 — 담당 안 건드림')),
+                  h('td', { style:{ padding:'5px 8px', color:'#475569' } }, it.coName || '—',
+                    it.wasType && it.wasType !== '급여' && h('div', { style:{ fontSize:'10.5px', color:'#854d0e' } }, '유형 ' + it.wasType)),
+                  h('td', { style:{ padding:'5px 8px' } }, it.cName || '',
+                    it.cMail && h('div', { style:{ fontSize:'10.5px', color:'#64748b', fontFamily:'monospace' } }, it.cMail)),
+                  h('td', { style:{ padding:'5px 8px', color:'#475569' } }, it.tName || '',
+                    it.tMail && h('div', { style:{ fontSize:'10.5px', fontFamily:'monospace',
+                      color: pcxPlan.safe[String(it.tMail).toLowerCase()] === false ? '#991b1b' : '#64748b' } },
+                      it.tMail + (pcxPlan.safe[String(it.tMail).toLowerCase()] === false ? ' (여러 담당 — 안 넣음)' : ''))),
+                  h('td', { style:{ padding:'5px 8px' } },
+                    h('span', { style:{ background:K.bg, color:K.fg, borderRadius:'99px', padding:'2px 8px', fontSize:'10.5px', fontWeight:700, whiteSpace:'nowrap' } }, K.t))
+                );
+              })))),
+
+          h('div', { style:{ display:'flex', alignItems:'center', gap:'8px', marginTop:'12px' } },
+            h('button', { onClick:applyPayContacts, disabled: w.length === 0,
+              style:{ background: w.length ? '#2563eb' : '#cbd5e1', color:'#fff', border:'none', borderRadius:'7px', padding:'9px 18px', fontSize:'13px', fontWeight:700, cursor: w.length ? 'pointer' : 'default', fontFamily:'inherit' } },
+              '업체관리에 넣기 (' + w.length + '곳)'),
+            h('button', { onClick:function(){ setPcxPlan(null); },
+              style:{ background:'#fff', color:'#475569', border:'1px solid #e2e8f0', borderRadius:'7px', padding:'9px 16px', fontSize:'13px', cursor:'pointer', fontFamily:'inherit' } }, '닫기'),
+            h('span', { style:{ marginLeft:'auto', fontSize:'11.5px', color:'#64748b' } },
+              '엑셀 ' + c.all + '줄 → 바뀌는 업체 ' + w.length + '곳'
+              + (c.inherited ? ' · 물려받은 줄 ' + c.inherited : '')))
+        ));
+    })(),
     mergeOpen && h(CoMergeModal, {
       onChanged: function(){ refreshCompanies(); recountDup(); },
       onClose: function(){ setMergeOpen(false); refreshCompanies(); recountDup(); }
