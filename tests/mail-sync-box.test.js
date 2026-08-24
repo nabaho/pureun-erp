@@ -162,6 +162,21 @@ test('★ 표시가 뒤로 가지 않는다 — 되돌아가면 같은 것을 �
   assert.equal(s.lo, 100);
 });
 
+test('★ 지난 회차의 셈과 정리 때를 떨어뜨리지 않는다 — 떨어지면 폴더 전체를 헛되게 다시 읽는다', () => {
+  /* 여기서 둘을 잃으면 「우리 것과 통수가 다르다」가 늘 참이 되어, 6시간마다 폴더
+     전체를 읽는다(그것이 곧 요금이다). 2026-08-24 에 실제로 그랬고 고쳤다. */
+  const s = MB.nextSync({ hi: 500, lo: 200, uv: 7, n: 301, prunedAt: 1756000000000 },
+                        [150, 199], 7, false);
+  assert.equal(s.n, 301);
+  assert.equal(s.prunedAt, 1756000000000);
+});
+
+test('번호가 갈리면 셈도 버린다 — 다른 메일을 세어 둔 값이다', () => {
+  const s = MB.nextSync({ hi: 500, lo: 1, uv: 7, n: 500, prunedAt: 9 }, [10], 9, true);
+  assert.equal(s.n, 0);
+  assert.equal(s.prunedAt, 0);
+});
+
 test('★ 서버가 번호를 다시 매겼으면(uidValidity 변경) 처음부터 다시 한다', () => {
   assert.equal(MB.uidReset({ uv: 7 }, 9), true);
   assert.equal(MB.uidReset({ uv: 7 }, 7), false);

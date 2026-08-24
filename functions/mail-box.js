@@ -238,19 +238,27 @@ function backfillWindow(sync, uidNext, chunk) {
 }
 
 /* 회차가 끝난 뒤 적어 둘 표시. 번호가 뒤로 가는 일은 없어야 한다 —
-   uidValidity 가 바뀌면(서버가 번호를 다시 매겼다) 처음부터 다시 해야 한다. */
+   uidValidity 가 바뀌면(서버가 번호를 다시 매겼다) 처음부터 다시 해야 한다.
+
+   ⚠ 지난 회차가 적어 둔 «셈(n)»과 «마지막 정리 때(prunedAt)»를 그대로 이어 준다.
+     예전에는 여기서 새 객체를 만들며 둘을 떨어뜨렸다 — 그러면 회차마다 셈이 0 에서
+     다시 시작해 「우리 것과 통수가 다르다」가 늘 참이 되고, 폴더 전체를 6시간마다
+     헛되게 읽는다(그것이 곧 요금이다). */
 function nextSync(sync, seen, uidValidity, done) {
   const s = sync || {};
   const nums = (seen || []).map(Number).filter((n) => n > 0);
   const old = Number(s.uv || 0);
   const uv = Number(uidValidity || 0);
   if (uv && old && uv !== old) {
-    /* 번호가 갈렸다 — 지난 표시는 못 믿는다. 이번에 본 것만으로 다시 시작한다. */
+    /* 번호가 갈렸다 — 지난 표시는 못 믿는다. 이번에 본 것만으로 다시 시작한다.
+       셈도 정리 때도 버린다(다른 메일을 세어 둔 값이다). */
     return {
       uv: uv,
       hi: nums.length ? Math.max.apply(null, nums) : 0,
       lo: nums.length ? Math.min.apply(null, nums) : 0,
       done: false,
+      n: 0,
+      prunedAt: 0,
     };
   }
   const hi = Number(s.hi || 0);
@@ -260,6 +268,8 @@ function nextSync(sync, seen, uidValidity, done) {
     hi: nums.length ? Math.max(hi, Math.max.apply(null, nums)) : hi,
     lo: nums.length ? (lo ? Math.min(lo, Math.min.apply(null, nums)) : Math.min.apply(null, nums)) : lo,
     done: !!done,
+    n: Number(s.n || 0),
+    prunedAt: Number(s.prunedAt || 0),
   };
 }
 

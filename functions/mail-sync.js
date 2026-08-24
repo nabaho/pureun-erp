@@ -24,8 +24,9 @@ const MB = require('./mail-box');
 const ROOT = 'mailbox';
 
 /* 한 회차 한도 — 넘으면 다음 회차로 넘긴다. 죽는 것보다 나눠 하는 것이 낫다. */
-const CHUNK = 300;          // 한 폴더에서 한 번에 볼 통수
-const MAX_ROWS = 3000;      // 한 회차 전체 통수
+const CHUNK = 400;          // 한 폴더에서 한 바퀴에 볼 통수
+const MAX_ROWS = 9000;      // 한 회차 전체 통수 — 한 줄이 250바이트쯤이니 2MB 남짓
+const MAX_TURNS = 400;      // 줄에서 꺼내 볼 횟수 — 끝나지 않는 회차를 막는 뒷그물
 const WRITE_BATCH = 250;    // 실시간DB에 한 번에 적을 줄 수
 const PRUNE_GAP_MS = 6 * 60 * 60 * 1000;   // 지워진 메일 정리는 6시간에 한 번
 const BODY_FULL_MAX = 2 * 1024 * 1024;     // 이보다 작으면 통째로 받아 파싱한다
@@ -66,9 +67,14 @@ async function runSync(deps, opts) {
   const pass = deps.mailPass();
   if (!user || !pass) return { ok: false, error: '메일 계정이 설정되지 않았습니다' };
 
-  let client;
-  try { client = await connect(deps, user, pass); } catch (e) {
-    return { ok: false, error: '다음메일에 붙지 못했습니다 — ' + String((e && e.message) || e) };
+  /* opts.client 는 «검사용 구멍»이다. 실제 메일함에 붙지 않고 한 회차를 돌려 보려면
+     이 자리가 있어야 한다 — 창이 어떻게 움직이는지는 글자만 보는 검사로는 못 잡는다
+     (2026-08-24 에 옛것 방향이 구간을 건너뛰는 것을 이 검사로 잡았다). */
+  let client = o.client || null;
+  if (!client) {
+    try { client = await connect(deps, user, pass); } catch (e) {
+      return { ok: false, error: '다음메일에 붙지 못했습니다 — ' + String((e && e.message) || e) };
+    }
   }
 
   try {
@@ -103,9 +109,20 @@ async function runSync(deps, opts) {
           시간이 모자라 끊기더라도 중요한 것이 먼저 차 있다. */
     plan.sort((a, b) => MB.folderOrder(MB.folderKind(a.box)) - MB.folderOrder(MB.folderKind(b.box)));
 
+    /* ③ 예산이 남는 동안 «줄 서서 몇 바퀴» 돈다.
+       첫 배포 회차를 재 보니 폴더 33개를 한 바퀴 도는 데 30초였다 — 예산은 460초다.
+       한 바퀴만 돌면 폴더마다 한 뭉치씩이라 몇 만 통을 다 가져오는 데 하루가 걸린다.
+       그래서 폴더를 «줄»로 세우고, 아직 남은 폴더는 줄 끝에 다시 세운다. 예산이 다할
+       때까지 돌고, 다 끝난 폴더는 줄에서 빠지므로 헛돌지 않는다.
+       ⚠ 돌려 세우는 것이 요점이다 — 앞 폴더를 끝까지 파면 그 사이 뒤 폴더는 한 통도
+         안 온다. 대표 눈에는 「어떤 칸은 되고 어떤 칸은 안 된다」로 보인다. */
+    const queue = plan.slice();
     let pruned = 0;
-    for (const p of plan) {
-      if (nowMs() > deadline || out.rows >= MAX_ROWS) { out.waiting++; continue; }
+    let turns = 0;
+    while (queue.length && turns < MAX_TURNS && nowMs() < deadline && out.rows < MAX_ROWS) {
+      turns++;
+      const p = queue.shift();
+      let more = false;      // 이 폴더에 아직 볼 것이 남았나 (줄 끝에 다시 세울지)
 
       /* 서버가 번호를 다시 매겼다 — 지난 목록은 다른 메일을 가리킨다. 버리고 다시 시작한다. */
       if (MB.uidReset(p.sync, p.st.uidValidity)) {
@@ -114,19 +131,25 @@ async function runSync(deps, opts) {
       }
 
       const w = MB.backfillWindow(p.sync, p.st.uidNext, CHUNK);
-      const ranges = [w.fresh, w.back].filter(Boolean);
+      /* 어느 방향인지 함께 들고 간다 — 중간에 끊겼을 때 표시를 옮겨도 되는지가
+         방향마다 다르다(아래 «끊겼을 때» 주석). */
+      const ranges = [];
+      if (w.fresh) ranges.push({ dir: 'fresh', from: w.fresh.from, to: w.fresh.to });
+      if (w.back) ranges.push({ dir: 'back', from: w.back.from, to: w.back.to });
 
       if (ranges.length) {
+        more = true;          // 가져올 것이 있었다 — 다음 바퀴에 창을 다시 계산한다
         let lock;
         try { lock = await client.getMailboxLock(p.box.path, { readOnly: true }); } catch (e) {
           console.warn('syncMailbox 폴더 잠금 실패:', p.box.path, String((e && e.message) || e));
-          continue;
+          continue;   /* 이 폴더는 줄에서 뺀다 — 못 여는 폴더를 계속 다시 세우면 회차가 헛돈다 */
         }
         try {
           for (const r of ranges) {
             const seen = [];
             let batch = {};
             let n = 0;
+            let cut = false;      // 시간·통수 한도에 걸려 중간에 끊겼나
             try {
               for await (const msg of client.fetch(
                 r.from + ':' + r.to,
@@ -138,31 +161,48 @@ async function runSync(deps, opts) {
                 batch[ROOT + '/msgs/' + p.slug + '/' + row.u] = row;
                 seen.push(row.u); n++; out.rows++;
                 if (n % WRITE_BATCH === 0) { await db.ref().update(batch); batch = {}; }
-                if (nowMs() > deadline || out.rows >= MAX_ROWS) break;
+                if (nowMs() > deadline || out.rows >= MAX_ROWS) { cut = true; break; }
               }
             } catch (e) {
+              cut = true;
               console.warn('syncMailbox 목록을 못 읽었습니다:', p.box.path, String((e && e.message) || e));
             }
             if (Object.keys(batch).length) await db.ref().update(batch);
 
-            /* ⚠ 본 **범위**를 표시에 함께 넣는다. 그 사이 번호가 다 지워진 구간이면
-               가져온 것이 하나도 없는데, 그때 표시가 안 움직이면 같은 빈 구간을
-               영원히 다시 본다(창이 멈춘다). */
-            seen.push(r.from, r.to);
-            p.sync = MB.nextSync(p.sync, seen, p.st.uidValidity, w.done);
-            p.sync.n = Number(p.sync.n || 0) + n;
-            if (nowMs() > deadline || out.rows >= MAX_ROWS) break;
+            /* ── 끊겼을 때 표시를 어떻게 옮기나 ──
+               IMAP 은 번호가 «작은 것부터» 온다. 그래서 중간에 끊기면 손에 있는 것은
+               그 구간의 «아래쪽»이다.
+
+               · 새것 방향([hi+1 … 맨위])은 끊겨도 괜찮다. hi 를 «받은 것 중 가장 큰
+                 번호»로 올리면, 다음 회차가 바로 그 위에서 이어 받는다.
+               · 옛것 방향([lo-뭉치 … lo-1])은 끊기면 표시를 **옮기면 안 된다.**
+                 lo 를 받은 것 중 가장 작은 번호로 내리면, 못 받은 «위쪽»(예: 4751~5000)이
+                 이미 본 것으로 표시돼 **영원히 건너뛴다.** 그냥 두면 다음 회차에 같은
+                 구간을 다시 본다 — 같은 줄을 덮어쓰는 것뿐이라 해가 없다.
+
+               ⚠ 끝까지 다 본 구간은 «범위 자체»를 표시에 넣는다. 그 사이 번호가 모두
+                 지워진 구간이면 받은 것이 하나도 없는데, 그때 표시가 안 움직이면 같은
+                 빈 구간을 영원히 다시 본다(창이 멈춘다). */
+            if (r.dir === 'back' && cut) {
+              /* 표시를 옮기지 않는다 — 이번에 적은 줄은 그대로 남는다 */
+            } else {
+              if (!cut) seen.push(r.from, r.to);
+              const before = Number(p.sync.n || 0);
+              p.sync = MB.nextSync(p.sync, seen, p.st.uidValidity, w.done && !cut);
+              p.sync.n = before + n;
+            }
+            if (cut) break;
           }
         } finally {
           try { lock.release(); } catch (_) { /* 이미 놓였다 */ }
         }
       }
 
-      /* ③ 다음메일에서 지운 것을 우리 목록에서도 뺀다.
-         ⚠ 값이 어긋날 때만 한다. 회차마다 폴더 전체를 읽으면 그것이 곧 요금이다
-           (2026-08-16 「once 뒤 on」 사고와 같은 결). 통수가 우리 것과 같으면
-           지워진 것이 없다는 뜻이니 열어 보지 않는다. */
-      const doneAll = !!p.sync.done;
+      /* ④ 다음메일에서 지운 것을 우리 목록에서도 뺀다.
+         ⚠ 값이 어긋날 때만, 그리고 «더 가져올 것이 없을 때만» 한다. 회차마다 폴더
+           전체를 읽으면 그것이 곧 요금이다(2026-08-16 「once 뒤 on」 사고와 같은 결).
+           통수가 우리 것과 같으면 지워진 것이 없다는 뜻이니 열어 보지 않는다. */
+      const doneAll = !more && !!p.sync.done;
       const mismatch = doneAll && Number(p.sync.n || 0) !== Number(p.st.messages || 0);
       const stale = nowMs() - Number(p.sync.prunedAt || 0) > PRUNE_GAP_MS;
       if (mismatch && stale && pruned < 1 && nowMs() < deadline) {
@@ -193,12 +233,17 @@ async function runSync(deps, opts) {
       p.sync.at = nowMs();
       p.sync.total = Number(p.st.messages || 0);
       await db.ref(ROOT + '/sync/' + p.slug).update(p.sync);
-      if (p.sync.done) out.ready++; else out.waiting++;
+      if (more) queue.push(p);          // 아직 남았다 — 줄 끝에 다시 세운다
     }
+
+    /* ⑤ 셈은 «끝난 뒤 한 번만» 한다. 바퀴마다 세면 같은 폴더를 여러 번 센다 —
+       「기다리는 폴더 33개」가 「198개」로 보이면 그 숫자를 못 믿게 된다. */
+    plan.forEach((p) => { if (p.sync && p.sync.done) out.ready++; else out.waiting++; });
+    out.turns = turns;
 
     await db.ref(ROOT + '/meta').update({
       at: nowMs(), ok: true, folders: out.folders, rows: out.rows,
-      removed: out.removed, ready: out.ready, waiting: out.waiting, err: '',
+      removed: out.removed, ready: out.ready, waiting: out.waiting, turns: turns, err: '',
     });
   } catch (e) {
     out.ok = false;
@@ -460,6 +505,9 @@ module.exports = function build(deps) {
   };
 };
 
-/* 검사에서 값 판단만 따로 부를 수 있게 열어 둔다 */
+/* 검사에서 부를 수 있게 열어 둔다 — 값 판단(pickParts)과 «한 회차 돌리기»(runSync).
+   runSync 는 opts.client 로 가짜 메일함을 끼울 수 있다. */
 module.exports.pickParts = pickParts;
+module.exports.runSync = runSync;
 module.exports.ROOT = ROOT;
+module.exports.CHUNK = CHUNK;
