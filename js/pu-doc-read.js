@@ -259,7 +259,10 @@
      'other' 로 굳은 사진들이었다. 사람이 한 장씩 「다시 판독」을 눌러야만
      풀리는 상태는 자동 분류라고 할 수 없다.
      ⚠ 종류를 늘리거나 프롬프트를 고치면 이 번호를 반드시 올릴 것. */
-  var READ_VERSION = 10;  // …/ 8 = 문서 차례 그대로(pairs 를 모든 서류에) / 9 = 모든 서류에 제목(docName), 사업자등록증명을 사업자등록증으로 줄여 쓰지 않기 / 10 = 서식에 법인등록번호·설립일자·업태·업종·주생산품·매출액·상시근로자수·홈페이지를 이름 붙은 키로
+  /* ⚠ 11 은 «물음»이 바뀐 것이 아니라 **읽는 길**이 늘었다(글자 있는 PDF 를 글자로).
+     그래도 번호를 올린다 — 그림으로 읽어 둔 옛 PDF 서류를 글자로 다시 읽으면
+     1↔7 오독이 사라지고, 다시 읽는 값이 그림 왕복보다 싸다. */
+  var READ_VERSION = 11;  // …/ 9 = 모든 서류에 제목(docName) / 10 = 서식에 매출액·상시근로자수 등을 이름 붙은 키로 / 11 = 글자 있는 PDF 는 글자로 판독(그림 왕복 없음)
 
   function fail(message) {
     return { kind: 'other', fields: {}, bizNoOk: null, ntsChecked: false, ntsState: null, error: message };
@@ -542,7 +545,43 @@
       return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
     });
     parts.push({ text: PROMPT_ALL + (imgs.length > 1 ? MULTI_NOTE : '') });
+    return runDocParts(parts);
+  }
 
+  /* ── 글자로 된 서류를 판독한다 (대표 결정 2026-08-24) ──
+     "글자 있는 PDF 는 글자로" — 홈택스·정부포털이 «만들어 준» PDF 는 안에 글자가
+     그대로 있다. 실데이터에서 사진첩 서류의 65%(382/585)가 사업자등록증(명)이었다.
+     그것을 3배 배율 그림(한 쪽 831KB)으로 바꿔 AI 에게 「읽어라」 하던 것을 그만둔다.
+
+     ⚠ 무엇이 나아지나
+       · 판독할 때마다 그림을 내려받지 않는다 — 되풀이 판독이 비용의 큰 몫이었다.
+       · AI 입력이 한 쪽 3,000토큰 → 500~1,500토큰.
+       · **1↔7 · 4↔9 오독이 원천적으로 없다.** 글자는 이미 정확하다.
+       · 쪽수 제한이 사실상 없다 — 그림은 여러 장을 한 번에 넣으면 뒤쪽을 못 본다.
+     ⚠ 물음(PROMPT_ALL)은 **그대로 쓴다.** 갈래 목록·칸 이름·제목 규칙·pairs 규칙을
+       두 벌로 두면 한쪽만 고쳐 놓고 다른 쪽은 옛 규칙으로 남는다. 앞머리가 「이
+       이미지가」로 시작하므로, 그것이 아래 글자를 가리킨다고 한 줄로 바로잡는다.
+     ⚠ 주민번호는 여기서 한 번 더 지운다 — 부르는 쪽에서 잊어도 AI 로는 안 나가게
+       (readTableText 와 같은 「마지막 문지기」 원칙). 글자는 사진과 달리 자리를
+       틀릴 일이 없어 지우는 것이 안전하다. */
+  var TEXT_NOTE =
+    '\n\n⚠ 위에서 「이미지」라고 한 것은 아래 글자를 말합니다 — 이 서류에서 **그대로 뽑아 낸 글자**입니다(그림이 아닙니다).' +
+    ' 글자는 이미 정확하므로 고쳐 쓰거나 지어내지 마십시오.' +
+    ' 여러 쪽이면 「--- N쪽 ---」 로 나뉘어 있고, 쪽마다 따로 답하지 말고 **전체를 함께 읽어 한 벌의 JSON**만 주세요.';
+
+  function readDocText(text) {
+    if (!deps.fetch) return Promise.resolve(fail('판독 준비가 되지 않았습니다'));
+    var body = String(text == null ? '' : text).trim();
+    /* 빈 글자로 AI 를 부르면 헛돈이고 답도 쓸 수 없다 — 부르는 쪽이 그림으로 가야 한다. */
+    if (!body) return Promise.resolve(fail('읽을 글자가 없습니다'));
+    var RM = global.PuRrnMask;
+    if (RM && RM.maskRrnInText) body = RM.maskRrnInText(body).text;
+    return runDocParts([{ text: PROMPT_ALL + TEXT_NOTE + '\n\n' + body }]);
+  }
+
+  /* 모델·재시도·키 조달·결과 다듬기 — 사진으로 보낼 때와 글자로 보낼 때가 **똑같이**
+     쓴다. 두 벌로 두면 한쪽만 고쳐 놓고 다른 쪽은 옛 길로 남는다. */
+  function runDocParts(parts) {
     /* 서버 대리인이 있으면 열쇠를 아예 안 챙긴다(2026-08-17) */
     if (useProxy()) {
       return askProxy(parts).then(function (j) {
@@ -767,6 +806,7 @@
     PROMPTS: { all: PROMPT_ALL },
     READ_VERSION: READ_VERSION,
     read: read,
+    readDocText: readDocText,
     readWageTable: readWageTable,
     readTableText: readTableText,
     readChangeNotice: readChangeNotice,

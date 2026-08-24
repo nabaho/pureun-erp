@@ -17,7 +17,7 @@
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=1"></script>
 <!-- ?v= 저장 층을 고치면 반드시 올린다 — 캐시에 묵으면 고친 것이 통째로 묻힌다. -->
-<script src="js/pu-photo-store.js?v=6"></script>
+<script src="js/pu-photo-store.js?v=7"></script>
 <!-- 주민번호 가림 — 계산 층과, 급여데이터함과 나눠 쓰는 긋기 층 -->
 <script src="js/pu-rrn-mask.js?v=3"></script>
 <script src="js/pu-rrn-mask-ui.js?v=2"></script>
@@ -26,7 +26,7 @@
      이 파일이 캐시에 묵으면 옛 지시로 읽어 제목이 안 생기는데, 화면(pu-photos.html)은
      새것이라 제목 자리만 비어 보인다 — 고친 것이 통째로 묻힌 것처럼 된다.
      tests/photos-doc-title.test.js 가 둘이 어긋나지 않는지 지킨다. -->
-<script src="js/pu-doc-read.js?v=13"></script>
+<script src="js/pu-doc-read.js?v=14"></script>
 <script src="js/pu-lockkey.js?v=1"></script>
 <!-- ?v= 는 등록 층을 고칠 때 올린다 — 캐시에 묵으면 고친 안내가 안 보인다. -->
 <script src="js/pu-doc-file.js?v=4"></script>
@@ -4116,9 +4116,29 @@ async function pdfToPages(file) {
        넘어가면 올리기가 멈춘다. print 로 두면 그 신호를 기다리지 않는다. */
     await page.render({ canvasContext: c.getContext('2d'), viewport: vp, intent: 'print' }).promise;
     const blob = await new Promise(function (res) { c.toBlob(res, 'image/jpeg', 0.92); });
-    out.push({ blob: blob, page: n, total: total });
+    /* ── 안에 이미 있는 «글자»도 함께 뽑는다 (대표 결정 2026-08-24) ──
+       홈택스·정부포털이 만들어 준 PDF 는 글자가 그대로 들어 있다. 그림은 «보기용»
+       으로 그대로 두고, **판독은 글자로** 한다 — 그림을 다시 내려받지 않아도 되고,
+       AI 입력이 몇 배 작아지고, 1↔7·4↔9 오독이 원천적으로 없다.
+       ⚠ 스캔한 종이는 글자가 없다 — 그때는 빈 문자열이 되어 예전처럼 그림으로 읽는다.
+       ⚠ 글자 뽑기가 실패해도 올리기를 멈추지 않는다. 그림은 이미 손에 있다. */
+    let txt = '';
+    try {
+      const tc = await page.getTextContent();
+      txt = (tc.items || []).map(function (t) { return (t && t.str) || ''; }).join(' ')
+        .replace(/[ \t]+/g, ' ').trim();
+    } catch (e) { console.warn('[PDF 글자]', n, e && e.message); }
+    out.push({ blob: blob, page: n, total: total, text: txt });
   }
   return { pages: out, total: total, taken: take };
+}
+
+/* 글자가 «쓸 만큼» 있는가. 스캔한 종이는 0~몇 자만 나온다(도장 옆 잡티가 글자로
+   잡히는 일이 있어 0 으로만 가르면 안 된다). 한 쪽에 40자면 서류로서 읽을 것이 있다.
+   ⚠ 낮추면 스캔을 글자로 읽으려 들어 빈 답이 온다. 올리면 짧은 서식이 그림으로 간다. */
+const PDF_TEXT_MIN = 40;
+function pdfTextUsable(t) {
+  return String(t || '').replace(/\s/g, '').length >= PDF_TEXT_MIN;
 }
 
 /* ══════ 한 문서로 모으기 (대표 지시 2026-08-13) ══════
@@ -4328,6 +4348,8 @@ async function addFiles(fileList, isDoc, opts) {
         /* taken: 실제로 담은 쪽수. total 보다 적을 수 있다(상한에 걸린 경우) —
            둘을 함께 남겨야 "나머지는 어디 갔나"에 답할 수 있다. */
         file.__pdfDoc = { name: base, page: p.page, total: r.total, taken: r.taken, group: gid };
+        /* 안에 있던 글자를 사진에 딸려 보낸다 — 판독은 이것으로 한다(대표 결정 2026-08-24). */
+        if (pdfTextUsable(p.text)) file.__pdfText = p.text;
         files.push(file);
       });
       if (r.total > r.taken) {
@@ -4423,6 +4445,12 @@ async function addFiles(fileList, isDoc, opts) {
       if (cp && cp.way) { meta.capWay = cp.way; meta.capW = cp.w; meta.capH = cp.h; }
       /* 잰 선명도도 함께 — 기준값을 실제 사진으로 맞추려면 숫자가 남아야 한다 */
       if (cp && typeof cp.sharp === 'number') meta.sharp = cp.sharp;
+      /* PDF 안에 글자가 있었다는 표시 — 판독이 이것을 보고 «글자로» 읽는다.
+         ⚠ 글자 자체는 meta 에 담지 «않는다». 목록을 부를 때 meta 를 통째로
+           내려받으므로, 쪽마다 수천 자를 넣으면 사진첩을 열 때마다 그것을 다
+           내려받는다 — 줄이려던 비용이 오히려 늘어난다. 글자는 저장 층이 따로
+           담는다(texts/…). 여기에는 「있다」는 한 글자만 남긴다. */
+      if (f.__pdfText) meta.hasText = true;
       await queue.enqueue({
         _fromCam: !!(opts && opts.fromCam),
         _portalCapture: !!(opts && opts.portalCapture),
@@ -4432,6 +4460,7 @@ async function addFiles(fileList, isDoc, opts) {
         kind: isDoc ? 'doc' : 'photo',
         full: full.dataUrl,
         thumb: thumb.dataUrl,
+        text: f.__pdfText || '',
         meta: meta
       });
     } catch (e) {
@@ -4955,6 +4984,33 @@ function docJobs(job) {
     .sort(function (a, b) { return (a.meta.doc.page || 0) - (b.meta.doc.page || 0); });
 }
 
+/* ── 이 문서를 «글자로» 읽을 수 있는가 (대표 결정 2026-08-24) ──
+   쪽마다 뽑아 둔 글자를 쪽 차례대로 이어 준다. 못 읽으면 빈 문자열 —
+   부르는 쪽이 그림으로 물러난다.
+
+   ⚠ **모든 쪽에 글자가 있어야** 글자로 간다. 한 쪽이라도 스캔이면 그 쪽 내용이
+     통째로 빠진 채 「다 읽었다」로 돌아온다 — 반쪽만 읽는 것이 그림으로 읽는 것보다
+     나쁘다(빠진 줄도 모른다).
+   ⚠ 쪽 표시를 붙인다. 없으면 AI 가 두 쪽 사이를 한 줄로 이어 읽어 값이 섞인다. */
+function docTextOf(list) {
+  const arr = list || [];
+  if (!arr.length) return '';
+  const parts = [];
+  for (let i = 0; i < arr.length; i++) {
+    const t = textOfOne(arr[i]);
+    if (!pdfTextUsable(t)) return '';
+    parts.push(arr.length > 1 ? ('--- ' + (i + 1) + '쪽 ---\n' + t) : t);
+  }
+  return parts.join('\n\n');
+}
+/* 올리는 중이면 손에 들고 있고(job.text), 이미 올라간 것이면 미리 받아 둔다(_text). */
+function textOfOne(x) {
+  if (!x) return '';
+  if (typeof x.text === 'string' && x.text) return x.text;
+  if (typeof x._text === 'string' && x._text) return x._text;
+  return '';
+}
+
 function startRead(job) {
   /* ⚠ 저장한 자리와 **같은 셈법**이어야 한다(올린 때 기준). 촬영 시각으로 세면
      2019년 사진을 오늘 올렸을 때 판독 결과를 2019년 자리에 적어 사라진다. */
@@ -4965,7 +5021,15 @@ function startRead(job) {
      쪽마다 따로 보면 조문만 있는 2쪽 이후가 죄다 빈칸으로 돌아온다. */
   const sibs = docJobs(job);
   const imgs = sibs.map(function (s) { return s.full; }).filter(function (f) { return safeSrc(f); });
-  return PuDocRead.read(imgs.length > 1 ? imgs : (imgs[0] || job.full)).then(function (r) {
+  /* ── 글자가 있으면 «글자로» 읽는다 (대표 결정 2026-08-24) ──
+     그림을 보내면 AI 가 「읽어야」 하고 1↔7 오독이 생긴다. 글자는 이미 정확하다.
+     ⚠ **모든 쪽에 글자가 있어야** 글자로 간다. 한 쪽이라도 스캔이면 그 쪽 내용이
+       통째로 빠지므로, 그때는 예전처럼 그림으로 읽는다(반쪽만 읽는 것이 더 나쁘다). */
+  const txt = docTextOf(sibs);
+  const src = txt
+    ? PuDocRead.readDocText(txt)
+    : PuDocRead.read(imgs.length > 1 ? imgs : (imgs[0] || job.full));
+  return src.then(function (r) {
     const v = PuDocRead.autoOk(r);
     const read = {
       kind: r.kind, fields: r.fields, bizNoOk: r.bizNoOk,
@@ -9598,16 +9662,38 @@ function readPhoto(id, masked) {
   const pages = docPages(id);
   /* ⚠ 가린 사본이 왔으면 **그것만** 읽힌다. 여기서 원본을 함께 실으면 가린 뜻이 없다.
      그래서 여러 쪽짜리도 그 한 장만 간다 — 가림은 보고 있는 쪽에 대해 한 것이다. */
-  const source = masked
-    ? Promise.resolve([masked])
-    : Promise.all(pages.map(function (p) {
-        return PuPhotoStore.loadFull(photoYearOf(p.id), p.id, photoOwner(p.id))
-          .catch(function () { return ''; });
-      }));
-  return source.then(function (fulls) {
-    const imgs = fulls.filter(function (f) { return safeSrc(f); });
-    if (!imgs.length) throw new Error('사진 본문을 불러오지 못했습니다');
-    return PuDocRead.read(imgs.length > 1 ? imgs : imgs[0]);
+  /* ── 글자가 있으면 «글자로» 읽는다 (대표 결정 2026-08-24) ──
+     PDF 안에 있던 글자를 담아 두었으면 **원본 그림을 아예 안 내려받는다.** 되풀이
+     판독이 비용의 큰 몫이었는데(한 쪽 831KB), 그 왕복이 통째로 사라진다.
+     ⚠ 가린 사본이 왔으면 글자로 가지 «않는다» — 가린 것은 그림이고, 글자에는 가린
+       자리가 그대로 남아 있다. 가린 뜻이 없어진다.
+     ⚠ 글자가 한 쪽이라도 없으면 그림으로 물러난다(docTextOf 가 빈 문자열을 준다).
+       휴지통에서 되살린 사진은 글자가 없을 수 있는데, 그때도 판독이 멈추면 안 된다. */
+  const wantText = !masked && pages.some(function (p) {
+    const g = gridItems.find(function (x) { return x.id === p.id; });
+    return !!(g && g.meta && g.meta.hasText);
+  });
+  const textP = wantText
+    ? Promise.all(pages.map(function (p) {
+        return PuPhotoStore.loadText(photoYearOf(p.id), p.id, photoOwner(p.id))
+          .then(function (t) { return { _text: t }; })
+          .catch(function () { return { _text: '' }; });
+      })).then(docTextOf)
+    : Promise.resolve('');
+
+  return textP.then(function (txt) {
+    if (txt) return PuDocRead.readDocText(txt);
+    const source = masked
+      ? Promise.resolve([masked])
+      : Promise.all(pages.map(function (p) {
+          return PuPhotoStore.loadFull(photoYearOf(p.id), p.id, photoOwner(p.id))
+            .catch(function () { return ''; });
+        }));
+    return source.then(function (fulls) {
+      const imgs = fulls.filter(function (f) { return safeSrc(f); });
+      if (!imgs.length) throw new Error('사진 본문을 불러오지 못했습니다');
+      return PuDocRead.read(imgs.length > 1 ? imgs : imgs[0]);
+    });
   }).then(function (r) {
     const v = PuDocRead.autoOk(r);
     const read = {
