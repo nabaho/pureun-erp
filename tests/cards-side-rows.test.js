@@ -27,12 +27,19 @@ test('세로 줄 모양이 CSS 에 있다', () => {
   assert.match(source, /\.sidetabv button\{[^}]*justify-content:flex-start/);
 });
 
-test('갈래 차례는 메일 · 명함 · 사업자', () => {
+/* 2026-08-24 대표 지시로 메일이 이 줄에서 빠졌다 — 메일은 딴 창이고, 들어가는 길은
+   옆줄 맨 아래 「✉️ 메일 열기」다. 차례는 명함 → 사업자 → 기업 상세만 남는다.
+   자세한 것은 tests/cards-mail-own-window.test.js. */
+test('갈래 차례는 명함 · 사업자 · 기업 상세 (메일은 딴 창이라 없다)', () => {
   const fn = sideFn();
-  const i = fn.indexOf('openMailPage()');
   const j = fn.indexOf("switchTab('card')");
   const k = fn.indexOf("switchTab('biz')");
-  assert.ok(i > 0 && j > i && k > j, '메일 → 명함 → 사업자 차례가 아니다');
+  const l = fn.indexOf('openCoPage()');
+  assert.ok(j > 0 && k > j && l > k, '명함 → 사업자 → 기업 상세 차례가 아니다');
+  const tabs = fn.indexOf('class="sidetab sidetabv"');
+  const rowEnd = fn.indexOf('</div></div>`', tabs);
+  assert.ok(fn.slice(tabs, rowEnd).indexOf('openMailPage()') < 0,
+    '갈래 줄에 메일이 되살아나면 두 창으로 나눈 뜻이 없어진다');
 });
 
 test('로고와 갈래가 붙박이 덩어리 안에 들어 있다', () => {

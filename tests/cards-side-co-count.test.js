@@ -59,7 +59,10 @@ test('세 자리마다 쉼표를 넣는다 — 명함·사업자와 같은 차�
 test('켜짐 표시는 그대로 하나뿐이다 — 개수를 넣다가 망가지면 안 된다', () => {
   const bar = tabBar();
   assert.match(bar, /\$\{onCo\?'on':''\}/, '기업 상세 켜짐 조건이 사라졌다');
-  assert.match(bar, /!onMail&&!onCo&&state\.tab==='card'/, '명함 켜짐 조건이 사라졌다');
+  /* 2026-08-24: 메일이 이 줄에서 빠져 「!onMail」로 가릴 일이 없어졌다 —
+     메일 창에서는 줄 자체를 안 그린다(tests/cards-mail-own-window.test.js). */
+  assert.match(bar, /!onCo&&state\.tab==='card'/, '명함 켜짐 조건이 사라졌다');
+  assert.ok(bar.indexOf('openMailPage()') < 0, '갈래 줄에 메일이 되살아났다');
 });
 
 test('값을 치른 근거가 코드에 적혀 있다', () => {
