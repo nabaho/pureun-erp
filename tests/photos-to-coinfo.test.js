@@ -132,8 +132,14 @@ test('한 번 보낸 사진은 다시 안 보낸다', () => {
 
 test('보낸 표시는 사진 주인 자리에 남긴다', () => {
   /* 남의 사진을 관리자가 보냈을 때 내 자리에 쓰면 주인 화면엔 「아직 안 보냄」으로 남아 또 보낸다 */
-  const at = html.indexOf('function sendCoInfo(');
-  assert.match(html.slice(at, at + 1400), /saveRead\(gridYear, id, read, photoOwner\(id\)\)/);
+  /* ⚠ 2026-08-23: 해를 gridYear 로 «박아 두지 않는다». 자동 보내기가 붙으면서
+     sendCoInfo 가 year 를 받게 되었다 — 화면의 해로 짐작하면 다른 해 사진의 기록이
+     엉뚱한 자리에 적힌다. 지킬 것은 「주인 자리(photoOwner)에 적는다」이지 그 해를
+     어디서 얻느냐가 아니다. 고정 폭 slice 도 cutFn 으로 바꿨다 — 함수가 길어지면
+     창이 끝에 못 닿는다(tests/test-cut-truncation 이 그것을 잡는다). */
+  const fn = cutFn(html, 'function sendCoInfo(');
+  assert.match(fn, /saveRead\([A-Za-z]+, id, read, photoOwner\(id\)\)/,
+    '★ 주인 자리에 안 적으면 주인 화면엔 「아직 안 보냄」으로 남아 또 보냅니다');
 });
 
 test('어느 서류에서 온 값인지 남긴다', async () => {
@@ -177,7 +183,14 @@ test('사진 번호가 없으면 서류 기록도 안 남긴다', async () => {
 });
 
 test('사진첩이 사진 번호·연도·주인을 함께 넘긴다', () => {
-  /* ⚠ 예전에는 앞 900자만 봤다(함수는 1,178자) — 함수를 통째로 본다. */
-  assert.match(cutFn(html, 'function sendCoInfo('),
-    /photo: \{ year: gridYear, id: id, owner: photoOwner\(id\)/);
+  /* ⚠ 예전에는 앞 900자만 봤다(함수는 1,178자) — 함수를 통째로 본다.
+     ⚠ 2026-08-23: 해를 gridYear 로 박아 두지 않는다 — 자동 보내기가 붙으면서
+       sendCoInfo 가 year 를 받게 되었다(화면의 해로 짐작하면 다른 해 사진의 기록이
+       엉뚱한 자리에 적힌다). 지킬 것은 「셋을 함께 넘긴다」이다. */
+  const fn = cutFn(html, 'function sendCoInfo(');
+  assert.match(fn, /photo: \{ year: [A-Za-z]+, id: id, owner: photoOwner\(id\)/,
+    '★ 어느 사진에서 온 값인지 안 남기면 나중에 그 서류를 못 찾습니다');
+  /* 그리고 그 해가 «주어진 것»부터 쓰는지 — 화면의 해는 마지막 수단이어야 한다. */
+  assert.match(fn, /const yr = year \|\|/,
+    '★ 화면의 해부터 쓰면 다른 해 사진에서 어긋납니다');
 });
