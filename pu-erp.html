@@ -36427,6 +36427,8 @@ function FinanceLedger(props){
   /* 휴대폰이 «붙어 있나» — 이것이 안 보여서 「문자는 왔는데 왜 안 들어오나」를
      아무도 확인할 수 없었다(대표 물음 2026-08-24). null 은 아직 안 물어본 것. */
   var hanaStatS=useState(null);  var hanaStat=hanaStatS[0];  var setHanaStat=hanaStatS[1];
+  var hanaAlertsS=useState([]);  var hanaAlerts=hanaAlertsS[0];  var setHanaAlerts=hanaAlertsS[1];
+  var hanaAlertOpenS=useState(false); var hanaAlertOpen=hanaAlertOpenS[0]; var setHanaAlertOpen=hanaAlertOpenS[1];
   var fNameS=useState('');     var fName=fNameS[0];   var setFName=fNameS[1];
   var inMatchS=useState({});   var inMatch=inMatchS[0]; var setInMatch=inMatchS[1];
   var expCatS=useState({});    var expCat=expCatS[0];   var setExpCat=expCatS[1];
@@ -36772,6 +36774,35 @@ function FinanceLedger(props){
     setHanaBusy(false);
   }
 
+  async function loadHanaAdminAlerts(openNow){
+    if(!_meNow().isAdmin) return [];
+    try{
+      var d=await hanaSmsCall('adminAlerts');
+      var list=Array.isArray(d.items)?d.items:[];
+      setHanaAlerts(list);
+      var sig=list.map(function(x){return x.alertKey;}).join('|');
+      var seen='';
+      try{seen=sessionStorage.getItem('pu_hana_alert_seen')||'';}catch(_se){}
+      if(list.length && (openNow || sig!==seen)){
+        setHanaAlertOpen(true);
+        try{sessionStorage.setItem('pu_hana_alert_seen',sig);}catch(_sw){}
+      }
+      return list;
+    }catch(e){
+      if(window._erpErrLog) window._erpErrLog(e);
+      return [];
+    }
+  }
+
+  async function resolveHanaAdminAlert(item){
+    if(!item || !item.alertKey) return;
+    try{
+      await hanaSmsCall('adminResolve',{alertKey:item.alertKey,resolution:'checked'});
+      setHanaAlerts(function(prev){return (prev||[]).filter(function(x){return x.alertKey!==item.alertKey;});});
+      showToast('입금 확인을 완료했습니다');
+    }catch(e){showToast('❌ 확인 상태를 저장하지 못했습니다: '+e.message);}
+  }
+
   async function importHanaSms(silent){
     if(hanaBusy) return;
     setHanaBusy(true);
@@ -36834,7 +36865,24 @@ function FinanceLedger(props){
 
       var summary=erpUploadSummary(mg,newOnly.length,0);
       setUpSum(summary);
+      var reviewItems=items.filter(function(x){return x.type!=='expense';}).map(function(x){
+        var amt=parseInt(x.amount,10)||0;
+        var ms=pending.filter(function(p){return p.amount===amt;});
+        return {
+          id:String(x.id||''),
+          officeStatus:ms.length===1?'matched':(ms.length?'ambiguous':'missing'),
+          matchedId:ms.length===1?String(ms[0].id||''):'',
+          companyName:ms.length===1?String(ms[0].companyName||ms[0].label||''):''
+        };
+      });
+      try{
+        if(reviewItems.length) await hanaSmsCall('review',{items:reviewItems});
+      }catch(_re){
+        if(window._erpErrLog) window._erpErrLog(_re);
+        if(!silent) showToast('입금 사업장 확인 알림은 잠시 후 다시 확인됩니다');
+      }
       await hanaSmsCall('ack',{ids:items.map(function(x){return x.id;}),batchId:bat?bat.id:'duplicate'});
+      if(_meNow().isAdmin) loadHanaAdminAlerts(false);
       showToast(newOnly.length
         ? ('📱 거래문자 '+newOnly.length+'건을 가져와 자동 매칭했습니다')
         : ('📱 '+items.length+'건은 이미 있는 거래라 중복으로 넣지 않았습니다'));
@@ -36856,6 +36904,17 @@ function FinanceLedger(props){
     hanaAutoOnce.current=true;
     var timer=setTimeout(function(){ importHanaSms(true).then(refreshHanaStatus, refreshHanaStatus); },1800);
     return function(){ clearTimeout(timer); };
+  },[]);
+  useEffect(function(){
+    if(!_meNow().isAdmin) return;
+    var requested=false;
+    try{requested=(new URLSearchParams(location.search)).get('hanaAlert')==='1';}catch(_qe){}
+    var stopped=false;
+    var poll=function(){if(!stopped && !document.hidden) loadHanaAdminAlerts(requested); requested=false;};
+    var timer=setTimeout(poll,700);
+    var interval=setInterval(poll,180000);
+    document.addEventListener('visibilitychange',poll);
+    return function(){stopped=true;clearTimeout(timer);clearInterval(interval);document.removeEventListener('visibilitychange',poll);};
   },[]);
   /* 묶음 하나를 «모두에게서» 지운다 — 그 묶음의 줄만 사라진다.
      겹쳐서 다른 묶음에도 있던 줄은 그 묶음 몫으로 남는다(다시 합치면 살아난다). */
@@ -38289,6 +38348,35 @@ function FinanceLedger(props){
 
   return h('div',{style:{padding:'0 2px'}},
 
+    hanaAlertOpen && _meNow().isAdmin && h('div',{role:'dialog','aria-modal':'true','aria-label':'입금 사업장 확인 알림',
+      onClick:function(){setHanaAlertOpen(false);},
+      style:{position:'fixed',inset:0,zIndex:10045,background:'rgba(15,23,42,.62)',display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}},
+      h('div',{onClick:function(e){e.stopPropagation();},
+        style:{width:'min(560px,100%)',maxHeight:'min(78vh,720px)',overflow:'auto',background:'#fff',borderRadius:'18px',padding:'20px',boxShadow:'0 24px 70px rgba(15,23,42,.35)'}},
+        h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'10px',marginBottom:'12px'}},
+          h('div',null,
+            h('strong',{style:{fontSize:'19px',color:'#1e293b'}},'💰 입금 사업장 확인 '+hanaAlerts.length+'건'),
+            h('div',{style:{fontSize:'12px',color:'#64748b',marginTop:'3px'}},'총괄관리자 전용 · 거래내역에서 확인 후 완료 처리하세요')),
+          h('button',{onClick:function(){setHanaAlertOpen(false);},'aria-label':'닫기',style:{border:0,background:'#f8fafc',borderRadius:'9px',width:'34px',height:'34px',cursor:'pointer',fontSize:'18px'}},'×')),
+        !hanaAlerts.length && h('div',{style:{padding:'28px 8px',textAlign:'center',color:'#64748b'}},'확인할 새 입금이 없습니다.'),
+        hanaAlerts.map(function(a){
+          var missing=a.officeStatus!=='matched';
+          return h('div',{key:a.alertKey,style:{border:'1px solid '+(missing?'#fde68a':'#bfdbfe'),background:missing?'#fffbeb':'#eff6ff',borderRadius:'12px',padding:'13px',marginBottom:'9px'}},
+            h('div',{style:{display:'flex',justifyContent:'space-between',gap:'10px',alignItems:'flex-start'}},
+              h('div',null,
+                h('strong',{style:{fontSize:'16px',color:'#1e293b'}},Number(a.amount||0).toLocaleString('ko-KR')+'원 입금'),
+                h('div',{style:{fontSize:'12px',color:'#64748b',marginTop:'3px'}},String(a.date||'')+' · '+String(a.memo||'입금'))),
+              h('span',{style:{fontSize:'11px',fontWeight:800,color:missing?'#d97706':'#2563eb',whiteSpace:'nowrap'}},missing?'확인 필요':'후보 확인됨')),
+            h('div',{style:{marginTop:'9px',fontSize:'13px',fontWeight:800,color:missing?'#854d0e':'#1e40af'}},
+              missing?'사무관리에서 내용을 입력 또는 확인해야 합니다.':('입금 사업장 후보: '+String(a.companyName||'확인 필요'))),
+            h('div',{style:{display:'flex',gap:'7px',marginTop:'11px',flexWrap:'wrap'}},
+              missing && h('button',{onClick:function(){setHanaAlertOpen(false);window.navigateTo('biz/contract');},style:{flex:'1 1 150px',padding:'9px',border:'1px solid #fbbf24',background:'#fff',color:'#854d0e',borderRadius:'8px',fontWeight:800,cursor:'pointer'}},'사무관리 입력·확인'),
+              h('button',{onClick:function(){resolveHanaAdminAlert(a);},style:{flex:'1 1 130px',padding:'9px',border:0,background:'#2563eb',color:'#fff',borderRadius:'8px',fontWeight:800,cursor:'pointer'}},'확인 완료'))
+          );
+        })
+      )
+    ),
+
     hanaPair && h('div',{role:'dialog','aria-modal':'true','aria-label':'하나 거래문자 휴대폰 연결',
       onClick:function(){setHanaPair(null);},
       style:{position:'fixed',inset:0,zIndex:10040,background:'rgba(15,23,42,.58)',display:'flex',alignItems:'center',justifyContent:'center',padding:'18px'}},
@@ -38359,6 +38447,10 @@ function FinanceLedger(props){
         title:'새로 받은 하나은행·하나카드 거래문자를 가져와 기존 거래내역과 자동으로 맞춥니다',
         style:{padding:'5px 9px',border:'1px solid #bbf7d0',background:'#f0fdf4',color:'#16a34a',borderRadius:'6px',fontSize:'11px',fontWeight:800,cursor:hanaBusy?'wait':'pointer',whiteSpace:'nowrap'}},
         hanaBusy?'⏳ 확인 중':'📱 문자 가져오기'),
+      _meNow().isAdmin && hanaAlerts.length>0 && h('button',{type:'button',onClick:function(e){e.stopPropagation();setHanaAlertOpen(true);},
+        title:'입금 사업장 확인이 필요한 거래를 봅니다',
+        style:{padding:'5px 9px',border:'1px solid #fbbf24',background:'#fffbeb',color:'#d97706',borderRadius:'6px',fontSize:'11px',fontWeight:900,cursor:'pointer',whiteSpace:'nowrap'}},
+        '🔔 입금 확인 '+hanaAlerts.length+'건'),
       hanaStatChip(),
       h('span',{className:'ld-up-sep',style:{width:'1px',height:'18px',background:'#e2e8f0'}}),
       // 드롭존 (1줄) — 폰에는 «끌어다 놓기» 가 없어 css 에서 접는다(.ld-up-drophint)

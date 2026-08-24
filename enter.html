@@ -1527,6 +1527,112 @@ body.portal-mode #moreFab{display:flex;}
     return ref;
   }
 
+  // ── 하나은행·하나카드 입금 확인 알림 (총괄관리자 전용) ──
+  // 큰 거래표를 감시하지 않고 작은 서버 요약만 로그인 때 1회, 이후 3분마다 확인한다.
+  var HANA_SMS_FN_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/hanaMessageBridge';
+  var portalHanaPollTimer = 0;
+  var portalHanaVisibilityHandler = null;
+  var portalHanaRole = '';
+
+  function portalHanaRemoveChip(){ var chip = $('portalHanaChip'); if(chip) chip.remove(); }
+  function portalHanaRemoveUi(){
+    portalHanaRemoveChip();
+    var modal = $('portalHanaModal'); if(modal) modal.remove();
+  }
+  function stopPortalHanaAlerts(){
+    portalHanaRole = '';
+    if(portalHanaPollTimer){ clearInterval(portalHanaPollTimer); portalHanaPollTimer = 0; }
+    if(portalHanaVisibilityHandler){
+      document.removeEventListener('visibilitychange', portalHanaVisibilityHandler);
+      portalHanaVisibilityHandler = null;
+    }
+    portalHanaRemoveUi();
+  }
+  function portalHanaCall(){
+    var u = auth.currentUser;
+    if(!u) return Promise.reject(new Error('로그인이 필요합니다'));
+    return u.getIdToken().then(function(token){
+      return fetch(HANA_SMS_FN_URL, {
+        method:'POST',
+        headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},
+        body:JSON.stringify({action:'adminAlerts'})
+      });
+    }).then(function(resp){
+      return resp.json().catch(function(){ return {}; }).then(function(data){
+        if(!resp.ok || !data.ok) throw new Error(data.error || '입금 알림을 확인하지 못했습니다');
+        return Array.isArray(data.items) ? data.items : [];
+      });
+    });
+  }
+  function openHanaLedger(){
+    var erp = null;
+    for(var i=0;i<APPS.length;i++){ if(APPS[i].key === 'erp'){ erp = APPS[i]; break; } }
+    if(!erp) return;
+    var v = Math.floor(Date.now()/600000);
+    var url = erp.url + '?sso=1&hanaAlert=1&v=' + v + '#menu=fin/ledger';
+    if(isMobile()) location.href = url;
+    else openPortalApp(erp, url);
+  }
+  function closePortalHanaModal(){ var m=$('portalHanaModal'); if(m) m.style.display='none'; }
+  function showPortalHanaModal(items){
+    if(!items || !items.length) return;
+    var old=$('portalHanaModal'); if(old) old.remove();
+    var missing=items.filter(function(x){ return x.officeStatus !== 'matched'; }).length;
+    var m=document.createElement('div'); m.id='portalHanaModal'; m.setAttribute('role','dialog'); m.setAttribute('aria-modal','true');
+    m.style.cssText='position:fixed;inset:0;z-index:10050;background:rgba(15,23,42,.48);display:flex;align-items:center;justify-content:center;padding:18px;';
+    var card=document.createElement('div');
+    card.style.cssText='width:min(440px,100%);background:#fff;border-radius:20px;box-shadow:0 24px 70px rgba(15,23,42,.3);padding:22px;color:#172554;';
+    var title=document.createElement('h2'); title.textContent='💰 입금 사업장 확인 '+items.length+'건';
+    title.style.cssText='font-size:20px;margin:0 0 12px;'; card.appendChild(title);
+    var msg=document.createElement('div');
+    msg.style.cssText='font-size:14px;line-height:1.65;color:#475569;background:#f8fafc;border-radius:12px;padding:12px 14px;';
+    msg.textContent='새 입금 내역이 있습니다. 거래내역에서 입금 사업장을 확인해 주세요.';
+    card.appendChild(msg);
+    if(missing){
+      var warn=document.createElement('div');
+      warn.style.cssText='margin-top:10px;padding:11px 14px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:700;font-size:13px;';
+      warn.textContent='⚠ 사무관리 입력 또는 확인 필요 '+missing+'건'; card.appendChild(warn);
+    }
+    var actions=document.createElement('div'); actions.style.cssText='display:flex;gap:8px;margin-top:16px;';
+    var close=document.createElement('button'); close.type='button'; close.textContent='나중에'; close.style.cssText='flex:1;padding:12px;border:1px solid #cbd5e1;background:#fff;border-radius:11px;font-weight:700;'; close.onclick=closePortalHanaModal;
+    var open=document.createElement('button'); open.type='button'; open.textContent='거래내역에서 확인'; open.style.cssText='flex:2;padding:12px;border:0;background:#1d4ed8;color:#fff;border-radius:11px;font-weight:800;'; open.onclick=openHanaLedger;
+    actions.appendChild(close); actions.appendChild(open); card.appendChild(actions); m.appendChild(card);
+    m.addEventListener('click',function(e){ if(e.target===m) closePortalHanaModal(); });
+    document.body.appendChild(m);
+  }
+  function renderPortalHanaAlerts(items, allowPopup){
+    var modal=$('portalHanaModal');
+    var modalWasOpen=!!(modal && modal.style.display!=='none');
+    portalHanaRemoveChip();
+    if(!items || !items.length){ if(modal) modal.remove(); return; }
+    var missing=items.filter(function(x){ return x.officeStatus !== 'matched'; }).length;
+    var chip=document.createElement('button'); chip.id='portalHanaChip'; chip.type='button';
+    chip.style.cssText='position:fixed;left:14px;bottom:74px;z-index:10020;border:0;border-radius:999px;background:#b91c1c;color:#fff;padding:11px 16px;font-weight:800;box-shadow:0 8px 24px rgba(15,23,42,.25);';
+    chip.textContent='💰 입금 확인 '+items.length+'건'+(missing?' · 사무관리 '+missing+'건':'');
+    chip.onclick=function(){ showPortalHanaModal(items); }; document.body.appendChild(chip);
+    var sig=items.map(function(x){ return x.alertKey; }).join('|');
+    var seen=''; try{ seen=sessionStorage.getItem('pu_portal_hana_seen')||''; }catch(_se){}
+    if(modalWasOpen){
+      showPortalHanaModal(items);
+    }else if(allowPopup && sig!==seen){
+      try{ sessionStorage.setItem('pu_portal_hana_seen',sig); }catch(_sw){}
+      showPortalHanaModal(items);
+    }
+  }
+  function pollPortalHanaAlerts(allowPopup){
+    if(portalHanaRole!=='admin' || document.hidden) return;
+    portalHanaCall().then(function(items){ renderPortalHanaAlerts(items,allowPopup); }).catch(function(){ /* 다음 조회에서 조용히 재시도 */ });
+  }
+  function initPortalHanaAlerts(role){
+    stopPortalHanaAlerts();
+    if(role!=='admin') return;
+    portalHanaRole=role;
+    pollPortalHanaAlerts(true);
+    portalHanaPollTimer=setInterval(function(){ pollPortalHanaAlerts(true); },180000);
+    portalHanaVisibilityHandler=function(){ if(!document.hidden) pollPortalHanaAlerts(true); };
+    document.addEventListener('visibilitychange',portalHanaVisibilityHandler);
+  }
+
   // 로그인 직후 바로 찍기 — 오른쪽 아래 동그란 단추(#camFab, 정적 마크업).
   // 타일 줄과 달리 다시 그릴 필요가 없어 배선은 한 번만 한다.
   function wireCamFab(){
@@ -1752,6 +1858,7 @@ body.portal-mode #moreFab{display:flex;}
 
     // 건의함: 현재 사용자 정보 전달 + 플로팅 버튼 표시
     if(window.sgSetUser) window.sgSetUser(acct);
+    initPortalHanaAlerts(role);
   }
 
   // ══════════ 타일 순서: 드래그 이동 + 고정 (사용자별, 기기 간 동기화) ══════════
@@ -2311,6 +2418,7 @@ body.portal-mode #moreFab{display:flex;}
   // ── 로그아웃 ──
   $('logoutBtn').addEventListener('click', function(){
     /* 같은 탭에서 다시 로그인하면 반드시 포털 선택 화면에 머문다. */
+    stopPortalHanaAlerts();
     try { sessionStorage.setItem('pu_skip_home','1'); sessionStorage.removeItem('pu_auth_hint'); localStorage.removeItem('pu_auth_hint'); } catch(e){}
     auth.signOut().then(function(){ location.reload(); });
   });
