@@ -151,10 +151,44 @@
     return 'rules.html?sso=1#rev=' + encodeURIComponent(r.id);
   }
 
+  /* ── 서버 한도에 맞춰 자르기 ──
+     서버 규칙은 색인의 칸마다 길이를 잰다. 한 칸이라도 길면 «그 회차 저장이
+     통째로» 물리쳐지고, 화면에는 아무 말도 안 뜬 채 이력만 조용히 안 쌓인다.
+     표준 조 제목은 22자쯤이라 여유가 있지만, 규정관리는 사업장이 올린 «실제»
+     취업규칙을 읽으므로 회사가 길게 쓴 제목·긴 사업장명이 들어올 수 있다.
+     한도는 여기 한 곳에만 두고 규정관리·작성기가 같이 쓴다
+     (docs/firebase-rules-…json 의 index 규칙과 같은 값 — 검사가 대조한다). */
+  var LIMIT = { site: 120, bizno: 20, asof: 10, savedAt: 20, doneAt: 20,
+                savedBy: 40, doneBy: 40, ownerName: 40, art: 60,
+                arts: 4, changed: 1000 };
+  function cut(v, n) { return String(v == null ? '' : v).slice(0, n); }
+  function fit(o) {
+    o = o || {};
+    var n = Number(o.changed);
+    if (!isFinite(n) || n < 0) n = 0;
+    return {
+      site: cut(o.site, LIMIT.site),
+      bizno: cut(o.bizno, LIMIT.bizno),
+      asof: cut(o.asof, LIMIT.asof),
+      kind: kindOf(o),
+      changed: Math.min(Math.round(n), LIMIT.changed),
+      arts: (Array.isArray(o.arts) ? o.arts : []).filter(Boolean)
+              .slice(0, LIMIT.arts).map(function (t) { return cut(t, LIMIT.art); }),
+      artsMore: Math.max(0, Math.round(Number(o.artsMore) || 0)),
+      savedAt: cut(o.savedAt, LIMIT.savedAt),
+      savedBy: cut(o.savedBy, LIMIT.savedBy),
+      doneAt: cut(o.doneAt, LIMIT.doneAt),
+      doneBy: cut(o.doneBy, LIMIT.doneBy),
+      ownerUid: String(o.ownerUid || ''),
+      ownerName: cut(o.ownerName, LIMIT.ownerName),
+      from: (o.from === 'chwieop' ? 'chwieop' : 'rules')
+    };
+  }
+
   window.PuRulesHistory = {
-    PATH: PATH,
+    PATH: PATH, LIMIT: LIMIT,
     load: load, reload: reload,
-    forCompany: forCompany,
+    forCompany: forCompany, fit: fit,
     kindOf: kindOf, lineOf: lineOf, artsOf: artsOf, shortDate: shortDate,
     openUrl: openUrl, sortNewest: sortNewest,
     _norm: norm, _digits: digits, _shape: shape,

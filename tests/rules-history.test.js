@@ -134,7 +134,9 @@ test('취업규칙 작성기가 제정을 이력으로 남긴다 — 예전엔 �
   assert.match(writer, /rules_mgmt\/done\//, '개정과 같은 자리에 쌓는다');
   assert.match(writer, /rules_mgmt\/index\//, '다른 화면이 읽는 색인도 함께');
   assert.match(writer, /rules_mgmt\/orig\//, '제정 당시 전문도 남겨 나중에 개정 검토를 시작할 수 있게');
-  assert.match(writer, /kind:'제정'/);
+  // 구분은 작성기가 직접 적지 않는다 — 「어디서 왔나」만 넘기고 공용 읽개가 제정으로 읽는다
+  assert.match(writer, /from:'chwieop'/);
+  assert.equal(H.kindOf({ from: 'chwieop' }), '제정');
   // 보관함 목록이 summary 를 읽는다 — 없으면 목록이 깨진다
   assert.match(writer, /summary:\{위반의심:0,누락:0,수동확인:0,시행예정:0\}/);
   assert.match(writer, /function saveDoc[\s\S]{0,700}chwSaveEnactment\(\)/, '저장할 때 함께 남긴다');
@@ -177,22 +179,14 @@ test('색인에 넣는 칸이 서버 규칙이 허용하는 칸과 정확히 같
   assert.ok(allowed.length > 5, '규칙 문서에서 칸 목록을 못 읽었다');
   assert.equal(rev.$other['.validate'], false, '목록에 없는 칸은 막아야 한다');
 
-  /* 서버로 보내는 객체 리터럴에서 칸 이름만 뽑는다 — 「k:값」과 줄임꼴 「k,」 둘 다 센다.
-     literal 은 «그 리터럴이 시작하는 자리»여야 한다 — 함수 첫 중괄호부터 훑으면
-     안쪽 셈에 쓰인 이름(rec.items 같은 것)까지 칸으로 세어 버린다. */
-  const fieldsOf = (src, literal, to) => {
-    const a = src.indexOf(literal);
-    assert.ok(a > 0, literal + ' 를 찾지 못했다');
-    const lit = src.slice(a, src.indexOf(to, a));
-    const named = [...lit.matchAll(/([A-Za-z]\w*)\s*:/g)].map(m => m[1]);
-    const short = [...lit.matchAll(/[{,]\s*([A-Za-z]\w*)\s*[,}]/g)].map(m => m[1]);
-    return [...new Set(named.concat(short))].sort();
-  };
-  const fromRules = fieldsOf(rules, 'return {\n    site:rec.site', 'function rulesIndexPath');
-  const fromWriter = fieldsOf(writer, 'var idx={', '\n  };');
-
-  assert.deepEqual(fromRules, allowed, '규정관리가 넣는 칸이 규칙과 다르다');
-  assert.deepEqual(fromWriter, allowed, '작성기가 넣는 칸이 규칙과 다르다');
+  /* 소스를 긁지 않고 «서버로 보내는 그 함수»를 실제로 돌려 나온 칸을 견준다 —
+     규정관리도 작성기도 이 함수를 거치므로, 여기만 맞으면 두 곳 다 맞는다.
+     넘겨준 적 없는 칸(items 처럼 셈에만 쓰는 것)이 새어 나가는지도 함께 본다. */
+  const made = Object.keys(H.fit({
+    site: '가', asof: '2026-08-01', ownerUid: 'u1',
+    items: [1, 2, 3], owner: 'a@b.c', enacted: true, status: '완료'
+  })).sort();
+  assert.deepEqual(made, allowed, '색인에 넣는 칸이 규칙이 허용하는 칸과 다르다');
 });
 
 test('규칙이 받아 주는 값만 코드가 넣는다 — 구분·보낸 곳은 정해진 낱말뿐', () => {
@@ -204,6 +198,58 @@ test('규칙이 받아 주는 값만 코드가 넣는다 — 구분·보낸 곳�
   assert.equal(H.kindOf({ from: 'chwieop' }), '제정');
   const froms = /\^\(([^)]+)\)\$/.exec(rev.from['.validate'])[1].split('|');
   assert.deepEqual(froms.sort(), ['chwieop', 'rules']);
+});
+
+/* ── 서버 한도 ──
+   규칙은 칸마다 길이를 재고, 한 칸이라도 길면 그 회차 저장을 «통째로» 물리친다.
+   화면에는 아무 말도 안 뜨고 이력만 조용히 안 쌓이므로, 넣기 전에 잘라야 한다. */
+test('규칙이 정한 길이 한도와 코드가 쓰는 한도가 같다', () => {
+  const rev = readJson(RULES_FULL).rules.rules_mgmt.index.$site.$rev;
+  const maxOf = k => {
+    const m = /length\s*<=\s*(\d+)/.exec((rev[k] || {})['.validate'] || '');
+    return m ? Number(m[1]) : null;
+  };
+  ['site', 'bizno', 'asof', 'savedAt', 'savedBy', 'doneAt', 'doneBy', 'ownerName'].forEach(k => {
+    assert.equal(H.LIMIT[k], maxOf(k), k + ' 한도가 규칙과 다르다');
+  });
+  assert.equal(H.LIMIT.art, maxOf.call(null, 'arts') || Number(/length\s*<=\s*(\d+)/.exec(rev.arts.$i['.validate'])[1]),
+    '조 제목 한도가 규칙과 다르다');
+  const maxChanged = Number(/val\(\)\s*<=\s*(\d+)/.exec(rev.changed['.validate'])[1]);
+  assert.equal(H.LIMIT.changed, maxChanged, '바뀐 조 수 한도가 규칙과 다르다');
+});
+
+test('값이 아무리 길어도 규칙을 어기지 않게 잘라서 넣는다', () => {
+  const long = '가'.repeat(500);
+  const o = H.fit({
+    site: long, bizno: long, asof: long, savedAt: long, doneAt: long,
+    savedBy: long, doneBy: long, ownerName: long, ownerUid: 'u1',
+    changed: 99999, arts: [long, long, long, long, long, long], artsMore: -3, mode: 'full'
+  });
+  const L = H.LIMIT;
+  ['site', 'bizno', 'asof', 'savedAt', 'doneAt', 'savedBy', 'doneBy', 'ownerName']
+    .forEach(k => assert.ok(o[k].length <= L[k], k + ' 가 한도를 넘었다: ' + o[k].length));
+  assert.ok(o.changed <= L.changed, '바뀐 조 수가 한도를 넘었다');
+  assert.ok(o.arts.length <= L.arts, '조 제목 개수가 한도를 넘었다');
+  o.arts.forEach(a => assert.ok(a.length <= L.art, '조 제목이 한도를 넘었다: ' + a.length));
+  assert.ok(o.artsMore >= 0, '음수는 규칙이 받지 않는다');
+  assert.equal(o.kind, '전부개정');
+  assert.equal(o.from, 'rules', '알 수 없는 값은 rules 로 떨어뜨린다');
+});
+
+test('빈 기록을 넣어도 규칙이 요구하는 칸은 빠지지 않는다', () => {
+  const o = H.fit({});
+  ['site', 'asof', 'kind', 'ownerUid'].forEach(k =>
+    assert.ok(k in o, k + ' 는 규칙이 반드시 요구한다'));
+  assert.equal(o.kind, '일부개정');
+  assert.equal(o.changed, 0);
+  assert.deepEqual(o.arts, []);
+});
+
+test('색인을 넣는 두 화면이 모두 공용 자르개를 거친다', () => {
+  assert.match(rules, /return PuRulesHistory\.fit\(\{/, '규정관리');
+  assert.match(writer, /var idx=PuRulesHistory\.fit\(\{/, '작성기');
+  // 작성기도 공용 읽개를 읽어야 fit 을 부를 수 있다
+  assert.match(writer, /js\/pu-rules-history\.js\?v=\d+/, '작성기가 공용 읽개를 읽어야 한다');
 });
 
 test('공용 읽개를 쓰는 화면은 그 파일을 읽고 판번호를 붙인다', () => {
