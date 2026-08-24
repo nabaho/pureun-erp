@@ -28,7 +28,9 @@ const CHUNK = 400;          // 한 폴더에서 한 바퀴에 볼 통수
 const MAX_ROWS = 9000;      // 한 회차 전체 통수 — 한 줄이 250바이트쯤이니 2MB 남짓
 const MAX_TURNS = 400;      // 줄에서 꺼내 볼 횟수 — 끝나지 않는 회차를 막는 뒷그물
 const WRITE_BATCH = 250;    // 실시간DB에 한 번에 적을 줄 수
-const PREVIEW_BYTES = 800;  // 미리보기로 잘라 받을 앞부분 — base64 라도 200자는 나온다
+const PREVIEW_BYTES = 800;   // 글(text/plain) 은 앞 800바이트면 넉넉하다
+const PREVIEW_HTML_BYTES = 3000; /* html 은 앞머리가 <head><style> 로 가득해 800으로는
+   글이 한 자도 안 나온다(2026-08-24 대표 화면: 「.color_fix span {color:#888 !i」). */
 const PRUNE_GAP_MS = 24 * 60 * 60 * 1000;  // 통수가 그대로일 때의 그물 — 하루에 한 번
 const BODY_FULL_MAX = 2 * 1024 * 1024;     // 이보다 작으면 통째로 받아 파싱한다
 const ATT_MAX = 20 * 1024 * 1024;          // 첨부 하나를 돌려줄 상한
@@ -205,16 +207,22 @@ async function runSync(deps, opts) {
             if (!cut && held.length) {
               const byPart = {};
               held.forEach((g) => {
-                if (g.tp && g.tp.part) (byPart[g.tp.part] = byPart[g.tp.part] || []).push(g);
+                if (!g.tp || !g.tp.part) return;
+                /* 자르는 길이가 html 인지에 따라 다르므로 묶음 열쇠에 함께 넣는다 */
+                const key = g.tp.part + '|' + (g.tp.html ? 1 : 0);
+                (byPart[key] = byPart[key] || []).push(g);
               });
-              for (const part of Object.keys(byPart)) {
+              for (const key of Object.keys(byPart)) {
                 if (nowMs() > deadline) break;
-                const group = byPart[part];
+                const group = byPart[key];
+                const part = key.slice(0, key.lastIndexOf('|'));
+                const isHtml = key.slice(key.lastIndexOf('|') + 1) === '1';
+                const maxLen = isHtml ? PREVIEW_HTML_BYTES : PREVIEW_BYTES;
                 try {
                   const got = {};
                   for await (const m of client.fetch(
                     MB.uidSet(group.map((g) => g.row.u)),
-                    { uid: true, bodyParts: [{ key: part, start: 0, maxLength: PREVIEW_BYTES }] },
+                    { uid: true, bodyParts: [{ key: part, start: 0, maxLength: maxLen }] },
                     { uid: true }
                   )) {
                     const bp = m.bodyParts;

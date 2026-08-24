@@ -133,9 +133,31 @@ test('html 은 꼬리표를 걷고 글만 남긴다', () => {
   assert.match(got, /안녕하세요/);
 });
 
+test('★ 잘려서 «안 닫힌» style 안의 CSS 가 새어 나오지 않는다 — 실제로 목록에 나왔다', () => {
+  /* 대표 화면 2026-08-24: 「메일 발송 | 노동위원회 .color_fix span {color:#888 !i」.
+     앞부분만 잘라 받으므로 </style> 가 안 들어와, 여는 꼬리표만 지워지고 CSS 가 글로 남았다. */
+  const cutHtml = '<html><head><style>.color_fix span {color:#888 !imp';
+  const got = MB.previewFrom(Buffer.from(cutHtml), { enc: '7bit', cs: 'utf-8', html: true });
+  assert.equal(got.indexOf('color_fix'), -1, 'CSS 가 미리보기에 남아 있다');
+  assert.equal(got.indexOf('{'), -1, 'CSS 조각이 남아 있다');
+});
+
+test('잘린 꼬리표 꼬리도 글로 새지 않는다', () => {
+  const got = MB.previewFrom(Buffer.from('<p>안녕하세요 자료 보냅니다</p><div class="x'),
+                             { enc: '7bit', cs: 'utf-8', html: true });
+  assert.equal(got, '안녕하세요 자료 보냅니다');
+});
+
 test('★ 인용줄(> …)은 건너뛴다 — 답장은 온통 인용으로 시작한다', () => {
   const t = '> 이전 메일 내용입니다\n> 또 인용\n실제 답장입니다';
   assert.equal(MB.previewFrom(Buffer.from(t), { enc: '7bit', cs: 'utf-8' }), '실제 답장입니다');
+});
+
+test('★ 인용밖에 없으면 인용이라도 보여 준다 — 빈 줄은 「본문 없는 메일」로 읽힌다', () => {
+  const t = '> 이전 메일 내용입니다\n> 또 인용';
+  const got = MB.previewFrom(Buffer.from(t), { enc: '7bit', cs: 'utf-8' });
+  assert.ok(got.length > 0, '셋째 줄이 비었다');
+  assert.match(got, /이전 메일 내용/);
 });
 
 test('미리보기는 길이를 못 박는다 — 만 줄이 오가는 자리다', () => {
