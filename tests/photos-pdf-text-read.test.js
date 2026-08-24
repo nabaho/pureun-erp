@@ -149,9 +149,12 @@ test('★ 글자 판독이 같은 물음(PROMPT_ALL)을 쓴다 — 두 벌이면
 });
 
 test('★ 사진 길과 글자 길이 같은 뒤처리를 쓴다 — 두 벌이면 한쪽이 옛 길로 남는다', () => {
-  assert.match(fnOf(readjs, 'read'), /return runDocParts\(parts\);/);
+  /* ⚠ 2026-08-24: runDocParts 가 «어느 길로 읽었나»(via)를 함께 받는다 — 결과에
+     남겨야 「글자 있는데 그림으로 읽은 것」만 골라 다시 읽을 수 있다.
+     지킬 것은 「두 길이 같은 뒤처리를 쓴다」이지 인자 개수가 아니다. */
+  assert.match(fnOf(readjs, 'read'), /return runDocParts\(parts, 'image'\);/);
   assert.match(fnOf(readjs, 'readDocText'), /return runDocParts\(\[\{ text: /);
-  assert.match(readjs, /function runDocParts\(parts\)/);
+  assert.match(readjs, /function runDocParts\(parts, via\)/);
 });
 
 test('★ 빈 글자로 AI 를 부르지 않는다 — 헛돈이고 답도 쓸 수 없다', () => {

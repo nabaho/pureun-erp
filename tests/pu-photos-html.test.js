@@ -1992,7 +1992,11 @@ test('옛 판 판독기로 읽은 사진은 스스로 다시 읽는다', () => {
      자세한 검사는 tests/photos-read-budget.test.js 에 있다. */
   const fn = app.match(/function staleRead\([\s\S]*?\n\}/);
   assert.ok(fn, 'staleRead 를 찾을 수 없습니다');
-  assert.match(fn[0], /PuDocRead\.READ_VERSION/, '판독기 판 번호를 보지 않습니다');
+  /* ⚠ 2026-08-24: 판 번호가 둘로 갈렸다 — 다시 읽는 것은 «물음이 바뀐 판»만 본다
+     (읽는 길만 바꿔도 읽어 둔 것 전부가 다시 읽히던 것을 막았다).
+     지킬 것은 「옛 판으로 읽은 것을 스스로 다시 읽는다」이지 어느 번호를 보느냐가
+     아니다. 자세한 것은 tests/photos-reread-only-when-useful.test.js. */
+  assert.match(fn[0], /PuDocRead\.PROMPT_VERSION/, '판독기 판 번호를 보지 않습니다');
   assert.match(fn[0], /r\.ack/, '사람이 확인한 것까지 도로 뒤집습니다');
   const auto = app.match(/function autoReadPending\([\s\S]*?\n\}/);
   assert.match(auto[0], /filter\(staleRead\)/, '자동 판독이 옛 결과를 안 집어 옵니다');

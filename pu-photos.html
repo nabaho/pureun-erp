@@ -26,7 +26,7 @@
      이 파일이 캐시에 묵으면 옛 지시로 읽어 제목이 안 생기는데, 화면(pu-photos.html)은
      새것이라 제목 자리만 비어 보인다 — 고친 것이 통째로 묻힌 것처럼 된다.
      tests/photos-doc-title.test.js 가 둘이 어긋나지 않는지 지킨다. -->
-<script src="js/pu-doc-read.js?v=14"></script>
+<script src="js/pu-doc-read.js?v=15"></script>
 <script src="js/pu-lockkey.js?v=1"></script>
 <!-- ?v= 는 등록 층을 고칠 때 올린다 — 캐시에 묵으면 고친 안내가 안 보인다. -->
 <script src="js/pu-doc-file.js?v=4"></script>
@@ -4858,13 +4858,34 @@ function neverRead(it) {
   return !(it && it.meta && it.meta.read);
 }
 
-/* 읽기는 했는데 **옛 판**으로 읽은 사진인가 — 이것은 조금씩. */
+/* 읽기는 했는데 **다시 읽을 값이 있는** 사진인가 — 이것은 조금씩.
+
+   ⚠ 종전에는 「판 번호가 올랐으면 다 다시」였다(rv < READ_VERSION). 그래서 읽는
+     «길»만 바꿔도 읽어 둔 것 전부가 다시 읽을 것이 되었다 — 2026-08-24 에 글자
+     판독을 붙이며 판을 11 로 올리자 574장이 그 차례에 들어갔다. 카메라로 찍은
+     회의사진·명함까지 들어갔는데 그것들은 다시 읽어도 «같은 답»이다.
+
+   그래서 다시 읽는 까닭을 둘로 좁혔다(대표 결정 2026-08-24):
+     ① **물음이 바뀌었다** — 뽑을 칸이나 갈래 목록이 달라졌으니 답이 달라진다.
+     ② **더 나은 길이 생겼다** — 글자가 있는데 그림으로 읽어 둔 것. 다시 읽으면
+        1↔7 오독이 사라지고, 그림을 안 받으니 그 값이 더 싸다.
+   둘 다 아니면 다시 읽지 않는다.
+
+   ⚠ 옛 기록에는 물음 판(pv)이 없다. 그때는 rv 하나가 물음 판 노릇도 했으므로
+     rv 를 대신 본다 — 이 한 줄이 없으면 「pv 없음 = 0」으로 읽혀 **막으려던 파도가
+     그대로 인다.** */
+function readPromptVer(r) {
+  if (!r) return 0;
+  return (r.pv != null) ? (r.pv || 0) : (r.rv || 0);
+}
 function staleRead(it) {
   const r = it && it.meta && it.meta.read;
   if (!r) return false;
   if (r.ack) return false;                       // 사람이 확인한 것은 안 뒤집는다
   if (RESTALE_SKIP[r.kind]) return false;        // 다시 읽어도 나올 것이 없다
-  return (r.rv || 0) < PuDocRead.READ_VERSION;
+  if (readPromptVer(r) < PuDocRead.PROMPT_VERSION) return true;      // ① 물음이 바뀌었다
+  if (it.meta.hasText && r.via !== 'text') return true;              // ② 더 나은 길이 생겼다
+  return false;
 }
 
 /* 다시 읽어야 하는가 — ①아직 안 읽었거나 ②옛 판 판독기로 읽은 것.
@@ -5036,8 +5057,13 @@ function startRead(job) {
       ntsChecked: r.ntsChecked, ntsState: r.ntsState,
       auto: v.auto, why: v.why, error: r.error, at: Date.now(),
       /* 어느 판 판독기로 읽었는지 — 종류를 더 가릴 수 있게 되면 이 값을 보고
-         옛 결과를 다시 읽는다(자동 분류가 뒤늦게라도 맞아떨어져야 한다). */
-      rv: PuDocRead.READ_VERSION
+         옛 결과를 다시 읽는다(자동 분류가 뒤늦게라도 맞아떨어져야 한다).
+         ⚠ pv(물음 판)와 via(글자/그림 어느 길)를 함께 남긴다(대표 결정 2026-08-24) —
+           이 둘이 없으면 「다시 읽을 값이 있는 것」을 가릴 수 없어, 판 번호를 올릴
+           때마다 읽어 둔 것 전부가 다시 읽힌다(574장 파도). staleRead 참고. */
+      rv: PuDocRead.READ_VERSION,
+      pv: PuDocRead.PROMPT_VERSION,
+      via: r.via || 'image'
     };
     if (sibs.length > 1) read.pagesRead = sibs.length;
     job._reading = false;
@@ -7160,7 +7186,8 @@ function retagPhotos(ids, tabKey) {
          ack: true 로 「확인 필요」에서 빼고, 다시 판독이 도로 뒤집지 않게 막는다. */
       const read = Object.assign({}, it.meta.read || { fields: {} }, {
         kind: kind, auto: false, why: '사람이 분류를 정했습니다', ack: true,
-        by: PuPhotoStore.myName() || '', at: Date.now(), rv: PuDocRead.READ_VERSION
+        by: PuPhotoStore.myName() || '', at: Date.now(),
+        rv: PuDocRead.READ_VERSION, pv: PuDocRead.PROMPT_VERSION
       });
       return PuPhotoStore.setPrimaryKind(gridYear, id, read, null, photoOwner(id))
         .then(function () {
@@ -9701,8 +9728,13 @@ function readPhoto(id, masked) {
       ntsChecked: r.ntsChecked, ntsState: r.ntsState,
       auto: v.auto, why: v.why, error: r.error, at: Date.now(),
       /* 어느 판 판독기로 읽었는지 — 종류를 더 가릴 수 있게 되면 이 값을 보고
-         옛 결과를 다시 읽는다(자동 분류가 뒤늦게라도 맞아떨어져야 한다). */
-      rv: PuDocRead.READ_VERSION
+         옛 결과를 다시 읽는다(자동 분류가 뒤늦게라도 맞아떨어져야 한다).
+         ⚠ pv(물음 판)와 via(글자/그림 어느 길)를 함께 남긴다(대표 결정 2026-08-24) —
+           이 둘이 없으면 「다시 읽을 값이 있는 것」을 가릴 수 없어, 판 번호를 올릴
+           때마다 읽어 둔 것 전부가 다시 읽힌다(574장 파도). staleRead 참고. */
+      rv: PuDocRead.READ_VERSION,
+      pv: PuDocRead.PROMPT_VERSION,
+      via: r.via || 'image'
     };
     /* 몇 쪽을 함께 보고 낸 답인지 남긴다 — 「2쪽인데 왜 같은 내용인가」에 답한다. */
     if (pages.length > 1) read.pagesRead = pages.length;
