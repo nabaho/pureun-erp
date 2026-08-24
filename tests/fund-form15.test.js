@@ -47,7 +47,7 @@ function load() {
     grabFn('openingMoves'), grabFn('computeFin'), grabFn('guessBfKind'), grabFn('_k1000'),
     // ㉚ 는 그 해 «현금» 출연금을 상한으로 삼는다 — 그 값을 세는 함수도 함께 들여온다
     grabFn('_txnDone'), grabFn('_splitSum'), grabFn('_contribOf'),
-    grabFn('_openAssets'), grabFn('buildF15'),
+    grabFn('_openAssets'), grabFn('bfMovesOf'), grabFn('buildF15'),
     'this.buildF15=buildF15; this.guessBfKind=guessBfKind; this._k1000=_k1000;',
     'this.F15_ROWS=F15_ROWS; this.BF_KINDS=BF_KINDS;',
     'this.setFund=function(id,o){ funds[id]=o; };'
