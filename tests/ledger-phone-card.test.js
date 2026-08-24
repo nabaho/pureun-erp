@@ -30,8 +30,12 @@ const erp = fs.readFileSync(path.join(ROOT, 'pu-erp.html'), 'utf8');
 const css = fs.readFileSync(path.join(ROOT, 'css', 'pu-erp.css'), 'utf8');
 
 /* 폰 구간(max-width:640px) 블록만 떼어 온다 — 넓은 화면 규칙과 섞어 보면
-   「폰에서만 바꿨다」를 증명할 수 없다. */
-function phoneBlocks() {
+   「폰에서만 바꿨다」를 증명할 수 없다.
+   ⚠ 블록을 **낱개 그대로** 돌려준다. 예전에는 하나로 이어 붙인 뒤 다시 갈라
+   빼려 했는데, 이어 붙일 때 넣은 줄바꿈이 블록 글자에 섞여 원문과 안 맞았다 —
+   그래서 폰 구간이 셋인데 하나만 빠지고 나머지가 WIDE 에 남아, 폰 규칙을
+   넓은 화면 규칙으로 잘못 읽어 검사가 멀쩡한 코드를 두고 터졌다(2026-08-23). */
+function phoneBlockList() {
   const out = [];
   const re = /@media \(max-width:640px\)\{/g;
   let m;
@@ -43,18 +47,21 @@ function phoneBlocks() {
     }
     out.push(css.slice(m.index, i));
   }
-  return out.join('\n');
+  return out;
 }
-const PHONE = phoneBlocks();
+const PHONE_BLOCKS = phoneBlockList();
+const PHONE = PHONE_BLOCKS.join('\n');
 /* 폰 구간을 «뺀» 나머지 — 넓은 화면을 볼 때 쓴다.
    통째로 보면 폰 규칙에 걸려 무엇이든 늘 통과한다. */
 const WIDE = (function () {
   let w = css;
-  PHONE.split('@media (max-width:640px){').filter(Boolean).forEach(function (b) {
-    w = w.replace('@media (max-width:640px){' + b, '');
-  });
+  PHONE_BLOCKS.forEach(function (b) { w = w.replace(b, ''); });
   return w;
 })();
+/* 셋 다 빠졌는지 여기서 못 박는다 — 하나라도 남으면 위 검사들이 헛것이 된다. */
+if (/@media \(max-width:640px\)\{/.test(WIDE)) {
+  throw new Error('폰 구간을 다 빼지 못했습니다 — 넓은 화면 검사가 헛것이 됩니다');
+}
 
 const CELLS = ['chk', 'no', 'st', 'amt', 'date', 'memo', 'co', 'kind', 'staff', 'act'];
 
