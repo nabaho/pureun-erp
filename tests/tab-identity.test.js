@@ -54,21 +54,27 @@ PAGES.forEach(function(f){
   const title = ((s.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || '').trim();
   const href = (s.match(ICON_RE) || [])[1] || '';
   const m = href.match(SPEC);
-  info[f] = { title, href, emoji: m ? m[1] : null };
+  /* ★ 이모지 한 글자로 그리는 것이 이 저장소의 «보통» 규격이다 — 짧고, 고칠 것이 없다.
+     다만 이모지는 기기·브라우저가 «저마다 다른 그림» 으로 그린다. 그래서 회사 얼굴이
+     되는 화면(포털)은 획으로 직접 그려 둔다(대표 지시 2026-08-24 「너무 촌스럽다」).
+     ⚠ 여기서 볼 것은 «어느 규격인가» 가 아니라 ① 그림이 있는가 ② 서로 다른가 이다.
+       규격을 못 박아 두었다가, 포털 아이콘을 제대로 그린 것만으로 이 검사가 깨졌다. */
+  const drawn = !m && /^data:image\/svg\+xml,/.test(href) && /<(rect|path|circle|polygon)/.test(href);
+  info[f] = { title, href, emoji: m ? m[1] : null, drawn: drawn, id: m ? m[1] : (drawn ? href : null) };
 });
 
 console.log('\n[① 화면마다 아이콘이 있고 규격이 같다]');
 ok('탭에 서는 화면을 찾았다', Object.keys(info).length >= 18, '찾은 수: ' + Object.keys(info).length);
-const noIcon = Object.keys(info).filter(f => !info[f].emoji);
+const noIcon = Object.keys(info).filter(f => !info[f].id);
 ok('★ 모든 화면에 그림 아이콘이 있다', noIcon.length === 0,
    noIcon.length ? ('빠진 곳:\n      ' + noIcon.map(f => f + '  href=' + (info[f].href || '(없음)').slice(0, 60)).join('\n      ')) : '');
 
 console.log('\n[② 그림이 서로 겹치지 않는다]');
 const byEmoji = {};
-Object.keys(info).forEach(f => { const e = info[f].emoji; if(e) (byEmoji[e] = byEmoji[e] || []).push(f); });
+Object.keys(info).forEach(f => { const e = info[f].id; if(e) (byEmoji[e] = byEmoji[e] || []).push(f); });
 const dupE = Object.keys(byEmoji).filter(e => byEmoji[e].length > 1);
 ok('★ 같은 그림을 쓰는 화면이 없다', dupE.length === 0,
-   dupE.map(e => '      ' + e + ' → ' + byEmoji[e].join(', ')).join('\n'));
+   dupE.map(e => '      ' + e.slice(0, 24) + ' → ' + byEmoji[e].join(', ')).join('\n'));
 
 console.log('\n[③ 제목 앞이 겹치지 않는다 — 좁은 탭은 앞에서부터 보인다]');
 const byHead = {};
