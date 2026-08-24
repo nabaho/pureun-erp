@@ -60,7 +60,9 @@ test('메일 화면에서는 명함 목록의 줄들을 접는다', () => {
 test('이름이 「기업정보함」으로 바뀌었다 (PC·폰 모두)', () => {
   assert.match(cards, /<div class="logo">기업정보함<\/div>/, '폰 머리줄');
   assert.match(cards, /📇 푸른 기업정보함/, 'PC 옆줄');
-  assert.match(cards, /<title>푸른 기업정보함<\/title>/);
+  /* 탭 제목도 「기업정보함」 — 폰 머리줄·manifest·포털 타일과 같은 이름이어야 한다.
+     2026-08-24 탭 이름 통일 전에는 여기만 「푸른 기업정보함」으로 혼자 달랐다. */
+  assert.match(cards, /<title>기업정보함<\/title>/);
   const mf = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'pu-cards-manifest.json'), 'utf8'));
   assert.equal(mf.short_name, '기업정보함', '홈화면에 설치했을 때 뜨는 이름');
   /* 포털 쪽은 이미 「기업정보함」이었다 — 둘이 같은 말을 해야 한다 */
