@@ -105,7 +105,11 @@ async function deliver(opts) {
 
   const v = MS.validateSend({
     to: body.to, cc: body.cc, bcc: body.bcc,
-    subject: body.subject, body: body.body, attachments: got.attachments,
+    subject: body.subject, body: body.body,
+    /* ★ 서식 몫 (대표 지시 2026-08-24). 이 줄을 빼면 화면에서 꾸민 것이 조용히 사라져
+       도구줄이 다시 «가짜»가 된다 — 그것이 이번에 고친 문제였다. */
+    html: body.html,
+    attachments: got.attachments,
   });
   if (!v.ok) return { ok: false, status: 400, error: v.error };
 
@@ -124,6 +128,9 @@ async function deliver(opts) {
     cc: v.cc.length ? v.cc.join(', ') : undefined,
     bcc: bcc.length ? bcc.join(', ') : undefined,
     subject: v.subject,
+    /* 서식과 평문을 «같이» 보낸다 (대표 지시 2026-08-24). 평문을 빼면 서식을 못 읽는
+       메일 프로그램에서 빈 편지가 되고, 서식을 빼면 도구줄이 다시 가짜가 된다. */
+    html: v.html || undefined,
     text: v.body,
     attachments: v.attachments.map((a) => ({
       filename: a.filename, content: a.content, encoding: a.encoding,
@@ -201,6 +208,10 @@ async function deliver(opts) {
       cc: v.cc.join(', '),
       subject: v.subject,
       body: v.body,
+      /* 서식 몫도 남긴다 — 없으면 「다시 쓰기」가 꾸민 것을 잃고 평문으로 돌아간다.
+         ⚠ 자리를 더 쓴다. 본문은 보통 1KB 안쪽이라 값을 치를 만하다고 봤다 —
+           썸네일(2.48MB)과 달리 이건 글자뿐이다. 커지면 여기부터 다시 본다. */
+      html: v.html || '',
       ids: (Array.isArray(body.matIds) ? body.matIds : []).filter((x) => typeof x === 'string'),
       names: got.names,
       localNames: got.extras.map((f) => String((f && f.name) || '')).filter(Boolean),
@@ -243,6 +254,8 @@ function slimPayload(body) {
     oneByOne: !!p.oneByOne,
     subject: String(p.subject || ''),
     body: String(p.body || ''),
+    /* 서식 몫 — 안 담으면 «예약한 편지만» 서식이 사라진다 (대표 지시 2026-08-24) */
+    html: String(p.html || ''),
     matIds: (Array.isArray(p.matIds) ? p.matIds : []).filter((x) => typeof x === 'string').slice(0, 10),
     set: String(p.set || ''),
     toName: String(p.toName || ''),
