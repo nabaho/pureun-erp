@@ -217,15 +217,19 @@ test('내게쓴메일함은 내가 나에게 보낸 것만 — 아니면 받은 
   assert.equal(rows[0].u, 30);
 });
 
-/* ══════ 갈래 나누기 (청구서·쇼핑·소셜·프로모션) ══════ */
+/* ══════ 갈래 단추줄 — 없앴다 ══════ */
 
-test('낱말로 갈래를 짚는다 — 못 맞히면 어느 갈래도 아니다(아무 데나 밀어 넣지 않는다)', () => {
-  const c = load({ folders: FOLDERS });
-  assert.equal(c.mbClassify({ s:'세금계산서 발행 안내' }), 'bill');
-  assert.equal(c.mbClassify({ s:'주문이 배송되었습니다' }), 'shop');
-  assert.equal(c.mbClassify({ s:'카페 새 댓글 알림' }), 'social');
-  assert.equal(c.mbClassify({ s:'여름 특가 이벤트' }), 'promo');
-  assert.equal(c.mbClassify({ s:'퇴직금 산정 내역서 송부' }), '');
+test('★ 갈래 단추줄(청구서·쇼핑·소셜·프로모션)이 없다 — 대표 화면 2026-08-24', () => {
+  /* "이부분 박스 모두 없애자". 단추줄만 걷고 판정 함수를 남겨 두면 다음 사람이
+     「쓰는 줄」 알고 고친다 — 그래서 mbClassify 도 함께 지웠다. */
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  const h = c.mbBoxHtml();
+  assert.ok(h.indexOf('dm-tabs') < 0, '갈래 단추줄이 남아 있다');
+  ['청구서', '쇼핑', '소셜', '프로모션'].forEach((w) => {
+    assert.ok(h.indexOf('>' + w + '<') < 0, w + ' 단추가 남아 있다');
+  });
+  assert.equal(typeof c.mbClassify, 'undefined', '안 쓰는 판정 함수가 남아 있다');
+  assert.ok(src.indexOf('.dm-tabs{') < 0, '안 쓰는 모양(CSS)이 남아 있다');
 });
 
 /* ══════ 시각 ══════ */
@@ -301,14 +305,99 @@ test('☐ 를 안 눌렀어도 짚어 둔 줄을 고른 것으로 본다 — 「
   assert.equal(c.mbPicked().length, 1);
 });
 
+/* ══════ 폰 — 다음메일 «앱»과 같은 차림 (대표 화면 2026-08-24) ══════
+   "폰에서 화면은 캡쳐2,3 과 똑같이 만들어달라."
+   여기서 지키는 것은 «앱에서 보던 것이 폰에서도 그대로 있는가»다. */
+
+test('★ 폰 목록에 앱의 그 줄들이 있다 — 얼굴딱지·보낸이·시각·제목', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  const h = c.mbMobileHtml();
+  assert.ok(h.indexOf('dmm-av') > 0, '얼굴딱지가 없다');
+  assert.ok(h.indexOf('dmm-l1') > 0 && h.indexOf('dmm-l2') > 0, '보낸이·제목 줄이 없다');
+  assert.ok(h.indexOf('세무법인 한세') > 0, '보낸이가 안 나온다');
+  assert.match(h, /오전 |오후 |월 \d+일|\d{4}\./, '시각이 앱 차림이 아니다');
+});
+
+test('★ 폰 맨 위 줄 — ☰ · 칸 이름 · 새로고침 · 고르기 · 찾기', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  const h = c.mbMobileHtml();
+  assert.ok(h.indexOf('mbDrawer(true)') > 0, '서랍을 여는 ☰ 가 없다');
+  assert.ok(h.indexOf('받은메일함') > 0, '어느 칸인지 안 나온다');
+  assert.ok(h.indexOf('mbPickMode()') > 0, '고르기가 없다');
+  assert.ok(h.indexOf('mbFindToggle()') > 0, '찾기가 없다');
+  assert.ok(h.indexOf('dmm-fab') > 0, '메일 쓰기 단추가 없다');
+});
+
+test('★ 폰 서랍에 앱의 칸이 다 있다 — 하나라도 없으면 폰에서 그 칸에 갈 길이 없다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  const h = c.mbDrawerHtml();
+  ['전체메일','받은메일함','내게쓴메일함','보낸메일함','임시보관함','예약메일함','내 메일함']
+    .forEach((nm) => assert.ok(h.indexOf(nm) > 0, nm + ' 이 서랍에 없다'));
+  assert.ok(h.indexOf('내게쓰기') > 0, '내게쓴메일함 옆 딱지가 없다');
+  assert.ok(h.indexOf('수신확인') > 0, '보낸메일함 옆 딱지가 없다');
+  assert.ok(h.indexOf('안읽음') > 0 && h.indexOf('중요') > 0 && h.indexOf('첨부') > 0,
+    '안읽음·중요·첨부 줄이 없다');
+});
+
+test('★ 폰 서랍 맨 아래로 나갈 길이 남아 있다 — 없으면 메일함에 갇힌다', () => {
+  /* 폰 메일함은 화면을 통째로 덮는다(위치 고정). 그래서 나갈 길이 서랍에만 있다. */
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  const h = c.mbDrawerHtml();
+  assert.ok(h.indexOf('closeMailPage()') > 0, '기업정보함으로 나갈 길이 없다');
+  assert.ok(h.indexOf('openSettingsPage()') > 0, '환경설정으로 갈 길이 없다');
+  assert.ok(h.indexOf('openMatPage()') > 0, '자료함으로 갈 길이 없다');
+});
+
+test('고르기 모드에서는 네모가 나오고 쓰기 단추는 숨는다 — 앱과 같다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS, state: { mbPickMode: true } });
+  const h = c.mbMobileHtml();
+  assert.ok(h.indexOf('dmm-chk') > 0, '고르는 네모가 없다');
+  assert.ok(h.indexOf('dmm-fab') < 0, '고르는 중에 쓰기 단추가 남아 있다');
+  assert.ok(h.indexOf('mbTrash()') > 0, '고른 것을 휴지통으로 옮길 길이 없다');
+});
+
+test('★ 얼굴딱지 색은 사람마다 늘 같다 — 그릴 때마다 바뀌면 눈이 붙잡을 것이 없다', () => {
+  const c = load({ folders: FOLDERS });
+  assert.equal(c.dmmFaceColor('세무법인 한세'), c.dmmFaceColor('세무법인 한세'));
+  assert.match(c.dmmFaceColor('아무개'), /^#[0-9a-f]{6}$/);
+  /* ⚠ 「두 이름은 색이 달라야 한다」로 못 박지 않는다 — 색이 열두 가지뿐이라 어떤 짝은
+     반드시 겹친다. 볼 것은 «고르게 흩어지는가»다. */
+  const names = ['세무법인 한세','윤병수회계사무소','김현아','유문경','정곤영','심아람',
+                 'LUNA LAB','이혜원','우명진','효성에프엠에스','충남북부상공회의소','이피아관리팀'];
+  const kinds = new Set(names.map((n) => c.dmmFaceColor(n)));
+  assert.ok(kinds.size >= 5, '열두 사람이 색 ' + kinds.size + '가지로만 나온다 — 너무 뭉친다');
+});
+
+test('얼굴에 넣을 글자 — 한글은 첫 글자, 영문은 대문자', () => {
+  const c = load({ folders: FOLDERS });
+  assert.equal(c.dmmInitial('세무법인 한세'), '세');
+  assert.equal(c.dmmInitial('babylawyer@hanmail.net'), 'B');
+  assert.equal(c.dmmInitial('"이혜원"'), '이');
+  assert.equal(c.dmmInitial(''), '?');
+});
+
+test('★ 폰 시각 — 오늘은 오전/오후 시:분, 올해는 월·일', () => {
+  const c = load({ folders: FOLDERS });
+  const t = new Date(); t.setHours(18, 32, 0, 0);
+  assert.equal(c.dmmTime(t.getTime()), '오후 6:32');
+  const m = new Date(t.getTime()); m.setHours(9, 5, 0, 0);
+  assert.equal(c.dmmTime(m.getTime()), '오전 9:05');
+  const old = new Date(t.getTime()); old.setMonth(old.getMonth() === 0 ? 11 : old.getMonth() - 1);
+  assert.match(c.dmmTime(old.getTime()), /월 \d+일|\d{4}\./);
+  assert.equal(c.dmmTime(0), '');
+});
+
 /* ══════ 화면 갈림길 ══════ */
 
 test('★ PC 와 폰이 «둘 다» 메일함을 그린다 — 한쪽만 고치면 그쪽에서만 안 보인다', () => {
+  /* 2026-08-24: 폰은 «앱과 같은 차림»을 따로 쓴다(mbMobileHtml) — 다음메일의 PC 와 폰이
+     아예 다르게 생겼기 때문이다. 자료는 한 벌 그대로 쓰므로(mbVisibleRows) 목록 규칙을
+     고치면 두 화면이 함께 따라온다. 여기서 지키는 것은 «두 쪽 다 그린다»는 사실이다. */
   const pc = cut('function renderMailPage()', '\n/* ── 폰 메일 화면 ──');
   assert.match(pc, /mailSent==='box' \? mbBoxHtml\(\)/, 'PC 가 메일함을 안 그립니다');
   const ph = cut('function renderMailMobile()', '\n/* ── 쓰기 화면 ── */');
-  assert.match(ph, /mailSent==='box' \? mbBoxHtml\(\)/, '폰이 메일함을 안 그립니다');
-  assert.match(ph, /openMailBox\(/, '폰에 메일함으로 가는 길이 없습니다');
+  assert.match(ph, /mailSent==='box'/, '폰이 메일함을 안 그립니다');
+  assert.match(ph, /mbMobileHtml\(\)/, '폰이 메일함을 안 그립니다');
 });
 
 test('★ 서버에 붙는 주소는 메일 함수들과 같은 리전이다 — 다르면 통째로 404 다', () => {
