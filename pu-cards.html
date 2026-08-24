@@ -782,6 +782,16 @@ table.sbox.tight td.none{padding:26px 8px}
 .msoff{flex:none;border:1px solid #f3c9c9;background:#fff;color:#c0392b;border-radius:7px;
   padding:6px 10px;font-size:11.5px;cursor:pointer;font-family:inherit}
 .msoff:hover{background:#ffecec}
+/* 글자냐 사진이냐 (대표 지시 2026-08-24) */
+.msmode{display:flex;gap:6px;margin:10px 0 0}
+.msmode button{flex:1;border:1px solid #dde3ee;background:#fff;color:#5a6885;border-radius:8px;
+  padding:8px 10px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit}
+.msmode button.on{background:#eef4ff;border-color:#b9d0f5;color:#1a55b0}
+.msmode button i{font-style:normal;font-size:10.5px;font-weight:400;color:#8b98b3;margin-left:3px}
+.msmode button.on i{color:#4a7fd0}
+/* 나갈 모양 미리보기 — 받는 사람이 볼 그대로 */
+.mspreview{margin:10px 0 0;padding:12px;border:1px solid #e4e8f0;border-radius:10px;background:#fff}
+.mspreview .none{font-size:12px;color:#8b98b3}
 /* 본문 속 서명 그림이 너무 크게 벌어지지 않게 */
 .cpbody img{max-width:280px;height:auto}
 .cphint{font-size:11.5px;color:#8b98b3;line-height:1.6;margin:7px 0 11px}
@@ -5118,9 +5128,68 @@ function mySign(){
   return all[k] || null;
 }
 
-/* 서명 덩어리 — 명함 사진 표시 + 공용 글자 서명. 사진을 안 골랐으면 글자만. */
+/* ══════ 글자로 짠 디지털 명함 (대표 지시 2026-08-24) ══════
+   「명함이 깔끔하게 정리되어 디지털 형태로 갔으면 좋겠다」
+
+   왜 사진보다 나은가
+     · 받는 쪽 메일 프로그램이 바깥 그림을 기본으로 막는 일이 잦다 — 글자는 무조건 보인다
+     · 주소·전화를 «긁어 붙일 수» 있다. 사진은 손으로 옮겨 적어야 한다
+     · 폰에서 사진은 작아 안 읽히고, 글자는 화면 폭에 맞춰 접힌다
+     · 편지마다 따라가는데 사진은 50~150KB, 글자는 1KB 안쪽이다
+     · 첨부 파일 목록에 명함 사진이 끼는 일이 없다
+   ⚠ 꾸밈은 functions/mail-send.js 의 STYLE_OK 에 있는 것만 쓴다 —
+     border·padding·display 는 목록에 없어 서버가 조용히 지운다.
+   ⚠ 빈 값은 «자리를 안 만든다». 「T : 」만 남으면 안 채운 칸이 드러난다. */
+function signCardHtml(it){
+  const o = it || {};
+  const g = k => String(o[k]==null?'':o[k]).trim();
+  const nm = g('name');
+  if(!nm) return '';                       /* 이름조차 없으면 명함이라 할 수 없다 */
+  const L = [];
+  /* 전화·팩스·휴대폰은 «있는 것만» 한 줄에 모은다 */
+  const tel = [];
+  if(g('companyTel')) tel.push('T ' + esc(g('companyTel')));
+  if(g('companyFax')) tel.push('F ' + esc(g('companyFax')));
+  if(g('mobile'))     tel.push('M ' + esc(g('mobile')));
+  if(tel.length) L.push(tel.join(' &nbsp;·&nbsp; '));
+  if(g('email')){
+    /* 주소에 따옴표가 있으면 속성이 깨져 뒤가 다 망가진다 — 그때는 글자로만 둔다 */
+    const em = g('email');
+    L.push(/["'<>\s]/.test(em) ? esc(em)
+      : `<a href="mailto:${esc(em)}" style="color:#1d4fc4">${esc(em)}</a>`);
+  }
+  if(g('companyAddr')) L.push(esc(g('companyAddr')));
+  const role = [g('dept'), g('title')].filter(Boolean).join(' · ');
+  return `<div style="font-size:15px;font-weight:700;color:#1b2536;margin:0">${esc(nm)}${
+      role ? ` <span style="font-size:12px;font-weight:400;color:#5a6885">${esc(role)}</span>` : ''}</div>`
+    + (g('company') ? `<div style="font-size:13px;font-weight:700;color:#1d4fc4">${esc(g('company'))}</div>` : '')
+    + (L.length ? `<div style="font-size:12px;color:#5a6885;line-height:1.75">${L.join('<br>')}</div>` : '');
+}
+
+/* 서명을 «글자»로 보낼까 «사진»으로 보낼까 — 사람마다 따로. 기본은 글자다. */
+function signMode(){
+  const rec = mySign() || {};
+  return rec.mode === 'photo' ? 'photo' : 'card';
+}
+function setSignMode(m){
+  const k = mySignKey(); if(!k) return;
+  const rec = mySign() || {};
+  const mode = (m==='photo') ? 'photo' : 'card';
+  firebase.database().ref(`${DB_ROOT}/config/matMail/perUser/${k}`)
+    .update({ mode: mode })
+    .then(()=>{
+      _matMail = _matMail || {}; _matMail.perUser = _matMail.perUser || {};
+      _matMail.perUser[k] = Object.assign({}, rec, { mode: mode });
+      showPanel(mySignHtml()); renderMailPage();
+      toast(mode==='card' ? '글자로 짠 명함으로 나갑니다' : '명함 사진으로 나갑니다', 5000);
+    })
+    .catch(e=>toast('저장하지 못했습니다: '+((e&&e.message)||'')));
+}
+
+/* 서명 덩어리 — 고른 갈래에 따라 «글자 명함» 또는 «사진 표시» + 공용 글자 서명. */
 function signBlockHtml(){
   const rec = mySign();
+  const mode = signMode();
   const txt = textToHtml(signText());
   /* 보안문구는 «맨 끝». 작고 흐린 글씨로 본문과 구별한다.
      ⚠ 꾸밈은 functions/mail-send.js 의 STYLE_OK 에 있는 것만 쓴다 —
@@ -5130,7 +5199,17 @@ function signBlockHtml(){
     ? '<hr><span style="font-size:12px;color:#8b98b3;line-height:1.6">'
       + textToHtml(sec) + '</span>'
     : '';
-  return (rec && rec.cardId ? SIGN_IMG + '<br>' : '') + txt + secHtml;
+  /* 고른 명함이 있으면 그것을 «글자»로 짜거나 «사진 표시»로 넣는다.
+     ⚠ 글자 갈래에 사진 표시를 함께 넣으면 안 된다 — 서버가 그림을 붙여 빈 자리가 뜬다. */
+  let head = '';
+  if(rec && rec.cardId){
+    if(mode === 'photo') head = SIGN_IMG + '<br>';
+    else {
+      const card = signCardHtml(state.items[rec.cardId]);
+      head = card ? card + '<br>' : '';
+    }
+  }
+  return head + txt + secHtml;
 }
 
 /* 화면에 보일 때는 표시를 «실제 그림»으로 바꿔 준다 — 서버가 붙이기 전이라
@@ -5192,7 +5271,19 @@ function mySignHtml(){
       <div class="t"><b>${esc(cur.name||'(이름 없음)')}</b>
         <span>${esc(cur.company||'')}</span></div>
       <button class="msoff" onclick="clearMySign()" title="서명에서 명함 사진을 뺍니다">✕ 빼기</button>
-    </div>` : `<p class="cpnone" style="padding:10px 2px">아직 고른 명함이 없습니다</p>`}
+    </div>
+    ${/* 글자냐 사진이냐 (대표 지시 2026-08-24 「깔끔하게 정리되어 디지털 형태로」).
+         글자를 기본으로 둔다 — 받는 쪽이 그림을 막아도 보이고, 긁어 붙일 수 있다. */''}
+    <div class="msmode">
+      <button class="${signMode()==='card'?'on':''}" onclick="setSignMode('card')"
+        title="이름·회사·전화·주소를 글자로 짜서 보냅니다 — 무조건 보이고, 긁어 붙일 수 있습니다">
+        📝 글자로 <i>권장</i></button>
+      <button class="${signMode()==='photo'?'on':''}" onclick="setSignMode('photo')"
+        title="명함 사진을 그림으로 보냅니다 — 받는 쪽이 그림을 막으면 안 보일 수 있습니다">
+        🖼 사진으로</button>
+    </div>
+    ${signMode()==='card' ? `<div class="mspreview">${signCardHtml(cur) || '<span class="none">이 명함에 적힌 값이 없습니다 — 명함을 열어 채워 주세요</span>'}</div>` : ''}`
+    : `<p class="cpnone" style="padding:10px 2px">아직 고른 명함이 없습니다</p>`}
     <div class="mdsearch" style="margin:10px 0 8px"><input id="msQ" value="${esc(_msQ||'')}"
       placeholder="🔍 내 이름·회사로 찾기" oninput="msType(this.value)"></div>
     <div class="ablist" id="msList">${mySignListHtml()}</div>
