@@ -38,15 +38,15 @@ function cutFn(name) {
   return FN.slice(i, i + 10 + (nx > 0 ? nx : 2000));
 }
 
-/* 가짜 메일 서버 — 폴더 하나에 첨부 없는 메일 한 통 */
-function fakeImap(mails) {
+/* 가짜 메일 서버 — 폴더 하나에 첨부 없는 메일 한 통.
+   boxes 를 주면 그 폴더만 있는 것으로 한다 — 「급여」가 이름에 없는 폴더에서만
+   일어나는 갈래(모르는 주소는 안 담는다)를 시험할 길이 없었다. */
+function fakeImap(mails, boxes) {
+  const rows = (boxes || ['INBOX', '2.급여+사무대행']).map(v => ({ path: v, name: v }));
   return {
     connect: () => Promise.resolve(),
     logout: () => Promise.resolve(),
-    list: () => Promise.resolve([
-      { path: 'INBOX', name: 'INBOX' },
-      { path: '2.급여+사무대행', name: '2.급여+사무대행' }
-    ]),
+    list: () => Promise.resolve(rows),
     getMailboxLock: () => Promise.resolve({ release() {} }),
     /* 실제 IMAP 은 원문을 source 로 준다. 그 원문을 simpleParser 가 풀어 준다 —
        여기서는 이미 풀린 것을 source 에 넣고 파서는 그대로 돌려준다. */
@@ -94,7 +94,7 @@ function fakeDb() {
   };
 }
 
-function run(mails) {
+function run(mails, boxes) {
   const MR = require(path.join(R, 'functions', 'mail-receive.js'));
   const db = fakeDb();
   const saved = [];
@@ -114,7 +114,7 @@ function run(mails) {
     MAIL_LOG_KEEP: 500,
     MAIL_DONE_DAYS: 120,
     MD: { loginIds: () => ['id@daum.net'] },
-    ImapFlow: function () { return fakeImap(mails); },
+    ImapFlow: function () { return fakeImap(mails, boxes); },
     getDatabase: () => db,
     getStorage: () => ({ bucket: () => ({ file: (w) => ({ save: (b) => { saved.push(w); return Promise.resolve(); } }) }) }),
     mailUserAsync: () => Promise.resolve('id@daum.net'),
@@ -226,3 +226,70 @@ test('★ 자료로 안 담긴 메일도 목록에는 남는다 — 문의 메�
   assert.equal(rows[0].took, 0);
   assert.match(rows[0].why, /숫자가 없어/, '왜 안 담겼는지 적어야 합니다');
 });
+
+/* ══════ 이미 처리한 메일도 목록에는 보여야 한다 (2026-08-24 규칙 켠 첫날) ══════
+
+   대표가 콘솔 규칙을 넣은 직후 목록이 **텅 비었다.** 폴더의 30통이 모두 지난
+   회차에 이미 처리돼 처리 목록(mailseen)에 있었고, 그 갈래는 목록을 적기
+   전에 건너뛰고 있었다. 폴더에 있는데 화면에 없으면 「안 왔다」로 읽힌다. */
+
+test('★ 지난 회차에 처리한 메일도 목록에는 남는다 — 규칙 켠 첫날 목록이 텅 비었다', async () => {
+  const first = run([MAIL_BODY_ONLY]);
+  await first.go();
+  const second = run([MAIL_BODY_ONLY]);
+  const done = first.db.get('paydata/mailseen') || {};
+  Object.keys(done).forEach(k => second.db.set('paydata/mailseen/' + k, done[k]));
+  const out = await second.go();
+  assert.equal(out.took, 0, '같은 메일을 두 번 담으면 안 됩니다');
+  const box = second.db.get('paydata/maillog') || {};
+  const rows = Object.keys(box).map(k => box[k]);
+  assert.equal(rows.length, 1, '목록에 안 남았습니다');
+  assert.equal(rows[0].old, true, '지난 회차 것이라고 적어야 합니다');
+});
+
+test('★ 지난 회차 것을 「안 담김 0건」으로 적지 않는다 — 없는 문제를 쫓게 된다', async () => {
+  const first = run([MAIL_BODY_ONLY]);
+  await first.go();
+  const second = run([MAIL_BODY_ONLY]);
+  const done = first.db.get('paydata/mailseen') || {};
+  Object.keys(done).forEach(k => second.db.set('paydata/mailseen/' + k, done[k]));
+  await second.go();
+  const row = Object.values(second.db.get('paydata/maillog') || {})[0];
+  assert.equal(row.old, true);
+  assert.equal(row.why, '지난 회차에 이미 처리했습니다');
+});
+
+test('★ 이미 적힌 줄은 회차마다 다시 안 쓴다 — 30분마다 같은 것을 쓰면 그게 요금이다', async () => {
+  const first = run([MAIL_BODY_ONLY]);
+  await first.go();
+  const third = run([MAIL_BODY_ONLY]);
+  const done = first.db.get('paydata/mailseen') || {};
+  Object.keys(done).forEach(k => third.db.set('paydata/mailseen/' + k, done[k]));
+  /* 목록에 이미 적혀 있는 상태로 시작한다 — 표를 남겨 두고 덮였는지 본다 */
+  const log = first.db.get('paydata/maillog') || {};
+  Object.keys(log).forEach(k => {
+    third.db.set('paydata/maillog/' + k, Object.assign({}, log[k], { 표: '그대로' }));
+  });
+  await third.go();
+  const row = Object.values(third.db.get('paydata/maillog') || {})[0];
+  assert.equal(row['표'], '그대로', '이미 있는 줄을 덮어썼습니다');
+});
+
+test('★ 모르는 주소라 안 담은 메일도 목록에는 남는다 — 「왜 안 보이나」가 바로 이 경우다', async () => {
+  /* 폴더 이름에 「급여」가 없으면 아는 주소만 담는다(그때만 가린다). */
+  const other = Object.assign({}, MAIL_BODY_ONLY, {
+    envelope: { messageId: '<ad@daum.net>' }, box: '받은메일함',
+    from: { text: '광고 <ad@spam.com>' }, subject: '대출 안내'
+  });
+  /* 받은메일함만 있고, 그것을 보라고 켜 둔 상태 — 이때만 주소를 가린다 */
+  const t = run([other], ['INBOX']);
+  t.db.set('paydata/mailconf', { scanInbox: true });
+  const db = t.db;
+  const out = await t.go();
+  assert.equal(out.took, 0, '모르는 주소를 담으면 안 됩니다');
+  const rows = Object.values(db.get('paydata/maillog') || {});
+  assert.equal(rows.length, 1, '목록에 안 남았습니다');
+  assert.match(rows[0].why, /업체관리에 없는 주소/, '왜 안 담겼는지 적어야 합니다');
+  assert.equal(rows[0].old, false, '지난 회차 것이 아닙니다');
+});
+

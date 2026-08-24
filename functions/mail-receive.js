@@ -208,7 +208,10 @@ function mailLogRecord(o) {
     took: Number(o.took || 0),
     seatName: String(o.seatName == null ? '' : o.seatName),
     shared: o.shared === true,
-    why: String(o.why == null ? '' : o.why)
+    why: String(o.why == null ? '' : o.why),
+    /* 지난 회차에 이미 처리한 메일 — 담긴 결과를 알 수 없다.
+       0건이라고 적으면 화면에 「안 담김」으로 보여 거짓말이 된다. */
+    old: o.old === true
   };
 }
 
