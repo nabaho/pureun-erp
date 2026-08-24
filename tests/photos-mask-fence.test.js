@@ -47,12 +47,37 @@ function readerCallSites() {
    새 길이 필요하면 대표께 다시 물어야 한다. */
 const KNOWN_GAP = ['readPhoto', 'startRead'];
 
+/* ── 판독기를 부르지만 «스스로 사진을 고르지 않는» 층 (2026-08-24) ──
+   여러 쪽 문서를 덩이로 나눠 읽게 되면서 판독기를 부르는 줄이 이 넷으로 옮겨 갔다.
+   이것들은 부르는 쪽이 준 것을 그대로 넘길 뿐이다 — 어떤 사진을 읽을지 고르는 것은
+   여전히 위의 둘이다. 그래서 **감수 목록을 늘리지 않고**, 대신 아래에서 «이것들을
+   누가 부르는가»를 본다. 새 길이 이 층을 거쳐 들어오면 그때 울타리가 운다. */
+const PASS_THROUGH = ['imgChunkMakers', 'readDocChunked', 'runReadChunks', 'textChunkMakers'];
+
 test('★ 사진첩에 판독기로 가는 길이 새로 생기지 않았다', () => {
   const sites = readerCallSites();
-  const extra = sites.filter(n => KNOWN_GAP.indexOf(n) < 0);
+  const extra = sites.filter(n => KNOWN_GAP.indexOf(n) < 0 && PASS_THROUGH.indexOf(n) < 0);
   assert.deepEqual(extra, [],
     '★ 가림을 안 거치는 판독 길이 새로 생겼습니다: ' + extra.join(', ')
     + ' — 가린 사본만 읽게 하거나, 어쩔 수 없으면 KNOWN_GAP 에 **까닭과 함께** 적으세요');
+});
+
+test('★ 지나가는 층도 그 둘만 부른다 — 뒷문이 되면 안 된다', () => {
+  /* PASS_THROUGH 를 감수 목록에서 빼 준 대신, 여기가 그 값을 지킨다.
+     이 검사가 없으면 「덩이 층을 부르면 울타리를 안 거친다」가 되어 울타리가 헛돈다. */
+  const bad = [];
+  PASS_THROUGH.forEach(function (name) {
+    const re = new RegExp('\\b' + name + '\\(', 'g');
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const before = html.slice(Math.max(0, m.index - 10), m.index);
+      if (/function\s+$/.test(before)) continue;      // 자기 선언은 부르는 것이 아니다
+      const fn = fnAround(html, m.index);
+      if (KNOWN_GAP.indexOf(fn) < 0 && PASS_THROUGH.indexOf(fn) < 0) bad.push(name + ' ← ' + fn);
+    }
+  });
+  assert.deepEqual(bad, [],
+    '★ 덩이 층을 거쳐 판독기로 가는 새 길이 생겼습니다: ' + bad.join(', '));
 });
 
 /* 격자에서 사람이 「가리고 판독」을 누른 길은 **가린 사본만** 읽어야 한다.
