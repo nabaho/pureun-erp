@@ -188,19 +188,21 @@ test('★ 표시가 뒤로 가지 않는다 — 되돌아가면 같은 것을 �
   assert.equal(s.lo, 100);
 });
 
-test('★ 지난 회차의 셈과 정리 때를 떨어뜨리지 않는다 — 떨어지면 폴더 전체를 헛되게 다시 읽는다', () => {
-  /* 여기서 둘을 잃으면 「우리 것과 통수가 다르다」가 늘 참이 되어, 6시간마다 폴더
-     전체를 읽는다(그것이 곧 요금이다). 2026-08-24 에 실제로 그랬고 고쳤다. */
-  const s = MB.nextSync({ hi: 500, lo: 200, uv: 7, n: 301, prunedAt: 1756000000000 },
+test('★ 지난 회차가 적어 둔 것을 떨어뜨리지 않는다 — 정리 판정이 통째로 망가진다', () => {
+  /* n 을 잃으면 「통수가 다르다」가 늘 참이 되어 폴더를 회차마다 헛되게 읽고(요금),
+     lastN 을 잃으면 그 반대로 «지운 것이 있어도 못 알아챈다». 둘 다 겪었다(2026-08-24). */
+  const s = MB.nextSync({ hi: 500, lo: 200, uv: 7, n: 301, prunedAt: 1756000000000, lastN: 299 },
                         [150, 199], 7, false);
   assert.equal(s.n, 301);
   assert.equal(s.prunedAt, 1756000000000);
+  assert.equal(s.lastN, 299);
 });
 
 test('번호가 갈리면 셈도 버린다 — 다른 메일을 세어 둔 값이다', () => {
-  const s = MB.nextSync({ hi: 500, lo: 1, uv: 7, n: 500, prunedAt: 9 }, [10], 9, true);
+  const s = MB.nextSync({ hi: 500, lo: 1, uv: 7, n: 500, prunedAt: 9, lastN: 500 }, [10], 9, true);
   assert.equal(s.n, 0);
   assert.equal(s.prunedAt, 0);
+  assert.equal(s.lastN, 0);
 });
 
 test('★ 서버가 번호를 다시 매겼으면(uidValidity 변경) 처음부터 다시 한다', () => {
