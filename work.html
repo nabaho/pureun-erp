@@ -171,15 +171,12 @@
   .tmh .n{margin-left:auto;font-size:17px;font-weight:800;color:var(--ink);font-variant-numeric:tabular-nums}
   .tmh .n i{font-style:normal;font-size:11px;font-weight:700;color:var(--faint);margin-left:1px}
   .tmsub{font-size:10.5px;color:var(--faint);margin-top:1px}
-  .tmsig{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px;min-height:18px}
+  .tmsig{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
   .tmsig .s{font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:5px}
   .tmsig .over{background:#fef2f2;color:#b91c1c}
   .tmsig .soon{background:#fff7ed;color:#c2410c}
-  .tmsig .stale{background:#f1f5f9;color:#64748b}
-  .tmsig .ok{background:#f0fdf4;color:#15803d}
-  .tmbar{height:3px;border-radius:2px;background:var(--bg);margin-top:8px;overflow:hidden}
-  .tmbar i{display:block;height:100%;background:var(--acc);border-radius:2px}
-  .tmrec{font-size:10.5px;color:var(--faint);margin-top:4px}
+  .tmrec{font-size:10.5px;color:var(--faint);margin-top:7px}
+  .tmrec b{color:var(--sub);font-weight:700}
   .tmnone{color:var(--faint);font-size:12.5px;padding:26px;text-align:center}
   .cgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}
   .cgrid.hd{border-top:1px solid #eef2f8;background:#fcfdff}
@@ -6178,6 +6175,11 @@ function teamOnly(nm){
 function teamCardData(open,wk,today){
   var by={};
   function slot(nm){ return by[nm]||(by[nm]={nm:nm,main:0,sub:0,over:0,soon:0,stale:0,rec:0}); }
+  /* ⚠ 칸은 «주담당인 사람» 에게만 만든다 — 아래 담당별 묶음(teamNames)과 같은 규칙이다.
+     부담당 칸에는 사람 이름이 아닌 것이 섞여 있다. 엑셀 이관이 「공동작업자」 칸의
+     글을 명부와 대조 없이 그대로 담았기 때문이다(「- 전화번호 : 042-…」, 「① 노동청」).
+     그것들로도 칸을 만들었더니 열두 사람 자리에 마흔 칸이 깔려 화면을 못 읽었다.
+     그래서 부담당 수는 «이미 자기 칸이 있는 사람» 에게만 더한다. */
   open.forEach(function(it){
     var nm=(it.mgr_main&&it.mgr_main.name)||'(담당 미지정)';
     var s=slot(nm); s.main++;
@@ -6187,8 +6189,11 @@ function teamCardData(open,wk,today){
     var ld=(it.last&&it.last.d)||'';
     if(!ld||_dayDiff(today,ld)>=14) s.stale++;
     if(wkLogsOf(it._id,wk).length) s.rec++;
-    // 부담당으로 붙어 있는 건도 그 사람 칸에 센다 — 주담당이 아니어도 하는 일이다
-    mgrSubNames(it).forEach(function(n){ if(n&&n!==nm) slot(n).sub++; });
+  });
+  // 부담당은 두 번째 바퀴에서 — 그래야 주담당 칸이 다 만들어진 뒤에 견줄 수 있다
+  open.forEach(function(it){
+    var nm=(it.mgr_main&&it.mgr_main.name)||'(담당 미지정)';
+    mgrSubNames(it).forEach(function(n){ if(n&&n!==nm&&by[n]) by[n].sub++; });
   });
   var out=Object.keys(by).map(function(k){ return by[k]; });
   /* 손봐야 할 것이 많은 사람이 위로. 기한이 지난 것이 가장 급하고 임박이 그다음이다.
@@ -6202,17 +6207,22 @@ function teamCardData(open,wk,today){
   return out;
 }
 function teamCardHTML(c){
-  var pct=c.main?Math.round(c.rec/c.main*100):0;
+  /* ⚠ 배지는 «드문 일» 에만 쓴다.
+     모두에게 똑같이 붙는 표시는 아무것도 구별해 주지 않으면서 자리만 차지한다.
+     실제로 지금 팀은 이백오십칠 건이 모두 방치라, 「2주+ 방치 N」 배지를 칸마다
+     붙였더니 칸 전체가 회색 딱지밭이 되어 눈에 걸리는 것이 하나도 없었다.
+     그래서 기한(지남·임박)만 배지로 내고, 기록·방치는 아래 회색 한 줄로 내린다.
+     아무 배지도 없으면 그 줄은 아예 그리지 않는다 — 조용한 것이 「괜찮다」는 뜻이다. */
   var sig=(c.over?'<span class="s over">지남 '+c.over+'</span>':'')
-    +(c.soon?'<span class="s soon">임박 '+c.soon+'</span>':'')
-    +(c.stale?'<span class="s stale">2주+ 방치 '+c.stale+'</span>':'');
+    +(c.soon?'<span class="s soon">임박 '+c.soon+'</span>':'');
+  // 분모를 함께 적는다 — 「방치 75」 만으로는 그것이 전부인지 일부인지 알 수 없다
+  var stale=c.stale?' · 방치 '+(c.stale>=c.main?'<b>'+c.stale+'</b>':c.stale)+'/'+c.main:'';
   return '<div class="tmc" onclick="teamOnly(\''+escJ(c.nm)+'\')" '
     +'title="'+esc(c.nm+' 님이 맡은 업무만 표로 봅니다')+'">'
     +'<div class="tmh"><b>'+esc(c.nm)+'</b><span class="n">'+c.main+'<i>건</i></span></div>'
     +(c.sub?'<div class="tmsub">+ 부담당 '+c.sub+'건</div>':'')
-    +'<div class="tmsig">'+(sig||'<span class="s ok">눈여겨볼 것 없음</span>')+'</div>'
-    +'<div class="tmbar"><i style="width:'+pct+'%"></i></div>'
-    +'<div class="tmrec">이 주 기록 '+c.rec+'/'+c.main+'건</div>'
+    +(sig?'<div class="tmsig">'+sig+'</div>':'')
+    +'<div class="tmrec">이 주 기록 '+c.rec+'/'+c.main+stale+'</div>'
   +'</div>';
 }
 function teamBoardHTML(open,wk,today){

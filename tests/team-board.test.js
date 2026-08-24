@@ -40,7 +40,6 @@ function makeBox(opts){
     esc: x => String(x == null ? '' : x).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),
     escJ: x => String(x == null ? '' : x).replace(/\\/g, '\\\\').replace(/'/g, "\\'"),
     itemDue: (it) => (it && it.due) || '',
-    mgrSubNames: (it) => (it && it.subs) || [],
     _dayDiff: (a, b) => Math.round((new Date(a + 'T00:00:00') - new Date(b + 'T00:00:00')) / 86400000),
     wkLogsOf: (id) => (opts.logs || {})[id] || [],
     todayStr: () => opts.today || '2026-08-24',
@@ -51,7 +50,7 @@ function makeBox(opts){
   box.window = box;
   vm.createContext(box);
   vm.runInContext(
-    grab('dday') + '\n'
+    grab('dday') + '\n' + grab('mgrSubNames') + '\n'
     + src.match(/var TEAMVIEW_KEY='[^']*';/)[0] + '\n'
     + grab('teamView') + '\n' + grab('setTeamView') + '\n' + grab('teamViewSeg') + '\n'
     + grab('teamOnly') + '\n'
@@ -69,7 +68,9 @@ const 업무 = [
   { _id:'d', mgr_main:{name:'김혜민'}, due:'2026-08-31', last:{d:'2026-08-24'} },   // 임박(D-7)
   { _id:'e', mgr_main:{name:'김혜민'}, due:'', last:{d:'2026-08-20'} },             // 기한 없음
   { _id:'f', mgr_main:{name:'김윤희'}, due:'2026-09-30', last:{d:'2026-08-22'} },
-  { _id:'g', mgr_main:{name:'김윤희'}, due:'2026-08-24', last:{d:'2026-08-22'}, subs:['권형하'] },
+  { _id:'g', mgr_main:{name:'김윤희'}, due:'2026-08-24', last:{d:'2026-08-22'},
+    // ⚠ 부담당 칸에는 사람 아닌 것이 섞여 있다 — 엑셀 이관이 명부와 대조 없이 담았다
+    mgr_subs:[{sid:'',name:'권형하'},{sid:'',name:'- 전화번호 : 042-520-8062'}] },
   { _id:'h', mgr_main:null,            due:'', last:{d:'2026-08-22'} }              // 담당 미지정
 ];
 const 기록 = { a:[{d:'2026-08-24'}], f:[{d:'2026-08-23'}] };
@@ -102,6 +103,32 @@ test('부담당으로 붙어 있는 건도 그 사람 칸에 센다 — 주담�
 
 test('부담당 건은 큰 숫자에 섞지 않는다 — 아래 담당별 묶음과 기준이 어긋나면 안 된다', () => {
   assert.equal(칸()['권형하'].main, 3, '부담당 1건을 더해 4가 되면 안 된다');
+});
+
+/* ⚠ 이 화면이 처음 나갔을 때 열두 사람 자리에 마흔 칸이 깔렸다.
+   부담당 칸에 사람 아닌 글(「- 전화번호 : 042-…」, 「① 노동청」, 「- 조사관 : …」)이
+   섞여 있는데, 그것들로도 칸을 만들었기 때문이다.
+   엑셀 이관이 「공동작업자」 칸의 글을 명부와 대조 없이 그대로 담은 탓이다. */
+test('사람 아닌 부담당은 칸을 만들지 않는다 — 열두 사람 자리에 마흔 칸이 깔렸던 일', () => {
+  const c = 칸();
+  assert.ok(!c['- 전화번호 : 042-520-8062'], '전화번호가 사람 칸을 차지했다');
+  assert.equal(Object.keys(c).sort().join(','), '(담당 미지정),권형하,김윤희,김혜민');
+});
+
+test('주담당 건이 하나도 없으면 칸이 없다 — 담당별 묶음(teamNames)과 같은 규칙', () => {
+  const box = makeBox({});
+  const rows = [{ _id:'1', mgr_main:{name:'가가'}, last:{d:'2026-08-23'},
+    mgr_subs:[{sid:'',name:'① 노동청'},{sid:'',name:'나나'}] }];
+  const got = Array.from(box.data(rows, 'wk', '2026-08-24')).map(c => c.nm);
+  assert.equal(got.join(','), '가가', '부담당으로만 등장한 이름은 칸을 못 만든다');
+});
+
+test('쓰레기가 아무리 많아도 칸 수는 사람 수 그대로다', () => {
+  const box = makeBox({});
+  const 쓰레기 = ['- 사업장 : 광유엔지니어링', '(010-4323-2800)', '② 노동위원회', '- 차의환 부장'];
+  const rows = 쓰레기.map((g, i) => ({ _id:'r' + i, mgr_main:{name:'가가'}, last:{d:'2026-08-23'},
+    mgr_subs:[{sid:'',name:g}] }));
+  assert.equal(Array.from(box.data(rows, 'wk', '2026-08-24')).length, 1);
 });
 
 test('기한이 지난 것과 임박한 것을 가른다', () => {
@@ -163,11 +190,35 @@ test('칸을 누르면 그 사람만 표로 간다', () => {
   assert.match(html, /onclick="teamOnly\('권형하'\)"/);
 });
 
-test('눈여겨볼 것이 없으면 그렇게 말한다 — 빈 칸으로 두지 않는다', () => {
+/* ⚠ 배지는 «드문 일» 에만 쓴다.
+   처음에는 방치도 배지로 냈는데, 지금 팀은 이백오십칠 건이 «모두» 방치라
+   칸마다 회색 딱지가 붙어 눈에 걸리는 것이 하나도 없었다.
+   모두에게 똑같이 붙는 표시는 아무것도 구별해 주지 않으면서 자리만 차지한다. */
+test('방치는 배지가 아니라 아래 회색 한 줄로 — 모두에게 붙는 표시는 배지가 못 된다', () => {
+  const box = makeBox({ logs:기록 });
+  const html = box.card(칸()['권형하']);
+  assert.ok(html.indexOf('class="s stale"') < 0, '방치 배지가 남아 있다');
+  assert.match(html, /class="tmrec"[^>]*>이 주 기록 1\/3 · 방치/);
+});
+
+test('방치에 분모를 함께 적는다 — 「방치 75」 만으로는 전부인지 일부인지 모른다', () => {
+  const box = makeBox({ logs:기록 });
+  assert.match(box.card(칸()['권형하']), /방치 2\/3/);
+});
+
+test('전부 방치면 굵게 — 일부만 방치인 것과 눈으로 갈린다', () => {
+  const box = makeBox({});
+  const c = Array.from(box.data([{ _id:'1', mgr_main:{name:'가가'}, last:null }], 'wk', '2026-08-24'))[0];
+  assert.match(box.card(c), /방치 <b>1<\/b>\/1/);
+});
+
+test('눈여겨볼 것이 없으면 배지 줄을 아예 그리지 않는다 — 조용한 것이 「괜찮다」는 뜻', () => {
   const box = makeBox({});
   const c = Array.from(box.data([{ _id:'1', mgr_main:{name:'가가'}, due:'2026-12-01', last:{d:'2026-08-23'} }],
     'wk', '2026-08-24'))[0];
-  assert.match(box.card(c), /눈여겨볼 것 없음/);
+  const html = box.card(c);
+  assert.ok(html.indexOf('class="tmsig"') < 0, '빈 배지 줄이 자리만 차지한다');
+  assert.ok(html.indexOf('눈여겨볼 것 없음') < 0, '괜찮다는 말을 굳이 적지 않는다');
 });
 
 test('부담당 건수는 있을 때만 적는다', () => {
@@ -178,7 +229,13 @@ test('부담당 건수는 있을 때만 적는다', () => {
 });
 
 test('이 주 기록은 몇 개 중 몇 개인지 함께 적는다 — 퍼센트만으로는 크기를 모른다', () => {
-  assert.match(makeBox({ logs:기록 }).card(칸()['권형하']), /이 주 기록 1\/3건/);
+  assert.match(makeBox({ logs:기록 }).card(칸()['권형하']), /이 주 기록 1\/3/);
+});
+
+test('기한이 지났거나 임박한 것은 배지로 낸다 — 이건 드문 일이다', () => {
+  const html = makeBox({ logs:기록 }).card(칸()['권형하']);
+  assert.match(html, /class="s over">지남 1</);
+  assert.match(html, /class="s soon">임박 1</);
 });
 
 test('보여줄 사람이 없으면 빈 화면 대신 한 줄을 남긴다', () => {
@@ -264,7 +321,9 @@ test('한 사람만 걸러 보는 중이면 그렇게 말하고 돌아갈 길을
 });
 
 test('칸 모양이 CSS에 있다', () => {
-  ['.tmwrap{', '.tmc{', '.tmsig .over{', '.tmsig .soon{', '.tmsig .stale{', '.tmbar{'].forEach(c =>
+  ['.tmwrap{', '.tmc{', '.tmsig .over{', '.tmsig .soon{', '.tmrec{'].forEach(c =>
     assert.ok(CSS.indexOf(c) >= 0, c + ' 없음'));
   assert.match(CSS, /\.tmwrap\{[^}]*auto-fill/, '창 너비에 따라 칸 수가 정해진다');
+  assert.ok(CSS.indexOf('.tmsig .stale{') < 0, '안 쓰는 규칙은 남기지 않는다');
+  assert.ok(CSS.indexOf('.tmbar{') < 0, '늘 비어 있는 막대는 줄 하나만 더 먹었다');
 });
