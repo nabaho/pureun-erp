@@ -178,6 +178,40 @@ function pickMailboxes(list, conf) {
   return out;
 }
 
+/* ══════ 서버가 본 메일 목록 (대표 결정 2026-08-24) ══════
+   푸른 메일에는 **보내는 쪽만** 있었다(쓰기·보낸·예약·자료함). 받은 메일은
+   급여데이터함 안에서만, 그것도 **자료로 담긴 것만** 보였다 — 문의 메일처럼
+   자료가 안 되는 것은 앱에서 통째로 안 보였다.
+
+   ⚠ **사본을 만드는 것이 아니다.** 답장·삭제·읽음은 여전히 다음메일이 진짜다.
+   여기 적는 것은 「서버가 무엇을 보고 무엇을 담았나」는 기록이라, 본문 전문을
+   넣지 않는다 — 목록만 읽어도 그 글이 다 따라오면 느리고 요금이 된다. */
+var MAIL_PREVIEW = 160;
+var MAIL_SUBJECT_MAX = 200;
+
+function mailLogRecord(o) {
+  o = o || {};
+  var subject = String(o.subject == null ? '' : o.subject).replace(/[\r\n]+/g, ' ').trim();
+  if (subject.length > MAIL_SUBJECT_MAX) subject = subject.slice(0, MAIL_SUBJECT_MAX);
+  /* 미리보기 — 줄바꿈을 한 칸으로 눌러 담는다(목록은 한 줄로 보인다) */
+  var preview = String(o.body == null ? '' : o.body)
+    .replace(/\s+/g, ' ').trim().slice(0, MAIL_PREVIEW);
+  return {
+    from: String(o.from == null ? '' : o.from).replace(/[\r\n]+/g, ' ').trim().slice(0, 200),
+    subject: subject,
+    preview: preview,
+    box: String(o.box == null ? '' : o.box),
+    at: Number(o.at || 0),
+    atts: Number(o.atts || 0),
+    /* 담긴 결과 — 이 화면의 핵심이다. 몇 건이 자료로 갔고, 누구 칸으로 갔고,
+       안 갔으면 왜 안 갔는지. */
+    took: Number(o.took || 0),
+    seatName: String(o.seatName == null ? '' : o.seatName),
+    shared: o.shared === true,
+    why: String(o.why == null ? '' : o.why)
+  };
+}
+
 /* ══════ 처리한 메일 기억하기 (대표 결정 2026-08-23) ══════
    여태 「읽음」을 처리 표시로 썼다 — 서버가 **안 읽은 메일만** 봤다.
    그래서 **대표가 다음메일에서 그 메일을 열어 보면 급여데이터함에 영영 안
@@ -483,5 +517,6 @@ module.exports = {
   BODY_MAX, bodyTextOf, okBody, bodyFilename,
   seatFromBox,
   mailKey,
+  mailLogRecord, MAIL_PREVIEW,
   extOf, okAttachment, sharedPendingRecord, pendingRecordFor, mailNoteOf
 };
