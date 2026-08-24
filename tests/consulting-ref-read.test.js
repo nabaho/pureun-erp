@@ -36,7 +36,7 @@ function load(opts) {
     _refReadReady: false,
     PuDocRead: {
       READ_VERSION: 11, PROMPT_VERSION: 10,
-      init(d) { got.init = d; },
+      init(d) { got.init = d; got.inits = (got.inits || 0) + 1; },
       keysFrom: (db, opt) => ({ readDocUrl: 'u', getToken: () => 'T', _db: db, _auth: opt && opt.auth }),
       read(dataUrl) { got.read.push(dataUrl); return Promise.resolve(o.r || {}); },
       autoOk: () => ({ auto: true, why: '' })
@@ -101,7 +101,8 @@ test('★ 열쇠는 서버가 든다 — auth 를 안 넘기면 브라우저가 
 test('준비는 한 번만 한다 — 캡처마다 다시 준비하면 헛일이다', () => {
   const c = load();
   c.refReadInit(); c.refReadInit(); c.refReadInit();
-  assert.equal(c._got.init._auth ? 1 : 0, 1);
+  /* ⚠ 부른 횟수를 센다. 「_auth 가 있나」만 보면 세 번 준비해도 통과한다(실제로 그랬다). */
+  assert.equal(c._got.inits, 1, '★ 준비를 ' + c._got.inits + '번 했습니다');
   assert.equal(c._refReadReady, true);
 });
 

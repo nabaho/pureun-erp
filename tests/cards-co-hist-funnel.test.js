@@ -94,6 +94,99 @@ function paint(ctx, o, data) {
   return ctx._box.html;
 }
 
+/* 색인을 «만드는» 길도 실제로 돌린다. 걸러기만 재고 만들기를 안 재면, 번호 없는
+   기록을 버리는 옛 규칙으로 되돌려도 검사가 조용히 통과한다(실제로 그랬다). */
+function loadIndexer(fixtures) {
+  const kindsDecl = app.match(/^const ERP_HIST_KINDS = \[[\s\S]*?\n\];$/m)[0];
+  const at = app.indexOf('function loadErpCaseCons');
+  const end = app.indexOf('\nfunction erpUnwrapList');
+  assert.ok(at > 0 && end > at, 'loadErpCaseCons 를 잘라내지 못했습니다');
+  const seen = [];
+  const ctx = {
+    Object, Array, String, Number, Promise, console,
+    Store: { mode: 'firebase' },
+    firebase: { database: () => ({ ref: p => ({ once: () => {
+      seen.push(p);
+      return Promise.resolve({ val: () => fixtures[p] });
+    } }) }) },
+    digits: s => String(s || '').replace(/\D/g, ''),
+    _norm: s => String(s || '').replace(/\s|\(주\)|주식회사|㈜/g, '').replace(/[.#$/[\]]/g, '').toLowerCase(),
+    _erpCaseCons: null, _erpCaseConsLoading: false, _erpConsTypes: null,
+    _erpHistTypes: {}, _erpCaseConsWaiters: []
+  };
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext([kindsDecl, app.slice(at, end), cutFn(app, 'function erpUnwrapList(')].join('\n'), ctx);
+  ctx._seen = seen;
+  return ctx;
+}
+const idx = (fixtures) => new Promise(res => loadIndexer(fixtures).loadErpCaseCons(res));
+
+test('★ 사업자번호가 있는 기록은 번호 색인에 담는다', async () => {
+  const got = await idx({ 'data/consultings/v': { k1: { bizNo:'312-81-49225', companyName:'가나기업' } } });
+  assert.equal((got.byBiz['3128149225'] || []).length, 1);
+  assert.equal(Object.keys(got.byName).length, 0, '번호가 있으면 이름 색인에는 안 담습니다');
+});
+
+test('★ 사업자번호가 없으면 «이름 색인»에 담는다 — 예전에는 여기서 버렸다', async () => {
+  const got = await idx({ 'data/consultings/v': { k1: { companyName:'(주) 가나기업', typeCode:'cons-clinic' } } });
+  assert.equal(Object.keys(got.byBiz).length, 0, '10자리가 아닌 것을 번호 색인에 넣으면 안 됩니다');
+  assert.equal((got.byName['가나기업'] || []).length, 1,
+    '★ 버리면 그 회사는 이력이 통째로 안 붙습니다 — 대표님 화면이 빈 까닭입니다');
+  assert.equal(got.byName['가나기업'][0]._byName, true,
+    '★ 이름으로 이은 표를 안 달면 화면이 그 사실을 밝힐 수 없습니다');
+});
+
+test('이름 색인의 열쇠는 업체관리 맞추기와 같은 규칙으로 다듬는다', async () => {
+  const got = await idx({ 'data/funds/v': { f1: { companyName:'주식회사 가나 기업' } } });
+  assert.ok(got.byName['가나기업'], '★ 규칙이 갈리면 같은 회사가 이름 하나 차이로 안 붙습니다: '
+    + Object.keys(got.byName).join(','));
+});
+
+test('회사 이름이 어느 칸에 있어도 찾는다 — 사업마다 칸 이름이 다르다', async () => {
+  const a = await idx({ 'data/cases/v': { c1: { company:'가나기업' } } });
+  assert.ok(a.byName['가나기업'], 'company 칸을 안 봅니다');
+  const b = await idx({ 'data/cases/v': { c1: { name:'가나기업' } } });
+  assert.ok(b.byName['가나기업'], 'name 칸을 안 봅니다');
+});
+
+test('이름도 번호도 없는 기록은 어느 색인에도 안 담는다', async () => {
+  const got = await idx({ 'data/consultings/v': { k1: { typeCode:'cons-clinic' } } });
+  assert.equal(Object.keys(got.byBiz).length, 0);
+  assert.equal(Object.keys(got.byName).length, 0);
+});
+
+test('★ 넷을 다 읽고, 갈래 표를 제대로 붙인다', async () => {
+  const got = await idx({
+    'data/consultings/v': { a: { bizNo:'312-81-49225' } },
+    'data/cases/v':       { b: { bizNo:'312-81-49225' } },
+    'data/funds/v':       { c: { bizNo:'312-81-49225' } },
+    'data/other_projects/v': { d: { bizNo:'312-81-49225' } }
+  });
+  const kinds = (got.byBiz['3128149225'] || []).map(r => r._kind).sort();
+  same(kinds, ['case', 'consulting', 'fund', 'other']);
+});
+
+test('★ 사업마다 유형 사전을 제 자리에 담는다 — 한 벌로 뭉치면 이름이 섞인다', async () => {
+  const c = loadIndexer({
+    'data/biz_cons_types':  { v: [{ code:'cons-clinic', name:'현장클리닉' }] },
+    'data/biz_fund_types':  { v: [{ code:'fund-setup', name:'복지기금 설립' }] },
+    'data/biz_other_types': { v: [{ code:'oth-edu', name:'관리자 교육' }] }
+  });
+  await new Promise(res => c.loadErpCaseCons(res));
+  assert.equal(c._erpHistTypes.consulting[0].name, '현장클리닉');
+  assert.equal(c._erpHistTypes.fund[0].name, '복지기금 설립');
+  assert.equal(c._erpHistTypes.other[0].name, '관리자 교육');
+  assert.equal(c._erpConsTypes[0].name, '현장클리닉', '옛 이름(_erpConsTypes)도 이어져야 합니다');
+});
+
+test('★ 넷과 사전 셋, 일곱 자리를 읽는다 — 그 밖은 안 건드린다', async () => {
+  const c = loadIndexer({});
+  await new Promise(res => c.loadErpCaseCons(res));
+  same(c._seen.slice().sort(), ['data/biz_cons_types', 'data/biz_fund_types', 'data/biz_other_types',
+    'data/cases/v', 'data/consultings/v', 'data/funds/v', 'data/other_projects/v']);
+});
+
 /* ══════ ① 잇는 방법 — 이것이 안 나오던 까닭이다 ══════ */
 
 test('★ 사업자번호가 맞으면 그 회사 기록만 붙인다', () => {
@@ -165,7 +258,11 @@ test('갈래 머리를 떼는 규칙도 목록에서 만든다 — 손으로 적
 test('★ 해는 시작일에서 뽑고, 없으면 접수일·끝난일을 본다', () => {
   const c = load();
   assert.equal(c.erpHistYear(REC.clinic), 2026);
-  assert.equal(c.erpHistYear(REC.case1), 2023, '사건은 접수일(receiveDate)이 시작입니다');
+  /* ⚠ 접수일«만» 있는 것으로 잰다. 끝난일이 함께 있으면 접수일을 안 봐도 같은 해가
+     나와서, 접수일을 빼도 검사가 조용히 통과한다(실제로 그랬다). */
+  assert.equal(c.erpHistYear({ receiveDate: '2021-02-15' }), 2021,
+    '★ 사건은 접수일이 시작입니다 — 안 보면 「해 모름」으로 떨어집니다');
+  assert.equal(c.erpHistYear(REC.case1), 2023);
   assert.equal(c.erpHistYear({ closedAt: '2019-08-01T00:00:00Z' }), 2019);
 });
 

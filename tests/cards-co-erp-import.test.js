@@ -26,7 +26,12 @@ const code = _pure + '\n' + source.slice(digitsAt, digitsEnd) + '\n' + source.sl
 
   const writes = []; const sets = [];
   const ctx = {
+    Object, Array, String, Number, Math, JSON,
     _erpConsTypes: [{ code:'cons-ilteo', name:'일터상생혁신' }],
+    /* ⚠ 2026-08-24: 사업마다 유형 사전이 따로다(컨설팅·기금·기타). 안 주면 이름표를
+       만드는 자리에서 ReferenceError 로 멎어 이 파일이 통째로 운다. */
+    _erpHistTypes: { consulting:[{ code:'cons-ilteo', name:'일터상생혁신' }],
+                     fund:[{ code:'fund-setup', name:'복지기금 설립' }], other:[] },
     loadErpCaseCons: cb => cb(ctx._erpFixture),
     _erpFixture: { byBiz: {} },
     coList: () => items.slice(),
