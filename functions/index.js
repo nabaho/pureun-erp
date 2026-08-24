@@ -1120,6 +1120,12 @@ async function runPaydataMailOnce() {
     /* 갈린 것·공용에 남은 것을 따로 센다 — 「왜 아무도 안 받나」를 로그만 보고 알아야 한다. */
     let routed = 0, shared = 0;
     const whys = {};
+    /* ⚠ 돌려줄 셈은 **try 밖에** 둔다. 예전에는 try 안에서 만든 boxes·inbox 를
+       try 를 나온 뒤 return 에서 썼다 — 담기가 다 끝난 회차마다 반드시
+       `ReferenceError: boxes is not defined` 로 터졌다(2026-08-24 로그).
+       자료는 들어갔는데 함수는 실패로 끝나, 「지금 가져오기」가 500 을 받아
+       사람에게 「가져오지 못했습니다」로 보였다. */
+    const scanned = { boxes: [], looked: 0, took: 0, skipped: 0, unknown: 0, routed: 0, shared: 0 };
     try {
       /* 볼 폴더를 **찾아서** 고른다(대표 결정 2026-08-23). 여태 「급여자료」라는
          이름 하나만 찾아, 이미 있는 「2.급여+사무대행」 폴더를 못 보고 열흘 넘게
@@ -1133,6 +1139,7 @@ async function runPaydataMailOnce() {
         console.warn("receivePaydataMail: 폴더 목록을 못 읽었습니다", String((e && e.message) || e));
       }
       const boxes = MR.pickMailboxes(boxList, conf);
+      scanned.boxes = boxes;              // try 를 나온 뒤에도 쓸 수 있게
       if (!boxes.length) {
         /* 폴더 이름을 사람이 알 수 있게 **있는 그대로** 남긴다 — 이것이 없어서
            「무슨 이름으로 만들어야 하나」를 알 길이 없었다. */
@@ -1181,7 +1188,7 @@ async function runPaydataMailOnce() {
            알 수 없다. 2026-08-23에 실제로 그것 때문에 배포가 먹었는지
            로그로 확인할 수 없었다. 업체·직원 명부는 여전히 안 읽는다. */
         console.log("receivePaydataMail 새 메일 없음", { boxes: boxes });
-        return { boxes: boxes, looked: 0, took: 0, skipped: 0, unknown: 0, routed: 0, shared: 0 };
+        return scanned;                   // 셈은 모두 0 그대로다
       }
       const known = await payMailKnownList(db);
       /* 이미 처리한 메일 목록 — 읽음 표시를 안 쓰므로 이것이 유일한 기준이다. */
@@ -1194,7 +1201,15 @@ async function runPaydataMailOnce() {
           parsed = await simpleParser(item.source);
         } catch (e) {
           console.warn("receivePaydataMail: 메일을 읽지 못했습니다", String((e && e.message) || e));
-          continue;   // 읽음 표시도 하지 않는다 — 다음 회차에 다시 해 본다
+          continue;   // 처리한 것으로 안 적는다 — 다음 회차에 다시 해 본다
+        }
+        /* ⚠ 파서가 **던지지 않고 빈 값**을 줄 수도 있다. 그때 그냥 나아가면
+           바로 다음 줄(parsed.from)에서 터져 그 회차가 통째로 멈춘다 —
+           담던 자료까지 함께 멈춘다. 한 통을 건너뛰는 것이 낫다. */
+        if (!parsed) {
+          skipped++;
+          console.warn("receivePaydataMail: 메일 내용이 비어 건너뜀");
+          continue;
         }
 
         const fromText = (parsed.from && parsed.from.text) || "";
@@ -1265,6 +1280,9 @@ async function runPaydataMailOnce() {
       }
       /* 처리한 메일을 적어 둔다 — 안 적으면 회차마다 같은 것을 다시 담는다. */
       await payMailMarkDone(db, newlyDone, doneKeys);
+      scanned.looked = inbox.length;
+      scanned.took = took; scanned.skipped = skipped; scanned.unknown = unknown;
+      scanned.routed = routed; scanned.shared = shared;
       console.log("receivePaydataMail",
         { boxes: boxes, looked: inbox.length, took, skipped, unknown, routed, shared, whys });
       /* 앱이 「마지막에 언제·어느 폴더를 봤나」를 보여 줄 수 있게 적어 둔다 —
@@ -1278,8 +1296,7 @@ async function runPaydataMailOnce() {
     } finally {
       try { await client.logout(); } catch (_) { /* 이미 끊겼다 */ }
     }
-    return { boxes: boxes, looked: inbox.length, took: took, skipped: skipped,
-      unknown: unknown, routed: routed, shared: shared };
+    return scanned;
   }
 }
 
