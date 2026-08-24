@@ -155,6 +155,14 @@ async function runSync(deps, opts) {
         if (pick.back.length) ranges.push({ dir: 'back', uids: pick.back });
         if (ranges.length) more = true;   // 가져올 것이 있었다 — 다음 바퀴에 다시 고른다
 
+        /* ⚠ 가져올 것이 «없을» 때도 표시를 적어야 한다. 안 적으면 폴더가 다 찼는데도
+           done 이 영원히 false 로 남아 ①「기다리는 폴더 33개」라고 거짓을 말하고,
+           ②정리(지워진 메일 빼기)가 한 번도 돌지 않는다(doneAll 이 안 된다).
+           실제로 그랬다 — INBOX 가 400/400 인데 끝났다고 안 했다(2026-08-24 실측). */
+        if (!ranges.length) {
+          p.sync = MB.nextSync(p.sync, [], p.st.uidValidity, pick.done);
+        }
+
         {
           for (const r of ranges) {
             const seen = [];

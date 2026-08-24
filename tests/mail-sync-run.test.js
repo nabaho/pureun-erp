@@ -145,6 +145,31 @@ test('★ 한 뭉치보다 많아도 한 회차에 다 가져온다 — 예산�
   assert.ok(r.turns > 1, '한 바퀴만 돌았다 — 예산이 남는데 멈췄다');
 });
 
+test('★ 다 찬 폴더는 «끝났다»고 적는다 — 안 적으면 셈이 거짓이 되고 정리가 안 돈다', async () => {
+  const folders = { INBOX: box(120) };
+  const db = fakeDb();
+  const r = await MS.runSync(deps(db), { client: fakeMail(folders), deadlineMs: 60000 });
+  assert.equal(r.ready, 1, '다 찼는데 「기다리는 폴더」로 세고 있다');
+  assert.equal(r.waiting, 0);
+  assert.equal(db.__get(MS.ROOT + '/sync/' + slug('INBOX')).done, true);
+});
+
+test('★ 가져올 것이 «없는» 바퀴에도 표시를 적는다 — 실제로 이 자리에서 done 이 안 적혔다', async () => {
+  /* 2026-08-24 실측: INBOX 가 400/400 인데 done 이 false 로 남아 「기다리는 폴더 33개」로
+     세어지고, 정리(지워진 메일 빼기)가 한 번도 돌지 않았다. 앞 회차가 다 가져온 뒤
+     끝났을 때 그렇게 된다 — 다음 회차의 첫 바퀴는 «가져올 것이 없는» 바퀴다. */
+  const folders = { INBOX: box(120) };
+  const db = fakeDb();
+  const d = deps(db);
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  /* 앞 회차가 표시를 못 적고 끝난 상태를 손으로 만든다 */
+  await db.ref(MS.ROOT + '/sync/' + slug('INBOX')).update({ done: false });
+  const r = await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  assert.equal(db.__get(MS.ROOT + '/sync/' + slug('INBOX')).done, true,
+    '가져올 것이 없는 바퀴가 표시를 안 적었다 — 이 폴더는 영원히 「기다리는」 상태로 남는다');
+  assert.equal(r.ready, 1);
+});
+
 test('★ 번호가 하나도 빠지지 않는다 — 가운데가 조용히 비는 것이 가장 무섭다', async () => {
   const folders = { INBOX: box(1230) };
   const db = fakeDb();
