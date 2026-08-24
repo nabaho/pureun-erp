@@ -218,6 +218,32 @@ function toText(buf, charset) {
 
 const PREVIEW_MAX = 140;
 
+/* &#44048; · &#xAC00; 같은 «숫자 문자»를 글자로. 한글 메일에 아주 흔하다 —
+   안 풀면 「감사합니다」가 「&#44048;&#49324;&#54633;&#45768;&#45796;」로 보인다. */
+function unentity(s) {
+  return String(s || '')
+    .replace(/&#(\d{1,7});/g, (m, d) => {
+      const n = Number(d);
+      try { return (n > 0 && n <= 0x10ffff) ? String.fromCodePoint(n) : ' '; } catch (e) { return ' '; }
+    })
+    .replace(/&#x([0-9a-f]{1,6});/gi, (m, h) => {
+      const n = parseInt(h, 16);
+      try { return (n > 0 && n <= 0x10ffff) ? String.fromCodePoint(n) : ' '; } catch (e) { return ' '; }
+    })
+    .replace(/&nbsp;/gi, ' ').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"').replace(/&apos;/gi, "'")
+    .replace(/&amp;/gi, '&');
+}
+
+/* 메일 머리줄인가 — 전달·답장 본문 맨 앞에 붙는 것들. 글이 아니다. */
+const HEAD_LINE = /^\s*(-{2,}\s*)?(original message|원본\s*메시지|from|to|cc|bcc|sent|date|subject|보낸사람|받는사람|보낸날짜|제목)\s*[:：]/i;
+function isHeadLine(ln) {
+  const t = String(ln || '').trim();
+  if (!t) return true;
+  if (/^-{3,}.*-{3,}$/.test(t)) return true;      // ----- 원본 메시지 -----
+  return HEAD_LINE.test(t);
+}
+
 function previewFrom(buf, tp) {
   const t = tp || {};
   let s = toText(decodePart(buf, t.enc), t.cs);
@@ -229,21 +255,22 @@ function previewFrom(buf, tp) {
        「.color_fix span {color:#888 !i」 같은 것이 나왔다(2026-08-24 대표 화면).
        닫히지 않은 것은 거기서부터 «끝까지» 버린다. */
     s = s.replace(/<\s*(script|style|head)\b[\s\S]*$/i, ' ');
-    s = s.replace(/<[^>]*>/g, ' ')
-         .replace(/<[^>]*$/, ' ')          // 잘린 꼬리표 꼬리
-         .replace(/&nbsp;/gi, ' ').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
-         .replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'");
+    /* 줄바꿈 꼬리표는 빈칸이 아니라 «줄»로 바꾼다 — 아래에서 머리줄을 줄 단위로 걷는다 */
+    s = s.replace(/<\s*br\b[^>]*>/gi, '\n').replace(/<\s*\/\s*(p|div|tr|li)\s*>/gi, '\n');
+    s = s.replace(/<[^>]*>/g, ' ').replace(/<[^>]*$/, ' ');
     /* ③ 꼬리표 밖에 남은 CSS 조각(선택자 { … })도 글이 아니다 */
     s = s.replace(/[^\s{}]+\s*\{[^{}]*\}?/g, ' ');
   }
+  s = unentity(s);
   /* 보이지 않는 글자를 걷어내고 빈칸을 하나로 */
   const clean = (x) => x.replace(/[\u0000-\u001f\u007f\u00ad\u200b-\u200f\ufeff]/g, ' ')
                         .replace(/\s+/g, ' ').trim();
-  /* ④ 인용줄(> …)을 걷어낸다 — 답장 메일이 온통 인용으로 시작한다.
-     ⚠ 다 걷어내고 «아무것도 안 남으면» 인용이라도 보여 준다. 셋째 줄이 비면 사람은
-       「본문이 없는 메일」로 읽는데, 실은 인용만 있는 답장이다(대표 화면 2026-08-24). */
-  const noQuote = clean(s.split(/\r?\n/).filter((ln) => !/^\s*>/.test(ln)).join(' '));
-  const out = noQuote || clean(s.replace(/^\s*>+/gm, ' '));
+  /* ④ 인용줄(> …)과 메일 머리줄을 걷어낸다 — 답장·전달은 그것으로 시작한다.
+     ⚠ 다 걷어내고 «아무것도 안 남으면» 걷지 않은 것을 보여 준다. 셋째 줄이 비면 사람은
+       「본문이 없는 메일」로 읽는데, 실은 인용·머리줄만 있는 답장이다. */
+  const lines = s.split(/\r?\n/);
+  const body = clean(lines.filter((ln) => !/^\s*>/.test(ln) && !isHeadLine(ln)).join(' '));
+  const out = body || clean(s.replace(/^\s*>+/gm, ' '));
   return out.slice(0, PREVIEW_MAX);
 }
 
@@ -252,7 +279,7 @@ function previewFrom(buf, tp) {
    표시(hi·lo)가 다 찼다고 되어 있어 다시 가져오지도 않는다 — 그러면 옛 줄은 영원히
    반쪽이다. 그래서 번호를 붙여 두고, 번호가 다르면 그 폴더만 처음부터 다시 훑는다.
    ⚠ 줄에 칸을 더할 때마다 이 번호를 올린다. 안 올리면 새 칸은 «새 메일에만» 붙는다. */
-const ROW_VER = 3;   /* 2→3: 잘린 style 안의 CSS 가 미리보기로 새던 것을 고쳤다 */
+const ROW_VER = 4;   /* 3→4: 숫자 문자(&#44048;)를 풀고, 메일 머리줄을 걷어낸다 */
 
 function needsRefetch(sync) {
   return Number((sync || {}).ver || 0) !== ROW_VER;
@@ -416,7 +443,7 @@ module.exports = {
   safeKey, hash8, slugOf,
   folderKind, folderOrder, isSyncable, folderRecord,
   attCount, oneAddr, addrList, hasFlag, msgRow,
-  textPartOf, decodePart, toText, previewFrom, PREVIEW_MAX,
+  textPartOf, decodePart, toText, previewFrom, unentity, isHeadLine, PREVIEW_MAX,
   ROW_VER, needsRefetch, folderDone,
   pickToFetch, uidSet, nextSync, uidReset,
 };
