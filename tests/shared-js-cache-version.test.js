@@ -40,7 +40,7 @@ function htmlFiles(dir, out){
 }
 
 const pages = htmlFiles(ROOT);
-console.log('\n[공용 .js 는 ?v= 를 달고 부른다] — html ' + pages.length + '개를 훑는다');
+console.log('\n[공용 .js·.css 는 ?v= 를 달고 부른다] — html ' + pages.length + '개를 훑는다');
 
 /* 화면마다 js/ 를 어떻게 부르는지 모은다 — 붙은 것과 안 붙은 것을 함께 센다. */
 const bare = [];              // ?v= 없이 부르는 곳
@@ -48,15 +48,23 @@ const vers = {};              // 파일 → 쓰이는 번호들
 pages.forEach(function(p){
   const s = fs.readFileSync(p, 'utf8');
   const rel = path.relative(ROOT, p).replace(/\\/g, '/');
-  const re = /src="(?:\.\.\/)?js\/([\w.-]+\.js)(\?v=(\d+))?"/g;
-  let m;
-  while((m = re.exec(s))){
-    if(m[2]){ (vers[m[1]] = vers[m[1]] || new Set()).add(m[3]); }
-    else bare.push(rel + ' → ' + m[1]);
-  }
+  /* ★ js 뿐 아니라 css 도 본다 — 2026-08-23 에 css/pu-erp.css 가 ?v= 없이 불리고
+     있는 것을 발견했다. js 만 보고 있었으니 css 는 통째로 눈 밖이었다.
+     모양을 고쳐도 브라우저가 옛 css 를 쓰는 것은 js 와 똑같은 사고다. */
+  const res = [
+    /src="(?:\.\.\/)?js\/([\w.-]+\.js)(\?v=(\d+))?"/g,
+    /href="(?:\.\.\/)?css\/([\w.-]+\.css)(\?v=(\d+))?"/g,
+  ];
+  res.forEach(function(re){
+    let m;
+    while((m = re.exec(s))){
+      if(m[2]){ (vers[m[1]] = vers[m[1]] || new Set()).add(m[3]); }
+      else bare.push(rel + ' → ' + m[1]);
+    }
+  });
 });
 
-ok('★ js/ 파일을 ?v= 없이 부르는 화면이 없다', bare.length === 0,
+ok('★ js/·css/ 파일을 ?v= 없이 부르는 화면이 없다', bare.length === 0,
    bare.length
      ? ('붙여 주세요 — 안 붙이면 고쳐도 브라우저가 옛 파일을 그대로 씁니다:\n      '
         + bare.join('\n      '))
@@ -71,7 +79,7 @@ ok('★ 같은 파일을 화면마다 다른 번호로 부르지 않는다', spl
    split.length ? ('번호를 하나로 맞춰 주세요:\n      ' + split.join('\n      ')) : '');
 
 // 훑을 것이 실제로 있어야 이 검사가 뜻을 갖는다(경로 규칙이 바뀌면 알려 준다)
-ok('js/ 를 부르는 화면을 실제로 찾았다 (경로 규칙이 바뀌면 알려 준다)',
+ok('js/·css/ 를 부르는 화면을 실제로 찾았다 (경로 규칙이 바뀌면 알려 준다)',
    Object.keys(vers).length > 0);
 
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===\n');
