@@ -948,21 +948,49 @@ const PAYDATA_BUCKET = "pureun-erp.firebasestorage.app";  // 앱(pu-paydata.html
 const PAYMAIL_BOX = "급여자료";      // 다음메일에서 규칙으로 모아 두는 폴더
 const PAYMAIL_UPLOADER = "_mail";    // 창고 자리 — 사람이 아니라 서버가 담았다는 표시
 const PAYMAIL_MAX_PER_RUN = 30;      // 한 회차에 처리할 메일 수 — 오래 붙어 있지 않게
+/* 며칠 전 것까지 훑나 — 읽음 여부를 안 보게 된 뒤로는 이 기간이 「다시 볼 범위」다.
+   너무 길면 회차마다 많이 받고, 너무 짧으면 늦게 발견한 메일을 놓친다. */
+const PAYMAIL_LOOK_DAYS = 14;
 
-/* 읽음 표시는 **그 메일이 있던 폴더**에서 해야 한다 — 폴더를 여러 개 보게 된 뒤로
-   마지막에 열려 있던 폴더에서 표시하면 엉뚱한 메일이 읽음이 되거나 아무 일도
-   안 일어난다(그러면 같은 메일을 회차마다 다시 담는다). */
-async function markSeen(client, item) {
-  if (!item || !item.box) {
-    await client.messageFlagsAdd({ uid: String(item.uid) }, ["\\Seen"], { uid: true });
-    return;
+/* ── 처리한 메일 목록 (대표 결정 2026-08-23) ──
+   여태 「읽음」을 처리 표시로 썼다 — 서버가 안 읽은 메일만 봐서, **대표가
+   메일을 열어 보면 그 자료가 영영 안 들어왔다.** 사람이 읽는 것과 서버가
+   처리한 것은 다른 일이라 한 칸을 같이 쓸 수 없다.
+
+   이제 메일 고유 번호를 여기 적어 두고, 읽음 표시는 **건드리지 않는다.**
+   ⚠ 끝없이 쌓이면 회차마다 그 전부를 읽는다(요금) — 오래된 것은 걷어낸다. */
+const MAIL_DONE_KEEP = 3000;              // 적어 둘 기록 수
+const MAIL_DONE_DAYS = 120;               // 이보다 오래된 것은 걷어낸다
+
+async function payMailDoneKeys(db) {
+  const snap = await db.ref(PAYDATA_ROOT + "/mailseen").once("value").catch(() => null);
+  return (snap && snap.val()) || {};
+}
+
+/* 처리했다고 적고, 오래된 기록은 걷어낸다 — 한 번의 update 로 함께 한다. */
+async function payMailMarkDone(db, keys, done) {
+  if (!keys.length) return;
+  const now = Date.now();
+  const up = {};
+  keys.forEach(function (k) { up[PAYDATA_ROOT + "/mailseen/" + k] = now; });
+
+  /* 걷어내기: 너무 오래된 것과, 수가 넘치면 오래된 쪽부터. */
+  const old = [];
+  const cut = now - MAIL_DONE_DAYS * 24 * 60 * 60 * 1000;
+  Object.keys(done || {}).forEach(function (k) {
+    if (Number(done[k] || 0) < cut) old.push(k);
+  });
+  const left = Object.keys(done || {}).filter(function (k) { return old.indexOf(k) < 0; });
+  if (left.length + keys.length > MAIL_DONE_KEEP) {
+    left.sort(function (a, b) { return Number(done[a] || 0) - Number(done[b] || 0); })
+      .slice(0, left.length + keys.length - MAIL_DONE_KEEP)
+      .forEach(function (k) { old.push(k); });
   }
-  const lock = await client.getMailboxLock(item.box);
-  try {
-    await client.messageFlagsAdd({ uid: String(item.uid) }, ["\\Seen"], { uid: true });
-  } finally {
-    lock.release();
-  }
+  old.forEach(function (k) { up[PAYDATA_ROOT + "/mailseen/" + k] = null; });
+  await db.ref().update(up).catch(function (e) {
+    /* 못 적으면 다음 회차에 같은 메일을 또 담는다 — 조용히 넘기면 안 된다 */
+    console.error("receivePaydataMail 처리 기록 실패:", String((e && e.message) || e));
+  });
 }
 
 function payMailId() {
@@ -1129,8 +1157,14 @@ async function runPaydataMailOnce() {
           continue;
         }
         try {
-          for await (const msg of client.fetch({ seen: false }, { uid: true, source: true })) {
-            inbox.push({ uid: msg.uid, source: msg.source, box: box });
+          /* 읽음 여부를 **안 본다**(대표 결정 2026-08-23) — 대표가 열어 본 메일도
+             가져와야 한다. 대신 최근 것부터 훑고, 이미 처리한 것은 아래에서 건너뛴다.
+             ⚠ 폴더 전부를 매번 받으면 안 된다 — 최근 며칠 것만 본다. */
+          const since = new Date(Date.now() - PAYMAIL_LOOK_DAYS * 24 * 60 * 60 * 1000);
+          for await (const msg of client.fetch({ since: since },
+            { uid: true, source: true, envelope: true })) {
+            inbox.push({ uid: msg.uid, source: msg.source, box: box,
+              messageId: (msg.envelope && msg.envelope.messageId) || "" });
             if (inbox.length >= PAYMAIL_MAX_PER_RUN) break;
           }
         } finally {
@@ -1150,6 +1184,9 @@ async function runPaydataMailOnce() {
         return { boxes: boxes, looked: 0, took: 0, skipped: 0, unknown: 0, routed: 0, shared: 0 };
       }
       const known = await payMailKnownList(db);
+      /* 이미 처리한 메일 목록 — 읽음 표시를 안 쓰므로 이것이 유일한 기준이다. */
+      const doneKeys = await payMailDoneKeys(db);
+      const newlyDone = [];
 
       for (const item of inbox) {
         let parsed;
@@ -1164,6 +1201,12 @@ async function runPaydataMailOnce() {
         const sender = MR.senderOf(fromText);
         const subject = String(parsed.subject || "");
 
+        /* 이미 처리한 메일이면 건너뛴다. 대표가 읽었는지는 보지 않는다. */
+        const mkey = MR.mailKey(item.messageId || (parsed.messageId || ""),
+          { from: sender, subject: subject, date: parsed.date ? +new Date(parsed.date) : 0 });
+        if (mkey && doneKeys[mkey]) continue;
+        if (mkey) newlyDone.push(mkey);
+
         /* 급여 폴더에 온 것은 주소를 안 가린다(대표 결정 2026-08-23) — 대표가
            규칙으로 손수 갈라 둔 곳이라 그 안의 것은 이미 「급여 자료」다.
            받은메일함을 보게 켰을 때는 광고까지 들어오므로 그때만 가린다. */
@@ -1172,8 +1215,7 @@ async function runPaydataMailOnce() {
           unknown++;
           console.log("receivePaydataMail 모르는 주소라 건너뜀:", sender || "(주소 없음)",
             "폴더:", item.box || "(모름)");
-          await markSeen(client, item);
-          continue;
+          continue;   // 처리한 것으로 적어 둔다(위에서 newlyDone 에 넣었다)
         }
 
         const atts = Array.isArray(parsed.attachments) ? parsed.attachments : [];
@@ -1220,8 +1262,9 @@ async function runPaydataMailOnce() {
             console.log("receivePaydataMail 본문 건너뜀:", bchk.why);
           }
         }
-        await markSeen(client, item);
       }
+      /* 처리한 메일을 적어 둔다 — 안 적으면 회차마다 같은 것을 다시 담는다. */
+      await payMailMarkDone(db, newlyDone, doneKeys);
       console.log("receivePaydataMail",
         { boxes: boxes, looked: inbox.length, took, skipped, unknown, routed, shared, whys });
       /* 앱이 「마지막에 언제·어느 폴더를 봤나」를 보여 줄 수 있게 적어 둔다 —

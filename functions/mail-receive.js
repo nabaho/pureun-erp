@@ -178,6 +178,35 @@ function pickMailboxes(list, conf) {
   return out;
 }
 
+/* ══════ 처리한 메일 기억하기 (대표 결정 2026-08-23) ══════
+   여태 「읽음」을 처리 표시로 썼다 — 서버가 **안 읽은 메일만** 봤다.
+   그래서 **대표가 다음메일에서 그 메일을 열어 보면 급여데이터함에 영영 안
+   들어왔다.** 메일이 오면 확인하려고 여는 것이 당연한데 그 순간 자료가 사라졌다.
+
+   사람이 읽는 것과 서버가 처리한 것은 **다른 일**이다. 한 칸을 같이 쓰면 안 된다.
+   그래서 메일마다 있는 고유 번호(Message-ID)를 서버가 따로 적어 둔다.
+   ⚠ 읽음 표시는 이제 서버가 **건드리지 않는다** — 대표의 읽음·안읽음은 대표 것이다. */
+
+/* Message-ID → 실시간DB 열쇠. 못 쓰는 글자( . $ # [ ] / )와 꺾쇠·빈칸을 걷어낸다.
+   ⚠ 고유 번호를 안 붙이는 메일도 있다. 그때는 보낸이·제목·시각으로 만든다 —
+   같은 메일이면 같은 값이 나와야 두 번 안 담는다. */
+function mailKey(messageId, fallback) {
+  var id = String(messageId == null ? '' : messageId).trim().replace(/^<|>$/g, '').trim();
+  if (!id) {
+    var f = fallback || {};
+    var from = String(f.from == null ? '' : f.from).trim();
+    var subject = String(f.subject == null ? '' : f.subject).trim();
+    var date = Number(f.date || 0);
+    if (!from && !subject && !date) return '';   // 억지로 만들지 않는다
+    id = from + '|' + subject + '|' + date;
+  }
+  var key = id.replace(/[.$#[\]/\s]/g, '_');
+  /* 실시간DB 열쇠는 768바이트까지지만, 길면 목록만 읽어도 무겁다 —
+     앞을 살리고 잘라 낸다(앞부분이 메일마다 다른 곳이다). */
+  if (key.length > 180) key = key.slice(0, 180);
+  return key;
+}
+
 /* ══════ 메일 본문도 자료로 (대표 결정 2026-08-23) ══════
    여태 **첨부만** 담고 본문은 통째로 버렸다. 그래서 첨부 없이 본문에 적어
    보낸 메일(「이번달 김철수 22일」)이 아예 안 들어왔고, 카톡·문자를 메일로
@@ -453,5 +482,6 @@ module.exports = {
   trustBox,
   BODY_MAX, bodyTextOf, okBody, bodyFilename,
   seatFromBox,
+  mailKey,
   extOf, okAttachment, sharedPendingRecord, pendingRecordFor, mailNoteOf
 };
