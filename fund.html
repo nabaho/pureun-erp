@@ -6164,6 +6164,30 @@ function _openAssets(op){
   return s;
 }
 /* 별지15호 전체 수치 산출. rep=사람이 입력한 보조값, sites=참여사업장, welf=목적사업·대부 */
+/* ══ 출연금 대조 — 같은 돈을 두 군데서 따로 적고 있다 ══
+   · 장부(분개)    통장에서 들어온 출연금 → 별지15호 ⑬·⑮ 로 나간다
+   · 사업장 명부   사업장별 «그 해» 출연금(손입력) → 지원신청서·기금출연확인서로 나간다
+   둘이 어긋나면 같은 해에 대해 «서로 다른 숫자»가 적힌 서류 두 벌이 노동부와 공단으로
+   나간다. 어느 쪽이 맞는지는 사람만 안다 — 앱은 «다르다»는 사실만 알린다
+   (대부 실행액 대조와 같은 방식이다).
+
+   ⚠ 사업장의 «기본 출연금»(sites/{사업장}/contrib)은 여기 안 쓴다. 그것은 설립 때 정한
+     기준 금액이지 그 해에 들어온 돈이 아니다 — 섞어 넣으면 멀쩡한 해가 틀린 것으로
+     잡힌다. 대신 «그 해 값이 안 적힌 사업장»을 세어 알려 준다. 차이의 원인이 대개
+     거기다(지원금 한도 계산은 값이 있어야 해서 기본값으로 메우지만, 그건 다른 일이다).
+   ⚠ 장부 쪽은 ⑬+⑮ 다 — 현물출연은 통장에 안 찍히므로 현금만 보면 늘 모자라게 나온다. */
+function contribCheck(bookAmt,sites,sy){
+  var sum=0,nYear=0,nNone=0;
+  (sites||[]).filter(function(s){ return s.status!=='closed'; }).forEach(function(s){
+    var y=num(((sy||{})[s._id]||{}).contrib)||0;
+    if(y){ nYear++; sum+=y; } else { nNone++; }
+  });
+  var book=Math.round(num(bookAmt)||0), site=Math.round(sum);
+  return { book:book, site:site, diff:book-site, nYear:nYear, nNone:nNone,
+           off:(book>0||site>0)&&book!==site };
+}
+/* 고치러 가는 곳은 «참여사업장 › 연도별 기록» 한 곳이다 */
+function goSiteYears(){ S.tab='sites'; S.siteTab='years'; renderFund(); }
 function buildF15(arr,fid,yr,rep,sites,welf){
   rep=rep||{}; sites=sites||[]; welf=welf||[];
   var fin=computeFin(arr,fid,yr), jr=journalOf(arr), mv=acctMoves(jr);
@@ -6304,15 +6328,18 @@ function buildF15(arr,fid,yr,rep,sites,welf){
 function f15Load(){
   var fid=S.fundId, yr=S.year, key=fid+'/'+yr;
   if(S.f15For===key) return true;
-  S.f15For=key; S.f15Rep=null; S.f15Sites=null; S.f15Welf=null; S.f15Close=null;
+  S.f15For=key; S.f15Rep=null; S.f15Sites=null; S.f15Welf=null; S.f15Close=null; S.f15Sy=null;
   Promise.all([
     // closing 노드 전체를 읽는다 — report(입력값) + locked(확정 상태)를 함께 쓰기 위해
     fbDb.ref(NS+'/closing/'+fid+'/'+yr).once('value').then(function(s){return s.val()||{};}).catch(function(){return {};}),
     _loadSites(fid).catch(function(){return [];}),
-    fbDb.ref(NS+'/welfare/'+fid+'/'+yr).once('value').then(function(s){var v=s.val()||{};return Object.keys(v).map(function(k){return v[k];});}).catch(function(){return [];})
+    fbDb.ref(NS+'/welfare/'+fid+'/'+yr).once('value').then(function(s){var v=s.val()||{};return Object.keys(v).map(function(k){return v[k];});}).catch(function(){return [];}),
+    /* 사업장별 «그 해» 출연금 — 장부와 대조하려고 함께 읽는다(contribCheck) */
+    fbDb.ref(NS+'/site_years/'+fid+'/'+yr).once('value').then(function(s){return s.val()||{};}).catch(function(){return {};})
   ]).then(function(r){
     if(S.f15For!==key) return;
     S.f15Close=r[0]||{}; S.f15Rep=S.f15Close.report||{}; S.f15Sites=r[1]||[]; S.f15Welf=r[2]||[];
+    S.f15Sy=r[3]||{};
     if(S.tab==='closing'&&S.view==='fund') renderFund();
   });
   return false;
@@ -6387,7 +6414,22 @@ function f15View(arr){
       +'<tr><td>⑰ 기본재산 사용</td><td style="text-align:right">'+_n(_k1000(R.bf.use))+'</td></tr>'
       +'<tr><td>⑱ 기금법인 분할 등</td><td style="text-align:right">'+_n(_k1000(R.bf.split))+'</td></tr>'
       +'<tr style="font-weight:700"><td>⑲ 소계(증−감)</td><td style="text-align:right">'+_n(_k1000(R.bfInc-R.bfDec))+'</td></tr>'
-      +'<tr style="font-weight:700;background:var(--bg)"><td>⑳ 해당 회계연도 말</td><td style="text-align:right">'+_n(_k1000(R.bfEnd))+'</td></tr></table></div>'
+      +'<tr style="font-weight:700;background:var(--bg)"><td>⑳ 해당 회계연도 말</td><td style="text-align:right">'+_n(_k1000(R.bfEnd))+'</td></tr>'
+      /* 출연금이 사업장 명부와 어긋나는가 — 별지15호(장부)와 지원신청서(사업장 명부)가
+         같은 해에 대해 다른 숫자를 들고 나가는 것을 여기서 붙잡는다. */
+      +(function(){
+        var cc=contribCheck(R.bf.employer+R.bf.other,S.f15Sites,S.f15Sy);
+        if(!cc.off&&!cc.nNone) return '';
+        return '<tr><td colspan="2" style="padding:0"><div class="msg '+(cc.off?'err':'warn')+'" style="margin:6px 0;font-size:11.5px;line-height:1.55">'
+          +(cc.off?'<b>⚠ 출연금이 사업장 명부와 다릅니다.</b> 장부(⑬+⑮) '+_n(_k1000(cc.book))+'천원 · '
+              +'사업장 명부 '+_n(_k1000(cc.site))+'천원 · <b>차이 '+_n(_k1000(Math.abs(cc.diff)))+'천원</b><br>'
+              +'별지15호는 <b>장부</b>를, 지원신청서·기금출연확인서는 <b>사업장 명부</b>를 씁니다 — '
+              +'그대로 두면 같은 해에 대해 숫자가 다른 서류 두 벌이 나갑니다.<br>':'')
+          +(cc.nNone?'그 해 출연금이 안 적힌 사업장 <b>'+cc.nNone+'곳</b>'+(cc.nYear?' (적힌 곳 '+cc.nYear+'곳)':'')+' — 대개 여기가 원인입니다.<br>':'')
+          +'<button onclick="goSiteYears()" style="margin-top:4px;padding:2px 9px;font-size:11px">참여사업장 › 연도별 기록으로</button>'
+          +'</div></td></tr>';
+      })()
+      +'</table></div>'
     +'<div style="min-width:300px;flex:1"><div style="font-weight:700;margin-bottom:6px">사업실적 57~70 (천원 / 명)</div><table>'
       +'<thead><tr><th>항목</th><th style="text-align:right">금액</th><th style="text-align:right">수혜자</th></tr></thead><tbody>'+itemRows
       +'<tr style="font-weight:700"><td>'+_f15n(67)+' 소계</td><td style="text-align:right">'+_n(_k1000(R.subAmt))+'</td><td style="text-align:right">'+_n(R.subCnt)+'</td></tr>'
@@ -7240,6 +7282,16 @@ function lockClosing(){
   if(!journalOf(arr).length){ toast('승인된 분개가 없습니다','warn'); return; }
   var msg=yr+'년 결산을 확정합니다.\n확정 시점의 수치가 스냅샷으로 보존되어 결산 대장·연도별 비교에 쓰입니다.'
     +(fin.balanced?'':'\n\n⚠️ 대차가 맞지 않습니다 (차이 '+won(fin.totalAssets-fin.totalLiabEq)+') — 전기이월을 먼저 확인하세요.');
+  /* 출연금이 사업장 명부와 어긋나면 확정 전에 짚어 준다 — 확정한 숫자가 별지15호로 나가고,
+     같은 해 지원신청서는 사업장 명부에서 나간다. 어긋난 채로 두면 서류 두 벌이 다르다.
+     ⚠ 운영상황보고서 탭을 한 번도 안 열었으면 사업장 자료가 없다(S.f15For 가 다르다).
+       그때는 «모른다»가 맞다 — 0 과 견주면 멀쩡한 해가 틀린 것으로 잡힌다. */
+  if(S.f15For===fid+'/'+yr && S.f15Sites){
+    var _R=buildF15(arr,fid,yr,S.f15Rep,S.f15Sites,S.f15Welf);
+    var _cc=contribCheck(_R.bf.employer+_R.bf.other,S.f15Sites,S.f15Sy);
+    if(_cc.off) msg+='\n\n⚠️ 출연금이 사업장 명부와 다릅니다 — 장부 '+won(_cc.book)+' · 사업장 명부 '+won(_cc.site)
+      +'\n   별지15호는 장부를, 지원신청서·기금출연확인서는 사업장 명부를 씁니다.';
+  }
   var _negs=finNegatives(fin);
   if(_negs.length) msg+='\n\n⚠️ 재무제표에 음수 항목이 있습니다 — '
     +_negs.map(function(n){ return n.name+' '+won(n.v); }).join(', ')
@@ -8412,6 +8464,7 @@ var HELP={
    +'<p>칸을 누르면 그 기금의 그 연도 <b>회계·결산</b> 화면으로 바로 들어갑니다.</p>'},
  'close.lock':{t:'결산 확정',h:'<p>확정하면 그 시점의 재무·보고서 수치가 <b>스냅샷</b>으로 저장됩니다.</p>'
    +'<p>이후 거래를 수정해도 확정된 숫자는 그대로 남아, <b>제출한 값과 화면 값이 어긋나는 일</b>을 막습니다.</p>'
+   +'<p><b>출연금이 사업장 명부와 다르면</b> 함께 알려 줍니다 — 별지15호는 <b>장부</b>를, 지원신청서·기금출연확인서는 <b>사업장 명부</b>를 쓰기 때문에, 어긋난 채로 두면 같은 해에 대해 숫자가 다른 서류 두 벌이 나갑니다.</p>'
    +'<p>대차가 맞지 않으면 경고가 뜨지만, 확인 후 진행할 수는 있습니다.</p><p>해제하면 잠금만 풀리고 스냅샷은 남습니다.</p>'},
  'close.f15':{t:'운영상황보고서 (별지 제15호)',h:'<p>고용노동부에 제출하는 <b>정식 2쪽 서식</b>을 장부에서 만들어 냅니다. 단위는 <b>천원</b>입니다.</p>'
    +'<p><b>자동으로 채워지는 것</b></p><ul>'
