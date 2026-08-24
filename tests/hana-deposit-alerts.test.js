@@ -59,7 +59,25 @@ test('통합포털 관리자 알림은 거래내역으로 바로 연결된다', 
   assert.match(portal, /body:JSON\.stringify\(\{action:'adminAlerts'\}\)/);
   assert.match(portal, /hanaAlert=1/);
   assert.match(portal, /#menu=fin\/ledger/);
-  assert.match(portal, /setInterval\(function\(\)\{ pollPortalHanaAlerts\(true\); \},180000\)/);
+  /* 3분마다 다시 본다. 몇 초인지가 규칙이지 «괄호 안에 무엇을 넣는가»가 아니다 —
+     2026-08-24 에 저절로 뜨는 창을 없애면서 allowPopup 인자가 사라졌다. */
+  assert.match(portal, /setInterval\([\s\S]{0,80}?pollPortalHanaAlerts\([\s\S]{0,20}?\},\s*180000\)/);
+});
+
+/* ★ 로그인하자마자 확인 창이 저절로 뜨지 않는다 (대표 지시 2026-08-24)
+   푸른이알피 타일에 「입금 N」 표시가 붙으므로, 볼지 말지는 사람이 정한다.
+   하던 일을 가로막고 뜨는 창은 그것대로 일을 끊는다. */
+test('★ 로그인할 때 확인 창이 저절로 뜨지 않는다', () => {
+  const start = portal.indexOf('function renderPortalHanaAlerts');
+  const end = portal.indexOf('function pollPortalHanaAlerts', start);
+  const block = portal.slice(start, end);
+  /* 창을 여는 곳은 «읽던 창을 이어서 그리는» 한 군데뿐이어야 한다.
+     두 군데가 되면 그중 하나가 저절로 뜨는 길이다. */
+  const opens = (block.match(/showPortalHanaModal\(/g) || []).length;
+  assert.strictEqual(opens, 1, '확인 창을 여는 곳이 하나여야 한다 (읽던 창 이어 그리기)');
+  assert.doesNotMatch(block, /allowPopup/, '저절로 띄우는 스위치가 남아 있으면 안 된다');
+  assert.doesNotMatch(portal, /pu_portal_hana_seen/,
+    '「이미 본 것」 기억은 저절로 띄울 때만 쓰던 것이다 — 함께 사라져야 한다');
 });
 
 test('주기 갱신은 사용자가 읽고 있는 입금 알림창을 닫지 않는다', () => {
@@ -73,5 +91,5 @@ test('주기 갱신은 사용자가 읽고 있는 입금 알림창을 닫지 않
      지키려는 것은 이름이 아니라 «읽고 있는 창은 안 건드린다» 이다 — 아래 두 줄이 그것을 본다. */
   assert.match(block, /portalHanaPaintBadge\(\)/);
   assert.doesNotMatch(block, /portalHanaRemoveUi\(\)/);
-  assert.match(block, /if\(modalWasOpen\)\{\s*showPortalHanaModal\(items\)/);
+  assert.match(block, /if\(modalWasOpen\)\s*\{?\s*showPortalHanaModal\(items\)/);
 });
