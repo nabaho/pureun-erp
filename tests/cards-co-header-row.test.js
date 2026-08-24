@@ -49,7 +49,9 @@ function renderTabsRow(state, cos){
     _coFolders: { f1: { id:'f1', name:'업체관리' } },
     coList: () => cos || [],
     coSizeSelHtml: sz => '<select class="copgsize" onchange="coSetPageSize(this.value)">'
-      + '<option value="' + sz + '" selected>테스트</option></select>' };
+      + '<option value="' + sz + '" selected>테스트</option></select>',
+    /* 2026-08-24: 종료 토글이 탭 줄에 붙었다 — 이 파일은 쪽 크기 자리만 보므로 0곳으로 둔다 */
+    coClosedCount: () => 0 };
   vm.createContext(ctx);
   const a = '/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════';
   const b = '/* ══════ 폴더 안의 탭 — 화면 ══════ */';
