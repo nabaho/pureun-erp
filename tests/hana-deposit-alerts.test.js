@@ -39,6 +39,20 @@ test('ERP는 입금 사업장과 사무관리 확인 상태를 연결한다', ()
   assert.match(erp, /setInterval\(poll,180000\)/);
 });
 
+test('ERP는 총괄관리자 권한이 화면보다 늦게 준비돼도 입금 알림을 다시 확인한다', () => {
+  const marker = erp.indexOf("get('hanaAlert')==='1'");
+  const start = erp.lastIndexOf('useEffect(function(){', marker);
+  const end = erp.indexOf('},[]);', marker);
+  assert.ok(start >= 0 && end > marker, '입금 알림 초기화 구간을 찾을 수 있어야 한다');
+  const block = erp.slice(start, end);
+  assert.doesNotMatch(block, /useEffect\(function\(\)\{\s*if\(!_meNow\(\)\.isAdmin\) return/,
+    '첫 렌더 순간의 미완성 권한만 보고 알림 감시를 영구 종료하면 안 된다');
+  assert.match(block, /if\(!_meNow\(\)\.isAdmin\)\{[\s\S]*?retryTimer=setTimeout\(poll,500\)/,
+    '총괄관리자 권한이 준비될 때까지 제한적으로 재확인해야 한다');
+  assert.match(block, /visibilitychange[\s\S]*?onVisible/,
+    '휴대폰 화면으로 돌아올 때도 관리자 권한과 새 입금을 다시 확인해야 한다');
+});
+
 test('통합포털 관리자 알림은 거래내역으로 바로 연결된다', () => {
   assert.match(portal, /function initPortalHanaAlerts\(role\)/);
   assert.match(portal, /if\(role!=='admin'\) return/);
