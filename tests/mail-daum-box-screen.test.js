@@ -151,9 +151,12 @@ test('★ 안읽음 셈에서 스팸함·휴지통은 뺀다 — 광고 200통�
 });
 
 test('자료함으로 가는 길은 하나뿐이다 — 겹치면 다음에 한쪽만 고친다', () => {
-  const c = load({ folders: FOLDERS, msgs: MSGS });
-  const h = c.mailSideHtml();
-  assert.equal(h.split('openMatPage()').length - 1, 1);
+  /* 자료함은 「푸른 도구」 안에 있다(대표 화면 2026-08-24 "불필요한 것 같은데") —
+     접었을 때 0개, 펼쳤을 때 정확히 하나. */
+  const shut = load({ folders: FOLDERS, msgs: MSGS });
+  assert.equal(shut.mailSideHtml().split('openMatPage()').length - 1, 0);
+  const open = load({ folders: FOLDERS, msgs: MSGS, state: { mbToolOpen: true } });
+  assert.equal(open.mailSideHtml().split('openMatPage()').length - 1, 1);
 });
 
 test('옆줄은 스스로 맨 아래 붙박이를 붙이지 않는다 — 부르는 쪽이 붙인다', () => {
