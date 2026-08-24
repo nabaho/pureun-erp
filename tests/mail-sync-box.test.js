@@ -172,6 +172,16 @@ test('★ 줄에 칸을 더하면 판 번호가 올라간다 — 안 올리면 �
   assert.equal(MB.needsRefetch({}), true, '판 번호가 없던 옛 폴더는 다시 훑어야 한다');
 });
 
+test('★ 줄 판이 옛것인 폴더는 «다 된 것이 아니다» — 그러면 셈이 거짓말을 한다', () => {
+  /* 2026-08-24 실측: 서른셋 가운데 일곱만 새 판이었는데 회차 기록은 ready 33 이었다.
+     지난 회차의 done 이 그대로 남아 있어서다. 숫자가 거짓이면 아무도 안 믿는다. */
+  assert.equal(MB.folderDone({ done: true, ver: MB.ROW_VER }), true);
+  assert.equal(MB.folderDone({ done: true, ver: MB.ROW_VER - 1 }), false, '옛 판을 다 됐다고 한다');
+  assert.equal(MB.folderDone({ done: true }), false, '판 번호가 없던 옛 폴더를 다 됐다고 한다');
+  assert.equal(MB.folderDone({ done: false, ver: MB.ROW_VER }), false);
+  assert.equal(MB.folderDone(null), false);
+});
+
 test('미리보기를 넘기면 줄에 담긴다', () => {
   const row = MB.msgRow({ uid: 1, envelope: {} }, '안녕하세요 자료 보냅니다');
   assert.equal(row.p, '안녕하세요 자료 보냅니다');

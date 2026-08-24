@@ -283,6 +283,30 @@ test('★ 본문이 없으면 미리보기 칸을 만들지 않는다 — 빈 �
   });
 });
 
+test('★ 줄 판이 옛것인 폴더를 「다 됐다」로 세지 않는다 — 화면에는 반쪽 줄이 남아 있다', async () => {
+  /* 2026-08-24 실측: 서른셋 가운데 일곱만 새 판이었는데 회차 기록은 ready 33 이었다.
+     지난 회차의 done 이 그대로 남아 있어서다. 숫자가 거짓이면 아무도 안 믿는다. */
+  const folders = { INBOX: box(3), '보낸메일함': Object.assign(box(3), { specialUse: '\\Sent' }) };
+  const db = fakeDb();
+  const d = deps(db);
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  await db.ref(MS.ROOT + '/sync/' + slug('보낸메일함')).update({ ver: 1 });   // 옛 판으로 되돌린다
+
+  /* 그 폴더는 이번 회차에 «못 연다»고 해 둔다 — 그래야 옛 판인 채로 셈에 들어온다 */
+  const client = fakeMail(folders);
+  const realLock = client.getMailboxLock;
+  client.getMailboxLock = async (p) => {
+    if (p === '보낸메일함') throw new Error('못 엽니다');
+    return realLock.call(client, p);
+  };
+  const r = await MS.runSync(d, { client: client, deadlineMs: 60000 });
+
+  assert.equal(r.ready + r.waiting, 2, '폴더 수가 안 맞는다');
+  assert.equal(db.__get(MS.ROOT + '/sync/' + slug('보낸메일함')).ver, 1, '검사 짜임이 틀렸다');
+  assert.equal(r.waiting, 1, '옛 판인 폴더를 「다 됐다」로 세고 있다');
+  assert.equal(r.ready, 1);
+});
+
 test('★ 줄 모양이 바뀌면 그 폴더를 다시 훑는다 — 안 그러면 옛 줄은 영원히 반쪽이다', async () => {
   const folders = { INBOX: box(5) };
   Object.keys(folders.INBOX.msgs).forEach((u) => { folders.INBOX.msgs[u].__body = '본문 ' + u; });
