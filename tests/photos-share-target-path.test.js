@@ -25,8 +25,19 @@ const { cutFn } = require('./cut-fn');
 
 const R = path.join(__dirname, '..');
 const app = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
-const sw = fs.readFileSync(path.join(R, 'pu-photos-sw.js'), 'utf8');
 const mf = JSON.parse(fs.readFileSync(path.join(R, 'pu-photos-manifest.json'), 'utf8'));
+
+/* ⚠⚠ **화면이 실제로 등록하는 워커**를 읽는다 — 파일 이름을 손으로 적으면 안 된다.
+   처음에 `pu-photos-sw.js` 를 박아 두었는데, 화면은 통합 워커 `pu-sw.js` 를 등록한다
+   (워커는 한 scope 에 하나만 살아남아 네 앱이 하나를 함께 쓴다 — pu-sw.js 머리말).
+   그래서 검사는 통과하는데 **정작 도는 워커는 안 보고 있었다.** 안 쓰는 파일을 지키는
+   검사는 없는 것보다 나쁘다 — 지키고 있다고 믿게 만든다. */
+const SW_FILE = (function () {
+  const m = app.match(/serviceWorker\.register\('([^']+)'/);
+  assert.ok(m, '화면이 워커를 등록하는 줄을 찾지 못했습니다');
+  return m[1].replace(/^\.?\//, '');
+})();
+const sw = fs.readFileSync(path.join(R, SW_FILE), 'utf8');
 
 /* ══════ ① 네 토막이 이름을 맞추고 있는가 ══════ */
 
@@ -55,19 +66,29 @@ test('★ 서비스워커가 «매니페스트가 보내는 그 길·그 이름�
   /* 매니페스트의 action 과 워커가 가로채는 길이 어긋나면 POST 가 그냥 흘러가
      「공유했는데 아무 일도 없다」가 된다 — 폰에서만 드러나는 어긋남이다. */
   const action = String(mf.share_target.action).replace(/^\.\//, '');
-  const m = sw.match(/var SHARE_PATH = '([^']+)'/);
-  assert.ok(m, '워커에서 SHARE_PATH 를 찾지 못했습니다');
-  assert.ok(m[1].indexOf(action) >= 0,
-    '★ 매니페스트는 「' + action + '」로 보내는데 워커는 「' + m[1] + '」를 봅니다');
-  /* 파일 칸 이름도 같아야 한다 — 다르면 fd.getAll 이 늘 빈 배열이다 */
+  /* 통합 워커는 앱마다 상수를 따로 둔다(PHOTOS_SHARE) — 이름을 못 박지 않고
+     「그 길을 가리키는 상수가 있는가」로 본다. */
+  const m = sw.match(/var (\w*PHOTOS\w*|SHARE_PATH) = '([^']*pu-photos[^']*)'/);
+  assert.ok(m, '★ ' + SW_FILE + ' 에서 사진첩 공유 길을 찾지 못했습니다');
+  assert.ok(m[2].indexOf(action) >= 0,
+    '★ 매니페스트는 「' + action + '」로 보내는데 워커는 「' + m[2] + '」를 봅니다');
+  /* 그 상수를 실제로 «가로채는 데» 쓰는지 — 상수만 두고 안 쓰면 POST 가 흘러간다 */
+  assert.match(sw, new RegExp('respondWith\\(takePhotos'),
+    '★ 길만 적어 두고 가로채지 않으면 「공유했는데 아무 일도 없다」가 됩니다');
+  /* 파일 칸 이름도 같아야 한다 — 다르면 fd.getAll 이 늘 빈 배열이다.
+     ⚠ 사진첩 몫 안에서만 본다(통합 워커에는 명함첩·급여데이터함 것도 있다). */
   const field = mf.share_target.params.files[0].name;
-  assert.ok(sw.indexOf("fd.getAll('" + field + "')") >= 0,
-    '★ 매니페스트는 「' + field + '」로 보내는데 워커가 그 이름을 안 읽습니다');
+  assert.ok(cutFn(sw, 'function takePhotos(').indexOf("fd.getAll('" + field + "')") >= 0,
+    '★ 매니페스트는 「' + field + '」로 보내는데 사진첩 공유가 그 이름을 안 읽습니다');
 });
 
 test('★ 워커가 화면에 «무슨 일이 있었는지» 알려 준다 — 조용히 넘기면 올라간 줄 안다', () => {
+  /* ⚠ **사진첩 몫 안에서만** 본다. 통합 워커에는 급여데이터함도 같은 줄을 갖고 있어,
+     파일 통째로 찾으면 사진첩 쪽을 고쳐도 급여데이터함의 것이 걸려 통과한다
+     (실제로 그렇게 안 잡혔다). */
+  const swTake = cutFn(sw, 'function takePhotos(');
   ['?share=1', '?share=none', '?share=err'].forEach(s => {
-    assert.ok(sw.indexOf(s) >= 0, '워커가 ' + s + ' 를 안 보냅니다');
+    assert.ok(swTake.indexOf(s) >= 0, '★ 사진첩 공유가 ' + s + ' 를 안 보냅니다');
   });
   /* 화면이 그 셋을 다 알아들어야 한다 — 하나라도 빠지면 그 경우에 아무 말이 없다.
      ⚠ 화면은 `?share=` 뒤의 «값»만 읽는다(shareFlag) — 통째 글자로 찾으면 못 찾는다. */
@@ -93,10 +114,22 @@ test('★ 표시가 없어도 한 번 살펴본다 — 공유 직후 로그인�
     ' 생기면, 로그인 화면을 거친 공유 사진이 영영 안 나옵니다');
 });
 
-test('★ 워커는 아무것도 캐시하지 않는다 — 캐시를 두면 옛 화면이 남는다', () => {
-  /* pu-version.js 의 「새 버전 자동 적용」과 싸운다. 머리말에 적어 둔 규칙이다. */
-  assert.ok(!/caches\.open|cache\.put|cache\.addAll/.test(sw),
-    '★ 공유 받는 워커가 캐시를 두면 고친 화면이 폰에서 안 바뀝니다');
+test('★ 워커가 «화면»을 캐시하지 않는다 — 캐시를 두면 옛 화면이 폰에 남는다', () => {
+  /* pu-version.js 의 「새 버전 자동 적용」과 싸운다(pu-sw.js 머리말).
+     ⚠ 「캐시를 아예 안 쓴다」로 보면 안 된다 — 명함첩은 공유받은 파일을 캐시에 «잠깐»
+       담는다(그것은 화면 캐시가 아니다). 처음에 그렇게 봐서 멀쩡한 코드가 걸렸다.
+     지킬 것은 **GET 을 가로채지 않는다**는 것이다. GET 을 안 가로채면 화면·스크립트는
+     늘 브라우저가 평소대로 받아 오므로 옛것이 남을 수가 없다. */
+  assert.ok(!/addAll/.test(sw), '★ 화면 목록을 미리 담으면 고친 화면이 폰에서 안 바뀝니다');
+  const fetchAt = sw.indexOf("addEventListener('fetch'");
+  assert.ok(fetchAt > 0, 'fetch 다루는 자리를 찾지 못했습니다');
+  const handler = sw.slice(fetchAt, sw.indexOf('\n});', fetchAt));
+  assert.match(handler, /method !== 'POST'\) return;/,
+    '★ POST 가 아닌 것을 흘려보내지 않으면 화면까지 워커를 거쳐 옛것이 남습니다');
+  /* respondWith 는 공유 길 셋에만 — 그 밖에 하나라도 있으면 GET 을 잡는 길이 생긴다 */
+  const responds = (handler.match(/respondWith\(/g) || []).length;
+  assert.equal(responds, 3,
+    '★ 가로채는 곳이 ' + responds + '군데입니다 — 공유 길(명함첩·사진첩·급여데이터함) 셋뿐이어야 합니다');
 });
 
 test('★ 워커를 한 곳에서만 등록한다 — 앱마다 따로 등록하면 서로 밀어내 공유가 죽는다', () => {
