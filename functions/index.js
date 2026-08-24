@@ -1043,7 +1043,7 @@ function payMailId() {
 
 /* 아는 주소 명단은 메일이 실제로 있을 때만 만들고, 따뜻한 함수 인스턴스에서는
    6시간 재사용한다. 예전에는 빈 메일함이어도 10분마다 업체·직원 전체를 읽었다. */
-let payMailKnownCache = { at: 0, list: null, index: null, owners: null };
+let payMailKnownCache = { at: 0, list: null, index: null, owners: null, cos: null };
 async function payMailKnownList(db) {
   const now = Date.now();
   if (payMailKnownCache.list && now - payMailKnownCache.at < 6 * 60 * 60 * 1000) {
@@ -1061,7 +1061,10 @@ async function payMailKnownList(db) {
   const ownSnap = await db.ref(PAYDATA_ROOT + "/owners").once("value").catch(() => null);
   const index = MR.buildCompanyIndex(cos);
   const owners = (ownSnap && ownSnap.val()) || {};
-  payMailKnownCache = { at: now, list: list, index: index, owners: owners };
+  /* 업체 배열도 함께 담는다 — 주소로 못 가릴 때 **제목에서** 사업장을 찾는 데 쓴다
+     (회계사무소 한 주소가 여러 사업장에 걸린다, 대표 요청 2026-08-24).
+     같은 읽기로 만들어 두지 않으면 메일 한 통마다 다시 읽어 요금이 된다. */
+  payMailKnownCache = { at: now, list: list, index: index, owners: owners, cos: MR.coList(cos) };
   return list;
 }
 
@@ -1079,7 +1082,7 @@ async function payMailStoreBody(db, bucket, text, mail) {
   const name = MR.bodyFilename(mail.subject);
   const route = MR.routeFor(
     { from: mail.from, subject: mail.subject, filename: name },
-    payMailKnownCache.index, payMailKnownCache.owners, mail.box);
+    payMailKnownCache.index, payMailKnownCache.owners, mail.box, payMailKnownCache.cos);
   const common = {
     filename: name, file: where,
     mime: "text/plain", bytes: buf.length,
@@ -1108,7 +1111,7 @@ async function payMailStoreOne(db, bucket, att, mail) {
   });
   const route = MR.routeFor(
     { from: mail.from, subject: mail.subject, filename: att.filename },
-    payMailKnownCache.index, payMailKnownCache.owners, mail.box);
+    payMailKnownCache.index, payMailKnownCache.owners, mail.box, payMailKnownCache.cos);
 
   const common = {
     filename: att.filename, file: where,
