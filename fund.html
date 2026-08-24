@@ -463,6 +463,8 @@ function shell(){
     +'<div id="navsub"></div>'
     +'</div>'
     +'<div class="sitem" data-nav="1" id="nav-billing" onclick="go(\'billing\')" title="드래그: 메뉴 순서 변경"><span class="gr">⋮⋮</span>💰 청구 관리</div>'
+    /* 전체 백업 — 메뉴가 아니라 «도구»라 드래그 순서에서 뺀다(data-nav 없음) */
+    +'<div class="sitem" id="nav-backup" onclick="exportAll()" title="기금 전체 자료를 JSON 파일로 내려받습니다">⬇ 전체 백업</div>'
     /* 서식 현황·결산 대장은 기금 현황과 같은 42개 목록이라 별도 메뉴를 없앴다.
        기금 현황의 [보기] 전환으로 들어간다(같은 목록, 열만 교체). */
     +'<div class="sitem" data-nav="1" id="nav-forms" onclick="S.formsCtx=\'library\';S.formsHost=null;S._sideKind=null;go(\'forms\')" title="전사 표준서식 관리(견본 편집·원본 등록·공통 저장) · 드래그로 순서 변경"><span class="gr">⋮⋮</span>📚 서식 자료실</div>'
@@ -4363,7 +4365,9 @@ function infoForm(f){
     var sec='';
     if(INFO_SECS[c[0]]){
       // 첫 묶음 머리 줄 오른쪽에 ⓘ·당겨오기를 얹는다(제목 줄을 따로 두지 않기 위해)
-      var tools=_first?('<span style="flex:1"></span>'+hlp('info.card')
+      var tools=_first?('<span style="flex:1"></span>'
+        +'<button onclick="openAudit()" style="padding:2px 9px;font-size:11.5px" title="이 기금을 누가 언제 고쳤는지">🕘 변경 기록</button>'
+        +hlp('info.card')
         +'<button onclick="openCardPick()" style="padding:2px 9px;font-size:11.5px;font-weight:600"'
         +' title="푸른 기업정보함(사업자등록증)에서 기금법인명·고유번호·대표자·소재지를 당겨옵니다">🏢 기업정보함에서</button>'):'';
       sec='<div class="sec'+(_first?' first':'')+'">'+INFO_SECS[c[0]]+tools+'</div>'; _first=false;
@@ -4575,6 +4579,7 @@ function monthLockSet(mm,on){
     fbDb.ref(NS+'/closing/'+fid+'/'+yr+'/months/'+mm).set(on?{at:ymd(),by:(S.user||'')}:null)
       .then(function(){
         S.f15For=null; _cbDirty();                 // 결산 화면·대장이 새 상태를 보게
+        _audit(fid,on?'월마감':'월마감 해제',yr+'년 '+(+mm)+'월');
         if(S.fundId===fid&&S.year===yr) renderFund();
         toast((+mm)+'월 '+(on?'마감했습니다':'마감을 풀었습니다'));
       }).catch(function(e){ toast('실패: '+e.message,'err'); });
@@ -5143,6 +5148,76 @@ function applyDocFound(){
   markDirty();
   toast(n?(n+'개 항목을 채웠습니다 — 확인 후 [💾 저장]'):'반영할 칸을 찾지 못했습니다',n?'':'warn');
 }
+/* ══════════ 변경 기록 · 내보내기 · 담당 확인 ══════════
+   대표 검토 2026-08-24 ⑧⑨⑩. 노동청·공단에 내는 숫자인데 누가 언제 고쳤는지 남지
+   않았고, 통째로 내보낼 길도 없었으며, 로그인하면 42개가 모두 열려 있었다. */
+
+/* ── ⑧ 변경 기록 (audit/{기금}/{순번}) ──
+   ⚠ 자주 일어나는 일은 «담지 않는다». 예산 칸 하나 고칠 때마다 기록하면 기록이
+     기금 자료보다 커지고, 정작 중요한 것이 파묻힌다. 노동청·공단에 나가는 숫자가
+     바뀌는 자리만 남긴다 — 기금 정보 · 결산 확정 · 월마감 · 대부.
+   ⚠ 실패해도 «하던 일을 막지 않는다». 기록은 곁다리다 — 이것 때문에 저장이 안 되면
+     주객이 뒤바뀐다. */
+function _audit(fid,what,detail){
+  try{
+    if(!fid) return;
+    fbDb.ref(NS+'/audit/'+fid).push().set({at:new Date().toISOString().slice(0,19).replace('T',' '),
+      by:(S.user||'?'), what:String(what||''), detail:String(detail||'').slice(0,300)});
+  }catch(e){}
+}
+function openAudit(){
+  var fid=S.fundId, f=funds[fid]||{};
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">🕘 변경 기록</h2>'
+    +'<span class="muted" style="font-size:11.5px">'+esc(f.short_name||f.name||'')+'</span>'+hlp('audit.log')+'</div>'
+    +'<div id="auditBody" style="max-height:60vh;overflow:auto">'+loadingHTML()+'</div>',{width:760});
+  fbDb.ref(NS+'/audit/'+fid).limitToLast(80).once('value').then(function(sn){
+    var v=sn.val()||{}, arr=Object.keys(v).map(function(k){ return v[k]; })
+      .sort(function(a,b){ return String(b.at||'').localeCompare(String(a.at||'')); });
+    var b=$('auditBody'); if(!b) return;
+    b.innerHTML=arr.length
+      ? '<table><thead><tr><th style="width:150px">언제</th><th style="width:100px">누가</th><th>무엇을</th></tr></thead><tbody>'
+        +arr.map(function(x){ return '<tr><td style="white-space:nowrap">'+esc(x.at||'')+'</td>'
+          +'<td style="white-space:nowrap">'+esc(x.by||'')+'</td>'
+          +'<td><b>'+esc(x.what||'')+'</b>'+(x.detail?' <span class="muted">'+esc(x.detail)+'</span>':'')+'</td></tr>'; }).join('')
+        +'</tbody></table>'
+      : '<div class="muted" style="padding:16px 4px">아직 기록이 없습니다. 이제부터 기금 정보·결산 확정·월마감·대부 변경이 남습니다.</div>';
+  }).catch(function(e){ var b=$('auditBody');
+    if(b) b.innerHTML='<div class="msg err">읽지 못했습니다: '+esc(e.message||e)+'</div>'; });
+}
+
+/* ── ⑩ 담당이 아닌 기금을 고칠 때 한 번 묻는다 ──
+   ⚠ «막지» 않는다. 작은 사무소라 서로 대신 봐 주는 일이 흔하다 — 잠그면 일이 멈춘다.
+     실수로 남의 기금을 고치는 것만 막는다. */
+function _isMine(f){
+  var me=String(S.user||'').trim(); if(!me) return true;      // 누구인지 모르면 묻지 않는다
+  if(String((f&&f.manager)||'').indexOf(me)>=0) return true;
+  if(((f&&f.mgr_main)||{}).name===me) return true;
+  return ((f&&f.mgr_subs)||[]).some(function(x){ return x&&x.name===me; });
+}
+function askIfNotMine(f,what){
+  if(_isMine(f)) return Promise.resolve(true);
+  var mgr=((f&&f.mgr_main)||{}).name||f.manager||'(미지정)';
+  return confirmM('이 기금의 담당은 '+mgr+' 입니다.\n'+what+' 을(를) 진행할까요?',{ok:'진행'});
+}
+
+/* ── ⑨ 전체 내보내기 ──
+   ⚠ 실데이터가 그대로 담긴다 — 파일을 아무 데나 두지 말 것. ⓘ 에 적어 두었다.
+   ⚠ «되돌리기»는 넣지 않는다. 통째로 덮어쓰는 단추는 잘못 누르면 42개가 한 번에
+     날아간다. 지운 기금은 [🗑 삭제 보관함]에서 되살린다. */
+function exportAll(){
+  toast('전체 자료를 모으는 중…');
+  fbDb.ref(NS).once('value').then(function(sn){
+    var v=sn.val()||{};
+    var blob=new Blob([JSON.stringify(v,null,1)],{type:'application/json'});
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='기금관리_전체백업_'+ymd()+'.json';
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },0);
+    var cnt=Object.keys(v.funds||{}).length;
+    toast('기금 '+cnt+'개를 내려받았습니다 — 파일을 안전한 곳에 두세요');
+  }).catch(function(e){ toast('내보내기 실패: '+e.message,'err'); });
+}
 function saveInfo(){
   var patch={};
   FIELDS.forEach(function(c){ if(c[0]==='manager')return; var el=$('fd-'+c[0]); if(el)patch[c[0]]=el.value.trim?el.value.trim():el.value; });
@@ -5173,11 +5248,16 @@ function saveInfo(){
   });
   if(!Object.keys(changed).length){ clearDirty(); toast('변경된 내용이 없습니다'); return; }
   patch=changed;
-  fbDb.ref(NS+'/funds/'+_fid).update(patch).then(function(){
-    if(funds[_fid]) Object.assign(funds[_fid],patch);
-    if(S.fundId===_fid){ clearDirty(); renderFund(); toast('저장되었습니다'); }
-    else toast('저장되었습니다 (이전 기금)');
-  }).catch(function(e){toast('저장 실패: '+e.message,'err');});
+  var _lbl=FIELDS.filter(function(c){ return patch.hasOwnProperty(c[0]); }).map(function(c){ return c[1]; });
+  askIfNotMine(cur,'기금 정보 저장').then(function(ok){
+    if(!ok) return;
+    fbDb.ref(NS+'/funds/'+_fid).update(patch).then(function(){
+      if(funds[_fid]) Object.assign(funds[_fid],patch);
+      _audit(_fid,'기금 정보 저장',_lbl.join(' · ')||Object.keys(patch).join(' · '));
+      if(S.fundId===_fid){ clearDirty(); renderFund(); toast('저장되었습니다'); }
+      else toast('저장되었습니다 (이전 기금)');
+    }).catch(function(e){toast('저장 실패: '+e.message,'err');});
+  });
 }
 
 // ── 참여사업장 (2단계) ──
@@ -6302,6 +6382,7 @@ function saveLoan(id){
   var ref=id?fbDb.ref(NS+'/loans/'+fid+'/'+id):fbDb.ref(NS+'/loans/'+fid).push();
   var body=id?ref.update(o):ref.set(o);
   body.then(function(){ S.loanFor=null; closeM();
+    _audit(fid,id?'대부 수정':'대부 추가',(o.name||'')+' '+Number(o.amount||0).toLocaleString()+'원');
     if(S.fundId===fid) renderFund(); toast('저장되었습니다'); })
     .catch(function(e){ toast('저장 실패: '+e.message,'err'); });
 }
@@ -6310,6 +6391,7 @@ function delLoan(id){
   confirmM('이 대부 기록을 지울까요?\n상환 기록도 함께 없어집니다.',{ok:'삭제',danger:true}).then(function(ok){
     if(!ok) return;
     fbDb.ref(NS+'/loans/'+fid+'/'+id).remove().then(function(){ S.loanFor=null; closeM();
+      _audit(fid,'대부 삭제',(((S.loans||{})[id]||{}).name)||id);
       if(S.fundId===fid) renderFund(); toast('삭제되었습니다'); })
       .catch(function(e){ toast('삭제 실패: '+e.message,'err'); });
   });
@@ -6508,7 +6590,104 @@ function _nz(v){ return v?_n(v):''; }                    // 0은 빈칸(장부 �
 // ── 하위 탭 ──
 var CLOSE_SUBS=[['txn','거래·분개입력'],['journal','분개장'],['ledger','계정별원장'],
                 ['monthly','월계표'],['tb','합계잔액시산표'],['fin','재무제표·전기대비'],
-                ['years','연도별 비교'],['f15','운영상황보고서']];
+                ['budget','예산·집행'],['years','연도별 비교'],['f15','운영상황보고서']];
+
+/* ══════════ 예산·집행 — funds/{기금}/years/{연도}/budget ══════════
+   연간 일정에 「차기연도 사업계획·예산 수립, 협의회 상정」이 있는데 그 «결과를 넣을 곳»이
+   없었다(대표 검토 2026-08-24, ⑥). 목적사업 탭에 사업별 예산 칸만 있었을 뿐,
+   기금 전체 예산서와 집행률은 어디에도 없었다.
+
+   ⚠ 예산은 사람이 정하고, 실적은 «장부가 말한다». 실적 칸은 손으로 못 고친다 —
+     고칠 수 있게 두면 집행률이 곧 무의미해진다.
+   ⚠ 예산은 협의회가 의결한 숫자다. 앱이 «채워 넣지» 않는다 — 목적사업비만
+     [목적사업에서 가져오기]로 옮겨 주고, 그것도 사람이 눌러야 들어간다. */
+var BUDGET_ROWS=[
+  ['rev','수입',[['rev_contrib','출연금','contrib'],
+                 ['rev_interest','이자·운용수익','interest'],
+                 ['rev_etc','그 밖의 수입','bizRev']]],
+  ['exp','지출',[['exp_purpose','목적사업비','purpose'],
+                 ['exp_admin','일반관리비','admin'],
+                 ['exp_etc','그 밖의 비용','otherExp']]]
+];
+/* 그 해 «장부가 말하는» 실적. 출연금은 기본재산으로 들어온 것을 센다
+   (별지15호 ⑬+⑮ 와 같은 목록 — 따로 세면 예산서와 보고서가 어긋난다). */
+function budgetActual(arr,fin,rep){
+  var bf=bfMovesOf(journalOf(arr),rep).filter(function(b){ return b.kind==='employer'||b.kind==='other'; })
+    .reduce(function(t,b){ return t+b.amount; },0);
+  return { contrib:bf, interest:num(fin.interest)||0, bizRev:num(fin.bizRev)||0,
+           purpose:num(fin.purpose)||0, admin:num(fin.admin)||0, otherExp:num(fin.otherExp)||0 };
+}
+function budgetOf(fid,yr){
+  var yd=(funds[fid]&&funds[fid].years&&funds[fid].years[yr])||{};
+  return yd.budget||{};
+}
+/* 한 줄 계산 — 예산·실적·집행률·남은 것 (순수, 검사 대상) */
+function budgetLine(plan,act){
+  var p=num(plan)||0, a=num(act)||0;
+  return { plan:p, act:a, rest:p-a, rate:p?Math.round(a/p*1000)/10:null };
+}
+function budgetSet(key,v){
+  var fid=S.fundId, yr=S.year, val=num(v)||0;
+  fbDb.ref(NS+'/funds/'+fid+'/years/'+yr+'/budget/'+key).set(val||null).then(function(){
+    /* funds 는 실시간 구독이라 화면은 스스로 따라온다 — 손으로 또 넣지 않는다 */
+    toast('저장됨');
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
+}
+/* 목적사업비 예산만 [목적사업] 탭에서 옮겨 온다 — 나머지는 협의회가 정하는 숫자다 */
+function budgetFromWelfare(){
+  var fid=S.fundId, yr=S.year;
+  fbDb.ref(NS+'/welfare/'+fid+'/'+yr).once('value').then(function(sn){
+    var v=sn.val()||{}, sum=0, cnt=0;
+    Object.keys(v).forEach(function(k){ var w=v[k]||{};
+      if(w.category==='대부사업') return;              // 대부는 자산이라 목적사업비가 아니다
+      var b=num(w.budget)||0; if(b){ sum+=b; cnt++; } });
+    if(!sum){ toast(yr+'년 목적사업에 예산이 적힌 사업이 없습니다','warn'); return; }
+    confirmM(yr+'년 목적사업 '+cnt+'건의 예산 합계 '+won(sum)+'을\n지출 › 목적사업비 예산으로 넣을까요?',
+      {ok:'넣기'}).then(function(ok){ if(!ok) return; budgetSet('exp_purpose',sum); });
+  }).catch(function(e){ toast('읽지 못했습니다: '+e.message,'err'); });
+}
+function budgetView(arr){
+  var fid=S.fundId, yr=S.year;
+  var fin=computeFin(arr,fid,yr), plan=budgetOf(fid,yr);
+  var act=budgetActual(arr,fin,(S.f15Rep||{}));
+  var W=function(v){ return Number(Math.round(v||0)).toLocaleString(); };
+  var tot={};
+  var body=BUDGET_ROWS.map(function(g){
+    var sp=0,sa=0;
+    var rows=g[2].map(function(r){
+      var L=budgetLine(plan[r[0]],act[r[2]]);
+      sp+=L.plan; sa+=L.act;
+      return '<tr><td>'+esc(r[1])+'</td>'
+        +'<td style="text-align:right"><input value="'+esc(L.plan||'')+'" placeholder="0" '
+          +'onchange="budgetSet(\''+r[0]+'\',this.value)" '
+          +'style="width:130px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px;text-align:right"></td>'
+        +'<td style="text-align:right">'+W(L.act)+'</td>'
+        +'<td style="text-align:right">'+(L.rate==null?'<span class="muted">—</span>'
+            :'<span'+(L.rate>100?' style="color:var(--danger);font-weight:700"':'')+'>'+L.rate+'%</span>')+'</td>'
+        +'<td style="text-align:right'+(L.rest<0?';color:var(--danger)':'')+'">'+W(L.rest)+'</td></tr>';
+    }).join('');
+    tot[g[0]]={plan:sp,act:sa};
+    return '<tr style="background:var(--bg);font-weight:700"><td colspan="5">'+g[1]+'</td></tr>'+rows
+      +'<tr style="font-weight:700"><td>'+g[1]+' 계</td><td style="text-align:right">'+W(sp)+'</td>'
+      +'<td style="text-align:right">'+W(sa)+'</td>'
+      +'<td style="text-align:right">'+(sp?Math.round(sa/sp*1000)/10+'%':'—')+'</td>'
+      +'<td style="text-align:right">'+W(sp-sa)+'</td></tr>';
+  }).join('');
+  var pDiff=(tot.rev.plan||0)-(tot.exp.plan||0), aDiff=(tot.rev.act||0)-(tot.exp.act||0);
+  var noPlan=!BUDGET_ROWS.some(function(g){ return g[2].some(function(r){ return num(plan[r[0]]); }); });
+  return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2 style="font-size:15px">'+yr+'년 예산·집행</h2>'+hlp('close.budget')
+    +'<span style="flex:1"></span>'
+    +'<button onclick="budgetFromWelfare()" title="목적사업 탭의 사업별 예산 합계를 목적사업비 예산으로 옮깁니다">📥 목적사업에서</button></div>'
+    +(noPlan?'<div class="msg warn" style="margin:10px 0;font-size:12px">'
+      +'<b>'+yr+'년 예산이 비어 있습니다.</b> 협의회가 의결한 숫자를 예산 칸에 넣으면 집행률이 나옵니다.</div>':'')
+    +'<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th>항목</th>'
+    +'<th style="text-align:right;width:150px">예산</th><th style="text-align:right">실적(장부)</th>'
+    +'<th style="text-align:right;width:80px">집행률</th><th style="text-align:right">남은 것</th></tr></thead><tbody>'
+    +body
+    +'<tr style="font-weight:700;border-top:2px solid var(--ink)"><td>수입 − 지출</td>'
+    +'<td style="text-align:right">'+W(pDiff)+'</td><td style="text-align:right'+(aDiff<0?';color:var(--danger)':'')+'">'+W(aDiff)+'</td>'
+    +'<td colspan="2"></td></tr></tbody></table></div></div>';
+}
 function closeSub(k){ S.closeSub=k; renderFund(); }
 function closeSubBar(){
   if(CLOSE_SUBS.map(function(x){return x[0];}).indexOf(S.closeSub)<0) S.closeSub='txn';
@@ -8006,7 +8185,9 @@ function lockClosing(){
     up['closing/'+fid+'/'+yr+'/locked_by']=(S.user||'');
     up['closing/'+fid+'/'+yr+'/fin']=snap;
     fbDb.ref(NS).update(up).then(function(){
-      S.f15For=null; S.ledgerIdx=null; S.txnsFor=null; _cbDirty(); renderFund();
+      S.f15For=null; S.ledgerIdx=null; S.txnsFor=null; _cbDirty();
+      _audit(fid,'결산 확정',yr+'년 · 자산 '+won(snap&&snap.assets)+(rc.amount>0?' · 준비금 '+won(rc.amount)+' '+rc.kind:''));
+      renderFund();
       toast(yr+'년 결산이 확정되었습니다'+(rc.amount>0?' · 준비금 '+won(rc.amount)+' '+rc.kind+' 기록':''));
     }).catch(function(e){ toast('확정 실패: '+e.message,'err'); });
   });
@@ -8016,7 +8197,9 @@ function unlockClosing(){
   confirmM(yr+'년 결산 확정을 해제할까요?\n스냅샷은 남고 잠금만 풀립니다(다시 확정하면 갱신).',{ok:'확정 해제',danger:true}).then(function(ok){
     if(!ok)return;
     fbDb.ref(NS+'/closing/'+fid+'/'+yr).update({locked:null,locked_at:null,locked_by:null}).then(function(){
-      S.f15For=null; S.ledgerIdx=null; _cbDirty(); renderFund(); toast('확정이 해제되었습니다');
+      S.f15For=null; S.ledgerIdx=null; _cbDirty();
+      _audit(fid,'결산 확정 해제',yr+'년');
+      renderFund(); toast('확정이 해제되었습니다');
     }).catch(function(e){ toast('실패: '+e.message,'err'); });
   });
 }
@@ -8276,6 +8459,7 @@ function closeBodyHTML(arr,rows){
     case 'monthly': return monthlyView(arr);
     case 'tb':      return tbView(arr);
     case 'fin':     return finCompareView(arr);
+    case 'budget':  return budgetView(arr);
     case 'years':   return yearsView();
     case 'f15':     return f15View(arr);
     default:
@@ -9031,6 +9215,15 @@ var HELP={
    +'<p><b>못 채우는 것</b> — 인가번호 · 인가일 · 설립등기일. 이 셋은 인가증·등기부에만 있으니 <b>서류 자동 입력</b>으로 넣으세요.</p>'
    +'<p><b>짝짓는 방법</b> — 이미 아는 번호(고유번호·법인등록번호)가 맞으면 그것으로, 없으면 <b>이름이 완전히 같을 때만</b> 짝짓습니다. 「충남 4호」와 「충남 40호」를 섞지 않기 위해 부분일치는 쓰지 않습니다.</p>'
    +'<p>후보가 둘 이상인 기금은 <b>건너뛰고</b> 몇 개를 건너뛰었는지 알려 줍니다. 넣기 전에 표로 보여 주고, 넣는 순간 서버 값을 다시 확인해 그 사이 채워진 칸은 건드리지 않습니다.</p>'},
+ 'audit.log':{t:'변경 기록',h:'<p>이 기금을 <b>누가 언제 무엇을</b> 고쳤는지 남깁니다. 노동청·공단에 내는 숫자라 되짚을 수 있어야 합니다.</p>'
+   +'<p><b>남기는 것</b> — 기금 정보 저장(어느 칸인지) · 결산 확정·해제 · 월마감·해제 · 대부 추가·수정·삭제</p>'
+   +'<p><b>안 남기는 것</b> — 거래 승인, 예산 칸처럼 <b>자주 일어나는 일</b>입니다. 다 남기면 기록이 기금 자료보다 커지고 정작 중요한 것이 파묻힙니다.</p>'
+   +'<p>최근 80건까지 보여 줍니다. 기록이 실패해도 <b>하던 일은 그대로 저장됩니다</b> — 기록은 곁다리입니다.</p>'},
+ 'close.budget':{t:'예산·집행',h:'<p>연간 일정의 <b>「차기연도 사업계획·예산 수립」</b> 결과를 넣는 곳입니다. 여태 넣을 자리가 없었습니다.</p>'
+   +'<p><b>예산은 사람이 정하고, 실적은 장부가 말합니다.</b> 실적 칸은 손으로 못 고칩니다 — 고칠 수 있게 두면 집행률이 곧 의미가 없어집니다.</p>'
+   +'<p><b>집행률이 100%를 넘으면</b> 빨갛게 나옵니다. 「남은 것」이 음수인 것과 같은 뜻입니다.</p>'
+   +'<p><b>[📥 목적사업에서]</b> 는 목적사업 탭의 사업별 예산 합계를 <b>목적사업비</b> 칸에 옮깁니다(대부는 자산이라 뺍니다). 나머지 칸은 협의회가 의결한 숫자이므로 앱이 채우지 않습니다.</p>'
+   +'<p>출연금 실적은 <b>기본재산으로 들어온 것</b>을 셉니다 — 별지15호 ⑬+⑮ 와 같은 목록이라 두 서류가 어긋나지 않습니다.</p>'},
  'close.month':{t:'월마감',h:'<p>한 달치 거래를 다 보고 나면 <b>자물쇠</b>를 채웁니다. 잠근 달의 거래는 <b>승인·계정 지정·쪼개기·삭제·새 거래</b>가 모두 막힙니다 — 실수로 지난 달을 건드리는 것을 막습니다.</p>'
    +'<p>단추의 숫자는 그 달의 <b>미승인 건수</b>입니다. 0 이 된 뒤에 잠그세요.</p>'
    +'<p><b>다시 풀 수 있습니다.</b> 결산 확정과 달리 월마감은 «일하는 중»의 표시라, 잘못 잠갔다고 그 달을 다시 만들게 하지 않습니다.</p>'
