@@ -25,8 +25,10 @@ ok('.erp-tip 에 position 이 있다 (풍선 절대배치 기준점)',
    /\.erp-tip\s*\{[^}]*position\s*:\s*relative/.test(css));
 
 console.log('\n[② pu-erp.html 이 그 CSS 를 실제로 불러온다]');
-ok('<link rel="stylesheet" href="css/pu-erp.css"> 가 있다',
-   /<link[^>]+href=["']css\/pu-erp\.css["'][^>]*>/.test(html));
+/* ★ 캐시 번호(?v=)가 붙어도 통과해야 한다 — 붙이는 것이 «옳은 고침» 이다.
+   (2026-08-23: css 에 ?v= 를 달자 이 검사가 깨졌다. 같은 실수를 js 에서도 했다) */
+ok('css/pu-erp.css 를 불러온다 (캐시 번호가 붙어 있어도 된다)',
+   /<link[^>]+href=["']css\/pu-erp\.css(\?v=\d+)?["'][^>]*>/.test(html));
 
 console.log('\n[③ data-tip 을 쓰는 자리는 전부 erp-tip 클래스와 짝을 이룬다]');
 /* 실제 속성 사용만 잡는다 — 'data-tip': 또는 data-tip: 처럼 콜론이 바로 따라와야
