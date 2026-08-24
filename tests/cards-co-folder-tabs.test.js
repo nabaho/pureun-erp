@@ -51,9 +51,12 @@ function loadTabsHtml(over){
   const r = src.indexOf('function renderCoFTabsHtml');
   const rEnd = src.indexOf('\nfunction pickCoFTab', r);
   assert.ok(r > 0 && rEnd > r, 'renderCoFTabsHtml 을 찾지 못했습니다 — ＃탭 줄이 사라졌다');
-  const state = Object.assign({ view:'co', coFolder:'', coFTab:'', isAdmin:true }, o.state || {});
+  const state = Object.assign({ view:'co', coFolder:'', coFTab:'', isAdmin:true, coPageSize:100 }, o.state || {});
   const ctx = { console, Object, Array, String, Number, Math, esc, state,
-    _coFolders: o.coFolders || {}, coList: () => o.cos || [] };
+    _coFolders: o.coFolders || {}, coList: () => o.cos || [],
+    /* 2026-08-24: 쪽 크기 고르기가 탭 줄 안으로 옮겨 왔다 — 이 검사는 탭 칩만
+       살피므로 진짜 select 는 필요 없다. 안 넣으면 renderCoFTabsHtml() 이 던진다. */
+    coSizeSelHtml: () => '' };
   vm.createContext(ctx);
   vm.runInContext(src.slice(i, j) + '\n' + src.slice(r, rEnd), ctx);
   return ctx;

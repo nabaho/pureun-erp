@@ -91,9 +91,7 @@ test('「→ N곳 모두」도 그대로 도구줄 안에 있다', () => {
 test('★ 도구줄은 표와 쪽넘김 «뒤»에 온다 — 붙어 따라와도 마지막 줄·쪽넘김을 안 덮는다', () => {
   const h = runList(ROWS, { k1: 1 });
   const tbl = h.indexOf('</table>');
-  /* ⚠ 2026-08-24 로 쪽넘김이 «위에도» 생겼다(대표 지시). 그래서 첫 번째 것을 찾으면
-     표보다 앞의 것이 잡힌다 — 여기서 봐야 하는 것은 «표 뒤»의 것이다. */
-  const pager = h.indexOf('class="copager"', tbl);
+  const pager = h.indexOf('class="copager"');
   const bar = h.indexOf('cosellift');
   assert.ok(tbl > 0 && pager > tbl, '표 뒤의 쪽넘김을 찾지 못했습니다');
   assert.ok(bar > pager,
