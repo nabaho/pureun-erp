@@ -64,8 +64,62 @@ test('★ 색표를 먼저 채운 «뒤» 일정을 받는다', () => {
 
 test('★ 구글에서 고른 색이 앱 색표를 «이긴다»', () => {
   /* 이게 지시의 핵심이다. 앱 색표로 덮으면 구글 화면과 영원히 다르다. */
-  assert.match(S, /if\(!gColor\) evColor = staffColorMap/,
+  /* 2026-08-26 — 만든이로 사람을 찾는 길이 생겨 조건이 하나 늘었다.
+     지킬 규칙은 그대로다: «구글 색이 있으면 앱 색표로 덮지 않는다». */
+  assert.match(S, /if\(!gColor && !_mailSid\) evColor = staffColorMap/,
     '앱 색표가 구글 색을 덮는다');
+  /* 담당자(matchedSid)도 만든이가 이긴다 — 이것이 색뿐 아니라 «거르기» 를 정한다.
+     제목의 이름은 「권형하에게 보고」처럼 «남의 이름» 일 수 있다. */
+  assert.match(S, /if\(!_mailSid\) matchedSid = u\.sid;/,
+    '제목 이름이 만든이를 덮는다 — 남의 이름으로 담당자가 바뀐다');
+});
+
+test('★ 만든이 이메일로 담당자를 가른다 — 제목에 이름이 없어도', () => {
+  /* ★ 2026-08-26 실제 구글 자료로 확인: 8월 일정 111건 «전부» 만든이 이메일이 있고
+     열 가지(직원 열 명)다. 그런데 제목에 이름이 있는 것은 «23건뿐» 이라,
+     제목만 보던 옛 코드에서는 88건(79%)이 «같은 파랑» 이었다.
+     그것이 「담당자마다 각자 넣었던 색」이 안 보인 진짜 까닭이다. */
+  assert.match(S, /var _mail = \(ev\.creator && ev\.creator\.email\)/, '만든이를 안 읽는다');
+  assert.match(S, /\(ev\.organizer && ev\.organizer\.email\)/, '만든이가 없을 때 주최자를 안 본다');
+  assert.match(S, /var _mailSid = gcalSidByMail\(_mail\)/, '만든이로 직원을 안 찾는다');
+  assert.match(S, /_mailSid \? \(staffColorMap\[_mailSid\] \|\| ''\) : ''/, '찾은 직원 색을 안 쓴다');
+});
+
+test('사람이 «이어 준» 표를 명부보다 먼저 본다', () => {
+  /* 명부에는 gmail 이 없다(loginId 는 sid@… 꼴) — 이 표가 없으면 이름을 맞출 길이 없다. */
+  /* 중괄호로 정확히 자른다 — 글자 거리로 자르면 다음 블록까지 넘어간다(실제로 당했다) */
+  const fn = fnBody('gcalSidByMail');
+  const mp = fn.indexOf('gcalMailMap()');
+  const roster = fn.indexOf('getActiveUsers');
+  assert.ok(mp > 0, '이어 준 표를 안 본다');
+  assert.ok(roster < 0 || mp < roster, '명부를 먼저 본다 — 사람이 이어 준 것이 더 확실하다');
+});
+
+test('★ 이어 준 뒤에도 «늘 같은 색» 이다 — 색으로 사람을 알아본다', () => {
+  const fn = fnBody('gcalMailColor');
+
+  /* 중복을 뺀 «고유색» 으로 나눈다 — STAFF_COLORS 11칸에 고유색은 6가지뿐이라
+     그대로 나누면 한 색에 몰린다(실제로 111건 중 69건이 한 색이었다). */
+  assert.match(fn, /uniq\.indexOf\(STAFF_COLORS\[u\]\) < 0/, '중복 색을 안 걸러 낸다');
+  assert.match(fn, /uniq\[h % uniq\.length\]/, '고유색으로 나누지 않는다');
+  assert.strictEqual(/#[0-9a-fA-F]{6}/.test(fn), false, '새 색을 만들었다');
+});
+
+test('아직 안 이은 계정이 몇인지 «단추에 적는다»', () => {
+  /* 안 적으면 이을 것이 남았는지 아무도 모른다 — 있는 기능이 없는 기능이 된다. */
+  assert.match(S, /'👤 계정 잇기'\+\(left\?\(' '\+left\+'명 남음'\)/, '남은 수를 안 적는다');
+});
+
+test('이어 준 표를 다른 PC 와도 나눠 쓴다', () => {
+  assert.match(S, /'gcal_mail_sid',/, '동기화 목록에 없다 — 이은 것이 이 PC 에만 남는다');
+});
+
+test('이어 주면 달력을 «다시 칠한다»', () => {
+  /* 저장만 하고 화면이 그대로면 「안 됐나」 하고 또 고르게 된다. */
+  const a = S.indexOf('function put(mail, sid)');
+  const fn = S.slice(a, a + 420);
+  assert.match(fn, /dbSet\(GCAL_MAIL_KEY/, '저장하지 않는다');
+  assert.match(fn, /setGcalRfk\(gcalRfk \+ 1\)/, '달력을 다시 읽지 않는다');
 });
 
 test('구글에 색을 «안 넣은» 일정은 앱 색표로 칠한다', () => {

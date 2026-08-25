@@ -2016,6 +2016,7 @@ var FB_ALL_SYNC_KEYS = [
   'pension_policy','security_perms',
   'payroll_irregular','contract_forms','dc_contributions','biz_cases',
   'payer_aliases','expense_cat_aliases',
+  'gcal_mail_sid',   // 구글 계정(만든이 메일) ↔ 직원 — 한 번 이어 주면 색·거르기가 정확해진다
   'bank_processed','combo_whitelist','cms_ledger',
   // 올린 통장 자료 묶음 — 다른 PC 에서 올린 것도 받아 함께 보려면 이 목록에 있어야 한다
   'ledger_batches','ledger_held','ledger_split_recipes',
@@ -53131,6 +53132,56 @@ function CorpDashboard(props){
     var lum = (0.299*r + 0.587*g + 0.114*b) / 255;
     return lum > 0.62 ? '#1e293b' : '#ffffff';
   }
+  /* ── 누가 만든 일정인가 ───────────────────────────────────────
+     ★ 2026-08-26 확인: 구글 일정 111건 «전부» 만든이 이메일이 있고 열 가지다(직원 열 명).
+       그런데 앱은 «제목에 이름이 있을 때만» 담당자를 알아봤다. 「1030 임금체불 내방상담」
+       처럼 이름이 없는 제목이 대부분이라 화면이 «거의 다 같은 파랑» 이었다 —
+       「담당자마다 각자 넣었던 색」이 안 보인 진짜 까닭이다.
+     ★ 그리고 색을 고른 일정은 «0건» 이었다(colorId 없음) — 구글 쪽 색이 없으니
+       사람을 갈라 칠하는 것이 유일한 길이다.
+     ⚠ 명부에는 gmail 이 없다(loginId 는 sid@… 꼴). 그래서 두 갈래로 찾는다:
+       ① 명부와 이메일이 맞으면 «그 직원의 색»(대표님이 고른 색이 그대로 쓰인다)
+       ② 안 맞으면 이메일로 «늘 같은 색» 을 골라 준다 — 사람마다 갈리기는 한다.
+       ②는 「각자 넣었던 색」과 같지는 않다. 명부에 gmail 을 넣으면 ①로 올라간다. */
+  function gcalMailKey(m){ return String(m || '').trim().toLowerCase(); }
+  var GCAL_MAIL_KEY = 'gcal_mail_sid';
+  function gcalMailMap(){
+    var v = (typeof dbGet === 'function') ? dbGet(GCAL_MAIL_KEY, {}) : {};
+    return (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+  }
+  function gcalSidByMail(mail){
+    var k = gcalMailKey(mail);
+    if(!k) return '';
+    /* ★ 사람이 한 번 이어 준 것이 가장 확실하다 — 명부 대조보다 먼저 본다.
+       명부에는 gmail 이 없어(loginId 는 sid@… 꼴) 이 표가 없으면 이름을 맞출 길이 없다. */
+    var mp = gcalMailMap();
+    if(mp[k]) return mp[k];
+    var us = (typeof getActiveUsers === 'function') ? (getActiveUsers() || []) : [];
+    for(var i = 0; i < us.length; i++){
+      var u = us[i] || {};
+      var cands = [u.loginId, u.email, u.gmail, u.googleEmail];
+      for(var j = 0; j < cands.length; j++){
+        if(cands[j] && gcalMailKey(cands[j]) === k) return u.sid;
+      }
+    }
+    return '';
+  }
+  /* 이메일 → 늘 같은 색. ⚠ 새 색을 만들지 않는다 — 직원 색표(STAFF_COLORS)에서 고른다.
+     같은 사람이 볼 때마다 색이 바뀌면 색으로 사람을 알아볼 수 없다. */
+  function gcalMailColor(mail){
+    var k = gcalMailKey(mail);
+    if(!k) return '';
+    /* ⚠ STAFF_COLORS 에는 «같은 색이 여러 번» 들어 있다(11칸에 고유색 6가지).
+       그대로 나누면 한 색에 몰린다 — 실제로 111건 중 69건(62%)이 한 색이었다.
+       중복을 뺀 «고유색» 으로 나눈다. */
+    var uniq = [];
+    for(var u = 0; u < STAFF_COLORS.length; u++){
+      if(uniq.indexOf(STAFF_COLORS[u]) < 0) uniq.push(STAFF_COLORS[u]);
+    }
+    var h = 0;
+    for(var i = 0; i < k.length; i++){ h = (h * 131 + k.charCodeAt(i)) >>> 0; }
+    return uniq[h % uniq.length];
+  }
   // 구글 캘린더 fetch (calYm 또는 gcalRfk 변경 시마다)
   useEffect(function(){
     var ym = calYm;
@@ -53161,21 +53212,29 @@ function CorpDashboard(props){
             /* ★ 색은 «구글에서 그 사람이 고른 것» 을 먼저 쓴다(colorId).
                구글에 색을 안 넣은 일정만 앱 색표로 칠한다 — 그러면 구글 화면과 같아진다. */
             var gColor = (window._gcalColors && ev.colorId) ? (window._gcalColors[String(ev.colorId)] || '') : '';
-            var evColor = gColor || (ev.summary ? '#2563eb' : '#94a3b8');
-            var matchedSid = 'GCAL';
+            /* ★ 색 고르는 순서 — 앞이 있으면 뒤로 안 넘어간다.
+               ①구글에서 그 일정에 «고른» 색  ②만든이가 명부에 있으면 그 직원 색
+               ③제목에 이름이 있으면 그 직원 색  ④만든이 이메일로 늘 같은 색  ⑤기본 */
+            var _mail = (ev.creator && ev.creator.email) || (ev.organizer && ev.organizer.email) || '';
+            var _mailSid = gcalSidByMail(_mail);
+            var evColor = gColor || (_mailSid ? (staffColorMap[_mailSid] || '') : '')
+                          || gcalMailColor(_mail) || (ev.summary ? '#2563eb' : '#94a3b8');
+            var matchedSid = _mailSid || 'GCAL';
             var activeUsers = (typeof getActiveUsers==='function') ? getActiveUsers() : [];
             for(var ui=0; ui<activeUsers.length; ui++){
               var u = activeUsers[ui];
               if(u.name && title.indexOf(u.name) >= 0){
-                // ⚠ 구글 색이 있으면 «그것이 이긴다» — 앱 색표로 덮으면 구글 화면과 달라진다
-                if(!gColor) evColor = staffColorMap[u.sid] || evColor;
-                matchedSid = u.sid;
+                /* ⚠ 구글 색이 있으면 «그것이 이긴다» — 앱 색표로 덮으면 구글 화면과 달라진다.
+                   ⚠ 만든이가 명부에서 «이미» 찾아졌으면 그것이 더 확실하다 — 덮지 않는다.
+                     제목의 이름은 「권형하에게 보고」처럼 «남의 이름» 일 수도 있다. */
+                if(!gColor && !_mailSid) evColor = staffColorMap[u.sid] || evColor;
+                if(!_mailSid) matchedSid = u.sid;
                 break;
               }
             }
             return { date:date, sid:matchedSid, type:'gcal',
               // ⚠ 아이콘을 붙이지 않는다 — 구글 화면에는 없다(type:'gcal' 로 이미 갈린다)
-              label: title, color: evColor, gcolor: gColor,
+              label: title, color: evColor, gcolor: gColor, creatorMail: _mail,
               evId:ev.id, gcalUrl:ev.htmlLink, draggable:true,
               time:timeStr,
               endTime: ev.end && ev.end.dateTime ? ev.end.dateTime.slice(11,16) : '',
@@ -53202,6 +53261,10 @@ function CorpDashboard(props){
   var cnhS = useState(null); var calNavHover = cnhS[0]; var setCalNavHover = cnhS[1];
   // 구글캘린더 스타일 상태
   var dpS = useState(null); var dayPopover = dpS[0]; var setDayPopover = dpS[1];
+  /* 「구글 계정 ↔ 직원」 잇는 창. ★ 명부에 gmail 이 없어서, 사람이 한 번 이어 주지 않으면
+     구글 일정의 담당자를 알 길이 없다(제목에 이름이 있는 것은 111건 중 23건뿐이었다). */
+  var mmS = useState(false); var mailMapOpen = mmS[0]; var setMailMapOpen = mmS[1];
+  var mmTickS = useState(0); var mmTick = mmTickS[0]; var setMmTick = mmTickS[1];
   // dayPopover: { date, events, rect } - +N더보기 클릭 시 팝오버
   var edS = useState(null); var evDetail = edS[0]; var setEvDetail = edS[1];
   // 이벤트 수정 모달 (evDetail에서 [✏️ 수정] 클릭 시)
@@ -53583,6 +53646,19 @@ function CorpDashboard(props){
             background:calFilter==='gcal'?'#2563eb':'#fff',color:calFilter==='gcal'?'#fff':'#2563eb',
             border:'1px solid #bfdbfe',borderRadius:'10px',cursor:'pointer'}},
           '🗓 구글'+(gcalEvList.length>0?' ('+gcalEvList.length+')':'')),
+        /* ★ 이어 준 사람이 몇인지 «단추에 적는다» — 안 적으면 이을 것이 남았는지 모른다 */
+        (function(){
+          var mails = {}, mp = gcalMailMap();
+          gcalEvList.forEach(function(e){ if(e.creatorMail) mails[e.creatorMail] = 1; });
+          var all = Object.keys(mails), left = all.filter(function(m){ return !mp[m]; }).length;
+          if(!all.length) return null;
+          return h('button',{onClick:function(){ setColorPicker(null); setMailMapOpen(true); },
+            title:'구글 일정을 만든 계정이 누구인지 한 번 이어 주면, 그 뒤로 담당자 색과 거르기가 정확해집니다',
+            style:{padding:'3px 8px',fontSize:'10.5px',fontWeight:left?700:500,
+              background:left?'#fffbeb':'#fff',color:left?'#d97706':'#64748b',
+              border:'1px solid '+(left?'#fde68a':'#cbd5e1'),borderRadius:'10px',cursor:'pointer'}},
+            '👤 계정 잇기'+(left?(' '+left+'명 남음'):(' '+all.length+'명')));
+        })(),
         !IS_MOBILE && h('div',{style:{position:'relative'}},
           h('input',{type:'search',value:calSearchQ,placeholder:'검색',
             title:'캘린더 일정 제목·업체명·내용 검색',
@@ -54118,6 +54194,68 @@ function CorpDashboard(props){
             borderRadius:'6px',cursor:'pointer',fontSize:'11px',color:'#64748b',fontWeight:600}
         }, '↩ 기본 색상으로 초기화')
       ),
+
+      // ─ 구글 계정 ↔ 직원 잇기 창 ─
+      mailMapOpen && (function(){
+        var mp = gcalMailMap();
+        var seen = {}, rows = [];
+        gcalEvList.forEach(function(e){
+          if(!e.creatorMail || seen[e.creatorMail]) return;
+          seen[e.creatorMail] = 1;
+          rows.push({ mail:e.creatorMail, n:0 });
+        });
+        rows.forEach(function(r){
+          r.n = gcalEvList.filter(function(e){ return e.creatorMail === r.mail; }).length;
+        });
+        rows.sort(function(a,b){ return b.n - a.n; });
+        var us = (typeof getActiveUsers === 'function') ? (getActiveUsers() || []) : [];
+        function put(mail, sid){
+          var next = Object.assign({}, gcalMailMap());
+          if(sid) next[mail] = sid; else delete next[mail];
+          dbSet(GCAL_MAIL_KEY, next);
+          setMmTick(mmTick + 1);
+          setGcalRfk(gcalRfk + 1);   // 색을 다시 칠하려면 일정을 다시 읽어야 한다
+        }
+        return h('div',{className:'modal-bg',onClick:function(){ setMailMapOpen(false); },style:{zIndex:210}},
+          h('div',{className:'dragm',onClick:function(e){e.stopPropagation();},
+            style:{background:'#fff',borderRadius:'14px',width:'560px',maxWidth:'96vw',maxHeight:'86vh',
+              display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 20px 60px rgba(0,0,0,0.3)'}},
+            h('div',{className:'dragh',title:'머리를 잡아 끌면 창을 옮길 수 있습니다',
+              style:{background:'#1e40af',color:'#fff',padding:'12px 16px',fontSize:'13px',fontWeight:700,
+                display:'flex',alignItems:'center',justifyContent:'space-between',
+                cursor:'grab',userSelect:'none',touchAction:'none'}},
+              h('span',null,'👤 구글 계정 ↔ 직원 잇기'),
+              h('button',{onClick:function(){ setMailMapOpen(false); },
+                style:{background:'none',border:'none',color:'#fff',fontSize:'18px',cursor:'pointer',padding:'0 4px',lineHeight:1}},'×')),
+            h('div',{style:{padding:'8px 16px',background:'#fffbeb',borderBottom:'1px solid #fde68a',
+              fontSize:'11.5px',color:'#854d0e'},
+              title:'구글 일정에는 「누가 만들었는지」만 남고 이름은 없습니다.\n'
+                +'한 번 이어 주면 그 뒤로 담당자 색과 거르기가 정확해집니다.\n'
+                +'아직 안 이은 계정은 이메일로 늘 같은 색을 주지만, 대표님이 고른 그 사람 색은 아닙니다.'},
+              '한 번 이어 주면 담당자 색이 정확해집니다 ',
+              h('span',{style:{color:'#d97706',fontWeight:700,cursor:'help'}},'ⓘ')),
+            h('div',{style:{padding:'10px 16px',overflowY:'auto',flex:1}},
+              rows.map(function(r,i){
+                var cur = mp[r.mail] || '';
+                var who = us.filter(function(u){ return u.sid === cur; })[0];
+                return h('div',{key:i,style:{display:'flex',alignItems:'center',gap:'8px',padding:'6px 0',
+                  borderBottom:'1px solid #f8fafc'}},
+                  h('div',{style:{flex:1,minWidth:0}},
+                    h('div',{style:{fontSize:'12px',fontWeight:700,color:'#1e293b',overflow:'hidden',
+                      textOverflow:'ellipsis',whiteSpace:'nowrap'}}, r.mail),
+                    h('div',{style:{fontSize:'10px',color:'#94a3b8'}}, r.n+'건'
+                      + (who ? (' · 이어짐: '+who.name) : ' · 아직 안 이음'))),
+                  h('select',{value:cur,
+                    onChange:function(e){ put(r.mail, e.target.value); },
+                    style:{width:'150px',padding:'5px 7px',fontSize:'11.5px',border:'1px solid #cbd5e1',
+                      borderRadius:'6px',fontFamily:'inherit',
+                      background: cur?'#f0fdf4':'#fffbeb'}},
+                    h('option',{value:''},'— 고르세요 —'),
+                    us.map(function(u,j){ return h('option',{key:j,value:u.sid}, u.name); })));
+              })),
+            h('div',{style:{padding:'9px 16px',borderTop:'1px solid #e2e8f0',fontSize:'10.5px',color:'#94a3b8'}},
+              '고르면 바로 저장되고 달력이 다시 칠해집니다 · 다른 PC 에서도 같이 보입니다')));
+      })(),
 
       // ─ 달력 본체 ─
       h('div', { style:{ display:'flex', flex:fitLayout?1:undefined, minHeight:0 } },
