@@ -6590,6 +6590,7 @@ function _nz(v){ return v?_n(v):''; }                    // 0은 빈칸(장부 �
 // ── 하위 탭 ──
 var CLOSE_SUBS=[['txn','거래·분개입력'],['journal','분개장'],['ledger','계정별원장'],
                 ['monthly','월계표'],['tb','합계잔액시산표'],['fin','재무제표·전기대비'],
+                ['cf','현금흐름표'],['ie','수입지출명세서'],
                 ['budget','예산·집행'],['years','연도별 비교'],['f15','운영상황보고서']];
 
 /* ══════════ 예산·집행 — funds/{기금}/years/{연도}/budget ══════════
@@ -6947,6 +6948,148 @@ function _cmpRow(lbl,cur,prv,bold){
     +'<td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--sub)">'+_n(prv)+'</td>'
     +'<td style="text-align:right;color:'+col+'">'+(d>0?'+':'')+_n(d)+'</td>'
     +'<td class="mo" style="text-align:right;color:'+col+'">'+(pct===null?(cur?'신규':'—'):((d>0?'+':'')+pct.toFixed(1)+'%'))+'</td></tr>';
+}
+/* ══════════ 현금흐름표 ══════════
+   이카운트 비영리회계에도, 공익법인 결산에도 들어가는 표다. 지금은 없었다.
+
+   기금은 «현금 장부»가 곧 원천이라 직접법으로 짠다 — 실제 입·출금을 성격별로 모은다.
+   ⚠ 현금이 오가지 않는 분개(준비금 설정·환입·전입 nocash)는 빼야 한다.
+      넣으면 흐름 합계가 통장 잔액과 어긋난다.
+   활동 구분
+     영업활동 : 출연금 수입·이자·목적사업비·관리비 — 기금의 본디 활동
+     투자활동 : 근로자대부금 지급/회수, 정기예금·증권 예치/해지
+     재무활동 : 기금에는 차입이 없어 늘 0 이지만 칸은 둔다 */
+/* 빌리고 갚는 돈은 재무활동이다 — 없다고 굳혀 두면 영업활동에 조용히 섞인다 */
+var CF_FINANCE=['단기차입금','장기차입금','차입금'];
+var CF_INVEST=['근로자대부금','정기예금','매도가능증권','단기금융상품','특정현금과예금'];
+function cashFlowRows(arr,fid,yr){
+  fid=fid||S.fundId; yr=yr||S.year;
+  var op=_openingOf(fid,yr)||{};
+  var begin=(num(op.cash)||0);
+  var appr=expandSplits(arr).filter(function(x){ return x.approved&&x.debit&&x.credit; });
+  var OPin={}, OPout={}, INin={}, INout={}, FIin={}, FIout={};
+  var opIn=0,opOut=0,invIn=0,invOut=0,fiIn=0,fiOut=0;
+  appr.forEach(function(x){
+    if(x.nocash) return;                       // 현금이 안 움직인 분개
+    var dep=num(x.deposit)||0, wd=num(x.withdraw)||0;
+    if(!dep&&!wd) return;
+    /* 현금이 든 쪽의 «상대 계정»이 그 돈의 성격이다 */
+    var other=dep?x.credit:x.debit;
+    var slot=CF_INVEST.indexOf(other)>=0?'I':(CF_FINANCE.indexOf(other)>=0?'F':'O');
+    var mi=dep?{O:OPin,I:INin,F:FIin}[slot]:{O:OPout,I:INout,F:FIout}[slot], amt=dep||wd;
+    mi[other]=(mi[other]||0)+amt;
+    if(dep){ if(slot==='I')invIn+=amt; else if(slot==='F')fiIn+=amt; else opIn+=amt; }
+    else   { if(slot==='I')invOut+=amt; else if(slot==='F')fiOut+=amt; else opOut+=amt; }
+  });
+  var R=[], add=function(lbl,v,lvl,bold,head){ R.push({lbl:lbl,cur:v,lvl:lvl||0,bold:!!bold,head:!!head}); };
+  var line=function(m){ Object.keys(m).sort(function(a,b){return m[b]-m[a];}).forEach(function(k){ add(k,m[k],2); }); };
+  add('Ⅰ. 영업활동으로 인한 현금흐름',opIn-opOut,0,true);
+  add('1. 유입',opIn,1); line(OPin);
+  add('2. 유출',opOut,1); line(OPout);
+  add('Ⅱ. 투자활동으로 인한 현금흐름',invIn-invOut,0,true);
+  add('1. 유입(회수·해지)',invIn,1); line(INin);
+  add('2. 유출(지급·예치)',invOut,1); line(INout);
+  add('Ⅲ. 재무활동으로 인한 현금흐름',fiIn-fiOut,0,true);
+  if(fiIn||fiOut){ add('1. 유입(차입)',fiIn,1); line(FIin); add('2. 유출(상환)',fiOut,1); line(FIout); }
+  var net=(opIn-opOut)+(invIn-invOut)+(fiIn-fiOut);
+  add('Ⅳ. 현금의 증가(감소)',net,0,true);
+  add('Ⅴ. 기초의 현금',begin,0,true);
+  add('Ⅵ. 기말의 현금',begin+net,0,true);
+  return {rows:R,begin:begin,net:net,end:begin+net};
+}
+function cashFlowView(arr){
+  var cf=cashFlowRows(arr);
+  var fin=computeFin(arr);
+  /* 기말 현금이 재무상태표의 현금과 달라지면 어느 한쪽이 틀린 것이다 — 조용히 두면 안 된다.
+     현금이 안 움직인 분개를 빼는 규칙이 어긋나면 여기서 바로 드러난다. */
+  var gap=Math.round(cf.end)-Math.round(fin.cash);
+  var chip=gap===0?'<span class="chip ok" style="font-size:10px">✅ 재무상태표 현금과 일치</span>'
+    :'<span class="chip dg" style="font-size:10px">⚠ 재무상태표 현금과 '+_n(gap)+' 차이</span>';
+  var body=cf.rows.map(function(r){
+    var pad=r.lvl?('padding-left:'+(r.lvl*14+8)+'px'):'';
+    return '<tr'+(r.bold?' style="font-weight:700;background:var(--bg)"':'')+'>'
+      +'<td><span style="'+pad+'">'+esc(r.lbl)+'</span></td>'
+      +'<td style="text-align:right;font-variant-numeric:tabular-nums">'+_n(r.cur)+'</td></tr>';
+  }).join('');
+  return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2 style="font-size:15px">'+S.year+'년 현금흐름표</h2>'
+    +hlp('close.cf')+chip
+    +'<span style="flex:1"></span><button onclick="printLedger(\'cf\')">🖨 인쇄</button></div>'
+    +'<p class="muted" style="font-size:11.5px;margin:6px 0 8px">직접법 — 실제 입·출금만 모읍니다. 준비금 설정·환입처럼 현금이 오가지 않는 분개는 빠집니다.</p>'
+    +'<div style="overflow-x:auto;max-width:620px"><table><thead><tr><th>과목</th><th style="text-align:right;width:150px">금액(원)</th></tr></thead><tbody>'
+    +body+'</tbody></table></div></div>';
+}
+/* ══════════ 수입지출명세서 ══════════
+   이카운트 비영리회계의 중심 표. 비영리는 «관-항-목»으로 수입과 지출을 나눠 적는다.
+   기금의 관·항은 정해져 있다(아래). 목은 계정과목이 그대로 온다. */
+var IE_TREE=[
+  {gwan:'수입', hang:[
+    {h:'출연금수입', accts:['기본재산'], dir:'입금'},
+    {h:'사업수익',  accts:['이자수익','잡수익'], dir:'입금'},
+    {h:'이월금',    accts:[], dir:'이월'}
+  ]},
+  {gwan:'지출', hang:[
+    {h:'고유목적사업비', accts:null, dir:'출금', use:'purpose'},
+    {h:'일반관리비',     accts:['지급수수료','사무용품비','기타관리비','세금과공과'], dir:'출금'},
+    {h:'대부사업',       accts:['근로자대부금'], dir:'출금'}
+  ]}
+];
+function ieRows(arr,fid,yr){
+  fid=fid||S.fundId; yr=yr||S.year;
+  var op=_openingOf(fid,yr)||{};
+  var appr=expandSplits(arr).filter(function(x){ return x.approved&&x.debit&&x.credit; });
+  var by={};   // 계정 → {in,out}
+  appr.forEach(function(x){
+    if(x.nocash) return;
+    var dep=num(x.deposit)||0, wd=num(x.withdraw)||0;
+    if(!dep&&!wd) return;
+    var other=dep?x.credit:x.debit;
+    var b=(by[other]=by[other]||{in:0,out:0});
+    if(dep) b.in+=dep; else b.out+=wd;
+  });
+  var R=[], add=function(lbl,v,lvl,bold){ R.push({lbl:lbl,cur:v,lvl:lvl||0,bold:!!bold}); };
+  var carry=_openAssets(op);
+  var totIn=carry, totOut=0;
+  IE_TREE.forEach(function(g){
+    var gSum=0, lines=[];
+    g.hang.forEach(function(h){
+      var accts=h.accts;
+      if(h.use==='purpose') accts=PURPOSE_ACCTS;
+      var hSum=0, sub=[];
+      if(h.dir==='이월'){ hSum=carry; }
+      else accts.forEach(function(a){
+        var b=by[a]; if(!b) return;
+        var v=(h.dir==='입금')?b.in:b.out;
+        if(!v) return;
+        hSum+=v; sub.push([a,v]);
+      });
+      if(!hSum && h.dir!=='이월') return;
+      lines.push(['항',h.h,hSum]);
+      sub.forEach(function(x){ lines.push(['목',x[0],x[1]]); });
+      gSum+=hSum;
+    });
+    /* 모델은 «숫자»만 돌려준다 — 이름표에 서식을 박으면 화면 밖(엑셀·검사)에서 못 쓴다 */
+    add('【'+g.gwan+'】',gSum,0,true);
+    lines.forEach(function(l){ add(l[1],l[2],l[0]==='항'?1:2,l[0]==='항'); });
+    if(g.gwan==='수입') totIn=gSum; else totOut=gSum;
+  });
+  add('수입 − 지출 (잔액)',totIn-totOut,0,true);
+  return {rows:R,totIn:totIn,totOut:totOut,carry:carry};
+}
+function ieView(arr){
+  var ie=ieRows(arr);
+  var body=ie.rows.map(function(r){
+    var pad=r.lvl?('padding-left:'+(r.lvl*14+8)+'px'):'';
+    return '<tr'+(r.bold?' style="font-weight:700'+(r.lvl===0?';background:var(--bg)':'')+'"':'')+'>'
+      +'<td><span style="'+pad+'">'+esc(r.lbl)+'</span></td>'
+      +'<td style="text-align:right;font-variant-numeric:tabular-nums">'+_n(r.cur)+'</td></tr>';
+  }).join('');
+  return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2 style="font-size:15px">'+S.year+'년 수입지출명세서</h2>'
+    +hlp('close.ie')
+    +'<span class="stat">수입 '+_n(ie.totIn)+'</span><span class="stat">지출 '+_n(ie.totOut)+'</span>'
+    +'<span style="flex:1"></span><button onclick="printLedger(\'ie\')">🖨 인쇄</button></div>'
+    +'<p class="muted" style="font-size:11.5px;margin:6px 0 8px">비영리 회계의 «관 — 항 — 목» 차례로 적습니다. 이월금은 전기말 자산총계입니다.</p>'
+    +'<div style="overflow-x:auto;max-width:620px"><table><thead><tr><th>관 · 항 · 목</th><th style="text-align:right;width:150px">금액(원)</th></tr></thead><tbody>'
+    +body+'</tbody></table></div></div>';
 }
 function finCompareView(arr){
   loadPrevTxns();
@@ -8540,6 +8683,8 @@ function closeBodyHTML(arr,rows){
     case 'monthly': return monthlyView(arr);
     case 'tb':      return tbView(arr);
     case 'fin':     return finCompareView(arr);
+    case 'cf':      return cashFlowView(arr);
+    case 'ie':      return ieView(arr);
     case 'budget':  return budgetView(arr);
     case 'years':   return yearsView();
     case 'f15':     return f15View(arr);
@@ -9456,6 +9601,12 @@ var HELP={
  'close.tb':{t:'합계잔액시산표',h:'<p>제출 서식과 같은 <b>4열</b>(차변 합계·잔액 / 계정과목 / 대변 잔액·합계)로 만듭니다.</p>'
    +'<p>전기이월도 합계에 포함됩니다. 맨 아래 <b>차변 합계=대변 합계</b>, <b>차변 잔액=대변 잔액</b>이 맞아야 결산이 성립합니다.</p>'
    +'<p>불일치가 뜨면 전기이월 입력이나 미승인 거래를 먼저 확인하세요.</p>'},
+ 'close.cf':{t:'현금흐름표',h:'<p>실제로 <b>오간 현금</b>만 모읍니다(직접법). 준비금 설정·환입처럼 현금이 움직이지 않는 분개는 빠집니다.</p>'
+   +'<p><b>영업활동</b> 출연금·이자·목적사업비·관리비 · <b>투자활동</b> 대부금 지급/회수, 예금·증권 예치/해지 · <b>재무활동</b> 차입(기금은 없음)</p>'
+   +'<p>맨 아래 <b>기말의 현금</b>은 재무상태표의 현금과 같아야 합니다. 다르면 화면이 그 차이를 알려 줍니다.</p>'},
+ 'close.ie':{t:'수입지출명세서',h:'<p>비영리 회계가 쓰는 <b>관 — 항 — 목</b> 차례로 수입과 지출을 적습니다(이카운트 비영리회계와 같은 짜임새).</p>'
+   +'<p><b>수입</b> 출연금수입 · 사업수익 · 이월금 &nbsp; <b>지출</b> 고유목적사업비 · 일반관리비 · 대부사업</p>'
+   +'<p><b>이월금</b>은 전기말 자산총계입니다. 현금이 오가지 않은 분개는 빠집니다.</p>'},
  'close.fin':{t:'재무제표 · 전기 대비',h:'<p>재무상태표·손익계산서를 <b>당기와 전기를 나란히</b> 놓고 증감액·증감률까지 계산합니다.</p>'
    +'<p>전기 숫자는 <b>지난해 승인 분개 + 지난해 전기이월</b>로 그 자리에서 다시 계산한 것입니다 — 따로 입력하지 않습니다.</p>'
    +'<p>지난해 자료가 없으면 전기는 0으로 표시되고 안내 배지가 붙습니다.</p>'},

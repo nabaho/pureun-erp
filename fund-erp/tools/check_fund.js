@@ -136,6 +136,39 @@ ok('목적사업비는 값이 있는 계정만', src.includes('if(!v&&!p) return
 /* 세부 항목은 가·나·다… 로 이어 붙인다 — 전부 「가.」면 제출본과 달라 보인다 */
 ok('세부 항목 번호가 이어진다', src.includes("var _GA='가나다라마바사아자차카타파하';")
   && src.includes("add((_GA.charAt(k)||'·')+'. '+a,v,p,1); k++;"));
+
+/* ══ 현금흐름표 · 수입지출명세서 ══ 이카운트 비영리회계에도, 공익법인 결산에도 들어가는 표다.
+   둘 다 없었다 — 재무제표만으로는 «돈이 어디로 갔는지»를 못 보여 준다. */
+ok('현금흐름표가 있다', src.includes('function cashFlowRows(') && src.includes('function cashFlowView('));
+ok('수입지출명세서가 있다', src.includes('function ieRows(') && src.includes('function ieView('));
+ok('두 표가 결산 탭에 있다', src.includes("['cf','현금흐름표'],['ie','수입지출명세서']")
+  && src.includes("case 'cf':      return cashFlowView(arr);") && src.includes("case 'ie':      return ieView(arr);"));
+/* ⚠ 현금이 오가지 않는 분개(준비금 설정·환입·전입)를 빼야 한다 —
+   넣으면 흐름 합계가 통장 잔액과 어긋나고, 기말 현금이 재무상태표와 달라진다. */
+ok('현금 안 움직인 분개를 뺀다', /function cashFlowRows\([\s\S]{0,900}?if\(x\.nocash\) return;/.test(src)
+  && /function ieRows\([\s\S]{0,700}?if\(x\.nocash\) return;/.test(src));
+ok('활동 셋으로 가른다', src.includes("add('Ⅰ. 영업활동으로 인한 현금흐름'")
+  && src.includes("add('Ⅱ. 투자활동으로 인한 현금흐름'") && src.includes("add('Ⅲ. 재무활동으로 인한 현금흐름'"));
+// 대부금·예금·증권은 투자활동이다 — 영업활동에 섞으면 «본디 활동»이 부풀어 보인다
+ok('투자활동 계정이 정해져 있다', /var CF_INVEST=\[[^\]]*'근로자대부금'[^\]]*'정기예금'[^\]]*'매도가능증권'/.test(src));
+/* 재무활동을 0 으로 굳혀 두면, 차입금을 적었을 때 영업활동에 조용히 섞인다 */
+ok('빌린 돈은 재무활동으로 간다', /var CF_FINANCE=\[[^\]]*'단기차입금'[^\]]*'장기차입금'/.test(src)
+  && src.includes("add('Ⅲ. 재무활동으로 인한 현금흐름',fiIn-fiOut,0,true);")
+  && src.includes('var net=(opIn-opOut)+(invIn-invOut)+(fiIn-fiOut);'));
+// 「2. 유출」 밑에 또 «( )» 를 붙이면 겹쳐 보인다
+ok('유출 항목에 군더더기 표시가 없다', src.includes('forEach(function(k){ add(k,m[k],2); });'));
+/* 기말 현금이 재무상태표와 다르면 어느 한쪽이 틀린 것이다 — 조용히 두면 안 된다 */
+ok('기말 현금을 재무상태표와 맞대 본다', src.includes('var gap=Math.round(cf.end)-Math.round(fin.cash);')
+  && src.includes('재무상태표 현금과'));
+// 비영리는 관-항-목으로 적는다(이카운트 비영리회계와 같은 짜임새)
+ok('수입지출을 관·항·목으로 적는다', src.includes('var IE_TREE=[')
+  && src.includes("{gwan:'수입'") && src.includes("{gwan:'지출'")
+  && src.includes("{h:'출연금수입'") && src.includes("{h:'고유목적사업비'"));
+ok('이월금은 전기말 자산총계', src.includes("var carry=_openAssets(op);")
+  && src.includes("if(h.dir==='이월'){ hSum=carry; }"));
+/* 모델은 숫자만 돌려줘야 한다 — 이름표에 서식을 박으면 엑셀·검사에서 못 쓴다 */
+ok('수입지출 모델이 서식을 안 박는다', src.includes("add('【'+g.gwan+'】',gSum,0,true);"));
+ok('두 표에 도움말이 있다', src.includes("'close.cf':{t:'현금흐름표'") && src.includes("'close.ie':{t:'수입지출명세서'"));
 /* 결손금은 «수입»이 아니다 — 수입에 음수로 넣으면 수입 합계가 그만큼 줄어 예산이 작아 보인다 */
 ok('예산편성안 이월금은 잉여일 때만', src.includes('var _carry=Math.max(0,fin.retained), _loss=Math.max(0,-fin.retained);')
   && src.includes("_xlRow(s,rw++,['수입 — 이월금',_carry,null,null]);")
