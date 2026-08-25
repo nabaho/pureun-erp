@@ -563,7 +563,13 @@ ok('보령시는 보령세무서', src.includes("'충남 보령시':'보령세�
 ok('세금과공과 계정', src.includes("'세금과공과':'비용'"));
 ok('격려금 계정', src.includes("'격려금':'비용'"));
 ok('고유목적사업준비금환입 계정(수익)', src.includes("'고유목적사업준비금환입':'수익'"));
-ok('세금과공과를 관리비로 집계', /var ADMIN=\[[^\]]*'세금과공과'/.test(src));
+ok('세금과공과를 관리비로 집계', /var ADMIN_ACCTS=\[[^\]]*'세금과공과'/.test(src));
+/* 일반관리비 목록이 세 벌이었다 — 계정을 하나 더하면 사업이익과 명세가 조용히 어긋났다.
+   한 곳에 두고 손익계산서·수입지출명세서·computeFin 이 함께 본다. */
+ok('일반관리비 목록이 한 벌', src.includes('  _sub(ADMIN_ACCTS);')
+  && src.includes("accts:ADMIN_ACCTS.concat(['법인세등'])")
+  && src.includes('  var ADMIN=ADMIN_ACCTS;')
+  && (src.match(/'지급수수료','사무용품비','기타관리비','세금과공과'/g)||[]).length===1);
 {
   const pa = (src.match(/var PURPOSE_ACCTS=\[(.*?)\];/) || [])[1] || '';
   const wc = (src.match(/var WELF_CATS=\[(.*?)\];/) || [])[1] || '';

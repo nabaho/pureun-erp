@@ -43,7 +43,7 @@ global.num = v => { if (v === '' || v == null) return ''; const n = Number(Strin
 global.S = { fundId: 'X', year: 2024 };
 global.funds = { X: { fund_type: '공동', years: {} } };
 /* 간접 eval — 이 파일은 strict 모드라 그냥 eval 하면 함수가 지역 스코프에 갇힌다 */
-(0, eval)(['ACCT_CHART', 'PURPOSE_ACCTS', 'OPEN_ACCT', 'RESERVE_ACCTS', 'F15_ROWS'].map(grabVar).join('\n') + '\n'
+(0, eval)(['ACCT_CHART', 'PURPOSE_ACCTS', 'ADMIN_ACCTS', 'OPEN_ACCT', 'RESERVE_ACCTS', 'F15_ROWS'].map(grabVar).join('\n') + '\n'
   + ['_openingOf', '_splitsOf', '_splitSum', '_txnDone', 'expandSplits', 'journalOf', 'acctMoves',
      // 준비금 1·2 배치는 기금마다 다르다 — 그것을 읽는 도우미도 함께 들여온다
      'computeFin', '_contribOf', '_reserveRate', '_rsvSwapOf', '_rsvRoles', '_reserveAcct', 'reserveAdjust',
@@ -61,6 +61,8 @@ global.funds = { X: { fund_type: '공동', years: {} } };
   const bodies = ['buildF15', 'computeFin', 'bfMovesOf', 'reserveAdjust', '_reserveEntries'];
   bodies.forEach(fn => {
     let body; try { body = grabFn(fn); } catch (e) { return; }
+    /* 주석은 걷어 낸다 — 설명 글에 든 이름(WARN 등)이 «없는 이름»으로 잘못 걸린다 */
+    body = body.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\r\n]*/g, ' ');
     /* 그 함수 «안»에서 만든 이름은 밖에서 들여올 것이 아니다 — 빼지 않으면
        var sg=function(){…} 같은 지역 도우미가 «없는 이름»으로 잘못 걸린다. */
     const local = new Set();
@@ -68,6 +70,11 @@ global.funds = { X: { fund_type: '공동', years: {} } };
     [...body.matchAll(/\bfunction\s+([_a-zA-Z][\w$]*)/g)].forEach(m => local.add(m[1]));
     // 점 뒤에 오는 것은 «메서드»라 전역 이름이 아니다(String.fromCharCode 등)
     [...body.matchAll(/(^|[^.\w$])([_a-zA-Z][\w$]*)\s*\(/g)].forEach(m => {
+      if (!local.has(m[2])) names.add(m[2]);
+    });
+    /* «부르는» 이름만 보면 놓친다 — ADMIN_ACCTS 처럼 그냥 갖다 쓰는 상수도 있다.
+       이 코드베이스의 모듈 상수는 모두 대문자라, 대문자 이름도 함께 본다. */
+    [...body.matchAll(/(^|[^.\w$])([A-Z][A-Z0-9_]{2,})\b/g)].forEach(m => {
       if (!local.has(m[2])) names.add(m[2]);
     });
   });
