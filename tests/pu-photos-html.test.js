@@ -99,6 +99,9 @@ test('화면은 실시간DB에 직접 쓰지 않는다 — 쓰기는 저장 층�
     .replace(/selected\.(add|delete|clear|has)\(/g, 'SET(')
     .replace(/PuDrag\.set\(/g, 'DRAG(')        // 끌어놓기 데이터 담기 — DB 쓰기가 아니다
     .replace(/dataTransfer\.setData\(/g, 'DRAG(')
+    /* 밖으로 끌어낼 사진을 미리 쥐어 두는 Map — 머릿속 기억이지 클라우드가 아니다
+       (2026-08-25). 이것까지 막으면 검사가 엉뚱한 곳에서 걸려 신뢰를 잃는다. */
+    .replace(/warmUrls\.set\(/g, 'MAP(')
     .replace(/\ba\.remove\(\)/g, 'DOM()');     // 임시 내려받기 링크 걷어내기 — DB 쓰기가 아니다
   for (const call of ['.set(', '.update(', '.remove(']) {
     assert.ok(!noDom.includes(call), '화면이 클라우드에 직접 쓰고 있습니다: ' + call);

@@ -36,16 +36,18 @@ function fnOf(name) {
   throw new Error(name + ' 의 끝을 찾지 못했습니다');
 }
 
-/* 실제로 돌린다 — 「DownloadURL 이라는 낱말이 있나」로는 무엇이 실리는지 못 잡는다. */
-function run(items, ids) {
+/* 실제로 돌린다 — 「DownloadURL 이라는 낱말이 있나」로는 무엇이 실리는지 못 잡는다.
+   warm = 미리 받아 둔 사진들 {번호: blob: 주소} (2026-08-25) */
+function run(items, ids, warm) {
   const calls = [];
   const ctx = {
     gridItems: items,
+    warmUrls: new Map(Object.entries(warm || {})),
     toast: function (m) { calls.push(['toast', m]); },
     photoTime: function (it) { return (it && it.meta && it.meta.upAt) || 0; },
     dayKey: function (t) { return new Date(t).toISOString().slice(0, 10); },
     console: { warn: function () {} },
-    Date, String, Object, Array, Boolean, Number
+    Date, String, Object, Array, Boolean, Number, Map
   };
   vm.createContext(ctx);
   vm.runInContext(fnOf('dragFileName') + '\n' + fnOf('dragOutUrl') + '\n' +
@@ -141,6 +143,87 @@ test('★ 여러 장 중 일부만 주소가 있으면 있는 것으로 나간�
 test('목록에 없는 번호는 조용히 건너뛴다 — 그것 때문에 끌기가 죽으면 안 된다', () => {
   const { dt } = run([photo('p1', U1, '가')], ['없는번호', 'p1']);
   assert.ok(dt.data['DownloadURL'].indexOf(U1) > 0);
+});
+
+/* ══════ ③-2 주소가 없는 사진도 나간다 — 대표 보고 2026-08-25 ══════
+   "사진을 드레그해서 한글hwp에 넣으면 문자로 나온다."
+
+   주소가 없으면 파일 칸을 못 실었고, 그러면 한글은 **남은 칸인 글자(PuDrag 표식)를
+   그대로 찍었다.** 계약서·근태표·급여명세는 주소를 «일부러» 안 남기므로
+   (보안 2단계 2026-08-17) 이 길이 없으면 서류는 영영 못 끌어낸다.
+   그래서 마우스를 얹는 동안 미리 받아 blob: 주소로 쥐고 있다가 싣는다. */
+
+const B1 = 'blob:https://nabaho.github.io/8e2b-4c11';
+
+test('★ 주소가 없어도 미리 받아 둔 사진이면 파일이 실린다 — 한글에 글자가 찍히던 그것', () => {
+  const { dt, calls } = run([photo('p1', '', '주식회사 율산')], ['p1'], { p1: B1 });
+  assert.ok(dt.data['DownloadURL'], '★ 미리 받아 뒀는데도 안 실었습니다 — 한글에 또 글자가 찍힙니다');
+  assert.ok(dt.data['DownloadURL'].indexOf(B1) > 0, '★ 미리 받아 둔 주소가 안 실렸습니다');
+  assert.match(dt.data['DownloadURL'], /:2026-08-21 주식회사 율산\.jpg:/, '이름은 그대로 날짜+업체다');
+  assert.ok(!calls.some(function (c) { return c[0] === 'toast'; }), '나가는데 못 나간다고 했습니다');
+});
+
+test('★ 미리 받아 둔 blob 주소는 «주소 목록»에는 안 싣는다 — 남의 창에서는 죽은 줄이다', () => {
+  const { dt } = run([photo('p1', '', '가')], ['p1'], { p1: B1 });
+  assert.equal(dt.data['text/uri-list'], undefined,
+    '★ blob: 은 이 창 안에서만 삽니다 — 목록으로 내보내면 받는 쪽이 못 엽니다');
+});
+
+test('★ 적힌 주소가 있으면 그것을 쓴다 — 미리 받은 것보다 우선', () => {
+  const { dt } = run([photo('p1', U1, '가')], ['p1'], { p1: B1 });
+  assert.ok(dt.data['DownloadURL'].indexOf(U1) > 0,
+    '★ 적힌 주소를 두고 blob 을 쓰면 기다림 없이 나가던 길이 느려집니다');
+  assert.equal(dt.data['text/uri-list'], U1, 'https 는 목록에도 실린다');
+});
+
+test('섞여 있으면 https 만 목록에 남는다 — 파일은 집은 그 사진', () => {
+  const { dt } = run([photo('p1', '', '가'), photo('p2', U2, '나')], ['p1', 'p2'], { p1: B1 });
+  assert.ok(dt.data['DownloadURL'].indexOf(B1) > 0, '집은 것은 p1 이다');
+  assert.equal(dt.data['text/uri-list'], U2, 'blob 은 목록에서 빠진다');
+});
+
+test('아직 못 받았으면 «아직»이라고 말한다 — 「없다」로 들리면 헛되이 포기한다', () => {
+  const { dt, calls } = run([photo('p1', '', '가')], ['p1'], {});
+  assert.equal(dt.data['DownloadURL'], undefined);
+  const m = calls.find(function (c) { return c[0] === 'toast'; });
+  assert.ok(m, '★ 조용히 아무 일도 안 일어나면 「왜 안 되지」로 시간을 버립니다');
+  assert.match(m[1], /준비/, '★ 잠깐 뒤 다시 끌면 된다는 것이 안 보입니다');
+});
+
+/* ── 미리 받는 층 ── */
+test('★ 마우스를 얹거나 누르면 미리 받는다 — 안 부르면 아무것도 안 준비된다', () => {
+  assert.match(app, /\$\('grid'\)\.addEventListener\('pointerover'/, '★ 얹을 때 준비하지 않습니다');
+  assert.match(app, /\$\('grid'\)\.addEventListener\('pointerdown'/, '★ 누를 때 준비하지 않습니다');
+  assert.match(fnOf('warmSoon'), /setTimeout/, '훑고 지나가는 사진까지 받으면 안 됩니다');
+});
+
+test('★ 이미 주소가 적힌 사진은 미리 받지 않는다 — 격자를 훑기만 해도 다 받게 된다', () => {
+  assert.match(fnOf('warmDragOut'), /fullUrl\.indexOf\('https:\/\/'\) === 0\)\) return/,
+    '★ 주소가 있는 사진까지 받으면 훑는 것만으로 사진첩을 통째로 내려받습니다');
+});
+
+test('★ 폰에서는 미리 받지 않는다 — 끌기가 없고, 곧 크게 보기가 같은 것을 받는다', () => {
+  assert.match(fnOf('warmPointer'), /pointerType !== 'mouse'/,
+    '★ 손가락으로 누를 때마다 같은 사진을 두 번 받게 됩니다');
+});
+
+test('★ 토큰 주소를 새로 만들어 쓰지 않는다 — 계약서 주소를 지운 까닭이 그것이다', () => {
+  const f = fnOf('warmDragOut');
+  /* 토큰 주소를 새로 얻는 길은 getDownloadURL 하나뿐이다 — 그것이 없어야 한다.
+     (typeof …fullUrl === 'string' 같은 «읽기»는 상관없다. 새로 만드는 것이 문제다.) */
+  assert.ok(!/getDownloadURL/.test(f),
+    '★ 만료도 로그인도 없는 링크를 되살리면 2026-08-17 보안 조치가 무효가 됩니다');
+  assert.match(f, /dataUrlToBlobUrl/, 'blob: 으로 만들어야 이 창 밖으로 안 샙니다');
+});
+
+test('쥐고 있는 주소는 몇 장뿐이고 오래된 것은 놓아 준다 — 안 놓으면 기억이 샌다', () => {
+  assert.match(fnOf('warmDragOut'), /forgetWarm\(warmOrder\.shift\(\)\)/);
+  assert.match(fnOf('forgetWarm'), /revokeObjectURL/);
+});
+
+test('받다가 터져도 끌기는 살아 있다 — 앱 사이 끌기는 이것과 무관하다', () => {
+  assert.match(fnOf('warmDragOut'), /\.catch\(function \(e\) \{/,
+    '★ 여기서 터지면 분류 탭·컨설팅으로 끄는 길까지 같이 죽습니다');
 });
 
 /* ══════ ④ 배선·안전장치 ══════ */
