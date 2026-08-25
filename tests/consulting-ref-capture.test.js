@@ -170,7 +170,13 @@ test('★ 사진 칸을 그릴 때 참고 캡처도 함께 그린다 — 안 부
 });
 
 test('★ 고르기 창은 하나를 같이 쓴다 — 창을 두 벌 만들면 한쪽만 고쳐진다', () => {
-  assert.match(fnOf('openAlbumPicker'), /albumPickTarget = \{ sid:sid, slotIdx:slotIdx, ref:!!ref \}/);
+  /* ⚠ 빈칸 수를 못 박지 말 것. 「albumPickTarget = {…}」로 적어 두었더니 코드가
+     「albumPickTarget={…}」로 바뀌자 main 이 빨간불이 됐다(2026-08-25) —
+     코드는 멀쩡했고 검사만 틀렸다. 뜻만 본다: 어느 칸에 넣을지와 참고 캡처인지. */
+  const picker = fnOf('openAlbumPicker');
+  assert.match(picker, /albumPickTarget\s*=\s*\{/, '고를 대상을 안 적어 둡니다');
+  assert.match(picker, /slotIdx\s*:\s*slotIdx/, '어느 칸에 넣을지를 안 담습니다');
+  assert.match(picker, /ref\s*:\s*!!ref/, '참고 캡처인지를 안 담으면 증빙 칸으로 들어갑니다');
   assert.match(fnOf('openRefCapPicker'), /openAlbumPicker\(sid, null, true\)/);
   /* 고른 뒤 참고 캡처 쪽으로 갈라지는 자리 */
   assert.match(fnOf('pickAlbumPhoto'), /if\(target\.ref\)\{/,

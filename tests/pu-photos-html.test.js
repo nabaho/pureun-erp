@@ -518,14 +518,23 @@ test('사진 칸마다 사진첩에서 고르는 단추가 있다 — 끌어다 
   assert.match(gov, /ondrop="dropExtraPhoto\(event,'\$\{sid\}',\$\{d\.i\}\)"/, '끌어다 놓기가 없어졌습니다');
 });
 
-test('고르는 창은 방문일로 거르지 않고 처음부터 전체를 보여준다', () => {
-  /* 대표 결정(2026-08-04): 대부분 폰으로 찍어 그때그때 올리므로 날짜를
-     가려 볼 필요가 없다 — 방문일 필터를 두지 않는다. */
+test('고르는 창은 방문일을 먼저 보여주되, 그 날 사진이 없으면 전체로 간다', () => {
+  /* ⚠ 결정이 바뀐 자리다.
+     2026-08-04 대표 결정: 「대부분 폰으로 찍어 그때그때 올리므로 날짜를 가려 볼
+       필요가 없다」 → 방문일 필터를 두지 않았다.
+     2026-08-25 변경(c6b2869b, 고르기를 수정 창 «안에서»): 방문일을 첫 화면으로
+       두고, 그 날 사진이 없으면 전체로 되돌린다.
+     ⚠ 뒤 변경이 앞 결정을 덮었다. 검사는 **지금 코드**를 적되, 앞 결정의 뜻
+       (「빈 화면부터 보여 주면 안 된다」)은 못 박아 둔다 — 되돌리라면 이 검사와
+       코드를 함께 되돌린다. */
   const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
   const fn = gov.match(/function openAlbumPicker\([\s\S]*?\n\}/);
   assert.ok(fn, 'openAlbumPicker 본문을 찾을 수 없습니다');
   assert.match(fn[0], /PuPhotoStore\.listYear\(/);
-  assert.ok(!/sc\.date|schedDate|visitDate/.test(fn[0]), '방문일로 거르고 있습니다');
+  /* 그 날 사진이 없으면 반드시 전체로 — 이것이 없으면 빈 화면만 보고 「사진첩에
+     아무것도 없다」고 오해한다. */
+  assert.match(fn[0], /pickDay\s*=\s*''/, '★ 그 날 사진이 없을 때 전체로 되돌리지 않습니다');
+  assert.match(fn[0], /apkDayKey\(/, '어느 날 사진인지 견주는 곳이 없습니다');
 });
 
 test('사진첩이 사람별로 갈려 있다 — 내 uid 를 owner 로 넘긴다', () => {
@@ -544,8 +553,15 @@ test('고른 사진도 끌어다 놓기와 같은 마무리를 탄다', () => {
   const fn = gov.match(/async function pickAlbumPhoto\([\s\S]*?\n\}/);
   assert.ok(fn, 'pickAlbumPhoto 본문을 찾을 수 없습니다');
   assert.match(fn[0], /insertAlbumFull\(/, '공용 마무리 단계를 타지 않습니다');
-  // 고르자마자 창을 닫아야 다음 칸을 헷갈리지 않는다
-  assert.match(fn[0], /closeModal\('mbAlbumPick'\)/);
+  /* ⚠ 예전에는 창을 따로 띄우고 `closeModal('mbAlbumPick')` 로 닫았다.
+     2026-08-25 변경(c6b2869b): 고르기를 **수정 창 안에서** 한다 — 창 위의 창을
+     없앴다. 그래서 닫을 창이 없다.
+     남은 뜻은 하나다: **고르고 나서 어디로 가는지가 분명해야 한다.**
+       빈 칸이 남았으면 다음 빈 칸으로, 없으면 고르기를 접는다. */
+  assert.match(fn[0], /nextEmptySlot\(/, '다음 빈 칸으로 옮겨 주지 않습니다');
+  assert.match(fn[0], /closeAlbumPick\(\)/, '★ 다 채웠는데 고르기 화면에 그대로 남습니다');
+  assert.equal(/closeModal\('mbAlbumPick'\)/.test(fn[0]), false,
+    '창 위의 창을 다시 만들었습니다 — 2026-08-25 에 없앴습니다');
 });
 
 test('사진이 없으면 왜 없는지 알려 준다', () => {
