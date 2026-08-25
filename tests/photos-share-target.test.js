@@ -209,11 +209,20 @@ test('사진이 아닌 것(스캔)은 미리보기 대신 이름을 보여준다
 });
 
 /* ── 설치 안내 ── */
-test('설치 안내는 설치 전에만·「나중에」는 한동안 안 뜬다', () => {
+/* ⚠ 2026-08-25: 「설치 신호가 없으면 무조건 숨김」이던 것을 갈랐다. **바로가기 창 안에서는
+   그 신호가 아예 안 온다** — 그러면 바로가기로 깔린 사람은 영영 아무 안내도 못 보고,
+   공유 목록에 왜 안 뜨는지도 모른다(대표 2026-08-25 보고). 그래서 바로가기일 때는
+   신호 없이도 알린다. 지킬 것은 그대로다: **미뤘거나 껐으면 안 띄운다.** */
+test('설치 안내는 미뤘거나 껐으면 안 뜬다·「나중에」는 한동안 안 뜬다', () => {
   assert.ok(/beforeinstallprompt/.test(html) && /appinstalled/.test(html));
   const m = html.match(/function renderInstNote\(\)[\s\S]*?\n\}/);
-  assert.ok(m && /!instPrompt *\|\| *instSnoozed\(\)/.test(m[0]),
-    '설치했거나 미룬 사람에게 계속 띄우면 안 됩니다.');
+  assert.ok(m, 'renderInstNote 를 찾지 못했습니다');
+  assert.ok(/instSnoozed\(\) *\|\| *noteHidden\('inst'\)/.test(m[0]),
+    '미뤘거나 껐는데 계속 띄우면 안 됩니다.');
+  /* 그 판정이 «맨 앞»이어야 한다 — 뒤에 있으면 미뤄 둔 사람에게도 바로가기 알림이 뜬다 */
+  assert.ok(m[0].indexOf('instSnoozed()') < m[0].indexOf('_realApp === false'),
+    '★ 미룸 판정이 뒤로 가면 「나중에」가 무의미해집니다.');
+  assert.ok(/!instPrompt/.test(m[0]), '설치 신호가 없을 때도 다뤄야 합니다.');
   assert.ok(/14 \* 86400000/.test(html), '「나중에」는 2주입니다.');
 });
 

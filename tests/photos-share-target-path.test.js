@@ -171,11 +171,15 @@ function say(opts) {
                  maxTouchPoints: (o.touch === undefined ? 5 : o.touch),
                  standalone: o.legacyStandalone },
     window: { matchMedia: () => ({ matches: !!o.standalone }) },
-    instPrompt: o.prompt || null
+    instPrompt: o.prompt || null,
+    /* ⚠ 2026-08-25: 안내가 「진짜 앱인가 바로가기인가」도 본다(_realApp). 안 주면 그 줄에서
+       ReferenceError 로 멎는다. 기본은 «모름»(null) — 여기 검사들은 그 갈래를 안 본다.
+       바로가기·진짜 앱 갈래는 photos-real-app-vs-shortcut.test.js 가 따로 잰다. */
+    _realApp: (o.realApp === undefined ? null : o.realApp)
   };
   c.globalThis = c;
   vm.createContext(c);
-  vm.runInContext(cutFn(app, 'function isInstalledApp(') + '\n' +
+  vm.runInContext(cutFn(app, 'function isStandaloneWindow(') + '\n' +
     cutFn(app, 'function shareSetupHtml('), c);
   return c.shareSetupHtml();
 }
@@ -186,11 +190,24 @@ test('★ 아직 안 깔았으면 «설치하면 생긴다»고 하고 단추를
   assert.match(h, /instRun\(\)/, '★ 설치할 수 있는데 단추가 없으면 손으로 찾아 헤맵니다');
 });
 
-test('★ 이미 깔았으면 «어떻게 쓰는지»를 말한다 — 또 설치하라고 하면 안 된다', () => {
-  const h = say({ standalone: true });
-  assert.match(h, /설치돼 있습니다/);
+/* ⚠⚠ 2026-08-25 에 **뜻이 바뀌었다.** 종전에는 「주소줄 없이 열렸으면 설치된 것」으로 보고
+   이 검사가 그 말을 못박고 있었다. 그런데 **홈 화면 바로가기도 똑같이 그렇게 열린다** —
+   바로가기는 공유 목록에 안 뜨는데 「이미 설치돼 있습니다」라고 하니, 대표님이 다시 깔면
+   될 일을 안 하시고 「깔았는데도 안 뜬다」로 막혀 계셨다(2026-08-25 보고).
+   이제 판정은 **진짜 앱인지 물어본 답**(_realApp)으로 한다. 지킬 것은 그대로다:
+   「진짜 앱이면 또 설치하라고 하지 않는다.」 */
+test('★ 진짜 앱이면 «어떻게 쓰는지»를 말한다 — 또 설치하라고 하면 안 된다', () => {
+  const h = say({ standalone: true, realApp: true });
+  assert.match(h, /깔려 있습니다/);
   assert.match(h, /공유/);
   assert.ok(h.indexOf('instRun()') < 0, '★ 이미 깔렸는데 설치 단추를 또 냅니다');
+});
+
+test('★ 창 모양만 보고 「설치됨」이라고 하지 않는다 — 바로가기가 그렇게 열린다', () => {
+  const h = say({ standalone: true, realApp: false });
+  assert.ok(h.indexOf('깔려 있습니다') < 0,
+    '★ 바로가기를 설치됐다고 하면 대표님이 다시 깔 생각을 못 하십니다');
+  assert.match(h, /바로가기/);
 });
 
 test('★ 브라우저가 설치 신호를 안 주면 «손으로 가는 길»을 알려 준다', () => {
