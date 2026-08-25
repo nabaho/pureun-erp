@@ -1639,6 +1639,9 @@ body.pc #pcDetail{display:flex}
 #pcDetail .pdrow .k{width:66px;flex-shrink:0;color:#8b98b3;font-size:11.5px;padding-top:1px}
 #pcDetail .pdrow .v{flex:1;color:#33415e;word-break:break-all}
 #pcDetail .pdrow .v a{color:#1d6fd8;text-decoration:none}
+/* 값이 어디서 왔는지 (4순위) — 값보다 «작고 옅게». 눈에 먼저 드는 건 값이어야 한다 */
+#pcDetail .pdrow .v .cosrc{font-size:11px;color:#9aa6bf;margin-top:2px;word-break:keep-all}
+#pcDetail .pdrow .v .cosrc em{font-style:normal;color:#1d4fc4;cursor:pointer;margin-left:5px}
 /* ── 골라서 한 번에 (넘버링 + ☐) ──
    자료함·보낸 메일·예약 메일 세 목록이 **같은 모양**을 쓴다(대표 지시 2026-08-10). */
 .pkbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 10px;padding:8px 11px;
@@ -13547,9 +13550,14 @@ function coList(){
 function coListBuild(){
   if(typeof _coWatch!=='undefined' && _coWatch) _coWatch.builds++;
   const by = {};
-  const take = (k, src) => {
-    const o = by[k] || (by[k] = { key:k, name:'', bizno:'', cards:[], docs:0, erp:null, extra:{} });
-    Object.keys(src||{}).forEach(f=>{ if(src[f] && !o[f]) o[f]=src[f]; });
+  /* ⚠ from 은 «이 칸을 어디서 채웠는지» 다 (대표 지시 2026-08-24, 4순위).
+     값만 옮기면 나중에 「이 대표자 어디서 봤더라」에 답할 길이 아예 없다 —
+     등록증에서 온 것인지 명함인지 푸른이알피인지 구별이 안 된다.
+     ⚠ 서버를 «더 읽지 않는다». 이미 손에 든 것을 적어 두기만 한다. */
+  const take = (k, src, from) => {
+    const o = by[k] || (by[k] = { key:k, name:'', bizno:'', cards:[], docs:0, erp:null,
+                                  extra:{}, srcOf:{} });
+    Object.keys(src||{}).forEach(f=>{ if(src[f] && !o[f]){ o[f]=src[f]; o.srcOf[f]=from; } });
     return o;
   };
   /* 상호 → 사업자번호 열쇠. 명함에는 사업자번호가 거의 안 적혀 있어서, 이 다리가 없으면
@@ -13559,7 +13567,8 @@ function coListBuild(){
   Object.values(allItems()).filter(it=>it.kind==='biz').forEach(it=>{
     const k = coKeyOf(it);
     const o = take(k, { name:it.company, bizno:it.bizno, ceo:it.ceo, address:it.address,
-      corpno:it.corpno, bizType:it.bizType, bizItem:it.bizItem, openDate:it.openDate, smeType:it.smeType });
+      corpno:it.corpno, bizType:it.bizType, bizItem:it.bizItem, openDate:it.openDate, smeType:it.smeType },
+      '사업자등록증');
     o.docs++;
     const n = _norm(it.company); if(n && !nameIdx[n]) nameIdx[n] = k;
   });
@@ -13567,13 +13576,13 @@ function coListBuild(){
   Object.values(allItems()).filter(it=>it.kind!=='biz' && (it.company||'').trim()).forEach(it=>{
     const k = (digits(it.bizno||'').length>=10) ? coKeyOf(it)
             : (nameIdx[_norm(it.company)] || coKeyOf(it));
-    const o = take(k, { name:it.company, bizno:it.bizno });
+    const o = take(k, { name:it.company, bizno:it.bizno }, '명함');
     o.cards.push(it);
   });
   /* ③ 푸른이알피 — 업체유형·담당 노무사 */
   Object.values(by).forEach(o=>{
     const m = ErpMatch.match({ bizno:o.bizno, company:o.name });
-    if(m){ o.erp = m; if(!o.ceo && m.ceoRaw) o.ceo = m.ceoRaw; }
+    if(m){ o.erp = m; if(!o.ceo && m.ceoRaw){ o.ceo = m.ceoRaw; o.srcOf.ceo = '푸른이알피'; } }
     /* ④ 서식에서 읽은 칸 + 폴더·탭. 열쇠가 바뀌었어도 옛 기록을 합쳐 보여준다. */
     const ex = coEffectiveExtra(o.key, o.name, _coInfo);
     if(ex){ o.extra = ex; o.folder = ex.folder || ''; }
@@ -15103,8 +15112,42 @@ function coSelAllMatching(){
    ⚠ 상세 패널과 「정보부족」 판정이 «같은 함수»를 쓴다. 따로 만들면 화면에는 보이는데
      부족으로 세거나 그 반대가 되고, 그 어긋남은 아무도 눈치 못 챈다. */
 function coVal(o, f){
-  const v = (o && ((o.extra && o.extra[f]) || o[f])) || '';
-  return String(v).trim();
+  if(!o) return '';
+  /* ⚠ «다듬은 뒤에» 고른다. 예전에는 다듬기 전 값으로 골라서, 서식에 공백만 든 칸이
+     («'   '» 은 참이다) 등록증에서 온 멀쩡한 값을 가렸다 — 화면은 빈칸이 되고
+     「정보부족」으로도 세어졌다(2026-08-24, 4순위를 만들다 드러났다). */
+  const ex = String((o.extra && o.extra[f]) == null ? '' : o.extra[f]).trim();
+  return ex || String(o[f] == null ? '' : o[f]).trim();
+}
+/* ══════ 이 값이 «어디서» 왔나 (대표 지시 2026-08-24, 4순위) ══════
+   한 회사 값은 네 곳에서 온다 — 사업자등록증 · 명함 · 푸른이알피 · 사진첩 서식.
+   값만 보여 주면 「이 매출액 어디서 봤더라」에 답할 수가 없어, 사진첩에 그 서류가
+   그대로 있는데도 다시 찾아 헤매게 된다. 어느 쪽이 더 믿을 만한지도 못 가린다.
+   ⚠ coVal 이 «고른 쪽»의 출처를 말해야 한다. 보이는 값은 서식 것인데 출처는 등록증이라
+     하면, 엉뚱한 서류를 뒤지게 된다 — 그래서 고르는 차례를 여기서 그대로 되풀이한다.
+   ⚠ 모르면 null 을 준다. 지어내지 않는다. */
+function coSrcOf(o, f){
+  const ex = (o && o.extra) || {};
+  if(String(ex[f] == null ? '' : ex[f]).trim()){
+    /* 서식에서 온 값 — src 는 docs 의 열쇠 하나만 가리킨다(요금 때문에 통째로 안 베낀다) */
+    const d = (ex.src && ex.docs && ex.docs[ex.src[f]]) || null;
+    if(d) return { label: d.name || '서식', at: d.at || 0, by: d.by || '',
+                   photoId: String(d.id || ''), photoYear: String(d.year || ''),
+                   photoOwner: String(d.owner || '') };
+    /* 4순위 이전에 들어온 값에는 src 가 없다. 「서식에서 왔다」까지는 참이라 그건 말한다 —
+       그것마저 숨기면 등록증에서 온 값과 구별이 안 된다. */
+    return { label:'서식', at:0, by:'', photoId:'', photoYear:'', photoOwner:'' };
+  }
+  const from = (o && o.srcOf && o.srcOf[f]) || '';
+  return from ? { label: from, at:0, by:'', photoId:'', photoYear:'', photoOwner:'' } : null;
+}
+/* 값 밑에 붙는 작은 출처 한 줄 */
+function coSrcTagHtml(o, f){
+  const s = coSrcOf(o, f);
+  if(!s) return '';
+  return `<div class="cosrc">${esc(s.label)}${s.by?` · ${esc(s.by)}`:''}${s.at?` · ${fmtDate(s.at)}`:''}` +
+    (s.photoId ? `<em onclick="event.stopPropagation();openCoDoc('${esc(s.photoYear)}','${esc(s.photoId)}','${esc(s.photoOwner)}')"
+      title="이 값이 나온 서류를 사진첩에서 엽니다">📷 원본 보기</em>` : '') + `</div>`;
 }
 /* 계약서·신고서를 쓸 때 있어야 하는 셋. 하나라도 비면 「정보부족」이다.
    ⚠ 사업자번호는 «일부러 뺐다» — 2순위 「🔢 번호 없음」 토글이 따로 맡는다.
@@ -15130,7 +15173,7 @@ function coIncompleteCount(){
 function coDetailPanelHtml(o){
   const val = f => coVal(o, f);
   const rows = CO_FIELDS.filter(([f])=>val(f)).map(([f,label])=>
-    `<div class="pdrow"><div class="k">${esc(label)}</div><div class="v">${esc(val(f))}</div></div>`).join('');
+    `<div class="pdrow"><div class="k">${esc(label)}</div><div class="v">${esc(val(f))}${coSrcTagHtml(o,f)}</div></div>`).join('');
   const folder = o.folder ? _coFolders[o.folder] : null;
   return `
     <div class="pdname">${esc(o.name)}${o.erp&&o.erp.type?` <span class="ty">${esc(o.erp.type)}</span>`:''}${
