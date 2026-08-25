@@ -199,6 +199,17 @@ ok('주석이 스스로 맞물림을 본다', src.includes("e.push('준비금1 �
 ok('화면에 그린 글자를 복사한다', src.includes('_notesTxt=notesText(N);')
   && src.includes("if(!_notesTxt){ toast('주석을 먼저 열어 주세요','warn'); return; }")
   && src.includes('document.execCommand(' + "'copy'" + ')'));
+/* 화면에만 있고 결산서(엑셀)에 없으면 반쪽이다 — 사람이 관청에 내는 건 엑셀 쪽이다 */
+ok('결산서 엑셀에 새 표 셋이 있다', src.includes("wb.addWorksheet('1-4 현금흐름표')")
+  && src.includes("wb.addWorksheet('1-5 수입지출명세서')") && src.includes("wb.addWorksheet('1-6 주석')"));
+ok('엑셀도 화면과 같은 모델을 쓴다', /wb\.addWorksheet\('1-4 현금흐름표'\)[\s\S]{0,600}?cashFlowRows\(arr,fid,yr\)/.test(src)
+  && /wb\.addWorksheet\('1-5 수입지출명세서'\)[\s\S]{0,600}?ieRows\(arr,fid,yr\)/.test(src)
+  && /wb\.addWorksheet\('1-6 주석'\)[\s\S]{0,600}?stmtNotes\(arr,fin,prv,fid,yr\)/.test(src));
+/* 어긋난 것을 엑셀에서 조용히 넘기면 그대로 제출된다 */
+ok('엑셀에도 어긋남을 적는다', src.includes('※ 기말 현금이 재무상태표의 현금')
+  && src.includes("_xlRow(s,rw++,['※ 맞물리지 않는 곳: '+_ne.join(', ')],{bold:true});"));
+// 시트 이름 오타 「이익잃여금」 — 결산서에 그대로 찍혔다
+ok('이익잉여금 오타가 없다', !src.includes('이익잃여금'));
 ok('두 표에 도움말이 있다', src.includes("'close.cf':{t:'현금흐름표'") && src.includes("'close.ie':{t:'수입지출명세서'"));
 
 /* ══ 회계법인 결산본(한진철관 2019)에서 드러난 것 ══ */
