@@ -2269,6 +2269,9 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
   /* 사업자번호 없는 회사만 보기 (대표 지시 2026-08-24, 2순위) — 사진첩 정보를
      받을 수 없는 회사들이다. 종료 토글과 같은 결로 화면에서 거를 뿐 새 쓰기가 없다. */
   coOnlyNoBiz:false,
+  /* 정보부족만 보기 (대표 지시 2026-08-24, 3순위) — 대표자·소재지·대표번호 중
+     하나라도 빈 회사. 명함의 onlyIncomplete 와 같은 결이다. */
+  coOnlyIncomplete:false,
   /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
   mailSent:false, mailDrawer:true, sentBox:{}, schedBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
   showBcc:false, draftAt:'', matPick:'', drawerQ:'', drawerOpen:{},
@@ -14051,6 +14054,13 @@ function renderCoFTabsHtml(){
   if(noBizN) h += `<button class="pctool ${state.coOnlyNoBiz?'on':''}"
     onclick="state.coOnlyNoBiz=!state.coOnlyNoBiz;state.coPage=0;renderCoAny()"
     title="사업자번호가 없는 회사만 봅니다 — 사진첩이 보낸 정보를 받을 수 없는 회사입니다">🔢 번호 없음 <b>${noBizN.toLocaleString()}</b></button>`;
+  /* ── 정보부족 (대표 지시 2026-08-24, 3순위) ──
+     계약서·신고서를 쓸 때 필요한 대표자·소재지·대표번호 중 하나라도 빈 회사.
+     0곳이면 안 보여 준다 — 누를 값이 없는 회색 단추를 두지 않는다. */
+  const lackN = coIncompleteCount();
+  if(lackN) h += `<button class="pctool ${state.coOnlyIncomplete?'on':''}"
+    onclick="state.coOnlyIncomplete=!state.coOnlyIncomplete;state.coPage=0;renderCoAny()"
+    title="대표자·소재지·대표번호 중 빠진 것이 있는 회사만 봅니다 — 계약서·신고서를 쓸 때 필요한 값입니다">📋 정보부족 <b>${lackN.toLocaleString()}</b></button>`;
   h += `<span style="margin-left:auto">${coSizeSelHtml(state.coPageSize)}</span>`;
   return h;
 }
@@ -14393,6 +14403,10 @@ function coFilteredList(skipCol){
      사진첩은 언제나 coInfo/{사업자번호} 로 보낸다 — 그래서 번호 없는 회사는
      사진첩이 보낸 정보를 «받을 수 없다». 채워야 할 곳을 눈에 보이게 한다. */
   if(state.coOnlyNoBiz) list = list.filter(o=>!String(o.bizno||'').trim());
+  /* ── 정보부족만 (대표 지시 2026-08-24, 3순위) ──
+     대표자·소재지·대표번호 중 하나라도 비면 부족이다. 명함의 「정보부족」과 같은 결
+     (명함도 전화 또는 이메일이 없으면 부족으로 본다) — 어디부터 채울지 정할 수 있게 한다. */
+  if(state.coOnlyIncomplete) list = list.filter(coLacks);
   return list;
 }
 /* 번호 없는 회사 수 — 폴더·태그·검색은 그대로 두고 센다(종료 개수와 같은 결). */
@@ -14603,7 +14617,7 @@ function coListHtml(info){
        명함 한 장만 있는 회사까지 붉게 칠하니 4,140곳이 온통 붉어져, 정작 봐야 할
        거래처의 빠진 서류가 묻혔다(대표 화면 2026-08-13). 푸른이알피 거래처이거나
        사업 딱지가 붙은 회사만 짚는다. */
-    const care = !!(o.erp || coTagsOf(o).length);
+    const care = coCares(o);
     const miss = s => care ? `<i class="miss">${s}</i>` : '';
     /* ⚠ 열쇠에 작은따옴표가 들어 있으면 줄을 눌러도 «아무 일도 안 일어난다».
        사업자번호가 없는 회사의 열쇠는 'n'+회사이름이고(coKeyOf), 이름 다듬기(_norm)는
@@ -14639,6 +14653,10 @@ function coListHtml(info){
       <td class="bits">
         ${o.cards.length?`<i>명함 ${o.cards.length}</i>`:''}
         ${o.docs?`<i>등록증 ${o.docs}</i>`:miss('등록증 없음')}
+        ${/* 무엇이 빠졌는지 «줄에서» 알려 준다 — 개수만 세면 회사를 하나씩 열어 봐야 한다
+             (대표 지시 2026-08-24, 3순위). */''}
+        ${(function(){ const m = coMissing(o); return m.length
+          ? miss(m.join('·') + ' 없음') : ''; })()}
       </td>
       <td class="mgr">${o.erp&&o.erp.main?esc(o.erp.main):''}</td>
       <td></td>
@@ -14951,8 +14969,38 @@ function coSelAllMatching(){
 /* 회사 상세 — 오른쪽 팝업(#pcDetail, 명함 상세와 같은 패널) 안에 넣을 내용만 만든다.
    목록 화면을 통째로 바꿔 그리던 예전 coDetailHtml 은 없앤다(대표 지시 2026-08-14,
    "화면 전환 대신 오른쪽 팝업으로"). */
+/* ══════ 회사 값 하나 꺼내기 — «한 곳에만» 둔다 (대표 지시 2026-08-24, 3순위) ══════
+   서식에서 읽은 값(extra)이 사업자등록증에서 온 값(o)보다 앞선다 — 나중에 읽은 것이
+   더 최신이기 때문이다.
+   ⚠ 상세 패널과 「정보부족」 판정이 «같은 함수»를 쓴다. 따로 만들면 화면에는 보이는데
+     부족으로 세거나 그 반대가 되고, 그 어긋남은 아무도 눈치 못 챈다. */
+function coVal(o, f){
+  const v = (o && ((o.extra && o.extra[f]) || o[f])) || '';
+  return String(v).trim();
+}
+/* 계약서·신고서를 쓸 때 있어야 하는 셋. 하나라도 비면 「정보부족」이다.
+   ⚠ 사업자번호는 «일부러 뺐다» — 2순위 「🔢 번호 없음」 토글이 따로 맡는다.
+     여기 넣으면 두 토글이 겹쳐 무엇을 보는 것인지 흐려진다. */
+const CO_CORE = [['ceo','대표자'], ['address','소재지'], ['companyTel','대표번호']];
+function coMissing(o){
+  return CO_CORE.filter(function(f){ return !coVal(o, f[0]); }).map(function(f){ return f[1]; });
+}
+/* «우리가 일하는 회사»인가 — 푸른이알피 거래처이거나 사업 딱지가 붙은 곳.
+   ⚠ 명함 한 장만 있는 회사까지 세면 4,140곳이 죄다 「정보부족」이 되어, 정작 채워야 할
+     거래처가 묻힌다. 표에서 빠진 것을 붉게 짚는 규칙과 «같은 잣대»다
+     (대표 화면 2026-08-13 — 온통 붉어진 그 화면). 한 곳에 두어 어긋나지 않게 한다. */
+function coCares(o){
+  return !!(o && (o.erp || coTagsOf(o).length));
+}
+/* 「정보부족」 한 줄 판정 — 거르개·개수·표가 모두 이것을 본다 */
+function coLacks(o){
+  return coCares(o) && coMissing(o).length > 0;
+}
+function coIncompleteCount(){
+  return coFilteredList(null).filter(coLacks).length;
+}
 function coDetailPanelHtml(o){
-  const val = f => o.extra[f] || o[f] || '';
+  const val = f => coVal(o, f);
   const rows = CO_FIELDS.filter(([f])=>val(f)).map(([f,label])=>
     `<div class="pdrow"><div class="k">${esc(label)}</div><div class="v">${esc(val(f))}</div></div>`).join('');
   const folder = o.folder ? _coFolders[o.folder] : null;

@@ -84,8 +84,11 @@ test('갈래가 없으면 어떻게 생기는지 알려준다', () => {
 
 test('빠진 서류 경고는 우리가 일하는 회사에만 띄운다', () => {
   /* 명함 한 장만 있는 회사까지 붉게 칠하니 4,140곳이 온통 붉어져,
-     정작 봐야 할 거래처의 빠진 서류가 묻혔다(대표 화면 2026-08-13). */
-  assert.match(source, /const care = !!\(o\.erp \|\| coTagsOf\(o\)\.length\)/);
+     정작 봐야 할 거래처의 빠진 서류가 묻혔다(대표 화면 2026-08-13).
+     2026-08-24(3순위): 이 잣대를 coCares 로 옮겨 「정보부족」 세기와 «같이» 쓴다 —
+     두 벌로 두면 「부족 3,900곳」이라 해 놓고 줄에는 아무것도 안 뜬다. */
+  assert.match(source, /function coCares\(o\)\{\s*\r?\n\s*return !!\(o && \(o\.erp \|\| coTagsOf\(o\)\.length\)\);/);
+  assert.match(source, /const care = coCares\(o\)/);
   assert.match(source, /const miss = s => care \?/);
 });
 
