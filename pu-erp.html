@@ -53443,6 +53443,21 @@ function CorpDashboard(props){
        대표 위젯 화면(2026-08)과 하나하나 대조했다 —
          8/13→1 · 8/15→3 · 8/25→13 · 8/26→14 · 8/3→21 · 7/26→13  모두 같았다.
      ⚠ 42칸을 다시 그릴 때마다 새로 세면 느리다 — 한 번 센 것은 적어 둔다. */
+  /* 구글 위젯 머리글의 「병오년6월 – 7월」 — 그 달 첫날·끝날의 음력 달이다.
+     ⚠ 간지(병오)는 era:'long' 을 켜야 yearName 조각으로 나온다.
+       year:'numeric' 만 주면 relatedYear(2026)만 온다. */
+  function corpLunarRange(ym){
+    try{
+      var y = +String(ym).slice(0,4), m = +String(ym).slice(5,7);
+      if(!y || !m) return '';
+      var a = new Date(Date.UTC(y, m-1, 1)), b = new Date(Date.UTC(y, m, 0));
+      var fm = new Intl.DateTimeFormat('ko-KR-u-ca-dangi', {era:'long', year:'numeric', month:'numeric', timeZone:'UTC'});
+      function pick(d, t){ var ps = fm.formatToParts(d); for(var i=0;i<ps.length;i++) if(ps[i].type===t) return ps[i].value; return ''; }
+      var yn = pick(a,'yearName'), m1 = pick(a,'month'), m2 = pick(b,'month');
+      if(!m1) return '';
+      return yn + '년' + m1 + (m2 && m2 !== m1 ? ' – ' + m2 : '');
+    }catch(e){ return ''; }
+  }
   var _corpLunarCache = {};
   function corpLunarDay(ymd){
     if(!ymd) return '';
@@ -53539,8 +53554,19 @@ function CorpDashboard(props){
   }, [calFit]);
   return h('div',{className:'corp-dash',style:{margin:!IS_MOBILE?(dashTab==='calendar'?'-24px':'-24px -24px 0 -24px'):'0 -10px',padding:IS_MOBILE?'4px 2px':(dashTab==='calendar'?'0':'4px 10px'),height:fitLayout?(IS_MOBILE?undefined:'calc(100vh - 46px)'):'auto',display:fitLayout?'flex':'block',flexDirection:'column',overflow:fitLayout?'hidden':'visible'}},
 
-    // 탭 전환 바 + 캘린더 필터 통합 행
-    h('div',{style:{display:'flex',alignItems:'center',gap:'4px',marginBottom: IS_MOBILE?'3px':'4px',background:'#fff',padding: IS_MOBILE?'3px 6px':'4px 6px',borderRadius:'10px',border:'1px solid #e2e8f0',flexShrink:0}},
+    /* ── 탭 전환 바 + 캘린더 필터 통합 행 ──
+       ★ 폰 달력에서는 이 줄을 «통째로» 접는다 (대표 지시 2026-08-25
+         「폰 구글 캘린더와 모든 UI 똑같이」). 구글은 머리글이 «한 줄» 뿐인데
+         우리는 두 줄이라, 달력 위 군더더기가 칸 한 줄에 가까웠다(재어서 0.91 : 0.49).
+       ⚠ 없애는 것이 아니다 — 이 줄에 있던 것은 달력 머리줄과 ⚙ 안으로 옮겼다.
+         · 다른 화면(직원별·분석)으로 가는 단추 → 머리줄 오른쪽
+         · 월/주/일 · 새로고침 → ⚙ 안 (구글도 보기 바꾸기를 메뉴에 둔다) */
+    (IS_MOBILE && dashTab==='calendar' && !calFilterOpen) ? null :
+    h('div',{style:{display:'flex',alignItems:'center',gap:'4px',
+      marginBottom: (IS_MOBILE && dashTab==='calendar')?'2px':(IS_MOBILE?'3px':'4px'),
+      background:'#fff',
+      padding: (IS_MOBILE && dashTab==='calendar')?'2px 5px':(IS_MOBILE?'3px 6px':'4px 6px'),
+      borderRadius:'10px',border:'1px solid #e2e8f0',flexShrink:0}},
       // 이음 모드: 법인 대시보드 탭 대신 이음센터 탭(근무 캘린더/인원 현황/외부 공유 뷰)을 같은 줄에 표시
       ieumMode ? (props.ieumTabs || null)
       : h('div',{style:{display:'flex',gap:'3px',flexShrink:0}},
@@ -53555,10 +53581,18 @@ function CorpDashboard(props){
         ]).filter(function(t){ return !(IS_MOBILE && t.hideOnMobile); }).map(function(t){
           var on = dashTab === t.v;
           return h('button',{key:t.v, onClick:function(){changeTab(t.v);},
-            style:{padding: IS_MOBILE?'4px 7px':'5px 8px', border:'none', borderRadius:'5px', cursor:'pointer',
+            /* 그림만 남겼으니 이름은 여기에 — 꾹 누르면 뜬다 */
+            title: t.label + (t.desc ? ' — ' + t.desc : ''),
+            style:{padding: (IS_MOBILE && dashTab==='calendar')?'4px 9px':(IS_MOBILE?'4px 7px':'5px 8px'), border:'none', borderRadius:'5px', cursor:'pointer',
               background: on?'#1e40af':'transparent', color: on?'#fff':'#475569',
               fontWeight: on?700:600, fontSize:'11px', transition:'all 0.15s', whiteSpace:'nowrap'}},
-            (IS_MOBILE && t.mlabel) ? t.mlabel : t.label,
+            /* ★ 폰 달력에서는 «그림만» 둔다 (대표 지시 2026-08-25 「폰 구글 캘린더와 모든
+               UI 똑같이」). 구글에는 이 줄이 아예 없다 — 없앨 수는 없으니 «얇게» 만든다.
+               재어 보니 달력 위 군더더기가 구글의 세 배였다(335 : 116 기기픽셀).
+               ⚠ 다른 탭(직원별·분석)에서는 글자를 남긴다 — 거기서는 이 줄이 화면의 머리다. */
+            (IS_MOBILE && dashTab==='calendar')
+              ? String((IS_MOBILE && t.mlabel) ? t.mlabel : t.label).split(' ')[0]
+              : ((IS_MOBILE && t.mlabel) ? t.mlabel : t.label),
             !IS_MOBILE && h('span',{style:{fontSize:'10px',fontWeight:500,marginLeft:'4px',opacity:0.85}}, t.desc));
         })
       ),
@@ -53574,6 +53608,22 @@ function CorpDashboard(props){
       dashTab==='calendar' && (!IS_MOBILE || calFilterOpen) && h('div',{style:IS_MOBILE
           ? {display:'flex',flexWrap:'nowrap',gap:'3px',flex:1,padding:'4px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'6px',overflowX:'auto',overflowY:'hidden',WebkitOverflowScrolling:'touch'}
           : {display:'flex',alignItems:'center',gap:'3px',flex:1,overflow:'hidden'}},
+        /* ⚙ 안으로 옮겨 온 것 — 보기 바꾸기와 새로고침.
+           ⚠ 머리줄에서 뺐으니 «여기에는 반드시» 있어야 한다. 없으면 기능을 없앤 것이다.
+             구글도 일/주/월 바꾸기를 ☰ 메뉴에 둔다. */
+        IS_MOBILE && h('div',{style:{display:'inline-flex',alignItems:'center',gap:'2px',flexShrink:0,marginRight:'5px'}},
+          h('div',{style:{display:'inline-flex',border:'1px solid #cbd5e1',borderRadius:'6px',overflow:'hidden',flexShrink:0}},
+            [{v:'month',t:'월'},{v:'week',t:'주'},{v:'day',t:'일'}].map(function(m, mi){
+              var on = calView===m.v;
+              return h('button',{key:m.v, onClick:function(){ setCalViewPersist(m.v); },
+                style:{padding:'2px 7px', fontSize:'10.5px', fontWeight:700,
+                  background: on?'#1e40af':'#fff', color: on?'#fff':'#475569',
+                  border:'none', borderRight: mi<2?'1px solid #e2e8f0':'none', cursor:'pointer'}}, m.t);
+            })),
+          h('button',{onClick:corpRefresh, title:'데이터 새로고침',
+            style:{padding:'2px 6px',fontSize:'12px',lineHeight:1,background:'#fff',color:'#475569',
+              border:'1px solid #e2e8f0',borderRadius:'6px',cursor:'pointer',flexShrink:0}},'🔄')
+        ),
         !ieumMode && h('button',{onClick:function(){setCalFilter(null);},title:'전체',
           style:IS_MOBILE
             ? {padding:'2px 6px',border:'none',borderRadius:'5px',cursor:'pointer',fontSize:'10px',fontWeight:700,flexShrink:0,
@@ -54120,24 +54170,77 @@ function CorpDashboard(props){
     dashTab === 'calendar' && h('div', { 'data-cal-root':'1', style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:IS_MOBILE?'10px':0, overflow:'hidden', flex:fitLayout?1:undefined, display:fitLayout?'flex':undefined, flexDirection:fitLayout?'column':undefined, minHeight:0 } },
 
       // ─ 네비게이션 행 ─
-      h('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', padding: IS_MOBILE ? '4px 8px' : '6px 14px', borderBottom:'1px solid #f8fafc', gap: IS_MOBILE?'5px':'6px', background:'#f8fafc', flexShrink:0 } },
+      /* ⚠ 폰에서는 머리줄에 «딴 바탕색·밑줄» 을 두지 않는다 — 구글 위젯은 달 이름과
+         표가 한 바닥으로 이어져 있다. 띠가 하나 더 보이면 그만큼 위가 무거워진다. */
+      h('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between',
+        padding: IS_MOBILE ? '3px 6px' : '6px 14px',
+        borderBottom: IS_MOBILE ? 'none' : '1px solid #f8fafc',
+        gap: IS_MOBILE?'4px':'6px', background: IS_MOBILE ? '#fff' : '#f8fafc', flexShrink:0 } },
         h('div', { style:{ display:'flex', alignItems:'center', gap: IS_MOBILE?'5px':'6px', flexWrap: IS_MOBILE?'nowrap':'wrap', flex: IS_MOBILE?1:undefined, minWidth:0 } },
-          h(MonthNav, { onPrev:calNavPrev, onNext:calNavNext,
+          /* ── 폰 월 보기 머리글 (대표 지시 2026-08-25 「폰 구글 캘린더와 모든 UI 똑같이」) ──
+             구글 위젯은 왼쪽에 「8월」을 크게, 그 아래 「병오년6월 – 7월」을 작게 둔다.
+             우리는 「◀ 2026-08 ▶」 였다 — 연도가 늘 붙어 있어 자리만 먹고, 음력은 없었다.
+             ⚠ 화살표는 오른쪽 묶음으로 보낸다(구글과 같은 자리).
+             ⚠ 주·일 보기와 PC 는 예전 그대로다 — 거기서는 «기간» 을 읽어야 한다. */
+          (IS_MOBILE && calView==='month') ? h('div', { onClick:calNavToday, title:'이번 달로',
+              style:{ display:'flex', flexDirection:'column', justifyContent:'center', cursor:'pointer',
+                lineHeight:1.15, minWidth:0, flexShrink:0 } },
+            /* 재어서 맞춘 크기 — 구글 「8월」은 칸 폭의 0.32, 아랫줄은 0.20 이다 */
+            h('div', { style:{ fontSize:'16px', fontWeight:800, color:'#1e293b' } },
+              parseInt(selYm.slice(5),10) + '월'),
+            h('div', { style:{ fontSize:'10px', color:'#94a3b8', fontWeight:700, whiteSpace:'nowrap' } },
+              corpLunarRange(selYm))
+          ) : h(MonthNav, { onPrev:calNavPrev, onNext:calNavNext,
             label: calView==='month' ? selYm : (calView==='week' ? (function(){ var w=weekDays(selDate); return w[0].slice(5)+' ~ '+w[6].slice(5); })() : (selDate.slice(5)+' ('+['일','월','화','수','목','금','토'][new Date(selDate).getDay()]+')')),
             onDragEnterPrev: function(){ calNavDragEnter('prev'); setCalNavHover('prev'); },
             onDragLeavePrev: function(){ calNavDragLeave('prev'); setCalNavHover(null); },
             onDragEnterNext: function(){ calNavDragEnter('next'); setCalNavHover('next'); },
             onDragLeaveNext: function(){ calNavDragLeave('next'); setCalNavHover(null); },
             navHover: calNavHover }),
-          h('button',{onClick:calNavToday,
+          /* 구글 위젯은 화살표를 오른쪽에 둔다 — 왼쪽은 달 이름 자리다.
+             ⚠ 「오늘」을 없애지 않는다 — 달 이름을 누르면 이번 달로 온다(위 onClick).
+               대신 좁은 폰에서는 «단추 하나» 를 아낀다. */
+          (IS_MOBILE && calView==='month') && h('div', { style:{ display:'inline-flex', gap:'2px', marginLeft:'auto', flexShrink:0 } },
+            h('button', { onClick:calNavPrev, title:'이전 달',
+              style:{ width:'30px', height:'30px', border:'none', background:'transparent', cursor:'pointer',
+                fontSize:'17px', color:'#475569', lineHeight:1, padding:0 } }, '‹'),
+            h('button', { onClick:calNavNext, title:'다음 달',
+              style:{ width:'30px', height:'30px', border:'none', background:'transparent', cursor:'pointer',
+                fontSize:'17px', color:'#475569', lineHeight:1, padding:0 } }, '›'),
+            /* 구글 머리글 오른쪽 끝의 파란 ＋ — 오늘 날짜로 새 일정을 연다.
+               ⚠ 빈 칸을 눌러도 만들어지지만, 그것은 «아는 사람만» 아는 길이다. */
+            h('button', { title:'새 일정',
+              onClick:function(){ setQuickCreate({ date: todayYMD(), title:'' }); setEvDetail(null); setDayPopover(null); },
+              style:{ minWidth:'34px', height:'26px', border:'none', background:'#2563eb', color:'#fff',
+                borderRadius:'999px', cursor:'pointer', fontSize:'15px', fontWeight:700, lineHeight:1,
+                padding:'0 8px', marginLeft:'2px' } }, '＋')
+          ),
+          /* 접힌 탭 줄에서 옮겨 온 것들 — 다른 화면으로 가는 단추와 ⚙.
+             ⚠ 지금 보고 있는 화면(달력)의 단추는 안 낸다 — 눌러도 제자리다. */
+          (IS_MOBILE && dashTab==='calendar' && !ieumMode) && h('div',
+            { style:{ display:'inline-flex', alignItems:'center', gap:'2px', flexShrink:0,
+                      marginLeft: calView==='month' ? '4px' : 'auto' } },
+            (IS_ADMIN ? [{v:'workload',ic:'👥',label:'직원별 업무'},{v:'analytics',ic:'📊',label:'분석'}]
+                      : [{v:'workload',ic:'📋',label:'내 업적'},{v:'myquick',ic:'⚡',label:'빠른 업무'}])
+              .map(function(t){
+                return h('button', { key:t.v, title:t.label, onClick:function(){ changeTab(t.v); },
+                  style:{ width:'28px', height:'26px', border:'none', background:'transparent',
+                    cursor:'pointer', fontSize:'14px', lineHeight:1, padding:0 } }, t.ic);
+              }),
+            h('button', { title:'필터 · 보기 바꾸기 · 새로고침',
+              onClick:function(){ setCalFilterOpen(!calFilterOpen); },
+              style:{ width:'28px', height:'26px', border:'none', background:'transparent',
+                cursor:'pointer', fontSize:'14px', lineHeight:1, padding:0 } }, '⚙')
+          ),
+          !(IS_MOBILE && calView==='month') && h('button',{onClick:calNavToday,
             style:{padding: IS_MOBILE?'3px 8px':'4px 10px', border:'1px solid #e2e8f0', background:'#fff', borderRadius:'10px',
               cursor:'pointer', fontSize:'11.5px', fontWeight:600, color:'#475569'}},'오늘'),
           // 월/주/일 뷰 전환 세그먼트 (폰: 오른쪽으로 밀어 한 줄 정렬)
-          h('div', { style:{ display:'inline-flex', border:'1px solid #cbd5e1', borderRadius:'8px', overflow:'hidden', marginLeft: IS_MOBILE?'auto':undefined, flexShrink:0 } },
+          !(IS_MOBILE && dashTab==='calendar') && h('div', { style:{ display:'inline-flex', border:'1px solid #cbd5e1', borderRadius:'8px', overflow:'hidden', marginLeft: (IS_MOBILE && calView!=='month')?'auto':undefined, flexShrink:0 } },
             [{v:'month',t:'월'},{v:'week',t:'주'},{v:'day',t:'일'}].map(function(m, mi){
               var on = calView===m.v;
               return h('button', { key:m.v, onClick:function(){ setCalViewPersist(m.v); },
-                style:{ padding: IS_MOBILE?'3px 9px':'4px 12px', fontSize:'11.5px', fontWeight:700,
+                style:{ padding: IS_MOBILE?'2px 8px':'4px 12px', fontSize:'11.5px', fontWeight:700,
                   background: on?'#1e40af':'#fff', color: on?'#fff':'#475569',
                   border:'none', borderRight: mi<2?'1px solid #e2e8f0':'none', cursor:'pointer' } }, m.t);
             })
@@ -54306,9 +54409,13 @@ function CorpDashboard(props){
         /* ★ 구글은 요일 머리를 «일곱 칸 모두 같은 회색» 으로 쓴다(캡처 대조).
            일요일 빨강·토요일 파랑은 우리가 넣었던 것이다 — 날짜 숫자 쪽도 같이 맞춘다.
            ⚠ 우리말 달력 관습(일=빨강)과는 다르다. 관습을 되살리라면 이 두 곳을 함께 되돌린다. */
+        /* 구글 위젯의 요일 줄 — 일곱 칸이 같은 색이고, 색은 «또렷하다»(어두운 바탕에 흰 글씨).
+           ⚠ 더 연하게(#94a3b8) 하면 구글과 «멀어진다» — 한 번 그렇게 했다가 되돌렸다.
+           ⚠ 높이만 줄인다. 재어 보니 구글 요일 줄은 칸 폭의 0.30 인데(기기픽셀 40/131.5),
+             8px 여백이면 우리는 0.63 — 두 배다. 그만큼 표가 아래로 밀린다. */
         ['일','월','화','수','목','금','토'].map(function(d, i){
-          return h('div', { key:i, style:{ padding:'8px 4px', textAlign:'center', fontSize:'11px', fontWeight:500,
-            color:'#64748b' }}, d);
+          return h('div', { key:i, style:{ padding: IS_MOBILE?'1px 4px':'8px 4px', textAlign:'center',
+            fontSize:'11px', fontWeight:500, lineHeight: IS_MOBILE?1.1:undefined, color:'#64748b' }}, d);
         })
       ),
 
