@@ -546,26 +546,37 @@
      30분을 기다리지 않고 서버에 지금 메일을 보라고 시킨다.
      ⚠ 로그인 표(idToken)를 함께 보낸다 — 서버가 직원인지 확인한다.
      ⚠ 서버가 60초 잠금을 걸고 있다. 연달아 누르면 429 로 「몇 초 뒤에」라고 온다. */
-  var PULL_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/pullPaydataMail';
+  var FN_BASE = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/';
 
-  function pullMailNow() {
+  /* 서버 함수 하나를 부른다 — 로그인 표를 붙이고, 까닭이 있으면 그 말을 그대로 던진다.
+     ⚠ 두 곳에서 같은 손질을 하면 한쪽만 고치게 된다(429 안내문이 그랬다). */
+  function callFn(name, fail) {
     var fb = deps.firebase || (typeof firebase !== 'undefined' ? firebase : null);
     if (!fb || !fb.auth) return Promise.reject(new Error('로그인을 확인할 수 없습니다'));
     var u = fb.auth().currentUser;
     if (!u) return Promise.reject(new Error('로그인이 필요합니다'));
     return u.getIdToken().then(function (tok) {
-      return fetch(PULL_URL, {
+      return fetch(FN_BASE + name, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
         body: '{}'
       });
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (j) {
-        if (!r.ok || !j.ok) throw new Error(j.error || ('가져오지 못했습니다 (' + r.status + ')'));
+        if (!r.ok || !j.ok) throw new Error(j.error || (fail + ' (' + r.status + ')'));
         return j;
       });
     });
   }
+
+  function pullMailNow() { return callFn('pullPaydataMail', '가져오지 못했습니다'); }
+
+  /* ── 공용 칸을 지금 규칙으로 다시 갈라 보내기 (대표 요청 2026-08-25) ──
+     배달은 메일을 **받을 때 한 번만** 한다. 그래서 업체관리에 주소를 나중에 넣어도
+     이미 공용 칸에 떨어진 것은 그대로 남는다(52건이 그랬다).
+     ⚠ 이 일은 서버만 할 수 있다 — 콘솔 규칙이 **남의 자리 쓰기**를 막는다.
+     ⚠ 총괄관리자만. 서버가 다시 한 번 확인한다. */
+  function regroupShared() { return callFn('regroupPaydataShared', '다시 갈라 보내지 못했습니다'); }
 
 
   function listMailConf() {
@@ -1632,6 +1643,7 @@
     listSharedPending: listSharedPending,
     mailConfPath: mailConfPath,
     pullMailNow: pullMailNow,
+    regroupShared: regroupShared,
     listMailConf: listMailConf,
     setMailScanInbox: setMailScanInbox,
     mailNote: mailNote,

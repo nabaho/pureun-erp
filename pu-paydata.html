@@ -27,7 +27,7 @@
 <script src="js/pu-resilience.js?v=1"></script>
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=2"></script>
-<script src="js/pu-paydata-store.js?v=3"></script>
+<script src="js/pu-paydata-store.js?v=4"></script>
 <!-- ?v= 는 판독기 판 번호(READ_VERSION)와 **같이 올린다**(2026-08-15).
      ⚠ 사진첩만 올리고 여기를 빠뜨리면, 같은 브라우저 안에서 사진첩은 새 판독기·
        급여데이터함은 캐시에 묵은 옛 판독기로 갈린다 — 같은 서류를 두 앱이 다르게
@@ -1413,6 +1413,14 @@ function guessTag(rec, companies) {
     const yy = text.match(/(?:^|\D)(\d{2})\s*년\s*(\d{1,2})\s*월/); // '25년 07월'
     if (yy) m = [yy[0], '20' + yy[1], yy[2]];
   }
+  /* 두 자리 해 + 월 — 「26.07월_급여_본점_예정.xlsx」 (실제로 온 파일 이름).
+     ⚠ 해를 20~39 로 묶는다. 안 묶으면 「1.5월분」 같은 것이 해로 읽힌다.
+     ⚠ 서버 tagFor 와 **같아야** 한다 — 다르면 같은 파일이 서버와 화면에서
+       다른 달로 잡힌다. */
+  if (!m) {
+    const yd = text.match(/(?:^|\D)([2-3]\d)[.\-_](\d{1,2})\s*월/);
+    if (yd) m = [yd[0], '20' + yd[1], yd[2]];
+  }
   if (m) {
     const mo = parseInt(m[2], 10);
     if (mo >= 1 && mo <= 12) month = m[1] + '-' + (mo < 10 ? '0' : '') + mo;
@@ -2055,6 +2063,36 @@ function pullMailNow() {
 }
 window.pullMailNow = pullMailNow;
 
+/* ── 공용 칸을 지금 규칙으로 다시 갈라 보내기 (대표 요청 2026-08-25) ──
+   배달은 메일을 **받을 때 한 번만** 한다. 그래서 업체관리에 주소를 나중에 넣어도
+   이미 공용 칸에 떨어진 것은 영원히 그대로였다(52건이 그랬다).
+   ⚠ 화면에서는 **남의 자리에 못 쓴다**(콘솔 규칙) — 서버 함수가 옮긴다. */
+function regroupShared() {
+  if (App.regrouping) return;
+  if (!confirm('공용 칸에 있는 것을 지금 규칙으로 다시 갈라 각 담당자 칸으로 보냅니다.\n\n'
+    + '업체관리에 주소를 넣은 뒤에 누르십시오 — 안 넣었으면 갈릴 것이 없습니다.\n'
+    + '못 갈린 것은 그대로 공용 칸에 남습니다.')) return;
+  App.regrouping = true; App.render();
+  return S.regroupShared().then(r => {
+    App.regrouping = false;
+    return ensureMail(true).then(() => {
+      const seats = r.seats || {};
+      const who = Object.keys(seats)
+        .map(uid => (App.owners && App.owners[uid] ? App.owners[uid].name : uid) + ' ' + seats[uid])
+        .join(' · ');
+      const whys = Object.keys(r.whys || {})
+        .map(w => '· ' + w + ' ' + r.whys[w] + '건').join('\n');
+      alert(Number(r.looked || 0) + '건 중 ' + Number(r.moved || 0) + '건을 담당자 칸으로 보냈습니다.'
+        + (who ? '\n' + who : '')
+        + (r.left ? '\n\n공용 칸에 남은 ' + r.left + '건:\n' + whys : ''));
+    });
+  }).catch(e => {
+    App.regrouping = false; App.render();
+    alert('다시 갈라 보내지 못했습니다 — ' + (e.code || e.message));
+  });
+}
+window.regroupShared = regroupShared;
+
 function screenMail() {
   const rows = mailRows(App.mail, mailCtx());
   const ids = rows.map(r => r.id);
@@ -2067,6 +2105,15 @@ function screenMail() {
     + (late ? ' · 오래된 것 <b class="wa">' + late + '</b>' : '') + '</span>'
     + '<span class="dacts"><button class="btn sm pri"' + (App.mailPulling ? ' disabled' : '') + ' onclick="pullMailNow()">'
         + (App.mailPulling ? '가져오는 중…' : '📥 지금 가져오기') + '</button>'
+        /* 다시 갈라 보내기 (대표 요청 2026-08-25) — 배달은 받을 때 한 번만 하므로,
+           업체관리에 주소를 나중에 넣어도 이미 여기 떨어진 것은 그대로 남는다.
+           ⚠ 총괄관리자에게만. 남의 자리로 옮기는 일이라 **서버가** 한다. */
+        + (S.amAdmin()
+          ? '<button class="btn sm regroup"' + (App.regrouping ? ' disabled' : '')
+            + ' title="업체관리에 주소를 넣은 뒤 누르십시오 — 지금 규칙으로 다시 갈라 각 담당자 칸으로 보냅니다"'
+            + ' onclick="regroupShared()">'
+            + (App.regrouping ? '갈라 보내는 중…' : '🔁 다시 갈라 보내기') + '</button>'
+          : '')
         + '<button class="btn sm" onclick="ensureMail(true)">↻ 다시 읽기</button></span>'
     + '</div></div>';
 
