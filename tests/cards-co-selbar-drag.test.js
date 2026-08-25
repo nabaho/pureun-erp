@@ -49,7 +49,9 @@ function runList(rows, sel, extra){
     "function coArrow(){ return ''; }",
     'function coTagsOf(o){ return (o && o.tags) || []; }',
     "function coSizeSelHtml(){ return ''; }",
-    "function coPagerHtml(){ return '<div class=\"copager\">쪽넘김</div>'; }"
+    "function coPagerHtml(){ return '<div class=\"copager\">쪽넘김</div>'; }",
+    /* 2026-08-24(2순위): 회사 목록 위 «고아 기업정보» 알림 띠 — 이 검사는 안 본다 */
+    "function coOrphanBarHtml(){ return ''; }"
   ].join('\n'), ctx);
   vm.runInContext(coListBlock(), ctx);
   const total = (extra && extra._total) || rows.length;

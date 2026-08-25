@@ -51,7 +51,10 @@ function renderTabsRow(state, cos){
     coSizeSelHtml: sz => '<select class="copgsize" onchange="coSetPageSize(this.value)">'
       + '<option value="' + sz + '" selected>테스트</option></select>',
     /* 2026-08-24: 종료 토글이 탭 줄에 붙었다 — 이 파일은 쪽 크기 자리만 보므로 0곳으로 둔다 */
-    coClosedCount: () => 0 };
+    coClosedCount: () => 0,
+    /* 2026-08-24(2순위): 탭 줄에 「번호 없음」 토글도 붙었다 — 이 검사들은
+       그 부분을 안 보므로 0곳으로 둔다(안 넣으면 renderCoFTabsHtml 이 던진다). */
+    coNoBizCount: () => 0 };
   vm.createContext(ctx);
   const a = '/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════';
   const b = '/* ══════ 폴더 안의 탭 — 화면 ══════ */';
