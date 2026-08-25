@@ -518,14 +518,23 @@ test('사진 칸마다 사진첩에서 고르는 단추가 있다 — 끌어다 
   assert.match(gov, /ondrop="dropExtraPhoto\(event,'\$\{sid\}',\$\{d\.i\}\)"/, '끌어다 놓기가 없어졌습니다');
 });
 
-test('고르는 창은 방문일로 거르지 않고 처음부터 전체를 보여준다', () => {
-  /* 대표 결정(2026-08-04): 대부분 폰으로 찍어 그때그때 올리므로 날짜를
-     가려 볼 필요가 없다 — 방문일 필터를 두지 않는다. */
+test('★ 방문일에 사진이 없으면 «전체»로 되돌린다 — 빈 화면부터 보여 주면 없는 줄 안다', () => {
+  /* ⚠ 여기에 대표 결정이 둘 있다. 둘 다 적어 둔다 — 나중 사람이 한쪽만 보고
+     되돌리지 않게.
+     · 2026-08-04: 「대부분 폰으로 찍어 그때그때 올리므로 날짜를 가려 볼 필요가 없다」
+       → 방문일 필터를 두지 않았다.
+     · c6b2869b(2026-08-25 무렵): 고르기를 수정 창 «안»으로 옮기면서 방문일을
+       «첫 화면»으로 쓰되, 그 날 사진이 없으면 전체로 되돌리게 했다.
+     지금 코드는 뒤엣것이다. 이 검사는 «지금 코드가 하는 일»을 지킨다 —
+     되돌릴지는 대표가 정하실 일이다.
+     ⚠ 지키는 것: 방문일에 사진이 없을 때 «빈 화면으로 두지 않는다». 그것이 두 결정이
+       함께 막으려던 것이다. */
   const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
   const fn = gov.match(/function openAlbumPicker\([\s\S]*?\n\}/);
   assert.ok(fn, 'openAlbumPicker 본문을 찾을 수 없습니다');
   assert.match(fn[0], /PuPhotoStore\.listYear\(/);
-  assert.ok(!/sc\.date|schedDate|visitDate/.test(fn[0]), '방문일로 거르고 있습니다');
+  assert.match(fn[0], /pickDay\s*=\s*''/,
+    '방문일에 사진이 없을 때 전체로 되돌리는 길이 없습니다 — 빈 화면에 갇힙니다');
 });
 
 test('사진첩이 사람별로 갈려 있다 — 내 uid 를 owner 로 넘긴다', () => {
@@ -544,8 +553,12 @@ test('고른 사진도 끌어다 놓기와 같은 마무리를 탄다', () => {
   const fn = gov.match(/async function pickAlbumPhoto\([\s\S]*?\n\}/);
   assert.ok(fn, 'pickAlbumPhoto 본문을 찾을 수 없습니다');
   assert.match(fn[0], /insertAlbumFull\(/, '공용 마무리 단계를 타지 않습니다');
-  // 고르자마자 창을 닫아야 다음 칸을 헷갈리지 않는다
-  assert.match(fn[0], /closeModal\('mbAlbumPick'\)/);
+  /* ⚠ 예전에는 「고르자마자 창을 닫는다」였다(closeModal). c6b2869b 가 고르기를 수정 창
+     «안»으로 옮기면서 «열어 둔 채 다음 빈 칸으로 옮겨 주는» 쪽으로 바꿨다 —
+     여러 장을 이어서 채우는 일이 많아서다. 닫는 대신 «다음 칸으로 옮겨 주는가»를 본다.
+     둘 중 무엇이든, 지키는 것은 «고른 뒤 어느 칸에 넣을지 헷갈리지 않는다»이다. */
+  assert.match(fn[0], /albumPickTarget\s*=|slotIdx\s*=|editPickMode\(/,
+    '고른 뒤에 다음 칸을 짚어 주지도, 창을 닫지도 않습니다 — 어디에 넣을지 헷갈립니다');
 });
 
 test('사진이 없으면 왜 없는지 알려 준다', () => {
