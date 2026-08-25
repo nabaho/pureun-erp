@@ -531,47 +531,59 @@ test('고르는 창은 방문일을 먼저 보여주되, 그 날 사진이 없�
        (「빈 화면부터 보여 주면 안 된다」)은 못 박아 둔다 — 되돌리라면 이 검사와
        코드를 함께 되돌린다. */
   const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
-  const fn = gov.match(/function openAlbumPicker\([\s\S]*?\n\}/);
-  assert.ok(fn, 'openAlbumPicker 본문을 찾을 수 없습니다');
+  /* ⚠ 2026-08-25 재조정 — 「한 번에 모두 보고 고르기」(1e86c9f9)로 함수가 갈렸다:
+       openAlbumPicker 안에 있던 읽기 → pkLoadYear · loadAlbumThumbs → pkThumbs
+       pickAlbumPhoto → pkPut · renderAlbumPick → pkPaintBody
+     코드는 멀쩡한데 검사가 옛 이름을 붙잡아 main 이 빨간불이 되고
+     «모든 앱 배포가 막혔다». 지킬 규칙은 이름이 아니라 뜻이다. */
+  const fn = gov.match(/function pkLoadYear\([\s\S]*?\n\}/);
+  assert.ok(fn, '연도별로 읽는 함수를 찾을 수 없습니다 (pkLoadYear)');
   assert.match(fn[0], /PuPhotoStore\.listYear\(/);
   /* 그 날 사진이 없으면 반드시 전체로 — 이것이 없으면 빈 화면만 보고 「사진첩에
      아무것도 없다」고 오해한다. */
-  assert.match(fn[0], /pickDay\s*=\s*''/, '★ 그 날 사진이 없을 때 전체로 되돌리지 않습니다');
-  assert.match(fn[0], /apkDayKey\(/, '어느 날 사진인지 견주는 곳이 없습니다');
+  assert.match(fn[0], /visitOnly\s*=\s*false/, '★ 그 날 사진이 없을 때 전체로 되돌리지 않습니다');
+  assert.match(fn[0], /DayKey\(/, '어느 날 사진인지 견주는 곳이 없습니다');
+  // 방문일을 «켠 채로» 연다는 뜻은 창을 여는 쪽이 지킨다
+  const opener = gov.match(/function openAlbumPicker\([\s\S]*?\n\}/)[0];
+  assert.match(opener, /visitOnly\s*=\s*!ref/, '방문일을 먼저 보여주지 않습니다');
 });
 
 test('사진첩이 사람별로 갈려 있다 — 내 uid 를 owner 로 넘긴다', () => {
   // 안 넘기면 저장 층이 "계정을 알 수 없습니다"로 거절한다(이 화면은 signIn 을 안 부른다).
   const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
-  const open = gov.match(/function openAlbumPicker\([\s\S]*?\n\}/)[0];
+  const open = gov.match(/function pkLoadYear\([\s\S]*?\n\}/)[0];
   assert.match(open, /listYear\(year, albumPickOwner\)/);
-  const thumbs = gov.match(/function loadAlbumThumbs\([\s\S]*?\n\}/)[0];
+  const thumbs = gov.match(/function pkThumbs\([\s\S]*?\n\}/)[0];
   assert.match(thumbs, /loadThumb\(it\.year, it\.id, owner\)/);
-  const pick = gov.match(/async function pickAlbumPhoto\([\s\S]*?\n\}/)[0];
-  assert.match(pick, /loadFull\(year, id, owner\)/);
+  const pick = gov.match(/async function pkPut\([\s\S]*?\n\}/)[0];
+  assert.match(pick, /loadFull\([^)]*owner\)/, '내 계정을 안 넘깁니다');
 });
 
 test('고른 사진도 끌어다 놓기와 같은 마무리를 탄다', () => {
   const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
-  const fn = gov.match(/async function pickAlbumPhoto\([\s\S]*?\n\}/);
-  assert.ok(fn, 'pickAlbumPhoto 본문을 찾을 수 없습니다');
+  const fn = gov.match(/async function pkPut\([\s\S]*?\n\}/);
+  assert.ok(fn, '고른 것을 넣는 함수를 찾을 수 없습니다 (pkPut)');
   assert.match(fn[0], /insertAlbumFull\(/, '공용 마무리 단계를 타지 않습니다');
   /* ⚠ 예전에는 창을 따로 띄우고 `closeModal('mbAlbumPick')` 로 닫았다.
      2026-08-25 변경(c6b2869b): 고르기를 **수정 창 안에서** 한다 — 창 위의 창을
      없앴다. 그래서 닫을 창이 없다.
      남은 뜻은 하나다: **고르고 나서 어디로 가는지가 분명해야 한다.**
        빈 칸이 남았으면 다음 빈 칸으로, 없으면 고르기를 접는다. */
-  assert.match(fn[0], /nextEmptySlot\(/, '다음 빈 칸으로 옮겨 주지 않습니다');
-  assert.match(fn[0], /closeAlbumPick\(\)/, '★ 다 채웠는데 고르기 화면에 그대로 남습니다');
+  /* 「한 번에 모두」로 바뀌며 고른 것을 «칸 순서대로» 채운다 — 다음 빈 칸을
+     따로 찾을 일이 없어졌다. 남은 뜻은 하나: 다 넣었으면 고르기를 접는다. */
+  assert.match(fn[0], /PK\.targets/, '어느 칸에 넣을지를 안 정합니다');
+  assert.match(fn[0], /closePickAll\(\)/, '★ 다 채웠는데 고르기 화면에 그대로 남습니다');
   assert.equal(/closeModal\('mbAlbumPick'\)/.test(fn[0]), false,
     '창 위의 창을 다시 만들었습니다 — 2026-08-25 에 없앴습니다');
 });
 
 test('사진이 없으면 왜 없는지 알려 준다', () => {
   const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
-  const fn = gov.match(/function renderAlbumPick\([\s\S]*?\n\}/);
-  assert.ok(fn, 'renderAlbumPick 본문을 찾을 수 없습니다');
+  const fn = gov.match(/function pkPaintBody\([\s\S]*?\n\}/);
+  assert.ok(fn, '고르기 목록을 그리는 함수를 찾을 수 없습니다 (pkPaintBody)');
   assert.match(fn[0], /사진첩에 올린 사진이 없습니다/);
+  /* 거름 때문에 빈 것과 사진첩 자체가 빈 것은 «다른 일» 이다 — 갈라 말해야 한다 */
+  assert.match(fn[0], /이 조건에 맞는 사진이 없습니다/, '거름 때문에 빈 것을 갈라 말하지 않습니다');
 });
 
 /* ── 사람별 분리 ── */

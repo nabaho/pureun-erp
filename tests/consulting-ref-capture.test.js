@@ -178,10 +178,21 @@ test('★ 고르기 창은 하나를 같이 쓴다 — 창을 두 벌 만들면 
   assert.match(picker, /slotIdx\s*:\s*slotIdx/, '어느 칸에 넣을지를 안 담습니다');
   assert.match(picker, /ref\s*:\s*!!ref/, '참고 캡처인지를 안 담으면 증빙 칸으로 들어갑니다');
   assert.match(fnOf('openRefCapPicker'), /openAlbumPicker\(sid, null, true\)/);
-  /* 고른 뒤 참고 캡처 쪽으로 갈라지는 자리 */
-  assert.match(fnOf('pickAlbumPhoto'), /if\(target\.ref\)\{/,
+  /* 고른 뒤 참고 캡처 쪽으로 갈라지는 자리.
+     ⚠ 2026-08-25 재조정 — 「한 번에 모두 보고 고르기」(1e86c9f9)로 바뀌며
+       pickAlbumPhoto 가 pkPut 으로 갈렸는데 이 검사가 옛 이름을 붙잡아
+       main 이 빨간불이 되고 «모든 앱 배포가 막혔다». 코드는 멀쩡했다.
+       그래서 이름을 고정하지 않고 «둘 중 있는 쪽» 을 본다 —
+       또 이름이 바뀌어도 뜻(갈라 넣는가)만 지켜지면 통과한다. */
+  const put = (function(){
+    for(const n of ['pkPut', 'pickAlbumPhoto']){
+      if(app.indexOf('function ' + n + '(') >= 0) return fnOf(n);
+    }
+    assert.fail('고른 것을 넣는 함수를 찾지 못했습니다 (pkPut·pickAlbumPhoto)');
+  })();
+  assert.match(put, /if\((target|tgt)\.ref\)\{/,
     '★ 갈라지지 않으면 참고 캡처가 증빙 칸으로 들어갑니다');
-  assert.match(fnOf('pickAlbumPhoto'), /rf\.docName\|\|rf\.company/,
+  assert.match(put, /docName\s*\|\|\s*\w+\.company/,
     '이름표를 서류 제목부터 쓰지 않습니다');
 });
 
