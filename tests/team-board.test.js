@@ -26,11 +26,23 @@ function grab(name){
   return src.slice(i, j);
 }
 
+/* ⚠ 시계를 멈춰 둔다 — 이 검사는 「오늘 = 2026-08-24」를 딛고 서 있다.
+   work.html 의 dday() 는 new Date() 로 «진짜 오늘» 을 본다. 그래서 이 파일은
+   2026-08-25 0시에 저절로 깨졌다(g 의 기한 8/24 가 「임박」에서 「지남」이 됐다).
+   ★ 고칠 것은 기댓값이 아니라 «검사가 시계를 타는 것» 이다 — 날짜를 못 박아 둔다.
+     안 그러면 자정마다 아무도 안 건드린 검사가 빨갛게 되고, 다음 사람은
+     자기가 무엇을 망가뜨렸는지 한참 찾는다. */
+const 오늘 = '2026-08-24T09:00:00+09:00';
+class 멈춘시계 extends Date {
+  constructor(){ if(arguments.length === 0) super(오늘); else super(...arguments); }
+  static now(){ return new Date(오늘).getTime(); }
+}
+
 function makeBox(opts){
   opts = opts || {};
   const log = { saved:{}, render:0, filter:null, cleared:[] };
   const box = {
-    console, Date, Math, String, Number, Array, Object, isNaN, parseInt,
+    console, Date: 멈춘시계, Math, String, Number, Array, Object, isNaN, parseInt,
     S: { fPop:'x', colPop:{} },
     localStorage: {
       getItem(k){ return Object.prototype.hasOwnProperty.call(log.saved, k) ? log.saved[k]

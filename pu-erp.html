@@ -52669,8 +52669,18 @@ function CorpDashboard(props){
   sortedMatrix.sort(function(a,b){ var d = _sortVal(b) - _sortVal(a); return sortDir==='asc' ? -d : d; });
 
   // ── 법인 공유 캘린더 데이터 ──
-  // 직원별 색상 매핑 (기존 위치 색상 재활용)
-  var STAFF_COLORS = ['#1e40af','#2563eb','#dc2626','#2563eb','#d97706','#16a34a','#d97706','#dc2626','#16a34a','#854d0e','#2563eb'];
+  /* ── 담당자 색 (대표 지시 2026-08-25 「구글과 같은 … 담당자 색 완벽하게 일치」) ──
+     ★ 예전 목록은 열한 자리에 «다섯 가지 색» 뿐이었다 — #2563eb 가 세 번, #dc2626·
+       #d97706·#16a34a 가 두 번씩. 그래서 서로 다른 사람이 «똑같은 색» 칩을 달았고,
+       달력만 보고는 누구 일인지 알 수 없었다(대표 화면 2026-08-25).
+       구글 달력은 달력(사람)마다 다른 색을 준다 — 그것이 색을 쓰는 뜻 전부다.
+     ★ 열한 가지가 모두 다르다. 색은 «승인된 27색» 안에서만 골랐다
+       (tests/color-palette.test.js 가 그것을 지킨다 — 새 색을 만들지 않는다).
+     ⚠ 색을 고를 때 «흰 글씨가 읽히는가» 를 함께 본다. calTextOn() 이 밝은 바탕에는
+       짙은 글씨를 주지만, #f87171 처럼 «어중간한» 색은 흰 글씨로 판정되면서도
+       대비가 2.8 밖에 안 나온다 — 그래서 그 색은 뺐다(#991b1b 로 바꿨다).
+       검사가 열한 색을 실제로 돌려 대비 3.0 이상인지 본다. */
+  var STAFF_COLORS = ['#2563eb','#16a34a','#dc2626','#d97706','#64748b','#1e40af','#4ade80','#991b1b','#fbbf24','#854d0e','#475569'];
   var COLOR_PALETTE_36 = [
     '#1e40af','#2563eb','#2563eb','#60a5fa',
     '#2563eb','#2563eb','#2563eb','#60a5fa',
@@ -53414,7 +53424,33 @@ function CorpDashboard(props){
      눈이 아프다는 대표 지적(2026-08-15). 흰 글씨는 그대로 두고 바탕만 낮췄다.
      ⚠ 두 곳에서 같이 쓰므로 여기 한 곳만 고치면 월·주·일이 함께 바뀐다.
         더 연하게/진하게는 이 숫자만 조절한다(1 에 가까울수록 연하다). */
-  var CAL_CHIP_LIGHTEN = 0.45;
+  /* ── 오간 이야기를 다 적어 둔다. 안 그러면 다음 사람이 되돌린다 ──
+     0.22 → 0.45 (2026-08-15): 「사람별 색이 원색 그대로라 눈이 아프다」
+     0.45 → 0    (2026-08-25): 「구글과 같은 … 담당자 색 완벽하게 일치」
+     ★ 두 지시가 부딪히는 것처럼 보이지만 아니다. 눈이 아팠던 까닭은 «진해서» 가
+       아니라 열한 자리에 다섯 색뿐이라 같은 색이 겹겹이 깔렸기 때문이었다.
+       색을 열한 가지로 갈라 놓은 지금은 진해도 어지럽지 않다.
+     ★ 그리고 이제 «구글에서 온 일정»은 구글 색 그대로 칠한다(ev.gcolor).
+       앱 색만 연하게 남겨 두면 한 화면에 두 벌의 색조가 섞여 오히려 어지럽다.
+     ⚠ 다시 연하게 하고 싶어지면, 색부터 세어 보라. 색이 겹치는 것이 진짜 원인이다. */
+  var CAL_CHIP_LIGHTEN = 0;
+  /* 음력 날짜 — 구글 달력 위젯이 「25 (13)」처럼 괄호로 붙여 주는 그 숫자다.
+     ★ 표를 손으로 들고 있지 않는다. 브라우저에 든 단기(檀紀)력을 쓴다.
+       대표 위젯 화면(2026-08)과 하나하나 대조했다 —
+         8/13→1 · 8/15→3 · 8/25→13 · 8/26→14 · 8/3→21 · 7/26→13  모두 같았다.
+     ⚠ 42칸을 다시 그릴 때마다 새로 세면 느리다 — 한 번 센 것은 적어 둔다. */
+  var _corpLunarCache = {};
+  function corpLunarDay(ymd){
+    if(!ymd) return '';
+    if(_corpLunarCache[ymd] !== undefined) return _corpLunarCache[ymd];
+    var out = '';
+    try{
+      out = new Intl.DateTimeFormat('ko-KR-u-ca-dangi', {day:'numeric', timeZone:'UTC'})
+              .format(new Date(ymd + 'T00:00:00Z')).replace(/[^0-9]/g, '');
+    }catch(e){ out = ''; }
+    _corpLunarCache[ymd] = out;
+    return out;
+  }
   /* 주/일 보기용 일정 칩.
      ★ 월 보기와 «같은 규칙» 을 쓴다 — 구글에서 고른 색은 그대로, 앱 색만 연하게,
        글자색은 바탕 밝기에 맞춰 고른다. 한 보기만 고치면 보기를 바꿀 때 색이 튄다. */
@@ -54315,7 +54351,9 @@ function CorpDashboard(props){
               onMouseEnter: cell.date ? function(e){ e.currentTarget.style.background=isCalDragOver?'#fffbeb':isToday?'#fffbeb':isOtherMonth?'#e2e8f0':'#f8fafc'; } : null,
               onMouseLeave: cell.date ? function(e){ e.currentTarget.style.background=isCalDragOver?'#fffbeb':isToday?'#fffbeb':isOtherMonth?'#f8fafc':isHoliday?'#fef2f2':'#fff'; } : null,
               style:{ background: isCalDragOver?'#fffbeb':isToday?'#fffbeb':isOtherMonth?'#f8fafc':isHoliday?'#fef2f2':(calMatchSet[cell.date]?'#fffbeb':'#fff'),
-                height: calMonthFit?undefined:(IS_MOBILE?'96px':undefined), minHeight:'0', overflow:'hidden', padding: IS_MOBILE?(calMonthFit?'2px 3px':'3px 4px 4px'):'5px 4px 3px', position:'relative',
+                /* ⚠ 폰에서는 좌우 여백을 걷었다 — 구글 위젯은 칩이 칸 폭을 «꽉» 채운다
+                   (재어 보니 칸 131.5 에 칩 130, 기기픽셀). 여백만큼 글자가 더 잘린다. */
+                height: calMonthFit?undefined:(IS_MOBILE?'96px':undefined), minHeight:'0', overflow:'hidden', padding: IS_MOBILE?'1px 0 2px':'5px 4px 3px', position:'relative',
                 borderRight:'1px solid '+(isOtherMonth?'#e2e8f0':'#f8fafc'), borderBottom:'1px solid '+(isOtherMonth?'#e2e8f0':'#f8fafc'),
                 cursor: 'default',
                 transition:'background 0.1s',
@@ -54323,33 +54361,41 @@ function CorpDashboard(props){
                 outlineOffset: '-2px',
                 boxSizing:'border-box' }},
 
-              // 날짜 번호
-              h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom: calMonthFit?'1px':(IS_MOBILE?'3px':'4px'), padding: calMonthFit?'0 1px':'0 2px' }},
+              /* ── 날짜 줄 ──
+                 ★ 구글 위젯은 칸 «가운데» 에 「25 (13)」 처럼 날짜와 음력을 나란히 둔다.
+                   우리는 왼쪽에 숫자만 있었다(대표 지시 2026-08-25 「구글과 같은 … 숫자 …
+                   날짜크기 완벽하게 일치」).
+                 ⚠ 오늘 동그라미는 «숫자에만» 씌운다 — 음력까지 감싸면 알약처럼 길어진다. */
+              h('div', { style:{ display:'flex', justifyContent:'center', alignItems:'center', gap:'2px',
+                  marginBottom: calMonthFit?'1px':(IS_MOBILE?'3px':'4px'), padding:'0 2px' }},
                 h('div', { className:'cal-day-num',
-                  style:{ width: calMonthFit?'16px':(IS_MOBILE?'19px':'24px'), height: calMonthFit?'16px':(IS_MOBILE?'19px':'24px'), borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center',
+                  style:{ minWidth: calMonthFit?'16px':(IS_MOBILE?'19px':'24px'), height: calMonthFit?'16px':(IS_MOBILE?'19px':'24px'), borderRadius:'999px', display:'flex', alignItems:'center', justifyContent:'center', padding:'0 3px',
                     fontSize: calMonthFit?'10px':(IS_MOBILE?'11.5px':'12px'), fontWeight: isToday?700:400, cursor:'pointer',
                     background: isToday?'#2563eb':'transparent',
                     /* ★ 구글은 날짜 숫자를 요일로 가르지 않는다 — 오늘만 파란 동그라미,
                        지난달·다음달은 흐리게. 공휴일은 «칩» 으로 보여 준다(아래). */
                     color: isToday?'#fff': isOtherMonth?'#94a3b8': '#1e293b' }},
                   cell.day),
-                null
+                cell.date && h('span', { style:{ fontSize: calMonthFit?'9px':(IS_MOBILE?'10px':'10.5px'),
+                    color: isOtherMonth?'#cbd5e1':'#94a3b8', lineHeight:1 }},
+                  '(' + corpLunarDay(cell.date) + ')')
               ),
 
               // 이벤트 칩
-              cell.date && h('div', { style:{ display:'flex', flexDirection:'column', gap: calMonthFit?'1.5px':(IS_MOBILE?'2.5px':'1.5px') }},
+              cell.date && h('div', { style:{ display:'flex', flexDirection:'column', gap: IS_MOBILE?'0.75px':'1.5px' }},
                 /* ★ 공휴일을 «칩» 으로 맨 위에 (구글과 같은 자리·같은 꼴).
                    전에는 칸 오른쪽 위 작은 글씨였다 — 구글에는 그 자리가 없다.
                    ⚠ 일정 개수(MAX_SHOW)에는 넣지 않는다 — 공휴일 때문에 일정이 접히면 안 된다. */
                 isHoliday && h('div', { key:'hol',
                   title: holidayName,
+                  /* ⚠ 일정 칩과 «같은 치수» 여야 한다 — 한 줄만 두꺼우면 그 줄이 도드라진다 */
                   style:{ background:'#fecaca', color:'#991b1b',
-                    paddingLeft: calMonthFit?'5px':(IS_MOBILE?'7px':'5px'), paddingRight: calMonthFit?'5px':(IS_MOBILE?'7px':'5px'),
-                    paddingTop: calMonthFit?'0.5px':(IS_MOBILE?'2px':'1px'), paddingBottom: calMonthFit?'0.5px':(IS_MOBILE?'2px':'1px'),
-                    borderRadius: calMonthFit?'4px':(IS_MOBILE?'6px':'4px'),
+                    paddingLeft: IS_MOBILE?'4px':'5px', paddingRight: IS_MOBILE?'4px':'5px',
+                    paddingTop: IS_MOBILE?'0px':'1px', paddingBottom: IS_MOBILE?'0px':'1px',
+                    borderRadius: IS_MOBILE?'3px':'4px',
                     fontSize: calMonthFit?'10px':(IS_MOBILE?'10.5px':'11px'), fontWeight:600,
-                    whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis',
-                    lineHeight: calMonthFit?'12.5px':(IS_MOBILE?'13px':'16px'),
+                    whiteSpace:'nowrap', overflow:'hidden', textOverflow: IS_MOBILE?'clip':'ellipsis',
+                    lineHeight: IS_MOBILE?'12px':'16px',
                     opacity: isOtherMonth?0.55:1 }}, holidayName),
                 dayEvents.slice(0, MAX_SHOW).map(function(ev, i){
                   /* ★ 구글은 시각을 «1030» 처럼 붙여 쓴다(10:30 이 아니다).
@@ -54384,13 +54430,20 @@ function CorpDashboard(props){
                     style:{
                       background: chipBg,
                       color: calTextOn(chipBg),
-                      paddingLeft: calMonthFit?'5px':(IS_MOBILE?'7px':'5px'), paddingRight: calMonthFit?'5px':(IS_MOBILE?'7px':'5px'), paddingTop: calMonthFit?'0.5px':(IS_MOBILE?'2px':'1px'), paddingBottom: calMonthFit?'0.5px':(IS_MOBILE?'2px':'1px'),
-                      borderRadius: calMonthFit?'4px':(IS_MOBILE?'6px':'4px'),
+                      /* ── 칩 치수는 구글 위젯을 재어 맞춘 것이다 (대표 화면 2026-08-25) ──
+                         칸 131.5 · 칩 130(꽉 참) · 칩높이 33 · 칩사이 2 · 모서리 8  [기기픽셀]
+                         칸 폭에 견준 비율로 옮기면 칩높이 0.251 · 칩폭 0.989 · 사이 0.0152.
+                         ⚠ 글자 크기는 «건드리지 않는다» — 9.5px 은 눈이 아프다는 지적이
+                           이미 있었다. 줄인 것은 위아래 여백(0.5px)과 줄높이뿐이다. */
+                      paddingLeft: IS_MOBILE?'4px':'5px', paddingRight: IS_MOBILE?'4px':'5px',
+                      paddingTop: IS_MOBILE?'0px':'1px', paddingBottom: IS_MOBILE?'0px':'1px',
+                      borderRadius: IS_MOBILE?'3px':'4px',
                       /* 구글 월간 칩은 11px 쯤이다 — 9.5px 은 너무 작아 눈이 아프다는 지적이 있었다 */
                       fontSize: calMonthFit?'10px':(IS_MOBILE?'10.5px':'11px'), fontWeight: IS_MOBILE?600:500,
-                      letterSpacing: IS_MOBILE?'-0.01em':undefined,
-                      whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis',
-                      lineHeight: calMonthFit?'12.5px':(IS_MOBILE?'13px':'16px'),
+                      letterSpacing: IS_MOBILE?'-0.02em':undefined,
+                      /* 구글은 「…」 없이 글자 가운데서 그냥 자른다 — 「…」 는 한 글자를 더 먹는다 */
+                      whiteSpace:'nowrap', overflow:'hidden', textOverflow: IS_MOBILE?'clip':'ellipsis',
+                      lineHeight: IS_MOBILE?'12px':'16px',
                       opacity: (cell.date < todayStr) ? 0.65 : 1,
                       cursor: ev.draggable ? 'grab' : 'pointer',
                       userSelect:'none',
@@ -54410,8 +54463,13 @@ function CorpDashboard(props){
                     setDayPopover({ date:cell.date, events:dayEvents });
                     setEvDetail(null); setQuickCreate(null);
                   },
-                  style:{ fontSize: calMonthFit?'8.5px':'9.5px', color:'#94a3b8', fontWeight:700, padding: calMonthFit?'0 4px':'1px 6px', cursor:'pointer', lineHeight: calMonthFit?'11px':'12px' }},
-                  calMonthFit ? ('+'+hiddenCount) : ('+'+hiddenCount+'개')),
+                  /* 구글 위젯은 남은 일정을 「•••」 점 셋으로 알린다. 「+7」은 폭을 더 먹고,
+                     실제로 대표 화면에서는 칸 아래로 잘려 「⊥7」처럼 보였다.
+                     ⚠ 몇 건인지는 title 에 남긴다 — 눌러 보기 전에도 알 수 있게. */
+                  title: hiddenCount + '건 더 있습니다',
+                  style:{ fontSize:'12px', color:'#94a3b8', fontWeight:800, padding:'0 4px',
+                    cursor:'pointer', lineHeight:'12px', letterSpacing:'1px' }},
+                  '•••'),
                 // PC: +N개 더보기
                 !IS_MOBILE && hiddenCount > 0 && h('div', {
                   onClick: function(e){
@@ -56151,7 +56209,7 @@ var EXPENSE_CAT_QUICK = [
 // 법인 대시보드와 동일한 근로자 지정색: 커스텀 색(pureun_v6_staff_custom_colors) 우선 → STAFF_COLORS 순번
 // ※ CorpDashboard 내부의 STAFF_COLORS·staffColorMap 규칙과 반드시 일치 유지
 function ieumStaffColorMap(){
-  var STAFF_COLORS = ['#1e40af','#2563eb','#dc2626','#2563eb','#d97706','#16a34a','#d97706','#dc2626','#16a34a','#854d0e','#2563eb'];
+  var STAFF_COLORS = ['#2563eb','#16a34a','#dc2626','#d97706','#64748b','#1e40af','#4ade80','#991b1b','#fbbf24','#854d0e','#475569'];
   var custom = {};
   try { custom = JSON.parse(localStorage.getItem('pureun_v6_staff_custom_colors')||'{}') || {}; } catch(e){}
   var map = {};
