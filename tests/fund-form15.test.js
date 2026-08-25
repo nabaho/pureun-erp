@@ -38,7 +38,11 @@ function grabDecl(name) {
 function load() {
   const box = {};
   new Function([
+    /* ⚠ 계정 이름표를 «하나라도» 빠뜨리면 ReferenceError 로 통째로 멎는다.
+       ADMIN_ACCTS 는 나중에 결산 셈에 들어왔는데 여기 안 넣어 두어 이 파일이 열두 개
+       한꺼번에 빨갛게 됐다(2026-08-25). 새 이름표를 쓰면 여기에도 함께 적는다. */
     grabDecl('ACCT_CHART'), grabDecl('PURPOSE_ACCTS'), grabDecl('OPEN_ACCT'),
+    grabDecl('ADMIN_ACCTS'),
     grabDecl('RESERVE_ACCTS'), grabDecl('F15_ROWS'), grabDecl('BF_KINDS'),
     'var funds={}, S={fundId:"F1", year:2025};',
     'function num(v){ if(v==null) return 0; var n=parseFloat(String(v).replace(/[^0-9.\\-]/g,"")); return isNaN(n)?0:n; }',
