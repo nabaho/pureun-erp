@@ -1346,6 +1346,8 @@ table.sbox.tight td.none{padding:26px 8px}
   overflow:hidden;text-overflow:ellipsis;max-width:230px}
 #folderMenu .fmhead span{font-weight:400;color:#a8abb2}
 #folderMenu .fmform{display:flex;gap:6px;padding:4px 8px 8px}
+/* 옮길 폴더가 스물여덟이라 창을 넘긴다 — 창 안에서 굴러가게 둔다 */
+#folderMenu .fmlist{max-height:min(58vh,420px);overflow-y:auto}
 #folderMenu .fmform input{flex:1;min-width:0;border:1px solid #dde3ee;border-radius:7px;
   padding:7px 9px;font-size:13px;font-family:inherit}
 #folderMenu .fmform button{flex:none;border:none;background:#2563d1;color:#fff;
@@ -11455,7 +11457,7 @@ function mbMobileHtml(){
       <span class="sp"></span>
       ${state.mbPickMode ? `
         <button class="dmm-ic" onclick="mbTrash()" title="휴지통으로">🗑</button>
-        <button class="dmm-ic" onclick="mbMove()" title="폴더 옮기기">📁</button>
+        <button class="dmm-ic" onclick="mbMove(event)" title="폴더 옮기기">📁</button>
         <button class="dmm-ic on" onclick="mbPickMode()" title="고르기 끝">✕</button>`
       : `
         <button class="dmm-ic" ${_mbBusy?'disabled':''} onclick="mbPull()" title="새로 가져오기">${_mbBusy?'⏳':'↻'}</button>
@@ -11608,7 +11610,7 @@ function mbBoxHtml(){
       <button onclick="mbReply(true)" title="받는 사람 모두에게 답장합니다">전체답장</button>
       <button onclick="mbForward()" title="고른 한 통을 우리 주소로 새로 써서 전달합니다">전달</button>
       <button onclick="mbResend()" title="같은 제목으로 새 편지를 씁니다">다시보내기</button>
-      <button onclick="mbMove()" title="고른 메일을 다른 폴더로 옮깁니다">이동 ˅</button>
+      <button onclick="mbMove(event)" title="고른 메일을 다른 폴더로 옮깁니다">이동 ˅</button>
       ${/* 열면 읽음이 되는데 «되돌릴 길»이 없었다 — 나중에 다시 볼 것을 표시해 두는 자리다 */''}
       <button onclick="mbReadMark(false)" title="고른 메일을 안 읽음으로 되돌립니다">안읽음</button>
       <button ${_mbBusy?'disabled':''} onclick="mbPull()"
@@ -11948,16 +11950,32 @@ function mbTrash(){
     + `⚠ 다음메일함에서도 휴지통으로 갑니다(되돌릴 수 있습니다).\n진행할까요?`)) return;
   mbMoveTo(picked, trash.slug, '휴지통');
 }
-function mbMove(){
+/* ── 어디로 옮길까 — «누른 자리 옆»에 폴더를 늘어놓고 눌러서 고른다 ──
+   ⚠ 예전에는 브라우저 알림창에 「1. 자문사답변 2. 급여 … 번호를 적어 주세요」가 떴다.
+     폴더가 스물여덟이라 목록이 화면을 넘겼고, 세어 가며 번호를 적어야 했다
+     (대표 지시 2026-08-25 — 폴더 손보는 창과 같은 까닭). */
+function mbMove(ev){
   const picked = mbPicked(); if(!picked.length) return toast('고른 것이 없습니다');
   const dests = mbFolders().filter(f=>f.kind==='custom'||f.kind==='archive'||f.kind==='inbox');
   if(!dests.length) return toast('옮길 폴더가 없습니다 — 새로고침을 먼저 눌러 주세요', 8000);
-  const list = dests.map((f,i)=>`${i+1}. ${f.name}`).join('\n');
-  const ans = prompt(`메일 ${picked.length}통을 어디로 옮길까요? 번호를 적어 주세요.\n\n${list}\n\n`
-    + `⚠ 다음메일함에서도 그 폴더로 옮겨집니다.`);
-  const i = Number(String(ans||'').trim()) - 1;
-  if(!(i>=0 && i<dests.length)) return;
-  mbMoveTo(picked, dests[i].slug, dests[i].name);
+  const m = $('folderMenu'); if(!m) return;
+  const delim = mbDelim();
+  m.innerHTML = `<div class="fmhead">${picked.length.toLocaleString()}통을 어디로 <span>다음메일에서도 옮겨집니다</span></div>
+    <div class="fmlist">${dests.map(f=>{
+      /* 층이 있으면 들여써서 어버이 밑에 있다는 것이 보이게 */
+      const at = delim ? String(f.path||'').lastIndexOf(delim) : -1;
+      const depth = (delim && at>0) ? String(f.path).split(delim).length-1 : 0;
+      const leaf = at>0 ? String(f.path).slice(at+delim.length) : f.name;
+      return `<div class="fmi" style="padding-left:${14+depth*13}px"
+        onclick="closeFolderMenu();mbMovePicked('${f.slug}')">📁 ${esc(leaf)}</div>`;
+    }).join('')}</div>`;
+  mbPlaceMenu(m, ev);
+}
+/* 창에서 고른 뒤 — 고른 목록은 그 사이 바뀌지 않는다(창을 여는 동안 목록을 안 건드린다) */
+function mbMovePicked(toSlug){
+  const f = mbFolderBy(toSlug); if(!f) return;
+  const picked = mbPicked(); if(!picked.length) return toast('고른 것이 없습니다');
+  mbMoveTo(picked, toSlug, f.name);
 }
 function mbMoveTo(picked, toSlug, toName){
   const byBox = {};

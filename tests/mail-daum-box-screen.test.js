@@ -378,6 +378,25 @@ test('★ 폴더 손보는 창은 «누른 자리 옆»에 뜬다 — 브라우�
   assert.match(held.html, /onclick=/, '눌러서 고를 수 없다');
 });
 
+test('★ 「이동」도 폴더를 늘어놓고 눌러서 고른다 — 번호를 세어 적지 않는다', () => {
+  /* 폴더가 스물여덟이라 알림창 목록이 화면을 넘겼고, 세어 가며 번호를 적어야 했다. */
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  const held = { html:'' };
+  c.$ = (id) => (id === 'folderMenu'
+    ? { set innerHTML(v){ held.html = v; }, get innerHTML(){ return held.html; },
+        style:{}, offsetHeight:200, contains:()=>false }
+    : null);
+  c.window = { innerWidth: 1600, innerHeight: 900 };
+  c.setTimeout = () => {};
+  c.state.mbCursor = 0;                      // 한 통을 짚어 둔 상태
+  c.mbMove({ clientX: 500, clientY: 200 });
+  assert.match(held.html, /mbMovePicked\(/, '눌러서 고를 수 없다');
+  assert.match(held.html, /1\.자문사답변/, '옮길 폴더가 안 나온다');
+  assert.ok(held.html.indexOf('번호를 적어') < 0, '아직 번호를 적으라고 한다');
+  assert.match(src, /#folderMenu \.fmlist\{[^}]*overflow-y:auto/,
+    '폴더가 많으면 창을 넘긴다 — 창 안에서 굴러가야 한다');
+});
+
 test('이름 바꾸기·새 폴더는 그 창 «안에서» 끝난다 — 창을 두 번 여닫지 않는다', () => {
   const c = load({ folders: FOLDERS, msgs: MSGS });
   const held = { html:'' };
