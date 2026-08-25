@@ -73,6 +73,11 @@ function load(over){
     '_mbMsgs = ' + JSON.stringify(o.msgs || {}) + ';' +
     '_mbMeta = { at: 1, ok: true };', ctx);
   ctx._held = held;
+  /* 덩어리 안의 let 값(_mbMsgs)은 밖에서 못 만진다 — 줄 하나를 갈아 끼울 길을 둔다 */
+  ctx.__setRow = (slug, uid, row) => {
+    vm.runInContext('_mbMsgs[' + JSON.stringify(slug) + '][' + JSON.stringify(uid) + '] = '
+      + JSON.stringify(row) + ';', ctx);
+  };
   return ctx;
 }
 
@@ -309,6 +314,63 @@ test('메일 화면이 아니면 방향키를 가로채지 않는다', () => {
 test('☐ 를 안 눌렀어도 짚어 둔 줄을 고른 것으로 본다 — 「고른 것이 없습니다」로 막지 않는다', () => {
   const c = load({ folders: FOLDERS, msgs: MSGS, state:{ mbCursor:0 } });
   assert.equal(c.mbPicked().length, 1);
+});
+
+/* ══════ 답장 · 중요(★) · 읽음 (대표 지시 2026-08-25 「내부적으로 기능이 부족하다」) ══════ */
+
+test('★ 답장·전체답장이 있다 — 메일 앱에서 가장 많이 쓰는 자리인데 없었다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  const h = c.mbBoxHtml();
+  assert.ok(h.indexOf('mbReply(false)') > 0, '답장이 없다');
+  assert.ok(h.indexOf('mbReply(true)') > 0, '전체답장이 없다');
+});
+
+test('★ 별을 누를 수 있다 — 보이는데 안 눌리면 고장으로 읽힌다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  assert.ok(c.mbBoxHtml().indexOf('mbStar(') > 0, '별에 누를 길이 없다');
+});
+
+test('★ 읽음을 되돌릴 수 있다 — 열면 읽음이 되는데 되돌릴 길이 없었다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  assert.ok(c.mbBoxHtml().indexOf('mbReadMark(false)') > 0, '안읽음으로 되돌릴 길이 없다');
+});
+
+test('★ 답장은 「RE:」를 겹쳐 붙이지 않는다 — RE: RE: RE: 가 쌓인다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  let got = null;
+  c.openMailPage = (p) => { got = p; };
+  c.state.mbOpen = { slug:'B_INBOX', uid:'10', text:'원래 본문입니다' };
+  c.mbReply(false);
+  assert.ok(got, '쓰기 화면을 안 열었다');
+  assert.equal(got.subject, 'RE: 소득세 확인 부탁드립니다');
+  /* 이미 RE: 가 붙은 것에는 더 안 붙인다 */
+  c.state.mbOpen = { slug:'B_INBOX', uid:'11', text:'x' };
+  c.mbReply(false);
+  assert.equal(got.subject, '세금계산서 발행 안내'.replace(/^/, 'RE: '));
+});
+
+test('★ 답장에 원래 글을 인용해 넣는다 — 인용이 없으면 받는 쪽이 무슨 이야기인지 모른다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  let got = null;
+  c.openMailPage = (p) => { got = p; };
+  c.state.mbOpen = { slug:'B_INBOX', uid:'10', text:'원래 본문입니다' };
+  c.mbReply(false);
+  assert.match(got.body, /> 원래 본문입니다/, '원래 글이 인용되지 않았다');
+  assert.equal(got.to, 'tax@hanse.kr', '보낸 사람에게 가지 않는다');
+});
+
+test('★ 전체답장은 나를 빼고 나머지에게 간다 — 나에게 또 보내지 않는다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS, me: '370-6@daum.net' });
+  let got = null;
+  c.openMailPage = (p) => { got = p; };
+  /* 받는 곳에 나와 남이 함께 있다 */
+  c.state.mbOpen = { slug:'B_INBOX', uid:'10', text:'x' };
+  const row = { u:10, f:'세무법인 한세', e:'tax@hanse.kr',
+    t:'370-6@daum.net,other@x.com', s:'제목', d:1 };
+  c.__setRow('B_INBOX', '10', row);
+  c.mbReply(true);
+  assert.equal(got.cc.indexOf('370-6@daum.net'), -1, '나에게 또 보내고 있다');
+  assert.ok(got.cc.indexOf('other@x.com') >= 0, '함께 받던 사람이 빠졌다');
 });
 
 /* ══════ 내 메일함 — 만들기·이름 바꾸기·지우기 (대표 지시 2026-08-25) ══════ */

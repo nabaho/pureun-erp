@@ -647,6 +647,38 @@ module.exports = function build(deps) {
         }
       })),
 
+    /* ══════ 표시 켜고 끄기 — 중요(★) · 읽음 ══════
+       ⚠ 이것도 다음메일을 «고치는» 자리다. 다만 되돌릴 수 있는 것이라(다시 누르면 된다)
+         물어보지 않고 그 자리에서 한다 — 별을 누를 때마다 「하시겠습니까」가 뜨면 못 쓴다.
+       ⚠ 켤 수 있는 표시를 둘로 못 박는다. \Deleted 같은 것을 여기로 흘려보내면
+         이 창구가 조용히 «지우는 길»이 된다. */
+    flagMailMessages: F
+      .region(REGION)
+      .runWith({ secrets: ['DAUM_MAIL_PASSWORD'], timeoutSeconds: 120, memory: '512MB' })
+      .https.onRequest((req, res) => gate(req, res, async () => {
+        const b = req.body || {};
+        const slug = String(b.slug || '');
+        const uids = (Array.isArray(b.uids) ? b.uids : []).map(String).filter((u) => /^\d+$/.test(u));
+        const FLAGS = { star: '\\Flagged', read: '\\Seen' };
+        const flag = FLAGS[String(b.flag || '')];
+        const on = !!b.on;
+        if (!slug || !uids.length || !flag) { reply(res, 400, { ok: false, error: '무엇에 무슨 표시를 할지 알 수 없습니다.' }); return; }
+        if (uids.length > 200) { reply(res, 400, { ok: false, error: '한 번에 200통까지 할 수 있습니다.' }); return; }
+
+        await withFolder(deps, slug, async (client) => {
+          if (on) await client.messageFlagsAdd(uids.join(','), [flag], { uid: true });
+          else await client.messageFlagsRemove(uids.join(','), [flag], { uid: true });
+        }, { write: true });
+
+        /* 우리 목록도 그 자리에서 맞춘다 — 다음 회차를 기다리면 별이 도로 꺼져 보인다 */
+        const key = (String(b.flag) === 'star') ? 'g' : 'r';
+        const up = {};
+        uids.forEach((u) => { up[ROOT + '/msgs/' + slug + '/' + u + '/' + key] = on ? 1 : 0; });
+        await deps.getDatabase().ref().update(up);
+
+        reply(res, 200, { ok: true, n: uids.length });
+      })),
+
     /* ══════ 휴지통으로 · 폴더 옮기기 ══════
        ⚠ 여기가 거울이 원본을 «고치는» 유일한 자리다(읽음 표시 빼고). 그래서 좁게 만든다 —
          옮기는 것만 되고, 지우는 것(\Deleted+EXPUNGE)은 아예 없다. 다음메일 휴지통에서
