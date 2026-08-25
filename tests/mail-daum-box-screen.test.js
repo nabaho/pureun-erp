@@ -316,6 +316,111 @@ test('☐ 를 안 눌렀어도 짚어 둔 줄을 고른 것으로 본다 — 「
   assert.equal(c.mbPicked().length, 1);
 });
 
+/* ══════ 옆줄 손질 (대표 화면 2026-08-25) ══════ */
+
+test('★ 옆줄 위 덩어리는 틀고정 — 폴더를 내려도 [메일쓰기]가 사라지지 않는다', () => {
+  /* 폴더가 스물여덟이라 아래로 내리면 로고·내 정보·메일쓰기가 화면 밖으로 나갔다. */
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  assert.ok(c.mailSideHtml().indexOf('dm-fix') > 0, '붙박이 덩어리가 없다');
+  assert.match(src, /\.dm-fix\{[^}]*position:sticky/, '붙박이 규칙이 없다');
+  assert.match(src, /\.dm-fix\{[^}]*background:#fff/,
+    '바탕을 안 칠하면 밑으로 지나가는 폴더 글자가 비쳐 겹친다');
+});
+
+test('★ 주소만으로는 누구인지 모른다 — 명함첩에서 이름·회사를 찾아 붙인다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  c.allItems = () => ({
+    a: { id:'a', email:'huamstoneceo@gmail.com', name:'김대표', company:'화암스톤' },
+    b: { id:'b', email:'tax@hanse.kr', name:'박세무', company:'' }
+  });
+  assert.equal(c.mbNameOf('huamstoneceo@gmail.com'), '김대표 (화암스톤)');
+  assert.equal(c.mbNameOf('tax@hanse.kr'), '박세무', '회사가 없으면 이름만');
+  assert.equal(c.mbNameOf('none@x.com', '메일이 알려준 이름'), '메일이 알려준 이름',
+    '명함에 없으면 메일이 알려 준 이름을 쓴다');
+  assert.equal(c.mbNameOf('none@x.com', ''), 'none@x.com', '그것도 없으면 주소를 쓴다');
+});
+
+test('받는 곳이 여럿이면 모두 이름으로 적는다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  c.allItems = () => ({ a: { id:'a', email:'a@x.com', name:'가가', company:'가나' } });
+  const got = c.mbNamesOf('a@x.com, b@y.com', '');
+  assert.match(got, /가가 \(가나\)/);
+  assert.match(got, /b@y\.com/, '명함에 없는 사람이 빠지면 안 된다');
+  assert.equal(c.mbNamesOf('', ''), '');
+});
+
+test('★ 보낸메일함 줄에도 받는 사람 이름이 나온다 — 주소만 있으면 누구인지 모른다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS, state:{ mbBox:'B_SENT' } });
+  c.allItems = () => ({ a: { id:'a', email:'client@abc.co.kr', name:'김대표', company:'에이비씨' } });
+  const rows = c.mbVisibleRows();
+  assert.equal(c.mbWho(rows[0]), '김대표 (에이비씨)');
+});
+
+test('★ 폴더 손보는 창은 «누른 자리 옆»에 뜬다 — 브라우저 알림창으로 올라가지 않는다', () => {
+  /* 대표 화면 2026-08-25: prompt 가 화면 맨 위에 떠서, 누른 자리에서 멀고
+     글을 읽고 번호를 적어야 했다. */
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  const held = { html:'', shown:false };
+  c.$ = (id) => (id === 'folderMenu'
+    ? { set innerHTML(v){ held.html = v; }, get innerHTML(){ return held.html; },
+        style:{ set display(v){ held.shown = (v === 'block'); } }, offsetHeight:160,
+        contains:()=>false }
+    : null);
+  c.window = { innerWidth: 1600, innerHeight: 900 };
+  c.setTimeout = () => {};
+  c.mbFolderMenu('B_MINE', { clientX: 120, clientY: 300 });
+  assert.ok(held.shown, '창이 안 떴다');
+  assert.match(held.html, /이름 바꾸기/);
+  assert.match(held.html, /아래에 새 폴더/);
+  assert.match(held.html, /폴더 지우기/);
+  /* 「번호를 적어 주세요」 같은 글이 아니라 «눌러서 고르는» 것이어야 한다 */
+  assert.ok(held.html.indexOf('번호를 적어') < 0, '아직 번호를 적으라고 한다');
+  assert.match(held.html, /onclick=/, '눌러서 고를 수 없다');
+});
+
+test('이름 바꾸기·새 폴더는 그 창 «안에서» 끝난다 — 창을 두 번 여닫지 않는다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  const held = { html:'' };
+  c.$ = (id) => (id === 'folderMenu'
+    ? { set innerHTML(v){ held.html = v; }, get innerHTML(){ return held.html; },
+        style:{}, offsetHeight:160, contains:()=>false }
+    : null);
+  c.window = { innerWidth: 1600, innerHeight: 900 };
+  c.setTimeout = () => {};
+  c.mbMenuRename('B_MINE');
+  assert.match(held.html, /id="mbFName"/, '이름을 적을 칸이 없다');
+  assert.match(held.html, /mbDoRename/, '바꾸는 단추가 없다');
+});
+
+test('★ 폴더를 끌어서 차례를 옮길 수 있다 — 차례는 «우리 쪽에만» 둔다', () => {
+  /* ⚠ 다음메일(IMAP)에는 폴더 차례라는 것이 없다 — 서버는 늘 이름순으로 준다. */
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  const h = c.mailSideHtml();
+  assert.match(h, /draggable="true"/, '끌 수 없다');
+  assert.ok(h.indexOf('mbDragStart(') > 0 && h.indexOf('mbDrop(') > 0, '끌어 놓는 길이 없다');
+  assert.ok(h.indexOf('grip') > 0, '잡을 손잡이가 없다');
+});
+
+test('★ 차례를 옮기면 그 자리에 들어간다 — 옮겼는데 제자리면 아무도 안 믿는다', () => {
+  const folders = {};
+  ['가','나','다','라'].forEach((n,i)=>{
+    folders['F'+i] = { path:n, name:n, kind:'custom', order:7, total:1, unseen:0 };
+  });
+  const c = load({ folders: folders });
+  c.firebase = { database: () => ({ ref: () => ({ set: () => Promise.resolve(),
+    once: () => Promise.resolve({ val: () => ({}) }) }) }) };
+  /* ⚠ 이 덩어리 안에는 «진짜» renderPCSide 가 들어 있다(pcItem…switchTab 을 통째로 돌린다).
+     그것이 $('pcSide') 에 그리므로 받아 줄 자리를 둔다 — 없으면 여기서 넘어진다. */
+  c.$ = () => ({ set innerHTML(v){}, get innerHTML(){ return ''; } });
+  const before = c.mbMineTree().map(f=>f.name);
+  assert.deepEqual(before, ['가','나','다','라'], '처음에는 이름순');
+  /* 「라」를 「가」 앞으로 */
+  c.state.mbDrag = 'F3';
+  c.mbDrop({ preventDefault(){} }, 'F0', null);
+  assert.deepEqual(c.mbMineTree().map(f=>f.name), ['라','가','나','다'],
+    '끌어다 놓은 자리에 안 들어갔다');
+});
+
 /* ══════ 답장 · 중요(★) · 읽음 (대표 지시 2026-08-25 「내부적으로 기능이 부족하다」) ══════ */
 
 test('★ 답장·전체답장이 있다 — 메일 앱에서 가장 많이 쓰는 자리인데 없었다', () => {
