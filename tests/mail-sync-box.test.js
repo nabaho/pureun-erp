@@ -33,6 +33,27 @@ test('★ 특수용도표시가 있으면 그것을 믿는다 — 이름이 무�
   assert.equal(MB.folderKind({ specialUse: '\\Trash', name: 'zzz' }), 'trash');
 });
 
+test('★ 그 계정에 «실제로 있는» 이름을 안다 — 실측 2026-08-25 (370-6@daum.net)', () => {
+  /* 다음메일이 만들어 둔 칸은 「스팸편지함」·「내게쓴편지함」·「예약편지함」이다.
+     예전 목록에는 「스팸함」만 있어서, 400통이 든 내게쓴편지함이 「내 메일함」 밑
+     잡폴더로 밀려나 있었고 화면의 「내게쓴메일함」은 가짜 거르개라 늘 비어 있었다. */
+  assert.equal(MB.folderKind({ name: '스팸편지함', path: '스팸편지함' }), 'spam');
+  assert.equal(MB.folderKind({ name: '내게쓴편지함', path: '내게쓴편지함' }), 'tome');
+  assert.equal(MB.folderKind({ name: '예약편지함', path: '예약편지함' }), 'sched');
+  /* 대표가 손으로 만든 폴더는 그대로 손폴더다 — 이름에 점이 있어도 마찬가지 */
+  assert.equal(MB.folderKind({ name: '1.자문사답변', path: '1.자문사답변' }), 'custom');
+  assert.equal(MB.folderKind({ name: '청구서함', path: '청구서함' }), 'custom');
+});
+
+test('★ 옆줄 차례 — 받은 → 내게쓴 → 보낸 → 임시 → 예약 → 보관 → 손폴더 → 스팸 → 휴지통', () => {
+  const order = (k) => MB.folderOrder(k);
+  const seq = ['inbox','tome','sent','drafts','sched','archive','custom','spam','trash'];
+  for(let i = 1; i < seq.length; i++){
+    assert.ok(order(seq[i-1]) < order(seq[i]),
+      seq[i-1] + ' 이 ' + seq[i] + ' 보다 뒤에 있다');
+  }
+});
+
 test('표시가 없으면 이름으로 짚는다 — 한글·영문 둘 다', () => {
   assert.equal(MB.folderKind({ name: 'INBOX', path: 'INBOX' }), 'inbox');
   assert.equal(MB.folderKind({ name: '보낸메일함', path: '보낸메일함' }), 'sent');

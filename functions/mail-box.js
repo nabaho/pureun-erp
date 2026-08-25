@@ -61,13 +61,20 @@ const KIND_BY_USE = {
   '\\Junk': 'spam',
   '\\Archive': 'archive',
 };
+/* ⚠ 이름을 여기 적을 때는 «그 계정에 실제로 있는 이름»을 넣는다.
+   실측 2026-08-25 (370-6@daum.net): 다음메일이 만들어 둔 칸은 「스팸편지함」·
+   「내게쓴편지함」·「예약편지함」이다. 예전 목록에는 「스팸함」만 있어서, 400통이 든
+   내게쓴편지함이 「내 메일함」 밑 잡폴더로 밀려나 있었고 화면의 「내게쓴메일함」은
+   가짜 거르개라 거의 늘 비어 있었다. */
 const KIND_BY_NAME = [
   ['inbox', ['inbox', '받은메일함', '받은편지함']],
   ['sent', ['sent', 'sent messages', 'sent items', '보낸메일함', '보낸편지함']],
   ['drafts', ['drafts', 'draft', '임시보관함', '임시저장']],
   ['trash', ['trash', 'deleted messages', '휴지통', '지운메일함']],
-  ['spam', ['junk', 'spam', '스팸함', '스팸메일함']],
+  ['spam', ['junk', 'spam', '스팸함', '스팸메일함', '스팸편지함']],
   ['archive', ['archive', '보관메일함', '보관함']],
+  ['tome', ['내게쓴메일함', '내게쓴편지함']],
+  ['sched', ['예약메일함', '예약편지함']],
 ];
 
 function folderKind(box) {
@@ -88,7 +95,8 @@ function folderKind(box) {
 /* 화면에 보일 차례. 다음메일 왼쪽 차림새와 같은 순서다 —
    받은 → 보낸 → 임시 → 보관 → 스팸 → 휴지통 → 손으로 만든 폴더.
    손으로 만든 폴더는 이름순이다(대표 폴더가 「1.자문사답변 … 9.자율점검」이라 이름순이 곧 번호순). */
-const KIND_ORDER = { inbox: 1, sent: 2, drafts: 3, archive: 4, spam: 8, trash: 9, custom: 5 };
+const KIND_ORDER = { inbox: 1, tome: 2, sent: 3, drafts: 4, sched: 5, archive: 6,
+  custom: 7, spam: 8, trash: 9 };
 
 function folderOrder(kind) {
   const n = KIND_ORDER[kind];

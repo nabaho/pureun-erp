@@ -675,7 +675,8 @@ table.sbox tr.bad td{background:#fdf4f4}
   padding-right:16px}
 .dm-row .box{flex:none;font-size:11px;color:#a8abb2;padding-right:12px;max-width:120px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.dm-row .at{flex:none;width:74px;text-align:right;color:#8c8c8c;font-size:12.5px;padding-right:4px}
+.dm-row .at{flex:none;width:112px;text-align:right;color:#8c8c8c;font-size:12.5px;
+  padding-right:4px;white-space:nowrap}
 /* 안 읽은 것은 굵게 — 다음메일과 같다 */
 .dm-row.unread .who,.dm-row.unread .sub{font-weight:700}
 .dm-none{text-align:center;color:#a8abb2;font-size:13px;padding:52px 10px;line-height:1.8}
@@ -10702,8 +10703,8 @@ function mbNow(){
    ⚠ IMAP 이 주는 이름(INBOX 등)을 그대로 쓰지 않는다. 사람이 다음메일에서 보는 이름은
      「받은메일함」이다 — 화면에 INBOX 라고 적으면 같은 칸인지 알 수 없다.
      손으로 만든 폴더만 제 이름을 쓴다(그건 대표가 붙인 이름이라 그게 맞다). */
-const MB_KIND_LABEL = { inbox:'받은메일함', sent:'보낸메일함', drafts:'임시보관함',
-  archive:'보관메일함', spam:'스팸함', trash:'휴지통' };
+const MB_KIND_LABEL = { inbox:'받은메일함', tome:'내게쓴메일함', sent:'보낸메일함',
+  drafts:'임시보관함', sched:'예약메일함', archive:'보관메일함', spam:'스팸함', trash:'휴지통' };
 function mbBoxName(id){
   if(id==='*all')  return '전체메일';
   if(id==='*tome') return '내게쓴메일함';
@@ -10770,14 +10771,20 @@ function mbWho(v){
 }
 
 /* 시각 — 오늘이면 시:분, 올해면 월.일, 지난해면 연.월.일. 다음메일과 같은 결이다. */
+/* ⚠ 날짜와 시각을 «함께» 적는다 (대표 지시 2026-08-25).
+   예전에는 오늘 온 것은 시각만(17:20), 지난 것은 날짜만(08.23) 적었다. 그래서
+   보낸메일함에서 「그날 몇 시에 보냈나」를 이 화면에서는 알 수 없었다 — 하루에
+   스무 통을 보내는 자리라 시각이 곧 순서다.
+   올해 것은 「08.25 17:20」, 지난해 것은 「25.08.25 17:20」. */
 function mbTime(ms){
   const n = Number(ms||0);
   if(!n) return '';
   const d = new Date(n), now = new Date();
   const p2 = x=>('0'+x).slice(-2);
-  if(d.toDateString()===now.toDateString()) return p2(d.getHours())+':'+p2(d.getMinutes());
-  if(d.getFullYear()===now.getFullYear()) return p2(d.getMonth()+1)+'.'+p2(d.getDate());
-  return String(d.getFullYear()).slice(2)+'.'+p2(d.getMonth()+1)+'.'+p2(d.getDate());
+  const hm = p2(d.getHours())+':'+p2(d.getMinutes());
+  const md = p2(d.getMonth()+1)+'.'+p2(d.getDate());
+  if(d.getFullYear()===now.getFullYear()) return md+' '+hm;
+  return String(d.getFullYear()).slice(2)+'.'+md+' '+hm;
 }
 
 /* ══════ 왼쪽 옆줄 ══════ */
@@ -10843,14 +10850,19 @@ function mailSideHtml(){
     </div>`;
   };
   h += row('*all','✉','전체메일');
-  const inbox = mbFolderOf('inbox')[0];
-  if(inbox) h += row(inbox.slug,'📥','받은메일함');
-  h += row('*tome','↗','내게쓴메일함');
+  mbFolderOf('inbox').forEach(f=>{ h += row(f.slug,'📥','받은메일함'); });
+  /* ⚠ 내게쓴메일함·예약메일함은 다음메일에 «진짜 폴더»로 있다(실측 2026-08-25:
+     내게쓴편지함 400통 · 예약편지함 142통). 예전에는 가짜 거르개(*tome)와 앱의 예약칸을
+     그 자리에 두어, 400통이 든 칸이 「내 메일함」 밑 잡폴더로 밀려나 있었다.
+     진짜 폴더가 없는 계정을 위해 옛 자리를 뒤에 남겨 둔다. */
+  const tome = mbFolderOf('tome');
+  if(tome.length) tome.forEach(f=>{ h += row(f.slug,'↗','내게쓴메일함'); });
+  else h += row('*tome','↗','내게쓴메일함');
   mbFolderOf('sent').forEach(f=>{ h += row(f.slug,'✈','보낸메일함','<span class="pill">수신확인</span>'); });
   mbFolderOf('drafts').forEach(f=>{ h += row(f.slug,'🗂','임시보관함'); });
-  /* 예약메일함 — 다음메일의 예약은 IMAP 으로 안 보인다. 우리 앱이 잡고 있는 예약이
-     실제로 나갈 것이므로 그것을 여기에 둔다(자리는 다음메일과 같은 자리). */
-  h += `<div class="dm-f ${state.mailSent==='sched'?'on':''}" onclick="openSchedBox()">
+  const sch = mbFolderOf('sched');
+  if(sch.length) sch.forEach(f=>{ h += row(f.slug,'🕐','예약메일함'); });
+  else h += `<div class="dm-f ${state.mailSent==='sched'?'on':''}" onclick="openSchedBox()">
       <span class="ic">🕐</span><span class="nm">예약메일함</span>
       ${schedList().length?`<span class="n">${schedList().length}</span>`:''}</div>`;
   mbFolderOf('archive').forEach(f=>{ h += row(f.slug,'📦','보관메일함'); });
@@ -10890,6 +10902,12 @@ function mailSideHtml(){
     h += `<div class="dm-f sub ${state.mailSent===true&&!state.sentCat&&!state.sentBy?'on':''}" onclick="openSentBox()"
         title="앱이 보낸 편지의 기록 — 누가·무엇을 붙여 보냈는지">
         <span class="nm">📤 앱이 보낸 기록</span>${sent.length?`<span class="n">${sent.length}</span>`:''}</div>`;
+    /* ⚠ 앱이 «잡아 둔» 예약은 다음메일의 예약편지함과 다른 것이다 — 아직 우리 DB 에만
+       있고 때가 되면 서버가 보낸다. 위 「예약메일함」(다음메일 폴더)과 헷갈리지 않게
+       이름을 「앱이 예약한 것」으로 두고 여기에 둔다. */
+    h += `<div class="dm-f sub ${state.mailSent==='sched'?'on':''}" onclick="openSchedBox()"
+        title="앱이 잡아 둔 예약 — 아직 나가지 않았습니다. 다음메일의 예약편지함과 다른 것입니다">
+        <span class="nm">⏰ 앱이 예약한 것</span>${schedList().length?`<span class="n">${schedList().length}</span>`:''}</div>`;
     /* 서버가 「급여자료」 폴더에서 무엇을 보고 무엇을 담았나 — 받은 메일 처리 기록이다.
        메일함 목록과는 다른 것이다(이쪽은 담긴 결과가 요점). */
     h += `<div class="dm-f sub ${state.mailSent==='inbox'?'on':''}" onclick="openInbox()"
@@ -11190,12 +11208,16 @@ function mbDrawerHtml(){
     </div>`;
 
   h += row('*all','✉','전체메일');
-  const inbox = mbFolderOf('inbox')[0];
-  if(inbox) h += row(inbox.slug,'📥','받은메일함');
-  h += row('*tome','📝','내게쓴메일함','<span class="pill">내게쓰기</span>');
+  mbFolderOf('inbox').forEach(f=>{ h += row(f.slug,'📥','받은메일함'); });
+  /* PC 옆줄과 «같은 규칙» — 진짜 폴더가 있으면 그것을 쓴다(까닭은 mailSideHtml 주석) */
+  const tome = mbFolderOf('tome');
+  if(tome.length) tome.forEach(f=>{ h += row(f.slug,'📝','내게쓴메일함','<span class="pill">내게쓰기</span>'); });
+  else h += row('*tome','📝','내게쓴메일함','<span class="pill">내게쓰기</span>');
   mbFolderOf('sent').forEach(f=>{ h += row(f.slug,'➤','보낸메일함','<span class="pill">수신확인</span>'); });
   mbFolderOf('drafts').forEach(f=>{ h += row(f.slug,'📁','임시보관함'); });
-  h += `<div class="dmm-f" onclick="openSchedBox()"><span class="ic">🕐</span>
+  const sch = mbFolderOf('sched');
+  if(sch.length) sch.forEach(f=>{ h += row(f.slug,'🕐','예약메일함'); });
+  else h += `<div class="dmm-f" onclick="openSchedBox()"><span class="ic">🕐</span>
       <span class="nm">예약메일함</span>
       ${schedList().length?`<span class="n">${schedList().length}</span>`:''}</div>`;
   mbFolderOf('archive').forEach(f=>{ h += row(f.slug,'📥','보관메일함'); });
@@ -11216,6 +11238,7 @@ function mbDrawerHtml(){
   /* 앱에는 없는 우리 것 — 맨 아래에 조용히. 지우면 폰에서 그 화면들에 갈 길이 없어진다. */
   h += `<div class="dmm-sec"><span class="nm">푸른 도구</span></div>
     <button class="dmm-out" onclick="openSentBox()">📤 앱이 보낸 기록</button>
+    <button class="dmm-out" onclick="openSchedBox()">⏰ 앱이 예약한 것</button>
     <button class="dmm-out" onclick="openInbox()">🧾 서버 수신기록</button>
     <button class="dmm-out" onclick="openMatPage()">📎 자료함</button>
     <button class="dmm-out" onclick="closeMailPage()">‹ 기업정보함으로</button>

@@ -78,6 +78,10 @@ function load(over){
 
 const FOLDERS = {
   B_INBOX: { path:'INBOX', name:'INBOX', kind:'inbox', order:1, total:120, unseen:4 },
+  /* ⚠ 다음메일에는 이 둘이 «진짜 폴더»로 있다(실측 2026-08-25: 내게쓴편지함 400통 ·
+     예약편지함 142통). 가짜 거르개로 두면 400통이 든 칸이 잡폴더로 밀려난다. */
+  B_TOME:  { path:'내게쓴편지함', name:'내게쓴편지함', kind:'tome', order:2, total:400, unseen:0 },
+  B_SCHED: { path:'예약편지함', name:'예약편지함', kind:'sched', order:5, total:142, unseen:0 },
   B_SENT:  { path:'보낸메일함', name:'보낸메일함', kind:'sent', order:2, total:80, unseen:0 },
   B_DRAFT: { path:'임시보관함', name:'임시보관함', kind:'drafts', order:3, total:2, unseen:0 },
   B_MINE:  { path:'INBOX.1.자문사답변', name:'1.자문사답변', kind:'custom', order:5, total:9, unseen:2 },
@@ -234,14 +238,16 @@ test('★ 갈래 단추줄(청구서·쇼핑·소셜·프로모션)이 없다 �
 
 /* ══════ 시각 ══════ */
 
-test('오늘 온 것은 시:분, 지난 것은 날짜 — 다음메일과 같은 결', () => {
+test('★ 날짜와 시각을 함께 적는다 — 하루 스무 통을 보내는 자리라 시각이 곧 순서다', () => {
+  /* 대표 지시 2026-08-25: 「보낸메일함에 날짜 시간이 상세히 있어야 한다」.
+     예전에는 오늘 것은 시각만, 지난 것은 날짜만 적어 「그날 몇 시」를 알 수 없었다. */
   const c = load({ folders: FOLDERS });
   const now = new Date();
   now.setHours(9, 5, 0, 0);
-  assert.match(c.mbTime(now.getTime()), /^\d\d:\d\d$/);
+  assert.match(c.mbTime(now.getTime()), /^\d\d\.\d\d \d\d:\d\d$/, '오늘 것에 날짜가 없다');
   const old = new Date(now.getTime());
-  old.setMonth(old.getMonth() === 0 ? 11 : old.getMonth() - 1);
-  assert.ok(!/^\d\d:\d\d$/.test(c.mbTime(old.getTime())), '지난 달 것이 시:분으로 나옵니다');
+  old.setFullYear(old.getFullYear() - 1);
+  assert.match(c.mbTime(old.getTime()), /^\d\d\.\d\d\.\d\d \d\d:\d\d$/, '지난해 것에 연도가 없다');
   assert.equal(c.mbTime(0), '', '날짜를 모르면 비워 둔다');
 });
 
