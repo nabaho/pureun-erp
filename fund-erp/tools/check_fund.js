@@ -90,12 +90,52 @@ const titleLine = (src.split(/\r?\n/).find(l => l.startsWith('var FM_TITLE=')) |
 /* ══ 결산서 워크북에도 음수가 나오면 안 된다 ══
    화면 재무제표는 _retLabel/_retVal 로 이름을 바꿔 양수로 적는데 워크북 세 곳만 원값을 썼다.
    결손금 이월 기금(실제 사례 있음)은 **제출 서류에 음수가 찍혔다**. */
-ok('워크북 처분계산서도 이름을 바꿔 양수로', src.includes("_rl?'Ⅰ. 미처리결손금':'Ⅰ. 미처분이익잉여금'")
-  && src.includes("_rl?'Ⅲ. 차기이월결손금':'Ⅲ. 차기이월이익잉여금'"));
-ok('워크북 처분계산서에 원값을 안 쓴다',
-  !src.includes("['Ⅰ. 미처분이익잉여금',fin.retained,prv.retained]")
-  && !src.includes("['Ⅲ. 차기이월이익잉여금',fin.retained,prv.retained]"));
-ok('당기순손실도 이름을 바꾼다', src.includes("(fin.net<0?'  2) 당기순손실':'  2) 당기순이익')"));
+/* 이름 바꾸기는 이제 «한 벌 모델»(stmtRE·stmtBS) 이 맡는다 — 화면과 워크북이 함께 지킨다.
+   종전에는 화면만 고치고 워크북 세 곳이 원값을 써서 제출 서류에 음수가 찍혔다. */
+ok('처분계산서가 이름을 바꿔 양수로', src.includes("add(isLoss?'1. 처분전결손금':'1. 처분전이익잉여금',_retVal(fin.retained)")
+  && src.includes("add(isLoss?'4. 차기이월결손금':'4. 차기이월이익잉여금',_retVal(fin.retained)"));
+ok('처분계산서에 원값(음수)을 안 쓴다',
+  !/add\('1\. 처분전이익잉여금',fin\.retained/.test(src) && !/add\('4\. 차기이월이익잉여금',fin\.retained/.test(src));
+ok('당기순손실도 이름을 바꾼다', src.includes("add((fin.net<0?'2) 당기순손실':'2) 당기순이익'),_retVal(fin.net)"));
+ok('재무상태표 결손금도 이름을 바꿔 양수로',
+  src.includes("add(isLoss?'Ⅱ. 결손금':'Ⅱ. 이익잉여금',_retVal(fin.retained)"));
+
+/* ══ 재무제표 3종을 «제출 양식 그대로» ══
+   짜임새는 실제 제출본(2025 결산서)에서 그대로 옮겼다. 화면과 워크북이 각자 줄을 짜면
+   서로 달라진다 — 실제로 재무상태표가 화면 7줄·워크북 12줄로 갈라져 있었다. */
+ok('재무제표 3종이 한 벌 모델에서 나온다',
+  ['function stmtBS(', 'function stmtIS(', 'function stmtRE('].every(f => src.includes(f)));
+ok('화면이 그 모델을 쓴다', src.includes('stmtBS(cur,prv)') && src.includes('stmtIS(cur,prv,cur.tb,prv.tb)')
+  && src.includes('stmtRE(cur,prv)'));
+ok('워크북도 같은 모델을 쓴다', src.includes('_xlStmt(stmtBS(fin,prv))')
+  && src.includes('_xlStmt(stmtIS(fin,prv,fin.tb,prv.tb))') && src.includes('stmtRE(fin,prv).forEach('));
+// 재무상태표 — 제출본의 층(유동/비유동 · 당좌 · 준비금1·2 · 자본금 · 이익잉여금)
+ok('재무상태표가 유동·비유동으로 갈린다', src.includes("add('Ⅰ. 유동자산'") && src.includes("add('Ⅱ. 비유동자산'")
+  && src.includes("add('Ⅰ. 유동부채'") && src.includes("add('Ⅱ. 비유동부채'"));
+ok('당좌자산·투자자산 층이 있다', src.includes("add('가. 당좌자산'") && src.includes("add('1. 투자자산'"));
+/* 준비금은 근거 법령이 달라 제출본이 두 줄로 적는다 — 합계 한 줄로 뭉치면 안 된다 */
+ok('준비금1·2를 갈라 적는다', src.includes("add('1) 고유목적사업준비금1',fin.res1")
+  && src.includes("add('2) 고유목적사업준비금2',fin.res2"));
+ok('자본금·이익잉여금 층이 있다', src.includes("add('Ⅰ. 자본금'") && src.includes("add('1. 기본재산'"));
+// 손익계산서 — 제출본의 열 단계
+ok('손익계산서가 열 단계다',
+  ['1. 사업수익', '2. 고유목적사업비용', '3. 사업총이익', '4. 일반관리비', '5. 사업이익',
+   '6. 사업외수익', '7. 사업외비용', '8. 법인세차감전순이익', '9. 법인세등', '10. 당기순이익']
+    .every(t => src.includes("add('" + t + "'")));
+/* 준비금 환입·전입이 6·7 단계로 가야 한다 — 종전에는 「기타비용」에 뭉뚱그려 단계가 없었다 */
+ok('사업외수익은 준비금 환입', src.includes('var nonopRev=revenue-bizRev, nonopExp=otherExp;'));
+ok('사업외수익을 준비금1·2로 가른다', src.includes("if(x.credit!=='고유목적사업준비금환입') return;")
+  && src.includes('if(x.debit===RESERVE_ACCTS[0]) rev1+=amt;'));
+ok('법인세등은 9번 칸으로', src.includes("else if(n==='법인세등') tax+=s;")
+  && src.includes('var net=revenue-purpose-admin-otherExp-tax,'));
+/* 단계가 안 맞물리면 어딘가에서 분류가 새고 있다 — 조용히 두면 제출본이 틀어진다 */
+ok('단계가 맞물리는지 스스로 본다', src.includes('function stmtChk(') && src.includes('stmtChk(cur)')
+  && src.includes('손익 단계 어긋남'));
+// 실제로 쓴 계정만 줄을 세운다 — 안 쓴 계정까지 0 으로 늘어놓으면 열여섯 줄이 된다
+ok('목적사업비는 값이 있는 계정만', src.includes('if(!v&&!p) return;') && src.includes('_sub(PURPOSE_ACCTS);'));
+/* 세부 항목은 가·나·다… 로 이어 붙인다 — 전부 「가.」면 제출본과 달라 보인다 */
+ok('세부 항목 번호가 이어진다', src.includes("var _GA='가나다라마바사아자차카타파하';")
+  && src.includes("add((_GA.charAt(k)||'·')+'. '+a,v,p,1); k++;"));
 /* 결손금은 «수입»이 아니다 — 수입에 음수로 넣으면 수입 합계가 그만큼 줄어 예산이 작아 보인다 */
 ok('예산편성안 이월금은 잉여일 때만', src.includes('var _carry=Math.max(0,fin.retained), _loss=Math.max(0,-fin.retained);')
   && src.includes("_xlRow(s,rw++,['수입 — 이월금',_carry,null,null]);")
