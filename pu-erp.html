@@ -53102,6 +53102,35 @@ function CorpDashboard(props){
 
   // 구글 캘린더 등록 딥링크 열기
   
+  /* ── 구글 색표 ────────────────────────────────────────────────
+     ★ 「담당자마다 각자 넣었던 색깔」은 «구글에 있는» 색이다. 그것을 받아 쓴다.
+     ⚠ 색값을 코드에 «적지 않는다» — 구글이 준 값을 그대로 쓴다.
+       적어 두면 ①팔레트 규율(승인 27색)을 깨고 ②구글에서 색을 바꿔도 안 따라간다.
+     한 번만 받아 창에 담아 둔다(달을 넘길 때마다 다시 받지 않는다). */
+  function gcalLoadColors(){
+    if(window._gcalColors) return Promise.resolve(window._gcalColors);
+    return fetchT('https://www.googleapis.com/calendar/v3/colors?key='+GCAL_API_KEY, null, 15000)
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var m = {}, ev = (d && d.event) || {};
+        Object.keys(ev).forEach(function(k){ if(ev[k] && ev[k].background) m[String(k)] = ev[k].background; });
+        window._gcalColors = m; return m;
+      })
+      .catch(function(){ window._gcalColors = {}; return window._gcalColors; });
+  }
+  /* ── 칩 글자색 ────────────────────────────────────────────────
+     ★ 구글은 바탕이 «연하면 짙은 글자», 진하면 흰 글자를 쓴다.
+       지금까지는 늘 흰 글자여서, 구글에서 연한 색을 고른 사람의 일정은 글씨가 묻혔다.
+     ⚠ 새 색을 만들지 않는다 — 팔레트에 이미 있는 짙은 회색과 흰색 둘만 쓴다. */
+  function calTextOn(bg){
+    var hex = String(bg || '').replace('#', '');
+    if(hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+    if(hex.length !== 6) return '#ffffff';
+    var r = parseInt(hex.slice(0,2),16), g = parseInt(hex.slice(2,4),16), b = parseInt(hex.slice(4,6),16);
+    // 사람 눈이 느끼는 밝기 — 초록이 가장 밝게 느껴진다
+    var lum = (0.299*r + 0.587*g + 0.114*b) / 255;
+    return lum > 0.62 ? '#1e293b' : '#ffffff';
+  }
   // 구글 캘린더 fetch (calYm 또는 gcalRfk 변경 시마다)
   useEffect(function(){
     var ym = calYm;
@@ -53115,7 +53144,9 @@ function CorpDashboard(props){
       +encodeURIComponent(GCAL_CAL_ID)+'/events?key='+GCAL_API_KEY
       +'&timeMin='+tMin+'&timeMax='+tMax+'&singleEvents=true&orderBy=startTime&maxResults=500';
     setGcalLoading(true); setGcalErr('');
-    fetchT(url, null, 20000)
+    // 색표를 먼저 채운 뒤 일정을 받는다 — 순서가 뒤바뀌면 첫 그림에 색이 빠진다
+    gcalLoadColors()
+      .then(function(){ return fetchT(url, null, 20000); })
       .then(function(r){ return r.json(); })
       .then(function(data){
         if(data.error){ setGcalErr(data.error.message||'API 오류'); setGcalLoading(false); return; }
@@ -53127,20 +53158,24 @@ function CorpDashboard(props){
             var title = (ev.summary||'').trim() || (ev.description||'').replace(/<[^>]+>/g,'').slice(0,20).trim();
             if(!title && timeStr) title = timeStr+' 일정';
             if(!title) title = '일정';
-            // 직원 이름 매칭 → 직원 색상 적용
-            var evColor = ev.summary ? '#2563eb' : '#94a3b8';
+            /* ★ 색은 «구글에서 그 사람이 고른 것» 을 먼저 쓴다(colorId).
+               구글에 색을 안 넣은 일정만 앱 색표로 칠한다 — 그러면 구글 화면과 같아진다. */
+            var gColor = (window._gcalColors && ev.colorId) ? (window._gcalColors[String(ev.colorId)] || '') : '';
+            var evColor = gColor || (ev.summary ? '#2563eb' : '#94a3b8');
             var matchedSid = 'GCAL';
             var activeUsers = (typeof getActiveUsers==='function') ? getActiveUsers() : [];
             for(var ui=0; ui<activeUsers.length; ui++){
               var u = activeUsers[ui];
               if(u.name && title.indexOf(u.name) >= 0){
-                evColor = staffColorMap[u.sid] || evColor;
+                // ⚠ 구글 색이 있으면 «그것이 이긴다» — 앱 색표로 덮으면 구글 화면과 달라진다
+                if(!gColor) evColor = staffColorMap[u.sid] || evColor;
                 matchedSid = u.sid;
                 break;
               }
             }
             return { date:date, sid:matchedSid, type:'gcal',
-              label:'🗓 '+title, color: evColor,
+              // ⚠ 아이콘을 붙이지 않는다 — 구글 화면에는 없다(type:'gcal' 로 이미 갈린다)
+              label: title, color: evColor, gcolor: gColor,
               evId:ev.id, gcalUrl:ev.htmlLink, draggable:true,
               time:timeStr,
               endTime: ev.end && ev.end.dateTime ? ev.end.dateTime.slice(11,16) : '',
@@ -53317,11 +53352,15 @@ function CorpDashboard(props){
      ⚠ 두 곳에서 같이 쓰므로 여기 한 곳만 고치면 월·주·일이 함께 바뀐다.
         더 연하게/진하게는 이 숫자만 조절한다(1 에 가까울수록 연하다). */
   var CAL_CHIP_LIGHTEN = 0.45;
-  // 주/일 보기용 일정 칩 (연한 배경 + 흰 글씨, 지난 날짜는 흐리게)
+  /* 주/일 보기용 일정 칩.
+     ★ 월 보기와 «같은 규칙» 을 쓴다 — 구글에서 고른 색은 그대로, 앱 색만 연하게,
+       글자색은 바탕 밝기에 맞춰 고른다. 한 보기만 고치면 보기를 바꿀 때 색이 튄다. */
   function renderEventChip(ev, dateStr, key){
-    var timeStr = ev.time ? ev.time.slice(0,5)+' ' : '';
+    // 구글은 시각을 「1030」 처럼 붙여 쓴다 — 월 보기와 같게 맞춘다
+    var timeStr = ev.time ? ev.time.slice(0,5).replace(':','')+' ' : '';
     var isPast = dateStr < todayYMD();
     var baseColor = ev.color || '#64748b';
+    var wdChipBg = ev.gcolor ? ev.gcolor : sgLighten(baseColor, CAL_CHIP_LIGHTEN);
     return h('div', { key:key,
       draggable: ev.draggable ? 'true' : 'false',
       onDragStart: ev.draggable ? function(e){ e.stopPropagation(); e.dataTransfer.effectAllowed='move';
@@ -53333,13 +53372,13 @@ function CorpDashboard(props){
       onMouseEnter:function(e){ e.currentTarget.style.filter='brightness(0.9)'; },
       onMouseLeave:function(e){ e.currentTarget.style.filter=''; },
       title: ev.tip || ev.tooltipText || ev.label,
-      style:{ background:sgLighten(baseColor, CAL_CHIP_LIGHTEN), color:'#fff',
+      style:{ background:wdChipBg, color:calTextOn(wdChipBg),
         padding:'3px 8px', borderRadius:'4px',
         fontSize:'11px', fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis',
         opacity: isPast?0.65:1,
         cursor: ev.draggable ? 'grab' : 'pointer', userSelect:'none', WebkitUserSelect:'none',
         WebkitUserDrag: ev.draggable ? 'element' : 'none', transition:'filter 0.1s' }},
-      h('span', { style:{ fontSize:'10px', fontWeight:500, opacity:0.75, marginRight:'2px' }}, timeStr), ev.label);
+      h('span', { style:{ fontWeight:600, marginRight:'3px' }}, timeStr), ev.label);
   }
 
 
@@ -54156,7 +54195,11 @@ function CorpDashboard(props){
               // 이벤트 칩
               cell.date && h('div', { style:{ display:'flex', flexDirection:'column', gap: calMonthFit?'1.5px':(IS_MOBILE?'2.5px':'1.5px') }},
                 dayEvents.slice(0, MAX_SHOW).map(function(ev, i){
-                  var timeStr = ev.time ? ev.time.slice(0,5)+' ' : '';
+                  /* ★ 구글은 시각을 «1030» 처럼 붙여 쓴다(10:30 이 아니다).
+                     콜론을 빼면 좁은 칸에서 제목이 두 글자쯤 더 보인다. */
+                  var timeStr = ev.time ? ev.time.slice(0,5).replace(':','')+' ' : '';
+                  /* ★ 구글에서 고른 색은 «그대로», 앱이 칠한 색만 연하게 — 한 번만 셈한다 */
+                  var chipBg = ev.gcolor ? ev.gcolor : sgLighten(ev.color||'#64748b', CAL_CHIP_LIGHTEN);
                   return h('div', { key:i,
                     draggable: ev.draggable ? 'true' : 'false',
                     onDragStart: ev.draggable ? function(e){
@@ -54182,14 +54225,15 @@ function CorpDashboard(props){
                     onMouseLeave:function(e){ e.currentTarget.style.filter=''; },
                     title: ev.tip || ev.tooltipText || ev.label,
                     style:{
-                      background: sgLighten(ev.color||'#64748b', CAL_CHIP_LIGHTEN),
-                      color: '#fff',
+                      background: chipBg,
+                      color: calTextOn(chipBg),
                       paddingLeft: calMonthFit?'5px':(IS_MOBILE?'7px':'5px'), paddingRight: calMonthFit?'5px':(IS_MOBILE?'7px':'5px'), paddingTop: calMonthFit?'0.5px':(IS_MOBILE?'2px':'1px'), paddingBottom: calMonthFit?'0.5px':(IS_MOBILE?'2px':'1px'),
                       borderRadius: calMonthFit?'4px':(IS_MOBILE?'6px':'4px'),
-                      fontSize: calMonthFit?'9px':(IS_MOBILE?'10.5px':'9.5px'), fontWeight: IS_MOBILE?600:500,
+                      /* 구글 월간 칩은 11px 쯤이다 — 9.5px 은 너무 작아 눈이 아프다는 지적이 있었다 */
+                      fontSize: calMonthFit?'10px':(IS_MOBILE?'10.5px':'11px'), fontWeight: IS_MOBILE?600:500,
                       letterSpacing: IS_MOBILE?'-0.01em':undefined,
                       whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis',
-                      lineHeight: calMonthFit?'11.5px':(IS_MOBILE?'13px':'14px'),
+                      lineHeight: calMonthFit?'12.5px':(IS_MOBILE?'13px':'16px'),
                       opacity: (cell.date < todayStr) ? 0.65 : 1,
                       cursor: ev.draggable ? 'grab' : 'pointer',
                       userSelect:'none',
@@ -54197,7 +54241,8 @@ function CorpDashboard(props){
                       WebkitUserDrag: ev.draggable ? 'element' : 'none',
                       transition:'filter 0.1s'
                     }},
-                    h('span', { style:{ fontSize:'9px', fontWeight:500, opacity:0.75, marginRight:'2px' }}, timeStr),
+                    /* 구글은 시각을 흐리게 하지 않는다 — 제목과 같은 굵기·같은 색이다 */
+                    h('span', { style:{ fontWeight:600, marginRight:'3px' }}, timeStr),
                     IS_MOBILE ? calStripIcon(ev.label) : ev.label
                   );
                 }),
