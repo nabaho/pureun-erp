@@ -38,11 +38,12 @@ function fnOf(name) {
 
 /* 실제로 돌린다 — 「DownloadURL 이라는 낱말이 있나」로는 무엇이 실리는지 못 잡는다.
    warm = 미리 받아 둔 사진들 {번호: blob: 주소} (2026-08-25) */
-function run(items, ids, warm) {
+function run(items, ids, warm, warmD) {
   const calls = [];
   const ctx = {
     gridItems: items,
     warmUrls: new Map(Object.entries(warm || {})),
+    warmData: new Map(Object.entries(warmD || {})),
     toast: function (m) { calls.push(['toast', m]); },
     photoTime: function (it) { return (it && it.meta && it.meta.upAt) || 0; },
     dayKey: function (t) { return new Date(t).toISOString().slice(0, 10); },
@@ -51,7 +52,7 @@ function run(items, ids, warm) {
   };
   vm.createContext(ctx);
   vm.runInContext(fnOf('dragFileName') + '\n' + fnOf('dragOutUrl') + '\n' +
-    fnOf('attachFileDragOut'), ctx);
+    fnOf('dragOutImg') + '\n' + fnOf('attachFileDragOut'), ctx);
   const dt = { data: {}, setData: function (k, v) { this.data[k] = v; calls.push(['set', k, v]); } };
   ctx.attachFileDragOut(dt, ids);
   return { dt: dt, calls: calls };
@@ -121,7 +122,9 @@ test('★ text/plain 은 건드리지 않는다 — PuDrag 것이다', () => {
 test('★ 원본 주소가 없으면 파일을 안 싣고 «말해 준다»', () => {
   const { dt, calls } = run([photo('p1', '', '가')], ['p1']);
   assert.equal(dt.data['DownloadURL'], undefined, '주소가 없는데 실었습니다');
-  assert.ok(calls.some(function (c) { return c[0] === 'toast' && /크게 보기에서/.test(c[1]); }),
+  /* 2026-08-25: 「크게 보기에서 끌어 주세요」로는 안 풀리는 경우가 있어(한글) 확실한
+     길인 «복사 → Ctrl+V» 를 가리키게 바꿨다. 말해 주는 것 자체는 그대로 지킨다. */
+  assert.ok(calls.some(function (c) { return c[0] === 'toast' && /복사|Ctrl\+V/.test(c[1]); }),
     '★ 조용히 아무 일도 안 일어나면 「왜 안 되지」로 시간을 버립니다');
 });
 
@@ -224,6 +227,107 @@ test('쥐고 있는 주소는 몇 장뿐이고 오래된 것은 놓아 준다 �
 test('받다가 터져도 끌기는 살아 있다 — 앱 사이 끌기는 이것과 무관하다', () => {
   assert.match(fnOf('warmDragOut'), /\.catch\(function \(e\) \{/,
     '★ 여기서 터지면 분류 탭·컨설팅으로 끄는 길까지 같이 죽습니다');
+});
+
+/* ══════ ③-3 한글은 「파일」이 아니라 「내용」을 받는다 — 대표 보고 2026-08-25(둘째) ══════
+   "여전히 안되는데 안가는데" — 파일 칸(DownloadURL)을 실었는데도 한글에는 글자가 찍혔다.
+
+   브라우저가 내미는 파일은 실제 파일이 아니라 «청하면 그때 내려주는 파일»이라
+   탐색기는 알아듣지만 한글·클로드코드는 안 쳐다본다. 그런 프로그램이 알아듣는 것은
+   **내용(text/html)** 이다. 그래서 그림 한 장짜리 HTML 도 함께 싣는다.
+   ⚠ blob: 은 이 창 안에서만 사는 주소라 한글이 못 연다 — https 나 data: 여야 한다. */
+
+const D1 = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+
+test('★ 그림 한 장짜리 HTML 을 함께 싣는다 — 이것이 없으면 한글은 글자만 받는다', () => {
+  const { dt } = run([photo('p1', U1, '가')], ['p1']);
+  assert.ok(dt.data['text/html'], '★ 내용 칸이 없으면 한글은 남은 칸인 «글자»를 찍습니다');
+  assert.match(dt.data['text/html'], /^<img src="/, '그림 한 장짜리여야 한다');
+  assert.ok(dt.data['text/html'].indexOf(U1) > 0, '★ 사진이 안 실렸습니다');
+});
+
+test('★ 주소가 없는 사진은 «사진 자체»를 내용에 싣는다 — 계약서는 주소가 없다', () => {
+  const { dt } = run([photo('p1', '', '가')], ['p1'], { p1: B1 }, { p1: D1 });
+  assert.ok(dt.data['text/html'].indexOf(D1) > 0,
+    '★ 계약서·근태표는 주소가 없어, 사진을 통째로 안 실으면 영영 못 넣습니다');
+});
+
+test('★ blob: 은 내용 칸에 안 싣는다 — 한글이 못 여는 주소다', () => {
+  /* 미리 받았지만 몸통은 놓아 준 뒤(오래된 것) — 파일 칸은 살아 있고 내용 칸은 없다 */
+  const { dt } = run([photo('p1', '', '가')], ['p1'], { p1: B1 }, {});
+  assert.ok(dt.data['DownloadURL'].indexOf(B1) > 0, '파일 칸은 blob 이어도 된다');
+  assert.equal(dt.data['text/html'], undefined,
+    '★ 한글이 못 여는 주소를 실으면 «깨진 그림»이 들어갑니다 — 글자보다 나쁩니다');
+});
+
+test('내용 칸도 «집은 그 사진»이다 — 목록 첫 장이 가면 엉뚱한 것이 들어간다', () => {
+  const { dt } = run([photo('p1', U1, '가'), photo('p2', U2, '나')], ['p2', 'p1']);
+  assert.ok(dt.data['text/html'].indexOf(U2) > 0);
+});
+
+test('따옴표가 든 주소에도 태그가 안 깨진다', () => {
+  const { dt } = run([photo('p1', '', '가')], ['p1'], { p1: B1 },
+    { p1: 'data:image/jpeg;base64,AA"BB' });
+  assert.equal((dt.data['text/html'].match(/"/g) || []).length, 2,
+    '★ 따옴표가 새면 태그가 깨져 아무것도 안 들어갑니다');
+});
+
+test('data: 가 아닌 값은 내용 칸에 안 쓴다 — 손상된 값이 앉아 있어도', () => {
+  for (const bad of [null, 0, {}, 'javascript:alert(1)', 'http://x/a.jpg']) {
+    const { dt } = run([photo('p1', '', '가')], ['p1'], { p1: B1 }, { p1: bad });
+    assert.equal(dt.data['text/html'], undefined, '★ ' + JSON.stringify(bad) + ' 를 실었습니다');
+  }
+});
+
+test('★ 크게 보기에서 끌 때도 내용 칸을 싣는다 — 거기서 끄는 사람이 더 많다', () => {
+  const fn = fnOf('viewerDragOut');
+  assert.match(fn, /setData\('text\/html'/, '★ 크게 보기만 빠지면 「어떤 건 되고 어떤 건 안 된다」가 됩니다');
+  assert.match(fn, /indexOf\('data:image\/'\) === 0/, 'blob 이 아니라 data: 를 실어야 한다');
+  /* 문지기만 두고 **엉뚱한 것을 실으면** 소용없다 — 실제로 무엇을 싣는지 본다.
+     여기서 blob 주소(url)를 실으면 한글에 「깨진 그림」이 들어간다. */
+  const line = fn.match(/setData\('text\/html'[^\n]*/)[0];
+  assert.match(line, /img\.src/, '★ 내용 칸에 실을 것은 사진 자체(img.src)입니다');
+  assert.ok(!/\burl\b/.test(line), '★ blob 주소를 실었습니다 — 한글이 못 엽니다');
+});
+
+test('★ 미리 받을 때 사진 몸통도 쥔다 — 안 쥐면 계약서는 내용 칸이 영영 빈다', () => {
+  assert.match(fnOf('warmDragOut'), /warmData\.set\(id, src\)/,
+    '★ 주소 없는 사진(계약서·근태표)은 이것이 유일한 길입니다');
+});
+
+test('사진 몸통은 방금 것 몇 장만 쥔다 — 열두 장을 다 쥐면 기억을 수십 MB 쓴다', () => {
+  assert.match(fnOf('warmDragOut'), /trimWarmData\(\)/, '★ 놓아 주는 길을 안 부릅니다');
+  const t = fnOf('trimWarmData');
+  assert.match(t, /warmData\.delete\(warmOrder\[i\]\)/);
+  assert.ok(!/warmUrls/.test(t),
+    '★ blob 주소까지 놓으면 탐색기로 끌던 길이 같이 죽습니다 — 그쪽은 가볍습니다');
+});
+
+/* ══════ ③-4 그래도 안 되면 — 복사가 확실한 길 ══════ */
+
+test('★ 크게 보기에 「📋 복사」 단추가 있다 — 끌기가 막힌 사람의 유일한 출구', () => {
+  assert.match(app, /id="viewerCopy"[^>]*onclick="copyViewerImage\(\)"/,
+    '★ 격자에만 있으면 크게 보기로 들어간 사람은 길이 없습니다');
+  assert.match(fnOf('copyViewerImage'), /copyPhotoImage\(viewerId\)/,
+    '★ 복사를 다시 짜면 두 벌이 되어 한쪽만 고쳐집니다');
+});
+
+test('★ Ctrl+C 로도 복사된다 — 사람은 복사를 손가락으로 한다', () => {
+  const i = app.indexOf("if (e.key !== 'c' && e.key !== 'C') return;");
+  assert.ok(i > 0, '★ Ctrl+C 자리를 찾지 못했습니다');
+  const seg = app.slice(i, i + 900);
+  assert.match(seg, /copyPhotoImage\(viewerId\)/, '크게 보기가 열려 있으면 그 사진');
+  assert.match(seg, /copySelectedImage\(\)/, '아니면 고른 사진');
+});
+
+test('★ 글 쓰는 중·글자를 긁어 놓았으면 Ctrl+C 를 안 가로챈다', () => {
+  const i = app.indexOf("if (e.key !== 'c' && e.key !== 'C') return;");
+  const seg = app.slice(i, i + 900);
+  assert.match(seg, /if \(typingNow\(\)\) return;/,
+    '★ 메모칸에서 글자를 복사하려던 사람은 복사가 고장 난 줄 압니다');
+  /* 「긁어 놓았나」를 «묻기»만 하고 **안 물러나면** 소용없다 — 물러나는 줄까지 본다. */
+  assert.match(seg, /if \(sel && String\(sel\)\.trim\(\)\) return;/,
+    '★ 사업자번호만 긁어 복사하는 손짓이 사진 복사로 바뀌면 더 나쁩니다');
 });
 
 /* ══════ ④ 배선·안전장치 ══════ */

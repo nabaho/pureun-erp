@@ -1736,14 +1736,17 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
   <div id="viewer">
     <!-- ← 돌아가기 — 바깥 클릭·Esc·✕ 로도 닫히지만, 눈에 보이는 단추가 있어야
          길을 몰라도 나온다(대표 지시 2026-08-13: "백 버튼이 있으면 좋겠다") -->
-    <div class="bar"><button class="vback" onclick="closeViewer()">← 돌아가기</button><span id="viewerInfo"></span><button onclick="closeViewer()">닫기 ✕</button></div>
+    <!-- 📋 복사 — 끌어다 놓기를 한글이 안 받아 주는 일이 있다(대표 보고 2026-08-25).
+         그때 확실한 길이 이것이다: 눌러서 복사한 뒤 한글에서 Ctrl+V.
+         ⚠ 격자 도구줄의 「📋 복사」와 **같은 함수**를 부른다 — 두 벌이 되면 한쪽만 고쳐진다. -->
+    <div class="bar"><button class="vback" onclick="closeViewer()">← 돌아가기</button><span id="viewerInfo"></span><button id="viewerCopy" onclick="copyViewerImage()" title="복사한 뒤 한글·워드·메일에서 Ctrl+V (Ctrl+C 로도 됩니다)">📋 복사</button><button onclick="closeViewer()">닫기 ✕</button></div>
     <div id="viewerBody">
       <!-- 사진을 누르면 원본 크기, 사진 바깥(어두운 곳)을 누르면 닫힌다 -->
       <!-- draggable="false": 이 그림을 끌면 창이 남의 파일로 오해해 같은 사진을
            새 번호로 다시 올린다(재복사). 새 그림을 넣을 때도 반드시 붙일 것 —
            tests/pu-photos-html.test.js 가 못 박아 두었다. -->
       <div id="viewerPic" onclick="picClick(event)"><img id="viewerImg" alt="" draggable="true"
-        ondragstart="viewerDragOut(event)" title="끌어서 다른 프로그램에 넣을 수 있습니다">
+        ondragstart="viewerDragOut(event)" title="끌어서 다른 프로그램에 넣습니다 · 안 들어가면 「📋 복사」 뒤 Ctrl+V">
         <!-- 돌리기 — 폰으로 찍으면 누워 들어오는 것이 있고, 누우면 글씨를 못 읽는다.
              사진을 누르면 원본 크기로 열리므로 이 단추는 클릭이 위로 안 새게 막는다. -->
         <div id="rotBar">
@@ -6811,14 +6814,17 @@ function dragFileName(it) {
    ⚠ 미리 받는 것은 **주소가 없는 사진뿐**이다. 있는 사진은 지금처럼 곧바로 싣는다
       (공짜다). 안 그러면 격자를 훑기만 해도 사진을 죄다 받게 된다.
    ⚠ 만든 blob 주소는 몇 장만 쥐고 오래된 것부터 놓아 준다 — 안 놓으면 기억이 샌다. */
-const warmUrls = new Map();     // 사진 번호 → blob: 주소
+const warmUrls = new Map();     // 사진 번호 → blob: 주소 (파일 칸에 쓴다)
+const warmData = new Map();     // 사진 번호 → data: 사진 (내용 칸에 쓴다 — 아래 참고)
 const warmBusy = new Set();     // 지금 받는 중 — 두 번 받지 않는다
 const warmOrder = [];           // 쥔 순서 — 오래된 것부터 놓아 준다
 const WARM_KEEP = 12;
+const WARM_KEEP_DATA = 3;       // 사진 몸통은 무겁다 — 방금 것 몇 장만 쥔다
 let warmTimer = 0;
 
 function forgetWarm(id) {
   const u = warmUrls.get(id);
+  warmData.delete(id);
   if (!u) return;
   warmUrls.delete(id);
   try { URL.revokeObjectURL(u); } catch (_) { }
@@ -6832,15 +6838,27 @@ function warmDragOut(id) {
       it.meta.fullUrl.indexOf('https://') === 0)) return;
   warmBusy.add(id);
   PuPhotoStore.loadFull(photoYearOf(id), id, photoOwner(id)).then(function (full) {
-    const u = dataUrlToBlobUrl(safeSrc(full) || '');
+    const src = safeSrc(full) || '';
+    const u = dataUrlToBlobUrl(src);
     if (!u) return;
     warmUrls.set(id, u);
+    /* 사진 몸통도 잠깐 쥔다 — 한글에 넣을 「내용」이 이것이다(attachFileDragOut 참고).
+       무거우므로 방금 것 몇 장만. 쥔 순서 목록은 하나로 함께 관리한다. */
+    warmData.set(id, src);
     warmOrder.push(id);
+    trimWarmData();
     while (warmOrder.length > WARM_KEEP) forgetWarm(warmOrder.shift());
   }).catch(function (e) {
     /* 못 받아도 끌기 자체는 살아 있어야 한다 — 앱 사이 끌기는 이것과 무관하다. */
     console.warn('[끌어내기 준비]', e);
   }).then(function () { warmBusy.delete(id); });
+}
+
+/* 사진 몸통은 오래된 것부터 놓는다 — 열두 장을 다 쥐면 기억을 수십 MB 쓴다.
+   ⚠ blob 주소(warmUrls)는 그대로 둔다. 그쪽은 가볍고, 놓아 버리면 탐색기로 끌던
+      길까지 같이 죽는다. */
+function trimWarmData() {
+  for (let i = 0; i < warmOrder.length - WARM_KEEP_DATA; i++) warmData.delete(warmOrder[i]);
 }
 
 /* 마우스가 사진 위에 잠깐 머물면 준비한다 — 훑고 지나가는 것까지 받지 않게 조금 기다린다. */
@@ -6876,6 +6894,29 @@ function dragOutUrl(it) {
   /* 주소가 없어 미리 받아 둔 사진 — 이 창 안에서만 사는 blob: 주소 */
   return (it && warmUrls.get(it.id)) || '';
 }
+
+/* ── 한글·워드·메일에 «그림으로» 들어갈 주소 (대표 보고 2026-08-25, 두 번째) ──
+   "여전히 안되는데 안가는데" — 앞서 파일 칸(DownloadURL)을 실었는데도 한글에는
+   여전히 글자가 찍혔다.
+
+   까닭: **한글은 「파일」을 받는 프로그램이 아니다.** 브라우저가 내미는 파일은
+   실제 파일이 아니라 「청하면 그때 내려주는 파일」(가상 파일)이라, 탐색기는 알아듣지만
+   한글·클로드코드는 안 쳐다본다. 8/23 에 「📋 복사」를 만든 것도 같은 까닭이었다
+   (그때 적힌 말: "탐색기에서는 되는데 클로드코드에서는 안 된다").
+
+   그런 프로그램이 알아듣는 것은 **내용(HTML)** 이다. 그래서 그림 한 장짜리 HTML을
+   함께 싣는다 — 한글이 그것을 읽으면 사진으로 들어간다.
+   ⚠ blob: 주소는 여기 쓸 수 없다 — 이 창 안에서만 사는 주소라 한글이 못 연다.
+      그래서 https 주소가 있으면 그것을, 없으면 **미리 받아 둔 사진을 통째로**(data:) 싣는다.
+      계약서·근태표는 주소가 없으므로 뒤엣것이라야 들어간다.
+   ⚠ 그래도 안 들어가는 프로그램이 있다 — 그때는 「📋 복사」 뒤 Ctrl+V 가 확실하다. */
+function dragOutImg(it) {
+  const u = it && it.meta && it.meta.fullUrl;
+  if (typeof u === 'string' && u.indexOf('https://') === 0) return u;
+  const d = it && warmData.get(it.id);
+  return (typeof d === 'string' && d.indexOf('data:image/') === 0) ? d : '';
+}
+
 function attachFileDragOut(dt, ids) {
   if (!dt) return;
   const items = ids.map(function (id) {
@@ -6889,13 +6930,13 @@ function attachFileDragOut(dt, ids) {
        사는 주소라, 목록으로 내보내면 받는 쪽이 열지 못하는 죽은 줄이 된다.
        파일 칸(DownloadURL)은 브라우저가 스스로 읽으므로 blob: 이어도 된다. */
     if (u.indexOf('https://') === 0) urls.push(u);
-    pairs.push({ url: u, name: dragFileName(it) });
+    pairs.push({ url: u, name: dragFileName(it), img: dragOutImg(it) });
   });
   if (!pairs.length) {
     /* 조용히 아무 일도 안 일어나면 「왜 안 되지」로 시간을 버린다(대표 승인 목업).
        ⚠ 이제는 「없다」가 아니라 「아직」이다 — 마우스를 얹으면 미리 받아 두므로,
           잠깐 뒤에 다시 끌면 나간다. 그렇게 말해 줘야 헛되이 포기하지 않는다. */
-    toast && toast('사진을 준비하는 중입니다 — 잠깐 뒤 다시 끌거나, 크게 보기에서 끌어 주세요');
+    toast && toast('사진을 준비하는 중입니다 — 잠깐 뒤 다시 끌거나, 「📋 복사」 뒤 Ctrl+V 하세요');
     return;
   }
   try {
@@ -6903,6 +6944,10 @@ function attachFileDragOut(dt, ids) {
     dt.setData('DownloadURL', 'image/jpeg:' + pairs[0].name + ':' + pairs[0].url);
     /* 주소 목록 — 규약이 CRLF 로 잇는다. text/plain 은 PuDrag 것이라 안 건드린다. */
     if (urls.length) dt.setData('text/uri-list', urls.join('\r\n'));
+    /* 한글·워드가 알아듣는 「내용」 — 까닭은 dragOutImg 에 적었다.
+       ⚠ 파일 칸보다 «뒤»에 실어도 상관없다(칸이 서로 다르다). 받는 쪽이 자기가
+          아는 칸을 골라 간다 — 한글은 이 칸을, 탐색기는 파일 칸을 본다. */
+    if (pairs[0].img) dt.setData('text/html', '<img src="' + pairs[0].img.replace(/"/g, '&quot;') + '">');
   } catch (err) { console.warn('[끌어내기]', err); }
 }
 
@@ -7090,6 +7135,13 @@ function copyPhotoImage(id) {
     alert('복사하지 못했습니다 — ' + ((e && e.message) || e) +
       '\n\n「⬇ 내려받기」로 받아 쓰실 수 있습니다.');
   });
+}
+
+/* 크게 보기에서 지금 보고 있는 사진을 복사한다 — 창의 「📋 복사」와 Ctrl+C 가 함께 부른다.
+   ⚠ copyPhotoImage 를 다시 짜지 않는다. 두 벌이 되면 한쪽만 고쳐진다. */
+function copyViewerImage() {
+  if (!viewerId) return;
+  copyPhotoImage(viewerId);
 }
 
 function copySelectedImage() {
@@ -9500,6 +9552,12 @@ function viewerDragOut(e) {
       dt.setData('DownloadURL', 'image/jpeg:' + name + ':' + url);
       setTimeout(function () { try { URL.revokeObjectURL(url); } catch (_) { } }, 60000);
     }
+    /* 한글·워드는 「파일」이 아니라 「내용」을 받는다 — 격자와 같은 칸을 여기도 싣는다
+       (까닭은 dragOutImg 에 적었다). 여기 사진은 이미 손에 있으므로 그대로 쓴다.
+       ⚠ blob: 이 아니라 img.src(data:) 다 — 한글은 이 창의 blob 주소를 못 연다. */
+    if (String(img.src).indexOf('data:image/') === 0) {
+      dt.setData('text/html', '<img src="' + img.src.replace(/"/g, '&quot;') + '">');
+    }
     dt.effectAllowed = 'copy';
   } catch (err) { console.warn('[끌어내기]', err); }
 }
@@ -11401,6 +11459,26 @@ document.addEventListener('keydown', function (e) {
   if (typingNow()) return;
   e.preventDefault();
   gotoPhoto(e.key === 'ArrowLeft' ? -1 : 1);
+});
+
+/* ── Ctrl+C 로 사진 복사 (대표 보고 2026-08-25: "여전히 안되는데") ──
+   끌어다 놓기를 한글이 안 받아 주는 경우가 있다 — 그때 확실한 길이 「복사 → Ctrl+V」다.
+   단추(📋 복사)는 8/23 부터 있었지만, 사람은 복사를 **손가락으로** 한다. 그 손버릇이
+   그대로 통해야 「안 된다」에서 빠져나온다.
+
+   ⚠ **글을 쓰는 중이면 가로채지 않는다.** 메모칸에서 글자를 복사하려던 Ctrl+C 를
+      우리가 먹으면, 쓰던 사람은 복사가 고장 난 줄 안다.
+   ⚠ **글자를 긁어 놓았으면 가로채지 않는다.** 판독 결과에서 사업자번호만 긁어
+      복사하는 일이 잦다 — 그 손짓이 사진 복사로 바뀌면 더 나쁘다.
+   ⚠ 크게 보기가 열려 있으면 그 사진, 아니면 고른 사진. 둘 다 아니면 우리 일이 아니다. */
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'c' && e.key !== 'C') return;
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+  if (typingNow()) return;
+  const sel = window.getSelection && window.getSelection();
+  if (sel && String(sel).trim()) return;      // 긁어 놓은 글자가 있다 — 그것이 먼저다
+  if (viewerId) { e.preventDefault(); copyPhotoImage(viewerId); return; }
+  if (selected.size) { e.preventDefault(); copySelectedImage(); }
 });
 
 /* ══════ 설정 화면 ══════
