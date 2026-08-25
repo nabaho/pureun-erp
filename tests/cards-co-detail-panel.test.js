@@ -44,6 +44,8 @@ function loadPanelBlock(items){
     /* 2026-08-24: 상세 패널이 «값이 어긋난 칸»도 보여준다 — 이 검사는 그 부분을
        안 보므로 빈 값으로 둔다(안 넣으면 coDetailPanelHtml 이 던진다). */
     coConflictHtml: () => '',
+    /* 2026-08-24(4순위): 값마다 «어디서 왔는지» 한 줄이 붙는다 — 이 검사는 안 본다 */
+    coSrcTagHtml: () => '',
     /* 2026-08-24(3순위): 값 꺼내기를 coVal 하나로 모았다 — 상세 패널이 그것을 쓴다 */
     coVal: (o, f) => String((o && ((o.extra && o.extra[f]) || o[f])) || '').trim(),
     CO_FIELDS: [['bizno','사업자번호'],['ceo','대표자']],
@@ -118,6 +120,8 @@ function loadPanelBlockAsync(items){
     /* 2026-08-24: 상세 패널이 «값이 어긋난 칸»도 보여준다 — 이 검사는 그 부분을
        안 보므로 빈 값으로 둔다(안 넣으면 coDetailPanelHtml 이 던진다). */
     coConflictHtml: () => '',
+    /* 2026-08-24(4순위): 값마다 «어디서 왔는지» 한 줄이 붙는다 — 이 검사는 안 본다 */
+    coSrcTagHtml: () => '',
     /* 2026-08-24(3순위): 값 꺼내기를 coVal 하나로 모았다 — 상세 패널이 그것을 쓴다 */
     coVal: (o, f) => String((o && ((o.extra && o.extra[f]) || o[f])) || '').trim(),
     CO_FIELDS: [],

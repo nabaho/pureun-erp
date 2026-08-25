@@ -401,6 +401,14 @@
       var cur = s.val() || {};
       var add = {}, filled = [], clash = [];
       var ph0 = o.photo || {};
+      /* 이 서류의 열쇠. 아래 docs/ 와 «같은 열쇠»를 쓴다 — 칸마다 이것 하나만 가리켜
+         「이 값이 어디서 왔나」에 답한다(대표 지시 2026-08-24, 4순위).
+         ⚠ 서류 이름·날짜·사람·사진번호를 칸마다 통째로 베끼지 «않는다». 그건 이미
+           docs/{열쇠} 에 한 번 들어 있다. 칸이 스무 개면 그 차이가 스무 배다
+           (2026-08-16 대량 쓰기 사고를 되풀이하지 않는다). */
+      var dk = ph0.id
+        ? String(ph0.year || 'unknown') + '_' + String(ph0.id).replace(/[.#$/[\]]/g, '_')
+        : '';
       KEEP.forEach(function (k) {
         var v = fields[k];
         if (v == null || String(v).trim() === '') return;
@@ -430,6 +438,8 @@
           return;                                                     /* 이미 있으면 그대로 둔다 */
         }
         add[k] = got;
+        /* «채운 칸에만» 붙인다. 안 채운 칸에 붙이면 남의 서류를 가리키게 된다. */
+        if (dk) add['src/' + k] = dk;
         filled.push(k);
       });
       /* 어떤 사업으로 들어온 회사인지 딱지를 붙인다 — 서류이름이 곧 사업 이름이다.
@@ -447,7 +457,6 @@
            자리에 다시 쓰여 줄이 늘지 않는다(사진 번호를 열쇠로 삼는다). */
       var ph = o.photo || {};
       if (ph.id) {
-        var dk = String(ph.year || 'unknown') + '_' + String(ph.id).replace(/[.#$/[\]]/g, '_');
         if (!(cur.docs && cur.docs[dk])) {
           add['docs/' + dk] = { name: tag || '서식', year: String(ph.year || ''), id: String(ph.id),
                                 owner: String(ph.owner || ''), at: Date.now(), by: o.byName || '' };
