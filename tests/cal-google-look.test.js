@@ -273,3 +273,20 @@ test('공휴일 칩에 새 색을 만들지 않았다', () => {
     assert.ok(['#fecaca', '#991b1b'].indexOf(c.toLowerCase()) >= 0, '새 색이 들어왔다: ' + c);
   });
 });
+
+test('★ 이메일을 «그대로» 열쇠로 쓰지 않는다 — 점을 못 쓴다', () => {
+  /* ★ 실시간DB 키에는 점(.)·#·$·[·]·/ 를 «쓸 수 없다». 이메일에는 점이 있다 —
+     그대로 쓰면 서버가 400 으로 거절하고 «이어 준 것이 이 PC 에만» 남는다.
+     ⚠ 화면에서는 저장된 것처럼 보인다 — 검사 없이는 아무도 모른다.
+     ⚠ enter.html 의 sgEmailKey 와 «같은 규칙» 이어야 한다 — 갈리면 한쪽이 못 찾는다. */
+  const fn = fnBody('gcalMailKey');
+  assert.ok(/replace\(\/\[\.#\$/.test(fn), '점·#·$ 를 안 바꾼다 — 서버가 거절한다');
+  assert.match(fn, /toLowerCase\(\)/, '대소문자를 안 맞춘다');
+  /* 실제로 돌려 본다 — 글자만 보면 규칙이 뒤바뀌어도 통과한다 */
+  const ctx = { String };
+  vm.createContext(ctx);
+  vm.runInContext(fn + '\nthis.f = gcalMailKey;', ctx);
+  assert.strictEqual(ctx.f('Cpla.JwPark@Gmail.com').indexOf('.') < 0, true, '점이 남아 있다');
+  assert.strictEqual(ctx.f('a.b@c.d'), 'a,b@c,d', '점을 쉼표로 안 바꾼다');
+  assert.strictEqual(ctx.f('X@Y.Z'), ctx.f('x@y.z'), '대소문자에 따라 갈린다');
+});
