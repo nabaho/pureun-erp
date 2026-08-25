@@ -170,7 +170,11 @@ test('★ 사진 칸을 그릴 때 참고 캡처도 함께 그린다 — 안 부
 });
 
 test('★ 고르기 창은 하나를 같이 쓴다 — 창을 두 벌 만들면 한쪽만 고쳐진다', () => {
-  assert.match(fnOf('openAlbumPicker'), /albumPickTarget = \{ sid:sid, slotIdx:slotIdx, ref:!!ref \}/);
+  /* ⚠ 빈칸까지 못 박지 않는다 — 코드가 `albumPickTarget={ …` 로 붙여 쓰면서 이 검사가
+     깨져 main 이 빨개졌다(2026-08-25, 아무도 손대지 않은 채). 여기서 볼 것은
+     «세 칸(sid·slotIdx·ref)을 담아 두는가»이지 빈칸을 어디에 두었는가가 아니다. */
+  assert.match(fnOf('openAlbumPicker'),
+    /albumPickTarget\s*=\s*\{\s*sid\s*:\s*sid\s*,\s*slotIdx\s*:\s*slotIdx\s*,\s*ref\s*:\s*!!ref\s*\}/);
   assert.match(fnOf('openRefCapPicker'), /openAlbumPicker\(sid, null, true\)/);
   /* 고른 뒤 참고 캡처 쪽으로 갈라지는 자리 */
   assert.match(fnOf('pickAlbumPhoto'), /if\(target\.ref\)\{/,
