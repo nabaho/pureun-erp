@@ -311,6 +311,44 @@ test('☐ 를 안 눌렀어도 짚어 둔 줄을 고른 것으로 본다 — 「
   assert.equal(c.mbPicked().length, 1);
 });
 
+/* ══════ 내 메일함 — 만들기·이름 바꾸기·지우기 (대표 지시 2026-08-25) ══════ */
+
+test('★ 폴더마다 손볼 자리(⋮)가 있다 — 예전에는 「다음메일에서 하십시오」로 막았다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  const h = c.mailSideHtml();
+  assert.ok(h.indexOf('mbFolderMenu(') > 0, '폴더를 손볼 길이 없다');
+  assert.ok(h.indexOf('mbNewFolder(') > 0, '새 폴더를 만들 길이 없다');
+  assert.ok(h.indexOf('mbWhereToMake') < 0, '「다음메일에서 하십시오」로 막던 것이 남아 있다');
+});
+
+test('★ 하위 폴더는 어버이 밑에 들여써서 나온다 — 층이 안 보이면 왜 있는지 모른다', () => {
+  const folders = Object.assign({}, FOLDERS, {
+    B_P: { path:'1.자문사답변', name:'1.자문사답변', kind:'custom', order:7, total:9, unseen:0, delim:'/' },
+    B_C: { path:'1.자문사답변/계약', name:'계약', kind:'custom', order:7, total:2, unseen:0, delim:'/' }
+  });
+  const c = load({ folders: folders, msgs: MSGS });
+  const tree = c.mbMineTree();
+  const p = tree.find(f=>f.path === '1.자문사답변');
+  const ch = tree.find(f=>f.path === '1.자문사답변/계약');
+  assert.equal(p._depth, 0);
+  assert.equal(ch._depth, 1, '하위 폴더가 층으로 안 나온다');
+  assert.equal(ch._leaf, '계약', '줄에는 마지막 마디만 적는다');
+  assert.ok(tree.indexOf(p) < tree.indexOf(ch), '어버이가 자식보다 먼저 와야 한다');
+});
+
+test('이름의 점을 층으로 읽지 않는다 — 대표 폴더가 「1.자문사답변」이다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  const one = c.mbMineTree().find(f=>f.path === 'INBOX.1.자문사답변');
+  if(one) assert.equal(one._depth, 0, '이름의 점을 층으로 읽었다');
+});
+
+test('구분자는 서버가 알려 준 것을 쓴다 — 못 박으면 다른 계정에서 엉뚱한 폴더가 생긴다', () => {
+  const c = load({ folders: { A: { path:'가', name:'가', kind:'custom', order:7, delim:'.' } } });
+  assert.equal(c.mbDelim(), '.');
+  const c2 = load({ folders: { A: { path:'가', name:'가', kind:'custom', order:7 } } });
+  assert.equal(c2.mbDelim(), '', '안 알려 주면 빈 값 — 층을 못 만든다고 말해야 한다');
+});
+
 /* ══════ 몇 통씩 보기 (대표 지시 2026-08-25) ══════ */
 
 test('★ 몇 통씩 볼지 고르는 칸이 있다 — 50·100 등', () => {

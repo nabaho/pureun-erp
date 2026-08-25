@@ -108,6 +108,45 @@ test('disposition 이 없는 옛 메일도 이름이 붙은 것은 첨부로 본
   assert.equal(MB.attCount(structure, 0), 1);
 });
 
+/* ── 폴더 만들기·이름 바꾸기 (대표 지시 2026-08-25) ──
+   ⚠ 여기가 틀리면 다음메일에 엉뚱한 자리에 폴더가 생기거나, 이름을 바꾸다 하위 폴더가
+     통째로 딸려 간다. 되돌리기 어려운 자리라 값 판단을 따로 검사한다. */
+
+test('★ 이름에 구분자를 못 쓴다 — 「가/나」는 IMAP 이 두 층으로 읽는다', () => {
+  assert.match(MB.folderNameBad('가/나', '/'), /쓸 수 없습니다/);
+  assert.equal(MB.folderNameBad('가.나', '/'), '', '구분자가 아니면 점은 써도 된다');
+  assert.equal(MB.folderNameBad('1.자문사답변', '/'), '', '지금 대표 폴더 이름이 이렇다');
+});
+
+test('빈 이름·앞뒤 빈칸·너무 긴 이름을 막는다 — 눈에 안 보이는데 다른 폴더가 된다', () => {
+  assert.match(MB.folderNameBad('', '/'), /적어 주세요/);
+  assert.match(MB.folderNameBad('   ', '/'), /적어 주세요/);
+  assert.match(MB.folderNameBad(' 가 ', '/'), /빈칸/);
+  assert.match(MB.folderNameBad('가'.repeat(61), '/'), /깁니다/);
+  assert.equal(MB.folderNameBad('계약서류', '/'), '');
+});
+
+test('★ 하위 폴더는 어버이 아래로 붙는다', () => {
+  assert.equal(MB.childPath('1.자문사답변', '계약', '/'), '1.자문사답변/계약');
+  assert.equal(MB.childPath('', '새폴더', '/'), '새폴더', '어버이가 없으면 맨 위');
+  assert.equal(MB.childPath('가', '나', ''), '나', '구분자를 모르면 층을 못 만든다 — 맨 위에');
+});
+
+test('★ 이름을 바꿔도 어버이는 그대로다 — 어버이째 옮기면 하위가 통째로 딸려 간다', () => {
+  assert.equal(MB.renamedPath('1.자문사답변/계약', '계약서', '/'), '1.자문사답변/계약서');
+  assert.equal(MB.renamedPath('1.자문사답변', '자문답변', '/'), '자문답변');
+});
+
+test('★ 폴더 기록에 구분자와 층을 함께 적는다 — 없으면 하위 폴더를 만들 수 없다', () => {
+  const rec = MB.folderRecord({ path: '가/나/다', name: '다', delimiter: '/' }, { messages: 3 });
+  assert.equal(rec.delim, '/');
+  assert.equal(rec.parent, '가/나');
+  assert.equal(rec.depth, 2);
+  const top = MB.folderRecord({ path: '1.자문사답변', name: '1.자문사답변', delimiter: '/' }, {});
+  assert.equal(top.parent, '', '맨 위 폴더는 어버이가 없다');
+  assert.equal(top.depth, 0, '이름의 점을 층으로 읽으면 안 된다');
+});
+
 /* ── 미리보기 (폰 목록 셋째 줄) ── */
 
 test('★ 글이 든 조각을 고른다 — text/plain 이 먼저다(html 은 꼬리표를 걷어야 해서 지저분하다)', () => {

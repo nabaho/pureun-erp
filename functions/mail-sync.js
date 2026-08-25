@@ -545,6 +545,108 @@ module.exports = function build(deps) {
         reply(res, 200, Object.assign({ ok: true }, got));
       })),
 
+    /* ══════ 폴더 만들기 · 이름 바꾸기 · 지우기 ══════
+       ⚠ 여기는 다음메일의 «폴더 자체»를 고치는 자리다. 메일 한 통을 옮기는 것과 다르다 —
+         폴더를 지우면 그 안의 메일이 함께 사라진다. 그래서 셋을 지킨다.
+       ① 손으로 만든 폴더(custom)만 건드린다. 받은메일함·보낸메일함처럼 다음메일이
+          만들어 둔 칸은 이름도 못 바꾸고 지우지도 못한다 — 지우면 메일함이 망가진다.
+       ② 지우기는 «비우고 지운다». 안에 있는 메일을 먼저 휴지통으로 옮긴 뒤 빈 폴더를
+          지운다. 그래야 잘못 눌러도 다음메일 휴지통에서 되찾을 수 있다.
+       ③ 우리 목록에서도 그 자리를 곧바로 지운다 — 다음 회차를 기다리면 없는 폴더가
+          옆줄에 남아 눌러도 빈 화면이 된다. */
+    manageMailFolder: F
+      .region(REGION)
+      .runWith({ secrets: ['DAUM_MAIL_PASSWORD'], timeoutSeconds: 300, memory: '512MB' })
+      .https.onRequest((req, res) => gate(req, res, async () => {
+        const b = req.body || {};
+        const act = String(b.act || '');
+        if (['create', 'rename', 'delete'].indexOf(act) < 0) {
+          reply(res, 400, { ok: false, error: '알 수 없는 작업입니다.' }); return;
+        }
+        const db = deps.getDatabase();
+        const all = (await db.ref(ROOT + '/folders').once('value')).val() || {};
+        /* 구분자는 폴더 기록에서 가져온다 — 서버마다 다르다(/ 인 곳도, . 인 곳도). */
+        let delim = '';
+        Object.keys(all).forEach((k) => { if (!delim && all[k] && all[k].delim) delim = all[k].delim; });
+
+        const user = await deps.mailUserAsync();
+        const pass = deps.mailPass();
+        if (!user || !pass) { reply(res, 500, { ok: false, error: '메일 계정이 설정되지 않았습니다.' }); return; }
+
+        /* 건드려도 되는 폴더인가 — 손으로 만든 것만 */
+        const mine = (slug) => {
+          const f = all[slug];
+          if (!f) { const e = new Error('그 폴더를 찾지 못했습니다'); e.status = 404; throw e; }
+          if (f.kind !== 'custom') {
+            const e = new Error('「' + (f.name || '') + '」 은 다음메일이 만들어 둔 칸이라 여기서 고칠 수 없습니다.');
+            e.status = 400; throw e;
+          }
+          return f;
+        };
+
+        const client = await connect(deps, user, pass);
+        try {
+          if (act === 'create') {
+            const parent = b.parent ? mine(String(b.parent)) : null;
+            const name = String(b.name || '');
+            const bad = MB.folderNameBad(name, delim);
+            if (bad) { reply(res, 400, { ok: false, error: bad }); return; }
+            if (parent && !delim) {
+              reply(res, 400, { ok: false, error: '이 메일함은 하위 폴더를 만들 수 없습니다 (서버가 층을 알려 주지 않습니다).' });
+              return;
+            }
+            const path = MB.childPath(parent ? parent.path : '', name, delim);
+            await client.mailboxCreate(path);
+            reply(res, 200, { ok: true, path: path });
+            return;
+          }
+
+          if (act === 'rename') {
+            const f = mine(String(b.slug || ''));
+            const name = String(b.name || '');
+            const bad = MB.folderNameBad(name, delim);
+            if (bad) { reply(res, 400, { ok: false, error: bad }); return; }
+            const to = MB.renamedPath(f.path, name, delim);
+            if (to === f.path) { reply(res, 200, { ok: true, path: to, same: true }); return; }
+            await client.mailboxRename(f.path, to);
+            /* 옛 자리를 우리 목록에서 지운다 — 새 자리는 다음 회차가 적는다 */
+            const up = {};
+            up[ROOT + '/folders/' + String(b.slug)] = null;
+            up[ROOT + '/msgs/' + String(b.slug)] = null;
+            up[ROOT + '/sync/' + String(b.slug)] = null;
+            await db.ref().update(up);
+            reply(res, 200, { ok: true, path: to });
+            return;
+          }
+
+          /* act === 'delete' — 비우고 지운다 */
+          const f = mine(String(b.slug || ''));
+          const trashSlug = Object.keys(all).find((k) => all[k] && all[k].kind === 'trash');
+          let moved = 0;
+          if (trashSlug && all[trashSlug].path !== f.path) {
+            const lock = await client.getMailboxLock(f.path);
+            try {
+              const uids = await client.search({ all: true }, { uid: true });
+              if (uids && uids.length) {
+                await client.messageMove(uids.join(','), all[trashSlug].path, { uid: true });
+                moved = uids.length;
+              }
+            } finally {
+              try { lock.release(); } catch (_) { /* 이미 놓였다 */ }
+            }
+          }
+          await client.mailboxDelete(f.path);
+          const up = {};
+          up[ROOT + '/folders/' + String(b.slug)] = null;
+          up[ROOT + '/msgs/' + String(b.slug)] = null;
+          up[ROOT + '/sync/' + String(b.slug)] = null;
+          await db.ref().update(up);
+          reply(res, 200, { ok: true, moved: moved });
+        } finally {
+          try { await client.logout(); } catch (_) { /* 이미 끊겼다 */ }
+        }
+      })),
+
     /* ══════ 휴지통으로 · 폴더 옮기기 ══════
        ⚠ 여기가 거울이 원본을 «고치는» 유일한 자리다(읽음 표시 빼고). 그래서 좁게 만든다 —
          옮기는 것만 되고, 지우는 것(\Deleted+EXPUNGE)은 아예 없다. 다음메일 휴지통에서

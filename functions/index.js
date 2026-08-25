@@ -2121,3 +2121,4 @@ exports.pullMailbox = MSYNC.pullMailbox;
 exports.readMailMessage = MSYNC.readMailMessage;
 exports.readMailAttachment = MSYNC.readMailAttachment;
 exports.moveMailMessages = MSYNC.moveMailMessages;
+exports.manageMailFolder = MSYNC.manageMailFolder;

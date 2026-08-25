@@ -119,19 +119,60 @@ function isSyncable(box) {
   return true;
 }
 
-/* 폴더 하나를 실시간DB에 적을 모양으로 — 앱 왼쪽 목록이 이것만 보고 그린다. */
+/* 폴더 하나를 실시간DB에 적을 모양으로 — 앱 왼쪽 목록이 이것만 보고 그린다.
+   ⚠ 구분자(delim)와 어버이(parent)를 함께 적는다. 하위 폴더를 만들려면 «이 서버가
+     쓰는 구분자»를 알아야 하는데, 그것은 IMAP 이 폴더마다 알려 준다(서버마다 다르다:
+     / 인 곳도, . 인 곳도 있다). 못 박아 두면 다른 계정에서 엉뚱한 폴더가 생긴다. */
 function folderRecord(box, status) {
   const b = box || {};
   const st = status || {};
   const kind = folderKind(b);
+  const path = String(b.path || '');
+  const delim = String(b.delimiter || '');
+  const at = delim ? path.lastIndexOf(delim) : -1;
   return {
-    path: String(b.path || ''),
-    name: String(b.name || b.path || ''),
+    path: path,
+    name: String(b.name || path || ''),
     kind: kind,
     order: folderOrder(kind),
     total: Number(st.messages || 0),
     unseen: Number(st.unseen || 0),
+    delim: delim,
+    parent: at > 0 ? path.slice(0, at) : '',
+    depth: (at > 0 && delim) ? path.split(delim).length - 1 : 0,
   };
+}
+
+/* ── 폴더 이름으로 쓸 수 있는가 ──
+   ⚠ 구분자가 든 이름은 막는다. 「가/나」로 만들면 IMAP 은 그것을 «두 층»으로 읽어
+     엉뚱한 자리에 폴더가 생긴다. 사람은 이름 하나를 지었다고 생각한다.
+   ⚠ 앞뒤 빈칸도 막는다 — 눈에 안 보이는데 다른 폴더가 된다. */
+function folderNameBad(name, delim) {
+  const s = String(name == null ? '' : name);
+  if (!s.trim()) return '이름을 적어 주세요';
+  if (s !== s.trim()) return '이름 앞뒤의 빈칸을 지워 주세요';
+  if (s.length > 60) return '이름이 너무 깁니다 (60자까지)';
+  if (delim && s.indexOf(delim) >= 0) return '이름에 「' + delim + '」 는 쓸 수 없습니다 — 폴더를 가르는 글자입니다';
+  if (/[\r\n\t"%*]/.test(s)) return '이름에 쓸 수 없는 글자가 있습니다';
+  return '';
+}
+
+/* 새 폴더의 «전체 경로». 어버이가 있으면 그 아래로 붙인다. */
+function childPath(parentPath, name, delim) {
+  const p = String(parentPath || '');
+  const d = String(delim || '');
+  if (!p) return String(name);
+  if (!d) return String(name);          // 구분자를 모르면 층을 못 만든다 — 맨 위에 만든다
+  return p + d + String(name);
+}
+
+/* 이름만 바꾼 경로 — 어버이는 그대로 두고 마지막 마디만 간다.
+   ⚠ 어버이째 옮기면 그 아래 하위 폴더가 통째로 딸려 가 사라진 것처럼 보인다. */
+function renamedPath(path, name, delim) {
+  const p = String(path || '');
+  const d = String(delim || '');
+  const at = d ? p.lastIndexOf(d) : -1;
+  return at > 0 ? p.slice(0, at + d.length) + String(name) : String(name);
 }
 
 /* ── 첨부가 몇 개인가 ──
@@ -455,6 +496,7 @@ module.exports = {
   safeKey, hash8, slugOf,
   folderKind, folderOrder, isSyncable, folderRecord,
   attCount, oneAddr, addrList, hasFlag, msgRow,
+  folderNameBad, childPath, renamedPath,
   textPartOf, decodePart, toText, previewFrom, unentity, isHeadLine, PREVIEW_MAX,
   ROW_VER, needsRefetch, folderDone,
   pickToFetch, uidSet, nextSync, uidReset,
