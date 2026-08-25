@@ -58,7 +58,10 @@ function loadTabsHtml(over){
        살피므로 진짜 select 는 필요 없다. 안 넣으면 renderCoFTabsHtml() 이 던진다. */
     coSizeSelHtml: () => '',
     /* 2026-08-24: 종료 토글이 탭 줄에 붙었다 — 이 검사는 탭 칩만 살피므로 0곳으로 둔다 */
-    coClosedCount: () => 0 };
+    coClosedCount: () => 0,
+    /* 2026-08-24(2순위): 탭 줄에 「번호 없음」 토글도 붙었다 — 이 검사들은
+       그 부분을 안 보므로 0곳으로 둔다(안 넣으면 renderCoFTabsHtml 이 던진다). */
+    coNoBizCount: () => 0 };
   vm.createContext(ctx);
   vm.runInContext(src.slice(i, j) + '\n' + src.slice(r, rEnd), ctx);
   return ctx;

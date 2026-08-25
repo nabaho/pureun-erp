@@ -170,7 +170,10 @@ test('종료가 0곳이면 단추가 안 보인다 — 늘 있는 회색 단추�
     _coFolders: { f1: { id:'f1', name:'업체관리' } },
     coList: () => noClosed, coFTabsOf: () => [], coTagsOf: () => [],
     CO_SORT: { type: () => '' }, coSorted: l => l,
-    coSizeSelHtml: () => '<select class="copgsize"></select>' };
+    coSizeSelHtml: () => '<select class="copgsize"></select>',
+    /* 2026-08-24(2순위): 탭 줄에 「번호 없음」 토글도 붙었다 — 여기서는 종료 단추만
+       보므로 0곳으로 둔다(안 넣으면 renderCoFTabsHtml 이 던진다). */
+    coNoBizCount: () => 0 };
   vm.createContext(ctx);
   const a = '/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════';
   const b = '/* ══════ 폴더 안의 탭 — 화면 ══════ */';

@@ -42,7 +42,9 @@ function run(list, sel){
   // 검사 대상 함수만 떼어 온다
   /* 나눠 보기가 붙은 뒤로 coListHtml 은 «잘린 쪽»을 받는다(2026-08-15).
      여기서 볼 것은 열쇠 이스케이프뿐이라 한 쪽에 다 담아 넘긴다. */
-  vm.runInContext("function coSizeSelHtml(){return ''} function coPagerHtml(){return ''}", ctx);
+  /* 2026-08-24(2순위): 회사 목록 위에 «고아 기업정보» 알림 띠가 붙었다 —
+     이 검사는 열쇠 이스케이프만 보므로 빈 값으로 둔다. */
+  vm.runInContext("function coSizeSelHtml(){return ''} function coPagerHtml(){return ''} function coOrphanBarHtml(){return ''}", ctx);
   vm.runInContext(src.slice(src.indexOf('function coListHtml(info){'),
                             src.indexOf('function coDocsHtml(')), ctx);
   return ctx.coListHtml({ rows:list, total:list.length, page:0, pages:1, size:200,
