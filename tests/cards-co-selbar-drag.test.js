@@ -51,7 +51,10 @@ function runList(rows, sel, extra){
     "function coSizeSelHtml(){ return ''; }",
     "function coPagerHtml(){ return '<div class=\"copager\">쪽넘김</div>'; }",
     /* 2026-08-24(2순위): 회사 목록 위 «고아 기업정보» 알림 띠 — 이 검사는 안 본다 */
-    "function coOrphanBarHtml(){ return ''; }"
+    "function coOrphanBarHtml(){ return ''; }",
+    /* 2026-08-24(3순위): 줄마다 «빠진 칸»을 알린다 — 이 검사는 안 본다 */
+    "function coMissing(){ return []; }",
+    "function coCares(o){ return !!(o && (o.erp || ((o.tags||[]).length))); }"
   ].join('\n'), ctx);
   vm.runInContext(coListBlock(), ctx);
   const total = (extra && extra._total) || rows.length;
