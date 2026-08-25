@@ -651,6 +651,10 @@ table.sbox tr.bad td{background:#fdf4f4}
   color:#1a1a1a;background:none;padding:0}
 .dm-search input:focus{outline:none;box-shadow:none;border:none}
 .dm-bar{width:1px;height:14px;background:#dcdde1;margin:0 10px}
+/* 몇 통씩 볼까 — 도구줄 오른쪽 끝. 찾기 칸과 같은 높이·테두리로 둔다 */
+.dm-size{height:32px;margin-left:8px;border:1px solid #d8d8d8;border-radius:4px;background:#fff;
+  font-family:inherit;font-size:13px;color:#333;padding:0 6px;cursor:pointer}
+.dm-size:hover{background:#f7f8fa}
 .dm-hint{text-align:right;font-size:11.5px;color:#a8abb2;padding:3px 2px 6px}
 
 /* ══════ 목록 ══════ */
@@ -10598,7 +10602,31 @@ function renderPCSide(){
      규칙(콘솔)과 서버 함수 두 곳에서 막는다 — 한 곳만 막으면 언젠가 뚫린다. */
 const MB_ROOT = 'mailbox';
 const MB_FN   = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/';
-const MB_PAGE = 100;      /* 한 쪽에 보일 통수 — 다음메일 한 쪽 분량 */
+const MB_PAGE = 100;      /* 한 쪽에 보일 통수 — 고르지 않았을 때의 기본값 */
+/* 「몇 통씩 보기」 — 다음메일도 이 값을 고르게 해 둔다(대표 지시 2026-08-25).
+   ⚠ 이 값은 «화면에 보일 수»이자 «서버에서 받아 올 수»다. 둘을 따로 두면 화면에는
+     50통인데 받아 오기는 500통이라, 눈에 안 보이는 곳에서 요금이 나간다. */
+const MB_SIZES = [50, 100, 200, 500];
+const MB_SIZE_LS = 'pucards_mb_size';
+function mbPageSize(){
+  let n = Number(state.mbSize||0);
+  if(!n){ try{ n = Number(localStorage.getItem(MB_SIZE_LS)||0); }catch(_){ } }
+  return MB_SIZES.indexOf(n) >= 0 ? n : MB_PAGE;
+}
+/* 고른 수를 바꾸면 그 자리에서 다시 받는다 — 「더 보기」로 늘려 둔 것도 함께 되돌린다.
+   안 되돌리면 50통으로 줄였는데 화면에는 500통이 그대로 남는다. */
+function mbSetPageSize(v){
+  const n = Number(v);
+  if(MB_SIZES.indexOf(n) < 0) return;
+  state.mbSize = n;
+  try{ localStorage.setItem(MB_SIZE_LS, String(n)); }catch(_){ }
+  state.mbLimit = 0;
+  const id = mbNow();
+  const slugs = (id==='*all'||id==='*tome') ? mbFolders().map(f=>f.slug) : [id];
+  let left = slugs.length;
+  if(!left){ renderMailPage(); return; }
+  slugs.forEach(s=>loadMailBox(s, n, ()=>{ if(!--left){ renderPCSide(); renderMailPage(); } }));
+}
 
 let _mbFolders = null;    /* {slug:{path,name,kind,order,total,unseen}} — null 이면 아직 안 읽음 */
 let _mbMsgs    = {};      /* {slug:{uid:줄}} */
@@ -10642,7 +10670,7 @@ function mbEnsureFolders(){
    전부 받지 않는 까닭: 몇 년치가 만 통이면 한 번에 2MB 가 오간다. 「더 보기」로 늘린다. */
 function loadMailBox(slug, n, cb){
   if(Store.mode!=='firebase'){ if(cb) cb(); return; }
-  firebase.database().ref(MB_ROOT+'/msgs/'+slug).orderByKey().limitToLast(n||MB_PAGE).once('value')
+  firebase.database().ref(MB_ROOT+'/msgs/'+slug).orderByKey().limitToLast(n||mbPageSize()).once('value')
     .then(s=>{ _mbMsgs[slug] = s.val()||{}; _mbErr=''; if(cb) cb(); })
     .catch(e=>{
       _mbErr = (e&&e.code)||(e&&e.message)||'읽지 못했습니다';
@@ -10953,10 +10981,19 @@ function openMailBox(id){
     : (_mbMsgs[id] ? [] : [id]);
   if(!need.length){ renderPCSide(); renderMailPage(); return; }
   let left = need.length;
-  need.forEach(s=>loadMailBox(s, MB_PAGE, ()=>{
+  need.forEach(s=>loadMailBox(s, mbPageSize(), ()=>{
     if(--left) return;
     if(state.view==='mail' && state.mailSent==='box'){ renderPCSide(); renderMailPage(); }
   }));
+}
+/* 지금 보는 칸에 «모두» 몇 통 있나 — 서버가 폴더마다 적어 둔 값이다.
+   화면에 보이는 수(가져온 것)와 다르다. 둘을 같이 보여 줘야 「더 있나」를 안다. */
+function mbBoxTotal(){
+  const id = mbNow();
+  if(id==='*all' || id==='*tome')
+    return mbFolders().reduce((s,f)=>s+Number(f.total||0), 0);
+  const f = mbFolderBy(id);
+  return f ? Number(f.total||0) : 0;
 }
 function mbFilter(k){
   state.mbFilter = (state.mbFilter===k ? '' : k);
@@ -10966,7 +11003,7 @@ function mbFilter(k){
 function mbMore(){
   const id = mbNow();
   const slugs = (id==='*all'||id==='*tome') ? mbFolders().map(f=>f.slug) : [id];
-  const n = (state.mbLimit||MB_PAGE) + MB_PAGE;
+  const n = (state.mbLimit||mbPageSize()) + mbPageSize();
   state.mbLimit = n;
   let left = slugs.length; if(!left) return;
   toast('더 가져오고 있습니다…', 2000);
@@ -10985,7 +11022,7 @@ function mbPull(){
       const slugs = (id==='*all'||id==='*tome') ? mbFolders().map(f=>f.slug) : [id];
       let left = slugs.length || 1;
       const fin = ()=>{ if(!--left){ renderPCSide(); renderMailPage(); if(msg) toast(msg, ms||6000); } };
-      if(!slugs.length) fin(); else slugs.forEach(s=>loadMailBox(s, state.mbLimit||MB_PAGE, fin));
+      if(!slugs.length) fin(); else slugs.forEach(s=>loadMailBox(s, state.mbLimit||mbPageSize(), fin));
     });
   };
   const u = firebase.auth().currentUser;
@@ -11112,7 +11149,8 @@ function mbMobileHtml(){
         oninput="state.mbQ=this.value;if(!event.isComposing)renderMailPage()"
         oncompositionend="state.mbQ=this.value;renderMailPage()"></div>` : ''}
     <div class="dmm-list">${body}
-      ${rows.length ? `<button class="dmm-more" onclick="mbMore()">이전 메일 더 보기</button>` : ''}</div>
+      ${rows.length && mbBoxTotal() > rows.length
+        ? `<button class="dmm-more" onclick="mbMore()">이전 메일 더 보기</button>` : ''}</div>
     ${state.mbPickMode ? '' : `<button class="dmm-fab" onclick="openMailPage()" title="메일 쓰기">✏️</button>`}
     <div class="dmm-dim" onclick="mbDrawer(false)"></div>
     <aside class="dmm-drawer">${mbDrawerHtml()}</aside>
@@ -11243,16 +11281,29 @@ function mbBoxHtml(){
           oncompositionend="state.mbQ=this.value;renderMailPage()"></span>
       <span class="dm-bar"></span>
       <button onclick="mbShowDetail()">상세</button>
+      ${/* 몇 통씩 볼까 (대표 지시 2026-08-25) — 다음메일도 이 값을 고르게 해 둔다.
+           ⚠ 「보이는 수」와 「받아 오는 수」가 같은 값이다. 따로 두면 화면에는 50통인데
+             받아 오기는 500통이라, 눈에 안 보이는 곳에서 요금이 나간다. */''}
+      <select class="dm-size" onchange="mbSetPageSize(this.value)" title="한 번에 몇 통씩 볼까">
+        ${MB_SIZES.map(n=>`<option value="${n}" ${n===mbPageSize()?'selected':''}>${n}개씩</option>`).join('')}
+      </select>
     </div>
     ${/* 안내줄 — 오른쪽 글귀는 다음메일함과 같은 그 문장이다. 방향키·스페이스가 실제로
           되게 만들어 두었다(mbKeyNav) — 안 되는 채로 적어 두면 거짓말이 된다.
           왼쪽에는 몇 통인지와 언제 가져온 것인지를 둔다. 거울이니 «언제 것인가»가
           늘 보여야 한다. */''}
     <div class="dm-hint" style="display:flex;gap:12px;text-align:left">
-      <span style="flex:1">${rows.length ? `${rows.length.toLocaleString()}통${nPick?` · ${nPick}통 고름`:''} · ` : ''}${esc(meta)}</span>
+      <span style="flex:1">${rows.length
+        ? `${rows.length.toLocaleString()}통 보는 중`
+          + (mbBoxTotal() > rows.length ? ` · 이 칸에 모두 ${mbBoxTotal().toLocaleString()}통` : '')
+          + (nPick?` · ${nPick}통 고름`:'') + ' · '
+        : ''}${esc(meta)}</span>
       <span>＊ 메일 목록, 방향키로 이동, 스페이스로 선택</span></div>
     <div class="dm-list">${body}</div>
-    ${rows.length ? `<button class="dm-more" onclick="mbMore()">이전 메일 더 보기</button>` : ''}`;
+    ${/* ⚠ 「더 보기」는 «남은 것이 있을 때만» 보여 준다. 다 보고 있는데도 단추가 있으면
+         눌러도 아무 일이 없어, 대표께서 「고장 났나」 하신다. */''}
+    ${rows.length && mbBoxTotal() > rows.length
+      ? `<button class="dm-more" onclick="mbMore()">이전 메일 더 보기</button>` : ''}`;
 }
 
 /* ── 방향키로 이동 · 스페이스로 선택 ──
