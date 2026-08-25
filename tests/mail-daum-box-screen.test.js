@@ -305,6 +305,50 @@ test('☐ 를 안 눌렀어도 짚어 둔 줄을 고른 것으로 본다 — 「
   assert.equal(c.mbPicked().length, 1);
 });
 
+/* ══════ 몇 통씩 보기 (대표 지시 2026-08-25) ══════ */
+
+test('★ 몇 통씩 볼지 고르는 칸이 있다 — 50·100 등', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  const h = c.mbBoxHtml();
+  assert.ok(h.indexOf('mbSetPageSize(') > 0, '고르는 칸이 없다');
+  [50, 100].forEach((n) => {
+    assert.ok(h.indexOf('>' + n + '개씩<') > 0, n + '개씩 이 없다');
+  });
+});
+
+test('★ 고른 수가 «보이는 수»이자 «받아 오는 수»다 — 따로 두면 안 보이는 곳에서 요금이 나간다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  assert.equal(c.mbPageSize(), 100, '고르지 않았으면 100통');
+  c.state.mbSize = 50;
+  assert.equal(c.mbPageSize(), 50);
+  c.state.mbSize = 7;                       // 없는 값
+  assert.equal(c.mbPageSize(), 100, '없는 값이면 기본값으로 되돌린다');
+});
+
+test('★ 이 칸에 모두 몇 통인지 함께 보여 준다 — 보이는 수만으로는 「더 있나」를 모른다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS });
+  const h = c.mbBoxHtml();
+  assert.match(h, /통 보는 중/, '몇 통 보고 있는지 안 나온다');
+  /* 받은메일함은 모두 120통인데 자료는 두 줄뿐이다 — 「모두」가 나와야 한다 */
+  assert.match(h, /이 칸에 모두 120통/, '이 칸의 전체 통수가 안 나온다');
+});
+
+test('★ 남은 것이 없으면 「더 보기」를 안 보여 준다 — 눌러도 아무 일이 없으면 고장으로 읽힌다', () => {
+  const folders = Object.assign({}, FOLDERS, {
+    B_INBOX: { path:'INBOX', name:'INBOX', kind:'inbox', order:1, total:2, unseen:0 }
+  });
+  const c = load({ folders: folders, msgs: MSGS });
+  assert.ok(c.mbBoxHtml().indexOf('mbMore()') < 0, '다 보고 있는데 더 보기가 있다');
+  const c2 = load({ folders: FOLDERS, msgs: MSGS });     // 모두 120통 · 손에는 2통
+  assert.ok(c2.mbBoxHtml().indexOf('mbMore()') > 0, '남았는데 더 보기가 없다');
+});
+
+test('전체메일은 폴더들의 통수를 합쳐 센다', () => {
+  const c = load({ folders: FOLDERS, msgs: MSGS, state: { mbBox: '*all' } });
+  const sum = Object.values(FOLDERS).reduce((s, f) => s + f.total, 0);
+  assert.equal(c.mbBoxTotal(), sum);
+});
+
 /* ══════ 폰 — 다음메일 «앱»과 같은 차림 (대표 화면 2026-08-24) ══════
    "폰에서 화면은 캡쳐2,3 과 똑같이 만들어달라."
    여기서 지키는 것은 «앱에서 보던 것이 폰에서도 그대로 있는가»다. */
