@@ -158,3 +158,64 @@ test('법인 대시보드와 이음센터가 «같은» 달력을 쓴다', () =>
   assert.match(RAW, /이음센터 모드: 이음센터 화면\(dash\/ieum\)에서 캘린더만 재사용/,
     '두 화면이 달력을 따로 그린다 — 한 곳을 고쳐도 다른 곳은 그대로다');
 });
+
+/* ── 위치·크기 (2026-08-25 이어서) ────────────────────────────────
+   캡처를 나란히 놓고 구글과 다른 곳을 다섯 찾아 맞췄다. */
+
+test('★ 한 칸에 «넷» 을 보인다 — 구글과 같다', () => {
+  /* 셋이면 「7개 더보기」가 너무 자주 떠서 하루를 보려면 매번 눌러야 했다. */
+  assert.match(S, /var MAX_SHOW = 4;/, '한 칸에 보이는 개수가 구글과 다르다');
+  assert.strictEqual(/MAX_SHOW = calMonthFit ? 4 : 3/.test(S), false, '옛 셈이 남아 있다');
+});
+
+test('더보기 글귀에 «＋» 를 붙이지 않는다 — 구글 글귀 그대로', () => {
+  assert.match(S, /hiddenCount\+'개 더보기'/, '더보기 글귀가 구글과 다르다');
+  assert.strictEqual(/'\+'\+hiddenCount\+'개 더보기'/.test(S), false, '아직 ＋ 를 붙인다');
+});
+
+test('★ 요일 머리를 일곱 칸 «같은 색» 으로 쓴다', () => {
+  /* 구글은 일요일을 빨강으로 하지 않는다. 우리가 넣었던 것이다.
+     ⚠ 우리말 관습과 다르므로, 되살리라면 요일 머리와 날짜 숫자를 «함께» 되돌린다. */
+  const i = S.indexOf("['일','월','화','수','목','금','토'].map(function(d, i){");
+  assert.ok(i > 0, '요일 머리를 못 찾았다');
+  const hd = S.slice(i, i + 400);
+  assert.strictEqual(/i===0\?'#dc2626'/.test(hd), false, '아직 일요일만 빨갛다');
+  assert.match(hd, /color:'#64748b'/, '일곱 칸이 같은 색이 아니다');
+  /* 구글 요일 머리는 «가볍다»(500). 굵게 하면 날짜보다 요일이 먼저 눈에 든다. */
+  assert.match(hd, /fontWeight:500/, '요일 머리가 구글보다 굵다');
+  assert.match(hd, /padding:'8px 4px'/, '요일 머리 높이가 구글과 다르다');
+});
+
+test('★ 날짜 숫자를 요일로 가르지 않는다 — 오늘만 파란 동그라미', () => {
+  const i = S.indexOf("className:'cal-day-num'");
+  assert.ok(i > 0, '날짜 숫자를 못 찾았다');
+  const num = S.slice(i, i + 700);
+  assert.match(num, /background: isToday\?'#2563eb':'transparent'/, '오늘 표시가 사라졌다');
+  assert.strictEqual(/isRed\?'#dc2626'/.test(num), false, '아직 일요일·공휴일 숫자를 빨갛게 한다');
+  assert.strictEqual(/weekday===6\?'#1e40af'/.test(num), false, '아직 토요일 숫자를 파랗게 한다');
+  assert.match(num, /isOtherMonth\?'#94a3b8'/, '지난달·다음달을 흐리게 하지 않는다');
+});
+
+test('★ 공휴일을 «칩» 으로 보여 준다 — 칸 오른쪽 위 글씨가 아니다', () => {
+  /* 구글에는 그 자리가 없다. 캡처에서 「광복절」은 붉은 칩이었다. */
+  assert.match(S, /isHoliday && h\('div', \{ key:'hol'/, '공휴일이 칩이 아니다');
+  assert.strictEqual(/textAlign:'right', marginTop:'4px' \}\}, holidayName\)/.test(S), false,
+    '아직 오른쪽 위 글씨로 그린다');
+});
+
+test('공휴일이 일정을 밀어내지 않는다', () => {
+  /* 공휴일을 개수(MAX_SHOW)에 넣으면 일정 하나가 접혀 안 보인다. */
+  const i = S.indexOf("key:'hol'");
+  const j = S.indexOf('dayEvents.slice(0, MAX_SHOW)', i);
+  assert.ok(j > i, '공휴일 칩이 일정 목록보다 뒤에 있다');
+  const between = S.slice(i, j);
+  assert.strictEqual(/MAX_SHOW/.test(between), false, '공휴일이 일정 개수를 깎는다');
+});
+
+test('공휴일 칩에 새 색을 만들지 않았다', () => {
+  const i = S.indexOf("key:'hol'");
+  const chip = S.slice(i, i + 900);
+  (chip.match(/#[0-9a-fA-F]{6}/g) || []).forEach(function (c) {
+    assert.ok(['#fecaca', '#991b1b'].indexOf(c.toLowerCase()) >= 0, '새 색이 들어왔다: ' + c);
+  });
+});
