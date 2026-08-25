@@ -155,6 +155,8 @@ test('★ 서버가 업체 배열을 함께 담아 둔다 — 메일마다 다�
   const fs = require('node:fs');
   const FN = fs.readFileSync(path.join(R, 'functions', 'index.js'), 'utf8');
   assert.match(FN, /cos: MR\.coList\(cos\)/);
-  const calls = FN.match(/payMailKnownCache\.cos\)/g) || [];
+  /* 메일 한 통을 담는 곳은 둘이다 — 첨부와 본문. 둘 다 넘겨야 한다.
+     ⚠ 「다시 갈라 보내기」도 같은 것을 쓰므로 자리 수로 세지 않는다. */
+  const calls = FN.match(/mail\.box, payMailKnownCache\.cos\)/g) || [];
   assert.equal(calls.length, 2, '첨부와 본문 두 곳에 다 넘겨야 합니다');
 });

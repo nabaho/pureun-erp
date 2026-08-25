@@ -313,6 +313,30 @@ function mailNoteOf(o) {
   return ('메일 ' + from + (subject ? ' · ' + subject : '')).slice(0, 300);
 }
 
+/* ── 공용 칸 줄에서 보낸이·제목을 되찾는다 (대표 요청 2026-08-25) ──
+   공용 칸에 52건이 「업체관리에 없는 주소」로 쌓여 있었다. 그 뒤에 업체관리에
+   주소를 넣어도 **이미 떨어진 것은 다시 갈리지 않는다** — 배달은 받을 때 한 번만
+   한다. 다시 갈라 보내려면 그 줄의 보낸이를 알아야 하는데,
+   ⚠ 예전 줄에는 mailFrom 칸이 없다 — note 에 「메일 <주소> · <제목>」으로만 있다. */
+function mailFromNote(note) {
+  const s = String(note == null ? '' : note);
+  const m = s.match(/^메일\s+(\S+?)(?:\s*·\s*([\s\S]*))?$/);
+  if (!m) return { from: '', subject: '' };
+  return { from: m[1], subject: String(m[2] || '').trim() };
+}
+
+/* 공용 칸 한 줄을 지금 규칙으로 다시 갈라 본다.
+   보낸이는 새 칸(mailFrom)을 먼저 보고, 없으면 note 에서 되찾는다. */
+function regroupOne(rec, index, owners, companies) {
+  const r = rec || {};
+  const got = (r.mailFrom || r.mailSubject)
+    ? { from: String(r.mailFrom || ''), subject: String(r.mailSubject || '') }
+    : mailFromNote(r.note);
+  return routeFor({
+    from: got.from, subject: got.subject, filename: String(r.filename || '')
+  }, index, owners, '', companies);
+}
+
 /* ══════ 메일을 담당자 칸으로 저절로 (대표 승낙 2026-08-21) ══════
    여태 메일로 온 자료는 공용 칸에 쌓이고, 누군가 「내가 맡기」를 눌러야
    내려왔다. 화면에는 이미 누가 맡을 사람인지 적혀 있었는데 그리로
@@ -477,6 +501,14 @@ function tagFor(o, company) {
     const yy = text.match(/(?:^|\D)(\d{2})\s*년\s*(\d{1,2})\s*월/); // 25년 07월
     if (yy) m = [yy[0], '20' + yy[1], yy[2]];
   }
+  /* 두 자리 해 + 월 — 「26.07월_급여_본점_예정.xlsx」 (실제로 온 파일 이름).
+     ⚠ 해를 20~40 으로 묶는다. 안 묶으면 「1.5월분」 같은 것이 해로 읽힌다.
+     ⚠ 급여데이터함 guessTag 와 **같아야** 한다 — 다르면 같은 파일이 서버와
+       화면에서 다른 달로 잡힌다. */
+  if (!m) {
+    const yd = text.match(/(?:^|\D)([2-3]\d)[.\-_](\d{1,2})\s*월/);
+    if (yd) m = [yd[0], '20' + yd[1], yd[2]];
+  }
   if (m) {
     const mo = parseInt(m[2], 10);
     if (mo >= 1 && mo <= 12) month = m[1] + '-' + (mo < 10 ? '0' : '') + mo;
@@ -600,7 +632,11 @@ function sharedPendingRecord(o) {
     kind: String(tag.kind || ''),
     from: 'mail',
     why: String(o.why || ''),
-    note: mailNoteOf(o)
+    note: mailNoteOf(o),
+    /* 보낸이·제목을 **칸으로도** 남긴다 (대표 요청 2026-08-25) — 나중에 다시
+       갈라 보낼 때 글(note)을 되짚어 읽지 않아도 된다. */
+    mailFrom: String(o.mailFrom || ''),
+    mailSubject: String(o.mailSubject || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 200)
   };
 }
 
@@ -609,6 +645,7 @@ module.exports = {
   normEmail, senderOf, collectEmails, sidToEmail,
   buildKnownList, isKnownSender,
   buildCompanyIndex, coList, companyFor, companiesFor, coFromText, seatFor, tagFor, routeFor,
+  mailFromNote, regroupOne,
   mailConfOf, pickMailboxes, MAILBOX_HINT,
   trustBox,
   BODY_MAX, bodyTextOf, okBody, bodyFilename,

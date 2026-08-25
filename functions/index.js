@@ -1456,6 +1456,87 @@ exports.pullPaydataMail = functions
   });
 
 
+/* ══════ 공용 칸을 지금 규칙으로 다시 갈라 보내기 (대표 요청 2026-08-25) ══════
+   배달은 메일을 **받을 때 한 번만** 한다. 그래서 업체관리에 주소를 나중에 넣어도
+   이미 공용 칸에 떨어진 것은 영원히 그대로였다 — 52건이 「업체관리에 없는 주소」로
+   쌓여 있었다.
+
+   ⚠ 이 일은 서버만 할 수 있다. 화면에서는 **남의 자리에 못 쓴다**(콘솔 규칙이
+   paydata/u/$owner 쓰기를 그 사람과 대리인에게만 준다). 그래서 함수로 둔다.
+   ⚠ 총괄관리자만 — 남의 자리로 자료를 옮기는 일이다.
+   ⚠ 지도(업체 주소)를 **새로 읽는다**. 6시간 캐시를 그냥 쓰면 방금 넣은 주소가
+   안 보여 「아무것도 안 갈렸다」로 끝난다. */
+exports.regroupPaydataShared = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 120, memory: "256MB" })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+    let me;
+    try {
+      me = await requireStaff(req);
+      const roleSnap = await getDatabase().ref("uid_roles/" + me.uid).once("value");
+      if (((roleSnap && roleSnap.val()) || {}).isAdmin !== true) {
+        res.status(403).json({ ok: false, error: "총괄관리자만 다시 갈라 보낼 수 있습니다." });
+        return;
+      }
+    } catch (e) {
+      res.status(e.status || 401).json({ ok: false, error: String(e.message || e) });
+      return;
+    }
+
+    const db = getDatabase();
+    try {
+      payMailKnownCache.at = 0;             // 방금 넣은 주소가 보이게 새로 읽는다
+      await payMailKnownList(db);
+      const snap = await db.ref(PAYDATA_ROOT + "/pending_shared").once("value");
+      const box = (snap && snap.val()) || {};
+      const ids = Object.keys(box);
+
+      const up = {};
+      let moved = 0, left = 0;
+      const whys = {}, seats = {};
+      ids.forEach(function (id) {
+        const rec = box[id] || {};
+        const r = MR.regroupOne(rec, payMailKnownCache.index,
+          payMailKnownCache.owners, payMailKnownCache.cos);
+        if (!r.shared && r.seat) {
+          /* 사람 자리로 옮긴다 — 공용 칸에서 빼고, 이름표(사업장·귀속월·종류)도
+             이번에 알아낸 것으로 갱신한다. */
+          const tag = r.tag || {};
+          up[PAYDATA_ROOT + "/u/" + r.seat + "/pending/" + id] = Object.assign({}, rec, {
+            companyId: String(tag.companyId || rec.companyId || ""),
+            companyName: String(tag.companyName || rec.companyName || ""),
+            month: String(tag.month || rec.month || ""),
+            kind: String(tag.kind || rec.kind || ""),
+            why: "",
+            routedAt: Date.now(),
+            routedBy: "regroup"
+          });
+          up[PAYDATA_ROOT + "/pending_shared/" + id] = null;
+          moved++;
+          seats[r.seat] = (seats[r.seat] || 0) + 1;
+        } else {
+          /* 아직 못 갈랐다 — 까닭을 지금 것으로 고쳐 둔다(무엇을 손봐야 하는지) */
+          left++;
+          whys[r.why || "(까닭 없음)"] = (whys[r.why || "(까닭 없음)"] || 0) + 1;
+          if (String(rec.why || "") !== String(r.why || "")) {
+            up[PAYDATA_ROOT + "/pending_shared/" + id + "/why"] = String(r.why || "");
+          }
+        }
+      });
+
+      if (Object.keys(up).length) await db.ref().update(up);
+      console.log("regroupPaydataShared", { looked: ids.length, moved, left, whys });
+      res.json({ ok: true, looked: ids.length, moved: moved, left: left, whys: whys, seats: seats });
+    } catch (e) {
+      console.error("regroupPaydataShared 실패:", String((e && e.message) || e));
+      res.status(500).json({ ok: false, error: String((e && e.message) || e) });
+    }
+  });
+
+
 /* 지문·간편 로그인(패스키) — 판단은 functions/passkey.js 한 곳에서만 한다.
    로그인 문을 여는 코드라 다른 함수와 섞지 않는다. */
 const _passkey = require('./passkey');
