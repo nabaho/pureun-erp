@@ -143,11 +143,13 @@ ok('「지난 기금」이 아니라 「종료기금」', src.includes("['past',
 ok('묶음 나누기는 homeBuckets 한 곳', src.includes('function homeBuckets(')
   && src.includes('function renderNav(') && /renderNav\(\);/.test(src));
 ok('본문 묶음 탭줄은 없앴다', src.includes("var tabbar='';   // 묶음 고르기는 사이드바로 옮겼다"));
-ok('머리줄은 고른 묶음만 말한다', src.includes('var curInc=_curList.filter(')
+/* 뜻은 「고른 묶음 기준으로 센다」이다 — 앞에 조건이 붙어도(미완비 묶음 등) 상관없다.
+   글자를 통째로 맞추면 다른 사람이 묶음을 늘릴 때마다 «멀쩡한데» 빨개진다. */
+ok('머리줄은 고른 묶음만 말한다', /var curInc=[^;]*_curList\.filter\(/.test(src)
   && !src.includes("'<h1>기금 현황</h1><span class=\"stat\">운영 '"));
-// 빈 묶음을 사이드바에 남기면 누를 것도 없는 줄이 자리만 차지한다
+// 빈 묶음을 사이드바에 남기면 누를 것도 없는 줄이 자리만 차지한다(묶음이 늘어도 뜻은 같다)
 ok('빈 설립중·종료·삭제는 사이드바에서 숨긴다',
-  src.includes("if(!n && (g[0]==='setup'||g[0]==='trash'||g[0]==='past')) return '';"));
+  /if\(!n && \(g\[0\]==='setup'\|\|g\[0\]==='trash'\|\|g\[0\]==='past'[^)]*\)\) return '';/.test(src));
 ok('[기금 현황]을 누르면 첫 하위로 (대표 선택 ②-나)',
   /function goHome\(\)\{[\s\S]{0,240}?S\.homeTab='지역공동';[\s\S]{0,240}?go\('home'\);/.test(src));
 /* ── 하위 묶음 접기·펴기 ── (대표 지시)
@@ -694,8 +696,10 @@ ok('비영리조직회계기준 계정', src.includes("'미수수익':'자산','
 ok('그 계정들의 전기이월 칸', src.includes("accrued:'미수수익',recv:'미수금',stfund:'단기금융상품',spcash:'특정현금과예금'"));
 /* 전기이월 칸을 손으로 나열하면 계정을 늘릴 때 빠진다 — 저장은 opening 마디를 통째로 바꿔 쓰므로
    화면에 칸이 없는 열쇠는 **저장할 때 값이 지워진다**. 그리는 쪽도 저장하는 쪽과 같은 표를 쓴다. */
+/* 뜻은 「칸을 계정표(OPEN_ACCT)를 돌며 그린다」이다. 격자 모양(grid/gridw)은 자유다 —
+   손으로 나열하면 계정을 늘릴 때 칸이 빠지고, 저장이 opening 을 통째로 덮어 이미 든 값이 지워진다. */
 ok('전기이월 칸을 계정표에서 뽑아 그린다',
-  src.includes("+'<div class=\"grid\" style=\"max-width:760px\">'+Object.keys(OPEN_ACCT).map(function(k){")
+  /<div class="grid\w*"[^>]*>'\+Object\.keys\(OPEN_ACCT\)\.map\(function\(k\)\{/.test(src)
   && src.includes("return oi(k, OPEN_ACCT[k]+(_n?"));
 ok('전기이월 칸을 손으로 나열하지 않는다', !/\+oi\('\w+','/.test(src));
 ok('저장도 같은 표에서 뽑는다',

@@ -48,7 +48,42 @@ global.funds = { X: { fund_type: '공동', years: {} } };
      // 준비금 1·2 배치는 기금마다 다르다 — 그것을 읽는 도우미도 함께 들여온다
      'computeFin', '_contribOf', '_reserveRate', '_rsvSwapOf', '_rsvRoles', '_reserveAcct', 'reserveAdjust',
      '_reserveEntry', '_reserveEntries', 'finNegatives', '_retLabel', '_retVal',
-     '_k1000', '_openAssets', 'guessBfKind', 'buildF15'].map(grabFn).join('\n'));
+     /* ⚠ buildF15 가 부르는 것은 모두 들여와야 한다 — 하나만 빠져도 이 검사가 «통째로» 죽고,
+        167건이 도는 줄 알지만 실제로는 아무것도 안 돈다(bfMovesOf 가 빠져 그랬다).
+        아래 «부르는데 없는 이름» 검사가 그것을 미리 잡는다. */
+     '_k1000', '_openAssets', 'guessBfKind', 'bfMovesOf', 'bfDays', 'buildF15'].map(grabFn).join('\n'));
+
+/* ══ 파수꾼 ══ 들여온 함수들이 «부르는데 없는 이름»을 미리 찾는다.
+   하나만 빠져도 이 검사는 첫 호출에서 죽고, 167건이 도는 줄 알지만 실제로는 0건이 돈다.
+   실제로 bfMovesOf 가 빠져 결산 회귀가 통째로 꺼진 채 main 에 올라가 있었다. */
+{
+  const names = new Set();
+  const bodies = ['buildF15', 'computeFin', 'bfMovesOf', 'reserveAdjust', '_reserveEntries'];
+  bodies.forEach(fn => {
+    let body; try { body = grabFn(fn); } catch (e) { return; }
+    /* 그 함수 «안»에서 만든 이름은 밖에서 들여올 것이 아니다 — 빼지 않으면
+       var sg=function(){…} 같은 지역 도우미가 «없는 이름»으로 잘못 걸린다. */
+    const local = new Set();
+    [...body.matchAll(/\b(?:var|let|const)\s+([_a-zA-Z][\w$]*)/g)].forEach(m => local.add(m[1]));
+    [...body.matchAll(/\bfunction\s+([_a-zA-Z][\w$]*)/g)].forEach(m => local.add(m[1]));
+    // 점 뒤에 오는 것은 «메서드»라 전역 이름이 아니다(String.fromCharCode 등)
+    [...body.matchAll(/(^|[^.\w$])([_a-zA-Z][\w$]*)\s*\(/g)].forEach(m => {
+      if (!local.has(m[2])) names.add(m[2]);
+    });
+  });
+  const BUILTIN = new Set(['if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'typeof',
+    'String', 'Number', 'Math', 'Object', 'Array', 'Date', 'JSON', 'parseInt', 'parseFloat', 'isFinite',
+    'push', 'map', 'filter', 'forEach', 'reduce', 'sort', 'join', 'slice', 'splice', 'concat', 'indexOf',
+    'keys', 'assign', 'test', 'replace', 'match', 'split', 'trim', 'toFixed', 'localeCompare',
+    'toLocaleString', 'some', 'every', 'find', 'includes', 'round', 'max', 'min', 'abs', 'floor', 'ceil',
+    'charAt', 'substring', 'padStart', 'toString', 'getTime', 'call', 'apply', 'add', 'has']);
+  const missing = [...names].filter(x => !BUILTIN.has(x) && typeof global[x] === 'undefined');
+  if (missing.length) {
+    console.log('\n✗ 들여오지 못한 이름: ' + missing.join(', '));
+    console.log('  → check_closing.js 위쪽 grabFn 목록에 넣어야 이 검사가 실제로 돕니다.');
+    process.exit(1);
+  }
+}
 
 let fail = 0, n = 0;
 const W = v => String(Math.round(v || 0).toLocaleString()).padStart(16);
