@@ -69,6 +69,26 @@ const noIcon = Object.keys(info).filter(f => !info[f].id);
 ok('★ 모든 화면에 그림 아이콘이 있다', noIcon.length === 0,
    noIcon.length ? ('빠진 곳:\n      ' + noIcon.map(f => f + '  href=' + (info[f].href || '(없음)').slice(0, 60)).join('\n      ')) : '');
 
+/* ★ 포털 이름은 「푸른포털」 로 짧게 (대표 지시 2026-08-25)
+   ⚠ 홈 화면 아이콘 «밑»에 뜨는 이름은 <title> 이 아니라 이 meta 다.
+     안 적으면 아이폰이 <title> 을 쓰는데, 길면 「푸른 통합 포…」 로 잘라 버린다.
+   ⚠ manifest 의 이름도 같이 맞춘다 — 안드로이드는 그쪽을 본다.
+     셋 중 하나만 바꾸면 기기마다 다른 이름으로 깔린다. */
+console.log('\n[①-b 포털 이름이 세 곳에서 같다]');
+ok('탭 제목이 「푸른포털」 이다', (info['enter.html'] || {}).title === '푸른포털',
+   '지금: ' + ((info['enter.html'] || {}).title || '(없음)'));
+ok('아이폰 홈 화면 이름표가 「푸른포털」 이다',
+   /<meta name="apple-mobile-web-app-title" content="푸른포털">/.test(portal),
+   '없으면 <title> 을 쓰는데 길면 잘린다');
+{
+  const mfPath = path.join(ROOT, 'manifest.json');
+  let mf = null;
+  try { mf = JSON.parse(fs.readFileSync(mfPath, 'utf8')); } catch (e) {}
+  ok('manifest(안드로이드) 이름도 「푸른포털」 이다',
+     !!mf && mf.name === '푸른포털' && mf.short_name === '푸른포털',
+     mf ? (mf.name + ' / ' + mf.short_name) : '읽지 못함');
+}
+
 console.log('\n[② 그림이 서로 겹치지 않는다]');
 const byEmoji = {};
 Object.keys(info).forEach(f => { const e = info[f].id; if(e) (byEmoji[e] = byEmoji[e] || []).push(f); });
