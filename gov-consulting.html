@@ -1487,10 +1487,15 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
         </div>
         <aside id="mEditPhotos" class="edit-photo-panel" style="display:none;">
           <div class="edit-photo-head">
-            <div class="edit-photo-title">📷 현장 사진 <span class="ph-sub">— 방문 증빙(타임스탬프)</span></div>
+            <div class="edit-photo-title" id="mEditPhTitle">📷 현장 사진 <span class="ph-sub">— 방문 증빙(타임스탬프)</span></div>
           </div>
           <div id="mEditPhCtl" style="margin-bottom:10px;"></div>
           <div id="mEditPhGrid" class="edit-photo-grid"></div>
+          <!-- 사진첩에서 고르기 — 창을 새로 띄우지 않고 이 자리에서 바꾼다(2026-08-25) -->
+          <div id="mEditPick" style="display:none;">
+            <div id="mEditPickHead"></div>
+            <div id="mEditPickBody" style="max-height:46vh;overflow-y:auto;"></div>
+          </div>
           <input type="file" id="mEditExtraFi" accept="image/*" style="display:none;">
           <!-- 📎 참고 캡처 (대표 승인 목업 2026-08-23) — 기술보호·현장클리닉은 포털
                화면을 캡처해 사업장 정보를 남길 일이 많다. 위 현장 사진은 «방문 증빙»
@@ -2412,6 +2417,9 @@ function renderPhotoLog(){
 function slotLabelByIdx(sc,i){ return slotLabelText(sc,i); }
 function renderEditPhotos(sid,sc){
   const phDiv=q('#mEditPhotos'); if(!phDiv)return;
+  /* 고르는 중이 아니면 사진 화면으로 돌려 둔다 — 창을 닫았다 다시 열었을 때
+     고르기 화면이 남아 있으면 사진이 사라진 것처럼 보인다. */
+  if(!albumPickTarget)editPickMode(false);
   const layout=phDiv.closest('.edit-layout');
   const modal=phDiv.closest('.edit-modal');
   const co=getCos().find(c=>c.id===sc?.coId);
@@ -2477,7 +2485,11 @@ function renderEditPhotos(sid,sc){
             <div style="font-size:9.5px;color:var(--t2);text-align:center;line-height:1.4;">끌어다 놓아도 됩니다<br>· 방문일·위 시간이 자동으로 찍힙니다 ·</div>
           </div></div>`;
       } else if(d.kind==='base'){
-        cell.innerHTML=`<div class="edit-photo-card" style="opacity:.75;"><div class="edit-photo-label">${d.label}</div><div class="edit-photo-empty">미등록<br><span style="font-size:9px;">촬영은 '📷 사진 등록'</span></div></div>`;
+        /* 증빙 칸에도 사진첩에서 고를 길을 준다(2026-08-25 대표 보고).
+           예전에는 추가 칸에만 있어서, 현장·입장·활동 칸에 사진첩 사진을 넣을
+           방법이 없었다 — 그래서 「참고 캡처」로 돌아가게 됐다.
+           넣을 때 방문일과 아래 시간으로 타임스탬프가 찍힌다(추가 칸과 같은 길). */
+        cell.innerHTML=`<div class="edit-photo-card" style="opacity:${mine?1:.75};"><div class="edit-photo-label">${d.label}</div><div class="edit-photo-empty">미등록<br><span style="font-size:9px;">촬영은 '📷 사진 등록'</span></div>${mine?`<div style="display:flex;flex-direction:column;gap:5px;padding:6px;"><input type="time" value="10:00" id="mExT${d.i}" style="width:100%;height:28px;border:1px solid var(--border);border-radius:7px;font-family:inherit;text-align:center;font-size:12px;background:var(--surface);color:var(--text);"><button onclick="openAlbumPicker('${sid}',${d.i})" style="width:100%;padding:7px;border:1px solid var(--accent);border-radius:7px;background:var(--surface);color:var(--accent);font-weight:800;font-size:11.5px;cursor:pointer;font-family:inherit;">🖼 사진첩에서 고르기</button></div>`:''}</div>`;
       } else { continue; }
       if(myToken!==_editPhRenderToken)return; // 붙이기 직전 재확인
       grid.appendChild(cell);
@@ -2918,42 +2930,136 @@ let albumPickTarget = null;   // { sid, slotIdx }
 let albumPickOwner = null;    // 내 uid
 let albumPickItems = [];
 
-/* ⚠ ref=true 면 «참고 캡처» 쪽으로 넣는다 (대표 승인 목업 2026-08-23) —
-   창을 두 벌 만들지 않는다. 넣는 자리만 다르고 고르는 일은 똑같다. */
+/* ══════ 사진첩에서 고르기 — 수정 창 «안에서» ══════
+   대표 보고(2026-08-25) "화면 뒤에 나와서 선택할 수가 없다".
+   층을 올려 급히 막았지만(550), 창 위의 창은 사진을 고르는 동안 왼쪽 일정
+   정보를 가려 «어느 칸에 넣는 중인지» 안 보인다.
+   그래서 창을 하나로 만든다 — 사진 영역이 그대로 사진첩 격자로 바뀐다.
+   ⚠ 창이 하나라 층 다툼이 원천적으로 없어진다.
+   ⚠ ref=true 는 «참고 캡처» 쪽으로 넣는다(2026-08-23 승인분) — 그대로 살린다.
+      고르는 일은 똑같고 넣는 자리만 다르다. */
+let pickDay='', pickQ='';
+
+function editPickMode(on){
+  const ctl=q('#mEditPhCtl'), grid=q('#mEditPhGrid'), pick=q('#mEditPick');
+  if(!pick)return;
+  if(ctl)ctl.style.display=on?'none':'';
+  if(grid)grid.style.display=on?'none':'';
+  pick.style.display=on?'block':'none';
+  const ttl=q('#mEditPhTitle');
+  if(ttl)ttl.innerHTML=on
+    ? '🖼 사진첩에서 고르기'
+    : '📷 현장 사진 <span class="ph-sub">— 방문 증빙(타임스탬프)</span>';
+}
+
+/* 사진 한 장에서 찾을 수 있는 말 — 사진첩의 판독 결과를 쓴다 */
+function apkHay(it){
+  const m=it.meta||{}, r=m.read||{}, f=r.fields||{};
+  const bits=[m.byName||''];
+  Object.keys(f).forEach(k=>{ const v=f[k]; if(typeof v==='string'||typeof v==='number')bits.push(String(v)); });
+  return bits.filter(Boolean).join(' ').toLowerCase();
+}
+function apkDayKey(ts){
+  const d=new Date(ts||0);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function apkShown(){
+  return albumPickItems.filter(it=>{
+    if(pickDay&&apkDayKey(it.meta.takenAt)!==pickDay)return false;
+    if(pickQ&&apkHay(it).indexOf(pickQ)<0)return false;
+    return true;
+  });
+}
+
+/* 비어 있는 다음 칸 — 한 장 넣고 나면 자동으로 옮겨 준다(여러 장을 이어서 채우게) */
+function nextEmptySlot(sid,sc,fromIdx){
+  const defs=photoSlotDefs(sc), p=PHOTOS[sid]||{};
+  const after=defs.filter(d=>d.i>fromIdx).concat(defs.filter(d=>d.i<=fromIdx));
+  const hit=after.find(d=>!p[d.key]);
+  return hit?hit.i:-1;
+}
+
 function openAlbumPicker(sid, slotIdx, ref){
   if(!window.PuPhotoStore){ toast('사진첩과 연결되지 않았습니다','err'); return; }
   const u=firebase.auth().currentUser;
   if(!u){ toast('로그인 정보를 확인할 수 없습니다','err'); return; }
-  albumPickTarget = { sid:sid, slotIdx:slotIdx, ref:!!ref };
-  albumPickOwner = u.uid;
-  q('#albumPickBody').innerHTML='<div class="apk-empty">불러오는 중…</div>';
-  q('#mbAlbumPick').classList.add('open');
+  albumPickTarget={ sid:sid, slotIdx:slotIdx, ref:!!ref };
+  albumPickOwner=u.uid;
+  pickQ='';
+  /* 처음 보여줄 날 = 그 일정의 방문일. 대부분 그 날 찍은 사진을 넣는다. */
+  const sc=getScheds().find(s=>s.id===sid);
+  pickDay=(sc&&sc.date)||'';
+  editPickMode(true);
+  q('#mEditPickBody').innerHTML='<div class="apk-empty">불러오는 중…</div>';
+  renderPickHead();
   PuPhotoStore.init({ db: firebase.database(), storage: photoStorage() });
   const year=String(new Date().getFullYear());
   PuPhotoStore.listYear(year, albumPickOwner).then(function(items){
     albumPickItems=Object.keys(items)
-      .map(function(id){ return { id:id, year:year, meta:items[id]||{} }; })
-      .sort(function(a,b){ return (b.meta.takenAt||0)-(a.meta.takenAt||0); });
+      .map(id=>({ id:id, year:year, meta:items[id]||{} }))
+      .sort((a,b)=>(b.meta.takenAt||0)-(a.meta.takenAt||0));
+    /* 방문일에 사진이 없으면 전체로 — 빈 화면부터 보여 주면 없는 줄 안다 */
+    if(pickDay&&!albumPickItems.some(it=>apkDayKey(it.meta.takenAt)===pickDay))pickDay='';
+    renderPickHead();
     renderAlbumPick();
     loadAlbumThumbs();
   }).catch(function(err){
     console.warn('[사진첩 고르기]',err);
-    q('#albumPickBody').innerHTML='<div class="apk-empty">사진 목록을 불러오지 못했습니다<br>'+escAttr((err&&err.message)||err)+'</div>';
+    q('#mEditPickBody').innerHTML='<div class="apk-empty">사진 목록을 불러오지 못했습니다<br>'+escAttr((err&&err.message)||err)+'</div>';
   });
 }
 
+function closeAlbumPick(){
+  editPickMode(false);
+  albumPickTarget=null;
+}
+
+function renderPickHead(){
+  const box=q('#mEditPickHead');
+  if(!box)return;
+  const tgt=albumPickTarget||{};
+  const sc=getScheds().find(s=>s.id===tgt.sid);
+  const label=tgt.ref?'참고 캡처':(sc&&tgt.slotIdx!=null?slotLabelText(sc,tgt.slotIdx):'');
+  /* 날짜별 장수 — 어느 날에 사진이 있는지 세어 고르개를 만든다 */
+  const cnt={};
+  albumPickItems.forEach(it=>{ const k=apkDayKey(it.meta.takenAt); cnt[k]=(cnt[k]||0)+1; });
+  const days=Object.keys(cnt).sort().reverse();
+  const dayOpts=[`<option value="">전체 ${albumPickItems.length}장</option>`]
+    .concat(days.map(d=>{
+      const [y,m,dd]=d.split('-');
+      const mark=(sc&&sc.date===d)?' · 방문일':'';
+      return `<option value="${d}" ${pickDay===d?'selected':''}>${+m}월 ${+dd}일${mark} · ${cnt[d]}장</option>`;
+    })).join('');
+  box.innerHTML=`
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;flex-wrap:wrap;">
+      <button class="btn btn-s" style="font-size:11px;padding:3px 9px;" onclick="closeAlbumPick()">← 뒤로</button>
+      <span style="font-size:11.5px;color:var(--t2);">사진을 누르면 바로 들어갑니다</span>
+    </div>
+    ${label?`<div style="background:rgba(21,101,192,.08);border-radius:8px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--accent);margin-bottom:7px;">지금 「${escAttr(label)}」${tgt.ref?'에 붙이는 중':' 칸에 넣는 중'}</div>`:''}
+    <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;">
+      <select onchange="pickDay=this.value;renderAlbumPick();loadAlbumThumbs();" style="height:28px;font-size:11.5px;border:1px solid var(--border);border-radius:7px;padding:0 6px;font-family:inherit;background:var(--surface);color:var(--text);max-width:150px;">${dayOpts}</select>
+      <input type="search" value="${escAttr(pickQ)}" placeholder="업체·서류로 찾기" oninput="pickQ=this.value.trim().toLowerCase();renderAlbumPick();loadAlbumThumbs();"
+        style="flex:1;min-width:110px;height:28px;font-size:11.5px;border:1px solid var(--border);border-radius:7px;padding:0 8px;font-family:inherit;background:var(--surface);color:var(--text);">
+    </div>`;
+}
+
 function renderAlbumPick(){
-  const body=q('#albumPickBody');
-  if(!albumPickItems.length){
-    body.innerHTML='<div class="apk-empty">사진첩에 올린 사진이 없습니다.<br>폰으로 찍은 사진이라면 사진첩에 먼저 올려 주세요.</div>';
+  const body=q('#mEditPickBody');
+  if(!body)return;
+  const rows=apkShown();
+  if(!rows.length){
+    body.innerHTML='<div class="apk-empty">'
+      +(albumPickItems.length?'찾는 사진이 없습니다.<br>날짜를 「전체」로 바꿔 보세요.'
+        :'사진첩에 올린 사진이 없습니다.<br>폰으로 찍은 사진이라면 사진첩에 먼저 올려 주세요.')
+      +'</div>';
     return;
   }
   let lastKey='', h='';
-  albumPickItems.forEach(function(it){
+  rows.forEach(function(it){
     const d=new Date(it.meta.takenAt||0);
     const key=d.toDateString();
     if(key!==lastKey){
-      if(lastKey) h+='</div>';
+      if(lastKey)h+='</div>';
       h+='<div class="apk-day">'+(d.getMonth()+1)+'월 '+d.getDate()+'일</div><div class="apk-cells">';
       lastKey=key;
     }
@@ -2965,14 +3071,15 @@ function renderAlbumPick(){
   body.innerHTML=h;
 }
 
-/* 미리보기는 목록을 그린 뒤 하나씩 받아 끼운다 — 한 번에 다 받으면 창이 느려진다. */
+/* 미리보기는 목록을 그린 뒤 하나씩 받아 끼운다 — 한 번에 다 받으면 느려진다.
+   걸러 보고 있으면 보이는 것만 받는다. */
 function loadAlbumThumbs(){
   const owner=albumPickOwner;
-  albumPickItems.forEach(function(it){
+  apkShown().forEach(function(it){
     PuPhotoStore.loadThumb(it.year, it.id, owner).then(function(t){
-      if(!t || owner!==albumPickOwner) return;   // 창이 바뀌었으면 끼우지 않는다
-      const cell=q('#albumPickBody [data-apk-id="'+it.id+'"]');
-      if(!cell) return;
+      if(!t || owner!==albumPickOwner) return;
+      const cell=q('#mEditPickBody [data-apk-id="'+it.id+'"]');
+      if(!cell || cell.querySelector('img')) return;
       const img=document.createElement('img');
       img.src=t;
       cell.appendChild(img);
@@ -2984,13 +3091,15 @@ async function pickAlbumPhoto(id, year){
   if(!albumPickTarget) return;
   const it=albumPickItems.find(function(x){ return x.id===id; });
   const target=albumPickTarget, owner=albumPickOwner;
-  closeModal('mbAlbumPick');
   /* 참고 캡처는 «표»만 붙인다 — 원본을 받아 오지 않는다. 그래서 기다림도 없다.
-     이름표는 판독한 서류 제목을 먼저 쓴다(「통합 기술보호지원반 신청서」). */
+     이름표는 판독한 서류 제목을 먼저 쓴다(「통합 기술보호지원반 신청서」).
+     참고 캡처는 여러 장을 이어 붙이는 일이 많아 고르기 화면을 그대로 둔다. */
   if(target.ref){
     const rf=it&&it.meta&&it.meta.read&&it.meta.read.fields;
     const nm=(rf&&(rf.docName||rf.company||rf.name))||'캡처';
     addRefCaps(target.sid, [{ year:year, id:id, owner:owner, name:nm }]);
+    editPickMode(true);
+    toast('참고 캡처에 붙였습니다 · 더 고를 수 있습니다');
     return;
   }
   toast('사진첩에서 가져오는 중…');
@@ -3005,7 +3114,21 @@ async function pickAlbumPhoto(id, year){
   const f=it&&it.meta&&it.meta.read&&it.meta.read.fields;
   const name=(f&&(f.company||f.name))||'사진';
   const ok=await insertAlbumFull(target.sid, target.slotIdx, full, name);
-  if(ok){ toast('사진첩에서 가져왔습니다'); markAlbumUsed({year:year,id:id,owner:owner}, target.sid); }
+  if(!ok)return;
+  markAlbumUsed({year:year,id:id,owner:owner}, target.sid);
+  /* 넣고 나서 «다음 빈 칸»으로 옮겨 준다 — 여러 장을 이어서 채우게.
+     빈 칸이 없으면 사진 화면으로 돌아간다(할 일이 끝났다). */
+  const sc2=getScheds().find(s=>s.id===target.sid);
+  const nxt=sc2?nextEmptySlot(target.sid,sc2,target.slotIdx):-1;
+  if(nxt>=0){
+    albumPickTarget={sid:target.sid,slotIdx:nxt,ref:false};
+    editPickMode(true);            // renderEditPhotos 가 사진 화면을 되살렸을 수 있다
+    renderPickHead(); renderAlbumPick(); loadAlbumThumbs();
+    toast('넣었습니다 · 다음 칸으로');
+  }else{
+    closeAlbumPick();
+    toast('사진첩에서 가져왔습니다');
+  }
 }
 
 function addExtraPhoto(sid,slotIdx){
