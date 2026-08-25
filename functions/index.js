@@ -2203,3 +2203,4 @@ exports.readMailMessage = MSYNC.readMailMessage;
 exports.readMailAttachment = MSYNC.readMailAttachment;
 exports.moveMailMessages = MSYNC.moveMailMessages;
 exports.manageMailFolder = MSYNC.manageMailFolder;
+exports.flagMailMessages = MSYNC.flagMailMessages;

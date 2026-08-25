@@ -694,6 +694,10 @@ table.sbox tr.bad td{background:#fdf4f4}
 .dm-read{padding-top:4px}
 .dm-read .back{background:none;border:none;font-family:inherit;font-size:13px;color:#2563d1;
   cursor:pointer;padding:6px 2px}
+/* 읽는 자리 위쪽 단추들 — 답장·전체답장·전달·중요·삭제 */
+.dm-read .rbtn{font-family:inherit;font-size:12.5px;color:#333;background:#fff;
+  border:1px solid #d8d8d8;border-radius:4px;height:30px;padding:0 11px;cursor:pointer}
+.dm-read .rbtn:hover{background:#f2f6fd;border-color:#9db6e3;color:#1a4fa0}
 .dm-read h3{margin:6px 0 12px;font-size:18px;font-weight:700;color:#111;line-height:1.45}
 .dm-read .meta{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:#6e6e6e;
   border-top:1px solid #ececec;border-bottom:1px solid #ececec;padding:10px 2px}
@@ -4789,7 +4793,7 @@ function openMailPage(pre){
          「손댔다」로 보여 임시저장이 쌓인다. */
     const html0 = textToHtml(body0) + '<br><br>' + signBlockHtml();
     _compose = {
-      cardId: p.cardId||'', to: p.to||'', cc:'',
+      cardId: p.cardId||'', to: p.to||'', cc: p.cc||'',
       subject: subject0, body: htmlToTextC(html0), html: html0,
       /* 처음 채워진 글을 기억해 둔다 — 손댔는지 견주는 잣대다(composeTouched) */
       base: { subject: subject0, body: htmlToTextC(html0) },
@@ -11387,7 +11391,8 @@ function mbBoxHtml(){
       id="mbRow${i}">
       <input type="checkbox" class="chk" ${pickOn(sel,v._key)?'checked':''}
         onclick="event.stopPropagation();pickHit('mbox','${v._key}')">
-      <span class="st ${Number(v.g||0)?'on':''}" title="${Number(v.g||0)?'중요':'중요 표시는 다음메일에서'}">${Number(v.g||0)?'★':'☆'}</span>
+      <span class="st ${Number(v.g||0)?'on':''}" title="중요 표시 — 다음메일에도 함께 켜집니다"
+        onclick="event.stopPropagation();mbStar('${v._slug}','${v.u}')">${Number(v.g||0)?'★':'☆'}</span>
       <span class="who" onclick="mbOpenMsg('${v._slug}','${v.u}')">${esc(mbWho(v))}</span>
       <span class="clip">${Number(v.a||0)?'📎':''}</span>
       <span class="sub" onclick="mbOpenMsg('${v._slug}','${v.u}')">${esc(v.s||'(제목 없음)')}</span>
@@ -11416,9 +11421,14 @@ function mbBoxHtml(){
             안 고른 채 누르면 「고른 것이 없습니다」로 알려 준다. 흐린 단추는 「이 앱은
             그 일을 못 한다」로 읽혀, 대표께서 눌러 보지도 않으신다. */''}
       <button onclick="mbTrash()" title="고른 메일을 다음메일 휴지통으로 옮깁니다">삭제</button>
+      ${/* 답장은 메일 앱에서 가장 많이 쓰는 자리인데 없었다(대표 지시 2026-08-25) */''}
+      <button onclick="mbReply(false)" title="보낸 사람에게 답장합니다">답장</button>
+      <button onclick="mbReply(true)" title="받는 사람 모두에게 답장합니다">전체답장</button>
       <button onclick="mbForward()" title="고른 한 통을 우리 주소로 새로 써서 전달합니다">전달</button>
       <button onclick="mbResend()" title="같은 제목으로 새 편지를 씁니다">다시보내기</button>
       <button onclick="mbMove()" title="고른 메일을 다른 폴더로 옮깁니다">이동 ˅</button>
+      ${/* 열면 읽음이 되는데 «되돌릴 길»이 없었다 — 나중에 다시 볼 것을 표시해 두는 자리다 */''}
+      <button onclick="mbReadMark(false)" title="고른 메일을 안 읽음으로 되돌립니다">안읽음</button>
       <button ${_mbBusy?'disabled':''} onclick="mbPull()"
         title="다음메일에 지금 붙어 목록을 새로 가져옵니다">${_mbBusy?'가져오는 중…':'새로고침 ↻'}</button>
       <span class="sp"></span>
@@ -11514,6 +11524,9 @@ function mbOpenMsg(slug, uid){
       const f = _mbFolders && _mbFolders[slug];
       if(f && Number(f.unseen||0)>0) f.unseen = Number(f.unseen)-1;
       renderPCSide(); renderMailPage();
+      /* 목록에서 [답장]을 눌러 본문부터 가져온 경우 — 이제 답장 화면으로 간다 */
+      if(state.mbReplyAfterOpen){ const all = state.mbReplyAfterOpen==='all';
+        state.mbReplyAfterOpen=''; mbReply(all); }
     })
     .catch(e=>{
       if(!state.mbOpen) return;
@@ -11522,6 +11535,28 @@ function mbOpenMsg(slug, uid){
     });
 }
 function mbBack(){ state.mbOpen=null; renderMailPage(); }
+/* 읽는 자리에서 누르는 전달·삭제 — 목록에서 고르지 않고 «지금 보는 이 통»에 한다.
+   ⚠ 고른 것(pick)을 건드리지 않는다. 목록에서 딴 것을 골라 두었는데 여기서 누르면
+     엉뚱한 메일이 지워진다. */
+function mbOneRow(slug, uid){
+  const v = (_mbMsgs[slug]||{})[String(uid)];
+  return v ? Object.assign({}, v, { _slug:slug, _key:slug+':'+uid }) : null;
+}
+function mbForwardOne(slug, uid){
+  const v = mbOneRow(slug, uid); if(!v) return toast('그 메일을 찾지 못했습니다');
+  const head = `\n\n────────── 아래는 전달받은 메일입니다 ──────────\n`
+    + `보낸이 · ${v.f||v.e||''}\n받은 때 · ${fmtDate(v.d)}\n제목 · ${v.s||''}\n`;
+  openMailPage({ to:'', subject:'[전달] '+String(v.s||''), body:head });
+  if(Number(v.a||0)) toast('첨부는 함께 가지 않습니다 — 첨부를 내려받은 뒤 붙여 주세요', 9000);
+}
+function mbTrashOne(slug, uid){
+  const v = mbOneRow(slug, uid); if(!v) return toast('그 메일을 찾지 못했습니다');
+  const trash = mbFolderOf('trash')[0];
+  if(!trash) return toast('휴지통 폴더를 찾지 못했습니다 — 새로고침을 먼저 눌러 주세요', 8000);
+  if(!confirm(`「${v.s||'(제목 없음)'}」 를 휴지통으로 옮깁니다.\n\n`
+    + `⚠ 다음메일함에서도 휴지통으로 갑니다(되돌릴 수 있습니다).\n진행할까요?`)) return;
+  mbMoveTo([v], trash.slug, '휴지통');
+}
 
 function mbReadHtml(){
   const o = state.mbOpen||{};
@@ -11534,7 +11569,17 @@ function mbReadHtml(){
     : o.text ? '<pre style="white-space:pre-wrap;font-family:inherit;margin:0">'+esc(o.text)+'</pre>'
     : '';
   return `<div class="dm-read">
-    <button class="back" onclick="mbBack()">‹ ${esc(mbBoxName(o.slug))}</button>
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+      <button class="back" onclick="mbBack()">‹ ${esc(mbBoxName(o.slug))}</button>
+      <span style="flex:1"></span>
+      ${/* 읽는 자리에 손이 갈 것들 — 다음메일도 여기 둔다 */''}
+      <button class="rbtn" onclick="mbReply(false)">답장</button>
+      <button class="rbtn" onclick="mbReply(true)">전체답장</button>
+      <button class="rbtn" onclick="mbForwardOne('${o.slug}','${o.uid}')">전달</button>
+      <button class="rbtn" title="중요 표시 — 다음메일에도 함께 켜집니다"
+        onclick="mbStar('${o.slug}','${o.uid}')">${Number(v.g||0)?'★ 중요':'☆ 중요'}</button>
+      <button class="rbtn" onclick="mbTrashOne('${o.slug}','${o.uid}')">삭제</button>
+    </div>
     <h3>${esc(v.s||'(제목 없음)')}</h3>
     <div class="meta">
       <span><b>보낸이</b> ${esc(v.f||v.e||'(모름)')}${v.e&&v.f!==v.e?' &lt;'+esc(v.e)+'&gt;':''}</span>
@@ -11590,6 +11635,89 @@ function mbAtt(i){
       toast('📥 '+(j.name||a.name||'첨부')+' 를 내려받았습니다');
     })
     .catch(e=>toast('내려받지 못했습니다 — '+((e&&e.message)||e), 8000));
+}
+
+/* ══════ 표시 켜고 끄기 — 중요(★) · 읽음 (대표 지시 2026-08-25) ══════
+   ⚠ 별이 «보이기만 하고 눌리지 않던» 자리다. 보이는데 안 눌리면 고장으로 읽힌다.
+   ⚠ 되돌릴 수 있는 것이라(다시 누르면 된다) 물어보지 않는다 — 별을 누를 때마다
+     「하시겠습니까」가 뜨면 못 쓴다. 화면을 먼저 바꾸고 서버에 맡긴다(빠르게 보이게),
+     실패하면 되돌리고 까닭을 말한다. */
+function mbFlag(slug, uid, flag, on){
+  const box = _mbMsgs[slug]; const row = box && box[String(uid)];
+  const key = (flag==='star') ? 'g' : 'r';
+  const before = row ? Number(row[key]||0) : 0;
+  if(row) row[key] = on ? 1 : 0;
+  renderMailPage(); renderPCSide();
+  const u = firebase.auth().currentUser;
+  if(!u){ if(row) row[key]=before; renderMailPage(); return toast('로그인이 필요합니다'); }
+  u.getIdToken()
+    .then(tok=>fetch(MB_FN+'flagMailMessages', { method:'POST',
+      headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
+      body: JSON.stringify({ slug:slug, uids:[String(uid)], flag:flag, on:!!on }) }))
+    .then(r=>r.json().catch(()=>({})))
+    .then(j=>{ if(!j.ok) throw new Error(j.error||'표시하지 못했습니다'); })
+    .catch(e=>{
+      if(row) row[key] = before;      // 되돌린다 — 화면만 바뀌고 다음메일은 그대로면 거짓말이 된다
+      renderMailPage(); renderPCSide();
+      toast('표시하지 못했습니다 — '+((e&&e.message)||e), 8000);
+    });
+}
+function mbStar(slug, uid){
+  const row = (_mbMsgs[slug]||{})[String(uid)];
+  mbFlag(slug, uid, 'star', !(row && Number(row.g||0)));
+}
+/* 고른 것들의 읽음 표시를 한꺼번에 — 다음메일의 「읽음/안읽음」 자리다 */
+function mbReadMark(on){
+  const picked = mbPicked();
+  if(!picked.length) return toast('고른 것이 없습니다');
+  const byBox = {};
+  picked.forEach(v=>{ (byBox[v._slug] = byBox[v._slug]||[]).push(String(v.u)); });
+  const u = firebase.auth().currentUser;
+  if(!u) return toast('로그인이 필요합니다');
+  u.getIdToken().then(tok=>Promise.all(Object.keys(byBox).map(slug=>
+    fetch(MB_FN+'flagMailMessages', { method:'POST',
+      headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
+      body: JSON.stringify({ slug:slug, uids:byBox[slug], flag:'read', on:!!on }) })
+      .then(r=>r.json().catch(()=>({})))
+  ))).then(res=>{
+    const bad = res.find(j=>!j||!j.ok);
+    if(bad) throw new Error((bad&&bad.error)||'표시하지 못했습니다');
+    picked.forEach(v=>{ const row=(_mbMsgs[v._slug]||{})[String(v.u)]; if(row) row.r = on?1:0; });
+    pickClear('mbox'); renderPCSide(); renderMailPage();
+    toast(`${picked.length}통을 ${on?'읽음':'안 읽음'}으로 표시했습니다`);
+  }).catch(e=>toast('표시하지 못했습니다 — '+((e&&e.message)||e), 8000));
+}
+
+/* ══════ 답장 · 전체답장 (대표 지시 2026-08-25) ══════
+   메일 앱에서 가장 많이 쓰는 자리인데 없었다 — 전달·다시보내기만 있었다.
+   ⚠ 답장도 «우리 회사 주소로 새로 쓰는» 것이다(다음메일이 아니라 우리 서버가 보낸다).
+     그래야 보낸 기록이 앱에도 남고 자료함의 자료를 붙일 수 있다.
+   ⚠ 본문을 인용해 넣는다 — 인용 없이 「네 알겠습니다」만 가면 받는 쪽이 무슨 이야기인지
+     모른다. 열어 둔 메일의 본문을 쓰므로, 목록에서 바로 누르면 먼저 열어 온다. */
+function mbReplyBody(v, text){
+  const when = fmtDate(v.d) + ' ' + new Date(Number(v.d||0)).toTimeString().slice(0,5);
+  const head = `\n\n────────── ${when} ${v.f||v.e||''} 님이 쓰신 글 ──────────\n`;
+  const body = String(text||'').split(/\r?\n/).map(ln=>'> '+ln).join('\n');
+  return head + body;
+}
+function mbReply(all){
+  const o = state.mbOpen;
+  const v = o ? ((_mbMsgs[o.slug]||{})[o.uid]||{}) : mbPicked()[0];
+  if(!v || !v.u) return toast('답장할 메일을 고르세요');
+  /* 목록에서 눌렀으면 본문이 아직 없다 — 먼저 열고 나서 답장 화면으로 간다 */
+  if(!o || o.uid !== String(v.u)){
+    toast('본문을 가져온 뒤 답장 화면으로 갑니다…', 4000);
+    state.mbReplyAfterOpen = all ? 'all' : 'one';
+    return mbOpenMsg(v._slug||o&&o.slug, v.u);
+  }
+  const me = mbMyAddr().toLowerCase();
+  const to = String(v.e||'');
+  /* 전체답장 — 원래 받는 사람들도 함께. 나는 뺀다(나에게 또 보내지 않는다). */
+  const cc = all ? String(v.t||'').split(',').map(s=>s.trim())
+      .filter(s=>s && s.toLowerCase()!==me && s.toLowerCase()!==to.toLowerCase()).join(', ')
+    : '';
+  const subj = /^re\s*:/i.test(String(v.s||'')) ? String(v.s) : 'RE: ' + String(v.s||'');
+  openMailPage({ to:to, cc:cc, subject:subj, body: mbReplyBody(v, o.text || htmlToTextC(o.html||'')) });
 }
 
 /* ══════ 전달 · 다시보내기 ══════
