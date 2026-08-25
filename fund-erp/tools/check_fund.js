@@ -145,8 +145,7 @@ ok('두 표가 결산 탭에 있다', src.includes("['cf','현금흐름표'],['i
   && src.includes("case 'cf':      return cashFlowView(arr);") && src.includes("case 'ie':      return ieView(arr);"));
 /* ⚠ 현금이 오가지 않는 분개(준비금 설정·환입·전입)를 빼야 한다 —
    넣으면 흐름 합계가 통장 잔액과 어긋나고, 기말 현금이 재무상태표와 달라진다. */
-ok('현금 안 움직인 분개를 뺀다', /function cashFlowRows\([\s\S]{0,900}?if\(x\.nocash\) return;/.test(src)
-  && /function ieRows\([\s\S]{0,700}?if\(x\.nocash\) return;/.test(src));
+ok('현금 안 움직인 분개를 뺀다', /function cashMoves\([\s\S]{0,400}?if\(x\.nocash\) return;/.test(src));
 ok('활동 셋으로 가른다', src.includes("add('Ⅰ. 영업활동으로 인한 현금흐름'")
   && src.includes("add('Ⅱ. 투자활동으로 인한 현금흐름'") && src.includes("add('Ⅲ. 재무활동으로 인한 현금흐름'"));
 // 대부금·예금·증권은 투자활동이다 — 영업활동에 섞으면 «본디 활동»이 부풀어 보인다
@@ -164,11 +163,40 @@ ok('기말 현금을 재무상태표와 맞대 본다', src.includes('var gap=Ma
 ok('수입지출을 관·항·목으로 적는다', src.includes('var IE_TREE=[')
   && src.includes("{gwan:'수입'") && src.includes("{gwan:'지출'")
   && src.includes("{h:'출연금수입'") && src.includes("{h:'고유목적사업비'"));
-ok('이월금은 전기말 자산총계', src.includes("var carry=_openAssets(op);")
-  && src.includes("if(h.dir==='이월'){ hSum=carry; }"));
+
 /* 모델은 숫자만 돌려줘야 한다 — 이름표에 서식을 박으면 엑셀·검사에서 못 쓴다 */
 ok('수입지출 모델이 서식을 안 박는다', src.includes("add('【'+g.gwan+'】',gSum,0,true);"));
 ok('두 표에 도움말이 있다', src.includes("'close.cf':{t:'현금흐름표'") && src.includes("'close.ie':{t:'수입지출명세서'"));
+
+/* ══ 회계법인 결산본(한진철관 2019)에서 드러난 것 ══ */
+// 미지급비용·선납세금 계정이 없어 아예 적을 수가 없었다
+ok('회계법인이 쓰는 계정이 있다', /'선납세금':'자산'/.test(src)
+  && /'미지급비용':'부채'/.test(src) && /'미지급금':'부채'/.test(src) && /'예수금':'부채'/.test(src));
+// 이월할 자리가 없으면 연말에 그 잔액이 사라진다
+ok('선납세금·미지급비용을 이월한다', /prepaid:'선납세금',payable:'미지급비용'/.test(src));
+/* 유동부채를 0 으로 굳혀 두면 미지급비용이 비유동부채로 잘못 찍히고,
+   그 밑의 준비금 명세와 합계가 어긋난다 */
+ok('유동부채와 비유동부채를 가른다', src.includes('var ncL=fin.res1+fin.res2, pNcL=prv.res1+prv.res2;')
+  && src.includes('var curL=fin.liab-ncL, pCurL=prv.liab-pNcL;')
+  && !/var curL=0, ncL=fin\.liab;/.test(src));
+
+/* ══ 두 표가 한 곳에서 센다 ══ 따로 세면 조용히 어긋난다 */
+ok('현금 움직임을 한 곳에서 센다', src.includes('function cashMoves(arr){')
+  && /function cashFlowRows\([\s\S]{0,300}?var mv=cashMoves\(arr\);/.test(src)
+  && /function ieRows\([\s\S]{0,300}?var mv=cashMoves\(arr\), by=mv\.by;/.test(src));
+/* 목록에 없는 계정을 안 받으면, 돈이 오갔는데도 명세서에서 사라진다
+   (한진철관의 선납세금·미지급비용·대부금 회수가 그랬다) */
+ok('안 잡힌 계정을 기타로 받는다', /\{h:'기타수입',\s*rest:true\}/.test(src)
+  && /\{h:'기타지출',\s*rest:true\}/.test(src)
+  && src.includes('if(claimed[a]) return;'));
+/* 이월금이 «전기말 자산총계»면 잔고와 흐름을 섞는 셈이라 재무상태표와 어긋난다 */
+/* 「기타」칸이 다 받아 주므로 합계는 안 틀리지만, 항을 지우면 이름표가 뭉개진다.
+   관-항-목의 «항»은 비영리 결산서가 정해 둔 이름이라 그대로 있어야 한다. */
+ok('수입·지출의 항이 다 있다', ['이월금','출연금수입','사업수익','대부금회수','예금·증권 해지','기타수입',
+  '고유목적사업비','일반관리비','대부금지급','예금·증권 예치','기타지출']
+  .every(function(h){ return src.indexOf("{h:'"+h+"'")>=0; }));
+ok('이월금은 전기말 현금', /var carry=num\(op\.cash\)\|\|0;/.test(src)
+  && src.includes("add('차기이월금 (수입 − 지출)',totIn-totOut,0,true);"));
 /* 결손금은 «수입»이 아니다 — 수입에 음수로 넣으면 수입 합계가 그만큼 줄어 예산이 작아 보인다 */
 ok('예산편성안 이월금은 잉여일 때만', src.includes('var _carry=Math.max(0,fin.retained), _loss=Math.max(0,-fin.retained);')
   && src.includes("_xlRow(s,rw++,['수입 — 이월금',_carry,null,null]);")
