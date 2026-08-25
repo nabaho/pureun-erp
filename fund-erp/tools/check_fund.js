@@ -166,6 +166,39 @@ ok('수입지출을 관·항·목으로 적는다', src.includes('var IE_TREE=['
 
 /* 모델은 숫자만 돌려줘야 한다 — 이름표에 서식을 박으면 엑셀·검사에서 못 쓴다 */
 ok('수입지출 모델이 서식을 안 박는다', src.includes("add('【'+g.gwan+'】',gSum,0,true);"));
+/* ══ 주석 ══ 공익법인회계기준이 요구하는 마지막 한 장. 없었다. */
+ok('주석이 있다', src.includes('function stmtNotes(') && src.includes('function notesView(')
+  && src.includes('function notesChk(') && src.includes('function notesText('));
+ok('주석이 결산 탭에 있다', src.includes("['notes','주석']")
+  && src.includes("case 'notes':   return notesView(arr);") && src.includes("'close.notes':{t:'주석'"));
+// 일곱 갈래 — 공익법인회계기준이 요구하는 것들
+ok('주석 일곱 갈래가 다 있다', ['1. 기금의 개요','2. 중요한 회계처리 방침','3. 고유목적사업준비금의 변동',
+  '4. 기본재산의 변동','5. 근로자대부금','6. 고유목적사업 집행 내역','7. 우발부채 및 약정사항']
+  .every(function(h){ return src.indexOf("sec('"+h) >= 0; }));
+/* ⚠ 주석은 대외 제출물이다. 빈 칸을 앱이 그럴듯하게 채우면 그대로 관청에 나간다 —
+   「—」로 두고, 무엇이 비었는지만 알려 준다. */
+ok('빈 칸을 지어내지 않는다', /var dash=function\(v\)\{ v=\(v==null\?'':String\(v\)\).trim\(\); return v\|\|'—'; \};/.test(src)
+  && src.includes("N[0].lines.forEach(function(l){ if(l[1]==='—') miss.push(l[0]); });")
+  && src.includes('비어 있는 항목 '));
+// 「없음」이라 단정하면 그것이 곧 허위 기재다 — 앱은 장부 밖의 일을 모른다
+ok('우발부채를 없다고 단정하지 않는다', src.includes('장부에 잡힌 것은 없다. 그 밖의 사항은 확인이 필요하다.'));
+/* 기본재산은 들어오기만 하지 않는다 — 준비금2 설정 때 여기서 빠져나간다.
+   그 줄을 빠뜨리면 기초+출연 ≠ 기말 이 된다(청신공동 2025: 7,200,000). */
+ok('기본재산에서 빠져나간 몫을 적는다', src.includes("if(x.debit==='기본재산') outB+=amt;")
+  && src.includes("s4.rows.push(['고유목적사업준비금2 설정',-Math.round(outB),null]);"));
+// 주석 스스로 맞물림을 본다 — 어긋나면 화면이 알려 준다
+/* 전입은 준비금이 «대변», 환입은 «차변»에 선다. 뒤집어 놓아도 두 금액이 같은 해에는
+   숫자로 안 드러난다 — 그래서 방향 자체를 못 박는다. */
+ok('전입은 대변·환입은 차변', src.includes("if(x.credit===RESERVE_ACCTS[0]) in1+=amt; else if(x.credit===RESERVE_ACCTS[1]) in2+=amt;")
+  && src.includes("if(x.debit===RESERVE_ACCTS[0]) out1+=amt; else if(x.debit===RESERVE_ACCTS[1]) out2+=amt;"));
+ok('주석이 스스로 맞물림을 본다', src.includes("e.push('준비금1 기말잔액')")
+  && src.includes("e.push('준비금2 기말잔액')") && src.includes("e.push('기본재산 기말')")
+  && src.includes("e.push('대부금 기말')")
+  && src.includes('준비금 변동이 안 맞물립니다'));
+// 화면에 그린 글자를 그대로 복사한다 — 다시 계산하면 화면과 다른 것이 복사될 수 있다
+ok('화면에 그린 글자를 복사한다', src.includes('_notesTxt=notesText(N);')
+  && src.includes("if(!_notesTxt){ toast('주석을 먼저 열어 주세요','warn'); return; }")
+  && src.includes('document.execCommand(' + "'copy'" + ')'));
 ok('두 표에 도움말이 있다', src.includes("'close.cf':{t:'현금흐름표'") && src.includes("'close.ie':{t:'수입지출명세서'"));
 
 /* ══ 회계법인 결산본(한진철관 2019)에서 드러난 것 ══ */

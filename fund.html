@@ -6593,7 +6593,7 @@ function _nz(v){ return v?_n(v):''; }                    // 0은 빈칸(장부 �
 // ── 하위 탭 ──
 var CLOSE_SUBS=[['txn','거래·분개입력'],['journal','분개장'],['ledger','계정별원장'],
                 ['monthly','월계표'],['tb','합계잔액시산표'],['fin','재무제표·전기대비'],
-                ['cf','현금흐름표'],['ie','수입지출명세서'],
+                ['cf','현금흐름표'],['ie','수입지출명세서'],['notes','주석'],
                 ['budget','예산·집행'],['years','연도별 비교'],['f15','운영상황보고서']];
 
 /* ══════════ 예산·집행 — funds/{기금}/years/{연도}/budget ══════════
@@ -7014,6 +7014,189 @@ function cashFlowRows(arr,fid,yr){
   add('Ⅴ. 기초의 현금',begin,0,true);
   add('Ⅵ. 기말의 현금',begin+net,0,true);
   return {rows:R,begin:begin,net:net,end:begin+net};
+}
+/* ══════════ 주석 ══════════ 공익법인회계기준이 요구하는 마지막 한 장이다.
+   숫자만으로는 «왜 그런 숫자인지»를 못 보여 준다.
+
+   ⚠ 주석은 대외 제출물이다. **없는 사실을 채워 넣지 않는다** —
+     인가번호·소재지처럼 빈 칸은 「—」로 두고 사람이 채우게 한다.
+     앱이 그럴듯하게 지어내면 그대로 관청에 나간다. */
+function stmtNotes(arr,fin,prv,fid,yr){
+  var f=funds[fid]||{}, op=_openingOf(fid,yr)||{};
+  prv=prv||{};
+  var dash=function(v){ v=(v==null?'':String(v)).trim(); return v||'—'; };
+  var N=[], sec=function(h,note){ var s={h:h,lines:[],rows:[],note:note||''}; N.push(s); return s; };
+
+  var s1=sec('1. 기금의 개요');
+  s1.lines.push(['명칭',dash(f.name)]);
+  s1.lines.push(['설립근거','근로복지기본법']);
+  s1.lines.push(['설립인가일',dash(f.inka_date)]);
+  s1.lines.push(['설립인가번호',dash(f.inka_no)]);
+  s1.lines.push(['고유번호',dash(f.tax_id_no)]);
+  s1.lines.push(['법인등록번호',dash(f.corp_reg_no)]);
+  s1.lines.push(['소재지',dash(f.addr)]);
+  s1.lines.push(['회계연도',yr+'. 1. 1. ~ '+yr+'. 12. 31.']);
+
+  // 앱이 실제로 하는 대로만 적는다 — 안 하는 처리를 적으면 그것이 곧 거짓이다
+  var s2=sec('2. 중요한 회계처리 방침');
+  s2.lines.push(['작성기준','공익법인회계기준에 따라 작성하였다.']);
+  s2.lines.push(['현금및현금성자산','사용이 제한되지 않은 보통예금 등을 말한다.']);
+  s2.lines.push(['수익 인식','이자수익은 실제로 받은 때에 인식한다.']);
+  s2.lines.push(['고유목적사업준비금1','법인세법 제29조에 따라 이자수익만큼 전입하였다가 같은 금액을 환입한다.']);
+  s2.lines.push(['고유목적사업준비금2','근로복지기본법 제62조제2항에 따라 다음 연도로 이월할 금액을 설정한다.']);
+
+  /* 준비금 변동 — 장부의 분개에서 곧장 뽑는다.
+     전입은 준비금이 «대변», 환입은 «차변»에 선다. */
+  var in1=0,in2=0,out1=0,out2=0;
+  expandSplits(arr).forEach(function(x){
+    if(!x.approved||!x.debit||!x.credit) return;
+    var amt=num(x.amount)||num(x.deposit)||num(x.withdraw)||0; if(!amt) return;
+    if(x.credit===RESERVE_ACCTS[0]) in1+=amt; else if(x.credit===RESERVE_ACCTS[1]) in2+=amt;
+    if(x.debit===RESERVE_ACCTS[0]) out1+=amt; else if(x.debit===RESERVE_ACCTS[1]) out2+=amt;
+  });
+  var s3=sec('3. 고유목적사업준비금의 변동',
+    '준비금1은 법인세법 제29조, 준비금2는 근로복지기본법 제62조제2항에 따른 것이다.');
+  s3.cols=['준비금1','준비금2'];
+  s3.rows.push(['기초잔액',Math.round(num(op.reserve)||0),Math.round(num(op.reserve2)||0)]);
+  s3.rows.push(['당기 전입',Math.round(in1),Math.round(in2)]);
+  s3.rows.push(['당기 환입',Math.round(out1),Math.round(out2)]);
+  s3.rows.push(['기말잔액',Math.round(fin.res1),Math.round(fin.res2)]);
+
+/* 기본재산은 «들어오기만» 하지 않는다 — 준비금2를 설정할 때 여기서 빠져나간다
+     (D 기본재산 / C 고유목적사업준비금2). 그 줄을 빠뜨리면 기말이 안 맞물린다. */
+  var s4=sec('4. 기본재산의 변동'), inB=0, outB=0, cl=[];
+  expandSplits(arr).forEach(function(x){
+    if(!x.approved||!x.debit||!x.credit) return;
+    var amt=num(x.amount)||num(x.deposit)||num(x.withdraw)||0; if(!amt) return;
+    if(x.credit==='기본재산'){ inB+=amt; cl.push([dash(x.date)+'  '+dash(x.memo),amt,null]); }
+    if(x.debit==='기본재산') outB+=amt;
+  });
+  s4.rows.push(['기초',Math.round(num(op.basic)||0),null]);
+  s4.rows.push(['당기 출연',Math.round(inB),null]);
+  s4.rows.push(['고유목적사업준비금2 설정',-Math.round(outB),null]);
+  s4.rows.push(['기말',Math.round(fin.basic),null]);
+  if(cl.length){ s4.rows.push(['〈출연 내역〉',null,null]); cl.forEach(function(r){ s4.rows.push(r); }); }
+  s4.note='준비금2는 기본재산에서 설정하므로 그만큼 기본재산이 줄어든다.';
+
+  // 대부금은 지출로 나가지만 «자산으로 남는 돈»이라 따로 밝힌다
+  var s5=sec('5. 근로자대부금');
+  var lb=cashMoves(arr).by['근로자대부금']||{in:0,out:0};
+  s5.rows.push(['기초',Math.round(num(op.loan)||0),null]);
+  s5.rows.push(['당기 대부',Math.round(lb.out),null]);
+  s5.rows.push(['당기 회수',Math.round(lb.in),null]);
+  s5.rows.push(['기말',Math.round(fin.loan),null]);
+
+  var s6=sec('6. 고유목적사업 집행 내역');
+  s6.cols=['당기','전기'];
+  PURPOSE_ACCTS.forEach(function(a){
+    var v=fin.tb[a]?fin.tb[a].bal_d:0, p=(prv.tb&&prv.tb[a])?prv.tb[a].bal_d:0;
+    if(!v&&!p) return;
+    s6.rows.push([a,Math.round(v),Math.round(p)]);
+  });
+  s6.rows.push(['합계',Math.round(fin.purpose),Math.round(prv.purpose||0)]);
+
+  /* 앱은 장부 밖의 일을 모른다 — 「없음」이라 단정하면 그것이 곧 허위 기재다 */
+  var s7=sec('7. 우발부채 및 약정사항');
+  s7.lines.push(['보증·담보·소송','장부에 잡힌 것은 없다. 그 밖의 사항은 확인이 필요하다.']);
+  return N;
+}
+/* 주석은 «기말잔액 = 기초 + 전입 − 환입» 이 맞아야 한다. 어긋나면 어느 한쪽이 틀린 것이다 */
+function notesChk(N){
+  var e=[], s3=null;
+  N.forEach(function(s){ if(s.h.indexOf('3.')===0) s3=s; });
+  if(s3){
+    var g=function(l){ for(var i=0;i<s3.rows.length;i++) if(s3.rows[i][0]===l) return s3.rows[i]; return null; };
+    var b=g('기초잔액'), i=g('당기 전입'), o=g('당기 환입'), t=g('기말잔액');
+    if(b&&i&&o&&t){
+      if(b[1]+i[1]-o[1]!==t[1]) e.push('준비금1 기말잔액');
+      if(b[2]+i[2]-o[2]!==t[2]) e.push('준비금2 기말잔액');
+    }
+  }
+  var s4=null; N.forEach(function(s){ if(s.h.indexOf('4.')===0) s4=s; });
+  if(s4){
+    var g4=function(l){ for(var i=0;i<s4.rows.length;i++) if(s4.rows[i][0]===l) return s4.rows[i]; return null; };
+    var a=g4('기초'), c=g4('당기 출연'), d=g4('고유목적사업준비금2 설정'), z=g4('기말');
+    if(a&&c&&d&&z&&a[1]+c[1]+d[1]!==z[1]) e.push('기본재산 기말');
+  }
+  // 대부금도 같은 셈이다 — 기말 = 기초 + 대부 − 회수
+  var s5=null; N.forEach(function(s){ if(s.h.indexOf('5.')===0) s5=s; });
+  if(s5){
+    var g5=function(l){ for(var i=0;i<s5.rows.length;i++) if(s5.rows[i][0]===l) return s5.rows[i]; return null; };
+    var p0=g5('기초'), lo=g5('당기 대부'), ri=g5('당기 회수'), pz=g5('기말');
+    if(p0&&lo&&ri&&pz&&p0[1]+lo[1]-ri[1]!==pz[1]) e.push('대부금 기말');
+  }
+  return e;
+}
+function notesView(arr){
+  loadPrevTxns();
+  var fid=S.fundId, yr=_yr();
+  var fin=computeFin(arr,fid,yr);
+  var pa=prevArr();
+  if(pa===null) return '<div class="panel">'+loadingHTML()+'<div class="muted" style="font-size:12px">'+(yr-1)+'년 자료를 불러오는 중…</div></div>';
+  var prv=computeFin(pa,fid,yr-1);
+  var N=stmtNotes(arr,fin,prv,fid,yr), bad=notesChk(N);
+  _notesTxt=notesText(N);
+  var miss=[];
+  N[0].lines.forEach(function(l){ if(l[1]==='—') miss.push(l[0]); });
+  var h='<div class="panel"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">'
+    +'<b>주석 '+yr+'년</b>'+hlp('close.notes')
+    +'<button onclick="copyNotes()" title="주석 전체를 글자로 복사해 한글 문서에 붙여넣기">📋 글자로 복사</button></div>';
+  if(bad.length) h+='<p class="warn" style="font-size:12px;margin:8px 0 0">⚠ 준비금 변동이 안 맞물립니다: '+esc(bad.join(', '))+'</p>';
+  /* 빈 칸을 지어내지 않는 대신, «무엇이 비었는지»는 알려 준다 — 안 알려 주면 그대로 제출된다 */
+  if(miss.length) h+='<p class="muted" style="font-size:12px;margin:8px 0 0">비어 있는 항목 '+miss.length+'개: <b>'+esc(miss.join(', '))+'</b> — 기금 기본정보에서 채우면 여기에 나옵니다.</p>';
+  N.forEach(function(s){
+    h+='<div style="margin-top:16px"><div style="font-weight:700;margin-bottom:6px">'+esc(s.h)+'</div>';
+    if(s.lines.length){
+      h+='<table><tbody>'+s.lines.map(function(l){
+        return '<tr><td style="width:170px;color:var(--muted)">'+esc(l[0])+'</td><td>'+esc(l[1])+'</td></tr>';
+      }).join('')+'</tbody></table>';
+    }
+    if(s.rows.length){
+      var two=(s.cols||[]).length===2;
+      h+='<table><thead><tr><th>구분</th><th style="text-align:right;width:150px">'+esc(two?s.cols[0]:'금액(원)')+'</th>'
+        +(two?'<th style="text-align:right;width:150px">'+esc(s.cols[1])+'</th>':'')+'</tr></thead><tbody>'
+        +s.rows.map(function(r){
+          var b=/합계|기말|〈/.test(r[0]);
+          return '<tr'+(b?' style="font-weight:700;background:var(--bg)"':'')+'><td>'+esc(r[0])+'</td>'
+            +'<td style="text-align:right;font-variant-numeric:tabular-nums">'+(r[1]==null?'':_n(r[1]))+'</td>'
+            +(two?'<td style="text-align:right;font-variant-numeric:tabular-nums">'+(r[2]==null?'':_n(r[2]))+'</td>':'')+'</tr>';
+        }).join('')+'</tbody></table>';
+    }
+    if(s.note) h+='<p class="muted" style="font-size:11px;margin:4px 0 0">'+esc(s.note)+'</p>';
+    h+='</div>';
+  });
+  return h+'</div>';
+}
+/* 한글 문서에 그대로 붙여 쓰라고 글자로 뽑는다 — 화면에서 표를 긁으면 칸이 어그러진다.
+   화면을 그릴 때 만들어 둔 글자를 쓴다 — 다시 계산하면 화면과 다른 것을 복사할 수 있다. */
+function notesText(N){
+  var out=[];
+  N.forEach(function(s){
+    out.push(s.h);
+    s.lines.forEach(function(l){ out.push('  '+l[0]+' : '+l[1]); });
+    s.rows.forEach(function(r){
+      out.push('  '+r[0]+(r[1]==null?'':'  '+_n(r[1]))+(r[2]==null?'':'  '+_n(r[2])));
+    });
+    if(s.note) out.push('  ※ '+s.note);
+    out.push('');
+  });
+  return out.join('\n');
+}
+var _notesTxt='';
+function copyNotes(){
+  if(!_notesTxt){ toast('주석을 먼저 열어 주세요','warn'); return; }
+  var t=_notesTxt;
+  var fb=function(){                                  // 클립보드를 막아 둔 환경이 있다
+    var ta=document.createElement('textarea');
+    ta.value=t; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select();
+    var okc=false; try{ okc=document.execCommand('copy'); }catch(e){}
+    document.body.removeChild(ta);
+    toast(okc?'주석을 복사했습니다':'복사하지 못했습니다',okc?'':'warn');
+  };
+  if(navigator.clipboard&&navigator.clipboard.writeText)
+    navigator.clipboard.writeText(t).then(function(){ toast('주석을 복사했습니다'); },fb);
+  else fb();
 }
 function cashFlowView(arr){
   var cf=cashFlowRows(arr);
@@ -8716,6 +8899,7 @@ function closeBodyHTML(arr,rows){
     case 'fin':     return finCompareView(arr);
     case 'cf':      return cashFlowView(arr);
     case 'ie':      return ieView(arr);
+    case 'notes':   return notesView(arr);
     case 'budget':  return budgetView(arr);
     case 'years':   return yearsView();
     case 'f15':     return f15View(arr);
@@ -9635,6 +9819,10 @@ var HELP={
  'close.cf':{t:'현금흐름표',h:'<p>실제로 <b>오간 현금</b>만 모읍니다(직접법). 준비금 설정·환입처럼 현금이 움직이지 않는 분개는 빠집니다.</p>'
    +'<p><b>영업활동</b> 출연금·이자·목적사업비·관리비 · <b>투자활동</b> 대부금 지급/회수, 예금·증권 예치/해지 · <b>재무활동</b> 차입(기금은 없음)</p>'
    +'<p>맨 아래 <b>기말의 현금</b>은 재무상태표의 현금과 같아야 합니다. 다르면 화면이 그 차이를 알려 줍니다.</p>'},
+ 'close.notes':{t:'주석',h:'<p>공익법인회계기준이 요구하는 <b>마지막 한 장</b>입니다. 숫자만으로는 못 보여 주는 «왜 그런 숫자인지»를 적습니다.</p>'
+   +'<p>개요 · 회계처리 방침 · 준비금 변동 · 기본재산 변동 · 대부금 · 목적사업 집행 · 우발부채, 이렇게 일곱 갈래입니다.</p>'
+   +'<p><b>빈 칸은 앱이 채우지 않습니다.</b> 인가번호·소재지처럼 비어 있으면 「—」로 두고, 무엇이 비었는지만 위에 알려 줍니다. 기금 기본정보에서 채우면 여기에 나옵니다.</p>'
+   +'<p>「📋 글자로 복사」를 누르면 한글 문서에 그대로 붙여 쓸 수 있습니다.</p>'},
  'close.ie':{t:'수입지출명세서',h:'<p>비영리 회계가 쓰는 <b>관 — 항 — 목</b> 차례로 수입과 지출을 적습니다(이카운트 비영리회계와 같은 짜임새).</p>'
    +'<p><b>수입</b> 출연금수입 · 사업수익 · 이월금 &nbsp; <b>지출</b> 고유목적사업비 · 일반관리비 · 대부사업</p>'
    +'<p><b>이월금</b>은 전기말 자산총계입니다. 현금이 오가지 않은 분개는 빠집니다.</p>'},
