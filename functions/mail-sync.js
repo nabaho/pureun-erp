@@ -81,8 +81,32 @@ async function runSync(deps, opts) {
   }
 
   try {
-    const boxes = (await client.list()).filter(MB.isSyncable);
+    const boxes = (await client.list()).filter(MB.isSyncable).filter(MB.isWanted);
     const syncSnap = (await db.ref(ROOT + '/sync').once('value')).val() || {};
+
+    /* ── 안 가져오기로 한 칸이 이미 담겨 있으면 걷어낸다 (대표 지시 2026-08-26) ──
+       "메일함에 스팸함은 연결시켜서 가지고 올 필요없다. 그런데 왜 가지고 있나"
+       ⚠ 앞으로 안 가져오는 것만으로는 부족하다 — 어제까지 담아 둔 스팸 수백 통이 DB 에
+         그대로 남아 왼쪽에 스팸함 칸으로 계속 보인다. 여기서 한 번 치운다.
+       ⚠ 걷어내기에 실패해도 동기화는 이어 간다. 다음 회차에 또 해 본다 — 이것 때문에
+         메일 전체가 안 오면 바꾼 보람이 없다. */
+    try {
+      const known = (await db.ref(ROOT + '/folders').once('value')).val() || {};
+      const drop = {};
+      Object.keys(known).forEach((slug) => {
+        const kind = String((known[slug] || {}).kind || '');
+        if (MB.SKIP_KINDS.indexOf(kind) < 0) return;
+        drop[ROOT + '/folders/' + slug] = null;
+        drop[ROOT + '/msgs/' + slug] = null;
+        drop[ROOT + '/sync/' + slug] = null;
+      });
+      if (Object.keys(drop).length) {
+        await db.ref().update(drop);
+        console.log('syncMailbox 안 쓰는 칸을 걷어냈습니다:', Object.keys(drop).length / 3);
+      }
+    } catch (e) {
+      console.warn('syncMailbox 안 쓰는 칸 걷어내기 실패:', String((e && e.message) || e));
+    }
 
     /* ① 폴더 목록부터 적는다 — 통수를 못 가져와도 왼쪽 폴더 목록은 그려진다.
           「아직 아무것도 안 보인다」와 「폴더는 보이는데 목록이 비었다」는 사람에게

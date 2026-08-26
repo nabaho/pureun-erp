@@ -660,6 +660,20 @@ table.sbox tr.bad td{background:#fdf4f4}
 .dm-from{flex:none;font-size:10.5px;color:#5d7a6d;background:#eaf6f1;border:1px solid #cfe6dc;
   border-radius:3px;padding:1px 6px;margin-right:8px;white-space:nowrap}
 
+/* ── 숨겨 둔 칸 되돌리는 자리 (대표 지시 2026-08-26) ──
+   ⚠ 되돌릴 길이 없으면 아무도 숨기기를 못 누른다. 숨기기와 «같은 화면»에 둔다. */
+.dm-hid{margin:2px 4px 6px;background:#fafbfc;border:1px solid #edeff2;border-radius:8px;padding:5px}
+.dm-hid .h{font-size:11px;color:#8c8c8c;padding:4px 6px 6px;line-height:1.5}
+.dm-hid .r{display:flex;align-items:center;gap:6px;font-size:12.5px;color:#7c7f86;
+  padding:4px 6px;border-radius:5px}
+.dm-hid .r:hover{background:#fff}
+.dm-hid .r .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dm-hid .r button{flex:none;font-family:inherit;font-size:11.5px;border:1px solid #d8dbe0;
+  background:#fff;color:#444;border-radius:4px;padding:3px 8px;cursor:pointer}
+.dm-hid .r button:hover{border-color:#0f8a5f;color:#0f8a5f}
+/* ⋮ 창의 갈래마다 «어디까지 가는지» 한 줄 — 안 적으면 다음메일 폴더가 사라진다 */
+#folderMenu .fmi small{display:block;color:#a8abb2;font-size:11px;margin-top:2px;line-height:1.4}
+
 /* ⚠ 여기 갈래 단추줄(.dm-tabs)과 톱니바퀴(.dm-gear) 모양이 있었다.
    대표 화면 2026-08-24 로 그 줄을 통째로 없애면서 모양도 함께 지웠다 —
    쓰지 않는 모양을 남기면 다음 사람이 「어디에 쓰이나」를 찾느라 시간을 버린다. */
@@ -10791,24 +10805,26 @@ const MB_RAW_P = '#';    /* 다음메일 원본 */
 
 let _mbBins = null;      /* {binId:{n:이름, l:이어진폴더slug, o:차례}} — null 이면 아직 안 읽음 */
 let _mbPut  = null;      /* {'slug:uid': binId} — «옮긴 것만» 든다 */
+let _mbHide = null;      /* {binId:true} — 안 쓰는 칸(소셜·프로모션…). 우리 화면에서만 치운다 */
 let _mbBinsBusy = false;
 
 /* 두 벌을 한 번에 읽는다 — 왼쪽 한 줄을 그리는 데 둘 다 필요하다.
    ⚠ once() 만 쓴다(2026-08-16 「once 뒤 on」 요금 사고와 같은 결). */
 function mbEnsureBins(cb){
-  if(_mbBins!==null && _mbPut!==null){ if(cb) cb(); return; }
+  if(_mbBins!==null && _mbPut!==null && _mbHide!==null){ if(cb) cb(); return; }
   if(typeof Store==='undefined' || Store.mode!=='firebase'){
-    _mbBins = _mbBins||{}; _mbPut = _mbPut||{}; if(cb) cb(); return;
+    _mbBins = _mbBins||{}; _mbPut = _mbPut||{}; _mbHide = _mbHide||{}; if(cb) cb(); return;
   }
   if(_mbBinsBusy){ if(cb) setTimeout(()=>mbEnsureBins(cb), 200); return; }
   _mbBinsBusy = true;
   Promise.all([
     firebase.database().ref(DB_ROOT+'/config/mailBins').once('value'),
-    firebase.database().ref(DB_ROOT+'/config/mailPut').once('value')
-  ]).then(([b,p])=>{
-    _mbBins = b.val()||{}; _mbPut = p.val()||{};
+    firebase.database().ref(DB_ROOT+'/config/mailPut').once('value'),
+    firebase.database().ref(DB_ROOT+'/config/mailHide').once('value')
+  ]).then(([b,p,h])=>{
+    _mbBins = b.val()||{}; _mbPut = p.val()||{}; _mbHide = h.val()||{};
   }).catch(e=>{
-    _mbBins = _mbBins||{}; _mbPut = _mbPut||{};
+    _mbBins = _mbBins||{}; _mbPut = _mbPut||{}; _mbHide = _mbHide||{};
     console.warn('[푸른분류]', (e&&e.message)||e);
   }).then(()=>{
     _mbBinsBusy = false;
@@ -10849,6 +10865,27 @@ function mbBinBy(id){
 /* 이 메일이 «옮겨진» 칸. 안 옮겼으면 빈 값 — 그러면 다음 자리를 그대로 따른다. */
 function mbPutOf(key){ return String((_mbPut||{})[key] || ''); }
 
+/* ── 안 쓰는 칸 치우기 (대표 지시 2026-08-26) ──
+   "소셜 프로모션 등 없애고 싶은데 삭제가 없다."
+   ⚠ 예전 「칸 지우기」는 다음메일에서 온 칸에는 «아무 일도 하지 않았다» — 적어 둔 칸이
+     아니라 다음 폴더에서 저절로 만들어지는 칸이라, 지워도 곧바로 되살아났다.
+     그런 칸은 «숨긴다». 다음메일은 그대로 두고 우리 목록에서만 치우는 것이다.
+   ⚠ 숨긴 칸의 메일은 「전체메일」과 안읽음 셈에서도 뺀다 — 광고 500통이 섞이면 정작
+     봐야 할 「새 것 몇 통」이 그 사이에 묻힌다(스팸함을 빼는 것과 같은 까닭).
+   ⚠ 되돌릴 자리를 함께 만든다(「푸른 분류」 머리줄의 👁). 되돌릴 길이 없으면 아무도
+     안 누른다. */
+function mbHidden(id){ return !!(_mbHide||{})[String(id||'').replace(/^~/,'')]; }
+/* 이 폴더를 맡고 있는 칸 — 「전체메일」에서 무엇을 뺄지 정할 때 쓴다 */
+function mbBinOfFolder(slug){
+  if(!slug) return null;
+  return mbBins().find(b=>b.link===slug) || null;
+}
+/* 이 메일이 «지금 어느 칸에 있나» — 옮긴 칸이 있으면 그것, 없으면 제 폴더를 맡은 칸 */
+function mbBinOfRow(v){
+  const put = mbPutOf(v._key);
+  return put ? mbBinBy(put) : mbBinOfFolder(v._slug);
+}
+
 /* ── 이 줄이 지금 보는 자리에 보이나 ──
    한 자리에서만 판단하게 모아 둔다. 그리는 곳과 「모두 고르기」가 서로 다른 셈을 하면
    개수가 어긋난다. */
@@ -10859,7 +10896,11 @@ function mbRowFits(v, id){
     const bin = mbBinBy(id); if(!bin) return false;
     return put ? (put === bin.id) : (!!bin.link && v._slug === bin.link);
   }
-  if(id==='*all' || id==='*tome') return true;             /* 전체는 다 보여 준다 */
+  if(id==='*all' || id==='*tome'){
+    /* 숨긴 칸의 메일은 전체에서도 뺀다 — 광고가 섞이면 「전체메일」이 광고함이 된다 */
+    const b0 = mbBinOfRow(v);
+    return !(b0 && mbHidden(b0.id));
+  }
   if(!put) return true;                                    /* 안 옮긴 것은 제자리 */
   const bin = mbBinBy(put);                                /* 옮겼으면 그 칸에서만 */
   return !!(bin && bin.link === v._slug);
@@ -11070,8 +11111,10 @@ function mailSideHtml(){
   const all = mbAllRows();
   /* 안 읽은 통수 — 스팸함·휴지통은 뺀다. 다음메일함도 그렇게 센다(캡처의 「4」가
      그 값이었다). 광고 스팸 200통이 섞이면 그 숫자가 아무 뜻이 없어진다. */
+  /* ⚠ 숨긴 칸(소셜·프로모션…)도 뺀다 — 스팸을 빼는 것과 같은 까닭이다(2026-08-26). */
   const cntUnread = mbFolders()
     .filter(f=>f.kind!=='spam' && f.kind!=='trash')
+    .filter(f=>{ const b0 = mbBinOfFolder(f.slug); return !(b0 && mbHidden(b0.id)); })
     .reduce((s,f)=>s+Number(f.unseen||0),0);
   const cntFlag = all.filter(v=>Number(v.g||0)).length;
   const cntAtt  = all.filter(v=>Number(v.a||0)).length;
@@ -11147,14 +11190,29 @@ function mailSideHtml(){
        예전: 다음메일 폴더를 그대로 비추고, 여기서 고치면 다음메일도 바뀌었다.
        지금: 우리 앱에서만 나눈다 — 다음메일에는 아무것도 쓰지 않는다.
        이름을 그대로 두면 다음메일에서도 바뀌는 줄 알고 누른다. */
-  const bins = mbBins();
+  const allBins = mbBins();
+  const bins = allBins.filter(b=>!mbHidden(b.id));
+  const hid  = allBins.filter(b=>mbHidden(b.id));
   const openMine = state.mbMineOpen !== false;
   h += `<div class="dm-fsec pu" onclick="mbToggleMine()"
       title="우리 앱에서만 나눈 칸입니다 — 다음메일은 그대로 있습니다">
       <span class="nm">푸른 분류 <span style="color:#b6b9c0">${openMine?'⌃':'⌄'}</span></span>
+      <span class="tool" onclick="event.stopPropagation();mbToggleHidden()"
+        title="숨긴 칸 보기 · 되돌리기">👁${hid.length?` <b style="color:#0f8a5f">${hid.length}</b>`:''}</span>
       <span class="tool" onclick="event.stopPropagation();mbBinNew(event)" title="새 칸 만들기">＋</span>
     </div>`;
   if(openMine){
+    /* ── 숨겨 둔 칸 — 되돌릴 자리 ──
+       ⚠ 되돌릴 길이 없으면 아무도 숨기기를 못 누른다. 숨기기와 «같은 화면»에 둔다. */
+    if(state.mbHideOpen){
+      h += `<div class="dm-hid"><div class="h">숨긴 칸 ${hid.length}개 — 다음메일에는 그대로 있습니다</div>`;
+      if(hid.length) hid.forEach(b=>{
+        h += `<div class="r"><span class="nm" title="${esc(b.name)}">👁‍🗨 ${esc(b.name)}</span>
+          <button onclick="mbBinShow('${b.id}')">되돌리기</button></div>`;
+      });
+      else h += `<div class="r"><span class="nm" style="color:#b6b9c0">숨긴 칸이 없습니다</span></div>`;
+      h += `</div>`;
+    }
     if(bins.length) bins.forEach(b=>{
       const c = mbBinCount(b);
       const id = MB_BIN_P + b.id;
@@ -11171,7 +11229,7 @@ function mailSideHtml(){
         <span class="nm" onclick="openMailBox('${id}')">${esc(b.name)}</span>
         ${c.un?`<span class="nu">${c.un}</span>`:''}
         <span class="fmenu" onclick="event.stopPropagation();mbBinMenu('${b.id}',event)"
-          title="이름 바꾸기 · 지우기">⋮</span></div>`;
+          title="이름 바꾸기 · 숨기기 · 지우기">⋮</span></div>`;
     });
     else h += `<div class="dm-side-hint">${_mbFolders===null ? '칸을 읽고 있습니다…'
       : _mbErr ? '아직 볼 수 없습니다 — 콘솔 규칙이 필요합니다'
@@ -11550,15 +11608,53 @@ function mbBinNew(ev){
   mbPlaceMenu(m, ev);
   setTimeout(()=>{ const e=$('mbBinName'); if(e) e.focus(); }, 30);
 }
+/* ⚠ 갈래가 «셋»이다(대표 지시 2026-08-26). 셋이 서로 다른 곳을 건드리므로 무엇이
+     어디까지 가는지 줄마다 적어 둔다 — 안 적으면 「지우기」를 눌러 다음메일 폴더가
+     사라진다.
+   ⚠ 마지막 줄은 칸이 «다음 폴더와 이어져 있을 때»만 나온다. 우리가 만든 칸에는
+     지울 다음 폴더가 없다 — 그때는 「칸 지우기」다. */
 function mbBinMenu(binId, ev){
   const b = mbBinBy(binId); if(!b) return;
   const m = $('folderMenu'); if(!m) return;
   const c = mbBinCount(b);
   m.innerHTML = `<div class="fmhead">${esc(b.name)}${c.n?` <span>${c.n.toLocaleString()}통</span>`:''}</div>
     <div class="fmi" onclick="mbBinRename('${b.id}')">✏️ 이름 바꾸기</div>
-    <div class="fmi danger" onclick="closeFolderMenu();mbBinDelete('${b.id}')">🗑 칸 지우기</div>`;
+    <div class="fmi" onclick="mbBinHide('${b.id}')">👁 이 칸 숨기기
+      <small>목록에서만 치웁니다 · 다음메일은 그대로</small></div>
+    ${b.link
+      ? `<div class="fmi danger" onclick="closeFolderMenu();mbAskDelete('${b.link}')">🗑 다음메일에서도 지우기
+          <small>다음메일 폴더가 사라집니다 · 메일은 휴지통으로</small></div>`
+      : `<div class="fmi danger" onclick="closeFolderMenu();mbBinDelete('${b.id}')">🗑 칸 지우기
+          <small>메일은 다음메일의 제자리로 돌아갑니다</small></div>`}`;
   mbPlaceMenu(m, ev);
 }
+/* ── 칸 숨기기·되돌리기 ──
+   ⚠ 저장은 낱칸으로 한다(set/remove). 통째로 덮어쓰면 다른 PC 에서 방금 숨긴 칸이
+     되살아난다. */
+function mbBinHide(binId){
+  const b = mbBinBy(binId); if(!b) return;
+  closeFolderMenu();
+  _mbHide = _mbHide || {}; _mbHide[b.id] = true;
+  if(state.mbBox === MB_BIN_P + b.id) state.mbBox = '';   /* 보고 있던 칸이면 나온다 */
+  renderPCSide(); renderMailPage();
+  const done = ()=>toast(`👁 「${b.name}」 을 숨겼습니다 — 다음메일에는 그대로 있습니다`
+    + ' · 되돌리려면 「푸른 분류」 옆 👁', 8000);
+  if(typeof Store==='undefined' || Store.mode!=='firebase') return done();
+  firebase.database().ref(DB_ROOT+'/config/mailHide/'+b.id).set(true)
+    .then(done)
+    .catch(e=>toast('숨기지 못했습니다 — '+((e&&e.message)||e), 9000));
+}
+function mbBinShow(binId){
+  const b = mbBinBy(binId); if(!b) return;
+  _mbHide = _mbHide || {}; delete _mbHide[b.id];
+  renderPCSide(); renderMailPage();
+  const done = ()=>toast(`「${b.name}」 을 되돌렸습니다`, 5000);
+  if(typeof Store==='undefined' || Store.mode!=='firebase') return done();
+  firebase.database().ref(DB_ROOT+'/config/mailHide/'+b.id).remove()
+    .then(done)
+    .catch(e=>toast('되돌리지 못했습니다 — '+((e&&e.message)||e), 9000));
+}
+function mbToggleHidden(){ state.mbHideOpen = !state.mbHideOpen; renderPCSide(); }
 function mbBinRename(binId){
   const b = mbBinBy(binId); if(!b) return;
   const m = $('folderMenu');
@@ -11899,14 +11995,28 @@ function mbDrawerHtml(){
   mbFolderOf('archive').forEach(f=>{ h += row(f.slug,'📥','보관메일함'); });
 
   /* ── 푸른 분류 — PC 옆줄과 «같은 규칙»(까닭은 mailSideHtml 주석) ── */
-  const bins = mbBins();
+  const allBins = mbBins();
+  const bins = allBins.filter(b=>!mbHidden(b.id));
+  const hidBins = allBins.filter(b=>mbHidden(b.id));
   const openMine = state.mbMineOpen !== false;
   h += `<div class="dmm-sec" onclick="mbToggleMine()">
       <span class="nm">● 푸른 분류</span>
+      <span class="tool" onclick="event.stopPropagation();mbToggleHidden()"
+        title="숨긴 칸 되돌리기">👁${hidBins.length?` ${hidBins.length}`:''}</span>
       <span class="tool" onclick="event.stopPropagation();mbBinNew(event)" title="새 칸">＋</span>
       <span>${openMine?'⌃':'⌄'}</span></div>`;
   if(openMine){
-    /* 층만큼 들여쓰고, 줄 끝에 ⋮ 를 둔다 — 폰에서도 이름 바꾸기·지우기가 된다 */
+    /* 숨겨 둔 칸 — 폰에서도 되돌릴 수 있어야 한다(PC 에서만 되면 폰에서 갇힌다) */
+    if(state.mbHideOpen){
+      h += `<div class="dm-hid"><div class="h">숨긴 칸 ${hidBins.length}개 — 다음메일에는 그대로</div>`;
+      if(hidBins.length) hidBins.forEach(b=>{
+        h += `<div class="r"><span class="nm">👁‍🗨 ${esc(b.name)}</span>
+          <button onclick="mbBinShow('${b.id}')">되돌리기</button></div>`;
+      });
+      else h += `<div class="r"><span class="nm" style="color:#b6b9c0">숨긴 칸이 없습니다</span></div>`;
+      h += `</div>`;
+    }
+    /* 층만큼 들여쓰고, 줄 끝에 ⋮ 를 둔다 — 폰에서도 이름 바꾸기·숨기기가 된다 */
     if(bins.length) bins.forEach(b=>{
       const c = mbBinCount(b);
       h += `<div class="dmm-f" style="padding-left:${18 + Number(b.depth||0)*14}px">
@@ -12370,7 +12480,8 @@ function mbTrash(){
      (2026-08-25 에 만든 길이고, 다음메일 폴더를 진짜로 정리하려는 날이 올 수 있다) */
 function mbMove(ev){
   const picked = mbPicked(); if(!picked.length) return toast('고른 것이 없습니다');
-  const bins = mbBins();
+  /* 숨긴 칸은 옮길 곳으로 내놓지 않는다 — 치운 칸에 넣으면 그 자리에서 사라진다 */
+  const bins = mbBins().filter(b=>!mbHidden(b.id));
   const m = $('folderMenu'); if(!m) return;
   const nowId = mbNow();
   m.innerHTML = `<div class="fmhead">${picked.length.toLocaleString()}통을 어느 칸으로

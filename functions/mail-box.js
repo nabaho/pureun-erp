@@ -119,6 +119,20 @@ function isSyncable(box) {
   return true;
 }
 
+/* ── 가져올 «까닭이 있는» 칸인가 (대표 지시 2026-08-26) ──
+   "메일함에 스팸함은 연결시켜서 가지고 올 필요없다. 그런데 왜 가지고 있나"
+   ⚠ 지금까지는 폴더를 «가리지 않고» 다 가져왔다. 스팸함이 든 것은 필요해서가 아니라
+     아무도 빼지 않아서다. 광고 수백 통이 DB 를 채우고, 동기화 예산(460초)을 나눠 쓰고,
+     「전체메일」에 섞여 든다.
+   ⚠ 스팸함 하나만 뺀다. 휴지통은 남긴다 — 잘못 지운 것을 찾는 자리라 사람이 실제로
+     본다(대표가 지목한 것도 스팸함뿐이다).
+   ⚠ 이 목록은 앱과 «맞춰야» 한다. 여기서 빼 놓고 앱이 그 칸을 그리면 늘 0통으로 남는다. */
+const SKIP_KINDS = ['spam'];
+
+function isWanted(box) {
+  return SKIP_KINDS.indexOf(folderKind(box)) < 0;
+}
+
 /* 폴더 하나를 실시간DB에 적을 모양으로 — 앱 왼쪽 목록이 이것만 보고 그린다.
    ⚠ 구분자(delim)와 어버이(parent)를 함께 적는다. 하위 폴더를 만들려면 «이 서버가
      쓰는 구분자»를 알아야 하는데, 그것은 IMAP 이 폴더마다 알려 준다(서버마다 다르다:
@@ -494,7 +508,7 @@ function uidReset(sync, uidValidity) {
 
 module.exports = {
   safeKey, hash8, slugOf,
-  folderKind, folderOrder, isSyncable, folderRecord,
+  folderKind, folderOrder, isSyncable, isWanted, SKIP_KINDS, folderRecord,
   attCount, oneAddr, addrList, hasFlag, msgRow,
   folderNameBad, childPath, renamedPath,
   textPartOf, decodePart, toText, previewFrom, unentity, isHeadLine, PREVIEW_MAX,
