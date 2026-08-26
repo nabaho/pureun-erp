@@ -17,9 +17,11 @@ function sideBlock(){
 /* 기업 상세의 ＃탭 줄 — 2026-08-17 대표 지시로 옆줄에서 «윗줄 탭 칩»으로 옮겼다.
    그래서 ＃탭의 드래그 배선도 옆줄(sideBlock)이 아니라 여기서 본다. */
 function coTabsBlock(){
-  const at = source.indexOf('function renderCoFTabsHtml');
+  /* 2026-08-26: ＃탭 칩이 coFTabChipsHtml 로 갈라져 나왔다(도구줄을 「전체」에서도
+     보이게 하면서). 끌어서 차례 바꾸기는 칩에 걸리므로 그 함수를 본다. */
+  const at = source.indexOf('function coFTabChipsHtml');
   const end = source.indexOf('\nfunction ', at + 20);
-  assert.ok(at > 0 && end > at, 'renderCoFTabsHtml 을 찾지 못했습니다 — ＃탭 줄이 사라졌다');
+  assert.ok(at > 0 && end > at, 'coFTabChipsHtml 을 찾지 못했습니다 — ＃탭 칩이 사라졌다');
   return source.slice(at, end);
 }
 

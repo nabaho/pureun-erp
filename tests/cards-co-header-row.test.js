@@ -57,12 +57,16 @@ function renderTabsRow(state, cos){
     coNoBizCount: () => 0,
     /* 2026-08-24(3순위): 탭 줄에 「정보부족」 토글도 붙었다 — 이 검사들은 그 부분을
        안 보므로 0곳으로 둔다(안 넣으면 renderCoFTabsHtml 이 던진다). */
-    coIncompleteCount: () => 0 };
+    coIncompleteCount: () => 0,
+    /* 2026-08-26: 도구줄이 「전체」에서도 나오게 갈라지면서, 개수 글귀도 이 줄에 붙었다.
+       이 검사들은 그 글귀를 안 보므로 빈 대역을 준다(안 넣으면 coToolsHtml 이 던진다). */
+    coPagerHtml: () => '', coPage: () => ({ page:0, pages:1, total:0, from:0, to:0 }),
+  };
   vm.createContext(ctx);
   const a = '/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════';
   const b = '/* ══════ 폴더 안의 탭 — 화면 ══════ */';
   const i = src.indexOf(a), j = src.indexOf(b);
-  vm.runInContext(src.slice(i, j) + '\n' + fnBody('renderCoFTabsHtml'), ctx);
+  vm.runInContext(src.slice(i, j) + '\n' + fnBody('coFTabChipsHtml') + '\n' + fnBody('coToolsHtml') + '\n' + fnBody('renderCoFTabsHtml'), ctx);
   return ctx.renderCoFTabsHtml();
 }
 
@@ -122,12 +126,15 @@ test('쪽 크기를 고르면 이미 있는 coSetPageSize 를 그대로 부른�
     '★ 새 길을 만들면 두 벌이 된다 — 이미 있는 것을 그대로 써야 한다');
 });
 
-test('탭 줄이 폴더를 안 골랐을 때는 여전히 빈 값이다', () => {
-  /* renderCoFTabsHtml 은 폴더가 없으면 일찍 돌아간다 — 쪽 크기 select 를 넣어도
-     이 이른 반환보다 «뒤»에 있어야 한다. 안 그러면 폴더 없이도 select 가 뜬다. */
+test('폴더를 안 골라도 개수 고르기는 나온다 — 탭 칩만 폴더에 딸린다', () => {
+  /* ⚠ 2026-08-26 에 «뒤집힌» 결정이다. 예전에는 폴더가 없으면 이 줄이 통째로
+     빈 값이었고, 이 검사가 그것을 못 박고 있었다. 그런데 그 바람에 「전체」에서
+     개수 고르기·종료·번호없음·정보부족 넷이 다 사라져, 4,143곳을 보면서
+     몇 개씩 볼지 고를 길이 없었다(대표 화면 2026-08-26).
+     이제 탭 «칩»만 폴더에 딸리고, 도구는 늘 나온다. */
   const fn = fnBody('renderCoFTabsHtml');
-  const early = fn.indexOf("if(!f) return ''");
-  const sel = fn.indexOf('coSizeSelHtml(');
-  assert.ok(early > 0, '이른 반환을 찾지 못했습니다');
-  assert.ok(sel > early, '쪽 크기 select 가 이른 반환보다 앞에 있다');
+  assert.ok(fn.indexOf("if(!f) return ''") < 0, '폴더가 없다고 도구까지 없애면 안 된다');
+  assert.match(fn, /f \? coFTabChipsHtml\(f\) : ''/, '칩만 폴더에 딸려야 한다');
+  assert.match(fn, /coToolsHtml\(\)/, '도구는 늘 이어 붙여야 한다');
+  assert.match(fnBody('coToolsHtml'), /coSizeSelHtml\(/, '개수 고르기는 도구 쪽에 있다');
 });

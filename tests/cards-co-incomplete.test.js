@@ -205,11 +205,15 @@ test('★ 부족한 곳이 0이면 단추가 안 뜬다', () => {
     _coFolders: { f1:{ id:'f1', name:'업체관리' } },
     coList: () => [],
     coSizeSelHtml: () => '', coClosedCount: () => 0, coNoBizCount: () => 0,
-    coIncompleteCount: () => 0 };
+    coIncompleteCount: () => 0,
+    /* 2026-08-26: 도구줄이 「전체」에서도 나오게 갈라지면서, 개수 글귀도 이 줄에 붙었다.
+       이 검사들은 그 글귀를 안 보므로 빈 대역을 준다(안 넣으면 coToolsHtml 이 던진다). */
+    coPagerHtml: () => '', coPage: () => ({ page:0, pages:1, total:0, from:0, to:0 }),
+  };
   vm.createContext(ctx);
   const a = '/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════';
   const b = '/* ══════ 폴더 안의 탭 — 화면 ══════ */';
-  vm.runInContext(src.slice(src.indexOf(a), src.indexOf(b)) + '\n' + fnBody('renderCoFTabsHtml'), ctx);
+  vm.runInContext(src.slice(src.indexOf(a), src.indexOf(b)) + '\n' + "var coPagerHtml=function(){return '';}, coPage=function(){return {};};" + fnBody('coFTabChipsHtml') + '\n' + fnBody('coToolsHtml') + '\n' + fnBody('renderCoFTabsHtml'), ctx);
   const h = ctx.renderCoFTabsHtml();
   assert.equal(h.indexOf('정보부족'), -1,
     '★ 0곳인데도 단추가 뜨면 무엇을 누르라는 건지 모른다');
@@ -223,11 +227,13 @@ test('부족한 곳이 있으면 단추가 뜨고 몇 곳인지 말한다', () =
     _coFolders: { f1:{ id:'f1', name:'업체관리' } },
     coList: () => [],
     coSizeSelHtml: () => '', coClosedCount: () => 0, coNoBizCount: () => 0,
+    /* 2026-08-26: 도구줄에 개수 글귀가 붙었다 — 이 검사는 그것을 안 보므로 빈 대역 */
+    coPagerHtml: () => '', coPage: () => ({}),
     coIncompleteCount: () => 7 };
   vm.createContext(ctx);
   const a = '/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════';
   const b = '/* ══════ 폴더 안의 탭 — 화면 ══════ */';
-  vm.runInContext(src.slice(src.indexOf(a), src.indexOf(b)) + '\n' + fnBody('renderCoFTabsHtml'), ctx);
+  vm.runInContext(src.slice(src.indexOf(a), src.indexOf(b)) + '\n' + "var coPagerHtml=function(){return '';}, coPage=function(){return {};};" + fnBody('coFTabChipsHtml') + '\n' + fnBody('coToolsHtml') + '\n' + fnBody('renderCoFTabsHtml'), ctx);
   const h = ctx.renderCoFTabsHtml();
   assert.ok(h.indexOf('정보부족') > 0, '단추가 없다');
   assert.ok(h.indexOf('7') > 0, '몇 곳인지 안 알려 준다');
@@ -288,7 +294,7 @@ function drawTabs(n, on){
   vm.createContext(ctx);
   const a = '/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════';
   const b = '/* ══════ 폴더 안의 탭 — 화면 ══════ */';
-  vm.runInContext(src.slice(src.indexOf(a), src.indexOf(b)) + '\n' + fnBody('renderCoFTabsHtml'), ctx);
+  vm.runInContext(src.slice(src.indexOf(a), src.indexOf(b)) + '\n' + "var coPagerHtml=function(){return '';}, coPage=function(){return {};};" + fnBody('coFTabChipsHtml') + '\n' + fnBody('coToolsHtml') + '\n' + fnBody('renderCoFTabsHtml'), ctx);
   return ctx.renderCoFTabsHtml();
 }
 /* 단추의 onclick 을 «실제로 실행»해 본다 — 글자만 맞춰 보면 =true 로 바꿔 놔도 못 잡는다 */
