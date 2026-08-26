@@ -611,7 +611,7 @@ ok('위원 격자를 따로 채운다', src.includes('function fillCommittee(roo
   && src.includes("['근로자측','사용자측'].forEach"));
 /* 위원 격자를 «먼저» 채우고 표를 남겨야, 뒤이은 라벨 채우기가 덮어쓰지 않는다.
    「생년월일」·「직책」 라벨이 대표자란에도 있어서 실제로 덮어썼다. */
-ok('위원 격자를 먼저 채우고 표를 남긴다', /var d=document\.createElement\('div'\); d\.innerHTML=html;[\s\S]{0,120}?fillCommittee\(d,f\);/.test(src)
+ok('위원 격자를 먼저 채우고 표를 남긴다', /stripBaked\(d\);[\s\S]{0,200}?fillCommittee\(d,f\);/.test(src)
   && src.includes("tr.setAttribute('data-cm','1');")
   && src.includes("if(tr.getAttribute('data-cm')) return;"));
 {
@@ -648,6 +648,24 @@ ok('신청 날짜와 신청인을 채운다', /\^20\\s\*년\\s\*월\\s\*일\$/.t
   names.forEach(n => { if (seen[n]) { if (dup.indexOf(n) < 0) dup.push(n); } else seen[n] = 1; });
   ok('같은 이름의 함수가 둘 있지 않다' + (dup.length ? ' — ' + dup.join(', ') : ''), dup.length === 0);
 }
+/* ══ 박혀 있는 «남의 값» 걷어내기 ══
+   변환한 원본 .hwp 가 어느 기금이 실제로 낸 서류라, 서식 19종에 금액·날짜가 남아 있었다.
+   지급신청서에는 남의 «계좌번호»까지 있었다. 그대로 인쇄하면 남의 숫자를 제출한다. */
+ok('남의 값을 걷어낸다', src.includes('function stripBaked(root){')
+  && src.includes('function _bakeText(s){') && src.includes('stripBaked(d);'));
+// 걷어내기가 «가장 먼저» 돌아야, 걷어낸 자리가 곧 채울 자리가 된다
+ok('걷어낸 뒤에 채운다', /stripBaked\(d\);[\s\S]{0,200}?fillCommittee\(d,f\);/.test(src));
+/* ⚠ 다 지우면 서식이 망가진다 — 이것들은 «서식의 일부»다 */
+ok('법령 개정일은 남긴다', src.includes("return /개정|시행/.test(pre) ? m : pre+BAKE_BLANK;"));
+ok('요율 구간은 남긴다', src.includes('if(cmp) return m;') && src.includes('미만|이상'));
+ok('용지 규격은 남긴다', src.includes('㎜|㎡|g') && src.includes('// 용지 규격'));
+/* 사업계획서는 쉼표 없는 예산 수치(56·560)가 칸마다 흩어져 있어, 글자 걷어내기만으로는
+   남의 예산이 그대로 남는다. 칸 안에 여러 줄이 든 곳이 있어 «글자 마디»마다 본다. */
+ok('숫자만 든 마디도 지운다', src.includes("if(BARE.test(s)) n.nodeValue='';")
+  && src.includes('if(n.nodeType===3) kids.push(n);'));
+// 줄의 첫 칸은 연번이다 — 지우면 표가 무너진다
+ok('연번은 안 건드린다', src.includes('if(ci===0) return;'));
+
 /* ══ 지원신청서(별지 제1호의2) ══ */
 /* 적는 자리가 «비어» 있지 않은 서식이 있다 — 지원신청서는 ＿＿＿＿ 로 줄을 그어 둔다.
    빈 칸만 찾으면 그런 자리는 영영 안 채워지고, 값이 라벨 칸에 잘못 붙는다. */
