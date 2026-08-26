@@ -88,7 +88,6 @@ t('왜 passkey 표시가 필요한지 적어 두었다', /규칙에 이 조건�
 
 console.log('\n[⑧ 화면은 심부름만 한다]');
 t('안 되는 기기에는 단추를 안 보인다', /function supported\(\)/.test(CLI), true);
-t('서버가 아니라고 하면 그대로 멈춘다', /if \(!j \|\| !j\.ok\) throw new Error/.test(CLI), true);
 /* 브라우저는 바이트, 서버는 글자 — 오갈 때마다 바꿔 준다 */
 const ctx = { atob:(s)=>Buffer.from(s,'base64').toString('binary'),
               btoa:(s)=>Buffer.from(s,'binary').toString('base64'),
@@ -130,5 +129,62 @@ t('등록할 때 내 표를 함께 보낸다', /auth\.currentUser\.getIdToken\(\
 /* ⚠ 「지문」만 적으면 거짓말이다 — 휴대폰 설정에 따라 얼굴·잠금번호가 뜬다 */
 t('★ 문구를 「지문·간편 로그인」으로 적었다', /🔒 지문·간편 로그인/.test(PORTAL), true);
 
-console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===\n');
-process.exit(fail ? 1 : 0);
+/* ══════════════════════════════════════════════════════════════════════════
+   [⑩ 서버가 뭐라 답하든 «왜 그런지» 를 말한다]
+
+   ★ 대표 지적 2026-08-26 「지문인식 왜 안 되나」
+     화면에는 「서버 응답을 읽지 못했습니다」 한 줄뿐이었다. 그 한 줄로는
+     아무것도 고칠 수 없다 — 답이 안 온 것인지 · 기능이 안 올라간 것인지 ·
+     권한에 막힌 것인지 · 서버가 터진 것인지가 «전부 같은 문장» 이었다.
+
+   ⚠ 예전에는 이 자리를 `if (!j || !j.ok) throw` 라는 «코드 모양» 으로 박아 두었다.
+     그래서 답을 읽는 방식만 바꿔도 기능이 멀쩡한데 검사가 깨졌다.
+     이제는 가짜 서버를 세워 «무엇을 말하는가» 만 본다 — 그것이 규칙이다. */
+function fakeFetch(status, body) {
+  return function () {
+    return Promise.resolve({ status: status, text: function () { return Promise.resolve(body); } });
+  };
+}
+/* 서버가 이렇게 답하면 화면은 뭐라고 하는가 (통과하면 null) */
+function says(status, body) {
+  ctx.fetch = fakeFetch(status, body);
+  return P.devices('P-001').then(function () { return null; },
+    function (e) { return String((e && e.message) || ''); });
+}
+function has(s, word) { return typeof s === 'string' && s.indexOf(word) >= 0; }
+
+(async function () {
+  console.log('\n[⑩ 서버가 뭐라 답하든 «왜 그런지» 를 말한다]');
+
+  t('제대로 온 답은 그냥 통과한다', await says(200, '{"ok":true,"devices":[]}'), null);
+
+  /* 서버가 «아니라고» 한 것은 서버 말을 그대로 옮긴다 — 우리가 바꿔 말하면 헷갈린다 */
+  t('★ 서버가 아니라고 하면 그대로 멈추고, 그 까닭을 옮긴다',
+    await says(400, '{"ok":false,"error":"이 사번으로 등록된 기기가 없습니다"}'),
+    '이 사번으로 등록된 기기가 없습니다');
+
+  /* JSON 이 아닌 답 — 여기가 대표가 막혔던 자리다. 넷을 갈라 말해야 한다. */
+  const notUp = await says(404, '<html>Not Found</html>');
+  t('★ 기능이 안 올라갔으면 「배포가 필요하다」고 말한다', has(notUp, '배포'), true);
+  t('★ 상태 번호를 삼키지 않는다 (신고용 손잡이)', has(notUp, '404'), true);
+  t('★ 어느 창구에서 막혔는지 말한다', has(notUp, 'passkeyDevices'), true);
+
+  t('★ 막힌 것(403)은 권한 이야기로 말한다',
+    has(await says(403, 'Forbidden'), '권한'), true);
+  t('★ 서버가 터진 것(500)은 오류라고 말한다',
+    has(await says(500, 'Internal Server Error'), '오류'), true);
+
+  /* 답 자체가 없는 것(인터넷 끊김·CORS)도 같은 문장으로 뭉뚱그리면 안 된다 */
+  ctx.fetch = function () { return Promise.reject(new Error('Failed to fetch')); };
+  const dead = await P.devices('P-001').then(function () { return null; },
+    function (e) { return String((e && e.message) || ''); });
+  t('★ 답 자체가 없으면 「닿지 못했다」고 말한다', has(dead, '닿지'), true);
+
+  /* 넷이 서로 «다른» 문장이어야 한다 — 같으면 갈라 말한 뜻이 없다 */
+  const four = [notUp, await says(403, 'x'), await says(500, 'x'), dead]
+    .map(function (m) { return m.split('[')[0]; });
+  t('★ 네 가지가 서로 다른 문장이다', new Set(four).size, 4);
+
+  console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===\n');
+  process.exit(fail ? 1 : 0);
+})();

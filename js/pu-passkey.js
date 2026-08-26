@@ -66,15 +66,46 @@
     return 'manual';
   }
 
+  /* 서버가 «JSON 이 아닌» 답을 보냈을 때 — 왜 그런지 말해 준다.
+     ─────────────────────────────────────────────────────────────────────
+     ⚠ 예전에는 그냥 「서버 응답을 읽지 못했습니다」 한 줄이었다(2026-08-26 대표 지적
+       「지문인식 왜 안 되나」). 그 한 줄로는 고칠 수가 없다 — 답이 안 온 것인지,
+       기능이 안 올라간 것인지, 권한에 막힌 것인지, 서버가 터진 것인지가
+       «전부 같은 문장» 이었기 때문이다. 상태 번호를 삼키지 않고 말한다.
+     ⚠ 대괄호 안(경로·번호·서버가 보낸 첫 줄)은 «신고용 손잡이» 다.
+       화면에 그대로 보여야 캡처 한 장으로 어디가 막혔는지 알 수 있다. */
+  function whyNotJson(path, st, text) {
+    var head = String(text || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+    var why =
+      st === 404 ? '서버에 이 기능이 아직 올라가지 않았습니다 (배포가 필요합니다)' :
+      st === 403 ? '서버가 요청을 막았습니다 (함수 공개 권한을 확인해 주세요)' :
+      st === 401 ? '서버가 로그인을 요구했습니다 (함수 공개 권한을 확인해 주세요)' :
+      (st >= 500) ? '서버에서 오류가 났습니다' :
+      st === 0 ? '서버에 닿지 못했습니다' :
+      '서버가 알 수 없는 답을 보냈습니다';
+    return why + ' [' + path + ' ' + (st || '연결실패') + (head ? ' · ' + head : '') + ']';
+  }
+
   function post(path, body, idToken) {
     var headers = { 'Content-Type': 'application/json' };
     if (idToken) headers.Authorization = 'Bearer ' + idToken;
+    var st = 0;
     return fetch(BASE + '/' + path, {
       method: 'POST', headers: headers, body: JSON.stringify(body || {})
+    }).catch(function (e) {
+      /* 여기로 오면 «답 자체가 없다» — 인터넷이 끊겼거나 CORS 에 막혔거나
+         주소가 없다. 상태 번호가 없으므로 0 으로 알린다. */
+      throw new Error(whyNotJson(path, 0, (e && e.message) || ''));
     }).then(function (r) {
-      return r.json().catch(function () { return { ok: false, error: '서버 응답을 읽지 못했습니다' }; });
-    }).then(function (j) {
-      if (!j || !j.ok) throw new Error((j && j.error) || '실패했습니다');
+      st = r.status;
+      /* ⚠ r.json() 을 바로 부르지 않는다 — 실패하면 «서버가 뭐라고 했는지» 까지
+         함께 잃는다. 글자로 받아 우리가 풀어 본다. */
+      return r.text();
+    }).then(function (t) {
+      var j = null;
+      try { j = JSON.parse(t); } catch (e) { /* 아래에서 까닭을 말한다 */ }
+      if (!j) throw new Error(whyNotJson(path, st, t));
+      if (!j.ok) throw new Error(j.error || '실패했습니다');
       return j;
     });
   }
