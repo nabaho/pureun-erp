@@ -80,7 +80,7 @@ const CASES = [
   ['본문이 빈 사진', { kind: 'card', error: '사진 본문을 불러오지 못했습니다', fields: {} }, /다시 올려/],
   ['종류를 못 가림', { kind: 'other', fields: { name: '홍길동' } }, /분류 지정/],
   ['검증에 걸림', { kind: 'bizreg', auto: false, fields: { bizNo: '123' } }, /미덥지/],
-  ['명함첩에 아직 안 감', { kind: 'card', auto: true, fields: {} }, /명함첩/],
+  ['기업정보함에 아직 안 감', { kind: 'card', auto: true, fields: {} }, /기업정보함/],
   ['업체관리에 못 넣음', { kind: 'sme', auto: true, fields: {} }, /업체관리/]
 ];
 

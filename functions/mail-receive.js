@@ -55,7 +55,7 @@ function collectEmails(node, out, depth) {
   return out;
 }
 
-/* 사번을 이메일로 — 포털·명함첩·급여데이터함이 쓰는 규칙과 **같아야** 한다.
+/* 사번을 이메일로 — 포털·기업정보함·급여데이터함이 쓰는 규칙과 **같아야** 한다.
    다르면 같은 사람을 못 찾아 직원이 보낸 메일이 막힌다. */
 function sidToEmail(sid) {
   return String(sid || '').toLowerCase().replace(/-/g, '') + '@pureun.kr';

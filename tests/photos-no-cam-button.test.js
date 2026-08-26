@@ -1,7 +1,7 @@
 /* 사진첩에서 카메라 단추를 없앤다 — 대표 지시 2026-08-10
    "사진첩에 오른쪽 아래 카메라 기능 전혀 필요없다. 삭제해서 제거해 달라."
 
-   ⚠ 단추만 없앤 것이지 촬영을 지운 것이 아니다. 명함첩과 포털이 ?cam=1 로
+   ⚠ 단추만 없앤 것이지 촬영을 지운 것이 아니다. 기업정보함과 포털이 ?cam=1 로
      이 화면의 카메라를 불러 쓴다 — 지우면 명함 촬영이 통째로 죽는다. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -22,17 +22,17 @@ test('★ 단추가 자취 없이 사라졌다 — 마크업·꾸밈·배선 모
 });
 
 test('★ 촬영 기능은 그대로 살아 있다', () => {
-  /* 명함첩·포털이 이 화면의 카메라를 불러 쓴다 */
+  /* 기업정보함·포털이 이 화면의 카메라를 불러 쓴다 */
   assert.match(app, /async function openCam\(/, '촬영을 여는 곳이 없어졌습니다.');
   assert.match(app, /function openCamIfAsked\(/, '?cam=1 로 들어오는 길이 없어졌습니다.');
   assert.match(app, /openCamIfAsked\(\);/, '들어와도 카메라를 안 켭니다.');
   assert.match(app, /id="camOv"/, '카메라 화면이 없어졌습니다.');
 });
 
-test('★ 명함첩이 부르는 주소가 그대로다', () => {
-  /* 명함첩의 촬영은 이 화면으로 넘어와서 이뤄진다 — 주소가 어긋나면
+test('★ 기업정보함이 부르는 주소가 그대로다', () => {
+  /* 기업정보함의 촬영은 이 화면으로 넘어와서 이뤄진다 — 주소가 어긋나면
      명함을 찍을 길이 사라진다. */
-  assert.match(cards, /pu-photos\.html\?cam=1/, '명함첩이 카메라를 못 부릅니다.');
+  assert.match(cards, /pu-photos\.html\?cam=1/, '기업정보함이 카메라를 못 부릅니다.');
   const m = cards.match(/pu-photos\.html\?cam=1[^'"]*/);
   assert.ok(/mode=card/.test(m[0]), '명함 모드로 안 넘기면 명함틀이 안 켜집니다.');
 });

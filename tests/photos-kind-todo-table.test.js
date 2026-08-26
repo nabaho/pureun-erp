@@ -91,8 +91,8 @@ const TABLE = {
   timesheet: [true,  /대조/],                  // 손글씨 숫자는 기계가 검산할 방법이 없다
   form:      [true,  /기업 상세/, { fields: { company: '가야엔지니어링',
                                              bizno: '312-81-49225' } }],
-  card:      [true,  /명함첩/, { auto: true }],   // 잘 읽혔는데 아직 명함첩에 안 갔다
-  bizreg:    [true,  /명함첩/, { auto: true }],   // 〃
+  card:      [true,  /기업정보함/, { auto: true }],   // 잘 읽혔는데 아직 기업정보함에 안 갔다
+  bizreg:    [true,  /기업정보함/, { auto: true }],   // 〃
   sme:       [true,  /업체관리/, { auto: true }], // 업체관리에 못 넣었다
   other:     [true,  /분류 지정/]              // 종류를 못 가렸다(내용은 읽었다)
 };

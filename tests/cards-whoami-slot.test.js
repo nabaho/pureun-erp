@@ -6,7 +6,7 @@ const path = require('node:path');
 const cards = fs.readFileSync(path.join(__dirname, '..', 'pu-cards.html'), 'utf8');
 const whoami = fs.readFileSync(path.join(__dirname, '..', 'js', 'pu-whoami.js'), 'utf8');
 
-test('명함첩은 로그인한 사람 이름에 «자리»를 준다 — 떠 있는 표가 아니다', () => {
+test('기업정보함은 로그인한 사람 이름에 «자리»를 준다 — 떠 있는 표가 아니다', () => {
   /* ★ 자리를 안 주면 pu-whoami 가 position:fixed 로 화면 오른쪽 위에 붙어
      🔍·🚪·☰ 를 덮는다(대표 화면 2026-08-20 "겹쳐져서 뒤 화면 안 보인다"). */
   assert.match(whoami, /position:fixed;top:8px;right:12px/,

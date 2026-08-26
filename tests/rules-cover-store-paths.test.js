@@ -89,13 +89,13 @@ test('★ 앱이 쓰는 잠금과 규칙의 잠금이 같은 쪽을 본다 — �
   });
 });
 
-test('★ 명함첩 메일함 자리도 규칙에 있다 — 브라우저가 읽는 자리다', () => {
+test('★ 기업정보함 메일함 자리도 규칙에 있다 — 브라우저가 읽는 자리다', () => {
   /* functions/mail-sync.js 는 서버(Admin SDK)라 규칙을 안 본다. 그런데
      pu-cards.html 의 메일함은 **브라우저에서** 읽으므로 규칙이 있어야 한다.
      저장소에 준비돼 있었는데 콘솔에는 없었다(2026-08-24 대조에서 드러남). */
   const cards = fs.readFileSync(path.join(R, 'pu-cards.html'), 'utf8');
   const m = cards.match(/const MB_ROOT = '([^']+)'/);
-  assert.ok(m, '명함첩의 메일함 뿌리를 찾지 못했습니다');
+  assert.ok(m, '기업정보함의 메일함 뿌리를 찾지 못했습니다');
   const j = JSON.parse(fs.readFileSync(RULES, 'utf8'));
   assert.ok(j.rules[m[1]], '★ 「' + m[1] + '」 규칙이 없습니다 — 메일함이 브라우저에서 안 읽힙니다');
   /* 거울이다 — 브라우저는 읽기만, 쓰기는 서버가 한다(mail-mirror 설계) */

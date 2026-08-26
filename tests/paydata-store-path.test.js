@@ -22,7 +22,7 @@ test('저장 층이 window에 붙는다', () => {
 
 test('★ 다른 앱의 루트를 쓰지 않는다', () => {
   const S = loadStore();
-  // data(포털)·pucards(명함첩)·puphotos(사진첩)·payroll_os(급여관리)를 건드리면 실데이터가 오염된다.
+  // data(포털)·pucards(기업정보함)·puphotos(사진첩)·payroll_os(급여관리)를 건드리면 실데이터가 오염된다.
   assert.equal(S.DB_ROOT, 'paydata');
   assert.equal(S.BUCKET_ROOT, 'pu_paydata');
 });

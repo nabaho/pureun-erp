@@ -20,7 +20,7 @@ test('업무관리 큰 목록은 항목 단위로 구독한다', () => {
   assert.match(app, /\.on\('child_removed'/);
 });
 
-test('명함첩 본문과 ERP 명함색인은 전체 value 구독을 하지 않는다', () => {
+test('기업정보함 본문과 ERP 명함색인은 전체 value 구독을 하지 않는다', () => {
   const cards = read('pu-cards.html');
   const erp = read('pu-erp.html');
   assert.doesNotMatch(cards, /ref\(DB_ROOT\+'\/items'\)\.on\('value'/);
@@ -29,7 +29,7 @@ test('명함첩 본문과 ERP 명함색인은 전체 value 구독을 하지 않�
   assert.match(erp, /watchPucardsIndexByChild\(/);
 });
 
-test('★ 명함첩 회사정보(coInfo)도 항목 단위로 구독한다', () => {
+test('★ 기업정보함 회사정보(coInfo)도 항목 단위로 구독한다', () => {
   /* coInfo 에는 회사가 최대 4,000곳 담긴다(cards 소스 주석). 통째로 구독하면
      누가 «폴더를 하나 옮길 때마다» 그 4,000곳이 켜 둔 모든 기기로 다시 내려간다.
      폴더·탭 배정은 한 번에 여러 건을 고치므로 더 자주 터진다.

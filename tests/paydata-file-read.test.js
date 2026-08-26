@@ -159,7 +159,7 @@ test('★ 판독 층에 글자 판독이 붙는다 — 사진 판독은 그대�
   const D = loadRead();
   assert.equal(typeof D.readTableText, 'function');
   assert.equal(typeof D.readWageTable, 'function', '사진 판독을 건드리면 안 됩니다');
-  assert.equal(typeof D.read, 'function', '사진첩·명함첩이 쓰는 read 를 건드리면 안 됩니다');
+  assert.equal(typeof D.read, 'function', '사진첩·기업정보함이 쓰는 read 를 건드리면 안 됩니다');
 });
 
 test('★ 글자를 보내면 사람별 값으로 돌아온다', async () => {

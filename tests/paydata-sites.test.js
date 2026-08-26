@@ -22,7 +22,7 @@ function loadStore() {
 test('★ 업체관리 자리를 본다 — 최상위 companies 가 아니다', () => {
   const S = loadStore();
   // 콘솔 규칙에 최상위 companies 열쇠도 있지만 어느 파일도 그 자리를 쓰지 않는다.
-  // 실데이터는 data/companies 에 있다(명함첩이 그 자리를 읽는다).
+  // 실데이터는 data/companies 에 있다(기업정보함이 그 자리를 읽는다).
   assert.equal(S.ERP_COMPANIES, 'data/companies');
 });
 

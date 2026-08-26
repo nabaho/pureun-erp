@@ -1,7 +1,7 @@
 /* 개인 폴더 「지문」 — 감춘 명함이 사진첩을 타고 도로 드러나지 않게 하는 층.
    지키는 것은 세 가지다.
      1. 지문에 번호가 그대로 들어 있지 않다 (읽어도 누구인지 모른다)
-     2. 명함첩과 사진첩이 **같은 지문**을 만든다 (다르면 못 알아본다)
+     2. 기업정보함과 사진첩이 **같은 지문**을 만든다 (다르면 못 알아본다)
      3. 개인 폴더에 있으면 사진첩이 아무것도 만들지 않는다 */
 const test = require('node:test');
 const assert = require('node:assert');
@@ -58,7 +58,7 @@ test('다른 번호는 다른 지문', async () => {
 test('앱을 새로 켜도 같은 지문 — 소금이 고정이라야 양쪽이 알아본다', async () => {
   const a = await fresh().PuLockKey.fingerprint('01028024601');
   const b = await fresh().PuLockKey.fingerprint('01028024601');
-  assert.equal(a, b, '앱마다 지문이 다르면 사진첩이 명함첩 지문을 못 알아본다');
+  assert.equal(a, b, '앱마다 지문이 다르면 사진첩이 기업정보함 지문을 못 알아본다');
 });
 
 test('열쇠가 없으면 지문을 만들지 않는다 — 빈 지문을 한 칸에 몰아 쓰면 안 된다', async () => {
@@ -77,20 +77,20 @@ test('무엇을 열쇠로 보나 — 명함은 휴대폰, 사업자등록증은 
   assert.equal(PuLockKey.keyOf('payslip', { mobile: '010-1111-2222' }), '', '명함·사업자등록증만 본다');
 });
 
-test('명함첩 레코드에서도 같은 열쇠가 나온다 (kind 가 card/biz)', () => {
+test('기업정보함 레코드에서도 같은 열쇠가 나온다 (kind 가 card/biz)', () => {
   const { PuLockKey } = fresh();
   assert.equal(PuLockKey.keyOfItem({ kind: 'card', mobile: '010-1111-2222' }), '01011112222');
   assert.equal(PuLockKey.keyOfItem({ kind: 'biz', bizno: '111-11-11111' }), '1111111111');
   assert.equal(PuLockKey.keyOfItem(null), '');
 });
 
-test('명함첩과 사진첩이 같은 지문을 만든다 — 한쪽은 레코드, 한쪽은 판독 결과', async () => {
+test('기업정보함과 사진첩이 같은 지문을 만든다 — 한쪽은 레코드, 한쪽은 판독 결과', async () => {
   const { PuLockKey } = fresh();
-  const 명함첩 = await PuLockKey.fingerprint(
+  const 기업정보함 = await PuLockKey.fingerprint(
     PuLockKey.keyOfItem({ kind: 'card', mobile: '010-2802-4601' }));
   const 사진첩 = await PuLockKey.fingerprint(
     PuLockKey.keyOf('card', { mobile: '01028024601' }));
-  assert.equal(명함첩, 사진첩);
+  assert.equal(기업정보함, 사진첩);
 });
 
 test('담기는 자리는 pucards 아래 — 직원도 읽을 수 있어야 사진첩이 물어본다', () => {

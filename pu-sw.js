@@ -1,15 +1,15 @@
-/* 푸른 통합 서비스워커 — 명함첩·사진첩 「공유 받기」 + PWA 설치 셸을 하나로 합침
+/* 푸른 통합 서비스워커 — 기업정보함·사진첩 「공유 받기」 + PWA 설치 셸을 하나로 합침
    ═══════════════════════════════════════════════════════════════════════════
    ★ 왜 하나로 합쳤나
    서비스워커는 **한 scope에 하나만** 살아남는다. 예전에는 네 앱이 저마다
    자기 워커를 기본 scope(/pureunall/)에 등록했다 —
      pu-cards-sw.js · pu-photos-sw.js · work-sw.js · pu-camera-sw.js
    나중에 연 앱의 워커가 앞의 것을 밀어내므로, 예를 들어
-     · 푸른사진첩을 열면  → 명함첩 [공유→푸른명함첩] 이 죽고
+     · 푸른사진첩을 열면  → 기업정보함 [공유→푸른기업정보함] 이 죽고
      · 업무관리나 푸른카메라를 열면 → 두 앱의 공유가 **모두** 죽었다
        (이 둘의 워커는 하는 일이 없는 설치용 껍데기라 공유 POST를 안 받는다)
    공유 대상 주소가 둘 다 /pureunall/ 아래라서 scope를 좁혀 나눌 수도 없다.
-     · 명함첩  : POST /pureunall/pu-cards-share
+     · 기업정보함  : POST /pureunall/pu-cards-share
      · 사진첩  : POST /pureunall/pu-photos.html
    그래서 **같은 파일 하나를 네 앱이 함께 등록**한다. 같은 주소·같은 scope면
    다시 등록해도 밀어내기가 일어나지 않는다.
@@ -34,7 +34,7 @@ self.addEventListener('activate', function (e) {
   e.waitUntil(self.clients.claim());
 });
 
-var CARDS_SHARE = '/pu-cards-share';    // 명함첩 manifest 의 share_target.action
+var CARDS_SHARE = '/pu-cards-share';    // 기업정보함 manifest 의 share_target.action
 var PHOTOS_SHARE = '/pu-photos.html';   // 사진첩 manifest 의 share_target.action
 var PAYDATA_SHARE = '/pu-paydata.html'; // 급여데이터함 manifest 의 share_target.action
 
@@ -53,7 +53,7 @@ function redirect(to) {
   return Response.redirect(new URL(to, self.location).href, 303);
 }
 
-/* ══════════ 명함첩: 공유받은 이미지를 Cache 에 잠깐 둔다 ══════════
+/* ══════════ 기업정보함: 공유받은 이미지를 Cache 에 잠깐 둔다 ══════════
    pu-cards.html 이 ?shared=1 로 돌아와 'pucards-share' 캐시에서 꺼내 쓴다.
    키 이름(shared-files · shared-N)은 읽는 쪽과 짝이라 바꾸면 안 된다. */
 function takeCards(req) {
@@ -69,7 +69,7 @@ function takeCards(req) {
         }));
       }
     } catch (err) {
-      if (self.console) console.warn('[명함첩 공유 받기]', err);
+      if (self.console) console.warn('[기업정보함 공유 받기]', err);
     }
     return redirect('./pu-cards.html?shared=1');
   })();

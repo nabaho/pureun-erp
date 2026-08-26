@@ -1,4 +1,4 @@
-/* 명함첩 중복 판단 — 배지를 눌러 열리는 팝업의 순수 로직.
+/* 기업정보함 중복 판단 — 배지를 눌러 열리는 팝업의 순수 로직.
    실행: node --test tests/*.test.js
 
    대표 지시 2026-08-10: "중복 단어 클릭하면 중복 삭제 또는 합치기 등 판단할 수 있는
@@ -24,7 +24,7 @@ function load(){
   assert.ok(i >= 0, '시작 표식 못찾음');
   assert.ok(j > i, '끝 표식 못찾음');
   const ctx = { console, Object, Array, String, Number, JSON, Date, Math, RegExp, Set };
-  /* 이 층이 쓰는 바깥 함수 둘만 넣어 준다 — 명함첩과 같은 열쇠 기준이어야 한다 */
+  /* 이 층이 쓰는 바깥 함수 둘만 넣어 준다 — 기업정보함과 같은 열쇠 기준이어야 한다 */
   ctx.digits = v => String(v==null?'':v).replace(/\D/g,'');
   ctx.rowKeys = r => {
     const ks = []; const d = ctx.digits(r.mobile);

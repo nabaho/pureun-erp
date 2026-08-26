@@ -29,10 +29,10 @@ function rowOf(job) {
 const done = (over) => Object.assign({ state: 'done', name: '사진' }, over);
 
 /* ── 어디로 갔나 ── */
-test('★ 명함첩으로 간 것은 명함첩이라고 적는다', () => {
+test('★ 기업정보함으로 간 것은 기업정보함이라고 적는다', () => {
   const r = rowOf(done({ _read: { kind: 'card', auto: true, fields: { name: '김철수' },
     filed: { id: 'c1' } } }));
-  assert.equal(r.to, '명함첩');
+  assert.equal(r.to, '기업정보함');
   assert.equal(r.tx, '김철수');
   assert.ok(r.ok, '간 것은 ✓ 로 보여야 합니다.');
 });
@@ -40,7 +40,7 @@ test('★ 명함첩으로 간 것은 명함첩이라고 적는다', () => {
 test('★ 업체관리까지 간 것은 둘 다 적는다', () => {
   const r = rowOf(done({ _read: { kind: 'bizreg', auto: true, fields: { company: '(주)대한산업' },
     filed: { id: 'c1' }, filedCo: { found: true, filled: ['bizNo'] } } }));
-  assert.equal(r.to, '명함첩·업체관리', '업체관리에 들어간 것을 안 적으면 확인하러 또 들어가야 합니다.');
+  assert.equal(r.to, '기업정보함·업체관리', '업체관리에 들어간 것을 안 적으면 확인하러 또 들어가야 합니다.');
 });
 
 test('업체관리에만 간 것(중소기업확인서)', () => {
@@ -131,13 +131,13 @@ test('카메라가 꺼져 있으면 안 그린다', () => {
 test('★ 올린 뒤 카메라가 꺼지지 않는다', () => {
   const m = html.match(/async function camUpload\(\)[\s\S]*?\n\}/);
   assert.ok(m, 'camUpload 을 찾지 못했습니다.');
-  /* 명함첩에서 온 촬영(camReturnTo)은 돌아가야 해서 끈다. 포털의 빠른 촬영
+  /* 기업정보함에서 온 촬영(camReturnTo)은 돌아가야 해서 끈다. 포털의 빠른 촬영
      (camQuickMode)도 저장 뒤 사진첩 목록을 보여줘야 해서 끈다. 사진첩 안에서
      연 일반 촬영만 계속 찍을 수 있도록 켠 채로 둔다. */
   assert.ok(/if \(camQuickMode && !camReturnTo\) \{[\s\S]{0,140}?camDiscard\(\)/.test(m[0]),
     '포털 빠른 촬영은 저장 뒤 사진첩으로 돌아와야 합니다.');
   assert.ok(/if \(camReturnTo\) \{ camDiscard\(\); camGoBack\(\); \}/.test(m[0]),
-    '명함첩에서 온 촬영은 저장 뒤 명함첩으로 돌아가야 합니다.');
+    '기업정보함에서 온 촬영은 저장 뒤 기업정보함으로 돌아가야 합니다.');
   assert.ok(/camOv'\)\.style\.display = 'flex'/.test(m[0]), '카메라로 돌아와야 합니다.');
   assert.ok(/camShots = \[\]/.test(m[0]), '보낸 사진이 남아 있으면 또 올라갑니다.');
   assert.ok(/revokeObjectURL/.test(m[0]), '미리보기 주소를 안 놓으면 기억이 샙니다.');

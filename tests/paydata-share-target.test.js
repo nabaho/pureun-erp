@@ -3,7 +3,7 @@
    POST 로 보낸다. 서버가 없으므로 통합 워커 pu-sw.js 가 가로채 IndexedDB 에
    잠깐 두고 화면을 ?share=1 로 돌려보낸다.
 
-   ⚠ 명함첩·사진첩과 한 워커(pu-sw.js)를 같이 쓰므로, 급여데이터함 몫을 더하면서
+   ⚠ 기업정보함·사진첩과 한 워커(pu-sw.js)를 같이 쓰므로, 급여데이터함 몫을 더하면서
    다른 두 앱의 길을 건드리지 않았는지도 함께 확인한다. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -83,11 +83,11 @@ test('다른 앱으로 가는 POST 는 급여데이터함 몫이 건드리지 �
   const sw = bootSw();
   assert.equal(await dispatch(sw.handlers, shareReq('https://x.io/pureunall/enter.html', [])), null);
   const cardsRes = await dispatch(sw.handlers, shareReq('https://x.io/pureunall/pu-cards-share', []));
-  assert.ok(cardsRes, '명함첩 길이 급여데이터함을 더하면서 죽었습니다.');
+  assert.ok(cardsRes, '기업정보함 길이 급여데이터함을 더하면서 죽었습니다.');
   const photosRes = await dispatch(sw.handlers, shareReq('https://x.io/pureunall/pu-photos.html', []));
   assert.ok(photosRes, '사진첩 길이 급여데이터함을 더하면서 죽었습니다.');
   // 각자 자기 IndexedDB에만 담겨야 한다
-  assert.ok(!sw.added['pu-paydata-share'], '명함첩·사진첩 공유가 급여데이터함 자리에 섞였습니다.');
+  assert.ok(!sw.added['pu-paydata-share'], '기업정보함·사진첩 공유가 급여데이터함 자리에 섞였습니다.');
 });
 
 /* ── 공유가 오면 담고 되돌려 보낸다 ── */
@@ -160,7 +160,7 @@ test('일꾼은 https 에서만 등록한다 (file:// 에서 오류 안 남)', (
     '등록이 실패해도 급여데이터함은 열려야 합니다.');
 });
 
-test('명함첩·사진첩과 다른 IndexedDB 이름을 쓴다 — 서로의 대기분을 집어가면 안 된다', () => {
+test('기업정보함·사진첩과 다른 IndexedDB 이름을 쓴다 — 서로의 대기분을 집어가면 안 된다', () => {
   assert.match(html, /const SHARE_IDB = 'pu-paydata-share'/);
 });
 

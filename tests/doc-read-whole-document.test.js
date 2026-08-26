@@ -125,13 +125,13 @@ test('★ 읽은 답을 모든 쪽에 남긴다', () => {
     '방금 올린 쪽들에 답을 안 남깁니다.');
 });
 
-test('★ 명함첩·업체관리에는 대표 쪽 하나만 보낸다', () => {
+test('★ 기업정보함·업체관리에는 대표 쪽 하나만 보낸다', () => {
   /* 쪽마다 보내면 같은 업체가 쪽수만큼 쌓인다. */
   const read = readPhotoFn();
-  assert.ok(/sendCards\(pages\[0\]\.id/.test(read), '쪽마다 명함첩으로 보냅니다.');
+  assert.ok(/sendCards\(pages\[0\]\.id/.test(read), '쪽마다 기업정보함으로 보냅니다.');
   assert.ok(/sendCompany\(pages\[0\]\.id/.test(read), '쪽마다 업체관리로 보냅니다.');
   const start = app.match(/function startRead\(job\)[\s\S]*?\n\}/)[0];
-  assert.ok(/sendCards\(sibs\[0\]\.id/.test(start), '쪽마다 명함첩으로 보냅니다.');
+  assert.ok(/sendCards\(sibs\[0\]\.id/.test(start), '쪽마다 기업정보함으로 보냅니다.');
   assert.ok(/sendCompany\(sibs\[0\]\.id/.test(start), '쪽마다 업체관리로 보냅니다.');
 });
 

@@ -53,7 +53,7 @@ const ctx = (function () {
   return c;
 })();
 
-/* 크기·명함첩 쪽은 다 통과시켜 두고 «업체관리 한 가지»만 본다 */
+/* 크기·기업정보함 쪽은 다 통과시켜 두고 «업체관리 한 가지»만 본다 */
 function biz(filedCo) {
   return { meta: { w: 2000, h: 2800, read: { kind: 'bizreg', auto: true, bizNoOk: true,
     fields: { company: '(주)가나', bizno: '123-45-67890' },

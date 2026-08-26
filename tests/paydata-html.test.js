@@ -35,7 +35,7 @@ test('★ 앱 안에서 실시간DB·창고 경로를 직접 만들지 않는다
 });
 
 test('★ 다른 앱의 자리를 건드리지 않는다', () => {
-  // pucards(명함첩)·puphotos(사진첩)·payroll_os(급여관리) 실데이터를 건드리면 안 된다.
+  // pucards(기업정보함)·puphotos(사진첩)·payroll_os(급여관리) 실데이터를 건드리면 안 된다.
   ['pucards', 'puphotos', 'payroll_os', 'fund_erp'].forEach(root => {
     assert.equal(new RegExp("['\"]" + root + "/").test(html), false, root + ' 자리를 건드립니다');
   });

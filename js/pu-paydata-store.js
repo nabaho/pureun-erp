@@ -1216,7 +1216,7 @@
   }
 
   /* 이 업체를 내가 담당하는가 — 사번을 이메일로 바꿔 견준다(sidToEmail 규칙이
-     명함첩·포털과 같아야 같은 사람을 찾는다). 주담당·부담당 모두 「내 담당」이다. */
+     기업정보함·포털과 같아야 같은 사람을 찾는다). 주담당·부담당 모두 「내 담당」이다. */
   function isMyCompany(co, myEmail) {
     if (!co || !myEmail) return false;
     var em = String(myEmail).toLowerCase();

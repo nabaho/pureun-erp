@@ -1,5 +1,5 @@
 ﻿/* 기업정보 — 회사 하나에 얽힌 것을 한자리에.
-   ⚠ 새 「갈래」가 아니라 **화면**이다. 명함첩은 「명함 아니면 사업자」 둘뿐이라고
+   ⚠ 새 「갈래」가 아니라 **화면**이다. 기업정보함은 「명함 아니면 사업자」 둘뿐이라고
      가정하는 곳이 아홉 군데, state.tab 을 쓰는 곳이 일흔두 군데다. 셋째 갈래를 끼우면
      검색·중복정리·내보내기·개인폴더가 다 흔들린다(대표 지시 2026-08-12). */
 const test = require('node:test');
@@ -129,7 +129,7 @@ test('옆줄은 폴더 ＋ → 전체 → 대표가 만든 폴더로 읽힌다',
 });
 
 test('목록은 한 줄에 한 회사인 표다', () => {
-  /* 명함첩 목록과 같은 결 — 왼쪽에 네모, 그다음 번호 */
+  /* 기업정보함 목록과 같은 결 — 왼쪽에 네모, 그다음 번호 */
   assert.match(source, /class="cotbl"/);
   assert.match(source, /<th class="num">#<\/th>/);
   assert.match(source, /onchange="coToggle\(/, '줄마다 고르는 네모가 없다');
@@ -171,7 +171,7 @@ test('찾기 칸은 화면 맨 위 하나만 쓴다', () => {
   assert.match(source, /p\.placeholder = '상호·사업자번호·대표자로 찾기'/);
 });
 
-test('기업정보에서 친 글자를 명함첩 찾기칸에 옮기지 않는다', () => {
+test('기업정보에서 친 글자를 기업정보함 찾기칸에 옮기지 않는다', () => {
   /* 회사 이름을 친 채 명함으로 나가면 명함 목록이 그 글자로 조용히 걸러진다 — 실제로 그랬다 */
   const at = source.indexOf('function onPcSearchInput');
   const fn = source.slice(at, source.indexOf('function clearPcSearch', at));

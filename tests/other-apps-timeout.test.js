@@ -1,10 +1,10 @@
 'use strict';
 // 나머지 앱의 바깥 부름에 시간 제한 — node --test tests/other-apps-timeout.test.js
 //
-// 왜: pu-erp·업무관리는 이미 막았는데(#205·#210) 경력관리·명함첩은 안 봤었다.
+// 왜: pu-erp·업무관리는 이미 막았는데(#205·#210) 경력관리·기업정보함은 안 봤었다.
 //     둘 다 OCR·AI 를 부르는데 시간 제한이 «하나도» 없었다. 답이 안 오면:
 //       경력관리 — 「⏳ 원문 추출 중…」 이 그대로 굳고, 여러 파일 일괄 읽기는 그 파일에서 멈춘다
-//       명함첩   — 창고에서 사진 받기가 안 끝나고, 「AI 연결 확인 중…」 은 아무 말도 안 해 준다
+//       기업정보함   — 창고에서 사진 받기가 안 끝나고, 「AI 연결 확인 중…」 은 아무 말도 안 해 준다
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -55,7 +55,7 @@ test('★ 경력관리에 시간 제한 없는 바깥 부름이 없다', () => {
   assert.ok(감싸개쓰나(kc, 'kcFetch') >= 2, '감싸개를 아무 데서도 안 쓴다');
 });
 
-test('★ 명함첩에 시간 제한 없는 바깥 부름이 없다', () => {
+test('★ 기업정보함에 시간 제한 없는 바깥 부름이 없다', () => {
   assert.deepEqual(남은부름(pc, 'pcFetch'), []);
   assert.ok(감싸개쓰나(pc, 'pcFetch') >= 2, '감싸개를 아무 데서도 안 쓴다');
 });
@@ -84,7 +84,7 @@ function sandbox(src, name, waitVar){
 }
 
 [['경력관리', () => sandbox(kc, 'kcFetch', 'KC_WAIT_MS')],
- ['명함첩',   () => sandbox(pc, 'pcFetch', 'PC_WAIT_MS')]].forEach(function(pair){
+ ['기업정보함',   () => sandbox(pc, 'pcFetch', 'PC_WAIT_MS')]].forEach(function(pair){
   const [이름, make] = pair;
 
   test(이름 + ' — 시간이 지나면 끊고, 끊겼다고 표시한다', async () => {
@@ -140,7 +140,7 @@ function sandbox(src, name, waitVar){
 });
 
 /* ── 앞 script 에 둔 것이 뒤 script 에서도 쓰이는가 ── */
-test('★ 명함첩 감싸개는 부름들보다 «앞» 에 있다 (뒤 script 에서도 쓰려면)', () => {
+test('★ 기업정보함 감싸개는 부름들보다 «앞» 에 있다 (뒤 script 에서도 쓰려면)', () => {
   /* ⚠ 예전에는 부르는 자리를 **글자 그대로** 적어 두었는데, 그 중 하나가
      구글을 직접 부르는 줄이었다. 2026-08-17 에 판독을 서버로 옮기며 그 줄이
      없어지자 이 검사가 「없다」고 깨졌다 — 고침이 옳았는데 검사가 막았다.

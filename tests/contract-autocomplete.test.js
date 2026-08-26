@@ -130,7 +130,7 @@ function rowsCtx(idx){
   };
   const rows = rowsCtx(idx).pcCompanyRows('에이치비씨');
   /* ★ 문구를 그대로 박아 두지 않는다 — 2026-08-11 에 「업태 없음」이 거짓이 됐다.
-     이제는 색인에 없어도 고를 때 명함첩 «원본» 에서 마저 읽으므로 「없음」이라 단정하면
+     이제는 색인에 없어도 고를 때 기업정보함 «원본» 에서 마저 읽으므로 「없음」이라 단정하면
      거짓말이다. 규칙만 못 박는다: 사업자등록증이 있는 회사면 업태 사정을 어떻게든 알린다. */
   t('★ 업태가 색인에 없으면 그 사정을 줄에서 알린다', /업태/.test(rows[0].sub), true);
   t('★ 「없다」고 단정하지 않는다 (원본에 있을 수 있다)', /업태 없음/.test(rows[0].sub), false);
@@ -157,7 +157,7 @@ function rowsCtx(idx){
 /* ═══ 4. 고를 때 업태·종목이 실제로 넘어가는가 (덮어쓰지 않고 빈 칸만) ═══ */
 {
   const blk = slice('  function onSelectPastCompany(r){', '    // 모든 컬렉션에서 회사정보 검색');
-  t('★ 명함첩에서 업태를 가져온다', /bizType: cur0\.bizType \|\| pc\.bizType \|\| ''/.test(blk), true);
+  t('★ 기업정보함에서 업태를 가져온다', /bizType: cur0\.bizType \|\| pc\.bizType \|\| ''/.test(blk), true);
   t('★ 종목도 가져온다', /bizCategory: cur0\.bizCategory \|\| pc\.bizCategory \|\| ''/.test(blk), true);
   t('★ 이미 적어 둔 업태를 덮지 않는다 (cur0 가 먼저)',
     /cur0\.bizType \|\| pc\.bizType/.test(blk), true);

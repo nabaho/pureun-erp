@@ -1,4 +1,4 @@
-/* 업무관리 사람·캘린더·화면 — 명함첩 찾기 · 담당 표시 · 캘린더 분할 · 설명 ⓘ · 넓게 쓰기
+/* 업무관리 사람·캘린더·화면 — 기업정보함 찾기 · 담당 표시 · 캘린더 분할 · 설명 ⓘ · 넓게 쓰기
    ⚠ 원래 임시 폴더에만 두었다가 한 번 날아갔다. 저장소에 둔다. */
 const fs = require('fs'), path = require('path');
 const ROOT = path.join(__dirname, '..');
@@ -83,7 +83,7 @@ eval(gvar('MAIL_COMMON') + '\n' + gvar('cardIdx') + '\n' + gvar('HELP') + '\n'
      'calWidth', 'splitOn', 'splitOpen', 'splitClose', 'calEvHTML',
      'calDaySet', 'calDayHas', 'calDayOnly'].map(grab).join('\n'));
 
-/* ── 명함첩: 무엇을 내주고 무엇을 빼는가 ── */
+/* ── 기업정보함: 무엇을 내주고 무엇을 빼는가 ── */
 const ITEMS = {
   c1: { name: '홍길동', company: '별표수세미', title: '과장', dept: '인사팀', mobile: '010-1111-2222', email: 'h@trista.co.kr' },
   c2: { name: '김안전', company: '(주)별표수세미', title: '차장', tel: '041-555-1234' },
@@ -96,7 +96,7 @@ const ITEMS = {
 };
 const load = () => { cardIdx = Object.keys(ITEMS).map(k => _cardRow(k, ITEMS[k], false)).filter(Boolean); };
 load();
-ok("명함첩에서 '개인'으로 숨긴 사람은 나오지 않는다", cardIdx.every(c => c.n !== '숨은이'));
+ok("기업정보함에서 '개인'으로 숨긴 사람은 나오지 않는다", cardIdx.every(c => c.n !== '숨은이'));
 ok('사업자등록증은 사람이 아니라 뺀다', cardIdx.every(c => c.k !== 'biz'));
 ok('이름도 회사도 없는 빈 명함은 뺀다',
   _cardRow('x', { name: '  ', company: '' }, false) === null
@@ -179,11 +179,11 @@ S = {}; PATCHED = null; TOASTS = [];
 cardPick('z');
 ok('어느 업무에 넣을지 모르면 아무것도 하지 않는다', PATCHED === null);
 cardIdx = saveIdx;
-ok('명함첩은 읽기만 한다 (명함은 명함첩에서 고친다)',
+ok('기업정보함은 읽기만 한다 (명함은 기업정보함에서 고친다)',
   !/\.set\(|\.update\(|\.remove\(/.test(grab('cardLoad')));
 ok('본문을 먼저 읽는다 (색인은 저장할 때만 갱신돼 빠진 사람이 생긴다)',
   grab('cardLoad').indexOf("'pucards/items'") < grab('cardLoad').indexOf("'pucards/idx'"));
-ok('명함첩 본문이 pucards/items 에 있고 지운 것은 trash 로 간다',
+ok('기업정보함 본문이 pucards/items 에 있고 지운 것은 trash 로 간다',
   C.indexOf("watchCardMap(this.db.ref(DB_ROOT+'/items')") > 0 && C.indexOf('`${DB_ROOT}/trash/${id}`') > 0);
 
 /* ── 담당 표시: 주담당·부담당 ── */

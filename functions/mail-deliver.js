@@ -92,7 +92,7 @@ async function deliver(opts) {
   const { db, body, from, pass, envId, byEmail } = opts;
   if (!from) {
     return { ok: false, status: 500,
-      error: '보내는 주소가 비어 있습니다.\n명함첩 → 자료함 → ✉️ 메일 본문에서 「보내는 주소」를 넣어 주세요.' };
+      error: '보내는 주소가 비어 있습니다.\n기업정보함 → 자료함 → ✉️ 메일 본문에서 「보내는 주소」를 넣어 주세요.' };
   }
   if (!pass) {
     return { ok: false, status: 500,

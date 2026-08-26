@@ -1,11 +1,11 @@
-/* 명함첩에서 회사를 가져와도 «업태·종목만» 안 들어오던 것 (2026-08-11)
-   대표 보고: "명함첩에서 이름 가지고 왔는데 업태 종목은 계속 못 읽는다."
+/* 기업정보함에서 회사를 가져와도 «업태·종목만» 안 들어오던 것 (2026-08-11)
+   대표 보고: "기업정보함에서 이름 가지고 왔는데 업태 종목은 계속 못 읽는다."
 
    ★ 까닭 — 자료가 없어서가 아니라 «어디를 보는지» 때문이었다.
-     푸른이알피는 명함첩의 가벼운 검색목록(pucards/idx)만 받아 쓴다.
+     푸른이알피는 기업정보함의 가벼운 검색목록(pucards/idx)만 받아 쓴다.
      그 목록에 업태(bt)·종목(bi) 칸이 생긴 것은 나중이라, 그 전에 저장된
      사업자등록증은 목록에 업태가 비어 있다 — 원본에는 멀쩡히 들어 있는데도.
-     명함첩의 「검색목록 다시 만들기」를 눌러야만 되는데, 그걸 알 사람이 없다.
+     기업정보함의 「검색목록 다시 만들기」를 눌러야만 되는데, 그걸 알 사람이 없다.
    고침: 고를 때 원본(pucards/items/{id})에서 «글자 칸 넷» 만 콕 집어 마저 읽는다.
         사진은 절대 안 읽는다 — 사업자등록증 원본은 사진 때문에 수 MB 다. */
 const fs = require('fs');
@@ -20,7 +20,7 @@ function t(name, got, want){
   else { fail++; console.log('  FAIL ' + name + '\n    받음 ' + G + '\n    기대 ' + W); }
 }
 
-/* ── 가짜 명함첩 서버를 세워 실제로 읽어 본다 ── */
+/* ── 가짜 기업정보함 서버를 세워 실제로 읽어 본다 ── */
 const READS = [];
 function makeCtx(items){
   const ctx = { console:console, setTimeout:setTimeout, Promise:Promise };
@@ -71,7 +71,7 @@ t('읽은 칸 목록', READS.filter(p => p.indexOf('pucards/items/b1/') === 0)
 
 console.log('\n[③ 없는 것은 없다고 한다 — 빈 껍데기를 돌려주지 않는다]');
 t('원본에도 업태가 없으면 없음', await makeCtx(ITEMS).pcFetchBizFields('b2'), null);
-t('명함첩에 아예 없는 카드', await makeCtx(ITEMS).pcFetchBizFields('없는id'), null);
+t('기업정보함에 아예 없는 카드', await makeCtx(ITEMS).pcFetchBizFields('없는id'), null);
 /* ★ 「null 이 돌아왔다」만 보면 안 된다 — 빈 id 로 pucards/items//bizType 을 읽으러 가도
    결과는 똑같이 null 이다. 아예 «읽지 않았는지» 를 봐야 한다(변이 b5). */
 const _before = READS.length;
@@ -106,11 +106,11 @@ console.log('\n[⑤ 말해 준다 — 조용히 비워 두면 「가져왔는데
 const c5 = makeCtx(ITEMS);
 c5.pcTopUpBiz({ bizId:'b2', bizType:'', bizCategory:'' }, function(){});
 await new Promise(r => setTimeout(r, 30));
-t('★ 원본에도 없으면 그렇게 말한다', /명함첩 사업자등록증에도 비어 있습니다/.test(c5._toasts.join('|')), true);
+t('★ 원본에도 없으면 그렇게 말한다', /기업정보함 사업자등록증에도 비어 있습니다/.test(c5._toasts.join('|')), true);
 const c6 = makeCtx(ITEMS);
 c6.pcTopUpBiz({ bizId:'b1', bizType:'', bizCategory:'' }, function(x, filled){ filled.push('업태','종목'); });
 await new Promise(r => setTimeout(r, 30));
-t('채웠으면 무엇을 채웠는지 말한다', /업태·종목 — 명함첩 원본에서 마저 가져왔습니다/.test(c6._toasts.join('|')), true);
+t('채웠으면 무엇을 채웠는지 말한다', /업태·종목 — 기업정보함 원본에서 마저 가져왔습니다/.test(c6._toasts.join('|')), true);
 const c7 = makeCtx(ITEMS);
 c7.pcTopUpBiz({ bizId:'b1', bizType:'', bizCategory:'' }, function(){ /* 채운 칸 없음 */ });
 await new Promise(r => setTimeout(r, 30));
@@ -121,7 +121,7 @@ await new Promise(r => setTimeout(r, 30));
 t('채우다 넘어져도 화면이 안 죽는다', true, true);
 
 console.log('\n[⑥ 세 화면 모두에 배선되어 있다]');
-t('계약 — 첨부칸 「명함첩 정보 가져오기」', /pcTopUpBiz\(row, _fillBizFromCard\);/.test(src), true);
+t('계약 — 첨부칸 「기업정보함 정보 가져오기」', /pcTopUpBiz\(row, _fillBizFromCard\);/.test(src), true);
 t('계약 — 「과거 회사 불러오기」 자동완성', /pcTopUpBiz\(pc, _fillBizFromCard\);/.test(src), true);
 const CO = src.slice(src.indexOf('function fillCompanyFromPcBiz(row){'),
                      src.indexOf('function fillCompanyFromPcBiz(row){') + 3000);

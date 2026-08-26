@@ -38,7 +38,7 @@ const FORM = { bizno:'134-86-05772', company:'신성컨트롤(주)', ceo:'조성
   dueDays:'60일', homepage:'www.sscontrol.co.kr/', email:'jhw@sscontrol.co.kr' };
 
 test('사업자번호를 열쇠로 회사 자리에 넣는다', async () => {
-  /* 명함첩 기업정보 화면도 같은 열쇠로 회사를 가른다 — 어긋나면 엉뚱한 회사에 붙는다 */
+  /* 기업정보함 기업정보 화면도 같은 열쇠로 회사를 가른다 — 어긋나면 엉뚱한 회사에 붙는다 */
   const c = load({});
   const r = await c.sendToCoInfo({ fields: FORM });
   assert.equal(r.ok, true);

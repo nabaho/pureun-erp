@@ -2,7 +2,7 @@
 // js/pu-doc-file.js 단위 검사 — 실행: node --test tests/*.test.js
 //   (이 환경의 node는 --test 에 디렉터리 인자를 주면 죽는다. 반드시 glob으로 파일을 넘긴다.)
 //
-// 등록 층은 판독 결과를 명함첩에 넣는 층이다. 실데이터를 만지는 층이므로
+// 등록 층은 판독 결과를 기업정보함에 넣는 층이다. 실데이터를 만지는 층이므로
 // 검사에서는 가짜 db 만 쓴다 — 실서버에 절대 붙지 않는다.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -47,7 +47,7 @@ const BIZ = {
   company: '가나상사', ceo: '홍길동', bizno: '220-81-62517', corpno: '160111-0371859',
   openDate: '2014-05-07', bizType: '제조업', bizItem: '금속가공', address: '천안시'
 };
-/* 이미 모든 칸이 찬 명함첩 레코드 — 채울 것이 없는 '진짜 중복'을 만들 때 쓴다. */
+/* 이미 모든 칸이 찬 기업정보함 레코드 — 채울 것이 없는 '진짜 중복'을 만들 때 쓴다. */
 const FULL_BIZ = Object.assign({}, BIZ);
 
 test('등록 층이 window에 붙는다', () => {
@@ -89,7 +89,7 @@ test('찾을 열쇠가 없으면 찾지 않는다 — 아무거나 붙이면 안
   assert.equal(await F.findExisting('bizreg', { company: '가나상사' }), null);
 });
 
-test('명함첩이 비어 있어도 터지지 않는다', async () => {
+test('기업정보함이 비어 있어도 터지지 않는다', async () => {
   const F = loadFile();
   F.init({ db: fakeDb({}) });
   assert.equal(await F.findExisting('card', { mobile: '010-1234-5678' }), null);
@@ -124,7 +124,7 @@ test('kind 는 채움 대상이 아니다 — 종류를 바꾸면 다른 물건�
   assert.ok(!('kind' in out), '레코드 종류를 바꾸려 합니다');
 });
 
-/* ── 명함첩에 넣기 ── */
+/* ── 기업정보함에 넣기 ── */
 
 test('새로 만들 때 레코드·검색 인덱스·사진을 한 번에 쓴다', async () => {
   const F = loadFile();
@@ -139,7 +139,7 @@ test('새로 만들 때 레코드·검색 인덱스·사진을 한 번에 쓴다
   const keys = Object.keys(u).sort();
   assert.ok(keys.some(k => /^pucards\/items\//.test(k)), '레코드를 안 썼습니다');
   assert.ok(keys.some(k => /^pucards\/idx\//.test(k)), '검색 인덱스를 안 썼습니다 — 다른 앱이 못 찾습니다');
-  assert.ok(keys.some(k => /^pucards\/photos\//.test(k)), '사진을 안 보냈습니다 — 명함첩에서 못 봅니다');
+  assert.ok(keys.some(k => /^pucards\/photos\//.test(k)), '사진을 안 보냈습니다 — 기업정보함에서 못 봅니다');
 });
 
 test('상위 노드를 통째로 쓰지 않는다 — 남의 명함이 지워진다', async () => {
@@ -156,7 +156,7 @@ test('상위 노드를 통째로 쓰지 않는다 — 남의 명함이 지워진
   }
 });
 
-test('명함 레코드에 명함첩이 쓰는 이름으로 담긴다', async () => {
+test('명함 레코드에 기업정보함이 쓰는 이름으로 담긴다', async () => {
   const F = loadFile();
   const db = fakeDb({});
   F.init({ db });
@@ -167,7 +167,7 @@ test('명함 레코드에 명함첩이 쓰는 이름으로 담긴다', async () 
   assert.equal(rec.name, '홍길동');
   assert.equal(rec.company, '가나상사');
   assert.equal(rec.mobile, '010-1234-5678');
-  assert.equal(rec.thumb, 'T', '목록용 미리보기가 없으면 명함첩 격자가 빕니다');
+  assert.equal(rec.thumb, 'T', '목록용 미리보기가 없으면 기업정보함 격자가 빕니다');
   assert.equal(rec.photoId, 'p1', '사진첩 사진과 잇는 고리가 없습니다');
   assert.equal(rec.createdAt, 1000, '촬영 시각을 받은 날로 써야 합니다');
   assert.equal(rec.source, 'pu-photos');
@@ -187,8 +187,8 @@ test('사업자등록증 레코드는 kind 가 biz 이고 사업자번호가 들
   assert.equal(rec.openDate, '2014-05-07');
 });
 
-test('검색 인덱스는 명함첩이 쓰는 약어 이름으로 담긴다', async () => {
-  // 이름이 다르면 명함첩·푸른이알피의 검색이 이 명함을 못 찾는다
+test('검색 인덱스는 기업정보함이 쓰는 약어 이름으로 담긴다', async () => {
+  // 이름이 다르면 기업정보함·푸른이알피의 검색이 이 명함을 못 찾는다
   const F = loadFile();
   const db = fakeDb({});
   F.init({ db });
@@ -328,7 +328,7 @@ test('읽어낸 것이 없으면 보내지 않는다 — 빈 껍데기를 만들
   assert.equal(db.calls.update.length, 0);
 });
 
-test('서류가 아닌 것은 명함첩에 보내지 않는다', async () => {
+test('서류가 아닌 것은 기업정보함에 보내지 않는다', async () => {
   const F = loadFile();
   const db = fakeDb({});
   F.init({ db });
@@ -343,7 +343,7 @@ test('결과 문구가 사람이 읽을 한국어다', async () => {
   const r = await F.sendToCards({ kind: 'bizreg', fields: BIZ, full: 'F', thumb: 'T', photoId: 'p2' });
   assert.ok(r.message && r.message.length > 0, '결과 문구가 없습니다');
   assert.ok(!/[A-Za-z]{5,}/.test(r.message), '영어 내부 용어가 노출됩니다: ' + r.message);
-  assert.match(r.message, /명함첩/);
+  assert.match(r.message, /기업정보함/);
 });
 
 /* ══════════ 업체관리에 넣기 ══════════

@@ -1,5 +1,5 @@
-/* 업체관리 — 「명함첩에서 대표자 찾기」가 연락처까지 채운다
-   (2026-08-10) 대표 지적: "명함첩에서 대표자 찾아서 수정하면 대표전화 팩스 이메일도
+/* 업체관리 — 「기업정보함에서 대표자 찾기」가 연락처까지 채운다
+   (2026-08-10) 대표 지적: "기업정보함에서 대표자 찾아서 수정하면 대표전화 팩스 이메일도
    입력되어야 하는데 이 부분은 입력이 안 된다".
    명함에는 그 값들이 이미 있는데 이름 한 칸만 가져오고 나머지를 버리고 있었다.
    ★ 이미 적어 둔 값은 덮어쓰지 않는다 — 손으로 고쳐 둔 것이 말없이 바뀌면 안 된다. */
@@ -17,7 +17,7 @@ function t(name, got, want){
 
 /* 함수를 소스에서 그대로 떼어 실제로 돌려본다.
    setF·showToast 만 대신 세운다 — 화면에 그리는 일이지 이 함수의 판단이 아니다. */
-const body = src.slice(src.indexOf('  function fillCeoFromPc(p){'), src.indexOf('  // 명함첩에서 담당자 추가 (pcId 기록'));
+const body = src.slice(src.indexOf('  function fillCeoFromPc(p){'), src.indexOf('  // 기업정보함에서 담당자 추가 (pcId 기록'));
 function run(form, card){
   let out = null, msg = '';
   const ctx = {
@@ -30,7 +30,7 @@ function run(form, card){
   return { f: out, msg: msg };
 }
 
-/* 명함첩 색인 한 줄 — n 이름 · ti 직책 · m 휴대폰 · t 전화 · ct 회사전화
+/* 기업정보함 색인 한 줄 — n 이름 · ti 직책 · m 휴대폰 · t 전화 · ct 회사전화
    fx 개인팩스 · cfx 회사팩스 · e 이메일 (pu-cards.html idxRecord 가 담는 것) */
 const CARD = { n:'이석권', ti:'대표이사', m:'010-1111-2222', t:'054-111-2222',
                ct:'054-999-8888', fx:'054-111-3333', cfx:'054-999-7777', e:'ceo@taesungdt.co.kr' };

@@ -1,7 +1,7 @@
 ﻿/* 자료함은 메일 갈래 안에 산다 — 자료는 메일에 붙여 보내려고 두는 것이다.
    옆줄(사이드바)이 'mail' 일 때만 메일 모양이면, 「🗂 자료함 관리」를 누르는 순간
    view 가 'mat' 이 되면서 옆줄이 명함으로 뚝 떨어진다. 자료를 만지러 들어갔는데
-   명함첩에 와 있게 된다(대표 지시 2026-08-12). */
+   기업정보함에 와 있게 된다(대표 지시 2026-08-12). */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -36,7 +36,7 @@ test('메일 옆줄은 명함 폴더를 그리기 전에 끝낸다', () => {
 });
 
 test('자료함에서 나가면 들어왔던 곳으로 돌아간다', () => {
-  /* 메일 쓰다 자료를 손보러 들어왔는데 나갈 때 명함첩에 떨어지면 하던 일을 잃는다 */
+  /* 메일 쓰다 자료를 손보러 들어왔는데 나갈 때 기업정보함에 떨어지면 하던 일을 잃는다 */
   assert.match(source, /let _matFrom/);
   assert.match(source, /_matFrom = \(state\.view===['"]mail['"]\) \? ['"]mail['"] : ['"]list['"]/);
   assert.match(source, /function closeMatPage\(\)\{ state\.view=_matFrom;/);

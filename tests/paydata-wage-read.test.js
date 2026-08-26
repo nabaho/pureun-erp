@@ -1,6 +1,6 @@
 'use strict';
 // 급여표 판독(급여데이터함 전용) — 실행: node --test tests/*.test.js
-//   기존 kind=payslip 프롬프트는 사진첩·명함첩·업체관리가 함께 쓰며
+//   기존 kind=payslip 프롬프트는 사진첩·기업정보함·업체관리가 함께 쓰며
 //   금액·이름을 **일부러** 담지 않는다. 급여데이터함은 반대로 사람별 금액이
 //   꼭 필요하므로, 그 프롬프트를 건드리지 않고 새 함수 readWageTable 을 만들었다.
 //   여기서는 그 새 함수만 검사한다 — 기존 read()/PROMPT_ALL 은 pu-doc-read.test.js 몫이다.

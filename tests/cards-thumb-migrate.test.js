@@ -1,4 +1,4 @@
-/* 명함첩 — 옛 명함에 박힌 썸네일을 밖으로 빼내기.
+/* 기업정보함 — 옛 명함에 박힌 썸네일을 밖으로 빼내기.
    실행: node --test tests/cards-thumb-migrate.test.js
 
    대표 기기 2026-08-16: 기업정보함을 열 때마다 pucards/items 를 통째로 4.92MB 받는데

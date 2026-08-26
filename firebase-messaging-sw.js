@@ -2,7 +2,7 @@
  *
  * ⚠ 이 워커는 반드시 좁은 scope(/pureunall/push/)로 등록한다.
  *   서비스워커는 한 scope에 하나만 살아남는다. 기본 scope(/pureunall/)로 등록하면
- *   명함첩 공유 수신용 pu-cards-sw.js 를 밀어내 [공유→푸른명함첩]이 죽는다.
+ *   기업정보함 공유 수신용 pu-cards-sw.js 를 밀어내 [공유→푸른기업정보함]이 죽는다.
  *   등록은 enter.html 의 pushEnable() 이 scope를 지정해 처리한다.
  *
  * 서버(functions/index.js notifySuggestion)는 data 전용 메시지를 보낸다.

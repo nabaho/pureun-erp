@@ -1,6 +1,6 @@
-/* 세 가지 — 명함첩 정보만 · 보류함 다시 보기 · 세금계산서 입금 대조
-   ★ 명함첩에서 사진까지 가져와 계약 기록에 base64 로 박혔다 — 레코드가 부풀어
-     저장이 조용히 실패한다(예전 「계약 저장 실패」의 원인). 사진은 명함첩에 이미 있다.
+/* 세 가지 — 기업정보함 정보만 · 보류함 다시 보기 · 세금계산서 입금 대조
+   ★ 기업정보함에서 사진까지 가져와 계약 기록에 base64 로 박혔다 — 레코드가 부풀어
+     저장이 조용히 실패한다(예전 「계약 저장 실패」의 원인). 사진은 기업정보함에 이미 있다.
    ★ 사무관리에 기록이 없어 보류함에 넣은 줄은, 나중에 기록을 만들어도 아무도 알려 주지
      않아 쌓이기만 했다.
    ★ 「끊어 놓고 안 들어온 계산서」·「들어왔는데 안 끊은 입금」을 볼 자리가 없어
@@ -26,7 +26,7 @@ const t = (name, got, want) => {
   else { fail++; console.log('FAIL ' + name + '\n  got  = ' + G + '\n  want = ' + W); }
 };
 
-/* ══════ ① 명함첩 — 정보만 가져온다 ══════ */
+/* ══════ ① 기업정보함 — 정보만 가져온다 ══════ */
 t('사진 읽어 오는 함수를 걷어냈다', /function pcFetchImages\(/.test(src), false);
 t('회사정보는 그대로 가져온다', /if\(row\.bizNo   && !cur\.bizNo\)   info\.bizNo   = row\.bizNo;/.test(src), true);
 t('업태·종목도 가져온다', /info\.bizType     = row\.bizType;/.test(src), true);
@@ -34,9 +34,9 @@ t('담당자도 그대로 가져온다', /var mg = mergeCompanyContacts\(cur\.co
 t('계약 기록에 사진을 넣지 않는다', /next\.bizLicenseImg   = img\.bizLicenseImg;/.test(src), false);
 t('명함 사진도 넣지 않는다', /next\.businessCardImg = img\.businessCardImg;/.test(src), false);
 t('가져올 정보가 없으면 그렇게 말한다', /이 회사에서 새로 가져올 정보가 없습니다/.test(src), true);
-t('단추 글자가 「정보 가져오기」', /'📇 명함첩 정보 가져오기'/.test(src), true);
-t('사진은 명함첩에서 보라고 길을 준다', /'명함첩에서 보기'/.test(src), true);
-t('그 길이 명함첩으로 간다', /href:'pu-cards\.html', target:'_blank'/.test(src), true);
+t('단추 글자가 「정보 가져오기」', /'📇 기업정보함 정보 가져오기'/.test(src), true);
+t('사진은 기업정보함에서 보라고 길을 준다', /'기업정보함에서 보기'/.test(src), true);
+t('그 길이 기업정보함으로 간다', /href:'pu-cards\.html', target:'_blank'/.test(src), true);
 // OCR 로 글자를 뽑으면 원본을 지우는 규칙은 그대로여야 한다 (같은 원칙이다)
 t('OCR 뒤 원본 정리는 그대로', /if\(filled > 0 && \(field === 'bizLicenseImg' \|\| field === 'businessCardImg'\)\)\{ nc\[field\] = ''; \}/.test(src), true);
 

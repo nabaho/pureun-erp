@@ -58,7 +58,7 @@ test('★ 주소가 메일이면 «첫 그림 전에» 화면을 메일로 정�
 test('메일 문이 아니면 예전처럼 목록으로 시작한다', () => {
   for (const s of ['', '?sso=1', '?view=mailbox', '?xview=mail', '?view=maillist']) {
     assert.equal(initialView(s), 'list',
-      '★ ' + JSON.stringify(s) + ' 로 들어왔는데 메일이 열렸다 — 명함첩을 못 쓰게 된다');
+      '★ ' + JSON.stringify(s) + ' 로 들어왔는데 메일이 열렸다 — 기업정보함을 못 쓰게 된다');
   }
 });
 

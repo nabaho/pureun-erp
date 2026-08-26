@@ -57,16 +57,16 @@ test('사업자등록번호 표기 정리', () => {
 });
 
 /* ── 앱별 필드 이름 변환 ──
-   같은 사업자등록번호를 앱마다 다르게 부른다(명함첩 bizno · 푸른이알피 bizNo ·
+   같은 사업자등록번호를 앱마다 다르게 부른다(기업정보함 bizno · 푸른이알피 bizNo ·
    기금관리 biz_no). 변환이 틀리면 조용히 안 붙고 아무도 모른다. */
 
-test('사업자등록증 → 명함첩 필드', () => {
+test('사업자등록증 → 기업정보함 필드', () => {
   const R = loadRead();
   const out = R.mapTo('cards', 'bizreg', {
     company: '가나상사', ceo: '홍길동', bizno: '220-81-62517',
     openDate: '2020-01-02', bizType: '제조업', bizItem: '금속가공', address: '천안시'
   });
-  assert.equal(out.kind, 'biz');       // 명함첩은 종류 칸이 있다
+  assert.equal(out.kind, 'biz');       // 기업정보함은 종류 칸이 있다
   assert.equal(out.company, '가나상사');
   assert.equal(out.bizno, '220-81-62517');
   assert.equal(out.bizItem, '금속가공');
@@ -100,7 +100,7 @@ test('사업자등록증 → 기금 참여사업장 필드', () => {
   assert.equal(out.address, '천안시');
 });
 
-test('명함 → 명함첩 필드는 이름이 그대로다', () => {
+test('명함 → 기업정보함 필드는 이름이 그대로다', () => {
   const R = loadRead();
   const out = R.mapTo('cards', 'card', { name: '홍길동', company: '가나상사', mobile: '010-1234-5678' });
   assert.equal(out.kind, 'card');
@@ -226,7 +226,7 @@ test('프롬프트에 세 종류와 읽을 항목이 모두 들어 있다', () =
 });
 
 /* 한글 우선(2026-08-07 대표 지시) — 명함에 한글·영문이 나란히 있으면 한글을 담는다.
-   영문을 담으면 명함첩·업체관리에서 한글로 찾는 사람이 못 찾고 같은 회사가 두 벌로 쌓인다. */
+   영문을 담으면 기업정보함·업체관리에서 한글로 찾는 사람이 못 찾고 같은 회사가 두 벌로 쌓인다. */
 test('★ 한글과 영문이 함께 있으면 한글을 담으라고 지시한다', () => {
   const p = loadRead().PROMPTS.all;
   assert.ok(/한글 우선/.test(p), '한글 우선 지시가 없습니다.');
@@ -635,9 +635,9 @@ function fakeDbKeys(map) {
   };
 }
 
-/* ⚠ 2026-08-17 — 여기 있던 검사 셋(「이 기기 → 명함첩 공유 → 포털 공용 순서로 찾는다」
+/* ⚠ 2026-08-17 — 여기 있던 검사 셋(「이 기기 → 기업정보함 공유 → 포털 공용 순서로 찾는다」
    등)은 **없앤 기능**을 재고 있었다. 열쇠는 이제 금고(Secret Manager)에 있고 서버만
-   안다. 명함첩 공유 자리·포털 공용 설정은 규칙상 **로그인한 모든 직원이 읽는** 자리라
+   안다. 기업정보함 공유 자리·포털 공용 설정은 규칙상 **로그인한 모든 직원이 읽는** 자리라
    그것이 바로 구멍이었다 — 그 자리의 열쇠도 지웠다.
    그래서 「어떤 순서로 찾는가」가 아니라 **「아예 안 찾는다」**를 못 박는다. */
 test('★ AI 키를 브라우저로 «가져다 주지 않는다» — 열쇠는 서버만 안다', async () => {
@@ -660,7 +660,7 @@ test('국세청 키는 포털 공용 설정에서만 찾는다', async () => {
   const R = loadRead({ window: { localStorage: { getItem: () => null } } });
   const db = fakeDbKeys({ 'data/app_config/ntsKey': 'NTS' });
   assert.equal(await R.keysFrom(db).getNtsKey(), 'NTS');
-  assert.ok(db.asked.every(p => p.indexOf('pucards') < 0), '국세청 키를 명함첩에서 찾고 있습니다');
+  assert.ok(db.asked.every(p => p.indexOf('pucards') < 0), '국세청 키를 기업정보함에서 찾고 있습니다');
 });
 
 test('키 함수는 db 가 없어도 터지지 않는다', async () => {

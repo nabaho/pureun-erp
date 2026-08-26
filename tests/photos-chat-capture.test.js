@@ -83,7 +83,7 @@ test('★ afterRead 가 할 일 배열을 버리지 않는다 — 실제로 돌�
   assert.equal(out.bizNoOk, null, '대화에는 사업자번호가 없습니다 — false 면 「검증 실패」로 오해합니다');
 });
 
-test('★ 대화는 명함첩·업체관리로 보내지 않는다 (autoOk)', () => {
+test('★ 대화는 기업정보함·업체관리로 보내지 않는다 (autoOk)', () => {
   const ctx = {};
   vm.createContext(ctx);
   vm.runInContext(lib.match(/var KINDS = \{[^\n]*/)[0], ctx);

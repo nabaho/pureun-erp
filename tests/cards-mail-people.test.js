@@ -53,7 +53,7 @@ test('띄어쓰기는 무시한다 — 「주식회사 에스에이피」를 붙
   same(c.findPeople(PEOPLE,'주식회사에스에이피',8).map(x=>x.id), ['b']);
 });
 
-test('이메일 없는 사람도 보여 준다 — 안 보이면 명함첩에 없는 줄 안다', () => {
+test('이메일 없는 사람도 보여 준다 — 안 보이면 기업정보함에 없는 줄 안다', () => {
   const c = load();
   const ids = c.findPeople(PEOPLE,'강',8).map(x=>x.id);
   assert.ok(ids.includes('c'), '이메일 없는 강기령도 나와야 한다');

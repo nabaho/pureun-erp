@@ -28,7 +28,7 @@ test('저장 층이 window에 붙는다', () => {
 
 test('기존 앱의 데이터 루트를 쓰지 않는다', () => {
   const S = loadStore();
-  // pucards(명함첩)·data(포털) 루트를 건드리면 실데이터가 오염된다.
+  // pucards(기업정보함)·data(포털) 루트를 건드리면 실데이터가 오염된다.
   assert.equal(S.DB_ROOT, 'puphotos');
   assert.equal(S.BUCKET_ROOT, 'pu_photos');
 });
@@ -956,8 +956,8 @@ test('왜 지웠는지도 기록에 남는다', async () => {
     'puphotos/u/U1/items/2026/p1': { takenAt: 111, kind: 'doc' }
   });
   S.init({ uid: 'U1', db, name: '홍길동' });
-  await S.deletePhoto('2026', 'p1', '중복 — 명함첩에 이미 있었음');
-  assert.equal(db.calls.update[0].u['puphotos/u/U1/dellog/p1'].why, '중복 — 명함첩에 이미 있었음');
+  await S.deletePhoto('2026', 'p1', '중복 — 기업정보함에 이미 있었음');
+  assert.equal(db.calls.update[0].u['puphotos/u/U1/dellog/p1'].why, '중복 — 기업정보함에 이미 있었음');
 });
 
 test('사람이 지운 것은 이유 칸이 비어 있다 — 없는 이유를 지어내지 않는다', async () => {
@@ -1047,7 +1047,7 @@ function legacyDb(items, blobs, thumbs, extra) {
 }
 
 /* ── 실시간DB → 창고 이사 (2026-08-13, 비용 조사 뒤 실행) ──
-   명함첩이 먼저 검증한 순서를 그대로 따른다: 올리고 → 되읽어 확인하고 →
+   기업정보함이 먼저 검증한 순서를 그대로 따른다: 올리고 → 되읽어 확인하고 →
    그제야 실시간DB에서 지운다. listOwners·listYears·listYear 를 실제로 훑으므로,
    경로를 트리로 걸어 다니며 update 한 결과가 다음 once() 읽기에도 반영되는
    "살아 있는" 가짜 DB 가 필요하다(legacyDb·fakeDbFor 는 정적 스냅샷이라 부족하다). */
@@ -1523,7 +1523,7 @@ test('deletePhoto — 사진 번호가 없으면 아무것도 지우지 않는�
 });
 
 /* ── 창고 사진 지우기·복원·영구삭제 (2026-08-13, 비용 조사 뒤 실행) ──
-   명함첩 휴지통이 지운 명함의 원본을 통째로 복사해 두었다가, 열 때마다 30일치를
+   기업정보함 휴지통이 지운 명함의 원본을 통째로 복사해 두었다가, 열 때마다 30일치를
    다시 내려받던 것이 청구서의 큰 몫이었다(₩28,833/93%). 사진첩은 미리 막는다:
    창고 사진은 **지울 때 본문을 안 만진다** — 트래시에 표시만 남기고 본문은
    창고의 원래 자리에 그대로 둔다. 본문을 실제로 지우는 것은 영구삭제 때뿐이다. */

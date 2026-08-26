@@ -27,7 +27,7 @@ function loadMgTableHtml(){
    결과 HTML에 있는지로 확인한다 — id 문자열이 아니라 눈에 보이는 값으로 증명한다. */
 function mkGrid(texts){ return texts.map((t,i)=>({text:t, no:i+1})); }
 
-test('명함첩은 공통 한글 엔진을 Firebase 사용 코드보다 먼저 읽는다', () => {
+test('기업정보함은 공통 한글 엔진을 Firebase 사용 코드보다 먼저 읽는다', () => {
   const engine = source.indexOf('js/pu-hwp-engine.js');
   const auth = source.indexOf('firebase-auth-compat.js');
   assert.ok(engine > 0);

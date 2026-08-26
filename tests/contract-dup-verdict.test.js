@@ -185,7 +185,7 @@ ok('이력 창도 세부 종류를 이름으로 보여준다', count("' 유형: 
 ok('이력 창 금액은 종류별 amounts 에서 읽는다', count("var a = Number((c.amounts && c.amounts[k]) || 0);") === 1);
 ok('저장 전 확인창도 세부 종류를 적는다', count("var _sub = contractSubtypeLabel(c, k);") === 1);
 
-/* 명함첩에서 회사 찾기 */
+/* 기업정보함에서 회사 찾기 */
 ok('PucardsCompanyPickerModal 이 한 번 정의돼 있다', count('function PucardsCompanyPickerModal(props){') === 1);
 ok('PucardsCompanyPickerModal 이 정의 1곳 + 사용 1곳 이상 나온다',
    count('PucardsCompanyPickerModal') >= 2, count('PucardsCompanyPickerModal') + '곳');
@@ -194,50 +194,50 @@ ok('회사 검색은 회사 묶음 함수를 그대로 쓴다 (묶는 코드를 
    'pcGroupCompanies() ' + count('pcGroupCompanies()') + '곳');
 /* (2026-08-09 대표 지시) 사진은 가져오지 않는다 — 정보만.
    "굳이 명함이나 사업자등록증 사진을 가지고 올 필요는 없어 보인다".
-   사진은 명함첩에 이미 있고, 계약 기록에 base64 로 박히면 레코드가 부풀어
+   사진은 기업정보함에 이미 있고, 계약 기록에 base64 로 박히면 레코드가 부풀어
    저장이 조용히 실패한다(예전 「계약 저장 실패」의 원인). */
 ok('첨부칸 두 곳(대표자 명함·사업자등록증)에서 같은 버튼을 쓴다 — dropZone 한 곳에 있다',
-   count("'📇 명함첩 정보 가져오기'") === 1 && count("dropZone('businessCardImg', '📇 대표자 명함', '')") === 1
+   count("'📇 기업정보함 정보 가져오기'") === 1 && count("dropZone('businessCardImg', '📇 대표자 명함', '')") === 1
    && count("dropZone('bizLicenseImg',   '📋 사업자등록증', '')") === 1);
-ok('사진은 가져오지 않는다', count('사진을 명함첩 사진으로 바꿉니다') === 0
+ok('사진은 가져오지 않는다', count('사진을 기업정보함 사진으로 바꿉니다') === 0
    && count('function pcFetchImages(') === 0);
-ok('사진이 필요하면 명함첩에서 보라고 길을 준다', count("'명함첩에서 보기'") === 1);
+ok('사진이 필요하면 기업정보함에서 보라고 길을 준다', count("'기업정보함에서 보기'") === 1);
 // 2026-08-03: 회사를 고르면 담당자·회사정보를 가져온다.
 // 2026-08-09: 사진을 빼면서 문구도 '가져올 정보가 없습니다'로 바뀌었다.
 ok('가져올 게 하나도 없을 때만 없다고 말한다',
    count('이 회사에서 새로 가져올 정보가 없습니다 (이미 다 들어와 있습니다)') === 1
-   && count('이 회사는 명함첩에 사진이 없습니다') === 0);
+   && count('이 회사는 기업정보함에 사진이 없습니다') === 0);
 ok('사업자등록증·명함 표시를 붙인다', count("'사업자등록증 있음'") === 1 && count("'명함 ' + r.cardCount + '장'") === 1);
-/* ⚠ 2026-08-07 다시 겨눔 — 64a9562(기업담당자를 명함첩에서 골라 담기)가 세 번째
+/* ⚠ 2026-08-07 다시 겨눔 — 64a9562(기업담당자를 기업정보함에서 골라 담기)가 세 번째
    검색칸을 더하면서 이 검사가 2개로 못 박아 둔 탓에 **모든 앱의 배포가 막혔다**.
    지켜야 할 것은 칸의 개수가 아니라 **모든 칸이 같은 문구를 쓰는 것**이다
    (문구가 갈리면 같은 기능이 자리마다 달라 보인다). */
-const PC_PH = "'명함첩 ' + Object.keys(window.pucardsIdx||{}).length + '건에서 검색'";
-ok('명함첩 건수 안내 문구를 그대로 쓴다', count(PC_PH) >= 2);
-ok('★ 명함첩 검색칸 문구가 자리마다 갈리지 않았다',
-   (html.match(/'명함첩 ' \+ [^\r\n]*?'건[^\r\n]*?검색'/g) || []).every(function (s) { return s === PC_PH; }));
-ok('자동완성에도 명함첩 표시가 붙는다', count("'📇 명함첩' + ((r._pc.bizId || r._pc.cardId) ? ' · 사진 있음' : '') + ' '") === 1);
-ok('자동완성 목록 머리글에 명함첩 건수를 적는다', count("'📇 명함첩 ' + pcN + '건 — 누르면 사진까지 가져옵니다'") === 1);
+const PC_PH = "'기업정보함 ' + Object.keys(window.pucardsIdx||{}).length + '건에서 검색'";
+ok('기업정보함 건수 안내 문구를 그대로 쓴다', count(PC_PH) >= 2);
+ok('★ 기업정보함 검색칸 문구가 자리마다 갈리지 않았다',
+   (html.match(/'기업정보함 ' \+ [^\r\n]*?'건[^\r\n]*?검색'/g) || []).every(function (s) { return s === PC_PH; }));
+ok('자동완성에도 기업정보함 표시가 붙는다', count("'📇 기업정보함' + ((r._pc.bizId || r._pc.cardId) ? ' · 사진 있음' : '') + ' '") === 1);
+ok('자동완성 목록 머리글에 기업정보함 건수를 적는다', count("'📇 기업정보함 ' + pcN + '건 — 누르면 사진까지 가져옵니다'") === 1);
 
 /* 담당자 헤더 한 줄 */
-const ctHead = slice('// 헤더 한 줄: 번호 · 주담당자 · 동일인 · 명함첩 · 명함 첨부 · 삭제',
-                     '// 명함첩에서 가져온 담당자: 출처·시점 표시');
+const ctHead = slice('// 헤더 한 줄: 번호 · 주담당자 · 동일인 · 기업정보함 · 명함 첨부 · 삭제',
+                     '// 기업정보함에서 가져온 담당자: 출처·시점 표시');
 ok('한 줄 헤더에 주담당자 표시가 있다', ctHead.indexOf('✓ 주담당자') > 0 && ctHead.indexOf('주담당자로') > 0);
 ok('한 줄 헤더에 동일인 체크박스가 있다(라벨은 짧게)', ctHead.indexOf("'🔗 동일인'") > 0);
 ok('동일인 뜻은 마우스를 올리면 그대로 보인다', ctHead.indexOf('🔗 사업자(대표) 동일인 —') > 0);
-ok('한 줄 헤더에 명함첩 찾기 버튼이 있다', ctHead.indexOf("'📇 명함첩'") > 0 && ctHead.indexOf('setPcPickIdx(idx)') > 0);
+ok('한 줄 헤더에 기업정보함 찾기 버튼이 있다', ctHead.indexOf("'📇 기업정보함'") > 0 && ctHead.indexOf('setPcPickIdx(idx)') > 0);
 ok('한 줄 헤더에 명함 첨부가 있다', ctHead.indexOf("'📎 명함 첨부'") > 0);
 ok('명함 첨부는 끌어놓기·Ctrl+V 를 그대로 받는다',
    ctHead.indexOf('onDrop:function(e){ e.preventDefault(); putCard(') > 0 && ctHead.indexOf('onPaste:function(e){') > 0);
 ok('명함 OCR 은 그대로 살아 있다', ctHead.indexOf("setOcrField('contact-'+idx)") > 0);
 ok('명함이 붙어 있으면 그 자리에 작은 그림으로 보여준다', ctHead.indexOf("height:'22px'") > 0);
 ok('한 줄 헤더에 삭제(×) 가 있다', ctHead.indexOf('removeContact(idx)') > 0);
-ok('동일인일 때는 명함첩·첨부가 숨는다 (두 컨트롤 모두 !locked)',
+ok('동일인일 때는 기업정보함·첨부가 숨는다 (두 컨트롤 모두 !locked)',
    (ctHead.match(/!locked/g) || []).length === 2, (ctHead.match(/!locked/g) || []).length + '곳');
 ok('옛 담당자 명함 드롭존 블록은 사라졌다', count('담당자 명함 첨부 (OCR)') === 0);
 ok('동일인 동기화 안내는 별도 줄로 그대로 남아 있다',
    count('🔒 회사정보(대표자/연락처)와 동기화 중 - 회사정보 수정 시 자동 반영.') === 1);
-ok('명함첩 출처 줄도 그대로 남아 있다', count(' 가져옴 · 자동연동 안 됨') === 1);
+ok('기업정보함 출처 줄도 그대로 남아 있다', count(' 가져옴 · 자동연동 안 됨') === 1);
 
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
 process.exit(fail ? 1 : 0);

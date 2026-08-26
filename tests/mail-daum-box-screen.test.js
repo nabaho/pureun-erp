@@ -333,7 +333,7 @@ test('★ 옆줄 위 덩어리는 틀고정 — 폴더를 내려도 [메일쓰�
     '바탕을 안 칠하면 밑으로 지나가는 폴더 글자가 비쳐 겹친다');
 });
 
-test('★ 주소만으로는 누구인지 모른다 — 명함첩에서 이름·회사를 찾아 붙인다', () => {
+test('★ 주소만으로는 누구인지 모른다 — 기업정보함에서 이름·회사를 찾아 붙인다', () => {
   const c = load({ folders: FOLDERS, msgs: MSGS });
   c.allItems = () => ({
     a: { id:'a', email:'huamstoneceo@gmail.com', name:'김대표', company:'화암스톤' },
