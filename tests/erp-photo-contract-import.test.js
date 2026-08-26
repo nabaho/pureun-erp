@@ -256,9 +256,13 @@ const t = (name, got, want) => {
   /* ═══ 6. PhotoContractPickerModal — 후보 목록 팝업 ═══
      ★ 「함수가 있다」만 보면 만들어 놓고 화면에 안 붙여도 통과한다.
        h() 를 가짜로 세워 «실제로 그려» 무엇이 나오는지, 누르면 무엇이 불리는지 본다. */
+  /* ⚠ 2026-08-26 에 이 창이 «찾기 창»으로 다시 지어졌다(대표 승인 목업
+     docs/mockups/erp-contract-photo-find.html) — 왼쪽은 그림 붙은 목록과 찾기 칸,
+     오른쪽은 원본과 판독값, 아래는 「이 내용을 입력」이다.
+     예전에는 줄을 누르는 즉시 넘어갔는데, 이제 **고른 뒤 원본을 보고** 누른다. */
   {
     const c = vm.createContext({});
-    // 아주 작은 h() — 그린 결과를 그대로 나무 구조로 돌려준다
+    // 아주 작은 h() 와 hook — 그린 결과를 그대로 나무 구조로 돌려준다
     vm.runInContext([
       'function h(tag, props){',
       '  var kids = Array.prototype.slice.call(arguments, 2);',
@@ -266,16 +270,28 @@ const t = (name, got, want) => {
       '}',
       'var escCalls = 0;',
       'function useEscClose(){ escCalls++; }',
-      'function fmtDate(ts){ return "2026.08.15"; }'
+      'function fmtDate(ts){ return "2026.08.15"; }',
+      /* 아주 작은 useState — 다시 그려도 값이 남아야 「고르고 → 입력」을 볼 수 있다 */
+      'var __st = [], __i = 0;',
+      'function useState(init){ var i = __i++;',
+      '  if(__st.length <= i) __st[i] = init;',
+      '  return [__st[i], function(v){ __st[i] = (typeof v === "function") ? v(__st[i]) : v; }]; }',
+      'function useEffect(){}',
+      'function erpPhotoAdmin(){ return false; }',
+      'var PuPhotoStore = { loadThumb:function(){ return Promise.resolve(""); },',
+      '                     loadFull:function(){ return Promise.resolve(""); } };',
+      'function render(p){ __i = 0; return PhotoContractPickerModal(p); }'
     ].join('\n'), c);
-    vm.runInContext(fn('PhotoContractPickerModal'), c);
+    vm.runInContext(fn('erpPhotoRowText') + '\n' + fn('erpPhotoFilter') + '\n' +
+                    fn('PhotoContractPickerModal'), c);
 
     const items = [
       { id:'p1', year:'2026', at:1000, score:100, fields:{ company:'유원에프앤비', signDate:'2026-07-01', docName:'컨설팅 계약서' } },
       { id:'p2', year:'2025', at:2000, score:70,  fields:{ company:'유원에프앤비 지점' } }
     ];
     let closed = 0, picked = null;
-    const tree = c.PhotoContractPickerModal({ items: items, onClose:function(){ closed++; }, onSelect:function(it){ picked = it; } });
+    const props = { items: items, onClose:function(){ closed++; }, onSelect:function(it){ picked = it; } };
+    let tree = c.render(props);
 
     // 나무를 훑어 원하는 것을 찾는다
     function walk(n, out){
@@ -284,41 +300,62 @@ const t = (name, got, want) => {
       if(n.tag){ out.push(n); walk(n.kids, out); }
       return out;
     }
-    const nodes = walk(tree, []);
-    const texts = [];
-    (function collect(n){
-      if(n == null) return;
-      if(Array.isArray(n)){ n.forEach(collect); return; }
-      if(typeof n === 'string'){ texts.push(n); return; }
-      if(n.kids) collect(n.kids);
-    })(tree);
+    const textsOf = function(root){
+      const out = [];
+      (function collect(n){
+        if(n == null) return;
+        if(Array.isArray(n)){ n.forEach(collect); return; }
+        if(typeof n === 'string'){ out.push(n); return; }
+        if(n.kids) collect(n.kids);
+      })(root);
+      return out;
+    };
+    /* 목록 한 줄 = key 가 붙고 누를 수 있는 칸 */
+    const rowsOf = function(root){
+      return walk(root, []).filter(function(n){ return n.props && n.props.key && n.props.onClick; });
+    };
+    let nodes = walk(tree, []);
+    let texts = textsOf(tree);
 
-    t('★ 제목이 뜬다', texts.indexOf('📷 사진첩 계약서에서 가져오기') >= 0, true);
-    t('★ Esc 로 닫히게 걸어 두었다', c.escCalls, 1);
-    t('★ 후보 수만큼 줄을 그린다', nodes.filter(function(n){ return n.props && n.props.onMouseEnter; }).length, 2);
+    t('★ 제목이 뜬다', texts.indexOf('📷 사진첩에서 계약서 찾기') >= 0, true);
+    t('★ Esc 로 닫히게 걸어 두었다', c.escCalls >= 1, true);
+    t('★ 찾기 칸이 있다', nodes.filter(function(n){ return n.tag === 'input'; }).length, 1);
+    t('★ 후보 수만큼 줄을 그린다', rowsOf(tree).length, 2);
     /* 계약일이 있으면 그걸, 없으면 찍은 날짜를 보여 준다 — 「날짜 미상」이 함부로 뜨면 안 된다 */
-    t('계약일이 있으면 계약일을 보여 준다', texts.indexOf('2026-07-01') >= 0, true);
-    t('계약일이 없으면 찍은 날짜로 대신한다', texts.indexOf('2026.08.15') >= 0, true);
-    t('문서명이 있으면 문서명을', texts.indexOf('컨설팅 계약서') >= 0, true);
-    t('문서명이 없으면 회사명으로', texts.indexOf('유원에프앤비 지점') >= 0, true);
+    t('계약일이 있으면 계약일을 보여 준다', texts.some(function(s){ return s.indexOf('2026-07-01') >= 0; }), true);
+    t('계약일이 없으면 찍은 날짜로 대신한다', texts.some(function(s){ return s.indexOf('2026.08.15') >= 0; }), true);
+    t('문서명이 있으면 문서명도', texts.some(function(s){ return s.indexOf('컨설팅 계약서') >= 0; }), true);
+    t('업체명이 줄 머리에 선다', texts.indexOf('유원에프앤비 지점') >= 0, true);
 
-    const rows = nodes.filter(function(n){ return n.props && n.props.onMouseEnter; });
-    rows[1].props.onClick();
-    t('★ 누른 그 건이 onSelect 로 넘어온다', picked && picked.id, 'p2');
+    /* ★ 고른 뒤 «입력» 을 눌러야 넘어간다 — 원본을 보고 나서 정한다 */
+    rowsOf(tree)[1].props.onClick();
+    tree = c.render(props);
+    t('★ 줄을 누르는 것만으로는 안 넘어간다 (원본을 보고 정한다)', picked, null);
+    const goBtn = walk(tree, []).filter(function(n){
+      return n.tag === 'button' && n.kids && String(n.kids.join('')).indexOf('이 내용을 입력') >= 0; })[0];
+    t('★ 「이 내용을 입력」 단추가 있다', !!goBtn, true);
+    goBtn.props.onClick();
+    t('★ 고른 그 건이 onSelect 로 넘어온다', picked && picked.id, 'p2');
+
     // 바깥을 누르면 닫힌다 (안쪽을 눌렀을 때는 안 닫혀야 한다)
     tree.props.onClick({ stopPropagation:function(){}, target:tree, currentTarget:tree });
     t('★ 바깥을 누르면 닫힌다', closed, 1);
     tree.props.onClick({ stopPropagation:function(){}, target:{}, currentTarget:tree });
     t('★ 안쪽을 누르면 안 닫힌다 (고르다 말고 창이 사라지면 안 된다)', closed, 1);
-    const xBtn = nodes.filter(function(n){ return n.tag === 'button' && n.props.onClick === undefined ? false : n.kids && n.kids.indexOf('×') >= 0; })[0];
+    const xBtn = walk(tree, []).filter(function(n){
+      return n.tag === 'button' && n.kids && n.kids.indexOf('×') >= 0; })[0];
     xBtn.props.onClick();
     t('× 로도 닫힌다', closed, 2);
 
-    t('후보가 없으면 줄이 없다',
-      walk(c.PhotoContractPickerModal({ items:[], onClose:function(){}, onSelect:function(){} }), [])
-        .filter(function(n){ return n.props && n.props.onMouseEnter; }).length, 0);
+    /* 사진첩에 계약서가 하나도 없을 때 — 빈 화면에 «왜 없는지»를 적는다 */
+    c.__st.length = 0;
+    const empty = c.render({ items:[], onClose:function(){}, onSelect:function(){} });
+    t('후보가 없으면 줄이 없다', rowsOf(empty).length, 0);
+    t('★ 왜 비었는지 말해 준다',
+      textsOf(empty).some(function(s){ return s.indexOf('계약서로 읽힌 사진이 없습니다') >= 0; }), true);
+    c.__st.length = 0;
     t('items 를 안 넘겨도 안 죽는다',
-      !!c.PhotoContractPickerModal({ onClose:function(){}, onSelect:function(){} }), true);
+      !!c.render({ onClose:function(){}, onSelect:function(){} }), true);
   }
 
   /* ═══ 7. ContractModal 배선 ═══ */
@@ -326,12 +363,20 @@ const t = (name, got, want) => {
     const blk = slice('function ContractModal(props){', '\n// ============ 방금 들어온 건 표시 ============');
     t('★ photoMatches 자리가 있다', /var pm = useState\(\[\]\); var photoMatches = pm\[0\]; var setPhotoMatches = pm\[1\];/.test(blk), true);
     t('★ 창을 열 때 한 번 읽어 둔다', /useEffect\(function\(\)\{ erpLoadMyContractPhotos\(function\(\)\{ setContractPhotosLoaded\(true\); \}\); \}, \[\]\);/.test(blk), true);
-    /* ★ 계약유형을 둘 이상 골랐으면 어느 쪽 계약금에 넣을지 알 수 없다 — 아예 안 찾는다 */
-    t('★ 계약유형이 «정확히 하나»일 때만 찾는다', /\(f\.kinds\|\|\[\]\)\.length !== 1/.test(blk), true);
-    t('★ 아니면 후보를 비운다 (앞서 찾은 것이 남아 있으면 안 된다)', /\{ setPhotoMatches\(\[\]\); return; \}/.test(blk), true);
-    t('회사명·유형 수·읽기 완료가 바뀌면 다시 찾는다',
-      /\}, \[f\.company\.name, \(f\.kinds\|\|\[\]\)\.length, contractPhotosLoaded\]\);/.test(blk), true);
-    t('★ 배지는 찾은 것이 있을 때만 보인다', /photoMatches\.length > 0 &&/.test(blk), true);
+    /* ⚠ 2026-08-26 — 「계약유형이 정확히 하나일 때만」이라는 조건을 **뺐다**(대표 승인).
+       새 계약은 유형이 0개로 시작하므로 회사명을 치는 동안 그 조건이 영영 성립하지
+       않아 초록불이 한 번도 안 켜졌다. 이제 이 목록은 «몇 건 있는지»를 알려 줄 뿐이고,
+       어느 칸에 담을지는 담는 쪽(erpContractPhotoApplyPatch)이 가린다 —
+       종류를 안 골랐으면 금액·업무를 아예 안 담고 그 사실을 말한다. */
+    t('★ 사진을 다 읽기 전에는 안 찾는다 (헛후보가 뜨면 안 된다)',
+      /if\(!contractPhotosLoaded\)\{ setPhotoMatches\(\[\]\); return; \}/.test(blk), true);
+    t('회사명·읽기 완료가 바뀌면 다시 찾는다',
+      /\}, \[f\.company\.name, contractPhotosLoaded\]\);/.test(blk), true);
+    /* ★ 단추는 **늘 보인다** — 조건이 맞을 때만 뜨면 사실상 안 뜬다(계약 121건 중 사용 0건).
+       맞는 것이 있으면 초록불로 «몇 건인지»를 알려 줄 뿐이다. */
+    t('★ 「계약서 찾기」 단추가 늘 보인다', /📷 계약서 찾기/.test(blk), true);
+    t('★ 맞는 것이 있으면 몇 건인지 알려 준다', /photoMatches\.length \? '📷 계약서 ' \+ photoMatches\.length/.test(blk), true);
+    t('★ 개수로 단추를 막지 않는다', /photoMatches\.length > 0 && h\('div'/.test(blk), false);
     /* ★★ 배지가 «어느 탭에» 있는지 — 이 기능이 실제로 보이느냐를 가른다.
        계약유형 체크박스는 계약정보 탭에 있고, 새 계약은 유형이 0개로 시작한다.
        배지를 기업정보 탭(회사명 칸 옆)에 두면 「유형 하나만 체크」 조건이 그 화면에서는
@@ -396,7 +441,10 @@ const t = (name, got, want) => {
 
     /* ★ 원본은 본인 것만 읽힌다 — 막히면 까닭을 적고, 판독 결과는 그대로 보여야 한다 */
     t('★ 원본이 안 열려도 조용히 비워 두지 않는다', /원본을 열 수 없습니다/.test(vw), true);
-    t('원본 읽기는 공용 저장 층을 거친다', /PuPhotoStore\.loadFull\(src\.year, src\.id\)/.test(vw), true);
+    /* ⚠ 주인을 함께 넘긴다(2026-08-26) — 관리자가 남의 사진을 고를 수 있게 되면서,
+       안 넘기면 내 자리를 뒤지다 빈손으로 돌아온다. */
+    t('원본 읽기는 공용 저장 층을 거친다',
+      /PuPhotoStore\.loadFull\(src\.year, src\.id, src\.owner \|\| undefined\)/.test(vw), true);
     t('★ 판독 결과는 이미 받아 둔 목록에서 꺼낸다 (다시 안 읽는다)',
       /erpLoadMyContractPhotos\(function\(items\)\{/.test(vw), true);
 
