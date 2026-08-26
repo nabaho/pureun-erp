@@ -106,16 +106,19 @@ test('★ 표 위의 쪽 옮기기가 없어졌다 — 사업자에는 그런 �
 
 /* ══════ ⑤ 표 아래 쪽 옮기기는 그대로 ══════ */
 
-test('표 뒤에는 쪽 옮기기가 그대로 있다 — 아예 없애면 다음 쪽으로 못 간다', () => {
-  const fn = fnBody('coListHtml');
-  const table = fn.indexOf('</tbody></table>');
-  assert.ok(table > 0, '표의 끝을 찾지 못했습니다');
-  assert.match(fn.slice(table), /coPagerHtml\(/,
-    '★ 표 뒤에도 쪽 옮기기가 없으면 다음 쪽으로 갈 길이 없다');
+test('쪽 옮기기가 여전히 있다 — 아예 없애면 다음 쪽으로 못 간다', () => {
+  /* 2026-08-26: 표 «안»에서 안 구르는 바닥(renderCoPage 의 .cofoot)으로 옮겼다.
+     표와 함께 굴러가면 200줄 아래로 숨어 4,143곳에서는 못 본다. */
+  assert.match(fnBody('renderCoPage'), /coPagerHtml\(info\)/,
+    '★ 쪽 옮기기가 없으면 다음 쪽으로 갈 길이 없다');
+  assert.equal(fnBody('coListHtml').indexOf('coPagerHtml('), -1,
+    '표 안에 남아 있으면 두 곳에 나온다');
 });
 
 test('쪽 옮기기 호출이 «한 곳»뿐이다 — 위·아래 두 벌로 만들지 않는다', () => {
-  const n = fnBody('coListHtml').split('coPagerHtml(').length - 1;
+  /* 그리는 자리가 둘이면 같은 글귀가 두 번 나오고 4,143곳을 두 번 거른다 */
+  const n = (fnBody('renderCoPage') + fnBody('coListHtml') + fnBody('coToolsHtml'))
+    .split('coPagerHtml(').length - 1;
   assert.equal(n, 1, '쪽 옮기기가 ' + n + '곳에서 불린다 — 하나여야 한다');
 });
 
