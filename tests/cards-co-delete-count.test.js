@@ -213,9 +213,10 @@ test('개수 고르기가 도구줄 오른쪽 끝에 있다', () => {
 test('줄을 새로 만들지 않는다 — 2026-08-24 에 없앤 그 줄을 되살리지 않는다', () => {
   /* 표 위에 따로 그리는 줄이 생기면 「화면 중간에 이상하다」가 다시 나온다 */
   const co = slice('function coListHtml(info){', 'function coDetailPanelHtml');
-  const tableAt = co.indexOf('<table class="cotbl"');
-  const pagerAt = co.indexOf('coPagerHtml(');
-  assert.ok(tableAt > 0 && pagerAt > tableAt, '쪽넘김은 표 아래에만 (도구줄 것은 별개)');
+  assert.ok(co.indexOf('<table class="cotbl"') > 0, '표를 못 찾았다');
+  /* 2026-08-26: 쪽넘김은 표 «밖»(renderCoPage 의 .cofoot)으로 옮겼다 — 화면에 붙어야
+     하기 때문이다. 표 위에 줄을 새로 만들지 않았다는 뜻은 그대로다. */
+  assert.ok(!/copgbar/.test(co), '2026-08-24 에 없앤 줄이 되살아났다');
 });
 
 /* ── 아끼기는 «안 넣었다» ── */

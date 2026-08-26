@@ -114,18 +114,47 @@ test('개수 글귀는 «아래»에만 — 도구줄에는 개수 고르기만 
     '위에도 개수를 적으면 같은 글귀가 두 곳에 나오고 4,143곳을 두 번 거른다');
 });
 
-test('표 아래에 쪽넘김이 있다 — 대표가 「아래에」라고 하신 그 자리', () => {
+test('쪽넘김이 «안 구르는 바닥»에 있다 — 화면에 붙어 늘 보인다', () => {
+  /* ⚠ 2026-08-26 두 번째 지적: 「데이터 가장 아래」가 아니라 «화면에 고정»이어야 한다.
+       표 안에 두면 200줄을 다 내려가야 보인다 — 4,143곳에서는 사실상 못 본다.
+       사업자의 #pcTableWrap(구름) + #pcPager(안 구름)와 같은 꼴로 갈랐다. */
+  const rp = slice('function renderCoPage(){', 'function coListHtml(info){');
+  assert.match(rp, /class="cobody"/, '구르는 칸이 있어야 한다');
+  assert.match(rp, /class="cofoot"/, '안 구르는 바닥이 있어야 한다');
+  assert.match(rp, /coPagerHtml\(info\)/, '바닥에 쪽넘김이 있어야 한다');
+  /* ⚠ 차례는 «그리는 글자»로 본다 — 위 주석에도 .cobody·.cofoot 이 적혀 있어,
+       그냥 indexOf 로 재면 순서를 바꿔도 주석이 먼저 잡혀 통과한다(되돌림이 찾아냈다). */
+  const bodyAt = rp.indexOf('class="cobody"'), footAt = rp.indexOf('class="cofoot"');
+  assert.ok(bodyAt > 0 && footAt > bodyAt, '바닥이 표보다 뒤에 와야 아래에 앉는다');
+  /* 반을 안 붙이면 위 규칙이 하나도 안 걸려 옛 모습으로 돌아간다 */
+  assert.match(rp, /classList\.add\('cosplit'\)/, '반(.cosplit)을 붙여야 규칙이 걸린다');
+  /* 표 «안»에는 없어야 한다 — 두 곳에 두면 두 번 나온다 */
   const co = slice('function coListHtml(info){', 'function coDetailPanelHtml');
-  const end = co.indexOf('</tbody></table>');
-  assert.ok(end > 0, '표의 끝을 못 찾았다');
-  assert.match(co.slice(end), /coPagerHtml\(/, '표 뒤에 없으면 아래에 안 나온다');
+  assert.ok(!/coPagerHtml\(/.test(co), '표 안에 남아 있으면 함께 굴러가 숨는다');
 });
 
-test('고른 줄 도구줄이 쪽넘김을 덮지 않는다 — 흐름 안의 마지막 자리', () => {
+test('바닥이 구르는 칸 «밖»이다 — CSS 로 못 박는다', () => {
+  assert.match(HTML, /#pcCo\.cosplit\{[^}]*display:flex[^}]*flex-direction:column[^}]*overflow:hidden/,
+    '#pcCo 가 구르면 바닥이 함께 밀려 나간다');
+  assert.match(HTML, /#pcCo\.cosplit>\.cobody\{[^}]*flex:1 1 auto[^}]*min-height:0[^}]*overflow:auto/,
+    '표 칸이 스스로 굴러야 한다 (min-height:0 없으면 안 줄어든다)');
+  assert.match(HTML, /#pcCo\.cosplit>\.cofoot\{[^}]*flex:none/,
+    '바닥이 늘어나면 목록을 먹는다');
+});
+
+test('사업자도 같은 꼴이다 — 흉내가 아니라 같은 구조', () => {
+  assert.match(HTML, /#pcTableWrap\{flex:1;overflow:auto/, '사업자는 표 칸만 구른다');
+  assert.ok(HTML.indexOf('<div id="pcPager"') > HTML.indexOf('<div id="pcTableWrap">'),
+    '사업자의 쪽넘김은 구르는 칸 밖에 형제로 있다');
+});
+
+test('고른 줄 도구줄이 마지막 줄을 덮지 않는다 — 흐름 안의 마지막 자리', () => {
+  /* 쪽넘김은 이제 구르는 칸 «밖»이라 애초에 덮일 수가 없다.
+     남은 것은 표의 마지막 줄이다 — 도구줄이 표 뒤에 와야 그 위에 내려앉는다. */
   const co = slice('function coListHtml(info){', 'function coDetailPanelHtml');
-  const pager = co.indexOf('coPagerHtml(');
+  const tbl = co.indexOf('</tbody></table>');
   const bar = co.lastIndexOf('${selbar}');
-  assert.ok(pager > 0 && bar > pager, '도구줄이 쪽넘김보다 앞에 오면 sticky 가 덮는다');
+  assert.ok(tbl > 0 && bar > tbl, '도구줄이 표보다 앞에 오면 마지막 줄을 덮는다');
 });
 
 /* ── 삭제 단추 모양이 도구줄 «안»으로 한정돼 있다 ── */

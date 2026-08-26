@@ -93,14 +93,16 @@ test('「→ N곳 모두」도 그대로 도구줄 안에 있다', () => {
   assert.ok(bar.indexOf('coSelAllMatching()') >= 0, '「N곳 모두」가 도구줄 밖으로 나갔다');
 });
 
-test('★ 도구줄은 표와 쪽넘김 «뒤»에 온다 — 붙어 따라와도 마지막 줄·쪽넘김을 안 덮는다', () => {
+test('★ 도구줄은 표 «뒤»에 온다 — 붙어 따라와도 마지막 줄을 안 덮는다', () => {
+  /* 2026-08-26: 쪽넘김이 구르는 칸 «밖»(renderCoPage 의 .cofoot)으로 나갔다 —
+     이제 도구줄이 그것을 덮을 수가 없다. 남은 것은 표의 마지막 줄이다. */
   const h = runList(ROWS, { k1: 1 });
   const tbl = h.indexOf('</table>');
-  const pager = h.indexOf('class="copager"');
   const bar = h.indexOf('cosellift');
-  assert.ok(tbl > 0 && pager > tbl, '표 뒤의 쪽넘김을 찾지 못했습니다');
-  assert.ok(bar > pager,
-    '도구줄이 쪽넘김보다 앞에 있다 — sticky 가 흐름의 마지막 자리에 없으면 쪽넘김을 덮는다');
+  assert.ok(tbl > 0, '표를 찾지 못했습니다');
+  assert.equal(h.indexOf('class="copager"'), -1, '쪽넘김이 표 안에 남아 있다');
+  assert.ok(bar > tbl,
+    '도구줄이 표보다 앞에 있다 — sticky 가 흐름의 마지막 자리에 없으면 마지막 줄을 덮는다');
 });
 
 test('★ 붙어 따라오는 감싸개는 «아래»에 붙는다 — 위는 표 머리(thead)가 이미 쓴다', () => {
@@ -123,7 +125,10 @@ test('★ PC 명함/사업자 화면으로도 안 샌다 — 그쪽은 #selbar �
      그 둘을 덜어 낸 나머지 전부에 한 번도 안 나와야 다른 화면으로 안 샌 것이다. */
   assert.ok(coListBlock().indexOf('cosellift') >= 0, '기업 상세 표에 감싸개가 없다');
   const css = block('.cosellift{', '\n.corow[draggable');
-  const rest = src.replace(css, '').replace(coListBlock(), '');
+  /* ⚠ 주석에 이름이 나오는 것은 «샌 것»이 아니다 — 설명은 오히려 있어야 한다.
+       주석을 먼저 떼고 «그리는 자리»만 센다(2026-08-26). */
+  const rest = src.replace(css, '').replace(coListBlock(), '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
   assert.ok(rest.indexOf('cosellift') < 0,
     '.cosellift 가 모양·기업 상세 표 말고 다른 자리에도 있다 — 다른 화면으로 샌다');
   /* 명함 도구줄은 여전히 제 함수 하나가 맡는다 */
