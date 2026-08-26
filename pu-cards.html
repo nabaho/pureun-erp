@@ -674,6 +674,26 @@ table.sbox tr.bad td{background:#fdf4f4}
 /* ⋮ 창의 갈래마다 «어디까지 가는지» 한 줄 — 안 적으면 다음메일 폴더가 사라진다 */
 #folderMenu .fmi small{display:block;color:#a8abb2;font-size:11px;margin-top:2px;line-height:1.4}
 
+/* ── 대시보드 둘 — 담당자 / 업무별 (대표 지시 2026-08-26 「가」안) ──
+   ⚠ 한 번에 하나만 보여 준다. 둘을 늘어놓으면 스물한 줄이라 아래는 굴려야 한다.
+     지금 무엇을 보고 있는지는 «칩 색»이 말한다 — 보라는 사람, 초록은 업무다. */
+.dm-seg{display:flex;gap:5px;align-items:center;padding:2px 6px 8px}
+.dm-seg button{font-family:inherit;font-size:12px;border:1px solid transparent;background:none;
+  color:#6b7078;border-radius:99px;padding:5px 11px;cursor:pointer;display:flex;align-items:center;gap:4px}
+.dm-seg button:hover{background:#f1f3f5}
+.dm-seg button.on{background:#7b4bd1;color:#fff;font-weight:700}
+.dm-seg button.on.g{background:#0f8a5f}
+.dm-seg button b{font-weight:700;opacity:.85}
+.dm-fsec.who{color:#7b4bd1;font-weight:700}
+.dm-fsec.who .nm::before{content:'●';font-size:8px;vertical-align:2px;margin-right:5px}
+.dm-f.whobin.on{background:#f2ecfd;color:#4c2a8f}
+/* 목록에 붙는 「👤 담당자」 꼬리표 — 업무 칸에서 볼 때 */
+.dm-who{flex:none;font-size:10.5px;color:#5b3a9c;background:#f2ecfd;border:1px solid #e0d4fa;
+  border-radius:3px;padding:1px 6px;margin-right:8px;white-space:nowrap;cursor:pointer}
+.dm-who:hover{background:#e9dffb}
+.dm-who.na{color:#8a6d1f;background:#fdf6e3;border-color:#f0e2b8}
+.dm-who.na:hover{background:#f9edcb}
+
 /* ⚠ 여기 갈래 단추줄(.dm-tabs)과 톱니바퀴(.dm-gear) 모양이 있었다.
    대표 화면 2026-08-24 로 그 줄을 통째로 없애면서 모양도 함께 지웠다 —
    쓰지 않는 모양을 남기면 다음 사람이 「어디에 쓰이나」를 찾느라 시간을 버린다. */
@@ -4980,6 +5000,7 @@ function renderMailPage(){
   /* ⚠ 갈래가 늘 때 «두 곳을 함께» 고쳐야 한다(폰은 renderMailMobile).
      'box' 는 다음메일함을 비추는 목록이다 — 2026-08-24 에 더했다. */
   el.innerHTML = state.mailSent==='box' ? mbBoxHtml()
+                : state.mailSent==='who' ? whoPageHtml()
                 : state.mailSent==='inbox' ? inboxBoxHtml()
                 : state.mailSent==='sched' ? schedBoxHtml()
                 : state.mailSent ? sentBoxHtml() : mailWriteHtml();
@@ -10837,20 +10858,22 @@ let _mbBinsBusy = false;
 /* 두 벌을 한 번에 읽는다 — 왼쪽 한 줄을 그리는 데 둘 다 필요하다.
    ⚠ once() 만 쓴다(2026-08-16 「once 뒤 on」 요금 사고와 같은 결). */
 function mbEnsureBins(cb){
-  if(_mbBins!==null && _mbPut!==null && _mbHide!==null){ if(cb) cb(); return; }
+  if(_mbBins!==null && _mbPut!==null && _mbHide!==null && _mbOwner!==null){ if(cb) cb(); return; }
   if(typeof Store==='undefined' || Store.mode!=='firebase'){
-    _mbBins = _mbBins||{}; _mbPut = _mbPut||{}; _mbHide = _mbHide||{}; if(cb) cb(); return;
+    _mbBins = _mbBins||{}; _mbPut = _mbPut||{}; _mbHide = _mbHide||{}; _mbOwner = _mbOwner||{};
+    if(cb) cb(); return;
   }
   if(_mbBinsBusy){ if(cb) setTimeout(()=>mbEnsureBins(cb), 200); return; }
   _mbBinsBusy = true;
   Promise.all([
     firebase.database().ref(DB_ROOT+'/config/mailBins').once('value'),
     firebase.database().ref(DB_ROOT+'/config/mailPut').once('value'),
-    firebase.database().ref(DB_ROOT+'/config/mailHide').once('value')
-  ]).then(([b,p,h])=>{
-    _mbBins = b.val()||{}; _mbPut = p.val()||{}; _mbHide = h.val()||{};
+    firebase.database().ref(DB_ROOT+'/config/mailHide').once('value'),
+    firebase.database().ref(DB_ROOT+'/config/mailWho').once('value')
+  ]).then(([b,p,h,w])=>{
+    _mbBins = b.val()||{}; _mbPut = p.val()||{}; _mbHide = h.val()||{}; _mbOwner = w.val()||{};
   }).catch(e=>{
-    _mbBins = _mbBins||{}; _mbPut = _mbPut||{}; _mbHide = _mbHide||{};
+    _mbBins = _mbBins||{}; _mbPut = _mbPut||{}; _mbHide = _mbHide||{}; _mbOwner = _mbOwner||{};
     console.warn('[푸른분류]', (e&&e.message)||e);
   }).then(()=>{
     _mbBinsBusy = false;
@@ -10912,11 +10935,155 @@ function mbBinOfRow(v){
   return put ? mbBinBy(put) : mbBinOfFolder(v._slug);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   담당자 대시보드 — 같은 메일을 «사람»으로도 본다 (대표 지시 2026-08-26)
+   ══════════════════════════════════════════════════════════════════════════
+   "푸른분류는 대시보드 두개로 나누어서 담당자, 업무별 로 나눠서 보게"
+   (앞서 «안 1 걸러 보기»로 정함 — 메일은 업무 칸에 그대로 있고, 담당자 칸은 그중에서
+    «그 사람 것만» 골라 보여 준다)
+
+   ★ 요점 — 담당자 칸은 «자리»가 아니라 «거르개»다.
+     메일을 옮기지 않는다. 업무 칸 통수는 담당자를 나눠도 줄지 않는다. 한 통을 주제로도
+     사람으로도 본다. 잘못 잡혀도 업무 칸은 멀쩡하다.
+
+   ★ 누가 담당인지 어떻게 아나 — 보낸이 주소로 찾는다. 순서가 있다.
+     ① 사람이 정해 준 주소            (config/mailWho/<주소>)
+     ② 기업정보함에서 그 주소 → 그 회사 → ErpMatch 의 담당 노무사
+     ③ 사람이 정해 준 회사 도메인      (config/mailWho/@<도메인>)
+     ④ 기업정보함 도메인이 «한 담당자로만» 이어질 때 그 사람
+     ⑤ 못 찾으면 「담당 모름」
+     ⚠ 사람이 정해 준 것이 늘 먼저다. 기계가 사람의 판단을 덮으면 고칠 길이 없다.
+
+   ★ 실측 2026-08-26 — 1.자문사답변 404통 가운데 229통(57%)이 이렇게 잡혔다
+     (박한별136·김혜민57·박재원47·박은비22·김보람21·최기운10·신욱임5·김동현2).
+     ⚠ 나머지는 자문사 «담당자의 개인 주소»(naver·hanmail)라 어디에도 적힌 곳이 없다.
+       그래서 「담당 모름」에서 한 번 정해 주면 그 주소가 ①에 쌓여 쓸수록 는다.
+     ⚠ 기업정보에 이메일이 «한 건도» 없다(363곳 전부 빈칸). 지금은 기업정보함의 주소를
+       회사 이름으로 이어 쓰는 것이다 — 「자문사 이메일 잇기」 화면이 이것을 메운다.
+
+   ★ 공용 도메인은 도메인으로 잇지 않는다. naver.com 을 한 담당자에게 주면 온 세상이
+     그 사람 것이 된다. */
+const MB_WHO_P  = '@';    /* 담당자 칸 */
+const MB_WHO_NA = '@?';   /* 담당 모름 */
+/* 사람마다 쓰는 무료 메일 — 회사가 아니라 «개인»이라 도메인으로 이으면 안 된다 */
+const MB_PUB_DOM = ['naver.com','gmail.com','hanmail.net','daum.net','nate.com','kakao.com',
+  'hotmail.com','outlook.com','yahoo.com','korea.com','empas.com','icloud.com','네이버.com'];
+
+let _mbOwner = null;      /* {열쇠: 담당자이름} — 사람이 정해 준 것만 */
+let _mbWhoIdx = null;     /* 기업정보함에서 뽑아 둔 {주소:담당자} · {도메인:담당자} — 캐시 */
+
+/* 이메일을 실시간DB 열쇠로 — 점을 못 쓴다.
+   ⚠ 포털(enter.html sgEmailKey)과 «같은 규칙»이어야 한다. 규칙이 갈리면 한쪽이 못 찾는다. */
+function mbWhoKey(s){ return String(s||'').toLowerCase().replace(/[.#$\[\]/]/g, ','); }
+function mbDomOf(email){
+  const e = String(email||'').toLowerCase();
+  const at = e.lastIndexOf('@');
+  return at > 0 ? e.slice(at + 1) : '';
+}
+
+/* 기업정보함 + ErpMatch 로 만든 주소표. 명함이 늦게 오므로 캐시를 비울 길을 둔다. */
+function mbWhoIndex(){
+  if(_mbWhoIdx) return _mbWhoIdx;
+  const byAddr = {}, domHit = {};
+  const items = (typeof state!=='undefined' && state.items) ? state.items : {};
+  Object.keys(items).forEach(k=>{
+    const it = items[k]; if(!it) return;
+    const em = String(it.email||'').trim().toLowerCase(); if(!em) return;
+    const rec = (typeof ErpMatch!=='undefined' && ErpMatch.match) ? ErpMatch.match(it) : null;
+    const who = rec && rec.main ? String(rec.main) : '';
+    if(!who) return;
+    if(!byAddr[em]) byAddr[em] = who;
+    const d = mbDomOf(em);
+    if(d && MB_PUB_DOM.indexOf(d) < 0) (domHit[d] = domHit[d] || {})[who] = 1;
+  });
+  const byDom = {};
+  Object.keys(domHit).forEach(d=>{
+    const w = Object.keys(domHit[d]);
+    if(w.length === 1) byDom[d] = w[0];      /* 갈리는 도메인은 안 쓴다 */
+  });
+  _mbWhoIdx = { byAddr, byDom };
+  return _mbWhoIdx;
+}
+function mbWhoBust(){ _mbWhoIdx = null; }
+
+/* ── 이 메일의 담당자 ── (위 다섯 순서를 여기 한 자리에서만 따진다) */
+function mbWhoOfRow(v){
+  const em = String((v&&v.e)||'').trim().toLowerCase();
+  if(!em) return '';
+  const set = _mbOwner || {};
+  const byHand = set[mbWhoKey(em)];
+  if(byHand) return String(byHand);                       /* ① 사람이 정한 주소 */
+  const idx = mbWhoIndex();
+  if(idx.byAddr[em]) return idx.byAddr[em];               /* ② 기업정보함 주소 */
+  const d = mbDomOf(em);
+  if(d){
+    const handDom = set[mbWhoKey('@' + d)];
+    if(handDom) return String(handDom);                   /* ③ 사람이 정한 도메인 */
+    if(idx.byDom[d]) return idx.byDom[d];                 /* ④ 기업정보함 도메인 */
+  }
+  return '';                                              /* ⑤ 담당 모름 */
+}
+
+/* ── 담당자 칸에 담기는 메일의 «울타리» ──
+   업무 칸(우리 칸)에 든 것만 본다. 받은메일함·보낸메일함·휴지통까지 넣으면 「담당 모름」이
+   광고·뉴스레터로 가득 차 일할 자리가 못 된다. 숨긴 칸도 뺀다. */
+function mbWhoScope(v){
+  const b = mbBinOfRow(v);
+  return !!(b && !mbHidden(b.id));
+}
+
+/* ── 담당자 목록 ── 자문사를 맡은 사람만. 빈 칸이 늘어서면 왼쪽만 길어진다. */
+function mbWhoList(){
+  const cnt = {}, un = {};
+  Object.keys(_mbMsgs||{}).forEach(slug=>{
+    const box = _mbMsgs[slug]||{};
+    const f = mbFolderBy(slug)||{};
+    Object.keys(box).forEach(uid=>{
+      const row = box[uid]; if(!row) return;
+      const v = Object.assign({}, row, { _slug:slug, _box:String(f.name||''), _key:slug+':'+uid });
+      if(!mbWhoScope(v)) return;
+      const w = mbWhoOfRow(v) || MB_WHO_NA;
+      cnt[w] = (cnt[w]||0) + 1;
+      if(!Number(v.r||0)) un[w] = (un[w]||0) + 1;
+    });
+  });
+  /* 아직 한 통도 안 온 담당자도 칸은 둔다 — 자문사를 맡고 있다면 곧 온다.
+     ⚠ 다만 «자문사를 맡은 사람»만이다(ErpMatch 에 이름이 있는 사람). */
+  const idx = mbWhoIndex();
+  Object.keys(idx.byAddr).forEach(a=>{ const w = idx.byAddr[a]; if(!(w in cnt)) cnt[w] = 0; });
+  Object.keys(_mbOwner||{}).forEach(k=>{ const w = String(_mbOwner[k]||''); if(w && !(w in cnt)) cnt[w] = 0; });
+  delete cnt[MB_WHO_NA];
+  return Object.keys(cnt)
+    .map(w=>({ name:w, n:cnt[w]||0, un:un[w]||0 }))
+    .sort((a,b)=> b.n - a.n || a.name.localeCompare(b.name,'ko'));
+}
+function mbWhoNoneCount(){
+  let n = 0, un = 0;
+  Object.keys(_mbMsgs||{}).forEach(slug=>{
+    const box = _mbMsgs[slug]||{};
+    const f = mbFolderBy(slug)||{};
+    Object.keys(box).forEach(uid=>{
+      const row = box[uid]; if(!row) return;
+      const v = Object.assign({}, row, { _slug:slug, _box:String(f.name||''), _key:slug+':'+uid });
+      if(!mbWhoScope(v)) return;
+      if(mbWhoOfRow(v)) return;
+      n++; if(!Number(v.r||0)) un++;
+    });
+  });
+  return { n:n, un:un };
+}
+
 /* ── 이 줄이 지금 보는 자리에 보이나 ──
    한 자리에서만 판단하게 모아 둔다. 그리는 곳과 「모두 고르기」가 서로 다른 셈을 하면
    개수가 어긋난다. */
 function mbRowFits(v, id){
   if(String(id).charAt(0)===MB_RAW_P) return true;         /* 원본 — 쪽지를 안 본다 */
+  /* 담당자 칸 — 자리를 옮기는 것이 아니라 «거르는» 것이다(대표 지시 2026-08-26) */
+  if(String(id).charAt(0)===MB_WHO_P){
+    if(!mbWhoScope(v)) return false;
+    const w = mbWhoOfRow(v);
+    return (id === MB_WHO_NA) ? !w : (w === String(id).slice(1));
+  }
   const put = mbPutOf(v._key);
   if(String(id).charAt(0)===MB_BIN_P){
     const bin = mbBinBy(id); if(!bin) return false;
@@ -10938,6 +11105,17 @@ function mbRowFits(v, id){
 function mbNeedSlugs(id){
   const s = String(id||'');
   if(s.charAt(0)===MB_RAW_P) return [s.slice(1)];
+  /* 담당자 칸은 «업무 칸을 가로지른다» — 우리 칸이 이어진 폴더를 다 읽어야 한다.
+     ⚠ 받은메일함·보낸메일함·휴지통은 안 읽는다(mbWhoScope 가 어차피 거른다). */
+  if(s.charAt(0)===MB_WHO_P){
+    const need = {};
+    mbBins().forEach(b=>{ if(b.link && !mbHidden(b.id)) need[b.link] = 1; });
+    const put = _mbPut||{};
+    Object.keys(put).forEach(k=>{
+      const at = k.lastIndexOf(':'); if(at>0) need[k.slice(0,at)] = 1;
+    });
+    return Object.keys(need);
+  }
   if(s.charAt(0)===MB_BIN_P){
     const bin = mbBinBy(s); if(!bin) return [];
     const need = {};
@@ -10993,6 +11171,9 @@ function mbBoxName(id){
   if(id==='*all')  return '전체메일';
   if(id==='*tome') return '내게쓴메일함';
   if(id==='*sched')return '예약메일함';
+  /* 담당자 칸 */
+  if(String(id).charAt(0)===MB_WHO_P)
+    return (id === MB_WHO_NA) ? '담당 모름' : ('👤 ' + String(id).slice(1));
   /* 푸른 분류 칸 — 대표가 붙인 이름을 그대로 */
   if(String(id).charAt(0)===MB_BIN_P){
     const b = mbBinBy(id);
@@ -11024,9 +11205,12 @@ function mbAllRows(){
     });
   };
   /* ⚠ 우리 칸은 «여러 폴더»에서 옮겨 온 것이 섞인다 — 읽어 둔 폴더를 다 훑은 뒤
-     mbRowFits 로 고른다. 이어진 폴더 하나만 보면 옮겨 온 메일이 안 보인다. */
+     mbRowFits 로 고른다. 이어진 폴더 하나만 보면 옮겨 온 메일이 안 보인다.
+   ⚠ 담당자 칸(@)도 «업무 칸을 가로지른다» — 여기 빠뜨리면 「@박한별」이라는 이름의
+     폴더를 찾다가 늘 0통이 된다(2026-08-26 에 실제로 그랬다). */
   const one = (id.charAt(0)===MB_RAW_P) ? id.slice(1)
-            : (id.charAt(0)===MB_BIN_P || id==='*all' || id==='*tome') ? '' : id;
+            : (id.charAt(0)===MB_BIN_P || id.charAt(0)===MB_WHO_P
+               || id==='*all' || id==='*tome') ? '' : id;
   if(one) push(one);
   else Object.keys(_mbMsgs).forEach(push);
 
@@ -11220,7 +11404,13 @@ function mailSideHtml(){
   const bins = allBins.filter(b=>!mbHidden(b.id));
   const hid  = allBins.filter(b=>mbHidden(b.id));
   const openMine = state.mbMineOpen !== false;
-  h += `<div class="dm-fsec pu" onclick="mbToggleMine()"
+  /* ── 대시보드 둘 — 담당자 / 업무별 (대표 지시 2026-08-26 「가」안) ──
+     ⚠ 한 번에 «하나»만 보여 준다. 둘을 함께 늘어놓으면 담당자 8 + 업무 13 = 스물한 줄이라
+       아래쪽은 굴려야 나온다. 칩 색으로 지금 무엇을 보고 있는지 알린다.
+     ⚠ 담기는 메일은 같다 — 담당자 칸은 «자리»가 아니라 «거르개»다. */
+  const dash = (state.mbDash === 'who') ? 'who' : 'topic';
+  const whos = (dash === 'who') ? mbWhoList() : [];
+  h += `<div class="dm-fsec ${dash==='who'?'who':'pu'}" onclick="mbToggleMine()"
       title="우리 앱에서만 나눈 칸입니다 — 다음메일은 그대로 있습니다">
       <span class="nm">푸른 분류 <span style="color:#b6b9c0">${openMine?'⌃':'⌄'}</span></span>
       <span class="tool" onclick="event.stopPropagation();mbToggleHidden()"
@@ -11228,6 +11418,37 @@ function mailSideHtml(){
       <span class="tool" onclick="event.stopPropagation();mbBinNew(event)" title="새 칸 만들기">＋</span>
     </div>`;
   if(openMine){
+    h += `<div class="dm-seg">
+      <button class="${dash==='who'?'on':''}" onclick="mbSetDash('who')"
+        title="같은 메일을 «담당자»로 갈라 봅니다 — 업무 칸 통수는 줄지 않습니다">
+        👤 담당자${whos.length?` <b>${whos.length}</b>`:''}</button>
+      <button class="g ${dash==='topic'?'on':''}" onclick="mbSetDash('topic')"
+        title="업무별 칸 — 지금 그대로입니다">📂 업무별${bins.length?` <b>${bins.length}</b>`:''}</button>
+    </div>`;
+  }
+  if(openMine && dash === 'who'){
+    /* ── 담당자 대시보드 ── */
+    if(whos.length) whos.forEach(w=>{
+      const id = MB_WHO_P + w.name;
+      h += `<div class="dm-f sub whobin ${now===id?'on':''}" onclick="openMailBox('${esc(id)}')"
+        title="${esc(w.name)} 담당 — 메일은 업무 칸에 그대로 있습니다${w.n?' · '+w.n.toLocaleString()+'통':''}">
+        <span class="ic">👤</span><span class="nm">${esc(w.name)}</span>
+        ${w.n?`<span class="n">${w.n.toLocaleString()}</span>`:''}
+        ${w.un?`<span class="nu">${w.un}</span>`:''}</div>`;
+    });
+    else h += `<div class="dm-side-hint">${_mbFolders===null ? '읽고 있습니다…'
+      : '아직 담당자를 아는 메일이 없습니다.<br>아래 <b>자문사 이메일 잇기</b>에서 이어 주세요'}</div>`;
+    const na = mbWhoNoneCount();
+    h += `<div class="dm-f sub ${now===MB_WHO_NA?'on':''}" onclick="openMailBox('${MB_WHO_NA}')"
+      title="보낸이 주소로 담당자를 찾지 못한 메일 — 한 번 정해 주면 다음부터 저절로 갑니다">
+      <span class="ic">❓</span><span class="nm">담당 모름</span>
+      ${na.n?`<span class="n">${na.n.toLocaleString()}</span>`:''}
+      ${na.un?`<span class="nu">${na.un}</span>`:''}</div>`;
+    h += `<div class="dm-f sub" onclick="openWhoPage()"
+      title="자문사 이메일을 이어 두면 담당자가 저절로 잡힙니다">
+      <span class="ic">🔗</span><span class="nm" style="color:#7b4bd1">자문사 이메일 잇기</span></div>`;
+  }
+  if(openMine && dash === 'topic'){
     /* ── 숨겨 둔 칸 — 되돌릴 자리 ──
        ⚠ 되돌릴 길이 없으면 아무도 숨기기를 못 누른다. 숨기기와 «같은 화면»에 둔다. */
     if(state.mbHideOpen){
@@ -11743,6 +11964,254 @@ function mbBinSave(id, rec, okMsg, after){
     .catch(e=>toast('저장하지 못했습니다 — '+((e&&e.message)||e), 9000));
 }
 function mbToggleRaw(){ state.mbRawOpen = !state.mbRawOpen; renderPCSide(); }
+/* ══════════════════════════════════════════════════════════════════════════
+   자문사 이메일 잇기 (대표 지시 2026-08-26 「이메일정보 입력함도」)
+   ══════════════════════════════════════════════════════════════════════════
+   ⚠ 기업정보 363곳에 이메일이 «한 건도» 없다(실측 2026-08-26). 그래서 지금은 기업정보함의
+     주소를 회사 이름으로 이어 쓰고 있고, 1.자문사답변의 57%만 잡힌다.
+   ★ 그래서 «두 갈래»를 둔다. 363줄을 처음부터 채우는 것은 하루가 걸리고, 채워도 정작
+     많이 오는 주소가 빠질 수 있다.
+     ① 많이 온 주소부터 — 「담당 모름」에 몇 통이 쌓였는지 보고 «많은 것부터» 잇는다.
+        21통짜리 하나를 이으면 그 자리에서 21통이 잡힌다. 힘 대비 얻는 것이 가장 크다.
+     ② 자문사부터   — 회사 목록을 보며 주소를 적어 넣는다. 아직 메일이 안 온 곳도 미리.
+   ⚠ 적는 자리는 우리 쪽(config/mailWho)이다. 기업정보(ERP)는 다른 앱의 자료라
+     여기서 고치지 않는다. */
+function openWhoPage(){
+  state.view='mail'; state.mailSent='who'; state.mbOpen=null;
+  if(!state.whoTab) state.whoTab = 'addr';
+  render();
+  try{ $('pcMain').scrollTop=0; }catch(_){}
+  /* 담당 모름을 세려면 업무 칸을 읽어 와야 한다 — 한 번만 */
+  const need = mbNeedSlugs(MB_WHO_NA).filter(s=>s && !_mbMsgs[s]);
+  if(!need.length) return;
+  let left = need.length;
+  need.forEach(s=>loadMailBox(s, mbPageSize(), ()=>{
+    if(--left) return;
+    if(state.mailSent==='who'){ renderPCSide(); renderMailPage(); }
+  }));
+}
+function whoTab(t){ state.whoTab = t; renderMailPage(); }
+
+/* 「담당 모름」 메일을 «보낸이별»로 묶는다 — 많이 온 순 */
+function whoUnknownSenders(){
+  const by = {};
+  Object.keys(_mbMsgs||{}).forEach(slug=>{
+    const box = _mbMsgs[slug]||{};
+    const f = mbFolderBy(slug)||{};
+    Object.keys(box).forEach(uid=>{
+      const row = box[uid]; if(!row) return;
+      const v = Object.assign({}, row, { _slug:slug, _box:String(f.name||''), _key:slug+':'+uid });
+      if(!mbWhoScope(v)) return;
+      if(mbWhoOfRow(v)) return;
+      const em = String(v.e||'').trim().toLowerCase(); if(!em) return;
+      const o = by[em] = by[em] || { e:em, n:0, name:'', last:'', at:0, box:'' };
+      o.n++;
+      if(!o.name && v.f) o.name = String(v.f);
+      if(Number(v.d||0) > o.at){ o.at = Number(v.d||0); o.last = String(v.s||''); o.box = v._box; }
+    });
+  });
+  return Object.values(by).sort((a,b)=> b.n - a.n || b.at - a.at);
+}
+
+/* 이 회사(도메인·이름)에 이미 이어 둔 주소가 몇 개인가 */
+function whoAddrOfName(name){
+  const out = [];
+  const idx = mbWhoIndex();
+  const items = (typeof state!=='undefined' && state.items) ? state.items : {};
+  Object.keys(items).forEach(k=>{
+    const it = items[k]; if(!it) return;
+    if(ErpMatch._norm(it.company) !== ErpMatch._norm(name)) return;
+    const em = String(it.email||'').trim().toLowerCase();
+    if(em && out.indexOf(em) < 0) out.push(em);
+  });
+  return out;
+}
+
+function whoPageHtml(){
+  const tab = state.whoTab || 'addr';
+  const names = mbWhoNames();
+  const na = mbWhoNoneCount();
+  const hand = Object.keys(_mbOwner||{}).length;
+
+  let body = '';
+  if(tab === 'addr'){
+    const list = whoUnknownSenders();
+    const shown = list.slice(0, 200);
+    body = `<div class="dm-hint" style="text-align:left;padding:8px 2px 10px">
+        담당자를 못 찾은 보낸이 <b>${list.length.toLocaleString()}곳</b> · 메일 <b>${na.n.toLocaleString()}통</b>
+        — <b>많이 온 곳부터</b> 늘어놓았습니다. 위에서부터 이어 주시면 가장 빨리 줄어듭니다.
+        ${list.length>200?`<br><span style="color:#c0392b">아래 200곳만 보입니다 — 이어 주시면 다음 것이 올라옵니다</span>`:''}
+      </div>
+      <div class="dm-list">`;
+    if(!shown.length) body += `<div class="dm-none">담당자를 못 찾은 메일이 없습니다. 🎉</div>`;
+    shown.forEach(o=>{
+      body += `<div class="dm-row">
+        <span class="st" style="width:52px;text-align:center;color:#7b4bd1;font-weight:700">${o.n}통</span>
+        <span class="who" style="width:210px">${esc(o.e)}</span>
+        <span class="sub">${esc(o.name ? o.name+' · ' : '')}${esc(o.last||'(제목 없음)')}</span>
+        <span class="dm-from">📂 ${esc(o.box||'')}</span>
+        <span class="dm-who na" onclick="mbWhoAsk('${esc(o.e)}',event)"
+          title="누구 담당인지 정하면 이 ${o.n}통이 그 자리에서 잡힙니다">＋ 담당자 정하기</span>
+        <span class="at">${mbTime(o.at)}</span>
+      </div>`;
+    });
+    body += `</div>`;
+  } else {
+    const cos = (typeof ErpMatch!=='undefined' && ErpMatch.companies) ? ErpMatch.companies : [];
+    const only = state.whoMgr || '';
+    const rows = cos.filter(c=>c && c.name)
+      .map(c=>{
+        const rec = ErpMatch.byName[ErpMatch._norm(c.name)] || null;
+        return { name:c.name, who: rec && rec.main ? rec.main : '', addrs: whoAddrOfName(c.name) };
+      })
+      .filter(r=>r.who)
+      .filter(r=>!only || r.who === only)
+      .sort((a,b)=> a.addrs.length - b.addrs.length || String(a.name).localeCompare(String(b.name),'ko'));
+    const none = rows.filter(r=>!r.addrs.length).length;
+    body = `<div class="dm-hint" style="text-align:left;padding:8px 2px 10px">
+        담당자가 적힌 자문사 <b>${rows.length.toLocaleString()}곳</b> ·
+        그 가운데 <b style="color:#c0392b">이메일이 하나도 없는 곳 ${none.toLocaleString()}곳</b>
+        (없는 곳이 위로 옵니다)
+      </div>
+      <div class="dm-tools" style="border:none;height:auto;flex-wrap:wrap;gap:4px;padding-bottom:8px">
+        <button class="${!only?'on':''}" onclick="state.whoMgr='';renderMailPage()"
+          style="${!only?'background:#f2ecfd;color:#4c2a8f;font-weight:700':''}">전체</button>
+        ${names.map(n=>`<button onclick="state.whoMgr='${esc(n)}';renderMailPage()"
+          style="${only===n?'background:#f2ecfd;color:#4c2a8f;font-weight:700':''}">${esc(n)}</button>`).join('')}
+      </div>
+      <div class="dm-list">`;
+    if(!rows.length) body += `<div class="dm-none">${ErpMatch && ErpMatch.ready
+      ? '담당자가 적힌 자문사가 없습니다.' : '자문사 목록을 읽고 있습니다…'}</div>`;
+    rows.slice(0, 400).forEach(r=>{
+      body += `<div class="dm-row">
+        <span class="who" style="width:230px">${esc(r.name)}</span>
+        <span class="dm-who">👤 ${esc(r.who)}</span>
+        <span class="sub" style="color:${r.addrs.length?'#5b6068':'#c0392b'}">
+          ${r.addrs.length ? esc(r.addrs.join(' · ')) : '이메일이 없습니다'}</span>
+        <span class="dm-who na" onclick="whoAddPrompt('${esc(r.name)}','${esc(r.who)}')"
+          title="이 회사에서 오는 주소를 적어 두면 ${esc(r.who)} 담당으로 잡힙니다">＋ 주소 잇기</span>
+      </div>`;
+    });
+    body += `</div>`;
+  }
+
+  return `
+    <div class="dm-tools" style="border-bottom:1px solid #d5d7dc">
+      <button onclick="openMailBox(mbNow())" title="메일함으로 돌아갑니다">‹ 메일함</button>
+      <span class="dm-bar"></span>
+      <button onclick="whoTab('addr')"
+        style="${tab==='addr'?'background:#f2ecfd;color:#4c2a8f;font-weight:700':''}">
+        ① 많이 온 주소부터</button>
+      <button onclick="whoTab('co')"
+        style="${tab==='co'?'background:#f2ecfd;color:#4c2a8f;font-weight:700':''}">
+        ② 자문사부터</button>
+      <span class="sp"></span>
+      <span style="font-size:11.5px;color:#a8abb2">사람이 이어 둔 주소 ${hand.toLocaleString()}개</span>
+    </div>
+    <div class="dm-hint" style="text-align:left;padding:10px 2px 2px;line-height:1.7">
+      ⚠ 여기서 이은 것은 <b>우리 앱에만</b> 남습니다 — 다음메일도, 기업정보함도 바뀌지 않습니다.<br>
+      한 번 이으면 그 주소에서 오는 메일은 <b>다음부터 저절로</b> 그 담당자로 갑니다.
+    </div>
+    ${body}`;
+}
+/* 자문사 줄에서 주소를 적어 넣는다 */
+function whoAddPrompt(coName, who){
+  const em = prompt('「' + coName + '」 에서 오는 이메일 주소를 적어 주세요.\n\n'
+    + '담당: ' + who + '\n(이 주소에서 오는 메일이 ' + who + ' 담당으로 잡힙니다)', '');
+  if(em === null) return;
+  const v = String(em).trim().toLowerCase();
+  if(!v) return;
+  if(v.indexOf('@') < 1 || v.indexOf('.') < 0) return toast('이메일 주소가 아닌 것 같습니다 — 다시 적어 주세요', 7000);
+  mbWhoSet(v, who, false);
+}
+
+/* 대시보드 바꿔 끼우기 — 담당자 / 업무별 */
+function mbSetDash(d){
+  state.mbDash = (d==='who') ? 'who' : 'topic';
+  state.mbMineOpen = true;
+  /* 지금 보던 칸이 «다른 대시보드의 것»이면 그쪽 첫 칸으로 옮겨 준다.
+     ⚠ 안 옮기면 「담당자」를 눌렀는데 화면은 업무 칸 그대로라 아무 일도 안 한 것처럼 보인다. */
+  const cur = mbNow();
+  const isWho = String(cur).charAt(0) === MB_WHO_P;
+  if(d==='who' && !isWho){
+    const first = mbWhoList()[0];
+    return openMailBox(first ? MB_WHO_P + first.name : MB_WHO_NA);
+  }
+  if(d==='topic' && isWho){
+    const first = mbBins().filter(b=>!mbHidden(b.id))[0];
+    if(first) return openMailBox(MB_BIN_P + first.id);
+  }
+  renderPCSide(); renderMailPage();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   이 주소는 누구 담당인가 — 사람이 한 번 정해 주는 자리 (대표 지시 2026-08-26)
+   ══════════════════════════════════════════════════════════════════════════
+   ⚠ 이것이 「담당 모름」을 줄이는 유일한 길이다. 자문사 «담당자의 개인 주소»
+     (naver·hanmail)는 기업정보함에도 기업정보에도 적힌 곳이 없다 — 사람만 안다.
+   ⚠ 한 번 정하면 config/mailWho 에 쌓여 «다음부터 저절로» 간다(mbWhoOfRow ①·③).
+   ⚠ 「이 회사 전체」는 도메인으로 잇는 것이다. 공용 도메인(naver 등)에는 안 내놓는다 —
+     naver 를 한 사람에게 주면 온 세상이 그 사람 것이 된다. */
+function mbWhoAsk(email, ev){
+  if(ev) ev.stopPropagation();
+  const em = String(email||'').trim().toLowerCase(); if(!em) return;
+  const m = $('folderMenu'); if(!m) return;
+  const d = mbDomOf(em);
+  const pub = !d || MB_PUB_DOM.indexOf(d) >= 0;
+  const names = mbWhoNames();
+  const now0 = _mbOwner ? String(_mbOwner[mbWhoKey(em)]||'') : '';
+  m.innerHTML = `<div class="fmhead">${esc(em)} <span>누구 담당입니까</span></div>
+    <div class="fmlist">${names.map(n=>`
+      <div class="fmi" onclick="mbWhoSet('${esc(em)}','${esc(n)}',false)">
+        ${now0===n?'✔ ':'👤 '}${esc(n)}</div>`).join('')}</div>
+    ${pub ? `<div class="dm-side-hint" style="padding:6px 9px">
+        ⚠ ${esc(d||'주소')} 는 «개인» 메일이라 회사 전체로는 잇지 않습니다</div>`
+      : `<div class="fmi" style="border-top:1px solid #eee;color:#7b4bd1;font-size:12px"
+          onclick="mbWhoAskDom('${esc(em)}')">🏢 ${esc(d)} «전체»를 한 사람에게 ›
+          <small>그 회사에서 오는 메일이 모두 그 담당자로 갑니다</small></div>`}
+    ${now0 ? `<div class="fmi danger" onclick="mbWhoSet('${esc(em)}','',false)">↩ 정한 것 지우기
+        <small>다시 기계가 짚습니다(기업정보함 · 도메인)</small></div>` : ''}`;
+  mbPlaceMenu(m, ev);
+}
+function mbWhoAskDom(email){
+  const d = mbDomOf(email); if(!d) return;
+  const m = $('folderMenu'); if(!m) return;
+  const names = mbWhoNames();
+  m.innerHTML = `<div class="fmhead">${esc(d)} <span>이 회사 전체를</span></div>
+    <div class="fmlist">${names.map(n=>`
+      <div class="fmi" onclick="mbWhoSet('${esc(email)}','${esc(n)}',true)">🏢 ${esc(n)}</div>`).join('')}</div>`;
+}
+/* 고를 수 있는 담당자 — 자문사를 맡은 사람 + 이미 정해 둔 사람 */
+function mbWhoNames(){
+  const s = {};
+  const idx = mbWhoIndex();
+  Object.keys(idx.byAddr).forEach(a=>{ s[idx.byAddr[a]] = 1; });
+  Object.keys(_mbOwner||{}).forEach(k=>{ const w = String(_mbOwner[k]||''); if(w) s[w] = 1; });
+  return Object.keys(s).sort((a,b)=>a.localeCompare(b,'ko'));
+}
+/* 정해 준 것을 적는다 — 낱칸으로. 통째로 덮어쓰면 다른 PC 에서 방금 정한 것이 사라진다. */
+function mbWhoSet(email, who, byDomain){
+  const em = String(email||'').trim().toLowerCase();
+  const key = mbWhoKey(byDomain ? ('@' + mbDomOf(em)) : em);
+  const nm  = String(who||'').trim();
+  closeFolderMenu();
+  _mbOwner = _mbOwner || {};
+  const before = _mbOwner[key];
+  if(nm) _mbOwner[key] = nm; else delete _mbOwner[key];
+  renderPCSide(); renderMailPage();
+  const what = byDomain ? ('🏢 ' + mbDomOf(em) + ' 전체') : ('👤 ' + em);
+  const msg = nm ? `${what} → 「${nm}」 담당으로 이었습니다 — 다음부터 저절로 갑니다`
+                 : `↩ ${what} 의 정한 것을 지웠습니다`;
+  if(typeof Store==='undefined' || Store.mode!=='firebase') return toast(msg, 6000);
+  const ref = firebase.database().ref(DB_ROOT+'/config/mailWho/'+key);
+  (nm ? ref.set(nm) : ref.remove())
+    .then(()=>toast(msg, 6000))
+    .catch(e=>{
+      if(before===undefined) delete _mbOwner[key]; else _mbOwner[key] = before;
+      renderPCSide(); renderMailPage();
+      toast('잇지 못했습니다 — '+((e&&e.message)||e), 9000);
+    });
+}
 
 /* 서버에 시키고, 끝나면 폴더 목록을 다시 읽는다.
    ⚠ 다시 읽지 않으면 옆줄이 옛 이름·없는 폴더를 그대로 들고 있다. */
@@ -11787,7 +12256,7 @@ function openMailBox(id){
     loadMaterials(()=>{ if(state.view==='mail') renderPCSide(); });
   if(_mbFolders===null){ loadMailFolders(()=>openMailBox(id)); return; }
   /* 푸른 분류 칸을 그리려면 쪽지(_mbPut)가 있어야 한다 — 없으면 옮긴 메일이 안 보인다 */
-  if(_mbBins===null || _mbPut===null){ mbEnsureBins(()=>openMailBox(id)); return; }
+  if(_mbBins===null || _mbPut===null || _mbOwner===null){ mbEnsureBins(()=>openMailBox(id)); return; }
   /* 전체메일·우리 칸은 여러 폴더를 합친다 — 아직 안 읽은 폴더를 채워 넣는다 */
   const need = mbNeedSlugs(id).filter(s=>s && !_mbMsgs[s]);
   if(!need.length){ renderPCSide(); renderMailPage(); return; }
@@ -12083,9 +12552,34 @@ function mbGo(id){ state.mbDrawerOpen = false; openMailBox(id); }
 
 /* 옮긴 메일 옆의 「다음: ○○」 꼬리표 — 다음메일에서는 그대로 그 자리에 있다는 표시.
    ⚠ 원본 자리와 전체메일에서는 붙이지 않는다. 거기서는 그 폴더에 있는 것이 당연하다. */
+/* ── 담당자 대시보드가 목록에 남기는 두 꼬리표 (대표 지시 2026-08-26) ──
+   · 담당자 칸에서는 «어느 업무 칸의 메일인가»를 적는다 — 안 적으면 사람 이름만 남는다.
+   · 업무 칸에서는 «누구 담당인가»를 적고, 모르면 눌러서 정할 수 있게 한다.
+     ⚠ 여기가 「담당 모름」을 줄이는 자리다. 따로 화면에 들어가야 정할 수 있으면 아무도 안 한다. */
+function mbWhoTag(v){
+  const id = mbNow();
+  if(id.charAt(0)===MB_RAW_P) return '';
+  const em = String(v.e||'').trim().toLowerCase();
+  /* 담당자 칸 안에서는 업무 칸을 적어 준다 */
+  if(id.charAt(0)===MB_WHO_P && id !== MB_WHO_NA){
+    const b = mbBinOfRow(v);
+    return b ? `<span class="dm-from" title="이 메일은 「${esc(b.name)}」 칸에 그대로 있습니다">📂 ${esc(b.name)}</span>` : '';
+  }
+  if(!em) return '';
+  const w = mbWhoOfRow(v);
+  if(w) return `<span class="dm-who" onclick="event.stopPropagation();mbWhoAsk('${esc(em)}',event)"
+      title="${esc(w)} 담당 — 눌러서 바꿀 수 있습니다">👤 ${esc(w)}</span>`;
+  /* 모르는 것은 «업무 칸»과 「담당 모름」에서만 물어본다. 전체메일에까지 노란 딱지가
+     줄줄이 붙으면 목록이 시끄럽다. */
+  if(id.charAt(0)===MB_BIN_P || id === MB_WHO_NA)
+    return `<span class="dm-who na" onclick="event.stopPropagation();mbWhoAsk('${esc(em)}',event)"
+      title="이 주소가 누구 담당인지 한 번 정해 주시면 다음부터 저절로 갑니다">＋ 담당자</span>`;
+  return '';
+}
 function mbFromTag(v){
   const id = mbNow();
   if(id.charAt(0)===MB_RAW_P || id==='*all' || id==='*tome') return '';
+  if(id.charAt(0)===MB_WHO_P) return '';        /* 담당자 칸은 mbWhoTag 가 적는다 */
   if(!mbPutOf(v._key)) return '';
   const f = mbFolderBy(v._slug);
   const nm = f ? (MB_KIND_LABEL[f.kind] || String(f.name||f.path)) : '';
@@ -12119,6 +12613,7 @@ function mbBoxHtml(){
       <span class="sub" onclick="mbOpenMsg('${v._slug}','${v.u}')">${esc(v.s||'(제목 없음)')}</span>
       ${/* 옮긴 메일에는 «다음메일에서는 어디 있나»를 적어 준다. 이것이 없으면 다음메일을
             열었을 때 그 메일이 사라진 줄 안다. */''}
+      ${mbWhoTag(v)}
       ${mbFromTag(v)}
       ${(mbNow()==='*all'||mbNow()==='*tome')?`<span class="box">${esc(v._box||'')}</span>`:''}
       <span class="at">${mbTime(v.d)}</span>
