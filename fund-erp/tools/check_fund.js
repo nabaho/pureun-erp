@@ -598,6 +598,46 @@ ok('보령시는 보령세무서', src.includes("'충남 보령시':'보령세�
 ok('세금과공과 계정', src.includes("'세금과공과':'비용'"));
 ok('격려금 계정', src.includes("'격려금':'비용'"));
 ok('고유목적사업준비금환입 계정(수익)', src.includes("'고유목적사업준비금환입':'수익'"));
+/* ══ 서식 자동 채움 ══ 라벨 옆 칸에 기금 데이터를 넣는 자리.
+   설립인가신청서 기준으로 넓혔다(값 6개 → 16곳). */
+ok('대표자는 명부의 이사장 줄에서 온다', src.includes('function _boss(f){')
+  && src.includes("return /이사장/.test(x.role||'');"));
+// 임원 명부에 생년월일·직책이 없으면 위원 칸을 손으로 쳐야 한다
+ok('임원 명부가 생년월일·직책·주소를 담는다', src.includes("class=\"off-birth\"")
+  && src.includes("class=\"off-title\"") && src.includes("class=\"off-addr\"")
+  && src.includes("['birth','title','addr'].forEach"));
+/* 반복 줄(근로자측 3줄·사용자측 3줄)은 «라벨 다음 칸» 방식으로 못 채운다 */
+ok('위원 격자를 따로 채운다', src.includes('function fillCommittee(root,f){')
+  && src.includes("['근로자측','사용자측'].forEach"));
+/* 위원 격자를 «먼저» 채우고 표를 남겨야, 뒤이은 라벨 채우기가 덮어쓰지 않는다.
+   「생년월일」·「직책」 라벨이 대표자란에도 있어서 실제로 덮어썼다. */
+ok('위원 격자를 먼저 채우고 표를 남긴다', /var d=document\.createElement\('div'\); d\.innerHTML=html;[\s\S]{0,120}?fillCommittee\(d,f\);/.test(src)
+  && src.includes("tr.setAttribute('data-cm','1');")
+  && src.includes("if(tr.getAttribute('data-cm')) return;"));
+{
+  /* ⚠ 이것이 핵심이다. 사람에 관한 값(대표자 이름·생일·주소·직책)은 «어느 칸 아래인지»를
+     걸어야 한다. 안 걸었더니 「주소」가 등록면허세 신고서(납세자 주소)와
+     임대차계약서(임대인·임차인 주소)에까지 대표자 개인 주소로 들어갔다. */
+  const i0 = src.indexOf('var FORM_FILL=['), i1 = src.indexOf('];', i0);
+  const blk = src.slice(i0, i1);
+  const rows = [...blk.matchAll(/\[(\/[^\/]+\/),\s*function\(f\)\{return ([^;]+);\}(,\s*\/[^\/]+\/)?\]/g)];
+  ok('채움 규칙을 읽었다 (' + rows.length + '개)', rows.length >= 12);
+  const bare = rows.filter(m => /_boss\(f\)/.test(m[2]) && !m[3]);
+  ok('사람에 관한 값은 칸이 걸려 있다' + (bare.length ? ' — ' + bare.map(m => m[1]).join(', ') : ''),
+    bare.length === 0);
+  ok('칸 걸기를 실제로 본다', src.includes('if(FORM_FILL[k][2] && !FORM_FILL[k][2].test(sect)) break;'));
+}
+// 분사무소의 「소재지」에 본사 주소를 넣으면 안 된다
+ok('분사무소는 건너뛴다', src.includes("if(/분사무소/.test(sect)) return;")
+  && src.includes("var sp=parseInt(cells[0].getAttribute('rowspan')||'1',10);"));
+/* 이 서식은 라벨과 적는 자리가 «한 칸»이다(명칭 칸이 colspan 13) —
+   옆 빈 칸만 찾으면 아무것도 안 채워진다 */
+ok('한 칸짜리 서식은 라벨 뒤에 이어 적는다', src.includes("s.className='fv'; s.textContent=v;")
+  && /\.fv\{margin-left:14px;font-weight:600\}/.test(src));
+// 신청 날짜·신청인은 정해져 있다 — 손으로 칠 까닭이 없다
+ok('신청 날짜와 신청인을 채운다', /\^20\\s\*년\\s\*월\\s\*일\$/.test(src)
+  && /\/\^신청인\\s\*대표\$\/\.test\(t\)/.test(src));
+
 /* ══ 서식 단추는 «그 서식으로» 가야 한다 ══
    갈 곳을 «누른 서식»이 아니라 «화면의 단계»(S.dbPhase)로 정하고 있었다.
    그래서 지원금 제출서류의 [서식]을 눌러도 ①인가가 열려, 거기서 다시 찾아야 했다. */

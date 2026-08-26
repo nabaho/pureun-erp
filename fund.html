@@ -2761,7 +2761,7 @@ function dgDocCss(){ return "@page{size:A4 portrait;margin:"+A4_PAD+"}"
   +".right{text-align:right}.center{text-align:center}table{border-collapse:collapse;width:100%;max-width:100%;margin:10px 0;table-layout:fixed}"
   +"td,th{border:1px solid #333;padding:5px 7px;font-size:12.5px;word-break:break-all;overflow-wrap:anywhere;vertical-align:middle}th{background:#f3f3f3;font-weight:700}"
   +"td>table{margin:0;width:100%;border:none}"
-  +".sign{margin-top:30px;text-align:right;line-height:2.4}.note{color:#888;font-size:11px}"
+  +".sign{margin-top:30px;text-align:right;line-height:2.4}.note{color:#888;font-size:11px}.fv{margin-left:14px;font-weight:600}"
   +".dgn{padding-left:1.5em;text-indent:-1.5em}.dgb{padding-left:3em;text-indent:-1.5em}blockquote{margin:0 0 0 2em}"
   // 서식 A4 조판(화면과 같은 규칙 — 미리보기와 인쇄물이 어긋나지 않게)
   +".fmtitle{text-align:center;font-size:20px;font-weight:700;letter-spacing:6px;margin:26px 0 20px}"
@@ -2793,6 +2793,7 @@ function dgDocCssIn(){ var s="#doced";
   +s+" .right{text-align:right}"+s+" .center{text-align:center}"+s+" table{border-collapse:collapse;width:100%;max-width:100%;margin:10px 0;table-layout:fixed}"
   +s+" td,"+s+" th{border:1px solid #333;padding:4px 5px;font-size:12px;word-break:break-all;overflow-wrap:anywhere;vertical-align:middle}"+s+" th{background:#f3f3f3;font-weight:700}"
   +s+" .sign{margin-top:30px;text-align:right;line-height:2.4}"+s+" .note{color:#888;font-size:11px}"
+  +s+" .fv{margin-left:14px;font-weight:600}"
   // 원본 변환 서식: 중첩표(처리절차 등) 밀착·빈 칸 높이 확보
   +s+" td>table{margin:0;width:100%;border:none}"+s+" td{height:1.9em}"
   // 한글 원문 정렬: 표식 줄 내어쓰기(되돌아가는 줄을 표식 뒤에 맞춤) · 「○」류는 한 단계 들여쓰기
@@ -3077,16 +3078,65 @@ function charterSane(f){
 /* ── 원본 .hwp에서 변환한 법정서식(fund_forms.js: window.HWP_FORMS) ──
    03_과거자료 원본을 파싱해 문단·표 격자를 그대로 옮긴 템플릿. 라벨 옆 빈 칸에 기금 데이터를 채운다.
    구조가 원본과 동일하므로 "폴더 서식과 다르다" 문제가 없다. (정밀 인쇄는 여전히 엑셀/HWP 권장) */
-var FORM_FILL=[   // [라벨 정규식, 값 함수] — 표에서 라벨 셀 다음의 빈 셀에 채움
+/* 대표자 = 명부의 «이사장» 줄. 대표자 정보를 따로 두지 않는다 —
+   두 곳에 두면 한쪽만 고쳐져 서식마다 다른 사람이 찍힌다. */
+function _boss(f){
+  var o=_officersOf(f).filter(function(x){ return /이사장/.test(x.role||''); })[0];
+  return o||{ name:(f&&f.chairman)||'' };
+}
+/* 접수번호·접수일·처리기간은 «관청이 적는» 칸이다 — 우리가 채우면 안 된다.
+   빈 채로 두는 것이 맞아서, 값 함수가 빈 문자열을 돌려준다(라벨을 아는 것과 채우는 것은 다르다). */
+/* [라벨 정규식, 값 함수, «어느 칸 아래일 때만»(생략하면 어디서나)]
+   ⚠ 세 번째가 없으면 같은 라벨이 다른 뜻으로 쓰인 서식에도 들어간다.
+     실제로 그랬다 — 「주소」에 대표자 개인 주소를 넣었더니 등록면허세 신고서(납세자 주소)와
+     임대차계약서(임대인·임차인 주소)에까지 들어갔다. 사람에 관한 값은 반드시 칸을 건다. */
+var FORM_FILL=[
   [/^명\s*칭$/, function(f){return f.name;}],
   [/^주사무소\s*소재지$/, function(f){return f.address;}],
   [/^소재지$/, function(f){return f.address;}],
   [/^전화번호$/, function(f){return f.phone;}],
-  [/^성명\(한글\)$/, function(f){return f.chairman;}],
-  [/^생년월일$/, function(f){return '';}],
-  [/^직\s*책$/, function(f){return f.chairman?'이사장':'';}],
-  [/^접수일$/, function(f){return '';}]
+  [/^성명\(한글\)$/, function(f){return _boss(f).name||f.chairman;}, /대표자/],
+  [/^생년월일$/, function(f){return _boss(f).birth||'';}, /대표자/],
+  [/^주\s*소$/, function(f){return _boss(f).addr||'';}, /대표자/],
+  [/^직\s*책$/, function(f){return _boss(f).title||(f.chairman?'이사장':'');}, /대표자/],
+  [/^접수일$/, function(f){return '';}],          // 관청 몫
+  [/^인가번호$/, function(f){return f.inka_no;}],
+  [/^법인등록번호$/, function(f){return f.corp_reg_no;}],
+  [/^고유번호$/, function(f){return f.tax_id_no;}],
+  [/^사업자등록번호$/, function(f){return f.tax_id_no;}]
 ];
+/* ── 설립준비위원회 위원 격자 ──
+   라벨 다음 칸을 채우는 방식으로는 «반복 줄»을 못 채운다. 원본 격자가 이렇다:
+     [위원회] [근로자측(3줄)] [성명(3줄)] ▢ [생년월일(3줄)] ▢ [직책(3줄)] ▢
+              (둘째·셋째 줄은 ▢ 셋뿐)
+   그래서 「근로자측/사용자측」 라벨을 만나면 그 줄부터 세 줄을 «명부 차례대로» 채운다. */
+function fillCommittee(root,f){
+  var sideOf=function(o){ var r=String(o.role||'');
+    return /사용자/.test(r)?'사용자측':(/근로자/.test(r)?'근로자측':''); };
+  var pick=function(side){ return _officersOf(f).filter(function(o){ return sideOf(o)===side; }); };
+  var trs=[].slice.call(root.querySelectorAll('tr'));
+  ['근로자측','사용자측'].forEach(function(side){
+    var at=-1;
+    for(var i=0;i<trs.length;i++){
+      var t0=[].slice.call(trs[i].children).map(function(c){ return (c.textContent||'').replace(/\s/g,''); });
+      if(t0.indexOf(side)>=0){ at=i; break; }
+    }
+    if(at<0) return;
+    var list=pick(side);
+    for(var k=0;k<3;k++){
+      var tr=trs[at+k]; if(!tr) break;
+      /* 이 줄은 위원 격자다 — 아래 라벨 채우기가 손대면 안 된다.
+         「생년월일」·「직책」 라벨이 대표자란에도 있어, 표시가 없으면 서로 덮어쓴다. */
+      tr.setAttribute('data-cm','1');
+      var o=list[k]; if(!o) break;
+      // 그 줄의 «빈 칸»만 골라 성명·생년월일·직책 차례로 넣는다
+      var blanks=[].slice.call(tr.children).filter(function(c){ return !(c.textContent||'').trim(); });
+      if(blanks.length<3) continue;
+      var v=[o.name||'', o.birth||'', o.title||''];
+      for(var j=0;j<3;j++) if(v[j]) blanks[j].textContent=v[j];
+    }
+  });
+}
 function hwpFormHTML(kind,f,sites){
   var ftype=(f.fund_type==='사내')?'사내':'공동';
   var key=(kind==='charter'&&ftype==='사내')?'charter_sane':kind;   // 정관은 공동/사내 원본이 다름
@@ -3096,17 +3146,53 @@ function hwpFormHTML(kind,f,sites){
   if(ftype==='사내') html=html.replace(/\[ \] 사내근로복지기금법인/g,'[V] 사내근로복지기금법인')
                               .replace(/\[V\] 공동근로복지기금법인/g,'[ ] 공동근로복지기금법인');
   var d=document.createElement('div'); d.innerHTML=html;
-  var tds=d.querySelectorAll('td');
-  for(var i=0;i<tds.length;i++){
-    var t=(tds[i].textContent||'').trim(); if(!t) continue;
-    for(var k=0;k<FORM_FILL.length;k++){
-      if(!FORM_FILL[k][0].test(t)) continue;
-      var v=FORM_FILL[k][1](f); if(!v) break;
-      var nx=tds[i].nextElementSibling;
-      if(nx && !(nx.textContent||'').trim()){ nx.textContent=v; }
-      break;
+  /* 위원 격자를 «먼저» 채운다 — 그 줄에 표를 남겨야 아래 라벨 채우기가 비껴간다 */
+  fillCommittee(d,f);
+  /* 사람이 읽듯 «지금 어느 칸 아래인지»를 따라간다.
+     분사무소 칸의 「소재지」에 본사 주소를 넣으면 안 되기 때문이다
+     (원본은 왼쪽 칸이 rowspan 으로 여러 줄을 덮는다). */
+  var sect='', left=0;
+  [].slice.call(d.querySelectorAll('tr')).forEach(function(tr){
+    var cells=[].slice.call(tr.children);
+    if(left>0){ left--; } else if(cells.length){
+      var sp=parseInt(cells[0].getAttribute('rowspan')||'1',10);
+      if(sp>1){ sect=(cells[0].textContent||'').replace(/\s/g,''); left=sp-1; }
+      else if(!/^\s*$/.test(cells[0].textContent||'')) sect='';
     }
-  }
+    if(tr.getAttribute('data-cm')) return;                  // 위원 격자는 건드리지 않는다
+    if(/분사무소/.test(sect)) return;                        // 분사무소는 본사 값과 다른 곳이다
+    cells.forEach(function(td){
+      var t=(td.textContent||'').trim(); if(!t) return;
+      for(var k=0;k<FORM_FILL.length;k++){
+        if(!FORM_FILL[k][0].test(t)) continue;
+        if(FORM_FILL[k][2] && !FORM_FILL[k][2].test(sect)) break;   // 그 칸 아래가 아니면 안 넣는다
+        var v=FORM_FILL[k][1](f); if(!v) break;
+        var nx=td.nextElementSibling;
+        if(nx && !(nx.textContent||'').trim()){ nx.textContent=v; }
+        else {
+          /* 이 서식은 라벨과 «적는 자리»가 한 칸이다(명칭 칸이 colspan 13).
+             옆 빈 칸이 없으면 라벨 오른쪽에 이어 적는다 — 원본 격자를 안 건드린다. */
+          var s=document.createElement('span');
+          s.className='fv'; s.textContent=v;
+          td.appendChild(s);
+        }
+        break;
+      }
+    });
+  });
+  /* 신청 날짜와 신청인은 «오늘·이 기금»이 정해져 있다 — 손으로 칠 까닭이 없다.
+     날짜 칸은 원본이 「20 년 월 일」 처럼 비워 둔 글자라, 라벨 다음 칸 방식으로는 못 찾는다. */
+  var _b=_boss(f), today=new Date();
+  [].slice.call(d.querySelectorAll('td,p,div')).forEach(function(el){
+    if(el.children.length) return;                       // 글자만 든 칸에서만
+    var t=(el.textContent||'').replace(/\s+/g,' ').trim();
+    if(/^20\s*년\s*월\s*일$/.test(t))
+      el.textContent=today.getFullYear()+'년 '+(today.getMonth()+1)+'월 '+today.getDate()+'일';
+    else if(/^신청인\s*대표$/.test(t) && _b.name){
+      var nx=el.nextElementSibling;
+      if(nx && !(nx.textContent||'').trim()) nx.textContent=_b.name;
+    }
+  });
   return "<p class='note'>※ <b>원본 서식 그대로 변환</b>(03_과거자료 .hwp) — 라벨 옆 칸은 기금 데이터 자동 채움. 빈칸은 수기 기입. 이 창에서 바로 수정하세요.</p>"+d.innerHTML;
 }
 /* 감사 대상 회계연도 — 첫해는 «설립인가일부터»다(참살이 2019: 2019.08.14.~12.31.).
@@ -4464,7 +4550,12 @@ function officerPanel(f){
   return '<div class="panel"><div class="row"><h2 style="margin:0">👥 임원 명부</h2>'+warn+hlp('officers')+'</div>'
     +'<p class="muted" style="font-size:11.5px;margin:6px 0 10px">등기부등본 「임원에 관한 사항」을 그대로 옮기세요. '
     +'<b>감사보고서는 감사가 각자 한 장씩</b> 쓰므로 노·사 감사를 모두 넣어야 두 장이 나옵니다.</p>'
-    +'<div style="overflow-x:auto"><table><thead><tr><th style="width:190px">직위</th><th>성명</th><th style="width:44px"></th></tr></thead>'
+    /* 생년월일·직책·주소는 «설립인가신청서(별지 제7호)»가 위원마다 요구하는 칸이다.
+       여기 없으면 그 서식을 손으로 채워야 한다 — 그래서 사람 한 줄에 함께 담는다.
+       ⚠ 개인정보다. 비워 두어도 되고, 채우면 서식에 자동으로 들어간다. */
+    +'<div style="overflow-x:auto"><table><thead><tr><th style="width:150px">직위</th><th style="width:110px">성명</th>'
+    +'<th style="width:120px">생년월일</th><th style="width:120px">직책<span class="muted" style="font-weight:400;font-size:10px">(회사)</span></th>'
+    +'<th>주소<span class="muted" style="font-weight:400;font-size:10px">(대표자만)</span></th><th style="width:44px"></th></tr></thead>'
     +'<tbody id="off-rows">'+(rows.length?rows.map(_offRow).join(''):_offRow({role:'이사장',name:f.chairman||''}))+'</tbody></table></div>'
     /* 저장 단추를 여기 또 두지 않는다 — 위 [기금 정보]의 [💾 저장]이 명부까지 함께 보낸다.
        같은 일을 하는 단추가 한 화면에 둘이면 «따로 저장해야 하나» 하고 망설이게 된다. */
@@ -4479,6 +4570,9 @@ function _offRow(o){
   if(o.role&&OFFICER_ROLES.indexOf(String(o.role))<0) opts='<option selected>'+esc(o.role)+'</option>'+opts;
   return '<tr><td><select class="off-role" onchange="markDirty()">'+opts+'</select></td>'
     +'<td><input class="off-name" type="text" value="'+esc(o.name||'')+'" oninput="markDirty()"></td>'
+    +'<td><input class="off-birth" type="text" placeholder="1980-01-01" value="'+esc(o.birth||'')+'" oninput="markDirty()"></td>'
+    +'<td><input class="off-title" type="text" placeholder="부장·대표이사" value="'+esc(o.title||'')+'" oninput="markDirty()"></td>'
+    +'<td><input class="off-addr" type="text" value="'+esc(o.addr||'')+'" oninput="markDirty()"></td>'
     +'<td><button onclick="this.closest(\'tr\').remove();markDirty()" title="이 줄 지우기">✕</button></td></tr>';
 }
 function addOfficerRow(){ var b=$('off-rows'); if(!b)return; b.insertAdjacentHTML('beforeend',_offRow({})); markDirty(); }
@@ -4486,8 +4580,12 @@ function addOfficerRow(){ var b=$('off-rows'); if(!b)return; b.insertAdjacentHTM
 function _readOfficers(){
   var b=$('off-rows'); if(!b) return null;
   return [].slice.call(b.querySelectorAll('tr')).map(function(tr){
-    var r=tr.querySelector('.off-role'), n=tr.querySelector('.off-name');
-    return { role:(r&&r.value)||'', name:((n&&n.value)||'').trim() };
+    var g=function(c){ var e=tr.querySelector(c); return ((e&&e.value)||'').trim(); };
+    /* 빈 칸은 «키를 두지 않는다» — 빈 문자열을 넣으면 실시간DB 에 쓸모없는 칸이 쌓이고,
+       나중에 «있는데 비었다»와 «아예 없다»가 구별되지 않는다. */
+    var o={ role:(tr.querySelector('.off-role')||{}).value||'', name:g('.off-name') };
+    ['birth','title','addr'].forEach(function(k){ var v=g('.off-'+k); if(v) o[k]=v; });
+    return o;
   }).filter(function(o){ return o.name; });
 }
 /* 서류 끌어놓기 → 판독 → 값 확인 후 폼에 반영 (저장은 [💾 저장] 눌러야 확정) */
