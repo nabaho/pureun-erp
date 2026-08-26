@@ -157,8 +157,10 @@ test('★ 종료 토글이 폴더·검색과 함께 좁혀진다 — 덮어쓰�
 /* ══════ 화면에 걸린 단추 ══════ */
 
 test('★ 탭 줄에 종료 토글 단추가 있다', () => {
-  const fn = fnBody('renderCoFTabsHtml');
-  assert.match(fn, /coOnlyClosed/, '탭 줄에서 토글을 안 켠다');
+  /* 2026-08-26: 탭 칩과 도구가 갈라졌다 — 토글은 도구 쪽(coToolsHtml)에 있다.
+     탭 줄에 «나온다»는 뜻은 그대로다: renderCoFTabsHtml 이 둘을 이어 붙인다. */
+  const fn = fnBody('coToolsHtml');
+  assert.match(fn, /coOnlyClosed/, '도구줄에서 토글을 안 켠다');
   assert.match(fn, /coClosedCount\(\)/, '개수를 안 보여 준다');
   assert.match(fn, /class="pctool/, '기존 토글 단추 모양(.pctool)을 안 쓴다');
 });
@@ -176,13 +178,17 @@ test('종료가 0곳이면 단추가 안 보인다 — 늘 있는 회색 단추�
     coNoBizCount: () => 0,
     /* 2026-08-24(3순위): 탭 줄에 「정보부족」 토글도 붙었다 — 이 검사들은 그 부분을
        안 보므로 0곳으로 둔다(안 넣으면 renderCoFTabsHtml 이 던진다). */
-    coIncompleteCount: () => 0 };
+    coIncompleteCount: () => 0,
+    /* 2026-08-26: 도구줄이 「전체」에서도 나오게 갈라지면서, 개수 글귀도 이 줄에 붙었다.
+       이 검사들은 그 글귀를 안 보므로 빈 대역을 준다(안 넣으면 coToolsHtml 이 던진다). */
+    coPagerHtml: () => '', coPage: () => ({ page:0, pages:1, total:0, from:0, to:0 }),
+  };
   vm.createContext(ctx);
   const a = '/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════';
   const b = '/* ══════ 폴더 안의 탭 — 화면 ══════ */';
   const i = src.indexOf(a), j = src.indexOf(b);
   vm.runInContext(src.slice(i, j) + '\n' + fnBody('coFilteredList') + '\n'
-    + fnBody('coClosedCount') + '\n' + fnBody('renderCoFTabsHtml'), ctx);
+    + fnBody('coClosedCount') + '\n' + fnBody('coFTabChipsHtml') + '\n' + fnBody('coToolsHtml') + '\n' + fnBody('renderCoFTabsHtml'), ctx);
   const h = ctx.renderCoFTabsHtml();
   assert.equal(h.indexOf('🚪'), -1,
     '★ 0곳이어도 단추가 늘 보이면 무엇을 누르라는 건지 모른다');

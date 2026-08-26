@@ -64,7 +64,11 @@ function loadTabsHtml(over){
     coNoBizCount: () => 0,
     /* 2026-08-24(3순위): 탭 줄에 「정보부족」 토글도 붙었다 — 이 검사들은 그 부분을
        안 보므로 0곳으로 둔다(안 넣으면 renderCoFTabsHtml 이 던진다). */
-    coIncompleteCount: () => 0 };
+    coIncompleteCount: () => 0,
+    /* 2026-08-26: 도구줄이 「전체」에서도 나오게 갈라지면서, 개수 글귀도 이 줄에 붙었다.
+       이 검사들은 그 글귀를 안 보므로 빈 대역을 준다(안 넣으면 coToolsHtml 이 던진다). */
+    coPagerHtml: () => '', coPage: () => ({ page:0, pages:1, total:0, from:0, to:0 }),
+  };
   vm.createContext(ctx);
   vm.runInContext(src.slice(i, j) + '\n' + src.slice(r, rEnd), ctx);
   return ctx;
@@ -246,12 +250,19 @@ test('★ 탭 이름은 onclick 에 안 들어간다 — 따옴표가 든 이름
   assert.match(h, /오&#39;늘/, '이름이 아예 안 보인다');
 });
 
-test('★ 폴더를 안 골랐으면 칩이 하나도 없다 — 탭은 폴더에 딸린다', () => {
+test('★ 폴더를 안 골랐으면 «칩»이 하나도 없다 — 탭은 폴더에 딸린다', () => {
+  /* ⚠ 2026-08-26: 예전에는 이 줄이 통째로 빈 값이었고 이 검사가 그것을 봤다.
+     그런데 그 바람에 「전체」에서 개수 고르기·종료·번호없음·정보부족이 다 사라졌다.
+     이제 «칩»만 폴더에 딸린다 — 도구줄은 늘 나온다. 그래서 빈 문자열이 아니라
+     «칩이 없다»를 본다. 빈 값으로 되돌리면 그 고장이 다시 온다. */
   const c = loadTabsHtml(Object.assign({}, TABS_FIXTURE, { state:{ coFolder:'' } }));
-  assert.equal(c.renderCoFTabsHtml(), '', '폴더 없이도 탭 칩이 나온다');
+  const h = c.renderCoFTabsHtml();
+  assert.equal(h.indexOf('＃ 전체'), -1, '폴더 없이도 탭 칩이 나온다');
+  assert.equal(h.indexOf('＋ 탭 만들기'), -1, '폴더 없이 탭을 만들라고 하면 안 된다');
+  assert.equal(c.coFTabChipsHtml ? typeof c.coFTabChipsHtml : 'function', 'function');
   /* 없는 폴더를 가리키고 있어도 터지지 않는다 */
   const c2 = loadTabsHtml(Object.assign({}, TABS_FIXTURE, { state:{ coFolder:'없는폴더' } }));
-  assert.equal(c2.renderCoFTabsHtml(), '');
+  assert.equal(c2.renderCoFTabsHtml().indexOf('＃ 전체'), -1);
 });
 
 test('★ 고른 탭·「＃ 전체」가 켜진 것으로 보인다', () => {

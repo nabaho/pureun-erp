@@ -219,7 +219,8 @@ test('★ 자동으로 이어 붙이지 않는다 — 사람이 정할 일이다
 /* ══════ ⑥ 화면에 걸려 있나 ══════ */
 
 test('탭 줄에 「번호 없음」 토글이 있다', () => {
-  const fn = fnBody('renderCoFTabsHtml');
+  /* 2026-08-26: 탭 칩과 도구가 갈라졌다 — 토글은 도구 쪽(coToolsHtml)에 있다 */
+  const fn = fnBody('coToolsHtml');
   assert.match(fn, /coOnlyNoBiz/, '고를 길이 없다');
   assert.match(fn, /coNoBizCount\(\)/, '개수를 안 보여 준다');
 });
