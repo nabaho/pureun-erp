@@ -2328,7 +2328,7 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
   isAdmin:false, privOpen:false, priv:{items:{},groups:{},trash:{}},
   /* 자료함 — 찾는 말·메일틀 갈래는 화면에만 쓰고 저장하지 않는다.
      sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
-  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coSel:{}, coSort:{key:'name',dir:'asc'}, coColFilter:{}, coFolder:'', coShowHidden:false,
+  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coSel:{}, coSort:{key:'name',dir:'asc'}, coColFilter:{}, coFolder:'', coShowHidden:false, coOnlyUid:false,
   /* q — 폰 찾기 칸(#search)에 친 명함·사업자용 글자. 칸 하나를 기업 상세(coQ)와 나눠 쓰므로
      화면을 옮길 때 되돌려 놓을 값을 여기 적어 둔다(최종 전체 리뷰 I4). 실제 거르기는
      예전대로 listItems() 가 $('search').value 를 읽어 한다 — 두 벌로 만들지 않는다. */
@@ -7036,6 +7036,10 @@ function listItems(){
       if (f.company && !(String(it.company||'').toLowerCase().includes(f.company.toLowerCase()))) return false;
       if (f.phone){ const d=digits(f.phone); if(!(digits(it.mobile).includes(d)||digits(it.tel).includes(d)||digits(it.companyTel).includes(d))) return false; }
       if (f.email && !has('email', f.email)) return false;
+      /* 서류이름 — 「고유번호」만 쳐도 고유번호증만 남는다(대표 지시 2026-08-26).
+         ⚠ 새 거르개를 만들지 않고 이미 있는 칸별 찾기에 얹는다. 새로 만들면
+           저장된 탭·개수 세기·조건 풀기 여덟 곳을 다 따라 고쳐야 한다. */
+      if (f.docName && !has('docName', f.docName)) return false;
       return true;
     })
     /* 조건 필터: 전화있음 / 이메일있음 / 중복만 */
@@ -12594,7 +12598,7 @@ function toggleSidebar(){ $('pcRoot').classList.toggle('sidehidden'); }
 /* 열 기본 너비 (더블클릭 복원용) — colgroup 정의와 일치 */
 const COL_DEFAULT_W = {
   card: { name:'7%', company:'11%', title:'10%', mobile:'9%', companyTel:'9%', companyFax:'9%', email:'12%', companyAddr:'13%', date:'74px', manager:'128px' },
-  biz:  { company:'19%', ceo:'9%', bizno:'12%', bizType:'12%', bizItem:'14%', address:'auto', date:'82px', manager:'128px' }
+  biz:  { company:'19%', ceo:'9%', bizno:'12%', docName:'11%', bizType:'11%', bizItem:'12%', address:'auto', date:'82px', manager:'128px' }
 };
 /* 열 너비 더블클릭 → 원래 크기로 복원 */
 function resetColWidth(e, key){
@@ -12634,7 +12638,13 @@ const COL_DEFS = {
          ['companyTel','회사전화'],['companyFax','회사팩스'],['email','이메일'],['companyAddr','회사주소'],['date','등록일']],
   /* 업태·종목은 계약서·업체관리에 그대로 옮겨 적는 칸이다 — 목록에서 바로 보여야
      사업자등록증을 하나씩 열어 보지 않는다 */
-  biz:  [['company','상호'],['ceo','대표자'],['bizno','사업자번호'],['bizType','업태'],['bizItem','종목'],
+  /* ⚠ 서류이름 — 고유번호증을 가려내는 칸이다 (대표 지시 2026-08-26).
+     사업자등록증과 고유번호증은 «같은 것»으로 다루므로 갈래(kind)도 열쇠도 같다.
+     둘을 가르는 것은 서류이름 하나뿐이다. 이 열이 없으면 사업자 목록에서는
+     한 장이 어느 쪽인지 알 길이 없었다. 칸별 찾기(아래 f.docName)로 골라 본다.
+     ⚠ 「열 ▾」에서 끌 수 있다 — 늘 보여야 하는 칸은 아니다. */
+  biz:  [['company','상호'],['ceo','대표자'],['bizno','사업자번호'],['docName','서류이름'],
+         ['bizType','업태'],['bizItem','종목'],
          ['address','소재지'],['date','등록일']]
 };
 function colHidden(key){ return !!(state.hiddenCols[state.tab]||{})[key]; }
@@ -14995,6 +15005,11 @@ function coToolsHtml(){
      위에도 붙이면 같은 글귀가 두 곳에 나오고, 4,143곳을 두 번 거르게 된다
      (도구줄은 이미 종료·번호없음·정보부족으로 세 번 거른다).
      사업자와 같은 모양이다: 위에는 «개수 고르기», 아래에는 «몇 곳 중 몇 번째». */
+  /* 고유번호증만 — 0곳이면 안 보여 준다(누를 값이 없는 회색 단추를 두지 않는다) */
+  const uidN = coUidCount();
+  if(uidN) h += `<button class="pctool ${state.coOnlyUid?'on':''}"
+    onclick="state.coOnlyUid=!state.coOnlyUid;state.coPage=0;renderCoAny()"
+    title="고유번호증으로 들어온 곳만 봅니다 — 비영리법인·국가기관 등. 사업자등록증과 같은 것으로 다루지만 따로 모아 볼 수 있습니다">🏢 고유번호증 <b>${uidN.toLocaleString()}</b></button>`;
   h += `<span style="margin-left:auto">${coSizeSelHtml(state.coPageSize)}</span>`;
   return h;
 }
@@ -15314,6 +15329,39 @@ function pickCoFolder(k){
    skipCol 을 주면 그 칸의 깔때기만 빼고 거른다 — 깔때기를 열 때 "이 칸을 지금 값으로
    거르지 않았다면 무엇이 보일까"를 보여줘야 하기 때문이다(안 그러면 목록이 늘 하나만
    남아 다른 값으로 못 바꾼다). */
+/* ══════ 고유번호증 — 순수 로직 (테스트 대상) ══════
+   대표 지시 2026-08-26: "고유번호증이 기업정보함에 입력이 안된다. 이부분 왜그런지
+   확인해달라. 사업자등록증 고유번호증 모두 같은것이다. 단 기업정보함에 고유번호증을
+   필터링 가능하게 해달라."
+
+   ★ 「입력이 안된다」의 까닭 — 판독 지시문에 «고유번호증»이라는 말이 없었다.
+     고유번호증은 제목도 다르고(사업자등록증이 아니다) 칸 이름도 다르다
+     (상호→단체명, 사업자등록번호→고유번호). 그래서 판독기가 form(서식)으로 볼
+     여지가 컸고, form 으로 떨어지면 사업자 목록에 아예 안 들어간다.
+     js/pu-doc-read.js 의 지시문에 「고유번호증도 bizreg 다」를 못 박았다.
+
+   ★ 「같은 것」이라는 뜻 — 갈래(kind)도 열쇠(사업자번호)도 같이 쓴다.
+     새 갈래를 만들지 않는다. 만들면 같은 회사가 두 줄로 갈라진다.
+     가려내는 것은 «서류이름»(docName) 하나로만 한다.
+   ⚠ 그래서 서류이름을 «항목»에도 담게 했다(js/pu-doc-read.js 의 cards.bizreg).
+     예전에는 coInfo 의 갈래(tags)에만 남아 서류 한 장 단위로는 가릴 수 없었다. */
+const UID_DOC_RE = /고유\s*번호/;
+function isUidDocName(name){ return UID_DOC_RE.test(String(name||'')); }
+/* 회사 한 곳이 고유번호증으로 들어온 곳인가 — 보는 자리가 셋이다.
+   ① 붙어 있는 등록증 한 장의 서류이름  ② 회사에 붙은 갈래(서식이 만든 딱지)
+   ③ coInfo 에 적힌 서류이름
+   ⚠ 셋 중 «하나라도» 맞으면 그렇다고 본다. 옛 자료는 ①이 비어 있다(그때는 항목에
+     서류이름을 안 담았다) — ②③이 그것을 건져 준다. 한 자리만 보면 옛 것이 다 빠진다. */
+function coIsUid(o){
+  if(!o) return false;
+  if((o.bizs||[]).some(function(it){ return it && isUidDocName(it.docName); })) return true;
+  const ex = o.extra || {};
+  if(isUidDocName(ex.docName)) return true;
+  return Object.keys(ex.tags || {}).some(isUidDocName);
+}
+/* 몇 곳인가 — 폴더·태그·검색은 그대로 두고 센다(종료 개수와 같은 결) */
+function coUidCount(){ return coFilteredList(null).filter(coIsUid).length; }
+
 function coFilteredList(skipCol){
   const q = String(state.coQ||'').trim().toLowerCase();
   let list = coList();
@@ -15341,6 +15389,10 @@ function coFilteredList(skipCol){
      대표자·소재지·대표번호 중 하나라도 비면 부족이다. 명함의 「정보부족」과 같은 결
      (명함도 전화 또는 이메일이 없으면 부족으로 본다) — 어디부터 채울지 정할 수 있게 한다. */
   if(state.coOnlyIncomplete) list = list.filter(coLacks);
+  /* ── 고유번호증만 (대표 지시 2026-08-26) ──
+     비영리법인·국가기관은 사업자등록증이 아니라 고유번호증을 받는다. 다루는 법은
+     같지만 «따로 모아 봐야 할» 때가 있다(법인·단체만 골라 서식을 보낼 때). */
+  if(state.coOnlyUid) list = list.filter(coIsUid);
   return list;
 }
 /* 번호 없는 회사 수 — 폴더·태그·검색은 그대로 두고 센다(종료 개수와 같은 결). */

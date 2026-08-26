@@ -65,6 +65,9 @@ function loadTabsHtml(over){
     /* 2026-08-24(3순위): 탭 줄에 「정보부족」 토글도 붙었다 — 이 검사들은 그 부분을
        안 보므로 0곳으로 둔다(안 넣으면 renderCoFTabsHtml 이 던진다). */
     coIncompleteCount: () => 0,
+    /* 2026-08-26: 도구줄에 「🏢 고유번호증」 단추도 붙었다 — 이 검사는 그 부분을
+       안 보므로 0곳으로 둔다(안 넣으면 coToolsHtml 이 던진다). */
+    coUidCount: () => 0,
     /* 2026-08-26: 도구줄이 「전체」에서도 나오게 갈라지면서, 개수 글귀도 이 줄에 붙었다.
        이 검사들은 그 글귀를 안 보므로 빈 대역을 준다(안 넣으면 coToolsHtml 이 던진다). */
     coPagerHtml: () => '', coPage: () => ({ page:0, pages:1, total:0, from:0, to:0 }),
