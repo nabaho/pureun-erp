@@ -553,10 +553,12 @@ test('사진첩이 사람별로 갈려 있다 — 내 uid 를 owner 로 넘긴�
   const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
   const open = gov.match(/function pkLoadYear\([\s\S]*?\n\}/)[0];
   assert.match(open, /listYear\(year, albumPickOwner\)/);
+  // 2026-08-26 부터 자리는 «사진마다» 정한다 — 공유받은 것은 주인 자리다(pkOwnerOf).
+  // 넘긴다는 뜻은 그대로다: 계정을 안 넘기면 저장 층이 거절한다.
   const thumbs = gov.match(/function pkThumbs\([\s\S]*?\n\}/)[0];
-  assert.match(thumbs, /loadThumb\(it\.year, it\.id, owner\)/);
+  assert.match(thumbs, /loadThumb\(it\.year, it\.id, pkOwnerOf\(it\)\)/);
   const pick = gov.match(/async function pkPut\([\s\S]*?\n\}/)[0];
-  assert.match(pick, /loadFull\([^)]*owner\)/, '내 계정을 안 넘깁니다');
+  assert.match(pick, /loadFull\(s\.year, s\.id, pkOwnerOf\(it\)\|\|owner\)/, '내 계정을 안 넘깁니다');
 });
 
 test('고른 사진도 끌어다 놓기와 같은 마무리를 탄다', () => {

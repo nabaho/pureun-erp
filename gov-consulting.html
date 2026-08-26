@@ -408,6 +408,10 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 .ref-card img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:7px;display:block;background:var(--sf2);cursor:zoom-in;}
 .ref-card .rl{font-size:10px;font-weight:900;color:var(--text);margin-bottom:6px;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;}
+/* 못 읽은 캡처 — 빈 네모 대신 까닭을 적는다 */
+.ref-card .rx{display:flex;align-items:center;justify-content:center;text-align:center;
+  min-height:74px;padding:6px;font-size:11px;line-height:1.4;color:#80868b;
+  background:#f1f3f4;border-radius:4px;}
 .ref-card .rw{font-size:9px;color:var(--t2);margin-top:5px;line-height:1.4;}
 .ref-card .rb{display:flex;gap:6px;margin-top:6px;}
 .ref-card .rb button{flex:1;min-width:0;padding:5px 4px;border:none;border-radius:7px;color:#fff;
@@ -473,6 +477,9 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 .pka-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
 .pka-kind{position:absolute;top:5px;left:5px;font-size:9.5px;font-weight:900;color:#fff;
   background:rgba(15,35,60,.72);padding:1px 6px;border-radius:999px;z-index:2;}
+/* 공유받은 사진 — 「내 것이 아니다」를 한눈에. 주인이 공유를 풀면 사라진다 */
+.pka-share{position:absolute;left:4px;bottom:4px;z-index:2;background:#e8f0fe;color:#1967d2;
+  font-size:10px;font-weight:600;border-radius:3px;padding:1px 4px;}
 .pka-used{position:absolute;bottom:5px;right:5px;font-size:9.5px;font-weight:900;color:#fff;
   background:rgba(46,125,50,.85);padding:1px 6px;border-radius:999px;z-index:2;}
 .pka-num{position:absolute;top:5px;right:5px;width:21px;height:21px;border-radius:50%;
@@ -2752,11 +2759,40 @@ function loadRefCapThumbs(sid, list){
   try{ PuPhotoStore.init({ db: firebase.database(), storage: photoStorage() }); }catch(e){}
   list.forEach(function(r){
     PuPhotoStore.loadThumb(r.y, r.id, r.own).then(function(t){
-      if(!t || my!==_refThumbToken) return;
+      if(my!==_refThumbToken) return;
+      if(!t){ refCapBlocked(r); return; }   // 자리는 읽혔는데 그림이 없다 = 지워진 사진
       const cell=q('#mEditRefGrid [data-ref-key="'+refCapKey(r)+'"] img');
       if(cell) cell.src=t;
-    }).catch(function(){});
+    }).catch(function(err){
+      if(my!==_refThumbToken) return;
+      refCapBlocked(r, err);
+    });
   });
+}
+
+/* ══════ 못 읽은 참고 캡처 — 순수 로직 (테스트 대상) ══════
+   ★ 이 자리가 «공유 원칙»이 실제로 작동하는 곳이다.
+     참고 캡처는 사진첩 주인 자리(puphotos/u/{주인}/…)를 읽는다. 공유받지 않았으면
+     서버가 막는다 — 붙인 사람 화면에는 보이고, 남의 화면에는 안 보인다.
+     즉 «자기 사진은 자기만, 공유된 것은 공유받은 사람만»은 이미 지켜지고 있었다.
+   ⚠ 문제는 그것을 «아무도 몰랐다»는 것이다. 지금까지는 조용히 빈 네모만 남아서
+     사진이 깨진 줄 알았다. 이제는 까닭을 적는다. */
+function refCapWhy(err){
+  var m = String((err && (err.code || err.message)) || '').toLowerCase();
+  if(m.indexOf('permission') >= 0 || m.indexOf('denied') >= 0 || m.indexOf('unauthorized') >= 0)
+    return '공유받지 않은 사진입니다';
+  if(!err) return '사진첩에서 지워진 사진입니다';
+  return '사진을 불러오지 못했습니다';
+}
+function refCapBlocked(r, err){
+  var card = q('#mEditRefGrid [data-ref-key="'+refCapKey(r)+'"]');
+  if(!card || card.querySelector('.rx')) return;
+  var img = card.querySelector('img'); if(img) img.style.display='none';
+  var box = document.createElement('div');
+  box.className = 'rx';
+  box.textContent = refCapWhy(err);
+  if(img && img.parentNode) img.parentNode.insertBefore(box, img.nextSibling);
+  else card.appendChild(box);
 }
 
 function dropRefCap(e, sid){
@@ -3084,6 +3120,7 @@ const PK = {
   sel:[],         // 고른 차례대로 [{id,year}]
   targets:[],     // 들어갈 칸 [{i,label}] — ref 일 때는 [] (참고 캡처로 몰아 넣는다)
   folders:{}, loadedYears:[],
+  sharedDone:false,  // 「나에게 공유된 것」을 이번 창에서 받았는가 (창마다 다시 받는다)
   thumbs:{}      // id → 미리보기. 다시 그려도 남는다(담은 칸도 이것을 쓴다)
 };
 
@@ -3172,6 +3209,9 @@ function openAlbumPicker(sid, slotIdx, ref){
   albumPickItems=[];
   PK.q=''; PK.kind='all'; PK.folder=''; PK.coOnly=false; PK.unusedOnly=false;
   PK.sel=[]; PK.loadedYears=[]; PK.thumbs={};
+  /* ⚠ 공유받은 것도 «창을 열 때마다» 다시 받는다 — 그 사이에 공유가 풀렸거나
+     새로 공유됐을 수 있다. 한 번만 받고 말면 풀린 사진이 계속 보인다. */
+  PK.sharedDone=false;
   /* 방문일만 보기를 «켠 채로» 연다 — 대부분 그 날 찍은 것을 넣는다.
      그 날 사진이 없으면 아래에서 스스로 끈다(빈 화면부터 보여 주지 않는다). */
   PK.visitOnly=!ref;
@@ -3184,6 +3224,48 @@ function openAlbumPicker(sid, slotIdx, ref){
   pkLoadYear(String(new Date().getFullYear()), true);
 }
 
+/* ══════ 공유받은 사진 — 순수 로직 (테스트 대상) ══════
+   대표 지시 2026-08-26: "원칙적으로 자기 사진은 자기만 보게 하고, 사진첩에서
+   공유된 경우 공유된 사람만 같이 기업정보함에서 공유될 수 있게."
+
+   ★ 조사해 보니 «막는 쪽»은 이미 되어 있었다
+     · 증빙 사진 — 서버에 안 올라간다. 그 PC 브라우저(IndexedDB) 안에만 있다.
+     · 참고 캡처 — 사진첩 주인 자리를 읽으므로 «서버»가 막는다(공유 안 되면 못 읽는다).
+     · 고르기 창 — 내 자리만 훑는다(albumPickOwner = 내 uid).
+   ★ 빠진 것은 반대쪽이었다 — «공유받은» 사진을 기업정보함에서 아예 못 썼다.
+     사진첩에서 공유해 줘도 여기서는 목록에 나오지 않아 붙일 수가 없었다.
+
+   ⚠ 공유받은 사진은 «주인 자리»에 그대로 둔다. 내 자리로 옮기지 않는다 —
+     옮기면 나중에 공유를 풀어도 내 자리에 남아 «공유를 풀 수 없는» 사진이 된다.
+     참고 캡처는 주인(own)을 적어 두므로 공유가 풀리면 그때부터 안 보인다. */
+
+/* 사진첩이 준 「나에게 공유된 것」을 고르기 창이 쓰는 모양으로 바꾼다.
+   주인 uid·이름을 새겨 둔다 — 누구 사진인지 보여 주고, 읽을 때 그 자리를 봐야 한다. */
+function pkSharedRows(items){
+  return Object.keys(items||{}).map(function(id){
+    var m = items[id] || {};
+    return {
+      id: id,
+      year: String(m.__year || m.__sharedYear || ""),
+      meta: m,
+      shared: true,
+      owner: m.__ownerUid || "",
+      ownerName: m.__ownerName || ""
+    };
+  }).filter(function(r){ return r.id && r.year && r.owner; });
+}
+/* 이 사진을 읽을 때 «누구 자리»를 봐야 하는가 — 공유받은 것은 주인 자리다 */
+function pkOwnerOf(it){ return (it && it.shared && it.owner) ? it.owner : albumPickOwner; }
+/* 같은 사진이 두 번 들어오지 않게 (내 것으로도 있고 공유로도 온 경우) */
+function pkMergeItems(mine, shared){
+  var seen = {}, out = [];
+  (mine||[]).concat(shared||[]).forEach(function(r){
+    if(!r || !r.id || seen[r.id]) return;
+    seen[r.id] = 1; out.push(r);
+  });
+  return out.sort(function(a,b){ return (b.meta.takenAt||0)-(a.meta.takenAt||0); });
+}
+
 /* 한 해씩 받는다 — 「지난해도 보기」로 이어 붙인다.
    처음부터 여러 해를 받으면 첫 화면이 느려진다. */
 function pkLoadYear(year, first){
@@ -3191,7 +3273,18 @@ function pkLoadYear(year, first){
   PK.loadedYears.push(year);
   return PuPhotoStore.listYear(year, albumPickOwner).then(function(items){
     const add=Object.keys(items||{}).map(id=>({id:id,year:year,meta:items[id]||{}}));
-    albumPickItems=albumPickItems.concat(add).sort((a,b)=>(b.meta.takenAt||0)-(a.meta.takenAt||0));
+    albumPickItems=pkMergeItems(albumPickItems.concat(add), []);
+    /* 공유받은 사진도 한 번만 함께 받는다 — 사진첩에서 나에게 공유해 준 것.
+       ⚠ 실패해도 내 사진은 보여야 한다. 공유 목록 하나 때문에 창이 비면 안 된다. */
+    if(first && !PK.sharedDone){
+      PK.sharedDone = true;
+      PuPhotoStore.listSharedToMe().then(function(sh){
+        return (PuPhotoStore.fillSharedNames ? PuPhotoStore.fillSharedNames(sh) : Promise.resolve(sh));
+      }).then(function(sh){
+        albumPickItems = pkMergeItems(albumPickItems, pkSharedRows(sh));
+        pkPaintChrome(); pkPaintBody();
+      }).catch(function(e){ console.warn('[공유받은 사진]', e); });
+    }
     /* 방문일에 사진이 없으면 「방문일만」을 스스로 끈다 */
     if(first && PK.visitOnly){
       const day=pkVisitDay();
@@ -3292,9 +3385,10 @@ function pkPaintBody(){
     h+=`<div class="pka-cell${at>=0?' sel':''}" data-pk-id="${escAttr(it.id)}" onclick="pkClick('${escAttr(it.id)}')">`
       +`<div class="pka-thumb"><span class="pka-kind">${pkKindLabel(it)}</span>`
       +(pkUsed(it)?'<span class="pka-used">쓴 것</span>':'')
+      +(it.shared?'<span class="pka-share">공유받음</span>':'')
       +`<span class="pka-num">${at>=0?at+1:''}</span></div>`
       +`<div class="pka-meta"><b>${escAttr(pkName(it))}</b>`
-      +`<span>${d.getMonth()+1}/${d.getDate()} · ${escAttr(it.meta.byName||'')}</span></div></div>`;
+      +`<span>${d.getMonth()+1}/${d.getDate()} · ${escAttr(it.shared?(it.ownerName||'공유해 준 사람'):(it.meta.byName||''))}</span></div></div>`;
   });
   h+='</div>';
   body.innerHTML=h;
@@ -3303,12 +3397,14 @@ function pkPaintBody(){
 
 /* 미리보기 — «보이는 것만» 받는다 */
 function pkThumbs(){
+  /* ⚠ 자리는 사진마다 다르다 — 공유받은 것은 «주인 자리»에 있다.
+     한 값으로 묶어 두면 공유받은 사진만 통째로 안 보인다. */
   const owner=albumPickOwner;
   pkShown().forEach(function(it){
     const cell=q('#pkaBody [data-pk-id="'+CSS.escape(it.id)+'"] .pka-thumb');
     if(!cell || cell.querySelector('img')) return;
     if(PK.thumbs[it.id]){ pkPutImg(cell, PK.thumbs[it.id]); return; }
-    PuPhotoStore.loadThumb(it.year, it.id, owner).then(function(t){
+    PuPhotoStore.loadThumb(it.year, it.id, pkOwnerOf(it)).then(function(t){
       if(!t || owner!==albumPickOwner) return;
       PK.thumbs[it.id]=t;
       const c=q('#pkaBody [data-pk-id="'+CSS.escape(it.id)+'"] .pka-thumb');
@@ -3388,7 +3484,7 @@ async function pkPut(){
     const refs=picks.map(s=>{
       const it=albumPickItems.find(x=>x.id===s.id);
       const f=(it&&it.meta&&it.meta.read&&it.meta.read.fields)||{};
-      return { year:s.year, id:s.id, owner:owner, name:(f.docName||f.company||f.name||'캡처') };
+      return { year:s.year, id:s.id, owner:pkOwnerOf(it)||owner, name:(f.docName||f.company||f.name||'캡처') };
     });
     /* ⚠ 알림을 여기서 또 띄우지 않는다 — addRefCaps 가 이미 「몇 장 붙였고
        몇 장은 이미 있었다」까지 알려 준다. 두 번 뜨면 뒤엣것이 앞엣것을 덮어
@@ -3404,11 +3500,13 @@ async function pkPut(){
     const s=picks[i];
     const it=albumPickItems.find(x=>x.id===s.id);
     let full=null;
-    try{ full=await PuPhotoStore.loadFull(s.year, s.id, owner); }
+    try{ full=await PuPhotoStore.loadFull(s.year, s.id, pkOwnerOf(it)||owner); }
     catch(err){ console.warn('[사진첩 넣기]',err); fail++; continue; }
     const f=(it&&it.meta&&it.meta.read&&it.meta.read.fields)||{};
     const ok=await insertAlbumFull(tgt.sid, t.i, full, (f.company||f.name||'사진'));
-    if(ok){ done++; markAlbumUsed({year:s.year,id:s.id,owner:owner}, tgt.sid); }
+    /* ⚠ 공유받은 사진에는 「쓴 것」을 적지 않는다 — 남의 자리라 서버가 막는다.
+       막힐 줄 알면서 보내면 오류만 쌓인다(2026-08 오류 폭주에서 배운 것). */
+    if(ok){ done++; if(!(it&&it.shared)) markAlbumUsed({year:s.year,id:s.id,owner:owner}, tgt.sid); }
     else fail++;
   }
   if(put){ put.disabled=false; put.textContent='넣고 닫기'; }
