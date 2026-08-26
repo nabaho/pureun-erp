@@ -86,7 +86,10 @@ function run(o) {
   };
   ctx.window = ctx;
   vm.createContext(ctx);
-  vm.runInContext(fnOf('refCapFileName') + '\n' + fnOf('uploadRefCap'), ctx);
+  /* ⚠ 저장 층을 세우는 일이 photoStoreOn() 한 곳으로 모였다(2026-08-26) —
+     그것도 같이 떠 와야 «실제로 무엇을 넘기는지»를 볼 수 있다. */
+  vm.runInContext(fnOf('myName') + '\n' + fnOf('photoStoreOn') + '\n' +
+                  fnOf('refCapFileName') + '\n' + fnOf('uploadRefCap'), ctx);
   return { ctx, log, calls, scheds: function () { return scheds; } };
 }
 const settle = function () { return new Promise(function (r) { setTimeout(r, 20); }); };
@@ -135,6 +138,9 @@ test('★ 계정을 넘긴다 — 안 넘기면 「담을 계정을 알 수 없�
   assert.equal(r.calls.init.uid, 'U9', '★ uid 를 안 넘겼습니다');
   assert.equal(r.calls.init.name, '권형하', '올린 이 이름이 없으면 목록에서 누구 것인지 모릅니다');
   assert.ok(r.calls.init.db && r.calls.init.storage, 'db·창고를 안 넘겼습니다');
+  /* ⚠ 열쇠(auth)도 함께 (2026-08-26). 계약서·근태기록부는 원본 주소를 안 남기므로
+     서버에 로그인 증명을 내밀어야만 열린다 — 안 넘기면 그 서류가 조용히 빈손이 된다. */
+  assert.ok(r.calls.init.auth, '★ 열쇠(auth)를 안 넘겼습니다 — 계약서·근태기록부가 안 열립니다');
 });
 
 test('★ 저장 방식은 넘기지 않는다 — 앱마다 갈리면 이 앱만 다른 저장소를 본다', async () => {

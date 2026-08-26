@@ -2766,7 +2766,7 @@ let _refThumbToken=0;
 function loadRefCapThumbs(sid, list){
   if(!window.PuPhotoStore || !list.length) return;
   const my=++_refThumbToken;
-  try{ PuPhotoStore.init({ db: firebase.database(), storage: photoStorage() }); }catch(e){}
+  photoStoreOn();
   list.forEach(function(r){
     PuPhotoStore.loadThumb(r.y, r.id, r.own).then(function(t){
       if(my!==_refThumbToken) return;
@@ -2867,9 +2867,8 @@ function uploadRefCap(sid, file){
      「사진을 담을 계정을 알 수 없습니다」로 통째로 막힌다.
      ⚠ 저장 방식(창고/실시간DB)은 넘기지 않는다 — 저장 층 한 곳에서 정한다.
        여기서 정하면 앱마다 갈려, 이 앱만 조용히 다른 저장소를 보게 된다. */
-  const me=(getStaff().find(function(x){ return x.id===myId(); })||{}).name||'';
-  PuPhotoStore.init({ db: firebase.database(), storage: photoStorage(),
-                      uid: u.uid, name: me, auth: firebase.auth() });
+  photoStoreOn();
+  const me=myName();
   const spec=PuPhotoStore.uploadSpec(true);   // true = 서류
   refShrink(file,[{maxEdge:spec.maxEdge,quality:spec.quality},
                   {maxEdge:spec.thumbEdge,quality:.85}]).then(function(sz){
@@ -3036,6 +3035,26 @@ function stepExtraPhotos(sid,delta){
    물러난다(이 화면은 읽기만 하므로 밑져야 본전이다). */
 function photoStorage(){ try{ return firebase.storage(); }catch(e){ return null; } }
 
+/* ── 사진첩 저장 층을 «언제나 같은 모습으로» 세운다 (2026-08-26) ──
+   ⚠ 여기 한 곳에서만 세운다. 전에는 네 군데에서 제각각 세웠고, 그 가운데
+     셋이 **열쇠(auth)와 계정(uid)을 안 넘겼다.** 계약서·근태기록부는
+     2026-08-17 부터 원본 주소를 안 남기므로 **서버에 열쇠를 내밀어야만**
+     열린다 — 안 넘기면 그 서류들이 조용히 빈손으로 돌아온다(오류도 안 난다).
+   ⚠ 계정(uid)도 있어야 한다. 없으면 저장 층이 「내 사진인지」를 가릴 수 없어
+     창고를 아예 두드리지 않고 옛 자리(실시간DB)만 보다가 역시 빈손이 된다. */
+function myName(){
+  return (getStaff().find(function(x){ return x.id===myId(); })||{}).name||'';
+}
+function photoStoreOn(){
+  if(!window.PuPhotoStore) return false;
+  let u=null; try{ u=firebase.auth().currentUser; }catch(e){ u=null; }
+  try{
+    PuPhotoStore.init({ db: firebase.database(), storage: photoStorage(),
+                        uid: (u&&u.uid)||'', name: myName(), auth: firebase.auth() });
+  }catch(e){ return false; }
+  return true;
+}
+
 /* 푸른사진첩에서 끌어다 놓은 사진 한 장을 이 회차 사진 칸에 담는다.
    사진첩 원본은 그대로 남고 **컨설팅이 사본을 갖는다**(설계서 원칙 — 사진첩을
    정리해도 증빙 기록이 온전해야 한다). 사람별 분리 때문에 남이 찍은 사진은
@@ -3064,7 +3083,7 @@ async function dropFromAlbum(ref, sid, slotIdx){
   toast('사진첩에서 사진을 가져오는 중…');
   let full=null;
   try{
-    PuPhotoStore.init({ db: firebase.database(), storage: photoStorage() });
+    photoStoreOn();
     full = await PuPhotoStore.loadFull(ref.year, ref.id, ref.owner);
   }catch(err){
     console.warn('[사진첩 가져오기]',err);
@@ -3229,7 +3248,7 @@ function openAlbumPicker(sid, slotIdx, ref){
   q('#mbPickAll').classList.add('open');
   q('#pkaBody').innerHTML='<div class="apk-empty">사진첩을 불러오는 중…</div>';
   pkPaintChrome();
-  PuPhotoStore.init({ db: firebase.database(), storage: photoStorage() });
+  photoStoreOn();
   PuPhotoStore.listFolders(albumPickOwner).then(f=>{ PK.folders=f||{}; pkPaintChrome(); }).catch(()=>{});
   pkLoadYear(String(new Date().getFullYear()), true);
 }
