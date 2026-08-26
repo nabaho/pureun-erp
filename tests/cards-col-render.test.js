@@ -10,6 +10,12 @@
      제목만 「사업자등록증 347개」로 바뀌고, 표와 쪽넘김은 «직전 명함 화면»
      (명함 열 · 6,286개)이 그대로 남았다 — 사업자 탭인데 명함이 나왔다.
 
+   ⚠ 2026-08-26 두 번째 보고 — 「제목들 셀 이상하게 바뀌었다」.
+     처음에는 «값을 그리는 것»(TD)만 못 박았다. 그런데 «머리글»(TH)도 같은 짝이다.
+     TH.docName 을 빠뜨리자 TH[k]||'' 가 빈 글자를 내어 머리글 칸이 하나 모자랐고,
+     그 뒤 이름표가 모두 한 칸 왼쪽으로 밀렸다 — 「업태」 자리에 서류이름이 보였다.
+     값은 맞는데 이름표가 틀리니 자료가 섞인 것처럼 읽힌다. 그래서 «둘 다» 본다.
+
    ★ 여기서 못 박는 것
      ① COL_DEFS 의 «모든» 열에 그리는 함수가 있다 (두 탭 다)
      ② 없어도 표 전체를 잃지 않는다 (빈 칸으로 넘기고 콘솔에 적는다)
@@ -44,18 +50,20 @@ function colDefs() {
 }
 /* TD 두 벌의 «열쇠»를 글에서 읽어 낸다 — 함수 본문은 화면(esc·state)에 얽혀 있어
    그대로 돌릴 수 없다. 우리가 볼 것은 «어떤 열쇠가 있나» 뿐이다. */
-function tdKeys() {
-  const body = slice("const TD = state.tab==='card' ? {", '  };');
+function twoBags(startMark) {
+  const body = slice(startMark, '  };');
   const cut = body.indexOf('} : {');
-  assert.ok(cut > 0, 'TD 두 벌의 가름을 못 찾았다');
+  assert.ok(cut > 0, '두 벌의 가름을 못 찾았다: ' + startMark);
   const grab = src => (src.match(/^\s{4}([A-Za-z]\w*):/gm) || [])
     .map(s => s.trim().replace(':', ''));
   return { card: grab(body.slice(0, cut)), biz: grab(body.slice(cut)) };
 }
+const tdKeys = () => twoBags("const TD = state.tab==='card' ? {");
+const thKeys = () => twoBags("const TH = state.tab==='card' ? {");
 
 /* ── ① 짝이 맞나 ── */
 
-test('★ COL_DEFS 의 모든 열에 그리는 함수가 있다 — 하나만 빠져도 표가 통째로 안 나온다', () => {
+test('★ COL_DEFS 의 모든 열에 «값 그리는 함수»가 있다 — 하나만 빠져도 표가 통째로 안 나온다', () => {
   const defs = colDefs();
   const keys = tdKeys();
   ['card', 'biz'].forEach(tab => {
@@ -67,6 +75,58 @@ test('★ COL_DEFS 의 모든 열에 그리는 함수가 있다 — 하나만 �
     assert.strictEqual(missing.join(','), '',
       tab + ' 탭에서 그리는 함수가 없는 열: ' + missing.join(', '));
   });
+});
+
+test('★ COL_DEFS 의 모든 열에 «머리글»이 있다 — 하나만 빠져도 이름표가 한 칸씩 밀린다', () => {
+  const defs = colDefs();
+  const keys = thKeys();
+  ['card', 'biz'].forEach(tab => {
+    const need = defs[tab].map(c => c[0]);
+    const have = keys[tab];
+    const missing = Array.from(need).filter(k => have.indexOf(k) < 0);
+    assert.strictEqual(missing.join(','), '',
+      tab + ' 탭에서 머리글이 없는 열: ' + missing.join(', '));
+  });
+});
+
+test('머리글이 없으면 «빈 칸»이라도 낸다 — 빈 글자를 내면 뒤가 다 밀린다', () => {
+  const ctx = { console: { warn() {} } };
+  vm.createContext(ctx);
+  new vm.Script(slice('const _thWarned = {};', '/* 칸 하나를 그린다')).runInContext(ctx);
+  assert.strictEqual(ctx.thOf({}, 'nosuch'), '<th class="col-nosuch"></th>');
+  assert.strictEqual(ctx.thOf({ nosuch: '' }, 'nosuch'), '<th class="col-nosuch"></th>',
+    '빈 글자도 빈 칸으로 바꿔야 한다');
+  assert.strictEqual(ctx.thOf(null, 'x'), '<th class="col-x"></th>');
+});
+
+test('있는 머리글은 그대로 쓴다', () => {
+  const ctx = { console: { warn() {} } };
+  vm.createContext(ctx);
+  new vm.Script(slice('const _thWarned = {};', '/* 칸 하나를 그린다')).runInContext(ctx);
+  assert.strictEqual(ctx.thOf({ bizno: '<th>사업자번호</th>' }, 'bizno'), '<th>사업자번호</th>');
+});
+
+test('머리글이 없으면 콘솔에 적는다 — 한 번만', () => {
+  const said = [];
+  const ctx = { console: { warn: function () { said.push(Array.from(arguments).join(' ')); } } };
+  vm.createContext(ctx);
+  new vm.Script(slice('const _thWarned = {};', '/* 칸 하나를 그린다')).runInContext(ctx);
+  ctx.thOf({}, 'nosuch'); ctx.thOf({}, 'nosuch');
+  assert.strictEqual(said.length, 1);
+  assert.match(said[0], /머리글/);
+  assert.match(said[0], /COL_DEFS/);
+});
+
+test('표 머리를 그릴 때 이 도우미를 실제로 쓴다', () => {
+  assert.match(HTML, /\$\{order\.map\(k=>thOf\(TH,k\)\)\.join\(''\)\}/);
+  assert.ok(!/order\.map\(k=>TH\[k\]\|\|''\)/.test(HTML),
+    '옛 길(TH[k]||\'\')이 남아 있으면 그 길로 칸이 밀린다');
+});
+
+test('서류이름 열에 머리글과 그리는 함수가 «둘 다» 있다 — 이번에 빠진 것은 머리글이었다', () => {
+  assert.ok(thKeys().biz.indexOf('docName') >= 0, '머리글이 없다');
+  assert.ok(tdKeys().biz.indexOf('docName') >= 0, '그리는 함수가 없다');
+  assert.match(HTML, /docName: `<th class="col-docName"[^`]*>서류이름/);
 });
 
 test('서류이름 열에도 그리는 함수가 있다 — 이번에 빠졌던 그 칸', () => {
