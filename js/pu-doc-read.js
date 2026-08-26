@@ -76,9 +76,14 @@
               mobile: 'mobile', tel: 'tel', fax: 'fax', email: 'email',
               companyTel: 'companyTel', companyFax: 'companyFax', companyAddr: 'companyAddr',
               website: 'website', address: 'address', memo: 'memo' },
+      /* ⚠ docName 을 «항목»에도 담는다 (대표 지시 2026-08-26 「고유번호증을 필터링
+         가능하게」). 예전에는 서류이름이 coInfo 의 갈래(tags)에만 남아서, 사업자 목록
+         에서는 그 한 장이 사업자등록증인지 고유번호증인지 알 길이 «전혀» 없었다.
+         회사 단위가 아니라 서류 한 장 단위로 골라 봐야 할 때가 그래서 막혔다. */
       bizreg: { company: 'company', ceo: 'ceo', bizno: 'bizno', corpno: 'corpno',
                 openDate: 'openDate', bizType: 'bizType', bizItem: 'bizItem',
-                companyTel: 'companyTel', companyFax: 'companyFax', address: 'address', memo: 'memo' }
+                companyTel: 'companyTel', companyFax: 'companyFax', address: 'address',
+                memo: 'memo', docName: 'docName' }
     },
     erp: {
       bizreg: { company: 'name', ceo: 'ceo', bizno: 'bizNo', corpno: 'corpNo',
@@ -136,6 +141,20 @@
     '\n⚠ 대화 캡처가 급여·계약 이야기를 담고 있어도 kind=chat 입니다. 서류 자체를 찍은 것만 payslip·contract 입니다.' +
     '\nkind=card 이면 키: name(이름), company(회사명), dept(부서), title(직책), mobile(휴대폰), tel(직통전화), fax(개인팩스), email(이메일), companyTel(회사 대표번호), companyFax(회사 팩스), companyAddr(회사 주소), website(홈페이지), address(개인 주소), memo(기타 정보), pairs(명함에 적힌 모든 줄 — 아래 규칙).' +
     '\nkind=bizreg 이면 키: docName(문서 제목 그대로 — 아래 【제목】 규칙), company(상호/법인명), ceo(대표자), bizno(사업자등록번호), corpno(법인등록번호), openDate(개업연월일), bizType(업태), bizItem(종목), companyTel(대표번호), companyFax(팩스), address(사업장 소재지), memo(기타), pairs(문서의 모든 칸 — 아래 규칙).' +
+    /* ── 고유번호증도 bizreg 다 (대표 지시 2026-08-26) ──
+       "고유번호증이 기업정보함에 입력이 안된다. 사업자등록증 고유번호증 모두 같은것이다."
+       ⚠ 이 줄이 없어서 «어떤 건 들어가고 어떤 건 안 들어갔다». 고유번호증은
+         · 제목이 「사업자등록증」이 아니고(사업자등록증이라는 낱말이 문서에 없다)
+         · 칸 이름도 다르다 — 상호가 아니라 «단체명», 사업자등록번호가 아니라 «고유번호»
+         그래서 판독기가 form(칸 이름과 값이 표로 짜인 문서) 으로 볼 여지가 컸다.
+         form 으로 떨어지면 사업자 목록에 아예 안 들어간다 — 그것이 그 증상이다.
+       ⚠ 번호는 열 자리로 같은 꼴이라 bizno 에 그대로 담으면 회사 열쇠가 맞는다
+         (기업 상세는 사업자번호로 회사를 가른다). 새 칸을 만들면 열쇠가 갈라진다. */
+    '\n⚠ 「고유번호증」(수익사업을 하지 않는 비영리법인·국가기관 등에 부여)도 kind=bizreg 입니다.' +
+    ' 사업자등록증과 같은 것으로 다루세요. 칸 이름이 다를 뿐입니다:' +
+    ' 「고유번호」→bizno, 「단체명」→company, 「대표자 성명」→ceo, 「법인등록번호」→corpno,' +
+    ' 「소재지」→address, 「교부 사유」·「대표자 주소」→memo.' +
+    ' docName 에는 문서 제목 그대로 「고유번호증」을 담으세요 — 나중에 이것만 골라 봅니다.' +
     '\nkind=sme 이면 키: docName(문서 제목 그대로 — 아래 【제목】 규칙), company(상호/법인명), bizno(사업자등록번호), ceo(대표자), smeType(기업규모 — 소기업/중기업/중견기업 등), issueNo(발급번호), issueDate(발급일), expiry(유효기간 만료일), industry(주업종), pairs(문서의 모든 칸 — 아래 규칙).' +
     /* 급여서류는 **금액을 읽지 않는다.** 어느 회사·언제 것인지만 담는다.
        임금 금액은 사람마다 다른 민감정보인데, 사진첩은 그것을 어디에도 쓰지 않으므로
