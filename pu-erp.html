@@ -12006,10 +12006,25 @@ function pcSameKey(x){
   var nm  = String((x && (x.n || x.name)) || '').replace(/\s/g,'');
   return nm + '|' + tel;
 }
+/* 담당자가 «맡는 일» — 계약 종류에서 그대로 가져온 낱말이다. 새 말을 만들지 않는다.
+   ⚠ 직책(부장·과장)과 다른 것이다. 직책은 contact.role, 맡는 일은 contact.duty. */
+var PC_DUTIES = ['자문','사건','컨설팅','급여','기금','상담','기타'];
+/* 계약 종류 → 맡는 일. 종류가 «하나일 때만» 미리 켜 둔다 —
+   여러 개면 어느 것인지 알 수 없고, 찍어서 켜 두면 조용히 틀린다. */
+function pcDutyFromKinds(kinds){
+  var M = { company:'자문', case:'사건', consulting:'컨설팅', fund:'기금', consult:'상담', other:'기타' };
+  var ks = (kinds || []).filter(function(k){ return M[k]; });
+  return ks.length === 1 ? M[ks[0]] : '';
+}
+try { window.PC_DUTIES = PC_DUTIES; window.pcDutyFromKinds = pcDutyFromKinds; } catch(_){ }
 function PucardsContactMultiPickerModal(props){
   useEscClose(props.onClose);
   var qs = useState(props.initialQuery || ''); var query = qs[0]; var setQuery = qs[1];
   var ss = useState({}); var sel = ss[0]; var setSel = ss[1];
+  /* 사람마다 «맡는 일». 체크한 사람만 뜻이 있다. */
+  var ds = useState({}); var duty = ds[0]; var setDuty = ds[1];
+  var defDuty = props.defaultDuty || '';
+  function dutyOf(id){ return (duty[id] !== undefined) ? duty[id] : defDuty; }
   var results = searchPucardsPeople(query);
 
   // 이미 담긴 사람은 다시 담지 않는다 (기업정보함 id 로, 없으면 이름+휴대폰으로 본다)
@@ -12031,7 +12046,10 @@ function PucardsContactMultiPickerModal(props){
   }
   function submit(){
     if(!picked.length) return;
-    props.onAdd(picked);
+    /* 고른 사람에 «맡는 일»을 붙여 넘긴다 — 담는 그 자리에서 정하니 빈칸으로 안 남는다. */
+    props.onAdd(picked.map(function(r){
+      return Object.assign({}, r, { __duty: dutyOf(r.id) });
+    }));
   }
 
   return h('div', {
@@ -12059,20 +12077,23 @@ function PucardsContactMultiPickerModal(props){
       ),
       // ★ 담당자가 아닌 사람까지 딸려 들어오지 않게, 고른 사람만 담는다는 것을 눈에 보이게 알린다
       h('div', { style:{ padding:'6px 18px', background:'#fffbeb', borderBottom:'1px solid #fde68a', fontSize:'10.5px', color:'#854d0e' } },
-        '체크한 사람만 담깁니다 — 회사로 찾으면 그 회사 사람이 다 나오니 담당자만 고르세요'),
+        '체크한 사람만 담깁니다 · 오른쪽에서 «맡는 일»을 정하세요 (자문 담당과 특별업무 담당이 다를 수 있습니다)'),
       h('div', { style:{ flex:1, overflow:'auto', padding:'8px' } },
         !query ? h('div', { style:{ padding:'16px', textAlign:'center', color:'#94a3b8', fontSize:'12px' } }, '회사 또는 이름을 입력하세요')
         : results.length === 0 ? h('div', { style:{ padding:'16px', textAlign:'center', color:'#94a3b8', fontSize:'12px' } }, '검색 결과가 없습니다')
         : results.map(function(r, i){
             var already = isHave(r), on = !!sel[r.id];
-            return h('label', { key:r.id || i,
+            /* ⚠ label 이 아니라 div 다 — label 안에 넣으면 «맡는 일»을 고르려고 눌러도
+               체크가 토글된다. 대신 이름 칸을 눌러 체크하게 한다. */
+            return h('div', { key:r.id || i,
               style:{ display:'flex', gap:'9px', alignItems:'flex-start', padding:'9px 12px', borderBottom:'1px solid #f8fafc',
-                cursor: already ? 'default' : 'pointer', background: on ? '#eff6ff' : (already ? '#f8fafc' : 'transparent'),
+                cursor:'default', background: on ? '#eff6ff' : (already ? '#f8fafc' : 'transparent'),
                 opacity: already ? 0.55 : 1, borderRadius:'4px' } },
               h('input', { type:'checkbox', checked:on, disabled:already,
                 onChange:function(){ if(!already) toggle(r.id); },
                 style:{ marginTop:'2px', cursor: already ? 'default' : 'pointer' } }),
-              h('div', { style:{ flex:1, minWidth:0 } },
+              h('div', { style:{ flex:1, minWidth:0, cursor: already ? 'default' : 'pointer' },
+                  onClick:function(){ if(!already) toggle(r.id); } },
                 h('div', { style:{ fontSize:'12.5px', fontWeight:600, color:'#1e293b' } },
                   (r.n || '(이름없음)') + (r.ti ? ' · ' + r.ti : '') + (r.d ? ' · ' + r.d : ''),
                   already && h('span', { style:{ marginLeft:'6px', fontSize:'10px', color:'#64748b', fontWeight:600 } }, '이미 담김')),
@@ -12083,6 +12104,17 @@ function PucardsContactMultiPickerModal(props){
                 (r.e || r.fx || r.cfx) && h('div', { style:{ fontSize:'10.5px', color:'#2563eb', marginTop:'1px' } },
                   (r.e ? '✉ ' + r.e : '') + ((r.e && (r.fx||r.cfx)) ? '  ' : '')
                   + ((r.fx||r.cfx) ? '📠 ' + (r.fx||r.cfx) : ''))
+              )
+              ,
+              /* 맡는 일 — 체크한 사람만 고를 수 있다. 안 담을 사람에게 일을 정해 봐야 뜻이 없다. */
+              !already && h('select', { value:dutyOf(r.id), disabled:!on,
+                onChange:function(e){ var v = e.target.value; setDuty(function(p){ var n = Object.assign({}, p); n[r.id] = v; return n; }); },
+                title:'이 사람이 이 사업장에서 «맡는 일»입니다 — 자문 담당과 특별업무 담당이 다를 수 있습니다',
+                style:{ flexShrink:0, padding:'3px 6px', border:'1px solid '+(on?'#cbd5e1':'#e2e8f0'), borderRadius:'5px',
+                  fontSize:'11px', background: on ? '#fff' : '#f8fafc', color: on ? '#475569' : '#cbd5e1',
+                  cursor: on ? 'pointer' : 'not-allowed' } },
+                h('option', { value:'' }, '맡는 일 —'),
+                PC_DUTIES.map(function(d){ return h('option', { key:d, value:d }, d); })
               )
             );
           })
@@ -13302,6 +13334,8 @@ function ContractModal(props){
       var added = 0;
       list.forEach(function(p){
         var pcc = pcToContact(p, false, p.id);
+        /* 고르는 창에서 정한 «맡는 일». 직책(role)과 다른 칸이다. */
+        if(p && p.__duty) pcc.duty = p.__duty;
         var blank = -1;
         for(var i=0;i<cs.length;i++){
           if(!cs[i]) continue;
@@ -13314,7 +13348,9 @@ function ContractModal(props){
       });
       // 주담당자가 하나도 없으면 첫 줄을 주담당으로 (제자리 수정 대신 새 객체로 — 옛 상태를 건드리지 않게)
       if(cs.length && !cs.some(function(c){ return c && c.isPrimary; })) cs[0] = Object.assign({}, cs[0], { isPrimary:true });
-      showToast('기업정보함에서 담당자 ' + added + '명 담았습니다');
+      var _dn = list.filter(function(p){ return p && p.__duty; }).length;
+      showToast('기업정보함에서 담당자 ' + added + '명 담았습니다'
+        + (_dn ? ' (맡는 일 ' + _dn + '명 정함)' : ''));
       return Object.assign({}, prev, { company: Object.assign({}, prev.company, { contacts: cs }) });
     });
   }
@@ -14884,6 +14920,12 @@ function ContractModal(props){
               ? h('span', { style:{ background:'#1e40af', color:'#fff', fontSize:'10px', padding:'2px 8px', borderRadius:'10px', fontWeight:700 } }, '✓ 주담당자')
               : h('button', { type:'button', onClick:function(){ setPrimary(idx); },
                   style:{ background:'#fff', color:'#1e40af', border:'1px solid #bfdbfe', padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:600, cursor:'pointer' } }, '주담당자로'),
+            /* 맡는 일 — 담을 때 정한 것을 그대로 보여 준다.
+               ⚠ 안 보여 주면 «담아 놓고 아무도 모르는 값»이 된다. */
+            ct.duty ? h('span', { title:'이 사람이 맡는 일 — 기업정보함에서 담을 때 정했습니다',
+              style:{ background:'#f0fdf4', color:'#166534', border:'1px solid #bbf7d0', fontSize:'10px',
+                padding:'2px 8px', borderRadius:'10px', fontWeight:700, whiteSpace:'nowrap' } },
+              '🏷 ' + ct.duty) : null,
             // 사업자 동일인 체크박스 — 라벨은 짧게, 뜻은 마우스를 올리면 그대로 보인다
             h('label', { title:'🔗 사업자(대표) 동일인 — 사업자등록증의 대표자와 같은 사람입니다',
               style:{ display:'flex', alignItems:'center', gap:'4px', fontSize:'10.5px', cursor:'pointer', color: locked ? '#1e40af' : '#64748b', fontWeight: locked ? 700 : 500, background: locked ? '#eff6ff' : 'transparent', padding:'2px 8px', borderRadius:'10px', border:'1px solid '+(locked ? '#bfdbfe' : 'transparent') } },
@@ -15636,6 +15678,8 @@ function ContractModal(props){
     // 기업정보함에서 담당자 여러 명 골라 담기 — 이미 담긴 사람은 다시 안 나오게 넘겨 준다
     pcMultiOpen && h(PucardsContactMultiPickerModal, {
       initialQuery: (f.company && f.company.name) || f.companyName || '',
+      /* 계약 종류가 하나면 그 일을 미리 켜 둔다 — 안 정하면 비어 남는다. */
+      defaultDuty: (typeof pcDutyFromKinds === 'function') ? pcDutyFromKinds(f.kinds) : '',
       have: f.company.contacts || [],
       onClose: function(){ setPcMultiOpen(false); },
       onAdd: function(list){ addContactsFromPucards(list); setPcMultiOpen(false); }
