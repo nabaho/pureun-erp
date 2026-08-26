@@ -74,15 +74,16 @@ test('★ 판 번호를 올려 이미 읽어 둔 서류가 다시 읽힌다', ()
 });
 
 test('★ 서식의 사업자번호는 있을 때만 검산한다 — 실제로 돌려 본다', async () => {
+  /* ⚠ 함수 본문을 «베어» 오지 않는다(2026-08-26). 그렇게 두었더니 afterRead 가
+     옆 함수를 부르기 시작하자 코드는 멀쩡한데 이 검사가 「없는 함수」로 넘어졌다.
+     판독기를 통째로 싣고 그쪽이 낸 통로로 부른다 — 진짜 그대로 돌아간다. */
   const boot = function () {
-    const ctx = { Promise, Object, String };
+    const ctx = { console, Promise, Object, Array, JSON, String, Number, Math, Date,
+      RegExp, Error, isFinite, parseInt, parseFloat, setTimeout, clearTimeout };
+    ctx.window = ctx; ctx.globalThis = ctx; ctx.self = ctx;
     vm.createContext(ctx);
-    vm.runInContext(lib.match(/var KINDS = \{[^\n]*/)[0], ctx);
-    vm.runInContext('var deps = {};', ctx);
-    ['bizNoDigits', 'bizNoValid', 'fmtBizNo', 'afterRead'].forEach(function (n) {
-      vm.runInContext(fnOf(lib, n, '  '), ctx);
-    });
-    return ctx;
+    vm.runInContext(lib, ctx);
+    return { afterRead: ctx.PuDocRead._afterReadForTest };
   };
   /* 진짜 번호(체크섬 통과) — 화면 캡처의 310-81-13809 */
   const ok = await boot().afterRead({ kind: 'form', company: '가야', bizno: '3108113809',

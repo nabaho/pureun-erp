@@ -664,6 +664,91 @@
      (대표 결정 2026-08-24) — 「글자가 있는데 그림으로 읽어 둔 것」만 골라 다시 읽는
      데 쓴다. 이 한 글자가 없으면 다시 읽을 값이 있는 것과 없는 것을 가릴 수 없어,
      판 번호를 올릴 때마다 읽어 둔 것 «전부»가 다시 읽힌다. */
+  /* ── pairs 에만 담긴 값을 «이름 붙은 칸»으로 되메운다 (2026-08-26) ──
+
+     대표 캡처의 실사례: 「4·4 제도 도입기업 선정 신청서」(성진테크)에서 화면에는
+     사업자등록번호 204-81-33738 이 **또렷이 보이는데** 그 아래에는
+     「사업자번호를 읽지 못해 기업 상세로 보낼 수 없습니다」가 떴다.
+
+     까닭 — 판독 표는 pairs(문서에 적힌 차례 그대로)를 그리고, 「기업 상세로 보내기」는
+     이름 붙은 칸(fields.bizno)을 본다. AI 가 **pairs 에만 담고 이름 붙은 칸을 비워 두면**
+     사람 눈에는 있는 값이 프로그램에는 없는 것이 된다 — 화면이 스스로 모순된 말을 한다.
+     지시문은 「이름 붙은 칸에 담은 것도 pairs 에 다시 담아라」고만 하고, 그 **반대**는
+     시키지 않는다. 그래서 한쪽만 채워지는 일이 실제로 났다(서식 25장 가운데 5장).
+
+     ⚠ 다시 판독하지 «않고» 고친다 — 판 번호를 올리면 읽어 둔 사진 수백 장이 다시
+       읽히고 그것이 그대로 요금이다. 이 되메우기는 **읽어 둔 결과에도** 걸린다.
+     ⚠ **비어 있는 칸만** 채운다. AI 가 담은 값을 덮으면 안 된다 —
+       pairs 는 문서 표기 그대로라, 이름 붙은 칸이 더 다듬어져 있을 수 있다.
+     ⚠ 채운다고 「검증 통과」가 되는 것은 아니다. 되메운 뒤에 검산(bizNoValid)을
+       그대로 다시 돌린다 — 「기계 검증 통과분만 자동 입력」이라는 규칙은 그대로다. */
+  var PAIR_TO_KEY = {
+    사업자등록번호: 'bizno', 사업자번호: 'bizno', 사업자등록번호칸: 'bizno',
+    법인등록번호: 'corpno', 법인번호: 'corpno',
+    기업명: 'company', 업체명: 'company', 회사명: 'company', 상호: 'company',
+    사업장명: 'company', 기관명: 'company', 사업체명: 'company', 법인명: 'company',
+    대표자: 'ceo', 대표자명: 'ceo', 대표: 'ceo', 대표이사: 'ceo', 성명대표: 'ceo',
+    주소: 'address', 소재지: 'address', 사업장소재지: 'address', 사업장주소: 'address',
+    전화: 'companyTel', 전화번호: 'companyTel', 연락처: 'companyTel',
+    대표번호: 'companyTel', 대표전화: 'companyTel',
+    팩스: 'companyFax', 팩스번호: 'companyFax',
+    홈페이지: 'homepage', 누리집: 'homepage',
+    설립일: 'openDate', 설립일자: 'openDate', 개업일: 'openDate', 개업연월일: 'openDate',
+    업태: 'bizType', 업종: 'bizItem', 종목: 'bizItem',
+    주생산품: 'product', 주생산품목: 'product',
+    매출액: 'sales', 직전년도매출액: 'sales', 전년도매출액: 'sales',
+    상시근로자수: 'workers', 근로자수: 'workers', 상시근로자: 'workers',
+    이메일: 'email', 전자우편: 'email',
+    담당자: 'name', 담당자명: 'name',
+    직위: 'title', 직책: 'title',
+    휴대폰: 'mobile', 휴대전화: 'mobile', 휴대폰번호: 'mobile'
+  };
+  /* 되메우기를 하는 갈래 — 위 칸 이름들을 실제로 갖고 있는 것만.
+     명함(card)은 칸 이름이 달라 섞으면 엉뚱한 자리에 들어간다. */
+  var PAIR_FILL_KINDS = { form: 1, bizreg: 1, sme: 1, contract: 1 };
+
+  /* 「업태(대표)」·「주소 (지역)」·「상시 근로자수」처럼 꾸밈이 붙은 이름을 맞춘다.
+     괄호 안·빈칸·점·콜론을 떼고 견준다 — 문서마다 표기가 조금씩 다르다. */
+  function pairKeyName(k) {
+    return String(k == null ? '' : k)
+      .replace(/\([^)]*\)/g, '')
+      .replace(/[\s·:.\-_/]/g, '');
+  }
+
+  function fillFromPairs(kind, fields) {
+    if (!PAIR_FILL_KINDS[kind]) return [];
+    var pairs = Array.isArray(fields && fields.pairs) ? fields.pairs : [];
+    if (!pairs.length) return [];
+    var filled = [];
+    pairs.forEach(function (p) {
+      var key = PAIR_TO_KEY[pairKeyName(p && p.k)];
+      if (!key) return;
+      var val = (p && p.v == null) ? '' : String(p.v).trim();
+      if (!val || val === '-') return;                  // 「-」는 문서에서 «없음»을 뜻한다
+      if (String(fields[key] == null ? '' : fields[key]).trim()) return;   // 이미 있으면 안 덮는다
+      fields[key] = val;
+      filled.push(key);
+    });
+    return filled;
+  }
+
+  /* 이미 저장된 판독 결과를 그 자리에서 고친다(다시 안 읽는다).
+     ⚠ 저장소에 다시 쓰지 «않는다» — 화면이 쓸 때마다 고쳐 쓰면 남의 수정과 부딪히고,
+       사진 수백 장에 쓰기가 그만큼 늘어난다. 읽어 온 것을 그때그때 다듬을 뿐이다. */
+  function healRead(read) {
+    if (!read || read.error || !read.fields) return [];
+    var had = String(read.fields.bizno || '').trim();
+    var filled = fillFromPairs(read.kind, read.fields);
+    if (!filled.length) return filled;
+    /* 사업자번호가 «새로» 생겼으면 검산해서 자동 입력 규칙에 태운다.
+       원래 있던 번호의 판정은 건드리지 않는다 — 국세청 조회까지 거친 값일 수 있다. */
+    if (!had && read.fields.bizno) {
+      read.fields.bizno = fmtBizNo(read.fields.bizno);
+      read.bizNoOk = bizNoValid(read.fields.bizno);
+    }
+    return filled;
+  }
+
   function afterRead(parsed, via) {
     var kind = KINDS[parsed.kind] ? parsed.kind : 'other';
     var fields = {};
@@ -673,6 +758,9 @@
       if (v === undefined || v === null || String(v).trim() === '') continue;
       fields[k] = typeof v === 'string' ? v.trim() : v;
     }
+    /* pairs 에만 담긴 값을 이름 붙은 칸으로 옮긴다 — 아래 검산보다 «먼저» 해야
+       되메운 사업자번호도 검산을 받는다. */
+    fillFromPairs(kind, fields);
 
     var out = { kind: kind, fields: fields, bizNoOk: null, ntsChecked: false, ntsState: null,
                 error: null, via: (via === 'text' ? 'text' : 'image') };
@@ -838,6 +926,10 @@
     fmtBizNo: fmtBizNo,
     mapTo: mapTo,
     keysFrom: keysFrom,
+    /* 이미 읽어 둔 결과를 **다시 판독하지 않고** 고친다 — pairs 에만 담긴 값을
+       이름 붙은 칸으로 옮기고, 그때 사업자번호가 새로 생겼으면 검산도 다시 한다.
+       돌려주는 것: 채운 칸 이름 배열(빈 배열이면 손댄 것이 없다). */
+    healRead: healRead,
     MODELS: MODELS,
     PROMPTS: { all: PROMPT_ALL },
     READ_VERSION: READ_VERSION,
@@ -851,6 +943,11 @@
     /* 검사 전용 — 바깥 함수들은 실패를 한국어 글로 감싸 버려서, 서버가 준
        **상태 숫자**가 살아 있는지 확인할 길이 없다. 그 안쪽을 열어 둔다.
        ⚠ 앱에서 부르지 말 것. */
-    _askProxyForTest: function (parts) { return askProxy(parts); }
+    _askProxyForTest: function (parts) { return askProxy(parts); },
+    /* 판독 결과를 다듬는 마지막 단계. 검사가 **진짜 그대로** 돌려 보라고 낸 통로다.
+       ⚠ 예전에는 검사들이 이 함수의 «본문만 베어» 따로 돌렸다. 그러다 이 함수가
+         옆 함수(fillFromPairs)를 부르기 시작하자, 코드는 멀쩡한데 검사 셋이
+         한꺼번에 「없는 함수」로 넘어졌다(2026-08-26). 베지 말고 여기로 부른다. */
+    _afterReadForTest: function (parsed, via) { return afterRead(parsed, via); }
   };
 })(typeof window !== 'undefined' ? window : globalThis);
