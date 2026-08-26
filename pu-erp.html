@@ -11392,12 +11392,59 @@ function _normPersonKey(c){
   if(!n && !p) return '';                                 // 이름도 전화도 없으면 담을 수 없다
   return n + '|' + p;
 }
+/* ══════ 담당자 줄 정리 (2026-08-26 대표 지적) ══════
+   증상: 「기업담당자 (5)」인데 #1 이 «빈칸»이고 거기 「✓ 주담당자」가 붙어 있으며
+        진짜 사람(김상호)은 #2 로 밀려 있었다.
+   까닭: 계약창은 처음부터 빈 담당자 줄을 하나 만들어 둔다(적을 자리). 그런데
+        mergeCompanyContacts 가 «그 빈 줄도 주담당을 쥔 사람»으로 세어,
+        들여온 사람들에게 주담당을 안 주고 빈 줄 뒤에 붙이기만 했다.
+   ⚠ 그렇게 저장된 계약이 이미 있으므로 «읽을 때»도 정리한다.
+   ⚠ 아무도 없으면 빈 줄 하나는 «남긴다» — 적을 자리가 없으면 손으로 못 넣는다. */
+function erpIsBlankContact(c){
+  if(!c) return true;
+  if(c.sameAsCeo) return false;                 // 「동일인」 줄은 비어 보여도 뜻이 있다
+  return !String(c.name||'').trim()
+      && !String(c.phone||'').trim()
+      && !String(c.bizPhone||'').trim()
+      && !String(c.email||'').trim();
+}
+/* forcePrimary — 아무도 주담당이 아닐 때 첫 사람을 세울지.
+   ⚠ 합칠 때는 «세우지 않는다». 업체관리 규칙이 「대표 표시를 마음대로 주지 않는다」이다.
+      계약을 «열 때»만 세운다 — 계약창은 주담당이 한 사람 있어야 화면·계약서가 말이 된다. */
+function erpTidyContacts(list, forcePrimary){
+  var arr = (list || []).filter(Boolean);
+  var real = arr.filter(function(c){ return !erpIsBlankContact(c); });
+  if(!real.length) return arr;                  // 다 비었으면 그대로 둔다
+  var seen = false;
+  var out = real.map(function(c){
+    if(!c.isPrimary) return c;
+    if(seen) return Object.assign({}, c, { isPrimary:false });   // 주담당은 한 사람뿐
+    seen = true; return c;
+  });
+  if(forcePrimary && !seen && out.length) out[0] = Object.assign({}, out[0], { isPrimary:true });
+  return out;
+}
+/* 계약 기록 한 건을 열 때 한 번 정리한다 (원본은 안 건드린다). */
+function erpTidyContactsIn(rec){
+  if(!rec || !rec.company || !Array.isArray(rec.company.contacts)) return rec;
+  var before = rec.company.contacts;
+  var after = erpTidyContacts(before, true);   // 계약을 열 때는 주담당을 «한 사람» 세운다
+  var same = after.length === before.length && after.every(function(c, i){ return c === before[i]; });
+  if(same) return rec;
+  return Object.assign({}, rec, { company: Object.assign({}, rec.company, { contacts: after }) });
+}
+/* ⚠ 여기서 window 에 내보내지 «않는다» — 아래 mergeCompanyContacts 뒤의 뭉치에서 함께 내보낸다.
+   두 검사(site-contact-sync·pucards-pull)가 「이 자리부터 다음 내보내기 뭉치까지」로 코드를 떼어 가는데,
+   그 사이에 내보내기 뭉치가 하나 더 있으면 mergeCompanyContacts 가 통째로 안 잘려 간다.
+   ⚠ 이 주석에 그 표(내보내기 여는 낱말)를 «글자 그대로» 쓰면 안 된다 — 주석이 검사를 자른다. */
+
 function mergeCompanyContacts(existing, incoming){
   var out = (existing || []).slice();                     // 원본 배열은 바꾸지 않는다
   var had = out.length;
   var seen = {};
   out.forEach(function(c){ var k = _normPersonKey(c); if(k) seen[k] = true; });
-  var hasPrimary = out.some(function(c){ return !!(c && c.isPrimary); });
+  /* ★ 빈 줄은 자리를 차지한 사람이 아니다 — 그렇게 세면 들여온 사람이 주담당을 못 받는다. */
+  var hasPrimary = out.some(function(c){ return !!(c && c.isPrimary) && !erpIsBlankContact(c); });
   var added = 0, skipped = 0;
   (incoming || []).forEach(function(c){
     var k = _normPersonKey(c);
@@ -11423,6 +11470,7 @@ function mergeCompanyContacts(existing, incoming){
     var n = { name: String(c.name || '').trim(), position: _role, role: _role,
       phone: String(c.phone || '').trim(), email: String(c.email || '').trim(), isPrimary: pr };
     // 기업정보함 출처는 남긴다. 명함 사진(cardImg)·동일인 표시는 계약 화면 것이라 옮기지 않는다.
+    if(c.duty) n.duty = String(c.duty).trim();       // 맡는 일 — 안 옮기면 합칠 때 사라진다
     if(c.pcId) n.pcId = c.pcId;
     if(c.pcAt) n.pcAt = c.pcAt;
     if(c.bizPhone) n.bizPhone = String(c.bizPhone).trim();
@@ -11432,9 +11480,13 @@ function mergeCompanyContacts(existing, incoming){
     if(c.website) n.website = String(c.website).trim();   // 홈페이지
     out.push(n); added++;
   });
-  return { contacts: out, added: added, skipped: skipped };
+  /* 사람을 하나라도 들여왔으면 빈 줄은 걷고 주담당을 «사람»에게 준다. */
+  return { contacts: (added > 0 ? erpTidyContacts(out) : out), added: added, skipped: skipped };
 }
 try {
+  window.erpIsBlankContact = erpIsBlankContact;
+  window.erpTidyContacts = erpTidyContacts;
+  window.erpTidyContactsIn = erpTidyContactsIn;
   window.contactRole = contactRole;
   window._normPersonKey = _normPersonKey;
   window.mergeCompanyContacts = mergeCompanyContacts;
@@ -12712,7 +12764,8 @@ function ContractModal(props){
   // 동시편집 가드: 모달 진입 시점의 updatedAt 캡처
   var origUpdatedAt = (props.cur && props.cur.updatedAt) || 0;
 
-  var init = props.cur || {
+  /* ★ 이미 저장된 계약에도 빈 줄이 들어 있다 — 열 때 한 번 정리한다. */
+  var init = (props.cur ? erpTidyContactsIn(props.cur) : null) || {
     kinds: [],
     typeCodes: { consult:'', company:'', case:'', consulting:'', fund:'', other:'' },
     amounts:   { consult:0, company:0, case:0, consulting:0, fund:0, other:0 },
