@@ -56,8 +56,10 @@ test('★ 접힘 줄에 이름·직급·연락처·맡는 일이 보인다', () 
   assert.ok(g.indexOf('p.name') >= 0, '이름이 없다');
   assert.ok(g.indexOf('contactRole(p)') >= 0, '직급이 없다');
   assert.ok(g.indexOf('p.phone || p.bizPhone') >= 0, '연락처가 없다');
-  /* ⚠ 「글자가 있다」로 겨누면 앞에 false ? 를 붙여 꺼도 통과한다 — 조건까지 본다. */
-  assert.ok(g.indexOf("p.duty ? h('span'") >= 0, '맡는 일이 없거나 꺼져 있다');
+  /* ⚠ 2026-08-26 다시 겨눔 — 읽기만 하던 표가 «고르는 칸»이 되었다(안 ㄱ).
+     「글자가 있다」로 겨누면 앞에 false 를 붙여 꺼도 통과하니, 부르는 꼴 그대로 본다. */
+  assert.ok(g.indexOf('ctDutySelect(ctPrimaryIdx(), p.duty, true)') >= 0,
+    '맡는 일이 접힌 줄에 없다');
   assert.ok(g.indexOf('setCtFold(false)') >= 0, '펼칠 길이 없다');
 });
 

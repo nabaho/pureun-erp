@@ -14167,6 +14167,38 @@ function ContractModal(props){
     return (f.company.contacts || []).filter(function(c){ return !erpIsBlankContact(c); });
   }
   function ctIsFolded(){ return ctFold && ctRealList().length >= 1; }
+  /* 주담당이 «몇 번째» 줄인지 — 접힌 줄에서 바로 고칠 때 그 줄을 가리키려고 쓴다. */
+  function ctPrimaryIdx(){
+    var cts = f.company.contacts || [];
+    for(var i=0;i<cts.length;i++){ if(cts[i] && cts[i].isPrimary && !erpIsBlankContact(cts[i])) return i; }
+    for(var j=0;j<cts.length;j++){ if(!erpIsBlankContact(cts[j])) return j; }
+    return -1;
+  }
+  /* ── 「맡는 일」 고르는 칸 (2026-08-26 대표 지시, 안 ㄱ) ──
+     지금까지는 기업정보함에서 «담을 때»만 정할 수 있어, 잘못 정하면 그 줄을 지우고
+     다시 담아야 했다. 이제 줄에서 바로 바꾼다.
+     ⚠ 낱말은 PC_DUTIES 한 곳에서만 온다 — 고르는 창과 «같은» 낱말이어야 한다.
+     ⚠ 직책(부장·과장)은 다른 칸이다(role). 여기서 건드리지 않는다.
+     ⚠ 「동일인」 줄에서도 고칠 수 있다 — 맡는 일은 «우리 쪽» 표시라 사업자등록증과 무관하다. */
+  function ctDutySelect(idx, val, small){
+    /* ⚠ 가리킬 줄이 없으면 아무것도 그리지 않는다 — idx 가 -1 이면
+       setContact(-1, …) 이 «없는 줄»을 만들어 자료를 망친다. */
+    if(idx == null || idx < 0) return null;
+    var on = !!val;
+    return h('select', { value: val || '',
+      onChange:function(e){ setContact(idx, 'duty', e.target.value); },
+      title:'이 사람이 맡는 일 — 자문 담당과 특별업무 담당이 다를 수 있습니다.\n'
+           +'비워 두면 「그냥 담당자」입니다',
+      style:{ background: on ? '#f0fdf4' : '#fff', color: on ? '#166534' : '#94a3b8',
+        border:'1px solid ' + (on ? '#bbf7d0' : '#cbd5e1'), borderRadius:'10px',
+        fontSize: small ? '10px' : '10.5px', fontWeight:700, padding:'2px 6px',
+        cursor:'pointer', whiteSpace:'nowrap', appearance:'auto' } },
+      h('option', { value:'' }, '🏷 맡는 일 —'),
+      (typeof PC_DUTIES !== 'undefined' ? PC_DUTIES : []).map(function(d){
+        return h('option', { key:d, value:d }, d);
+      })
+    );
+  }
   function ctPrimary(){
     var cts = f.company.contacts || [];
     for(var i=0;i<cts.length;i++){ if(cts[i] && cts[i].isPrimary && !erpIsBlankContact(cts[i])) return cts[i]; }
@@ -15045,7 +15077,8 @@ function ContractModal(props){
           h('span', { style:{ background:'#1e40af', color:'#fff', fontSize:'10px', padding:'2px 8px', borderRadius:'10px', fontWeight:700, whiteSpace:'nowrap' } }, '✓ 주담당'),
           h('span', { style:{ fontSize:'13px', fontWeight:800, color:'#1e293b' } }, p.name || '(이름 없음)'),
           sub ? h('span', { style:{ fontSize:'11px', color:'#64748b' } }, sub) : null,
-          p.duty ? h('span', { style:{ background:'#f0fdf4', color:'#166534', border:'1px solid #bbf7d0', fontSize:'10px', padding:'2px 8px', borderRadius:'10px', fontWeight:700, whiteSpace:'nowrap' } }, '🏷 ' + p.duty) : null,
+          /* 접힌 줄에서도 바로 고친다 — 대표가 늘 보는 줄이 여기다. */
+          h('div', { onClick:function(e){ e.stopPropagation(); } }, ctDutySelect(ctPrimaryIdx(), p.duty, true)),
           h('button', { type:'button', onClick:function(){ setCtFold(false); },
             title:'펼쳐서 고칩니다 — 담당자는 지워지지 않고 접혀 있을 뿐입니다',
             style:{ marginLeft:'auto', background:'#fff', color:'#475569', border:'1px solid #cbd5e1', borderRadius:'5px', padding:'3px 9px', fontSize:'10.5px', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' } },
@@ -15067,12 +15100,9 @@ function ContractModal(props){
               ? h('span', { style:{ background:'#1e40af', color:'#fff', fontSize:'10px', padding:'2px 8px', borderRadius:'10px', fontWeight:700 } }, '✓ 주담당자')
               : h('button', { type:'button', onClick:function(){ setPrimary(idx); },
                   style:{ background:'#fff', color:'#1e40af', border:'1px solid #bfdbfe', padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:600, cursor:'pointer' } }, '주담당자로'),
-            /* 맡는 일 — 담을 때 정한 것을 그대로 보여 준다.
-               ⚠ 안 보여 주면 «담아 놓고 아무도 모르는 값»이 된다. */
-            ct.duty ? h('span', { title:'이 사람이 맡는 일 — 기업정보함에서 담을 때 정했습니다',
-              style:{ background:'#f0fdf4', color:'#166534', border:'1px solid #bbf7d0', fontSize:'10px',
-                padding:'2px 8px', borderRadius:'10px', fontWeight:700, whiteSpace:'nowrap' } },
-              '🏷 ' + ct.duty) : null,
+            /* 맡는 일 — 줄에서 바로 고친다(안 ㄱ).
+               ⚠ 읽기만 하던 표였다 — 잘못 정하면 지우고 다시 담아야 했다. */
+            ctDutySelect(idx, ct.duty),
             // 사업자 동일인 체크박스 — 라벨은 짧게, 뜻은 마우스를 올리면 그대로 보인다
             h('label', { title:'🔗 사업자(대표) 동일인 — 사업자등록증의 대표자와 같은 사람입니다',
               style:{ display:'flex', alignItems:'center', gap:'4px', fontSize:'10.5px', cursor:'pointer', color: locked ? '#1e40af' : '#64748b', fontWeight: locked ? 700 : 500, background: locked ? '#eff6ff' : 'transparent', padding:'2px 8px', borderRadius:'10px', border:'1px solid '+(locked ? '#bfdbfe' : 'transparent') } },

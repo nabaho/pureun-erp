@@ -100,12 +100,18 @@ test('직책은 여전히 role 에 들어간다 (두 칸이 섞이지 않았다)
 });
 
 /* ── 화면 ── */
+/* ⚠ 2026-08-26 다시 겨눔 — 읽기만 하던 표가 «고르는 칸»이 되었다(안 ㄱ).
+   옛 검사는 그 표의 «문장 모양»을 못 박고 있었다.
+   지켜야 할 규칙은 ①담당자 줄에 맡는 일이 보인다 ②거기서 바로 고칠 수 있다 이다. */
 test('★★ 담은 뒤 맡는 일이 «보인다» — 안 보이면 아무도 모르는 값이 된다', () => {
-  assert.ok(B.indexOf("'🏷 ' + ct.duty") >= 0, '담당자 줄에 안 보여 준다');
+  assert.ok(B.indexOf('ctDutySelect(idx, ct.duty)') >= 0, '담당자 줄에 안 보여 준다');
 });
 
-test('맡는 일이 없으면 아무것도 안 붙인다 (빈 표가 줄줄이 생기지 않게)', () => {
-  assert.ok(/ct\.duty \? h\('span'/.test(B), '없을 때도 붙이고 있다');
+test('★ 안 정한 것과 정한 것이 눈에 다르다 (빈 표가 줄줄이 보이지 않게)', () => {
+  const fn = bare(cutBlock(SRC, 'function ctDutySelect(idx, val, small){'));
+  assert.ok(/var on = !!val;/.test(fn), '정했는지 안 가린다');
+  assert.ok(fn.indexOf("on ? '#f0fdf4'") >= 0, '정한 것이 눈에 안 띈다');
+  assert.ok(/h\('option', \{ value:'' \}/.test(fn), '「안 정함」을 고를 길이 없다');
 });
 
 test('★ 창을 열 때 계약 종류를 넘겨 준다', () => {
