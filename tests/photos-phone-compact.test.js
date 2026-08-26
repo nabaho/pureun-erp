@@ -34,11 +34,20 @@ function fakeDom() {
       id, parentNode: null, firstChild: null,
       classList: { toggle() {}, add() {}, remove() {} }, focus() {},
       appendChild(c) { c.parentNode = this; },
-      insertBefore(c) { c.parentNode = this; }
+      /* ⚠ 진짜 브라우저처럼 «남의 자식» 앞에는 못 끼운다 — NotFoundError 를 던진다.
+         이걸 흉내 내지 않았더니, 기준 칸이 다른 칸 «안»으로 들어가 버린 것을
+         못 잡았다(2026-08-26 에 #findBar 가 #gridBar 안으로 들어갔다). */
+      insertBefore(c, ref) {
+        if (ref && ref.parentNode !== this) {
+          throw new Error('NotFoundError: ' + ref.id + ' 는 ' + this.id + ' 의 자식이 아닙니다');
+        }
+        c.parentNode = this;
+      }
     };
   }
   const ids = ['phoneBar', 'side', 'chipRow', 'docBtn', 'row2', 'needBox', 'oldBox',
-    'upWrap', 'autoNote', 'findBar', 'q', 'phUpRow', 'phMenuBtn', 'phSheet',
+    /* gridBar 가 이제 윗줄 전부다 — 모으는 띠를 그 앞에 끼운다(2026-08-26) */
+    'upWrap', 'autoNote', 'findBar', 'gridBar', 'q', 'phUpRow', 'phMenuBtn', 'phSheet',
     'ownerPick', 'phTop', 'phOwner', 'collectBar', 'phCollectDock', 'phUpDock',
     'viewPhotos'];
   const nodes = {};
@@ -48,7 +57,10 @@ function fakeDom() {
   nodes.oldBox.parentNode = nodes.side;
   nodes.ownerPick.parentNode = nodes.side;
   nodes.upWrap.parentNode = nodes.side;
+  nodes.autoNote.parentNode = nodes.side;        // 올리기를 되돌릴 때 기준이 되는 칸
   nodes.collectBar.parentNode = nodes.viewPhotos;
+  nodes.gridBar.parentNode = nodes.viewPhotos;   // 윗줄 — 모으는 띠가 그 앞에 들어간다
+  nodes.findBar.parentNode = nodes.gridBar;      // 찾기는 윗줄 «안»에 있다(2026-08-26)
   return nodes;
 }
 
