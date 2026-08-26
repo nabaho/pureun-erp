@@ -45,6 +45,11 @@
   }
 
   var DEFAULTS = {
+    /* 엔진을 어디서 가져오나 — CDN 을 먼저, 저장소 사본을 나중에.
+       사본만 읽던 동안 이 엔진을 쓰는 앱들은 판을 올려도 옛 판(0.7.x)에 머물러
+       가운뎃점(·)을 흘렸다. rules.html 이 이미 쓰던 방식을 여기로 옮겨 왔다.
+       cdnBase 를 빈 값으로 두면 사본만 쓴다 — CDN 이 응답을 물고 늘어지는 망을 위한 탈출구. */
+    cdnBase: 'https://cdn.jsdelivr.net/npm/@rhwp/core',
     coreUrl: 'vendor/rhwp-core/rhwp.js',
     editorUrl: 'https://esm.sh/@rhwp/editor',
     maxFileBytes: 100 * 1024 * 1024,
@@ -104,15 +109,41 @@
     return Function('u', 'return import(u)')(url);
   }
 
+  /* 지금 쓰는 판 — 브라우저에 적힌 것이 더 새것이면 그것을, 옛것이면 기본 판을. */
+  function activeVersion() {
+    var stored = null;
+    try { stored = global.localStorage.getItem('pureun_v6_rhwp_ver'); } catch (_) {}
+    return pickVer(stored, CORE_VERSION);
+  }
+
+  function baseHref() {
+    return (global.location && global.location.href) || 'http://localhost/';
+  }
+
+  /* 가져올 자리를 순서대로. 저장소 사본은 «언제나 마지막»에 남긴다 —
+     오프라인·사내망의 마지막 보루라 지우면 안 된다. */
+  function coreCandidates(extra) {
+    var cfg = config(extra);
+    var out = [];
+    if (cfg.cdnBase) out.push(cfg.cdnBase + '@' + activeVersion() + '/rhwp.js');
+    out.push(new URL(cfg.coreUrl, baseHref()).href);
+    return out;
+  }
+
   function loadCore(extra) {
     if (corePromise) return corePromise;
     setupCanvasMeasure();
-    var cfg = config(extra);
-    var url = new URL(cfg.coreUrl, global.location && global.location.href || 'http://localhost/').href;
-    corePromise = dynamicImport(url).then(function (mod) {
-      return mod.default().then(function () { return mod; });
-    }).catch(function (err) {
-      corePromise = null;
+    var urls = coreCandidates(extra);
+    corePromise = urls.reduce(function (chain, url, i) {
+      return chain.catch(function (prev) {
+        if (i && global.console) global.console.warn('rhwp 로드 실패 → 다음 자리로:', url, prev);
+        return dynamicImport(url).then(function (mod) {
+          return mod.default().then(function () { return mod; });
+        });
+      });
+    }, Promise.reject(new Error('시작')))
+    .catch(function (err) {
+      corePromise = null;   // 물린 것을 놓아, 망이 돌아오면 다시 시도할 수 있게
       throw err;
     });
     return corePromise;
@@ -217,6 +248,8 @@
 
   var api = {
     CORE_VERSION: CORE_VERSION,
+    activeVersion: activeVersion,
+    coreCandidates: coreCandidates,
     pickVer: pickVer,
     verNewer: verNewer,
     config: config,
