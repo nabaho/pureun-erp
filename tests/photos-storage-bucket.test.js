@@ -31,11 +31,14 @@ test('★ gov-consulting.html 도 같은 창고를 본다 — 안 맞으면 옮�
     '사진첩과 다른 창고를 보면, 사진첩이 창고로 옮긴 뒤에는 이 화면에서 그 사진을 못 읽습니다.');
 });
 
-test('★ gov-consulting.html 의 두 PuPhotoStore.init 호출 모두 storage 를 넘긴다', () => {
+test('★ gov-consulting.html 은 저장 층에 창고를 넘긴다', () => {
+  /* ⚠ 「두 곳 모두」가 아니라 「세우는 곳마다」를 본다 — 2026-08-26 에 네 곳이
+     photoStoreOn() 한 곳으로 모였다. 몇 곳인지를 못 박으면, 옳게 모았는데도
+     검사가 운다(실제로 그랬다). 몇 곳이든 창고를 넘기는지만 지킨다. */
   const calls = gov.split(/\r?\n/).filter(function (l) {
     return l.indexOf('PuPhotoStore.init(') > -1;
   });
-  assert.ok(calls.length >= 2, 'PuPhotoStore.init 호출을 다 찾지 못했습니다 (' + calls.length + '곳).');
+  assert.ok(calls.length >= 1, 'PuPhotoStore.init 호출을 찾지 못했습니다.');
   const bare = calls.filter(function (c) { return c.indexOf('storage:') === -1; });
   assert.equal(bare.length, 0,
     'storage 를 안 넘기면 사진첩이 창고로 옮긴 사진은 loadFull 이 실시간DB에서 ' +

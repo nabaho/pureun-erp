@@ -73,7 +73,14 @@ const t = (name, got, want) => {
 /* ═══ 1. PuPhotoStore 로드 + 초기화 ═══ */
 {
   t('★ pu-photo-store.js 를 로드한다', /<script src="js\/pu-photo-store\.js\?v=\d+"><\/script>/.test(src), true);
-  t('★ 인증 완료 시 PuPhotoStore.init 을 부른다', /PuPhotoStore\.init\(\s*\{\s*db:\s*fbDb,\s*uid:\s*user\.uid\s*\}\s*\)/.test(src), true);
+  /* ⚠ 인자를 «글자 그대로» 못 박지 않는다 — 2026-08-26 에 열쇠(auth)를 하나 더
+     넘기게 되자, 옳게 고쳤는데도 이 검사만 울었다. 있어야 할 것이 «있는가»만 본다. */
+  var initCall = (src.match(/PuPhotoStore\.init\(\s*\{[^}]*\}\s*\)/) || [''])[0];
+  t('★ 인증 완료 시 PuPhotoStore.init 을 부른다',
+    /db:\s*fbDb/.test(initCall) && /uid:\s*user\.uid/.test(initCall), true);
+  /* 계약서는 2026-08-17 부터 원본 주소를 안 남긴다 — 서버에 열쇠를 내밀어야 열린다.
+     안 넘기면 계약서 보기 창이 오류도 없이 「불러오는 중…」에서 멎는다. */
+  t('★ 열쇠(auth)도 함께 넘긴다 — 안 넘기면 계약서 원본이 안 열린다', /auth:/.test(initCall), true);
 }
 
 /* ═══ 2. erpVatTextToFlag — 부가세 문구 판정 ═══ */
