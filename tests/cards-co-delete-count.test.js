@@ -201,10 +201,12 @@ test('폴더를 안 골라도 도구줄이 나온다 — 「전체」에서 통�
   assert.ok(body.includes("f ? coFTabChipsHtml(f) : ''"), '탭 칩만 폴더에 딸린다');
 });
 
-test('개수 고르기와 「1–200 / 4,143곳」이 같은 줄 오른쪽 끝에 있다', () => {
+test('개수 고르기가 도구줄 오른쪽 끝에 있다', () => {
+  /* ⚠ 2026-08-26: 처음에는 「1–200 / 4,143곳」도 여기에 붙였다가 뺐다. 대표 지시는
+       「아래에」였고, 위아래 두 곳에 같은 글귀를 두면 4,143곳을 두 번 거른다.
+       아래 쪽넘김은 cards-pager-always-count 가 따로 못 박는다. */
   const body = slice('function coToolsHtml(){', 'function pickCoFTab(');
   assert.ok(body.includes('coSizeSelHtml(state.coPageSize)'), '개수 고르기');
-  assert.ok(body.includes('coPagerHtml(coPage())'), '몇 곳 중 몇 번째인지');
   assert.match(body, /margin-left:auto/, '오른쪽 끝');
 });
 
