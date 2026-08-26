@@ -35869,6 +35869,30 @@ function CmsMatchModal(props){
   var byName = {};
   pool.forEach(function(c){ byName[c.name] = c; });
 
+  /* ── 넓은 풀 — 해지된 업체·자문료 미등록 업체까지 (김보람 건의 2026-08-26) ──
+     ★ 왜 필요한가: CMS 명세에는 있는데 ERP 목록에 «없어서» 고를 수가 없는 건들이 있다.
+       ⑴ 자문 해지 — status 가 active 가 아니라 위 풀에서 빠진다
+       ⑵ 자문료 미등록 — monthlyAdvisoryFee 가 0 이라 빠진다
+       그 업체 몫만큼 차액이 남아 확정 자체가 안 됐다(대표 화면: 차액 154,000원).
+     ⚠ 기본으로는 안 보인다 — 늘 보이면 고를 것이 수백 곳으로 늘어난다.
+       「해지·미등록도 보기」 를 켤 때만 목록에 낀다.
+     ⚠ 자동 고르기(nbApplyPick·자동조합)는 «좁은 풀» 만 쓴다 — 넓히면 해지 업체가
+       저절로 딸려 들어온다. 넓은 풀은 «사람이 직접 고를 때» 만 쓴다. */
+  var poolAllRef = useRef(null);
+  if(!poolAllRef.current){
+    poolAllRef.current = (dbGet('companies', null) || []).filter(function(c){
+      return c && c.name && !byName[c.name];
+    }).map(function(c){
+      return { name:c.name, fee:c.monthlyAdvisoryFee||0, payDay:c.taxInvoicePaymentDay||'',
+               mainSid:c.managerMain||'', mainName:userName(c.managerMain),
+               off: (c.status!=='active' ? '해지' : '자문료 없음') };
+    }).sort(function(a,b){ return (b.fee||0) - (a.fee||0); });
+  }
+  var poolMore = poolAllRef.current;
+  var byNameAll = {};
+  pool.forEach(function(c){ byNameAll[c.name] = c; });
+  poolMore.forEach(function(c){ byNameAll[c.name] = c; });
+
   var paidRef = useRef(null);
   if(!paidRef.current){
     var pd = {};
@@ -35883,6 +35907,8 @@ function CmsMatchModal(props){
   var qS  = useState('');    var query = qS[0];        var setQuery = qS[1];
   var hS  = useState('');    var hint = hS[0];         var setHint = hS[1];
   var bS  = useState(false); var busy = bS[0];         var setBusy = bS[1];
+  var moreS  = useState(false); var showMore = moreS[0]; var setShowMore = moreS[1];  // 해지·미등록도 보기
+  var linkS  = useState(null);  var linking  = linkS[0]; var setLinking  = linkS[1];  // 「연결 안 됨」 이어 붙이는 중
 
   // ── 🏦 나이스빌 CMS 실데이터 (cms_ledger) — 있으면 추정 조합보다 이쪽이 정답이다 ──
   // 열 때 한 번만 (색인도 1회) — 회원명을 ERP 업체로 풀어 이 입금을 이루는 업체 목록을 만든다
@@ -35934,36 +35960,67 @@ function CmsMatchModal(props){
     }
   }, []);
 
+  /* 나이스빌 명세가 있으면 «그 금액» 이 정답이다 — ERP 자문료는 해지·변경 뒤 낡아 있다.
+     ⚠ 명세가 없을 때만 자문료로 센다(예전 방식). */
+  var nbAmtByCo = {};
+  if(nbRef.current && nbRef.current.items){
+    nbRef.current.items.forEach(function(it){
+      if(it.coName) nbAmtByCo[it.coName] = (nbAmtByCo[it.coName] || 0) + (it.amount || 0);
+    });
+  }
   var sel = Object.keys(chk).filter(function(k){ return chk[k]; });
   var sum = 0;
-  sel.forEach(function(n){ var c = byName[n]; if(c) sum += (parseInt(c.fee,10)||0); });
+  sel.forEach(function(n){
+    var c = byNameAll[n];
+    sum += nbAmtByCo[n] || (c ? (parseInt(c.fee,10)||0) : 0);
+  });
   var diff = amount - sum;
   var matched = _erpFeeFits(sum, amount) && sum > 0;
 
-  var list = pool.filter(function(c){
+  var list = (showMore ? pool.concat(poolMore) : pool).filter(function(c){
     if(!query) return true;
     return c.name.toLowerCase().indexOf(query.toLowerCase()) >= 0;
   });
 
+  /* ★ 「이미입금」도 고를 수 있다 (김보람 건의 2026-08-26)
+       예전에는 여기서 곧장 돌아섰다 — 두 번 입금표시되는 것을 막으려던 것이다.
+       그런데 이미 입금표시된 업체가 이 입금의 «일부» 인 경우가 있다. 못 고르니
+       그 몫이 차액으로 남아 확정 자체가 막혔다(대표 화면: 차액 154,000원).
+     ⚠ 고를 수는 있되 «입금표시를 새로 만들지는 않는다» — 아래 apply 가 그대로 건너뛴다.
+       곧 «금액만 맞추는» 것이다. 두 번 잡히는 일은 여전히 없다. */
   function toggle(name){
-    if(paidMap[name]) return;
     var n = Object.assign({}, chk);
     if(n[name]) delete n[name]; else n[name] = 1;
     setChk(n);
+    /* 「연결 안 됨」 칩을 누른 뒤 고른 것이면 — 그 회원명을 이 업체로 기억해 둔다.
+       ⚠ 기억해 두지 않으면 다음 달에 또 똑같이 손으로 찾아야 한다. */
+    if(linking && n[name]){
+      try{
+        var _co = byNameAll[name];
+        erpLearnPayerAlias(linking.name, { companyName:name, companyId:(_co && _co.id) || '' });
+        showToast('🔗 「'+linking.name+'」 → '+name+' 으로 기억했습니다 (다음 달부터 저절로 이어집니다)');
+      }catch(_le){ if(window._erpErrLog) window._erpErrLog(_le); }
+      setLinking(null);
+    }
   }
 
   async function apply(){
     if(!sel.length || busy) return;
+    /* ⚠ 「이미입금」을 골랐다면 그것은 «금액만 맞추는» 것이다 — 새로 만들지 않는다.
+       확인 글에서 그 사실을 밝혀야, 두 번 잡힌 줄 알고 놀라는 일이 없다. */
+    var _dup = sel.filter(function(n){ return !!paidMap[n]; });
     var msg = '입금 '+amount.toLocaleString()+'원을 '+ym+' 자문료 '+sel.length+'곳으로 입금표시합니다.\n\n'
             + sel.slice(0,12).map(function(n){
-                var c = byName[n];
-                return '· '+n+' '+((c && c.fee)||0).toLocaleString()+'원';
+                var c = byNameAll[n];
+                var a = nbAmtByCo[n] || ((c && c.fee) || 0);
+                return '· '+n+' '+a.toLocaleString()+'원'+(paidMap[n] ? ' (이미 입금 — 금액만 맞춤)' : '');
               }).join('\n')
             + (sel.length>12 ? '\n· … 외 '+(sel.length-12)+'곳' : '')
-            + '\n\n합계 '+sum.toLocaleString()+'원'+(diff? ' (차액 '+diff.toLocaleString()+'원)':'');
+            + '\n\n합계 '+sum.toLocaleString()+'원'+(diff? ' (차액 '+diff.toLocaleString()+'원)':'')
+            + (_dup.length ? '\n\n※ 이미 입금표시된 '+_dup.length+'곳은 금액만 맞추고 새로 만들지 않습니다.' : '');
     if(!(await popConfirm(msg))) return;
     setBusy(true);
-    var ok=0, skip=0;
+    var ok=0, skip=0;          // skip = 이미 입금표시돼 «금액만 맞춘» 곳
     var okNames = [];
     sel.forEach(function(n){
       var co = byName[n];
@@ -36060,10 +36117,24 @@ function CmsMatchModal(props){
         h('div',{style:{marginTop:'5px',display:'flex',gap:'4px',flexWrap:'wrap',maxHeight:'104px',overflowY:'auto'}},
           nbData.items.map(function(it,ii){
             var bad = !it.coName;
+            /* ★ 칩을 «누를 수 있게» 했다 (김보람 건의 2026-08-26).
+                 · 이어진 업체면 → 그 업체를 바로 켜고 끈다(이미입금이어도 된다)
+                 · 연결 안 됨/목록없음이면 → 「이어 붙이기」 로 들어간다.
+                   아래 목록에서 고르면 그 회원명을 기억해 다음 달부터 저절로 이어진다.
+               예전에는 그냥 «읽는 글» 이라, 왜 안 되는지만 알려 주고 길이 없었다. */
+            var _linkOn = !!(linking && linking.name === it.name);
             return h('span',{key:ii,
-              title: bad ? '이 회원명과 같은 ERP 업체를 찾지 못했습니다 — 아래 목록에서 직접 체크하세요'
-                         : (it.paid ? '이미 입금표시된 업체입니다' : (it.inPool ? 'ERP 업체: '+it.coName : 'ERP 업체: '+it.coName+' (자문료 미등록 — 아래 목록에 없음)')),
+              onClick:function(){
+                if(it.coName && byNameAll[it.coName]){ toggle(it.coName); return; }
+                setLinking(_linkOn ? null : it);
+                setQuery('');
+                setShowMore(true);
+                if(!_linkOn) setHint('🔗 「'+it.name+'」 와 같은 업체를 아래에서 고르세요 — 고르면 다음 달부터 저절로 이어집니다');
+              },
+              title: bad ? '눌러서 아래 목록의 업체와 이어 붙입니다 (한 번 이어 두면 다음 달부터 저절로 맞습니다)'
+                         : (it.paid ? '이미 입금표시된 업체입니다 — 눌러서 금액만 맞출 수 있습니다' : (it.inPool ? '눌러서 켜고 끕니다 — ERP 업체: '+it.coName : '눌러서 이어 붙입니다 — '+it.coName+' (자문료 미등록)')),
               style:{fontSize:'10.5px',fontWeight:700,borderRadius:'8px',padding:'1px 7px',whiteSpace:'nowrap',
+                cursor:'pointer', outline: _linkOn ? '2px solid #2563eb' : 'none', outlineOffset:'1px',
                 background: bad?'#fef2f2':(it.paid?'#f8fafc':'#fff'),
                 color: bad?'#991b1b':(it.paid?'#94a3b8':'#1e40af'),
                 border:'1px solid '+(bad?'#fecaca':(it.paid?'#e2e8f0':'#eff6ff'))}},
@@ -36081,6 +36152,14 @@ function CmsMatchModal(props){
         h('input',{type:'search',value:query,placeholder:'🔍 사업장명 검색',
           onChange:function(e){setQuery(e.target.value);},
           style:{flex:1,padding:'5px 9px',fontSize:'11.5px',border:'1px solid #e2e8f0',borderRadius:'5px'}}),
+        /* 해지·자문료 미등록 업체는 기본으로 안 보인다 — 늘 보이면 고를 것이 수백 곳이 된다.
+           CMS 명세에는 있는데 목록에 없을 때만 켠다(칩을 누르면 저절로 켜진다). */
+        h('button',{onClick:function(){setShowMore(!showMore);},
+          title:'자문 해지·자문료 미등록 업체까지 목록에 넣습니다 (CMS 명세에는 있는데 목록에 없을 때)',
+          style:{padding:'5px 11px',background: showMore?'#1e40af':'#f8fafc', color: showMore?'#fff':'#475569',
+            border:'1px solid '+(showMore?'#1e40af':'#e2e8f0'),
+            borderRadius:'5px',fontSize:'11px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},
+          (showMore?'✓ ':'')+'해지·미등록도'),
         h('button',{onClick:function(){setChk({});},
           style:{padding:'5px 11px',background:'#f8fafc',color:'#475569',border:'1px solid #e2e8f0',
             borderRadius:'5px',fontSize:'11px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'전체 해제')
@@ -36103,12 +36182,14 @@ function CmsMatchModal(props){
             : list.map(function(co){
             var paid = !!paidMap[co.name];
             var on = !!chk[co.name];
+            /* ★ 이미입금도 누를 수 있다 — 「금액만 맞추기」 다(위 toggle 주석 참고).
+               ⚠ 골랐을 때는 흐리게 두지 않는다 — 흐리면 「안 골라졌다」로 읽힌다. */
             return h('tr',{key:co.name,
               onClick:function(){ toggle(co.name); },
-              style:{background: paid?'#f8fafc':(on?'#f0fdf4':'#fff'),
-                     opacity: paid?0.55:1, cursor: paid?'default':'pointer'}},
+              style:{background: on?(paid?'#fffbeb':'#f0fdf4'):(paid?'#f8fafc':'#fff'),
+                     opacity: (paid && !on)?0.55:1, cursor:'pointer'}},
               h('td',{style:tdS},
-                h('input',{type:'checkbox',checked:on,disabled:paid,
+                h('input',{type:'checkbox',checked:on,
                   onClick:function(e){e.stopPropagation();},
                   onChange:function(){ toggle(co.name); }})),
               h('td',{style:Object.assign({},tdS,{fontWeight: on?700:500, color:'#1e293b'})}, co.name),
@@ -36116,9 +36197,13 @@ function CmsMatchModal(props){
               h('td',{style:Object.assign({},tdS,{textAlign:'right',fontFamily:'monospace',
                 fontWeight:700,color: on?'#166534':'#475569'})}, (co.fee||0).toLocaleString()+'원'),
               h('td',{style:Object.assign({},tdS,{textAlign:'center',color:'#64748b'})}, co.payDay||'-'),
-              h('td',{style:tdS}, paid
-                ? h('span',{style:{color:'#94a3b8',fontWeight:700,fontSize:'10.5px'}},'✓ 입금완료')
-                : h('span',{style:{color:'#cbd5e1',fontSize:'10.5px'}},'미입금'))
+              h('td',{style:tdS},
+                co.off && h('span',{style:{color:'#854d0e',background:'#fffbeb',border:'1px solid #fde68a',
+                  borderRadius:'6px',padding:'0 5px',fontWeight:700,fontSize:'10px',marginRight:'4px'}}, co.off),
+                paid
+                  ? h('span',{style:{color: on?'#854d0e':'#94a3b8',fontWeight:700,fontSize:'10.5px'}},
+                      on ? '✓ 입금완료 · 금액만 맞춤' : '✓ 입금완료')
+                  : h('span',{style:{color:'#cbd5e1',fontSize:'10.5px'}},'미입금'))
             );
           }))
         )
@@ -40442,17 +40527,23 @@ function FinanceLedger(props){
     // ── CMS 일괄이체 매칭 모달 (적요가 '더빌이체' 등일 때) ──
     cmsRow && h(CmsMatchModal, { row:cmsRow,
       onClose:function(){ setCmsRow(null); },
+      /* ⚠ 「이미 입금됨」은 이제 «제외» 가 아니라 «금액만 맞춘» 것이다 (김보람 건의 2026-08-26).
+           그래서 새로 만든 것이 하나도 없어도(n=0) 그 입금은 «가려진 것» 이다 —
+           예전에는 n>0 일 때만 처리 표시를 해서, 전부 이미 입금된 묶음이면
+           그 입금이 영영 미처리로 남았다. */
       onApplied:function(n, skipped, cmsSet){
         var _r = cmsRow;
         setCmsRow(null);
-        if(n > 0){
-          erpMarkBankRowProcessed(_r, 'income', 'CMS 일괄이체 '+n+'곳');
+        var _done = n + (skipped||0);
+        if(_done > 0){
+          erpMarkBankRowProcessed(_r, 'income', 'CMS 일괄이체 '+_done+'곳');
           removeRow(_r._k, 'inc');
         }
-        showToast(n > 0
-          ? ('✅ CMS 일괄이체 '+n+'곳 입금표시' + (skipped ? ' · 이미 입금됨 '+skipped+'곳 제외' : '')
+        showToast(_done > 0
+          ? ('✅ CMS 일괄이체 '+_done+'곳 처리' + (n ? ' · 입금표시 '+n+'곳' : '')
+             + (skipped ? ' · 이미 입금돼 금액만 맞춤 '+skipped+'곳' : '')
              + (cmsSet ? ' · CMS 등록 '+cmsSet+'곳' : ''))
-          : ('처리된 업체가 없습니다' + (skipped ? ' — 이미 입금됨 '+skipped+'곳 제외' : '')));
+          : '고른 업체가 없습니다');
       } }),
 
     /* ── ➕ 직접 등록 팝업 ──
