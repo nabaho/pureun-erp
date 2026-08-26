@@ -2638,12 +2638,32 @@ var DOC_OPS=[['ops_asset_change','재산변동상황보고서(설립 이후·노
 var DOC_SUB=[['sub_required','지원금 신청 시 필요서류(안내)','공동'],['subsidy','공동근로복지기금 지원신청서','공동'],
   ['sub_checklist','공동자율점검 체크리스트','공동'],['sub_contrib','기금출연확인서(지원신청용)','공동'],
   ['sub_oath','서약서','공동'],['sub_welfare_plan','복지사업계획서','공동'],
-  // 사업계획서는 ①인가와 같은 서식(원본 대조 일치) — 중복 두지 않고 같은 bizplan을 공유한다
+  /* 사업계획서·정관은 ①인가와 «같은 서식»이다(원본 대조 일치). 서식을 새로 만들지 않고
+     같은 key 를 여기에도 걸어 둔다 — 지원금 제출서류에서 누르면 여기서 열리라고.
+     딴 단계로 튀면 «다시 찾아야» 한다. phaseOfDoc(kind,'subsidy') 가 이 자리를 고른다. */
   ['bizplan','사업계획서 (①인가와 같은 서식)','공동'],
+  ['charter','기금법인 정관 (①인가와 같은 서식)','공동'],
   ['sub_assets','재산목록표','공동'],['sub_payment','지원금 지급신청서(계좌)','공동']];
 // ⑥ 근로복지공단 인센티브 — 과거자료 '5. 공단인센티브청구'
 var DOC_INCENT=[['incent_cost','비용청구서(별지 제11호의2)','공동']];
 var DOC_ALL=[].concat(DOC_KINDS,DOC_REG,DOC_TAX,DOC_OPS,DOC_SUB,DOC_INCENT);
+/* 서식이 «어느 단계에» 사는지 — 목록에서 직접 찾는다.
+   따로 적어 두면 서식을 옮겼을 때 표만 옛말이 되어, 눌러도 엉뚱한 단계가 열린다.
+   실제로 그랬다: 지원금 제출서류의 [서식]을 눌러도 ①인가가 열려 다시 찾아야 했다
+   (갈 곳을 «누른 서식»이 아니라 «화면의 단계»로 정하고 있었다). */
+var DOC_PHASE=[['inka',DOC_KINDS],['reg',DOC_REG],['tax',DOC_TAX],
+               ['ops',DOC_OPS],['subsidy',DOC_SUB],['incent',DOC_INCENT]];
+/* prefer — «누른 사람이 있던 단계». 한 서식을 여러 단계에 일부러 두기도 한다
+   (사업계획서는 ①인가와 ⑤지원금에 같이 있다). 그때는 있던 자리에서 열어야
+   «왜 딴 데로 갔지» 하지 않는다. */
+function phaseOfDoc(kind,prefer){
+  var hit=[];
+  for(var i=0;i<DOC_PHASE.length;i++)
+    for(var j=0;j<DOC_PHASE[i][1].length;j++)
+      if(DOC_PHASE[i][1][j][0]===kind) hit.push(DOC_PHASE[i][0]);
+  if(prefer&&hit.indexOf(prefer)>=0) return prefer;
+  return hit[0]||'';
+}
 /* 선택 기금 유형에 맞는 서식만 — 공동/사내 기본서식을 따로 검토 */
 function docsFor(list,ftype){ return list.filter(function(d){ return !d[2]||d[2]===ftype; }); }
 // ── 🗂 서식 현황 대시보드 — 전체 기금 × 서식 준비 상태 비교 ──
@@ -2707,11 +2727,15 @@ function docsMatrixHTML(list){
     +'</div>';
 }
 // 매트릭스 칸 클릭 → 그 기금 📑 서식 탭으로(서식 지정 시 해당 서식 미리보기)
-function openFundDoc(fid,kind){
+function openFundDoc(fid,kind,prefer){
   if(!funds[fid]){ toast('기금을 찾을 수 없습니다','warn'); return; }
   S.fundId=fid; S.formFund=fid; S.formsCtx='fund'; S.tab='docs';
   if(kind){ S._sideKind=kind;
-    S.formPhase={kinds:'inka',reg:'reg',tax:'tax',ops:'ops',sub:'subsidy',incent:'incent'}[S.dbPhase]||'inka';   // 대시보드 단계 → 서식 화면 단계 키
+    /* 갈 곳은 «누른 서식»이 정한다. 화면의 단계로 정하면 지원금 서식을 눌러도
+       ①인가가 열려, 거기서 다시 찾아야 했다. */
+    S.formPhase=phaseOfDoc(kind,prefer)
+      || {kinds:'inka',reg:'reg',tax:'tax',ops:'ops',sub:'subsidy',incent:'incent'}[S.dbPhase]
+      || 'inka';
   }
   _go('fund',fid); S.tab='docs'; renderFund();
 }
@@ -6078,7 +6102,9 @@ function subsidyDocsPanel(f){
     return '<tr><td style="width:26px"><input type="checkbox"'+(on?' checked':'')+' onchange="subChkFund(\''+d.k+'\',this.checked)"></td>'
       +'<td'+(on?' style="color:#166534;font-weight:600"':'')+'>'+esc(d.n)+(d.opt?' <span class="chip" style="font-size:9.5px">선택</span>':'')+'</td>'
       +'<td class="muted" style="font-size:11.5px">'+esc(d.note||'')+'</td>'
-      +'<td>'+(d.form?'<button onclick="openFundDoc(\''+S.fundId+'\',\''+d.form+'\')" style="padding:1px 7px;font-size:11px">📄 서식</button>':'')+'</td></tr>';
+      /* 세 번째 인자는 «누른 사람이 있던 단계». 사업계획서처럼 ①인가와 ⑤지원금에
+         함께 놓인 서식은 여기서 누르면 ⑤지원금에서 열려야 한다. */
+      +'<td>'+(d.form?'<button onclick="openFundDoc(\''+S.fundId+'\',\''+d.form+'\',\'subsidy\')" style="padding:1px 7px;font-size:11px">📄 서식</button>':'')+'</td></tr>';
   }).join('');
   var fDone=fundDocs.filter(function(d){ return !d.opt&&fchk[d.k]; }).length;
   var fNeed=fundDocs.filter(function(d){ return !d.opt; }).length;

@@ -598,6 +598,29 @@ ok('보령시는 보령세무서', src.includes("'충남 보령시':'보령세�
 ok('세금과공과 계정', src.includes("'세금과공과':'비용'"));
 ok('격려금 계정', src.includes("'격려금':'비용'"));
 ok('고유목적사업준비금환입 계정(수익)', src.includes("'고유목적사업준비금환입':'수익'"));
+/* ══ 서식 단추는 «그 서식으로» 가야 한다 ══
+   갈 곳을 «누른 서식»이 아니라 «화면의 단계»(S.dbPhase)로 정하고 있었다.
+   그래서 지원금 제출서류의 [서식]을 눌러도 ①인가가 열려, 거기서 다시 찾아야 했다. */
+ok('서식이 사는 단계를 목록에서 찾는다', src.includes('var DOC_PHASE=[')
+  && src.includes('function phaseOfDoc(kind,prefer){')
+  && /S\.formPhase=phaseOfDoc\(kind,prefer\)/.test(src));
+// 한 서식을 여러 단계에 «일부러» 두기도 한다 — 그때는 있던 자리에서 열려야 한다
+ok('있던 자리를 먼저 본다', src.includes('if(prefer&&hit.indexOf(prefer)>=0) return prefer;'));
+ok('제출서류가 있던 자리를 넘겨준다', /openFundDoc[^)]*d\.form\+[^)]*subsidy/.test(src));
+{
+  /* 지원금 제출서류의 서식은 모두 ⑤지원금 목록에 있어야 한다 —
+     없으면 눌렀을 때 딴 단계가 열려 «다시 찾는» 그 일이 되풀이된다. */
+  const g = n => { const i = src.indexOf('var ' + n + '='); let d = 0;
+    for (let k = src.indexOf('=', i); k < src.length; k++) { const c = src[k];
+      if (c === '{' || c === '[') d++; else if (c === '}' || c === ']') { d--; if (!d) return src.slice(i, src.indexOf(';', k) + 1); } } };
+  // 간접 eval 은 전역에서 돈다 — 값을 «돌려받아» 쓴다(바깥 지역변수는 안 보인다)
+  const SUB = (0, eval)(g('DOC_SUB') + ';DOC_SUB');
+  const REQ = (0, eval)(g('SUB_REQ_DOCS') + ';SUB_REQ_DOCS');
+  const inSub = new Set(SUB.map(d => d[0]));
+  const miss = REQ.filter(d => d.form && !inSub.has(d.form)).map(d => d.n);
+  ok('지원금 제출서류의 서식이 모두 ⑤지원금에 있다' + (miss.length ? ' — ' + miss.join(', ') : ''),
+    miss.length === 0);
+}
 /* 자동분개는 «위에서부터 첫 번째로 맞는 규칙»을 쓴다.
    그래서 앞선 규칙이 이미 채가는 낱말을 뒤에 또 적으면 그 낱말은 한 번도 안 닿는다.
    적어 둔 사람은 닿는 줄 알고, 주석도 그렇게 적힌다 — 실제로 둘이 그랬다
@@ -633,7 +656,7 @@ ok('고유목적사업준비금환입 계정(수익)', src.includes("'고유목�
   // 근로복지시설비는 목적사업비 목록에 있어야 «2.고유목적사업비용» 줄로 간다
   ok('근로복지시설비가 목적사업비다', /var PURPOSE_ACCTS=\[[^\]]*'근로복지시설비'/.test(src));
 }
-ok('세금과공과를 관리비로 집계', /var ADMIN_ACCTS=\[[^\]]*'세금과공과'/.test(src));
+ok('세금과공과를 관리비로 집계', /var ADMIN_ACCTS=\[[^\]]*'세금과공과'/.test(src));
 /* 일반관리비 목록이 세 벌이었다 — 계정을 하나 더하면 사업이익과 명세가 조용히 어긋났다.
    한 곳에 두고 손익계산서·수입지출명세서·computeFin 이 함께 본다. */
 ok('일반관리비 목록이 한 벌', src.includes('  _sub(ADMIN_ACCTS);')
