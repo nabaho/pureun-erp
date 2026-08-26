@@ -63,7 +63,12 @@ test('청취기가 낡은 함수를 쥐지 않는다', () => {
 });
 
 test('상세 창이 열려 있거나 올리는 중이면 받지 않는다', () => {
-  const g = FI.slice(FI.indexOf('invDropRef.current = function(fs){'), FI.indexOf("  }, []);"));
+  const _s = FI.indexOf('invDropRef.current = function(fs){');
+  assert.ok(_s >= 0, '끌어놓기 손을 못 찾았다');
+  /* ⚠ 끝은 반드시 «시작점 뒤»에서 찾는다 — 앞에서 찾으면 다른 useEffect 에 걸려
+     빈 덩어리를 잘라 오고, 그러면 이 검사는 «아무것도 안 보고» 통과한다. */
+  const g = FI.slice(_s, FI.indexOf('  }, []);', _s));
+  assert.ok(g.length > 50, '덩어리를 제대로 못 잘랐다 (' + g.length + '자)');
   assert.match(g, /if\(detailModal\) return;/);
   assert.match(g, /uploadState\.status === 'parsing' \|\| uploadState\.status === 'saving'/);
 });

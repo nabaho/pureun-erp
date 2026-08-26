@@ -13006,7 +13006,7 @@ function ContractModal(props){
         어느 이름을 골랐든 번호는 «가지고 있는 줄»에서 온다.
      ★ 이미 적힌 칸은 절대 안 덮는다 — 손으로 고쳐 둔 값이 말없이 바뀌면 안 된다.
      ★ 순서가 곧 신뢰 순서다(erpHitPri) — 업체관리 → 기업정보함 → 계약 → 나머지. */
-  function applyCoGroup(g){
+  function applyCoGroup(g, opts){
     if(!g || !g.rows || !g.rows.length) return;
     var c = Object.assign({}, f.company || {});
     var contacts = (c.contacts || []).slice();
@@ -13024,6 +13024,11 @@ function ContractModal(props){
       ['employmentInsuredCount','injuryInsuredCount'].forEach(function(k){
         if(!c[k] && src[k]) c[k] = src[k];
       });
+      /* ★ 담당자는 «부르지 않으면» 안 딸려온다 (2026-08-26 대표 지시).
+         종전에는 회사를 고르면 그 회사 명함이 «모두» 담당자로 들어왔다 —
+         한 사람만 넣으려 해도 넷이 들어왔다. 사업장에서 자문을 맡는 사람과
+         특별한 일을 맡는 사람이 다를 수 있으니 «골라» 담아야 한다. */
+      if(opts && opts.people === false) return;
       if(src.contacts && src.contacts.length && typeof mergeCompanyContacts === 'function'){
         var mg = mergeCompanyContacts(contacts, src.contacts);
         if(mg && mg.added > 0) contacts = mg.contacts;
@@ -14459,13 +14464,15 @@ function ContractModal(props){
                 })) : null,
               h('div', { style:{ display:'flex', gap:'5px', flexWrap:'wrap' } },
                 h('button', { type:'button',
-                  onMouseDown:function(e){ e.preventDefault(); applyCoGroup(g); },
-                  title:'이 회사 정보를 «빈 칸만» 채웁니다 — 이미 적은 값은 그대로 둡니다.\n사업자번호는 가지고 있는 기록에서 가져옵니다',
+                  onMouseDown:function(e){ e.preventDefault(); applyCoGroup(g, { people:false }); },
+                  title:'이 회사 정보를 «빈 칸만» 채웁니다 — 이미 적은 값은 그대로 둡니다.\n'
+                       + '사업자번호는 가지고 있는 기록에서 가져옵니다.\n'
+                       + '담당자는 딸려오지 않습니다 — [담당자 골라 담기]에서 고르세요',
                   style:{ background:'#1e40af', color:'#fff', border:'1px solid #1e40af', borderRadius:'5px', padding:'3px 9px', fontSize:'10.5px', fontWeight:700, cursor:'pointer' } },
                   '🏢 기업정보 가져오기'),
                 g.hasCards ? h('button', { type:'button',
-                  onMouseDown:function(e){ e.preventDefault(); applyCoGroup(g); setPcCoPick('people'); },
-                  title:'기업정보함에서 이 회사 사람들을 보고 담당자를 골라 담습니다',
+                  onMouseDown:function(e){ e.preventDefault(); applyCoGroup(g, { people:false }); setPcMultiOpen(true); },
+                  title:'기업정보함에서 이 회사 사람들을 보고 담당자를 «하나씩 골라» 담습니다 — 모두 담기지 않습니다',
                   style:{ background:'#f0fdf4', color:'#166534', border:'1px solid #bbf7d0', borderRadius:'5px', padding:'3px 9px', fontSize:'10.5px', fontWeight:700, cursor:'pointer' } },
                   '👤 담당자 골라 담기') : null,
                 g.work.length ? h('button', { type:'button',
@@ -15424,23 +15431,10 @@ function ContractModal(props){
         h('button', { className:'x', onClick:function(){ safeClose(false); } }, '×')
       ),
       // ── 임시저장 자동 복원 배너
-      f._restoredFromDraft != null && h('div', {
-        style:{ margin:'10px 16px 0', padding:'8px 12px', background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'6px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:'10px', fontSize:'11.5px' } },
-        h('div', { style:{ color:'#854d0e', fontWeight:600 } },
-          '📋 이전 작성분 복원됨 (' + f._restoredFromDraft + '분 전' + (props.cur ? ' · 수정 중 저장본' : '') + ')',
-          // 복원된 종류를 명시 — 새 계약인데 예전 종류가 섞여있으면 바로 알아채도록
-          (f.kinds && f.kinds.length) ? h('span', { style:{ marginLeft:'6px', fontWeight:700, color:'#d97706' } },
-            '· 종류: ' + f.kinds.map(function(v){ return kindInfo(v).label; }).join(', ')) : null,
-          !props.cur ? h('span', { style:{ display:'block', color:'#854d0e', fontWeight:500, marginTop:'2px' } },
-            '새 계약을 시작하려면 [🆕 새로 시작]을 누르세요 (종류가 이전 값으로 남아있을 수 있습니다)') : null),
-        h('button', { onClick:function(){
-            try{ localStorage.removeItem(DRAFT_KEY); }catch(_e){}
-            setF(init);
-            showToast(props.cur ? '🗑 임시저장 삭제 — 원래 데이터로' : '🆕 새 계약으로 초기화');
-          },
-          style:{ padding:'3px 10px', background:'#fff', color:'#854d0e', border:'1px solid #fde68a', borderRadius:'4px', cursor:'pointer', fontSize:'10.5px', fontWeight:700, flexShrink:0 } },
-          props.cur ? '🗑 원래대로' : '🆕 새로 시작')
-      ),
+      /* ── 복원 안내 상자는 걷어냈다 (2026-08-26 대표 지시) ──
+         창 맨 위를 한 뼘 차지하면서 정작 눌러야 할 「새로 시작」은 오른쪽 구석에 있었다.
+         ⚠ 안내는 없애도 «되돌릴 손»은 남겨야 한다 — 없으면 이전에 쓰다 만 값이
+            섞인 채로 저장된다. 그 단추를 계약번호 줄 오른쪽 끝으로 옮겼다. */
       // ── 자동저장 상태 표시 (저장된 경우만)
       autoSaveStatus && f._restoredFromDraft == null && h('div', {
         style:{ margin:'6px 16px 0', padding:'4px 10px', background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:'4px', display:'inline-flex', alignItems:'center', gap:'6px', fontSize:'10.5px', color:'#166534' } },
@@ -15546,7 +15540,21 @@ function ContractModal(props){
             editNo && dupHit
             ? h('span', { style:{ fontSize:'10.5px', color:'#dc2626', fontWeight:700 } }, '🚫 이미 사용 중: ' + (dupHit.companyName||'-'))
             : editNo && h('span', { style:{ fontSize:'10.5px', color: canSuperEdit()?'#2563eb':'#fbbf24' } },
-                canSuperEdit() ? '🛡️ 관리자 권한으로 수정 가능' : '⚠️ 과거 데이터 입력 시에만 사용')
+                canSuperEdit() ? '🛡️ 관리자 권한으로 수정 가능' : '⚠️ 과거 데이터 입력 시에만 사용'),
+          /* 쓰다 만 것이 복원됐을 때만 나온다 — 오른쪽 끝으로 밀어 둔다.
+             안내 문구는 단추 위에 얹었다(마우스를 올리면 몇 분 전 것인지 보인다). */
+          f._restoredFromDraft != null && h('button', { type:'button',
+            onClick:function(){
+              try{ localStorage.removeItem(DRAFT_KEY); }catch(_e){}
+              setF(init);
+              showToast(props.cur ? '🗑 임시저장 삭제 — 원래 데이터로' : '🆕 새 계약으로 초기화');
+            },
+            title:'이전에 쓰다 만 내용(' + f._restoredFromDraft + '분 전)이 들어와 있습니다.\n'
+                 + '누르면 빈 계약으로 시작합니다 — 종류가 이전 값으로 남아 있을 수 있습니다.',
+            style:{ marginLeft:'auto', padding:'3px 10px', background:'#fffbeb', color:'#854d0e',
+              border:'1px solid #fde68a', borderRadius:'4px', cursor:'pointer',
+              fontSize:'10.5px', fontWeight:700, flexShrink:0 } },
+            props.cur ? '🗑 원래대로' : '🆕 새로 시작')
         );
       })(),
       // ── 의뢰인 유형 토글 (항상 보이게 상단 고정) ──
@@ -48223,8 +48231,30 @@ if(typeof window !== 'undefined'){
 
 function FinanceInvoice(){
   var _fill5 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 380px)
-  var existing = dbGet('finance_invoice', []);
-  var s = useState(existing); var invoices = s[0]; var setInvoices = s[1];
+  /* ★ 저장소를 «늘 다시 읽는다» (2026-08-26 김보람 제보: 「읽지 못하거나 사라진다」).
+     종전에는 useState(dbGet(...)) 라서 «처음 열 때의 사진»에 얼어붙었다.
+     파이어베이스가 늦게 닿으면 화면은 영영 0건이고, ⚠ 그 0건 위에 한 건을 더하면
+     통째 저장(dbSet)이 앞의 것을 «지운다». 사라지는 것보다 나쁜 것은 사라져도 모르는 것이다. */
+  var _ivT = useState(0); var setInvTickLocal = _ivT[1];
+  useEffect(function(){
+    function again(e){
+      /* 다른 화면이 저장할 때마다 수천 줄을 다시 그리지 않는다 — 내 열쇠일 때만. */
+      if(e && e.type === 'pureun-saved'){
+        var k = e.detail && e.detail.key;
+        if(k && k !== 'finance_invoice') return;
+      }
+      setInvTickLocal(function(n){ return n + 1; });
+    }
+    window.addEventListener('pureun-saved', again);
+    window.addEventListener('fb_data_changed', again);
+    window.addEventListener('fb_initial_done', again);
+    return function(){
+      window.removeEventListener('pureun-saved', again);
+      window.removeEventListener('fb_data_changed', again);
+      window.removeEventListener('fb_initial_done', again);
+    };
+  }, []);
+  var invoices = dbGet('finance_invoice', []);
   var q = useState(''); var query = q[0]; var setQuery = q[1];
   var ym = usePersistedState('invoice_month', ''); var monthFilter = ym[0]; var setMonthFilter = ym[1];
   var dt = useState(null); var detailModal = dt[0]; var setDetailModal = dt[1];
@@ -48480,7 +48510,8 @@ function FinanceInvoice(){
     });
   }
 
-  function persist(arr){ setInvoices(arr); dbSet('finance_invoice', arr); }
+  /* 화면 상태를 따로 들지 않는다 — 저장하고 다시 읽는다(위 tick 이 다시 그린다). */
+  function persist(arr){ dbSet('finance_invoice', arr); setInvTickLocal(function(n){ return n + 1; }); }
 
   function addNew(){
     var today = todayYMD();
@@ -48833,7 +48864,7 @@ function FinanceInvoice(){
           h('span', { style:{ fontSize:'11px', color:'#94a3b8' } },
             '화면 아무 곳에나 끌어다 놓아도 됩니다',
             h('br'),
-            '홈택스 파일 → 업체별 아카이브에 담깁니다 (여기엔 회색으로 함께 보입니다)'),
+            '홈택스 파일 → 업체별 아카이브에 담깁니다 (여기엔 회색으로 함께 보입니다) · ⚠ 올린 것은 «이 컴퓨터에만» 남습니다 — 다른 PC에서는 안 보입니다'),
           h('input', { type:'search', placeholder:'🔍 업체명·사업자번호 검색', value:query,
             onChange:function(e){ setQuery(e.target.value); },
             style:{ width:'220px', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px' } }),
