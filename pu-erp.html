@@ -11640,7 +11640,7 @@ function PastCompanySearchModal(props){
      종전에는 괄호만 지워 '(주)디와이테크' → '주디와이테크' 가 되어,
      명함에 '디와이테크' 로 적힌 회사를 못 찾았다(㈜ 는 되고 (주) 는 안 되는 상태).
    유한·재단·사단·의료·학교법인, 합자·합명도 같은 문제라 함께 처리한다. */
-var PC_CORP_TOKENS = /\(\s*(주|유|재|사|합|학|의|장)\s*\)|㈜|㈠|주식회사|유한책임회사|유한회사|합자회사|합명회사|재단법인|사단법인|의료법인|학교법인|사회복지법인|영농조합법인|농업회사법인/g;
+var PC_CORP_TOKENS = /\(\s*(주|유|재|사|합|학|의|장|자)\s*\)|㈜|㈠|주식회사|유한책임회사|유한회사|합자회사|합명회사|재단법인|사단법인|의료법인|학교법인|사회복지법인|영농조합법인|농업회사법인/g;
 function pcNormCo(s){
   return String(s||'').toLowerCase()
     .replace(PC_CORP_TOKENS, '')      // 법인 표기 먼저 (괄호째로)
@@ -11828,6 +11828,98 @@ function pcPersonRows(q){
 /* (2026-08-09) pcFetchImages 는 걷어냈다 — 기업정보함에서 «정보만» 가져오기로 했기 때문이다(대표 지시).
    사진을 계약 기록에 복사해 넣으면 레코드가 수 MB 로 부풀어 저장이 조용히 실패한다.
    사진은 기업정보함에 그대로 있으니 거기서 본다(첨부 칸의 「기업정보함에서 보기」). */
+
+/* ══════════ 계약창 의뢰인 목록 — 「한 회사 = 한 줄」로 묶기 ══════════
+   같은 회사가 이름 표기만 달라(천안청화공사 / 합자회사 천안청화공사 / (자)천안청화공사)
+   세 줄로 뜨고, 하나를 고르면 나머지 줄이 가진 것(사업자번호 같은)이 «조용히» 버려졌다.
+
+   ⚠ 묶는 규칙은 셋인데 그중 둘은 «안 묶는» 규칙이다 —
+      남의 회사를 합치는 것이 이 화면에서 가장 나쁜 실수다(엉뚱한 곳에 계약이 붙는다).
+   ① 사업자번호가 같으면 반드시 같은 회사다 — 이름이 달라도 묶는다.
+   ② 사업자번호가 «다르면» 이름이 같아도 절대 안 묶는다.
+   ③ 번호 없는 줄은, 그 이름에 번호가 «하나뿐»일 때만 붙는다. 둘 이상이면 어느 쪽인지
+      알 수 없으므로 따로 둔다 — 찍어서 붙이면 조용히 틀린다.
+   묶은 결과는 화면에 이름을 다 적어 보여 준다 — 사람이 눈으로 틀렸는지 볼 수 있어야 한다. */
+var ERP_WORK_SRC = { '계약':1, '사건':1, '컨설팅':1, '기금':1, '기타':1 };
+function erpHitCoName(r){
+  // 사람 줄은 label 이 «사람 이름»이다 — 묶을 때는 그 사람의 회사를 쓴다
+  if(r && r._pc) return String(r._pc.name || '');
+  return String((r && r.label) || '');
+}
+function erpHitBizDigits(r){ return String((r && r.bizNo) || '').replace(/\D/g, ''); }
+function erpHitNameKey(r){
+  var nm = erpHitCoName(r);
+  if(typeof pcNormCo === 'function') return pcNormCo(nm);
+  return nm.toLowerCase().replace(/[\s\-()·.,]/g, '');
+}
+function erpHitIsWork(r){ return !!(r && !r._pc && ERP_WORK_SRC[r.source]); }
+function erpHitIsMaster(r){ return !!(r && !r._pc && r.source === '업체'); }
+/* 신뢰 순서 — 이 순서로 «빈 칸만» 채운다. 업체관리가 우리 기준 기록이라 맨 앞이다. */
+function erpHitPri(r){
+  if(erpHitIsMaster(r)) return 0;
+  if(r && r._pc && !r._pc.person) return 1;
+  if(r && r._pc) return 2;
+  if(r && r.source === '계약') return 3;
+  return 4;
+}
+function erpMakeCoGroup(list){
+  var g = { rows:(list||[]).slice(), name:'', bizNo:'', aliases:[], info:[], work:[],
+            counts:{}, cardN:0, hasMaster:false, hasCards:false, key:'' };
+  g.rows.forEach(function(r){
+    if(!g.bizNo && r && r.bizNo) g.bizNo = r.bizNo;
+    var nm = erpHitCoName(r);
+    if(nm && g.aliases.indexOf(nm) < 0) g.aliases.push(nm);
+    if(erpHitIsWork(r)){ g.work.push(r); g.counts[r.source] = (g.counts[r.source]||0) + 1; }
+    else g.info.push(r);
+    if(r && r._pc){
+      g.hasCards = true;
+      var n = r._pc.person ? 1 : ((r._pc.contacts||[]).length);
+      if(n > g.cardN) g.cardN = n;
+    }
+    if(erpHitIsMaster(r)) g.hasMaster = true;
+  });
+  var best = g.rows.slice().sort(function(a,b){ return erpHitPri(a) - erpHitPri(b); })[0];
+  g.name = erpHitCoName(best) || '';
+  g.key  = g.bizNo ? ('b:' + erpHitBizDigits(g)) : ('n:' + erpHitNameKey(best || {}));
+  return g;
+}
+function erpGroupCoHits(rows){
+  var byName = {}, order = [];
+  (rows||[]).forEach(function(r){
+    var k = erpHitNameKey(r) || ('x:' + String((r && r.label) || ''));
+    if(!byName[k]){ byName[k] = []; order.push(k); }
+    byName[k].push(r);
+  });
+  var mid = [];
+  order.forEach(function(k){
+    var list = byName[k];
+    var seen = {}, numKeys = [];
+    list.forEach(function(r){ var d = erpHitBizDigits(r); if(d && !seen[d]){ seen[d] = 1; numKeys.push(d); } });
+    if(numKeys.length <= 1){ mid.push(erpMakeCoGroup(list)); return; }
+    /* 이름은 같은데 번호가 둘 이상 — «다른 회사»다. 번호별로 가른다. */
+    numKeys.forEach(function(d){
+      mid.push(erpMakeCoGroup(list.filter(function(r){ return erpHitBizDigits(r) === d; })));
+    });
+    var noNum = list.filter(function(r){ return !erpHitBizDigits(r); });
+    if(noNum.length) mid.push(erpMakeCoGroup(noNum));
+  });
+  /* 이름은 다른데 번호가 같은 무리를 마저 합친다 (「천안청화공사」 ↔ 「(자)천안청화공사」). */
+  var byNum = {}, out = [];
+  mid.forEach(function(g){
+    var d = erpHitBizDigits(g);
+    if(d && byNum[d]){
+      var t = byNum[d];
+      g.rows.forEach(function(r){ if(t.rows.indexOf(r) < 0) t.rows.push(r); });
+      var m = erpMakeCoGroup(t.rows);
+      Object.keys(m).forEach(function(kk){ t[kk] = m[kk]; });
+      return;
+    }
+    if(d) byNum[d] = g;
+    out.push(g);
+  });
+  return out;
+}
+try { window.erpGroupCoHits = erpGroupCoHits; } catch(_){ }
 
 // ============ 기업정보함 담당자 찾기 모달 (담당자 칸에서 바로 사람 검색) ============
 function searchPucardsPeople(query){
@@ -12711,6 +12803,7 @@ function ContractModal(props){
   var hrw = useState(false); var hideRetiredWk = hrw[0]; var setHideRetiredWk = hrw[1];  // 근로자: 재직자만 보기
   var ar = useState([]); var autoResults = ar[0]; var setAutoResults = ar[1];
   var aidx = useState(-1); var autoIdx = aidx[0]; var setAutoIdx = aidx[1];   // 자동완성 키보드 선택 인덱스
+  var wko = useState(''); var workOpen = wko[0]; var setWorkOpen = wko[1];   // 사업현황을 펼친 회사(그룹 열쇠)
   /* ── 사진첩 계약서 가져오기 ─────────────────────────────────────────
      내 사진첩에 찍어 둔 계약서(판독 끝난 것)에서 계약금·부가세·계약일·기간·업무요약을
      한 번에 채운다. ★ 계약유형을 «하나만» 골랐을 때만 찾는다 — 둘 이상이면 어느 쪽
@@ -12864,6 +12957,105 @@ function ContractModal(props){
   }
 
   // 자동완성 항목 선택 시 회사 정보 자동 채움
+  /* 지난 기록(업체·계약·사건·컨설팅·기금·기타)에서 그 줄의 «원본»을 찾는다. */
+  function _pastCoRecord(r){
+    var allSrc = [
+      { list: dbGet('contracts',[]), nameKey:'companyName', isContract:true },
+      { list: dbGet('companies',[]), nameKey:'name' },
+      { list: dbGet('cases',[]), nameKey:'companyName' },
+      { list: dbGet('consultings',[]), nameKey:'companyName' },
+      { list: dbGet('funds',[]), nameKey:'companyName' },
+      { list: dbGet('other_projects',[]), nameKey:'companyName' }
+    ];
+    var out = null;
+    allSrc.forEach(function(src){
+      if(out) return;
+      var item = src.list.find(function(x){
+        var nameOk = (x[src.nameKey]||'') === ((r && r.label) || '');
+        var xBiz = x.bizNo || (x.company && x.company.bizNo) || '';
+        return nameOk && xBiz === ((r && r.bizNo) || '');
+      });
+      if(item) out = { item:item, isContract:!!src.isContract };
+    });
+    return out;
+  }
+  /* 한 줄에서 «회사 칸에 넣을 값»만 뽑는다 (기업정보함 줄 / 지난 기록 줄 둘 다). */
+  function _coFieldsOf(r){
+    if(r && r._pc){
+      var pc = r._pc;
+      return { bizNo:pc.bizNo, ceo:pc.ceo, address:pc.address, phone:pc.phone, fax:pc.fax,
+               email:pc.ceoEmail, ceoPhone:pc.ceoPhone, bizType:pc.bizType,
+               bizCategory:pc.bizCategory, corpRegNo:pc.corpNo, contacts:(pc.contacts||[]) };
+    }
+    var fo = _pastCoRecord(r);
+    if(!fo) return { bizNo:(r && r.bizNo) || '' };
+    var co = fo.isContract ? (fo.item.company || {}) : fo.item;
+    return { bizNo:co.bizNo, ceo:co.ceo, ceo2:co.ceo2, zipcode:co.zipcode, address:co.address,
+             phone:co.phone, fax:co.fax, email:co.email, ceoPhone:co.ceoPhone,
+             bizType:co.bizType, bizCategory:co.bizCategory, corpRegNo:co.corpRegNo,
+             companySize:co.companySize,
+             companyId: co.companyId || fo.item.companyId || fo.item.id || '',
+             employmentInsuredCount: co.employmentInsuredCount,
+             injuryInsuredCount: co.injuryInsuredCount,
+             contacts:(co.contacts||[]), workers:(co.workers||[]) };
+  }
+  var ERP_CO_FILL_KEYS = ['bizNo','ceo','ceo2','zipcode','address','phone','fax','email',
+                          'ceoPhone','bizType','bizCategory','corpRegNo','companySize','companyId'];
+  /* 그룹 «전체»에서 빈 칸만 채운다.
+     ★ 이것이 대표가 겪은 「기업정보함 이름을 골랐더니 사업자번호가 안 왔다」를 없앤다 —
+        어느 이름을 골랐든 번호는 «가지고 있는 줄»에서 온다.
+     ★ 이미 적힌 칸은 절대 안 덮는다 — 손으로 고쳐 둔 값이 말없이 바뀌면 안 된다.
+     ★ 순서가 곧 신뢰 순서다(erpHitPri) — 업체관리 → 기업정보함 → 계약 → 나머지. */
+  function applyCoGroup(g){
+    if(!g || !g.rows || !g.rows.length) return;
+    var c = Object.assign({}, f.company || {});
+    var contacts = (c.contacts || []).slice();
+    var filled = [];
+    g.rows.slice().sort(function(a,b){ return erpHitPri(a) - erpHitPri(b); }).forEach(function(r){
+      var src = _coFieldsOf(r) || {};
+      ERP_CO_FILL_KEYS.forEach(function(k){
+        var have = (c[k] === undefined || c[k] === null) ? '' : String(c[k]);
+        if(have.trim() !== '') return;
+        var v = src[k];
+        if(v === undefined || v === null || String(v).trim() === '') return;
+        c[k] = v;
+        if(filled.indexOf(k) < 0) filled.push(k);
+      });
+      ['employmentInsuredCount','injuryInsuredCount'].forEach(function(k){
+        if(!c[k] && src[k]) c[k] = src[k];
+      });
+      if(src.contacts && src.contacts.length && typeof mergeCompanyContacts === 'function'){
+        var mg = mergeCompanyContacts(contacts, src.contacts);
+        if(mg && mg.added > 0) contacts = mg.contacts;
+      }
+      if(!(c.workers||[]).length && src.workers && src.workers.length) c.workers = src.workers.slice();
+    });
+    c.contacts = contacts;
+    if(g.name) c.name = g.name;
+    setF(function(prev){ return Object.assign({}, prev, {
+      company: Object.assign({}, prev.company || {}, c),
+      companyName: c.name || prev.companyName,
+      bizNo: c.bizNo || prev.bizNo
+    }); });
+    setAutoResults([]); setAutoIdx(-1); setWorkOpen('');
+    /* 업태·종목이 검색목록에 없으면 기업정보함 원본에서 마저 읽는다 (첨부칸 「가져오기」와 같은 규칙) */
+    var pcRow = null;
+    g.rows.forEach(function(r){ if(!pcRow && r && r._pc && !r._pc.person) pcRow = r; });
+    if(!pcRow) g.rows.forEach(function(r){ if(!pcRow && r && r._pc) pcRow = r; });
+    if(pcRow) pcTopUpBiz(pcRow._pc, _fillBizFromCard);
+    var msg = '✓ ' + (g.name || '회사') + ' — ';
+    msg += filled.length ? (filled.length + '칸 채움') : '새로 채울 칸이 없습니다';
+    if(g.rows.length > 1) msg += ' (기록 ' + g.rows.length + '곳에서 모음)';
+    showToast(msg);
+  }
+  /* 사업현황 한 줄의 이름표 — 계약번호·컨설팅명처럼 «그 건을 알아볼» 말을 붙인다. */
+  function _workLabelOf(r){
+    var fo = _pastCoRecord(r);
+    var it = fo && fo.item;
+    if(!it) return '';
+    return String(it.contractNo || it.programName || it.caseNo || it.title || '').slice(0, 40);
+  }
+
   function onSelectPastCompany(r){
     // 기업정보함에서 고른 경우 — 저장소를 다시 뒤질 필요 없이 딸려온 정보를 그대로 쓴다.
     // 사진(사업자등록증·명함)은 색인에 없으므로 원본 카드에서 따로 받아 뒤늦게 채운다.
@@ -14203,7 +14395,9 @@ function ContractModal(props){
             if(e.target.value.length >= 2){
               var q2 = e.target.value.toLowerCase();
               var res = searchPastCompanies(q2);
-              setAutoResults(res.slice(0,6));
+              /* 여섯에서 자르는 것은 «줄»이 아니라 «회사»다 — 같은 회사가 자리를 셋 먹어
+                 정작 찾던 회사가 밀려나던 것을 막는다. */
+              setAutoResults(erpGroupCoHits(res).slice(0,6)); setWorkOpen('');
             } else { setAutoResults([]); }
             setAutoIdx(-1);
           },
@@ -14212,7 +14406,7 @@ function ContractModal(props){
             if(e.key === 'ArrowDown'){ e.preventDefault(); setAutoIdx(function(p){ return p < autoResults.length-1 ? p+1 : 0; }); }
             else if(e.key === 'ArrowUp'){ e.preventDefault(); setAutoIdx(function(p){ return p > 0 ? p-1 : autoResults.length-1; }); }
             else if(e.key === 'Enter'){
-              if(autoIdx >= 0 && autoIdx < autoResults.length){ e.preventDefault(); onSelectPastCompany(autoResults[autoIdx]); setAutoResults([]); setAutoIdx(-1); }
+              if(autoIdx >= 0 && autoIdx < autoResults.length){ e.preventDefault(); applyCoGroup(autoResults[autoIdx]); }
             }
             else if(e.key === 'Escape'){ setAutoResults([]); setAutoIdx(-1); }
           },
@@ -14224,7 +14418,9 @@ function ContractModal(props){
             if((f.company||{}).companyId) return;       // 이미 업체를 특정한 상태
             if((f.company.name||'').length >= 2){
               var res = searchPastCompanies(f.company.name.toLowerCase());
-              setAutoResults(res.slice(0,6));
+              /* 여섯에서 자르는 것은 «줄»이 아니라 «회사»다 — 같은 회사가 자리를 셋 먹어
+                 정작 찾던 회사가 밀려나던 것을 막는다. */
+              setAutoResults(erpGroupCoHits(res).slice(0,6)); setWorkOpen('');
             }
           },
           placeholder:'회사명 또는 엑셀 한 행 붙여넣기',
@@ -14234,40 +14430,62 @@ function ContractModal(props){
           'data-autocomplete':'1',
           style:{ position:'absolute', top:'100%', left:0, right:0, zIndex:8000,
             background:'#fff', border:'1px solid #bfdbfe', borderRadius:'6px',
-            boxShadow:'0 4px 16px rgba(0,0,0,0.12)', maxHeight:'200px', overflow:'auto', marginTop:'2px' } },
+            boxShadow:'0 4px 16px rgba(0,0,0,0.12)', maxHeight:'280px', overflow:'auto', marginTop:'2px' } },
           h('div', { style:{ padding:'6px 10px', fontSize:'10.5px', color:'#64748b', borderBottom:'1px solid #f8fafc', background:'#eff6ff' } },
-            '📂 과거 데이터 선택 (클릭하면 자동 입력)'),
-          // 기업정보함에서 온 줄이 몇 개인지 미리 알려 준다 — 그 줄을 누르면 사진까지 딸려온다
-          (function(){
-            var pcN = autoResults.filter(function(r){ return r && r._pc; }).length;
-            if(!pcN) return null;
-            return h('div', { style:{ padding:'4px 10px', fontSize:'10.5px', color:'#2563eb', borderBottom:'1px solid #f8fafc', background:'#eff6ff', fontWeight:600 } },
-              '📇 기업정보함 ' + pcN + '건 — 누르면 사진까지 가져옵니다');
-          })(),
-          autoResults.map(function(r, i){
-            return h('div', { key:i,
-              onMouseDown:function(e){
-                e.preventDefault();
-                onSelectPastCompany(r);
-                setAutoResults([]);
-                setAutoIdx(-1);
-              },
-              style:{ padding:'8px 12px', cursor:'pointer', borderBottom:'1px solid #f8fafc',
-                background: autoIdx === i ? '#eff6ff' : '',
-                display:'flex', justifyContent:'space-between', alignItems:'center' },
-              onMouseEnter:function(e){ setAutoIdx(i); },
-              onMouseLeave:function(e){ e.currentTarget.style.background = autoIdx===i?'#eff6ff':''; } },
-              h('div', { style:{ minWidth:0 } },
-                h('div', { style:{ fontSize:'12px', fontWeight:600, color:'#1e293b' } }, r.label),
-                h('div', { style:{ fontSize:'10px', color:'#64748b', fontFamily:'monospace', marginTop:'1px' } },
-                  // 기업정보함 줄은 출처를 눈에 보이게 찍어 준다 (사진까지 가져오는 줄이라 구분이 필요하다)
-                  r._pc ? h('span', { style:{ color:'#2563eb', fontWeight:700, fontFamily:'inherit' },
-                      title:'기업정보함 원본 카드에서 사업자등록증·명함 사진을 읽어옵니다 — 사진이 없으면 알려 드립니다' },
-                      '📇 기업정보함' + ((r._pc.bizId || r._pc.cardId) ? ' · 사진 있음' : '') + ' ') : null,
-                  // 기업정보함은 사업자번호·대표·명함 장수를 한 줄로 (sub), 나머지는 기존 그대로
-                  r.sub ? r.sub : ((r.bizNo||'-') + (r.date?' · '+r.date:'')))
+            '📂 찾은 회사 ' + autoResults.length + '곳 — 이름 표기가 달라도 한 줄로 묶었습니다'),
+          autoResults.map(function(g, i){
+            var gid = g.key + '#' + i;
+            var open = workOpen === gid;
+            var badges = [];
+            if(g.hasMaster) badges.push({ t:'업체관리 있음', bg:'#bbf7d0', fg:'#166534' });
+            if(g.hasCards)  badges.push({ t:'기업정보함' + (g.cardN ? ' 명함 ' + g.cardN + '장' : ''), bg:'#eff6ff', fg:'#2563eb' });
+            Object.keys(g.counts).forEach(function(k){ badges.push({ t:k + ' ' + g.counts[k], bg:'#e2e8f0', fg:'#475569' }); });
+            // 묶은 «다른 이름»을 다 적는다 — 잘못 묶였으면 사람이 눈으로 본다
+            var others = g.aliases.filter(function(n){ return n && n !== g.name; });
+            return h('div', { key:gid,
+              style:{ padding:'9px 11px', borderBottom:'1px solid #f8fafc',
+                background: autoIdx === i ? '#f8fafc' : '' },
+              onMouseEnter:function(){ setAutoIdx(i); } },
+              h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'baseline', gap:'8px' } },
+                h('div', { style:{ fontSize:'12.5px', fontWeight:700, color:'#1e293b', minWidth:0 } }, g.name || '(회사명 없음)'),
+                h('div', { style:{ fontSize:'10px', color:'#64748b', fontFamily:'monospace', whiteSpace:'nowrap' } }, g.bizNo || '')
               ),
-              h('span', { style:{ background:r.sourceBg, color:r.sourceColor, fontSize:'10px', padding:'1px 7px', borderRadius:'8px', fontWeight:700, whiteSpace:'nowrap' } }, r.source)
+              others.length ? h('div', { style:{ fontSize:'10px', color:'#94a3b8', marginTop:'2px' },
+                  title:'사업자번호가 같거나, 번호가 없고 이름이 같아 한 회사로 보았습니다' },
+                  '같은 회사로 봄 → ' + others.join(' · ')) : null,
+              badges.length ? h('div', { style:{ display:'flex', gap:'4px', flexWrap:'wrap', margin:'5px 0 6px' } },
+                badges.map(function(b, bi){
+                  return h('span', { key:bi, style:{ background:b.bg, color:b.fg, fontSize:'9.5px', fontWeight:700, padding:'1px 6px', borderRadius:'8px', whiteSpace:'nowrap' } }, b.t);
+                })) : null,
+              h('div', { style:{ display:'flex', gap:'5px', flexWrap:'wrap' } },
+                h('button', { type:'button',
+                  onMouseDown:function(e){ e.preventDefault(); applyCoGroup(g); },
+                  title:'이 회사 정보를 «빈 칸만» 채웁니다 — 이미 적은 값은 그대로 둡니다.\n사업자번호는 가지고 있는 기록에서 가져옵니다',
+                  style:{ background:'#1e40af', color:'#fff', border:'1px solid #1e40af', borderRadius:'5px', padding:'3px 9px', fontSize:'10.5px', fontWeight:700, cursor:'pointer' } },
+                  '🏢 기업정보 가져오기'),
+                g.hasCards ? h('button', { type:'button',
+                  onMouseDown:function(e){ e.preventDefault(); applyCoGroup(g); setPcCoPick('people'); },
+                  title:'기업정보함에서 이 회사 사람들을 보고 담당자를 골라 담습니다',
+                  style:{ background:'#f0fdf4', color:'#166534', border:'1px solid #bbf7d0', borderRadius:'5px', padding:'3px 9px', fontSize:'10.5px', fontWeight:700, cursor:'pointer' } },
+                  '👤 담당자 골라 담기') : null,
+                g.work.length ? h('button', { type:'button',
+                  onMouseDown:function(e){ e.preventDefault(); setWorkOpen(open ? '' : gid); },
+                  title:'계약·사건·컨설팅·기금 기록을 «보기»만 합니다 — 회사 칸은 채우지 않습니다',
+                  style:{ background:'#fff', color:'#475569', border:'1px solid #cbd5e1', borderRadius:'5px', padding:'3px 9px', fontSize:'10.5px', fontWeight:700, cursor:'pointer' } },
+                  open ? '▲ 사업현황 닫기' : ('📁 사업현황 보기 (' + g.work.length + '건)')) : null
+              ),
+              open ? h('div', { style:{ border:'1px solid #e2e8f0', borderRadius:'6px', marginTop:'6px', overflow:'hidden' } },
+                h('div', { style:{ background:'#f8fafc', padding:'4px 9px', fontSize:'10px', color:'#64748b', borderBottom:'1px solid #e2e8f0' } },
+                  '보기만 합니다 — 회사 칸은 채우지 않습니다'),
+                g.work.map(function(w, wi){
+                  return h('div', { key:wi, style:{ padding:'5px 9px', borderBottom:'1px solid #f8fafc', display:'flex', justifyContent:'space-between', gap:'8px', fontSize:'10.5px' } },
+                    h('span', { style:{ minWidth:0 } },
+                      h('span', { style:{ background:w.sourceBg, color:w.sourceColor, fontSize:'9.5px', fontWeight:700, padding:'1px 6px', borderRadius:'8px', marginRight:'5px' } }, w.source),
+                      _workLabelOf(w) || w.label || ''),
+                    h('span', { style:{ color:'#94a3b8', fontFamily:'monospace', whiteSpace:'nowrap' } }, String(w.date || '').slice(0,10))
+                  );
+                })
+              ) : null
             );
           })
         )
