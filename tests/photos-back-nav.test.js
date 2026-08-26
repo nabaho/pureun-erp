@@ -81,7 +81,13 @@ test('★ 나가는 띠가 본문 맨 위 한 자리에 있다', () => {
 test('걸러보기를 바꾸면 띠도 따라온다', () => {
   const m = html.match(/function renderGridCount\(\)[\s\S]*?\n\}/)
          || html.match(/renderNeedBox\(\);[\s\S]{0,120}renderBackBar\(\);/);
-  assert.ok(/renderNeedBox\(\);[\s\S]{0,120}renderBackBar\(\);/.test(html),
+  /* ⚠ 글자수 창(0,120)으로 재고 있었다 — 사이에 칸 하나(renderUidCard)와 그 설명이
+       들어오자 창을 넘어 실패했다. 창을 키워 쫓아가면 다음에 또 깨진다.
+       보려던 것은 «차례»다: 확인 필요 칸 → 띠. 그것을 그대로 본다(2026-08-26). */
+  const needAt = html.indexOf('renderNeedBox();\r\n') >= 0
+    ? html.indexOf('renderNeedBox();\r\n') : html.indexOf('renderNeedBox();\n');
+  const barAt = html.indexOf('renderBackBar();', needAt + 1);
+  assert.ok(needAt > 0 && barAt > needAt,
     '걸러보기를 켜고 껐는데 띠가 그대로면 안 됩니다.');
   const sv = html.match(/function showView\([\s\S]*?\n\}/);
   assert.ok(/renderBackBar\(\);/.test(sv[0]), '화면을 옮길 때도 띠를 새로 그려야 합니다.');
