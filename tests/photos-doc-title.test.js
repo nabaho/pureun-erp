@@ -277,8 +277,10 @@ test('★ 격자 칸에 제목 띠가 붙는다', () => {
 test('★ 제목 띠는 맨 뒤에 그린다 — 앞에 두면 다른 띠에 묻힌다', () => {
   /* 칸 아래 띠들은 「뒤엣것이 위로 쌓인다」로 짜여 있다(2026-08-15 겹침 수정).
      ttl 을 who·cap 앞에 두면 그 뒤로 묻혀 안 보인다. */
+  /* ⚠ 이 줄에는 딱지가 하나씩 더 는다(2026-08-26 에 📌 증빙이 늘었다).
+     띠 이름을 «차례대로» 못 박으면 늘 때마다 운다 — 볼 것 둘의 앞뒤만 본다. */
   const g = fnOf(app, 'renderGrid');
-  const line = g.match(/\+ tag \+ stack \+ warn[^\n]*/);
+  const line = g.match(/\+ tag \+[^\n]*\bcap\b[^\n]*/);
   assert.ok(line, '칸을 만드는 줄을 찾지 못했습니다');
   assert.ok(line[0].indexOf('ttl') > line[0].indexOf('cap'),
     '★ 제목 띠가 업체 띠보다 앞에 있으면 묻혀 안 보입니다');

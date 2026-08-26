@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { cutFn } = require('./cut-fn');
 const app = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8');
 
 /* ── ① 쪽마다 따로 판독한다 ── */
@@ -107,9 +108,9 @@ test('★ 칸과 크게 보기 양쪽에 나온다', () => {
   /* ⚠ 예전에는 `$('viewerInfo').textContent = it … : '';` 라는 **표현식 모양**을
      붙잡고 있었다. 2026-08-17 에 제목줄을 두 줄로 가르며 renderViewerTitle 로
      옮겨 가자 깨졌다 — 서식명은 그대로 따라갔는데도다. 함수를 이름으로 찾는다. */
-  const vi = app.indexOf('function renderViewerTitle(');
-  assert.ok(vi > 0, '제목줄을 그리는 곳을 찾지 못했습니다 — 이름이 바뀌었나요?');
-  assert.ok(/docLabel\(it\.meta\)/.test(app.slice(vi, vi + 900)),
+  /* ⚠ 글자 수를 적어 자르지 않는다 — 함수가 길어지면(2026-08-26 에 「📌 증빙으로 씀」
+     한 줄이 늘었다) 창이 끝에 못 닿아 조용히 헛돈다. 중괄호 짝을 세어 벤다. */
+  assert.ok(/docLabel\(it\.meta\)/.test(cutFn(app, 'function renderViewerTitle(')),
     '크게 보기 제목줄에 안 나오면 열어 봐도 알 수 없습니다.');
 });
 
