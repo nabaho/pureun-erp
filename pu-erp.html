@@ -13155,14 +13155,23 @@ function ContractModal(props){
     if(!q || q.length < 2) return [];
     var seen = {};
     var results = [];
-    function add(label, bizNo, date, source, sourceBg, sourceColor){
+    function add(label, bizNo, date, source, sourceBg, sourceColor, preHit){
       var key = (bizNo||'') + '::' + label;
       if(seen[key]) return; seen[key]=true;
-      if(label.toLowerCase().indexOf(q)<0 && (bizNo||'').indexOf(q)<0) return;
+      /* preHit — 부르는 쪽이 이미 «예전 이름까지» 보고 걸렀으면 여기서 다시 걸러 내지 않는다. */
+      if(!preHit && label.toLowerCase().indexOf(q)<0 && (bizNo||'').indexOf(q)<0) return;
       results.push({ label:label, bizNo:bizNo, date:date, source:source, sourceBg:sourceBg, sourceColor:sourceColor });
     }
     dbGet('contracts',[]).forEach(function(c){ if(c.companyName) add(c.companyName,c.bizNo,c.contractDate||c.createdAt,'계약','#eff6ff','#2563eb'); });
-    dbGet('companies',[]).forEach(function(c){ if(c.name) add(c.name,c.bizNo,c.contractDate,'업체','#bbf7d0','#166534'); });
+    /* 예전 이름으로 쳐도 그 업체가 나온다 (대표 지시 ③) — 보이는 이름은 «현재» 이름이다.
+       ⚠ 예전 이름을 줄에 그대로 띄우지 않는다. 두 이름이 목록에 같이 있으면 같은 회사가 두 줄이 된다. */
+    dbGet('companies',[]).forEach(function(c){
+      if(!c || !c.name) return;
+      var hit = c.name.toLowerCase().indexOf(q) >= 0 || (c.bizNo||'').indexOf(q) >= 0
+             || erpPrevList(c).some(function(p){ return p.toLowerCase().indexOf(q) >= 0; });
+      if(!hit) return;
+      add(c.name, c.bizNo, c.contractDate, '업체', '#bbf7d0', '#166534', true);
+    });
     dbGet('cases',[]).forEach(function(c){ if(c.companyName) add(c.companyName,c.bizNo,c.receiveDate,'사건','#eff6ff','#1e40af'); });
     dbGet('consultings',[]).forEach(function(c){ if(c.companyName) add(c.companyName,c.bizNo,c.startDate,'컨설팅','#bfdbfe','#2563eb'); });
     dbGet('funds',[]).forEach(function(c){ if(c.companyName) add(c.companyName,c.bizNo,c.estDate,'기금','#fffbeb','#854d0e'); });
@@ -18955,6 +18964,96 @@ var COMPANY_TYPE_FILTERS = [
   { v:'기금',     label:'기금',  icon:'🏦', color:'#d97706' }
 ];
 
+/* ══════════ 업체 「예전 이름」 (2026-08-26 대표 지시) ══════════
+   사업장 이름이 바뀌면 예전 이름으로 들어온 입금·계약이 짝을 못 찾는다.
+   한 번 손으로 붙일 때 그 이름을 기억해 두면 다음부터 저절로 붙는다.
+
+   ⚠ 잘못 기억하면 «매달 조용히» 틀린다. 그래서 막는 규칙이 셋이다.
+     ① 다른 업체의 «현재» 이름은 예전 이름이 될 수 없다 — 두 회사가 섞인다.
+     ② 같은 예전 이름을 두 업체가 가질 수 없다 — 어느 쪽인지 알 수 없어진다.
+     ③ 자기 이름은 예전 이름이 아니다.
+   ⚠ 그리고 «사업자번호가 있으면 번호가 먼저»다. 예전 이름은 번호로 못 찾았을 때만 본다 —
+     이름은 겹칠 수 있지만 번호는 안 겹친다. (부르는 쪽이 지켜야 한다) */
+function erpPrevList(co){
+  var a = (co && co.prevNames) || [];
+  if(!Array.isArray(a)) return [];
+  var out = [], seen = {};
+  a.forEach(function(s){
+    var t = String(s == null ? '' : s).trim();
+    if(!t) return;
+    var k = erpCoKey(t);
+    if(!k || seen[k]) return;
+    seen[k] = 1; out.push(t);
+  });
+  return out;
+}
+/* 이름 비교 열쇠 — 법인 표기·공백·기호를 떼고 본다 (계약창 묶기와 «같은» 규칙). */
+function erpCoKey(s){
+  if(typeof pcNormCo === 'function') return pcNormCo(s);
+  return String(s == null ? '' : s).toLowerCase().replace(/[\s\-()·.,]/g, '');
+}
+/* 예전 이름 → 업체. 같은 예전 이름이 둘이면 «먼저 나온 쪽»이 이긴다(뒤는 못 넣게 막는다). */
+function erpPrevIndex(companies){
+  var idx = {};
+  (companies || []).forEach(function(co){
+    if(!co || co._deleted || !co.name) return;
+    erpPrevList(co).forEach(function(p){
+      var k = erpCoKey(p);
+      if(k && !idx[k]) idx[k] = co;
+    });
+  });
+  return idx;
+}
+/* 이름 하나로 업체를 찾는다. 현재 이름이 먼저, 없으면 예전 이름.
+   돌려주는 via 로 «무엇을 보고 찾았는지» 화면에 적을 수 있다 — 말없이 붙으면 안 된다. */
+function erpFindCoByAnyName(name, companies){
+  var k = erpCoKey(name);
+  if(!k) return null;
+  var list = companies || [];
+  for(var i = 0; i < list.length; i++){
+    var co = list[i];
+    if(!co || co._deleted || !co.name) continue;
+    if(erpCoKey(co.name) === k) return { co:co, via:'name', matched:co.name };
+  }
+  for(var j = 0; j < list.length; j++){
+    var co2 = list[j];
+    if(!co2 || co2._deleted || !co2.name) continue;
+    var hit = erpPrevList(co2).filter(function(p){ return erpCoKey(p) === k; })[0];
+    if(hit) return { co:co2, via:'prev', matched:hit };
+  }
+  return null;
+}
+/* 예전 이름으로 넣어도 되나 — 안 되면 «까닭»을 돌려준다(빈 문자열이면 넣어도 된다). */
+function erpPrevNameConflict(companies, coId, cand){
+  var t = String(cand == null ? '' : cand).trim();
+  if(!t) return '이름이 비어 있습니다';
+  var k = erpCoKey(t);
+  if(!k) return '이름이 비어 있습니다';
+  var list = companies || [];
+  var me = null;
+  list.forEach(function(c){ if(c && c.id === coId) me = c; });
+  if(me && erpCoKey(me.name) === k) return '자기 이름은 예전 이름이 될 수 없습니다';
+  for(var i = 0; i < list.length; i++){
+    var co = list[i];
+    if(!co || co._deleted || !co.name || co.id === coId) continue;
+    if(erpCoKey(co.name) === k) return '「' + co.name + '」의 «현재» 이름입니다 — 예전 이름으로 쓸 수 없습니다';
+  }
+  for(var j = 0; j < list.length; j++){
+    var co2 = list[j];
+    if(!co2 || co2._deleted || co2.id === coId) continue;
+    if(erpPrevList(co2).some(function(p){ return erpCoKey(p) === k; })){
+      return '이미 「' + co2.name + '」의 예전 이름입니다';
+    }
+  }
+  if(me && erpPrevList(me).some(function(p){ return erpCoKey(p) === k; })) return '이미 넣어 두었습니다';
+  return '';
+}
+try {
+  window.erpPrevList = erpPrevList; window.erpCoKey = erpCoKey;
+  window.erpPrevIndex = erpPrevIndex; window.erpFindCoByAnyName = erpFindCoByAnyName;
+  window.erpPrevNameConflict = erpPrevNameConflict;
+} catch(_){ }
+
 function CompanyManagement(){
   var _fill1 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 240px)
   var existing = dbGet('companies', null);
@@ -19891,7 +19990,9 @@ function CompanyManagement(){
       var qq = query.toLowerCase().trim();
       if(!qq) return true;
       var qqNum = query.replace(/[^0-9]/g,'');
+      /* 예전 이름으로도 찾아진다 (대표 지시 ④) — 이름이 바뀐 곳을 옛 이름으로 찾는 일이 잦다. */
       return (co.name||'').toLowerCase().indexOf(qq) >= 0
+          || erpPrevList(co).some(function(p){ return p.toLowerCase().indexOf(qq) >= 0; })
           || (qqNum && (co.bizNo||'').replace(/[^0-9]/g,'').indexOf(qqNum) >= 0)
           || (co.ceo||'').toLowerCase().indexOf(qq) >= 0
           || (co.ceo2||'').toLowerCase().indexOf(qq) >= 0
@@ -21221,6 +21322,41 @@ function CompanyEditModal(props){
               '📇 대표자 찾기')),
           h('div', { className:'fld' }, h('label', null, '업체명 *'),
             h('input', { type:'text', value:f.name || '', onChange:set('name'), placeholder:'(주)○○○' })),
+          /* ── 예전 이름 (2026-08-26 대표 지시) ──
+             배운 것을 «눈으로 보고 지운다» — 기억은 지울 수 있어야 믿을 수 있다.
+             ⚠ 넣을 때 막는 규칙 셋을 여기서 그대로 쓴다(erpPrevNameConflict). */
+          h('div', { className:'fld' }, h('label', null, '예전 이름'),
+            h('div', { style:{ display:'flex', gap:'5px', flexWrap:'wrap', alignItems:'center' } },
+              erpPrevList(f).map(function(p, pi){
+                return h('span', { key:p,
+                  style:{ display:'inline-flex', alignItems:'center', gap:'5px', background:'#eff6ff',
+                    color:'#1e40af', border:'1px solid #bfdbfe', borderRadius:'99px',
+                    padding:'3px 9px', fontSize:'11px', fontWeight:700 } },
+                  p,
+                  h('span', { onClick:function(){
+                      var next = erpPrevList(f).filter(function(x, xi){ return xi !== pi; });
+                      setF(function(prev){ return Object.assign({}, prev, { prevNames: next }); });
+                    },
+                    title:'이 예전 이름을 지웁니다',
+                    style:{ color:'#94a3b8', fontWeight:800, cursor:'pointer' } }, '✕')
+                );
+              }),
+              h('input', { type:'text', placeholder:'예전 이름 추가 후 Enter',
+                onKeyDown:function(e){
+                  if(e.key !== 'Enter') return;
+                  e.preventDefault();
+                  var v = (e.target.value || '').trim();
+                  if(!v) return;
+                  var why = erpPrevNameConflict(dbGet('companies', []) || [], f.id, v);
+                  if(why){ showToast('🚫 ' + why); return; }
+                  e.target.value = '';
+                  setF(function(prev){
+                    return Object.assign({}, prev, { prevNames: erpPrevList(prev).concat([v]) });
+                  });
+                },
+                title:'이름이 바뀐 사업장의 «옛 이름»입니다. 그 이름으로 들어온 입금·계약이 이 업체로 붙습니다',
+                style:{ minWidth:'150px', flex:'1 1 150px' } })
+            )),
           h('div', { className:'fld' }, h('label', null, '사업자번호'),
             h('input', { type:'text', value:f.bizNo || '',
               onChange:function(e){
