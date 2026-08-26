@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>목업 — 퇴사자 이어받기 (승계표)</title>
+<!--
+  ═══════════════════════════════════════════════════════════════════════
+  대표 지시 2026-08-26(여섯째):
+    "퇴사자의 이메일은 승계받은 담당자가 자동으로 본인 메일함으로 정렬되게 해달라.
+     이부분은 푸른이알피 업무관리 등 모두 연결되어 있기 때문에 과거 담당자의 정보나
+     메일 등 자료가 새로운사람에게 이관되고 쉽게 검토 찾을 수 있도록 해야한다."
+  ═══════════════════════════════════════════════════════════════════════
+
+  ★ 만들기 전에 실제 자료를 세었다 (2026-08-26 실시간DB)
+    · 명부 32명 가운데 «퇴사 21명»
+    · 그 가운데 «아직 기업정보의 담당으로 남아 있는» 사람은 6명 — 회사 25곳
+      박성수 14곳 · 김동근 5곳 · 김정현 2곳 · 박지호 2곳 · 장한돌 1곳 · 임혜미 1곳
+    · ⚠ 그 25곳 가운데 «살아 있는 부담당이 적힌 곳은 0곳»
+      → 자료만으로는 «누가 이어받았나»를 알 길이 없다. 사람이 한 번 정해야 한다.
+    · ⚠ 25곳 가운데 몇 곳은 이름에 「3월31일자 자문종료」가 붙어 있다 — 이미 끝난 자문사다.
+      그런 곳까지 넘기면 새 담당자 칸이 끝난 일로 찬다. 그래서 «끝난 곳은 빼는» 길을 둔다.
+
+  ★ 무엇을 만드나 — «승계표» 한 줄
+      퇴사자 한 명 → 이어받은 사람 한 명
+    이 한 줄이 있으면 메일은 저절로 새 사람 칸으로 간다(사람 단위로 25곳이 6줄로 덮인다).
+    ⚠ 두는 자리는 pucards/config/staffSucc 다 — 이미 쓰기가 열려 있고, 다른 앱도 읽을 수
+      있는 자리다(업무관리 등이 같은 표를 보면 자료가 함께 이관된다).
+    ⚠ 기업정보(ERP)의 managerMain 을 여기서 «고치지 않는다». 다른 앱의 자료다.
+      승계표는 「그 사람 몫을 누가 본다」는 우리 쪽 덮어쓰기다.
+-->
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:'맑은 고딕','Malgun Gothic',AppleSDGothicNeo-Regular,'돋움',dotum,sans-serif;
+  background:#f2f4f7;color:#1b2536;-webkit-font-smoothing:antialiased}
+:root{--blue:#2563d1;--line:#dde3ee;--sub:#8b98b3;--pu:#0f8a5f;--who:#7b4bd1;--who-bg:#f2ecfd;
+  --warn:#8a6d1f;--warn-bg:#fdf6e3;--bad:#c0392b}
+
+.top{background:#fff;border-bottom:1px solid var(--line);padding:16px 24px 14px}
+.top h1{margin:0 0 4px;font-size:19px;font-weight:800;letter-spacing:-.4px}
+.top p{margin:0;font-size:13px;color:#5a6885;line-height:1.75}
+
+.page{display:flex;gap:16px;align-items:flex-start;padding:16px 24px 10px}
+.side{width:250px;flex:0 0 250px;background:#fff;border:1px solid var(--line);border-radius:12px;
+  padding:12px 8px}
+.main{flex:1;min-width:0;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+
+.sec{display:flex;align-items:center;gap:6px;height:30px;padding:0 8px;margin-top:6px;
+  font-size:12px;color:var(--who);font-weight:700}
+.sec.g{color:var(--pu)}
+.grp{padding:8px 8px 3px 15px;font-size:11px;color:#9a8fc0;font-weight:700}
+.grp span{font-weight:400;color:#b6b9c0}
+.f{display:flex;align-items:center;gap:8px;height:31px;padding:0 8px 0 15px;border-radius:5px;
+  font-size:13px;color:#2b2b2b;cursor:pointer}
+.f:hover{background:#f7f8fa}
+.f.on{background:var(--who-bg);color:#4c2a8f;font-weight:700}
+.f .ic{width:16px;flex:none;text-align:center;font-size:12px}
+.f .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.f .n{flex:none;font-size:11.5px;color:#8c8c8c}
+.f .nu{flex:none;font-size:11px;color:#fff;background:#e0483c;border-radius:99px;
+  min-width:16px;height:16px;line-height:16px;text-align:center;padding:0 5px;font-weight:700}
+.f .got{flex:none;font-size:10px;color:#5b3a9c;background:var(--who-bg);border:1px solid #e0d4fa;
+  border-radius:3px;padding:0 5px}
+.hint{font-size:11px;color:var(--warn);line-height:1.6;padding:6px 10px}
+
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:10px}
+.tabs button{font-family:inherit;font-size:12.5px;border:1px solid transparent;background:none;
+  color:#6b7890;border-radius:6px;padding:6px 11px;cursor:pointer}
+.tabs button.on{background:var(--who-bg);color:#4c2a8f;font-weight:700}
+.tabs .sp{flex:1}
+
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{border-bottom:1px solid #eef1f6;padding:8px 8px;text-align:left;vertical-align:middle}
+th{background:#f7f9fc;font-weight:700;color:#5a6885;font-size:11.5px;border-bottom:1px solid var(--line)}
+td.num{text-align:right;color:#5a6885;white-space:nowrap}
+tr.done{background:#f4fbf8}
+select{font-family:inherit;font-size:12.5px;padding:5px 7px;border:1px solid var(--line);
+  border-radius:6px;background:#fff;color:var(--ink);max-width:150px}
+.pill{font-size:10.5px;border-radius:3px;padding:1px 6px;white-space:nowrap}
+.pill.w{color:var(--warn);background:var(--warn-bg);border:1px solid #f0e2b8}
+.pill.g{color:#5d7a6d;background:#eaf6f1;border:1px solid #cfe6dc}
+.co{font-size:11.5px;color:#8b98b3;line-height:1.6}
+.chk{display:flex;align-items:center;gap:5px;font-size:11.5px;color:#5a6885;margin:0 0 10px}
+
+.note{margin:6px 24px 24px;border:1px solid var(--line);border-radius:10px;padding:16px 18px;
+  background:#fff;font-size:13.5px;line-height:1.85;color:#33383f}
+.note h3{margin:0 0 8px;font-size:14.5px;color:#111}
+.note table{margin:8px 0 4px}
+.note code{background:#eef1f4;border-radius:3px;padding:1px 5px;font-size:12px}
+.note .ok{color:var(--pu);font-weight:700}
+.note .bad{color:var(--bad);font-weight:700}
+.tagline{position:fixed;right:14px;bottom:12px;background:#111;color:#fff;font-size:11.5px;
+  border-radius:99px;padding:6px 13px;opacity:.82;z-index:50}
+.toast{position:fixed;left:50%;bottom:56px;transform:translateX(-50%);background:#1c2128;color:#fff;
+  font-size:13px;padding:11px 18px;border-radius:8px;z-index:60;display:none}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>퇴사자 이어받기 — 승계표 한 줄</h1>
+  <p>아래 숫자는 <b>2026-08-26 실제 자료</b>입니다. 명부 32명 중 <b>퇴사 21명</b>,
+     그 가운데 <b>아직 담당으로 남아 있는 사람 6명 · 회사 25곳</b>.<br>
+     ⚠ 그 25곳에 <b>살아 있는 부담당이 적힌 곳은 0곳</b> — 자료만으로는 누가 이어받았는지
+     알 길이 없어 <b>한 번은 사람이 정해야</b> 합니다.</p>
+</div>
+
+<div class="page">
+  <aside class="side" id="side"></aside>
+  <main class="main" id="main"></main>
+</div>
+
+<div class="note" id="note"></div>
+<div class="toast" id="toast"></div>
+<div class="tagline">목업 — 퇴사자 이어받기 · 2026-08-26</div>
+
+<script>
+/* ══════ 실측값 (2026-08-26) ══════ */
+/* 재직자 — 사번순, 노무사/직원 갈래 */
+const LIVE = [
+  {sid:'P-001', n:'권형하', t:'대표노무사', k:'pro',   c:0},
+  {sid:'P-003', n:'박한별', t:'노무사',    k:'pro',   c:34},
+  {sid:'P-004', n:'김혜민', t:'노무사',    k:'pro',   c:21},
+  {sid:'P-005', n:'박재원', t:'노무사',    k:'pro',   c:17},
+  {sid:'P-007', n:'김동현', t:'노무사',    k:'pro',   c:2},
+  {sid:'A-001', n:'최기운', t:'사무장',    k:'staff', c:4},
+  {sid:'A-002', n:'신욱임', t:'차장',      k:'staff', c:2},
+  {sid:'A-003', n:'김보람', t:'과장',      k:'staff', c:4},
+  {sid:'A-004', n:'주민정', t:'대리',      k:'staff', c:0},
+  {sid:'A-005', n:'박은비', t:'주임',      k:'staff', c:5},
+  {sid:'A-006', n:'김석우', t:'사무직',    k:'staff', c:0}
+];
+/* 아직 담당으로 남은 퇴사자 — 회사 목록도 실측 */
+const RET = [
+  {sid:'P-002', n:'박성수', t:'노무사', mail:7,
+   cos:['박순자아우내순대','충주시설관리공단 노동조합','㈜원랜드원마트(3월31일자 자문종료)',
+        '㈜패커드코리아(3월31일자 자문종료)','대아산업주식회사','위라이브병원'], more:8, ended:2},
+  {sid:'T-002', n:'김동근', t:'노무사', mail:0,
+   cos:['북천안현대서비스㈜','㈜서휘건설','㈜광원전력','대한콘크리트산업','주식회사정호종합건설'],
+   more:0, ended:0},
+  {sid:'T-003', n:'김정현', t:'직원', mail:0,
+   cos:['오케이푸드주식회사','㈜선한에프앤비'], more:0, ended:0},
+  {sid:'T-004', n:'박지호', t:'직원', mail:0,
+   cos:['㈜에이치씨씨(3월31일자 자문종료)','㈜수영로지콘'], more:0, ended:1},
+  {sid:'T-005', n:'장한돌', t:'직원', mail:0,
+   cos:['(주)크리스탈와인컬렉션'], more:0, ended:0},
+  {sid:'P-006', n:'임혜미', t:'노무사', mail:0,
+   cos:['충원종합관리㈜'], more:0, ended:0}
+];
+
+let SUCC = {};                 /* {퇴사자sid: 이어받은사람sid} — 이것만 저장된다 */
+let skipEnded = true;          /* 「자문종료」 된 곳은 빼고 넘긴다 */
+let tab = 'succ';
+let now = '@박한별';
+
+function esc(s){ return String(s==null?'':s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+const liveBy = sid => LIVE.find(x=>x.sid===sid) || null;
+const retBy  = sid => RET.find(x=>x.sid===sid) || null;
+/* 그 사람이 «이어받아» 늘어난 통수 */
+function gotOf(sid){
+  return RET.filter(r=>SUCC[r.sid]===sid)
+    .reduce((s,r)=>s + r.mail, 0);
+}
+function coCount(r){ return r.cos.length + r.more - (skipEnded ? r.ended : 0); }
+const naLeft = () => RET.filter(r=>!SUCC[r.sid]).reduce((s,r)=>s+r.mail, 0);
+
+function drawSide(){
+  let h = `<div class="sec">● 담당자</div>`;
+  ['pro','staff'].forEach(k=>{
+    const g = LIVE.filter(x=>x.k===k);
+    h += `<div class="grp">${k==='pro'?'노무사':'직원'} <span>${g.length}명</span></div>`;
+    g.forEach(x=>{
+      const got = gotOf(x.sid);
+      const tot = x.c + got;
+      h += `<div class="f ${now==='@'+x.n?'on':''}" onclick="now='@${x.n}';draw()"
+        title="${esc(x.n)} ${esc(x.t)} · ${x.sid}">
+        <span class="ic">👤</span><span class="nm">${esc(x.n)}</span>
+        ${got?`<span class="got">+${got}</span>`:''}
+        ${tot?`<span class="n">${tot}</span>`:''}</div>`;
+    });
+  });
+  const na = naLeft();
+  h += `<div class="f ${now==='@?'?'on':''}" onclick="now='@?';draw()">
+      <span class="ic">❓</span><span class="nm">담당 모름</span>
+      ${na?`<span class="n">${na}</span>`:''}</div>`;
+  if(na) h += `<div class="hint">↑ 그 가운데 <b>${na}통</b>은 <b>퇴사자가 담당</b>이던 것입니다 —
+    오른쪽에서 이어받을 사람을 정해 주세요</div>`;
+  else h += `<div class="hint" style="color:#0f8a5f">✓ 퇴사자 몫이 모두 이어졌습니다</div>`;
+  h += `<div class="f" onclick="tab='succ';draw()">
+      <span class="ic">🔗</span><span class="nm" style="color:#7b4bd1">자문사 이메일 잇기</span></div>`;
+  document.getElementById('side').innerHTML = h;
+}
+
+function drawMain(){
+  let h = `<div class="tabs">
+      <button onclick="tab='addr';draw()" class="${tab==='addr'?'on':''}">① 많이 온 주소부터</button>
+      <button onclick="tab='co';draw()" class="${tab==='co'?'on':''}">② 자문사부터</button>
+      <button onclick="tab='succ';draw()" class="${tab==='succ'?'on':''}">③ 퇴사자 이어받기</button>
+      <span class="sp"></span>
+    </div>`;
+
+  if(tab !== 'succ'){
+    h += `<div style="padding:40px 8px;text-align:center;color:#a8abb2;line-height:1.9">
+      이 갈래는 <b>이미 만들어 배포돼 있습니다.</b><br>
+      이 목업은 <b>③ 퇴사자 이어받기</b>만 보여 드립니다.</div>`;
+    document.getElementById('main').innerHTML = h;
+    return;
+  }
+
+  const left = RET.filter(r=>!SUCC[r.sid]).length;
+  h += `<div style="font-size:12.5px;color:#5a6885;line-height:1.8;margin-bottom:10px">
+      아직 담당으로 남아 있는 퇴사자 <b>${RET.length}명</b> · 회사 <b>${RET.reduce((s,r)=>s+coCount(r),0)}곳</b>
+      ${left?` · <b style="color:#c0392b">아직 안 정한 사람 ${left}명</b>`:` · <b style="color:#0f8a5f">모두 정했습니다</b>`}
+      <br>한 줄만 정하면 <b>그 사람이 맡던 것 전부</b>가 새 담당자에게 갑니다 — 회사마다 따로 정할 일이 없습니다.
+    </div>
+    <label class="chk"><input type="checkbox" ${skipEnded?'checked':''}
+      onchange="skipEnded=this.checked;draw()">
+      <b>자문이 끝난 곳은 빼고</b> 넘긴다 — 이름에 「자문종료」가 붙은 곳
+      <span class="pill w">권장</span></label>
+    <table>
+      <tr><th style="width:120px">퇴사자</th><th style="width:64px">회사</th>
+        <th style="width:60px">메일</th><th>맡던 곳</th><th style="width:170px">누가 이어받나</th></tr>`;
+
+  RET.forEach(r=>{
+    const to = SUCC[r.sid] ? liveBy(SUCC[r.sid]) : null;
+    const shown = skipEnded ? r.cos.filter(c=>c.indexOf('자문종료')<0) : r.cos;
+    h += `<tr class="${to?'done':''}">
+      <td><b>${esc(r.n)}</b><br><span class="co">${esc(r.t)} · ${r.sid} · 퇴사</span></td>
+      <td class="num">${coCount(r)}곳${r.ended&&skipEnded?`<br><span class="pill w">종료 ${r.ended} 뺌</span>`:''}</td>
+      <td class="num">${r.mail?`<b style="color:#c0392b">${r.mail}통</b>`:'0통'}</td>
+      <td><span class="co">${shown.map(esc).join(' · ')}${r.more?` <b>외 ${r.more}곳</b>`:''}</span></td>
+      <td>
+        <select onchange="setSucc('${r.sid}',this.value)">
+          <option value="">— 아직 안 정함 —</option>
+          <optgroup label="노무사">
+            ${LIVE.filter(x=>x.k==='pro').map(x=>`<option value="${x.sid}"
+              ${SUCC[r.sid]===x.sid?'selected':''}>${esc(x.n)} (${esc(x.t)})</option>`).join('')}
+          </optgroup>
+          <optgroup label="직원">
+            ${LIVE.filter(x=>x.k==='staff').map(x=>`<option value="${x.sid}"
+              ${SUCC[r.sid]===x.sid?'selected':''}>${esc(x.n)} (${esc(x.t)})</option>`).join('')}
+          </optgroup>
+        </select>
+        ${to?`<br><span class="pill g">→ ${esc(to.n)} 칸으로</span>`:''}
+      </td></tr>`;
+  });
+  h += `</table>
+    <div style="margin-top:12px;font-size:12px;color:#8b98b3;line-height:1.75">
+      ⚠ 정해 두면 <b>메일뿐 아니라</b> 같은 표를 보는 다른 화면(업무관리 등)에서도
+      그 사람 몫이 새 담당자에게 보입니다.<br>
+      ⚠ 기업정보의 담당자 자체는 <b>바뀌지 않습니다</b> — 그것은 ERP 쪽 자료입니다.
+      여기 표는 「그 사람 몫을 누가 본다」는 우리 쪽 표시입니다.
+    </div>`;
+  document.getElementById('main').innerHTML = h;
+}
+
+function setSucc(retSid, toSid){
+  const r = retBy(retSid);
+  if(!toSid){ delete SUCC[retSid]; draw(); return toast(`「${r.n}」 이어받기를 지웠습니다`); }
+  SUCC[retSid] = toSid;
+  const to = liveBy(toSid);
+  draw();
+  toast(`🔗 「${r.n}」 이 맡던 ${coCount(r)}곳${r.mail?` · 메일 ${r.mail}통`:''} → `
+    + `「${to.n}」 님께 넘겼습니다`);
+}
+
+function drawNote(){
+  const done = Object.keys(SUCC).length;
+  document.getElementById('note').innerHTML = `
+  <h3>어떻게 도나</h3>
+  <table>
+    <tr><th style="width:190px">무엇이</th><th>어떻게</th></tr>
+    <tr><td>정하는 것</td>
+        <td><b>퇴사자 한 명 → 이어받은 사람 한 명.</b> 한 줄이면 그 사람이 맡던 회사 전부가 함께 간다
+        (실측 25곳이 <b>6줄</b>로 덮인다)</td></tr>
+    <tr><td>메일은</td>
+        <td class="ok">퇴사자 담당으로 잡힌 메일이 <b>새 담당자 칸으로 저절로</b> 간다.
+        옆줄에 <b>+N</b> 으로 「이어받아 늘어난 통수」를 적어 준다</td></tr>
+    <tr><td>안 정하면</td>
+        <td>「담당 모름」에 그대로 남는다 — <b>사라지지 않는다</b>. 옆줄이 몇 통인지 알려 준다</td></tr>
+    <tr><td>자문이 끝난 곳</td>
+        <td>이름에 「자문종료」가 붙은 곳은 <b>빼고</b> 넘긴다(기본). 넣으면 새 담당자 칸이
+        끝난 일로 찬다. 실측 <b>3곳</b>이 그렇다</td></tr>
+    <tr><td>두는 자리</td>
+        <td><code>pucards/config/staffSucc</code> — 이미 쓰기가 열려 있고
+        <b>다른 앱도 읽을 수 있는</b> 자리다(업무관리 등이 같은 표를 본다)</td></tr>
+    <tr><td>기업정보(ERP)는</td>
+        <td class="bad">바꾸지 않는다</td></tr>
+    <tr><td>되돌리기</td>
+        <td>「— 아직 안 정함 —」 으로 돌리면 그만이다. 메일은 하나도 안 움직였다</td></tr>
+  </table>
+
+  <h3 style="margin-top:16px">왜 사람이 한 번 정해야 하나</h3>
+  <div style="font-size:12.5px;line-height:1.9;color:#5a6885">
+    자료로 알아내려고 <b>먼저 세어 봤습니다.</b> 퇴사자가 담당인 회사 25곳 가운데
+    <b class="bad">살아 있는 부담당이 적힌 곳은 0곳</b>이었습니다.
+    기업정보의 담당자도 아직 퇴사자 이름 그대로입니다.
+    그래서 <b>추측하지 않고</b> 여쭙는 자리를 만들었습니다 — 여섯 줄이면 끝납니다.
+  </div>
+
+  <h3 style="margin-top:16px">해 보실 것</h3>
+  <div style="font-size:13px;line-height:1.9">
+    <b>박성수</b> 줄에서 이어받을 사람을 골라 보세요 (메일 7통 · 회사 12곳).
+    왼쪽 그 사람 칸에 <b style="color:#7b4bd1">+7</b> 이 붙고, <b>담당 모름</b>이 그만큼 줄어듭니다.
+    ${done?`<br><span style="color:#0f8a5f">지금 ${done}명 정했습니다.</span>`:''}
+  </div>`;
+}
+
+function draw(){ drawSide(); drawMain(); drawNote(); }
+let _t;
+function toast(s){
+  const el=document.getElementById('toast'); el.textContent=s; el.style.display='block';
+  clearTimeout(_t); _t=setTimeout(()=>el.style.display='none', 3600);
+}
+draw();
+</script>
+</body>
+</html>

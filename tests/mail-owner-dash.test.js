@@ -312,3 +312,198 @@ test('잇기 화면에서 메일함으로 돌아갈 길이 있다 — 없으면 
   const c = load({ state:{ mailSent:'who', whoTab:'addr' } });
   assert.ok(c.whoPageHtml().indexOf('openMailBox(') > 0, '돌아갈 길이 없다');
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+   담당자 목록 — 퇴사자 빼기 · 사번순 · 노무사/직원 가르기 (대표 지시 2026-08-26)
+   ══════════════════════════════════════════════════════════════════════════
+   "퇴사자는 자동으로 빠지게해라 있으면 안된다. 그리고 사번에 따라 정렬해주고
+    노무사와 직원을 따로 분류할 수 있게도 해달라."
+
+   ⚠ 명부는 data/user_dir 이 «진짜»다 — pureun_v6_user_accounts 는 낡아서 퇴사자도
+     status=active 로 남아 있다(실측 2026-08-26: 박성수·임혜미가 그랬다).
+     그래서 이 검사는 «명부에 retired 로 적혀 있으면 빠진다»를 본다. */
+const DIR = [
+  { sid:'P-001', name:'권형하', sortOrder:10,  role:'admin',  title:'대표노무사', status:'active'  },
+  { sid:'P-002', name:'박성수', sortOrder:20,  role:'member', title:'노무사',    status:'retired' },
+  { sid:'P-003', name:'박한별', sortOrder:30,  role:'member', title:'노무사',    status:'active'  },
+  { sid:'A-001', name:'최기운', sortOrder:80,  role:'staff',  title:'사무장',    status:'active'  },
+  { sid:'A-003', name:'김보람', sortOrder:100, role:'staff',  title:'과장',      status:'active'  },
+  { sid:'A-006', name:'김석우', sortOrder:130, role:'staff',  title:'사무직',    status:'leave'   },
+  { sid:'T-002', name:'김동근', sortOrder:150, role:'member', title:'노무사',    status:'retired' }
+];
+/* 회사 → 담당자. 퇴사자가 담당인 회사도 둔다(실제로 그런 회사가 있다). */
+const BYNAME2 = {
+  '한빛물산': { company:'한빛물산', main:'박한별', subs:[] },
+  '대한산업': { company:'대한산업', main:'최기운', subs:[] },
+  '옛거래처': { company:'옛거래처', main:'박성수', subs:[] },   /* 퇴사자가 담당 */
+  '휴직담당': { company:'휴직담당', main:'김석우', subs:[] },
+  '과장담당': { company:'과장담당', main:'김보람', subs:[] }
+};
+const ITEMS2 = {
+  a: { id:'a', email:'a@hanbit.co.kr', company:'한빛물산' },
+  b: { id:'b', email:'b@daehan.kr',    company:'대한산업' },
+  c: { id:'c', email:'c@old.kr',       company:'옛거래처' },
+  d: { id:'d', email:'d@leave.kr',     company:'휴직담당' },
+  e: { id:'e', email:'e@gwa.kr',       company:'과장담당' }
+};
+const FOLDERS2 = {
+  B_JAMUN: { path:'1.자문사답변', name:'1.자문사답변', kind:'custom', order:7, total:4, unseen:0 }
+};
+const M2 = (u,e,s) => ({ u:u, f:'보낸이', e:e, t:'370-6@daum.net', s:s, d:1756000000+u, r:1, g:0, a:0, z:1 });
+const MSGS2 = { B_JAMUN: {
+  '1': M2(1,'a@hanbit.co.kr','한빛'),
+  '2': M2(2,'b@daehan.kr','대한'),
+  '3': M2(3,'c@old.kr','옛거래처 — 퇴사자 담당'),
+  '4': M2(4,'d@leave.kr','휴직자 담당')
+}};
+
+function loadStaff(over){
+  const o = over || {};
+  const held = { wrote:{}, toasts:[] };
+  const state = Object.assign({
+    view:'mail', mailSent:'box', mbBox:'', items: ITEMS2, pick:{}, mbDash:'who',
+    mbQ:'', mbFilter:'', mbCursor:-1, mbOpen:null
+  }, o.state || {});
+  const dbRef = (p) => ({
+    once: () => Promise.resolve({ val: () => null }),
+    set: (v) => { held.wrote[p] = v; return Promise.resolve(); },
+    remove: () => { held.wrote[p] = null; return Promise.resolve(); },
+    child(k){ return dbRef(p + '/' + k); },
+    update: (v) => { held.wrote[p] = Object.assign(held.wrote[p]||{}, v); return Promise.resolve(); }
+  });
+  const dummy = { set innerHTML(v){ dummy._h = v; }, get innerHTML(){ return dummy._h||''; },
+    style:{}, offsetHeight:120, value:'', focus(){}, select(){}, contains:()=>false, scrollTop:0 };
+  const ctx = {
+    console, Object, Array, String, Number, Math, JSON, RegExp, Set, Date, Promise,
+    setTimeout: (fn)=>{ if(fn) fn(); }, atob:()=>'',
+    state,
+    esc: s => String(s == null ? '' : s).replace(/[&<>"']/g,
+      c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
+    Store: { mode:'firebase' }, DB_ROOT:'pucards',
+    matMailCfg: () => ({ from:'370-6@daum.net' }),
+    matList: () => [], matCat: () => '', MAT_CATS_NOW: () => [], _matMeta: {},
+    schedList: () => [], staffName: b => String(b||''),
+    fmtDate: () => '2026.08.26', fmtMB: n => n + 'B',
+    allItems: () => ITEMS2, allGroups: () => ({}),
+    isPrivGroup: () => false, canSeeGroup: () => true,
+    coList: () => [], coTagList: () => [], coFTabList: () => [],
+    coFTabCounts: () => ({all:0,byTab:{}}), _coFolders:{}, _coTagHidden:{},
+    toast: m => held.toasts.push(String(m)), confirm: () => true, prompt: () => null,
+    closeFolderMenu(){}, toggleSidebar(){}, openSettingsPage(){}, openMatPage(){},
+    openMailPage(){}, openSentBox(){}, openSchedBox(){}, openInbox(){}, closeMailPage(){},
+    openPrivateVault(){}, migrateLockedFolders(){},
+    inboxBoxHtml: () => '', schedBoxHtml: () => '', sentBoxHtml: () => '', mailWriteHtml: () => '',
+    wireMailWrite(){},
+    pickOf: k => (state.pick[k] = state.pick[k] || {}),
+    pickOn: (sel,id) => !!(sel && sel[id]),
+    pickList: (sel,ids) => (ids||[]).filter(i => !!(sel && sel[i])),
+    pickAllOn: (sel,ids) => !!(ids&&ids.length) && ids.every(i => !!(sel&&sel[i])),
+    pickClear: k => { state.pick[k] = {}; },
+    pickHit(){}, pickToggleAll(){}, pickRedraw(){},
+    renderPCSide(){}, renderMailPage(){}, render(){},
+    document: { getElementById: () => null, addEventListener(){}, removeEventListener(){} },
+    $: () => dummy,
+    window: { innerWidth:1600, innerHeight:900 },
+    fetch: () => Promise.resolve({ json:()=>Promise.resolve({ok:true}) }),
+    firebase: { auth: () => ({ currentUser:null }), database: () => ({ ref: p => dbRef(p) }) }
+  };
+  vm.createContext(ctx);
+  vm.runInContext(cut('const ErpMatch = {', '\nfunction autoFolderFlush('), ctx);
+  vm.runInContext(cut('function pcItem(attrs', '\nfunction switchTab('), ctx);
+  vm.runInContext(
+    '_mbFolders = ' + JSON.stringify(FOLDERS2) + ';' +
+    '_mbMsgs = ' + JSON.stringify(MSGS2) + ';' +
+    '_mbBins = {}; _mbPut = {}; _mbHide = {}; _mbOwner = ' + JSON.stringify(o.owner || {}) + ';' +
+    '_mbOrder = {}; _mbMeta = { at:1, ok:true };', ctx);
+  const EM = vm.runInContext('ErpMatch', ctx);
+  const byName = {}, staff = {};
+  Object.keys(BYNAME2).forEach(n => { byName[EM._norm(n)] = BYNAME2[n]; });
+  (o.dir || DIR).forEach(u => {
+    staff[EM._norm(u.name)] = { sid:u.sid, name:u.name, ord:u.sortOrder,
+      role:u.role, title:u.title, status:u.status };
+  });
+  EM.byName = byName; EM.byBiz = {}; EM.staff = staff; EM.ready = true;
+  ctx.ErpMatch = EM;
+  ctx._held = held;
+  return ctx;
+}
+const names = c => c.mbWhoList().map(w => w.name);
+
+test('★ 퇴사자는 담당자 목록에 «없다» — 대표 지시 「있으면 안된다」', () => {
+  const c = loadStaff();
+  const ns = names(c);
+  ['박성수','김동근'].forEach(n => assert.ok(ns.indexOf(n) < 0, n + '(퇴사)이 목록에 있다'));
+  assert.ok(ns.indexOf('박한별') >= 0, '재직자가 빠졌다');
+});
+
+test('★ 퇴사자 담당이던 메일은 «사라지지 않는다» — 「담당 모름」으로 온다', () => {
+  const c = loadStaff();
+  c.state.mbBox = '@?';
+  const subs = c.mbAllRows().map(v => v.s).join(' | ');
+  assert.ok(subs.indexOf('퇴사자 담당') >= 0,
+    '퇴사자 담당이던 메일이 어느 칸에도 없다 — 화면에서 통째로 사라졌다');
+  assert.ok(c.mbWhoNoneCount().ret > 0, '퇴사자 담당이던 통수를 세지 않는다');
+});
+
+test('★ 옆줄이 «왜 담당 모름이 늘었는지» 말해 준다 — 안 적으면 아무도 모른다', () => {
+  const c = loadStaff({ state:{ mbDash:'who' } });
+  const h = c.mailSideHtml();
+  assert.ok(h.indexOf('퇴사자') > 0, '퇴사자 담당이던 것이 여기 왔다고 안 알린다');
+});
+
+test('★ 휴직자는 «남는다» — 퇴사가 아니고 돌아온다', () => {
+  const c = loadStaff();
+  assert.equal(c.mbRetired('김석우'), false, '휴직을 퇴사로 봤다');
+  assert.ok(names(c).indexOf('김석우') >= 0, '휴직자가 목록에서 빠졌다');
+});
+
+test('★ 차례는 «사번 순»이다 — 통수 순이면 날마다 자리가 바뀌어 눈이 못 익힌다', () => {
+  const c = loadStaff();
+  const list = c.mbWhoList();
+  for(let i = 1; i < list.length; i++)
+    assert.ok(list[i-1].ord <= list[i].ord,
+      '사번 순이 아니다: ' + list[i-1].name + '(' + list[i-1].ord + ') → '
+      + list[i].name + '(' + list[i].ord + ')');
+  /* P-003 박한별이 A-001 최기운보다 앞이어야 한다 — 사번이 그렇다 */
+  const ns2 = names(c);
+  assert.ok(ns2.indexOf('박한별') < ns2.indexOf('최기운'), '사번이 앞인 사람이 뒤에 있다');
+});
+
+test('★ 노무사와 직원을 «갈라» 놓는다', () => {
+  const c = loadStaff();
+  const by = {};
+  c.mbWhoList().forEach(w => { (by[w.kind] = by[w.kind] || []).push(w.name); });
+  assert.ok((by.pro||[]).indexOf('박한별') >= 0, '노무사가 노무사가 아니다');
+  assert.ok((by.staff||[]).indexOf('최기운') >= 0, '사무장이 직원이 아니다');
+  assert.ok((by.staff||[]).indexOf('김보람') >= 0, '과장이 직원이 아니다');
+  assert.ok((by.pro||[]).indexOf('최기운') < 0, '직원이 노무사로 들어갔다');
+});
+
+test('★ 직함이 「노무사」면 노무사로 본다 — 사람이 보는 것은 직함이다', () => {
+  /* 옛 사람 가운데 role 이 staff 인데 직함이 노무사인 경우가 있다(실측: 안준형) */
+  const dir = DIR.concat([{ sid:'A-009', name:'안노무', sortOrder:135,
+    role:'staff', title:'노무사', status:'active' }]);
+  const c = loadStaff({ dir: dir, owner: { 'x@y,kr':'안노무' } });
+  const w = c.mbWhoList().find(x => x.name === '안노무');
+  assert.ok(w, '그 사람이 목록에 없다');
+  assert.equal(w.kind, 'pro', '직함이 노무사인데 직원으로 갈랐다');
+});
+
+test('★ 갈래 머리줄이 옆줄에 나온다 — 섞어 두면 열다섯 줄이 한 덩어리다', () => {
+  const c = loadStaff({ state:{ mbDash:'who' } });
+  const h = c.mailSideHtml();
+  assert.ok(h.indexOf('노무사') > 0, '「노무사」 머리줄이 없다');
+  assert.ok(h.indexOf('직원') > 0, '「직원」 머리줄이 없다');
+});
+
+test('명부에 없는 이름은 «지우지 않는다» — 모른다고 지우면 그 메일이 사라진다', () => {
+  const c = loadStaff({ owner: { 'z@z,kr':'모르는사람' } });
+  assert.equal(c.mbRetired('모르는사람'), false, '모르는 사람을 퇴사로 봤다');
+  assert.ok(names(c).indexOf('모르는사람') >= 0, '명부에 없다고 빼 버렸다');
+});
+
+test('명부에 없는 사람은 «뒤로» 온다 — 앞에 끼우면 사번 순이 깨져 보인다', () => {
+  const c = loadStaff({ owner: { 'z@z,kr':'모르는사람' } });
+  const list = c.mbWhoList();
+  assert.equal(list[list.length-1].name, '모르는사람', '명부에 없는 사람이 앞에 왔다');
+});
