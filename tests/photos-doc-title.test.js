@@ -354,6 +354,7 @@ function runGridBar(over) {
     worthRetry: function () { return true; },
     needsCheck: function () { return false; },
     renderNeedBox() {}, renderOldBox() {}, renderBackBar() {},
+    renderUidCard() {},   /* 2026-08-26: 서식으로 잡힌 고유번호증 칸이 늘었다 */
     renderPhMenuBtn() {}, renderPhNeedBtn() {}, renderPayNote() {},
     $: mk
   }, over || {});

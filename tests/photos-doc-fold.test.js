@@ -129,6 +129,7 @@ test('★ 도구줄이 장수를 쓴다 — 실제로 돌려 본다', () => {
     worthRetry: function () { return true; },
     needsCheck: function () { return false; },
     renderNeedBox() {}, renderOldBox() {}, renderBackBar() {},
+    renderUidCard() {},   /* 2026-08-26: 서식으로 잡힌 고유번호증 칸이 늘었다 */
     renderPhMenuBtn() {}, renderPhNeedBtn() {}, renderPayNote() {},
     $: mk
   };

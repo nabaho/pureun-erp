@@ -966,6 +966,12 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
   border-radius:10px;padding:9px;font-size:12.5px;font-weight:800;text-align:left}
 #needAckAll:disabled{opacity:.5}
 #needCard #needHint{margin:5px 2px 0;font-size:11px;line-height:1.5;color:var(--sub)}
+/* 서식으로 잡힌 고유번호증 — 「확인 필요」와 같은 결이되 색이 다르다(다른 할 일이다) */
+#uidCard{margin-top:12px}
+#uidBox{width:100%;padding:9px 11px;font-size:12px;font-weight:700;text-align:left;
+  border:1px solid #b6c6ee;background:#eef3ff;color:#1e40af;border-radius:9px;line-height:1.4}
+#uidBox:disabled{opacity:.55}
+#uidCard #uidHint{margin:5px 2px 0;font-size:11px;line-height:1.5;color:var(--sub)}
 #gridBar button:disabled{opacity:.45}
 
 /* 겹치는 서류를 스스로 치웠다는 알림 — 그 자리에서 되살릴 수 있다 */
@@ -1328,6 +1334,14 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
       <button id="needBox" onclick="toggleNeed()"></button>
       <button id="needAckAll" style="display:none" onclick="ackAllShown()"></button>
       <p id="needHint" style="display:none"></p>
+    </div>
+    <!-- 🏢 서식으로 잡힌 고유번호증 (대표 지시 2026-08-26 「자동으로 다시 판독」) —
+         판독 지시문에 「고유번호증」이 없던 동안 form(서식)으로 떨어진 것들이다.
+         서식으로 남아 있으면 기업정보함 사업자 목록에 «아예 안 들어간다».
+         ⚠ 0장이면 칸 자체를 안 보여 준다 — 늘 있는 회색 칸은 눌러볼 값이 없다. -->
+    <div id="uidCard" style="display:none">
+      <button id="uidBox" onclick="readUidMisread()"></button>
+      <p id="uidHint"></p>
     </div>
     <!-- 보유기간이 지난 것만 펼쳐 본다. 숫자만 알려 주고 어느 것인지 못 보면
          담당자는 알림만 끄게 된다(2026-08-07 재검토에서 드러난 빠짐). -->
@@ -8943,6 +8957,9 @@ function renderGridBar() {
              보유기간 지난 것처럼 **단추가 말해 주지 않는 때만** 적는다. */
           : '';
   renderNeedBox();
+  /* 서식으로 잡힌 고유번호증 칸 — 확인 필요 칸과 «같은 자리에서» 그린다.
+     따로 그리면 걸러보기를 옮겼을 때 한쪽만 새로 세어 숫자가 어긋난다. */
+  renderUidCard();
   renderOldBox();
   renderBackBar();
   renderPhMenuBtn();   // 아래 단추에 지금 보는 분류·장수를 다시 적는다   // 지금 무엇을 보고 있는지 띠에 그대로 적힌다
@@ -10894,6 +10911,101 @@ function readSelected() {
     if (failed) msg += '\n' + failed + '장은 판독하지 못했습니다 — 「확인 필요」에서 다시 해보세요.';
     const need = gridItems.filter(needsCheck).length;
     if (need) msg += '\n확인이 필요한 것이 ' + need + '장 있습니다.';
+    alert(msg);
+  });
+}
+
+/* ══════ 서식으로 잡힌 고유번호증 — 순수 로직 (테스트 대상) ══════
+   대표 지시 2026-08-26: "고유번호증이 기업정보함에 입력이 안된다" → 판독 지시문에
+   「고유번호증」이라는 말이 아예 없어서, form(서식)으로 떨어진 것들이 있다.
+   form 으로 남아 있으면 기업정보함 «사업자 목록»에 아예 안 들어간다.
+   대표 결정: 자동으로 다시 판독한다.
+
+   ★ 찾는 데는 AI 를 안 쓴다 — 이미 읽어 둔 «제목»만 보면 된다.
+     서식으로 분류됐어도 docName 에는 「고유번호증」이 그대로 적혀 있다
+     (지시문이 처음 보는 서류도 제목만은 담으라고 한다). 제목이 비었으면
+     문서의 칸 이름(pairs)에 「고유번호」가 있는지 본다.
+   ⚠ 이미 bizreg 로 잡힌 것은 «건드리지 않는다». 제대로 들어간 것을 다시 부르면
+     AI 한도만 태우고 결과는 같다.
+   ⚠ 사업자등록증에 적힌 「고유번호」 같은 낱말에 걸리지 않게, 갈래가 form·other 인
+     것만 본다. bizreg·sme 는 이미 제 자리에 있다. */
+const UID_RE = /고유\s*번호/;
+const UID_MISREAD_KINDS = { form: 1, other: 1 };
+/* 이 사진이 «서식으로 잘못 잡힌 고유번호증» 인가 */
+function uidMisread(it) {
+  const read = it && it.meta && it.meta.read;
+  if (!read) return false;
+  if (!UID_MISREAD_KINDS[String(read.kind || '')]) return false;
+  const fields = read.fields || {};
+  if (UID_RE.test(String(fields.docName || ''))) return true;
+  /* 제목이 비었을 때 — 문서의 칸 이름에 「고유번호」가 있으면 그 서류다.
+     ⚠ pairs 가 배열이 아닐 수 있다(AI 가 글자로 답한 옛 기록). Array.isArray 를 안 보면
+       .some 이 없어서 여기서 터지고, 칸 하나 때문에 사진첩 화면이 통째로 안 그려진다. */
+  const pairs = fields.pairs;
+  if (!Array.isArray(pairs)) return false;
+  return pairs.some(function (p) { return p && UID_RE.test(String(p.k || '')); });
+}
+/* 지금 «화면에 보이는» 것 가운데 몇 장인가 — 확인 필요 칸과 같은 규칙이다.
+   ⚠ 안 보이는 사진을 다시 판독하면, 아무도 안 본 서류에 AI 한도가 나간다. */
+function uidMisreadItems() { return shownItems().filter(uidMisread); }
+
+/* 칸 그리기 */
+function renderUidCard() {
+  const card = $('uidCard'); if (!card) return;
+  const items = uidMisreadItems();
+  const m = items.reduce(function (a, it) { return a + idsOf(it).length; }, 0);
+  card.style.display = m ? 'block' : 'none';
+  if (!m) return;
+  const box = $('uidBox'), hint = $('uidHint');
+  if (box) {
+    box.textContent = '🏢 서식으로 잡힌 고유번호증 ' + m + '장 — 다시 판독';
+    box.disabled = !!reading;
+  }
+  if (hint) hint.textContent = '다시 판독하면 사업자등록증과 같은 자리로 들어갑니다 '
+    + '(' + needScopeLabel() + '). 한 장씩 차례로 부르므로 시간이 걸립니다.';
+}
+
+/* 다시 판독 — 「모아 판독」(readSelected)과 «같은 길»을 탄다.
+   ⚠ 새 판독 길을 만들지 않는다. 만들면 한 번에 하나씩 부르는 규칙·실패 셈·
+     가림 강제 같은 것을 한 벌 더 챙겨야 하고, 한쪽만 고쳐지는 날이 온다. */
+function readUidMisread() {
+  if (reading) return;
+  const items = uidMisreadItems();
+  const ids = items.map(function (it) { return it.id; });
+  const m = items.reduce(function (a, it) { return a + idsOf(it).length; }, 0);
+  if (!ids.length) { renderUidCard(); return; }
+  /* AI 를 m 번 부른다 — 몇 장인지 말하고 한 번 물어본다 */
+  if (!confirm('서식으로 잡힌 고유번호증 ' + m + '장을 다시 판독합니다.\n\n'
+    + '· 한 장씩 차례로 AI 를 부릅니다 — ' + m + '번\n'
+    + '· 다시 읽으면 사업자등록증과 같은 자리(기업정보함 사업자 목록)로 들어갑니다\n'
+    + '· 한 장이 실패해도 나머지는 계속합니다\n\n계속할까요?')) return;
+  reading = true;
+  const box = $('uidBox');
+  let done = 0, failed = 0, fixed = 0;
+
+  function step(i) {
+    if (i >= ids.length) return Promise.resolve();
+    if (box) box.textContent = '판독 중… ' + (i + 1) + '/' + ids.length;
+    return readPhoto(ids[i]).then(function () {
+      done++;
+      /* 실제로 갈래가 바뀌었나 — 「판독했다」와 「고쳐졌다」는 다른 말이다 */
+      const cur = gridItems.find(function (x) { return x.id === ids[i]; });
+      const k = cur && cur.meta && cur.meta.read && cur.meta.read.kind;
+      if (k === 'bizreg') fixed++;
+    }, function (e) {
+      console.warn('[고유번호증 다시 판독]', ids[i], e);
+      failed++;
+    }).then(function () { return step(i + 1); });
+  }
+
+  step(0).then(function () {
+    reading = false;
+    renderGridBar(); renderGrid(); renderUidCard();
+    let msg = done + '장을 다시 판독했습니다.';
+    msg += '\n그 가운데 ' + fixed + '장이 사업자등록증 자리로 들어갔습니다.';
+    if (done - fixed) msg += '\n' + (done - fixed) + '장은 여전히 서식입니다 '
+      + '— 고유번호증이 아닐 수 있습니다(사진을 열어 확인해 주세요).';
+    if (failed) msg += '\n' + failed + '장은 판독하지 못했습니다.';
     alert(msg);
   });
 }
