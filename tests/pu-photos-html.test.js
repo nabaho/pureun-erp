@@ -913,8 +913,12 @@ test('체크는 늘 사진 오른쪽 위에 있고, 거기를 누르면 고른�
 
 test('고른 것에 쓰는 단추는 왼쪽 끝에 있다', () => {
   // 대표 지시 — 판독·지우기·취소를 왼쪽에서 고를 수 있게.
-  const bar = app.match(/<div id="gridBar">([\s\S]*?)<\/div>/);
-  assert.ok(bar, 'gridBar 를 찾을 수 없습니다');
+  /* ⚠ 첫 </div> 까지 자르면 안 된다 — 윗줄 안에 찾기 칸(#findBar)이 들어와
+     (2026-08-26) 거기서 잘려 단추가 하나도 안 잡혔다. 격자 앞까지 통으로 본다. */
+  const gi = app.indexOf('<div id="gridBar">');
+  const gend = app.indexOf('<div id="grid">');
+  assert.ok(gi > 0 && gend > gi, 'gridBar 를 찾을 수 없습니다');
+  const bar = [null, app.slice(gi, gend)];
   const iBtn = bar[1].indexOf('readSelBtn');
   const iCount = bar[1].indexOf('gridCount');
   assert.ok(iBtn >= 0 && iCount >= 0, '단추나 장수 표시가 없습니다');
@@ -2022,11 +2026,27 @@ test('★ 「분류 지정」 목록에 놓을 수 있는 칸이 모두 나온�
 
 test('분류 탭과 찾기 줄은 스크롤해도 위에 붙어 있다', () => {
   /* 사진이 수십 장이면 아래로 내려간 뒤 탭을 누르려고 다시 맨 위로 올라와야 했다. */
+  /* ⚠ 붙어 있어야 하는 것은 «찾기가 들어 있는 줄»이다. 2026-08-26 에 찾기·도구·안내
+     세 줄을 한 줄(#gridBar)로 합치면서 그 줄이 #findBar 에서 #gridBar 로 바뀌었다. */
   assert.match(app, /#kinds\{position:sticky;top:0/, '분류 탭이 고정되지 않습니다');
-  assert.match(app, /#findBar\{position:sticky/, '찾기 줄이 고정되지 않습니다');
+  const sticky = app.match(/#(?:findBar|gridBar)\{[^}]*position:\s*sticky[^}]*\}/g) || [];
+  assert.equal(sticky.length, 1,
+    '윗줄이 하나가 아닙니다(' + sticky.length + ') — 둘을 붙이면 서로 겹치거나 헛돕니다');
+  const top = sticky[0];
+  const id = top.match(/#(\w+)\{/)[1];
+  /* ⚠ display:contents 인 칸은 «칸이 아니라» 붙지 않는다 — 규칙만 적고 아무것도 안 붙는다 */
+  assert.ok(!/display:\s*contents/.test(top),
+    '#' + id + ' 는 칸 노릇을 안 하는데(display:contents) 붙이라고 적었습니다 — 아무것도 안 붙습니다');
+  const holder = app.match(new RegExp('<div id="' + id + '">[\\s\\S]{0,400}?id="yearSel"'));
+  assert.ok(holder, '붙어 있는 줄 안에 해 고르개가 없습니다 — 엉뚱한 줄을 붙였습니다');
   /* 배경이 없으면 사진이 밑으로 비쳐 글씨를 덮는다 */
   assert.match(app, /#kinds\{position:sticky[^}]*background:var\(--bg\)/, '분류 탭이 투명합니다');
-  assert.match(app, /#findBar\{position:sticky[^}]*background:var\(--bg\)/, '찾기 줄이 투명합니다');
+  assert.match(top, /background:var\(--bg\)/, '찾기 줄이 투명합니다');
+  /* 폰에서는 🔍 를 누르기 전까지 «찾기만» 접는다 — 그 손잡이가 .hidden 이다.
+     손잡이가 없어지면 첫 화면에서 찾기 칸이 한 줄을 도로 먹는다. */
+  assert.match(app, /#findBar\.hidden\{display:none\}/, '폰에서 찾기를 접는 손잡이가 없습니다');
+  assert.match(app, /classList\.toggle\('hidden', phone && !phoneFindOn\)/,
+    '접는 손잡이를 아무도 걸지 않습니다');
   /* 찾기 줄이 붙을 자리는 탭 높이를 **실제로 재서** 채운다 — 숫자를 박으면
      탭이 두 줄이 되는 폰에서 찾기 줄이 탭을 덮는다 */
   assert.match(app, /function syncStickyTop\(\)/);

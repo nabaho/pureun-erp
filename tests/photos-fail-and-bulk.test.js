@@ -409,8 +409,12 @@ test('★ 고르는 법을 화면에 적어 둔다 — 쓸어서 고르기는 �
   const seg = app.slice(i, i + 500);
   ['Shift', '끌면', '동그라미'].forEach(w =>
     assert.ok(seg.indexOf(w) >= 0, w + ' 를 안 알려 줍니다'));
-  /* 폰에서는 Shift·끌기가 안 켜진다 — 안 되는 것을 알려 주면 안 된다 */
-  assert.match(app, /@media \(max-width:760px\)\{ #pickTip\{display:none\} \}/,
+  /* 폰에서는 Shift·끌기가 안 켜진다 — 안 되는 것을 알려 주면 안 된다.
+     ⚠ 2026-08-26 부터 안내는 한 줄을 늘 먹는 대신 ? (#pickHelp) 안으로 들어갔다.
+       어느 칸이 그 말을 담고 있든 **폰에서 안 보이는 것**만 지킨다. */
+  const wrap = app.match(/<span id="(pickHelp)"[\s\S]{0,600}?id="pickTip"/);
+  const hideId = wrap ? wrap[1] : 'pickTip';
+  assert.match(app, new RegExp('@media \\(max-width:760px\\)\\{ #' + hideId + '\\{display:none\\}'),
     '★ 폰에서 안 되는 방법을 알려 주고 있습니다');
 });
 

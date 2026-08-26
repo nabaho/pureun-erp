@@ -138,8 +138,21 @@ test('★ 도구줄이 장수를 쓴다 — 실제로 돌려 본다', () => {
   vm.runInContext(fnOf(app, 'readableSel'), ctx);
   vm.runInContext(fnOf(app, 'renderGridBar'), ctx);
   ctx.renderGridBar();
+  /* ⚠ 2026-08-26 — 장수가 적히는 자리가 옮겨졌다. 예사 때는 「☑ 전부 N장」 단추가
+     그 말을 하고, gridCount 는 비워 둔다(윗줄을 한 줄로 합치며 같은 말을 두 번
+     적지 않기로 했다). 그래서 «화면 어딘가에» 4장이 적혔는지를 본다 —
+     자리가 또 옮겨져도 숫자가 거짓이 되는 것만은 잡힌다. */
+  const said = Object.keys(el).map(function (k) { return el[k].textContent; }).join(' | ');
+  assert.match(said, /4장/,
+    '접힌 문서를 한 칸으로 세면 「2장」이라 적고 4장을 지웁니다: ' + said);
+  assert.ok(!/(^|[^\d])2장/.test(said),
+    '칸 수(2장)를 적고 있습니다 — 지우기는 4장을 지웁니다: ' + said);
+
+  /* 찾는 중에는 단추가 말해 주지 않으므로 gridCount 가 장수를 적어야 한다 */
+  ctx.gridQ = '세무';
+  ctx.renderGridBar();
   assert.match(el.gridCount.textContent, /4장/,
-    '접힌 문서를 한 칸으로 세면 「2장」이라 적고 4장을 지웁니다: ' + el.gridCount.textContent);
+    '찾은 결과의 장수가 칸 수로 적힙니다: ' + el.gridCount.textContent);
 });
 
 test('★ 칸에 몇 쪽짜리인지 적는다', () => {

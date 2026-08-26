@@ -336,21 +336,75 @@ test('★ 차례 고르개가 폰에서 그냥 보인다 — 찾기를 펴지 �
   assert.match(bar, /pickSort\('new'\)/);
 });
 
-test('★ 도구줄은 「고른 것」이 아니라 「보여 줄 사진」이 없을 때만 숨는다', () => {
-  /* 이 사실이 위 자리 결정의 근거다 — 사진이 있으면 폰에서도 늘 떠 있고,
-     사진이 없으면 정렬할 것도 없다. 여기가 바뀌면 고르개가 또 숨는다. */
-  const f = fnOf(app, 'renderGridBar');
-  assert.match(f, /\$\('gridBar'\)\.style\.display = \(shown \|\| needOnly \|\| oldOnly \|\| gridQ\)/,
-    '도구줄 숨김 조건이 바뀌었습니다 — 고르개가 폰에서 안 보이게 될 수 있습니다');
+/* 도구줄을 **돌려 본다** — 어느 것이 뜨고 어느 것이 접히는지 눈으로 보는 대신 값으로 본다.
+   ⚠ 소스 한 줄을 글자로 못 박지 않는다(2026-08-26): 그렇게 두었더니 윗줄을 한 줄로
+     합치면서 뜻은 그대로인데 검사만 울었다. 보아야 할 것은 «무엇이 보이느냐»다. */
+function runGridBar(over) {
+  const el = {};
+  const mk = function (id) { return (el[id] = el[id] || { style: {}, textContent: '', disabled: false }); };
+  const ctx = Object.assign({
+    Object, Array, Set, String,
+    selected: new Set(),
+    shownItems: function () { return [{ id: 'a' }, { id: 'b' }]; },
+    gridItems: [],
+    needOnly: false, oldOnly: false, gridQ: '', reading: false, sending: false,
+    gridYear: String(new Date().getFullYear()),
+    viewingOther: function () { return false; },
+    canSend: function () { return false; },
+    worthRetry: function () { return true; },
+    needsCheck: function () { return false; },
+    renderNeedBox() {}, renderOldBox() {}, renderBackBar() {},
+    renderPhMenuBtn() {}, renderPhNeedBtn() {}, renderPayNote() {},
+    $: mk
+  }, over || {});
+  vm.createContext(ctx);
+  vm.runInContext(fnOf(app, 'idsOf'), ctx);
+  vm.runInContext(fnOf(app, 'shownCount'), ctx);
+  vm.runInContext(fnOf(app, 'readableSel'), ctx);
+  vm.runInContext(fnOf(app, 'renderGridBar'), ctx);
+  ctx.renderGridBar();
+  return el;
+}
+
+test('★ 윗줄은 통째로 숨지 않는다 — 해 고르개가 그 안에 있다', () => {
+  /* 2026-08-26 에 찾기 줄이 도구줄 «안»으로 들어갔다. 예전처럼 「볼 사진이 없으면
+     줄을 통째로 숨김」으로 두면, 사진 없는 해를 고른 순간 해 고르개까지 사라져
+     되돌아올 길이 없어진다. */
+  const none = runGridBar({ shownItems: function () { return []; } });
+  assert.notEqual(none.gridBar && none.gridBar.style.display, 'none',
+    '볼 사진이 없다고 윗줄을 통째로 숨겼습니다 — 해를 되돌릴 길이 없어집니다');
+});
+
+test('★ 차례 고르개는 보여 줄 사진이 있을 때만 뜬다 (고른 것과는 무관)', () => {
+  /* 고른 것이 없어도 사진만 있으면 떠 있어야 한다 — 폰에서 정렬이 숨은 기능이 됐던 적이 있다. */
+  const some = runGridBar();
+  assert.notEqual(some.sortSeg.style.display, 'none',
+    '사진이 있는데 차례 고르개가 숨었습니다 — 폰에서 정렬할 길이 사라집니다');
+
+  const none = runGridBar({ shownItems: function () { return []; } });
+  assert.equal(none.sortSeg.style.display, 'none',
+    '정렬할 사진이 하나도 없는데 고르개가 떠 있습니다');
+
+  /* 찾는 중·확인 필요·보유기간 지난 것 보기에서는 결과가 0장이라도 남는다 —
+     조건을 끄지 않은 채 고르개만 사라지면 화면이 고장 난 것처럼 보인다. */
+  ['needOnly', 'oldOnly'].forEach(function (flag) {
+    const o = { shownItems: function () { return []; } };
+    o[flag] = true;
+    assert.notEqual(runGridBar(o).sortSeg.style.display, 'none', flag + ' 에서 고르개가 사라졌습니다');
+  });
+  assert.notEqual(runGridBar({ shownItems: function () { return []; }, gridQ: '가' }).sortSeg.style.display,
+    'none', '찾는 중에 고르개가 사라졌습니다');
 });
 
 test('폰 화면에서 도구줄을 감추지 않는다', () => {
   /* 폰 구간에서 #kinds·#chipRow 처럼 통째로 감추는 목록에 gridBar 가 끼면
-     고르개도 함께 사라진다. */
-  const phone = app.match(/@media \(max-width:820px\)\{[\s\S]*?\n\}\r?\n#chipRow/);
+     고르개도, 이제는 해 고르개까지 함께 사라진다.
+     ⚠ 폰 덩어리는 **#chipRow 바로 앞의 것**을 집는다 — 앞쪽 @media 부터 집으면
+       그 사이의 예사 규칙까지 폰 규칙으로 잘못 읽는다(2026-08-26 에 실제로 그랬다). */
+  const phone = app.match(/@media \(max-width:820px\)\{(?:(?!@media)[\s\S])*?\n\}\r?\n#chipRow/);
   assert.ok(phone, '폰 전용 규칙 덩어리를 찾지 못했습니다');
-  assert.ok(!/#gridBar[^{]*\{[^}]*display:\s*none/.test(phone[0]),
-    '폰에서 도구줄을 감추면 차례 고르개도 함께 사라집니다');
+  assert.ok(!/#gridBar\s*\{[^}]*display:\s*none/.test(phone[0]),
+    '폰에서 도구줄을 감추면 차례 고르개도 해 고르개도 함께 사라집니다');
 });
 
 test('자리를 옮겨도 고르개 모습이 유지된다 — 꾸밈이 찾기 줄에 매여 있지 않다', () => {
