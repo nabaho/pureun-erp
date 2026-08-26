@@ -138,8 +138,15 @@ test('★ 색값을 코드에 적지 않았다 — 팔레트 규율을 지킨다
 /* ── 모양: 구글과 같게 ── */
 
 test('구글 색은 «그대로» 쓴다 — 연하게 바꾸지 않는다', () => {
-  assert.match(S, /var chipBg = ev\.gcolor \? ev\.gcolor : sgLighten\(/, '월 보기가 구글 색을 흐린다');
-  assert.match(S, /var wdChipBg = ev\.gcolor \? ev\.gcolor : sgLighten\(/, '주·일 보기가 구글 색을 흐린다');
+  /* 2026-08-26 재조정 — 담당자 색이 «이미 파스텔» 이 된 뒤로,
+     밝은 색에 45% 를 더 밝히면 흰색이 되어 칸 바탕과 구별이 안 된다
+     (노랑 → 밝기 0.91 · 회색 → 0.94). 그래서 «이미 밝으면 그대로» 갈래가 하나 늘었다.
+     ★ 지킬 규칙은 그대로다: 구글 색(gcolor)은 «절대» 흐리지 않는다. */
+  assert.match(S, /var chipBg = ev\.gcolor \? ev\.gcolor/, '월 보기가 구글 색을 흐린다');
+  assert.match(S, /var wdChipBg = ev\.gcolor \? ev\.gcolor/, '주·일 보기가 구글 색을 흐린다');
+  /* 이미 밝은 색도 안 흐린다 — 잣대는 글자색 고를 때와 «같은 것» 을 쓴다 */
+  const nb = (S.match(/calTextOn\(\w+\) === '#1e293b' \? \w+/g) || []).length;
+  assert.strictEqual(nb, 2, '두 보기 모두 «이미 밝으면 그대로» 를 안 쓴다 (지금 ' + nb + '곳)');
 });
 
 test('★ 글자색을 바탕 밝기에 맞춰 고른다', () => {
@@ -351,4 +358,30 @@ test('★ 종일 일정에 「0000」을 붙이지 않는다', () => {
      구글은 종일 일정에 시각을 안 보여 준다. */
   const n = (S.match(/ev\.time\.slice\(0,5\) !== '00:00'/g) || []).length;
   assert.strictEqual(n, 2, '두 보기 모두 고치지 않았다 (지금 ' + n + '곳)');
+});
+/* ── 이음센터 칩 (2026-08-26 대표 지적: "이음센터도 색을 좀더 연하게") ── */
+
+test('★ 이음센터 근무도 담당자 색을 쓴다 — 종류별 진한 파랑이 아니다', () => {
+  /* 담당자 색만 파스텔이 되고 이 칩만 진하게 남아 «더» 튀었다.
+     게다가 열 사람이 다 같은 파랑이라 누구 근무인지 색으로 구별이 안 됐다.
+     종류는 앞의 🏛 아이콘이 말한다 — 색이 아니라 아이콘이 뜻을 지킨다. */
+  assert.match(S, /r\.type==='eum-work' \? \(staffColorMap\[r\.sid\] \|\| '#94a3b8'\)/,
+    '이음센터가 아직 종류별 고정색을 쓴다');
+});
+
+test('연차·병가는 색이 «곧 뜻» 이라 그대로 둔다', () => {
+  /* 초록=휴가·빨강=병가. 여기까지 사람 색으로 바꾸면 «쉬는 날인지» 를 색으로 못 읽는다. */
+  assert.match(S, /r\.type==='sick' \? '#dc2626'/, '병가 색이 사라졌다');
+  assert.match(S, /r\.type==='trip' \? '#1e40af'/, '출장 색이 사라졌다');
+});
+
+test('★ 이미 밝은 색을 «더» 밝히지 않는다 — 흰색이 되어 칸과 구별이 안 된다', () => {
+  /* 구글 파스텔에 45% 를 더 밝히면: 노랑 0.83→0.91 · 회색 0.88→0.94.
+     실제로 재 보고 넣은 규칙이다. */
+  const ctx = { String, parseInt };
+  vm.createContext(ctx);
+  vm.runInContext(fnBody('calTextOn') + '\nthis.t = calTextOn;', ctx);
+  assert.strictEqual(ctx.t('#fbd75b'), '#1e293b', '구글 노랑을 «밝다» 고 안 본다 — 그러면 또 밝힌다');
+  assert.strictEqual(ctx.t('#e1e1e1'), '#1e293b', '구글 회색을 «밝다» 고 안 본다');
+  assert.strictEqual(ctx.t('#16a34a'), '#ffffff', '연차 초록을 «밝다» 고 본다 — 그러면 안 밝혀져 진한 채로 남는다');
 });
