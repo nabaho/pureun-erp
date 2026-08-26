@@ -411,7 +411,7 @@ body.portal-mode #moreFab{display:flex;}
 @media(max-width:520px){ #cfgFab{padding:6px 11px;font-size:.7rem;} }
 /* 사용액 자세히 보기 팝업 — 설정창과 같은 모양(#cfgModal)을 따른다 */
 #billModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:76;align-items:center;justify-content:center;padding:16px;}
-#billModal .box{background:#fff;border-radius:16px;width:780px;max-width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 50px rgba(15,23,42,.3);}
+#billModal .box{background:#fff;border-radius:16px;width:860px;max-width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 50px rgba(15,23,42,.3);}
 /* 머리를 잡아 창을 옮긴다 (2026-08-18 대표 지시) — 뒤가 가릴 때 비켜 두고 본다 */
 #billModal .hd{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid #eef2f7;flex-shrink:0;cursor:grab;user-select:none;touch-action:none;}
 #billModal .hd:active{cursor:grabbing;}
@@ -518,6 +518,9 @@ body.portal-mode #moreFab{display:flex;}
 #billModal .up{color:#dc2626;font-weight:700;}
 #billModal .z0{color:#cbd5e1;}
 #billModal .unk{color:#94a3b8;}
+/* 「누가」 칸 — 그 시각에 접속해 있던 사람. 아무도 없으면 자동으로 돈 것이다. */
+#billModal td.who{color:#166534;font-weight:700;text-align:left;max-width:96px;overflow:hidden;text-overflow:ellipsis;}
+#billModal table.bhist td:last-child,#billModal table.bhist th:last-child{text-align:left;}
 #billModal .blegend{margin-top:8px;padding:8px 10px;background:#f8fafc;border-radius:6px;font-size:.66rem;color:#64748b;line-height:1.65;}
 #billModal .blegend b{color:#475569;}
 /* 항목 표 — 「지금까지」와 「시간당」이 «한 줄에» 있다.
@@ -867,6 +870,7 @@ body.portal-mode #moreFab{display:flex;}
             <th id="billHistTh1">시각</th><th>전체</th><th>+증가</th>
             <th title="사진 창고">창고</th><th title="실시간DB">DB</th>
             <th title="서버 · 메일">서버</th><th>그 밖</th>
+            <th title="그 시각에 접속해 있던 사람 — 아무도 없으면 자동으로 돈 것입니다">누가</th>
           </tr></thead>
           <tbody id="billHistBody"></tbody>
         </table>
@@ -879,6 +883,8 @@ body.portal-mode #moreFab{display:flex;}
         <span class="up">+증가</span> 그 «한 시간»에 늘어난 돈 ·
         <span class="z0">회색 0</span> 그 시간엔 안 늘었다 ·
         <span class="unk">—</span> 소식이 없어 «모른다»(0원이 아니다) ·
+        <b>누가</b> 그 시각에 접속해 있던 사람 — <b>「자동」</b>이면 사람 없이 서버가 스스로 돈 것입니다
+        (메일 받기 10분마다 · 메일 보내기 15분마다 · 급여자료 30분마다) ·
         <b>합계</b> 맨 아래 줄 — 「전체」는 마지막으로 아는 누적액이고
         <span class="up">+증가</span>는 이 표에 있는 줄들을 다 더한 값이다
         (<span class="unk">≈</span> 가 붙었으면 모르는 칸을 빼고 더했다는 뜻)</div>
@@ -2044,13 +2050,35 @@ body.portal-mode #moreFab{display:flex;}
 
   function billYm(d){ return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'); }
 
+  /* ★ 「이 시간에 사람이 있었나, 자동이었나」 (2026-08-26 대표 물음)
+     — 새벽에 사용액이 느는데 사람 때문인지 자동인지 알 길이 없었다.
+     푸른이알피가 시간 칸마다 접속자를 한 번씩 남긴다(data/presence_hours).
+     ⚠ 여기서도 «한 번만» 읽는다 — 사용액 보려다 사용액을 늘리면 웃긴다. */
+  var _billWho = null, _billWhoYm = '';
+  function billWhoLoad(ym){
+    if(_billWhoYm === ym && _billWho) return Promise.resolve(_billWho);
+    return db.ref('data/presence_hours/' + ym).once('value')
+      .then(function(s2){ _billWho = s2.val() || {}; _billWhoYm = ym; return _billWho; })
+      .catch(function(){ _billWho = {}; _billWhoYm = ym; return _billWho; });
+  }
+  /* 그 시간 칸에 있던 사람들 (없으면 빈 배열 — 「아무도 없었다」는 곧 «자동» 이다) */
+  function billWhoAt(hourKey){
+    if(!_billWho) return [];
+    var k = String(hourKey || '').replace('T', '-');   // 2026-08-25T03 → 2026-08-25-03
+    var m = _billWho[k];
+    if(!m || typeof m !== 'object') return [];
+    return Object.keys(m).map(function(sid){ return m[sid] || sid; });
+  }
+
   function billHistLoad(){
     if(!db || !window.PuBilling) return;
     var ym = billYm(new Date());
     if(_billHistYm === ym && _billHist){ billPaintHist(); return; }
     var body = $('billHistBody');
-    if(body) body.innerHTML = '<tr><td colspan="7" class="unk">읽는 중…</td></tr>';
-    db.ref(window.PuBilling.HISTORY_ROOT + '/' + ym).once('value').then(function(snap){
+    if(body) body.innerHTML = '<tr><td colspan="8" class="unk">읽는 중…</td></tr>';
+    billWhoLoad(ym).then(function(){
+      return db.ref(window.PuBilling.HISTORY_ROOT + '/' + ym).once('value');
+    }).then(function(snap){
       _billHist = snap.val() || {}; _billHistYm = ym; billPaintHist();
     }).catch(function(){
       _billHist = {}; _billHistYm = ym; billPaintHist();
@@ -2082,6 +2110,7 @@ body.portal-mode #moreFab{display:flex;}
      ⚠ 모르는 칸이 섞였으면 ≈ 를 붙인다 — 소식 없던 시간이 있는데 딱 떨어지는
        숫자를 내놓으면 그 자체가 거짓말이다.
      ⚠ 줄이 스크롤로 올라가 버리면 「볼 수 있게」가 아니다 — 아래에 붙여 둔다(CSS). */
+  /* ⚠ 합계 줄도 칸 수가 맞아야 표가 안 어긋난다 — 「누가」 칸은 합계가 없다 */
   function billSumRow(rows, label){
     var B = window.PuBilling;
     if(!B || !B.sumBuckets || !rows || !rows.length) return '';
@@ -2097,6 +2126,7 @@ body.portal-mode #moreFab{display:flex;}
       + billCell(t.parts.database, t.known.database)
       + billCell(t.parts.functions, t.known.functions)
       + billCell(t.parts.etc, t.known.etc)
+      + '<td class="unk"></td>'
       + '</tr>';
   }
 
@@ -2106,7 +2136,7 @@ body.portal-mode #moreFab{display:flex;}
     var all = B.hourBuckets(_billHist, {});
     var rows = all.filter(function(b){ return billSpanFilter(b.hour); }).reverse();   // 최근이 위
     if(!rows.length){
-      body.innerHTML = '<tr><td colspan="7" class="unk">아직 쌓인 기록이 없습니다 — 기록은 켜는 날부터 쌓입니다.</td></tr>';
+      body.innerHTML = '<tr><td colspan="8" class="unk">아직 쌓인 기록이 없습니다 — 기록은 켜는 날부터 쌓입니다.</td></tr>';
       _billRates = null; billPaintItems();
       return;
     }
@@ -2133,7 +2163,7 @@ body.portal-mode #moreFab{display:flex;}
           + '</tr>';
       });
       body.innerHTML = (dh + billSumRow(days, '합계 ' + days.length + '일'))
-        || '<tr><td colspan="7" class="unk">아직 쌓인 기록이 없습니다.</td></tr>';
+        || '<tr><td colspan="8" class="unk">아직 쌓인 기록이 없습니다.</td></tr>';
       _billRates = B.hourlyRates(rows);
       billPaintItems();
       return;
@@ -2145,19 +2175,29 @@ body.portal-mode #moreFab{display:flex;}
     rows.forEach(function(b){
       var d = b.hour.slice(0,10), h = b.hour.slice(11);
       if(_billSpan === 'month' && lastDay && d !== lastDay){
-        html += '<tr class="dayrow"><td colspan="7">— ' + lastDay.slice(5) + ' —</td></tr>';
+        html += '<tr class="dayrow"><td colspan="8">— ' + lastDay.slice(5) + ' —</td></tr>';
       }
       lastDay = d;
       /* ★ 「전체」 = 그 시각까지 쌓인 값. 「몇 시에 «얼마»」의 그 얼마다.
          ⚠ 여기에 빈 칸을 넣어 두었던 탓에 열 이름만 있고 값은 «늘 비어» 있었다
            (2026-08-17 발견). 열을 만들었으면 값을 넣는다. */
-      html += '<tr><td>' + h + ':00</td>'
+      /* ★ 왜 늘었나 — 그 시각에 사람이 있었으면 이름을, 없었으면 «자동» 이라고 말한다.
+         자동으로 도는 것은 늘 같다: 메일 받기 10분·보내기 15분·급여자료 30분마다. */
+      var _who = billWhoAt(b.hour);
+      var _auto = '자동으로 도는 것 — 메일 받기 10분마다 · 메일 보내기 15분마다 · 급여자료 30분마다';
+      var _whoTxt = _who.length
+        ? (_who.join(', ') + ' 접속 중')
+        : '접속한 사람 없음 → 자동';
+      var _tip = h + ':00 — ' + _whoTxt + '\n' + _auto;
+      html += '<tr title="' + _tip.replace(/"/g, '&quot;') + '"><td>' + h + ':00</td>'
         + '<td>' + (b.cumKnown ? B.fmtWon(b.cum) : '<span class="unk">—</span>') + '</td>'
         + billCell(b.total, b.known.total)
         + billCell(b.parts.storage, b.known.storage)
         + billCell(b.parts.database, b.known.database)
         + billCell(b.parts.functions, b.known.functions)
         + billCell(b.parts.etc, b.known.etc)
+        + '<td class="' + (_who.length ? 'who' : 'unk') + '">'
+        + (_who.length ? _who.join(', ') : '자동') + '</td>'
         + '</tr>';
     });
     body.innerHTML = html
