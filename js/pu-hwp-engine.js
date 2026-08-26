@@ -2,6 +2,48 @@
 (function (global) {
   'use strict';
 
+  /* ── rhwp 엔진 판 번호 ── 여기 한 곳에서만 올린다(규정관리·푸른이알피가 함께 본다).
+     0.7.19 는 가운뎃점(·)을 그리지 않고 흘렸다. 같은 신구대조표를 두 판으로 렌더해
+     견주니 차이가 «· 단 하나»였다 — 0.7.19 는 3쪽 합쳐 0개, 0.8.4 는 12개
+     (981자 → 993자). 잃은 글자는 없고 쪽수·용지·표선·속도는 같았다.
+     「질병·사고·노령」이 「질병사고노령」으로 보이면 제출 전 확인이 어긋난다.
+     (내려받는 .hwpx 자체는 원래 정상이었다 — 흘린 것은 미리보기 렌더였다) */
+  var CORE_VERSION = '0.8.4';
+
+  /* 저장된 판과 기본 판 중 «더 새것»을 고른다.
+     예전에는 저장값이 있으면 무조건 그것을 썼다. 자동 갱신은 같은 minor 안에서만
+     올리므로(0.7.x→0.7.y), 0.7.19 가 적힌 브라우저는 기본값만 올려도 영영 옛 판을 쓴다.
+     글자로 견주면 0.10.0 이 0.9.9 보다 낮아지므로 자리별 숫자로 견준다. */
+  function verParts(v) {
+    return String(v == null ? '' : v).trim().split('.').map(function (x) { return parseInt(x, 10) || 0; });
+  }
+  function verNewer(a, b) {
+    var pa = verParts(a), pb = verParts(b);
+    for (var i = 0; i < 3; i++) { var x = pa[i] || 0, y = pb[i] || 0; if (x !== y) return x > y; }
+    return false;
+  }
+  /* 판 번호 모양 검사 — 숫자와 점만, 자리는 셋까지. 정규식을 쓰면 파일에 적히는
+     동안 역슬래시가 먹혀 조용히 «아무것도 안 맞는» 검사가 되기 쉽다. */
+  function verOk(s) {
+    if (!s) return false;
+    var p = String(s).split(String.fromCharCode(46));
+    if (p.length > 3) return false;
+    for (var i = 0; i < p.length; i++) {
+      if (!p[i].length) return false;
+      for (var j = 0; j < p[i].length; j++) {
+        var c = p[i].charCodeAt(j);
+        if (c < 48 || c > 57) return false;
+      }
+    }
+    return true;
+  }
+  function pickVer(stored, def) {
+    def = def || CORE_VERSION;
+    var s = String(stored == null ? '' : stored).trim();
+    if (!s || !verOk(s)) return def;
+    return verNewer(s, def) ? s : def;
+  }
+
   var DEFAULTS = {
     coreUrl: 'vendor/rhwp-core/rhwp.js',
     editorUrl: 'https://esm.sh/@rhwp/editor',
@@ -174,6 +216,9 @@
   }
 
   var api = {
+    CORE_VERSION: CORE_VERSION,
+    pickVer: pickVer,
+    verNewer: verNewer,
     config: config,
     detectFormat: detectFormat,
     validate: validate,
