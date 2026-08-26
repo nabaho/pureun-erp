@@ -435,6 +435,10 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 /* ══ 사진첩 «모두 보고» 고르기 (대표 승인 목업 2026-08-25) ══
    ⚠ 층 560 — 수정 창(mbEdit)보다 위. 같은 층이면 DOM 순서가 이겨 뒤로 숨는다. */
 #mbPickAll{z-index:560;padding:10px;}
+/* 창닫기 ✕ — 머리줄 안에 얌전히. 다른 창의 닫기와 같은 크기로 둔다 */
+.pka-x{width:30px;height:30px;flex:0 0 auto;border:0;background:transparent;border-radius:50%;
+  font-size:19px;line-height:1;color:#5f6368;cursor:pointer;}
+.pka-x:hover{background:#f1f3f4;color:#202124;}
 .pka{background:var(--surface);border-radius:14px;width:100%;height:100%;
   display:flex;flex-direction:column;overflow:hidden;}
 .pka-bar1{display:flex;align-items:center;gap:9px;padding:8px 12px;flex:none;flex-wrap:wrap;
@@ -520,7 +524,9 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 .pka-stamp.on .pka-mini::after{transform:translateX(13px);}
 @media(max-width:700px){
   .pka-right{width:100%;margin-left:0;}
-  .pka-find{width:100%;max-width:none;}
+  /* ⚠ width:100% 그대로 두면 ✕ 가 줄 밖으로 밀려난다.
+     남는 만큼만 늘어나게 하고(min-width:0), ✕ 자리를 남긴다. */
+  .pka-find{flex:1 1 auto;width:auto;min-width:0;max-width:none;}
 }
 .edit-photo-empty{font-size:11px;color:var(--t2);text-align:center;padding:28px 8px;border:1px dashed var(--border);border-radius:9px;background:var(--surface);line-height:1.5;}
 @media(max-width:860px){
@@ -1341,6 +1347,10 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
         </span>
         <input class="pka-find" id="pkaQ" type="search" placeholder="업체 · 서류 이름으로 찾기"
           oninput="PK.q=this.value.trim().toLowerCase();pkPaintBody();">
+        <!-- 창닫기 — 「← 수정으로」와 똑같이 «직전 창»으로 돌아간다.
+             왼쪽 글자만으로는 닫는 자리가 눈에 안 띈다는 대표 지적(2026-08-26). -->
+        <button class="pka-x" onclick="pkTryClose()" title="닫기 (Esc) — 수정 창으로 돌아갑니다"
+          aria-label="닫기">✕</button>
       </span>
     </div>
     <div class="pka-bar2" id="pkaChips"></div>
@@ -3295,6 +3305,27 @@ function pkLoadYear(year, first){
     console.warn('[사진첩 모두 보기]',err);
     q('#pkaBody').innerHTML='<div class="apk-empty">사진 목록을 불러오지 못했습니다<br>'+escAttr((err&&err.message)||err)+'</div>';
   });
+}
+
+/* ══════ 창닫기 — 순수 로직 (테스트 대상) ══════
+   대표 지시 2026-08-26: "창닫기 표시 있으면 좋겠다",
+                        "창닫기 눌렀을 경우 직전창으로 돌아가야 한다."
+
+   ★ «직전 창»은 수정 창이다 — 고르기 창은 그 «위»에 뜬다(mbEdit 은 열린 채로 있다).
+     그래서 닫기는 mbPickAll 하나만 닫으면 된다. 다 닫으면 적던 메모·시간이 날아간다.
+   ⚠ Esc 가 지금까지 «열린 창을 전부» 닫고 있었다.
+     고르기 창에서 Esc 를 누르면 수정 창까지 같이 닫혀 달력으로 튕겼다. 아래에서 고친다. */
+
+/* 담은 사진이 있는데 닫으면 한 번 물어본다 — 안 물으면 고른 것이 소리 없이 사라진다 */
+function pkCloseAsk(n){
+  var c = Math.floor(Number(n)) || 0;
+  return c > 0 ? ('담은 ' + c + '장을 안 넣고 닫습니다. 그래도 닫을까요?') : '';
+}
+function pkTryClose(){
+  var msg = pkCloseAsk(PK.sel.length);
+  if(msg && !confirm(msg)) return false;
+  closePickAll();                 // 수정 창만 남는다 = 직전 창으로 돌아간다
+  return true;
 }
 
 function closePickAll(){
@@ -8503,12 +8534,52 @@ function showShortcutHelp(){
   q('#shortcutPanel').style.display='flex';
 }
 
-function closeAllOverlays(){
-  qa('.mb.open').forEach(m=>{if(m.id!=='mbLogin')m.classList.remove('open');});
-  q('#notifPanel').style.display='none';
-  q('#shortcutPanel').style.display='none';
-  q('#statsPanel').style.display='none';
+/* ══════ Esc 로 닫기 — 순수 로직 (테스트 대상) ══════
+   대표 지시 2026-08-26: "창닫기 눌렀을 경우 직전창으로 돌아가야 한다."
+
+   ⚠ 여기가 그 지시가 «깨져 있던» 자리다. Esc 가 열린 창을 전부 닫았다.
+     사진첩 고르기 창에서 Esc → 수정 창까지 같이 닫히고 달력으로 튕겼다.
+     적던 메모·시간이 그대로 날아갔다. 이제 «맨 위 하나»만 닫는다. */
+
+/* 겹쳐 뜬 창 중 맨 위는 어느 것인가 — 층(z)이 높은 것, 같으면 나중에 그린 것 */
+function topOverlay(list){
+  var best = null;
+  (list||[]).forEach(function(o){
+    if(!o || !o.id) return;
+    if(!best || o.z >= best.z) best = o;
+  });
+  return best ? best.id : '';
 }
+/* 옆 패널(알림·단축키·통계) 중 열려 있는 것 */
+function openPanelIds(vis){
+  return Object.keys(vis||{}).filter(function(k){ return !!vis[k]; });
+}
+
+function openOverlayList(){
+  return Array.prototype.map.call(document.querySelectorAll('.mb.open'), function(m){
+    var z = parseInt((getComputedStyle(m).zIndex || ''), 10);
+    return { id: m.id, z: (z || 0) };
+  }).filter(function(o){ return o.id !== 'mbLogin'; });
+}
+
+/* Esc 한 번 = 창 하나. 창이 없을 때에만 옆 패널을 닫는다. */
+function closeTopOverlay(){
+  var id = topOverlay(openOverlayList());
+  /* 사진첩 고르기는 담은 것을 물어봐야 하므로 제 손으로 닫게 둔다 */
+  if(id === 'mbPickAll'){ pkTryClose(); return true; }
+  if(id){ closeModal(id); return true; }
+  return closePanels();
+}
+
+function closePanels(){
+  var hit = false;
+  ['#notifPanel','#shortcutPanel','#statsPanel'].forEach(function(sel){
+    var el = q(sel);
+    if(el && el.style.display !== 'none'){ el.style.display='none'; hit = true; }
+  });
+  return hit;
+}
+
 
 function initShortcuts(){
   document.addEventListener('keydown',e=>{
@@ -8532,7 +8603,7 @@ function initShortcuts(){
     if(e.key==='Escape'){
       // 검색창에 검색어가 있으면 먼저 지우기
       if(e.target.id==='dashSearch'&&e.target.value){e.target.value='';e.target.dispatchEvent(new Event('input'));return;}
-      closeAllOverlays();if(typing)e.target.blur();return;
+      closeTopOverlay();if(typing)e.target.blur();return;
     }
     if(typing||e.ctrlKey||e.metaKey||e.altKey)return;
     // 모달·패널 열려있으면 단축키 무시
