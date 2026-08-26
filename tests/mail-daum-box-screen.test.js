@@ -131,7 +131,13 @@ test('합쳐 보는 칸도 이름이 있다 — 이름 없는 칸은 어디인�
 test('★ 옆줄에 다음메일함의 칸들이 다 있다 — 하나라도 없으면 그 칸에 갈 길이 없다', () => {
   const c = load({ folders: FOLDERS, msgs: MSGS });
   const h = c.mailSideHtml();
-  for(const nm of ['전체메일','받은메일함','내게쓴메일함','보낸메일함','임시보관함','예약메일함','내 메일함']){
+  /* ⚠ 2026-08-26 로 「내 메일함」이 「푸른 분류」가 되었다 — 이름만 바뀐 것이 아니다.
+       예전: 다음메일 폴더를 그대로 비추고, 여기서 고치면 다음메일도 바뀌었다.
+       지금: 우리 앱에서만 나눈 칸이다(다음메일에는 아무것도 쓰지 않는다).
+     그래서 «다음에 있는 그대로»를 보는 자리가 따로 있어야 한다 — 「다음메일 원본」.
+     둘 중 하나라도 없으면 어느 쪽을 보고 있는지 알 길이 사라진다. */
+  for(const nm of ['전체메일','받은메일함','내게쓴메일함','보낸메일함','임시보관함','예약메일함',
+                   '푸른 분류','다음메일 원본']){
     assert.ok(h.indexOf(nm) >= 0, nm + ' 줄이 없습니다');
   }
   assert.ok(h.indexOf('메일쓰기') >= 0, '메일쓰기 단추가 없습니다');
@@ -390,8 +396,12 @@ test('★ 「이동」도 폴더를 늘어놓고 눌러서 고른다 — 번호�
   c.setTimeout = () => {};
   c.state.mbCursor = 0;                      // 한 통을 짚어 둔 상태
   c.mbMove({ clientX: 500, clientY: 200 });
-  assert.match(held.html, /mbMovePicked\(/, '눌러서 고를 수 없다');
-  assert.match(held.html, /1\.자문사답변/, '옮길 폴더가 안 나온다');
+  /* ⚠ 2026-08-26 — 이 창은 이제 «우리 칸» 창이다. 고르면 다음메일이 아니라 쪽지가 바뀐다.
+       다음메일에서도 옮기는 옛 길은 맨 아래 한 줄로 접어 두었다(없애지 않았다). */
+  assert.match(held.html, /mbBinPut\(/, '눌러서 고를 수 없다');
+  assert.match(held.html, /1\.자문사답변/, '옮길 칸이 안 나온다');
+  assert.match(held.html, /다음메일은 그대로/, '다음메일이 안 바뀐다는 말이 없다');
+  assert.match(held.html, /mbMoveDaum\(/, '다음메일에서도 옮기던 옛 길이 사라졌다');
   assert.ok(held.html.indexOf('번호를 적어') < 0, '아직 번호를 적으라고 한다');
   assert.match(src, /#folderMenu \.fmlist\{[^}]*overflow-y:auto/,
     '폴더가 많으면 창을 넘긴다 — 창 안에서 굴러가야 한다');
@@ -431,13 +441,18 @@ test('★ 차례를 옮기면 그 자리에 들어간다 — 옮겼는데 제자
   /* ⚠ 이 덩어리 안에는 «진짜» renderPCSide 가 들어 있다(pcItem…switchTab 을 통째로 돌린다).
      그것이 $('pcSide') 에 그리므로 받아 줄 자리를 둔다 — 없으면 여기서 넘어진다. */
   c.$ = () => ({ set innerHTML(v){}, get innerHTML(){ return ''; } });
-  const before = c.mbMineTree().map(f=>f.name);
-  assert.deepEqual(before, ['가','나','다','라'], '처음에는 이름순');
-  /* 「라」를 「가」 앞으로 */
-  c.state.mbDrag = 'F3';
+  /* ⚠ 이름을 «이어 붙여» 견준다. 덩어리 안에서 만든 배열은 바깥 배열과 «다른 종류»라
+     deepStrictEqual 이 눈에 똑같은 것을 두고도 다르다고 한다(vm 의 결). 여기서 보려는
+     것은 차례뿐이므로 글로 견주는 것이 맞다. */
+  const names = () => c.mbBins().map(b=>b.name).join(' ');
+  assert.equal(names(), '가 나 다 라', '처음에는 이름순');
+  /* 「라」를 「가」 앞으로.
+     ⚠ 2026-08-26 부터 왼쪽에 «두 가지»를 끌어다 놓는다 — 칸(차례 옮기기)과 메일(분류).
+       그래서 무엇을 끌고 있는지 함께 적는다. 이 표시가 없으면 메일을 끌었는데
+       칸 차례가 바뀐다. */
+  c.state.mbDrag = { kind:'bin', id:'F3' };
   c.mbDrop({ preventDefault(){} }, 'F0', null);
-  assert.deepEqual(c.mbMineTree().map(f=>f.name), ['라','가','나','다'],
-    '끌어다 놓은 자리에 안 들어갔다');
+  assert.equal(names(), '라 가 나 다', '끌어다 놓은 자리에 안 들어갔다');
 });
 
 /* ══════ 답장 · 중요(★) · 읽음 (대표 지시 2026-08-25 「내부적으로 기능이 부족하다」) ══════ */
@@ -499,12 +514,23 @@ test('★ 전체답장은 나를 빼고 나머지에게 간다 — 나에게 또
 
 /* ══════ 내 메일함 — 만들기·이름 바꾸기·지우기 (대표 지시 2026-08-25) ══════ */
 
-test('★ 폴더마다 손볼 자리(⋮)가 있다 — 예전에는 「다음메일에서 하십시오」로 막았다', () => {
+test('★ 칸마다 손볼 자리(⋮)가 있다 — 예전에는 「다음메일에서 하십시오」로 막았다', () => {
   const c = load({ folders: FOLDERS, msgs: MSGS });
   const h = c.mailSideHtml();
-  assert.ok(h.indexOf('mbFolderMenu(') > 0, '폴더를 손볼 길이 없다');
-  assert.ok(h.indexOf('mbNewFolder(') > 0, '새 폴더를 만들 길이 없다');
+  /* 우리 칸을 손보는 길 — 다음메일에는 아무것도 쓰지 않는다 */
+  assert.ok(h.indexOf('mbBinMenu(') > 0, '우리 칸을 손볼 길이 없다');
+  assert.ok(h.indexOf('mbBinNew(') > 0, '새 칸을 만들 길이 없다');
   assert.ok(h.indexOf('mbWhereToMake') < 0, '「다음메일에서 하십시오」로 막던 것이 남아 있다');
+});
+
+test('★ 다음메일 폴더 자체를 손보는 길은 «원본 자리»에 남아 있다 (2026-08-25 에 만든 길)', () => {
+  /* ⚠ 2026-08-26 로 왼쪽 위가 우리 칸이 되면서, 다음메일 폴더를 만들고 이름 바꾸고
+       지우는 길이 갈 곳을 잃을 뻔했다. 그 길은 「다음메일 원본」을 펼치면 나온다.
+       부르는 함수가 우리 칸 것과 «달라야» 한다 — 섞이면 다음메일이 조용히 바뀐다. */
+  const c = load({ folders: FOLDERS, msgs: MSGS, state:{ mbRawOpen:true } });
+  const h = c.mailSideHtml();
+  assert.ok(h.indexOf('mbFolderMenu(') > 0, '다음메일 폴더를 손볼 길이 없다');
+  assert.ok(h.indexOf('mbNewFolder(') > 0, '다음메일에 새 폴더를 만들 길이 없다');
 });
 
 test('★ 하위 폴더는 어버이 밑에 들여써서 나온다 — 층이 안 보이면 왜 있는지 모른다', () => {
@@ -605,7 +631,8 @@ test('★ 폰 맨 위 줄 — ☰ · 칸 이름 · 새로고침 · 고르기 · 
 test('★ 폰 서랍에 앱의 칸이 다 있다 — 하나라도 없으면 폰에서 그 칸에 갈 길이 없다', () => {
   const c = load({ folders: FOLDERS, msgs: MSGS });
   const h = c.mbDrawerHtml();
-  ['전체메일','받은메일함','내게쓴메일함','보낸메일함','임시보관함','예약메일함','내 메일함']
+  ['전체메일','받은메일함','내게쓴메일함','보낸메일함','임시보관함','예약메일함',
+   '푸른 분류','다음메일 원본']
     .forEach((nm) => assert.ok(h.indexOf(nm) > 0, nm + ' 이 서랍에 없다'));
   assert.ok(h.indexOf('내게쓰기') > 0, '내게쓴메일함 옆 딱지가 없다');
   assert.ok(h.indexOf('수신확인') > 0, '보낸메일함 옆 딱지가 없다');
