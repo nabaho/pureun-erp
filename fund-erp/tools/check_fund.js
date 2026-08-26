@@ -210,6 +210,41 @@ ok('엑셀에도 어긋남을 적는다', src.includes('※ 기말 현금이 재
   && src.includes("_xlRow(s,rw++,['※ 맞물리지 않는 곳: '+_ne.join(', ')],{bold:true});"));
 // 시트 이름 오타 「이익잃여금」 — 결산서에 그대로 찍혔다
 ok('이익잉여금 오타가 없다', !src.includes('이익잃여금'));
+/* ══ 계정코드 ══ 통상 방식: 1 자산 · 2 부채 · 3 자본 · 4 수익 · 5 비용 */
+ok('계정코드가 있다', src.includes('var ACCT_CODE={') && src.includes('function acctCode(')
+  && src.includes('function acctTableRows(') && src.includes('function acctCodeChk('));
+ok('계정과목표가 결산 탭에 있다', src.includes("['accts','계정과목표']")
+  && src.includes("case 'accts':   return acctTableView();") && src.includes("'close.accts':{t:'계정과목표'"));
+{
+  /* ACCT_CHART 와 ACCT_CODE 가 «짝이 맞아야» 한다 — 한쪽만 늘리면 조용히 빈칸이 된다.
+     앞자리는 구분과 같아야 한다(비용을 2xx 로 적으면 부채로 읽힌다). */
+  const chart = (src.match(/var ACCT_CHART=\{([\s\S]*?)\};/) || [])[1] || '';
+  const codes = (src.match(/var ACCT_CODE=\{([\s\S]*?)\};/) || [])[1] || '';
+  const nm = t => [...t.matchAll(/'([^']+)':/g)].map(m => m[1]);
+  const A = nm(chart), C = nm(codes);
+  ok('계정과목과 번호가 짝이 맞는다', A.length === C.length && A.every(x => C.includes(x)));
+  const HEAD = {자산:1, 부채:2, 자본:3, 수익:4, 비용:5};
+  const typeOf = {}; [...chart.matchAll(/'([^']+)':'([^']+)'/g)].forEach(m => typeOf[m[1]] = m[2]);
+  const pair = [...codes.matchAll(/'([^']+)':(\d+)/g)];
+  ok('번호 앞자리가 구분과 맞는다', pair.every(m => Math.floor(+m[2] / 100) === HEAD[typeOf[m[1]]]));
+  ok('번호가 겹치지 않는다', new Set(pair.map(m => m[2])).size === pair.length);
+}
+/* 표가 분류를 «따로 적으면» 계정을 옮겼을 때 표만 옛말이 된다 —
+   실제로 쓰는 목록을 그대로 읽어야 한다 */
+ok('계정과목표가 실제 목록을 읽는다', src.includes('PURPOSE_ACCTS.indexOf(n)>=0)?')
+  && src.includes('ADMIN_ACCTS.indexOf(n)>=0)?') && src.includes('RESERVE_ACCTS.indexOf(n)>=0)?')
+  && src.includes('CF_INVEST.indexOf(n)>=0) flow=') && src.includes('IE_TREE.forEach(function(g){ g.hang.forEach'));
+/* 준비금 분개는 _reserveEntry 가 늘 nocash 로 만든다 — 현금흐름표에 아예 안 나온다.
+   「영업활동」이라 적으면 통장이 움직이는 것처럼 읽힌다. */
+ok('준비금을 현금 안 움직임으로 적는다', src.includes("flow='현금 안 움직임'")
+  && src.includes("if(n==='현금성자산') flow='현금 그 자체';"));
+// 번호가 화면·엑셀에 실제로 보여야 쓸모가 있다
+ok('번호가 시산표·원장·엑셀에 보인다', src.includes(">'+acctCode(r.name)+'<")
+  && src.includes("var c=acctCode(n);") && src.includes("(acctCode(t.name)?acctCode(t.name)+' ':'')+t.name")
+  && src.includes("wb.addWorksheet('1-7 계정과목표')"));
+// 어긋난 것을 조용히 넘기면 그대로 제출된다
+ok('계정코드 어긋남을 알린다', src.includes("  if(e.length) h+='<p class=\"warn\"")
+  && src.includes("if(_ce.length){ rw++; _xlRow(s,rw++,['※ 어긋난 곳: '+_ce.join(' · ')],{bold:true}); }"));
 ok('두 표에 도움말이 있다', src.includes("'close.cf':{t:'현금흐름표'") && src.includes("'close.ie':{t:'수입지출명세서'"));
 
 /* ══ 회계법인 결산본(한진철관 2019)에서 드러난 것 ══ */
