@@ -638,6 +638,43 @@ ok('한 칸짜리 서식은 라벨 뒤에 이어 적는다', src.includes("s.cla
 ok('신청 날짜와 신청인을 채운다', /\^20\\s\*년\\s\*월\\s\*일\$/.test(src)
   && /\/\^신청인\\s\*대표\$\/\.test\(t\)/.test(src));
 
+{
+  /* ⚠ 같은 이름의 함수를 둘 두면 «뒤엣것이 이긴다» — 오류도 안 난다.
+     실제로 그랬다: 서식 손질용으로 fillSubsidy 를 새로 썼는데 엑셀 채우기에 이미 있어서,
+     브라우저에서는 엑셀 함수가 불렸다(그래서 서식은 안 채워지고 엑셀은 깨졌다).
+     이 검사가 없으면 다음에도 조용히 되풀이된다. */
+  const names = [...src.matchAll(/^function\s+([_a-zA-Z][\w$]*)\s*\(/gm)].map(m => m[1]);
+  const seen = {}, dup = [];
+  names.forEach(n => { if (seen[n]) { if (dup.indexOf(n) < 0) dup.push(n); } else seen[n] = 1; });
+  ok('같은 이름의 함수가 둘 있지 않다' + (dup.length ? ' — ' + dup.join(', ') : ''), dup.length === 0);
+}
+/* ══ 지원신청서(별지 제1호의2) ══ */
+/* 적는 자리가 «비어» 있지 않은 서식이 있다 — 지원신청서는 ＿＿＿＿ 로 줄을 그어 둔다.
+   빈 칸만 찾으면 그런 자리는 영영 안 채워지고, 값이 라벨 칸에 잘못 붙는다. */
+ok('밑줄 자리표시를 빈 칸으로 본다', src.includes('function _isBlankCell(t){')
+  && src.includes('if(nx && _isBlankCell(nx.textContent)){ nx.textContent=v; }'));
+/* 옆 칸에 이미 값이 있으면 손대면 안 된다 — 원본이 {{FUND}} 로 채워 둔 칸에
+   또 적어서 기금 이름이 두 번 찍혔다 */
+ok('이미 값이 든 칸은 안 건드린다', src.includes('function _isLabelCell(t){')
+  && src.includes('else if(!nx || _isLabelCell(nx.textContent)){'));
+ok('지원신청서를 따로 채운다', src.includes('function fillSubsidyDoc(root,f){')
+  && src.includes("if(kind==='subsidy') fillSubsidyDoc(d,f);"));
+/* ⚠ 이 변환본에는 «남의 실제 값»이 박혀 있었다(금액 10,000,000원·신청일 2020-05-13·
+   복지사업 종류 체크). 그대로 인쇄하면 남의 숫자를 제출한다. */
+ok('박힌 남의 금액을 걷어낸다',
+  src.includes('td.textContent=/지원신청/.test(lab) ? won(su.request_amount)'));
+ok('박힌 남의 날짜를 오늘로',
+  src.includes("td.textContent=n.getFullYear()+'년 '+(n.getMonth()+1)+'월 '+n.getDate()+'일';"));
+/* 복지사업 종류·지원받은 사실은 기금마다 다르다. 「둘 이상의 기업이 공동근로복지기금에
+   출연」은 공동기금이면 늘 그러하므로 그대로 둔다. */
+ok('기금마다 다른 체크를 지운다', src.includes("공동근로복지기금에") && src.includes("t0.indexOf('■')")
+  && src.includes("td.innerHTML=td.innerHTML.replace(/■/g,'□');"));
+ok('서명란에 이름을 넣는다', src.includes("if(nm) td.textContent=nm+' (서명 또는 인)';"));
+/* 지원신청서에는 신청인 말고도 «대기업·도급업체»와 «수급업체» 칸이 있다 —
+   안 걸면 그 칸에 기금 주소·전화가 들어간다. */
+ok('소재지·전화에 칸이 걸려 있다',
+  src.includes("return f.address;}, /신청인|기금법인|^$/]") && src.includes("return f.phone;}, /신청인/]"));
+
 /* ══ 서식 단추는 «그 서식으로» 가야 한다 ══
    갈 곳을 «누른 서식»이 아니라 «화면의 단계»(S.dbPhase)로 정하고 있었다.
    그래서 지원금 제출서류의 [서식]을 눌러도 ①인가가 열려, 거기서 다시 찾아야 했다. */

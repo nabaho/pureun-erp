@@ -3090,11 +3090,27 @@ function _boss(f){
    ⚠ 세 번째가 없으면 같은 라벨이 다른 뜻으로 쓰인 서식에도 들어간다.
      실제로 그랬다 — 「주소」에 대표자 개인 주소를 넣었더니 등록면허세 신고서(납세자 주소)와
      임대차계약서(임대인·임차인 주소)에까지 들어갔다. 사람에 관한 값은 반드시 칸을 건다. */
+/* 적는 자리가 «비어» 있지 않은 서식이 있다 — 지원신청서는 ＿＿＿＿ 로 줄을 그어 둔다.
+   빈 칸만 찾으면 그런 자리는 영영 안 채워지고, 값이 라벨 칸에 잘못 붙는다. */
+function _isBlankCell(t){ return !String(t||'').replace(/[＿_\-·∙ㆍ\s]/g,''); }
+/* 옆 칸이 «또 다른 라벨»인지 — 라벨이면 적는 자리가 따로 없다는 뜻이다.
+   값이 들어 있으면(이미 채워진 칸) 손대지 않아야 두 번 찍히지 않는다. */
+function _isLabelCell(t){
+  var s=String(t||'').replace(/\s+/g,' ').trim();
+  if(!s||s.length>14) return false;
+  for(var i=0;i<FORM_FILL.length;i++) if(FORM_FILL[i][0].test(s)) return true;
+  return /^\(한자\)$|^구\s*분$|^비\s*고$|^계$/.test(s);
+}
 var FORM_FILL=[
   [/^명\s*칭$/, function(f){return f.name;}],
   [/^주사무소\s*소재지$/, function(f){return f.address;}],
-  [/^소재지$/, function(f){return f.address;}],
+  /* 「소재지」·「전화」는 서식마다 임자가 다르다 — 지원신청서에는 신청인 말고도
+     대기업·도급업체와 수급업체 칸이 있어서, 안 걸면 그 칸에 기금 주소가 들어간다. */
+  [/^소재지$/, function(f){return f.address;}, /신청인|기금법인|^$/],
   [/^전화번호$/, function(f){return f.phone;}],
+  [/^전\s*화$/, function(f){return f.phone;}, /신청인/],
+  [/^기금인가번호$/, function(f){return f.inka_no;}],
+  [/^대표자$/, function(f){return _boss(f).name||f.chairman;}, /신청인/],
   [/^성명\(한글\)$/, function(f){return _boss(f).name||f.chairman;}, /대표자/],
   [/^생년월일$/, function(f){return _boss(f).birth||'';}, /대표자/],
   [/^주\s*소$/, function(f){return _boss(f).addr||'';}, /대표자/],
@@ -3137,6 +3153,48 @@ function fillCommittee(root,f){
     }
   });
 }
+/* ══ 지원신청서(별지 제1호의2) ══
+   ⚠ 이 변환본에는 «남의 실제 값»이 박혀 있다 — 원본 .hwp 가 어느 기금이 실제로 낸 것이라
+     금액 10,000,000원·신청일 2020년 05월 13일·복지사업 종류 체크가 그대로 딸려 왔다.
+     그대로 인쇄하면 남의 숫자를 제출하게 된다. 우리 자료로 바꾸거나, 모르면 «비운다».
+     비어 있으면 사람이 채운다 — 남의 숫자는 채운 줄 알고 그냥 낸다. */
+function fillSubsidyDoc(root,f){
+  var yr=(typeof S!=='undefined'&&S.year)||new Date().getFullYear();
+  var su=((f.years||{})[yr]||{}).subsidy||{};
+  var won=function(v){ var n=num(v); return (n===''||n==null||!n)?'':Number(n).toLocaleString()+'원'; };
+  var tds=[].slice.call(root.querySelectorAll('td'));
+  /* 체크 지우기는 «글자 하나 바꾸기»라 안에 태그가 있어도 안전하다 —
+     칸 안에 <br> 이 든 곳이 있어서, 글자만 든 칸만 보면 그 줄이 통째로 빠진다. */
+  tds.forEach(function(td){
+    var t0=(td.textContent||'').replace(/\s+/g,' ');
+    if(t0.indexOf('■')<0 || /공동근로복지기금에\s*출연/.test(t0)) return;
+    td.innerHTML=td.innerHTML.replace(/■/g,'□');
+  });
+  tds.forEach(function(td,i){
+    if(td.children.length) return;
+    var t=(td.textContent||'').replace(/\s+/g,' ').trim();
+    // 금액 — 앞 칸의 이름을 보고 무엇인지 가린다
+    if(/^[0-9,]+\s*원$/.test(t)){
+      var lab=(i>0?(tds[i-1].textContent||''):'').replace(/\s/g,'');
+      td.textContent=/지원신청/.test(lab) ? won(su.request_amount) : '';
+      return;
+    }
+    // 신청일 — 오늘로
+    if(/^20\d{2}\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일$/.test(t)){
+      var n=new Date();
+      td.textContent=n.getFullYear()+'년 '+(n.getMonth()+1)+'월 '+n.getDate()+'일';
+      return;
+    }
+    /* 체크 — 기금마다 다른 것은 지운다(복지사업 종류·지원받은 사실).
+       「둘 이상의 기업이 공동근로복지기금에 출연」은 공동기금이면 늘 그러하므로 그대로 둔다. */
+    /* 서명란은 「＿＿＿＿ (서명 또는 인)」 한 칸이라 빈 칸으로 안 보인다 —
+       줄 자리에만 이름을 넣고 «(서명 또는 인)»은 그대로 둔다. */
+    if(/^[＿_\s]+\(서명\s*또는\s*인\)$/.test(t)){
+      var nm=_boss(f).name||f.chairman;
+      if(nm) td.textContent=nm+' (서명 또는 인)';
+    }
+  });
+}
 function hwpFormHTML(kind,f,sites){
   var ftype=(f.fund_type==='사내')?'사내':'공동';
   var key=(kind==='charter'&&ftype==='사내')?'charter_sane':kind;   // 정관은 공동/사내 원본이 다름
@@ -3148,6 +3206,7 @@ function hwpFormHTML(kind,f,sites){
   var d=document.createElement('div'); d.innerHTML=html;
   /* 위원 격자를 «먼저» 채운다 — 그 줄에 표를 남겨야 아래 라벨 채우기가 비껴간다 */
   fillCommittee(d,f);
+  if(kind==='subsidy') fillSubsidyDoc(d,f);
   /* 사람이 읽듯 «지금 어느 칸 아래인지»를 따라간다.
      분사무소 칸의 「소재지」에 본사 주소를 넣으면 안 되기 때문이다
      (원본은 왼쪽 칸이 rowspan 으로 여러 줄을 덮는다). */
@@ -3168,14 +3227,16 @@ function hwpFormHTML(kind,f,sites){
         if(FORM_FILL[k][2] && !FORM_FILL[k][2].test(sect)) break;   // 그 칸 아래가 아니면 안 넣는다
         var v=FORM_FILL[k][1](f); if(!v) break;
         var nx=td.nextElementSibling;
-        if(nx && !(nx.textContent||'').trim()){ nx.textContent=v; }
-        else {
-          /* 이 서식은 라벨과 «적는 자리»가 한 칸이다(명칭 칸이 colspan 13).
-             옆 빈 칸이 없으면 라벨 오른쪽에 이어 적는다 — 원본 격자를 안 건드린다. */
+        if(nx && _isBlankCell(nx.textContent)){ nx.textContent=v; }
+        else if(!nx || _isLabelCell(nx.textContent)){
+          /* 서식에 따라 라벨과 «적는 자리»가 한 칸이다(설립인가신청서 명칭 칸이 colspan 13).
+             옆이 «또 다른 라벨»이면 적는 자리가 따로 없다는 뜻이라 라벨 뒤에 이어 적는다. */
           var s=document.createElement('span');
           s.className='fv'; s.textContent=v;
           td.appendChild(s);
         }
+        /* 옆 칸에 이미 값이 있으면 손대지 않는다 — 지원신청서 기금법인명 옆은
+           원본이 {{FUND}} 로 채워 두는데, 여기서 또 적으니 이름이 두 번 찍혔다. */
         break;
       }
     });
