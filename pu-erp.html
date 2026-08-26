@@ -13543,22 +13543,8 @@ function ContractModal(props){
     reader.onload = function(ev){ cb(ev.target.result); };
     reader.readAsDataURL(file);
   }
-  function onCardDrop(field){
-    return function(e){
-      e.preventDefault();
-      var file = e.dataTransfer.files && e.dataTransfer.files[0];
-      if(!file) return;
-      attachFile(field, file);
-    };
-  }
-  function onCardSelect(field){
-    return function(e){
-      var file = e.target.files && e.target.files[0];
-      if(!file) return;
-      attachFile(field, file);
-      e.target.value = '';
-    };
-  }
+  /* onCardDrop·onCardSelect 는 걷어냈다 (2026-08-26) — 사진을 «붙이는» 길이 없어졌다.
+     끌어다 놓기·고르기는 dropZone 안의 fillFrom 이 받아 «글자만» 읽는다. */
   function clearImg(field){
     var nextC = Object.assign({}, f.company); nextC[field] = '';
     setF(function(prev){ return Object.assign({}, prev, { company: nextC }); });
@@ -13957,73 +13943,66 @@ function ContractModal(props){
       icon + ' ' + label);
   }
 
+  /* 사진은 «담지 않는다» — 글자만 읽고 곧바로 버린다 (2026-08-26 대표 승인, 안 ㉯).
+     ★ 대표 지시는 「사진 첨부는 필요없다, 기업정보함에서 모두 가져오면 된다」였다.
+        없앨 것은 «사진을 계약에 쌓아 두는 일»이고, «사진에서 글자를 읽는 편함»은 아니다.
+     ⚠ 사진을 계약 기록에 base64 로 넣으면 레코드가 수 MB 로 부풀어 저장이 조용히
+        실패한다(예전 「계약 저장 실패」의 원인). 그래서 아예 상태에 «넣지 않고» 지나간다.
+     ⚠ 예전에 붙여 둔 사진은 그대로 둔다 — 있던 자료를 말없이 지우면 그게 곧 잃는 것이다. */
   function dropZone(field, title, hint){
     var img = (f.company && f.company[field]) || '';
     var ocrBusy = ocrField === field;
-    // 클립보드 이미지 붙여넣기 핸들러
-    function onPasteImg(e){
-      var items = (e.clipboardData || (e.originalEvent && e.originalEvent.clipboardData) || {}).items;
-      if(!items) return;
-      for(var i=0;i<items.length;i++){
-        if(items[i].type.indexOf('image')===0){
-          e.preventDefault();
-          var file = items[i].getAsFile();
-          if(!file) continue;
-          attachFile(field, file, function(b64){
-            setF(function(prev){
-              var nc = Object.assign({}, prev.company, (function(){var x={};x[field]=b64;return x;})());
-              return Object.assign({}, prev, { company: nc });
-            });
-          });
-          showToast('📋 클립보드 이미지 붙여넣기 완료');
-          break;
-        }
-      }
+    var inpId = 'coPhotoFill_' + field;
+    /* 고른 사진에서 글자만 뽑는다. b64 를 runOcr 에 «직접» 넘기므로 상태에 안 남는다. */
+    function fillFrom(file){
+      if(!file) return;
+      attachFile(field, file, function(b64){ runOcr(field, b64); });
     }
     return h('div', { style:{ flex:1 } },
-      h('div', { style:{ fontSize:'11.5px', fontWeight:700, color:'#475569', marginBottom:'4px', display:'flex', justifyContent:'space-between', alignItems:'center', gap:'4px' } },
+      h('div', { style:{ fontSize:'11.5px', fontWeight:700, color:'#475569', marginBottom:'4px', display:'flex', justifyContent:'space-between', alignItems:'center', gap:'4px', flexWrap:'wrap' } },
         h('span', null, title),
-        h('span', { style:{ display:'inline-flex', alignItems:'center', gap:'4px' } },
+        h('span', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', flexWrap:'wrap' } },
           /* (2026-08-09) 사진이 아니라 «정보» 를 가져온다 — 대표 지시.
-             사진은 기업정보함에 이미 있으니 두 번 보관할 이유가 없고,
-             계약 기록에 박히면 레코드가 부풀어 저장이 조용히 실패한다. */
+             사진은 기업정보함에 이미 있으니 두 번 보관할 이유가 없다. */
           h('button', { type:'button', onClick:function(){ setPcCoPick(field); },
-            title:'기업정보함에서 회사정보(사업자번호·대표·업태·종목·주소·연락처)와 담당자를 가져옵니다\n'
+            title:'기업정보함에서 회사정보(사업자번호·대표·업태·종목·주소·연락처)를 가져옵니다\n'
                  +'— 사진은 가져오지 않습니다. 사진은 기업정보함에서 보세요',
             style:{ background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe', padding:'2px 8px', borderRadius:'4px', fontSize:'10.5px', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' } },
             '📇 기업정보함 정보 가져오기'),
-          // 사진이 꼭 필요하면 기업정보함에서 본다 (여기로 복사해 오지 않는다)
           h('a', { href:'pu-cards.html', target:'_blank', rel:'noopener',
             title:'기업정보함을 새 탭에서 엽니다 — 사진은 거기서 보세요',
             style:{ color:'#64748b', fontSize:'10.5px', textDecoration:'underline', whiteSpace:'nowrap' } },
-            '기업정보함에서 보기'),
-          img && h('button', { type:'button', disabled:ocrBusy, onClick:function(){ runOcr(field); },
-            title: '이미지에서 텍스트 자동 추출 (한국어 지원)',
-            style:{ background:ocrBusy?'#cbd5e1':'#2563eb', color:'#fff', border:'none', padding:'2px 8px', borderRadius:'4px', fontSize:'10.5px', fontWeight:700, cursor:ocrBusy?'wait':'pointer' } },
-            ocrBusy ? '⏳ 처리중...' : '🔍 OCR 추출')
+            '기업정보함에서 보기')
         )
       ),
-      img
-        ? h('div', { style:{ position:'relative', border:'1px solid #e2e8f0', borderRadius:'6px', overflow:'hidden', background:'#f8fafc', height:'54px' } },
+      /* 사진으로 «채우기» — 붙이기가 아니다. 끌어다 놓기도 여기서 받는다. */
+      h('div', {
+          onDragOver:function(e){ e.preventDefault(); },
+          onDrop:function(e){ e.preventDefault(); fillFrom(e.dataTransfer.files && e.dataTransfer.files[0]); },
+          style:{ display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' } },
+        h('button', { type:'button', disabled:ocrBusy,
+          onClick:function(){ var el = document.getElementById(inpId); if(el) el.click(); },
+          title:'사진을 골라 «글자만» 읽어 빈 칸을 채웁니다.\n'
+               +'⚠ 사진은 계약에 저장하지 않습니다 — 사진은 기업정보함에 둡니다.\n'
+               +'PC 는 끌어다 놓기 · Ctrl+V 도 됩니다',
+          style:{ background:ocrBusy?'#cbd5e1':'#f8fafc', color:ocrBusy?'#fff':'#475569',
+            border:'1px dashed '+(ocrBusy?'#cbd5e1':'#cbd5e1'), padding:'5px 10px', borderRadius:'6px',
+            fontSize:'10.5px', fontWeight:700, cursor:ocrBusy?'wait':'pointer', whiteSpace:'nowrap' } },
+          ocrBusy ? '⏳ 읽는 중…' : '📷 사진으로 채우기'),
+        h('span', { style:{ fontSize:'10px', color:'#94a3b8' } }, '글자만 읽고 사진은 버립니다'),
+        h('input', { id:inpId, type:'file', accept:'image/*,.pdf',
+          onChange:function(e){ var fl = e.target.files && e.target.files[0]; e.target.value=''; fillFrom(fl); },
+          style:{ display:'none' } })
+      ),
+      /* 예전에 붙여 둔 사진 — 보기·지우기만 (새로 붙이는 길은 없앴다) */
+      img ? h('div', { style:{ position:'relative', border:'1px solid #e2e8f0', borderRadius:'6px', overflow:'hidden', background:'#f8fafc', marginTop:'5px' } },
+            h('div', { style:{ fontSize:'9.5px', color:'#854d0e', background:'#fffbeb', padding:'2px 6px', borderBottom:'1px solid #fde68a' } },
+              '📎 예전에 붙여 둔 사진 — 그대로 둡니다'),
             h(AsyncImg, { src:img, style:{ width:'100%', height:'54px', objectFit:'contain', display:'block' } }),
-            h('button', { onClick:function(){ clearImg(field); },
-              style:{ position:'absolute', top:'2px', right:'2px', background:'#fff', border:'1px solid #fecaca', color:'#dc2626', borderRadius:'4px', width:'20px', height:'20px', fontSize:'12px', cursor:'pointer', lineHeight:'18px', padding:0 } }, '×')
-          )
-        : h('label', {
-            onDragOver:function(e){ e.preventDefault(); },
-            onDrop:onCardDrop(field),
-            onPaste:onPasteImg,
-            onClick:function(e){ var inp = e.currentTarget.querySelector('input[type=file]'); if(inp){ e.preventDefault(); inp.click(); } }, // 모바일: 탭 시 사진 선택창 직접 열기(display:none input 탭 미작동 회피)
-            tabIndex:0,
-            title:'탭하여 사진·파일 선택 (카메라·갤러리) · PC는 드래그/Ctrl+V',
-            style:{ display:'flex', alignItems:'center', gap:'6px', border:'1px dashed #cbd5e1', borderRadius:'6px', padding:'6px 10px', cursor:'pointer', background:'#f8fafc', minHeight:'38px', outline:'none' } },
-            h('span', { style:{ fontSize:'14px' } }, '📎'),
-            h('div', null,
-              h('div', { style:{ fontSize:'10.5px', color:'#475569', fontWeight:600 } }, '📷 사진·파일 첨부 (탭)'),
-              h('div', { style:{ fontSize:'10.5px', color:'#94a3b8' } }, '갤러리·카메라·PDF · PC는 드래그/Ctrl+V')
-            ),
-            h('input', { type:'file', accept:'image/*,.pdf', onChange:onCardSelect(field), style:{ display:'none' } })
-          )
+            h('button', { type:'button', onClick:function(){ clearImg(field); },
+              title:'이 사진만 지웁니다 (기업정보함의 사진은 그대로입니다)',
+              style:{ position:'absolute', top:'20px', right:'2px', background:'#fff', border:'1px solid #fecaca', color:'#dc2626', borderRadius:'4px', width:'20px', height:'20px', fontSize:'12px', cursor:'pointer', lineHeight:'18px', padding:0 } }, '×')
+          ) : null
     );
   }
   // OCR 처리 중 표시용 state (어느 dropZone이 처리 중인지)
@@ -14042,17 +14021,13 @@ function ContractModal(props){
           var file = items[i].getAsFile();
           if(!file) continue;
           // 빈 필드 우선순위: 사업자등록증 → 명함
-          var targetField = (!f.company.bizLicenseImg) ? 'bizLicenseImg' : (!f.company.businessCardImg ? 'businessCardImg' : null);
-          if(!targetField){ showToast('📋 이미지 붙여넣기: 기존 이미지가 있습니다. 드롭존을 클릭 후 Ctrl+V 하세요'); return; }
-          attachFile(targetField, file, function(b64){
-            var fld = targetField;
-            setF(function(prev){
-              var nc = Object.assign({}, prev.company, (function(){var x={};x[fld]=b64;return x;})());
-              return Object.assign({}, prev, { company: nc });
-            });
-          });
+          /* 이제 사진을 담지 않으니 «빈 칸 찾기»가 필요 없다 — 늘 사업자등록증으로 읽는다.
+             (읽기 층이 명함 해석도 함께 시도하므로 명함을 붙여도 이름·직책이 들어온다) */
+          var targetField = 'bizLicenseImg';
+          /* 붙여넣은 사진도 «글자만» 읽고 버린다 — 계약 기록에 안 남는다. */
+          attachFile(targetField, file, function(b64){ runOcr(targetField, b64); });
           e.preventDefault();
-          showToast('📋 ' + (targetField==='bizLicenseImg'?'사업자등록증':'명함') + '에 이미지 붙여넣기 완료 (Ctrl+V)');
+          showToast('📋 붙여넣은 사진에서 글자를 읽습니다 — 사진은 저장하지 않습니다');
           break;
         }
       }
@@ -14060,8 +14035,10 @@ function ContractModal(props){
     document.addEventListener('paste', onGlobalPaste);
     return function(){ document.removeEventListener('paste', onGlobalPaste); };
   }, [f.company.bizLicenseImg, f.company.businessCardImg]);
-  function runOcr(field){
-    var img = (f.company && f.company[field]) || '';
+  /* imgOverride 를 주면 그 사진으로 읽고 «상태에 남기지 않는다» (사진으로 채우기).
+     주지 않으면 예전에 붙여 둔 사진으로 읽는다 — 그때는 다 읽은 뒤 그 사진을 지운다. */
+  function runOcr(field, imgOverride){
+    var img = imgOverride || (f.company && f.company[field]) || '';
     if(!img){ showToast('이미지 없음'); return; }
     setOcrField(field);
     var isLicenseField = field === 'bizLicenseImg';
@@ -14104,13 +14081,15 @@ function ContractModal(props){
           ws2[0] = w02; nc.workers = ws2;
         }
         // OCR로 1개 이상 추출되면 원본 이미지 삭제 (텍스트만 보관, 용량 절감)
-        if(filled > 0 && (field === 'bizLicenseImg' || field === 'businessCardImg')){ nc[field] = ''; }
+        /* 붙여 둔 사진으로 읽은 경우만 지운다 — 사진으로 채우기는 애초에 담지 않았다. */
+        if(!imgOverride && filled > 0 && (field === 'bizLicenseImg' || field === 'businessCardImg')){ nc[field] = ''; }
         return Object.assign({}, prev, { company: nc });
       });
       setOcrField('');
       var engineLabel = engine === 'vision' ? '[Google Vision]' : engine === 'claude' ? '[Claude Vision]' : '[Tesseract]';
       if(filled > 0){
-        showToast('✅ OCR 완료 '+engineLabel+': '+filledKeys.join('·')+' ('+filled+'개) — 원본 이미지 정리됨, 텍스트 확인·수정');
+        showToast('✅ 사진에서 읽음 '+engineLabel+': '+filledKeys.join('·')+' ('+filled+'개)'
+          + (imgOverride ? ' — 사진은 저장하지 않았습니다' : ' — 원본 사진 정리됨') + ', 값 확인·수정');
       } else {
         showToast('⚠️ 추출 없음 '+engineLabel+' — 이미지 품질 확인 또는 수동 입력');
       }

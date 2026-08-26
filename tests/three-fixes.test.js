@@ -37,8 +37,13 @@ t('가져올 정보가 없으면 그렇게 말한다', /이 회사에서 새로 
 t('단추 글자가 「정보 가져오기」', /'📇 기업정보함 정보 가져오기'/.test(src), true);
 t('사진은 기업정보함에서 보라고 길을 준다', /'기업정보함에서 보기'/.test(src), true);
 t('그 길이 기업정보함으로 간다', /href:'pu-cards\.html', target:'_blank'/.test(src), true);
-// OCR 로 글자를 뽑으면 원본을 지우는 규칙은 그대로여야 한다 (같은 원칙이다)
-t('OCR 뒤 원본 정리는 그대로', /if\(filled > 0 && \(field === 'bizLicenseImg' \|\| field === 'businessCardImg'\)\)\{ nc\[field\] = ''; \}/.test(src), true);
+// ⚠ 2026-08-26 다시 겨눔 — 「사진으로 채우기」는 사진을 애초에 «담지 않는다»(대표 승인, 안 ㉯).
+//   그래서 지울 것이 없다. 지켜야 할 규칙은 문장 모양이 아니라 이 둘이다:
+//   ① 담아 둔 사진은 글자를 뽑은 뒤 지운다  ② 안 담은 사진은 지우려 들지 않는다
+//   (②가 없으면 채우기가 «예전에 붙여 둔 사진»을 엉뚱하게 지운다)
+t('담아 둔 사진은 글자를 뽑으면 지운다',
+  /filled > 0 && \(field === 'bizLicenseImg' \|\| field === 'businessCardImg'\)\)\{ nc\[field\] = ''; \}/.test(src), true);
+t('애초에 담지 않은 사진은 지우려 들지 않는다', /if\(!imgOverride && filled > 0/.test(src), true);
 
 /* ══════ ② 보류함 다시 보기 ══════ */
 const FL = slice('function FinanceLedger(', '\nfunction FinanceIncome');
