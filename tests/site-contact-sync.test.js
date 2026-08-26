@@ -296,8 +296,11 @@ ok('helpers 가 window 에 노출돼 있다',
    && peCount('window._normPersonKey = _normPersonKey;') === 1);
 ok('업체관리 표의 직책도 contactRole 로 읽는다',
    peCount('contactRole(primary)') === 2 && peCount('contactRole(second)') === 2);
+/* ⚠ 2026-08-26 다시 겨눔 — 개수를 못 박고 있었다.
+   지켜야 할 규칙은 「직책은 contactRole 로 읽는다」이지 «몇 번 쓰였나»가 아니다.
+   새로 읽는 자리가 생길 때마다(계약창 접힘 줄 등) 이 검사가 «까닭 없이» 빨개졌다. */
 ok('상세보기의 직책도 contactRole 로 읽는다',
-   peCount('contactRole(primaryContact)') === 2 && peCount('contactRole(p)') === 2);
+   peCount('contactRole(primaryContact)') === 2 && peCount('contactRole(p)') >= 2);
 ok('편집칸은 그대로 position 을 쓴다 (읽기만 통일했다)',
    peCount("value:c.position || ''") === 1);
 ok('근로자(workers)의 직책은 건드리지 않았다', peCount('wk.position') >= 1);

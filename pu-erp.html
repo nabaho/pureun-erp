@@ -7615,7 +7615,16 @@ window.popConfirm = function(msg, onYes, opts){
   ok.textContent = opts.okText || '확인';
   var danger = opts.danger !== false; // 기본 danger
   Object.assign(ok.style, { padding:'4px 12px', fontSize:'11.5px', color:'#fff', border:'1px solid '+(danger?'#dc2626':'#1e40af'), background:(danger?'#dc2626':'#1e40af'), borderRadius:'4px', cursor:'pointer', fontWeight:'700' });
-  btns.appendChild(cancel); btns.appendChild(ok);
+  /* 세 번째 손 — 「더하기 / 바꾸기 / 그만두기」처럼 길이 셋일 때만 쓴다.
+     ⚠ 이 손을 고르면 true·false 가 아니라 'third' 가 온다. thirdText 를 안 준 곳은 그대로다. */
+  var third = null;
+  if(opts.thirdText){
+    third = document.createElement('button');
+    third.textContent = opts.thirdText;
+    Object.assign(third.style, { padding:'4px 10px', fontSize:'11.5px', background:'#fff',
+      color:'#dc2626', border:'1px solid #fecaca', borderRadius:'4px', cursor:'pointer', fontWeight:'700' });
+  }
+  btns.appendChild(cancel); if(third) btns.appendChild(third); btns.appendChild(ok);
   box.appendChild(btns);
   document.body.appendChild(box);
   // 위치 잡기 (anchor 아래, 화면 밖이면 위로 / 오른쪽 밖이면 안쪽으로)
@@ -7638,7 +7647,7 @@ window.popConfirm = function(msg, onYes, opts){
     if(isCallback){
       if(result && typeof onYes === 'function'){ try{ onYes(); }catch(err){ console.error(err); } }
     } else {
-      _resolver(!!result);
+      _resolver(typeof result === 'string' ? result : !!result);
     }
   };
   var outside = function(e){ if(!box.contains(e.target)) close(false); };
@@ -7647,6 +7656,7 @@ window.popConfirm = function(msg, onYes, opts){
     else if(e.key === 'Enter'){ e.preventDefault(); close(true); }
   };
   cancel.onclick = function(){ close(false); };
+  if(third) third.onclick = function(){ close('third'); };
   ok.onclick = function(){ close(true); };
   setTimeout(function(){
     document.addEventListener('mousedown', outside, true);
@@ -13393,10 +13403,30 @@ function ContractModal(props){
   /* 기업정보함에서 고른 사람들을 담당자 줄로 덧붙인다.
      ★ 고른 사람만 들어온다 — 모달에서 체크한 것만 여기로 온다.
      빈 줄(이름 없이 「+ 담당자 추가」로 만든 줄)이 있으면 그 자리부터 채워 쓴다. */
-  function addContactsFromPucards(list){
+  /* ── 담을 때 묻는다 (2026-08-26 대표 지시, 안 ㉡) ──
+     종전에는 누르면 그냥 붙어서, 담당자가 다섯·여섯으로 «모르는 사이에» 늘었다.
+     ⚠ 「바꾸기」는 되돌릴 수 없다 — 그래서 «누가 지워지는지 이름을 먼저 밝히고» 묻는다. */
+  async function addContactsFromPucards(list){
+    if(!list || !list.length) return;
+    var have = ctRealList();
+    var mode = 'add';
+    if(have.length){
+      var pn = have.filter(function(c){ return c.isPrimary; })[0] || have[0];
+      var names = have.map(function(c){ return c.name || '(이름 없음)'; }).join(', ');
+      var msg = '이 사업장에는 담당자가 이미 ' + have.length + '명 있습니다.\n'
+        + '주담당: ' + (pn.name || '(이름 없음)') + (contactRole(pn) ? ' (' + contactRole(pn) + ')' : '') + '\n\n'
+        + '고르신 ' + list.length + '명을 어떻게 할까요?\n\n'
+        + '· 더하기 — 있는 사람은 그대로 두고 더합니다\n'
+        + '· 바꾸기 — 있는 사람을 «지우고» 고른 사람만 남깁니다\n'
+        + '   지워질 사람: ' + names;
+      var ans = await popConfirm(msg, { okText:'더하기', thirdText:'바꾸기', cancelText:'그만두기', danger:false });
+      if(ans === false) return;                       // 그만두기 · 바깥 누르기 · Esc
+      mode = (ans === 'third') ? 'replace' : 'add';
+    }
     if(!list || !list.length) return;
     setF(function(prev){
-      var cs = (prev.company.contacts || []).slice();
+      /* 「바꾸기」면 빈 자리에서 시작한다 — 있는 사람을 지우겠다고 «이름까지 보고» 고른 것이다. */
+      var cs = (mode === 'replace') ? [] : (prev.company.contacts || []).slice();
       var added = 0;
       list.forEach(function(p){
         var pcc = pcToContact(p, false, p.id);
@@ -13415,10 +13445,14 @@ function ContractModal(props){
       // 주담당자가 하나도 없으면 첫 줄을 주담당으로 (제자리 수정 대신 새 객체로 — 옛 상태를 건드리지 않게)
       if(cs.length && !cs.some(function(c){ return c && c.isPrimary; })) cs[0] = Object.assign({}, cs[0], { isPrimary:true });
       var _dn = list.filter(function(p){ return p && p.__duty; }).length;
-      showToast('기업정보함에서 담당자 ' + added + '명 담았습니다'
-        + (_dn ? ' (맡는 일 ' + _dn + '명 정함)' : ''));
+      var _what = (mode === 'replace') ? '담당자를 ' + added + '명으로 바꿨습니다'
+                                    : '기업정보함에서 담당자 ' + added + '명 담았습니다';
+      showToast(_what + (_dn ? ' (맡는 일 ' + _dn + '명 정함)' : ''));
       return Object.assign({}, prev, { company: Object.assign({}, prev.company, { contacts: cs }) });
     });
+    /* 담고 나면 펼쳐 보여 준다 — 무엇이 들어왔는지 눈으로 봐야 한다.
+       ⚠ 상태 갱신 «안»에서 부르지 않는다 — 갱신 함수는 두 번 불릴 수 있다. */
+    setCtFold(false);
   }
 
   // 사업자번호 onBlur 자동 매칭 토스트
@@ -14124,6 +14158,21 @@ function ContractModal(props){
   }
   // OCR 처리 중 표시용 state (어느 dropZone이 처리 중인지)
   var os = useState(''); var ocrField = os[0]; var setOcrField = os[1];
+  /* ── 담당자 접기 (2026-08-26 대표 지시, 안 ㉠) ──
+     평소엔 «주담당 한 줄»만 보인다. 담당자가 넷이면 칸 넷이 세로로 길게 펼쳐졌다.
+     ⚠ 접는 것이지 «지우는» 것이 아니다 — 계약서·연락처에는 그대로 쓰인다.
+     ⚠ 아직 아무도 없으면 접지 않는다 — 접으면 «적을 자리»가 안 보인다. */
+  var cfd = useState(true); var ctFold = cfd[0]; var setCtFold = cfd[1];
+  function ctRealList(){
+    return (f.company.contacts || []).filter(function(c){ return !erpIsBlankContact(c); });
+  }
+  function ctIsFolded(){ return ctFold && ctRealList().length >= 1; }
+  function ctPrimary(){
+    var cts = f.company.contacts || [];
+    for(var i=0;i<cts.length;i++){ if(cts[i] && cts[i].isPrimary && !erpIsBlankContact(cts[i])) return cts[i]; }
+    for(var j=0;j<cts.length;j++){ if(!erpIsBlankContact(cts[j])) return cts[j]; }
+    return null;
+  }
   var co = useState(true); var coOpen = co[0]; var setCoOpen = co[1];
   // 전역 붙여넣기: 모달 열린 동안 Ctrl+V로 빈 드롭존에 이미지 자동 삽입
   useEffect(function(){
@@ -14987,7 +15036,24 @@ function ContractModal(props){
         h('button', { onClick:addContact, type:'button',
           style:{ background:'#eff6ff', color:'#1e40af', border:'1px solid #bfdbfe', padding:'4px 10px', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer' } }, '+ 담당자 추가')
       ),
-      (f.company.contacts || []).map(function(ct, idx){
+      /* 접힘 — 주담당 한 줄. 대표가 말한 「기존 주담당 1인 이름만」이다. */
+      ctIsFolded() && (function(){
+        var p = ctPrimary(); if(!p) return null;
+        var sub = [contactRole(p), p.phone || p.bizPhone || ''].filter(Boolean).join(' · ');
+        return h('div', { style:{ display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap',
+            background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:'6px', padding:'9px 12px' } },
+          h('span', { style:{ background:'#1e40af', color:'#fff', fontSize:'10px', padding:'2px 8px', borderRadius:'10px', fontWeight:700, whiteSpace:'nowrap' } }, '✓ 주담당'),
+          h('span', { style:{ fontSize:'13px', fontWeight:800, color:'#1e293b' } }, p.name || '(이름 없음)'),
+          sub ? h('span', { style:{ fontSize:'11px', color:'#64748b' } }, sub) : null,
+          p.duty ? h('span', { style:{ background:'#f0fdf4', color:'#166534', border:'1px solid #bbf7d0', fontSize:'10px', padding:'2px 8px', borderRadius:'10px', fontWeight:700, whiteSpace:'nowrap' } }, '🏷 ' + p.duty) : null,
+          h('button', { type:'button', onClick:function(){ setCtFold(false); },
+            title:'펼쳐서 고칩니다 — 담당자는 지워지지 않고 접혀 있을 뿐입니다',
+            style:{ marginLeft:'auto', background:'#fff', color:'#475569', border:'1px solid #cbd5e1', borderRadius:'5px', padding:'3px 9px', fontSize:'10.5px', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' } },
+            '✏️ 고치기')
+        );
+      })(),
+      /* 펼침 — 지금까지의 칸들 그대로 (주담당 바꾸기·지우기 모두 여기서) */
+      !ctIsFolded() && (f.company.contacts || []).map(function(ct, idx){
         var locked = !!ct.sameAsCeo;
         var lockedStyle = locked
           ? { padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px', fontFamily:'inherit', background:'#f8fafc', color:'#64748b', cursor:'not-allowed' }
@@ -15136,6 +15202,18 @@ function ContractModal(props){
           )
         );
       }),
+      /* 여닫는 손 — 접혀 있으면 몇 명이 숨어 있는지 «수를 밝힌다».
+         ⚠ 「3명 더」라고 말해 주지 않으면 사람이 사라진 줄 안다. */
+      ctRealList().length >= 1 && h('button', { type:'button',
+        onClick:function(){ setCtFold(!ctFold); },
+        title: ctIsFolded() ? '담당자는 지워지지 않았습니다 — 접혀 있을 뿐입니다' : '주담당 한 줄만 보이게 접습니다',
+        style:{ background:'none', border:'none', color:'#2563eb', fontSize:'11.5px', fontWeight:700,
+          cursor:'pointer', padding:'4px 0', marginTop:'2px' } },
+        ctIsFolded()
+          ? (ctRealList().length > 1
+              ? ('▾ 다른 담당자 ' + (ctRealList().length - 1) + '명 더 보기')
+              : '▾ 펼쳐서 고치기')
+          : '▴ 접기 — 주담당만 보기'),
 
     );
   } else if(tab === 'contract'){
