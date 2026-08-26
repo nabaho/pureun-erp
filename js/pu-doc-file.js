@@ -16,8 +16,49 @@
 
   var CARDS_ROOT = 'pucards';
 
-  var deps = { db: null };
-  function init(o) { o = o || {}; deps.db = o.db || null; return true; }
+  var deps = { db: null, storage: null };
+  function init(o) {
+    o = o || {};
+    deps.db = o.db || null;
+    if (o.storage !== undefined) deps.storage = o.storage || null;
+    return true;
+  }
+
+  /* ── 원본 사진은 «창고»에 둔다 (2026-08-26) ──
+     기업정보함은 2026-08-09 에 원본을 창고로 옮겼다 — 명함 4,400장 약 1.7GB 가
+     실시간DB 무료 한도(1GB)를 이것 하나로 넘겨 데이터베이스가 멈출 뻔했다.
+     그런데 **사진첩을 거쳐 들어오는 길만 옛 방식**이라, 한 장에 약 700KB 씩
+     실시간DB 로 도로 쌓이고 있었다(2026-08-26 실측: 417장 · 약 284MB).
+
+     ⚠ 창고 이름을 여기 적어 둔다. 부르는 화면(사진첩·정부사업일정)은 저마다
+       **다른 창고**를 기본으로 쓴다 — 사진첩은 pureun-erp-hrphotos 다.
+       그래서 firebase.storage() 를 그냥 쓰면 엉뚱한 창고에 올라간다.
+     ⚠ 막히면(규칙·권한·꾸러미 없음) 조용히 «옛 자리»로 물러난다. 기업정보함의
+       읽기는 창고 먼저, 없으면 실시간DB 순이라 어느 쪽에 있어도 보인다 —
+       올리다 막혔다고 명함 등록을 통째로 무르는 것이 훨씬 나쁘다. */
+  var CARDS_BUCKET = 'gs://pureun-erp-photos';
+  function cardsStorage() {
+    if (deps.storage) return deps.storage;
+    try {
+      if (global.firebase && global.firebase.app) {
+        deps.storage = global.firebase.app().storage(CARDS_BUCKET);
+        return deps.storage;
+      }
+    } catch (e) { /* 꾸러미가 없거나 창고가 없다 — 옛 자리로 간다 */ }
+    return null;
+  }
+  /* 올렸으면 true. 올릴 것이 없거나 막히면 false — 부르는 쪽이 옛 자리에 담는다. */
+  function putPhoto(id, dataUrl) {
+    if (!dataUrl) return Promise.resolve(false);
+    var st = cardsStorage();
+    if (!st) return Promise.resolve(false);
+    try {
+      return st.ref(CARDS_ROOT + '/photos/' + id)
+        .putString(String(dataUrl), 'data_url')
+        .then(function () { return true; })
+        .catch(function () { return false; });
+    } catch (e) { return Promise.resolve(false); }
+  }
 
   /* 기업정보함 레코드 종류 — 판독 종류와 이름이 다르다. */
   var TO_CARD_KIND = { card: 'card', bizreg: 'biz' };
@@ -237,9 +278,9 @@
          (사진이 이미 있으면 덮지 않는다. 원래 것이 더 나을 수 있다.)
          이 판단이 없으면 '글자는 다 있지만 사진은 없는' 명함에 들어온 사진을
          쓸모없다고 보고 치워 버린다. */
-      if (blank(rec.thumb) && !blank(o.thumb)) {
+      var addPhoto = blank(rec.thumb) && !blank(o.thumb);
+      if (addPhoto) {
         u[CARDS_ROOT + '/items/' + hit.id + '/thumb'] = o.thumb;
-        if (o.full) u[CARDS_ROOT + '/photos/' + hit.id] = o.full;
         if (o.photoId) u[CARDS_ROOT + '/items/' + hit.id + '/photoId'] = o.photoId;
         labels.push('사진');
       }
@@ -261,7 +302,13 @@
       /* 인덱스도 같이 갱신해야 검색에 새 값이 잡힌다. */
       u[CARDS_ROOT + '/idx/' + hit.id] = idxOf(Object.assign({}, rec, gaps, { kind: want }));
       out.message = head + '. 빈 칸 ' + labels.length + '개를 채웠습니다 (' + labels.join('·') + ')';
-      return deps.db.ref().update(u).then(function () { return out; });
+      /* 원본은 «먼저» 창고에 올린다 — 올라갔으면 실시간DB 에는 안 넣는다.
+         막혔으면 옛 자리에 담아 사진이 사라지지 않게 한다. */
+      return (addPhoto ? putPhoto(hit.id, o.full) : Promise.resolve(false))
+        .then(function (up) {
+          if (addPhoto && o.full && !up) u[CARDS_ROOT + '/photos/' + hit.id] = o.full;
+          return deps.db.ref().update(u).then(function () { return out; });
+        });
     });
   }
 
@@ -289,23 +336,30 @@
     /* 번호 열쇠도 같이 — 안 쓰면 다음에 같은 명함을 찍었을 때 또 새로 만든다 */
     var bk = byKeyName(o.kind, o.fields);
     if (bk) u[CARDS_ROOT + '/' + BYKEY + '/' + bk] = id;
-    /* 사진은 기업정보함이 자기 사본을 갖는다 — 사진첩을 정리해도 기업정보함 기록이 온전하게. */
-    if (o.full) u[CARDS_ROOT + '/photos/' + id] = o.full;
-    /* 뒷면 사본은 `{id}_b` 자리에 — 기업정보함 편집기·상세보기가 보는 자리와 같다.
-       (기업정보함이 자기 카메라로 찍던 시절부터 쓰던 자리라 화면은 안 고쳐도 된다) */
-    if (o.full2) u[CARDS_ROOT + '/photos/' + id + '_b'] = o.full2;
     /* 무엇으로 넣었는지 — **판독이 읽어 온 제목 그대로** 말한다(대표 지적 2026-08-17).
        사업자등록증명(국세청 증명원)을 넣고도 「사업자등록증으로 넣었습니다」라고
        하면 다른 서류가 들어간 줄 안다. 둘은 같은 갈래(bizreg)로 다뤄 같은 자리에
        쌓이는 것이 맞지만, **말은 실제 서류 이름이어야 한다.** */
     var docName = String((o.fields && o.fields.docName) || '').trim();
     var label = docName || (want === 'biz' ? '사업자등록증' : '명함');
-    return deps.db.ref().update(u).then(function () {
-      return {
-        id: id, created: true, filled: [],
-        message: '기업정보함에 ' + label + '으로 새로 넣었습니다'
-      };
-    });
+    /* 사진은 기업정보함이 «자기 사본»을 갖는다 — 사진첩을 정리해도 기록이 온전하게.
+       ⚠ 사본은 **창고**에 둔다(위 putPhoto 의 까닭). 뒷면은 `{id}_b` 자리에 —
+         기업정보함 편집기·상세보기가 보는 자리와 같다(그쪽 화면은 안 고쳐도 된다).
+       ⚠ 올리고 «나서» 레코드를 쓴다. 순서를 바꾸면 레코드는 있는데 사진이 없는
+         틈이 생긴다. 반대로 레코드 쓰기가 넘어지면 창고에 홀로 남는 파일이 생기는데,
+         그것은 자리만 조금 먹을 뿐 아무 화면도 안 가리킨다. */
+    return Promise.all([putPhoto(id, o.full), putPhoto(id + '_b', o.full2)])
+      .then(function (up) {
+        if (o.full && !up[0]) u[CARDS_ROOT + '/photos/' + id] = o.full;
+        if (o.full2 && !up[1]) u[CARDS_ROOT + '/photos/' + id + '_b'] = o.full2;
+        return deps.db.ref().update(u);
+      })
+      .then(function () {
+        return {
+          id: id, created: true, filled: [],
+          message: '기업정보함에 ' + label + '으로 새로 넣었습니다'
+        };
+      });
   }
 
   /* ══════════════════════════════════════════════════════════════
