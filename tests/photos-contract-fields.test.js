@@ -87,15 +87,15 @@ test('★ 계약서도 판이 화면 절반을 쓴다 — 실제로 돌려 본�
 });
 
 test('★ 계약서 판독이 상대 업체를 담는지 — 실제로 돌려 본다', async () => {
-  const ctx = { Promise, Object, String };
+  /* ⚠ 함수 본문을 «베어» 오지 않는다(2026-08-26) — 판독기를 통째로 싣고
+     그쪽이 낸 통로로 부른다. 베어 쓰면 옆 함수를 부르기 시작한 순간 넘어진다. */
+  const ctx = { console, Promise, Object, Array, JSON, String, Number, Math, Date,
+    RegExp, Error, isFinite, parseInt, parseFloat, setTimeout, clearTimeout };
+  ctx.window = ctx; ctx.globalThis = ctx; ctx.self = ctx;
   vm.createContext(ctx);
-  vm.runInContext(lib.match(/var KINDS = \{[^\n]*/)[0], ctx);
-  vm.runInContext('var deps = {};', ctx);
-  ['bizNoDigits', 'bizNoValid', 'fmtBizNo', 'afterRead'].forEach(function (n) {
-    vm.runInContext(fnOf(lib, n, '  '), ctx);
-  });
+  vm.runInContext(lib, ctx);
   /* 대표 화면의 위임계약서를 그대로 흉내 낸다 */
-  const out = await ctx.afterRead({
+  const out = await ctx.PuDocRead._afterReadForTest({
     kind: 'contract', company: '㈜맥스텍', ceo: '양명헌',
     address: '충남 천안시 서북구 2공단 2로 95, 402호 508호', companyTel: '041-557-7600',
     docName: '위임계약서', scope: '인사노무진단(RBA 점검)',

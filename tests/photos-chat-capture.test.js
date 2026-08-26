@@ -65,12 +65,14 @@ test('★ 이미 처리된 것은 done=true 로 표시하게 시킨다', () => {
 
 test('★ afterRead 가 할 일 배열을 버리지 않는다 — 실제로 돌려 본다', async () => {
   /* fields 정리가 문자열만 살리면 todos(배열)가 조용히 사라진다. */
-  const ctx = { Promise, Object, String };
+  /* ⚠ 함수 본문을 «베어» 오지 않는다(2026-08-26) — 판독기를 통째로 싣고
+     그쪽이 낸 통로로 부른다. 베어 쓰면 옆 함수를 부르기 시작한 순간 넘어진다. */
+  const ctx = { console, Promise, Object, Array, JSON, String, Number, Math, Date,
+    RegExp, Error, isFinite, parseInt, parseFloat, setTimeout, clearTimeout };
+  ctx.window = ctx; ctx.globalThis = ctx; ctx.self = ctx;
   vm.createContext(ctx);
-  vm.runInContext(lib.match(/var KINDS = \{[^\n]*/)[0], ctx);
-  vm.runInContext('var deps = {};', ctx);
-  vm.runInContext(fnOf(lib, 'afterRead', '  '), ctx);
-  const out = await ctx.afterRead({
+  vm.runInContext(lib, ctx);
+  const out = await ctx.PuDocRead._afterReadForTest({
     kind: 'chat', company: ' 오색할인마트 ', name: '임대순 대표',
     summary: '근로계약서 송부와 병가를 논의',
     todos: [{ t: '휴직 신고', done: false, ours: true },
