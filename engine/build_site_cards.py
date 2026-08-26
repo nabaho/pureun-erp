@@ -18,6 +18,55 @@ OUT_DIR = os.path.join(DATA_ROOT, "_harness_out")
 WRAP = {"급여", "1. 급여", "급여자료", "기타", "급여관리"}
 
 
+# 파일 이름 안에서 사업장이 아닌 낱말 — 이것만 남으면 못 알아낸 것이다
+FILE_NOISE = ("급여대장", "급여", "명세서", "노임대장", "임금대장", "대장",
+              "수정", "최종", "회계법인용", "세액반영", "금액대조", "복사본")
+# 법인 표기 — 같은 회사가 「(주)씨에스바이오」와 「씨에스바이오」로 갈리지 않게 뗀다
+CORP = r'^\s*(\(주\)|\(유\)|㈜|㈜|주식회사|유한회사|합자회사|농업회사법인)\s*'
+
+
+def _date_tok(t):
+    """2026년 · 2월 · 260225 같은 날짜 토막인가."""
+    t = (t or "").strip()
+    return bool(re.fullmatch(r'\d{4}년|\d{1,2}월|\d{6,8}|\d{4}년\s*\d{1,2}월', t))
+
+
+def _noise_tok(t):
+    t = (t or "").strip()
+    if not t or _date_tok(t):
+        return True
+    if t in FILE_NOISE:
+        return True
+    s2 = t
+    for w in FILE_NOISE:
+        s2 = s2.replace(w, "")
+    s2 = re.sub(r'\d{4}년|\d{1,2}월|\d{6,8}|\s+', '', s2)
+    return not s2
+
+
+def site_from_filename(name):
+    """파일 이름에서 사업장을 뽑는다. 못 찾으면 None.
+
+    ⚠ 담당자 폴더 밑에 **사업장 폴더 없이 파일이 바로** 놓인 경우가 있다
+      (2026-08-17 확인: 31곳). 그때 예전에는 **파일 이름이 그대로 사업장**이 되어
+      화면에 「…급여대장_260225.xlsx」가 사업장으로 떴다.
+      실제 이름들: 「2026년 2월 급여대장_운화헬스케어_260225.xlsx」(급여대장 뒤),
+      「서독_2024년 10월 급여대장_241101.xlsx」(맨 앞). 그래서 **잡말·날짜가 아닌
+      첫 토막**을 사업장으로 본다.
+    """
+    base = re.sub(r'\.(xlsx|xlsm|xls|csv|pdf|hwp|hwpx)$', '', str(name or ""), flags=re.I)
+    for p in [x.strip() for x in base.split("_") if x.strip()]:
+        if _noise_tok(p):
+            continue
+        s2 = p
+        for w in FILE_NOISE:
+            s2 = s2.replace(w, "")
+        s2 = re.sub(r'\d{4}년|\d{1,2}월|\d{6,8}', '', s2).strip(" -.·")
+        if s2:
+            return s2
+    return None
+
+
 def raw_site(rel):
     parts = rel.replace("/", "\\").split("\\")
     rest = parts[1:]
@@ -26,13 +75,25 @@ def raw_site(rel):
         i += 1
     if i >= len(rest):
         return None
+    # 마지막 토막이면 **폴더가 아니라 파일**이다 — 파일 이름에서 뽑는다
+    if i == len(rest) - 1:
+        return site_from_filename(rest[i])
     s = re.sub(r'^\d+\s*[.\-]\s*', '', rest[i]).strip()
     return s or None
 
 
 def site_base(s):
+    """보여 줄 사업장 이름. 끝의 괄호와 **앞의 법인 표기**를 뗀다.
+
+    ⚠ 앞의 「(주)」를 떼는 까닭 — 같은 회사가 파일마다 「(주)씨에스바이오」와
+      「씨에스바이오」로 적혀 있어 두 곳으로 갈렸다. 표기만 다른 것은 합친다.
+    ⚠ 그러나 **줄임말은 안 합친다** — 「천성」과 「(주)천성가축약품」은 표기 차이가
+      아니라 다른 글자다. 같은 회사일 수 있지만 확인 없이 합치면 남의 급여가
+      섞인다. 갈라 두고 사람이 판단한다.
+    """
     if not s:
         return s
+    s = re.sub(CORP, '', s)
     return re.sub(r'\s*[\(\[].*?[\)\]]\s*$', '', s).strip() or s
 
 
