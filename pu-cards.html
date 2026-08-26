@@ -645,6 +645,21 @@ table.sbox tr.bad td{background:#fdf4f4}
 .dm-f.sub{padding-left:15px;font-size:13px}
 .dm-side-hint{font-size:11.5px;color:#a8abb2;line-height:1.65;padding:6px 9px 2px}
 
+/* ── 푸른 분류 / 다음메일 원본 (대표 지시 2026-08-26) ──
+   ⚠ 두 덩어리가 «다른 것»임이 한눈에 보여야 한다. 위는 우리가 나눈 칸(초록),
+     아래는 다음에 있는 그대로(회색·자물쇠). 같은 이름의 칸이 두 곳에 나오므로
+     색으로 갈라 두지 않으면 어느 쪽을 보고 있는지 모른다. */
+.dm-fsec.pu{color:#0f8a5f;font-weight:700}
+.dm-fsec.pu .nm::before{content:'●';font-size:8px;vertical-align:2px;margin-right:5px}
+.dm-fsec.daum{border-top:1px solid #f0f0f0;margin-top:12px;padding-top:4px;color:#8c8c8c}
+.dm-f.ro{color:#7c7f86}
+.dm-f.ro .lock{flex:none;font-size:10px;color:#c2c5cb;width:14px;text-align:center}
+/* 메일을 끌어다 칸 위에 올렸을 때 */
+.dm-f.dropmail{background:#eaf6f1;box-shadow:inset 0 0 0 1px #0f8a5f}
+/* 옮긴 메일 옆의 「다음: ○○」 꼬리표 — 다음메일에서는 어디 있나 */
+.dm-from{flex:none;font-size:10.5px;color:#5d7a6d;background:#eaf6f1;border:1px solid #cfe6dc;
+  border-radius:3px;padding:1px 6px;margin-right:8px;white-space:nowrap}
+
 /* ⚠ 여기 갈래 단추줄(.dm-tabs)과 톱니바퀴(.dm-gear) 모양이 있었다.
    대표 화면 2026-08-24 로 그 줄을 통째로 없애면서 모양도 함께 지웠다 —
    쓰지 않는 모양을 남기면 다음 사람이 「어디에 쓰이나」를 찾느라 시간을 버린다. */
@@ -10678,7 +10693,7 @@ function mbSetPageSize(v){
   try{ localStorage.setItem(MB_SIZE_LS, String(n)); }catch(_){ }
   state.mbLimit = 0;
   const id = mbNow();
-  const slugs = (id==='*all'||id==='*tome') ? mbFolders().map(f=>f.slug) : [id];
+  const slugs = mbNeedSlugs(id);
   let left = slugs.length;
   if(!left){ renderMailPage(); return; }
   slugs.forEach(s=>loadMailBox(s, n, ()=>{ if(!--left){ renderPCSide(); renderMailPage(); } }));
@@ -10746,6 +10761,153 @@ function mbFolders(){
 function mbFolderOf(kind){ return mbFolders().filter(v=>v.kind===kind); }
 function mbFolderBy(slug){ return (_mbFolders||{})[slug] || null; }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   푸른 분류 — 우리 앱에서만 메일을 갈라 두는 층 (대표 지시 2026-08-26)
+   ══════════════════════════════════════════════════════════════════════════
+   "다음메일의 폴더는 그대로 유지한다. 오로지 푸른메일함에 있는 메일을
+    구분해서 정리하려는 것이다."
+
+   ★ 요점 하나 — «옮긴 것만 쪽지로 적는다.»
+     메일을 옮겨도 다음메일에는 아무것도 쓰지 않는다. 우리 DB 에 「이 메일은 ○○ 칸에
+     있다」는 쪽지 한 줄을 남길 뿐이다. 쪽지가 «없는» 메일은 다음이 넣은 자리를 그대로
+     비춘다. 그래서
+       · 처음 화면이 지금과 똑같다 — 베껴 넣을 목록이 없다
+       · 새 메일도 저절로 제자리로 들어온다
+       · 되돌리기가 쪽지 한 줄을 지우는 일이다
+     통째로 베끼는 길은 버렸다. 같은 목록을 두 벌 들면 어긋났을 때 어느 쪽이 맞는지
+     알 수 없고, 요금과 백업 한도(16MB)에 그 자리에서 걸린다.
+
+   ★ 두는 자리 — pucards/config 밑이다. mailbox 는 규칙이 «서버만» 쓰게 막아 두었다.
+     (mailOrder 를 여기 둔 것과 같은 까닭)
+
+   ★ 열쇠 이름표 셋 — 왼쪽에서 무엇을 골랐는지 이 한 글자로 가른다.
+       ~xxx  푸른 분류 칸    (우리 것)
+       #xxx  다음메일 원본   (쪽지를 무시하고 다음에 있는 그대로)
+       그 밖  다음메일 기본 칸(받은·보낸·휴지통…) — 우리 눈으로 본다(쪽지를 따른다)
+     ⚠ 「받은메일함」과 「다음메일 원본 › 받은메일함」의 통수가 다를 수 있다. 그것이
+       맞다 — 앞은 «우리가 정리한 뒤», 뒤는 «다음에 있는 그대로»다. */
+const MB_BIN_P = '~';    /* 푸른 분류 칸 */
+const MB_RAW_P = '#';    /* 다음메일 원본 */
+
+let _mbBins = null;      /* {binId:{n:이름, l:이어진폴더slug, o:차례}} — null 이면 아직 안 읽음 */
+let _mbPut  = null;      /* {'slug:uid': binId} — «옮긴 것만» 든다 */
+let _mbBinsBusy = false;
+
+/* 두 벌을 한 번에 읽는다 — 왼쪽 한 줄을 그리는 데 둘 다 필요하다.
+   ⚠ once() 만 쓴다(2026-08-16 「once 뒤 on」 요금 사고와 같은 결). */
+function mbEnsureBins(cb){
+  if(_mbBins!==null && _mbPut!==null){ if(cb) cb(); return; }
+  if(typeof Store==='undefined' || Store.mode!=='firebase'){
+    _mbBins = _mbBins||{}; _mbPut = _mbPut||{}; if(cb) cb(); return;
+  }
+  if(_mbBinsBusy){ if(cb) setTimeout(()=>mbEnsureBins(cb), 200); return; }
+  _mbBinsBusy = true;
+  Promise.all([
+    firebase.database().ref(DB_ROOT+'/config/mailBins').once('value'),
+    firebase.database().ref(DB_ROOT+'/config/mailPut').once('value')
+  ]).then(([b,p])=>{
+    _mbBins = b.val()||{}; _mbPut = p.val()||{};
+  }).catch(e=>{
+    _mbBins = _mbBins||{}; _mbPut = _mbPut||{};
+    console.warn('[푸른분류]', (e&&e.message)||e);
+  }).then(()=>{
+    _mbBinsBusy = false;
+    if(cb) cb();
+    if(state.view==='mail'){ renderPCSide(); renderMailPage(); }
+  });
+}
+
+/* ── 우리 칸 목록 ──
+   적어 둔 칸 + 아직 손대지 않은 다음 폴더(그대로 한 칸이 된다).
+   ⚠ 다음에 새 폴더가 생기면 여기 저절로 나타난다 — 적어 두는 일 없이. 그래야 대표가
+     다음메일에서 폴더를 하나 만들었을 때 우리 화면에서 조용히 빠지지 않는다. */
+function mbBins(){
+  const st = _mbBins || {};
+  const out = [];
+  const linked = {};
+  Object.keys(st).forEach(id=>{
+    const v = st[id]||{};
+    if(v.l) linked[v.l] = 1;
+    out.push({ id:id, name:String(v.n||''), link:String(v.l||''),
+               depth:0, stored:true });
+  });
+  mbFolderOf('custom').forEach(f=>{
+    if(st[f.slug] || linked[f.slug]) return;      /* 이미 어떤 칸이 맡고 있다 */
+    out.push({ id:f.slug, name:String(f.name||f.path||''), link:f.slug,
+               depth:Number(f.depth||0), stored:false });
+  });
+  /* 차례는 예전 그대로 config/mailOrder 에 둔다 — 열쇠가 폴더 slug 이던 것이 그대로
+     칸 id 가 되므로, 어제까지 손으로 옮겨 둔 차례가 그대로 살아 있다. */
+  return out.sort((a,b)=> mbOrderOf(a.id) - mbOrderOf(b.id)
+    || String(a.name).localeCompare(String(b.name),'ko'));
+}
+function mbBinBy(id){
+  const key = String(id||'');
+  const bare = key.charAt(0)===MB_BIN_P ? key.slice(1) : key;
+  return mbBins().find(b=>b.id===bare) || null;
+}
+/* 이 메일이 «옮겨진» 칸. 안 옮겼으면 빈 값 — 그러면 다음 자리를 그대로 따른다. */
+function mbPutOf(key){ return String((_mbPut||{})[key] || ''); }
+
+/* ── 이 줄이 지금 보는 자리에 보이나 ──
+   한 자리에서만 판단하게 모아 둔다. 그리는 곳과 「모두 고르기」가 서로 다른 셈을 하면
+   개수가 어긋난다. */
+function mbRowFits(v, id){
+  if(String(id).charAt(0)===MB_RAW_P) return true;         /* 원본 — 쪽지를 안 본다 */
+  const put = mbPutOf(v._key);
+  if(String(id).charAt(0)===MB_BIN_P){
+    const bin = mbBinBy(id); if(!bin) return false;
+    return put ? (put === bin.id) : (!!bin.link && v._slug === bin.link);
+  }
+  if(id==='*all' || id==='*tome') return true;             /* 전체는 다 보여 준다 */
+  if(!put) return true;                                    /* 안 옮긴 것은 제자리 */
+  const bin = mbBinBy(put);                                /* 옮겼으면 그 칸에서만 */
+  return !!(bin && bin.link === v._slug);
+}
+
+/* ── 이 칸을 열려면 어느 폴더를 읽어 와야 하나 ──
+   우리 칸에는 여러 다음 폴더에서 옮겨 온 메일이 섞일 수 있다. 그 폴더들을 안 읽으면
+   옮긴 메일이 «사라진 것처럼» 보인다. */
+function mbNeedSlugs(id){
+  const s = String(id||'');
+  if(s.charAt(0)===MB_RAW_P) return [s.slice(1)];
+  if(s.charAt(0)===MB_BIN_P){
+    const bin = mbBinBy(s); if(!bin) return [];
+    const need = {};
+    if(bin.link) need[bin.link] = 1;
+    const put = _mbPut||{};
+    Object.keys(put).forEach(k=>{
+      if(put[k] !== bin.id) return;
+      const at = k.lastIndexOf(':'); if(at>0) need[k.slice(0,at)] = 1;
+    });
+    return Object.keys(need);
+  }
+  if(s==='*all' || s==='*tome') return mbFolders().map(f=>f.slug);
+  return [s];
+}
+
+/* ── 이 칸에 몇 통 들어 있나 ── (왼쪽 줄 끝의 숫자·안 읽은 수) */
+function mbBinCount(bin){
+  let n = 0, un = 0;
+  Object.keys(_mbMsgs||{}).forEach(slug=>{
+    const box = _mbMsgs[slug]||{};
+    Object.keys(box).forEach(uid=>{
+      const v = box[uid]; if(!v) return;
+      const key = slug+':'+uid;
+      const put = mbPutOf(key);
+      const mine = put ? (put===bin.id) : (!!bin.link && slug===bin.link);
+      if(!mine) return;
+      n++; if(!Number(v.r||0)) un++;
+    });
+  });
+  /* ⚠ 아직 그 폴더를 읽어 오지 않았으면 우리가 센 수는 0 이다 — 그 자리에 0 을 적으면
+     「빈 칸」으로 보인다. 그럴 때는 서버가 폴더마다 적어 둔 셈을 그대로 쓴다
+     (아직 아무것도 안 옮겼으므로 그 값이 맞다). */
+  const f = bin.link ? mbFolderBy(bin.link) : null;
+  if(f && !_mbMsgs[bin.link]) return { n:Number(f.total||0), un:Number(f.unseen||0) };
+  return { n:n, un:un };
+}
+
 /* 지금 고른 칸. 없으면 받은메일함. */
 function mbNow(){
   const id = state.mbBox||'';
@@ -10764,6 +10926,17 @@ function mbBoxName(id){
   if(id==='*all')  return '전체메일';
   if(id==='*tome') return '내게쓴메일함';
   if(id==='*sched')return '예약메일함';
+  /* 푸른 분류 칸 — 대표가 붙인 이름을 그대로 */
+  if(String(id).charAt(0)===MB_BIN_P){
+    const b = mbBinBy(id);
+    return b ? String(b.name) : '푸른 분류';
+  }
+  /* 다음메일 원본 — 같은 이름이 둘이 되므로 어느 쪽인지 적어 준다 */
+  if(String(id).charAt(0)===MB_RAW_P){
+    const f0 = mbFolderBy(String(id).slice(1));
+    const nm = f0 ? (MB_KIND_LABEL[f0.kind] || String(f0.name||f0.path)) : '메일함';
+    return nm + ' (다음메일 원본)';
+  }
   const f = mbFolderBy(id);
   if(!f) return '메일함';
   return MB_KIND_LABEL[f.kind] || String(f.name||f.path);
@@ -10783,10 +10956,14 @@ function mbAllRows(){
       out.push(Object.assign({}, v, { _slug:slug, _box:String(f.name||''), _key:slug+':'+uid }));
     });
   };
-  if(id==='*all' || id==='*tome') Object.keys(_mbMsgs).forEach(push);
-  else push(id);
+  /* ⚠ 우리 칸은 «여러 폴더»에서 옮겨 온 것이 섞인다 — 읽어 둔 폴더를 다 훑은 뒤
+     mbRowFits 로 고른다. 이어진 폴더 하나만 보면 옮겨 온 메일이 안 보인다. */
+  const one = (id.charAt(0)===MB_RAW_P) ? id.slice(1)
+            : (id.charAt(0)===MB_BIN_P || id==='*all' || id==='*tome') ? '' : id;
+  if(one) push(one);
+  else Object.keys(_mbMsgs).forEach(push);
 
-  let rows = out;
+  let rows = out.filter(v=>mbRowFits(v, id));
   if(id==='*tome'){
     const me = mbMyAddr().toLowerCase();
     rows = rows.filter(v=>me && String(v.e||'').toLowerCase()===me
@@ -10965,36 +11142,77 @@ function mailSideHtml(){
       ${schedList().length?`<span class="n">${schedList().length}</span>`:''}</div>`;
   mbFolderOf('archive').forEach(f=>{ h += row(f.slug,'📦','보관메일함'); });
 
-  /* ── 내 메일함 — 대표가 손으로 만든 폴더(1.자문사답변 … 9.자율점검) ── */
-  const mine = mbMineTree();
+  /* ── 푸른 분류 — 우리 앱에서만 나눈 칸 (대표 지시 2026-08-26) ──
+     ⚠ 예전 「내 메일함」 자리다. 이름을 바꾼 까닭은 «다른 것이 되었기» 때문이다.
+       예전: 다음메일 폴더를 그대로 비추고, 여기서 고치면 다음메일도 바뀌었다.
+       지금: 우리 앱에서만 나눈다 — 다음메일에는 아무것도 쓰지 않는다.
+       이름을 그대로 두면 다음메일에서도 바뀌는 줄 알고 누른다. */
+  const bins = mbBins();
   const openMine = state.mbMineOpen !== false;
-  h += `<div class="dm-fsec" onclick="mbToggleMine()">
-      <span class="nm">내 메일함 <span style="color:#b6b9c0">${openMine?'⌃':'⌄'}</span></span>
-      <span class="tool" onclick="event.stopPropagation();mbNewFolder('',event)" title="새 폴더 만들기">＋</span>
+  h += `<div class="dm-fsec pu" onclick="mbToggleMine()"
+      title="우리 앱에서만 나눈 칸입니다 — 다음메일은 그대로 있습니다">
+      <span class="nm">푸른 분류 <span style="color:#b6b9c0">${openMine?'⌃':'⌄'}</span></span>
+      <span class="tool" onclick="event.stopPropagation();mbBinNew(event)" title="새 칸 만들기">＋</span>
     </div>`;
   if(openMine){
-    if(mine.length) mine.forEach(f=>{
-      const un = Number(f.unseen||0), tt = Number(f.total||0);
-      /* 층만큼 들여쓴다 — 하위 폴더가 어버이 밑에 있다는 것이 보여야 한다 */
-      const pad = 15 + Number(f._depth||0) * 14;
-      /* ⚠ 끌어서 차례를 옮길 수 있다(대표 지시 2026-08-25). 차례는 우리 쪽에만 둔다 —
-         다음메일에는 «폴더 차례»라는 것이 없다. */
-      h += `<div class="dm-f sub ${now===f.slug?'on':''}" style="padding-left:${pad}px"
-        draggable="true" ondragstart="mbDragStart(event,'${f.slug}')"
+    if(bins.length) bins.forEach(b=>{
+      const c = mbBinCount(b);
+      const id = MB_BIN_P + b.id;
+      /* 층만큼 들여쓴다 — 다음에서 하위 폴더였던 것이 어버이 밑에 있다는 것이 보이게 */
+      const pad = 15 + Number(b.depth||0) * 14;
+      /* ⚠ 끌어서 차례를 옮길 수 있다. 차례도 옮기기도 모두 우리 쪽에만 남는다. */
+      h += `<div class="dm-f sub ${now===id?'on':''}" style="padding-left:${pad}px"
+        draggable="true" ondragstart="mbDragStart(event,'${b.id}')"
         ondragend="this.classList.remove('dropover')"
         ondragover="mbDragOver(event,this)" ondragleave="mbDragLeave(this)"
-        ondrop="mbDrop(event,'${f.slug}',this)"
-        title="${esc(f.name)}${tt?' · 모두 '+tt.toLocaleString()+'통':''} — 끌어서 차례를 옮길 수 있습니다">
-        <span class="grip" title="끌어서 옮기기">⋮⋮</span>
-        <span class="nm" onclick="openMailBox('${f.slug}')">${esc(f._leaf)}</span>
-        ${un?`<span class="nu">${un}</span>`:''}
-        <span class="fmenu" onclick="event.stopPropagation();mbFolderMenu('${f.slug}',event)"
-          title="이름 바꾸기 · 하위 폴더 · 지우기">⋮</span></div>`;
+        ondrop="mbDrop(event,'${b.id}',this)"
+        title="${esc(b.name)}${c.n?' · '+c.n.toLocaleString()+'통':''} — 메일을 끌어다 놓으면 이 칸으로 옮겨집니다">
+        <span class="grip" title="끌어서 차례 옮기기">⋮⋮</span>
+        <span class="nm" onclick="openMailBox('${id}')">${esc(b.name)}</span>
+        ${c.un?`<span class="nu">${c.un}</span>`:''}
+        <span class="fmenu" onclick="event.stopPropagation();mbBinMenu('${b.id}',event)"
+          title="이름 바꾸기 · 지우기">⋮</span></div>`;
     });
-    else h += `<div class="dm-side-hint">${_mbFolders===null ? '폴더를 읽고 있습니다…'
+    else h += `<div class="dm-side-hint">${_mbFolders===null ? '칸을 읽고 있습니다…'
       : _mbErr ? '아직 볼 수 없습니다 — 콘솔 규칙이 필요합니다'
       : '아직 동기화되지 않았습니다.<br>목록에서 <b>새로고침</b>을 눌러 주세요'}</div>`;
   }
+
+  /* ── 다음메일 원본 — 접어 둔다. 여기는 «다음에 있는 그대로»다 ──
+     ⚠ 우리가 옮긴 것과 상관없이 다음에 있는 자리를 그대로 보여 준다. 그래서 「푸른 분류」의
+       통수와 여기 통수가 다를 수 있다 — 그것이 이 칸이 있는 까닭이다.
+     ⚠ 여기서는 옮기지 않는다(목록 도구줄의 옮기기가 꺼진다). 옮기고 싶으면 왼쪽 위
+       우리 칸에서 하면 된다. */
+  const openRaw = !!state.mbRawOpen;
+  h += `<div class="dm-fsec daum" onclick="mbToggleRaw()"
+      title="다음메일에 있는 그대로 — 우리가 나눈 것과 상관없이 보여 줍니다">
+      <span class="nm">다음메일 원본 <span style="color:#b6b9c0">${openRaw?'⌃':'⌄'}</span></span>
+      <span class="tool" onclick="event.stopPropagation();mbNewFolder('',event)"
+        title="다음메일에 새 폴더 만들기 — 다음메일에서도 생깁니다">＋</span></div>`;
+  if(openRaw){
+    h += `<div class="dm-side-hint">다음메일에 있는 그대로입니다.<br>
+      여기서 메일을 옮기지는 않습니다 — 나누는 일은 위 <b>푸른 분류</b>에서 합니다.</div>`;
+    /* 손으로 만든 폴더는 층·마지막 마디를 살려 적는다(다음메일에서 보는 그 모습) */
+    const leafOf = {};
+    mbMineTree().forEach(f=>{ leafOf[f.slug] = f; });
+    mbFolders().forEach(f=>{
+      const id = MB_RAW_P + f.slug;
+      const t  = leafOf[f.slug];
+      const nm = t ? String(t._leaf) : (MB_KIND_LABEL[f.kind] || String(f.name||f.path));
+      const tt = Number(f.total||0);
+      const pad = 15 + (t ? Number(t._depth||0) * 14 : 0);
+      /* ⚠ 다음메일 폴더 자체를 손보는 자리는 «여기 하나»다(2026-08-25 에 만든 길).
+           우리 칸을 손보는 ⋮ 와 부르는 함수가 다르다 — 섞으면 다음메일이 바뀐다. */
+      h += `<div class="dm-f sub ro ${now===id?'on':''}" style="padding-left:${pad}px"
+        onclick="openMailBox('${id}')"
+        title="${esc(nm)}${tt?' · 모두 '+tt.toLocaleString()+'통':''} — 다음메일에 있는 그대로">
+        <span class="lock">🔒</span><span class="nm">${esc(nm)}</span>
+        ${tt?`<span class="n">${tt.toLocaleString()}</span>`:''}
+        ${f.kind==='custom' ? `<span class="fmenu" onclick="event.stopPropagation();mbFolderMenu('${f.slug}',event)"
+          title="다음메일 폴더 손보기 — 다음메일에서도 바뀝니다">⋮</span>` : ''}</div>`;
+    });
+  }
+
   /* 스팸·휴지통은 맨 아래 — 다음메일과 같은 자리 */
   mbFolderOf('spam').forEach(f=>{ h += row(f.slug,'🚫','스팸함'); });
   mbFolderOf('trash').forEach(f=>{ h += row(f.slug,'🗑','휴지통'); });
@@ -11227,22 +11445,41 @@ function mbOrderOf(slug){
   const n = Number(mbOrderMap()[slug]);
   return Number.isFinite(n) ? n : 9999;      /* 차례를 안 정한 것은 뒤로, 그다음 이름순 */
 }
-function mbDragStart(ev, slug){
-  state.mbDrag = slug;
-  try{ ev.dataTransfer.effectAllowed='move'; ev.dataTransfer.setData('text/plain', slug); }catch(_){}
+/* ── 왼쪽 칸을 끌어 차례 옮기기 ── */
+function mbDragStart(ev, binId){
+  state.mbDrag = { kind:'bin', id:binId };
+  try{ ev.dataTransfer.effectAllowed='move'; ev.dataTransfer.setData('text/plain', binId); }catch(_){}
 }
-function mbDragOver(ev, el){ ev.preventDefault(); if(el) el.classList.add('dropover'); }
-function mbDragLeave(el){ if(el) el.classList.remove('dropover'); }
+/* ── 목록의 메일을 끌어 칸에 넣기 (대표 지시 2026-08-26) ──
+   ⚠ 고르지 않은 줄을 끌면 «그 줄 하나만» 끌린다. 골라 둔 것을 통째로 끌고 가면
+     엉뚱한 메일이 함께 옮겨진 줄 모른다. */
+function mbRowDragStart(ev, key){
+  const sel = pickOf('mbox');
+  if(!pickOn(sel, key)){ pickClear('mbox'); pickHit('mbox', key); pickRedraw(); }
+  state.mbDrag = { kind:'mail' };
+  try{ ev.dataTransfer.effectAllowed='move'; ev.dataTransfer.setData('text/plain', key); }catch(_){}
+}
+function mbDragOver(ev, el){
+  ev.preventDefault();
+  if(!el) return;
+  const d = state.mbDrag||{};
+  el.classList.add(d.kind==='mail' ? 'dropmail' : 'dropover');
+}
+function mbDragLeave(el){ if(el) el.classList.remove('dropover'), el.classList.remove('dropmail'); }
 /* 끌어다 놓은 자리 «앞»에 넣는다 — 아래로 끌면 그 줄 다음에 온다 */
-function mbDrop(ev, toSlug, el){
-  ev.preventDefault(); if(el) el.classList.remove('dropover');
-  const from = state.mbDrag; state.mbDrag = '';
-  if(!from || from===toSlug) return;
-  const list = mbMineTree().map(f=>f.slug);
-  const a = list.indexOf(from), b = list.indexOf(toSlug);
+function mbDrop(ev, toBin, el){
+  ev.preventDefault();
+  if(el){ el.classList.remove('dropover'); el.classList.remove('dropmail'); }
+  const d = state.mbDrag || {}; state.mbDrag = null;
+  /* 메일을 끌어다 놓았다 — 그 칸으로 옮긴다(다음메일은 그대로) */
+  if(d.kind==='mail') return mbBinPut(toBin);
+  const from = d.id;
+  if(!from || from===toBin) return;
+  const list = mbBins().map(b=>b.id);
+  const a = list.indexOf(from), b = list.indexOf(toBin);
   if(a<0 || b<0) return;
   list.splice(a, 1);
-  list.splice(list.indexOf(toSlug) + (a < b ? 1 : 0), 0, from);
+  list.splice(list.indexOf(toBin) + (a < b ? 1 : 0), 0, from);
   const map = {};
   list.forEach((s,i)=>{ map[s] = i; });
   _mbOrder = map;
@@ -11252,6 +11489,138 @@ function mbDrop(ev, toSlug, el){
       .catch(e=>toast('차례를 저장하지 못했습니다 — '+((e&&e.message)||e), 8000));
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   푸른 분류 — 옮기기·되돌리기·칸 손보기 (대표 지시 2026-08-26)
+   ══════════════════════════════════════════════════════════════════════════
+   ⚠ 여기서는 다음메일에 «아무것도 쓰지 않는다». 서버를 부르지도 않는다.
+     쪽지(config/mailPut) 한 줄을 적고 지울 뿐이다. */
+
+/* 고른 메일을 이 칸으로 — 쪽지를 적는다 */
+function mbBinPut(binId){
+  const picked = mbPicked();
+  if(!picked.length){ closeFolderMenu(); return toast('고른 것이 없습니다'); }
+  const bin = mbBinBy(binId);
+  if(!bin){ closeFolderMenu(); return toast('그 칸을 찾지 못했습니다'); }
+  const up = {};
+  picked.forEach(v=>{
+    /* 이어진 다음 폴더 그대로면 쪽지가 필요 없다 — 지운다(쪽지는 적을수록 좋다) */
+    const same = (bin.link && v._slug === bin.link);
+    up[v._key] = same ? null : bin.id;
+  });
+  mbPutWrite(up, `📂 ${picked.length}통을 「${bin.name}」 으로 옮겼습니다 — 다음메일은 그대로입니다`);
+}
+/* 되돌리기 — 쪽지를 지우면 다음이 넣은 자리로 돌아간다 */
+function mbBinUndo(){
+  const picked = mbPicked().filter(v=>mbPutOf(v._key));
+  if(!picked.length) return toast('되돌릴 것이 없습니다 — 옮긴 메일을 골라 주세요');
+  const up = {};
+  picked.forEach(v=>{ up[v._key] = null; });
+  mbPutWrite(up, `↩ ${picked.length}통을 다음메일 자리로 되돌렸습니다`);
+}
+/* 쪽지를 적는다 — 화면을 먼저 고치고, 저장이 실패하면 되돌린다 */
+function mbPutWrite(up, okMsg){
+  const before = {};
+  Object.keys(up).forEach(k=>{ before[k] = (_mbPut||{})[k] || null; });
+  _mbPut = _mbPut || {};
+  Object.keys(up).forEach(k=>{ if(up[k]==null) delete _mbPut[k]; else _mbPut[k] = up[k]; });
+  pickClear('mbox'); closeFolderMenu();
+  renderPCSide(); renderMailPage();
+  if(typeof Store==='undefined' || Store.mode!=='firebase') return toast(okMsg, 6000);
+  firebase.database().ref(DB_ROOT+'/config/mailPut').update(up)
+    .then(()=>toast(okMsg, 6000))
+    .catch(e=>{
+      Object.keys(before).forEach(k=>{ if(before[k]==null) delete _mbPut[k]; else _mbPut[k] = before[k]; });
+      renderPCSide(); renderMailPage();
+      toast('옮기지 못했습니다 — '+((e&&e.message)||e), 9000);
+    });
+}
+
+/* ── 칸 만들기·이름 바꾸기·지우기 ──
+   ⚠ 폴더 손보는 창(#folderMenu)과 «같은 자리»를 쓴다. 창을 두 벌 만들면 한쪽만 고쳐진다. */
+function mbBinNew(ev){
+  if(ev) ev.stopPropagation();
+  const m = $('folderMenu'); if(!m) return;
+  m.innerHTML = `<div class="fmhead">새 칸 <span>우리 앱에만 생깁니다</span></div>
+    <div class="fmform">
+      <input id="mbBinName" placeholder="칸 이름" maxlength="40"
+        onkeydown="if(event.key==='Enter')mbBinCreate();if(event.key==='Escape')closeFolderMenu()">
+      <button onclick="mbBinCreate()">만들기</button>
+    </div>`;
+  mbPlaceMenu(m, ev);
+  setTimeout(()=>{ const e=$('mbBinName'); if(e) e.focus(); }, 30);
+}
+function mbBinMenu(binId, ev){
+  const b = mbBinBy(binId); if(!b) return;
+  const m = $('folderMenu'); if(!m) return;
+  const c = mbBinCount(b);
+  m.innerHTML = `<div class="fmhead">${esc(b.name)}${c.n?` <span>${c.n.toLocaleString()}통</span>`:''}</div>
+    <div class="fmi" onclick="mbBinRename('${b.id}')">✏️ 이름 바꾸기</div>
+    <div class="fmi danger" onclick="closeFolderMenu();mbBinDelete('${b.id}')">🗑 칸 지우기</div>`;
+  mbPlaceMenu(m, ev);
+}
+function mbBinRename(binId){
+  const b = mbBinBy(binId); if(!b) return;
+  const m = $('folderMenu');
+  m.innerHTML = `<div class="fmhead">이름 바꾸기 <span>우리 앱에서만 바뀝니다</span></div>
+    <div class="fmform">
+      <input id="mbBinName" value="${esc(b.name)}" maxlength="40"
+        onkeydown="if(event.key==='Enter')mbBinDoRename('${b.id}');if(event.key==='Escape')closeFolderMenu()">
+      <button onclick="mbBinDoRename('${b.id}')">바꾸기</button>
+    </div>`;
+  setTimeout(()=>{ const e=$('mbBinName'); if(e){ e.focus(); e.select(); } }, 30);
+}
+function mbBinCreate(){
+  const e = $('mbBinName'); const name = e ? String(e.value||'').trim() : '';
+  if(!name) return toast('칸 이름을 적어 주세요');
+  /* ⚠ 새 칸은 다음 폴더와 «이어지지 않는다»(link 없음) — 오로지 옮겨 넣은 것만 담긴다 */
+  const id = 'b' + Date.now().toString(36);
+  mbBinSave(id, { n:name, l:'' }, `📂 「${name}」 칸을 만들었습니다`, ()=>{
+    /* 고른 것이 있으면 만들자마자 넣어 준다 — 창을 두 번 여닫지 않는다 */
+    if(mbPicked().length) mbBinPut(id);
+  });
+}
+function mbBinDoRename(binId){
+  const b = mbBinBy(binId); if(!b) return;
+  const e = $('mbBinName'); const name = e ? String(e.value||'').trim() : '';
+  if(!name) return toast('칸 이름을 적어 주세요');
+  if(name === b.name) return closeFolderMenu();
+  mbBinSave(b.id, { n:name, l:b.link||'' }, `✏️ 이름을 「${name}」 로 바꿨습니다`);
+}
+/* 칸을 지운다 — 메일은 사라지지 않는다. 쪽지를 떼어 다음 자리로 돌려보낼 뿐이다. */
+function mbBinDelete(binId){
+  const b = mbBinBy(binId); if(!b) return;
+  const c = mbBinCount(b);
+  if(!confirm(`「${b.name}」 칸을 지웁니다.\n\n`
+    + (c.n ? `안에 있는 ${c.n.toLocaleString()}통은 «다음메일에 있는 제자리»로 돌아갑니다.\n`
+           : `이 칸은 비어 있습니다.\n`)
+    + `메일은 하나도 사라지지 않습니다 — 다음메일은 처음부터 그대로였습니다.\n\n진행할까요?`)) return;
+  const up = {};
+  Object.keys(_mbPut||{}).forEach(k=>{ if(_mbPut[k]===b.id) up[k] = null; });
+  _mbBins = _mbBins || {};
+  delete _mbBins[b.id];
+  if(state.mbBox === MB_BIN_P + b.id) state.mbBox = '';
+  const done = ()=>{ if(Object.keys(up).length) mbPutWrite(up, `🗑 「${b.name}」 칸을 지웠습니다`);
+                     else { renderPCSide(); renderMailPage(); toast(`🗑 「${b.name}」 칸을 지웠습니다`, 6000); } };
+  if(typeof Store==='undefined' || Store.mode!=='firebase') return done();
+  firebase.database().ref(DB_ROOT+'/config/mailBins/'+b.id).remove()
+    .then(done)
+    .catch(e=>toast('지우지 못했습니다 — '+((e&&e.message)||e), 9000));
+}
+/* 칸 하나를 적어 둔다 — 아직 적어 두지 않았던 칸(다음 폴더에서 저절로 온 칸)이면
+   이때 처음 우리 것이 된다. */
+function mbBinSave(id, rec, okMsg, after){
+  _mbBins = _mbBins || {};
+  _mbBins[id] = { n:String(rec.n||''), l:String(rec.l||'') };
+  closeFolderMenu();
+  renderPCSide(); renderMailPage();
+  const fin = ()=>{ toast(okMsg, 6000); if(after) after(); };
+  if(typeof Store==='undefined' || Store.mode!=='firebase') return fin();
+  firebase.database().ref(DB_ROOT+'/config/mailBins/'+id).set(_mbBins[id])
+    .then(fin)
+    .catch(e=>toast('저장하지 못했습니다 — '+((e&&e.message)||e), 9000));
+}
+function mbToggleRaw(){ state.mbRawOpen = !state.mbRawOpen; renderPCSide(); }
 
 /* 서버에 시키고, 끝나면 폴더 목록을 다시 읽는다.
    ⚠ 다시 읽지 않으면 옆줄이 옛 이름·없는 폴더를 그대로 들고 있다. */
@@ -11295,10 +11664,10 @@ function openMailBox(id){
   if(!_matLoaded && Store.mode==='firebase')
     loadMaterials(()=>{ if(state.view==='mail') renderPCSide(); });
   if(_mbFolders===null){ loadMailFolders(()=>openMailBox(id)); return; }
-  /* 전체메일·내게쓴메일함은 여러 폴더를 합친다 — 아직 안 읽은 폴더를 채워 넣는다 */
-  const need = (id==='*all'||id==='*tome')
-    ? mbFolders().map(f=>f.slug).filter(s=>!_mbMsgs[s])
-    : (_mbMsgs[id] ? [] : [id]);
+  /* 푸른 분류 칸을 그리려면 쪽지(_mbPut)가 있어야 한다 — 없으면 옮긴 메일이 안 보인다 */
+  if(_mbBins===null || _mbPut===null){ mbEnsureBins(()=>openMailBox(id)); return; }
+  /* 전체메일·우리 칸은 여러 폴더를 합친다 — 아직 안 읽은 폴더를 채워 넣는다 */
+  const need = mbNeedSlugs(id).filter(s=>s && !_mbMsgs[s]);
   if(!need.length){ renderPCSide(); renderMailPage(); return; }
   let left = need.length;
   need.forEach(s=>loadMailBox(s, mbPageSize(), ()=>{
@@ -11312,7 +11681,12 @@ function mbBoxTotal(){
   const id = mbNow();
   if(id==='*all' || id==='*tome')
     return mbFolders().reduce((s,f)=>s+Number(f.total||0), 0);
-  const f = mbFolderBy(id);
+  /* 우리 칸은 서버가 세어 주지 않는다(다음메일에 없는 칸이다) — 우리가 센다 */
+  if(String(id).charAt(0)===MB_BIN_P){
+    const b = mbBinBy(id);
+    return b ? mbBinCount(b).n : 0;
+  }
+  const f = mbFolderBy(String(id).charAt(0)===MB_RAW_P ? String(id).slice(1) : id);
   return f ? Number(f.total||0) : 0;
 }
 function mbFilter(k){
@@ -11322,7 +11696,7 @@ function mbFilter(k){
 }
 function mbMore(){
   const id = mbNow();
-  const slugs = (id==='*all'||id==='*tome') ? mbFolders().map(f=>f.slug) : [id];
+  const slugs = mbNeedSlugs(id);
   const n = (state.mbLimit||mbPageSize()) + mbPageSize();
   state.mbLimit = n;
   let left = slugs.length; if(!left) return;
@@ -11339,7 +11713,7 @@ function mbPull(){
     _mbBusy=false;
     loadMailFolders(()=>{
       const id = mbNow();
-      const slugs = (id==='*all'||id==='*tome') ? mbFolders().map(f=>f.slug) : [id];
+      const slugs = mbNeedSlugs(id);
       let left = slugs.length || 1;
       const fin = ()=>{ if(!--left){ renderPCSide(); renderMailPage(); if(msg) toast(msg, ms||6000); } };
       if(!slugs.length) fin(); else slugs.forEach(s=>loadMailBox(s, state.mbLimit||mbPageSize(), fin));
@@ -11524,26 +11898,37 @@ function mbDrawerHtml(){
       ${schedList().length?`<span class="n">${schedList().length}</span>`:''}</div>`;
   mbFolderOf('archive').forEach(f=>{ h += row(f.slug,'📥','보관메일함'); });
 
-  const mine = mbMineTree();
+  /* ── 푸른 분류 — PC 옆줄과 «같은 규칙»(까닭은 mailSideHtml 주석) ── */
+  const bins = mbBins();
   const openMine = state.mbMineOpen !== false;
   h += `<div class="dmm-sec" onclick="mbToggleMine()">
-      <span class="nm">내 메일함</span>
-      <span class="tool" onclick="event.stopPropagation();mbNewFolder('',event)" title="새 폴더">＋</span>
+      <span class="nm">● 푸른 분류</span>
+      <span class="tool" onclick="event.stopPropagation();mbBinNew(event)" title="새 칸">＋</span>
       <span>${openMine?'⌃':'⌄'}</span></div>`;
   if(openMine){
     /* 층만큼 들여쓰고, 줄 끝에 ⋮ 를 둔다 — 폰에서도 이름 바꾸기·지우기가 된다 */
-    if(mine.length) mine.forEach(f=>{
-      const un = Number(f.unseen||0);
-      h += `<div class="dmm-f" style="padding-left:${18 + Number(f._depth||0)*14}px">
-        <span class="ic">📁</span>
-        <span class="nm" onclick="mbGo('${f.slug}')">${esc(f._leaf)}</span>
-        ${un?`<span class="n">${un}</span>`:''}
-        <span class="fmenu" onclick="event.stopPropagation();mbFolderMenu('${f.slug}',event)">⋮</span></div>`;
+    if(bins.length) bins.forEach(b=>{
+      const c = mbBinCount(b);
+      h += `<div class="dmm-f" style="padding-left:${18 + Number(b.depth||0)*14}px">
+        <span class="ic">📂</span>
+        <span class="nm" onclick="mbGo('${MB_BIN_P + b.id}')">${esc(b.name)}</span>
+        ${c.un?`<span class="n">${c.un}</span>`:''}
+        <span class="fmenu" onclick="event.stopPropagation();mbBinMenu('${b.id}',event)">⋮</span></div>`;
     });
     else h += `<div class="dmm-hint">${_mbErr
       ? '아직 볼 수 없습니다 — 콘솔 규칙이 필요합니다'
       : '아직 동기화되지 않았습니다'}</div>`;
   }
+  /* ── 다음메일 원본 — 접어 둔다. 다음에 있는 그대로 ── */
+  const openRaw = !!state.mbRawOpen;
+  h += `<div class="dmm-sec" onclick="mbToggleRaw()">
+      <span class="nm">🔒 다음메일 원본</span><span>${openRaw?'⌃':'⌄'}</span></div>`;
+  if(openRaw) mbFolders().forEach(f=>{
+    const nm = MB_KIND_LABEL[f.kind] || String(f.name||f.path);
+    h += `<div class="dmm-f" onclick="mbGo('${MB_RAW_P + f.slug}')">
+      <span class="ic">🔒</span><span class="nm">${esc(nm)}</span>
+      ${Number(f.total||0)?`<span class="n">${Number(f.total).toLocaleString()}</span>`:''}</div>`;
+  });
   mbFolderOf('spam').forEach(f=>{ h += row(f.slug,'🚫','스팸함'); });
   mbFolderOf('trash').forEach(f=>{ h += row(f.slug,'🗑','휴지통'); });
 
@@ -11560,6 +11945,18 @@ function mbDrawerHtml(){
 /* 서랍에서 칸을 고르면 서랍은 닫힌다 — 고르고 나서 또 닫아야 하면 두 번 손이 간다 */
 function mbGo(id){ state.mbDrawerOpen = false; openMailBox(id); }
 
+/* 옮긴 메일 옆의 「다음: ○○」 꼬리표 — 다음메일에서는 그대로 그 자리에 있다는 표시.
+   ⚠ 원본 자리와 전체메일에서는 붙이지 않는다. 거기서는 그 폴더에 있는 것이 당연하다. */
+function mbFromTag(v){
+  const id = mbNow();
+  if(id.charAt(0)===MB_RAW_P || id==='*all' || id==='*tome') return '';
+  if(!mbPutOf(v._key)) return '';
+  const f = mbFolderBy(v._slug);
+  const nm = f ? (MB_KIND_LABEL[f.kind] || String(f.name||f.path)) : '';
+  if(!nm) return '';
+  return `<span class="dm-from" title="다음메일에서는 「${esc(nm)}」 에 그대로 있습니다">다음: ${esc(nm)}</span>`;
+}
+
 /* ══════ 오른쪽 본문 — 목록 ══════ */
 function mbBoxHtml(){
   if(state.mbOpen) return mbReadHtml();
@@ -11572,7 +11969,11 @@ function mbBoxHtml(){
   const cur = Number(state.mbCursor);
   const body = rows.length ? rows.map((v,i)=>`
     <div class="dm-row ${Number(v.r||0)?'':'unread'} ${pickOn(sel,v._key)?'pick':''} ${i===cur?'cur':''}"
-      id="mbRow${i}">
+      id="mbRow${i}"
+      ${/* ⚠ 끌어다 왼쪽 칸에 놓으면 그 칸으로 간다. 「다음메일 원본」에서는 끌 수 없다 —
+            그 자리는 다음에 있는 그대로를 보여 주는 곳이라 우리가 손댈 자리가 아니다. */''}
+      ${mbNow().charAt(0)===MB_RAW_P ? '' :
+        `draggable="true" ondragstart="mbRowDragStart(event,'${v._key}')"`}>
       <input type="checkbox" class="chk" ${pickOn(sel,v._key)?'checked':''}
         onclick="event.stopPropagation();pickHit('mbox','${v._key}')">
       <span class="st ${Number(v.g||0)?'on':''}" title="중요 표시 — 다음메일에도 함께 켜집니다"
@@ -11580,6 +11981,9 @@ function mbBoxHtml(){
       <span class="who" onclick="mbOpenMsg('${v._slug}','${v.u}')">${esc(mbWho(v))}</span>
       <span class="clip">${Number(v.a||0)?'📎':''}</span>
       <span class="sub" onclick="mbOpenMsg('${v._slug}','${v.u}')">${esc(v.s||'(제목 없음)')}</span>
+      ${/* 옮긴 메일에는 «다음메일에서는 어디 있나»를 적어 준다. 이것이 없으면 다음메일을
+            열었을 때 그 메일이 사라진 줄 안다. */''}
+      ${mbFromTag(v)}
       ${(mbNow()==='*all'||mbNow()==='*tome')?`<span class="box">${esc(v._box||'')}</span>`:''}
       <span class="at">${mbTime(v.d)}</span>
     </div>`).join('')
@@ -11610,7 +12014,14 @@ function mbBoxHtml(){
       <button onclick="mbReply(true)" title="받는 사람 모두에게 답장합니다">전체답장</button>
       <button onclick="mbForward()" title="고른 한 통을 우리 주소로 새로 써서 전달합니다">전달</button>
       <button onclick="mbResend()" title="같은 제목으로 새 편지를 씁니다">다시보내기</button>
-      <button onclick="mbMove(event)" title="고른 메일을 다른 폴더로 옮깁니다">이동 ˅</button>
+      ${/* ⚠ 「이동」은 이제 «우리 앱 안에서만» 나누는 일이다(대표 지시 2026-08-26).
+            다음메일에는 아무것도 쓰지 않는다 — 그래서 이름도 「분류」로 바꿨다.
+            다음메일에서도 옮기고 싶으면 이 창 맨 아래 접힌 줄을 편다. */''}
+      <button onclick="mbMove(event)"
+        title="고른 메일을 푸른 분류 칸으로 옮깁니다 — 다음메일은 그대로입니다">분류 ˅</button>
+      ${mbNow().charAt(0)===MB_RAW_P ? '' :
+        `<button onclick="mbBinUndo()"
+          title="옮긴 메일을 다음메일에 있는 제자리로 되돌립니다">원래대로 ↩</button>`}
       ${/* 열면 읽음이 되는데 «되돌릴 길»이 없었다 — 나중에 다시 볼 것을 표시해 두는 자리다 */''}
       <button onclick="mbReadMark(false)" title="고른 메일을 안 읽음으로 되돌립니다">안읽음</button>
       <button ${_mbBusy?'disabled':''} onclick="mbPull()"
@@ -11954,7 +12365,35 @@ function mbTrash(){
    ⚠ 예전에는 브라우저 알림창에 「1. 자문사답변 2. 급여 … 번호를 적어 주세요」가 떴다.
      폴더가 스물여덟이라 목록이 화면을 넘겼고, 세어 가며 번호를 적어야 했다
      (대표 지시 2026-08-25 — 폴더 손보는 창과 같은 까닭). */
+/* ⚠ 2026-08-26 로 이 창이 «우리 칸» 창이 되었다. 고르면 다음메일이 아니라 쪽지가 바뀐다.
+     다음메일에서도 옮기는 옛 길은 맨 아래 한 줄로 접어 두었다 — 없애지는 않았다.
+     (2026-08-25 에 만든 길이고, 다음메일 폴더를 진짜로 정리하려는 날이 올 수 있다) */
 function mbMove(ev){
+  const picked = mbPicked(); if(!picked.length) return toast('고른 것이 없습니다');
+  const bins = mbBins();
+  const m = $('folderMenu'); if(!m) return;
+  const nowId = mbNow();
+  m.innerHTML = `<div class="fmhead">${picked.length.toLocaleString()}통을 어느 칸으로
+      <span>우리 앱에서만 — 다음메일은 그대로</span></div>
+    <div class="fmlist">${bins.map(b=>{
+      if(nowId === MB_BIN_P + b.id) return '';
+      const c = mbBinCount(b);
+      return `<div class="fmi" style="padding-left:${14+Number(b.depth||0)*13}px"
+        onclick="mbBinPut('${b.id}')">📂 ${esc(b.name)}${c.n?` <span style="color:#a8abb2">${c.n}</span>`:''}</div>`;
+    }).join('')}</div>
+    <div class="fmform">
+      <input id="mbBinName" placeholder="새 칸 이름" maxlength="40"
+        onkeydown="if(event.key==='Enter')mbBinCreate();if(event.key==='Escape')closeFolderMenu()">
+      <button onclick="mbBinCreate()">만들기</button>
+    </div>
+    <div class="fmi" style="border-top:1px solid #eee;color:#8c8c8c;font-size:12px"
+      onclick="mbMoveDaum(event)" title="다음메일 폴더 자체를 옮깁니다 — 다음메일에서도 바뀝니다">
+      ⚠ 다음메일에서도 옮기기 ›</div>`;
+  mbPlaceMenu(m, ev);
+}
+/* 옛 길 — 다음메일 폴더를 진짜로 옮긴다. 여기만 다음메일을 고친다. */
+function mbMoveDaum(ev){
+  if(ev) ev.stopPropagation();
   const picked = mbPicked(); if(!picked.length) return toast('고른 것이 없습니다');
   const dests = mbFolders().filter(f=>f.kind==='custom'||f.kind==='archive'||f.kind==='inbox');
   if(!dests.length) return toast('옮길 폴더가 없습니다 — 새로고침을 먼저 눌러 주세요', 8000);
@@ -11969,7 +12408,6 @@ function mbMove(ev){
       return `<div class="fmi" style="padding-left:${14+depth*13}px"
         onclick="closeFolderMenu();mbMovePicked('${f.slug}')">📁 ${esc(leaf)}</div>`;
     }).join('')}</div>`;
-  mbPlaceMenu(m, ev);
 }
 /* 창에서 고른 뒤 — 고른 목록은 그 사이 바뀌지 않는다(창을 여는 동안 목록을 안 건드린다) */
 function mbMovePicked(toSlug){
@@ -13641,6 +14079,7 @@ function renderPC(){
      클래스 하나로 갈라 둔다 — 명함 창의 남색 옆줄은 그대로여야 한다. */
   const rt=$('pcRoot'); if(rt&&rt.classList) rt.classList.toggle('mailmode', isMail||isMat);
   if(isMail||isMat) mbEnsureFolders();   /* 메일 창에 들어오면 폴더 목록을 한 번 가져온다 */
+  if(isMail) mbEnsureBins();             /* 푸른 분류 칸과 «옮긴 것» 쪽지도 한 번만 */
   const co=$('pcCo');       if(co) co.style.display = isCo ? 'block' : 'none';
   /* 기업정보를 나서면 찾기 칸을 명함첩 것으로 되돌린다 — 회사를 찾던 글자가
      그대로 남아 있으면 명함 목록이 조용히 걸러진 채 보인다. */
