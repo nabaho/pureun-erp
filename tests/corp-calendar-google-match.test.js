@@ -27,7 +27,13 @@ const path = require('node:path');
 const erp = fs.readFileSync(path.join(__dirname, '..', 'pu-erp.html'), 'utf8');
 
 function staffPalettes() {
-  return (erp.match(/var STAFF_COLORS = \[[^\]]*\]/g) || [])
+  /* 2026-08-26 재조정 — 담당자 색을 «구글 색표에서 받아» 쓰게 바뀌었다.
+     이제 STAFF_COLORS 는 런타임 값이고, 코드에 남는 정적 목록은
+     「구글 색표가 아직 안 왔을 때」의 되돌아갈 자리(STAFF_COLORS_FALLBACK)다.
+     ★ 지킬 규칙은 그대로다 — 색이 서로 겹치지 않고, 두 곳이 같고, 글씨가 읽힌다.
+       구글 색 열한 가지는 이 셋을 모두 만족한다(밝아서 짙은 글자가 붙는다).
+     ⚠ 색값을 코드에 적으면 팔레트 규율(승인 27색)이 깨지므로 «받아 쓰는» 것이 맞다. */
+  return (erp.match(/var STAFF_COLORS_FALLBACK = \[[^\]]*\]/g) || [])
     .map(s => (s.match(/#[0-9a-f]{6}/g) || []));
 }
 
@@ -35,7 +41,7 @@ test('★ 담당자 색이 서로 겹치지 않는다 — 겹치면 색을 쓰�
   /* 예전 목록: 열한 자리에 다섯 색. #2563eb 가 세 번, #dc2626·#d97706·#16a34a 가 두 번씩.
      서로 다른 사람이 같은 색 칩을 달아, 달력만 보고는 누구 일인지 알 수 없었다. */
   const ps = staffPalettes();
-  assert.ok(ps.length >= 1, 'STAFF_COLORS 를 찾지 못했습니다');
+  assert.ok(ps.length >= 1, 'STAFF_COLORS_FALLBACK 을 찾지 못했습니다');
   ps.forEach(function (p, i) {
     const uniq = new Set(p);
     assert.equal(uniq.size, p.length,
@@ -46,7 +52,7 @@ test('★ 담당자 색이 서로 겹치지 않는다 — 겹치면 색을 쓰�
 
 test('★ 담당자 색 목록이 두 곳에서 같다 — 한쪽만 고치면 이음센터와 달력이 딴 색이 된다', () => {
   const ps = staffPalettes();
-  assert.equal(ps.length, 2, 'STAFF_COLORS 는 두 곳(대시보드·이음)에 있습니다: ' + ps.length + '곳');
+  assert.equal(ps.length, 2, 'STAFF_COLORS_FALLBACK 은 두 곳(대시보드·이음)에 있습니다: ' + ps.length + '곳');
   assert.deepEqual(ps[0], ps[1], '★ 두 목록이 어긋났습니다 — 같은 사람이 화면마다 다른 색이 됩니다.');
 });
 

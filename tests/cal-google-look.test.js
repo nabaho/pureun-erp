@@ -300,3 +300,55 @@ test('★ 이메일을 «그대로» 열쇠로 쓰지 않는다 — 점을 못 �
   assert.strictEqual(ctx.f('a.b@c.d'), 'a,b@c,d', '점을 쉼표로 안 바꾼다');
   assert.strictEqual(ctx.f('X@Y.Z'), ctx.f('x@y.z'), '대소문자에 따라 갈린다');
 });
+/* ── 담당자 색을 구글 파스텔로 (2026-08-26 대표 지적: "색이 더 혼란스럽다") ── */
+
+test('★ 구글 색표를 담당자 색으로 쓴다 — 코드에 색을 적지 않는다', () => {
+  /* 두 화면을 나란히 놓고 보니 구글은 «연한 파스텔», 앱은 «진한 원색» 이었다.
+     같은 칸에 진한 색이 여럿 쌓이니 눈이 아프고 무엇이 중요한지 안 보인다.
+     ⚠ 색값을 코드에 적으면 ①승인 27색 팔레트 규율이 깨지고 ②구글이 바꿔도 안 따라간다. */
+  const fn = fnBody('gcalPalette');
+  assert.match(fn, /window\._gcalColors/, '구글 색표를 안 본다');
+  assert.strictEqual(/#[0-9a-fA-F]{6}/.test(fn), false, '색값을 코드에 적었다');
+  assert.match(S, /var STAFF_COLORS = \(typeof gcalPalette === 'function' && gcalPalette\(\)\)/,
+    '담당자 색이 구글 색표를 안 쓴다');
+});
+
+test('★ 색 차례가 «늘 같다» — 사람 색이 흔들리면 색으로 못 알아본다', () => {
+  /* 색표는 객체로 온다. 키 차례가 브라우저마다 다를 수 있으니 번호로 세운다. */
+  const fn = fnBody('gcalPalette');
+  assert.match(fn, /sort\(function\(a,b\)\{ return \(parseInt\(a,10\)/, '번호 순으로 안 세운다');
+  const ctx = { Object, parseInt, window: { _gcalColors: { 11: '#c', 2: '#b', 1: '#a' } } };
+  vm.createContext(ctx);
+  vm.runInContext(fn + '\nthis.f = gcalPalette;', ctx);
+  /* ⚠ vm 안에서 만든 배열은 «다른 realm» 이라 deepStrictEqual 이 늘 실패한다 — 값으로 견준다 */
+  assert.strictEqual(Array.from(ctx.f()).join(','), '#a,#b,#c', '11 이 2 보다 앞에 온다 — 글자순으로 세웠다');
+});
+
+test('색표가 아직 안 왔으면 «되돌아갈 자리» 를 쓴다', () => {
+  /* 첫 그림에서 색이 통째로 빠지면 달력이 회색 덩어리가 된다. */
+  assert.match(S, /\|\| STAFF_COLORS_FALLBACK/, '되돌아갈 자리가 없다');
+  const ctx2 = { Object, parseInt, window: {} };
+  vm.createContext(ctx2);
+  vm.runInContext(fnBody('gcalPalette') + '\nthis.f = gcalPalette;', ctx2);
+  assert.strictEqual(ctx2.f(), null, '색표가 없는데 빈 목록을 돌려준다');
+  /* ★ 색표가 «비어서» 와도 빈 목록을 돌려주면 안 된다 —
+     빈 배열은 참(truthy)이라 되돌아갈 자리를 «건너뛰고» 달력이 회색 덩어리가 된다. */
+  const ctx3 = { Object, parseInt, window: { _gcalColors: {} } };
+  vm.createContext(ctx3);
+  vm.runInContext(fnBody('gcalPalette') + '\nthis.f = gcalPalette;', ctx3);
+  assert.strictEqual(ctx3.f(), null, '빈 색표에 빈 목록을 돌려준다 — 색이 통째로 사라진다');
+
+  /* 같은 색이 두 번 오면 두 사람이 같은 색이 된다 — 하나만 남긴다 */
+  const ctx4 = { Object, parseInt, window: { _gcalColors: { 1: '#a', 2: '#a', 3: '#b' } } };
+  vm.createContext(ctx4);
+  vm.runInContext(fnBody('gcalPalette') + '\nthis.f = gcalPalette;', ctx4);
+  assert.strictEqual(Array.from(ctx4.f()).join(','), '#a,#b', '같은 색을 두 번 담는다');
+});
+
+test('★ 종일 일정에 「0000」을 붙이지 않는다', () => {
+  /* 시각 없이 만든 앱 일정이 00:00 으로 담겨, 칩마다 0000 이 붙었다
+     (대표 캡처: 「0000 0930 맥스텍…」 — 제목에 든 진짜 시각 앞에 겹쳤다).
+     구글은 종일 일정에 시각을 안 보여 준다. */
+  const n = (S.match(/ev\.time\.slice\(0,5\) !== '00:00'/g) || []).length;
+  assert.strictEqual(n, 2, '두 보기 모두 고치지 않았다 (지금 ' + n + '곳)');
+});
