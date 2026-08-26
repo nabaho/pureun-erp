@@ -69,6 +69,9 @@ function cellFor(o) {
     checkWhy: function () { return '업체 이름이 비어 있습니다'; },
     docLabel: function () { return ''; },
     docTitle: function () { return o.title || ''; },
+    /* 📌 증빙 딱지가 늘었다(2026-08-26) — 안 주면 칸이 통째로 안 그려진다 */
+    isUsed: function () { return !!o.used; },
+    usedWhere: function () { return o.used ? '푸른이알피 계약 — 가나' : ''; },
     String: String, Set: Set, Boolean: Boolean
   };
   vm.createContext(ctx);

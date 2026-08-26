@@ -17,6 +17,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { cutFn } = require('./cut-fn');
+
 const R = path.join(__dirname, '..');
 const app = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
 const reader = fs.readFileSync(path.join(R, 'js', 'pu-doc-read.js'), 'utf8');
@@ -102,9 +104,9 @@ test('크게 보기 제목줄도 같은 규칙이다 — 한쪽만 고치면 열
   /* ⚠ 예전에는 `$('viewerInfo').textContent` 라는 **표현식 자체**를 붙잡고 있었다.
      2026-08-17 에 제목줄을 두 줄(날짜 크게)로 가르며 그 줄이 renderViewerTitle 로
      옮겨 가자 깨졌다 — 규칙은 그대로 따라갔는데도다. 자리가 아니라 **함수**를 본다. */
-  const i = app.indexOf('function renderViewerTitle(');
-  assert.ok(i > 0, '제목줄을 그리는 곳을 찾지 못했습니다 — 이름이 바뀌었나요?');
-  const chunk = app.slice(i, i + 900);
+  /* ⚠ 글자 수를 적어 자르지 않는다 — 함수가 한 줄 길어지면(2026-08-26 에 「📌 증빙으로
+     씀」 한 줄이 늘었다) 창이 끝에 못 닿아 조용히 헛돈다. 중괄호 짝을 세어 벤다. */
+  const chunk = cutFn(app, 'function renderViewerTitle(');
   assert.match(chunk, /read\.kind === 'meeting'/,
     '제목줄이 아직 「서류」라고 적습니다');
 });

@@ -164,14 +164,17 @@ test('올린 날짜를 크게', async (t) => {
        나오는지, 그리고 이름에 든 꺾쇠가 화면을 깨지 않는지 본다 —
        한쪽만 감싸도 다른 쪽 낱말이 남아 낱말 찾기는 통과한다(뮤테이션에서 걸렸다). */
     const el = { innerHTML: '' };
-    const f = new Function('$', 'photoTime', 'docLabel', 'photoWhere', 'esc',
+    /* 📌 증빙 알약이 늘었다(2026-08-26) — 그 둘도 함께 넣어야 제목줄이 그려진다 */
+    const f = new Function('$', 'photoTime', 'docLabel', 'photoWhere', 'esc', 'isUsed', 'usedWhereShort',
       cut(app, 'function viewerDateText(') + '\n' +
       cut(app, 'function renderViewerTitle(') + '\nreturn renderViewerTitle;')(
       function () { return el; },
       function (it) { return it.ts; },
       function () { return '<img src=x>서식'; },
       function () { return '12 / 48장'; },
-      function (s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); });
+      function (s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); },
+      function (m) { return !!(m && m.used && m.used.at); },
+      function (m) { return (m && m.used && m.used.where) || ''; });
 
     f({ ts: new Date(2026, 7, 13).getTime(), meta: { kind: 'doc', byName: '<b>권형하' } });
     assert.match(el.innerHTML, /<span class="d">2026년 8월 13일<\/span>/, '날짜 줄이 없습니다.');
@@ -179,6 +182,15 @@ test('올린 날짜를 크게', async (t) => {
     assert.match(el.innerHTML, /12 \/ 48장/, '몇 번째인지가 안 적힙니다.');
     assert.doesNotMatch(el.innerHTML, /<b>|<img/,
       '이름·서식명을 그대로 넣었습니다 — 꺾쇠가 든 이름 하나로 제목줄이 통째로 깨집니다.');
+
+    /* 📌 증빙으로 쓴 사진에는 어디에 썼는지가 한 줄 더 붙는다 (2026-08-26) —
+       안 쓴 사진에는 «안» 붙어야 한다(늘 뜨면 아무도 안 읽는다). */
+    assert.doesNotMatch(el.innerHTML, /증빙으로 씀/, '안 쓴 사진에 증빙 알약이 붙었습니다');
+    f({ ts: new Date(2026, 7, 13).getTime(),
+        meta: { kind: 'doc', byName: '권형하', used: { at: 1, where: '푸른이알피 계약 — <b>가나' } } });
+    assert.match(el.innerHTML, /<span class="u">📌 증빙으로 씀 · /, '★ 증빙 알약이 안 붙습니다');
+    assert.doesNotMatch(el.innerHTML, /<b>/,
+      '어디에 썼는지를 그대로 넣었습니다 — 꺾쇠가 든 업체 이름 하나로 제목줄이 깨집니다');
 
     /* 사진이 없으면 아무것도 안 그린다 — 지운 뒤 옛 제목이 남으면 안 된다 */
     el.innerHTML = '남은 것';
