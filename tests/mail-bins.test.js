@@ -98,7 +98,7 @@ function load(over){
     renderPCSide(){ }, renderMailPage(){ held.calls.push('render'); },
     render(){ held.calls.push('render'); },
     /* 그리는 함수가 진짜로 들어 있다(덩어리를 통째로 돌린다) — 받아 줄 자리를 둔다 */
-    document: { getElementById: () => null },
+    document: { getElementById: () => null, addEventListener(){}, removeEventListener(){} },
     $: () => ({ set innerHTML(v){}, get innerHTML(){ return ''; }, style:{}, offsetHeight:100,
                 value:'', focus(){}, select(){}, contains:()=>false }),
     /* ★ 다음메일에 손대는 길은 이 둘뿐이다 — 여기가 울리면 다음메일이 바뀐 것이다 */
@@ -115,11 +115,13 @@ function load(over){
     '_mbMsgs = ' + JSON.stringify(o.msgs || MSGS) + ';' +
     '_mbBins = ' + JSON.stringify(o.bins || {}) + ';' +
     '_mbPut = ' + JSON.stringify(o.put || {}) + ';' +
+    '_mbHide = ' + JSON.stringify(o.hide || {}) + ';' +
     '_mbOrder = {};' +
     '_mbMeta = { at: 1, ok: true };', ctx);
   ctx._held = held;
   ctx.__put = () => vm.runInContext('JSON.stringify(_mbPut)', ctx);
   ctx.__bins = () => vm.runInContext('JSON.stringify(_mbBins)', ctx);
+  ctx.__hide = () => vm.runInContext('JSON.stringify(_mbHide)', ctx);
   return ctx;
 }
 
@@ -287,4 +289,115 @@ test('★ 같은 이름이 두 곳에 나오므로 어느 쪽인지 적어 준�
   const c = load();
   assert.equal(c.mbBoxName('~B_GONG'), '6.공공기관');
   assert.match(c.mbBoxName('#B_GONG'), /다음메일 원본/, '어느 쪽인지 알 수 없다');
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   안 쓰는 칸 치우기 (대표 지시 2026-08-26 둘째)
+   ══════════════════════════════════════════════════════════════════════════
+   "소셜 프로모션 등 없애고 싶은데 삭제가 없다. 그리고 나머지들도 삭제하고 싶을 수도
+    있는데 그런부분은 전혀 없다."
+
+   ⚠ 예전 「칸 지우기」는 다음메일에서 온 칸에 «아무 일도 하지 않았다» — 적어 둔 칸이
+     아니라 다음 폴더에서 저절로 만들어지는 칸이라 지워도 곧바로 되살아났다.
+     여기서 못 박는 것은 그 되살아남이 «다시는 일어나지 않는다»는 것이다. */
+
+test('★ 다음에서 온 칸도 치울 수 있다 — 예전에는 지워도 곧바로 되살아났다', () => {
+  const c = load();
+  assert.ok(c.mbBins().some(b=>b.id==='B_GONG'), '처음에는 보인다');
+  c.mbBinHide('B_GONG');
+  const shown = c.mbBins().filter(b=>!c.mbHidden(b.id)).map(b=>b.name).join(' ');
+  assert.ok(shown.indexOf('6.공공기관') < 0, '숨겼는데 아직 목록에 있다');
+  assert.match(c.__hide(), /B_GONG/, '숨긴 것이 저장되지 않았다');
+});
+
+test('★ 숨겨도 다음메일은 그대로 — 서버를 부르지 않고, 원본에는 남아 있다', () => {
+  const c = load();
+  c.mbBinHide('B_GONG');
+  assert.equal(c._held.fetched, 0, '숨기면서 다음메일 서버를 불렀다');
+  Object.keys(c._held.wrote).forEach(p=>assert.ok(p.indexOf('mailbox') < 0,
+    '다음메일 자리에 적으려 했다: ' + p));
+  assert.ok(subjects(c, '#B_GONG').indexOf('근무일정') >= 0, '다음메일 원본에서 사라졌다');
+});
+
+test('★ 숨긴 칸의 메일은 「전체메일」에서도 빠진다 — 광고가 섞이면 전체메일이 광고함이 된다', () => {
+  const a = load();
+  const b = load({ hide: { B_GONG: true } });
+  a.state.mbBox = '*all'; b.state.mbBox = '*all';
+  assert.ok(a.mbAllRows().length > b.mbAllRows().length, '전체메일에서 안 빠졌다');
+  assert.ok(subjects(b, '*all').indexOf('근무일정') < 0, '숨긴 칸의 메일이 전체메일에 있다');
+  assert.ok(subjects(b, '*all').indexOf('연차 문의') >= 0, '안 숨긴 칸까지 사라졌다');
+});
+
+test('★ 안읽음 셈에서도 뺀다 — 스팸을 빼는 것과 같은 까닭', () => {
+  const one = (h) => { const m = h.match(/<em>(\d+)<\/em><span>안읽음/); return m ? Number(m[1]) : -1; };
+  const a = load();                              /* B_GONG 에 안 읽은 1통 */
+  const b = load({ hide: { B_GONG: true } });
+  assert.ok(one(a.mailSideHtml()) > one(b.mailSideHtml()), '숨겼는데 안읽음 셈이 그대로다');
+});
+
+test('★ 되돌릴 자리가 함께 있다 — 되돌릴 길이 없으면 아무도 숨기기를 못 누른다', () => {
+  const c = load({ hide: { B_GONG: true }, state:{ mbHideOpen:true } });
+  const h = c.mailSideHtml();
+  assert.ok(h.indexOf('mbBinShow(') > 0, '되돌리는 단추가 없다');
+  assert.ok(h.indexOf('6.공공기관') > 0, '숨긴 칸 이름이 그 자리에 안 나온다');
+  assert.ok(h.indexOf('mbToggleHidden()') > 0, '숨긴 칸을 펴 볼 길이 없다');
+});
+
+test('되돌리면 제자리로 온다 — 메일도 함께 돌아온다', () => {
+  const c = load({ hide: { B_GONG: true } });
+  c.mbBinShow('B_GONG');
+  assert.equal(c.__hide(), '{}', '숨김 표시가 안 지워졌다');
+  assert.ok(subjects(c, '*all').indexOf('근무일정') >= 0, '전체메일에 안 돌아왔다');
+});
+
+test('★ ⋮ 창의 갈래가 «어디까지 가는지» 줄마다 적혀 있다 — 안 적으면 다음 폴더가 사라진다', () => {
+  const c = load();
+  const held = { html:'' };
+  c.$ = (id) => (id === 'folderMenu'
+    ? { set innerHTML(v){ held.html = v; }, get innerHTML(){ return held.html; },
+        style:{}, offsetHeight:180, contains:()=>false }
+    : null);
+  c.window = { innerWidth: 1600, innerHeight: 900 };
+  /* 다음에서 온 칸 — 숨기기와 «다음메일에서도 지우기» 둘 다 있어야 한다 */
+  c.mbBinMenu('B_GONG', { clientX: 300, clientY: 200 });
+  assert.match(held.html, /mbBinHide\(/, '숨기기가 없다');
+  assert.match(held.html, /다음메일은 그대로/, '숨기기가 어디까지 가는지 안 적혀 있다');
+  assert.match(held.html, /mbAskDelete\(/, '다음메일에서도 지우는 길이 없다');
+  assert.match(held.html, /다음메일 폴더가 사라집니다/, '진짜 지우기의 무게가 안 적혀 있다');
+});
+
+test('★ 우리가 만든 칸에는 «다음메일에서도 지우기»가 안 나온다 — 지울 다음 폴더가 없다', () => {
+  const c = load({ bins: { NB: { n:'충남중기청', l:'' } } });
+  const held = { html:'' };
+  c.$ = (id) => (id === 'folderMenu'
+    ? { set innerHTML(v){ held.html = v; }, get innerHTML(){ return held.html; },
+        style:{}, offsetHeight:180, contains:()=>false }
+    : null);
+  c.window = { innerWidth: 1600, innerHeight: 900 };
+  c.mbBinMenu('NB', { clientX: 300, clientY: 200 });
+  assert.ok(held.html.indexOf('mbAskDelete(') < 0, '없는 다음 폴더를 지우라고 한다');
+  assert.match(held.html, /mbBinDelete\(/, '칸 지우기가 없다');
+});
+
+test('숨긴 칸은 «옮길 곳»으로도 안 내놓는다 — 치운 칸에 넣으면 그 자리에서 사라진다', () => {
+  const c = load({ hide: { B_GONG: true } });
+  const held = { html:'' };
+  c.$ = (id) => (id === 'folderMenu'
+    ? { set innerHTML(v){ held.html = v; }, get innerHTML(){ return held.html; },
+        style:{}, offsetHeight:200, contains:()=>false }
+    : null);
+  c.window = { innerWidth: 1600, innerHeight: 900 };
+  c.state.mbBox = 'B_INBOX';
+  c.state.pick.mbox = { 'B_INBOX:10': true };
+  c.mbMove({ clientX: 500, clientY: 200 });
+  assert.ok(held.html.indexOf('6.공공기관') < 0, '숨긴 칸이 옮길 곳에 나온다');
+  assert.match(held.html, /1\.자문사답변/, '안 숨긴 칸까지 사라졌다');
+});
+
+test('★ 폰 서랍에서도 숨기고 되돌릴 수 있다 — PC 에서만 되면 폰에서 갇힌다', () => {
+  const c = load({ hide: { B_GONG: true }, state:{ mbHideOpen:true } });
+  const h = c.mbDrawerHtml();
+  assert.ok(h.indexOf('mbBinShow(') > 0, '폰에서 되돌릴 길이 없다');
+  assert.ok(h.indexOf('mbToggleHidden()') > 0, '폰에서 숨긴 칸을 펴 볼 길이 없다');
+  assert.ok(h.indexOf('mbBinMenu(') > 0, '폰에서 칸을 손볼 길이 없다');
 });

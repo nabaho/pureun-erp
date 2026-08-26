@@ -4,6 +4,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const MB = require('../functions/mail-box.js');
+const fs = require('node:fs');
+const path = require('node:path');
 
 /* ── 폴더 열쇠 ──
    다음메일 폴더 경로에는 점이 들어간다(INBOX.1.자문사답변). 실시간DB 열쇠에는
@@ -69,6 +71,46 @@ test('고를 수 없는 껍데기 폴더는 세지 않는다 — 늘 0통으로 
   assert.equal(MB.isSyncable({ path: 'INBOX', flags: new Set(['\\Noselect']) }), false);
   assert.equal(MB.isSyncable({ path: 'INBOX', flags: ['\\NonExistent'] }), false);
   assert.equal(MB.isSyncable({ path: 'INBOX', flags: new Set(['\\HasChildren']) }), true);
+});
+
+/* ══════ 가져올 까닭이 있는 칸만 (대표 지시 2026-08-26) ══════
+   "메일함에 스팸함은 연결시켜서 가지고 올 필요없다. 그런데 왜 가지고 있나"
+   ⚠ 지금까지 폴더를 «가리지 않고» 다 가져왔다. 스팸이 든 것은 필요해서가 아니라
+     아무도 빼지 않아서였다. */
+
+test('★ 스팸함은 가져오지 않는다 — 광고 수백 통이 DB 와 동기화 예산을 먹는다', () => {
+  assert.equal(MB.isWanted({ name: '스팸편지함', path: '스팸편지함' }), false);
+  assert.equal(MB.isWanted({ path: 'Junk', specialUse: '\\Junk' }), false);
+});
+
+test('★ 휴지통은 남긴다 — 잘못 지운 것을 찾는 자리라 사람이 실제로 본다', () => {
+  assert.equal(MB.isWanted({ name: '휴지통', path: '휴지통' }), true);
+});
+
+test('받은메일함·보낸메일함·손으로 만든 폴더는 그대로 가져온다', () => {
+  assert.equal(MB.isWanted({ path: 'INBOX', specialUse: '\\Inbox' }), true);
+  assert.equal(MB.isWanted({ name: '보낸메일함', path: '보낸메일함' }), true);
+  assert.equal(MB.isWanted({ name: '1.자문사답변', path: 'INBOX.1.자문사답변' }), true);
+});
+
+test('★ 빼는 갈래를 «한 자리»에서만 정한다 — 두 곳에 적으면 한쪽만 고쳐진다', () => {
+  /* 동기화가 «이미 담긴 것을 걷어낼 때»도 이 목록을 본다(mail-sync.js). 목록이 갈리면
+     「앞으로는 안 가져오는데 이미 담긴 스팸은 안 지워지는」 어중간한 상태가 된다. */
+  assert.ok(Array.isArray(MB.SKIP_KINDS), '빼는 갈래 목록이 밖으로 나와 있지 않다');
+  assert.ok(MB.SKIP_KINDS.indexOf('spam') >= 0, '스팸이 빼는 목록에 없다');
+  assert.ok(MB.SKIP_KINDS.indexOf('trash') < 0, '휴지통까지 빼고 있다');
+});
+
+test('★ 동기화가 «이미 담긴» 스팸도 걷어낸다 — 안 지우면 왼쪽에 그대로 남는다', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'functions', 'mail-sync.js'), 'utf8');
+  assert.match(src, /isWanted/, '스팸을 걸러 내지 않는다');
+  assert.match(src, /SKIP_KINDS/, '이미 담긴 것을 걷어내는 자리가 없다');
+  /* 목록·본문·진행표 셋을 다 지워야 한다 — 하나만 남아도 칸이 계속 보이거나
+     다음 회차가 「이미 다 했다」고 여긴다 */
+  ['/folders/', '/msgs/', '/sync/'].forEach((p) => {
+    assert.ok(src.indexOf("ROOT + '" + p + "' + slug] = null") > 0,
+      p + ' 를 걷어내지 않는다');
+  });
 });
 
 /* ── 첨부 개수 ──
