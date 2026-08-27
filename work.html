@@ -659,6 +659,11 @@
     z-index:6;background:var(--panel);box-shadow:inset 0 -1px 0 var(--line)}
   @media (max-width:760px){ .hotbl{overflow-x:auto} .hotbl thead th{position:static;box-shadow:none}
     .hocard .hct{position:static;margin:-14px -16px 8px} }
+  /* 회사 묶음 머리줄 — 그 회사 것을 한 번에 넘기는 자리.
+     ⚠ sticky 로 만들지 않는다. 표 머리행이 이미 붙어 있어 둘이 겹친다. */
+  .hotbl tr.hogrp td{background:var(--bg);border-top:1px solid var(--line);padding:6px 8px;font-size:12.5px}
+  .hotbl tr.hogrp b{font-weight:800}
+  .hotbl tr.hogrp .muted{font-size:11.5px;margin-left:4px}
   /* 후임 지정 — 고르는 칸과 [지정]을 한 줄에. 폭을 묶어 두지 않으면 이름이 긴 사람을
      고른 순간 [지정]이 아래로 밀려 줄 높이가 두 배가 된다. */
   .sucw{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;max-width:100%}
@@ -4404,8 +4409,18 @@ function _handoverTo(id,sid,name,why){
   if((it.mgr_main&&it.mgr_main.sid)===sid){ return; }
   var old={sid:(it.mgr_main&&it.mgr_main.sid)||'',name:(it.mgr_main&&it.mgr_main.name)||'—'};
   var subs=(it.mgr_subs||[]).filter(function(s){return s.sid!==sid;});   // 새 주담당은 부담당에서 제외
-  patchItem(id,{mgr_main:{sid:sid,name:name},mgr_subs:subs,
-    ho:{from:old,to:{sid:sid,name:name},at:new Date().toISOString(),confirmed:false}}).then(function(ok){
+  var f={mgr_main:{sid:sid,name:name},mgr_subs:subs,
+    ho:{from:old,to:{sid:sid,name:name},at:new Date().toISOString(),confirmed:false}};
+  /* 푸른이알피 사무관리의 주담당도 함께 바꾼다.
+     ⚠ 여기서 마스터에 바로 쓰면 안 된다 — 키마다 저장형태(배열/객체)가 달라
+       그것을 아는 dbPatch 가 푸른이알피 «안에만» 있다.
+       부담당을 넘길 때 쓰던 길(pe_addsub)과 같은 방식으로 «요청만» 적어 두고,
+       푸른이알피 동기화 엔진이 읽어서 처리하고 지운다.
+     ⚠ 안 넘기면 사무관리에는 퇴사자가 주담당으로 남아 두 곳이 어긋난다.
+       (되돌아가지는 않는다 — 미러는 푸른이알피가 «실제로 바뀌었을 때만» 덮는다.
+        그래도 어긋난 채로 두면 언젠가 푸른이알피를 손댄 순간 여기가 덮인다) */
+  if(peLinked(it)) f.pe_setmain={sid:sid,name:name,from:old.sid||'',at:new Date().toISOString()};
+  patchItem(id,f).then(function(ok){
     if(!ok)return;   // 담당 변경이 실패했으면 감사 로그를 남기지 않는다
     addLog(id,'담당 '+old.name+' → '+name+' (인수 확인 대기)'+(why?' · '+why:''),todayStr(),'ho');
     toast('🔄 담당 변경: '+name+' — 인수 확인 대기'); if(S.drawerId===id)renderDrawer(); route();
@@ -4830,18 +4845,38 @@ function renderHo(){
           +'</div>'
           +'<div class="hotbl"><table><thead><tr><th style="width:52px">구분</th><th>기업 / 업무</th>'
           +'<th style="width:74px">노트</th><th style="width:186px">후임 지정</th></tr></thead><tbody>';
-        arr.forEach(function(it){
-          h+='<tr><td>'+catBadge(it.cat)+'</td>'
-            +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
-            +'<div class="sub">'+esc(it.title||'')+(it.last?' · 최근 '+esc(md(it.last.d)):'')+'</div></td>'
-            +'<td>'+(noteDone(it)?'<span class="ck">✓</span>':'<span class="ckno">미작성</span>')+'</td>'
-            +'<td onclick="event.stopPropagation()"><select onchange="assignSuccessor(\''+it._id+'\',this)" style="padding:3px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px">'
-            +'<option value="">후임 선택…</option>'
-            /* ⚠ 승계표에 있는 사람을 «미리 골라 둔다» — 왜 골라져 있는지 옆에 적는다 */
-            +st.map(function(u){return '<option value="'+esc(u.sid)+'" data-name="'+esc(u.name)+'"'
-              +((sUser&&u.sid===sUser.sid)?' selected':'')+'>'+esc(u.name)
-              +((sUser&&u.sid===sUser.sid)?' (승계표)':'')+'</option>';}).join('')
-            +'</select></td></tr>';
+        /* ── 회사별로 묶어 낸다 (대표 지시 2026-08-27 「사업장 등을 각각 배분」) ──
+           묶음 머리줄에서 그 회사 것을 «한 번에» 넘길 수 있다.
+           그래도 예외는 아래 건별 [후임 선택]으로 여전히 된다 — 막지 않는다. */
+        var _opts=function(sel){ return '<option value="">이어받을 사람…</option>'
+          +st.map(function(u){return '<option value="'+esc(u.sid)+'" data-name="'+esc(u.name)+'"'
+            +((sel&&u.sid===sel)?' selected':'')+'>'+esc(u.name)
+            +((sUser&&u.sid===sUser.sid)?' (승계표)':'')+'</option>';}).join(''); };
+        succCoGroups(nm).forEach(function(g){
+          // ⚠ 사람 이름에는 빈칸·따옴표가 들어올 수 있다 — 그대로 id 에 쓰면 못 찾는다
+          var gid='sucCo-'+safeKey(nm)+'-'+safeKey(g.k);
+          h+='<tr class="hogrp"><td colspan="2"><b>🏢 '+esc(g.name)+'</b>'
+            +' <span class="muted">'+g.items.length+'건</span></td>'
+            +'<td colspan="2" onclick="event.stopPropagation()" style="text-align:right">'
+            +'<select id="'+gid+'" style="padding:3px 6px;border:1px solid var(--line);border-radius:6px;font-size:11.5px">'
+            +_opts(sUser?sUser.sid:'')+'</select>'
+            +'<button style="font-size:11.5px;margin-left:4px" '
+            +'onclick="succCoBulk(\''+escJ(nm)+'\',\''+escJ(g.k)+'\',document.getElementById(\''+gid+'\'))" '
+            +'title="'+esc(g.name+' 의 '+g.items.length+'건을 한 번에 넘깁니다')+'">🔄 이 회사 넘기기</button>'
+            +'</td></tr>';
+          g.items.forEach(function(it){
+            h+='<tr><td>'+catBadge(it.cat)+'</td>'
+              +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
+              +'<div class="sub">'+esc(it.title||'')+(it.last?' · 최근 '+esc(md(it.last.d)):'')+'</div></td>'
+              +'<td>'+(noteDone(it)?'<span class="ck">✓</span>':'<span class="ckno">미작성</span>')+'</td>'
+              +'<td onclick="event.stopPropagation()"><select onchange="assignSuccessor(\''+it._id+'\',this)" style="padding:3px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px">'
+              +'<option value="">후임 선택…</option>'
+              /* ⚠ 승계표에 있는 사람을 «미리 골라 둔다» — 왜 골라져 있는지 옆에 적는다 */
+              +st.map(function(u){return '<option value="'+esc(u.sid)+'" data-name="'+esc(u.name)+'"'
+                +((sUser&&u.sid===sUser.sid)?' selected':'')+'>'+esc(u.name)
+                +((sUser&&u.sid===sUser.sid)?' (승계표)':'')+'</option>';}).join('')
+              +'</select></td></tr>';
+          });
         });
         h+='</tbody></table></div>';
       });
@@ -4946,6 +4981,50 @@ function succBulk(fromName,toSid,toName){
   var n=0;
   arr.forEach(function(it){ _handoverTo(it._id,toSid,toName); n++; });
   toast('🔄 '+n+'건을 '+toName+' 님께 넘겼습니다 — 인수 확인 대기');
+}
+/* ══════════════════════════════════════════════════════════════════════════
+   업체(사업장)별로 나눠 배분하기 (대표 지시 2026-08-27)
+   ══════════════════════════════════════════════════════════════════════════
+   퇴사자 몫을 한 사람에게 통째로 넘기는 길(succBulk)은 이미 있었다.
+   없던 것은 «사업장별로 각각 다른 사람에게» 나눠 주는 길이다.
+   ⚠ 가르는 단위를 «회사»로 잡는다. 한 회사를 두 사람이 나눠 맡으면
+     그 사업장은 누구에게 연락해야 하는지 알 수 없게 된다.
+   ⚠ 그래도 예외는 건별 [후임 선택]으로 여전히 할 수 있다 — 막지 않는다. */
+function succCoGroups(fromName){
+  var by={}, out=[];
+  openItems().forEach(function(it){
+    if(((it.mgr_main&&it.mgr_main.name)||'')!==fromName) return;
+    var nm=String(it.company||it.client||'').trim()||'(회사 없음)';
+    var k=_normCo(nm)||'_none';
+    if(!by[k]){ by[k]={k:k,name:nm,items:[]}; out.push(by[k]); }
+    by[k].items.push(it);
+  });
+  // 건수가 많은 회사부터 — 나눌 때 큰 덩어리를 먼저 정하게 된다
+  out.sort(function(a,b){
+    if(a.items.length!==b.items.length) return b.items.length-a.items.length;
+    return String(a.name).localeCompare(String(b.name),'ko');
+  });
+  return out;
+}
+function succCoBulk(fromName,coKey,selEl){
+  if(!selEl||!selEl.value){ toast('이어받을 사람을 먼저 고르세요','warn'); return; }
+  var toSid=selEl.value;
+  var toName=selEl.options[selEl.selectedIndex].getAttribute('data-name')||'';
+  var g=succCoGroups(fromName).filter(function(x){return x.k===coKey;})[0];
+  if(!g||!g.items.length){ toast('넘길 건이 없습니다'); return; }
+  /* ⚠ 되돌리기 어려운 일이라 반드시 물어본 뒤에 한다 —
+     몇 건인지, 어디로 가는지, 무엇이 함께 따라가는지까지 적는다. */
+  confirmM('「'+g.name+'」의 진행 중인 '+g.items.length+'건을\n'
+    +'「'+toName+'」 님께 넘깁니다.\n\n'
+    +'함께 따라가는 것\n'
+    +'· 주간 기록 · 인수인계 노트 · 지식 카드 (업무 번호가 그대로라 저절로)\n'
+    +'· 푸른이알피 사무관리의 주담당\n\n'
+    +'건마다 「담당 '+fromName+' → '+toName+'」 기록이 남고 «인수 확인 대기»가 됩니다.\n'
+    +'되돌리려면 건별로 다시 골라야 합니다.',{ok:'넘기기'}).then(function(ok){
+    if(!ok) return;
+    g.items.forEach(function(it){ _handoverTo(it._id,toSid,toName,'업체 단위 배분'); });
+    toast('🔄 '+g.name+' '+g.items.length+'건을 '+toName+' 님께 넘겼습니다 — 인수 확인 대기');
+  });
 }
 /* 승계표에 한 줄 적기 — 메일함도 같은 표를 본다 */
 function succDeclare(fromName){

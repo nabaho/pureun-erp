@@ -69,6 +69,8 @@ function load(succ) {
     items: items,
     S: { me:{sid:'P-003',name:'박한별'} },
     route(){}, openDrawer(){}, catBadge: () => '', md: () => '', noteDone: () => false,
+    // 담당을 넘기면 푸른이알피 주담당도 함께 바꾼다 — 연동된 건인지 여기서 가른다
+    peLinked: it => !!(it && it.src === 'puerp' && it.ref && it.ref.type && it.ref.id),
     renderDrawer(){}, $: () => null,
     addLog: (id,msg) => held.logs.push(id + ': ' + msg),
     patchItem: (id,patch) => { held.patched.push({ id, to:(patch.mgr_main||{}).name, ho:patch.ho });

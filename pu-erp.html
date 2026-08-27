@@ -50939,6 +50939,7 @@ var _wsPendingId = null;
         var up = {}, toPe = [], toWs = 0, now = new Date().toISOString();
         var toPeB = [];                                    // 업무 요약 역방향 반영 대기열
         var toPeS = [];                                    // 부담당 참여 요청 반영 대기열
+        var toPeM = [];                                    // 주담당 넘기기 반영 대기열 (인수인계)
         // 진행 필드는 project_progress(배열 통째 저장)에 담긴다 — 업무시트가 직접 쓰면
         // 다음 전체 저장에 덮여 사라지므로, 여기서 푸른이알피가 자기 손으로 쓴다.
         var PP = dbGet('project_progress', []) || [];
@@ -50996,6 +50997,23 @@ var _wsPendingId = null;
             });
             if(addN) toPeS.push({ store:store, id:w.ref.id, subs:curS });
             up['work_erp/items/' + wid + '/pe_addsub'] = null;   // 처리했으니 지운다
+          }
+          /* ── 주담당 넘기기 (업무관리 → 푸른이알피) ──
+             업무관리에서 담당을 넘기면 pe_setmain 에 새 담당 사번이 담긴다.
+             ⚠ 안 옮기면 사무관리에는 퇴사자가 주담당으로 남아 두 곳이 어긋난다.
+               (그 상태로 두면 언젠가 푸른이알피에서 담당을 손댄 순간 업무관리가 덮인다)
+             ⚠ 부담당(pe_addsub)과 달리 «갈아 끼우는» 일이라, 업무관리가 시킨 그대로만 한다.
+             ⚠ 기준선 분기보다 앞에 두어야 새로 연결된 건도 첫 패스에 처리된다. */
+          if(w.pe_setmain && w.pe_setmain.sid){
+            var _newM = String(w.pe_setmain.sid);
+            if(String(pe.managerMain || '') !== _newM){
+              // 새 주담당이 부담당에도 들어 있으면 뺀다 — 한 사람이 두 자리를 차지하지 않게
+              var _keep = (pe.managerSubs || []).filter(function(sd){ return String(sd) !== _newM; });
+              toPeM.push({ store:store, id:w.ref.id, sid:_newM, subs:_keep,
+                           from:String(w.pe_setmain.from || ''),
+                           type:w.ref.type, name:(pe.companyName || pe.title || w.ref.id) });
+            }
+            up['work_erp/items/' + wid + '/pe_setmain'] = null;  // 처리했으니 지운다
           }
           // ── 사건 단계 기한 → 업무관리 (한 방향) ──
           // 법정 기한은 송달일·판정일에서 계산된 값이다. 사람이 적은 "다음 할 일"(next)에
@@ -51210,6 +51228,30 @@ var _wsPendingId = null;
         // 부담당 참여 — managerSubs만 건드린다(주담당은 그대로)
         toPeS.forEach(function(t){
           try{ if(dbPatch(t.store, t.id, { managerSubs:t.subs })) okPe++; }catch(e){}
+        });
+        /* 주담당 넘기기 — 인수인계로 담당이 바뀐 건. 마스터의 주담당을 갈아 끼운다.
+           그리고 «옛 담당이 적어 둔 진행 메모»(project_progress)도 새 담당에게 옮긴다.
+           ⚠ 「과거 자료가 따라간다」가 여기서 갈린다. 안 옮기면 그 건의 진행률·다음 할 일이
+             퇴사자 이름으로 남고, 새 담당은 진행률 0부터 다시 시작한 것처럼 보인다.
+           ⚠ 새 담당에게 이미 그 건의 행이 있으면 건드리지 않는다 — 그 사람이 쓴 것이 먼저다.
+           ⚠ 누가 넘겼는지 모르면(from 이 비면) 옮기지 않는다. 남의 기록을 함부로 손대지 않는다. */
+        toPeM.forEach(function(t){
+          try{ if(!dbPatch(t.store, t.id, { managerMain:t.sid, managerSubs:t.subs })) return; }catch(e){ return; }
+          okPe++;
+          if(!t.from || t.from === t.sid) return;
+          var iOld = -1, iNew = -1;
+          for(var pj = 0; pj < PP.length; pj++){
+            var pr = PP[pj];
+            if(!pr || pr.projectType !== t.type || pr.projectId !== t.id) continue;
+            if(pr.sid === t.from) iOld = pj;
+            else if(pr.sid === t.sid) iNew = pj;
+          }
+          if(iOld < 0 || iNew >= 0) return;
+          /* ⚠ 주인만 바꾼다. updatedAt 은 손대지 않는다 —
+             여기서 지금 시각을 찍으면 그 행이 «방금 손댄 것»이 되어,
+             다음 판에 업무관리가 적어 둔 상태·다음 할 일을 옛 값으로 덮는다. */
+          PP[iOld] = Object.assign({}, PP[iOld], { sid:t.sid });
+          ppDirty = 1; toPg++;
         });
         // project_progress는 배열 통째 저장 — 푸른이알피 자신의 dbSet으로만 쓴다
         if(ppDirty){ try{ dbSet('project_progress', PP); }catch(e){ toPg = 0; } }
