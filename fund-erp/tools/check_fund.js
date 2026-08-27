@@ -668,6 +668,24 @@ ok('음수를 △ 로 적는다', src.includes("return (n<0?'△':'')+Math.abs(n
 // 예비비는 예산의 「그 밖의 비용」이다
 ok('예비비를 그 밖의 비용에서 가져온다', src.includes("spare=g('exp_etc')"));
 
+/* ══ 추정재무상태표 ══ 올해 기말에 내년 계획을 얹는다 */
+ok('추정재무상태표를 셈한다', src.includes('function bizplanBS(f,yr,fin){')
+  && src.includes('var BIZ_BS_ROWS=['));
+// 예비비도 «쓸 돈»으로 보아 현금에서 뺀다 — 안 빼면 그만큼 대차가 어긋난다
+ok('예비비를 현금에서 뺀다', src.includes('var cash=fin.cash+contrib+interest-pur-adm-spare;'));
+// 올해 기말이 없으면 바탕이 없다 — 0 을 바탕으로 삼으면 «올해 재산이 0» 이라 적는 셈이다
+ok('확정 결산이 없으면 안 채운다', src.includes('if(!fin||fin.totalAssets==null) return;'));
+/* 회계 가름은 기금마다 다르다(제출본도 한쪽을 비웠다) — 「계」만 적는다 */
+ok('계 칸만 적는다', src.includes('blanks[2].textContent=W(BIZ_BS_ROWS[i][1](P));'));
+// 계획이 재원보다 크면 추정 잔액이 음수가 된다 — 조용히 인쇄하면 안 된다
+ok('재원이 모자라면 알린다', src.includes('추정 잔액이 음수입니다'));
+
+/* ══ 협의회 위원 명부 ══ 임원 명부에서 측별로 채운다 */
+ok('위원 명부를 임원 명부에서 채운다', src.includes('function fillRoster(root,f){')
+  && src.includes("if(kind==='reg_roster') fillRoster(d,f);"));
+// 「소재지 : ＿＿＿」처럼 라벨과 값이 한 글줄에 붙은 곳은 표 칸 방식으로 못 닿는다
+ok('한 글줄짜리 라벨도 채운다', src.includes("el.textContent=m[1]+' : '+v;"));
+
 /* ══ 박혀 있는 «남의 값» 걷어내기 ══
    변환한 원본 .hwp 가 어느 기금이 실제로 낸 서류라, 서식 19종에 금액·날짜가 남아 있었다.
    지급신청서에는 남의 «계좌번호»까지 있었다. 그대로 인쇄하면 남의 숫자를 제출한다. */

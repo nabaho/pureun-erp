@@ -3214,6 +3214,34 @@ function stripBaked(root){
     });
   });
 }
+/* ══ 협의회 위원 명부(등기용) ══ 임원 명부에서 측별로 채운다.
+   서식이 근로자위원 2줄·사용자위원 2줄이라 명부 차례대로 넣는다. */
+function fillRoster(root,f){
+  var sideOf=function(o){ var r=String(o.role||'');
+    return /사용자/.test(r)?'사용자측':(/근로자/.test(r)?'근로자측':''); };
+  var pick={'근로자위원':_officersOf(f).filter(function(o){return sideOf(o)==='근로자측';}),
+            '사용자위원':_officersOf(f).filter(function(o){return sideOf(o)==='사용자측';})};
+  var used={'근로자위원':0,'사용자위원':0};
+  [].slice.call(root.querySelectorAll('tr')).forEach(function(tr){
+    var cs=[].slice.call(tr.children); if(cs.length<2) return;
+    var lab=(cs[0].textContent||'').replace(/\s/g,'');
+    if(!pick[lab]) return;
+    var o=pick[lab][used[lab]++]; if(!o||!o.name) return;
+    if(_isBlankCell(cs[1].textContent)) cs[1].textContent=o.name;
+  });
+  /* 아래쪽 「기금명 / 소재지 / 대표자」는 라벨과 값이 «한 글줄»에 붙어 있다 —
+     표 칸이 아니라서 라벨 채우기가 못 닿는다. */
+  var _b=_boss(f);
+  [].slice.call(root.querySelectorAll('td,p,div')).forEach(function(el){
+    if(el.children.length) return;
+    var t=(el.textContent||'').replace(/\s+/g,' ').trim();
+    var m=t.match(/^(소\s*재\s*지|대\s*표\s*자|기\s*금\s*명)\s*:\s*[＿\s]*$/);
+    if(!m) return;
+    var k=m[1].replace(/\s/g,'');
+    var v=(k==='소재지')?f.address:(k==='대표자')?(_b.name||f.chairman):f.name;
+    if(v) el.textContent=m[1]+' : '+v;
+  });
+}
 /* ══ 사업계획서 — 손익예산 열 단계 ══
    서식의 열 단계는 손익계산서와 «같은 짜임새»다. 그래서 예산만 있으면 나머지는 셈으로 나온다:
      3=1-2 · 5=3-4 · 8=5+6-7 · 10=8-9
@@ -3255,6 +3283,49 @@ function bizplanRows(f,yr){
   add('10.당기순이익',     pOp+pNonopRev-pNonopExp, interest-fNonopExp);
   return R;
 }
+/* ══ 추정재무상태표 — 올해 기말에 내년 계획을 얹는다 ══
+     현금   = 올해 현금 + 출연 + 이자 − 목적사업비 − 일반관리비 − 예비비
+     기본재산 = 올해 기본재산 + 출연 − 준비금2 설정
+     준비금2 = 올해 준비금2 + 설정 − 환입2
+   이 셋이 맞물려야 대차가 맞는다(예비비도 «쓸 돈»으로 보아 현금에서 뺀다 —
+   안 빼면 예비비만큼 대차가 어긋난다).
+
+   ⚠ 「목적사업회계 / 기금관리회계」 칸은 채우지 않는다.
+     어느 계정을 어느 쪽으로 보낼지는 기금마다 다르고(제출본도 한쪽을 비워 두었다),
+     칸마다 따로 대차를 맞출 수 있는 규칙이 없다. 「계」만 적는다 — 그건 다툼이 없다. */
+function bizplanBS(f,yr,fin){
+  var b=budgetOf(S.fundId,yr)||{};
+  var g=function(k){ return num(b[k])||0; };
+  var contrib=g('rev_contrib'), interest=g('rev_interest');
+  var pur=g('exp_purpose'), adm=g('exp_admin'), spare=g('exp_etc');
+  if(!contrib&&!interest&&!pur&&!adm) return null;
+  var setup=Math.round(contrib*_reserveRate(S.fundId));   // 출연금의 정해진 몫을 준비금2로
+  var back2=pur+adm+spare-interest;                       // 준비금2 환입(손익예산과 같은 셈)
+  var cash=fin.cash+contrib+interest-pur-adm-spare;
+  var res2=fin.res2+setup-back2;
+  var basic=fin.basic+contrib-setup;
+  return {
+    cash:cash, savings:fin.savings, secu:fin.secu, loan:fin.loan, otherAsset:fin.otherAsset,
+    res1:fin.res1, res2:res2, basic:basic, retained:fin.retained,
+    curLiab:fin.liab-fin.res1-fin.res2,
+    assets:cash+fin.savings+fin.secu+fin.loan+fin.otherAsset
+  };
+}
+/* 추정재무상태표 줄 — 서식의 라벨 그대로 */
+var BIZ_BS_ROWS=[
+  ['Ⅰ.유동자산',   function(p){return p.cash+p.savings+p.otherAsset;}],
+  ['1.당좌자산',    function(p){return p.cash+p.savings+p.otherAsset;}],
+  ['Ⅱ.비유동자산',  function(p){return p.loan+p.secu;}],
+  ['1.투자자산',    function(p){return p.loan+p.secu;}],
+  ['자산총계',      function(p){return p.assets;}],
+  ['Ⅰ.유동부채',   function(p){return p.curLiab;}],
+  ['Ⅱ.비유동부채',  function(p){return p.res1+p.res2;}],
+  ['부채총계',      function(p){return p.curLiab+p.res1+p.res2;}],
+  ['Ⅰ.자본금',     function(p){return p.basic;}],
+  ['1.기본재산',    function(p){return p.basic;}],
+  ['자본총계',      function(p){return p.basic+p.retained;}],
+  ['부채와자본총계', function(p){return p.curLiab+p.res1+p.res2+p.basic+p.retained;}]
+];
 function fillBizplanDoc(root,f){
   var yr=(typeof S!=='undefined'&&S.year)||new Date().getFullYear();
   var R=bizplanRows(f,yr); if(!R) return;
@@ -3279,6 +3350,37 @@ function fillBizplanDoc(root,f){
       return;
     }
   });
+  /* 추정재무상태표 — «계» 칸만 적는다(회계 가름은 기금마다 다르다).
+     올해 기말은 «확정 결산 스냅샷»에서 온다. 없으면 추정할 바탕이 없으니 안 채운다 —
+     0 을 바탕으로 삼으면 «올해 재산이 0» 이라 적는 셈이다. */
+  var fin=(S.f15Close||{}).fin;
+  if(!fin||fin.totalAssets==null) return;
+  var P=bizplanBS(f,yr,fin);
+  if(!P) return;
+  [].slice.call(root.querySelectorAll('tr')).forEach(function(tr){
+    var cs=[].slice.call(tr.children); if(cs.length<4) return;
+    var lab=(cs[0].textContent||'').replace(/\s/g,'');
+    for(var i=0;i<BIZ_BS_ROWS.length;i++){
+      if(lab.indexOf(BIZ_BS_ROWS[i][0])!==0) continue;
+      var blanks=cs.slice(1).filter(function(c){ return !(c.textContent||'').trim(); });
+      if(blanks.length<3) return;
+      blanks[2].textContent=W(BIZ_BS_ROWS[i][1](P));   // 셋째 칸이 「계」다
+      return;
+    }
+  });
+  /* 계획이 재원보다 크면 추정 잔액이 음수가 된다 — 그것을 조용히 인쇄하면 안 된다.
+     서식이 잘못된 것이 아니라 «계획이 안 되는 것»이므로, 그렇다고 적어 준다. */
+  var neg=[];
+  if(P.cash<0) neg.push('현금');
+  if(P.res2<0) neg.push('고유목적사업준비금2');
+  if(P.basic<0) neg.push('기본재산');
+  if(neg.length){
+    var w=document.createElement('p');
+    w.className='note';
+    w.textContent='※ 추정 잔액이 음수입니다('+neg.join('·')+'). 계획한 지출이 재원보다 큽니다 —'
+      +' 예산을 고치거나 출연을 늘려야 합니다.';
+    root.insertBefore(w,root.firstChild);
+  }
 }
 /* ══ 지원신청서(별지 제1호의2) ══
    ⚠ 이 변환본에는 «남의 실제 값»이 박혀 있다 — 원본 .hwp 가 어느 기금이 실제로 낸 것이라
@@ -3337,6 +3439,7 @@ function hwpFormHTML(kind,f,sites){
   fillCommittee(d,f);
   if(kind==='subsidy') fillSubsidyDoc(d,f);
   if(kind==='bizplan') fillBizplanDoc(d,f);
+  if(kind==='reg_roster') fillRoster(d,f);
   /* 사람이 읽듯 «지금 어느 칸 아래인지»를 따라간다.
      분사무소 칸의 「소재지」에 본사 주소를 넣으면 안 되기 때문이다
      (원본은 왼쪽 칸이 rowspan 으로 여러 줄을 덮는다). */

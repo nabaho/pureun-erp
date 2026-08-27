@@ -26,6 +26,10 @@ const CHECKS = [
   ['check_closing.js', '결산 엔진 회귀(확정 결산서)'],
   ['check_stmt.js', '제출본 대조(재무제표 줄)'],
 ];
+/* pii_scan 은 통과 문구가 다르고(«✓ 전 서식 깨끗함»), 무엇보다
+   «서식 템플릿에 남의 개인정보가 없는가»를 본다 — 공개 배포되는 파일이라 이게 제일 급하다.
+   예전엔 이 검사가 다른 폴더를 보고 있어, 깨끗하다고 하는 동안 실명·집주소·계좌번호가 남아 있었다. */
+const PII = ['pii_scan.js', '서식에 남의 개인정보가 없는가'];
 
 for (const [file, what] of CHECKS) {
   test('기금 결산 검사 — ' + what + ' (' + file + ')', () => {
@@ -42,6 +46,16 @@ for (const [file, what] of CHECKS) {
     assert.strictEqual(r.status, 0, file + ' 실패:\n' + out.slice(-2000));
   });
 }
+
+test('기금 서식 검사 — ' + PII[1] + ' (' + PII[0] + ')', () => {
+  const p = path.join(TOOLS, PII[0]);
+  assert.ok(fs.existsSync(p), PII[0] + ' 이 없습니다');
+  const r = spawnSync(process.execPath, [p], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
+  const out = (r.stdout || '') + (r.stderr || '');
+  assert.ok(/전 서식 깨끗함/.test(out),
+    '서식 템플릿에 남의 개인정보가 남아 있습니다:\n' + out.slice(-2000));
+  assert.strictEqual(r.status, 0, PII[0] + ' 실패:\n' + out.slice(-2000));
+});
 
 /* 검사가 «몇 건을 돌았는지»도 못 박는다.
    건수가 확 줄면 검사가 조용히 꺼진 것이다 — 통과 문구만으로는 못 잡는다.
