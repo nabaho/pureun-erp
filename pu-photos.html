@@ -300,6 +300,10 @@ button{font-family:inherit;cursor:pointer}
 .smallwarn{border:1.5px solid #fbbf24;background:#fffbeb;border-radius:9px;padding:10px 11px;margin:8px 0}
 .smallwarn .t{font-size:13px;font-weight:800;color:#92400e}
 .smallwarn .d{font-size:12px;color:#78350f;margin:3px 0 0;line-height:1.6}
+/* 「어디서·얼마로 들어왔나」 — 「앱이 줄인 건가 원본이 작았던 건가」를 여기서 끝낸다.
+   글보다 한 단 낮춰(테두리 있는 회색 줄) 안내와 섞이지 않게 한다. */
+.smallwarn .camefrom{margin:0 0 9px;padding:5px 8px;border:1px solid #fde68a;border-radius:7px;
+  background:rgba(255,255,255,.6);font-size:11.5px;line-height:1.6;color:#78350f}
 /* 기계 검증을 통과한 것은 «할 일이 아니다» — 주황(할 일)에서 회청(알림)으로 낮춘다
    (대표 결정 2026-08-23). 같은 주황으로 두면 목록에서 뺀 판단을 화면이 뒤집는다. */
 /* 여러 쪽 PDF — 「한 문서로」냐 「쪽마다 따로」냐 묻는 칸 (대표 지시 2026-08-24) */
@@ -2327,7 +2331,7 @@ async function shareSave() {
     });
     const dropped = shareShots.length - picked.length;
     shareClose();
-    await addFiles(files, true);
+    await addFiles(files, true, { via: 'share' });   /* 공유로 받음 */
     if (dropped) toast('안 고른 ' + dropped + '장은 버렸습니다');
   } finally {
     btn.disabled = false;
@@ -2554,7 +2558,7 @@ window.addEventListener('online', function () { if (queue) queue.retryNow(); });
 /* ══════ 사진 고르기 → 축소 → 대기열 ══════ */
 $('docBtn').onclick = function () { $('docInput').click(); };
 /* 서류 칸과 그림 칸은 «같은 손잡이»를 쓴다 — 갈라 두면 언젠가 한쪽만 고친다 */
-$('docInput').onchange = function () { addFiles(this.files, true); this.value = ''; };
+$('docInput').onchange = function () { addFiles(this.files, true, { via: 'file' }); this.value = ''; };
 if ($('picInput')) $('picInput').onchange = $('docInput').onchange;
 /* ══════ 연속촬영 카메라 ══════
    대표 지시(2026-08-06): 한 장 찍으면 닫히던 것을 — 셔터 연타로 여러 장 모으고,
@@ -3507,6 +3511,14 @@ function loadImg(url) {
    이보다 작게 찍히면 「더 가까이」라고 알린다(사진은 그대로 담는다). */
 const CARD_MIN_SHORT = 700;
 
+/* ── 촬영 중간 그림의 굽기 품질 (2026-08-27) ──
+   찍은 그림은 두 번 구워진다: 여기서 한 번(잘라 담을 때), 올릴 때 또 한 번(shrinkMany).
+   둘 다 0.92 로 구우면 획 가장자리에 링잉이 겹쳐 잔글씨가 뭉갠다.
+   ⚠ 여기 것은 **화면에 못 나가는 중간 그림**이다 — 클라우드에 올라가지도 않는다.
+     그러니 크기를 아낄 까닭이 없다. 거의 손실 없이 굽고, 실제 압축은 올릴 때 한 번만.
+   ⚠ 1.0(무손실)로 두지 않는다 — 폰에서 중간 파일이 몇십 MB 가 되어 메모리가 튄다. */
+const CAM_MID_Q = 0.97;
+
 /* 기기가 낼 수 있는 가장 큰 사진을 달라고 한다.
    ⚠ 기기가 이 값을 안 받아 줄 수 있다 — 그때는 takePhoto() 가 던지므로
       부르는 쪽에서 미리보기 프레임으로 물러선다(예전 그대로). */
@@ -3937,7 +3949,12 @@ async function camShoot(opts) {
     const c = document.createElement('canvas');
     c.width = cw; c.height = ch;
     c.getContext('2d').drawImage(src, cx, cy, cw, ch, 0, 0, cw, ch);
-    const blob = await new Promise(function (res) { c.toBlob(res, 'image/jpeg', 0.92); });
+    /* ── 두 번 굽지 않는다 (대표 물음 2026-08-27: "글자 선명도가 너무 낮다") ──
+       찍은 그림은 여기서 한 번(JPEG), 담을 때 또 한 번(shrinkMany) 구워졌다.
+       같은 품질로 두 번 구우면 획 가장자리에 링잉이 생겨 잔글씨가 뭉갠다.
+       여기 것은 **화면에 못 나가는 중간 그림**이라 크기를 아껴야 할 까닭이 없다 —
+       거의 손실 없는 값으로 굽고, 실제 압축은 담을 때 한 번만 한다. */
+    const blob = await new Promise(function (res) { c.toBlob(res, 'image/jpeg', CAM_MID_Q); });
     if (!camShotIsCurrent(sessionToken, shotToken, shotTrack)) return;
     if (!blob) throw new Error('사진을 만들지 못했습니다');
 
@@ -3946,23 +3963,42 @@ async function camShoot(opts) {
           판독이 실패하면 원본으로 다시 시도한다(cropped 표시로 가른다).
        ⚠ 못 찾으면 자르지 않는다 — 잘못 잘라 글자를 날리느니 안 자르는 게 낫다. */
     let useBlob = blob, raw = null, cropped = false, small = false;
+    /* 담기는 그림의 실제 크기 — 아래 「조금 더 가까이」가 이것을 본다 */
+    let outW = cw, outH = ch;
     if (cropPref()) {
       try {
         const r = findCardRect(c, cw, ch);
         if (r.ok) {
           const cut = cropRotated(c, r);
-          const cb = await new Promise(function (res) { cut.toBlob(res, 'image/jpeg', 0.92); });
+          const cb = await new Promise(function (res) { cut.toBlob(res, 'image/jpeg', CAM_MID_Q); });
           if (!camShotIsCurrent(sessionToken, shotToken, shotTrack)) return;
           /* 잘라낸 것이 터무니없이 작으면 잘못 찾은 것이다 — 원본을 쓴다 */
-          if (cb && cb.size > blob.size * 0.15) { raw = blob; useBlob = cb; cropped = true; }
-          /* 잘라 놓고 보니 너무 작으면 — 글자를 못 읽는다. 더 가까이 찍으시라고 알린다.
-             (자르지 않고 그냥 두면 배경만 큰 사진이 남아 판독이 흐려진다) */
-          if (cropped && Math.min(r.w, r.h) < CARD_MIN_SHORT) {
-            small = true;
-            toast('명함이 작게 찍혔습니다 — 조금 더 가까이서 찍어 주세요');
+          if (cb && cb.size > blob.size * 0.15) {
+            raw = blob; useBlob = cb; cropped = true;
+            outW = cut.width; outH = cut.height;
           }
         }
       } catch (e) { console.warn('[테두리]', e); }   // 실패해도 사진은 남는다
+    }
+
+    /* ── 「조금 더 가까이」 (대표 물음 2026-08-27: "직접 찍는데 계속 안 좋다") ──
+
+       ⚠ **이 경고가 한 번도 뜬 적이 없었다.** 예전에는 `cropped` 일 때만 봤는데,
+         꺽쇠로 먼저 잘라 놓으면 그 뒤의 테두리 찾기는 **명함이 화면을 꽉 채운 것**을
+         보게 되고, 그것을 「화면 전체 = 못 찾은 것」(CARD_MAX_AREA)으로 물린다.
+         그래서 cropped 는 늘 false 였고 — 운영 데이터 명함 43장에서 **0장** —
+         멀리서 찍어도 아무 말이 없었다.
+
+       ⚠ 그래서 «어떻게 잘렸는지»를 안 본다. **담기는 그림의 짧은 변**만 본다.
+         꺽쇠로 잘렸든 테두리로 잘렸든 안 잘렸든, 명함이 작으면 작은 것이다.
+       ⚠ 사진은 그대로 담는다. 다시 찍을지는 사람이 정한다. */
+    if (frameOn()) {
+      const shortEdge = Math.min(outW, outH);
+      if (shortEdge && shortEdge < CARD_MIN_SHORT) {
+        small = true;
+        toast('명함이 작게 찍혔습니다(짧은 변 ' + Math.round(shortEdge) + 'px) — '
+          + '조금 더 가까이서 다시 찍어 주세요', 6000);
+      }
     }
 
     /* ── 흐리면 말해 준다 ──
@@ -4103,7 +4139,7 @@ async function takePortalCameraFile() {
   });
   if (!files.length) throw new Error('촬영한 사진을 찾지 못했습니다. 다시 촬영해 주세요.');
   portalCameraStatus('촬영한 사진 ' + files.length + '장을 저장하고 있습니다', false);
-  await addFiles(files, true, { fromCam: true, portalCapture: true });
+  await addFiles(files, true, { fromCam: true, portalCapture: true, via: 'portalcam' });
   return true;
 }
 function finishCamShots() {
@@ -4192,7 +4228,7 @@ async function camUpload() {
        이제 이 카메라는 **명함 스캐너**다(계획서 1단계). 대표님 화면에 「저장본
        1200×1600」으로 찍힌 것이 이 때문이고, 명함이 화면의 4분의 1이면
        글자가 400px 남짓밖에 안 남아 판독이 흐려진다. */
-    await addFiles(files, true, { fromCam: true, pairs: pairs, caps: caps });
+    await addFiles(files, true, { fromCam: true, pairs: pairs, caps: caps, via: 'cam' });
     if (dropped) toast('안 고른 ' + dropped + '장은 버렸습니다');
     if (camQuickMode && !camReturnTo) {
       camQuickMode = false;
@@ -4287,7 +4323,7 @@ window.addEventListener('drop', function (e) {
   dragDepth = 0;
   showDrop(false);
   const files = (e.dataTransfer && e.dataTransfer.files) || [];
-  if (files.length) addFiles(files, true);
+  if (files.length) addFiles(files, true, { via: 'drop' });   /* 끌어다 놓기 */
 });
 
 function hasFiles(e) {
@@ -4309,7 +4345,7 @@ window.addEventListener('paste', function (e) {
     const f = items[i].getAsFile();
     if (f) files.push(f);
   }
-  if (files.length) { e.preventDefault(); addFiles(files, true); }
+  if (files.length) { e.preventDefault(); addFiles(files, true, { via: 'paste' }); }
 });
 
 /* ══════ 스캔(PDF) ══════
@@ -4371,7 +4407,11 @@ async function pdfToPages(file) {
        그 신호는 **탭이 보이지 않을 때 오지 않는다** → 스캔을 올려두고 다른 탭으로
        넘어가면 올리기가 멈춘다. print 로 두면 그 신호를 기다리지 않는다. */
     await page.render({ canvasContext: c.getContext('2d'), viewport: vp, intent: 'print' }).promise;
-    const blob = await new Promise(function (res) { c.toBlob(res, 'image/jpeg', 0.92); });
+    /* ── 두 번 굽지 않는다 (대표 물음 2026-08-27) ──
+       PDF 한 쪽을 여기서 JPEG 로 굽고, 담을 때 shrinkMany 가 또 굽는다.
+       둘 다 0.92 면 획 가장자리에 링잉이 겹쳐 잔글씨가 뭉갠다. 여기 것은
+       **중간 그림**이라 크기를 아낄 까닭이 없다 — 실제 압축은 담을 때 한 번만. */
+    const blob = await new Promise(function (res) { c.toBlob(res, 'image/jpeg', CAM_MID_Q); });
     /* ── 안에 이미 있는 «글자»도 함께 뽑는다 (대표 결정 2026-08-24) ──
        홈택스·정부포털이 만들어 준 PDF 는 글자가 그대로 들어 있다. 그림은 «보기용»
        으로 그대로 두고, **판독은 글자로** 한다 — 그림을 다시 내려받지 않아도 되고,
@@ -4832,7 +4872,16 @@ async function addFiles(fileList, isDoc, opts) {
         byName: PuPhotoStore.myName() || u.email || '',
         kind: isDoc ? 'doc' : 'photo',
         w: full.w, h: full.h,
-        size: full.dataUrl.length
+        size: full.dataUrl.length,
+        /* ── 어디서·얼마로 들어왔나 (대표 물음 2026-08-27) ──
+           「직접 찍는데 계속 안 좋다」를 짚으려는데 **가릴 자료가 없었다.**
+           운영 데이터 595장 가운데 우리 카메라로 찍힌 표시가 있는 것은 2장뿐이고,
+           나머지는 어디서 온 것인지 아무도 몰랐다 — 카톡으로 받은 것인지,
+           갤러리에서 고른 것인지, 앱이 줄인 것인지.
+           ⚠ 그래서 **들어온 길과 원본 화소**를 사진마다 적어 둔다. 다음부터는
+             화질 이야기가 나오면 그 자리에서 답이 나온다(짐작이 아니라). */
+        via: (opts && opts.via) || (opts && opts.fromCam ? 'cam' : 'file'),
+        srcW: full.srcW || 0, srcH: full.srcH || 0
       };
       const frontId = idAt[pairs[fi]];
       if (frontId) meta.cardBack = frontId;   // 이 장은 그 명함의 뒷면이다
@@ -5034,7 +5083,10 @@ function drawScaled(im, maxEdge, quality) {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(im, 0, 0, w, h);
-  return { dataUrl: c.toDataURL('image/jpeg', quality || 0.85), w: w, h: h };
+  /* 들어온 원본이 몇 화소였는지 함께 돌려준다 — 「작습니다」가 뜰 때
+     **앱이 줄인 것인지 원본이 작았던 것인지**를 화면이 말할 수 있어야 한다
+     (대표 물음 2026-08-27: 「직접 찍는데 계속 안 좋다」 — 그 자리에서 가릴 길이 없었다). */
+  return { dataUrl: c.toDataURL('image/jpeg', quality || 0.85), w: w, h: h, srcW: iw, srcH: ih };
 }
 
 /* ══════ 올리는 중 목록 ══════ */
@@ -9848,6 +9900,30 @@ function smallCheckedOk(r) {
   return false;
 }
 
+/* ── 이 사진이 «어디서·얼마로» 들어왔나 (대표 물음 2026-08-27) ──
+   「직접 찍는데 계속 안 좋다」를 짚는데 사흘이 걸렸다. 사진에 그 자취가 없어서
+   **카톡으로 받은 것인지·갤러리에서 고른 것인지·앱이 줄인 것인지**를 가릴 수가
+   없었기 때문이다. 이제 사진마다 적어 두므로 그 자리에서 답한다.
+   ⚠ 옛 사진에는 이 값이 없다 — 그때는 아무 말도 안 한다(모르는 것을 지어내지 않는다). */
+const VIA_LABEL = {
+  cam: '푸른사진첩 카메라로 찍음', portalcam: '포털 카메라로 찍음',
+  file: '파일에서 고름(갤러리·PC)', share: '다른 앱에서 「공유」로 받음',
+  paste: '붙여넣기', drop: '끌어다 놓기'
+};
+function cameFromLine(m) {
+  const via = VIA_LABEL[m && m.via];
+  const sw = Number(m && m.srcW) || 0, sh = Number(m && m.srcH) || 0;
+  if (!via && !sw) return '';
+  const bits = [];
+  if (via) bits.push(via);
+  if (sw && sh) {
+    /* 앱이 줄인 것인지 원본이 작았던 것인지 — 이 한 줄이 그 물음을 끝낸다 */
+    const shrank = Math.max(sw, sh) > Math.max(Number(m.w) || 0, Number(m.h) || 0);
+    bits.push('받은 원본 ' + sw + '×' + sh + (shrank ? '' : ' — <b>앱이 줄인 것이 아닙니다</b>'));
+  }
+  return '<div class="camefrom">📥 ' + bits.join(' · ') + '</div>';
+}
+
 /* 판 맨 위에 붙는 알림. **무엇을 하라는 것인지**까지 적는다 —
    "작습니다"만 적으면 사람이 할 수 있는 일이 없다. */
 function smallBox(it) {
@@ -9866,7 +9942,7 @@ function smallBox(it) {
   return '<div class="smallwarn' + (okd ? ' okd' : '') + '">' +
     '<div class="t">🔍 원본이 작습니다 — ' + m.w + '×' + m.h +
     (okd ? ' · 검증 통과' : '') + '</div>' +
-    '<div class="d">' + body +
+    '<div class="d">' + body + cameFromLine(m) +
     '<b>더 크게 다시 받으시려면</b><br>' +
     '· <b>PDF로 저장해 올리기</b> — 가장 좋습니다(글자를 3배로 펼쳐 담습니다)<br>' +
     '· 화면 캡처라면 브라우저를 150~200%로 키운 뒤 찍기<br>' +

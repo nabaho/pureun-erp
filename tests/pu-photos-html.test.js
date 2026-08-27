@@ -153,7 +153,8 @@ test('서류 고르기 버튼이 따로 있고 서류로 표시된다', () => {
   // 나중에 서류만 골라 보거나 기업정보함으로 넘길 수 있게 종류를 남긴다.
   assert.match(app, /id="docBtn"/);
   assert.match(app, /id="docInput"/);
-  assert.match(app, /addFiles\(this\.files, true\)/);
+  /* ⚠ 2026-08-27 — 어디서 왔는지(via)를 함께 넘긴다. 인자를 통째로 못 박지 않는다. */
+  assert.match(app, /addFiles\(this\.files, true[,)]/);
   assert.match(app, /kind: isDoc \? 'doc' : 'photo'/);
 });
 
@@ -977,7 +978,7 @@ test('화면을 캡처해 붙여넣을 수 있다', () => {
 
 test('끌어다 놓기·붙여넣기는 서류로 담는다', () => {
   // 스캔·화면 캡처가 주 용도라 글씨를 읽어야 한다 → 고화질(서류) 기준
-  assert.match(app, /addFiles\([^)]*,\s*true\s*\)/);
+  assert.match(app, /addFiles\([^)]*,\s*true[,)]/);
 });
 
 test('사진 열기에 예비 통로가 있다 — 브라우저마다 되는 방법이 다르다', () => {
