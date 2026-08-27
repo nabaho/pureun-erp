@@ -194,3 +194,28 @@ test('막지 않는다 — 묻기만 한다', () => {
   assert.ok(!/return;|toast\([^)]*권한/.test(a), '막고 있다 — 물어야 한다');
   assert.match(grabFn('saveInfo'), /askIfNotMine\(cur,'기금 정보 저장'\)/, '기금 정보 저장에 안 걸렸다');
 });
+
+/* ══════ 수입 항목이 «겹치지» 않는다 ══════
+   2026-08-27 브라우저에서 실제로 그려 보고 잡았다. computeFin 의 interest 는 이름과
+   달리 «이자»가 아니라 수익 전체다(var interest=revenue). bizRev 는 그 안에 든
+   사업수익이라 interest = bizRev + nonopRev 다. 예산 화면이 이자 칸에 interest,
+   그 밖 칸에 bizRev 를 넣어 «같은 돈을 두 번» 세었고 수입 계가 그만큼 부풀었다. */
+test('수입 항목끼리 겹치지 않는다 — 같은 돈을 두 번 세지 않는다', () => {
+  /* 주석에 적힌 이름은 빼고 «실제로 쓰는 곳»만 본다 */
+  const a = grabFn('budgetActual').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/fin\.interest/.test(a),
+    'fin.interest 는 수익 «전체»라 bizRev 와 겹친다 — 두 번 세어진다');
+  assert.match(a, /bizRev:num\(fin\.bizRev\)/, '사업수익을 안 쓴다');
+  assert.match(a, /nonopRev:num\(fin\.nonopRev\)/, '사업외수익을 안 쓴다');
+
+  /* computeFin 이 정말 interest = bizRev + nonopRev 인지 — 이 전제가 깨지면 갈래를 다시 짜야 한다 */
+  const cf = grabFn('computeFin');
+  assert.match(cf, /var interest=revenue/, 'interest 의 뜻이 바뀌었다 — 예산 갈래를 다시 볼 것');
+  assert.match(cf, /var nonopRev=revenue-bizRev/, 'nonopRev 의 뜻이 바뀌었다');
+
+  /* 항목이 쓰는 이름이 서로 달라야 겹치지 않는다 */
+  const box = {};
+  new Function([grabDecl('BUDGET_ROWS'), 'this.R=BUDGET_ROWS;'].join('\n')).call(box);
+  const keys = [].concat.apply([], box.R.map(g => g[2].map(r => r[2])));
+  assert.equal(new Set(keys).size, keys.length, '같은 실적을 두 항목이 쓰고 있다: ' + keys.join(', '));
+});
