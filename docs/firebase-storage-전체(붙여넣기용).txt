@@ -1,0 +1,113 @@
+rules_version = '2';
+
+// ═══════════════════════════════════════════════════════════════════
+//  파일 창고(Storage) 규칙 — 2026-08-27
+//
+//  ★ 이 한 벌은 «어느 창고에 넣어도 안전»합니다.
+//     지금 쓰고 계신 규칙에 있던 것을 하나도 빼지 않고, 빠져 있던 두 자리
+//     (사진첩 pu_photos · 증빙 gov_evidence)를 더한 것뿐입니다.
+//     그 창고에 없는 자리는 규칙만 있고 쓰이지 않으므로 아무 일도 안 합니다.
+//
+//  ▶ 꼭 넣어야 하는 곳: pureun-erp-hrphotos  (사진첩 · 증빙 사진)
+//     콘솔 → Storage → 창고 이름 옆 ▾ → pureun-erp-hrphotos → 규칙 → 게시
+//
+//  ▶ 넣어도 되는 곳(안 넣어도 지금과 같음):
+//     pureun-erp.firebasestorage.app (급여자료) · pureun-erp-photos (명함)
+//
+//  ⚠ 보조 함수(signedIn·isStaff·okImage·okPayFile)는 «지금 쓰시는 그대로»
+//     두었습니다. 더 조이면 급여데이터함·명함첩이 막힐 수 있어 손대지 않았습니다.
+// ═══════════════════════════════════════════════════════════════════
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ── 명함첩(pu-cards.html) ── 창고 pureun-erp-photos
+    match /pucards/photos/{photoId} {
+      allow read:   if isStaff();
+      allow write:  if isStaff() && okImage();
+      allow delete: if isStaff();
+    }
+
+    // ── 옛 이름 자리 ──
+    //    코드가 부르는 자리는 아래 «pu_photos»(밑줄 있음)입니다.
+    //    이 줄은 지금 아무 일도 안 하지만, 혹시 남아 있는 파일이 있을 수 있어
+    //    지우지 않고 그대로 둡니다.
+    match /puphotos/u/{uid}/{allPaths=**} {
+      allow read:   if signedIn() && request.auth.uid == uid;
+      allow write:  if signedIn() && request.auth.uid == uid && okImage();
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // ── 사진첩(pu-photos.html) ── 창고 pureun-erp-hrphotos ── 2026-08-27 바로잡음
+    //    ⚠ 코드가 실제로 쓰는 자리는 «pu_photos»(밑줄 있음)입니다.
+    //      위 puphotos 만 있으면 사진첩이 창고를 쓰기 시작할 때 통째로 막힙니다.
+    //    사람별 자리 — 본인만 읽고 쓴다.
+    //    ⚠ 총괄 관리자가 «남의 자리»에 손대는 것(이사 도구·남의 사진 영구삭제)은
+    //      이 규칙만으로 안 됩니다 — 창고 규칙은 실시간DB(uid_roles/isAdmin)를
+    //      읽을 수 없어 「이 사람이 관리자인가」를 여기서 판정할 수 없습니다.
+    //      남의 몫은 실패로 잡히고 사진은 실시간DB에 그대로 남습니다.
+    match /pu_photos/u/{uid}/{allPaths=**} {
+      allow read:   if signedIn() && request.auth.uid == uid;
+      allow write:  if signedIn() && request.auth.uid == uid && okImage();
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // 창고 연결 점검 — 아주 짧은 글자 하나만 오갑니다.
+    // 사진이 아니라서 okImage 를 걸지 않습니다(걸면 점검 자체가 막힙니다).
+    match /pu_photos/_probe/{allPaths=**} {
+      allow read, write, delete: if signedIn();
+    }
+
+    // ── 정부사업일정 — 현장 사진(증빙) ── 2026-08-27 추가
+    //    증빙은 «법인 기록»입니다. 담당자가 바뀌거나 대표님이 확인하실 때
+    //    못 보면 안 되므로 로그인한 직원이면 «누구나» 읽고 씁니다.
+    //    ⚠ 사진첩(pu_photos)에 안 넣은 까닭이 이것입니다 — 사진첩은 위에서
+    //      보듯 «본인만» 읽어서 동료가 열면 안 보입니다.
+    //    ⚠ 자리는 gov_evidence/{일정번호}/{칸}.jpg 로 계산됩니다.
+    //      그래서 일정 기록에 가리키는 표를 따로 적지 않습니다.
+    //    ⚠ 지우기도 직원이 할 수 있습니다 — 앱이 「본인 컨설팅만」으로 이미
+    //      막고 있고, 창고 규칙은 그 판정을 할 수 없습니다.
+    match /gov_evidence/{sid}/{file} {
+      allow read:   if isStaff();
+      allow write:  if isStaff() && okImage();
+      allow delete: if isStaff();
+    }
+
+    // ── 급여데이터함 (2026-08-13 추가) ──
+    //    사진첩과 두 군데가 다르다. 둘 다 일부러 그렇다.
+    //    ① 읽기가 전 직원이다 — 남의 자리를 이름 골라 볼 수 있어야 한다(대표 결정).
+    //       ⚠ 그래서 앱을 거치지 않고 주소를 아는 접근은 열람 기록이 안 남는다.
+    //    ② 사진만 받는 검사(okImage)를 걸지 않는다 — 엑셀·PDF를 받아야 한다.
+    //       엉뚱한 종류는 앱이 올리기 전에 막는다(exe·js·html 거절).
+    //       한글 파일(hwp)은 브라우저가 종류를 안 알려줘서 종류로 묶으면 통째로 막힌다.
+    //    쓰기는 올린 사람 자리만 — 창고 규칙은 실시간DB를 못 읽어 대리인 판정을
+    //    여기서 할 수 없다. 「누구 자리 소속인가」는 실시간DB 정보가 정한다.
+    match /pu_paydata/{uid}/{allPaths=**} {
+      allow read:   if isStaff();
+      allow write:  if signedIn() && request.auth.uid == uid && okPayFile();
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // 위에 없는 자리는 전부 막는다
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isStaff() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+    function okImage() {
+      return request.resource != null
+          && request.resource.size < 10 * 1024 * 1024
+          && request.resource.contentType.matches('image/.*');
+    }
+    // 급여자료 — 종류는 묶지 않고 크기만 막는다(위 주석 ② 참고). 한 건 25MB.
+    function okPayFile() {
+      return request.resource != null
+          && request.resource.size < 25 * 1024 * 1024;
+    }
+  }
+}
