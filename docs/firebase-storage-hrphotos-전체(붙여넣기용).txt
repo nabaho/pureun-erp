@@ -1,0 +1,74 @@
+rules_version = '2';
+
+// ═══════════════════════════════════════════════════════════════════
+//  파일 창고 규칙 — 버킷 pureun-erp-hrphotos (서울)
+//  콘솔 → Storage → 창고 ▾ 에서 «pureun-erp-hrphotos» 선택 → 규칙 → 게시
+//
+//  ⚠ 다른 창고에 넣지 마십시오. 이 프로젝트에는 창고가 넷입니다.
+//     pureun-erp-hrphotos            ← 이 파일 (사진첩 · 증빙 사진)
+//     pureun-erp.firebasestorage.app   급여자료 · 기금 서류
+//     pureun-erp-photos                명함 · 사업자등록증 원본
+//     pureun-erp.appspot.com           급여OS
+//
+//  2026-08-27 — 2026-08-13 사진첩 규칙에 «증빙 사진(gov_evidence)» 한 덩이를
+//  더한 것입니다. 사진첩 부분은 한 글자도 바꾸지 않았습니다.
+// ═══════════════════════════════════════════════════════════════════
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ── 사진첩(pu-photos.html) — 사람별 자리. 본인만 읽고 쓴다. ──
+    //
+    // ⚠ 총괄 관리자의 "남의 자리" 접근(이사 도구 migrateToStorage, 관리자가
+    //   남의 사진을 지울 때의 영구삭제)은 이 규칙만으로는 안 된다 — 창고 규칙은
+    //   실시간DB(uid_roles/isAdmin)를 읽을 방법이 없어 "이 사람이 관리자인가"를
+    //   여기서 판정할 수 없다. 지금은 관리자가 본인 소유 사진을 옮기는 것만
+    //   되고, 다른 직원 사진을 옮기려 하면 창고 쪽 쓰기/지우기가 막혀 그 사람
+    //   몫은 실패(failed)로 잡힌다 — 사진을 잃지는 않는다(실시간DB에 그대로
+    //   남는다), 다만 창고로는 안 옮겨진다. 여러 직원 사진을 한꺼번에
+    //   관리자가 옮기려면 서버(Cloud Functions, Admin SDK) 도구가 따로 필요하다.
+    match /pu_photos/u/{uid}/{allPaths=**} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if signedIn() && request.auth.uid == uid && okImage();
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // 창고 연결 점검(probePath) — 사람 구분 없이 아주 짧은 글자 하나만 오간다.
+    // 사진이 아니라 okImage 를 걸지 않는다(text/plain 이라 막히면 점검 자체가 안 된다).
+    match /pu_photos/_probe/{allPaths=**} {
+      allow read, write, delete: if signedIn();
+    }
+
+    // ── 정부사업일정 — 현장 사진(증빙) ── 2026-08-27 추가
+    //
+    // 증빙 사진은 «법인 기록»이다. 개인 사진첩과 다르다 —
+    // 담당자가 바뀌거나 대표님이 확인하실 때 못 보면 안 되므로,
+    // 로그인한 직원이면 «누구나» 읽고 쓴다.
+    //
+    // ⚠ 사진첩(pu_photos)에 넣지 않은 까닭이 이것이다. 사진첩은 위에서 보듯
+    //   «본인만» 읽는다 — 동료가 열면 안 보인다.
+    // ⚠ 자리는 gov_evidence/{일정번호}/{칸}.jpg 로 «계산»된다. 그래서 일정
+    //   기록에 가리키는 표를 따로 안 적는다.
+    // ⚠ 지우는 것도 직원이 할 수 있다 — 앱에서 «본인 컨설팅만» 지우도록
+    //   이미 막고 있고, 창고 규칙은 그 판정을 할 수 없다(실시간DB를 못 읽는다).
+    match /gov_evidence/{sid}/{file} {
+      allow read: if signedIn();
+      allow write: if signedIn() && okImage();
+      allow delete: if signedIn();
+    }
+
+    // 위에 없는 자리는 전부 막는다
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.firebase.sign_in_provider == 'password';
+    }
+    function okImage() {
+      return request.resource != null
+          && request.resource.size < 10 * 1024 * 1024
+          && request.resource.contentType.matches('image/.*');
+    }
+  }
+}
