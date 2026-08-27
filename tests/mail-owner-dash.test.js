@@ -783,3 +783,95 @@ test('★ 담당자 줄과 업무 줄의 «아이콘 폭»이 같다 — 다르�
   assert.match(src, /\.dm-f\.topicbin \.dot\{[^}]*width:17px/, '업무 줄 아이콘 폭이 다르다');
   assert.match(src, /\.dm-f \.ic\{[^}]*width:17px/, '담당자 줄 아이콘 폭이 17px 이 아니다');
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+   로그인한 «나»부터 보인다 (대표 지시 2026-08-27)
+   ══════════════════════════════════════════════════════════════════════════
+   "각자 담당자가 로그인 하는경우 본인 이름이 가장 위에 와서 본인위주로 검토할 수 있게"
+   "로그인 할 경우 본인 이름과 본인메일을 맨 먼저 볼 수 있는 시스템"
+
+   ★ 지키는 것 넷
+     1. 내 줄이 «갈래 머리줄보다 위»에 온다 — 갈래 안에서만 올리면 직원은 여섯 줄 아래다
+     2. 내 줄은 «한 번만» 나온다 — 두 줄이면 통수를 두 번 센 줄 안다
+     3. 남의 차례는 «안 흔들린다» — 사번 순 그대로
+     4. 내 칸이 비어 있으면 그리로 «안 보낸다» — 빈 칸을 먼저 보이면 「메일함이 비었다」가 된다 */
+function loadMe(myName, over){
+  const c = load(over || {});
+  /* myEmail·staffName 은 덩어리 밖에 있다 — 안에서 만들어 준다.
+     ⚠ 실제 앱과 «같은 규칙»이어야 한다: 사번의 붙임표를 떼고 @pureun.kr (ErpMatch.nameByEmail) */
+  vm.runInContext('myEmail = "me@pureun.kr";', c);
+  vm.runInContext('function staffName(e){ return (e === "me@pureun.kr") ? '
+    + JSON.stringify(myName || '') + ' : String(e||""); }', c);
+  return c;
+}
+
+test('★ 내 줄이 «가장 위»에 온다 — 갈래 머리줄보다 위', () => {
+  const c = loadMe('박한별', { state:{ mbDash:'who' } });
+  const h = c.mailSideHtml();
+  const iMe = h.indexOf('내 메일');
+  /* ⚠ 이 대역에는 명부(ErpMatch.staff)가 없어 갈래가 「그 밖」으로 나온다 —
+     갈래 «이름»이 아니라 «갈래 머리줄 자체»를 찾는다. 여기서 보려는 것은 차례뿐이다. */
+  const iGrp = h.indexOf('class="dm-whogrp">');
+  assert.ok(iMe > 0, '「내 메일」 머리줄이 없다');
+  assert.ok(iGrp > 0, '갈래 머리줄이 없다');
+  assert.ok(iMe < iGrp, '내 줄이 갈래 머리줄보다 아래에 있다 (내 ' + iMe + ' · 갈래 ' + iGrp + ')');
+});
+
+test('★ 내 줄은 «한 번만» 나온다 — 두 줄이면 통수를 두 번 센 줄 안다', () => {
+  const c = loadMe('박한별', { state:{ mbDash:'who' } });
+  const h = c.mailSideHtml();
+  const n = (h.match(/openMailBox\('@박한별'\)/g) || []).length;
+  assert.equal(n, 1, '내 칸으로 가는 줄이 ' + n + '개다');
+});
+
+test('★ 내 줄에 «나» 표가 붙는다 — 위에만 두면 그냥 첫 줄로 읽힌다', () => {
+  const c = loadMe('박한별', { state:{ mbDash:'who' } });
+  const h = c.mailSideHtml();
+  assert.ok(h.indexOf('meTag') > 0, '「나」 표가 없다');
+  assert.ok(h.indexOf('meRow') > 0, '내 줄이 눈에 띄게 칠해지지 않았다');
+});
+
+test('★ 남의 차례는 «안 흔들린다» — 사번 순 그대로', () => {
+  const c = loadMe('박한별', { state:{ mbDash:'who' } });
+  const rest = c.mbWhoList().filter(w => !w.me);
+  for(let i = 1; i < rest.length; i++)
+    assert.ok(rest[i-1].ord <= rest[i].ord,
+      '사번 순이 깨졌다: ' + rest[i-1].name + '(' + rest[i-1].ord + ') → '
+      + rest[i].name + '(' + rest[i].ord + ')');
+  assert.ok(c.mbWhoList()[0].me, '내가 맨 위가 아니다');
+});
+
+test('★ 처음 열면 «내 칸»이 열린다', () => {
+  const c = loadMe('박한별');
+  c.state.mbBox = '';
+  assert.equal(c.mbNow(), '@박한별', '열린 칸: ' + c.mbNow());
+});
+
+test('★ 처음 열면 «담당자» 대시보드가 먼저다', () => {
+  const c = loadMe('박한별', { state:{ mbDash:'' } });
+  const h = c.mailSideHtml();
+  /* 담당자 칩이 켜져 있어야 한다 */
+  assert.match(h, /<button class="on"[^>]*onclick="mbSetDash\('who'\)"/,
+    '담당자 칩이 안 켜져 있다');
+});
+
+test('★ 내가 담당인 메일이 «한 통도 없으면» 내 칸으로 안 보낸다', () => {
+  /* 이 harness 에서 최기운은 담당 메일이 없다 */
+  const c = loadMe('최기운');
+  c.state.mbBox = '';
+  assert.notEqual(c.mbNow(), '@최기운', '빈 칸으로 보냈다');
+  assert.equal(c.mbMyBox(), '', '빈 칸을 내 칸으로 내놓았다');
+});
+
+test('로그인한 사람을 못 찾으면 예전 그대로다 — 아무것도 안 깨진다', () => {
+  const c = loadMe('');
+  c.state.mbBox = '';
+  assert.equal(c.mbMyName(), '', '찾은 이름: ' + c.mbMyName());
+  assert.equal(c.mbMyBox(), '');
+  assert.ok(c.mbNow(), '열 칸이 없다');
+});
+
+test('★ 이름 대신 «주소»가 오면 안 쓴다 — 옆줄에 p003@… 가 뜨면 안 된다', () => {
+  const c = loadMe('p003@pureun.kr');
+  assert.equal(c.mbMyName(), '', '주소를 이름으로 썼다: ' + c.mbMyName());
+});

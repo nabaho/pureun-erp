@@ -728,6 +728,14 @@ table.sbox tr.bad td{background:#fdf4f4}
 .dm-whogrp{display:flex;align-items:center;gap:6px;padding:8px 8px 3px 15px;font-size:11px;
   color:#9a8fc0;font-weight:700;letter-spacing:.2px}
 .dm-whogrp span{font-weight:400;color:#b6b9c0}
+/* ── 「내 메일」이 맨 위 (대표 지시 2026-08-27) ──
+   ⚠ 남의 줄과 «눈에 띄게» 달라야 한다. 같은 모양으로 위에만 두면 그냥 첫 줄로 읽힌다. */
+.dm-whogrp.me{color:#7b4bd1;padding-top:4px}
+.dm-f.whobin.meRow{background:#f7f4fe}
+.dm-f.whobin.meRow:hover{background:#f2ecfd}
+.dm-f.whobin.meRow.on{background:#e9dffb;color:#3f2178}
+.dm-f .meTag{flex:none;font-size:10px;font-weight:700;color:#fff;background:#7b4bd1;
+  border-radius:3px;padding:0 5px;margin-left:5px;vertical-align:1px}
 /* 목록에 붙는 「👤 담당자」 꼬리표 — 업무 칸에서 볼 때 */
 .dm-who{flex:none;font-size:10.5px;color:#5b3a9c;background:#f2ecfd;border:1px solid #e0d4fa;
   border-radius:3px;padding:1px 6px;margin-right:8px;white-space:nowrap;cursor:pointer}
@@ -11733,12 +11741,17 @@ function mbWhoList(){
        실측 2026-08-26 — 박성수·임혜미·김동근·김정현·박지호 다섯이 섞여 있었다. */
   /* ⚠ 차례는 «사번 순»이다(같은 지시). 통수 많은 순으로 두면 날마다 순서가 바뀌어
        눈이 자리를 못 익힌다 — 늘 같은 자리에 있어야 손이 먼저 간다. */
+  /* ⚠ «나»는 맨 위로 (대표 지시 2026-08-27 「본인 이름이 가장 위에 와서 본인위주로 검토」).
+       사번 순은 그대로 두고 내 줄만 앞으로 뽑는다 — 남의 차례는 안 흔들린다.
+       ⚠ 내가 담당이 아니면(목록에 없으면) 아무 일도 일어나지 않는다. */
+  const me = mbMyName();
   return Object.keys(cnt)
     .filter(w=>!mbRetired(w))
-    .map(w=>({ name:w, n:cnt[w]||0, un:un[w]||0,
+    .map(w=>({ name:w, n:cnt[w]||0, un:un[w]||0, me:(!!me && w===me),
                kind:mbWhoKind(w), ord:mbWhoOrd(w), sid:(mbStaffOf(w)||{}).sid||'',
                title:(mbStaffOf(w)||{}).title||'' }))
-    .sort((a,b)=> a.ord - b.ord || a.name.localeCompare(b.name,'ko'));
+    .sort((a,b)=> (b.me?1:0) - (a.me?1:0)
+      || a.ord - b.ord || a.name.localeCompare(b.name,'ko'));
 }
 function mbWhoNoneCount(){
   let n = 0, un = 0, ret = 0;
@@ -11844,10 +11857,28 @@ function mbBinCount(bin){
   return { n:n, un:un };
 }
 
-/* 지금 고른 칸. 없으면 받은메일함. */
+/* ── 처음 들어오면 «내 것»부터 (대표 지시 2026-08-27) ──
+   "각자 담당자가 로그인 하는경우 본인 이름이 가장 위에 와서 본인위주로 검토할 수 있게"
+   "로그인 할 경우 본인 이름과 본인메일을 맨 먼저 볼 수 있는 시스템"
+   ⚠ 내 칸이 «있을 때만» 그리로 간다. 담당 자문사가 없는 사람은 내 칸이 비어 있어,
+     거기로 보내면 「메일함이 텅 비었다」로 보인다 — 그때는 예전대로 받은메일함이다. */
+function mbMyName(){
+  let n = '';
+  try{ n = staffName(myEmail) || ''; }catch(_){ n = ''; }
+  return (n && n.indexOf('@') < 0) ? n : '';
+}
+function mbMyBox(){
+  const me = mbMyName(); if(!me) return '';
+  const w = mbWhoList().find(x=>x.name === me);
+  return (w && w.n) ? (MB_WHO_P + me) : '';       /* 한 통도 없으면 안 보낸다 */
+}
+
+/* 지금 고른 칸. 없으면 «내 칸», 그것도 없으면 받은메일함. */
 function mbNow(){
   const id = state.mbBox||'';
   if(id) return id;
+  const mine = mbMyBox();
+  if(mine) return mine;
   const inbox = mbFolderOf('inbox')[0];
   return inbox ? inbox.slug : '*all';
 }
@@ -12101,7 +12132,11 @@ function mailSideHtml(){
      ⚠ 한 번에 «하나»만 보여 준다. 둘을 함께 늘어놓으면 담당자 8 + 업무 13 = 스물한 줄이라
        아래쪽은 굴려야 나온다. 칩 색으로 지금 무엇을 보고 있는지 알린다.
      ⚠ 담기는 메일은 같다 — 담당자 칸은 «자리»가 아니라 «거르개»다. */
-  const dash = (state.mbDash === 'who') ? 'who' : 'topic';
+  /* ⚠ 처음 들어오면 «담당자»가 먼저다(대표 지시 2026-08-27 「본인 이름과 본인메일을
+       맨 먼저」). 다만 내가 담당인 메일이 한 통도 없으면 예전대로 업무별로 연다 —
+       빈 칸을 먼저 보여 주면 「메일함이 비었다」로 읽힌다. */
+  const dash = state.mbDash ? (state.mbDash === 'who' ? 'who' : 'topic')
+             : (mbMyBox() ? 'who' : 'topic');
   const whos = (dash === 'who') ? mbWhoList() : [];
   /* ⚠ 머리줄 색은 «고정»이다(대표 지시 2026-08-26). 대시보드에 따라 보라↔초록으로 바꾸면
        칩을 옮길 때마다 옆줄이 통째로 다른 화면처럼 보인다. */
@@ -12130,21 +12165,35 @@ function mailSideHtml(){
        ⚠ 차례는 사번 순이다 — 늘 같은 자리에 있어야 손이 먼저 간다.
        ⚠ 갈래가 하나뿐이면 머리줄을 안 붙인다. 「노무사」 한 줄 밑에 노무사만 있으면
          그 줄이 아무것도 말해 주지 않는다. */
+    /* 담당자 한 줄 — 「나」와 갈래 목록이 같은 모양이어야 한다(한 자리에서 만든다) */
+    const whoRow = (w, mine)=>{
+      const id = MB_WHO_P + w.name;
+      return `<div class="dm-f sub whobin ${mine?'meRow':''} ${now===id?'on':''}"
+        onclick="openMailBox('${esc(id)}')"
+        title="${esc(w.name)}${w.title?' '+esc(w.title):''}${w.sid?' · '+esc(w.sid):''} 담당${
+          mine?' — 내 메일입니다':' — 메일은 업무 칸에 그대로 있습니다'}${w.n?' · '+w.n.toLocaleString()+'통':''}">
+        <span class="ic">👤</span><span class="nm">${esc(w.name)}${mine?' <b class="meTag">나</b>':''}</span>
+        ${w.n?`<span class="n">${w.n.toLocaleString()}</span>`:''}
+        ${w.un?`<span class="nu">${w.un}</span>`:''}</div>`;
+    };
     if(whos.length){
-      const kinds = ['pro','staff','etc'].filter(k=>whos.some(w=>w.kind===k));
+      /* ── ★ 내 것이 «가장 위»에 (대표 지시 2026-08-27) ──
+         ⚠ 갈래 머리줄(노무사·직원)보다 «위»에 둔다. 갈래 안에서 맨 위로만 올리면
+           내가 직원이면 여섯 줄쯤 아래라 「가장 위」가 아니다.
+         ⚠ 그래서 아래 갈래 목록에서는 내 줄을 «뺀다» — 두 줄이 되면 통수가 두 번 세인 줄 안다. */
+      const meRow = whos.find(w=>w.me);
+      if(meRow){
+        h += `<div class="dm-whogrp me">내 메일 <span>${esc(meRow.title||'')}</span></div>`;
+        h += whoRow(meRow, true);
+      }
+      const rest = whos.filter(w=>!w.me);
+      const kinds = ['pro','staff','etc'].filter(k=>rest.some(w=>w.kind===k));
       kinds.forEach(k=>{
-        const grp = whos.filter(w=>w.kind===k);
-        if(kinds.length > 1)
+        const grp = rest.filter(w=>w.kind===k);
+        if(kinds.length > 1 || meRow)
           h += `<div class="dm-whogrp">${esc(MB_WHO_KIND_LABEL[k]||'')}
             <span>${grp.length}명</span></div>`;
-        grp.forEach(w=>{
-          const id = MB_WHO_P + w.name;
-          h += `<div class="dm-f sub whobin ${now===id?'on':''}" onclick="openMailBox('${esc(id)}')"
-            title="${esc(w.name)}${w.title?' '+esc(w.title):''}${w.sid?' · '+esc(w.sid):''} 담당 — 메일은 업무 칸에 그대로 있습니다${w.n?' · '+w.n.toLocaleString()+'통':''}">
-            <span class="ic">👤</span><span class="nm">${esc(w.name)}</span>
-            ${w.n?`<span class="n">${w.n.toLocaleString()}</span>`:''}
-            ${w.un?`<span class="nu">${w.un}</span>`:''}</div>`;
-        });
+        grp.forEach(w=>{ h += whoRow(w, false); });
       });
     }
     else h += `<div class="dm-side-hint">${_mbFolders===null ? '읽고 있습니다…'
