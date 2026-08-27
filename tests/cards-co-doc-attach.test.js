@@ -179,17 +179,23 @@ test('빈 서류 목록·망가진 것에 안 넘어진다', () => {
 /* ── 화면 ── */
 
 test('★ 근거를 딱지에 적는다 — 조용히 붙이면 잘못 붙은 것을 못 찾는다', () => {
-  const body = slice('function coCaseDocsHtml(hits){', 'function coHistPaint(){');
-  assert.match(body, /<i>\$\{esc\(h\.word\)\}<\/i>/, '근거 낱말을 보여 줘야 한다');
-  assert.match(body, /이 이름에 함께 들어 있어 이 사업에 붙였습니다/, '왜 붙었는지 말해야 한다');
+  /* 2026-08-26(3단계): 근거가 셋으로 늘어(지정·기억·이름) 딱지에 적는 값이
+     h.word 에서 tag 로 넓어졌다. 「적는다」는 뜻은 그대로다. */
+  const body = slice('function coCaseDocsHtml(hits){', '/* ══════ 3단계 — 끌어다 놓기');
+  assert.match(body, /<i>\$\{esc\(tag\)\}<\/i>/, '근거를 보여 줘야 한다');
+  assert.match(body, /CO_WHY_TIP/, '왜 붙었는지 말해야 한다');
+  assert.match(HTML, /이 낱말이 사업 이름과 서류 제목에 함께 들어 있습니다/,
+    '이름 대조의 까닭이 적혀 있어야 한다');
   assert.match(body, /openCoDoc\(/, '눌러서 원본을 볼 수 있어야 한다');
 });
 
 test('붙은 서류를 사업 줄 «바로 아래»에 놓는다', () => {
   const body = slice('function coHistPaint(){', 'box.innerHTML = `<div class="pdsec"');
-  const rowAt = body.indexOf('list += erpHistRowHtml(r, grouped);');
-  const docAt = body.indexOf('list += coCaseDocsHtml(plan.byCase[r._i]);');
+  /* 2026-08-26(3단계): 사업 줄을 «받는 자리»로 감쌌다 — 차례는 그대로다 */
+  const rowAt = body.indexOf('+ erpHistRowHtml(r, grouped);');
+  const docAt = body.indexOf('list += coCaseDocsHtml(plan.byCase[r._i])');
   assert.ok(rowAt > 0 && docAt > rowAt, '사업 줄 뒤에 와야 한다');
+  assert.match(body, /class=\"cohist-drop\"/, '받는 자리가 있어야 한다');
 });
 
 test('걸러 보거나 정렬을 바꿔도 붙임새가 따라온다 — 줄 번호가 아니라 기록으로 잇는다', () => {
@@ -220,9 +226,12 @@ test('사업 기록이 오기 «전»에는 서류 전부를 보여 준다', () 
 
 /* ── 2단계도 쓰기가 없다 ── */
 
-test('★ 서버에 아무것도 쓰지 않는다', () => {
-  const body = slice('const CASE_TOK_STOP = new Set([', 'function coHistPaint(){');
-  assert.ok(!/Store\.|\.update\(|\.set\(|\.remove\(/.test(body), '붙이면서 쓰기가 나가면 안 된다');
+test('★ «맞춰 보는 셈»은 서버에 쓰지 않는다 — 쓰는 것은 사람이 끌어다 놓을 때만이다', () => {
+  /* 2026-08-26(3단계): 기억을 남기려면 써야 한다. 다만 «자동으로 그리는 길»에는
+     여전히 쓰기가 없다 — 그리기만 하다가 쓰면 화면을 열 때마다 쓰기가 나간다. */
+  const body = slice('const CASE_TOK_STOP = new Set([', '/* ══════ 3단계 — 끌어다 놓기');
+  assert.ok(!/Store\.|\.update\(|\.set\(|\.remove\(/.test(body),
+    '붙임새를 셈하면서 쓰기가 나가면 안 된다');
   const paint = slice('function coHistPaint(){', 'box.innerHTML = `<div class="pdsec"');
   assert.ok(!/Store\.db|\.update\(|\.remove\(/.test(paint), '그리면서 쓰기가 나가면 안 된다');
 });

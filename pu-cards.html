@@ -1890,6 +1890,17 @@ body.pc #pcDetail{display:flex}
 .codocchip i{font-style:normal;font-size:10.5px;color:#8a6d1f;background:#fff8ec;
   border-radius:4px;padding:1px 5px}
 /* 「아직 안 붙은 서류」 밑에 붙는 한 줄 — 왜 안 붙었는지 */
+/* 3단계 — 받는 자리·근거별 딱지 색·떼기 ✕ */
+.cohist-drop.dropon{background:#eef4ff;box-shadow:inset 0 0 0 2px #1d4ed8;border-radius:8px}
+.codocchip.w-지정{border-color:#b6d4b6;background:#f2faf2}
+.codocchip.w-지정 i{color:#2d5a2d;background:#e6f4e6}
+.codocchip.w-기억{border-color:#d9c9a8;background:#fffdf7}
+.codocchip.w-기억 i{color:#8a6d1f;background:#fff8ec}
+.codocchip em{font-style:normal;margin-left:2px;padding:0 3px;border-radius:4px;
+  color:#a0a8b8;font-size:12px}
+.codocchip em:hover{color:#a50e0e;background:#fdeced}
+/* 안 붙은 서류도 끌 수 있다 — 손 모양으로 알린다 */
+.codoc[draggable="true"]{cursor:grab}
 .codochint{font-size:11.5px;color:#8b98b3;line-height:1.5;margin:-4px 4px 7px}
 .cohist-none{border:1px dashed #dbe1ec;border-radius:10px;padding:14px;text-align:center;
   font-size:12px;color:#8b98b3;background:#fbfcfe;line-height:1.7}
@@ -16375,16 +16386,92 @@ function docCaseMatch(docName, cases){
   if(hits.length > 1 && hits[1].w.length === hits[0].w.length) return null;
   return { i:hits[0].i, why:'이름', word:hits[0].w };
 }
+/* ══════ 3단계 — 사람이 고른 짝을 기억한다 (순수 로직) ══════
+   대표 지시 2026-08-26, 구상안 3단계: 끌어다 놓기 + 짝 기억.
+
+   ★ 근거는 «세 가지»이고 차례가 있다. 앞엣것이 이기고, 무엇으로 붙었는지 딱지에 적는다.
+     ① 지정 — 사람이 이 서류를 이 사업 위에 끌어다 놓았다. 가장 확실하다.
+     ② 기억 — 같은 이름의 서류를 전에 이 회사에서 그 사업에 붙였다.
+     ③ 이름 — 서류 제목에 사업 이름이 들어 있다(2단계).
+   ⚠ 기억은 «회사 안»에서만 쓴다. 「자문계약서」가 갑회사에서 일터혁신에 붙었다고
+     을회사의 자문계약서까지 그리 붙이면 남의 사업에 남의 계약서가 붙는다.
+   ⚠ 기억이 틀릴 수 있다 — 이듬해 다른 컨설팅의 자문계약서가 오면 옛 짝으로 붙는다.
+     그래서 «기억으로 붙은 것»은 딱지에 「기억」이라 적고 한 번에 뗄 수 있게 둔다.
+     조용히 붙이면 그 잘못을 아무도 못 찾는다.
+
+   ★ 여기서부터 서버에 «쓴다» — 기억해야 하기 때문이다. 1·2단계는 안 썼다.
+     쓰는 자리는 둘뿐이고, 둘 다 회사의 딸림 정보(coInfo) 안이다:
+       coInfo/{회사}/docPin/{서류}     = 사업열쇠   ← 이 서류 하나
+       coInfo/{회사}/docRule/{이름열쇠} = 사업열쇠   ← 같은 이름의 다음 것들
+     ⚠ 명함·등록증(items)은 건드리지 않는다. 서류를 어디에 놓았는지는 회사의 일이다. */
+
+/* 사업 하나를 가리키는 열쇠. 이알피 기록에는 고유 id 가 없어 번호를 쓴다.
+   ⚠ 번호가 빈 기록도 있다(컨설팅에 자주). 그때는 갈래+이름+해로 짓는다 —
+     같은 회사 안에서 그 셋이 겹치는 일은 사실상 없다.
+   ⚠ 실시간DB 열쇠에 못 쓰는 글자(. # $ [ ] /)를 뺀다. 안 빼면 그 자리에서 쓰기가 막힌다. */
+function caseKeyOf(row){
+  if(!row) return '';
+  const safe = t => String(t||'').replace(/[.#$/[\]\x00-\x1f\x7f]/g,'_');
+  const no = String(row.no||'').trim();
+  if(no) return safe(row.kind + '~' + no);
+  /* ⚠ _canon 을 부르지 않는다 — 이 함수는 «홀로» 돌아가야 한다(검사가 이 토막만 뜬다).
+       바깥 함수에 매이면 시험할 때마다 그것까지 실어야 하고, 한쪽만 고쳐지는 날이 온다. */
+  const flat = String(row.name||'').replace(/\s/g,'');
+  return safe(row.kind + '~' + flat + '~' + (row.year||''));
+}
+/* 서류이름 → 기억 열쇠. 띄어쓰기·괄호를 지워 「자문 계약서」와 「자문계약서」를 하나로 본다. */
+function docNameKey(name){
+  return String(name||'')
+    .replace(/[()\[\]{}<>「」『』·,.\/\-_~|+&\s]/g, '')
+    .replace(/[#$\x00-\x1f\x7f]/g, '');
+}
+
 /* 회사 하나의 서류 전부를 나눈다 — 붙은 것과 «아직 안 붙은 것» */
-function docCasePlan(docs, cases){
+/* pins  = { 서류열쇠 → 사업열쇠 }   사람이 끌어다 놓은 것
+   rules = { 이름열쇠 → 사업열쇠 }   기억한 짝
+   ⚠ 열쇠가 가리키는 사업이 «지금 이 회사 목록에 없으면» 무시한다 —
+     이알피에서 그 사업이 지워졌거나 회사가 바뀐 자리다. 없는 사업에 붙여 두면
+     서류가 어디에도 안 보인다(조용히 잃는다). 그때는 「안 붙은 서류」로 남는다. */
+function docCasePlan(docs, cases, pins, rules){
   const byCase = {}, left = [];
+  const idxByKey = {};
+  (cases||[]).forEach(function(c, i){ const k = caseKeyOf(c); if(k) idxByKey[k] = i; });
+  const put = function(i, d, why, word){
+    (byCase[i] = byCase[i] || []).push({ doc:d, why:why, word:word||'' });
+  };
   (docs||[]).forEach(function(d){
     if(!d) return;
+    /* ① 지정 — 사람이 고른 것이 가장 세다 */
+    const pin = (pins||{})[d._k];
+    if(pin && (pin in idxByKey)) return put(idxByKey[pin], d, '지정');
+    /* ② 기억 — 같은 이름을 전에 붙여 둔 자리 */
+    const rl = (rules||{})[docNameKey(d.name)];
+    if(rl && (rl in idxByKey)) return put(idxByKey[rl], d, '기억');
+    /* ③ 이름 대조 (2단계) */
     const m = docCaseMatch(d.name, cases);
-    if(m){ (byCase[m.i] = byCase[m.i] || []).push({ doc:d, why:m.why, word:m.word }); }
-    else left.push(d);
+    if(m) return put(m.i, d, m.why, m.word);
+    left.push(d);
   });
   return { byCase:byCase, left:left };
+}
+/* 끌어다 놓았을 때 쓸 자리 — 「이 서류 하나」와 「같은 이름의 다음 것들」 둘.
+   ⚠ 한 번의 update 로 보낸다. 두 번 나눠 쓰면 하나만 남는 일이 생긴다. */
+function docAttachPlan(coKey, docKey, docName, caseKey){
+  if(!coKey || !docKey || !caseKey) return null;
+  const upd = {};
+  upd['coInfo/' + coKey + '/docPin/' + docKey] = caseKey;
+  const nk = docNameKey(docName);
+  if(nk) upd['coInfo/' + coKey + '/docRule/' + nk] = caseKey;
+  return upd;
+}
+/* 뗄 때 — 지정과 기억을 «둘 다» 지운다. 하나만 지우면 다시 붙는다. */
+function docDetachPlan(coKey, docKey, docName){
+  if(!coKey || !docKey) return null;
+  const upd = {};
+  upd['coInfo/' + coKey + '/docPin/' + docKey] = null;
+  const nk = docNameKey(docName);
+  if(nk) upd['coInfo/' + coKey + '/docRule/' + nk] = null;
+  return upd;
 }
 
 /* 지금 보고 있는 회사와 깔때기 상태.
@@ -16412,14 +16499,81 @@ function coHistSet(what, val){
 /* 사업 한 줄 아래에 붙은 서류들 — 눌러서 사진첩의 원본을 연다.
    ⚠ 근거(어느 낱말로 붙였는지)를 딱지에 적는다. 조용히 붙이면 «잘못 붙은 계약서»를
      아무도 못 찾는다. 이 저장소가 값의 출처(srcOf)를 남기는 것과 같은 결이다. */
+/* 붙은 근거를 사람 말로 — 무엇으로 붙었는지 딱지에 그대로 적는다 */
+const CO_WHY_TIP = {
+  '지정': '사람이 이 사업에 놓았습니다',
+  '기억': '같은 이름의 서류를 전에 이 사업에 붙였습니다 — 틀렸으면 ✕ 로 떼세요',
+  '이름': '이 낱말이 사업 이름과 서류 제목에 함께 들어 있습니다'
+};
 function coCaseDocsHtml(hits){
   if(!hits || !hits.length) return '';
   return `<div class="cohist-docs">` + hits.map(function(h){
     const d = h.doc || {};
-    return `<span class="codocchip" onclick="openCoDoc('${esc(d.year||'')}','${esc(d.id||'')}','${esc(d.owner||'')}')"
-        title="「${esc(h.word)}」 이 이름에 함께 들어 있어 이 사업에 붙였습니다 — 눌러서 원본 보기">`
-      + `📄 ${esc(d.name||'서식')}<i>${esc(h.word)}</i></span>`;
+    const why = h.why || '이름';
+    const tag = why === '이름' ? (h.word || '이름') : why;
+    /* 사람이 고친 것(지정·기억)만 뗄 수 있다 — 이름 대조는 규칙이라 뗄 것이 없다.
+       ⚠ ✕ 는 누르면 «되돌린다». 지우는 것이 아니라 「안 붙은 서류」로 돌려보낸다. */
+    const off = (why === '지정' || why === '기억')
+      ? `<em onclick="event.stopPropagation();coDocDetach('${esc(d._k||'')}')"
+           title="이 사업에서 뗍니다 — 서류는 그대로 있고 「안 붙은 서류」로 돌아갑니다">✕</em>` : '';
+    return `<span class="codocchip w-${esc(why)}"
+        draggable="true" ondragstart="coDocDragStart(event,'${esc(d._k||'')}')"
+        onclick="openCoDoc('${esc(d.year||'')}','${esc(d.id||'')}','${esc(d.owner||'')}')"
+        title="${esc(CO_WHY_TIP[why]||'')} — 눌러서 원본 보기, 끌어서 다른 사업으로">`
+      + `📄 ${esc(d.name||'서식')}<i>${esc(tag)}</i>${off}</span>`;
   }).join('') + `</div>`;
+}
+/* ══════ 3단계 — 끌어다 놓기·떼기 (화면·쓰기) ══════
+   ⚠ 지금 보고 있는 회사(_coHist.o)에만 쓴다. 회사가 바뀌면 끌던 것을 버린다 —
+     늦게 떨어진 서류가 딴 회사에 붙으면 되돌리기 어렵다. */
+let _coDocDrag = null;      /* { docKey, coKey } */
+function coDocDragStart(e, docKey){
+  const o = _coHist.o;
+  if(!o || !docKey){ return; }
+  _coDocDrag = { docKey: docKey, coKey: o.key };
+  try{ e.dataTransfer.effectAllowed = 'move';
+       e.dataTransfer.setData('text/plain', docKey); }catch(_){}
+}
+function coDocDragOver(e){
+  if(!_coDocDrag) return;                /* 남의 끌기(폴더·명함)에 반응하지 않는다 */
+  e.preventDefault();
+  try{ e.dataTransfer.dropEffect = 'move'; }catch(_){}
+  const el = e.currentTarget; if(el && el.classList) el.classList.add('dropon');
+}
+function coDocDragLeave(e){
+  const el = e.currentTarget; if(el && el.classList) el.classList.remove('dropon');
+}
+async function coDocDrop(e, caseKey){
+  e.preventDefault();
+  const el = e.currentTarget; if(el && el.classList) el.classList.remove('dropon');
+  const g = _coDocDrag; _coDocDrag = null;
+  const o = _coHist.o;
+  if(!g || !o || !caseKey) return;
+  if(g.coKey !== o.key) return toast('보던 회사가 바뀌어 붙이지 않았습니다', 6000);
+  const d = ((o.extra && o.extra.docs) || {})[g.docKey];
+  if(!d) return;
+  const upd = docAttachPlan(o.key, g.docKey, d.name, caseKey);
+  if(!upd) return;
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
+  try{
+    await Store.db.ref(DB_ROOT).update(upd);
+    /* ⚠ 화면을 여기서 억지로 안 고친다 — coInfo 구독이 새 값을 주면 회사 표가
+       다시 뽑히고 패널도 다시 그려진다. 두 곳에서 고치면 어긋난다. */
+    toast(`📄 ${esc(d.name||'서식')} 을 붙였습니다 — 같은 이름은 다음부터 저절로 붙습니다`, 7000);
+  }catch(err){ toast('❌ 붙이지 못했습니다: ' + ((err&&err.message)||''), 8000); }
+}
+/* ✕ — 이 사업에서 뗀다. 서류는 그대로 있고 「안 붙은 서류」로 돌아간다. */
+async function coDocDetach(docKey){
+  const o = _coHist.o;
+  if(!o || !docKey) return;
+  const d = ((o.extra && o.extra.docs) || {})[docKey];
+  const upd = docDetachPlan(o.key, docKey, d && d.name);
+  if(!upd) return;
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
+  try{
+    await Store.db.ref(DB_ROOT).update(upd);
+    toast('뗐습니다 — 「아직 안 붙은 서류」로 돌아갑니다', 6000);
+  }catch(err){ toast('❌ 떼지 못했습니다: ' + ((err&&err.message)||''), 8000); }
 }
 function coHistPaint(){
   const box = $('coErpHistBox'); if(!box) return;
@@ -16433,9 +16587,14 @@ function coHistPaint(){
   /* 어느 사업인지 셀 때 쓰는 자리표 — 걸러 보거나 정렬을 바꿔도 붙임새가 따라온다 */
   all.forEach(function(r, i){ r._i = i; });
   /* 2단계 — 서류를 사업에 붙인다(이름 대조). 서버에 쓰지 않고 그릴 때마다 맞춰 본다. */
-  const docsAll = Object.values((o.extra && o.extra.docs) || {})
-    .sort(function(a,b){ return (b.at||0)-(a.at||0); });
-  const plan = docCasePlan(docsAll, all);
+  /* ⚠ 서류의 «열쇠»(coInfo 안의 이름)를 함께 싣는다 — 3단계에서 「이 서류 하나」를
+     가리키려면 열쇠가 있어야 한다. Object.values 만 쓰면 어느 것인지 못 짚는다. */
+  const docMap = (o.extra && o.extra.docs) || {};
+  const docsAll = Object.keys(docMap).map(function(k){
+    return Object.assign({ _k:k }, docMap[k] || {});
+  }).sort(function(a,b){ return (b.at||0)-(a.at||0); });
+  const plan = docCasePlan(docsAll, all,
+    (o.extra && o.extra.docPin) || {}, (o.extra && o.extra.docRule) || {});
   /* 안 붙은 것은 「아직 안 붙은 서류」 칸으로 — 조용히 사라지는 것이 가장 나쁘다 */
   coLeftDocsPaint(plan.left, docsAll.length);
   const rows = erpHistSort(erpHistPick(all, pick), pick.sort);
@@ -16478,11 +16637,17 @@ function coHistPaint(){
         list += `<div class="cohist-yr"><span class="n">${curY?curY+'년':'해 모름'}</span>`
           + `<span class="ln"></span><span class="t">${s.n}건 · ${s.fee.toLocaleString()}원</span></div>`;
       }
-      list += erpHistRowHtml(r, grouped);
+      /* 사업 줄을 «받는 자리»로 감싼다 — 안 붙은 서류를 여기 놓으면 붙는다.
+         ⚠ erpHistRowHtml 은 그대로 둔다(검사 둘이 그 함수를 떠서 쓴다).
+           감싸개만 씌워 끌어다 놓기를 얹는다. */
+      list += `<div class="cohist-drop" data-ck="${esc(caseKeyOf(r))}"
+          ondragover="coDocDragOver(event)" ondragleave="coDocDragLeave(event)"
+          ondrop="coDocDrop(event,'${esc(caseKeyOf(r))}')">`
+        + erpHistRowHtml(r, grouped);
       /* 2단계 — 이름 대조로 붙은 서류를 그 사업 «바로 아래»에 놓는다.
          ⚠ r._i 는 all 안에서의 자리다(아래에서 심어 둔다). 걸러 보거나 정렬을
            바꿔도 붙임새가 따라오게 하려면 «줄»이 아니라 «기록»을 열쇠로 써야 한다. */
-      list += coCaseDocsHtml(plan.byCase[r._i]);
+      list += coCaseDocsHtml(plan.byCase[r._i]) + `</div>`;
     });
   }
 
@@ -17363,13 +17528,15 @@ function coLeftDocsPaint(left, total){
   const box = $('coDocsBox'); if(!box) return;
   if(!(total||0)){ box.innerHTML = ''; return; }
   box.innerHTML = coDocsListHtml(left, '아직 안 붙은 서류',
-    '어느 사업·사건 것인지 이름으로는 알 수 없었습니다 — 사업 이름이 서류 제목에 없으면 못 붙입니다');
+    '어느 사업·사건 것인지 이름으로는 알 수 없었습니다. 위의 사업 위로 «끌어다 놓으면» 붙고, 같은 이름은 다음부터 저절로 붙습니다');
 }
 function coDocsListHtml(docs, title, hint){
   if(!docs || !docs.length) return '';
   return `<div class="pcsec" style="margin:16px 4px 8px">${esc(title)} ${docs.length}건</div>
     ${hint?`<div class="codochint">${esc(hint)}</div>`:''}
-    ${docs.map(d=>`<div class="cof codoc" onclick="openCoDoc('${esc(d.year||'')}','${esc(d.id||'')}','${esc(d.owner||'')}')"
+    ${docs.map(d=>`<div class="cof codoc" draggable="${d._k?'true':'false'}"
+        ondragstart="coDocDragStart(event,'${esc(d._k||'')}')"
+        onclick="openCoDoc('${esc(d.year||'')}','${esc(d.id||'')}','${esc(d.owner||'')}')"
         title="사진첩에서 이 서류를 엽니다">
       <span>${esc(d.name||'서식')}</span>
       <b>${d.at?fmtDate(d.at):''}${d.by?` · ${esc(d.by)}`:''}
