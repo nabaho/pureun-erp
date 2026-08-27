@@ -162,11 +162,95 @@ test('둘 다 안 열리면 «왜 안 되는지» 말한다 — 조용히 멎으
   assert.ok(r.err && /PDF/.test(r.err), '★ 알아들을 말이 없습니다: ' + r.err);
 });
 
-test('★ 우리 사본이 저장소에 실제로 있고, 바깥 것과 «같은 판»이다', () => {
-  const here = fs.readFileSync(path.join(R, 'vendor', 'pdf.min.js'), 'utf8');
+/* ══════════ ②-2 묶는 도구(jszip)도 우리 것부터 — 대표 지시 2026-08-25 ══════════
+   PDF 와 같은 까닭이다. 바깥이 막히면 「여러 장 내려받기」가 통째로 멎는다.
+   ⚠ 저장소에 넣은 사본은 바깥에서 새로 받은 것이 아니라, 정부사업일정 화면에
+      이미 통째로 박혀 돌고 있던 그 판을 꺼내 파일로 옮긴 것이다. */
+
+function runZip(fail) {
+  const tried = [];
+  const ctx = {
+    window: {}, Error, Promise, console: { warn() {} },
+    document: {
+      head: { appendChild(s) {
+        setTimeout(function () {
+          if (fail && s.src.indexOf(fail) >= 0) { s.onerror(); return; }
+          ctx.window.JSZip = ctx.window.JSZip || function () {};
+          s.onload();
+        }, 0);
+      } },
+      createElement() { return new Proxy({}, {
+        set(t, k, v) { if (k === 'src') tried.push(v); t[k] = v; return true; } }); },
+    },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(fnOf('loadScriptOnce') + '\n' +
+    app.match(/const ZIP_LIB_HERE[\s\S]*?\n\}/)[0], ctx);
+  return ctx.loadZipLib().then(
+    function () { return { tried: tried }; },
+    function (e) { return { tried: tried, err: e.message }; });
+}
+
+test('★ 묶는 도구도 우리 사본을 먼저 쓴다', async () => {
+  const r = await runZip(null);
+  assert.ok(r.tried.length, '아무것도 안 불렀습니다');
+  assert.ok(r.tried[0].indexOf('vendor/') === 0,
+    '★ 처음 부른 것이 「' + r.tried[0] + '」입니다 — 우리 사본이어야 합니다');
+  assert.equal(r.tried.length, 1, '★ 우리 사본이 열렸는데 바깥까지 불렀습니다');
+});
+
+test('★ 묶는 도구도 안 열리면 바깥으로 물러선다', async () => {
+  const r = await runZip('vendor/');
+  assert.equal(r.tried.length, 2, '한 번만 해 보고 포기했습니다');
+  assert.ok(r.tried[1].indexOf('https://') === 0, '바깥으로 안 물러섰습니다');
+  assert.ok(!r.err, '물러섰는데도 실패로 끝났습니다: ' + r.err);
+});
+
+test('묶는 도구도 둘 다 안 열리면 말해 준다', async () => {
+  const r = await runZip('jszip');
+  assert.ok(r.err && /묶는 도구/.test(r.err), '★ 알아들을 말이 없습니다: ' + r.err);
+});
+
+/* 화면이 «부르는 그 주소»를 읽는다 — 손으로 적으면 오타를 못 잡는다.
+   ⚠ 실제로 겪었다: 주소를 vendor/jszip.js 로 슬쩍 바꿔 봤더니 검사가 통과했다.
+     「vendor 로 시작하는가」만 보고 있었던 탓이다. 있는 파일인지까지 봐야 한다. */
+function herePath(name) {
+  const m = app.match(new RegExp('const ' + name + " = '([^']+)'"));
+  assert.ok(m, name + ' 를 찾지 못했습니다');
+  return m[1];
+}
+
+test('★ 화면이 부르는 사본이 «저장소에 실제로 있다» — 오타 하나면 늘 바깥으로 샌다', () => {
+  ['PDF_LIB_HERE', 'PDF_WORKER_HERE', 'ZIP_LIB_HERE'].forEach(function (n) {
+    const p = herePath(n);
+    assert.ok(fs.existsSync(path.join(R, p)),
+      '★ ' + n + ' 가 「' + p + '」를 부르는데 그런 파일이 없습니다 — 늘 바깥으로 물러섭니다');
+  });
+});
+
+test('★ 묶는 도구 사본이 «진짜로 도는 물건»이다 — 판·묶기·풀기까지 본다', async () => {
+  const src = fs.readFileSync(path.join(R, herePath('ZIP_LIB_HERE')), 'utf8');
+  /* 브라우저인 척 넘겨 준다 — UMD 가 거기에 자기를 매단다 */
+  const win = {}, slf = {};
+  new Function('window', 'self', src)(win, slf);
+  const Z = win.JSZip || slf.JSZip;
+  assert.equal(typeof Z, 'function', '★ 사본이 켜지지 않습니다');
+  const cdn = (app.match(/jszip\/([\d.]+)\/jszip\.min\.js/) || [])[1];
+  assert.equal(Z.version, cdn,
+    '★ 사본(' + Z.version + ')과 물러설 바깥 것(' + cdn + ')의 판이 다릅니다');
+  /* 켜지기만 하고 안 돌아가면 소용없다 — 한글을 넣어 묶었다 풀어 본다 */
+  const z = new Z();
+  z.file('시험.txt', '푸른노무법인');
+  const buf = await z.generateAsync({ type: 'nodebuffer' });
+  assert.equal(buf.slice(0, 2).toString(), 'PK', '★ zip 이 아닙니다');
+  const back = await (await Z.loadAsync(buf)).file('시험.txt').async('string');
+  assert.equal(back, '푸른노무법인', '★ 풀어 보니 내용이 다릅니다');
+});
+
+test('★ PDF 사본이 바깥 것과 «같은 판»이다 — 물러설 때 조용히 어긋나면 안 된다', () => {
+  const here = fs.readFileSync(path.join(R, herePath('PDF_LIB_HERE')), 'utf8');
   const cdn = (app.match(/pdf\.js\/([\d.]+)\/pdf\.min\.js/) || [])[1];
   assert.ok(cdn, '물러설 바깥 주소를 찾지 못했습니다');
   assert.ok(here.indexOf(cdn) >= 0,
     '★ 저장소 사본과 바깥 것의 판이 다릅니다(바깥 ' + cdn + ') — 물러설 때 조용히 어긋납니다');
-  assert.ok(fs.existsSync(path.join(R, 'vendor', 'pdf.worker.min.js')), '일꾼 사본이 없습니다');
 });
