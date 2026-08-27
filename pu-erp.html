@@ -7620,6 +7620,18 @@ window.popConfirm = function(msg, onYes, opts){
   Object.assign(ok.style, { padding:'4px 12px', fontSize:'11.5px', color:'#fff', border:'1px solid '+(danger?'#dc2626':'#1e40af'), background:(danger?'#dc2626':'#1e40af'), borderRadius:'4px', cursor:'pointer', fontWeight:'700' });
   /* 세 번째 손 — 「더하기 / 바꾸기 / 그만두기」처럼 길이 셋일 때만 쓴다.
      ⚠ 이 손을 고르면 true·false 가 아니라 'third' 가 온다. thirdText 를 안 준 곳은 그대로다. */
+  /* 길이 넷 이상이면 choices 로 준다 — [{key,label}] 를 그대로 단추로 깔고 key 를 돌려준다.
+     ⚠ 안 준 곳은 그대로다(취소/확인 둘). 이 물음창은 230군데가 쓴다. */
+  var extra = [];
+  (opts.choices || []).forEach(function(c){
+    if(!c || !c.key) return;
+    var b2 = document.createElement('button');
+    b2.textContent = c.label || c.key;
+    Object.assign(b2.style, { padding:'4px 10px', fontSize:'11.5px', background:'#fff',
+      color:'#1e40af', border:'1px solid #bfdbfe', borderRadius:'4px', cursor:'pointer', fontWeight:'700' });
+    b2.onclick = function(){ close(c.key); };
+    extra.push(b2);
+  });
   var third = null;
   if(opts.thirdText){
     third = document.createElement('button');
@@ -7627,7 +7639,10 @@ window.popConfirm = function(msg, onYes, opts){
     Object.assign(third.style, { padding:'4px 10px', fontSize:'11.5px', background:'#fff',
       color:'#dc2626', border:'1px solid #fecaca', borderRadius:'4px', cursor:'pointer', fontWeight:'700' });
   }
-  btns.appendChild(cancel); if(third) btns.appendChild(third); btns.appendChild(ok);
+  btns.appendChild(cancel); if(third) btns.appendChild(third);
+  extra.forEach(function(b2){ btns.appendChild(b2); });
+  if(!opts.choices || !opts.choices.length) btns.appendChild(ok);
+  /* ⚠ choices 를 준 곳에는 「확인」을 안 붙인다 — 고를 것이 다섯이 되면 무엇이 기본인지 흐려진다. */
   box.appendChild(btns);
   document.body.appendChild(box);
   // 위치 잡기 (anchor 아래, 화면 밖이면 위로 / 오른쪽 밖이면 안쪽으로)
@@ -35738,7 +35753,8 @@ if(typeof window !== 'undefined'){
 // 업체입금 탭의 addIncome과 같은 형태의 자문료 입금 레코드를 만든다.
 // (거래내역 화면에서 연 모달은 IncomeCompanyTab의 addIncome 클로저에 닿을 수 없다 —
 //  업체입금에서 열 때는 props.addIncome을 넘겨 그쪽을 그대로 쓴다)
-function erpAddCompanyIncome(co, month, year, date, note){
+/* kind — 안 주면 자문료. 자문이 «해지»된 업체에는 컨설팅·사건 미납이 들어오기도 한다(대표 확인). */
+function erpAddCompanyIncome(co, month, year, date, note, kind){
   try {
     if(!co || !co.name) return false;
     var ym = String(year) + '-' + ('0'+month).slice(-2);
@@ -35753,7 +35769,7 @@ function erpAddCompanyIncome(co, month, year, date, note){
     return dbUpsert('finance_income', {
       id:'fi-adv-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
       date:date, amount:co.fee||0, sourceKind:'company', sourceId:'',
-      companyName:co.name, kind:'자문료', payDay:co.payDay||'',
+      companyName:co.name, kind:(kind || '자문료'), payDay:co.payDay||'',
       managerSid:co.mainSid||'', managerName:co.mainName||'',
       note:note||'', perfShares:[], createdAt:(new Date()).toISOString()
     }) !== false;
@@ -36070,7 +36086,7 @@ function erpParseNicebill(raw, det){
 
 // ── 회원명·사업자번호 → ERP 업체 색인 (파싱 1회만 만든다 — 행마다 업체목록을 훑지 않도록) ──
 function erpNicebillCoIndex(){
-  var idx = { byNorm:{}, byBiz:{}, list:[], cache:{} };
+  var idx = { byNorm:{}, byBiz:{}, byPrev:{}, list:[], cache:{} };
   var all = dbGet('companies', []) || [];
   if(!Array.isArray(all)) return idx;
   for(var i=0; i<all.length; i++){
@@ -36086,13 +36102,22 @@ function erpNicebillCoIndex(){
     idx.list.push(e);
     if(e.norm && !idx.byNorm[e.norm]) idx.byNorm[e.norm] = e;
     if(e.biz.length >= 10 && !idx.byBiz[e.biz]) idx.byBiz[e.biz] = e;
+    /* 예전 이름도 싣는다 (2026-08-26 대표 지시) — 이름이 바뀐 사업장이 CMS 명세에는
+       옛 이름으로 찍혀 들어온다. ⚠ 현재 이름·번호로 못 찾았을 때만 본다(아래 찾는 순서). */
+    if(typeof erpPrevList === 'function'){
+      erpPrevList(c).forEach(function(p){
+        var pk = erpNormName(p);
+        if(pk && !idx.byNorm[pk] && !idx.byPrev[pk]) idx.byPrev[pk] = { e:e, matched:p };
+      });
+    }
   }
   return idx;
 }
 
 // 회원명(+사업자번호) → ERP 업체 / 없으면 null
 // ① 이름 정규화 정확일치 → ② 사업자번호 일치 → ③ 이름 유사도 88↑ → ④ 학습된 입금자 별칭
-function erpNicebillMatchCo(idx, name, bizNo){
+/* out 을 주면 «무엇을 보고 찾았는지» 담아 준다({via,matched}) — 화면에 적으려고. */
+function erpNicebillMatchCo(idx, name, bizNo, out){
   if(!idx) return null;
   var nm = erpNormName(name);
   var bz = _nbDigits(bizNo);
@@ -36101,6 +36126,10 @@ function erpNicebillMatchCo(idx, name, bizNo){
   var hit = null;
   if(nm && idx.byNorm[nm]) hit = idx.byNorm[nm];
   if(!hit && bz.length >= 10 && idx.byBiz[bz]) hit = idx.byBiz[bz];
+  /* ★ 예전 이름 — 현재 이름·번호로 못 찾았을 때만 본다.
+     번호는 안 겹치지만 이름은 겹칠 수 있어서, 번호가 늘 먼저다. */
+  var _prevHit = null;
+  if(!hit && nm && idx.byPrev && idx.byPrev[nm]){ _prevHit = idx.byPrev[nm]; hit = _prevHit.e; }
   if(!hit && nm){
     var best = null, bestSc = 0;
     for(var i=0; i<idx.list.length; i++){
@@ -36117,6 +36146,10 @@ function erpNicebillMatchCo(idx, name, bizNo){
       var an = erpNormName(al.companyName);
       if(an && idx.byNorm[an]) hit = idx.byNorm[an];
     }
+  }
+  if(out){
+    out.via = _prevHit ? 'prev' : (hit ? 'name' : '');
+    out.matched = _prevHit ? _prevHit.matched : (hit ? hit.name : '');
   }
   if(idx.cache){
     if(Object.keys(idx.cache).length > 4000) idx.cache = {};
@@ -36480,12 +36513,15 @@ function CmsMatchModal(props){
       var _nbIdx = erpNicebillCoIndex();
       var _items = [], _pick = [], _seen = {}, _noLink = 0;
       _nbInfo.rows.forEach(function(r){
-        var co = erpNicebillMatchCo(_nbIdx, r.name, r.bizNo);
+        var _mv = {};
+        var co = erpNicebillMatchCo(_nbIdx, r.name, r.bizNo, _mv);
         var cn = co ? co.name : '';
         var inPool = !!(cn && byName[cn]);
         if(!cn) _noLink++;
         _items.push({ name:r.name, coName:cn, amount:parseInt(r.amount,10)||0,
-                      inPool:inPool, paid:!!(cn && paidMap[cn]) });
+                      inPool:inPool, paid:!!(cn && paidMap[cn]),
+                      /* 말없이 붙지 않는다 — 무엇을 보고 붙였는지 줄에 적는다. */
+                      prevVia:(_mv.via === 'prev' ? _mv.matched : '') });
         if(inPool && !paidMap[cn] && !_seen[cn]){ _seen[cn] = 1; _pick.push(cn); }
       });
       nbRef.current = { info:_nbInfo, items:_items, pick:_pick, noLink:_noLink };
@@ -36559,7 +36595,17 @@ function CmsMatchModal(props){
       try{
         var _co = byNameAll[name];
         erpLearnPayerAlias(linking.name, { companyName:name, companyId:(_co && _co.id) || '' });
-        showToast('🔗 「'+linking.name+'」 → '+name+' 으로 기억했습니다 (다음 달부터 저절로 이어집니다)');
+        /* ★ 회원명 별칭만이 아니라 «업체의 예전 이름»으로도 기억한다 (2026-08-26 대표 지시).
+           별칭은 이 화면에서만 통하지만, 예전 이름은 업체관리·계약창·거래내역이 함께 쓴다.
+           ⚠ 막는 규칙 셋(다른 업체의 현재 이름·이미 남의 예전 이름·자기 이름)에 걸리면 안 넣는다. */
+        var _pw = (typeof erpPrevNameConflict === 'function' && _co)
+          ? erpPrevNameConflict(dbGet('companies', []) || [], _co.id, linking.name) : '안 넣음';
+        if(!_pw && _co){
+          dbPatch('companies', _co.id, { prevNames: erpPrevList(_co).concat([linking.name]) });
+        }
+        showToast('🔗 「'+linking.name+'」 → '+name+' 으로 기억했습니다'
+          + (!_pw ? ' (예전 이름으로도 남겼습니다 — 업체관리에서 지울 수 있습니다)'
+                  : ' (다음 달부터 저절로 이어집니다)'));
       }catch(_le){ if(window._erpErrLog) window._erpErrLog(_le); }
       setLinking(null);
     }
@@ -36580,6 +36626,21 @@ function CmsMatchModal(props){
             + '\n\n합계 '+sum.toLocaleString()+'원'+(diff? ' (차액 '+diff.toLocaleString()+'원)':'')
             + (_dup.length ? '\n\n※ 이미 입금표시된 '+_dup.length+'곳은 금액만 맞추고 새로 만들지 않습니다.' : '');
     if(!(await popConfirm(msg))) return;
+    /* ★ 자문이 «해지»되었거나 자문료가 없는 업체가 섞여 있으면 종류를 묻는다.
+       대표 확인: 「대부분 자문료이지만 컨설팅 미납·사건 미납으로 들어오는 경우 있음」.
+       ⚠ 한 번만 묻고 그 종류를 그 업체들에 함께 쓴다 — 곳마다 물으면 열 번 뜬다. */
+    var offNames = sel.filter(function(n){ var c = byNameAll[n]; return !!(c && c.off); });
+    var offKind = '자문료';
+    if(offNames.length){
+      var k = await popConfirm('자문이 «해지»되었거나 자문료가 없는 업체가 ' + offNames.length + '곳 있습니다.\n'
+        + offNames.slice(0, 8).join(', ') + (offNames.length > 8 ? (' 외 ' + (offNames.length - 8) + '곳') : '') + '\n\n'
+        + '이 입금은 무엇으로 잡을까요?',
+        { choices:[{ key:'자문료', label:'자문료' }, { key:'컨설팅', label:'컨설팅' },
+                   { key:'사건', label:'사건' }, { key:'기타수입', label:'기타수입' }],
+          cancelText:'그만두기', danger:false });
+      if(k === false) return;                       // 그만두기 · 바깥 누르기 · Esc
+      offKind = k;
+    }
     setBusy(true);
     var ok=0, skip=0;          // skip = 이미 입금표시돼 «금액만 맞춘» 곳
     var okNames = [];
@@ -36588,8 +36649,10 @@ function CmsMatchModal(props){
       if(!co) return;
       if(paidMap[n]){ skip++; return; }              // 중복 방지 2차 관문 (이미 입금표시된 업체+월)
       var d = ymd || todayYMD();
-      if(props.addIncome){ props.addIncome(co, month, d, 'CMS 일괄이체 자동매칭'); }
-      else if(!erpAddCompanyIncome(co, month, year, d, 'CMS 일괄이체 자동매칭')){ skip++; return; }
+      /* 해지·미등록 업체면 위에서 고른 종류로 (나머지는 자문료) */
+      var _k = (byNameAll[n] && byNameAll[n].off) ? offKind : '자문료';
+      if(props.addIncome){ props.addIncome(co, month, d, 'CMS 일괄이체 자동매칭', _k); }
+      else if(!erpAddCompanyIncome(co, month, year, d, 'CMS 일괄이체 자동매칭', _k)){ skip++; return; }
       paidMap[n] = 1; ok++; okNames.push(n);
     });
     // ── CMS 일괄이체로 들어온 업체 = 실제 CMS 자동이체 업체 → 업체관리 CMS 체크를 켜 둔다 ──
@@ -36701,7 +36764,8 @@ function CmsMatchModal(props){
                 border:'1px solid '+(bad?'#fecaca':(it.paid?'#e2e8f0':'#eff6ff'))}},
               it.name + (it.coName && erpNormName(it.coName)!==erpNormName(it.name) ? ' → '+it.coName : '')
               + ' ' + it.amount.toLocaleString()+'원'
-              + (bad ? ' · 연결 안 됨' : (it.paid ? ' · 이미입금' : (it.inPool ? '' : ' · 목록없음'))));
+              + (bad ? ' · 연결 안 됨' : (it.paid ? ' · 이미입금' : (it.inPool ? '' : ' · 목록없음')))
+              + (it.prevVia ? (' · 예전 이름 「' + it.prevVia + '」') : ''));
           })
         )
       ),
@@ -44889,7 +44953,8 @@ function IncomeCompanyTab(){
     return incomes.find(function(i){return i.companyName===name&&i.sourceKind==='company'&&(i.date||'').slice(0,7)===ym;});
   }
 
-  function addIncome(co, month, date, note){
+  /* kind — 안 주면 자문료 (CMS 나누기에서 해지 업체 종류를 넘겨준다) */
+  function addIncome(co, month, date, note, kind){
     var existing=getItem(co.name,month);
     if(existing){
       if(!incomeLockGuard(existing) || !incomeLockGuard({date:date})) return;
@@ -44898,7 +44963,7 @@ function IncomeCompanyTab(){
       persistOneIncome({
         id:'fi-adv-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
         date:date, amount:co.fee||0, sourceKind:'company', sourceId:'',
-        companyName:co.name, kind:'자문료', payDay:co.payDay||'',
+        companyName:co.name, kind:(kind || '자문료'), payDay:co.payDay||'',
         managerSid:co.mainSid, managerName:co.mainName,
         note:note||'', perfShares: [], createdAt:(new Date()).toISOString()
       });

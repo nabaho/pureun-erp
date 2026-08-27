@@ -142,6 +142,9 @@ test('★★ 세 번째 손을 안 준 곳은 «그대로»다 (다른 물음창
   assert.ok(/var third = null;/.test(fn), '기본이 없음이어야 한다');
   assert.ok(fn.indexOf('if(opts.thirdText){') >= 0, 'thirdText 를 준 곳에만 만들어야 한다');
   assert.ok(fn.indexOf('opts.thirdText = ') < 0, '부르는 쪽이 안 준 값을 스스로 채우고 있다');
-  assert.ok(/btns\.appendChild\(cancel\); if\(third\) btns\.appendChild\(third\); btns\.appendChild\(ok\)/.test(fn),
-    '안 준 곳에도 단추가 생긴다');
+  /* ⚠ 2026-08-26 다시 겨눔 — 갈래를 넷 이상 낼 수 있게 되면서(choices) 이 줄의 «모양»이 바뀌었다.
+     지켜야 할 규칙은 「아무것도 안 준 곳에는 취소·확인 둘만 나온다」이지 줄의 생김새가 아니다. */
+  assert.ok(/btns\.appendChild\(cancel\);/.test(fn), '취소가 늘 있어야 한다');
+  assert.ok(/if\(third\) btns\.appendChild\(third\);/.test(fn), '세 번째 손을 준 곳에만 붙여야 한다');
+  assert.ok(/btns\.appendChild\(ok\);/.test(fn), '확인이 사라졌다');
 });
