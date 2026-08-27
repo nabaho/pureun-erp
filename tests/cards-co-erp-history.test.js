@@ -44,6 +44,11 @@ const code = _pure + '\n' + source.slice(nameAt, renderEnd);
     _erpConsTypes: [{ code:'cons-ilteo', name:'일터상생혁신', agency:'노사발전재단' }],
     _erpHistTypes: { consulting: [{ code:'cons-ilteo', name:'일터상생혁신', agency:'노사발전재단' }] },
     ErpMatch: { nameByEmail: {} },
+    /* 2026-08-26(2단계): coHistPaint 가 서류 붙임새를 함께 셈한다 —
+       이 검사들은 이력 줄만 보므로 «붙일 서류가 없다»고 답하는 대역을 준다. */
+    docCasePlan: function(){ return { byCase:{}, left:[] }; },
+    coLeftDocsPaint: function(){},
+    coCaseDocsHtml: function(){ return ''; },
     $: id => { if(id==='coErpHistBox') return { set innerHTML(v){ calls.boxHtml=v; }, get innerHTML(){ return calls.boxHtml; } }; return null; }
   };
   ctx.globalThis = ctx;
