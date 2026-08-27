@@ -48,9 +48,13 @@ test('★ 미리보기 주소만 받는 길이 있다 — 파일까지 내려받
 });
 
 test('판독(OCR)이 쓰는 길은 그대로 내용을 받는다', () => {
-  /* 주소만으로는 글자를 읽을 수 없다 — loadFull 까지 바꾸면 판독이 죽는다 */
-  const fn = storeFnOf('loadFull');
-  assert.match(fn, /withStorage\(/, 'loadFull 이 창고를 안 봅니다');
+  /* 주소만으로는 글자를 읽을 수 없다 — 원본 길까지 「주소만」으로 바꾸면 판독이 죽는다.
+     ⚠ 2026-08-27 — loadFull 은 「까닭까지 주는 길」(loadFullDetail)을 얇게 감싼 것이
+       됐다. 창고를 보는 몸통은 그쪽에 있다. 이름이 아니라 «내용을 받는가»를 본다. */
+  const fn = storeFnOf('loadFullDetail');
+  assert.match(fn, /withStorage\(/, '원본 길이 창고를 안 봅니다');
+  assert.match(storeFnOf('loadFull'), /loadFullDetail\(/,
+    'loadFull 이 그 길을 안 거칩니다 — 길이 두 벌이 되면 한쪽만 고쳐집니다');
 });
 
 /* ── ② 화면: 적어 둔 주소를 먼저 쓴다 ── */

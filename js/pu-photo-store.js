@@ -1348,12 +1348,20 @@
   /* 민감 서류 원본을 **서버에서** 받아온다 — 주소를 안 남기기로 했으므로 이 길이 있어야
      관리자·공유받은 사람이 계약서를 볼 수 있다(창고 규칙은 「자기 사진만」이라 403 이다).
      ⚠ 실패하면 **조용히 넘기지 않는다.** 왜 안 보이는지 말해 줘야 「고장」으로 안 읽는다. */
-  function fullFromServer(year, id, owner) {
+  function fullFromServer(year, id, owner, mark) {
+    var note = mark || function () {};
     var f = (typeof fetch === 'function') ? fetch : null;
-    if (!f || !deps.auth) return Promise.resolve('');
+    if (!f) { note('nofetch', '이 브라우저에서는 서버에 청할 수 없습니다'); return Promise.resolve(''); }
+    if (!deps.auth) {
+      /* ⚠ 이 한 줄이 계약서 31장을 세 앱에서 통째로 안 보이게 했다(2026-08-26).
+         화면이 저장 층을 세우면서 열쇠를 안 넘긴 것인데, 예전에는 그냥 빈손이라
+         「원본이 없습니다」로 보여 아무도 까닭을 몰랐다. 이제 그대로 말한다. */
+      note('nokey', '이 화면이 서버에 내밀 열쇠를 안 넘겼습니다 — 관리자에게 알려 주세요');
+      return Promise.resolve('');
+    }
     var user = null;
     try { user = deps.auth.currentUser; } catch (_) { user = null; }
-    if (!user) return Promise.resolve('');
+    if (!user) { note('nologin', '로그인이 풀렸습니다 — 새로고침 뒤 다시 열어 주세요'); return Promise.resolve(''); }
     return user.getIdToken().then(function (t) {
       return f(PHOTO_VIEW_URL, {
         method: 'POST',
@@ -1365,7 +1373,10 @@
         if (r.ok && j && j.ok && j.dataUrl) return j.dataUrl;
         /* 400 = 「민감 서류가 아니다」 — 부르는 쪽이 헛짚은 것이니 조용히 물러난다.
            그 밖(403·404·502)은 사람이 알아야 하는 상태다. */
-        if (r.status === 400) return '';
+        if (r.status === 400) {
+          note('notsensitive', '이 사진은 서버를 거치는 서류가 아닙니다 — 원본이 어디에도 없습니다');
+          return '';
+        }
         var e = new Error((j && j.error) || ('원본을 받아오지 못했습니다 (오류 ' + r.status + ')'));
         e.status = r.status;
         throw e;
@@ -1373,7 +1384,19 @@
     });
   }
 
-  function loadFull(year, id, owner) {
+  /* ── 원본 받아오기 : **빈손이면 까닭을 함께 돌려준다** (대표 지시 2026-08-27) ──
+
+     2026-08-26~27 에 찾은 고장 셋이 늦게 발견된 까닭이 하나였다 —
+     **조용히 빈손으로 «성공»했다.** 오류가 안 나니 아무도 안 물어봤고,
+     화면은 「원본을 불러오는 중…」에서 영영 멎거나 그냥 빈칸으로 보였다.
+
+     그래서 이 길 하나만 둔다: 빈손이면 **왜 빈손인지**를 함께 준다.
+     · loadFull 은 이것을 얇게 감싼 것이라 **두 벌이 되지 않는다** —
+       두 벌로 두면 그것 자체가 오늘 잡으려는 「한쪽만 고쳐진 것」이 된다.
+     · 403·404·502 처럼 «사람이 알아야 하는» 상태는 여전히 던진다(빈손이 아니다). */
+  function loadFullDetail(year, id, owner) {
+    var d = { code: '', why: '' };
+    var mark = function (code, why) { if (!d.code) { d.code = code; d.why = why; } };
     return loadVia('fullUrl', year, id, owner, function () {
       return withStorage(function () { return filePath(year, id, 'full', owner); }, function () {
         return withLegacy(blobPath(year, id, owner), legacyRoot('blobs') + '/' + year + '/' + id);
@@ -1381,9 +1404,17 @@
         /* 창고에도 옛 자리에도 없다 — **민감 서류라 주소를 안 남긴 것**일 수 있다.
            그때는 서버에 청한다. 이 갈래가 없으면 계약서가 「원본이 없습니다」로 보인다. */
         if (v) return v;
-        return fullFromServer(year, id, owner);
+        return fullFromServer(year, id, owner, mark);
       });
+    }).then(function (src) {
+      if (src) return { src: src, code: '', why: '' };
+      if (!d.code) mark('none', '사진첩에 원본이 없습니다 — 지워졌거나 아직 다 안 올라갔을 수 있습니다');
+      return { src: '', code: d.code, why: d.why };
     });
+  }
+
+  function loadFull(year, id, owner) {
+    return loadFullDetail(year, id, owner).then(function (r) { return r.src; });
   }
 
   /* ── 한 해의 미리보기를 **한 번에** 받아온다 (대표 보고 2026-08-10) ──
@@ -1969,6 +2000,9 @@
     rememberThumbUrl: rememberThumbUrl,
     forgetThumbUrl: forgetThumbUrl,
     loadFull: loadFull,
+    /* 원본을 «까닭과 함께» — 화면에 사진을 띄우는 곳은 이것을 쓴다.
+       빈손일 때 아무 말도 못 하면 사람은 「고장」인지 「원래 없는 것」인지 모른다. */
+    loadFullDetail: loadFullDetail,
     loadText: loadText,
     init: init,
     getMode: getMode,

@@ -444,7 +444,7 @@ const t = (name, got, want) => {
     /* ⚠ 주인을 함께 넘긴다(2026-08-26) — 관리자가 남의 사진을 고를 수 있게 되면서,
        안 넘기면 내 자리를 뒤지다 빈손으로 돌아온다. */
     t('원본 읽기는 공용 저장 층을 거친다',
-      /PuPhotoStore\.loadFull\(src\.year, src\.id, src\.owner \|\| undefined\)/.test(vw), true);
+      /PuPhotoStore\.loadFull(Detail)?\(src\.year, src\.id, src\.owner \|\| undefined\)/.test(vw), true);
     t('★ 판독 결과는 이미 받아 둔 목록에서 꺼낸다 (다시 안 읽는다)',
       /erpLoadMyContractPhotos\(function\(items\)\{/.test(vw), true);
 
