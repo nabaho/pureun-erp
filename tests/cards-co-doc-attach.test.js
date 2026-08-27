@@ -236,8 +236,13 @@ test('★ «맞춰 보는 셈»은 서버에 쓰지 않는다 — 쓰는 것은 
   assert.ok(!/Store\.db|\.update\(|\.remove\(/.test(paint), '그리면서 쓰기가 나가면 안 된다');
 });
 
-test('날짜 추정은 아직 «안» 켰다 — 4단계다', () => {
-  const body = slice('const CASE_TOK_STOP = new Set([', 'function coHistPaint(){');
-  assert.ok(!/\.from|\.to\b|takenAt|기간 안/.test(body),
-    '날짜로 붙이는 근거가 들어왔다 — 4단계에서 할 일이다');
+test('날짜 추정은 «이름 대조보다 뒤»에 온다 — 2026-08-26 에 4단계로 켰다', () => {
+  /* ⚠ 예전에는 「날짜 근거가 아예 없다」를 못 박았다. 4단계에서 켜면서 뜻을 바꿨다:
+       없는 것이 아니라 «이름보다 약하다». 차례가 그것을 지킨다.
+       날짜 셈 자체는 cards-co-doc-date 가 따로 못 박는다. */
+  const body = slice('function docCasePlan(docs, cases, pins, rules){', '/* 끌어다 놓았을 때 쓸 자리');
+  const name = body.indexOf('docCaseMatch(d.name, cases)');
+  const date = body.indexOf('docDateHit(d.at, cases)');
+  assert.ok(name > 0, '이름 대조가 사라졌다');
+  assert.ok(date > name, '날짜가 이름보다 앞이면 약한 근거가 이긴다');
 });

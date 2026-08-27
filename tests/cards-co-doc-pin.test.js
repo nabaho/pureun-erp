@@ -219,10 +219,13 @@ test('끌어다 놓으라고 «적어» 둔다 — 안 적으면 아무도 안 �
   assert.match(HTML, /위의 사업 위로 «끌어다 놓으면» 붙고, 같은 이름은 다음부터 저절로 붙습니다/);
 });
 
-test('★ 지정·기억으로 붙은 것만 뗄 수 있다 — 이름 대조는 규칙이라 뗄 것이 없다', () => {
+test('★ 어떤 근거로 붙은 것이든 뗄 수 있다 — 2026-08-26(4단계)에 넓혔다', () => {
+  /* ⚠ 3단계까지는 지정·기억만 뗄 수 있었다. 그러면 이름·날짜로 «틀리게» 붙은 것을
+       물릴 길이 없다 — 떼도 다음에 같은 근거로 또 붙는다. 4단계에서 넓혔고,
+       기계가 추측한 것을 떼면 「안 붙임」 표시를 남긴다(cards-co-doc-date 가 못 박는다). */
   const body = slice('function coCaseDocsHtml(hits){', '/* ══════ 3단계 — 끌어다 놓기');
-  assert.match(body, /why === '지정' \|\| why === '기억'/);
-  assert.match(body, /coDocDetach\(/);
+  assert.match(body, /coDocDetach\('\$\{esc\(d\._k\|\|''\)\}','\$\{esc\(why\)\}'\)/,
+    '무슨 근거로 붙었는지 함께 넘겨야 한다');
 });
 
 test('근거마다 사람 말로 까닭을 적는다', () => {
@@ -253,7 +256,7 @@ test('화면을 억지로 고치지 않는다 — 구독이 새 값을 준다', 
 
 test('클라우드가 아니면 조용히 넘기지 않고 말해 준다', () => {
   const drop = slice('async function coDocDrop(e, caseKey){', '/* ✕ — 이 사업에서 뗀다.');
-  const off = slice('async function coDocDetach(docKey){', 'function coHistPaint(){');
+  const off = slice('async function coDocDetach(docKey, why){', 'function coHistPaint(){');
   [drop, off].forEach(b => assert.match(b, /Store\.mode!=='firebase'/));
 });
 
