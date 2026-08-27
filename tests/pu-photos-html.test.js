@@ -556,8 +556,12 @@ test('사진첩이 사람별로 갈려 있다 — 내 uid 를 owner 로 넘긴�
   assert.match(open, /listYear\(year, albumPickOwner\)/);
   // 2026-08-26 부터 자리는 «사진마다» 정한다 — 공유받은 것은 주인 자리다(pkOwnerOf).
   // 넘긴다는 뜻은 그대로다: 계정을 안 넘기면 저장 층이 거절한다.
-  const thumbs = gov.match(/function pkThumbs\([\s\S]*?\n\}/)[0];
-  assert.match(thumbs, /loadThumb\(it\.year, it\.id, pkOwnerOf\(it\)\)/);
+  /* ★ «어느 함수에서» 읽는지는 못 박지 않는다. 2026-08-27 요금 줄이기로 「보이는 것만」
+     읽게 쪼개지며 loadThumb 호출이 pkThumbs → pkThumbOne 으로 옮겼고, 이 검사가 그
+     함수 이름을 붙잡고 있어 저장소 전체 배포가 막혔다.
+     지킬 것은 하나다: 썸네일을 읽을 때 «사진마다 주인(pkOwnerOf)»을 넘기는가. */
+  assert.match(gov, /loadThumb\([^)]*pkOwnerOf\(/,
+    '썸네일을 읽을 때 사진마다 주인을 안 넘깁니다 — 공유받은 사진이 안 보이게 됩니다');
   const pick = gov.match(/async function pkPut\([\s\S]*?\n\}/)[0];
   assert.match(pick, /loadFull\(s\.year, s\.id, pkOwnerOf\(it\)\|\|owner\)/, '내 계정을 안 넘깁니다');
 });
