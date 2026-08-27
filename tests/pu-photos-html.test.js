@@ -2128,15 +2128,18 @@ test('명함틀을 켜면 그 안만 잘라 담는다', () => {
   assert.match(app, /id="camModeDocument"[^>]*setCamCaptureMode\('document'\)/);
 });
 
-test('몇 장 찍었는지 위 가운데에 크게 보인다', () => {
-  /* 왼쪽 아래 작은 딱지는 찍는 데 정신이 팔리면 놓친다(대표 지시). */
-  assert.match(app, /id="camCount"/);
+test('몇 장 찍었는지, 그리고 상한이 가까운지 알 수 있다', () => {
+  /* ⚠ 2026-08-27 대표 지시: "캡쳐3 표시가 필요하나 … 불필요하게 있는것 같다" —
+     윗줄에 늘 떠 있던 「📸 3장 찍었습니다」를 걷었다. 장수는 아래 왼쪽 사진에
+     붙는 「n장」 딱지와 완료 단추가 들고 있다(tests/photos-cam-aim.test.js).
+     여기서 지키는 것은 **두 가지 소식이 사라지지 않는 것**이다:
+       ① 몇 장 찍었는지가 어디엔가 있다  ② 상한이 다가온다는 예고가 있다. */
   const fn = app.match(/function renderCamStrip\([\s\S]*?\n\}/)[0];
-  assert.match(fn, /장 찍었습니다/, '장수를 말로 알려 주지 않습니다');
+  assert.match(fn, /more\.textContent = n \+ '장'/, '장수를 아무 데서도 안 알려 줍니다');
+  assert.match(fn, /\$\('camDone'\)\.innerHTML = n \?/, '완료 단추가 장수를 안 들고 있습니다');
   /* 상한이 가까우면 남은 수를 알려 준다 — 다 차고 나서 알면 늦다 */
   assert.match(fn, /장 더/, '상한이 가까울 때 남은 수를 안 알립니다');
   assert.match(fn, /다 찼습니다/);
-  assert.match(app, /#camCount\{[^}]*margin:0 auto/, '장수가 가운데에 있지 않습니다');
 });
 
 test('손전등을 켜 둔 채 카메라를 끄지 않는다', () => {

@@ -30,9 +30,17 @@ test('일반사진에서는 사각 틀과 자동촬영 감시를 끈다', () => 
   assert.match(mode[0], /stopAutoWatch\(\)/);
 });
 
-test('명함·서류 모드만 네 귀퉁이 안내와 안전한 자르기를 쓴다', () => {
-  assert.match(html, /#camFrame i\{[^}]*border:0 solid #34d399/);
-  assert.match(html, /#camFrame i\.tl\{[^}]*border-left-width:3px[^}]*border-top-width:3px/);
+test('명함·서류 모드만 눈에 보이는 안내와 안전한 자르기를 쓴다', () => {
+  /* ⚠ 2026-08-27 대표 지시: "꺽쇠 없이 가운데 중앙에 o 모양으로" — 네 귀퉁이 꺽쇠를 걷었다.
+     그래서 여기서 «꺽쇠의 모양»(border-left-width 따위)을 못 박지 않는다.
+     지켜야 하는 뜻은 둘이다:
+       ① 자르는 자리(#camFrame)의 «자리·크기»는 그대로다 — camShoot 이 이 칸을
+          getBoundingClientRect 로 읽어 자른다. 옮기거나 줄이면 엉뚱한 데가 잘린다.
+       ② 눈에 보이는 안내가 **무엇이든 하나는 있어야** 한다 — 없으면 어디에 맞출지 모른다. */
+  assert.match(html, /#camFrame\{[^}]*left:27%;right:27%[^}]*aspect-ratio:1\.6\/1/,
+    '★ 자르는 자리가 움직였습니다 — 찍은 사진이 엉뚱한 데서 잘립니다');
+  assert.match(html, /#camAim\{[^}]*border-radius:50%/,
+    '★ 눈에 보이는 조준 안내가 없습니다 — 어디에 맞출지 알 길이 없습니다');
   assert.match(html, /function cropPref\(\) \{ return showFrame\(\); \}/);
   const shoot = html.match(/async function camShoot\([^)]*\)[\s\S]*?(?=\nfunction renderCamStrip)/);
   assert.match(shoot[0], /if \(showFrame\(\)\)/);
