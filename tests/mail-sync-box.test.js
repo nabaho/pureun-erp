@@ -463,3 +463,64 @@ test('★ 서버가 번호를 다시 매겼으면(uidValidity 변경) 처음부�
   assert.equal(s.hi, 20, '지난 표시를 그대로 두면 새 번호를 건너뛴다');
   assert.equal(s.lo, 10);
 });
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   전달된 메일이 «통째로 첨부»된 것 (2026-08-27 검토에서 나옴)
+   ══════════════════════════════════════════════════════════════════════════
+   노무법인에 아주 흔한 모양이다 — 받은 메일을 그대로 붙여 보내는 것(message/rfc822).
+   그 첨부 «안»에 또 조각이 들어 있다.
+
+   ⚠ 예전에는 첨부인지 보기 «전»에 안으로 파고들었다. 그래서
+       화면에 보이는 차례 : [전달된메일.eml, 바깥첨부.pdf]   (작은 메일 — mailparser)
+       첨부 받는 쪽 차례  : [안쪽첨부.pdf,  바깥첨부.pdf]   (pickParts)
+     첫째 첨부를 누르면 «다른 파일»이 내려왔다.
+   ★ 사람 눈에 그것은 «파일 하나»다. 그래서 첨부인지 먼저 보고, 첨부면 안 파고든다. */
+
+const MS = require('../functions/mail-sync.js');
+
+/* 전달된 메일이 통째로 붙은 흔한 모양 */
+const FWD = { type:'multipart/mixed', childNodes:[
+  { type:'text/plain', part:'1', parameters:{ charset:'euc-kr' } },
+  { type:'message/rfc822', part:'2', disposition:'attachment',
+    dispositionParameters:{ filename:'전달된메일.eml' }, size:9000,
+    childNodes:[
+      { type:'text/plain', part:'2.1' },
+      { type:'application/pdf', part:'2.2', disposition:'attachment',
+        dispositionParameters:{ filename:'안쪽첨부.pdf' }, size:5000 } ] },
+  { type:'application/pdf', part:'3', disposition:'attachment',
+    dispositionParameters:{ filename:'바깥첨부.pdf' }, size:7000 } ]};
+
+test('★ 통째로 첨부된 메일은 «한 개»다 — 안으로 파고들면 누른 것과 다른 파일이 내려온다', () => {
+  const got = MS.pickParts(FWD, null, 0);
+  const names = got.atts.map(a => a.name);
+  assert.ok(names.indexOf('전달된메일.eml') >= 0,
+    '사람이 화면에서 보는 첨부(.eml)가 목록에 없습니다 — 누르면 다른 것이 옵니다');
+  assert.ok(names.indexOf('안쪽첨부.pdf') < 0,
+    '첨부 «안»의 것이 목록에 올라왔습니다 — 차례가 화면과 어긋납니다');
+  assert.ok(names.indexOf('바깥첨부.pdf') >= 0, '바깥 첨부가 빠졌습니다');
+  /* ⚠ 조각 이름을 함께 실어야 한다 — 받는 쪽이 번호가 아니라 이것으로 집는다 */
+  got.atts.forEach(a => assert.ok(a.part, a.name + ' 에 조각 이름이 없습니다'));
+});
+
+test('★ 📎 개수도 사람 눈과 같아야 한다 — 안쪽 것까지 세면 표시가 뜻을 잃는다', () => {
+  assert.equal(MB.attCount(FWD, 0), 2, '사람 눈에는 첨부가 둘입니다');
+  /* 안에 첨부가 셋 든 것을 붙여도 «한 개»다 */
+  const many = { type:'multipart/mixed', childNodes:[
+    { type:'text/plain', part:'1' },
+    { type:'message/rfc822', part:'2', disposition:'attachment',
+      dispositionParameters:{ filename:'묶음.eml' }, size:1,
+      childNodes:[1,2,3].map((n,i)=>({ type:'application/pdf', part:'2.'+(i+1),
+        disposition:'attachment', dispositionParameters:{ filename:'안'+n+'.pdf' }, size:1 })) } ]};
+  assert.equal(MB.attCount(many, 0), 1, '붙인 메일 하나를 여러 개로 세고 있습니다');
+});
+
+test('★ 본문 조각의 «글자표»를 들고 온다 — 없으면 큰 메일의 한글이 깨진다', () => {
+  const got = MS.pickParts(FWD, null, 0);
+  assert.equal(got.textCs, 'euc-kr', '글자표를 안 들고 옵니다');
+  /* 큰 메일은 이 값으로 읽는다 — utf-8 로 못 박으면 euc-kr 한글이 통째로 깨진다.
+     (작은 메일은 mailparser 가 알아서 해 주므로 큰 것만 그랬다 — 눈에 잘 안 띈다) */
+  const euc = Buffer.from([0xB0,0xA8,0xBB,0xE7,0xC7,0xD5,0xB4,0xCF,0xB4,0xD9]);
+  assert.equal(MB.toText(euc, got.textCs), '감사합니다');
+  assert.notEqual(euc.toString('utf8'), '감사합니다', '검사 밑그림이 틀렸습니다');
+});

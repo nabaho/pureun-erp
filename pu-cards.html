@@ -798,6 +798,15 @@ table.sbox tr.bad td{background:#fdf4f4}
 .dm-more[disabled]{color:#c2c4ca;cursor:default}
 
 /* ══════ 메일 한 통 보기 ══════ */
+/* 바깥 그림을 막았다는 줄 — 눌러서 풀 수 있다(다음메일과 같은 자리) */
+.dm-read .imghold{margin:8px 0 0;padding:8px 10px;border:1px solid #f0d9a8;background:#fffaf0;
+  border-radius:6px;font-size:12.5px;color:#7a5b18;line-height:1.6}
+.dm-read .imghold b{color:#5a4210}
+.dm-read .imghold button{margin-left:8px;font-family:inherit;font-size:12px;cursor:pointer;
+  color:#7a5b18;background:#fff;border:1px solid #e2cfa4;border-radius:5px;padding:3px 9px}
+/* 막아 둔 그림 자리 — 자리만 남기고 조용히 둔다(깨진 그림표가 줄줄이 뜨지 않게) */
+.dm-read .body img[data-hold]{display:inline-block;min-width:14px;min-height:14px;
+  background:#f4f5f7;border:1px dashed #d8dade;border-radius:3px}
 .dm-read{padding-top:4px}
 .dm-read .back{background:none;border:none;font-family:inherit;font-size:13px;color:#2563d1;
   cursor:pointer;padding:6px 2px}
@@ -11485,10 +11494,17 @@ function mbDomOf(email){
 
 /* 기업정보함 + ErpMatch 로 만든 주소표. 명함이 늦게 오므로 캐시를 비울 길을 둔다. */
 function mbWhoIndex(){
-  if(_mbWhoIdx) return _mbWhoIdx;
-  const byAddr = {}, domHit = {}, endAddr = {}, endDomHit = {}, coAddr = {};
   const items = (typeof state!=='undefined' && state.items) ? state.items : {};
-  Object.keys(items).forEach(k=>{
+  const keys = Object.keys(items);
+  /* ⚠ 명함 수가 «바뀌면» 다시 만든다 (2026-08-27).
+       예전에는 한 번 만들고 끝이었다. 그런데 기업정보함은 watchCardMap 으로 «흘러 들어온다» —
+       메일 화면이 먼저 그려지면 그때는 명함이 0장이라 표가 통째로 비고, 그 빈 표가
+       그대로 굳었다. 그러면 담당자가 «전부 담당 모름»으로 보이고, 새로고침을 해야만
+       제자리로 온다. 무엇이 틀렸는지 화면만 봐서는 알 길이 없는 종류의 고장이다.
+     ⚠ 판정을 «수»로 하는 것은 mbWhoMap(이름·회사 찾기)과 같은 결이다. */
+  if(_mbWhoIdx && _mbWhoIdx._n === keys.length) return _mbWhoIdx;
+  const byAddr = {}, domHit = {}, endAddr = {}, endDomHit = {}, coAddr = {};
+  keys.forEach(k=>{
     const it = items[k]; if(!it) return;
     const em = String(it.email||'').trim().toLowerCase(); if(!em) return;
     const rec = (typeof ErpMatch!=='undefined' && ErpMatch.match) ? ErpMatch.match(it) : null;
@@ -11522,7 +11538,7 @@ function mbWhoIndex(){
   Object.keys(endDomHit).forEach(d=>{
     if(endDomHit[d].end && !endDomHit[d].live) endDom[d] = 1;
   });
-  _mbWhoIdx = { byAddr, byDom, endAddr, endDom, coAddr };
+  _mbWhoIdx = { byAddr, byDom, endAddr, endDom, coAddr, _n: keys.length };
   return _mbWhoIdx;
 }
 function mbWhoBust(){ _mbWhoIdx = null; }
@@ -11885,24 +11901,39 @@ function mbNeedSlugs(id){
 
 /* ── 이 칸에 몇 통 들어 있나 ── (왼쪽 줄 끝의 숫자·안 읽은 수) */
 function mbBinCount(bin){
-  let n = 0, un = 0;
+  let loaded = 0, un = 0;
   Object.keys(_mbMsgs||{}).forEach(slug=>{
     const box = _mbMsgs[slug]||{};
     Object.keys(box).forEach(uid=>{
       const v = box[uid]; if(!v) return;
-      const key = slug+':'+uid;
-      const put = mbPutOf(key);
+      const put = mbPutOf(slug+':'+uid);
       const mine = put ? (put===bin.id) : (!!bin.link && slug===bin.link);
       if(!mine) return;
-      n++; if(!Number(v.r||0)) un++;
+      loaded++; if(!Number(v.r||0)) un++;
     });
   });
-  /* ⚠ 아직 그 폴더를 읽어 오지 않았으면 우리가 센 수는 0 이다 — 그 자리에 0 을 적으면
-     「빈 칸」으로 보인다. 그럴 때는 서버가 폴더마다 적어 둔 셈을 그대로 쓴다
-     (아직 아무것도 안 옮겼으므로 그 값이 맞다). */
+  /* ── 통수는 «읽어 온 것»으로 세면 안 된다 (2026-08-27) ──
+     ⚠ 예전에는 폴더를 안 읽었을 때만 서버 셈을 쓰고, 읽고 나면 «읽어 온 것»을 세었다.
+       그래서 「1.자문사답변 404」가 그 칸을 «누르는 순간 100» 으로 줄었다. 한 통도
+       사라지지 않았는데 숫자만 준 것이라, 보는 사람은 메일이 없어진 줄 안다.
+     ★ 셀 수 있다. 서버가 적어 둔 폴더 통수에서 «밖으로 옮긴 것»을 빼고 «들어온 것»을
+       더하면 된다. 쪽지(_mbPut)는 한 쪽만 받아 오는 것이 아니라 «통째로» 있으므로
+       이 셈은 얼마나 읽어 왔는지와 상관없이 늘 같다. */
   const f = bin.link ? mbFolderBy(bin.link) : null;
-  if(f && !_mbMsgs[bin.link]) return { n:Number(f.total||0), un:Number(f.unseen||0) };
-  return { n:n, un:un };
+  const put = _mbPut||{};
+  let out = 0, into = 0;
+  Object.keys(put).forEach(k=>{
+    const at = k.lastIndexOf(':'); if(at <= 0) return;
+    const slug = k.slice(0, at);
+    if(bin.link && slug === bin.link){ if(put[k] !== bin.id) out++; return; }
+    if(put[k] === bin.id) into++;
+  });
+  const n = f ? Math.max(0, Number(f.total||0) - out + into) : into;
+  /* ⚠ 안 읽은 수는 이렇게 셀 수 없다 — 읽었는지는 줄마다 봐야 안다. 아직 그 폴더를
+     안 읽어 왔으면 서버가 적어 둔 값을, 읽어 왔으면 그중에서 센다. 안 읽은 메일은
+     거의 늘 «맨 앞»에 있어 첫 쪽 안에 든다. */
+  const untotal = (f && !_mbMsgs[bin.link]) ? Number(f.unseen||0) : un;
+  return { n:n, un:untotal };
 }
 
 /* ── 처음 들어오면 «내 것»부터 (대표 지시 2026-08-27) ──
@@ -12352,7 +12383,11 @@ function mailSideHtml(){
   }
 
   /* 스팸·휴지통은 맨 아래 — 다음메일과 같은 자리 */
-  mbFolderOf('spam').forEach(f=>{ h += row(f.slug,'🚫','스팸함'); });
+  /* ⚠ 스팸함 줄이 여기 있었다 — 지웠다(2026-08-27).
+     서버가 스팸함을 «아예 안 가져오고», 예전에 담아 둔 것도 걷어낸다
+     (mail-box.js SKIP_KINDS · mail-sync.js 「안 쓰는 칸 걷어내기」).
+     그래서 이 줄은 늘 0번 돌았다 — 화면에는 안 보이는데 코드에는 살아 있어,
+     다음 사람이 «쓰는 줄» 알고 고치게 된다. 되살릴 일이 생기면 서버부터 고친다. */
   mbFolderOf('trash').forEach(f=>{ h += row(f.slug,'🗑','휴지통'); });
 
   /* ══════ 푸른 도구 ══════
@@ -13453,7 +13488,11 @@ function mbDrawerHtml(){
       <span class="ic">🔒</span><span class="nm">${esc(nm)}</span>
       ${Number(f.total||0)?`<span class="n">${Number(f.total).toLocaleString()}</span>`:''}</div>`;
   });
-  mbFolderOf('spam').forEach(f=>{ h += row(f.slug,'🚫','스팸함'); });
+  /* ⚠ 스팸함 줄이 여기 있었다 — 지웠다(2026-08-27).
+     서버가 스팸함을 «아예 안 가져오고», 예전에 담아 둔 것도 걷어낸다
+     (mail-box.js SKIP_KINDS · mail-sync.js 「안 쓰는 칸 걷어내기」).
+     그래서 이 줄은 늘 0번 돌았다 — 화면에는 안 보이는데 코드에는 살아 있어,
+     다음 사람이 «쓰는 줄» 알고 고치게 된다. 되살릴 일이 생기면 서버부터 고친다. */
   mbFolderOf('trash').forEach(f=>{ h += row(f.slug,'🗑','휴지통'); });
 
   /* 앱에는 없는 우리 것 — 맨 아래에 조용히. 지우면 폰에서 그 화면들에 갈 길이 없어진다. */
@@ -13708,11 +13747,14 @@ function mbReadHtml(){
   const box = _mbMsgs[o.slug]||{};
   const v = box[o.uid]||{};
   const to = String(v.t||'').split(',').filter(Boolean).join(', ');
-  /* 본문은 서버가 준 그대로 넣는다. 남의 HTML 이라 스크립트가 섞여 있을 수 있으므로
-     꼬리표를 걷어낸 뒤에 넣는다 — 걷지 않으면 메일 한 통이 이 앱을 조종할 수 있다. */
-  const bodyHtml = o.html ? mbCleanHtml(o.html)
+  /* 본문은 남의 HTML 이다 — «허락한 것만» 남기고 넣는다(mbCleanHtml).
+     걷지 않으면 메일 한 통이 이 앱을 조종할 수 있다. */
+  const imgKey = String(o.slug||'')+':'+String(o.uid||'');
+  const imgOn = (state.mbImgShow === imgKey);
+  const bodyHtml = o.html ? mbCleanHtml(o.html, imgOn)
     : o.text ? '<pre style="white-space:pre-wrap;font-family:inherit;margin:0">'+esc(o.text)+'</pre>'
     : '';
+  const held = o.html ? _mbImgHold : 0;   /* 방금 막은 바깥 그림 수 — 위에서 세어 둔다 */
   return `<div class="dm-read">
     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
       <button class="back" onclick="mbBack()">‹ ${esc(mbBoxName(o.slug))}</button>
@@ -13738,6 +13780,9 @@ function mbReadHtml(){
     ${(o.atts&&o.atts.length) ? `<div class="atts">${o.atts.map((a,i)=>
       `<button onclick="mbAtt(${i})" title="내려받기">📎 ${esc(a.name||'첨부')}${a.size?' · '+fmtMB(a.size):''}</button>`
     ).join('')}</div>` : ''}
+    ${held ? `<div class="imghold">🖼 바깥에서 오는 그림 ${held}개를 막았습니다 —
+      부르는 순간 보낸 쪽이 <b>언제 열었는지</b> 알게 됩니다.
+      <button onclick="mbShowImg()">그림 보기</button></div>` : ''}
     <div class="body">${o.loading ? '<div class="wait">본문을 가져오고 있습니다…</div>'
       : o.err ? '<div class="wait">열지 못했습니다 — '+esc(o.err)+'</div>'
       : (bodyHtml || '<div class="wait">본문이 없습니다.</div>')}</div>
@@ -13747,16 +13792,130 @@ function mbReadHtml(){
   </div>`;
 }
 
-/* 남의 HTML 을 화면에 넣기 전에 위험한 것을 걷어낸다.
-   ⚠ script·이벤트 속성·바깥 창을 부르는 것을 지운다. 이것을 빼면 메일 한 통이
-     이 앱의 자료를 읽어 딴 곳으로 보낼 수 있다. */
-function mbCleanHtml(html){
-  let s = String(html||'');
-  s = s.replace(/<\s*(script|iframe|object|embed|link|meta|base)\b[\s\S]*?<\s*\/\s*\1\s*>/gi, '');
-  s = s.replace(/<\s*(script|iframe|object|embed|link|meta|base)\b[^>]*>/gi, '');
-  s = s.replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
-  s = s.replace(/(href|src|action)\s*=\s*("|')?\s*javascript:[^"'\s>]*/gi, '$1="#"');
-  return s;
+/* ══════════════════════════════════════════════════════════════════════════
+   남의 HTML 을 화면에 넣기 전에 — «허락한 것만 남긴다» (다시 지음 2026-08-27)
+   ══════════════════════════════════════════════════════════════════════════
+   ⚠ 예전에는 «위험한 것을 하나씩 지웠다». 실제로 돌려 보니 시험한 여섯 가지가 모두
+     뚫렸다. 까닭은 하나다 — 「&#106;avascript:」처럼 실체로 감추면 «글자만 보는»
+     정규식은 못 알아보는데, 브라우저는 실체를 «먼저 푼 뒤» 읽는다.
+     지우는 목록은 늘 새 수법에 진다. 메일은 아무나 우리에게 보낼 수 있는 자리다.
+
+   ★ 그래서 뒤집었다 — 브라우저 파서로 한 번 읽어 들인 뒤(그 자리에서는 아무것도
+     돌지 않는다. script 도, onerror 도) 그 나무를 훑으며 «아는 꼬리표·아는 속성»만
+     남긴다. 실체는 이미 풀려 있으므로 감출 데가 없다. 새 수법이 나와도 허락 목록에
+     없으면 그대로 막힌다.
+
+   ⚠ 모르는 꼬리표는 «껍데기만» 벗긴다(<o:p> 같은 워드 꼬리표). 통째로 버리면 그 안의
+     글까지 사라져 본문이 빈다.
+   ⚠ script·style·form 처럼 «안에 든 것 자체»가 위험한 것만 통째로 버린다.
+     style 을 남기면 화면을 덮어 우리 단추를 가릴 수 있다. */
+const MB_TAG_KILL = { SCRIPT:1, STYLE:1, IFRAME:1, FRAME:1, FRAMESET:1, OBJECT:1, EMBED:1,
+  APPLET:1, LINK:1, META:1, BASE:1, HEAD:1, TITLE:1, FORM:1, INPUT:1, BUTTON:1, SELECT:1,
+  OPTION:1, OPTGROUP:1, TEXTAREA:1, LABEL:1, SVG:1, MATH:1, NOSCRIPT:1, TEMPLATE:1,
+  AUDIO:1, VIDEO:1, SOURCE:1, TRACK:1, CANVAS:1, PORTAL:1, MARQUEE:1, XMP:1, PLAINTEXT:1 };
+const MB_TAG_OK = { A:1, ABBR:1, ADDRESS:1, ARTICLE:1, ASIDE:1, B:1, BDI:1, BDO:1,
+  BLOCKQUOTE:1, BR:1, CAPTION:1, CENTER:1, CITE:1, CODE:1, COL:1, COLGROUP:1, DD:1, DEL:1,
+  DETAILS:1, DFN:1, DIV:1, DL:1, DT:1, EM:1, FIGCAPTION:1, FIGURE:1, FONT:1, FOOTER:1,
+  H1:1, H2:1, H3:1, H4:1, H5:1, H6:1, HEADER:1, HR:1, I:1, IMG:1, INS:1, KBD:1, LI:1,
+  MAIN:1, MARK:1, NAV:1, OL:1, P:1, PRE:1, Q:1, RP:1, RT:1, RUBY:1, S:1, SAMP:1, SECTION:1,
+  SMALL:1, SPAN:1, STRIKE:1, STRONG:1, SUB:1, SUMMARY:1, SUP:1, TABLE:1, TBODY:1, TD:1,
+  TFOOT:1, TH:1, THEAD:1, TIME:1, TR:1, TT:1, U:1, UL:1, VAR:1, WBR:1 };
+/* 남길 속성 — 「보이는 모양」에 쓰는 것만.
+   ⚠ id·class 는 뺀다. 우리 화면의 이름과 겹치면 메일이 우리 모양을 가로챈다.
+   ⚠ background(그림 주소를 부르는 옛 속성)도 뺀다 — 열람 추적에 그대로 쓰인다. */
+const MB_ATTR_OK = { alt:1, title:1, width:1, height:1, align:1, valign:1, colspan:1,
+  rowspan:1, span:1, border:1, cellpadding:1, cellspacing:1, bgcolor:1, color:1, face:1,
+  size:1, dir:1, lang:1, start:1, type:1, datetime:1, nowrap:1 };
+
+/* ── 주소 하나가 안전한가 ── «푼 뒤의 값»을 본다.
+   ⚠ 허락한 방식만 통과시킨다. 모르는 것은 다 막는다 — 새 방식이 생겨도 저절로 막힌다.
+   ⚠ 보이지 않는 글자를 먼저 걷는다. 「jav<탭>ascript:」가 그 수법이다.
+   ⚠ 우리 앱 주소(/ 나 # 로 시작하는 것)도 막는다 — 메일이 우리 화면의 다른 자리를
+     가리키게 하면 사람은 그것을 «우리 것»으로 읽는다. */
+function mbSafeUrl(u, forImg){
+  const s = String(u==null?'':u).replace(/[\x00-\x20\x7f\xa0\u200b-\u200f\ufeff]/g,'');
+  if(!s) return '';
+  /* 메일에 박아 넣은 그림(서명 로고 등)은 바깥을 부르지 않으므로 그대로 둔다 */
+  if(forImg && /^data:image\/(png|gif|jpe?g|webp|bmp|x-icon);base64,[A-Za-z0-9+/=]+$/i.test(s)) return s;
+  if(/^https?:\/\/[^\s"'<>]+$/i.test(s)) return s;
+  if(!forImg && /^mailto:[^\s"'<>]+$/i.test(s)) return s;
+  if(!forImg && /^tel:[+0-9()-]+$/i.test(s)) return s;
+  return '';
+}
+/* 모양 속성 — 바깥을 부르거나 화면을 덮는 것만 걷어낸다 */
+function mbStyleClean(v){
+  return String(v||'').split(';').filter(d=>{
+    const t = String(d||'').toLowerCase();
+    if(!t.trim()) return false;
+    if(/url\s*\(|expression\s*\(|javascript\s*:|@import|behavior\s*:|-moz-binding/.test(t)) return false;
+    if(/^\s*(position|z-index)\s*:/.test(t)) return false;   /* 우리 단추를 덮지 못하게 */
+    return true;
+  }).join(';');
+}
+
+let _mbImgHold = 0;      /* 이번 본문에서 «막은 바깥 그림» 수 */
+
+function mbCleanHtml(html, showImg){
+  _mbImgHold = 0;
+  let doc = null;
+  /* ⚠ 못 읽으면 아무것도 안 보여 준다. 못 걸렀는데 그냥 넣는 것보다 «안 보이는» 편이 낫다. */
+  try{ doc = new DOMParser().parseFromString(String(html||''), 'text/html'); }catch(_){ doc = null; }
+  if(!doc || !doc.body) return '';
+  const walk = (el)=>{
+    Array.prototype.slice.call(el.childNodes||[]).forEach(n=>{
+      if(n.nodeType === 8){ n.parentNode && n.parentNode.removeChild(n); return; }   /* 주석 */
+      if(n.nodeType !== 1) return;                                    /* 글은 그대로 둔다 */
+      const tag = String(n.tagName||'').toUpperCase();
+      if(MB_TAG_KILL[tag]){ el.removeChild(n); return; }
+      walk(n);
+      if(!MB_TAG_OK[tag]){                       /* 모르는 꼬리표 — 껍데기만 벗긴다 */
+        while(n.firstChild) el.insertBefore(n.firstChild, n);
+        el.removeChild(n); return;
+      }
+      Array.prototype.slice.call(n.attributes||[]).forEach(at=>{
+        const nm = String(at.name||'').toLowerCase();
+        const val = String(at.value||'');
+        if(nm==='style'){
+          const st = mbStyleClean(val);
+          if(st) n.setAttribute('style', st); else n.removeAttribute(at.name);
+          return;
+        }
+        if(nm==='href' && tag==='A'){
+          const safe = mbSafeUrl(val, false);
+          if(safe) n.setAttribute('href', safe); else n.removeAttribute(at.name);
+          return;
+        }
+        if(nm==='src' && tag==='IMG'){
+          const safe = mbSafeUrl(val, true);
+          n.removeAttribute(at.name);
+          if(!safe) return;
+          if(/^data:/i.test(safe)){ n.setAttribute('src', safe); return; }
+          /* ⚠ 바깥에서 오는 그림 — 주소만 옮겨 두고 «부르지 않는다».
+             그대로 두면 메일을 여는 순간 보낸 쪽이 «언제 열었는지»를 알게 된다.
+             다음메일도 기본으로 막고 「이미지 보기」를 따로 둔다. */
+          if(showImg){ n.setAttribute('src', safe); return; }
+          n.setAttribute('data-src', safe);
+          n.setAttribute('data-hold', '1');
+          _mbImgHold++;
+          return;
+        }
+        if(!MB_ATTR_OK[nm]) n.removeAttribute(at.name);
+      });
+      /* 링크는 늘 새 창으로 — 우리 화면을 밀어내지 못하게 */
+      if(tag==='A' && n.getAttribute('href')){
+        n.setAttribute('target','_blank');
+        n.setAttribute('rel','noopener noreferrer nofollow');
+      }
+    });
+  };
+  walk(doc.body);
+  return doc.body.innerHTML;
+}
+/* 「그림 보기」 — 이 메일 한 통에 대해서만, 이 자리에서만 푼다 */
+function mbShowImg(){
+  const o = state.mbOpen||{};
+  state.mbImgShow = String(o.slug||'')+':'+String(o.uid||'');
+  renderMailPage();
 }
 
 /* 첨부 하나 내려받기 — 서버가 그 자리에서 IMAP 으로 받아 넘긴다(창고에 옮겨 담지 않는다) */
@@ -13768,7 +13927,7 @@ function mbAtt(i){
   u.getIdToken()
     .then(tok=>fetch(MB_FN+'readMailAttachment', { method:'POST',
       headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
-      body: JSON.stringify({ slug:o.slug, uid:o.uid, index:i }) }))
+      body: JSON.stringify({ slug:o.slug, uid:o.uid, index:i, part:String(a.part||'') }) }))
     .then(r=>r.json().catch(()=>({})))
     .then(j=>{
       if(!j.ok) throw new Error(j.error||'내려받지 못했습니다');

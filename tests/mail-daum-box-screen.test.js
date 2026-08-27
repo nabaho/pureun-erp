@@ -73,6 +73,8 @@ function load(over){
     '_mbMsgs = ' + JSON.stringify(o.msgs || {}) + ';' +
     '_mbMeta = { at: 1, ok: true };', ctx);
   ctx._held = held;
+  /* ⚠ 덩어리 안의 const(허락 목록 등)는 ctx 에 안 붙는다 — 안에서 꺼내 온다 */
+  ctx.__get = (expr) => vm.runInContext(expr, ctx);
   /* 덩어리 안의 let 값(_mbMsgs)은 밖에서 못 만진다 — 줄 하나를 갈아 끼울 길을 둔다 */
   ctx.__setRow = (slug, uid, row) => {
     vm.runInContext('_mbMsgs[' + JSON.stringify(slug) + '][' + JSON.stringify(uid) + '] = '
@@ -264,18 +266,80 @@ test('★ 날짜와 시각을 함께 적는다 — 하루 스무 통을 보내�
 
 /* ══════ 남의 HTML ══════ */
 
-test('★ 메일 본문의 스크립트를 걷어낸다 — 안 걷으면 메일 한 통이 이 앱을 조종한다', () => {
+/* ⚠ 여기 있던 검사는 «이빨이 없었다»(2026-08-27).
+     script·onerror·javascript:·iframe 네 가지를 그대로 적어 넣고 안 남았는지만 봤는데,
+     그 넷은 예전 정규식이 이미 잡던 것들이다. 정작 사람이 쓰는 수법(실체로 감추기,
+     탭 끼우기, svg animate)은 «여섯 가지 모두» 뚫렸는데 검사는 늘 통과했다.
+   ★ 그래서 둘로 나눴다.
+     ① 판정하는 값(주소가 안전한가 · 모양 속성이 안전한가 · 허락 목록)은 여기서 «감춘 것까지»
+        넣어 본다.
+     ② 나무를 훑는 일 자체는 브라우저 파서가 있어야 하므로 진짜 브라우저에서 확인한다
+        (docs/mockups/mail-clean-check.html — 뚫리면 그 화면이 빨갛게 된다). */
+
+test('★ 주소 거르개 — «실체로 감춘» javascript: 도 막는다', () => {
   const c = load({ folders: FOLDERS });
-  const dirty = '<p>안녕</p><script>steal()</script>'
-    + '<img src=x onerror="steal()">'
-    + '<a href="javascript:steal()">링크</a>'
-    + '<iframe src="http://evil"></iframe>';
-  const clean = c.mbCleanHtml(dirty);
-  assert.ok(clean.indexOf('script') < 0, 'script 가 남아 있습니다');
-  assert.ok(!/onerror/i.test(clean), '이벤트 속성이 남아 있습니다');
-  assert.ok(!/javascript:/i.test(clean), 'javascript: 주소가 남아 있습니다');
-  assert.ok(!/<iframe/i.test(clean), 'iframe 이 남아 있습니다');
-  assert.ok(clean.indexOf('안녕') >= 0, '본문 글까지 지워졌습니다');
+  /* ⚠ 브라우저는 실체를 «먼저 푼 뒤» 읽는다. 그래서 mbSafeUrl 이 보는 것도 푼 값이다.
+       여기서는 파서가 넘겨줄 «푼 값»을 그대로 넣어 본다. */
+  const 막아야 = [
+    'java\u200bscript:alert(1)',            // 그냥
+    'jav\tascript:alert(1)',          // 탭 끼우기 (&#x09; 가 풀린 모양)
+    ' javascript:alert(1)',           // 앞 빈칸
+    'java\u200bscript:alert(1)',      // 눈에 안 보이는 글자
+    'JaVaScRiPt:alert(1)',            // 대소문자 섞기
+    'vbscript:msgbox(1)',
+    'data:text/html;base64,PHNjcmlwdD4=',   // 글로 된 data: — 새 창이 우리 자리를 흉내 낸다
+    '/enter.html?x=1',                // 우리 앱 주소 — 메일이 우리 것인 척하게 둘 수 없다
+    '#pcSide',
+    'about:blank',
+  ];
+  막아야.forEach(u=>{
+    assert.equal(c.mbSafeUrl(u, false), '', '이 주소가 통과했습니다: ' + JSON.stringify(u));
+    assert.equal(c.mbSafeUrl(u, true), '', '그림 주소로 통과했습니다: ' + JSON.stringify(u));
+  });
+
+  /* 통과해야 하는 것 — 다 막아 버리면 메일의 링크가 하나도 안 눌린다 */
+  assert.equal(c.mbSafeUrl('https://www.moel.go.kr/a?b=1', false), 'https://www.moel.go.kr/a?b=1');
+  assert.equal(c.mbSafeUrl('mailto:370-6@daum.net', false), 'mailto:370-6@daum.net');
+  assert.ok(c.mbSafeUrl('http://x.kr/a.png', true), '바깥 그림 주소를 아예 못 읽습니다');
+  /* 메일에 박아 넣은 그림(서명 로고)은 바깥을 안 부르므로 그대로 둔다 */
+  assert.ok(c.mbSafeUrl('data:image/png;base64,iVBORw0KGgo=', true), '박아 넣은 그림이 막혔습니다');
+  /* ⚠ 그림 자리에 글로 된 data: 를 넣는 길은 없어야 한다 */
+  assert.equal(c.mbSafeUrl('data:text/html;base64,PHA+', true), '');
+});
+
+test('★ 모양 속성 — 바깥을 부르거나 우리 단추를 덮는 것을 걷는다', () => {
+  const c = load({ folders: FOLDERS });
+  const out = c.mbStyleClean(
+    'color:#333;background-image:url(http://track.example/p.gif);'
+    + 'width:100%;position:fixed;z-index:9999;behavior:url(#x);'
+    + 'font-size:14px;background:expression(alert(1))');
+  assert.ok(/color/.test(out) && /width/.test(out) && /font-size/.test(out),
+    '멀쩡한 모양까지 지웠습니다 — 본문이 망가져 보입니다');
+  assert.ok(!/url\(/i.test(out), '바깥 그림을 부르는 것이 남았습니다(열람 추적)');
+  assert.ok(!/position/i.test(out), 'position 이 남았습니다 — 우리 단추를 덮을 수 있습니다');
+  assert.ok(!/z-index/i.test(out), 'z-index 가 남았습니다');
+  assert.ok(!/expression/i.test(out), 'expression 이 남았습니다');
+});
+
+test('★ 허락 목록 — 위험한 꼬리표는 «안에 든 것까지» 버리고, 모르는 것은 껍데기만 벗긴다', () => {
+  const c = load({ folders: FOLDERS });
+  /* 안에 든 것 자체가 위험한 것들 — 통째로 버려야 한다 */
+  const KILL = c.__get('MB_TAG_KILL'), OK = c.__get('MB_TAG_OK'), ATTR = c.__get('MB_ATTR_OK');
+  ['SCRIPT','STYLE','IFRAME','OBJECT','EMBED','FORM','INPUT','BUTTON','SVG','MATH',
+   'LINK','META','BASE','NOSCRIPT','TEMPLATE','TEXTAREA','SELECT'].forEach(t=>{
+    assert.ok(KILL[t], t + ' 를 통째로 버리지 않습니다');
+    assert.ok(!OK[t], t + ' 가 허락 목록에도 들어 있습니다');
+  });
+  /* 글을 담는 흔한 꼬리표는 남아야 한다 — 안 그러면 본문이 한 덩어리로 뭉친다 */
+  ['P','DIV','BR','TABLE','TR','TD','A','IMG','SPAN','B','UL','LI','BLOCKQUOTE','PRE']
+    .forEach(t=>assert.ok(OK[t], t + ' 가 허락 목록에 없습니다 — 본문이 망가집니다'));
+  /* id·class 는 남기지 않는다 — 우리 화면 이름과 겹치면 모양을 가로챈다 */
+  assert.ok(!ATTR['id'] && !ATTR['class'], 'id·class 가 남습니다');
+  assert.ok(!ATTR['background'], 'background 가 남습니다 — 그림 주소를 부르는 옛 속성입니다');
+  assert.ok(!ATTR['srcset'] && !ATTR['formaction'], '주소를 부르는 속성이 남습니다');
+  /* 모양에 쓰는 것은 남아야 한다 */
+  ['width','height','colspan','bgcolor','align','alt'].forEach(a=>
+    assert.ok(ATTR[a], a + ' 가 빠졌습니다 — 표가 무너져 보입니다'));
 });
 
 /* ══════ 방향키 · 스페이스 ══════

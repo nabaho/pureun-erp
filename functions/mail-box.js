@@ -195,21 +195,25 @@ function renamedPath(path, name, delim) {
 function attCount(node, depth) {
   const n = node;
   if (!n || (depth || 0) > 8) return 0;
-  let sum = 0;
-  const kids = n.childNodes || n.children;
-  if (Array.isArray(kids)) {
-    for (let i = 0; i < kids.length; i++) sum += attCount(kids[i], (depth || 0) + 1);
-    return sum;
-  }
   const disp = String(n.disposition || '').toLowerCase();
   const type = String(n.type || '').toLowerCase();
   const named = !!(n.dispositionParameters && n.dispositionParameters.filename) ||
                 !!(n.parameters && n.parameters.name);
+  /* ⚠ 첨부인지 «먼저» 본다 — 안으로 파고들기 전에.
+     전달된 메일이 통째로 첨부된 것(message/rfc822)은 그 «안에» 또 조각이 들어 있다.
+     먼저 파고들면 사람이 보는 첨부 한 개(전달된메일.eml) 대신 그 안의 것들이 세어져
+     📎 개수가 엉뚱해진다. 사람 눈에 그것은 «파일 하나»다.
+     (예전 차례로는 첨부인지 보기 전에 childNodes 부터 훑었다 — 2026-08-27 실측) */
   if (disp === 'attachment') return 1;
   /* 이름이 붙은 inline 은 사람이 「첨부」로 여긴다 — 단, cid 로 본문에 박힌 것은 뺀다 */
   if (disp === 'inline' && named && !n.id) return 1;
   /* disposition 이 아예 없는 옛 메일 — 본문(text/*) 이 아니고 이름이 있으면 첨부다 */
   if (!disp && named && type.indexOf('text/') !== 0) return 1;
+  let sum = 0;
+  const kids = n.childNodes || n.children;
+  if (Array.isArray(kids)) {
+    for (let i = 0; i < kids.length; i++) sum += attCount(kids[i], (depth || 0) + 1);
+  }
   return sum;
 }
 
