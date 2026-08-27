@@ -282,7 +282,11 @@ const t = (name, got, want) => {
       '                     loadFull:function(){ return Promise.resolve(""); } };',
       'function render(p){ __i = 0; return PhotoContractPickerModal(p); }'
     ].join('\n'), c);
+    /* 2026-08-27: 창이 갈래(erpPhotoPick)·갈래 수(erpPhotoKindCounts)도 쓴다 — 함께 넣는다. */
     vm.runInContext(fn('erpPhotoRowText') + '\n' + fn('erpPhotoFilter') + '\n' +
+                    slice('var ERP_DOC_KINDS =', '\nfunction erpContractDocKind(') + '\n' +
+                    fn('erpContractDocKind') + '\n' + fn('erpPhotoPick') + '\n' +
+                    fn('erpPhotoKindCounts') + '\n' +
                     fn('PhotoContractPickerModal'), c);
 
     const items = [
@@ -312,14 +316,18 @@ const t = (name, got, want) => {
     };
     /* 목록 한 줄 = key 가 붙고 누를 수 있는 칸 */
     const rowsOf = function(root){
-      return walk(root, []).filter(function(n){ return n.props && n.props.key && n.props.onClick; });
+      /* ⚠ 2026-08-27: 갈래 칩도 key·onClick 을 가진다 —
+         목록 줄은 div 다. 태그까지 봐야 칩을 줄로 세지 않는다. */
+      return walk(root, []).filter(function(n){
+        return n.tag === 'div' && n.props && n.props.key && n.props.onClick; });
     };
     let nodes = walk(tree, []);
     let texts = textsOf(tree);
 
     t('★ 제목이 뜬다', texts.indexOf('📷 사진첩에서 계약서 찾기') >= 0, true);
     t('★ Esc 로 닫히게 걸어 두었다', c.escCalls >= 1, true);
-    t('★ 찾기 칸이 있다', nodes.filter(function(n){ return n.tag === 'input'; }).length, 1);
+    t('★ 찾기 칸이 있다', nodes.filter(function(n){
+      return n.tag === 'input' && !(n.props && n.props.type === 'checkbox'); }).length, 1);
     t('★ 후보 수만큼 줄을 그린다', rowsOf(tree).length, 2);
     /* 계약일이 있으면 그걸, 없으면 찍은 날짜를 보여 준다 — 「날짜 미상」이 함부로 뜨면 안 된다 */
     t('계약일이 있으면 계약일을 보여 준다', texts.some(function(s){ return s.indexOf('2026-07-01') >= 0; }), true);

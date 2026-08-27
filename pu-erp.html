@@ -12611,7 +12611,11 @@ function erpLoadMyContractPhotos(cb){
                내 것이면 __ownerUid 가 없다(그대로 빈 값으로 둔다). */
             owner: meta.__ownerUid || '', ownerName: meta.__ownerName || '',
             /* 목록 미리보기를 부를 때 쓴다 — 창고에 없는 옛 사진을 헛되이 두드리지 않는다 */
-            loc: meta.loc || '' });
+            loc: meta.loc || '',
+            /* ★ 「이미 증빙으로 썼다」 표 (2026-08-26 대표 지시).
+               계약을 저장할 때 PuPhotoStore.markUsed 가 남기는 자국이다.
+               ⚠ 이걸 안 들고 오면 찾기 창이 «이미 쓴 계약서를 매번 다시» 보여 준다. */
+            used: (meta.used && meta.used.at) ? meta.used : null });
         }
       });
     });
@@ -12807,6 +12811,47 @@ function erpPhotoFilter(items, q){
   });
 }
 
+/* ══════ 계약서 «갈래» (2026-08-27 대표 지시) ══════
+   업체관리에 붙는 계약서는 자문·급여·위임·용역으로 갈린다.
+   찾기 창에서 갈래를 골라 그 안에서만 찾을 수 있게 한다 —
+   스물한 장이 한 줄로 늘어서 있으면 「자문계약서만 보고 싶다」를 못 한다.
+
+   ⚠ 문서 이름으로 가른다. 「급여관리업무 위임계약서」는 «급여»다 —
+     그래서 급여를 위임보다 «먼저» 본다. 순서가 곧 규칙이다.
+   ⚠ 모르면 「기타」다 — 억지로 어느 갈래에 넣지 않는다. */
+var ERP_DOC_KINDS = ['자문', '급여', '용역', '위임', '기타'];
+function erpContractDocKind(fields){
+  var f = fields || {};
+  var s = [f.docName, f.scope].filter(Boolean).join(' ');
+  if(/자문/.test(s)) return '자문';
+  if(/급여|임금/.test(s)) return '급여';
+  if(/용역/.test(s)) return '용역';
+  if(/위임|약정|위탁/.test(s)) return '위임';
+  return '기타';
+}
+/* 갈래·이미 쓴 것까지 함께 거른다 — 찾기 칸과 규칙이 갈리면 안 된다. */
+function erpPhotoPick(items, q, kind, showUsed){
+  var out = erpPhotoFilter(items, q);
+  if(kind && kind !== '전체'){
+    out = out.filter(function(it){ return erpContractDocKind(it.fields) === kind; });
+  }
+  if(!showUsed) out = out.filter(function(it){ return !(it.used && it.used.at); });
+  return out;
+}
+/* 갈래마다 몇 장인지 — 「자문 0장」이면 눌러 보지 않아도 된다. */
+function erpPhotoKindCounts(items, q, showUsed){
+  var base = erpPhotoPick(items, q, '전체', showUsed);
+  var c = { '전체': base.length };
+  ERP_DOC_KINDS.forEach(function(k){ c[k] = 0; });
+  base.forEach(function(it){ var k = erpContractDocKind(it.fields); c[k] = (c[k] || 0) + 1; });
+  return c;
+}
+try {
+  window.erpContractDocKind = erpContractDocKind;
+  window.erpPhotoPick = erpPhotoPick;
+  window.erpPhotoKindCounts = erpPhotoKindCounts;
+} catch(_){ }
+
 /* ══════ 📷 사진첩에서 계약서 찾기 (대표 승인 목업 2026-08-26) ══════
    docs/mockups/erp-contract-photo-find.html
 
@@ -12831,7 +12876,14 @@ function PhotoContractPickerModal(props){
   var fs3 = useState(''); var full = fs3[0]; var setFull = fs3[1];
   var es3 = useState(''); var fullErr = es3[0]; var setFullErr = es3[1];
 
-  var rows = erpPhotoFilter(all, q);
+  /* 갈래 고르기 · 이미 쓴 것 보이기 (2026-08-27 대표 지시) */
+  var ks = useState('전체'); var kind = ks[0]; var setKind = ks[1];
+  /* ★ 이미 쓴 계약서는 «기본으로 감춘다» — 다시 검토할 것이 아니다.
+     ⚠ 지우지 않고 감추기만 한다. 잘못 붙였거나 계약이 깨진 것도 있어
+        다시 꺼내 쓸 일이 있다 — 스위치로 도로 보인다. */
+  var us = useState(false); var showUsed = us[0]; var setShowUsed = us[1];
+  var rows = erpPhotoPick(all, q, kind, showUsed);
+  var kindCnt = erpPhotoKindCounts(all, q, showUsed);
 
   /* 목록에 보이는 것만 미리보기를 받는다 — 한 장에 약 20KB 다 */
   useEffect(function(){
@@ -12893,7 +12945,24 @@ function PhotoContractPickerModal(props){
             h('input', { type:'search', value:q, onChange:function(e){ setQ(e.target.value); },
               placeholder:'🔍 업체명·문서명·날짜로 찾기',
               style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1',
-                borderRadius:'7px', fontSize:'12px', fontFamily:'inherit' } })),
+                borderRadius:'7px', fontSize:'12px', fontFamily:'inherit' } }),
+            /* ── 갈래 (2026-08-27 대표 지시) ──
+               「자문계약서만 보고 싶다」를 할 수 있게 한다.
+               ⚠ 갈래마다 «몇 장인지» 함께 적는다 — 0장이면 눌러 보지 않아도 된다. */
+            h('div', { style:{ display:'flex', gap:'4px', flexWrap:'wrap', marginTop:'7px' } },
+              ['전체'].concat(ERP_DOC_KINDS).map(function(k){
+                var on = kind === k;
+                var n = kindCnt[k] || 0;
+                return h('button', { key:k, type:'button',
+                  onClick:function(){ setKind(k); },
+                  title: k === '전체' ? '모두 봅니다' : ('문서 이름에 「' + k + '」이 든 계약서만 봅니다'),
+                  style:{ padding:'2px 8px', borderRadius:'99px', fontSize:'10.5px', fontWeight:700,
+                    cursor:'pointer', whiteSpace:'nowrap',
+                    border:'1px solid ' + (on ? '#1e40af' : '#e2e8f0'),
+                    background: on ? '#1e40af' : (n ? '#fff' : '#f8fafc'),
+                    color: on ? '#fff' : (n ? '#475569' : '#cbd5e1') } },
+                  k + ' ' + n);
+              }))),
           h('div', { style:{ flex:1, overflow:'auto', padding:'6px' } },
             rows.length === 0
               ? h('div', { style:{ padding:'22px 12px', fontSize:'11.5px', color:'#94a3b8', textAlign:'center', lineHeight:1.8 } },
@@ -12917,7 +12986,16 @@ function PhotoContractPickerModal(props){
                       h('div', { style:{ fontSize:'12px', fontWeight:700, color:'#1e293b',
                         whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' } }, t.head),
                       h('div', { style:{ fontSize:'10.5px', color:'#64748b', marginTop:'2px',
-                        whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' } }, t.sub))
+                        whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' } }, t.sub),
+                      /* 이미 계약에 붙여 쓴 것 — 어디에 썼는지까지 적는다.
+                         ⚠ 「이미 씀」만 적고 어디인지 안 적으면, 잘못 붙인 것을 찾아갈 수가 없다. */
+                      (it.used && it.used.at) ? h('div', {
+                        title: '이미 계약에 붙여 썼습니다' + (it.used.where ? (' — ' + it.used.where) : ''),
+                        style:{ marginTop:'2px', display:'inline-block', background:'#fffbeb',
+                          color:'#854d0e', border:'1px solid #fde68a', borderRadius:'8px',
+                          padding:'0 5px', fontSize:'9.5px', fontWeight:700,
+                          maxWidth:'100%', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } },
+                        '📌 이미 씀' + (it.used.where ? (' · ' + it.used.where) : '')) : null)
                   );
                 })
           )
@@ -12949,6 +13027,17 @@ function PhotoContractPickerModal(props){
       ),
       h('div', { style:{ padding:'11px 16px', borderTop:'1px solid #e2e8f0', display:'flex',
         alignItems:'center', gap:'8px', flexShrink:0 } },
+        /* 이미 쓴 것 보이기 — 감춘 것이 몇 장인지 함께 적는다.
+           ⚠ 「없다」와 「감췄다」가 같아 보이면 안 된다. */
+        h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'5px', fontSize:'11.5px',
+            color:'#475569', cursor:'pointer', whiteSpace:'nowrap', marginRight:'10px' },
+          title:'계약에 이미 붙여 쓴 계약서입니다 — 평소에는 감춰 둡니다' },
+          h('input', { type:'checkbox', checked:showUsed,
+            onChange:function(){ setShowUsed(!showUsed); } }),
+          '이미 쓴 것도 보기' + (function(){
+            var hid = erpPhotoPick(all, q, kind, true).length - rows.length;
+            return (!showUsed && hid > 0) ? (' (' + hid + '장 감춤)') : '';
+          })()),
         h('span', { style:{ fontSize:'11.5px', color:'#64748b' } }, '고른 뒤 무엇이 바뀌는지 먼저 보여 드립니다'),
         h('div', { style:{ flex:1 } }),
         h('button', { onClick:props.onClose,

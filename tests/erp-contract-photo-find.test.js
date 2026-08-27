@@ -130,7 +130,9 @@ test('★ 목록에 그림·찾기 칸이 있고, 고른 것의 원본을 띄운
   /* ⚠ 이름을 못 박지 않는다 — 2026-08-27 에 「까닭까지 주는 길」(loadFullDetail)로
      옮겼다. 볼 것은 «원본을 부르는가» 다. */
   assert.match(p, /PuPhotoStore\.loadFull(Detail)?\(/, '★ 원본을 안 띄우면 「보고 넣는」 것이 안 됩니다');
-  assert.match(p, /erpPhotoFilter\(all, q\)/, '찾기 칸이 목록을 안 거릅니다');
+  /* ⚠ 거르개 이름을 못 박지 않는다 — 2026-08-27 에 갈래·이미 쓴 것까지 함께 보는
+     erpPhotoPick 으로 옮겼다. 볼 것은 «찾기 칸(q)이 목록에 걸리는가» 다. */
+  assert.match(p, /var rows = erpPhoto(Filter|Pick)\(all, q[,)]/, '찾기 칸이 목록을 안 거릅니다');
   assert.match(p, /이 내용을 입력/, '입력 단추가 없습니다');
 });
 
