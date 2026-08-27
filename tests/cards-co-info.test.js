@@ -193,8 +193,12 @@ test('읽어 온 서류 목록을 회사 상세에 보여준다', () => {
   assert.match(source, /읽어 온 서류 \$\{docs\.length\}건/);
   /* 최신 것이 위로 — 방금 보낸 서류를 맨 밑에서 찾게 하면 안 된다 */
   assert.match(source, /sort\(\(a,b\)=>\(b\.at\|\|0\)-\(a\.at\|\|0\)\)/);
+  /* ⚠ 고정 폭(at+900)으로 자르고 있었다 — 2026-08-26 에 사업·사건 칸을 위로 올리며
+       주석이 늘자 창을 넘어 실패했다. 폭을 키워 쫓아가지 말고 «함수 끝»까지 본다. */
   const at = source.indexOf('function coDetailPanelHtml');
-  assert.match(source.slice(at, at + 900), /coDocsHtml\(o\)/, '상세에 안 끼웠다');
+  const end = source.indexOf('function openCoDetailPanel', at + 1);
+  assert.ok(at > 0 && end > at, 'coDetailPanelHtml 을 못 찾았다');
+  assert.match(source.slice(at, end), /coDocsHtml\(o\)/, '상세에 안 끼웠다');
 });
 
 test('유형(자문·급여)은 제 칸을 갖는다', () => {
