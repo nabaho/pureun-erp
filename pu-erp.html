@@ -6455,32 +6455,71 @@ function coGroupScore(g){
   return { score:s, conflict:conflict, why:why };
 }
 
-// 이름이 같은 현재 업체 묶음. 확실한 것부터 위로.
+/* 종사업장번호 — 사업자번호 열 자리 **뒤에** 붙는 자리다(172-11-01009-0).
+   0 = 본사업장, 1·6 … = 그 회사의 다른 사업장.
+   ⚠ 안 적혀 있으면 본사업장으로 본다 — 실제 자료에서 한쪽만 적힌 짝이 많다. */
+function coSubNo(c){
+  var d = String((c && c.bizNo) || '').replace(/\D/g, '');
+  return d.length > 10 ? d.slice(10) : '0';
+}
+
+// 같은 업체가 두 줄인 묶음. 확실한 것부터 위로.
 function coDupGroups(){
   var cos = dbGet('companies', []) || [];
   var skip = dbGet(CO_MERGE_SKIP, {}) || {};
-  var byName = {};
+  var byName = {}, byBiz = {};
   cos.forEach(function(c){
     if(!c || !c.id) return;
-    var n = CompanyRef._norm(c.name); if(!n) return;
-    (byName[n] = byName[n] || []).push(c);
+    var n = CompanyRef._norm(c.name);
+    if(n) (byName[n] = byName[n] || []).push(c);
+    /* ── 사업자번호로도 묶는다 (대표 결정 2026-08-27) ──
+       이름이 달라 여태 **한 묶음도 안 걸리던** 것이 25묶음 있었다. 사무대행
+       명단을 가져올 때 같은 사업장이 다른 이름으로 한 줄 더 생겼다:
+         「해찬솔에프쓰리」 ↔ 「해찬솔F3」 · 「청아미즈산부인과」 ↔ 「…의원」
+       그중 둘은 살아 있는 쪽에 담당이 없고 담당 붙은 쪽이 닫혀 있어,
+       그 사업장 자료가 **어느 쪽으로도 못 가고 있었다.**
+       ⚠ 종사업장번호가 다르면 **안 묶는다.** -0 은 본사업장, -6 은 그 회사의
+       다른 사업장이다. 합치면 두 사업장 자료가 한 곳에 섞인다(실제로 더존앤테크·
+       성지정보통신 2묶음이 그런 사이였다). */
+    var b = CompanyRef._normBiz(c.bizNo);
+    if(b){ var k = b + '-' + coSubNo(c); (byBiz[k] = byBiz[k] || []).push(c); }
   });
-  var out = [];
-  Object.keys(byName).forEach(function(n){
-    var g = byName[n]; if(g.length < 2) return;
-    var key = n + '|' + g.map(function(c){ return c.id; }).sort().join('|');
+
+  var out = [], seen = {};
+  function addGroup(prefix, g, extraWhy){
+    if(g.length < 2) return;
+    var ids = g.map(function(c){ return c.id; }).sort().join('|');
+    if(seen[ids]) return;                       // 이름으로도 번호로도 걸린 것 — 한 번만
+    var key = prefix + '|' + ids;
     if(skip[key]) return;
+    seen[ids] = 1;
     var sc = coGroupScore(g);
-    // 남길 쪽 기본값: 사업자번호 있는 것 > 자동등록 아닌 것 > 먼저 만들어진 것
+    /* 남길 쪽 기본값 — 살아 있는 것 > 담당 있는 것 > 사업자번호 있는 것 >
+       자동등록 아닌 것 > 먼저 만들어진 것.
+       ⚠ 「살아 있는 것」과 「담당 있는 것」을 앞에 둔 까닭: 그러지 않으면
+       해찬솔처럼 **닫힌 업체로 합쳐져** 살아 있는 사업장이 사라진다. */
     var sorted = g.slice().sort(function(a,b){
+      var al = (String(a.status||'') === 'active') ? 1 : 0;
+      var bl = (String(b.status||'') === 'active') ? 1 : 0;
+      if(al !== bl) return bl - al;
+      var am = String(a.managerMain||'') ? 1 : 0, bm = String(b.managerMain||'') ? 1 : 0;
+      if(am !== bm) return bm - am;
       var ab = CompanyRef._normBiz(a.bizNo) ? 1 : 0, bb = CompanyRef._normBiz(b.bizNo) ? 1 : 0;
       if(ab !== bb) return bb - ab;
       var aa = coIsAuto(a) ? 1 : 0, ba = coIsAuto(b) ? 1 : 0;
       if(aa !== ba) return aa - ba;
       return String(a.createdAt||'').localeCompare(String(b.createdAt||''));
     });
-    out.push({ key:key, name:g[0].name, list:sorted, keepId:sorted[0].id,
-      score:sc.score, conflict:sc.conflict, why:sc.why });
+    out.push({ key:key, name:sorted[0].name, list:sorted, keepId:sorted[0].id,
+      score:sc.score, conflict:sc.conflict,
+      why:(extraWhy ? [extraWhy] : []).concat(sc.why) });
+  }
+
+  /* ⚠ 이름 묶음을 **먼저** 돌린다 — 열쇠(key)가 예전과 같아야
+     「이건 아니다」로 넘겨 둔 것이 되살아나지 않는다. */
+  Object.keys(byName).forEach(function(n){ addGroup(n, byName[n], ''); });
+  Object.keys(byBiz).forEach(function(k){
+    addGroup('biz:' + k, byBiz[k], '사업자번호가 같음 (이름은 다름)');
   });
   // 확실한 것 먼저 → 사업자번호 충돌(다른 회사 의심)은 맨 뒤
   out.sort(function(a,b){
