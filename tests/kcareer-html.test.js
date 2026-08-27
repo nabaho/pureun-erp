@@ -814,7 +814,34 @@ test('저장·불러오기 확인창이 기록 건수를 비교해 보여준다'
   // 예전엔 localStorage 열쇠 개수를 보여줘서 197→86을 알 수 없었다
   assert.ok(!/Object\.keys\(v\.ls\)\.length/.test(pull), '열쇠 개수는 기록 건수가 아닙니다');
   const push = funcSource('fbPush');
-  assert.match(push, /cloud\.total>here\.total/, '클라우드가 더 많으면 물어봐야 합니다');
+  assert.match(push, /cloudTotal>here\.total/, '클라우드가 더 많으면 물어봐야 합니다');
+});
+
+test('건수를 못 읽었다고 저장까지 막지 않는다', () => {
+  // ⚠ 비교용 읽기가 실패하면 예전엔 '저장 실패' 토스트만 내고 쓰기를 아예 안 했다.
+  //    자료를 되살린 직후 클라우드에 올려 둬야 하는 상황에서 복구 경로가 막힌다.
+  const push = funcSource('fbPush');
+  assert.match(push, /_fbCloudTotal\(function\(cloudTotal\)/);
+  assert.match(push, /cloudTotal!=null && cloudTotal>here\.total/,
+    '건수를 못 읽었으면(null) 비교를 건너뛰고 저장해야 합니다');
+  assert.match(push, /save\(\);/);
+  // _fbCloudTotal은 어떤 실패에도 cb(null)로 끝나야 한다 — 그래야 저장이 이어진다
+  const t = funcSource('_fbCloudTotal');
+  assert.ok((t.match(/cb\(null\)/g) || []).length >= 3, '실패 경로마다 cb(null)로 이어져야 합니다');
+});
+
+test('로그인마다 전체 자료를 내려받지 않는다 — counts만 읽는다', () => {
+  // fbGatherLS는 첨부 조각(pf_chunk_*)까지 담아 payload가 수 MB다
+  const t = funcSource('_fbCloudTotal');
+  assert.match(t, /'\/counts'\)/, '가벼운 counts 경로를 먼저 읽어야 합니다');
+  assert.match(t, /counts'\)\.set\(\{total:t/, '옛 자료면 한 번 채워 두어 다음부터 가볍게 합니다');
+  const loss = funcSource('fbCheckLoss');
+  assert.match(loss, /_fbCloudTotal\(/);
+  assert.ok(!/ref\('kcareer\/'\+fbUid\)\.once/.test(loss), '⚠ 노드 전체를 읽으면 안 됩니다');
+  assert.ok(!/ref\('kcareer\/'\+fbUid\)\.once/.test(funcSource('fbPush')), '⚠ 저장 전에도 전체를 읽으면 안 됩니다');
+  // 저장할 때 counts를 함께 적어야 다음 로그인이 가볍다
+  assert.match(funcSource('_fbDoPush'), /counts:\{total:hereTotal/);
+  assert.match(funcSource('fbAutoPush'), /_fbDoPush\(/);
 });
 
 test('브라우저 자료가 지워져 기본 데이터로 돌아가면 크게 알린다', () => {
@@ -822,7 +849,7 @@ test('브라우저 자료가 지워져 기본 데이터로 돌아가면 크게 �
   assert.match(source, /id="fbLossNotice"/);
   assert.match(source, /id="fbLossMsg"/);
   const src = funcSource('fbCheckLoss');
-  assert.match(src, /_fbCounts\(v\.ls\)/);
+  assert.match(src, /_fbCloudTotal\(/);
   assert.match(src, /_fbCounts\(null\)/);
   assert.match(src, /cloud\.total <= here\.total \+ 5/, '몇 건 차이로 겁주지 않아야 합니다');
   assert.match(src, /fbLossNotice/);
@@ -888,14 +915,33 @@ test('배치 동기화는 배치 열쇠만 담고 기록은 건드리지 않는�
   assert.match(push, /if\(_navSyncApplying\) return;/, '받아 적용하는 중에 되돌려 보내면 메아리가 됩니다');
 });
 
-test('배치 동기화는 메아리·옛 값을 걸러내고 첫 수신은 조용하다', () => {
+test('배치 동기화는 메아리를 걸러내고 첫 수신은 조용하다', () => {
   const w = funcSource('navSyncWatch');
-  assert.match(w, /if\(v\.at<=_navSyncAt\) return;/, '내가 쓴 값과 옛 값은 무시해야 합니다');
-  assert.match(w, /var first=\(_navSyncAt===0\)/);
+  assert.match(w, /if\(_navSyncSame\(v\)\) return;/, '이미 같은 배치면 무시해야 합니다');
+  assert.match(w, /var first=!_navSyncSeen/);
   assert.match(w, /if\(!first\) toast\(/, '켤 때마다 알림이 뜨면 시끄럽습니다');
   assert.match(w, /buildNav\(\)/, '받은 배치를 화면에 반영해야 합니다');
-  // 로그아웃하면 감시를 풀어야 다른 계정으로 새로 붙는다
-  assert.match(source, /_navSyncWatching=false; _navSyncAt=0;/);
+});
+
+test('최신 판정을 기기 시계로 하지 않는다 — 시계가 느린 기기도 반영된다', () => {
+  // ⚠ v.at<=_navSyncAt 로 거르면 폰 시계가 PC보다 느릴 때 폰 변경이 영영 무시된다
+  const w = funcSource('navSyncWatch');
+  assert.ok(!/v\.at<=/.test(w), '⚠ 시계 비교로 최신을 판정하지 말 것');
+  const same = funcSource('_navSyncSame');
+  ['state', 'favs', 'grpOrder', 'orders'].forEach((k) => {
+    assert.ok(same.indexOf(k) >= 0, '_navSyncSame이 ' + k + '를 비교해야 합니다');
+  });
+});
+
+test('로그아웃하면 배치 리스너를 실제로 뗀다', () => {
+  // ⚠ 표시만 내리면 재로그인마다 리스너가 쌓여 알림·buildNav가 여러 번 돈다
+  const stop = funcSource('navSyncStop');
+  assert.match(stop, /_navSyncRef\.off\('value'\)/, 'off로 리스너를 떼야 합니다');
+  assert.match(stop, /_navSyncWatching=false/);
+  assert.match(stop, /_navSyncSeen=false/);
+  assert.match(funcSource('navSyncWatch'), /_navSyncRef=fbDb\.ref\(/, '뗄 수 있게 ref를 들고 있어야 합니다');
+  assert.match(source, /if\(typeof navSyncStop==='function'\)\{ try\{ navSyncStop\(\); \}catch\(e\)\{\} \}/,
+    '로그아웃 분기에서 불러야 합니다');
 });
 
 /* ===== 한글(HWPX)로 보기 (2026-08-23) =====
@@ -934,7 +980,8 @@ test('7MB 엔진을 몰래 받아오지 않는다 — 누를 때만 올린다', 
 
 test('쪽 수 배지는 한글 값을 정답으로 쓰고, 어림값일 때는 그렇다고 밝힌다', () => {
   const src = funcSource('cvRenderGuide');
-  assert.match(src, /if\(_hwpEngineReady\)\{ cvHwpCount\(\); \}/, '엔진이 있으면 한글 값이 정답입니다');
+  assert.match(src, /_cvHwpCountT=setTimeout\(function\(\)\{ cvHwpCount\(\); \}, 900\)/,
+    '엔진이 있으면 잠잠해진 뒤 한글 값으로 다시 셉니다');
   assert.match(src, /'A4 '\+n\+'장 · 화면'/, '어림값에는 · 화면을 붙여야 합니다');
   assert.match(funcSource('cvHwpCount'), /'장 · 한글'/, '한글 값에는 · 한글을 붙여야 합니다');
   // 툴바 진입점
@@ -950,6 +997,42 @@ test('보관한 한글 문서는 내려받지 않고 앱 안에서 본다', () =
   // 기관 양식 칩과 값채우기 결과도 바로 볼 수 있어야 한다
   assert.match(funcSource('renderCvForms'), /cvFormHwpView/);
   assert.match(funcSource('hwpxFill'), /openHwpViewer\(await blob\.arrayBuffer\(\)/);
+});
+
+test('쪽 나눔 빈 줄을 걷어낸 뒤 한글 문서를 만든다', () => {
+  // ⚠ 공용 서식층(tableFrom)은 skip으로 「칸」만 거르고 「행」은 버리지 않는다.
+  //    그대로 두면 쪽 경계마다 빈 표 줄이 문서에 남는다(실측: 화면 쪽수-1 개).
+  const src = funcSource('_cvBuildHwpx');
+  assert.match(src, /_cvStripGaps\(sheet\)/, '만들기 전에 화면 전용 빈 줄을 걷어내야 합니다');
+  assert.match(src, /finally \{\s*if\(hadGaps\) cvPaginate\(\);/, '만든 뒤 화면 쪽 나눔을 되돌려야 합니다');
+  // ⚠ 여기서 자를 다시 그리면 cvHwpCount를 거쳐 되돌아와 무한히 돈다
+  //    (주석에도 그 이름이 나오므로 주석을 지운 뒤 실제 코드만 본다)
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/cvRenderGuide/.test(code), '⚠ _cvBuildHwpx에서 자를 다시 그리면 무한 재귀입니다');
+});
+
+test('화면 쪽 수와 한글 쪽 수가 다르면 둘 다 밝힌다', () => {
+  // 시트 옆 배지는 화면 기준(1/3 쪽)인데 툴바는 한글 기준(A4 2장)이라 서로 모순으로 보였다
+  const cnt = funcSource('cvHwpCount');
+  assert.match(cnt, /\(화면 '\+_cvScreenPages\+'장\)/, '다를 때는 화면 쪽 수도 함께 적어야 합니다');
+  const guide = funcSource('cvRenderGuide');
+  assert.match(guide, /_cvScreenPages=n;/, '화면 쪽 수를 기억해 둬야 비교할 수 있습니다');
+  assert.match(guide, /화면 미리보기 기준입니다/, '시트 옆 배지가 어느 기준인지 밝혀야 합니다');
+});
+
+test('한글 쪽 수 세기가 겹쳐 돌지 않는다', () => {
+  // 먼저 시작한 셈이 나중에 끝나면 옛 쪽 수가 배지에 남는다
+  const src = funcSource('cvHwpCount');
+  assert.match(src, /if\(_cvHwpCountBusy\) return;/);
+  assert.match(src, /finally\{ _cvHwpCountBusy=false; \}/);
+});
+
+test('한글 뷰어는 형식을 못박지 않고 인라인 스타일을 정리한다', () => {
+  const dl = funcSource('hwpViewDownload');
+  assert.ok(!/'hwpx'\)/.test(dl), "⚠ 형식을 'hwpx'로 못박으면 옛 .hwp가 잘못된 MIME으로 저장됩니다");
+  assert.match(dl, /PureunHwp\.download\(_hwpView\.bytes, _hwpView\.name\)/);
+  // renderPreview가 cssText에 덧붙이기(+=)로 넣으므로 닫을 때 지워야 쌓이지 않는다
+  assert.match(funcSource('closeHwpView'), /removeAttribute\('style'\)/);
 });
 
 test('빈 공간 행은 HWPX·텍스트 추출에 섞이지 않는다', () => {
