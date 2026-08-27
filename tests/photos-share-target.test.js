@@ -11,10 +11,26 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { cutFn } = require('./cut-fn');
 
 const R = path.join(__dirname, '..');
-const swSrc = fs.readFileSync(path.join(R, 'pu-photos-sw.js'), 'utf8');
 const html = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
+
+/* ⚠⚠ **화면이 실제로 등록하는 일꾼**을 읽는다 — 파일 이름을 손으로 적으면 안 된다
+   (대표 검토 2026-08-25). 이 검사는 `pu-photos-sw.js` 를 박아 두고 있었는데,
+   그 파일은 **더 이상 등록되지 않는다** — 워커는 한 scope 에 하나만 살아남아
+   네 앱이 통합 워커 `pu-sw.js` 하나를 함께 쓴다(pu-sw.js 머리말). 옛 파일은 예전에
+   등록해 둔 브라우저가 조용히 갈아타도록 남겨 둔 껍데기다.
+   그래서 **「가장 위험한 성질을 실제로 돌려서 확인한다」던 것이, 정작 안 도는 파일을
+   돌려 보고 있었다.** 둘은 이미 갈라져 있었다(되돌려 보내는 방식이 다르다).
+   안 쓰는 파일을 지키는 검사는 없는 것보다 나쁘다 — 지키고 있다고 믿게 만든다.
+   옆 검사(photos-share-target-path)는 8/25 에 같은 함정을 고쳤는데 이 파일을 놓쳤다. */
+const SW_FILE = (function () {
+  const m = html.match(/serviceWorker\.register\('([^']+)'/);
+  assert.ok(m, '화면이 일꾼을 등록하는 줄을 찾지 못했습니다');
+  return m[1].replace(/^\.?\//, '');
+})();
+const swSrc = fs.readFileSync(path.join(R, SW_FILE), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(R, 'pu-photos-manifest.json'), 'utf8'));
 
 /* ── 일꾼을 진짜로 켠다 ── */
@@ -48,11 +64,16 @@ function bootSw() {
       },
     },
   };
+  /* 통합 일꾼은 기업정보함 몫에서 캐시를 쓴다 — 사진첩 몫은 안 쓰지만,
+     파일을 통째로 켜야 하므로 자리만 마련해 둔다(우리 시험에서는 안 불린다). */
+  ctx.caches = { open: async () => ({ put: async () => {} }) };
   ctx.self = {
     addEventListener(name, fn) { handlers[name] = fn; },
     skipWaiting() {},
     clients: { claim() {} },
     console: ctx.console,
+    /* 통합 일꾼은 돌아갈 주소를 self.location 기준으로 만든다 */
+    location: 'https://x.io/pureunall/pu-photos.html',
   };
   vm.createContext(ctx);
   vm.runInContext(swSrc, ctx);
@@ -88,9 +109,16 @@ test('다른 앱으로 가는 POST 는 가로채지 않는다', async () => {
   assert.equal(await dispatch(sw.handlers, shareReq('https://x.io/pureunall/pu-cards.html', [])), null);
 });
 
-test('★ 캐시를 아예 쓰지 않는다', () => {
-  assert.ok(!/\bcaches\b/.test(swSrc),
-    '캐시를 두면 pu-version.js 의 새 버전 자동 적용과 싸워 옛 화면이 남습니다.');
+test('★ 사진첩 몫에는 캐시가 끼어들지 않는다', () => {
+  /* ⚠ 2026-08-25 다시 겨눔 — 종전에는 파일 전체에 `caches` 라는 낱말이 없는지 보았다.
+     통합 일꾼은 **기업정보함 몫에서** 공유받은 사진을 캐시에 잠깐 둔다(그쪽 설계다).
+     그래서 낱말 하나로 재면 애먼 곳에서 걸린다. 지켜야 할 것은 «사진첩 길에
+     캐시가 안 끼어드는가»이므로 그 토막만 본다. 여기 캐시를 두면 새 판 자동 적용과
+     싸워 옛 화면이 남는다. */
+  const seg = cutFn(swSrc, 'function takePhotos(');
+  assert.ok(seg, 'takePhotos 를 찾지 못했습니다');
+  assert.ok(!/\bcaches\b/.test(seg),
+    '★ 사진첩 공유에 캐시를 두면 pu-version.js 의 새 판 자동 적용과 싸워 옛 화면이 남습니다.');
 });
 
 /* ── ② 공유가 오면 담고 되돌려 보낸다 ── */
@@ -131,13 +159,23 @@ test('★ manifest 의 파일 이름과 일꾼이 꺼내는 이름이 같다', (
   assert.equal(st.method, 'POST');
   assert.equal(st.enctype, 'multipart/form-data', '파일을 보내려면 이 값이어야 합니다.');
   const field = st.params.files[0].name;
-  assert.ok(new RegExp("getAll\\('" + field + "'\\)").test(swSrc),
+  /* ⚠ 통합 일꾼은 앱마다 꺼내는 자리가 따로다 — **사진첩 토막**에서 봐야 한다.
+     파일 전체로 재면 급여데이터함이 같은 이름을 쓰고 있어 사진첩이 틀려도 통과한다. */
+  const seg = cutFn(swSrc, 'function takePhotos(') || swSrc;
+  assert.ok(new RegExp("getAll\\('" + field + "'\\)").test(seg),
     '이름이 어긋나면 사진이 한 장도 안 옵니다(가장 흔한 실수).');
 });
 
 test('공유 주소가 앱 안(scope)에 있다', () => {
-  assert.ok(manifest.share_target.action.indexOf('pu-photos.html') >= 0);
-  assert.ok(/SHARE_PATH *= *'\/pu-photos\.html'/.test(swSrc), '일꾼이 보는 길과 같아야 합니다.');
+  const action = String(manifest.share_target.action).replace(/^\.\//, '');
+  assert.ok(action.indexOf('pu-photos.html') >= 0);
+  /* ⚠ 통합 일꾼은 앱마다 상수를 따로 둔다(PHOTOS_SHARE) — 옛 파일의 이름(SHARE_PATH)을
+     못 박아 두었더니, 이름이 안 맞아 걸린 것이 아니라 **애초에 옛 파일을 보고 있었다.**
+     이름을 못 박지 말고 「사진첩 길을 가리키는 상수가 있는가」로 본다. */
+  const m = swSrc.match(/var (\w*PHOTOS\w*|SHARE_PATH) = '([^']*pu-photos[^']*)'/);
+  assert.ok(m, '★ ' + SW_FILE + ' 에서 사진첩 공유 길을 찾지 못했습니다');
+  assert.ok(m[2].indexOf(action) >= 0,
+    '★ 매니페스트는 「' + action + '」로 보내는데 일꾼은 「' + m[2] + '」를 봅니다');
 });
 
 test('사진과 스캔(PDF)을 함께 받는다', () => {
