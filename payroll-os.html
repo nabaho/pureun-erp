@@ -17,10 +17,11 @@
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <script src="js/pu-backup.js?v=1"></script>
-<script src="js/pu-labor-core.js?v=1"></script>
+<script src="js/pu-labor-core.js?v=3"></script>
 <script src="js/pu-hwp-engine.js?v=14"></script>
 <script src="hwpx_gen.js?v=14"></script>
 <script src="hwpx_doc.js?v=2"></script>
+<script src="xlsx_gen.js?v=15"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <style>
 :root{--navy:#2E3A8C;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
@@ -288,14 +289,14 @@ function dbSet(k,v){
   });
 }
 
-var App={screen:'cards',site:null,month:null};
+var App={screen:'cards',site:null,month:null,emp:null,day:null};
 /* ── 화면 이동 기록(직전 화면으로 되돌아가는 백 키) ──
    헤더 ← 버튼과 폰 물리 백키가 같은 History API를 공유. file://에선 pushState가
    막혀도(try/catch) 화면 전환은 정상, 폰 백키만 비활성(라이브 https에선 전부 동작). */
 var navDepth=0;
-function navSnap(){ return {screen:App.screen,site:App.site,month:App.month}; }
-function navSame(a,b){ return a.screen===b.screen&&a.site===b.site&&a.month===b.month; }
-function navApply(s){ App.screen=s.screen; App.site=s.site; App.month=s.month; }
+function navSnap(){ return {screen:App.screen,site:App.site,month:App.month,emp:App.emp,day:App.day}; }
+function navSame(a,b){ return a.screen===b.screen&&a.site===b.site&&a.month===b.month&&a.emp===b.emp&&a.day===b.day; }
+function navApply(s){ App.screen=s.screen; App.site=s.site; App.month=s.month; App.emp=s.emp||null; App.day=s.day||null; }
 function navSeed(){ navDepth=0; try{ history.replaceState({pnav:navSnap(),depth:0},''); }catch(e){} }
 function navTo(patch){
   var next=Object.assign(navSnap(),patch);
@@ -310,7 +311,7 @@ window.addEventListener('popstate',function(ev){
   if(st&&st.pnav){ navApply(st.pnav); navDepth=st.depth||0; render(); }
   // 시작점보다 더 뒤로 = 브라우저 기본(앱 이탈/포털) 허용
 });
-App.go=function(s){ navTo({screen:s,site:null,month:null}); };  // 기존 호출부 호환(탭 이동)
+App.go=function(s){ navTo({screen:s,site:null,month:null,emp:null,day:null}); };  // 기존 호출부 호환(탭 이동)
 var NAV=[{id:'cards',label:'⚙️ 설정 카드'},{id:'inbox',label:'📥 수신함'},{id:'payroll',label:'💰 급여 처리'},{id:'attend',label:'🕒 근태'},{id:'leave',label:'🌴 연차·휴가'},{id:'sever',label:'🎓 퇴직'},{id:'slip',label:'📄 명세서'},{id:'report',label:'📑 신고'}];
 var SIG={green:'#2E7D4F',orange:'#B26A00',red:'#C43D3D',gray:'#8a8f98'};
 function won(n){ return (n==null)?'-':Number(n).toLocaleString(); }
@@ -687,11 +688,47 @@ function screenSlip(){
   h+='<div class="sub noprint"><a href="#" onclick="goBack();return false">← '+App.site+'</a> · <b>'+App.month+'</b> 명세서 '+slipEmps.length+'장 '+
      (draft?'<span class="badge warn">미확정 — 검토용 워터마크</span>':'<span class="badge ok">확정본</span>')+
      ' <button class="btn" style="margin-left:8px" onclick="window.print()">인쇄 / PDF 저장</button>'+
-     ' <button class="btn sec" style="margin-left:6px" onclick="exportPayrollSlipsHwpx()">한글(HWPX) 저장</button></div>';
+     ' <button class="btn sec" style="margin-left:6px" onclick="exportPayrollSlipsHwpx()">한글(HWPX) 저장</button>'+
+     ' <button class="btn sec" style="margin-left:6px" onclick="exportLedgerXlsx(&#39;'+App.site.replace(/'/g,"")+'&#39;,&#39;'+App.month.replace(/'/g,"")+'&#39;)">급여대장 엑셀</button>'+
+     ' <button class="btn sec" style="margin-left:6px" onclick="exportLedgerCsv(&#39;'+App.site.replace(/'/g,"")+'&#39;,&#39;'+App.month.replace(/'/g,"")+'&#39;)">CSV</button>'+
+     (draft ? '' : ' <button class="btn" style="margin-left:6px" onclick="sendSlipAll(&#39;'+App.site.replace(/'/g,"")+'&#39;,&#39;'+App.month.replace(/'/g,"")+'&#39;)">📧 전원 메일 발송</button>')+
+     '</div>';
   h+='<div class="noprint" style="background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:14px">'+
      '<div style="font-size:12.5px;color:var(--sub);margin-bottom:6px">명세서 하단 안내 문구(연차사용촉진 등) — 모든 명세서에 함께 인쇄됩니다</div>'+
      '<textarea id="slipnotice" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;font-family:inherit;font-size:12.5px" rows="2">'+String(notice).replace(/</g,'&lt;')+'</textarea>'+
      '<button class="btn sec" style="margin-top:6px;padding:5px 12px;font-size:12px" onclick="saveNotice()">문구 저장</button></div>';
+  /* ── 발송 명단 (인쇄에는 안 나온다) ──
+     이메일은 사람마다 다르고 자주 바뀐다. 그래서 명세서 화면에서 바로 고치게 둔다.
+     ⚠ 확정된 달만 보낼 수 있다 — 미확정본은 「검토용」 워터마크가 찍힌 문서다. */
+  h += '<div class="noprint" style="background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:14px">' +
+    '<div style="font-size:12.5px;color:var(--sub);margin-bottom:6px">발송 명단 — 이메일을 넣고 [보내기]. ' +
+    (draft ? '<b style="color:var(--warn)">이 달은 미확정이라 발송이 잠겨 있습니다</b>' : '보낸 사람은 날짜가 표시됩니다') + '</div>' +
+    '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">' +
+    '<tr style="background:var(--paper)"><th style="padding:6px 8px;text-align:left">성명</th>' +
+    '<th style="padding:6px 8px;text-align:left">이메일</th>' +
+    '<th style="padding:6px 8px;text-align:left">보낸 기록</th>' +
+    '<th style="padding:6px 8px"></th></tr>';
+  slipEmps.forEach(function (e) {
+    var nm = String(e.성명 || '').replace(/'/g, '');
+    var meta = (typeof empMeta === 'function') ? empMeta(App.site, e.성명) : {};
+    var st = (typeof sentOf === 'function') ? sentOf(App.site, App.month, e.성명) : null;
+    var mk = App.site.replace(/'/g, '') + '|' + nm;
+    h += '<tr style="border-top:1px solid var(--line)">' +
+      '<td style="padding:5px 8px;font-weight:600">' + (e.성명 || '') + '</td>' +
+      '<td style="padding:5px 8px"><input type="email" value="' + String(meta.이메일 || '').replace(/"/g, '') +
+      '" placeholder="name@example.com" oninput="lput(&#39;emp_meta&#39;,&#39;' + mk + '&#39;,{이메일:this.value})" ' +
+      'style="width:200px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px"></td>' +
+      '<td style="padding:5px 8px;color:var(--sub)">' + (st ? new Date(st.at).toLocaleString() + ' → ' + st.to : '-') + '</td>' +
+      '<td style="padding:5px 8px;text-align:right">' +
+      (draft ? '<span style="font-size:11.5px;color:var(--sub)">확정 후 가능</span>'
+        : '<button class="btn sec" style="padding:3px 10px;font-size:12px" onclick="sendSlipOne(&#39;' +
+          App.site.replace(/'/g, '') + '&#39;,&#39;' + App.month.replace(/'/g, '') + '&#39;,&#39;' + nm + '&#39;)">보내기</button>') +
+      '</td></tr>';
+  });
+  h += '</table></div>' +
+    '<div style="font-size:11.5px;color:var(--sub);margin-top:8px">메일은 푸른노무법인 발송 함수(sendPayslip)로 나갑니다. ' +
+    '보낸 사실은 서버에 남고, 같은 사람에게 다시 보낼 때 한 번 더 확인합니다.</div></div>';
+
   slipEmps.forEach(function(e){ h+=slipHTML(App.site,App.month,e,payday,notice,draft); });
   return h;
 }
@@ -1293,6 +1330,13 @@ function screenCards(){
   var cards=dbGet('site_cards',[]);
   var h='<h1>설정 카드</h1><div class="sub">푸른통합시스템 · payroll_os · '+cards.length+'곳</div>';
   h+='<button class="btn sec" onclick="importCards()">설정 카드(JSON) 가져와 서버 저장</button>';
+  /* 간이세액표 — 없으면 소득세를 계산할 수 없다(국세청이 산식을 공개하지 않아
+     표 자체가 법적 기준이다). 그래서 있는지 없는지를 눈에 보이게 둔다. */
+  h+=' <button class="btn sec" onclick="importTaxTable()">간이세액표(JSON) 가져오기</button>';
+  var tt=dbGet('tax_table',null);
+  h+='<div style="margin-top:10px;font-size:12.5px">'+(tt&&tt.rows&&tt.rows.length
+    ? '<span class="badge ok">간이세액표 있음</span> '+(tt.연도||'')+'년 · 구간 '+tt.rows.length+'개 · 가족 칸 '+((tt.rows[0].tax||[]).length)+'개'
+    : '<span class="badge warn">간이세액표 없음</span> 소득세는 대장 값만 씁니다 — <code>node engine/build_simpletax.js</code> 로 만든 JSON을 올리세요')+'</div>';
   if(!cards.length){ h+='<div class="empty" style="margin-top:14px">서버에 자료 없음. 위 버튼으로 site_cards.json 올리면 저장됩니다.</div>'; return h; }
   h+='<div class="cards">'+cards.map(function(c){var n=(c.확인필요||[]).length;
     return '<div class="c"><div style="display:flex;justify-content:space-between"><span class="t">'+c.사업장+'</span>'+
@@ -1310,6 +1354,178 @@ function screenCards(){
      labor_policy[사업장] · emp_meta[사업장|성명]
      attend[사업장|월|성명] · leave[사업장|연도|성명] · sever[사업장|성명]
    ══════════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════════
+   명세서 발송 · 회계프로그램용 엑셀 내보내기
+   ──────────────────────────────────────────────────────────────────────
+   발송은 **되돌릴 수 없는 밖으로 나가는 행위**다. 그래서 규칙을 못 박는다:
+     ① 확정된 월만 보낸다(미확정은 검토용 워터마크본 — 나가면 사고다)
+     ② 보내기 전에 사람에게 확인받는다(누구에게·몇 명·어느 달)
+     ③ 보낸 사실을 남긴다(slip_sent) — 두 번 보내는 것을 막고, 물으면 답한다
+   메일 함수는 이미 있는 sendPayslip 을 쓴다(pu-erp 와 같은 자리·같은 방식).
+   ══════════════════════════════════════════════════════════════════════ */
+var PAYSLIP_FN_URL = 'https://us-central1-pureun-erp.cloudfunctions.net/sendPayslip';
+
+/* 보낸 기록 — 사업장|월|성명 */
+function sentMap() { return lmap('slip_sent'); }
+function sentOf(site, month, name) { return sentMap()[site + '|' + month + '|' + name] || null; }
+
+/* 로그인 증표를 붙여 함수를 부른다(pu-erp 의 postMail 과 같은 방식).
+   ⚠ 증표가 없으면 서버가 401 로 되돌린다 — 우리 도메인이 공개 발송기가 되지 않게. */
+function postPayslip(payload) {
+  var u = null;
+  try { u = (window.firebase && firebase.auth && firebase.auth().currentUser) || null; } catch (e) {}
+  if (!u) return Promise.reject(new Error('로그인 후 이용해 주세요.'));
+  return u.getIdToken().then(function (tok) {
+    return fetch(PAYSLIP_FN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+      body: JSON.stringify(payload)
+    }).then(function (r) { return r.json(); });
+  });
+}
+
+/* 메일 본문 — 명세서 표를 그대로 담는다. 메일 클라이언트는 CSS 를 많이 지우므로
+   표는 style 속성으로만 꾸민다(class 는 메일에서 사라진다). */
+function payslipMailHtml(site, month, e) {
+  var rows = slipRows(e) || [];
+  var tr = rows.map(function (r) {
+    return '<tr><td style="padding:5px 8px;border-bottom:1px solid #e5e7eb">' + (r[0] == null ? '' : r[0]) + '</td>' +
+      '<td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:right">' + (r[1] == null ? '' : r[1]) + '</td></tr>';
+  }).join('');
+  return '<div style="font-family:sans-serif;font-size:14px;line-height:1.7;color:#1e293b">' +
+    '<p>' + (e.성명 || '') + ' 님 안녕하세요.</p>' +
+    '<p>' + site + ' ' + month + ' 임금명세서를 보내 드립니다. (근로기준법 48조 2항)</p>' +
+    '<table style="border-collapse:collapse;font-size:13px;min-width:280px">' + tr + '</table>' +
+    '<p style="font-size:12px;color:#64748b">문의는 담당자에게 회신해 주세요. 이 메일은 푸른노무법인이 사업장을 대행해 보냅니다.</p>' +
+    '</div>';
+}
+
+/* 한 사람에게 보내기 — 확인 → 발송 → 기록 */
+function sendSlipOne(site, month, name) {
+  if (!isLocked(site, month)) {
+    alert('확정되지 않은 달입니다. 급여 처리 화면에서 확정한 뒤 보내세요.\n(미확정본은 「검토용」 워터마크가 찍힙니다)');
+    return;
+  }
+  var meta = empMeta(site, name);
+  var to = (meta.이메일 || '').trim();
+  if (!to || to.indexOf('@') < 0) { alert(name + ' 님의 이메일이 없습니다. 이메일 칸에 넣어 주세요.'); return; }
+  var rec = payRecs(site).filter(function (r) { return r.월 === month; })[0];
+  var emps = rec ? (empsOf(rec) || []) : [];
+  var e = dedupeEmps(emps).filter(function (x) { return x.성명 === name; })[0];
+  if (!e) { alert('직원 표를 아직 받지 못했습니다. 잠시 뒤 다시 눌러 주세요.'); return; }
+  var prev = sentOf(site, month, name);
+  var msg = name + ' 님에게\n' + to + ' (으)로\n' + site + ' ' + month + ' 임금명세서를 보낼까요?';
+  if (prev) msg = '이미 ' + new Date(prev.at).toLocaleString() + ' 에 보냈습니다.\n\n' + msg + '\n\n(다시 보내면 두 번 받게 됩니다)';
+  if (!confirm(msg)) return;
+  postPayslip({
+    to: to, name: name, ym: month,
+    subject: '[푸른노무법인] ' + month + ' 임금명세서 — ' + name,
+    html: payslipMailHtml(site, month, e)
+  }).then(function (d) {
+    if (d && d.ok) {
+      lput('slip_sent', site + '|' + month + '|' + name, { at: Date.now(), to: to, by: (d.by || '') });
+      alert('발송 완료 → ' + to);
+    } else {
+      alert('발송 실패: ' + JSON.stringify((d && d.error) || d));
+    }
+  }).catch(function (err) { alert('호출 실패: ' + ((err && err.message) || err)); });
+}
+
+/* 여럿에게 — 한 번 확인하고 차례로 보낸다.
+   ⚠ 한꺼번에 던지지 않는다(메일 서비스가 막고, 어디까지 갔는지도 모르게 된다).
+     하나씩 보내고 결과를 세어 마지막에 알린다. */
+function sendSlipAll(site, month) {
+  if (!isLocked(site, month)) { alert('확정되지 않은 달입니다. 확정 후 보내세요.'); return; }
+  var rec = payRecs(site).filter(function (r) { return r.월 === month; })[0];
+  var emps = rec ? dedupeEmps(empsOf(rec) || []) : [];
+  var todo = emps.filter(function (e) {
+    var m = empMeta(site, e.성명);
+    return m.이메일 && m.이메일.indexOf('@') > -1 && !sentOf(site, month, e.성명);
+  });
+  var noMail = emps.length - emps.filter(function (e) {
+    var m = empMeta(site, e.성명); return m.이메일 && m.이메일.indexOf('@') > -1;
+  }).length;
+  if (!todo.length) {
+    alert('보낼 대상이 없습니다.' + (noMail ? '\n이메일이 없는 사람 ' + noMail + '명 — 이메일 칸을 채우세요.' : '\n(이미 모두 보냈습니다)'));
+    return;
+  }
+  if (!confirm(site + ' ' + month + ' 임금명세서를 ' + todo.length + '명에게 보낼까요?' +
+    (noMail ? '\n(이메일 없는 ' + noMail + '명은 건너뜁니다)' : '') +
+    '\n(이미 보낸 사람은 제외했습니다)')) return;
+  var okN = 0, failN = 0, i = 0;
+  function next() {
+    if (i >= todo.length) {
+      alert('발송 끝 — 성공 ' + okN + '명' + (failN ? ' · 실패 ' + failN + '명' : ''));
+      render();
+      return;
+    }
+    var e = todo[i++];
+    var to = empMeta(site, e.성명).이메일;
+    postPayslip({
+      to: to, name: e.성명, ym: month,
+      subject: '[푸른노무법인] ' + month + ' 임금명세서 — ' + e.성명,
+      html: payslipMailHtml(site, month, e)
+    }).then(function (d) {
+      if (d && d.ok) { okN++; lput('slip_sent', site + '|' + month + '|' + e.성명, { at: Date.now(), to: to, by: (d.by || '') }); }
+      else failN++;
+      next();
+    }).catch(function () { failN++; next(); });
+  }
+  next();
+}
+
+/* ── 회계프로그램용 급여대장 엑셀 ──
+   ⚠ 더존 등 프로그램마다 가져오기 열 순서가 다르다. 그래서 「더존 전용 서식」이라고
+     하지 않고 **표준 급여대장**을 낸다 — 첫 사용 시 프로그램의 가져오기 매핑을
+     한 번 맞추면 그다음부터는 그대로 쓸 수 있다. 주민번호는 넣지 않는다. */
+var LEDGER_COLS = ['순번', '성명', '기본급', '과세총액', '비과세', '지급총액',
+  '국민연금', '건강보험', '장기요양', '고용보험', '소득세', '지방소득세', '공제총액', '실지급액'];
+function ledgerRows(site, month) {
+  var rec = payRecs(site).filter(function (r) { return r.월 === month; })[0];
+  var emps = rec ? dedupeEmps(empsOf(rec) || []) : [];
+  var out = [], i = 0;
+  emps.forEach(function (e) {
+    i++;
+    var 지급 = (e.지급총액 != null) ? e.지급총액
+      : ((e.실수령 != null && e.공제총액 != null) ? (Number(e.실수령) + Number(e.공제총액)) : null);
+    out.push([i, e.성명 || '', e.기본급, e.과세총액, e.비과세, 지급,
+      e.국민연금, e.건강보험, e.장기요양, e.고용보험, e.소득세, e.지방세, e.공제총액, e.실수령]
+      .map(function (v, ix) { return ix <= 1 ? v : (v == null ? '' : v); }));
+  });
+  return out;
+}
+function exportLedgerXlsx(site, month) {
+  var rows = ledgerRows(site, month);
+  if (!rows.length) { alert('내보낼 직원 표가 없습니다. 잠시 뒤 다시 눌러 주세요.'); return; }
+  if (!window.XLSXGEN) { alert('엑셀 만들기 도구를 불러오지 못했습니다.'); return; }
+  XLSXGEN.download({
+    sheet: '급여대장',
+    title: site + ' ' + month + ' 급여대장',
+    sub: '푸른노무법인 · 주민번호 미포함 · 회계프로그램 가져오기용',
+    headers: LEDGER_COLS,
+    rows: rows,
+    landscape: true
+  }, '급여대장_' + site + '_' + month + '.xlsx');
+}
+/* CSV — 엑셀이 막히거나 다른 프로그램에 넣을 때. 한글이 깨지지 않게 BOM 을 붙인다. */
+function exportLedgerCsv(site, month) {
+  var rows = ledgerRows(site, month);
+  if (!rows.length) { alert('내보낼 직원 표가 없습니다.'); return; }
+  var esc2 = function (v) {
+    var s2 = (v == null ? '' : String(v));
+    return (s2.indexOf(',') > -1 || s2.indexOf('"') > -1) ? '"' + s2.replace(/"/g, '""') + '"' : s2;
+  };
+  var lines = [LEDGER_COLS.join(',')].concat(rows.map(function (r) { return r.map(esc2).join(','); }));
+  var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '급여대장_' + site + '_' + month + '.csv';
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 1500);
+}
+window.sendSlipOne = sendSlipOne; window.sendSlipAll = sendSlipAll;
+window.exportLedgerXlsx = exportLedgerXlsx; window.exportLedgerCsv = exportLedgerCsv;
+
 var LC = (typeof PuLaborCore !== 'undefined') ? PuLaborCore : null;
 
 /* 연도별 기준값 — engine/rates.json 과 같은 값(마스터는 rates.json) */
@@ -1421,6 +1637,246 @@ function policyBar(site) {
     '</div>';
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   일별 출퇴근 달력 — 하루씩 찍고, 법이 세는 시간은 코어가 센다
+   ──────────────────────────────────────────────────────────────────────
+   왜 달력이 필요한가: 월 합계(연장 10h)만 받으면 **주 12시간 한도**(근기법
+   53조)를 볼 수 없고, 야간 겹침(22~06시)·철야·주휴 개근도 판정할 수 없다.
+   하루 단위로 있어야 법 판단이 된다.
+
+   저장: attend[사업장|월|성명].일별 = [{date,in,out,breakMin,type}]
+   ⚠ 일별 기록이 있으면 **그것이 이긴다**(월 합계 손입력을 덮는다). 두 값이
+     다를 때 무엇이 진실인지 화면에 밝힌다 — 조용히 하나를 고르면 안 된다.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* 공휴일 — 휴일근로 판정에 쓴다. 연도별로 담는다(사업장 약정휴일도 여기).
+   ⚠ 넣지 않으면 주휴일(기본 일요일)만 휴일로 본다 — 설날·추석 근로가
+     평일 연장으로 계산되어 수당이 적게 나온다. 그래서 화면에서 알린다. */
+function holidayMap() { return lmap('holidays'); }
+function holidaysOf(year) {
+  var m = holidayMap()[String(year)];
+  return (m && m.list) ? m.list : [];
+}
+function setHolidays(year, text) {
+  var list = String(text || '').split(/[,\s]+/)
+    .map(function (x) { return x.trim(); })
+    .filter(function (x) { return /^\d{4}-\d{1,2}-\d{1,2}$/.test(x); })
+    .map(function (x) {
+      var p = x.split('-');
+      return p[0] + '-' + ('0' + p[1]).slice(-2) + '-' + ('0' + p[2]).slice(-2);
+    });
+  lput('holidays', String(year), { list: list });
+}
+
+/* 그 달의 일별 기록 (배열) */
+function dayRecords(site, month, name) {
+  var a = attendOf(site, month, name);
+  return (a && a.일별 && a.일별.length) ? a.일별 : [];
+}
+/* 일별 기록으로 낸 집계 — 없으면 null(부르는 쪽이 손입력을 쓴다) */
+function derivedAttend(site, month, name, P) {
+  var recs = dayRecords(site, month, name);
+  if (!recs.length) return null;
+  var y = laborYearOfMonth(month);
+  return LC.summarizeAttendance(recs, { policy: P, holidays: holidaysOf(y), weeklyOffDow: 0 });
+}
+/* 월 이름에서 연도 뽑기 — '2026-03'·'3월'·'23년 7월' 모두 온다.
+   ⚠ 연도를 못 찾으면 올해로 본다(최저임금·공휴일 연도가 어긋나면 값이 틀린다). */
+function laborYearOfMonth(month) {
+  var m = String(month || '').match(/(20\d{2})/);
+  if (m) return m[1];
+  var m2 = String(month || '').match(/^(\d{2})년/);
+  if (m2) return '20' + m2[1];
+  /* '25.05 늘봄반찬' 처럼 **두 자리 연도.월** 로 오는 시트가 실제로 있다.
+     이걸 놓치면 최저임금·공휴일 연도가 올해로 잡혀 과거 달 계산이 틀린다. */
+  var m3 = String(month || '').match(/(?:^|[^\d])(\d{2})[.\-\/](\d{1,2})(?!\d)/);
+  if (m3 && Number(m3[2]) >= 1 && Number(m3[2]) <= 12) return '20' + m3[1];
+  return laborYear();
+}
+/* 월 이름에서 '몇 월'인지 — 달력 격자를 그리려면 필요하다.
+   ⚠ 실제 시트 이름은 '3월'·'2026-03'·'23년 7월'·'25.05 늘봄반찬' 로 섞여 온다. */
+function laborMonthNum(month) {
+  var s = String(month || '');
+  var m = s.match(/(20\d{2})[-.\/]?(\d{1,2})/);
+  if (m && Number(m[2]) >= 1 && Number(m[2]) <= 12) return Number(m[2]);
+  var m2 = s.match(/(\d{1,2})\s*월/);
+  if (m2 && Number(m2[1]) >= 1 && Number(m2[1]) <= 12) return Number(m2[1]);
+  var m3 = s.match(/(?:^|[^\d])(\d{2})[.\-\/](\d{1,2})(?!\d)/);
+  if (m3 && Number(m3[2]) >= 1 && Number(m3[2]) <= 12) return Number(m3[2]);
+  return null;
+}
+
+var DAY_TYPES = [
+  { key: 'work', label: '근무' }, { key: 'holiday', label: '휴일근로' },
+  { key: 'annual', label: '연차' }, { key: 'half', label: '반차' },
+  { key: 'absent', label: '결근' }, { key: 'paid', label: '유급휴가' },
+  { key: 'unpaid', label: '무급휴가·휴직' }
+];
+function dayTypeLabel(t) {
+  for (var i = 0; i < DAY_TYPES.length; i++) if (DAY_TYPES[i].key === t) return DAY_TYPES[i].label;
+  return '근무';
+}
+
+/* 하루 기록 저장·삭제 — 같은 날짜는 덮어쓴다(두 줄이 되면 시간이 두 배로 센다) */
+function saveDay(site, month, name) {
+  var d = document.getElementById('dayDate'), i = document.getElementById('dayIn'),
+      o = document.getElementById('dayOut'), b = document.getElementById('dayBreak'),
+      t = document.getElementById('dayType'), nt = document.getElementById('dayNote');
+  if (!d || !d.value) { alert('날짜를 확인하세요.'); return; }
+  var type = t ? t.value : 'work';
+  var rec = { date: d.value, type: type };
+  if (type === 'work' || type === 'holiday') {
+    if (!i.value || !o.value) { alert('출근·퇴근 시각을 넣으세요. (휴가·결근이면 유형을 바꾸세요)'); return; }
+    rec.in = i.value; rec.out = o.value; rec.breakMin = Number(b.value || 0);
+  }
+  if (nt && nt.value) rec.note = nt.value;
+  var list = dayRecords(site, month, name).filter(function (r) { return r.date !== rec.date; });
+  list.push(rec);
+  list.sort(function (a, c) { return String(a.date) < String(c.date) ? -1 : 1; });
+  lput('attend', site + '|' + month + '|' + name, { 일별: list });
+  App.day = null;
+}
+function delDay(site, month, name, date) {
+  if (!confirm(date + ' 기록을 지울까요?')) return;
+  var list = dayRecords(site, month, name).filter(function (r) { return r.date !== date; });
+  lput('attend', site + '|' + month + '|' + name, { 일별: list });
+  App.day = null;
+}
+function clearDays(site, month, name) {
+  if (!confirm(name + ' 의 이 달 일별 기록을 모두 지울까요? (월 합계 손입력으로 돌아갑니다)')) return;
+  lput('attend', site + '|' + month + '|' + name, { 일별: [] });
+}
+
+/* ── 달력 화면 ── */
+function screenDayCalendar() {
+  var site = App.site, month = App.month, name = App.emp;
+  var P = policyFor(site), s = esc(site), m = esc(month), nm = esc(name);
+  var year = laborYearOfMonth(month), mon = laborMonthNum(month);
+  var h = '<h1>근태 달력</h1><div class="sub"><a href="#" onclick="navTo({emp:null,day:null});return false">← ' +
+    month + ' 직원표</a> · <b>' + name + '</b> · ' + year + '년 ' + (mon || '?') + '월</div>';
+
+  if (!mon) {
+    return h + '<div class="empty">이 시트 이름(' + month + ')에서 「몇 월」인지 읽지 못해 달력을 그릴 수 없습니다. ' +
+      '월 합계 입력을 쓰세요.</div>';
+  }
+
+  var recs = dayRecords(site, month, name);
+  var byDate = {};
+  recs.forEach(function (r) { byDate[r.date] = r; });
+  var holi = {};
+  holidaysOf(year).forEach(function (d) { holi[d] = 1; });
+
+  /* 달력 격자 — 일요일 시작. UTC 로 계산해 시간대로 하루 밀리는 일을 막는다. */
+  var first = new Date(Date.UTC(Number(year), mon - 1, 1));
+  var lead = first.getUTCDay();
+  var last = new Date(Date.UTC(Number(year), mon, 0)).getUTCDate();
+  var pad2s = function (n) { return (n < 10 ? '0' : '') + n; };
+
+  h += '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;background:#fff;table-layout:fixed">' +
+    '<tr style="background:var(--paper)">' +
+    ['일', '월', '화', '수', '목', '금', '토'].map(function (d, i) {
+      return '<th style="padding:6px;font-size:12px;color:' + (i === 0 ? 'var(--bad)' : (i === 6 ? '#2563eb' : 'inherit')) + '">' + d + '</th>';
+    }).join('') + '</tr><tr>';
+  var col = 0, i2;
+  for (i2 = 0; i2 < lead; i2++) { h += '<td style="border:1px solid var(--line);height:64px;background:#fafafa"></td>'; col++; }
+  for (var d2 = 1; d2 <= last; d2++) {
+    if (col === 7) { h += '</tr><tr>'; col = 0; }
+    var ds = year + '-' + pad2s(mon) + '-' + pad2s(d2);
+    var r = byDate[ds];
+    var isSun = (new Date(Date.UTC(Number(year), mon - 1, d2)).getUTCDay() === 0);
+    var isHoli = isSun || holi[ds];
+    var bg = r ? (r.type === 'absent' ? '#fdecec' : (r.type === 'holiday' ? '#fff4e5' :
+      (r.type === 'annual' || r.type === 'half' ? '#eaf5ea' : (r.type === 'unpaid' ? '#f1f1f1' : '#eef4ff')))) : '#fff';
+    var body = '';
+    if (r) {
+      if (r.type === 'work' || r.type === 'holiday') {
+        body = '<div style="font-size:10.5px;color:var(--sub)">' + (r.in || '') + '~' + (r.out || '') + '</div>' +
+          '<div style="font-size:11.5px;font-weight:700">' + (Math.round(LC.dayWorkedHours(r) * 100) / 100) + 'h</div>';
+      } else {
+        body = '<div style="font-size:11px;font-weight:600">' + dayTypeLabel(r.type) + '</div>';
+      }
+    }
+    h += '<td onclick="navTo({day:\'' + ds + '\'})" style="border:1px solid var(--line);height:64px;vertical-align:top;padding:4px;cursor:pointer;background:' + bg + '">' +
+      '<div style="font-size:11px;color:' + (isHoli ? 'var(--bad)' : 'var(--sub)') + '">' + d2 + (holi[ds] ? ' 공휴' : '') + '</div>' + body + '</td>';
+    col++;
+  }
+  while (col < 7) { h += '<td style="border:1px solid var(--line);height:64px;background:#fafafa"></td>'; col++; }
+  h += '</tr></table></div>';
+
+  /* 하루 편집 — 칸을 누르면 아래에 열린다 */
+  var sel = App.day;
+  if (sel) {
+    var cur = byDate[sel] || {};
+    h += '<div style="margin-top:12px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px">' +
+      '<b style="font-size:13px">' + sel + '</b>' +
+      '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12.5px">' +
+      '<input type="hidden" id="dayDate" value="' + sel + '">' +
+      '<label>유형 <select id="dayType" style="padding:5px 8px;border:1px solid var(--line);border-radius:6px">' +
+      DAY_TYPES.map(function (t) {
+        return '<option value="' + t.key + '"' + ((cur.type || 'work') === t.key ? ' selected' : '') + '>' + t.label + '</option>';
+      }).join('') + '</select></label>' +
+      '<label>출근 <input type="time" id="dayIn" value="' + (cur.in || '09:00') + '" style="padding:5px 6px;border:1px solid var(--line);border-radius:6px"></label>' +
+      '<label>퇴근 <input type="time" id="dayOut" value="' + (cur.out || '18:00') + '" style="padding:5px 6px;border:1px solid var(--line);border-radius:6px"></label>' +
+      '<label>휴게(분) <input type="number" id="dayBreak" value="' + (cur.breakMin == null ? 60 : cur.breakMin) + '" style="width:64px;padding:5px 6px;border:1px solid var(--line);border-radius:6px;text-align:right"></label>' +
+      '<input type="text" id="dayNote" placeholder="비고" value="' + esc(cur.note || '') + '" style="padding:5px 8px;border:1px solid var(--line);border-radius:6px;width:140px">' +
+      '<button class="btn" onclick="saveDay(\'' + s + '\',\'' + m + '\',\'' + nm + '\')">저장</button>' +
+      (byDate[sel] ? '<button class="btn sec" onclick="delDay(\'' + s + '\',\'' + m + '\',\'' + nm + '\',\'' + sel + '\')">지우기</button>' : '') +
+      '<button class="btn sec" onclick="navTo({day:null})">닫기</button>' +
+      '</div><div class="note" style="margin-top:8px">퇴근이 출근보다 이르면 <b>철야</b>로 봅니다(다음날 퇴근). ' +
+      '야간(22~06시) 겹침·연장·주휴는 저장하면 코어가 자동으로 셉니다.</div></div>';
+  } else {
+    h += '<div class="note">날짜 칸을 누르면 그 하루를 입력합니다.</div>';
+  }
+
+  /* 이 달 집계 — 코어가 센 값 */
+  var att = derivedAttend(site, month, name, P);
+  if (att) {
+    var A = att.합계;
+    var meta = empMeta(site, name);
+    var 시급 = LC.hourlyOrdinary(Number(meta.통상임금월액 || 0), P);
+    var al = LC.statutoryAllowances(att, 시급, { policy: P, payType: meta.급여형태 || 'monthly' });
+    h += '<h2 style="margin:18px 0 8px;font-size:15px">이 달 집계 (달력으로 계산)</h2>';
+    h += '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;background:#fff">' +
+      '<tr style="background:var(--paper)">' +
+      ['실근로', '소정내', '연장', '야간', '휴일 8h내', '휴일 8h초과', '주휴시간', '근로일', '결근', '연차사용', '법정수당'].map(function (c) {
+        return '<th style="padding:7px;text-align:right;white-space:nowrap">' + c + '</th>';
+      }).join('') + '</tr><tr style="border-top:1px solid var(--line);text-align:right">' +
+      [A.실근로, A.소정내, A.연장, A.야간, A.휴일8이내, A.휴일8초과, att.주휴시간].map(function (v) {
+        return '<td style="padding:7px">' + (Math.round(Number(v || 0) * 100) / 100) + 'h</td>';
+      }).join('') +
+      '<td style="padding:7px">' + A.근로일수 + '일</td>' +
+      '<td style="padding:7px">' + A.결근일수 + '일</td>' +
+      '<td style="padding:7px">' + A.연차사용 + '일</td>' +
+      '<td style="padding:7px;font-weight:700">' + won(al.법정수당합계) + '</td></tr></table></div>';
+    if (att.연장한도초과주 && att.연장한도초과주.length) {
+      h += '<div class="note" style="border-left:3px solid var(--bad)"><b>연장근로 주 12시간 한도 초과</b> — ' +
+        att.연장한도초과주.join(', ') + ' 주. 근기법 53조 위반이 될 수 있습니다(막지 않고 알립니다).</div>';
+    }
+    var cl = LC.compLeaveHours(att, P);
+    h += '<div class="note">보상휴가로 바꾸면 <b>' + cl.휴가시간 + '시간</b>(약 ' + cl.휴가일수 + '일) — 가산 포함 환산(근기법 57조). ' +
+      '<button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="clearDays(\'' + s + '\',\'' + m + '\',\'' + nm + '\')">일별 기록 모두 지우기</button></div>';
+  } else {
+    h += '<div class="note">아직 일별 기록이 없습니다. 날짜를 눌러 입력하면 여기에 집계가 나타나고, ' +
+      '직원표의 연장·야간·휴일 칸을 <b>달력 값이 대신합니다</b>.</div>';
+  }
+
+  /* 공휴일 — 없으면 명절 근로가 평일 연장으로 계산된다 */
+  var hs = holidaysOf(year);
+  h += '<h2 style="margin:18px 0 8px;font-size:15px">' + year + '년 공휴일·약정휴일</h2>' +
+    '<div style="background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px">' +
+    '<textarea id="holiText" rows="2" placeholder="2026-01-01, 2026-03-01, 2026-05-05 …" style="width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;font-size:12.5px">' +
+    hs.join(', ') + '</textarea>' +
+    '<div style="margin-top:8px;display:flex;gap:8px;align-items:center">' +
+    '<button class="btn" onclick="setHolidays(\'' + year + '\', document.getElementById(\'holiText\').value)">공휴일 저장</button>' +
+    '<span style="font-size:12px;color:var(--sub)">' + (hs.length ? hs.length + '일 등록됨' : '아직 없음 — 일요일만 휴일로 봅니다') + '</span></div></div>';
+  if (!hs.length) h += '<div class="note" style="border-left:3px solid var(--warn)">' +
+    '<b>공휴일을 넣지 않으면</b> 설날·추석·공휴일 근로가 평일 연장(×1.5)으로 계산되어 ' +
+    '휴일수당(8h 이내 ×1.5 / 초과 ×2.0)보다 적게 나올 수 있습니다.</div>';
+  return h;
+}
+window.saveDay = saveDay; window.delDay = delDay; window.clearDays = clearDays;
+window.setHolidays = setHolidays;
+
 /* ══════════════ ① 근태 ══════════════ */
 function screenAttend() {
   if (!LC) return '<h1>근태</h1><div class="empty">노동법 코어(js/pu-labor-core.js)를 불러오지 못했습니다.</div>';
@@ -1442,6 +1898,7 @@ function screenAttend() {
     });
     return h + '</div>';
   }
+  if (App.emp) return screenDayCalendar();
   var P = policyFor(App.site), emps = siteEmployees(App.site, App.month), m = esc(App.month);
   if (laborRec(App.site, App.month) && !laborEmpsReady(App.site, App.month)) return '<h1>근태</h1>' + '<div class="sub"><a href="#" onclick="goBack();return false">← 돌아가기</a></div>' + '<div class="empty">직원 표를 받고 있습니다… 잠시만 기다려 주세요.</div>';
   var h2 = '<h1>근태</h1><div class="sub"><a href="#" onclick="goBack();return false">← ' + App.site + '</a> · <b>' + App.month + '</b> 근태·법정수당 (' + emps.length + '명)</div>';
@@ -1456,17 +1913,25 @@ function screenAttend() {
     var nm = esc(e.성명), a = attendOf(App.site, App.month, e.성명), meta = empMeta(App.site, e.성명);
     var 통상 = Number(meta.통상임금월액 || e.기본급 || 0);
     var 시급 = LC.hourlyOrdinary(통상, P);
-    var att = { 합계: { 연장: Number(a.연장 || 0), 야간: Number(a.야간 || 0), 휴일8이내: Math.min(Number(a.휴일 || 0), P.dailyContractHours), 휴일8초과: Math.max(0, Number(a.휴일 || 0) - P.dailyContractHours) }, 주휴시간: 0, 연장한도초과주: [] };
+    /* 일별 달력 기록이 있으면 **그것이 이긴다** — 하루 단위여야 야간 겹침·철야·
+       주 12시간 한도·주휴 개근을 볼 수 있다. 손입력은 자료가 합계로만 올 때 쓴다. */
+    var der = derivedAttend(App.site, App.month, e.성명, P);
+    var att = der || { 합계: { 연장: Number(a.연장 || 0), 야간: Number(a.야간 || 0), 휴일8이내: Math.min(Number(a.휴일 || 0), P.dailyContractHours), 휴일8초과: Math.max(0, Number(a.휴일 || 0) - P.dailyContractHours) }, 주휴시간: 0, 연장한도초과주: [] };
     var al = LC.statutoryAllowances(att, 시급, { policy: P, payType: 'monthly' });
     tot += al.법정수당합계;
     var key = "'" + s + "','" + m + "','" + nm + "'";
     h2 += '<tr style="border-top:1px solid var(--line);text-align:right">' +
-      '<td style="padding:6px 8px;text-align:left;font-weight:600">' + (e.성명 || '') + '</td>' +
+      '<td style="padding:6px 8px;text-align:left;font-weight:600">' +
+        '<a href="#" onclick="navTo({emp:&#39;' + nm + '&#39;});return false" style="color:inherit">' + (e.성명 || '') + '</a>' +
+        (der ? ' <span class="badge ok" style="font-weight:400">달력</span>' : '') + '</td>' +
       '<td style="padding:6px 8px">' + nInput(meta.통상임금월액 == null ? (e.기본급 || '') : meta.통상임금월액, 'lput(\'emp_meta\',\'' + s + '|' + nm + '\',{통상임금월액:+this.value})', 92) + '</td>' +
       '<td style="padding:6px 8px;color:var(--sub)">' + won(Math.round(시급)) + '</td>' +
-      '<td style="padding:6px 8px">' + nInput(a.연장, 'setAttend(' + key + ',{연장:+this.value})') + '</td>' +
-      '<td style="padding:6px 8px">' + nInput(a.야간, 'setAttend(' + key + ',{야간:+this.value})') + '</td>' +
-      '<td style="padding:6px 8px">' + nInput(a.휴일, 'setAttend(' + key + ',{휴일:+this.value})') + '</td>' +
+      (der
+        ? ['연장','야간','휴일8이내'].map(function(k,ix){ var v = ix===2 ? (der.합계.휴일8이내+der.합계.휴일8초과) : der.합계[k];
+            return '<td style="padding:6px 8px;color:var(--sub)" title="달력으로 계산된 값">' + (Math.round(Number(v||0)*100)/100) + '</td>'; }).join('')
+        : '<td style="padding:6px 8px">' + nInput(a.연장, 'setAttend(' + key + ',{연장:+this.value})') + '</td>' +
+          '<td style="padding:6px 8px">' + nInput(a.야간, 'setAttend(' + key + ',{야간:+this.value})') + '</td>' +
+          '<td style="padding:6px 8px">' + nInput(a.휴일, 'setAttend(' + key + ',{휴일:+this.value})') + '</td>') +
       '<td style="padding:6px 8px">' + nInput(a.결근, 'setAttend(' + key + ',{결근:+this.value})', 48) + '</td>' +
       '<td style="padding:6px 8px">' + nInput(a.연차사용, 'setAttend(' + key + ',{연차사용:+this.value})', 48) + '</td>' +
       '<td style="padding:6px 8px">' + won(al.연장수당) + '</td>' +
@@ -1477,6 +1942,71 @@ function screenAttend() {
   h2 += '<tr style="border-top:2px solid var(--line);background:var(--paper);text-align:right;font-weight:700">' +
     '<td colspan="11" style="padding:8px">법정수당 합계</td><td style="padding:8px">' + won(tot) + '</td></tr>';
   h2 += '</table></div>';
+
+  /* ── 근태 반영 급여 미리보기 ──
+     여기서 고리가 이어진다: 근태 → 법정수당 → 4대보험·소득세 → 실수령.
+     계산은 전부 코어(LC.monthlyPayroll)가 한다. 화면은 표만 그린다.
+     ⚠ 확정이 아니라 **미리보기**다. 급여 확정은 급여 처리 화면에서 사람이 한다. */
+  var TT = dbGet('tax_table', null);
+  var mwY = String((App.month || '').match(/\d{4}/) ? (App.month.match(/\d{4}/))[0] : laborYear());
+  var mwH = minWageOf(mwY);
+  h2 += '<h2 style="margin:18px 0 8px;font-size:15px">근태 반영 급여 미리보기</h2>';
+  if (!TT) h2 += '<div class="note" style="border-left:3px solid var(--warn)">' +
+    '<b>간이세액표가 없어 소득세를 계산하지 못합니다.</b> 설정 카드 화면의 [간이세액표 가져오기]로 올리세요. ' +
+    '국세청이 세액 산출 산식을 공개하지 않으므로 <b>표 자체가 법적 기준</b>입니다 — 추정으로 대신하지 않습니다.</div>';
+  h2 += '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;background:#fff">' +
+    '<tr style="background:var(--paper)">' +
+    ['성명', '가족', '자녀', '지급총액', '국민연금', '건강+장기', '고용', '소득세', '지방세', '공제총액', '실수령', '점검'].map(function (c, i) {
+      return '<th style="padding:7px;text-align:' + (i < 1 ? 'left' : 'right') + ';white-space:nowrap">' + c + '</th>';
+    }).join('') + '</tr>';
+  var sumPay = 0, sumNet = 0, warn = 0;
+  emps.forEach(function (e) {
+    var nm = esc(e.성명), a = attendOf(App.site, App.month, e.성명), meta = empMeta(App.site, e.성명);
+    var mk = "'" + s + '|' + nm + "'";
+    var 기본급 = Number(meta.통상임금월액 || e.기본급 || 0);
+    var mp = LC.monthlyPayroll({
+      기본급: 기본급,
+      고정수당: Number(meta.고정수당 || 0),
+      비과세: Number(meta.비과세 || 0),
+      근태집계: derivedAttend(App.site, App.month, e.성명, P) ||
+        { 합계: { 연장: Number(a.연장 || 0), 야간: Number(a.야간 || 0),
+          휴일8이내: Math.min(Number(a.휴일 || 0), P.dailyContractHours),
+          휴일8초과: Math.max(0, Number(a.휴일 || 0) - P.dailyContractHours) }, 주휴시간: 0, 연장한도초과주: [] },
+      policy: P, rates: LABOR_RATES, 연도: mwY,
+      간이세액표: TT, 부양가족수: Number(meta.부양가족수 || 1), 자녀수: Number(meta.자녀수 || 0),
+      최저임금시급: mwH, 월소정근로시간: P.monthlyStdHours,
+      고지_국민연금: meta.고지_국민연금, 고지_건강보험: meta.고지_건강보험
+    });
+    sumPay += mp.지급.지급총액; sumNet += mp.실수령;
+    var sig = mp.검증.신호;
+    if (sig !== 'green') warn++;
+    var tip = (sig === 'red' && mp.검증.최저임금) ? mp.검증.최저임금.메시지
+      : (mp.검증.소득세미정 ? '간이세액표 없음 — 소득세 미계산' : '이상 없음');
+    h2 += '<tr style="border-top:1px solid var(--line);text-align:right">' +
+      '<td style="padding:6px 7px;text-align:left;font-weight:600">' + (e.성명 || '') + '</td>' +
+      '<td style="padding:6px 7px">' + nInput(meta.부양가족수 == null ? 1 : meta.부양가족수, 'lput(\'emp_meta\',' + mk + ',{부양가족수:+this.value})', 44) + '</td>' +
+      '<td style="padding:6px 7px">' + nInput(meta.자녀수 == null ? 0 : meta.자녀수, 'lput(\'emp_meta\',' + mk + ',{자녀수:+this.value})', 44) + '</td>' +
+      '<td style="padding:6px 7px;font-weight:700">' + won(mp.지급.지급총액) + '</td>' +
+      '<td style="padding:6px 7px">' + won(mp.공제.국민연금) + '</td>' +
+      '<td style="padding:6px 7px">' + won(mp.공제.건강보험 + mp.공제.장기요양) + '</td>' +
+      '<td style="padding:6px 7px">' + won(mp.공제.고용보험) + '</td>' +
+      '<td style="padding:6px 7px">' + (mp.검증.소득세미정 ? '<span style="color:var(--warn)">표없음</span>' : won(mp.공제.소득세)) + '</td>' +
+      '<td style="padding:6px 7px">' + won(mp.공제.지방세) + '</td>' +
+      '<td style="padding:6px 7px">' + won(mp.공제.공제총액) + '</td>' +
+      '<td style="padding:6px 7px;font-weight:700">' + won(mp.실수령) + '</td>' +
+      '<td style="padding:6px 7px" title="' + esc(tip) + '"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:' + SIG[sig] + '"></span></td></tr>';
+  });
+  h2 += '<tr style="border-top:2px solid var(--line);background:var(--paper);text-align:right;font-weight:700">' +
+    '<td colspan="3" style="padding:8px">합계 ' + emps.length + '명</td>' +
+    '<td style="padding:8px">' + won(sumPay) + '</td>' +
+    '<td colspan="6"></td><td style="padding:8px">' + won(sumNet) + '</td><td></td></tr>';
+  h2 += '</table></div>';
+  h2 += '<div class="note">' + (warn ? '<b>점검 필요 ' + warn + '명</b> — 동그라미에 마우스를 올리면 까닭이 보입니다. ' : '전원 이상 없음. ') +
+    '4대보험은 <b>공단 고지액이 있으면 고지액</b>을 씁니다(없으면 요율계산). 소득세는 <b>간이세액표</b>에서 찾고 ' +
+    '8~20세 자녀 공제(1명 12,500 · 2명 29,160 · 3명↑ +25,000)를 뺍니다. 지방소득세 = 소득세×10% 10원 절사. ' +
+    '최저임금은 ' + mwY + '년 ' + mwH.toLocaleString() + '원 기준이며 <b>가산수당은 산입하지 않습니다</b>. ' +
+    '이 표는 미리보기입니다 — 확정은 급여 처리 화면에서 사람이 합니다.</div>';
+
   h2 += '<div class="note">가산율 — 연장 ×1.5 · 야간 ×0.5(가산분) · 휴일 8h이내 ×1.5 / 8h초과 ×2.0 (근기법 56조). ' +
     '5인 미만 사업장은 가산 없이 1.0배. 월급제는 주휴수당을 월급에 포함된 것으로 보아 따로 얹지 않습니다(이중지급 방지). ' +
     '시급 = 통상임금월액 ÷ 월 소정근로시간.</div>';
@@ -1642,6 +2172,20 @@ function render(){
   else if(App.screen==='report') { m.innerHTML=screenReport(); addPayrollReportHwpxAction(m); }
   else m.innerHTML=screenInbox();
 }
+/* 간이세액표 올리기 — 모양을 먼저 본다. 잘못된 파일이 들어가면 세금이
+   조용히 0 이 되거나 엉뚱해진다(가장 찾기 어려운 종류의 고장). */
+function importTaxTable(){var i=document.createElement('input');i.type='file';i.accept='.json';
+  i.onchange=function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();
+   r.onload=function(){try{
+     var t=JSON.parse(r.result);
+     if(!t||!t.rows||!t.rows.length) throw new Error('rows 가 없습니다 — 간이세액표 JSON이 맞는지 확인하세요');
+     var bad=t.rows.filter(function(x){return x.min==null||!x.tax||!x.tax.length;}).length;
+     if(bad) throw new Error(bad+'개 구간에 min 또는 tax 가 없습니다');
+     if(t.rows[t.rows.length-1].max!=null) throw new Error('마지막 구간에 상한이 있습니다 — 높은 급여가 「표없음」이 됩니다');
+     dbSet('tax_table',t);
+     alert('간이세액표 저장 완료 — '+(t.연도||'')+'년 · 구간 '+t.rows.length+'개 · 가족 칸 '+t.rows[0].tax.length+'개');
+   }catch(err){alert('간이세액표 오류: '+err.message);}};r.readAsText(f);};i.click();}
+window.importTaxTable=importTaxTable;
 function importCards(){var i=document.createElement('input');i.type='file';i.accept='.json';
   i.onchange=function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();
    r.onload=function(){try{var raw=JSON.parse(r.result);var a=Array.isArray(raw)?raw:Object.values(raw);dbSet('site_cards',a);alert('카드 '+a.length+'개 서버 저장 완료');}catch(err){alert('JSON 오류: '+err.message);}};r.readAsText(f);};i.click();}
