@@ -206,7 +206,9 @@ test('★ 기기가 낼 수 있는 가장 큰 사진을 달라고 한다', () =>
 
 test('★ 명함이 작게 찍히면 더 가까이 찍으라고 알린다', () => {
   assert.ok(/const CARD_MIN_SHORT = 700;/.test(html));
-  const m = html.match(/if \(cropped && Math\.min\(r\.w, r\.h\) < CARD_MIN_SHORT\)[\s\S]{0,140}/);
+  /* ⚠ 2026-08-27 — 경고를 cropped 에 매던 것이 «한 번도 안 뜬» 까닭이었다.
+     담기는 그림의 짧은 변으로 판정하게 바꿨다. 모양이 아니라 «알리는가»를 본다. */
+  const m = html.match(/Math\.min\(outW, outH\)[\s\S]{0,220}/);
   assert.ok(m && /가까이/.test(m[0]),
     '작게 찍힌 줄 모르고 넘어가면 판독이 흐린 이유를 알 수 없습니다.');
 });

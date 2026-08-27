@@ -186,7 +186,8 @@ test('로그인이 끝난 뒤에 공유를 꺼낸다', () => {
 test('담기는 addFiles 통로를 그대로 탄다 (서류로)', () => {
   const m = html.match(/async function shareSave\(\)[\s\S]*?\n\}/);
   assert.ok(m, 'shareSave 를 찾지 못했습니다.');
-  assert.ok(/addFiles\(files, true\)/.test(m[0]),
+  /* ⚠ 2026-08-27 — 어디서 왔는지(via)를 함께 넘긴다. 인자를 글자로 못 박지 않는다. */
+  assert.ok(/addFiles\(files, true[,)]/.test(m[0]),
     '밖에서 들어온 것은 끌어놓기·붙여넣기와 같이 서류로 다뤄야 글씨가 읽힙니다.');
   assert.ok(/shareClose\(\);[\s\S]{0,40}await addFiles/.test(m[0]),
     '담기 전에 화면을 닫아야 대기열 표시가 보입니다.');

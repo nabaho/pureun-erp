@@ -92,7 +92,11 @@ test('★ 알림이 무엇을 하라는 것인지까지 적는다', () => {
   const ctx = load();
   /* ⚠ 2026-08-23 부터 smallBox 가 smallCheckedOk 를 부른다(기계가 확인한 것은
      말투를 낮춘다). 진짜 함수를 함께 넣는다 — 없으면 그 자리에서 멎는다. */
+  /* ⚠ 2026-08-27 부터 smallBox 가 「어디서·얼마로 들어왔나」(cameFromLine)도 부른다 —
+     「앱이 줄인 건가 원본이 작았던 건가」를 이 알림이 답해야 하기 때문이다.
+     함께 넣지 않으면 그 자리에서 멎는다. */
   vm.runInContext(lineOf('TEL_SHAPE') + '\n' + lineOf('MAIL_SHAPE') + '\n' +
+    constOf('VIA_LABEL') + '\n' + fnOf('cameFromLine') + '\n' +
     fnOf('smallCheckedOk') + '\n' + fnOf('smallBox'), ctx);
   assert.equal(ctx.smallBox(doc('form', 2480, 3508)), '');
   assert.match(ctx.smallBox(doc('form', 512, 755)), /512×755/);
