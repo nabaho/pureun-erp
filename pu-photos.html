@@ -874,6 +874,9 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
   border-radius:11px;padding:10px 8px;font-size:13px;font-weight:800;font-family:inherit}
 #camModes button.on{background:#fff;color:#101828;border-color:#fff}
 #camAutoWrap{display:none;align-items:center;gap:7px}
+/* 리멤버로도 보내기 — 명함·서류 모드에서만, 그리고 폰이 받아 줄 때만 뜬다
+   (대표 승인 목업 2026-08-27 card-to-remember.html) */
+#camRmbWrap{display:none;align-items:center;gap:7px;margin-left:14px}
 #camCtl{background:#101010;padding:12px 16px calc(env(safe-area-inset-bottom) + 14px)}
 #camCtl .saverow{display:flex;align-items:center;gap:7px;color:#cbd5e1;font-size:12.5px;margin-bottom:11px}
 #camCtl .row{display:flex;align-items:center;justify-content:space-between}
@@ -1786,6 +1789,14 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
         <span id="camAutoWrap">
           <input type="checkbox" id="camAuto" onchange="setCamAutoPref(this.checked)">
           <label for="camAuto">멈추면 저절로 찍기</label>
+        </span>
+        <!-- 리멤버로도 보내기 (대표 지시 2026-08-27, 승인 목업 card-to-remember.html)
+             "자동으로 리멤버로 보내기 만들어 달라. 리멤버에 다시 올리는 버튼 누르고 싶지 않다"
+             ⚠ 한 번 켜 두면 다음부터 그대로다 — 그것이 「단추를 안 누른다」의 뜻이다.
+             ⚠ 명함·서류 모드에서, 그리고 폰이 보내기를 받아 줄 때만 뜬다. -->
+        <span id="camRmbWrap">
+          <input type="checkbox" id="camRmb" onchange="setCardShareToPref(this.checked)">
+          <label for="camRmb">저장하면 리멤버로도 보내기</label>
         </span>
       </div>
       <div class="row">
@@ -2838,6 +2849,68 @@ function setCamSavePref(on) {
   const b = $('camRevSave'); if (b) b.checked = on;
 }
 
+/* ══════ 명함을 리멤버로도 보내기 (대표 지시 2026-08-27) ══════
+   "폰에서 사진찍고 자동으로 리멤버로 보내기 만들어 달라.
+    리멤버에 다시 올리는 버튼 누르고 싶지 않다."
+
+   ⚠ **웹은 다른 앱을 골라 파일을 밀어넣을 수 없다.** 브라우저가 막아 둔 것이고
+     뚫는 길이 없다(아무 웹페이지나 남의 앱에 파일을 집어넣게 되기 때문이다).
+     그래서 할 수 있는 것은 «따로 누르는 단추를 없애는 것»이다 — 저장을 누르면
+     보내기 목록이 **저절로** 뜨고, 대표님은 리멤버를 한 번 누르시면 된다.
+     지금까지는 ⑴찍고 ⑵리멤버 앱 열고 ⑶명함 등록 누르고 ⑷갤러리에서 찾아 고르는
+     네 번이었다.
+
+   ⚠ **켠 것을 기억한다.** 매번 켜야 하면 그것이 곧 「단추 누르기」다.
+
+   ── 대표 승인 (목업 card-to-remember.html) ──
+   ㉮ 명함·서류 모드일 때만  ㉮ 앞·뒷면 두 장 다  ㉮ 흐리게·작게 찍힌 장은 빼고 */
+const CARD_SHARE_LS = 'puphotos_card_share';
+function cardShareToPref() { return localStorage.getItem(CARD_SHARE_LS) === '1'; }
+function setCardShareToPref(on) {
+  localStorage.setItem(CARD_SHARE_LS, on ? '1' : '0');
+  const b = $('camRmb'); if (b) b.checked = on;
+}
+
+/* 보낼 것만 골라낸다 — 흐리거나 작게 찍힌 장은 뺀다.
+   리멤버가 잘못 읽으면 고치는 것이 더 일이다(대표 승인 ㉮). */
+function cardSharePick(shots) {
+  return (shots || []).filter(function (s) { return s && !s.small && !s.blurry; });
+}
+
+/* ⚠ **반드시 누른 그 순간에 부른다.** 브라우저는 「사람이 방금 누름」이 살아 있을
+     때만 보내기 창을 띄워 준다(몇 초면 꺼진다). 올리기를 기다렸다가 부르면
+     조용히 거절당한다 — 그래서 camUpload 맨 위에서, 아무것도 기다리기 전에 부른다.
+   ⚠ 기다리지 않는다(await 안 한다). 창이 뜬 채로 올리기는 그대로 이어져야 한다 —
+     대표님이 리멤버를 고르시는 사이에 저장이 끝난다. 기다렸다가 올리면
+     리멤버로 넘어간 뒤에 올리기가 시작돼 사진이 안 담길 수 있다. **저장이 먼저다.** */
+function shareCardsOut(picked) {
+  if (!frameOn() || !cardShareToPref() || !canShareFiles()) return;
+  const good = cardSharePick(picked);
+  const skipped = picked.length - good.length;
+  if (!good.length) {
+    toast('흐리거나 작게 찍힌 장뿐이라 리멤버로는 안 보냈습니다 — 사진첩에는 담깁니다');
+    return;
+  }
+  const files = good.map(function (s, i) {
+    return new File([s.blob], camFileName(s.ts, i), { type: 'image/jpeg', lastModified: s.ts });
+  });
+  try {
+    navigator.share({ files: files, title: '명함 ' + files.length + '장' })
+      .then(function () {
+        toast(skipped ? '리멤버로 ' + files.length + '장 보냈습니다 (흐린 ' + skipped + '장 제외)'
+          : '리멤버로 ' + files.length + '장 보냈습니다');
+      })
+      .catch(function (e) {
+        /* 창을 그냥 닫은 것은 잘못이 아니다 — 사진첩에는 이미 담긴다. */
+        if (e && e.name === 'AbortError') return;
+        console.warn('[리멤버 보내기]', e);
+        toast('리멤버로 보내지 못했습니다 — 사진첩에는 담았습니다');
+      });
+  } catch (e) {
+    console.warn('[리멤버 보내기]', e);
+  }
+}
+
 /* ══════ 푸른카메라 아이콘으로 들어온 경우 ══════
    촬영 코드를 사진첩 하나로 합치면서(대표 지시 2026-08-08) pu-camera.html 은
    문패만 남겨 `?cam=1` 로 넘긴다. 그 표시를 보고 **곧바로 카메라**를 켠다.
@@ -3342,6 +3415,14 @@ function applyFrameUI() {
   $("camModeDocument").className = on ? "on" : "";
   const auto = $('camAutoWrap');
   if (auto) auto.style.display = on ? 'inline-flex' : 'none';
+  /* 리멤버로도 보내기 — 명함·서류일 때만. ⚠ 폰이 「파일 보내기」를 못 받으면
+     아예 안 보여 준다. 켤 수 있는데 아무 일도 안 일어나는 스위치가 가장 나쁘다. */
+  const rmb = $('camRmbWrap');
+  if (rmb) {
+    rmb.style.display = (on && canShareFiles()) ? 'inline-flex' : 'none';
+    const box = $('camRmb');
+    if (box) box.checked = cardShareToPref();
+  }
   setCamTip();
 }
 
@@ -4255,6 +4336,10 @@ async function camUpload() {
   camShots.forEach(function (s, i) { if (s.sel) pickedIdx.push(i); });
   const picked = pickedIdx.map(function (i) { return camShots[i]; });
   if (!picked.length) return;
+  /* ⚠ **여기가 맨 위여야 한다.** 「사람이 방금 눌렀다」가 살아 있는 동안에만
+     보내기 창이 뜬다 — 올리기를 기다린 뒤에 부르면 조용히 거절당한다.
+     기다리지 않으므로 아래 올리기는 그대로 이어진다(저장이 먼저다). */
+  shareCardsOut(picked);
   const pos = {};
   pickedIdx.forEach(function (orig, j) { pos[orig] = j; });
   const pairs = {};
