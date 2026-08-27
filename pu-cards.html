@@ -15944,12 +15944,21 @@ function coEffectiveExtra(key, name, coInfoMap){
      탭은 여럿 겹칠 수 있다 — 옛 것도 새 것도 버리지 않는다. */
   const tags = {}; for(let k in old.tags||{}) tags[k] = old.tags[k]; for(let k in cur.tags||{}) tags[k] = cur.tags[k];
   const docs = {}; for(let k in old.docs||{}) docs[k] = old.docs[k]; for(let k in cur.docs||{}) docs[k] = cur.docs[k];
+  /* ⚠ conflicts·src 도 «칸마다» 합친다 (검토 2026-08-27).
+     예전에는 아래 통째 베끼기에 맡겨서, 양쪽에 다 있으면 옛 열쇠 것이 «전부» 날아갔다.
+     1순위(어긋난 칸)의 존재 이유가 「조용히 버리지 않는다」인데 바로 그 실패가
+     합치기에서 되살아난 것이다 — 어긋남 경고가 소리 없이 사라지면 아무도 못 챈다.
+     tags·docs 와 «같은 결»로 둔다: 열쇠가 칸 이름이라 겹치면 새 열쇠가 이긴다. */
+  const clash = {}; for(let k in old.conflicts||{}) clash[k] = old.conflicts[k]; for(let k in cur.conflicts||{}) clash[k] = cur.conflicts[k];
+  const srcs  = {}; for(let k in old.src||{}) srcs[k] = old.src[k]; for(let k in cur.src||{}) srcs[k] = cur.src[k];
   const folder = cur.folder || old.folder || '';
   const result = {};
   for(let k in old) if(old.hasOwnProperty(k)) result[k] = old[k];
   for(let k in cur) if(cur.hasOwnProperty(k)) result[k] = cur[k];
   result.tags = tags;
   result.docs = docs;
+  result.conflicts = clash;
+  result.src = srcs;
   result.folder = folder;
   return result;
 }
@@ -15994,8 +16003,14 @@ function coListBuild(){
   /* ① 사업자등록증 — 회사의 뼈대 */
   Object.values(allItems()).filter(it=>it.kind==='biz').forEach(it=>{
     const k = coKeyOf(it);
+    /* ⚠ companyTel 을 여기 «안 넣어서» 3순위 「📋 정보부족」이 거짓말을 했다
+       (검토 2026-08-27). 등록증에서 대표번호를 읽어 두고도(BIZ_FIELDS) 회사로 안
+       올리니, coVal(o,'companyTel') 이 사진첩 서식이 준 값 아니면 늘 빈칸이었다 —
+       거래처 288곳 중 288곳이 「대표번호 없음」이었고, 채우러 들어가 보면 등록증에
+       이미 있었다. 칸을 늘릴 때는 CO_FIELDS·CO_CORE 와 함께 본다. */
     const o = take(k, { name:it.company, bizno:it.bizno, ceo:it.ceo, address:it.address,
-      corpno:it.corpno, bizType:it.bizType, bizItem:it.bizItem, openDate:it.openDate, smeType:it.smeType },
+      corpno:it.corpno, bizType:it.bizType, bizItem:it.bizItem, openDate:it.openDate,
+      smeType:it.smeType, companyTel:it.companyTel },
       '사업자등록증');
     o.docs++;
     /* ⚠ 세는 것만으로는 지울 수 없다 — 어느 등록증인지 알아야 한다(대표 지시 2026-08-26
@@ -16007,7 +16022,11 @@ function coListBuild(){
   Object.values(allItems()).filter(it=>it.kind!=='biz' && (it.company||'').trim()).forEach(it=>{
     const k = (digits(it.bizno||'').length>=10) ? coKeyOf(it)
             : (nameIdx[_norm(it.company)] || coKeyOf(it));
-    const o = take(k, { name:it.company, bizno:it.bizno }, '명함');
+    /* ⚠ 명함에서 올리는 전화는 companyTel(회사 대표번호) «하나뿐»이다.
+       tel(직통전화)·mobile(휴대폰)은 그 «사람» 것이라 회사 대표번호가 아니다 —
+       올려 버리면 그 사람이 퇴사한 뒤에도 계약서·신고서에 개인번호가 나간다.
+       take 는 빈 칸만 채우므로 등록증이 먼저 이긴다(등록증을 ①에서 먼저 돈다). */
+    const o = take(k, { name:it.company, bizno:it.bizno, companyTel:it.companyTel }, '명함');
     o.cards.push(it);
   });
   /* ③ 푸른이알피 — 업체유형·담당 노무사 */
