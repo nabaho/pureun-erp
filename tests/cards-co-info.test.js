@@ -224,9 +224,18 @@ test('마지막에 남는 폭을 먹는 빈 칸을 둔다', () => {
      밀려난다 — 눈이 좌우로 멀리 오간다(대표 화면 2026-08-13). */
   const at = source.indexOf('<colgroup><col style="width:34px">');
   assert.ok(at > 0, '기업정보 표의 colgroup 을 찾지 못했습니다');
-  const cg = source.slice(at, at + 260);
-  assert.match(cg, /width:300px/, '상호 칸에 폭을 안 줬다 — 남은 폭을 다 먹는다');
-  assert.match(cg, /<col><\/colgroup>/, '남는 폭을 먹는 빈 칸이 없다');
+  /* ⚠ 폭 숫자를 못 박지 않는다 — 2026-08-27 에 「가진 것」을 한 줄로 만들며
+       상호 300→255, 가진 것 170→215 로 옮겼다(표 전체 폭은 그대로 868).
+       여기서 볼 것은 «상호에 고정 폭이 있고, 마지막 칸만 비어 있다» 는 것이다. */
+  const cg = source.slice(at, source.indexOf('</colgroup>', at));
+  const cols = cg.match(/<col[^>]*>/g) || [];
+  assert.ok(cols.length >= 8, '칸이 모자라다: ' + cols.length);
+  assert.match(cols[2], /width:\d+px/, '상호 칸에 폭을 안 줬다 — 남은 폭을 다 먹는다');
+  assert.ok(!/width/.test(cols[cols.length - 1]),
+    '마지막 칸에 폭을 주면 남는 폭을 먹을 칸이 없다');
+  /* ⚠ cg 는 </colgroup> «앞»까지만 벤 것이라 그 글자를 여기서 찾을 수 없다 —
+       원본을 본다(2026-08-27 에 위 슬라이스를 바꾸며 남은 자리). */
+  assert.match(source, /<col><\/colgroup>/, '남는 폭을 먹는 빈 칸이 없다');
 });
 
 test('열 머리를 눌러 정렬한다 — 사업자 표와 같은 손놀림', () => {
