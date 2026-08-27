@@ -91,7 +91,11 @@ test('★ 서버가 준 까닭이 있으면 함께 적는다', () => {
 
 test('★ 크게 보기가 이 안내를 실제로 부른다', () => {
   const open = fnOf('openViewer');
-  assert.match(open, /showNoBody\(it, ''\)/, '본문이 비었을 때 안내를 안 부릅니다');
+  /* ⚠ 2026-08-27 — 빈손일 때 «까닭»을 함께 넘긴다(got.why). 예전에는 빈 문자열이라
+     안내가 「왜인지」를 말할 수 없었다. 넘기는 값을 못 박지 말고 부르는지만 본다. */
+  assert.match(open, /showNoBody\(it, [^)]*\)/, '본문이 비었을 때 안내를 안 부릅니다');
+  assert.match(open, /showNoBody\(it, got\.why/,
+    '★ 까닭을 안 넘기면 안내가 「왜 없는지」를 말할 수 없습니다');
   assert.match(open, /catch\(function \(e\) \{ showNoBody\(it, \(e && e\.message\) \|\| String\(e\)\); \}\)/,
     '읽기가 터졌을 때도 같은 안내여야 합니다 — 터지면 조용한 것이 가장 나쁩니다');
 });

@@ -1236,8 +1236,13 @@ ok('서류함: 참조 지울 때 사진첩은 그대로라고 알린다', src.in
     '첫 호출 ' + first.join(',') + ' / 어긋남 ' + bad.join(','));
 }
 // 원본을 그리는 코드가 두 벌이면 한쪽만 고쳐져 화면마다 다르게 동작한다
+// ⚠ 2026-08-27 — 부르는 이름이 loadFull → loadFullDetail 로 바뀌었다(빈손일 때
+//    «까닭»까지 받는다). 이름을 못 박지 말고 «한 곳인가»만 본다.
 ok('원본 그리기는 한 곳(_loadScanInto)', src.includes('function _loadScanInto')
-  && (src.match(/PuPhotoStore\.loadFull\(String\(r\.year\)/g) || []).length === 1);
+  && (src.match(/PuPhotoStore\.loadFull(?:Detail)?\(String\(r\.year\)/g) || []).length === 1);
+// 빈손일 때 «왜인지»를 말한다 — 「원본을 찾지 못했습니다」만으로는 손 쓸 데가 없다
+ok('원본이 빈손이면 까닭을 함께 적는다', /loadFullDetail\(String\(r\.year\)/.test(src)
+  && /got\.why/.test(src));
 
 console.log('\n' + (fail ? 'FAILURES ' + fail + ' / ' + n : 'ALL PASS (' + n + '건)'));
 process.exit(fail ? 1 : 0);

@@ -127,7 +127,9 @@ test('★ 찾기 창에는 «후보가 아니라 전부» 가 들어간다', () 
 test('★ 목록에 그림·찾기 칸이 있고, 고른 것의 원본을 띄운다', () => {
   const p = cutFn(ERP, 'function PhotoContractPickerModal(');
   assert.match(p, /PuPhotoStore\.loadThumb\(/, '★ 목록에 그림이 없으면 어느 계약서인지 모릅니다');
-  assert.match(p, /PuPhotoStore\.loadFull\(/, '★ 원본을 안 띄우면 「보고 넣는」 것이 안 됩니다');
+  /* ⚠ 이름을 못 박지 않는다 — 2026-08-27 에 「까닭까지 주는 길」(loadFullDetail)로
+     옮겼다. 볼 것은 «원본을 부르는가» 다. */
+  assert.match(p, /PuPhotoStore\.loadFull(Detail)?\(/, '★ 원본을 안 띄우면 「보고 넣는」 것이 안 됩니다');
   assert.match(p, /erpPhotoFilter\(all, q\)/, '찾기 칸이 목록을 안 거릅니다');
   assert.match(p, /이 내용을 입력/, '입력 단추가 없습니다');
 });
@@ -144,7 +146,7 @@ test('★ 미리보기는 보이는 것만 받는다 — 열자마자 전부 받
 
 test('★ 원본은 «고른 한 장»만 받는다', () => {
   const p = cutFn(ERP, 'function PhotoContractPickerModal(');
-  const at = p.indexOf('PuPhotoStore.loadFull(');
+  const at = p.search(/PuPhotoStore\.loadFull(Detail)?\(/);
   const before = p.slice(Math.max(0, at - 300), at);
   assert.match(before, /if\(!sel/, '★ 아무것도 안 골랐는데 원본을 부릅니다');
   assert.match(p, /\[sel && sel\.id\]/, '고른 것이 바뀔 때만 받아야 합니다');
@@ -159,10 +161,10 @@ test('★ 원본이 빈손으로 와도 그 사실을 말한다', () => {
 test('★ 남의 사진이면 주인을 함께 넘긴다 — 안 넘기면 내 자리를 뒤지다 빈손이 된다', () => {
   const p = cutFn(ERP, 'function PhotoContractPickerModal(');
   assert.match(p, /loadThumb\(it\.year, it\.id, it\.owner \|\| undefined/, '미리보기에 주인을 안 넘깁니다');
-  assert.match(p, /loadFull\(sel\.year, sel\.id, sel\.owner \|\| undefined\)/, '원본에 주인을 안 넘깁니다');
+  assert.match(p, /loadFull(Detail)?\(sel\.year, sel\.id, sel\.owner \|\| undefined\)/, '원본에 주인을 안 넘깁니다');
   /* 붙인 뒤 「원본 보기」도 마찬가지다 */
   assert.match(cutFn(ERP, 'function ContractDocViewModal('),
-    /loadFull\(src\.year, src\.id, src\.owner \|\| undefined\)/,
+    /loadFull(Detail)?\(src\.year, src\.id, src\.owner \|\| undefined\)/,
     '★ 계약에 붙인 뒤 원본 보기가 주인을 잃습니다');
   assert.match(cutFn(ERP, 'function ContractModal('), /owner: photoPreview\.item\.owner/,
     '★ 계약에 주인을 안 적어 두면 다음에 열 때 못 찾습니다');

@@ -186,6 +186,9 @@ test('★ 푸른이알피는 원본이 «빈손»으로 와도 그 사실을 말
   const to = erp.indexOf('function seg(', from);
   assert.ok(from > 0 && to > from, '계약서 보기 창을 못 찾았습니다');
   const body = erp.slice(from, to);
-  assert.match(body, /if\s*\(u\)\s*setImgUrl\(u\);?\s*[\r\n]+\s*else\s+setImgErr\(/,
+  /* ⚠ 값 이름을 못 박지 않는다 — 2026-08-27 에 「까닭까지 주는 길」로 옮기며
+     u → got.src 가 됐다. 볼 것은 «빈손일 때 말을 하는가» 다. */
+  assert.match(body, /else\s+setImgErr\(/,
     '원본이 빈손일 때 아무 말도 안 합니다 — 「불러오는 중…」이 영영 떠 있게 됩니다');
+  assert.match(body, /setImgUrl\(/, '원본이 왔을 때 안 띄웁니다');
 });

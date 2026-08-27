@@ -224,3 +224,142 @@ test('필수 항목 목록에는 «왜 필요한지»가 적혀 있다', () => {
     assert.ok(String(MUST_PASS[k]).length >= 15, k + ' 에 까닭이 없습니다');
   });
 });
+
+/* ══════ ④ 조용한 빈손 금지 ══════
+
+   대표 지시 2026-08-27: 「조용히 빈손」
+
+   8/26~27 고장 셋이 «늦게» 발견된 까닭이 하나였다 — **조용히 빈손으로 «성공»했다.**
+   오류가 안 나니 아무도 안 물었고, 화면은 「원본을 불러오는 중…」에서 영영 멎거나
+   그냥 빈칸으로 보였다. 사람은 「느린 건가 고장인가 원래 없는 건가」를 알 수 없었다.
+
+   그래서 저장 층에 **까닭을 함께 주는 길**(loadFullDetail)을 냈다. 아래 둘이 그 길을 지킨다. */
+
+/* 원본을 «화면에 그림으로» 붙이는 자리 — 손으로 안 적는다. 코드에서 찾는다. */
+function fullCallsIn(src) {
+  const out = [];
+  const re = /PuPhotoStore\.(loadFull|loadFullDetail)\(/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const seg = src.slice(m.index, m.index + 460);
+    out.push({
+      fn: m[1],
+      line: src.slice(0, m.index).split('\n').length,
+      /* 그림으로 붙이는가 — <img src= 를 만들거나, 그림 칸에 값을 넣는다 */
+      paints: /<img src="/.test(seg) || /\.src\s*=\s*\w/.test(seg) ||
+              /setImgUrl\(/.test(seg) || /setFull\(/.test(seg),
+      seg: seg.replace(/\s+/g, ' ').slice(0, 110)
+    });
+  }
+  return out;
+}
+
+test('★ 원본을 «화면에 띄우는» 곳은 까닭까지 받는다 — 빈칸만 보여 주면 손 쓸 데가 없다', () => {
+  const bad = [];
+  let painted = 0;
+  htmlFiles.forEach(function (f) {
+    fullCallsIn(readHtml(f)).forEach(function (c) {
+      if (!c.paints) return;
+      painted++;
+      if (c.fn !== 'loadFullDetail') bad.push(f + ':' + c.line + '  ' + c.seg);
+    });
+  });
+  assert.ok(painted >= 3,
+    '원본을 화면에 띄우는 곳을 ' + painted + '군데만 찾았습니다 — 찾는 규칙이 어긋났습니다');
+  assert.deepEqual(bad, [],
+    '★ 원본을 화면에 띄우면서 «왜 빈손인지»를 안 받습니다.\n' +
+    '  loadFullDetail 을 쓰고 got.why 를 그대로 보여 주세요 —\n' +
+    '  「열쇠를 안 넘겼다」와 「지워졌다」는 사람이 할 일이 서로 다릅니다.\n\n' + bad.join('\n'));
+});
+
+test('★ 까닭을 받아 놓고 «안 쓰면» 안 받은 것과 같다', () => {
+  /* 실제로 이 변형이 살아남았다 — loadFullDetail 로 바꿔 놓고 got.why 를 안 쓰면
+     화면은 예전과 똑같이 「원본을 찾지 못했습니다」만 말한다. 받았으면 써야 한다. */
+  const unused = [];
+  htmlFiles.forEach(function (f) {
+    const src = readHtml(f);
+    const re = /PuPhotoStore\.loadFullDetail\(/g;
+    let m;
+    while ((m = re.exec(src))) {
+      /* 받는 대목 «전체»를 본다 — 글자 수로 자르면 긴 처리에서 헛울린다.
+         then( 뒤 중괄호 짝을 세어 그 덩이 끝까지. await 로 받는 곳은 몇 줄만 본다. */
+      const then = src.indexOf('.then(', m.index);
+      let seg;
+      if (then > 0 && then - m.index < 200) {
+        let i = src.indexOf('{', then), depth = 0, end = i;
+        for (; i < src.length; i++) {
+          if (src[i] === '{') depth++;
+          else if (src[i] === '}') { depth--; if (!depth) { end = i; break; } }
+        }
+        seg = src.slice(m.index, end + 1);
+      } else {
+        seg = src.slice(m.index, m.index + 400);   // const got = await … 꼴
+      }
+      if (!/\.why\b/.test(seg)) {
+        unused.push(f + ':' + src.slice(0, m.index).split('\n').length + '  ' +
+          seg.replace(/\s+/g, ' ').slice(0, 110));
+      }
+    }
+  });
+  assert.deepEqual(unused, [],
+    '★ 까닭을 받아 놓고 안 씁니다 — 화면은 예전 그대로 「없습니다」만 말합니다:\n' + unused.join('\n'));
+});
+
+test('★ 까닭 없는 길(loadFull)을 쓰는 곳이 늘지 않는다', () => {
+  /* ── 톱니바퀴(ratchet) ──
+     18곳을 하루에 다 고칠 수는 없다. 대신 **늘지 않게** 못 박는다 —
+     새로 쓰는 코드는 까닭 있는 길로 가고, 옛 자리는 손볼 때마다 하나씩 줄어든다.
+     ⚠ 숫자를 줄이는 것은 언제든 좋다(줄이면 이 줄도 함께 줄여 주세요).
+        늘리려면 **왜 까닭이 필요 없는지**를 먼저 답할 수 있어야 한다. */
+  let n = 0;
+  htmlFiles.forEach(function (f) {
+    fullCallsIn(readHtml(f)).forEach(function (c) { if (c.fn === 'loadFull') n++; });
+  });
+  const CAP = 14;   // 검사고정-허용: 톱니바퀴 — 이 숫자는 «줄어들기만» 하는 것이 규칙이다
+  assert.ok(n <= CAP,
+    '★ 까닭 없는 길(loadFull)이 ' + n + '곳으로 늘었습니다(허용 ' + CAP + ').\n' +
+    '  새 코드는 loadFullDetail 을 쓰고, 빈손일 때 got.why 를 보여 주세요.');
+});
+
+test('★ 저장 층이 빈손마다 까닭을 붙인다 — 갈래를 실제로 돌려 본다', () => {
+  const STORE = fs.readFileSync(path.join(R, 'js', 'pu-photo-store.js'), 'utf8');
+  const i = STORE.indexOf('function loadFullDetail(');
+  assert.ok(i > 0, '까닭 있는 길이 없습니다');
+  const j = STORE.indexOf('\n  function loadFull(', i);
+  const body = STORE.slice(i, j);
+  /* 빈손인데 까닭이 안 붙는 갈래가 있으면, 그 갈래는 다시 「조용한 빈손」이다 */
+  assert.match(body, /if \(!d\.code\) mark\(/,
+    '★ 아무 갈래에도 안 걸린 빈손에 까닭이 안 붙습니다 — 그때가 바로 조용한 빈손입니다');
+  assert.match(body, /return \{ src: '', code: d\.code, why: d\.why \}/,
+    '까닭을 돌려주지 않습니다');
+  /* 서버 길의 조용한 갈래 넷이 모두 까닭을 남기는가 */
+  const s = STORE.indexOf('function fullFromServer(');
+  const e = STORE.indexOf('\n  /* ── 원본 받아오기', s);
+  const srv = STORE.slice(s, e);
+  ['nofetch', 'nokey', 'nologin', 'notsensitive'].forEach(function (code) {
+    assert.ok(srv.indexOf("'" + code + "'") > 0,
+      '★ 서버 길의 「' + code + '」 갈래가 조용히 빈손으로 돌아갑니다');
+  });
+  /* 빈손으로 돌아가는 «모든» 자리 바로 앞에 까닭이 붙어 있는가 —
+     개수를 세지 않는다(모양이 조금 달라지면 헛울린다). 자리마다 앞을 본다. */
+  const silent = [];
+  const re = /Promise\.resolve\(''\)|return '';/g;
+  let m;
+  while ((m = re.exec(srv))) {
+    const before = srv.slice(Math.max(0, m.index - 220), m.index);
+    if (!/note\(\s*'/.test(before)) silent.push(srv.slice(m.index - 60, m.index + 24).replace(/\s+/g, ' '));
+  }
+  assert.deepEqual(silent, [],
+    '★ 까닭 없이 빈손으로 돌아가는 갈래가 남아 있습니다:\n' + silent.join('\n'));
+});
+
+test('★ loadFull 은 까닭 있는 길을 «감싼 것»이다 — 두 벌이면 한쪽만 고쳐진다', () => {
+  /* 이 파일이 잡으려는 바로 그 병이다. 길을 두 벌로 두면 다음에 또 어긋난다. */
+  const STORE = fs.readFileSync(path.join(R, 'js', 'pu-photo-store.js'), 'utf8');
+  const i = STORE.indexOf('\n  function loadFull(');
+  const body = STORE.slice(i, STORE.indexOf('\n  }', i));
+  assert.match(body, /loadFullDetail\(year, id, owner\)/,
+    '★ loadFull 이 제 길을 따로 갖고 있습니다 — 한쪽만 고쳐질 자리가 또 생겼습니다');
+  assert.ok(body.indexOf('withStorage') < 0 && body.indexOf('fullFromServer') < 0,
+    '★ loadFull 이 길을 두 벌로 갖고 있습니다');
+});
