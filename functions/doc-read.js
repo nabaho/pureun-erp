@@ -36,7 +36,7 @@ function validate(body) {
   const parts = body.parts;
   if (!Array.isArray(parts) || !parts.length) return { ok: false, error: "보낼 내용이 없습니다" };
 
-  let imgs = 0;
+  let imgs = 0, chars = 0;
   for (const p of parts) {
     if (!p || typeof p !== "object") return { ok: false, error: "보낼 내용의 모양이 맞지 않습니다" };
     if (p.inline_data) {
@@ -45,13 +45,26 @@ function validate(body) {
       imgs++;
     } else if (typeof p.text !== "string") {
       return { ok: false, error: "보낼 내용의 모양이 맞지 않습니다" };
+    } else {
+      chars += p.text.trim().length;
     }
   }
-  if (!imgs) return { ok: false, error: "사진이 없습니다" };
+  /* ⚠ **글자만 보내는 것도 옳은 길이다** (2026-08-26 고침).
+     예전에는 「사진이 한 장도 없으면 돌려보낸다」였다. 2026-08-17 에 이 대리인을
+     만들 때는 판독이 늘 그림이었으니 맞는 말이었다. 그런데 2026-08-24 에
+     「글자 있는 PDF 는 글자로 읽는다」가 들어오면서(사진첩 readDocText),
+     **글자만 담은 요청**이 생겼다 — 그것을 여기서 「사진이 없습니다」로 되돌려보내
+     그 길이 한 번도 성공한 적이 없었다(대표 보고 2026-08-26: 사업자등록증명 PDF
+     가 계속 판독 실패. 운영 데이터에서 글자로 읽는 사진은 그 한 장뿐이었고,
+     그 한 장이 바로 이 오류였다).
+     ⚠ 그림도 글자도 없으면 그대로 돌려보낸다 — 부르는 만큼이 요금이다. */
+  if (!imgs && !chars) return { ok: false, error: "보낼 내용이 없습니다" };
 
   const size = Buffer.byteLength(JSON.stringify(body), "utf8");
   if (size > MAX_BODY_BYTES) {
-    return { ok: false, error: "사진이 너무 큽니다 — 장수를 나눠 판독해 주세요" };
+    return { ok: false, error: imgs
+      ? "사진이 너무 큽니다 — 장수를 나눠 판독해 주세요"
+      : "글자가 너무 많습니다 — 나눠서 판독해 주세요" };
   }
   return { ok: true, parts: parts, cfg: body.generationConfig };
 }
