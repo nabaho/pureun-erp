@@ -2454,10 +2454,21 @@ const Store = {
             if(!Store._idxDone){ setTimeout(backfillIdx, 3000); }
             /* 번호 열쇠 자리 첫 채우기 — 한 번만. 명함이 다 들어온 뒤라야 빠짐없이 찬다. */
             if(!Store._byKeyDone){ Store._byKeyDone=true; setTimeout(ensureByKeyMap, 4000); }
-          } },
+          }
+          /* 새 명함을 저절로 폴더에 넣는다 (대표 지시 2026-08-26 「들어올 때 바로」).
+             ⚠ «표시»는 여기서 바로 한다(값이 없어도 되는 셈이라 가볍다). 미루면 안 된다 —
+               켜는 동안 도착한 명함까지 「처음 것」으로 표시되어 조용히 새어 나간다.
+             ⚠ «옮기기»만 미룬다. 규칙·폴더가 손에 들어온 뒤라야 옳게 고르고,
+               사진첩이 스무 장을 잇달아 보낼 때 한 번으로 모을 수 있다. */
+          autoClsMark();
+          autoClsSoon();
+        },
           e => { if(isDenied(e)) itemsDeniedTell(e); });
         watchCardMap(this.db.ref(DB_ROOT+'/groups'), value => { state.groups = value||{}; }, () => { renderSoon();
-          if(!Store._bizSeedDone){ Store._bizSeedDone=true; setTimeout(seedBizFolders, 3000); } });
+          if(!Store._bizSeedDone){ Store._bizSeedDone=true; setTimeout(seedBizFolders, 3000); }
+          /* 직업별 탭은 «폴더가 손에 들어온 뒤»에 심는다 — 탭이 폴더에 딸리기 때문이다.
+             규칙 심기(3초)보다 뒤에 둔다: 폴더는 규칙이 만들기도 한다. */
+          if(!Store._profTabSeedDone){ Store._profTabSeedDone=true; setTimeout(seedProfTabs, 6000); } });
         /* 내 탭(저장된 검색·필터 조건) — 전 직원 공유 */
         watchCardMap(this.db.ref(DB_ROOT+'/views'), value => { state.views = value||{}; }, () => { renderSoon();
           if(!Store._erpTabSeedDone){ Store._erpTabSeedDone=true; setTimeout(seedErpTabs, 3500); } });
@@ -14650,16 +14661,46 @@ function _go(sub, modalCall){ return _panelTarget==='inline' ? `setSub('${sub}')
 /* ══════ 규칙 분류 — 순수 로직 (테스트 대상) ══════
    미분류로 쌓인 명함을 회사명 단어로 폴더에 나눠 담는다.
    '청' 처럼 짧은 말은 청소·청과에도 걸려 일부러 뺐다 — 시청·구청처럼 길게 적는다. */
+/* ── tabs: 폴더 «안»에서 다시 갈래를 만드는 조건 탭 (대표 지시 2026-08-26) ──
+     "노무사·전문가는 자동 분류되고, 변호사·회계사·세무사·감평사 등은 별도로
+      폴더와 탭으로 자동이동 가능하게"
+   ⚠ 탭은 «조건 탭»으로 만든다(🔍) — 명함마다 vtabs 를 쓰지 않는다.
+     담는 탭(🏷)으로 만들면 6,286장에 쓰기가 붙고, 새 명함마다 또 써야 한다.
+     조건 탭은 회사명으로 거르므로 «쓰기가 0» 이고 새 명함도 저절로 들어온다.
+   ⚠ 여기 words 는 «폴더로 보내는» 말이고, tabs[].words 는 «폴더 안에서 가르는» 말이다.
+     탭의 말은 폴더의 말보다 좁아야 한다 — 넓으면 폴더 전체가 한 탭에 들어간다. */
 const CLASSIFY_DEFAULTS = [
   { key:'nomu',   order:1, enabled:true, toGroupName:'노무사',
-    words:['노무법인','노무사사무소','노무사무소'] },
+    words:['노무법인','노무사사무소','노무사무소'],
+    tabs:[ { name:'노무법인',   words:['노무법인'] },
+           { name:'개인사무소', words:['노무사사무소','노무사무소'] } ] },
   { key:'expert', order:2, enabled:true, toGroupName:'전문가',
-    words:['세무','회계','법무','변호사','법률','변리','특허','감정평가'] },
+    words:['세무','회계','법무','변호사','법률','변리','특허','감정평가'],
+    /* ⚠ 「법무」는 변호사·법무사 둘 다 쓰는 말이라 탭으로 안 쓴다 —
+       탭이 틀리면 없는 것보다 나쁘다. 그런 것은 폴더 「전체」에서 본다. */
+    tabs:[ { name:'세무사',      words:['세무'] },
+           { name:'회계사',      words:['회계'] },
+           { name:'변호사',      words:['변호사','법률'] },
+           { name:'감정평가사',  words:['감정평가'] },
+           { name:'변리사',      words:['변리','특허'] } ] },
   { key:'public', order:3, enabled:true, toGroupName:'기관·공공',
-    words:['공단','공사','시청','구청','군청','도청','교육청','경찰청','소방서','협회','진흥원','재단','연구원','공제회'] },
+    words:['공단','공사','시청','구청','군청','도청','교육청','경찰청','소방서','협회','진흥원','재단','연구원','공제회'],
+    tabs:[ { name:'공단·공사',  words:['공단','공사'] },
+           { name:'지자체',     words:['시청','구청','군청','도청','교육청'] },
+           { name:'진흥원·재단', words:['진흥원','재단','연구원'] },
+           { name:'협회·공제회', words:['협회','공제회'] } ] },
   { key:'life',   order:4, enabled:true, toGroupName:'생활·기타',
     words:['배달','꽃배달','보험','갈비','식당','마트','택배','렌터카','화수목','미용실','세탁','피자','치킨'] }
 ];
+/* 이 규칙이 만들 탭 목록 — 저장된 규칙에 tabs 가 없으면 기본값에서 가져온다.
+   ⚠ 대표가 환경설정에서 말을 고쳐 저장하면 tabs 가 빠진 채로 저장될 수 있다.
+     그때 탭이 조용히 사라지지 않게 기본값으로 되메운다. */
+function classifyTabsOf(r){
+  if(!r || !r.key) return [];
+  if(Array.isArray(r.tabs)) return r.tabs.filter(t=>t && t.name && Array.isArray(t.words) && t.words.length);
+  const d = CLASSIFY_DEFAULTS.find(x=>x.key===r.key);
+  return (d && Array.isArray(d.tabs)) ? d.tabs : [];
+}
 /* 규칙이 하나도 없을 때만 기본 4개를 심는다.
    기록 이름(key)을 고정으로 써서, 두 사람이 동시에 심어도 같은 4개로 모인다.
    지운 뒤 다시 살아나지 않도록 이 기기에 1회만 표시 */
@@ -14738,6 +14779,183 @@ function ruleFolderId(kind, name){
   const safe = _canon(name).replace(/[.$#[\]/\x00-\x1f\x7f]/g, '_');
   return `rule_${kind}_${safe || 'g'}`;
 }
+/* ══════ 새 명함 자동 분류 — 순수 로직 (테스트 대상) ══════
+   대표 지시 2026-08-26: "사진첩에서 인식되면 노무사·전문가는 자동적으로 분류되고…"
+   대표 결정: 「새 명함이 들어올 때 바로」.
+
+   ★ 옛 명함 6,286장을 «다시 훑지 않는다» — 이것이 이 기능의 전부다.
+     구독은 자료가 바뀔 때마다 명함 «전부»를 다시 준다. 그때마다 미분류를 찾아
+     옮기면, 켤 때마다 수천 건 쓰기가 나간다 — 2026-08 오류 폭주가 그 모양이었다.
+     그래서 «처음 받은 명함은 다 봤다고 표시만 하고 아무것도 쓰지 않는다».
+     그 뒤에 «새로 나타난 id» 만 옮긴다. 옛것을 정리하는 길은 예전대로
+     환경설정 → 정리 → 「규칙으로 분류」 다(사람이 보고 누른다).
+
+   ⚠ 손으로 넣어 둔 폴더는 절대 안 건드린다 — classifyTargets 가 이미 미분류만 고른다.
+   ⚠ 잠긴 폴더로는 안 보낸다 — findRuleGroup 이 이미 막는다.
+   ⚠ 한 번에 보내는 장수를 못 박는다. 사진첩에서 스무 장을 한꺼번에 보내는 일이 있다. */
+const AUTO_CLS_CHUNK = 200;    /* 한 번의 update 에 담을 최대 장수 */
+const AUTO_CLS_MAX   = 400;    /* 한 번에 처리할 최대 장수 — 넘으면 남기고 다음에 */
+
+/* 처음 받은 것인가 — 처음이면 «표시만» 하고 옮기지 않는다.
+   seen 은 부르는 쪽이 들고 있는 Set 이다(화면 상태를 순수 로직에 넣지 않는다). */
+function autoClsNewIds(items, seen, firstRun){
+  const fresh = [];
+  (items||[]).forEach(function(it){
+    if(!it || !it.id) return;
+    if(seen.has(it.id)) return;
+    seen.add(it.id);
+    if(!firstRun) fresh.push(it.id);
+  });
+  return fresh;
+}
+
+/* 옮길 것을 정한다 — 새로 나타난 id 가운데 규칙에 걸리는 미분류만.
+   돌려주는 것은 «쓸 자리와 값» 이다. 실제 쓰기는 부르는 쪽이 한다(테스트가 쉬워진다). */
+function autoClsPlan(items, freshIds, rules, groups){
+  const fresh = new Set(freshIds || []);
+  const byId = {};
+  (items||[]).forEach(function(it){ if(it && it.id) byId[it.id] = it; });
+  const on = (rules||[]).filter(r=>r && r.key && r.enabled!==false)
+                        .slice().sort((a,b)=>(a.order||0)-(b.order||0));
+  const moves = [];   /* [{id, gid, kind, ruleKey, groupName}] */
+  const skipped = { locked:0, missing:0, over:0 };
+  const gidCache = {};
+  fresh.forEach(function(id){
+    if(moves.length >= AUTO_CLS_MAX){ skipped.over++; return; }
+    const it = byId[id]; if(!it) return;
+    if(String(it.group||'') !== '') return;      /* 이미 폴더에 있다 — 안 건드린다 */
+    const kind = (it.kind==='biz') ? 'biz' : 'card';
+    let hit = null;
+    for(let i=0;i<on.length;i++){ if(ruleHit(it, on[i])){ hit = on[i]; break; } }
+    if(!hit) return;
+    const ck = hit.key + '\u0001' + kind;
+    if(!(ck in gidCache)) gidCache[ck] = findRuleGroup(groups||{}, hit, kind);
+    const t = gidCache[ck];
+    if(t && t.locked){ skipped.locked++; return; }
+    if(!t || !t.gid){ skipped.missing++; return; }   /* 폴더가 아직 없다 — 만들지 않는다 */
+    moves.push({ id:id, gid:t.gid, kind:kind, ruleKey:hit.key, groupName:hit.toGroupName });
+  });
+  return { moves:moves, skipped:skipped };
+}
+
+/* 쓸 자리로 바꾼다 — 한 번의 update 로 보낼 수 있게 나눠 담는다 */
+function autoClsChunks(moves, chunk){
+  /* ⚠ 이상한 값이면 «기본값»으로 돌아간다. Math.max(1, …) 로 두면 음수가 들어올 때
+       꾸러미 크기가 1 이 되어 «한 장씩 쓰기»가 된다 — 이 함수가 막으려던 바로 그것이다
+       (검사가 잡아 준 자리, 2026-08-26). */
+  const nn = Math.floor(Number(chunk));
+  const size = (nn >= 1) ? nn : AUTO_CLS_CHUNK;
+  const out = [];
+  for(let i=0;i<(moves||[]).length;i+=size){
+    const upd = {};
+    moves.slice(i, i+size).forEach(function(m){
+      if(m && m.id && m.gid) upd['items/' + m.id + '/group'] = m.gid;
+    });
+    if(Object.keys(upd).length) out.push(upd);
+  }
+  return out;
+}
+
+/* 무엇을 어디로 보냈는지 한 줄로 — 조용히 옮기면 「내 명함이 왜 딴 데 있나」가 된다 */
+function autoClsToastText(moves){
+  const by = {};
+  (moves||[]).forEach(function(m){ const k=(m&&m.groupName)||'?'; by[k]=(by[k]||0)+1; });
+  const parts = Object.keys(by).map(k=>'📁 '+k+' '+by[k]+'장');
+  return parts.length ? ('새 명함을 저절로 분류했습니다 — ' + parts.join(' · ')) : '';
+}
+
+/* ══════ 새 명함 자동 분류 — 화면·쓰기 ══════ */
+const _autoClsSeen = new Set();
+let _autoClsFirst = true;      /* 첫 꾸러미는 «표시만» 한다 */
+let _autoClsBusy = false;
+let _autoClsWait = [];         /* 옮길 차례를 기다리는 id */
+let _autoClsTimer = null;
+
+/* ① 표시 — 꾸러미가 올 때 «그 자리에서» 부른다. 쓰기가 없고 값이 필요 없다.
+   ★ 첫 꾸러미는 표시만 하고 버린다. 옛 명함 6,286장을 여기서 옮기면 켤 때마다
+     수천 건 쓰기가 나간다(2026-08 오류 폭주가 그 모양이었다).
+     옛것 정리는 예전대로 환경설정 → 정리에서 사람이 누른다. */
+function autoClsMark(){
+  const items = Object.values(state.items||{});
+  const fresh = autoClsNewIds(items, _autoClsSeen, _autoClsFirst);
+  if(_autoClsFirst){ _autoClsFirst = false; return; }
+  if(fresh.length) _autoClsWait = _autoClsWait.concat(fresh);
+}
+/* ② 옮기기를 미룬다 — 사진첩이 스무 장을 잇달아 보내면 한 번으로 모인다.
+   규칙·폴더 심기(3~6초)보다 뒤라야 옳게 고른다. */
+function autoClsSoon(){
+  if(!_autoClsWait.length) return;
+  clearTimeout(_autoClsTimer);
+  _autoClsTimer = setTimeout(autoClassifyOnArrive, 7000);
+}
+
+/* ③ 실제로 옮긴다 */
+async function autoClassifyOnArrive(){
+  try{
+    if(Store.mode!=='firebase') return;
+    if(_autoClsBusy) return;
+    const fresh = _autoClsWait; _autoClsWait = [];
+    if(!fresh.length) return;
+    const items = Object.values(state.items||{});
+    const plan = autoClsPlan(items, fresh, classifyRuleList(), state.groups||{});
+    if(!plan.moves.length) return;
+    _autoClsBusy = true;
+    const chunks = autoClsChunks(plan.moves, AUTO_CLS_CHUNK);
+    for(const upd of chunks) await Store.db.ref(DB_ROOT).update(upd);
+    /* 검색목록도 따라가야 한다 — 폴더가 바뀌면 잠금 여부가 바뀔 수 있다.
+       ⚠ 한 장씩 쓰지 않는다. writeIdx 는 잠긴 폴더면 스스로 건너뛴다. */
+    plan.moves.forEach(function(m){
+      const it = state.items[m.id];
+      if(it) { try{ writeIdx(Object.assign({}, it, { group:m.gid })); }catch(_){} }
+    });
+    const msg = autoClsToastText(plan.moves);
+    if(msg) toast(msg, 7000);
+    if(plan.skipped.over) console.warn('[자동 분류] 너무 많아 남겼다 — 다음에 이어서', plan.skipped.over);
+  }catch(e){ console.warn('[자동 분류]', e && e.message); }
+  finally{ _autoClsBusy = false; }
+}
+
+/* ── 직업별 탭 심기 (대표 지시 2026-08-26) ──
+   «조건 탭»(🔍)으로 만든다 — 회사명에 그 말이 든 명함이 저절로 들어온다.
+   ⚠ 담는 탭(🏷)으로 만들면 명함마다 vtabs 쓰기가 붙는다. 조건 탭은 쓰기가 0 이고
+     새 명함도 저절로 들어온다 — 자동 분류와 결이 맞는다.
+   ⚠ 탭은 그 «폴더 안»에서만 보인다(scope = 폴더 id). 폴더가 아직 없으면 심지 않는다 —
+     scope 가 없는 탭은 어디에도 안 나타나 「만들었는데 안 보인다」가 된다.
+   ⚠ 지운 뒤 다시 살아나지 않게 이 기기에 한 번만 표시한다(다른 심기와 같은 방식). */
+function seedProfTabs(){
+  try{
+    if(Store.mode!=='firebase') return;
+    if(localStorage.getItem('pucards_proftabs_v1')) return;
+    if(!state.groups || !Object.keys(state.groups).length) return;
+    let put = 0;
+    classifyRuleList().forEach(function(r){
+      const tabs = classifyTabsOf(r);
+      if(!tabs.length) return;
+      ['card','biz'].forEach(function(kind){
+        const t = findRuleGroup(state.groups, r, kind);
+        if(!t || !t.gid) return;              /* 폴더가 없거나 잠겼다 — 넘어간다 */
+        tabs.forEach(function(tb, i){
+          /* 회사명에 그 말이 들면 걸린다 — 여러 말은 첫 말로 심는다.
+             ⚠ 칸별 찾기는 말 하나만 받는다. 「변호사·법률」처럼 둘이면 첫 말로 두고,
+               대표가 탭 ⋮ 에서 조건을 고칠 수 있다(조건 탭이라 그 길이 있다). */
+          const word = String(tb.words[0]||'').trim(); if(!word) return;
+          const dup = Object.values(state.views||{}).find(v=>v && (v.kind||'card')===kind
+            && (v.scope||'all')===t.gid && _canon(v.name)===_canon(tb.name));
+          if(dup) return;
+          const fl = { q:'', group:t.gid, owner:'all', region:'', erpFilter:'', erpMgr:'',
+            colFilter:{ company: word },
+            onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false,
+            sort:'date', sortKey:null, sortDir:'desc' };
+          const v = { id:uid(), name:tb.name, kind:kind, scope:t.gid, order:2000+i, f:fl };
+          Store.putView(v); state.views[v.id] = v; put++;
+        });
+      });
+    });
+    localStorage.setItem('pucards_proftabs_v1','1');
+    if(put){ try{ render(); }catch(_){} toast(`직업별 탭 ${put}개를 만들었습니다 — 폴더를 누르면 윗줄에 나옵니다`, 7000); }
+  }catch(e){ console.warn('[seedProfTabs]', e && e.message); }
+}
+
 /* ══════ 규칙 분류 — 화면 ══════ */
 /* 지금 보고 있는 종류(명함/사업자) 기준으로 규칙별 걸린 장수를 센다.
    화면과 적용이 같은 답을 보게 이 한 곳에서만 계산한다. */
