@@ -507,3 +507,279 @@ test('명부에 없는 사람은 «뒤로» 온다 — 앞에 끼우면 사번 �
   const list = c.mbWhoList();
   assert.equal(list[list.length-1].name, '모르는사람', '명부에 없는 사람이 앞에 왔다');
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+   자문종료 칸 · 퇴사자 이어받기 (대표 지시 2026-08-26)
+   ══════════════════════════════════════════════════════════════════════════
+   "자문종료의 경우 종료업체로 별도로 관리할 수 있나 자문종료 메일로 모두 이동되게"
+   "퇴사자의 이메일은 승계받은 담당자가 자동으로 본인 메일함으로 정렬되게 해달라"
+
+   ★ 세어 보고 알게 된 것 (2026-08-26 실시간DB)
+     · 퇴사자가 담당인 25곳 가운데 «24곳이 이미 종료»였다 — 승계가 아니라 종료 칸으로 간다
+     · 정말 이어받아야 하는 곳은 1곳(충원종합관리㈜ · 담당 임혜미)
+     · 기업 371곳 = active 205 · closed 100 · suboffice 66
+       ⚠ suboffice 는 «지사»다 — 끝난 것이 아니다 */
+const ENDF = {
+  B_JAMUN: { path:'1.자문사답변', name:'1.자문사답변', kind:'custom', order:7, total:5, unseen:0 }
+};
+const ENDM = (u,e,s) => ({ u:u, f:'보낸이', e:e, t:'370-6@daum.net', s:s, d:1756000000+u, r:1, g:0, a:0, z:1 });
+const ENDMSGS = { B_JAMUN: {
+  '1': ENDM(1,'a@live.kr',   '살아 있는 자문사'),
+  '2': ENDM(2,'b@ended.kr',  '끝난 자문사'),
+  '3': ENDM(3,'c@retire.kr', '퇴사자가 담당'),
+  '4': ENDM(4,'d@sub.kr',    '지사 — 끝난 것이 아니다'),
+  '5': ENDM(5,'e@nobody.kr', '아무 데도 없는 곳')
+}};
+const ENDITEMS = {
+  a: { id:'a', email:'a@live.kr',   company:'살아있는회사' },
+  b: { id:'b', email:'b@ended.kr',  company:'끝난회사' },
+  c: { id:'c', email:'c@retire.kr', company:'퇴사자회사' },
+  d: { id:'d', email:'d@sub.kr',    company:'지사회사' }
+};
+/* ⚠ 실제 ErpMatch 처럼 left(끝났다)를 함께 만든다 — 빠뜨리면 종료 칸이 늘 0이 된다 */
+const ENDCOS = [
+  { name:'살아있는회사', main:'박한별', status:'active'    },
+  { name:'끝난회사',     main:'박한별', status:'closed'    },
+  { name:'퇴사자회사',   main:'박성수', status:'active'    },
+  { name:'지사회사',     main:'김혜민', status:'suboffice' }
+];
+const ENDDIR = [
+  { sid:'P-002', name:'박성수', sortOrder:20, role:'member', title:'노무사', status:'retired' },
+  { sid:'P-003', name:'박한별', sortOrder:30, role:'member', title:'노무사', status:'active'  },
+  { sid:'P-004', name:'김혜민', sortOrder:40, role:'member', title:'노무사', status:'active'  }
+];
+
+function loadEnd(over){
+  const o = over || {};
+  const held = { wrote:{}, toasts:[], fetched:0 };
+  const state = Object.assign({
+    view:'mail', mailSent:'box', mbBox:'', items: ENDITEMS, pick:{}, mbDash:'who',
+    mbQ:'', mbFilter:'', mbCursor:-1, mbOpen:null, whoTab:'succ'
+  }, o.state || {});
+  const dbRef = (p) => ({
+    once: () => Promise.resolve({ val: () => null }),
+    set: (v) => { held.wrote[p] = v; return Promise.resolve(); },
+    remove: () => { held.wrote[p] = null; return Promise.resolve(); },
+    child(k){ return dbRef(p + '/' + k); },
+    update: (v) => { held.wrote[p] = Object.assign(held.wrote[p]||{}, v); return Promise.resolve(); }
+  });
+  const dummy = { set innerHTML(v){ dummy._h = v; }, get innerHTML(){ return dummy._h||''; },
+    style:{}, offsetHeight:120, value:'', focus(){}, select(){}, contains:()=>false, scrollTop:0 };
+  const ctx = {
+    console, Object, Array, String, Number, Math, JSON, RegExp, Set, Date, Promise,
+    setTimeout: (fn)=>{ if(fn) fn(); }, atob:()=>'',
+    state,
+    esc: s => String(s == null ? '' : s).replace(/[&<>"']/g,
+      c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
+    Store: { mode:'firebase' }, DB_ROOT:'pucards',
+    matMailCfg: () => ({ from:'370-6@daum.net' }),
+    matList: () => [], matCat: () => '', MAT_CATS_NOW: () => [], _matMeta: {},
+    schedList: () => [], staffName: b => String(b||''),
+    fmtDate: () => '2026.08.26', fmtMB: n => n + 'B',
+    allItems: () => ENDITEMS, allGroups: () => ({}),
+    isPrivGroup: () => false, canSeeGroup: () => true,
+    coList: () => [], coTagList: () => [], coFTabList: () => [],
+    coFTabCounts: () => ({all:0,byTab:{}}), _coFolders:{}, _coTagHidden:{},
+    toast: m => held.toasts.push(String(m)), confirm: () => true, prompt: () => null,
+    closeFolderMenu(){}, toggleSidebar(){}, openSettingsPage(){}, openMatPage(){},
+    openMailPage(){}, openSentBox(){}, openSchedBox(){}, openInbox(){}, closeMailPage(){},
+    openPrivateVault(){}, migrateLockedFolders(){},
+    inboxBoxHtml: () => '', schedBoxHtml: () => '', sentBoxHtml: () => '', mailWriteHtml: () => '',
+    wireMailWrite(){},
+    pickOf: k => (state.pick[k] = state.pick[k] || {}),
+    pickOn: (sel,id) => !!(sel && sel[id]),
+    pickList: (sel,ids) => (ids||[]).filter(i => !!(sel && sel[i])),
+    pickAllOn: (sel,ids) => !!(ids&&ids.length) && ids.every(i => !!(sel&&sel[i])),
+    pickClear: k => { state.pick[k] = {}; },
+    pickHit(){}, pickToggleAll(){}, pickRedraw(){},
+    renderPCSide(){}, renderMailPage(){}, render(){},
+    document: { getElementById: () => null, addEventListener(){}, removeEventListener(){} },
+    $: () => dummy,
+    window: { innerWidth:1600, innerHeight:900 },
+    fetch: () => { held.fetched++; return Promise.resolve({ json:()=>Promise.resolve({ok:true}) }); },
+    firebase: { auth: () => ({ currentUser:null }), database: () => ({ ref: p => dbRef(p) }) }
+  };
+  vm.createContext(ctx);
+  vm.runInContext(cut('const ErpMatch = {', '\nfunction autoFolderFlush('), ctx);
+  vm.runInContext(cut('function pcItem(attrs', '\nfunction switchTab('), ctx);
+  vm.runInContext(
+    '_mbFolders = ' + JSON.stringify(ENDF) + ';' +
+    '_mbMsgs = ' + JSON.stringify(ENDMSGS) + ';' +
+    '_mbBins = {}; _mbPut = {}; _mbHide = {}; _mbOwner = {}; _mbOrder = {};' +
+    '_mbSucc = ' + JSON.stringify(o.succ || {}) + ';' +
+    '_mbMeta = { at:1, ok:true };', ctx);
+  const EM = vm.runInContext('ErpMatch', ctx);
+  const byName = {}, staff = {};
+  ENDCOS.forEach(c => {
+    const st = String(c.status||'');
+    byName[EM._norm(c.name)] = { company:c.name, main:c.main, subs:[], type:'자문',
+      status:st, left:(st==='inactive'||st==='terminated'||st==='closed'),
+      ceo:'', contacts:[], bizNo:'' };
+  });
+  (o.dir || ENDDIR).forEach(u => {
+    staff[EM._norm(u.name)] = { sid:u.sid, name:u.name, ord:u.sortOrder,
+      role:u.role, title:u.title, status:u.status };
+  });
+  EM.byName = byName; EM.byBiz = {}; EM.staff = staff; EM.ready = true;
+  EM.companies = ENDCOS.map(c => ({ name:c.name, managerMain:c.main, status:c.status }));
+  ctx.ErpMatch = EM;
+  ctx._held = held;
+  ctx.__succ = () => vm.runInContext('JSON.stringify(_mbSucc)', ctx);
+  return ctx;
+}
+const endSubs = (c, id) => { c.state.mbBox = id; return c.mbAllRows().map(v=>v.s).sort().join(' | '); };
+
+/* ══════ 자문종료 ══════ */
+
+test('★ 자문이 끝난 업체의 메일은 「자문종료」 칸으로 간다', () => {
+  const c = loadEnd();
+  assert.ok(endSubs(c, '@!').indexOf('끝난 자문사') >= 0, '종료 칸에 안 들어왔다');
+});
+
+test('★ 종료 메일은 담당자 칸에서 «빠진다» — 한 통이 두 곳에 있으면 몇 통인지 모른다', () => {
+  const c = loadEnd();
+  const s = endSubs(c, '@박한별');
+  assert.ok(s.indexOf('살아 있는 자문사') >= 0, '살아 있는 자문사 메일이 사라졌다');
+  assert.ok(s.indexOf('끝난 자문사') < 0, '끝난 업체 메일이 담당자 칸에 남아 있다');
+});
+
+test('★ 종료 메일은 「담당 모름」에도 안 들어간다', () => {
+  const c = loadEnd();
+  assert.ok(endSubs(c, '@?').indexOf('끝난 자문사') < 0, '담당 모름에 겹쳐 들어왔다');
+});
+
+test('★ 「지사」는 끝난 것이 아니다 — 넣으면 지사가 통째로 종료로 간다', () => {
+  const c = loadEnd();
+  assert.ok(endSubs(c, '@!').indexOf('지사') < 0, '지사가 종료 칸으로 갔다');
+  assert.ok(endSubs(c, '@김혜민').indexOf('지사') >= 0, '지사 메일이 담당자 칸에서 사라졌다');
+});
+
+test('종료 칸에도 이름이 있다 — 이름 없는 칸은 어디인지 알 수 없다', () => {
+  const c = loadEnd();
+  assert.match(c.mbBoxName('@!'), /자문종료/);
+});
+
+test('★ 옆줄에 「자문종료」 줄이 있다 — 메일이 0통이어도 갈 길은 있어야 한다', () => {
+  const c = loadEnd({ state:{ mbDash:'who' } });
+  const h = c.mailSideHtml();
+  assert.ok(h.indexOf('자문종료') > 0, '종료 칸으로 갈 길이 없다');
+});
+
+test('★ 종료업체 목록에 «이메일이 없는 곳»이 위로 온다 — 채워야 할 곳이 먼저 보여야 한다', () => {
+  const c = loadEnd();
+  const rows = c.mbEndedCos();
+  assert.ok(rows.length, '종료업체 목록이 비었다');
+  for(let i = 1; i < rows.length; i++)
+    assert.ok(rows[i-1].addrs.length <= rows[i].addrs.length, '이메일 없는 곳이 아래로 갔다');
+  assert.ok(rows.every(r => r.name !== '지사회사'), '지사가 종료업체 목록에 있다');
+});
+
+/* ══════ 퇴사자 이어받기 ══════ */
+
+test('★ 이어받은 사람이 있으면 그 사람 칸으로 «저절로» 간다', () => {
+  const c = loadEnd({ succ: { 'P-002':'P-003' } });   /* 박성수 → 박한별 */
+  assert.ok(endSubs(c, '@박한별').indexOf('퇴사자가 담당') >= 0, '이어받은 사람 칸에 안 왔다');
+  assert.ok(endSubs(c, '@?').indexOf('퇴사자가 담당') < 0, '담당 모름에 그대로 남았다');
+});
+
+test('★ 안 이었으면 「담당 모름」에 남는다 — 사라지지 않는다', () => {
+  const c = loadEnd();
+  assert.ok(endSubs(c, '@?').indexOf('퇴사자가 담당') >= 0, '메일이 어느 칸에도 없다');
+});
+
+test('★ 이어받은 사람도 퇴사했으면 «또 이어받은 사람»을 찾는다 — 두 번까지', () => {
+  const dir = ENDDIR.concat([{ sid:'T-009', name:'중간사람', sortOrder:200,
+    role:'member', title:'노무사', status:'retired' }]);
+  const c = loadEnd({ dir: dir, succ: { 'P-002':'T-009', 'T-009':'P-003' } });
+  assert.equal(c.mbSuccOf('박성수'), '박한별', '두 다리 건너서 못 찾았다');
+});
+
+test('★ 서로 가리키면 «멈춘다» — 한없이 따라가면 화면이 얼어붙는다', () => {
+  const dir = ENDDIR.concat([{ sid:'T-009', name:'중간사람', sortOrder:200,
+    role:'member', title:'노무사', status:'retired' }]);
+  const c = loadEnd({ dir: dir, succ: { 'P-002':'T-009', 'T-009':'P-002' } });
+  assert.equal(c.mbSuccOf('박성수'), '', '서로 가리키는데 사람을 내놓았다');
+});
+
+test('★ 이어받아도 다음메일 서버를 부르지 않는다 — 우리 쪽 표일 뿐이다', () => {
+  const c = loadEnd();
+  c.mbSuccSet('P-002', 'P-003');
+  assert.equal(c._held.fetched, 0, '다음메일 서버를 불렀다');
+  Object.keys(c._held.wrote).forEach(p => assert.ok(p.indexOf('mailbox') < 0,
+    '다음메일 자리에 적으려 했다: ' + p));
+  assert.match(c.__succ(), /P-003/, '이어받기가 안 적혔다');
+});
+
+test('★ 열쇠는 «사번»이다 — 이름은 같을 수 있고 바뀔 수도 있다', () => {
+  const c = loadEnd();
+  c.mbSuccSet('P-002', 'P-003');
+  const st = JSON.parse(c.__succ());
+  assert.equal(st['P-002'], 'P-003', '사번이 아니라 다른 것으로 적었다');
+});
+
+test('자기 자신에게는 못 넘긴다 — 넘기면 영영 못 찾는다', () => {
+  const c = loadEnd();
+  c.mbSuccSet('P-002', 'P-002');
+  assert.equal(c.__succ(), '{}', '자기 자신에게 넘겼다');
+});
+
+test('이어받기를 지우면 다시 「담당 모름」으로 간다 — 되돌릴 길이 있어야 한다', () => {
+  const c = loadEnd({ succ: { 'P-002':'P-003' } });
+  c.mbSuccSet('P-002', '');
+  assert.equal(c.__succ(), '{}', '안 지워졌다');
+  assert.ok(endSubs(c, '@?').indexOf('퇴사자가 담당') >= 0, '제자리로 안 돌아왔다');
+});
+
+test('★ 이어받기 목록에서 «끝난 업체»는 뺀다 — 그건 승계가 아니라 종료다', () => {
+  const c = loadEnd();
+  const pend = c.mbSuccPending();
+  const park = pend.find(p => p.name === '박성수');
+  assert.ok(park, '이어받을 퇴사자가 안 나온다');
+  assert.ok(park.cos.indexOf('끝난회사') < 0, '끝난 업체가 이어받기 목록에 있다');
+});
+
+test('★ 잇기 화면에 갈래 넷이 다 있다 — 주소·자문사·이어받기·종료업체', () => {
+  const c = loadEnd({ state:{ mailSent:'who' } });
+  ['addr','co','succ','end'].forEach(t => {
+    c.state.whoTab = t;
+    const h = c.whoPageHtml();
+    assert.ok(h.length > 300, t + ' 갈래가 안 그려진다');
+  });
+  c.state.whoTab = 'succ';
+  assert.ok(c.whoPageHtml().indexOf('mbSuccSet(') > 0, '이어받을 사람을 고를 길이 없다');
+  c.state.whoTab = 'end';
+  assert.ok(c.whoPageHtml().indexOf('자문종료') > 0, '종료업체 갈래가 종료를 말하지 않는다');
+});
+
+/* ══════ 옆줄이 «일관되게» 생겼나 (대표 지시 2026-08-26) ══════ */
+
+test('★ 대시보드를 옮겨도 머리줄 색이 «안 바뀐다» — 바뀌면 다른 화면처럼 보인다', () => {
+  const a = loadEnd({ state:{ mbDash:'who' } }).mailSideHtml();
+  const b = loadEnd({ state:{ mbDash:'topic' } }).mailSideHtml();
+  const head = h => (h.match(/<div class="dm-fsec[^"]*"/) || [''])[0];
+  assert.equal(head(a), head(b), '대시보드에 따라 머리줄 클래스가 바뀐다');
+});
+
+test('★ 두 칩이 «같은 모양»이다 — 한쪽만 다른 색이면 옮길 때마다 옆줄이 흔들린다', () => {
+  const h = loadEnd({ state:{ mbDash:'who' } }).mailSideHtml();
+  const seg = (h.match(/<div class="dm-seg">[\s\S]*?<\/div>/) || [''])[0];
+  const cls = (seg.match(/<button class="([^"]*)"/g) || []).map(x => x.replace(/on/g,'').trim());
+  assert.ok(cls.length === 2, '칩이 둘이 아니다');
+  assert.equal(cls[0].replace(/["\s]/g,''), cls[1].replace(/["\s]/g,'').replace(/class=button/,''),
+    '두 칩의 꾸밈이 다르다');
+  assert.ok(src.indexOf('.dm-seg button.on.g{') < 0, '칩 색이 아직 둘이다');
+});
+
+test('★ 칩이 두 줄로 깨지지 않는다 — 「담당/자」로 잘려 보였다', () => {
+  assert.match(src, /\.dm-seg button\{[^}]*white-space:nowrap/, '칩이 줄바꿈된다');
+  assert.match(src, /\.dm-seg button\{[^}]*flex:1 1 0/, '칩 폭이 글자 수에 따라 달라진다');
+});
+
+test('★ 메일 옆줄을 조금 넓혔다 — 240px 에서는 칸 이름이 잘렸다', () => {
+  assert.match(src, /#pcRoot\.mailmode #pcSide\{[^}]*width:274px/, '옆줄이 안 넓어졌다');
+});
+
+test('★ 담당자 줄과 업무 줄의 «아이콘 폭»이 같다 — 다르면 칩을 옮길 때 이름이 밀린다', () => {
+  assert.match(src, /\.dm-f\.topicbin \.dot\{[^}]*width:17px/, '업무 줄 아이콘 폭이 다르다');
+  assert.match(src, /\.dm-f \.ic\{[^}]*width:17px/, '담당자 줄 아이콘 폭이 17px 이 아니다');
+});
