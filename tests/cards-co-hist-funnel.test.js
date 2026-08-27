@@ -38,6 +38,11 @@ function load() {
     _erpConsTypes: null,
     _erpHistTypes: {},
     ErpMatch: { nameByEmail: {} },
+    /* 2026-08-26(2단계): coHistPaint 가 서류 붙임새를 함께 셈한다 —
+       이 검사들은 이력 줄만 보므로 «붙일 서류가 없다»고 답하는 대역을 준다. */
+    docCasePlan: function(){ return { byCase:{}, left:[] }; },
+    coLeftDocsPaint: function(){},
+    coCaseDocsHtml: function(){ return ''; },
     $: id => (id === 'coErpHistBox'
       ? { set innerHTML(v) { box.html = v; }, get innerHTML() { return box.html; } } : null)
   };

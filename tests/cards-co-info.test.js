@@ -190,7 +190,12 @@ test('기업정보를 나서면 안내글을 되돌린다', () => {
 
 test('읽어 온 서류 목록을 회사 상세에 보여준다', () => {
   assert.match(source, /function coDocsHtml/);
-  assert.match(source, /읽어 온 서류 \$\{docs\.length\}건/);
+  /* 2026-08-26(2단계): 글귀가 coDocsListHtml 로 옮겨갔다 — 제목을 밖에서 넘긴다.
+     「읽어 온 서류」라는 말은 그대로 쓰이고, 붙임새가 정해진 뒤에는
+     「아직 안 붙은 서류」로 다시 그린다. 둘 다 있는지 본다. */
+  assert.match(source, /\$\{esc\(title\)\} \$\{docs\.length\}건/);
+  assert.match(source, /'읽어 온 서류'/);
+  assert.match(source, /'아직 안 붙은 서류'/);
   /* 최신 것이 위로 — 방금 보낸 서류를 맨 밑에서 찾게 하면 안 된다 */
   assert.match(source, /sort\(\(a,b\)=>\(b\.at\|\|0\)-\(a\.at\|\|0\)\)/);
   /* ⚠ 고정 폭(at+900)으로 자르고 있었다 — 2026-08-26 에 사업·사건 칸을 위로 올리며
