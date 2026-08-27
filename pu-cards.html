@@ -7963,59 +7963,107 @@ function ensureThumbs(id){
     .catch(()=>{ it.thumb=it.thumb||''; return it; });
 }
 
-/* ══════ 한 번만 실행: 실시간DB 에 있는 원본 사진을 창고로 옮긴다 ══════
-   대표 결정 2026-08-09 — 명함 4,400장 약 1.7GB 가 무료 한도(1GB)를 이것 하나로
-   넘겨 데이터베이스가 멈출 뻔했다. 창고로 옮기면 0.1GB 로 떨어진다.
+/* ══════ 실시간DB 에 남은 원본 사진을 창고로 옮긴다 ══════
+   대표 결정 2026-08-09 — 명함 사진이 실시간DB 무료 한도(1GB)를 이것 하나로
+   넘겨 멈출 뻔했다. 창고로 옮기면 저장비가 **200배** 싸진다
+   (실시간DB $5/GB/월 · 창고 $0.025/GB/월 — 2026-08-27 비용 계산).
+
+   ⚠ 예전에는 `photos` 를 **한 번에 통째로** 읽었다(`once('value')`).
+     284MB 를 한 덩어리로 받아 메모리에 올리는 셈이라 ㉮브라우저가 버거웠고
+     ㉯도중에 끊기면 그 284MB 를 **처음부터 다시** 받아야 했다.
+     이제 **번호 목록만**(shallow) 먼저 받고(수십 KB), 사진은 **한 장씩** 받는다.
+     끊겨도 이미 옮긴 것은 목록에서 사라져 있어 남은 것만 이어서 한다.
 
    ⚠ 순서를 지킨다: **올리고 → 되읽어 확인하고 → 그제야 지운다.**
-      확인을 건너뛰고 지우면 창고에 안 올라간 사진이 영영 사라진다. 명함 사진은
-      다시 찍을 수 없는 것이 많다(그 사람을 또 만나야 한다).
-   ⚠ 개인 폴더 명함은 건드리지 않는다 — 창고 규칙에 그 자리가 없다(Store._inBucket).
-   ⚠ 한 장씩 천천히 한다. 몰아서 던지면 창고가 막고, 실패한 것이 어느 장인지 모른다.
-      중간에 끊겨도 다시 실행하면 **남은 것만** 이어서 한다(이미 옮긴 것은 건너뛴다). */
+      확인을 건너뛰고 지우면 창고에 안 올라간 사진이 영영 사라진다.
+      명함 사진은 다시 찍을 수 없는 것이 많다(그 사람을 또 만나야 한다).
+   ⚠ 개인 폴더 명함은 건드리지 않는다 — 창고 규칙에 그 자리가 없다.
+   ⚠ 한 장씩 천천히. 몰아서 던지면 창고가 막고, 실패한 것이 어느 장인지 모른다. */
+
+/* 번호만 받아 온다 — 값은 안 받는다(shallow). REST 로만 되는 일이라 fetch 를 쓴다. */
+async function _cardsPhotoIds(){
+  const u = firebase.auth().currentUser;
+  if(!u) throw new Error('로그인 정보를 확인할 수 없습니다');
+  const tok = await u.getIdToken();
+  const base = firebase.app().options.databaseURL;
+  /* ⚠ 토큰을 «주소»에 넣지 않는다(?auth=) — 주소는 서버 기록·방문기록에 남는다.
+     머리글(Authorization)로 보내면 기록에 안 남고, 파이어베이스도 이 방식을 받는다. */
+  const res = await fetch(`${base}/${DB_ROOT}/photos.json?shallow=true`,
+    { headers: { Authorization: 'Bearer ' + tok } });
+  if(!res.ok) throw new Error('목록을 읽지 못했습니다 (' + res.status + ')');
+  const j = await res.json();
+  return j ? Object.keys(j) : [];
+}
+
+/* 화면에 진행률을 적는다 — 예전에는 개발자 콘솔에만 찍혀 대표님이 못 보셨다. */
+function _mvBox(html){
+  const el = $('setInline');
+  if(el) el.innerHTML = `<div style="border:1px solid #d7deea;border-radius:10px;padding:12px 14px;
+    background:#f7f9fc;font-size:13px;line-height:1.7">${html}</div>`;
+}
+
 window.pucardsMovePhotosToStorage = async function(){
-  if(Store.mode!=='firebase'){ console.log('실시간 공유 모드에서만 됩니다'); return; }
-  if(typeof firebase==='undefined' || !firebase.storage){ console.log('창고를 쓸 수 없습니다 — 새로고침 후 다시'); return; }
+  if(Store.mode!=='firebase'){ toast('실시간 공유 모드에서만 됩니다'); return; }
+  if(typeof firebase==='undefined' || !firebase.storage){ toast('창고를 쓸 수 없습니다 — 새로고침 후 다시'); return; }
 
-  console.log('[기업정보함] 실시간DB 에서 사진 목록을 읽는 중… (잠시 걸립니다)');
-  let snap;
-  try { snap = await Store.db.ref(`${DB_ROOT}/photos`).once('value'); }
-  catch(e){ console.log('목록을 읽지 못했습니다: ' + (e && e.message)); return; }
-  const all = snap.val() || {};
-  const ids = Object.keys(all);
-  if(!ids.length){ console.log('옮길 사진이 없습니다 — 이미 끝났습니다.'); toast('사진 옮기기 — 할 것 없음'); return; }
+  _mvBox('실시간DB 에 남은 사진 번호를 세는 중… <span style="color:#8b98b3">(목록만 읽습니다 — 사진은 아직 안 받습니다)</span>');
+  let ids;
+  try { ids = await _cardsPhotoIds(); }
+  catch(e){ _mvBox(`<b style="color:#c0392b">목록을 읽지 못했습니다</b><br>${(e&&e.message)||e}`); return; }
 
-  const totalMB = (ids.reduce((s,k)=>s+String(all[k]||'').length,0)/1048576).toFixed(1);
-  if(!confirm(`명함 사진 ${ids.length}장(약 ${totalMB}MB)을 파일 창고로 옮깁니다.\n\n` +
-              `· 한 장씩 올리고 확인한 뒤에 실시간DB 에서 지웁니다\n` +
-              `· 창을 닫지 마세요. 끊겨도 다시 실행하면 이어서 합니다\n\n계속할까요?`)) return;
+  if(!ids.length){
+    _mvBox('☁ <b>옮길 사진이 없습니다.</b> 이미 다 옮겨졌습니다.');
+    toast('사진 옮기기 — 할 것 없음'); return;
+  }
+  if(!confirm(`실시간DB 에 남은 명함 사진 ${ids.length}장을 파일 창고로 옮깁니다.\n\n`
+            + `· 한 장씩 받아 올리고, 되읽어 «확인한 뒤에» 지웁니다\n`
+            + `· 창을 닫지 마세요. 끊겨도 다시 누르면 남은 것만 이어서 합니다\n\n계속할까요?`)) return;
 
-  console.log(`[기업정보함] ${ids.length}장(약 ${totalMB}MB) 옮기기 시작 — 창을 닫지 마세요`);
   _quiet = true;
-  let done=0, skipped=0, failed=0;
-  const bad = [];
-  try {
-    for(const id of ids){
-      const dataUrl = all[id];
-      if(!dataUrl || String(dataUrl).indexOf('data:')!==0){ skipped++; continue; }  // 빈 값·깨진 값은 두고 본다
-      try {
-        await Store._putToBucket(id, dataUrl);
-        /* 되읽어 **실제로 들어갔는지** 본다. 여기서 걸리면 지우지 않는다. */
-        const back = await Store._fetchFromBucket(id);
-        if(!back || back.indexOf('data:')!==0) throw new Error('되읽기 실패');
-        await Store.db.ref(`${DB_ROOT}/photos/${id}`).remove();
-        delete Store.photoCache[id];
-        done++;
-      } catch(e){
+  let done=0, skipped=0, failed=0, movedBytes=0;
+  const bad=[];
+  const t0=Date.now();
+  try{
+    for(let i=0;i<ids.length;i++){
+      const id=ids[i];
+      try{
+        /* 한 장만 받는다 — 여기가 예전과 가장 다른 곳이다 */
+        const snap = await Store.db.ref(`${DB_ROOT}/photos/${id}`).once('value');
+        const dataUrl = snap.val();
+        if(!dataUrl || String(dataUrl).indexOf('data:')!==0){ skipped++; }
+        else{
+          await Store._putToBucket(id, dataUrl);
+          const back = await Store._fetchFromBucket(id);           // 되읽어 확인
+          if(!back || back.indexOf('data:')!==0) throw new Error('되읽기 실패');
+          await Store.db.ref(`${DB_ROOT}/photos/${id}`).remove();  // 그제야 지운다
+          delete Store.photoCache[id];
+          movedBytes += String(dataUrl).length * 0.75;
+          done++;
+        }
+      }catch(e){
         failed++; bad.push(id);
-        console.warn(`  ✗ ${id} — ${e && e.message} (실시간DB 에 그대로 둡니다)`);
+        console.warn(`[명함첩] ✗ ${id} — ${(e&&e.message)||e} (실시간DB 에 그대로 둡니다)`);
       }
-      if((done+failed+skipped) % 100 === 0) console.log(`  ${done+failed+skipped} / ${ids.length} (옮김 ${done} · 실패 ${failed})`);
+      if((i+1)%5===0 || i===ids.length-1){
+        const mb=(movedBytes/1048576).toFixed(1);
+        const pct=Math.round((i+1)/ids.length*100);
+        _mvBox(`☁ <b>창고로 옮기는 중… ${i+1} / ${ids.length}</b> (${pct}%)`
+             + `<div style="height:8px;background:#e3e9f2;border-radius:99px;margin:8px 0;overflow:hidden">`
+             + `<div style="height:100%;width:${pct}%;background:#2f6fd0"></div></div>`
+             + `옮김 <b>${done}</b>장 · 약 <b>${mb}MB</b>`
+             + (skipped?` · 건너뜀 ${skipped}`:'') + (failed?` · <span style="color:#c0392b">실패 ${failed}</span>`:'')
+             + `<br><span style="color:#8b98b3">창을 닫지 마세요</span>`);
+        await new Promise(r=>setTimeout(r,0));   // 화면이 갱신될 틈을 준다
+      }
     }
-  } finally { _quiet = false; }
+  } finally { _quiet=false; }
 
-  console.log(`[기업정보함] 끝 — 옮김 ${done}장 · 건너뜀 ${skipped}장 · 실패 ${failed}장`);
-  if(failed) console.log('  실패한 것은 실시간DB 에 그대로 있습니다. 다시 실행하면 재시도합니다:', bad.slice(0,20));
+  const mb=(movedBytes/1048576).toFixed(1);
+  const sec=Math.round((Date.now()-t0)/1000);
+  _mvBox(`✅ <b>끝났습니다</b> — 옮김 <b>${done}</b>장(약 ${mb}MB) · 건너뜀 ${skipped} · 실패 ${failed} · ${sec}초`
+       + `<br>실시간DB 저장비 기준 <b>약 ${(movedBytes/1073741824*5).toFixed(2)}달러/월</b> 아꼈습니다`
+       + (failed?`<br><span style="color:#c0392b">실패한 것은 실시간DB 에 그대로 있습니다. 다시 누르면 재시도합니다.</span>`:'')
+       + `<br><b>새로고침해 주세요.</b>`);
   toast(`사진 ${done}장을 창고로 옮겼습니다${failed?` (실패 ${failed}장)`:''} — 새로고침해 주세요`);
 };
 
@@ -15930,6 +15978,10 @@ function renderSettingsPage(){
       + btn('backupNow()','💾','지금 백업','JSON 저장')
       + btn('restoreInput.click()','📂','백업 복원','JSON 불러오기')
       + btn(`setSub('mailblock')`,'🚫','메일 수신거부 관리',`${Object.keys(state.mailBlock||{}).length}명`)
+      /* ☁ 실시간DB 에 남은 원본 사진을 창고로 — 저장비가 200배 차이다
+         (실시간DB $5/GB/월 · 창고 $0.025/GB/월). 예전에는 개발자 콘솔에서만
+         부를 수 있어 대표님이 실행하실 길이 없었다(2026-08-27). */
+      + (state.isAdmin ? btn('pucardsMovePhotosToStorage()','☁','사진 창고로 옮기기','실시간DB 비우기 · 요금 절약') : '')
       + `<div id="setInline" style="grid-column:1/-1;margin-top:6px"></div>`;
   } else if(cur==='clean'){
     panel = `<div id="setInline" style="grid-column:1/-1"></div>`;   /* 팝업 없이 여기에 펼침 */
