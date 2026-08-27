@@ -83,9 +83,18 @@ test('★ 한 장이 실패해도 그 장은 실시간DB 에 남긴다', () => {
   /* 지우기가 try 안에 있어야 한다 — 실패하면 지우기까지 못 가고 넘어간다.
      (줄바꿈·들여쓰기로 못 박지 않는다 — 파일이 CRLF 라 어긋난다) */
   const body = m[0];
-  const tryAt = body.search(/try\s*\{\s*await Store\._putToBucket/);
+  /* ⚠ 2026-08-27 고침 — 예전에는 try 가 «_putToBucket 으로 시작하는지»를 봤다.
+     그런데 「한 장씩만 받기」로 바뀌면서(484249c4, 통째로 읽던 것 고침) try 가
+     «그 한 장을 읽는 것»으로 시작하게 됐고, 검사가 깨졌다. 코드는 더 나아졌는데
+     검사가 옛 «방식»에 못 박혀 있었던 것이다.
+     여기서 지켜야 할 것은 방식이 아니라 «지우기가 try 안에 있는가» 하나다 —
+     그러니 지우기 «앞의 가장 가까운» try 를 찾아 그것으로 본다. */
   const catchAt = body.search(/\}\s*catch\(e\)\{\s*failed\+\+/);
   const delAt = body.indexOf('.remove()');
+  let tryAt = -1;
+  const re = /try\s*\{/g;
+  let hit;
+  while ((hit = re.exec(body)) && hit.index < delAt) tryAt = hit.index;
   assert.ok(tryAt > 0 && catchAt > 0, '한 장씩 감싸는 try/catch 가 있어야 합니다.');
   assert.ok(tryAt < delAt && delAt < catchAt,
     '지우기가 try 밖에 있으면 올리기에 실패한 장도 지워집니다.');
@@ -100,16 +109,31 @@ test('되돌릴 수 없는 일이라 먼저 묻는다', () => {
 
 test('끊겨도 이어서 한다 — 이미 옮긴 것은 목록에 없다', () => {
   const m = html.match(/window\.pucardsMovePhotosToStorage = async function\(\)\{[\s\S]*?\n\};/);
-  /* 옮긴 것은 실시간DB 에서 지우므로, 다시 실행하면 남은 것만 읽힌다 */
-  assert.ok(/photos`\)\.once\('value'\)/.test(m[0]),
+  /* 옮긴 것은 실시간DB 에서 지우므로, 다시 실행하면 남은 것만 읽힌다.
+     ⚠ 2026-08-27 고침 — 예전에는 「photos 를 통째로 once('value')」를 못 박고 있었다.
+       그런데 484249c4 가 «바로 그 통째로 읽기»를 없앴다(목록만 읽고 사진은 한 장씩).
+       검사가 고쳐진 쪽을 되레 막고 있었던 것이다. 지켜야 할 것은 읽는 «방법»이 아니라
+       «남은 것만 본다»는 성질이다. */
+  assert.ok(/_cardsPhotoIds\(\)/.test(m[0]),
     '남아 있는 것만 읽어야 이어서 하기가 됩니다.');
-  assert.ok(/이미 끝났습니다/.test(m[0]), '다 끝났을 때 아무 말이 없으면 고장으로 보입니다.');
+  assert.ok(/옮길 사진이 없습니다|이미 (다 옮겨졌습니다|끝났습니다)/.test(m[0]),
+    '다 끝났을 때 아무 말이 없으면 고장으로 보입니다.');
 });
 
 test('깨진 값은 지우지 않고 남겨 둔다', () => {
   const m = html.match(/window\.pucardsMovePhotosToStorage = async function\(\)\{[\s\S]*?\n\};/);
-  assert.ok(/indexOf\('data:'\)!==0\)\{ skipped\+\+; continue; \}/.test(m[0]),
-    '빈 값·깨진 값을 창고에 올리려다 실패하고 지우면 안 됩니다.');
+  const body = m[0];
+  /* ⚠ 2026-08-27 고침 — 예전에는 「{ skipped++; continue; }」라는 «글자»를 못 박았다.
+     484249c4 가 같은 일을 else 로 바꿔 쓰면서 깨졌다. 지켜야 할 성질은 하나다:
+     data: 로 시작하지 않는 값은 «올리지도 지우지도 않고» 건너뛴다. */
+  assert.ok(/indexOf\('data:'\)!==0/.test(body),
+    '깨진 값을 가려내는 곳이 없습니다.');
+  const guardAt = body.search(/indexOf\('data:'\)!==0/);
+  const skipAt = body.indexOf('skipped++', guardAt);
+  const putAt = body.indexOf('_putToBucket');
+  assert.ok(skipAt > guardAt && skipAt < putAt,
+    '빈 값·깨진 값을 창고에 올리려다 실패하고 지우면 안 됩니다 — '
+    + '가려낸 «뒤에» 올리기가 와야 합니다.');
 });
 
 /* ── 옛 도구는 그대로 둔다 ── */
