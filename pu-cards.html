@@ -1895,6 +1895,9 @@ body.pc #pcDetail{display:flex}
 .codocchip.w-지정{border-color:#b6d4b6;background:#f2faf2}
 .codocchip.w-지정 i{color:#2d5a2d;background:#e6f4e6}
 .codocchip.w-기억{border-color:#d9c9a8;background:#fffdf7}
+/* 4단계 — 가장 약한 근거다. 점선으로 「확인해 달라」를 눈에 보이게 한다. */
+.codocchip.w-날짜{border-style:dashed;border-color:#c9a8a8;background:#fffaf8}
+.codocchip.w-날짜 i{color:#a50e0e;background:#fdeced}
 .codocchip.w-기억 i{color:#8a6d1f;background:#fff8ec}
 .codocchip em{font-style:normal;margin-left:2px;padding:0 3px;border-radius:4px;
   color:#a0a8b8;font-size:12px}
@@ -16426,6 +16429,48 @@ function docNameKey(name){
     .replace(/[#$\x00-\x1f\x7f]/g, '');
 }
 
+/* ══════ 4단계 — 날짜로 맞춰 본다 (순수 로직) ══════
+   대표 지시 2026-08-26, 구상안 4단계. «맨 마지막»에 켠다.
+
+   ★ 왜 마지막인가 — 틀릴 수 있는 근거다. 서류 날짜는 «사진첩에 올린 때»이고
+     서류에 적힌 날짜가 아니다. 계약서를 몇 달 뒤에 찍어 올리는 일이 흔하다.
+     그래서 앞의 셋(지정·기억·이름)이 다 실패했을 때만 본다.
+   ★ «사업이 하나뿐일 때만» 붙인다. 그 날짜에 걸리는 사업이 둘이면 안 붙인다 —
+     둘 중 아무 쪽에 붙여 봤자 반은 틀린다.
+   ★ 붙여도 「날짜」라고 적고 «확인해 달라»고 말한다. 앞의 셋과 눈에 다르게 둔다.
+
+   ⚠ 이알피 기간은 해(year)와 월-일(from/to)로 나뉘어 있다. to 가 비면 진행중이라
+     그 해 끝까지로 본다. to 가 from 보다 앞이면 해를 넘긴 사업이다(11월~2월). */
+const CO_PIN_NONE = '-';    /* 「어디에도 안 붙임」 — 사람이 추측을 물린 자리 */
+
+/* 사업 하나의 «기간»을 밀리초 두 값으로. 알 수 없으면 null. */
+function caseWindow(row){
+  const y = Number(String((row && row.year) || '').slice(0,4));
+  if(!y) return null;
+  const md = function(v, dflt){
+    const m = String(v||'').match(/^(\d{2})-(\d{2})$/);
+    return m ? { mo:Number(m[1]), d:Number(m[2]) } : dflt;
+  };
+  const a = md(row && row.from, { mo:1,  d:1  });
+  const b = md(row && row.to,   { mo:12, d:31 });
+  /* 해를 넘긴 사업 — 끝이 시작보다 앞이면 이듬해로 본다 */
+  const endY = (b.mo < a.mo || (b.mo === a.mo && b.d < a.d)) ? y + 1 : y;
+  const s = Date.UTC(y, a.mo - 1, a.d, 0, 0, 0);
+  const e = Date.UTC(endY, b.mo - 1, b.d, 23, 59, 59);
+  return (e >= s) ? [s, e] : null;
+}
+/* 이 날짜에 걸리는 사업이 «딱 하나»인가 — 아니면 null */
+function docDateHit(at, cases){
+  const t = Number(at) || 0;
+  if(!t) return null;
+  const hit = [];
+  (cases||[]).forEach(function(c, i){
+    const w = caseWindow(c);
+    if(w && t >= w[0] && t <= w[1]) hit.push(i);
+  });
+  return hit.length === 1 ? { i:hit[0], why:'날짜' } : null;
+}
+
 /* 회사 하나의 서류 전부를 나눈다 — 붙은 것과 «아직 안 붙은 것» */
 /* pins  = { 서류열쇠 → 사업열쇠 }   사람이 끌어다 놓은 것
    rules = { 이름열쇠 → 사업열쇠 }   기억한 짝
@@ -16441,8 +16486,12 @@ function docCasePlan(docs, cases, pins, rules){
   };
   (docs||[]).forEach(function(d){
     if(!d) return;
-    /* ① 지정 — 사람이 고른 것이 가장 세다 */
     const pin = (pins||{})[d._k];
+    /* ⓿ 「안 붙임」 — 사람이 추측을 물린 것. 어떤 근거도 다시 붙이지 않는다.
+       ⚠ 이것이 없으면 이름·날짜로 «틀리게» 붙은 것을 뗄 길이 없다 —
+         떼도 다음에 그릴 때 같은 근거로 또 붙는다(3단계까지의 빈 자리였다). */
+    if(pin === CO_PIN_NONE){ left.push(d); return; }
+    /* ① 지정 — 사람이 고른 것이 가장 세다 */
     if(pin && (pin in idxByKey)) return put(idxByKey[pin], d, '지정');
     /* ② 기억 — 같은 이름을 전에 붙여 둔 자리 */
     const rl = (rules||{})[docNameKey(d.name)];
@@ -16450,6 +16499,9 @@ function docCasePlan(docs, cases, pins, rules){
     /* ③ 이름 대조 (2단계) */
     const m = docCaseMatch(d.name, cases);
     if(m) return put(m.i, d, m.why, m.word);
+    /* ④ 날짜 (4단계) — 맨 마지막. 걸리는 사업이 딱 하나일 때만. */
+    const dt = docDateHit(d.at, cases);
+    if(dt) return put(dt.i, d, dt.why);
     left.push(d);
   });
   return { byCase:byCase, left:left };
@@ -16464,11 +16516,15 @@ function docAttachPlan(coKey, docKey, docName, caseKey){
   if(nk) upd['coInfo/' + coKey + '/docRule/' + nk] = caseKey;
   return upd;
 }
-/* 뗄 때 — 지정과 기억을 «둘 다» 지운다. 하나만 지우면 다시 붙는다. */
-function docDetachPlan(coKey, docKey, docName){
+/* 뗄 때 — 지정과 기억을 «둘 다» 지운다. 하나만 지우면 다시 붙는다.
+   ⚠ why 를 함께 받는다. 사람이 «고쳐 붙인 것»(지정·기억)을 뗄 때는 그저 지우면
+     되지만, «기계가 추측한 것»(이름·날짜)을 뗄 때는 지우기만 하면 다음에 그릴 때
+     같은 근거로 또 붙는다. 그래서 「안 붙임」 표시를 남긴다. */
+function docDetachPlan(coKey, docKey, docName, why){
   if(!coKey || !docKey) return null;
+  const guess = (why === '이름' || why === '날짜');
   const upd = {};
-  upd['coInfo/' + coKey + '/docPin/' + docKey] = null;
+  upd['coInfo/' + coKey + '/docPin/' + docKey] = guess ? CO_PIN_NONE : null;
   const nk = docNameKey(docName);
   if(nk) upd['coInfo/' + coKey + '/docRule/' + nk] = null;
   return upd;
@@ -16503,7 +16559,10 @@ function coHistSet(what, val){
 const CO_WHY_TIP = {
   '지정': '사람이 이 사업에 놓았습니다',
   '기억': '같은 이름의 서류를 전에 이 사업에 붙였습니다 — 틀렸으면 ✕ 로 떼세요',
-  '이름': '이 낱말이 사업 이름과 서류 제목에 함께 들어 있습니다'
+  '이름': '이 낱말이 사업 이름과 서류 제목에 함께 들어 있습니다 — 틀렸으면 ✕ 로 떼세요',
+  /* 4단계 — 가장 약한 근거다. 그렇게 말해 둔다. */
+  '날짜': '올린 날짜가 이 사업 기간 안에 들어 «맞춰 본» 것입니다 — 확인해 주세요.'
+        + ' 서류에 적힌 날짜가 아니라 사진첩에 올린 날짜입니다'
 };
 function coCaseDocsHtml(hits){
   if(!hits || !hits.length) return '';
@@ -16511,11 +16570,12 @@ function coCaseDocsHtml(hits){
     const d = h.doc || {};
     const why = h.why || '이름';
     const tag = why === '이름' ? (h.word || '이름') : why;
-    /* 사람이 고친 것(지정·기억)만 뗄 수 있다 — 이름 대조는 규칙이라 뗄 것이 없다.
-       ⚠ ✕ 는 누르면 «되돌린다». 지우는 것이 아니라 「안 붙은 서류」로 돌려보낸다. */
-    const off = (why === '지정' || why === '기억')
-      ? `<em onclick="event.stopPropagation();coDocDetach('${esc(d._k||'')}')"
-           title="이 사업에서 뗍니다 — 서류는 그대로 있고 「안 붙은 서류」로 돌아갑니다">✕</em>` : '';
+    /* ⚠ 4단계부터는 «어떤 근거로 붙은 것이든» 뗄 수 있다.
+       3단계까지는 지정·기억만 뗄 수 있었는데, 그러면 이름·날짜로 «틀리게» 붙은 것을
+       물릴 길이 없었다 — 떼도 다음에 그릴 때 같은 근거로 또 붙는다.
+       기계가 추측한 것을 떼면 「안 붙임」 표시를 남겨 다시 안 붙게 한다(docDetachPlan). */
+    const off = `<em onclick="event.stopPropagation();coDocDetach('${esc(d._k||'')}','${esc(why)}')"
+           title="이 사업에서 뗍니다 — 서류는 그대로 있고 「안 붙은 서류」로 돌아갑니다">✕</em>`;
     return `<span class="codocchip w-${esc(why)}"
         draggable="true" ondragstart="coDocDragStart(event,'${esc(d._k||'')}')"
         onclick="openCoDoc('${esc(d.year||'')}','${esc(d.id||'')}','${esc(d.owner||'')}')"
@@ -16563,16 +16623,20 @@ async function coDocDrop(e, caseKey){
   }catch(err){ toast('❌ 붙이지 못했습니다: ' + ((err&&err.message)||''), 8000); }
 }
 /* ✕ — 이 사업에서 뗀다. 서류는 그대로 있고 「안 붙은 서류」로 돌아간다. */
-async function coDocDetach(docKey){
+async function coDocDetach(docKey, why){
   const o = _coHist.o;
   if(!o || !docKey) return;
   const d = ((o.extra && o.extra.docs) || {})[docKey];
-  const upd = docDetachPlan(o.key, docKey, d && d.name);
+  const upd = docDetachPlan(o.key, docKey, d && d.name, why);
   if(!upd) return;
   if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
   try{
     await Store.db.ref(DB_ROOT).update(upd);
-    toast('뗐습니다 — 「아직 안 붙은 서류」로 돌아갑니다', 6000);
+    /* 기계가 추측한 것을 물렸으면 «다시 안 붙는다»고 말해 준다 —
+       안 말하면 다음에 또 붙을까 싶어 몇 번을 누른다. */
+    const guess = (why === '이름' || why === '날짜');
+    toast(guess ? '뗐습니다 — 다시 붙이지 않습니다(「안 붙은 서류」로 돌아갑니다)'
+                : '뗐습니다 — 「아직 안 붙은 서류」로 돌아갑니다', 6000);
   }catch(err){ toast('❌ 떼지 못했습니다: ' + ((err&&err.message)||''), 8000); }
 }
 function coHistPaint(){
