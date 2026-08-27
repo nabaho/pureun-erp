@@ -604,6 +604,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
 <div id="fbLossNotice" style="display:none;flex-shrink:0;background:#FDECEC;color:#9B2C2C;border-bottom:1px solid #F5B5B5;padding:9px 14px;font-size:13px;text-align:center;font-weight:600">
   <span id="fbLossMsg"></span>
   <a href="#" onclick="fbPull();return false" style="font-weight:800;color:#9B2C2C;margin-left:10px;text-decoration:underline">☁ 클라우드에서 되살리기</a>
+  <a href="#" onclick="kcRecoverOpen();return false" style="font-weight:800;color:#9B2C2C;margin-left:10px;text-decoration:underline">🔎 백업에서 찾기</a>
   <a href="#" onclick="document.getElementById('fbLossNotice').style.display='none';return false" style="color:#9B2C2C;margin-left:12px;opacity:.6;font-weight:400">나중에</a>
 </div>
 <!-- 내 컴퓨터로 받아 두는 백업 재촉 — 사라지는 토스트가 아니라 안 사라지는 띠로 (2026-08-24) -->
@@ -1062,6 +1063,8 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
               <button class="btn fs-ui" type="button" onclick="fsConnectFolder()">📁 서류 폴더 연결</button>
               <button class="btn fs-ui" type="button" onclick="openScanPreview()">🔍 서류 폴더 스캔</button>
               <button class="btn fs-ui" type="button" onclick="fsUndoLast()">↩ 이번 스캔 되돌리기</button>
+              <div style="border-top:1px dashed var(--border);margin:4px 0"></div>
+              <button class="btn" type="button" onclick="kcRecoverOpen()" style="color:var(--red);font-weight:700">🔎 백업에서 되살리기</button>
             </div>
           </div>
           <button class="btn primary" data-act="new">+ 새 위촉장</button>
@@ -1474,6 +1477,13 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
     <div class="modal-h">🔍 서류 폴더 스캔 결과 — 아직 저장되지 않았습니다</div>
     <div class="modal-b" id="scanBody"></div>
     <div class="modal-foot"><button class="btn" onclick="closeScan()">닫기 (저장 안 함)</button><button class="btn primary" onclick="fsCommitScan()">등록</button></div>
+  </div>
+</div>
+<div class="modal-ov" id="modalRecover">
+  <div class="modal" style="width:min(760px,96vw)">
+    <div class="modal-h">🔎 백업에서 되살리기 — 날짜마다 위촉장이 몇 건인지 세어 보여 줍니다</div>
+    <div class="modal-b" id="kcRecoverBody"></div>
+    <div class="modal-foot"><button class="btn" onclick="kcRecoverClose()">닫기</button></div>
   </div>
 </div>
 <div class="modal-ov" id="modalHwpView">
@@ -6527,6 +6537,93 @@ function fbCheckLoss(){
       +' (차이 '+(cloud.total-here.total)+'건). 브라우저 자료가 지워졌을 수 있습니다.';
     el.style.display='block';
   });
+}
+/* ===== 백업에서 되살리기 도우미 =====
+   공용 백업·복구 패널은 「날짜」만 보여 준다. 어느 시점에 자료가 온전한지 알 수 없어
+   하나씩 복원해 봐야 했다(실사용에서 「모르겠다」로 막혔다).
+   여기서는 백업마다 위촉장 건수만 싸게 세어 보여 주고, 고른 시점을
+   ①클라우드 되돌리기 ②이 기기로 내리기 까지 한 번에 처리한다.
+   ⚠ 공용 js/pu-backup.js 는 다른 앱과 함께 쓰므로 건드리지 않는다 — 읽기만 한다. */
+var KC_BK_SYS='kcareer';
+function kcRecoverClose(){ var m=document.getElementById('modalRecover'); if(m) m.classList.remove('open'); }
+function _kcBkBody(key){ return 'systemBackups/'+KC_BK_SYS+'/'+key; }
+/* 백업 하나에서 위촉장 배열만 꺼내 센다 — 본문 전체(수 MB)를 받지 않으려고
+   paths/0/value/ls/wiccok 만 콕 집어 읽는다. kcareer 백업 경로는 항상 한 개다. */
+function _kcBkWiccok(key){
+  return fbDb.ref(_kcBkBody(key)+'/paths/0/value/ls/wiccok').once('value').then(function(s){
+    try{ var a=JSON.parse(s.val()||'[]'); return Array.isArray(a)?a:[]; }catch(e){ return []; }
+  }).catch(function(){ return null; });
+}
+async function kcRecoverOpen(){
+  var m=document.getElementById('modalRecover'), box=document.getElementById('kcRecoverBody');
+  if(!m||!box) return;
+  m.classList.add('open');
+  if(!fbUid||!fbDb){ box.innerHTML='<div class="empty">먼저 로그인해 주세요.</div>'; return; }
+  var nowW=(get('wiccok')||[]).filter(function(r){ return r.type==='위촉장'; }).length;
+  box.innerHTML='<div class="rc-mute">백업 목록을 읽는 중…</div>';
+  var idx;
+  try{ idx=(await fbDb.ref('systemBackupsIndex/'+KC_BK_SYS).once('value')).val()||{}; }
+  catch(e){ box.innerHTML='<div class="empty">백업 목록을 읽지 못했습니다 — '+escapeHtml((e&&e.message)||'')+'</div>'; return; }
+  var items=Object.keys(idx).filter(function(k){ return k!=='_dailyClaim'; })
+    .map(function(k){ var v=idx[k]||{}; return { key:k, at:Number(v.createdAt||0), label:v.label||'' }; })
+    .sort(function(a,b){ return b.at-a.at; });
+  if(!items.length){ box.innerHTML='<div class="empty">저장된 백업이 없습니다.</div>'; return; }
+  box.innerHTML='<div class="rc-mute">백업 '+items.length+'개에서 위촉장 건수를 세는 중… (0/'+items.length+')</div>';
+  var rows=[], best=null;
+  for(var i=0;i<items.length;i++){
+    var w=await _kcBkWiccok(items[i].key);
+    var n=(w==null)?null:w.filter(function(r){ return r.type==='위촉장'; }).length;
+    var orig=(w==null)?0:w.filter(function(r){ return r.src||r.relPath||r.genFileId||r.origFileId; }).length;
+    rows.push({ it:items[i], n:n, orig:orig });
+    if(n!=null && (!best || n>best.n)) best={ it:items[i], n:n, orig:orig };
+    box.firstChild.textContent='백업 '+items.length+'개에서 위촉장 건수를 세는 중… ('+(i+1)+'/'+items.length+')';
+  }
+  var head='<div style="font-size:13px;margin-bottom:10px">지금 이 기기의 위촉장은 <b>'+nowW+'건</b>입니다.'
+    +(best&&best.n>nowW
+      ? ' <b style="color:var(--teal)">'+new Date(best.it.at).toLocaleDateString('ko-KR')+' 백업에 '+best.n+'건</b>이 있습니다 — 아래 초록 단추를 누르면 그 시점으로 되살립니다.'
+      : ' <b style="color:var(--red)">모든 백업이 지금과 같거나 더 적습니다.</b> 백업으로는 되살릴 수 없으니 <b>위촉장 › ⋯ 더보기 › 🔍 서류 폴더 스캔</b>으로 원본 폴더에서 다시 읽어 오세요.')
+    +'</div>';
+  var tbl='<table><thead><tr><th>백업 시각</th><th>종류</th><th>위촉장</th><th>원본 연결</th><th>되살리기</th></tr></thead><tbody>'
+    +rows.map(function(r){
+      var isBest=(best&&r.it.key===best.it.key&&best.n>nowW);
+      var cnt=(r.n==null)?'<span style="color:var(--text-mute)">읽지 못함</span>'
+        :('<b'+(r.n>nowW?' style="color:var(--teal)"':'')+'>'+r.n+'건</b>');
+      return '<tr'+(isBest?' style="background:#E8F6F1"':'')+'><td>'+new Date(r.it.at).toLocaleString('ko-KR')+'</td>'
+        +'<td>'+escapeHtml(r.it.label)+'</td><td>'+cnt+'</td><td>'+(r.n==null?'-':r.orig+'건')+'</td>'
+        +'<td>'+((r.n!=null&&r.n>0)
+          ? '<button class="btn sm'+(isBest?' primary':'')+'" onclick="kcRecoverRun(\''+_jsAttr(r.it.key)+'\','+r.n+')">'+(isBest?'✅ 이 시점으로':'되살리기')+'</button>'
+          : '-')+'</td></tr>';
+    }).join('')+'</tbody></table>';
+  box.innerHTML=head+tbl;
+}
+/* 고른 시점으로 ①클라우드를 되돌리고 ②이 기기까지 내린다 — 두 단계를 한 번에.
+   ⚠ 되돌리기 전에 지금 상태를 백업으로 남긴다(되돌린 것도 되돌릴 수 있게). */
+async function kcRecoverRun(key, n){
+  var nowW=(get('wiccok')||[]).filter(function(r){ return r.type==='위촉장'; }).length;
+  if(!confirm('이 백업(위촉장 '+n+'건)으로 되살립니다.\n지금 이 기기의 '+nowW+'건은 사라지고 백업 내용으로 바뀝니다.\n\n되돌리기 전 상태는 자동으로 백업해 둡니다.\n\n계속할까요?')) return;
+  var box=document.getElementById('kcRecoverBody');
+  if(box) box.innerHTML='<div class="rc-mute">① 지금 상태를 백업하는 중…</div>';
+  try{
+    try{ if(window.PUBackup && PUBackup.snapshot) await PUBackup.snapshot(); }catch(e){ console.warn('pre-restore',e); }
+    if(box) box.innerHTML='<div class="rc-mute">② 클라우드를 그 시점으로 되돌리는 중…</div>';
+    var body=(await fbDb.ref(_kcBkBody(key)).once('value')).val();
+    if(!body||!body.paths) throw new Error('백업 본문이 없습니다');
+    var updates={}, list=Array.isArray(body.paths)?body.paths:Object.keys(body.paths).map(function(k){return body.paths[k];});
+    list.forEach(function(e){ if(!e||!e.path||e.skipped) return; updates[e.path]=(e.exists===false||e.value===undefined)?null:e.value; });
+    if(!Object.keys(updates).length) throw new Error('이 백업에는 되살릴 내용이 없습니다');
+    await fbDb.ref().update(updates);
+    if(box) box.innerHTML='<div class="rc-mute">③ 이 기기로 내려받는 중…</div>';
+    var v=(await fbDb.ref('kcareer/'+fbUid).once('value')).val();
+    if(!v||!v.ls) throw new Error('되돌린 자료를 읽지 못했습니다');
+    Object.keys(v.ls).forEach(function(bare){ if(FB_SKIP.indexOf(bare)>=0) return;
+      try{ localStorage.setItem(NS+bare, v.ls[bare]); }catch(e){ console.error('recover set',bare,e); } });
+    if(v.at) fbSetBase(v.at);
+    alert('되살렸습니다 — 화면을 새로고침합니다.');
+    location.reload();
+  }catch(e){
+    if(box) box.innerHTML='<div class="empty">되살리지 못했습니다 — '+escapeHtml((e&&e.message)||'알 수 없는 오류')
+      +'<div style="font-size:12px;margin-top:8px">다시 시도하거나, 위촉장 › ⋯ 더보기 › 🔍 서류 폴더 스캔으로 원본에서 다시 읽어 오세요.</div></div>';
+  }
 }
 /* 실제로 클라우드에 올리는 부분 — 건수(counts)도 함께 적어 다음 로그인이 가벼워진다 */
 function _fbDoPush(hereTotal, quiet){

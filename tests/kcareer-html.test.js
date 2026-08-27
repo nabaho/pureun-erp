@@ -860,6 +860,36 @@ test('브라우저 자료가 지워져 기본 데이터로 돌아가면 크게 �
   assert.match(source.slice(i, i + 900), /onclick="fbPull\(\);return false"/);
 });
 
+test('백업에서 되살리기 — 날짜마다 건수를 세어 고를 수 있게 한다', () => {
+  // 공용 백업 패널은 날짜만 보여줘 어느 시점이 온전한지 알 수 없었다(실사용에서 막혔다)
+  assert.match(source, /id="modalRecover"/);
+  assert.match(source, /id="kcRecoverBody"/);
+  const open = funcSource('kcRecoverOpen');
+  assert.match(open, /systemBackupsIndex\/'\+KC_BK_SYS/, '백업 색인을 읽어야 합니다');
+  assert.match(open, /_kcBkWiccok\(/, '백업마다 위촉장 건수를 세야 합니다');
+  assert.match(open, /서류 폴더 스캔/, '백업으로 못 되살릴 때 다음 수를 알려줘야 합니다');
+  // ⚠ 본문 전체(수 MB)를 받지 말고 위촉장 배열만 콕 집어 읽는다
+  assert.match(funcSource('_kcBkWiccok'), /paths\/0\/value\/ls\/wiccok/);
+  // 두 단계(클라우드 되돌리기 + 이 기기로 내리기)를 한 번에 해야 한다
+  const run = funcSource('kcRecoverRun');
+  assert.match(run, /PUBackup\.snapshot\(\)/, '되돌리기 전에 지금 상태를 백업해야 합니다');
+  assert.match(run, /fbDb\.ref\(\)\.update\(updates\)/, '클라우드를 되돌려야 합니다');
+  assert.match(run, /localStorage\.setItem\(NS\+bare/, '이 기기까지 내려야 화면이 바뀝니다');
+  assert.match(run, /confirm\(/, '덮어쓰기 전에 물어봐야 합니다');
+  // 진입점 두 곳
+  assert.match(source, /onclick="kcRecoverOpen\(\)"/);
+  const i = source.indexOf('id="fbLossNotice"');
+  assert.match(source.slice(i, i + 1200), /kcRecoverOpen\(\);return false/);
+});
+
+test('공용 백업 모듈은 읽기만 한다 — 다른 앱과 함께 쓰기 때문', () => {
+  // js/pu-backup.js 를 고치면 급여·명함첩·기금까지 영향을 받는다
+  const bk = fs.readFileSync(path.join(__dirname, '..', 'js', 'pu-backup.js'), 'utf8');
+  assert.match(bk, /window\.PUBackup =/, '공용 모듈이 그대로 있어야 합니다');
+  assert.match(funcSource('kcRecoverRun'), /window\.PUBackup && PUBackup\.snapshot/,
+    '공용 모듈은 공개된 함수만 불러 씁니다');
+});
+
 test('백업 재촉은 실제로 불리고, 안 사라지는 띠로 보인다', () => {
   // ⚠ 예전엔 만들어만 놓고 아무도 부르지 않아 한 번도 뜨지 않았다 (마지막 백업 76일 전 방치)
   assert.match(source, /_safe\(checkBackupReminder\);/, '부팅 때 부르지 않으면 영원히 안 뜹니다');
