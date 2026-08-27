@@ -180,9 +180,13 @@ test('통과분은 색을 낮춘다 — 할 일 색(주황)으로 두면 할 일
   assert.match(css, /\.smallwarn\{[^}]*border:1\.5px solid #fbbf24/, '원래 주황이 사라졌습니다');
 });
 
-/* ══════ ④ 두 함수가 같은 조건을 쓴다 ══════ */
+/* ══════ ④ 판정과 이유가 한 곳에서 나온다 ══════
+   ⚠ 2026-08-27 다시 겨눔 — 종전에는 needsCheck·checkWhy 두 벌이 «같은 조건인가»를
+     재고 있었다. 이제 needsCheck 가 checkWhy 를 그대로 쓴다(「이유가 있으면 곧 할 일」)
+     — 어긋날 수가 없다. 그 구조가 살아 있는지를 못 박는다. */
 
-test('★ needsCheck 와 checkWhy 가 같은 조건이다 — 어긋나면 안 보이는 이유가 떠다닌다', () => {
-  assert.match(fnOf('needsCheck'), /tooSmall\(it\) && !smallCheckedOk\(r\)/);
+test('★ 판정과 이유가 한 곳에서 나온다 — 어긋날 수 없게 해 둔다', () => {
   assert.match(fnOf('checkWhy'), /small && !smallCheckedOk\(r\)/);
+  assert.match(fnOf('needsCheck'), /return !!checkWhy\(it\);/,
+    '★ 다시 두 벌로 갈라지면 「목록엔 없는데 이유만 떠다니는」 사고가 돌아옵니다');
 });

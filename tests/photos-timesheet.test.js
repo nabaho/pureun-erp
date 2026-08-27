@@ -70,8 +70,10 @@ test('★ 근태표 탭이 있고 이름표가 붙는다', () => {
 test('★ 새 근태표는 「표를 원본과 대조」로 눈에 띈다', () => {
   const w = fnOf(app, 'checkWhy');
   assert.match(w, /timesheet'\) return '근태표 — 표를 원본과 대조'/);
-  assert.ok(w.indexOf("kind === 'timesheet'") < w.indexOf('!r.auto'),
-    'needsCheck 와 순서가 어긋나면 걸린 이유와 적힌 이유가 달라집니다');
+  /* ⚠ **코드 꼴로 찾는다**(`if (!r.auto)`). 그냥 `!r.auto` 로 찾으면 그 줄을 설명하는
+     주석을 먼저 집어 순서가 거꾸로 나온다 — 2026-08-27 에 실제로 그렇게 걸렸다. */
+  assert.ok(w.indexOf("kind === 'timesheet'") < w.indexOf('if (!r.auto)'),
+    '★ auto 판정이 먼저면 근태표가 「미덥지 않음」으로 뭉뚱그려집니다');
 });
 
 test('★ 넓은 표 종류만 판이 화면 절반을 쓴다', () => {

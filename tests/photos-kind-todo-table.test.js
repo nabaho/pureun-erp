@@ -144,11 +144,14 @@ test('★ 판독기가 아는 갈래가 표에 하나도 빠지지 않았다', (
 });
 
 test('★ 보관만 하는 갈래는 한 곳에만 적혀 있다', () => {
-  /* 두 함수에 따로 적으면 이번처럼 한쪽이 빠진다 */
-  const why = fnOf(app, 'checkWhy'), need = fnOf(app, 'needsCheck');
+  /* 갈래 이름을 함수 안에 흩어 적으면 한쪽이 꼭 빠진다 — 목록(KEEP_ONLY) 하나로 본다.
+     ⚠ 2026-08-27: 판정 자체도 checkWhy 한 곳으로 모았다(needsCheck 는 그것을 그대로
+       쓴다). 그래서 「두 함수가 같은 목록을 쓰는가」는 이제 잴 것이 없다. */
+  const why = fnOf(app, 'checkWhy');
   assert.match(why, /KEEP_ONLY\[r\.kind\]/, 'checkWhy 가 공용 목록을 안 씁니다');
-  assert.match(need, /KEEP_ONLY\[r\.kind\]/, 'needsCheck 가 공용 목록을 안 씁니다');
-  assert.ok(!/r\.kind === 'meeting'/.test(why + need),
+  assert.match(fnOf(app, 'needsCheck'), /return !!checkWhy\(it\);/,
+    '★ 판정이 다시 두 벌로 갈라지면 목록에서 한쪽이 빠집니다');
+  assert.ok(!/r\.kind === 'meeting'/.test(why),
     '갈래를 함수 안에 또 적어 두었습니다 — 목록 한 곳으로 모아 주세요');
 });
 
@@ -161,8 +164,10 @@ test('급여서류는 「보관만」 목록에 넣지 않는다 — 지워야 �
   assert.ok(keep, 'KEEP_ONLY 를 찾지 못했습니다');
   assert.ok(!/payslip/.test(keep[1]),
     '급여서류가 「보관만」 목록에 들어 있습니다 — 지워야 하는 서류가 할 일에서 사라집니다');
-  const need = fnOf(app, 'needsCheck');
-  assert.ok(need.indexOf("kind === 'payslip'") < need.indexOf('KEEP_ONLY'),
+  /* ⚠ 2026-08-27: 순서를 보던 자리가 needsCheck 였는데, 판정이 checkWhy 한 곳으로
+     모이면서 그쪽으로 옮겼다. 지키는 것은 그대로 — 급여서류가 목록보다 앞이다. */
+  const why = fnOf(app, 'checkWhy');
+  assert.ok(why.indexOf("kind === 'payslip'") < why.indexOf('KEEP_ONLY'),
     '급여서류 판정이 목록보다 뒤로 밀렸습니다 — 순서가 바뀌면 조용히 사라집니다');
 });
 

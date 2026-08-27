@@ -130,13 +130,11 @@ test('★ 보낼 것이 남은 서식은 무엇을 하라는지 적힌다', () =
   /* ⚠ **코드 꼴로 찾는다**(`if (!r.auto)`). 그냥 `!r.auto` 로 찾으면 그 줄을 설명하는
      주석을 먼저 집어 순서가 거꾸로 나온다 — 실제로 그렇게 걸렸다. */
   assert.ok(w.indexOf("r.kind === 'form'") < w.indexOf('if (!r.auto)'),
-    'needsCheck 와 순서가 어긋나면 걸린 이유와 적힌 이유가 달라집니다');
-  /* needsCheck 도 같은 조건·같은 순서여야 한다 — 서식은 늘 auto:false 라
-     그 줄에 먼저 닿으면 이 고침이 통째로 무의미해진다. */
-  const n = fnOf(app, 'needsCheck');
-  assert.match(n, /if \(r\.kind === 'form'\) return formTodo\(r\);/);
-  assert.ok(n.indexOf("r.kind === 'form'") < n.indexOf('if (!r.auto)'),
-    '★ auto 판정이 먼저면 서식은 언제나 할 일입니다');
+    '★ auto 판정이 먼저면 서식은 언제나 할 일입니다 — 서식은 늘 auto:false 다');
+  /* ⚠ 2026-08-27 다시 겨눔 — needsCheck 가 checkWhy 를 그대로 쓰게 됐다. 두 벌이
+     «같은 조건·같은 순서인가»를 재던 검사는 이제 잴 것이 없다(어긋날 수가 없다). */
+  assert.match(fnOf(app, 'needsCheck'), /return !!checkWhy\(it\);/,
+    '★ 판정이 다시 두 벌로 갈라지면 목록과 이유가 어긋납니다');
 });
 
 /* readRows 를 실제로 돌린다 — 화면의 표는 이것이 낸 차례를 그대로 그린다 */

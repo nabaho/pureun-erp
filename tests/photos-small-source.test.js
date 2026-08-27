@@ -115,11 +115,15 @@ test('★ 할 일로 남는다 — 사람이 대조해야 끝난다', () => {
      경고로 남아 있던 43장이 전부 체크섬을 통과한 사업자등록증이었다.
      확인할 «길이 없는» 것은 그대로 할 일이다 — 자세한 것은
      tests/photos-small-but-checked.test.js. */
-  const fn = fnOf('needsCheck');
-  assert.match(fn, /if \(tooSmall\(it\) && !smallCheckedOk\(r\)\) return true;/);
+  /* ⚠ 2026-08-27: 판정이 checkWhy 한 곳으로 모였다(needsCheck 는 그것을 그대로 쓴다).
+     지키는 것은 그대로 — 작으면 할 일이고, 「확인했음」으로 치울 수 있다. */
+  const fn = fnOf('checkWhy');
+  assert.match(fn, /if \(small && !smallCheckedOk\(r\)\) return '원본이 작습니다/);
   /* 「확인했음」(ack)으로 치울 수 있어야 한다 — 못 치우는 할 일은 목록을 못 믿게 한다 */
   assert.ok(fn.indexOf('r.ack') < fn.indexOf('tooSmall(it)'),
     '★ 확인했음보다 앞에 있으면 영원히 안 지워지는 ⚠ 가 됩니다');
+  assert.match(fnOf('needsCheck'), /return !!checkWhy\(it\);/,
+    '★ 판정이 다시 두 벌로 갈라지면 목록과 이유가 어긋납니다');
 });
 
 test('★ 걸린 이유에 원본 크기를 적는다 — 헛되이 「다시 판독」을 누르지 않게', () => {

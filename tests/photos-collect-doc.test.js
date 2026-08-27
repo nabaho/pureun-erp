@@ -25,7 +25,9 @@ function fnOf(name) {
 
 test('★ 모으는 중인 장은 올라와도 판독을 안 건다', () => {
   const fn = fnOf('onQueueChange');
-  assert.match(fn, /if \(!\(j\.meta && j\.meta\.doc && j\.meta\.doc\.collecting\)\) \{/,
+  /* ⚠ 2026-08-27: 조건을 collectingNow 한 곳으로 모았다. 「모으는 중이면 안 건다」는
+     그대로다 — 못 박는 것은 조건의 «모양»이 아니라 그 판정을 쓴다는 사실이다. */
+  assert.match(fn, /if \(!collectingNow\(j\)\) \{/,
     '★ 이 줄이 없으면 장마다 따로 읽혀 모으기가 아무 뜻이 없습니다');
   /* 실제로 돌려 본다 — 모으는 중이면 queueRead 가 안 불려야 한다 */
   const run = function (doc) {
@@ -40,7 +42,7 @@ test('★ 모으는 중인 장은 올라와도 판독을 안 건다', () => {
       renderUp: function () {}
     };
     vm.createContext(ctx);
-    vm.runInContext(fnOf('onQueueChange'), ctx);
+    vm.runInContext(fnOf('collectingNow') + '\n' + fnOf('onQueueChange'), ctx);
     ctx.onQueueChange([{ id: 'p1', state: 'done', meta: { doc: doc } }]);
     return called;
   };
@@ -51,19 +53,50 @@ test('★ 모으는 중인 장은 올라와도 판독을 안 건다', () => {
     '다 모은 문서는 읽어야 합니다');
 });
 
-test('★ 다음에 열 때 자동 판독도 건너뛴다', () => {
-  /* 이 줄이 없으면 화면을 다시 열자마자 autoReadPending 이 장마다 따로 읽어,
-     모으기가 막으려던 헛읽기가 그대로 난다 */
-  const ctx = { PuDocRead: { READ_VERSION: 8 }, Object };
+/* ⚠⚠ 2026-08-27 다시 겨눔 — 이 검사는 **needsRead** 를 보고 있었는데 그 함수는
+   **아무도 안 불렀다.** 화면이 쓰는 것은 neverRead·staleRead 둘이다(상한이 달라
+   따로 쓴다). 그래서 「모으는 중인 장은 자동 판독이 안 집어간다」를 지키고 있다고
+   믿었지만, 실제로는 **staleRead 에 그 가드가 없어서 집어가고 있었다** —
+   이미 읽어 둔 사진 여러 장을 한 문서로 묶을 때(카톡으로 한 장씩 온 계약서)
+   묶는 중인 장이 다시 읽기 차례에 들어갔다. 막으려던 바로 그 헛읽기다.
+   → 살아 있는 두 함수를 **각각** 본다. */
+test('★ 다음에 열 때 자동 판독도 건너뛴다 — 두 길 모두', () => {
+  const ctx = { PuDocRead: { READ_VERSION: 8, PROMPT_VERSION: 9 }, Object };
   vm.createContext(ctx);
-  /* needsRead 는 2026-08-13 부터 neverRead·staleRead 를 합친 것이다 */
   vm.runInContext(app.match(/^const RESTALE_SKIP = \{[^\n]*\};/m)[0].replace('const ', 'var ') + '\n' +
-    fnOf('neverRead') + '\n' + fnOf('staleRead') + '\n' + fnOf('needsRead'), ctx);
-  assert.equal(ctx.needsRead({ meta: { doc: { collecting: true } } }), false,
+    fnOf('collectingNow') + '\n' + fnOf('readPromptVer') + '\n' +
+    fnOf('neverRead') + '\n' + fnOf('staleRead'), ctx);
+
+  /* ① 아직 안 읽은 장 */
+  assert.equal(ctx.neverRead({ meta: { doc: { collecting: true } } }), false,
     '★ 모으는 중인 장을 자동 판독이 집어갑니다');
-  assert.equal(ctx.needsRead({ meta: {} }), true, '안 읽은 사진은 읽어야 합니다');
-  assert.equal(ctx.needsRead({ meta: { doc: { group: 'g', total: 3 } } }), true,
+  assert.equal(ctx.neverRead({ meta: {} }), true, '안 읽은 사진은 읽어야 합니다');
+  assert.equal(ctx.neverRead({ meta: { doc: { group: 'g', total: 3 } } }), true,
     '다 모은 문서는 읽어야 합니다');
+
+  /* ② 이미 읽었는데 «다시 읽을 때가 된» 장 — 여기 가드가 없어서 새어 나갔다 */
+  const oldRead = { kind: 'card', pv: 1 };     // 물음 판이 낮다 → 그냥 두면 다시 읽는다
+  assert.equal(ctx.staleRead({ meta: { read: oldRead } }), true,
+    '(전제) 이 장은 원래 다시 읽을 차례다');
+  assert.equal(ctx.staleRead({ meta: { read: oldRead, doc: { collecting: true } } }), false,
+    '★ 모으는 중인 장이 «다시 읽기» 차례에 들어갑니다 — 낱장으로 또 읽힙니다');
+});
+
+test('★ 「모으는 중」 판정은 한 곳뿐이다 — 흩어지면 한 곳이 꼭 빠진다', () => {
+  /* 종전에는 세 곳에 흩어져 있었고, 그중 하나는 죽은 함수였다.
+     죽은 쪽에 가드가 있어서 «덮여 있는 것처럼» 보인 것이 이 사고의 뿌리다. */
+  /* 주석은 세지 않는다 — 설명 글에 낱말이 나오는 것까지 잡으면 고칠 수 없는 검사가
+     되고, 그러면 다음 사람이 검사를 지운다. 판정 함수 자신도 뺀다. */
+  const code = app.replace(/\/\*[\s\S]*?\*\//g, '').replace(fnOf('collectingNow'), '');
+  const n = (code.match(/doc\.collecting\b/g) || []).length;
+  assert.equal(n, 0, '★ collecting 을 직접 보는 코드가 ' + n + '곳 남았습니다 — collectingNow 로 모아 주세요');
+  assert.match(fnOf('neverRead'), /collectingNow\(it\)/, 'neverRead 가 공용 판정을 안 씁니다');
+  assert.match(fnOf('staleRead'), /collectingNow\(it\)/, '★ staleRead 가 공용 판정을 안 씁니다');
+});
+
+test('죽은 판정(needsRead)은 없어졌다 — 지키는 시늉만 하는 검사를 다시 만들지 않는다', () => {
+  assert.ok(!/function needsRead\s*\(/.test(app),
+    '★ 아무도 안 부르는 판정이 되살아났습니다 — 검사가 그것을 지키면 헛것을 지킵니다');
 });
 
 /* ── 다 넣었을 때 ── */
@@ -102,7 +135,9 @@ function collectCtx(over) {
     _calls: calls
   });
   vm.createContext(ctx);
-  vm.runInContext(fnOf('applyCollected') + '\n' + fnOf('finishCollect') + '\n' +
+  /* ⚠ 2026-08-27: resumeCollectIfAny 가 collectingNow 를 쓴다 — 안 넣으면 멎는다 */
+  vm.runInContext(fnOf('collectingNow') + '\n' +
+    fnOf('applyCollected') + '\n' + fnOf('finishCollect') + '\n' +
     fnOf('cancelCollect') + '\n' + fnOf('resumeCollectIfAny'), ctx);
   return ctx;
 }

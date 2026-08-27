@@ -31,7 +31,7 @@
 <script src="js/pu-doc-read.js?v=19"></script>
 <script src="js/pu-lockkey.js?v=2"></script>
 <!-- ?v= 는 등록 층을 고칠 때 올린다 — 캐시에 묵으면 고친 안내가 안 보인다. -->
-<script src="js/pu-doc-file.js?v=9"></script>
+<script src="js/pu-doc-file.js?v=10"></script>
 <script src="js/pu-drag.js?v=2"></script>
 <script src="js/pu-billing.js?v=6"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -3810,7 +3810,8 @@ function cropRotated(src, r) {
    ⚠ 셔터 단추는 그대로 둔다. 자동이 안 잡히는 상황(어두운 곳)에서 사람이
      누를 길을 없애면 안 된다. */
 const CAM_AUTO_LS = 'puphotos.cam.auto';
-const CAM_CROP_LS = 'puphotos.cam.crop';
+/* ⚠ CAM_CROP_LS('puphotos.cam.crop')를 걷어냈다(대표 검토 2026-08-27) — 아무 데서도
+   안 썼다. 자르기 설정을 기억해 두려던 자리인데 그 기능이 안 들어왔다. */
 const SAMPLE_MS = 120;      // 이만큼마다 한 번 잰다(발열)
 const STILL_DIFF = 3.2;     // 밝기 차이 평균이 이보다 작으면 멎은 것
 const MOVE_DIFF = 7;        // 이보다 크면 「장면이 바뀌었다」
@@ -4844,9 +4845,7 @@ function applyCollected(ids, name) {
    말없이 두면 **아무도 안 읽어 주는 사진**이 조용히 쌓인다. */
 function resumeCollectIfAny() {
   if (collectDoc || viewingOther()) return;
-  const left = gridItems.filter(function (x) {
-    return x.meta && x.meta.doc && x.meta.doc.collecting;
-  });
+  const left = gridItems.filter(collectingNow);
   if (!left.length) return;
   const group = left[0].meta.doc.group;
   const mine = left.filter(function (x) { return x.meta.doc.group === group; })
@@ -5289,7 +5288,7 @@ function onQueueChange(list) {
          이 한 줄이 이 기능의 전부다 — 읽어 버리면 장마다 반쪽짜리 결과가 나고,
          묶어서 다시 읽느라 AI를 네 번 부른다. 다 넣었다고 할 때 한 번만 읽는다
          (finishCollect → queuePhotoRead). */
-      if (!(j.meta && j.meta.doc && j.meta.doc.collecting)) {
+      if (!collectingNow(j)) {
         const sibs = docJobs(j);
         const want = (j.meta && j.meta.doc && j.meta.doc.taken) || 1;
         const ready = sibs.length >= want &&
@@ -5502,9 +5501,24 @@ const AUTO_RESTALE_MAX = 3;
      판 번호의 존재 이유다(2026-08-06: 회의사진 0장, 기타서류 6장). */
 const RESTALE_SKIP = { meeting: 1, payslip: 1 };
 
+/* ── 「한 문서로 모으는 중」인 장은 **아무 길로도 판독하지 않는다** (2026-08-13) ──
+   다 모은 뒤 쪽 번호를 매겨 **한 번만** 읽는다. 장마다 따로 읽으면 반쪽짜리 답을
+   세 번 만들고 버리며, 그 세 번이 분당 한도를 먹어 다른 서류 판독까지 밀어낸다.
+
+   ⚠⚠ 이 가드가 **staleRead 에는 빠져 있었다**(대표 검토 2026-08-27에 발견).
+     그래서 「이미 읽어 둔 사진 여러 장을 골라 한 문서로 묶는」 길에서는 —
+     카톡으로 한 장씩 온 계약서를 묶을 때가 그렇다 — 묶는 중인 장이 **다시 읽기
+     차례에 들어가** 낱장으로 또 읽혔다. 막으려던 바로 그 헛읽기다.
+     가드가 세 곳에 흩어져 있었고 그중 하나(needsRead)는 **아무도 안 부르는
+     함수**였다. 그 죽은 함수에 가드가 있어서 «덮여 있는 것처럼» 보였다.
+     그래서 판정을 이 한 곳으로 모은다. */
+function collectingNow(it) {
+  return !!(it && it.meta && it.meta.doc && it.meta.doc.collecting);
+}
+
 /* 아직 **한 번도** 안 읽은 사진인가 — 이것이 먼저다. */
 function neverRead(it) {
-  if (it && it.meta && it.meta.doc && it.meta.doc.collecting) return false;
+  if (collectingNow(it)) return false;
   return !(it && it.meta && it.meta.read);
 }
 
@@ -5529,6 +5543,7 @@ function readPromptVer(r) {
   return (r.pv != null) ? (r.pv || 0) : (r.rv || 0);
 }
 function staleRead(it) {
+  if (collectingNow(it)) return false;           // ★ 모으는 중 — 다 모은 뒤 한 번만
   const r = it && it.meta && it.meta.read;
   if (!r) return false;
   if (r.ack) return false;                       // 사람이 확인한 것은 안 뒤집는다
@@ -5538,17 +5553,13 @@ function staleRead(it) {
   return false;
 }
 
-/* 다시 읽어야 하는가 — ①아직 안 읽었거나 ②옛 판 판독기로 읽은 것.
-   ②가 없으면 회의사진·급여서류를 가르치기 전에 읽힌 사진이 'other' 로 굳어
-   기타서류에 영원히 남는다(2026-08-06 대표 화면: 회의사진 0장, 기타서류 6장).
-   ⚠ 사람이 「확인했음」을 누른 것은 다시 읽지 않는다 — 사람 손으로 정리한
-   것을 기계가 도로 뒤집으면 그 표시가 무의미해진다.
-   ⚠ 「한 문서로 모으는 중」인 장도 아직 읽지 않는다(2026-08-13). 이 줄이 없으면
-     자동 판독이 장마다 따로 읽어 버려 모으기가 막으려던 헛읽기가 그대로 난다. */
-function needsRead(it) {
-  if (it && it.meta && it.meta.doc && it.meta.doc.collecting) return false;
-  return neverRead(it) || staleRead(it);
-}
+/* ⚠ 여기 있던 needsRead(= neverRead || staleRead)를 걷어냈다(대표 검토 2026-08-27).
+   **아무도 안 불렀다.** 화면은 둘을 따로 쓴다 — 안 읽은 것은 20장까지, 다시 읽는 것은
+   3장까지로 **상한이 다르기** 때문이다(autoReadPending). 합친 판정으로는 그 구분을
+   못 하므로 처음부터 쓸 자리가 없었다.
+   그런데 검사 열세 곳이 그 죽은 함수를 붙들고 「판독 규칙」을 지키고 있었고, 거기에만
+   있던 「모으는 중」 가드 때문에 **덮여 있는 것처럼 보였다** — 위 collectingNow 참고.
+   지키는 시늉만 하는 검사는 없느니만 못하다. 검사는 살아 있는 둘로 옮겨 겨눴다. */
 
 /* ⚠⚠ 자동 판독은 **주민번호 가림을 거치지 않는다** (2026-08-17 확인,
    대표 결정 「이대로 감수한다」). 격자에서 사람이 「가리고 판독」을 누른 길은
@@ -5983,7 +5994,14 @@ function sendCards(id, year, job) {
       thumb: (it && safeSrc(it.thumb)) || '',
       full2: safeSrc(back) || '',
       thumb2: (backIt && safeSrc(backIt.thumb)) || '',
+      /* ── 어느 사진에서 왔는지 «셋 다» 넘긴다 (대표 검토 2026-08-27) ──
+         ⚠ 사진첩은 사람별·해별로 갈려 있어 **해·번호·주인 셋이 다 있어야** 사진을 찾는다.
+           종전에는 번호만 넘겨서, 기업정보함이 그 번호를 적어 두고도 **원본을 열 수 없었다.**
+           기업 상세 쪽은 이미 셋을 다 넘기고 있었고(「📷 원본 보기」가 되는 까닭이다)
+           명함 쪽만 반쪽이었다. 넘길 값은 바로 위 loadFull 이 쓰는 그 값이다. */
       photoId: id,
+      photoYear: String(year || ''),
+      photoOwner: owner || '',
       /* ⚠ 기업정보함에 적히는 날짜도 **올린 때**다(2026-08-13 대표 지시:
          "지금 올린 시간과 순서대로 사진첩에 저장되고 기업정보함에 내용이 저장되게").
          찍은 때로 적으면 오래된 명함 사진을 오늘 정리했는데 기업정보함 목록
@@ -6557,11 +6575,9 @@ function purgeYears(years) {
   }, Promise.resolve());
 }
 
-function purgeRecentTrash() {
-  const y = new Date().getFullYear();
-  return purgeYears([String(y), String(y - 1)]);
-}
-
+/* ⚠ 여기 있던 purgeRecentTrash(올해·작년 휴지통만 비우기)를 걷어냈다
+   (대표 검토 2026-08-27) — 아무 데서도 안 불렀다. 화면이 쓰는 것은 아래
+   purgeEveryYearTrash 하나다. */
 function purgeEveryYearTrash() {
   const y = new Date().getFullYear(), out = [];
   for (let i = 0; i < 8; i++) out.push(String(y - i));
@@ -7663,8 +7679,15 @@ function chatTodo(read) {
    "확인필요 3장 클릭했는데 어떻게 하라는 건가. 상황에 대한 판단이 안 선다"
 
    걸리는 이유가 여섯 가지인데 화면에는 ⚠ 표 하나뿐이었다. 그래서 한 장씩
-   열어 봐야 무엇을 해야 하는지 알 수 있었다. **판정하는 순서를 needsCheck 와
-   똑같이 맞춘다** — 순서가 어긋나면 걸린 이유와 적힌 이유가 달라진다. */
+   열어 봐야 무엇을 해야 하는지 알 수 있었다.
+
+   ★ 이 함수가 「확인 필요」의 **유일한 판단**이다 (대표 검토 2026-08-27).
+     needsCheck 는 이제 그저 «여기서 말이 나왔는가»만 본다. 갈래를 더하거나 고칠 때
+     **여기 한 곳만** 손대면 목록과 이유가 저절로 같이 간다.
+   ⚠ 할 일이면 반드시 **빈 문자열이 아닌 말**을 내놓아야 한다. 빈 문자열을 내놓으면
+     그 사진은 할 일에서 조용히 빠진다 — 그것이 이 함수가 「아니오」를 말하는 방식이다.
+   ⚠ 판정 순서가 곧 «먼저 말해 줄 것»의 순서다. 예를 들어 급여서류는 「확인했음」보다
+     앞에 둔다 — 확인이 아니라 지워야 하는 것이라 눌러서 치울 수 없어야 한다. */
 function checkWhy(it) {
   const r = (it && it.meta && it.meta.read) || null;
   if (!r) return '';
@@ -7679,15 +7702,17 @@ function checkWhy(it) {
   if (r.error) return readFailAdvice(r);
   /* ⚠ 「읽었는데 미덥지 않음」보다 **먼저** 말한다 — 원인이 원본 크기라는 것을
      알아야 사람이 「다시 판독」을 헛되이 누르지 않는다(같은 그림을 또 읽을 뿐이다). */
-  /* ⚠ needsCheck 와 «같은 조건»이어야 한다 — 한쪽만 고치면 할 일에서는 빠졌는데
-     이유는 남아, 목록에 안 보이는 사진의 이유가 떠다닌다. */
+  /* ⚠ 「확인했음」(위 ack)으로 치울 수 있어야 한다 — 대조를 마친 뒤에도 안 없어지면
+     치울 수 없는 할 일이 되어 목록을 못 믿게 된다. 그래서 ack 뒤에 둔다. */
   const small = tooSmall(it);
   if (small && !smallCheckedOk(r)) return '원본이 작습니다(' + small + 'px) — 값을 원본과 대조';
   if (r.kind === 'other') return readAnyField(r) ? '종류를 못 가림 — 분류 지정' : '';
   if (KEEP_ONLY[r.kind]) return '';
   /* ── 셋은 「사람이 해서 달라지는 것이 있을 때만」 (대표 지시 2026-08-24) ──
-     까닭은 위 formTodo·chatTodo 옆에 적었다. needsCheck 와 **같은 조건**을 쓴다 —
-     한쪽만 고치면 목록에는 안 보이는데 이유만 떠다닌다. */
+     까닭은 위 formTodo·chatTodo 옆에 적었다.
+     ⚠ **아래 「스스로 통과 못 함」 줄보다 먼저** 판정해야 한다. 서식·대화캡처는
+       판독기가 일부러 auto:false 로 준다(「자동 등록 대상이 아니다」는 뜻) —
+       그 줄에 먼저 닿으면 무조건 할 일이 되어 이 고침이 통째로 무의미해진다. */
   if (r.kind === 'chat') return chatTodo(r) ? '대화 캡처 — 남은 할 일 확인' : '';
   /* 근태표는 표를 원본과 대조해야 한다 — 손글씨 숫자는 기계가 검산할 방법이 없다. */
   if (r.kind === 'timesheet') return '근태표 — 표를 원본과 대조';
@@ -7695,52 +7720,31 @@ function checkWhy(it) {
   if (r.kind === 'form') return formTodo(r) ? '🏢 기업 상세로 아직 안 보냄 — 보내기' : '';
   if (!r.auto) return '읽은 값이 미덥지 않음 — 열어서 확인';
   if (CARD_KINDS[r.kind] && !(r.filed && r.filed.id)) return '기업정보함에 아직 안 감 — 보내기';
-  /* ⚠ needsCheck 와 «같은 조건»(coTodo)이어야 한다 — 한쪽만 고치면 목록에는
-     안 보이는데 이유만 떠다닌다. 「업체가 아직 없다」는 이유가 아니라 기다림이다. */
+  /* ⚠ 「업체가 아직 없다」는 이유가 아니라 **기다림**이다 — 사진첩에서 할 수 있는 일이
+     없으므로 할 일로 두면 치울 수 없는 ⚠ 가 된다(coTodo 에 까닭을 적었다).
+     ⚠ 중소기업확인서는 기업정보함에 안 가므로, 이 줄이 없으면 아무 곳에도 안 들어간
+       채 조용히 묻힌다 — 그래서 「안 보냈다」는 반드시 남겨 둔다. */
   if (coTodo(r)) return '업체관리로 아직 안 보냄 — 보내기';
   return '';
 }
 
+/* ── 「확인 필요인가」 = 「말해 줄 이유가 있는가」 (대표 검토 2026-08-27) ──
+   종전에는 열네 갈래짜리 판단이 **두 벌**이었다 — 여기서 «필요한가»를 정하고
+   checkWhy 에서 «왜인가»를 따로 정했다. 둘을 묶어 두는 것은 주석뿐이었다
+   ("같은 조건이어야 한다"가 세 곳에 적혀 있었다).
+
+   ⚠ 한쪽만 고치면 **목록에는 안 보이는데 이유만 떠다니거나, 할 일 딱지는 붙었는데
+     왜인지 못 말한다.** 2026-08-04·08-13 대표 보고("확인 필요가 계속 나온다")가
+     바로 이 자리다. 명함 뒷면 사고(08-25)와 같은 모양이기도 하다.
+
+   ⚠ 합쳐도 **판정은 한 글자도 안 바뀐다.** checkWhy 는 할 일일 때 반드시 빈 문자열이
+     아닌 말을 내놓기 때문이다 — 판독 실패 갈래(readFailAdvice)도 어느 길로 가든
+     반드시 한 마디를 준다. 「이유가 있으면 곧 할 일」이 그래서 성립한다.
+
+   ⚠ 앞으로 갈래를 더할 때는 **checkWhy 한 곳만** 고친다. 할 일로 만들려면 말을
+     내놓고, 할 일이 아니면 빈 문자열을 내놓으면 된다. */
 function needsCheck(it) {
-  const r = it && it.meta && it.meta.read;
-  if (!r) return false;
-  /* ⚠ 급여서류는 「확인했음」으로 넘길 수 없다 — 확인이 아니라 **지워야** 하는
-     것이라, 아래 ack 줄보다 먼저 판정한다. 지울 때까지 계속 할 일로 남는다. */
-  if (r.kind === 'payslip') return true;
-  /* ⚠ 사람이 「확인했음」을 누른 것은 더 이상 할 일이 아니다.
-     이 빠져나갈 길이 없으면 **영원히 지워지지 않는 ⚠** 가 생긴다 — 예를 들어
-     사업자등록증인데 그 업체가 업체관리에 없으면(아래 CO_KINDS 줄) 사진첩에서는
-     할 수 있는 일이 없는데도 계속 할 일로 남는다. 2026-08-04 대표 보고:
-     "확인 필요 오류가 계속 나온다". 치울 수 없는 할 일은 목록을 못 믿게 만든다. */
-  if (r.ack) return false;
-  if (r.error) return true;                                   // 판독 실패
-  /* 원본이 작아 지어냈을 수 있는 서류 — 사람이 원본과 대조해야 한다.
-     ⚠ 단, **기계가 값을 확인했으면 할 일이 아니다**(대표 결정 2026-08-23) —
-       까닭은 smallCheckedOk 에 적었다. 작다는 사실은 사진을 열면 그대로 뜬다.
-     ⚠ 「확인했음」(위 ack)으로도 치울 수 있다. 대조를 마친 뒤에도 안 없어지면
-       치울 수 없는 할 일이 되어 목록을 못 믿게 된다. */
-  if (tooSmall(it) && !smallCheckedOk(r)) return true;
-  /* 종류를 못 가렸어도 **내용을 읽어냈으면** 사람이 봐야 한다 — 자동 등록 대상이
-     아니므로 이 줄이 없으면 아무 곳에도 안 들어간 채 조용히 묻힌다.
-     정말 서류가 아닌 사진(읽은 것이 없음)은 할 일이 아니다. */
-  if (r.kind === 'other') return readAnyField(r);
-  if (KEEP_ONLY[r.kind]) return false;                        // 넣을 곳이 없다 — 할 일이 아니다
-  /* ── 셋은 「사람이 해서 달라지는 것이 있을 때만」 (대표 지시 2026-08-24) ──
-     ⚠ **아래 `!r.auto` 줄보다 먼저** 판정해야 한다. 서식·대화캡처는 판독기가 일부러
-       auto:false 로 준다(「자동 등록 대상이 아니다」는 뜻) — 그 줄에 먼저 닿으면
-       무조건 할 일이 되어 이 고침이 통째로 무의미해진다.
-     ⚠ checkWhy 와 «같은 조건»이다. 까닭은 formTodo·chatTodo 옆에 적었다. */
-  if (r.kind === 'form') return formTodo(r);
-  if (r.kind === 'chat') return chatTodo(r);
-  if (r.kind === 'timesheet') return true;                    // 손글씨 — 기계가 못 본다
-  if (!r.auto) return true;                                   // 검증에 걸렸다
-  if (CARD_KINDS[r.kind] && !(r.filed && r.filed.id)) return true;  // 아직 안 보냈다
-  /* 업체관리로 «아직 안 보낸» 것은 할 일이다 — 누르면 끝난다. 다만 보냈는데
-     업체가 아직 없는 것은 기다림이지 할 일이 아니다(coTodo 에 까닭을 적었다).
-     ⚠ 중소기업확인서는 기업정보함에 안 가므로, 이 줄이 없으면 아무 곳에도 안 들어간
-       채 조용히 묻힌다 — 그래서 「안 보냈다」는 반드시 남겨 둔다. */
-  if (coTodo(r)) return true;
-  return false;
+  return !!checkWhy(it);
 }
 
 /* ── 업체관리에 **실제로 채워 넣었는가** ──
@@ -11844,10 +11848,9 @@ function closePhSheet() {
 }
 function phSheetOpen() { const s = $('phSheet'); return !!s && s.classList.contains('on'); }
 
-/* 고르면 바로 닫힌다 — 고른 뒤에도 창이 남으면 사진을 보려고 또 닫아야 한다 */
-function phPick(k) { closePhSheet(); needOnly = false; failOnly = false; oldOnly = false; pickKind(k); renderPhMenuBtn(); }
-function phPickNeed() { closePhSheet(); if (!needOnly) toggleNeed(); renderPhMenuBtn(); }
-function phPickOld() { closePhSheet(); if (!oldOnly) toggleOld(); renderPhMenuBtn(); }
+/* ⚠ 여기 있던 phPick·phPickNeed·phPickOld 를 걷어냈다(대표 검토 2026-08-27) —
+   폰 창에서 분류 줄을 걷어낼 때(2026-08-24) 부르는 자리가 함께 사라졌는데
+   함수만 남아 있었다. 셋 다 아무 데서도 안 불렀다. */
 
 let phoneFindOn = false;
 function togglePhoneFind() {

@@ -97,9 +97,11 @@ test('★ 사업자번호가 열 자리가 안 되면 보낼 수 없다 — 할 
 test('★ auto:false 라고 무조건 할 일로 삼지 않는다 — 서식은 늘 auto:false 다', () => {
   /* 판독기가 서식에 auto:false 를 주는 것은 「자동 등록 대상이 아니다」는 뜻이다.
      그 줄에 먼저 닿으면 이 고침이 통째로 무의미해진다 — 판정 «순서»가 핵심이다. */
-  const fn = cutFn(app, 'function needsCheck(');
-  const iForm = fn.indexOf("if (r.kind === 'form') return formTodo(r);");
-  const iAuto = fn.indexOf('if (!r.auto) return true;');
+  /* ⚠ 2026-08-27: 판정이 checkWhy 한 곳으로 모였다(needsCheck 는 그것을 그대로 쓴다).
+     순서도 그쪽에서 본다 — 지키는 것은 그대로, 서식 판정이 auto 판정보다 «앞». */
+  const fn = cutFn(app, 'function checkWhy(');
+  const iForm = fn.indexOf("if (r.kind === 'form')");
+  const iAuto = fn.indexOf('if (!r.auto)');
   assert.ok(iForm > 0 && iAuto > 0, '두 줄을 찾지 못했습니다');
   assert.ok(iForm < iAuto,
     '★ `!r.auto` 가 먼저면 서식은 언제나 할 일입니다 — 고친 뜻이 사라집니다');

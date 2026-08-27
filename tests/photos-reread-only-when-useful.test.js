@@ -43,7 +43,11 @@ function load(vers) {
   assert.ok(skip, 'RESTALE_SKIP 을 찾지 못했습니다');
   const c = { PuDocRead: vers || { READ_VERSION: 11, PROMPT_VERSION: 10 }, Object, String, Boolean };
   vm.createContext(c);
-  vm.runInContext(skip[0] + '\n' + fnOf(app, 'readPromptVer') + '\n' + fnOf(app, 'staleRead'), c);
+  /* ⚠ 2026-08-27: staleRead 가 「모으는 중」 판정(collectingNow)을 함께 쓴다 —
+     그 가드가 staleRead 에만 빠져 있어서, 이미 읽어 둔 장을 한 문서로 묶는 동안
+     낱장으로 또 읽히고 있었다. 안 넣으면 여기서 멎는다. */
+  vm.runInContext(skip[0] + '\n' + fnOf(app, 'collectingNow') + '\n' +
+    fnOf(app, 'readPromptVer') + '\n' + fnOf(app, 'staleRead'), c);
   return c;
 }
 const S = load();
