@@ -62784,6 +62784,39 @@ function rtSwap(x, fromSid, toSid){
   }
   return { managerMain: main, managerSubs: subs };
 }
+/* ══════════════════════════════════════════════════════════════════════════
+   승계표 — 세 앱이 «같은 표»를 본다 (대표 지시 2026-08-27)
+   ══════════════════════════════════════════════════════════════════════════
+   "푸른이알피 또는 업무관리에서 승계정리를 하면 업무관리는 자동으로 승계되게 해달라"
+   "푸른이알피에서 변경해도 자동으로 다른곳도 모두 동기화 되어서 변경될 수 있게"
+
+   ★ 여기(퇴사 마법사)가 «승계를 실제로 정하는 자리»다. 한 줄을 적어 두면
+     · 메일함(기업정보함) — 그 사람 담당이던 메일이 새 담당자 칸으로 간다
+     · 업무관리 — 그 사람 업무가 저절로 새 담당자에게 넘어간다
+   ⚠ 두는 자리는 pucards/config/staffSucc 다 — 세 앱이 다 읽고 쓸 수 있는 자리라
+     여기로 정했다(pureun_v6_* 는 이 앱 것이고, data/* 는 쓰기 규칙이 다르다).
+     이름이 pucards 로 시작하지만 «메일함 것»이 아니라 «세 앱 공용 표»다.
+   ⚠ 열쇠는 «사번»이다. 이름은 같을 수 있고 바뀔 수도 있다.
+   ⚠ 여기서는 «적기만» 한다. 남의 앱 자료(업무·메일)를 직접 고치지 않는다 —
+     각 앱이 제 길로 옮겨야 그쪽 기록(누가 언제 넘겼나)이 제대로 남는다. */
+var SUCC_PATH = 'pucards/config/staffSucc';
+function succWrite(fromSid, toSid){
+  if(!fromSid || !toSid || fromSid === toSid) return Promise.resolve(false);
+  if(typeof fbDb === 'undefined' || !fbDb) return Promise.resolve(false);
+  return fbDb.ref(SUCC_PATH + '/' + fromSid).set(toSid)
+    .then(function(){ return true; })
+    .catch(function(e){ console.warn('[승계표]', e && e.message); return false; });
+}
+/* 넘긴 것 가운데 «가장 많이 받은 사람» — 승계자로 미리 짚어 주려는 것이다.
+   ⚠ 건마다 다르게 넘겼을 수 있으므로 «제안»일 뿐이다. 반드시 물어본 뒤에 적는다. */
+function succPickTop(picks){
+  var n = {};
+  (picks||[]).forEach(function(p){ if(p && p.to) n[p.to] = (n[p.to]||0) + 1; });
+  var best = '', bn = 0;
+  Object.keys(n).forEach(function(k){ if(n[k] > bn){ bn = n[k]; best = k; } });
+  return best;
+}
+
 // picks = [{store,id,to}] — to 가 비면 안 넘긴다
 function rtMove(fromSid, picks){
   var byStore = {};
@@ -62872,10 +62905,34 @@ function RetireModal(props){
     if(left > 0){
       if(!window.confirm('넘기지 않은 업무가 ' + left + '건 남습니다.\n\n퇴사자가 담당으로 남아 있으면 목록에 계속 뜨고,\n그 업체에서 입금이 확정될 때 성과급이 그 사람에게 분배될 수 있습니다.\n\n그래도 진행할까요?')) return;
     }
+    var picks = held.filter(function(x){ return toMap[keyOf(x)]; })
+      .map(function(x){ return { store:x.store, id:x.id, to:toMap[keyOf(x)] }; });
     if(movedN > 0){
-      var n = rtMove(u.sid, held.filter(function(x){ return toMap[keyOf(x)]; })
-        .map(function(x){ return { store:x.store, id:x.id, to:toMap[keyOf(x)] }; }));
+      var n = rtMove(u.sid, picks);
       showToast('🔄 업무 ' + n + '건을 넘겼습니다');
+    }
+    /* ── 승계표에 한 줄 (대표 지시 2026-08-27) ──
+       여기서 정한 것이 메일함·업무관리로 «저절로» 이어진다.
+       ⚠ 여기 남은 것(위에서 넘긴 업체·사건)과 «다른 곳»에 있는 것이 있다 —
+         메일함의 그 사람 담당 메일, 업무관리의 진행 중 업무가 그렇다.
+         그것들은 이 한 줄을 보고 각자 옮겨 간다.
+       ⚠ 반드시 물어본 뒤에 적는다. 건마다 다른 사람에게 넘겼을 수 있어
+         «가장 많이 받은 사람»은 제안일 뿐이다. */
+    var topSid = succPickTop(picks);
+    if(topSid){
+      /* ⚠ 이 자리에는 users 가 없다 — 마법사가 쓰는 candidates(재직·휴직자)에서 찾는다 */
+      var toU = (candidates||[]).find(function(x){ return x && x.sid === topSid; });
+      var toNm = (toU && toU.name) || topSid;
+      if(window.confirm('앞으로 「' + u.name + '」 님 몫을 「' + toNm + '」 님이 받는 것으로 적을까요?\n\n'
+        + '· 메일함 — 그 사람 담당이던 메일이 ' + toNm + ' 님 칸으로 갑니다.\n'
+        + '· 업무관리 — 그 사람의 진행 중 업무가 저절로 ' + toNm + ' 님께 넘어갑니다.\n'
+        + '  (건마다 「담당 ' + u.name + ' → ' + toNm + '」 기록이 남습니다)\n\n'
+        + '· 여기서 방금 넘긴 업체·사건은 이미 옮겨졌습니다 — 이 물음과 별개입니다.\n\n'
+        + '나중에 업무관리에서 바꿀 수 있습니다.')){
+        succWrite(u.sid, topSid).then(function(okk){
+          if(okk) showToast('🔗 승계표: ' + u.name + ' → ' + toNm + ' — 메일함·업무관리가 함께 따라갑니다');
+        });
+      }
     }
     var selDocs = Object.keys(docs).filter(function(k){ return docs[k]; });
     props.onSave(Object.assign({}, u, {
