@@ -142,6 +142,52 @@ eq("'25.12' → 12월", laborMonthNum('25.12'), 12);
 eq('13월 같은 헛값은 안 받는다', laborMonthNum('25.13'), null);
 eq("'23년 7월 사계절찬' → 7월", laborMonthNum('23년 7월 사계절찬'), 7);
 
+
+/* 발송·내보내기 코드 블록만 떼어 본다 — 노동법 화면 블록보다 앞에 있다 */
+const j0 = H.indexOf('var PAYSLIP_FN_URL'), j1 = H.indexOf('var LC = (typeof PuLaborCore');
+const SCR2 = H.slice(j0, j1 > j0 ? j1 : H.length);
+const mCols = /var LEDGER_COLS = \[([\s\S]*?)\];/.exec(H);
+const LEDGER_COLS_STR = mCols ? mCols[1] : '';
+const LEDGER_HAS_RRN = /주민/.test(LEDGER_COLS_STR);
+const REQUIRED_COLS = ['성명', '기본급', '과세총액', '국민연금', '건강보험',
+  '고용보험', '소득세', '지방소득세', '공제총액', '실지급액'];
+
+section('명세서 발송 — 밖으로 나가는 행위라 규칙을 못 박는다');
+ok('발송 블록을 찾았다', SCR2.length > 500, '길이 ' + SCR2.length);
+ok('발송 함수가 있다', H.indexOf('function sendSlipOne(') > -1 && H.indexOf('function sendSlipAll(') > -1);
+ok('window 에 노출',
+  H.indexOf('window.sendSlipOne = sendSlipOne') > -1 && H.indexOf('window.sendSlipAll = sendSlipAll') > -1);
+ok('이미 있는 sendPayslip 함수를 쓴다(주소 규칙을 새로 만들지 않는다)',
+  H.indexOf('cloudfunctions.net/sendPayslip') > -1);
+ok('로그인 증표(Bearer)를 붙인다 — 없으면 공개 발송기가 된다',
+  /Authorization.{0,14}Bearer/.test(SCR2));
+ok('★ 확정되지 않은 달은 보내지 않는다', SCR2.indexOf('if (!isLocked(site, month))') > -1);
+ok('★ 보내기 전에 사람에게 확인받는다', SCR2.indexOf('confirm(msg)') > -1);
+ok('★ 보낸 사실을 남긴다(slip_sent)', SCR2.indexOf("lput('slip_sent'") > -1);
+ok('다시 보낼 때 이미 보냈다고 알린다', SCR2.indexOf('이미 ') > -1 && SCR2.indexOf('var prev = sentOf(') > -1);
+ok('이메일이 없으면 부르지 않는다(빈 주소 방지)', SCR2.indexOf("indexOf('@') < 0") > -1);
+ok('여럿 보낼 때 하나씩 보낸다(한꺼번에 던지지 않는다)', SCR2.indexOf('function next()') > -1);
+ok('미확정이면 화면에서 전원 발송 단추를 감춘다', H.indexOf("(draft ? '' : ' <button") > -1);
+ok('발송 명단은 인쇄물에 안 나온다(noprint)', H.indexOf('발송 명단 — 이메일을 넣고') > -1 && /noprint[\s\S]{0,300}발송 명단/.test(H));
+
+section('회계프로그램용 엑셀·CSV 내보내기');
+ok('xlsx 만들기 도구를 불러온다', /<script src="xlsx_gen\.js\?v=\d+"><\/script>/.test(H));
+ok('엑셀·CSV 함수가 있다',
+  H.indexOf('function exportLedgerXlsx(') > -1 && H.indexOf('function exportLedgerCsv(') > -1);
+ok('window 에 노출',
+  H.indexOf('window.exportLedgerXlsx = exportLedgerXlsx') > -1 &&
+  H.indexOf('window.exportLedgerCsv = exportLedgerCsv') > -1);
+ok('열 목록을 찾았다', LEDGER_COLS_STR.length > 20, LEDGER_COLS_STR.slice(0, 40));
+ok('★ 주민번호를 내보내지 않는다', LEDGER_HAS_RRN === false, '열 목록에 주민이 들어 있습니다');
+REQUIRED_COLS.forEach(function (c) {
+  ok('열에 ' + c + ' 있음', LEDGER_COLS_STR.indexOf(c) > -1);
+});
+ok('CSV 에 BOM 을 붙인다(엑셀에서 한글 안 깨지게)', SCR2.indexOf('Blob([') > -1 && /charset=utf-8/.test(SCR2));
+ok('내보낼 것이 없으면 빈 파일을 만들지 않는다', SCR2.indexOf('내보낼 직원 표가 없습니다') > -1);
+ok('더존 전용이라 우기지 않는다(가져오기 매핑을 안내한다)',
+  SCR2.indexOf('프로그램마다 가져오기 열 순서가 다르다') > -1);
+ok('지급총액이 없으면 실수령+공제로 되살린다', SCR2.indexOf('Number(e.실수령) + Number(e.공제총액)') > -1);
+
 console.log('\n════════════════════════════════');
 console.log('  통과 ' + pass + ' · 실패 ' + fail);
 console.log('════════════════════════════════');
