@@ -1215,6 +1215,71 @@
     });
   }
 
+  /* ══════ 막힌 자리를 이 화면에서 바로 잇기 (대표 결정 2026-08-27) ══════
+     메일이 담당자 칸으로 못 간 까닭은 셋뿐이고, 둘은 **업체관리를 고쳐야** 풀린다.
+     여태는 빨간 글만 보이고, 고치려면 푸른이알피를 따로 열어 그 사업장을
+     찾아가야 했다 — 55건을 그렇게 할 수는 없다.
+
+     ⚠ **바뀌는 칸만** 적어 낸다(업체 한 줄을 통째로 덮지 않는다). 업체관리는
+     업체별로 따로 실어 보내므로(data/companies/v/{id}), 남의 세션이 같은 업체의
+     다른 칸을 만지고 있어도 서로 안 밟는다.
+     ⚠ `/u`(갱신시각)도 함께 올린다 — 다른 화면이 「바뀌었다」를 그것으로 안다. */
+  function coFieldPath(coId, field) {
+    return ERP_COMPANIES + '/v/' + coId + '/' + field;
+  }
+
+  /* 주담당 정하기 — 값은 **사번**이다(이름이 아니다).
+     이름을 넣으면 사람과 이어지지 않아 그 사업장 메일이 영원히 공용 칸에 남는다
+     (실제로 「김보람(박은비)」가 13곳에 글자로 적혀 있었다). */
+  function setCompanyOwner(coId, sid) {
+    if (!coId) return Promise.reject(new Error('사업장을 골라 주세요'));
+    var s = String(sid || '').trim();
+    if (!SID_RE.test(s)) return Promise.reject(new Error('사번이 아닙니다: ' + (s || '(빈칸)')));
+    var up = {};
+    up[coFieldPath(coId, 'managerMain')] = s;
+    up[ERP_COMPANIES + '/u'] = Date.now();
+    return deps.db.ref().update(up).then(function () { return true; });
+  }
+
+  /* 보낸이 주소를 그 사업장 담당자로 넣기 —
+     ⚠ 업체관리는 담당자를 contacts[] 로 두고 primaryContactName/Phone/Email 은
+     그중 **대표 한 명을 비춘 딸림값**이다. 딸림값만 고치면 업체관리 화면이
+     contacts 를 다시 그릴 때 되돌아간다 — 둘을 함께 적는다.
+     ⚠ 이미 있는 사람은 덮지 않는다. 사람이 손으로 적어 둔 것이 있다. */
+  function addCompanyEmail(co, email, name) {
+    if (!co || !co.id) return Promise.reject(new Error('사업장을 골라 주세요'));
+    var em = String(email || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return Promise.reject(new Error('메일 주소가 아닙니다'));
+    var low = em.toLowerCase();
+    var arr = (Array.isArray(co.contacts) ? co.contacts : []).map(function (c) {
+      return Object.assign({}, c);
+    });
+    if (!arr.length && co.primaryContactName) {
+      arr.push({ name: co.primaryContactName, phone: co.primaryContactPhone || '',
+        email: co.primaryContactEmail || '', isPrimary: true });
+    }
+    var at = -1;
+    for (var i = 0; i < arr.length; i++) {
+      if (String(arr[i].email || '').trim().toLowerCase() === low) { at = i; break; }
+    }
+    if (at >= 0) {
+      if (name && !arr[at].name) arr[at].name = name;      // 빈 이름만 채운다
+    } else {
+      arr.push({ name: String(name || '').trim(), position: '', phone: '',
+        email: em, isPrimary: arr.length === 0 });
+    }
+    if (!arr.some(function (c) { return c.isPrimary; })) arr[0].isPrimary = true;
+    var pri = arr.filter(function (c) { return c.isPrimary; })[0] || arr[0] || {};
+
+    var up = {};
+    up[coFieldPath(co.id, 'contacts')] = arr;
+    up[coFieldPath(co.id, 'primaryContactName')] = pri.name || '';
+    up[coFieldPath(co.id, 'primaryContactPhone')] = pri.phone || '';
+    up[coFieldPath(co.id, 'primaryContactEmail')] = pri.email || '';
+    up[ERP_COMPANIES + '/u'] = Date.now();
+    return deps.db.ref().update(up).then(function () { return true; });
+  }
+
   /* 이 업체를 내가 담당하는가 — 사번을 이메일로 바꿔 견준다(sidToEmail 규칙이
      기업정보함·포털과 같아야 같은 사람을 찾는다). 주담당·부담당 모두 「내 담당」이다. */
   function isMyCompany(co, myEmail) {
@@ -1690,6 +1755,8 @@
     deleteValueCell: deleteValueCell,
     deleteValuesBySource: deleteValuesBySource,
     ERP_COMPANIES: ERP_COMPANIES,
+    setCompanyOwner: setCompanyOwner,
+    addCompanyEmail: addCompanyEmail,
     normalizeCompanies: normalizeCompanies,
     listCompanies: listCompanies,
     isPayrollCompany: isPayrollCompany,
