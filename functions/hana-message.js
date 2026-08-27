@@ -71,6 +71,13 @@ function tailMemo(text, dt, fallback) {
   let memo = dt ? text.slice(dt.end) : "";
   memo = memo
     .replace(/(?:일시불|할부\s*\d+개월|누적|잔액|가용액|사용가능액)\s*[0-9,]*\s*원?/ig, " ")
+    /* ★ 금액도 뗀다 (2026-08-26) — 은행 쪽은 떼는데 카드만 안 뗐다.
+       「71,700원 (주)루나」처럼 남으면 업체 이름 맞추기가 빗나간다. */
+    .replace(/[0-9][0-9,]*\s*원/g, " ")
+    /* ⚠ 「승인·취소·카드사 이름 떼기」는 넣었다가 «걷어냈다» (2026-08-26).
+       실제 하나카드 문자는 그 말들이 «날짜 앞»에 있어 여기까지 오지 않는다 —
+       쓰이지도 않으면서 「신용정보원」 같은 «진짜 가게 이름»을 깎을 위험만 있었다.
+       근거 없이 넣은 거르개는 언젠가 엉뚱한 것을 지운다. */
     .replace(/[|·]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -146,14 +153,20 @@ function parseHanaMessage(input, options) {
   let balance = 0;
   let memo;
   let note;
+  let cancel = false;
 
-  if (CARD_RE.test(text) && /취소/.test(text)) {
-    return reject("card_cancel_review_required");
-  } else if (CARD_RE.test(text) && /승인/.test(text)) {
+  if (CARD_RE.test(text) && /(승인|취소)/.test(text)) {
+    /* ★ 취소도 «대기함에 올린다» (2026-08-26 대표 답: 「대기함, 확정은 손으로」).
+       종전에는 서버가 통째로 버려서 승인만 들어왔다 —
+       ⚠ 그러면 카드 지출이 «실제보다 많아» 보인다.
+       ⚠ 다만 스스로 마이너스로 만들지는 않는다. 취소는 사람이 보고 정한다. */
+    const isCancel = /취소/.test(text);
     src = "card";
     type = "expense";
-    memo = tailMemo(text, dt, "하나카드 승인");
-    note = `하나카드 문자${accountHint(text) ? ` · ${accountHint(text)}` : ""}`;
+    cancel = isCancel;
+    memo = tailMemo(text, dt, isCancel ? "하나카드 취소" : "하나카드 승인");
+    if (isCancel) memo = `[취소] ${memo}`.slice(0, 100);
+    note = `하나카드 ${isCancel ? "취소" : "승인"} 문자${accountHint(text) ? ` · ${accountHint(text)}` : ""}`;
   } else if (BANK_RE.test(text) && /(입금|출금|이체)/.test(text)) {
     src = "bank";
     type = bankDirection(text);
@@ -165,7 +178,9 @@ function parseHanaMessage(input, options) {
   }
 
   const rawHash = sha256(text);
-  const id = sha256([src, type, dt.date, amount, compact(memo), rawHash].join("|"));
+  /* ⚠ 취소 여부를 열쇠에 넣는다 — 같은 날 같은 금액의 승인과 취소가
+     한 줄로 겹쳐 «취소가 사라지는» 일을 막는다. */
+  const id = sha256([src, type, cancel ? "C" : "A", dt.date, amount, compact(memo), rawHash].join("|"));
   return {
     ok: true,
     transaction: {
@@ -178,6 +193,8 @@ function parseHanaMessage(input, options) {
       balance,
       memo,
       note,
+      /* 취소 줄은 «스스로 확정되지 않는다» — 화면이 이 표를 보고 손을 막는다. */
+      cancel,
     },
   };
 }

@@ -41,10 +41,14 @@ test("인증번호·날짜 없는 알림·승인취소는 자동 저장하지 �
     HM.parseHanaMessage("하나은행 입금 10,000원 홍길동"),
     { ok: false, reason: "missing_datetime" },
   );
-  assert.deepEqual(
-    HM.parseHanaMessage("하나9950 승인취소 26,000원 08/23 09:02 스시리", { now: NOW }),
-    { ok: false, reason: "card_cancel_review_required" },
-  );
+  /* ⚠ 2026-08-26 다시 겨눔 — 대표 답 「대기함, 확정은 손으로」.
+     취소를 «버리던» 것을 «올리되 스스로 확정되지 않게» 로 바꿨다.
+     승인만 들어오면 카드 지출이 실제보다 많아 보였기 때문이다.
+     지켜야 할 규칙은 그대로다: 취소가 저절로 처리되면 안 된다(cancel 표로 막는다). */
+  const _cancel = HM.parseHanaMessage("하나9950 승인취소 26,000원 08/23 09:02 스시리", { now: NOW });
+  assert.equal(_cancel.ok, true, "취소를 아직 버리고 있다");
+  assert.equal(_cancel.transaction.cancel, true, "취소라고 표시하지 않는다");
+  assert.equal(_cancel.transaction.src, "card");
 });
 
 test("같은 거래 알림은 같은 중복방지 번호를 만든다", () => {

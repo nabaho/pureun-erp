@@ -105,8 +105,11 @@ test('막던 것은 그대로 막는다 — 인증번호·카드 취소·남의 
   /* 문을 넓혔으니 «넓어지면 안 되는 쪽»을 함께 못 박는다. */
   assert.equal(HM.parseHanaMessage('하나 08/24 08:09 인증번호 123456 입금 10,000원', { now: NOW }).reason,
     'security_message');
-  assert.equal(HM.parseHanaMessage('하나9950 승인취소 26,000원 08/23 09:02 스시리', { now: NOW }).reason,
-    'card_cancel_review_required');
+  /* ⚠ 2026-08-26 다시 겨눔 — 취소는 이제 «들어온다»(대기함). 대신 cancel 표가 붙어
+     스스로 확정되지 않는다. 여기서 막을 것은 「모르는 사이에 처리되는 것」이지 「들어오는 것」이 아니다. */
+  const _c = HM.parseHanaMessage('하나9950 승인취소 26,000원 08/23 09:02 스시리', { now: NOW });
+  assert.equal(_c.ok, true, '취소를 아직 버리고 있다');
+  assert.equal(_c.transaction.cancel, true, '취소 표가 없어 저절로 확정된다');
   assert.equal(HM.parseHanaMessage('[Web발신] 국민은행 입금 10,000원 08/24 09:00 홍길동', { now: NOW }).reason,
     'not_hana_transaction');
   /* 「하나」가 이름 속에 든 남의 문자까지 삼키면 안 된다 */

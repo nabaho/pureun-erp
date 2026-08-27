@@ -37197,6 +37197,11 @@ function erpRowState(row, groups, ctx){
   var amt = parseInt(row.amount, 10) || 0;
   var held = ctx.held || {};
   if(row._dup || (row._k && held[row._k])) return { state:'done', label:'이미 처리', diff:0, fee:0 };
+  /* ★ 카드 «취소» 줄은 스스로 확정되지 않는다 (2026-08-26 대표 답: 「대기함, 확정은 손으로」).
+     취소는 앞선 승인을 되돌리는 것이라 «어느 승인을 되돌리는지» 사람이 봐야 한다.
+     ⚠ 감추지는 않는다 — 감추면 카드 지출이 실제보다 많아 보이던 옛 문제로 돌아간다.
+     ⚠ 여기 한 곳에서만 막는다 — 화면 여기저기서 다시 재면 배지와 단추가 어긋난다. */
+  if(row.cancel) return { state:'check', label:'카드 취소 — 손으로 처리', diff:0, fee:0 };
   if(!groups.length) return { state:'none', label:'후보 없음', diff:0, fee:0 };
   if(groups.length > 1) return { state:'check', label:'업체가 여럿 — 골라야 합니다', diff:0, fee:0 };
   var g = groups[0];
@@ -38041,7 +38046,9 @@ function FinanceLedger(props){
         return _bankDraftSlimRow({
           _k:'hana-'+String(x.id||''), date:String(x.date||''), memo:String(x.memo||''),
           note:String(x.note||'휴대폰 문자'), amount:parseInt(x.amount,10)||0,
-          balance:parseInt(x.balance,10)||0, src:(x.src==='card'?'card':'bank')
+          balance:parseInt(x.balance,10)||0, src:(x.src==='card'?'card':'bank'),
+          /* 카드 «취소» 줄 — 대기함에는 오지만 스스로 확정되지 않는다(대표 답). */
+          cancel: !!x.cancel
         }, x.type==='expense'?'expense':'income', x.src==='card'?'card':'bank');
       }).filter(function(x){ return x.date && x.amount>0; });
       if(!incoming.length) throw new Error('가져올 수 있는 거래가 없습니다');
@@ -38535,7 +38542,7 @@ function FinanceLedger(props){
       /* 자문료 잔금이 다음 달에 들어와도 «받을 달» 로 친다 — 7월 자문료 잔금을 8월에 받으면 7월 매출.
          이 칸이 있어야 addAdvisoryPending 이 그 달 합계를 제대로 세고 잔금 후보가 사라진다. */
       advisoryYm: isAdv ? (pItem.ym || String(paidDate).slice(0,7)) : undefined,
-      memo:'[하나'+(fileType==='bank'?'은행':'카드')+'] '+(row.memo||'')+(row.note?' / '+row.note:''),
+      memo:'[하나'+((row&&row.src==='card')?'카드':'은행')+'] '+(row.memo||'')+(row.note?' / '+row.note:''),
       // replace('s','') 는 «맨 앞» s 를 지운다 — consultings→conultings, cases→caes 로 깨졌다
       sourceKind: isAdv ? 'company' : pItem.store.replace(/s$/,''),
       sourceId:pItem.item.id,
@@ -38809,7 +38816,7 @@ function FinanceLedger(props){
       managerName:(!_isAdv && d.mainSid) ? _sidName(d.mainSid) : '',
       deductions:ded, perfBaseAmount:perfBase, perfShares:shares,
       perfExclude:_isAdv || !(d.perfOn && d.mainSid),
-      memo:'[하나'+(fileType==='bank'?'은행':'카드')+'] '+(row.memo||'')
+      memo:'[하나'+((row&&row.src==='card')?'카드':'은행')+'] '+(row.memo||'')
            +' / ➕ 직접 등록 · '+(DOC[d.doc]||'증빙없음')+(d.cardMode?' · 카드':''),
       confirmedAt:new Date().toISOString(), confirmedBy:CURRENT_USER?CURRENT_USER.sid:''
     });
@@ -38833,7 +38840,7 @@ function FinanceLedger(props){
     dbUpsert('finance_expense', {id:'fe-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
       date:row.date||todayYMD(),
       amount:row.amount, category:cat,
-      payee:row.memo||'', note:'[하나'+(fileType==='bank'?'은행':'카드')+'] '+(row.note||row.memo||''),
+      payee:row.memo||'', note:'[하나'+((row&&row.src==='card')?'카드':'은행')+'] '+(row.note||row.memo||''),
       /* 어디서 온 출금인지 표를 남긴다 (2026-08-16 대표 지시).
          전에는 비고 머리에 「[하나은행]」이 섞여 들어갈 뿐이라 «읽어야» 알았다.
          출금관리 목록이 이 표를 보고 「🏦 거래내역」 딱지를 붙인다. */
