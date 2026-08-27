@@ -37192,6 +37192,54 @@ if(typeof window !== 'undefined'){
    ready 초록: 바로 확정 가능 · check 노랑: 사람이 봐야 함
    none  빨강: 이름 근거 있는 후보 없음 · done 회색: 이미 처리했거나 보류함에 넣음
    판단은 여기 한 곳에서만 한다 — 화면 여기저기서 다시 재면 배지와 단추가 어긋난다. */
+/* ══════════ 카드 «취소」의 짝 찾기 (2026-08-26 대표 지시: 「자동 짝지어 달라」) ══════════
+   취소 문자는 앞선 «승인»을 되돌리는 것이다. 어느 승인인지 이어 주면
+   둘을 함께 상계할 수 있고, 안 이어 주면 사람이 매달 눈으로 찾아야 한다.
+
+   ⚠ 찾는 규칙은 좁게 잡는다 — 엉뚱한 승인에 붙으면 «지우지 말아야 할 지출»이 지워진다.
+     ① 카드 줄이어야 하고 ② 금액이 «똑같아야» 하고 ③ 가게 이름이 같아야 하고
+     ④ 취소보다 «앞선» 날이어야 하고 ⑤ 90일 안이어야 한다.
+   ⚠ 후보가 둘 이상이면 «고르지 않는다» — 어느 것을 되돌리는지 모르는 채 찍으면 안 된다.
+   ⚠ 이미 짝지어진 승인은 다시 안 쓴다 — 한 승인이 두 취소를 갚을 수는 없다. */
+function erpCardCancelKey(memo){
+  var s = String(memo == null ? '' : memo).replace(/^\s*\[취소\]\s*/, '');
+  if(typeof erpCoKey === 'function') return erpCoKey(s);
+  return s.toLowerCase().replace(/[\s\-()·.,]/g, '');
+}
+var ERP_CANCEL_DAYS = 90;
+function erpCardCancelMatch(cancelRow, rows){
+  var c = cancelRow || {};
+  if(!c.cancel || c.src !== 'card') return { state:'none', row:null, all:[] };
+  var amt = parseInt(c.amount, 10) || 0;
+  var key = erpCardCancelKey(c.memo);
+  var cd = String(c.date || '').slice(0, 10);
+  if(!amt || !key || !cd) return { state:'none', row:null, all:[] };
+  var used = {};
+  (rows || []).forEach(function(r){
+    if(r && r.cancel && r.pairedWith) used[r.pairedWith] = 1;
+  });
+  var hits = (rows || []).filter(function(r){
+    if(!r || r.cancel || r.src !== 'card') return false;
+    if((parseInt(r.amount, 10) || 0) !== amt) return false;
+    if(erpCardCancelKey(r.memo) !== key) return false;
+    var rd = String(r.date || '').slice(0, 10);
+    if(!rd || rd > cd) return false;                       // 취소보다 뒤면 그 승인이 아니다
+    var gap = (new Date(cd + 'T00:00:00Z') - new Date(rd + 'T00:00:00Z')) / 86400000;
+    if(!(gap >= 0 && gap <= ERP_CANCEL_DAYS)) return false;
+    if(r._k && used[r._k] && r._k !== c.pairedWith) return false;   // 이미 다른 취소가 갚았다
+    return true;
+  });
+  /* 날짜가 가까운 것부터 — 고르지는 않고 «보여 줄 차례»만 정한다 */
+  hits.sort(function(a, b){ return String(b.date || '').localeCompare(String(a.date || '')); });
+  if(!hits.length) return { state:'none', row:null, all:[] };
+  if(hits.length > 1) return { state:'many', row:null, all:hits };
+  return { state:'one', row:hits[0], all:hits };
+}
+try {
+  window.erpCardCancelKey = erpCardCancelKey;
+  window.erpCardCancelMatch = erpCardCancelMatch;
+} catch(_){ }
+
 function erpRowState(row, groups, ctx){
   row = row || {}; groups = groups || []; ctx = ctx || {};
   var amt = parseInt(row.amount, 10) || 0;
@@ -37201,7 +37249,22 @@ function erpRowState(row, groups, ctx){
      취소는 앞선 승인을 되돌리는 것이라 «어느 승인을 되돌리는지» 사람이 봐야 한다.
      ⚠ 감추지는 않는다 — 감추면 카드 지출이 실제보다 많아 보이던 옛 문제로 돌아간다.
      ⚠ 여기 한 곳에서만 막는다 — 화면 여기저기서 다시 재면 배지와 단추가 어긋난다. */
-  if(row.cancel) return { state:'check', label:'카드 취소 — 손으로 처리', diff:0, fee:0 };
+  if(row.cancel){
+    /* ★ 짝을 «자동으로 찾아» 보여 준다 (2026-08-26 대표 지시).
+       찾아 주기만 하고 «스스로 지우지는» 않는다 — 되돌리는 것은 되돌릴 수 없다. */
+    var _pm = (typeof erpCardCancelMatch === 'function')
+      ? erpCardCancelMatch(row, ctx.allRows || []) : { state:'none', row:null };
+    if(_pm.state === 'one'){
+      return { state:'check', diff:0, fee:0, pair:_pm.row,
+        label:'↔ ' + String(_pm.row.date || '').slice(5, 10) + ' 승인과 짝 — 눌러서 상계' };
+    }
+    if(_pm.state === 'many'){
+      /* 어느 승인을 되돌리는지 모르는 채 찍으면 «지우면 안 될 지출»이 지워진다. */
+      return { state:'check', diff:0, fee:0,
+        label:'카드 취소 — 짝 후보 ' + _pm.all.length + '건, 골라야 합니다' };
+    }
+    return { state:'check', label:'카드 취소 — 짝을 못 찾았습니다, 손으로', diff:0, fee:0 };
+  }
   if(!groups.length) return { state:'none', label:'후보 없음', diff:0, fee:0 };
   if(groups.length > 1) return { state:'check', label:'업체가 여럿 — 골라야 합니다', diff:0, fee:0 };
   var g = groups[0];
@@ -39358,6 +39421,16 @@ function FinanceLedger(props){
     if(row._dup) return;
     expGuess[row._k] = erpExpenseCatGuess(row.memo||row.note||'');
   });
+  /* ── 카드 「취소」의 짝 (2026-08-26 대표 지시: 「자동 짝지어 달라」) ──
+     ⚠ 여기서 «찾기만» 한다. 상계는 사람이 누른다 — 되돌리는 것은 되돌릴 수 없다.
+     ⚠ 줄마다 한 번만 찾는다. 표를 그릴 때마다 다시 찾으면 줄 수만큼 헛일이 된다. */
+  var expPair = {};
+  if(rows && ldTabEff==='exp' && typeof erpCardCancelMatch === 'function'){
+    expAll.forEach(function(row){
+      if(!row || !row.cancel) return;
+      expPair[row._k] = erpCardCancelMatch(row, expAll);
+    });
+  }
   /* (2026-08-09) 확정 갈래 판정은 걷어냈다 — 확정이 단추 하나로 합쳐지면서 쓰는 데가
      없어졌는데도 행마다 관문을 다시 재느라 렌더마다 헛일을 했다.
      지금은 erpRowState 한 번이 그 자리를 대신한다. */
@@ -39706,10 +39779,15 @@ function FinanceLedger(props){
         style:{display:'flex',alignItems:'center',gap:'4px',cursor:'pointer',fontSize:'11.5px',whiteSpace:'nowrap',fontWeight:fileType==='nicebill'?700:400,color:fileType==='nicebill'?'#2563eb':'#64748b'}},
         h('input',{type:'radio',name:'ledgerType',checked:fileType==='nicebill',onChange:function(){setFileType('nicebill');setRows(null);setDetected(null);}}),'🏦 나이스빌 CMS'),
       h('span',{className:'ld-up-sep',style:{width:'1px',height:'18px',background:'#e2e8f0'}}),
+      /* ★ 「휴대폰 연결」·「문자 가져오기」는 권형하(대표)만 보인다 (2026-08-26 지시).
+         이어진 휴대폰이 «권형하 것 하나»뿐이라, 다른 사람에게는 누를 일이 없는 단추다.
+         ⚠ 사번을 못 박지 않는다 — isOwner(대표·총괄) 로 가린다. 사번은 바뀔 수 있다. */
+      _meNow().isOwner &&
       h('button',{type:'button',disabled:hanaBusy,onClick:function(e){e.stopPropagation();startHanaSmsPair();},
         title:'권형하 휴대폰을 하나은행·하나카드 거래문자와 연결합니다',
         style:{padding:'5px 9px',border:'1px solid #bfdbfe',background:'#eff6ff',color:'#1e40af',borderRadius:'6px',fontSize:'11px',fontWeight:800,cursor:hanaBusy?'wait':'pointer',whiteSpace:'nowrap'}},
         '🔗 휴대폰 연결'),
+      _meNow().isOwner &&
       h('button',{type:'button',disabled:hanaBusy,onClick:function(e){e.stopPropagation();importHanaSms();},
         title:'새로 받은 하나은행·하나카드 거래문자를 가져와 기존 거래내역과 자동으로 맞춥니다',
         style:{padding:'5px 9px',border:'1px solid #bbf7d0',background:'#f0fdf4',color:'#16a34a',borderRadius:'6px',fontSize:'11px',fontWeight:800,cursor:hanaBusy?'wait':'pointer',whiteSpace:'nowrap'}},
@@ -40657,6 +40735,26 @@ function FinanceLedger(props){
                 h('td',{style:Object.assign({},tdS,{fontWeight:700,color:'#854d0e',whiteSpace:'nowrap'})},row.amount.toLocaleString()+'원'),
                 h('td',{style:Object.assign({},tdS,{color:'#475569',maxWidth:'140px'})},
                   h('div',null,row.memo),row.note&&h('div',{style:{fontSize:'10px',color:'#94a3b8'}},row.note),
+                  /* 카드 취소 — 어느 승인을 되돌리는지 «찾아서 적는다».
+                     ⚠ 못 찾았거나 여럿이면 그렇게 적는다. 찍어서 붙이면 지우면 안 될 지출이 지워진다. */
+                  row.cancel && (function(){
+                    var pm = expPair[row._k] || { state:'none' };
+                    var t = pm.state === 'one'
+                      ? ('↔ ' + String(pm.row.date||'').slice(5,10) + ' 승인과 짝')
+                      : (pm.state === 'many'
+                          ? ('↔ 짝 후보 ' + pm.all.length + '건 — 골라야 합니다')
+                          : '↔ 짝을 못 찾았습니다');
+                    var on = pm.state === 'one';
+                    return h('div',{
+                      title: on
+                        ? ('이 취소는 ' + String(pm.row.date||'').slice(0,10) + ' 「' + (pm.row.memo||'') + '」 승인을 되돌리는 것으로 보입니다.\n'
+                           + '금액·가게 이름·날짜가 맞는 승인이 하나뿐일 때만 이렇게 적습니다.')
+                        : '금액·가게 이름이 같고 취소보다 앞선 카드 승인을 90일 안에서 찾습니다',
+                      style:{marginTop:'2px',display:'inline-block',
+                        background: on ? '#f0fdf4' : '#fffbeb', color: on ? '#166534' : '#854d0e',
+                        border:'1px solid ' + (on ? '#bbf7d0' : '#fde68a'),
+                        borderRadius:'8px',padding:'0 5px',fontSize:'9.5px',fontWeight:700}}, t);
+                  })(),
                   row._dup && h('div',{title:'처리 대상: '+((dupInfoE&&dupInfoE.target)||'-')+'\n환경설정 ▸ 입금자 별칭 관리에서 이 기록을 지우면 다시 처리할 수 있습니다',
                     style:{marginTop:'2px',display:'inline-block',background:'#fffbeb',color:'#d97706',
                       border:'1px solid #fde68a',borderRadius:'8px',padding:'0 5px',fontSize:'9.5px',fontWeight:700}},

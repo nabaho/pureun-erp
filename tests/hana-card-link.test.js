@@ -57,16 +57,36 @@ test('★★ 같은 날 같은 금액의 승인과 취소가 «한 줄로 겹치
 });
 
 test('★★ 취소 줄은 «스스로 확정되지 않는다» (대표 답: 확정은 손으로)', () => {
+  /* ⚠ 2026-08-26 다시 겨눔 — 짝 찾기가 들어오며 한 줄이 여러 갈래가 됐다.
+     지켜야 할 규칙은 「취소 줄은 어느 갈래로 가도 초록이 아니다」이지 줄의 생김새가 아니다. */
   const fn = bare(cutBlock(SRC, 'function erpRowState(row, groups, ctx){'));
-  assert.ok(/if\(row\.cancel\) return \{ state:'check'/.test(fn), '취소 줄이 초록이 될 수 있다');
-  const i = fn.indexOf('row.cancel');
+  const i = fn.indexOf('if(row.cancel)');
+  assert.ok(i >= 0, '취소를 가리는 곳이 없다');
   const j = fn.indexOf("state:'ready'");
-  assert.ok(i >= 0 && j >= 0 && i < j, '막는 것이 «확정 가능»보다 뒤에 있으면 이미 늦다');
+  assert.ok(j >= 0 && i < j, '막는 것이 «확정 가능»보다 뒤에 있으면 이미 늦다');
+  /* 취소 갈래 안에서 나가는 길이 모두 check 여야 한다 */
+  /* 취소 갈래의 «닫는 괄호»까지만 자른다 — 더 가면 다른 갈래의 return 까지 센다. */
+  const blk = (function(){
+    let d = 0, st = fn.indexOf('{', i);
+    for (let k = st; k < fn.length; k++) {
+      if (fn[k] === '{') d++;
+      else if (fn[k] === '}') { d--; if (d === 0) return fn.slice(i, k + 1); }
+    }
+    throw new Error('취소 갈래 닫는 괄호를 못 찾았다');
+  })();
+  /* «돌려주는» 것만 센다 — 중간에 쓰는 { state:'none' } 같은 값은 결과가 아니다. */
+  const outs = blk.match(/return { state:'(\w+)'/g) || [];
+  assert.ok(outs.length >= 3, '취소 갈래가 통째로 사라졌다');
+  outs.forEach((o) => assert.strictEqual(o, "return { state:'check'", '취소 줄이 ' + o + ' 로 빠진다'));
 });
 
 test('★★ 그렇다고 «감추지는» 않는다 — 감추면 지출이 많아 보이던 옛 문제로 돌아간다', () => {
   const fn = cutBlock(SRC, 'function erpRowState(row, groups, ctx){');
-  assert.ok(fn.indexOf("label:'카드 취소 — 손으로 처리'") >= 0, '무엇을 해야 하는지 안 알려 준다');
+  /* ⚠ 2026-08-26 다시 겨눔 — 말이 셋으로 갈렸다(짝 하나 / 여럿 / 못 찾음).
+     지켜야 할 것은 «어느 갈래든 무엇을 해야 하는지 말한다»이다. */
+  ['카드 취소', '짝'].forEach((w) => {
+    assert.ok(fn.indexOf(w) >= 0, '취소 줄이 무엇인지·무엇을 해야 하는지 안 알려 준다: ' + w);
+  });
   assert.ok(fn.indexOf("state:'done'") >= 0, '「이미 처리」 갈래가 사라졌다');
   /* done 이 아니라 check 여야 목록에 남아 사람 눈에 띈다 */
   assert.ok(!/if\(row\.cancel\) return \{ state:'done'/.test(bare(fn)), '취소를 「이미 처리」로 감춘다');
