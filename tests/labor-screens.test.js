@@ -66,6 +66,27 @@ section('개인정보 — 실데이터가 섞여 들어가지 않았는가');
 ok('코어에 주민번호 형태 문자열이 없다', !/\d{6}\s*-\s*\d{7}/.test(CORE));
 ok('화면 블록에 직원 실명 시드가 없다', !/LEAVE_LEDGER_SEED/.test(SCR));
 
+
+section('간이세액표 — 앱 연결');
+ok('설정 카드에 간이세액표 가져오기 버튼', H.indexOf('importTaxTable()') > -1);
+ok('importTaxTable 정의됨', H.indexOf('function importTaxTable(') > -1);
+ok('window 에 노출됨', /window\.importTaxTable\s*=/.test(H));
+ok('tax_table 키로 저장한다', /dbSet\('tax_table'/.test(H));
+ok('올릴 때 모양을 검사한다(rows 없으면 거부)', /rows 가 없습니다/.test(H));
+ok('마지막 구간 상한을 검사한다(높은 급여 누락 방지)', /마지막 구간에 상한이 있습니다/.test(H));
+ok('표 없으면 화면이 알린다', /간이세액표가 없어 소득세를 계산하지 못합니다/.test(H));
+
+section('근태 → 급여 미리보기');
+ok('미리보기 표가 있다', H.indexOf('근태 반영 급여 미리보기') > -1);
+ok('통합계산은 코어가 한다(LC.monthlyPayroll)', SCR.indexOf('LC.monthlyPayroll(') > -1);
+ok('간이세액표를 코어에 넘긴다', /간이세액표: TT/.test(SCR));
+ok('최저임금 연도값을 코어에 넘긴다', /최저임금시급: mwH/.test(SCR));
+/* 자녀공제 금액은 코어에만 있어야 한다. 화면 설명문은 "12,500"(쉼표)으로 적으므로
+   쉼표 없는 숫자로 찾으면 계산식이 박힌 경우만 걸린다. */
+ok('화면에 자녀공제 금액을 계산식으로 박지 않았다', !/\b12500\b|\b29160\b/.test(SCR));
+ok('코어에 자녀공제 금액이 있다', /12500/.test(CORE) && /29160/.test(CORE));
+ok('코어가 국세청 산식을 추정하지 않는다고 밝힌다', /산식을 짓지 않는다|산식을 공개하지 않는다/.test(CORE));
+
 console.log('\n════════════════════════════════');
 console.log('  통과 ' + pass + ' · 실패 ' + fail);
 console.log('════════════════════════════════');

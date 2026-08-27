@@ -753,6 +753,94 @@
   /* 지방소득세 = 소득세 × 10% → 10원 절사 (실측 31명 전원 일치) */
   function localIncomeTax(incomeTax) { return floor10(num(incomeTax) * 0.1); }
 
+
+  /* ══════════════════════════════════════════════════════════════════
+     F. 근로소득 간이세액표 — 매월 원천징수할 소득세 (소득세법 134조)
+     ══════════════════════════════════════════════════════════════════
+     ⚠ 여기서 가장 중요한 결정: **산식을 짓지 않는다.**
+       국세청은 간이세액표의 세액 산출 산식을 공개하지 않는다(근로소득공제·
+       기본공제·특별소득공제·특별세액공제 중 일부·연금보험료공제·근로소득
+       세액공제·세율이 이미 녹아든 값이다). 그래서 **표 자체가 법적 기준**이다.
+
+       실제로 확인한 예: 월급여 3,500,000원·공제대상가족 4명 → 49,340원.
+       근로소득공제·인적공제·연금보험료·근로소득세액공제만으로 되짚어 보면
+       월 121,333원이 나온다 — 표값의 2.5배다. 즉 산식 추정은 못 쓴다.
+       (특별소득공제·특별세액공제 표준화 금액이 비공개이기 때문)
+
+       → 표를 **불러서 찾아 쓴다**. 표가 없으면 조용히 0으로 두지 않고
+         '표 없음'으로 알린다. 틀린 세금을 조용히 내는 것이 가장 나쁘다.
+
+     표 모양(engine/build_simpletax.js 가 국세청 파일에서 만든다):
+       { 연도:'2026', 자녀공제:{...}, rows:[ {min, max, tax:[1인,2인,…,11인]} ] }
+       min·max = 월 급여액(비과세 제외) 구간, tax[i] = 공제대상가족 (i+1)명 세액 */
+
+  /* 8세 이상 20세 이하 자녀 공제 (국세청 고시) —
+     1명 12,500원 · 2명 29,160원 · 3명 이상 29,160원 + 2명 초과 1명당 25,000원.
+     ⚠ 표에서 **빼는** 금액이다(음수가 되면 0). */
+  var CHILD_CREDIT = { one: 12500, two: 29160, extra: 25000 };
+  function childCredit(n) {
+    var c = Math.max(0, Math.floor(num(n)));
+    if (c <= 0) return 0;
+    if (c === 1) return CHILD_CREDIT.one;
+    if (c === 2) return CHILD_CREDIT.two;
+    return CHILD_CREDIT.two + CHILD_CREDIT.extra * (c - 2);
+  }
+
+  /* 표에서 그 급여·가족수의 세액을 찾는다.
+     ⚠ 표의 구간은 "이상~미만"이다. 마지막 구간은 상한이 없다(max 생략). */
+  function lookupSimpleTax(table, monthlyTaxable, familyCount) {
+    if (!table || !table.rows || !table.rows.length) return null;
+    var pay = num(monthlyTaxable);
+    var fam = Math.max(1, Math.floor(num(familyCount) || 1));
+    var rows = table.rows;
+    /* 표의 하한(106만원 안팎)보다 급여가 적으면 **세액 0원이 정답**이다 —
+       간이세액표는 세액이 생기는 급여부터 시작한다. 이걸 '표없음'으로 두면
+       단시간·일용 근로자마다 경고가 떠서, 정작 진짜 문제가 묻힌다. */
+    if (pay < num(rows[0].min)) return 0;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var lo = num(r.min), hi = (r.max == null) ? Infinity : num(r.max);
+      if (pay >= lo && pay < hi) {
+        var arr = r.tax || [];
+        if (!arr.length) return null;
+        /* 표의 가족수 칸이 모자라면 **마지막 칸**을 쓴다(11인 초과).
+           없는 칸을 0으로 읽으면 세금이 0이 되어 조용히 틀린다. */
+        var idx = Math.min(fam, arr.length) - 1;
+        var v = arr[idx];
+        return (v == null) ? null : num(v);
+      }
+    }
+    return null;      // 표 범위를 벗어남(급여가 표 상한 초과 등)
+  }
+
+  /* 매월 원천징수할 소득세.
+     o = { 월과세급여, 부양가족수, 자녀수(8~20세), table, 비율(80·100·120) }
+     비율: 근로자가 신청하면 간이세액의 80%·120%로 낼 수 있다(소득세법 시행령 194조).
+           기본 100%. 연말정산에서 정산되므로 총액은 같다. */
+  function withholdingTax(o) {
+    o = o || {};
+    var base = lookupSimpleTax(o.table, o.월과세급여, o.부양가족수);
+    if (base == null) {
+      return {
+        소득세: 0, 지방소득세: 0, 상태: '표없음', 출처: null,
+        안내: '근로소득 간이세액표가 없어 소득세를 계산하지 못했습니다 — 표를 올리거나 대장의 소득세 값을 넣으세요.'
+      };
+    }
+    var 자녀 = childCredit(o.자녀수);
+    var 비율 = num(o.비율 || 100) / 100;
+    if (!(비율 > 0)) 비율 = 1;
+    /* 자녀공제를 먼저 빼고 비율을 적용한다(국세청 예시 순서: 표값 − 자녀공제). */
+    var 소득세 = Math.max(0, floor10((base - 자녀) * 비율));
+    return {
+      소득세: 소득세, 지방소득세: localIncomeTax(소득세),
+      표값: base, 자녀공제: 자녀, 비율: num(o.비율 || 100),
+      상태: 'ok', 출처: '간이세액표' + (o.table && o.table.연도 ? '(' + o.table.연도 + ')' : ''),
+      근거: '간이세액표 ' + base.toLocaleString() + '원'
+        + (자녀 ? ' − 자녀공제 ' + 자녀.toLocaleString() + '원' : '')
+        + (비율 !== 1 ? ' × ' + num(o.비율) + '%' : '')
+    };
+  }
+
   /* 월 급여 한 사람 통합 계산 — 근태부터 실수령까지 한 줄로 잇는다.
      소득세는 간이세액표가 있어야 정확해서, 표(또는 값)를 주지 않으면
      '표 필요'로 표시하고 0 으로 둔다 — 조용히 틀린 값을 만들지 않는다. */
@@ -776,9 +864,23 @@
       고지_장기요양: o.고지_장기요양, 고지_고용보험: o.고지_고용보험
     });
 
-    var 소득세 = (o.소득세 != null) ? num(o.소득세)
-      : (typeof o.간이세액 === 'function' ? num(o.간이세액(과세총액, o.부양가족수 || 1)) : 0);
-    var 소득세미정 = (o.소득세 == null && typeof o.간이세액 !== 'function');
+    /* 소득세 — 우선순위: ①직접 준 값(대장에서 온 값이 가장 세다) ②간이세액표 조회
+       ③주입 함수 ④없으면 '표 없음'. 넷 다 없을 때 조용히 0으로 두지 않는다. */
+    var wt = null, 소득세, 소득세미정 = false;
+    if (o.소득세 != null) {
+      소득세 = num(o.소득세);
+    } else if (o.간이세액표) {
+      wt = withholdingTax({
+        월과세급여: 과세총액, 부양가족수: o.부양가족수 || 1, 자녀수: o.자녀수,
+        table: o.간이세액표, 비율: o.원천징수비율
+      });
+      소득세 = wt.소득세;
+      소득세미정 = (wt.상태 !== 'ok');
+    } else if (typeof o.간이세액 === 'function') {
+      소득세 = num(o.간이세액(과세총액, o.부양가족수 || 1));
+    } else {
+      소득세 = 0; 소득세미정 = true;
+    }
     var 지방세 = localIncomeTax(소득세);
 
     var 공제총액 = ins.합계 + 소득세 + 지방세 + num(o.기타공제);
@@ -816,7 +918,8 @@
         신호: (mw && mw.판정 === 'violation') ? 'red'
           : (소득세미정 || (att && att.연장한도초과주 && att.연장한도초과주.length)) ? 'orange' : 'green'
       },
-      근거: { 수당: al.근거, 보험: ins.근거 }
+      근거: { 수당: al.근거, 보험: ins.근거, 소득세: wt ? wt.근거 : (o.소득세 != null ? '대장 값' : '미정') },
+      세금: wt
     };
   }
 
@@ -848,6 +951,9 @@
     retirementIncomeTax: retirementIncomeTax, basicTax: basicTax,
     // 급여
     insuranceEmployee: insuranceEmployee, localIncomeTax: localIncomeTax,
+    // 간이세액표
+    CHILD_CREDIT: CHILD_CREDIT, childCredit: childCredit,
+    lookupSimpleTax: lookupSimpleTax, withholdingTax: withholdingTax,
     monthlyPayroll: monthlyPayroll
   };
 

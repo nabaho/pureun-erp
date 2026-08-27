@@ -17,7 +17,7 @@
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <script src="js/pu-backup.js?v=1"></script>
-<script src="js/pu-labor-core.js?v=1"></script>
+<script src="js/pu-labor-core.js?v=2"></script>
 <script src="js/pu-hwp-engine.js?v=14"></script>
 <script src="hwpx_gen.js?v=14"></script>
 <script src="hwpx_doc.js?v=2"></script>
@@ -1293,6 +1293,13 @@ function screenCards(){
   var cards=dbGet('site_cards',[]);
   var h='<h1>설정 카드</h1><div class="sub">푸른통합시스템 · payroll_os · '+cards.length+'곳</div>';
   h+='<button class="btn sec" onclick="importCards()">설정 카드(JSON) 가져와 서버 저장</button>';
+  /* 간이세액표 — 없으면 소득세를 계산할 수 없다(국세청이 산식을 공개하지 않아
+     표 자체가 법적 기준이다). 그래서 있는지 없는지를 눈에 보이게 둔다. */
+  h+=' <button class="btn sec" onclick="importTaxTable()">간이세액표(JSON) 가져오기</button>';
+  var tt=dbGet('tax_table',null);
+  h+='<div style="margin-top:10px;font-size:12.5px">'+(tt&&tt.rows&&tt.rows.length
+    ? '<span class="badge ok">간이세액표 있음</span> '+(tt.연도||'')+'년 · 구간 '+tt.rows.length+'개 · 가족 칸 '+((tt.rows[0].tax||[]).length)+'개'
+    : '<span class="badge warn">간이세액표 없음</span> 소득세는 대장 값만 씁니다 — <code>node engine/build_simpletax.js</code> 로 만든 JSON을 올리세요')+'</div>';
   if(!cards.length){ h+='<div class="empty" style="margin-top:14px">서버에 자료 없음. 위 버튼으로 site_cards.json 올리면 저장됩니다.</div>'; return h; }
   h+='<div class="cards">'+cards.map(function(c){var n=(c.확인필요||[]).length;
     return '<div class="c"><div style="display:flex;justify-content:space-between"><span class="t">'+c.사업장+'</span>'+
@@ -1477,6 +1484,70 @@ function screenAttend() {
   h2 += '<tr style="border-top:2px solid var(--line);background:var(--paper);text-align:right;font-weight:700">' +
     '<td colspan="11" style="padding:8px">법정수당 합계</td><td style="padding:8px">' + won(tot) + '</td></tr>';
   h2 += '</table></div>';
+
+  /* ── 근태 반영 급여 미리보기 ──
+     여기서 고리가 이어진다: 근태 → 법정수당 → 4대보험·소득세 → 실수령.
+     계산은 전부 코어(LC.monthlyPayroll)가 한다. 화면은 표만 그린다.
+     ⚠ 확정이 아니라 **미리보기**다. 급여 확정은 급여 처리 화면에서 사람이 한다. */
+  var TT = dbGet('tax_table', null);
+  var mwY = String((App.month || '').match(/\d{4}/) ? (App.month.match(/\d{4}/))[0] : laborYear());
+  var mwH = minWageOf(mwY);
+  h2 += '<h2 style="margin:18px 0 8px;font-size:15px">근태 반영 급여 미리보기</h2>';
+  if (!TT) h2 += '<div class="note" style="border-left:3px solid var(--warn)">' +
+    '<b>간이세액표가 없어 소득세를 계산하지 못합니다.</b> 설정 카드 화면의 [간이세액표 가져오기]로 올리세요. ' +
+    '국세청이 세액 산출 산식을 공개하지 않으므로 <b>표 자체가 법적 기준</b>입니다 — 추정으로 대신하지 않습니다.</div>';
+  h2 += '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;background:#fff">' +
+    '<tr style="background:var(--paper)">' +
+    ['성명', '가족', '자녀', '지급총액', '국민연금', '건강+장기', '고용', '소득세', '지방세', '공제총액', '실수령', '점검'].map(function (c, i) {
+      return '<th style="padding:7px;text-align:' + (i < 1 ? 'left' : 'right') + ';white-space:nowrap">' + c + '</th>';
+    }).join('') + '</tr>';
+  var sumPay = 0, sumNet = 0, warn = 0;
+  emps.forEach(function (e) {
+    var nm = esc(e.성명), a = attendOf(App.site, App.month, e.성명), meta = empMeta(App.site, e.성명);
+    var mk = "'" + s + '|' + nm + "'";
+    var 기본급 = Number(meta.통상임금월액 || e.기본급 || 0);
+    var mp = LC.monthlyPayroll({
+      기본급: 기본급,
+      고정수당: Number(meta.고정수당 || 0),
+      비과세: Number(meta.비과세 || 0),
+      근태집계: { 합계: { 연장: Number(a.연장 || 0), 야간: Number(a.야간 || 0),
+        휴일8이내: Math.min(Number(a.휴일 || 0), P.dailyContractHours),
+        휴일8초과: Math.max(0, Number(a.휴일 || 0) - P.dailyContractHours) }, 주휴시간: 0, 연장한도초과주: [] },
+      policy: P, rates: LABOR_RATES, 연도: mwY,
+      간이세액표: TT, 부양가족수: Number(meta.부양가족수 || 1), 자녀수: Number(meta.자녀수 || 0),
+      최저임금시급: mwH, 월소정근로시간: P.monthlyStdHours,
+      고지_국민연금: meta.고지_국민연금, 고지_건강보험: meta.고지_건강보험
+    });
+    sumPay += mp.지급.지급총액; sumNet += mp.실수령;
+    var sig = mp.검증.신호;
+    if (sig !== 'green') warn++;
+    var tip = (sig === 'red' && mp.검증.최저임금) ? mp.검증.최저임금.메시지
+      : (mp.검증.소득세미정 ? '간이세액표 없음 — 소득세 미계산' : '이상 없음');
+    h2 += '<tr style="border-top:1px solid var(--line);text-align:right">' +
+      '<td style="padding:6px 7px;text-align:left;font-weight:600">' + (e.성명 || '') + '</td>' +
+      '<td style="padding:6px 7px">' + nInput(meta.부양가족수 == null ? 1 : meta.부양가족수, 'lput(\'emp_meta\',' + mk + ',{부양가족수:+this.value})', 44) + '</td>' +
+      '<td style="padding:6px 7px">' + nInput(meta.자녀수 == null ? 0 : meta.자녀수, 'lput(\'emp_meta\',' + mk + ',{자녀수:+this.value})', 44) + '</td>' +
+      '<td style="padding:6px 7px;font-weight:700">' + won(mp.지급.지급총액) + '</td>' +
+      '<td style="padding:6px 7px">' + won(mp.공제.국민연금) + '</td>' +
+      '<td style="padding:6px 7px">' + won(mp.공제.건강보험 + mp.공제.장기요양) + '</td>' +
+      '<td style="padding:6px 7px">' + won(mp.공제.고용보험) + '</td>' +
+      '<td style="padding:6px 7px">' + (mp.검증.소득세미정 ? '<span style="color:var(--warn)">표없음</span>' : won(mp.공제.소득세)) + '</td>' +
+      '<td style="padding:6px 7px">' + won(mp.공제.지방세) + '</td>' +
+      '<td style="padding:6px 7px">' + won(mp.공제.공제총액) + '</td>' +
+      '<td style="padding:6px 7px;font-weight:700">' + won(mp.실수령) + '</td>' +
+      '<td style="padding:6px 7px" title="' + esc(tip) + '"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:' + SIG[sig] + '"></span></td></tr>';
+  });
+  h2 += '<tr style="border-top:2px solid var(--line);background:var(--paper);text-align:right;font-weight:700">' +
+    '<td colspan="3" style="padding:8px">합계 ' + emps.length + '명</td>' +
+    '<td style="padding:8px">' + won(sumPay) + '</td>' +
+    '<td colspan="6"></td><td style="padding:8px">' + won(sumNet) + '</td><td></td></tr>';
+  h2 += '</table></div>';
+  h2 += '<div class="note">' + (warn ? '<b>점검 필요 ' + warn + '명</b> — 동그라미에 마우스를 올리면 까닭이 보입니다. ' : '전원 이상 없음. ') +
+    '4대보험은 <b>공단 고지액이 있으면 고지액</b>을 씁니다(없으면 요율계산). 소득세는 <b>간이세액표</b>에서 찾고 ' +
+    '8~20세 자녀 공제(1명 12,500 · 2명 29,160 · 3명↑ +25,000)를 뺍니다. 지방소득세 = 소득세×10% 10원 절사. ' +
+    '최저임금은 ' + mwY + '년 ' + mwH.toLocaleString() + '원 기준이며 <b>가산수당은 산입하지 않습니다</b>. ' +
+    '이 표는 미리보기입니다 — 확정은 급여 처리 화면에서 사람이 합니다.</div>';
+
   h2 += '<div class="note">가산율 — 연장 ×1.5 · 야간 ×0.5(가산분) · 휴일 8h이내 ×1.5 / 8h초과 ×2.0 (근기법 56조). ' +
     '5인 미만 사업장은 가산 없이 1.0배. 월급제는 주휴수당을 월급에 포함된 것으로 보아 따로 얹지 않습니다(이중지급 방지). ' +
     '시급 = 통상임금월액 ÷ 월 소정근로시간.</div>';
@@ -1642,6 +1713,20 @@ function render(){
   else if(App.screen==='report') { m.innerHTML=screenReport(); addPayrollReportHwpxAction(m); }
   else m.innerHTML=screenInbox();
 }
+/* 간이세액표 올리기 — 모양을 먼저 본다. 잘못된 파일이 들어가면 세금이
+   조용히 0 이 되거나 엉뚱해진다(가장 찾기 어려운 종류의 고장). */
+function importTaxTable(){var i=document.createElement('input');i.type='file';i.accept='.json';
+  i.onchange=function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();
+   r.onload=function(){try{
+     var t=JSON.parse(r.result);
+     if(!t||!t.rows||!t.rows.length) throw new Error('rows 가 없습니다 — 간이세액표 JSON이 맞는지 확인하세요');
+     var bad=t.rows.filter(function(x){return x.min==null||!x.tax||!x.tax.length;}).length;
+     if(bad) throw new Error(bad+'개 구간에 min 또는 tax 가 없습니다');
+     if(t.rows[t.rows.length-1].max!=null) throw new Error('마지막 구간에 상한이 있습니다 — 높은 급여가 「표없음」이 됩니다');
+     dbSet('tax_table',t);
+     alert('간이세액표 저장 완료 — '+(t.연도||'')+'년 · 구간 '+t.rows.length+'개 · 가족 칸 '+t.rows[0].tax.length+'개');
+   }catch(err){alert('간이세액표 오류: '+err.message);}};r.readAsText(f);};i.click();}
+window.importTaxTable=importTaxTable;
 function importCards(){var i=document.createElement('input');i.type='file';i.accept='.json';
   i.onchange=function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();
    r.onload=function(){try{var raw=JSON.parse(r.result);var a=Array.isArray(raw)?raw:Object.values(raw);dbSet('site_cards',a);alert('카드 '+a.length+'개 서버 저장 완료');}catch(err){alert('JSON 오류: '+err.message);}};r.readAsText(f);};i.click();}
