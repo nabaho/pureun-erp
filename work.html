@@ -1054,6 +1054,7 @@ function start(){
       if(appHasFocus()){ S._pend=true; return; } route(); },function(){ steps={}; });
     watchMapChildren(NS+'/tpl',function(value){ tpls=value||{}; },null,function(){ tpls={}; });
     peWatch();                                   // 푸른이알피 등록 → 자동 연동
+    succAutoSoon();                              // 승계표 → 퇴사자 업무 자동 승계
     calLoadPrefs().then(function(){ route(); }); // 캘린더 개인 설정(보임·보기·레이어)
   });
   document.addEventListener('focusout',function(){ setTimeout(function(){
@@ -1276,6 +1277,61 @@ function succOfName(name){
   }
   return to.name;
 }
+/* ══════════════════════════════════════════════════════════════════════════
+   승계표대로 «저절로» 넘긴다 (대표 지시 2026-08-27)
+   ══════════════════════════════════════════════════════════════════════════
+   "푸른이알피 또는 업무관리에서 승계정리를 하면 업무관리는 자동으로 승계되게 해달라"
+
+   ★ 표 한 줄이 세 곳을 움직인다 — 메일함은 «보기»만 바꾸면 되지만(자리를 안 옮긴다),
+     업무는 «주담당»을 실제로 바꿔야 그 사람 화면에 뜬다. 그래서 여기만 자동으로 쓴다.
+
+   ⚠ 지키는 것 다섯
+     ① 퇴사자만 — 재직자 몫을 표 하나로 옮기면 그 사람이 모르는 사이에 일이 사라진다
+     ② 진행 중인 것만 — 끝난 건은 지난 기록이다
+     ③ 한 건씩 _handoverTo 로 — 「담당 A → B (인수 확인 대기)」 기록이 건마다 남아야
+        누가 언제 넘겼는지 남는다. 통째로 갈아 끼우면 그것이 사라진다
+     ④ 멱등 — 이미 그 사람이 주담당이면 _handoverTo 가 건너뛴다. 두 사람이 같이 열어도
+        두 번 넘어가지 않는다
+     ⑤ 조용히 하지 않는다 — 몇 건이 왜 옮겨졌는지 알림으로 말해 준다.
+        말 없이 열세 건이 옮겨지면 「내 업무가 왜 늘었지」가 된다
+
+   ⚠ 자동이므로 «되돌리기»가 표 한 줄로는 안 된다(업무는 이미 넘어갔다). 그래서
+     사람이 표를 적을 때 그렇게 적어 두었다(succDeclare 의 물음). */
+var _succAutoDone=false;
+function succAutoSoon(){
+  /* 업무 목록이 아직 안 왔을 수 있다 — 조금 뒤에 한 번만 돈다 */
+  setTimeout(succAuto, 2500);
+}
+function succAuto(){
+  if(_succAutoDone) return;
+  if(!items || !Object.keys(items).length) return;      /* 아직 목록이 없다 — 다음 기회에 */
+  loadStaff().then(loadSucc).then(function(){
+    if(_succAutoDone) return;
+    var map=succMap(), keys=Object.keys(map);
+    if(!keys.length){ _succAutoDone=true; return; }
+    var moved=[];
+    keys.forEach(function(fromSid){
+      var from=staffBySid(fromSid);
+      if(!from||from.status!=='retired') return;         /* ① 퇴사자만 */
+      var toName=succOfName(from.name); if(!toName) return;
+      var to=staffByName(toName); if(!to||!to.sid) return;
+      var arr=openItems().filter(function(it){           /* ② 진행 중인 것만 */
+        var m=it.mgr_main||{};
+        return m.name===from.name && m.sid!==to.sid;     /* ④ 이미 넘어간 것은 뺀다 */
+      });
+      if(!arr.length) return;
+      /* ③ 한 건씩 — 기록에 «승계표대로»라고 남긴다. 사람이 그때 고른 것이 아니다. */
+      arr.forEach(function(it){ _handoverTo(it._id,to.sid,to.name,'승계표대로 자동'); });
+      moved.push(from.name+' → '+to.name+' '+arr.length+'건');
+    });
+    _succAutoDone=true;
+    if(moved.length){                                    /* ⑤ 조용히 하지 않는다 */
+      toast('🔗 승계표대로 넘겼습니다 — '+moved.join(' · ')+' (인수 확인 대기)');
+      setTimeout(route, 600);
+    }
+  }).catch(function(){ /* 못 읽어도 화면은 그대로 돈다 */ });
+}
+
 /* 승계표에 한 줄 적는다 — 메일함도 이 표를 본다 */
 function succSet(fromName,toSid,toName){
   var from=staffByName(fromName);
@@ -4219,7 +4275,9 @@ function doHandover(id){
   var sid=sel.value, name=sel.options[sel.selectedIndex].getAttribute('data-name');
   closeM(); _handoverTo(id,sid,name);
 }
-function _handoverTo(id,sid,name){
+/* why — 왜 넘겼는지 한 마디(선택). 승계표대로 «저절로» 넘긴 것은 사람이 그때 고른 것이
+   아니므로, 기록에 그렇게 적어야 나중에 「누가 이걸 옮겼지」가 안 된다. */
+function _handoverTo(id,sid,name,why){
   var it=items[id]; if(!it)return;
   if((it.mgr_main&&it.mgr_main.sid)===sid){ return; }
   var old={sid:(it.mgr_main&&it.mgr_main.sid)||'',name:(it.mgr_main&&it.mgr_main.name)||'—'};
@@ -4227,7 +4285,7 @@ function _handoverTo(id,sid,name){
   patchItem(id,{mgr_main:{sid:sid,name:name},mgr_subs:subs,
     ho:{from:old,to:{sid:sid,name:name},at:new Date().toISOString(),confirmed:false}}).then(function(ok){
     if(!ok)return;   // 담당 변경이 실패했으면 감사 로그를 남기지 않는다
-    addLog(id,'담당 '+old.name+' → '+name+' (인수 확인 대기)',todayStr(),'ho');
+    addLog(id,'담당 '+old.name+' → '+name+' (인수 확인 대기)'+(why?' · '+why:''),todayStr(),'ho');
     toast('🔄 담당 변경: '+name+' — 인수 확인 대기'); if(S.drawerId===id)renderDrawer(); route();
   });
 }
