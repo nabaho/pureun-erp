@@ -556,7 +556,10 @@ test('사진첩이 사람별로 갈려 있다 — 내 uid 를 owner 로 넘긴�
   assert.match(open, /listYear\(year, albumPickOwner\)/);
   // 2026-08-26 부터 자리는 «사진마다» 정한다 — 공유받은 것은 주인 자리다(pkOwnerOf).
   // 넘긴다는 뜻은 그대로다: 계정을 안 넘기면 저장 층이 거절한다.
-  const thumbs = gov.match(/function pkThumbs\([\s\S]*?\n\}/)[0];
+  /* ⚠ 실제로 받아 오는 곳은 pkThumbs 가 아니라 **pkThumbOne** 이다.
+     pkThumbs 는 화면에 보이는 칸을 훑기만 하고, 한 장을 받는 일은 pkThumbOne 이
+     한다(2026-08-27 확인 — 이 어긋남으로 main 이 빨간불이었다). */
+  const thumbs = gov.match(/function pkThumbOne\([\s\S]*?\n\}/)[0];
   assert.match(thumbs, /loadThumb\(it\.year, it\.id, pkOwnerOf\(it\)\)/);
   const pick = gov.match(/async function pkPut\([\s\S]*?\n\}/)[0];
   assert.match(pick, /loadFull\(s\.year, s\.id, pkOwnerOf\(it\)\|\|owner\)/, '내 계정을 안 넘깁니다');

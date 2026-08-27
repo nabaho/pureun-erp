@@ -20,7 +20,10 @@ const GOV = fs.readFileSync(path.join(ROOT, 'gov-consulting.html'), 'utf8');
 function slice(fromMark, toMark) {
   const a = GOV.indexOf(fromMark);
   const b = GOV.indexOf(toMark);
-  assert.ok(a > 0 && b > a, '표식을 못 찾았다: ' + fromMark);
+  /* ⚠ 어느 표식이 없는지 **집어서** 말한다. 앞 표식 이름만 대고 있어,
+     정작 없어진 것은 뒤 표식인데 앞엣것을 한참 찾았다(2026-08-27). */
+  assert.ok(a >= 0, '앞 표식을 못 찾았다: ' + fromMark);
+  assert.ok(b > a, '뒤 표식을 못 찾았다: ' + toMark + ' (앞 표식 ' + fromMark + ' 은 있다)');
   return GOV.slice(a, b);
 }
 function run(code, seed) {
@@ -31,7 +34,9 @@ function run(code, seed) {
 }
 
 const CLOSE_ASK = () => run(slice('function pkCloseAsk(', 'function pkTryClose('));
-const TOP = () => run(slice('function topOverlay(', 'function openPanelIds('));
+/* ⚠ 뒤 표식이 openPanelIds 였는데 openOverlayList 로 이름이 바뀌었다(2026-08-27).
+   함수는 그대로인데 검사만 옛 이름을 붙잡고 있어 main 이 빨간불이었다. */
+const TOP = () => run(slice('function topOverlay(', 'function openOverlayList('));
 
 /* ── 담은 것이 있으면 한 번 물어본다 ── */
 
