@@ -17,7 +17,7 @@
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <script src="js/pu-backup.js?v=1"></script>
-<script src="js/pu-labor-core.js?v=2"></script>
+<script src="js/pu-labor-core.js?v=3"></script>
 <script src="js/pu-hwp-engine.js?v=14"></script>
 <script src="hwpx_gen.js?v=14"></script>
 <script src="hwpx_doc.js?v=2"></script>
@@ -288,14 +288,14 @@ function dbSet(k,v){
   });
 }
 
-var App={screen:'cards',site:null,month:null};
+var App={screen:'cards',site:null,month:null,emp:null,day:null};
 /* ── 화면 이동 기록(직전 화면으로 되돌아가는 백 키) ──
    헤더 ← 버튼과 폰 물리 백키가 같은 History API를 공유. file://에선 pushState가
    막혀도(try/catch) 화면 전환은 정상, 폰 백키만 비활성(라이브 https에선 전부 동작). */
 var navDepth=0;
-function navSnap(){ return {screen:App.screen,site:App.site,month:App.month}; }
-function navSame(a,b){ return a.screen===b.screen&&a.site===b.site&&a.month===b.month; }
-function navApply(s){ App.screen=s.screen; App.site=s.site; App.month=s.month; }
+function navSnap(){ return {screen:App.screen,site:App.site,month:App.month,emp:App.emp,day:App.day}; }
+function navSame(a,b){ return a.screen===b.screen&&a.site===b.site&&a.month===b.month&&a.emp===b.emp&&a.day===b.day; }
+function navApply(s){ App.screen=s.screen; App.site=s.site; App.month=s.month; App.emp=s.emp||null; App.day=s.day||null; }
 function navSeed(){ navDepth=0; try{ history.replaceState({pnav:navSnap(),depth:0},''); }catch(e){} }
 function navTo(patch){
   var next=Object.assign(navSnap(),patch);
@@ -310,7 +310,7 @@ window.addEventListener('popstate',function(ev){
   if(st&&st.pnav){ navApply(st.pnav); navDepth=st.depth||0; render(); }
   // 시작점보다 더 뒤로 = 브라우저 기본(앱 이탈/포털) 허용
 });
-App.go=function(s){ navTo({screen:s,site:null,month:null}); };  // 기존 호출부 호환(탭 이동)
+App.go=function(s){ navTo({screen:s,site:null,month:null,emp:null,day:null}); };  // 기존 호출부 호환(탭 이동)
 var NAV=[{id:'cards',label:'⚙️ 설정 카드'},{id:'inbox',label:'📥 수신함'},{id:'payroll',label:'💰 급여 처리'},{id:'attend',label:'🕒 근태'},{id:'leave',label:'🌴 연차·휴가'},{id:'sever',label:'🎓 퇴직'},{id:'slip',label:'📄 명세서'},{id:'report',label:'📑 신고'}];
 var SIG={green:'#2E7D4F',orange:'#B26A00',red:'#C43D3D',gray:'#8a8f98'};
 function won(n){ return (n==null)?'-':Number(n).toLocaleString(); }
@@ -1428,6 +1428,246 @@ function policyBar(site) {
     '</div>';
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   일별 출퇴근 달력 — 하루씩 찍고, 법이 세는 시간은 코어가 센다
+   ──────────────────────────────────────────────────────────────────────
+   왜 달력이 필요한가: 월 합계(연장 10h)만 받으면 **주 12시간 한도**(근기법
+   53조)를 볼 수 없고, 야간 겹침(22~06시)·철야·주휴 개근도 판정할 수 없다.
+   하루 단위로 있어야 법 판단이 된다.
+
+   저장: attend[사업장|월|성명].일별 = [{date,in,out,breakMin,type}]
+   ⚠ 일별 기록이 있으면 **그것이 이긴다**(월 합계 손입력을 덮는다). 두 값이
+     다를 때 무엇이 진실인지 화면에 밝힌다 — 조용히 하나를 고르면 안 된다.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* 공휴일 — 휴일근로 판정에 쓴다. 연도별로 담는다(사업장 약정휴일도 여기).
+   ⚠ 넣지 않으면 주휴일(기본 일요일)만 휴일로 본다 — 설날·추석 근로가
+     평일 연장으로 계산되어 수당이 적게 나온다. 그래서 화면에서 알린다. */
+function holidayMap() { return lmap('holidays'); }
+function holidaysOf(year) {
+  var m = holidayMap()[String(year)];
+  return (m && m.list) ? m.list : [];
+}
+function setHolidays(year, text) {
+  var list = String(text || '').split(/[,\s]+/)
+    .map(function (x) { return x.trim(); })
+    .filter(function (x) { return /^\d{4}-\d{1,2}-\d{1,2}$/.test(x); })
+    .map(function (x) {
+      var p = x.split('-');
+      return p[0] + '-' + ('0' + p[1]).slice(-2) + '-' + ('0' + p[2]).slice(-2);
+    });
+  lput('holidays', String(year), { list: list });
+}
+
+/* 그 달의 일별 기록 (배열) */
+function dayRecords(site, month, name) {
+  var a = attendOf(site, month, name);
+  return (a && a.일별 && a.일별.length) ? a.일별 : [];
+}
+/* 일별 기록으로 낸 집계 — 없으면 null(부르는 쪽이 손입력을 쓴다) */
+function derivedAttend(site, month, name, P) {
+  var recs = dayRecords(site, month, name);
+  if (!recs.length) return null;
+  var y = laborYearOfMonth(month);
+  return LC.summarizeAttendance(recs, { policy: P, holidays: holidaysOf(y), weeklyOffDow: 0 });
+}
+/* 월 이름에서 연도 뽑기 — '2026-03'·'3월'·'23년 7월' 모두 온다.
+   ⚠ 연도를 못 찾으면 올해로 본다(최저임금·공휴일 연도가 어긋나면 값이 틀린다). */
+function laborYearOfMonth(month) {
+  var m = String(month || '').match(/(20\d{2})/);
+  if (m) return m[1];
+  var m2 = String(month || '').match(/^(\d{2})년/);
+  if (m2) return '20' + m2[1];
+  /* '25.05 늘봄반찬' 처럼 **두 자리 연도.월** 로 오는 시트가 실제로 있다.
+     이걸 놓치면 최저임금·공휴일 연도가 올해로 잡혀 과거 달 계산이 틀린다. */
+  var m3 = String(month || '').match(/(?:^|[^\d])(\d{2})[.\-\/](\d{1,2})(?!\d)/);
+  if (m3 && Number(m3[2]) >= 1 && Number(m3[2]) <= 12) return '20' + m3[1];
+  return laborYear();
+}
+/* 월 이름에서 '몇 월'인지 — 달력 격자를 그리려면 필요하다.
+   ⚠ 실제 시트 이름은 '3월'·'2026-03'·'23년 7월'·'25.05 늘봄반찬' 로 섞여 온다. */
+function laborMonthNum(month) {
+  var s = String(month || '');
+  var m = s.match(/(20\d{2})[-.\/]?(\d{1,2})/);
+  if (m && Number(m[2]) >= 1 && Number(m[2]) <= 12) return Number(m[2]);
+  var m2 = s.match(/(\d{1,2})\s*월/);
+  if (m2 && Number(m2[1]) >= 1 && Number(m2[1]) <= 12) return Number(m2[1]);
+  var m3 = s.match(/(?:^|[^\d])(\d{2})[.\-\/](\d{1,2})(?!\d)/);
+  if (m3 && Number(m3[2]) >= 1 && Number(m3[2]) <= 12) return Number(m3[2]);
+  return null;
+}
+
+var DAY_TYPES = [
+  { key: 'work', label: '근무' }, { key: 'holiday', label: '휴일근로' },
+  { key: 'annual', label: '연차' }, { key: 'half', label: '반차' },
+  { key: 'absent', label: '결근' }, { key: 'paid', label: '유급휴가' },
+  { key: 'unpaid', label: '무급휴가·휴직' }
+];
+function dayTypeLabel(t) {
+  for (var i = 0; i < DAY_TYPES.length; i++) if (DAY_TYPES[i].key === t) return DAY_TYPES[i].label;
+  return '근무';
+}
+
+/* 하루 기록 저장·삭제 — 같은 날짜는 덮어쓴다(두 줄이 되면 시간이 두 배로 센다) */
+function saveDay(site, month, name) {
+  var d = document.getElementById('dayDate'), i = document.getElementById('dayIn'),
+      o = document.getElementById('dayOut'), b = document.getElementById('dayBreak'),
+      t = document.getElementById('dayType'), nt = document.getElementById('dayNote');
+  if (!d || !d.value) { alert('날짜를 확인하세요.'); return; }
+  var type = t ? t.value : 'work';
+  var rec = { date: d.value, type: type };
+  if (type === 'work' || type === 'holiday') {
+    if (!i.value || !o.value) { alert('출근·퇴근 시각을 넣으세요. (휴가·결근이면 유형을 바꾸세요)'); return; }
+    rec.in = i.value; rec.out = o.value; rec.breakMin = Number(b.value || 0);
+  }
+  if (nt && nt.value) rec.note = nt.value;
+  var list = dayRecords(site, month, name).filter(function (r) { return r.date !== rec.date; });
+  list.push(rec);
+  list.sort(function (a, c) { return String(a.date) < String(c.date) ? -1 : 1; });
+  lput('attend', site + '|' + month + '|' + name, { 일별: list });
+  App.day = null;
+}
+function delDay(site, month, name, date) {
+  if (!confirm(date + ' 기록을 지울까요?')) return;
+  var list = dayRecords(site, month, name).filter(function (r) { return r.date !== date; });
+  lput('attend', site + '|' + month + '|' + name, { 일별: list });
+  App.day = null;
+}
+function clearDays(site, month, name) {
+  if (!confirm(name + ' 의 이 달 일별 기록을 모두 지울까요? (월 합계 손입력으로 돌아갑니다)')) return;
+  lput('attend', site + '|' + month + '|' + name, { 일별: [] });
+}
+
+/* ── 달력 화면 ── */
+function screenDayCalendar() {
+  var site = App.site, month = App.month, name = App.emp;
+  var P = policyFor(site), s = esc(site), m = esc(month), nm = esc(name);
+  var year = laborYearOfMonth(month), mon = laborMonthNum(month);
+  var h = '<h1>근태 달력</h1><div class="sub"><a href="#" onclick="navTo({emp:null,day:null});return false">← ' +
+    month + ' 직원표</a> · <b>' + name + '</b> · ' + year + '년 ' + (mon || '?') + '월</div>';
+
+  if (!mon) {
+    return h + '<div class="empty">이 시트 이름(' + month + ')에서 「몇 월」인지 읽지 못해 달력을 그릴 수 없습니다. ' +
+      '월 합계 입력을 쓰세요.</div>';
+  }
+
+  var recs = dayRecords(site, month, name);
+  var byDate = {};
+  recs.forEach(function (r) { byDate[r.date] = r; });
+  var holi = {};
+  holidaysOf(year).forEach(function (d) { holi[d] = 1; });
+
+  /* 달력 격자 — 일요일 시작. UTC 로 계산해 시간대로 하루 밀리는 일을 막는다. */
+  var first = new Date(Date.UTC(Number(year), mon - 1, 1));
+  var lead = first.getUTCDay();
+  var last = new Date(Date.UTC(Number(year), mon, 0)).getUTCDate();
+  var pad2s = function (n) { return (n < 10 ? '0' : '') + n; };
+
+  h += '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;background:#fff;table-layout:fixed">' +
+    '<tr style="background:var(--paper)">' +
+    ['일', '월', '화', '수', '목', '금', '토'].map(function (d, i) {
+      return '<th style="padding:6px;font-size:12px;color:' + (i === 0 ? 'var(--bad)' : (i === 6 ? '#2563eb' : 'inherit')) + '">' + d + '</th>';
+    }).join('') + '</tr><tr>';
+  var col = 0, i2;
+  for (i2 = 0; i2 < lead; i2++) { h += '<td style="border:1px solid var(--line);height:64px;background:#fafafa"></td>'; col++; }
+  for (var d2 = 1; d2 <= last; d2++) {
+    if (col === 7) { h += '</tr><tr>'; col = 0; }
+    var ds = year + '-' + pad2s(mon) + '-' + pad2s(d2);
+    var r = byDate[ds];
+    var isSun = (new Date(Date.UTC(Number(year), mon - 1, d2)).getUTCDay() === 0);
+    var isHoli = isSun || holi[ds];
+    var bg = r ? (r.type === 'absent' ? '#fdecec' : (r.type === 'holiday' ? '#fff4e5' :
+      (r.type === 'annual' || r.type === 'half' ? '#eaf5ea' : (r.type === 'unpaid' ? '#f1f1f1' : '#eef4ff')))) : '#fff';
+    var body = '';
+    if (r) {
+      if (r.type === 'work' || r.type === 'holiday') {
+        body = '<div style="font-size:10.5px;color:var(--sub)">' + (r.in || '') + '~' + (r.out || '') + '</div>' +
+          '<div style="font-size:11.5px;font-weight:700">' + (Math.round(LC.dayWorkedHours(r) * 100) / 100) + 'h</div>';
+      } else {
+        body = '<div style="font-size:11px;font-weight:600">' + dayTypeLabel(r.type) + '</div>';
+      }
+    }
+    h += '<td onclick="navTo({day:\'' + ds + '\'})" style="border:1px solid var(--line);height:64px;vertical-align:top;padding:4px;cursor:pointer;background:' + bg + '">' +
+      '<div style="font-size:11px;color:' + (isHoli ? 'var(--bad)' : 'var(--sub)') + '">' + d2 + (holi[ds] ? ' 공휴' : '') + '</div>' + body + '</td>';
+    col++;
+  }
+  while (col < 7) { h += '<td style="border:1px solid var(--line);height:64px;background:#fafafa"></td>'; col++; }
+  h += '</tr></table></div>';
+
+  /* 하루 편집 — 칸을 누르면 아래에 열린다 */
+  var sel = App.day;
+  if (sel) {
+    var cur = byDate[sel] || {};
+    h += '<div style="margin-top:12px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px">' +
+      '<b style="font-size:13px">' + sel + '</b>' +
+      '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12.5px">' +
+      '<input type="hidden" id="dayDate" value="' + sel + '">' +
+      '<label>유형 <select id="dayType" style="padding:5px 8px;border:1px solid var(--line);border-radius:6px">' +
+      DAY_TYPES.map(function (t) {
+        return '<option value="' + t.key + '"' + ((cur.type || 'work') === t.key ? ' selected' : '') + '>' + t.label + '</option>';
+      }).join('') + '</select></label>' +
+      '<label>출근 <input type="time" id="dayIn" value="' + (cur.in || '09:00') + '" style="padding:5px 6px;border:1px solid var(--line);border-radius:6px"></label>' +
+      '<label>퇴근 <input type="time" id="dayOut" value="' + (cur.out || '18:00') + '" style="padding:5px 6px;border:1px solid var(--line);border-radius:6px"></label>' +
+      '<label>휴게(분) <input type="number" id="dayBreak" value="' + (cur.breakMin == null ? 60 : cur.breakMin) + '" style="width:64px;padding:5px 6px;border:1px solid var(--line);border-radius:6px;text-align:right"></label>' +
+      '<input type="text" id="dayNote" placeholder="비고" value="' + esc(cur.note || '') + '" style="padding:5px 8px;border:1px solid var(--line);border-radius:6px;width:140px">' +
+      '<button class="btn" onclick="saveDay(\'' + s + '\',\'' + m + '\',\'' + nm + '\')">저장</button>' +
+      (byDate[sel] ? '<button class="btn sec" onclick="delDay(\'' + s + '\',\'' + m + '\',\'' + nm + '\',\'' + sel + '\')">지우기</button>' : '') +
+      '<button class="btn sec" onclick="navTo({day:null})">닫기</button>' +
+      '</div><div class="note" style="margin-top:8px">퇴근이 출근보다 이르면 <b>철야</b>로 봅니다(다음날 퇴근). ' +
+      '야간(22~06시) 겹침·연장·주휴는 저장하면 코어가 자동으로 셉니다.</div></div>';
+  } else {
+    h += '<div class="note">날짜 칸을 누르면 그 하루를 입력합니다.</div>';
+  }
+
+  /* 이 달 집계 — 코어가 센 값 */
+  var att = derivedAttend(site, month, name, P);
+  if (att) {
+    var A = att.합계;
+    var meta = empMeta(site, name);
+    var 시급 = LC.hourlyOrdinary(Number(meta.통상임금월액 || 0), P);
+    var al = LC.statutoryAllowances(att, 시급, { policy: P, payType: meta.급여형태 || 'monthly' });
+    h += '<h2 style="margin:18px 0 8px;font-size:15px">이 달 집계 (달력으로 계산)</h2>';
+    h += '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;background:#fff">' +
+      '<tr style="background:var(--paper)">' +
+      ['실근로', '소정내', '연장', '야간', '휴일 8h내', '휴일 8h초과', '주휴시간', '근로일', '결근', '연차사용', '법정수당'].map(function (c) {
+        return '<th style="padding:7px;text-align:right;white-space:nowrap">' + c + '</th>';
+      }).join('') + '</tr><tr style="border-top:1px solid var(--line);text-align:right">' +
+      [A.실근로, A.소정내, A.연장, A.야간, A.휴일8이내, A.휴일8초과, att.주휴시간].map(function (v) {
+        return '<td style="padding:7px">' + (Math.round(Number(v || 0) * 100) / 100) + 'h</td>';
+      }).join('') +
+      '<td style="padding:7px">' + A.근로일수 + '일</td>' +
+      '<td style="padding:7px">' + A.결근일수 + '일</td>' +
+      '<td style="padding:7px">' + A.연차사용 + '일</td>' +
+      '<td style="padding:7px;font-weight:700">' + won(al.법정수당합계) + '</td></tr></table></div>';
+    if (att.연장한도초과주 && att.연장한도초과주.length) {
+      h += '<div class="note" style="border-left:3px solid var(--bad)"><b>연장근로 주 12시간 한도 초과</b> — ' +
+        att.연장한도초과주.join(', ') + ' 주. 근기법 53조 위반이 될 수 있습니다(막지 않고 알립니다).</div>';
+    }
+    var cl = LC.compLeaveHours(att, P);
+    h += '<div class="note">보상휴가로 바꾸면 <b>' + cl.휴가시간 + '시간</b>(약 ' + cl.휴가일수 + '일) — 가산 포함 환산(근기법 57조). ' +
+      '<button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="clearDays(\'' + s + '\',\'' + m + '\',\'' + nm + '\')">일별 기록 모두 지우기</button></div>';
+  } else {
+    h += '<div class="note">아직 일별 기록이 없습니다. 날짜를 눌러 입력하면 여기에 집계가 나타나고, ' +
+      '직원표의 연장·야간·휴일 칸을 <b>달력 값이 대신합니다</b>.</div>';
+  }
+
+  /* 공휴일 — 없으면 명절 근로가 평일 연장으로 계산된다 */
+  var hs = holidaysOf(year);
+  h += '<h2 style="margin:18px 0 8px;font-size:15px">' + year + '년 공휴일·약정휴일</h2>' +
+    '<div style="background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px">' +
+    '<textarea id="holiText" rows="2" placeholder="2026-01-01, 2026-03-01, 2026-05-05 …" style="width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;font-size:12.5px">' +
+    hs.join(', ') + '</textarea>' +
+    '<div style="margin-top:8px;display:flex;gap:8px;align-items:center">' +
+    '<button class="btn" onclick="setHolidays(\'' + year + '\', document.getElementById(\'holiText\').value)">공휴일 저장</button>' +
+    '<span style="font-size:12px;color:var(--sub)">' + (hs.length ? hs.length + '일 등록됨' : '아직 없음 — 일요일만 휴일로 봅니다') + '</span></div></div>';
+  if (!hs.length) h += '<div class="note" style="border-left:3px solid var(--warn)">' +
+    '<b>공휴일을 넣지 않으면</b> 설날·추석·공휴일 근로가 평일 연장(×1.5)으로 계산되어 ' +
+    '휴일수당(8h 이내 ×1.5 / 초과 ×2.0)보다 적게 나올 수 있습니다.</div>';
+  return h;
+}
+window.saveDay = saveDay; window.delDay = delDay; window.clearDays = clearDays;
+window.setHolidays = setHolidays;
+
 /* ══════════════ ① 근태 ══════════════ */
 function screenAttend() {
   if (!LC) return '<h1>근태</h1><div class="empty">노동법 코어(js/pu-labor-core.js)를 불러오지 못했습니다.</div>';
@@ -1449,6 +1689,7 @@ function screenAttend() {
     });
     return h + '</div>';
   }
+  if (App.emp) return screenDayCalendar();
   var P = policyFor(App.site), emps = siteEmployees(App.site, App.month), m = esc(App.month);
   if (laborRec(App.site, App.month) && !laborEmpsReady(App.site, App.month)) return '<h1>근태</h1>' + '<div class="sub"><a href="#" onclick="goBack();return false">← 돌아가기</a></div>' + '<div class="empty">직원 표를 받고 있습니다… 잠시만 기다려 주세요.</div>';
   var h2 = '<h1>근태</h1><div class="sub"><a href="#" onclick="goBack();return false">← ' + App.site + '</a> · <b>' + App.month + '</b> 근태·법정수당 (' + emps.length + '명)</div>';
@@ -1463,17 +1704,25 @@ function screenAttend() {
     var nm = esc(e.성명), a = attendOf(App.site, App.month, e.성명), meta = empMeta(App.site, e.성명);
     var 통상 = Number(meta.통상임금월액 || e.기본급 || 0);
     var 시급 = LC.hourlyOrdinary(통상, P);
-    var att = { 합계: { 연장: Number(a.연장 || 0), 야간: Number(a.야간 || 0), 휴일8이내: Math.min(Number(a.휴일 || 0), P.dailyContractHours), 휴일8초과: Math.max(0, Number(a.휴일 || 0) - P.dailyContractHours) }, 주휴시간: 0, 연장한도초과주: [] };
+    /* 일별 달력 기록이 있으면 **그것이 이긴다** — 하루 단위여야 야간 겹침·철야·
+       주 12시간 한도·주휴 개근을 볼 수 있다. 손입력은 자료가 합계로만 올 때 쓴다. */
+    var der = derivedAttend(App.site, App.month, e.성명, P);
+    var att = der || { 합계: { 연장: Number(a.연장 || 0), 야간: Number(a.야간 || 0), 휴일8이내: Math.min(Number(a.휴일 || 0), P.dailyContractHours), 휴일8초과: Math.max(0, Number(a.휴일 || 0) - P.dailyContractHours) }, 주휴시간: 0, 연장한도초과주: [] };
     var al = LC.statutoryAllowances(att, 시급, { policy: P, payType: 'monthly' });
     tot += al.법정수당합계;
     var key = "'" + s + "','" + m + "','" + nm + "'";
     h2 += '<tr style="border-top:1px solid var(--line);text-align:right">' +
-      '<td style="padding:6px 8px;text-align:left;font-weight:600">' + (e.성명 || '') + '</td>' +
+      '<td style="padding:6px 8px;text-align:left;font-weight:600">' +
+        '<a href="#" onclick="navTo({emp:&#39;' + nm + '&#39;});return false" style="color:inherit">' + (e.성명 || '') + '</a>' +
+        (der ? ' <span class="badge ok" style="font-weight:400">달력</span>' : '') + '</td>' +
       '<td style="padding:6px 8px">' + nInput(meta.통상임금월액 == null ? (e.기본급 || '') : meta.통상임금월액, 'lput(\'emp_meta\',\'' + s + '|' + nm + '\',{통상임금월액:+this.value})', 92) + '</td>' +
       '<td style="padding:6px 8px;color:var(--sub)">' + won(Math.round(시급)) + '</td>' +
-      '<td style="padding:6px 8px">' + nInput(a.연장, 'setAttend(' + key + ',{연장:+this.value})') + '</td>' +
-      '<td style="padding:6px 8px">' + nInput(a.야간, 'setAttend(' + key + ',{야간:+this.value})') + '</td>' +
-      '<td style="padding:6px 8px">' + nInput(a.휴일, 'setAttend(' + key + ',{휴일:+this.value})') + '</td>' +
+      (der
+        ? ['연장','야간','휴일8이내'].map(function(k,ix){ var v = ix===2 ? (der.합계.휴일8이내+der.합계.휴일8초과) : der.합계[k];
+            return '<td style="padding:6px 8px;color:var(--sub)" title="달력으로 계산된 값">' + (Math.round(Number(v||0)*100)/100) + '</td>'; }).join('')
+        : '<td style="padding:6px 8px">' + nInput(a.연장, 'setAttend(' + key + ',{연장:+this.value})') + '</td>' +
+          '<td style="padding:6px 8px">' + nInput(a.야간, 'setAttend(' + key + ',{야간:+this.value})') + '</td>' +
+          '<td style="padding:6px 8px">' + nInput(a.휴일, 'setAttend(' + key + ',{휴일:+this.value})') + '</td>') +
       '<td style="padding:6px 8px">' + nInput(a.결근, 'setAttend(' + key + ',{결근:+this.value})', 48) + '</td>' +
       '<td style="padding:6px 8px">' + nInput(a.연차사용, 'setAttend(' + key + ',{연차사용:+this.value})', 48) + '</td>' +
       '<td style="padding:6px 8px">' + won(al.연장수당) + '</td>' +
@@ -1510,9 +1759,10 @@ function screenAttend() {
       기본급: 기본급,
       고정수당: Number(meta.고정수당 || 0),
       비과세: Number(meta.비과세 || 0),
-      근태집계: { 합계: { 연장: Number(a.연장 || 0), 야간: Number(a.야간 || 0),
-        휴일8이내: Math.min(Number(a.휴일 || 0), P.dailyContractHours),
-        휴일8초과: Math.max(0, Number(a.휴일 || 0) - P.dailyContractHours) }, 주휴시간: 0, 연장한도초과주: [] },
+      근태집계: derivedAttend(App.site, App.month, e.성명, P) ||
+        { 합계: { 연장: Number(a.연장 || 0), 야간: Number(a.야간 || 0),
+          휴일8이내: Math.min(Number(a.휴일 || 0), P.dailyContractHours),
+          휴일8초과: Math.max(0, Number(a.휴일 || 0) - P.dailyContractHours) }, 주휴시간: 0, 연장한도초과주: [] },
       policy: P, rates: LABOR_RATES, 연도: mwY,
       간이세액표: TT, 부양가족수: Number(meta.부양가족수 || 1), 자녀수: Number(meta.자녀수 || 0),
       최저임금시급: mwH, 월소정근로시간: P.monthlyStdHours,

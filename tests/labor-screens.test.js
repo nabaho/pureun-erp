@@ -12,6 +12,9 @@ function ok(name, cond, extra) {
   if (cond) { pass++; console.log('  PASS ' + name); }
   else { fail++; console.log('  FAIL ' + name + (extra ? ' — ' + extra : '')); }
 }
+function eq(name, got, want) {
+  ok(name + ' (=' + want + ')', got === want, '실제 ' + got);
+}
 function section(t) { console.log('\n── ' + t + ' ──'); }
 
 section('연결 — 코어 로드·메뉴·렌더');
@@ -27,8 +30,11 @@ ok('코어 스크립트가 화면 코드보다 먼저 온다',
 });
 
 section('규칙은 코어에만 — 화면에 계산식이 박히지 않았는가');
-// 화면 블록만 떼어 본다(코어 파일은 별도라 여기 없다)
-const i0 = H.indexOf('function screenAttend'), i1 = H.indexOf('function render()');
+/* 화면 블록만 떼어 본다(코어 파일은 별도라 여기 없다).
+   ⚠ 시작점은 달력·근태·연차·퇴직 코드가 모두 들어오도록 노동법 화면 블록의
+     첫 줄(var LC = …)로 잡는다. screenAttend 부터 잡으면 그보다 앞에 있는
+     달력 코드가 빠져 「코어를 부르는가」 검사가 헛돈다. */
+const i0 = H.indexOf('var LC = (typeof PuLaborCore'), i1 = H.indexOf('function render()');
 const SCR = H.slice(i0, i1 > i0 ? i1 : H.length);
 ok('화면 블록을 찾았다', SCR.length > 500, '길이 ' + SCR.length);
 ['statutoryAllowances', 'accrueAnnual', 'annualLedger', 'annualUnusedPay',
@@ -86,6 +92,55 @@ ok('최저임금 연도값을 코어에 넘긴다', /최저임금시급: mwH/.te
 ok('화면에 자녀공제 금액을 계산식으로 박지 않았다', !/\b12500\b|\b29160\b/.test(SCR));
 ok('코어에 자녀공제 금액이 있다', /12500/.test(CORE) && /29160/.test(CORE));
 ok('코어가 국세청 산식을 추정하지 않는다고 밝힌다', /산식을 짓지 않는다|산식을 공개하지 않는다/.test(CORE));
+
+
+section('일별 출퇴근 달력 — 연결');
+ok('screenDayCalendar 정의됨', H.indexOf('function screenDayCalendar(') > -1);
+ok('근태 화면이 직원 선택 시 달력으로 보낸다', H.indexOf('if (App.emp) return screenDayCalendar();') > -1);
+ok('화면 이동에 emp·day 차원이 있다(뒤로가기 동작)',
+  /emp:App\.emp/.test(H) && /a\.emp===b\.emp/.test(H) && /App\.day=s\.day/.test(H));
+['saveDay', 'delDay', 'clearDays', 'setHolidays'].forEach(function (fn) {
+  ok(fn + ' 정의·노출',
+    H.indexOf('function ' + fn + '(') > -1 && H.indexOf('window.' + fn + ' = ' + fn) > -1);
+});
+ok('달력 집계는 코어가 한다(LC.summarizeAttendance)', SCR.indexOf('LC.summarizeAttendance(') > -1);
+ok('일별 기록이 손입력을 대신한다(derivedAttend 우선)',
+  /var der = derivedAttend\(/.test(SCR) && /var att = der \|\|/.test(SCR));
+ok('미리보기도 달력 값을 쓴다', /근태집계: derivedAttend\(/.test(SCR));
+ok('같은 날짜는 덮어쓴다(두 줄이면 시간이 두 배로 센다)',
+  /filter\(function \(r\) \{ return r\.date !== rec\.date; \}\)/.test(H));
+ok('공휴일 없으면 화면이 경고한다', /공휴일을 넣지 않으면/.test(H));
+ok('주 12시간 한도 초과를 알린다', /연장근로 주 12시간 한도 초과/.test(H));
+ok('달력 값 칸은 읽기전용으로 둔다(두 값이 싸우지 않게)', /달력으로 계산된 값/.test(H));
+
+section('월 이름 읽기 — 실제 시트 이름이 제각각이다');
+/* 급여대장 시트 이름은 '3월'·'2026-03'·'23년 7월'·'25.05 늘봄반찬' 등으로 섞여 온다.
+   여기서 연·월을 잘못 읽으면 달력이 안 그려지거나 최저임금 연도가 어긋난다. */
+const grabFn = (name) => {
+  const i = H.indexOf('function ' + name + '(');
+  if (i < 0) throw new Error('못 찾음: ' + name);
+  let d = 0, st = false;
+  for (let j = i; j < H.length; j++) {
+    if (H[j] === '{') { d++; st = true; }
+    else if (H[j] === '}') { d--; if (st && d === 0) return H.slice(i, j + 1); }
+  }
+  throw new Error('괄호 안 닫힘: ' + name);
+};
+const laborYear = () => '2026';
+eval(grabFn('laborYearOfMonth'));
+eval(grabFn('laborMonthNum'));
+eq("'2026-03' → 2026년", laborYearOfMonth('2026-03'), '2026');
+eq("'2026-03' → 3월", laborMonthNum('2026-03'), 3);
+eq("'3월' → 3월", laborMonthNum('3월'), 3);
+eq("'3월' → 연도 없으면 올해", laborYearOfMonth('3월'), '2026');
+eq("'23년 7월' → 2023년", laborYearOfMonth('23년 7월'), '2023');
+eq("'23년 7월' → 7월", laborMonthNum('23년 7월'), 7);
+eq("'25.05 늘봄반찬' → 5월", laborMonthNum('25.05 늘봄반찬'), 5);
+eq('월을 못 읽으면 null (달력 대신 합계 입력 안내)', laborMonthNum('놀봄모종'), null);
+eq("'25.05 늘봄반찬' → 2025년", laborYearOfMonth('25.05 늘봄반찬'), '2025');
+eq("'25.12' → 12월", laborMonthNum('25.12'), 12);
+eq('13월 같은 헛값은 안 받는다', laborMonthNum('25.13'), null);
+eq("'23년 7월 사계절찬' → 7월", laborMonthNum('23년 7월 사계절찬'), 7);
 
 console.log('\n════════════════════════════════');
 console.log('  통과 ' + pass + ' · 실패 ' + fail);
