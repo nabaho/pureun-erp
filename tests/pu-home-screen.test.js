@@ -1763,6 +1763,45 @@ test('★ 갈래는 대시보드 카드로 고른다 — 카드가 우리 자료
     'main 에 max-width 가 남아 있습니다 — 화면 전체를 쓰라는 지시입니다');
 });
 
+/* ══════ 「남김」과 대조 딱지 (6차 검토에서 나온 것) ══════
+   실제 화면이 «같은 것»을 두고 카드에는 「할 일 2」, 할 일 칸에는 「3명」이라고 적고 있었다.
+   원인: 남기기 예외를 표시해도 그 사람의 «지난» 대조 딱지(내릴 것)가 그대로 남아,
+   카드(남김을 아는 셈)와 할 일 목록(딱지만 보는 셈)이 서로 다른 답을 냈다. */
+test('★ 「남김」인데 「내릴 것」이 남아 있으면 지난 딱지로 보고 「확인 전」으로 되돌린다', () => {
+  const ctx = rosterBox([{ name: '장한돌', leftAt: '2023-12-31' }], {
+    at: 1, members: { '140': { name: '장한돌', status: 'toRemove', reason: '명부 퇴사' } },
+    pages: {}, duplicates: [], leftovers: {}
+  });
+  ctx.App.members = { '140': { name: '장한돌',
+    keepOnSite: { at: '2026-08-18', by: '권형하', why: '세종지사장 — 고용관계 아님' } } };
+  ctx.App.pages = {}; ctx.App.pageConfig = {};
+  const r = plain(ctx.memberRows())[0];
+  /* 부품은 남기기 예외가 있으면 toRemove 를 내지 않는다 — 함께 있으면 지난 딱지다 */
+  assert.equal(r.status, '', '「남김」인데 「내릴 것」 딱지를 그대로 믿었습니다');
+  assert.match(r.reason, /확인 전/, '왜 딱지가 사라졌는지 안 적었습니다');
+  assert.equal(r.kept, true, '「남김」 표시가 사라졌습니다');
+  /* 카드와 할 일이 «같은 수»를 말해야 한다 */
+  assert.equal(ctx.statOf('members').hot, 0, '남긴 사람이 카드의 할 일로 남았습니다');
+  const 남은줄 = ctx.rowsWith(x => x.status === 'toRemove');
+  assert.equal(남은줄.length, 0, '할 일 목록이 남긴 사람을 「내릴 것」으로 셌습니다');
+});
+
+test('★ 「남김」은 퇴사 판정만 면제한다 — 내용이 안 올라갔으면 할 일이다', () => {
+  /* 편집칸 안내도 「내용 대조만 합니다」라고 적혀 있다. 남김을 먼저 보면 남긴 사람의
+     경력을 고쳐 「안 올라감」이 되어도 카드가 조용해, 안 올린 글을 올린 줄 알게 된다. */
+  const ctx = rosterBox([{ name: '장한돌', leftAt: '2023-12-31' }], {
+    at: 1, members: { '140': { name: '장한돌', status: 'pending', reason: '고친 뒤 확인 전' } },
+    pages: {}, duplicates: [], leftovers: {}
+  });
+  ctx.App.members = { '140': { name: '장한돌',
+    keepOnSite: { at: '2026-08-18', by: '권형하', why: '세종지사장' } } };
+  ctx.App.pages = {}; ctx.App.pageConfig = {};
+  const r = plain(ctx.memberRows())[0];
+  assert.equal(r.status, 'pending', '「안 올라감」 딱지가 사라졌습니다');
+  assert.equal(ctx.needsAttentionRow(r), true, '남긴 사람이라고 「안 올라감」을 넘겼습니다');
+  assert.equal(ctx.statOf('members').hot, 1, '카드가 조용합니다 — 안 올린 글을 올린 줄 압니다');
+});
+
 test('★ 「손댈 것」 딱지에 적힌 수와 눌러서 나온 줄 수가 같다', () => {
   /* 딱지에 3 이라 적혀 있는데 눌러 보니 5줄이면 어느 쪽이 맞는지 알 수 없다.
      ★ 겹쳐 세지 않는 것까지 함께 지킨다 — 박성수처럼 «명부 퇴사»이면서 «홈페이지에도
