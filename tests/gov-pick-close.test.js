@@ -31,7 +31,11 @@ function run(code, seed) {
 }
 
 const CLOSE_ASK = () => run(slice('function pkCloseAsk(', 'function pkTryClose('));
-const TOP = () => run(slice('function topOverlay(', 'function openPanelIds('));
+/* ★ 끝 표식은 topOverlay «바로 다음»에 오는 함수로 잡는다. 예전에는 openPanelIds 를
+   끝으로 삼았는데 그 함수가 없어지자(2026-08-27 요금 줄이기) 이 검사가 깨져
+   저장소 전체 배포가 막혔다. 이 검사가 지키는 것은 「맨 위 창 하나만 닫는가」이지
+   옆 함수의 이름이 아니다. */
+const TOP = () => run(slice('function topOverlay(', 'function openOverlayList('));
 
 /* ── 담은 것이 있으면 한 번 물어본다 ── */
 
