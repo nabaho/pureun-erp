@@ -1354,7 +1354,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
       </span>
     </div>
     <div class="pka-bar2" id="pkaChips"></div>
-    <div class="pka-body" id="pkaBody"></div>
+    <div class="pka-body" id="pkaBody" onscroll="pkOnScroll()"></div>
     <div class="pka-tray">
       <span class="pka-trayhead">🧺 담은 것 <b id="pkaCnt">0장</b></span>
       <span class="pka-slots" id="pkaSlots"></span>
@@ -1819,6 +1819,7 @@ const FB_CONFIG={
 // localStorage 키 → Firebase 노드 매핑 (scal_ 접두어)
 const FB_NODES={p_staff:'scal_staff',p_types:'scal_types',p_cos:'scal_cos',p_scheds:'scal_scheds',p_env:'scal_env',p_fieldState:'scal_fieldState',p_conflictMatrix:'scal_conflictMatrix',p_erpTypeMap:'scal_erpTypeMap',p_erpConsHold:'scal_erpConsHold'};
 let FB_READY=false, _fbDB=null, _fbSuppress=false;
+const _heldSnap={};   // 쓰는 중에 구독이 받아 둔 값 — 다시 안 받으려고 붙든다
 let _savePending=0, _saveFailed=false, _releaseLockAfterSave=false;
 const _recordWriteQueue={},_recordWritePending={};
 
@@ -1976,15 +1977,6 @@ window.addEventListener('storage',e=>{if(_editLockCo&&e.key===_editLockLocalKey(
 window.addEventListener('beforeunload',()=>{_releaseCompanyEditLockNow();});
 
 // [포털 연동] 루프 차단기: 10초 내 2회 이상 포털로 이동했다면 더 이상 이동하지 않음 (무한루프 구조적 차단)
-function _govBounceOK(){
-  try{
-    const k='pu_sso_bounce', now=Date.now();
-    const arr=(JSON.parse(sessionStorage.getItem(k)||'[]')||[]).filter(t=>now-t<10000);
-    if(arr.length>=2) return false;
-    arr.push(now); sessionStorage.setItem(k,JSON.stringify(arr));
-    return true;
-  }catch(e){ return false; }
-}
 function fbInit(){
   try{
     firebase.initializeApp(FB_CONFIG);
@@ -2068,7 +2060,11 @@ function fbSubscribe(){
   for(const[lsKey,node]of Object.entries(FB_NODES)){
     _fbDB.ref(node).on('value',snap=>{
       if(!snap.exists())return;
-      if((_recordWritePending[node]||0)>0)return;
+      /* ⚠ 내가 쓰는 중이면 «지금은» 반영하지 않는다. 다만 받은 값은 버리지 않고
+         적어 둔다 — 자료는 이미 내려받았다. 예전에는 버리고 나서 쓰기가 끝난 뒤
+         once() 로 «같은 것을 한 번 더» 받았다. 저장할 때마다 사업장·일정을 두 번
+         내려받은 셈이다(2026-08-25 비용 점검). */
+      if((_recordWritePending[node]||0)>0){ _heldSnap[node]=snap.val(); return; }
       const val=snap.val();
       if((lsKey==='p_cos'||lsKey==='p_scheds')&&_isBulkShrink(JSON.parse(localStorage.getItem(lsKey)||'[]'),val)){
         console.warn('[안전장치] 실시간 비정상 축소 반영 보류:',lsKey);
@@ -2141,11 +2137,21 @@ function fbPushRecordDelta(lsKey,beforeValue,afterValue){
     .finally(()=>{
       _recordWritePending[node]=Math.max(0,(_recordWritePending[node]||1)-1);
       if(_recordWritePending[node]===0){
-        _fbDB.ref(node).once('value').then(snap=>{
-          const val=_idRows(snap.val());
+        /* 구독이 이미 받아 둔 것이 있으면 그것을 쓴다 — 다시 받지 않는다.
+           없을 때만(구독 전이거나 이벤트가 아직 안 온 경우) 한 번 읽는다. */
+        const held=_heldSnap[node];
+        if(held!=null){
+          delete _heldSnap[node];
+          const val=_idRows(held);
           _fbSuppress=true;try{lsSet(lsKey,JSON.stringify(val));}finally{_fbSuppress=false;}
           if(typeof renderDash==='function'){renderSummaryBar();renderDash();renderCal();renderNotifBadge();}
-        }).catch(()=>{});
+        }else{
+          _fbDB.ref(node).once('value').then(snap=>{
+            const val=_idRows(snap.val());
+            _fbSuppress=true;try{lsSet(lsKey,JSON.stringify(val));}finally{_fbSuppress=false;}
+            if(typeof renderDash==='function'){renderSummaryBar();renderDash();renderCal();renderNotifBadge();}
+          }).catch(()=>{});
+        }
       }
     });
   _recordWriteQueue[node]=task;
@@ -2284,8 +2290,32 @@ function openPhotoDB(){
     req.onerror=e=>rej(e);
   });
 }
+/* ⚠ 저장이 «끝날 때까지» 기다린다 (2026-08-25 검토).
+   예전에는 넣으라고 시키기만 하고 기다리지 않았다. 화면에는 방금 넣은 사진이
+   메모리에서 그대로 보이므로 **저장된 줄 안다.** 다음에 열면 없다.
+   저장 공간이 꽉 찼을 때(QuotaExceeded) 특히 그렇다 — 사진은 한 장에 수백KB라
+   금방 찬다. 그래서 실패를 «돌려주고», 부르는 쪽에서 사람에게 알린다.
+   ⚠ 예외를 던지지 않는다 — 기다리지 않고 부르는 자리가 여럿이라, 던지면
+     잡히지 않은 거절이 되어 다른 일까지 멈춘다. */
 async function savePhotoToDB(sid,key,dataUrl){
-  try{const db=await openPhotoDB();const tx=db.transaction('photos','readwrite');tx.objectStore('photos').put(dataUrl,`${sid}_${key}`);}catch(e){console.warn('사진 저장 실패',e);}
+  try{
+    const db=await openPhotoDB();
+    await new Promise((res,rej)=>{
+      const tx=db.transaction('photos','readwrite');
+      tx.objectStore('photos').put(dataUrl,`${sid}_${key}`);
+      tx.oncomplete=()=>res();
+      tx.onabort=tx.onerror=()=>rej(tx.error||new Error('저장이 중단되었습니다'));
+    });
+    return true;
+  }catch(e){ console.warn('사진 저장 실패',e); _lastPhotoSaveErr=e; return false; }
+}
+let _lastPhotoSaveErr=null;
+/* 저장 공간이 꽉 찬 것과 그 밖의 고장을 갈라 알린다 — 할 일이 서로 다르다. */
+function photoSaveFailMsg(){
+  const e=_lastPhotoSaveErr, nm=String((e&&(e.name||e.message))||'');
+  return /Quota|quota/.test(nm)
+    ? '사진 저장 공간이 찼습니다 — 옛 일정의 사진을 ZIP으로 내보낸 뒤 지워 주세요'
+    : '사진을 저장하지 못했습니다 — 다시 시도해 주세요';
 }
 async function deletePhotoFromDB(sid){
   try{const db=await openPhotoDB();const tx=db.transaction('photos','readwrite');const st=tx.objectStore('photos');for(let i=0;i<PHOTO_MAX_SLOTS;i++){st.delete(`${sid}_c${i}`);st.delete(`${sid}_o${i}`);st.delete(`${sid}_f${i}`);}}catch(e){}
@@ -3112,12 +3142,14 @@ function markAlbumUsed(ref, sid){
   }catch(err){ console.warn('[사진첩 사용 표시]',err); }
 }
 
-/* ══════ 사진첩에서 고르기 (창 하나로) ══════
+/* ══════ 사진첩에서 고르기 ══════
    끌어다 놓기는 두 창을 나란히 띄워야 되므로, 창 하나로도 넣을 수 있는 길을
-   더한다(대표 지시). 방문일 필터는 두지 않는다 — 대부분 폰으로 찍어 그때그때
-   올리므로 날짜를 가려 볼 필요가 없다(대표 결정, 2026-08-04). 처음부터 전체를
-   보여주고 편집자가 알아서 고른다.
+   더한다(대표 지시).
 
+   ⚠ 「방문일 필터는 두지 않는다」(2026-08-04)는 **뒤집혔다.** 2026-08-25 승인
+     목업은 방문일을 «기본으로 켜고», 그 날 사진이 없을 때만 스스로 끈다.
+     사진이 쌓이자 전체부터 보여 주는 것이 오히려 못 찾게 만들었다.
+     되돌리지 말 것.
    ⚠ 사진첩이 사람별로 갈려 있다 — **내 uid 를 항상 owner 로 넘긴다.**
    안 넘기면 저장 층이 "계정을 알 수 없습니다"로 거절한다(로그인만으로는
    사진첩 쪽 계정을 모른다 — 이 화면은 signIn 을 부르지 않는다). */
@@ -3348,6 +3380,7 @@ function pkTryClose(){
 }
 
 function closePickAll(){
+  if(_pkScrollT){ clearTimeout(_pkScrollT); _pkScrollT=null; }
   closeModal('mbPickAll');
   albumPickTarget=null; albumPickItems=[]; PK.sel=[];
 }
@@ -3445,23 +3478,64 @@ function pkPaintBody(){
   pkThumbs();
 }
 
-/* 미리보기 — «보이는 것만» 받는다 */
-function pkThumbs(){
+/* 미리보기 — «화면에 들어온 것만» 받는다.
+   ⚠ 예전에는 «걸러진 전부»를 받았다. 「전체」나 「지난해도 보기」를 누르면
+     수백 장을 한꺼번에 내려받는다 — 느리기도 하지만 창고 요금이 그만큼 나간다.
+     이제 스크롤해서 눈에 들어올 때 받는다. 한 번 받은 것은 PK.thumbs 에
+     남아 다시 안 받는다(격자를 다시 그려도, 담은 칸에서도 그것을 쓴다).
+   (2026-08-25 비용 점검) */
+/* 미리보기 — «화면에 들어온 것만» 받는다.
+   ⚠ 예전에는 «걸러진 전부»를 받았다. 「전체」나 「지난해도 보기」를 누르면
+     수백 장을 한꺼번에 내려받는다 — 느리기도 하지만 창고 요금이 그만큼 나간다.
+     이제 눈에 보이는 것과 그 앞 한 화면치만 받는다. 한 번 받은 것은
+     PK.thumbs 에 남아 다시 안 받는다(격자를 다시 그려도, 담은 칸에서도 쓴다).
+   ⚠ IntersectionObserver 를 안 쓴다 — 화면이 «안 그려지는» 상황에서 한 장도
+     안 받는 일이 생긴다(검사 중에 실제로 0장이 나왔다). 자리를 직접 재면
+     그런 구멍이 없고, 몇 장을 받았는지 세어 검사로 지킬 수도 있다.
+   (2026-08-25 비용 점검) */
+const PK_AHEAD=400;            // 눈에 들어오기 «전» 얼마까지 미리 받나(px)
+let _pkScrollT=null;
+
+function pkThumbOne(cell){
   /* ⚠ 자리는 사진마다 다르다 — 공유받은 것은 «주인 자리»에 있다.
      한 값으로 묶어 두면 공유받은 사진만 통째로 안 보인다. */
+  const id=cell.parentElement && cell.parentElement.dataset.pkId;
+  if(!id || cell.querySelector('img') || cell.dataset.on==='1') return false;
+  if(PK.thumbs[id]){ pkPutImg(cell, PK.thumbs[id]); return false; }
+  const it=albumPickItems.find(function(x){ return x.id===id; });
+  if(!it) return false;
+  cell.dataset.on='1';
   const owner=albumPickOwner;
-  pkShown().forEach(function(it){
-    const cell=q('#pkaBody [data-pk-id="'+CSS.escape(it.id)+'"] .pka-thumb');
-    if(!cell || cell.querySelector('img')) return;
-    if(PK.thumbs[it.id]){ pkPutImg(cell, PK.thumbs[it.id]); return; }
-    PuPhotoStore.loadThumb(it.year, it.id, pkOwnerOf(it)).then(function(t){
-      if(!t || owner!==albumPickOwner) return;
-      PK.thumbs[it.id]=t;
-      const c=q('#pkaBody [data-pk-id="'+CSS.escape(it.id)+'"] .pka-thumb');
-      if(c && !c.querySelector('img')) pkPutImg(c, t);
-      pkPaintTray();          // 담은 칸에도 그림이 들어가야 한다
-    }).catch(function(){});
+  PuPhotoStore.loadThumb(it.year, it.id, pkOwnerOf(it)).then(function(th){
+    if(!th || owner!==albumPickOwner) return;
+    PK.thumbs[id]=th;
+    const c=q('#pkaBody [data-pk-id="'+CSS.escape(id)+'"] .pka-thumb');
+    if(c && !c.querySelector('img')) pkPutImg(c, th);
+    pkPaintTray();          // 담은 칸에도 그림이 들어가야 한다
+  }).catch(function(){ cell.dataset.on=''; });
+  return true;
+}
+
+/* 지금 보이는 범위(+앞 한 화면) 안의 것만 받는다. 새로 받은 장수를 돌려준다.
+   ⚠ offsetTop 으로 재면 안 된다 — 칸(.pka-cell)이 position:relative 라
+     그 안의 미리보기는 offsetTop 이 늘 0 이다. 전부 「맨 위」로 잡혀 120장을
+     한꺼번에 받았다(검사에서 잡힘). 실제 자리는 getBoundingClientRect 로 잰다. */
+function pkThumbs(){
+  const root=q('#pkaBody'); if(!root)return 0;
+  const rr=root.getBoundingClientRect();
+  const top=rr.top-PK_AHEAD, bot=rr.bottom+PK_AHEAD;
+  let n=0;
+  root.querySelectorAll('.pka-cell').forEach(function(cell){
+    const r=cell.getBoundingClientRect();
+    if(r.bottom<top || r.top>bot) return;
+    const th=cell.querySelector('.pka-thumb');
+    if(th && pkThumbOne(th)) n++;
   });
+  return n;
+}
+function pkOnScroll(){
+  if(_pkScrollT) return;
+  _pkScrollT=setTimeout(function(){ _pkScrollT=null; pkThumbs(); }, 90);
 }
 
 function pkPutImg(box, src){ const im=document.createElement('img'); im.src=src; box.appendChild(im); }
@@ -3663,7 +3737,6 @@ const ST={sid:null,photos:[null,null],times:[null,null],done:[false,false],pos:'
 function todayStr(){const d=new Date();return `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;}
 function p2(n){return String(n).padStart(2,'0');}
 function uid(){return Math.random().toString(36).slice(2,10);}
-function isSun(ds){return new Date(ds).getDay()===0;}
 function isBlocked(ds){
   const env=getEnv();
   if(getHoliday(ds)&&env.allowHoliday!==false)return null; // 공휴일은 등록 허용
@@ -4134,7 +4207,10 @@ function runPhotoQueue(){
 }
 
 // ===== E: 백업/복원 =====
-const BK_KEYS=['p_staff','p_types','p_cos','p_scheds','p_fieldState','p_env','p_conflictMatrix'];
+/* ⚠ 클라우드로 오가는 칸(FB_NODES)과 «같아야» 한다 (2026-08-25 검토).
+   p_erpTypeMap(ERP 연결)·p_erpConsHold(안 가져옴)가 빠져 있어서, 백업으로
+   되살리면 ERP 연결이 전부 풀리고 신규 컨설팅을 매일 다시 물어보게 됐다. */
+const BK_KEYS=['p_staff','p_types','p_cos','p_scheds','p_fieldState','p_env','p_conflictMatrix','p_erpTypeMap','p_erpConsHold'];
 function buildBackupData(){
   const d={version:1,exported:new Date().toISOString()};
   BK_KEYS.forEach(k=>d[k]=localStorage.getItem(k));
@@ -4211,6 +4287,20 @@ function serverBackupDaily(force){
   if(!FB_READY||!_fbDB)return Promise.resolve(false);
   const id=sbkId();
   if(!force&&localStorage.getItem('p_lastServerBk')===id)return Promise.resolve(false);
+  /* ⚠ 「했다」는 표가 «내 기기»에만 있어서, 직원 수만큼 같은 백업을 다시 썼다.
+     열 명이 로그인하면 하루 스무 번이 아니라 «이백 번» 쓰는 셈이다.
+     그래서 클라우드 목록을 먼저 본다 — 목록 한 줄은 「언제·몇 건」뿐이라
+     내려받는 양이 거의 없다. 큰 것을 쓰기 전에 작은 것을 읽는다.
+     (2026-08-25 비용 점검) */
+  if(!force){
+    return _fbDB.ref(SBK_IDX+'/'+id+'/savedAt').once('value').then(s=>{
+      if(s.exists()){ lsSet('p_lastServerBk',id); return false; }   // 누가 이미 했다
+      return sbkWrite(id);
+    }).catch(()=>sbkWrite(id));
+  }
+  return sbkWrite(id);
+}
+function sbkWrite(id){
   const data=buildBackupData();
   if(!sbkWorthSaving(data)){ console.warn('[서버백업] 데이터가 비어 건너뜀'); return Promise.resolve(false); }
   const payload=JSON.stringify(data);
@@ -4382,11 +4472,6 @@ async function saveCanvasAs(cv,fn){
   document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
   toast(`저장됨: ${fn}`);
-}
-
-function dlCanvas(sid,idx,fn){
-  const cv=PHOTOS[sid]?.[`c${idx}`];if(!cv)return;
-  saveCanvasAs(cv,fn);
 }
 
 // ===== 로그인 / 권한 =====
@@ -6360,13 +6445,6 @@ function revertRoundChange(id){
   });
 }
 
-function validateRoundOrder(coId,typeId,newDate,excludeId=null){
-  // 날짜 중복만 체크 (회차는 저장 후 재정렬로 처리)
-  const dup=getScheds().find(s=>s.coId===coId&&s.typeId===typeId&&s.date===newDate&&s.id!==excludeId);
-  if(dup)return `${newDate}에 이미 등록된 일정이 있습니다`;
-  return null;
-}
-
 async function handleDrop(date,item){
   const blockMsg=isBlocked(date);
   if(blockMsg){toast(blockMsg,'err');return;}
@@ -7396,37 +7474,6 @@ function renderEnv(){
     </div>`).join('');
 }
 
-function renderAttLimitList(){
-  const env=getEnv();
-  const staff=getStaff();
-  // 개인별 초과 여부 표시용
-  const today=todayStr();
-  q('#attLimitList').innerHTML=staff.map(s=>{
-    const maxKey=`attMax_${s.id}`;
-    const maxVal=env[maxKey]??env.maxDailyPerAtt;
-    // 오늘 이 노무사 담당 건수
-    const todayCnt=getScheds().filter(sc=>sc.date===today&&(sc.attId===s.id||getCoAtts(sc).includes(s.id))).length;
-    const over=maxVal>0&&todayCnt>=maxVal;
-    return `<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--sf2);">
-      <span style="width:10px;height:10px;border-radius:50%;background:${s.color};flex-shrink:0;display:inline-block;"></span>
-      <div style="flex:1;">
-        <div style="font-size:13px;font-weight:800;">${s.name}</div>
-        <div style="font-size:10px;color:${over?'var(--danger)':'var(--t2)'};margin-top:1px;">오늘 ${todayCnt}건 담당${maxVal>0?` / 최대 ${maxVal}건`:' / 무제한'}${over?' ⚠️ 초과':''}</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px;">
-        <span style="font-size:10px;color:var(--t2);">최대</span>
-        <input type="number" min="0" max="20" value="${maxVal}"
-          style="width:52px;padding:5px;border:1.5px solid var(--border);border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;text-align:center;outline:none;background:var(--surface);"
-          onchange="saveEnvField('attMax_${s.id}',+this.value);renderAttLimitList();">
-        <span style="font-size:10px;color:var(--t2);">건 (0=무제한)</span>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function renderExclusiveList(){
-  renderConflictMatrix();
-}
 function renderConflictMatrix(){
   const box=q('#conflictMatrix'); if(!box)return;
   const types=getTypes().filter(t=>t.active!==false);
@@ -7849,8 +7896,9 @@ async function simpleStampFile(sid,slotIdx,file,t){
   const prev=await getPhotoFromDB(sid,key);
   if(!PHOTOS[sid])PHOTOS[sid]={};
   PHOTOS[sid][key]=cv;
-  await savePhotoToDB(sid,key,cv.toDataURL('image/jpeg',.92));
-  await savePhotoToDB(sid,okey,origDurl);
+  const okSave=await savePhotoToDB(sid,key,cv.toDataURL('image/jpeg',.92));
+  if(!okSave){ if(PHOTOS[sid])PHOTOS[sid][key]=null; toast(photoSaveFailMsg(),'err'); return false; }
+  await savePhotoToDB(sid,okey,origDurl);   // 원본은 못 남겨도 증빙은 살아 있다
   await markPlain(sid,slotIdx,!withStamp);
   // 중복 사진 지문 등록 (촬영 모달 경로와 동일하게 — 다른 회차 재사용 시 경고되도록)
   try{ const h=await hashDataUrl(origDurl); if(h)addPhotoHash(h,sc); }catch(e){}
@@ -8417,6 +8465,7 @@ async function saveStamp(){
   const slug=`${tyNm}_${co?.name||'?'}_${schedPhase(sc)==='pre'?'사전진단':''}${sc?.round||'N'}회`;
   const lblFn=i=>slotFileLabel(sc,i);
   if(!PHOTOS[ST.sid])PHOTOS[ST.sid]={};
+  let saveFail=0;
   // 1) 앱 내부 저장 (IndexedDB) — 합성 결과 + 원본 모두 저장, 지문 등록 + 이력
   for(let i=0;i<N;i++){
     if(!ST.done[i])continue;
@@ -8424,11 +8473,16 @@ async function saveStamp(){
     const prev=await getPhotoFromDB(ST.sid,`c${i}`); // 변경 전 사진(있으면 교체)
     logPhoto(prev?'replace':'add', ST.sid, i, prev);
     PHOTOS[ST.sid][`c${i}`]=cv;
-    savePhotoToDB(ST.sid,`c${i}`,cv.toDataURL('image/jpeg',.92));
+    /* ⚠ 기다렸다가 확인한다 — 예전에는 시키고 넘어가서, 저장 공간이 찼을 때
+       화면에만 남고 실제로는 안 들어갔다. */
+    if(!await savePhotoToDB(ST.sid,`c${i}`,cv.toDataURL('image/jpeg',.92))){
+      PHOTOS[ST.sid][`c${i}`]=null; saveFail++; continue;
+    }
     if(ST.pDurl&&ST.pDurl[i])savePhotoToDB(ST.sid,`o${i}`,ST.pDurl[i]);
     markPlain(ST.sid,i,!stampOn());
     if(ST.pHash&&ST.pHash[i]&&sc)addPhotoHash(ST.pHash[i],sc);
   }
+  if(saveFail){ toast(`${saveFail}장을 저장하지 못했습니다 — `+photoSaveFailMsg(),'err'); }
   closeModal('mbStamp');renderCal();
   if(_photoQueue&&_photoQueue.length)setTimeout(runPhotoQueue,250);
   // 2) 파일 저장 (위치 선택, 순차)
@@ -8570,10 +8624,6 @@ function topOverlay(list){
   return best ? best.id : '';
 }
 /* 옆 패널(알림·단축키·통계) 중 열려 있는 것 */
-function openPanelIds(vis){
-  return Object.keys(vis||{}).filter(function(k){ return !!vis[k]; });
-}
-
 function openOverlayList(){
   return Array.prototype.map.call(document.querySelectorAll('.mb.open'), function(m){
     var z = parseInt((getComputedStyle(m).zIndex || ''), 10);
