@@ -31,7 +31,17 @@ function run(code, seed) {
 }
 
 const CLOSE_ASK = () => run(slice('function pkCloseAsk(', 'function pkTryClose('));
-const TOP = () => run(slice('function topOverlay(', 'function openPanelIds('));
+/* ⚠ 끝 표식으로 옆 함수 이름을 쓰면, 그 함수 «이름만» 바뀌어도 깨진다.
+   실제로 깨졌다 — openPanelIds 가 openOverlayList 로 바뀌었다.
+   여기서 필요한 것은 topOverlay 하나이니 괄호 짝을 세어 그것만 떠 온다. */
+const TOP = () => run(pick('function topOverlay('));
+function pick(mark){
+  const a = GOV.indexOf(mark);
+  assert.ok(a > 0, '표식을 못 찾았다: ' + mark);
+  let d = 0, j = a;
+  for(;;j++){ if(GOV[j] === '{') d++; else if(GOV[j] === '}'){ d--; if(!d){ j++; break; } } }
+  return GOV.slice(a, j);
+}
 
 /* ── 담은 것이 있으면 한 번 물어본다 ── */
 
