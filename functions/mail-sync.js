@@ -455,13 +455,41 @@ module.exports = function build(deps) {
   const F = deps.functions;
   const REGION = deps.MAIL_REGION;
 
-  /* 총괄관리자만. 회사 메일함에는 고객사 임직원의 신상이 그대로 들어 있다.
-     창고·DB 규칙은 uid_roles 를 못 보는 자리가 있어, 서버가 여기서 다시 따진다. */
-  async function requireAdmin(req) {
+  /* ══════════════════════════════════════════════════════════════════════════
+     누가 회사 메일함을 볼 수 있나 (대표 지시 2026-08-27 「전 직원에게 다 열기」)
+     ══════════════════════════════════════════════════════════════════════════
+     예전에는 총괄관리자 한 사람뿐이었다. 그래서 직원이 메일함에 들어가도 화면이
+     통째로 비어 있었다 — 자기 담당 메일조차 못 봤다.
+
+     ★ 「직원」의 뜻을 «로그인한 사람»으로 두면 안 된다.
+       deps.requireStaff 는 «비밀번호로 로그인했는가»만 본다. 회사 계정이 아니어도
+       통과한다. 그래서 여기서 uid_roles 에 «사번이 적힌 재직자»인지 한 번 더 본다.
+       (2026-08-27 실측: uid_roles 는 10명 전원이 사번·status 를 갖고 있다)
+     ⚠ 콘솔 규칙(mailbox.read)도 «같은 뜻»으로 맞춰야 한다 — 한쪽만 열면
+       목록은 보이는데 본문에서 403 이 나거나, 그 반대가 된다.
+     ⚠ status 는 그 사람이 «본인이 로그인할 때» 적힌다. 퇴사자가 다시 로그인하지
+       않으면 active 로 남는다 — 퇴사 계정은 로그인 자체를 막아야 진짜로 닫힌다.
+       (이 저장소의 다른 규칙들도 모두 같은 처지다. 여기서만 생기는 구멍이 아니다) */
+  async function requireMailUser(req) {
     const decoded = await deps.requireStaff(req);
+    const snap = await deps.getDatabase().ref('uid_roles/' + decoded.uid).once('value');
+    const v = snap.val() || {};
+    if (!v.sid || v.status !== 'active') {
+      const e = new Error('회사 메일함은 재직 중인 직원만 볼 수 있습니다.');
+      e.status = 403;
+      throw e;
+    }
+    return decoded;
+  }
+
+  /* 다음메일의 «폴더 자체»를 만들고 지우는 일만 대표 몫으로 남긴다.
+     한 사람이 폴더를 지우면 열 사람의 화면이 함께 바뀌고, 그 안의 메일이 휴지통으로
+     간다 — 되돌리기 어렵다. 메일을 «보고·읽음 표시하고·옮기는» 것과는 무게가 다르다. */
+  async function requireAdmin(req) {
+    const decoded = await requireMailUser(req);
     const snap = await deps.getDatabase().ref('uid_roles/' + decoded.uid + '/isAdmin').once('value');
     if (snap.val() !== true) {
-      const e = new Error('총괄관리자만 메일함을 볼 수 있습니다.');
+      const e = new Error('다음메일 폴더를 만들고 지우는 것은 대표님만 할 수 있습니다.');
       e.status = 403;
       throw e;
     }
@@ -472,12 +500,13 @@ module.exports = function build(deps) {
     res.status(code).json(body);
   }
 
-  async function gate(req, res, fn) {
+  /* who: 통과 조건. 안 주면 «재직 중인 직원». */
+  async function gate(req, res, fn, who) {
     deps.setCors(req, res);
     if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
     if (req.method !== 'POST') { reply(res, 405, { ok: false, error: 'POST 요청만 허용됩니다.' }); return; }
     try {
-      await requireAdmin(req);
+      await (who || requireMailUser)(req);
       await fn();
     } catch (e) {
       console.error('mailbox:', String((e && e.message) || e));
@@ -669,7 +698,7 @@ module.exports = function build(deps) {
         } finally {
           try { await client.logout(); } catch (_) { /* 이미 끊겼다 */ }
         }
-      })),
+      }, requireAdmin)),   /* ★ 이 창구만 대표 몫이다 — 폴더를 지우면 열 사람 화면이 함께 바뀐다 */
 
     /* ══════ 표시 켜고 끄기 — 중요(★) · 읽음 ══════
        ⚠ 이것도 다음메일을 «고치는» 자리다. 다만 되돌릴 수 있는 것이라(다시 누르면 된다)
