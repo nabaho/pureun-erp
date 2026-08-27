@@ -181,16 +181,30 @@ test('브라우저는 열쇠를 모른다', async (t) => {
 test('서버 대리인', async (t) => {
   const parts = [{ inline_data: { mime_type: 'image/jpeg', data: 'QUJD' } }, { text: '읽어라' }];
 
-  await t.test('사진이 없으면 구글을 부르기 전에 돌려보낸다', () => {
-    assert.equal(DR.validate({ parts: [{ text: '읽어라' }] }).ok, false,
-      '사진 없이 부르면 그만큼이 그대로 요금입니다.');
+  await t.test('★ 보낼 것이 아무것도 없으면 구글을 부르기 전에 돌려보낸다', () => {
+    /* 부르는 만큼이 그대로 요금이다 — 빈 요청은 여기서 끝낸다. */
     assert.equal(DR.validate(null).ok, false);
     assert.equal(DR.validate({ parts: [] }).ok, false);
+    assert.equal(DR.validate({ parts: [{ text: '   ' }] }).ok, false, '빈칸만 보내는 것도 빈 요청입니다');
+    assert.equal(DR.validate({ parts: [{ inline_data: { data: '' } }] }).ok, false, '빈 사진도 사진이 아닙니다');
+  });
+
+  await t.test('★ «글자만» 보내는 것도 옳은 길이다 — 글자 있는 PDF 는 그림 없이 읽는다', () => {
+    /* ⚠ 2026-08-17 에 이 대리인을 만들 때는 판독이 늘 그림이었다. 그래서
+       「사진이 한 장도 없으면 돌려보낸다」였다. 2026-08-24 에 「글자 있는 PDF 는
+       글자로」가 들어오면서 글자만 담은 요청이 생겼는데, 여기서 되돌려보내
+       **그 길이 한 번도 성공한 적이 없었다**(대표 보고 2026-08-26). */
+    const v = DR.validate({ parts: [{ text: '사업자등록증명\n상호 주식회사 대원유지\n사업자등록번호 312-86-35425' }] });
+    assert.equal(v.ok, true, '★ 글자만 보내면 「사진이 없습니다」로 되돌아갑니다 — PDF 판독이 통째로 막힙니다');
   });
 
   await t.test('너무 큰 요청은 받지 않는다', () => {
     const big = [{ inline_data: { mime_type: 'image/jpeg', data: 'A'.repeat(DR.MAX_BODY_BYTES + 10) } }];
     assert.equal(DR.validate({ parts: big }).ok, false);
+    /* 글자가 너무 많을 때도 막는다 — 그때는 「사진이 크다」고 하면 거짓말이다 */
+    const longText = DR.validate({ parts: [{ text: '가'.repeat(DR.MAX_BODY_BYTES) }] });
+    assert.equal(longText.ok, false);
+    assert.match(longText.error, /글자가 너무 많습니다/, '글자인데 「사진이 크다」고 합니다: ' + longText.error);
   });
 
   await t.test('제대로 된 요청은 통과한다', () => {
