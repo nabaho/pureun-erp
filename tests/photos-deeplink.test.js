@@ -90,10 +90,16 @@ test('못 찾으면 조용히 넘기지 않는다', () => {
   assert.match(photos, /그 서류 사진을 찾지 못했습니다/);
 });
 
-test('기업정보에서 새 창으로 연다', () => {
-  /* 지금 창을 갈아타면 보던 회사와 고르던 것이 다 날아간다 */
+test('기업정보에서 새 창으로 열되 «한 창»만 쓴다', () => {
+  /* 지금 창을 갈아타면 보던 회사와 고르던 것이 다 날아간다 — 그래서 새 창이다.
+     ⚠ 그런데 «늘 새 창»(_blank)이면 누를 때마다 탭이 쌓인다(대표 지적 2026-08-27).
+       창에 **이름**을 붙이면 브라우저가 그 창을 다시 쓴다. 자세한 것은
+       tests/cards-doc-window-reuse.test.js 가 돌려서 본다. */
   assert.match(cards, /function openCoDoc/);
-  assert.match(cards, /window\.open\('pu-photos\.html\?' \+ q, '_blank'\)/);
+  assert.match(cards, /window\.open\('pu-photos\.html\?' \+ q, CO_DOC_WIN\)/,
+    '★ 창 이름 없이 열면 누를 때마다 사진첩 탭이 쌓입니다');
+  assert.doesNotMatch(cards, /window\.open\('pu-photos\.html\?' \+ q, '_blank'\)/,
+    '★ _blank 는 늘 새 탭입니다');
   assert.match(cards, /onclick="openCoDoc\(/);
 });
 
@@ -113,9 +119,11 @@ test('주소에 넣는 값은 인코딩한다', () => {
   const body = cards.slice(at, i + 1);
 
   let url = '';
-  new Function('encodeURIComponent', 'toast', 'window',
+  /* CO_DOC_WIN(창 이름)도 함께 넣어 준다 — 2026-08-27 부터 그 이름으로 창을 다시 쓴다 */
+  new Function('encodeURIComponent', 'toast', 'window', 'CO_DOC_WIN',
     body + "\nopenCoDoc('2026&x', 'p 1=2&z', 'u#1');")(
-    encodeURIComponent, function () { }, { open: function (u) { url = u; } });
+    encodeURIComponent, function () { },
+    { open: function (u) { url = u; return { focus: function () {} }; } }, 'puPhotoDoc');
 
   assert.ok(url.indexOf('pu-photos.html?') === 0, '새 창을 안 엽니다: ' + url);
   /* 값 안에 든 & = # 가 그대로 나가면 주소가 갈라진다 */
