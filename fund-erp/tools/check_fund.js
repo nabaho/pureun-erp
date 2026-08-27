@@ -648,6 +648,26 @@ ok('신청 날짜와 신청인을 채운다', /\^20\\s\*년\\s\*월\\s\*일\$/.t
   names.forEach(n => { if (seen[n]) { if (dup.indexOf(n) < 0) dup.push(n); } else seen[n] = 1; });
   ok('같은 이름의 함수가 둘 있지 않다' + (dup.length ? ' — ' + dup.join(', ') : ''), dup.length === 0);
 }
+/* ══ 사업계획서 손익예산 ══
+   서식의 열 단계는 손익계산서와 같은 짜임새라, 예산만 있으면 나머지는 셈으로 나온다.
+   제출본과 대조해 칸 하나까지 같은 것을 확인했다. */
+ok('사업계획서를 예산으로 채운다', src.includes('function bizplanRows(f,yr){')
+  && src.includes('function fillBizplanDoc(root,f){')
+  && src.includes("if(kind==='bizplan') fillBizplanDoc(d,f);"));
+/* ⚠ 이것은 «계획»이다 — 실적(computeFin)을 넣으면 내년 계획 자리에 올해 실적이 들어간다.
+   예산이 비면 «비운 채로» 둔다. */
+ok('예산이 없으면 안 채운다', src.includes('if(!interest&&!etcRev&&!pur&&!adm) return null;')
+  && src.slice(src.indexOf('function bizplanRows'), src.indexOf('function fillBizplanDoc')).indexOf('computeFin') < 0);
+/* 목적사업 회계와 기금관리 회계가 «따로» 0 으로 맞물린다(제출본이 그렇게 짜여 있다) */
+ok('두 회계가 따로 맞물린다', src.includes('var pNonopExp=spare, pNonopRev=spare-pOp;')
+  && src.includes('var fNonopExp=interest;'));
+/* ⚠ 이 서식은 «천원» 단위다 — 원으로 적으면 천 배로 부풀어 보인다 */
+ok('천원 단위로 적는다', src.includes('var n=Math.round((v||0)/1000);'));
+// 음수는 △ 로 적는 것이 이 서식의 관례다
+ok('음수를 △ 로 적는다', src.includes("return (n<0?'△':'')+Math.abs(n).toLocaleString();"));
+// 예비비는 예산의 「그 밖의 비용」이다
+ok('예비비를 그 밖의 비용에서 가져온다', src.includes("spare=g('exp_etc')"));
+
 /* ══ 박혀 있는 «남의 값» 걷어내기 ══
    변환한 원본 .hwp 가 어느 기금이 실제로 낸 서류라, 서식 19종에 금액·날짜가 남아 있었다.
    지급신청서에는 남의 «계좌번호»까지 있었다. 그대로 인쇄하면 남의 숫자를 제출한다. */
