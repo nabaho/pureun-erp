@@ -427,17 +427,18 @@ async function drain(stream, max) {
 /* 구조에서 「본문」과 「첨부」를 갈라 놓는다. 본문 부분만 따로 받으면
    20MB 첨부가 붙은 메일도 글을 바로 읽을 수 있다. */
 function pickParts(node, out, depth) {
-  out = out || { html: null, text: null, atts: [] };
+  out = out || { html: null, text: null, htmlCs: '', textCs: '', atts: [] };
   if (!node || (depth || 0) > 8) return out;
-  const kids = node.childNodes || node.children;
-  if (Array.isArray(kids)) {
-    kids.forEach((k) => pickParts(k, out, (depth || 0) + 1));
-    return out;
-  }
   const type = String(node.type || '').toLowerCase();
   const disp = String(node.disposition || '').toLowerCase();
   const fname = (node.dispositionParameters && node.dispositionParameters.filename) ||
                 (node.parameters && node.parameters.name) || '';
+  /* ⚠ 첨부인지 «먼저» 본다 — 안으로 파고들기 전에.
+     전달된 메일이 통째로 첨부된 것(message/rfc822)은 그 안에 또 조각이 들어 있다.
+     먼저 파고들면 첨부 목록에 «안쪽 첨부»가 오르고, 정작 사람이 화면에서 보는
+     「전달된메일.eml」은 목록에 없다. 그러면 첫째 첨부를 눌렀을 때 «다른 파일»이
+     내려온다 — 화면은 mailparser 차례, 받는 쪽은 이 차례를 쓰기 때문이다.
+     (2026-08-27 실측: 화면 [전달된메일.eml, 바깥첨부.pdf] · 서버 [안쪽첨부.pdf, 바깥첨부.pdf]) */
   const isAtt = disp === 'attachment' || (fname && type.indexOf('text/') !== 0 && !node.id);
   if (isAtt) {
     out.atts.push({
@@ -446,8 +447,16 @@ function pickParts(node, out, depth) {
     });
     return out;
   }
-  if (type === 'text/html' && !out.html) out.html = String(node.part || '');
-  if (type === 'text/plain' && !out.text) out.text = String(node.part || '');
+  const kids = node.childNodes || node.children;
+  if (Array.isArray(kids)) {
+    kids.forEach((k) => pickParts(k, out, (depth || 0) + 1));
+    return out;
+  }
+  /* 글자표를 함께 들고 온다 — 이것이 없으면 아래에서 utf-8 로 못 박아 읽어야 하고,
+     euc-kr 로 온 한글 메일이 통째로 깨진다. */
+  const cs = String((node.parameters && node.parameters.charset) || '').toLowerCase();
+  if (type === 'text/html' && !out.html) { out.html = String(node.part || ''); out.htmlCs = cs; }
+  if (type === 'text/plain' && !out.text) { out.text = String(node.part || ''); out.textCs = cs; }
   return out;
 }
 
@@ -563,36 +572,35 @@ module.exports = function build(deps) {
             await deps.getDatabase().ref(ROOT + '/msgs/' + slug + '/' + uid + '/r').set(1);
           } catch (_) { /* 목록 쪽 표시는 다음 회차에 맞춰진다 */ }
 
+          /* ── 첨부 목록은 «한 벌»로 만든다 (2026-08-27) ──
+             ⚠ 예전에는 작은 메일은 mailparser 가, 첨부를 내려받는 쪽은 pickParts 가
+               각각 세었다. 두 차례가 어긋나면 첫째 첨부를 눌렀을 때 다른 파일이 온다.
+               이제 «구조»(pickParts) 하나만 보고, 조각 이름(part)까지 실어 보낸다 —
+               받는 쪽은 번호가 아니라 그 이름으로 집는다. 차례가 흔들려도 안 어긋난다. */
+          const parts = pickParts(head.bodyStructure, null, 0);
+          const atts = parts.atts.map((a, i) => Object.assign({ i: i }, a));
+
           const size = Number(head.size || 0);
           if (size && size <= BODY_FULL_MAX) {
             const { simpleParser } = require('mailparser');
             const one = await client.fetchOne(uid, { uid: true, source: true }, { uid: true });
             const p = await simpleParser(one.source);
-            return {
-              html: p.html || '', text: String(p.text || ''),
-              atts: (p.attachments || [])
-                .filter((a) => !(a.contentDisposition === 'inline' && a.cid))
-                .map((a, i) => ({ i: i, part: '', name: String(a.filename || '이름없는첨부'),
-                  mime: String(a.contentType || ''), size: Number(a.size || 0) })),
-              full: true,
-            };
+            return { html: p.html || '', text: String(p.text || ''), atts: atts, full: true };
           }
 
-          /* 큰 메일 — 본문 부분만 */
-          const parts = pickParts(head.bodyStructure, null, 0);
+          /* 큰 메일 — 본문 부분만.
+             ⚠ 글자표를 못 박지 않는다. 예전에는 toString('utf8') 이라 euc-kr 로 온
+               한글 메일이 2MB 를 넘는 순간 통째로 깨졌다(작은 메일은 mailparser 가
+               알아서 해 주므로 큰 것만 그랬다 — 그래서 눈에 잘 안 띄었다). */
           let html = '', text = '';
           if (parts.html) {
             const d = await client.download(uid, parts.html, { uid: true });
-            html = (await drain(d.content, BODY_FULL_MAX)).toString('utf8');
+            html = MB.toText(await drain(d.content, BODY_FULL_MAX), parts.htmlCs);
           } else if (parts.text) {
             const d = await client.download(uid, parts.text, { uid: true });
-            text = (await drain(d.content, BODY_FULL_MAX)).toString('utf8');
+            text = MB.toText(await drain(d.content, BODY_FULL_MAX), parts.textCs);
           }
-          return {
-            html: html, text: text,
-            atts: parts.atts.map((a, i) => Object.assign({ i: i }, a)),
-            full: false,
-          };
+          return { html: html, text: text, atts: atts, full: false };
         }, { write: true });
 
         reply(res, 200, Object.assign({ ok: true }, got));
@@ -772,7 +780,10 @@ module.exports = function build(deps) {
         const slug = String(b.slug || '');
         const uid = String(b.uid || '');
         const idx = Number(b.index);
-        if (!slug || !/^\d+$/.test(uid) || !Number.isInteger(idx) || idx < 0) {
+        /* 조각 이름(1.2 처럼 숫자와 점만)이 오면 그것으로 집는다 — 번호보다 튼튼하다.
+           옛 화면이 아직 번호만 보낼 수 있으므로 번호도 받는다. */
+        const part = /^[0-9]+(\.[0-9]+)*$/.test(String(b.part || '')) ? String(b.part) : '';
+        if (!slug || !/^\d+$/.test(uid) || (!part && !(Number.isInteger(idx) && idx >= 0))) {
           reply(res, 400, { ok: false, error: '어느 첨부인지 알 수 없습니다.' }); return;
         }
 
@@ -780,7 +791,9 @@ module.exports = function build(deps) {
           const head = await client.fetchOne(uid, { uid: true, size: true, bodyStructure: true }, { uid: true });
           if (!head) throw Object.assign(new Error('그 메일이 없습니다'), { status: 404 });
           const parts = pickParts(head.bodyStructure, null, 0);
-          const a = parts.atts[idx];
+          /* ⚠ 조각 이름이 있으면 «반드시» 첨부 목록 안에 있는 것이어야 한다.
+             아무 조각이나 받아 주면 이 창구가 본문을 통째로 꺼내는 길이 된다. */
+          const a = part ? parts.atts.find((x) => x.part === part) : parts.atts[idx];
           if (!a) throw Object.assign(new Error('그 첨부가 없습니다'), { status: 404 });
           if (Number(a.size || 0) > ATT_MAX) throw Object.assign(new Error('너무 큽니다 — 다음메일에서 내려받아 주세요'), { status: 413 });
           const d = await client.download(uid, a.part, { uid: true });
