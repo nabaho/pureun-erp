@@ -1209,12 +1209,85 @@ function _normStaff(v){
     .sort(function(a,b){ return (a.ord-b.ord)
       ||String(a.sid||'').localeCompare(String(b.sid||''),'en',{numeric:true}); });
 }
+/* ── 명부 «전부» (퇴사자 포함) ──
+   ⚠ _staffCache 는 재직자만 걸러 둔 것이다. 퇴사자의 «사번»을 알아야 승계표와 이을 수
+     있는데(업무의 mgr_main.sid 가 비어 있고 이름만 있다 — 실측 2026-08-27),
+     그 사번은 걸러 낸 쪽에만 있다. 그래서 «거르지 않은» 벌을 따로 둔다.
+   ⚠ 새로 읽어 오지 않는다 — 같은 자료(data/user_accounts/v)를 한 번 읽어 두 벌로 쓴다. */
+var _allStaffCache=null;
+function _normAll(v){
+  if(!v) return []; if(!Array.isArray(v)) v=Object.keys(v).map(function(k){return v[k];});
+  return v.filter(function(u){return u&&u.name;}).map(function(u){
+    return {sid:String(u.sid||''),name:String(u.name),title:String(u.title||''),
+            status:String(u.status||''),ord:(typeof u.sortOrder==='number')?u.sortOrder:9999};});
+}
 function loadStaff(){
   if(_staffCache) return Promise.resolve(_staffCache);
   try{ var raw=localStorage.getItem('pureun_v6_user_accounts');
-    if(raw){ var a=_normStaff(JSON.parse(raw)); if(a.length){ _staffCache=a; return Promise.resolve(a); } } }catch(e){}
-  return fbDb.ref('data/user_accounts/v').once('value').then(function(s){ _staffCache=_normStaff(s.val()); return _staffCache; })
-    .catch(function(){ _staffCache=[]; return _staffCache; });
+    if(raw){ var pv=JSON.parse(raw); var a=_normStaff(pv);
+      if(a.length){ _staffCache=a; _allStaffCache=_normAll(pv); return Promise.resolve(a); } } }catch(e){}
+  return fbDb.ref('data/user_accounts/v').once('value').then(function(s){
+      _staffCache=_normStaff(s.val()); _allStaffCache=_normAll(s.val()); return _staffCache; })
+    .catch(function(){ _staffCache=[]; _allStaffCache=[]; return _staffCache; });
+}
+function allStaff(){ return _allStaffCache||[]; }
+function staffByName(n){
+  var k=String(n||'').trim();
+  return allStaff().filter(function(u){return u.name===k;})[0]||null;
+}
+function staffBySid(s){
+  var k=String(s||'').trim(); if(!k) return null;
+  return allStaff().filter(function(u){return u.sid===k;})[0]||null;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   승계표 — 메일함과 «같은 표»를 본다 (대표 지시 2026-08-26 「업무관리 연결」)
+   ══════════════════════════════════════════════════════════════════════════
+   "과거 담당자의 정보나 메일 등 자료가 새로운사람에게 이관되고 쉽게 검토 찾을 수
+    있도록 해야한다."
+
+   ★ 표는 pucards/config/staffSucc 에 있다(사번 → 사번). 메일함(기업정보함)이 적고
+     여기서 읽는다. 두 앱이 «각자» 후임을 정하면 메일은 A 에게, 업무는 B 에게 가서
+     아무도 그 사람 몫 전부를 못 본다.
+   ⚠ 여기서도 «적을 수 있다» — 업무관리에서 후임을 정하면 메일함도 따라간다.
+     한쪽에서만 적으면 「연결」이 아니라 「복사」가 된다.
+   ⚠ 표가 없다고 아무것도 막지 않는다. 지금처럼 건별로 후임을 고르면 된다.
+   ⚠ 실측 2026-08-27 — 업무 271건 가운데 퇴사자가 주담당인 것은 임혜미 15건(안 끝난 것 13건)
+     뿐이다. 다른 퇴사자는 업무관리에 없다. */
+var _succCache=null;
+var SUCC_PATH='pucards/config/staffSucc';
+function loadSucc(){
+  if(_succCache) return Promise.resolve(_succCache);
+  if(typeof fbDb==='undefined'||!fbDb){ _succCache={}; return Promise.resolve(_succCache); }
+  return fbDb.ref(SUCC_PATH).once('value')
+    .then(function(s){ _succCache=s.val()||{}; return _succCache; })
+    .catch(function(){ _succCache={}; return _succCache; });   /* 못 읽어도 화면은 돈다 */
+}
+function succMap(){ return _succCache||{}; }
+/* 이 사람(이름)을 이어받은 «재직자» 이름. 없으면 빈 값.
+   ⚠ 이어받은 사람도 퇴사했으면 그 다음까지 — «두 번»만 따라간다.
+     한없이 따라가면 서로 가리키는 표에서 안 멈춘다(메일함 쪽과 같은 규칙). */
+function succOfName(name){
+  var u=staffByName(name); if(!u||!u.sid) return '';
+  var to=staffBySid(succMap()[u.sid]); if(!to) return '';
+  if(to.status==='retired'){
+    var to2=staffBySid(succMap()[to.sid]);
+    return (to2&&to2.status!=='retired')?to2.name:'';
+  }
+  return to.name;
+}
+/* 승계표에 한 줄 적는다 — 메일함도 이 표를 본다 */
+function succSet(fromName,toSid,toName){
+  var from=staffByName(fromName);
+  if(!from||!from.sid) return Promise.resolve(false);
+  if(!toSid||toSid===from.sid) return Promise.resolve(false);
+  _succCache=_succCache||{}; _succCache[from.sid]=toSid;
+  return fbDb.ref(SUCC_PATH+'/'+from.sid).set(toSid).then(function(){
+    toast('🔗 승계표: '+fromName+' → '+toName+' — 메일함도 함께 바뀝니다'); return true;
+  }).catch(function(e){
+    delete _succCache[from.sid];
+    toast('승계표를 적지 못했습니다: '+((e&&e.message)||''),'err'); return false;
+  });
 }
 /* 「나는 누구인가」는 «로그인 이메일» 로만 정한다 (2026-08-16 대표 지시).
    ⚠ 전에는 셋을 차례로 봤다: ①localStorage 의 work_me_sid ②이메일 ③주소의 user=.
@@ -4441,8 +4514,11 @@ function saveAiQa(id,n){
 function renderHo(){
   var app=$('app'); if(!app)return;
   app.innerHTML=loadingHTML();
-  Promise.all([loadStaff(),fbDb.ref(NS+'/handover_docs').once('value').then(function(s){return s.val()||{};}).catch(function(){return {};})])
-  .then(function(rr){ var st=rr[0], docs=rr[1]; S._hodocs=docs;
+  /* ⚠ 승계표(메일함과 같은 표)도 함께 읽는다 — 늦게 오면 「승계표에 없습니다」가
+       한 번 깜박였다가 바뀐다. 한 번만 읽고 캐시에 남는다(loadSucc). */
+  Promise.all([loadStaff(),loadSucc(),
+    fbDb.ref(NS+'/handover_docs').once('value').then(function(s){return s.val()||{};}).catch(function(){return {};})])
+  .then(function(rr){ var st=rr[0], docs=rr[2]; S._hodocs=docs;
     var admin=isAdmin();
     var lvs=activeLeavings();
     /* 위 영역을 통째로 틀고정한다. 스크롤하면 제목 한 줄로 접혀 목록 볼 자리를 돌려준다 —
@@ -4549,7 +4625,29 @@ function renderHo(){
         +'<span class="muted" style="font-size:11.5px">퇴직·이관 후 남은 건입니다. 후임을 지정하거나 완료 처리하세요.</span></div>';
       onames.forEach(function(nm){
         var arr=orphan[nm];
-        h+='<div style="font-weight:800;font-size:12.5px;margin:10px 0 4px">👤 '+esc(nm)+' — '+arr.length+'건</div>'
+        /* ── 메일함 승계표를 여기서도 본다 (대표 지시 2026-08-26 「업무관리 연결」) ──
+           ⚠ 표가 있으면 «미리 골라 두고», 한 번에 넘길 길을 준다. 열세 건을 하나씩
+             고르는 것과 한 번 누르는 것은 실제로 하느냐 마느냐를 가른다.
+           ⚠ 표가 없으면 아무것도 막지 않는다 — 지금처럼 건별로 고르면 된다.
+             다만 «앞으로도 이 사람이 받는다»고 적어 둘 길을 옆에 둔다(그것이 연결이다). */
+        var sName=succOfName(nm);
+        var sUser=sName?staffByName(sName):null;
+        h+='<div style="font-weight:800;font-size:12.5px;margin:10px 0 4px">👤 '+esc(nm)+' — '+arr.length+'건'
+          +(sUser
+            ? ' <span class="muted" style="font-weight:400">· 메일함 승계표 <b style="color:#0f8a5f">→ '+esc(sName)+'</b></span>'
+              +' <button class="primary" style="font-size:11.5px;margin-left:6px" '
+              +'onclick="succBulk(\''+esc(nm)+'\',\''+esc(sUser.sid)+'\',\''+esc(sName)+'\')" '
+              +'title="이 사람의 '+arr.length+'건을 모두 '+esc(sName)+' 님께 넘깁니다">🔄 '+arr.length+'건 모두 '+esc(sName)+'에게</button>'
+            : ' <span class="muted" style="font-weight:400">· 메일함 승계표에 없습니다</span>'
+              +'<span onclick="event.stopPropagation()">'
+              +'<select id="sucdef-'+esc(nm)+'" style="margin-left:6px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;font-size:11.5px">'
+              +'<option value="">이어받을 사람…</option>'
+              +st.map(function(u){return '<option value="'+esc(u.sid)+'" data-name="'+esc(u.name)+'">'+esc(u.name)+'</option>';}).join('')
+              +'</select>'
+              +'<button style="font-size:11.5px;margin-left:4px" onclick="succDeclare(\''+esc(nm)+'\')" '
+              +'title="앞으로 이 사람 몫을 누가 받는지 적어 둡니다 — 메일함도 같은 표를 봅니다">🔗 승계표에 적기</button>'
+              +'</span>')
+          +'</div>'
           +'<div class="hotbl"><table><thead><tr><th style="width:52px">구분</th><th>기업 / 업무</th>'
           +'<th style="width:74px">노트</th><th style="width:186px">후임 지정</th></tr></thead><tbody>';
         arr.forEach(function(it){
@@ -4559,7 +4657,10 @@ function renderHo(){
             +'<td>'+(noteDone(it)?'<span class="ck">✓</span>':'<span class="ckno">미작성</span>')+'</td>'
             +'<td onclick="event.stopPropagation()"><select onchange="assignSuccessor(\''+it._id+'\',this)" style="padding:3px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px">'
             +'<option value="">후임 선택…</option>'
-            +st.map(function(u){return '<option value="'+esc(u.sid)+'" data-name="'+esc(u.name)+'">'+esc(u.name)+'</option>';}).join('')
+            /* ⚠ 승계표에 있는 사람을 «미리 골라 둔다» — 왜 골라져 있는지 옆에 적는다 */
+            +st.map(function(u){return '<option value="'+esc(u.sid)+'" data-name="'+esc(u.name)+'"'
+              +((sUser&&u.sid===sUser.sid)?' selected':'')+'>'+esc(u.name)
+              +((sUser&&u.sid===sUser.sid)?' (승계표)':'')+'</option>';}).join('')
             +'</select></td></tr>';
         });
         h+='</tbody></table></div>';
@@ -4643,6 +4744,40 @@ function assignSuccessor(id,selEl){
   var sid=selEl.value; if(!sid)return;
   var name=selEl.options[selEl.selectedIndex].getAttribute('data-name');
   _handoverTo(id,sid,name);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   승계표로 «한 번에» 넘기기 (대표 지시 2026-08-26 「업무관리 연결」)
+   ══════════════════════════════════════════════════════════════════════════
+   ⚠ 되돌리기 어려운 일이라 «반드시 물어본 뒤»에 한다 — 몇 건인지, 누구에게 가는지,
+     되돌리려면 건별로 다시 골라야 한다는 것까지 적는다.
+   ⚠ 한 건씩 _handoverTo 로 돈다 — 그래야 «담당 A → B (인수 확인 대기)» 기록이
+     건마다 남는다. 통째로 갈아 끼우면 누가 언제 넘겼는지 사라진다.
+   ⚠ 이미 그 사람이 주담당인 건은 _handoverTo 가 알아서 건너뛴다. */
+function succBulk(fromName,toSid,toName){
+  var arr=openItems().filter(function(it){
+    return ((it.mgr_main&&it.mgr_main.name)||'')===fromName;
+  });
+  if(!arr.length){ toast('넘길 건이 없습니다'); return; }
+  if(!confirm('「'+fromName+'」 님의 진행 중인 '+arr.length+'건을\n'
+    +'모두 「'+toName+'」 님께 넘깁니다.\n\n'
+    +'· 건마다 「담당 '+fromName+' → '+toName+'」 기록이 남고 «인수 확인 대기»가 됩니다.\n'
+    +'· 되돌리려면 건별로 다시 골라야 합니다.\n\n진행할까요?')) return;
+  var n=0;
+  arr.forEach(function(it){ _handoverTo(it._id,toSid,toName); n++; });
+  toast('🔄 '+n+'건을 '+toName+' 님께 넘겼습니다 — 인수 확인 대기');
+}
+/* 승계표에 한 줄 적기 — 메일함도 같은 표를 본다 */
+function succDeclare(fromName){
+  var sel=document.getElementById('sucdef-'+fromName);
+  if(!sel||!sel.value){ toast('이어받을 사람을 먼저 고르세요','warn'); return; }
+  var toSid=sel.value, toName=sel.options[sel.selectedIndex].getAttribute('data-name');
+  var u=staffByName(fromName);
+  if(!u||!u.sid){ toast('「'+fromName+'」 님을 명부에서 찾지 못했습니다 — 사번이 없어 적을 수 없습니다','err'); return; }
+  if(!confirm('「'+fromName+'」 님 몫을 앞으로 「'+toName+'」 님이 받는 것으로 적습니다.\n\n'
+    +'· 메일함(기업정보함)도 같은 표를 봅니다 — 그 사람 담당이던 메일이 '+toName+' 님 칸으로 갑니다.\n'
+    +'· 업무는 이 표만으로 넘어가지 않습니다 — 아래에서 넘기거나 [모두 넘기기]를 누르세요.\n\n진행할까요?')) return;
+  succSet(fromName,toSid,toName).then(function(ok){ if(ok) route(); });
 }
 /* ── 명단에 없는 사람이 부담당으로만 남은 건 ─────────────────────────
    주담당이 빠지는 것은 「후임 지정」이 맡는다. 부담당은 넘길 일이 없고
