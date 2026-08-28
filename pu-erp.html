@@ -141,6 +141,9 @@
 <!-- 급여담당자 엑셀 → 업체관리 (대표 결정 2026-08-24). 읽고 대조하는 일은 이 파일이,
      그리기는 아래 화면이 한다 — 검사가 이 파일을 그대로 돌린다. -->
 <script src="js/pu-co-xls.js?v=2"></script>
+<!-- 기업정보함 → 업체관리 담당자 메일 (대표 요청 2026-08-27).
+     맞추는 일은 이 파일이, 그리기는 아래 화면이 한다 — 검사가 이 파일을 그대로 돌린다. -->
+<script src="js/pu-co-cards.js?v=1"></script>
 <script>
 (function(){
 'use strict';
@@ -19515,6 +19518,60 @@ function CompanyManagement(){
     setPcxPlan(null);
   }
 
+  // ── 기업정보함에서 담당자 메일 끌어오기 (대표 요청 2026-08-27) ──
+  // 대표: 「푸른 이알피와 기업정보함을 연결해서 담당사업장 직원의 이메일을 연결시켜 달라」
+  // 명함 6,636장에 메일이 4,266개 있다. 급여 사업장과 이어지는 것만 골라 온다.
+  // ⚠ **누를 때 한 번만** 원본을 읽는다(pucards/items 2.9MB). 구독하지 않는다 —
+  //   늘 받아 두면 그것이 그대로 요금이 된다. 경량 색인(pucards/idx)에는 명함의
+  //   사업자번호가 없어 15곳밖에 못 잡는다(원본은 27곳).
+  // ⚠ 자동으로 안 넣는다. 담당자별로 보여 주고 고른 것만 넣는다.
+  var _pccS = useState(null); var pccPlan = _pccS[0]; var setPccPlan = _pccS[1];
+  var _pccPS = useState({}); var pccOff = _pccPS[0]; var setPccOff = _pccPS[1];
+  var _pccBS = useState(false); var pccBusy = _pccBS[0]; var setPccBusy = _pccBS[1];
+
+  function pullCardEmails(){
+    var C = window.PuCoCards;
+    if(!C){ showToast('모듈을 못 불렀습니다 (pu-co-cards.js)'); return; }
+    if(!fbDb){ showToast('기업정보함과 연결되지 않았습니다'); return; }
+    if(pccBusy) return;
+    setPccBusy(true);
+    fbDb.ref('pucards/items').once('value').then(function(snap){
+      var box = (snap && snap.val()) || {};
+      var cards = Object.keys(box).map(function(k){
+        return Object.assign({ _k:k }, box[k]);
+      });
+      /* 급여 업체만 본다 — 자문·사무대행까지 훑으면 엉뚱한 곳이 섞인다 */
+      var pay = companies.filter(function(c){
+        return c && !c.suspended && String(c.status||'') === 'active'
+          && String(c.typeCode||'') === '급여';
+      });
+      var r = C.plan(cards, pay, {});
+      setPccBusy(false);
+      setPccOff({});
+      if(!r.sites){
+        showToast('기업정보함에서 새로 넣을 주소를 못 찾았습니다 (명함 ' + cards.length + '장)');
+        return;
+      }
+      setPccPlan(Object.assign({ cardCount: cards.length }, r));
+    }).catch(function(e){
+      setPccBusy(false);
+      showToast('기업정보함을 읽지 못했습니다: ' + ((e && e.message) || e));
+    });
+  }
+
+  function applyCardEmails(){
+    var C = window.PuCoCards; if(!C || !pccPlan) return;
+    /* pccOff 는 「빼기」로 꺼 둔 것 — writes 는 false 만 뺀다 */
+    var w = C.writes(pccPlan.items, pccOff);
+    if(!w.length){ showToast('넣을 것이 없습니다'); setPccPlan(null); return; }
+    var byId = {}; companies.forEach(function(c){ if(c && c.id) byId[c.id] = c; });
+    var recs = w.map(function(x){ return Object.assign({}, byId[x.id], x.patch); });
+    if(!coUpsertMany(recs)) return;
+    var n = w.reduce(function(s, x){ return s + x.added; }, 0);
+    showToast('📇 기업정보함에서 담당자 메일 ' + n + '개를 ' + w.length + '곳에 넣었습니다');
+    setPccPlan(null);
+  }
+
   // ── 세무사무실 보수총액 신고자료 일괄요청 ──
   var taxMailS = useState(false); var taxMailModal = taxMailS[0]; var setTaxMailModal = taxMailS[1];
   var _tfeS = useState((function(){ try{ return localStorage.getItem('pureun_v6_tax_from_email')||''; }catch(e){ return ''; } })());
@@ -20559,6 +20616,15 @@ function CompanyManagement(){
         style:{ background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe', padding:'5px 10px', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap', marginRight:'6px' } },
         '📥 급여담당자 엑셀',
         h('input', { type:'file', accept:'.xlsx,.xls', multiple:true, onChange:importPayContactXlsx, style:{ display:'none' } })),
+      // 기업정보함에서 담당자 메일 끌어오기 (대표 요청 2026-08-27)
+      statusTab !== 'suboffice' && h('button', {
+        onClick:pullCardEmails, disabled:pccBusy,
+        className:'erp-tip',
+        'data-tip':'기업정보함 명함에서 급여 사업장의 담당자 메일을 찾아 옵니다.\n담당자별로 보여 드리고, 고른 것만 넣습니다.\n\n⚠ 누를 때 한 번만 읽습니다(늘 받아 두면 요금이 됩니다).',
+        style:{ background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe', padding:'5px 10px',
+          borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:pccBusy?'default':'pointer',
+          whiteSpace:'nowrap', marginRight:'6px' } },
+        pccBusy ? '찾는 중…' : '📇 기업정보함에서 메일'),
       // 사무대행 전용 도구 (컨텍스트)
       statusTab === 'suboffice' && h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', marginRight:'6px' } },
         h('label', { style:{ background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe', padding:'5px 10px', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
@@ -21140,6 +21206,93 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
             h('span', { style:{ marginLeft:'auto', fontSize:'11.5px', color:'#64748b' } },
               '엑셀 ' + c.all + '줄 → 바뀌는 업체 ' + w.length + '곳'
               + (c.inherited ? ' · 물려받은 줄 ' + c.inherited : '')))
+        ));
+    })(),
+    // ★ 기업정보함에서 담당자 메일 미리보기 (대표 요청 2026-08-27)
+    //   담당자별로 묶어 보여 준다 — 「자기 사업장만 확인하면 된다」가 대표의 뜻이다.
+    pccPlan && (function(){
+      var C = window.PuCoCards;
+      var live = C.writes(pccPlan.items, pccOff);
+      var nMail = live.reduce(function(s, x){ return s + x.added; }, 0);
+      var nameOf = function(sid){
+        if(!sid) return '담당 없음';
+        var u = users.find(function(x){ return x.sid === sid; });
+        return (u ? u.name : sid);
+      };
+      var HOW = {
+        biz:  { t:'사업자번호', bg:'#f0fdf4', fg:'#166534' },
+        name: { t:'이름',       bg:'#eff6ff', fg:'#2563eb' },
+        stem: { t:'이름 앞머리', bg:'#fffbeb', fg:'#854d0e' }
+      };
+      /* 담당자가 바뀔 때마다 이름 줄을 끼운다 */
+      var last = null, trs = [];
+      pccPlan.items.forEach(function(x){
+        var sid = String(x.co.managerMain || '');
+        if(sid !== last){
+          last = sid;
+          var mine = pccPlan.items.filter(function(y){ return String(y.co.managerMain||'') === sid; });
+          trs.push(h('tr', { key:'w'+sid, style:{ background:'#f8fafc' } },
+            h('td', { colSpan:5, style:{ padding:'7px 10px', fontWeight:800, fontSize:'12.5px' } },
+              nameOf(sid) + ' — ' + mine.length + '곳')));
+        }
+        x.rows.forEach(function(r){
+          var key = String(x.co.id) + '|' + String(r.email).toLowerCase();
+          var on = pccOff[key] !== false;
+          var H = HOW[r.how] || HOW.name;
+          trs.push(h('tr', { key:key, style:{ opacity:on?1:0.45 } },
+            h('td', { style:{ padding:'5px 10px' } },
+              h('input', { type:'checkbox', checked:on, title:'끄면 이 주소는 안 넣습니다',
+                onChange:function(){ setPccOff(function(p){
+                  var n = Object.assign({}, p);
+                  if(n[key] === false) delete n[key]; else n[key] = false;
+                  return n; }); } })),
+            h('td', { style:{ padding:'5px 10px' } }, x.co.name || ''),
+            h('td', { style:{ padding:'5px 10px' } }, r.name || '—'),
+            h('td', { style:{ padding:'5px 10px', fontFamily:'monospace', fontSize:'11.5px' } }, r.email),
+            h('td', { style:{ padding:'5px 10px' } },
+              h('span', { style:{ background:H.bg, color:H.fg, borderRadius:'99px',
+                padding:'2px 8px', fontSize:'10.5px', fontWeight:700 } }, H.t))));
+        });
+      });
+
+      return h('div', { onClick:function(){ setPccPlan(null); },
+        style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' } },
+        h('div', { onClick:function(e){ e.stopPropagation(); },
+          style:{ background:'#fff', borderRadius:'12px', padding:'20px 22px', width:'880px', maxWidth:'95vw', maxHeight:'90vh', display:'flex', flexDirection:'column', boxShadow:'0 20px 60px rgba(0,0,0,0.25)' } },
+          h('div', { style:{ fontWeight:800, fontSize:'16px', color:'#1e293b', marginBottom:'4px' } },
+            '📇 기업정보함에서 담당자 메일 끌어오기'),
+          h('div', { style:{ fontSize:'12px', color:'#64748b', marginBottom:'12px' } },
+            '명함 ' + (pccPlan.cardCount || 0) + '장을 훑어 급여 사업장과 이어지는 것만 골랐습니다'
+            + ' — 아직 아무것도 쓰지 않았습니다'),
+          h('div', { style:{ display:'flex', gap:'8px', marginBottom:'11px', flexWrap:'wrap' } },
+            [['사업장', pccPlan.sites + '곳'], ['새 주소', pccPlan.mails + '개'],
+             ['두 곳에 걸려 안 고른 명함', pccPlan.ambig + '장']].map(function(p){
+              return h('div', { key:p[0], style:{ border:'1px solid #e2e8f0', borderRadius:'9px',
+                padding:'7px 11px', fontSize:'12px' } },
+                h('b', { style:{ color:'#2563eb' } }, p[1]), ' ' + p[0]);
+            })),
+          h('div', { style:{ background:'#eff6ff', borderLeft:'3px solid #2563eb', padding:'9px 12px',
+            borderRadius:'0 8px 8px 0', fontSize:'12px', marginBottom:'11px', color:'#1e293b' } },
+            h('b', null, '두 사업장에 걸리는 명함은 아무 데도 안 넣습니다.'),
+            ' 한쪽을 골라 넣으면 남의 업체에 엉뚱한 사람이 붙습니다. 이미 적힌 담당자도 덮지 않습니다 — 아래에 붙입니다.'),
+          h('div', { style:{ flex:1, overflow:'auto', border:'1px solid #e2e8f0', borderRadius:'8px' } },
+            h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:'12.5px' } },
+              h('thead', null, h('tr', null,
+                ['넣기','사업장','명함에서 온 사람','메일','어떻게 맞췄나'].map(function(t){
+                  return h('th', { key:t, style:{ padding:'6px 10px', textAlign:'left', fontSize:'11px',
+                    color:'#64748b', borderBottom:'1px solid #e2e8f0', position:'sticky', top:0, background:'#f8fafc' } }, t);
+                }))),
+              h('tbody', null, trs))),
+          h('div', { style:{ display:'flex', alignItems:'center', gap:'8px', marginTop:'12px' } },
+            h('button', { onClick:applyCardEmails, disabled:!nMail,
+              style:{ background:nMail?'#2563eb':'#cbd5e1', color:'#fff', border:'none', borderRadius:'7px',
+                padding:'9px 18px', fontSize:'13px', fontWeight:700, cursor:nMail?'pointer':'default', fontFamily:'inherit' } },
+              '고른 것 업체관리에 넣기 (' + nMail + '개)'),
+            h('button', { onClick:function(){ setPccPlan(null); },
+              style:{ background:'#fff', color:'#475569', border:'1px solid #e2e8f0', borderRadius:'7px',
+                padding:'9px 16px', fontSize:'13px', cursor:'pointer', fontFamily:'inherit' } }, '닫기'),
+            h('span', { style:{ marginLeft:'auto', fontSize:'11.5px', color:'#64748b' } },
+              '바뀌는 업체 ' + live.length + '곳'))
         ));
     })(),
     mergeOpen && h(CoMergeModal, {
