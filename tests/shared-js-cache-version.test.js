@@ -28,10 +28,17 @@ function ok(name, cond, hint){
   else { fail++; console.log('  FAIL ' + name + (hint ? '\n    ' + hint : '')); }
 }
 
+/* ⚠ 저장소 «안»에 다른 작업트리·빌드 결과가 들어앉아 있을 수 있다 (2026-08-28).
+   공용 작업트리에는 .codex-worktrees/ 안에 옛 사본이 네 벌 있었고, 그것들까지
+   훑는 바람에 「pu-appbar.js → ?v=4, ?v=6」 같은 헛실패가 났다.
+   여기서 볼 것은 «이 저장소가 배포하는 화면» 뿐이다 — 남의 사본은 건너뛴다. */
+var SKIP_DIRS = ['node_modules', '.git', '.codex-worktrees', 'dist', 'build',
+                 '.superpowers', '.claude'];
+
 function htmlFiles(dir, out){
   out = out || [];
   fs.readdirSync(dir, { withFileTypes: true }).forEach(function(e){
-    if(e.name === 'node_modules' || e.name === '.git') return;
+    if(SKIP_DIRS.indexOf(e.name) >= 0) return;
     var p = path.join(dir, e.name);
     if(e.isDirectory()) htmlFiles(p, out);
     else if(e.name.endsWith('.html')) out.push(p);
