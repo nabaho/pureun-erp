@@ -31839,6 +31839,61 @@ var DUP_DEFAULT = {
 //   5) 자문료 미생성 회사 (active + monthlyAdvisoryFee>0인데 이번달 입금 없음)
 // 발견 시 표 + [수정] / [무시] 버튼
 // ============================================================
+/* ── CMS 실데이터와 «실제로 적힌 입금액» 대조 (김보람 과장 건의 2026-08-28) ──────
+   2026-08-28 이전에는 매칭 창이 보여준 금액과 저장된 금액이 달랐다
+   (저장 함수가 업체관리의 «지금 자문료»를 꺼내 썼다).
+   그래서 자문료가 바뀐 뒤에 들어온 입금은 조용히 틀린 금액으로 남아 있다.
+   여기서 그것들을 찾아낸다. 고치지는 않는다 — 세금계산서·성과급이 걸려 있어
+   무엇이 얼마나 어긋났는지부터 사람이 봐야 한다.
+
+   맞춰 보는 방법: 같은 업체 · 같은 «입금일»(CMS 정산예정일) 끼리 짝지어 금액을 견준다.
+   ⚠ 성공(status==='ok')한 줄만 본다 — 실패한 출금은 애초에 입금이 아니다.
+   ⚠ 한 업체가 같은 날 두 번 빠져나갈 수 있어 «합쳐서» 견준다. */
+function erpCmsAmountAudit(rows, incomes, resolveName){
+  var out = { checked:0, bad:[], noLink:0, sumGap:0 };
+  if(!rows || !rows.length || !incomes) return out;
+
+  /* ① CMS 성공분을 «업체+정산일» 로 합친다 */
+  var real = {};
+  rows.forEach(function(r){
+    if(!r || r.status !== 'ok') return;
+    var d = String(r.setdate || '').slice(0, 10);
+    if(!d) return;
+    var co = resolveName(r.name, r.bizNo);
+    if(!co){ out.noLink++; return; }
+    var k = co + '|' + d;
+    real[k] = (real[k] || 0) + (parseInt(r.amount, 10) || 0);
+  });
+
+  /* ② 적힌 입금을 같은 열쇠로 합친다 (업체+날짜) */
+  var saved = {};
+  incomes.forEach(function(it){
+    if(!it || it.sourceKind !== 'company') return;
+    var d = String(it.date || '').slice(0, 10);
+    if(!d || !it.companyName) return;
+    var k = it.companyName + '|' + d;
+    if(!saved[k]) saved[k] = { amt:0, ids:[], note:it.note || '', kind:it.kind || '' };
+    saved[k].amt += parseInt(it.amount, 10) || 0;
+    saved[k].ids.push(it.id);
+  });
+
+  /* ③ 양쪽에 다 있는 것만 견준다 — 한쪽에만 있는 것은 «다른 이야기»다 */
+  Object.keys(real).forEach(function(k){
+    var sv = saved[k];
+    if(!sv) return;
+    out.checked++;
+    var gap = sv.amt - real[k];
+    if(gap === 0) return;
+    var p = k.split('|');
+    out.bad.push({ co:p[0], date:p[1], real:real[k], saved:sv.amt, gap:gap,
+                   ids:sv.ids, note:sv.note, kind:sv.kind });
+    out.sumGap += gap;
+  });
+  /* 많이 어긋난 것부터 — 금액이 큰 것이 먼저 눈에 들어와야 한다 */
+  out.bad.sort(function(a, b){ return Math.abs(b.gap) - Math.abs(a.gap); });
+  return out;
+}
+
 // ============ 데이터 진단 툴 ============
 function DataDiagnostics(){
   var rsS = useState(null); var results = rsS[0]; var setResults = rsS[1];
@@ -31928,7 +31983,33 @@ function DataDiagnostics(){
       if(wrongYear.length) warns.push({ key:'contractno_year', label:'계약번호 연도 불일치', count:wrongYear.length,
         desc:'계약일 연도와 계약번호 연도가 다름: '+wrongYear.slice(0,3).map(function(c){return c.contractNo;}).join(', ') });
 
-      // ── 8. 통계 ──
+      // ── 8. CMS 실데이터와 적힌 입금액 대조 (2026-08-28) ──
+      /* 옛 버그로 «지금 자문료»가 적힌 건을 찾는다. 고치지는 않는다(fix:false) —
+         세금계산서·성과급이 걸려 있어 사람이 먼저 봐야 한다. */
+      try {
+        var _lg = (typeof erpCmsLedgerGet === 'function') ? erpCmsLedgerGet() : null;
+        if(_lg && _lg.rows && _lg.rows.length){
+          var _idx = erpNicebillCoIndex();
+          var _au = erpCmsAmountAudit(_lg.rows, incomes, function(nm, bz){
+            var c = erpNicebillMatchCo(_idx, nm, bz, {});
+            return c ? c.name : '';
+          });
+          if(_au.bad.length){
+            issues.push({ key:'cms_amount_gap', label:'CMS 실데이터와 입금액 불일치',
+              count:_au.bad.length, fix:false,
+              desc:'실제 빠져나간 금액과 ERP에 적힌 금액이 다른 건 ' + _au.bad.length + '건'
+                 + ' (합계 ' + (_au.sumGap>0?'+':'') + _au.sumGap.toLocaleString() + '원)'
+                 + ' — 2026-08-28 이전 매칭에서 「지금 자문료」가 적힌 것들입니다.'
+                 + ' 세금계산서·성과급에 영향이 갈 수 있어 자동으로 고치지 않습니다.',
+              data:_au.bad });
+          } else if(_au.checked){
+            infos.push({ label:'CMS 금액 대조 (이상 없음)', count:_au.checked });
+          }
+          if(_au.noLink) infos.push({ label:'CMS 줄 중 업체를 못 찾음(대조 못함)', count:_au.noLink });
+        }
+      } catch(_ae){ if(window._erpErrLog) window._erpErrLog(_ae); }
+
+      // ── 9. 통계 ──
       infos.push({ label:'총 계약', count: contracts.length });
       infos.push({ label:'총 업체', count: dbGet('companies',[]).length });
       infos.push({ label:'총 입금', count: incomes.length });
