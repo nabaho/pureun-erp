@@ -860,6 +860,33 @@ test('브라우저 자료가 지워져 기본 데이터로 돌아가면 크게 �
   assert.match(source.slice(i, i + 900), /onclick="fbPull\(\);return false"/);
 });
 
+/* ===== 회의·강의비 개인정보 동의서 자동 생성 (2026-08-27, 2단계 v1) ===== */
+
+test('회의·기타비용 행에 📨 동의서 버튼이 있다', () => {
+  assert.match(source, /feeConsentDoc\('meetfee','\$\{r\.id\}'\)/);
+  assert.match(source, /feeConsentDoc\('etcfee','\$\{r\.id\}'\)/);
+});
+
+test('동의서는 건의 정보를 채워 한글 뷰어로 띄운다', () => {
+  const src = funcSource('feeConsentDoc');
+  assert.match(src, /HWPX\.docTitle\('개인정보 수집·이용 동의서'\)/);
+  assert.match(src, /HWPX\.tablePara\(/, '성명·일자·구분·금액 표가 있어야 합니다');
+  assert.match(src, /r\.content/, '내용을 채워야 합니다');
+  assert.match(src, /HWPX\.build\(body\)/);
+  assert.match(src, /PureunHwp\.validate\(/, '만든 파일을 검증해야 합니다');
+  assert.match(src, /openHwpViewer\(bytes, nm\)/, '뷰어로 떠야 🖨 PDF·⬇ 저장이 이어진다');
+});
+
+test('동의서 안전선 — 동의 칸을 미리 채우지 않고, 주민번호를 걷지 않는다', () => {
+  const src = funcSource('feeConsentDoc');
+  assert.match(src, /□ 동의함/, '동의 칸은 빈 네모여야 합니다 — 표시는 본인 몫');
+  assert.ok(!/■ 동의함/.test(src), '⚠ 동의를 미리 채우면 동의의 효력이 없습니다');
+  assert.ok(!/주민/.test(src.replace(/\/\*[\s\S]*?\*\//g, '')),
+    '⚠ 비용 지급에 주민등록번호는 불필요 — 걷으면 안 됩니다');
+  assert.match(src, /5년/, '보유기간을 밝혀야 합니다');
+  assert.match(src, /거부/, '거부 권리와 불이익을 밝혀야 합니다');
+});
+
 /* ===== 기관 양식 자동 채움 (2026-08-27, 1단계) ===== */
 
 test('양식 자동 채움 모듈이 로드되고 값채우기가 둘 다 한다 (토큰 + 라벨)', () => {

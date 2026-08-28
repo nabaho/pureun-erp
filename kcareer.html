@@ -4724,13 +4724,13 @@ const CAREER_CFG={
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td>${formatDate(r.date)||'-'}</td>
       <td><span class="tag navy">${r.type||'-'}</span></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.content||'-'}</td>
       <td style="text-align:right">${r.amt?Number(r.amt).toLocaleString('ko-KR')+'원':'-'}</td><td>${r.org||'-'}</td>
-      <td onclick="event.stopPropagation()">${rowActions(r.id,'meetfee',r.content,p)}</td></tr>`},
+      <td onclick="event.stopPropagation()"><button class="btn sm" onclick="feeConsentDoc('meetfee','${r.id}')" title="수령인에게 받을 개인정보 동의서를 자동으로 만듭니다">📨 동의서</button>${rowActions(r.id,'meetfee',r.content,p)}</td></tr>`},
   etcfee:{store:'etcfee',qFields:['content','org','type'],
     cols:['ID','일자','구분','내용/사유','금액','지출처/수령인','관리'],
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td>${formatDate(r.date)||'-'}</td>
       <td><span class="tag navy">${r.type||'-'}</span></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.content||'-'}</td>
       <td style="text-align:right">${r.amt?Number(r.amt).toLocaleString('ko-KR')+'원':'-'}</td><td>${r.org||'-'}</td>
-      <td onclick="event.stopPropagation()">${rowActions(r.id,'etcfee',r.content,p)}</td></tr>`},
+      <td onclick="event.stopPropagation()"><button class="btn sm" onclick="feeConsentDoc('etcfee','${r.id}')" title="수령인에게 받을 개인정보 동의서를 자동으로 만듭니다">📨 동의서</button>${rowActions(r.id,'etcfee',r.content,p)}</td></tr>`},
 };
 /* rec를 넘기면 로컬 폴더 참조(src:'fs') 레코드도 원본 있는 것으로 판정한다.
    fs 레코드는 base64가 없으므로 다운로드·원본삭제 대신 '원본 열기'만 준다. */
@@ -5844,6 +5844,51 @@ async function cvFormHwpView(id){
 }
 function _xesc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function _fillTokens(xml,map,stat){ return xml.replace(/\{\{([\s\S]*?)\}\}/g,function(m,inner){ const name=inner.replace(/<[^>]*>/g,'').replace(/\s+/g,''); if(Object.prototype.hasOwnProperty.call(map,name)){ stat.done++; return _xesc(map[name]); } stat.miss[name]=(stat.miss[name]||0)+1; return m; }); }
+/* ===== 회의·강의비 개인정보 동의서 자동 생성 (자동화 2단계 v1) =====
+   여태 손으로 만들던 동의서를 신청 건에서 버튼 하나로 만든다. 한글 뷰어로 떠서
+   🖨 PDF·⬇ 저장이 바로 된다. 대상자 서명란은 비워 둔다 — 서명은 대상자의 몫이다.
+   ⚠ 동의 칸을 미리 채우지 않는다(□ 그대로) — 동의는 본인이 표시해야 효력이 있다.
+   ⚠ 주민등록번호는 담지 않는다 — 비용 지급에는 성명·연락처·계좌면 충분하다.
+   전자서명 링크·메일 발송(3단계)은 공유 기반(서명 페이지·메일 서버·보안규칙)이
+   필요해 대표 승인 후 별도로 진행한다. */
+function feeConsentDoc(store, id){
+  var r=(get(store)||[]).find(function(x){ return x.id===id; });
+  if(!r){ toast('건을 찾을 수 없습니다'); return; }
+  if(typeof HWPX==='undefined'){ toast('한글 문서 도구를 불러오지 못했습니다'); return; }
+  var d=new Date(); var today=d.getFullYear()+'년 '+(d.getMonth()+1)+'월 '+d.getDate()+'일';
+  var amt=r.amt?Number(r.amt).toLocaleString('ko-KR')+'원':'-';
+  var who=r.org||'';
+  var body=HWPX.docTitle('개인정보 수집·이용 동의서')
+    +HWPX.para('(회의·강의 등 비용 지급용)', HWPX.CP.body, {paraPr:HWPX.PP.center})
+    +HWPX.spacer()
+    +HWPX.tablePara([
+      ['성명(수령인)', who, '일  자', formatDate(r.date)||'-'],
+      ['구  분', r.type||'-', '금  액', amt],
+      ['내  용', r.content||'-', '', '']
+    ], HWPX.cols([0.16,0.34,0.16,0.34]))
+    +HWPX.spacer()
+    +HWPX.para('푸른노무법인은 위 회의·강의 등 비용의 지급을 위하여 「개인정보 보호법」에 따라 아래와 같이 개인정보를 수집·이용하고자 합니다. 내용을 읽으신 후 동의 여부를 표시하여 주시기 바랍니다.')
+    +HWPX.spacer()
+    +HWPX.para('1. 수집·이용 항목 : 성명, 연락처, 예금주 및 계좌번호')
+    +HWPX.para('2. 수집·이용 목적 : 회의·강의 등 비용(수당·여비)의 지급, 회계 처리 및 세무 신고')
+    +HWPX.para('3. 보유·이용 기간 : 지급일부터 5년(국세기본법 등 관련 법령에 따른 보존기간)')
+    +HWPX.para('4. 동의를 거부할 권리 및 불이익 : 동의를 거부하실 수 있으나, 거부하시는 경우 비용 지급이 제한될 수 있습니다.')
+    +HWPX.spacer()
+    +HWPX.para('위 개인정보의 수집·이용에 동의합니다.　（ □ 동의함　　□ 동의하지 않음 ）', HWPX.CP.body, {paraPr:HWPX.PP.center})
+    +HWPX.spacer()
+    +HWPX.para(today, HWPX.CP.body, {paraPr:HWPX.PP.center})
+    +HWPX.spacer()
+    +HWPX.para('성명 :  '+(who||'　　　　　　')+'　　　　　　(서명 또는 인)', HWPX.CP.body, {paraPr:HWPX.PP.right})
+    +HWPX.spacer()
+    +HWPX.para('푸른노무법인 귀중', HWPX.CP.body, {paraPr:HWPX.PP.center});
+  var bytes;
+  try{ bytes=HWPX.build(body); PureunHwp.validate(bytes,'동의서.hwpx'); }
+  catch(e){ toast('동의서 만들기 실패: '+((e&&e.message)||'알 수 없는 오류')); return; }
+  var nm='개인정보동의서_'+String(who||'수령인').replace(/[\\/:*?"<>|]/g,'')+'_'+(formatDate(r.date)||'').replace(/\./g,'')+'.hwpx';
+  openHwpViewer(bytes, nm);
+  toast('동의서를 만들었습니다 — 🖨 PDF로 뽑거나 ⬇ 저장해 전달하세요');
+}
+
 /* 자동 채움에 쓸 데이터 — 빠른 이력서와 같은 출처·같은 매핑 */
 function _cvFillData(){
   const info=(typeof getProfileInfo==='function'?getProfileInfo():get('profile_info'))||{};
