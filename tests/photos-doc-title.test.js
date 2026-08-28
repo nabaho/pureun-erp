@@ -352,6 +352,8 @@ function runGridBar(over) {
     needOnly: false, oldOnly: false, gridQ: '', reading: false, sending: false,
     gridYear: String(new Date().getFullYear()),
     viewingOther: function () { return false; },
+    /* 2026-08-28: 도구줄이 «막는 쪽과 같은 기준»(mayTouch)을 본다 — 안 주면 멎는다 */
+    mayTouch: function () { return true; },
     canSend: function () { return false; },
     worthRetry: function () { return true; },
     needsCheck: function () { return false; },

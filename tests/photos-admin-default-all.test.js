@@ -48,8 +48,10 @@ test('★ 전체 근로자에서도 올릴 수 있다', () => {
 });
 
 test('★ 지우기·판독은 여전히 잠긴다 (남의 사진이 섞여 있다)', () => {
-  const m = app.match(/function blockedIfOther\([^)]*\)[\s\S]*?\n\}/);
-  assert.ok(m, 'blockedIfOther 를 찾지 못했습니다.');
+  /* ⚠ 2026-08-28: 판정이 mayTouch 로 옮겨졌다 — 화면(도구줄)이 막는 쪽과 «같은 기준»을
+     써야 하는데 blockedIfOther 는 말하는 일(alert)까지 해서 그리는 중에 못 부른다. */
+  const m = app.match(/function mayTouch\([^)]*\)[\s\S]*?\n\}/);
+  assert.ok(m, 'mayTouch 를 찾지 못했습니다.');
   assert.ok(/viewingOther\(\)/.test(m[0]) && !/viewingOnlyOther/.test(m[0]),
     '전체 근로자 화면에는 남의 사진이 섞여 있어 지우기·판독은 막아야 합니다.');
 });
