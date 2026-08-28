@@ -208,12 +208,49 @@ test('★ 도구줄에 두 단추가 있고, 고른 것이 있을 때만 보인�
     '★ 고른 것이 있을 때 안 나옵니다');
 });
 
-test('★ 남의 사진에는 두 단추를 안 내준다 — 눌러도 거절당할 단추는 고장으로 읽힌다', () => {
+/* ⚠ 2026-08-28 대표 보고 — "여기서 어떻게 공유자 선택하나". 「전체 근로자」로 보시는
+   중이었고 고르신 25장은 **본인 사진**이었는데 단추가 통째로 숨어 있었다.
+   막는 쪽은 「전부 내 것이거나 총괄관리자면 된다」인데 화면만 「전체 근로자면 무조건
+   숨김」이라 **눌렀으면 그냥 됐을 일**에 단추가 없었다. 기준을 한 곳으로 모았다. */
+test('★ 화면이 «막는 쪽과 같은 기준»으로 단추를 낸다 — 눌러도 되는데 없으면 못 찾는다', () => {
   const bar = cutFn(photos, 'function renderGridBar(');
-  const i = bar.indexOf('viewingOther()');
-  assert.ok(i > 0);
-  assert.match(bar.slice(i, i + 260), /'tagBtn', 'coBtn', 'shareBtn'/,
-    '★ 남의 사진에서도 업체 지정·공유가 보입니다');
+  assert.match(bar, /const touch = mayTouch\(Array\.from\(selected\)\);/,
+    '★ 화면이 제 기준을 따로 쓰면 「눌러도 되는데 단추가 없는」 자리가 다시 생깁니다');
+  assert.match(bar, /if \(!touch\) \{[\s\S]{0,120}'tagBtn', 'coBtn', 'shareBtn'/,
+    '★ 손댈 수 없을 때는 감춰야 합니다');
+  assert.match(bar, /\(n >= 2 && touch\)/, '한 문서로 묶기도 같은 기준이라야 합니다');
+  /* 막는 쪽도 같은 판정을 쓴다 — 두 벌이면 다시 갈린다 */
+  assert.match(cutFn(photos, 'function blockedIfOther('), /if \(mayTouch\(ids\)\) return false;/,
+    '★ 막는 쪽이 제 기준을 따로 쓰고 있습니다');
+});
+
+test('★ 「손대도 되는가」 판정이 실제로 그렇게 가른다', () => {
+  const ctx = { Array, console: { warn() {} } };
+  ctx.PuPhotoStore = { amAdmin: function () { return ctx._admin; } };
+  ctx.isMinePhoto = function (id) { return ctx._mine.indexOf(id) >= 0; };
+  ctx.viewingOther = function () { return ctx._other; };
+  vm.createContext(ctx);
+  vm.runInContext(cutFn(photos, 'function mayTouch('), ctx);
+  const set = function (o) { ctx._admin = !!o.admin; ctx._other = !!o.other; ctx._mine = o.mine || []; };
+
+  set({ other: true, admin: false, mine: ['a', 'b'] });
+  assert.equal(ctx.mayTouch(['a', 'b']), true,
+    '★ 전체 근로자로 보는 중이어도 «고른 것이 전부 내 사진»이면 손댈 수 있습니다');
+  assert.equal(ctx.mayTouch(['a', 'z']), false, '남의 것이 섞였으면 안 된다');
+  set({ other: true, admin: true, mine: [] });
+  assert.equal(ctx.mayTouch(['z']), true, '★ 총괄관리자는 남의 사진에도 손댈 수 있습니다');
+  set({ other: false, admin: false, mine: [] });
+  assert.equal(ctx.mayTouch([]), true, '내 사진첩을 보는 중이면 된다');
+  set({ other: true, admin: false, mine: [] });
+  assert.equal(ctx.mayTouch([]), false);
+});
+
+test('★ 업체를 달 때 «주인 자리»에 적는다 — 안 넘기면 남의 사진은 화면에서만 바뀐다', () => {
+  assert.match(cutFn(photos, 'function submitSetCo('),
+    /saveNote\(photoYearOf\(id\), id, \{ company: name, note: note \}, photoOwner\(id\)\)/,
+    '★ 주인을 안 넘기면 내 자리에 적혀 아무 일도 안 일어납니다');
+  /* 저장 층이 그 자리를 실제로 받는지 — 안 받으면 넘겨도 소용없다 */
+  assert.match(cutFn(store, 'function saveNote('), /function saveNote\(year, id, patch, owner\)/);
 });
 
 test('★ 업체를 단 «그 순간» 자동 공유가 걸린다 — 만들고 안 부르면 아무것도 안 바뀐다', () => {

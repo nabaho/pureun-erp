@@ -1901,10 +1901,12 @@ test('분류 지정은 남의 사진(전체 근로자 포함)에는 못 한다',
        목록 돌리기로 바뀌었다. 지킬 것은 「남의 사진에서는 분류 지정이 안 보인다」이지
        그 줄이 어떤 글자인가가 아니다. */
   const bar = app.match(/function renderGridBar\([\s\S]*?\n\}/)[0];
-  const i = bar.indexOf('viewingOther()');
+  /* ⚠ 2026-08-28 또 옮겼다 — 판정이 mayTouch 한 곳으로 모였다(화면과 막는 쪽이
+     같은 기준을 쓰게). 지킬 것은 「손댈 수 없으면 분류 지정이 안 보인다」이다. */
+  const i = bar.indexOf('if (!touch)');
   assert.ok(i > 0, '남의 사진 갈래를 못 찾았습니다');
   assert.match(bar.slice(i, i + 300), /'tagBtn'[\s\S]{0,80}display = 'none'/,
-    '★ 남의 사진에서도 분류 지정이 보입니다');
+    '★ 손댈 수 없는데도 분류 지정이 보입니다');
 });
 
 test('분류 지정은 항목별 실제 소유자 자리에 쓴다', () => {

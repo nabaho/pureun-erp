@@ -11,7 +11,14 @@ const path = require('node:path');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8');
 const mine = app.match(/function isMinePhoto\([\s\S]*?\n\}/);
-const blocked = app.match(/function blockedIfOther\([\s\S]*?\n\}/);
+/* ⚠ 2026-08-28 다시 겨눔 — 판정을 mayTouch 한 곳으로 모았다. **화면(도구줄)이 막는 쪽과
+   같은 기준을 써야 하는데** blockedIfOther 는 말하는 일(alert)까지 해서 그리는 중에
+   부를 수 없었다. 그래서 「눌러도 되는데 단추가 없는」 자리가 생겼다(대표 보고
+   2026-08-28: "여기서 어떻게 공유자 선택하나" — 전체 근로자로 보시는 중이었고
+   고르신 25장은 본인 사진이었다).
+   지킬 것은 그대로다 — 판정의 **차례**가 이 기능의 전부라 그 차례를 계속 못박는다. */
+const blocked = app.match(/function mayTouch\([\s\S]*?\n\}/);
+const alerts = app.match(/function blockedIfOther\([\s\S]*?\n\}/);
 
 test('★ 사진마다 주인을 따로 본다 — 화면이 아니라', () => {
   assert.ok(mine, 'isMinePhoto 를 찾지 못했습니다.');
@@ -27,7 +34,7 @@ test('★ 고른 것이 전부 내 사진이면 막지 않는다', () => {
   assert.ok(/every\(isMinePhoto\)/.test(blocked[0]),
     '한 장이라도 남의 것이면 막아야 하고, 전부 내 것이면 통과시켜야 합니다.');
   const pass = blocked[0].indexOf('every(isMinePhoto)');
-  const gate = blocked[0].indexOf('if (!viewingOther())');
+  const gate = blocked[0].indexOf('return !viewingOther()');
   assert.ok(pass > 0 && gate > pass,
     '내 사진인지 먼저 봐야 합니다 — 화면 판단이 앞서면 예전처럼 다 막힙니다.');
 });
@@ -35,7 +42,7 @@ test('★ 고른 것이 전부 내 사진이면 막지 않는다', () => {
 test('빈 목록으로는 통과하지 못한다', () => {
   /* blockedIfOther() 를 인자 없이 부르는 곳(대량 작업)이 아직 있다.
      빈 배열이 every 로 참이 되어 술술 통과하면 잠금이 통째로 풀린다. */
-  assert.ok(/list && list\.length && list\.every/.test(blocked[0]),
+  assert.ok(/list\.length && list\.every/.test(blocked[0]),
     '빈 목록이 통과하면 남의 사진 잠금이 통째로 풀립니다.');
 });
 
@@ -46,15 +53,19 @@ test('★ 총괄 관리자는 남의 사진도 손댈 수 있다', () => {
   assert.ok(/amAdmin\(\)/.test(blocked[0]),
     '관리자 판정이 없으면 총괄 관리자도 남의 사진을 못 지웁니다.');
   const admin = blocked[0].indexOf('amAdmin()');
-  const other = blocked[0].indexOf('if (!viewingOther())');
+  const other = blocked[0].indexOf('return !viewingOther()');
   assert.ok(admin > 0 && other > admin,
     '화면 판단이 앞서면 관리자도 예전처럼 막힙니다.');
 });
 
 test('★ 직원끼리는 여전히 못 건드린다', () => {
-  assert.ok(/if \(!viewingOther\(\)\) return false;/.test(blocked[0]),
+  assert.ok(/return !viewingOther\(\);/.test(blocked[0]),
     '남의 사진을 보는 중인지 안 가리면 잠금이 통째로 풀립니다.');
-  assert.ok(/보기만 할 수 있습니다/.test(blocked[0]), '왜 막혔는지 안 알려 줍니다.');
+  /* 막는 쪽은 그 판정을 **그대로** 쓰고, «왜 막혔는지»만 말한다 —
+     제 기준을 따로 두면 화면과 다시 갈린다(2026-08-28에 실제로 갈렸다). */
+  assert.ok(/if \(mayTouch\(ids\)\) return false;/.test(alerts[0]),
+    '★ 막는 쪽이 제 기준을 따로 씁니다 — 화면과 다시 갈립니다.');
+  assert.ok(/보기만 할 수 있습니다/.test(alerts[0]), '왜 막혔는지 안 알려 줍니다.');
 });
 
 test('★ 고른 사진을 실제로 넘긴다 — 안 넘기면 예전 그대로다', () => {
