@@ -298,7 +298,8 @@ test('★ 판독은 문서마다 한 번만, 그러나 다른 문서는 빠뜨�
        문서마다 한 번씩 거르는 규칙은 두 갈래에 **똑같이** 걸려야 한다. */
     neverRead: function () { return true; },
     staleRead: function () { return false; },
-    needsRead: function () { return true; },
+    /* ⚠ needsRead 짝퉁을 걷어냈다(2026-08-27) — 그 함수는 아무도 안 부르던 것이라
+       화면에서 사라졌다. 여기 남겨 두면 「아직 쓰는 것」처럼 보인다. */
     queuePhotoRead: function (id) { queued.push(id); },
     $: function () { return el; },
     gridItems: [

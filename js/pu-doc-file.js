@@ -281,7 +281,15 @@
       var addPhoto = blank(rec.thumb) && !blank(o.thumb);
       if (addPhoto) {
         u[CARDS_ROOT + '/items/' + hit.id + '/thumb'] = o.thumb;
-        if (o.photoId) u[CARDS_ROOT + '/items/' + hit.id + '/photoId'] = o.photoId;
+        /* ⚠ 사진 고리는 **셋을 한 벌로** 적는다(대표 검토 2026-08-27) — 사진첩은
+           사람별·해별로 갈려 있어 번호 하나로는 못 연다. 여기서 하나라도 빠지면
+           명함의 「📷 사진첩 원본」이 열리지 않는다. 새로 만드는 쪽(createOne)과
+           **같은 세 칸**이라야 한다. */
+        if (o.photoId) {
+          u[CARDS_ROOT + '/items/' + hit.id + '/photoId'] = o.photoId;
+          u[CARDS_ROOT + '/items/' + hit.id + '/photoYear'] = o.photoYear || '';
+          u[CARDS_ROOT + '/items/' + hit.id + '/photoOwner'] = o.photoOwner || '';
+        }
         labels.push('사진');
       }
 
@@ -327,7 +335,11 @@
       createdAt: o.takenAt || Date.now(),
       updatedAt: Date.now(),
       source: 'pu-photos',               // 어디서 왔는지 남긴다
-      photoId: o.photoId || '',          // 사진첩 사진과 잇는 고리
+      /* 사진첩 사진과 잇는 고리 — **셋이 한 벌**이라야 열린다(사진첩은 사람별·해별로
+         갈려 있다). 번호만 적던 것을 2026-08-27 검토에서 바로잡았다. */
+      photoId: o.photoId || '',
+      photoYear: String(o.photoYear || ''),
+      photoOwner: o.photoOwner || '',
       capturedBy: o.byName || ''
     });
     var u = {};

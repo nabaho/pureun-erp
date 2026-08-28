@@ -376,8 +376,10 @@ test('명함·서류·회의사진 세 가지를 가린다', () => {
   /* 회의사진은 기업정보함에 넣을 것이 없으니 '확인 필요'로 잡지 않는다.
      ⚠ 2026-08-15 다시 겨눔 — 판정을 KEEP_ONLY 한 곳으로 모았다(갈래마다 따로
      적다가 계약서가 빠져 영영 안 없어지는 ⚠ 가 생겼다). */
-  const fn = app.match(/function needsCheck\([\s\S]*?\n\}/);
-  assert.match(fn[0], /KEEP_ONLY\[r\.kind\]\) return false/);
+  /* ⚠ 2026-08-27 또 옮겼다 — 판정이 checkWhy 한 곳으로 모였다(needsCheck 는 그것을
+     그대로 쓴다). 지킬 것은 그대로: 회의사진은 목록에 있고 할 일이 아니다. */
+  const fn = app.match(/function checkWhy\([\s\S]*?\n\}/);
+  assert.match(fn[0], /KEEP_ONLY\[r\.kind\]\) return ''/);
   assert.match(app, /const KEEP_ONLY = \{[^}]*meeting: 1/);
 });
 
@@ -777,18 +779,20 @@ test('확인이 필요한 것만 모아 볼 수 있다', () => {
 
 test('확인 필요 판정에 아직 판독 안 한 것과 서류 아닌 것은 안 든다', () => {
   // 안 한 일과 어긋난 일은 다르다. 정말 서류가 아닌 사진은 읽을 것이 없다.
-  const fn = app.match(/function needsCheck\([\s\S]*?\n\}/);
-  assert.ok(fn, 'needsCheck 본문을 찾을 수 없습니다');
-  assert.match(fn[0], /if \(!r\) return false/);
+  /* ⚠ 2026-08-27: 판정이 checkWhy 한 곳으로 모였다(needsCheck 는 그것을 그대로 쓴다).
+     「할 일이 아니다」는 이제 **빈 말을 내놓는 것**으로 나타난다. */
+  const fn = app.match(/function checkWhy\([\s\S]*?\n\}/);
+  assert.ok(fn, 'checkWhy 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /if \(!r\) return ''/);
   /* 'other' 는 **읽은 것이 있을 때만** 확인 필요다(2026-08-04 정교화).
      종류를 못 가렸어도 상호·사업자번호를 읽어낸 서류가 실제로 있고(지정서 등),
      그건 자동 등록 대상이 아니라 아무 곳에도 안 들어간 채 조용히 묻힌다.
      읽은 것이 없는 사진은 여전히 할 일이 아니다. */
-  assert.match(fn[0], /kind === 'other'\) return readAnyField\(r\)/);
+  assert.match(fn[0], /kind === 'other'\) return readAnyField\(r\) \? '종류를 못 가림/);
   // 판독 실패·검증 걸림·아직 안 보낸 것은 든다
-  assert.match(fn[0], /r\.error\) return true/);
-  assert.match(fn[0], /!r\.auto\) return true/);
-  assert.match(fn[0], /filed && r\.filed\.id\)\) return true/);
+  assert.match(fn[0], /r\.error\) return readFailAdvice\(r\)/);
+  assert.match(fn[0], /!r\.auto\) return '읽은 값이 미덥지 않음/);
+  assert.match(fn[0], /filed && r\.filed\.id\)\) return '기업정보함에 아직 안 감/);
 });
 
 test('확인 필요 표시가 격자 칸에 바로 보인다', () => {
@@ -1461,9 +1465,10 @@ test('사진첩 안에서 끈 것은 받지 않는다 — 같은 사진이 또 �
 test('사람이 확인한 것은 할 일에서 빠진다', () => {
   /* 사업자등록증인데 그 업체가 업체관리에 없으면 사진첩에서 할 수 있는 일이
      없는데도 계속 ⚠ 로 남았다. 치울 수 없는 할 일은 목록을 못 믿게 만든다. */
-  const fn = app.match(/function needsCheck\([\s\S]*?\n\}/);
-  assert.ok(fn, 'needsCheck 본문을 찾을 수 없습니다');
-  assert.match(fn[0], /if \(r\.ack\) return false/, '확인해도 치워지지 않습니다');
+  /* ⚠ 2026-08-27: 판정이 checkWhy 한 곳으로 모였다 — 「빠진다」는 빈 말로 나타난다. */
+  const fn = app.match(/function checkWhy\([\s\S]*?\n\}/);
+  assert.ok(fn, 'checkWhy 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /if \(r\.ack\) return ''/, '확인해도 치워지지 않습니다');
   // 확인 표시는 판독 결과와 함께 서버에 남아야 다음에 열 때도 치워져 있다
   const ack = app.match(/function ackRead\([\s\S]*?\n\}/);
   assert.ok(ack, 'ackRead 본문을 찾을 수 없습니다');
@@ -1532,7 +1537,8 @@ test('기업정보함 보내기와 업체관리 보내기를 따로 둔다', () 
 
 test('중소기업확인서가 아무 곳에도 안 들어가면 확인 필요로 잡는다', () => {
   // 확인서는 기업정보함에 가지 않는다 — 이 줄이 없으면 조용히 묻힌다.
-  const fn = fnBodyOf('needsCheck');
+  /* ⚠ 2026-08-27 또 옮겼다 — 판정이 checkWhy 한 곳으로 모였다. */
+  const fn = fnBodyOf('checkWhy');
   /* ⚠ 2026-08-11 다시 겨눔 — 판정을 coFilledOk 로 모았다(filled 가 실시간DB 에서
      사라져 화면이 멎던 사고). 지킬 것은 「업체관리 쪽 할 일을 잡는다」이지
      이 함수 안에서 filedCo 를 직접 읽는 모양이 아니다.

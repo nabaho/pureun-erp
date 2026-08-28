@@ -112,15 +112,17 @@ test('★ 남은 할 일이 있는 대화는 무엇을 하라는지 적힌다', 
   const w = fnOf(app, 'checkWhy');
   assert.match(w, /chat'\) return chatTodo\(r\) \? '대화 캡처 — 남은 할 일 확인' : ''/,
     '이유가 없으면 ⚠ 만 떠서 한 장씩 열어 봐야 압니다');
-  /* needsCheck 와 같은 순서여야 한다 — chat 판정이 auto 판정보다 앞.
+  /* chat 판정이 auto 판정보다 앞이어야 한다 — 대화캡처는 늘 auto:false 라
+     그 줄에 먼저 닿으면 언제나 할 일이 된다.
      ⚠ **코드 꼴로 찾는다**(`if (!r.auto)`). 그냥 `!r.auto` 로 찾으면 그 줄을 설명하는
        주석을 먼저 집어 순서가 거꾸로 나온다 — 실제로 그렇게 걸렸다. */
   assert.ok(w.indexOf("r.kind === 'chat'") < w.indexOf('if (!r.auto)'),
-    '순서가 어긋나면 걸린 이유와 적힌 이유가 달라집니다');
-  const n = fnOf(app, 'needsCheck');
-  assert.match(n, /if \(r\.kind === 'chat'\) return chatTodo\(r\);/);
-  assert.ok(n.indexOf("r.kind === 'chat'") < n.indexOf('if (!r.auto)'),
     '★ auto 판정이 먼저면 대화캡처는 언제나 할 일입니다');
+  /* ⚠ 2026-08-27 다시 겨눔 — needsCheck 가 checkWhy 를 그대로 쓰게 됐다
+     (「이유가 있으면 곧 할 일」). 두 벌을 나란히 두고 «같은 조건인가»를 재던 검사는
+     이제 잴 것이 없다 — 어긋날 수가 없다. 대신 **그 구조가 살아 있는가**를 못 박는다. */
+  assert.match(fnOf(app, 'needsCheck'), /return !!checkWhy\(it\);/,
+    '★ 판정이 다시 두 벌로 갈라지면 「목록엔 없는데 이유만 떠다니는」 사고가 돌아옵니다');
 });
 
 test('★ 요약과 할 일이 화면에 그려진다 — 실제로 돌려 본다', () => {

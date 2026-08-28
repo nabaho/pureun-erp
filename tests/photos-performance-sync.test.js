@@ -74,5 +74,7 @@ test('회의사진은 독립 분류로 유지되고 확인필요 오류로 취�
      이지 그 판정이 어떤 글자로 적혀 있는가가 아니다. */
   assert.match(html, /const KEEP_ONLY = \{[^}]*meeting: 1/,
     '회의사진이 「보관만」 목록에서 빠졌습니다 — 확인 필요로 잡히게 됩니다');
-  assert.match(html, /if \(KEEP_ONLY\[r\.kind\]\) return false/);
+  /* ⚠ 2026-08-27 또 옮겼다 — 판정이 checkWhy 한 곳으로 모였다(needsCheck 는 그것을
+     그대로 쓴다). 「할 일이 아니다」는 이제 빈 말을 내놓는 것으로 나타난다. */
+  assert.match(html, /if \(KEEP_ONLY\[r\.kind\]\) return ''/);
 });

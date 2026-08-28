@@ -51,7 +51,10 @@ function load(items) {
        쓴다(옛 기록에는 pv 가 없어 rv 를 대신 본다). 안 넣으면 그 자리에서 멎어
        이 파일의 검사가 통째로 운다. */
     fnOf('readPromptVer'),
-    fnOf('neverRead'), fnOf('staleRead'), fnOf('needsRead'), fnOf('autoReadPending')
+    /* ⚠ 2026-08-27: 「모으는 중」 판정을 collectingNow 한 곳으로 모았다. 안 넣으면
+       두 판정이 그 자리에서 멎어 이 파일의 검사가 통째로 운다. */
+    fnOf('collectingNow'),
+    fnOf('neverRead'), fnOf('staleRead'), fnOf('autoReadPending')
   ].join('\n'), ctx);
   return ctx;
 }
@@ -125,11 +128,21 @@ test('다 읽은 사진은 안 건드린다', () => {
   assert.equal(c._note.style.display, 'none', '할 일이 없으면 안내도 없어야 합니다');
 });
 
-test('모으는 중인 장은 아직 안 읽는다', () => {
-  const c = load([{ id: 'a', meta: { doc: { group: 'g', collecting: true } } }]);
+/* ⚠ 2026-08-27 다시 겨눔 — 종전에는 «죽은» needsRead 로 확인해서, **이미 읽어 둔**
+   장을 모으는 경우(카톡으로 한 장씩 온 계약서를 묶을 때)가 통째로 빠져 있었다.
+   실제로 그 길에서는 staleRead 에 가드가 없어 낱장으로 또 읽히고 있었다.
+   그래서 «대기열에 실제로 안 들어가는가»를 두 갈래로 다 본다. */
+test('★ 모으는 중인 장은 아직 안 읽는다 — 안 읽은 장도, 이미 읽은 장도', () => {
+  const c = load([
+    { id: 'a', meta: { doc: { group: 'g', collecting: true } } },                 // 아직 안 읽음
+    { id: 'b', meta: { doc: { group: 'g', collecting: true }, read: { kind: 'card', rv: 7 } } }  // 이미 읽음 = 다시 읽을 차례
+  ]);
   c.autoReadPending();
-  assert.deepEqual(c._queued, []);
-  assert.equal(c.needsRead({ meta: { doc: { collecting: true } } }), false);
+  assert.deepEqual(c._queued, [],
+    '★ 모으는 중인 장이 판독 대기열에 들어갔습니다 — 낱장으로 또 읽힙니다');
+  assert.equal(c.neverRead({ meta: { doc: { collecting: true } } }), false);
+  assert.equal(c.staleRead({ meta: { doc: { collecting: true }, read: { kind: 'card', rv: 7 } } }), false,
+    '★ 다시 읽기 쪽에 가드가 없습니다 — 이것이 2026-08-27에 찾은 구멍입니다');
 });
 
 test('★ 여러 쪽 문서는 문서마다 한 번만 — 안 읽은 쪽·다시 읽을 쪽 둘 다', () => {
@@ -145,10 +158,17 @@ test('★ 여러 쪽 문서는 문서마다 한 번만 — 안 읽은 쪽·다�
   assert.deepEqual(c._queued, ['p1', 'q1'], '★ 같은 문서를 두 번 읽습니다');
 });
 
-test('needsRead 는 둘을 합친 것이다 — 다른 곳이 쓰는 판정이 어긋나면 안 된다', () => {
+/* ⚠ 종전 제목: 「needsRead 는 둘을 합친 것이다 — 다른 곳이 쓰는 판정이 어긋나면 안 된다」.
+   그런데 **그 「다른 곳」이 없었다.** 아무도 안 부르는 함수였고, 화면은 둘을 따로 쓴다
+   (상한이 20장·3장으로 다르기 때문이다). 2026-08-27 검토에서 걷어냈다.
+   지켜야 할 것은 그대로다 — **두 판정이 각자 제 몫을 가른다.** */
+test('★ 두 판정이 각자 제 몫을 가른다', () => {
   const c = load([]);
-  assert.equal(c.needsRead(fresh('a')), true);
-  assert.equal(c.needsRead(stale('b')), true);
-  assert.equal(c.needsRead(stale('c', 'meeting')), false);
-  assert.equal(c.needsRead(done('d')), false);
+  assert.equal(c.neverRead(fresh('a')), true, '안 읽은 것은 neverRead 몫이다');
+  assert.equal(c.staleRead(fresh('a')), false, '안 읽은 것을 staleRead 가 집으면 상한이 뒤섞인다');
+  assert.equal(c.staleRead(stale('b')), true, '다시 읽을 것은 staleRead 몫이다');
+  assert.equal(c.neverRead(stale('b')), false);
+  assert.equal(c.staleRead(stale('c', 'meeting')), false, '나올 것 없는 종류는 다시 안 읽는다');
+  assert.equal(c.staleRead(done('d')), false);
+  assert.equal(c.neverRead(done('d')), false);
 });

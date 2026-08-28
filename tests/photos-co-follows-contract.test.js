@@ -101,9 +101,13 @@ test('넣은 것·이미 차 있던 것은 할 일이 아니다', () => {
   assert.equal(J.coTodo(R_FULL), false);
 });
 
-test('★ needsCheck 와 checkWhy 가 같은 조건(coTodo)을 쓴다', () => {
-  assert.match(fnOf(app, 'needsCheck'), /if \(coTodo\(r\)\) return true;/);
+/* ⚠ 2026-08-27 다시 겨눔 — needsCheck 가 checkWhy 를 그대로 쓰게 됐다. 두 벌이
+   «같은 조건인가»를 재던 검사는 이제 잴 것이 없다(어긋날 수가 없다).
+   지켜야 할 것은 그대로다: **업체관리 할 일은 coTodo 한 곳으로 가른다.** */
+test('★ 업체관리 할 일은 coTodo 한 곳으로 가른다', () => {
   assert.match(fnOf(app, 'checkWhy'), /if \(coTodo\(r\)\) return '업체관리로 아직 안 보냄/);
+  assert.match(fnOf(app, 'needsCheck'), /return !!checkWhy\(it\);/,
+    '★ 판정이 다시 두 벌로 갈라지면 목록과 이유가 어긋납니다');
 });
 
 /* ══════ ③ 한 번만 읽는다 ══════ */
