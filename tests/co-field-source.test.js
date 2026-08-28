@@ -167,7 +167,9 @@ function buildList(bizItems, cardItems, erp){
     _norm: v => String(v || '').replace(/\s+/g, ''),
     coKeyOf: it => { const d = String(it.bizno || '').replace(/\D/g, '');
                      return d.length >= 10 ? d : ('n' + String(it.company || '').replace(/\s+/g, '')); },
-    ErpMatch: { match: () => erp || null },
+    ErpMatch: { ready: true, match: () => erp || null,
+      /* 2026-08-28: coListBuild 가 전체를 한 번에 맞춘다 — 대역도 같은 답을 준다 */
+      matchAll: list => { const out = {}; (list||[]).forEach(o=>{ if(o && erp) out[o.key] = erp; }); return out; } },
     coEffectiveExtra: () => null };
   vm.createContext(ctx);
   vm.runInContext(fnBody('coListBuild'), ctx);
