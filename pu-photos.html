@@ -5227,6 +5227,53 @@ function decodeViaDataUrl(file) {
   });
 }
 
+/* ── 만들어진 사진이 «온전한가» (김동현 제보 2026-08-27) ─────────────────
+   ★ 무슨 일이 있었나
+     한 번에 28장을 올렸더니 격자에 «위쪽 띠만» 보이고 아래는 빈 칸이었다.
+     재현해 보니 덜 받은 JPEG 는 «정상으로 열리고 크기도 맞게» 나온다 —
+     다만 있는 줄만 칠하고 나머지는 빈 채로 남는다. 화면 탓도 느린 탓도 아니고
+     파일이 실제로 불완전했던 것이다.
+
+   ★ 어디서 잘리나
+     창고(Storage) 업로드는 통째로 되거나 실패하지 반쯤 남지 않는다.
+     그러니 «올리기 전»에 이미 잘려 있었다. 폰에서 큰 사진을 연달아 줄이면
+     canvas 가 메모리에 밀려 toDataURL 이 잘린 결과를 내놓는 일이 있다.
+     — 어느 단계가 흘리든, 여기서 막으면 잘린 사진은 창고에 못 들어간다.
+
+   ★ 어떻게 아나
+     JPEG 는 반드시 FFD9(끝 표시)로 끝난다. 끊긴 파일에는 그 표시가 없다.
+     글자 몇 개만 보면 되므로 사진을 다시 풀 필요가 없다 — 폰에서도 값이 싸다. */
+function jpegTailBytes(dataUrl, n) {
+  var s = String(dataUrl || '');
+  var i = s.indexOf(',');
+  if (i < 0) return null;
+  var b64 = s.slice(i + 1);
+  /* base64 는 4글자가 3바이트다 — 뒤 4의 배수만 떼어 내야 제대로 풀린다 */
+  var take = Math.min(b64.length, Math.max(8, Math.ceil(n / 3) * 4));
+  var tail = b64.slice(b64.length - take);
+  var pad = tail.length % 4;
+  if (pad) tail = tail.slice(pad);
+  try {
+    var bin = atob(tail);
+    var out = new Uint8Array(bin.length);
+    for (var k = 0; k < bin.length; k++) out[k] = bin.charCodeAt(k);
+    return out;
+  } catch (e) { return null; }
+}
+function jpegIsWhole(dataUrl) {
+  var s = String(dataUrl || '');
+  if (s.indexOf('data:image/jpeg') !== 0) return true;   // JPEG 가 아니면 여기서 따지지 않는다
+  if (s.length < 512) return false;                      // 이 정도면 사진일 리가 없다
+  var t = jpegTailBytes(s, 6);
+  if (!t || t.length < 2) return false;
+  /* 끝 표시(FFD9)가 마지막에 있어야 한다. 만들 때 뒤에 0 이 몇 개 붙는 기기가 있어
+     끝에서 조금 뒤까지 훑는다. */
+  for (var i = t.length - 2; i >= 0 && i >= t.length - 5; i--) {
+    if (t[i] === 0xFF && t[i + 1] === 0xD9) return true;
+  }
+  return false;
+}
+
 /* 사진을 긴 변 maxEdge 로 줄여 JPEG dataURL 로 만든다.
    회전 정보(EXIF orientation)는 브라우저가 그림을 읽을 때 반영한다.
    quality: 서류는 글씨를 읽어야 해서 사진보다 높다(저장 층의 uploadSpec 참고). */
@@ -5248,8 +5295,25 @@ function shrinkMany(file, sizes) {
     /* ⚠ 축소본을 다시 줄여 미리보기를 만들지 않는다 — 둘 다 원본에서 뽑는다.
        한 번 줄인 것을 또 줄이면 표본을 두 세대 거쳐 격자 미리보기가 흐려진다
        (2026-08-15 재어 보고 되돌림 · drawScaled 주석 참고). */
-    const out = sizes.map(function (s) { return drawScaled(im, s.maxEdge, s.quality); });
+    var out = sizes.map(function (s) { return drawScaled(im, s.maxEdge, s.quality); });
+
+    /* ★ 덜 만들어졌으면 «한 번 더» 만들어 본다 (김동현 제보 2026-08-27).
+       폰에서 큰 사진을 연달아 줄이면 canvas 가 메모리에 밀려 잘린 결과가 나온다.
+       그럴 때 그냥 다시 그리면 대개 성공한다 — 잠깐 사이 자리가 비기 때문이다. */
+    var retried = 0;
+    out = out.map(function (o, i) {
+      if (jpegIsWhole(o.dataUrl)) return o;
+      retried++;
+      return drawScaled(im, sizes[i].maxEdge, sizes[i].quality);
+    });
+    if (retried) console.warn('[사진] 덜 만들어져 다시 그림 ' + retried + '장');
+
     if (im.close) im.close();
+
+    /* 두 번째도 잘렸으면 «올리지 않는다». 잘린 채로 올리면 격자에 위쪽 띠만
+       보이는데, 화면만 봐서는 덜 올라간 것인지 알 길이 없다 — 그게 이번 제보였다. */
+    var bad = out.filter(function (o) { return !jpegIsWhole(o.dataUrl); });
+    if (bad.length) throw new Error('사진을 온전히 줄이지 못했습니다 — 한 번에 올리는 장수를 줄여 다시 시도해 주세요');
     return out;
   });
 }
