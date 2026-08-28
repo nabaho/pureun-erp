@@ -505,7 +505,15 @@
     var KEEP = ['company','ceo','corpno','address','companyTel','mobile','email','homepage',
                 'bizType','bizItem','openDate','smeType','product','sales','workers',
                 'docName','applyNo','applyItems',
-                'applyField','applyDetail','applyDate','dueDays','birth'];
+                'applyField','applyDetail','applyDate','dueDays','birth',
+                /* ── 은행·자동이체 (대표 지시 2026-08-28) — CMS 신청서에서 온다 ──
+                   ⚠ 계좌번호를 **온전히** 담는다. 대표 결정: "뒤 계좌 모두 보여야 한다.
+                     그래야 추후 데이터를 이용해서 cms 자동입력할 수 있다."
+                     **가리도록 되돌리지 말 것** — 「계좌번호가 그대로 있네」로 보이지만
+                     그것이 목적이다(자동입력에 쓰려면 온전한 번호라야 한다).
+                   ⚠ 예금주 **주민번호는 여기 없다.** 판독기가 아예 안 읽는다
+                     (js/pu-doc-read.js 의 kind=cms 물음에 「읽지 마세요」로 못박아 두었다). */
+                'bankName','bankAcct','bankHolder','payDay','payerNo','applyType'];
     var ref = deps.db.ref(CARDS_ROOT + '/coInfo/' + key);
     return ref.once('value').then(function (s) {
       var cur = s.val() || {};
@@ -707,6 +715,88 @@
     return sendToCompanyMany([o || {}]).then(function (r) { return r[0]; });
   }
 
+  /* ══════════════════════════════════════════════════════════════
+     계약의 「CMS 자동이체」를 켠다 (대표 지시 2026-08-28)
+     ══════════════════════════════════════════════════════════════
+     "사진첩에서 cms 계약서가 정리되어 자동이체 승인한 경우 자동이체 체크해달라."
+
+     ⚠ 규칙 넷. 이 넷을 어기면 남의 계약이 바뀐다.
+
+     1. **계약을 새로 만들지 않는다.** 못 찾으면 아무것도 하지 않고 그대로 알린다.
+     2. **딱 하나일 때만 켠다**(대표 결정 2026-08-28 ②㉮). 그 업체에 살아 있는 계약이
+        둘 이상이면 어느 것인지 알 수 없다 — 「어느 계약인지 골라 주세요」로 알린다.
+        진행 중인 것 전부에 켜면 끝난 자문까지 자동이체가 켜진다.
+     3. **끄지 않는다.** 켜는 일만 한다. 신청서 한 장 때문에 사람이 손으로 꺼 둔 것이
+        도로 켜지는 일은 있어도, 켜 둔 것이 꺼지는 일은 없어야 한다.
+     4. **칸 하나만 쓴다.** 계약 레코드를 통째로 쓰면 그 사이 다른 사람이 고친 값이 날아간다
+        (업체관리에서 겪은 그 사고다 — coFill 의 까닭과 같다).
+
+     ⚠ 「승인」의 뜻은 부르는 쪽이 정한다(대표 결정 ③㉮: 은행·계좌·예금주가 다 읽히면).
+       여기서는 «켜 달라는 말을 들으면 켠다». */
+  var ERP_CT = 'data/contracts';
+
+  function eachContract(raw, fn) {
+    if (!raw) return;
+    if (Array.isArray(raw)) {
+      for (var i = 0; i < raw.length; i++) if (raw[i]) fn(raw[i], String(i));
+      return;
+    }
+    if (typeof raw !== 'object') return;
+    Object.keys(raw).forEach(function (k) { if (raw[k]) fn(raw[k], k); });
+  }
+
+  /* 끝난 계약은 셈에서 뺀다 — 지난해 끝난 자문까지 세면 늘 「여럿」이 되어 아무것도 못 켠다. */
+  function ctLive(c) {
+    var st = String((c && c.status) || '').toLowerCase();
+    return st !== 'closed' && st !== 'done' && st !== 'end' && st !== '종료';
+  }
+
+  function setContractCms(o) {
+    o = o || {};
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var bizKeyV = bizKey(o.bizNo);
+    var nameKeyV = coNameKey(o.companyName);
+    if (!bizKeyV && !nameKeyV) {
+      return Promise.resolve({ ok: false, message: '어느 업체인지 알 수 없습니다' });
+    }
+    return deps.db.ref(ERP_CT).once('value').then(function (s) {
+      var wrap = s.val();
+      var raw = (wrap && wrap.v !== undefined) ? wrap.v : wrap;
+      var hits = [];
+      eachContract(raw, function (c, at) {
+        if (!ctLive(c)) return;
+        var mine = (bizKeyV && bizKey(c.bizNo) === bizKeyV) ||
+                   (!bizKeyV && nameKeyV && coNameKey(c.companyName || c.company) === nameKeyV);
+        if (mine) hits.push({ id: c.id || at, at: at, rec: c });
+      });
+      if (!hits.length) {
+        return { ok: false, message: '푸른이알피에 그 업체의 진행 중인 계약이 없습니다' };
+      }
+      if (hits.length > 1) {
+        return { ok: false, many: hits.length,
+          message: '계약이 ' + hits.length + '건이라 어느 것인지 알 수 없습니다 — 계약관리에서 골라 켜 주세요' };
+      }
+      var hit = hits[0];
+      if (hit.rec.isCMS === true) {
+        return { ok: true, already: true, id: hit.id, message: '이미 자동이체로 되어 있었습니다' };
+      }
+      var now = Date.now();
+      var u = {}, path = ERP_CT + '/v/' + hit.at + '/';
+      u[path + 'isCMS'] = true;
+      /* 어디서 켰는지 남긴다 — 나중에 「이거 누가 켰지」에 답해야 한다 */
+      u[path + 'cmsFrom'] = 'CMS 신청서' + (o.bankName ? ' (' + o.bankName + ')' : '');
+      u[path + 'cmsAt'] = now;
+      u[path + 'updatedAt'] = now;
+      if (o.byName) u[path + 'updatedBy'] = o.byName;
+      /* 갱신시각 — 푸른이알피가 이걸 보고 다시 읽는다. 안 쓰면 화면에 안 나타난다. */
+      u[ERP_CT + '/u'] = now;
+      return deps.db.ref().update(u).then(function () {
+        return { ok: true, id: hit.id,
+          message: '「' + (hit.rec.companyName || hit.rec.company || '') + '」 계약에 자동이체를 켰습니다' };
+      });
+    });
+  }
+
   global.PuDocFile = {
     init: init,
     inPrivateVault: inPrivateVault,
@@ -720,6 +810,7 @@
     coNameKey: coNameKey,
     findCompanyByName: findCompanyByName,
     companyMgrSids: companyMgrSids,
+    setContractCms: setContractCms,
     companyIndex: companyIndex,
     sendToCoInfo: sendToCoInfo,
     sendToCompany: sendToCompany,

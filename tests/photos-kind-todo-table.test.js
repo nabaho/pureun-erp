@@ -91,6 +91,13 @@ const TABLE = {
   timesheet: [true,  /대조/],                  // 손글씨 숫자는 기계가 검산할 방법이 없다
   form:      [true,  /기업 상세/, { fields: { company: '가야엔지니어링',
                                              bizno: '312-81-49225' } }],
+  /* CMS 자동이체 신청서 (대표 지시 2026-08-28) — 서식과 같은 자리로 간다.
+     ⚠ 그 서식에는 **사업자번호 칸이 아예 없다.** 업체명만으로도 보낼 수 있어야 하므로
+       여기 표본도 업체명만 준다 — 그것으로 할 일이 잡혀야 맞다. */
+  cms:       [true,  /기업 상세/, { fields: { company: '아이행복어린이집',
+                                             bankName: '국민은행',
+                                             bankAcct: '123456-04-567890',
+                                             bankHolder: '양유정' } }],
   card:      [true,  /기업정보함/, { auto: true }],   // 잘 읽혔는데 아직 기업정보함에 안 갔다
   bizreg:    [true,  /기업정보함/, { auto: true }],   // 〃
   sme:       [true,  /업체관리/, { auto: true }], // 업체관리에 못 넣었다
