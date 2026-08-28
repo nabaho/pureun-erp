@@ -11,7 +11,10 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'pu-cards.html'), 'utf8');
 
 test('거르는 차례는 coFilteredList 한 곳에만 있다', () => {
-  assert.match(source, /function coFilteredList\(skipCol\)/);
+  /* ⚠ 2026-08-27: 두 번째 인자(skipCares)가 붙었다 — 「🏢 거래처 / 🏢 전체」 두 칩이
+     저마다 «누르면 몇 곳이 되는지»를 세려면 거래처 거르개만 뺀 목록이 필요하다.
+     여기서 지킬 것은 «인자 개수»가 아니라 「거르기가 이 함수 한 곳에 있다」는 것이다. */
+  assert.match(source, /function coFilteredList\(skipCol\b/);
   const at = source.indexOf('function coVisible()');
   const fn = source.slice(at, at + 200);
   assert.match(fn, /return coSorted\(coFilteredList\(null\)\)/, 'coVisible 이 coFilteredList 를 안 거친다');
