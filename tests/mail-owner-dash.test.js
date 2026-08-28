@@ -912,3 +912,99 @@ test('기업정보함이 처음부터 있던 것과 «같은 답»이 나온다 
                early.mbWhoList().map(w => w.name).sort().join(','),
                '늦게 온 쪽과 처음부터 있던 쪽의 답이 다릅니다');
 });
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   푸른이알피에 적힌 주소도 담당자에게 잇는다 (대표 지시 2026-08-28)
+   ══════════════════════════════════════════════════════════════════════════
+   "메일함에 담당자로 되어 있을경우 푸른이알피에서 담당자 메일이나 기업정보함에있는
+    담당자 메일 주소등이 자동으로 법인내 담당자에게 자동으로 연결되게 해달라."
+
+   ★ 세어 보고 넣었다(실측 2026-08-28) — 업체 371곳 가운데 메일이 적힌 곳 116곳,
+     이을 수 있는 주소 123개, 그 가운데 **100개가 무료메일**이다. 바로 그것들이
+     지금 「담당 모름」으로 떨어지던 주소다(회사 도메인이 없어 도메인으로는 못 잇고,
+     명함에도 없다). 메일 353통 → 749통이 잡힌다.
+   ⚠ 주소가 «세 군데»에 흩어져 있다(email · primaryContactEmail · contacts[].email
+     — 실측 10·101·137건). 하나만 보면 대부분을 놓친다. */
+
+/* 푸른이알피 업체 자료를 끼워 넣는다.
+   ⚠ 담당자·종료 판정은 앱과 «같은 길»(ErpMatch.byName)로 받는다 — 여기서 따로
+     셈하면 검사만 통과하고 화면은 다르게 움직인다. */
+function loadErp(over){
+  const o = over || {};
+  const c = loadStaff(o);
+  (o.recs || []).forEach(r => { c.ErpMatch.byName[c.ErpMatch._norm(r.company)] = r; });
+  c.ErpMatch.companies = o.companies || [];
+  c.mbWhoBust();
+  return c;
+}
+const whoOfAddr = (c, em) => c.mbWhoOfRow({ e: em });
+
+test('★ 업체 메일 · 담당자 메일 · 담당자 카드 — «세 군데» 모두 본다', () => {
+  /* ⚠ 처음에는 세 주소를 모두 @hanbit.co.kr 로 두었는데, 그 도메인은 기업정보함
+       명함에도 있어서 «도메인으로» 잡혔다 — 세 군데 가운데 둘을 꺼도 검사가 통과했다.
+       그래서 주소마다 «겹치지 않는 도메인»을 준다. 이 길로만 잡힐 수 있게. */
+  const c = loadErp({ companies: [{
+    name: '한빛물산',                       /* 담당 박한별 (BYNAME2) */
+    email: 'office@only-co.kr',
+    primaryContactEmail: 'contact@only-pc.kr',
+    contacts: [{ name: '김과장', email: 'kimpersonal@naver.com' }]   /* 무료메일 */
+  }] });
+  [['업체 메일', 'office@only-co.kr'],
+   ['담당자 메일', 'contact@only-pc.kr'],
+   ['담당자 카드', 'kimpersonal@naver.com']].forEach(([where, a]) => {
+    assert.equal(whoOfAddr(c, a), '박한별', where + '(' + a + ')를 안 보고 있습니다');
+  });
+});
+
+test('★ 무료메일 주소가 이어진다 — 지금 「담당 모름」으로 떨어지던 바로 그것들이다', () => {
+  const c = loadErp({ companies: [{
+    name: '한빛물산', contacts: [{ name: '박부장', email: 'parkboss@naver.com' }] }] });
+  assert.equal(whoOfAddr(c, 'parkboss@naver.com'), '박한별', '무료메일 주소가 안 이어집니다');
+  /* ⚠ 그렇다고 naver.com «도메인 전체»를 그 사람에게 주면 안 된다 — 온 세상이 그 사람 것이 된다 */
+  assert.equal(whoOfAddr(c, 'stranger@naver.com'), '',
+    '무료메일 도메인을 통째로 한 사람에게 주고 있습니다');
+});
+
+test('★ 업체 자료가 «늦게» 와도 다시 만든다 — 빈 표가 굳으면 전부 담당 모름이 된다', () => {
+  const c = loadErp({ companies: [] });
+  assert.equal(whoOfAddr(c, 'late@naver.com'), '', '검사 밑그림이 틀렸습니다');
+  /* ErpMatch.load 가 이제 끝났다 */
+  c.ErpMatch.companies = [{ name: '한빛물산',
+    contacts: [{ name: '박부장', email: 'late@naver.com' }] }];
+  assert.equal(whoOfAddr(c, 'late@naver.com'), '박한별',
+    '업체 자료가 들어왔는데도 표가 옛것 그대로입니다(새로고침해야 보입니다)');
+});
+
+test('★ 자문이 «끝난» 업체 주소는 담당자 칸이 아니라 종료 칸으로 (대표 결정 2026-08-28)', () => {
+  /* ⚠ 처음에 이 검사를 mbWhoOfRow 로 겨눴다가 틀렸다 — 그 함수는 끝난 업체에도
+       담당자 이름을 그대로 준다(누가 맡던 곳인지는 알아야 하니 맞다).
+       «어느 칸에 들어가는가»를 정하는 것은 mbRowFits 다. 규칙이 사는 자리를 겨눈다. */
+  const c = loadErp({
+    recs: [{ company: '종료업체', main: '박한별', subs: [], left: true }],
+    companies: [{ name: '종료업체',
+      contacts: [{ name: '이과장', email: 'ended@naver.com' }] }]
+  });
+  const row = { e: 'ended@naver.com', _slug: 'B_JAMUN', _key: 'B_JAMUN:9' };
+  assert.ok(c.mbEndedOfRow(row), '끝난 업체로 안 잡힙니다');
+  assert.equal(c.mbRowFits(row, '@박한별'), false,
+    '끝난 업체 메일이 담당자 칸에 들어갑니다 — 한 통이 두 곳에 겹칩니다');
+  assert.equal(c.mbRowFits(row, '@?'), false, '「담당 모름」에도 겹쳐 들어갑니다');
+  assert.equal(c.mbRowFits(row, '@!'), true, '종료 칸에 안 들어갑니다');
+});
+
+test('메일 주소 꼴이 아닌 것은 안 담는다 — 빈칸·쓰레기가 표를 더럽힌다', () => {
+  const c = loadErp({ companies: [{
+    name: '한빛물산', email: '', primaryContactEmail: '없음',
+    contacts: [{ name: '가', email: '   ' }, { name: '나', email: 'ok2@hanbit.co.kr' }] }] });
+  assert.equal(whoOfAddr(c, 'ok2@hanbit.co.kr'), '박한별');
+  assert.equal(whoOfAddr(c, '없음'), '');
+});
+
+test('담당자가 «없는» 업체의 주소는 아무에게도 안 붙는다', () => {
+  const c = loadErp({
+    recs: [{ company: '담당없음', main: '', subs: [], left: false }],
+    companies: [{ name: '담당없음', contacts: [{ name: '가', email: 'nobody@naver.com' }] }]
+  });
+  assert.equal(whoOfAddr(c, 'nobody@naver.com'), '');
+});

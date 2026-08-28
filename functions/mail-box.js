@@ -503,6 +503,46 @@ function nextSync(sync, seen, uidValidity, done) {
   };
 }
 
+/* ── 지운 것인가, 「창 밖」으로 밀려난 것인가 (대표 지시 2026-08-28) ──
+   "왜 400 으로 했나 불필요한것 같다 제한이 필요없을 것 같다."
+
+   ★ 400 은 우리 한도가 아니다 — 다음메일 IMAP 이 폴더당 그만큼만 보여 준다
+     (실측: 13개 폴더가 나란히 400 에서 멈춘다). 우리는 이미 그보다 많이 담고 있었다
+     (실측 2026-08-28: Sent 421 · INBOX 411 · 1.자문사답변 406).
+
+   ⚠ 그런데 «정리»가 그것을 도로 깎았다. 예전 규칙은 「지금 목록에 없으면 지운다」였다.
+     새 메일이 한 통 오면 가장 옛것이 그 400 창 밖으로 밀리는데, 지운 것이 아닌데도
+     목록에서 사라진다. 그래서 우리 거울이 «영영 400 을 못 넘었다» — 대표가 지우지도
+     않은 메일을 우리가 스스로 지우고 있었다.
+
+   ★ 가를 수 있다. IMAP 번호(uid)는 «늘 커지기만» 한다. 그러니 지금 보이는 것 가운데
+     «가장 작은 번호»(floor)보다 작으면 그것은 창 밖이지 지워진 것이 아니다.
+     floor 보다 크면서 목록에 없으면 — 그 구간은 서버가 다 보여 주고 있으므로 —
+     정말 지워졌거나 다른 폴더로 옮겨진 것이다.
+
+   ⚠ 창 밖으로 밀려난 «뒤에» 지운 것은 영영 못 알아챈다. 그 값과 「지우지도 않은 메일이
+     사라진다」를 견주면 남기는 쪽이 낫다(대표 지시).
+   ⚠ 목록이 비어 있으면 «아무것도 지우지 않는다». 예전에는 이때 폴더가 통째로 지워졌다 —
+     번호 목록을 못 받으면(SEARCH 실패) p.uids 가 빈 배열이 되는데, 그러면 「살아 있는
+     것이 하나도 없다」로 읽혀 담아 둔 줄이 전부 날아간다. 한 번의 접속 실패로 몇 년치가
+     사라지는 길이라 여기서 막는다. */
+function goneKeys(haveKeys, uids) {
+  const list = (uids || []).map(Number).filter((n) => n > 0);
+  if (!list.length) return [];
+  const alive = {};
+  let floor = Infinity;
+  for (let i = 0; i < list.length; i++) {
+    alive[String(list[i])] = 1;
+    if (list[i] < floor) floor = list[i];
+  }
+  return (haveKeys || []).filter((k) => {
+    const n = Number(k);
+    if (!Number.isFinite(n) || n <= 0) return false;
+    if (alive[String(n)]) return false;
+    return n > floor;
+  });
+}
+
 /* 새로 매겨졌으면 지난 목록은 버려야 한다 — 같은 번호가 다른 메일을 가리킨다. */
 function uidReset(sync, uidValidity) {
   const old = Number((sync || {}).uv || 0);
@@ -517,5 +557,5 @@ module.exports = {
   folderNameBad, childPath, renamedPath,
   textPartOf, decodePart, toText, previewFrom, unentity, isHeadLine, PREVIEW_MAX,
   ROW_VER, needsRefetch, folderDone,
-  pickToFetch, uidSet, nextSync, uidReset,
+  pickToFetch, uidSet, nextSync, uidReset, goneKeys,
 };

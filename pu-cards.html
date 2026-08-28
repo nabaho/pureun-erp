@@ -11599,13 +11599,18 @@ function mbWhoIndex(){
        그대로 굳었다. 그러면 담당자가 «전부 담당 모름»으로 보이고, 새로고침을 해야만
        제자리로 온다. 무엇이 틀렸는지 화면만 봐서는 알 길이 없는 종류의 고장이다.
      ⚠ 판정을 «수»로 하는 것은 mbWhoMap(이름·회사 찾기)과 같은 결이다. */
-  if(_mbWhoIdx && _mbWhoIdx._n === keys.length) return _mbWhoIdx;
+  /* ⚠ 업체 자료(푸른이알피)도 «늦게» 온다 — ErpMatch.load 가 끝나야 채워진다.
+       명함 수만 보면, 업체가 뒤에 도착해도 표가 그대로 굳는다. 둘 다 센다. */
+  const cos = (typeof ErpMatch!=='undefined' && ErpMatch.companies) ? ErpMatch.companies : [];
+  const stamp = keys.length + ':' + cos.length;
+  if(_mbWhoIdx && _mbWhoIdx._n === stamp) return _mbWhoIdx;
   const byAddr = {}, domHit = {}, endAddr = {}, endDomHit = {}, coAddr = {};
-  keys.forEach(k=>{
-    const it = items[k]; if(!it) return;
-    const em = String(it.email||'').trim().toLowerCase(); if(!em) return;
-    const rec = (typeof ErpMatch!=='undefined' && ErpMatch.match) ? ErpMatch.match(it) : null;
-    if(!rec) return;
+
+  /* 주소 하나를 표에 넣는다 — 기업정보함과 푸른이알피가 «같은 길»을 쓰게 한 자리.
+     ⚠ 먼저 넣은 것이 이긴다(byAddr[em] 이 있으면 안 덮는다). 부르는 차례가 곧 규칙이다. */
+  const put = (email, rec)=>{
+    const em = String(email||'').trim().toLowerCase();
+    if(!em || !rec) return;
     const d = mbDomOf(em);
     const pub = !d || MB_PUB_DOM.indexOf(d) >= 0;
     /* ── 자문이 끝난 업체인가 (대표 지시 2026-08-26) ──
@@ -11624,7 +11629,56 @@ function mbWhoIndex(){
     if(!who) return;
     if(!byAddr[em]) byAddr[em] = who;
     if(!pub) (domHit[d] = domHit[d] || {})[who] = 1;
+  };
+
+  /* ══════════════════════════════════════════════════════════════════════
+     ① 푸른이알피(업체관리)에 적힌 주소 — 대표 지시 2026-08-28
+     ══════════════════════════════════════════════════════════════════════
+     "메일함에 담당자로 되어 있을경우 푸른이알피에서 담당자 메일이나 기업정보함에있는
+      담당자 메일 주소등이 자동으로 법인내 담당자에게 자동으로 연결되게 해달라."
+
+     ★ 먼저 세어 보고 넣었다(실측 2026-08-28) — 업체 371곳 가운데 메일이 하나라도
+       적힌 곳 116곳, 이을 수 있는 «다른» 주소 123개.
+       그 가운데 **100개가 무료메일(naver·hanmail…)** 이다. 바로 그것들이 지금
+       「담당 모름」으로 떨어지던 주소다 — 회사 도메인이 없어 도메인으로는 못 잇고,
+       기업정보함 명함에도 없던 것들이다.
+       메일 7,355통 기준 담당자가 잡히는 것이 **353통 → 749통**(+396통)이 된다.
+
+     ⚠ 새로 받아 오는 자료가 «없다» — ErpMatch.companies 는 이미 손에 든 것이다
+       (요금이 늘지 않는다).
+     ⚠ 주소가 세 군데에 흩어져 있다: 업체 메일(email) · 담당자 메일
+       (primaryContactEmail) · 담당자 카드(contacts[].email). 실측으로는
+       10 · 101 · 137 건이라 «셋 다» 봐야 한다. 하나만 보면 대부분을 놓친다.
+     ⚠ 담당 노무사가 «없는» 업체라도 끝난 업체면 넣는다 — 종료 칸이 그것으로 찬다.
+     ⚠ 기업정보함보다 «먼저» 넣는다(대표 결정 2026-08-28: 「푸른이알피를 먼저」).
+       계약서에 적힌 공식 담당자를 믿는다는 뜻이다. 실측으로 두 곳이 어긋나는 주소는
+       8개이고 그 8개는 실제 메일에 한 번도 안 나온다 — 지금 화면은 한 통도 안 바뀐다. */
+  const okMail = (e)=>/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(e||'').trim());
+  cos.forEach(co=>{
+    if(!co) return;
+    /* ErpMatch 가 이미 만들어 둔 판정을 그대로 쓴다 — 담당자·종료 여부를 여기서 다시
+       셈하면 두 곳이 어긋난다(업체관리 status 뜻이 바뀌면 한쪽만 따라간다).
+       ⚠ 이렇게 «되짚으면» 이름이 겹치는 업체에서 남의 담당자를 받을 수 있다.
+         그래서 재 보고 넣었다 — 실측 2026-08-28: 되짚기가 null 인 업체 0곳,
+         곧바로 co 를 쓴 것과 «다른» 담당자를 주는 업체 0곳, 주소 248개 그대로.
+         잃는 것이 없으므로 «한 자리에서만 판정한다»는 쪽을 골랐다. */
+    const rec = (typeof ErpMatch!=='undefined' && ErpMatch.match)
+      ? ErpMatch.match({ bizno: co.bizNo, company: co.name }) : null;
+    if(!rec || (!rec.main && !rec.left)) return;
+    if(okMail(co.email)) put(co.email, rec);
+    if(okMail(co.primaryContactEmail)) put(co.primaryContactEmail, rec);
+    (co.contacts||[]).forEach(c=>{ if(c && okMail(c.email)) put(c.email, rec); });
   });
+
+  /* ② 기업정보함 명함에 적힌 주소 */
+  keys.forEach(k=>{
+    const it = items[k]; if(!it) return;
+    const em = String(it.email||'').trim().toLowerCase(); if(!em) return;
+    const rec = (typeof ErpMatch!=='undefined' && ErpMatch.match) ? ErpMatch.match(it) : null;
+    if(!rec) return;
+    put(em, rec);
+  });
+
   const byDom = {}, endDom = {};
   Object.keys(domHit).forEach(d=>{
     const w = Object.keys(domHit[d]);
@@ -11635,7 +11689,7 @@ function mbWhoIndex(){
   Object.keys(endDomHit).forEach(d=>{
     if(endDomHit[d].end && !endDomHit[d].live) endDom[d] = 1;
   });
-  _mbWhoIdx = { byAddr, byDom, endAddr, endDom, coAddr, _n: keys.length };
+  _mbWhoIdx = { byAddr, byDom, endAddr, endDom, coAddr, _n: stamp };
   return _mbWhoIdx;
 }
 function mbWhoBust(){ _mbWhoIdx = null; }
