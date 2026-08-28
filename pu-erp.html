@@ -136,7 +136,7 @@
 </div>
 <div id="root"></div>
 <script src="js/utils.js?v=1"></script>
-<script src="js/pu-photo-store.js?v=9"></script>
+<script src="js/pu-photo-store.js?v=10"></script>
 <script src="js/pu-billing.js?v=6"></script>
 <!-- 급여담당자 엑셀 → 업체관리 (대표 결정 2026-08-24). 읽고 대조하는 일은 이 파일이,
      그리기는 아래 화면이 한다 — 검사가 이 파일을 그대로 돌린다. -->
@@ -12672,6 +12672,90 @@ function erpLoadMyContractPhotos(cb){
   });
 }
 
+/* ── 사번(sid) → 계정(uid) 대조표 ──
+   사진 권한은 «계정»으로 걸고 담당자는 «사번»으로 적혀 있다. 그 사이를 잇는 것이
+   uid_roles 다(로그인할 때 그 사람 계정 밑에 사번이 적힌다).
+   ⚠ 한 번도 로그인한 적 없는 사람은 계정이 없어 **여기 안 나온다** — 부르는 쪽이
+     그 사실을 사람에게 말해 줘야 한다. 조용히 빠뜨리면 「왜 저 사람만 못 보지」가 된다.
+   ⚠ 한 사람이 계정을 여럿 만들었으면 **가장 최근 것**을 쓴다.
+   ⚠ 성과확인(pcfLoadUidMap)이 같은 자리를 읽는다 — 두 벌로 두면 한쪽만 고쳐지므로
+     그쪽이 이 함수를 부른다. */
+var _erpUidBySid = null;
+function erpUidBySid(){
+  if(_erpUidBySid) return Promise.resolve(_erpUidBySid);
+  if(typeof fbDb === 'undefined' || !fbDb) return Promise.resolve({});
+  return fbDb.ref('uid_roles').once('value').then(function(s){
+    var v = s.val() || {}, best = {};
+    Object.keys(v).forEach(function(uid){
+      var r = v[uid]; if(!r || !r.sid) return;
+      var t = r.updatedAt || 0;
+      if(!best[r.sid] || t > best[r.sid].t) best[r.sid] = { uid:uid, t:t };
+    });
+    var out = {};
+    Object.keys(best).forEach(function(sid){ out[sid] = best[sid].uid; });
+    _erpUidBySid = out;
+    return out;
+  }).catch(function(){ return {}; });
+}
+
+/* ── 업무를 저장하면 그 일의 담당자에게 사진을 열어 준다 (대표 지시 2026-08-28) ──
+   "사진첩의 사진의 경우 푸른이알피에서 주담당 부담당으로 업무처리하는 경우
+    공동으로 사진을 보고 공유할 수 있게 해달라."
+
+   지금까지는 사진첩이 사람별로 갈려 있어, 부담당이 계약을 열어도 주담당이 붙인
+   계약서 사진은 **「원본을 열 수 없습니다 — 내가 올린 사진만 볼 수 있습니다」** 였다
+   (위 ContractDocViewModal 의 그 문구다).
+
+   ⚠ **더해 주기만 한다**(대표 결정 2026-08-28: 담당에서 빠진 사람은 그대로 둔다).
+     손으로 넣어 둔 공유가 저장 한 번에 조용히 끊기면 안 된다.
+   ⚠ 권한을 줄 수 있는 사람은 **사진 주인과 총괄관리자**뿐이다(사진첩 규칙). 아니면
+     거절당한다 — 그때는 «누가 무엇을 해야 하는지»를 적어 준다. 조용히 넘기면
+     「분명 저장했는데 저쪽은 못 본다」가 된다.
+   ⚠ **저장을 되돌리지 않는다.** 공유가 안 됐다고 다 된 계약 저장을 무를 수는 없다.
+   ⚠ 계약·사건·컨설팅·기금이 **이 함수 하나**를 쓴다 — 담당 칸의 모양이 넷 다 같다
+     (managerMain + managerSubs). 네 벌로 두면 한쪽만 고쳐진다. */
+function erpMgrSids(item){
+  var out = [];
+  if(item && item.managerMain) out.push(item.managerMain);
+  ((item && item.managerSubs) || []).forEach(function(s){
+    if(s && out.indexOf(s) < 0) out.push(s);
+  });
+  return out;
+}
+
+function erpSharePhotoWithMgrs(photo, item, where){
+  if(!photo || !photo.id || !photo.year) return;
+  if(typeof PuPhotoStore === 'undefined' || !PuPhotoStore.addShare) return;
+  var sids = erpMgrSids(item);
+  if(!sids.length) return;
+  erpUidBySid().then(function(map){
+    var uids = [], noAcct = [];
+    sids.forEach(function(sid){
+      var uid = (map || {})[sid];
+      if(uid){ if(uids.indexOf(uid) < 0) uids.push(uid); }
+      else noAcct.push((typeof userName === 'function' && userName(sid)) || sid);
+    });
+    var tail = noAcct.length
+      ? ' (' + noAcct.join('·') + '님은 아직 로그인한 적이 없어 못 열어 드렸습니다)' : '';
+    if(!uids.length){
+      if(noAcct.length) showToast('⚠ 사진은 못 열어 주었습니다' + tail, 8000);
+      return;
+    }
+    return PuPhotoStore.addShare(photo.year, photo.id, uids, photo.owner || '', where)
+      .then(function(added){
+        var n = (added || []).length;
+        if(n) showToast('✓ 담당자 ' + n + '명에게 사진을 열어 주었습니다' + tail, noAcct.length ? 8000 : 4000);
+        else if(noAcct.length) showToast('⚠ 사진은 못 열어 주었습니다' + tail, 8000);
+      });
+  }).catch(function(e){
+    var who = String((photo && photo.ownerName) || '').trim();
+    showToast('⚠ 저장은 됐지만 사진은 못 열어 주었습니다 — ' +
+      (who ? who + '님이 사진첩에서 「같이 볼 사람」에 넣어 주셔야 합니다'
+           : '이 사진의 주인만 권한을 줄 수 있습니다'), 9000);
+    console.warn('[담당자 공유]', e && e.message);
+  });
+}
+
 /* ── 판독 항목 이름표 — 어느 칸으로 들어갔는지까지 보여 준다 ──
    판독기가 쓰는 키(js/pu-doc-read.js 의 kind=contract)를 사람 말로 옮긴다.
    into 는 「이 계약의 어느 칸에 들어갔나」 — 없으면 참고용 항목이다. */
@@ -14415,12 +14499,21 @@ function ContractModal(props){
        ⚠ 저장이 «된 뒤에» 남긴다 — 「적용」만 누르고 그만둔 것을 썼다고 하면 안 된다.
        ⚠ 실패해도 저장을 되돌리지 않는다. 표시가 없으면 보관이 짧아질 뿐이고,
          그것 때문에 다 된 계약 저장을 무를 수는 없다. */
+    /* ★ 그리고 이 계약의 **주담당·부담당에게 그 사진을 열어 준다** (대표 지시 2026-08-28).
+       까닭과 지킬 것은 erpSharePhotoWithMgrs 에 적었다. 저장이 된 뒤에, 저장을
+       되돌리지 않는 자리라는 점이 「증빙 표시」와 같아서 나란히 둔다. */
     try {
       var _sp = saveData && saveData.srcPhoto;
       if(_sp && _sp.id && _sp.year && typeof PuPhotoStore !== 'undefined' && PuPhotoStore.markUsed){
-        PuPhotoStore.markUsed(_sp.year, _sp.id,
-          '푸른이알피 계약 — ' + ((saveData.company && saveData.company.name) || '업체 미상'))
+        var _where = '푸른이알피 계약 — ' + ((saveData.company && saveData.company.name) || '업체 미상');
+        /* ⚠ 주인을 함께 넘긴다. 안 넘기면 저장 층이 **내 자리**에 대고 표시하므로,
+           남이 올린 계약서에는 「증빙으로 썼다」가 영영 안 남는다 — 그 사진은 1년 뒤
+           「보유기간 지난 사진」으로 떠서 모르고 지우면 계약 증빙이 사라진다
+           (2026-08-28 검토에서 찾음. 관리자가 남의 사진을 고를 수 있게 된 08-26 이후로
+            줄곧 그랬다). */
+        PuPhotoStore.markUsed(_sp.year, _sp.id, _where, _sp.owner || '')
           .catch(function(e){ console.warn('[증빙 표시]', e && e.message); });
+        erpSharePhotoWithMgrs(_sp, saveData, _where);
       }
     } catch(e){ window._erpErrLog && window._erpErrLog(e); }
     try {
@@ -63523,18 +63616,10 @@ function pcfMergeAll(rows, prev, nowIso, byName, due){
 }
 
 // uid_roles 를 뒤집어 사번 → 계정(uid). 한 번도 로그인 안 한 사람은 안 나온다.
+/* ⚠ 2026-08-28: 사진 공유가 같은 대조표를 쓰게 되면서 **erpUidBySid 한 곳으로 모았다.**
+   두 벌로 두면 「계정이 여럿이면 최근 것」 같은 규칙이 한쪽만 고쳐진다. */
 function pcfLoadUidMap(){
-  if(typeof fbDb === 'undefined' || !fbDb) return Promise.resolve({});
-  return fbDb.ref('uid_roles').once('value').then(function(s){
-    var v = s.val() || {}, best = {};
-    Object.keys(v).forEach(function(uid){
-      var r = v[uid]; if(!r || !r.sid) return;
-      var t = r.updatedAt || 0;
-      if(!best[r.sid] || t > best[r.sid].t) best[r.sid] = { uid:uid, t:t };  // 계정이 여럿이면 최근 것
-    });
-    var out = {}; Object.keys(best).forEach(function(sid){ out[sid] = best[sid].uid; });
-    return out;
-  }).catch(function(){ return {}; });
+  return erpUidBySid();
 }
 
 function pcfLoadMonth(ym){

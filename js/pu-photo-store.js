@@ -784,14 +784,54 @@
       u[base + '/shareWith/' + who] = true;
       u[sharedToPath(who, id)] = { owner: deps.uid, year: String(year), at: Date.now() };
     });
-    /* 뺀 사람은 두 곳에서 다 지운다 — 한 곳만 지우면 목록에 유령이 남는다 */
+    /* 뺀 사람은 두 곳에서 다 지운다 — 한 곳만 지우면 목록에 유령이 남는다.
+       ⚠ 「왜 열렸는지」(shareBy)도 함께 지운다(2026-08-28). 안 지우면 뺀 사람의 설명이
+         남아, 다음에 그 사람을 손으로 넣었을 때 「계약 담당」이라고 잘못 적힌다. */
     Object.keys(was).forEach(function (who) {
       if (now[who]) return;
       u[base + '/shareWith/' + who] = null;
+      u[base + '/shareBy/' + who] = null;
       u[sharedToPath(who, id)] = null;
     });
     if (!Object.keys(u).length) return Promise.resolve();
     return deps.db.ref().update(u);
+  }
+
+  /* ── 일하는 사람들에게 «더해 주기»만 한다 (대표 지시 2026-08-28) ──
+     "푸른이알피에서 주담당 부담당으로 업무처리하는 경우 공동으로 사진을 보고
+      공유할 수 있게 해달라."
+
+     setShare 와 셋이 다르다.
+     ① **더하기만 한다.** 넘긴 목록에 없는 사람은 건드리지 않는다 — 손으로 넣어 둔
+        공유가 업무 저장 한 번에 조용히 끊기면 안 된다(대표 결정 2026-08-28: 「그대로 둔다」).
+     ② **남의 사진에도 걸 수 있다**(owner 를 받는다). 계약서 사진은 대개 남이 올린 것이라
+        내 자리에 쓰면 아무 일도 안 일어난다.
+        ⚠ 규칙이 허락하는 사람은 **사진 주인과 총괄관리자**뿐이다. 아니면 여기서
+          거절당한다 — 부르는 쪽이 그 사실을 사람에게 말해 줘야 한다(조용히 넘기면
+          「분명 저장했는데 저쪽은 못 본다」가 된다).
+     ③ **왜 열렸는지 남긴다**(shareBy). 사진첩이 「계약 담당」이라고 적어 주려는 것이다 —
+        손으로 넣은 사람과 구분되어야 ✕ 로 뺄 때 망설이지 않는다.
+        ⚠ 권한을 가르는 것은 여전히 shareWith 하나다(규칙이 그것만 본다). shareBy 는
+          설명일 뿐이라, 없어도 보이는 데는 지장이 없다. */
+  function addShare(year, id, uids, owner, why) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    if (!year || !id) return Promise.reject(new Error('사진을 알 수 없습니다'));
+    var who = owner || deps.uid;
+    if (!who) return Promise.reject(new Error('사진 주인을 알 수 없습니다'));
+    var base = metaPath(year, id, who);
+    var u = {}, added = [];
+    (uids || []).forEach(function (x) {
+      /* 주인 자신은 넣지 않는다 — 자기 사진은 원래 보인다(넣으면 「같이 볼 사람」에
+         자기 이름이 뜬다). */
+      if (!x || x === who) return;
+      if (u[base + '/shareWith/' + x]) return;      // 같은 사람이 두 번 온 경우
+      u[base + '/shareWith/' + x] = true;
+      u[base + '/shareBy/' + x] = String(why || '').slice(0, 60) || '업무';
+      u[sharedToPath(x, id)] = { owner: who, year: String(year), at: Date.now() };
+      added.push(x);
+    });
+    if (!added.length) return Promise.resolve([]);
+    return deps.db.ref().update(u).then(function () { return added; });
   }
 
   /* 나에게 공유된 사진 목록 — 받는 사람 자리를 훑고 그 한 장씩 읽어 온다.
@@ -1939,6 +1979,7 @@
     saveRead: saveRead,
     setPrimaryKind: setPrimaryKind,
     setShare: setShare,
+    addShare: addShare,
     listSharedToMe: listSharedToMe,
     fillSharedNames: fillSharedNames,
     sharedToPath: sharedToPath,
