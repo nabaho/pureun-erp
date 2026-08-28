@@ -860,6 +860,37 @@ test('브라우저 자료가 지워져 기본 데이터로 돌아가면 크게 �
   assert.match(source.slice(i, i + 900), /onclick="fbPull\(\);return false"/);
 });
 
+/* ===== 기관 양식 자동 채움 (2026-08-27, 1단계) ===== */
+
+test('양식 자동 채움 모듈이 로드되고 값채우기가 둘 다 한다 (토큰 + 라벨)', () => {
+  assert.match(source, /<script src="js\/kcareer-hwpxfill\.js\?v=\d+"><\/script>/);
+  const src = funcSource('hwpxFill');
+  assert.match(src, /_fillTokens\(s,map,stat\)/, '기존 {{토큰}} 방식은 그대로 동작해야 합니다(하위호환)');
+  assert.match(src, /KcareerHwpxFill\.autoFill\(s, data\)/, '토큰이 없어도 라벨로 채워야 합니다');
+  assert.match(src, /Contents\\\/section\\d\+\\\.xml/, '라벨 채움은 본문(section)에만 적용합니다');
+  assert.match(src, /KcareerHwpxFill\.summarize\(agg\)/, '무엇을 채웠는지 사람이 읽게 요약해야 합니다');
+  // 토큰도 라벨도 못 찾으면 안내하고 멈춘다 — 빈 파일을 저장하지 않는다
+  assert.match(src, /&& !auto\)/, '라벨 채움 결과도 성공 판정에 넣어야 합니다');
+});
+
+test('자동 채움 데이터는 빠른 이력서와 같은 출처를 쓴다', () => {
+  const src = funcSource('_cvFillData');
+  ['profile_info', "get('edu')", "get('wiccok')", "get('consult')", "get('case')", "get('lecture')"]
+    .forEach((k) => assert.ok(src.indexOf(k) >= 0, k + ' 를 써야 합니다'));
+  // 목록 표 열쇠와 같은 필드명이어야 매핑된다
+  assert.match(src, /period:/); assert.match(src, /school:/); assert.match(src, /role:/);
+});
+
+test('한글 뷰어에 🖨 PDF — 캔버스를 A4 그대로 인쇄한다', () => {
+  assert.match(source, /onclick="hwpViewPdf\(\)"/);
+  const src = funcSource('hwpViewPdf');
+  assert.match(src, /#hwpViewBody canvas/, '이미 그려진 쪽을 그대로 쓴다');
+  assert.match(src, /@page\{size:A4;margin:0\}/, 'A4 꽉 채워야 한글 모양 그대로다');
+  assert.match(src, /page-break-after:always/, '쪽마다 끊어야 합니다');
+  assert.match(src, /toDataURL/, '캔버스를 그림으로 옮겨 인쇄합니다');
+  assert.match(src, /w\.onload/, '그림이 실리기 전에 인쇄하면 빈 쪽이 나옵니다');
+});
+
 test('백업에서 되살리기 — 날짜마다 건수를 세어 고를 수 있게 한다', () => {
   // 공용 백업 패널은 날짜만 보여줘 어느 시점이 온전한지 알 수 없었다(실사용에서 막혔다)
   assert.match(source, /id="modalRecover"/);

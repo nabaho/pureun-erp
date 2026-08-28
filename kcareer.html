@@ -571,6 +571,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
 <script src="js/pu-backup.js?v=1"></script>
 <script src="js/kcareer-scan.js?v=1"></script>
 <script src="js/kcareer-pusync.js?v=1"></script>
+<script src="js/kcareer-hwpxfill.js?v=1"></script>
 <!-- AI 판독 호출기 — 열쇠는 회사 서버가 든다(브라우저는 모른다) -->
 <script src="js/pu-ai-call.js?v=2"></script>
   <!-- 프로그램 사이 이동 (공용 앱바) -->
@@ -1493,7 +1494,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
       <div id="hwpViewInfo" style="font-size:12px;color:var(--text-mute);margin-bottom:8px"></div>
       <div id="hwpViewBody"></div>
     </div>
-    <div class="modal-foot"><button class="btn" onclick="closeHwpView()">닫기</button><button class="btn primary" onclick="hwpViewDownload()">⬇ 파일로 저장</button></div>
+    <div class="modal-foot"><button class="btn" onclick="closeHwpView()">닫기</button><button class="btn" onclick="hwpViewPdf()">🖨 PDF</button><button class="btn primary" onclick="hwpViewDownload()">⬇ 파일로 저장</button></div>
   </div>
 </div>
 <div class="modal-ov" id="modalSub">
@@ -2238,6 +2239,24 @@ function hwpViewDownload(){
   /* ⚠ 형식을 'hwpx'로 못박지 말 것 — 보관함의 옛 .hwp(이진 형식)도 이 뷰어로 열린다.
      형식을 비우면 내용에서 hwp/hwpx를 알아서 가려 올바른 MIME으로 저장한다. */
   PureunHwp.download(_hwpView.bytes, _hwpView.name);
+}
+/* 뷰어가 이미 그린 A4 캔버스를 그대로 인쇄한다 — 한글 모양 그대로의 PDF가 나온다.
+   (인쇄창에서 「PDF로 저장」을 고르면 파일이 된다. 한글 프로그램이 없어도 된다.) */
+function hwpViewPdf(){
+  var cvs=document.querySelectorAll('#hwpViewBody canvas');
+  if(!cvs.length){ toast('먼저 문서가 화면에 그려져야 합니다'); return; }
+  var w=window.open('','_blank');
+  if(!w){ toast('팝업이 막혔습니다 — 주소창의 팝업 허용을 눌러주세요'); return; }
+  var html='<!doctype html><html><head><meta charset="utf-8"><title>'
+    +escapeHtml((_hwpView&&_hwpView.name)||'문서')+'</title>'
+    +'<style>@page{size:A4;margin:0}html,body{margin:0;padding:0}'
+    +'img{display:block;width:100%;page-break-after:always}img:last-child{page-break-after:auto}</style>'
+    +'</head><body>';
+  for(var i=0;i<cvs.length;i++) html+='<img src="'+cvs[i].toDataURL('image/png')+'">';
+  html+='</body></html>';
+  w.document.open(); w.document.write(html); w.document.close();
+  /* 그림이 다 실린 뒤 인쇄창 — 바로 부르면 빈 쪽이 나올 수 있다 */
+  w.onload=function(){ setTimeout(function(){ try{ w.focus(); w.print(); }catch(e){} }, 250); };
 }
 
 /* ===== 제출서류 건 열기 — 그 사업에 낸 서류 목록 ===== */
@@ -5802,10 +5821,15 @@ function renderCvForms(){ const box=document.getElementById('cvForms'); if(!box)
       +(isH?' <a href="#" onclick="cvFormHwpView(\''+f.id+'\');return false" style="color:var(--navy);font-weight:700">👁 보기</a>':'')
       +(isH?' <a href="#" onclick="hwpxFill(\''+f.id+'\');return false" style="color:var(--teal);font-weight:700">✏️ 값채우기</a>':'')
       +' <a href="#" onclick="downloadFile(\''+f.id+'\');return false">⬇</a> <a href="#" onclick="cvDelForm(\''+f.id+'\');return false" style="color:var(--red)">✕</a></span>'; });
-  if(!arr.length) html+='<div style="font-size:11px;color:var(--text-mute);margin-top:6px">기관 양식(HWPX)을 올려두면 여기서 값채우기 → 한글로 마무리</div>';
-  /* 토큰 설명은 처음 한 번만 보면 되는 내용이라 접어 둔다 — 두 줄이 늘 화면을 먹고 있었다 */
-  html+='<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11px;color:var(--text-mute)">💡 양식 만드는 법 (토큰)</summary>'
-    +'<div style="font-size:11px;color:var(--text-mute);margin-top:6px;line-height:1.8">한글 양식에 <b>{{성명}} {{생년월일}} {{성별}} {{연락처}} {{이메일}} {{주소}} {{자격}} {{소속}} {{발급일}} {{연도}}</b> 를 넣어 <b>.hwpx</b>로 저장 후 업로드하면, ✏️값채우기가 프로필 값으로 바꿔줍니다. (토큰은 한 번에 입력하세요)</div></details>';
+  if(!arr.length) html+='<div style="font-size:11px;color:var(--text-mute);margin-top:6px">기관 양식(HWPX)을 <b>받은 그대로</b> 올리고 ✏️값채우기 — 성명·연락처·학력·경력 칸을 알아보고 자동으로 채웁니다</div>';
+  /* 자세한 설명은 접어 둔다 — 두 줄이 늘 화면을 먹고 있었다 */
+  html+='<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11px;color:var(--text-mute)">💡 값채우기가 하는 일</summary>'
+    +'<div style="font-size:11px;color:var(--text-mute);margin-top:6px;line-height:1.8">'
+    +'① 표에서 <b>성명·생년월일·연락처·이메일·주소·자격·소속</b> 칸을 알아보고 옆 빈 칸에 프로필 값을 넣습니다.<br>'
+    +'② <b>학력·경력 표</b>(기간/학교/전공, 기간/기관/직위)는 아래 빈 줄에 한 줄씩 채웁니다. 이미 적힌 칸은 건드리지 않습니다.<br>'
+    +'③ 결과가 한글 화면으로 바로 떠서 확인 후 <b>🖨 PDF</b> 또는 <b>⬇ 저장</b>합니다.<br>'
+    +'· 칸 이름이 특이해 못 알아보면 한글 양식에 <b>{{성명}} {{생년월일}} {{연락처}} {{이메일}} {{주소}} {{자격}} {{소속}} {{발급일}}</b> 토큰을 넣는 방식도 그대로 됩니다.<br>'
+    +'· 옛 .hwp는 안 됩니다 — 한글에서 「다른 이름으로 저장 → hwpx」 후 올려주세요.</div></details>';
   html+='</div>'; box.innerHTML=html; }
 async function cvAddForm(){ const inp=document.createElement('input'); inp.type='file'; inp.accept='.hwp,.hwpx,.pdf,.doc,.docx,.jpg,.jpeg,.png';
   inp.onchange=async function(){ const f=inp.files[0]; if(!f) return; const buf=await f.arrayBuffer(); const id='CVFORM'+Date.now()+Math.random().toString(36).slice(2,6); const ext=(f.name.split('.').pop()||'').toLowerCase();
@@ -5820,6 +5844,23 @@ async function cvFormHwpView(id){
 }
 function _xesc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function _fillTokens(xml,map,stat){ return xml.replace(/\{\{([\s\S]*?)\}\}/g,function(m,inner){ const name=inner.replace(/<[^>]*>/g,'').replace(/\s+/g,''); if(Object.prototype.hasOwnProperty.call(map,name)){ stat.done++; return _xesc(map[name]); } stat.miss[name]=(stat.miss[name]||0)+1; return m; }); }
+/* 자동 채움에 쓸 데이터 — 빠른 이력서와 같은 출처·같은 매핑 */
+function _cvFillData(){
+  const info=(typeof getProfileInfo==='function'?getProfileInfo():get('profile_info'))||{};
+  const edu=get('edu').map(function(r){ return { period:r.period||r.year||'', school:r.school||'',
+    major:(r.degree||'')+(r.graduated?(' / '+r.graduated):'') }; });
+  const wic=get('wiccok').map(function(r){ return { period:r.period||r.issueDate||r.year||'',
+    org:r.org||'', role:(r.type||'')+(r.titleVal?' '+r.titleVal:'') }; });
+  const acts=[].concat(
+    get('consult').map(function(r){ return { period:r.date||r.period||r.year||'', org:r.org||r.client||'', role:'[컨설팅] '+(r.title||r.content||'') }; }),
+    get('case').map(function(r){ return { period:r.date||r.period||r.year||'', org:r.org||'', role:'[사건] '+(r.title||r.content||'') }; }),
+    get('lecture').map(function(r){ return { period:r.date||r.period||r.year||'', org:r.org||'', role:'[강의] '+(r.title||'') }; }));
+  return {
+    fields:{ name:info.name||'', birth:info.birth||'', gender:info.gender||'', phone:info.phone||'',
+             email:info.email||'', addr:info.addr||'', license:info.license||'', org:info.org||'' },
+    edu:edu, career:wic.concat(acts)
+  };
+}
 async function hwpxFill(id){ const form=(get('cvforms').find(function(x){return x.id===id;}))||null; if(!form) return;
   if((form.ext||'')!=='hwpx'){ toast('값 채우기는 HWPX 양식만 됩니다 — 한글에서 "다른 이름으로 저장 → hwpx"'); return; }
   try{ await _ensureJSZip(); }catch(e){ toast('모듈 로드 실패(인터넷 필요)'); return; }
@@ -5828,15 +5869,35 @@ async function hwpxFill(id){ const form=(get('cvforms').find(function(x){return 
   const today=d.getFullYear()+'년 '+(d.getMonth()+1)+'월 '+d.getDate()+'일';
   const map={'성명':info.name||'','이름':info.name||'','생년월일':info.birth||'','성별':info.gender||'','전화':info.phone||'','연락처':info.phone||'','이메일':info.email||'','주소':info.addr||'','자격':info.license||'','소속':info.org||'','발급일':today,'오늘':today,'날짜':today,'연도':String(d.getFullYear())};
   let zip; try{ zip=await JSZip.loadAsync(b64ToAb(f.base64)); }catch(e){ toast('HWPX 열기 실패 — 올바른 hwpx인지 확인'); return; }
+  /* ① 기존 {{토큰}} 치환 — 토큰을 심어 둔 양식은 그대로 동작한다(하위호환) */
   const stat={done:0,miss:{}}; const names=Object.keys(zip.files).filter(function(n){return /\.xml$/i.test(n);});
   for(const n of names){ let s=await zip.file(n).async('string'); if(s.indexOf('{{')<0) continue; s=_fillTokens(s,map,stat); zip.file(n,s); }
-  if(stat.done===0 && !Object.keys(stat.miss).length){ toast('양식에서 {{토큰}}을 찾지 못했습니다 — 한글에서 토큰을 한 번에 입력했는지 확인하세요'); return; }
+  /* ② 라벨 채움 — 토큰이 없어도 표의 「성명」「연락처」「학력」「경력」 칸을 알아보고 채운다.
+     기관이 준 파일을 손대지 않고 그대로 올리면 된다. 본문(section*.xml)에만 적용한다. */
+  const agg={ fields:[], lists:[], kept:[] };
+  if(window.KcareerHwpxFill){
+    const data=_cvFillData();
+    const secs=Object.keys(zip.files).filter(function(n){ return /Contents\/section\d+\.xml$/i.test(n); });
+    for(const n of secs){
+      const s=await zip.file(n).async('string');
+      const r=KcareerHwpxFill.autoFill(s, data);
+      if(r.changed) zip.file(n, r.xml);
+      agg.fields=agg.fields.concat(r.report.fields);
+      agg.lists=agg.lists.concat(r.report.lists);
+      agg.kept=agg.kept.concat(r.report.kept);
+    }
+  }
+  const auto=agg.fields.length || agg.lists.some(function(l){ return l.put>0; });
+  if(stat.done===0 && !Object.keys(stat.miss).length && !auto){
+    toast('채울 칸을 찾지 못했습니다 — 표의 칸 이름(성명·연락처 등)이 다르면 알려주세요. {{토큰}} 방식도 됩니다'); return; }
   const blob=await zip.generateAsync({type:'blob',mimeType:'application/hwp+zip'});
   const nm=(form.name||'양식').replace(/\.hwpx$/i,'')+'_채움.hwpx';
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=nm; a.click();
   if(typeof _logCv==='function') _logCv('기관양식','HWPX 채움');
-  const miss=Object.keys(stat.miss);
-  toast('값 '+stat.done+'개 채워 저장됨'+(miss.length?(' · 미매칭: '+miss.slice(0,5).join(', ')):'')+' — 한글에서 도장·PDF 마무리');
+  const parts=[];
+  if(stat.done) parts.push('토큰 '+stat.done+'개');
+  if(auto) parts.push(KcareerHwpxFill.summarize(agg));
+  toast(parts.join(' · ')+' 채워 저장됨 — 화면에서 확인하세요');
   /* 값이 정말 들어갔는지 한글로 보고 확인할 수 있게 바로 띄운다 —
      여태 내려받아 한글에서 열어 봐야 알 수 있었다. */
   try{ openHwpViewer(await blob.arrayBuffer(), nm); }catch(e){} }
