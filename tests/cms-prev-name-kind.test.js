@@ -160,17 +160,28 @@ test('★ 그만두면 아무 일도 안 한다', () => {
 
 test('★★ 종류가 «두 갈래 모두»에 넘어간다 (한쪽만 넘기면 조용히 자문료가 된다)', () => {
   const fn = bare(cutCmsApply());
-  assert.ok(/props\.addIncome\(co, month, d, 'CMS 일괄이체 자동매칭', _k\)/.test(fn),
+  /* ⚠ 인자 목록을 통째로 못 박지 않는다 — 2026-08-28 에 «금액»(_amt)이 뒤에 붙으면서
+     뜻은 그대로인데 모양이 달라 이 검사가 깨졌다. 볼 것은 «종류가 넘어가는가» 다. */
+  assert.ok(/props\.addIncome\([^)]*\b_k\b/.test(fn),
     '업체입금 탭 갈래에 종류를 안 넘긴다');
-  assert.ok(/erpAddCompanyIncome\(co, month, year, d, 'CMS 일괄이체 자동매칭', _k\)/.test(fn),
+  assert.ok(/erpAddCompanyIncome\([^)]*\b_k\b/.test(fn),
     '거래내역 갈래에 종류를 안 넘긴다');
+  /* 금액도 두 갈래 모두에 넘어가야 한다 — 안 넘기면 저장 함수가 «지금 자문료»를 꺼내 쓴다
+     (김보람 과장 건의 2026-08-28: 보여준 275,000 대신 440,000 이 적히던 일) */
+  assert.ok(/props\.addIncome\([^)]*\b_amt\b/.test(fn) &&
+            /erpAddCompanyIncome\([^)]*\b_amt\b/.test(fn),
+    '두 갈래 모두에 «적을 금액»을 넘겨야 한다');
 });
 
 test('★★ 받는 쪽 두 함수가 종류를 «쓴다» (안 쓰면 넘겨도 소용없다)', () => {
-  const a = bare(cutBlock(SRC, 'function erpAddCompanyIncome(co, month, year, date, note, kind){'));
+  /* 머리줄도 통째로 못 박지 않는다 — 인자가 하나 늘면 못 찾는다 */
+  const a = bare(cutBlock(SRC, 'function erpAddCompanyIncome(co, month, year, date, note, kind'));
   assert.ok(/kind:\(kind \|\| '자문료'\)/.test(a), 'erpAddCompanyIncome 이 종류를 안 쓴다');
-  const b = bare(cutBlock(SRC, '  function addIncome(co, month, date, note, kind){'));
+  const b = bare(cutBlock(SRC, '  function addIncome(co, month, date, note, kind'));
   assert.ok(/kind:\(kind \|\| '자문료'\)/.test(b), '업체입금 탭 addIncome 이 종류를 안 쓴다');
+  /* 받은 «금액»도 실제로 쓰는가 — 안 쓰면 넘겨도 소용없다 */
+  assert.ok(/amount != null/.test(a) && /amount != null/.test(b),
+    '★ 받은 금액을 안 쓰고 co.fee 를 꺼내 쓰면 화면과 저장이 갈라진다');
 });
 
 /* ── 물음창 ── */
