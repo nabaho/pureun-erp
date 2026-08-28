@@ -2925,11 +2925,44 @@ const ErpMatch = {
     const b = ErpMatch._digits(it.bizno);
     if (b.length>=10 && ErpMatch.byBiz[b]) return ErpMatch.byBiz[b];
     const n = ErpMatch._norm(it.company);
-    const r = n ? ErpMatch.byName[n] : null;
-    if (!r) return null;
-    const rb = ErpMatch._digits(r.bizNo);
-    if (b.length>=10 && rb.length>=10 && b !== rb) return null;   /* 번호가 다르면 다른 회사다 */
-    return r;
+    return (n && ErpMatch.byName[n]) || null;
+  },
+  /* ── 회사 목록 «전체»를 한 번에 맞춘다 (대표 보고 2026-08-28 두 번째) ──
+     오전에 match() 안에서 「번호가 다르면 안 붙인다」로 막았더니 잘못된 종료는 사라졌지만
+     «거래처가 목록에서 사라졌다» — 푸른이알피에 번호가 다르게 적힌 멀쩡한 거래처까지
+     끊었기 때문이다(옮겨 적다 틀렸거나, 법인 전환 전 번호가 남아 있거나).
+
+     뿌리는 «우리 회사 둘이 업체 기록 하나를 두고 다투는 것»이다:
+       푸른이알피 : 주식회사 행복한단홍갈비 (213-87-03415, 종료)
+       기업정보함 : 주식회사 행복한단홍갈비 (213-87-03415)
+                    행복한 단홍갈비        (726-33-00338)  ← 다듬으면 이름이 같아진다
+     213 이 «번호로» 그 기록의 임자다. 726 이 이름으로 또 가져가면 안 된다.
+     그런데 그것은 «726 하나만 봐서는 알 수 없다» — 213 이 있는지를 알아야 안다.
+     그래서 하나씩이 아니라 «전체»를 한 번에 맞춘다.
+       ① 번호가 딱 맞는 것부터 다 집는다 (가장 확실하다)
+       ② 남은 회사는 이름으로 — 다만 «이미 임자가 있는» 기록은 안 준다
+     이러면 둘 다 지켜진다: 남의 종료를 물려받지 않고, 임자 없는 기록은 그대로 붙는다.
+     ⚠ 새로 받아오는 것이 없다 — 이미 손에 든 두 색인을 훑을 뿐이다. */
+  matchAll(list){
+    const out = {};
+    if (!ErpMatch.ready || !list || !list.length) return out;
+    const taken = new Set();
+    list.forEach(o=>{
+      if(!o) return;
+      const b = ErpMatch._digits(o.bizno);
+      if(b.length < 10) return;
+      const r = ErpMatch.byBiz[b];
+      if(r){ out[o.key] = r; taken.add(r); }
+    });
+    list.forEach(o=>{
+      if(!o || out[o.key]) return;
+      const n = ErpMatch._norm(o.name);
+      const r = n ? ErpMatch.byName[n] : null;
+      /* 임자가 이미 있으면 «안 준다». 한 기록이 둘에 겹쳐 붙으면 담당·유형·종료가
+         두 곳에 나오고, 그중 한 곳은 반드시 틀린다. */
+      if(r && !taken.has(r)){ out[o.key] = r; taken.add(r); }
+    });
+    return out;
   },
   /* 푸른이알피 업체 하나 → 그 업체의 기록.
      ⚠ 예전에는 화면마다 byName[_norm(co.name)] 을 직접 뒤졌다. 그러면 이름이 같은
@@ -16312,9 +16345,13 @@ function coListBuild(){
     const o = take(k, { name:it.company, bizno:it.bizno, companyTel:it.companyTel }, '명함');
     o.cards.push(it);
   });
-  /* ③ 푸른이알피 — 업체유형·담당 노무사 */
+  /* ③ 푸른이알피 — 업체유형·담당 노무사
+     ⚠ 회사 «전체»를 한 번에 맞춘다(matchAll). 하나씩 맞추면 「이 업체 기록의 임자가
+       따로 있는가」를 알 수 없어, 이름이 같아진 다른 회사가 남의 종료·담당을 물려받는다
+       (대표 보고 2026-08-28). 번호가 먼저, 이름은 임자 없는 것만. */
+  const erpBy = ErpMatch.matchAll(Object.values(by));
   Object.values(by).forEach(o=>{
-    const m = ErpMatch.match({ bizno:o.bizno, company:o.name });
+    const m = erpBy[o.key] || null;
     /* 푸른이알피는 «맨 나중»이다 — 빈 칸만 채우므로 등록증 → 명함 → 이알피 차례가 된다.
        등록증이 법적 원본이고, 명함은 그 회사가 스스로 박아 준 번호다.
        ⚠ 어느 쪽이 왔는지는 srcOf 로 화면에 나온다(4순위) — 사람이 보고 판단할 수 있다.
