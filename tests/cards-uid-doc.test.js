@@ -120,7 +120,9 @@ test('다른 갈래가 섞여 있어도 고유번호증만 짚는다', () => {
 /* ── 기업 상세에서 골라 본다 ── */
 
 test('기업 상세 거르기에 걸려 있다', () => {
-  const body = slice(HTML, 'function coFilteredList(skipCol){', '/* 번호 없는 회사 수');
+  /* ⚠ 2026-08-27: 서명에 두 번째 인자(skipCares)가 붙었다 — 여는 괄호까지만 잡는다.
+     서명을 통째로 못 박으면 인자 하나 늘 때마다 상관없는 검사가 깨진다. */
+  const body = slice(HTML, 'function coFilteredList(skipCol', '/* 「🏢 거래처」·「🏢 전체」');
   assert.match(body, /if\(state\.coOnlyUid\) list = list\.filter\(coIsUid\);/);
 });
 

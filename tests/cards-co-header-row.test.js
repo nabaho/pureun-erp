@@ -58,6 +58,8 @@ function renderTabsRow(state, cos){
     /* 2026-08-24(3순위): 탭 줄에 「정보부족」 토글도 붙었다 — 이 검사들은 그 부분을
        안 보므로 0곳으로 둔다(안 넣으면 renderCoFTabsHtml 이 던진다). */
     coIncompleteCount: () => 0,
+    /* 2026-08-27: 도구줄에 「🏢 거래처 / 🏢 전체」 두 칩이 붙었다 — 이 검사는 안 본다 */
+    coScopeCounts: () => ({ cares: 0, all: 0 }),
     /* 2026-08-26: 도구줄에 「🏢 고유번호증」 단추도 붙었다 — 이 검사는 그 부분을
        안 보므로 0곳으로 둔다(안 넣으면 coToolsHtml 이 던진다). */
     coUidCount: () => 0,

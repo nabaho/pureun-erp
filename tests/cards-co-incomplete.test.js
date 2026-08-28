@@ -206,6 +206,8 @@ test('★ 부족한 곳이 0이면 단추가 안 뜬다', () => {
     coList: () => [],
     coSizeSelHtml: () => '', coClosedCount: () => 0, coNoBizCount: () => 0,
     coIncompleteCount: () => 0,
+    /* 2026-08-27: 도구줄에 「🏢 거래처 / 🏢 전체」 두 칩이 붙었다 — 이 검사는 안 본다 */
+    coScopeCounts: () => ({ cares: 0, all: 0 }),
     /* 2026-08-26: 도구줄에 「🏢 고유번호증」 단추도 붙었다 — 이 검사는 그 부분을
        안 보므로 0곳으로 둔다(안 넣으면 coToolsHtml 이 던진다). */
     coUidCount: () => 0,
@@ -233,6 +235,8 @@ test('부족한 곳이 있으면 단추가 뜨고 몇 곳인지 말한다', () =
     /* 2026-08-26: 도구줄에 개수 글귀가 붙었다 — 이 검사는 그것을 안 보므로 빈 대역 */
     coPagerHtml: () => '', coPage: () => ({}),
     coIncompleteCount: () => 7,
+    /* 2026-08-27: 도구줄에 「🏢 거래처 / 🏢 전체」 두 칩이 붙었다 — 이 검사는 안 본다 */
+    coScopeCounts: () => ({ cares: 0, all: 0 }),
     /* 2026-08-26: 도구줄에 「🏢 고유번호증」 단추도 붙었다 — 이 검사는 그 부분을
        안 보므로 0곳으로 둔다(안 넣으면 coToolsHtml 이 던진다). */
     coUidCount: () => 0 };
@@ -296,7 +300,9 @@ function drawTabs(n, on){
     _coFolders: { f1:{ id:'f1', name:'업체관리' } },
     coList: () => [],
     coSizeSelHtml: () => '', coClosedCount: () => 0, coNoBizCount: () => 0,
-    coIncompleteCount: () => n };
+    coIncompleteCount: () => n,
+    /* 2026-08-27: 도구줄에 「🏢 거래처 / 🏢 전체」 두 칩이 붙었다 — 이 검사는 안 본다 */
+    coScopeCounts: () => ({ cares: 0, all: 0 }) };
   vm.createContext(ctx);
   const a = '/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════';
   const b = '/* ══════ 폴더 안의 탭 — 화면 ══════ */';
