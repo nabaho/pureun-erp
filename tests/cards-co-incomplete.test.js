@@ -195,59 +195,38 @@ test('거르는 일은 coFilteredList 한 곳에만 둔다', () => {
     '★ 딴 곳에서 거르면 화면마다 결과가 어긋난다');
 });
 
-/* ══════ ⑤ 0곳이면 안 보인다 ══════ */
+/* ══════ ⑤ 옆줄 「할 일」에 뜬다 · 0곳이면 안 보인다 ══════
+   ⚠ 2026-08-28 자리가 옮겨졌다 — 대표 지시 「기업상세 탭은 거래관계가 있었는지
+     여부만 나누면 된다」. 탭 줄에 뜻이 둘(고르기·거르기)이라 서로의 수를 갉아먹었다.
+     기능은 그대로고 자리만 옆줄(coTodoSideHtml)로 내렸다. */
 
-test('★ 부족한 곳이 0이면 단추가 안 뜬다', () => {
+function drawTodo(lack, on){
   const ctx = { console, Object, Array, String, Number,
     esc: s => String(s==null?'':s),
-    state: { coFolder:'f1', coFTab:'', isAdmin:true, coPageSize:100,
-             coOnlyClosed:false, coOnlyNoBiz:false, coOnlyIncomplete:false },
-    _coFolders: { f1:{ id:'f1', name:'업체관리' } },
-    coList: () => [],
-    coSizeSelHtml: () => '', coClosedCount: () => 0, coNoBizCount: () => 0,
-    coIncompleteCount: () => 0,
-    /* 2026-08-27: 도구줄에 「🏢 거래처 / 🏢 전체」 두 칩이 붙었다 — 이 검사는 안 본다 */
-    coScopeCounts: () => ({ cares: 0, all: 0 }),
-    /* 2026-08-26: 도구줄에 「🏢 고유번호증」 단추도 붙었다 — 이 검사는 그 부분을
-       안 보므로 0곳으로 둔다(안 넣으면 coToolsHtml 이 던진다). */
-    coUidCount: () => 0,
-    /* 2026-08-26: 도구줄이 「전체」에서도 나오게 갈라지면서, 개수 글귀도 이 줄에 붙었다.
-       이 검사들은 그 글귀를 안 보므로 빈 대역을 준다(안 넣으면 coToolsHtml 이 던진다). */
-    coPagerHtml: () => '', coPage: () => ({ page:0, pages:1, total:0, from:0, to:0 }),
-  };
+    state: { coOnlyClosed:false, coOnlyNoBiz:false, coOnlyIncomplete:!!on, coOnlyUid:false },
+    coClosedCount: () => 0, coNoBizCount: () => 0,
+    coIncompleteCount: () => lack, coUidCount: () => 0,
+    pcItem: (attrs, label, cnt, isOn) =>
+      `<div class="pcitem ${isOn?'on':''}" ${attrs}>${label}<span>${cnt}</span></div>` };
   vm.createContext(ctx);
-  const a = '/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════';
-  const b = '/* ══════ 폴더 안의 탭 — 화면 ══════ */';
-  vm.runInContext(src.slice(src.indexOf(a), src.indexOf(b)) + '\n' + "var coPagerHtml=function(){return '';}, coPage=function(){return {};}, coUidCount=function(){return 0;};" + fnBody('coFTabChipsHtml') + '\n' + fnBody('coToolsHtml') + '\n' + fnBody('renderCoFTabsHtml'), ctx);
-  const h = ctx.renderCoFTabsHtml();
-  assert.equal(h.indexOf('정보부족'), -1,
-    '★ 0곳인데도 단추가 뜨면 무엇을 누르라는 건지 모른다');
+  vm.runInContext(fnBody('coTodoSideHtml'), ctx);
+  return ctx.coTodoSideHtml();
+}
+
+test('★ 부족한 곳이 0이면 줄이 안 뜬다', () => {
+  assert.equal(drawTodo(0, false).indexOf('정보부족'), -1,
+    '★ 0곳인데도 뜨면 무엇을 누르라는 건지 모른다');
 });
 
-test('부족한 곳이 있으면 단추가 뜨고 몇 곳인지 말한다', () => {
-  const ctx = { console, Object, Array, String, Number,
-    esc: s => String(s==null?'':s),
-    state: { coFolder:'f1', coFTab:'', isAdmin:true, coPageSize:100,
-             coOnlyClosed:false, coOnlyNoBiz:false, coOnlyIncomplete:false },
-    _coFolders: { f1:{ id:'f1', name:'업체관리' } },
-    coList: () => [],
-    coSizeSelHtml: () => '', coClosedCount: () => 0, coNoBizCount: () => 0,
-    /* 2026-08-26: 도구줄에 개수 글귀가 붙었다 — 이 검사는 그것을 안 보므로 빈 대역 */
-    coPagerHtml: () => '', coPage: () => ({}),
-    coIncompleteCount: () => 7,
-    /* 2026-08-27: 도구줄에 「🏢 거래처 / 🏢 전체」 두 칩이 붙었다 — 이 검사는 안 본다 */
-    coScopeCounts: () => ({ cares: 0, all: 0 }),
-    /* 2026-08-26: 도구줄에 「🏢 고유번호증」 단추도 붙었다 — 이 검사는 그 부분을
-       안 보므로 0곳으로 둔다(안 넣으면 coToolsHtml 이 던진다). */
-    coUidCount: () => 0 };
-  vm.createContext(ctx);
-  const a = '/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════';
-  const b = '/* ══════ 폴더 안의 탭 — 화면 ══════ */';
-  vm.runInContext(src.slice(src.indexOf(a), src.indexOf(b)) + '\n' + "var coPagerHtml=function(){return '';}, coPage=function(){return {};}, coUidCount=function(){return 0;};" + fnBody('coFTabChipsHtml') + '\n' + fnBody('coToolsHtml') + '\n' + fnBody('renderCoFTabsHtml'), ctx);
-  const h = ctx.renderCoFTabsHtml();
-  assert.ok(h.indexOf('정보부족') > 0, '단추가 없다');
+test('부족한 곳이 있으면 뜨고 몇 곳인지 말한다', () => {
+  const h = drawTodo(7, false);
+  assert.ok(h.indexOf('정보부족') > 0, '줄이 없다');
   assert.ok(h.indexOf('7') > 0, '몇 곳인지 안 알려 준다');
   assert.match(h, /coOnlyIncomplete/, '눌러도 안 켜진다');
+});
+
+test('★ 탭 줄에는 도로 안 남아 있다 — 두 곳에서 같은 일을 하면 한쪽만 고쳐진다', () => {
+  assert.equal(fnBody('coToolsHtml').indexOf('coOnlyIncomplete'), -1);
 });
 
 /* ══════ ⑥ 줄에서 «무엇이» 빠졌는지 ══════ */
@@ -290,29 +269,12 @@ test('빠진 것이 없는 회사 줄에는 그 표시가 안 붙는다', () => 
   assert.equal(h.indexOf('소재지'), -1, '다 채운 회사에 부족 표시가 붙으면 표가 시끄러워진다');
 });
 
-/* ══════ ⑧ 단추가 «켜지고 꺼진다» ══════ */
+/* ══════ ⑧ 켜지고 꺼진다 (옆줄) ══════ */
 
-function drawTabs(n, on){
-  const ctx = { console, Object, Array, String, Number,
-    esc: s => String(s==null?'':s),
-    state: { coFolder:'f1', coFTab:'', isAdmin:true, coPageSize:100,
-             coOnlyClosed:false, coOnlyNoBiz:false, coOnlyIncomplete:!!on },
-    _coFolders: { f1:{ id:'f1', name:'업체관리' } },
-    coList: () => [],
-    coSizeSelHtml: () => '', coClosedCount: () => 0, coNoBizCount: () => 0,
-    coIncompleteCount: () => n,
-    /* 2026-08-27: 도구줄에 「🏢 거래처 / 🏢 전체」 두 칩이 붙었다 — 이 검사는 안 본다 */
-    coScopeCounts: () => ({ cares: 0, all: 0 }) };
-  vm.createContext(ctx);
-  const a = '/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════';
-  const b = '/* ══════ 폴더 안의 탭 — 화면 ══════ */';
-  vm.runInContext(src.slice(src.indexOf(a), src.indexOf(b)) + '\n' + "var coPagerHtml=function(){return '';}, coPage=function(){return {};}, coUidCount=function(){return 0;};" + fnBody('coFTabChipsHtml') + '\n' + fnBody('coToolsHtml') + '\n' + fnBody('renderCoFTabsHtml'), ctx);
-  return ctx.renderCoFTabsHtml();
-}
-/* 단추의 onclick 을 «실제로 실행»해 본다 — 글자만 맞춰 보면 =true 로 바꿔 놔도 못 잡는다 */
+/* onclick 을 «실제로 실행»해 본다 — 글자만 맞춰 보면 =true 로 바꿔 놔도 못 잡는다 */
 function clickIncomplete(h, state){
   const m = h.match(/onclick="(state\.coOnlyIncomplete[^"]*)"/);
-  assert.ok(m, '정보부족 단추에 누를 코드가 없다');
+  assert.ok(m, '정보부족 줄에 누를 코드가 없다');
   const cx = { state, renderCoAny: () => {} };
   vm.createContext(cx);
   vm.runInContext(m[1].replace(/&#39;/g, "'").replace(/&quot;/g, '"'), cx);
@@ -321,20 +283,20 @@ function clickIncomplete(h, state){
 
 test('★ 한 번 더 누르면 «꺼진다» — 켜지기만 하면 전체로 못 돌아온다', () => {
   const st = { coOnlyIncomplete:true, coPage:0 };
-  clickIncomplete(drawTabs(7, true), st);
+  clickIncomplete(drawTodo(7, true), st);
   assert.equal(st.coOnlyIncomplete, false,
     '★ 꺼지지 않으면 다시 전체를 보려고 화면을 새로 고쳐야 한다');
 });
 
 test('꺼져 있을 때 누르면 켜진다', () => {
   const st = { coOnlyIncomplete:false, coPage:0 };
-  clickIncomplete(drawTabs(7, false), st);
+  clickIncomplete(drawTodo(7, false), st);
   assert.equal(st.coOnlyIncomplete, true);
 });
 
 test('★ 거르면 «첫 쪽»으로 돌아온다 — 5쪽에서 걸면 빈 화면이 뜬다', () => {
   const st = { coOnlyIncomplete:false, coPage:5 };
-  clickIncomplete(drawTabs(7, false), st);
+  clickIncomplete(drawTodo(7, false), st);
   assert.equal(st.coPage, 0,
     '★ 쪽수를 그대로 두면 결과가 3쪽뿐일 때 아무것도 없는 화면을 본다');
 });

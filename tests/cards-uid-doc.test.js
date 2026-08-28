@@ -126,19 +126,21 @@ test('기업 상세 거르기에 걸려 있다', () => {
   assert.match(body, /if\(state\.coOnlyUid\) list = list\.filter\(coIsUid\);/);
 });
 
-test('도구줄에 「🏢 고유번호증 N」 단추가 있다', () => {
-  const body = slice(HTML, 'function coToolsHtml(){', 'function pickCoFTab(');
+/* ⚠ 2026-08-28 자리가 옮겨졌다 — 대표 지시로 탭 줄은 「거래관계 여부」만 나누고,
+   할 일 넷(종료·번호없음·정보부족·고유번호증)은 옆줄(coTodoSideHtml)로 내렸다.
+   기능은 그대로다. 0곳 숨김·켜고 끄기는 tests/cards-co-chips-two.test.js 가
+   «그려서» 확인한다 — 여기서는 고유번호증 몫이 그 안에 들어 있는지만 본다. */
+test('옆줄 「할 일」에 「고유번호증 N」이 있다', () => {
+  const body = slice(HTML, 'function coTodoSideHtml(){', '\n}');
   assert.match(body, /coUidCount\(\)/, '몇 곳인지 세야 한다');
-  /* ⚠ 세는 것과 «보여 주는 것»은 다르다 — 세어 두고 안 적는 되돌림이 그냥 지나갔다 */
-  assert.match(body, /🏢 고유번호증 <b>\$\{uidN\.toLocaleString\(\)\}<\/b>/,
-    '센 값을 단추에 적어야 한다');
-  assert.match(body, /state\.coOnlyUid=!state\.coOnlyUid/, '눌러서 켜고 끈다');
-  assert.match(body, /🏢 고유번호증/);
+  assert.match(body, /coOnlyUid/, '눌러서 켜고 끈다');
+  assert.match(body, /고유번호증/, '이름표가 없다');
 });
 
-test('0곳이면 단추를 안 보여 준다 — 눌러도 아무 일 없는 회색 단추를 두지 않는다', () => {
-  const body = slice(HTML, 'function coToolsHtml(){', 'function pickCoFTab(');
-  assert.match(body, /if\(uidN\) h \+=/, '0곳일 때도 그리면 안 된다');
+test('탭 줄에는 도로 안 남아 있다 — 두 곳에서 같은 일을 하면 한쪽만 고쳐진다', () => {
+  const body = slice(HTML, 'function coToolsHtml(){', 'function coTodoSideHtml(');
+  assert.equal(body.indexOf('coUidCount'), -1, '탭 줄이 아직 고유번호증을 센다');
+  assert.equal(body.indexOf('고유번호증'), -1, '탭 줄에 아직 단추가 있다');
 });
 
 test('개수는 폴더·검색을 그대로 두고 센다 — 종료 개수와 같은 결', () => {
