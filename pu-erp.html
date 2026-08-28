@@ -36152,7 +36152,10 @@ if(typeof window !== 'undefined'){
 // (거래내역 화면에서 연 모달은 IncomeCompanyTab의 addIncome 클로저에 닿을 수 없다 —
 //  업체입금에서 열 때는 props.addIncome을 넘겨 그쪽을 그대로 쓴다)
 /* kind — 안 주면 자문료. 자문이 «해지»된 업체에는 컨설팅·사건 미납이 들어오기도 한다(대표 확인). */
-function erpAddCompanyIncome(co, month, year, date, note, kind){
+/* amount — 실제로 적을 금액. 안 주면 예전처럼 업체관리의 «지금 자문료».
+   ⚠ 이것이 없어서, 화면은 275,000원이라 보여주고 저장은 440,000원을 하고 있었다
+     (김보람 과장 건의 2026-08-28 · 자문료가 오른 뒤 늦게 들어온 입금). */
+function erpAddCompanyIncome(co, month, year, date, note, kind, amount){
   try {
     if(!co || !co.name) return false;
     var ym = String(year) + '-' + ('0'+month).slice(-2);
@@ -36166,7 +36169,8 @@ function erpAddCompanyIncome(co, month, year, date, note, kind){
     if(exists) return false;
     return dbUpsert('finance_income', {
       id:'fi-adv-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
-      date:date, amount:co.fee||0, sourceKind:'company', sourceId:'',
+      date:date, amount:(amount != null ? (parseInt(amount,10)||0) : (co.fee||0)),
+      sourceKind:'company', sourceId:'',
       companyName:co.name, kind:(kind || '자문료'), payDay:co.payDay||'',
       managerSid:co.mainSid||'', managerName:co.mainName||'',
       note:note||'', perfShares:[], createdAt:(new Date()).toISOString()
@@ -36900,6 +36904,8 @@ function CmsMatchModal(props){
   var hS  = useState('');    var hint = hS[0];         var setHint = hS[1];
   var bS  = useState(false); var busy = bS[0];         var setBusy = bS[1];
   var moreS  = useState(false); var showMore = moreS[0]; var setShowMore = moreS[1];  // 해지·미등록도 보기
+  /* 손으로 고친 금액 { 업체명: 금액 } — 비어 있으면 실데이터·자문료를 그대로 쓴다 */
+  var amtS   = useState({});    var amtEdit  = amtS[0];  var setAmtEdit  = amtS[1];
   var linkS  = useState(null);  var linking  = linkS[0]; var setLinking  = linkS[1];  // 「연결 안 됨」 이어 붙이는 중
 
   // ── 🏦 나이스빌 CMS 실데이터 (cms_ledger) — 있으면 추정 조합보다 이쪽이 정답이다 ──
@@ -36963,12 +36969,24 @@ function CmsMatchModal(props){
       if(it.coName) nbAmtByCo[it.coName] = (nbAmtByCo[it.coName] || 0) + (it.amount || 0);
     });
   }
+  /* ── 이 업체에 «얼마»를 적을 것인가 (2026-08-28) ──────────────────
+     손으로 고친 값 > 나이스빌 실데이터 > 업체관리 자문료 순으로 고른다.
+     ★ 여기서 고른 값이 화면·확인창·저장 «세 곳 모두»에 쓰인다 —
+       전에는 화면만 실데이터를 쓰고 저장은 자문료를 써서 서로 달랐다. */
+  function effAmt(n){
+    if(Object.prototype.hasOwnProperty.call(amtEdit, n)) return parseInt(amtEdit[n],10)||0;
+    if(nbAmtByCo[n]) return nbAmtByCo[n];
+    var c = byNameAll[n];
+    return c ? (parseInt(c.fee,10)||0) : 0;
+  }
+  function amtFrom(n){
+    if(Object.prototype.hasOwnProperty.call(amtEdit, n)) return 'hand';
+    if(nbAmtByCo[n]) return 'cms';
+    return 'fee';
+  }
   var sel = Object.keys(chk).filter(function(k){ return chk[k]; });
   var sum = 0;
-  sel.forEach(function(n){
-    var c = byNameAll[n];
-    sum += nbAmtByCo[n] || (c ? (parseInt(c.fee,10)||0) : 0);
-  });
+  sel.forEach(function(n){ sum += effAmt(n); });
   var diff = amount - sum;
   var matched = _erpFeeFits(sum, amount) && sum > 0;
 
@@ -37016,9 +37034,10 @@ function CmsMatchModal(props){
     var _dup = sel.filter(function(n){ return !!paidMap[n]; });
     var msg = '입금 '+amount.toLocaleString()+'원을 '+ym+' 자문료 '+sel.length+'곳으로 입금표시합니다.\n\n'
             + sel.slice(0,12).map(function(n){
-                var c = byNameAll[n];
-                var a = nbAmtByCo[n] || ((c && c.fee) || 0);
-                return '· '+n+' '+a.toLocaleString()+'원'+(paidMap[n] ? ' (이미 입금 — 금액만 맞춤)' : '');
+                var a = effAmt(n);
+                return '· '+n+' '+a.toLocaleString()+'원'
+                       + (amtFrom(n)==='hand' ? ' (손수정)' : '')
+                       + (paidMap[n] ? ' (이미 입금 — 새로 만들지 않음)' : '');
               }).join('\n')
             + (sel.length>12 ? '\n· … 외 '+(sel.length-12)+'곳' : '')
             + '\n\n합계 '+sum.toLocaleString()+'원'+(diff? ' (차액 '+diff.toLocaleString()+'원)':'')
@@ -37049,8 +37068,12 @@ function CmsMatchModal(props){
       var d = ymd || todayYMD();
       /* 해지·미등록 업체면 위에서 고른 종류로 (나머지는 자문료) */
       var _k = (byNameAll[n] && byNameAll[n].off) ? offKind : '자문료';
-      if(props.addIncome){ props.addIncome(co, month, d, 'CMS 일괄이체 자동매칭', _k); }
-      else if(!erpAddCompanyIncome(co, month, year, d, 'CMS 일괄이체 자동매칭', _k)){ skip++; return; }
+      /* ★ 화면이 보여준 그 금액을 그대로 넘긴다 — 안 넘기면 저장 함수가
+         업체관리의 «지금 자문료»를 제 맘대로 꺼내 쓴다(고치기 전의 그 버그). */
+      var _amt = effAmt(n);
+      var _note = 'CMS 일괄이체 자동매칭' + (amtFrom(n)==='hand' ? ' · 금액 손수정' : '');
+      if(props.addIncome){ props.addIncome(co, month, d, _note, _k, _amt); }
+      else if(!erpAddCompanyIncome(co, month, year, d, _note, _k, _amt)){ skip++; return; }
       paidMap[n] = 1; ok++; okNames.push(n);
     });
     // ── CMS 일괄이체로 들어온 업체 = 실제 CMS 자동이체 업체 → 업체관리 CMS 체크를 켜 둔다 ──
@@ -37195,7 +37218,9 @@ function CmsMatchModal(props){
             h('th',{style:Object.assign({},thS,{width:'34px'})},''),
             h('th',{style:thS},'사업장'),
             h('th',{style:thS},'주담당'),
-            h('th',{style:Object.assign({},thS,{textAlign:'right'})},'자문료'),
+            /* 「자문료」가 아니라 «적을 금액» 이다 — 실데이터가 있으면 그것이 답이라
+               업체관리 자문료와 다를 수 있다(다르면 아래 줄에 자문료를 함께 적는다) */
+            h('th',{style:Object.assign({},thS,{textAlign:'right',width:'132px'})},'적을 금액'),
             h('th',{style:Object.assign({},thS,{textAlign:'center'})},'납부일'),
             h('th',{style:thS},ym+' 상태')
           )),
@@ -37217,8 +37242,37 @@ function CmsMatchModal(props){
                   onChange:function(){ toggle(co.name); }})),
               h('td',{style:Object.assign({},tdS,{fontWeight: on?700:500, color:'#1e293b'})}, co.name),
               h('td',{style:Object.assign({},tdS,{color:'#64748b'})}, co.mainName||'-'),
-              h('td',{style:Object.assign({},tdS,{textAlign:'right',fontFamily:'monospace',
-                fontWeight:700,color: on?'#166534':'#475569'})}, (co.fee||0).toLocaleString()+'원'),
+              /* 고른 줄은 금액을 «고칠 수 있게» 연다 (김보람 과장 건의 2026-08-28).
+                 실데이터도 틀릴 때가 있어 마지막 손잡이를 남긴다. */
+              h('td',{style:Object.assign({},tdS,{textAlign:'right'})},
+                (function(){
+                  var a = effAmt(co.name), src = amtFrom(co.name), fee = parseInt(co.fee,10)||0;
+                  var tag = src==='hand' ? { t:'고침', c:'#1e40af', b:'#eff6ff', d:'#bfdbfe' }
+                          : src==='cms'  ? { t:'실데이터', c:'#166534', b:'#f0fdf4', d:'#bbf7d0' }
+                                         : { t:'자문료', c:'#64748b', b:'#f8fafc', d:'#e2e8f0' };
+                  return h('div',{style:{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:'2px'}},
+                    h('div',{style:{display:'flex',alignItems:'center',gap:'4px'}},
+                      h('span',{style:{fontSize:'9.5px',fontWeight:800,padding:'0 5px',borderRadius:'99px',
+                        color:tag.c,background:tag.b,border:'1px solid '+tag.d}}, tag.t),
+                      on
+                        ? h('input',{ type:'text', inputMode:'numeric', value:a.toLocaleString(),
+                            onClick:function(e){ e.stopPropagation(); },
+                            onChange:function(e){
+                              var v = String(e.target.value||'').replace(/[^0-9]/g,'');
+                              var m = Object.assign({}, amtEdit); m[co.name] = v ? parseInt(v,10) : 0;
+                              setAmtEdit(m);
+                            },
+                            style:{width:'92px',textAlign:'right',fontFamily:'monospace',fontWeight:700,
+                              fontSize:'11.5px',padding:'2px 6px',border:'1px solid #bfdbfe',
+                              borderRadius:'4px',color:'#1e40af'} })
+                        : h('span',{style:{fontFamily:'monospace',fontWeight:700,color:'#475569',fontSize:'11.5px'}},
+                            a.toLocaleString()+'원')
+                    ),
+                    /* 업체관리 자문료와 다르면 «왜 다른지» 알 수 있게 함께 적는다 */
+                    (a !== fee) && h('span',{style:{fontSize:'9.5px',color:'#94a3b8'}},
+                      '자문료 '+fee.toLocaleString())
+                  );
+                })()),
               h('td',{style:Object.assign({},tdS,{textAlign:'center',color:'#64748b'})}, co.payDay||'-'),
               h('td',{style:tdS},
                 co.off && h('span',{style:{color:'#854d0e',background:'#fffbeb',border:'1px solid #fde68a',
@@ -45457,7 +45511,8 @@ function IncomeCompanyTab(){
   }
 
   /* kind — 안 주면 자문료 (CMS 나누기에서 해지 업체 종류를 넘겨준다) */
-  function addIncome(co, month, date, note, kind){
+  /* amount — 실제로 적을 금액 (위 erpAddCompanyIncome 과 같은 규칙) */
+  function addIncome(co, month, date, note, kind, amount){
     var existing=getItem(co.name,month);
     if(existing){
       if(!incomeLockGuard(existing) || !incomeLockGuard({date:date})) return;
@@ -45465,7 +45520,8 @@ function IncomeCompanyTab(){
     } else {
       persistOneIncome({
         id:'fi-adv-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
-        date:date, amount:co.fee||0, sourceKind:'company', sourceId:'',
+        date:date, amount:(amount != null ? (parseInt(amount,10)||0) : (co.fee||0)),
+        sourceKind:'company', sourceId:'',
         companyName:co.name, kind:(kind || '자문료'), payDay:co.payDay||'',
         managerSid:co.mainSid, managerName:co.mainName,
         note:note||'', perfShares: [], createdAt:(new Date()).toISOString()

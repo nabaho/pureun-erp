@@ -67,8 +67,16 @@ test('★ 「연결 안 됨」 칩을 눌러 이어 붙일 수 있다 — 그리
 
 test('★ 합계는 나이스빌 명세 금액을 먼저 쓴다 — 해지·변경 뒤 ERP 자문료는 낡아 있다', () => {
   assert.match(M, /var nbAmtByCo = \{\}/, '명세 금액 색인이 없습니다.');
-  assert.match(M, /sum \+= nbAmtByCo\[n\] \|\| \(c \? \(parseInt\(c\.fee,10\)\|\|0\) : 0\)/,
-    '★ 자문료만 세면 해지 업체를 골라도 차액이 안 맞습니다.');
+  /* ⚠ 예전에는 이 자리의 «식 모양»을 그대로 못 박아 두었다. 2026-08-28 에 화면·확인창·저장이
+     같은 값을 쓰도록 effAmt() 한 곳으로 모으면서, 뜻은 그대로인데 모양이 달라 검사가 깨졌다.
+     그래서 «어떻게 썼는가»가 아니라 «명세가 자문료보다 먼저인가»를 본다. */
+  assert.match(M, /sum \+= effAmt\(n\)/,
+    '★ 합계가 「적을 금액」(effAmt)으로 세어지지 않습니다 — 화면과 저장이 갈라집니다.');
+  const eff = M.slice(M.indexOf('function effAmt(n)'), M.indexOf('function amtFrom(n)'));
+  assert.ok(eff.indexOf('nbAmtByCo[n]') >= 0 && eff.indexOf('c.fee') >= 0,
+    '★ 「적을 금액」이 명세와 자문료를 둘 다 보지 않습니다.');
+  assert.ok(eff.indexOf('nbAmtByCo[n]') < eff.indexOf('c.fee'),
+    '★ 자문료가 명세보다 먼저입니다 — 해지·변경 뒤 낡은 자문료가 이깁니다.');
 });
 
 test('★ 전부 이미입금이어도 그 입금은 «처리됨» 이 된다', () => {
