@@ -826,12 +826,44 @@
       if (!x || x === who) return;
       if (u[base + '/shareWith/' + x]) return;      // 같은 사람이 두 번 온 경우
       u[base + '/shareWith/' + x] = true;
-      u[base + '/shareBy/' + x] = String(why || '').slice(0, 60) || '업무';
+      /* ⚠ 까닭이 빈 값이면 **표를 안 단다**(2026-08-28). 사람이 손으로 고른 사람에게
+         「업무」라고 적어 두면, 사진첩에서 ✕ 로 뺄 때 무엇이 자동인지 갈리지 않는다. */
+      u[base + '/shareBy/' + x] = String(why || '').trim().slice(0, 60) || null;
       u[sharedToPath(x, id)] = { owner: who, year: String(year), at: Date.now() };
       added.push(x);
     });
     if (!added.length) return Promise.resolve([]);
     return deps.db.ref().update(u).then(function () { return added; });
+  }
+
+  /* ── 사번(sid) → 계정(uid) 대조표 (대표 지시 2026-08-28) ──
+     업체·계약의 담당자는 «사번»으로 적혀 있고, 사진 권한은 «계정»으로 건다. 그 사이를
+     잇는 것이 uid_roles 다(로그인할 때 그 사람 계정 밑에 사번이 적힌다).
+
+     ⚠ **화면이 아니라 여기**에 둔다. 사진첩 화면은 실시간DB를 직접 만지지 않는 것이
+       규칙이고(tests/pu-photos-html.test.js 가 셋으로 못박는다), 처음에 화면에
+       두었다가 그 셋에 걸렸다 — 울타리가 옳았다.
+     ⚠ 한 번도 로그인한 적 없는 사람은 계정이 없어 **안 나온다.** 부르는 쪽이 그 사실을
+       사람에게 말해 줘야 한다 — 조용히 빠뜨리면 「왜 저 사람만 못 보지」가 된다.
+     ⚠ 한 사람이 계정을 여럿 만들었으면 **가장 최근 것**을 쓴다.
+     ⚠ 한 번 읽고 쥐고 있는다 — 스무 장에 담당자를 걸 때마다 읽으면 그만큼 돈이 든다. */
+  var _uidBySid = null;
+  function uidBySid() {
+    if (_uidBySid) return Promise.resolve(_uidBySid);
+    if (!deps.db) return Promise.resolve({});
+    return deps.db.ref('uid_roles').once('value').then(function (s) {
+      var v = s.val() || {}, best = {};
+      Object.keys(v).forEach(function (uid) {
+        var r = v[uid];
+        if (!r || !r.sid) return;
+        var t = r.updatedAt || 0;
+        if (!best[r.sid] || t > best[r.sid].t) best[r.sid] = { uid: uid, t: t };
+      });
+      var out = {};
+      Object.keys(best).forEach(function (sid) { out[sid] = best[sid].uid; });
+      _uidBySid = out;
+      return out;
+    }).catch(function () { return {}; });
   }
 
   /* 나에게 공유된 사진 목록 — 받는 사람 자리를 훑고 그 한 장씩 읽어 온다.
@@ -1980,6 +2012,7 @@
     setPrimaryKind: setPrimaryKind,
     setShare: setShare,
     addShare: addShare,
+    uidBySid: uidBySid,
     listSharedToMe: listSharedToMe,
     fillSharedNames: fillSharedNames,
     sharedToPath: sharedToPath,

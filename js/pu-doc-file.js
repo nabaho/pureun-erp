@@ -392,6 +392,50 @@
   /* 사업자번호는 표기가 제각각이다(하이픈·공백). 숫자만 남겨 비교한다. */
   function bizKey(v) { var d = digits(v); return d.length >= 10 ? d : ''; }
 
+  /* ── 업체를 «이름»으로 찾는다 (대표 지시 2026-08-28) ──
+     회의·현장 사진에는 사업자번호가 없다. 사람이 적어 넣는 것은 업체 «이름»뿐이라,
+     그 이름으로 업체를 찾아야 담당자를 알 수 있다.
+
+     ⚠ 표기가 제각각이다 — 「(주)승진텍라인」·「승진텍 라인」·「승진텍라인㈜」.
+       법인 표시와 띄어쓰기를 걷어 내고 견준다.
+     ⚠ **딱 하나만 맞을 때만** 준다. 같은 이름이 둘이면 어느 쪽 담당자인지 알 수 없고,
+       잘못 고르면 **남의 업체 담당자에게 사진이 열린다.** 애매하면 아무것도 안 하는
+       것이 맞다 — 사람이 손으로 고르면 된다. */
+  function coNameKey(v) {
+    return String(v == null ? '' : v)
+      .replace(/\(주\)|\(유\)|주식회사|유한회사|유한책임회사|㈜|㈲/g, '')
+      .replace(/\s+/g, '')
+      .toLowerCase();
+  }
+
+  function findCompanyByName(name) {
+    var key = coNameKey(name);
+    if (!key) return Promise.resolve(null);
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(ERP_CO).once('value').then(function (s) {
+      var wrap = s.val();
+      var raw = (wrap && wrap.v !== undefined) ? wrap.v : wrap;
+      var hits = [];
+      eachCompany(raw, function (co, at) {
+        if (coNameKey(co.name) === key) hits.push({ id: co.id || at, at: at, rec: co });
+      });
+      return hits.length === 1 ? hits[0] : null;
+    });
+  }
+
+  /* 그 업체의 주담당·부담당 사번. 담당이 없으면 빈 배열.
+     ⚠ 계약·사건과 **같은 칸 이름**이다(managerMain/managerSubs). 업체 담당자는
+       업체관리에서만 고치는 값이라(푸른이알피 주석) 여기서는 읽기만 한다. */
+  function companyMgrSids(rec) {
+    var out = [];
+    if (!rec) return out;
+    if (rec.managerMain) out.push(rec.managerMain);
+    (rec.managerSubs || []).forEach(function (s) {
+      if (s && out.indexOf(s) < 0) out.push(s);
+    });
+    return out;
+  }
+
   /* 업체 목록은 배열형·객체형 둘 다 쓰인다(푸른이알피가 옮겨 가는 중이다).
      어느 쪽이든 **칸 경로**를 만들 수 있게 열쇠를 함께 돌려준다. */
   function eachCompany(raw, fn) {
@@ -673,6 +717,9 @@
     whenText: whenText,
     sendToCards: sendToCards,
     findCompanyByBizNo: findCompanyByBizNo,
+    coNameKey: coNameKey,
+    findCompanyByName: findCompanyByName,
+    companyMgrSids: companyMgrSids,
     companyIndex: companyIndex,
     sendToCoInfo: sendToCoInfo,
     sendToCompany: sendToCompany,
