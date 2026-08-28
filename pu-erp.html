@@ -20080,7 +20080,8 @@ function CompanyManagement(){
       var curField2 = editing.field;
       var dir = e.shiftKey ? -1 : 1;
       // 편집 가능 필드 순서 (활성업체 기준)
-      var fieldsActive = ['name','typeCode','bizNo','ceo','phone','address','companySize','employmentInsuredCount','payrollDay','injuryInsuredCount','monthlyAdvisoryFee','vatType','contractStartDate','contractEndDate','taxInvoicePaymentDay'];
+      /* feeHistory 도 함께 저장한다 — 빠뜨리면 적어도 저장이 안 돼 «안 먹는» 것처럼 보인다 */
+      var fieldsActive = ['name','typeCode','bizNo','ceo','phone','address','companySize','employmentInsuredCount','payrollDay','injuryInsuredCount','monthlyAdvisoryFee','feeHistory','vatType','contractStartDate','contractEndDate','taxInvoicePaymentDay'];
       var fieldsSub = ['name','bizNo','ceo','address','note'];
       var fieldList = statusTab === 'suboffice' ? fieldsSub : fieldsActive;
       var fIdx = fieldList.indexOf(curField2);
@@ -21896,6 +21897,63 @@ function CompanyEditModal(props){
             )),
           h('div', { className:'fld' }, h('label', null, '월 자문료'),
             h('input', { type:'text', value:(f.monthlyAdvisoryFee||0).toLocaleString(), onChange:setNum('monthlyAdvisoryFee'), placeholder:'원', style:{ fontFamily:'monospace', textAlign:'right' } })),
+          /* ── 자문료가 바뀐 이력 (김보람 과장 건의 2026-08-28) ────────────────
+             자동이체가 익월·익익월이면 늦게 들어온 돈은 «옛 금액» 이다.
+             여기에 「언제부터 얼마」를 적어 두면 그 달 귀속으로 셈한다.
+             ⚠ 안 적어도 된다 — 비어 있으면 위 「월 자문료」를 그대로 쓴다(예전과 같다). */
+          h('div', { className:'fld', style:{ gridColumn:'1 / -1' } },
+            h('label', null, '자문료가 바뀐 이력 ',
+              h('span', { style:{ fontWeight:400, color:'#94a3b8', fontSize:'10.5px' } },
+                '— 늦게 들어오는 자동이체를 그 달 금액으로 맞춥니다 (안 적어도 됩니다)')),
+            h('div', { style:{ display:'flex', flexDirection:'column', gap:'5px' } },
+              erpFeeHistorySort(f.feeHistory || []).map(function(hrec, hi){
+                return h('div', { key:'fh'+hi, style:{ display:'flex', gap:'6px', alignItems:'center' } },
+                  h('input', { type:'text', value:hrec.from || '', placeholder:'2026-01',
+                    title:'이 달부터 아래 금액이 됩니다',
+                    onChange:function(e){
+                      var v = String(e.target.value||'').replace(/[^0-9-]/g,'').slice(0,7);
+                      setF(function(prev){
+                        var list = erpFeeHistorySort(prev.feeHistory || []).slice();
+                        list[hi] = Object.assign({}, list[hi], { from:v });
+                        return Object.assign({}, prev, { feeHistory:list });
+                      });
+                    },
+                    style:{ width:'96px', fontFamily:'monospace', textAlign:'center' } }),
+                  h('span', { style:{ color:'#94a3b8', fontSize:'11px' } }, '부터'),
+                  h('input', { type:'text', value:(parseInt(hrec.fee,10)||0).toLocaleString(),
+                    onChange:function(e){
+                      var v = parseInt(String(e.target.value||'').replace(/[^0-9]/g,''), 10) || 0;
+                      setF(function(prev){
+                        var list = erpFeeHistorySort(prev.feeHistory || []).slice();
+                        list[hi] = Object.assign({}, list[hi], { fee:v });
+                        return Object.assign({}, prev, { feeHistory:list });
+                      });
+                    },
+                    style:{ width:'116px', fontFamily:'monospace', textAlign:'right' } }),
+                  h('span', { style:{ color:'#94a3b8', fontSize:'11px' } }, '원'),
+                  h('button', { type:'button', title:'이 줄 지우기',
+                    onClick:function(){
+                      setF(function(prev){
+                        var list = erpFeeHistorySort(prev.feeHistory || []).filter(function(_, j){ return j !== hi; });
+                        return Object.assign({}, prev, { feeHistory:list });
+                      });
+                    },
+                    style:{ border:'1px solid #fecaca', background:'#fff', color:'#991b1b',
+                      borderRadius:'4px', padding:'2px 8px', fontSize:'11px', cursor:'pointer' } }, '지움')
+                );
+              }),
+              h('button', { type:'button',
+                onClick:function(){
+                  setF(function(prev){
+                    var list = erpFeeHistorySort(prev.feeHistory || []).slice();
+                    list.push({ from:'', fee: parseInt(prev.monthlyAdvisoryFee,10) || 0 });
+                    return Object.assign({}, prev, { feeHistory:list });
+                  });
+                },
+                style:{ alignSelf:'flex-start', border:'1px solid #bfdbfe', background:'#eff6ff',
+                  color:'#1e40af', borderRadius:'5px', padding:'4px 11px', fontSize:'11.5px',
+                  fontWeight:700, cursor:'pointer' } }, '+ 바뀐 자문료 적기')
+            )),
           h('div', { className:'fld' }, h('label', null, '부가세'),
             h('select', { value:f.vatType || 'unspecified', onChange:set('vatType') },
               h('option', { value:'unspecified' }, '⚠️ 미확정'),
@@ -31839,6 +31897,41 @@ var DUP_DEFAULT = {
 //   5) 자문료 미생성 회사 (active + monthlyAdvisoryFee>0인데 이번달 입금 없음)
 // 발견 시 표 + [수정] / [무시] 버튼
 // ============================================================
+/* ── 그 달의 자문료 (김보람 과장 건의 2026-08-28, 다안) ────────────────────
+   자문료가 오르내려도 «그 달에 약속된 금액»으로 셈해야 한다.
+   자동이체를 익월·익익월 말일로 걸어 둔 곳은, 늦게 들어온 돈이 «옛 금액» 이다.
+   칸토덴카화인프로덕츠: 2025-12 까지 275,000 → 2026-01 부터 440,000 인데
+   2026-02-03 에 들어온 돈은 12월분 275,000 이었다.
+
+   feeHistory = [{ from:'YYYY-MM', fee:숫자 }, …]  — 그 달부터 «계속» 그 금액.
+   ⚠ 이력이 없으면 지금 자문료를 쓴다 — 안 적어 둔 업체는 예전과 똑같이 돈다.
+   ⚠ 적어 둔 것보다 더 옛날 달을 물으면 «가장 오래된 요율»로 본다 —
+     지금 요율로 답하는 것보다 그쪽이 사실에 가깝다. */
+function erpFeeForMonth(co, ym){
+  var now = co ? (parseInt(co.monthlyAdvisoryFee, 10) || parseInt(co.fee, 10) || 0) : 0;
+  if(!co || !ym) return now;
+  var hist = co.feeHistory;
+  if(!hist || !hist.length) return now;
+  var key = String(ym).slice(0, 7);
+  var best = null, oldest = null;
+  for(var i = 0; i < hist.length; i++){
+    var hrec = hist[i];
+    if(!hrec || !hrec.from) continue;
+    var from = String(hrec.from).slice(0, 7);
+    if(!oldest || from < String(oldest.from).slice(0, 7)) oldest = hrec;
+    if(from > key) continue;                                  // 아직 시작 안 한 요율
+    if(!best || from > String(best.from).slice(0, 7)) best = hrec;
+  }
+  if(best) return parseInt(best.fee, 10) || 0;
+  return oldest ? (parseInt(oldest.fee, 10) || 0) : now;
+}
+/* 이력을 «보기 좋게» 정렬 — 시작월 오름차순. 화면·저장 양쪽에서 같은 차례로 쓴다 */
+function erpFeeHistorySort(list){
+  return (list || []).slice().sort(function(a, b){
+    return String((a && a.from) || '').localeCompare(String((b && b.from) || ''));
+  });
+}
+
 /* ── CMS 실데이터와 «실제로 적힌 입금액» 대조 (김보람 과장 건의 2026-08-28) ──────
    2026-08-28 이전에는 매칭 창이 보여준 금액과 저장된 금액이 달랐다
    (저장 함수가 업체관리의 «지금 자문료»를 꺼내 썼다).
@@ -37058,7 +37151,9 @@ function CmsMatchModal(props){
     if(Object.prototype.hasOwnProperty.call(amtEdit, n)) return parseInt(amtEdit[n],10)||0;
     if(nbAmtByCo[n]) return nbAmtByCo[n];
     var c = byNameAll[n];
-    return c ? (parseInt(c.fee,10)||0) : 0;
+    /* 실데이터가 없을 때 — «지금» 자문료가 아니라 «그 달» 자문료를 쓴다.
+       이력을 안 적어 둔 업체는 erpFeeForMonth 가 지금 자문료를 돌려주므로 예전과 같다. */
+    return c ? (erpFeeForMonth(c, ym) || (parseInt(c.fee,10)||0)) : 0;
   }
   function amtFrom(n){
     if(Object.prototype.hasOwnProperty.call(amtEdit, n)) return 'hand';
