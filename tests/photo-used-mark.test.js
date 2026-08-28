@@ -192,20 +192,33 @@ test('★ 푸른이알피는 계약이 저장된 뒤에 표시를 남긴다', ()
     '표시를 넘기기 뒤로 미루면 넘기기가 넘어졌을 때 표시가 통째로 안 남습니다');
 });
 
-test('★ 푸른이알피는 붙인 사진이 있을 때만 표시한다', () => {
+/* ⚠ 2026-08-28 다시 겨눔 — 종전에는 `slice(i - 400, i)` 처럼 **글자 수로 창을 떠서**
+   봤다. 그 대목에 주석 몇 줄이 늘자(담당자 공유가 같은 자리에 붙었다) 보려던 조건이
+   창 밖으로 밀려나 검사가 울었다. 코드는 멀쩡한데 검사만 우는 것은 못 고칠 검사다.
+   → 창을 넓히며 쫓아가지 말고, **그 대목(try 블록) 자체**를 떠서 본다. */
+function markBlock() {
   const i = ERP.indexOf('PuPhotoStore.markUsed(');
   assert.ok(i > 0, '표시하는 곳을 못 찾았습니다');
-  const around = ERP.slice(i - 400, i);
-  assert.match(around, /srcPhoto/, '어느 사진인지 안 보고 표시합니다');
-  assert.match(around, /\.id\s*&&[\s\S]{0,40}\.year/,
+  const start = ERP.lastIndexOf('try {', i);
+  assert.ok(start > 0, '표시 대목을 감싼 try 를 못 찾았습니다');
+  const end = ERP.indexOf('} catch', i);
+  assert.ok(end > i, '표시 대목의 catch 를 못 찾았습니다');
+  return { i: i, start: start, before: ERP.slice(start, i), block: ERP.slice(start, end) };
+}
+
+test('★ 푸른이알피는 붙인 사진이 있을 때만 표시한다', () => {
+  const m = markBlock();
+  assert.match(m.before, /srcPhoto/, '어느 사진인지 안 보고 표시합니다');
+  assert.match(m.before, /\.id\s*&&[\s\S]{0,40}\.year/,
     '해·번호가 반쪽이어도 표시합니다 — 엉뚱한 자리에 적힙니다');
 });
 
 test('★ 표시가 막혀도 계약 저장을 무르지 않는다', () => {
-  const i = ERP.indexOf('PuPhotoStore.markUsed(');
-  const seg = ERP.slice(i, i + 300);
-  assert.match(seg, /\.catch\(/, '표시가 막히면 그대로 터져 저장이 오류로 보입니다');
-  const pre = ERP.slice(i - 500, i);
-  assert.ok(pre.lastIndexOf('try {') > pre.lastIndexOf('} catch'),
+  const m = markBlock();
+  assert.match(m.block.slice(m.i - m.start), /\.catch\(/,
+    '표시가 막히면 그대로 터져 저장이 오류로 보입니다');
+  /* 표시 대목이 try 안에 있다 — 위 markBlock 이 try…catch 를 실제로 찾아낸 것이
+     그 증거다. 여기서는 그 사이에 다른 catch 가 끼어들지 않았는지만 본다. */
+  assert.ok(m.before.lastIndexOf('} catch') < 0,
     '표시 대목이 try 로 감싸여 있지 않습니다 — 저장 성공이 오류로 뒤집힙니다');
 });
