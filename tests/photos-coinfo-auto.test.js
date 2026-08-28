@@ -100,7 +100,7 @@ function runSend(o) {
     Date, Promise, Object, String, Boolean
   };
   vm.createContext(ctx);
-  vm.runInContext(fnOf('canSendCoInfo') + '\n' + fnOf('sendCoInfo'), ctx);
+  vm.runInContext(fnOf('canSendCoInfo') + '\n' + fnOf('coInfoFields') + '\n' + fnOf('autoCmsOn') + '\n' + fnOf('sendCoInfoWith') + '\n' + fnOf('sendCoInfo'), ctx);
   return { ctx, calls, job };
 }
 const settle = function () { return new Promise(function (r) { setTimeout(r, 20); }); };

@@ -189,10 +189,14 @@ test('사진첩이 사진 번호·연도·주인을 함께 넘긴다', () => {
      ⚠ 2026-08-23: 해를 gridYear 로 박아 두지 않는다 — 자동 보내기가 붙으면서
        sendCoInfo 가 year 를 받게 되었다(화면의 해로 짐작하면 다른 해 사진의 기록이
        엉뚱한 자리에 적힌다). 지킬 것은 「셋을 함께 넘긴다」이다. */
-  const fn = cutFn(html, 'function sendCoInfo(');
+  /* ⚠ 2026-08-28: CMS 신청서가 붙으면서 함수가 둘로 갈렸다 — sendCoInfo 는 «어느 회사인지»를
+     갖추고(그 서식엔 사업자번호가 없어 업체명으로 찾는다), 실제로 보내는 것은
+     sendCoInfoWith 다. 지킬 것은 그대로 「셋을 함께 넘긴다」이다. */
+  const fn = cutFn(html, 'function sendCoInfoWith(');
+  assert.ok(fn, 'sendCoInfoWith 를 찾지 못했습니다');
   assert.match(fn, /photo: \{ year: [A-Za-z]+, id: id, owner: photoOwner\(id\)/,
     '★ 어느 사진에서 온 값인지 안 남기면 나중에 그 서류를 못 찾습니다');
   /* 그리고 그 해가 «주어진 것»부터 쓰는지 — 화면의 해는 마지막 수단이어야 한다. */
-  assert.match(fn, /const yr = year \|\|/,
+  assert.match(cutFn(html, 'function sendCoInfo('), /const yr = year \|\|/,
     '★ 화면의 해부터 쓰면 다른 해 사진에서 어긋납니다');
 });

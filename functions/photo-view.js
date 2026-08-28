@@ -42,8 +42,10 @@
    · contract  계약서   — 근로계약서에 주민번호가 있다
    · timesheet 근태표   — 이름·주민번호가 함께 있다
    · payslip   급여서류 — 사진첩에 두지 않기로 한 것이지만(「지워 주세요」),
-                          남아 있는 동안은 가장 민감하다 */
-const SENSITIVE_KINDS = { contract: 1, timesheet: 1, payslip: 1 };
+                          남아 있는 동안은 가장 민감하다
+   · cms       자동이체 신청서 — **은행 계좌번호**와 예금주 주민번호가 적혀 있다
+                          (대표 지시 2026-08-28) */
+const SENSITIVE_KINDS = { contract: 1, timesheet: 1, payslip: 1, cms: 1 };
 
 function isSensitiveKind(kind) {
   return !!SENSITIVE_KINDS[String(kind || "")];

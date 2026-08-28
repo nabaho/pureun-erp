@@ -19,7 +19,7 @@
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <!-- ?v= 저장 층을 고치면 반드시 올린다 — 캐시에 묵으면 고친 것이 통째로 묻힌다. -->
-<script src="js/pu-photo-store.js?v=11"></script>
+<script src="js/pu-photo-store.js?v=12"></script>
 <!-- 주민번호 가림 — 계산 층과, 급여데이터함과 나눠 쓰는 긋기 층 -->
 <script src="js/pu-rrn-mask.js?v=3"></script>
 <script src="js/pu-rrn-mask-ui.js?v=2"></script>
@@ -28,10 +28,10 @@
      이 파일이 캐시에 묵으면 옛 지시로 읽어 제목이 안 생기는데, 화면(pu-photos.html)은
      새것이라 제목 자리만 비어 보인다 — 고친 것이 통째로 묻힌 것처럼 된다.
      tests/photos-doc-title.test.js 가 둘이 어긋나지 않는지 지킨다. -->
-<script src="js/pu-doc-read.js?v=19"></script>
+<script src="js/pu-doc-read.js?v=20"></script>
 <script src="js/pu-lockkey.js?v=2"></script>
 <!-- ?v= 는 등록 층을 고칠 때 올린다 — 캐시에 묵으면 고친 안내가 안 보인다. -->
-<script src="js/pu-doc-file.js?v=11"></script>
+<script src="js/pu-doc-file.js?v=12"></script>
 <script src="js/pu-drag.js?v=2"></script>
 <script src="js/pu-billing.js?v=6"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -5402,7 +5402,7 @@ function onQueueChange(list) {
 /* ⚠ contract 가 빠져 있었다(2026-08-15 발견) — 계약서는 readLabel() 에서
      '알 수 없음' 으로 떨어졌다. 갈래는 제대로 가려 놓고 이름만 없던 것이다. */
 const READ_LABEL = { chat: '카톡·메일 대화', timesheet: '근태·휴무표', form: '서식·신청서', card: '명함', bizreg: '사업자등록증', sme: '중소기업확인서',
-  payslip: '급여서류', meeting: '회의·현장 사진', contract: '계약서', other: '서류로 보이지 않음' };
+  payslip: '급여서류', meeting: '회의·현장 사진', contract: '계약서', cms: 'CMS 자동이체 신청서', other: '서류로 보이지 않음' };
 
 /* ══════ 서류 제목 (대표 지시 2026-08-15) ══════
    "사업자등록증명 도 제목을 정확하게 인지하게해라. 그리고 모든 서식에 제목을 찾고
@@ -6203,7 +6203,15 @@ function canSendCoInfo(read) {
   if (!read || read.error) return false;
   if (read.filedInfo && read.filedInfo.at) return false;
   const f = read.fields || {};
-  return String(f.bizno || '').replace(/\D/g, '').length >= 10;
+  if (String(f.bizno || '').replace(/\D/g, '').length >= 10) return true;
+  /* ── CMS 자동이체 신청서만은 «업체명»으로도 보낸다 (대표 지시 2026-08-28) ──
+     ⚠ 그 서식에는 **사업자번호 칸이 아예 없다.** 신청인 칸은 성명·전화·은행·계좌뿐이다.
+       사업자번호만 열쇠로 삼으면 CMS 신청서는 영영 기업 상세에 못 간다.
+     ⚠ 업체명으로 찾는 것은 «딱 하나만 맞을 때»만 된다(PuDocFile.findCompanyByName).
+       둘이면 아무것도 안 한다 — 남의 회사에 계좌가 붙으면 되돌릴 방법이 없다.
+       그 판정은 보내는 자리(coInfoFields)에서 실제로 한다. 여기서는 «해 볼 만한가»만 본다. */
+  if (read.kind === 'cms' && String(f.company || '').trim()) return true;
+  return false;
 }
 
 /* ── 기업 상세로 «스스로» 보낼 수 있는가 (대표 지시 2026-08-23) ──
@@ -6236,8 +6244,71 @@ function sendCoInfo(id, year, job) {
   const read = (it && it.meta && it.meta.read) || (job && job._read);
   if (!canSendCoInfo(read)) return Promise.resolve();
   const yr = year || (it && it.meta && it.meta.__year) || gridYear;
+  return coInfoFields(read).then(function (fields) {
+    if (!fields) {
+      /* 업체를 못 찾았다(없거나, 같은 이름이 둘이다). 조용히 넘기면 「보냈는데 없다」가
+         된다 — 왜 못 갔는지 사진에 적어 화면이 말하게 한다. */
+      read.filedInfoError = '어느 업체인지 못 찾았습니다 — 업체명을 확인해 주세요';
+      if (viewerId === id) renderReadPanel(it);
+      return PuPhotoStore.saveRead(yr, id, read, photoOwner(id));
+    }
+    return sendCoInfoWith(id, yr, job, it, read, fields);
+  });
+}
+
+/* ── CMS 신청서를 읽었으면 그 업체 계약의 「자동이체」를 켠다 (대표 지시 2026-08-28) ──
+   "사진첩에서 cms 계약서가 정리되어 자동이체 승인한 경우 자동이체 체크해달라."
+
+   ⚠ **무엇을 「승인」으로 볼 것인가**(대표 결정 2026-08-28 ③㉮):
+     은행·계좌번호·예금주 **셋이 다 읽혔을 때**. 신청서가 있다고 은행 승인이 난 것은
+     아니지만, 그 셋이 다 적혀 서명까지 된 신청서를 우리가 받았다면 자동이체로 간다는
+     뜻이라고 보기로 했다. 셋 중 하나라도 비면 켜지 않는다 — 반쪽 신청서다.
+   ⚠ 「해지」 신청서로는 **켜지 않는다.** 끄는 일은 사람이 한다(그쪽이 돈이 걸린 일이다).
+   ⚠ 켜지 못해도 **기업 상세에 넣은 것은 그대로 둔다.** 계좌는 이미 담겼고, 체크는
+     계약관리에서 손으로 켜면 된다. */
+function autoCmsOn(read, fields) {
+  const f = fields || {};
+  if (!read || read.kind !== 'cms') return;
+  if (!window.PuDocFile || !PuDocFile.setContractCms) return;
+  if (String(f.applyType || '').indexOf('해지') >= 0) return;
+  const bank = String(f.bankName || '').trim();
+  const acct = String(f.bankAcct || '').trim();
+  const holder = String(f.bankHolder || '').trim();
+  if (!bank || !acct || !holder) {
+    toast('은행·계좌·예금주가 다 읽혀야 자동이체를 켭니다 — 값을 확인해 주세요');
+    return;
+  }
+  return PuDocFile.setContractCms({
+    bizNo: f.bizno || '', companyName: f.company || '',
+    bankName: bank, byName: PuPhotoStore.myName() || ''
+  }).then(function (r) {
+    toast((r && r.ok ? '🏦 ' : '⚠ ') + ((r && r.message) || '자동이체를 켜지 못했습니다'),
+      (r && r.ok) ? 4500 : 8000);
+  }).catch(function (e) {
+    console.warn('[자동이체 켜기]', e);
+    toast('⚠ 자동이체를 켜지 못했습니다 — 계약관리에서 손으로 켜 주세요', 8000);
+  });
+}
+
+/* 기업 상세로 보낼 칸을 갖춘다 — 사업자번호가 없으면 «업체명»으로 찾아 채운다.
+   ⚠ 못 찾으면 null 을 준다. 아무 회사에나 넣느니 안 넣는 것이 맞다 — 계좌가 남의
+     회사에 붙으면 되돌릴 방법이 없다(같은 이름이 둘이면 findCompanyByName 이 빈손이다). */
+function coInfoFields(read) {
+  const f = Object.assign({}, (read && read.fields) || {});
+  if (String(f.bizno || '').replace(/\D/g, '').length >= 10) return Promise.resolve(f);
+  const name = String(f.company || '').trim();
+  if (!name || !window.PuDocFile || !PuDocFile.findCompanyByName) return Promise.resolve(null);
+  return PuDocFile.findCompanyByName(name).then(function (hit) {
+    const bz = hit && hit.rec && hit.rec.bizNo;
+    if (!bz) return null;
+    f.bizno = bz;
+    return f;
+  }).catch(function () { return null; });
+}
+
+function sendCoInfoWith(id, yr, job, it, read, fields) {
   return PuDocFile.sendToCoInfo({
-    fields: read.fields,
+    fields: fields,
     byName: PuPhotoStore.myName() || '',
     /* 어느 사진에서 온 값인지 함께 넘긴다 — 나중에 그 서류를 다시 찾을 수 있어야 한다 */
     photo: { year: yr, id: id, owner: photoOwner(id) || '' }
@@ -6252,7 +6323,8 @@ function sendCoInfo(id, year, job) {
     renderUp();
     /* 주인 자리에 남긴다 — 남의 사진을 관리자가 보냈을 때 내 자리에 쓰면
        주인 화면에는 「아직 안 보냄」으로 남아 또 보내게 된다(업체관리와 같은 까닭). */
-    return PuPhotoStore.saveRead(yr, id, read, photoOwner(id));
+    return PuPhotoStore.saveRead(yr, id, read, photoOwner(id))
+      .then(function () { return autoCmsOn(read, fields); });
   }).catch(function (e) {
     console.warn('[기업정보 보내기]', e);
     read.filedInfoError = (e && e.message) || String(e);
@@ -7758,7 +7830,9 @@ const KEEP_ONLY = { meeting: 1, contract: 1 };
    ⚠ 값이 틀렸을 위험은 그대로 지킨다: 기업 상세로 «스스로» 가는 것은 기계가 번호를
      검산한 것만이고(autoSendCoInfo), 원본이 작은 서식은 위 tooSmall 줄에서 먼저 걸린다. */
 function formTodo(read) {
-  return !!(read && read.kind === 'form' && canSendCoInfo(read));
+  /* ⚠ CMS 자동이체 신청서도 같다(2026-08-28) — 기업 상세로 보낼 것이 남았을 때만
+     할 일이다. 보냈으면 canSendCoInfo 가 거짓이라 저절로 빠진다. */
+  return !!(read && (read.kind === 'form' || read.kind === 'cms') && canSendCoInfo(read));
 }
 
 /* 대화 캡처 — 뽑아 둔 할 일이 **아직 남아 있을 때만**.
@@ -7813,7 +7887,7 @@ function checkWhy(it) {
   /* 근태표는 표를 원본과 대조해야 한다 — 손글씨 숫자는 기계가 검산할 방법이 없다. */
   if (r.kind === 'timesheet') return '근태표 — 표를 원본과 대조';
   /* 서식은 기업 상세로 보낼 것이 남았을 때만 — 보냈거나 보낼 수 없으면 보관만 한다. */
-  if (r.kind === 'form') return formTodo(r) ? '🏢 기업 상세로 아직 안 보냄 — 보내기' : '';
+  if (r.kind === 'form' || r.kind === 'cms') return formTodo(r) ? '🏢 기업 상세로 아직 안 보냄 — 보내기' : '';
   if (!r.auto) return '읽은 값이 미덥지 않음 — 열어서 확인';
   if (CARD_KINDS[r.kind] && !(r.filed && r.filed.id)) return '기업정보함에 아직 안 감 — 보내기';
   /* ⚠ 「업체가 아직 없다」는 이유가 아니라 **기다림**이다 — 사진첩에서 할 수 있는 일이

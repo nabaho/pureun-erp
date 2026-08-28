@@ -100,7 +100,8 @@ test('★ auto:false 라고 무조건 할 일로 삼지 않는다 — 서식은 
   /* ⚠ 2026-08-27: 판정이 checkWhy 한 곳으로 모였다(needsCheck 는 그것을 그대로 쓴다).
      순서도 그쪽에서 본다 — 지키는 것은 그대로, 서식 판정이 auto 판정보다 «앞». */
   const fn = cutFn(app, 'function checkWhy(');
-  const iForm = fn.indexOf("if (r.kind === 'form')");
+  /* ⚠ 2026-08-28: CMS 가 같은 줄에 붙어 `if (r.kind === 'form' || r.kind === 'cms')` 가 됐다 */
+  const iForm = fn.indexOf("if (r.kind === 'form'");
   const iAuto = fn.indexOf('if (!r.auto)');
   assert.ok(iForm > 0 && iAuto > 0, '두 줄을 찾지 못했습니다');
   assert.ok(iForm < iAuto,
