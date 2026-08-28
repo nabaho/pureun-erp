@@ -318,16 +318,22 @@ async function runSync(deps, opts) {
         if (mismatch && pruned < 1 && nowMs() < deadline) {
           pruned++;
           try {
-            const alive = {};
-            p.uids.forEach((u) => { alive[String(u)] = 1; });
             const have = (await db.ref(ROOT + '/msgs/' + p.slug).once('value')).val() || {};
+            const haveKeys = Object.keys(have);
+            /* ⚠ 「목록에 없으면 지운다」가 아니다 — 다음메일이 폴더당 400통까지만
+               보여 주므로, 새 메일이 오면 가장 옛것이 그 창 밖으로 «밀린다».
+               지운 것과 밀려난 것을 갈라야 우리 거울이 400 을 넘어 쌓인다.
+               까닭은 mail-box.js goneKeys 머리글(대표 지시 2026-08-28). */
+            const dead = MB.goneKeys(haveKeys, p.uids);
             const gone = {};
-            let g = 0;
-            Object.keys(have).forEach((k) => {
-              if (!alive[k]) { gone[ROOT + '/msgs/' + p.slug + '/' + k] = null; g++; }
-            });
-            if (g) await db.ref().update(gone);
-            out.removed += g;
+            dead.forEach((k) => { gone[ROOT + '/msgs/' + p.slug + '/' + k] = null; });
+            if (dead.length) await db.ref().update(gone);
+            out.removed += dead.length;
+            /* 우리가 «실제로 들고 있는» 줄 수 — 화면의 「이 칸에 모두 몇 통」이 이것이다.
+               다음메일이 주는 400 을 그대로 적으면, 400 을 넘겨 쌓인 뒤에도 400 이라고
+               말하게 된다(목록에는 그보다 많이 보이는데). 여기서만 셀 수 있다 —
+               폴더를 통째로 읽는 자리가 여기뿐이다. */
+            p.sync.kept = Math.max(0, haveKeys.length - dead.length);
             p.sync.n = p.uids.length;
             /* 이번에 «살아 있던 통수»를 적어 둔다 — 다음 회차에 이보다 줄었으면
                지운 것이 있다는 뜻이라 그때 다시 읽는다. */
@@ -343,12 +349,20 @@ async function runSync(deps, opts) {
 
       p.sync.at = nowMs();
       p.sync.ver = MB.ROW_VER;
-      /* 통수는 «번호 목록의 길이»가 진짜다 — STATUS 가 주는 값이 서버마다 달랐다
-         (실측 2026-08-24: 열두 폴더가 나란히 400 으로 나왔다). 목록은 셀 수 있다. */
-      p.sync.total = p.uids ? p.uids.length : Number(p.st.messages || 0);
+      /* ── 이 칸에 모두 몇 통인가 ──
+         STATUS 가 주는 값은 못 믿는다(실측 2026-08-24: 열두 폴더가 나란히 400).
+         번호 목록의 길이는 셀 수 있지만, 그것은 «다음메일이 지금 보여 주는» 수다.
+         우리는 그보다 많이 들고 있을 수 있다 — 창 밖으로 밀려난 옛 메일을 이제
+         안 지우기 때문이다(대표 지시 2026-08-28). 그럴 때는 «우리가 든 수»가 맞다:
+         목록에 그만큼 보이는데 머리에 400 이라고 적으면 그 숫자를 못 믿게 된다.
+         ⚠ kept 는 정리할 때만 새로 세므로 하루쯤 뒤처질 수 있다. 그 사이 온 새 메일은
+           번호 목록에도 들어 있으므로 큰 쪽을 쓰면 어느 쪽으로도 밑돌지 않는다. */
+      const seen = p.uids ? p.uids.length : Number(p.st.messages || 0);
+      const total = Math.max(seen, Number(p.sync.kept || 0));
+      p.sync.total = total;
       if (p.uids) {
         /* 옆줄 폴더 줄이 보는 값도 같은 값으로 맞춘다 */
-        await db.ref(ROOT + '/folders/' + p.slug + '/total').set(p.uids.length);
+        await db.ref(ROOT + '/folders/' + p.slug + '/total').set(total);
       }
       await db.ref(ROOT + '/sync/' + p.slug).update(p.sync);
       if (more) queue.push(p);          // 아직 남았다 — 줄 끝에 다시 세운다

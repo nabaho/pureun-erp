@@ -449,3 +449,70 @@ test('한 폴더를 못 열어도 나머지는 가져온다 — 하나 때문에
   assert.equal(r.folders, 1);
   assert.equal(uidsIn(db, slug('INBOX')).length, 5);
 });
+
+
+/* ══════ 400 «창»이 우리 거울을 깎지 않는다 (대표 지시 2026-08-28) ══════ */
+
+test('★ 다음메일이 옛것을 안 보여 줘도 우리 목록에서는 안 사라진다 — 400 을 넘겨 쌓인다', async () => {
+  /* 다음메일은 폴더당 정해진 개수까지만 보여 준다. 새 메일이 오면 가장 옛것이 그
+     창 밖으로 밀린다 — 지운 것이 아닌데 목록에서 사라진다.
+     ⚠ 예전에는 그것을 우리가 지웠다. 그래서 거울이 영영 그 개수를 못 넘었다. */
+  const folders = { INBOX: box(10) };            // 지금은 1~10 이 보인다
+  const db = fakeDb();
+  const d = deps(db);
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  assert.equal(uidsIn(db, slug('INBOX')).length, 10);
+
+  /* 새 메일 다섯 통이 오면서 옛것 다섯 통이 창 밖으로 밀렸다(지운 것이 아니다) */
+  folders.INBOX = box(10, 6);                    // 이제 6~15 만 보인다
+  await db.ref(MS.ROOT + '/sync/' + slug('INBOX')).update({ prunedAt: 0 });
+  const r = await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+
+  assert.equal(r.removed, 0, '밀려난 것을 «지운 것»으로 보고 지웠습니다');
+  assert.deepEqual(uidsIn(db, slug('INBOX')), [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],
+    '거울이 다음메일이 보여 주는 개수를 못 넘고 있습니다');
+});
+
+test('★ 그러면서도 «정말 지운 것»은 그대로 뺀다 — 둘을 갈라야 거울이 거울이다', async () => {
+  const folders = { INBOX: box(10) };
+  const db = fakeDb();
+  const d = deps(db);
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  /* 창은 그대로(1 이 아직 보인다)인데 5 만 없어졌다 = 사람이 지웠다 */
+  delete folders.INBOX.msgs['5'];
+  await db.ref(MS.ROOT + '/sync/' + slug('INBOX')).update({ prunedAt: 0 });
+  const r = await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  assert.equal(r.removed, 1, '지운 것을 안 뺐습니다');
+  assert.equal(uidsIn(db, slug('INBOX')).indexOf(5), -1);
+});
+
+test('★★ 번호 목록을 못 받은 회차가 폴더를 비우지 않는다', async () => {
+  /* 접속이 한 번 흔들려 SEARCH 가 실패하면 번호 목록이 빈 배열로 온다.
+     예전 규칙에서는 그것이 「전부 지워졌다」로 읽혀 몇 년치가 한 번에 날아갔다. */
+  const folders = { INBOX: box(10) };
+  const db = fakeDb();
+  const d = deps(db);
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  await db.ref(MS.ROOT + '/sync/' + slug('INBOX')).update({ prunedAt: 0 });
+
+  const broken = fakeMail(folders);
+  broken.search = async () => { throw new Error('접속이 끊겼습니다'); };
+  const r = await MS.runSync(d, { client: broken, deadlineMs: 60000 });
+  assert.equal(r.removed, 0, '번호 목록을 못 받았는데 지웠습니다');
+  assert.equal(uidsIn(db, slug('INBOX')).length, 10, '폴더가 비었습니다');
+});
+
+test('★ 「이 칸에 모두 몇 통」은 우리가 든 수로 적는다 — 400 이라고 적어 놓고 406 을 보여 주면 안 된다', async () => {
+  const folders = { INBOX: box(10) };
+  const db = fakeDb();
+  const d = deps(db);
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  folders.INBOX = box(10, 6);                    // 창이 밀려 6~15 만 보인다
+  await db.ref(MS.ROOT + '/sync/' + slug('INBOX')).update({ prunedAt: 0 });
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+
+  const held = uidsIn(db, slug('INBOX')).length;
+  const shown = Number((db.__get(MS.ROOT + '/folders/' + slug('INBOX')) || {}).total || 0);
+  assert.equal(held, 15, '검사 밑그림이 틀렸습니다');
+  assert.equal(shown, held, '다음메일이 보여 주는 수(10)를 적고 있습니다 — 목록에는 15통이 보입니다');
+});
