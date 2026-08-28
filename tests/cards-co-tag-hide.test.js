@@ -39,6 +39,8 @@ function loadTagHideBlock(){
   const calls = { updates: [], rendered: false, pcRendered: false, anyRendered: false };
   const ctx = {
     _coTagHidden: {},
+    /* 2026-08-28: 옆줄에 「할 일」 칸이 붙었다 — 이 검사는 그 부분을 안 본다 */
+    coTodoSideHtml: () => '',
     _coTagHiddenOn: false,
     state: { view:'co', coShowHidden:false, coTag:'' },
     Store: { mode:'firebase', db: { ref: p => ({

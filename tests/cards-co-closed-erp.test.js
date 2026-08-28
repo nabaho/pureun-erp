@@ -156,13 +156,16 @@ test('★ 종료 토글이 폴더·검색과 함께 좁혀진다 — 덮어쓰�
 
 /* ══════ 화면에 걸린 단추 ══════ */
 
-test('★ 탭 줄에 종료 토글 단추가 있다', () => {
-  /* 2026-08-26: 탭 칩과 도구가 갈라졌다 — 토글은 도구 쪽(coToolsHtml)에 있다.
-     탭 줄에 «나온다»는 뜻은 그대로다: renderCoFTabsHtml 이 둘을 이어 붙인다. */
-  const fn = fnBody('coToolsHtml');
-  assert.match(fn, /coOnlyClosed/, '도구줄에서 토글을 안 켠다');
+test('★ 종료 토글이 옆줄 「할 일」에 있다', () => {
+  /* ⚠ 2026-08-28 자리가 옮겨졌다 — 대표 지시 「기업상세 탭은 거래관계가 있었는지
+     여부만 나누면 된다」. 탭 줄에 뜻이 둘(고르기·거르기)이라 서로의 수를 갉아먹었다:
+     「종료」를 켜면 거래처 16 · 전체 16 · 정보부족 16 으로 모두 붙어 버렸다.
+     기능은 그대로고 자리만 옆줄로 내렸다(coTodoSideHtml). */
+  const fn = fnBody('coTodoSideHtml');
+  assert.match(fn, /coOnlyClosed/, '옆줄에서 토글을 안 켠다');
   assert.match(fn, /coClosedCount\(\)/, '개수를 안 보여 준다');
-  assert.match(fn, /class="pctool/, '기존 토글 단추 모양(.pctool)을 안 쓴다');
+  assert.equal(fnBody('coToolsHtml').indexOf('coOnlyClosed'), -1,
+    '★ 탭 줄에 도로 남아 있으면 두 곳에서 같은 일을 한다');
 });
 
 test('종료가 0곳이면 단추가 안 보인다 — 늘 있는 회색 단추는 눌러볼 값이 없다', () => {

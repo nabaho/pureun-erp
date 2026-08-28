@@ -58,6 +58,8 @@ function load(over){
     coFTabList: () => o.coFTabs || [],
     _coFolders: o.coFolders || {},
     _coTagHidden: {},
+    /* 2026-08-28: 옆줄에 「할 일」 칸이 붙었다 — 이 검사는 그 부분을 안 본다 */
+    coTodoSideHtml: () => '',
     MAT_CATS_NOW: () => o.matCats || [],
     matList: () => o.mats || [],
     matCat: m => (m && m.cat) || '',
