@@ -221,7 +221,11 @@ test('★ 분류 창의 모든 길이 그 번역을 거친다 — 한 곳만 놓
   app.split('\n').forEach(function (l, i) {
     if (!/showKindErr\(/.test(l)) return;
     if (/kindErrMsg\(/.test(l)) return;
-    if (/'[^']*해 주세요'|'[^']*입력'/.test(l)) return;   // 우리가 쓰는 안내문은 그대로
+    /* 우리가 손으로 쓴 우리말 안내문은 그대로 둔다.
+       ⚠ 2026-08-28 넓힘 — 「…해 주세요」만 봐주다가 「골라 주세요」·「적어 주세요」가
+         걸렸다. 잡으려는 것은 «번역을 안 거친 오류»이지 우리말 안내문이 아니다.
+         울타리의 이빨은 그대로다 — 오류를 그대로 넘기면 여전히 걸린다. */
+    if (/'[^']*주세요'|'[^']*입력'/.test(l)) return;
     if (/^function showKindErr/.test(l.trim())) return;
     bad.push((i + 1) + ': ' + l.trim());
   });

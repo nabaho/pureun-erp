@@ -242,7 +242,10 @@ function why(meta, uid) {
 }
 
 test('★ 업무로 열린 사람에게는 표가 붙는다 — 손으로 넣은 사람과 갈라야 한다', () => {
-  assert.equal(why({ shareBy: { U2: '푸른이알피 계약 — 야성건설' } }, 'U2'), '계약');
+  /* ⚠ 2026-08-28: 사진첩 업체 공유가 생기면서 표에 오는 꼴이 둘이 됐다 —
+     「푸른이알피 계약 — 야성건설」(칩에는 「계약 담당」)과 「승진텍라인 담당」(그대로). */
+  assert.equal(why({ shareBy: { U2: '푸른이알피 계약 — 야성건설' } }, 'U2'), '계약 담당');
+  assert.equal(why({ shareBy: { U2: '승진텍라인 담당' } }, 'U2'), '승진텍라인 담당');
   assert.equal(why({ shareBy: {} }, 'U2'), '', '손으로 넣은 사람에게 표가 붙었습니다');
   assert.equal(why({}, 'U2'), '', '옛 공유(설명 없음)에서 넘어졌습니다');
   assert.equal(why(null, 'U2'), '');
