@@ -88,5 +88,21 @@ ok('업체관리에 이력 적는 칸이 있다', /자문료가 바뀐 이력/.t
 ok('저장 목록에 feeHistory 가 들어 있다', /'monthlyAdvisoryFee','feeHistory'/.test(SRC),
    '빠뜨리면 적어도 저장이 안 돼 「안 먹는」 것처럼 보인다');
 
+console.log('\n[⑧ 자동 생성도 「그 달」 금액으로]');
+/* 한 해치를 한꺼번에 만들 때가 가장 크게 어긋났다 — 지난 달까지 «지금» 자문료로 만들었다 */
+ok('업체 목록에 이력이 실려 온다', /feeHistory:c\.feeHistory \|\| null/.test(SRC),
+   '안 실으면 그 달 금액을 알 길이 없다');
+/* 자문료 입금을 만드는 길이 다섯이다 — 이번 달·한 해치·한 달 전체·미납 여러 달·CMS 미납.
+   ⚠ 이 검사가 실제로 «내가 두 곳만 고친 것»을 잡아냈다. 다섯을 함께 센다. */
+const gen = (SRC.match(/amount:\(erpFeeForMonth\(co, ym\)/g) || []).length;
+ok('자문료 입금을 만드는 다섯 길 모두 그 달 금액을 쓴다', gen === 5,
+   '지금 ' + gen + '곳 — 하나라도 빠지면 그 길로 만든 것만 다시 어긋난다');
+ok('옛 방식(amount:co.fee)으로 만드는 곳이 없다',
+   !/calcDate\(ym, ?co\.payDay\), amount:co\.fee/.test(SRC),
+   '한 곳이라도 남으면 그 길로 만든 것만 다시 어긋난다');
+ok('미납 여러 달 확인창도 달별로 더한다',
+   /unpaid\.reduce\(function\(t,m\)\{ return t \+ \(erpFeeForMonth\(co,/.test(SRC),
+   '한 금액 × 개월수로 어림하면 확인창과 실제가 또 갈린다');
+
 console.log('\n  === ' + (total - fail) + ' 통과 / ' + fail + ' 실패 ===');
 process.exit(fail ? 1 : 0);
