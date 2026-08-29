@@ -748,6 +748,14 @@ test('★ 잇기 화면에 갈래 넷이 다 있다 — 주소·자문사·이�
   });
   c.state.whoTab = 'succ';
   assert.ok(c.whoPageHtml().indexOf('mbSuccSet(') > 0, '이어받을 사람을 고를 길이 없다');
+  /* ★★ 「고를 «길»이 있나」가 아니라 「고를 «사람»이 있나」를 본다.
+     2026-08-29 에 노무사/직원 갈래를 없애면서 이 칸이 아직 x.kind 로 거르고 있어
+     두 갈래가 «둘 다 비었고», 화면에는 상자만 남고 고를 사람이 한 명도 없었다.
+     옛 검사는 mbSuccSet( 만 찾아서 그대로 통과했다 — 빈 상자를 못 본 것이다. */
+  const sel = (c.whoPageHtml().match(/<select onchange="mbSuccSet[\s\S]*?<\/select>/) || [''])[0];
+  const opts = (sel.match(/<option value="[^"]+"/g) || []);
+  assert.ok(opts.length > 0,
+    '★ 이어받을 «사람»이 하나도 없습니다 — 상자만 있고 고를 것이 없습니다');
   c.state.whoTab = 'end';
   assert.ok(c.whoPageHtml().indexOf('자문종료') > 0, '종료업체 갈래가 종료를 말하지 않는다');
 });
