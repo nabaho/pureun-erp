@@ -546,6 +546,7 @@ body.portal-mode #moreFab{display:flex;}
 #billModal .r{display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:.82rem;}
 #billModal .r .k{color:#64748b;}
 #billModal .r .v{font-weight:700;font-variant-numeric:tabular-nums;}
+#billModal .pbasis{font-size:.68rem;color:#94a3b8;padding:0 0 2px;line-height:1.5;}
 #billModal .memo{margin-top:12px;font-size:.71rem;color:#92400e;background:#fffbeb;border-left:3px solid #fbbf24;padding:7px 10px;border-radius:0 6px 6px 0;line-height:1.6;}
 #billModal .foot{margin-top:12px;font-size:.68rem;color:#94a3b8;line-height:1.65;}
 /* ── 한 화면 (2026-08-17 대표 지시: "한번 클릭으로 실시간 변화 등을 한번에")
@@ -2115,7 +2116,7 @@ body.portal-mode #moreFab{display:flex;}
   function billPaint(){
     var chip = $('billChip');
     if(!chip || !window.PuBilling) return;
-    var s = window.PuBilling.summarize(_billCur, Date.now());
+    var s = window.PuBilling.summarize(_billCur, Date.now(), _billHistBk);
     if(!s.has){ chip.style.display = 'none'; return; }
     chip.style.display = 'inline-flex';
     $('billDot').style.background = BILL_DOT[s.tone] || BILL_DOT.none;
@@ -2136,6 +2137,15 @@ body.portal-mode #moreFab{display:flex;}
       var k2 = document.createElement('span'); k2.className = 'k'; k2.textContent = '이 추세면 월말';
       var v2 = document.createElement('span'); v2.className = 'v'; v2.textContent = '≈ ' + B.fmtWon(s.projected);
       r2.appendChild(k2); r2.appendChild(v2); rows.appendChild(r2);
+      /* ★ 무엇을 기준으로 밀었는지 «반드시» 밝힌다 (2026-08-29).
+         밝히지 않으면 대표님은 숫자만 보고 「고쳤는데 왜 그대로냐」를 물으실 수밖에 없다 —
+         실제로 그런 일이 있었다(달 평균이라 이미 끝난 비싸던 시기가 따라붙고 있었다). */
+      var bs = s.projectedBasis || {};
+      var note = document.createElement('div'); note.className = 'pbasis';
+      note.textContent = (bs.mode === 'recent')
+        ? '최근 ' + bs.days + '일 기준 · 하루 ' + B.fmtWon(bs.perDay)
+        : '이번 달 평균 기준 — 온전한 하루가 이틀은 쌓여야 최근 기준으로 바뀝니다';
+      rows.appendChild(note);
     }
     var memo = $('billMemo');
     if(s.etcNote){ memo.textContent = s.etcNote; memo.style.display = 'block'; }
@@ -2180,6 +2190,10 @@ body.portal-mode #moreFab{display:flex;}
      ⚠ 「기록」 칸은 «한 번만» 읽는다 — 구독(on)하지 않는다.
        사용액 보려다 사용액이 늘면 웃긴다. */
   var _billSpan = 'today', _billHist = null, _billHistYm = '';
+  /* 월말 어림을 «최근 며칠» 로 밀기 위한 재료 (2026-08-29).
+     ⚠ 기록은 창을 열어야 내려온다 — 그전까지는 null 이고, 그때는 달 평균으로 민다.
+       그래서 기록이 도착하면 왼쪽 칸을 «다시 그려야» 한다. */
+  var _billHistBk = null;
   var _billSum = null, _billRates = null;
 
   function billYm(d){ return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'); }
@@ -2268,6 +2282,11 @@ body.portal-mode #moreFab{display:flex;}
     var B = window.PuBilling, body = $('billHistBody');
     if(!B || !body) return;
     var all = B.hourBuckets(_billHist, {});
+    /* ⚠ «이번 달» 기록일 때만 월말 어림의 재료로 쓴다 — 지난 달을 펴 보는 중에
+       그 값으로 이번 달을 밀면 엉뚱한 숫자가 된다. */
+    var _nowYm = new Date().toISOString().slice(0, 7);
+    _billHistBk = (_billHistYm === _nowYm) ? all : null;
+    billPaint();                                   // 왼쪽 칸의 「월말」을 다시 민다
     var rows = all.filter(function(b){ return billSpanFilter(b.hour); }).reverse();   // 최근이 위
     if(!rows.length){
       body.innerHTML = '<tr><td colspan="8" class="unk">아직 쌓인 기록이 없습니다 — 기록은 켜는 날부터 쌓입니다.</td></tr>';

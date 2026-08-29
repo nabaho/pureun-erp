@@ -371,3 +371,92 @@ test('「그 밖」이 낡은 칸 때문에 부풀 수 있으면 그렇다고 �
     }
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+   월말 어림을 «최근 며칠» 로 민다 (대표 확인 2026-08-29)
+
+   ★ 왜 바꿨나
+     8월 첫 16일은 하루 ₩5,448 이었다. 8/27 에 요금 새던 곳을 막아 하루 ₩585 로
+     내려갔다. 그런데도 화면은 「이 추세면 월말 ₩113,241」을 계속 내놓았다 —
+     달 평균으로 밀면 **이미 끝난 «비싸던 시기»가 월말까지 따라붙기** 때문이다.
+     고친 보람이 안 보이면 아무도 고치지 않는다. 그것이 이 검사가 지키는 것이다.
+
+   ⚠ 아래는 «지금 숫자» 를 박지 않는다. 지키는 것은 규칙 넷이다 —
+     ① 최근이 싸지면 어림도 내려간다  ② 오늘(반쪽 하루)은 세지 않는다
+     ③ 아는 날이 모자라면 달 평균으로 되돌아간다  ④ 어느 쪽으로 밀었는지 밝힌다 */
+
+/* 시간 칸을 손으로 짓는다 — 하루에 한 칸이면 「그 날 늘어난 돈」이 그대로 담긴다.
+   tz:0 으로 고정해 검사가 기계의 시간대에 흔들리지 않게 한다. */
+function histOf(perDay) {          // perDay: { 'YYYY-MM-DD': 그 날 늘어난 돈 }
+  const total = {};
+  let cum = 0;
+  const days = Object.keys(perDay).sort();
+  // 첫 칸은 견줄 앞 값이 없어 「모른다」가 되므로, 하루 앞에 기준점을 하나 놓는다
+  const first = Date.parse(days[0] + 'T00:00:00Z') - DAY;
+  total[first] = 0;
+  days.forEach(d => { cum += perDay[d]; total[Date.parse(d + 'T12:00:00Z')] = cum; });
+  return { total: total };
+}
+function bk(perDay) { return B.hourBuckets(histOf(perDay), { tz: 0 }); }
+
+test('월말 어림 — 최근 며칠로 민다', async (t) => {
+  /* 앞은 비쌌고 뒤는 싸졌다. 달 평균은 비싸던 때에 끌려가고, 최근 기준은 안 끌려간다. */
+  const 쌈 = { '2026-08-01': 5000, '2026-08-02': 5000, '2026-08-03': 5000,
+              '2026-08-04': 500, '2026-08-05': 500, '2026-08-06': 500 };
+  const now = Date.parse('2026-08-07T00:00:00Z');
+  const row = total({ cost: 16500, intervalStart: AUG });
+
+  await t.test('★ 최근이 싸지면 어림도 «따라 내려간다»', () => {
+    const 달평균 = B.projectMonthEnd(row, now);
+    const 최근 = B.projectRecent(row, bk(쌈), now, { tz: 0 });
+    assert.ok(최근, '최근 기준을 못 냈습니다');
+    assert.ok(최근.cost < 달평균,
+      '★ 최근이 싸졌는데 어림이 안 내려갑니다 — 고친 보람이 화면에 안 보입니다.\n' +
+      '  달 평균 ' + 달평균 + ' · 최근 기준 ' + 최근.cost);
+    /* 그리고 «지금까지 쓴 돈» 보다는 커야 한다 — 남은 날에도 돈은 든다 */
+    assert.ok(최근.cost > row.cost, '★ 남은 날을 0원으로 봤습니다.');
+  });
+
+  await t.test('★ 오늘(아직 안 끝난 하루)은 «세지 않는다»', () => {
+    /* 같은 기록을 아침에 봐도 저녁에 봐도 «하루 평균» 은 같아야 한다.
+       오늘을 온전한 하루로 치면 아침엔 평균이 실제의 몇 분의 일로 나온다. */
+    const 아침 = B.projectRecent(row, bk(쌈), Date.parse('2026-08-07T01:00:00Z'), { tz: 0 });
+    const 저녁 = B.projectRecent(row, bk(쌈), Date.parse('2026-08-07T22:00:00Z'), { tz: 0 });
+    assert.equal(아침.perDay, 저녁.perDay,
+      '★ 보는 시각에 따라 하루 평균이 달라집니다 — 오늘을 세고 있습니다.');
+  });
+
+  await t.test('★ 아는 날이 모자라면 «내놓지 않는다» (달 평균으로 되돌아간다)', () => {
+    const 하루뿐 = { '2026-08-01': 5000 };
+    assert.equal(B.projectRecent(row, bk(하루뿐), Date.parse('2026-08-02T12:00:00Z'), { tz: 0 }), null,
+      '★ 하루치로 한 달을 점치면 그날의 튐이 그대로 월말이 됩니다.');
+    assert.equal(B.projectRecent(row, [], now, { tz: 0 }), null, '★ 기록이 없는데 값을 냈습니다.');
+  });
+
+  await t.test('★ 지난 달 기록으로 이번 달을 밀지 않는다', () => {
+    const 지난달 = { '2026-07-10': 5000, '2026-07-11': 5000, '2026-07-12': 5000 };
+    assert.equal(B.projectRecent(row, bk(지난달), now, { tz: 0 }), null,
+      '★ 지난 달 칸으로 이번 달 월말을 밀면 엉뚱한 숫자가 됩니다.');
+  });
+
+  await t.test('★ 어느 쪽으로 밀었는지 «밝힌다»', () => {
+    const 최근 = B.summarize({ total: row }, now, bk(쌈));
+    assert.equal(최근.projectedBasis.mode, 'recent');
+    assert.ok(최근.projectedBasis.days >= 2, '몇 날로 밀었는지 안 알려 줍니다.');
+    assert.ok(최근.projectedBasis.perDay > 0, '하루 얼마로 봤는지 안 알려 줍니다.');
+
+    const 없음 = B.summarize({ total: row }, now);
+    assert.equal(없음.projectedBasis.mode, 'month',
+      '★ 기록이 없으면 달 평균이라고 밝혀야 합니다 — 안 밝히면 숫자를 못 믿습니다.');
+    assert.equal(없음.projected, B.projectMonthEnd(row, now));
+  });
+});
+
+test('★ 화면이 그 기준을 실제로 적어 준다', () => {
+  const enterSrc = enter;
+  assert.match(enterSrc, /projectedBasis/,
+    '★ 화면이 기준을 안 읽습니다 — 숫자만 보여 주면 대표는 왜 그런지 물을 수밖에 없습니다.');
+  /* ⚠ [^)]* 로 훑으면 안 된다 — 사이에 Date.now() 의 닫는 괄호가 있다 */
+  assert.match(enterSrc, /summarize\(\s*_billCur[\s\S]{0,60}?_billHistBk\s*\)/,
+    '★ 화면이 기록을 안 넘겨 줍니다 — 그러면 영영 달 평균으로만 밉니다.');
+});

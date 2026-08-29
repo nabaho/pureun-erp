@@ -89,6 +89,49 @@
     return Math.round(cost / elapsed * whole);
   }
 
+  /* ── 월말 어림 ② : «최근 며칠» 의 하루 평균으로 민다 (대표 확인 2026-08-29) ──
+     ⚠ 달 평균(projectMonthEnd)으로 밀면 **이미 끝난 «비싸던 시기»가 월말까지 따라붙는다.**
+       8월이 그랬다 — 첫 16일은 하루 ₩5,448 이었는데 8/27 에 새던 곳을 막아
+       하루 ₩585 로 내려갔다. 그런데도 화면은 여전히 「월말 ₩113,241」을 내놓았다.
+       **고친 보람이 안 보이면 아무도 고치지 않는다.** 그래서 최근 쪽에 무게를 둔다.
+     ⚠ «오늘» 은 빼고 센다 — 아직 안 끝난 하루를 온전한 하루로 치면 낮게 나온다.
+       (오후 3시에 보면 하루 평균이 실제의 5분의 3으로 보인다.)
+     ⚠ 아는 날이 둘도 안 되면 **내놓지 않는다** — 달 평균으로 되돌아간다.
+       하루치로 한 달을 점치면 그날 하루의 튐이 그대로 월말이 된다.
+     ⚠ 이번 달 칸만 센다. 지난 달을 보고 있을 때 그 값으로 이번 달을 밀면 안 된다. */
+  var RECENT_DAYS = 3;
+
+  function projectRecent(row, buckets, now, opts) {
+    if (!row) return null;
+    var cost = num(row.cost), t = num(now);
+    if (cost === null || t === null) return null;
+
+    var days = dayBuckets(buckets || []);
+    if (!days.length) return null;
+
+    var tz = (opts && num(opts.tz) !== null) ? num(opts.tz) : -new Date().getTimezoneOffset();
+    var today = hourKey(t, tz).slice(0, 10);
+    var ym = today.slice(0, 7);
+    var done = days.filter(function (d) {
+      return d.day.slice(0, 7) === ym && d.day < today && d.known && d.known.total;
+    });
+    if (done.length < 2) return null;
+
+    var take = done.slice(-RECENT_DAYS);
+    var sum = 0;
+    take.forEach(function (d) { sum += (num(d.total) || 0); });
+    var perDay = sum / take.length;
+
+    /* 남은 시간은 «날 수» 가 아니라 **소수 하루** 로 센다 —
+       오늘 남은 반나절을 하루로 치면 매일 아침 월말이 뛴다. */
+    var d0 = new Date(t + tz * 60000);
+    var nextMonth = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() + 1, 1);
+    var left = (nextMonth - tz * 60000 - t) / 86400000;
+    if (left < 0) left = 0;
+
+    return { cost: Math.round(cost + perDay * left), perDay: Math.round(perDay), days: take.length };
+  }
+
   /* 쪼갠 칸이 전체보다 얼마나 낡으면 「그 밖」을 못 믿는 값으로 볼까 — 10분.
      구글 예산 알림은 칸마다 따로 오고 20~30분씩 어긋나기도 한다. 전체만 새로 오고
      실시간DB 칸이 낡아 있으면, 실시간DB가 오른 몫이 뺄셈에서 「그 밖」으로 새어
@@ -103,7 +146,10 @@
      ⚠ 그런데 그 뺄셈은 **칸들이 같은 시각일 때만** 맞다. 어느 칸이 전체보다
        10분 넘게 낡았으면 「그 밖」에 approx 표시를 얹고, 어느 칸을 기다리는
        중인지(etcNote) 함께 내놓는다 — 화면이 ≈와 안내를 그릴 수 있게. */
-  function summarize(current, now) {
+  /* buckets 는 hourBuckets() 의 결과(선택). 있으면 «최근 며칠» 기준으로 월말을 밀고,
+     없거나 모자라면 달 평균으로 되돌아간다 — 화면은 어느 쪽으로 밀었는지
+     projectedBasis 로 알 수 있어야 한다(안 밝히면 숫자를 못 믿는다). */
+  function summarize(current, now, buckets) {
     var cur = (current && typeof current === 'object') ? current : {};
     var total = cur.total || null;
     var totalUpd = total ? num(total.updatedAt) : null;
@@ -150,6 +196,8 @@
     var upd = total ? num(total.updatedAt) : null;
     var r = ratio({ cost: totalCost, budget: limit });
 
+    var _pr = projectRecent(total, buckets, now);
+
     return {
       has: totalCost !== null,
       cost: totalCost,
@@ -158,7 +206,9 @@
       tone: tone(r),
       parts: parts,
       etcNote: etcNote,
-      projected: projectMonthEnd(total, now),
+      projected: _pr ? _pr.cost : projectMonthEnd(total, now),
+      projectedBasis: _pr ? { mode: 'recent', days: _pr.days, perDay: _pr.perDay }
+                          : { mode: 'month' },
       updatedAt: upd,
       ago: agoText(upd, now),
       stale: isStale(upd, now),
@@ -382,6 +432,8 @@
     projectMonthEnd: projectMonthEnd,
     summarize: summarize,
     hourKey: hourKey,
+    projectRecent: projectRecent,
+    RECENT_DAYS: RECENT_DAYS,
     hourBuckets: hourBuckets,
     dayBuckets: dayBuckets,
     sumBuckets: sumBuckets,
