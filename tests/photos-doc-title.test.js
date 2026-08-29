@@ -359,7 +359,7 @@ function runGridBar(over) {
     needsCheck: function () { return false; },
     renderNeedBox() {}, renderOldBox() {}, renderBackBar() {},
     renderUidCard() {},   /* 2026-08-26: 서식으로 잡힌 고유번호증 칸이 늘었다 */
-    renderPhMenuBtn() {}, renderPhNeedBtn() {}, renderGotCard() {},
+    renderPhMenuBtn() {}, renderPhNeedBtn() {}, renderGotCard() {}, renderOwnerSelLabel() {},
     /* 2026-08-29: 내 사진에 공유받은 것이 섞인다 — 칩·거르기가 이 셋을 쓴다 */
     isSharedItem() { return false; }, sharedByName() { return ''; }, sharedOnly: false,
     ALL_OWNERS: '__all__', gridOwner: null, renderPayNote() {},

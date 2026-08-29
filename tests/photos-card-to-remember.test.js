@@ -36,11 +36,20 @@ test('★ 한 번 켜면 다음부터 그대로다 — 매번 켜야 하면 그�
   vm.runInContext(APP.match(/const CARD_SHARE_LS = '[^']*';/)[0] + '\n' +
     cutFn(APP, 'function cardShareToPref(') + '\n' +
     cutFn(APP, 'function setCardShareToPref('), ctx);
-  assert.equal(ctx.cardShareToPref(), false, '★ 처음부터 켜져 있으면 안 됩니다 — 남의 앱으로 사진이 나갑니다');
+  /* ⚠ 2026-08-29 대표 지시로 **기본이 켜짐**이 되었다 —
+     "저장하면리멤버로보내기는 자동으로 체크되게 해달라."
+     처음에는 「처음부터 켜져 있으면 안 된다 — 남의 앱으로 사진이 나간다」로 두었는데,
+     실제로 저절로 나가는 것이 아니라 **폰의 보내기 창이 뜨고 사람이 리멤버를 고른다**
+     (shareCardsOut). 고르지 않으면 아무 데도 안 간다.
+     그리고 이 기능을 만든 까닭 자체가 「단추를 안 누르는 것」이었다 — 기본이 꺼져 있으면
+     폰을 바꿀 때마다 «켜는 것부터» 해야 하고 그것이 곧 단추다.
+     ⚠ 끈 사람의 뜻은 그대로 지킨다(아래 두 줄과 photos-cam-defaults 가 함께 못박는다). */
+  assert.equal(ctx.cardShareToPref(), true,
+    '★ 기본이 꺼져 있으면 폰을 바꿀 때마다 켜는 것부터 해야 합니다(대표 지시 2026-08-29)');
+  ctx.setCardShareToPref(false);
+  assert.equal(ctx.cardShareToPref(), false, '★ 끈 것이 안 남으면 끄는 길이 없는 것과 같습니다');
   ctx.setCardShareToPref(true);
   assert.equal(ctx.cardShareToPref(), true, '★ 켠 것이 안 남습니다 — 찍을 때마다 다시 켜야 합니다');
-  ctx.setCardShareToPref(false);
-  assert.equal(ctx.cardShareToPref(), false);
 });
 
 /* ── 승인한 세 가지 ── */
