@@ -132,7 +132,10 @@ test('★ 도구줄이 장수를 쓴다 — 실제로 돌려 본다', () => {
     needsCheck: function () { return false; },
     renderNeedBox() {}, renderOldBox() {}, renderBackBar() {},
     renderUidCard() {},   /* 2026-08-26: 서식으로 잡힌 고유번호증 칸이 늘었다 */
-    renderPhMenuBtn() {}, renderPhNeedBtn() {}, renderPayNote() {},
+    renderPhMenuBtn() {}, renderPhNeedBtn() {}, renderGotCard() {},
+    /* 2026-08-29: 내 사진에 공유받은 것이 섞인다 — 칩·거르기가 이 셋을 쓴다 */
+    isSharedItem() { return false; }, sharedByName() { return ''; }, sharedOnly: false,
+    ALL_OWNERS: '__all__', gridOwner: null, renderPayNote() {},
     $: mk
   };
   vm.createContext(ctx);
@@ -309,6 +312,9 @@ test('★ 판독은 문서마다 한 번만, 그러나 다른 문서는 빠뜨�
        문서마다 한 번씩 거르는 규칙은 두 갈래에 **똑같이** 걸려야 한다. */
     neverRead: function () { return true; },
     staleRead: function () { return false; },
+    /* 2026-08-29: 자동 판독이 **손댈 수 있는 사진만** 읽는다(내 사진에 공유받은 것이
+       섞이므로). 여기서는 전부 내 것으로 둔다 — 문서 거르기가 이 검사의 주제다. */
+    mayTouch: function () { return true; },
     /* ⚠ needsRead 짝퉁을 걷어냈다(2026-08-27) — 그 함수는 아무도 안 부르던 것이라
        화면에서 사라졌다. 여기 남겨 두면 「아직 쓰는 것」처럼 보인다. */
     queuePhotoRead: function (id) { queued.push(id); },

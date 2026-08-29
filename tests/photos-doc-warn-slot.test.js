@@ -72,6 +72,10 @@ function cellFor(o) {
     /* 📌 증빙 딱지가 늘었다(2026-08-26) — 안 주면 칸이 통째로 안 그려진다 */
     isUsed: function () { return !!o.used; },
     usedWhere: function () { return o.used ? '푸른이알피 계약 — 가나' : ''; },
+    /* 👤 공유 칩이 늘었다(2026-08-29) — 「내 사진」에 공유받은 것이 섞이면서 칸이
+       「누가 열어 줬는지」를 적는다. 안 주면 칸이 통째로 안 그려진다. */
+    sharedByName: function () { return o.sharedBy || ''; },
+    ALL_OWNERS: '__all__', gridOwner: null,
     String: String, Set: Set, Boolean: Boolean
   };
   vm.createContext(ctx);

@@ -8,6 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8');
 const mine = app.match(/function isMinePhoto\([\s\S]*?\n\}/);
@@ -39,11 +40,43 @@ test('★ 고른 것이 전부 내 사진이면 막지 않는다', () => {
     '내 사진인지 먼저 봐야 합니다 — 화면 판단이 앞서면 예전처럼 다 막힙니다.');
 });
 
-test('빈 목록으로는 통과하지 못한다', () => {
-  /* blockedIfOther() 를 인자 없이 부르는 곳(대량 작업)이 아직 있다.
-     빈 배열이 every 로 참이 되어 술술 통과하면 잠금이 통째로 풀린다. */
-  assert.ok(/list\.length && list\.every/.test(blocked[0]),
-    '빈 목록이 통과하면 남의 사진 잠금이 통째로 풀립니다.');
+/* ⚠ 2026-08-29 다시 겨눔 — 여기는 「list.length && list.every」라는 **글자**를 못박고
+   있었다. 그런데 그 글자가 있어도 마지막 줄(`return !viewingOther()`)이 「내 사진
+   화면이면 다 된다」라서, 빈 목록은 어차피 통과했다 — 검사가 지킨다고 믿은 것을
+   실제로는 안 지키고 있었다. **돌려서** 본다.
+
+   그리고 이제 「내 사진」 화면에 **공유받은 사진이 섞인다**(대표 지시 2026-08-29).
+   화면으로 판단하면 남의 사진에 대고 지우기·판독을 누를 수 있게 된다. */
+function touchCtx(over) {
+  const ctx = Object.assign({
+    Array, console: { warn() {} },
+    _mine: [], _admin: false, _other: false
+  }, over || {});
+  ctx.PuPhotoStore = { amAdmin: function () { return ctx._admin; } };
+  ctx.isMinePhoto = function (id) { return ctx._mine.indexOf(id) >= 0; };
+  ctx.viewingOther = function () { return ctx._other; };
+  vm.createContext(ctx);
+  vm.runInContext(blocked[0], ctx);
+  return ctx;
+}
+
+test('★★ 고른 것이 «사진 기준»으로 갈린다 — 내 사진에 남의 것이 섞여도', () => {
+  const c = touchCtx({ _mine: ['a', 'b'] });      // 직원, 내 사진 화면(_other=false)
+  assert.equal(c.mayTouch(['a', 'b']), true, '전부 내 것이면 됩니다');
+  assert.equal(c.mayTouch(['a', 'x']), false,
+    '★ 한 장이라도 남의 것(공유받은 것)이 섞이면 막아야 합니다 — 서버가 어차피 막습니다');
+  assert.equal(c.mayTouch('x'), false, '★ 공유받은 사진 한 장도 못 건드립니다');
+});
+
+test('★ 총괄관리자는 섞여 있어도 손댈 수 있다', () => {
+  const c = touchCtx({ _mine: ['a'], _admin: true });
+  assert.equal(c.mayTouch(['a', 'x']), true);
+});
+
+test('빈 목록으로는 남의 사진 화면에서 통과하지 못한다', () => {
+  /* blockedIfOther() 를 인자 없이 부르는 곳(대량 작업)이 아직 있다. */
+  assert.equal(touchCtx({ _other: true }).mayTouch([]), false);
+  assert.equal(touchCtx({ _other: true }).mayTouch(null), false);
 });
 
 /* 2026-08-10 다시 겨눔 — 총괄 관리자에게 남의 사진을 열었다(대표 지시

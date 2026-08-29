@@ -183,6 +183,15 @@ button{font-family:inherit;cursor:pointer}
    ⚠ 초록이다. 파랑(서류)·주황(확인 필요)과 색으로 갈려야 훑을 때 구별된다. */
 #grid .cell .pf{position:absolute;left:4px;bottom:4px;background:#15803d;color:#fff;
   font-size:10px;font-weight:800;border-radius:5px;padding:2px 6px;letter-spacing:-.2px}
+/* 👤 누가 열어 준 사진인가 (대표 지시 2026-08-29) — 내 사진과 한 격자에 섞여 있으므로
+   이 표 하나가 「남의 것」임을 말한다. 지우기·판독이 안 되는 까닭도 이것으로 설명된다.
+   ⚠ **왼쪽 위**다 — 「서류」 딱지도 왼쪽 위지만 그 둘은 같은 칸에 잘 안 겹친다
+     (남이 열어 주는 것은 대개 회의·현장 사진이다). 겹치면 아래로 내려 앉는다.
+   ⚠ 파랑이다 — 초록(증빙)·주황(확인 필요)과 갈려야 훑을 때 구별된다. */
+#grid .cell .shr{position:absolute;left:4px;top:4px;background:var(--blue);color:#fff;
+  font-size:10px;font-weight:800;border-radius:5px;padding:2px 6px;letter-spacing:-.2px;
+  max-width:calc(100% - 34px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#grid .cell .tag + .shr,#grid .cell.doc .shr{top:auto;bottom:4px;left:4px}
 /* 서류 카드는 아래쪽이 글자 자리라 그 위(미리보기 띠 안)에 얹는다 */
 #grid .cell.doc .pf{bottom:auto;top:4px;left:auto;right:4px}
 #grid .cell.doc .pgs{top:auto;bottom:4px;right:4px}
@@ -1042,6 +1051,9 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
 #gotCard{margin-top:12px}
 #gotBox{width:100%;padding:10px;font-size:12.5px;font-weight:700;text-align:left;
   border:1px solid #b6c6ee;background:#eef2fd;color:var(--blue);border-radius:10px;line-height:1.4}
+/* 켜 두면 채워서 — 지금 걸러 보는 중이라는 것이 한눈에 보여야 한다
+   (「확인 필요」·「지난 사진」이 .on 으로 하는 것과 같은 규칙) */
+#gotBox.on{background:var(--blue);border-color:var(--blue);color:#fff}
 #gotCard #gotHint{margin:5px 2px 0;font-size:11px;line-height:1.5;color:var(--sub)}
 /* 서식으로 잡힌 고유번호증 — 「확인 필요」와 같은 결이되 색이 다르다(다른 할 일이다) */
 #uidCard{margin-top:12px}
@@ -1430,7 +1442,7 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
          않으면 영영 못 본다.
          ⚠ 0장이면 칸 자체를 안 그린다 — 늘 있는 회색 칸은 눌러 볼 값이 없다(uidCard 와 같은 규칙). -->
     <div id="gotCard" style="display:none">
-      <button id="gotBox" onclick="goShared()"></button>
+      <button id="gotBox" onclick="toggleShared()"></button>
       <p id="gotHint"></p>
     </div>
     <div id="needCard" style="display:none">
@@ -5728,8 +5740,14 @@ function autoReadPending() {
   /* ⚠ **안 읽은 것을 먼저** 훑는다(문서 걸러내기도 이쪽이 먼저 써야 한다).
      다시 읽는 것이 앞서면, 판 번호를 올린 날 새로 올린 사진이 뒤로 밀려
      「올렸는데 판독이 안 된다」가 된다. */
-  const fresh = gridItems.filter(neverRead).filter(oneDoc);
-  const stale = gridItems.filter(staleRead).filter(oneDoc);
+  /* ⚠ **손댈 수 있는 사진만** 읽는다(2026-08-29). 「내 사진」 화면에 공유받은 사진이
+     섞이면서, 안 거르면 남이 올린 사진을 내 화면에서 읽으려 든다 — 결과를 쓸 때
+     서버가 막아 헛일이 되고 그 사이 AI 한도만 나간다. 판독은 **읽고 쓰는** 일이다.
+     ⚠ 「전체 근로자」 화면에서 남의 사진을 읽는 길(2026-08-10 대표 지시)은 그대로다 —
+       그때는 총괄관리자라 mayTouch 가 참이다. */
+  const canRead = function (it) { return mayTouch(it.id); };
+  const fresh = gridItems.filter(canRead).filter(neverRead).filter(oneDoc);
+  const stale = gridItems.filter(canRead).filter(staleRead).filter(oneDoc);
   const take = fresh.slice(0, AUTO_READ_MAX)
     .concat(stale.slice(0, AUTO_RESTALE_MAX));
   if (!take.length) { $('autoNote').style.display = 'none'; return; }
@@ -6521,8 +6539,11 @@ function sendCardsNow() {
      (안 그러면 주인은 계속 「업체 없음」을 본다). */
 let _coSweptOnce = false;
 function coWaiting() {
-  /* 보냈는데 업체가 없어서 못 넣은 것들 */
+  /* 보냈는데 업체가 없어서 못 넣은 것들
+     ⚠ **손댈 수 있는 것만**(2026-08-29) — 「내 사진」에 공유받은 사진이 섞이면서,
+       안 거르면 남의 사진에 「업체관리로 보냈음」 표를 그 사람 자리에 쓰려다 막힌다. */
   return gridItems.filter(function (it) {
+    if (!mayTouch(it.id)) return false;
     const r = it && it.meta && it.meta.read;
     if (!r || r.error || !CO_KINDS[r.kind]) return false;
     const c = r.filedCo;
@@ -6788,11 +6809,31 @@ function photoYearOf(id) {
      명함 뒷면 사고(2026-08-25)와 같은 모양이다 — 기준은 반드시 한 곳이어야 한다.
    ⚠ 판정만 여기 두고, 말하는 것은 아래에 둔다. 화면은 «물어보기만» 해야 하는데
      그때마다 alert 가 뜨면 그리는 중에 창이 뜬다. */
+/* ⚠ 2026-08-29 — 「내 사진」 화면에 **공유받은 사진이 섞이게** 되면서 마지막 줄이
+   위험해졌다. 종전 `return !viewingOther();` 는 「내 사진 화면이면 다 된다」는 뜻인데,
+   이제 그 화면에 남의 사진이 들어 있다. 그대로 두면 직원이 공유받은 사진에 대고
+   지우기·판독·분류를 누를 수 있게 되고, 서버가 막아 「눌렀는데 오류」가 된다.
+   **고른 것이 있으면 그것들로만 판단한다** — 화면이 아니라 사진이 기준이다. */
 function mayTouch(ids) {
   const list = ids == null ? [] : (Array.isArray(ids) ? ids : [ids]);
-  if (list.length && list.every(isMinePhoto)) return true;   // 고른 것이 전부 내 사진
+  if (list.length) return list.every(isMinePhoto) || PuPhotoStore.amAdmin();
   if (PuPhotoStore.amAdmin()) return true;                   // 총괄관리자는 남의 것도
-  return !viewingOther();
+  return !viewingOther();                                    // 고른 것이 없을 때(화면 기준)
+}
+
+/* 이 사진이 «남이 나에게 열어 준 것»인가 — 내 사진과 한 격자에 섞여 있으므로
+   칩·거르기·잠금이 모두 이 하나를 본다(두 벌로 두면 한쪽만 고쳐진다). */
+function isSharedItem(it) {
+  const own = it && it.meta && it.meta.__ownerUid;
+  return !!(own && own !== PuPhotoStore.myUid());
+}
+
+/* 누가 열어 줬는지 — 이름이 없으면(명단을 못 읽었으면) 표를 안 단다.
+   uid 를 그대로 보여 주면 사람이 알아볼 수 없는 글자만 칸을 먹는다. */
+function sharedByName(it) {
+  if (!isSharedItem(it)) return '';
+  const n = String((it.meta && it.meta.__ownerName) || '').trim();
+  return (n && n !== it.meta.__ownerUid) ? n : '';
 }
 
 function blockedIfOther(ids) {
@@ -6915,6 +6956,37 @@ let gridRenderLimit = 0;
 const PHONE_PHOTO_BATCH = 60;
 function resetGridRenderLimit() { gridRenderLimit = isPhone() ? PHONE_PHOTO_BATCH : Number.MAX_SAFE_INTEGER; }
 
+/* ── 내 사진 + 나에게 열어 준 사진을 «한 격자»에 (대표 지시 2026-08-29) ──
+   "받은사진으로 나오지 말고 전체사진에서 같이 보이게하고 …
+    그렇게 해야 공유된 사진을 같이 사용할 수 있다."
+
+   받은 사진이 딴 화면에 있으면 내 사진과 나란히 못 쓴다 — 한 업체 일을 하는데
+   내가 찍은 것과 동료가 열어 준 것이 두 화면에 갈려 있으면, 찾기도 분류 탭도
+   따로 놀아서 「같이 쓰는」 것이 안 된다.
+
+   ⚠ **보고 있는 그 해 것만** 섞는다. 안 거르면 2025년에 받은 사진이 2026년 화면에
+     끼어들어 날짜 묶음이 어긋난다. 다른 해 것은 고르개의 「받은 사진 — 다른 해까지」로 본다.
+   ⚠ **내 사진이 먼저다.** 같은 번호가 양쪽에 있으면(있을 리 없지만) 내 것을 남긴다 —
+     남의 것으로 덮으면 내 사진에 남의 주인이 붙어 저장 층이 엉뚱한 자리를 두드린다.
+   ⚠ **공유 목록을 못 읽어도 내 사진은 보여야 한다.** 규칙이 막혀 있거나 연결이 끊겨도
+     사진첩 자체가 안 열리면 안 된다 — 조용히 빈 목록으로 넘어간다. */
+function listMineAndShared(year) {
+  return Promise.all([
+    PuPhotoStore.listYear(year, null),
+    PuPhotoStore.listSharedToMe().then(PuPhotoStore.fillSharedNames)
+      .catch(function (e) { console.warn('[받은 사진]', e && e.message); return {}; })
+  ]).then(function (r) {
+    const out = Object.assign({}, r[0] || {});
+    Object.keys(r[1] || {}).forEach(function (id) {
+      const m = r[1][id] || {};
+      if (String(m.__year || '') !== String(year)) return;
+      if (out[id]) return;
+      out[id] = m;
+    });
+    return out;
+  });
+}
+
 function loadGrid() {
   /* 전체 근로자 모드 — 판독·자동등록 대기열은 돌리지 않는다. 그건 '내가 올린
      것'을 처리하는 일이라, 남의 사진까지 자동으로 건드리면 안 된다. */
@@ -6922,7 +6994,9 @@ function loadGrid() {
     ? PuPhotoStore.listSharedToMe().then(PuPhotoStore.fillSharedNames)
     : gridOwner === ALL_OWNERS
       ? PuPhotoStore.listYearAll(gridYear)
-      : PuPhotoStore.listYear(gridYear, gridOwner);
+      : gridOwner
+        ? PuPhotoStore.listYear(gridYear, gridOwner)
+        : listMineAndShared(gridYear);
   call.then(function (items) {
     gridItems = Object.keys(items).map(id => ({ id: id, meta: items[id] || {} }));
     /* ⚠ 이미 읽어 둔 서식 가운데, 값이 pairs 에만 담기고 «이름 붙은 칸»은 빈 것이 있다.
@@ -7131,6 +7205,16 @@ function renderGrid() {
     const proof = isUsed(it.meta)
       ? '<span class="pf" title="' + esc('증빙으로 씀 · ' + (usedWhere(it.meta) || '어디에 썼는지 안 적혀 있습니다')) + '">📌 증빙</span>'
       : '';
+    /* 👤 누가 열어 준 사진인가 (대표 지시 2026-08-29 「누가 공유했는지 확인되게」) ──
+       내 사진과 한 격자에 섞여 있으므로, 이 표가 없으면 **어느 것이 남의 것인지 알 수가
+       없다.** 지우기·판독이 안 되는 까닭도 이 표 하나로 설명된다.
+       ⚠ 「전체 근로자」 화면에서는 안 단다 — 거기는 원래 다 남의 것이라 온 칸에 붙어
+         2026-08-16 에 걷어낸 「올린 사람 띠」가 그대로 되살아난다. */
+    const shrName = (gridOwner === ALL_OWNERS) ? '' : sharedByName(it);
+    const shr = shrName
+      ? '<span class="shr" title="' + esc(shrName + ' 님이 나에게 열어 준 사진입니다 — 보기만 됩니다') +
+        '">👤 ' + esc(shrName) + '</span>'
+      : '';
     /* 확인이 필요한 사진은 칸에서 바로 보인다 — 눌러 봐야 아는 일이 없게.
        ⚠ 「확인 필요」만 보는 중에는 **왜 걸렸는지**를 칸에 적는다(대표 보고 2026-08-10:
           "확인필요 3장 클릭했는데 어떻게 하라는 건가 상황에 대한 판단이 안 선다").
@@ -7180,10 +7264,10 @@ function renderGrid() {
           (l1 ? '<span class="dttl">' + esc(l1) + '</span>' : '') +
           (l2 ? '<span class="dco">' + esc(l2) + '</span>' : '') +
         '</span>' +
-        stack + proof + warn + '<span class="ck">✓</span></div>';
+        stack + proof + shr + warn + '<span class="ck">✓</span></div>';
     } else {
       html += '<div class="cell' + on + '" data-id="' + esc(it.id) + '" draggable="true">' +
-        img + tag + stack + proof + warn + cap + ttl + '<span class="ck">✓</span></div>';
+        img + tag + stack + proof + shr + warn + cap + ttl + '<span class="ck">✓</span></div>';
     }
   });
   html += '</div>';
@@ -7868,6 +7952,9 @@ let needOnly = false;          // 「확인 필요」만 걸러 보는 중인가
      보이는지 알 수 없다. */
 let failOnly = false;
 let oldOnly = false;           // 「보유기간 지난 것」만 걸러 보는 중인가
+/* 「공유받은 것」만 걸러 보는 중인가 (대표 지시 2026-08-29 「공유된사진만 따로 선택할 수 있게」).
+   ⚠ 걸러 «보기»일 뿐 딴 화면이 아니다 — 끄면 내 사진과 다시 섞인다. 그것이 이 지시의 뜻이다. */
+let sharedOnly = false;
 const selected = new Set();
 
 /* ── 확인이 필요한 사진 ──
@@ -8087,6 +8174,8 @@ function shownItemsFresh() {
     return !!(it && it.meta && it.meta.read && it.meta.read.error);
   });
   if (oldOnly) list = list.filter(isOldItem);
+  /* 공유받은 것만 — 분류 탭·찾기와 **함께** 걸린다(따로 걸면 서로 어긋난다) */
+  if (sharedOnly) list = list.filter(isSharedItem);
   /* 찾는 말도 같은 자리에서 건다 — 걸러보기·분류 탭과 어긋나면 안 된다. */
   if (gridQ) list = list.filter(matchQ);
   const folded = foldDocs(list);
@@ -9792,6 +9881,9 @@ function renderGridBar() {
   /* 👥 공유는 왼쪽 대시보드에 있다(2026-08-29) — 여기서 **같은 기준**으로 함께 정한다.
      따로 정하면 도구줄은 막았는데 옆 칸은 열려 있는 어긋남이 생긴다. */
   renderShareCard(n, touch);
+  /* 「공유받은 것만」 칸도 여기서 함께 — 그 숫자는 지금 격자에 섞여 있는 받은 사진 수라
+     목록이 바뀔 때마다 다시 세야 한다. */
+  renderGotCard();
   /* 📎 한 문서로 묶기 — 두 장 이상 골랐을 때만. 한 장으로는 묶을 것이 없어
      늘 띄우면 눌러도 아무 일이 없는 헛단추가 된다.
      ⚠ 이 단추도 blockedIfOther 로 막힌다 — 같은 기준을 쓴다. */
@@ -12061,7 +12153,7 @@ function renderOwnerPick() {
   if (!PuPhotoStore.amAdmin()) {
     $('ownerPick').style.display = 'block';
     $('ownerSel').innerHTML = '<option value="">내 사진</option>' +
-      '<option value="' + SHARED_OWNER + '">나와 공유된 사진</option>';
+      '<option value="' + SHARED_OWNER + '">받은 사진 — 다른 해까지</option>';
     $('ownerSel').value = gridOwner || '';
     /* ── 직원도 «누구에게 열지» 고를 수 있어야 한다 (대표 지시 2026-08-29) ──
        이름표만 챙긴다. **고르개에는 사람을 안 넣는다** — 넣으면 「남의 사진 보기」가
@@ -12095,7 +12187,7 @@ function renderOwnerPick() {
        셋째 줄에 묻혀 있으면 못 찾는다(대표 보고 2026-08-10). 몇 명인지도 함께. */
     $('ownerSel').innerHTML = '<option value="">내 사진</option>' +
       '<option value="' + ALL_OWNERS + '">전체 근로자 (' + (ids.length + 1) + '명)</option>' +
-      '<option value="' + SHARED_OWNER + '">나와 공유된 사진</option>' +
+      '<option value="' + SHARED_OWNER + '">받은 사진 — 다른 해까지</option>' +
       ids.map(function (k) {
         return '<option value="' + esc(k) + '">' + esc((owners[k] && owners[k].name) || k) + '</option>';
       }).join('');
@@ -12159,14 +12251,44 @@ function renderShareCard(n, touch) {
   if (b) b.textContent = '👥 고른 ' + n + '장 공유하기';
 }
 
+/* ⚠ 2026-08-29 — 이 칸은 이제 «딴 화면으로 가는 문»이 아니라 **거르개**다.
+   대표 지시: "받은사진으로 나오지 말고 전체사진에서 같이 보이게 하고, 공유된 사진만
+   따로 선택할 수 있게." 받은 사진은 이미 「내 사진」 격자에 섞여 있고, 이 단추는
+   그 가운데 «받은 것만» 남긴다. 한 번 더 누르면 다시 섞인다. */
 function renderGotCard() {
   const card = $('gotCard'); if (!card) return;
-  const show = sharedCount > 0 && gridOwner !== SHARED_OWNER;
+  /* 지금 화면에 실제로 섞여 있는 받은 사진 수 — 그것이 걸러질 장수다.
+     색인 전체(sharedCount)는 «다른 해» 것까지 세므로 이 단추의 숫자로는 맞지 않는다. */
+  const here = gridItems.filter(isSharedItem).length;
+  const show = (here > 0 || sharedOnly) && gridOwner !== SHARED_OWNER;
   card.style.display = show ? 'block' : 'none';
   if (!show) return;
   const box = $('gotBox'), hint = $('gotHint');
-  if (box) box.textContent = '👥 받은 사진 ' + sharedCount + '장 — 보기';
-  if (hint) hint.textContent = '다른 분이 나에게 열어 준 사진입니다. 보기만 됩니다.';
+  if (box) {
+    box.classList.toggle('on', sharedOnly);
+    box.textContent = sharedOnly
+      ? '👥 공유받은 것만 ' + here + '장 · ✕ 전체 보기'
+      : '👥 공유받은 것만 ' + here + '장';
+  }
+  if (hint) {
+    hint.textContent = sharedOnly
+      ? '다시 누르면 내 사진과 함께 봅니다.'
+      : '다른 분이 나에게 열어 준 사진입니다 — 칸에 👤 이름이 붙어 있습니다. 보기만 됩니다.';
+  }
+}
+
+/* 「공유받은 것만」 켜고 끄기 — 걸러보기라 화면(gridOwner)은 안 바꾼다.
+   ⚠ 다른 거르개와 겹치면 무엇을 보고 있는지 알 수 없다 — 켤 때 나머지를 끈다
+     (「확인 필요」·「지난 사진」이 서로에게 하는 것과 같은 규칙). */
+function toggleShared() {
+  sharedOnly = !sharedOnly;
+  if (sharedOnly) { needOnly = false; failOnly = false; oldOnly = false; }
+  selected.clear();
+  resetGridRenderLimit();
+  renderGrid();
+  renderNeedBox();
+  renderOldBox();
+  renderGotCard();
 }
 
 /* 고르개 줄에도 장수를 적는다 — 폰에는 옆 칸이 없고 이 줄만 있다.
@@ -12174,22 +12296,21 @@ function renderGotCard() {
      글자만 바꾼다. */
 function renderOwnerSelLabel() {
   const sel = $('ownerSel'); if (!sel) return;
+  /* ⚠ 2026-08-29 — 받은 사진은 이제 「내 사진」에 **함께** 나온다. 이 줄은 그 화면이
+     보여 주지 못하는 것 하나를 위해 남는다: **다른 해에 받은 사진**(합쳐 보기는
+     보고 있는 그 해만 섞는다). 이름도 그렇게 바꿔 오해가 없게 한다. */
   for (let i = 0; i < sel.options.length; i++) {
     if (sel.options[i].value !== SHARED_OWNER) continue;
-    sel.options[i].textContent = '나와 공유된 사진' + (sharedCount ? (' ' + sharedCount + '장') : '');
+    sel.options[i].textContent = '받은 사진 — 다른 해까지' + (sharedCount ? (' ' + sharedCount + '장') : '');
   }
-}
-
-function goShared() {
-  const sel = $('ownerSel');
-  if (sel) sel.value = SHARED_OWNER;
-  pickOwner(SHARED_OWNER);
 }
 
 function pickOwner(uid) {
   gridOwner = uid || null;
   gridItems = [];
   selected.clear(); needOnly = false; failOnly = false; oldOnly = false;
+  /* 사람이 바뀌면 「공유받은 것만」도 푼다 — 다른 사람 화면에는 뜻이 없는 거르개다 */
+  sharedOnly = false;
   /* 사람이 바뀌면 찾던 말도 지운다 — 남의 사진에 내 검색어를 물려 두면 헷갈린다. */
   gridQ = '';
   if ($('q')) $('q').value = '';
