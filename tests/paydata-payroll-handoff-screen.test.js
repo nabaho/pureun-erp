@@ -61,7 +61,7 @@ function loadApp(appState, opts) {
     cut('canWrite'), cut('bannerHtml'),
     /* 사업장 머리에 담당자 메일 한 줄이 붙는다(2026-08-29) — 여기서는 그 줄이
        할 일이 없으므로 빈 것으로 둔다. 이 파일이 보는 것은 「넘기기 단추」다. */
-    cut('coMailsHtml'), cut('coOwnerName'), cut('fixPeople'),
+    cut('coMailChip'), cut('coMailDropHtml'), cut('coOwnerName'), cut('fixPeople'),
     cut('drawerCounts'), cut('drawerModel'), cut('searchRows'),
     cut('folderCounts'), cut('folderRows'), cut('folderBar'), cut('folderEditorHtml'), cut('folderOptionsHtml'),
     cut('valueGridModel'), cut('fetchValues'),
