@@ -31,7 +31,7 @@
 <script src="js/pu-doc-read.js?v=20"></script>
 <script src="js/pu-lockkey.js?v=2"></script>
 <!-- ?v= 는 등록 층을 고칠 때 올린다 — 캐시에 묵으면 고친 안내가 안 보인다. -->
-<script src="js/pu-doc-file.js?v=13"></script>
+<script src="js/pu-doc-file.js?v=14"></script>
 <script src="js/pu-drag.js?v=2"></script>
 <script src="js/pu-billing.js?v=6"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -1677,6 +1677,18 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
              한 번 옮기면 실시간DB에서는 지워집니다(창고에는 그대로 남습니다).</p>
            <button class="wide" onclick="runServerMigrate()">옛 사진 창고로 옮기기</button>
            <pre id="serverMigOut"></pre>
+         </div>
+         <!-- ── 이미 보낸 서류에 「적힌 것」 채우기 (대표 지시 2026-08-29) ──
+              2026-08-28 부터 보낸 서류에는 문서에 적힌 항목이 통째로 담긴다.
+              그 전에 보낸 서류에는 없어서, 판독 결과를 옮겨 담아 준다.
+              ⚠ 다시 판독하지 «않는다» — 판독 결과는 이미 사진에 남아 있다. 요금 0원. -->
+         <div class="card" id="pairsFill">
+           <div class="row" style="border:none"><span>이미 보낸 서류에 「적힌 것」 채우기</span></div>
+           <p class="mignote">서류에 적힌 항목을 기업정보함의 그 서류 밑에 담습니다.
+             <b>다시 판독하지 않습니다</b> — 이미 읽어 둔 결과를 옮기기만 하므로 요금이 들지 않습니다.
+             내 사진첩에 있는 것 중 «이미 기업 상세로 보낸» 서류에만 채웁니다.</p>
+           <button class="wide" onclick="runPairsBackfill()">「적힌 것」 채우기</button>
+           <pre id="pairsFillOut"></pre>
          </div>
        </details>
      </div>
@@ -12044,6 +12056,45 @@ function pickOwner(uid) {
    옛 자리(2026-08-03 전) 사람별 분리 도구(runMigrate/runDropLegacy)는 이사가
    끝나 2026-08-15 지웠다. */
 const SERVER_MIGRATE_URL = 'https://us-central1-pureun-erp.cloudfunctions.net/migratePhotosToStorage';
+
+/* ── 이미 보낸 서류에 「적힌 것」 채우기 (대표 지시 2026-08-29) ──
+   2026-08-28 부터 보낸 서류에는 문서에 적힌 항목(pairs)이 통째로 담긴다. 그 전에
+   보낸 서류에는 없다 — 판독 결과는 이미 사진에 남아 있으므로(meta.read.fields)
+   그것을 옮겨 담기만 한다. «다시 판독하지 않는다» — 판독은 AI 호출이고 그것이 요금이다.
+   ⚠ 지금 보고 있는 해(gridYear)의 «내가 볼 수 있는» 사진만 훑는다. 사진은 사람별로
+     나뉘어 있어(puphotos/u/{uid}), 남의 것까지 한 번에 훑을 길이 없다. */
+async function runPairsBackfill() {
+  const out = $('pairsFillOut');
+  /* coWaiting 과 «같은 목록»(gridItems)을 본다 — 지금 화면에 실린 그 해의 사진들이다 */
+  const items = gridItems.filter(function (it) {
+    const r = it && it.meta && it.meta.read;
+    return r && r.fields && Array.isArray(r.fields.pairs) && r.fields.pairs.length;
+  });
+  if (!items.length) {
+    out.textContent = '이 해에는 채울 것이 없습니다 — 서류에 적힌 항목을 읽어 둔 사진이 없습니다.';
+    return;
+  }
+  if (!confirm('읽어 둔 서류 ' + items.length + '장의 «적힌 것»을 기업정보함에 채웁니다.\n\n'
+             + '· 다시 판독하지 않습니다 (요금이 들지 않습니다)\n'
+             + '· 이미 기업 상세로 «보낸» 서류에만 채웁니다\n'
+             + '· 이미 채워져 있으면 건드리지 않습니다\n\n계속할까요?')) return;
+  out.textContent = '채우는 중…';
+  try {
+    const r = await PuDocFile.backfillPairs(items.map(function (it) {
+      return { fields: it.meta.read.fields,
+               photo: { id: it.id, year: gridYear, owner: photoOwner(it.id) } };
+    }), function (done, total) {
+      out.textContent = '채우는 중… 회사 ' + done + ' / ' + total;
+    });
+    out.textContent = '✅ 끝났습니다\n'
+      + '  채움 ' + r.filled + '건 · 회사 ' + r.coCount + '곳\n'
+      + '  이미 있음 ' + r.already + ' · 아직 안 보낸 서류 ' + r.notSent
+      + ' · 번호를 못 읽음 ' + r.noKey + (r.failed ? ' · 실패 ' + r.failed : '')
+      + '\n  기업 상세에서 서류 줄을 펼치면 「적힌 것」이 보입니다.';
+  } catch (e) {
+    out.textContent = '❌ ' + ((e && e.message) || e);
+  }
+}
 
 async function runServerMigrate() {
   async function callServerMigrate(limit) {
