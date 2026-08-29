@@ -25,7 +25,7 @@
 <script src="js/pu-rrn-mask-ui.js?v=3"></script>
 <!-- ✨ AI 지우개 계산 층 (대표 지시 2026-08-29) — 자르기·마젠타 표시·제자리 붙이기.
      ⚠ 사진첩만 쓴다(급여데이터함은 가리기까지만). -->
-<script src="js/pu-photo-edit.js?v=3"></script>
+<script src="js/pu-photo-edit.js?v=4"></script>
 <!-- 🖍 사진 편집 — 칠한 자취를 «군데»로 나누는 셈 (대표 지시 2026-08-29 「자유롭게 편집」).
      ⚠ 몇 군데인지가 곧 «요금 몇 번»이라, 이 셈은 노드에서 그대로 돌려 볼 수 있어야 한다. -->
 <script src="js/pu-photo-paint.js?v=1"></script>
@@ -778,6 +778,12 @@ button{font-family:inherit;cursor:pointer}
   padding:7px 8px;font:700 11.5px inherit;display:flex;align-items:center;justify-content:center;gap:5px}
 .edtools button.on{background:var(--blue);border-color:var(--blue);color:#fff}
 .edtools .dot{display:inline-block;border-radius:50%;background:currentColor}
+/* 「무엇을 할까요?」 — 한글로 적는 칸 (대표 지시 2026-08-29) */
+.edwant{display:block;margin:10px 0 0}
+.edwant span{display:block;font-size:11.5px;color:var(--sub);margin-bottom:4px}
+.edwant input{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;
+  padding:9px 10px;font:13px inherit;color:var(--ink)}
+.edwant input:focus{outline:none;border-color:var(--blue)}
 #readPanel .again.pri:disabled{opacity:.5}
 /* ✨ 지우기 — **요금이 드는 유일한 단추**라 색을 갈라 둔다(보라).
    파랑(새 사진으로 저장)과 같아 보이면 헛돈이 나간다. */
@@ -12029,6 +12035,17 @@ function photoEdCancel() {
 /* ── 칠하기 ── */
 function edBrushR() { return ED_BRUSH[photoEd && photoEd.brush !== undefined ? photoEd.brush : 1]; }
 function setEdBrush(i) { if (photoEd) { photoEd.brush = i; renderReadPanel(maskItem()); } }
+/* ── 무엇을 할까 — 사람이 한글로 적은 말 (대표 지시 2026-08-29) ──
+   ⚠ **여기서 판을 다시 그리지 않는다.** 한 글자 칠 때마다 다시 그리면 칸이 새로
+     만들어지며 **글자를 치던 자리가 튕긴다.** 값만 담아 둔다.
+   ⚠ 읽을 때는 «화면에 있는 칸»을 먼저 본다 — 판을 다시 그린 직후에도 사람이
+     방금 친 글자를 놓치지 않는다. */
+function setEdWant(v) { if (photoEd) photoEd.want = String(v == null ? '' : v).slice(0, 200); }
+function edWant() {
+  const box = $('edWant');
+  if (box && photoEd) setEdWant(box.value);
+  return (photoEd && photoEd.want) || '';
+}
 function setEdErase(on) { if (photoEd) { photoEd.erasing = !!on; renderReadPanel(maskItem()); } }
 function edUndo() { if (photoEd) { photoEd.strokes.pop(); edRepaint(); renderReadPanel(maskItem()); } }
 function edClear() { if (photoEd) { photoEd.strokes = []; edRepaint(); renderReadPanel(maskItem()); } }
@@ -12192,8 +12209,11 @@ async function edRun() {
     alert('편집 층이 실려 있지 않습니다 — 새로고침해 주세요.'); return;
   }
   const areas = edAreas();
-  if (!areas.length) { alert('지울 곳을 먼저 칠해 주세요.'); return; }
-  if (!confirm('칠한 ' + areas.length + '군데를 지우고 그 자리를 배경으로 메웁니다.\n\n' +
+  if (!areas.length) { alert('편집할 곳을 먼저 칠해 주세요.'); return; }
+  /* 사람이 한글로 적은 «무엇을 할까» (대표 지시 2026-08-29). 안 적으면 지우고 메운다. */
+  const want = edWant();
+  if (!confirm('칠한 ' + areas.length + '군데를 ' + (want || '지우고 그 자리를 배경으로 메웁니다') +
+    (want ? '\n— 이렇게 고칩니다.' : '.') + '\n\n' +
     '· **요금이 ' + areas.length + '번** 듭니다(떨어진 곳마다 한 번).\n' +
     '· 결과를 **먼저 보여 드립니다** — 마음에 안 들면 버리시면 됩니다.\n' +
     '· 저장하면 **새 사진으로** 담깁니다 — 원본은 그대로입니다.\n\n계속할까요?')) return;
@@ -12201,25 +12221,27 @@ async function edRun() {
   photoEd.busy = { done: 0, all: areas.length };
   renderReadPanel(maskItem());
   let full = photoEd.url;
-  let failed = 0, last = '';
+  let failed = 0, last = '', did = '';
   try {
     const shape = edShapeCanvas($('edImg'));
     for (let i = 0; i < areas.length; i++) {
-      /* 지운 결과 위에 다음 군데를 얹어 간다 — 그래야 여러 군데가 한 장에 모인다 */
+      /* 고친 결과 위에 다음 군데를 얹어 간다 — 그래야 여러 군데가 한 장에 모인다 */
       const img = await loadImg(full);
       try {
         const cut = window.PuPhotoEdit.buildCrop(img, areas[i], { shape: shape });
-        const patchUrl = await window.PuPhotoEdit.callEdit({
+        const got = await window.PuPhotoEdit.callEdit({
           fetch: window.fetch.bind(window),
           getToken: function () {
             const u = firebase.auth().currentUser;
             return u ? u.getIdToken() : Promise.resolve('');
           }
-        }, cut.dataUrl);
-        const patch = await loadImg(patchUrl);
+        }, cut.dataUrl, want);
+        const patch = await loadImg(got.src);
         full = window.PuPhotoEdit.pasteBack(img, cut.spec, patch);
+        /* 서버가 실제로 쓴 말 — 사진에 기록으로 남길 것이다(무엇을 시켰나) */
+        did = got.want || did;
       } catch (e) {
-        console.warn('[지우기 ' + (i + 1) + '군데]', e);
+        console.warn('[사진 편집 ' + (i + 1) + '군데]', e);
         failed++; last = (e && e.message) || String(e);
       }
       if (!photoEd) return;                       // 그 사이에 창을 닫으셨다
@@ -12227,17 +12249,17 @@ async function edRun() {
       renderReadPanel(maskItem());
     }
     if (failed === areas.length) throw new Error(last);
-    photoEd.done = { full: full, before: photoEd.url, n: areas.length - failed };
+    photoEd.done = { full: full, before: photoEd.url, n: areas.length - failed, want: did };
     photoEd.busy = null;
     renderReadPanel(maskItem());
     renderViewerEdit();
     toast(failed
-      ? (areas.length - failed) + '군데를 지웠습니다 — ' + failed + '군데는 못 지웠습니다'
-      : '✨ ' + areas.length + '군데를 지웠습니다 — 보시고 골라 주세요');
+      ? (areas.length - failed) + '군데를 고쳤습니다 — ' + failed + '군데는 못 고쳤습니다'
+      : '✨ ' + areas.length + '군데를 고쳤습니다 — 보시고 골라 주세요');
   } catch (e) {
     photoEd.busy = null;
-    console.warn('[지우기]', e);
-    alert('지우지 못했습니다 — ' + ((e && e.message) || e) + '\n사진은 그대로입니다.');
+    console.warn('[사진 편집]', e);
+    alert('고치지 못했습니다 — ' + ((e && e.message) || e) + '\n사진은 그대로입니다.');
     renderReadPanel(maskItem());
   }
 }
@@ -12269,7 +12291,11 @@ async function edKeep() {
     const meta = Object.assign({}, (src && src.meta) || {}, {
       w: size.w, h: size.h,
       editedFrom: photoEd.id,
-      edited: { at: Date.now(), how: 'ai', n: photoEd.done.n }
+      /* ⚠ **무엇을 시켰는지**(what)까지 남긴다 — 사람이 한글로 시킬 수 있게 된
+         2026-08-29 부터는 「손댔나」만으로 부족하다. 증빙 사진에서 「무엇을 했나」에
+         답하려면 그 말이 있어야 한다. 서버가 실제로 쓴 말을 그대로 적는다. */
+      edited: { at: Date.now(), how: 'ai', n: photoEd.done.n,
+        what: String(photoEd.done.want || '').slice(0, 200) }
     });
     await PuPhotoStore.savePhoto({ id: id, meta: meta, full: full, thumb: thumb });
     gridItems.unshift({ id: id, meta: meta, full: full, thumb: thumb });
@@ -12429,9 +12455,12 @@ function edPanelHtml() {
       '<p class="note" style="margin:8px 0 0">' + esc(e.err || '') + '</p>' +
       '<button class="again" onclick="photoEdCancel()">닫기</button></div>';
   }
-  /* ── 지운 결과를 보고 계신 중 ── */
+  /* ── 고친 결과를 보고 계신 중 ── */
   if (e.done) {
-    return '<div class="box"><b>✨ 지운 결과 — 아직 저장하지 않았습니다</b>' +
+    return '<div class="box"><b>✨ 고친 결과 — 아직 저장하지 않았습니다</b>' +
+      /* 무엇을 시켰는지 그대로 보여 준다 — 결과를 판단하려면 시킨 말이 옆에 있어야 한다 */
+      (e.done.want ? '<p class="note" style="margin:8px 0 0">시킨 말: <b>' +
+        esc(e.done.want) + '</b></p>' : '') +
       '<p class="note" style="margin:8px 0 0">어떻습니까? 아래 단추를 <b>누르고 있으면</b> ' +
       '고치기 전이 보입니다.</p>' +
       '<button class="again" style="width:100%;margin-top:8px"' +
@@ -12445,17 +12474,17 @@ function edPanelHtml() {
       '요금은 <b>이미 들었습니다</b> — 버려도 다시 들지 않습니다.</p>' +
       '</div>';
   }
-  /* ── 지우는 중 ── */
+  /* ── 고치는 중 ── */
   if (e.busy) {
-    return '<div class="box"><b>✨ 지우는 중…</b>' +
+    return '<div class="box"><b>✨ 고치는 중…</b>' +
       '<p class="note" style="margin:8px 0 0">' + e.busy.done + ' / ' + e.busy.all +
       '군데 — 한 군데에 10초쯤 걸립니다. 창을 닫지 마십시오.</p></div>';
   }
   const n = edAreas().length;
   const painted = (e.strokes || []).length;
-  return '<div class="box"><b>🖍 사진 편집 — 지울 곳을 칠해 주세요</b>' +
-    '<p class="note" style="margin:8px 0 0">지울 것(벽시계·이름표·배경 글씨 등) 위를 ' +
-    '<b>붓으로 칠하면</b> 그 모양 그대로 지워지고 그 자리는 배경으로 메워집니다.<br>' +
+  return '<div class="box"><b>🖍 사진 편집 — 편집할 곳을 칠해 주세요</b>' +
+    '<p class="note" style="margin:8px 0 0">고칠 것(벽시계·이름표·배경 글씨 등) 위를 ' +
+    '<b>붓으로 칠하면</b> 그 모양 그대로 고쳐집니다.<br>' +
     '<b>떨어진 여러 군데</b>를 칠해 두면 한꺼번에 처리합니다.<br>' +
     '<b>원본은 그대로 두고</b> 고친 것을 새 사진으로 담습니다.</p>' +
     /* 붓 굵기 — 셋이면 넉넉하다 */
@@ -12475,8 +12504,21 @@ function edPanelHtml() {
     '<span class="note" style="margin:0 0 0 auto">' +
     (n ? n + '군데 칠함' : '칠한 곳 없음') + '</span>' +
     '</div>' +
+    /* ── 무엇을 할까 — 한글로 적는다 (대표 지시 2026-08-29) ──
+       "한글을 입력해서 이해하고 고칠 수 있게 해달라"
+       ⚠ **비워 두면 하던 대로** 지우고 배경으로 메운다 — 여기가 늘어난 만큼
+         예전 쓰던 방식이 어려워지면 안 된다.
+       ⚠ 칠한 자리 «안에서만» 고친다는 것과 나머지를 안 건드린다는 것은
+         **서버가 늘 붙인다** — 여기 적는 말로는 못 지운다. */
+    '<label class="edwant"><span>무엇을 할까요? <b>(비워 두면 지웁니다)</b></span>' +
+    '<input id="edWant" type="text" maxlength="200" value="' + esc(e.want || '') +
+    '" oninput="setEdWant(this.value)"' +
+    ' placeholder="예) 지워 주세요 · 얼굴을 알아볼 수 없게 · 글자를 지우고 벽으로"></label>' +
+    '<p class="note" style="margin:5px 0 0;font-size:11px">' +
+    '칠한 자리 <b>안에서만</b> 고칩니다 — 나머지는 손대지 않습니다.<br>' +
+    '⚠ 시킨 말은 <b>사진에 기록으로 남습니다</b>(증빙 사진이라 「무엇을 했나」에 답할 수 있어야 합니다).</p>' +
     '<button class="again ai"' + (n ? '' : ' disabled') + ' onclick="edRun()">' +
-    (n ? '✨ ' + n + '군데 지우기 (요금 ' + n + '번)' : '지울 곳을 먼저 칠해 주세요') + '</button>' +
+    (n ? '✨ ' + n + '군데 고치기 (요금 ' + n + '번)' : '편집할 곳을 먼저 칠해 주세요') + '</button>' +
     (n ? '<p class="note" style="margin:6px 0 0;font-size:11px">' +
       '<b>떨어진 곳마다 한 번씩</b> 요금이 듭니다 — 가까이 있는 것은 하나로 셉니다.</p>' : '') +
     '</div>';
