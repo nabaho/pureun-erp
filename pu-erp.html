@@ -4915,10 +4915,22 @@ function erpExpCatStore(){
   return (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
 }
 
+/* 적요 → «기억하는 열쇠». 여기가 같으면 같은 지출로 본다.
+   ★★ 달 이름을 «뺀다» (대표 지시 2026-08-29:
+      「세금 등 매월 자동으로 이체되는 내용은 등록 이후 다른 달에 이체되는 것도
+        모두 같이 처리되게 해라」).
+      「박성수_12월급여」와 「박성수_1월급여」는 «같은 지출»인데 여태 다른 열쇠였다
+      (박성수12월급여 ≠ 박성수1월급여). 그래서 달이 바뀌면 배운 것이 소용없었다.
+      「12월 문자수수료」·「1월 문자수수료」도 마찬가지다.
+    ⚠ erpCleanMemo 자체는 «건드리지 않는다» — 업체 이름 맞추기가 그것을 함께 쓴다.
+      달을 빼는 것은 «카테고리 기억»에만 맞는 규칙이다.
+    ⚠ 달을 뺀 뒤 남는 것이 없으면 빼기 전 것을 쓴다 — 「12월」만 적힌 적요가 있다. */
 function erpExpCatKey(memo){
   var raw = String(memo===null||memo===undefined?'':memo);
   if(!raw.trim()) return '';
-  return erpNormName(erpCleanMemo(raw));
+  var base = erpNormName(erpCleanMemo(raw));
+  var noMonth = String(base).replace(/\d{1,2}월/g, '');
+  return noMonth || base;
 }
 
 // 적요 → 학습된 카테고리 엔트리 (없으면 null)
@@ -38597,6 +38609,14 @@ function FinanceLedger(props){
   var fNameS=useState('');     var fName=fNameS[0];   var setFName=fNameS[1];
   var inMatchS=useState({});   var inMatch=inMatchS[0]; var setInMatch=inMatchS[1];
   var expCatS=useState({});    var expCat=expCatS[0];   var setExpCat=expCatS[1];
+  /* ★ 「배운 것은 저절로 등록」 (대표 지시 2026-08-29:
+       「내용 확인 후 자동등록되면 검토가 필요없다」).
+     ⚠ 처음에는 «꺼져» 있다. 켜는 것은 대표가 한 번 정하는 일이다 —
+       지출을 장부에 적는 것은 사람 대신 하는 일이라, 묻지도 않고 시작하지 않는다.
+     ⚠ 켜도 «배운 것»만 등록한다. 처음 보는 적요는 그대로 남아 대표가 고른다.
+  */
+  var expAutoS = usePersistedState('ledger_exp_auto_reg', false);
+  var expAutoReg = expAutoS[0]; var setExpAutoReg = expAutoS[1];
   var dragS=useState(false);   var dragOver=dragS[0];   var setDragOver=dragS[1];
   var sugOpenS=useState({});   var sugOpen=sugOpenS[0]; var setSugOpen=sugOpenS[1]; // 후보 펼침 (행별)
   /* 입금/출금 탭 — 평소에는 «마지막에 보던 탭» 을 기억한다.
@@ -40377,6 +40397,53 @@ function FinanceLedger(props){
     if(row._dup) return;
     expGuess[row._k] = erpExpenseCatGuess(row.memo||row.note||'');
   });
+  /* ── 배운 것을 «저절로» 채운다 (대표 지시 2026-08-29) ────────────────────
+     「출금관리에 카테고리 한 번 등록하면 자동으로 연결되게 해라」.
+     여태는 「🤖 카테고리 자동」을 «눌러야» 채워졌다 — 매달 누르는 일이 남았다.
+   ⚠ 사람이 고른 것은 «절대» 덮지 않는다(nm[row._k] 가 있으면 건너뛴다).
+   ⚠ 사라진 카테고리 코드는 건너뛴다 — 없는 것을 고른 채로 등록되면 안 된다.
+   ⚠ 채울 것이 없으면 setExpCat 을 부르지 않는다 — 부르면 다시 그리고,
+      다시 그리면 또 부른다(끝없이 돈다). */
+  useEffect(function(){
+    if(!rows || ldTabEff!=='exp') return;
+    var add = null;
+    expAll.forEach(function(row){
+      if(row._dup || expCat[row._k]) return;
+      var g = expGuess[row._k];
+      if(!g || !g.category) return;
+      if(!EXP_CATS.some(function(c){ return c.code===g.category; })) return;
+      if(!add) add = {};
+      add[row._k] = g.category;
+    });
+    if(add) setExpCat(Object.assign({}, expCat, add));
+  });
+
+  /* ── 켜 두었으면 «배운 것»을 저절로 등록한다 ─────────────────────────
+     ⚠ 채우는 것과 «따로» 돈다 — 채워진 다음 회차에 등록한다.
+       한 번에 하면 방금 채운 것이 아직 화면에 없어 빠뜨린다.
+     ⚠ 배운 것만 등록한다. 사람이 손으로 고른 것은 «그대로 둔다» —
+       고르다 만 것을 대신 눌러 버리면 그것이야말로 무서운 일이다.
+     ⚠ 이미 처리된 줄(_dup)은 건드리지 않는다. */
+  useEffect(function(){
+    if(!rows || ldTabEff!=='exp' || !expAutoReg) return;
+    var done = [];
+    expAll.forEach(function(row){
+      if(row._dup) return;
+      var cat = expCat[row._k];
+      if(!cat) return;
+      var g = expGuess[row._k];
+      if(!g || g.category !== cat) return;      /* 배운 것과 같을 때만 */
+      saveExpense(row, cat);
+      erpLearnExpenseCat(row.memo||row.note||'', cat);
+      var _cn = EXP_CATS.find(function(c){ return c.code===cat; });
+      erpMarkBankRowProcessed(row, 'expense', (_cn?_cn.name:cat));
+      done.push(row._k);
+    });
+    if(!done.length) return;
+    done.forEach(function(k){ removeRow(k,'exp'); });
+    showToast('🤖 배운 대로 출금 ' + done.length + '건을 등록했습니다');
+  });
+
   /* ── 카드 「취소」의 짝 (2026-08-26 대표 지시: 「자동 짝지어 달라」) ──
      ⚠ 여기서 «찾기만» 한다. 상계는 사람이 누른다 — 되돌리는 것은 되돌릴 수 없다.
      ⚠ 줄마다 한 번만 찾는다. 표를 그릴 때마다 다시 찾으면 줄 수만큼 헛일이 된다. */
@@ -41421,6 +41488,19 @@ function FinanceLedger(props){
           title:'전에 등록한 적요와 같으면 그때 고른 카테고리를 자동으로 채웁니다',
           style:{padding:'4px 11px',background:'#166534',color:'#fff',border:'none',borderRadius:'6px',fontSize:'11px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap',flexShrink:0}
         },'🤖 카테고리 자동'),
+        /* 켜 두면 매달 누를 것이 없다 — 배운 것은 열자마자 등록된다. */
+        ldTabEff==='exp' && h('label',{
+          title:'전에 등록한 적요와 같은 출금은, 열자마자 그때 고른 카테고리로 저절로 등록합니다. '
+            +'처음 보는 적요는 그대로 남아 직접 고르시면 됩니다.',
+          style:{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'11px',
+            fontWeight:700,color: expAutoReg ? '#166534' : '#64748b',cursor:'pointer',
+            whiteSpace:'nowrap',padding:'4px 9px',borderRadius:'6px',
+            background: expAutoReg ? '#f0fdf4' : '#f8fafc',
+            border:'1px solid ' + (expAutoReg ? '#bbf7d0' : '#e2e8f0')}},
+          h('input',{type:'checkbox',checked:!!expAutoReg,
+            onChange:function(){ setExpAutoReg(!expAutoReg); },
+            style:{cursor:'pointer'}}),
+          expAutoReg ? '🤖 배운 것은 저절로 등록 (켜짐)' : '🤖 배운 것은 저절로 등록'),
         ldTabEff==='exp' && expReadyCnt>0 && h('button',{
           onClick:async function(){
             if(!(await popConfirm('카테고리 선택된 출금 '+expReadyCnt+'건을 등록합니다.'))) return;
