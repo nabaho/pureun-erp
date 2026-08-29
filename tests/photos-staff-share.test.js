@@ -120,22 +120,15 @@ test('★ 콘솔과 다른 곳은 «일부러 고친 두 곳»뿐이다', () => 
        exportLog·exportSeen — 반출 기록(대표가 방금 콘솔에 넣으셨다)
        pu_mailseen          — 메일 읽음 자리
        mailbox/.read        — 메일함을 재직 직원 전원에게 연 것(2026-08-27 결정) */
+  /* ★ 2026-08-29 — 대표가 적용본을 콘솔에 «게시»했다. 이제 저장소와 콘솔이 같다.
+     그래서 「일부러 다른 곳 몇 개」가 아니라 «한 곳도 다르지 않다»로 못 박는다 —
+     규칙이 한 글자라도 어긋나면 그 자리에서 걸린다.
+     ⚠ 규칙을 고칠 때는 «두 파일을 함께» 고친다:
+       ① scripts/make-firebase-rules.js 를 고치고 적용본을 다시 만든다
+       ② 콘솔에 붙여넣는다
+       ③ docs/firebase-rules-콘솔원문-….json 을 그 내용으로 맞춘다
+     ③을 빠뜨리면 이 검사가 걸린다 — 그것이 「콘솔에 아직 안 넣었다」는 신호다. */
   assert.deepEqual(diff.sort(), [
-      "/data/app_config",
-      "/data/companies",
-      "/data/consultings",
-      "/data/contracts",
-      "/data/portal_prefs",
-      "/data/portal_prefs_uid",
-      "/data/presence_hours",
-      "/data/sg_meta",
-      "/data/sg_resolved",
-      "/data/sg_resolved_uid",
-      "/data/suggestions",
-      "/exportLog",
-      "/exportSeen",
-      "/mailbox/.read",
-      "/pu_mailseen"
   ],
     '★ 뜻하지 않은 곳이 바뀌었습니다: ' + diff.join(', ') +
      '\n  규칙은 한 번에 통째로 바뀝니다 — 곁다리 변경이 섞이면 무엇이 깨졌는지 못 짚습니다.');
