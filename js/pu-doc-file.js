@@ -42,6 +42,7 @@
   var CO_PAIRS_MAX = 60;
   var CO_PAIR_LEN = 300;
 
+
   var CARDS_BUCKET = 'gs://pureun-erp-photos';
   function cardsStorage() {
     if (deps.storage) return deps.storage;
@@ -483,6 +484,74 @@
      나머지 칸(상호·대표자)은 사업자등록증이 더 정확한 원본이다. */
   var SME_ONLY = { companySize: 1, smeExpiry: 1, smeIssueNo: 1, smeIssueDate: 1 };
 
+  /* ══════ 이미 보낸 서류에 «적힌 것»을 뒤늦게 채운다 (대표 지시 2026-08-29) ══════
+     2026-08-28 부터 보낸 서류에는 docs/{서류}/pairs 가 담긴다. 그런데 «그 전에 보낸
+     서류»에는 없다 — 대표 화면 기준 400장 남짓.
+
+     ⚠ 다시 판독하지 «않는다». 판독은 AI 호출이고 그것이 그대로 요금이다. 그런데
+       판독 결과는 이미 사진에 남아 있다(사진 항목의 meta.read.fields) — 옮기기만
+       하면 0원이다.
+     ⚠ 사진첩에서 부른다. 사진은 puphotos/u/{uid} 에, 기업정보는 pucards/coInfo 에
+       있어 뿌리가 다르다. 사진첩은 제 사진을 이미 손에 들고 있다.
+     ⚠ «이미 보낸 서류»에만 채운다. 안 보낸 사진까지 쓰면 기업정보함에 없던 서류가
+       이름·날짜도 없이 pairs 만 든 껍데기로 생긴다.
+     ⚠ 회사마다 «한 번» 읽고 «한 번» 쓴다. 서류 한 장마다 오가면 400번이 800번이 된다
+       (2026-08-16 에 겪은 그 규모다).
+
+     list: [{ fields, photo:{year,id,owner} }] — sendToCoInfo 에 넣는 것과 같은 꼴.
+     돌려주는 것: { scanned, coCount, filled, already, notSent, noKey, failed } */
+  function backfillPairs(list, onStep) {
+    var items = Array.isArray(list) ? list : [];
+    var out = { scanned: items.length, coCount: 0, filled: 0,
+                already: 0, notSent: 0, noKey: 0, failed: 0 };
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+
+    /* 회사별로 모은다 — 오가는 횟수를 회사 수로 줄이는 것이 이 함수의 요점이다 */
+    var byCo = {};
+    items.forEach(function (it) {
+      var f = (it && it.fields) || {};
+      var ph = (it && it.photo) || {};
+      var key = bizKey(f.bizno);
+      if (!key || !ph.id) { out.noKey++; return; }
+      var tidy = tidyPairs(f.pairs);
+      if (!tidy.pairs.length) return;                    /* 담을 것이 없다 */
+      var dk = String(ph.year || 'unknown') + '_' + String(ph.id).replace(/[.#$/[\]]/g, '_');
+      (byCo[key] = byCo[key] || []).push({ dk: dk, tidy: tidy });
+    });
+
+    var keys = Object.keys(byCo);
+    out.coCount = keys.length;
+    var i = 0;
+    function step() {
+      if (i >= keys.length) return Promise.resolve(out);
+      var key = keys[i++];
+      return one(key).then(function () {
+        if (onStep) { try { onStep(i, keys.length, out); } catch (e) {} }
+        return step();
+      });
+    }
+    function one(key) {
+      var base = CARDS_ROOT + '/coInfo/' + key;
+      return deps.db.ref(base + '/docs').once('value')
+        .then(function (s) {
+          var docs = s.val() || {};
+          var upd = {}, n = 0;
+          byCo[key].forEach(function (e) {
+            var cur = docs[e.dk];
+            if (!cur) { out.notSent++; return; }          /* 안 보낸 사진 — 만들지 않는다 */
+            if (cur.pairs) { out.already++; return; }     /* 이미 있다 — 다시 쓰면 요금만 는다 */
+            upd['docs/' + e.dk + '/pairs'] = e.tidy.pairs;
+            if (e.tidy.cut) upd['docs/' + e.dk + '/pairsCut'] = e.tidy.cut;
+            n++;
+          });
+          if (!n) return;
+          return deps.db.ref(base).update(upd).then(function () { out.filled += n; });
+        })
+        .catch(function () { out.failed++; });            /* 한 회사가 막혀도 나머지는 계속 */
+    }
+    return step();
+  }
+
   /* ══════ 기업정보(기업정보함 🏢)로 보내기 ══════
      서식·신청서는 지금까지 갈 곳이 없었다 — 읽어 놓고도 어디에도 안 남았다.
      업체관리(ERP)와 다른 점: **업체가 없어도 받는다.** ERP 는 실제 거래처만 두는
@@ -601,21 +670,10 @@
                조용히 줄이면 나중에 「왜 없지」가 된다.
              ⚠ 개인정보는 «거르지 않는다» — 대표 결정 2026-08-28 (가) 「그대로 다 담는다」.
                주민등록번호는 판독 층이 애초에 안 읽는다(PROMPT_ALL 에 못 박혀 있다). */
-          var raw = Array.isArray(fields.pairs) ? fields.pairs : [];
-          var keep = [];
-          raw.forEach(function (p) {
-            if (keep.length >= CO_PAIRS_MAX) return;
-            var pk = String((p && p.k) == null ? '' : p.k).trim();
-            var pv = String((p && p.v) == null ? '' : p.v).trim();
-            if (!pk || !pv) return;                       /* 빈 껍데기는 안 담는다 */
-            keep.push({ k: pk.slice(0, CO_PAIR_LEN), v: pv.slice(0, CO_PAIR_LEN) });
-          });
-          if (keep.length) {
-            doc.pairs = keep;
-            var usable = raw.filter(function (p) {
-              return p && String(p.k || '').trim() && String(p.v || '').trim();
-            }).length;
-            if (usable > keep.length) doc.pairsCut = usable - keep.length;
+          var tidy = tidyPairs(fields.pairs);
+          if (tidy.pairs.length) {
+            doc.pairs = tidy.pairs;
+            if (tidy.cut) doc.pairsCut = tidy.cut;
           }
           add['docs/' + dk] = doc;
           filled.push('서류');
@@ -718,6 +776,23 @@
         '개를 채웠습니다 (' + labels.join('·') + ')' } };
   }
 
+  /* 담을 수 있게 다듬는다 — 빈 껍데기를 버리고, 개수·길이를 자르고, 몇 개 잘랐는지 센다.
+     ⚠ 보낼 때(sendToCoInfo)와 뒤늦게 채울 때(backfillPairs)가 «같은 규칙»을 쓴다.
+       두 벌로 두면 한쪽만 고쳐져, 언제 보냈느냐에 따라 담긴 내용이 달라진다. */
+  function tidyPairs(raw) {
+    var list = Array.isArray(raw) ? raw : [];
+    var keep = [], usable = 0;
+    list.forEach(function (p) {
+      var pk = String((p && p.k) == null ? '' : p.k).trim();
+      var pv = String((p && p.v) == null ? '' : p.v).trim();
+      if (!pk || !pv) return;                            /* 빈 껍데기는 안 담는다 */
+      usable++;
+      if (keep.length >= CO_PAIRS_MAX) return;
+      keep.push({ k: pk.slice(0, CO_PAIR_LEN), v: pv.slice(0, CO_PAIR_LEN) });
+    });
+    return { pairs: keep, cut: usable - keep.length };
+  }
+
   /* 여러 장을 «한 번 읽고 한 번 써서» 처리한다. 돌려주는 것은 넣은 순서대로의
      결과 배열 — 사진 하나하나가 저마다 filedCo 에 적을 값을 받는다.
      ⚠ 쓰기도 한 번에 모은다. 152장을 하나씩 쓰면 그만큼 왕복이 생긴다. */
@@ -751,6 +826,7 @@
   }
 
   /* 한 장 — 여러 장 길을 그대로 쓴다(길이 둘이면 한쪽만 고쳐진다). */
+
   function sendToCompany(o) {
     return sendToCompanyMany([o || {}]).then(function (r) { return r[0]; });
   }
@@ -853,6 +929,7 @@
     setContractCms: setContractCms,
     companyIndex: companyIndex,
     sendToCoInfo: sendToCoInfo,
+    backfillPairs: backfillPairs,
     sendToCompany: sendToCompany,
     sendToCompanyMany: sendToCompanyMany
   };
