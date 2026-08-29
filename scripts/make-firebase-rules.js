@@ -184,6 +184,53 @@ rules.pucards = {
 };
 rules.pucards_private = { $uid: { '.read': 'auth != null && auth.uid === $uid', '.write': 'auth != null && auth.uid === $uid' } };
 
+/* ══ 반출 기록 — 기업정보함에서 «밖으로 나간 것» (대표 지시 2026-08-29) ══
+   설계서: docs/superpowers/specs/2026-08-29-기업정보함-반출기록-design.md
+
+   ★ 왜 pucards «밖»인가
+     규칙은 위에서 아래로 흐르고, 부모가 준 읽기를 자식이 못 뺏는다.
+     pucards 는 '.read': MAIL — 로그인한 직원 누구나 읽는다. 그 아래에 기록을 두면
+     「관리자만」이라고 적어도 직원이 그대로 읽는다. 그래서 맨 위 칸이다.
+
+   ★ 왜 쓰기 문턱이 MAIL 인가 (LOGIN 이 아니라)
+     pucards 읽기와 «같아야» 한다. 더 좁히면 「기업정보함은 쓰는데 기록은 못 남기는」
+     사람이 생기고, 그 사람은 앱이 내려받기를 아예 거절한다.
+
+   ★ $other 를 막았으면 일곱 칸을 «모두» 이름으로 적어야 한다
+     이름 없는 칸은 $other 에 걸려 .validate:false 가 되고, 그러면 쓰기가 통째로 막힌다.
+     글자 수는 pu-cards.html 의 EXPORT_MAX 와 짝이다(앱이 먼저 잘라 보낸다).
+
+   paydata/access_log · handoff_log 와 «같은 꼴»이다 — 새 방식이 아니다. */
+const expText = (n) => `newData.isString() && newData.val().length <= ${n}`;
+rules.exportLog = {
+  '.read': `auth != null && ${ADMIN}`,
+  $id: {
+    /* !data.exists() = 새로 만드는 것만. 고치기·지우기는 «아무도» 못 한다 —
+       자기 기록을 지울 수 있으면 기록은 아무 뜻이 없다. */
+    '.write': `(${MAIL}) && !data.exists()`,
+    '.validate': "newData.hasChildren(['at','by','uid','kind','what','n'])",
+    at:   { '.validate': 'newData.isNumber() && newData.val() === now' },   /* 날짜 속이기 금지 */
+    uid:  { '.validate': 'newData.isString() && newData.val() === auth.uid' }, /* 남의 이름 금지 */
+    n:    { '.validate': 'newData.isNumber() && newData.val() >= 0' },
+    by:   { '.validate': expText(40) },
+    kind: { '.validate': expText(30) },
+    what: { '.validate': expText(200) },
+    why:  { '.validate': expText(300) },
+    /* 정해 둔 일곱 칸 말고는 아무것도 못 넣는다 — 기록 칸에 명함 내용을 쑤셔 넣어
+       «두 번째 유출원»을 만들지 못하게 막는다 */
+    $other: { '.validate': false }
+  }
+};
+/* 대표가 「확인」한 시각만 담는다(알림 배지를 끄는 데만 쓴다).
+   기록 자체에 「봤음」을 적으면 «기록을 고치는» 것이 되어 고칠 문을 열어 주게 된다. */
+rules.exportSeen = {
+  $uid: {
+    '.read':  'auth != null && auth.uid === $uid',
+    '.write': `auth != null && auth.uid === $uid && ${ADMIN}`,
+    '.validate': 'newData.isNumber()'
+  }
+};
+
 rules.puphotos = {
   owners: {
     '.read': LOGIN,

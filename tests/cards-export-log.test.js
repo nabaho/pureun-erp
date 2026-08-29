@@ -139,7 +139,12 @@ test('★ 모든 문에 이름표가 있다 — 없으면 기록에 날것이 �
 function recBox(){
   const ctx = { console, Number, String, Object };
   vm.createContext(ctx);
-  vm.runInContext(fn('exportLogRec'), ctx);
+  /* 자르는 한도(EXPORT_MAX)와 자르개(expCut)까지 «진짜 것»으로 실어야
+     「규칙에 안 걸리게 잘라 보낸다」를 실제로 확인할 수 있다 */
+  const a = src.indexOf('const EXPORT_MAX');
+  const b = src.indexOf('function exportLogRec');
+  assert.ok(a > 0 && b > a, 'EXPORT_MAX 덩이를 찾지 못했습니다');
+  vm.runInContext(src.slice(a, b) + '\n' + fn('exportLogRec'), ctx);
   return ctx;
 }
 test('★ 기록에 담는 칸은 일곱뿐 — 내용(이름·전화·이메일)은 안 담는다', () => {
@@ -157,6 +162,18 @@ test('건수는 늘 숫자다 — 글자가 들어오면 0', () => {
   const c = recBox();
   assert.equal(c.exportLogRec({ n:'많이' }).n, 0);
   assert.equal(c.exportLogRec({ n:'12' }).n, 12);
+});
+
+test('★ 긴 파일 이름이 와도 «잘라서» 보낸다 — 안 자르면 기록이 막힌다', () => {
+  /* 자료함 파일 이름이 길면 what 이 200자를 넘을 수 있다. 규칙이 그걸 막으면
+     기록이 안 남고, 기록이 안 남으면 내려받기가 통째로 거절된다. */
+  const c = recBox();
+  const r = c.exportLogRec({ by:'가'.repeat(80), kind:'x'.repeat(60),
+    what:'자료함 · ' + '나'.repeat(400), why:'다'.repeat(900) });
+  assert.equal(r.by.length,   40);
+  assert.equal(r.kind.length, 30);
+  assert.equal(r.what.length, 200);
+  assert.equal(r.why.length,  300);
 });
 
 /* ══════ ③④ 문지기가 언제 막나 ══════ */
@@ -280,8 +297,85 @@ test('★ 규칙 글이 «지울 수 없는 기록»을 못 박는다', () => {
   assert.ok(a > 0 && b > a, '문서 짜임이 바뀌었다 — 「붙여넣을 것」 대목을 찾지 못했다');
   const doc = whole.slice(a, b);
   assert.match(doc, /!data\.exists\(\)/, '★ 고치기·지우기를 막는 줄이 없다');
-  assert.match(doc, /newData\.child\('uid'\)\.val\(\) === auth\.uid/, '남의 이름으로 적는 것을 안 막는다');
-  assert.match(doc, /newData\.child\('at'\)\.val\(\) === now/, '날짜 속이기를 안 막는다');
+  assert.match(doc, /=== auth\.uid/, '남의 이름으로 적는 것을 안 막는다');
+  assert.match(doc, /=== now/, '날짜 속이기를 안 막는다');
   assert.match(doc, /isAdmin/, '읽기를 관리자로 안 막는다');
+  assert.match(doc, /"\$other":\s*\{\s*"\.validate":\s*false/,
+    '★ 정해 둔 칸 말고 «아무거나» 넣을 수 있다 — 기록이 두 번째 유출원이 된다');
   assert.ok(doc.indexOf('"exportLog"') > 0 && doc.indexOf('"exportSeen"') > 0, '두 칸이 다 있지 않다');
+});
+
+/* ⚠ 규칙의 진짜는 «만들개» 하나뿐이다 — scripts/make-firebase-rules.js 가
+   docs/firebase-rules-전체-적용본.json 을 낸다(tests/firebase-rules-apply.test.js 가 짝을 지킨다).
+   손으로 합친 전체 파일을 따로 두면 두 벌이 되고, 두 벌은 반드시 어긋난다. */
+const APPLY = path.join(R, 'docs', 'firebase-rules-전체-적용본.json');
+
+test('★ 기록 두 칸이 «적용본»에 있고, pucards 밖에 있다', () => {
+  assert.ok(fs.existsSync(APPLY), '적용본 규칙 파일이 없다');
+  const j = JSON.parse(fs.readFileSync(APPLY, 'utf8'));
+  assert.ok(j.rules.exportLog && j.rules.exportSeen, '적용본에 반출 기록 두 칸이 없다');
+  assert.ok(!j.rules.pucards.exportLog,
+    '★ 기록이 pucards «안»에 들어갔다 — 부모가 준 읽기를 자식이 못 뺏어 직원이 그대로 읽는다');
+  assert.equal(j.rules.exportLog.$id.$other['.validate'], false,
+    '★ 정해 둔 칸 말고 아무거나 넣을 수 있다');
+});
+
+test('★ 「한 칸만 넣기」 안내문이 적용본과 «같은 규칙»이다', () => {
+  /* 두 글이 어긋나면, 전문을 붙여넣은 날과 한 칸만 넣은 날의 규칙이 달라진다 —
+     그 어긋남은 콘솔에 넣고 나서야 드러나고, 그때는 이미 앱이 멈춰 있다. */
+  const j = JSON.parse(fs.readFileSync(APPLY, 'utf8'));
+  const doc = fs.readFileSync(path.join(R, 'docs', 'firebase-rules-반출기록-한칸만-넣기.txt'), 'utf8');
+  const cut = doc.slice(doc.indexOf('"exportLog"'), doc.lastIndexOf('},') + 2);
+  const fromDoc = JSON.parse('{' + cut.replace(/,\s*$/, '') + '}');
+  assert.deepEqual(fromDoc.exportLog, j.rules.exportLog, '★ exportLog 가 두 글에서 다르다');
+  assert.deepEqual(fromDoc.exportSeen, j.rules.exportSeen, '★ exportSeen 이 두 글에서 다르다');
+});
+
+test('★ 반출 기록 규칙이 «두 벌»이 되지 않는다', () => {
+  /* 규칙의 진짜는 만들개 하나다. 손으로 합친 전체 파일에 이 규칙을 또 적어 두면,
+     한쪽만 고쳐진 날 콘솔에 무엇이 들어갈지 아무도 모르게 된다.
+     ⚠ docs 에 만들개 이전의 옛 전체 파일이 둘 남아 있다
+       (firebase-rules-전체(붙여넣기용).json · …(메일함포함…).json).
+       그 둘을 여기서 정리하지는 않는다 — 남의 글이고 대표 판단이다.
+       다만 «반출 기록»만은 그 옛 파일들로 번지지 않게 막는다. */
+  const docs = path.join(R, 'docs');
+  const others = fs.readdirSync(docs)
+    .filter(f => /^firebase-rules-전체/.test(f) && f !== 'firebase-rules-전체-적용본.json')
+    .filter(f => fs.readFileSync(path.join(docs, f), 'utf8').indexOf('exportLog') >= 0);
+  assert.deepEqual(others, [],
+    '★ 반출 기록 규칙이 적용본 말고 다른 전체 파일에도 적혔다 — 두 벌은 반드시 어긋난다: '
+    + others.join(', '));
+});
+
+test('★ $other 를 막았으면 일곱 칸을 «모두» 이름으로 적어야 한다', () => {
+  /* 이름 없는 칸은 $other 에 걸려 .validate:false 가 된다 → 쓰기가 통째로 막히고,
+     기록을 못 남기면 앱이 내려받기를 거절한다. 즉 «기업정보함이 멈춘다». */
+  const p = path.join(R, 'docs', 'firebase-rules-반출기록-한칸만-넣기.txt');
+  const whole = fs.readFileSync(p, 'utf8');
+  const doc = whole.slice(whole.indexOf('붙여넣을 것'), whole.indexOf('무슨 뜻인가'));
+  ['at', 'uid', 'n', 'by', 'kind', 'what', 'why'].forEach(function(k){
+    assert.match(doc, new RegExp('"' + k + '":\\s*\\{\\s*"\\.validate"'),
+      '★ ' + k + ' 칸에 이름이 없다 — $other 에 걸려 기록 쓰기가 통째로 막힌다');
+  });
+});
+
+test('★ 앱이 자르는 길이와 규칙의 한도가 «같다» — 앱이 벽에 부딪히면 안 된다', () => {
+  /* 규칙이 벽이고 앱이 그 벽에 부딪히면 기록이 안 남고, 기록이 안 남으면 내려받기가
+     거절된다. 긴 파일 이름 하나로 기업정보함이 멈추는 것이다 — 앱이 «먼저» 잘라야 한다. */
+  const m = code(src).match(/const EXPORT_MAX\s*=\s*\{([^}]*)\}/);
+  assert.ok(m, 'EXPORT_MAX 를 찾지 못했습니다 — 앱이 자르지 않으면 규칙에 걸린다');
+  const app = {};
+  m[1].split(',').forEach(function(pair){
+    const kv = pair.split(':'); if (kv.length === 2) app[kv[0].trim()] = Number(kv[1]);
+  });
+  const p = path.join(R, 'docs', 'firebase-rules-반출기록-한칸만-넣기.txt');
+  const whole = fs.readFileSync(p, 'utf8');
+  const doc = whole.slice(whole.indexOf('붙여넣을 것'), whole.indexOf('무슨 뜻인가'));
+  ['by', 'kind', 'what', 'why'].forEach(function(k){
+    const r = doc.match(new RegExp('"' + k + '":[^\\n]*length <= (\\d+)'));
+    assert.ok(r, k + ' 의 한도를 규칙에서 찾지 못했습니다');
+    assert.equal(app[k], Number(r[1]),
+      '★ ' + k + ' — 앱은 ' + app[k] + '자로 자르는데 규칙은 ' + r[1] + '자까지다. '
+      + '앱이 더 길게 보내면 기록이 막히고 내려받기가 통째로 거절된다');
+  });
 });
