@@ -8581,9 +8581,15 @@ let _dragSel = null;
      화면에 안 보이는 줄이 사이에 끼어 함께 고르진다. */
 function dragSelCtx(kind){
   if(kind === 'co'){
+    /* ⚠ renderCoAny() 가 아니라 «목록만» 이다 (대표 보고 2026-08-29).
+       네모를 «한 번 누르는» 길이 여기다 — .selcell 의 onmousedown 이 preventDefault()
+       하므로 네모의 onchange(coToggle)는 아예 안 뜬다. 그래서 2026-08-16 M1 이
+       coToggle·coSelAll 을 「목록만」으로 좁혀 놓고도, 정작 사람이 누르는 길은
+       옆줄까지 통째로 다시 그리고 있었다 — 4,147곳에서 누를 때마다 그만큼 멈췄다.
+       고르기만 바뀐다: 옆줄의 폴더·탭 개수는 움직이지 않는다. */
     return { bag: state.coSel,
              ids: [...document.querySelectorAll('.cotbl [data-selid]')].map(e=>e.dataset.selid),
-             done: ()=>renderCoAny() };
+             done: ()=>renderCoListOnly() };
   }
   return { bag: state.sel,
            ids: [...document.querySelectorAll('#pcTable [data-selid]')].map(e=>e.dataset.selid),
@@ -11489,8 +11495,24 @@ function pcSideBottomHtml(){
     <button class="pcside-settings" onclick="openSettingsPage()" title="정리·데이터·연동·탭·계정 설정 (별도 화면으로 열림)">⚙️ 환경설정</button>
   </div>`;
 }
+/* ── 옆줄 폴더 칸도 «구르던 자리»를 지킨다 (대표 보고 2026-08-29, 같은 갈래) ──
+   #pcFolderList 는 44vh 짜리 구르는 칸인데 renderPCSide() 가 그 칸을 «통째로 새로»
+   만든다 — 기업 상세 목록(.cobody)과 똑같은 무늬다. 폴더가 스무 개쯤 되면 아래쪽
+   폴더를 보려고 내려놓은 자리가, 네모 하나 누를 때마다 맨 위로 돌아왔다.
+   ⚠ 갈래·화면이 바뀌면(명함↔사업자↔기업 상세) 폴더 목록 자체가 다른 것이므로
+     옛 자리를 되꽂지 않는다 — 엉뚱한 폴더 앞에 서 있게 된다. */
+let _pcSideTop = { key:'', top:0 };
+function pcSideNowKey(){ return String(state.view||'') + '|' + String(state.tab||''); }
+function pcSideKeepTop(){ const b=$('pcFolderList'); if(b) _pcSideTop.top = b.scrollTop; }
+function pcSideRestoreTop(){
+  const now = pcSideNowKey();
+  const b=$('pcFolderList');
+  if(b) b.scrollTop = (_pcSideTop.key === now) ? _pcSideTop.top : 0;
+  _pcSideTop.key = now;
+}
 function renderPCSide(){
   mbMemoClear();   /* 그리는 «동안»만 사는 셈을 버린다 — 낡을 틈을 안 준다 */
+  pcSideKeepTop();   /* 갈아 끼우기 «전»에 읽어 둔다 — 끼우면 그 칸은 사라진다 */
   /* 개인 폴더가 열려 있으면 그 명함도 함께 센다 — 대표 눈에는 한 목록이어야 한다 */
   const all = Object.values(allItems());
   const kindArr = all.filter(it=>it.kind===state.tab);
@@ -11516,7 +11538,7 @@ function renderPCSide(){
   if(onMail){
     /* 여백은 안쪽 덩어리(.dm-side)가 갖는다 — 위 CSS 주석에 까닭을 적어 두었다 */
     const mh = '<div class="dm-side">' + mailSideHtml() + pcSideBottomHtml() + '</div>';
-    $('pcSide').innerHTML = mh;
+    $('pcSide').innerHTML = mh; pcSideRestoreTop();
     return;
   }
   let h = `<div class="pcside-top">
@@ -11636,10 +11658,10 @@ function renderPCSide(){
        «지금 손봐야 할 회사»라 뜻이 다르므로 여기로 내렸다. 기능은 그대로다. */
     h += coTodoSideHtml();
     h += pcSideBottomHtml();
-    $('pcSide').innerHTML = h; return;
+    $('pcSide').innerHTML = h; pcSideRestoreTop(); return;
   }
   /* 메일 갈래에서는 메일 전용 폴더를 그린다 — 명함 폴더는 여기서 쓸 일이 없다 */
-  if(onMail){ h += mailSideHtml(); h += pcSideBottomHtml(); $('pcSide').innerHTML = h; return; }
+  if(onMail){ h += mailSideHtml(); h += pcSideBottomHtml(); $('pcSide').innerHTML = h; pcSideRestoreTop(); return; }
   /* 현재 탭에 속한 폴더만 — 계층 없이 1단계로 평평하게.
      개인 창고를 열어 두었으면 그 폴더도 함께 보인다(allGroups).
      안 보이면 명함만 전체 목록에 섞여 나오고 어느 것이 개인 건지 알 수 없다.
@@ -11715,6 +11737,7 @@ function renderPCSide(){
   /* 맨 아래 고정 환경설정 — 갈림길마다 같은 것을 붙인다(pcSideBottomHtml) */
   h += pcSideBottomHtml();
   $('pcSide').innerHTML = h;
+  pcSideRestoreTop();
 }
 /* ══════════════ 다음메일함 (대표 지시 2026-08-24) ══════════════
    "다음 370-6@daum.net 에 있는 메일을 모두 동기화 시켜달라.
@@ -18675,6 +18698,35 @@ function coApplyColFilter(field, value){
   closePcDetail(); renderCoPage();
 }
 
+/* ══════ 구르던 자리를 지킨다 (대표 보고 2026-08-29) ══════
+   "화면에서 사업장 클릭하면 왜 자동으로 맨위로 올라가나 추가로 클릭못하게 만든다"
+
+   renderCoPage() 는 #pcCo 를 통째로 갈아 끼우는데, «구르는 칸» 자체가 그 안에 있다
+   (.cobody). 그래서 다시 그릴 때마다 구르는 칸이 **새 것**이 되고, 새 칸의 scrollTop 은
+   언제나 0 이다. 크롬에서 재 봤다(2026-08-29, 900px 내린 상태):
+     ① 구르는 칸 «자신»의 innerHTML 갈아끼우기      → 900 → 900
+     ② 구르는 칸 «안쪽 자식»의 innerHTML 갈아끼우기 → 900 → 900
+     ③ 구르는 칸을 «통째로 새로» 만들기             → 900 →   0   ← 여기가 ③이었다
+   명함 표(#pcTableWrap 안의 #pcTable)가 ②라서 멀쩡했고 기업 상세만 ③이었다.
+   171번째 줄에서 네모를 누르면 1번 줄로 돌아오니, 두 곳째부터는 고를 수가 없다.
+
+   ⚠ 그렇다고 «늘» 지키면 안 된다. 2쪽으로 넘겼는데 한가운데가 보이면 그것도 고장이다.
+     그래서 목록의 «모양»(쪽·쪽크기·찾기말·폴더·탭·태그·정렬·거르개)이 그대로일 때만
+     지킨다. 자료가 바뀌어 다시 그리는 것(실시간 저장)은 모양이 그대로이므로 지켜진다 —
+     아무 것도 안 눌렀는데 화면이 튀지 않는다.
+   ⚠ 다시 그리는 곳을 서른아홉 군데 고치지 않고 «여기 한 곳»에서 판단한다. 부르는 쪽에
+     맡기면 새로 생긴 자리 하나가 조용히 빠진다 — 그동안 M1 이 그렇게 새어 나갔다. */
+let _coScrollShape = '';
+function coListShapeKey(){
+  const s = state;
+  /* ⚠ 글자로 잇지 않는다 — 그냥 이으면 「쪽 1·크기 200」과 「쪽 12·크기 00」이 같은 값이
+     되어 넘겼는데 안 튀거나, 안 넘겼는데 튄다. 목록으로 싸면 그 헷갈림이 없다. */
+  return JSON.stringify([ s.coPage, s.coPageSize, s.coQ, s.coFolder, s.coFTab, s.coTag,
+           s.coSort && s.coSort.key, s.coSort && s.coSort.dir,
+           s.coOnlyCares?1:0, s.coOnlyClosed?1:0, s.coOnlyNoBiz?1:0,
+           s.coOnlyIncomplete?1:0, s.coOnlyUid?1:0,
+           s.coColFilter||{} ]);
+}
 function renderCoPage(){
   const el=$('pcCo'); if(!el) return;
   if(typeof _coWatch!=='undefined' && _coWatch) _coWatch.renders++;
@@ -18708,9 +18760,21 @@ function renderCoPage(){
      그래서 여기서 두 칸으로 갈라 준다: 구르는 칸(.cobody) + 안 구르는 바닥(.cofoot).
      ⚠ 고른 줄 도구줄(.cosellift)은 구르는 칸 «안»에 그대로 둔다 — 표 끝까지 내려가면
        마지막 줄 위에 내려앉아야 하고, 바닥으로 빼면 늘 두 줄이 겹쳐 화면을 먹는다. */
+  /* ⚠ 갈아 끼우기 «전»에 읽는다 — 끼우고 나면 그 칸은 이미 사라진 옛 칸이다.
+     ⚠ 모양 열쇠는 coPage() «뒤»에 만든다. coPage() 가 범위 밖 쪽 번호를 안으로 당겨
+       state.coPage 를 고쳐 놓기 때문이다 — 앞에서 만들면 당겨진 쪽이 「바뀐 것」으로
+       읽혀 애먼 때에 맨 위로 튄다. */
+  const keepTop = (function(){ const b = el.querySelector('.cobody'); return b ? b.scrollTop : 0; })();
+  const shape = coListShapeKey();
+  const sameList = (shape === _coScrollShape);
+  _coScrollShape = shape;
   el.classList.add('cosplit');
   el.innerHTML = `<div class="cobody"><div class="setwrap">${coListHtml(info)}</div></div>`
     + `<div class="cofoot">${coPagerHtml(info)}</div>`;
+  /* 새로 만들어진 칸에 자리를 되꽂는다. 목록이 짧아졌으면 브라우저가 알아서 끝까지만
+     내려 준다 — 우리가 자를 필요가 없다. */
+  const body = el.querySelector('.cobody');
+  if(body) body.scrollTop = sameList ? keepTop : 0;
 }
 /* 기업정보함 목록과 같은 결로 — 한 줄에 한 회사, 왼쪽에 네모와 번호.
    회사가 수백 곳이면 「몇 번째까지 봤더라」를 번호로 짚고, 골라서 한꺼번에 다루려면
@@ -19953,6 +20017,20 @@ function renderCoMobileList(){
       : '전체';
     /* 개수는 **찾은 전체**다 — 지금 쪽 수(200)를 적으면 회사가 200곳뿐인 줄 안다 */
     groupBtn.innerHTML = `${esc(label)} (${info.total.toLocaleString()}) <span class="v">▼</span>`;
+  }
+  /* ── 폰도 «모양»이 바뀌면 맨 위로 (대표 보고 2026-08-29, 같은 갈래의 반대쪽) ──
+     자리를 되꽂을 일은 없다. #list 는 구르는 칸(#listwrap) «안»에 있어서 갈아 끼워도
+     자리가 안 날아간다(크롬 실측 2026-08-29 — PC 의 .cobody 와 갈리는 지점이다).
+     대신 2쪽으로 넘겼는데 한가운데가 보이는 «반대쪽» 문제가 남아 있었다 — 명함 폰
+     목록(listGoPage)은 이미 맨 위로 올려 준다. 같은 손놀림을 여기에도 준다.
+     ⚠ 빈 목록으로 끝나는 길보다 «먼저» 둔다. 뒤에 두면 「찾지 못했습니다」로 끝난
+       번에 모양이 안 적혀, 다음 번에 애먼 때 맨 위로 튄다.
+     ⚠ 모양 열쇠는 PC 와 «한 벌»을 쓴다(_coScrollShape). 둘 중 하나만 그려지므로
+       섞이지 않고, 두 벌로 두면 한쪽만 고쳐질 자리가 생긴다. */
+  const coShape = coListShapeKey();
+  if(coShape !== _coScrollShape){
+    _coScrollShape = coShape;
+    try{ window.scrollTo(0,0); const w=$('listwrap'); if(w) w.scrollTop=0; }catch(_){}
   }
   if(!info.total){
     el.innerHTML = `<div class="empty">회사를 찾지 못했습니다.</div>`;

@@ -294,6 +294,12 @@ function loadCoMobileList(list, folders){
     /* 진짜 coVisible 은 state.coFolder 로도 거른다 — 그 몫만 흉내 낸다.
        (여기서 거르지 않으면 「전체로 되돌리기」가 개수까지 맞추는지 증명할 수 없다) */
     coVisible: () => (ctx.state.coFolder ? list.filter(o=>o.folder===ctx.state.coFolder) : list),
+    /* 2026-08-29 — 폰 목록도 「목록의 모양이 바뀌었나」를 보고 맨 위로 올려 준다.
+       그리는 내용만 보는 검사이므로 대역으로 둔다(자리 옮기기는
+       cards-co-scroll-keep.test.js 가 따로 지킨다). */
+    coListShapeKey: () => 'shape',
+    _coScrollShape: '',
+    window: { scrollTo: () => {} },
     /* renderCoMobileList 는 이제 쪽 나눠 그리기(coPage)를 거친다 — 여기서는 쪽 나눔이
        관심사가 아니므로 coVisible 결과를 통째로 한 쪽처럼 돌려준다.
        ⚠ coPage() 가 coVisible() 을 거치게 두는 것이 중요하다 — I3 의 「죽은 폴더를

@@ -174,7 +174,11 @@ test('옆줄 사업별 목록에 숨기기·다시보기 아이콘이 있다', (
      cards-co-folders.test.js 에서 이미 한 번 터졌다. 이 덩어리의 진짜 끝은 글자수가
      아니라 `$('pcSide').innerHTML = h; return;` 이다 — 형제 검사들과 같은 경계를 쓴다.
      보는 «자리»만 바꾸고, 무엇을 확인하는지는 그대로 둔다. */
-  const end = source.indexOf("$('pcSide').innerHTML = h; return;", at);
+  /* ⚠ 끝 경계는 「옆줄을 갈아 끼우는 그 줄」이다 — 그 줄 «뒤»에 무엇이 더 붙는지는
+   이 검사가 볼 일이 아니다. 예전에는 `= h; return;` 까지 글자 그대로 붙들어,
+   2026-08-29 에 그 줄 뒤로 구르던 자리 되꽂기(pcSideRestoreTop)가 붙자 형제 검사
+   다섯이 «기능이 멀쩡한데» 한꺼번에 깨졌다(CLAUDE.md 「지금 값이 아니라 규칙」). */
+  const end = source.indexOf("$('pcSide').innerHTML", at);
   assert.ok(at > 0 && end > at, '기업 상세 옆줄 덩어리를 찾지 못했습니다');
   const fn = source.slice(at, end);
   assert.match(fn, /hideCoTag/);

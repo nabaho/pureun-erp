@@ -29,7 +29,11 @@ test('옆줄에 폴더 목록과 ＋가 있다', () => {
      등)을 얻으면서 글자수가 늘자 소리 없이 걸려 넘어졌다. 이 블록의 진짜 끝은 글자수가
      아니라 `$('pcSide').innerHTML = h; return;` 이다 — cards-co-folder-tabs.test.js 의
      sideBlock() 도 같은 경계를 쓴다. */
-  const end = source.indexOf("$('pcSide').innerHTML = h; return;", at);
+  /* ⚠ 끝 경계는 「옆줄을 갈아 끼우는 그 줄」이다 — 그 줄 «뒤»에 무엇이 더 붙는지는
+   이 검사가 볼 일이 아니다. 예전에는 `= h; return;` 까지 글자 그대로 붙들어,
+   2026-08-29 에 그 줄 뒤로 구르던 자리 되꽂기(pcSideRestoreTop)가 붙자 형제 검사
+   다섯이 «기능이 멀쩡한데» 한꺼번에 깨졌다(CLAUDE.md 「지금 값이 아니라 규칙」). */
+  const end = source.indexOf("$('pcSide').innerHTML", at);
   assert.ok(at > 0 && end > at, '기업 상세 옆줄 덩어리를 찾지 못했습니다');
   const fn = source.slice(at, end);
   assert.match(fn, /onclick="openCoFolderDialog\(\)"/, '＋ 를 못 찾았다');
