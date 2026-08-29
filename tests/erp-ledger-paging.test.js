@@ -22,7 +22,9 @@ test('입금 표는 그릴 때만 자른다', () => {
 });
 
 test('출금 표도 같은 방식', () => {
-  assert.match(FL, /h\('tbody',null,expList\.slice\(0,ldShow\)\.map\(/);
+  /* ⚠ 목록 «이름»을 못 박지 않는다 — 2026-08-29 에 카드별로 갈라 보게 되면서
+     expList → expCardList 가 됐다. 볼 것은 «ldShow 만큼만 그리는가» 다. */
+  assert.match(FL, /h\('tbody',null,exp(?:Card)?List\.slice\(0,ldShow\)\.map\(/);
 });
 
 test('합계·건수는 전체로 계산한다 (화면만 잘랐지 자료를 자른 게 아니다)', () => {
@@ -84,6 +86,9 @@ test('더 보기 줄이 표의 칸을 다 덮는다 (밀리면 줄이 어긋난�
     assert.equal(span, th, '표 머리 ' + th + '칸인데 더보기 줄은 ' + span + '칸이다');
     spans.push(span);
   });
-  assert.ok(spans.indexOf(10) >= 0, '입금 표는 열 칸이 되었다');
-  assert.ok(spans.indexOf(6) >= 0, '출금 표는 여섯 칸 그대로다');
+  /* ⚠ 칸 «수»를 못 박지 않는다 — 2026-08-29 에 출금 표에 「카드」 칸이 늘어 6→7 이 됐다.
+     진짜 규칙은 위 줄에서 이미 지킨다: «머리 칸 수 == 더보기 colSpan».
+     여기서는 두 표가 실제로 있고 칸이 있다는 것만 본다(0 이면 표가 사라진 것이다). */
+  assert.equal(spans.length, 2, '입금·출금 두 표가 있어야 한다');
+  spans.forEach(function(n){ assert.ok(n >= 5, '표 칸이 ' + n + '개다 — 너무 적다'); });
 });

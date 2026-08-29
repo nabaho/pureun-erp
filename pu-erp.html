@@ -38070,6 +38070,15 @@ if(typeof window !== 'undefined'){
      ④ 취소보다 «앞선» 날이어야 하고 ⑤ 90일 안이어야 한다.
    ⚠ 후보가 둘 이상이면 «고르지 않는다» — 어느 것을 되돌리는지 모르는 채 찍으면 안 된다.
    ⚠ 이미 짝지어진 승인은 다시 안 쓴다 — 한 승인이 두 취소를 갚을 수는 없다. */
+/* 카드 문자에 적힌 «끝 네 자리» — 「하나카드 승인 문자 · ****9950」 → 9950.
+   ⚠ 은행 줄에는 없다(빈 글자). 카드가 아닌 것을 카드로 세면 안 된다. */
+function erpCardTail(row){
+  if(!row || row.src !== 'card') return '';
+  var m = /\*{2,}\s*(\d{3,4})/.exec(String(row.note || ''));
+  return m ? m[1] : '';
+}
+try { window.erpCardTail = erpCardTail; } catch(_e){ }
+
 function erpCardCancelKey(memo){
   var s = String(memo == null ? '' : memo).replace(/^\s*\[취소\]\s*/, '');
   if(typeof erpCoKey === 'function') return erpCoKey(s);
@@ -39918,6 +39927,20 @@ function FinanceLedger(props){
   var dupExpCnt = expAll.filter(function(r){return r._dup;}).length;
   var incList = hideDup ? incAll.filter(function(r){return !r._dup;}) : incAll;
   var expList = hideDup ? expAll.filter(function(r){return !r._dup;}) : expAll;
+
+  /* ── 카드별로 갈라 보기 (대표 지시 2026-08-29) ──────────────────────
+     「적요에 카드와 사용처를 각각 분리해달라, 그래야 카드만 분리해서 볼 수 있다」.
+     카드 번호는 문자를 읽을 때 note 에 「하나카드 승인 문자 · ****9950」으로 적힌다.
+     ⚠ 옛 줄에도 그대로 들어 있으므로 note 에서 «읽어» 쓴다 — 자료를 새로 만들지 않는다. */
+  var expCardS = useState(''); var expCardPick = expCardS[0]; var setExpCardPick = expCardS[1];
+  var expCardCnt = (function(){
+    var c = {};
+    expList.forEach(function(r){ var t = erpCardTail(r); if(t) c[t] = (c[t]||0) + 1; });
+    return c;
+  })();
+  var expCardList = expList.filter(function(r){
+    return !expCardPick || erpCardTail(r) === expCardPick;
+  });
 
   // ── 월별 필터 (입금·출금 공용) ──
   var _ldMonSet={};
@@ -41885,16 +41908,32 @@ function FinanceLedger(props){
       ldTabEff==='exp' && expList.length>0 && h('div',null,
         h('div',{style:{fontWeight:700,fontSize:'12px',color:'#854d0e',marginBottom:'6px',padding:'4px 10px',background:'#fffbeb',borderRadius:'5px',display:'flex',alignItems:'center',gap:'8px'}},
           '💸 '+(incMon?parseInt(incMon.slice(5),10)+'월 ':'')+'출금 내역 — 카테고리 선택 후 출금관리 등록',
+          /* 카드별로 갈라 보기 — 어떤 카드가 몇 건인지 함께 적는다(0건이면 눌러 볼 것이 없다). */
+          Object.keys(expCardCnt).length > 0 && h('span',{style:{display:'inline-flex',gap:'4px',marginLeft:'8px',flexWrap:'wrap'}},
+            [''].concat(Object.keys(expCardCnt).sort()).map(function(t){
+              var on = expCardPick === t;
+              return h('button',{key:t||'all',type:'button',
+                onClick:function(){ setExpCardPick(t); },
+                title: t ? ('끝 네 자리 '+t+' 카드만 봅니다') : '카드·통장을 모두 봅니다',
+                style:{padding:'1px 8px',borderRadius:'99px',fontSize:'10.5px',fontWeight:800,
+                  cursor:'pointer',fontFamily:'inherit',
+                  border:'1px solid '+(on?'#1e40af':'#e2e8f0'),
+                  background:on?'#1e40af':'#ffffff',color:on?'#ffffff':'#475569'}},
+                (t ? (t+' '+expCardCnt[t]) : '전체 '+expList.length));
+            })),
           h('span',{style:{marginLeft:'auto',fontWeight:800,color:'#d97706'}},
             expList.length+'건 · 합계 '+expSum.toLocaleString()+'원')),
         h('div',{ref:_ldFill.ref,style:_ldBox},
           h('table',{style:{width:'100%',borderCollapse:'separate',borderSpacing:0}},
             h('thead',null,h('tr',null,
               h('th',{style:Object.assign({},thS,{width:'34px',textAlign:'right'})},'#'),
-              h('th',{style:thS},'날짜'),h('th',{style:thS},'출금액'),h('th',{style:thS},'적요'),
+              h('th',{style:thS},'날짜'),h('th',{style:thS},'출금액'),
+              /* 카드를 «따로» 세운다 — 적요에 섞여 있으면 카드만 골라 볼 수가 없다. */
+              h('th',{style:Object.assign({},thS,{width:'64px'})},'카드'),
+              h('th',{style:thS},'적요'),
               h('th',{style:Object.assign({},thS,{minWidth:'130px'})},'카테고리'),h('th',{style:thS},'처리')
             )),
-            h('tbody',null,expList.slice(0,ldShow).map(function(row,_re){
+            h('tbody',null,expCardList.slice(0,ldShow).map(function(row,_re){
               var cat=expCat[row._k];
               var catName=cat?EXP_CATS.find(function(c){return c.code===cat;}):null;
               var g=expGuess[row._k];
@@ -41904,6 +41943,13 @@ function FinanceLedger(props){
                 h('td',{style:Object.assign({},tdS,{textAlign:'right',color:'#94a3b8',fontSize:'10.5px',fontVariantNumeric:'tabular-nums'})},_re+1),
                 h('td',{style:tdS},row.date),
                 h('td',{style:Object.assign({},tdS,{fontWeight:700,color:'#854d0e',whiteSpace:'nowrap'})},row.amount.toLocaleString()+'원'),
+                /* 카드 칸 — 없으면 비워 둔다(은행 줄). 「-」 같은 것을 채우지 않는다. */
+                h('td',{style:Object.assign({},tdS,{whiteSpace:'nowrap'})},
+                  (function(){ var t = erpCardTail(row); return t
+                    ? h('span',{title:'하나카드 끝 네 자리',
+                        style:{fontSize:'10.5px',fontWeight:800,color:'#1e40af',
+                          background:'#eff6ff',border:'1px solid #bfdbfe',
+                          borderRadius:'6px',padding:'1px 5px'}}, t) : null; })()),
                 h('td',{style:Object.assign({},tdS,{color:'#475569',maxWidth:'140px'})},
                   h('div',null,row.memo),row.note&&h('div',{style:{fontSize:'10px',color:'#94a3b8'}},row.note),
                   /* 카드 취소 — 어느 승인을 되돌리는지 «찾아서 적는다».
@@ -41966,7 +42012,7 @@ function FinanceLedger(props){
             h('tfoot',null,
               // 아직 안 그린 행 잇기 — 입금 표와 같은 이유(그리는 양 줄이기)
               expList.length>ldShow && h('tr',null,
-                h('td',{colSpan:6,style:{padding:'8px',textAlign:'center',background:'#fffbeb'}},
+                h('td',{colSpan:7,style:{padding:'8px',textAlign:'center',background:'#fffbeb'}},
                   h('button',{onClick:function(){ setLdShow(ldShow+200); },
                     style:{padding:'6px 18px',background:'#fff',color:'#d97706',border:'1px solid #fde68a',
                       borderRadius:'7px',fontSize:'12px',fontWeight:800,cursor:'pointer'}},

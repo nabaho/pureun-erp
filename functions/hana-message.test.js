@@ -50,7 +50,42 @@ test("금액 앞 공백이 없는 은행 알림도 읽는다", () => {
   assert.equal(got.transaction.amount, 1000000);
 });
 
-test("승인취소 문자는 출금으로 잘못 넣지 않고 검토 대상으로 제외한다", () => {
+/* ⚠ 2026-08-26 에 규칙이 «뒤집혔다» (대표: 「대기함, 확정은 손으로」).
+   그 전에는 취소 문자를 통째로 버렸는데, 그러면 카드 지출이 «실제보다 많아» 보인다.
+   이제는 대기함에 올리고 cancel 표를 달아 «사람이» 정한다.
+   ★ 이 검사는 그때 같이 안 고쳐져 빨강인 채로 남아 있었다 —
+     CI 가 tests/ 만 돌아서 아무도 못 봤다. 아래에서 CI 가 이 파일도 돌게 했다. */
+test("★★ 승인취소 문자는 «대기함에 올리고» 취소 표를 단다 (버리지 않는다)", () => {
   const got = HM.parseHanaMessage("하나9950 승인취소 26,000원 08/23 09:02 스시리", { now: NOW });
-  assert.deepEqual(got, { ok: false, reason: "card_cancel_review_required" });
+  assert.equal(got.ok, true, "취소를 버리면 카드 지출이 실제보다 많아 보인다");
+  assert.equal(got.transaction.cancel, true, "취소 표가 없으면 승인처럼 보인다");
+  assert.equal(got.transaction.src, "card");
+  assert.match(got.transaction.memo, /^\[취소\]/, "한눈에 취소인 줄 알아야 한다");
+});
+
+/* ★★ 실제 하나은행 입출금 문자의 «짧은 꼴» (2026-08-24 대표 문자).
+   은행 이름을 「하나」 한 낱말로 줄여 보낸다.
+   ⚠ 이 꼴이 여기 표본으로 «없어서» 폰 거르개 검사(tests/hana-phone-filter.test.js)가
+     이 꼴을 볼 수가 없었다 — 폰이 은행 문자를 통째로 버리는 것을 아무도 못 잡았다
+     (대표: 「왜 입출금내역은 없나 30일간」). 규칙은 주석이 아니라 «표본»으로 적어 둔다. */
+test("★★ 은행 짧은 꼴 — 「하나 08/24 16:35 … 입금」", () => {
+  const r = HM.parseHanaMessage("[Web발신]\n하나 08/24 16:35\n680******45904\n입금 512,073원\n잔액 3,210,000원", { now: NOW });
+  assert.equal(r.ok, true);
+  assert.equal(r.transaction.src, "bank");
+  assert.equal(r.transaction.type, "income");
+  assert.equal(r.transaction.amount, 512073);
+});
+
+test("★★ 은행 짧은 꼴 — 출금", () => {
+  const r = HM.parseHanaMessage("[Web발신]\n하나 08/25 09:31\n680******45904\n출금 110,000원\n잔액 3,100,000원", { now: NOW });
+  assert.equal(r.ok, true);
+  assert.equal(r.transaction.src, "bank");
+  assert.equal(r.transaction.type, "expense");
+});
+
+/* 「가능액」이 가게 이름에 붙어 남던 것 (2026-08-29 대표 화면) */
+test("★★ 「누적가능액」이 가게 이름에 안 붙는다", () => {
+  const r = HM.parseHanaMessage("[Web발신] 하나9950 승인 권*하 52,200원 일시불 07/31 11:48 롯데리아천 누적가능액 1,234,567원", { now: NOW });
+  assert.equal(r.ok, true);
+  assert.equal(r.transaction.memo, "롯데리아천");
 });

@@ -31,7 +31,9 @@ test('긴 표는 모두 옛 감싸개를 쓰지 않는다', () => {
      그 표만 overflowX:'auto' 라 높이가 없었고, 높이가 없으면 페이지가 구르는 상자가 되어
      sticky 가 아무 일도 못 한다: 도구줄·요약칩·머리줄이 통째로 딸려 올라갔다. */
   [{ re:/style:_ldBox\}[\s\S]{0,4000}?incList\.slice\(0,ldShow\)/,  name:'입금 표' },
-   { re:/style:_ldBox\}[\s\S]{0,4000}?expList\.slice\(0,ldShow\)/,  name:'출금 표' },
+   /* ⚠ 목록 «이름»을 못 박지 않는다 — 2026-08-29 에 카드별로 갈라 보게 되면서
+      expList → expCardList 가 됐다. 볼 것은 «그 표가 상자 안에 있는가» 다. */
+   { re:/style:_ldBox\}[\s\S]{0,4000}?exp(?:Card)?List\.slice\(0,ldShow\)/,  name:'출금 표' },
    { re:/style:_ldBox\}[\s\S]{0,4000}?nbSortTh\('wdate'/,           name:'나이스빌 CMS 표' }].forEach(function(c){
     const seg = c.re.exec(FL);
     assert.ok(seg, c.name + ' 가 _ldBox 안에 있어야 한다');
