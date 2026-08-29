@@ -135,8 +135,24 @@
     var ctx = canvas.getContext('2d');
     ctx.drawImage(img, spec.sx, spec.sy, spec.sw, spec.sh, 0, 0, spec.outW, spec.outH);
     ctx.fillStyle = MARK;
-    ctx.fillRect(Math.round(spec.mx * spec.scale), Math.round(spec.my * spec.scale),
-      Math.max(1, Math.round(spec.mw * spec.scale)), Math.max(1, Math.round(spec.mh * spec.scale)));
+    /* ── 칠한 «모양 그대로» 표시한다 (대표 지시 2026-08-29 「자유롭게 편집」) ──
+       opts.shape 는 사진과 같은 크기의 그림이고, 칠한 자리에만 색이 있다.
+       ⚠ 네모로 덮으면 지울 것 둘레의 **멀쩡한 배경까지 지우라고 시키는** 셈이다.
+         의자에 걸린 옷 하나를 지우려는데 네모 안의 벽·바닥까지 새로 그려진다.
+       ⚠ source-in — 「칠한 자리에만 마젠타」를 만드는 길이다. 모양을 먼저 그리고
+         그 위에 색을 덮되 **겹치는 곳만** 남긴다. */
+    if (opts.shape) {
+      var m = make(spec.outW, spec.outH);
+      var mc = m.getContext('2d');
+      mc.drawImage(opts.shape, spec.sx, spec.sy, spec.sw, spec.sh, 0, 0, spec.outW, spec.outH);
+      mc.globalCompositeOperation = 'source-in';
+      mc.fillStyle = MARK;
+      mc.fillRect(0, 0, spec.outW, spec.outH);
+      ctx.drawImage(m, 0, 0);
+    } else {
+      ctx.fillRect(Math.round(spec.mx * spec.scale), Math.round(spec.my * spec.scale),
+        Math.max(1, Math.round(spec.mw * spec.scale)), Math.max(1, Math.round(spec.mh * spec.scale)));
+    }
     return { spec: spec, dataUrl: canvas.toDataURL('image/jpeg', opts.quality || 0.9) };
   }
 

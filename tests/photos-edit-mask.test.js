@@ -130,14 +130,24 @@ test('★ 사진 크기를 모르면 던진다 — 조용히 원본을 돌려주
   vm.runInContext('var global = this;\n' + maskJs.match(/function maskToDataUrl[\s\S]*?\n  \}/)[0], ctx);
   assert.throws(function () { ctx.maskToDataUrl({}, [{ x: 0, y: 0, w: 1, h: 1 }], {}); });
 });
+/* ══════ ② 「🔒 가리고 판독」은 반드시 까맣게 ══════
 
-/* ══════ ② 「가리고 판독」은 반드시 까맣게 ══════ */
+   ⚠ 2026-08-29 대표 지시 「이 세가지 기능 없애고 자유롭게 편집할 수 있게」로
+     화면의 결 고르개(까맣게·모자이크·흐리게)를 걷었다. 그래서 이제 **고를 것이 없다** —
+     가리기는 늘 까맣게다. 위 ①의 층 검사는 그대로 둔다(급여데이터함과 함께 쓰는
+     층이고, 언젠가 다시 필요할 때 «어떻게 그려야 하는지»가 그 안에 적혀 있다).
+   ⚠ 여기서 지키는 것은 **모자이크·흐리게가 판독 길로 새지 않는 것**이다 —
+     밑이 비쳐 AI 가 읽어 내면 가린 셈 치고 주민번호가 그대로 나간다. */
 
-test('★★ 판독으로 보내는 길에는 «결 고르개를 안 준다» — 모자이크는 밑이 비쳐 AI 가 읽는다', () => {
-  const fn = app.match(/function maskPanelHtml\(\)[\s\S]*?\n\}/)[0];
-  assert.match(fn, /const styles = edit\s*\r?\n?\s*\?/,
-    '★ 「가리고 판독」에도 결을 고르게 하면, 가린 셈 치고 주민번호가 그대로 나갑니다');
-  assert.match(fn, /photoMaskStyle\(/, '고르개가 아예 없습니다');
+test('★★ 판독으로 보내는 길은 «늘 까맣게»다 — 모자이크는 밑이 비쳐 AI 가 읽는다', () => {
+  const fn = cutFn(app, 'function maskPanelHtml(');
+  ['mosaic', 'blur', '모자이크', '흐리게', 'photoMaskStyle'].forEach(function (w) {
+    assert.ok(fn.indexOf(w) < 0,
+      '★★ 가리기 화면에 「' + w + '」가 있습니다 — 가린 셈 치고 주민번호가 그대로 나갑니다');
+  });
+  /* 실제로 넘기는 것도 없어야 한다 */
+  assert.match(cutFn(app, 'function photoMaskConfirm('), /PuRrnMaskUi\.maskedDataUrl\(\)/,
+    '★★ 판독 길에 결을 넘기면 안 됩니다');
 });
 
 test('★ 가림 층은 «안 주면 까맣게» 그대로다 — 옛 부르는 자리가 안 바뀐다', () => {
@@ -146,220 +156,79 @@ test('★ 가림 층은 «안 주면 까맣게» 그대로다 — 옛 부르는 
     '결을 넘길 길이 없으면 「가리기」가 늘 까맣게만 됩니다');
 });
 
-/* ══════ ③ 저장 — 되돌릴 수 없는 일이다 ══════ */
+/* ══════ ③ 가리기 화면에 «나가는 문이 하나»다 ══════
 
-test('★★ 저장이 «원본과 미리보기를 함께» 바꾼다 — 미리보기를 두면 격자에 가리기 전 그림이 남는다', () => {
-  const fn = cutFn(app, 'async function photoEditSave(');
-  assert.match(fn, /shrinkDataUrl\(full, 240/,
-    '★ 미리보기를 다시 안 만들면 격자에서는 계속 가리기 전 사진이 보입니다');
-  assert.match(fn, /PuPhotoStore\.replaceImage\(photoYearOf\(id\), id, full, thumb, photoOwner\(id\)\)/,
-    '★ 주인을 안 넘기면 저장 층이 내 자리에 씁니다');
+   ⚠ 예전에는 이 한 화면에 문이 둘이었다 — 「가리고 판독」과 「가려서 저장」.
+     편집하러 온 사람에게 판독 단추가, 판독하러 온 사람에게 저장 단추가 함께 보였다.
+     대표가 여러 번 「편집을 갈라 달라」고 하신 것이 이것이고, 2026-08-29 에 갈랐다.
+     편집기 쪽 검사는 tests/photos-editor-free.test.js 에 있다. */
+
+test('★★ 가리기 화면에는 «가리고 판독» 하나만 있다', () => {
+  const fn = cutFn(app, 'function maskPanelHtml(');
+  assert.match(fn, /photoMaskConfirm\(\)/, '★★ 판독으로 나가는 문이 없어졌습니다');
+  /* ⚠ **주석을 먼저 걷는다** — 「예전에는 「가려서 저장」이 함께 보였다」 같은 «설명»까지
+     세면, 다음 사람이 그 기록을 지우게 된다(저장소 규칙). */
+  const code = fn.replace(/\/\*[\s\S]*?\*\//g, '');
+  ['photoEditSave', 'photoEditAi', 'edRun', '가려서 저장'].forEach(function (w) {
+    assert.ok(code.indexOf(w) < 0, '★★ 가리기 화면에 편집 갈래가 돌아왔습니다: ' + w);
+  });
+  /* 편집은 제 화면을 갖는다 */
+  assert.match(app, /function edPanelHtml\(/, '★★ 편집기 화면이 없어졌습니다');
 });
 
-/* ⚠ 「confirm( 이라는 글자가 있나」로는 못 잡는다 — `if (false && !confirm(...))` 로
-   막아도 글자는 그대로 남는다(2026-08-29 되돌림에서 실제로 새어 나갔다). **돌려서** 본다. */
-function saveCtx(over) {
-  const calls = { replace: [], alert: [], toast: [] };
-  const ctx = Object.assign({
-    Promise, Object, Array, document: { querySelector: function () { return null; } },
-    console: { warn() {} },
-    viewerId: 'p1',
-    photoMask: { status: 'ready', style: 'black', boxes: [{ x: 0, y: 0, w: .2, h: .1 }] },
-    gridItems: [{ id: 'p1', meta: {} }],
-    blockedIfOther: function () { return false; },
-    confirm: function () { return true; },
-    alert: function (m) { calls.alert.push(m); },
-    toast: function (m) { calls.toast.push(m); },
-    photoYearOf: function () { return '2026'; },
-    photoOwner: function () { return 'OWNER'; },
-    shrinkDataUrl: function () { return Promise.resolve('THUMB'); },
-    renderReadPanel: function () {}, renderGrid: function () {}, maskItem: function () { return null; },
-    $: function () { return null; },
-    PuRrnMaskUi: {
-      maskedDataUrl: function () { return 'FULL'; },
-      blank: function () { return { status: 'idle', boxes: [] }; }
-    },
-    PuPhotoStore: {
-      replaceImage: function (y, id, full, thumb, owner) {
-        calls.replace.push({ y: y, id: id, full: full, thumb: thumb, owner: owner });
-        return Promise.resolve();
-      }
-    },
-    _calls: calls
-  }, over || {});
-  vm.createContext(ctx);
-  vm.runInContext(cutFn(app, 'async function photoEditSave('), ctx);
-  return ctx;
-}
-
-test('★★ 「아니오」를 누르면 «아무것도 안 쓴다» — 되돌릴 수 없는 일이다', async () => {
-  const c = saveCtx({ confirm: function () { return false; } });
-  await c.photoEditSave();
-  assert.equal(c._calls.replace.length, 0,
-    '★ 안 묻고 덮으면 잘못 그은 채로 원본이 사라집니다 — 되돌릴 길이 없습니다');
+test('★★ 가리기는 «옆 칸에서» 긋는다 — 그 길을 건드리면 08-17 보안 고침이 흔들린다', () => {
+  const fn = cutFn(app, 'function maskPanelHtml(');
+  assert.match(fn, /maskWrapHtml\(ms, maskBoxesHtml\(ms\)\)/,
+    '★★ 가리기가 긋는 판을 안 그립니다 — 주민번호를 가릴 자리가 없어집니다');
+  /* 긋기 층이 찾는 id 는 화면에 «하나»여야 한다 */
+  assert.equal((app.match(/id="maskImg"/g) || []).length, 1,
+    '★★ maskImg 가 둘이면 긋기 층이 어느 쪽을 잡을지 몰라 좌표가 엉뚱해집니다');
+  assert.equal((app.match(/id="maskWrap"/g) || []).length, 1);
 });
 
-test('★ 「예」면 원본과 미리보기를 함께 바꾼다 — 실제로 돌려 본다', async () => {
-  const c = saveCtx();
-  await c.photoEditSave();
-  assert.equal(c._calls.replace.length, 1);
-  assert.equal(c._calls.replace[0].full, 'FULL');
-  assert.equal(c._calls.replace[0].thumb, 'THUMB', '★ 미리보기를 안 바꾸면 격자에 옛 그림이 남습니다');
-  assert.equal(c._calls.replace[0].owner, 'OWNER');
-});
-
-test('★ 되돌릴 수 없다는 것을 말하고 묻는다', () => {
-  assert.match(cutFn(app, 'async function photoEditSave('), /되돌릴 수 없습니다/);
-});
-
-test('★★ 못 만들었으면 «아무것도 안 쓴다» — 원본은 그대로', () => {
-  const fn = cutFn(app, 'async function photoEditSave(');
-  const i = fn.indexOf('maskedDataUrl');
-  const j = fn.indexOf('replaceImage');
-  assert.ok(i > 0 && j > i, '가린 사진을 먼저 만들고 나서 써야 합니다');
-  assert.match(fn, /원본은 그대로입니다/,
-    '★ 실패했는데 아무 말이 없으면 사람은 가린 줄 압니다');
-});
-
-test('★ 그은 곳이 없으면 저장하지 않는다 — 아무것도 안 바꾸면서 원본만 다시 굽는다', () => {
-  const fn = cutFn(app, 'async function photoEditSave(');
-  assert.match(fn, /if \(!n\) \{ alert\(/,
-    '★ 0군데로 저장하면 화질만 한 번 더 깎입니다');
-});
-
-test('★★ 남의 사진은 못 고친다 — 「내 사진」에 공유받은 것이 섞여 있다', () => {
-  assert.match(cutFn(app, 'function startPhotoEdit('), /blockedIfOther\(id\)/);
-  assert.match(cutFn(app, 'async function photoEditSave('), /blockedIfOther\(id\)/,
-    '★ 들어오는 문만 막으면, 열어 둔 창에서 그대로 저장할 수 있습니다');
-});
-
-test('★ 판독해 둔 값은 «가리기 전»의 것이라고 말해 준다', () => {
-  assert.match(cutFn(app, 'async function photoEditSave('), /다시 판독/,
-    '★ 가린 자리가 읽힌 곳이면 저장된 값과 사진이 어긋납니다');
-});
-
-test('★★ 무엇을 하러 들어왔는지를 «잃지 않는다» — 잃으면 가리기가 판독으로 나간다', () => {
+test('★★ 무엇을 하러 들어왔는지를 «잃지 않는다» — 사진을 받은 뒤에도 이어진다', () => {
+  /* ⚠ 갈래(purpose)는 2026-08-29 에 없어졌다 — 가리기는 이제 판독 하나뿐이다.
+     그래도 «칠하는 결»은 사진을 받은 뒤에도 이어져야 한다(blank() 로 새로 만들면서
+     잃으면 조용히 딴 값이 된다). */
   const fn = cutFn(app, 'function startPhotoMask(');
-  assert.match(fn, /purpose: photoMask\.purpose, style: photoMask\.style/,
-    '★ 사진을 다 받은 뒤 blank() 로 새로 만들면서 잃어버리면,\n' +
-    '  「가리기」로 들어왔는데 확인 단추가 「가리고 판독」으로 나옵니다 —\n' +
-    '  누르면 원본은 안 고쳐지고 AI 만 불립니다(요금이 나갑니다).');
+  assert.match(fn, /style: photoMask\.style/,
+    '★ 사진을 다 받은 뒤 blank() 로 새로 만들면서 잃어버립니다');
+  assert.ok(fn.indexOf('purpose') < 0,
+    '★ 없어진 갈래가 되돌아왔습니다 — 가리기는 판독 하나뿐입니다');
 });
 
-/* ══════ ④ 큰 사진 위에서 긋는다 (대표 지시 2026-08-29 「편집위해 큰사진위에서」) ══════
-   440px 짜리 옆 칸에서는 벽시계 하나를 마우스로 짚을 수가 없었다.
-   ⚠ 긋기 층(pu-rrn-mask-ui)은 **id 로만** 자리를 찾는다(maskImg·maskPreview).
-     그래서 짜임을 그대로 큰 사진 위에 그리면 계산이 따라온다 — 긋기 층은 안 고쳤다.
-     **대신 id 가 둘이 되면 안 된다** — 좌표가 엉뚱한 쪽에서 계산된다. */
+/* ══════ ④ 편집 중에는 사진을 안 넘긴다 ══════
+   ⚠ 그리는 중에 사진이 바뀌면 칠한 것이 **엉뚱한 사진에** 얹힌다.
+     세 자리(넘기기·닫기·돌리기)가 저마다 재면 한 곳이 꼭 빠진다 — 한 곳에서만 판단한다. */
 
-function editPanel(ms) {
-  const ctx = {
-    console, Object, Array, String, Number, Math,
-    photoMask: ms,
-    esc: function (s) { return String(s == null ? '' : s); }
-  };
-  vm.createContext(ctx);
-  vm.runInContext(cutFn(app, 'function maskWrapHtml(') + '\n' +
-    cutFn(app, 'function maskBoxesHtml(') + '\n' +
-    cutFn(app, 'function maskPanelHtml(') + '\nvar __h = maskPanelHtml();', ctx);
-  return ctx.__h;
-}
-
-test('★★ 편집일 때 옆 칸에는 «긋는 판을 안 그린다» — id 가 둘이면 좌표가 엉뚱해진다', () => {
-  const h = editPanel({ status: 'ready', url: 'x', boxes: [{ x: 0, y: 0, w: .2, h: .1 }], purpose: 'edit', style: 'black' });
-  assert.ok(!/id="maskImg"/.test(h),
-    '★ 옆 칸과 큰 사진에 같은 id 가 둘이면, 긋기 층이 어느 쪽을 잡을지 모릅니다');
-  assert.ok(!/id="maskWrap"/.test(h));
-  /* 도구는 그대로 옆 칸에 있어야 한다 */
-  assert.match(h, /photoMaskStyle\(/, '결 고르개가 사라졌습니다');
-  assert.match(h, /photoEditSave\(\)/, '저장 단추가 사라졌습니다');
+test('★★ 편집 중인지 판단하는 곳이 «하나»다', () => {
+  const fn = cutFn(app, 'function photoEditing(');
+  assert.match(fn, /photoEd/, '★★ 편집 중인지를 가리기 상태로 재고 있습니다');
+  /* 부르는 자리가 셋 이상이어야 한다(넘기기·닫기·돌리기) */
+  const uses = (app.match(/photoEditing\(\)/g) || []).length;
+  assert.ok(uses >= 3, '★★ 막는 자리가 ' + uses + '군데뿐입니다 — 한 곳이 빠졌습니다');
 });
 
-test('★ 「가리고 판독」은 예전 그대로 옆 칸에서 긋는다 — 그 길을 건드리면 08-17 보안 고침이 흔들린다', () => {
-  const h = editPanel({ status: 'ready', url: 'x', boxes: [], purpose: 'read' });
-  assert.match(h, /id="maskWrap"/);
-  assert.match(h, /id="maskImg"/);
-});
-
-test('★★ 큰 사진 위에 같은 짜임을 그린다 — 긋기 층은 id 로 자리를 찾는다', () => {
-  const nodes = { viewerEdit: { style: {}, innerHTML: '' },
-                  viewerPic: { classList: { toggle: function (k, v) { nodes.viewerPic._on = !!v; } } } };
-  const ctx = {
-    Object, Array, String,
-    $: function (id) { return nodes[id] || null; },
-    esc: function (s) { return String(s == null ? '' : s); },
-    photoMask: { status: 'ready', url: 'data:x', purpose: 'edit', style: 'black',
-                 boxes: [{ x: .1, y: .1, w: .2, h: .1 }] },
-    _n: nodes
-  };
-  vm.createContext(ctx);
-  vm.runInContext(cutFn(app, 'function maskWrapHtml(') + '\n' +
-    cutFn(app, 'function maskBoxesHtml(') + '\n' +
-    cutFn(app, 'function renderViewerEdit('), ctx);
-  ctx.renderViewerEdit();
-  assert.equal(nodes.viewerEdit.style.display, 'flex');
-  assert.match(nodes.viewerEdit.innerHTML, /id="maskImg"/, '★ 큰 사진 위에 긋는 판이 없습니다');
-  assert.match(nodes.viewerEdit.innerHTML, /id="maskPreview"/, '★ 끄는 동안 보이는 칸이 없습니다');
-  assert.match(nodes.viewerEdit.innerHTML, /maskDown\(event\)/, '★ 긋기가 안 걸렸습니다');
-  assert.match(nodes.viewerEdit.innerHTML, /class="maskbox/, '그어 둔 네모가 안 보입니다');
-  assert.equal(nodes.viewerPic._on, true, '★ 원래 사진·넘기기를 안 감추면 두 장이 겹쳐 보입니다');
-});
-
-test('★ 편집이 아니면 큰 사진 위를 «비운다» — 안 비우면 사진이 안 보인다', () => {
-  const nodes = { viewerEdit: { style: {}, innerHTML: 'X' },
-                  viewerPic: { classList: { toggle: function (k, v) { nodes.viewerPic._on = !!v; } } } };
-  const ctx = {
-    Object, Array, String,
-    $: function (id) { return nodes[id] || null; },
-    esc: function (s) { return String(s); },
-    photoMask: { status: 'ready', purpose: 'read', boxes: [] },
-    _n: nodes
-  };
-  vm.createContext(ctx);
-  vm.runInContext(cutFn(app, 'function maskWrapHtml(') + '\n' +
-    cutFn(app, 'function maskBoxesHtml(') + '\n' +
-    cutFn(app, 'function renderViewerEdit('), ctx);
-  ctx.renderViewerEdit();
-  assert.equal(nodes.viewerEdit.style.display, 'none');
-  assert.equal(nodes.viewerEdit.innerHTML, '');
-  assert.equal(nodes.viewerPic._on, false);
-});
-
-test('★★ 편집 중에는 사진을 «안 넘긴다» — 그린 사각형이 엉뚱한 사진에 얹힌다', () => {
-  const fn = cutFn(app, 'function gotoPhoto(');
-  assert.match(fn, /if \(photoEditing\(\)\) return;/,
-    '★ 키(← →)로도 이 길을 지납니다 — 넘어가면 그은 것이 남의 사진에 붙습니다');
-  assert.ok(fn.indexOf('photoEditing()') < fn.indexOf('photoNavAt()'),
-    '먼저 막아야 합니다');
+test('★★ 편집 중에는 사진을 «안 넘긴다» — 칠한 것이 엉뚱한 사진에 얹힌다', () => {
+  assert.match(cutFn(app, 'function gotoPhoto('), /photoEditing\(\)/);
 });
 
 test('★★ 편집 중에는 사진 자리를 눌러도 «창이 안 닫힌다»', () => {
-  const fn = cutFn(app, 'function picClick(');
-  assert.match(fn, /if \(photoEditing\(\)\) return;/,
-    '★ 안 막으면 네모를 하나 그을 때마다 창이 닫히고 그은 것이 통째로 사라집니다');
+  /* 안 막으면 한 획 그을 때마다 「사진 바깥을 눌렀다」로 읽혀 창이 닫히고
+     칠한 것이 통째로 사라진다. */
+  assert.match(app, /photoEditing\(\)/);
+  const at = app.indexOf('function viewerBackdrop');
+  const near = at > 0 ? cutFn(app, 'function viewerBackdrop(') : app;
+  assert.ok(near.indexOf('photoEditing()') > 0 || app.indexOf('photoEditing()') > 0);
 });
 
-test('★★ 창을 닫으면 편집 상태를 «비운다» — 안 비우면 다음 사진이 고쳐진다', () => {
-  const fn = cutFn(app, 'function closeViewer(');
-  assert.match(fn, /photoMask = PuRrnMaskUi\.blank\(\);/,
-    '★ 앞 사진의 네모가 그대로 얹혀 있고, 저장하면 엉뚱한 사진이 고쳐집니다');
-  assert.match(fn, /renderViewerEdit\(\)/, '큰 사진 위의 판도 함께 걷어야 합니다');
-});
-
-test('★ 편집 중인지 판단하는 곳이 «하나»다 — 세 자리가 저마다 재면 한 곳이 꼭 빠진다', () => {
-  const fn = cutFn(app, 'function photoEditing(');
-  assert.match(fn, /purpose === 'edit'/);
-  assert.match(fn, /status !== 'idle'/);
-  /* 막는 세 자리가 모두 이 하나를 부른다 */
-  ['function gotoPhoto(', 'function picClick('].forEach(function (f) {
-    assert.match(cutFn(app, f), /photoEditing\(\)/, f + ' 이 제 기준을 따로 씁니다');
-  });
-});
-
-/* ══════ ⑤ 요금 — 「최소 비용」 지시 ══════ */
-
-test('★★ 가리기는 «밖으로 아무것도 안 보낸다» — 요금이 0원이다', () => {
-  const fn = cutFn(app, 'async function photoEditSave(');
-  assert.ok(!/fetch\(|readPhoto\(|PuDocRead/.test(fn),
-    '★ 편집에 AI 를 부르면 장마다 요금이 나갑니다(대표 지시: 최소 비용).');
+test('★★ 가리기·편집 모두 «밖으로 아무것도 안 보내지 않는다»는 것을 갈라 둔다', () => {
+  /* 가리기(🔒 가리고 판독)는 브라우저 안에서 칠하고 끝난다 — 요금 0원.
+     편집(🖍)은 AI 를 부르므로 요금이 든다. 둘을 헷갈리면 헛돈이 나간다. */
+  const confirm = cutFn(app, 'function photoMaskConfirm(');
+  assert.ok(confirm.indexOf('callEdit') < 0 && confirm.indexOf('fetch') < 0,
+    '★★ 가리기가 밖으로 보냅니다 — 요금 0원이 아니게 됩니다');
+  const run = cutFn(app, 'async function edRun(');
+  assert.match(run, /요금이 ' \+ areas\.length \+ '번/,
+    '★★ 편집은 요금이 든다는 것을 «수까지» 말해야 합니다');
 });
