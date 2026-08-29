@@ -215,3 +215,38 @@ test('★ PC·폰 목록 둘 다 그림 클립을 쓴다 — 한쪽만 바꾸면
     assert.ok(/<svg[^>]*>/.test(joined), where + ' 줄의 첨부 표시가 그림이 아닙니다');
   });
 });
+
+/* ══════ 칸을 «여는» 것도 빨라야 한다 (2026-08-29 뒤늦게 잡음) ══════
+   ⚠ 옆줄만 고치고 끝난 줄 알았다. 배포본으로 다시 재 보니 담당자 칸을 «여는» 것은
+     아직 8.3초였다 — 앞서 0.2초로 보였던 것은 그때 잠깐 있던 캐시 덕이었고,
+     그 캐시는 정확성 때문에 걷어냈다. 재는 자리를 바꾸면 답도 바뀐다.
+   목록을 거르는 자리(mbRowFits)가 줄마다 담당자 표를 다시 찾고 있었다. */
+
+test('★★ 담당자 칸을 열 때 담당자 표를 «줄마다» 다시 찾지 않는다', () => {
+  const c = load();
+  let found = 0;
+  vm.runInContext('(function(){ const _r = mbWhoIndex;'
+    + ' mbWhoIndex = function(){ __countIdx(); return _r.apply(null, arguments); }; })();', c);
+  c.__countIdx = () => { found++; };
+  c.state.mbBox = '@' + NAMES[0];
+  c.mbAllRows();
+  assert.ok(found > 0, '검사 밑그림이 틀렸습니다 — 표를 한 번도 안 찾았습니다');
+  assert.ok(found < ROWS / 4,
+    '목록을 한 번 거르는 데 담당자 표를 ' + found + '번 찾습니다 (메일 ' + ROWS + '통) — '
+    + '메일 수에 따라 늘어나면 통수가 늘수록 칸 열기가 느려집니다');
+});
+
+test('★ 빨라졌어도 «누가 그 칸에 들어가는가»는 그대로다', () => {
+  const c = load();
+  const id = '@' + NAMES[0];
+  c.state.mbBox = id;
+  const fast = c.mbAllRows().map(v => v._key).sort().join(',');
+  /* 표를 안 넘겨 «줄마다 찾던» 옛 길과 견준다 — 답이 같아야 한다 */
+  const slow = [];
+  Object.keys(MSGS).forEach(slug => Object.keys(MSGS[slug]).forEach(uid => {
+    const row = MSGS[slug][uid];
+    const v = Object.assign({}, row, { _slug:slug, _box:'', _key:slug+':'+uid });
+    if (c.mbRowFits(v, id)) slow.push(v._key);
+  }));
+  assert.equal(fast, slow.sort().join(','), '표를 넘겼더니 답이 달라졌습니다');
+});
