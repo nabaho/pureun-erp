@@ -294,7 +294,31 @@ rules.activeWriter = { '.read': LOGIN, '.write': LOGIN };
 /* 로그인 «전» 에도 읽는다 — 새 판이 나왔는지 보는 칸이라 그렇다 */
 rules.appBuild = { '.read': true, '.write': ADMIN };
 
-rules.mailbox  = { '.read': `auth != null && ${ADMIN}`, '.write': false };
+/* ══ 회사 메일함 ═══════════════════════════════════════════════════════
+   ⚠ 「직원」의 뜻을 «로그인한 사람»으로 두면 안 된다 — 회사 메일함에는 고객사
+     임직원의 신상이 제목에까지 들어 있다. uid_roles 에 «사번이 적힌 재직자»만 본다.
+   ⚠ 서버 함수(functions/mail-sync.js requireMailUser)도 «같은 뜻»으로 막는다 —
+     한쪽만 열면 「목록은 보이는데 본문에서 403」이 된다.
+   (대표 지시 2026-08-27 「전 직원에게 다 열기」) */
+const STAFF = `auth != null && root.child('uid_roles').child(auth.uid).child('sid').exists()`
+            + ` && root.child('uid_roles').child(auth.uid).child('status').val() === 'active'`;
+rules.mailbox  = { '.read': STAFF, '.write': false };
+
+/* ══ 「누가 봤나」 — 혼자 맡은 건 (대표 지시 2026-08-29) ═══════════════════
+   "주담당 부담당만 본 기록 남게 하면 된다. 나머지는 기록은 권형하만 확인이 된다."
+
+   ★ 왜 pucards «밖»에 있나 — pucards 는 위쪽에 .read 가 걸려 있고, 파이어베이스
+     규칙은 «위에서 허락하면 아래에서 못 막는다». 그 밑에 두면 전 직원이 읽는다.
+   ⚠ 읽기는 대표님만. 쓰기는 «자기 사번 칸에만» — 남의 이름으로 못 적는다.
+   ⚠ 공동으로 맡은 건의 기록은 pucards/mailSeen 에 있다(서로 봐야 두 번 일하지 않는다). */
+rules.pu_mailseen = {
+  '.read': `auth != null && ${ADMIN}`,
+  $mail: { $sid: {
+    '.write': `auth != null`
+      + ` && root.child('uid_roles').child(auth.uid).child('sid').val() === $sid`
+      + ` && root.child('uid_roles').child(auth.uid).child('status').val() === 'active'`
+  } }
+};
 rules.homepage = { '.read': `auth != null && ${ADMIN}`, '.write': `auth != null && ${ADMIN}` };
 rules.kcareer  = { $uid: { '.read': 'auth != null && auth.uid === $uid', '.write': 'auth != null && auth.uid === $uid' } };
 
