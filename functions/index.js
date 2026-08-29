@@ -1537,6 +1537,101 @@ exports.regroupPaydataShared = functions
   });
 
 
+/* ══════ 잘못 온 자료를 다른 사람에게 넘기기 (대표 지시 2026-08-29) ══════
+   대표: 「만약 잘못 갈라 보내면 다른 사람에게 보낼 수 있게 시스템 만들어야 한다」
+
+   자료가 내 대기 칸에 있으면 나는 지우거나 서랍에 담을 수만 있었다.
+   **남의 칸에는 못 쓴다** — 콘솔 규칙이 「자기 자리와 대리인만」으로 막는다.
+   그래서 잘못 온 자료는 버리거나 그냥 떠안는 수밖에 없었다.
+
+   ⚠ 옮기는 것은 **한 줄뿐**이다. 창고의 파일은 그대로 둔다 — 빠르고, 잘못돼도
+     되돌리기 쉽다.
+   ⚠ 넘길 수 있는 사람: **그 자료를 갖고 있는 사람**과 총괄관리자.
+     남의 칸을 아무나 뒤지면 안 된다.
+   ⚠ 아직 급여데이터함에 안 들어온 사람에게는 **못 넘긴다** — 아무도 안 여는
+     자리에 두면 사라진 것과 같다(갈라 보내기와 같은 규칙).
+   ⚠ 까닭을 반드시 적는다. 「왜 나한테 왔지」를 받는 사람이 알아야 한다. */
+const HAND_WHY_MAX = 200;
+
+exports.handPaydataItem = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 60, memory: "256MB" })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+
+    let me;
+    try { me = await requireStaff(req); }
+    catch (e) { res.status(e.status || 401).json({ ok: false, error: String(e.message || e) }); return; }
+
+    const body = req.body || {};
+    const ids = (Array.isArray(body.ids) ? body.ids : [body.id])
+      .map((x) => String(x || "")).filter(Boolean);
+    const from = String(body.from || "");
+    const to = String(body.to || "");            // 빈칸이면 공용 칸으로 되돌린다
+    const why = cleanText(body.why, HAND_WHY_MAX);
+    if (!ids.length) { res.status(400).json({ ok: false, error: "넘길 자료를 고르십시오." }); return; }
+    if (!from) { res.status(400).json({ ok: false, error: "어느 자리에서 넘기는지 알 수 없습니다." }); return; }
+    if (!why) { res.status(400).json({ ok: false, error: "왜 넘기는지 적어 주십시오 — 받는 사람이 알아야 합니다." }); return; }
+    if (to && to === from) { res.status(400).json({ ok: false, error: "같은 자리로는 넘길 수 없습니다." }); return; }
+
+    const db = getDatabase();
+    try {
+      /* 갖고 있는 사람이거나 총괄관리자만 */
+      if (me.uid !== from) {
+        const roleSnap = await db.ref("uid_roles/" + me.uid).once("value");
+        if (((roleSnap && roleSnap.val()) || {}).isAdmin !== true) {
+          res.status(403).json({ ok: false, error: "그 자리의 자료는 본인이나 총괄관리자만 넘길 수 있습니다." });
+          return;
+        }
+      }
+      /* 받는 사람이 이 함에 들어와 있는가 — 안 들어온 자리에 두면 사라진 것과 같다 */
+      if (to) {
+        const own = await db.ref(PAYDATA_ROOT + "/owners/" + to).once("value");
+        if (!own || !own.val()) {
+          res.status(400).json({ ok: false, error: "그 분은 아직 급여데이터함에 들어온 적이 없습니다 — 한 번 열어야 자리가 생깁니다." });
+          return;
+        }
+      }
+
+      const up = {};
+      const done = [];
+      const now = Date.now();
+      for (const id of ids) {
+        const snap = await db.ref(PAYDATA_ROOT + "/u/" + from + "/pending/" + id).once("value");
+        const rec = snap && snap.val();
+        if (!rec) continue;                       // 그 사이 누가 처리했다
+        const moved = Object.assign({}, rec, {
+          handedFrom: from, handedBy: me.uid, handedAt: now, handWhy: why
+        });
+        if (to) {
+          up[PAYDATA_ROOT + "/u/" + to + "/pending/" + id] = moved;
+        } else {
+          /* 임자를 모를 때는 공용 칸으로 — 아무에게나 떠넘기는 것보다 낫다 */
+          up[PAYDATA_ROOT + "/pending_shared/" + id] = Object.assign({}, moved, {
+            why: "사람이 되돌림 — " + why
+          });
+        }
+        up[PAYDATA_ROOT + "/u/" + from + "/pending/" + id] = null;
+        /* 누가·언제·누구에게·왜 — 자료가 돌고 돌면 어디서 어긋났는지 찾아야 한다 */
+        up[PAYDATA_ROOT + "/handoff_log/" + id + "_" + now] = {
+          id: id, from: from, to: to, by: me.uid, at: now, why: why,
+          filename: String(rec.filename || "")
+        };
+        done.push(id);
+      }
+      if (!done.length) { res.json({ ok: true, moved: 0, note: "옮길 것이 없습니다 — 이미 처리됐을 수 있습니다." }); return; }
+      await db.ref().update(up);
+      console.log("handPaydataItem", { by: me.uid, from, to: to || "(공용)", n: done.length });
+      res.json({ ok: true, moved: done.length, to: to });
+    } catch (e) {
+      console.error("handPaydataItem 실패:", String((e && e.message) || e));
+      res.status(500).json({ ok: false, error: String((e && e.message) || e) });
+    }
+  });
+
+
 /* 지문·간편 로그인(패스키) — 판단은 functions/passkey.js 한 곳에서만 한다.
    로그인 문을 여는 코드라 다른 함수와 섞지 않는다. */
 const _passkey = require('./passkey');
