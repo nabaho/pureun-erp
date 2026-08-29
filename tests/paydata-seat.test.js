@@ -36,6 +36,9 @@ function loadApp(appState) {
     cut('pickOn'), cut('pickToggle'), cut('pickSetAll'), cut('pickList'),
     cut('pickAllOn'), cut('pickPrune'), cut('pickOf'), cut('pickPut'), cut('pickBar'),
     cut('canWrite'), cut('bannerHtml'),
+    /* 사업장 머리에 담당자 메일 한 줄이 붙는다(2026-08-29) — 이 파일이 보는 것은
+       「남의 자리에서 지우기·폴더 만들기가 없는가」라 그 줄은 있기만 하면 된다. */
+    cut('coMailsHtml'), cut('coOwnerName'), cut('fixPeople'),
     cut('guessTag'), cut('pendTagOf'), cut('setPendTag'), cut('screenPending'),
     cut('drawerCounts'), cut('drawerModel'), cut('searchRows'),
     cut('folderCounts'), cut('folderRows'), cut('folderBar'), cut('folderEditorHtml'),

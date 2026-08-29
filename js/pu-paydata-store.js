@@ -1184,7 +1184,25 @@
         status: String(row.status || ''),
         suspended: !!row.suspended,
         managerMain: String(row.managerMain || ''),
-        managerSubs: Array.isArray(row.managerSubs) ? row.managerSubs.slice() : []
+        managerSubs: Array.isArray(row.managerSubs) ? row.managerSubs.slice() : [],
+        /* 담당자 메일 (대표 지적 2026-08-29 「왜 여기에서는 확인이 어려운가」) —
+           업체관리에는 넣어 두었는데 **이 화면이 그 칸을 안 가져와서** 어디에도
+           안 보였다. 사업장을 열었을 때 「이 사업장 메일은 어디서 오는가」가
+           바로 보여야 한다.
+           ⚠ contacts[] 가 진짜고 primaryContact* 는 그중 대표를 비춘 딸림값이다 —
+             옛 업체는 딸림값만 있어 둘 다 가져온다.
+           ⚠ 여기서 무겁게 담지 않는다. 메일·이름·직책만 — 전화·주소까지 담으면
+             371곳을 그릴 때마다 그 글이 다 따라온다. */
+        contacts: (Array.isArray(row.contacts) ? row.contacts : [])
+          .filter(function (c) { return c && (c.email || c.name); })
+          .map(function (c) {
+            return { name: String(c.name || ''), position: String(c.position || ''),
+              email: String(c.email || ''), isPrimary: !!c.isPrimary };
+          }),
+        primaryContactName: String(row.primaryContactName || ''),
+        primaryContactEmail: String(row.primaryContactEmail || ''),
+        taxOfficeName: String(row.taxOfficeName || ''),
+        taxEmail: String(row.taxEmail || '')
       });
     }
     return out;
@@ -1239,6 +1257,30 @@
     up[coFieldPath(coId, 'managerMain')] = s;
     up[ERP_COMPANIES + '/u'] = Date.now();
     return deps.db.ref().update(up).then(function () { return true; });
+  }
+
+  /* 한 사업장의 담당자 메일 줄 — 화면이 그대로 그린다.
+     ⚠ 같은 주소가 contacts 와 딸림값에 둘 다 있으면 한 번만 보인다.
+     ⚠ 세무사무소는 **갈라서** 준다 — 업체 담당자와 뜻이 다르다(한 주소가 여러
+       사업장에 걸리기도 한다). */
+  function companyMails(co) {
+    var out = [], seen = {};
+    var push = function (name, email, kind) {
+      var e = String(email || '').trim();
+      if (!e) return;
+      var low = e.toLowerCase();
+      if (seen[low]) return;
+      seen[low] = 1;
+      out.push({ name: String(name || ''), email: e, kind: kind });
+    };
+    var arr = (co && Array.isArray(co.contacts)) ? co.contacts : [];
+    arr.filter(function (c) { return c && c.isPrimary; })
+      .forEach(function (c) { push(c.name, c.email, 'contact'); });
+    arr.filter(function (c) { return c && !c.isPrimary; })
+      .forEach(function (c) { push(c.name, c.email, 'contact'); });
+    push((co && co.primaryContactName) || '', (co && co.primaryContactEmail) || '', 'contact');
+    push((co && co.taxOfficeName) || '', (co && co.taxEmail) || '', 'tax');
+    return out;
   }
 
   /* 보낸이 주소를 그 사업장 담당자로 넣기 —
@@ -1757,6 +1799,7 @@
     ERP_COMPANIES: ERP_COMPANIES,
     setCompanyOwner: setCompanyOwner,
     addCompanyEmail: addCompanyEmail,
+    companyMails: companyMails,
     normalizeCompanies: normalizeCompanies,
     listCompanies: listCompanies,
     isPayrollCompany: isPayrollCompany,
