@@ -1501,3 +1501,123 @@ test('★ 규칙을 콘솔에 붙여넣으라는 안내가 저장소에 있다',
   assert.match(t, /pu_mailseen/, '붙여넣을 규칙 원문이 없습니다');
   assert.match(t, /isAdmin/, '대표님만 읽는다는 조건이 없습니다');
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+   「담당자 보내기」 — 다음메일의 「이동」 자리 (대표 승인 목업 2026-08-29)
+   ══════════════════════════════════════════════════════════════════════════
+   "푸른메일함에도 캡쳐2 기능 만들어달라. 담당자 보내기로"
+
+   ★ 지키는 것 다섯
+     1. 메일이 «안 움직인다» — 업무 칸 통수가 그대로여야 한다(담당자 칸은 거르개다)
+     2. 낱개로 박은 것이 «주소 규칙보다 세다» — 안 그러면 그 단추가 아무 뜻이 없다
+     3. 체크를 안 켜면 «고른 것만» — 다른 메일까지 따라가면 안 된다
+     4. 「지난 것도」는 지금 보는 칸이 아니라 «온 메일함»을 뒤진다
+     5. 되돌리면 «주소 규칙도» 지운다 — 안 지우면 도로 그 사람에게 간다 */
+function loadMv(over){
+  const o = over || {};
+  const c = loadCo(o);
+  /* ⚠ 이 대역에는 업무 칸이 «하나»뿐이라 「지난 메일도 함께」를 잴 수가 없다 —
+       같은 주소에서 온 메일이 한 통밖에 없기 때문이다.
+       그래서 «다른 업무 칸»에 같은 보낸이의 지난 메일을 한 통 더 심는다. */
+  vm.runInContext('_mbWhoMsg = ' + JSON.stringify(o.msg || {}) + ';'
+    + '_mbFolders.B_PAY = { path:"2.급여", name:"2.급여", kind:"custom", order:7, total:1, unseen:0 };'
+    + '_mbMsgs.B_PAY = { "20": { u:20, f:"보낸이", e:"a@hanbit.co.kr", t:"370-6@daum.net",'
+    + ' s:"지난 급여 자료", d:1755000000, r:1, g:0, a:0, z:1 } };', c);
+  c.state.mbOwnKeep = !!o.keep;
+  c.state.mbOwnPast = !!o.past;
+  return c;
+}
+/* 고른 «척» 한다.
+   ⚠ 줄 번호(rows[0])로 고르면 안 된다 — 목록은 «최신순»이라 엉뚱한 보낸이가 잡힌다.
+     실제로 그렇게 잡아서 검사 둘이 헛돌았다. 보낸이 «주소»로 찾는다. */
+function pick(c, email){
+  /* ⚠ '~B_JAMUN' 로 고르면 안 된다 — 이 대역은 _mbBins 가 비어 있어 그 칸이 늘 0통이다.
+     '*all' 은 칸을 안 따지므로 어느 대역에서나 줄이 보인다. */
+  c.state.mbBox = '*all';
+  const rows = c.mbAllRows();
+  const v = rows.find(x => String(x.e||'').toLowerCase() === String(email).toLowerCase());
+  assert.ok(v, '검사 밑그림이 틀렸다 — ' + email + ' 에서 온 메일이 없다: '
+    + rows.map(r=>r.e).join(' '));
+  c.state.pick.mbox = {}; c.state.pick.mbox[v._key] = 1;
+  return v;
+}
+
+test('★★ 낱개로 박은 것이 «주소 규칙보다 세다»', () => {
+  const c = loadMv({ owner: { 'a@hanbit,co,kr': '김보람' },
+                     msg: { 'b_jamun:1': '최기운' } });
+  const v = { e:'a@hanbit.co.kr', _key:'B_JAMUN:1', _slug:'B_JAMUN' };
+  assert.equal(c.mbWhoOfRow(v), '최기운',
+    '★ 주소 규칙이 낱개로 박은 것을 덮었습니다 — 그러면 「담당자 보내기」가 아무 뜻이 없습니다');
+});
+
+test('★ 낱개로 박으면 그 사람 칸에 «담긴다»', () => {
+  const c = loadMv({ msg: { 'b_jamun:1': '김보람' } });
+  const v = { e:'a@hanbit.co.kr', r:1, _key:'B_JAMUN:1', _slug:'B_JAMUN' };
+  assert.equal(c.mbRowFits(v, '@김보람'), true, '박은 사람 칸에 안 담긴다');
+  assert.equal(c.mbRowFits(v, '@박한별'), false, '옛 담당자 칸에도 남아 있다');
+});
+
+test('★★ 메일이 «안 움직인다» — 업무 칸 통수가 그대로다', () => {
+  const before = (() => { const c = loadMv(); c.state.mbBox = '~B_JAMUN';
+    return c.mbAllRows().length; })();
+  const c = loadMv({ msg: { 'b_jamun:1': '김보람' } });
+  c.state.mbBox = '~B_JAMUN';
+  assert.equal(c.mbAllRows().length, before,
+    '★ 담당자를 보냈더니 업무 칸에서 메일이 사라졌습니다 — 담당자 칸은 «거르개»입니다');
+});
+
+test('★ 체크를 안 켜면 «고른 것만» 간다 — 같은 주소의 다른 메일은 그대로', () => {
+  const c = loadMv();
+  pick(c, 'a@hanbit.co.kr');
+  c.mbOwnerPut('김보람');
+  const w = c._held.wrote['pucards'] || {};
+  const keys = Object.keys(w).filter(k=>/mailWhoMsg/.test(k));
+  assert.equal(keys.length, 1, '고른 것 말고도 박았습니다: ' + keys.join(' '));
+  assert.ok(!Object.keys(w).some(k=>/mailWho\//.test(k)),
+    '★ 체크를 안 켰는데 «주소 규칙»을 남겼습니다');
+});
+
+test('★★ 「앞으로 오는 것도」를 켜면 «주소 규칙»을 남긴다', () => {
+  const c = loadMv({ keep: true });
+  pick(c, 'a@hanbit.co.kr');
+  c.mbOwnerPut('김보람');
+  const w = c._held.wrote['pucards'] || {};
+  assert.ok(Object.keys(w).some(k=>/^config\/mailWho\//.test(k)),
+    '★ 주소 규칙이 안 남았습니다: ' + Object.keys(w).join(' '));
+});
+
+test('★★ 「지난 메일도」는 «온 메일함»을 뒤진다 — 지금 보는 칸만 보면 반쪽이다', () => {
+  /* a@hanbit.co.kr 은 B_JAMUN 과 B_PAY 두 칸에 있다 */
+  const c = loadMv({ past: true });
+  pick(c, 'a@hanbit.co.kr');
+  c.mbOwnerPut('김보람');
+  const w = c._held.wrote['pucards'] || {};
+  const keys = Object.keys(w).filter(k=>/mailWhoMsg/.test(k));
+  assert.ok(keys.length >= 2,
+    '★ 다른 칸에 있는 지난 메일을 안 박았습니다 (' + keys.length + '개): ' + keys.join(' '));
+  assert.ok(keys.some(k=>/b_pay/.test(k)), '다른 업무 칸의 지난 메일이 빠졌습니다');
+});
+
+test('★ 되돌리면 «주소 규칙도» 지운다 — 안 지우면 도로 그 사람에게 간다', () => {
+  const c = loadMv({ owner: { 'a@hanbit,co,kr': '김보람' }, msg: { 'b_jamun:1': '김보람' } });
+  pick(c, 'a@hanbit.co.kr');
+  c.mbOwnerPut('');
+  const w = c._held.wrote['pucards'] || {};
+  assert.equal(w['config/mailWho/a@hanbit,co,kr'], null,
+    '★ 주소 규칙이 남아 있어 되돌려도 도로 갑니다: ' + JSON.stringify(w));
+});
+
+test('★ 창에 «메일이 안 움직인다»는 말이 있다 — 없으면 옮겨진 줄 안다', () => {
+  const c = loadMv();
+  pick(c, 'a@hanbit.co.kr');
+  let html = '';
+  c.$ = () => ({ set innerHTML(v){ html = v; }, get innerHTML(){ return html; },
+    style:{}, getBoundingClientRect:()=>({}), classList:{ add(){}, remove(){} } });
+  vm.runInContext('$ = ' + 'globalThis.$', c);
+  /* 창을 그리는 것만 본다 — 자리 잡기(mbPlaceMenu)는 화면이 있어야 한다 */
+  try{ c.mbOwnerMove({ }); }catch(_){ }
+  assert.match(html, /움직이지 않습니다/, '★ 「메일이 안 움직인다」는 말이 창에 없습니다');
+  assert.match(html, /자문사로 잇기/, '더 나은 길(자문사로 잇기)을 안 알려 줍니다');
+  assert.match(html, /지난 메일도 함께/, '다음메일의 둘째 체크가 없습니다');
+});
+
