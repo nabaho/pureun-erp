@@ -102,6 +102,12 @@ test('화면은 실시간DB에 직접 쓰지 않는다 — 쓰기는 저장 층�
     /* 밖으로 끌어낼 사진을 미리 쥐어 두는 Map — 머릿속 기억이지 클라우드가 아니다
        (2026-08-25). 이것까지 막으면 검사가 엉뚱한 곳에서 걸려 신뢰를 잃는다. */
     .replace(/warm(Urls|Data)\.set\(/g, 'MAP(')
+    /* 그림 조각의 값 바꾸기·걷어내기 — 캔버스 위의 일이지 클라우드가 아니다(2026-08-29
+       ✏️ 글자·도형). fabric 은 o.set('fill', …) · canvas.remove(o) 로 말한다.
+       ⚠ 여기를 넓게 열면 진짜 DB 쓰기가 숨는다 — **글자 값으로 시작하는 set** 과
+         edFab 이라는 이름을 콕 집는다. */
+    .replace(/\bo\.set\('(fill|stroke)',/g, 'CANVAS(')
+    .replace(/\bedFab\.(remove|dispose)\(/g, 'CANVAS(')
     .replace(/\ba\.remove\(\)/g, 'DOM()');     // 임시 내려받기 링크 걷어내기 — DB 쓰기가 아니다
   for (const call of ['.set(', '.update(', '.remove(']) {
     assert.ok(!noDom.includes(call), '화면이 클라우드에 직접 쓰고 있습니다: ' + call);
