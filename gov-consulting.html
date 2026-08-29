@@ -1036,7 +1036,6 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
     <span class="hdr-extra">
       <button class="notif-btn" id="helpBtn" data-tip="키보드 단축키 안내 ( ? )">⌨️</button>
       <button class="notif-btn" id="photoLogBtn" data-tip="사진 변경 이력 (등록·교체·삭제)">🕘</button>
-      <button class="zip-btn" id="zipBtn" data-tip="전체 데이터 백업 — ZIP 파일로 내보내기">📦 ZIP</button>
     </span>
     <button class="notif-btn hdr-more" id="hdrMoreBtn" type="button" aria-expanded="false" data-tip="사진·백업·단축키">⋯</button>
   </div>
@@ -1195,8 +1194,21 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
     <div style="display:flex;flex-direction:column;gap:12px;max-width:400px;">
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px;">
         <div style="font-size:13px;font-weight:800;margin-bottom:4px;">⬇ 내보내기</div>
-        <div style="font-size:11px;color:var(--t2);margin-bottom:10px;">직원·컨설팅종류·사업장·일정 전체를 JSON 파일로 저장합니다.</div>
+        <div style="font-size:11px;color:var(--t2);margin-bottom:10px;">직원·컨설팅종류·사업장·일정 전체를 JSON 파일로 저장합니다.
+          <b>사진은 안 들어갑니다</b> — 사진은 아래 ZIP 으로 따로 받습니다.</div>
         <button class="btn btn-p" id="exportJsonBtn" style="width:100%;padding:10px;">JSON 파일로 내보내기</button>
+      </div>
+      <!-- 📦 현장 사진 ZIP — 머리줄에서 여기로 옮겼다 (대표 지시 2026-08-29).
+           ⚠ 이름표를 바로잡았다: 예전에는 「전체 데이터 백업」이라 적혀 있었는데
+             실제로 담기는 것은 **사진뿐**이다. 자료는 위 JSON 이 담는다.
+           ⚠ 「전부」가 아니라는 것도 적는다 — 이 PC 에 올라와 있는 사진만 담긴다. -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px;">
+        <div style="font-size:13px;font-weight:800;margin-bottom:4px;">📦 현장 사진 ZIP</div>
+        <div style="font-size:11px;color:var(--t2);margin-bottom:10px;">
+          증빙 사진을 <b>업체·컨설팅 폴더로 나눠</b> ZIP 으로 받습니다(파일 이름에 회차·칸).<br>
+          ⚠ <b>이 PC 에 올라와 있는 사진만</b> 담깁니다 — 다른 PC 에서 찍은 것은 안 들어갑니다.
+        </div>
+        <button class="btn btn-s" id="zipBtn" style="width:100%;padding:10px;">📦 사진 ZIP 으로 받기</button>
       </div>
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px;">
         <div style="font-size:13px;font-weight:800;margin-bottom:4px;">⬆ 가져오기</div>
@@ -2097,6 +2109,7 @@ function fbInit(){
         fbSyncDown();   // 최초 1회 전체 수신
         fbSubscribe();  // 실시간 구독
         subscribeRoundLog(); // 회차 변경 이력 구독
+        subscribePhotoLog(); // 사진 변경 이력 구독 (2026-08-29 공용으로 옮김)
         updateFbStatus('🟢');
         if(_savePending===0)setSaveState('saved','저장 완료','클라우드 연결이 정상입니다.');
       }
@@ -2497,39 +2510,65 @@ async function getPhotoFromDB(sid,key){
   try{const db=await openPhotoDB();return await new Promise(res=>{const tx=db.transaction('photos','readonly');const rq=tx.objectStore('photos').get(`${sid}_${key}`);rq.onsuccess=()=>res(rq.result||null);rq.onerror=()=>res(null);});}catch(e){return null;}
 }
 
-// ===== 사진 변경 이력 (등록/교체/삭제 + 이전 사진 썸네일) =====
+/* ═══ 사진 변경 이력 (등록·교체·삭제) — 공용 자리에 둔다 (대표 결정 2026-08-29 「가」) ═══
+
+   ★ 왜 옮겼나 — 이력은 「누가 언제 무슨 사진을 지웠나」를 **나중에 답하기 위한**
+     기록인데, 그동안 **그 사람 PC 브라우저 안에만** 있었다. 다른 사람은 못 보고,
+     브라우저 자료를 지우면 사라졌다. 답해야 할 때 없는 기록은 없는 것과 같다.
+
+   ★ 썸네일을 뺐다 — 이력의 값어치는 «그림»이 아니라 «누가·언제·무엇을»에 있다.
+     그림(120px base64)이 한 건에 3~5KB 라 200건에 0.8MB 였고, 그 무게 때문에
+     공용으로 옮기지 못하고 있었다. 글자만이면 200건에 40KB — 요금은 사실상 0 이다.
+
+   ⚠ 한 줄씩 **push** 한다(회차 이력과 같은 방식). 배열을 통째로 올리면 두 사람이
+     같은 때 지울 때 나중 사람이 앞사람 기록을 덮는다 — 그것도 조용히.
+   ⚠ 클라우드가 없으면 이 PC 에 쌓아 두고, 화면은 «둘을 합쳐» 보여 준다.
+     안 그러면 오프라인에 지운 기록이 영영 안 보인다. */
 const PHOTO_LOG_MAX=200;
+const PHOTO_LOG_NODE='scal_photoLog';
+let _photoLog=[];        // 공용 자리에서 받아 둔 것
 function getPhotoLog(){try{return JSON.parse(localStorage.getItem('p_photoLog')||'[]');}catch(e){return[];}}
 function setPhotoLog(arr){lsSet('p_photoLog',JSON.stringify(arr.slice(-PHOTO_LOG_MAX)));}
-// dataURL을 작은 썸네일(가로 120px)로 축소
-async function makeThumb(durl){
-  if(!durl)return null;
+/* 공용 + 이 PC — 시각 내림차순으로 합친다. 같은 건이 양쪽에 있으면 하나로 본다
+   (클라우드에 올린 뒤 이 PC 것을 굳이 지우지 않는다 — 지우다 실패하면 기록이 샌다). */
+function photoLogAll(){
+  const seen={}, out=[];
+  _photoLog.concat(getPhotoLog()).forEach(e=>{
+    if(!e||!e.t)return;
+    const k=e.t+'|'+(e.sid||'')+'|'+(e.slot!=null?e.slot:'')+'|'+(e.action||'');
+    if(seen[k])return; seen[k]=1; out.push(e);
+  });
+  return out.sort((a,b)=>a.t<b.t?1:-1).slice(0,PHOTO_LOG_MAX);
+}
+function subscribePhotoLog(){
+  if(!FB_READY||!_fbDB)return;
   try{
-    const img=new Image();
-    await new Promise(r=>{img.onload=r;img.onerror=r;img.src=durl;});
-    const w=120,h=Math.max(1,Math.round((img.naturalHeight||img.height)*w/(img.naturalWidth||img.width)));
-    const c=document.createElement('canvas');c.width=w;c.height=h;
-    c.getContext('2d').drawImage(img,0,0,w,h);
-    return c.toDataURL('image/jpeg',.5);
-  }catch(e){return null;}
+    _fbDB.ref(PHOTO_LOG_NODE).limitToLast(PHOTO_LOG_MAX).on('value',snap=>{
+      const v=snap.val()||{};
+      _photoLog=Object.values(v).filter(Boolean);
+      if(q('#mbPhotoLog')?.classList.contains('open'))renderPhotoLog();
+    });
+  }catch(e){ console.warn('사진 이력 구독 실패',e); }
 }
 // 이력 1건 추가. action: 'add'|'replace'|'delete'
-async function logPhoto(action,sid,slotIdx,prevDurl){
+function logPhoto(action,sid,slotIdx,prevDurl){
   try{
     const sc=getScheds().find(x=>x.id===sid);
     const co=sc?getCos().find(c=>c.id===sc.coId):null;
     const ty=sc?getTypes().find(t=>t.id===sc.typeId):null;
-    const thumb=(action==='delete'||action==='replace')?await makeThumb(prevDurl):null;
-    const arr=getPhotoLog();
-    arr.push({
+    const entry={
       t:new Date().toISOString(),
       action, sid, slot:slotIdx,
       slotName: sc?slotLabelText(sc,slotIdx):(slotIdx===0?'입장':slotIdx===1?'활동':`추가 ${slotIdx-1}`),
       co: co?.name||'?', ty: ty?.name||'?', round: sc?.round||0,
-      who: getSession()?.name||'',
-      prevThumb: thumb
-    });
-    setPhotoLog(arr);
+      who: getSession()?.name||''
+    };
+    if(FB_READY&&_fbDB){
+      try{ _fbDB.ref(PHOTO_LOG_NODE).push(entry); }
+      catch(e){ console.warn('사진 이력 올리기 실패',e); const a=getPhotoLog();a.push(entry);setPhotoLog(a); }
+    }else{
+      const a=getPhotoLog();a.push(entry);setPhotoLog(a);   // 미연결: 이 PC 에
+    }
     if(typeof renderPhotoLog==='function'&&q('#mbPhotoLog')?.classList.contains('open'))renderPhotoLog();
   }catch(e){console.warn('logPhoto',e);}
 }
@@ -2685,18 +2724,20 @@ async function galZip(){
 }
 function renderPhotoLog(){
   const box=q('#photoLogBody'); if(!box)return;
-  const arr=getPhotoLog().slice().reverse();
+  /* 공용 자리 + 이 PC 를 합쳐 본다 (2026-08-29) — 예전에는 이 PC 것만 보여서
+     다른 사람이 지운 기록이 안 보였다. */
+  const arr=photoLogAll();
   if(!arr.length){ box.innerHTML='<div style="text-align:center;padding:30px;color:var(--t2);font-size:13px;">아직 사진 변경 기록이 없습니다</div>'; return; }
   const actMap={add:['📥 등록','var(--ok)'],replace:['🔄 교체','var(--info)'],delete:['🗑 삭제','var(--danger)']};
+  /* ⚠ 「변경 전 그림」은 더 이상 담지 않는다 — 그 무게(200건에 0.8MB) 때문에
+     이력을 공용으로 못 옮기고 있었다. 값어치는 «누가·언제·무엇을»에 있다. */
   box.innerHTML=arr.map(e=>{
     const [lbl,col]=actMap[e.action]||['?','var(--t2)'];
     const dt=e.t?e.t.slice(0,16).replace('T',' '):'';
-    const th=e.prevThumb?`<img src="${e.prevThumb}" style="width:54px;height:54px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0;" title="변경 전 사진">`:`<div style="width:54px;height:54px;border-radius:6px;background:var(--sf2);flex-shrink:0;"></div>`;
-    return `<div style="display:flex;gap:10px;align-items:center;padding:8px;border-bottom:1px solid var(--border);">
-      ${th}
+    return `<div style="display:flex;gap:10px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--border);">
       <div style="flex:1;min-width:0;">
-        <div style="font-size:12px;font-weight:800;"><span style="color:${col};">${lbl}</span> · ${e.co} ${e.ty} ${e.round}회차</div>
-        <div style="font-size:11px;color:var(--t2);margin-top:2px;">${e.slotName} 사진 · ${dt}${e.who?' · '+e.who:''}</div>
+        <div style="font-size:12px;font-weight:800;"><span style="color:${col};">${lbl}</span> · ${escAttr(e.co||'')} ${escAttr(e.ty||'')} ${e.round||0}회차</div>
+        <div style="font-size:11px;color:var(--t2);margin-top:2px;">${escAttr(e.slotName||'')} 사진 · ${dt}${e.who?' · '+escAttr(e.who):''}</div>
       </div>
     </div>`;
   }).join('');
