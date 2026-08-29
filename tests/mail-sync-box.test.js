@@ -568,3 +568,67 @@ test('★★ 목록이 «비면» 아무것도 지우지 않는다 — 한 번�
 test('번호가 아닌 열쇠는 건드리지 않는다', () => {
   assert.deepEqual(MB.goneKeys(['abc','0','-3'], [5,6,7]), []);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+   휴지통 — 폴더는 남기고 «메일만» 안 가져온다 (대표 지시 2026-08-29)
+   ══════════════════════════════════════════════════════════════════════════
+   "다음메일에서 삭제한 부분이 있는경우 푸른메일함에 당겨올 필요없다"
+
+   ★ 지키는 것 넷
+     1. 휴지통 «메일»은 안 가져온다
+     2. 휴지통 «폴더»는 남는다 — 없으면 우리 [삭제]가 옮길 자리를 못 찾아 삭제가 막힌다
+     3. 이미 담긴 휴지통 메일은 한 번 걷어낸다 — 안 걷으면 어제 것이 그대로 보인다
+     4. 스팸함은 예전처럼 «폴더째» 빠진다 — 둘을 섞으면 한쪽이 틀린다 */
+const MB2 = require(path.join(__dirname, '..', 'functions', 'mail-box.js'));
+
+test('★★ 휴지통은 «메일»을 안 가져온다', () => {
+  assert.equal(MB2.wantsMsgs({ name:'휴지통' }), false, '휴지통 메일을 가져옵니다');
+  assert.equal(MB2.wantsMsgs({ specialUse:'\\Trash' }), false, '표시로도 못 걸러냅니다');
+  assert.equal(MB2.wantsMsgs({ name:'Deleted Messages' }), false,
+    '영문 이름(Deleted Messages)을 못 걸러냅니다 — 실제 계정이 이 이름입니다');
+});
+
+test('★★ 휴지통 «폴더»는 남는다 — 없으면 [삭제]가 막힌다', () => {
+  /* 우리 [삭제]는 mbFolderOf('trash') 로 옮길 자리를 찾는다. 폴더가 없으면
+     「휴지통 폴더를 찾지 못했습니다」가 뜨고 삭제 자체가 안 된다. */
+  assert.equal(MB2.isWanted({ name:'휴지통' }), true,
+    '★ 휴지통 폴더까지 빠졌습니다 — 삭제가 막힙니다');
+  assert.ok(MB2.SKIP_KINDS.indexOf('trash') < 0,
+    '★ trash 가 폴더째 빼는 목록에 들어갔습니다');
+});
+
+test('★ 스팸함은 예전처럼 «폴더째» 빠진다 — 둘을 섞으면 한쪽이 틀린다', () => {
+  assert.equal(MB2.isWanted({ name:'스팸편지함' }), false, '스팸함이 되살아났습니다');
+  assert.ok(MB2.NO_MSG_KINDS.indexOf('spam') < 0,
+    '스팸함이 「메일만 안 가져오는 칸」으로 옮겨졌습니다 — 폴더도 빼야 합니다');
+});
+
+test('★ 폴더 기록에 «메일은 안 가져온다»고 적어 둔다 — 앱이 그것을 보고 알려 준다', () => {
+  const t = MB2.folderRecord({ name:'휴지통', path:'Trash' }, { messages:22 });
+  assert.equal(t.nomsg, 1, '★ 표가 없으면 앱은 빈 칸을 고장으로 읽습니다');
+  const i = MB2.folderRecord({ name:'받은메일함', path:'INBOX' }, { messages:10 });
+  assert.equal(i.nomsg, undefined, '엉뚱한 칸에 표가 붙었습니다');
+});
+
+test('★★ 이미 담긴 휴지통 «메일»을 걷어내되 «폴더»는 남긴다 — 코드로 확인', () => {
+  /* 앞으로 안 가져오는 것만으로는 부족하다. 어제까지 담아 둔 것이 그대로 보인다.
+     ⚠ 주석을 걷고 본다 — 설명에 적은 말이 코드로 세이면 안 된다. */
+  const sync = fs.readFileSync(path.join(__dirname, '..', 'functions', 'mail-sync.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const i = sync.indexOf('NO_MSG_KINDS.indexOf(kind)');
+  assert.ok(i > 0, '★ 이미 담긴 휴지통 메일을 안 걷어냅니다');
+  const near = sync.slice(i, i + 260);
+  assert.match(near, /msgs\//, '메일을 안 걷습니다');
+  assert.ok(near.indexOf("'/folders/'") < 0,
+    '★ 폴더까지 지웁니다 — [삭제]가 옮길 자리를 못 찾습니다');
+});
+
+test('★ 줄에서 빼는 것으로 끝난다 — 폴더 기록은 그 «앞»에서 이미 적힌다', () => {
+  const sync = fs.readFileSync(path.join(__dirname, '..', 'functions', 'mail-sync.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const iFolders = sync.indexOf("fUp[ROOT + '/folders/' + slug]");
+  const iQueue = sync.indexOf('MB.wantsMsgs');
+  assert.ok(iFolders > 0 && iQueue > 0, '자리를 못 찾았습니다');
+  assert.ok(iFolders < iQueue,
+    '★ 폴더를 적기 «전»에 줄에서 빼면 휴지통 폴더가 아예 안 적힙니다');
+});

@@ -95,10 +95,19 @@ async function runSync(deps, opts) {
       const drop = {};
       Object.keys(known).forEach((slug) => {
         const kind = String((known[slug] || {}).kind || '');
-        if (MB.SKIP_KINDS.indexOf(kind) < 0) return;
-        drop[ROOT + '/folders/' + slug] = null;
-        drop[ROOT + '/msgs/' + slug] = null;
-        drop[ROOT + '/sync/' + slug] = null;
+        /* 안 가져오기로 한 칸 — 폴더째 걷는다(스팸함) */
+        if (MB.SKIP_KINDS.indexOf(kind) >= 0) {
+          drop[ROOT + '/folders/' + slug] = null;
+          drop[ROOT + '/msgs/' + slug] = null;
+          drop[ROOT + '/sync/' + slug] = null;
+          return;
+        }
+        /* 메일만 안 가져오는 칸 — 폴더는 «남기고» 담긴 메일만 걷는다(휴지통).
+           ⚠ 폴더까지 지우면 [삭제]가 옮길 자리를 못 찾아 삭제 자체가 막힌다. */
+        if (MB.NO_MSG_KINDS.indexOf(kind) >= 0) {
+          drop[ROOT + '/msgs/' + slug] = null;
+          drop[ROOT + '/sync/' + slug] = null;
+        }
       });
       if (Object.keys(drop).length) {
         await db.ref().update(drop);
@@ -143,7 +152,9 @@ async function runSync(deps, opts) {
        때까지 돌고, 다 끝난 폴더는 줄에서 빠지므로 헛돌지 않는다.
        ⚠ 돌려 세우는 것이 요점이다 — 앞 폴더를 끝까지 파면 그 사이 뒤 폴더는 한 통도
          안 온다. 대표 눈에는 「어떤 칸은 되고 어떤 칸은 안 된다」로 보인다. */
-    const queue = plan.slice();
+    /* ⚠ 휴지통은 «폴더만» 남기고 메일은 안 가져온다(대표 지시 2026-08-29).
+         줄에서 빼는 것으로 끝난다 — 폴더 기록은 위에서 이미 적었으므로 [삭제]가 그대로 된다. */
+    const queue = plan.filter((p) => MB.wantsMsgs(p.box));
     let pruned = 0;
     let turns = 0;
     while (queue.length && turns < MAX_TURNS && nowMs() < deadline && out.rows < MAX_ROWS) {

@@ -133,6 +133,23 @@ function isWanted(box) {
   return SKIP_KINDS.indexOf(folderKind(box)) < 0;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   휴지통 — 폴더는 남기고 «메일만» 안 가져온다 (대표 지시 2026-08-29)
+   ══════════════════════════════════════════════════════════════════════════
+   "다음메일에서 삭제한 부분이 있는경우 푸른메일함에 당겨올 필요없다"
+
+   ⚠ 스팸함처럼 «통째로» 빼면 안 된다. 우리 앱의 [삭제]는 다음메일 휴지통으로 옮기는데,
+     옮길 자리 이름을 폴더 목록에서 찾는다(mbFolderOf('trash')). 폴더가 없으면
+     「휴지통 폴더를 찾지 못했습니다」가 떠서 삭제 자체가 막힌다.
+   ★ 그래서 폴더 «기록»은 남기고 그 안의 메일만 안 가져온다. 앱은 nomsg 를 보고
+     「다음메일에서 보십시오」라고 알려 준다 — 빈 칸만 보이면 고장으로 읽힌다.
+   ⚠ 이 목록도 앱과 «맞춰야» 한다. 서버만 고치고 앱이 그대로면 늘 0통인 칸이 남는다. */
+const NO_MSG_KINDS = ['trash'];
+
+function wantsMsgs(box) {
+  return NO_MSG_KINDS.indexOf(folderKind(box)) < 0;
+}
+
 /* 폴더 하나를 실시간DB에 적을 모양으로 — 앱 왼쪽 목록이 이것만 보고 그린다.
    ⚠ 구분자(delim)와 어버이(parent)를 함께 적는다. 하위 폴더를 만들려면 «이 서버가
      쓰는 구분자»를 알아야 하는데, 그것은 IMAP 이 폴더마다 알려 준다(서버마다 다르다:
@@ -144,7 +161,7 @@ function folderRecord(box, status) {
   const path = String(b.path || '');
   const delim = String(b.delimiter || '');
   const at = delim ? path.lastIndexOf(delim) : -1;
-  return {
+  const rec = {
     path: path,
     name: String(b.name || path || ''),
     kind: kind,
@@ -155,6 +172,10 @@ function folderRecord(box, status) {
     parent: at > 0 ? path.slice(0, at) : '',
     depth: (at > 0 && delim) ? path.split(delim).length - 1 : 0,
   };
+  /* 「메일은 안 가져오는 칸」이라고 «적어» 둔다 — 앱이 이 표를 보고 「다음메일에서
+     보십시오」라고 알려 준다. 안 적으면 앱은 빈 칸을 보고 고장으로 읽는다. */
+  if (NO_MSG_KINDS.indexOf(kind) >= 0) rec.nomsg = 1;
+  return rec;
 }
 
 /* ── 폴더 이름으로 쓸 수 있는가 ──
@@ -553,6 +574,7 @@ function uidReset(sync, uidValidity) {
 module.exports = {
   safeKey, hash8, slugOf,
   folderKind, folderOrder, isSyncable, isWanted, SKIP_KINDS, folderRecord,
+  wantsMsgs, NO_MSG_KINDS,
   attCount, oneAddr, addrList, hasFlag, msgRow,
   folderNameBad, childPath, renamedPath,
   textPartOf, decodePart, toText, previewFrom, unentity, isHeadLine, PREVIEW_MAX,
