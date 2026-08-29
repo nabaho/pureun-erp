@@ -1698,6 +1698,47 @@ exports.recordBillingAlert = functions
         String((e && e.message) || e));
     }
 
+    /* ── 하루 폭주 판정 (2026-08-29 대표 지시) ─────────────────────────
+       2026-08-16 에 백업이 폭주해 하루에 86,042원이 나갔는데 아무 알림도 없었다.
+       총액 알림은 「얼마를 넘으면」이라 닿을 때쯤엔 이미 다 나간 뒤다.
+
+       ★ 「전체」 쪽지가 왔을 때만 잰다 — 칸마다 재면 같은 일을 다섯 번 한다.
+       ⚠ 기록을 **통째로 읽지 않는다.** 최근 아흐레만 잘라 읽는다 —
+         사용액을 보려고 사용액을 늘리면 웃긴다.
+       ⚠ 판정에 실패해도 위의 값·기록은 «살린다». */
+    if (parsed.key === "total") {
+      try {
+        const nowMs = Date.now();
+        const ym = BA.historyEntry(parsed, nowMs).path.split("/")[2];
+        const since = nowMs - 9 * 86400000;
+        const db = getDatabase();
+        const snap = await db.ref("billing/history/" + ym + "/total")
+          .orderByKey().startAt(String(Math.round(since))).once("value");
+        const hit = BA.spikeCheck(snap.val() || {}, nowMs);
+        const ref = db.ref("billing/spike");
+        if (!hit) {
+          /* 지나간 폭주 표는 치운다 — 어제 것이 오늘도 붉게 떠 있으면 아무도 안 믿는다 */
+          const old = (await ref.once("value")).val();
+          if (old && old.day !== BA.kstDay(nowMs)) await ref.remove();
+        } else {
+          /* 어느 칸에서 느는지는 **폭주일 때만** 알아본다 */
+          const byKey = {};
+          for (const k of ["database", "storage", "functions", "ai"]) {
+            const s = await db.ref("billing/history/" + ym + "/" + k)
+              .orderByKey().startAt(String(Math.round(since))).once("value");
+            const v = s.val();
+            if (v) byKey[k] = v;
+          }
+          const who = BA.spikeCulprit(byKey, nowMs);
+          await ref.set(Object.assign({}, hit, who ? { key: who.key, label: who.label } : {}));
+          console.warn("recordBillingAlert: 하루 폭주", hit, who || "");
+        }
+      } catch (e) {
+        console.error("recordBillingAlert: 폭주 판정 실패(값·기록은 살렸습니다)",
+          String((e && e.message) || e));
+      }
+    }
+
     console.log("recordBillingAlert", {
       key: parsed.key,
       cost: parsed.row.cost,

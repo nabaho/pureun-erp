@@ -89,8 +89,40 @@ test('★★ 「그 밖」이 무엇인지 «모른다»고 밝히고, 어디서
     '어디서 봐야 하는지 안 알려 준다 — 모른다고만 하면 손이 없다');
 });
 
-test('★ 쪼개 보는 항목은 셋뿐이다 (그래서 나머지가 「그 밖」이 된다)', () => {
+/* ⚠ 예전에는 여기서 «항목 셋»을 글자 그대로 박아 두었다(2026-08-29 고침).
+   그래서 AI 칸을 하나 더한 것만으로 검사가 깨졌다 — 기능이 망가져서가 아니라
+   «지금 값»을 박아 두었기 때문이다(CLAUDE.md 「검사를 쓰는 규칙」).
+   못 박아야 할 것은 개수가 아니라 **「쪼갠 것이 총액에 못 미치면 그 차이가
+   「그 밖」이 된다」**는 규칙이다. 항목이 늘든 줄든 이 규칙은 그대로다. */
+test('★ 쪼갠 것이 총액에 못 미치면 그 차이가 「그 밖」이 된다', () => {
+  /* 화면 쪽 파일이라 브라우저 전역에 붙는다 — 통째로 돌려 꺼낸다 */
+  const vm = require('vm');
+  const g = { window: {}, console, Math, Number, String, Object, Array, Date, isFinite, parseInt };
+  g.window = g;
+  vm.createContext(g);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'js', 'pu-billing.js'), 'utf8'), g);
+  const B = g.PuBilling;
+  const now = Date.parse('2026-08-29T10:00:00Z');
+  const row = (cost) => ({ cost, updatedAt: now, intervalStart: Date.parse('2026-08-01T00:00:00Z') });
+  const s = B.summarize({
+    total: row(1000), storage: row(100), database: row(300),
+  }, now);
+  const etc = s.parts.filter((p) => p.key === 'etc');
+  assert.strictEqual(etc.length, 1, '모자란 몫을 「그 밖」으로 안 내놓는다');
+  assert.strictEqual(etc[0].cost, 600, '「그 밖」이 총액 − 쪼갠 것의 합이 아니다');
+  /* 쪼갠 것이 총액을 다 채우면 「그 밖」은 아예 없어야 한다 —
+     0원짜리 줄을 남기면 「안 썼다」로 읽히고, 없는 칸과 헷갈린다. */
+  const s2 = B.summarize({ total: row(400), storage: row(100), database: row(300) }, now);
+  assert.ok(!s2.parts.some((p) => p.key === 'etc'), '다 채웠는데 「그 밖」이 남았다');
+});
+
+test('★ 쪼개는 항목이 바뀌면 「그 밖」 설명도 함께 손봐야 한다', () => {
   const bill = fs.readFileSync(path.join(ROOT, 'js', 'pu-billing.js'), 'utf8');
-  assert.ok(/var PARTS = \['storage', 'database', 'functions'\]/.test(bill),
-    '쪼개는 항목이 바뀌었다 — 「그 밖」 설명도 같이 고쳐야 한다');
+  const m = /var PARTS = \[([^\]]*)\]/.exec(bill);
+  assert.ok(m, 'PARTS 를 찾지 못했다');
+  /* 개수는 안 박는다. 다만 **「그 밖」 이 남을 수 있다**는 전제는 지켜져야 한다 —
+     PARTS 가 총액까지 통째로 담게 되면 「그 밖」 설명이 거짓말이 된다. */
+  assert.ok(!/'total'/.test(m[1]), '전체는 쪼갠 항목에 넣지 않는다 — 두 번 세어진다');
+  assert.ok(ENTER.indexOf('「그 밖」은 구글 예산 알림이 안 걸린 서비스입니다') >= 0,
+    '「그 밖」 설명이 화면에서 사라졌다');
 });
