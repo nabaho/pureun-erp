@@ -1736,6 +1736,13 @@ td.selcell{cursor:cell}
   border-radius:9px;font-size:12.5px;color:#8a6d1f;cursor:pointer}
 .coorphbar:hover{background:#fff9e8}
 .coorphbar em{font-style:normal;color:#1d4fc4;margin-left:4px}
+/* 고아를 끝맺는 단추 둘 (대표 지시 2026-08-29) — 누를 것이 없으면 줄이 영영 남는다 */
+.coorph .oact{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+.coorph .oact button{border:1px solid #cfd9ee;background:#fff;color:#1e2a47;border-radius:8px;
+  padding:5px 10px;font-size:12.5px;cursor:pointer}
+.coorph .oact button:hover{background:#f4f7fd}
+.coorph .oact .odrop{color:#a03c3c;border-color:#eccccc}
+.coorph .oact .odrop:hover{background:#fdf5f5}
 .coorph{padding:10px 11px;border-bottom:1px solid #f2f5fa}
 .coorph:last-child{border-bottom:none}
 .coorph .ok{font-size:13px;font-weight:700;color:#1b2536}
@@ -18977,6 +18984,76 @@ function coOrphanBarHtml(){
       <em>— 눌러서 보기</em></div>`;
 }
 function openCoOrphan(){ showPanel(coOrphanHtml()); }
+
+/* ══════ 고아를 «끝맺는다» (대표 지시 2026-08-29 「이거 정리 안 되나?」) ══════
+   이 알림은 지금까지 «보여 주기만» 했다 — 창을 열면 「사업자등록증을 등록하면 저절로
+   이어 붙습니다」라고 적혀 있을 뿐 누를 것이 없어 1건이 영영 남는다.
+   알림은 «끝맺을 길»이 있어야 알림이다. 없으면 눈이 그것을 배경으로 배운다.
+
+   ① 만들기 — 그 안내문이 시키는 일을 대신 한다.
+      ⚠ 사업자번호는 «열쇠»에서 가져온다. 사진첩이 보낸 값에 bizno 칸이 비어 있을 수
+        있는데, 붙게 만드는 것은 열쇠(coKeyOf)이지 그 칸이 아니다. 열쇠가 어긋나면
+        만들어도 안 붙고 회사만 하나 늘어난다.
+      ⚠ 등록증이 «아는 칸»만 옮긴다. 폴더·탭·서류는 회사에 붙는 값이지 서류의 칸이
+        아니다 — 넣으면 엉뚱한 자리에 들어간다.
+      ⚠ 빈 칸은 아예 안 만든다. 빈 글자로 덮으면 나중에 진짜 값이 와도 안 들어온다.
+   ② 버리기 — 지운 회사가 남긴 자국일 때.
+   ⚠ 「이름이 같은 회사에 붙이기」는 «안 만든다». 사업자번호가 다른데 이름만 같은 남의
+     회사에 대표자·소재지가 들어가면 되돌리기 어렵다 — 지금처럼 짚어만 준다. */
+function coOrphanAdoptPlan(key){
+  const rec = (_coInfo || {})[key] || {};
+  const isBiz = String(key||'').charAt(0) !== 'n';
+  const name = String(rec.company || '').trim();
+  if(!isBiz && !name){
+    return { ok:false, why:'상호도 사업자번호도 없어 어느 회사인지 만들 수가 없습니다' };
+  }
+  /* 등록증이 아는 칸 = 등록증 서식(BIZ_FIELDS)과 기업정보 칸(CO_FIELDS)이 겹치는 것 */
+  const known = {}; BIZ_FIELDS.forEach(f=>{ known[f[0]] = 1; });
+  const item = { id: uid(), kind:'biz', thumb:'', group:'',
+                 createdAt: Date.now(), updatedAt: Date.now(),
+                 company: name, bizno: isBiz ? key : '' };
+  const fields = [];
+  CO_FIELDS.forEach(f=>{
+    const k = f[0];
+    if(k === 'bizno' || k === 'company' || !known[k]) return;
+    const v = String(rec[k] == null ? '' : rec[k]).trim();
+    if(!v) return;                       /* 빈 칸은 «만들지 않는다» */
+    item[k] = v; fields.push(f[1]);
+  });
+  if(name) fields.unshift('상호');
+  if(isBiz) fields.unshift('사업자번호');
+  return { ok:true, item, fields, name: name || '(이름 없음)' };
+}
+async function coOrphanAdopt(key){
+  const p = coOrphanAdoptPlan(key);
+  if(!p.ok) return toast('⚠ ' + p.why, 7000);
+  if(!confirm(`「${p.name}」의 사업자등록증을 만듭니다.\n\n`
+    + `· 옮겨 담을 칸 — ${p.fields.join(' · ')}\n`
+    + `· 사진은 없습니다 (나중에 올릴 수 있습니다)\n`
+    + `· 만들면 이 기업정보가 저절로 그 회사에 붙습니다\n\n계속할까요?`)) return;
+  try{
+    Store.put(p.item);
+    coListBust(); renderCoAny(); render();
+    showPanel(coOrphanHtml());          /* 창을 그 자리에서 다시 그린다 — 줄어든 것이 보이게 */
+    toast(`📄 「${p.name}」 사업자등록증을 만들었습니다 — 기업정보가 이어 붙었습니다`, 7000);
+  }catch(e){ toast('❌ 만들지 못했습니다: ' + ((e&&e.message)||''), 8000); }
+}
+async function coOrphanDrop(key){
+  const rec = (_coInfo || {})[key] || {};
+  const nm = String(rec.company || '').trim() || key;
+  if(!confirm(`「${nm}」의 기업정보를 버립니다.\n\n`
+    + `· 사진첩의 원본 사진은 지워지지 않습니다\n`
+    + `· 명함과 사업자등록증도 그대로입니다\n`
+    + `· ⚠ 지운 회사를 휴지통에서 되살려도 폴더·탭은 안 돌아옵니다\n\n계속할까요?`)) return;
+  try{
+    const upd = {};
+    upd['coInfo/' + key] = null;
+    await Store.db.ref(DB_ROOT).update(upd);
+    coListBust(); renderCoAny();
+    showPanel(coOrphanHtml());
+    toast('🗑 기업정보를 버렸습니다', 6000);
+  }catch(e){ toast('❌ 버리지 못했습니다: ' + ((e&&e.message)||''), 8000); }
+}
 function coOrphanHtml(){
   const list = coOrphanList();
   if(!list.length) return `<div class="mhead"><b>어느 회사에도 안 붙은 기업정보</b>${_closeBtn()}</div>
@@ -18999,6 +19076,13 @@ function coOrphanHtml(){
           return d && d.id ? `<div class="om"><em onclick="openCoDoc('${esc(d.year||'')}','${esc(d.id)}','${esc(d.owner||'')}')"
             title="이 정보가 나온 서류를 사진첩에서 엽니다">📷 원본 보기</em></div>` : '';
         })()}
+        <!-- 끝맺는 길 둘 (대표 지시 2026-08-29) — 없으면 이 줄은 영영 남는다 -->
+        <div class="oact">
+          <button onclick="coOrphanAdopt('${esc(o.key)}')"
+            title="읽어 둔 칸으로 사업자등록증을 만듭니다 — 만들면 이 정보가 저절로 붙습니다">📄 이 정보로 사업자등록증 만들기</button>
+          <button class="odrop" onclick="coOrphanDrop('${esc(o.key)}')"
+            title="지운 회사가 남긴 자국일 때 씁니다 — 사진첩의 원본 사진은 안 지워집니다">🗑 버리기</button>
+        </div>
       </div>`).join('')}</div>`;
 }
 
