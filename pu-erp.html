@@ -38656,15 +38656,20 @@ function FinanceLedger(props){
   // (업체 월 자문료 후보는 rows 가 정해진 뒤에 더한다 — 아래 addAdvisoryPending 참고)
 
   // ── 출금 카테고리 (자주 쓰는 것 우선) ──
-  var EXP_CATS = [
-    {code:'exp-rent',   name:'임차료'},    {code:'exp-utility', name:'공과금'},
-    {code:'exp-comm',   name:'통신비'},    {code:'exp-tax',     name:'4대보험·세금'},
-    {code:'exp-salary', name:'급여'},      {code:'exp-welfare', name:'접대·복리·교육'},
-    {code:'exp-supply', name:'소모품·교통'},{code:'exp-card',   name:'법인카드'},
-    {code:'exp-outsource',name:'외부수수료'},{code:'exp-system', name:'시스템'},
-    {code:'exp-vehicle',name:'차량유지비'},{code:'exp-bankfee', name:'이체수수료'},
-    {code:'exp-other',  name:'기타'}
-  ];
+  /* ══ 출금 카테고리 (대표 지시 2026-08-29: 「카테고리를 좀더 다양화 할 수 없을까?」) ══
+     ★ 여기 손으로 열세 개를 적어 두고 있었다. 그런데 «설정 ▸ 출금 카테고리»에는
+       이미 스물한 개가 있다(퇴직연금·일용직 임금·기타소득 지급·실비지급 …).
+       길이 둘이라 한쪽만 늘어난 것이다 — 거래내역에서는 그것들을 아예 고를 수가 없었다.
+     ★ 이제 «설정의 목록»을 그대로 쓴다. 대표가 설정에서 늘리면 여기도 함께 늘어난다 —
+       다음에 「더 다양하게」가 필요할 때 코드를 고칠 일이 없다.
+     ⚠ 숨김(hidden) 표가 달린 것은 뺀다. ⚠ 못 읽으면 빈 목록이 되지 않게 시드를 쓴다. */
+  var EXP_CATS = (function(){
+    try {
+      var cs = (typeof getExpenseCats === 'function') ? getExpenseCats() : EXPENSE_CAT_SEED;
+      cs = (cs || []).filter(function(c){ return c && c.code && c.hidden !== true; });
+      return cs.length ? cs : EXPENSE_CAT_SEED.slice();
+    } catch(e){ return EXPENSE_CAT_SEED.slice(); }
+  })();
 
   // ── State ──
   var typeS=useState('bank');  var fileType=typeS[0]; var setFileType=typeS[1];
@@ -40040,8 +40045,25 @@ function FinanceLedger(props){
     expList.forEach(function(r){ var t = erpCardTail(r); if(t) c[t] = (c[t]||0) + 1; });
     return c;
   })();
+  /* ── 표 머리에서 거르기 (대표 지시 2026-08-29 「필터링 기능」) ──
+     98건·398건짜리 표에서 「급여만」·「아직 안 고른 것만」을 볼 수 있어야 한다.
+   ⚠ 세는 것(카드별 건수)은 «거르기 전»으로 센다 — 거른 뒤에 세면
+     「9950 52건」이 걸러진 수로 줄어 몇 건이 남았는지 알 수 없게 된다. */
+  var expQS = useState(''); var expQ = expQS[0]; var setExpQ = expQS[1];
+  var expCatFS = useState(''); var expCatF = expCatFS[0]; var setExpCatF = expCatFS[1];
   var expCardList = expList.filter(function(r){
-    return !expCardPick || erpCardTail(r) === expCardPick;
+    if(expCardPick && erpCardTail(r) !== expCardPick) return false;
+    if(expQ){
+      var q = String(expQ).toLowerCase();
+      var hay = String((r.memo||'') + ' ' + (r.note||'')).toLowerCase();
+      if(hay.indexOf(q) < 0) return false;
+    }
+    if(expCatF){
+      var c = expCat[r._k] || '';
+      if(expCatF === '__none'){ if(c) return false; }
+      else if(c !== expCatF) return false;
+    }
+    return true;
   });
 
   // ── 월별 필터 (입금·출금 공용) ──
@@ -42105,7 +42127,32 @@ function FinanceLedger(props){
               h('th',{style:Object.assign({},thS,{width:'64px'})},'카드'),
               h('th',{style:thS},'적요'),
               h('th',{style:Object.assign({},thS,{minWidth:'130px'})},'카테고리'),h('th',{style:thS},'처리')
-            )),
+            ),
+              /* 거르는 줄 — 표 머리 바로 아래. 「급여만」·「아직 안 고른 것만」을 볼 수 있다. */
+              h('tr',{style:{background:'#f8fafc'}},
+                h('td',{style:Object.assign({},tdS,{fontWeight:400})},''),
+                h('td',{style:Object.assign({},tdS,{fontWeight:400})},''),
+                h('td',{style:Object.assign({},tdS,{fontWeight:400})},''),
+                h('td',{style:Object.assign({},tdS,{fontWeight:400})},''),
+                h('td',{style:Object.assign({},tdS,{fontWeight:400})},
+                  h('input',{type:'search',value:expQ,placeholder:'적요 찾기',
+                    onInput:function(e){ setExpQ(e.target.value); },
+                    style:{width:'100%',fontSize:'11px',padding:'3px 6px',fontFamily:'inherit',
+                      border:'1px solid #e2e8f0',borderRadius:'5px'}})),
+                h('td',{style:Object.assign({},tdS,{fontWeight:400})},
+                  h('select',{value:expCatF,onChange:function(e){ setExpCatF(e.target.value); },
+                    style:{width:'100%',fontSize:'11px',padding:'3px 5px',fontFamily:'inherit',
+                      border:'1px solid #e2e8f0',borderRadius:'5px'}},
+                    h('option',{value:''},'카테고리 전체'),
+                    h('option',{value:'__none'},'아직 안 고른 것만'),
+                    EXP_CATS.map(function(c){ return h('option',{key:c.code,value:c.code},c.name); }))),
+                h('td',{style:Object.assign({},tdS,{fontWeight:400})},
+                  (expQ||expCatF) ? h('button',{type:'button',
+                    onClick:function(){ setExpQ(''); setExpCatF(''); },
+                    style:{padding:'2px 8px',fontSize:'10.5px',fontWeight:700,cursor:'pointer',
+                      fontFamily:'inherit',border:'1px solid #e2e8f0',background:'#ffffff',
+                      color:'#475569',borderRadius:'5px'}},'거르기 해제') : null)
+              )),
             h('tbody',null,expCardList.slice(0,ldShow).map(function(row,_re){
               var cat=expCat[row._k];
               var catName=cat?EXP_CATS.find(function(c){return c.code===cat;}):null;
@@ -42118,13 +42165,26 @@ function FinanceLedger(props){
                 h('td',{style:Object.assign({},tdS,{fontWeight:700,color:'#854d0e',whiteSpace:'nowrap'})},row.amount.toLocaleString()+'원'),
                 /* 카드 칸 — 없으면 비워 둔다(은행 줄). 「-」 같은 것을 채우지 않는다. */
                 h('td',{style:Object.assign({},tdS,{whiteSpace:'nowrap'})},
-                  (function(){ var t = erpCardTail(row); return t
-                    ? h('span',{title:'하나카드 끝 네 자리',
-                        style:{fontSize:'10.5px',fontWeight:800,color:'#1e40af',
-                          background:'#eff6ff',border:'1px solid #bfdbfe',
-                          borderRadius:'6px',padding:'1px 5px'}}, t) : null; })()),
+                  /* ★ 적요 아래에 있던 「하나카드 승인 문자 · ****9950」을 «여기로» 옮겼다
+                     (대표 지시 2026-08-29). 적요 칸에 두 줄로 붙어 있으면 가게 이름을 가리고,
+                     카드 칸에는 번호만 있어 두 곳이 같은 말을 나눠 갖고 있었다. */
+                  (function(){
+                    var t = erpCardTail(row);
+                    if(!t) return null;
+                    var isC = !!row.cancel;
+                    return h('div',{title:'하나카드 ' + (isC?'취소':'승인') + ' 문자 · 끝 네 자리 ' + t},
+                      h('div',{style:{fontSize:'10.5px',fontWeight:800,color:'#1e40af',
+                        background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'6px',
+                        padding:'1px 5px',display:'inline-block'}}, t),
+                      h('div',{style:{marginTop:'2px',fontSize:'9.5px',fontWeight:700,
+                        color: isC ? '#991b1b' : '#64748b'}}, isC ? '취소' : '승인'));
+                  })()),
                 h('td',{style:Object.assign({},tdS,{color:'#475569',maxWidth:'140px'})},
-                  h('div',null,row.memo),row.note&&h('div',{style:{fontSize:'10px',color:'#94a3b8'}},row.note),
+                  h('div',null,row.memo),
+                  /* ⚠ 카드 줄에서는 이 둘째 줄을 «안 그린다» — 같은 말이 카드 칸에 있다
+                     (대표: 「2줄 아래 하나카드 등은 삭제하고 그 내용을 카드로 옮기라는 것」).
+                     통장 줄은 그대로 둔다 — 거기 적힌 계좌번호는 카드 칸에 없다. */
+                  (row.src!=='card') && row.note && h('div',{style:{fontSize:'10px',color:'#94a3b8'}},row.note),
                   /* 카드 취소 — 어느 승인을 되돌리는지 «찾아서 적는다».
                      ⚠ 못 찾았거나 여럿이면 그렇게 적는다. 찍어서 붙이면 지우면 안 될 지출이 지워진다. */
                   row.cancel && (function(){
