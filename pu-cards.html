@@ -2534,15 +2534,35 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
 /* ── 데이터 계층 ── */
 /* 명함 한 장을 고칠 때 수천 장 전체를 다시 받지 않도록 항목 단위로 동기화한다.
    최초 자료량은 같지만 이후 전송량은 실제로 바뀐 한 건에 가깝게 줄어든다. */
-function watchCardMap(ref, assign, settled, denied){
+/* ⚠ seed — 지난 로그인 때 담아 둔 스냅숏이다(cardCacheGet). 주면 «즉시» 그 값으로
+     한 번 그리고, 서버 것이 오는 대로 한 장씩 갈아 끼운다(대표 보고 2026-08-29
+     「기업정보함도 빨리」 — 명함 2.5MB 를 다 받을 때까지 화면이 비어 있었다).
+   ⚠ 씨앗에는 «그 사이 지워진 명함»이 남아 있을 수 있다. 서버는 제가 가진 것만
+     child_added 로 주므로, 첫 스트림이 끝났을 때(settled 직전) 서버가 끝내 안 준
+     열쇠를 걷어낸다 — 안 걷으면 지운 명함이 유령으로 영영 남는다. */
+function watchCardMap(ref, assign, settled, denied, seed){
   const map={}; let timer=null;
+  const pend={};                        /* 씨앗인데 아직 서버가 확인 안 해 준 열쇠 */
+  let firstSettle = false;
+  if(seed && typeof seed==='object'){
+    Object.keys(seed).forEach(k=>{ map[k]=seed[k]; pend[k]=1; });
+    firstSettle = true;
+    assign(map);                        /* 즉시 한 번 — 화면이 바로 선다 */
+  }
   const publish=()=>{
     assign(map);
     clearTimeout(timer);
-    timer=setTimeout(()=>{ if(settled) settled(); },140);
+    timer=setTimeout(()=>{
+      if(firstSettle){
+        firstSettle=false;
+        const ghosts = Object.keys(pend);
+        if(ghosts.length){ ghosts.forEach(k=>{ delete map[k]; }); assign(map); }
+      }
+      if(settled) settled();
+    },140);
   };
-  const put=s=>{ map[s.key]=s.val(); publish(); };
-  const drop=s=>{ delete map[s.key]; publish(); };
+  const put=s=>{ map[s.key]=s.val(); delete pend[s.key]; publish(); };
+  const drop=s=>{ delete map[s.key]; delete pend[s.key]; publish(); };
   ref.on('child_added',put,denied);
   ref.on('child_changed',put,denied);
   ref.on('child_removed',drop,denied);
@@ -2552,6 +2572,52 @@ function watchCardMap(ref, assign, settled, denied){
     try{ ref.off('child_added',put); ref.off('child_changed',put); ref.off('child_removed',drop); }catch(_){ }
   };
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   명함 씨앗 — 지난 로그인 때 받아 둔 것을 기기(IndexedDB)에 담아 둔다
+   ══════════════════════════════════════════════════════════════════════════
+   대표 보고 2026-08-29: "기업정보함도 빨리"
+   ★ 재 보니 명함은 6,636장 × 평균 380B = 2.5MB 로 «살찐 칸이 없다» — 줄일 것이
+     없으니, 지난번 받은 것을 먼저 그리고 최신본은 뒤에서 갈아 끼우는 길뿐이다.
+   ⚠ localStorage 가 아니라 IndexedDB 다 — 2.5MB 글자를 localStorage 에 넣으면
+     쓸 때마다 화면이 멈칫하고(동기), 다른 앱 몫의 5MB 한도도 갉아먹는다.
+   ⚠ 그리는 것은 «로그인이 붙은 뒤»다(아래 부르는 자리가 auth 안에 있다) —
+     로그인 화면 뒤에서 명함이 먼저 보이면 안 된다.
+   ⚠ 기기에 담긴 것은 브라우저 프로필을 여는 사람이 읽을 수 있다. 회사 PC 에서
+     쓰는 앱이라 두기로 한다 — 지우려면 브라우저 「사이트 데이터 삭제」다. */
+const CARD_CACHE_KEY = 'items-v1';
+function cardCacheGet(cb){
+  let done=false; const fin=v=>{ if(!done){ done=true; cb(v); } };
+  try{
+    const rq = indexedDB.open('pu-cards-cache', 1);
+    rq.onupgradeneeded = e=>{ e.target.result.createObjectStore('kv'); };
+    rq.onsuccess = e=>{
+      try{
+        const db = e.target.result;
+        const g = db.transaction('kv','readonly').objectStore('kv').get(CARD_CACHE_KEY);
+        g.onsuccess = ()=>{ fin(g.result && g.result.items ? g.result.items : null); try{ db.close(); }catch(_){ } };
+        g.onerror = ()=>{ fin(null); try{ db.close(); }catch(_){ } };
+      }catch(_){ fin(null); }
+    };
+    rq.onerror = ()=>fin(null);
+    rq.onblocked = ()=>fin(null);
+  }catch(_){ fin(null); }
+}
+function cardCachePut(items){
+  try{
+    const rq = indexedDB.open('pu-cards-cache', 1);
+    rq.onupgradeneeded = e=>{ e.target.result.createObjectStore('kv'); };
+    rq.onsuccess = e=>{
+      try{
+        const db = e.target.result;
+        db.transaction('kv','readwrite').objectStore('kv')
+          .put({ at: Date.now(), items: items }, CARD_CACHE_KEY);
+        setTimeout(()=>{ try{ db.close(); }catch(_){ } }, 800);
+      }catch(_){ }
+    };
+  }catch(_){ }
+}
+let _cardSeedUsed = false;   /* 씨앗으로 그렸고 아직 최신본이 다 안 왔다 — 저장을 막는 표 */
 
 const Store = {
   mode:'local', db:null,
@@ -2571,15 +2637,20 @@ const Store = {
       this.mode = 'firebase';
       modeBadge.textContent='실시간 공유'; modeBadge.classList.add('live');
       modeBadge.title='전 직원 실시간 공유 중';
-      const subscribe = () => {
+      const subscribe = (seed) => {
         watchCardMap(this.db.ref(DB_ROOT+'/items'), value => { state.items = value||{}; }, () => { coListBust(); renderSoon();
           /* 명함이 도착한 **뒤에** 마지막 보던 화면으로 옮긴다(대표 지시 2026-08-10).
              먼저 옮기면 빈 화면이 잠깐 보이고, 자료함·보낸 메일은 아직 읽히지도 않았다. */
           if(!Store._itemsReady){
-            Store._itemsReady=true; restoreLastScreen();
+            Store._itemsReady=true; _cardSeedUsed=false; restoreLastScreen();
             if(!Store._idxDone){ setTimeout(backfillIdx, 3000); }
             /* 번호 열쇠 자리 첫 채우기 — 한 번만. 명함이 다 들어온 뒤라야 빠짐없이 찬다. */
             if(!Store._byKeyDone){ Store._byKeyDone=true; setTimeout(ensureByKeyMap, 4000); }
+          }
+          /* 씨앗 갈무리 — 다음 로그인은 이것을 먼저 그린다(cardCacheGet).
+             자주 쓰면 그때마다 2.5MB 를 베끼므로 5분에 한 번만. */
+          if(Store._itemsReady && Date.now() - (Store._cacheAt||0) > 5*60*1000){
+            Store._cacheAt = Date.now(); cardCachePut(state.items);
           }
           /* 새 명함을 저절로 폴더에 넣는다 (대표 지시 2026-08-26 「들어올 때 바로」).
              ⚠ «표시»는 여기서 바로 한다(값이 없어도 되는 셈이라 가볍다). 미루면 안 된다 —
@@ -2589,7 +2660,7 @@ const Store = {
           autoClsMark();
           autoClsSoon();
         },
-          e => { if(isDenied(e)) itemsDeniedTell(e); });
+          e => { if(isDenied(e)) itemsDeniedTell(e); }, seed);
         watchCardMap(this.db.ref(DB_ROOT+'/groups'), value => { state.groups = value||{}; }, () => { renderSoon();
           if(!Store._bizSeedDone){ Store._bizSeedDone=true; setTimeout(seedBizFolders, 3000); }
           /* 직업별 탭은 «폴더가 손에 들어온 뒤»에 심는다 — 탭이 폴더에 딸리기 때문이다.
@@ -2627,7 +2698,27 @@ const Store = {
             myEmail=(u.email||'').toLowerCase(); myUid=u.uid||'';
             /* ⚠ loadSharedGKey() 를 뗐다(2026-08-17) — 로그인할 때마다 실시간DB 의
                열쇠를 브라우저로 내려받던 자리다. 이제 열쇠는 서버만 안다. */
-            hideCardsLogin(); subscribe(); ErpMatch.load();
+            hideCardsLogin(); ErpMatch.load();
+            /* ── 명함 씨앗을 먼저 그린다 (대표 보고 2026-08-29 「기업정보함도 빨리」) ──
+               지난 로그인 때 담아 둔 스냅숏(IndexedDB)을 구독의 씨앗으로 준다 — 화면이
+               «즉시» 서고, 최신본은 뒤에서 한 장씩 갈아 끼워진다(watchCardMap 머리글).
+               ⚠ 씨앗 읽기가 늦거나 막히면(사생활 모드 등) 400ms 뒤 그냥 시작한다 —
+                 씨앗은 빠르게 하는 덤이지, 없다고 문이 잠기면 안 된다.
+               ⚠ 씨앗으로 그린 동안은 저장을 막는다(_cardSeedUsed → Store.put) — 옛
+                 스냅숏 위에 고쳐 쓰면 남이 그 사이 고친 것을 도로 덮는다. */
+            /* ⚠ 「한 번만」 표는 이 로그인 «건»의 지역 변수다 — Store 에 두면 로그아웃
+               뒤 다시 로그인했을 때 구독이 영영 안 붙는다. */
+            let _subT = null, _subKicked = false;
+            const goSub = (seed)=>{
+              if(_subKicked) return; _subKicked = true; clearTimeout(_subT);
+              if(seed && !Store._itemsReady){
+                _cardSeedUsed = true;
+                subscribe(seed);
+                restoreLastScreen();       /* 씨앗이 곧 명함이다 — 마지막 화면을 바로 연다 */
+              } else subscribe();
+            };
+            _subT = setTimeout(()=>goSub(null), 400);
+            cardCacheGet(items=>goSub(items));
             /* ── 메일 문으로 들어왔으면 «지금» 연다 (대표 보고 2026-08-29 「로그인이 늦다」) ──
                ⚠ 마지막 화면 복원(restoreLastScreen)은 기업정보함 명함이 «다 도착한 뒤»에
                  돈다(아래 subscribe 의 items 구독이 부른다). 명함은 실측 2.9MB 라, 메일
@@ -2674,6 +2765,13 @@ const Store = {
      열려 있지 않으면 state.priv 가 비어 있어 언제나 공용을 가리킨다. */
   _rootOf(id){ return (state.priv && state.priv.items && state.priv.items[id]) ? privRoot() : DB_ROOT; },
   put(it){ it.updatedAt = Date.now();
+    /* ⚠ 씨앗(지난 스냅숏)으로 그린 동안은 저장을 막는다 — 그 명함은 «옛 판»일 수
+       있어, 고쳐 쓰면 남이 그 사이 고친 것을 도로 덮는다. 최신본이 다 오면
+       (_itemsReady) 풀린다 — 보통 몇 초다. */
+    if (this.mode==='firebase' && _cardSeedUsed && !Store._itemsReady){
+      toast('방금 로그인해 최신 명함을 받는 중입니다 — 몇 초 뒤 다시 저장해 주세요', 6000);
+      return;
+    }
     if (this.mode==='firebase'){
       /* 썸네일은 items 밖(thumbs/)에 둔다 — items 는 통째로 구독되는 칸이라 무거우면 안 된다.
          빈 값이면 지우지 않는다: 사진을 안 건드린 수정에서 옛 썸네일이 날아가면 안 된다. */
