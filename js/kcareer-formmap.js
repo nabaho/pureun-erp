@@ -123,8 +123,123 @@
     return map;
   }
 
+  /* 표·행·열로 칸 하나를 찾아 바꾼다 */
+  function eachCellAt(xml, tbl, row, col, fn) {
+    var ti = -1, done = false;
+    var out = X.eachTable(xml, function (t) {
+      ti++;
+      if (ti !== tbl || done) return t;
+      var rows = X.splitRows(t);
+      if (!rows[row]) return t;
+      var cells = X.splitCells(rows[row]);
+      if (!cells[col]) return t;
+      var next = fn(cells[col]);
+      if (next == null || next === cells[col]) return t;
+      done = true;
+      return t.replace(rows[row], rows[row].replace(cells[col], next));
+    });
+    return { xml: out, ok: done };
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  /* 안내글 「(한글)」 뒤에 이어 쓴다 — 지우지 않는다.
+     ⚠ 안내글을 지우면 서식이 뜻하는 「여기에 한글로 쓰세요」가 사라진다.
+       종이로 낼 때 다음 사람이 무슨 칸인지 알 수 없게 된다. */
+  function appendAfter(tc, value) {
+    var m = tc.match(/(<hp:t[^>]*>)([\s\S]*?)(<\/hp:t>)/);
+    if (!m) return null;
+    return tc.replace(m[0], m[1] + m[2] + ' ' + esc(value) + m[3]);
+  }
+
+  /* ── 되돌려 넣기 ──
+     화면이 만든 plan 만 보고 넣는다. 화면은 XML 을 모르고, 여기는 화면을 모른다.
+     plan = { picks:{자리이름표: 열쇠}, lists:{목록이름표: 갈래}, data:{fields,edu,career} }
+     열쇠가 '' 면 «비워 둔다». '__stamp' 는 도장 자리라 글자를 안 넣는다. */
+  function apply(sectionXml, plan) {
+    plan = plan || {};
+    var picks = plan.picks || {}, data = plan.data || {}, fields = data.fields || {};
+    var xml = String(sectionXml || ''), filled = [], failed = [];
+    var map = scan(xml);
+
+    Object.keys(picks).forEach(function (id) {
+      var key = picks[id];
+      if (!key || key === '__stamp') return;      /* 비워 둠 · 도장은 여기서 안 다룬다 */
+      var found = map.slots.filter(function (x) { return x.id === id; });
+      if (!found.length) { failed.push({ id: id, why: '그런 자리가 없습니다' }); return; }
+      var s = found[0], r;
+      if (key === '__incell') {
+        /* 칸 안에 라벨이 여럿인 자리는 통째로 기존 일꾼(autoFill)에게 맡긴다 */
+        r = eachCellAt(xml, s.tbl, s.row, s.col, function (tc) {
+          var one = X.autoFill('<hp:tbl><hp:tr>' + tc + '</hp:tr></hp:tbl>', { fields: fields });
+          if (!one.changed) return null;
+          var m2 = one.xml.match(/<hp:tc\b[\s\S]*<\/hp:tc>/);
+          return m2 ? m2[0] : null;
+        });
+        if (r.ok) { xml = r.xml; filled.push({ id: id, key: key, value: '(칸 안 라벨)' }); }
+        else failed.push({ id: id, why: '칸 안 라벨을 못 채웠습니다' });
+        return;
+      }
+      var val = fields[key];
+      if (val == null || val === '') { failed.push({ id: id, why: '넣을 값이 없습니다' }); return; }
+      r = eachCellAt(xml, s.tbl, s.row, s.col, function (tc) {
+        return s.kind === '안내글뒤' ? appendAfter(tc, val) : X.fillCell(tc, val);
+      });
+      if (r.ok) { xml = r.xml; filled.push({ id: id, key: key, value: val }); }
+      else failed.push({ id: id, why: '이 칸에는 넣을 수 없습니다' });
+    });
+
+    /* 목록 표는 기존 fillList(autoFill 안)가 이미 잘 한다 — 다시 만들지 않는다 */
+    var wantLists = plan.lists || {};
+    if (Object.keys(wantLists).length) {
+      var before = xml;
+      var r2 = X.autoFill(xml, { fields: {}, edu: data.edu || [], career: data.career || [] });
+      if (r2.changed) {
+        xml = r2.xml;
+        (r2.report.lists || []).forEach(function (l) {
+          filled.push({ id: 'L', key: l.kind, value: l.put + '줄' });
+        });
+      }
+      if (xml === before) failed.push({ id: 'L', why: '목록 표에 빈 줄이 없습니다' });
+    }
+
+    return { xml: xml, changed: xml !== String(sectionXml || ''), filled: filled, failed: failed };
+  }
+
+  /* ── 서식 지문 ──
+     «칸의 짜임»만 본다 — 표 개수 · 행 수 · 각 행의 칸 수 · «알아본 라벨».
+
+     ⚠ 칸의 글자를 그대로 담으면 안 된다. 한 번 채우고 나면 빈 칸에 값이 들어가
+       지문이 달라지고, 그러면 방금 정한 기억을 다음번에 못 쓴다(실측에서 걸렸다).
+     ⚠ 그래서 «사전이 알아본 라벨만» 담는다 — 라벨 칸은 절대 덮지 않으므로 안 변한다.
+       채워 넣은 값(권형하·푸른노무법인)은 라벨이 아니라 담기지 않는다.
+     ⚠ 알아본 라벨이 하나도 없어도 짜임만으로 지문이 선다 — 그때는 서로 다른 서식이
+       같은 지문을 가질 수 있다. 그건 «기억을 못 쓰는» 쪽이 아니라 «잘못 쓰는» 쪽이므로,
+       행·칸 수까지 모두 같아야만 같은 지문이 되게 촘촘히 적는다. */
+  function fingerprint(sectionXml) {
+    var parts = [], ti = -1;
+    X.eachTable(String(sectionXml || ''), function (t) {
+      ti++;
+      var rows = X.splitRows(t);
+      parts.push('T' + ti + ':' + rows.length);
+      rows.forEach(function (tr, ri) {
+        var cells = X.splitCells(tr).map(X.cellText);
+        var labels = cells.map(function (c) {
+          return X.fieldKeyOf(c) || X.colKeyOf(c) || '';
+        }).join(',');
+        parts.push(ri + '/' + cells.length + '|' + labels);
+      });
+      return t;
+    });
+    var s = parts.join(';'), h = 5381;
+    for (var i = 0; i < s.length; i++) { h = ((h << 5) + h + s.charCodeAt(i)) | 0; }
+    return 'F' + (h >>> 0).toString(36) + '.' + s.length;
+  }
+
   var api = { scan: scan, classify: classify, detectList: detectList,
-              guess: guess, hintKey: hintKey };
+              guess: guess, hintKey: hintKey, apply: apply, fingerprint: fingerprint };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KcareerFormMap = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

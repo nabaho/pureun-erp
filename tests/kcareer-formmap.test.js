@@ -150,3 +150,64 @@ test('사전에 없는 말은 «모름»으로 남긴다 — 지어내지 않는
   const m = M.guess(M.scan(tbl([['추천사유', ''], ['비상연락망', '']])), {});
   assert.ok(m.slots.every((s) => s.guess === ''), '모르면 모른다고 해야 사람이 고른다');
 });
+
+/* ── 되돌려 넣기와 서식 지문 ── */
+const WHO = { fields: { name: '권형하', nameHanja: '權炯河', birth: '1975.01.07',
+  phone: '010-1234-5678', addr: '충남 천안시', org: '푸른노무법인', title: '대표노무사' },
+  career: [{ period: '2025', org: '충청남도', role: '노동권익보호관' }] };
+
+test('빈 칸에 고른 값이 들어간다', () => {
+  const xml = tbl([['성명', ''], ['주소', '']]);
+  const r = M.apply(xml, { picks: { t0r0c1: 'name', t0r1c1: 'addr' }, data: WHO });
+  assert.ok(r.xml.indexOf('권형하') > 0);
+  assert.ok(r.xml.indexOf('충남 천안시') > 0);
+  assert.equal(r.filled.length, 2);
+});
+
+test('★ 안내글 뒤에 «이어» 쓴다 — 「(한글)」을 지우지 않는다', () => {
+  const xml = tbl([['성  명', '(한글)']]);
+  const r = M.apply(xml, { picks: { t0r0c1: 'name' }, data: WHO });
+  assert.ok(r.xml.indexOf('(한글)') > 0, '안내글은 남아야 합니다 — 서식이 뜻하는 바가 사라집니다');
+  assert.ok(r.xml.indexOf('권형하') > 0, '이름이 들어가야 합니다');
+});
+
+test('«비워 둠»(빈 값)을 고르면 아무것도 안 넣는다', () => {
+  const xml = tbl([['성명', '']]);
+  const r = M.apply(xml, { picks: { t0r0c1: '' }, data: WHO });
+  assert.equal(r.changed, false);
+  assert.equal(r.filled.length, 0);
+});
+
+test('도장 자리에는 글자를 넣지 않는다 — 도장은 따로 찍는다', () => {
+  const xml = tbl([['성명', '(인)']]);
+  const r = M.apply(xml, { picks: { t0r0c1: '__stamp' }, data: WHO });
+  assert.equal(r.changed, false);
+});
+
+test('목록 표는 고른 만큼 줄로 넣는다', () => {
+  const xml = tbl([['기간', '기관명', '직위'], ['', '', '']]);
+  const r = M.apply(xml, { picks: {}, lists: { L0: 'career' }, data: WHO });
+  assert.ok(r.xml.indexOf('충청남도') > 0);
+});
+
+test('넣지 못한 자리는 «세어서» 돌려준다 — 조용히 넘기면 「저장했는데 비어 있다」가 된다', () => {
+  const xml = tbl([['성명', '']]);
+  const r = M.apply(xml, { picks: { t9r9c9: 'name' }, data: WHO });
+  assert.equal(r.failed.length, 1);
+  assert.equal(r.failed[0].id, 't9r9c9');
+});
+
+test('서식 지문 — 같은 서식은 같고, 칸 이름이 달라지면 달라진다', () => {
+  const a = tbl([['성명', ''], ['주소', '']]);
+  const b = tbl([['성명', ''], ['주소', '']]);
+  const c = tbl([['성명', ''], ['연락처', '']]);
+  assert.equal(M.fingerprint(a), M.fingerprint(b));
+  assert.notEqual(M.fingerprint(a), M.fingerprint(c),
+    '칸 이름이 달라지면 옛 기억을 쓰면 안 됩니다 — 엉뚱한 칸에 넣는 것이 더 나쁘다');
+});
+
+test('★ 서식 지문은 «채운 값»에 흔들리지 않는다 — 한 번 채운 서식도 같은 서식이다', () => {
+  const before = tbl([['성명', ''], ['주소', '']]);
+  const after = M.apply(before, { picks: { t0r0c1: 'name' }, data: WHO }).xml;
+  assert.equal(M.fingerprint(before), M.fingerprint(after));
+});
