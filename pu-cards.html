@@ -3170,21 +3170,31 @@ const ErpMatch = {
        메일에서 빠진다.
      ⚠ 가릴 값이 없거나 표시가 없으면 «재직»으로 본다. 모른다고 빼 버리면 멀쩡한
        담당자에게 메일이 안 간다 — 안 가는 쪽이 잘못 가는 쪽보다 늦게 드러난다. */
+  /* 이 명함에서 사람을 가릴 «열쇠» — 이메일(다듬은 것)과 전화 숫자.
+     ⚠ 읽을 때(leftOfCard)와 쓸 때(cardMarkLeft)가 «같은 열쇠»를 써야 한다. 두 벌이면
+       눌러서 표시해 놓고 목록에는 안 뜨는 일이 난다. 그래서 여기 한 곳에 둔다. */
+  keyOfCard(it){
+    return { mail: String((it && it.email) || '').trim().toLowerCase(),
+             nums: [it && it.mobile, it && it.tel, it && it.companyTel]
+               .map(v => ErpMatch._digits(v)).filter(v => v.length >= 8) };
+  },
+  /* 담당자 줄 하나가 이 열쇠와 같은 사람인가 */
+  samePerson(p, key){
+    if (!p || !key || (!key.mail && !key.nums.length)) return false;
+    const pm = String(p.email || '').trim().toLowerCase();
+    if (key.mail && pm && pm === key.mail) return true;
+    const pn = [p.phone, p.bizPhone].map(v => ErpMatch._digits(v)).filter(v => v.length >= 8);
+    return pn.length > 0 && key.nums.some(n => pn.indexOf(n) >= 0);
+  },
   leftOfCard(it){
     if (!ErpMatch.ready || !it) return false;
     const m = ErpMatch.match(it);
     const people = (m && m.people) || [];
     if (!people.length) return false;
-    const mail = String(it.email || '').trim().toLowerCase();
-    const nums = [it.mobile, it.tel, it.companyTel]
-      .map(v => ErpMatch._digits(v)).filter(v => v.length >= 8);
-    if (!mail && !nums.length) return false;             /* 가릴 값이 없다 — 모른다 */
+    const key = ErpMatch.keyOfCard(it);
+    if (!key.mail && !key.nums.length) return false;     /* 가릴 값이 없다 — 모른다 */
     for (let i = 0; i < people.length; i++) {
-      const p = people[i];
-      const pm = String(p.email || '').trim().toLowerCase();
-      if (mail && pm && pm === mail) return !!p.left;
-      const pn = [p.phone, p.bizPhone].map(v => ErpMatch._digits(v)).filter(v => v.length >= 8);
-      if (pn.length && nums.some(n => pn.indexOf(n) >= 0)) return !!p.left;
+      if (ErpMatch.samePerson(people[i], key)) return !!people[i].left;
     }
     return false;
   },
@@ -9617,6 +9627,12 @@ function openPcDetail(id){
       <button onclick="toggleNoMail('${id}')" class="${it.noMail?'nomail-on':''}"
         title="${it.noMail?'수신거부를 풉니다':'단체 발송에서 뺍니다 — 「보내지 마세요」 회신이 왔을 때'}"
         >${it.noMail?'🚫 수신거부 중':'🚫 수신거부'}</button>
+      ${/* 거래처 담당자 퇴사 (대표 지시 2026-08-29) — 적는 곳은 푸른이알피 담당자 줄 하나다.
+           ⚠ 「수신거부」와 뜻이 다르다: 수신거부는 «그 사람이 보내지 말라»고 한 것이고,
+             퇴사는 «그 회사를 떠났다»는 것이다. 그래서 단추를 따로 둔다. */''}
+      <button onclick="askCardLeft('${id}')" class="${ErpMatch.leftOfCard(it)?'nomail-on':''}"
+        title="${ErpMatch.leftOfCard(it)?'퇴사 표시를 풉니다':'그 회사를 떠났다고 표시합니다 — 푸른이알피 담당자 줄에 적히고, 단체 메일에서 빠집니다'}"
+        >${ErpMatch.leftOfCard(it)?'🚪 퇴사 처리됨':'🚪 퇴사'}</button>
     </div>` : `
     <div class="pdacts three"><button onclick="copyCardInfo('${id}')" title="정보를 한 줄로 복사">📋 정보 복사</button><button onclick="downloadPhoto('${id}')" title="원본 사진 내려받기">📥 원본 사진</button>${ photoBackBtn(it) }<button onclick="closeDetail();openEditor(state.items['${id}'])">✏️ 수정</button></div>`;
   /* ── 한 화면에 담기(대표 지시 2026-08-10) ──
@@ -19051,6 +19067,88 @@ function coVal(o, f){
   const ex = String((o.extra && o.extra[f]) == null ? '' : o.extra[f]).trim();
   return ex || String(o[f] == null ? '' : o[f]).trim();
 }
+/* 명함 상세의 「🚪 퇴사」 — 묻고, 쓰고, 알린다.
+   ⚠ 켤 때만 묻는다. 푸는 것은 되돌리는 일이라 막을 까닭이 없다. */
+async function askCardLeft(id){
+  const it = state.items[id]; if(!it) return;
+  const on = !ErpMatch.leftOfCard(it);
+  const who = it.name || it.company || '이 사람';
+  if(on && !confirm(`「${who}」이 「${it.company||''}」을 떠난 것으로 표시합니다.\n\n`
+    + `· 푸른이알피 업체관리의 담당자 줄에 적힙니다\n`
+    + `· 단체 메일·주소록에서 자동으로 빠집니다\n`
+    + `· 명함은 지워지지 않습니다\n\n계속할까요?`)) return;
+  try{
+    /* 누가 고쳤는지 남긴다 — 푸른이알피의 동시 편집 판단이 이걸 본다.
+       ⚠ PuWhoami 가 아직 안 실렸을 수 있다(로그인 직후). 이름이 없다고 표시를
+         못 하게 하지는 않는다 — 이름은 «있으면 좋은 것»이지 조건이 아니다. */
+    let me = '';
+    try{ const w = window.PuWhoami && PuWhoami.get && PuWhoami.get(); me = (w && w.name) || ''; }catch(_){}
+    const r = await cardMarkLeft(it, on, me);
+    if(!r.ok) return toast('⚠ ' + r.message, 7000);
+    toast(r.message + (r.added ? ' (업체관리 담당자에 새로 올렸습니다)' : ''), 7000);
+    render(); openDetail(id);
+  }catch(e){ toast('❌ 표시하지 못했습니다: ' + ((e&&e.message)||''), 8000); }
+}
+
+/* ══════ 명함에서 「🚪 퇴사」를 누른다 — (나) (대표 지시 2026-08-29) ══════
+   적는 곳은 «푸른이알피 담당자 줄» 하나다(data/companies … contacts[].left).
+   명함에는 아무것도 안 적는다 — 두 곳에 적으면 어느 쪽이 참인지 알 수 없게 된다.
+   ⚠ 새 길을 내지 않는다. 기업정보함은 이미 이 자리에 쓴다(세금계산서 담당자 저장 등) —
+     그 쓰기 꼴(v/{id} · updatedAt · u)을 그대로 따른다. 갱신시각(u)을 안 쓰면
+     푸른이알피 화면이 안 바뀐다.
+   ⚠ 사람은 ErpMatch.samePerson 으로 가린다 — 읽을 때와 «같은 열쇠»다.
+   ⚠ 담당자 줄에 «없는» 사람이면 퇴사 상태로 한 줄 더한다. 안 그러면 담당자로 등록
+     안 된 사람은 표시할 방법이 아예 없다. 다만 «푸는» 쪽은 더하지 않는다 —
+     풀 것이 없는데 줄을 만들면 유령이 쌓인다. */
+async function cardMarkLeft(it, on, byName){
+  const key = ErpMatch.keyOfCard(it);
+  if(!key.mail && !key.nums.length){
+    return { ok:false, message:'이메일이나 전화가 있어야 누구인지 가릴 수 있습니다' };
+  }
+  const want = ErpMatch._digits(it && it.bizno);
+  if(want.length < 10) return { ok:false, message:'사업자번호가 없어 어느 업체인지 알 수 없습니다' };
+  const db = firebase.database();
+  const snap = await db.ref('data/companies').once('value');
+  const wrap = snap.val();
+  const rawv = (wrap && wrap.v !== undefined) ? wrap.v : wrap;
+  const isObj = rawv && !Array.isArray(rawv) && typeof rawv === 'object';
+  const list = Array.isArray(rawv) ? rawv.filter(Boolean)
+             : (isObj ? Object.keys(rawv).map(k=>rawv[k]).filter(Boolean) : []);
+  const cur = list.find(c => c && ErpMatch._digits(c.bizNo) === want);
+  if(!cur) return { ok:false, message:'아직 업체관리에 없는 업체입니다 — 계약이 만들어지면 쓸 수 있습니다' };
+
+  const now = Date.now();
+  const cs = (cur.contacts || []).slice();
+  let at = -1;
+  for(let i=0;i<cs.length;i++){ if(ErpMatch.samePerson(cs[i], key)){ at = i; break; } }
+  if(at < 0){
+    if(!on) return { ok:false, message:'업체관리 담당자에 없는 사람입니다 — 풀 것이 없습니다' };
+    cs.push({ id: 'mc-' + now.toString(36) + Math.random().toString(36).slice(2,5),
+      name: String((it&&it.name)||''), role: String((it&&it.title)||''),
+      phone: String((it&&it.mobile)||''), bizPhone: String((it&&it.tel)||''),
+      fax: '', email: String((it&&it.email)||''), isPrimary: false,
+      left: true, leftAt: now });
+  }else{
+    cs[at] = Object.assign({}, cs[at], on ? { left:true, leftAt:now }
+                                          : { left:false, leftAt:0 });
+  }
+  const merged = Object.assign({}, cur, { contacts: cs, updatedAt: now });
+  if(byName) merged.updatedBy = byName;
+  const up = {};
+  if(isObj) up['data/companies/v/'+cur.id] = merged;
+  else {
+    const i = list.findIndex(c => c && c.id === cur.id);
+    if(i>=0) list[i] = merged;
+    up['data/companies/v'] = list;
+  }
+  up['data/companies/u'] = now;   /* 갱신시각 — 푸른이알피가 이걸 보고 다시 읽는다 */
+  await db.ref().update(up);
+  ErpMatch.load();                /* 색인을 다시 만들어 딱지·거르개가 바로 바뀌게 */
+  return { ok:true, added: at < 0,
+    message: on ? `🚪 「${(it&&it.name)||''}」을 퇴사로 표시했습니다 — 단체 메일에서 빠집니다`
+                : `퇴사 표시를 풀었습니다` };
+}
+
 /* ══════ 이 값이 «어디서» 왔나 (대표 지시 2026-08-24, 4순위) ══════
    한 회사 값은 네 곳에서 온다 — 사업자등록증 · 명함 · 푸른이알피 · 사진첩 서식.
    값만 보여 주면 「이 매출액 어디서 봤더라」에 답할 수가 없어, 사진첩에 그 서류가
