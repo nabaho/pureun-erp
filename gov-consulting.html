@@ -2593,6 +2593,14 @@ function renderPhotoLog(){
 }
 // 일정 수정창: 저장된 타임스탬프 사진(합성본+원본) 미리보기 — 캐시 없으면 DB에서 직접 로드
 function slotLabelByIdx(sc,i){ return slotLabelText(sc,i); }
+/* 사무실 일정에서 «이번만» 사진 칸을 펼쳐 둔 것. 기록에 남기지 않는다 —
+   사무실인데 사진을 넣는 것은 드문 예외라, 다음에 열 때는 다시 접혀 있는 게 맞다. */
+const officePhotoOpen={};
+function openOfficePhotos(sid){
+  officePhotoOpen[sid]=true;
+  renderEditPhotos(sid, getScheds().find(s=>s.id===sid));
+}
+
 function renderEditPhotos(sid,sc){
   const phDiv=q('#mEditPhotos'); if(!phDiv)return;
   const layout=phDiv.closest('.edit-layout');
@@ -2601,10 +2609,39 @@ function renderEditPhotos(sid,sc){
   const tyNm=getTypes().find(t=>t.id===sc?.typeId)?.name||'컨설팅';
   const mine=canEdit(sc);
   const defs=photoSlotDefs(sc);
-  const show = mine || schedHasPhoto(sid);
+  /* ⚠ 사무실 일정에는 현장 사진 칸을 «안 보여 준다»(대표 지시 2026-08-29).
+       사무실에서 한 일은 방문 증빙이 필요 없는데, 빈 칸 둘이 늘 떠 있으면
+       「안 넣었다」로 읽혀 넣어야 할 것처럼 보인다.
+     ⚠ 다만 «예외»가 있다 — 사무실로 적어 두고 사진이 필요한 날이 있다.
+       그래서 없애지 않고 «접어» 둔다. 한 번 누르면 그 자리에서 펼쳐진다.
+     ⚠ 이미 사진이 들어 있으면 절대 감추지 않는다. 증빙을 숨기는 셈이 된다.
+     ⚠ 화면의 「방문 구분」을 바로 따라간다(edit_isField) — 저장 전에 사무실로
+       바꿔도 그 자리에서 접힌다. */
+  const isOffice = (typeof edit_isField!=='undefined' && edit_id===sid) ? !edit_isField : !(sc&&sc.isField);
+  const folded = isOffice && !schedHasPhoto(sid) && !officePhotoOpen[sid];
+  const show = (mine || schedHasPhoto(sid));
   phDiv.style.display = show?'block':'none';
   layout?.classList.toggle('has-photos',show);
   modal?.classList.toggle('has-photos',show);
+  if(folded){
+    const ttl=q('#mEditPhTitle');
+    if(ttl)ttl.innerHTML='🏢 사무실 일정 <span class="ph-sub">— 현장 사진이 필요 없습니다</span>';
+    const ctl0=q('#mEditPhCtl'); if(ctl0)ctl0.innerHTML='';
+    const g=q('#mEditPhGrid');
+    if(g)g.innerHTML = mine
+      ? `<div style="grid-column:1/-1;border:1px dashed var(--border);border-radius:10px;padding:16px 14px;text-align:center;background:var(--sf2);">
+           <div style="font-size:12px;color:var(--t2);line-height:1.7;margin-bottom:10px;">
+             사무실에서 한 일은 방문 증빙이 필요 없습니다.<br>그래도 사진을 남기시려면 아래를 누르세요.</div>
+           <button onclick="openOfficePhotos('${sid}')" style="padding:8px 16px;border:1px solid var(--accent);border-radius:8px;background:var(--surface);color:var(--accent);font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;">＋ 현장 사진 추가</button>
+         </div>`
+      : '';
+    renderRefCaps(sid, sc);
+    return;
+  }
+  /* 접힌 상태에서 펼쳤을 때 제목을 되돌린다 — 안 되돌리면 사진 칸이 보이는데
+     「사진이 필요 없습니다」라고 적혀 있어 서로 어긋난다. */
+  const _ttl=q('#mEditPhTitle');
+  if(_ttl)_ttl.innerHTML='📷 현장 사진 <span class="ph-sub">— 방문 증빙(타임스탬프)</span>';
   // 개수 컨트롤(스테퍼) — 본인 컨설팅만
   const ctl=q('#mEditPhCtl');
   if(ctl){
@@ -6553,6 +6590,7 @@ async function openEditModal(sid){
   const co=getCos().find(c=>c.id===sc.coId);
   const ty=getTypes().find(t=>t.id===sc.typeId);
   edit_id=sid;edit_isField=sc.isField;
+  delete officePhotoOpen[sid];      // 창을 다시 열면 접힌 채로 시작한다
   q('#mEditTitle').textContent=`${co?.name||'?'} 수정`;
   q('#mEditDate').textContent=korDate(sc.date);
   /* 빠진 사람은 새로 못 고른다. 다만 이 일정에 이미 배정된 사람은 남긴다. */
@@ -9191,6 +9229,10 @@ function bind(){
     edit_isField=o.dataset.f==='1';
     qa('#mEditTog .topt').forEach(x=>x.classList.toggle('on',(x.dataset.f==='1')===edit_isField));
     q('#mEditPhoto').style.display=edit_isField?'inline-flex':'none';
+    /* 사진 칸도 바로 따라간다 — 사무실로 바꿨는데 빈 칸이 남아 있으면
+       「사진을 넣어야 하나」로 읽힌다(2026-08-29). */
+    const _sc=getScheds().find(s=>s.id===edit_id);
+    if(_sc)renderEditPhotos(edit_id,_sc);
   });
   q('#mEditPhoto').onclick=()=>{const sid=edit_id;closeModal('mbEdit');setTimeout(()=>openStampModal(sid),150);};
   // Stamp modal
