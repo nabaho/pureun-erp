@@ -139,6 +139,8 @@ test('★ 도구줄이 장수를 쓴다 — 실제로 돌려 본다', () => {
   vm.runInContext(fnOf(app, 'idsOf'), ctx);
   vm.runInContext(fnOf(app, 'shownCount'), ctx);
   vm.runInContext(fnOf(app, 'readableSel'), ctx);
+  /* 2026-08-28: 도구줄이 숫자 규칙(cnt)을 쓴다 — 안 주면 그 자리에서 멎는다 */
+  vm.runInContext(fnOf(app, 'cnt'), ctx);
   vm.runInContext(fnOf(app, 'renderGridBar'), ctx);
   ctx.renderGridBar();
   /* ⚠ 2026-08-26 — 장수가 적히는 자리가 옮겨졌다. 예사 때는 「☑ 전부 N장」 단추가

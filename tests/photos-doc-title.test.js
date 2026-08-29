@@ -366,6 +366,8 @@ function runGridBar(over) {
   vm.runInContext(fnOf(app, 'idsOf'), ctx);
   vm.runInContext(fnOf(app, 'shownCount'), ctx);
   vm.runInContext(fnOf(app, 'readableSel'), ctx);
+  /* 2026-08-28: 도구줄이 숫자 규칙(cnt)을 쓴다 — 안 주면 그 자리에서 멎는다 */
+  vm.runInContext(fnOf(app, 'cnt'), ctx);
   vm.runInContext(fnOf(app, 'renderGridBar'), ctx);
   ctx.renderGridBar();
   return el;

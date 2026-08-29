@@ -930,10 +930,19 @@ test('고른 것에 쓰는 단추는 왼쪽 끝에 있다', () => {
   const gend = app.indexOf('<div id="grid">');
   assert.ok(gi > 0 && gend > gi, 'gridBar 를 찾을 수 없습니다');
   const bar = [null, app.slice(gi, gend)];
+  /* ⚠ 2026-08-28 다시 겨눔 — 고른 장수(gridCount)를 **맨 앞**으로 옮겼다(대표 승인 목업).
+     읽는 차례가 「25장 고름 → 무엇을 할까」가 되게 한 것이다. 그래서 단추는 이제
+     장수 «뒤»에 온다. 지킬 것은 그대로 — **고른 것에 쓰는 단추가 차례 고르개보다
+     앞(왼쪽)에 있다.** */
   const iBtn = bar[1].indexOf('readSelBtn');
+  const iSort = bar[1].indexOf('sortSeg');
+  assert.ok(iBtn >= 0 && iSort >= 0, '단추나 차례 고르개가 없습니다');
+  assert.ok(iBtn < iSort, '단추가 차례 고르개보다 뒤에 있습니다 — 왼쪽 끝이 아닙니다');
+  /* 그리고 장수는 「☑ 전부」 바로 뒤·단추들보다 앞이라야 한다 */
+  const iAll = bar[1].indexOf('selAllBtn');
   const iCount = bar[1].indexOf('gridCount');
-  assert.ok(iBtn >= 0 && iCount >= 0, '단추나 장수 표시가 없습니다');
-  assert.ok(iBtn < iCount, '단추가 장수 표시보다 뒤에 있습니다 — 왼쪽 끝이 아닙니다');
+  assert.ok(iAll < iCount && iCount < iBtn,
+    '★ 고른 장수가 맨 앞이 아닙니다 — 무엇을 할지 먼저 보고 몇 장인지 나중에 알게 됩니다');
 });
 
 test('여러 장 지울 때 한 장이 실패해도 나머지를 지운다', () => {
