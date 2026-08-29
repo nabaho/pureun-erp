@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 // 인자를 안 주면 저장소의 대상 파일을 본다 (node tests/perf-rules.test.js 로 바로 실행)
-const TARGET = process.argv[2] || path.join(__dirname, '..', 'docs/firebase-rules-현재적용본.json');
+const TARGET = process.argv[2] || path.join(__dirname, '..', 'docs/firebase-rules-전체-적용본.json');
 const t = fs.readFileSync(TARGET, 'utf8');
 let j;
 try { j = JSON.parse(t); } catch (e) { console.log('  FAIL JSON 문법 — ' + e.message); process.exit(1); }
@@ -87,7 +87,12 @@ const allowTop = ['systemAlerts','systemBackups','systemBackupsIndex','systemRes
   'paydata',
   /* 2026-08-15 건의 폰 알림(웹푸시). 기기 토큰을 본인 자리에만 담는다 —
      남의 토큰을 읽으면 그 사람 폰으로 알림을 밀어넣을 수 있다. */
-  'fcm_tokens'];
+  'fcm_tokens',
+  /* 2026-08-29 — 겨냥을 «적용본»으로 옮기며 함께 적었다. 옛 스냅숏에는
+     아예 없던 칸들이라 「모르는 게 생겼다」로 잡혔다. 일부러 넣은 것이 맞다:
+     billing(요금) · backup_key(백업열쇠) · homepage · mailbox · pu_mailseen(메일 읽음)
+     · scal_*(일정관리) · exportLog·exportSeen(반출 기록). */
+  'billing','backup_key','homepage','mailbox','pu_mailseen','scal_erpConsHold','scal_serverBackups','scal_serverBackupsIndex','exportLog','exportSeen'];
 
 const keys = Object.keys(R);
 const removed = baseTop.filter(function (k) { return keys.indexOf(k) < 0; });

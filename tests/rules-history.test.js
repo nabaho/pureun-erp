@@ -153,14 +153,18 @@ test('작성기에서 규정관리로 넘길 때 사업자번호를 함께 싣�
 /* 규칙 문서는 두 벌이다 — 콘솔에 통째로 붙여넣는 「전체본」과 그 한 블록만 뗀 「조각본」.
    조각본은 전체본에서 떠온 것이므로 둘이 어긋나면 안 되고, 두 문서가 허용하는 칸이
    코드가 넣는 칸과 정확히 같아야 한다. 하나만 어긋나도 이력이 조용히 안 쌓인다. */
-const RULES_FULL = 'docs/firebase-rules-현재적용본+취업규칙이력(붙여넣기용).json';
-const RULES_SNIP = 'docs/firebase-rules-취업규칙이력-추가(붙여넣기용).json';
+const RULES_FULL = 'docs/firebase-rules-전체-적용본.json';
+const RULES_SNIP = 'docs/firebase-rules-전체-적용본.json';
 const readJson = p => JSON.parse(fs.readFileSync(path.join(root, p), 'utf8'));
 
-test('전체본과 조각본의 index 블록이 한 글자도 다르지 않다', () => {
-  const full = readJson(RULES_FULL).rules.rules_mgmt.index;
-  const snip = readJson(RULES_SNIP).index;
-  assert.deepEqual(snip, full, '조각본은 전체본에서 떠온 것이어야 한다 — 손으로 고치지 말 것');
+/* ⚠ 2026-08-29 — 조각본을 없애고 «적용본» 한 곳으로 모았다.
+   「두 파일이 같은가」는 파일이 하나가 되어 뜻이 없어졌다. 지킬 것은 그 아래로 옮긴다:
+   이력 색인 규칙이 «적용본에 살아 있는가». 이것이 빠지면 취업규칙 이력이 조용히 안 쌓인다. */
+test('★ 이력 색인 규칙이 적용본에 살아 있다', () => {
+  const idx = readJson(RULES_FULL).rules.rules_mgmt.index;
+  assert.ok(idx, '★ rules_mgmt/index 규칙이 사라졌다 — 이력이 조용히 안 쌓인다');
+  assert.ok(idx['.read'], '읽기 규칙이 없다');
+  assert.ok(idx.$site && idx.$site.$rev, '사업장·개정 자리가 없다');
 });
 
 test('전체본은 콘솔에 붙여넣을 수 있는 모양이고, index 는 done 옆에 있다', () => {

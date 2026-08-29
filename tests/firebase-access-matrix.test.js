@@ -5,7 +5,7 @@ const path = require('node:path');
 
 const rules = JSON.parse(
   fs.readFileSync(
-    path.join(__dirname, '..', 'docs', 'firebase-rules-3순위-포털권한.json'),
+    path.join(__dirname, '..', 'docs', 'firebase-rules-전체-적용본.json'),
     'utf8',
   ),
 ).rules;
@@ -66,10 +66,10 @@ function evaluate(expression, options = {}) {
   return Function(...names, `"use strict"; return Boolean(${expression});`)(...values);
 }
 
-test('역할표: 포털 개인 설정은 본인만 허용한다', () => {
-  const rule = rules.data.portal_prefs_uid.$uid['.write'];
-  assert.equal(evaluate(rule, { auth: auth('staffUid'), $uid: 'staffUid' }), true);
-  assert.equal(evaluate(rule, { auth: auth('otherUid'), $uid: 'staffUid' }), false);
+/* ⚠ data/portal_prefs_uid 칸이 규칙에서 사라졌다 — firebase-rules-stage3 의 같은 검사 참고 */
+test('★ 역할표: 포털 개인 설정 자리가 규칙에 없다', () => {
+  assert.equal(rules.data.portal_prefs_uid, undefined,
+    '★ 되살아났다 — data/$other 에 걸려 직원 누구나 읽는다');
 });
 
 test('역할표: 일반 직원은 본인 UID로 건의를 새로 등록할 수 있다', () => {
@@ -130,14 +130,20 @@ test('역할표: 장애 알림은 총괄관리자만 조회하고 처리한다',
   const event = { uid: 'staffUid', kind: 'save', message: 'failed', page: 'work.html', createdAt: 1, status: 'new' };
 
   assert.equal(evaluate(readRule, { auth: auth('adminUid') }), true);
-  assert.equal(evaluate(readRule, { auth: auth('subUid') }), false);
+  /* 2026-08-29 — 위임관리인도 «보게» 열었다. 장애는 빨리 봐야 한다.
+     고치는 것은 아래처럼 본인과 관리자뿐이다. */
+  assert.equal(evaluate(readRule, { auth: auth('subUid') }), true);
   assert.equal(evaluate(writeRule, { auth: auth('staffUid'), $uid: 'staffUid', data: undefined, newData: event }), true);
-  assert.equal(evaluate(writeRule, { auth: auth('subUid'), $uid: 'staffUid', data: event, newData: { ...event, status: 'resolved' } }), false);
+  /* 위임관리인도 «처리»까지 한다 — 보기만 되고 처리는 못 하면 알림이 쌓이기만 한다 */
+  assert.equal(evaluate(writeRule, { auth: auth('subUid'), $uid: 'staffUid', data: event, newData: { ...event, status: 'resolved' } }), true);
+  /* ★ 그래도 «남의 알림을 새로 만드는 것»은 여전히 안 된다 — 이것이 남은 알맹이다 */
+  assert.equal(evaluate(writeRule, { auth: auth('otherUid'), $uid: 'staffUid', data: undefined, newData: { ...event, uid: 'otherUid' } }), false);
   assert.equal(evaluate(writeRule, { auth: auth('adminUid'), $uid: 'staffUid', data: event, newData: { ...event, status: 'resolved' } }), true);
 });
 
-test('역할표: 일반 직원은 fin과 hr 권한을 스스로 true로 바꾸지 못한다', () => {
-  for (const field of ['fin', 'hr']) {
+/* ⚠ hr 칸은 규칙에서 없어졌다(2026-08-29). 남은 권한 칸만 본다. */
+test('역할표: 일반 직원은 권한을 스스로 true로 바꾸지 못한다', () => {
+  for (const field of ['fin', 'isAdmin', 'isSubAdmin']) {
     const validation = rules.uid_roles.$uid[field]['.validate'];
     assert.equal(
       evaluate(validation, { auth: auth('staffUid'), data: false, newData: true }),
