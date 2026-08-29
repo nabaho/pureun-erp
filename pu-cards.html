@@ -1546,6 +1546,17 @@ table.sbox.tight td.none{padding:26px 8px}
   border:1px solid #e4e8f0;border-radius:10px;cursor:pointer;background:#fff;transition:all .12s}
 .movefolder:hover{background:#eef3fb;border-color:#3a4a73}
 .movefolder .mfic{font-size:17px}
+/* 내려받기 고르는 줄 — 폴더 고르기와 «같은 줄»에 개수만 오른쪽에 붙인다
+   (대표 지시 2026-08-29 「명함 사업자 기업상세 각각」). 누르기 «전에» 몇 건인지 안다. */
+.xpick{display:flex;align-items:center;gap:10px}
+.xpick .xnm{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.35}
+.xpick .xnm em{font-style:normal;font-size:11.5px;color:#8b98b3}
+.xpick .xn{margin-left:auto;font-size:13.5px;font-weight:800;color:#1b2536;
+  white-space:nowrap;font-variant-numeric:tabular-nums}
+/* 0건이면 못 누른다 — 눌러서 빈 파일을 받으면 「고장인가」 하게 된다 */
+.xpick.off{opacity:.45;cursor:default}
+.xpick.off:hover{background:#fff;border-color:#e4e8f0}
+.xpick.off .xn{color:#8b98b3}
 .pcitem:hover{background:#27365c}
 /* 「보낸 사람」 접는 줄 — 사람이 늘어도 왼쪽이 이름으로 가득 차지 않게 접어 둔다 */
 /* 이름표는 한 줄로 — 「보낸 사 람」처럼 접히면 무슨 말인지 알아보기 어렵다 */
@@ -7858,12 +7869,18 @@ function regionOf(it){
   const map={'서울특별시':'서울','부산광역시':'부산','대구광역시':'대구','인천광역시':'인천','광주광역시':'광주','대전광역시':'대전','울산광역시':'울산','세종특별자치시':'세종','경기도':'경기','강원특별자치도':'강원','충청북도':'충북','충청남도':'충남','전라북도':'전북','전라남도':'전남','경상북도':'경북','경상남도':'경남','제주특별자치도':'제주'};
   return map[m[1]]||m[1];
 }
-function listItems(){
+/* ⚠ 갈래(kind)를 «받을 수 있게» 열어 두었다 (대표 지시 2026-08-29 「명함 사업자 기업상세
+   각각 다운 받을 수 있게」). 안 주면 예전 그대로 보고 있는 갈래다 — 부르는 곳 스무 남짓은
+   손대지 않는다.
+   ⚠ 거르는 셈을 «두 벌로 만들지 않으려고» 이렇게 한다. 내보내기용 세기를 따로 지으면
+     화면에 보이는 건수와 내려받은 건수가 조용히 어긋난다. */
+function listItems(kind){
+  const tab = kind || state.tab;
   const q = $('search').value.trim().toLowerCase();
   const qc = q.replace(/\s/g,'');
   const isCho = qc && /^[ㄱ-ㅎ]+$/.test(qc);   /* 초성 검색: ㅎㄱㄷ → 홍길동 */
   const arr = Object.values(allItems())
-    .filter(it => it.kind===state.tab)
+    .filter(it => it.kind===tab)
     .filter(it => {
       if (state.group==='all') return true;
       return (it.group||'')===state.group;
@@ -10031,7 +10048,9 @@ function openMenu(){
     ${hd('📥 데이터')}
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');importInput.click()">📥 파일 가져오기
       <span class="msub">리멤버 엑셀 · 구글 CSV · vCard</span></button>
-    <button class="sheetbtn" onclick="menuBg.classList.remove('open');exportXlsx()">📤 엑셀로 내보내기</button>
+    <!-- 폰에서도 같은 창을 연다 — 내려받기는 한 자리에서만 갈린다(환경설정과 같은 함수) -->
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');openExportPick()">📤 엑셀로 내보내기
+      <span class="msub">명함 · 사업자등록증 · 기업 상세</span></button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');printList()">🖨 현재 목록 인쇄 / PDF</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');backupNow()">💾 지금 백업
       <span class="msub">JSON 파일로 저장</span></button>
@@ -11451,15 +11470,120 @@ function openErpNameCheck(){
 }
 
 /* ════════════ 📤 엑셀 내보내기 ════════════ */
-async function exportXlsx(){
+/* ══════ 내려받기 — 셋 중 «고른 것»만 (대표 지시 2026-08-29) ══════
+   「명함 사업자 기업상세 각각 다운 받을 수 있게 해달라」 · 「내려받는건 환경설정에서」
+
+   ■ 예전에 무엇이 잘못이었나
+     ① 갈래가 «보고 있는 화면»으로 저절로 정해졌다(state.tab). 기업 상세를 보는 중에
+        눌러도 명함이 나왔고, 기업 상세는 내보낼 길이 아예 없었다.
+     ② 단추 설명은 「현재 목록」인데 실제로는 «전체»가 나갔다. 폴더·탭으로 아무리
+        좁혀 놓아도 6,295건이 통째로 나갔다 — 적힌 말과 하는 일이 달랐다.
+     ②는 대표 결정으로 «지금 보고 있는 목록»이 나가게 고쳤다. 분류해 둔 것이 쓰인다.
+
+   ⚠ 셋의 건수는 화면이 쓰는 «그 함수»로 센다 — 명함·사업자는 listItems(갈래),
+     기업 상세는 coVisible(). 세기를 따로 지으면 화면 건수와 내려받은 건수가 어긋난다. */
+const EXPORT_KINDS = [
+  { id:'card', ic:'📇', name:'명함' },
+  { id:'biz',  ic:'📄', name:'사업자등록증' },
+  { id:'co',   ic:'🏢', name:'기업 상세' }
+];
+/* 갈래마다 «지금 몇 건이 나가는지»와 «왜 그만큼인지» — 순수 로직(검사 대상) */
+function exportScope(kind){
+  if(kind==='co'){
+    const selN = Object.keys(state.coSel||{}).length;
+    if(selN) return { n:selN, sub:'네모로 골라 두신 것', picked:true };
+    const list = coVisible();
+    return { n:list.length, sub:coScopeLabel(), picked:false };
+  }
+  const sel = Object.keys(state.sel||{}).filter(id=>{
+    const it = (state.items||{})[id]; return it && it.kind===kind;
+  });
+  if(sel.length) return { n:sel.length, sub:'네모로 골라 두신 것', picked:true };
+  const list = listItems(kind);
+  return { n:list.length, sub:narrowLabel(), picked:false };
+}
+/* 기업 상세에 걸린 조건을 사람 말로 — 명함 쪽 narrowLabel() 과 같은 노릇 */
+function coScopeLabel(){
+  const bits = [];
+  if(state.coFolder){ const f=(_coFolders||{})[state.coFolder]; if(f&&f.name) bits.push('📁 '+f.name); }
+  if(state.coFTab) bits.push('＃ '+state.coFTab);
+  if(state.coTag) bits.push('🏷 '+state.coTag);
+  if(String(state.coQ||'').trim()) bits.push('🔍 "'+String(state.coQ).trim()+'"');
+  if(state.coOnlyCares) bits.push('거래처만');
+  if(state.coOnlyClosed) bits.push('종료만');
+  if(state.coOnlyNoBiz) bits.push('번호없음만');
+  if(state.coOnlyIncomplete) bits.push('정보부족만');
+  if(state.coOnlyUid) bits.push('고유번호증만');
+  return bits.join(' · ') || '전체';
+}
+/* 고르는 창 — 이미 쓰고 있는 「폴더 고르기」(#folderDlg · .movefolder)와 같은 결.
+   ⚠ 0건인 줄은 «못 누르게» 한다. 눌러서 빈 파일을 받으면 고장으로 읽힌다. */
+function openExportPick(){
+  const rows = EXPORT_KINDS.map(k=>{
+    const s = exportScope(k.id);
+    const off = !s.n;
+    return `<div class="movefolder xpick${off?' off':''}"
+        ${off?'':`onclick="folderDlgBg.classList.remove('open');runExport('${k.id}')"`}>
+      <span class="mfic">${k.ic}</span>
+      <span class="xnm">${esc(k.name)}<em>${esc(off?'이 조건에 맞는 것이 없습니다':s.sub)}</em></span>
+      <b class="xn">${s.picked?'고른 ':''}${s.n.toLocaleString()}건</b>
+    </div>`;
+  }).join('');
+  $('folderDlg').innerHTML = `
+    <div class="mhead"><b>📤 엑셀로 내보내기</b>
+      <button class="iconbtn" onclick="folderDlgBg.classList.remove('open')">✕</button></div>
+    <div style="font-size:12.5px;color:#8b98b3;padding:0 6px 10px">누르면 그 갈래가
+      <b>지금 화면에 걸러진 그대로</b> 엑셀로 나옵니다</div>
+    <div style="max-height:46vh;overflow:auto;padding:2px;display:flex;flex-direction:column;gap:6px">${rows}</div>
+    <div class="mfoot"><button class="btn ghost" onclick="folderDlgBg.classList.remove('open')">취소</button></div>`;
+  $('folderDlgBg').classList.add('open');
+}
+function runExport(kind){
+  return kind==='co' ? coExportXlsx() : exportXlsx(kind);
+}
+/* 기업 상세 엑셀 — 화면에 보이는 칸을 그대로 옮긴다.
+   ⚠ 값은 coVal() 로 꺼낸다. 상세 패널·「정보부족」 판정과 «같은 함수»여야,
+     화면에는 있는데 엑셀은 비는 일이 안 생긴다. */
+async function coExportXlsx(){
   await needXLSX();
-  const isCard = state.tab==='card';
+  const selKeys = Object.keys(state.coSel||{});
+  /* ⚠ 고른 것이 있으면 «보이는 목록»이 아니라 회사 전체에서 고른다. 골라 둔 뒤 폴더를
+     옮기면 고른 것이 화면 밖으로 나가는데, 그때 「고른 2곳」이라 해 놓고 1곳만 내보내면
+     조용히 틀린다 — 창에 적힌 수와 파일 안의 수가 늘 같아야 한다. */
+  let list = selKeys.length ? coList().filter(o=>state.coSel[o.key]) : coVisible();
+  const scopeLabel = selKeys.length ? `선택${selKeys.length}곳` : '현재목록';
+  if(!list.length) return toast('내보낼 회사가 없습니다');
+  const rows = list.map(o=>{
+    const r = { '상호': o.name || '', '유형': (o.erp && o.erp.type) || '' };
+    CO_FIELDS.forEach(([k,label])=>{ r[label] = k==='bizno' ? fmtBizno(coVal(o,k)) : coVal(o,k); });
+    r['담당'] = (o.erp && o.erp.main) || '';
+    r['폴더'] = (o.folder && (_coFolders||{})[o.folder] || {}).name || '';
+    r['명함 수'] = o.cards.length;
+    r['등록증 수'] = o.docs || 0;
+    return r;
+  });
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '기업 상세');
+  XLSX.writeFile(wb, `푸른기업정보함_기업상세_${scopeLabel}_${fmtDate(Date.now())}.xlsx`);
+  toast(`엑셀 파일을 내려받았습니다 (${scopeLabel} ${rows.length}곳)`);
+}
+async function exportXlsx(kind){
+  await needXLSX();
+  const tab = kind || state.tab;
+  const isCard = tab==='card';
   const fields = isCard ? CARD_FIELDS : BIZ_FIELDS;
-  /* 선택된 항목이 있으면 그것만, 없으면 전체 */
-  const selIds = Object.keys(state.sel);
-  let targets = Object.values(state.items).filter(it=>it.kind===state.tab);
-  let scopeLabel = '전체';
-  if (selIds.length){ targets = targets.filter(it=>state.sel[it.id]); scopeLabel = `선택${selIds.length}건`; }
+  /* 네모로 고른 것이 있으면 그것만, 없으면 «지금 보고 있는 목록».
+     ⚠ 예전에는 여기가 state.items 전부였다 — 「현재 목록」이라 적어 놓고 전체를 냈다. */
+  const selIds = Object.keys(state.sel).filter(id=>{
+    const it = state.items[id]; return it && it.kind===tab;
+  });
+  /* ⚠ 고른 것이 있으면 «보이는 목록»이 아니라 그 갈래 전체에서 고른다 —
+     창에 적힌 「고른 12건」과 파일 안의 수가 늘 같아야 한다(coExportXlsx 와 같은 규칙). */
+  let targets = selIds.length
+    ? selIds.map(id=>state.items[id])
+    : listItems(tab);
+  const scopeLabel = selIds.length ? `선택${selIds.length}건` : '현재목록';
   const rows = targets
     .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))
     .map(it=>{ const o={};
@@ -17457,7 +17581,11 @@ function renderSettingsPage(){
   if(cur==='data'){
     panel = note('파일로 가져오고 내보내고, 백업해 둡니다.')
       + btn('importInput.click()','📥','파일 가져오기','리멤버·구글·vCard')
-      + btn('exportXlsx()','📤','엑셀로 내보내기','현재 목록')
+      /* 대표 지시 2026-08-29 「내려받는건 환경설정에서 할수 있게 해라」 —
+         여기가 내려받기의 «집»이다. 누르면 명함·사업자·기업 상세 셋 중 고른다.
+         ⚠ 여기는 글자를 «이어 붙이는» 자리다(템플릿 문자열이 아니다) — ${} 를 쓰면
+           그 글자가 화면에 그대로 나온다. 주석은 이렇게 둔다. */
+      + btn('openExportPick()','📤','엑셀로 내보내기','명함 · 사업자 · 기업 상세')
       + btn('printList()','🖨','인쇄 / PDF','현재 목록')
       + btn('backupNow()','💾','지금 백업','JSON 저장')
       + btn('restoreInput.click()','📂','백업 복원','JSON 불러오기')

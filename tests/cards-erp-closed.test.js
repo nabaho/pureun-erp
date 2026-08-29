@@ -54,7 +54,10 @@ function fnBody(name){
 
 test('★ 계약이 끝난 업체의 명함·사업자만 골라 볼 수 있다', () => {
   /* ⚠ 소스에 글자가 있나만 보면 지워도 통과한다 — «걸러 보고» 확인한다 */
-  const at = src.indexOf('function listItems()');
+  /* ⚠ 인자가 아니라 «그 함수»를 찾는다. 2026-08-29 에 listItems 가 갈래를 받게 되자
+     'function listItems()' 로 찾던 검사 셋이 한꺼번에 못 찾았다 — 기능은 멀쩡했다
+     (CLAUDE.md 「지금 값이 아니라 규칙」). */
+  const at = src.indexOf('function listItems(');
   const open = src.indexOf('{', at);
   let d = 0, end = -1;
   for (let k = open; k < src.length; k++) {
@@ -86,7 +89,7 @@ test('★ 계약이 끝난 업체의 명함·사업자만 골라 볼 수 있다'
 });
 
 test('★ 업체관리에 «없는» 곳은 종료가 아니다 — 정보가 없을 뿐이다', () => {
-  const at = src.indexOf('function listItems()');
+  const at = src.indexOf('function listItems(');
   const open = src.indexOf('{', at);
   let d = 0, end = -1;
   for (let k = open; k < src.length; k++) {
