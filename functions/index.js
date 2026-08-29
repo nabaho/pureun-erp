@@ -2070,11 +2070,23 @@ async function requireHanaDevice(req, body) {
   const snap = await ref.once("value");
   const device = snap.val() || {};
   if (device.disabled === true || !device.tokenHash || !hanaSafeEqual(device.tokenHash, hanaHash(match[1]))) {
+    /* ★ 폰이 «죽은 열쇠»로 말을 걸어 온 것을 적어 둔다 (2026-08-29 대표 지시로 파다 잡음).
+       여태는 여기서 그냥 401 을 던지고 끝냈다 — 서버에 자국이 하나도 안 남았다.
+       그래서 화면은 「연결 뒤 문자 0건」이라고만 했고, 대표는
+       「앱이 지워졌나 · 알림이 꺼졌나 · 절전인가」를 셋 다 헤매야 했다.
+       실은 «앱은 멀쩡히 살아 말을 걸고 있는데 연결만 끊긴» 것일 수 있다.
+     ⚠ «그 폰이 실제로 등록되어 있을 때»만 적는다(tokenHash 가 있을 때).
+       아무 uid 나 적게 하면 모르는 사람이 남의 칸에 글을 쓸 수 있다. */
+    if (device.tokenHash) {
+      ref.child("lastReject").set({ at: Date.now(), reason: device.disabled === true ? "disabled" : "bad_token" })
+        .catch(() => { /* 못 적어도 거절은 그대로 한다 */ });
+    }
     const error = new Error("휴대폰 연결이 만료되었거나 해제되었습니다.");
     error.status = 401;
     throw error;
   }
-  ref.child("lastSeenAt").set(Date.now()).catch(() => {});
+  /* 잘 들어왔으면 「끊김」 자국을 지운다 — 지난 자국이 남아 계속 붉으면 못 믿는 표가 된다. */
+  ref.update({ lastSeenAt: Date.now(), lastReject: null }).catch(() => {});
   return { uid, deviceId, device };
 }
 
@@ -2176,6 +2188,10 @@ exports.hanaMessageBridge = functions
           memo: tx.memo,
           note: tx.note,
           rawHash: tx.rawHash,
+          /* ★ 카드 «취소» 표 — 여태 여기서 버려졌다(2026-08-29).
+             화면은 이 표를 보고 «스스로 확정되지 않게» 손을 막는다.
+             버리면 취소가 승인처럼 보이고, 카드 지출이 실제보다 많아진다. */
+          cancel: tx.cancel === true,
           status: "pending",
           receivedAt,
           deviceName: cameFrom,
@@ -2258,6 +2274,8 @@ exports.hanaMessageBridge = functions
             id: tx.id, src: tx.src, type: tx.type, date: tx.date,
             amount: tx.amount, balance: tx.balance || 0,
             memo: tx.memo, note: tx.note, rawHash: tx.rawHash,
+            /* 폰 길과 «같은» 표를 남긴다 — 길에 따라 다르게 들어가면 안 된다. */
+            cancel: tx.cancel === true,
             status: "pending", receivedAt,
             deviceName: "PC 붙여넣기",
           };
@@ -2340,6 +2358,9 @@ exports.hanaMessageBridge = functions
           lastOkAt: Number(d.lastOkAt || 0),
           lastSkip: (d.lastSkip && d.lastSkip.reason)
             ? { reason: String(d.lastSkip.reason), at: Number(d.lastSkip.at || 0) } : null,
+          /* 「열쇠가 죽어 거절했다」 — 화면이 「앱이 없다」와 가르는 데 쓴다. */
+          lastReject: (d.lastReject && d.lastReject.at)
+            ? { reason: String(d.lastReject.reason || "bad_token"), at: Number(d.lastReject.at || 0) } : null,
           disabled: d.disabled === true,
         }));
         hanaJson(res, 200, { ok: true, devices }); return;
@@ -2368,6 +2389,8 @@ exports.hanaMessageBridge = functions
             type: x.type === "expense" ? "expense" : "income", date: String(x.date || ""),
             amount: Number(x.amount || 0), balance: Number(x.balance || 0), memo: String(x.memo || ""),
             note: String(x.note || ""), receivedAt: Number(x.receivedAt || 0),
+            /* 적어 두고도 안 보내면 화면의 cancel 은 늘 거짓이 된다. */
+            cancel: x.cancel === true,
           }));
         hanaJson(res, 200, { ok: true, items }); return;
       }
