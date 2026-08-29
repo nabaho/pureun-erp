@@ -20,11 +20,17 @@ const GOV = fs.readFileSync(path.join(ROOT, 'gov-consulting.html'), 'utf8');
 
 /* 순수 로직만 떠서 돌린다 — 화면(DOM)이 없어도 되는 부분이다.
    ⚠ 길이를 못 박아 자르지 않는다(주석 한 줄 늘면 깨진다). 표식 사이를 벤다. */
-function sandbox() {
+function sandbox(over) {
+  const o = over || {};
   const from = GOV.indexOf('function pkSharedRows(');
   const to = GOV.indexOf('function pkLoadYear(');
   assert.ok(from > 0 && to > from, '공유 로직 표식을 못 찾았다');
-  const ctx = { albumPickOwner: 'ME' };
+  /* ⚠ 2026-08-29 부터 pkMergeItems 가 «증빙 칸에는 회의·현장 사진만» 거른다.
+     그 값(PK)과 갈래 판정(pkKindOf)은 잘라 온 조각 «밖»에 있다 — 받아 줄 자리를 준다.
+     기본은 «안 거름»이라, 아래 겹치기·차례 검사는 예전 그대로를 본다. */
+  const ctx = { albumPickOwner: 'ME',
+    PK: { onlyMeeting: !!o.onlyMeeting },
+    pkKindOf: (r) => (r && r.kind) || 'meeting' };
   vm.createContext(ctx);
   new vm.Script(GOV.slice(from, to)).runInContext(ctx);
   return ctx;
@@ -101,6 +107,30 @@ test('미리보기·원본·표를 한 값이 아니라 사진마다 정한 자�
     '원본도 사진마다 자리를 정해야 한다');
   assert.ok(GOV.includes('owner:pkOwnerOf(it)||owner'),
     '참고 캡처 표에 주인을 적어야 나중에 그 자리를 읽는다');
+});
+
+/* ── 증빙 칸에는 회의·현장 사진만 (대표 지시 2026-08-29) ── */
+
+test('★ 증빙 칸으로 고를 때는 명함·서류를 «가져오지도» 않는다 — 고를 것이 묻힌다', () => {
+  const { pkMergeItems } = sandbox({ onlyMeeting: true });
+  const out = pkMergeItems([
+    { id: 'm1', kind: 'meeting', meta: { takenAt: 3 } },
+    { id: 'c1', kind: 'card',    meta: { takenAt: 2 } },
+    { id: 'd1', kind: 'doc',     meta: { takenAt: 1 } }
+  ], []);
+  /* ⚠ 글로 견준다. 덩어리(vm) 안에서 만든 배열은 바깥 배열과 «다른 종류»라
+     deepStrictEqual 이 눈에 똑같은 것을 두고도 다르다고 한다 — 실제로 걸렸다. */
+  assert.strictEqual(out.map(r => r.id).join(','), 'm1',
+    '명함·서류까지 가져옵니다 — 방문 증빙으로 고를 것이 그 사이에 묻힙니다');
+});
+
+test('참고 캡처 칸에서는 «다» 보여 준다 — 거기는 서류·명함을 붙이는 자리다', () => {
+  const { pkMergeItems } = sandbox({ onlyMeeting: false });
+  const out = pkMergeItems([
+    { id: 'm1', kind: 'meeting', meta: { takenAt: 3 } },
+    { id: 'd1', kind: 'doc',     meta: { takenAt: 1 } }
+  ], []);
+  assert.strictEqual(out.length, 2, '참고 캡처인데 서류를 걸러 냅니다');
 });
 
 /* ── 겹치지 않게 ── */
