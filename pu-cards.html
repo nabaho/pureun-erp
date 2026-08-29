@@ -11410,6 +11410,40 @@ function mbMyAddr(){ return String((matMailCfg().from||'')).trim(); }
 
 /* ── 폴더 목록 읽기 ──
    ⚠ once() 만 쓴다. 같은 자리에 on() 을 걸면 첫 값을 두 번 받는다(2026-08-16 요금 사고). */
+/* ══════════════════════════════════════════════════════════════════════════
+   로그인이 «붙기 전»에는 메일을 읽지 않는다 (대표 보고 2026-08-28)
+   ══════════════════════════════════════════════════════════════════════════
+   "왜 로그인 할때마다 가끔씩 메일이 하나도 안나타나고 없는 경우가 발생하나"
+
+   ★ 까닭 — 경주였다. 메일 아이콘으로 들어오면(?view=mail) 첫 화면이 «로그인 복원보다
+     먼저» 그려지고, renderPC 가 폴더·분류 읽기를 그 자리에서 쏜다. 브라우저가 로그인
+     토큰을 되살리는 일은 비동기라, 토큰이 늦으면 서버 규칙(auth != null)이
+     PERMISSION_DENIED 로 거절한다. 그때 아래 catch 가 «빈 것을 다 읽었다»고
+     표시했다(_mbFolders = {}) — 가져오기는 「한 번만」 설계라 다시는 시도하지 않았고,
+     로그인이 붙은 «뒤에도» 빈 화면이 그대로 남았다. 토큰이 빠르면 정상, 느리면 빈 화면 —
+     그래서 「가끔」이었다.
+
+   ★ 고치는 결 둘.
+     ① 로그인이 없으면 «아예 안 쏜다»(mbAuthOk) — 실패를 잘 처리하는 것보다 실패할
+        요청을 안 보내는 것이 먼저다. _mbFolders 를 null 로 두므로, 로그인이 붙은 뒤
+        오는 render 가 저절로 다시 가져온다(들어오는 문 renderPC 가 매번 두드린다).
+     ② 그래도 거절당하면(로그인이 도중에 풀린 때) «다 읽었다»로 표시하지 않는다 —
+        null 로 되돌려 다음 render 가 다시 시도하게 둔다. 진짜 규칙 문제(로그인이
+        멀쩡한데 거절)일 때만 지금처럼 오류로 남긴다.
+   ⚠ 안내문도 가른다(mbErrTell) — 로그인이 풀린 것을 「콘솔에 규칙을 넣어야 합니다」로
+     말하면 사람이 콘솔을 뒤지느라 시간을 버린다(2026-08-16 App Check 안내문과 같은 결). */
+function mbAuthOk(){
+  if(typeof Store==='undefined' || Store.mode!=='firebase') return true;
+  try{ return !!(firebase.auth && firebase.auth().currentUser); }catch(_){ return false; }
+}
+/* 못 읽었을 때 사람에게 할 말 — 원인을 «맞게» 말한다(itemsDeniedTell 과 같은 결) */
+function mbErrTell(){
+  if(!_mbErr) return '';
+  if(/permission[_ ]denied/i.test(String(_mbErr)) && !mbAuthOk())
+    return '로그인이 풀렸습니다 — 다시 로그인해 주세요';
+  return '아직 볼 수 없습니다 — 파이어베이스 콘솔에 규칙을 넣어야 합니다 ('+_mbErr+')';
+}
+
 function loadMailFolders(cb){
   if(Store.mode!=='firebase'){ _mbFolders = _mbFolders||{}; if(cb) cb(); return; }
   Promise.all([
@@ -11418,7 +11452,10 @@ function loadMailFolders(cb){
   ]).then(([f,m])=>{
     _mbFolders = f.val()||{}; _mbMeta = m.val()||{}; _mbErr=''; if(cb) cb();
   }).catch(e=>{
-    _mbFolders = {}; _mbErr = (e&&e.code)||(e&&e.message)||'읽지 못했습니다';
+    _mbErr = (e&&e.code)||(e&&e.message)||'읽지 못했습니다';
+    /* ⚠ 로그인이 없어 거절당한 것이면 «다 읽었다»로 표시하지 않는다 — {} 로 굳히면
+       로그인이 붙은 뒤에도 영영 빈 화면이다. null 로 두면 다음 render 가 다시 가져온다. */
+    _mbFolders = (/permission[_ ]denied/i.test(String(_mbErr)) && !mbAuthOk()) ? null : {};
     console.warn('[메일함]', _mbErr); if(cb) cb();
   });
 }
@@ -11428,6 +11465,7 @@ function loadMailFolders(cb){
 function mbEnsureFolders(){
   if(_mbFolders!==null || _mbBusyFolders) return;
   if(typeof Store==='undefined' || Store.mode!=='firebase'){ _mbFolders = {}; return; }
+  if(!mbAuthOk()) return;   /* 로그인이 아직 — 붙으면 다음 render 가 다시 두드린다 */
   _mbBusyFolders = true;
   loadMailFolders(()=>{
     _mbBusyFolders = false;
@@ -11505,6 +11543,10 @@ function mbEnsureBins(cb){
     if(cb) cb(); return;
   }
   if(_mbBinsBusy){ if(cb) setTimeout(()=>mbEnsureBins(cb), 200); return; }
+  /* ⚠ 로그인이 붙기 전에는 안 쏜다 — 거절당한 빈 값이 «다 읽었다»로 굳으면
+     옮긴 쪽지(_mbPut)가 없는 채로 화면이 열려, 옮겨 둔 메일이 제자리에 보인다.
+     (폴더 목록과 같은 경주 — mbAuthOk 머리글) */
+  if(!mbAuthOk()) return;
   _mbBinsBusy = true;
   Promise.all([
     firebase.database().ref(DB_ROOT+'/config/mailBins').once('value'),
@@ -11517,8 +11559,13 @@ function mbEnsureBins(cb){
     _mbBins = b.val()||{}; _mbPut = p.val()||{}; _mbHide = h.val()||{}; _mbOwner = w.val()||{};
     _mbSucc = sc.val()||{};
   }).catch(e=>{
-    _mbBins = _mbBins||{}; _mbPut = _mbPut||{}; _mbHide = _mbHide||{}; _mbOwner = _mbOwner||{};
-    _mbSucc = _mbSucc||{};
+    /* ⚠ 로그인이 없어 거절당한 것이면 «다 읽었다»로 굳히지 않는다 — 로그인이 붙은 뒤
+       다음 render 가 다시 가져오게 null 그대로 둔다(폴더 목록과 같은 결). */
+    const denied = /permission[_ ]denied/i.test(String((e&&(e.code||e.message))||''));
+    if(!(denied && !mbAuthOk())){
+      _mbBins = _mbBins||{}; _mbPut = _mbPut||{}; _mbHide = _mbHide||{}; _mbOwner = _mbOwner||{};
+      _mbSucc = _mbSucc||{};
+    }
     console.warn('[푸른분류]', (e&&e.message)||e);
   }).then(()=>{
     _mbBinsBusy = false;
@@ -12531,7 +12578,7 @@ function mailSideHtml(){
           title="이름 바꾸기 · 숨기기 · 지우기">⋮</span></div>`;
     });
     else h += `<div class="dm-side-hint">${_mbFolders===null ? '칸을 읽고 있습니다…'
-      : _mbErr ? '아직 볼 수 없습니다 — 콘솔 규칙이 필요합니다'
+      : _mbErr ? esc(mbErrTell())
       : '아직 동기화되지 않았습니다.<br>목록에서 <b>새로고침</b>을 눌러 주세요'}</div>`;
   }
 
@@ -13396,6 +13443,10 @@ function openMailBox(id){
      한 번만 읽는다(_matLoaded). */
   if(!_matLoaded && Store.mode==='firebase')
     loadMaterials(()=>{ if(state.view==='mail') renderPCSide(); });
+  /* ⚠ 로그인이 붙기 전이면 여기서 멈춘다 — 화면은 「읽고 있습니다…」로 남고, 로그인이
+     붙은 뒤 restoreLastScreen·render 가 다시 연다. 안 막으면 아래 «못 읽으면 다시
+     연다» 고리가 로그인 없는 채로 끝없이 돈다(거절 → 다시 → 거절 …). */
+  if(!mbAuthOk()) return;
   if(_mbFolders===null){ loadMailFolders(()=>openMailBox(id)); return; }
   /* 푸른 분류 칸을 그리려면 쪽지(_mbPut)가 있어야 한다 — 없으면 옮긴 메일이 안 보인다 */
   if(_mbBins===null || _mbPut===null || _mbOwner===null || _mbSucc===null){ mbEnsureBins(()=>openMailBox(id)); return; }
@@ -13552,7 +13603,7 @@ function mbMobileHtml(){
     </div>`;
   }).join('')
   : `<div class="dmm-none">${
-      _mbErr ? '아직 볼 수 없습니다 —<br>파이어베이스 콘솔에 규칙을 넣어야 합니다.'
+      _mbErr ? esc(mbErrTell())
       : _mbFolders===null ? '읽고 있습니다…'
       : (state.mbQ||state.mbFilter) ? '찾은 메일이 없습니다.'
       : '아직 동기화된 메일이 없습니다.<br>위 <b>↻</b> 를 눌러 가져오세요.'}</div>`;
@@ -13663,7 +13714,7 @@ function mbDrawerHtml(){
         <span class="fmenu" onclick="event.stopPropagation();mbBinMenu('${b.id}',event)">⋮</span></div>`;
     });
     else h += `<div class="dmm-hint">${_mbErr
-      ? '아직 볼 수 없습니다 — 콘솔 규칙이 필요합니다'
+      ? esc(mbErrTell())
       : '아직 동기화되지 않았습니다'}</div>`;
   }
   /* ── 다음메일 원본 — 접어 둔다. 다음에 있는 그대로 ── */
@@ -13765,7 +13816,7 @@ function mbBoxHtml(){
       <span class="at">${mbTime(v.d)}</span>
     </div>`).join('')
     : `<div class="dm-none">${
-        _mbErr ? '아직 볼 수 없습니다 — 파이어베이스 콘솔에 규칙을 넣어야 합니다.<br>('+esc(_mbErr)+')'
+        _mbErr ? esc(mbErrTell())
         : _mbFolders===null ? '읽고 있습니다…'
         : (state.mbQ||state.mbFilter) ? '찾은 메일이 없습니다.'
         : '아직 동기화된 메일이 없습니다.<br><b>새로고침 ↻</b> 를 눌러 다음메일에서 가져오세요.'}</div>`;
