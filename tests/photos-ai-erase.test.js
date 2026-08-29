@@ -182,97 +182,14 @@ test('★ 열쇠가 오류 글에 섞여 나가지 않는다', () => {
   const why = PE.safeReason({ error: { message: 'bad key AQ.abcdefghij1234567890' } }, '');
   assert.ok(!/AQ\.abcdef/.test(why), '★ 오류 글에 열쇠가 섞여 나갑니다');
 });
+/* ══════ ⑤ 부르는 쪽이 지켜야 하는 것 ══════
 
-/* ══════ ⑤ 화면 — 요금을 사람이 알고 누른다 ══════ */
-
-/* ⚠ 「confirm( 이라는 **글자**가 있나」로는 못 잡는다 — `if (false && !confirm(...))` 로
-   막아도 글자는 남는다(되돌림에서 실제로 새어 나갔다). **돌려서** 본다. */
-function aiCtx(over) {
-  const calls = { edit: 0, replace: 0, alert: [], toast: [] };
-  const ctx = Object.assign({
-    Promise, Object, Array, String, Date, console: { warn() {} },
-    document: { querySelector: function () { return null; } },
-    window: { fetch: function () {} },
-    viewerId: 'p1',
-    photoMask: { status: 'ready', purpose: 'edit', boxes: [{ x: .4, y: .4, w: .1, h: .1 }] },
-    gridItems: [{ id: 'p1', meta: {} }],
-    blockedIfOther: function () { return false; },
-    confirm: function () { return true; },
-    alert: function (m) { calls.alert.push(m); },
-    toast: function (m) { calls.toast.push(m); },
-    photoYearOf: function () { return '2026'; },
-    photoOwner: function () { return 'OWNER'; },
-    shrinkDataUrl: function () { return Promise.resolve('THUMB'); },
-    loadImg: function () { return Promise.resolve({ naturalWidth: 300, naturalHeight: 200 }); },
-    renderReadPanel: function () {}, renderGrid: function () {}, maskItem: function () { return null; },
-    $: function (id) { return id === 'maskImg' ? { naturalWidth: 2000, naturalHeight: 1500 } : null; },
-    firebase: { auth: function () { return { currentUser: { getIdToken: function () { return Promise.resolve('T'); } } }; } },
-    PuRrnMaskUi: { blank: function () { return { status: 'idle', boxes: [] }; } },
-    PuPhotoStore: {
-      replaceImage: function () { calls.replace++; return Promise.resolve(); },
-      markEdited: function () { return Promise.resolve(); }
-    },
-    _calls: calls
-  }, over || {});
-  ctx.PuPhotoEdit = Object.assign({
-    buildCrop: function () { return { spec: { sx: 0, sy: 0, sw: 300, sh: 200, outW: 300, outH: 200 }, dataUrl: 'data:image/jpeg;base64,CUT' }; },
-    callEdit: function () { calls.edit++; return Promise.resolve('data:image/png;base64,OUT'); },
-    pasteBack: function () { return 'FULL'; }
-  }, (over && over._edit) || {});
-  ctx.window.PuPhotoEdit = ctx.PuPhotoEdit;
-  vm.createContext(ctx);
-  vm.runInContext(cutFn(app, 'async function photoEditAi('), ctx);
-  return ctx;
-}
-
-test('★★ 「아니오」를 누르면 «부르지도 않는다» — 부르는 순간이 곧 요금이다', async () => {
-  const c = aiCtx({ confirm: function () { return false; } });
-  await c.photoEditAi();
-  assert.equal(c._calls.edit, 0, '★ 안 묻고 부르면 잘못 눌러도 그대로 요금입니다');
-  assert.equal(c._calls.replace, 0);
-});
-
-test('★★ 못 받으면 «사진을 안 바꾼다» — 조용히 넘어가면 지운 줄 안다', async () => {
-  const c = aiCtx({ _edit: { callEdit: function () { return Promise.reject(new Error('한도 초과')); } } });
-  await c.photoEditAi();
-  assert.equal(c._calls.replace, 0, '★ 못 받았는데 저장하면 원본만 잃습니다');
-  assert.match(c._calls.alert.join(' '), /원본은 그대로입니다/);
-});
-
-test('★★ AI 가 준 사진을 «못 읽으면» 저장하지 않는다 — 깨진 그림으로 원본을 덮으면 끝이다', async () => {
-  const c = aiCtx({ loadImg: function () { return Promise.reject(new Error('사진을 읽지 못했습니다')); } });
-  await c.photoEditAi();
-  assert.equal(c._calls.replace, 0,
-    '★ 못 읽은 것을 그대로 붙여 저장하면 되돌릴 수 없습니다');
-  assert.match(c._calls.alert.join(' '), /원본은 그대로입니다/);
-});
-
-test('★ 받으면 원본과 미리보기를 함께 바꾼다 — 실제로 돌려 본다', async () => {
-  const c = aiCtx();
-  await c.photoEditAi();
-  assert.equal(c._calls.edit, 1, '한 번만 불러야 합니다');
-  assert.equal(c._calls.replace, 1);
-  assert.match(c._calls.toast.join(' '), /자국/, '손댐 자국이 남는다고 말해 줘야 합니다');
-});
-
-test('★ 두 군데를 그어 두면 부르지 않는다 — 조각이 커져 요금이 오른다', async () => {
-  const c = aiCtx({ photoMask: { status: 'ready', purpose: 'edit',
-    boxes: [{ x: .1, y: .1, w: .1, h: .1 }, { x: .7, y: .7, w: .1, h: .1 }] } });
-  await c.photoEditAi();
-  assert.equal(c._calls.edit, 0);
-  assert.match(c._calls.alert.join(' '), /한 군데/);
-});
-
-test('★ 요금이 든다고 «말하고» 묻는다', () => {
-  const fn = cutFn(app, 'async function photoEditAi(');
-  assert.match(fn, /요금이 듭니다/);
-  assert.match(fn, /되돌릴 수 없습니다/);
-});
-
-test('★★ 한 번에 «한 군데»만 — 여러 군데면 조각이 커져 요금이 오른다', () => {
-  const fn = cutFn(app, 'async function photoEditAi(');
-  assert.match(fn, /boxes\.length !== 1/, '★ 여러 군데를 한 번에 보내면 조각이 커집니다');
-});
+   ⚠ 2026-08-29 저녁, 편집이 가리기에서 갈라져 나오면서(대표 지시 「편집기능 분리」)
+     **부르는 화면이 통째로 바뀌었다** — 네모 하나가 아니라 «붓으로 칠한 여러 군데»이고,
+     저장은 원본을 덮지 않고 «새 사진»으로 담는다.
+     그 화면 쪽 검사는 **tests/photos-editor-free.test.js** 에 있다.
+   ⚠ 여기 남기는 것은 «부르는 쪽이 어디에 있든 지켜야 하는 것» 셋뿐이다.
+     화면이 또 바뀌어도 이 셋은 그대로다. */
 
 test('★★ 다시 시도하지 «않는다» — 조용히 두 번 부르면 두 배가 나간다', () => {
   /* ⚠ **주석을 걷어내고 본다.** 왜 안 되풀이하는지 적어 둔 설명까지 걸리면
@@ -286,34 +203,32 @@ test('★★ 다시 시도하지 «않는다» — 조용히 두 번 부르면 �
     '★ 부르는 자리가 둘이면 한 번 눌러 두 번 나갑니다');
 });
 
-test('★ 받는 것이 저장보다 «먼저»다 — 짜임으로도 못박아 둔다', () => {
-  const fn = cutFn(app, 'async function photoEditAi(');
-  const i = fn.indexOf('PuPhotoEdit.callEdit');
-  const j = fn.indexOf('PuPhotoStore.replaceImage');
-  assert.ok(i > 0 && j > i, '★ 받기 전에 저장하면 못 받아도 사진이 바뀝니다');
+test('★★ 요금이 «몇 번» 드는지 말하고 묻는다 — 안 묻고 부르면 잘못 눌러도 요금이다', () => {
+  /* ⚠ 「confirm( 이라는 **글자**가 있나」로는 못 잡는다 — `if (false && !confirm(...))` 로
+     막아도 글자는 남는다(되돌림에서 실제로 새어 나갔다). 부르는 자리와 함께 본다. */
+  const fn = cutFn(app, 'async function edRun(');
+  const askAt = fn.indexOf('confirm(');
+  const callAt = fn.indexOf('callEdit');
+  assert.ok(askAt > 0 && callAt > askAt, '★★ 묻기 전에 부릅니다 — 부르는 순간이 곧 요금입니다');
+  assert.match(fn, /if \(!confirm\(/, '★★ 「아니오」를 안 받습니다');
+  assert.match(fn, /요금이 ' \+ areas\.length \+ '번/,
+    '★★ 몇 번 요금이 드는지 안 말합니다 — 다섯 군데를 칠했으면 다섯 번입니다');
 });
 
 test('★★ 「손댐」 자국을 남긴다 — 눈에 안 보이는 고침이라 기록이 없으면 답할 수 없다', () => {
-  assert.match(cutFn(app, 'async function photoEditAi('), /markEdited\(photoYearOf\(id\), id, 'ai', photoOwner\(id\)\)/,
+  /* 사본에 적는다 — 원본은 안 건드리므로(2026-08-29 「원본은 두고」) 자국도 사본에 있다. */
+  const fn = cutFn(app, 'async function edKeep(');
+  assert.match(fn, /edited: \{ at: Date\.now\(\), how: 'ai'/,
     '★ 증빙 사진에 자국 없이 손대면 나중에 「이 사진 손댔나」에 아무도 답 못 합니다');
+  assert.match(fn, /editedFrom: photoEd\.id/, '★ 어느 사진에서 나왔는지 안 적습니다');
+  /* 저장 층에도 자국 자리가 그대로 있어야 한다(다른 길에서 쓴다) */
   const m = cutFn(store, 'function markEdited(');
   assert.match(m, /metaPath\(year, id, owner\) \+ '\/edited'/, '주인 자리에 적어야 남습니다');
 });
 
-test('★ 자국이 실패해도 «고친 것을 되돌리지 않는다» — 자국이 없을 뿐이다', () => {
-  const fn = cutFn(app, 'async function photoEditAi(');
-  assert.match(fn, /markEdited\([\s\S]{0,120}\.catch\(/,
-    '★ 여기서 터지면 다 된 고치기가 실패로 보입니다');
-});
-
-test('★★ 가리기(요금 0원)가 «먼저» 보이고, AI 는 요금이 든다고 적혀 있다', () => {
-  const fn = cutFn(app, 'function maskPanelHtml(');
-  assert.match(fn, /AI 로 지우기 \(요금 듦\)/, '★ 요금이 드는 단추에 그 말이 없으면 헛돈이 나갑니다');
-  assert.ok(fn.indexOf('photoEditSave()') < fn.indexOf('photoEditAi()'),
-    '★ 요금 없는 길이 먼저 보여야 합니다');
-  assert.match(fn, /요금 없이/, '가려도 되는 일이라는 안내가 없습니다');
-});
-
-test('★ 남의 사진은 AI 로도 못 고친다', () => {
-  assert.match(cutFn(app, 'async function photoEditAi('), /blockedIfOther\(id\)/);
+test('★ 남의 사진은 못 고친다 — 「내 사진」에 공유받은 것이 섞여 있다', () => {
+  assert.match(cutFn(app, 'function startPhotoEdit('), /blockedIfOther\(id\)/,
+    '★ 편집기를 여는 자리에서 안 막습니다');
+  assert.match(cutFn(app, 'async function edRun('), /blockedIfOther\(photoEd\.id\)/,
+    '★ 부르는 자리에서도 막아야 합니다 — 창을 열어 둔 채 주인이 바뀔 수 있습니다');
 });

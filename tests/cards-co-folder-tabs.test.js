@@ -192,7 +192,11 @@ test('고른 것이 없거나 묶음 크기가 헛값이어도 터지지 않는�
    오전 지시의 알맹이(새 폴더가 아래로 밀리면 안 된다)는 여전히 지켜야 한다. */
 test('폴더 목록 뒤에 붙박이 줄이 끼어들지 않는다 — 새 폴더가 밀리지 않게', () => {
   const i = src.indexOf("if(state.view==='co'){");
-  const side = src.slice(i, src.indexOf('$(\'pcSide\').innerHTML = h; return;', i));
+  /* ⚠ 끝 경계는 「옆줄을 갈아 끼우는 그 줄」이다 — 그 줄 «뒤»에 무엇이 더 붙는지는
+   이 검사가 볼 일이 아니다. 예전에는 `= h; return;` 까지 글자 그대로 붙들어,
+   2026-08-29 에 그 줄 뒤로 구르던 자리 되꽂기(pcSideRestoreTop)가 붙자 형제 검사
+   다섯이 «기능이 멀쩡한데» 한꺼번에 깨졌다(CLAUDE.md 「지금 값이 아니라 규칙」). */
+  const side = src.slice(i, src.indexOf("$('pcSide').innerHTML", i));
   const allAt    = side.indexOf("pickCoFolder('')");
   const folderAt = side.indexOf('>폴더');
   const foldersLoopAt = side.indexOf('folders.forEach');
@@ -279,7 +283,7 @@ test('★ 고른 탭·「＃ 전체」가 켜진 것으로 보인다', () => {
 
 test('★ 옆줄에는 탭이 더 이상 없다 — 옆줄은 폴더만 있는 곳이다', () => {
   const i = src.indexOf("if(state.view==='co'){");
-  const side = src.slice(i, src.indexOf('$(\'pcSide\').innerHTML = h; return;', i));
+  const side = src.slice(i, src.indexOf("$('pcSide').innerHTML", i));
   assert.ok(side.indexOf('coFTabList(f)') < 0, '옆줄이 아직 탭 목록을 그린다');
   assert.ok(side.indexOf('＋ 이 폴더에 탭 만들기') < 0, '옆줄에 탭 만들기가 남아 있다');
   assert.ok(side.indexOf("pickCoFTab(") < 0, '옆줄에 탭을 고르는 줄이 남아 있다');
@@ -342,7 +346,7 @@ test('탭이 없을 때의 안내가 «윗줄»을 가리킨다 — 옆줄에는
 
 test('폴더가 하나도 없으면 만들라고 안내한다 — 빈 칸만 보이면 안 된다', () => {
   const i = src.indexOf("if(state.view==='co'){");
-  const side = src.slice(i, src.indexOf('$(\'pcSide\').innerHTML = h; return;', i));
+  const side = src.slice(i, src.indexOf("$('pcSide').innerHTML", i));
   assert.match(side, /if\(!folders\.length\)/);
 });
 

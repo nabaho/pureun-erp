@@ -137,7 +137,7 @@
 <div id="root"></div>
 <script src="js/utils.js?v=1"></script>
 <script src="js/pu-photo-store.js?v=15"></script>
-<script src="js/pu-billing.js?v=6"></script>
+<script src="js/pu-billing.js?v=7"></script>
 <script src="js/pu-rrn-seal.js?v=1"></script>
 <!-- 급여담당자 엑셀 → 업체관리 (대표 결정 2026-08-24). 읽고 대조하는 일은 이 파일이,
      그리기는 아래 화면이 한다 — 검사가 이 파일을 그대로 돌린다. -->
@@ -30168,6 +30168,27 @@ function _xmlExtract(xml, paraTag, textTag){
   }
   return lines.join('\n').replace(/\n{3,}/g,'\n\n').trim();
 }
+/* QR 만들개 — 앱 받는 주소를 폰 카메라로 찍게 한다.
+   ⚠ 처음부터 받아 두지 않는다. 이 창을 여는 사람은 거의 없다 —
+     모두에게 짐을 지울 일이 아니다(fflate·PDF.js 와 같은 방식). */
+function _ensureQrcode(cb){
+  if(typeof QRCode!=='undefined'){ cb(null); return; }
+  var s=document.createElement('script');
+  s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+  s.onload=function(){ cb(null); };
+  s.onerror=function(){ cb('QR 만들개 로드 실패'); };
+  document.head.appendChild(s);
+}
+/* 앱 파일의 «절대 주소» — 폰 주소창에 손으로 칠 수 있어야 한다.
+   ⚠ 상대 경로(hana-bridge.apk)만으로는 폰에서 칠 수가 없다.
+   ⚠ file:// 로 열어 본 경우엔 그 주소가 폰에서 안 통하므로 올려 둔 곳을 쓴다. */
+function hanaApkUrl(){
+  try{
+    if(location.protocol==='https:')
+      return location.origin + location.pathname.replace(/[^/]*$/, '') + 'hana-bridge.apk';
+  }catch(_e){}
+  return 'https://nabaho.github.io/pureunall/hana-bridge.apk';
+}
 function _ensureFflate(cb){
   if(typeof fflate!=='undefined'){ cb(null); return; }
   var s=document.createElement('script');
@@ -38957,6 +38978,32 @@ function FinanceLedger(props){
      그때 손쓸 길이 없었다. PC 에서 붙여넣으면 «폰과 똑같은 길»로 들어가게 한다.
      ⚠ 서버가 같은 파서·같은 대기함을 쓴다(ingestPaste) — 여기서 따로 읽지 않는다.
        화면이 스스로 읽으면 길이 셋이 되고, 셋이 갈라지면 또 조용히 막힌다. */
+  /* 「이렇게 고칩니다」 창 (2026-08-29 대표: 「안된다 다시 최종 완벽하게 완성해라」).
+     ⚠ 여태 막힌 표는 «글»이기만 했다 — 「연결 뒤 문자 0건」 뒤에 까닭 셋을 늘어놓고
+       무엇을 누르라는 말이 없었다. 대표는 그 셋을 혼자 헤매야 했다.
+     ★ 실제로 가장 잦은 까닭은 «폰 앱이 옛 판» 이다 — 옛 앱은 「하나9950 승인」 꼴
+       카드 문자를 폰에서 버리므로 서버는 아무것도 못 듣는다. 그래서 첫 줄이 앱 받기다. */
+  var hanaFixS = useState(false); var hanaFix = hanaFixS[0]; var setHanaFix = hanaFixS[1];
+  /* 창이 열린 뒤에 QR 을 그린다.
+     ⚠ 못 그려도 «조용히» 넘어간다 — 주소가 글자로 남아 있어 길이 안 끊긴다.
+     ⚠ 이미 그린 것은 다시 안 그린다(창을 여닫을 때마다 다시 그리면 깜빡인다). */
+  useEffect(function(){
+    if(!hanaFix && !hanaPair) return;
+    var boxes = document.querySelectorAll('.hana-qr');
+    if(!boxes.length) return;
+    _ensureQrcode(function(err){
+      if(err) return;
+      for(var i=0;i<boxes.length;i++){
+        var b = boxes[i];
+        if(b.getAttribute('data-drawn')) continue;
+        try{
+          b.innerHTML = '';
+          new QRCode(b, { text: b.getAttribute('data-url')||'', width:104, height:104 });
+          b.setAttribute('data-drawn','1');
+        }catch(_e){ /* 못 그려도 주소 글자가 남는다 */ }
+      }
+    });
+  }, [hanaFix, hanaPair]);
   var pasteS = useState(false); var pasteOpen = pasteS[0]; var setPasteOpen = pasteS[1];
   var pasteTS = useState('');   var pasteText = pasteTS[0]; var setPasteText = pasteTS[1];
   var pasteRS = useState(null); var pasteRes = pasteRS[0];  var setPasteRes = pasteRS[1];
@@ -40515,7 +40562,11 @@ function FinanceLedger(props){
     if(!hanaStat) return null;
     var st={fontSize:'10.5px',fontWeight:800,borderRadius:'12px',padding:'3px 8px',
             whiteSpace:'nowrap',border:'1px solid'};
-    function chip(txt,bg,fg,bd,title){
+    /* fix 를 주면 «누를 수 있는» 표가 된다 — 막힌 표는 반드시 갈 곳이 있어야 한다. */
+    function chip(txt,bg,fg,bd,title,fix){
+      if(fix) return h('button',{type:'button',title:title||'',onClick:function(){setHanaFix(true);},
+        style:Object.assign({},st,{background:bg,color:fg,borderColor:bd,cursor:'pointer',fontFamily:'inherit'})},
+        txt+' ›');
       return h('span',{title:title||'',style:Object.assign({},st,{background:bg,color:fg,borderColor:bd})},txt);
     }
     if(hanaStat.error)
@@ -40524,7 +40575,7 @@ function FinanceLedger(props){
     var ds=hanaStat.devices||[];
     if(!ds.length)
       return chip('📵 휴대폰 미연결','#fef2f2','#991b1b','#fecaca',
-        '연결된 휴대폰이 없어 하나 거래문자가 들어오지 않습니다. 「🔗 휴대폰 연결」을 눌러 연결번호를 받으세요.');
+        '연결된 휴대폰이 없어 하나 거래문자가 들어오지 않습니다. 눌러서 앱 받기·연결하는 법을 봅니다.', true);
     var d=ds[0];
     function when(ms){
       if(!ms) return '';
@@ -40532,6 +40583,14 @@ function FinanceLedger(props){
       return ('0'+(t.getMonth()+1)).slice(-2)+'-'+('0'+t.getDate()).slice(-2)
              +' '+('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2);
     }
+    /* ★ 폰은 말을 거는데 «열쇠가 죽어» 서버가 거절한 것 (2026-08-29 에 낸 자국).
+       이것을 「문자 0건」이라고만 하면 앱을 지웠다고 오해해 엉뚱한 데를 뒤진다 —
+       실은 앱은 멀쩡히 살아 있고 «연결만» 다시 맺으면 된다. 가장 먼저 본다. */
+    var rj=d.lastReject;
+    if(rj && Number(rj.at||0) > Number(d.lastOkAt||0))
+      return chip('🔌 연결이 끊겼습니다','#fef2f2','#991b1b','#fecaca',
+        '휴대폰 앱은 살아서 보내고 있는데 연결이 끊겨 서버가 되돌려보내고 있습니다 ('
+        +when(rj.at)+'). 「🔗 휴대폰 연결」로 새 연결번호를 받아 다시 이으세요.', true);
     var skip=d.lastSkip;
     if(skip && Number(skip.at||0) > Number(d.lastOkAt||0))
       return chip('⚠ 마지막 문자 걸러짐','#fffbeb','#854d0e','#fde68a',
@@ -40558,12 +40617,180 @@ function FinanceLedger(props){
       return chip('⚠ 연결 뒤 문자 0건' + pairTxt,'#fef2f2','#991b1b','#fecaca',
         '연결한 지 한참 됐는데 거래문자가 한 건도 안 들어왔습니다. 흔한 까닭 셋 — '
         +'① 휴대폰에 「푸른 하나문자 연결」 앱이 지워졌다 ② 앱의 「알림 접근 허용」이 꺼졌다 '
-        +'③ 절전 모드가 앱을 재웠다. (그냥 거래가 없었을 수도 있습니다)');
+        +'③ 절전 모드가 앱을 재웠다. (그냥 거래가 없었을 수도 있습니다) 눌러서 차례대로 고칩니다.', true);
     if(!d.lastOkAt)
-      return chip('📱 연결됨 · 받은 문자 없음' + pairTxt,'#eff6ff','#1e40af','#bfdbfe',
-        '휴대폰은 붙어 있는데 아직 하나 거래문자가 한 건도 안 왔습니다. 휴대폰에서 「알림 접근 허용」이 켜져 있는지 보세요.');
+    /* ★ 연결은 됐는데 한 건도 없는 자리 — 여기서 «할 일»을 바로 적는다 (2026-08-29).
+       대표: 「연결했다고 하는데 왜 안들어오나」. 그때 서버 기록은 이랬다 —
+       연결 1분 전 · 폰이 보낸 것 0건 · 대기함엔 옛 은행 문자뿐.
+       곧 «앱에서 지난 문자 가져오기를 아직 안 누른» 것이다.
+     ⚠ 이 앱은 알림을 엿듣는다 — 알림은 지나가면 사라진다. 그래서 연결만 해서는
+       «앞으로 올 문자»만 들어온다. 그동안 온 것은 그 주황 단추로만 들어온다.
+       표가 「받은 문자 없음」이라고만 하면, 고장인 줄 알고 엉뚱한 데를 뒤진다. */
+    /* ★ 「지난 문자를 이미 끌어왔나」를 갈라 본다 (2026-08-29).
+       안 가르면, 방금 눌러 72건을 받아 놓고도 화면이 「누르세요」를 되풀이한다 —
+       사람은 시킨 대로 또 누른다. 이미 한 일을 또 시키는 화면은 못 믿게 된다. */
+    if(d.lastHistoryAt)
+      return chip('📱 연결됨 · 지난 문자 받음 · 새 문자 기다리는 중' + pairTxt,
+        '#eff6ff','#1e40af','#bfdbfe',
+        '지난 문자는 ' + when(d.lastHistoryAt) + ' 에 받았습니다. '
+        +'이제부터는 카드를 쓰거나 입금이 있을 때 저절로 들어옵니다 — 더 누를 것이 없습니다.', true);
+      return chip('📱 연결됨 · 앱에서 「지난 문자 가져오기」를 누르세요' + pairTxt,
+        '#fffbeb','#854d0e','#fde68a',
+        '연결은 됐습니다. 다만 이 앱은 «앞으로 올» 문자만 받습니다 — 그동안 온 문자는 '
+        +'폰 앱의 주황색 「지난 문자 가져오기 (최근 30일)」를 눌러야 들어옵니다. '
+        +'누르면 앱 화면 위 상자에 결과가 나옵니다.', true);
     return chip('📱 연결됨 · '+when(d.lastOkAt),'#f0fdf4','#166534','#bbf7d0',
       (d.deviceName||'휴대폰')+' · 마지막으로 들어온 거래문자 '+when(d.lastOkAt));
+  }
+
+  /* ══════ 「하나 문자가 안 들어옵니다 — 이렇게 고칩니다」 ══════
+     대표 2026-08-29: 「카드 내역 자동으로 연결하게 만들고 있는데 안된다」.
+
+     파고들어 보니 길은 다 있었다. 막힌 곳은 «폰에 깔린 앱이 옛 판» 이었다 —
+     2026-08-29 낮에 고치기 전 앱은 「하나9950 승인 …」 꼴 카드 문자를
+     서버에 닿기도 «전에» 폰에서 버렸다. 그래서 서버에는 자국조차 없었고
+     화면은 「연결 뒤 문자 0건」이라고만 했다.
+
+   ★ 그래서 첫 줄이 «앱 받기» 다. 나머지 셋은 그다음에 흔한 차례대로 놓았다.
+   ⚠ 이 창은 «새 연결번호를 만들지 않는다». 다시 연결하면 서버가 세던 것이
+     0 으로 돌아가 「연결 뒤 문자 0건」이 다시 뜬다 — 고치러 왔다가 더 헷갈린다.
+     연결이 실제로 끊긴 때만 「🔗 휴대폰 연결」을 따로 누른다. */
+  /* ══════ 앱 받는 자리 (2026-08-29 대표: 「앱 다시 깔게 프로그램 올려달라」) ══════
+     ⚠ «한 덩이»로 둔다 — 연결 창과 고치기 창 두 군데에 같은 것이 필요하다.
+       두 벌로 두면 한쪽만 고치고 지나간다(이 저장소에서 여러 번 겪었다).
+     ★ 대표는 PC 로 본다. 앱은 «폰에» 깔아야 한다 — 그 사이를 QR 이 잇는다.
+       예전에 「받아서 옮기는 것 귀찮다」고 한 그 사이다.
+     ⚠ QR 만들개를 못 받아도 «길이 끊기면 안 된다» — 주소를 글자로도 적어 둔다. */
+  function hanaApkBlock(){
+    var url = hanaApkUrl();
+    return h('div',null,
+      h('a',{href:'hana-bridge.apk',download:'푸른-하나문자-'+HANA_APK_VER+'.apk',
+        style:{display:'block',textAlign:'center',padding:'12px',
+          borderRadius:'10px',background:'#16a34a',color:'#ffffff',fontWeight:800,
+          fontSize:'13.5px',textDecoration:'none'}},
+        '⬇ 폰에 앱 받기 (판 '+HANA_APK_VER+')'),
+      h('div',{style:{display:'flex',gap:'11px',alignItems:'center',marginTop:'9px',
+        background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'10px'}},
+        h('div',{className:'hana-qr','data-url':url,
+          style:{width:'104px',height:'104px',flexShrink:0,background:'#ffffff',
+            borderRadius:'6px',display:'flex',alignItems:'center',justifyContent:'center',
+            fontSize:'10px',color:'#94a3b8'}}, 'QR'),
+        h('div',{style:{fontSize:'11.5px',lineHeight:1.55,color:'#475569',minWidth:0}},
+          h('b',null,'PC 로 보고 계신가요?'),' 휴대폰 ',h('b',null,'카메라'),'로 왼쪽 네모를 찍으면 ',
+          '폰에서 바로 받아집니다. 옮길 것이 없습니다.',
+          h('div',{style:{marginTop:'6px',fontSize:'11px',color:'#64748b',wordBreak:'break-all'}},
+            '또는 휴대폰 인터넷 주소창에 직접 치세요 — ', h('b',null,url)))));
+  }
+  function hanaFixModal(){
+    if(!hanaFix) return null;
+    var box={background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'11px',
+      padding:'11px 13px',marginBottom:'9px'};
+    var num={display:'inline-block',minWidth:'19px',height:'19px',lineHeight:'19px',
+      textAlign:'center',borderRadius:'99px',background:'#1e40af',color:'#fff',
+      fontSize:'11px',fontWeight:800,marginRight:'6px'};
+    var ttl={fontSize:'13px',fontWeight:800,color:'#1e293b'};
+    var sub={fontSize:'12px',lineHeight:1.6,color:'#475569',margin:'6px 0 0'};
+    function step(n,title,body){
+      return h('div',{style:box},
+        h('div',{style:ttl}, h('span',{style:num},String(n)), title),
+        h('div',{style:sub}, body));
+    }
+    return h('div',{role:'dialog','aria-modal':'true','aria-label':'하나 문자가 안 들어올 때',
+      onClick:function(){setHanaFix(false);},
+      style:{position:'fixed',inset:0,zIndex:10046,background:'rgba(15,23,42,.62)',
+        display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}},
+      h('div',{onClick:function(e){e.stopPropagation();},
+        style:{width:'min(520px,100%)',maxHeight:'min(86vh,860px)',overflow:'auto',
+          background:'#fff',borderRadius:'18px',padding:'20px',
+          boxShadow:'0 24px 70px rgba(15,23,42,.35)'}},
+        h('div',{style:{fontSize:'17px',fontWeight:900,color:'#1e293b'}},
+          '📵 하나 문자가 안 들어옵니다'),
+        h('p',{style:{fontSize:'12.5px',lineHeight:1.65,color:'#475569',margin:'8px 0 14px'}},
+          '위에서부터 차례로 해 보세요. ',
+          h('b',null,'거의 언제나 1~2번'),' 입니다 — 폰에 깔린 앱이 옛 판이면 ',
+          h('b',null,'카드 문자를 폰에서 버립니다'),'. 그러면 서버에는 아무 자국도 안 남아 ',
+          '이 화면이 「문자 0건」이라고만 말하게 됩니다.'),
+
+        /* 1 — 앱 다시 깔기. 폰에서 이 화면을 열고 누르면 그대로 깔린다. */
+        step(1, '휴대폰에 앱을 새로 깝니다',
+          h('div',null,
+            h('div',null,'휴대폰에서 ',h('b',null,'이 화면을 열고'),' 아래를 누르세요. ',
+              'PC 에서 누르면 파일만 받아집니다.'),
+            hanaApkBlock(),
+            h('div',{style:{marginTop:'7px'}},
+            /* ★ 「판 번호를 보세요」만으로는 부족했다 (2026-08-29 대표 화면).
+               옛 앱(1.1.0 이전)은 판 번호를 «아예 안 적는다» — 그래서 대표가
+               「판 번호가 없는데?」에서 막혔다. «없으면 옛것»이라고 못 박아 준다.
+             ⚠ 다운로드 폴더에 예전에 받아 둔 파일이 남아 있으면 그것을 눌러
+               옛 앱이 다시 깔린다 — 실제로 그렇게 됐다. 그 말을 함께 적는다. */
+            h('div',{style:{marginTop:'7px'}},
+              '깐 뒤 앱을 열면 맨 위 설명 아래에 ',
+              h('b',null,'「(앱 판 ' + HANA_APK_VER + ')」'),' 이 보여야 합니다.'),
+            h('div',{style:{marginTop:'5px',padding:'7px 9px',background:'#fffbeb',
+              border:'1px solid #fde68a',borderRadius:'8px',fontSize:'11.5px',lineHeight:1.55}},
+              h('b',null,'판 번호가 아예 안 보이면 옛 앱입니다.'),
+              ' 그때는 앱을 지우고, ',h('b',null,'다운로드 폴더의 예전 apk 파일도 지운 뒤'),
+              ' 위 QR 로 다시 받으세요 — 옛 파일을 눌러 옛 앱이 다시 깔린 적이 있습니다.')))),
+
+        /* ★ 2 — 연결번호 (2026-08-29 대표: 「문자 안들어오고 연결번호 계속 요청들어온다」).
+           폰 앱의 연결정보는 «앱 데이터»에 있다 — 앱을 지우고 다시 깔면 함께 사라진다.
+           그래서 새로 깐 앱은 8자리 번호를 다시 달라고 한다. 당연한 일이다.
+         ⚠★ 여기가 비어 있었다. 앱은 번호를 달라 하는데 이 창은
+            「🔗 휴대폰 연결은 여기서 누르지 않습니다」라고 «막고» 있었다 —
+            빠져나갈 데가 없었다. 창이 사람을 가둔 것이다. 그 경고를 걷고 길을 낸다. */
+        step(2, '연결번호를 받아 앱에 넣습니다',
+          h('div',null,
+            h('b',null,'앱을 다시 깔면 연결이 지워집니다'),' — 앱 안에 있던 연결정보가 ',
+            '앱과 함께 지워지기 때문입니다. 그래서 ',h('b',null,'8자리 번호를 다시 넣어야'),' 합니다. ',
+            '아래를 눌러 번호를 받고, 폰 앱 첫 화면에 넣은 뒤 「연결」을 누르세요.',
+            h('button',{type:'button',onClick:function(){ setHanaFix(false); startHanaSmsPair(); },
+              style:{display:'block',width:'100%',marginTop:'9px',padding:'12px',
+                border:0,background:'#2563eb',color:'#ffffff',
+                borderRadius:'10px',fontWeight:800,fontSize:'13.5px',cursor:'pointer',
+                fontFamily:'inherit'}},
+              '🔗 연결번호 받기 (8자리)'),
+            h('div',{style:{marginTop:'7px',fontSize:'11px',color:'#64748b'}},
+              '번호는 5분 동안만 씁니다. 폰 앱에서 「연결하지 못했습니다」가 나오면 ',
+              '번호가 지난 것이니 여기서 다시 받으세요.'))),
+
+        /* 3 — 알림 접근·절전. 앱이 있어도 이 둘이 막으면 아무것도 못 듣는다. */
+        step(3, '「알림 접근 허용」을 켜고 절전을 끕니다',
+          h('div',null,
+            '앱 안의 ',h('b',null,'녹색 「알림 접근 허용」'),' 단추를 누릅니다. ',
+            '그리고 휴대폰 설정에서 이 앱의 ',h('b',null,'절전(배터리 최적화)을 끕니다'),' — ',
+            '켜 두면 삼성이 앱을 재워 문자를 못 봅니다.')),
+
+        /* 4 — 지난 문자. 알림은 지나가면 사라진다. 그동안 못 받은 것은 여기로만 온다. */
+        step(4, '앱에서 「지난 문자 가져오기」를 누릅니다',
+          h('div',null,
+            '이 앱은 ',h('b',null,'알림을 엿듣습니다'),'. 알림은 지나가면 사라지므로 ',
+            '앱을 깔기 ',h('b',null,'전'),'에 온 문자는 기다려도 오지 않습니다. ',
+            '앱 안의 주황색 ',h('b',null,'「지난 문자 가져오기 (최근 30일)」'),'를 누르면 ',
+            '문자함에서 지난 한 달치를 끌어옵니다. ',
+            h('span',{style:{color:'#166534',fontWeight:700}},'이미 들어온 것은 두 번 쌓이지 않습니다.'))),
+
+        /* 5 — 끝내 안 될 때. 폰 없이도 장부는 채울 수 있어야 한다. */
+        step(5, '그래도 안 되면 문자를 붙여넣습니다',
+          h('div',null,
+            '휴대폰 문자를 복사해 PC 에서 그대로 넣을 수 있습니다. ',
+            h('b',null,'폰으로 온 것과 같은 길'),'로 들어가므로 결과가 똑같습니다.',
+            h('button',{type:'button',onClick:function(){ setHanaFix(false); setPasteOpen(true); },
+              style:{display:'block',width:'100%',marginTop:'9px',padding:'11px',
+                border:'1px solid #cbd5e1',background:'#fff',color:'#475569',
+                borderRadius:'10px',fontWeight:800,fontSize:'13px',cursor:'pointer',
+                fontFamily:'inherit'}},
+              '📋 문자 붙여넣기 열기'))),
+
+        h('div',{style:{fontSize:'11.5px',lineHeight:1.6,color:'#64748b',
+          background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'10px',padding:'10px 12px'}},
+          '⚠ 다시 연결하면 ',h('b',null,'「마지막으로 들어온 문자」 표시가 처음으로 돌아갑니다'),'. ',
+          '고장이 아닙니다 — 새로 깐 앱은 아직 아무것도 안 보냈으니 맞는 말입니다. ',
+          '문자가 한 통 들어오면 다시 초록으로 바뀝니다.'),
+
+        h('button',{onClick:function(){setHanaFix(false);},
+          style:{width:'100%',marginTop:'14px',padding:'11px',border:0,background:'#2563eb',
+            color:'#fff',borderRadius:'10px',fontWeight:800,fontSize:'14px',cursor:'pointer',
+            fontFamily:'inherit'}},'확인')));
   }
 
   function nbChip(txt, bg, fg, bd, title){
@@ -40603,6 +40830,7 @@ function FinanceLedger(props){
       )
     ),
 
+    hanaFixModal(),
     hanaPair && h('div',{role:'dialog','aria-modal':'true','aria-label':'하나 거래문자 휴대폰 연결',
       onClick:function(){setHanaPair(null);},
       style:{position:'fixed',inset:0,zIndex:10040,background:'rgba(15,23,42,.58)',display:'flex',alignItems:'center',justifyContent:'center',padding:'18px'}},
@@ -40637,10 +40865,7 @@ function FinanceLedger(props){
            «이 화면을 폰에서 열고» 누르면 그대로 깔린다. PC 에서 받아 옮길 일이 없다.
            ⚠ 판 번호를 함께 적는다 — 폰 앱 첫 화면에도 같은 번호가 뜨므로,
              「새로 깐 것이 맞나」를 두 화면을 견줘 바로 알 수 있다. */
-        h('a',{href:'hana-bridge.apk',download:'푸른-하나문자-'+HANA_APK_VER+'.apk',
-          style:{display:'block',textAlign:'center',padding:'13px',margin:'0 0 12px',borderRadius:'11px',
-            background:'#16a34a',color:'#fff',fontWeight:800,fontSize:'14px',textDecoration:'none'}},
-          '⬇ 폰에 앱 받기 (판 '+HANA_APK_VER+')'),
+        h('div',{style:{margin:'0 0 12px'}}, hanaApkBlock()),
         h('p',{style:{fontSize:'12px',lineHeight:1.6,color:'#64748b',margin:'0 0 14px'}},
           '휴대폰에서 이 화면을 열고 위를 누르세요. ',
           h('b',null,'「출처를 알 수 없는 앱」'),' 을 물으면 한 번 허용하면 됩니다. ',

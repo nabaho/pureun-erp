@@ -16,6 +16,10 @@ const BUDGET_KEYS = {
   "pu-storage": "storage",
   "pu-database": "database",
   "pu-functions": "functions",
+  /* AI(제미나이) — 서류 판독과 사진 지우개가 부른다 (2026-08-29 추가).
+     ⚠ 예산을 안 걸면 이 몫이 「그 밖」에 섞여 **얼마나 쓰는지 볼 수가 없다.**
+       지우개는 «그림을 만드는» 부르기라 판독보다 훨씬 비싸고, 이제 막 켰다. */
+  "pu-ai": "ai",
 };
 
 const LABELS = {
@@ -23,6 +27,7 @@ const LABELS = {
   storage: "사진 창고",
   database: "실시간DB",
   functions: "서버 · 메일",
+  ai: "AI 판독·지우개",
 };
 
 /* ⚠ `Number(null)` 은 0 이고 `Number("")` 도 0 이다. 그냥 Number 로 바꾸면
@@ -125,4 +130,104 @@ function historyEntry(parsed, arrivedMs) {
   };
 }
 
-module.exports = { BUDGET_KEYS, LABELS, parseAlert, shouldApply, historyEntry };
+/* ══════ 하루 폭주 판정 (2026-08-29 대표 지시) ══════
+
+   ★ 왜 필요한가 — 2026-08-16 에 백업이 폭주해 **하루에 86,042원**이 나갔는데
+     **아무 알림도 없었다.** 지금 걸려 있는 알림은 「총액이 얼마를 넘으면」이라,
+     그 금액에 닿을 때쯤이면 이미 다 나간 뒤다. 필요한 것은
+     **「하루 증가가 평소의 몇 배면」** 이다. 그래야 그날 안에 잡는다.
+
+   ⚠ 이것은 **막는 장치가 아니라 알리는 장치**다. Blaze 에는 자동 상한이 없어
+     무엇도 멈추지 않는다. 빨리 알아채는 것이 유일한 방어다.
+
+   ⚠ 비교할 «평소» 가 없으면 **판정하지 않는다.** 달이 막 바뀌었거나 기록이
+     이틀 어치도 안 되는데 「몇 배」라고 하면 그건 거짓말이다.
+   ⚠ 작은 금액은 배수가 쉽게 커진다(20원 → 100원도 5배다). 그래서 배수와 함께
+     **금액 바닥**을 둔다 — 둘 다 넘어야 폭주다. */
+
+const SPIKE_RATIO = 5;        // 평소의 몇 배부터 폭주로 볼까
+const SPIKE_MIN_WON = 3000;   // 그날 늘어난 금액이 이보다 작으면 배수가 커도 잡음이다
+const SPIKE_BASE_DAYS = 7;    // 「평소」를 이레로 잡는다
+const SPIKE_MIN_BASE = 2;     // 평소가 이틀 어치도 없으면 판정하지 않는다
+
+/* 그 나라 시간(KST)으로 며칠인가 — 서버는 UTC 로 도는데 사람은 한국 날짜로 본다.
+   ⚠ UTC 로 자르면 아침 아홉 시 전에 쓴 돈이 «전날»에 붙는다. */
+function kstDay(ms) {
+  const d = new Date(num(ms) + 9 * 3600000);
+  return d.getUTCFullYear() + "-" +
+    String(d.getUTCMonth() + 1).padStart(2, "0") + "-" +
+    String(d.getUTCDate()).padStart(2, "0");
+}
+
+/* 기록({시각: 누적금액}) → 날짜별 «그날 늘어난 금액».
+   ⚠ 기록은 «누적» 이라 그대로 더하면 안 된다. 날마다 마지막 값을 잡고 그 차를 낸다.
+   ⚠ 첫날은 «그 전날 값을 모르므로» 증가분을 낼 수 없다 — 0 이 아니라 «없음» 이다.
+     0 으로 두면 「그날은 안 썼다」로 읽혀, 그 다음 날이 통째로 폭주로 잡힌다. */
+function dailyIncreases(history) {
+  if (!history || typeof history !== "object") return [];
+  const lastOfDay = {};
+  Object.keys(history).forEach((ts) => {
+    const t = num(ts);
+    const v = num(history[ts] && history[ts].cost !== undefined ? history[ts].cost : history[ts]);
+    if (t === null || v === null) return;
+    const day = kstDay(t);
+    if (!lastOfDay[day] || t > lastOfDay[day].t) lastOfDay[day] = { t, v };
+  });
+  const days = Object.keys(lastOfDay).sort();
+  const out = [];
+  for (let i = 1; i < days.length; i++) {
+    const inc = lastOfDay[days[i]].v - lastOfDay[days[i - 1]].v;
+    /* 달이 바뀌면 구글은 0 부터 다시 센다 — 그때 나오는 «큰 마이너스» 는 증가가 아니다 */
+    if (inc < 0) continue;
+    out.push({ day: days[i], inc });
+  }
+  return out;
+}
+
+/* 오늘이 평소보다 몇 배인가. 폭주면 알릴 한 줄, 아니면 null. */
+function spikeCheck(history, nowMs) {
+  const rows = dailyIncreases(history);
+  if (!rows.length) return null;
+  const today = kstDay(nowMs);
+  const cur = rows[rows.length - 1];
+  if (cur.day !== today) return null;          // 오늘 자료가 아직 없다
+  /* 「평소」는 오늘 앞의 이레. ⚠ 관문은 **여기 하나뿐**이다 —
+     예전에는 위에 `rows.length < 3` 을 하나 더 뒀는데, 그것이 이 줄을 가려
+     **죽은 관문**이 됐다(검사를 지워도 안 걸렸다). 짝이 되는 관문 둘을 두면
+     하나가 죽고, 죽은 줄은 지켜 주는 것이 없으면서 지켜 주는 척한다. */
+  const base = rows.slice(-1 - SPIKE_BASE_DAYS, -1);
+  if (base.length < SPIKE_MIN_BASE) return null;
+  const avg = base.reduce((s, r) => s + r.inc, 0) / base.length;
+  if (avg <= 0) return null;                   // 견줄 평소가 없다
+  const ratio = cur.inc / avg;
+  if (cur.inc < SPIKE_MIN_WON || ratio < SPIKE_RATIO) return null;
+  return {
+    day: today,
+    inc: Math.round(cur.inc),
+    avg: Math.round(avg),
+    ratio: Math.round(ratio * 10) / 10,
+    baseDays: base.length,
+    at: Math.round(num(nowMs)),
+  };
+}
+
+/* 어느 칸에서 늘고 있나 — 폭주일 때만 부른다(평소에는 셈할 이유가 없다).
+   가장 많이 는 칸 하나만 돌려준다. 「실시간DB 에서 늘고 있습니다」 한 줄이면 충분하다. */
+function spikeCulprit(historyByKey, nowMs) {
+  const today = kstDay(nowMs);
+  let best = null;
+  Object.keys(historyByKey || {}).forEach((k) => {
+    if (k === "total") return;
+    const rows = dailyIncreases(historyByKey[k]);
+    const cur = rows.length ? rows[rows.length - 1] : null;
+    if (!cur || cur.day !== today) return;
+    if (!best || cur.inc > best.inc) best = { key: k, label: LABELS[k] || k, inc: Math.round(cur.inc) };
+  });
+  return best;
+}
+
+module.exports = {
+  BUDGET_KEYS, LABELS, parseAlert, shouldApply, historyEntry,
+  SPIKE_RATIO, SPIKE_MIN_WON, SPIKE_BASE_DAYS, SPIKE_MIN_BASE,
+  kstDay, dailyIncreases, spikeCheck, spikeCulprit,
+};

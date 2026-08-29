@@ -31,9 +31,37 @@
      ⚠ 너무 넓으면 조각이 커져 요금이 오르고, 지울 곳이 조각 안에서 작아져 잘 안 지워진다. */
   var PAD_RATIO = 0.6;
   var MIN_PAD = 24;      // 아주 작은 네모도 둘레는 봐야 한다(픽셀)
+  /* ── 조각이 «너무 작아도» 안 된다 (2026-08-29 이어 만들기) ──
+     ⚠ 둘레만 비율로 떠 오면, 작은 것을 지울 때 조각이 통째로 100px 남짓이 된다.
+       벽시계 하나를 지우려는데 모델에게 보이는 것이 손톱만 한 그림이면
+       **메울 배경이 무엇인지 알 길이 없다** — 대표가 「시원찮다」고 하실 자리가 여기다.
+     ⚠ 넓게 떠도 **보내는 양은 안 는다.** 어차피 긴 변을 MAX_EDGE 로 줄여 보내므로,
+       넓게 뜨면 같은 요금으로 배경을 더 보여 주는 셈이다.
+     ⚠ 사진보다 크면 사진 전체까지만. */
+  var MIN_CROP = 512;
+  /* ── 돌아온 조각에서 «되붙일 자리» ──
+     지운 네모 둘레로 이만큼만 더 붙인다(이음매를 감출 만큼만).
+     ⚠ 둘레(PAD)까지 통째로 되붙이면 **지운 자리보다 다섯 배 넓은 자리가 흐려진다** —
+       줄여 보낸 조각을 다시 늘려 붙이기 때문이다. 그 흐린 네모가 곧 자국이다. */
+  var BACK_PAD_RATIO = 0.06;
+  var BACK_MIN_PAD = 8;
   var MARK = '#FF00FF';  // 서버의 물음과 **같은 색**이어야 한다(functions/photo-edit.js)
 
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+  /* [a,b) 를 want 만큼으로 넓힌다 — 가운데를 붙잡고 양쪽으로, 사진(0~max) 안에서.
+     ⚠ 한쪽 끝에 닿으면 **모자란 만큼을 반대쪽에서** 받아 온다. 안 그러면
+       가장자리에 있는 것을 지울 때만 조각이 반쪽이 된다(그때가 제일 어렵다). */
+  function growTo(a, b, want, max) {
+    if (want <= b - a) return [a, b];
+    /* ⚠ 「사진보다 넓게 원할 때」를 따로 다루지 않는다 — 아래 두 번의 밀기와
+       마지막 자르기가 그 경우까지 [0, max] 로 끝낸다. 따로 재면 두 곳이 같은 일을 한다. */
+    var half = (want - (b - a)) / 2;
+    var lo = Math.round(a - half), hi = Math.round(b + half);
+    if (lo < 0) { hi -= lo; lo = 0; }
+    if (hi > max) { lo -= (hi - max); hi = max; }
+    return [Math.max(0, lo), Math.min(max, hi)];
+  }
 
   /* ── 어디를 잘라 보낼까 ──
      box 는 «비율»(0~1)이고 돌려주는 것은 **원본 픽셀**이다.
@@ -54,17 +82,34 @@
     var sy = clamp(Math.round(py - pad), 0, imgH);
     var ex = clamp(Math.round(px + pw + pad), 0, imgW);
     var ey = clamp(Math.round(py + ph + pad), 0, imgH);
+    /* 너무 작으면 넓힌다 — 네모 «가운데»를 붙잡고 양쪽으로 편 뒤 사진 안으로 민다.
+       ⚠ 가장자리에서는 한쪽으로만 밀어야 한다. 그냥 자르면 조각이 다시 작아진다. */
+    /* ⚠ 사진보다 크게 뜰 걱정은 안 한다 — growTo 가 「원하는 만큼이 사진보다 넓으면
+       사진 전체」로 끝낸다. 여기서 또 재면 두 곳이 같은 일을 하고, 언젠가 한쪽만 바뀐다. */
+    var want = opts.minCrop || MIN_CROP;
+    var grown = growTo(sx, ex, want, imgW);
+    sx = grown[0]; ex = grown[1];
+    grown = growTo(sy, ey, want, imgH);
+    sy = grown[0]; ey = grown[1];
     var sw = ex - sx, sh = ey - sy;
     if (sw <= 0 || sh <= 0) return null;
 
     /* 줄이기 — 긴 변을 maxEdge 로. **키우지는 않는다**(작은 조각을 늘려 봐야
        없던 그림이 생기지 않고 보내는 양만 는다). */
     var scale = Math.min(1, maxEdge / Math.max(sw, sh));
+    /* 되붙일 자리 — 지운 네모 둘레로 조금만. **원본 픽셀**이고 조각 안에 있어야 한다. */
+    var bp = Math.max(BACK_MIN_PAD, Math.round(Math.max(pw, ph) * BACK_PAD_RATIO));
+    var bx = clamp(Math.round(px - bp), sx, sx + sw);
+    var by = clamp(Math.round(py - bp), sy, sy + sh);
+    var bex = clamp(Math.round(px + pw + bp), sx, sx + sw);
+    var bey = clamp(Math.round(py + ph + bp), sy, sy + sh);
     return {
       sx: sx, sy: sy, sw: sw, sh: sh,
       /* 조각 안에서 «지울 네모»가 어디인가 — 마젠타를 칠할 자리다 */
       mx: Math.round(px - sx), my: Math.round(py - sy),
       mw: Math.round(pw), mh: Math.round(ph),
+      /* 돌아온 조각에서 «이만큼만» 되붙인다(원본 픽셀 자리) */
+      bx: bx, by: by, bw: Math.max(1, bex - bx), bh: Math.max(1, bey - by),
       scale: scale,
       outW: Math.max(1, Math.round(sw * scale)),
       outH: Math.max(1, Math.round(sh * scale))
@@ -90,15 +135,38 @@
     var ctx = canvas.getContext('2d');
     ctx.drawImage(img, spec.sx, spec.sy, spec.sw, spec.sh, 0, 0, spec.outW, spec.outH);
     ctx.fillStyle = MARK;
-    ctx.fillRect(Math.round(spec.mx * spec.scale), Math.round(spec.my * spec.scale),
-      Math.max(1, Math.round(spec.mw * spec.scale)), Math.max(1, Math.round(spec.mh * spec.scale)));
+    /* ── 칠한 «모양 그대로» 표시한다 (대표 지시 2026-08-29 「자유롭게 편집」) ──
+       opts.shape 는 사진과 같은 크기의 그림이고, 칠한 자리에만 색이 있다.
+       ⚠ 네모로 덮으면 지울 것 둘레의 **멀쩡한 배경까지 지우라고 시키는** 셈이다.
+         의자에 걸린 옷 하나를 지우려는데 네모 안의 벽·바닥까지 새로 그려진다.
+       ⚠ source-in — 「칠한 자리에만 마젠타」를 만드는 길이다. 모양을 먼저 그리고
+         그 위에 색을 덮되 **겹치는 곳만** 남긴다. */
+    if (opts.shape) {
+      var m = make(spec.outW, spec.outH);
+      var mc = m.getContext('2d');
+      mc.drawImage(opts.shape, spec.sx, spec.sy, spec.sw, spec.sh, 0, 0, spec.outW, spec.outH);
+      mc.globalCompositeOperation = 'source-in';
+      mc.fillStyle = MARK;
+      mc.fillRect(0, 0, spec.outW, spec.outH);
+      ctx.drawImage(m, 0, 0);
+    } else {
+      ctx.fillRect(Math.round(spec.mx * spec.scale), Math.round(spec.my * spec.scale),
+        Math.max(1, Math.round(spec.mw * spec.scale)), Math.max(1, Math.round(spec.mh * spec.scale)));
+    }
     return { spec: spec, dataUrl: canvas.toDataURL('image/jpeg', opts.quality || 0.9) };
   }
 
   /* ── 돌아온 조각을 «제자리에» 붙인다 ──
-     ⚠ 원본을 통째로 다시 그리고 그 자리만 덮는다 — 나머지 화소는 **원본 그대로**다.
+     ⚠ 원본을 통째로 다시 그리고 **지운 네모 둘레만** 덮는다.
        사진 전체를 AI 에게 받으면 나머지도 미세하게 바뀌고, 그것이 증빙 사진에서는
-       「손댄 사진」이 된다. */
+       「손댄 사진」이 된다.
+     ⚠ 조각 «전체»(둘레 포함)를 되붙이지 않는다 — 줄여 보낸 것을 다시 늘려 붙이므로
+       지운 자리보다 다섯 배 넓은 자리가 흐려진다. **그 흐린 네모가 곧 자국이다.**
+       둘레를 넓게 뜬 것은 모델에게 «보여 주기» 위한 것이지 되붙이기 위한 것이 아니다.
+     ⚠ 대신 이음매가 생길 수 있다 — 그래서 네모보다 조금(BACK_PAD) 넓게 붙인다.
+       모델이 틀을 옮기지 않는다는 전제이고, 물음이 그것을 못박고 있다.
+     ⚠ **사진 전체가 다시 구워지는 것은 어쩔 수 없다**(JPEG 이다). 그림은 그대로지만
+       화소 값은 미세하게 달라진다 — 「하나도 안 바뀐다」고 말하지 않는다. */
   function pasteBack(img, spec, patchImg, opts) {
     opts = opts || {};
     var w = (img && (img.naturalWidth || img.width)) || 0;
@@ -111,10 +179,20 @@
     var canvas = make(w, h);
     var ctx = canvas.getContext('2d');
     ctx.drawImage(img, 0, 0, w, h);
-    ctx.drawImage(patchImg, 0, 0,
-      (patchImg && (patchImg.naturalWidth || patchImg.width)) || spec.outW,
-      (patchImg && (patchImg.naturalHeight || patchImg.height)) || spec.outH,
-      spec.sx, spec.sy, spec.sw, spec.sh);
+    /* 돌아온 조각의 «실제» 크기로 잰다 — 모델이 보낸 크기가 보낸 크기와 다를 수 있다.
+       그래서 자리를 픽셀이 아니라 **비율**로 옮긴다. */
+    var pw = (patchImg && (patchImg.naturalWidth || patchImg.width)) || spec.outW;
+    var ph = (patchImg && (patchImg.naturalHeight || patchImg.height)) || spec.outH;
+    /* 되붙일 자리 — 없으면 조각 전체(옛 자국이 남은 사진을 다시 손볼 때) */
+    var bx = spec.bx === undefined ? spec.sx : spec.bx;
+    var by = spec.by === undefined ? spec.sy : spec.by;
+    var bw = spec.bw === undefined ? spec.sw : spec.bw;
+    var bh = spec.bh === undefined ? spec.sh : spec.bh;
+    var u = (bx - spec.sx) / spec.sw, v = (by - spec.sy) / spec.sh;
+    ctx.drawImage(patchImg,
+      Math.round(u * pw), Math.round(v * ph),
+      Math.max(1, Math.round(bw / spec.sw * pw)), Math.max(1, Math.round(bh / spec.sh * ph)),
+      bx, by, bw, bh);
     return canvas.toDataURL('image/jpeg', opts.quality || 0.92);
   }
 
@@ -154,6 +232,7 @@
 
   global.PuPhotoEdit = {
     EDIT_URL: EDIT_URL, MAX_EDGE: MAX_EDGE, PAD_RATIO: PAD_RATIO, MARK: MARK,
+    MIN_CROP: MIN_CROP,
     cropSpec: cropSpec, buildCrop: buildCrop, pasteBack: pasteBack,
     splitDataUrl: splitDataUrl, callEdit: callEdit
   };

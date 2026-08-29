@@ -2327,8 +2327,21 @@ function photoSaveFailMsg(){
     ? '사진 저장 공간이 찼습니다 — 옛 일정의 사진을 ZIP으로 내보낸 뒤 지워 주세요'
     : '사진을 저장하지 못했습니다 — 다시 시도해 주세요';
 }
+/* 일정 하나의 증빙을 통째로 지운다 — 브라우저 안 **과 창고** 둘 다.
+   ⚠ 창고를 안 지우면 사진이 남는다. 요금도 요금이지만, 지운 일정의 현장 사진이
+     창고에 계속 있는 것은 「지웠다」는 말과 다르다.
+   ⚠ 칸 이름을 여기에 또 적지 않는다 — 아래 목록 한 곳에서만 정한다.
+     예전에는 c·o·f 만 적혀 있어 **찍은 시각(m)이 지워지지 않고 남았다.** */
+function photoSlotKeys(i){ return [`c${i}`,`o${i}`,plainKey(i),timeKey(i)]; }
 async function deletePhotoFromDB(sid){
-  try{const db=await openPhotoDB();const tx=db.transaction('photos','readwrite');const st=tx.objectStore('photos');for(let i=0;i<PHOTO_MAX_SLOTS;i++){st.delete(`${sid}_c${i}`);st.delete(`${sid}_o${i}`);st.delete(`${sid}_f${i}`);}}catch(e){}
+  try{
+    const db=await openPhotoDB();const tx=db.transaction('photos','readwrite');const st=tx.objectStore('photos');
+    for(let i=0;i<PHOTO_MAX_SLOTS;i++)photoSlotKeys(i).forEach(k=>st.delete(`${sid}_${k}`));
+  }catch(e){}
+  /* 창고 사본 — 기다리지 않는다. 없으면 없는 대로 조용히 끝난다.
+     ⚠ 창고에는 사진 둘(합성본·원본)만 있다 — 시각·「안 찍음」 표는 합성본에
+       딸린 쪽지라 그 파일을 지우면 함께 없어진다. */
+  try{ for(let i=0;i<PHOTO_MAX_SLOTS;i++){ evRemove(sid,`c${i}`); evRemove(sid,`o${i}`); } }catch(e){}
 }
 async function deleteOnePhotoFromDB(sid,key){
   try{const db=await openPhotoDB();const tx=db.transaction('photos','readwrite');tx.objectStore('photos').delete(`${sid}_${key}`);}catch(e){}
@@ -3770,10 +3783,7 @@ async function delEditPhoto(sid,i){
     const prev=await getPhotoFromDB(sid,`c${i}`);
     logPhoto('delete', sid, i, prev);             // 삭제 이력 기록(이전 썸네일)
     if(PHOTOS[sid])PHOTOS[sid][`c${i}`]=null;
-    await deleteOnePhotoFromDB(sid,`c${i}`);
-    await deleteOnePhotoFromDB(sid,`o${i}`);        // 원본도 함께 삭제
-    await deleteOnePhotoFromDB(sid,plainKey(i));    // 「안 찍음」 표도 함께
-    evRemove(sid,`c${i}`);                          // 창고 사본도 함께 — 안 지우면 되살아난다
+    await deleteStampSlot(sid,i);   // 사진·원본·「안 찍음」 표·시각·창고 사본까지 한 길로
     const sc=getScheds().find(x=>x.id===sid);
     renderEditPhotos(sid,sc);                       // 미리보기 갱신
     renderCal();
@@ -6869,7 +6879,9 @@ function erpToArray(v){
   if(typeof v==='object')return Object.values(v);
   return null;
 }
-// ① 같은 브라우저의 pu-erp localStorage → ② Firebase(data/*) 순으로 읽기.
+// ① 같은 브라우저의 pu-erp localStorage → ② Firebase(data 아래) 순으로 읽기.
+// ⚠ 한 줄 주석 안에 블록 주석 시작 기호를 쓰지 않는다 — 검사들이 주석을 걷을 때
+//    그 기호가 블록 주석을 «열어» 뒤의 코드를 통째로 먹는다(검사가 조용히 눈을 감는다).
 // Firebase는 보안 규칙상 막혀 있을 수 있으므로 실패해도 조용히 넘어간다.
 function erpReadLocal(key){
   try{ return erpToArray(JSON.parse(localStorage.getItem(ERP_LS_PREFIX+key)||'null')); }catch(e){ return null; }
@@ -6882,12 +6894,39 @@ async function erpReadCloud(key){
     return erpToArray((raw&&typeof raw==='object'&&'v' in raw)?raw.v:raw); // {v,u} 래퍼 해제
   }catch(e){ return null; } // permission_denied 등
 }
+/* 이 브라우저의 이알피 사본이 «언제 것»인가 — 이알피가 저장할 때마다 적어 두는 시각.
+   클라우드 쪽에도 data/<키>/u 에 같은 뜻의 시각이 있다. */
+function erpLocalStamp(key){
+  const v=Number(localStorage.getItem(ERP_LS_PREFIX+'_meta_'+key)||0);
+  return isFinite(v)?v:0;
+}
+async function erpCloudStamp(key){
+  if(!FB_READY||!_fbDB)return 0;
+  try{
+    const snap=await _fbDB.ref('data/'+key+'/u').once('value');
+    const v=Number(snap.val()||0);
+    return isFinite(v)?v:0;
+  }catch(e){ return 0; }        // 규칙이 막았거나 끊겼다 — 「모른다」는 0
+}
+/* ★ 이 브라우저 사본을 «무조건» 먼저 쓰면 안 된다 (2026-08-29 검토에서 나온 것).
+     이 PC 에서 이알피를 오래 안 열었으면 몇 달 전 판으로 판단하게 된다.
+     읽기만 할 때도 나쁘지만, 지금은 이 자료로 **부담당을 맞춘다** —
+     옛 판을 받아 사업장 부담당을 되돌리고, 그것을 다시 이알피로 올려
+     **새 값을 옛 값으로 덮는다.** 그래서 시각을 견주고 새 쪽을 쓴다.
+   ⚠ 클라우드 시각을 못 읽으면(규칙·끊김) 0 이고, 그때는 있는 사본을 쓴다 —
+     못 읽었다고 빈손을 돌려주면 기능이 통째로 멈춘다. */
 async function erpRead(key){
   const local=erpReadLocal(key);
-  if(local&&local.length)return {rows:local,src:'local'};
+  const localAt=erpLocalStamp(key);
+  const cloudAt=await erpCloudStamp(key);
+  const localFresh=!cloudAt||cloudAt<=localAt;
+  if(local&&local.length&&localFresh)return {rows:local,src:'local',at:localAt,stale:false};
   const cloud=await erpReadCloud(key);
-  if(cloud&&cloud.length)return {rows:cloud,src:'cloud'};
-  return {rows:local||cloud||[],src:(local?'local':(cloud?'cloud':'none'))};
+  if(cloud&&cloud.length)return {rows:cloud,src:'cloud',at:cloudAt,stale:false};
+  /* 클라우드가 새것인데 못 읽었다 — 있는 사본을 쓰되 «옛것»이라고 표시한다.
+     이 표시를 보고 부담당 맞추기는 손을 뗀다(옛 값으로 새 값을 덮지 않게). */
+  if(local&&local.length)return {rows:local,src:'local',at:localAt,stale:!localFresh};
+  return {rows:[],src:'none',at:0,stale:false};
 }
 async function erpLoadAll(){
   ERP.err='';
@@ -6897,6 +6936,9 @@ async function erpLoadAll(){
     ERP.consultings=(c.rows||[]).filter(Boolean);
     ERP.dir=(d.rows||[]).filter(Boolean);
     ERP.src=c.src;
+    /* 「옛 사본으로 읽었다」 — 이 표가 서면 **되돌려 쓰는 일**을 하지 않는다.
+       읽어서 보여 주는 것은 옛것이라도 낫지만, 옛것으로 새것을 덮으면 자료가 상한다. */
+    ERP.stale=!!(c.stale||d.stale);
     if(!ERP.types.length&&!ERP.consultings.length){
       ERP.loaded=false;
       ERP.err='이 브라우저에서 푸른ERP 데이터를 찾을 수 없습니다. 같은 브라우저에서 푸른ERP(pu-erp)를 한 번 열어 로그인한 뒤 다시 시도해주세요.';
@@ -6904,11 +6946,17 @@ async function erpLoadAll(){
     }
     ERP.loaded=true;
     /* 명부를 읽었으면 곧바로 맞춘다 — 대표 지시(휴직·퇴사는 자동으로 빠지게).
-       바뀐 것이 없으면 아무것도 저장하지 않는다. */
-    try{ syncStaffFromErp(); }catch(err){ console.warn('[직원 맞춤]',err); }
-    /* 부담당도 함께 맞춘다 — 직원 맞춤 **뒤에** 와야 한다.
-       사번·재직 여부가 정해진 뒤라야 누구를 올릴 수 있는지 판단할 수 있다. */
-    try{ erpSyncSubsDown(); }catch(err){ console.warn('[부담당 맞춤]',err); }
+       바뀐 것이 없으면 아무것도 저장하지 않는다.
+       ⚠ 옛 사본으로 읽은 판에서는 맞추지 않는다 — 몇 달 전 명부로 재직자를
+         휴직·퇴사로 돌려놓으면 그 사람이 담당에서 빠진다. */
+    if(!ERP.stale){
+      try{ syncStaffFromErp(); }catch(err){ console.warn('[직원 맞춤]',err); }
+      /* 부담당도 함께 맞춘다 — 직원 맞춤 **뒤에** 와야 한다.
+         사번·재직 여부가 정해진 뒤라야 누구를 올릴 수 있는지 판단할 수 있다. */
+      try{ erpSyncSubsDown(); }catch(err){ console.warn('[부담당 맞춤]',err); }
+    }else{
+      console.warn('[푸른ERP] 이 브라우저 사본이 클라우드보다 옛것입니다 — 맞추기를 건너뜁니다');
+    }
   }catch(e){ ERP.err=e.message||'불러오기 실패'; ERP.loaded=false; }
 }
 // ERP 사번 → 이름 → 정부컨설팅 직원 id (이름으로 매칭)
@@ -7298,6 +7346,9 @@ function erpLocalWriteSubs(id,next,ts,by){
    ★ 이 확인이 없으면 안 된다 — 배열형으로 저장돼 있으면 data/consultings/v/<id> 는
      없는 자리이고, 자칫 자리번호로 쓰면 **엉뚱한 컨설팅**의 부담당을 덮는다.
      확인되지 않으면 클라우드에는 쓰지 않는다. */
+/* ⚠ **확인한 것만 기억한다.** 못 물어본 것(끊김·규칙)을 「아니다」로 기억하면,
+     잠깐 흔들린 뒤로 그 세션 내내 이알피에 아무것도 못 올린다 — 그런데 화면은
+     저장됐다고 말한다. 못 물어봤으면 다음에 다시 묻는다. */
 let _erpConsObjForm=null;
 async function erpConsObjForm(sampleId){
   if(_erpConsObjForm!==null)return _erpConsObjForm;
@@ -7305,8 +7356,8 @@ async function erpConsObjForm(sampleId){
   try{
     const snap=await _fbDB.ref('data/consultings/v/'+sampleId+'/id').once('value');
     _erpConsObjForm=(snap.val()===sampleId);
-  }catch(e){ _erpConsObjForm=false; }
-  return _erpConsObjForm;
+    return _erpConsObjForm;
+  }catch(e){ return false; }        // 기억하지 않는다 — 다음에 다시 묻는다
 }
 
 /* 이알피에 부담당 칸 **하나만** 쓴다.
@@ -7342,6 +7393,12 @@ async function erpWriteSubs(c,next){
 async function erpSyncSubsUp(coId,opt){
   opt=opt||{};
   if(!ERP.loaded||!myId()||!coId)return null;
+  /* 옛 사본으로 읽은 판이면 손대지 않는다 — 지금 이알피에 무엇이 들었는지 모르는 채로
+     쓰면, 그사이 남이 넣은 부담당을 **없던 것으로 덮는다.** */
+  if(ERP.stale){
+    if(!opt.silent)toast('푸른이알피 자료가 옛 사본이라 올리지 않았습니다 — 같은 브라우저에서 푸른이알피를 한 번 열어 주세요','err');
+    return null;
+  }
   const co=getCos().find(c=>c&&c.id===coId);
   if(!co||co.deleted)return null;
   const linked=erpConsByCo()[coId]||[];
@@ -8332,12 +8389,20 @@ function openStampFor(sid){
 }
 
 /* 저장돼 있는 원본을 타임스탬프 창으로 되살린다.
-   ⚠ 원본이 없는 아주 옛 사진은 되살릴 수 없다 — 그때는 조용히 넘어가지 않고
+   ⚠ 이 PC 에 없으면 **창고에서 받아 온다** (대표 결정 2026-08-29) — 예전에는
+     원본이 찍은 사람 PC 안에만 있어서, 다른 PC 에서 열면 시간을 다시 못 찍었다.
+     받아 오면 이 PC 에도 넣어 두므로 다음부터는 통신하지 않는다.
+   ⚠ 그래도 없는 아주 옛 사진은 되살릴 수 없다 — 그때는 조용히 넘어가지 않고
      「원본이 없어 다시 찍을 수 없습니다」라고 그 칸에 적는다. */
 async function restoreStampPhotos(sid,n){
   for(let i=0;i<n;i++){
     if(!ST.done[i])continue;
-    const orig=await getPhotoFromDB(sid,'o'+i);
+    let orig=await getPhotoFromDB(sid,'o'+i);
+    if(!orig)orig=await evEnsureLocal(sid,'o'+i);
+    /* 타임스탬프를 «안 찍은» 사진은 합성본이 곧 원본이라 창고에 또 안 올린다
+       (같은 그림을 두 번 두면 저장 칸만 두 배가 된다). 그 경우 합성본을 원본으로 쓴다. */
+    if(!orig&&await getPhotoFromDB(sid,plainKey(i)))
+      orig=await getPhotoFromDB(sid,'c'+i)||await evEnsureLocal(sid,'c'+i);
     if(!orig){ ST.noOrig=ST.noOrig||{}; ST.noOrig[i]=true; continue; }
     const img=new Image();
     const ok=await new Promise(res=>{ img.onload=()=>res(true); img.onerror=()=>res(false); img.src=orig; });
@@ -8677,29 +8742,31 @@ function renderRFs(){
         const sc=PHOTOS[ST.sid]?.[`c${i}`];
         if(sc){const cv=q(`#cv${i}`);cv.width=sc.width;cv.height=sc.height;cv.getContext('2d').drawImage(sc,0,0);}
       }
-      // 개별 저장: IndexedDB 보관 + 파일 저장
+      /* 개별 저장 — 「모두 저장」과 **똑같이** 저장하고, 파일로도 내려받는다.
+         ⚠ 여기서 따로 저장하지 않는다(saveStampSlot 하나만 부른다) — 예전에는
+           여기가 브라우저 안에만 넣어서, 이 단추로 저장한 증빙은 창고에 안 올라가고
+           사진첩 「증빙으로 씀」 표도 안 붙었다(보유기준이 1년으로 잡혔다). */
       r.querySelector('.rf-save').onclick=async e=>{
         e.stopPropagation();const ri=+e.currentTarget.dataset.ri;
-        const cv=q(`#cv${ri}`);if(!cv)return;
-        if(!PHOTOS[ST.sid])PHOTOS[ST.sid]={c0:null,c1:null};
-        PHOTOS[ST.sid][`c${ri}`]=cv;
-        savePhotoToDB(ST.sid,`c${ri}`,cv.toDataURL('image/jpeg',.92));
         const sc=getScheds().find(s=>s.id===ST.sid);
+        if(!await saveStampSlot(ri,sc)){ toast(photoSaveFailMsg(),'err'); return; }
+        const cv=q(`#cv${ri}`);
         const co=getCos().find(c=>c.id===sc?.coId);
         const tyNm=getTypes().find(t=>t.id===sc?.typeId)?.name||'컨설팅';
         const ph=schedPhase(sc)==='pre'?'사전진단':'';
         const fn=`${tyNm}_${co?.name||'?'}_${ph}${sc?.round||'N'}회_${slotFileLabel(sc,ri)}.jpg`;
-        await saveCanvasAs(cv,fn);
+        if(cv)await saveCanvasAs(cv,fn);
         renderCal();
       };
-      // 삭제: 합성결과·원본·시각 모두 비움
+      /* 삭제 — 합성결과·원본·시각·창고 사본까지 모두.
+         ⚠ 창고 사본을 안 지우면 다른 PC 에서 열 때 **되살아난다**. */
       r.querySelector('.rf-del').onclick=async e=>{
         e.stopPropagation();const ri=+e.currentTarget.dataset.ri;
         const prev=await getPhotoFromDB(ST.sid,`c${ri}`);
         logPhoto('delete', ST.sid, ri, prev);
         ST.photos[ri]=null;ST.done[ri]=false;ST.times[ri]=null;
         if(PHOTOS[ST.sid])PHOTOS[ST.sid][`c${ri}`]=null;
-        deleteOnePhotoFromDB(ST.sid,`c${ri}`);
+        await deleteStampSlot(ST.sid,ri);
         renderPDs();renderRFs();renderCal();toast(`${slotLabelText(getScheds().find(s=>s.id===ST.sid),ri)} 사진 삭제`);
       };
       // 다시 등록: 사진만 새로 선택 (시각 유지)
@@ -8959,12 +9026,20 @@ function evRef(sid, key){
 }
 
 /* 창고에 올린다. 실패해도 «넣기 자체»는 성공으로 둔다 — 브라우저 안에는
-   이미 들어갔다. 다만 조용히 넘어가지 않고 표시를 남긴다. */
-async function evUpload(sid, key, dataUrl){
+   이미 들어갔다. 다만 조용히 넘어가지 않고 표시를 남긴다.
+   ⚠ 찍은 시각·「안 찍음」 표는 **딸린 쪽지(메타데이터)**로 붙인다 —
+     파일을 따로 만들면 저장 칸도 올리기 횟수도 늘지만, 쪽지는 요금이 0 이다. */
+async function evUpload(sid, key, dataUrl, meta){
   const r = evRef(sid, key);
   if(!r || !dataUrl) return false;
   try{
-    await r.putString(String(dataUrl), 'data_url');
+    const opt = {};
+    if(meta){
+      const cm = {};
+      Object.keys(meta).forEach(k=>{ if(meta[k]!=null)cm[k]=String(meta[k]); });
+      if(Object.keys(cm).length)opt.customMetadata = cm;
+    }
+    await r.putString(String(dataUrl), 'data_url', opt);
     evNeedRule = false;
     return true;
   }catch(e){
@@ -9000,12 +9075,32 @@ async function evRemove(sid, key){
   try{ await r.delete(); }catch(e){}   // 없으면 없는 대로
 }
 
+/* 딸린 쪽지만 읽는다 — 사진은 안 받는다(요금은 «받은 양»에 붙는다). */
+async function evMeta(sid, key){
+  const r = evRef(sid, key);
+  if(!r) return null;
+  try{ const m = await r.getMetadata(); return (m && m.customMetadata) || null; }
+  catch(e){ return null; }
+}
+
 /* 브라우저 안에 없으면 창고에서 받아 «브라우저에도 넣어» 둔다.
-   다른 PC 에서 처음 열 때 한 번만 받고, 그 뒤로는 빠른 사본을 쓴다. */
+   다른 PC 에서 처음 열 때 한 번만 받고, 그 뒤로는 빠른 사본을 쓴다.
+   ⚠ 사진만 받아 오면 「사진은 있는데 몇 시로 찍었는지 모른다」가 된다 —
+     딸린 쪽지의 시각·「안 찍음」 표도 함께 이 PC 에 옮겨 둔다. */
 async function evEnsureLocal(sid, key){
   const got = await evDownload(sid, key);
   if(!got) return null;
   await savePhotoToDB(sid, key, got);   // 실패해도 이번 화면에는 보인다
+  const m = /^c(\d+)$/.exec(String(key||''));
+  if(m){
+    const i = +m[1];
+    const cm = await evMeta(sid, key);
+    if(cm){
+      const t = /^(\d{1,2}):(\d{1,2})$/.exec(String(cm.shotAt||''));
+      if(t) await saveStampTime(sid, i, { h:+t[1], m:+t[2] });
+      if(cm.plain !== undefined) await markPlain(sid, i, cm.plain === '1');
+    }
+  }
   return got;
 }
 
@@ -9024,23 +9119,38 @@ async function evUploadBacklog(){
   const jobs = [];
   for(const sc of scheds){
     const defs = photoSlotDefs(sc);
-    for(const d of defs) jobs.push({ sid: sc.id, key: d.key });
+    /* 합성본과 **원본**을 함께 올린다 — 원본이 없으면 다른 PC 에서 시간을
+       다시 못 찍는다(대표 결정 2026-08-29). 칸 번호(d.i)는 쪽지를 붙일 때 쓴다. */
+    for(const d of defs){
+      jobs.push({ sid: sc.id, key: d.key, i: d.i, main: true });
+      if(d.okey) jobs.push({ sid: sc.id, key: d.okey, i: d.i, main: false });
+    }
   }
   say(`이 PC 에 있는 증빙 사진을 찾는 중… <span style="color:var(--t2)">(일정 ${scheds.length}건)</span>`);
 
   let have = 0, up = 0, skip = 0, fail = 0, bytes = 0;
   const t0 = Date.now();
   for(let i=0;i<jobs.length;i++){
-    const { sid, key } = jobs[i];
+    const { sid, key, i: slot, main } = jobs[i];
     const durl = await getPhotoFromDB(sid, key);
     if(!durl) continue;                       // 그 칸에 사진이 없다
+    const plain = !!await getPhotoFromDB(sid, plainKey(slot));
+    /* 타임스탬프를 «안 찍은» 사진은 합성본이 곧 원본이다 — 같은 그림을 두 번 두면
+       저장 칸만 두 배가 된다. 원본 칸은 건너뛴다. */
+    if(!main && plain) continue;
     have++;
     /* 이미 창고에 있나 — 있으면 안 올린다(요금과 시간을 아낀다) */
     const r = evRef(sid, key);
     let there = false;
     try{ await r.getMetadata(); there = true; }catch(e){ there = false; }
+    /* 합성본에는 찍은 시각·「안 찍음」 표를 딸린 쪽지로 붙인다(요금 0) */
+    let meta = null;
+    if(main){
+      const tm = await loadStampTime(sid, slot);
+      meta = { shotAt: tm ? `${p2(tm.h)}:${p2(tm.m)}` : '', plain: plain ? '1' : '0' };
+    }
     if(there){ skip++; }
-    else if(await evUpload(sid, key, durl)){ up++; bytes += durl.length * 0.75; }
+    else if(await evUpload(sid, key, durl, meta)){ up++; bytes += durl.length * 0.75; }
     else { fail++; }
     if(have % 3 === 0 || i === jobs.length-1){
       say(`☁ <b>올리는 중…</b> 찾은 사진 ${have}장 · 올림 <b>${up}</b> · 이미 있음 ${skip}`
@@ -9093,6 +9203,70 @@ function togStampSw(){
   for(let i=0;i<N;i++) if(ST.done&&ST.done[i]) drawStamp(i);
 }
 
+/* ══ 증빙 한 칸을 «온전히» 저장한다 — 저장하는 길은 이 하나뿐이다 ══
+   ★ 2026-08-29 검토에서 나온 것 — 저장하는 길이 둘이었는데 한쪽(💾 개별 저장)이
+     반쪽이었다. 그쪽은 브라우저 안에만 넣고 다음을 **모두 빠뜨렸다**:
+       ㉮ 공용 창고 — 그 PC 에만 남아, 다른 PC 에서 안 보이고 PC 를 바꾸면 없어졌다.
+          (증빙 사진을 창고에 두려고 만든 기능인데, 이 길로 저장하면 안 올라갔다)
+       ㉯ 사진첩 「증빙으로 씀」 표 — **보유기준이 증빙 5년·나머지 1년으로 갈린다.**
+          표가 없으면 사진첩은 그냥 사진으로 보고 **1년 뒤 지운다.**
+       ㉰ 찍은 시각·원본·「안 찍음」 표·중복 지문·이력.
+   ⚠ 그래서 두 길을 **한 함수로** 합쳤다. 나중에 저장하는 자리가 또 생겨도
+     이것만 부르면 빠지는 것이 없다. 나눠 두면 반드시 한쪽만 고쳐지는 날이 온다. */
+async function saveStampSlot(i,sc){
+  const cv=q(`#cv${i}`); if(!cv)return false;
+  if(!PHOTOS[ST.sid])PHOTOS[ST.sid]={};
+  const prev=await getPhotoFromDB(ST.sid,`c${i}`);   // 변경 전 사진(있으면 교체)
+  logPhoto(prev?'replace':'add', ST.sid, i, prev);
+  PHOTOS[ST.sid][`c${i}`]=cv;
+  /* ⚠ 기다렸다가 확인한다 — 예전에는 시키고 넘어가서, 저장 공간이 찼을 때
+     화면에만 남고 실제로는 안 들어갔다. */
+  const durl=cv.toDataURL('image/jpeg',.92);
+  if(!await savePhotoToDB(ST.sid,`c${i}`,durl)){
+    PHOTOS[ST.sid][`c${i}`]=null; return false;
+  }
+  const plain=!stampOn();
+  const tm=ST.times&&ST.times[i];
+  /* 창고에도 (기다리지 않는다). 찍은 시각·「안 찍음」 표는 **딸린 쪽지**로 붙여
+     보낸다 — 파일을 따로 만들지 않으니 저장 칸도 올리기 횟수도 안 늘고,
+     다른 PC 에서 사진을 받을 때 시각까지 함께 따라온다. */
+  evUpload(ST.sid,`c${i}`,durl,{ shotAt: tm?`${p2(tm.h)}:${p2(tm.m)}`:'', plain: plain?'1':'0' });
+  if(ST.pDurl&&ST.pDurl[i]){
+    savePhotoToDB(ST.sid,`o${i}`,ST.pDurl[i]);
+    /* ★ 원본도 창고에 둔다 (대표 결정 2026-08-29).
+       없으면 **다른 PC 에서는 시간을 다시 못 찍는다** — 원본이 그 PC 안에만
+       있었기 때문이다. 요금은 증빙 1,000장 기준 월 14원(서울 추가 창고).
+       ⚠ 타임스탬프를 «안 찍은» 사진은 합성본이 곧 원본이라 **또 올리지 않는다.**
+         같은 그림을 두 번 두면 저장 칸만 두 배가 된다. */
+    if(!plain)evUpload(ST.sid,`o${i}`,ST.pDurl[i]);
+  }
+  markPlain(ST.sid,i,plain);
+  /* 찍은 시각을 남긴다 — 없으면 다시 열었을 때 «몇 시로 찍었는지»를
+     알 수 없어 고치려면 사람이 기억해 내야 한다(2026-08-29). */
+  saveStampTime(ST.sid,i,ST.times[i]);
+  /* 사진첩에서 가져온 것이면 「증빙으로 썼다」고 남긴다 — 보유기준이
+     증빙 5년·나머지 1년으로 갈리는데, 이 표가 없으면 사진첩은 모른다. */
+  if(ST.albumRef&&ST.albumRef[i])markAlbumUsed(ST.albumRef[i],ST.sid);
+  const _sc=sc||getScheds().find(s=>s.id===ST.sid);
+  if(ST.pHash&&ST.pHash[i]&&_sc)addPhotoHash(ST.pHash[i],_sc);
+  return true;
+}
+
+/* ══ 증빙 한 칸을 «온전히» 지운다 — 지우는 길도 이 하나뿐이다 ══
+   ⚠ 창고 사본을 함께 지우지 않으면 **다른 PC 에서 열 때 되살아난다**
+     (evEnsureLocal 이 창고에서 받아 브라우저에 도로 넣는다).
+   ⚠ 원본·「안 찍음」 표·찍은 시각도 함께 — 사진만 지우면 다음에 열었을 때
+     「사진은 없는데 시간은 있다」는 앞뒤 안 맞는 판이 된다. */
+async function deleteStampSlot(sid,i){
+  await deleteOnePhotoFromDB(sid,`c${i}`);
+  await deleteOnePhotoFromDB(sid,`o${i}`);
+  await deleteOnePhotoFromDB(sid,plainKey(i));
+  await deleteOnePhotoFromDB(sid,timeKey(i));
+  /* 창고 사본도 — 안 지우면 되살아난다. **원본까지** 지운다(따로 올라가 있다). */
+  evRemove(sid,`c${i}`);
+  evRemove(sid,`o${i}`);
+}
+
 async function saveStamp(){
   const N=ST.n||2;
   if(!ST.done.some(Boolean)){toast('합성 사진이 없습니다','err');return;}
@@ -9106,26 +9280,7 @@ async function saveStamp(){
   // 1) 앱 내부 저장 (IndexedDB) — 합성 결과 + 원본 모두 저장, 지문 등록 + 이력
   for(let i=0;i<N;i++){
     if(!ST.done[i])continue;
-    const cv=q(`#cv${i}`);if(!cv)continue;
-    const prev=await getPhotoFromDB(ST.sid,`c${i}`); // 변경 전 사진(있으면 교체)
-    logPhoto(prev?'replace':'add', ST.sid, i, prev);
-    PHOTOS[ST.sid][`c${i}`]=cv;
-    /* ⚠ 기다렸다가 확인한다 — 예전에는 시키고 넘어가서, 저장 공간이 찼을 때
-       화면에만 남고 실제로는 안 들어갔다. */
-    const durl=cv.toDataURL('image/jpeg',.92);
-    if(!await savePhotoToDB(ST.sid,`c${i}`,durl)){
-      PHOTOS[ST.sid][`c${i}`]=null; saveFail++; continue;
-    }
-    evUpload(ST.sid,`c${i}`,durl);      // 창고에도 (기다리지 않는다)
-    if(ST.pDurl&&ST.pDurl[i])savePhotoToDB(ST.sid,`o${i}`,ST.pDurl[i]);
-    markPlain(ST.sid,i,!stampOn());
-    /* 찍은 시각을 남긴다 — 없으면 다시 열었을 때 «몇 시로 찍었는지»를
-       알 수 없어 고치려면 사람이 기억해 내야 한다(2026-08-29). */
-    saveStampTime(ST.sid,i,ST.times[i]);
-    /* 사진첩에서 가져온 것이면 「증빙으로 썼다」고 남긴다 — 보유기준이
-       증빙 5년·나머지 1년으로 갈리는데, 이 표가 없으면 사진첩은 모른다. */
-    if(ST.albumRef&&ST.albumRef[i])markAlbumUsed(ST.albumRef[i],ST.sid);
-    if(ST.pHash&&ST.pHash[i]&&sc)addPhotoHash(ST.pHash[i],sc);
+    if(!await saveStampSlot(i,sc))saveFail++;
   }
   if(saveFail){ toast(`${saveFail}장을 저장하지 못했습니다 — `+photoSaveFailMsg(),'err'); }
   closeModal('mbStamp');renderCal();

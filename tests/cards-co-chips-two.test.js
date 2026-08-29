@@ -114,7 +114,11 @@ test('★ 할 일 넷이 옆줄에 «그대로» 있다 — 자리만 옮겼지 
 
 test('★ 옆줄 할 일이 «옆줄에서 그려진다» — 함수만 있고 안 부르면 소용없다', () => {
   const i = src.indexOf("if(state.view==='co'){");
-  const end = src.indexOf("$('pcSide').innerHTML = h; return;", i);
+  /* ⚠ 끝 경계는 「옆줄을 갈아 끼우는 그 줄」이다 — 그 줄 «뒤»에 무엇이 더 붙는지는
+   이 검사가 볼 일이 아니다. 예전에는 `= h; return;` 까지 글자 그대로 붙들어,
+   2026-08-29 에 그 줄 뒤로 구르던 자리 되꽂기(pcSideRestoreTop)가 붙자 형제 검사
+   다섯이 «기능이 멀쩡한데» 한꺼번에 깨졌다(CLAUDE.md 「지금 값이 아니라 규칙」). */
+  const end = src.indexOf("$('pcSide').innerHTML", i);
   assert.ok(i > 0 && end > i, '기업 상세 옆줄을 찾지 못했습니다');
   assert.match(src.slice(i, end), /coTodoSideHtml\(\)/,
     '★ 옆줄이 할 일 칸을 안 그린다 — 넷이 화면 어디에서도 안 보이게 된다');

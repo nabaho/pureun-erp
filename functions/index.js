@@ -1698,6 +1698,47 @@ exports.recordBillingAlert = functions
         String((e && e.message) || e));
     }
 
+    /* ── 하루 폭주 판정 (2026-08-29 대표 지시) ─────────────────────────
+       2026-08-16 에 백업이 폭주해 하루에 86,042원이 나갔는데 아무 알림도 없었다.
+       총액 알림은 「얼마를 넘으면」이라 닿을 때쯤엔 이미 다 나간 뒤다.
+
+       ★ 「전체」 쪽지가 왔을 때만 잰다 — 칸마다 재면 같은 일을 다섯 번 한다.
+       ⚠ 기록을 **통째로 읽지 않는다.** 최근 아흐레만 잘라 읽는다 —
+         사용액을 보려고 사용액을 늘리면 웃긴다.
+       ⚠ 판정에 실패해도 위의 값·기록은 «살린다». */
+    if (parsed.key === "total") {
+      try {
+        const nowMs = Date.now();
+        const ym = BA.historyEntry(parsed, nowMs).path.split("/")[2];
+        const since = nowMs - 9 * 86400000;
+        const db = getDatabase();
+        const snap = await db.ref("billing/history/" + ym + "/total")
+          .orderByKey().startAt(String(Math.round(since))).once("value");
+        const hit = BA.spikeCheck(snap.val() || {}, nowMs);
+        const ref = db.ref("billing/spike");
+        if (!hit) {
+          /* 지나간 폭주 표는 치운다 — 어제 것이 오늘도 붉게 떠 있으면 아무도 안 믿는다 */
+          const old = (await ref.once("value")).val();
+          if (old && old.day !== BA.kstDay(nowMs)) await ref.remove();
+        } else {
+          /* 어느 칸에서 느는지는 **폭주일 때만** 알아본다 */
+          const byKey = {};
+          for (const k of ["database", "storage", "functions", "ai"]) {
+            const s = await db.ref("billing/history/" + ym + "/" + k)
+              .orderByKey().startAt(String(Math.round(since))).once("value");
+            const v = s.val();
+            if (v) byKey[k] = v;
+          }
+          const who = BA.spikeCulprit(byKey, nowMs);
+          await ref.set(Object.assign({}, hit, who ? { key: who.key, label: who.label } : {}));
+          console.warn("recordBillingAlert: 하루 폭주", hit, who || "");
+        }
+      } catch (e) {
+        console.error("recordBillingAlert: 폭주 판정 실패(값·기록은 살렸습니다)",
+          String((e && e.message) || e));
+      }
+    }
+
     console.log("recordBillingAlert", {
       key: parsed.key,
       cost: parsed.row.cost,
@@ -2070,11 +2111,23 @@ async function requireHanaDevice(req, body) {
   const snap = await ref.once("value");
   const device = snap.val() || {};
   if (device.disabled === true || !device.tokenHash || !hanaSafeEqual(device.tokenHash, hanaHash(match[1]))) {
+    /* ★ 폰이 «죽은 열쇠»로 말을 걸어 온 것을 적어 둔다 (2026-08-29 대표 지시로 파다 잡음).
+       여태는 여기서 그냥 401 을 던지고 끝냈다 — 서버에 자국이 하나도 안 남았다.
+       그래서 화면은 「연결 뒤 문자 0건」이라고만 했고, 대표는
+       「앱이 지워졌나 · 알림이 꺼졌나 · 절전인가」를 셋 다 헤매야 했다.
+       실은 «앱은 멀쩡히 살아 말을 걸고 있는데 연결만 끊긴» 것일 수 있다.
+     ⚠ «그 폰이 실제로 등록되어 있을 때»만 적는다(tokenHash 가 있을 때).
+       아무 uid 나 적게 하면 모르는 사람이 남의 칸에 글을 쓸 수 있다. */
+    if (device.tokenHash) {
+      ref.child("lastReject").set({ at: Date.now(), reason: device.disabled === true ? "disabled" : "bad_token" })
+        .catch(() => { /* 못 적어도 거절은 그대로 한다 */ });
+    }
     const error = new Error("휴대폰 연결이 만료되었거나 해제되었습니다.");
     error.status = 401;
     throw error;
   }
-  ref.child("lastSeenAt").set(Date.now()).catch(() => {});
+  /* 잘 들어왔으면 「끊김」 자국을 지운다 — 지난 자국이 남아 계속 붉으면 못 믿는 표가 된다. */
+  ref.update({ lastSeenAt: Date.now(), lastReject: null }).catch(() => {});
   return { uid, deviceId, device };
 }
 
@@ -2176,6 +2229,10 @@ exports.hanaMessageBridge = functions
           memo: tx.memo,
           note: tx.note,
           rawHash: tx.rawHash,
+          /* ★ 카드 «취소» 표 — 여태 여기서 버려졌다(2026-08-29).
+             화면은 이 표를 보고 «스스로 확정되지 않게» 손을 막는다.
+             버리면 취소가 승인처럼 보이고, 카드 지출이 실제보다 많아진다. */
+          cancel: tx.cancel === true,
           status: "pending",
           receivedAt,
           deviceName: cameFrom,
@@ -2204,7 +2261,13 @@ exports.hanaMessageBridge = functions
              「폰과 말이 통한다」가 아니다. 지난 것을 넣었다고 살아 있다고 찍으면,
              알림이 막힌 채로 「멀쩡함」이 되어 진짜 끊김을 영영 못 알아챈다.
              PC 붙여넣기도 같은 까닭으로 안 찍는다(아래). */
-        if (!fromHistory) {
+        if (fromHistory) {
+          /* ★ 지난 문자는 lastOkAt 을 안 찍는다(위 까닭). 그렇다고 아무 자국도
+             안 남기면, 화면이 「앱에서 지난 문자 가져오기를 누르세요」를 «영영»
+             되풀이한다 — 방금 눌러 72건이 들어왔는데도 그랬다(2026-08-29 대표).
+             그래서 «지난 문자를 받았다»는 것만 따로 적는다. 살아 있음과는 다른 말이다. */
+          await hanaDeviceRef(linked).update({ lastHistoryAt: Date.now() }).catch(() => {});
+        } else {
           await hanaDeviceRef(linked).update({ lastOkAt: Date.now(), lastSkip: null }).catch(() => {});
         }
         hanaJson(res, 200, { ok: true, saved: true, id: tx.id }); return;
@@ -2258,6 +2321,8 @@ exports.hanaMessageBridge = functions
             id: tx.id, src: tx.src, type: tx.type, date: tx.date,
             amount: tx.amount, balance: tx.balance || 0,
             memo: tx.memo, note: tx.note, rawHash: tx.rawHash,
+            /* 폰 길과 «같은» 표를 남긴다 — 길에 따라 다르게 들어가면 안 된다. */
+            cancel: tx.cancel === true,
             status: "pending", receivedAt,
             deviceName: "PC 붙여넣기",
           };
@@ -2340,6 +2405,12 @@ exports.hanaMessageBridge = functions
           lastOkAt: Number(d.lastOkAt || 0),
           lastSkip: (d.lastSkip && d.lastSkip.reason)
             ? { reason: String(d.lastSkip.reason), at: Number(d.lastSkip.at || 0) } : null,
+          /* 「열쇠가 죽어 거절했다」 — 화면이 「앱이 없다」와 가르는 데 쓴다. */
+          lastReject: (d.lastReject && d.lastReject.at)
+            ? { reason: String(d.lastReject.reason || "bad_token"), at: Number(d.lastReject.at || 0) } : null,
+          /* 「지난 문자를 끌어온 적이 있다」 — 살아 있음(lastOkAt)과 다른 말이다.
+             이걸 안 보내면 화면이 이미 한 일을 또 시킨다. */
+          lastHistoryAt: Number(d.lastHistoryAt || 0),
           disabled: d.disabled === true,
         }));
         hanaJson(res, 200, { ok: true, devices }); return;
@@ -2368,6 +2439,8 @@ exports.hanaMessageBridge = functions
             type: x.type === "expense" ? "expense" : "income", date: String(x.date || ""),
             amount: Number(x.amount || 0), balance: Number(x.balance || 0), memo: String(x.memo || ""),
             note: String(x.note || ""), receivedAt: Number(x.receivedAt || 0),
+            /* 적어 두고도 안 보내면 화면의 cancel 은 늘 거짓이 된다. */
+            cancel: x.cancel === true,
           }));
         hanaJson(res, 200, { ok: true, items }); return;
       }

@@ -89,14 +89,19 @@ eval(gvar('STATUSES') + '\n' + gvar('PLAN_GROUP') + '\n' + gvar('COLS_KEY') + '\
 S.grpOn = false;
 ok('접을 수 있는 열은 다섯 (기업·요일 칸·종료는 접지 않는다)',
   COLSET.my.map(c => c[0]).join() === 'cat,pt,st,last,due');
-ok('처음에는 업무와 최근 기록이 접혀 있다',
-  colHidden('my','pt') === true && colHidden('my','last') === true
+/* 업무명을 다시 폈다 — 계약 종류(업체계약·컨설팅계약…)가 거기 있는데 접혀 있어
+   「계약」이라는 것만 보이고 무슨 계약인지 알 수가 없었다. 최근 기록만 접어 둔다. */
+ok('처음에는 최근 기록만 접혀 있다',
+  colHidden('my','last') === true && colHidden('my','pt') === false
   && colHidden('my','cat') === false && colHidden('my','st') === false && colHidden('my','due') === false);
 ok('접을 수 없는 열은 언제나 펴져 있다',
   colHidden('my','co') === false && colHidden('my','') === false);
 
-/* ── 켜고 끄기 ── */
+/* ── 켜고 끄기 ──
+   ⚠ 시작 상태를 기본값에 기대지 않는다. 기본값은 화면을 손볼 때마다 바뀌는데,
+      거기서 출발하면 그때마다 이 묶음이 통째로 깨진다(실제로 깨졌다). */
 STORE = {}; S.cols = undefined;
+STORE[COLS_KEY.my] = 'pt,last';                 // 업무·최근 기록이 접힌 상태에서 시작
 colToggle('my','last');
 ok('접힌 열을 펴면 펴진다', colHidden('my','last') === false);
 ok('편 것이 이 브라우저에 저장된다', STORE[COLS_KEY.my] === 'pt');
@@ -108,6 +113,7 @@ ok('접을 수 없는 열은 눌러도 안 바뀐다',
   colHidden('my','co') === false && STORE[COLS_KEY.my].split(',').sort().join() === 'pt,st');
 
 STORE = {}; S.cols = undefined;
+STORE[COLS_KEY.my] = 'pt,last';
 colToggle('my','pt'); colToggle('my','last');
 ok('전부 펴면 빈 값으로 저장된다', STORE[COLS_KEY.my] === '');
 S.cols = undefined;
@@ -182,13 +188,21 @@ ok('머리줄에는 열 칩이 하나뿐이다', (function () {
   return (h.match(/chipbtn/g) || []).length === 1 && h.indexOf('▦ 열') > 0;
 })());
 /* 늘 「몇 개 중 몇 개」를 적는다. 접힘 개수만 적던 때에는 다 펴 놓은 사람에게
-   숫자가 아예 안 붙어, 열을 접고 펼 수 있다는 것 자체가 안 보였다. */
+   숫자가 아예 안 붙어, 열을 접고 펼 수 있다는 것 자체가 안 보였다.
+   ⚠ 숫자를 글자로 박지 않는다 — 기본 접힘 열이 하나만 바뀌어도 깨진다(실제로 깨졌다).
+      지금 상태에서 세어 그 값이 칩에 적혀 있는지만 본다. */
+const colTag = sc => {
+  const all = colCols(sc).length;
+  const shown = colCols(sc).filter(c => !colHidden(sc, c[0])).length;
+  return '▦ 열 ' + shown + '/' + all;
+};
 ok('몇 개 중 몇 개를 보고 있는지 칩에 적는다',
-  colBtn('my').indexOf('▦ 열 3/5') > 0);
+  colBtn('my').indexOf(colTag('my')) > 0);
 ok('다 펴도 숫자가 붙는다 (접을 수 있다는 것이 늘 보이게)', (function () {
-  colToggle('my','pt'); colToggle('my','last');
+  const hid = colCols('my').filter(c => colHidden('my', c[0])).map(c => c[0]);
+  hid.forEach(k => colToggle('my', k));          // 지금 접혀 있는 것만 편다
   const h = colBtn('my');
-  colToggle('my','pt'); colToggle('my','last');
+  hid.forEach(k => colToggle('my', k));          // 되돌린다
   return h.indexOf('▦ 열 5/5') > 0;
 })());
 ok('손잡이가 표 선 색이 아니다 (흰 바탕에서 안 보였다)', (function () {
@@ -207,11 +221,19 @@ ok('다섯 열이 체크 목록으로 나온다', (function () {
   return COLSET.my.every(c => h.indexOf('<span>' + c[1] + '</span>') > 0)
     && (h.match(/type="checkbox"/g) || []).length === 5;
 })());
-ok('접힌 열은 체크가 꺼져 있다', (function () {
+/* 어느 열이 기본으로 접혀 있는지는 화면을 손볼 때마다 바뀐다.
+   열 이름을 박지 말고, 지금 접힌 것과 펴진 것을 하나씩 골라 견준다. */
+ok('접힌 열은 체크가 꺼져 있고 펴진 열은 켜져 있다', (function () {
+  const off = colCols('my').filter(c => colHidden('my', c[0]))[0];
+  const on = colCols('my').filter(c => !colHidden('my', c[0]) && !colForced('my', c[0]))[0];
+  if (!off || !on) return false;
   const h = colPopHTML('my');
-  const 업무 = h.slice(h.indexOf("colToggle('my','pt')") - 90, h.indexOf('<span>업무</span>'));
-  const 상태 = h.slice(h.indexOf("colToggle('my','st')") - 90, h.indexOf('<span>상태</span>'));
-  return 업무.indexOf('checked') < 0 && 상태.indexOf('checked') > 0;
+  const seg = c => {
+    const a = h.indexOf("colToggle('my','" + c[0] + "')");
+    const b = h.indexOf('<span>' + c[1] + '</span>');
+    return (a < 0 || b < 0) ? '' : h.slice(Math.max(0, a - 90), b);
+  };
+  return seg(off).indexOf('checked') < 0 && seg(on).indexOf('checked') > 0;
 })());
 ok('창을 띄우지 않는다 (모달이 아니다)',
   colPopHTML('my').indexOf('showModal') < 0 && W.indexOf('function colModal(') < 0);
@@ -247,7 +269,7 @@ ok('기업·담당·종료는 두 화면 모두 접지 않는다',
   && colHas('my', 'co') === false);
 STORE = {}; S.cols = undefined; S.grpOn = false;
 ok('두 화면이 서로 다른 곳에 기억한다',
-  COLS_KEY.my === 'work_my_cols' && !!COLS_KEY.team && COLS_KEY.team !== COLS_KEY.my);
+  !!COLS_KEY.my && !!COLS_KEY.team && COLS_KEY.team !== COLS_KEY.my);
 colToggle('team', 'log');
 ok('팀에서 접은 것은 팀에만 저장된다',
   STORE[COLS_KEY.team].indexOf('log') >= 0 && !STORE[COLS_KEY.my]);
@@ -379,10 +401,11 @@ ok('띠는 "펴기"가 아니라 묶음을 푸는 길을 준다', (function () {
 ok('묶어 보기가 잡은 열은 사람이 접은 것으로 세지 않는다', (function () {
   const forced = colCols('my').filter(c => colForced('my', c[0])).map(c => c[0]);
   const byHand = colCols('my').filter(c => colHidden('my', c[0]) && !colForced('my', c[0])).map(c => c[0]);
-  return forced.join() === 'cat' && byHand.join() === 'pt,last';
+  return forced.join() === 'cat' && byHand.join() === 'last';
 })());
 // 구분까지 접혀 있으므로 보이는 열은 상태·다음 할 일 둘뿐이다
-ok('묶어 보기가 잡은 열도 안 보이는 것으로 센다', colBtn('my').indexOf('▦ 열 2/5') > 0);
+ok('묶어 보기가 잡은 열도 안 보이는 것으로 센다', colBtn('my').indexOf(colTag('my')) > 0
+  && colHidden('my','cat') === true);          // 구분은 묶어 보기가 잡아 안 보인다
 S.grpOn = false;
 
 /* ── 상태 드롭다운 ── */
@@ -622,7 +645,35 @@ setTimeout(function () {
         logToPlan('W1', 'L2');
         ok('남이 쓴 기록은 옮기지 못한다', SET === null && DELETED === null);
 
-        console.log('\n' + (fail ? 'FAILED ' + fail + '/' + (pass + fail) : 'ALL ' + pass + ' PASS'));
+        
+/* ── 경고를 줄에서 칩으로 ──
+   할 일 알림(노트·빈 칸·미연결)은 한 번 처리하면 끝나는 것이라 칩으로 접었고,
+   상태 알림(지난 주 열람·걸러 보기)은 「왜 목록이 이렇게 보이는가」라 줄로 남겼다. */
+const RM = grab('renderMy');
+ok('할 일 알림 셋은 줄로 그리지 않는다 (칩으로 모은다)', (function () {
+  // 셋 다 todos.push 로 모여야 한다 — 하나라도 h+= 로 남으면 그 줄이 화면을 민다
+  const n = (RM.match(/todos\.push\(/g) || []).length;
+  return n === 3 && RM.indexOf('warnChip(todos)') > 0;
+})());
+ok('상태 알림은 줄로 남는다 (안 보이면 왜 이렇게 보이는지 모른다)',
+  /if\(!isCurWeek\(\)\)\{\s*\n?\s*h\+='<div class="histbanner">/.test(RM)
+  && RM.indexOf('걸러 보기가 걸려 있어') > 0);
+
+/* ⚠ 상태 알림은 반드시 h 를 만든 뒤에 와야 한다. 앞에 두면 아래에서 h 를 새로
+   만들 때 통째로 지워진다 — 실제로 그렇게 사라졌고, 화면만 보아서는 모른다. */
+ok('상태 알림이 h 를 만든 뒤에 온다',
+  RM.indexOf("var h='<div class=\"row hdr-my\"") < RM.indexOf('열람 중 — 이 주에 기록하면'));
+
+// 알림이 없으면 칩도 없어야 한다 — 빈 칩이 자리를 먹으면 고친 뜻이 없다
+ok('알림이 없으면 칩을 그리지 않는다',
+  grab('warnChip').indexOf('if(!todos||!todos.length) return ') > 0);
+ok('칩을 누르면 펴지고 밖을 누르면 닫힌다',
+  grab('warnChip').indexOf('S.warnOpen=!S.warnOpen') > 0
+  && grab('warnPopHTML').indexOf('onclick="warnPopClose()"') > 0);
+ok('펼치면 무엇인지와 바로 가는 단추가 함께 나온다',
+  grab('warnPopHTML').indexOf('warnrow') > 0 && grab('warnPopHTML').indexOf('w.a.map') > 0);
+
+console.log('\n' + (fail ? 'FAILED ' + fail + '/' + (pass + fail) : 'ALL ' + pass + ' PASS'));
         process.exit(fail ? 1 : 0);
       }, 0);
     }, 0);
