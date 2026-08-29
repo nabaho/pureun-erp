@@ -1293,3 +1293,38 @@ test('★ 자문사 갈래가 «메일함에서 이은 주소»도 센다 — �
   assert.ok(a.indexOf('zzz@nowhere.kr') >= 0,
     '이었는데 그 회사 주소로 안 잡힌다: ' + a);
 });
+
+test('★★ 잇기 화면이 «가볍다» — 줄마다 자문사를 통째로 넣으면 브라우저가 멈춘다', () => {
+  /* 2026-08-29 대표 보고 「눌렀는데 안이어 진다」의 까닭이 이것이었다.
+     줄 200개 × 자문사 212곳 = <option> 42,400개, 화면 하나가 «2MB» 였다.
+     논리는 맞는데 브라우저가 그리다 멈춰 아무 일도 안 일어났다.
+     ★ 자문사 목록은 datalist 로 «한 벌만» 둔다. */
+  const c = loadCo({ state:{ mailSent:'who', whoTab:'addr' } });
+  const h = c.whoPageHtml();
+  const rows = (h.match(/class="dm-row"/g) || []).length;
+  const opts = (h.match(/<option /g) || []).length;
+  assert.ok(rows > 0, "검사 밑그림이 틀렸다 — 이을 줄이 없다");
+  /* 줄 수와 «상관없이» 목록은 한 벌이다 — 줄마다 넣으면 줄 수에 곱해진다 */
+  const cos = c.mbCoNames().length;
+  assert.ok(opts <= cos + 5,
+    "★ 자문사 목록이 줄마다 들어갔습니다 — option " + opts + "개(자문사 " + cos
+    + "곳 × 줄 " + rows + "개). 브라우저가 그리다 멈춥니다");
+});
+
+test('★ 자문사 «목록에 없는» 이름은 안 잇는다 — 오타가 조용히 저장되면 안 된다', () => {
+  const c = loadCo();
+  c.mbCoSet('zzz@nowhere.kr', '있지도않은회사이름', false);
+  assert.equal(c._held.wrote['pucards/config/mailCo/zzz@nowhere,kr'], undefined,
+    '★ 목록에 없는 이름이 저장되었습니다');
+  assert.ok(c._held.toasts.join(' ').indexOf('목록에 없습니다') >= 0,
+    '왜 안 되는지 말해 주지 않는다');
+});
+
+test('★ 자문사 칸이 «짜부라지지» 않는다 — 이 줄은 flex 라 칸이 눌린다', () => {
+  const c = loadCo({ state:{ mailSent:'who', whoTab:'addr' } });
+  const h = c.whoPageHtml();
+  const i = h.indexOf('<input list="mbCoDL"');
+  assert.ok(i > 0, '자문사 고르는 칸이 없다');
+  const box = h.slice(i, i + 420);
+  assert.match(box, /flex:none/, '★ flex:none 이 없어 칸이 짜부라집니다');
+});
