@@ -154,7 +154,12 @@ test('★ 로그인하지 않으면 «업무 자료» 는 아무것도 못 읽�
 test('★ 파일이 만들개(scripts/make-firebase-rules.js)가 내놓는 것과 같다', () => {
   /* 손으로 고쳐 놓고 만들개를 안 고치면, 다음에 만들 때 그 고침이 조용히 사라진다. */
   const out = cp.execFileSync('node', [path.join(ROOT, 'scripts', 'make-firebase-rules.js')], { encoding: 'utf8' });
-  assert.equal(out.trim(), fs.readFileSync(FILE, 'utf8').trim(),
+  /* ⚠ 줄끝을 맞춰 견준다. 만들개는 LF 를 내놓는데 깃이 윈도우에서 파일을 CRLF 로
+       받아 두므로, 맞추지 않으면 «윈도우에서만» 깨진다 — 글자는 한 자도 안 다른데.
+       CI(리눅스)는 초록불이라 「내가 뭘 건드렸나」를 한참 찾게 된다(2026-08-29 실제로 겪음).
+       검사가 도는 곳에 따라 답이 달라지면 그 검사는 못 믿는다. */
+  const eol = (v) => String(v).split('\r\n').join('\n').trim();
+  assert.equal(eol(out), eol(fs.readFileSync(FILE, 'utf8')),
     '★ 규칙 파일과 만들개가 어긋났습니다.\n' +
     '  고칠 곳은 scripts/make-firebase-rules.js 이고, 그 뒤\n' +
     '  node scripts/make-firebase-rules.js > docs/firebase-rules-전체-적용본.json 을 다시 돌립니다.');
