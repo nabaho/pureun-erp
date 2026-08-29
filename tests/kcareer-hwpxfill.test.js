@@ -113,6 +113,43 @@ test('중첩 표(셀 안의 표)는 통째로 건너뛴다 — 정규식 경계 
   assert.ok(!/권형하/.test(r.xml), '중첩 표는 건드리면 안 됩니다');
 });
 
+/* ===== 실제 기관 양식 모양 (2026-08-29) — 지방공기업평가원 위촉직이사 지원서 =====
+   성명 칸에 (한글)/(한자), 전화번호 칸 안에 「자택:____ 직장:____」,
+   현 근무처 칸에 「기관명 : 부서명 : 직위 :」가 한 칸에 들어 있다. */
+
+test('칸 이름 확장: 현주소·휴대폰·기관명·부서명·직위·한자', () => {
+  assert.equal(F.fieldKeyOf('현 주 소'), 'addr');
+  assert.equal(F.fieldKeyOf('휴 대 폰'), 'phone');
+  assert.equal(F.fieldKeyOf('기관명'), 'org');
+  assert.equal(F.fieldKeyOf('부서명'), 'dept');
+  assert.equal(F.fieldKeyOf('직위'), 'title');
+  assert.equal(F.fieldKeyOf('한자'), 'nameHanja');
+  assert.equal(F.fieldKeyOf('현 근무처'), 'org');
+});
+
+test('칸 안에 라벨이 있는 모양 — 「자택:____ 직장:____」을 채운다', () => {
+  const xml = tbl([['전화번호', '자택:________  직장:________']]);
+  const r = F.autoFill(xml, { fields: { phoneHome: '041-556-0035', phoneWork: '041-556-3656' } });
+  assert.match(r.xml, /자택:041-556-0035/);
+  assert.match(r.xml, /직장:041-556-3656/);
+});
+
+test('칸 안 라벨 — 「기관명 : 부서명 : 직위 :」 한 칸에 셋', () => {
+  const xml = tbl([['현 근무처', '기관명 :        부서명 :        직위 :        ']]);
+  const r = F.autoFill(xml, { fields: { org: '푸른노무법인', dept: '노무팀', title: '대표' } });
+  assert.match(r.xml, /기관명 :\s*푸른노무법인/);
+  assert.match(r.xml, /부서명 :\s*노무팀/);
+  assert.match(r.xml, /직위 :\s*대표/);
+});
+
+test('칸 안 라벨 — 뒤에 이미 글자가 있으면 덮지 않는다', () => {
+  const xml = tbl([['전화번호', '자택:041-000-0000  직장:________']]);
+  const r = F.autoFill(xml, { fields: { phoneHome: '999', phoneWork: '041-556-3656' } });
+  assert.match(r.xml, /자택:041-000-0000/, '이미 적힌 번호는 그대로');
+  assert.ok(!/자택:999/.test(r.xml));
+  assert.match(r.xml, /직장:041-556-3656/, '빈자리만 채운다');
+});
+
 test('summarize: 사람이 읽을 한 줄', () => {
   assert.equal(F.summarize({ fields: [], lists: [], kept: [] }), '알아본 칸이 없습니다');
   assert.equal(

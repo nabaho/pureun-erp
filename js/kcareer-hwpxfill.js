@@ -11,14 +11,27 @@
   /* ===== 라벨 사전 =====
      양식마다 칸 이름이 다르다(성명/이름/신청자). 공백·괄호·별표는 떼고 본다. */
   var FIELD_LABELS = [
-    { re: /^(성명|이름|신청자명?|성함)$/, key: 'name' },
-    { re: /^(생년월일|생일|출생연월일)$/, key: 'birth' },
+    { re: /^(성명|이름|신청자명?|성함|성명한글|한글성명)$/, key: 'name' },
+    { re: /^(한자|한자성명|성명한자)$/, key: 'nameHanja' },
+    { re: /^(생년월일|생일|출생연월일|생년월일주민번호)$/, key: 'birth' },
     { re: /^성별$/, key: 'gender' },
-    { re: /^(연락처|전화번호?|휴대폰|핸드폰|휴대전화)$/, key: 'phone' },
-    { re: /^(이메일|전자우편|e-?mail)$/i, key: 'email' },
-    { re: /^(주소|거주지|자택주소)$/, key: 'addr' },
-    { re: /^(자격증?|보유자격|자격사항)$/, key: 'license' },
-    { re: /^(소속|소속기관|근무처|회사명|직장명?)$/, key: 'org' }
+    { re: /^(연락처|전화번호?|휴대폰|핸드폰|휴대전화|이동전화|hp)$/i, key: 'phone' },
+    { re: /^(이메일|전자우편|e-?mail|메일주소)$/i, key: 'email' },
+    { re: /^(주소|현주소|거주지|자택주소|주민등록주소)$/, key: 'addr' },
+    { re: /^(자격증?|보유자격|자격사항|자격면허)$/, key: 'license' },
+    { re: /^(소속|소속기관|근무처|현근무처|회사명|직장명?|기관명|근무기관)$/, key: 'org' },
+    { re: /^(부서|부서명|소속부서)$/, key: 'dept' },
+    { re: /^(직위|직책|현직위|담당직위)$/, key: 'title' }
+  ];
+  /* 칸 안에 「자택:______ 직장:______」처럼 라벨과 빈자리가 함께 있는 양식이 많다.
+     이런 자리는 라벨 바로 뒤(밑줄·공백)를 값으로 바꾼다. */
+  var INCELL_LABELS = [
+    { re: /자택/, key: 'phoneHome' }, { re: /직장|사무실/, key: 'phoneWork' },
+    { re: /휴대폰|핸드폰|휴대전화/, key: 'phone' },
+    { re: /기관명/, key: 'org' }, { re: /부서명/, key: 'dept' }, { re: /직위/, key: 'title' },
+    { re: /한글/, key: 'name' }, { re: /한자/, key: 'nameHanja' },
+    { re: /성명|이름/, key: 'name' }, { re: /생년월일/, key: 'birth' },
+    { re: /이메일|E-?mail/i, key: 'email' }, { re: /주소/, key: 'addr' }
   ];
   /* 목록 표 머리행 열쇠 — 학력·경력 표의 열을 알아본다 */
   var COL_LABELS = [
@@ -97,12 +110,50 @@
     return i < 0 ? hay : hay.slice(0, i) + newStr + hay.slice(i + oldStr.length);
   }
 
+  /* ===== ①-B 칸 안 라벨: 「자택:______ 직장:______」처럼 한 칸에 라벨과 빈자리가 함께 =====
+     라벨 뒤의 밑줄(___)이나 콜론 뒤 빈자리를 값으로 바꾼다.
+     ⚠ 라벨 뒤에 이미 글자가 있으면 건드리지 않는다. */
+  function fillInCell(tc, fields, report) {
+    var txt = cellText(tc);
+    if (!txt) return tc;
+    var hits = [];
+    INCELL_LABELS.forEach(function (L) {
+      if (!L.re.test(txt)) return;
+      if (fields[L.key] == null || fields[L.key] === '') return;
+      if (hits.some(function (h) { return h.key === L.key; })) return;
+      hits.push(L);
+    });
+    if (!hits.length) return tc;
+    var out = tc, did = 0;
+    hits.forEach(function (L) {
+      /* <hp:t> 안의 글자만 바꾼다 — 태그를 건드리면 문서가 깨진다 */
+      out = out.replace(/(<hp:t[^>]*>)([\s\S]*?)(<\/hp:t>)/g, function (m, a, inner, b) {
+        if (did >= hits.length) return m;
+        /* 라벨 + (콜론) + 밑줄/공백 자리
+           ⚠ L.re.source 를 (?:…) 로 감싸야 한다 — 「직장|사무실」처럼 교대가 들어 있으면
+           괄호 없이는 '직장' 또는 '사무실\s*[:：]?\s*' 로 갈라져 뒤가 통째로 사라진다. */
+        var re = new RegExp('((?:' + L.re.source + ')\\s*[:：]?\\s*)(_{2,}|\\u3000{2,}|\\s{4,})');
+        if (!re.test(inner)) return m;
+        var next = inner.replace(re, function (mm, head) { return head + esc(fields[L.key]); });
+        if (next === inner) return m;
+        did++; report.fields.push({ key: L.key, value: fields[L.key] });
+        report.usedKeys[L.key] = true;
+        return a + next + b;
+      });
+    });
+    return out;
+  }
+
   /* ===== ① 단일 값: 라벨 칸 → 같은 행의 바로 다음 빈 칸 ===== */
   function fillFields(tbl, fields, report) {
     var rows = splitRows(tbl), newTbl = tbl;
     rows.forEach(function (tr) {
       var cells = splitCells(tr), newTr = tr;
-      for (var i = 0; i < cells.length - 1; i++) {
+      for (var i = 0; i < cells.length; i++) {
+        /* 칸 안에 라벨과 빈자리가 함께 있는 모양(자택:___ 직장:___)을 먼저 처리한다 */
+        var inFilled = fillInCell(cells[i], fields, report);
+        if (inFilled !== cells[i]) { newTr = replaceOnce(newTr, cells[i], inFilled); cells[i] = inFilled; }
+        if (i >= cells.length - 1) break;
         var key = fieldKeyOf(cellText(cells[i]));
         if (!key || fields[key] == null || fields[key] === '') continue;
         if (report.usedKeys[key]) continue;               // 같은 값은 한 번만(첫 등장 우선)
