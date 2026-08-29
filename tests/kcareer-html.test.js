@@ -698,11 +698,15 @@ test('이력서관리 네 화면은 제목·설명을 숨긴다 — 빵부스러
   });
 });
 
-test('네 화면 모두 접이식(.rh-fold) 같은 모양이다', () => {
+test('이력서관리 네 화면이 같은 모양이다 — 접이식 또는 툴바 한 줄', () => {
   assert.match(source, /\.rh-fold>summary\{/, '.rh-fold 요약줄 스타일이 있어야 합니다');
-  // 빠른이력서·이력서생성보관·프로필·경력증명서 = 4개
+  // 빠른이력서·프로필·경력증명서 = 접이식 3개
   const folds = source.match(/<details class="rh-fold"/g) || [];
-  assert.ok(folds.length >= 4, '네 화면에 각각 접이식 묶음이 있어야 합니다 (지금 ' + folds.length + '개)');
+  assert.ok(folds.length >= 3, '접이식 묶음이 있어야 합니다 (지금 ' + folds.length + '개)');
+  // 이력서 생성·보관은 카드 3개 대신 목록 화면과 같은 툴바 한 줄을 쓴다(2026-08-29)
+  const i = source.indexOf('<div class="tabpanel active" id="rh-edit">');
+  const panel = source.slice(i, source.indexOf('<!-- 탭2', i));
+  assert.match(panel, /<div class="toolbar"/, '업로드·모드·보관함은 툴바 한 줄이어야 합니다');
 });
 
 test('빠른 이력서에서 중복 카드를 없앴다 — 서류 만들기 버튼은 같은 화면 안 중복이었다', () => {
@@ -858,6 +862,58 @@ test('브라우저 자료가 지워져 기본 데이터로 돌아가면 크게 �
   // 되살리기 버튼이 붙어 있어야 한다
   const i = source.indexOf('id="fbLossNotice"');
   assert.match(source.slice(i, i + 900), /onclick="fbPull\(\);return false"/);
+});
+
+/* ===== 이력서 생성·보관 — 내 정보로 채우기 + 임시저장 (2026-08-29) ===== */
+
+test('.hwp 양식도 자동 채움된다 — 한글 엔진으로 hwpx로 바꿔서', () => {
+  // ⚠ 자동 채움은 XML을 고치므로 .hwp(이진)는 그대로는 못 채운다.
+  //    실측 확인: 열기 → exportHwpx() → 채움 → 다시 열기 (잉크 2010→2883)
+  const src = funcSource('_rhToHwpx');
+  assert.match(src, /ext==='hwpx'/, 'hwpx는 그대로 씁니다');
+  assert.match(src, /PureunHwp\.openDoc\(bytes, name\)/);
+  assert.match(src, /doc\.exportHwpx\(\)/, '.hwp는 hwpx로 내보내 채웁니다');
+  assert.match(src, /doc\.free\(\)/, 'WASM 기억은 스스로 안 비워집니다');
+});
+
+test('✨ 내 정보로 채우기 — 손으로 타이핑하지 않는다', () => {
+  assert.match(source, /onclick="rhAutoFillDoc\(\)"/);
+  const src = funcSource('rhAutoFillDoc');
+  assert.match(src, /_rhToHwpx\(_rhDoc\.bytes, _rhDoc\.name\)/);
+  assert.match(src, /KcareerHwpxFill\.autoFill\(s, data\)/);
+  assert.match(src, /_cvFillData\(\)/, '프로필·경력에서 끌어옵니다');
+  assert.match(src, /openHwpViewer\(filled/, '채운 결과를 바로 보여줘야 확인할 수 있습니다');
+  assert.match(src, /rhDraftSave\(\)/, '채운 결과도 임시저장돼야 합니다');
+});
+
+test('최종 저장 전까지 계속 임시저장한다', () => {
+  assert.match(source, /var RH_DRAFT='rh_draft'/);
+  assert.match(funcSource('importTemplateFile'), /rhDraftSave\(\)/, '올리는 순간 임시저장');
+  const save = funcSource('rhDraftSave');
+  assert.match(save, /saveFileUnified\(RH_DRAFT/);
+  assert.match(save, /rh_draft_meta/);
+  // 화면을 열면 이어서 할 수 있어야 한다
+  assert.match(source, /_safe\(\(\)=>rhDraftCheck\(\)\)/);
+  assert.match(funcSource('rhDraftCheck'), /rhResumeBar/);
+  assert.match(source, /onclick="rhDraftResume\(\);return false"/);
+  // ⚠ 최종 저장이 끝나면 임시저장을 지운다 — 낡은 것을 가리키면 안 된다
+  assert.match(funcSource('confirmResumeSave'), /rhDraftDrop\(\)/);
+});
+
+test('이력서 생성 화면의 중복을 없앴다', () => {
+  // 「완성본 생성」이 위·아래 두 번, 「이력서 작성/프로필 작성」 버튼과 「이력서 모드」 딱지가
+  // 같은 말을 두 번 하고 있었다. 카드 3개가 화면 절반을 먹던 것도 툴바 한 줄로.
+  const i = source.indexOf('<div class="tabpanel active" id="rh-edit">');
+  const j = source.indexOf('<!-- 탭2', i);
+  const panel = source.slice(i, j);
+  assert.ok(!/① 양식 업로드/.test(panel), '카드 번호(①②③)는 툴바로 합치며 없앴습니다');
+  assert.ok(!/rhSetDomain\('resume'\)/.test(panel), '모드 버튼 두 개 대신 드롭다운 하나');
+  assert.match(panel, /id="rhModeSel"/);
+  // 주석에는 그 이름이 남아 있으므로 주석을 지운 뒤 실제 마크업만 본다
+  const markup = panel.replace(/<!--[\s\S]*?-->/g, '');
+  assert.equal((markup.match(/완성본 HWP 생성/g) || []).length, 0, '아래쪽 중복 버튼을 없앴습니다');
+  assert.equal((markup.match(/기본정보 자동 채우기/g) || []).length, 0, '「내 정보로 채우기」로 합쳤습니다');
+  assert.match(panel, /id="rhGenBtn"[^>]*style="display:none"/, '기존 호출자를 위해 숨겨 남깁니다');
 });
 
 /* ===== 회의·강의비 개인정보 동의서 자동 생성 (2026-08-27, 2단계 v1) ===== */
