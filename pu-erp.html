@@ -4925,6 +4925,78 @@ function erpExpCatStore(){
     ⚠ erpCleanMemo 자체는 «건드리지 않는다» — 업체 이름 맞추기가 그것을 함께 쓴다.
       달을 빼는 것은 «카테고리 기억»에만 맞는 규칙이다.
     ⚠ 달을 뺀 뒤 남는 것이 없으면 빼기 전 것을 쓴다 — 「12월」만 적힌 적요가 있다. */
+/* ══════ 급여 출금 → 인사관리 급여 잇기 (대표 지시 2026-08-29) ══════
+   「12월 급여로 표시되어 있기 때문에 인사관리에서 12월 급여부분과 연결시켜야 한다 반드시」
+
+   적요가 「박한별_12월급여」다. 여기서 «누구의 몇 월»인지를 읽는다.
+
+ ★★ 달은 «적요»에서 읽는다 — 나간 날짜가 아니다.
+    12월 급여가 1월 5일에 나간다. 나간 날로 달을 정하면 온통 어긋난다.
+ ★ 해는 나간 날에서 «되짚어» 정한다: 적요의 달이 나간 달보다 «크면» 지난해다
+   (2026-01-05 에 나간 「12월급여」 → 2025-12). 12월→1월만이 아니라
+   늦게 나가는 어떤 달에도 맞는다.
+ ⚠ 이름에 숫자가 붙는 경우가 있어(홍길동2) 이름은 «달 앞까지» 통째로 가져온다. */
+function erpPayrollFromMemo(memo, rowDate){
+  var s = String(memo === null || memo === undefined ? '' : memo).trim();
+  if(!s) return null;
+  var m = /^(.+?)[\s_\-]*(\d{1,2})\s*월\s*급여\s*$/.exec(s);
+  if(!m) return null;
+  var name = String(m[1]).replace(/[\s_\-]+$/, '').trim();
+  var mon = parseInt(m[2], 10);
+  if(!name || !(mon >= 1 && mon <= 12)) return null;
+  var d = String(rowDate || '');
+  var ry = parseInt(d.slice(0, 4), 10);
+  var rm = parseInt(d.slice(5, 7), 10);
+  if(!(ry >= 2000) || !(rm >= 1 && rm <= 12)) return null;
+  var year = (mon > rm) ? (ry - 1) : ry;
+  return { name: name, ym: year + '-' + (mon < 10 ? '0' + mon : String(mon)), month: mon };
+}
+
+/* 인사관리(payroll_monthly)에서 «그 사람의 그 달» 급여를 찾는다.
+ ⚠ 못 찾으면 null 이다 — 없는 것을 지어내지 않는다.
+ ⚠ 이름이 같은 기록이 여럿이면 «고르지 않는다». 어느 것인지 모르는 채
+   찍어서 이으면, 남의 급여에 이 출금이 붙는다. */
+function erpFindPayroll(name, ym){
+  var nm = String(name || '').replace(/\s+/g, '');
+  if(!nm || !ym) return null;
+  var all = [];
+  try { all = dbGet('payroll_monthly', []) || []; } catch(e){ return null; }
+  var hit = all.filter(function(r){
+    if(!r || r.ym !== ym) return null;
+    var rn = String(r.empName || r.name || '').replace(/\s+/g, '');
+    return rn && rn === nm;
+  });
+  if(hit.length !== 1) return { many: hit.length > 1, count: hit.length, rec: null, netPay: 0 };
+  var rec = hit[0];
+  var net = 0;
+  try { net = (calcPayroll(rec) || {}).netPay || 0; } catch(e){ net = 0; }
+  return { many: false, count: 1, rec: rec, netPay: net };
+}
+
+/* 출금 한 줄 → 인사관리 급여와 어떻게 이어지는가.
+   돌려주는 것: null | {state, ym, name, netPay, rec}
+     'ok'    금액까지 맞는다      'gap'  기록은 있는데 금액이 다르다
+     'many'  같은 이름이 여럿     'none' 그 달 기록이 없다
+ ⚠ 금액이 다르면 «다르다고 적는다». 맞춰 주지 않는다 —
+   급여는 한 원만 어긋나도 사람이 봐야 한다. */
+function erpPayrollLink(row){
+  if(!row) return null;
+  var got = erpPayrollFromMemo(row.memo || row.note || '', row.date);
+  if(!got) return null;
+  var found = erpFindPayroll(got.name, got.ym);
+  if(!found) return { state:'none', ym:got.ym, name:got.name, netPay:0, rec:null };
+  if(found.many) return { state:'many', ym:got.ym, name:got.name, netPay:0, rec:null, count:found.count };
+  if(!found.rec) return { state:'none', ym:got.ym, name:got.name, netPay:0, rec:null };
+  var amt = parseInt(row.amount, 10) || 0;
+  return { state: (found.netPay === amt ? 'ok' : 'gap'),
+    ym:got.ym, name:got.name, netPay:found.netPay, rec:found.rec };
+}
+try {
+  window.erpPayrollFromMemo = erpPayrollFromMemo;
+  window.erpFindPayroll = erpFindPayroll;
+  window.erpPayrollLink = erpPayrollLink;
+} catch(_e){ }
+
 function erpExpCatKey(memo){
   var raw = String(memo===null||memo===undefined?'':memo);
   if(!raw.trim()) return '';
@@ -39862,6 +39934,15 @@ function FinanceLedger(props){
 
   // ── 출금 등록 ──
   function saveExpense(row, cat){
+    /* ★ 급여 출금이면 «어느 달 누구의 급여»인지 함께 남긴다 (대표 지시 2026-08-29).
+       이것이 없으면 출금관리에서 보고도 12월 급여인지 1월 급여인지 알 수 없다.
+     ⚠ 금액이 어긋나거나 이름이 여럿이면 «잇지 않는다» — 틀린 연결은 없느니만 못하다.
+       화면에는 그렇게 적혀 있으니 사람이 보고 정한다. */
+    var _pl = null;
+    try { _pl = (typeof erpPayrollLink === 'function') ? erpPayrollLink(row) : null; } catch(e){ _pl = null; }
+    var _payroll = (_pl && _pl.state === 'ok' && _pl.rec)
+      ? { ym:_pl.ym, name:_pl.name, sid:(_pl.rec.empSid || _pl.rec.sid || ''), netPay:_pl.netPay }
+      : null;
     dbUpsert('finance_expense', {id:'fe-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
       date:row.date||todayYMD(),
       amount:row.amount, category:cat,
@@ -39871,7 +39952,8 @@ function FinanceLedger(props){
          출금관리 목록이 이 표를 보고 「🏦 거래내역」 딱지를 붙인다. */
       src:'ledger',
       paid:true, paidDate:row.date||todayYMD(),
-      branch:'cheonan'});
+      branch:'cheonan',
+      payroll:_payroll});
   }
 
   /* ── 골라 둔 짝을 «서버에» 적는다 (2026-08-10 대표 지시: "골라둔짝도 보이게") ──
@@ -40447,6 +40529,17 @@ function FinanceLedger(props){
   /* ── 카드 「취소」의 짝 (2026-08-26 대표 지시: 「자동 짝지어 달라」) ──
      ⚠ 여기서 «찾기만» 한다. 상계는 사람이 누른다 — 되돌리는 것은 되돌릴 수 없다.
      ⚠ 줄마다 한 번만 찾는다. 표를 그릴 때마다 다시 찾으면 줄 수만큼 헛일이 된다. */
+  /* ── 급여 출금 → 인사관리 급여 잇기 (대표 지시 2026-08-29) ──
+     ⚠ 줄마다 «한 번만» 찾는다. 표를 그릴 때마다 다시 찾으면 줄 수만큼 헛일이다
+       (인사관리 기록 전체를 훑는 일이라 398줄이면 398번이다). */
+  var expPayroll = {};
+  if(rows && ldTabEff==='exp' && typeof erpPayrollLink === 'function'){
+    expAll.forEach(function(row){
+      if(row._dup) return;
+      try { expPayroll[row._k] = erpPayrollLink(row); }
+      catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+    });
+  }
   var expPair = {};
   if(rows && ldTabEff==='exp' && typeof erpCardCancelMatch === 'function'){
     expAll.forEach(function(row){
@@ -42055,7 +42148,34 @@ function FinanceLedger(props){
                   row._dup && h('div',{title:'처리 대상: '+((dupInfoE&&dupInfoE.target)||'-')+'\n환경설정 ▸ 입금자 별칭 관리에서 이 기록을 지우면 다시 처리할 수 있습니다',
                     style:{marginTop:'2px',display:'inline-block',background:'#fffbeb',color:'#d97706',
                       border:'1px solid #fde68a',borderRadius:'8px',padding:'0 5px',fontSize:'9.5px',fontWeight:700}},
-                    '⚠️ 이미 처리됨'+(dupInfoE&&dupInfoE.at?' ('+String(dupInfoE.at).slice(0,10)+')':''))),
+                    '⚠️ 이미 처리됨'+(dupInfoE&&dupInfoE.at?' ('+String(dupInfoE.at).slice(0,10)+')':''))
+                  ,(function(){
+                    /* ★ 인사관리 급여와 이어지는가 (대표: 「반드시 연결시켜야 한다」).
+                       ⚠ 금액이 다르면 «다르다고 적는다» — 맞춰 주지 않는다.
+                          급여는 한 원만 어긋나도 사람이 봐야 한다.
+                       ⚠ 같은 이름이 여럿이면 «고르지 않는다» — 찍어서 이으면
+                          남의 급여에 이 출금이 붙는다. */
+                    var pl = expPayroll[row._k];
+                    if(!pl) return null;
+                    var box = { display:'inline-block', marginTop:'2px', borderRadius:'8px',
+                      padding:'0 5px', fontSize:'9.5px', fontWeight:700, whiteSpace:'nowrap' };
+                    if(pl.state === 'ok')
+                      return h('div',{title:'인사관리 '+pl.ym+' 급여와 실지급액까지 맞습니다',
+                        style:Object.assign({},box,{background:'#f0fdf4',color:'#166534',border:'1px solid #bbf7d0'})},
+                        '👤 인사 '+pl.ym+' 급여 ✅');
+                    if(pl.state === 'gap')
+                      return h('div',{title:'인사관리 '+pl.ym+' 급여는 '+pl.netPay.toLocaleString()+'원입니다. '
+                          +'출금은 '+(row.amount||0).toLocaleString()+'원 — 사람이 봐야 합니다.',
+                        style:Object.assign({},box,{background:'#fffbeb',color:'#854d0e',border:'1px solid #fde68a'})},
+                        '👤 인사 '+pl.ym+' · 장부 '+pl.netPay.toLocaleString()+'원 ⚠ 금액 다름');
+                    if(pl.state === 'many')
+                      return h('div',{title:'인사관리 '+pl.ym+' 에 같은 이름이 '+pl.count+'건입니다 — 어느 것인지 사람이 골라야 합니다',
+                        style:Object.assign({},box,{background:'#fffbeb',color:'#854d0e',border:'1px solid #fde68a'})},
+                        '👤 인사 '+pl.ym+' · 같은 이름 '+pl.count+'건 — 골라야 합니다');
+                    return h('div',{title:'인사관리 '+pl.ym+' 에 '+pl.name+' 급여 기록이 없습니다',
+                      style:Object.assign({},box,{background:'#f8fafc',color:'#64748b',border:'1px solid #e2e8f0'})},
+                      '👤 인사 '+pl.ym+' 기록 없음');
+                  })()),
                 h('td',{style:tdS},
                   /* ══ 고르는 «그 자리»에서 끝낸다 (대표 지시 2026-08-29) ══════════
                      「이렇게 멀리서 클릭하는거 마우스 움직임 불편하다,
