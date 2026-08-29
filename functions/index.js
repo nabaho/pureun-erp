@@ -2213,6 +2213,19 @@ exports.hanaMessageBridge = functions
         }
         const tx = parsed.transaction;
         const inboxRef = db.ref(`hanaSmsBridge/inbox/${linked.uid}/${tx.id}`);
+        /* ★★ 원문이 같으면 «이미 담은 것»이다 (2026-08-29 에 크게 데었다).
+           tx.id 는 적요를 재료로 만든다. 그래서 파서를 고쳐 적요가 바뀌면
+           «같은 문자»인데도 열쇠가 달라져 새 줄로 또 들어온다 —
+           실제로 「가능액」을 걷어낸 날, 카드 26건이 두 벌이 되어
+           합계가 1,176,450원 부풀었다.
+         ★ rawHash 는 문자 «원문»의 해시라 파서를 고쳐도 안 변한다.
+           그것이 진짜 열쇠다. */
+        const sameRaw = await db.ref(`hanaSmsBridge/inbox/${linked.uid}`)
+          .orderByChild("rawHash").equalTo(tx.rawHash).limitToFirst(1).once("value")
+          .catch(() => null);
+        if (sameRaw && sameRaw.exists()) {
+          hanaJson(res, 200, { ok: true, duplicate: true, sameRaw: true, id: tx.id }); return;
+        }
         const existing = await inboxRef.once("value");
         if (existing.exists()) {
           hanaJson(res, 200, { ok: true, duplicate: true, id: tx.id }); return;

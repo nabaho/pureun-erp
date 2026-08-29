@@ -38156,6 +38156,41 @@ if(typeof window !== 'undefined'){
    ⚠ 이미 짝지어진 승인은 다시 안 쓴다 — 한 승인이 두 취소를 갚을 수는 없다. */
 /* 카드 문자에 적힌 «끝 네 자리» — 「하나카드 승인 문자 · ****9950」 → 9950.
    ⚠ 은행 줄에는 없다(빈 글자). 카드가 아닌 것을 카드로 세면 안 된다. */
+/* ══════ 겹친 줄 찾기 (2026-08-29) ══════
+   파서를 고쳐 적요가 바뀌면, 같은 문자가 «새 줄»로 또 들어온다.
+   「롯데리아천 가능액」과 「롯데리아천」이 같은 52,200원으로 나란히 선다.
+
+ ★ 짝으로 보는 조건을 «좁게» 잡는다 —
+   날짜·금액·갈래·취소가 «모두 같고», 한쪽 적요가 다른 쪽으로 시작하며,
+   남는 꼬리가 «아는 군더더기»(가능액·잔액·누적 …)뿐일 때만.
+ ⚠ 넓게 잡으면 같은 날 같은 금액의 «다른 결제»가 지워진다.
+   눈에 보이는 겹침이 조용히 지워진 기록보다 낫다.
+ ⚠ 지우는 것은 «꼬리가 붙은 쪽»이다 — 깨끗한 적요를 남긴다. */
+var ERP_DUP_TAIL = /^(?:가능액|잔액|누적|가용액|사용가능액|이용가능액|원|\s)+$/;
+function erpStaleDupPairs(rows){
+  var out = [];
+  var list = (rows || []).filter(Boolean);
+  for(var i = 0; i < list.length; i++){
+    for(var j = 0; j < list.length; j++){
+      if(i === j) continue;
+      var a = list[i], b = list[j];
+      if(a.date !== b.date || a.amount !== b.amount) continue;
+      if((a.src || "") !== (b.src || "")) continue;
+      if(!!a.cancel !== !!b.cancel) continue;
+      var am = String(a.memo || '').trim(), bm = String(b.memo || '').trim();
+      if(!am || !bm || am === bm) continue;
+      if(am.length <= bm.length) continue;             /* a 가 «긴» 쪽일 때만 본다 */
+      if(am.indexOf(bm) !== 0) continue;               /* 짧은 쪽으로 시작해야 한다 */
+      var tail = am.slice(bm.length);
+      if(!ERP_DUP_TAIL.test(tail)) continue;           /* 남는 꼬리가 군더더기여야 한다 */
+      out.push({ drop: a, keep: b, tail: tail.trim() });
+      break;
+    }
+  }
+  return out;
+}
+try { window.erpStaleDupPairs = erpStaleDupPairs; } catch(_e){ }
+
 function erpCardTail(row){
   if(!row || row.src !== 'card') return '';
   var m = /\*{2,}\s*(\d{3,4})/.exec(String(row.note || ''));
@@ -40554,6 +40589,11 @@ function FinanceLedger(props){
   /* ── 급여 출금 → 인사관리 급여 잇기 (대표 지시 2026-08-29) ──
      ⚠ 줄마다 «한 번만» 찾는다. 표를 그릴 때마다 다시 찾으면 줄 수만큼 헛일이다
        (인사관리 기록 전체를 훑는 일이라 398줄이면 398번이다). */
+  /* 겹친 줄 — 파서를 고친 뒤 같은 문자가 두 벌로 들어온 것 (2026-08-29).
+     ⚠ 여기서는 «세기만» 한다. 치우는 것은 사람이 누른다. */
+  var expDupPairs = (rows && ldTabEff==='exp' && typeof erpStaleDupPairs === 'function')
+    ? erpStaleDupPairs(expAll.filter(function(r){ return !r._dup; })) : [];
+
   var expPayroll = {};
   if(rows && ldTabEff==='exp' && typeof erpPayrollLink === 'function'){
     expAll.forEach(function(row){
@@ -41603,6 +41643,31 @@ function FinanceLedger(props){
           title:'전에 등록한 적요와 같으면 그때 고른 카테고리를 자동으로 채웁니다',
           style:{padding:'4px 11px',background:'#166534',color:'#fff',border:'none',borderRadius:'6px',fontSize:'11px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap',flexShrink:0}
         },'🤖 카테고리 자동'),
+        /* ★ 겹친 줄 치우기 — 있을 때만 나온다. 없으면 단추가 아예 안 보인다.
+           2026-08-29: 「가능액」을 걷어내며 적요가 바뀌어, 같은 카드 문자가
+           두 벌로 들어왔다(26건·1,176,450원). 그 뒤로도 파서를 고칠 때마다
+           생길 수 있는 일이라 «치우는 길»을 남겨 둔다. */
+        ldTabEff==='exp' && expDupPairs.length>0 && h('button',{
+          onClick:async function(){
+            var ps = expDupPairs;
+            var sum = ps.reduce(function(s,p){ return s + (parseInt(p.drop.amount,10)||0); }, 0);
+            var head = ps.slice(0,5).map(function(p){
+              return '· ' + p.drop.date + '  ' + (p.drop.amount||0).toLocaleString() + '원  「'
+                + p.drop.memo + '」 → 「' + p.keep.memo + '」';
+            }).join('\n');
+            var ok = await popConfirm('겹친 줄 ' + ps.length + '건을 치웁니다 (합계 '
+              + sum.toLocaleString() + '원).\n\n같은 날짜·금액인데 적요 끝에 군더더기가'
+              + ' 붙은 쪽만 치웁니다. 깨끗한 줄은 그대로 남습니다.\n\n' + head
+              + (ps.length>5 ? ('\n… 그 밖 ' + (ps.length-5) + '건') : ''));
+            if(!ok) return;
+            ps.forEach(function(p){ removeRow(p.drop._k,'exp'); });
+            showToast('🧹 겹친 줄 ' + ps.length + '건을 치웠습니다');
+          },
+          title:'같은 문자가 두 벌로 들어온 줄을 치웁니다 — 깨끗한 쪽은 남습니다',
+          style:{padding:'4px 11px',background:'#d97706',color:'#ffffff',border:'none',
+            borderRadius:'6px',fontSize:'11px',fontWeight:700,cursor:'pointer',
+            whiteSpace:'nowrap',flexShrink:0,fontFamily:'inherit'}
+        },'🧹 겹친 줄 치우기 ' + expDupPairs.length),
         /* 켜 두면 매달 누를 것이 없다 — 배운 것은 열자마자 등록된다. */
         ldTabEff==='exp' && h('label',{
           title:'전에 등록한 적요와 같은 출금은, 열자마자 그때 고른 카테고리로 저절로 등록합니다. '
