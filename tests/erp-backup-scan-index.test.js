@@ -91,11 +91,19 @@ function makeDb(tree, log) {
 function build(tree, opts) {
   const log = [];
   const o = opts || {};
+  /* ⚠ 2026-08-29 부터 백업 본문을 읽는 자리마다 주민번호 잠금을 «푼다»
+     (대표 지시 「백업 시 주번 암호화」). 이 검사가 보는 것은 «몇 번 내려받나» 라
+     여기서는 그대로 돌려주는 것으로 대신한다 — 잠그고 푸는 것 자체는
+     tests/rrn-seal.test.js 가 실제로 돌려서 확인한다.
+     ⚠ 다만 «부르기는 하는가» 는 여기서도 센다(아래 unsealCalls). 안 부르면
+       되돌릴 때 주민번호 자리에 enc:v1:… 이 들어간다. */
+  const unsealCalls = [];
   const sandbox = new Function(
-    'fbDb', 'window', 'dbGet', 'dbUpsertMany',
+    'fbDb', 'window', 'dbGet', 'dbUpsertMany', 'erpUnsealSnap',
     SRC + '\nreturn { _snapIdIndex, _lostSnapEnsureIds, erpScanLostRecords, erpRestoreLostRecords, erpDataForensics };'
-  )(makeDb(tree, log), { _erpErrLog: function () { } }, o.dbGet || (() => []), o.dbUpsertMany || (() => true));
-  return { fns: sandbox, log };
+  )(makeDb(tree, log), { _erpErrLog: function () { } }, o.dbGet || (() => []), o.dbUpsertMany || (() => true),
+    function (snap) { unsealCalls.push(snap); return Promise.resolve(snap); });
+  return { fns: sandbox, log, unsealCalls };
 }
 
 const SNAP = {
@@ -146,6 +154,13 @@ test('명부 얻기 (_lostSnapEnsureIds) — 내려받기 횟수를 센다', asy
     const heal = log.find((l) => l.op === 'set' && l.path === 'serverBackupsIndex/old1/ids');
     assert.ok(heal, '자가 치유가 없으면 옛 백업이 밀려날 때까지 매 검사가 비쌉니다.');
     assert.ok(tree.serverBackupsIndex.old1.ids.contracts.c1, '적힌 명부가 비었습니다.');
+  });
+
+  await t.test('★ 본문을 받으면 «반드시» 잠금을 푼다 — 안 풀면 enc:v1: 이 그대로 들어간다', async () => {
+    const { fns, unsealCalls } = build({ serverBackups: { old1: SNAP } });
+    await fns._lostSnapEnsureIds({ ids: null, path: 'serverBackups', fbKey: 'old1' });
+    assert.equal(unsealCalls.length, 1,
+      '★ 백업 본문을 받고 잠금을 안 풀었습니다 (2026-08-29 「백업 시 주번 암호화」).');
   });
 });
 

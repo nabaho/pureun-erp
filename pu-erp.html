@@ -138,6 +138,7 @@
 <script src="js/utils.js?v=1"></script>
 <script src="js/pu-photo-store.js?v=14"></script>
 <script src="js/pu-billing.js?v=6"></script>
+<script src="js/pu-rrn-seal.js?v=1"></script>
 <!-- 급여담당자 엑셀 → 업체관리 (대표 결정 2026-08-24). 읽고 대조하는 일은 이 파일이,
      그리기는 아래 화면이 한다 — 검사가 이 파일을 그대로 돌린다. -->
 <script src="js/pu-co-xls.js?v=2"></script>
@@ -2782,8 +2783,75 @@ window.erpBackupBatches = erpBackupBatches;
 // 스냅샷 한 벌 저장 — 머리(메타)를 먼저 set 해 이전 반쪽을 지우고, 조각을 차례로 실은 뒤,
 // 목록(인덱스)은 전부 성공했을 때만 쓴다. 목록에 없는 스냅샷은 백업 목록·유실검사가
 // 보지 않으므로, 도중에 끊긴 반쪽이 온전한 백업처럼 보이는 일이 없다.
+/* ══ 백업에 담기는 주민번호를 잠근다 (대표 지시 2026-08-29) ══
+   「푸른 화면에서는 주민번호가 보여야 한다 … 하지만 백업 시 주번 암호화해야 된다」
+
+   ★ 화면과 살아 있는 자료는 «그대로» 다. 잠그는 것은 백업 사본뿐이다.
+   ⚠ 열쇠는 한 번 만들고 **절대 갈아치우지 않는다** — 갈면 옛 백업 스무 벌을
+     전부 못 푼다. 그래서 transaction 으로 «없을 때만» 넣는다(두 관리자가 같은
+     순간에 처음 켜도 하나만 남는다).
+   ⚠ 열쇠 칸(`backup_key`)은 **보안규칙에서 관리자만** 읽게 막아야 한다.
+     안 막으면 이 잠금은 「밖으로 나간 사본」만 지킨다(그것만으로도 뜻은 있다).
+   ⚠ 열쇠를 못 얻으면 **백업을 쓰지 않는다.** 잠기지 않은 채로 쓰면 지시를
+     어기는 것이고, 조용히 넘기면 아무도 모른다 — 그래서 소리 내어 알린다. */
+var _bkKeyPromise = null;
+function erpBackupKey(){
+  if(_bkKeyPromise) return _bkKeyPromise;
+  _bkKeyPromise = new Promise(function(res, rej){
+    if(!window.PuRrnSeal){ rej(new Error('잠금 모듈(js/pu-rrn-seal.js)을 못 불러왔습니다')); return; }
+    if(typeof fbDb === 'undefined' || !fbDb){ rej(new Error('서버에 연결되지 않았습니다')); return; }
+    var made = PuRrnSeal.newKeyB64();
+    fbDb.ref('backup_key/v1').transaction(function(cur){ return cur || made; })
+      .then(function(r){
+        var b64 = (r && r.snapshot && r.snapshot.val()) || null;
+        if(!b64){ rej(new Error('백업 열쇠를 읽지 못했습니다(권한 확인)')); return; }
+        res(PuRrnSeal.importKey(b64));
+      })
+      .catch(function(e){ rej(e); });
+  });
+  /* 실패한 약속을 캐시에 남기면 다음 시도까지 영영 막힌다 */
+  _bkKeyPromise.catch(function(){ _bkKeyPromise = null; });
+  return _bkKeyPromise;
+}
+
+/* 백업으로 나가기 직전에 잠근다. 원본(snap.data)은 안 건드린다 —
+   같은 덩어리로 요약·id명부를 만들기 때문이다. */
+function erpSealSnap(snap){
+  return erpBackupKey().then(function(key){
+    return PuRrnSeal.seal(snap.data || {}, key);
+  }).then(function(sealed){
+    return { savedAt: snap.savedAt, version: snap.version, data: sealed };
+  });
+}
+
+/* 되돌릴 때 푼다. 이 잠금이 생기기 «전» 백업은 잠긴 자리가 없어 그대로 지나간다 —
+   옛 백업을 손볼 필요가 없다. */
+function erpUnsealSnap(snap){
+  if(!snap || !snap.data || !window.PuRrnSeal) return Promise.resolve(snap);
+  if(!PuRrnSeal.countSealed(snap.data)) return Promise.resolve(snap);
+  return erpBackupKey().then(function(key){
+    return PuRrnSeal.unseal(snap.data, key);
+  }).then(function(open){
+    snap.data = open;
+    return snap;
+  });
+}
+
 function serverBackupWrite(id, snap){
-  var batches = erpBackupBatches(snap.data);
+  /* ⚠ 요약·id명부는 «원본» 으로 만든다(아래). 잠근 사본으로 만들면 요약이 달라진다. */
+  return erpSealSnap(snap).then(function(locked){ return _serverBackupWriteRaw(id, snap, locked); })
+    .catch(function(e){
+      /* 잠글 수 없으면 안 쓴다 — 잠기지 않은 백업을 쓰는 것이 더 나쁘다.
+         조용히 넘기면 「백업이 도는 줄 알았다」가 된다. */
+      console.error('[백업] 주민번호를 잠그지 못해 백업을 건너뜁니다:', e && e.message);
+      window.erpAlert && erpAlert('danger', '백업을 저장하지 못했습니다',
+        '주민번호를 잠글 열쇠를 얻지 못했습니다 — ' + ((e && e.message) || '알 수 없음'),
+        '잠기지 않은 백업은 남기지 않습니다. 관리자로 로그인했는지, 서버 연결이 정상인지 확인해 주세요.');
+      throw e;
+    });
+}
+function _serverBackupWriteRaw(id, snap, locked){
+  var batches = erpBackupBatches(locked.data);
   var p = fbDb.ref('serverBackups/' + id).set({ savedAt: snap.savedAt, version: snap.version });
   batches.forEach(function(b){
     p = p.then(function(){ return fbDb.ref('serverBackups/' + id).update(b); });
@@ -2902,8 +2970,10 @@ function serverBackupRecent(){
   var sig = _quickHash(JSON.stringify(snap.data));
   if(localStorage.getItem('pureun_v6_recent_sig') === sig) return; // 변화 없음 → 건너뜀
   var key = String(Date.now()); // 13자리 ms → 사전순=시간순
-  var w = {}; w['serverBackupsRecent/'+key] = snap; w['serverBackupsRecentIndex/'+key] = { savedAt:snap.savedAt, summary:_snapSummary(snap.data), ids:_snapIdIndex(snap.data) };
-  fbDb.ref().update(w)
+  /* ⚠ 바뀜 판정(sig)은 «원본» 으로 이미 냈다 — 잠근 뒤에 내면 매번 달라진다
+     (잠글 때마다 새 IV 를 쓰므로 같은 자료도 다른 글자가 된다). */
+  var w = {}; w['serverBackupsRecentIndex/'+key] = { savedAt:snap.savedAt, summary:_snapSummary(snap.data), ids:_snapIdIndex(snap.data) };
+  erpSealSnap(snap).then(function(locked){ w['serverBackupsRecent/'+key] = locked; return fbDb.ref().update(w); })
     .then(function(){
       localStorage.setItem('pureun_v6_recent_sig', sig);
       console.log('[ERP] 수시 백업 저장: '+new Date().toLocaleString('sv-SE'));
@@ -3030,6 +3100,7 @@ async function _lostSnapEnsureIds(q){
     try {
       var ss = await fbDb.ref(q.path + '/' + q.fbKey).once('value');
       snap = (ss && ss.val()) || null;
+      snap = await erpUnsealSnap(snap);        // 잠긴 주민번호를 푼다(옛 백업은 그대로 지나간다)
     } catch(e){ window._erpErrLog && window._erpErrLog(e); return { ids:null, snap:null }; }
   }
   if(!snap || !snap.data) return { ids:null, snap:snap };
@@ -3539,6 +3610,7 @@ async function erpDataForensics(keyword){
         try {
           var ss = await fbDb.ref(q.path + '/' + q.fbKey).once('value');
           snap = (ss && ss.val()) || null;
+          snap = await erpUnsealSnap(snap);    // 잠긴 주민번호를 푼다
         } catch(e3){ window._erpErrLog && window._erpErrLog(e3); continue; }
       }
       if(!snap || !snap.data) continue;
@@ -33251,6 +33323,9 @@ function BackupSection(){
       try { localStorage.removeItem('pureun_v6_recent_sig'); serverBackupRecent(); } catch(_e){}
       var s = await fbDb.ref(entry.path + '/' + entry.fbKey).once('value');
       var snap = (s && s.val()) || {};
+      /* ★ 반드시 푼다 — 안 풀면 주민번호 자리에 enc:v1:… 이 그대로 들어가
+         화면에서는 「자료가 깨졌다」로 보인다. */
+      snap = await erpUnsealSnap(snap);
       var _sbts = snap.savedAt ? Date.parse(snap.savedAt) : 0;
       if(isNaN(_sbts)) _sbts = 0;
       await applyBackupData(snap.data || {}, (entry.kind === 'daily' ? '서버백업 ' : '수시백업 ') + entry.label, _sbts);

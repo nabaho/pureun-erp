@@ -5,6 +5,7 @@
    둘 다 "잘못되면 조용히" 라서, 여기서 소리 나게 고정한다. */
 const fs = require('fs');
 const vm = require('vm');
+const { webcrypto } = require('node:crypto');
 const path = require('path');
 
 const HTML = path.join(__dirname, '..', 'pu-erp.html');
@@ -134,18 +135,27 @@ function writeCtx(failAt){
     set(v){ n++; calls.push({ op:'set', path: path || '/', size: JSON.stringify(v||{}).length });
       return (failAt === n) ? Promise.reject(new Error('write_too_big')) : Promise.resolve(); },
     update(v){ n++; calls.push({ op:'update', path: path || '/', keys: Object.keys(v) });
-      return (failAt === n) ? Promise.reject(new Error('write_too_big')) : Promise.resolve(); }
+      return (failAt === n) ? Promise.reject(new Error('write_too_big')) : Promise.resolve(); },
+    /* 백업 열쇠는 «없을 때만» 넣는 transaction 으로 얻는다 (2026-08-29 주민번호 잠금).
+       쓰기 횟수에는 안 센다 — 이 검사가 세는 것은 백업 조각을 싣는 횟수다. */
+    transaction(fn){ const v = fn(null); return Promise.resolve({ snapshot: { val: () => v } }); }
   });
   const c = {
-    console: { log(){}, warn(){} }, Object, JSON, Array, String, Number, parseInt, isNaN, Math, Promise,
-    window: {},
+    console: { log(){}, warn(){}, error(){} }, Object, JSON, Array, String, Number, parseInt, isNaN, Math, Promise,
+    Error, Uint8Array, TextEncoder, TextDecoder, crypto: webcrypto,
+    btoa: (x) => Buffer.from(x, 'binary').toString('base64'),
+    atob: (x) => Buffer.from(x, 'base64').toString('binary'),
     fbDb: { ref: (p) => mkRef(p) },
     _snapSummary(){ return '요약'; },
     /* 2026-08-16 부터 인덱스에 id 명부(ids)가 같이 실린다 — 유실 검사가 본문을
        통째로 안 받게 하는 장치. 여기서는 흐름만 보므로 빈 명부로 대신한다. */
     _snapIdIndex(){ return {}; }
   };
+  c.window = c;                 // 잠금 모듈이 window 에 붙는다
   vm.createContext(c);
+  /* ★ 잠금 모듈을 «진짜로» 넣는다 — 가짜로 때우면 「백업이 실제로 잠기는가」를
+     이 검사가 못 본다(2026-08-29 대표 지시 「백업 시 주번 암호화」). */
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'pu-rrn-seal.js'), 'utf8'), c);
   vm.runInContext(slice('var BACKUP_BATCH_CHARS =', '// 스냅샷 한 벌 삭제'), c);
   return { c, calls };
 }
