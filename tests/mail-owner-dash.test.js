@@ -1740,3 +1740,110 @@ test('★ 미리보기 켜기는 «이 기계에만» 담는다 — 한 사람�
   assert.ok(fn.indexOf('firebase') < 0 && fn.indexOf('DB_ROOT') < 0,
     '★ 미리보기 취향을 전 직원 공용으로 저장합니다');
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+   사무관리(컨설팅·사건·기금)의 부담당도 «같이» 본다 (대표 지시 2026-08-29)
+   ══════════════════════════════════════════════════════════════════════════
+   "푸른이알피에서 사무관리 업무를 주담당 부담당으로 같이 업무처리하는경우
+    이부분도 같이 본인들이 볼수 있게 가능한가?"
+
+   ★ 지키는 것 다섯
+     1. 진행 중인 건의 부담당은 그 회사 메일을 «같이» 본다
+     2. «끝난» 건의 부담당은 안 본다 — 저절로 빠져야 사람이 잊어도 안전하다
+     3. 담당자가 «사번»으로 적혀 있어도 이름으로 푼다 — 안 풀면 옆줄에 P-007 이 뜬다
+     4. 퇴사자는 뺀다 · 주담당과 같은 사람은 두 번 안 센다
+     5. 옆줄 «숫자»와 칸에 «담기는 통수»가 같다 */
+function loadBiz(over){
+  const o = over || {};
+  const c = loadCo(o);
+  /* ⚠ 업체 부담당(o.subs)은 loadCo 가 안 심는다 — loadSeen 에만 있었다.
+       안 심으면 「업체 + 사무관리 둘 다」를 못 잰다(실제로 못 쟀다). */
+  if(o.subs){
+    const EM = c.ErpMatch;
+    Object.keys(o.subs).forEach(co=>{ const k = EM._norm(co);
+      EM.byName[k] = Object.assign({}, EM.byName[k], { subs: o.subs[co] }); });
+    c.mbWhoBust();
+  }
+  /* 사무관리 표를 심는다 — 앱은 loadErpCaseCons 가 채우지만, 여기서는 결과만 넣는다 */
+  vm.runInContext('_mbBizSubs = ' + JSON.stringify(o.biz || {}) + ';', c);
+  return c;
+}
+const BROW = e => ({ e: e, r: 1, _slug: 'B_JAMUN', _key: 'B_JAMUN:9' });
+
+test('★★ 사무관리 건의 부담당이 그 회사 메일을 «같이» 본다', () => {
+  /* a@hanbit.co.kr → 한빛물산(주담당 박한별). 컨설팅 부담당이 최기운이라고 두자. */
+  const c = loadBiz({ biz: { '한빛물산': ['최기운'] } });
+  const v = BROW('a@hanbit.co.kr');
+  assert.equal(c.mbWhoOfRow(v), '박한별', '주담당이 안 잡힌다 — 검사 밑그림이 틀렸다');
+  assert.equal(c.mbSubsOfRow(v).join(' '), '최기운', '사무관리 부담당이 안 잡힌다');
+  assert.equal(c.mbRowFits(v, '@최기운'), true, '★ 부담당 칸에 안 보입니다');
+  assert.equal(c.mbRowFits(v, '@박한별'), true, '주담당 칸에서 사라졌다');
+});
+
+test('★ 업체 부담당과 «함께» 잡힌다 — 한쪽이 다른 쪽을 밀어내면 안 된다', () => {
+  const c = loadBiz({ subs: { '한빛물산': ['김보람'] }, biz: { '한빛물산': ['최기운'] } });
+  const got = c.mbSubsOfRow(BROW('a@hanbit.co.kr')).sort().join(' ');
+  assert.equal(got, '김보람 최기운', '둘 다 안 잡힌다: ' + got);
+});
+
+test('★★ 주담당과 «같은 사람»이면 두 번 안 센다', () => {
+  const c = loadBiz({ biz: { '한빛물산': ['박한별'] } });
+  assert.equal(c.mbSubsOfRow(BROW('a@hanbit.co.kr')).length, 0,
+    '★ 주담당이 부담당으로도 잡혀 그 사람 칸에서 두 번 셉니다');
+});
+
+test('★ 퇴사자는 뺀다', () => {
+  const c = loadBiz({ biz: { '한빛물산': ['박성수'] } });   /* 박성수 = 퇴사 */
+  assert.equal(c.mbSubsOfRow(BROW('a@hanbit.co.kr')).length, 0, '퇴사자가 남았다');
+});
+
+test('★ 자문이 «끝난» 회사면 사무관리 부담당도 안 본다', () => {
+  const c = loadBiz({ co: { 'zzz@nowhere,kr': '끝난회사' }, biz: { '끝난회사': ['최기운'] } });
+  c.ErpMatch.byName[c.ErpMatch._norm('끝난회사')] =
+    { company:'끝난회사', main:'박한별', subs:[], left:true };
+  c.mbWhoBust();
+  assert.equal(c.mbSubsOfRow(BROW('zzz@nowhere.kr')).length, 0,
+    '★ 끝난 회사인데 부담당이 계속 봅니다');
+});
+
+test('★★ 옆줄 «숫자»와 칸에 «담기는 통수»가 같다 — 어긋나면 「4통이라는데 열면 1통」', () => {
+  const c = loadBiz({ biz: { '한빛물산': ['최기운'] } });
+  const row = c.mbWhoList().find(w => w.name === '최기운');
+  assert.ok(row, '최기운이 목록에 없다');
+  c.state.mbBox = '@최기운';
+  assert.equal(c.mbAllRows().length, row.n,
+    '★ 옆줄은 ' + row.n + '통이라는데 칸에는 ' + c.mbAllRows().length + '통입니다');
+});
+
+/* ── 표를 만드는 쪽 ── */
+
+test('★★ «끝난» 사무관리 건은 표에 안 담는다 — 코드로 확인', () => {
+  /* 표를 채우는 곳(mbBizSubsLoad)이 status 를 걸러야 한다.
+     ⚠ 주석을 걷고 본다 — 설명에 적은 「종료」가 코드로 세이면 안 된다. */
+  const body = src.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const i = body.indexOf('function mbBizSubsLoad');
+  assert.ok(i > 0, '표를 채우는 곳이 없다');
+  const fn = body.slice(i, i + 1400);
+  assert.match(fn, /종료|closed/, '★ 끝난 건을 안 거릅니다 — 끝난 컨설팅 부담당이 계속 봅니다');
+  assert.match(fn, /nameBySid/, '★ 사번을 이름으로 안 풉니다 — 옆줄에 P-007 이 뜹니다');
+  assert.match(fn, /mbRetired/, '퇴사자를 안 거릅니다');
+});
+
+test('★ 새로 받아 오는 자료가 «없다» — 앱이 이미 읽는 것을 쓴다', () => {
+  /* 사무관리 기록은 기업 상세 이력을 그리려고 이미 읽고 있다(loadErpCaseCons).
+     여기서 또 받아 오면 앱을 켤 때마다 같은 것을 두 번 받는다. */
+  const body = src.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const i = body.indexOf('function mbBizSubsLoad');
+  const fn = body.slice(i, i + 1400);
+  assert.match(fn, /loadErpCaseCons/, '이미 있는 길을 안 씁니다');
+  assert.ok(fn.indexOf("ref('data/") < 0 && fn.indexOf('once(') < 0,
+    '★ 같은 자료를 다시 받아 옵니다');
+});
+
+test('★ 사번 → 이름 표를 «한 곳»에서만 만든다', () => {
+  /* 두 곳에서 만들면 한쪽만 고쳐지는 날이 온다. */
+  const body = src.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const n = (body.match(/nameBySid\[u\.sid\]/g) || []).length;
+  assert.equal(n, 1, '사번→이름 표를 ' + n + '곳에서 만듭니다');
+  assert.match(body, /ErpMatch\.nameBySid = nameBySid/, '밖에서 쓸 수 있게 안 내놓습니다');
+});
