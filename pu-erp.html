@@ -2800,14 +2800,24 @@ function erpBackupKey(){
   _bkKeyPromise = new Promise(function(res, rej){
     if(!window.PuRrnSeal){ rej(new Error('잠금 모듈(js/pu-rrn-seal.js)을 못 불러왔습니다')); return; }
     if(typeof fbDb === 'undefined' || !fbDb){ rej(new Error('서버에 연결되지 않았습니다')); return; }
-    var made = PuRrnSeal.newKeyB64();
-    fbDb.ref('backup_key/v1').transaction(function(cur){ return cur || made; })
-      .then(function(r){
-        var b64 = (r && r.snapshot && r.snapshot.val()) || null;
-        if(!b64){ rej(new Error('백업 열쇠를 읽지 못했습니다(권한 확인)')); return; }
-        res(PuRrnSeal.importKey(b64));
-      })
-      .catch(function(e){ rej(e); });
+    /* ⚠ 「있으면 그대로, 없으면 만들기」를 transaction 하나로 하면 «안 된다».
+       transaction 은 같은 값을 돌려줘도 **쓰기를 한 번 보낸다**. 그런데 규칙은
+       열쇠를 못 바꾸게 `!data.exists()` 로 막아 두었으므로, 열쇠가 이미 있는
+       둘째 날부터는 그 쓰기가 거부되고 백업이 통째로 멈춘다.
+       그래서 «먼저 읽고», 없을 때만 만든다 — 평소에는 읽기 한 번으로 끝난다.
+       ⚠ 두 관리자가 같은 순간에 처음 켜면 한쪽은 규칙에 막힌다. 그때는 다시 읽어
+         «먼저 넣은 쪽의 열쇠» 를 쓴다(막힌 것이 곧 남이 넣었다는 뜻이다). */
+    var ref = fbDb.ref('backup_key/v1');
+    var read = function(){ return ref.once('value').then(function(s){ return s.val() || null; }); };
+    read().then(function(have){
+      if(have) return have;
+      var made = PuRrnSeal.newKeyB64();
+      return ref.transaction(function(cur){ return cur || made; })
+        .then(read, read);            // 넣었든 남이 먼저 넣어 막혔든 — 다시 읽는다
+    }).then(function(b64){
+      if(!b64) throw new Error('백업 열쇠를 읽지 못했습니다(권한 확인)');
+      res(PuRrnSeal.importKey(b64));
+    }).catch(function(e){ rej(e); });
   });
   /* 실패한 약속을 캐시에 남기면 다음 시도까지 영영 막힌다 */
   _bkKeyPromise.catch(function(){ _bkKeyPromise = null; });
@@ -3106,7 +3116,12 @@ async function _lostSnapEnsureIds(q){
   if(!snap || !snap.data) return { ids:null, snap:snap };
   var ids = _snapIdIndex(snap.data);
   // 인덱스 경로는 보관함 경로 + 'Index' — serverBackups(Index)·serverBackupsRecent(Index)
-  try { fbDb.ref(q.path + 'Index/' + q.fbKey + '/ids').set(ids); } catch(e2){ /* 못 적어도 이번 검사는 계속 */ }
+  /* ⚠ .set() 은 «약속» 을 돌려주므로 try/catch 로는 안 잡힌다 — 규칙에 막히면
+     콘솔에 잡히지 않은 오류가 남는다. 인덱스 쓰기는 관리자·위임관리인만 되므로
+     (2026-08-29 규칙) 일반 직원 기기에서는 늘 막힌다. 자가치유는 «있으면 좋은 것» 이라
+     못 적어도 이번 검사는 그대로 이어 간다. */
+  try { fbDb.ref(q.path + 'Index/' + q.fbKey + '/ids').set(ids).catch(function(){}); }
+  catch(e2){ /* 못 적어도 이번 검사는 계속 */ }
   return { ids:ids, snap:snap };
 }
 // 스냅샷 정렬용 시각 (savedAt 우선 → 수시키는 ms 숫자 → 일간키는 날짜 파싱)

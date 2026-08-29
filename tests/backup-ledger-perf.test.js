@@ -128,17 +128,27 @@ function reassemble(batches){
 }
 
 /* ══════ 3. serverBackupWrite — 순서와 실패 처리 ══════ */
-function writeCtx(failAt){
+function writeCtx(failAt, keyStore){
   const calls = [];
   let n = 0;
+  keyStore = keyStore || {};
   const mkRef = (path) => ({
     set(v){ n++; calls.push({ op:'set', path: path || '/', size: JSON.stringify(v||{}).length });
       return (failAt === n) ? Promise.reject(new Error('write_too_big')) : Promise.resolve(); },
     update(v){ n++; calls.push({ op:'update', path: path || '/', keys: Object.keys(v) });
       return (failAt === n) ? Promise.reject(new Error('write_too_big')) : Promise.resolve(); },
-    /* 백업 열쇠는 «없을 때만» 넣는 transaction 으로 얻는다 (2026-08-29 주민번호 잠금).
+    /* 백업 열쇠 칸 — «올려 둔 규칙 그대로» 흉내 낸다 (2026-08-29).
+       규칙: 읽기는 관리자, 쓰기는 **없을 때만**(`!data.exists()`).
+       ⚠ 이 흉내가 「늘 성공」으로 되어 있으면, 둘째 날부터 백업이 멈추는 사고를
+         검사가 통과시킨다 — 실제로 그럴 뻔했다. 그래서 거부까지 그대로 흉내 낸다.
        쓰기 횟수에는 안 센다 — 이 검사가 세는 것은 백업 조각을 싣는 횟수다. */
-    transaction(fn){ const v = fn(null); return Promise.resolve({ snapshot: { val: () => v } }); }
+    once(){ return Promise.resolve({ val: () => (path in keyStore ? keyStore[path] : null) }); },
+    transaction(fn){
+      if (path in keyStore) return Promise.reject(new Error('PERMISSION_DENIED: 열쇠는 못 바꾼다'));
+      const v = fn(null);
+      keyStore[path] = v;
+      return Promise.resolve({ snapshot: { val: () => v } });
+    }
   });
   const c = {
     console: { log(){}, warn(){}, error(){} }, Object, JSON, Array, String, Number, parseInt, isNaN, Math, Promise,
@@ -160,7 +170,9 @@ function writeCtx(failAt){
   return { c, calls };
 }
 {
-  const { c, calls } = writeCtx(0);
+  /* ★ 같은 열쇠 칸을 두 번 쓴다 — 「둘째 날」을 흉내 내는 것이 이 검사의 핵심이다 */
+  const KEYS = {};
+  const { c, calls } = writeCtx(0, KEYS);
   const rows = new Array(40).fill(0).map((_, i) => ({ id:'r'+i, memo:'m'.repeat(30) }));
   let batches = 0;
   c.serverBackupWrite('2026-08-09', { savedAt:'T', version:'v6', data:{ a: rows, b: { x: 1 } } })
@@ -170,8 +182,16 @@ function writeCtx(failAt){
       t('조각은 스냅샷 자리에 update 로 실린다', calls.slice(1, -1).every(x => x.op === 'update' && x.path === 'serverBackups/2026-08-09'), true);
       t('★ 인덱스는 맨 마지막 — 전부 성공한 뒤에만', calls[calls.length - 1].path, 'serverBackupsIndex/2026-08-09');
       t('조각 수를 돌려준다', batches >= 1, true);
-      afterWrite();
     })
+    .then(function(){
+      /* ★ 둘째 날 — 열쇠가 이미 있다. 전에는 여기서 transaction 이 규칙에 막혀
+         백업이 통째로 멈췄다(2026-08-29 에 잡은 사고). */
+      const two = writeCtx(0, KEYS);
+      return two.c.serverBackupWrite('2026-08-10', { savedAt:'T2', version:'v6', data:{ a: rows } })
+        .then(function(){ t('★ 이튿날에도 백업이 떠진다 (열쇠가 이미 있어도)', true, true); },
+              function(e){ fail++; console.log('FAIL 이튿날 백업: ' + e.message); });
+    })
+    .then(afterWrite)
     .catch(function(e){ fail++; console.log('FAIL serverBackupWrite 정상 흐름: ' + e.message); afterWrite(); });
 }
 function afterWrite(){
