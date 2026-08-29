@@ -747,8 +747,26 @@ button{font-family:inherit;cursor:pointer}
    뷰어의 사진 자리를 통째로 쓴다. 배경을 안 깔아 원래 사진과 같은 자리에 겹치게 —
    「사진 위에서 긋는다」가 눈으로 그대로 보인다. */
 #viewerEdit{position:absolute;inset:0;display:none;align-items:center;justify-content:center;padding:8px}
-#viewerEdit .maskwrap.big{background:transparent;max-height:100%;max-width:100%}
-#viewerEdit .maskwrap.big img{max-height:100%;max-width:100%;object-fit:contain}
+/* ⚠⚠ **칸(#maskWrap)과 사진(#maskImg)이 «똑같은 자리»여야 한다** (대표 보고 2026-08-29:
+     「마우스의 위치와 박스가 생성되는 위치가 다르다 완전히 이상하다」).
+     긋기는 사진을 재고(getBoundingClientRect), 그어 놓은 네모는 칸을 기준으로 %로
+     그린다. 둘이 다르면 그은 자리와 네모가 어긋난다.
+
+   ── 무엇이 어긋났나 (브라우저에서 실제로 재 본 값) ──
+     칸 1384×744 · 사진 1384×**1038** — 세로로 147px 밀리고 배율이 1.395배 어긋났다.
+     사진이 칸보다 294px 커서 위아래가 잘려 나가기까지 했다.
+   ── 왜 ──
+     사진에 걸어 둔 `max-height:100%` 의 100% 는 **어미 칸의 높이**를 뜻하는데,
+     그 칸의 높이가 「내용에 맞춰서」(auto)였다. 정해지지 않은 높이의 100% 는
+     **없는 것으로 친다** — 그래서 높이 제한이 통째로 사라졌다.
+   ── 어떻게 고쳤나 ──
+     ① 칸에 **정해진 높이**(height:100%)를 준다 — 그래야 100% 가 뜻을 갖는다.
+     ② 칸에 **사진의 본디 비**를 박는다(maskFitWrap 이 사진을 읽어 넣는다) —
+        그래야 칸이 사진보다 넓거나 좁아지지 않는다.
+     ③ 사진은 칸을 **그대로 채운다**(width/height 100%). max- 로 다시 재지 않는다 —
+        다시 재는 순간 ①의 병이 되돌아온다. */
+#viewerEdit .maskwrap.big{background:transparent;max-height:100%;max-width:100%;height:100%}
+#viewerEdit .maskwrap.big img{width:100%;height:100%;max-width:none;max-height:none;object-fit:contain}
 /* 편집 중에는 원래 사진과 넘기기·돌리기를 감춘다 — 그리는 중에 사진이 바뀌면
    그은 사각형이 엉뚱한 사진에 얹힌다. */
 #viewerPic.editing>#viewerImg,#viewerPic.editing>#rotBar,#viewerPic.editing>.picnav{display:none}
@@ -12125,9 +12143,26 @@ function maskWrapHtml(ms, boxes, big) {
   return '<div id="maskWrap" class="maskwrap' + (big ? ' edit big' : '') + '" ondragstart="return false"' +
     ' onpointerdown="maskDown(event)" onpointermove="maskMove(event)"' +
     ' onpointerup="maskUp(event)" onpointercancel="maskCancelDrag()">' +
-    '<img id="maskImg" src="' + esc((ms && ms.url) || '') + '" alt="" draggable="false">' + boxes +
+    '<img id="maskImg" src="' + esc((ms && ms.url) || '') + '" alt="" draggable="false"' +
+    ' onload="maskFitWrap(this)">' + boxes +
     '<div id="maskPreview" class="maskbox" style="display:none"></div>' +
     '</div>';
+}
+
+/* ── 칸에 사진의 «본디 비»를 박는다 (대표 보고 2026-08-29 「마우스의 위치와 박스가
+     생성되는 위치가 다르다」) ──
+   긋기는 **사진**을 재고, 그어 놓은 네모는 **칸**을 기준으로 %로 그린다.
+   둘이 한 자리가 아니면 그은 곳과 네모가 어긋난다 — 실제로 세로 1.395배 어긋났다.
+   비를 박아 두면 칸이 사진보다 넓거나 좁아질 수 없다.
+   ⚠ 옆 칸(작은 판)에는 안 건다 — 거기는 지금 맞게 돌고 있고(재 봤다: 440×330 = 440×330),
+     비를 박으면 52vh 한도와 부딪쳐 오히려 어긋난다. 고장 안 난 것은 안 건드린다.
+   ⚠ 사진을 다 불러와야 본디 크기를 알 수 있어 onload 에서 한다. 그 전에는 아직
+     그을 수 없으므로 늦지 않다. */
+function maskFitWrap(im) {
+  const wrap = $('maskWrap');
+  if (!wrap || !wrap.classList.contains('big')) return;
+  if (!im || !im.naturalWidth || !im.naturalHeight) return;
+  wrap.style.aspectRatio = im.naturalWidth + ' / ' + im.naturalHeight;
 }
 
 /* ── 큰 사진 위에서 긋기 (대표 지시 2026-08-29 「편집위해 큰사진위에서」) ──
