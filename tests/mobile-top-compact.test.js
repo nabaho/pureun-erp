@@ -23,9 +23,18 @@ test('정부컨설팅: 가끔 쓰는 단추는 폰에서만 ⋯ 안으로 접는
   // 단추 12개가 폰에서 두 줄을 먹어 달력이 그만큼 아래로 밀렸다
   assert.match(gov, /<span class="hdr-extra">/);
   assert.match(gov, /id="hdrMoreBtn"/);
-  ['helpBtn', 'photoGalBtn', 'photoLogBtn', 'backupBtn', 'zipBtn'].forEach(function (id) {
-    const m = gov.match(new RegExp('<span class="hdr-extra">[\\s\\S]*?</span>'));
-    assert.ok(m && m[0].indexOf('id="' + id + '"') >= 0, id + ' 가 ⋯ 묶음 안에 없습니다');
+  /* ⚠ 예전에는 «어떤 단추가 들어 있는지»를 이름으로 못 박았다(2026-08-29 고침).
+     그래서 안 쓰는 단추 둘을 뺐을 때, 기능이 망가져서가 아니라 «지금 값»을 박아 둔
+     탓에 검사가 깨졌다(CLAUDE.md 「검사를 쓰는 규칙」).
+     못 박을 것은 이름표가 아니라 **「가끔 쓰는 것은 묶여 있고, 접었다 펼 수 있다」**
+     는 규칙이다 — 단추가 늘든 줄든 이 규칙은 그대로다. */
+  const box = gov.match(/<span class="hdr-extra">[\s\S]*?<\/span>/);
+  assert.ok(box, '⋯ 묶음을 찾지 못했습니다');
+  const ids = [...box[0].matchAll(/id="([^"]+)"/g)].map(function (m) { return m[1]; });
+  assert.ok(ids.length >= 2, '묶을 것이 없으면 ⋯ 자체가 헛단추입니다 (지금 ' + ids.length + '개)');
+  /* 늘 보여야 하는 것(저장 상태·알림·로그아웃)은 묶으면 안 된다 — 접히면 못 쓴다 */
+  ['saveState', 'notifBtn', 'hdrLogout'].forEach(function (id) {
+    assert.ok(ids.indexOf(id) < 0, id + ' 은(는) 늘 보여야 하는데 ⋯ 안에 넣었습니다');
   });
   // PC 는 묶음이 없는 것처럼 — 단추가 예전 그대로 한 줄에 늘어선다
   assert.match(gov, /\.hdr-extra\{display:contents;\}/);
