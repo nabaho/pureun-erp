@@ -30168,6 +30168,27 @@ function _xmlExtract(xml, paraTag, textTag){
   }
   return lines.join('\n').replace(/\n{3,}/g,'\n\n').trim();
 }
+/* QR 만들개 — 앱 받는 주소를 폰 카메라로 찍게 한다.
+   ⚠ 처음부터 받아 두지 않는다. 이 창을 여는 사람은 거의 없다 —
+     모두에게 짐을 지울 일이 아니다(fflate·PDF.js 와 같은 방식). */
+function _ensureQrcode(cb){
+  if(typeof QRCode!=='undefined'){ cb(null); return; }
+  var s=document.createElement('script');
+  s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+  s.onload=function(){ cb(null); };
+  s.onerror=function(){ cb('QR 만들개 로드 실패'); };
+  document.head.appendChild(s);
+}
+/* 앱 파일의 «절대 주소» — 폰 주소창에 손으로 칠 수 있어야 한다.
+   ⚠ 상대 경로(hana-bridge.apk)만으로는 폰에서 칠 수가 없다.
+   ⚠ file:// 로 열어 본 경우엔 그 주소가 폰에서 안 통하므로 올려 둔 곳을 쓴다. */
+function hanaApkUrl(){
+  try{
+    if(location.protocol==='https:')
+      return location.origin + location.pathname.replace(/[^/]*$/, '') + 'hana-bridge.apk';
+  }catch(_e){}
+  return 'https://nabaho.github.io/pureunall/hana-bridge.apk';
+}
 function _ensureFflate(cb){
   if(typeof fflate!=='undefined'){ cb(null); return; }
   var s=document.createElement('script');
@@ -38963,6 +38984,26 @@ function FinanceLedger(props){
      ★ 실제로 가장 잦은 까닭은 «폰 앱이 옛 판» 이다 — 옛 앱은 「하나9950 승인」 꼴
        카드 문자를 폰에서 버리므로 서버는 아무것도 못 듣는다. 그래서 첫 줄이 앱 받기다. */
   var hanaFixS = useState(false); var hanaFix = hanaFixS[0]; var setHanaFix = hanaFixS[1];
+  /* 창이 열린 뒤에 QR 을 그린다.
+     ⚠ 못 그려도 «조용히» 넘어간다 — 주소가 글자로 남아 있어 길이 안 끊긴다.
+     ⚠ 이미 그린 것은 다시 안 그린다(창을 여닫을 때마다 다시 그리면 깜빡인다). */
+  useEffect(function(){
+    if(!hanaFix && !hanaPair) return;
+    var boxes = document.querySelectorAll('.hana-qr');
+    if(!boxes.length) return;
+    _ensureQrcode(function(err){
+      if(err) return;
+      for(var i=0;i<boxes.length;i++){
+        var b = boxes[i];
+        if(b.getAttribute('data-drawn')) continue;
+        try{
+          b.innerHTML = '';
+          new QRCode(b, { text: b.getAttribute('data-url')||'', width:104, height:104 });
+          b.setAttribute('data-drawn','1');
+        }catch(_e){ /* 못 그려도 주소 글자가 남는다 */ }
+      }
+    });
+  }, [hanaFix, hanaPair]);
   var pasteS = useState(false); var pasteOpen = pasteS[0]; var setPasteOpen = pasteS[1];
   var pasteTS = useState('');   var pasteText = pasteTS[0]; var setPasteText = pasteTS[1];
   var pasteRS = useState(null); var pasteRes = pasteRS[0];  var setPasteRes = pasteRS[1];
@@ -40596,6 +40637,32 @@ function FinanceLedger(props){
    ⚠ 이 창은 «새 연결번호를 만들지 않는다». 다시 연결하면 서버가 세던 것이
      0 으로 돌아가 「연결 뒤 문자 0건」이 다시 뜬다 — 고치러 왔다가 더 헷갈린다.
      연결이 실제로 끊긴 때만 「🔗 휴대폰 연결」을 따로 누른다. */
+  /* ══════ 앱 받는 자리 (2026-08-29 대표: 「앱 다시 깔게 프로그램 올려달라」) ══════
+     ⚠ «한 덩이»로 둔다 — 연결 창과 고치기 창 두 군데에 같은 것이 필요하다.
+       두 벌로 두면 한쪽만 고치고 지나간다(이 저장소에서 여러 번 겪었다).
+     ★ 대표는 PC 로 본다. 앱은 «폰에» 깔아야 한다 — 그 사이를 QR 이 잇는다.
+       예전에 「받아서 옮기는 것 귀찮다」고 한 그 사이다.
+     ⚠ QR 만들개를 못 받아도 «길이 끊기면 안 된다» — 주소를 글자로도 적어 둔다. */
+  function hanaApkBlock(){
+    var url = hanaApkUrl();
+    return h('div',null,
+      h('a',{href:'hana-bridge.apk',download:'푸른-하나문자-'+HANA_APK_VER+'.apk',
+        style:{display:'block',textAlign:'center',padding:'12px',
+          borderRadius:'10px',background:'#16a34a',color:'#ffffff',fontWeight:800,
+          fontSize:'13.5px',textDecoration:'none'}},
+        '⬇ 폰에 앱 받기 (판 '+HANA_APK_VER+')'),
+      h('div',{style:{display:'flex',gap:'11px',alignItems:'center',marginTop:'9px',
+        background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'10px'}},
+        h('div',{className:'hana-qr','data-url':url,
+          style:{width:'104px',height:'104px',flexShrink:0,background:'#ffffff',
+            borderRadius:'6px',display:'flex',alignItems:'center',justifyContent:'center',
+            fontSize:'10px',color:'#94a3b8'}}, 'QR'),
+        h('div',{style:{fontSize:'11.5px',lineHeight:1.55,color:'#475569',minWidth:0}},
+          h('b',null,'PC 로 보고 계신가요?'),' 휴대폰 ',h('b',null,'카메라'),'로 왼쪽 네모를 찍으면 ',
+          '폰에서 바로 받아집니다. 옮길 것이 없습니다.',
+          h('div',{style:{marginTop:'6px',fontSize:'11px',color:'#64748b',wordBreak:'break-all'}},
+            '또는 휴대폰 인터넷 주소창에 직접 치세요 — ', h('b',null,url)))));
+  }
   function hanaFixModal(){
     if(!hanaFix) return null;
     var box={background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'11px',
@@ -40631,11 +40698,7 @@ function FinanceLedger(props){
           h('div',null,
             h('div',null,'휴대폰에서 ',h('b',null,'이 화면을 열고'),' 아래를 누르세요. ',
               'PC 에서 누르면 파일만 받아집니다.'),
-            h('a',{href:'hana-bridge.apk',download:'푸른-하나문자-'+HANA_APK_VER+'.apk',
-              style:{display:'block',textAlign:'center',padding:'12px',margin:'9px 0 0',
-                borderRadius:'10px',background:'#16a34a',color:'#fff',fontWeight:800,
-                fontSize:'13.5px',textDecoration:'none'}},
-              '⬇ 폰에 앱 받기 (판 '+HANA_APK_VER+')'),
+            hanaApkBlock(),
             h('div',{style:{marginTop:'7px'}},
               '깐 뒤 앱 첫 화면의 판 번호가 ',h('b',null,HANA_APK_VER),' 인지 보세요 — 같으면 새것입니다.'))),
 
@@ -40751,10 +40814,7 @@ function FinanceLedger(props){
            «이 화면을 폰에서 열고» 누르면 그대로 깔린다. PC 에서 받아 옮길 일이 없다.
            ⚠ 판 번호를 함께 적는다 — 폰 앱 첫 화면에도 같은 번호가 뜨므로,
              「새로 깐 것이 맞나」를 두 화면을 견줘 바로 알 수 있다. */
-        h('a',{href:'hana-bridge.apk',download:'푸른-하나문자-'+HANA_APK_VER+'.apk',
-          style:{display:'block',textAlign:'center',padding:'13px',margin:'0 0 12px',borderRadius:'11px',
-            background:'#16a34a',color:'#fff',fontWeight:800,fontSize:'14px',textDecoration:'none'}},
-          '⬇ 폰에 앱 받기 (판 '+HANA_APK_VER+')'),
+        h('div',{style:{margin:'0 0 12px'}}, hanaApkBlock()),
         h('p',{style:{fontSize:'12px',lineHeight:1.6,color:'#64748b',margin:'0 0 14px'}},
           '휴대폰에서 이 화면을 열고 위를 누르세요. ',
           h('b',null,'「출처를 알 수 없는 앱」'),' 을 물으면 한 번 허용하면 됩니다. ',

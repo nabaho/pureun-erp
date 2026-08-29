@@ -84,9 +84,11 @@ test('★★ 고치는 창은 «새 연결번호를 만들지 않는다»', () =
 
 test('★★ 고치는 창이 «앱 받기»와 «지난 문자»를 함께 말한다', () => {
   const fix = bare(cutBlock(ERP, 'function hanaFixModal(){'));
-  assert.ok(/href:\s*'hana-bridge\.apk'/.test(fix),
+  /* ⚠ 2026-08-29: 받는 자리를 «한 덩이»(hanaApkBlock)로 모았다 — 연결 창과 함께 쓴다.
+     여기서 볼 것은 «받는 길이 있는가» 다. 판 번호·QR·주소는 그 덩이의 검사가 본다
+     (tests/hana-apk-reach.test.js). */
+  assert.ok(/href:\s*'hana-bridge\.apk'|hanaApkBlock\(\)/.test(fix),
     '★ 앱 받는 길이 없다 — 폰 앱이 옛 판이면 카드 문자를 폰에서 버린다');
-  assert.ok(fix.indexOf('HANA_APK_VER') >= 0, '어느 판인지 안 적는다 — 새로 깐 것이 맞는지 못 견준다');
   /* ⚠ 앱 안의 «그 단추 이름 그대로» 적어야 대표가 폰에서 찾는다.
      「지난 문자」라고만 적으면 어느 단추인지 못 찾는다. */
   assert.ok(fix.indexOf('「지난 문자 가져오기 (최근 30일)」') >= 0,
@@ -104,9 +106,13 @@ test('★★ 창을 실제로 «그려 본다» — 글자만 맞고 터지는 �
     HANA_APK_VER: '9.9.9',
     setHanaFix: () => {},
     setPasteOpen: () => {},
+    location: { protocol: 'https:', origin: 'https://x.kr', pathname: '/a/b.html' },
     h: (tag, props, ...kids) => ({ tag, props: props || {}, kids }),
   };
   vm.createContext(ctx);
+  /* 창이 앱 받는 덩이를 부른다 — 함께 넣어야 실제로 그려진다. */
+  vm.runInContext(cutBlock(ERP, 'function hanaApkUrl(){'), ctx);
+  vm.runInContext(cutBlock(ERP, '  function hanaApkBlock(){'), ctx);
   vm.runInContext(cutBlock(ERP, 'function hanaFixModal(){'), ctx);
   const tree = ctx.hanaFixModal();
   assert.ok(tree && tree.tag === 'div', '창이 안 그려진다');
