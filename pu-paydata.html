@@ -27,7 +27,7 @@
 <script src="js/pu-resilience.js?v=2"></script>
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
-<script src="js/pu-paydata-store.js?v=6"></script>
+<script src="js/pu-paydata-store.js?v=7"></script>
 <!-- ?v= 는 판독기 판 번호(READ_VERSION)와 **같이 올린다**(2026-08-15).
      ⚠ 사진첩만 올리고 여기를 빠뜨리면, 같은 브라우저 안에서 사진첩은 새 판독기·
        급여데이터함은 캐시에 묵은 옛 판독기로 갈린다 — 같은 서류를 두 앱이 다르게
@@ -325,6 +325,18 @@ h1{font-size:18px;margin-bottom:4px}
    고치는 단추는 「내가 맡기」와 **색을 갈라 둔다** — 맡기는 내 일이고,
    이것은 업체관리를 고치는 일이다. */
 .btn.fix{background:#EEF1FB;border-color:#C9D2F5;color:var(--navy);font-weight:700}
+/* ── 사업장 담당자 메일 한 줄 (대표 지적 2026-08-29) ──
+   사업장을 열면 「이 사업장 메일은 어디서 오는가」가 바로 보여야 한다. */
+.comails{display:flex;align-items:flex-start;gap:9px;padding:8px 14px;
+  background:#F7F9FF;border-bottom:1px solid var(--line);font-size:12.5px}
+.comails.none{background:#FBF1DE}
+.comails .lb{flex:0 0 auto;color:var(--sub);font-size:11.5px;padding-top:2px}
+.comails .bd{flex:1;min-width:0;line-height:1.75;word-break:break-all}
+.comails .em{font-family:Consolas,monospace;font-size:11.5px}
+.comails .tg{display:inline-block;border-radius:99px;padding:1px 7px;font-size:10px;
+  font-weight:700;margin-left:4px}
+.comails .tg.ok{background:#EAF6EE;color:var(--ok)}
+.comails .tg.gy{background:#F0F1F3;color:var(--sub)}
 .fxbg{position:fixed;inset:0;background:rgba(35,38,59,.45);z-index:60}
 .fxbox{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:61;
   background:var(--card);border:1px solid var(--line);border-radius:14px;
@@ -2208,6 +2220,61 @@ function screenMail() {
   return h;
 }
 
+/* ══════ 사업장 담당자 메일 한 줄 (대표 지적 2026-08-29) ══════
+   대표: 「담당자와 관련된 이메일주소가 정리되고… 왜 여기에서는 확인이 어려운가」
+
+   업체관리에는 넣어 두었는데 **급여데이터함이 그 칸을 안 가져와서** 어디에도
+   안 보였다(normalizeCompanies 가 이름·유형·주담당만 담았다). 그래서 「정리됐나」를
+   확인할 길이 없었다 — 업체관리를 따로 열어 그 사업장을 찾아가야 했다.
+
+   사업장을 열면 「이 사업장 메일은 **어디서 오는가**」가 바로 보이게 한다.
+   ⚠ 없으면 그렇다고 말하고, **그 자리에서 넣을 길**을 함께 둔다. */
+function coMailsHtml(coId) {
+  if (!coId) return '';
+  const co = (App.companies || []).filter(c => c.id === coId)[0];
+  if (!co) return '';
+  const rows = S.companyMails(co);
+  const add = canWrite()
+    ? '<button class="btn sm fix" onclick="openFixCo(\'' + jsq(coId) + '\')">✉️ 주소'
+      + (rows.length ? ' 더' : '') + ' 넣기</button>'
+    : '';
+  if (!rows.length) {
+    /* 담당을 함께 적는다 — 「넣으면 누구 칸으로 가는가」가 이 줄의 값이다 */
+    const who = coOwnerName(co);
+    return '<div class="comails none"><span class="lb">📧 담당자</span>'
+      + '<span class="bd"><b>담당자 메일이 없습니다.</b> 넣으면 이 사업장이 보낸 메일이'
+      + (who ? ' <b>' + esc(who) + ' 칸</b>으로' : ' 담당자 칸으로')
+      + ' 저절로 옵니다.</span>' + add + '</div>';
+  }
+  return '<div class="comails"><span class="lb">📧 담당자</span><span class="bd">'
+    + rows.map((r, i) =>
+      (r.name ? esc(r.name) + ' ' : '')
+      + '<span class="em">' + esc(r.email) + '</span>'
+      + (r.kind === 'tax' ? '<span class="tg gy">세무</span>'
+        : (i === 0 ? '<span class="tg ok">이 주소로 오면 여기로</span>' : ''))
+    ).join('<br>')
+    + '</span>' + add + '</div>';
+}
+window.coMailsHtml = coMailsHtml;
+
+function coOwnerName(co) {
+  const sid = String((co && co.managerMain) || '');
+  if (!sid) return '';
+  const p = fixPeople().filter(x => x.sid === sid)[0];
+  return p ? p.name : sid;
+}
+
+/* 사업장 화면에서 바로 주소 넣기 — 메일 줄이 아니라 **사업장**에서 여는 길이다.
+   ⚠ 서랍은 같은 것을 쓴다(saveFix). 두 벌 만들면 한쪽만 고쳐진다. */
+function openFixCo(coId) {
+  const co = (App.companies || []).filter(c => c.id === coId)[0];
+  if (!co) return;
+  App.fix = { kind: 'mail', id: '', from: '', name: '', coId: coId,
+    fromCo: true, err: '', busy: false };
+  App.render();
+}
+window.openFixCo = openFixCo;
+
 /* ══════ 막힌 자리를 이 줄에서 바로 잇기 (대표 결정 2026-08-27) ══════
    대표: 「푸른이알피에 담당자 연락시킬 수 없나」
    여태는 빨간 까닭만 보이고, 고치려면 푸른이알피를 따로 열어 그 사업장을
@@ -2325,7 +2392,13 @@ function fixHtml() {
         + esc(p.name) + ' (' + esc(p.sid) + ')</option>').join('')
       + '</select></div>';
   } else {
-    body = '<div class="fxr"><label>보낸이</label><b>' + esc(f.from) + '</b></div>'
+    /* 두 갈래로 열린다. 메일 줄에서 열면 **보낸이가 정해져 있고 사업장을 고른다**.
+       사업장 화면에서 열면 반대다 — 사업장이 정해져 있고 주소를 적는다. */
+    body = (f.fromCo
+      ? '<div class="fxr"><label>보낸이</label>'
+        + '<input type="text" value="' + esc(f.from) + '" placeholder="hr@company.kr"'
+        + ' oninput="if(App.fix)App.fix.from=this.value"></div>'
+      : '<div class="fxr"><label>보낸이</label><b>' + esc(f.from) + '</b></div>')
       + '<div class="fxr"><label>사업장</label><select onchange="fixSet(\'coId\',this.value)">'
       + '<option value="">— 급여 사업장 —</option>'
       + pay.slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'ko'))
@@ -2336,7 +2409,9 @@ function fixHtml() {
       + '<input type="text" value="' + esc(f.name) + '" placeholder="비워 두면 주소만 넣습니다"'
       + ' oninput="if(App.fix)App.fix.name=this.value"></div>';
   }
-  const can = f.kind === 'owner' ? !!f.sid : !!f.coId;
+  /* 사업장 화면에서 열었으면 **주소를 적어야** 넣을 수 있다 — 사업장은 이미 정해졌다 */
+  const can = f.kind === 'owner' ? !!f.sid
+    : (f.fromCo ? (!!f.coId && !!String(f.from || '').trim()) : !!f.coId);
   return '<div class="fxbg" onclick="closeFix()"></div>'
     + '<div class="fxbox">'
     + '<div class="fxh">' + (f.kind === 'owner' ? '👤 주담당 정하기' : '✉️ 주소 넣기')
@@ -3104,7 +3179,8 @@ function screenDrawer() {
         + (S.canHandoffPayroll()
           ? '<button class="btn sm" onclick="handoffMonth()"' + (App.handoffBusy ? ' disabled' : '') + '>'
           + (App.handoffBusy ? '넘기는 중…' : '📤 급여관리에 알리기') + '</button>' : ''))
-    + '</span></div>';
+    + '</span></div>'
+    + coMailsHtml(App.companyId);
 
   if (!S.isKeepKind(App.kind)) {
     h += monthStripHtml();
