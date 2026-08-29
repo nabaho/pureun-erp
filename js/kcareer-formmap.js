@@ -30,13 +30,54 @@
     return '';
   }
 
+  /* ── 목록 표 알아보기 ──
+     머리행에서 목록 열쇠가 «둘 이상» 맞으면 목록 표다.
+     하나만 맞으면 보통 표로 둔다 — 「기간 | 비고」 같은 표를 삼키면 안 된다.
+     ⚠ 목록 표를 낱개 칸으로 두면 학력·경력 표 하나가 칸 지도 아홉 줄이 되어 못 쓴다. */
+  function detectList(grid, ti) {
+    for (var r = 0; r < grid.length; r++) {
+      var keys = grid[r].map(function (t) { return X.colKeyOf(t); });
+      var hit = keys.filter(Boolean).length;
+      if (hit < 2) continue;
+      var kind = keys.indexOf('school') >= 0 ? 'edu'
+        : (keys.indexOf('org') >= 0 && (keys.indexOf('role') >= 0 || keys.indexOf('period') >= 0)) ? 'career' : '';
+      if (!kind) continue;
+      var blank = 0;
+      for (var q = r + 1; q < grid.length; q++) {
+        var empty = grid[q].every(function (t) { return !String(t || '').trim(); });
+        if (empty) blank++;
+      }
+      return { id: 'L' + ti, tbl: ti, kind: kind, cols: keys, head: r, blank: blank };
+    }
+    return null;
+  }
+
+  /* 칸 안에 표가 또 있는 자리를 센다 — 건드리지는 않되 «있다»고는 말해야 한다.
+     ⚠ X.eachTable 은 중첩 표를 만나면 콜백을 아예 안 부르므로 여기서 따로 센다. */
+  function countNested(xml) {
+    var n = 0, pos = 0;
+    for (;;) {
+      var s = xml.indexOf('<hp:tbl', pos);
+      if (s < 0) break;
+      var e = xml.indexOf('</hp:tbl>', s);
+      if (e < 0) break;
+      e += '</hp:tbl>'.length;
+      if (xml.slice(s, e).indexOf('<hp:tbl', 7) >= 0) n++;
+      pos = e;
+    }
+    return n;
+  }
+
   function scan(sectionXml) {
+    var xmlAll = String(sectionXml || '');
     var slots = [], lists = [], warn = { textBoxes: 0, nested: 0 };
     var ti = -1;
-    X.eachTable(String(sectionXml || ''), function (tbl) {
+    X.eachTable(xmlAll, function (tbl) {
       ti++;
       var rows = X.splitRows(tbl);
       var grid = rows.map(function (tr) { return X.splitCells(tr).map(X.cellText); });
+      var L = detectList(grid, ti);
+      if (L) { lists.push(L); return tbl; }   /* 목록 표는 낱개로 세지 않는다 */
       grid.forEach(function (cells, ri) {
         cells.forEach(function (txt, ci) {
           var kind = classify(txt);
@@ -48,10 +89,14 @@
       });
       return tbl;   /* 훑기만 한다 — 여기서는 아무것도 안 바꾼다 */
     });
+    /* 못 읽는 것은 «반드시» 세어서 알린다 — 조용히 빠지면 「채웠다는데 비어 있다」가 된다.
+       글상자(도형 안의 글)는 엔진이 아직 못 읽고, 중첩 표는 경계를 잘못 짚어 건드리지 않는다. */
+    warn.textBoxes = (xmlAll.match(/<hp:drawText\b/g) || []).length;
+    warn.nested = countNested(xmlAll);
     return { slots: slots, lists: lists, warn: warn };
   }
 
-  var api = { scan: scan, classify: classify };
+  var api = { scan: scan, classify: classify, detectList: detectList };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KcareerFormMap = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

@@ -76,3 +76,33 @@ test('서식 다섯을 다 훑는다 — 어느 것에서도 자리가 0이 되�
     assert.ok(m.slots.length > 0, name + ' 에서 자리를 하나도 못 찾았습니다');
   });
 });
+
+test('목록 표는 낱개 칸이 아니라 «한 줄»로 묶는다 — 아홉 줄이 되면 못 쓴다', () => {
+  const m = M.scan(tbl([['기간', '기관명', '직위'], ['', '', ''], ['', '', ''], ['', '', '']]));
+  assert.equal(m.lists.length, 1);
+  assert.equal(m.lists[0].kind, 'career');
+  assert.equal(m.lists[0].blank, 3, '빈 줄이 몇 개인지 알아야 「3줄까지」를 말해 준다');
+  assert.equal(m.slots.length, 0, '목록 표의 칸은 낱개로 세지 않는다');
+});
+
+test('학교 열이 있으면 학력 표로 본다', () => {
+  const m = M.scan(tbl([['기간', '학교명', '전공'], ['', '', '']]));
+  assert.equal(m.lists[0].kind, 'edu');
+});
+
+test('머리행 열쇠가 하나뿐이면 목록 표로 보지 않는다 — 보통 표를 잘못 삼키면 안 된다', () => {
+  const m = M.scan(tbl([['기간', '비고'], ['', '']]));
+  assert.equal(m.lists.length, 0);
+  assert.ok(m.slots.length > 0, '보통 표로서 자리는 나와야 합니다');
+});
+
+test('글상자를 세어서 알린다 — 조용히 빠지면 「채웠다는데 비어 있다」가 된다', () => {
+  const xml = tbl([['성명', '']]) + '<hp:drawText><hp:p><hp:run><hp:t>글상자 속 글</hp:t></hp:run></hp:p></hp:drawText>';
+  assert.equal(M.scan(xml).warn.textBoxes, 1);
+});
+
+test('중첩 표(칸 안의 표)를 세어서 알린다 — 건드리지 않되 «있다»고는 말한다', () => {
+  const inner = tbl([['가', '']]);
+  const outer = '<hp:tbl><hp:tr><hp:tc><hp:p><hp:run>' + inner + '</hp:run></hp:p></hp:tc></hp:tr></hp:tbl>';
+  assert.equal(M.scan(outer).warn.nested, 1);
+});
