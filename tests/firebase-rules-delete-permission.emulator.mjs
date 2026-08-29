@@ -8,7 +8,7 @@
         npm i -g firebase-tools     (java 필요)
      2) 규칙을 담은 임시 폴더를 만들고 에뮬레이터를 띄운다
         mkdir -p /tmp/rulestest && cd /tmp/rulestest
-        cp "<저장소>/docs/firebase-rules-급여데이터함-포함(붙여넣기용).json" rules.json
+        cp "<저장소>/docs/firebase-rules-전체-적용본.json" rules.json
         printf '{"database":{"rules":"rules.json"},"emulators":{"database":{"port":9000,"host":"127.0.0.1"},"ui":{"enabled":false}}}' > firebase.json
         firebase emulators:start --only database --project pureun-erp
      3) 다른 창에서

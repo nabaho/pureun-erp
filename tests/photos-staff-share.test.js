@@ -27,7 +27,7 @@ const { cutFn } = require('./cut-fn');
 const R = path.join(__dirname, '..');
 const app = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
 const store = fs.readFileSync(path.join(R, 'js', 'pu-photo-store.js'), 'utf8');
-const PASTE = path.join(R, 'docs', 'firebase-rules-현재적용본+분류이름표(붙여넣기용).json');
+const PASTE = path.join(R, 'docs', 'firebase-rules-전체-적용본.json');
 const CONSOLE = path.join(R, 'docs', 'firebase-rules-콘솔원문-2026-08-29.json');
 const rules = JSON.parse(fs.readFileSync(PASTE, 'utf8')).rules;
 
@@ -113,9 +113,19 @@ test('★ 콘솔과 다른 곳은 «일부러 고친 두 곳»뿐이다', () => 
       if (JSON.stringify(av) !== JSON.stringify(bv)) diff.push(q);
     });
   })(con, rules, '');
+  /* ⚠ 2026-08-29 — 콘솔 원문 스냅숏을 «진짜 콘솔»로 갈아 끼웠다(대표가 주신 것).
+     그 전 스냅숏은 실제 콘솔이 아니었다 — 열여섯 칸이 다르고 backup_key 가 빠져 있었다.
+     「콘솔이 진짜다」라고 말하면서 가짜와 대조하고 있었던 셈이다.
+     지금 «일부러 다른 곳»은 아래 넷이다:
+       exportLog·exportSeen — 반출 기록(대표가 방금 콘솔에 넣으셨다)
+       pu_mailseen          — 메일 읽음 자리
+       mailbox/.read        — 메일함을 재직 직원 전원에게 연 것(2026-08-27 결정) */
   assert.deepEqual(diff.sort(), [
-    '/puphotos/owners/.read',
-    '/puphotos/sharedTo/$uid/$pid/.write'
-  ], '★ 뜻하지 않은 곳이 바뀌었습니다: ' + diff.join(', ') +
+      "/exportLog",
+      "/exportSeen",
+      "/mailbox/.read",
+      "/pu_mailseen"
+  ],
+    '★ 뜻하지 않은 곳이 바뀌었습니다: ' + diff.join(', ') +
      '\n  규칙은 한 번에 통째로 바뀝니다 — 곁다리 변경이 섞이면 무엇이 깨졌는지 못 짚습니다.');
 });

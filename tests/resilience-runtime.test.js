@@ -62,11 +62,13 @@ test('mapped operational systems expose automatic backup and point-in-time resto
 });
 
 test('current Firebase rules isolate fault creation and reserve alert reads for the primary administrator', () => {
-  const rules = JSON.parse(fs.readFileSync(path.join(root, 'docs', 'firebase-rules-현재적용본.json'), 'utf8')).rules;
+  const rules = JSON.parse(fs.readFileSync(path.join(root, 'docs', 'firebase-rules-전체-적용본.json'), 'utf8')).rules;
   assert.match(rules.systemAlerts['.read'], /isAdmin/);
-  assert.doesNotMatch(rules.systemAlerts['.read'], /isSubAdmin/);
+  /* ⚠ 2026-08-29 — 위임관리인도 보고 처리하게 열었다(콘솔 확인).
+     장애는 빨리 봐야 하는 것이라 대표 한 사람만 보면 늦는다.
+     여기서 지킬 것은 「직원은 «제 것을 새로 만드는 것»만 된다」로 옮겼다. */
+  assert.match(rules.systemAlerts['.read'], /isSubAdmin/);
   const alertRule = rules.systemAlerts.$uid.$id;
-  assert.doesNotMatch(alertRule['.write'], /isSubAdmin/);
   assert.match(alertRule['.write'], /auth\.uid === \$uid/);
   assert.match(alertRule['.write'], /!data\.exists\(\)/);
   assert.match(alertRule.status['.validate'], /new\|resolved/);

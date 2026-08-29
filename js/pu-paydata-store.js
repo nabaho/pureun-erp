@@ -4,7 +4,7 @@
    (사진첩 js/pu-photo-store.js 와 같은 원리)
 
    설계서: docs/superpowers/specs/2026-08-13-급여데이터함-design.md
-   콘솔 규칙: docs/firebase-rules-급여데이터함-포함(붙여넣기용).json
+   콘솔 규칙: docs/firebase-rules-전체-적용본.json
 
    ⚠ 지켜야 할 것 넷
    1. 쓰기는 반드시 다중 경로 update 한 번. 상위 노드를 set 으로 덮으면

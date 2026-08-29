@@ -25,7 +25,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const R = path.join(__dirname, '..');
-const RULES = path.join(R, 'docs', 'firebase-rules-현재적용본+분류이름표(붙여넣기용).json');
+const RULES = path.join(R, 'docs', 'firebase-rules-전체-적용본.json');
 
 /* `DB_ROOT + '/xxx'` 에서 xxx 를 모은다 */
 function rootsUsedBy(file, varName) {
@@ -142,7 +142,11 @@ test('★ $other 가 사진 본체의 잠금을 헐겁게 하지 않는다 — �
 
 test('규칙 파일이 스스로 어디에 붙이는 것인지 밝힌다 — 저장소 파일로 배포하면 안 된다', () => {
   /* 규칙은 콘솔이 진짜다. 저장소 파일로 통째 덮어 배포해 사진첩·성과확인이 막힌 적이 있다. */
-  const guide = path.join(R, 'docs', 'firebase-rules-분류이름표-추가(붙여넣기용).json');
-  assert.ok(fs.existsSync(guide), '넣는 법을 적은 파일이 없습니다');
-  assert.match(JSON.stringify(JSON.parse(fs.readFileSync(guide, 'utf8'))), /콘솔/);
+  /* 2026-08-29 — 적용본은 «순수 JSON» 이라 그 안에 말을 담을 수 없다.
+     「콘솔이 진짜다 · 저장소 파일로 배포하지 마라」는 안내문이 맡는다. */
+  const guide = path.join(R, 'docs', 'firebase-rules-적용안내.md');
+  assert.ok(fs.existsSync(guide), '넣는 법을 적은 안내문이 없습니다');
+  assert.match(fs.readFileSync(guide, 'utf8'), /콘솔/);
+  assert.ok(fs.existsSync(path.join(R, 'docs', 'firebase-rules-전체-적용본.json')),
+    '붙여넣을 적용본이 없습니다');
 });

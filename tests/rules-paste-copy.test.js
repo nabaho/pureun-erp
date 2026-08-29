@@ -1,6 +1,6 @@
 'use strict';
 /* docs/rules-paste.json 은 콘솔에 붙여넣는 파일의 '짧은 이름 복사본'이다.
-   원본 이름(firebase-rules-급여데이터함-포함(붙여넣기용).json)은 한글과 괄호 때문에
+   원본 이름(firebase-rules-전체-적용본.json)은 한글과 괄호 때문에
    raw 주소가 길게 인코딩돼 복사하기 어렵다. 그래서 같은 내용을 짧은 이름으로도 둔다.
      https://raw.githubusercontent.com/nabaho/pureunall/main/docs/rules-paste.json
 
@@ -12,7 +12,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
-const SRC = path.join(root, 'docs', 'firebase-rules-급여데이터함-포함(붙여넣기용).json');
+/* 2026-08-29 — 옛 조각 파일을 없애고 «적용본» 하나로 모았다.
+   짧은 이름 복사본은 그대로 둔다 — 바깥에서 raw 주소로 가져다 쓰기 때문이다. */
+const SRC = path.join(root, 'docs', 'firebase-rules-전체-적용본.json');
 const COPY = path.join(root, 'docs', 'rules-paste.json');
 
 test('짧은 이름 복사본이 원본과 한 글자도 다르지 않다', () => {

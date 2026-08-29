@@ -234,17 +234,21 @@ test('★ 분류 창의 모든 길이 그 번역을 거친다 — 한 곳만 놓
 });
 
 test('★ 붙여넣을 규칙 조각을 저장소에 남긴다 — 앱이 고칠 수 없는 일이다', () => {
-  const p = path.join(R, 'docs', 'firebase-rules-분류이름표-추가(붙여넣기용).json');
+  const p = path.join(R, 'docs', 'firebase-rules-전체-적용본.json');
   assert.ok(fs.existsSync(p), '★ 조각이 없으면 대표께서 무엇을 붙여넣어야 할지 모릅니다');
+  /* 2026-08-29 — 조각 파일을 없애고 «적용본» 한 곳으로 모았다.
+     지킬 것은 그대로다: 이름표 칸이 규칙에 있고, 쓰기는 총괄관리자만. */
   const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-  const g = j['붙여넣을_조각'];
+  const g = j.rules.puphotos;
   ['kindLabels', 'kindHidden'].forEach(k => {
     assert.ok(g[k], k + ' 자리가 없습니다');
     assert.match(g[k]['.read'], /auth != null/, '읽기 조건이 없습니다');
     assert.match(g[k]['.write'], /isAdmin/, '★ 쓰기를 아무에게나 열면 안 됩니다 — 총괄 관리자만');
   });
-  /* 콘솔이 진짜라는 것을 못박는다 — 저장소 파일로 덮어 배포하면 사진첩이 막힌다 */
-  assert.match(JSON.stringify(j['_읽어보세요']), /콘솔/,
+  /* 콘솔이 진짜라는 것을 못박는다 — 저장소 파일로 덮어 배포하면 사진첩이 막힌다.
+     ⚠ 2026-08-29 — 적용본은 «순수 JSON» 이라 그 안에 말을 담을 수 없다.
+       그 말은 docs/firebase-rules-적용안내.md 가 맡는다. */
+  assert.match(fs.readFileSync(path.join(R, 'docs', 'firebase-rules-적용안내.md'), 'utf8'), /콘솔/,
     '규칙을 어디에 넣는 것인지 안 적어 두면 저장소 파일로 배포합니다');
 });
 
