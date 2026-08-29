@@ -559,6 +559,26 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
 #rcEditCard.rh-wide #docxEditor{max-height:calc(100vh - 210px)}
 /* 평소에도 너무 짧지 않게 — 한글 편집기는 최소 한 쪽은 보여야 한다 */
 #rhwpEditor{min-height:520px}
+/* ── 서식 작업 서랍 ──
+   오른쪽 패널을 접으면 문서가 화면을 다 쓴다. 서식은 넓게 봐야 어느 칸이 비었는지 보인다. */
+#rcEditCard.rh-wide>div:last-child{grid-template-columns:1fr 360px}
+#rcEditCard.rh-drawer-off>div:last-child{grid-template-columns:1fr!important}
+#rcEditCard.rh-drawer-off #rcDragPanel{display:none}
+.rh-dtabs{display:flex;gap:4px;margin-bottom:8px;align-items:center}
+.rh-dtab{font-size:11.5px;padding:5px 10px;border:1px solid var(--border);border-radius:7px;
+  background:var(--soft);color:var(--text-mute);cursor:pointer;font-family:inherit}
+.rh-dtab.on{background:#fff;color:var(--navy);font-weight:700;border-color:var(--teal)}
+.rh-slot{border:1px solid var(--border);border-radius:9px;padding:8px 10px;margin-bottom:7px}
+.rh-slot.ok{border-color:#BEDFD4;background:#F4FBF8}
+.rh-slot.miss{border-color:#EBD9A8;background:#FFFBF0}
+.rh-slot .r1{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+.rh-slot .nm{font-size:12px;font-weight:700;color:var(--navy)}
+.rh-slot .loc{font-size:10.5px;color:var(--text-mute);margin-left:auto;white-space:nowrap}
+.rh-slot select{width:100%;font-family:inherit;font-size:12.5px;padding:5px 7px;
+  border:1px solid var(--border);border-radius:6px;background:#fff}
+.rh-warn{font-size:11px;color:var(--amber);background:#FFFBF0;border:1px solid #EBD9A8;
+  border-radius:7px;padding:7px 9px;margin-bottom:8px;line-height:1.5}
+#rhMapList{max-height:calc(100vh - 300px);overflow-y:auto}
 /* ===== 빠른 이력서 A4 쪽 나눔 =====
    점선이 표 한 줄 가운데를 지나가 「짤린 것」처럼 보였다 → 줄은 절대 자르지 않고,
    경계에 걸친 줄 앞에 빈 공간(.cv-pgap)을 넣어 다음 쪽 머리로 내린다.
@@ -798,6 +818,21 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
                 </div>
               </div>
               <div id="rcDragPanel">
+                <!-- 서랍 세 칸 — 채울 곳(칸 지도) · 내 정보 · 경력·자격.
+                     「내 정보」가 없어서 성명·연락처를 손으로 쳐야 했다(대표 제보 2026-08-29). -->
+                <div class="rh-dtabs">
+                  <button class="rh-dtab on" id="rhDT-map" onclick="rhDrawerTab('map')">채울 곳</button>
+                  <button class="rh-dtab" id="rhDT-me" onclick="rhDrawerTab('me')">내 정보</button>
+                  <button class="rh-dtab" id="rhDT-career" onclick="rhDrawerTab('career')">경력·자격</button>
+                  <button class="btn sm" style="margin-left:auto;font-size:11px" onclick="rhDrawerToggle()" title="서랍을 접으면 문서가 화면을 다 씁니다">⇥</button>
+                </div>
+                <div id="rhPane-map">
+                  <div id="rhMapWarn"></div>
+                  <div id="rhMapList" class="rc-mute" style="font-size:12px">서식을 올리면 채울 곳이 여기 나옵니다</div>
+                  <button class="btn primary" style="width:100%;margin-top:8px" onclick="rhFillByMap()">✅ 이대로 채우기</button>
+                </div>
+                <div id="rhPane-me" style="display:none"><div id="rhMyInfo"></div></div>
+                <div id="rhPane-career" style="display:none">
                 <div style="font-size:11px;font-weight:600;color:var(--navy);margin-bottom:8px">경력·자격 목록 — 드래그 또는 클릭</div>
                 <div id="rcCatTabs" style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:8px"></div>
                 <div style="display:flex;gap:6px;margin-bottom:8px">
@@ -811,6 +846,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
                   위 <b>✨ 내 정보로 채우기</b>가 자동으로 넣습니다. 이 목록은 특정 항목을 직접 골라 넣을 때만 쓰세요.
                 </div>
                 <button id="rhGenBtn" onclick="generateFilledHWP('resume')" style="display:none"></button>
+                </div>
               </div>
             </div>
           </div>
@@ -3560,7 +3596,11 @@ async function importTemplateFile(file,d){ const cfg=DOMAINS[d].create;
   /* 받은 한글 서식은 곧바로 **큰 창**으로 띄운다 — 대표 요청(2026-08-29).
      작은 미리보기로는 어느 칸을 채울지 안 보인다. 편집기를 다 올린 뒤에 연다
      (같이 부르면 엔진 둘이 한꺼번에 올라와 화면이 멎는다). */
-  if(/^(hwp|hwpx)$/.test(ext)) openHwpViewer(buf, fname);
+  if(/^(hwp|hwpx)$/.test(ext)) {
+    /* 올리자마자 칸 지도를 그린다 — 「어디를 채울지」를 먼저 보여 준다 */
+    try{ await rhBuildMap(); }catch(e){ console.warn('칸지도',e); }
+    openHwpViewer(buf, fname);
+  }
 }
 function renderTplLib(d){ const cfg=DOMAINS[d].create; const box=document.getElementById(cfg.tplLib); if(!box) return; const arr=tplList(d);
   if(!arr.length){ box.className='empty'; box.textContent='보관된 양식 없음'; return; } box.className=''; box.innerHTML='';
@@ -6202,6 +6242,197 @@ function rhToggleWide(){
   else if(window._rhWideEsc){ document.removeEventListener('keydown', window._rhWideEsc); window._rhWideEsc=null; }
 }
 
+/* ===== 칸 지도 화면 =====
+   지금까지는 「알아본 자리만」 채우고 모르는 자리는 조용히 지나갔다. 그래서 서식이 바뀌면
+   몇 칸씩 비었고, 대표 지원서에서는 이름이 통째로 빠졌다.
+   여기서는 모르는 자리도 목록에 올려 «물어본다» — 그래야 처음 보는 서식도 다 채운다.
+   한 번 골라 준 짝은 서식 지문으로 기억해 두 번째부터는 확인만 하면 된다. */
+var _rhMap = null;        /* {slots,lists,warn,fp} */
+var _rhPicks = {};        /* {자리이름표: 열쇠} — 사람이 고른 것 */
+
+var RH_KEYS = [
+  ['name','성명'],['nameHanja','한자 성명'],['birth','생년월일'],['gender','성별'],
+  ['phone','휴대폰'],['phoneHome','자택 전화'],['phoneWork','사무실 전화'],
+  ['email','이메일'],['addr','주소'],['org','소속'],['dept','부서'],
+  ['title','직위'],['license','자격증']
+];
+
+function rhDrawerTab(which){
+  ['map','me','career'].forEach(function(k){
+    var p=document.getElementById('rhPane-'+k); if(p) p.style.display=(k===which?'':'none');
+    var t=document.getElementById('rhDT-'+k); if(t) t.classList.toggle('on', k===which);
+  });
+  if(which==='me') rhRenderMyInfo();
+}
+function rhDrawerToggle(){
+  var c=document.getElementById('rcEditCard'); if(c) c.classList.toggle('rh-drawer-off');
+}
+
+/* 「내 정보」 — 클릭하면 편집기 커서 자리에 들어간다.
+   이 목록이 없어서 성명·연락처를 손으로 쳐야 했다(대표 제보 2026-08-29). */
+function rhRenderMyInfo(){
+  var box=document.getElementById('rhMyInfo'); if(!box) return;
+  var f=(_cvFillData().fields)||{};
+  var html=RH_KEYS.map(function(p){
+    var v=f[p[0]]; if(!v) return '';
+    return '<div class="rh-slot" style="cursor:pointer;margin-bottom:5px" onclick="insertToEditor(\''+_jsAttr(v)+'\')">'
+      +'<div style="font-size:10.5px;color:var(--text-mute)">'+escapeHtml(p[1])+'</div>'
+      +'<div style="font-size:12.5px;font-weight:600;color:var(--ink)">'+escapeHtml(v)+'</div></div>';
+  }).join('');
+  box.innerHTML=html
+    ? '<div style="font-size:11px;color:var(--text-mute);margin-bottom:8px">한글 편집기에서 넣을 자리를 클릭한 뒤, 아래 항목을 누르세요</div>'+html
+    : '<div class="rc-mute" style="font-size:12px">프로필에 적은 내용이 없습니다</div>';
+}
+
+/* 올린 서식을 훑어 칸 지도를 그린다 */
+async function rhBuildMap(){
+  if(!_rhDoc || !_rhDoc.bytes) return;
+  var box=document.getElementById('rhMapList'); if(!box) return;
+  if(!window.KcareerFormMap){ box.textContent='칸 지도 모듈을 못 불러왔습니다'; return; }
+  try{ await _ensureJSZip(); }catch(e){ box.textContent='모듈을 못 불러왔습니다(인터넷 필요)'; return; }
+  var src=null;
+  try{ src=await _rhToHwpx(_rhDoc.bytes,_rhDoc.name); }catch(e){ src=null; }
+  if(!src){ box.textContent='이 형식은 칸 지도를 만들 수 없습니다 — 한글에서 HWPX로 저장해 올려주세요'; return; }
+  var zip=await JSZip.loadAsync(src);
+  var names=Object.keys(zip.files).filter(function(n){ return /Contents\/section\d+\.xml$/i.test(n); }).sort();
+  var slots=[],lists=[],warn={textBoxes:0,nested:0},fps=[],data=_cvFillData();
+  for(const n of names){
+    var xml=await zip.file(n).async('string');
+    var m=KcareerFormMap.guess(KcareerFormMap.scan(xml), data);
+    m.slots.forEach(function(s){ s.sec=n; }); m.lists.forEach(function(l){ l.sec=n; });
+    slots=slots.concat(m.slots); lists=lists.concat(m.lists);
+    warn.textBoxes+=m.warn.textBoxes; warn.nested+=m.warn.nested;
+    fps.push(KcareerFormMap.fingerprint(xml));
+  }
+  _rhMap={slots:slots,lists:lists,warn:warn,fp:fps.join('/')};
+  _rhPicks=rhMemoryLoad(_rhMap.fp)||{};
+  rhRenderMap();
+}
+
+function rhRenderMap(){
+  var box=document.getElementById('rhMapList'); if(!box||!_rhMap) return;
+  box.className='';
+  /* 못 읽은 것은 «반드시» 적는다 — 조용히 빠지면 「채웠다는데 비어 있다」가 된다 */
+  var w=document.getElementById('rhMapWarn'), msgs=[];
+  if(_rhMap.warn.textBoxes) msgs.push('글상자 '+_rhMap.warn.textBoxes+'개는 못 읽습니다 — 한글에서 직접 쓰셔야 합니다');
+  if(_rhMap.warn.nested) msgs.push('칸 안에 표가 또 있는 자리 '+_rhMap.warn.nested+'곳은 건드리지 않습니다');
+  if(w) w.innerHTML=msgs.length?'<div class="rh-warn">⚠ '+msgs.join('<br>⚠ ')+'</div>':'';
+
+  var f=(_cvFillData().fields)||{};
+  /* 이름도 왼쪽 라벨도 없는 순수 빈 칸(병합 칸의 잔여 등)은 감춘다 — 목록이 지저분해진다 */
+  var shown=_rhMap.slots.filter(function(s){ return s.guess||s.left||s.kind!=='빈칸'; });
+  var hidden=_rhMap.slots.length-shown.length;
+  /* ⚠ 초록은 «실제로 채워진다»는 뜻이어야 한다.
+     열쇠는 알아봤는데 넣을 값이 없으면(프로필에 안 적힌 칸) 초록으로 두면 안 된다 —
+     「채운다더니 비어 있다」가 된다. 값이 없으면 노랗게 띄워 사람에게 묻는다. */
+  var willFill=function(s){
+    var p=(_rhPicks[s.id]!=null)?_rhPicks[s.id]:s.guess;
+    if(!p) return '';
+    if(p==='__incell'||p==='__stamp') return p;
+    return (f[p]!=null && f[p]!=='') ? p : '';
+  };
+  var known=shown.filter(function(s){ return willFill(s); }).length;
+
+  var html='<div style="font-size:11.5px;color:var(--text-mute);margin-bottom:8px">채울 곳 '
+    +shown.length+'군데 — 알아본 것 '+known+' · 골라 줄 것 '+(shown.length-known)+'</div>';
+
+  html+=_rhMap.lists.map(function(l){
+    var nm=(l.kind==='edu'?'학력 표':'경력 표');
+    return '<div class="rh-slot ok"><div class="r1"><span class="nm">'+nm+'</span>'
+      +'<span class="loc">빈 '+l.blank+'줄</span></div>'
+      +'<div style="font-size:11px;color:var(--text-mute)">아래 빈 줄에 '
+      +(l.kind==='edu'?'학력':'경력')+'을 채웁니다</div></div>';
+  }).join('');
+
+  html+=shown.map(function(s){
+    var pick=(_rhPicks[s.id]!=null)?_rhPicks[s.id]:s.guess;
+    var isStamp=(pick==='__stamp');
+    var opts='<option value="">— 비워 둠 —</option>'
+      +RH_KEYS.map(function(p){
+        return '<option value="'+p[0]+'"'+(pick===p[0]?' selected':'')+'>'+p[1]
+          +(f[p[0]]?' · '+escapeHtml(String(f[p[0]])).slice(0,18):'')+'</option>'; }).join('')
+      +'<option value="__incell"'+(pick==='__incell'?' selected':'')+'>칸 안 라벨 자동</option>'
+      +'<option value="__stamp"'+(isStamp?' selected':'')+'>🖋 도장 자리</option>';
+    var ok=willFill(s);
+    return '<div class="rh-slot '+(ok?'ok':'miss')+'">'
+      +'<div class="r1"><span class="nm">'+escapeHtml(s.left||s.text||'빈 칸')+'</span>'
+      +'<span class="loc">'+(s.tbl+1)+'표 '+(s.row+1)+'행 '+(s.col+1)+'열</span></div>'
+      +(s.text?'<div style="font-size:10.5px;color:var(--text-mute);margin-bottom:4px">지금 「'
+        +escapeHtml(s.text)+'」'+(s.kind==='안내글뒤'?' — 뒤에 이어 씁니다':'')+'</div>':'')
+      +(pick&&!ok&&pick!=='__incell'&&pick!=='__stamp'
+        ?'<div style="font-size:10.5px;color:var(--amber);margin-bottom:4px">넣을 값이 없습니다 — 다른 값을 고르거나 프로필에 적어 주세요</div>':'')
+      +(s.hint==='rrn'?'<div style="font-size:10.5px;color:var(--red);margin-bottom:4px">주민등록번호는 자동으로 넣지 않습니다 — 직접 쓰세요</div>':'')
+      +'<select onchange="rhPick(\''+s.id+'\',this.value)">'+opts+'</select></div>';
+  }).join('');
+
+  if(hidden) html+='<div style="font-size:11px;color:var(--text-mute);margin-top:6px">'
+    +'이름도 왼쪽 라벨도 없는 빈 칸 '+hidden+'군데는 감췄습니다</div>';
+  box.innerHTML=html;
+}
+function rhPick(id,v){ _rhPicks[id]=v; rhRenderMap(); }
+
+/* 고른 대로 채운 뒤 «보고 있는 편집기»에 다시 올린다.
+   ⚠ 다른 창에만 띄우면 편집기는 그대로라 「내가 쳐야 하나」가 된다(대표 제보 2026-08-29). */
+async function rhFillByMap(){
+  if(!_rhDoc||!_rhDoc.bytes||!_rhMap){ toast('먼저 서식을 올려주세요'); return; }
+  toast('⏳ 채우는 중…');
+  var src=null;
+  try{ src=await _rhToHwpx(_rhDoc.bytes,_rhDoc.name); }catch(e){ src=null; }
+  if(!src){ toast('이 형식은 채울 수 없습니다 — 한글에서 HWPX로 저장해 올려주세요'); return; }
+  var zip=await JSZip.loadAsync(src), data=_cvFillData();
+  var filled=[], failed=[];
+  var names=Object.keys(zip.files).filter(function(n){ return /Contents\/section\d+\.xml$/i.test(n); }).sort();
+  for(const n of names){
+    var picks={};
+    _rhMap.slots.forEach(function(s){
+      if(s.sec!==n) return;
+      var p=(_rhPicks[s.id]!=null)?_rhPicks[s.id]:s.guess;
+      if(p) picks[s.id]=p;
+    });
+    var wantLists={}; _rhMap.lists.forEach(function(l){ if(l.sec===n) wantLists[l.id]=l.guess; });
+    var xml=await zip.file(n).async('string');
+    var r=KcareerFormMap.apply(xml,{picks:picks,lists:wantLists,data:data});
+    if(r.changed) zip.file(n,r.xml);
+    filled=filled.concat(r.filled); failed=failed.concat(r.failed);
+  }
+  if(!filled.length){ toast('채운 칸이 없습니다 — 오른쪽에서 넣을 값을 골라 주세요'); return; }
+  var bytes=new Uint8Array(await zip.generateAsync({type:'arraybuffer'}));
+  _rhDoc={ name:String(_rhDoc.name).replace(/\.(hwp|hwpx)$/i,'')+'_채움.hwpx', ext:'hwpx', bytes:bytes };
+  rhMemorySave(_rhMap.fp, _rhPicks, _rhDoc.name);
+  rhDraftSave();
+  await mountEditor(bytes.buffer.slice(0), _rhDoc.name);
+  toast('✅ '+filled.length+'칸 채웠습니다'+(failed.length?' · '+failed.length+'칸은 못 넣었습니다':''));
+  if(failed.length) console.warn('[칸지도] 못 넣은 자리', failed);
+}
+
+/* ── 서식별 기억 ──
+   한 번 골라 준 짝을 «서식 지문»으로 담아 둔다. 같은 서식을 다시 올리면 그대로 얹는다.
+   ⚠ 이름이 아니라 지문으로 담는다 — 이름은 사람이 바꾸고, 칸의 짜임은 안 바뀐다.
+   ⚠ 지문이 다르면 옛 기억을 쓰지 않는다 — 엉뚱한 칸에 넣는 것이 안 넣는 것보다 나쁘다. */
+var RH_MEM='form_maps';
+function _rhMemAll(){ try{ return JSON.parse(LS.get(NS+RH_MEM)||'{}')||{}; }catch(e){ return {}; } }
+function rhMemorySave(fp, picks, name){
+  if(!fp) return;
+  try{
+    var all=_rhMemAll();
+    all[fp]={ name:String(name||''), at:Date.now(), picks:Object.assign({},picks||{}) };
+    /* 오래된 것부터 버린다 — 서식이 쌓이면 저장공간을 먹는다 */
+    var keys=Object.keys(all);
+    if(keys.length>60){
+      keys.sort(function(a,b){ return (all[a].at||0)-(all[b].at||0); })
+        .slice(0, keys.length-60).forEach(function(k){ delete all[k]; });
+    }
+    LS.set(NS+RH_MEM, JSON.stringify(all));
+  }catch(e){ console.warn('칸지도 기억',e); }
+}
+function rhMemoryLoad(fp){
+  if(!fp) return null;
+  var m=_rhMemAll()[fp];
+  if(!m) return null;
+  toast('전에 정한 대로 채울 곳을 맞춰 두었습니다 — 확인만 하시면 됩니다');
+  return Object.assign({}, m.picks||{});
+}
+
 /* 작성 중에도 30초마다 조용히 임시저장 — 「저장됨」 표시가 툴바에 남는다.
    ⚠ 편집기 내용을 가져올 수 있을 때만 저장한다(못 가져오면 올린 원본이 그대로 남아 있다). */
 var _rhAutoT=null;
@@ -6253,9 +6484,20 @@ function _cvFillData(){
     get('consult').map(function(r){ return { period:r.date||r.period||r.year||'', org:r.org||r.client||'', role:'[컨설팅] '+(r.title||r.content||'') }; }),
     get('case').map(function(r){ return { period:r.date||r.period||r.year||'', org:r.org||'', role:'[사건] '+(r.title||r.content||'') }; }),
     get('lecture').map(function(r){ return { period:r.date||r.period||r.year||'', org:r.org||'', role:'[강의] '+(r.title||'') }; }));
+  /* ── 전화번호는 «모양»으로 갈라 담는다 ──
+     프로필에 번호 칸이 하나뿐이라, 예전에는 그 하나가 「휴대폰」 칸에 그대로 들어갔다.
+     실측(2026-08-29) 사무실 번호 041-556-0035 가 「휴대폰」 자리에 박혔다 — 틀린 번호다.
+     010·011·016~019 로 시작하면 휴대폰, 아니면 사무실 번호로 본다.
+     ⚠ 모르는 것은 «비워 둔다». 틀린 번호를 적어 내는 것이 안 적는 것보다 나쁘다
+       (칸 지도가 빈 자리를 노랗게 띄워 사람에게 묻는다). */
+  var tel=String(info.phone||'').trim();
+  var isMobile=/^01[016789][-.\s]?\d{3,4}[-.\s]?\d{4}$/.test(tel.replace(/\s/g,''));
   return {
-    fields:{ name:info.name||'', birth:info.birth||'', gender:info.gender||'', phone:info.phone||'',
-             email:info.email||'', addr:info.addr||'', license:info.license||'', org:info.org||'' },
+    fields:{ name:info.name||'', nameHanja:info.nameHanja||'',
+             birth:info.birth||'', gender:info.gender||'',
+             phone:isMobile?tel:'', phoneWork:isMobile?'':tel, phoneHome:'',
+             email:info.email||'', addr:info.addr||'', license:info.license||'',
+             org:info.org||'', dept:info.dept||'', title:info.title||'' },
     edu:edu, career:wic.concat(acts)
   };
 }
