@@ -3734,7 +3734,10 @@ window.erpPullFromServer = function(){
     try{ showToast('서버 로그인이 필요합니다 — 로그아웃 후 다시 로그인하세요'); }catch(_){ alert('서버 로그인이 필요합니다'); }
     return;
   }
-  if(!confirm('서버의 최신 데이터를 이 기기로 받아옵니다.\n(이 기기 화면 데이터를 서버 내용으로 교체 · 서버에는 쓰지 않음)\n\n계속할까요?')) return;
+  /* ⚠ 값을 적어 준다 — 이 단추 하나가 통째 한 벌(약 2.8MB)이다.
+     자동 경로에서는 통째 받기를 없앴으므로(2026-08-29), 남은 통째는 «사람이
+     누른 것» 뿐이다. 얼마짜리인지 모르고 누르면 없앤 뜻이 반쯤 사라진다. */
+  if(!confirm('서버의 최신 데이터를 이 기기로 받아옵니다.\n(이 기기 화면 데이터를 서버 내용으로 교체 · 서버에는 쓰지 않음)\n\n※ 전체를 한 번에 받습니다(약 2.8MB) — 평소 켤 때는 바뀐 표만 받습니다.\n\n계속할까요?')) return;
   fbDb.ref('data').once('value').then(function(snap){
     var remote = snap.val() || {};
     var CHECK = ['companies','cases','consultings','funds','other_projects','payroll_monthly','finance_income','finance_expense','contracts'];
@@ -8137,7 +8140,11 @@ function _fbApplyRecord(k, v, opts){
 function fbInitialSync(_isRetry){
   if(!fbDb) return Promise.resolve(0);
   return _bootKeyPlan().then(function(plan){
-    if(plan.mode !== 'perKey') return _fbInitialSyncFull(_isRetry);
+    /* ⚠ 어느 길로 갔는지 «남긴다». 아래 fbSetupListener 가 이 값이 'full' 일
+       때만 data 통째 구독을 붙인다 — 「아니면 붙인다」(음성 조건)로 두면
+       중간에 실패한 길 하나가 통째 구독을 되살린다. 양성 조건이어야 안전하다. */
+    window._fbBootMode = plan.mode;
+    if(plan.mode !== 'perKey'){ window._fbPerKeyMode = false; return _fbInitialSyncFull(_isRetry); }
     window._fbPerKeyMode = true;
     return _fbSyncKeys(plan.keys, {});
   });
@@ -8148,13 +8155,49 @@ function fbInitialSync(_isRetry){
      명단**을 쓰므로 새 열쇠가 생겨도 저절로 포함된다(설계서 3.5의 표류 문제 해소).
    · 권한: uid_roles/{uid}/fin — 규칙이 판단 근거로 쓰는 바로 그 값(아주 작다).
      **명시적으로 false 일 때만** 재무 열쇠를 건너뛴다. undefined·조회실패 → 전부. */
-var _BOOT_PLAN_TIMEOUT_MS = 8000;   // 계획이 이보다 늦으면 통째 읽기로 간다 — 부팅을 세우지 않는다
+var _BOOT_PLAN_TIMEOUT_MS = 8000;   // 계획이 이보다 늦으면 굳은 명단으로 간다 — 부팅을 세우지 않는다
+
+/* ══ 통째로 받는 길을 «자동 경로에서» 없앤다 (대표 지시 2026-08-29 「통째로 받기 없애줘」) ══
+
+   ★ 통째 한 번이 얼마인가 — 2.83MB 를 «두 번» 받는다(5.7MB).
+     once('value') 로 받고, 그 자리가 떼어진 뒤 child_changed 구독을 붙이면
+     서버가 같은 것을 한 번 더 보낸다. 실시간DB 내려받기는 GB당 $1 이다.
+     8/1~8/11 청구서의 93%(₩28,833)가 이 한 줄에서 나왔다.
+
+   ★ 그런데 예전에는 «계획이 안 서면 무조건 통째» 였다. 길이 넷이나 됐다 —
+     인증이 8초 안에 안 끝났을 때 · 명단 조회 실패 · 계획 지연 · 계획 실패.
+     넷 다 «가끔» 이지만, 직원 수 × 하루 여는 횟수를 곱하면 가끔이 아니다.
+
+   ★ 이제 되돌아갈 자리는 **굳은 명단(FB_ALL_SYNC_KEYS)으로 열쇠별 받기** 다.
+     여전히 fail-open 이다 — 빈 화면이 되지 않는다. 권한 없는 표는 조용히
+     건너뛰고(규칙이 판단한다), u-감시 덕에 안 바뀐 표는 0바이트로 끝난다.
+
+   ⚠ 굳은 명단으로 되돌아가면 «서버에는 있는데 명단에 없는 새 표» 를 놓친다.
+     그러나 그것은 열쇠별 모드가 이미 안고 있는 한계와 같다(부팅 때 받은
+     명단으로만 돈다). 새 표를 놓치는 것보다 매번 5.7MB 를 받는 것이 더 나쁘다.
+   ⚠ 통째로 받는 길이 아주 사라지지는 않는다 — 사람이 일부러 켜는 스위치
+     (`pureun_v6_boot_full`)와 환경설정의 「서버에서 받아오기」가 남아 있다.
+     **자동으로 도는 길에만 없다.** */
+function _fbFallbackPlan(why){
+  var keys = FB_ALL_SYNC_KEYS
+    .filter(fbShouldSync)                                          // 올리지 않는 것은 받지도 않는다
+    .filter(function(k){ return FB_COLD_KEYS.indexOf(k) < 0; });
+  /* 재무 권한을 못 읽었으므로 재무 표도 넣는다 — 규칙이 막으면 조용히 건너뛴다.
+     (「조회 실패 → 전부」는 원래 규칙 그대로다. 여기서 임의로 좁히면 재무
+      담당자가 빈 화면을 본다.) */
+  console.warn('[Firebase] 서버 명단을 못 받았다(' + why + ') — 굳은 명단 '
+    + keys.length + '개로 열쇠별 받기 (통째 받기 안 함)');
+  return { mode:'perKey', keys: keys, fin: undefined, why: why, fallback: true };
+}
+
 function _bootKeyPlan(){
   try {
+    /* ★ 통째로 가는 «단 하나» 의 길 — 사람이 일부러 켠 스위치다.
+       (콘솔: localStorage.setItem('pureun_v6_boot_full','1')) */
     if(localStorage.getItem('pureun_v6_boot_full') === '1') return Promise.resolve({ mode:'full', why:'스위치' });
   } catch(_){}
   var u = (typeof firebase !== 'undefined' && firebase.auth) ? firebase.auth().currentUser : null;
-  if(!u || !u.uid) return Promise.resolve({ mode:'full', why:'인증 전' });
+  if(!u || !u.uid) return Promise.resolve(_fbFallbackPlan('인증 전'));
   var work = Promise.all([
     fbDb.ref('uid_roles/' + u.uid + '/fin').once('value').then(function(s){ return s.val(); }),
     u.getIdToken().then(function(tok){
@@ -8162,14 +8205,14 @@ function _bootKeyPlan(){
     })
   ]).then(function(r){
     var fin = r[0], shallow = r[1];
-    if(!shallow || typeof shallow !== 'object') return { mode:'full', why:'명단 없음' };
+    if(!shallow || typeof shallow !== 'object') return _fbFallbackPlan('명단 없음');
     var keys = Object.keys(shallow).filter(fbShouldSync);           // 올리지 않는 것은 받지도 않는다
     keys = keys.filter(function(k){ return FB_COLD_KEYS.indexOf(k) < 0; });
     if(fin === false) keys = keys.filter(function(k){ return FB_FIN_GATED.indexOf(k) < 0; });
     return { mode:'perKey', keys: keys, fin: fin };
   });
-  var timeout = new Promise(function(res){ setTimeout(function(){ res({ mode:'full', why:'계획 지연' }); }, _BOOT_PLAN_TIMEOUT_MS); });
-  return Promise.race([work, timeout]).catch(function(){ return { mode:'full', why:'계획 실패' }; });
+  var timeout = new Promise(function(res){ setTimeout(function(){ res(_fbFallbackPlan('계획 지연')); }, _BOOT_PLAN_TIMEOUT_MS); });
+  return Promise.race([work, timeout]).catch(function(){ return _fbFallbackPlan('계획 실패'); });
 }
 /* 주입 가능한 fetch — 검사에서 가짜로 갈아끼운다.
    ⚠ fetchT(시간제한 래퍼)를 거친다 — 이 저장소 규칙: 바깥으로 나가는 부름에
@@ -8693,7 +8736,11 @@ function fbSetupListener(){
      구독이 이미 실시간 반영까지 맡고 있다 — 그 위에 data 통째 구독(child_added)을
      또 붙이면 서버가 **모든 키를 한 번 더 보낸다**(주석에 "no-op" 이라 적혀 있던
      그 발화가 CPU 만 공짜였지 내려받기는 통째 한 벌이었다. 켤 때마다 2.83MB×2). */
-  if(window._fbPerKeyMode) return;
+  /* ★ 통째 구독은 **통째로 받기로 한 길에서만** 붙인다 (대표 지시 2026-08-29).
+     예전에는 「열쇠별 모드가 아니면 붙인다」였다 — 계획이 실패해 통째로 새던
+     길 넷이 그대로 여기로 이어져, 받은 2.83MB 를 한 번 더 받았다(합 5.7MB).
+     이제 자동 경로는 전부 열쇠별이라 여기는 스위치를 켠 사람에게만 열린다. */
+  if(window._fbBootMode !== 'full') return;
 
   fbDb.ref('data').on('child_changed', function(snap){
     _applyRemote(snap.key, snap.val());

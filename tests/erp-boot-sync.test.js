@@ -31,6 +31,10 @@ function sliceBetween(startMark, endMark, name) {
 /* ── 떠 올 조각들 ── */
 const SRC_EXCLUDE = sliceBetween('var FB_EXCLUDE = [', 'var FB_FIN_KEYS', 'FB_EXCLUDE/fbShouldSync');
 const SRC_CONSTS  = sliceBetween('var FB_FIN_KEYS = [', '// ── [보안규칙 대비] 전체 동기화 키', '가르기 상수');
+/* 되돌아갈 자리가 굳은 명단(FB_ALL_SYNC_KEYS)을 쓰므로 그것도 함께 넣는다
+   (2026-08-29 「통째로 받기 없애줘」). 없으면 폴백이 ReferenceError 로 죽는데,
+   그건 «검사가 못 돌아서» 지 코드가 틀려서가 아니다 — 헷갈리기 쉬운 자리다. */
+const SRC_ALLKEYS = sliceBetween('var FB_ALL_SYNC_KEYS = [', '];', '전체 동기화 키') + '];';
 const SRC_BOOT    = sliceBetween('/* ── 초기 동기화 갈림길', 'function _fbInitialSyncFull(', '부팅 갈림길');
 
 /* 실측 서버 열쇠 명단(2026-08-16, data shallow) — 표류 검증용 고정값(일부) */
@@ -152,7 +156,7 @@ function makeEnv(opts) {
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  new vm.Script(SRC_EXCLUDE + '\n' + SRC_CONSTS + '\n' + SRC_BOOT, { filename: 'boot-sync.js' })
+  new vm.Script(SRC_EXCLUDE + '\n' + SRC_CONSTS + '\n' + SRC_ALLKEYS + '\n' + SRC_BOOT, { filename: 'boot-sync.js' })
     .runInContext(sandbox);
   return {
     sandbox, reads, applied, uListeners, liveListeners, recListeners,
@@ -196,13 +200,37 @@ test('★ 권한을 모르면(fin=undefined) 전부 받는다 — 명시적 fals
     '★ 권한이 불명확한데 가르면 재무 담당자가 빈 화면을 봅니다');
 });
 
-test('★ 권한·명단 조회가 실패하면 통째 읽기로 간다 (fail-open)', async () => {
-  const a = makeEnv({ rolesReject: true });
-  await a.sync();
-  assert.equal(a.fullCalls(), 1, '★ 조회 실패인데 가르기를 강행하면 무엇이 빠졌는지 아무도 모릅니다');
-  const b = makeEnv({ fin: true, shallowFail: true });
-  await b.sync();
-  assert.equal(b.fullCalls(), 1);
+/* ⚠ 예전에는 「조회가 실패하면 **통째 읽기**로 간다」였다(fail-open).
+   그 길이 넷이었고(인증 전·명단 없음·계획 지연·계획 실패), 한 번 걸릴 때마다
+   5.7MB 였다. 대표 지시 2026-08-29 「통째로 받기 없애줘」로 되돌아갈 자리를
+   **굳은 명단 열쇠별 받기**로 바꿨다 — 여전히 fail-open 이지만 통째가 아니다.
+   ★ 지키는 것은 「실패해도 화면이 안 빈다」와 「그래도 통째로는 안 받는다」 둘이다. */
+test('★ 조회가 실패해도 화면이 안 빈다 — 다만 통째로는 «안» 받는다', async () => {
+  for (const opts of [{ rolesReject: true }, { fin: true, shallowFail: true }]) {
+    const env = makeEnv(opts);
+    const plan = await env.plan();
+    assert.equal(plan.mode, 'perKey',
+      '★ 되돌아갈 자리가 아직 통째 읽기입니다 — 한 번에 5.7MB 입니다: ' + JSON.stringify(opts));
+    assert.ok(plan.fallback, '되돌아온 길이라는 표시가 없습니다 — 로그에서 구분이 안 됩니다');
+    /* 빈 화면이 되면 안 된다 — 업무 표도 재무 표도 명단에 들어 있어야 한다.
+       (재무 권한을 «못 읽은» 것이므로 임의로 좁히지 않는다. 규칙이 막는다.) */
+    assert.ok(plan.keys.indexOf('companies') >= 0, '★ 업무 표가 빠져 화면이 빕니다');
+    assert.ok(plan.keys.indexOf('finance_income') >= 0,
+      '★ 권한을 못 읽었는데 재무를 뺐습니다 — 재무 담당자가 빈 화면을 봅니다');
+    await env.sync();
+    assert.equal(env.fullCalls(), 0, '★ 되돌아온 길에서 통째 읽기를 불렀습니다: ' + JSON.stringify(opts));
+  }
+});
+
+test('★ 자동으로 도는 길에는 통째 읽기가 «하나도» 없다', async () => {
+  /* 사람이 켠 스위치 말고, 저절로 통째로 가는 길이 남아 있으면 안 된다. */
+  for (const opts of [{}, { fin: true }, { fin: false }, { rolesReject: true },
+                      { fin: true, shallowFail: true }]) {
+    const env = makeEnv(opts);
+    await env.sync();
+    assert.equal(env.fullCalls(), 0,
+      '★ 자동 경로에서 통째로 받았습니다: ' + JSON.stringify(opts));
+  }
 });
 
 test('되돌림 스위치를 켜면 무조건 통째 읽기다', async () => {
@@ -373,7 +401,11 @@ test('★ erpEnsureKeys 는 감시를 안 거치고 곧바로 본문 구독이�
 
 /* ══════ ③ 전역 구독 — 이중 다운로드의 두 번째 절반 (1차 그대로) ══════ */
 
-function loadSetupListener(perKey) {
+/* mode: 'perKey' | 'full' | (그 밖 — 계획이 서지 않은 상태)
+   ⚠ 2026-08-29 부터 통째 구독은 «양성 조건» 이다 — _fbBootMode 가 'full' 일 때만
+     붙는다. 예전처럼 「열쇠별이 아니면 붙인다」로 두면, 중간에 실패해 어느 쪽도
+     아닌 상태가 통째 구독을 되살린다. 그래서 세 번째 경우도 함께 잰다. */
+function loadSetupListener(mode) {
   const src = sliceBetween('function fbSetupListener(){', '\n// 페이지 로드 시 자동 실행', 'fbSetupListener');
   const onCalls = [];
   const sandbox = {
@@ -383,7 +415,7 @@ function loadSetupListener(perKey) {
     FB_ALL_SYNC_KEYS: ['companies'],
     fbDb: { ref(p) { return { on(ev) { onCalls.push(p + ':' + ev); }, off() {} }; } },
     _fbApplyRecord() { return true; },
-    window: { _fbPerKeyMode: !!perKey },
+    window: { _fbBootMode: mode, _fbPerKeyMode: mode === 'perKey' },
     erpAlert: null
   };
   sandbox.globalThis = sandbox;
@@ -393,7 +425,7 @@ function loadSetupListener(perKey) {
 }
 
 test('★ 열쇠별 모드에서는 data 통째 구독을 안 붙인다 — 붙이면 전부를 한 번 더 받는다', () => {
-  assert.deepEqual(loadSetupListener(true), [],
+  assert.deepEqual(loadSetupListener('perKey'), [],
     '★ 열쇠별 구독 위에 통째 구독을 또 붙이면 서버가 모든 키를 다시 보냅니다(2.83MB)');
 });
 
@@ -405,16 +437,26 @@ test('★ 통째 모드에서도 child_added 를 안 붙인다 — 그것이 마
      내려받기는 한 벌 그대로였다. 켤 때마다 약 2.8MB.
      ⚠ 고침이 값을 실제로 아끼는지는 «무엇을 구독하는가»로만 확인할 수 있다 —
        화면은 둘 다 똑같이 도므로 눈으로는 못 가린다. */
-  assert.deepEqual(loadSetupListener(false).sort(), ['data:child_changed'],
+  assert.deepEqual(loadSetupListener('full').sort(), ['data:child_changed'],
     '★ child_added 를 붙이면 켤 때마다 있는 키를 통째로 한 벌 더 받습니다.');
+});
+
+test('★ 계획이 서지 않은 상태에서는 통째 구독을 «안» 붙인다 (대표 지시 2026-08-29)', () => {
+  /* 예전 조건은 「열쇠별이 아니면 붙인다」였다. 그래서 계획이 실패해 어느 쪽도
+     아닌 상태가 곧바로 통째 구독이 됐다 — 요금이 새던 길이 여기로 이어졌다.
+     이제는 «통째로 받기로 한 길» 에서만 붙는다. */
+  assert.deepEqual(loadSetupListener(undefined), [],
+    '★ 어느 길인지 모르는데 통째 구독을 붙였습니다 — 서버가 모든 키를 보냅니다.');
+  assert.deepEqual(loadSetupListener('알 수 없음'), [],
+    '★ 모르는 값이 통째 구독으로 새어 들어갑니다.');
 });
 
 test('★ 두 모드가 같은 것을 구독한다 — 한쪽만 다르면 그쪽에서만 요금이 샌다', () => {
   /* 열쇠별 = 아무것도 안 붙임(초기 동기화가 이미 실시간까지 맡는다)
      통째   = child_changed 하나(고침만 받는다)
      둘 다 **있는 키를 다시 받지 않는다**는 점이 같다. */
-  const perKey = loadSetupListener(true);
-  const full = loadSetupListener(false);
+  const perKey = loadSetupListener('perKey');
+  const full = loadSetupListener('full');
   assert.ok(perKey.indexOf('data:child_added') < 0 && full.indexOf('data:child_added') < 0,
     '어느 한쪽에라도 child_added 가 남으면 그 길로 들어온 사람은 두 배로 받습니다.');
 });
