@@ -25,6 +25,17 @@
 `tests/test-pin-guard.test.js` 가 이 규칙을 기계로 지킨다 —
 새로 박아 두면 그 자리에서 걸리고, 어떻게 고칠지도 함께 알려 준다.
 
+## 파이어베이스 보안규칙은 «채팅에» 올린다 (대표 지시 2026-08-29)
+
+규칙을 고쳤으면 **파일 첨부로 끝내지 말고 채팅 본문에 전문을 코드블록으로 올린다.**
+대표가 콘솔에 붙여넣는 것이 마지막 한 걸음인데, 파일을 내려받아 여는 단계가
+그 사이에 끼면 「나중에」가 된다 — 그러면 고친 규칙이 영영 안 올라간다.
+
+- 만들 때: `node scripts/make-firebase-rules.js > docs/firebase-rules-전체-적용본.json`
+- 고칠 곳은 **만들개**(`scripts/make-firebase-rules.js`)다. JSON을 손으로 고치면
+  다음에 만들 때 조용히 사라진다 (`tests/firebase-rules-apply.test.js` 가 막는다).
+- 채팅에 올릴 때는 **무엇이 바뀌었는지 먼저 한 줄**, 그다음 전문.
+
 ## MCP Skills
 
 ### korean-law-mcp
