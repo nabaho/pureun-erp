@@ -61,7 +61,11 @@ function run(box, code) { vm.runInContext(code, box); }
 function condLabel() {
   const at = SRC.indexOf('const COND_LABEL');
   assert.ok(at >= 0, 'COND_LABEL 을 찾지 못했다');
-  return SRC.slice(at, SRC.indexOf('\n', at)).replace(/^const /, 'var ');
+  /* ⚠ 「한 줄」로 자르지 않는다. 조건이 늘면서 두 줄이 되자, 둘째 줄에 적힌 조건이
+     검사 눈에 «없는 것»이 되어 애먼 자리에서 실패했다(2026-08-29). 선언의 끝(};)까지 읽는다. */
+  const end = SRC.indexOf('};', at);
+  assert.ok(end > at, 'COND_LABEL 의 끝(};)을 찾지 못했다');
+  return SRC.slice(at, end + 2).replace(/^const /, 'var ');
 }
 
 /* ── ① 조건 모두 풀기가 «둘 다» 푼다 ───────────────────────────────── */
@@ -74,16 +78,19 @@ test('showAllInFolder 가 퇴사자·계약종료도 푼다', () => {
   assert.equal(box.state.onlyIncomplete, false);
 });
 
-/* ── ② 단추는 상태만 뒤집는다 — 칠하기는 render 가 한다 ──────────── */
-test('도구 단추가 classList 를 직접 만지지 않는다', () => {
+/* ── ② 도구줄에 거르개 단추가 «없다» (대표 지시 2026-08-29) ──────────
+   "명함 사업자에 캡쳐내용 모두 빼라 이부분은 검색할 필요 없다.
+    폴더로 분류하거나 탭으로 분류하면 된다."
+   조건 자체는 살아 있다(저장한 탭이 쥐고 있다). 단추만 없앤 것이다.
+   ⚠ 조건을 «켜는» 단추를 다시 만들 때는 classList 를 직접 만지지 말고 toggleCond 를
+     쓸 것 — 그것이 2026-08-29 오전에 겉모습과 상태가 어긋났던 까닭이다. 그 규칙은
+     아래 toggleCond 검사가 그대로 지킨다. */
+test('★ 도구줄에 거르개 단추가 다시 생기지 않았다', () => {
   const head = SRC.slice(SRC.indexOf('id="pcTools"'), SRC.indexOf('id="pcMgrFilter"'));
-  ['leftBtn', 'closedBtn'].forEach(id => {
-    const at = head.indexOf('id="' + id + '"');
-    assert.ok(at >= 0, id + ' 단추가 없다');
-    const line = head.slice(at, head.indexOf('</button>', at));
-    assert.ok(!/classList/.test(line),
-      id + ' 이 classList 를 직접 만진다 — 상태와 겉모습이 어긋난다');
-    assert.ok(/toggleCond\(/.test(line), id + ' 이 toggleCond 를 안 쓴다');
+  ['incompleteBtn', 'leftBtn', 'closedBtn', 'privateBtn'].forEach(id => {
+    assert.ok(head.indexOf('id="' + id + '"') < 0,
+      '★ ' + id + ' 이 도구줄에 다시 생겼다 — 대표 지시로 뺀 것이다 '
+      + '(분류는 폴더와 탭으로 한다)');
   });
 });
 
@@ -105,19 +112,25 @@ test('clearCond 는 «푸는 쪽»만 한다 — 다시 눌러 켜지면 안 된
   assert.equal(box.state.onlyClosed, false, '✕ 가 조건을 «켰다»');
 });
 
-/* ── ③ render 가 단추를 상태대로 다시 칠한다 ──────────────────────── */
-test('paintCondBtns 가 상태 그대로 칠한다', () => {
-  const box = ctx({ onlyLeft: true, onlyClosed: false });
-  run(box, fn('paintCondBtns'));
-  run(box, 'paintCondBtns()');
-  assert.equal(box.painted.leftBtn, true, '켜진 조건인데 단추가 꺼져 보인다');
-  assert.equal(box.painted.closedBtn, false, '안 켠 조건인데 단추가 켜져 보인다');
-});
-
-test('표를 그릴 때마다 paintCondBtns 를 부른다', () => {
-  const r = fn('renderPCTable');
-  assert.ok(/paintCondBtns\(\)/.test(r),
-    '단추를 다시 안 칠한다 — 저장된 탭으로 돌아오면 겉모습이 거짓말을 한다');
+/* ── ③ 걸 수 있는 조건은 «하나도 빠짐없이» 딱지에 있다 ─────────────
+   단추가 있을 때는 「켜진 단추」가 표시 노릇을 했다. 단추를 뺀 뒤로는 이 딱지가
+   «유일한» 표시다 — 여기 빠진 조건은 화면을 조용히 걸러 놓고 아무 말도 안 한다.
+   그것이 2026-08-29 오전의 「0건에서 못 빠져나온다」였다.
+   ★ 「조건 모두 풀기」(showAllInFolder)가 푸는 것을 «걸 수 있는 조건»의 목록으로 삼는다 —
+     사람이 두 곳을 따로 적다 어긋나는 것을 막으려고, 한쪽에서 읽어 다른 쪽을 견준다. */
+test('★ showAllInFolder 가 푸는 조건이 모두 딱지에 있다', () => {
+  const clears = [...fn('showAllInFolder').matchAll(/state\.(only[A-Za-z]+)\s*=\s*false/g)]
+    .map(m => m[1]);
+  assert.ok(clears.length >= 4, '푸는 조건을 못 찾았다 (' + clears.length + '개)');
+  const labels = condLabel();
+  /* onlyPhone·onlyEmail·onlyDup 은 도구줄에 단추가 없던 «옛 폰 전용» 거르개다.
+     지금 화면에서 걸 길이 없으므로 딱지를 안 요구한다 — 걸 길이 생기면 그때 넣는다. */
+  const 폰전용 = ['onlyPhone', 'onlyEmail', 'onlyDup'];
+  clears.filter(k => !폰전용.includes(k)).forEach(k => {
+    assert.ok(labels.includes(k + ':'),
+      '★ ' + k + ' 은(는) 걸 수 있는데 딱지(COND_LABEL)에 없다 — '
+      + '걸려도 아무 말이 없고, 왜 몇 건만 나오는지 알 길이 없다');
+  });
 });
 
 /* ── ④ 조건 띠 — 걸린 것을 «글로» 보여 주고 ✕ 로 푼다 ───────────── */
