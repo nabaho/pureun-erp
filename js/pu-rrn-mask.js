@@ -65,12 +65,56 @@
     var canvas = make(w, h);
     var ctx = canvas.getContext('2d');
     ctx.drawImage(img, 0, 0, w, h);
+    var style = opts.style || 'black';
     ctx.fillStyle = '#000';
     (boxes || []).forEach(function (b) {
       var p = toPixels(b, w, h);
-      if (p.w > 0 && p.h > 0) ctx.fillRect(p.x, p.y, p.w, p.h);
+      if (p.w <= 0 || p.h <= 0) return;
+      if (style === 'mosaic') { mosaic(ctx, canvas, make, p); return; }
+      if (style === 'blur') { blurBox(ctx, canvas, make, p); return; }
+      ctx.fillRect(p.x, p.y, p.w, p.h);
     });
     return canvas.toDataURL('image/jpeg', opts.quality || 0.92);
+  }
+
+  /* ── 모자이크 (대표 지시 2026-08-29 「사진 편집 — 특정 부분 없어지게」) ──
+     그 자리만 아주 작게 줄였다가 **매끄럽게 늘리지 않고** 도로 키운다 — 그러면
+     네모 알갱이가 된다.
+     ⚠ 글자를 지우는 데 쓰면 **까맣게 칠하는 것보다 약하다.** 알갱이가 굵어야 안 읽힌다 —
+       그래서 조각을 «긴 변의 1/10» 로 줄인다(최소 1픽셀).
+     ⚠ 개인정보를 지우는 목적이면 까맣게 칠하는 편이 확실하다. 모자이크는 「사람 얼굴처럼
+       무엇이 있었는지는 남기되 알아볼 수 없게」 할 때 쓴다. */
+  function mosaic(ctx, canvas, make, p) {
+    var n = Math.max(1, Math.round(Math.max(p.w, p.h) / 10));
+    var sw = Math.max(1, Math.round(p.w / n));
+    var sh = Math.max(1, Math.round(p.h / n));
+    var tmp = make(sw, sh);
+    var t = tmp.getContext('2d');
+    t.imageSmoothingEnabled = false;
+    t.drawImage(canvas, p.x, p.y, p.w, p.h, 0, 0, sw, sh);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(tmp, 0, 0, sw, sh, p.x, p.y, p.w, p.h);
+    ctx.restore();
+  }
+
+  /* ── 흐리게 ──
+     ⚠ 캔버스 filter 는 그리는 «전체»에 걸린다. 그래서 그 자리만 딴 캔버스에 떠서
+       흐리게 그린 뒤 도로 붙인다 — 안 그러면 사진 전체가 흐려진다.
+     ⚠ filter 를 못 쓰는 브라우저(오래된 것·일부 웹뷰)에서는 조용히 넘어가면
+       **안 가려진 채로 저장된다.** 그때는 모자이크로 떨어뜨린다. */
+  function blurBox(ctx, canvas, make, p) {
+    var r = Math.max(2, Math.round(Math.max(p.w, p.h) / 12));
+    var tmp = make(p.w, p.h);
+    var t = tmp.getContext('2d');
+    if (typeof t.filter !== 'string') { mosaic(ctx, canvas, make, p); return; }
+    t.filter = 'blur(' + r + 'px)';
+    if (t.filter.indexOf('blur') < 0) { mosaic(ctx, canvas, make, p); return; }
+    /* 가장자리가 투명과 섞여 옅어지지 않게, 조각보다 넓게 떠서 그린다 */
+    var pad = r * 2;
+    t.drawImage(canvas, p.x - pad, p.y - pad, p.w + pad * 2, p.h + pad * 2,
+      -pad, -pad, p.w + pad * 2, p.h + pad * 2);
+    ctx.drawImage(tmp, 0, 0, p.w, p.h, p.x, p.y, p.w, p.h);
   }
 
   /* ── 주민번호 꼴 (2차, 대표 지시 2026-08-15) ──
