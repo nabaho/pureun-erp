@@ -238,10 +238,38 @@ test('★ 이름을 몰라도 «가는 길»은 남긴다 — 빼면 그 사람 
   assert.equal(ctx.sharedPeople()[0].name, 'U9');
 });
 
-test('★ 한 사람에게만 받았으면 칩을 안 그린다 — 위 단추와 같은 말이라 자리만 먹는다', () => {
+/* ⚠ 2026-08-29 대표 지시로 **칩 → 고르개**가 되었다
+   ("공유받은거 드롭다운 방식으로 이름 선택하게").
+   칩일 때는 다섯 사람이 **세 줄**을 먹어 왼쪽 칸이 밀렸다
+   (대표 화면: 김보람 154 · 김동현 80 · 박은비 19 · 주민정 4 · 신욱임 3).
+   그리고 칩은 «둘 이상»에서만 나와, 한 사람에게만 받으면 이름이 어디에도 없었다 —
+   고르개는 **한 사람이어도** 그린다. */
+test('★★ 준 사람을 «고르개»로 고른다 — 사람이 열이 되어도 한 줄이다', () => {
   const fn = cutFn(app, 'function renderGotCard(');
-  assert.match(fn, /if \(list\.length < 2\) \{ who\.style\.display = 'none'/,
-    '★ 한 사람뿐인데 칩을 그리면 같은 말이 두 번입니다');
+  assert.match(fn, /<select onchange="pickSharedWho\(this\.value, true\)">/,
+    '★ 칩으로 되돌리면 사람이 늘 때마다 왼쪽 칸이 밀립니다');
+  assert.match(fn, /if \(!list\.length\) \{ who\.style\.display = 'none'/,
+    '★ 한 사람뿐이어도 그려야 이름이 보입니다(0명일 때만 접습니다)');
+  assert.match(fn, /준 사람 — 전체 /, '★ 전체로 돌아갈 줄이 없으면 그 사람 것에 갇힙니다');
+});
+
+test('★★ 고르개에서 고르면 «고른 그대로» 따른다 — 다시 눌러 풀리면 화면과 어긋난다', () => {
+  const ctx = {
+    selected: { clear: function () {} },
+    resetGridRenderLimit: function () {}, renderGrid: function () {},
+    renderNeedBox: function () {}, renderOldBox: function () {},
+    sharedWho: 'U2', sharedOnly: true, needOnly: false, failOnly: false, oldOnly: false
+  };
+  vm.createContext(ctx);
+  vm.runInContext(cutFn(app, 'function pickSharedWho('), ctx);
+  /* 이미 고른 사람을 고르개에서 «다시» 골랐다 — 칩이라면 풀렸겠지만 고르개는 그대로다 */
+  ctx.pickSharedWho('U2', true);
+  assert.equal(ctx.sharedWho, 'U2',
+    '★ 고르개에는 「김보람」이 떠 있는데 화면은 전체가 되면, 무엇을 보는지 어긋납니다');
+  /* 「준 사람 — 전체」를 고르면 푼다 */
+  ctx.pickSharedWho('', true);
+  assert.equal(ctx.sharedWho, '', '★ 전체로 돌아갈 길이 없으면 갇힙니다');
+  assert.equal(ctx.sharedOnly, true, '받은 것 보기는 그대로 — 사람만 푼 것이다');
 });
 
 /* ══════ ③-3 「누구 사진」 고르개에 «준 사람 이름» (대표 지시 2026-08-29) ══════
