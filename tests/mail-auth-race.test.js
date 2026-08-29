@@ -176,3 +176,35 @@ test('로그인 뒤에는 예전처럼 읽는다 — 문이 잠기기만 하면 
   const f = c.__folders();
   assert.ok(f && f.B1, '로그인했는데도 못 읽습니다');
 });
+
+/* ══════ ④ 로그인 «뒤가 늦다» — 기다리는 줄을 없앤다 (대표 보고 2026-08-29) ══════
+   "로그인 하면 속도가 늦는데 이부분 어떻게 빨리되게 할 수 없나?"
+   재 보니 메일은 기업정보함 명함(실측 2.9MB)이 다 내려온 «뒤에 줄 서» 있었고,
+   폴더가 온 «뒤에야» 분류를 가지러 갔다(왕복 하나 더). */
+
+test('★ 폴더와 분류를 «나란히» 가져온다 — 차례로 기다리면 왕복이 하나 더 든다', async () => {
+  const c = load({ user: { uid:'U1' } });
+  /* 서버가 아직 답하지 않은 상태를 만든다 — 무엇을 «먼저 물었는지»만 본다 */
+  c.firebase.database = () => ({ ref: (p) => ({
+    once(){ c._held.reads.push(p); return new Promise(()=>{}); },
+    orderByKey(){ return this; }, limitToLast(){ return this; }
+  }) });
+  c.openMailBox('');
+  await settle();
+  const asked = c._held.reads.join(' ');
+  assert.ok(asked.indexOf('mailbox/folders') >= 0, '폴더를 안 물었습니다');
+  assert.ok(asked.indexOf('config/mailBins') >= 0,
+    '분류를 폴더가 «다 온 뒤에야» 물으러 갑니다 — 같은 시간에 물어야 한 왕복이 줍니다');
+});
+
+test('★ 메일 문으로 들어오면 기업정보함(2.9MB)을 «기다리지 않고» 연다', () => {
+  /* ⚠ 이 배선은 Store.init 안(로그인 자리)에 있어 vm 으로 통째로 돌리기에는 너무 무겁다.
+       대신 «로그인 성공 가지» 안에 그 부름이 있는지를 본다 — 이 줄이 빠지면 메일은
+       다시 명함 2.9MB 뒤에 줄 선다(마지막 화면 복원은 명함 도착이 부른다). */
+  const i = src.indexOf('onAuthStateChanged');
+  const j = src.indexOf('showCardsLogin()', i);
+  assert.ok(i > 0 && j > i, '로그인 자리를 찾지 못했습니다');
+  const branch = src.slice(i, j);
+  assert.ok(/if\(urlWantsMail\(\)\)\s*restoreLastScreen\(\);/.test(branch),
+    '로그인 직후에 메일 문을 여는 줄이 없습니다 — 메일이 명함 내려받기 뒤에 줄 섭니다');
+});
