@@ -238,7 +238,10 @@ test('★ 몇 명이 퇴사로 빠졌는지 «말해 준다» — 조용히 빼�
 test('★ 목록에서 «퇴사자만» 골라 볼 수 있다 — 「어떻게 확인하나」의 답이다', () => {
   /* ⚠ 소스에 글자가 있는지만 보면 모자란다 — 지워도 아무 일 없이 통과한다
      (2026-08-29 고장넣기에서 실제로 샜다). 그래서 «걸러 보고» 확인한다. */
-  const at = src.indexOf('function listItems()');
+  /* ⚠ 인자가 아니라 «그 함수»를 찾는다. 2026-08-29 에 listItems 가 갈래를 받게 되자
+     'function listItems()' 로 찾던 검사 셋이 한꺼번에 못 찾았다 — 기능은 멀쩡했다
+     (CLAUDE.md 「지금 값이 아니라 규칙」). */
+  const at = src.indexOf('function listItems(');
   assert.ok(at > 0, 'listItems 를 찾지 못했습니다');
   const open = src.indexOf('{', at);
   let d = 0, end = -1;
