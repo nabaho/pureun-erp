@@ -1765,8 +1765,19 @@
     });
   }
 
+  /* ── 사람 명단 (대표 지시 2026-08-29 「직원끼리도 공유하게 해라」) ──
+     담긴 것은 **이름과 마지막 올린 때**뿐이다 — 사진은 여기 없다(그것이 이 칸을 따로
+     둔 까닭이다). 그래서 전 직원이 읽어도 열리는 것은 «누가 사진첩을 쓰는가»뿐이다.
+
+     ⚠ 종전에는 관리자만 읽었다. 그 바람에 **직원은 공유할 사람을 고를 수가 없었다** —
+       고르개가 비어 「고를 사람이 없습니다」만 떴다. 받는 것은 되는데 보내는 것이
+       막혀 있어서, 「직원끼리 주고받는 것이 목적」이라는 설계와 어긋나 있었다.
+     ⚠ **남의 사진이 열리는 것이 아니다.** 사진은 `u/{주인}` 이고 그 자물쇠는 그대로다 —
+       주인과 총괄관리자만 본다. 여기서 얻는 것은 이름표뿐이다.
+     ⚠ 「전체 근로자」로 훑는 길(listYearAll·listYearsAll·migrateToStorage)은 저마다
+       제 isAdmin 을 그대로 들고 있다 — 이 문을 연다고 그 길이 열리지 않는다. */
   function listOwners() {
-    if (!deps.isAdmin || !deps.db) return Promise.resolve({});
+    if (!deps.db) return Promise.resolve({});
     return deps.db.ref(DB_ROOT + '/owners').once('value')
       .then(function (s) { return s.val() || {}; });
   }
