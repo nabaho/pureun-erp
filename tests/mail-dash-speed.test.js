@@ -257,15 +257,58 @@ test('★ 빨라졌어도 «누가 그 칸에 들어가는가»는 그대로다'
      그것이 어긋남의 참된 까닭이고, 실제 픽셀은 브라우저로 따로 확인한다
      (docs/mockups/mail-dash-align.html — 이름 18px·숫자 21px 어긋남이 0 이 되는 것을 봤다). */
 
-test('★★ 담당자 줄에도 손잡이·메뉴 «자리»가 있다 — 없으면 칩을 바꿀 때 줄이 밀린다', () => {
+/* ── 두 대시보드 줄의 «부품 차례» ─────────────────────────────────────────
+   ★ 2026-08-29 대표 보고 「번갈아 클릭하면 화면 변화가 심하다」의 «진짜» 까닭이
+     여기였다. 폭은 이미 맞춰 두었는데도 이름이 뛰었다 —
+       업무 줄  : 점 → 손잡이 → 이름
+       담당자 줄 : 손잡이 → 그림 → 이름
+     순서가 반대라 폭을 아무리 맞춰도 이름 시작 자리가 다르다.
+   ⚠ 그래서 「자리가 있나」가 아니라 «차례가 같나»를 본다. 자리만 세면 오늘 고친
+     고장을 다시 넣어도 통과한다 — 실제로 그렇게 통과하고 있었다. */
+function partsOf(row) {
+  return (row.match(/class="(dot|ic|grip|nm|nu|fmenu)\b/g) || [])
+    .map(s => s.slice(7))
+    .filter(p => p !== 'nu');      /* 안 읽은 수는 «있을 때만» 붙는다 — 양쪽 다 그렇다 */
+}
+function rowsOf(c, dash, cls) {
+  c.state.mbDash = dash;
+  return c.mailSideHtml().match(
+    new RegExp('<div class="dm-f sub ' + cls + '[\\s\\S]*?</div>', 'g')) || [];
+}
+
+test('★★ 두 대시보드 줄의 «부품 차례»가 같다 — 순서가 다르면 폭을 맞춰도 이름이 뛴다', () => {
+  const c = load();
+  const who = rowsOf(c, 'who', 'whobin');
+  const topic = rowsOf(c, 'topic', 'topicbin');
+  assert.ok(who.length && topic.length, '검사 밑그림이 틀렸습니다');
+  const want = partsOf(topic[0]).join(' > ');
+  assert.equal(want, 'dot > grip > nm > fmenu',
+    '업무 줄의 부품 차례가 바뀌었습니다 — 담당자 줄도 함께 고쳐야 합니다: ' + want);
+  who.forEach((r, i) => assert.equal(partsOf(r).join(' > '), want,
+    '담당자 ' + (i + 1) + '번째 줄의 부품 차례가 업무 줄과 다릅니다 (칩을 바꾸면 이름이 뜁니다)'));
+});
+
+test('★ 담당자 줄에도 손잡이·메뉴 «자리»가 있다 — 하나라도 빠지면 그 줄만 밀린다', () => {
+  const c = load();
+  rowsOf(c, 'who', 'whobin').forEach(r => {
+    assert.match(r, /class="grip/, '이름 앞 손잡이 자리가 없습니다 (이름이 18px 밀립니다)');
+    assert.match(r, /class="fmenu/, '오른쪽 메뉴 자리가 없습니다 (숫자가 21px 밀립니다)');
+  });
+});
+
+test('★ 담당자 화면 «아래 세 줄»도 같은 자리 — 담당 모름·자문종료·이메일 잇기', () => {
+  /* 이 셋만 손잡이 자리가 없어 이름이 위 사람 줄보다 왼쪽으로 밀려 있었다.
+     ⚠ 그림(❓🚪🔗)은 그대로 둔다 — 사람이 아니라 「할 일」이라, 점으로 바꾸면
+       사람 줄과 구별이 안 된다(대표 결정 2026-08-29). 맞추는 것은 «자리»뿐이다. */
   const c = load();
   c.state.mbDash = 'who';
   const h = c.mailSideHtml();
-  const who = (h.match(/<div class="dm-f sub whobin[\s\S]*?<\/div>/g) || []);
-  assert.ok(who.length, '담당자 줄이 없습니다 — 검사 밑그림이 틀렸습니다');
-  who.forEach(r => {
-    assert.ok(/class="grip ghost"/.test(r), '이름 앞 손잡이 자리가 없습니다 (이름이 18px 밀립니다)');
-    assert.ok(/class="fmenu ghost"/.test(r), '오른쪽 메뉴 자리가 없습니다 (숫자가 21px 밀립니다)');
+  ['담당 모름', '자문종료', '자문사 이메일 잇기'].forEach(name => {
+    const i = h.indexOf('>' + name + '<');
+    assert.ok(i > 0, name + ' 줄이 없습니다');
+    const row = h.slice(h.lastIndexOf('<div class="dm-f', i), i);
+    assert.match(row, /class="grip ghost"/,
+      name + ' 줄에 손잡이 자리가 없습니다 — 이름이 왼쪽으로 밀립니다');
   });
 });
 
@@ -291,17 +334,24 @@ test('★ 숫자 칸이 두 대시보드 모두 «하나»다 — 칸 수가 다
   topic.forEach(r => assert.ok(!/class="n">/.test(r), '업무 칸에 전체 통수가 돌아왔습니다'));
 });
 
-test('★ 아이콘이 «같은 상자·같은 굵기»다 — 이모지는 PC 마다 다르게 그려진다', () => {
+test('★ 두 대시보드가 «같은 점»을 쓴다 — 모양이 다르면 여전히 두 화면이다', () => {
+  /* 대표 지시 2026-08-29 「사람이름에 아이콘은 지우고 업무별과 같이 점으로」.
+     8/29 낮에는 «같은 크기의 다른 그림»(사람 / 점)이었다 — 크기를 맞춰도
+     칩을 옮길 때마다 눈이 새 모양을 다시 읽어야 했다.
+     ⚠ 사람 그림을 되살리면 여기서 걸린다. */
   const c = load();
-  assert.ok(/<svg/.test(c.mbWhoIcoSvg()) && /<svg/.test(c.mbTopicIcoSvg()),
-    '아이콘을 글자로 그렸습니다');
-  const sizeOf = h => (h.match(/width="(\d+)" height="(\d+)"/) || []).slice(1).join("x");
-  assert.equal(sizeOf(c.mbWhoIcoSvg()), sizeOf(c.mbTopicIcoSvg()),
-    '두 아이콘의 크기가 다릅니다 — 칩을 바꿀 때마다 눈이 자리를 다시 찾습니다');
-  assert.notEqual(c.mbWhoIcoSvg(), c.mbTopicIcoSvg(),
-    '두 아이콘이 똑같습니다 — 사람과 칸이 안 갈립니다');
-  /* 이모지 담당자 아이콘이 남아 있으면 안 된다 */
-  c.state.mbDash = 'who';
-  const who = (c.mailSideHtml().match(/<div class="dm-f sub whobin[\s\S]*?<\/div>/g) || []);
-  who.forEach(r => assert.ok(r.indexOf('\u{1F464}') < 0, '담당자 줄에 이모지가 남아 있습니다'));
+  assert.match(c.mbTopicIcoSvg(), /<svg/, '아이콘을 글자로 그렸습니다');
+  assert.equal(typeof c.mbWhoIcoSvg, 'undefined',
+    '사람 그림(mbWhoIcoSvg)이 되살아났습니다 — 담당자 줄도 업무 칸과 같은 점이어야 합니다');
+  const c2 = load();
+  const icoOf = (dash, cls) => {
+    const r = rowsOf(c2, dash, cls)[0] || '';
+    return (r.match(/<svg[\s\S]*?<\/svg>/) || [''])[0];
+  };
+  const w = icoOf('who', 'whobin'), t = icoOf('topic', 'topicbin');
+  assert.ok(w && t, '어느 한쪽에 그림이 없습니다');
+  assert.equal(w, t, '두 대시보드의 그림이 다릅니다 — 칩을 바꿀 때마다 딴 화면으로 보입니다');
+  /* 이모지가 남아 있으면 안 된다 — PC 마다 다르게 그려진다 */
+  rowsOf(c2, 'who', 'whobin').forEach(r =>
+    assert.ok(r.indexOf('\u{1F464}') < 0, '담당자 줄에 이모지가 남아 있습니다'));
 });
