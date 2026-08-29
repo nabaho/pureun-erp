@@ -46,3 +46,10 @@ test('조각 함수를 내보낸다 — 칸 지도가 같은 자를 쓴다(따�
   assert.equal(F.splitCells(F.splitRows(t)[0]).length, 2);
   assert.equal(F.normLabel('성 명 *'), '성명');
 });
+
+test('밑줄은 «값 자리»라 삼켜서 바꾼다 — 남기면 「041-556-0035_______」처럼 줄이 넘친다', () => {
+  const r = F.autoFill(tbl([['전화번호', '자택:_________  직장:_________']]), { fields: WHO });
+  const txt = (r.xml.match(/<hp:t[^>]*>([\s\S]*?)<\/hp:t>/g) || [])
+    .map((x) => x.replace(/<[^>]*>/g, '')).join(' ');
+  assert.doesNotMatch(txt, /041-556-0035_/, '값 뒤에 밑줄이 남으면 안 됩니다');
+});

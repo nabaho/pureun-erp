@@ -636,8 +636,9 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
 <script src="js/pu-backup.js?v=1"></script>
 <script src="js/kcareer-scan.js?v=1"></script>
 <script src="js/kcareer-pusync.js?v=1"></script>
-<script src="js/kcareer-hwpxfill.js?v=4"></script>
+<script src="js/kcareer-hwpxfill.js?v=5"></script>
 <script src="js/kcareer-formmap.js?v=2"></script>
+<script src="js/kcareer-hwpstamp.js?v=2"></script>
 <!-- AI 판독 호출기 — 열쇠는 회사 서버가 든다(브라우저는 모른다) -->
 <script src="js/pu-ai-call.js?v=2"></script>
   <!-- 프로그램 사이 이동 (공용 앱바) -->
@@ -797,6 +798,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
               <div class="rc-h" style="margin:0">편집</div>
               <div class="rc-actions">
                 <button class="btn primary" onclick="rhAutoFillDoc()" title="프로필·경력에서 성명·연락처·학력·경력을 끌어와 양식 칸에 넣습니다">✨ 내 정보로 채우기</button>
+                <button class="btn" style="border-color:#D9B9B9;color:var(--red)" onclick="rhStampDoc()" title="★기본 도장을 「(인)」 자리에 찍습니다 — 글자를 다 확인한 뒤 마지막에">🖋 도장 찍기</button>
                 <button class="btn" onclick="rhOpenBigPopup()" id="rhBigBtn" title="올린 한글 서식을 큰 창으로 — 실제 A4 쪽 그대로 보입니다">🔍 큰 창으로 보기</button>
                 <button class="btn" onclick="rhToggleWide()" id="rhWideBtn" title="편집 화면을 넓게 — 아래가 잘려 안 보일 때">⛶ 넓게 보기</button>
                 <button class="btn" id="rcSaveBtn">💾 완성본 생성</button>
@@ -6431,6 +6433,59 @@ function rhMemoryLoad(fp){
   if(!m) return null;
   toast('전에 정한 대로 채울 곳을 맞춰 두었습니다 — 확인만 하시면 됩니다');
   return Object.assign({}, m.picks||{});
+}
+
+/* ── 도장 찍기 ──
+   글자 채우기와 «따로» 둔다 — 도장을 안 찍는 서류가 있고,
+   내용을 다 확인한 뒤 마지막에 날인하는 것이 순서다(대표 결정 2026-08-29).
+   ⚠ 자리를 못 찾으면 «찍지 않는다». 잘못 날인한 서류는 되돌릴 수 없다. */
+async function rhStampDoc(){
+  if(!_rhDoc||!_rhDoc.bytes){ toast('먼저 서식을 올려주세요'); return; }
+  if(!window.KcareerHwpStamp){ toast('도장 모듈을 못 불러왔습니다'); return; }
+  var st=(typeof getDefaultStamp==='function')?getDefaultStamp():null;
+  if(!st){ toast('먼저 환경설정 › 도장(직인) 보관함에 도장을 올려주세요'); return; }
+  var f=await getFileAsync(st.id);
+  if(!f||!f.base64){ toast('도장 그림을 찾을 수 없습니다'); return; }
+  try{ await _ensureJSZip(); }catch(e){ toast('모듈을 못 불러왔습니다(인터넷 필요)'); return; }
+  var src=null;
+  try{ src=await _rhToHwpx(_rhDoc.bytes,_rhDoc.name); }catch(e){ src=null; }
+  if(!src){ toast('이 형식에는 도장을 찍을 수 없습니다 — 한글에서 HWPX로 저장해 올려주세요'); return; }
+
+  var png=String(f.base64).replace(/^data:[^,]*,/,'');
+  /* 그림의 «본래 크기»를 재 둔다 — 이걸 안 맞추면 도장이 잘려 조각만 그려진다 */
+  var px=await new Promise(function(res){
+    var im=new Image();
+    im.onload=function(){ res(im.naturalWidth||300); };
+    im.onerror=function(){ res(300); };
+    im.src='data:image/png;base64,'+png;
+  });
+
+  var zip=await JSZip.loadAsync(src);
+  /* ⚠ 그림 이름은 «반드시» image1·image2… — 엔진이 이름 규칙으로 찾는다.
+     뜻이 담긴 이름을 쓰면 목록에 href 를 적어 줘도 깨진 상자가 그려진다(실측). */
+  var imgId=KcareerHwpStamp.nextImageId(Object.keys(zip.files));
+  var href='BinData/'+imgId+'.png';
+  zip.file(href, png, {base64:true});
+  var hpf=await zip.file('Contents/content.hpf').async('string');
+  zip.file('Contents/content.hpf', KcareerHwpStamp.addToManifest(hpf, imgId, href));
+
+  var names=Object.keys(zip.files).filter(function(n){ return /Contents\/section\d+\.xml$/i.test(n); }).sort();
+  var done=0;
+  for(const n of names){
+    var xml=await zip.file(n).async('string');
+    var at=KcareerHwpStamp.findSpot(xml);
+    if(!at) continue;
+    var pic=KcareerHwpStamp.picXml({ id:imgId, orgPx:px, showHU:3400, offY:-700 });
+    zip.file(n, KcareerHwpStamp.insertPic(xml, pic, at));
+    done++;
+    break;   /* 도장은 한 번만 — 여러 장에 찍히면 되돌리기가 어렵다 */
+  }
+  if(!done){ toast('도장 자리(「(인)」·「(서명)」)를 못 찾았습니다 — 한글에서 직접 넣어 주세요'); return; }
+  var bytes=new Uint8Array(await zip.generateAsync({type:'arraybuffer'}));
+  _rhDoc={ name:String(_rhDoc.name).replace(/\.(hwp|hwpx)$/i,'')+'_날인.hwpx', ext:'hwpx', bytes:bytes };
+  rhDraftSave();
+  await mountEditor(bytes.buffer.slice(0), _rhDoc.name);
+  toast('🖋 도장을 찍었습니다 — 자리가 어긋나면 한글에서 옮길 수 있습니다');
 }
 
 /* 작성 중에도 30초마다 조용히 임시저장 — 「저장됨」 표시가 툴바에 남는다.

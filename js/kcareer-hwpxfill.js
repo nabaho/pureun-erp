@@ -142,10 +142,14 @@
            ⚠ L.re.source 를 (?:…) 로 감싸야 한다 — 「직장|사무실」처럼 교대가 들어 있으면
              괄호 없이는 '직장' 또는 '사무실\s*[:：]?\s*' 로 갈라져 뒤가 통째로 사라진다. */
         var ANY = INCELL_LABELS.map(function (x) { return x.re.source; }).join('|');
-        var re = new RegExp('((?:' + L.re.source + ')\\s*[:：]\\s*)'
-          + '(?=$|_{2,}|\\u3000{2,}|\\s{4,}|\\s*(?:' + ANY + ')\\s*[:：])');
+        var BLANK = '_{2,}|\\u3000{2,}|[ \\t]{4,}';
+        /* 밑줄·넓은 공백은 «값 자리»이므로 삼켜서 값으로 바꾼다(안 삼키면
+           「직장:041-556-0035_______」처럼 밑줄이 남아 줄이 넘친다).
+           삼킬 것이 없으면(끝이거나 바로 다음 라벨이면) 자리만 잡고 끼워 넣는다. */
+        var re = new RegExp('((?:' + L.re.source + ')\\s*[:：]\\s*)(' + BLANK + ')?'
+          + '(?=$|' + BLANK + '|\\s*(?:' + ANY + ')\\s*[:：])');
         if (!re.test(inner)) return m;
-        var next = inner.replace(re, function (mm, head, off, whole) {
+        var next = inner.replace(re, function (mm, head, blank, off, whole) {
           /* 뒤에 다른 라벨이 이어지면 사이를 벌린다 — 「푸른노무법인부서명」이 되지 않게 */
           var rest = whole.slice(off + mm.length);
           return head + esc(fields[L.key]) + (rest.replace(/^[\s_　]+/, '') ? '  ' : '');

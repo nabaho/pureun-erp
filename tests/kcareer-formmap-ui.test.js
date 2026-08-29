@@ -74,3 +74,24 @@ test('초록은 «실제로 채워진다»는 뜻이어야 한다 — 값이 없
   assert.match(fn.slice(0, 3000), /willFill/,
     '열쇠만 보고 초록으로 칠하면 「채운다더니 비어 있다」가 됩니다');
 });
+
+test('도장은 «누를 때만» 찍힌다 — 채우기와 한 단추로 묶지 않는다', () => {
+  assert.match(bare, /function rhStampDoc/);
+  /* 그 함수 «본문만» 본다 — 창을 넉넉히 잡으면 옆 함수까지 딸려 와 검사가 헛돈다 */
+  const at = bare.indexOf('function rhFillByMap');
+  const rest = bare.slice(at + 20);
+  const end = rest.search(/\n(async )?function /);
+  const fill = rest.slice(0, end > 0 ? end : 3000);
+  assert.doesNotMatch(fill, /rhStampDoc|KcareerHwpStamp/,
+    '채우기가 도장까지 찍으면 안 찍을 서류에도 찍힙니다');
+});
+
+test('도장 모듈을 읽어 들인다 — 캐시 번호를 붙여서', () => {
+  assert.match(source, /js\/kcareer-hwpstamp\.js\?v=\d+/);
+});
+
+test('도장 자리를 못 찾으면 찍지 않고 알린다 — 아무 데나 날인하면 되돌릴 수 없다', () => {
+  const at = bare.indexOf('function rhStampDoc');
+  const fn = bare.slice(at, at + 3000);
+  assert.match(fn, /if\(!done\)/, '자리를 못 찾았을 때의 길이 있어야 합니다');
+});
