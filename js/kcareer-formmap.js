@@ -154,6 +154,41 @@
     return tc.replace(m[0], m[1] + m[2] + ' ' + esc(value) + m[3]);
   }
 
+  /* 이 자리에 «직접 친 글자»가 있나 — 없으면 null(고른 열쇠로 간다), 있으면 {단일} 또는 {라벨별} */
+  function typedFor(id, values) {
+    if (Object.prototype.hasOwnProperty.call(values, id)) return { one: String(values[id] == null ? '' : values[id]) };
+    var byKey = null;
+    Object.keys(values).forEach(function (k) {
+      var p = String(k).split(':');
+      if (p[0] !== id || p.length < 2) return;
+      byKey = byKey || {};
+      byKey[p[1]] = String(values[k] == null ? '' : values[k]);
+    });
+    return byKey ? { parts: byKey } : null;
+  }
+
+  /* 직접 친 글자를 칸에 넣는다. 빈 글자면 «비워 둔다»(지우개로도 쓴다). */
+  function putTyped(xml, s, typed) {
+    if (typed.parts) {
+      /* 칸 안 라벨 — 라벨마다 따로 넣는다. 기존 채움 일꾼에 «그 값만» 담아 부른다 */
+      var any = Object.keys(typed.parts).some(function (k) { return typed.parts[k] !== ''; });
+      if (!any) return { ok: false, empty: true };
+      var r = eachCellAt(xml, s.tbl, s.row, s.col, function (tc) {
+        var one = X.autoFill('<hp:tbl><hp:tr>' + tc + '</hp:tr></hp:tbl>', { fields: typed.parts });
+        if (!one.changed) return null;
+        var m = one.xml.match(/<hp:tc\b[\s\S]*<\/hp:tc>/);
+        return m ? m[0] : null;
+      });
+      return { ok: r.ok, xml: r.xml, shown: Object.keys(typed.parts).join('·') };
+    }
+    var v = typed.one;
+    if (v === '') return { ok: false, empty: true };
+    var r2 = eachCellAt(xml, s.tbl, s.row, s.col, function (tc) {
+      return s.kind === '안내글뒤' ? appendAfter(tc, v) : X.fillCell(tc, v);
+    });
+    return { ok: r2.ok, xml: r2.xml, shown: v };
+  }
+
   /* ── 되돌려 넣기 ──
      화면이 만든 plan 만 보고 넣는다. 화면은 XML 을 모르고, 여기는 화면을 모른다.
      plan = { picks:{자리이름표: 열쇠}, lists:{목록이름표: 갈래}, data:{fields,edu,career} }
@@ -161,11 +196,29 @@
   function apply(sectionXml, plan) {
     plan = plan || {};
     var picks = plan.picks || {}, data = plan.data || {}, fields = data.fields || {};
+    /* 입력판에서 «직접 친 글자». 자리 이름표(t0r0c1) 또는 라벨까지 붙인 이름표(t0r0c1:phoneHome).
+       ⚠ 고른 열쇠보다 «앞선다» — 사람이 고쳐 쓴 것이 최종이다. */
+    var values = plan.values || {};
     var xml = String(sectionXml || ''), filled = [], failed = [];
     var map = scan(xml);
 
-    Object.keys(picks).forEach(function (id) {
+    /* 직접 친 자리도 채울 목록에 넣는다(고르지 않았어도) */
+    var todo = {};
+    Object.keys(picks).forEach(function (id) { todo[id] = true; });
+    Object.keys(values).forEach(function (k) { todo[String(k).split(':')[0]] = true; });
+
+    Object.keys(todo).forEach(function (id) {
       var key = picks[id];
+      var typed = typedFor(id, values);
+      if (typed !== null) {
+        var s0 = map.slots.filter(function (x) { return x.id === id; })[0];
+        if (!s0) { failed.push({ id: id, why: '그런 자리가 없습니다' }); return; }
+        var r0 = putTyped(xml, s0, typed);
+        if (r0.ok) { xml = r0.xml; filled.push({ id: id, key: '(직접)', value: r0.shown }); }
+        else if (r0.empty) { /* 비워 두기로 한 자리 — 실패가 아니다 */ }
+        else failed.push({ id: id, why: '이 칸에는 넣을 수 없습니다' });
+        return;
+      }
       if (!key || key === '__stamp') return;      /* 비워 둠 · 도장은 여기서 안 다룬다 */
       var found = map.slots.filter(function (x) { return x.id === id; });
       if (!found.length) { failed.push({ id: id, why: '그런 자리가 없습니다' }); return; }
