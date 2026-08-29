@@ -220,6 +220,10 @@ function loadSend(existing){
     Promise, Object, String, Date, Error,
     CARDS_ROOT: 'pucards',
     CO_LABEL: { ceo:'대표자', address:'소재지', sales:'매출액' },
+    /* 2026-08-28: 어긋남 알림이 «기업정보함» 이름표를 먼저 본다 */
+    FIELD_LABEL: { ceo:'대표자', address:'소재지', companyTel:'대표번호' },
+    /* 2026-08-28: 서류 밑에 pairs 를 담는다 — 그 한계값 */
+    CO_PAIRS_MAX: 60, CO_PAIR_LEN: 300,
     bizKey: v => { const d = String(v||'').replace(/\D/g,''); return d.length>=10 ? d : ''; },
     deps: { db: { ref: p => ({
       once: () => Promise.resolve({ val: () => existing }),

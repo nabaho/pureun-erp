@@ -45,6 +45,10 @@ function load(existing){
     /* 알림 글이 칸 이름표를 쓴다 — 잘라낸 조각 밖에 있어 넣어 준다.
        진짜 표(js/pu-doc-file.js 의 CO_LABEL)와 이름이 같으면 충분하다. */
     CO_LABEL: { ceo:'대표자', address:'소재지', companyTel:'전화' },
+    /* 2026-08-28: 어긋남 알림이 «기업정보함» 이름표를 먼저 본다 */
+    FIELD_LABEL: { ceo:'대표자', address:'소재지', companyTel:'대표번호' },
+    /* 2026-08-28: 서류 밑에 pairs 를 담는다 — 그 한계값 */
+    CO_PAIRS_MAX: 60, CO_PAIR_LEN: 300,
     bizKey: v => { const d = String(v||'').replace(/\D/g,''); return d.length>=10 ? d : ''; },
     deps: { db: { ref: p => ({
       once: () => Promise.resolve({ val: () => existing }),
