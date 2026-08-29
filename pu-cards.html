@@ -2157,6 +2157,9 @@ body.pc #pcDetail{display:flex}
         <button id="incompleteBtn" class="pctool" onclick="this.classList.toggle('on');state.onlyIncomplete=!state.onlyIncomplete;state.page=0;render()" title="전화·이메일이 모두 있지 않은 명함만 보기 (빠진 정보 채우기용)">정보부족</button>
         <!-- 거래처 담당자 퇴사 (대표 지시 2026-08-29) — 「퇴사자를 어떻게 확인하나」의 답 -->
         <button id="leftBtn" class="pctool" onclick="this.classList.toggle('on');state.onlyLeft=!state.onlyLeft;state.page=0;render()" title="그 회사를 떠난 거래처 담당자만 보기 — 푸른이알피 담당자 줄의 퇴사 표시를 읽습니다. 단체 메일에서는 자동으로 빠집니다">🚪 퇴사자</button>
+        <!-- 계약이 끝난 업체 (대표 지시 2026-08-29) — 기업 상세의 「🚪 종료」와 같은 결.
+             폴더를 옮기지 않고 푸른이알피 값을 읽어 보여 주기만 한다(새 쓰기 0). -->
+        <button id="closedBtn" class="pctool" onclick="this.classList.toggle('on');state.onlyClosed=!state.onlyClosed;state.page=0;render()" title="푸른이알피 업체관리에서 종료·해지·폐업으로 표시된 업체의 명함·사업자등록증만 보기">🏚 계약종료</button>
         <button id="privateBtn" class="pctool" onclick="this.classList.toggle('on');state.onlyPrivate=!state.onlyPrivate;state.page=0;render()" title="개인으로 지정한 명함만 보기">개인</button>
         <select id="pcMgrFilter" onchange="filterErpMgr(this.value)" title="담당 노무사로 명함 걸러보기">
           <option value="">담당 전체</option>
@@ -2460,7 +2463,7 @@ function seedErpTabs(){
           &&(v.scope||'all')==='all'&&((v.f||{}).erpFilter)===t);
         if(dup) return;
         const f={ q:'', group:'all', owner:'all', region:'', erpFilter:t, colFilter:{},
-          onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false, onlyLeft:false,
+          onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false, onlyLeft:false, onlyClosed:false,
           sort:'date', sortKey:null, sortDir:'desc' };
         const v={ id:uid(), name:t, kind, scope:'all', order:1000+i, f };
         Store.putView(v); state.views[v.id]=v;
@@ -7839,6 +7842,9 @@ function listItems(){
       /* 그 회사를 떠난 담당자만 (대표 지시 2026-08-29) — 「어떻게 확인하나」에 답하는 자리다.
          판단은 ErpMatch 한 곳에서 한다: 여기서 따로 가리면 메일과 결과가 어긋난다. */
       if (state.onlyLeft && !ErpMatch.leftOfCard(it)) return false;
+      /* 계약이 끝난 업체만 (대표 지시 2026-08-29) — 명함·사업자 «둘 다» 본다.
+         ⚠ 업체관리에 «없는» 곳은 종료가 아니다. 정보가 없을 뿐이라 여기서 빠진다. */
+      if (state.onlyClosed){ const mc = ErpMatch.match(it); if(!(mc && mc.left)) return false; }
       if (state.onlyPrivate && it.scope!=='private') return false;
       /* ERP 연결 필터: 자문/급여/노조/기금(유형) · linked(연결만) · none(미연결) */
       if (state.erpFilter){
@@ -10922,21 +10928,67 @@ function openSimilar(){
   showPanel(h);
 }
 
-/* ════════════ 🚪 ERP 종료업체 명함 일괄 정리 → '업체퇴사' 폴더로 이동 ════════════ */
+/* ── 이 종류(명함/사업자)의 «종료 분류함» 찾기 (대표 지시 2026-08-29) ──
+   ⚠ 예전에는 이름이 딱 「업체퇴사」인 폴더만 찾았다. 대표님 것은 「2.업체종료 및 퇴사」라
+     앞 번호를 떼도 「업체종료및퇴사」 — 안 맞았다. 그래서 계약이 끝나면 「업체퇴사」를
+     «새로 만들어» 그리로 보냈고, 종료 업체가 두 폴더로 갈렸다.
+   ⚠ 이름으로 짐작하는 일이라 «넓게 잡지 않는다». 「업체」가 들어가고 「종료」나 「퇴사」가
+     함께 든 것만 본다 — 「1. 업체관리」는 안 걸린다. 어느 것을 골랐는지는 물어볼 때
+     이름으로 말해 준다(사람이 보고 멈출 수 있게).
+   ⚠ 명함용·사업자용 폴더는 따로다. 이름이 같아도 섞이면 안 된다. */
+function erpClosedFolderOf(kind){
+  const want = (kind === 'biz') ? 'biz' : 'card';
+  const list = Object.values((state && state.groups) || {});
+  for(let i=0;i<list.length;i++){
+    const g = list[i]; if(!g) continue;
+    if(((g.kind) || 'card') !== want) continue;
+    const nm = _canon(g.name);
+    if(nm === '업체퇴사') return g;                       /* 예전 이름 그대로 */
+    if(nm.indexOf('업체') >= 0 && (nm.indexOf('종료') >= 0 || nm.indexOf('퇴사') >= 0)) return g;
+  }
+  return null;
+}
+
+/* ════════════ 🏚 계약이 끝난 업체의 명함·사업자를 종료 분류함으로 ════════════
+   ⚠ 사업자등록증도 «함께» 옮긴다. 예전에는 kind==='card' 만 봐서, 끝난 업체의
+     등록증은 그대로 남았다 — 반만 정리된 것이다.
+   ⚠ 한 장씩 Store.put 하지 «않는다». 그 한 번이 서버 메시지 세 개다(items·idx·bykey).
+     2026-08-16 에 5,000건 오류를 낸 것이 그 패턴이다 — autoFolder 가 이미 쓰는
+     「모아서 한 번에」(autoFolderFlush)를 그대로 쓴다. */
 function openErpClosedTidy(){
   if(Store.mode!=='firebase') return toast('ERP 연결(Firebase) 상태에서만 가능합니다');
   if(!ErpMatch.ready) return toast('ERP 업체관리 데이터를 불러오는 중입니다. 잠시 후 다시 눌러 주세요.');
-  const cards=Object.values(state.items).filter(it=>it&&it.kind==='card');
-  const closed=cards.filter(it=>{ const m=ErpMatch.match(it); return m && m.left; });   /* ERP 종료(폐업·해지) 업체 */
-  if(!closed.length) return toast('ERP에서 종료된 업체의 명함이 없습니다');
-  const 퇴사폴더=Object.values(state.groups).find(g=>g && _canon(g.name)==='업체퇴사');
-  const toMove=closed.filter(it=> !퇴사폴더 || it.group!==퇴사폴더.id);
-  if(!toMove.length) return toast(`종료업체 명함 ${closed.length}장이 이미 '업체퇴사' 폴더에 있습니다 👍`);
-  if(!confirm(`ERP에서 종료(폐업·해지)된 업체의 명함 ${toMove.length}장을\n'업체퇴사' 폴더로 이동할까요?\n\n· 삭제 아님 — 폴더만 이동, 되돌리기 가능\n· 전체 종료업체 명함 ${closed.length}장 중 ${toMove.length}장이 대상`)) return;
-  let g=퇴사폴더; if(!g){ g={id:uid(), name:'업체퇴사', order:Date.now()}; Store.putGroup(g); state.groups[g.id]=g; }
-  let n=0;
-  toMove.forEach(it=>{ it.group=g.id; it.erpAutoFoldered=1; it.updatedAt=Date.now(); Store.put(it); n++; });
-  toast(`✅ ${n}장을 '업체퇴사' 폴더로 정리했습니다`,6000);
+  const closed = Object.values(state.items).filter(it=>{
+    if(!it) return false;
+    const m = ErpMatch.match(it); return !!(m && m.left);      /* ERP 종료(폐업·해지) 업체 */
+  });
+  if(!closed.length) return toast('푸른이알피에서 종료된 업체의 명함·사업자등록증이 없습니다');
+
+  /* 종류마다 갈 곳이 다르다 — 없으면 그 종류의 폴더를 새로 만든다 */
+  const dest = {}, made = [];
+  ['card','biz'].forEach(k=>{
+    let g = erpClosedFolderOf(k);
+    if(!g){ g = { id:uid(), name:'업체퇴사', kind:k, order:Date.now() }; made.push(g); }
+    dest[k] = g;
+  });
+  const kindOf = it => (it && it.kind==='biz') ? 'biz' : 'card';
+  const toMove = closed.filter(it => it.group !== dest[kindOf(it)].id);
+  if(!toMove.length) return toast(`종료 업체 ${closed.length}건이 이미 정리돼 있습니다 👍`);
+
+  const nCard = toMove.filter(it=>kindOf(it)==='card').length;
+  const nBiz  = toMove.length - nCard;
+  const 갈곳 = Array.from(new Set(toMove.map(it=>dest[kindOf(it)].name))).join(' · ');
+  if(!confirm(`푸른이알피에서 종료(폐업·해지)된 업체의\n`
+    + `명함 ${nCard}장${nBiz?` · 사업자등록증 ${nBiz}장`:''}을\n`
+    + `「${갈곳}」 폴더로 옮길까요?\n\n`
+    + `· 지우는 것이 아닙니다 — 폴더만 옮기고 되돌릴 수 있습니다\n`
+    + `· 전체 종료 업체 ${closed.length}건 중 ${toMove.length}건이 대상입니다`)) return;
+
+  made.forEach(g=>{ Store.putGroup(g); state.groups[g.id]=g; });
+  const now = Date.now();
+  toMove.forEach(it=>{ it.group = dest[kindOf(it)].id; it.erpAutoFoldered = 1; it.updatedAt = now; });
+  autoFolderFlush(toMove);                                     /* 모아서 한 번에 */
+  toast(`✅ 명함 ${nCard}장${nBiz?` · 사업자등록증 ${nBiz}장`:''}을 「${갈곳}」으로 정리했습니다`, 6000);
   render();
 }
 
@@ -15733,7 +15785,7 @@ function saveCurrentAsView(){
     if(!name0) return;
     const id=uid();
     const mf={ q:'', group:(state.group||'all'), owner:'all', region:'', erpFilter:'', erpMgr:'', colFilter:{},
-      onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false, onlyLeft:false,
+      onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false, onlyLeft:false, onlyClosed:false,
       vtab:id, sort:'date', sortKey:null, sortDir:'desc' };
     Store.putView({ id, name:name0, kind:state.tab, scope:(state.group||'all'), manual:true, order:Date.now(), f:mf });
     toast(`🏷 '${name0}' 담는 탭을 만들었습니다 — 명함을 선택해 [🏷 탭에 담기]로 넣으세요`,6000);
@@ -15800,7 +15852,7 @@ function createManualTabAndAdd(){
   if(!name) return;
   const id=uid();
   const mf={ q:'', group:(state.group||'all'), owner:'all', region:'', erpFilter:'', erpMgr:'', colFilter:{},
-    onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false, onlyLeft:false,
+    onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false, onlyLeft:false, onlyClosed:false,
     vtab:id, sort:'date', sortKey:null, sortDir:'desc' };
   const v={ id, name, kind:state.tab, scope:(state.group||'all'), manual:true, order:Date.now(), f:mf };
   state.views[id]=v;      /* 공유 저장 반영 전에도 바로 담을 수 있게 */
@@ -16328,7 +16380,7 @@ function seedProfTabs(){
           if(dup) return;
           const fl = { q:'', group:t.gid, owner:'all', region:'', erpFilter:'', erpMgr:'',
             colFilter:{ company: word },
-            onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false, onlyLeft:false,
+            onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false, onlyLeft:false, onlyClosed:false,
             sort:'date', sortKey:null, sortDir:'desc' };
           const v = { id:uid(), name:tb.name, kind:kind, scope:t.gid, order:2000+i, f:fl };
           Store.putView(v); state.views[v.id] = v; put++;
