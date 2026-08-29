@@ -58,6 +58,11 @@ function boot() {
     },
     window: { addEventListener: function (k, fn) { listeners[k] = fn; } },
     $: el,
+    /* 2026-08-29: 닫을 때 **편집 상태를 비운다** — 안 비우면 다음 사진에 앞 사진의
+       네모가 얹혀 있고, 저장하면 엉뚱한 사진이 고쳐진다. */
+    PuRrnMaskUi: { blank: function () { return { status: 'idle', boxes: [] }; } },
+    renderViewerEdit: function () {},
+    photoMask: null,
     __hist: hist,
     __fire: function () { if (listeners.popstate) listeners.popstate(); }
   };

@@ -181,7 +181,11 @@ function panel(state) {
     esc: function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
   };
   vm.createContext(ctx);
-  vm.runInContext(cutFn(app, 'function maskPanelHtml(') + '\nvar __h = maskPanelHtml();', ctx);
+  /* 2026-08-29: 짜임을 한 곳에서 만들게 갈랐다(옆 칸 · 큰 사진 위 두 자리에 쓰므로).
+     시늉을 두지 않고 **진짜를 함께 띄운다** — 시늉이면 짜임이 바뀌어도 안 걸린다. */
+  vm.runInContext(cutFn(app, 'function maskWrapHtml(') + '\n' +
+    cutFn(app, 'function maskBoxesHtml(') + '\n' +
+    cutFn(app, 'function maskPanelHtml(') + '\nvar __h = maskPanelHtml();', ctx);
   return ctx.__h;
 }
 
