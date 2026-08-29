@@ -11965,12 +11965,13 @@ let _mbBinsBusy = false;
 /* 두 벌을 한 번에 읽는다 — 왼쪽 한 줄을 그리는 데 둘 다 필요하다.
    ⚠ once() 만 쓴다(2026-08-16 「once 뒤 on」 요금 사고와 같은 결). */
 function mbEnsureBins(cb){
-  if(_mbBins!==null && _mbPut!==null && _mbHide!==null && _mbOwner!==null && _mbSucc!==null){
+  if(_mbBins!==null && _mbPut!==null && _mbHide!==null && _mbOwner!==null && _mbSucc!==null
+     && _mbCo!==null && _mbNotCo!==null){
     if(cb) cb(); return;
   }
   if(typeof Store==='undefined' || Store.mode!=='firebase'){
     _mbBins = _mbBins||{}; _mbPut = _mbPut||{}; _mbHide = _mbHide||{}; _mbOwner = _mbOwner||{};
-    _mbSucc = _mbSucc||{};
+    _mbSucc = _mbSucc||{}; _mbCo = _mbCo||{}; _mbNotCo = _mbNotCo||{};
     if(cb) cb(); return;
   }
   if(_mbBinsBusy){ if(cb) setTimeout(()=>mbEnsureBins(cb), 200); return; }
@@ -11985,17 +11986,20 @@ function mbEnsureBins(cb){
     firebase.database().ref(DB_ROOT+'/config/mailHide').once('value'),
     firebase.database().ref(DB_ROOT+'/config/mailWho').once('value'),
     /* 승계표 — 다른 앱도 읽을 수 있게 config 밑에 둔다(대표 지시 2026-08-26) */
-    firebase.database().ref(DB_ROOT+'/config/staffSucc').once('value')
-  ]).then(([b,p,h,w,sc])=>{
+    firebase.database().ref(DB_ROOT+'/config/staffSucc').once('value'),
+    /* 주소 ↔ 자문사 · 자문사 아님 (대표 승인 2026-08-29) — 둘 다 전 직원 공용 */
+    firebase.database().ref(DB_ROOT+'/config/mailCo').once('value'),
+    firebase.database().ref(DB_ROOT+'/config/mailNotCo').once('value')
+  ]).then(([b,p,h,w,sc,co,nc])=>{
     _mbBins = b.val()||{}; _mbPut = p.val()||{}; _mbHide = h.val()||{}; _mbOwner = w.val()||{};
-    _mbSucc = sc.val()||{};
+    _mbSucc = sc.val()||{}; _mbCo = co.val()||{}; _mbNotCo = nc.val()||{};
   }).catch(e=>{
     /* ⚠ 로그인이 없어 거절당한 것이면 «다 읽었다»로 굳히지 않는다 — 로그인이 붙은 뒤
        다음 render 가 다시 가져오게 null 그대로 둔다(폴더 목록과 같은 결). */
     const denied = /permission[_ ]denied/i.test(String((e&&(e.code||e.message))||''));
     if(!(denied && !mbAuthOk())){
       _mbBins = _mbBins||{}; _mbPut = _mbPut||{}; _mbHide = _mbHide||{}; _mbOwner = _mbOwner||{};
-      _mbSucc = _mbSucc||{};
+      _mbSucc = _mbSucc||{}; _mbCo = _mbCo||{}; _mbNotCo = _mbNotCo||{};
     }
     console.warn('[푸른분류]', (e&&e.message)||e);
   }).then(()=>{
@@ -12102,6 +12106,29 @@ const MB_PUB_DOM = ['naver.com','gmail.com','hanmail.net','daum.net','nate.com',
 let _mbOwner = null;      /* {열쇠: 담당자이름} — 사람이 정해 준 것만 */
 let _mbWhoIdx = null;     /* 기업정보함에서 뽑아 둔 {주소:담당자} · {도메인:담당자} — 캐시 */
 
+/* ══════════════════════════════════════════════════════════════════════════
+   주소를 «자문사»에 잇는다 (대표 승인 목업 2026-08-29 · 「자문사만 이으면 된다」)
+   ══════════════════════════════════════════════════════════════════════════
+   ★ 왜 사람이 아니라 회사인가
+     예전에는 주소에 «담당자 이름»을 박았다(_mbOwner). 그러면 푸른이알피에서 담당을
+     바꿔도 메일은 옛사람에게 그대로 간다 — 표를 손으로 다시 고쳐야 한다.
+     회사에 이어 두면 담당자는 «회사에서 따라온다». 고칠 곳이 한 곳으로 준다.
+
+   ★ 왜 이것이 필요한가 (실측 2026-08-29 · 메일 5,686통)
+     · 담당자가 있는 자문사 215곳 가운데 «주소를 아는 곳은 71곳(33%)»뿐이다.
+       나머지 144곳은 메일이 와도 이을 길이 없다 — 주소를 모르기 때문이다.
+     · 여기서 한 번 이어 두면 그 회사 주소가 «남는다». 쓸수록 144곳이 줄어든다.
+
+   ⚠ 「자문사 아님」(_mbNotCo)은 «잇기 목록에서만» 뺀다. 메일은 그대로 있고
+     「담당 모름」 칸에서도 그대로 보인다 — 목록에서 지운다고 메일을 감추면
+     그 메일은 아무 데서도 못 본다.
+     실측: 상공회의소·노동청·근복공단·타 노무법인이 1,932통(187곳)이라, 이것을
+     치우지 않으면 정작 이어야 할 자문사가 목록 아래에 묻힌다.
+   ⚠ 두 표 다 «전 직원 공용»이다(config 밑). 사람마다 따로 두면 대표님이 이어 둔 것을
+     직원은 못 보고 「내 화면만 이상하다」가 된다. */
+let _mbCo = null;         /* {열쇠: 자문사이름}  열쇠 = 주소 또는 '@도메인' */
+let _mbNotCo = null;      /* {열쇠: 1} — 자문사가 아니라고 표시해 «잇기 목록»에서 치운 것 */
+
 /* 이메일을 실시간DB 열쇠로 — 점을 못 쓴다.
    ⚠ 포털(enter.html sgEmailKey)과 «같은 규칙»이어야 한다. 규칙이 갈리면 한쪽이 못 찾는다. */
 function mbWhoKey(s){ return String(s||'').toLowerCase().replace(/[.#$\[\]/]/g, ','); }
@@ -12126,7 +12153,7 @@ function mbWhoIndex(){
   const cos = (typeof ErpMatch!=='undefined' && ErpMatch.companies) ? ErpMatch.companies : [];
   const stamp = keys.length + ':' + cos.length;
   if(_mbWhoIdx && _mbWhoIdx._n === stamp) return _mbWhoIdx;
-  const byAddr = {}, domHit = {}, endAddr = {}, endDomHit = {}, coAddr = {};
+  const byAddr = {}, domHit = {}, endAddr = {}, endDomHit = {}, coAddr = {}, rawCo = {};
 
   /* 주소 하나를 표에 넣는다 — 기업정보함과 푸른이알피가 «같은 길»을 쓰게 한 자리.
      ⚠ 먼저 넣은 것이 이긴다(byAddr[em] 이 있으면 안 덮는다). 부르는 차례가 곧 규칙이다. */
@@ -12196,6 +12223,11 @@ function mbWhoIndex(){
   keys.forEach(k=>{
     const it = items[k]; if(!it) return;
     const em = String(it.email||'').trim().toLowerCase(); if(!em) return;
+    /* ⚠ 명함에 «적힌 그대로»의 회사 이름을 따로 담아 둔다 (2026-08-29).
+         coAddr 은 푸른이알피와 «만난» 회사만 담는다 — 못 만난 것은 빈칸이다.
+         그런데 「이 회사 아닌가요?」가 짚어야 하는 것이 바로 «못 만난» 이름이다.
+         coAddr 만 보면 짚어야 할 것이 하나도 안 보인다(실제로 그랬다). */
+    if(!rawCo[em] && it.company) rawCo[em] = String(it.company);
     const rec = (typeof ErpMatch!=='undefined' && ErpMatch.match) ? ErpMatch.match(it) : null;
     if(!rec) return;
     put(em, rec);
@@ -12211,7 +12243,7 @@ function mbWhoIndex(){
   Object.keys(endDomHit).forEach(d=>{
     if(endDomHit[d].end && !endDomHit[d].live) endDom[d] = 1;
   });
-  _mbWhoIdx = { byAddr, byDom, endAddr, endDom, coAddr, _n: stamp };
+  _mbWhoIdx = { byAddr, byDom, endAddr, endDom, coAddr, rawCo, _n: stamp };
   return _mbWhoIdx;
 }
 function mbWhoBust(){ _mbWhoIdx = null; }
@@ -12236,6 +12268,11 @@ const MB_WHO_END = '@!';   /* 자문종료 칸 */
 function mbEndedOfRow(v, idx0){
   const em = String((v&&v.e)||'').trim().toLowerCase();
   if(!em) return false;
+  /* 사람이 «끝난 자문사»에 이어 두었으면 그대로 종료 칸이다 (2026-08-29).
+     ⚠ 이것을 빼먹으면 끝난 회사에 이어 놓고도 그 회사 담당자 칸에 계속 쌓인다 —
+       「자문종료로 옮겼는데 왜 아직 내 칸에 있나」가 된다. */
+  const coRec = mbCoRec(mbCoOf(em));
+  if(coRec && coRec.left) return true;
   const idx = idx0 || mbWhoIndex();
   if(idx.endAddr[em]) return true;
   const d = mbDomOf(em);
@@ -12442,7 +12479,32 @@ function mbWhoDrop(ev, toName, el){
   }
 }
 
-/* ── 이 메일의 담당자 ── (위 다섯 순서를 여기 한 자리에서만 따진다) */
+/* ══════════════════════════════════════════════════════════════════════════
+   주소 ↔ 자문사 표를 읽고 쓰는 자리 (대표 승인 2026-08-29)
+   ══════════════════════════════════════════════════════════════════════════ */
+/* 이 주소(또는 도메인)에 이어 둔 자문사 이름 */
+function mbCoOf(em){
+  const set = _mbCo || {};
+  const a = String(set[mbWhoKey(em)] || '');
+  if(a) return a;
+  const d = mbDomOf(em);
+  return d ? String(set[mbWhoKey('@' + d)] || '') : '';
+}
+/* 자문사 이름 → 푸른이알피 기록(담당자·종료여부).
+   ⚠ ErpMatch 가 이미 해 둔 판정을 그대로 쓴다 — 여기서 다시 셈하면 두 곳이 어긋난다. */
+function mbCoRec(name){
+  if(!name || typeof ErpMatch==='undefined' || !ErpMatch.byName) return null;
+  return ErpMatch.byName[ErpMatch._norm(name)] || null;
+}
+/* 이 주소를 「자문사 아님」으로 치웠나 — «잇기 목록»에서만 쓴다 */
+function mbNotCo(em){
+  const set = _mbNotCo || {};
+  if(set[mbWhoKey(em)]) return true;
+  const d = mbDomOf(em);
+  return !!(d && set[mbWhoKey('@' + d)]);
+}
+
+/* ── 이 메일의 담당자 ── (아래 순서를 여기 한 자리에서만 따진다) */
 function mbWhoOfRow(v, idx0){
   const em = String((v&&v.e)||'').trim().toLowerCase();
   if(!em) return '';
@@ -12458,6 +12520,16 @@ function mbWhoOfRow(v, idx0){
   };
   const byHand = live(set[mbWhoKey(em)]);
   if(byHand) return byHand;                               /* ① 사람이 정한 주소 */
+  /* ①-2 «자문사»에 이어 둔 주소 — 담당자는 그 회사에서 따라온다 (2026-08-29).
+     ⚠ ① 보다 뒤다: 사람이 «이 사람»이라고 못 박은 것이 회사보다 세다.
+     ⚠ ② 기업정보함보다 앞이다: 여기 이은 것은 «사람이 직접 고른» 회사이고,
+       기업정보함은 기계가 이름으로 짚은 것이다. 사람이 먼저다.
+     ⚠ 끝난 회사면 담당자를 안 준다 — 자문종료 칸이 가져간다(mbEndedOfRow). */
+  const coRec = mbCoRec(mbCoOf(em));
+  if(coRec && !coRec.left){
+    const c1 = live(coRec.main);
+    if(c1) return c1;
+  }
   const idx = idx0 || mbWhoIndex();
   const a1 = live(idx.byAddr[em]);
   if(a1) return a1;                                       /* ② 기업정보함 주소 */
@@ -13607,8 +13679,11 @@ function openWhoPage(){
 }
 function whoTab(t){ state.whoTab = t; renderMailPage(); }
 
-/* 「담당 모름」 메일을 «보낸이별»로 묶는다 — 많이 온 순 */
-function whoUnknownSenders(){
+/* 「담당 모름」 메일을 «보낸이별»로 묶는다 — 많이 온 순
+   opt.all=true 면 「자문사 아님」으로 치운 것도 함께 준다(치운 것 되돌리는 갈래에서 쓴다).
+   ⚠ 치운 것은 «목록»에서만 빠진다 — 메일은 「담당 모름」 칸에 그대로 있다. */
+function whoUnknownSenders(opt){
+  const all = !!(opt && opt.all);
   const by = {};
   Object.keys(_mbMsgs||{}).forEach(slug=>{
     const box = _mbMsgs[slug]||{};
@@ -13626,19 +13701,41 @@ function whoUnknownSenders(){
       if(Number(v.d||0) > o.at){ o.at = Number(v.d||0); o.last = String(v.s||''); o.box = v._box; }
     });
   });
-  return Object.values(by).sort((a,b)=> b.n - a.n || b.at - a.at);
+  /* ── 치운 것을 걸러 내고, 줄마다 «이미 이은 자문사»와 «짚이는 회사»를 붙인다 ──
+     ⚠ 짚기(mbCoGuess)는 표를 한 번만 찾아 넘긴다 — 줄마다 다시 찾으면 그것이 곧 느림이다. */
+  const idx = mbWhoIndex();
+  return Object.values(by)
+    .filter(o => all || !mbNotCo(o.e))
+    .map(o => {
+      o.co = mbCoOf(o.e);                       /* 이미 이어 둔 자문사 (보통은 빈칸) */
+      o.hid = mbNotCo(o.e);                     /* 치워 둔 것인가 */
+      /* ⚠ 짚기는 «여기서 안 한다» — 줄마다 자문사 372곳을 훑으면 2,000줄 × 372 이다.
+        (2026-08-16 옆줄 25초 사고와 같은 결) 보이는 200줄에서만 짚는다. */
+      return o;
+    })
+    .sort((a,b)=> b.n - a.n || b.at - a.at);
 }
 
-/* 이 회사(도메인·이름)에 이미 이어 둔 주소가 몇 개인가 */
+/* 이 회사(도메인·이름)에 이미 이어 둔 주소가 몇 개인가
+   ⚠ 기업정보함 명함뿐 아니라 «메일함에서 이은 주소»(config/mailCo)도 함께 센다
+     (대표 승인 2026-08-29). 안 세면 여기서 아무리 이어도 「이메일이 없습니다」가
+     그대로라, 이은 것이 어디로 갔는지 알 수가 없다. */
 function whoAddrOfName(name){
   const out = [];
-  const idx = mbWhoIndex();
   const items = (typeof state!=='undefined' && state.items) ? state.items : {};
   Object.keys(items).forEach(k=>{
     const it = items[k]; if(!it) return;
     if(ErpMatch._norm(it.company) !== ErpMatch._norm(name)) return;
     const em = String(it.email||'').trim().toLowerCase();
     if(em && out.indexOf(em) < 0) out.push(em);
+  });
+  const n = ErpMatch._norm(name);
+  Object.keys(_mbCo||{}).forEach(k=>{
+    if(ErpMatch._norm(_mbCo[k]) !== n) return;
+    /* 열쇠는 주소열쇠(점이 쉼표로 바뀐 것)다 — 보여 줄 때만 점으로 되돌린다.
+       ⚠ 도메인으로 이은 것(@회사.kr)은 그대로 「@…」로 보여 준다. */
+    const shown = String(k).replace(/,/g, '.');
+    if(out.indexOf(shown) < 0) out.push(shown);
   });
   return out;
 }
@@ -13650,24 +13747,69 @@ function whoPageHtml(){
   const hand = Object.keys(_mbOwner||{}).length;
 
   let body = '';
-  if(tab === 'addr'){
-    const list = whoUnknownSenders();
+  if(tab === 'addr' || tab === 'notco'){
+    /* ══════════════════════════════════════════════════════════════════════
+       주소를 «자문사»에 잇는다 (대표 승인 목업 2026-08-29)
+       ══════════════════════════════════════════════════════════════════════
+       ★ 예전에는 여기서 주소에 «사람 이름»을 박았다. 담당이 바뀌면 손으로 다시 고쳐야
+         했고, 이은 것이 이 화면 밖으로는 한 글자도 안 남았다.
+       ★ 이제 «자문사»를 고른다 — 담당자는 회사에서 따라오고, 이은 주소는 그 회사 것으로
+         남아 「이메일을 모르는 자문사 144곳」이 쓸수록 줄어든다.
+       ⚠ 「자문사 아님」은 «이 목록에서만» 치운다 — 메일은 「담당 모름」 칸에 그대로다.
+         실측 2026-08-29: 상공회의소·노동청·근복공단·타 노무법인이 1,932통(187곳)이라,
+         치우지 않으면 정작 이어야 할 자문사가 목록 아래에 묻힌다. */
+    const hide = (tab === 'notco');
+    const all = whoUnknownSenders({ all: true });
+    const list = all.filter(o => hide ? o.hid : !o.hid);
     const shown = list.slice(0, 200);
-    body = `<div class="dm-hint" style="text-align:left;padding:8px 2px 10px">
-        담당자를 못 찾은 보낸이 <b>${list.length.toLocaleString()}곳</b> · 메일 <b>${na.n.toLocaleString()}통</b>
-        — <b>많이 온 곳부터</b> 늘어놓았습니다. 위에서부터 이어 주시면 가장 빨리 줄어듭니다.
-        ${list.length>200?`<br><span style="color:#c0392b">아래 200곳만 보입니다 — 이어 주시면 다음 것이 올라옵니다</span>`:''}
-      </div>
-      <div class="dm-list">`;
-    if(!shown.length) body += `<div class="dm-none">담당자를 못 찾은 메일이 없습니다. 🎉</div>`;
+    const cos = mbCoNames();
+    const gidx = mbWhoIndex();   /* 짚기가 쓸 표 — 한 번만 찾는다 */
+    const opts = (sel)=>cos.map(c=>
+      `<option value="${esc(c)}" ${sel===c?'selected':''}>${esc(c)}</option>`).join('');
+    body = hide
+      ? `<div class="dm-hint" style="text-align:left;padding:8px 2px 10px;line-height:1.75">
+          「자문사 아님」으로 치운 보낸이 <b>${list.length.toLocaleString()}곳</b><br>
+          <b>메일은 그대로 있습니다</b> — 「담당 모름」 칸에서 그대로 보입니다.
+          여기서만 안 보이게 한 것입니다.</div>
+        <div class="dm-list">`
+      : `<div class="dm-hint" style="text-align:left;padding:8px 2px 10px;line-height:1.75">
+          담당자를 못 찾은 보낸이 <b>${list.length.toLocaleString()}곳</b> · 메일 <b>${na.n.toLocaleString()}통</b>
+          — <b>많이 온 곳부터</b>입니다. 위에서부터 이어 주시면 가장 빨리 줄어듭니다.<br>
+          <b>자문사를 고르면 담당자는 저절로 따라옵니다</b> — 담당이 바뀌어도 다시 고칠 일이 없습니다.
+          자문사가 아니면 <b>「자문사 아님」</b>으로 치워 두시면 목록이 깨끗해집니다.
+          ${list.length>200?`<br><span style="color:#c0392b">아래 200곳만 보입니다 — 이어 주시면 다음 것이 올라옵니다</span>`:''}
+        </div>
+        <div class="dm-list">`;
+    if(!shown.length) body += `<div class="dm-none">${hide
+      ? '치워 둔 것이 없습니다.' : '담당자를 못 찾은 메일이 없습니다. 🎉'}</div>`;
     shown.forEach(o=>{
-      body += `<div class="dm-row">
+      const rec = o.co ? mbCoRec(o.co) : null;
+      o.guess = o.co ? null : mbCoGuess(o.e, gidx);   /* 보이는 줄에서만 짚는다 */
+      const who = rec && rec.main ? rec.main : '';
+      body += `<div class="dm-row" style="height:auto;padding:7px 0">
         <span class="st" style="width:52px;text-align:center;color:#2563d1;font-weight:700">${o.n}통</span>
-        <span class="who" style="width:210px">${esc(o.e)}</span>
-        <span class="sub">${esc(o.name ? o.name+' · ' : '')}${esc(o.last||'(제목 없음)')}</span>
-        <span class="dm-from">📂 ${esc(o.box||'')}</span>
-        <span class="dm-who na" onclick="mbWhoAsk('${esc(o.e)}',event)"
-          title="누구 담당인지 정하면 이 ${o.n}통이 그 자리에서 잡힙니다">＋ 담당자 정하기</span>
+        <span class="who" style="width:200px">${esc(o.e)}
+          <br><span style="font-size:11px;color:#a8abb2">${esc(o.name||'')}</span></span>
+        <span class="sub" style="white-space:normal">${esc(o.last||'(제목 없음)')}
+          ${o.guess?`<br><span style="font-size:11.5px;background:#fffbeb;border:1px solid #fde68a;
+            border-radius:4px;padding:1px 6px;color:#8a6d1f">💡 명함의 「${esc(o.guess.from)}」 —
+            자문사 「${esc(o.guess.name)}」 아닌가요?</span>`:''}</span>
+        ${hide ? `
+          <span class="dm-who na" onclick="mbNotCoSet('${esc(o.e)}',false,false)"
+            title="잇기 목록으로 되돌립니다">↩ 되돌리기</span>`
+        : `
+          <select onchange="mbCoSet('${esc(o.e)}',this.value,false)"
+            style="font-family:inherit;font-size:12px;padding:4px 6px;border:1px solid #d5d7dc;
+                   border-radius:6px;max-width:210px">
+            <option value="">— 어느 자문사입니까 —</option>
+            ${o.guess?`<option value="${esc(o.guess.name)}">💡 ${esc(o.guess.name)} (${esc(o.guess.who)})</option>`:''}
+            ${opts(o.co)}
+          </select>
+          ${who?`<span class="dm-who" title="이 자문사의 담당자입니다">👤 ${esc(who)}</span>`:''}
+          <span class="dm-who na" onclick="mbNotCoSet('${esc(o.e)}',true,false)"
+            title="자문사가 아니면 목록에서 치웁니다 — 메일은 그대로 있습니다">✕ 자문사 아님</span>
+          <span class="dm-who na" onclick="mbWhoAsk('${esc(o.e)}',event)"
+            title="회사와 상관없이 «사람»을 직접 박습니다">＋ 사람으로</span>`}
         <span class="at">${mbTime(o.at)}</span>
       </div>`;
     });
@@ -13803,12 +13945,20 @@ function whoPageHtml(){
       <button onclick="whoTab('end')"
         style="${tab==='end'?'background:#eef3fb;color:#123a86;font-weight:700':''}"
         title="자문이 끝난 업체 — 그 메일은 🚪 자문종료 칸으로 갑니다">④ 종료업체</button>
+      ${/* ⚠ 치운 것을 되돌릴 «길»이 반드시 보여야 한다. 없으면 아무도 「자문사 아님」을
+           못 누른다 — 되돌릴 수 없는 단추는 안 눌린다(숨긴 칸 되돌리기와 같은 까닭). */''}
+      <button onclick="whoTab('notco')"
+        style="${tab==='notco'?'background:#eef3fb;color:#123a86;font-weight:700':''}"
+        title="자문사가 아니라고 치운 것 — 되돌릴 수 있습니다">⑤ 치운 것 ${
+          Object.keys(_mbNotCo||{}).length || ''}</button>
       <span class="sp"></span>
-      <span style="font-size:11.5px;color:#a8abb2">사람이 이어 둔 주소 ${hand.toLocaleString()}개</span>
+      <span style="font-size:11.5px;color:#a8abb2">자문사로 이은 주소 ${
+        Object.keys(_mbCo||{}).length.toLocaleString()}개 · 사람으로 박은 것 ${hand.toLocaleString()}개</span>
     </div>
     <div class="dm-hint" style="text-align:left;padding:10px 2px 2px;line-height:1.7">
-      ⚠ 여기서 이은 것은 <b>우리 앱에만</b> 남습니다 — 다음메일도, 기업정보함도 바뀌지 않습니다.<br>
-      한 번 이으면 그 주소에서 오는 메일은 <b>다음부터 저절로</b> 그 담당자로 갑니다.
+      ⚠ 여기서 이은 것은 <b>우리 앱에만</b> 남습니다 — 다음메일도, 기업정보함 명함도 바뀌지 않습니다.<br>
+      <b>자문사로 이으면</b> 담당자는 푸른이알피에서 따라옵니다 — 담당이 바뀌면 메일도 함께 따라갑니다.<br>
+      <b>사람으로 박으면</b> 그 사람에게 고정됩니다 — 담당이 바뀌어도 안 따라갑니다(여기서 다시 고쳐야 합니다).
     </div>
     ${body}`;
 }
@@ -13909,6 +14059,101 @@ function mbWhoSet(email, who, byDomain){
       renderPCSide(); renderMailPage();
       toast('잇지 못했습니다 — '+((e&&e.message)||e), 9000);
     });
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   주소를 «자문사»에 잇기 / 「자문사 아님」으로 치우기 (대표 승인 2026-08-29)
+   ══════════════════════════════════════════════════════════════════════════
+   ⚠ 두 함수가 «같은 모양»이다 — 화면을 먼저 바꾸고, 저장이 실패하면 되돌린다.
+     되돌리지 않으면 「이었다」고 보이는데 새로고침하면 사라진다(고장으로 안 보인다). */
+
+/* 한 자리에서만 저장한다 — 실패하면 화면도 함께 되돌린다 */
+function mbCfgSet(path, cache, key, val, okMsg){
+  const before = cache[key];
+  if(val === null || val === undefined || val === '') delete cache[key]; else cache[key] = val;
+  mbWhoBust(); renderPCSide(); renderMailPage();
+  if(typeof Store==='undefined' || Store.mode!=='firebase') return toast(okMsg, 6000);
+  const ref = firebase.database().ref(DB_ROOT + '/config/' + path + '/' + key);
+  const p = (val === null || val === undefined || val === '') ? ref.remove() : ref.set(val);
+  p.then(()=>toast(okMsg, 6000)).catch(e=>{
+    if(before === undefined) delete cache[key]; else cache[key] = before;
+    mbWhoBust(); renderPCSide(); renderMailPage();
+    toast('저장하지 못했습니다 — '+((e&&e.message)||e), 9000);
+  });
+}
+
+/* 주소(또는 도메인)를 자문사에 잇는다. 담당자는 그 회사에서 따라온다. */
+function mbCoSet(email, coName, byDomain){
+  const em = String(email||'').trim().toLowerCase();
+  const d  = mbDomOf(em);
+  /* ⚠ 무료 메일은 «도메인으로» 못 잇는다 — 네이버 하나를 이으면 온 세상이 한 회사가 된다 */
+  const pub = !d || MB_PUB_DOM.indexOf(d) >= 0;
+  if(byDomain && pub) return toast(d + ' 는 개인 메일이라 회사 전체로는 못 잇습니다', 7000);
+  const key = mbWhoKey(byDomain ? ('@' + d) : em);
+  const nm  = String(coName||'').trim();
+  _mbCo = _mbCo || {};
+  closeFolderMenu();
+  if(!nm) return mbCfgSet('mailCo', _mbCo, key, null,
+    '↩ ' + (byDomain ? d + ' 전체' : em) + ' 의 이은 것을 지웠습니다');
+  const rec = mbCoRec(nm);
+  const who = rec && rec.main ? rec.main : '';
+  const what = byDomain ? ('🏢 ' + d + ' 전체') : em;
+  /* ⚠ 담당자가 «없는» 자문사에 이어도 막지 않는다 — 이어 두면 담당자를 나중에 적는
+       순간 저절로 간다. 다만 지금은 안 간다는 것을 말해 준다. */
+  mbCfgSet('mailCo', _mbCo, key, nm,
+    who ? `${what} → 「${nm}」(담당 ${who}) 으로 이었습니다 — 담당이 바뀌면 메일도 따라갑니다`
+        : `${what} → 「${nm}」 으로 이었습니다 ⚠ 이 회사에 담당자가 아직 없어 「담당 모름」에 그대로 있습니다`);
+}
+
+/* 「자문사 아님」 — 잇기 목록에서만 치운다. 메일은 그대로 있다. */
+function mbNotCoSet(email, on, byDomain){
+  const em = String(email||'').trim().toLowerCase();
+  const d  = mbDomOf(em);
+  const pub = !d || MB_PUB_DOM.indexOf(d) >= 0;
+  if(byDomain && pub) return toast(d + ' 는 개인 메일이라 회사 전체로는 못 치웁니다', 7000);
+  const key = mbWhoKey(byDomain ? ('@' + d) : em);
+  const what = byDomain ? ('🏢 ' + d + ' 전체') : em;
+  _mbNotCo = _mbNotCo || {};
+  closeFolderMenu();
+  mbCfgSet('mailNotCo', _mbNotCo, key, on ? 1 : null,
+    on ? `${what} 를 잇기 목록에서 치웠습니다 — 메일은 그대로 있습니다`
+       : `↩ ${what} 를 잇기 목록으로 되돌렸습니다`);
+}
+
+/* ── 「이 회사 아닌가요?」 ──
+   기업정보함이 아는 «회사 이름»과 푸른이알피 자문사 이름이 조금 달라 못 만난 것을 짚는다.
+   ⚠ 기계가 «혼자 잇지 않는다» — 짚어만 주고 사람이 눌러야 이어진다.
+     이름이 겹치는 회사가 있어(「서산시」 ↔ 「서산시시설관리공단」) 혼자 이으면 틀린다.
+   ⚠ 세 글자 아래는 안 본다 — 두 글자면 엉뚱한 회사가 걸린다. */
+function mbCoGuess(em, idx0){
+  const idx = idx0 || mbWhoIndex();
+  /* ⚠ rawCo(명함에 적힌 그대로) 를 본다 — coAddr 은 «이미 만난» 회사만 담아서,
+       짚어야 할 「못 만난 이름」이 거기엔 하나도 없다. */
+  const raw = String((idx.rawCo||{})[String(em||'').trim().toLowerCase()] || '');
+  if(!raw || typeof ErpMatch==='undefined' || !ErpMatch.byName) return null;
+  const n = ErpMatch._norm(raw);
+  if(n.length < 3) return null;
+  if(ErpMatch.byName[n]) return null;            /* 이미 만나는 이름이면 짚을 것이 없다 */
+  let best = null;
+  Object.keys(ErpMatch.byName).forEach(k=>{
+    if(k.length < 3) return;
+    if(k.indexOf(n) < 0 && n.indexOf(k) < 0) return;
+    const rec = ErpMatch.byName[k];
+    if(!rec || rec.left || !rec.main) return;    /* 끝난 곳·담당자 없는 곳은 안 짚는다 */
+    /* 이름이 «가장 가까운» 것 하나만 — 여럿이면 사람이 목록에서 고르게 둔다 */
+    if(!best || Math.abs(k.length - n.length) < Math.abs(best.k.length - n.length))
+      best = { k:k, name:rec.company, who:rec.main };
+  });
+  return best ? { from: raw, name: best.name, who: best.who } : null;
+}
+
+/* 고를 수 있는 자문사 — 살아 있고 담당자가 적힌 곳 (이름순) */
+function mbCoNames(){
+  const cos = (typeof ErpMatch!=='undefined' && ErpMatch.byName) ? ErpMatch.byName : {};
+  return Object.keys(cos).map(k=>cos[k])
+    .filter(r=>r && r.company && r.main && !r.left)
+    .map(r=>String(r.company))
+    .sort((a,b)=>a.localeCompare(b,'ko'));
 }
 
 /* 서버에 시키고, 끝나면 폴더 목록을 다시 읽는다.
