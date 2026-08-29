@@ -2140,6 +2140,8 @@ body.pc #pcDetail{display:flex}
       <div id="pcErpTabs"></div>
       <div id="pcTools">
         <button id="incompleteBtn" class="pctool" onclick="this.classList.toggle('on');state.onlyIncomplete=!state.onlyIncomplete;state.page=0;render()" title="전화·이메일이 모두 있지 않은 명함만 보기 (빠진 정보 채우기용)">정보부족</button>
+        <!-- 거래처 담당자 퇴사 (대표 지시 2026-08-29) — 「퇴사자를 어떻게 확인하나」의 답 -->
+        <button id="leftBtn" class="pctool" onclick="this.classList.toggle('on');state.onlyLeft=!state.onlyLeft;state.page=0;render()" title="그 회사를 떠난 거래처 담당자만 보기 — 푸른이알피 담당자 줄의 퇴사 표시를 읽습니다. 단체 메일에서는 자동으로 빠집니다">🚪 퇴사자</button>
         <button id="privateBtn" class="pctool" onclick="this.classList.toggle('on');state.onlyPrivate=!state.onlyPrivate;state.page=0;render()" title="개인으로 지정한 명함만 보기">개인</button>
         <select id="pcMgrFilter" onchange="filterErpMgr(this.value)" title="담당 노무사로 명함 걸러보기">
           <option value="">담당 전체</option>
@@ -2443,7 +2445,7 @@ function seedErpTabs(){
           &&(v.scope||'all')==='all'&&((v.f||{}).erpFilter)===t);
         if(dup) return;
         const f={ q:'', group:'all', owner:'all', region:'', erpFilter:t, colFilter:{},
-          onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false,
+          onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false, onlyLeft:false,
           sort:'date', sortKey:null, sortDir:'desc' };
         const v={ id:uid(), name:t, kind, scope:'all', order:1000+i, f };
         Store.putView(v); state.views[v.id]=v;
@@ -2929,6 +2931,19 @@ const ErpMatch = {
                전화다(pu-erp.html CO_FIELD_LABEL: phone='전화', primaryContactPhone='담당자 연락처').
              ⚠ 새로 받아오는 것이 없다 — cos 는 이미 손에 든 자료다. */
           phone: co.phone||'', address: co.address||'',
+          /* ── 담당자 줄 — 퇴사한 사람을 가리는 데 쓴다 (대표 지시 2026-08-29) ──
+             거래처 «담당자 개인»의 퇴사는 지금까지 적을 자리가 아예 없었다. 그래서
+             떠난 사람에게 메일이 계속 나갔다. 적는 자리는 여기 하나다 —
+             푸른이알피는 기업정보함을 읽기만 하고 쓰지 않으므로(pucards/idx 30곳 전부
+             읽기), 반대로 기업정보함이 ERP 에 쓰는 길(sendToCompany)을 그대로 쓴다.
+             회사 종료(left)가 이미 그 방식이라 규칙이 하나로 유지된다.
+             ⚠ 사람을 가릴 때 쓰는 값만 담는다 — 이름·이메일·전화. 이름은 «보여 주려고»
+               담을 뿐 가리는 데는 안 쓴다(동명이인이 서로를 덮는다).
+             ⚠ 새로 받아오는 것이 없다 — cos 는 이미 손에 든 자료다. */
+          people: (co.contacts||[]).filter(Boolean).map(function(c){
+            return { name: c.name||'', email: c.email||'', phone: c.phone||'',
+                     bizPhone: c.bizPhone||'', left: !!c.left, leftAt: c.leftAt||0 };
+          }),
           ceoRaw: co.ceo||'', ceo2Raw: co.ceo2||'', contactsRaw: _contactsRaw,
           ceo: ErpMatch._norm(co.ceo||''), ceo2: ErpMatch._norm(co.ceo2||''),
           contacts: _contactsRaw.map(x=>ErpMatch._norm(x)).filter(Boolean),
@@ -3023,6 +3038,33 @@ const ErpMatch = {
   recOfCo(co){
     if (!co) return null;
     return ErpMatch.match({ bizno: co.bizNo, company: co.name });
+  },
+  /* ── 이 명함의 사람이 그 회사를 «떠났나» (대표 지시 2026-08-29) ──
+     푸른이알피 담당자 줄의 퇴사 표시를 읽는다. 적는 곳은 거기 하나고 여기는 읽기만 한다.
+     ⚠ «이름으로 맞추지 않는다». 이름은 사람이 적는 글자라 동명이인이 서로를 덮는다 —
+       2026-08-28 에 회사 이름으로 맞추다 「주식회사 행복한단홍갈비」와 「행복한 단홍갈비」가
+       섞인 사고를 겪었다. 이메일(다듬은 것)과 전화 «숫자»만 쓴다. 사람마다 하나뿐인 값이다.
+     ⚠ 그 회사 담당자 «안에서만» 찾는다. 남의 회사 동명이인에 걸리면 멀쩡한 사람이
+       메일에서 빠진다.
+     ⚠ 가릴 값이 없거나 표시가 없으면 «재직»으로 본다. 모른다고 빼 버리면 멀쩡한
+       담당자에게 메일이 안 간다 — 안 가는 쪽이 잘못 가는 쪽보다 늦게 드러난다. */
+  leftOfCard(it){
+    if (!ErpMatch.ready || !it) return false;
+    const m = ErpMatch.match(it);
+    const people = (m && m.people) || [];
+    if (!people.length) return false;
+    const mail = String(it.email || '').trim().toLowerCase();
+    const nums = [it.mobile, it.tel, it.companyTel]
+      .map(v => ErpMatch._digits(v)).filter(v => v.length >= 8);
+    if (!mail && !nums.length) return false;             /* 가릴 값이 없다 — 모른다 */
+    for (let i = 0; i < people.length; i++) {
+      const p = people[i];
+      const pm = String(p.email || '').trim().toLowerCase();
+      if (mail && pm && pm === mail) return !!p.left;
+      const pn = [p.phone, p.bizPhone].map(v => ErpMatch._digits(v)).filter(v => v.length >= 8);
+      if (pn.length && nums.some(n => pn.indexOf(n) >= 0)) return !!p.left;
+    }
+    return false;
   },
   /* 배지 짧은 텍스트: "김보람" 또는 "김보람 +2" */
   label(it){
@@ -4125,6 +4167,7 @@ function bulkSummary(stat, gapSec, matNames){
   const skip = [];
   if(stat && stat.noEmail) skip.push(`이메일 없음 ${stat.noEmail}`);
   if(stat && stat.blocked) skip.push(`수신거부 ${stat.blocked}`);
+  if(stat && stat.left)    skip.push(`퇴사 ${stat.left}`);
   if(stat && stat.dup)     skip.push(`중복 ${stat.dup}`);
   if(skip.length) out.push({ k:'빠지는 곳', v: skip.reduce((a,b)=>a+b.replace(/\D+/g,'')*1,0)+`곳 (${skip.join(' · ')})` });
   out.push({ k:'걸리는 시간', v: bulkEta(n, gapSec)+` (${gapSec}초에 한 통씩)` });
@@ -5499,6 +5542,7 @@ function mailWriteHtml(){
             ${(function(){ const s=c.bulkStat||{}; const b=[];
                 if(s.noEmail) b.push(`이메일 없음 ${s.noEmail}`);
                 if(s.blocked) b.push(`수신거부 ${s.blocked}`);
+  if(s.left)    b.push(`퇴사 ${s.left}`);
                 if(s.dup)     b.push(`중복 ${s.dup}`);
                 return b.length ? `<span class="cpbulkx">${esc(b.join(' · '))} 제외</span>` : ''; })()}
             <button class="cpbulkoff" onclick="bulkCancel()" title="한 곳에만 보내는 보통 메일로 돌아갑니다">✕ 묶음 풀기</button>
@@ -7656,6 +7700,9 @@ function listItems(){
       if (state.onlyPhone && !(it.mobile||it.tel||it.companyTel)) return false;
       if (state.onlyEmail && !it.email) return false;
       if (state.onlyIncomplete && (it.mobile||it.tel||it.companyTel) && it.email) return false;
+      /* 그 회사를 떠난 담당자만 (대표 지시 2026-08-29) — 「어떻게 확인하나」에 답하는 자리다.
+         판단은 ErpMatch 한 곳에서 한다: 여기서 따로 가리면 메일과 결과가 어긋난다. */
+      if (state.onlyLeft && !ErpMatch.leftOfCard(it)) return false;
       if (state.onlyPrivate && it.scope!=='private') return false;
       /* ERP 연결 필터: 자문/급여/노조/기금(유형) · linked(연결만) · none(미연결) */
       if (state.erpFilter){
@@ -8520,7 +8567,7 @@ const MAILTO_MAX = 50;
 function mailSel(){
   const ids=Object.keys(state.sel); if(!ids.length) return toast('명함을 먼저 선택하세요');
   const r = mailTargets(ids.map(id=>state.items[id]).filter(Boolean), state.mailBlock);
-  if(!r.ok.length) return toast(`보낼 수 있는 주소가 없습니다 — 이메일 없음 ${r.stat.noEmail} · 수신거부 ${r.stat.blocked}`,6000);
+  if(!r.ok.length) return toast(`보낼 수 있는 주소가 없습니다 — 이메일 없음 ${r.stat.noEmail} · 수신거부 ${r.stat.blocked} · 퇴사 ${r.stat.left}`,6000);
   if(r.ok.length > MAILTO_MAX){
     toast(`주소가 많아 메일앱이 열리지 않습니다 (${r.ok.length.toLocaleString()}명).\n주소를 복사했으니 메일 쓰기창 숨은참조 칸에 붙여넣으세요`, 10000);
     return selMailCopy();
@@ -15440,7 +15487,7 @@ function saveCurrentAsView(){
     if(!name0) return;
     const id=uid();
     const mf={ q:'', group:(state.group||'all'), owner:'all', region:'', erpFilter:'', erpMgr:'', colFilter:{},
-      onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false,
+      onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false, onlyLeft:false,
       vtab:id, sort:'date', sortKey:null, sortDir:'desc' };
     Store.putView({ id, name:name0, kind:state.tab, scope:(state.group||'all'), manual:true, order:Date.now(), f:mf });
     toast(`🏷 '${name0}' 담는 탭을 만들었습니다 — 명함을 선택해 [🏷 탭에 담기]로 넣으세요`,6000);
@@ -15507,7 +15554,7 @@ function createManualTabAndAdd(){
   if(!name) return;
   const id=uid();
   const mf={ q:'', group:(state.group||'all'), owner:'all', region:'', erpFilter:'', erpMgr:'', colFilter:{},
-    onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false,
+    onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false, onlyLeft:false,
     vtab:id, sort:'date', sortKey:null, sortDir:'desc' };
   const v={ id, name, kind:state.tab, scope:(state.group||'all'), manual:true, order:Date.now(), f:mf };
   state.views[id]=v;      /* 공유 저장 반영 전에도 바로 담을 수 있게 */
@@ -16035,7 +16082,7 @@ function seedProfTabs(){
           if(dup) return;
           const fl = { q:'', group:t.gid, owner:'all', region:'', erpFilter:'', erpMgr:'',
             colFilter:{ company: word },
-            onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false,
+            onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false, onlyLeft:false,
             sort:'date', sortKey:null, sortDir:'desc' };
           const v = { id:uid(), name:tb.name, kind:kind, scope:t.gid, order:2000+i, f:fl };
           Store.putView(v); state.views[v.id] = v; put++;
@@ -19495,19 +19542,24 @@ function keyEmail(k){ return String(k||'').replace(/,/g, '.'); }
 function mailTargets(items, block){
   const B = block || {};
   const ok = [], seen = {};
-  let noEmail=0, blocked=0, dup=0;
+  let noEmail=0, blocked=0, dup=0, left=0;
   (items||[]).forEach(it=>{
     if(!it) return;
     if(inLockedGroup(it)) return;              /* 잠긴 폴더 명함은 단체 메일에 섞이면 안 된다 */
     const e = normEmail(it.email);
     if(!e){ noEmail++; return; }
+    /* ── 그 회사를 떠난 담당자는 뺀다 (대표 지시 2026-08-29) ──
+       푸른이알피 담당자 줄의 퇴사 표시를 읽는다 — 여기서는 판단하지 않는다.
+       ⚠ 몇 명이 빠졌는지 «세어서 말해 준다». 「수신거부 N」과 같은 결이다 —
+         조용히 빼면 왜 안 갔는지 아무도 모른다. */
+    if(ErpMatch.leftOfCard(it)){ left++; return; }
     if(it.noMail || B[emailKey(e)]){ blocked++; return; }
     if(seen[e]){ dup++; return; }
     seen[e] = 1;
     ok.push({ name:it.name||'', email:e, company:it.company||'',
               title:it.title||'', mobile:it.mobile||it.companyTel||it.tel||'' });
   });
-  return { ok, stat:{ ready:ok.length, noEmail, blocked, dup } };
+  return { ok, stat:{ ready:ok.length, noEmail, blocked, dup, left } };
 }
 /* CSV — 엑셀·주소록이 한글을 제대로 읽게 BOM 을 붙이고, 값에 든 쉼표·따옴표·줄바꿈을 감싼다. */
 const CSV_COLS = [['name','이름'],['email','이메일'],['company','회사'],['title','직책'],['mobile','휴대폰']];
@@ -19532,7 +19584,7 @@ function selMailPick(){
   const items = ids.map(id=>state.items[id]).filter(Boolean);
   const r = mailTargets(items, state.mailBlock);
   if(!r.ok.length){
-    toast(`보낼 수 있는 주소가 없습니다 — 이메일 없음 ${r.stat.noEmail} · 수신거부 ${r.stat.blocked}`, 6000);
+    toast(`보낼 수 있는 주소가 없습니다 — 이메일 없음 ${r.stat.noEmail} · 수신거부 ${r.stat.blocked} · 퇴사 ${r.stat.left}`, 6000);
     return null;
   }
   return r;
@@ -19542,6 +19594,7 @@ function _mailStatText(st){
   const bits = [];
   if(st.noEmail) bits.push(`이메일 없음 ${st.noEmail}`);
   if(st.blocked) bits.push(`수신거부 ${st.blocked}`);
+  if(st.left)    bits.push(`퇴사 ${st.left}`);
   if(st.dup)     bits.push(`중복 ${st.dup}`);
   return `${st.ready.toLocaleString()}명 준비됨` + (bits.length ? ` · ${bits.join(' · ')} 제외` : '');
 }

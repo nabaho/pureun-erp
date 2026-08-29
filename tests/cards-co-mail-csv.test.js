@@ -98,7 +98,9 @@ test('mailTargets 가 네 가지를 실제로 걸러낸다', () => {
     normEmail: v => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(String(v||'').trim())
       ? String(v).trim().toLowerCase() : '',
     emailKey: e => String(e).replace(/\./g,'_'),
-    inLockedGroup: it => !!(it && it.locked) };
+    inLockedGroup: it => !!(it && it.locked),
+    /* 2026-08-29: 단체 메일이 퇴사한 거래처 담당자를 뺀다 — 이 검사는 그 부분을 안 본다 */
+    ErpMatch: { leftOfCard: () => false } };
   vm.createContext(ctx);
   vm.runInContext(fnBody('mailTargets'), ctx);
   const r = plain(ctx.mailTargets([
