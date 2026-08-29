@@ -612,6 +612,18 @@ input.kf-in[data-key]{width:auto;min-width:96px}
 input.kf-in:focus{background:#FFF4CF;border-bottom-color:var(--teal);box-shadow:0 0 0 2px rgba(14,124,102,.15)}
 input.kf-in.kf-done{background:#EDF7F3;border-bottom:1.5px solid var(--teal);font-weight:600}
 @media(max-width:900px){ .kf-sheet{padding:18px 14px} }
+/* ── 원본 그림 위에 겹치는 입력칸 ──
+   종이는 엔진이 그린 캔버스 그대로다. 입력칸은 그 위에 떠 있다.
+   ⚠ 배경을 반투명으로 둔다 — 완전히 덮으면 원본의 밑줄·안내글이 안 보인다. */
+.kf-sheet{background:transparent;box-shadow:none;padding:0;width:auto;display:flex;flex-direction:column;gap:14px;align-items:center}
+.kf-paper{position:relative;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.18);flex:none}
+.kf-paper canvas{display:block}
+.kf-paper input.kf-in{position:absolute;width:auto;min-width:0;font-family:"Malgun Gothic",sans-serif;
+  background:rgba(255,246,214,.60);border:none;border-bottom:1.5px dashed var(--amber);
+  padding:0 3px;border-radius:2px;color:var(--ink);line-height:1.1}
+.kf-paper input.kf-in:focus{background:rgba(255,244,207,.95);border-bottom-color:var(--teal);
+  box-shadow:0 0 0 2px rgba(14,124,102,.28);z-index:2}
+.kf-paper input.kf-in.kf-done{background:rgba(237,247,243,.72);border-bottom:1.5px solid var(--teal);font-weight:600}
 /* ── ⇄ 나란히 — 왼쪽 입력판, 오른쪽 한글 ──
    친 값이 «진짜 서식»에 어떻게 들어갔는지 눈을 옮기지 않고 견준다(대표 요청 2026-08-29). */
 #kfPair.kf-both{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start}
@@ -713,6 +725,7 @@ input.kf-in.kf-done{background:#EDF7F3;border-bottom:1.5px solid var(--teal);fon
 <script src="js/kcareer-formmap.js?v=4"></script>
 <script src="js/kcareer-hwpstamp.js?v=2"></script>
 <script src="js/kcareer-formhtml.js?v=2"></script>
+<script src="js/kcareer-overlay.js?v=1"></script>
 <!-- AI 판독 호출기 — 열쇠는 회사 서버가 든다(브라우저는 모른다) -->
 <script src="js/pu-ai-call.js?v=2"></script>
   <!-- 프로그램 사이 이동 (공용 앱바) -->
@@ -2971,7 +2984,9 @@ async function exportEditedHwpx(){ return _rhwp ? await _rhwp.exportHwpx() : nul
 
 /* ===== 내비게이션 ===== */
 let NAV=[
-  {g:'이력서관리', items:[['page-quickcv','⚡ 빠른 이력서(PDF)'],['page-resume-hub','이력서 생성·보관'],['page-profile','프로필 작성보관'],['page-certdoc','경력증명서 보관']]},
+  /* 「이력서 생성·보관」이 첫 자리다 — 대표가 가장 자주 쓰는 화면이다(2026-08-29 지시).
+     ⚠ 빠른 이력서를 «지우지는» 않는다. 순서만 바꾼다. */
+  {g:'이력서관리', items:[['page-resume-hub','이력서 생성·보관'],['page-quickcv','⚡ 빠른 이력서(PDF)'],['page-profile','프로필 작성보관'],['page-certdoc','경력증명서 보관']]},
   /* 회의비용·기타비용을 한 화면으로 합쳤다(2026-08-29) — 「구분」이 이미 가른다.
      ⚠ 기록은 옮기지 않았다. page-etcfee 는 남겨 두어 옛 기록을 그 화면으로 고칠 수 있다. */
   {g:'회의·비용관리', items:[['page-meetfee','비용관리']]},
@@ -3753,7 +3768,11 @@ async function importTemplateFile(file,d){ const cfg=DOMAINS[d].create;
   const b64=abToB64(buf);
   saveFileUnified(tempId,{id:tempId,name:fname,ext,size:file.size,base64:b64,savedAt:new Date().toISOString()});
   delete _furl[tempId]; /* 캐시 초기화 */
-  showSidePreview(tempId);
+  /* ⚠ 한글 서식은 옆 미리보기를 띄우지 않는다 — 편집기에 «원본 그대로» 나오므로
+     옆에 또 띄우면 「두 개 다른 화면」이 된다(대표 제보 2026-08-29).
+     열려 있던 옛 미리보기도 닫는다. PDF·DOCX 는 편집기가 원본을 못 그리므로 그대로 둔다. */
+  if(/^(hwp|hwpx)$/.test(ext)){ _spPinned=false; hideSidePreview(); }
+  else showSidePreview(tempId);
   /* 양식 보관함에 추가 체크 시 */
   if(document.getElementById(cfg.saveLib).checked){ const id='tpl_'+Date.now();
     saveFileUnified(id,{id,name:fname,ext,size:file.size,base64:b64,savedAt:new Date().toISOString()});
@@ -3771,7 +3790,9 @@ function renderTplLib(d){ const cfg=DOMAINS[d].create; const box=document.getEle
     const act=document.createElement('span');
     const open=document.createElement('button'); open.className='btn sm'; open.textContent='열기';
     open.onclick=async()=>{ const f=await getFileAsync(t.id); if(!f) return toast('원본을 찾을 수 없음');
-      delete _furl[t.id]; showSidePreview(t.id);
+      delete _furl[t.id];
+      /* 보관함에서 열 때도 같다 — 한글은 편집기가 원본을 그리므로 옆 미리보기는 군더더기다 */
+      if(_isHwpName(t.name)){ _spPinned=false; hideSidePreview(); } else showSidePreview(t.id);
       await mountEditor(b64ToAb(f.base64),t.name,cfg); };
     const del=document.createElement('button'); del.className='btn sm'; del.textContent='삭제'; del.style.marginLeft='6px';
     del.onclick=()=>{ deleteFile(t.id); set(DOMAINS[d].tplKey, tplList(d).filter(x=>x.id!==t.id)); renderTplLib(d); };
@@ -6581,7 +6602,7 @@ function rhPick(id,v){ _rhPicks[id]=v; rhRenderMap(); }
      원본 XML 의 그 칸에 넣는다. HTML 을 그대로 내면 글꼴·여백·표 너비가 달라진다.
    ⚠ 자리 이름표는 칸 지도와 «같은 규칙»이다. 다르면 엉뚱한 칸에 들어간다(검사가 지킨다). */
 var _rhVals = {};      /* {자리이름표(:라벨): 친 글자} */
-var _rhBuilt = null;   /* 구역별 build() 결과 */
+var _rhSlots = [];     /* 채울 자리(칸 지도) — 겹치기 입력칸이 이것을 쓴다 */
 var _rhMode = 'in';
 
 function rhSetMode(m){
@@ -6599,35 +6620,124 @@ function rhSetMode(m){
 }
 
 /* 입력판을 그린다 — 서식을 열 때 칸 지도와 함께 만들어진다 */
+/* ── 서식 입력판 = «원본 그림 + 그 위의 입력칸» ──
+   HTML 표로 흉내 내면 서식마다 새로 깨진다(대표 제보 2026-08-29). 원본을 그대로 그리고
+   그 위에 입력칸만 얹으면 깨질 구석이 없다.
+   ⚠ 두 번 그린다: ①표식판(누가 어느 칸인지) ②원본판(칸의 진짜 크기·보이는 그림).
+     짐작으로 순서를 맞추지 않는다 — 한 칸만 어긋나도 값이 엉뚱한 자리에 박힌다. */
 async function rhBuildInput(){
-  var wrap=document.getElementById('kfSheetWrap'), sheet=document.getElementById('kfSheet');
-  var modes=document.getElementById('kfModes'), hint=document.getElementById('kfHintBar');
-  if(!wrap||!sheet||!window.KcareerFormHtml) return;
-  if(!_rhDoc||!_rhDoc.bytes){ modes.style.display='none'; if(hint) hint.style.display='none'; wrap.style.display='none'; return; }
+  var wrap=document.getElementById("kfSheetWrap"), sheet=document.getElementById("kfSheet");
+  var modes=document.getElementById("kfModes"), hint=document.getElementById("kfHintBar");
+  var hide=function(){ if(modes) modes.style.display="none"; if(hint) hint.style.display="none"; if(wrap) wrap.style.display="none"; };
+  if(!wrap||!sheet||!window.KcareerOverlay||!window.PureunHwp){ hide(); return; }
+  if(!_rhDoc||!_rhDoc.bytes){ hide(); return; }
   var src=null;
   try{ await _ensureJSZip(); src=await _rhToHwpx(_rhDoc.bytes,_rhDoc.name); }catch(e){ src=null; }
-  if(!src){ modes.style.display='none'; if(hint) hint.style.display='none'; wrap.style.display='none'; return; }
+  if(!src){ hide(); return; }
+
+  sheet.innerHTML='<div class="rc-mute" style="padding:22px">서식을 그리는 중…</div>';
+  modes.style.display="flex"; if(hint) hint.style.display="";
+  wrap.style.display="flex";
+
   var zip=await JSZip.loadAsync(src);
   var names=Object.keys(zip.files).filter(function(n){ return /Contents\/section\d+\.xml$/i.test(n); }).sort();
-  _rhBuilt=[];
-  var html='', warn={textBoxes:0,nested:0};
+  var warn={textBoxes:0,nested:0};
+  _rhSlots=[];
+  /* ① 칸 지도 + 표식 심기 */
+  var probeZip=await JSZip.loadAsync(src), plans={};
   for(const n of names){
-    var xml=await zip.file(n).async('string');
-    var b=KcareerFormHtml.build(xml);
-    b.sec=n; _rhBuilt.push(b);
-    warn.textBoxes+=b.warn.textBoxes; warn.nested+=b.warn.nested;
-    html+=KcareerFormHtml.toHtml(b, { values:_rhVals });
+    var xml=await zip.file(n).async("string");
+    var m=KcareerFormMap.guess(KcareerFormMap.scan(xml), _cvFillData());
+    m.slots.forEach(function(sl){ sl.sec=n; }); m.lists.forEach(function(l){ l.sec=n; });
+    warn.textBoxes+=m.warn.textBoxes; warn.nested+=m.warn.nested;
+    _rhSlots=_rhSlots.concat(m.slots);
+    var plan=KcareerOverlay.markPlan(m.slots);
+    plans[n]=plan;
+    var r=KcareerFormMap.apply(xml,{values:plan.values,data:{fields:{}}});
+    probeZip.file(n, r.xml);
   }
-  sheet.innerHTML=html;
-  modes.style.display='flex'; if(hint) hint.style.display='';
-  var note=document.getElementById('kfNote');
-  /* 못 그리는 것은 «반드시» 적는다 — 조용히 빠지면 다른 서식이 된다 */
-  var msg=[];
-  if(warn.textBoxes) msg.push('글상자 '+warn.textBoxes+'개는 여기서 못 칩니다(한글에서 직접)');
-  if(warn.nested) msg.push('칸 안의 표 '+warn.nested+'곳은 건드리지 않습니다');
-  if(note) note.textContent=msg.length?('⚠ '+msg.join(' · ')):'노란 칸에 바로 치세요 — 저장은 원본 한글에 들어갑니다';
+  var probeBytes=new Uint8Array(await probeZip.generateAsync({type:"arraybuffer"}));
+
+  /* \u2461 \ub450 \ud310\uc744 \uadf8\ub824 \uc88c\ud45c\ub97c \uc5bb\ub294\ub2e4 */
+  var boxes={}, pages=[];
+  try{
+    var probe=await _rhLayout(probeBytes);
+    var clean=await _rhLayout(new Uint8Array(await zip.generateAsync({type:"arraybuffer"})), true);
+    pages=clean.pages;
+    var allMarks={}; Object.keys(plans).forEach(function(n){ Object.assign(allMarks, plans[n].marks); });
+    for(var p=0;p<probe.pages.length && p<clean.pages.length;p++){
+      var colR=(clean.pages[p].info.columns&&clean.pages[p].info.columns[0])
+        ? (clean.pages[p].info.columns[0].x+clean.pages[p].info.columns[0].width)
+        : clean.pages[p].info.width;
+      var b=KcareerOverlay.boxesFrom(probe.pages[p].runs, clean.pages[p].runs, allMarks, colR);
+      Object.keys(b).forEach(function(id){ if(!boxes[id]){ b[id].page=p; boxes[id]=b[id]; } });
+    }
+  }catch(e){ console.warn("겹치기 좌표",e); }
+
+  /* \u2462 \uadf8\ub9ac\uae30 */
+  sheet.innerHTML="";
+  var made=0;
+  pages.forEach(function(pg,pi){
+    var paper=document.createElement("div"); paper.className="kf-paper";
+    paper.style.width=Math.round(pg.info.width)+"px";
+    paper.style.height=Math.round(pg.info.height)+"px";
+    paper.appendChild(pg.canvas);
+    _rhSlots.forEach(function(sl){
+      var b=boxes[sl.id]; if(!b||b.page!==pi) return;
+      if(sl.guess==="__stamp") return;
+      if(!KcareerOverlay.usable(b, pg.info.width, pg.info.height)) return;
+      var el=document.createElement("input");
+      el.className="kf-in"; el.dataset.slot=sl.id;
+      el.style.left=Math.round(b.x)+"px"; el.style.top=Math.round(b.y)+"px";
+      el.style.width=Math.round(b.w)+"px"; el.style.height=Math.round(b.h*1.25)+"px";
+      el.style.fontSize=Math.round(b.h*0.86)+"px";
+      var v=_rhVals[sl.id]; if(v){ el.value=v; el.classList.add("kf-done"); }
+      el.title=(sl.left||sl.text||"채울 칸");
+      paper.appendChild(el); made++;
+    });
+    sheet.appendChild(paper);
+  });
+
+  var note=document.getElementById("kfNote"), msg=[];
+  if(!pages.length) msg.push("서식을 그리지 못했습니다 — 오른쪽 칸 지도로 채워 주세요");
+  else if(!made) msg.push("칠 자리를 못 찾았습니다 — 오른쪽 칸 지도로 채워 주세요");
+  if(warn.textBoxes) msg.push("글상자 "+warn.textBoxes+"개는 여기서 못 칩니다(한글에서 직접)");
+  if(warn.nested) msg.push("칸 안의 표 "+warn.nested+"곳은 건드리지 않습니다");
+  if(note) note.textContent=msg.length?("⚠ "+msg.join(" · ")):("노란 칸에 바로 치세요 — 칠 자리 "+made+"곳 · 저장은 원본 한글에 들어갑니다");
   rhBindInputs();
-  rhSetMode('in');
+  rhSetMode("in");
+}
+
+/* 문서를 그려 «쪽마다» 캔버스와 글자 조각을 돌려준다.
+   withCanvas 가 참일 때만 캔버스를 만든다 — 표식판은 재기만 하면 되므로 안 그린다(빠르다). */
+async function _rhLayout(bytes, withCanvas){
+  var mod=await _rhEngine();
+  var doc=new mod.HwpDocument(bytes instanceof Uint8Array?bytes:new Uint8Array(bytes));
+  try{
+    var out=[], n=doc.pageCount();
+    for(var i=0;i<n;i++){
+      var info=JSON.parse(doc.getPageInfo(i));
+      var runs=[]; try{ runs=JSON.parse(doc.getPageTextLayout(i)).runs||[]; }catch(e){}
+      var cv=null;
+      if(withCanvas){
+        cv=document.createElement("canvas");
+        var dpr=Math.max(1,Math.min(window.devicePixelRatio||1,2));
+        cv.width=Math.round(info.width*dpr); cv.height=Math.round(info.height*dpr);
+        cv.style.width=Math.round(info.width)+"px"; cv.style.height=Math.round(info.height)+"px";
+        doc.renderPageToCanvas(i, cv, dpr);
+      }
+      out.push({info:info, runs:runs, canvas:cv});
+    }
+    return {pages:out};
+  } finally { try{ doc.free(); }catch(e){} }
+}
+var _rhEngineMod=null;
+async function _rhEngine(){
+  if(_rhEngineMod) return _rhEngineMod;
+  var url=new URL((PureunHwp.config().coreUrl||"vendor/rhwp-core/rhwp.js"), location.href).href;
+  var mod=await (Function("u","return import(u)")(url));
+  await mod.default();
+  _rhEngineMod=mod; return mod;
 }
 
 function rhBindInputs(){
