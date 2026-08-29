@@ -129,7 +129,11 @@ for(const s of SCREENS){
       `${s.name} 화면에 맨 아래 붙박이 덩어리가 없다 — 대표가 설정으로 갈 길을 잃는다`);
     assert.ok(html.indexOf('⚙️ 환경설정') >= 0,
       `${s.name} 화면에서 「환경설정」이 사라졌다(대표 보고 2026-08-17)`);
-    assert.ok(html.indexOf('openSettingsPage()') >= 0, '누를 수 없는 이름표만 있다');
+    /* ⚠ 가는 «곳»은 창마다 다르다(대표 보고 2026-08-29 「왜 기업정보함으로 이동하나」) —
+         메일 창은 메일 설정, 명함 창은 명함 설정. 여기서 지키는 것은 그대로다:
+         «누를 수 있는 길»이 있는가. */
+    assert.ok(/openMailSetPage\(\)|openSettingsPage\(\)/.test(html),
+      '누를 수 없는 이름표만 있다');
   });
 }
 

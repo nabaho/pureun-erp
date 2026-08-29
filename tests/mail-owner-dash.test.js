@@ -1621,3 +1621,122 @@ test('★ 창에 «메일이 안 움직인다»는 말이 있다 — 없으면 �
   assert.match(html, /지난 메일도 함께/, '다음메일의 둘째 체크가 없습니다');
 });
 
+
+/* ══════════════════════════════════════════════════════════════════════════
+   메일함 «전용» 환경설정 (대표 보고 2026-08-29)
+   ══════════════════════════════════════════════════════════════════════════
+   "환경설정 클릭시 왜 기업정보함으로 이동하나 메일함의 환경설정은 별도로 구축해야된다"
+   "다음메일에 있는 환경설정이다 필요한 부분이 있는지 모두 검토하고 반영해 달라"
+
+   ★ 지키는 것 다섯
+     1. 메일 창의 ⚙ 는 «메일» 설정으로 간다 (cards-mail-own-window 가 옆줄 쪽을 지킨다)
+     2. 단축키 목록이 «거짓말하지 않는다» — 적어 둔 키는 mbKeyNav 가 정말 해야 한다
+     3. 다음메일이 주인인 설정은 «그리로 보낸다» — 「여기서 못 한다」로 끝내면 헤맨다
+     4. IMAP 을 끄면 메일함이 멈춘다는 것을 «반드시» 적는다
+     5. 본문 미리보기는 «새로 받아 오지 않는다» — 이미 온 값(row.p)을 쓴다 */
+function loadSet(over){
+  const c = loadCo(over || {});
+  c.state.mailSent = 'set';
+  return c;
+}
+
+test('★★ 단축키 목록이 «거짓말하지 않는다» — 적은 키는 정말 되어야 한다', () => {
+  /* 안 되는 키를 적어 두면 그 자리에서 거짓말이 된다. 목록과 손잡이(mbKeyNav)를 맞대 본다.
+     ⚠ 주석을 걷고 본다 — 「Delete 는 일부러 안 넣었다」 같은 설명이 «되는 것»으로 세인다. */
+  const nav = src.slice(src.indexOf('function mbKeyNav'),
+                        src.indexOf('function mbShowDetail'))
+                 .replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const c = loadSet();
+  /* ⚠ 덩어리 안의 const 는 밖에서 못 본다(vm 의 결) — 안에서 꺼내 온다 */
+  const keys = vm.runInContext('MB_KEYS', c).map(x => x[0]);
+  assert.ok(keys.length >= 5, '단축키 목록이 너무 짧다');
+  const HAS = {
+    '↑ ↓':       /ArrowDown/.test(nav) && /ArrowUp/.test(nav),
+    'Enter':     /'Enter'/.test(nav),
+    'Space':     /' '|Spacebar/.test(nav),
+    'U':         /'u'|'U'/.test(nav),
+    'S':         /'s'|'S'/.test(nav),
+    'C':         /'c'|'C'/.test(nav),
+    'Esc':       /'Escape'/.test(nav),
+    'Shift + A': /shiftKey/.test(nav) && /'A'|'a'/.test(nav),
+    'Shift + /': /'\?'/.test(nav)
+  };
+  keys.forEach(k => {
+    assert.ok(k in HAS, '★ 「' + k + '」 는 이 검사가 모르는 키입니다 — 정말 되는지 확인해 주세요');
+    assert.ok(HAS[k], '★ 「' + k + '」 를 적어 놓고 mbKeyNav 는 그 일을 안 합니다');
+  });
+});
+
+test('★ 삭제(Delete)는 «일부러» 안 넣었다 — 키 하나로 다음메일 휴지통까지 가면 안 된다', () => {
+  const c = loadSet();
+  assert.ok(!vm.runInContext('MB_KEYS', c).some(x => /Delete/i.test(x[0])),
+    '★ Delete 를 넣었습니다 — 우리 삭제는 다음메일 휴지통까지 건드립니다(단추에는 물음이 있습니다)');
+});
+
+test('★★ 다음메일이 «주인»인 설정은 그리로 보낸다 — 여섯 자리 다', () => {
+  const c = loadSet();
+  const h = c.mailSetHtml();
+  ['setting/Folder', 'setting/Filter', 'setting/Spam',
+   'setting/Imap', 'setting/Account', 'setting/Absence'].forEach(u => {
+    assert.ok(h.indexOf(u) > 0, '★ 다음메일 「' + u + '」 로 가는 길이 없습니다');
+  });
+});
+
+test('★★ IMAP 을 끄면 «메일함이 멈춘다»는 말이 있다 — 이것을 안 적으면 언젠가 끈다', () => {
+  const c = loadSet();
+  const h = c.mailSetHtml();
+  const i = h.indexOf('setting/Imap');
+  assert.ok(i > 0, 'IMAP 줄이 없다');
+  const near = h.slice(Math.max(0, i - 400), i + 600);
+  assert.match(near, /멈춥니다|멈춘다/,
+    '★ IMAP 을 끄면 우리 메일함이 통째로 멈춘다는 경고가 없습니다');
+});
+
+test('★ 안 만든 것은 «까닭»과 함께 적는다 — 안 적으면 빠뜨린 것으로 보인다', () => {
+  const c = loadSet();
+  const h = c.mailSetHtml();
+  assert.match(h, /안 만들었습니다/, '안 만든 것을 적지 않았다');
+  /* 스팸은 «안 가져온다»는 결정이 있었다 — 그 말이 이 화면에 있어야 한다 */
+  assert.match(h, /스팸함을 <b>아예 안 가져옵니다<\/b>|스팸함을 아예 안 가져옵니다/,
+    '스팸을 왜 안 가져오는지 안 적혀 있다');
+});
+
+test('★ 흩어져 있던 것을 한자리에 모았다 — 몇 통씩·숨긴 칸·자문사 잇기', () => {
+  const c = loadSet();
+  const h = c.mailSetHtml();
+  assert.ok(h.indexOf('mbSetPageSize(') > 0, '몇 통씩이 없다');
+  assert.ok(h.indexOf('mbToggleHidden()') > 0, '숨긴 칸 되돌리기가 없다');
+  assert.ok(h.indexOf('openWhoPage()') > 0, '자문사 이메일 잇기가 없다');
+  assert.ok(h.indexOf('openMailBox(') > 0, '메일함으로 돌아갈 길이 없다 — 갇힌다');
+});
+
+test('★ 보내는 주소 바꾸기는 대표님만 — 직원 화면에는 단추가 없다', () => {
+  const boss = loadSet({ state:{ isAdmin:true } });
+  assert.ok(boss.mailSetHtml().indexOf('editMailFrom()') > 0, '대표님이 못 바꾸신다');
+  const staff = loadSet({ state:{ isAdmin:false } });
+  assert.ok(staff.mailSetHtml().indexOf('editMailFrom()') < 0,
+    '★ 직원 화면에 보내는 주소 바꾸기가 있습니다');
+});
+
+test('★★ 본문 미리보기는 «새로 받아 오지 않는다» — 이미 온 값을 쓴다', () => {
+  /* 서버가 목록과 함께 미리보기(row.p)를 적어 둔다. 실측 2026-08-29: 7,361통 중 6,328통(86%).
+     ⚠ 여기서 본문을 새로 부르면(readMailMessage) 목록 한 번에 100번을 부른다. */
+  /* ⚠ 글자 수로 창을 자르면 안 된다 — 줄이 늘면 조용히 반만 본다.
+       미리보기를 그리는 «그 줄»을 찾아 언저리만 본다. */
+  const i = src.indexOf('class="pre"');
+  assert.ok(i > 0, '목록에 미리보기 줄이 없다');
+  const body = src.slice(Math.max(0, i - 700), i + 400);
+  assert.match(body, /v\.p/, '미리보기가 이미 온 값(row.p)을 안 씁니다');
+  assert.ok(body.indexOf('readMailMessage') < 0,
+    '★ 목록에서 본문을 새로 부릅니다 — 한 화면에 100번을 부르게 됩니다');
+});
+
+test('★ 미리보기 켜기는 «이 기계에만» 담는다 — 한 사람이 켠 것이 열 사람 화면을 바꾸면 안 된다', () => {
+  const body = src.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const i = body.indexOf('function mbPreviewSet');
+  assert.ok(i > 0, '미리보기 켜기가 없다');
+  const fn = body.slice(i, i + 400);
+  assert.match(fn, /localStorage/, '이 기계에 안 담는다');
+  assert.ok(fn.indexOf('firebase') < 0 && fn.indexOf('DB_ROOT') < 0,
+    '★ 미리보기 취향을 전 직원 공용으로 저장합니다');
+});

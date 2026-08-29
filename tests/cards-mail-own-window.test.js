@@ -210,13 +210,26 @@ test('★ 옆줄이 다음메일함처럼 끝난다 — 접었을 때 우리 앱
   assert.ok(h.indexOf('전체 자료') < 0, '접었는데 자료함 목록이 보인다');
   assert.ok(h.indexOf('푸른 도구') > 0, '펼칠 길이 없다');
   assert.ok(h.indexOf('closeMailPage()') > 0, '기업정보함으로 나갈 길이 없다 — 창에 갇힌다');
-  assert.ok(h.indexOf('openSettingsPage()') > 0, '환경설정으로 갈 길이 없다');
+  /* ⚠ 메일 창에서는 «메일» 설정으로 간다(대표 보고 2026-08-29). 지키는 것은 그대로다. */
+  assert.ok(h.indexOf('openMailSetPage()') > 0, '환경설정으로 갈 길이 없다');
 });
 
 /* ══════ ⑥ 환경설정은 두 창 모두에 남는다 ══════ */
 
-for(const s of MAIL_SCREENS.concat(CARD_SCREENS)){
-  test(`★ ${s.name}: ⚙️ 환경설정이 그대로 있다`, () => {
+/* ⚠ 설정으로 가는 «길»은 두 창 모두에 그대로 있다(2026-08-17 규칙).
+   달라진 것은 가는 «곳»뿐이다 — 메일 창은 메일 설정, 명함 창은 명함 설정.
+   (대표 보고 2026-08-29 「환경설정 클릭시 왜 기업정보함으로 이동하나」) */
+for(const s of MAIL_SCREENS){
+  test(`★ ${s.name}: ⚙️ 환경설정이 «메일» 설정으로 간다`, () => {
+    const h = side(s.state);
+    assert.ok(h.indexOf('openMailSetPage()') > 0,
+      '나누다가 설정으로 가는 길을 잃으면 안 된다 (2026-08-17 에 겪은 일)');
+    assert.ok(h.indexOf('openSettingsPage()') < 0,
+      '★ 메일 창인데 명함 설정으로 갑니다 — 왜 그 화면이 열리는지 알 길이 없습니다');
+  });
+}
+for(const s of CARD_SCREENS){
+  test(`★ ${s.name}: ⚙️ 환경설정이 «명함» 설정으로 간다`, () => {
     assert.ok(side(s.state).indexOf('openSettingsPage()') > 0,
       '나누다가 설정으로 가는 길을 잃으면 안 된다 (2026-08-17 에 겪은 일)');
   });
