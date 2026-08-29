@@ -53,6 +53,8 @@ eval("var END_WAYS=[['done','종료','x','closed'],['cancel','취소','x','cance
   + gvar('KIND_SET') + '\n' + gvar('KIND_ALIAS') + '\n'
   + gvar('PE_DEF') + '\n' + gvar('PE_KEYS') + '\n' + gvar('PE_MIRROR') + '\n'
   + gvar('PE_TKEY') + '\n' + gvar('NO_PREFIX_SKIP') + '\n' + gvar('PE_ST_LABEL') + '\n'
+  + gvar('PE_CKIND') + '\n'   // 계약 종류(업체계약·컨설팅계약…) — peType 이 쓴다
+
   + ['catNorm', 'isKind', 'catColor', 'catList', 'catBadge',
      'peTypeName', '_peRawType', 'peType', 'peStatus', 'peEndWay', '_peClosed', '_peDue',
      'briefTrim', 'itemName', 'ptOf', 'needBrief', 'nameCell',
@@ -81,15 +83,23 @@ ok('컨설팅도 마찬가지',
   peType('consulting', { typeCodes: { consulting: 'cons-a' } }, '') === '일터혁신 상생 컨설팅');
 ok('typeCode 한 칸만 있는 옛 자료도 푼다',
   peType('case', { typeCode: 'case-a' }, '') === '부당해고');
+/* 계약은 「종류」(업체계약·컨설팅계약…)를 앞에 두고 세부 유형을 뒤에 붙인다.
+   종전에는 세부 유형만 찾아, 유형 코드가 비면 업무명이 통째로 비어 「—」였다 —
+   계약인 것은 알아도 무슨 계약인지 알 수가 없었다. */
 ok('계약은 붙어 있는 종류를 모두 이어 준다',
   peType('contract', { kinds: ['company', 'case'], typeCodes: { company: 'co-a', case: 'case-a' } }, '')
-    === '취업규칙 · 부당해고');
+    === '업체계약 취업규칙 · 사건계약 부당해고');
 ok('같은 이름이 두 번 나오지 않는다',
-  peType('contract', { kinds: ['company', 'case'], typeCodes: { company: '점검', case: '점검' } }, '') === '점검');
+  peType('contract', { kinds: ['company', 'company'], typeCodes: { company: '점검' } }, '') === '업체계약 점검');
 ok('kind 한 개짜리 옛 자료도 읽는다',
-  peType('contract', { kind: 'company', typeCodes: { company: 'co-b' } }, '') === '새마을금고 점검');
+  peType('contract', { kind: 'company', typeCodes: { company: 'co-b' } }, '') === '업체계약 새마을금고 점검');
 ok('마스터에 없으면 예전 칸으로 내려간다',
-  peType('contract', { kinds: ['consulting'], consultingType: '현장클리닉' }, '') === '현장클리닉');
+  peType('contract', { kinds: ['consulting'], consultingType: '현장클리닉' }, '') === '컨설팅계약 현장클리닉');
+/* ⚠ 이것이 이번 수술의 요점 — 세부 유형이 없어도 종류는 남아야 한다.
+   여기가 비면 화면에 「—」만 뜨고 무슨 계약인지 알 수 없다. */
+ok('세부 유형이 없어도 종류는 남는다',
+  peType('contract', { kinds: ['consulting'] }, '') === '컨설팅계약'
+  && peType('contract', { kinds: ['company', 'fund'] }, '') === '업체계약 · 기금관리');
 ok('기타사업은 관리번호 접두어가 업무명',
   peType('other', { projectNo: '기술보호-2026-006' }, '') === '기술보호');
 ok('접두어가 구분과 같은 말이면 버린다 ("계약"은 무슨 일인지 알려 주지 않는다)',
