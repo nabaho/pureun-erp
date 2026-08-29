@@ -550,7 +550,7 @@
 
   /* 서버 함수 하나를 부른다 — 로그인 표를 붙이고, 까닭이 있으면 그 말을 그대로 던진다.
      ⚠ 두 곳에서 같은 손질을 하면 한쪽만 고치게 된다(429 안내문이 그랬다). */
-  function callFn(name, fail) {
+  function callFn(name, fail, payload) {
     var fb = deps.firebase || (typeof firebase !== 'undefined' ? firebase : null);
     if (!fb || !fb.auth) return Promise.reject(new Error('로그인을 확인할 수 없습니다'));
     var u = fb.auth().currentUser;
@@ -559,7 +559,7 @@
       return fetch(FN_BASE + name, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
-        body: '{}'
+        body: JSON.stringify(payload || {})
       });
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (j) {
@@ -577,6 +577,19 @@
      ⚠ 이 일은 서버만 할 수 있다 — 콘솔 규칙이 **남의 자리 쓰기**를 막는다.
      ⚠ 총괄관리자만. 서버가 다시 한 번 확인한다. */
   function regroupShared() { return callFn('regroupPaydataShared', '다시 갈라 보내지 못했습니다'); }
+
+  /* ── 잘못 온 자료를 다른 사람에게 넘기기 (대표 지시 2026-08-29) ──
+     ⚠ 이 일도 서버만 할 수 있다 — 콘솔 규칙이 **남의 자리 쓰기**를 막는다.
+     ⚠ to 가 비면 **공용 칸으로 되돌린다**(임자를 모를 때). 아무에게나 떠넘기는
+       것보다 낫다.
+     ⚠ 까닭은 반드시 적는다 — 받는 사람이 「왜 나한테 왔지」를 알아야 한다. */
+  function handItem(ids, from, to, why) {
+    var list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean);
+    if (!list.length) return Promise.reject(new Error('넘길 자료를 고르세요'));
+    if (!String(why || '').trim()) return Promise.reject(new Error('왜 넘기는지 적어 주세요'));
+    return callFn('handPaydataItem', '넘기지 못했습니다',
+      { ids: list, from: String(from || deps.uid || ''), to: String(to || ''), why: String(why) });
+  }
 
 
   function listMailConf() {
@@ -1751,6 +1764,7 @@
     mailConfPath: mailConfPath,
     pullMailNow: pullMailNow,
     regroupShared: regroupShared,
+    handItem: handItem,
     listMailConf: listMailConf,
     setMailScanInbox: setMailScanInbox,
     mailNote: mailNote,
