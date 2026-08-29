@@ -2086,8 +2086,20 @@ exports.hanaMessageBridge = functions
 
       if (action === "ingest") {
         const linked = await requireHanaDevice(req, body);
+        /* ══ 온 길이 둘이다 (대표 지시 2026-08-29) ══════════════════════════
+           ① 알림 (source 없음) — 지금 막 도착한 문자. 예전부터 있던 길.
+           ② 문자함 (source==="history") — 폰의 지난 문자를 손으로 끌어온 것.
+
+           ★ ②에는 «알림 꾸러미 이름»이 없다. 알림을 통해 온 것이 아니라
+             안드로이드 문자함(SMS)에서 직접 읽은 것이라, 어느 앱이 띄웠는지가
+             아예 없다. 그래서 꾸러미 검사를 건너뛴다 — 대신 기기 열쇠로
+             이미 누구인지 확인했고(requireHanaDevice), 문자함은 OS 가 지키는
+             자리라 아무 앱이나 넣을 수 없다.
+           ⚠ 그 밖의 것은 «하나도» 다르지 않다 — 같은 해석기, 같은 대기함,
+             같은 중복막이. 여기서 갈라지면 한쪽만 조용히 막힌다(2026-08-29 사고). */
+        const fromHistory = String(body.source || "") === "history";
         const packageName = String(body.packageName || "").trim();
-        if (!HANA_MESSAGE_PACKAGES.has(packageName)) {
+        if (!fromHistory && !HANA_MESSAGE_PACKAGES.has(packageName)) {
           await hanaNoteSkip(linked, "unsupported_message_app");
           hanaJson(res, 400, { ok: false, ignored: true, reason: "unsupported_message_app" }); return;
         }
@@ -2108,6 +2120,10 @@ exports.hanaMessageBridge = functions
           hanaJson(res, 200, { ok: true, duplicate: true, id: tx.id }); return;
         }
         const receivedAt = Date.now();
+        /* 어디서 왔는지를 적어 둔다 — 「받은 때」가 실제로 쓴 때보다 한참 뒤인 줄이
+           섞이면, 그것이 지난 문자를 끌어온 것인지 사람이 알 수 있어야 한다. */
+        const cameFrom = String(linked.device.deviceName || "권형하 휴대폰").slice(0, 46) +
+          (fromHistory ? " · 지난 문자" : "");
         const inboxValue = {
           id: tx.id,
           src: tx.src,
@@ -2120,7 +2136,7 @@ exports.hanaMessageBridge = functions
           rawHash: tx.rawHash,
           status: "pending",
           receivedAt,
-          deviceName: String(linked.device.deviceName || "권형하 휴대폰").slice(0, 60),
+          deviceName: cameFrom,
         };
         const updates = {};
         updates[`inbox/${linked.uid}/${tx.id}`] = inboxValue;
@@ -2137,11 +2153,18 @@ exports.hanaMessageBridge = functions
             status: "new",
             officeStatus: "unknown",
             receivedAt,
-            deviceName: String(linked.device.deviceName || "권형하 휴대폰").slice(0, 60),
+            deviceName: cameFrom,
           };
         }
         await db.ref("hanaSmsBridge").update(updates);
-        await hanaDeviceRef(linked).update({ lastOkAt: Date.now(), lastSkip: null }).catch(() => {});
+        /* ⚠ 지난 문자를 끌어온 것으로는 lastOkAt 을 찍지 않는다.
+             lastOkAt 이 뜻하는 것은 「알림 다리가 지금 돌고 있다」이지
+             「폰과 말이 통한다」가 아니다. 지난 것을 넣었다고 살아 있다고 찍으면,
+             알림이 막힌 채로 「멀쩡함」이 되어 진짜 끊김을 영영 못 알아챈다.
+             PC 붙여넣기도 같은 까닭으로 안 찍는다(아래). */
+        if (!fromHistory) {
+          await hanaDeviceRef(linked).update({ lastOkAt: Date.now(), lastSkip: null }).catch(() => {});
+        }
         hanaJson(res, 200, { ok: true, saved: true, id: tx.id }); return;
       }
 
