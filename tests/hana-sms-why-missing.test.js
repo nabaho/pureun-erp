@@ -198,8 +198,13 @@ test('★ 연결 창이 «앱을 어디서 받는지»부터 알려 준다', () 
   assert.ok(at > 0, '연결 창을 찾지 못했습니다');
   const win = erp.slice(at, at + 3000);
   assert.match(win, /푸른 하나문자 연결/, '★ 앱 이름이 없으면 무엇을 찾을지 모릅니다.');
-  assert.match(win, /build-hana-sms-bridge/,
-    '★ 받는 곳이 없으면 앱이 없는 사람은 여기서 길이 끊깁니다.');
+  /* ⚠ 2026-08-29 에 이 줄이 GitHub Actions 주소(build-hana-sms-bridge)를 못 박고
+       있었다. 대표: 「이거 다운받아 옮기는 것 귀찮다」 — PC 에서 Actions 를 뒤져
+       Artifacts 를 받고 폰으로 보내는 세 단계였다. 이제 사이트에 올려 둔 APK 를
+       «폰에서 눌러» 바로 깐다. 옛 길로 되돌아가면 이 검사가 잡는다. */
+  assert.match(win, /href:'hana-bridge\.apk'/,
+    '★ 받는 곳이 없으면 앱이 없는 사람은 여기서 길이 끊깁니다 — ' +
+    '폰에서 바로 누를 수 있어야 합니다(PC 에서 받아 옮기게 하지 말 것).');
   assert.match(win, /알림 접근 허용/);
   assert.match(win, /절전/, '★ 절전이 앱을 재운다는 것을 안 적으면 연결하고도 문자가 안 옵니다.');
 });
