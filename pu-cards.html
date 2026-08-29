@@ -4163,7 +4163,31 @@ let _mailCellTimer = null;
 function clickMailCell(ev, id){
   if(ev) ev.stopPropagation();
   if(_mailCellTimer){ clearTimeout(_mailCellTimer); _mailCellTimer=null; return; }  /* 두 번째 — 고치기가 받는다 */
-  _mailCellTimer = setTimeout(()=>{ _mailCellTimer=null; openSendMaterials(id); }, 260);
+  _mailCellTimer = setTimeout(()=>{ _mailCellTimer=null; openMailWindow(id); }, 260);
+}
+/* ══════ 이메일을 누르면 «딴 창»의 메일 쓰기로 (대표 지시 2026-08-29) ══════
+   "메일 주소 클릭하면 별도로 팝업창의 메일창으로 들어가게 하고
+    메일을 여러개 클릭한다고 여러개 팝업창으로 나오면 안된다 하나만 나오게 해라"
+
+   ★ 창에 «이름»을 붙인다. 이름이 같으면 브라우저가 그 창을 «다시 쓴다» —
+     처음엔 새 창이 뜨고, 그다음부터는 그 창이 새 사람으로 바뀐다.
+     사진첩 서류 보기(CO_DOC_WIN)에서 이미 같은 방법을 쓰고 있다.
+   ⚠ 열려 있던 창은 뒤에 가려 있다 — focus() 로 앞으로 끌어오지 않으면
+     «아무 일도 안 일어난» 것처럼 보인다.
+   ⚠ 팝업이 막히면 예전 길(같은 창)로 되돌아간다. 막혔다고 아무 일도 안 하면
+     이메일을 눌러도 반응이 없는 화면이 된다. */
+const MAIL_WIN = 'puMailWrite';   // 메일 쓰기 전용 창 이름 — 하나만 뜬다
+function openMailWindow(id){
+  const it = state.items[id]; if(!it) return;
+  const email = normEmail(it.email);
+  if(!email) return toast('이 명함에 이메일이 없습니다 — 명함을 열어 이메일을 넣어 주세요', 6000);
+  const q = 'view=mail&to=' + encodeURIComponent(email)
+          + '&name=' + encodeURIComponent(it.name || it.company || '')
+          + '&card=' + encodeURIComponent(it.id);
+  let w = null;
+  try{ w = window.open('pu-cards.html?' + q, MAIL_WIN); }catch(_){}
+  if(!w) return openSendMaterials(id);        /* 팝업이 막혔다 — 예전 길로 */
+  try{ w.focus(); }catch(_){}
 }
 function openSendMaterials(id){
   const it=state.items[id]; if(!it) return;
@@ -8086,6 +8110,16 @@ function saveLastScreen(){
 /* 주소가 메일 화면을 가리키는가 — 홈 화면의 「메일」 아이콘이 이 주소로 들어온다.
    ⚠ 머리(<head>)의 manifest 갈아 끼우기와 «같은 조건»이어야 한다. 한쪽만 고치면
      아이콘 이름은 메일인데 열리는 화면은 명함 목록이 된다. */
+/* 주소에 실려 온 「누구에게」 — 이메일을 눌러 열린 창인지 가른다 (순수 로직, 검사 대상) */
+function mailToFromUrl(search){
+  let s = search;
+  if(s === undefined){ try{ s = location.search; }catch(_){ s = ''; } }
+  let p;
+  try{ p = new URLSearchParams(s || ''); }catch(_){ return null; }
+  const to = String(p.get('to') || '').trim();
+  if(!to) return null;
+  return { to: to, name: String(p.get('name') || ''), card: String(p.get('card') || '') };
+}
 function urlWantsMail(){
   try{ return /(^|[?&])view=mail(&|$)/.test(location.search); }catch(_){ return false; }
 }
@@ -8120,6 +8154,13 @@ function restoreLastScreen(){
        예전에는 쓰기 화면이 열렸다 — 메일함을 열었는데 빈 편지지가 나오는 셈이었고,
        쓰다 만 글이 있으면 「이어서 쓸까요?」 물음까지 문을 막았다.
        쓰기는 옆줄 [메일쓰기] 로 간다. */
+    /* ★ 이메일을 눌러 들어온 길이면 «받은메일함»이 아니라 그 사람에게 쓰기다
+       (대표 지시 2026-08-29). 주소에 to 가 실려 온다. */
+    const _to = mailToFromUrl();
+    if(_to){
+      openMailPage({ cardId:_to.card, to:_to.to, name:_to.name, company:'', ids:[] });
+      return;
+    }
     openMailBox('');
     /* 아이콘 만들려고 옮겨 온 길이면 이어서 마저 한다 — 브라우저가 알림을
        띄울 틈을 조금 준다(beforeinstallprompt 는 화면이 뜬 뒤에 온다). */
@@ -11878,8 +11919,12 @@ function pcSideBottomHtml(){
   const cross = onMailNow
     ? `<button class="pcside-settings" onclick="closeMailPage()"
         title="명함·사업자·기업 상세로 — 같은 자료를 다른 창에서 봅니다">‹ 기업정보함으로</button>`
-    : `<button class="pcside-settings" onclick="openMailBox('')"
-        title="받은메일함 · 보낸메일함 · 쓰기 · 자료함 — 별도 창으로 열립니다">✉️ 메일 열기</button>`;
+    /* 2026-08-29 대표 지시로 「✉️ 메일 열기」를 뺐다.
+       ⚠ 길이 끊기지 않는지 먼저 확인했다 — 메일로 들어가는 길은 둘이 남는다:
+         · 포털(enter.html)의 「📧 푸른 메일」 타일
+         · 이 화면에서 «이메일을 누르면» 뜨는 메일 창(openMailWindow)
+       돌아오는 길(‹ 기업정보함으로)은 그대로 둔다 — 그것까지 빼면 메일 창에 갇힌다. */
+    : '';
   return `<div class="pcside-bottom">
     ${cross}
     ${state.isAdmin && oldLocked ? `<button class="pcside-settings" onclick="migrateLockedFolders()"

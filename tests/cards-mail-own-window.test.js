@@ -161,16 +161,19 @@ for(const s of MAIL_SCREENS){
   });
 }
 
+/* ⚠ 2026-08-29 대표 지시 「메일열기 필요없다. 삭제」로 옆줄 단추를 뺐다.
+   지키던 뜻은 그대로다 — «메일로 가는 길이 끊기지 않는다». 다만 길이 바뀌었다:
+     ① 포털(enter.html)의 「📧 푸른 메일」 타일
+     ② 이메일을 누르면 뜨는 메일 창(openMailWindow) — 창 하나만 뜬다
+   그 둘은 tests/cards-mail-popup.test.js 가 지킨다. 여기서는 «옆줄에 되살아나지
+   않았는가»와 «돌아오는 길은 살아 있는가»만 본다. */
 for(const s of CARD_SCREENS){
-  test(`★ ${s.name}: 맨 아래에 메일로 가는 길이 있다`, () => {
+  test(`${s.name}: 옆줄에 「메일 열기」가 되살아나지 않았다`, () => {
     const h = side(s.state);
     const i = h.indexOf('class="pcside-bottom"');
     assert.ok(i > 0, '붙박이 칸이 없다');
-    /* 2026-08-24: 이 단추는 «받은메일함»으로 간다(openMailBox). 예전에는 쓰기
-       화면(openMailPage)으로 갔는데, 메일함을 열었는데 빈 편지지가 나오는 셈이었다.
-       여기서 지키는 것은 «메일로 가는 길이 있다»는 사실이다. */
-    assert.ok(/onclick="openMail(Box|Page)\(/.test(h.slice(i)),
-      '갈래 줄에서 메일을 뺐으니 여기에는 있어야 한다 — 둘 다 없으면 길이 끊긴다');
+    assert.ok(!/onclick="openMailBox\(/.test(h.slice(i)),
+      '★ 「메일 열기」가 되살아났다 — 대표 지시로 뺀 것이다');
   });
 }
 
