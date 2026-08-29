@@ -118,7 +118,7 @@ function load(over){
     '_mbBins = {}; _mbPut = {};' +
     '_mbHide = ' + JSON.stringify(o.hide || {}) + ';' +
     '_mbOwner = ' + JSON.stringify(o.owner || {}) + ';' +
-    '_mbOrder = {};' +
+    '_mbOrder = {}; _mbWhoOrder = ' + JSON.stringify(o.whoOrder || {}) + ';' +
     '_mbMeta = { at: 1, ok: true };', ctx);
   /* ⚠ 덩어리 안의 const 는 밖에서 못 만진다(lexical) — 안에서 꺼내 온다 */
   const EM = vm.runInContext('ErpMatch', ctx);
@@ -414,7 +414,8 @@ function loadStaff(over){
     '_mbFolders = ' + JSON.stringify(FOLDERS2) + ';' +
     '_mbMsgs = ' + JSON.stringify(MSGS2) + ';' +
     '_mbBins = {}; _mbPut = {}; _mbHide = {}; _mbOwner = ' + JSON.stringify(o.owner || {}) + ';' +
-    '_mbOrder = {}; _mbMeta = { at:1, ok:true };', ctx);
+    '_mbOrder = {}; _mbWhoOrder = ' + JSON.stringify(o.whoOrder || {}) + ';' +
+    '_mbMeta = { at:1, ok:true };', ctx);
   const EM = vm.runInContext('ErpMatch', ctx);
   const byName = {}, staff = {};
   Object.keys(BYNAME2).forEach(n => { byName[EM._norm(n)] = BYNAME2[n]; });
@@ -469,31 +470,31 @@ test('★ 차례는 «사번 순»이다 — 통수 순이면 날마다 자리�
   assert.ok(ns2.indexOf('박한별') < ns2.indexOf('최기운'), '사번이 앞인 사람이 뒤에 있다');
 });
 
-test('★ 노무사와 직원을 «갈라» 놓는다', () => {
-  const c = loadStaff();
-  const by = {};
-  c.mbWhoList().forEach(w => { (by[w.kind] = by[w.kind] || []).push(w.name); });
-  assert.ok((by.pro||[]).indexOf('박한별') >= 0, '노무사가 노무사가 아니다');
-  assert.ok((by.staff||[]).indexOf('최기운') >= 0, '사무장이 직원이 아니다');
-  assert.ok((by.staff||[]).indexOf('김보람') >= 0, '과장이 직원이 아니다');
-  assert.ok((by.pro||[]).indexOf('최기운') < 0, '직원이 노무사로 들어갔다');
-});
+/* ══════════════════════════════════════════════════════════════════════════
+   노무사 / 직원 갈래는 «없앴다» (대표 지시 2026-08-29)
+   ══════════════════════════════════════════════════════════════════════════
+   "노무사 직원구분 없애고 항상 로그인하는 본인이 제일 위에 있고 나머지는 사번순서로"
 
-test('★ 직함이 「노무사」면 노무사로 본다 — 사람이 보는 것은 직함이다', () => {
-  /* 옛 사람 가운데 role 이 staff 인데 직함이 노무사인 경우가 있다(실측: 안준형) */
-  const dir = DIR.concat([{ sid:'A-009', name:'안노무', sortOrder:135,
-    role:'staff', title:'노무사', status:'active' }]);
-  const c = loadStaff({ dir: dir, owner: { 'x@y,kr':'안노무' } });
-  const w = c.mbWhoList().find(x => x.name === '안노무');
-  assert.ok(w, '그 사람이 목록에 없다');
-  assert.equal(w.kind, 'pro', '직함이 노무사인데 직원으로 갈랐다');
-});
-
-test('★ 갈래 머리줄이 옆줄에 나온다 — 섞어 두면 열다섯 줄이 한 덩어리다', () => {
+   담당자 쪽에만 머리줄이 셋(내 메일·노무사·직원) 있어서, 담당자 ↔ 업무별을 번갈아
+   누를 때마다 옆줄이 통째로 다시 짜였다.
+   ⚠ 되살리려면 «업무별 쪽에도 같은 머리줄»을 넣어야 한다 — 한쪽에만 넣으면
+     오늘 고친 흔들림이 그대로 돌아온다. */
+test('★ 갈래 머리줄이 «없다» — 한 덩어리로 늘어놓는다', () => {
   const c = loadStaff({ state:{ mbDash:'who' } });
   const h = c.mailSideHtml();
-  assert.ok(h.indexOf('노무사') > 0, '「노무사」 머리줄이 없다');
-  assert.ok(h.indexOf('직원') > 0, '「직원」 머리줄이 없다');
+  assert.ok(h.indexOf('dm-whogrp') < 0,
+    '갈래 머리줄이 되살아났다 — 업무별 쪽에도 같은 머리줄이 있어야 한다');
+  /* 사람은 그대로 다 나온다 — 머리줄만 걷은 것이지 사람을 뺀 것이 아니다 */
+  ['박한별', '최기운', '김보람'].forEach(nm =>
+    assert.ok(h.indexOf('>' + nm) > 0, nm + ' 이 옆줄에서 사라졌다'));
+});
+
+test('★ 갈래 표(kind)를 더 이상 만들지 않는다 — 안 쓰는 갈래가 남으면 다시 가르고 싶어진다', () => {
+  const c = loadStaff();
+  const w = c.mbWhoList()[0];
+  assert.equal(w.kind, undefined,
+    '갈래 표가 남아 있다 — 옆줄이 안 쓰는데 셈만 한다');
+  assert.equal(typeof c.mbWhoKind, 'undefined', 'mbWhoKind 가 되살아났다');
 });
 
 test('명부에 없는 이름은 «지우지 않는다» — 모른다고 지우면 그 메일이 사라진다', () => {
@@ -812,7 +813,7 @@ test('★ 담당자 줄과 업무 줄의 «아이콘 폭»이 같다 — 다르�
    "로그인 할 경우 본인 이름과 본인메일을 맨 먼저 볼 수 있는 시스템"
 
    ★ 지키는 것 넷
-     1. 내 줄이 «갈래 머리줄보다 위»에 온다 — 갈래 안에서만 올리면 직원은 여섯 줄 아래다
+     1. 내 줄이 «맨 첫 줄»이다 (2026-08-29 갈래 머리줄을 없앤 뒤로는 말 그대로 첫 줄)
      2. 내 줄은 «한 번만» 나온다 — 두 줄이면 통수를 두 번 센 줄 안다
      3. 남의 차례는 «안 흔들린다» — 사번 순 그대로
      4. 내 칸이 비어 있으면 그리로 «안 보낸다» — 빈 칸을 먼저 보이면 「메일함이 비었다」가 된다 */
@@ -826,16 +827,12 @@ function loadMe(myName, over){
   return c;
 }
 
-test('★ 내 줄이 «가장 위»에 온다 — 갈래 머리줄보다 위', () => {
+test('★ 내 줄이 «맨 첫 줄»이다 — 머리줄이 없어졌으니 첫 줄이 곧 나여야 한다', () => {
   const c = loadMe('박한별', { state:{ mbDash:'who' } });
-  const h = c.mailSideHtml();
-  const iMe = h.indexOf('내 메일');
-  /* ⚠ 이 대역에는 명부(ErpMatch.staff)가 없어 갈래가 「그 밖」으로 나온다 —
-     갈래 «이름»이 아니라 «갈래 머리줄 자체»를 찾는다. 여기서 보려는 것은 차례뿐이다. */
-  const iGrp = h.indexOf('class="dm-whogrp">');
-  assert.ok(iMe > 0, '「내 메일」 머리줄이 없다');
-  assert.ok(iGrp > 0, '갈래 머리줄이 없다');
-  assert.ok(iMe < iGrp, '내 줄이 갈래 머리줄보다 아래에 있다 (내 ' + iMe + ' · 갈래 ' + iGrp + ')');
+  const rows = c.mailSideHtml().match(/<div class="dm-f sub whobin[\s\S]*?<\/div>/g) || [];
+  assert.ok(rows.length > 1, '담당자 줄이 하나뿐이라 차례를 볼 수 없다 — 밑그림이 틀렸다');
+  assert.match(rows[0], /meTag/, '첫 줄이 내 줄이 아니다: ' + rows[0].slice(0, 120));
+  rows.slice(1).forEach(r => assert.ok(r.indexOf('meTag') < 0, '내 줄이 아래에도 또 있다'));
 });
 
 test('★ 내 줄은 «한 번만» 나온다 — 두 줄이면 통수를 두 번 센 줄 안다', () => {
@@ -1028,4 +1025,106 @@ test('담당자가 «없는» 업체의 주소는 아무에게도 안 붙는다'
     companies: [{ name: '담당없음', contacts: [{ name: '가', email: 'nobody@naver.com' }] }]
   });
   assert.equal(whoOfAddr(c, 'nobody@naver.com'), '');
+});
+
+/* 명부가 든 대역 + 로그인한 나 — 차례 셋을 한꺼번에 보려면 둘 다 있어야 한다 */
+function loadMeStaff(myName, over){
+  const c = loadStaff(over || {});
+  vm.runInContext('myEmail = "me@pureun.kr";', c);
+  vm.runInContext('function staffName(e){ return (e === "me@pureun.kr") ? '
+    + JSON.stringify(myName || '') + ' : String(e||""); }', c);
+  return c;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   사람 이름 차례를 «손으로» 옮긴다 (대표 지시 2026-08-29)
+   ══════════════════════════════════════════════════════════════════════════
+   "내가 사람이름 위치 변경할 수 있게 해라"
+
+   ★ 차례를 정하는 것이 «셋»이고, 그 앞뒤가 규칙이다.
+       ① 로그인한 나 — 늘 맨 위, 끌어도 안 내려간다
+       ② 손으로 옮긴 자리 — 대표님이 끌어 둔 것이 이긴다
+       ③ 사번 순 — 안 옮긴 사람은 예전 그대로
+     ⚠ ②가 ③보다 «앞»이어야 한다. 뒤집으면 끌어 놓아도 사번 순으로 되돌아가
+       「끌리긴 하는데 안 옮겨진다」가 된다 — 고장처럼 보이지도 않아 더 나쁘다. */
+function whoNames(c){ return c.mbWhoList().map(w => w.name).join(' '); }
+
+test('★ 손으로 옮긴 차례가 «사번 순보다 앞선다»', () => {
+  /* 사번 순이면 박한별(30) → 최기운(80) → 김보람(100).
+     최기운을 맨 앞으로 옮겨 둔다. */
+  const c = loadStaff({ whoOrder: { '최기운':0, '박한별':1, '김보람':2 } });
+  const ns = whoNames(c);
+  assert.ok(ns.indexOf('최기운') < ns.indexOf('박한별'),
+    '★ 옮긴 차례가 무시되고 사번 순으로 돌아갔습니다: ' + ns);
+});
+
+test('★ 안 옮긴 사람은 «사번 순 그대로» — 한 사람 옮겼다고 나머지가 흩어지면 안 된다', () => {
+  const c = loadStaff({ whoOrder: { '김보람':0 } });
+  const rest = c.mbWhoList().filter(w => w.pos >= 9999);
+  for(let i = 1; i < rest.length; i++)
+    assert.ok(rest[i-1].ord <= rest[i].ord,
+      '안 옮긴 사람들의 사번 순이 깨졌습니다: ' + rest.map(w=>w.name+'('+w.ord+')').join(' '));
+  assert.equal(c.mbWhoList()[0].name, '김보람', '맨 앞으로 옮긴 사람이 앞에 없습니다');
+});
+
+test('★★ «나»는 옮긴 차례보다도 위다 — 끌어도 안 내려간다', () => {
+  /* 남을 0번으로 옮겨 두어도 내가 위여야 한다 */
+  const c = loadMeStaff('박한별', { whoOrder: { '최기운':0, '김보람':1 } });
+  const list = c.mbWhoList();
+  assert.equal(list[0].name, '박한별',
+    '★ 내가 맨 위가 아닙니다 — 차례: ' + list.map(w=>w.name).join(' '));
+  assert.ok(list[0].me, '맨 윗줄에 「나」 표가 없습니다');
+});
+
+test('★ 내 줄은 «끌 수 없다» — 자기 줄을 아래로 내려놓고 못 찾는 일을 막는다', () => {
+  const c = loadMeStaff('박한별', { state:{ mbDash:'who' } });
+  const rows = c.mailSideHtml().match(/<div class="dm-f sub whobin[\s\S]*?<\/div>/g) || [];
+  assert.ok(rows.length > 1, '검사 밑그림이 틀렸습니다');
+  assert.ok(rows[0].indexOf('draggable') < 0, '★ 내 줄을 끌 수 있습니다');
+  assert.ok(rows[1].indexOf('draggable="true"') > 0, '남의 줄을 못 끕니다');
+});
+
+test('★ 끌어다 놓으면 그 자리에 들어가고, 그 차례가 «저장»된다', () => {
+  const c = loadStaff();
+  const before = c.mbWhoList().map(w => w.name);
+  const from = before[before.length - 1], to = before[0];
+  assert.notEqual(from, to, '검사 밑그림이 틀렸습니다 — 사람이 하나뿐입니다');
+  c.mbWhoDragStart({ dataTransfer:{ setData(){} } }, from);
+  c.mbWhoDrop({ preventDefault(){} }, to, null);
+  assert.equal(c.mbWhoList()[0].name, from,
+    '끌어다 놓은 사람이 맨 앞에 없습니다: ' + whoNames(c));
+  /* ⚠ 저장까지 봐야 한다 — 화면만 바뀌고 안 적히면 새로고침에 되돌아간다 */
+  const w = c._held.wrote['pucards/config/mailWhoOrder'];
+  assert.ok(w && typeof w === 'object', '★ 차례를 저장하지 않았습니다');
+  assert.equal(Number(w[from]), 0, '저장된 차례가 화면과 다릅니다: ' + JSON.stringify(w));
+});
+
+test('★ «나»는 저장되는 차례에 «안 들어간다» — 자리를 다투면 남이 사라진 것처럼 보인다', () => {
+  const c = loadMeStaff('박한별');
+  const rest = c.mbWhoList().filter(w => !w.me).map(w => w.name);
+  c.mbWhoDragStart({ dataTransfer:{ setData(){} } }, rest[rest.length-1]);
+  c.mbWhoDrop({ preventDefault(){} }, rest[0], null);
+  const w = c._held.wrote['pucards/config/mailWhoOrder'] || {};
+  assert.equal('박한별' in w, false, '★ 「나」가 차례표에 들어갔습니다: ' + JSON.stringify(w));
+  assert.equal(c.mbWhoList()[0].name, '박한별', '옮긴 뒤 내가 맨 위에서 밀렸습니다');
+});
+
+test('메일을 사람 줄에 떨어뜨려도 «아무 일도 없다» — 옮겨진 척하면 안 된다', () => {
+  const c = loadStaff();
+  const before = whoNames(c);
+  c.state.mbDrag = { kind:'mail' };
+  c.mbWhoDrop({ preventDefault(){} }, c.mbWhoList()[0].name, null);
+  assert.equal(whoNames(c), before, '메일을 떨어뜨렸는데 사람 차례가 바뀌었습니다');
+  assert.equal(c._held.wrote['pucards/config/mailWhoOrder'], undefined, '엉뚱한 것을 저장했습니다');
+});
+
+test('★ 차례를 두는 자리가 업무 칸 차례와 «나란히» 있다 — mailbox 에는 못 쓴다', () => {
+  /* mailbox 는 규칙이 아무도 못 쓰게 막혀 있다(적는 것은 서버뿐).
+     ⚠ 사람마다 따로 두지 않는다 — 대표님이 정리해 둔 차례를 직원이 못 보면
+       「내 화면만 이상하다」가 된다. */
+  assert.match(src, /config\/mailWhoOrder/, '담당자 차례를 두는 자리가 없습니다');
+  assert.ok(src.indexOf('mailbox/config/mailWhoOrder') < 0,
+    '★ 아무도 못 쓰는 곳(mailbox)에 차례를 적고 있습니다');
+  assert.ok(!/mailWhoOrder\/'\s*\+\s*(myEmail|uid)/.test(src),
+    '★ 사람마다 따로 두면 남이 정리한 차례를 못 봅니다');
 });
