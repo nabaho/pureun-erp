@@ -972,8 +972,15 @@ test('이력서 생성 화면의 중복을 없앴다', () => {
 /* ===== 회의·강의비 개인정보 동의서 자동 생성 (2026-08-27, 2단계 v1) ===== */
 
 test('회의·기타비용 행에 📨 동의서 버튼이 있다', () => {
-  assert.match(source, /feeConsentDoc\('meetfee','\$\{r\.id\}'\)/);
-  assert.match(source, /feeConsentDoc\('etcfee','\$\{r\.id\}'\)/);
+  /* 저장소 이름을 글자로 박지 않는다 — 두 화면을 하나로 합치면서(2026-08-29)
+     줄마다 «자기 저장소»를 넘기게 바뀌었다. 여기서 보는 것은 «동의서를 부르는가»와
+     «그 줄의 저장소를 함께 넘기는가»다. */
+  /* 줄에서 부르는 자리만 본다(함수 «정의»는 빼야 한다 — 거기엔 r.id 가 없다) */
+  const calls = (source.match(/feeConsentDoc\([^)]*\)/g) || []).filter((c) => c.indexOf('${') >= 0);
+  assert.ok(calls.length >= 2, '두 비용 화면 모두에 동의서 단추가 있어야 합니다');
+  calls.forEach((c) => assert.match(c, /r\.id/, '어느 건인지 넘겨야 합니다'));
+  assert.ok(calls.some((c) => /_st|etcfee/.test(c)),
+    '합친 표에서는 그 줄이 온 저장소를 넘겨야 남의 자리에 저장되지 않습니다');
 });
 
 test('동의서는 건의 정보를 채워 한글 뷰어로 띄운다', () => {

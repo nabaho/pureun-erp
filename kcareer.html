@@ -331,6 +331,13 @@ html.dark .empty{color:var(--text-mute)}
 #page-resume-hub .rc-h,#page-resume-store .rc-h,#page-profile .rc-h,#page-certdoc .rc-h,#page-quickcv .rc-h{margin-bottom:6px}
 #page-resume-hub .empty,#page-resume-store .empty,#page-profile .empty,#page-certdoc .empty,#page-quickcv .empty{padding:12px 0}
 #page-resume-hub .dropzone,#page-resume-store .dropzone,#page-profile .dropzone,#page-certdoc .dropzone,#page-quickcv .dropzone{padding:11px 14px}
+/* 「구분」 칩 — 회의비용·기타비용을 한 화면으로 합치고 여기서 가른다(2026-08-29) */
+.fee-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.fee-chip{font-size:12px;padding:5px 12px;border:1px solid var(--border);border-radius:20px;
+  background:#fff;color:var(--text-mute);cursor:pointer;font-family:inherit}
+.fee-chip:hover{background:var(--hover)}
+.fee-chip.on{background:var(--navy);border-color:var(--navy);color:#fff;font-weight:700}
+.fee-chip .n{opacity:.7;margin-left:4px;font-size:11px}
 /* 회의·비용관리 화면 콤팩트 (회의등비용신청·기타비용신청) */
 #page-meetfee .page-head,#page-etcfee .page-head{margin-bottom:10px}
 #page-meetfee .dt .empty,#page-etcfee .dt .empty{padding:22px 16px}
@@ -1186,7 +1193,10 @@ input.kf-in.kf-done{background:#EDF7F3;border-bottom:1.5px solid var(--teal);fon
         <div id="cvPhotoPicker" class="cv-photo-picker" style="display:none"></div>
       </div></section>
       <section class="page-view" id="page-meetfee" ondragover="pageDropOver(event,'meetfee')" ondragleave="pageDropLeave(event)" ondrop="pageDropFile(event,'meetfee')"><div class="page"><div class="page-drop-overlay" id="ovl-page-meetfee"><span>📎 영수증·증빙을 놓으면 OCR 자동 등록</span></div>
-        <div class="page-head"><div class="page-title">🧾 회의등비용신청</div><div class="page-desc">회의·상담·출장 등 비용 신청·기록</div></div>
+        <div class="page-head"><div class="page-title">🧾 비용관리</div><div class="page-desc">회의·출장·식대·교통·기타 — 모든 비용 신청·기록</div></div>
+        <!-- 「구분」 칩 — 눌러서 거른다. 화면을 둘로 나눌 일이 아니라 여기서 가르면 된다.
+             ⚠ 아래 「전체 구분」 고르개와 «같은 것»을 움직인다(거르는 규칙은 한 곳에만 둔다). -->
+        <div class="fee-chips" id="feeChips"></div>
         <div class="toolbar">
           <input class="tb-input" data-f="q" placeholder="내용·지출처 검색" style="min-width:200px">
           <select class="tb-select" data-f="year"><option value="">전체 연도</option></select>
@@ -1677,7 +1687,7 @@ input.kf-in.kf-done{background:#EDF7F3;border-bottom:1.5px solid var(--teal);fon
       <div id="hwpViewInfo" style="font-size:12px;color:var(--text-mute);margin-bottom:8px"></div>
       <div id="hwpViewBody"></div>
     </div>
-    <div class="modal-foot"><button class="btn" onclick="closeHwpView()">닫기</button><button class="btn primary" onclick="rhAutoFillDoc()" title="프로필·경력에서 성명·연락처·학력·경력을 끌어와 이 서식의 빈 칸에 넣습니다">✨ 내 정보로 채우기</button><button class="btn" onclick="hwpViewPdf()">🖨 PDF</button><button class="btn" onclick="hwpViewDownload()">⬇ 파일로 저장</button></div>
+    <div class="modal-foot"><button class="btn" onclick="closeHwpView()">닫기</button><button class="btn primary" onclick="rhAutoFillDoc()" title="프로필·경력에서 성명·연락처·학력·경력을 끌어와 이 서식의 빈 칸에 넣습니다">✨ 내 정보로 채우기</button><button class="btn primary" onclick="hwpViewPdfFile()" title="인쇄창 없이 곧바로 .pdf 파일로 내려받습니다">⬇ PDF 받기</button><button class="btn" onclick="hwpViewPdf()" title="인쇄창을 열어 종이로 뽑거나 미리 봅니다">🖨 인쇄</button><button class="btn" onclick="hwpViewDownload()">⬇ 파일로 저장</button></div>
   </div>
 </div>
 <div class="modal-ov" id="modalSub">
@@ -2464,6 +2474,42 @@ function hwpViewDownload(){
 }
 /* 뷰어가 이미 그린 A4 캔버스를 그대로 인쇄한다 — 한글 모양 그대로의 PDF가 나온다.
    (인쇄창에서 「PDF로 저장」을 고르면 파일이 된다. 한글 프로그램이 없어도 된다.) */
+/* ── 한글 서식을 «바로» PDF 파일로 ──
+   대표 결정(2026-08-29): 「자동으로 pdf로 바꾸는 기능」. 지금까지는 인쇄창을 거쳐
+   대표가 「PDF로 저장」을 직접 골라야 했다 — 그건 «자동»이 아니다.
+   엔진이 그린 A4 캔버스가 이미 있으므로 그것을 묶어 파일로 떨군다.
+   ⚠ 그림으로 들어가므로 글자 복사는 안 된다. 제출용으로는 문제없고,
+     글자가 살아 있는 PDF가 필요하면 한글에서 「PDF로 저장」을 쓴다(화면에 적어 둔다). */
+async function _ensureJsPdf(){
+  if(window.jspdf&&window.jspdf.jsPDF) return;
+  await new Promise(function(res,rej){
+    var s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.onload=res; s.onerror=rej; document.head.appendChild(s);
+  });
+}
+async function hwpViewPdfFile(){
+  var cvs=document.querySelectorAll('#hwpViewBody canvas');
+  if(!cvs.length){ toast('먼저 문서가 화면에 그려져야 합니다'); return; }
+  toast('⏳ PDF로 만드는 중…');
+  try{ await _ensureJsPdf(); }catch(e){ toast('PDF 도구를 못 불러왔습니다(인터넷 필요) — 🖨 인쇄로 뽑아 주세요'); return; }
+  var JsPDF=window.jspdf.jsPDF, pdf=null;
+  for(var i=0;i<cvs.length;i++){
+    var c=cvs[i];
+    /* 쪽마다 «그 쪽의 가로세로»로 만든다 — 가로 쪽이 섞여 있어도 안 찌그러진다 */
+    var land=c.width>c.height;
+    if(!pdf) pdf=new JsPDF({orientation:land?'l':'p', unit:'pt', format:'a4'});
+    else pdf.addPage('a4', land?'l':'p');
+    var pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight();
+    /* 쪽에 꽉 채우되 비율은 지킨다 */
+    var k=Math.min(pw/c.width, ph/c.height);
+    var w=c.width*k, h=c.height*k;
+    pdf.addImage(c.toDataURL('image/jpeg',0.92),'JPEG',(pw-w)/2,(ph-h)/2,w,h);
+  }
+  var nm=String((_hwpView&&_hwpView.name)||'문서').replace(/\.(hwp|hwpx)$/i,'')+'.pdf';
+  pdf.save(nm);
+  toast('✅ '+nm+' 로 저장했습니다 ('+cvs.length+'쪽)');
+}
 function hwpViewPdf(){
   var cvs=document.querySelectorAll('#hwpViewBody canvas');
   if(!cvs.length){ toast('먼저 문서가 화면에 그려져야 합니다'); return; }
@@ -2923,7 +2969,9 @@ async function exportEditedHwpx(){ return _rhwp ? await _rhwp.exportHwpx() : nul
 /* ===== 내비게이션 ===== */
 let NAV=[
   {g:'이력서관리', items:[['page-quickcv','⚡ 빠른 이력서(PDF)'],['page-resume-hub','이력서 생성·보관'],['page-profile','프로필 작성보관'],['page-certdoc','경력증명서 보관']]},
-  {g:'회의·비용관리', items:[['page-meetfee','회의등비용신청'],['page-etcfee','기타비용신청']]},
+  /* 회의비용·기타비용을 한 화면으로 합쳤다(2026-08-29) — 「구분」이 이미 가른다.
+     ⚠ 기록은 옮기지 않았다. page-etcfee 는 남겨 두어 옛 기록을 그 화면으로 고칠 수 있다. */
+  {g:'회의·비용관리', items:[['page-meetfee','비용관리']]},
   {g:'경력관리', items:[['page-wiccok','위촉장'],['page-license','자격증'],['page-complete','수료증'],['page-award','표창 및 포상'],['page-edu','학력']]},
   {g:'실적관리', items:[['page-case','사건실적'],['page-consult','컨설팅실적'],['page-fund','기금실적'],['page-lecture','강의실적'],['page-etc','기타실적'],['page-puagency','외부기관 실적'],['page-submission','제출서류']]},
   {g:null, items:[['page-settings','환경설정']]},
@@ -5027,12 +5075,12 @@ const CAREER_CFG={
       <td style="white-space:nowrap">${r.fileCount||0}개</td>
       <td style="font-size:11px;color:var(--teal)">${(r.promoted||[]).length?('승격 '+(r.promoted||[]).length):'-'}</td>
       <td onclick="event.stopPropagation()">${rowActions(r.id,'submission',r.title,p,r)}</td></tr>`},
-  meetfee:{store:'meetfee',qFields:['content','org','type'],
+  meetfee:{store:'meetfee',stores:['meetfee','etcfee'],qFields:['content','org','type'],
     cols:['ID','일자','구분','내용/사유','금액','지출처/수령인','관리'],
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td>${formatDate(r.date)||'-'}</td>
       <td><span class="tag navy">${r.type||'-'}</span></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.content||'-'}</td>
       <td style="text-align:right">${r.amt?Number(r.amt).toLocaleString('ko-KR')+'원':'-'}</td><td>${r.org||'-'}</td>
-      <td onclick="event.stopPropagation()"><button class="btn sm" onclick="feeConsentDoc('meetfee','${r.id}')" title="수령인에게 받을 개인정보 동의서를 자동으로 만듭니다">📨 동의서</button>${rowActions(r.id,'meetfee',r.content,p)}</td></tr>`},
+      <td onclick="event.stopPropagation()"><button class="btn sm" onclick="feeConsentDoc('${r._st||'meetfee'}','${r.id}')" title="수령인에게 받을 개인정보 동의서를 자동으로 만듭니다">📨 동의서</button>${rowActions(r.id,(r._st||'meetfee'),r.content,(r._st||'meetfee'))}</td></tr>`},
   etcfee:{store:'etcfee',qFields:['content','org','type'],
     cols:['ID','일자','구분','내용/사유','금액','지출처/수령인','관리'],
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td>${formatDate(r.date)||'-'}</td>
@@ -5131,8 +5179,16 @@ function _tbExtra(sec, html){
 }
 
 function renderCareer(name){ const cfg=CAREER_CFG[name]; if(!cfg) return;
+  /* 기타비용은 합친 표(비용관리) 안에서 보인다 — 고쳤으면 그쪽도 다시 그린다.
+     안 그리면 「저장했는데 화면은 그대로」가 된다. */
+  if(name==='etcfee') setTimeout(function(){ renderCareer('meetfee'); },0);
   const sec=document.getElementById('page-'+name); if(!sec) return;
-  let data=get(cfg.store); if(cfg.filter) data=data.filter(cfg.filter);
+  /* 두 저장소를 한 표에 모은다(비용관리) — 기록은 «옮기지 않는다».
+     옮기다 잃는 것이 합치는 이득보다 크다. 어느 저장소에서 왔는지는 _st 로 들고 다닌다. */
+  let data = cfg.stores
+    ? cfg.stores.reduce(function(a,st){ return a.concat(get(st).map(function(r){ return Object.assign({_st:st}, r); })); }, [])
+    : get(cfg.store);
+  if(cfg.filter) data=data.filter(cfg.filter);
   // 중복 의심 감지 및 배지
   var _dupGrp={}; data.forEach(function(r){ var k=dupKey(r); (_dupGrp[k]=_dupGrp[k]||[]).push(r.id); });
   var _dupIds=new Set(); Object.keys(_dupGrp).forEach(function(k){ var ids=_dupGrp[k]; if(ids.length>1 && !dupDismissed(name,k)) ids.forEach(function(id){ _dupIds.add(id); }); });
@@ -5211,12 +5267,17 @@ function renderCareer(name){ const cfg=CAREER_CFG[name]; if(!cfg) return;
   _stickyTop(sec);               /* 표 머리줄이 툴바 아래에 붙도록 높이를 알려준다 */
   careerSelSync(name);
   box.querySelectorAll('th').forEach((th,idx)=>{ if(th.textContent==='관리'||th.textContent==='№') return; th.style.cursor='pointer'; th.title='클릭하면 정렬'; th.onclick=()=>sortTable(box,th,idx); });
+  /* ⚠ 합친 표(비용관리)에서는 줄마다 «온 곳»이 다르다. 그걸 잃으면 기타비용 기록을
+     고칠 때 회의비용 쪽에 새로 저장돼 원본이 남고 사본이 생긴다. */
+  var _stOf={}; data.forEach(function(r){ _stOf[r.id]=r._st||cfg.store; });
   box.querySelectorAll('tbody tr').forEach(tr=>{ const chip=tr.querySelector('.id-chip'); if(!chip) return; const rid=chip.textContent.trim();
+    const rst=_stOf[rid]||cfg.store;
     tr.addEventListener('dragover',e=>{ e.preventDefault(); tr.style.boxShadow='inset 0 0 0 2px var(--teal)'; });
     tr.addEventListener('dragleave',()=>{ tr.style.boxShadow=''; });
-    tr.addEventListener('drop',e=>{ e.preventDefault(); tr.style.boxShadow=''; const f=e.dataTransfer.files&&e.dataTransfer.files[0]; if(f) dropAttach(rid,cfg.store,name,f); });
+    tr.addEventListener('drop',e=>{ e.preventDefault(); tr.style.boxShadow=''; const f=e.dataTransfer.files&&e.dataTransfer.files[0]; if(f) dropAttach(rid,rst,rst,f); });
     tr.style.cursor='pointer';
-    tr.addEventListener('click',e=>{ if(e.target.closest('button,a,input,select,textarea,.btn,.id-chip')) return; openEditDrawer(name, rid); }); });
+    tr.addEventListener('click',e=>{ if(e.target.closest('button,a,input,select,textarea,.btn,.id-chip')) return; openEditDrawer(rst, rid); }); });
+  if(cfg.stores) renderFeeChips(sec, data, tp);
   if(_flashId){ box.querySelectorAll('tbody tr').forEach(tr=>{ if(tr.textContent.indexOf(_flashId)>=0) tr.classList.add('row-flash'); }); _flashId=null; }
 }
 var _flashId=null, _pageLimit={};
@@ -5504,6 +5565,27 @@ function importCsv(page){ const cfg=CAREER_CFG[page]; const def=(typeof FORM_DEF
     set(cfg.store,arr); renderCareer(page); toast(n+'건 가져옴'); };
   inp.click();
 }
+/* ── 「구분」 칩 ──
+   회의비용·기타비용을 한 화면으로 합치고(2026-08-29) 구분은 여기서 가른다.
+   ⚠ 거르는 규칙은 «한 곳»에만 둔다 — 칩은 아래 「전체 구분」 고르개를 움직일 뿐이다.
+     따로 거르면 칩과 고르개가 어긋나 「눌렀는데 안 걸러진다」가 된다.
+   칩마다 건수를 적는다 — 눌러 보기 전에 몇 건인지 알아야 헛걸음이 없다. */
+function renderFeeChips(sec, data, cur){
+  var box=sec.querySelector('.fee-chips'); if(!box) return;
+  var sel=sec.querySelector('[data-f="type"]'); if(!sel) return;
+  var kinds=[]; Array.prototype.forEach.call(sel.options, function(o){ if(o.value!=='') kinds.push(o.textContent); });
+  var cnt={}; data.forEach(function(r){ var k=r.type||'기타'; cnt[k]=(cnt[k]||0)+1; });
+  var html='<button type="button" class="fee-chip'+(cur?'':' on')+'" data-t="">전체<span class="n">'+data.length+'</span></button>';
+  kinds.forEach(function(k){
+    html+='<button type="button" class="fee-chip'+(cur===k?' on':'')+'" data-t="'+escapeHtml(k)+'">'
+      +escapeHtml(k)+'<span class="n">'+(cnt[k]||0)+'</span></button>';
+  });
+  box.innerHTML=html;
+  box.querySelectorAll('.fee-chip').forEach(function(b){
+    b.onclick=function(){ sel.value=b.dataset.t; sel.dispatchEvent(new Event('change')); };
+  });
+}
+
 function bindCareer(){ Object.keys(CAREER_CFG).forEach(name=>{ const sec=document.getElementById('page-'+name); if(!sec||sec.dataset.bound) return; sec.dataset.bound='1';
   sec.querySelectorAll('[data-f]').forEach(el=>el.addEventListener(el.tagName==='SELECT'?'change':'input',()=>{ _pageLimit[name]=40; renderCareer(name); }));
   const z=sec.querySelector('.ocr-zone'); if(z){ z.onclick=()=>{ const inp=document.createElement('input'); inp.type='file'; inp.multiple=true; inp.accept='.pdf,.jpg,.jpeg,.png,.hwp,.hwpx'; inp.onchange=()=>ocrDrop(inp.files,name); inp.click(); };
