@@ -52,7 +52,11 @@ function boot(who) {
   vm.createContext(ctx);
   vm.runInContext(app.match(/const LASTV_PREFIX = [^\n]*/)[0], ctx);
   vm.runInContext("var _lastScreenSig = ''; var _lastScreenDone = false;", ctx);
-  ['lastScreenKey', 'urlWantsMail', 'saveLastScreen', 'restoreLastScreen']
+  /* 2026-08-29 — 이메일을 눌러 열린 창이면 「받은메일함」이 아니라 그 사람에게 쓰기다.
+     그것을 가르는 mailToFromUrl 이 restoreLastScreen 안에서 돌므로 함께 실어 준다. */
+  ctx.URLSearchParams = URLSearchParams;
+  ctx.String = String;
+  ['lastScreenKey', 'mailToFromUrl', 'urlWantsMail', 'saveLastScreen', 'restoreLastScreen']
     .forEach(n => vm.runInContext(fn(n), ctx));
   return ctx;
 }
