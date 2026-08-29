@@ -297,6 +297,15 @@
   .mgl.inl{display:inline-flex;margin-top:0;margin-left:5px;vertical-align:1px}
   .ofc{font-size:11px;color:var(--faint);margin-left:5px}
   /* 이관한 계약에 붙는 꼬리표 — 어디로 넘어갔는지. 감춤을 풀고 볼 때 까닭이 보인다. */
+  /* 할 일 알림 칩 — 경고색으로 눈에 띄되 자리는 안 먹는다 */
+  .chipbtn.warnchip{border-color:#fde68a;background:#fffdf5;color:var(--warn);font-weight:800}
+  .chipbtn.warnchip.on{background:var(--warn);border-color:var(--warn);color:#fff}
+  .warnlist{max-height:340px;overflow:auto}
+  .warnrow{padding:9px 2px;border-bottom:1px solid var(--line)}
+  .warnrow:last-child{border-bottom:0}
+  .warnrow .wt{font-size:12.5px;line-height:1.5}
+  .warnrow .ws{font-size:11.5px;color:var(--sub);margin-top:2px}
+  .warnrow .wa{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
   .xfer{font-size:10.5px;font-weight:700;color:#5b21b6;background:#ede9fe;border-radius:5px;padding:0 6px;margin-left:6px;white-space:nowrap}
   /* 푸른이알피에서 한 건씩 당겨오기 */
   .phd{font-size:11.5px;font-weight:800;color:var(--sub);margin:10px 0 4px;padding-top:6px;border-top:1px solid var(--line)}
@@ -1612,6 +1621,39 @@ function colPopHTML(sc){
     +'</div>';
 }
 // 표 바깥으로 띄운다(표에 가로 스크롤이 있어 안에 두면 잘린다) — 깔때기와 같다
+/* ── 할 일 알림 칩 ──
+   줄로 깔면 목록이 그만큼 아래로 밀린다. 칩 하나로 접고 눌러야 펴지게 한다.
+   ⚠ 숫자만 보이면 무엇인지 모르므로, 펼쳤을 때 한 줄 설명과 바로 가는 단추를 함께 둔다. */
+function warnPopClose(){ if(S.warnOpen){ S.warnOpen=false; renderMy(); } }
+function warnChip(todos){
+  if(!todos||!todos.length) return '';
+  return '<span class="chipbtn warnchip'+(S.warnOpen?' on':'')+'" id="warnchip" '
+    +'onclick="event.stopPropagation();S.warnOpen=!S.warnOpen;renderMy()" '
+    +'title="처리할 것이 '+todos.length+'가지 있습니다 — 눌러서 봅니다">⚠ '+todos.length+'</span>'
+    +(S.warnOpen?warnPopHTML(todos):'');
+}
+function warnPopHTML(todos){
+  return '<div class="fbk" onclick="warnPopClose()"></div>'
+    +'<div class="fpop" id="warnpop" onclick="event.stopPropagation()">'
+    +'<div class="fpl warnlist">'
+    +todos.map(function(w){
+        return '<div class="warnrow"><div class="wt">'+w.ic+' '+w.t+'</div>'
+          +(w.s?'<div class="ws">'+esc(w.s)+'</div>':'')
+          +'<div class="wa">'+w.a.map(function(a){
+              return '<span class="lnk" onclick="warnPopClose();'+a[1]+'">'+esc(a[0])+'</span>';
+            }).join('')+'</div></div>';
+      }).join('')
+    +'</div>'
+    +'<div class="fpa"><span class="muted" style="font-size:11px;flex:1">한 번 처리하면 사라집니다</span>'
+    +'<span class="lnk" onclick="warnPopClose()">닫기</span></div>'
+    +'</div>';
+}
+function warnPopPos(){
+  var b=$('warnchip'), q=$('warnpop'); if(!b||!q) return;
+  var r=b.getBoundingClientRect();
+  q.style.left=Math.max(8,Math.min(r.left,window.innerWidth-q.offsetWidth-8))+'px';
+  q.style.top=Math.min(r.bottom+4,window.innerHeight-q.offsetHeight-8)+'px';
+}
 function colPopPos(){
   var b=$('colchip'), p=$('colpop'); if(!b||!p) return;
   var r=b.getBoundingClientRect();
@@ -3320,6 +3362,35 @@ function renderMy(){
   if(S.f==='due')base=fc.due; else if(S.f==='nolog')base=fc.nolog; else if(S.f==='next')base=fc.next;
   else if(S.f==='recv')base=recv;
   var total=base.length;
+  /* 할 일 알림 — 매번 읽을 것이 아니라 한 번 처리하면 끝나는 것들이다.
+     줄로 깔면 그만큼 목록이 아래로 밀린다(넷이 겹치면 네 줄). 칩 하나로 접고
+     눌러야 펴지게 한다. 상태 알림(지난 주 열람·걸러 보기)은 아래에 줄로 남긴다 —
+     그것은 「왜 목록이 이렇게 보이는가」라 안 보이면 헷갈린다. */
+  var todos=[];
+  var myLv=S.vsid&&(leaving[S.vsid]||null);
+  if(myLv&&!myLv.done){
+    var miss=mine.filter(function(it){return !noteDone(it);}).length;
+    var dd2=dday(myLv.date);
+    todos.push({ic:'🚪',
+      t:esc(myLv.type||'부재')+' 예정 '+(dd2===null?'':(dd2>=0?'D-'+dd2:'지남'))
+        +' — 인수인계 노트 미작성 <b>'+miss+'건</b> / 진행 '+mine.length+'건',
+      s:'각 업무를 열어 📦 노트를 작성하세요.',
+      a:[['인수인계 현황 →','go(\'ho\')']]});
+  }
+  // 업무 칸이 —로 비어 무슨 일인지 알 수 없는 건 — 한 화면에서 몰아 적게 안내한다
+  var nb=mine.filter(needBrief).length;
+  if(nb) todos.push({ic:'✏️',
+    t:'업무 칸이 비어 <b>무슨 일인지 알 수 없는</b> 업무 <b>'+nb+'건</b>',
+    s:'푸른이알피에 유형·업무명·업무 요약이 모두 비어 있어서입니다.',
+    a:[['한 번에 적기 →','briefFillModal()']]});
+  // 푸른이알피에 주담당인데 아직 업무시트에 없는 건 → 1차 연결 안내 (기준일 이전 백로그)
+  var unl=peMineUnlinked();
+  if(unl&&unl.length){
+    todos.push({ic:'🔗',
+      t:'푸른이알피에 <b>'+esc(S.vname||'이 사람')+' 님이 주담당</b>인 업무 <b>'+unl.length+'건</b>이 아직 연결되지 않았습니다',
+      s:'',
+      a:(isAdmin()?[['전 직원 한 번에 →','puerpAllModal()']]:[]).concat([['이 사람만 연결 →','puerpMineModal()']])});
+  }
   var nMain=mine.filter(function(it){return roleOf(it,viewer())==='main';}).length;
   var nSub=mine.length-nMain;
   if(S.myRole) base=base.filter(function(it){return roleOf(it,viewer())===S.myRole;});
@@ -3357,6 +3428,7 @@ function renderMy(){
     +'</span>'
     +myModeSeg()                 /* 표 · 보드 · 타임라인 — 같은 목록을 세 모양으로 */
     +'<span style="flex:1"></span>'
+    +warnChip(todos)
     +(xferHid?'<span class="chipbtn'+(S.myXfer?' on':'')+'" onclick="S.myXfer=!S.myXfer;renderMy()" '
        +'title="컨설팅·사건 등으로 넘긴 계약입니다. 그쪽에서 일이 이어지므로 기본으로 감춥니다.">'
        +(S.myXfer?'✓ 이관 계약 '+xferHid+'건 보임':'↗ 이관 '+xferHid+'건 숨김')+'</span>':'')
@@ -3374,32 +3446,15 @@ function renderMy(){
     +'<span class="wknav" onclick="shiftWeek(1)">›</span>'
     +'</div>'
     +splitOpen();                       // 캘린더가 켜져 있으면 여기서부터 좌우로 갈린다
-  // 보고 있는 사람의 부재(퇴사·휴직·연차) 예정 → 인수인계 진행 배너
-  var myLv=S.vsid&&(leaving[S.vsid]||null);
-  if(myLv&&!myLv.done){
-    var miss=mine.filter(function(it){return !noteDone(it);}).length;
-    var dd2=dday(myLv.date);
-    h+='<div class="histbanner">🚪 <b>'+esc(myLv.type||'부재')+' 예정 '+(dd2===null?'':(dd2>=0?'D-'+dd2:'지남'))+'</b>'
-      +' — 인수인계 노트 미작성 <b>'+miss+'건</b> / 진행 '+mine.length+'건. 각 업무를 열어 📦 노트를 작성하세요.'
-      +'<span class="back" onclick="go(\'ho\')">인수인계 현황 →</span></div>';
-  }
+  /* 상태 알림은 줄로 남긴다 — 「왜 목록이 이렇게 보이는가」라 안 보이면 헷갈린다.
+     할 일 알림(노트·빈 칸·미연결)만 위 도구줄의 ⚠ 칩으로 접었다.
+     ⚠ 이 줄들은 반드시 h 가 만들어진 뒤에 와야 한다. 앞에 두면 아래에서 h 를
+       새로 만들 때 통째로 지워진다(실제로 지워졌다). */
   if(!isCurWeek()){
     h+='<div class="histbanner">🕘 <b>'+esc(weekLabel(S.week))+'</b> 열람 중 — 이 주에 기록하면 그 주 기록으로 저장됩니다 (실제 입력일 병기)'
       +'<span class="back" onclick="setWeek(null)">이번 주로 →</span></div>';
   }
-  // 업무 칸이 —로 비어 무슨 일인지 알 수 없는 건 — 한 화면에서 몰아 적게 안내한다
-  var nb=mine.filter(needBrief).length;
-  if(nb) h+='<div class="histbanner">✏️ 업무 칸이 비어 <b>무슨 일인지 알 수 없는</b> 업무가 <b>'+nb+'건</b>입니다. '
-    +'푸른이알피에 유형·업무명·업무 요약이 모두 비어 있어서입니다.'
-    +'<span class="back" onclick="briefFillModal()">한 번에 적기 →</span></div>';
-  // 푸른이알피에 주담당인데 아직 업무시트에 없는 건 → 1차 연결 안내 (기준일 이전 백로그)
-  var unl=peMineUnlinked();
-  if(unl&&unl.length){
-    h+='<div class="histbanner">🔗 푸른이알피에 <b>'+esc(S.vname||'이 사람')+' 님이 주담당</b>인 업무 '
-      +'<b>'+unl.length+'건</b>이 아직 연결되지 않았습니다.'
-      +(isAdmin()?'<span class="back" onclick="puerpAllModal()" style="margin-left:auto" title="전 직원의 주담당 업무를 한 번에 연결합니다">전 직원 한 번에 →</span>':'')
-      +'<span class="back" onclick="puerpMineModal()"'+(isAdmin()?' style="margin-left:6px"':'')+'>이 사람만 연결 →</span></div>';
-  }
+
   if(!mine.length){
     h+='<div class="panel" style="text-align:center;color:var(--sub);padding:40px">'
       +(unl&&unl.length
@@ -3492,6 +3547,7 @@ function renderMy(){
   app.innerHTML=h+splitClose();
   if(S.fPop) fPopPos();
   if(S.colPop) colPopPos();
+  if(S.warnOpen) warnPopPos();
   // 캘린더에서 날을 골랐으면 그 칸으로 커서를 옮긴다 — 그리기가 끝난 뒤라야 잡힌다
   if(S._calFocus) setTimeout(calFocusDay,60);
   calAfter();

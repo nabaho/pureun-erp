@@ -645,7 +645,35 @@ setTimeout(function () {
         logToPlan('W1', 'L2');
         ok('남이 쓴 기록은 옮기지 못한다', SET === null && DELETED === null);
 
-        console.log('\n' + (fail ? 'FAILED ' + fail + '/' + (pass + fail) : 'ALL ' + pass + ' PASS'));
+        
+/* ── 경고를 줄에서 칩으로 ──
+   할 일 알림(노트·빈 칸·미연결)은 한 번 처리하면 끝나는 것이라 칩으로 접었고,
+   상태 알림(지난 주 열람·걸러 보기)은 「왜 목록이 이렇게 보이는가」라 줄로 남겼다. */
+const RM = grab('renderMy');
+ok('할 일 알림 셋은 줄로 그리지 않는다 (칩으로 모은다)', (function () {
+  // 셋 다 todos.push 로 모여야 한다 — 하나라도 h+= 로 남으면 그 줄이 화면을 민다
+  const n = (RM.match(/todos\.push\(/g) || []).length;
+  return n === 3 && RM.indexOf('warnChip(todos)') > 0;
+})());
+ok('상태 알림은 줄로 남는다 (안 보이면 왜 이렇게 보이는지 모른다)',
+  /if\(!isCurWeek\(\)\)\{\s*\n?\s*h\+='<div class="histbanner">/.test(RM)
+  && RM.indexOf('걸러 보기가 걸려 있어') > 0);
+
+/* ⚠ 상태 알림은 반드시 h 를 만든 뒤에 와야 한다. 앞에 두면 아래에서 h 를 새로
+   만들 때 통째로 지워진다 — 실제로 그렇게 사라졌고, 화면만 보아서는 모른다. */
+ok('상태 알림이 h 를 만든 뒤에 온다',
+  RM.indexOf("var h='<div class=\"row hdr-my\"") < RM.indexOf('열람 중 — 이 주에 기록하면'));
+
+// 알림이 없으면 칩도 없어야 한다 — 빈 칩이 자리를 먹으면 고친 뜻이 없다
+ok('알림이 없으면 칩을 그리지 않는다',
+  grab('warnChip').indexOf('if(!todos||!todos.length) return ') > 0);
+ok('칩을 누르면 펴지고 밖을 누르면 닫힌다',
+  grab('warnChip').indexOf('S.warnOpen=!S.warnOpen') > 0
+  && grab('warnPopHTML').indexOf('onclick="warnPopClose()"') > 0);
+ok('펼치면 무엇인지와 바로 가는 단추가 함께 나온다',
+  grab('warnPopHTML').indexOf('warnrow') > 0 && grab('warnPopHTML').indexOf('w.a.map') > 0);
+
+console.log('\n' + (fail ? 'FAILED ' + fail + '/' + (pass + fail) : 'ALL ' + pass + ' PASS'));
         process.exit(fail ? 1 : 0);
       }, 0);
     }, 0);
