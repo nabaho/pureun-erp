@@ -194,7 +194,13 @@ function aiCtx(over) {
     document: { querySelector: function () { return null; } },
     window: { fetch: function () {} },
     viewerId: 'p1',
-    photoMask: { status: 'ready', purpose: 'edit', boxes: [{ x: .4, y: .4, w: .1, h: .1 }] },
+    /* ⚠ 2026-08-29 부터 지운 결과를 **저장 전에 보여 준다**(대표 승인 목업
+       ai-erase-preview.html). 그래서 photoEditAi 는 «보여 주는» 데까지고,
+       저장은 photoAiKeep 이 맡는다 — 둘 다 넣고 돌린다.
+       저장 전에 아무것도 안 바뀌는지는 tests/photos-ai-erase-preview.test.js 가 본다. */
+    aiPreview: null,
+    renderViewerEdit: function () {},
+    photoMask: { status: 'ready', purpose: 'edit', url: 'ORIG', boxes: [{ x: .4, y: .4, w: .1, h: .1 }] },
     gridItems: [{ id: 'p1', meta: {} }],
     blockedIfOther: function () { return false; },
     confirm: function () { return true; },
@@ -221,7 +227,14 @@ function aiCtx(over) {
   }, (over && over._edit) || {});
   ctx.window.PuPhotoEdit = ctx.PuPhotoEdit;
   vm.createContext(ctx);
-  vm.runInContext(cutFn(app, 'async function photoEditAi('), ctx);
+  vm.runInContext(cutFn(app, 'function aiOn(') + '\n' +
+    cutFn(app, 'async function photoEditAi(') + '\n' +
+    cutFn(app, 'async function photoAiKeep('), ctx);
+  /* 「지우고 저장까지」 한 번에 — 예전 photoEditAi 가 하던 일 전부다 */
+  ctx.eraseAndKeep = async function () {
+    await ctx.photoEditAi();
+    if (ctx.photoMask && ctx.photoMask.ai) await ctx.photoAiKeep();
+  };
   return ctx;
 }
 
@@ -247,9 +260,9 @@ test('★★ AI 가 준 사진을 «못 읽으면» 저장하지 않는다 — �
   assert.match(c._calls.alert.join(' '), /원본은 그대로입니다/);
 });
 
-test('★ 받으면 원본과 미리보기를 함께 바꾼다 — 실제로 돌려 본다', async () => {
+test('★ 받아서 «저장까지» 하면 원본과 미리보기를 함께 바꾼다 — 실제로 돌려 본다', async () => {
   const c = aiCtx();
-  await c.photoEditAi();
+  await c.eraseAndKeep();
   assert.equal(c._calls.edit, 1, '한 번만 불러야 합니다');
   assert.equal(c._calls.replace, 1);
   assert.match(c._calls.toast.join(' '), /자국/, '손댐 자국이 남는다고 말해 줘야 합니다');
@@ -266,7 +279,13 @@ test('★ 두 군데를 그어 두면 부르지 않는다 — 조각이 커져 �
 test('★ 요금이 든다고 «말하고» 묻는다', () => {
   const fn = cutFn(app, 'async function photoEditAi(');
   assert.match(fn, /요금이 듭니다/);
-  assert.match(fn, /되돌릴 수 없습니다/);
+  /* ⚠ 2026-08-29 부터 「되돌릴 수 없습니다」가 아니다 — 결과를 **먼저 보여 주고**
+     대표님이 저장할지 고르신다(승인 목업 ai-erase-preview.html).
+     묻는 말과 실제로 하는 일이 어긋나면 그 말을 아무도 안 믿게 된다. */
+  assert.match(fn, /먼저 보여 드립니다/,
+    '★ 묻는 말이 실제와 어긋납니다 — 이제 곧바로 덮어쓰지 않습니다');
+  assert.ok(fn.indexOf('되돌릴 수 없습니다') < 0,
+    '★ 없어진 일(곧바로 덮어쓰기)을 아직 경고하고 있습니다');
 });
 
 test('★★ 한 번에 «한 군데»만 — 여러 군데면 조각이 커져 요금이 오른다', () => {
@@ -287,21 +306,25 @@ test('★★ 다시 시도하지 «않는다» — 조용히 두 번 부르면 �
 });
 
 test('★ 받는 것이 저장보다 «먼저»다 — 짜임으로도 못박아 둔다', () => {
+  /* ⚠ 2026-08-29 부터 저장은 다른 함수(photoAiKeep)로 갈라졌다. 그래서 «순서»는
+     함수 안이 아니라 **두 걸음 사이**에 있다 — 받는 쪽에는 저장이 아예 없어야 한다. */
   const fn = cutFn(app, 'async function photoEditAi(');
-  const i = fn.indexOf('PuPhotoEdit.callEdit');
-  const j = fn.indexOf('PuPhotoStore.replaceImage');
-  assert.ok(i > 0 && j > i, '★ 받기 전에 저장하면 못 받아도 사진이 바뀝니다');
+  assert.ok(fn.indexOf('PuPhotoEdit.callEdit') > 0, '받는 자리가 없어졌습니다');
+  assert.ok(fn.indexOf('PuPhotoStore.replaceImage') < 0,
+    '★ 받는 걸음에서 저장까지 합니다 — 대표님이 보고 고르실 틈이 없습니다');
+  const keep = cutFn(app, 'async function photoAiKeep(');
+  assert.match(keep, /PuPhotoStore\.replaceImage/, '저장하는 걸음이 없습니다');
 });
 
 test('★★ 「손댐」 자국을 남긴다 — 눈에 안 보이는 고침이라 기록이 없으면 답할 수 없다', () => {
-  assert.match(cutFn(app, 'async function photoEditAi('), /markEdited\(photoYearOf\(id\), id, 'ai', photoOwner\(id\)\)/,
+  assert.match(cutFn(app, 'async function photoAiKeep('), /markEdited\(photoYearOf\(id\), id, 'ai', photoOwner\(id\)\)/,
     '★ 증빙 사진에 자국 없이 손대면 나중에 「이 사진 손댔나」에 아무도 답 못 합니다');
   const m = cutFn(store, 'function markEdited(');
   assert.match(m, /metaPath\(year, id, owner\) \+ '\/edited'/, '주인 자리에 적어야 남습니다');
 });
 
 test('★ 자국이 실패해도 «고친 것을 되돌리지 않는다» — 자국이 없을 뿐이다', () => {
-  const fn = cutFn(app, 'async function photoEditAi(');
+  const fn = cutFn(app, 'async function photoAiKeep(');
   assert.match(fn, /markEdited\([\s\S]{0,120}\.catch\(/,
     '★ 여기서 터지면 다 된 고치기가 실패로 보입니다');
 });

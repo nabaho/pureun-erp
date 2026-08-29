@@ -10637,7 +10637,9 @@ function closeViewer() {
   $('viewerImg').src = '';
   $('readPanel').innerHTML = '';
   /* ⚠ 편집 중이었으면 **그 상태를 비운다.** 안 비우면 다음에 다른 사진을 열 때
-     앞 사진의 네모가 그대로 얹혀 있고, 저장하면 엉뚱한 사진이 고쳐진다. */
+     앞 사진의 네모가 그대로 얹혀 있고, 저장하면 엉뚱한 사진이 고쳐진다.
+     ⚠ 아직 저장 안 한 «지운 그림»(photoMask.ai)도 이 안에 들어 있어 함께 사라진다 —
+       그러라고 밖에 안 두고 여기에 담았다. */
   photoMask = PuRrnMaskUi.blank();
   renderViewerEdit();
   viewerId = null;
@@ -11995,6 +11997,8 @@ function photoMaskStyle(s) {
 async function photoEditAi() {
   const id = viewerId;
   if (!id || !photoMask || photoMask.status !== 'ready') return;
+  /* 이미 지운 결과를 보고 계시면 또 부르지 않는다 — 한 번 더 부르는 것이 곧 요금이다 */
+  if (photoMask.ai) return;
   if (blockedIfOther(id)) return;
   const boxes = photoMask.boxes || [];
   if (boxes.length !== 1) { alert('AI 로 지우기는 한 번에 한 군데만 됩니다.'); return; }
@@ -12002,7 +12006,7 @@ async function photoEditAi() {
   if (!confirm('AI 로 그 자리를 지우고 배경으로 메웁니다.\n\n' +
     '· 이 한 번에 **요금이 듭니다**(잘라낸 조각만 보냅니다).\n' +
     '· 가려도 되는 일이면 「가려서 저장」이 요금 없이 끝납니다.\n' +
-    '· 되돌릴 수 없습니다 — 원본을 덮어씁니다.\n\n계속할까요?')) return;
+    '· 결과를 **먼저 보여 드립니다** — 마음에 안 들면 버리시면 됩니다.\n\n계속할까요?')) return;
 
   const btn = document.querySelector('.again.ai');
   if (btn) { btn.disabled = true; btn.textContent = '지우는 중… (10초쯤)'; }
@@ -12019,6 +12023,59 @@ async function photoEditAi() {
     }, cut.dataUrl);
     const patch = await loadImg(patchUrl);
     const full = PuPhotoEdit.pasteBack(img, cut.spec, patch);
+    /* ⚠ **여기서 저장하지 않는다** (대표 승인 목업 2026-08-29 ai-erase-preview.html).
+       예전에는 곧바로 원본을 덮어썼다. 그러면 결과가 시원찮아도 되돌릴 수 없어
+       **실사진으로 시험해 보는 것 자체가 사진 한 장을 거는 일**이 된다 —
+       남은 일이 「해 보고 시원찮으면 맞추기」인데 해 볼 수가 없는 셈이었다.
+       이제 보여 드리고 대표님이 고르신다. */
+    photoMask.ai = { id: id, full: full, before: photoMask.url };
+    photoMask.url = full;
+    renderReadPanel(maskItem());
+    renderViewerEdit();
+    toast('✨ 지웠습니다 — 보시고 「이대로 저장」 또는 「버리기」를 골라 주세요');
+  } catch (e) {
+    console.warn('[AI 지우기]', e);
+    alert('지우지 못했습니다 — ' + ((e && e.message) || e) + '\n원본은 그대로입니다.');
+  } finally {
+    renderReadPanel(maskItem());
+  }
+}
+
+/* ══════ 지운 결과를 «저장 전에» 보여 준다 (대표 승인 목업 2026-08-29) ══════
+   ⚠ **요금은 이미 들었다.** 버려도 다시 안 들고, 다시 지우려면 또 든다 —
+     그래서 「한 번 더」를 안 만든다(대표 승인 ㉮). 버리면 그은 네모가 그대로 남아
+     「⬛ 까맣게」로 요금 없이 끝내실 수 있다.
+   ⚠ **저장 뒤 되돌리기는 안 만든다**(대표 승인 ㉮) — 저장 전에 보시므로 필요가 줄고,
+     원본을 한 벌 더 두면 창고가 두 배가 된다.
+   ⚠ 미리 보는 동안에도 넘기기·닫기·돌리기는 막혀 있다(photoEditing 이 그대로 참이다).
+
+   ★ **편집 상태(photoMask) 안에 담는다** — 따로 전역으로 두면 창을 닫을 때·편집을
+     새로 열 때·저장한 뒤에 **네 곳에서 저마다 비워 줘야** 하고, 그 중 한 곳이 빠지면
+     **앞 사진의 지운 그림이 다음 사진에 얹혀 저장된다.** 이 저장소가 여러 번 겪은 병이다.
+     photoMask 를 새로 만드는 순간 이것도 함께 사라지므로 비우는 일이 아예 없어진다.
+   ⚠ 그래서 아래 함수들은 photoMask.ai 하나만 본다 — 두 곳에 적어 두지 않는다. */
+function aiOn() { return photoMask && photoMask.ai; }
+
+/* 눌러서 «고치기 전»을 본다 — 무엇이 달라졌는지는 나란히 봐야 안다.
+   ⚠ 큰 사진과 옆 칸이 같은 id 를 쓰므로 자리를 하나만 잡는다. */
+function aiPeek(on) {
+  const a = aiOn();
+  if (!a) return;
+  const im = $('maskImg');
+  if (im) im.src = on ? a.before : a.full;
+}
+
+/* ── 이대로 저장 ── */
+async function photoAiKeep() {
+  const a = aiOn();
+  if (!a) return;
+  const id = a.id, full = a.full;
+  if (blockedIfOther(id)) return;
+  const btn = document.querySelector('.again.aikeep');
+  if (btn) { btn.disabled = true; btn.textContent = '저장하는 중…'; }
+  try {
+    /* ⚠ 미리보기도 **고친 사진에서 다시 만든다.** 옛 미리보기를 두면 격자에서는
+       고치기 전 그림이 계속 보인다(가장 놓치기 쉬운 자리다). */
     const thumb = await shrinkDataUrl(full, 240, 0.8);
     await PuPhotoStore.replaceImage(photoYearOf(id), id, full, thumb, photoOwner(id));
     /* 자국 — 못 남겨도 고친 것을 되돌리지 않는다(자국이 없을 뿐이다) */
@@ -12031,17 +12088,32 @@ async function photoEditAi() {
       it.full = full; it.thumb = thumb;
       it.meta = Object.assign({}, it.meta, { edited: { at: Date.now(), how: 'ai' } });
     }
+    /* ⚠ 편집 상태를 통째로 비운다 — 들고 있던 결과(ai)도 그 안에 있으므로 함께 사라진다 */
     photoMask = PuRrnMaskUi.blank();
     const vi = $('viewerImg'); if (vi) vi.src = full;
     renderReadPanel(maskItem());
+    renderViewerEdit();
     renderGrid();
     toast('✨ AI 로 지웠습니다 — 사진에 「손댐」 자국이 남습니다');
   } catch (e) {
-    console.warn('[AI 지우기]', e);
-    alert('지우지 못했습니다 — ' + ((e && e.message) || e) + '\n원본은 그대로입니다.');
-  } finally {
+    /* ⚠ 못 저장했으면 **들고 있던 결과를 그대로 둔다** — 지운 그림을 잃지 않는다.
+       여기서 비우면 요금을 치른 결과가 사라지고 다시 부르셔야 한다. */
+    console.warn('[AI 지우기 저장]', e);
+    alert('저장하지 못했습니다 — ' + ((e && e.message) || e) +
+      '\n지운 그림은 그대로 있습니다. 다시 눌러 보십시오.');
     renderReadPanel(maskItem());
   }
+}
+
+/* ── 버리기 — 사진은 손대지 않는다 ── */
+function photoAiDrop() {
+  const a = aiOn();
+  if (!a) return;
+  photoMask.url = a.before;
+  photoMask.ai = null;
+  renderReadPanel(maskItem());
+  renderViewerEdit();
+  toast('버렸습니다 — 사진은 그대로입니다');
 }
 
 /* data URL 을 그림으로 — 붙여 넣으려면 크기를 알아야 한다 */
@@ -12057,6 +12129,9 @@ function loadImg(src) {
 async function photoEditSave() {
   const id = viewerId;
   if (!id || !photoMask || photoMask.status !== 'ready') return;
+  /* ⚠ 지운 결과를 보고 계실 때는 이 길로 안 온다 — photoMask.url 이 «지운 그림»이라
+     여기서 가려 저장하면 대표님이 아직 고르지 않은 것을 저장하게 된다. */
+  if (photoMask.ai) return;
   if (blockedIfOther(id)) return;
   const n = (photoMask.boxes || []).length;
   if (!n) { alert('가릴 곳을 먼저 그어 주세요.'); return; }
@@ -12089,8 +12164,10 @@ async function photoEditSave() {
 
 /* 가림을 그만두면 판독도 안 한다 — 안 가린 채로 새는 길을 두지 않는다. */
 function photoMaskCancel() {
+  /* 보고 계시던 결과(photoMask.ai)도 이 안에 있어 함께 사라진다 */
   photoMask = PuRrnMaskUi.blank();
   renderReadPanel(maskItem());
+  renderViewerEdit();
 }
 
 /* 주민번호 한 줄은 종이의 몇 %다. 이보다 넓으면 손이 미끄러진 것으로 보고 되묻는다.
@@ -12176,12 +12253,19 @@ function renderViewerEdit() {
   const on = ms.purpose === 'edit' && ms.status === 'ready';
   box.style.display = on ? 'flex' : 'none';
   box.innerHTML = on ? maskWrapHtml(ms, maskBoxesHtml(ms), true) : '';
+  /* ⚠ 결과를 보고 계실 때는 **더 못 긋게** 막는다 — 그 사이에 그은 네모는 이미 보낸
+     조각과 아무 상관이 없고, 저장하면 어느 것이 반영된 것인지 알 수 없게 된다. */
+  const wrap = $('maskWrap');
+  if (wrap && ms.ai) { wrap.style.pointerEvents = 'none'; wrap.style.cursor = 'default'; }
   const pic = $('viewerPic');
   if (pic) pic.classList.toggle('editing', on);
 }
 
 /* 그어 둔 네모들 — 옆 칸과 큰 사진이 같은 것을 그린다 */
 function maskBoxesHtml(ms) {
+  /* ⚠ 지운 결과를 보고 계실 때는 네모를 안 그린다 — 이미 지워진 자리를 다시 덮으면
+     **무엇이 어떻게 지워졌는지 볼 수가 없다.** 보시라고 만든 걸음이다. */
+  if (ms && ms.ai) return '';
   const edit = ms && ms.purpose === 'edit';
   return ((ms && ms.boxes) || []).map(function (b, i) {
     /* 고른 결대로 보여 준다 — 까맣게만 보이면 무엇이 저장될지 알 수 없다 */
@@ -12203,6 +12287,27 @@ function maskPanelHtml() {
     return '<div class="box"><b>가릴 곳 고르기</b>' +
       '<p class="note" style="margin:8px 0 0">' + esc(ms.err) + '</p>' +
       '<button class="again" onclick="photoMaskCancel()">닫기</button></div>';
+  }
+  /* ── 지운 결과를 보고 계신 중이면 «고르는 것»만 보여 준다 (대표 승인 목업 2026-08-29) ──
+     ⚠ 이때 긋기 도구·결 고르개를 함께 두면 무엇을 눌러야 하는지 흐려진다.
+       지금 하실 일은 **저장할지 버릴지** 하나뿐이다. */
+  if (ms.ai) {
+    return '<div class="box"><b>✨ 지운 결과 — 아직 저장하지 않았습니다</b>' +
+      '<p class="note" style="margin:8px 0 0">어떻습니까? 아래 단추를 <b>누르고 있으면</b> ' +
+      '고치기 전이 보입니다.</p>' +
+      /* 눌렀다 떼는 동안만 옛 그림 — 손가락(폰)과 마우스 둘 다 받는다.
+         ⚠ pointerleave 도 받아야 한다. 끌다가 단추 밖에서 떼면 옛 그림이 그대로 남는다. */
+      '<button class="again" style="width:100%;margin-top:8px"' +
+      ' onpointerdown="aiPeek(true)" onpointerup="aiPeek(false)"' +
+      ' onpointerleave="aiPeek(false)" onpointercancel="aiPeek(false)">' +
+      '👁 눌러서 고치기 전 보기</button>' +
+      '<button class="again pri aikeep" onclick="photoAiKeep()">✅ 이대로 저장</button>' +
+      '<button class="again" onclick="photoAiDrop()">↩ 버리기</button>' +
+      /* 요금을 한 번 더 분명히 한다 — 「버리면 아까우니 저장하자」로 기울지 않게 */
+      '<p class="note" style="margin:6px 0 0;font-size:11px">' +
+      '요금은 <b>이미 들었습니다</b> — 버려도 다시 들지 않습니다. 버리면 그은 네모가 ' +
+      '그대로 남아 「⬛ 까맣게」로 <b>요금 없이</b> 끝내실 수 있습니다.</p>' +
+      '</div>';
   }
   const n = (ms.boxes || []).length;
   /* 「사진 편집」으로 들어왔는가 — 나가는 문·안내·긋는 자리가 통째로 달라진다 */
