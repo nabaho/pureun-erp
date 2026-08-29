@@ -109,6 +109,35 @@ rules.data = {
 
   /* 그 밖의 업무 칸 — 이름이 안 붙은 것은 전부 여기로 온다.
      ⚠ 이름 붙은 칸이 «먼저» 잡히므로 위의 재무 칸들은 여기에 안 걸린다. */
+  /* ══ 여기부터 — 이름 없이 열려 있던 자리들 (2026-08-29 대표 보고) ══
+     지금까지 이 열한 자리는 이름이 없어 아래 $other 로 떨어졌다.
+     $other 는 「깜빡 잊은 자리」와 「일부러 연 자리」를 똑같이 대접한다 —
+     그래서 무엇이 열려 있는지 아무도 셀 수 없었다.
+     ★ 권한은 «지금 그대로»다. 이름만 적는다 — 동작은 한 톨도 안 바뀐다.
+       좁힐지는 대표 판단이다(무엇이 들었는지는 PR 에 적었다). */
+
+  /* 여러 앱이 함께 쓰는 업무 자료 — 푸른이알피·사진첩·급여데이터함이 모두 읽고 쓴다 */
+  companies:      { '.read': LOGIN, '.write': LOGIN },   /* 거래처 원장 */
+  contracts:      { '.read': LOGIN, '.write': LOGIN },   /* 계약 기록 */
+  consultings:    { '.read': LOGIN, '.write': LOGIN },   /* 컨설팅 사업(금액 포함) */
+  presence_hours: { '.read': LOGIN, '.write': LOGIN },   /* 근무 시간 */
+
+  /* 포털 — 앱 공용 설정과 개인 타일 순서 */
+  app_config:       { '.read': LOGIN, '.write': LOGIN }, /* 포털 공용 설정(FCM 키 등) */
+  portal_prefs:     { '.read': LOGIN, '.write': LOGIN }, /* 옛 타일 순서 */
+  portal_prefs_uid: { '.read': LOGIN, '.write': LOGIN }, /* 지금 타일 순서 */
+
+  /* 옛 건의 자리 — 관리자가 포털에 들어오면 suggestions_private 로 옮기고 여기를 «지운다»
+     (enter.html 의 sgEnsurePrivateMigration). 이사가 끝나면 이 넷은 빈 자리가 된다.
+     ⚠ 그때까지는 «건의 원문»이 여기 남아 있을 수 있다 — 좁힐 첫 후보다(대표 판단). */
+  suggestions:     { '.read': LOGIN, '.write': LOGIN },
+  sg_meta:         { '.read': LOGIN, '.write': LOGIN },
+  sg_resolved:     { '.read': LOGIN, '.write': LOGIN },
+  sg_resolved_uid: { '.read': LOGIN, '.write': LOGIN },
+
+  /* ⚠ 여기 이름이 없는 자리는 아래로 떨어져 «재직 직원 누구나» 읽고 쓴다.
+     새 자리를 만들 때는 권한을 정해 위에 이름을 적을 것 —
+     tests/rules-data-named.test.js 가 이름 없는 자리를 잡는다. */
   $other: { '.read': LOGIN, '.write': LOGIN }
 };
 
