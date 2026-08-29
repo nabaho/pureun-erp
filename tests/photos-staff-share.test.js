@@ -121,6 +121,17 @@ test('★ 콘솔과 다른 곳은 «일부러 고친 두 곳»뿐이다', () => 
        pu_mailseen          — 메일 읽음 자리
        mailbox/.read        — 메일함을 재직 직원 전원에게 연 것(2026-08-27 결정) */
   assert.deepEqual(diff.sort(), [
+      "/data/app_config",
+      "/data/companies",
+      "/data/consultings",
+      "/data/contracts",
+      "/data/portal_prefs",
+      "/data/portal_prefs_uid",
+      "/data/presence_hours",
+      "/data/sg_meta",
+      "/data/sg_resolved",
+      "/data/sg_resolved_uid",
+      "/data/suggestions",
       "/exportLog",
       "/exportSeen",
       "/mailbox/.read",

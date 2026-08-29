@@ -10,10 +10,14 @@ const rules = JSON.parse(fs.readFileSync(rulesPath, 'utf8')).rules;
    사라졌다는 것은 안전해졌다는 뜻이 아니다: data/$other 가 받아
    «재직 직원 누구나» 읽고 쓴다. 그러니 「없다」를 못 박아,
    누가 그 자리를 되살릴 때 제 규칙 없이 되살리지 못하게 한다. */
-test('★ 개인 포털 설정 자리가 규칙에 없다 — 되살리려면 제 규칙과 함께', () => {
-  assert.equal(rules.data.portal_prefs_uid, undefined,
-    '★ portal_prefs_uid 가 돌아왔다 — data/$other 에 걸려 직원 누구나 읽는다. '
-    + '되살릴 때는 auth.uid === $uid 규칙을 함께 넣을 것');
+/* 2026-08-29 — 이름을 적었다. 권한은 그때 열려 있던 그대로다(재직 직원).
+   ⚠ 좁힐지는 대표 판단으로 남아 있다 — 「내 타일 순서를 남이 바꾼다」가 지금 상태다.
+     좁히려면 auth.uid === $uid 로 바꾸면 된다. 여기서 조용히 정하지 않는다. */
+test('개인 포털 설정 자리에 이름이 있다 (권한은 아직 재직 직원)', () => {
+  const node = rules.data.portal_prefs_uid;
+  assert.ok(node, '★ 이름이 없어졌다 — $other 로 떨어져 아무도 세지 못하게 된다');
+  assert.match(node['.read'], /sign_in_provider|passkey/);
+  assert.match(node['.write'], /sign_in_provider|passkey/);
 });
 
 test('건의 수정과 답변은 관리자만 가능하고 신규 작성자는 UID를 남긴다', () => {
@@ -30,11 +34,14 @@ test('건의 수정과 답변은 관리자만 가능하고 신규 작성자는 U
    지금 건의는 suggestions_private 로 옮겨 갔다(그쪽은 아래에서 지킨다).
    ★ 옛 자리에 «자료가 남아 있다면» data/$other 로 직원 누구나 읽는다 —
      콘솔 데이터 탭에서 그 두 자리가 비었는지 확인이 필요하다(대표 보고 2026-08-29). */
-test('★ 옛 건의 자리가 규칙에 없다 — 되살리려면 제 규칙과 함께', () => {
-  assert.equal(rules.data.sg_resolved, undefined,
-    '★ sg_resolved 가 돌아왔다 — 제 규칙 없이 두면 직원 누구나 읽는다');
-  assert.equal(rules.data.suggestions, undefined,
-    '★ data/suggestions 가 돌아왔다 — 제 규칙 없이 두면 직원 누구나 읽는다');
+/* 2026-08-29 — 이름을 적었다. 이 넷은 «옛 건의 원문»이 남아 있을 수 있는 자리다.
+   관리자가 포털에 들어오면 suggestions_private 로 옮기고 여기를 지운다
+   (enter.html 의 sgEnsurePrivateMigration). 이사가 끝나면 빈 자리가 된다.
+   ⚠ 좁힐 «첫 후보»다 — 건의는 직원이 대표께 올린 글이다(대표 판단 대기). */
+test('옛 건의 자리 넷에 이름이 있다 (이사가 끝나면 빈 자리가 된다)', () => {
+  ['suggestions', 'sg_meta', 'sg_resolved', 'sg_resolved_uid'].forEach(k => {
+    assert.ok(rules.data[k], '★ ' + k + ' 의 이름이 없어졌다 — $other 로 떨어진다');
+  });
 });
 
 test('해결 알림은 대상 UID와 관리자만 접근한다', () => {

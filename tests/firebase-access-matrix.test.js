@@ -67,9 +67,10 @@ function evaluate(expression, options = {}) {
 }
 
 /* ⚠ data/portal_prefs_uid 칸이 규칙에서 사라졌다 — firebase-rules-stage3 의 같은 검사 참고 */
-test('★ 역할표: 포털 개인 설정 자리가 규칙에 없다', () => {
-  assert.equal(rules.data.portal_prefs_uid, undefined,
-    '★ 되살아났다 — data/$other 에 걸려 직원 누구나 읽는다');
+/* 2026-08-29 — 이름을 적었다(권한은 그대로). 좁히기는 대표 판단으로 남아 있다. */
+test('역할표: 포털 개인 설정 자리에 이름이 있다', () => {
+  assert.ok(rules.data.portal_prefs_uid,
+    '★ 이름이 없어졌다 — $other 로 떨어져 무엇이 열렸는지 셀 수 없게 된다');
 });
 
 test('역할표: 일반 직원은 본인 UID로 건의를 새로 등록할 수 있다', () => {
