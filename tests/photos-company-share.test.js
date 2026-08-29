@@ -211,15 +211,46 @@ test('업체가 없거나 고른 것이 없으면 대조표를 읽지 않는다 
 
 /* ══════ ④ 배선 ══════ */
 
-test('★ 도구줄에 두 단추가 있고, 고른 것이 있을 때만 보인다', () => {
+test('★ 업체 지정은 도구줄에, 공유는 «누구 사진 아래» 대시보드에 (대표 지시 2026-08-29)', () => {
   assert.match(photos, /id="coBtn"[^>]*onclick="openSetCo\(\)"/, '★ 업체 지정 단추가 없습니다');
-  assert.match(photos, /id="shareBtn"[^>]*onclick="openShareMany\(\)"/, '★ 공유 단추가 없습니다');
+  /* 공유는 도구줄에서 왼쪽 대시보드로 내려왔다 — 「누구 사진」 바로 아래가 제자리다. */
+  assert.match(photos, /id="shareSideBtn"[^>]*onclick="openShareMany\(\)"/, '★ 공유 단추가 없습니다');
+  /* ⚠ **두 자리에 두지 않는다.** 두 벌이면 한쪽만 고쳐지는 날이 온다. */
+  assert.ok(!/id="shareBtn"/.test(photos),
+    '★ 도구줄에 공유 단추가 다시 생겼습니다 — 자리는 하나여야 합니다');
+  /* 짜임 차례: 「누구 사진」 고르개 → 공유 칸. 뒤바뀌면 «아래»가 아니게 된다. */
+  assert.ok(photos.indexOf('id="ownerSel"') < photos.indexOf('id="shareCard"'),
+    '★ 공유 칸이 「누구 사진」보다 위에 있습니다');
   const bar = cutFn(photos, 'function renderGridBar(');
-  /* ⚠ 「'coBtn', 'shareBtn'」만 찾으면 안 된다 — 아래 «남의 사진 숨기기» 줄에도 같은
-     글자가 있어, 보여 주는 줄에서 빠져도 그쪽이 검사를 통과시킨다(2026-08-28 되돌림에서
-     실제로 새어 나갔다). **그 줄**을 통째로 못박는다. */
-  assert.match(bar, /'selCancel', 'tagBtn',\s*'coBtn', 'shareBtn'\]\.forEach/,
+  /* ⚠ 「'coBtn'」만 찾으면 안 된다 — 아래 «남의 사진 숨기기» 줄에도 같은 글자가 있어,
+     보여 주는 줄에서 빠져도 그쪽이 검사를 통과시킨다(2026-08-28 되돌림에서 실제로
+     새어 나갔다). **그 줄**을 통째로 못박는다. */
+  assert.match(bar, /'selCancel', 'tagBtn',\s*'coBtn'\]\.forEach/,
     '★ 고른 것이 있을 때 안 나옵니다');
+});
+
+test('★★ 공유 칸은 도구줄과 «한 기준»으로 뜬다 — 따로 정하면 한쪽만 막힌다', () => {
+  const bar = cutFn(photos, 'function renderGridBar(');
+  assert.match(bar, /renderShareCard\(n, touch\)/,
+    '★ 도구줄이 쓰는 그 판정을 그대로 넘겨야 합니다');
+  const fn = cutFn(photos, 'function renderShareCard(');
+  const ctx = { _card: { style: {} }, _btn: { textContent: '' } };
+  ctx.$ = function (id) { return id === 'shareCard' ? ctx._card : ctx._btn; };
+  vm.createContext(ctx);
+  vm.runInContext(fn, ctx);
+
+  ctx.renderShareCard(15, true);
+  assert.equal(ctx._card.style.display, 'block');
+  assert.match(ctx._btn.textContent, /15장/,
+    '★ 장수가 없으면 몇 장에 걸리는지 모른 채 누르게 됩니다');
+
+  ctx.renderShareCard(0, true);
+  assert.equal(ctx._card.style.display, 'none',
+    '★ 고른 것이 없는데 떠 있으면 눌러도 아무 일이 없습니다');
+
+  ctx.renderShareCard(15, false);
+  assert.equal(ctx._card.style.display, 'none',
+    '★ 손댈 수 없는 사진(남의 것)에 공유 칸이 뜨면 눌러도 막힙니다');
 });
 
 /* ⚠ 2026-08-28 대표 보고 — "여기서 어떻게 공유자 선택하나". 「전체 근로자」로 보시는
@@ -230,7 +261,7 @@ test('★ 화면이 «막는 쪽과 같은 기준»으로 단추를 낸다 — �
   const bar = cutFn(photos, 'function renderGridBar(');
   assert.match(bar, /const touch = mayTouch\(Array\.from\(selected\)\);/,
     '★ 화면이 제 기준을 따로 쓰면 「눌러도 되는데 단추가 없는」 자리가 다시 생깁니다');
-  assert.match(bar, /if \(!touch\) \{[\s\S]{0,120}'tagBtn', 'coBtn', 'shareBtn'/,
+  assert.match(bar, /if \(!touch\) \{[\s\S]{0,120}'tagBtn', 'coBtn'/,
     '★ 손댈 수 없을 때는 감춰야 합니다');
   assert.match(bar, /\(n >= 2 && touch\)/, '한 문서로 묶기도 같은 기준이라야 합니다');
   /* 막는 쪽도 같은 판정을 쓴다 — 두 벌이면 다시 갈린다 */

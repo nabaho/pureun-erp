@@ -45,17 +45,23 @@ function fakeDom() {
       }
     };
   }
-  const ids = ['phoneBar', 'side', 'chipRow', 'docBtn', 'row2', 'needBox', 'oldBox',
+  const ids = ['phoneBar', 'side', 'chipRow', 'docBtn', 'row2', 'needBox', 'needCard', 'oldBox',
     /* gridBar 가 이제 윗줄 전부다 — 모으는 띠를 그 앞에 끼운다(2026-08-26) */
     'upWrap', 'autoNote', 'findBar', 'gridBar', 'q', 'phUpRow', 'phMenuBtn', 'phSheet',
-    'ownerPick', 'phTop', 'phOwner', 'collectBar', 'phCollectDock', 'phUpDock',
-    'viewPhotos'];
+    'ownerPick', 'foldWrap', 'shareCard', 'phTop', 'phOwner', 'collectBar', 'phCollectDock',
+    'phUpDock', 'viewPhotos'];
   const nodes = {};
   ids.forEach(id => { nodes[id] = el(id); });
   nodes.docBtn.parentNode = nodes.row2;
-  nodes.needBox.parentNode = nodes.side;
+  /* ⚠ needBox 는 **needCard 안**에 있다 — 예전 가짜는 side 밑에 바로 두었다.
+     그래서 「needBox 를 기준으로 side.insertBefore」 하던 진짜 흠을 못 잡았다
+     (2026-08-29 발견, 폰→PC 로 넓힐 때 NotFoundError 로 터졌다). 진짜와 같게 둔다. */
+  nodes.needCard.parentNode = nodes.side;
+  nodes.needBox.parentNode = nodes.needCard;
   nodes.oldBox.parentNode = nodes.side;
   nodes.ownerPick.parentNode = nodes.side;
+  nodes.foldWrap.parentNode = nodes.side;     // 「누구 사진」 다음이자 side 의 직접 자식
+  nodes.shareCard.parentNode = nodes.side;    // 👥 공유 — 「누구 사진」 바로 아래
   nodes.upWrap.parentNode = nodes.side;
   nodes.autoNote.parentNode = nodes.side;        // 올리기를 되돌릴 때 기준이 되는 칸
   nodes.collectBar.parentNode = nodes.viewPhotos;
@@ -90,6 +96,28 @@ test('폰에서는 사람·문서묶기·업로드 상세를 시트로 옮기고
   assert.equal(r.nodes.upWrap.parentNode.id, 'side');
   assert.equal(r.nodes.collectBar.parentNode.id, 'viewPhotos');
   assert.equal(r.nodes.docBtn.parentNode.id, 'row2');
+});
+
+/* ⚠ 이 검사가 없던 동안 폰→PC 로 넓히면 **거기서 터졌다** — 기준으로 잡은 needBox 가
+   side 의 자식이 아니었다(needCard 안에 있다). 터지면 그 뒤 줄이 다 안 돌아
+   올리기·모으기 칸까지 제자리를 못 찾는다. */
+test('★ 폰↔PC 를 오가도 터지지 않는다 — 기준 칸은 «side 의 직접 자식»이라야 한다', () => {
+  const r = runPlace(390);
+  r.ctx.window.innerWidth = 1400;
+  assert.doesNotThrow(function () { r.ctx.placeForWidth(); },
+    '★ 넓힐 때 터지면 대시보드가 통째로 어긋납니다');
+});
+
+/* 대표 지시 2026-08-29 — 「공유버튼은 누구사진아래 대시보드로」.
+   도구줄에서 뺐으므로, 폰에서 «누구 사진»을 따라가지 않으면 공유할 길이 아예 사라진다. */
+test('★★ 👥 공유 칸은 「누구 사진」을 따라간다 — 폰에서도 함께 옮겨진다', () => {
+  const r = runPlace(390);
+  assert.equal(r.nodes.shareCard.parentNode.id, 'phOwner',
+    '★ 안 따라가면 폰에서는 공유할 길이 아예 없어집니다(도구줄에서 뺐습니다)');
+  r.ctx.window.innerWidth = 1400;
+  r.ctx.placeForWidth();
+  assert.equal(r.nodes.shareCard.parentNode.id, 'side',
+    '★ 넓혀도 시트 안에 남아 있으면 PC 에서 사라집니다');
 });
 
 test('요약 상태는 네 핵심 렌더 경로에서 함께 갱신된다', () => {
