@@ -141,7 +141,7 @@
 <script src="js/pu-backup.js?v=1"></script>
 <script src="js/pu-dev-automation.js?v=1"></script>
 <script src="js/pu-passkey.js?v=3"></script>
-<script src="js/pu-billing.js?v=6"></script>
+<script src="js/pu-billing.js?v=7"></script>
 <style>
 :root{
   --bg:#e2e8f0; --ink:#202124; --sub:#475569; --mute:#64748b;
@@ -548,6 +548,13 @@ body.portal-mode #moreFab{display:flex;}
 #billModal .r .v{font-weight:700;font-variant-numeric:tabular-nums;}
 #billModal .pbasis{font-size:.68rem;color:#94a3b8;padding:0 0 2px;line-height:1.5;}
 #billModal .memo{margin-top:12px;font-size:.71rem;color:#92400e;background:#fffbeb;border-left:3px solid #fbbf24;padding:7px 10px;border-radius:0 6px 6px 0;line-height:1.6;}
+/* 하루 폭주 (2026-08-29) — 「갱신 대기」 같은 노란 알림보다 «세게». 다른 것이다:
+   노랑은 「기다리는 중」이고 이것은 「지금 돈이 나가고 있다」이다. */
+#billModal .bspike{margin-top:12px;font-size:.73rem;color:#8e2b2b;background:#fdecec;
+  border:1.5px solid #e9a0a0;border-radius:9px;padding:9px 11px;line-height:1.6;}
+#billModal .bspike b{font-weight:800;}
+#billModal .bspike>b:first-child{display:block;font-size:.78rem;margin-bottom:3px;}
+#billModal .bspike .bsnote{display:block;margin-top:5px;font-size:.68rem;opacity:.82;}
 #billModal .foot{margin-top:12px;font-size:.68rem;color:#94a3b8;line-height:1.65;}
 /* ── 한 화면 (2026-08-17 대표 지시: "한번 클릭으로 실시간 변화 등을 한번에")
       왼쪽 = 지금 · 오른쪽 = 시간별. 칸을 오갈 것이 없다.
@@ -592,6 +599,9 @@ body.portal-mode #moreFab{display:flex;}
      ⚠ .memo 는 !important 가 있어야 한다 — 코드가 `memo.style.display='block'`
        으로 «칸에 직접» 적어 두어, 그냥 적으면 진다(실제로 폰에 계속 떠 있었다). */
   #billModal .memo{display:none!important;}
+  /* ⚠ .bspike 는 **여기 넣지 않는다.** 위 셋은 «설명» 이라 접어도 되지만
+     폭주 줄은 「지금 돈이 나가고 있다」는 알림이다 — 폰에서 접으면
+     폰으로만 보시는 분은 영영 못 본다. */
   #billModal .bd>.foot,#billModal .blegend{display:none;}
   #billModal .box.bhelp-on .memo{display:block!important;}
   #billModal .box.bhelp-on .bd>.foot,
@@ -976,6 +986,9 @@ body.portal-mode #moreFab{display:flex;}
     <div class="bd bL" id="billPaneNow">
       <div class="big" id="billBig">—</div>
       <div class="when" id="billWhen"></div>
+      <!-- 하루 폭주 (2026-08-29) — 서버가 판정해 둔 것을 그리기만 한다.
+           평소에는 아예 없다. 늘 떠 있는 경고는 곧 아무도 안 본다. -->
+      <div class="bspike" id="billSpike" style="display:none;"></div>
       <div class="memo" id="billMemo" style="display:none;"></div>
       <div id="billItems"></div>
       <div class="rows" id="billRows"></div>
@@ -2094,7 +2107,7 @@ body.portal-mode #moreFab{display:flex;}
      ⚠ 화면에서 감추는 것은 「안 보이게」 한 것이지 「못 보게」 한 것이 아니다.
        진짜 잠금은 실시간DB 규칙에서 billing/current 읽기를 관리자로 막는 것이다. */
   var BILL_DOT = { ok:'#4ade80', warn:'#fbbf24', over:'#f87171', none:'#94a3b8' };
-  var _billStop = null, _billCur = null, _billTick = null;
+  var _billStop = null, _billCur = null, _billTick = null, _billSpike = null;
 
   function billIsAdmin(role){ return role === 'admin' || role === 'admin-delegate'; }
 
@@ -2111,6 +2124,19 @@ body.portal-mode #moreFab{display:flex;}
       function(v){ _billCur = v; billPaint(); },
       function(){ _billCur = null; billPaint(); });   // 규칙에 막히면 조용히 감춘다
     _billTick = setInterval(billPaint, 60000);        // 「26분 전」이 멈춰 있지 않게
+
+    /* ── 하루 폭주 (2026-08-29 대표 지시) ──────────────────────────────
+       2026-08-16 에 하루 86,042원이 나갔는데 아무도 몰랐다. 총액 알림은
+       「얼마를 넘으면」이라 닿을 때쯤엔 이미 끝난 뒤다.
+       판정은 서버가 해 두고(billing/spike) 여기서는 **그리기만** 한다.
+       ⚠ 규칙에 막히면 조용히 없는 것으로 둔다 — 사용액 칸과 같은 규칙이다. */
+    try {
+      var sref = db.ref('billing/spike');
+      sref.on('value', function(s){ _billSpike = s.val() || null; billPaint(); },
+                       function(){ _billSpike = null; });
+      var prevStop = _billStop;
+      _billStop = function(){ try{ sref.off(); }catch(e){} if(prevStop) prevStop(); };
+    } catch(e){ _billSpike = null; }
   }
 
   function billPaint(){
@@ -2119,10 +2145,24 @@ body.portal-mode #moreFab{display:flex;}
     var s = window.PuBilling.summarize(_billCur, Date.now(), _billHistBk);
     if(!s.has){ chip.style.display = 'none'; return; }
     chip.style.display = 'inline-flex';
-    $('billDot').style.background = BILL_DOT[s.tone] || BILL_DOT.none;
+    /* 오늘 폭주 중이면 딱지부터 빨갛게 — 창을 열지 않아도 눈에 걸려야 한다 */
+    var spike = billSpikeToday();
+    $('billDot').style.background = spike ? BILL_DOT.over : (BILL_DOT[s.tone] || BILL_DOT.none);
     $('billAmt').textContent = window.PuBilling.fmtWon(s.cost);
-    $('billAgo').textContent = s.ago || '';
+    $('billAgo').textContent = spike ? ('⚠ 오늘 ' + spike.ratio + '배') : (s.ago || '');
     if(document.getElementById('billModal').style.display === 'flex') billPaintModal(s);
+  }
+
+  /* 서버가 적어 둔 폭주 표 — **오늘 것일 때만** 쓴다.
+     어제 것이 오늘도 붉게 떠 있으면 사람이 곧 안 믿게 된다(서버도 치우지만
+     화면에서도 한 번 더 본다 — 서버 판정이 늦게 올 수 있다). */
+  function billSpikeToday(){
+    var sp = _billSpike;
+    if(!sp || !sp.day || !sp.ratio) return null;
+    var d = new Date(Date.now() + 9*3600000);   // 한국 날짜로 견준다
+    var today = d.getUTCFullYear() + '-' +
+      String(d.getUTCMonth()+1).padStart(2,'0') + '-' + String(d.getUTCDate()).padStart(2,'0');
+    return sp.day === today ? sp : null;
   }
 
   function billPaintModal(s){
@@ -2150,7 +2190,26 @@ body.portal-mode #moreFab{display:flex;}
     var memo = $('billMemo');
     if(s.etcNote){ memo.textContent = s.etcNote; memo.style.display = 'block'; }
     else memo.style.display = 'none';
+    billPaintSpike();
     billPaintItems();
+  }
+
+  /* 하루 폭주 한 줄. 평소에는 **아예 안 그린다** —
+     늘 떠 있는 경고는 곧 아무도 안 읽는다.
+     ⚠ 「막았다」고 말하지 않는다. Blaze 에는 자동 상한이 없어 무엇도 안 멈춘다.
+       할 수 있는 말은 「지금 많이 나가고 있다」까지다. */
+  function billPaintSpike(){
+    var box = $('billSpike'); if(!box) return;
+    var sp = billSpikeToday();
+    if(!sp){ box.style.display = 'none'; box.textContent = ''; return; }
+    var B = window.PuBilling;
+    var who = sp.label ? (' · ' + sp.label + ' 에서 늘고 있습니다') : '';
+    box.innerHTML =
+      '<b>⚠️ 오늘 평소보다 많이 나가고 있습니다</b>' +
+      '오늘 <b>' + B.fmtWon(sp.inc) + '</b> · 최근 ' + (sp.baseDays || 0) + '일 하루 평균 ' +
+      '<b>' + B.fmtWon(sp.avg) + '</b> — <b>' + sp.ratio + '배</b>' + who +
+      '<span class="bsnote">자동으로 멈추는 장치는 없습니다 — 무엇이 도는 중인지 확인해 주세요.</span>';
+    box.style.display = 'block';
   }
 
   /* 항목 표 — 「지금까지」(구독으로 오는 값)와 「시간당」(기록에서 낸 값)이 한 줄에 있다.
