@@ -40,10 +40,25 @@ function cut(a, b) {
 (function () {
   const apps = cut('var APPS = [', '\n  ];');
   const apply = cut('function applyTileOrder(){', '\n  }');
-  ok('★ 급여데이터함의 기본 위치는 직접업무다',
-     /key:'paydata'[\s\S]*?row:'direct'/.test(apps));
-  ok('★ 옛 저장값이 업무지원이어도 급여데이터함은 직접업무로 보낸다',
-     /t\.dataset\.key === 'paydata'[\s\S]*?\? 'direct'/.test(apply));
+  /* ⚠ 2026-08-29: 줄이 둘(support/direct) → 넷(client/store/office/outside)이 됐다.
+     급여데이터함은 «자료함»으로 갔다 — 사진첩과 같은 줄이다(둘 다 쌓아 두는 함).
+     못 박을 것은 줄 «이름»이 아니라, ①제자리가 정해져 있는가
+     ②옛 저장값이 그 제자리를 못 덮는가 다. */
+  const rows = cut('var APP_ROWS = [', '\n  ];');
+  ok('★ 급여데이터함에 제자리가 정해져 있다 (그 줄이 실제로 있는 줄이다)',
+     (function () {
+       const m = /key:'paydata'[\s\S]{0,200}?row:'([a-z]+)'/.exec(apps);
+       return !!(m && rows.indexOf("id:'" + m[1] + "'") >= 0);
+     })());
+  ok('★ 급여데이터함은 사진첩과 «같은 줄»이다 (둘 다 쌓아 두는 함이다)',
+     (function () {
+       const a = /key:'paydata'[\s\S]{0,200}?row:'([a-z]+)'/.exec(apps);
+       const b = /key:'photos'[\s\S]{0,200}?row:'([a-z]+)'/.exec(apps);
+       return !!(a && b && a[1] === b[1]);
+     })());
+  ok('★★ 옛 저장값이 «지금 없는 줄»이면 앱의 제자리로 보낸다 (타일이 사라지면 안 된다)',
+     /savedRowOf\(t\.dataset\.key, t\.dataset\.row\)/.test(apply)
+     && /function savedRowOf[\s\S]{0,200}?rowExists\(r\) \? r : dflt/.test(en));
 })();
 
 /* ── 폰에서는 설명이 셀을 밀어내지 않고 툴팁으로 남는다 ── */
