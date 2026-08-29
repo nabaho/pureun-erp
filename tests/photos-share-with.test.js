@@ -141,10 +141,12 @@ test('★ 받는 사람 목록은 본인과 관리자만 읽는다', () => {
   assert.ok(/auth\.uid === \$uid/.test(r) && /isAdmin/.test(r));
 });
 
-test('★ 공유는 올린 사람만 걸고, 받는 사람도 뺄 수 있다', () => {
+test('★ 공유는 올린 사람과 총괄관리자만 걸고, 받는 사람도 뺄 수 있다', () => {
   const w = rules.puphotos.sharedTo['$uid']['$pid']['.write'];
   assert.ok(/newData\.child\('owner'\)\.val\(\) === auth\.uid/.test(w),
-    '남이 남의 사진을 나에게 공유하게 두면 안 됩니다.');
+    '아무나 남의 사진을 나에게 공유하게 두면 안 됩니다.');
+  assert.ok(/isAdmin/.test(w),
+    '★ 총괄관리자를 빼면 남이 올린 사진은 영영 못 열어 줍니다 (2026-08-29 대표 보고).');
   assert.ok(/auth\.uid === \$uid/.test(w), '받은 사람이 스스로 뺄 수 있어야 합니다.');
   const v = rules.puphotos.sharedTo['$uid']['$pid']['.validate'];
   assert.ok(/owner/.test(v) && /year/.test(v), '어느 해 누구 사진인지 없으면 못 찾습니다.');
@@ -158,7 +160,12 @@ test('★ 공유받은 사진은 고치거나 지울 수 없다', () => {
   assert.ok(/gridOwner !== PuPhotoStore\.myUid\(\)/.test(v[0]),
     '공유 모드에서도 올리기·지우기가 잠겨야 합니다.');
   const s = html.match(/async function setShareTo\(uids\)[\s\S]*?\n\}/);
-  assert.ok(/viewingOther\(\)/.test(s[0]), '남의 사진을 내가 공유할 수는 없습니다.');
+  /* ⚠ 2026-08-29: viewingOther() 로 가르던 것을 mayTouch() 로 바꿨다. viewingOther 는
+     「전체 근로자」 화면이면 **내 사진이어도** 참이라, 총괄관리자가 늘 켜 두는 화면에서
+     크게 보기의 공유가 통째로 죽어 있었다. 막는 쪽과 보여 주는 쪽은 한 기준이어야 한다. */
+  assert.ok(/mayTouch\(/.test(s[0]), '남의 사진을 아무나 공유할 수는 없습니다.');
+  assert.ok(!/viewingOther\(\)/.test(s[0]),
+    '★ viewingOther 로 되돌리면 「전체 근로자」 화면에서 공유가 다시 죽습니다.');
 });
 
 test('공유받은 사진에는 자동 판독을 안 돌린다', () => {
@@ -175,6 +182,11 @@ test('★ 관리자가 아니어도 「나와 공유된 사진」을 볼 수 있
 
 test('규칙이 아직 없으면 무엇이 문제인지 말해 준다', () => {
   const s = html.match(/async function setShareTo\(uids\)[\s\S]*?\n\}/);
-  assert.ok(/permission\|denied/.test(s[0]) && /규칙/.test(s[0]),
+  assert.ok(/shareDeniedHint\(/.test(s[0]), '막힌 까닭을 안 붙이면 원인을 못 짚습니다.');
+  /* 그 설명은 한 곳에서만 만든다 — 세 자리(크게 보기·모아 공유·업체 자동)가 같은 말을
+     해야 하고, 세 벌로 두면 한 곳이 낡는다. */
+  const h = html.match(/function shareDeniedHint\(e\)[\s\S]*?\n\}/);
+  assert.ok(h, 'shareDeniedHint 를 찾지 못했습니다.');
+  assert.ok(/permission\|denied/.test(h[0]) && /규칙/.test(h[0]),
     '조용히 실패하면 대표님이 원인을 못 짚습니다(건의함 때 겪었습니다).');
 });
