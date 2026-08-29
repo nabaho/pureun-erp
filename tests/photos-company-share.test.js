@@ -128,13 +128,19 @@ test('★ 고른 것이 여러 업체면 «섞였다»고 본다 — 엉뚱한 �
 /* ══════ ③ 자동 공유 ══════ */
 
 function autoCtx(over) {
-  const calls = { toast: [], share: [] };
+  const calls = { toast: [], share: [], alert: [] };
   const o = over || {};
   const ctx = {
     Object, String, Array, Promise, console: { warn() {} },
     gridItems: o.items || [],
     ownerNames: { U2: '이몽룡', U3: '성춘향' },
     toast: function (m) { calls.toast.push(m); },
+    /* 막혔을 때는 알림(toast)이 아니라 **창**으로 말한다 — 알림은 몇 초 뒤 사라져서,
+       스무 장을 걸어 두고 다른 일을 하던 사람은 못 본다(2026-08-29). */
+    alert: function (m) { calls.alert.push(m); },
+    shareDeniedHint: function (e) {
+      return /permission|denied/i.test(String((e && e.message) || e)) ? '\n서버 규칙이 막았습니다.' : '';
+    },
     photoYearOf: function () { return '2026'; },
     photoOwner: function () { return 'OWNER'; },
     PuPhotoStore: {
@@ -185,7 +191,15 @@ test('나 자신은 빼고 연다 — 내 사진에 내 이름이 뜨면 안 된
 test('★ 권한이 없어 다 막히면 그 사실을 말한다 — 조용히 넘기면 못 본 줄 모른다', async () => {
   const c = autoCtx({ fail: true });
   await c.autoShareByCo(['p1'], '승진텍라인');
-  assert.match(c._calls.toast.join(' '), /내가 올린 사진/, '★ 왜 안 됐는지 안 말합니다');
+  const said = c._calls.alert.join(' ');
+  assert.match(said, /열지 못했습니다/, '★ 왜 안 됐는지 안 말합니다');
+  assert.match(said, /승진텍라인/, '어느 업체에서 막혔는지 없으면 스무 장 중 무엇인지 모릅니다');
+  /* ⚠ 「내가 올린 사진에만 권한을 줄 수 있습니다」로 되돌리지 말 것 —
+     총괄관리자는 사진 자리에 쓸 수 있다. 막는 것은 받는 사람 목록 자리 하나이고,
+     그건 콘솔에 규칙을 붙여넣으면 열린다. 잘못 짚어 주면 엉뚱한 데를 뒤진다. */
+  assert.ok(!/내가 올린 사진에만/.test(said),
+    '★ 관리자에게는 틀린 말입니다 — 막힌 곳은 받는 사람 목록 자리입니다');
+  assert.match(said, /규칙/, '무엇이 막았는지 없으면 원인을 못 짚습니다');
 });
 
 test('업체가 없거나 고른 것이 없으면 대조표를 읽지 않는다 — 헛되이 돈이 나간다', async () => {

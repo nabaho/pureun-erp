@@ -19,7 +19,7 @@
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <!-- ?v= 저장 층을 고치면 반드시 올린다 — 캐시에 묵으면 고친 것이 통째로 묻힌다. -->
-<script src="js/pu-photo-store.js?v=12"></script>
+<script src="js/pu-photo-store.js?v=13"></script>
 <!-- 주민번호 가림 — 계산 층과, 급여데이터함과 나눠 쓰는 긋기 층 -->
 <script src="js/pu-rrn-mask.js?v=3"></script>
 <script src="js/pu-rrn-mask-ui.js?v=2"></script>
@@ -610,7 +610,10 @@ button{font-family:inherit;cursor:pointer}
      혼란스럽다. 현재는 분류 기능 없애고 업로드 기능만 만들어라").
      그래서 분류 탭 줄도, 그것을 담던 창(#phSheet)도, 창을 여는 알약(#phMenuBtn)도
      폰에서는 안 보인다. 넓은 화면에는 그대로 다 있다. */
-  #kinds,#chipRow,#needBox,#needCard,#oldBox{display:none!important}
+  /* ⚠ 「👥 받은 사진」 칸도 폰에서는 접는다 — 대신 **고르개 줄에 장수가 적힌다**
+     (「나와 공유된 사진 25장」). 폰에는 옆 칸이 없고 고르개만 있어서, 알림을 옆 칸에만
+     두면 폰 쓰는 사람에게는 다시 아무 신호가 없는 것이 된다. */
+  #kinds,#chipRow,#needBox,#needCard,#oldBox,#gotCard{display:none!important}
   /* 「누구 사진」과 상세 진행은 「사진 작업」 시트 안에 둔다. */
   #ownerPick{border-top:none;padding-top:0;margin-top:0;min-width:0}
   #ownerPick .cap{font-size:10.5px;margin-bottom:3px;white-space:nowrap}
@@ -1022,6 +1025,12 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
   border-radius:10px;padding:9px;font-size:12.5px;font-weight:800;text-align:left}
 #needAckAll:disabled{opacity:.5}
 #needCard #needHint{margin:5px 2px 0;font-size:11px;line-height:1.5;color:var(--sub)}
+/* 👥 받은 사진 — 「⚠ 확인 필요」와 **같은 모양·같은 자리**로 둔다(새로 배울 것이 없게).
+   색만 파랑이다 — 잘못된 것이 아니라 «와 있는 것»이라 노랑을 쓰면 안 된다. */
+#gotCard{margin-top:12px}
+#gotBox{width:100%;padding:10px;font-size:12.5px;font-weight:700;text-align:left;
+  border:1px solid #b6c6ee;background:#eef2fd;color:var(--blue);border-radius:10px;line-height:1.4}
+#gotCard #gotHint{margin:5px 2px 0;font-size:11px;line-height:1.5;color:var(--sub)}
 /* 서식으로 잡힌 고유번호증 — 「확인 필요」와 같은 결이되 색이 다르다(다른 할 일이다) */
 #uidCard{margin-top:12px}
 #uidBox{width:100%;padding:9px 11px;font-size:12px;font-weight:700;text-align:left;
@@ -1393,6 +1402,15 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
          "확인필요는 대시보드 분리해서 체크할 수 있게 해달라").
          숫자만 보고 들어가던 단추였는데, 이제 ①들어가기 ②지금 보이는 것 한꺼번에
          확인 처리 를 한자리에서 한다 — 56장을 한 장씩 열어 ✓ 누르는 일이 없어진다. -->
+    <!-- 👥 받은 사진 — 대표 보고 2026-08-29 「권형하가 공유했는데 전혀 공유가 안되었다」
+         사진은 가 있었다. 없던 것은 **받는 쪽의 신호**다. 보낸 쪽은 초록 알림을 받는데
+         받는 쪽 화면에는 아무 말이 없어, 고르개 둘째 줄을 열어 보라고 사람이 일러 주지
+         않으면 영영 못 본다.
+         ⚠ 0장이면 칸 자체를 안 그린다 — 늘 있는 회색 칸은 눌러 볼 값이 없다(uidCard 와 같은 규칙). -->
+    <div id="gotCard" style="display:none">
+      <button id="gotBox" onclick="goShared()"></button>
+      <p id="gotHint"></p>
+    </div>
     <div id="needCard" style="display:none">
       <button id="needBox" onclick="toggleNeed()"></button>
       <button id="needAckAll" style="display:none" onclick="ackAllShown()"></button>
@@ -8926,17 +8944,20 @@ function autoShareByCo(ids, coName) {
       return;
     }
     const where = coName + ' 담당';
-    let done = 0;
+    let done = 0, lastErr = null;
     return list.reduce(function (chain, id) {
       return chain.then(function () {
         return PuPhotoStore.addShare(photoYearOf(id), id, uids, photoOwner(id), where)
           .then(function (added) { if ((added || []).length) done++; })
-          .catch(function (e) { console.warn('[업체 담당자 공유]', id, e); });
+          .catch(function (e) { lastErr = e; console.warn('[업체 담당자 공유]', id, e); });
       });
     }, Promise.resolve()).then(function () {
       const who = uids.map(function (u) { return ownerNames[u] || u; }).join('·');
       if (done) toast('👥 ' + coName + ' 담당자(' + who + ')에게 ' + done + '장을 열었습니다');
-      else toast('⚠ 공유하지 못했습니다 — 내가 올린 사진에만 권한을 줄 수 있습니다');
+      /* ⚠ 「내가 올린 사진에만」은 틀린 말이었다(2026-08-29) — 총괄관리자는 사진 자리에
+         쓸 수 있고, 막는 것은 받는 사람 목록 자리 하나다. 알림은 짧아야 하므로 한 줄만
+         적고, 자세한 것은 크게 보기의 공유에서 나온다. */
+      else if (lastErr) alert('⚠ ' + coName + ' 담당자에게 사진을 열지 못했습니다.' + shareDeniedHint(lastErr));
     });
   });
 }
@@ -9050,7 +9071,7 @@ function submitShareMany() {
   ok.disabled = true;
   const coName = oneCoOf(ids);
   const where = coName ? (coName + ' 담당') : '';
-  let done = 0, failed = 0;
+  let done = 0, failed = 0, lastErr = null;
   ids.reduce(function (chain, id) {
     return chain.then(function () {
       /* ⚠ 미리 체크된 담당자만 「담당」 표를 단다 — 손으로 고른 사람은 표 없이 둔다.
@@ -9067,13 +9088,18 @@ function submitShareMany() {
             ? PuPhotoStore.addShare(photoYearOf(id), id, hand, photoOwner(id), '') : null;
         })
         .then(function () { done++; })
-        .catch(function (e) { failed++; console.warn('[공유]', id, e); });
+        .catch(function (e) { failed++; lastErr = e; console.warn('[공유]', id, e); });
     });
   }, Promise.resolve()).then(function () {
     closeKindPopup();
     const who = picked.map(function (u) { return ownerNames[u] || u; }).join('·');
     if (done) toast('👥 ' + who + '님에게 ' + done + '장을 열었습니다');
-    if (failed) alert(failed + '장은 열지 못했습니다 — 내가 올린 사진에만 권한을 줄 수 있습니다.');
+    /* ⚠ 「내가 올린 사진에만」이라고 하던 문구를 고쳤다(2026-08-29). 총괄관리자는 사진
+       자리에 쓸 수 있으므로 그 말이 맞지 않는다 — 막는 것은 받는 사람 목록 자리
+       하나뿐이고, 그건 규칙을 한 번 붙여넣으면 열린다. 잘못 짚어 주면 사람이
+       엉뚱한 데를 뒤진다. */
+    if (failed) alert(failed + '장은 열지 못했습니다.' + shareDeniedHint(lastErr) +
+      (shareDeniedHint(lastErr) ? '' : '\n' + ((lastErr && lastErr.message) || '')));
   }).then(function () { ok.disabled = false; });
 }
 
@@ -10896,8 +10922,13 @@ function shareWhy(it, uid) {
   return s;
 }
 
+/* ⚠ 「볼 수만 있는 화면인가」가 아니라 **「이 사진에 손댈 수 있나」**로 가른다
+     (대표 보고 2026-08-29). viewingOther() 로 가르던 동안, 총괄관리자가 늘 켜 두는
+     「전체 근로자」 화면에서는 이 칸이 통째로 사라져 **크게 보기로는 공유를 아예 못
+     했다.** 도구줄 단추에서 똑같은 것을 08-28 에 고쳤는데 여기만 남아 있었다 —
+     막는 쪽(mayTouch)과 보여 주는 쪽의 기준은 하나여야 한다. */
 function shareBox(it) {
-  if (!it || viewingOther()) return '';
+  if (!it || !mayTouch(it.id)) return '';
   const list = Object.keys((it.meta && it.meta.shareWith) || {});
   const chips = list.map(function (uid) {
     const why = shareWhy(it, uid);
@@ -10922,7 +10953,7 @@ function shareBox(it) {
 /* 사람 고르기 — 이미 고른 사람은 빼고 보여 준다 */
 function openSharePick() {
   const it = gridItems.find(function (x) { return x.id === viewerId; });
-  if (!it || viewingOther()) return;
+  if (!it || !mayTouch(viewerId)) return;
   const has = (it.meta && it.meta.shareWith) || {};
   const me = PuPhotoStore.myUid();
   const ids = Object.keys(ownerNames).filter(function (u) { return u !== me && !has[u]; });
@@ -10936,7 +10967,7 @@ function openSharePick() {
 
 function unshareOne(uid) {
   const it = gridItems.find(function (x) { return x.id === viewerId; });
-  if (!it || viewingOther()) return;
+  if (!it || !mayTouch(viewerId)) return;
   const has = Object.keys((it.meta && it.meta.shareWith) || {});
   setShareTo(has.filter(function (u) { return u !== uid; }));
 }
@@ -10944,10 +10975,13 @@ function unshareOne(uid) {
 async function setShareTo(uids) {
   const id = viewerId;
   const it = gridItems.find(function (x) { return x.id === id; });
-  if (!it || viewingOther()) return;
+  if (!it || !mayTouch(id)) return;
   const before = Object.keys((it.meta && it.meta.shareWith) || {});
   try {
-    await PuPhotoStore.setShare(gridYear, id, uids, before);
+    /* ⚠ **주인을 넘긴다**(2026-08-29). 안 넘기면 저장 층이 «내 자리»에 대고 써서,
+       총괄관리자가 남의 사진을 열어 줄 때 있지도 않은 내 사진 밑에 유령이 생기고
+       받는 쪽에는 빈 사진 한 장이 뜬다 — 화면은 「공유했습니다」라고 말한다. */
+    await PuPhotoStore.setShare(photoYearOf(id), id, uids, before, photoOwner(id));
     const next = {};
     uids.forEach(function (u) { next[u] = true; });
     it.meta = Object.assign({}, it.meta, { shareWith: uids.length ? next : undefined });
@@ -10955,12 +10989,23 @@ async function setShareTo(uids) {
     toast(uids.length ? '같이 볼 사람을 정했습니다' : '공유를 풀었습니다');
   } catch (e) {
     console.warn('[공유]', e);
-    /* 규칙이 아직 없으면 여기서 막힌다 — 무엇이 문제인지 그대로 말한다 */
-    alert('공유하지 못했습니다.\n' + ((e && e.message) || e) +
-      (/permission|denied/i.test(String(e && e.message))
-        ? '\n\n파이어베이스 규칙에 공유 자리가 아직 없습니다 — 규칙을 게시하면 열립니다.'
-        : ''));
+    alert('공유하지 못했습니다.\n' + ((e && e.message) || e) + shareDeniedHint(e));
   }
+}
+
+/* ── 막혔을 때 «무엇을 해야 하는지» 한 줄 (대표 보고 2026-08-29) ──
+   종전 문구는 「내가 올린 사진에만 권한을 줄 수 있습니다」였다. 그런데 총괄관리자는
+   사진 자리에는 쓸 수 있게 되어 있어서(규칙의 u/$uid), 그 말이 맞지 않는다 —
+   막는 것은 **받는 사람 목록 자리(sharedTo)** 하나뿐이고, 그건 콘솔에 규칙을 한 번
+   붙여넣으면 열린다. 무엇이 막혔는지 안 적으면 사람이 원인을 못 짚는다
+   (건의함·분류 이름표 때 두 번 겪었다).
+   ⚠ 조용히 넘기지 않는다. 조용한 실패가 이번 일의 뿌리다. */
+function shareDeniedHint(e) {
+  if (!/permission|denied/i.test(String((e && e.message) || e))) return '';
+  return '\n\n서버 규칙이 막았습니다.\n' +
+    '· 내 사진이면 규칙이 아직 안 올라간 것입니다.\n' +
+    '· 남이 올린 사진이면, 「받는 사람 목록」 자리를 총괄관리자에게도 열어 주는\n' +
+    '  규칙을 파이어베이스 콘솔에 붙여넣어야 합니다.';
 }
 
 function myNoteBox(it) {
@@ -11978,6 +12023,9 @@ function sendSelected() {
 /* ══════ 누구 사진을 볼까 (총괄 관리자만) ══════
    직원은 이 칸이 아예 없다 — 남의 사진을 볼 길이 화면에도 없고 규칙에도 없다. */
 function renderOwnerPick() {
+  /* 받은 사진 세기는 **관리자 여부와 무관하다** — 누구나 받을 수 있다.
+     한 번만 걸린다(watchShared 안에서 스스로 막는다). */
+  watchShared();
   /* 「나와 공유된 사진」은 **관리자가 아니어도** 볼 수 있는 유일한 남의 사진이라
      관리자 판정보다 앞에서 그린다. 관리자가 아니면 이 두 줄만 있는 고르개가 된다. */
   if (!PuPhotoStore.amAdmin()) {
@@ -11985,6 +12033,10 @@ function renderOwnerPick() {
     $('ownerSel').innerHTML = '<option value="">내 사진</option>' +
       '<option value="' + SHARED_OWNER + '">나와 공유된 사진</option>';
     $('ownerSel').value = gridOwner || '';
+    /* ⚠ 고르개를 새로 만들 때마다 장수를 «다시» 적어야 한다 — 안 적으면 숫자가
+       조용히 사라진다(다시 그릴 일이 잦은 칸이다). */
+    renderOwnerSelLabel();
+    renderGotCard();
     renderPhSummary();
     return;
   }
@@ -12005,6 +12057,8 @@ function renderOwnerPick() {
       ids.map(function (k) {
         return '<option value="' + esc(k) + '">' + esc((owners[k] && owners[k].name) || k) + '</option>';
       }).join('');
+    renderOwnerSelLabel();   /* 다시 그렸으니 장수를 다시 적는다 */
+    renderGotCard();
     /* ⚠ 관리자는 **「전체 근로자」로 시작한다** (대표 지시 2026-08-10:
        "권형하는 항상 전체 근로자로 기준을 잡아 달라").
        총괄책임자는 전 직원 것을 보는 것이 기본이고, 자기 것만 보려면 바꾸면 된다.
@@ -12022,6 +12076,56 @@ function renderOwnerPick() {
     $('ownerSel').value = gridOwner || '';
     renderPhSummary();
   }).catch(function (e) { console.warn('[사람 명단]', e); });
+}
+
+/* ══════ 👥 받은 사진이 왔다는 «신호» (대표 보고 2026-08-29) ══════
+   "권형하가 공유했는데 전혀 공유가 안되었다."
+
+   ⚠ 사진은 가 있었다. 없던 것은 **받는 쪽의 신호**다. 여는 쪽은 초록 알림을 받는데
+     받는 쪽 화면에는 아무 말이 없었고, 「나와 공유된 사진」으로 가는 길은 고르개
+     둘째 줄 하나뿐이었다 — 사람이 일러 주지 않으면 평생 안 연다.
+
+   ⚠ 숫자는 **색인 한 칸만 구독**해서 얻는다. 사진은 한 장도 안 읽으므로 사진첩을 열
+     때마다 세도 요금이 안 는다. 구독이라 보고 있는 중에 누가 열어 주면 저절로 는다.
+   ⚠ 「내 사진」으로 볼 때만 권한다 — 이미 받은 사진을 보고 있는 사람에게 「받은 사진이
+     있습니다」는 말이 아니다. */
+let sharedCount = 0;
+let stopSharedWatch = null;
+
+function watchShared() {
+  if (stopSharedWatch || !PuPhotoStore.watchSharedCount) return;
+  stopSharedWatch = PuPhotoStore.watchSharedCount(function (n) {
+    sharedCount = Number(n) || 0;
+    renderGotCard();
+    renderOwnerSelLabel();
+  });
+}
+
+function renderGotCard() {
+  const card = $('gotCard'); if (!card) return;
+  const show = sharedCount > 0 && gridOwner !== SHARED_OWNER;
+  card.style.display = show ? 'block' : 'none';
+  if (!show) return;
+  const box = $('gotBox'), hint = $('gotHint');
+  if (box) box.textContent = '👥 받은 사진 ' + sharedCount + '장 — 보기';
+  if (hint) hint.textContent = '다른 분이 나에게 열어 준 사진입니다. 보기만 됩니다.';
+}
+
+/* 고르개 줄에도 장수를 적는다 — 폰에는 옆 칸이 없고 이 줄만 있다.
+   ⚠ 고르개를 **다시 그리지 않는다.** 다시 그리면 고르고 있던 값이 튄다. 그 한 줄의
+     글자만 바꾼다. */
+function renderOwnerSelLabel() {
+  const sel = $('ownerSel'); if (!sel) return;
+  for (let i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value !== SHARED_OWNER) continue;
+    sel.options[i].textContent = '나와 공유된 사진' + (sharedCount ? (' ' + sharedCount + '장') : '');
+  }
+}
+
+function goShared() {
+  const sel = $('ownerSel');
+  if (sel) sel.value = SHARED_OWNER;
+  pickOwner(SHARED_OWNER);
 }
 
 function pickOwner(uid) {
@@ -12049,6 +12153,8 @@ function pickOwner(uid) {
   loadGrid();
   refreshYears();
   loadFolders();   // 남의 사진을 볼 때는 폴더 칸을 통째로 숨긴다
+  /* 「받은 사진」을 보고 있는 사람에게 「받은 사진이 있습니다」는 말이 아니다 — 그 화면에서는 접는다 */
+  renderGotCard();
   renderPhSummary();
 }
 
