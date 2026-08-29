@@ -122,26 +122,77 @@ test('아무것도 없으면 빈손 — 없는 것을 지어내지 않는다', (
 
 /* ══════ 사업장 화면 ══════ */
 
-test('★ 사업장을 열면 담당자 메일 줄이 붙는다 — 만들고 안 부르면 없는 것과 같다', () => {
-  assert.match(HTML, /\+ coMailsHtml\(App\.companyId\)/);
+/* ══════ 머리를 두 줄로 (대표 지시 2026-08-29) ══════
+
+   대표: 「탭이나 달력 메일 등 전체적으로 깔끔하게… 한두 줄 정도로.
+         담당자 메일주소도 모두 볼 것은 아니고 이름만 보면 될 것 같다」
+
+   주소 세 줄을 늘 펴 두었더니 자리 띠·이름줄·메일 셋·달력·탭 = **여섯 줄**이라
+   정작 자료는 일곱째 줄에서야 보였다. 이름 한 조각으로 접고, 달력을 탭 줄에 넣는다.
+   ⚠ 지우는 것은 없다 — 주소도 「이 주소로 오면 여기로」도 눌러서 편다. */
+
+test('★ 머리줄에는 이름만 나온다 — 주소를 늘 펴 두지 않는다', () => {
+  const fn = cut('coMailChip');
+  assert.match(fn, /first\.name/, '이름을 안 보여 줍니다');
+  assert.equal(/companyMails\(co\)[\s\S]*?\.email[\s\S]*?join/.test(fn), false,
+    '주소를 줄줄이 그리고 있습니다');
+  assert.match(fn, /외 ' \+ more/, '몇 명 더 있는지 안 알려 줍니다');
 });
 
-test('★ 메일이 없으면 그렇다고 말하고, 누구 칸으로 갈지도 적는다', () => {
-  const fn = cut('coMailsHtml');
-  assert.match(fn, /담당자 메일이 없습니다/);
-  assert.match(fn, /칸<\/b>으로|담당자 칸으로/, '넣으면 어디로 가는지 안 알려 줍니다');
-  assert.match(fn, /coOwnerName/);
+test('★ 이름이 없으면 주소라도 보여 준다 — 빈 조각은 누를 데가 없다', () => {
+  assert.match(cut('coMailChip'), /first\.name \|\| first\.email/);
+});
+
+test('★ 눌러야 주소가 펴진다 — 접힘이 기본이다', () => {
+  const drop = cut('coMailDropHtml');
+  assert.match(drop, /App\.coMailOpen !== coId/, '늘 펴져 있습니다');
+  assert.match(drop, /이 주소로 오면 여기로/, '펴도 안 알려 주면 뜻이 없습니다');
+  assert.match(drop, /세무/);
+});
+
+test('★ 같은 것을 다시 누르면 접힌다', () => {
+  assert.match(cut('toggleCoMail'), /App\.coMailOpen === coId\) \? ''/);
+});
+
+test('★ 메일이 없으면 한 줄에서 바로 눈에 띈다 — 그래야 채운다', () => {
+  const fn = cut('coMailChip');
+  assert.match(fn, /담당자 메일 없음/);
+  assert.match(fn, /comail none/, '없는 것과 있는 것이 같은 색이면 안 보입니다');
+});
+
+test('★ 펼치면 누구 칸으로 갈지도 적는다', () => {
+  const drop = cut('coMailDropHtml');
+  assert.match(drop, /담당자 메일이 없습니다/);
+  assert.match(drop, /coOwnerName/);
+});
+
+test('★ 머리줄에 조각이 붙고, 펼침 칸은 그 아래에 붙는다', () => {
+  assert.match(HTML, /\+ coMailChip\(App\.companyId\)/);
+  assert.match(HTML, /\+ coMailDropHtml\(App\.companyId\)/);
+});
+
+test('★ 달력이 탭·찾기와 같은 줄에 선다 — 줄 하나를 통째로 먹지 않는다', () => {
+  const m = HTML.match(/id="findBar" class="foldfind">'[\s\S]{0,160}/);
+  assert.ok(m, 'findBar 를 찾을 수 없습니다');
+  assert.match(m[0], /monthStripHtml\(\)/, '달력이 아직 딴 줄입니다');
+});
+
+test('근로계약서 탭에는 달력을 안 붙인다 — 그 칸은 월과 상관없다', () => {
+  const m = HTML.match(/id="findBar" class="foldfind">'[\s\S]{0,160}/);
+  assert.match(m[0], /keepKind \? '' : monthStripHtml\(\)/);
+});
+
+test('★ 달력 줄이 같은 줄에 서도 아래 여백이 두 번 안 생긴다', () => {
+  assert.match(HTML, /\.foldfind \.mstrip\{margin-bottom:0/);
 });
 
 test('★ 그 자리에서 넣을 길을 함께 둔다 — 업체관리를 따로 열게 하지 않는다', () => {
-  assert.match(cut('coMailsHtml'), /openFixCo/);
+  assert.match(cut('coMailDropHtml'), /openFixCo/);
   assert.match(cut('openFixCo'), /fromCo: true/);
 });
 
 test('★ 서랍은 한 벌만 쓴다 — 두 벌 만들면 한쪽만 고쳐진다', () => {
-  /* 사업장에서 열든 메일 줄에서 열든 saveFix 하나로 간다 */
   assert.equal((HTML.match(/function saveFix\(/g) || []).length, 1);
-  assert.match(cut('openFixCo'), /App\.fix = \{/);
 });
 
 test('★ 사업장에서 열면 주소를 적어야 넣을 수 있다 — 사업장은 이미 정해졌다', () => {
@@ -151,10 +202,11 @@ test('★ 사업장에서 열면 주소를 적어야 넣을 수 있다 — 사�
 });
 
 test('★ 볼 수만 있는 사람에게는 넣기 단추를 안 보인다', () => {
-  assert.match(cut('coMailsHtml'), /canWrite\(\)/);
+  assert.match(cut('coMailDropHtml'), /canWrite\(\)/);
 });
 
 test('★ 자리층을 고쳤으니 부르는 화면의 ?v= 를 올렸다', () => {
   const m = HTML.match(/pu-paydata-store\.js\?v=(\d+)/);
   assert.ok(m && Number(m[1]) >= 7, '?v= 를 안 올리면 고쳐도 배포에 안 실립니다: ' + (m && m[1]));
 });
+
