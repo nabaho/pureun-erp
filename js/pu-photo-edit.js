@@ -207,7 +207,13 @@
      ⚠ **다시 시도하지 않는다.** 판독과 다르다 — 그림을 만드는 부르기는 한 번이 곧
        요금이라, 조용히 두 번 부르면 사람이 모르는 새 두 배가 나간다.
        서버 안에서는 잠깐 바쁠 때(429·5xx)만 기다렸다 다시 부른다. */
-  function callEdit(deps, dataUrl) {
+  /* ⚠ want — 사람이 한글로 적은 «무엇을 할까» (대표 지시 2026-08-29
+     "한글을 입력해서 이해하고 고칠 수 있게 해달라"). 안 적으면 하던 대로 지우고 메운다.
+     ⚠ **틀은 서버가 쥔다** — 「칠한 자리 안에서만」·「나머지는 하나도 안 바꾼다」는
+       사람이 못 지운다(functions/photo-edit.js promptFor).
+     ⚠ 돌아온 «무엇을 시켰나»(want)를 그대로 올려 보낸다 — 화면이 사진에 기록으로
+       남긴다. 증빙 사진에서 「이 사진 손댔나」에 답하려면 그것까지 있어야 한다. */
+  function callEdit(deps, dataUrl, want) {
     var fetchFn = deps && deps.fetch;
     var getToken = deps && deps.getToken;
     if (!fetchFn || !getToken) return Promise.reject(new Error('로그인 정보를 확인할 수 없습니다'));
@@ -217,7 +223,7 @@
       return fetchFn(deps.url || EDIT_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
-        body: JSON.stringify({ image: img })
+        body: JSON.stringify({ image: img, want: String(want == null ? '' : want) })
       });
     }).then(function (r) {
       return r.json().then(function (j) {
@@ -225,7 +231,10 @@
           throw new Error((j && j.error) || ('AI 가 응답하지 않습니다 (' + (r.status || 0) + ')'));
         }
         if (!j.image || !j.image.data) throw new Error('AI 가 고친 사진을 돌려주지 않았습니다');
-        return 'data:' + (j.image.mimeType || 'image/png') + ';base64,' + j.image.data;
+        return {
+          src: 'data:' + (j.image.mimeType || 'image/png') + ';base64,' + j.image.data,
+          want: String(j.want || '')
+        };
       });
     });
   }

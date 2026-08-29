@@ -32,14 +32,42 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024;
    ⚠ 사진에 잘 없는 색이라야 모델이 헷갈리지 않는다. */
 const MARK_COLOR = "#FF00FF";
 
-/* 물음 — **서버가 정한다.** 부르는 쪽은 못 바꾼다.
-   ⚠ 「지우고 메우기」만 시킨다. 없던 것을 그려 넣으라고 시키지 않는다 —
-     사진첩은 정부사업·컨설팅 증빙으로 쓰는 사진이 많다. */
-const PROMPT =
-  "이 사진에서 마젠타(" + MARK_COLOR + ") 사각형으로 덮인 부분을 지우고," +
-  " 그 자리를 주변 배경으로 자연스럽게 메워 주세요." +
-  " 나머지 부분은 색·밝기·질감을 포함해 **하나도 바꾸지 마세요.**" +
-  " 글자나 사람을 새로 만들어 넣지 마세요. 사진만 돌려주세요.";
+/* ══════ 물음 — 「무엇을 할까」는 사람이, 「무엇을 지킬까」는 서버가 ══════
+
+   ⚠ 2026-08-29 까지는 **물음을 통째로 서버가 정했다**(부르는 쪽이 글을 못 보냈다).
+     까닭은 「없던 것을 만들어 넣는」 데 쓰이면 증빙 사진에서 문제가 되기 때문이었다.
+   ⚠ 대표 지시로 그 문을 연다: "한글을 입력해서 이해하고 고칠 수 있게 해달라."
+     앞선 지시에도 이미 "특정부분 없어지게하거나 **만들고** 싶은데" 가 있었다.
+
+   ★ 그래서 **글은 받되 «틀»은 서버가 그대로 쥔다.** 사람이 적은 말은 «가운데»에만
+     들어가고, 앞뒤의 지킴말은 사람이 못 지운다:
+       ① 칠한 자리 «안에서만» 고친다
+       ② 나머지 부분은 색·밝기·질감까지 **하나도 안 바꾼다**
+       ③ 사진만 돌려준다(글로 답하지 않는다)
+     ②가 이 기능의 안전장치다 — 이것이 있어야 «고친 자리»가 어디인지 사람이 안다.
+   ⚠ 무엇을 시켰는지는 **사진에 기록으로 남긴다**(meta.edited.what) — 증빙 사진에서
+     「이 사진 손댔나」에 답하려면 «무엇을 시켰나»까지 있어야 한다. */
+
+/* 아무 말도 안 적으면 하던 대로 — 지우고 배경으로 메운다 */
+const DEFAULT_WANT = "지우고, 그 자리를 주변 배경으로 자연스럽게 메워 주세요";
+/* 사람이 적을 수 있는 길이. 길면 모델이 딴 데로 새고 요금도 는다. */
+const MAX_WANT = 200;
+
+function wantOf(text) {
+  const t = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
+  return t ? t.slice(0, MAX_WANT) : DEFAULT_WANT;
+}
+
+function promptFor(text) {
+  return "이 사진에서 마젠타(" + MARK_COLOR + ") 로 덮인 부분에 대해 다음을 해 주세요: " +
+    wantOf(text) +
+    " ⚠ 고치는 것은 **마젠타로 덮인 자리 안에서만** 입니다." +
+    " 나머지 부분은 색·밝기·질감을 포함해 **하나도 바꾸지 마세요.**" +
+    " 사진만 돌려주세요(글로 답하지 마세요).";
+}
+
+/* 옛 이름 — 아무 말도 안 적었을 때의 물음이다(부르는 자리가 아직 쓴다) */
+const PROMPT = promptFor("");
 
 function isTransient(status) {
   return status === 429 || status === 408 || (status >= 500 && status < 600);
@@ -62,15 +90,18 @@ function validate(body) {
   }
   const size = Buffer.byteLength(JSON.stringify(body), "utf8");
   if (size > MAX_BODY_BYTES) return { ok: false, error: "요청이 너무 큽니다" };
-  return { ok: true, data: data, mimeType: mime };
+  /* 사람이 적은 말 — 없어도 된다(그러면 하던 대로 지우고 메운다).
+     ⚠ 글이 아닌 것이 오면 **없는 것으로 친다** — 여기서 던지면 사진까지 못 고친다. */
+  const want = typeof body.want === "string" ? body.want : "";
+  return { ok: true, data: data, mimeType: mime, want: want };
 }
 
-/* 구글에 보낼 몸통 — 물음은 **여기서** 붙인다(부르는 쪽이 못 바꾼다). */
-function editBody(data, mimeType) {
+/* 구글에 보낼 몸통 — **틀은 여기서** 붙인다. 사람이 적은 말은 가운데에만 들어간다. */
+function editBody(data, mimeType, want) {
   return {
     contents: [{
       parts: [
-        { text: PROMPT },
+        { text: promptFor(want) },
         { inline_data: { mime_type: mimeType, data: data } }
       ]
     }],
@@ -111,8 +142,8 @@ function pickImage(json) {
 
 /* 모델을 차례로 시도한다 — 판독 대리인과 같은 규칙.
    404·429 면 다음 모델로, 401·403(열쇠 문제)은 곧바로 포기. */
-async function callEdit(fetchFn, key, data, mimeType, waits) {
-  const body = JSON.stringify(editBody(data, mimeType));
+async function callEdit(fetchFn, key, data, mimeType, waits, want) {
+  const body = JSON.stringify(editBody(data, mimeType, want));
   const init = { method: "POST", headers: { "Content-Type": "application/json" }, body: body };
   const pauses = waits || [2000, 5000];
   let last = { status: 0, why: "" };
@@ -152,5 +183,6 @@ async function callEdit(fetchFn, key, data, mimeType, waits) {
 
 module.exports = {
   MODELS, MAX_IMAGE_BYTES, MAX_BODY_BYTES, MARK_COLOR, PROMPT,
+  DEFAULT_WANT, MAX_WANT, wantOf, promptFor,
   isTransient, validate, editBody, modelUrl, safeReason, pickImage, callEdit
 };

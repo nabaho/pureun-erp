@@ -1879,13 +1879,16 @@ exports.photoEdit = functions
     const key = await readGeminiKey();
     if (!key) { res.status(503).json({ ok: false, error: "AI 키가 설정되지 않았습니다 — 관리자에게 알려 주세요." }); return; }
 
-    const r = await PE.callEdit(fetch, key, v.data, v.mimeType);
+    // 사람이 적은 말(want)을 함께 넘긴다 — 틀(지킴말)은 photo-edit.js 가 그대로 쥔다.
+    const r = await PE.callEdit(fetch, key, v.data, v.mimeType, null, v.want);
     if (!r.ok) {
       res.status(r.status && r.status >= 400 ? r.status : 502)
         .json({ ok: false, error: r.why || "AI가 응답하지 않습니다.", status: r.status || 0 });
       return;
     }
-    res.json({ ok: true, image: r.image });
+    // ★ 무엇을 시켰는지 **돌려준다** — 화면이 그것을 사진에 기록으로 남긴다.
+    //   증빙 사진에서 「이 사진 손댔나」에 답하려면 «무엇을 시켰나»까지 있어야 한다.
+    res.json({ ok: true, image: r.image, want: PE.wantOf(v.want) });
   });
 
 // ═══ 민감 서류 보기 (사진첩 보안 3건 계획 2단계, 대표 지시 2026-08-17) ═══
