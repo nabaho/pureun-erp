@@ -107,3 +107,20 @@ test('★ 목록에 붙는 담당자 딱지도 옆줄과 같은 갈래 — 그 �
   assert.ok(chip.body.indexOf('#5b3a9c') < 0 && chip.body.indexOf('#f2ecfd') < 0,
     '옆줄은 파랑인데 목록의 담당자 딱지만 보라입니다');
 });
+
+test('★ 담당자 «기능 전체»에 보라가 안 남았다 — 옆줄만 파랑이고 그 화면은 보라면 반쪽이다', () => {
+  /* 「담당 모름 정해 주기」·「자문사 이메일 잇기」·담당자 창은 옆줄에서 들어가는 자리다.
+     옆줄만 맞추고 그 화면을 두면, 눌러 들어간 순간 다시 딴 화면이 된다.
+     ⚠ 「메일 쓰기」의 문구 서랍(.edbtn.edtpl·.tplkeys, #5b3a9c)은 «그대로 둔다» —
+       다른 화면의 다른 기능이고, 거기서는 눈에 띄라고 일부러 보라로 둔 것이다. */
+  const GONE = ['#4c2a8f', '#7b4bd1'];
+  const left = [];
+  GONE.forEach(c => {
+    let i = -1;
+    while ((i = src.indexOf(c, i + 1)) >= 0) {
+      const a = src.lastIndexOf('\n', i) + 1, b = src.indexOf('\n', i);
+      left.push(c + '  ' + src.slice(a, b < 0 ? src.length : b).trim().slice(0, 70));
+    }
+  });
+  assert.deepEqual(left, [], '담당자 기능에 보라가 남아 있습니다:\n  ' + left.join('\n  '));
+});
