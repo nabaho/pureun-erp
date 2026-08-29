@@ -432,6 +432,9 @@ function loadMgSaveBlock(){
     _visibleToast: '',
     confirm: msg => { calls.confirm.push(msg); return ctx._confirmReturns.shift() ?? true; },
     _confirmReturns: [],
+    /* 2026-08-29 — 내려받기가 문지기(puExport)를 지나게 되면서 mgDownload 가 async 가 되었다.
+       여기서는 «늘 통과»하는 대역을 둔다. 문지기 자체는 tests/cards-export-log.test.js 가 지킨다. */
+    puExport: () => Promise.resolve(true),
     matType: () => ({ mime:'application/x-hwp' }),
     _matMeta: {},
     /* ⚠ 진짜 putMaterial 은 **던지지 않는다.** 안에서 실패를 삼키고 알림만 띄운 뒤
@@ -572,11 +575,11 @@ test('[실행] mgSave 도중 오류가 나면 삼키지 않고 알리며 busy �
   assert.equal(ctx._mg.busy, false, '오류가 나도 busy 에 갇히면 다시는 저장을 못 누른다');
 });
 
-test('[실행] mgDownload 는 자료함을 건드리지 않고 고친 이름으로 파일만 내려받는다', () => {
+test('[실행] mgDownload 는 자료함을 건드리지 않고 고친 이름으로 파일만 내려받는다', async () => {
   const ctx = loadMgSaveBlock();
   ctx._mg = { id:'m1', name:'문서.hwpx', bytes:'OLD', doc:'DOC', edited:{0:'바뀐 글'},
     grid:{ units:[{no:1,text:'옛 글'}], blocks:[], warn:{} }, busy:false };
-  ctx.mgDownload();
+  await ctx.mgDownload();
   assert.equal(ctx._calls.putMaterial.length, 0, '내려받기는 자료함 원본을 바꾸면 안 된다');
   assert.equal(ctx._calls.download.length, 1);
   assert.equal(ctx._calls.download[0].bytes, 'NEWBYTES:문서.hwpx');
