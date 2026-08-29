@@ -1526,6 +1526,18 @@ table.sbox.tight td.none{padding:26px 8px}
   border-bottom:1px solid #eef2f7;margin-bottom:5px;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;max-width:230px}
 #folderMenu .fmhead span{font-weight:400;color:#a8abb2}
+/* ── 「담당자 보내기」 창의 체크 둘 (대표 승인 목업 2026-08-29) ──
+   ⚠ 다음메일의 그 자리와 «같은 모양»이어야 한다 — 대표께서 매일 보시는 창이다.
+   ⚠ 머리줄(fmhead)이 max-width:230px 라 줄이 잘린다. 여기는 «두 줄»이 필요하므로
+     white-space 를 풀고 폭을 넉넉히 준다. */
+#folderMenu .fmchk{display:flex;gap:8px;align-items:flex-start;padding:7px 14px;
+  font-size:12.5px;color:#4b5563;cursor:pointer;border-top:1px solid #f1f2f4;
+  white-space:normal;max-width:270px;line-height:1.5}
+#folderMenu .fmchk input{margin:2px 0 0;flex:none}
+#folderMenu .fmchk small{display:block;color:#9aa0a8;font-size:11px;margin-top:1px}
+#folderMenu .fmchk input:disabled + span{color:#b6b9c0}
+#folderMenu .fmi.me{background:#f5f8fd}
+#folderMenu .fmi small{display:block;color:#9aa0a8;font-size:11px;white-space:normal}
 #folderMenu .fmform{display:flex;gap:6px;padding:4px 8px 8px}
 /* 옮길 폴더가 스물여덟이라 창을 넘긴다 — 창 안에서 굴러가게 둔다 */
 #folderMenu .fmlist{max-height:min(58vh,420px);overflow-y:auto}
@@ -12097,12 +12109,12 @@ let _mbBinsBusy = false;
    ⚠ once() 만 쓴다(2026-08-16 「once 뒤 on」 요금 사고와 같은 결). */
 function mbEnsureBins(cb){
   if(_mbBins!==null && _mbPut!==null && _mbHide!==null && _mbOwner!==null && _mbSucc!==null
-     && _mbCo!==null && _mbNotCo!==null){
+     && _mbCo!==null && _mbNotCo!==null && _mbWhoMsg!==null){
     if(cb) cb(); return;
   }
   if(typeof Store==='undefined' || Store.mode!=='firebase'){
     _mbBins = _mbBins||{}; _mbPut = _mbPut||{}; _mbHide = _mbHide||{}; _mbOwner = _mbOwner||{};
-    _mbSucc = _mbSucc||{}; _mbCo = _mbCo||{}; _mbNotCo = _mbNotCo||{};
+    _mbSucc = _mbSucc||{}; _mbCo = _mbCo||{}; _mbNotCo = _mbNotCo||{}; _mbWhoMsg = _mbWhoMsg||{};
     if(cb) cb(); return;
   }
   if(_mbBinsBusy){ if(cb) setTimeout(()=>mbEnsureBins(cb), 200); return; }
@@ -12120,17 +12132,19 @@ function mbEnsureBins(cb){
     firebase.database().ref(DB_ROOT+'/config/staffSucc').once('value'),
     /* 주소 ↔ 자문사 · 자문사 아님 (대표 승인 2026-08-29) — 둘 다 전 직원 공용 */
     firebase.database().ref(DB_ROOT+'/config/mailCo').once('value'),
-    firebase.database().ref(DB_ROOT+'/config/mailNotCo').once('value')
-  ]).then(([b,p,h,w,sc,co,nc])=>{
+    firebase.database().ref(DB_ROOT+'/config/mailNotCo').once('value'),
+    /* 메일 한 통에 박은 담당자 (대표 지시 2026-08-29 「담당자 보내기」) */
+    firebase.database().ref(DB_ROOT+'/config/mailWhoMsg').once('value')
+  ]).then(([b,p,h,w,sc,co,nc,wm])=>{
     _mbBins = b.val()||{}; _mbPut = p.val()||{}; _mbHide = h.val()||{}; _mbOwner = w.val()||{};
-    _mbSucc = sc.val()||{}; _mbCo = co.val()||{}; _mbNotCo = nc.val()||{};
+    _mbSucc = sc.val()||{}; _mbCo = co.val()||{}; _mbNotCo = nc.val()||{}; _mbWhoMsg = wm.val()||{};
   }).catch(e=>{
     /* ⚠ 로그인이 없어 거절당한 것이면 «다 읽었다»로 굳히지 않는다 — 로그인이 붙은 뒤
        다음 render 가 다시 가져오게 null 그대로 둔다(폴더 목록과 같은 결). */
     const denied = /permission[_ ]denied/i.test(String((e&&(e.code||e.message))||''));
     if(!(denied && !mbAuthOk())){
       _mbBins = _mbBins||{}; _mbPut = _mbPut||{}; _mbHide = _mbHide||{}; _mbOwner = _mbOwner||{};
-      _mbSucc = _mbSucc||{}; _mbCo = _mbCo||{}; _mbNotCo = _mbNotCo||{};
+      _mbSucc = _mbSucc||{}; _mbCo = _mbCo||{}; _mbNotCo = _mbNotCo||{}; _mbWhoMsg = _mbWhoMsg||{};
     }
     console.warn('[푸른분류]', (e&&e.message)||e);
   }).then(()=>{
@@ -12259,6 +12273,25 @@ let _mbWhoIdx = null;     /* 기업정보함에서 뽑아 둔 {주소:담당자}
      직원은 못 보고 「내 화면만 이상하다」가 된다. */
 let _mbCo = null;         /* {열쇠: 자문사이름}  열쇠 = 주소 또는 '@도메인' */
 let _mbNotCo = null;      /* {열쇠: 1} — 자문사가 아니라고 표시해 «잇기 목록»에서 치운 것 */
+
+/* ══════════════════════════════════════════════════════════════════════════
+   「담당자 보내기」 — 메일 «한 통»에 담당자를 박는다 (대표 승인 목업 2026-08-29)
+   ══════════════════════════════════════════════════════════════════════════
+   "푸른메일함에도 캡쳐2 기능 만들어달라. 담당자 보내기로"
+   (캡쳐2 = 다음메일의 「이동」 메뉴 — 폴더 목록 + 체크박스 둘)
+
+   ★ 다음메일과 «다른 점» — 메일이 움직이지 않는다. 담당자 칸은 자리가 아니라 «거르개»라,
+     「담당자 보내기」는 곧 「이 메일의 담당자는 ○○이다」라고 적는 일이다.
+   ★ 다음메일의 체크박스 둘을 이렇게 옮겼다.
+     · (둘 다 끔)             → 고른 메일 «한 통씩»만 (이 표)
+     · 앞으로 오는 것도        → 그 «주소»를 못 박는다(mailWho)
+     · 이 보낸이의 지난 메일도  → 같은 주소의 지난 메일까지 «낱개로» 박는다
+   ⚠ 「앞으로 오는 것도」를 켜면 «지난 메일도 함께» 간다 — 우리는 주소를 그때그때
+     따져서 보여 주므로 규칙 하나가 과거·미래를 다 덮는다. 그 말을 화면에 적어 둔다.
+     안 적으면 「지난 것은 안 옮길 줄 알았다」가 된다.
+   ⚠ 낱개 지정이 «주소 규칙보다 세다» — 한 통만 다르게 두려고 박는 것이라,
+     주소 규칙이 덮으면 그 단추가 아무 뜻이 없어진다. */
+let _mbWhoMsg = null;     /* {메일열쇠: 담당자이름} — 메일 한 통에 박은 것 */
 
 /* 이메일을 실시간DB 열쇠로 — 점을 못 쓴다.
    ⚠ 포털(enter.html sgEmailKey)과 «같은 규칙»이어야 한다. 규칙이 갈리면 한쪽이 못 찾는다. */
@@ -12649,6 +12682,12 @@ function mbWhoOfRow(v, idx0){
     if(!mbRetired(w)) return String(w);
     return mbSuccOf(w) || '';
   };
+  /* ①-0 이 «메일 한 통»에 박은 것 — 가장 세다 (대표 지시 2026-08-29 「담당자 보내기」).
+     ⚠ 주소 규칙보다 «앞»이어야 한다. 한 통만 다르게 두려고 박는 것이라, 주소 규칙이
+       덮으면 그 단추가 아무 뜻이 없어진다.
+     ⚠ _key 가 없는 자리에서도 부른다(딱지·귀띔) — 없으면 그냥 건너뛴다. */
+  const byMsg = live((v && v._key) ? ((_mbWhoMsg||{})[mbWhoKey(v._key)] || '') : '');
+  if(byMsg) return byMsg;
   const byHand = live(set[mbWhoKey(em)]);
   if(byHand) return byHand;                               /* ① 사람이 정한 주소 */
   /* ①-2 «자문사»에 이어 둔 주소 — 담당자는 그 회사에서 따라온다 (2026-08-29).
@@ -14943,6 +14982,10 @@ function mbBoxHtml(){
             다음메일에서도 옮기고 싶으면 이 창 맨 아래 접힌 줄을 편다. */''}
       <button onclick="mbMove(event)"
         title="고른 메일을 푸른 분류 칸으로 옮깁니다 — 다음메일은 그대로입니다">분류 ˅</button>
+      ${/* ── 「담당자 보내기」 (대표 지시 2026-08-29 「캡쳐2 기능을 담당자 보내기로」) ──
+           다음메일의 「이동」 자리다. 메일은 안 움직이고 «담당자»만 바뀐다. */''}
+      <button onclick="mbOwnerMove(event)"
+        title="고른 메일의 담당자를 정합니다 — 메일은 움직이지 않습니다(담당자 칸은 거르개)">담당자 ˅</button>
       ${mbNow().charAt(0)===MB_RAW_P ? '' :
         `<button onclick="mbBinUndo()"
           title="옮긴 메일을 다음메일에 있는 제자리로 되돌립니다">원래대로 ↩</button>`}
@@ -15726,6 +15769,97 @@ function mbTrash(){
    ⚠ 예전에는 브라우저 알림창에 「1. 자문사답변 2. 급여 … 번호를 적어 주세요」가 떴다.
      폴더가 스물여덟이라 목록이 화면을 넘겼고, 세어 가며 번호를 적어야 했다
      (대표 지시 2026-08-25 — 폴더 손보는 창과 같은 까닭). */
+/* ══════════════════════════════════════════════════════════════════════════
+   「담당자 보내기」 — 다음메일의 「이동」과 같은 자리 (대표 승인 목업 2026-08-29)
+   ══════════════════════════════════════════════════════════════════════════
+   ⚠ 다음메일과 «다른 점»을 창 안에 적어 둔다 — 안 적으면 「메일이 옮겨진 줄」 안다.
+     메일은 움직이지 않는다. 「이 메일의 담당자는 ○○이다」라고 적는 일이다. */
+function mbOwnKeep(on){ state.mbOwnKeep = !!on; }
+function mbOwnPast(on){ state.mbOwnPast = !!on; }
+function mbOwnerMove(ev){
+  const picked = mbPicked(); if(!picked.length) return toast('고른 것이 없습니다');
+  const m = $('folderMenu'); if(!m) return;
+  const keep = !!state.mbOwnKeep, past = !!state.mbOwnPast;
+  const who = mbWhoList();
+  /* 고른 것이 «한 보낸이»에서만 왔나 — 아니면 주소 규칙을 못 쓴다 */
+  const addrs = [];
+  picked.forEach(v=>{ const e = String(v.e||'').trim().toLowerCase();
+    if(e && addrs.indexOf(e) < 0) addrs.push(e); });
+  const one = addrs.length === 1 ? addrs[0] : '';
+  m.innerHTML = `<div class="fmhead">${picked.length.toLocaleString()}통을 어느 담당자에게
+      <span>우리 앱에서만 — 메일은 «움직이지 않습니다»(담당자 칸은 거르개입니다)</span></div>
+    <div class="fmlist">${who.map(w=>`
+      <div class="fmi ${w.me?'me':''}" onclick="mbOwnerPut('${esc(w.name)}')">
+        <span style="color:#a4a9b1">●</span> ${esc(w.name)}${w.me?' <b class="meTag">나</b>':''}
+        ${w.un?`<span style="margin-left:auto;color:#2563d1;font-weight:700">${w.un}</span>`:''}</div>`).join('')}
+    </div>
+    <div class="fmi" style="color:#7c7f86" onclick="mbOwnerPut('')">
+      ❓ 담당 모름으로 되돌리기</div>
+    ${one ? `<div class="fmi" style="border-top:1px solid #eee;color:#2563d1;font-size:12px"
+      onclick="closeFolderMenu();openWhoPage()">🔗 자문사로 잇기 ›
+      <small>담당자가 «회사에서» 따라옵니다 — 담당이 바뀌어도 안 어긋납니다</small></div>` : ''}
+    ${/* ⚠ 체크는 «누르는 순간» 저장하지 않는다 — 담당자를 고를 때 함께 쓰인다.
+         그래서 창을 다시 그린다(체크가 켜진 채로 보여야 무엇을 할지 안다). */''}
+    <label class="fmchk"><input type="checkbox" ${keep?'checked':''} ${one?'':'disabled'}
+      onclick="mbOwnKeep(this.checked);mbOwnerMove(event)">
+      <span><b>앞으로 오는 것도</b> 이 담당자에게
+        <small>${one ? esc(one)+' 를 못 박습니다 · ⚠ 켜면 «지난 메일도 함께» 갑니다'
+                     : '고른 것이 여러 보낸이라 못 씁니다 — 한 곳만 골라 주세요'}</small></span></label>
+    <label class="fmchk"><input type="checkbox" ${past?'checked':''} ${one?'':'disabled'}
+      onclick="mbOwnPast(this.checked);mbOwnerMove(event)">
+      <span><b>이 보낸이의 지난 메일도</b> 함께
+        <small>${one ? '규칙은 안 남기고 지난 메일만 한 통씩 박습니다'
+                     : '고른 것이 여러 보낸이라 못 씁니다'}</small></span></label>`;
+  mbPlaceMenu(m, ev);
+}
+/* 고른 것(과 고른 갈래)에 담당자를 박는다. name 이 빈칸이면 되돌린다. */
+function mbOwnerPut(name){
+  const picked = mbPicked(); if(!picked.length){ closeFolderMenu(); return toast('고른 것이 없습니다'); }
+  const nm = String(name||'').trim();
+  const keep = !!state.mbOwnKeep, past = !!state.mbOwnPast;
+  const em = String((picked[0]||{}).e||'').trim().toLowerCase();
+  closeFolderMenu();
+  const upd = {};
+  _mbWhoMsg = _mbWhoMsg || {};
+  /* ① 어느 메일에 박을 것인가 */
+  let rows = picked;
+  if(past && em){
+    /* 같은 주소에서 온 «모든» 메일 — 지금 보는 칸이 아니라 온 메일함을 뒤진다 */
+    rows = [];
+    Object.keys(_mbMsgs||{}).forEach(slug=>{
+      const box = _mbMsgs[slug]||{};
+      Object.keys(box).forEach(uid=>{
+        const r = box[uid]; if(!r) return;
+        if(String(r.e||'').trim().toLowerCase() !== em) return;
+        rows.push(Object.assign({}, r, { _slug:slug, _key:slug+':'+uid }));
+      });
+    });
+  }
+  rows.forEach(v=>{
+    const k = mbWhoKey(v._key);
+    if(nm){ _mbWhoMsg[k] = nm; upd['config/mailWhoMsg/'+k] = nm; }
+    else if(_mbWhoMsg[k]){ delete _mbWhoMsg[k]; upd['config/mailWhoMsg/'+k] = null; }
+  });
+  /* ② 주소 규칙 — 켰을 때만. 되돌릴 때는 규칙도 함께 지운다(안 지우면 도로 그 사람에게 간다) */
+  let ruleMsg = '';
+  if(em && (keep || !nm)){
+    const rk = mbWhoKey(em);
+    _mbOwner = _mbOwner || {};
+    if(nm && keep){ _mbOwner[rk] = nm; upd['config/mailWho/'+rk] = nm;
+      ruleMsg = ' · ' + em + ' 는 앞으로도 「' + nm + '」'; }
+    else if(!nm && _mbOwner[rk]){ delete _mbOwner[rk]; upd['config/mailWho/'+rk] = null;
+      ruleMsg = ' · ' + em + ' 의 규칙도 지웠습니다'; }
+  }
+  mbWhoBust(); renderPCSide(); renderMailPage();
+  const msg = nm
+    ? `${rows.length.toLocaleString()}통을 「${nm}」 담당으로 보냈습니다${ruleMsg}`
+    : `${rows.length.toLocaleString()}통을 「담당 모름」으로 되돌렸습니다${ruleMsg}`;
+  if(typeof Store==='undefined' || Store.mode!=='firebase') return toast(msg, 7000);
+  firebase.database().ref(DB_ROOT).update(upd)
+    .then(()=>toast(msg, 7000))
+    .catch(e=>toast('저장하지 못했습니다 — '+((e&&e.message)||e), 9000));
+}
+
 /* ⚠ 2026-08-26 로 이 창이 «우리 칸» 창이 되었다. 고르면 다음메일이 아니라 쪽지가 바뀐다.
      다음메일에서도 옮기는 옛 길은 맨 아래 한 줄로 접어 두었다 — 없애지는 않았다.
      (2026-08-25 에 만든 길이고, 다음메일 폴더를 진짜로 정리하려는 날이 올 수 있다) */
