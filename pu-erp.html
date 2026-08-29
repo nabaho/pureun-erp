@@ -42057,10 +42057,52 @@ function FinanceLedger(props){
                       border:'1px solid #fde68a',borderRadius:'8px',padding:'0 5px',fontSize:'9.5px',fontWeight:700}},
                     '⚠️ 이미 처리됨'+(dupInfoE&&dupInfoE.at?' ('+String(dupInfoE.at).slice(0,10)+')':''))),
                 h('td',{style:tdS},
+                  /* ══ 고르는 «그 자리»에서 끝낸다 (대표 지시 2026-08-29) ══════════
+                     「이렇게 멀리서 클릭하는거 마우스 움직임 불편하다,
+                       어떻게 한번에 처리방법 없나?」
+                     398줄짜리 표에서 카테고리 칸은 왼쪽, 「등록」은 오른쪽 끝이다.
+                     한 줄에 좌우로 한 번씩 — 398줄이면 팔이 800번 오간다.
+
+                   ★ 둘을 없앤다:
+                     ① «같은 적요»는 한 번에 함께 고른다 (398줄이라도 서로 다른 적요는 훨씬 적다)
+                     ② 「저절로 등록」이 켜져 있으면 «고른 그 자리»에서 등록한다 — 오른쪽까지 갈 일이 없다
+                   ⚠ 남이(사람이) 이미 «다른» 카테고리로 골라 둔 줄은 건드리지 않는다.
+                   ⚠ 이미 처리된 줄(_dup)도 건드리지 않는다.
+                   ⚠ 적요가 비어 열쇠가 없으면 «그 줄만» 한다 — 빈 열쇠는 아무 줄과나 맞는다. */
                   h('select',{value:cat||'',onChange:function(e){
+                    var v=e.target.value;
                     var nm=Object.assign({},expCat);
-                    if(e.target.value) nm[row._k]=e.target.value; else delete nm[row._k];
+                    if(!v){ delete nm[row._k]; setExpCat(nm); return; }
+                    var myKey=erpExpCatKey(row.memo||row.note||'');
+                    var same=[];
+                    expAll.forEach(function(r){
+                      if(r._dup) return;
+                      if(r._k!==row._k){
+                        if(!myKey) return;                              /* 열쇠가 없으면 그 줄만 */
+                        if(nm[r._k] && nm[r._k]!==v) return;            /* 손으로 달리 고른 것은 그대로 */
+                        if(erpExpCatKey(r.memo||r.note||'')!==myKey) return;
+                      }
+                      nm[r._k]=v; same.push(r);
+                    });
                     setExpCat(nm);
+                    var _cn=EXP_CATS.find(function(c){return c.code===v;});
+                    var _nm2=_cn?_cn.name:v;
+                    if(!expAutoReg){
+                      if(same.length>1) showToast('같은 적요 '+same.length+'건을 함께 골랐습니다 — 「출금 N건 등록」을 누르세요');
+                      return;
+                    }
+                    /* 스위치가 켜져 있다 — 여기서 끝낸다. */
+                    var done=[];
+                    same.forEach(function(r){
+                      saveExpense(r,v);
+                      erpLearnExpenseCat(r.memo||r.note||'', v);
+                      erpMarkBankRowProcessed(r,'expense',_nm2);
+                      done.push(r._k);
+                    });
+                    done.forEach(function(k){ removeRow(k,'exp'); });
+                    showToast('✅ '+_nm2+' '+done.length+'건 등록'
+                      +(done.length>1?' — 같은 적요를 함께 처리했습니다':'')
+                      +' · 다음 달부터는 저절로 됩니다');
                   },style:{width:'100%',fontSize:'11px',padding:'3px 5px',border:'1px solid #e2e8f0',borderRadius:'4px',
                     background:cat?'#fffbeb':'#fff',color:cat?'#854d0e':'#475569',fontWeight:cat?700:400}},
                     h('option',{value:''},'-- 카테고리 선택 --'),

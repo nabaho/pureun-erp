@@ -103,3 +103,47 @@ test('★ 스위치가 화면에 «보인다» (숨은 채로 도는 자동은 �
   assert.ok(/onChange:function\(\)\{ setExpAutoReg\(!expAutoReg\); \}/.test(src),
     '★ 끌 수가 없다');
 });
+
+/* ══════ 고르는 «그 자리»에서 끝내기 (대표 2026-08-29) ══════
+   「이렇게 멀리서 클릭하는거 마우스 움직임 불편하다, 어떻게 한번에 처리방법 없나?」
+   카테고리 칸은 왼쪽, 「등록」은 오른쪽 끝 — 398줄이면 팔이 800번 오간다. */
+function catSelect() {
+  const at = ERP.indexOf("h('select',{value:cat||'',onChange:function(e){");
+  assert.ok(at > 0, '카테고리 고르는 칸을 못 찾았다');
+  return bare(ERP.slice(at, at + 2600));
+}
+
+test('★★ 같은 적요는 «한 번에» 함께 골라진다', () => {
+  const s = catSelect();
+  assert.ok(/var myKey\s*=\s*erpExpCatKey\(row\.memo\|\|row\.note\|\|''\)/.test(s),
+    '★ 같은 적요를 묶는 열쇠를 안 만든다 — 줄마다 따로 고르게 된다');
+  assert.ok(/erpExpCatKey\(r\.memo\|\|r\.note\|\|''\)!==myKey\) return;/.test(s),
+    '★ 다른 적요까지 함께 고른다 — 엉뚱한 지출이 같이 등록된다');
+});
+
+test('★★ 손으로 «달리 고른» 줄은 안 건드린다', () => {
+  const s = catSelect();
+  assert.ok(/if\(nm\[r\._k\] && nm\[r\._k\]!==v\) return;/.test(s),
+    '★★ 사람이 따로 골라 둔 것을 덮어쓴다 — 고른 것이 말없이 바뀌는 것보다 나쁜 일은 없다');
+  assert.ok(/if\(r\._dup\) return;/.test(s), '★ 이미 처리된 줄을 다시 등록한다');
+});
+
+test('★★ 적요가 비면 «그 줄만» 한다 (빈 열쇠는 아무 줄과나 맞는다)', () => {
+  const s = catSelect();
+  assert.ok(/if\(!myKey\) return;/.test(s),
+    '★ 적요 없는 줄 하나를 고르면 적요 없는 줄이 모두 딸려 온다');
+});
+
+test('★★ 스위치가 켜져 있으면 «그 자리»에서 등록한다', () => {
+  const s = catSelect();
+  assert.ok(/if\(!expAutoReg\)\{/.test(s),
+    '★ 스위치와 상관없이 등록한다 — 켜지도 않았는데 장부에 적힌다');
+  assert.ok(/saveExpense\(r,v\);/.test(s) && /removeRow\(k,'exp'\);/.test(s),
+    '★ 고른 자리에서 등록이 안 된다 — 오른쪽 끝까지 또 가야 한다');
+});
+
+test('★ 몇 건을 함께 처리했는지 «말해 준다»', () => {
+  const s = catSelect();
+  assert.ok(/done\.length\+'건 등록'/.test(s),
+    '★ 몇 건이 등록됐는지 안 알려 주면, 한 줄만 고른 줄 알고 지나간다');
+});
