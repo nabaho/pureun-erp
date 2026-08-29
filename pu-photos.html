@@ -19,10 +19,13 @@
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <!-- ?v= 저장 층을 고치면 반드시 올린다 — 캐시에 묵으면 고친 것이 통째로 묻힌다. -->
-<script src="js/pu-photo-store.js?v=14"></script>
+<script src="js/pu-photo-store.js?v=15"></script>
 <!-- 주민번호 가림 — 계산 층과, 급여데이터함과 나눠 쓰는 긋기 층 -->
 <script src="js/pu-rrn-mask.js?v=4"></script>
 <script src="js/pu-rrn-mask-ui.js?v=3"></script>
+<!-- ✨ AI 지우개 계산 층 (대표 지시 2026-08-29) — 자르기·마젠타 표시·제자리 붙이기.
+     ⚠ 사진첩만 쓴다(급여데이터함은 가리기까지만). -->
+<script src="js/pu-photo-edit.js?v=1"></script>
 <script src="js/pu-photo-queue.js?v=1"></script>
 <!-- ?v= 는 판독기 판 번호(READ_VERSION)와 **같이 올린다**(2026-08-15).
      이 파일이 캐시에 묵으면 옛 지시로 읽어 제목이 안 생기는데, 화면(pu-photos.html)은
@@ -766,6 +769,11 @@ button{font-family:inherit;cursor:pointer}
   border-radius:8px;padding:7px 6px;font:700 11.5px inherit;white-space:nowrap;min-width:0}
 .maskstyle button.on{background:var(--blue);border-color:var(--blue);color:#fff}
 #readPanel .again.pri:disabled{opacity:.5}
+/* ✨ AI 로 지우기 — **요금이 드는 유일한 단추**라 색을 갈라 둔다(보라).
+   파랑(가려서 저장)과 같아 보이면 헛돈이 나간다. */
+#readPanel .again.ai{width:100%;margin-top:6px;background:#faf5ff;border-color:#d8b4fe;
+  color:#7e22ce;font-weight:800}
+#readPanel .again.ai:disabled{opacity:.6}
 #readPanel .again.pri{background:var(--blue);color:#fff;border-color:var(--blue);
   width:100%;margin-top:8px}
 /* 판독 단추 옆의 🔒 — 눌러야 할 것이 둘이라 헷갈리지 않게 살짝 갈라 둔다 */
@@ -11957,6 +11965,77 @@ function photoMaskStyle(s) {
      사람은 가린 줄 안다 — 이 기능이 막으려던 바로 그 일이다.
    ⚠ 미리보기도 **가린 사진에서 다시 만든다.** 옛 미리보기를 두면 격자에서는
      가리기 전 그림이 계속 보인다(가장 놓치기 쉬운 자리다). */
+/* ── ✨ AI 로 지우기 (대표 지시 2026-08-29 「지우개 모두 만들어라」) ──
+   지울 자리만 **잘라서** 보내고, 돌아온 조각을 **제자리에** 붙인다.
+   ⚠ 사진 전체를 보내지 않는다 — 그것이 요금의 전부다(2000×1500 통째면 몇 배).
+   ⚠ 사진 전체를 **받지도** 않는다. 조각만 받아 그 자리만 덮으므로 **나머지 화소는
+     원본 그대로**다. 전체를 받으면 나머지도 미세하게 바뀌어 「손댄 사진」이 된다.
+   ⚠ **누르기 전에 묻는다.** 요금이 드는 유일한 자리다.
+   ⚠ **자국을 남긴다**(meta.edited) — 증빙 사진에 눈에 안 보이는 고침을 하는 것이라,
+     나중에 「이 사진 손댔나」에 답할 수 있어야 한다.
+   ⚠ 실패하면 **원본은 그대로다.** 조용히 넘어가면 사람은 지운 줄 안다. */
+async function photoEditAi() {
+  const id = viewerId;
+  if (!id || !photoMask || photoMask.status !== 'ready') return;
+  if (blockedIfOther(id)) return;
+  const boxes = photoMask.boxes || [];
+  if (boxes.length !== 1) { alert('AI 로 지우기는 한 번에 한 군데만 됩니다.'); return; }
+  if (!window.PuPhotoEdit) { alert('지우개 층이 실려 있지 않습니다 — 새로고침해 주세요.'); return; }
+  if (!confirm('AI 로 그 자리를 지우고 배경으로 메웁니다.\n\n' +
+    '· 이 한 번에 **요금이 듭니다**(잘라낸 조각만 보냅니다).\n' +
+    '· 가려도 되는 일이면 「가려서 저장」이 요금 없이 끝납니다.\n' +
+    '· 되돌릴 수 없습니다 — 원본을 덮어씁니다.\n\n계속할까요?')) return;
+
+  const btn = document.querySelector('.again.ai');
+  if (btn) { btn.disabled = true; btn.textContent = '지우는 중… (10초쯤)'; }
+  try {
+    const img = $('maskImg');
+    if (!img) throw new Error('사진을 찾지 못했습니다 — 다시 열어 주세요');
+    const cut = PuPhotoEdit.buildCrop(img, boxes[0]);
+    const patchUrl = await PuPhotoEdit.callEdit({
+      fetch: window.fetch.bind(window),
+      getToken: function () {
+        const u = firebase.auth().currentUser;
+        return u ? u.getIdToken() : Promise.resolve('');
+      }
+    }, cut.dataUrl);
+    const patch = await loadImg(patchUrl);
+    const full = PuPhotoEdit.pasteBack(img, cut.spec, patch);
+    const thumb = await shrinkDataUrl(full, 240, 0.8);
+    await PuPhotoStore.replaceImage(photoYearOf(id), id, full, thumb, photoOwner(id));
+    /* 자국 — 못 남겨도 고친 것을 되돌리지 않는다(자국이 없을 뿐이다) */
+    if (PuPhotoStore.markEdited) {
+      PuPhotoStore.markEdited(photoYearOf(id), id, 'ai', photoOwner(id))
+        .catch(function (e) { console.warn('[손댄 자국]', e && e.message); });
+    }
+    const it = gridItems.find(function (x) { return x.id === id; });
+    if (it) {
+      it.full = full; it.thumb = thumb;
+      it.meta = Object.assign({}, it.meta, { edited: { at: Date.now(), how: 'ai' } });
+    }
+    photoMask = PuRrnMaskUi.blank();
+    const vi = $('viewerImg'); if (vi) vi.src = full;
+    renderReadPanel(maskItem());
+    renderGrid();
+    toast('✨ AI 로 지웠습니다 — 사진에 「손댐」 자국이 남습니다');
+  } catch (e) {
+    console.warn('[AI 지우기]', e);
+    alert('지우지 못했습니다 — ' + ((e && e.message) || e) + '\n원본은 그대로입니다.');
+  } finally {
+    renderReadPanel(maskItem());
+  }
+}
+
+/* data URL 을 그림으로 — 붙여 넣으려면 크기를 알아야 한다 */
+function loadImg(src) {
+  return new Promise(function (res, rej) {
+    const im = new Image();
+    im.onload = function () { res(im); };
+    im.onerror = function () { rej(new Error('AI 가 준 사진을 읽지 못했습니다')); };
+    im.src = src;
+  });
+}
+
 async function photoEditSave() {
   const id = viewerId;
   if (!id || !photoMask || photoMask.status !== 'ready') return;
@@ -12136,7 +12215,23 @@ function maskPanelHtml() {
     (edit
       ? '<button class="again pri maskgo"' + (n ? '' : ' disabled') +
         ' onclick="photoEditSave()">' +
-        (n ? n + '군데 가려서 저장' : '가릴 곳을 먼저 그어 주세요') + '</button>'
+        (n ? n + '군데 가려서 저장' : '가릴 곳을 먼저 그어 주세요') + '</button>' +
+        /* ── ✨ AI 로 지우기 (대표 지시 2026-08-29) ──
+           가리기는 «덮는» 것이고 이쪽은 «없애는» 것이다. 배경으로 메우므로 무엇이
+           있었는지 자국이 안 남는다.
+           ⚠ **한 번에 한 군데**만. 여러 군데면 조각이 커져 그대로 요금이 오른다.
+           ⚠ 요금이 드는 유일한 단추라 **색을 갈라** 두고, 옆에 그 사실을 적어 둔다.
+              「⬛ 까맣게」로 충분한 일에 이것을 누르면 헛돈이다. */
+        (n === 1
+          ? '<button class="again ai" onclick="photoEditAi()">✨ AI 로 지우기 (요금 듦)</button>' +
+            '<p class="note" style="margin:6px 0 0;font-size:11px">' +
+            '배경으로 메워 <b>자국이 안 남습니다.</b> 가려도 되는 일이면 위쪽 「가려서 저장」이 ' +
+            '<b>요금 없이</b> 끝납니다.</p>'
+          : n > 1
+            ? '<p class="note" style="margin:6px 0 0;font-size:11px">' +
+              '✨ AI 로 지우기는 <b>한 번에 한 군데</b>만 됩니다 — 여러 군데면 보낼 조각이 커져 ' +
+              '요금이 오릅니다.</p>'
+            : '')
       : '<button class="again pri" onclick="photoMaskConfirm()">' +
         (n ? n + '군데 가리고 판독' : '가릴 것 없음 — 그대로 판독') + '</button>') +
     '</div>';

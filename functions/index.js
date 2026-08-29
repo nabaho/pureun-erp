@@ -1805,6 +1805,48 @@ exports.readDoc = functions
     res.json({ ok: true, reply: r.json });
   });
 
+// ══════════ AI 지우개 — 사진에서 표시한 곳을 지우고 배경으로 메운다 ══════════
+// 대표 지시 2026-08-29: "특정부분 없어지게" · "편집기능에 최소 비용이 들게"
+//
+// ⚠ **요금이 이 함수의 주제다.** 그림을 만드는 모델은 판독보다 비싸다.
+//   ① 브라우저가 **자른 조각만** 보낸다. 서버는 그 크기를 **직접 막는다** —
+//      브라우저가 잘못 만들어 통째로 보내도 요금이 안 샌다(자물쇠는 서버에 있어야 한다).
+//   ② **물음은 서버가 정한다.** 부르는 쪽이 글을 못 보낸다 — 마음대로 시키면
+//      「없던 것을 만들어 넣는」 일에도 쓰이고, 그것은 증빙 사진에 있어선 안 된다.
+//   ③ 열쇠는 판독 대리인과 **같은 금고**에서 온다(readGeminiKey).
+const PE = require("./photo-edit");
+
+exports.photoEdit = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 120, memory: "512MB", secrets: ["GEMINI_KEY"] })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+
+    // ★ 누가 부르는지 먼저 — 이 검사가 없으면 우리 열쇠가 공개 지우개가 된다.
+    try {
+      await requireReader(req);
+    } catch (e) {
+      res.status(e.status || 401).json({ ok: false, error: String(e.message || e) });
+      return;
+    }
+
+    const v = PE.validate((req.body && typeof req.body === "object") ? req.body : {});
+    if (!v.ok) { res.status(400).json({ ok: false, error: v.error }); return; }
+
+    const key = await readGeminiKey();
+    if (!key) { res.status(503).json({ ok: false, error: "AI 키가 설정되지 않았습니다 — 관리자에게 알려 주세요." }); return; }
+
+    const r = await PE.callEdit(fetch, key, v.data, v.mimeType);
+    if (!r.ok) {
+      res.status(r.status && r.status >= 400 ? r.status : 502)
+        .json({ ok: false, error: r.why || "AI가 응답하지 않습니다.", status: r.status || 0 });
+      return;
+    }
+    res.json({ ok: true, image: r.image });
+  });
+
 // ═══ 민감 서류 보기 (사진첩 보안 3건 계획 2단계, 대표 지시 2026-08-17) ═══
 // 계약서·근태표의 **원본 주소를 사진 정보에 안 남긴다.** 볼 때마다 여기로 와서
 // 로그인·권한을 확인받고 내용을 받아 간다. 까닭과 정한 것들은 photo-view.js 머리에.
