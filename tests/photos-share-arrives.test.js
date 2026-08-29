@@ -137,14 +137,27 @@ test('못 읽어도 화면은 산다 — 규칙이 막혀도 사진첩 자체가
 
 /* ══════ ④ 받는 쪽 신호 — 이번 보고의 «진짜» 알맹이 ══════ */
 
-function cardCtx(n, owner) {
-  const el = function () { return { style: {}, textContent: '', options: [] }; };
+/* ⚠ 2026-08-29 — 이 칸은 «딴 화면으로 가는 문»에서 **거르개**로 바뀌었다.
+   대표 지시: "받은사진으로 나오지 말고 전체사진에서 같이 보이게 하고, 공유된 사진만
+   따로 선택할 수 있게." 그래서 숫자도 «색인 전체»가 아니라 **지금 격자에 섞여 있는
+   받은 사진 수**를 쓴다 — 색인은 다른 해 것까지 세므로 이 단추의 숫자로는 틀리다. */
+function cardCtx(nShared, owner, on) {
+  const el = function () {
+    const o = { style: {}, textContent: '', options: [], _cls: {} };
+    o.classList = { toggle: function (k, v) { o._cls[k] = !!v; } };
+    return o;
+  };
   const nodes = { gotCard: el(), gotBox: el(), gotHint: el() };
+  const items = [];
+  for (let i = 0; i < nShared; i++) items.push({ id: 's' + i, _shared: true });
+  items.push({ id: 'mine', _shared: false });     // 내 사진도 섞여 있다
   const ctx = {
     Number, String,
     $: function (id) { return nodes[id] || null; },
     SHARED_OWNER: '__shared__',
-    sharedCount: n,
+    gridItems: items,
+    isSharedItem: function (it) { return !!(it && it._shared); },
+    sharedOnly: !!on,
     gridOwner: owner,
     _nodes: nodes
   };
@@ -154,20 +167,37 @@ function cardCtx(n, owner) {
   return ctx;
 }
 
-test('★★ 받은 사진이 있으면 «장수와 함께» 말해 준다 — 이것이 없어서 「공유가 안 됐다」가 됐다', () => {
-  const c = cardCtx(25, null);
+test('★★ 받은 사진이 섞여 있으면 «장수와 함께» 걸러 볼 길을 준다', () => {
+  const c = cardCtx(16, null, false);
   assert.equal(c._nodes.gotCard.style.display, 'block',
     '★ 받는 쪽에 아무 신호가 없으면, 사진이 가 있어도 「안 왔다」와 같습니다.');
-  assert.match(c._nodes.gotBox.textContent, /25장/,
+  assert.match(c._nodes.gotBox.textContent, /16장/,
     '★ 몇 장인지 없으면 눌러 볼 값을 사람이 못 정합니다.');
 });
 
-test('★ 0장이면 칸 자체를 안 그린다 — 늘 있는 회색 칸은 눌러 볼 값이 없다', () => {
-  assert.equal(cardCtx(0, null)._nodes.gotCard.style.display, 'none');
+test('★★ 숫자는 «지금 격자에 섞인 것»을 센다 — 색인 전체를 쓰면 다른 해 것까지 세어 거짓이 된다', () => {
+  const c = cardCtx(3, null, false);
+  assert.match(c._nodes.gotBox.textContent, /3장/);
+  assert.ok(!/4장/.test(c._nodes.gotBox.textContent), '내 사진까지 세면 안 됩니다');
 });
 
-test('★ 이미 「받은 사진」을 보고 있으면 접는다 — 보고 있는 사람에게 할 말이 아니다', () => {
-  assert.equal(cardCtx(25, '__shared__')._nodes.gotCard.style.display, 'none');
+test('★ 켜 두면 «켠 티»가 나고 끄는 길이 함께 보인다', () => {
+  const c = cardCtx(16, null, true);
+  assert.equal(c._nodes.gotBox._cls.on, true, '★ 걸러 보는 중인지 모르면 사진이 사라진 줄 압니다');
+  assert.match(c._nodes.gotBox.textContent, /전체 보기/, '★ 되돌아갈 길이 그 자리에 있어야 합니다');
+});
+
+test('★ 0장이면 칸 자체를 안 그린다 — 늘 있는 회색 칸은 눌러 볼 값이 없다', () => {
+  assert.equal(cardCtx(0, null, false)._nodes.gotCard.style.display, 'none');
+});
+
+test('★ 켜 둔 채 0장이 되어도 칸은 남는다 — 안 남기면 끄는 길이 사라진다', () => {
+  assert.equal(cardCtx(0, null, true)._nodes.gotCard.style.display, 'block',
+    '★ 칸이 사라지면 「공유받은 것만」에 갇혀 전체로 돌아올 수가 없습니다');
+});
+
+test('★ 「받은 사진 — 다른 해까지」 화면에서는 접는다 — 거기는 이미 받은 것뿐이다', () => {
+  assert.equal(cardCtx(16, '__shared__', false)._nodes.gotCard.style.display, 'none');
 });
 
 test('★★ 고르개 줄에도 장수를 적는다 — 폰에는 옆 칸이 없고 이 줄만 있다', () => {

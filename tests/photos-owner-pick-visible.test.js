@@ -28,7 +28,9 @@ test('★ 「전체 근로자」가 둘째 줄에 있다', () => {
   const admin = m[0].slice(m[0].indexOf('migAllowed'));
   const mine = admin.indexOf('내 사진</option>');
   const all = admin.indexOf('ALL_OWNERS');
-  const shared = admin.indexOf('SHARED_OWNER + \'">나와 공유된 사진');
+  /* ⚠ 2026-08-29 이름이 바뀌었다 — 받은 사진은 이제 「내 사진」에 **함께** 나오고,
+     이 줄은 그 화면이 못 보여 주는 것 하나(**다른 해에 받은 사진**)를 위해 남는다. */
+  const shared = admin.indexOf('SHARED_OWNER + \'">받은 사진 — 다른 해까지');
   assert.ok(mine > 0 && all > 0 && shared > 0, '세 줄이 다 있어야 합니다.');
   assert.ok(mine < all && all < shared,
     '총괄책임자가 가장 자주 찾는 「전체 근로자」가 아래에 묻히면 못 찾습니다.');

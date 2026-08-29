@@ -38,6 +38,10 @@ function load(items) {
        이 파일의 표본이 rv 7(옛 판)·8(최신)이므로 물음 판도 8 로 둔다. */
     PuDocRead: { READ_VERSION: 8, PROMPT_VERSION: 8 },
     gridItems: items || [],
+    /* ⚠ 2026-08-29: 「내 사진」에 공유받은 사진이 섞이면서, 자동 판독은 **손댈 수 있는
+       사진만** 읽는다. 판독은 읽고 «쓰는» 일이라 남의 사진은 결과를 못 쓰고 한도만 나간다.
+       여기서는 전부 내 것으로 둔다 — 한도 셈이 이 파일의 주제다. */
+    mayTouch: function () { return true; },
     queuePhotoRead: function (id) { queued.push(id); },
     $: function (id) { return id === 'autoNote' ? note : null; },
     _queued: queued, _note: note
