@@ -192,6 +192,10 @@ test('이미 있는 값은 안 덮는다 — 자동이라 더욱 그래야 한�
     Promise, Object, String, Date, Error,
     CARDS_ROOT: 'pucards',
     CO_LABEL: { ceo: '대표자' },
+    /* 2026-08-28: 어긋남 알림이 «기업정보함» 이름표를 먼저 본다 */
+    FIELD_LABEL: { ceo:'대표자', address:'소재지', companyTel:'대표번호' },
+    /* 2026-08-28: 서류 밑에 pairs 를 담는다 — 그 한계값 */
+    CO_PAIRS_MAX: 60, CO_PAIR_LEN: 300,
     bizKey: v => { const d = String(v || '').replace(/\D/g, ''); return d.length >= 10 ? d : ''; },
     deps: { db: { ref: () => ({
       once: () => Promise.resolve({ val: () => ({ ceo: '사람이 고친 대표자' }) }),

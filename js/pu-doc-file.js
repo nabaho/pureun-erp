@@ -36,6 +36,12 @@
      ⚠ 막히면(규칙·권한·꾸러미 없음) 조용히 «옛 자리»로 물러난다. 기업정보함의
        읽기는 창고 먼저, 없으면 실시간DB 순이라 어느 쪽에 있어도 보인다 —
        올리다 막혔다고 명함 등록을 통째로 무르는 것이 훨씬 나쁘다. */
+  /* 서류 밑에 담는 pairs 의 한계 (대표 결정 2026-08-28).
+     판독이 어긋나 글자가 쏟아지면 그것이 그대로 요금이다 — 2026-08-16·08-26 에
+     두 번 겪었다. 자른 것은 docs/{서류}/pairsCut 에 «몇 개 잘랐는지»를 남긴다. */
+  var CO_PAIRS_MAX = 60;
+  var CO_PAIR_LEN = 300;
+
   var CARDS_BUCKET = 'gs://pureun-erp-photos';
   function cardsStorage() {
     if (deps.storage) return deps.storage;
@@ -502,7 +508,7 @@
        (매출액·상시근로자수)가 pairs 에만 있어 기업 상세까지 오지 못했다.
        늘릴 때는 pu-cards.html 의 CO_FIELDS 에도 이름표를 함께 넣어야 한다 —
        여기만 늘리면 값은 쌓이는데 화면에 안 나온다. */
-    var KEEP = ['company','ceo','corpno','address','companyTel','mobile','email','homepage',
+    var KEEP = ['company','ceo','corpno','address','companyTel','mobile','email','homepage','companyFax',
                 'bizType','bizItem','openDate','smeType','product','sales','workers',
                 'docName','applyNo','applyItems',
                 'applyField','applyDetail','applyDate','dueDays','birth',
@@ -576,8 +582,42 @@
       var ph = o.photo || {};
       if (ph.id) {
         if (!(cur.docs && cur.docs[dk])) {
-          add['docs/' + dk] = { name: tag || '서식', year: String(ph.year || ''), id: String(ph.id),
-                                owner: String(ph.owner || ''), at: Date.now(), by: o.byName || '' };
+          var doc = { name: tag || '서식', year: String(ph.year || ''), id: String(ph.id),
+                      owner: String(ph.owner || ''), at: Date.now(), by: o.byName || '' };
+          /* ── 서류에 «적힌 것 전부»를 그 서류 밑에 (대표 결정 2026-08-28) ──
+             「기업정보함에는 사진첩에서 들어온 그 기업과 관련된 정보는 모두 보관하고 싶다」
+
+             판독 층은 이름 붙은 칸(company·ceo·sales…)과 함께 pairs 를 만든다 —
+             문서에 적힌 «모든 항목»을 적힌 그대로다. 그런데 KEEP 29칸만 통과시켜,
+             pairs 는 «저장되는 곳이 아예 없었다». 되메우기(PAIR_TO_KEY, 이름표 55가지)가
+             아는 이름만 칸으로 옮기고 나머지(신청 사유·사업 기간·지원 금액·고용보험
+             관리번호 …)는 통째로 사라졌다. 서식은 계속 새로 생기므로 «이름표를
+             쫓아가는 방식은 끝이 없다» — 그래서 서류 밑에 통째로 둔다.
+
+             ⚠ 회사 칸에 밀어 넣지 «않는다». 서류마다 표기가 달라 서로 덮고 어긋난다.
+               서류 밑에 두면 「그 서류가 뭐라고 했는가」가 영영 남는다.
+             ⚠ 개수·길이는 «자른다». 판독이 어긋나 글자가 쏟아지면 그것이 그대로
+               요금이다(2026-08-16·08-26 두 번 겪었다). 자른 것은 잘랐다고 남긴다 —
+               조용히 줄이면 나중에 「왜 없지」가 된다.
+             ⚠ 개인정보는 «거르지 않는다» — 대표 결정 2026-08-28 (가) 「그대로 다 담는다」.
+               주민등록번호는 판독 층이 애초에 안 읽는다(PROMPT_ALL 에 못 박혀 있다). */
+          var raw = Array.isArray(fields.pairs) ? fields.pairs : [];
+          var keep = [];
+          raw.forEach(function (p) {
+            if (keep.length >= CO_PAIRS_MAX) return;
+            var pk = String((p && p.k) == null ? '' : p.k).trim();
+            var pv = String((p && p.v) == null ? '' : p.v).trim();
+            if (!pk || !pv) return;                       /* 빈 껍데기는 안 담는다 */
+            keep.push({ k: pk.slice(0, CO_PAIR_LEN), v: pv.slice(0, CO_PAIR_LEN) });
+          });
+          if (keep.length) {
+            doc.pairs = keep;
+            var usable = raw.filter(function (p) {
+              return p && String(p.k || '').trim() && String(p.v || '').trim();
+            }).length;
+            if (usable > keep.length) doc.pairsCut = usable - keep.length;
+          }
+          add['docs/' + dk] = doc;
           filled.push('서류');
         }
       }
@@ -585,7 +625,7 @@
       /* 어긋남을 사람 말로. 「이미 다 들어 있습니다」로 뭉뚱그리면 확인된 것처럼 읽힌다. */
       var clashMsg = clash.length
         ? '⚠ ' + clash.length + '개 칸이 기존 값과 «다릅니다» — 기업 상세에서 확인해 주세요 ('
-          + clash.map(function (k) { return CO_LABEL[k] || k; }).join(', ') + ')'
+          + clash.map(function (k) { return FIELD_LABEL[k] || CO_LABEL[k] || k; }).join(', ') + ')'
         : '';
       if (!filled.length && !clash.length) {
         return { ok: true, filled: [], conflicts: 0,
