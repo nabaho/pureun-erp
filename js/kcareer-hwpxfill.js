@@ -129,12 +129,23 @@
       /* <hp:t> 안의 글자만 바꾼다 — 태그를 건드리면 문서가 깨진다 */
       out = out.replace(/(<hp:t[^>]*>)([\s\S]*?)(<\/hp:t>)/g, function (m, a, inner, b) {
         if (did >= hits.length) return m;
-        /* 라벨 + (콜론) + 밑줄/공백 자리
+        /* 라벨 + 콜론 + «값 자리»
+           ⚠ 값 자리는 밑줄만이 아니다. 실측(2026-08-29) 「기관명 : 부서명 : 직위 :」에서
+             끝에 붙은 「직위」가 늘 빠졌다 — 뒤에 밑줄도 넉넉한 공백도 없이 문장이 끝난다.
+             사이 공백이 좁으면 셋 다 빠졌다. 그래서 «끝» 과 «바로 다음 라벨» 도 값 자리로 본다.
+           ⚠ 그렇다고 아무 데나 넣으면 안 된다 — 뒤에 이미 «글자»가 오면 건드리지 않는다.
+             앞을 내다보기(?=…)로만 판단하고, 실제로 바꾸는 자리는 라벨+콜론까지다.
            ⚠ L.re.source 를 (?:…) 로 감싸야 한다 — 「직장|사무실」처럼 교대가 들어 있으면
-           괄호 없이는 '직장' 또는 '사무실\s*[:：]?\s*' 로 갈라져 뒤가 통째로 사라진다. */
-        var re = new RegExp('((?:' + L.re.source + ')\\s*[:：]?\\s*)(_{2,}|\\u3000{2,}|\\s{4,})');
+             괄호 없이는 '직장' 또는 '사무실\s*[:：]?\s*' 로 갈라져 뒤가 통째로 사라진다. */
+        var ANY = INCELL_LABELS.map(function (x) { return x.re.source; }).join('|');
+        var re = new RegExp('((?:' + L.re.source + ')\\s*[:：]\\s*)'
+          + '(?=$|_{2,}|\\u3000{2,}|\\s{4,}|\\s*(?:' + ANY + ')\\s*[:：])');
         if (!re.test(inner)) return m;
-        var next = inner.replace(re, function (mm, head) { return head + esc(fields[L.key]); });
+        var next = inner.replace(re, function (mm, head, off, whole) {
+          /* 뒤에 다른 라벨이 이어지면 사이를 벌린다 — 「푸른노무법인부서명」이 되지 않게 */
+          var rest = whole.slice(off + mm.length);
+          return head + esc(fields[L.key]) + (rest.replace(/^[\s_　]+/, '') ? '  ' : '');
+        });
         if (next === inner) return m;
         did++; report.fields.push({ key: L.key, value: fields[L.key] });
         report.usedKeys[L.key] = true;
@@ -244,7 +255,10 @@
   var api = {
     autoFill: autoFill, summarize: summarize,
     fieldKeyOf: fieldKeyOf, colKeyOf: colKeyOf,
-    cellText: cellText, isEmptyCell: isEmptyCell, fillCell: fillCell
+    cellText: cellText, isEmptyCell: isEmptyCell, fillCell: fillCell,
+    /* 칸 지도(kcareer-formmap.js)가 «같은 자»를 쓰도록 내보낸다 —
+       따로 만들면 두 곳의 셈이 어긋나 「지도에는 있는데 안 채워지는 칸」이 생긴다 */
+    splitRows: splitRows, splitCells: splitCells, eachTable: eachTable, normLabel: normLabel
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KcareerHwpxFill = api;
