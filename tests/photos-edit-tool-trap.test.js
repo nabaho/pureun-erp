@@ -55,6 +55,8 @@ function box() {
   vm.createContext(ctx);
   /* ⚠ 이 층은 window 가 있으면 window 에 붙는다 — 덮어쓰면 통째로 사라진다 */
   vm.runInContext(fs.readFileSync(path.join(R, 'js', 'pu-photo-paint.js'), 'utf8'), ctx);
+  /* 도구 고르개(자르기·밝기가 늘면서 생겼다) — 없으면 판을 못 그린다 */
+  vm.runInContext(APP.match(/const ED_MODES = \[[\s\S]*?\];/)[0], ctx);
   ['function edBrushR(', 'function setEdBrush(', 'function setEdErase(', 'function edUndo(',
    'function edClear(', 'function edPoint(', 'function edDown(', 'function edMove(',
    'function edUp(', 'function edEraseAt(', 'function edPaintTo(', 'function edRepaint(',

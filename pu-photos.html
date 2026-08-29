@@ -780,6 +780,23 @@ button{font-family:inherit;cursor:pointer}
 .edtools button:disabled{opacity:.4}
 .edtools .dot{display:inline-block;border-radius:50%;background:currentColor}
 .edtools .lb{font-size:11.5px;color:var(--sub);margin-right:2px}
+/* ── 도구 고르개 (대표 지시 2026-08-29) — «요금이 드는 것은 하나뿐»이 늘 보여야 한다 ── */
+.edmodes{display:flex;gap:5px;margin:9px 0 0}
+.edmodes button{flex:1 1 0;min-width:0;border:1px solid var(--line);background:#fff;color:var(--ink);
+  border-radius:9px;padding:7px 5px;font:700 11.5px inherit;display:flex;flex-direction:column;
+  align-items:center;gap:3px;white-space:nowrap}
+.edmodes button.on{background:var(--blue);border-color:var(--blue);color:#fff}
+.edmodes .pay{font-size:9.5px;font-weight:800;border-radius:999px;padding:1px 6px;
+  background:#dcfce7;color:#15803d}
+.edmodes .pay.y{background:#ede9fe;color:#6d28d9}
+.edmodes button.on .pay{background:rgba(255,255,255,.22);color:#fff}
+/* 밝기·대비 막대 */
+.edrange{display:flex;align-items:center;gap:8px;margin:7px 0 0}
+.edrange span{flex:0 0 34px;font-size:11.5px;color:var(--sub)}
+.edrange input{flex:1 1 auto;min-width:0}
+/* 자르기 — 자르개가 사진 둘레를 제 짜임으로 바꾼다. 비를 박지 않고 칸을 통째로 쓴다. */
+.edwrap.crop{aspect-ratio:auto !important;width:100%;height:100%}
+.edwrap.crop img{width:auto;height:auto;max-width:100%;max-height:100%}
 /* 지우개일 때 «무엇을 지우는지» — 이 한 줄이 없어서 마우스가 고장 난 줄 아셨다 */
 .note.edmode{margin:6px 0 0;font-size:11.5px;line-height:1.6;background:#fff7ed;
   border:1px solid #fed7aa;color:#b45309;border-radius:8px;padding:7px 9px}
@@ -12003,11 +12020,24 @@ let photoEd = null;
 /* 붓 굵기 — 사진 짧은 변에 대한 비율. 셋이면 넉넉하다(가늘게·보통·굵게). */
 const ED_BRUSH = [0.012, 0.028, 0.055];
 
+/* ── 도구 셋 (대표 지시 2026-08-29, 검토 문서 docs/사진편집-라이브러리-검토.md) ──
+   ⚠ **요금이 드는 것은 하나뿐이다.** 자르기·밝기는 이 기기 안에서 끝나므로 0원이다.
+     그 사실이 화면에 늘 보여야 헛돈이 안 나간다.
+   ⚠ 셋 다 **원본을 안 덮고 새 사진으로** 담는다 — 담는 길은 edKeep 하나뿐이다.
+     자르개(cropperjs)에 딸린 「저장」 단추는 **쓰지 않는다.** 그것을 쓰면 원본 보존·
+     어디서 나왔는지·무엇을 했는지 기록이 통째로 빠진다(검토 문서 ③). */
+const ED_MODES = [
+  { k: 'ai', t: '✨ 지우기·고치기', pay: true },
+  { k: 'crop', t: '✂️ 자르기', pay: false },
+  { k: 'tone', t: '☀️ 밝기·대비', pay: false }
+];
+
 function startPhotoEdit() {
   const id = viewerId;
   if (!id) return;
   if (blockedIfOther(id)) return;
-  photoEd = { status: 'loading', id: id, url: '', strokes: [], brush: 1, erasing: false, done: null };
+  photoEd = { status: 'loading', id: id, url: '', mode: 'ai',
+    strokes: [], brush: 1, erasing: false, done: null, bri: 100, con: 100 };
   renderReadPanel(maskItem());
   renderViewerEdit();
   PuPhotoStore.loadFull(photoYearOf(id), id, photoOwner(id)).then(function (full) {
@@ -12033,9 +12063,144 @@ function photoEditing() {
 }
 
 function photoEdCancel() {
+  edCropStop();
   photoEd = null;
   renderReadPanel(maskItem());
   renderViewerEdit();
+}
+
+/* ── 도구 바꾸기 ──
+   ⚠ 바꿀 때 **앞 도구의 자취를 지운다** — 칠해 놓고 자르기로 갔다가 돌아오면
+     그 칠이 잘린 사진에 얹혀 엉뚱한 자리를 가리킨다. */
+function setEdMode(m) {
+  if (!photoEd || photoEd.mode === m) return;
+  edCropStop();
+  photoEd.mode = m;
+  photoEd.strokes = [];
+  photoEd.erasing = false;
+  photoEd.bri = 100;
+  photoEd.con = 100;
+  renderReadPanel(maskItem());
+  renderViewerEdit();
+}
+
+/* ══════ ✂️ 자르기 — 요금 0원 (대표 지시 2026-08-29) ══════
+   ⚠ 자르개는 **우리 사본을 먼저** 쓴다(vendor/cropper.min.js). 바깥(cdnjs)은 물러설 곳 —
+     관공서·큰 기업 방화벽이 그 주소를 흔히 막는다(PDF·묶기 도구와 같은 규칙).
+   ⚠ **쓸 때만** 받는다. 사진첩은 처음 열 때 이미 무겁다. */
+const CROP_LIB_HERE = 'vendor/cropper.min.js';
+const CROP_CSS_HERE = 'vendor/cropper.min.css';
+const CROP_LIB_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js';
+const CROP_CSS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css';
+
+function loadCssOnce(href) {
+  return new Promise(function (res, rej) {
+    if (document.querySelector('link[data-css="' + href + '"]')) { res(); return; }
+    const l = document.createElement('link');
+    l.rel = 'stylesheet'; l.href = href; l.setAttribute('data-css', href);
+    l.onload = function () { res(); };
+    l.onerror = function () { rej(new Error(href)); };
+    document.head.appendChild(l);
+  });
+}
+
+async function loadCropLib() {
+  if (window.Cropper) return window.Cropper;
+  try {
+    await Promise.all([loadScriptOnce(CROP_LIB_HERE), loadCssOnce(CROP_CSS_HERE)]);
+  } catch (_) {
+    try { await Promise.all([loadScriptOnce(CROP_LIB_CDN), loadCssOnce(CROP_CSS_CDN)]); }
+    catch (_2) { throw new Error('자르는 도구를 불러오지 못했습니다'); }
+  }
+  if (!window.Cropper) throw new Error('자르는 도구를 불러오지 못했습니다');
+  return window.Cropper;
+}
+
+let edCropper = null;
+function edCropStop() {
+  if (edCropper) { try { edCropper.destroy(); } catch (_) { /* 이미 없어졌다 */ } edCropper = null; }
+}
+
+/* 사진을 다 불러오면 자르개를 붙인다 */
+async function edCropStart(im) {
+  if (!photoEd || photoEd.mode !== 'crop' || photoEd.done) return;
+  try {
+    const C = await loadCropLib();
+    if (!photoEd || photoEd.mode !== 'crop') return;   // 그 사이에 도구를 바꾸셨다
+    edCropStop();
+    edCropper = new C(im, {
+      viewMode: 1, autoCropArea: 0.9, background: false,
+      /* 자르개가 저 혼자 무엇을 저장하지 않는다 — 담는 것은 우리 몫이다 */
+      zoomable: false, movable: false, rotatable: false
+    });
+  } catch (e) {
+    console.warn('[자르기]', e);
+    toast((e && e.message) || '자르는 도구를 불러오지 못했습니다');
+  }
+}
+
+/* 자른 결과 — «새 사진으로 담기» 앞의 그 걸음(done)으로 넘긴다 */
+function edCropApply() {
+  if (!photoEd || !edCropper) { toast('자를 자리를 먼저 정해 주세요'); return; }
+  const box = edCropper.getData(true);
+  const c = edCropper.getCroppedCanvas({ imageSmoothingQuality: 'high' });
+  if (!c || !c.width || !c.height) { toast('자르지 못했습니다 — 자를 자리를 다시 정해 주세요'); return; }
+  const full = c.toDataURL('image/jpeg', 0.92);
+  edCropStop();
+  photoEd.done = { full: full, before: photoEd.url, n: 1, how: 'crop',
+    want: '잘라내기 ' + Math.round(box.width) + '×' + Math.round(box.height) };
+  renderReadPanel(maskItem());
+  renderViewerEdit();
+  toast('✂️ 잘랐습니다 — 보시고 골라 주세요 (요금 없음)');
+}
+
+/* ══════ ☀️ 밝기·대비 — 요금 0원 ══════
+   ⚠ 화면에서 보이는 것과 담기는 것이 **같은 값**이어야 한다 — 미리보기는 CSS filter,
+     담을 때는 캔버스 filter 로 «같은 글»을 쓴다(한 곳에서 만든다). */
+function edFilterCss() {
+  const b = (photoEd && photoEd.bri) || 100, c = (photoEd && photoEd.con) || 100;
+  return (b === 100 && c === 100) ? '' : 'brightness(' + b + '%) contrast(' + c + '%)';
+}
+function setEdTone(which, v) {
+  if (!photoEd) return;
+  const n = Math.max(50, Math.min(150, Number(v) || 100));
+  if (which === 'bri') photoEd.bri = n; else photoEd.con = n;
+  const im = $('edImg');
+  if (im) im.style.filter = edFilterCss();      // 그 자리에서 바로 보인다
+  const lb = $('edToneLb');
+  if (lb) lb.textContent = '밝기 ' + photoEd.bri + '% · 대비 ' + photoEd.con + '%';
+}
+function edToneReset() {
+  if (!photoEd) return;
+  photoEd.bri = 100; photoEd.con = 100;
+  renderReadPanel(maskItem());
+  renderViewerEdit();
+}
+async function edToneApply() {
+  if (!photoEd) return;
+  const css = edFilterCss();
+  if (!css) { toast('바꾼 것이 없습니다 — 밝기나 대비를 옮겨 주세요'); return; }
+  try {
+    const im = await loadImg(photoEd.url);
+    const c = document.createElement('canvas');
+    c.width = im.naturalWidth; c.height = im.naturalHeight;
+    const g = c.getContext('2d');
+    /* ⚠ 이 브라우저가 filter 를 못 쓰면 **조용히 그냥 담으면 안 된다** —
+       사람은 밝아진 줄 아는데 원본 그대로가 담긴다. */
+    g.filter = css;
+    if (String(g.filter).indexOf('brightness') < 0) {
+      throw new Error('이 브라우저는 밝기 조절을 지원하지 않습니다');
+    }
+    g.drawImage(im, 0, 0);
+    photoEd.done = { full: c.toDataURL('image/jpeg', 0.92), before: photoEd.url, n: 1,
+      how: 'tone', want: '밝기 ' + photoEd.bri + '% · 대비 ' + photoEd.con + '%' };
+    renderReadPanel(maskItem());
+    renderViewerEdit();
+    toast('☀️ 고쳤습니다 — 보시고 골라 주세요 (요금 없음)');
+  } catch (e) {
+    console.warn('[밝기·대비]', e);
+    alert('고치지 못했습니다 — ' + ((e && e.message) || e) + '\n사진은 그대로입니다.');
+  }
 }
 
 /* ── 칠하기 ── */
@@ -12322,7 +12487,7 @@ async function edKeep() {
       /* ⚠ **무엇을 시켰는지**(what)까지 남긴다 — 사람이 한글로 시킬 수 있게 된
          2026-08-29 부터는 「손댔나」만으로 부족하다. 증빙 사진에서 「무엇을 했나」에
          답하려면 그 말이 있어야 한다. 서버가 실제로 쓴 말을 그대로 적는다. */
-      edited: { at: Date.now(), how: 'ai', n: photoEd.done.n,
+      edited: { at: Date.now(), how: photoEd.done.how || 'ai', n: photoEd.done.n,
         what: String(photoEd.done.want || '').slice(0, 200) }
     });
     await PuPhotoStore.savePhoto({ id: id, meta: meta, full: full, thumb: thumb });
@@ -12445,20 +12610,29 @@ function maskWrapHtml(ms, boxes) {
 function renderViewerEdit() {
   const box = $('viewerEdit'); if (!box) return;
   const on = !!(photoEd && photoEd.status === 'ready');
-  box.style.display = on ? 'flex' : 'none';
-  box.innerHTML = on
-    ? '<div id="edWrap" class="edwrap" ondragstart="return false">' +
-      '<img id="edImg" src="' + esc(photoEd.done ? photoEd.done.full : photoEd.url) +
-      '" alt="" draggable="false" onload="edFitWrap(this)">' +
-      /* 칠하는 판 — 사진과 «똑같은 자리»여야 한다(08-29 에 겪은 그 병) */
-      '<canvas id="edCv"' + (photoEd.done ? '' :
-        ' onpointerdown="edDown(event)" onpointermove="edMove(event)"' +
-        ' onpointerup="edUp()" onpointercancel="edUp()"') + '></canvas>' +
-      '</div>'
-    : '';
-  const pic = $('viewerPic');
-  if (pic) pic.classList.toggle('editing', on);
-  if (on) edRepaint();
+  const pic0 = $('viewerPic');
+  if (pic0) pic0.classList.toggle('editing', on);
+  if (!on) { edCropStop(); box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'flex';
+  /* 결과를 보고 계실 때는 도구를 안 얹는다 — 무엇이 고쳐졌는지 보시는 자리다 */
+  const mode = photoEd.done ? 'done' : photoEd.mode;
+  /* ⚠ 자르기는 자르개가 사진 둘레를 제 짜임으로 바꾼다 — 그래서 «비를 안 박고»
+     칸을 통째로 쓴다. 칠하기는 반대로 비가 박혀야 자리가 안 어긋난다. */
+  const crop = mode === 'crop';
+  box.innerHTML =
+    '<div id="edWrap" class="edwrap' + (crop ? ' crop' : '') + '" ondragstart="return false">' +
+    '<img id="edImg" src="' + esc(photoEd.done ? photoEd.done.full : photoEd.url) +
+    '" alt="" draggable="false"' +
+    (crop ? ' onload="edCropStart(this)"' : ' onload="edFitWrap(this)"') +
+    (mode === 'tone' ? ' style="filter:' + esc(edFilterCss()) + '"' : '') + '>' +
+    /* 칠하는 판 — 「지우기·고치기」일 때만. 사진과 «똑같은 자리»여야 한다(08-29 그 병) */
+    (mode === 'ai'
+      ? '<canvas id="edCv" onpointerdown="edDown(event)" onpointermove="edMove(event)"' +
+        ' onpointerup="edUp()" onpointercancel="edUp()"></canvas>'
+      : '') +
+    '</div>';
+  if (mode !== 'crop') edCropStop();
+  if (mode === 'ai') edRepaint();
 }
 
 /* 칸에 사진의 «본디 비»를 박는다 — 칸과 사진이 한 몸이라야 칠한 자리가 안 어긋난다
@@ -12498,8 +12672,11 @@ function edPanelHtml() {
       '<button class="again pri edkeep" onclick="edKeep()">✅ 새 사진으로 저장</button>' +
       '<button class="again" onclick="edDrop()">↩ 버리기</button>' +
       '<p class="note" style="margin:6px 0 0;font-size:11px">' +
-      '<b>원본은 그대로 둡니다</b> — 고친 것을 새 사진으로 나란히 담습니다.<br>' +
-      '요금은 <b>이미 들었습니다</b> — 버려도 다시 들지 않습니다.</p>' +
+      '<b>원본은 그대로 둡니다</b> — 고친 것을 새 사진으로 나란히 담습니다.' +
+      /* 요금 얘기는 «요금이 든 때»에만 한다 — 자르기·밝기는 0원인데 그 말을 하면 헷갈린다 */
+      (e.done.how === 'ai'
+        ? '<br>요금은 <b>이미 들었습니다</b> — 버려도 다시 들지 않습니다.'
+        : '<br>이 고침은 <b>요금이 들지 않았습니다</b> — 버려도 그만입니다.') + '</p>' +
       '</div>';
   }
   /* ── 고치는 중 ── */
@@ -12508,9 +12685,49 @@ function edPanelHtml() {
       '<p class="note" style="margin:8px 0 0">' + e.busy.done + ' / ' + e.busy.all +
       '군데 — 한 군데에 10초쯤 걸립니다. 창을 닫지 마십시오.</p></div>';
   }
+  /* ── 도구 고르개 — 요금이 드는 것은 하나뿐이라는 것이 늘 보여야 한다 ── */
+  const tabs = '<div class="edmodes">' + ED_MODES.map(function (m) {
+    return '<button class="' + (e.mode === m.k ? 'on' : '') + '"' +
+      ' onclick="setEdMode(\'' + m.k + '\')">' + m.t +
+      '<span class="pay' + (m.pay ? ' y' : '') + '">' + (m.pay ? '요금' : '0원') + '</span></button>';
+  }).join('') + '</div>';
+
+  /* ── ✂️ 자르기 — 요금 0원 ── */
+  if (e.mode === 'crop') {
+    return '<div class="box"><b>✂️ 자르기</b>' + tabs +
+      '<p class="note" style="margin:8px 0 0">큰 사진 위에서 <b>남길 자리를 끌어</b> 정하세요.<br>' +
+      '<b>요금이 들지 않습니다</b> — 이 창 안에서 끝납니다.<br>' +
+      '<b>원본은 그대로 두고</b> 자른 것을 새 사진으로 담습니다.</p>' +
+      '<div class="maskfoot"><button class="again" onclick="photoEdCancel()">그만두기</button></div>' +
+      '<button class="again pri" onclick="edCropApply()">✂️ 이대로 자르기 (요금 없음)</button>' +
+      '</div>';
+  }
+
+  /* ── ☀️ 밝기·대비 — 요금 0원 ── */
+  if (e.mode === 'tone') {
+    const same = e.bri === 100 && e.con === 100;
+    return '<div class="box"><b>☀️ 밝기·대비</b>' + tabs +
+      '<p class="note" style="margin:8px 0 0">막대를 옮기면 <b>큰 사진에 바로</b> 비칩니다.<br>' +
+      '<b>요금이 들지 않습니다</b> — 이 창 안에서 끝납니다.</p>' +
+      '<p class="note" id="edToneLb" style="margin:8px 0 0"><b>밝기 ' + e.bri +
+      '% · 대비 ' + e.con + '%</b></p>' +
+      '<label class="edrange"><span>밝기</span>' +
+      '<input type="range" min="50" max="150" value="' + e.bri +
+      '" oninput="setEdTone(\'bri\', this.value)"></label>' +
+      '<label class="edrange"><span>대비</span>' +
+      '<input type="range" min="50" max="150" value="' + e.con +
+      '" oninput="setEdTone(\'con\', this.value)"></label>' +
+      '<div class="maskfoot">' +
+      (same ? '' : '<button class="again" onclick="edToneReset()">되돌리기</button>') +
+      '<button class="again" onclick="photoEdCancel()">그만두기</button></div>' +
+      '<button class="again pri"' + (same ? ' disabled' : '') + ' onclick="edToneApply()">' +
+      (same ? '밝기나 대비를 옮겨 주세요' : '☀️ 이대로 고치기 (요금 없음)') + '</button>' +
+      '</div>';
+  }
+
   const n = edAreas().length;
   const painted = (e.strokes || []).length;
-  return '<div class="box"><b>🖍 사진 편집 — 편집할 곳을 칠해 주세요</b>' +
+  return '<div class="box"><b>🖍 사진 편집 — 편집할 곳을 칠해 주세요</b>' + tabs +
     '<p class="note" style="margin:8px 0 0">고칠 것(벽시계·이름표·배경 글씨 등) 위를 ' +
     '<b>붓으로 칠하면</b> 그 모양 그대로 고쳐집니다.<br>' +
     '<b>떨어진 여러 군데</b>를 칠해 두면 한꺼번에 처리합니다.<br>' +
