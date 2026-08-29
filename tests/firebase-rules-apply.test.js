@@ -153,8 +153,13 @@ test('★ 로그인하지 않으면 «업무 자료» 는 아무것도 못 읽�
 
 test('★ 파일이 만들개(scripts/make-firebase-rules.js)가 내놓는 것과 같다', () => {
   /* 손으로 고쳐 놓고 만들개를 안 고치면, 다음에 만들 때 그 고침이 조용히 사라진다. */
+  /* ⚠ 줄바꿈으로 견주지 않는다. 이 저장소는 Windows 에서 개발하고 core.autocrlf=true 라,
+     git 안에는 LF 로 담기고 «작업 파일만» CRLF 가 된다. 그대로 견주면 CI(리눅스)는
+     초록인데 개발 PC 에서만 빨간불이 된다 — 그러면 사람이 없는 고장을 쫓는다
+     (2026-08-29 실측: 내용은 칸 48개가 모두 같고 CRLF 784개만 달랐다). */
+  const nl = (s) => String(s).replace(/\r\n/g, '\n').trim();
   const out = cp.execFileSync('node', [path.join(ROOT, 'scripts', 'make-firebase-rules.js')], { encoding: 'utf8' });
-  assert.equal(out.trim(), fs.readFileSync(FILE, 'utf8').trim(),
+  assert.equal(nl(out), nl(fs.readFileSync(FILE, 'utf8')),
     '★ 규칙 파일과 만들개가 어긋났습니다.\n' +
     '  고칠 곳은 scripts/make-firebase-rules.js 이고, 그 뒤\n' +
     '  node scripts/make-firebase-rules.js > docs/firebase-rules-전체-적용본.json 을 다시 돌립니다.');
