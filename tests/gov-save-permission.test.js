@@ -121,7 +121,7 @@ test('저장 실패 뒤처리가 «오류를 받아» 판단한다', () => {
 
 /* ── ② 붙여넣기용 규칙이 직원 저장을 허용하나 ── */
 
-const RULES_FILE = 'docs/firebase-rules-일정관리-직원저장(붙여넣기용).json';
+const RULES_FILE = 'docs/firebase-rules-전체-적용본.json';
 const SCAL = ['scal_staff', 'scal_types', 'scal_cos', 'scal_scheds', 'scal_env',
   'scal_fieldState', 'scal_conflictMatrix', 'scal_roundlog', 'scal_erpTypeMap'];
 

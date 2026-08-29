@@ -76,7 +76,7 @@ ok('0 이면 배지를 감춘다', /b\.style\.display = n > 0 \? 'inline-flex' :
 
 console.log('\n[⑦ 규칙을 건드리지 않았다 — 콘솔 규칙이 진짜이므로]');
 {
-  const rules = fs.readFileSync(path.join(__dirname, '..', 'docs', 'firebase-rules-3순위-포털권한.json'), 'utf8');
+  const rules = fs.readFileSync(path.join(__dirname, '..', 'docs', 'firebase-rules-전체-적용본.json'), 'utf8');
   const j = JSON.parse(rules);
   const sg = j.rules.suggestions_private.$id;
   ok('상태는 여전히 new|ing|done 세 가지', /\^\(new\|ing\|done\)\$/.test(sg.status['.validate']));

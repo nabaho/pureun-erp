@@ -36,7 +36,7 @@ test('new versions apply automatically and only show a one-second completion not
 });
 
 test('backup and restore data is manager-only in current Firebase rules', () => {
-  const rules = JSON.parse(fs.readFileSync(path.join(root, 'docs/firebase-rules-현재적용본.json'), 'utf8')).rules;
+  const rules = JSON.parse(fs.readFileSync(path.join(root, 'docs/firebase-rules-전체-적용본.json'), 'utf8')).rules;
   for (const key of ['systemBackups', 'systemBackupsIndex', 'systemRestoreLog']) {
     assert.match(rules[key]['.read'], /isAdmin/);
     assert.match(rules[key]['.read'], /isSubAdmin/);
