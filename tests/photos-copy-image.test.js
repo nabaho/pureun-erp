@@ -69,7 +69,16 @@ function run(o) {
       } });
     },
     navigator: o.noClipboard ? {} : { clipboard: { write: function (items) {
-      written.push(items); return Promise.resolve();
+      written.push(items);
+      /* ⚠ 2026-08-28 — 진짜 API 는 ClipboardItem 안의 «약속»을 기다리고, 그 약속이
+         깨지면 write 도 깨진다. 시늉만 하고 늘 성공하면 «원본을 못 읽었을 때»를
+         통째로 못 잡는다 — 실제로 그 검사 둘이 조용히 통과하고 있었다. */
+      const vals = [];
+      (items || []).forEach(function (one) {
+        const map = (one && one.map) || {};
+        Object.keys(map).forEach(function (k) { vals.push(map[k]); });
+      });
+      return Promise.all(vals).then(function () {});
     } } },
     ClipboardItem: function (map) { this.map = map; Object.assign(this, map); },
     Promise, Set, Array, Object, String, Number, setTimeout, Error

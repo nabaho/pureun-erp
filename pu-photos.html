@@ -6048,6 +6048,26 @@ function canSendCards(it, read) {
   return canSend(read) && !isCardBack(it);
 }
 
+/* ── 회사 기록의 근거가 된 사진은 «증빙»이다 (대표 결정 2026-08-28) ──
+   보유기준은 증빙 5년 / 나머지 1년인데, 그 갈림을 정하는 것은 meta.used 하나다.
+   그런데 그 표를 남기는 것은 정부사업일정·푸른이알피 계약·근로복지기금 셋뿐이었다 —
+   **기업정보함으로 보낸 명함·사업자등록증에는 안 붙었다.** 그래서 그 원본들이 1년 뒤
+   「보유기간 지난 사진」으로 떠서, 모르고 지우면 회사 기록의 근거가 사라진다.
+
+   ⚠ **주인을 함께 넘긴다.** 안 넘기면 저장 층이 내 자리에 적으므로 남이 올린 사진에는
+     영영 안 남는다(2026-08-27 에 증빙 표시에서 똑같은 것을 찾아 고쳤다).
+   ⚠ 실패해도 **보낸 것을 되돌리지 않는다.** 표가 없으면 보관이 짧아질 뿐이고,
+     그것 때문에 다 된 등록을 무를 수는 없다.
+   ⚠ 세 길(기업정보함·기업 상세·업체관리)이 **이 함수 하나**를 쓴다 — 세 벌로 두면
+     한 곳이 꼭 빠진다(이번에 빠진 것이 바로 그런 자리였다). */
+function markFiledUsed(id, year, where) {
+  try {
+    if (!id || !PuPhotoStore.markUsed) return;
+    PuPhotoStore.markUsed(year || photoYearOf(id), id, where, photoOwner(id) || '')
+      .catch(function (e) { console.warn('[증빙 표시]', e && e.message); });
+  } catch (e) { console.warn('[증빙 표시]', e); }
+}
+
 function sendCards(id, year, job) {
   const it = gridItems.find(function (x) { return x.id === id; });
   const read = (it && it.meta.read) || (job && job._read);
@@ -6105,6 +6125,9 @@ function sendCards(id, year, job) {
     if (job) job._read = read;
     if (viewerId === id) renderReadPanel(it);
     renderUp();
+    /* 이 사진이 기업정보함 기록의 근거가 됐다 — 증빙 5년(위 markFiledUsed 참고) */
+    markFiledUsed(id, year, '기업정보함 — ' +
+      ((read.fields && (read.fields.company || read.fields.name)) || '업체 미상'));
     /* 기록을 먼저 남기고 나서 치운다 — 순서가 바뀌면 휴지통에 담긴 사본에
        '기업정보함 어디로 갔는지'가 빠져 되살려도 고리가 끊긴다. */
     return PuPhotoStore.saveRead(year, id, read, owner).then(function () {
@@ -6320,6 +6343,8 @@ function sendCoInfoWith(id, yr, job, it, read, fields) {
        그래서 개수(n)를 숫자로 따로 남긴다. */
     read.filedInfo = { at: Date.now(), by: PuPhotoStore.myName() || '',
                        n: (res.filled || []).length, message: res.message || '' };
+    /* 이 사진이 기업 상세 값의 근거가 됐다 — 증빙 5년 */
+    markFiledUsed(id, yr, '기업 상세 — ' + ((fields && fields.company) || '업체 미상'));
     if (it) it.meta = Object.assign({}, it.meta, { read: read });
     if (job) job._read = read;
     if (viewerId === id) renderReadPanel(it);
@@ -6386,6 +6411,12 @@ function sendCompany(id, year, job) {
     read.filedCo = {
       at: Date.now(), found: !!res.found, filled: res.filled || [], message: res.message
     };
+    /* ⚠ **실제로 넣었을 때만** 증빙이다. 업체가 아직 없어 못 넣은 것은 아무 기록의
+       근거도 안 됐다 — 그때까지 5년을 잡아 두면 안 지워도 될 사진이 쌓인다. */
+    if (res.found) {
+      markFiledUsed(id, year, '업체관리 — ' +
+        ((read.fields && read.fields.company) || '업체 미상'));
+    }
     if (it) it.meta = Object.assign({}, it.meta, { read: read });
     if (job) job._read = read;
     if (viewerId === id) renderReadPanel(it);
@@ -7687,12 +7718,17 @@ function copyPhotoImage(id) {
     return;
   }
   toast('복사 중…');
-  PuPhotoStore.loadFull(photoYearOf(id), id, photoOwner(id)).then(function (full) {
+  /* ⚠ **클립보드 쓰기를 «누른 그 순간»에 건다** (2026-08-28).
+     종전에는 사진을 다 받은 «뒤에» clipboard.write 를 불렀다. 그런데 사진을 받는 데
+     몇 초 걸리는 사이 사람이 한글 창으로 옮겨 가면 이 창이 초점을 잃고, 크롬이
+     「Document is not focused」로 거절한다 — 누른 사람 눈에는 그냥 «안 되는» 것이다.
+     ClipboardItem 은 Blob 대신 **그 약속(Promise)** 을 받을 수 있다. 그러면 쓰기는
+     누르는 순간에 시작되고 사진은 뒤늦게 도착해도 된다. */
+  const blobP = PuPhotoStore.loadFull(photoYearOf(id), id, photoOwner(id)).then(function (full) {
     if (!safeSrc(full)) throw new Error('사진 본문을 불러오지 못했습니다');
     return pngBlobOf(full);
-  }).then(function (blob) {
-    return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-  }).then(function () {
+  });
+  navigator.clipboard.write([new ClipboardItem({ 'image/png': blobP })]).then(function () {
     toast('복사했습니다 — 클로드코드·한글·메일에서 Ctrl+V 하세요');
   }).catch(function (e) {
     console.warn('[사진 복사]', e);
