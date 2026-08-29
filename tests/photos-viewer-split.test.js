@@ -141,8 +141,12 @@ test('★ 단추가 한 줄에 모두 들어간다', () => {
     '★ 두 칸 격자면 공유·지우기가 한 줄씩 차지해 석 줄이 됩니다');
   assert.match(app, /#readPanel \.acts button\{flex:0 0 auto;/,
     '단추는 제 글 만큼만 차지해야 한 줄에 다 들어갑니다');
-  assert.match(app, /#readPanel \.acts \.rd\{flex:1 1 auto;min-width:0;/,
-    '남은 자리는 글이 긴 「다시 판독」이 가져야 줄이 안 넘칩니다');
+  /* ⚠ 2026-08-29 대표 지시로 도구줄이 **아이콘만**이 되었다("글자가 아니라 아이콘으로
+     확인할 수 있게"). 예전에는 글이 긴 「다시 판독」이 남은 자리를 갖고 줄어들다가
+     좁은 판에서 잘려 무엇인지 알 수 없었다. 이제 한 글자라 자리를 다투지 않는다.
+     (실측: 단추 27~36px, 가장 붐비는 7개에 256px 로 260px 판에 들어간다) */
+  assert.match(app, /#readPanel \.acts \.rd\{flex:0 0 auto\}/,
+    '★ 아이콘 하나가 남은 자리를 다 먹으면 줄이 이상해집니다');
   assert.ok(!/#readPanel \.acts \.wide\{grid-column/.test(app),
     '한 줄 통으로 쓰던 규칙이 남아 있습니다');
 });
@@ -155,7 +159,7 @@ test('★ 도구줄이 판 맨 위에 붙박여 있다 — 표가 길어도 늘 
     '★ 배경이 비치면 아래 표 글자가 단추 뒤로 지나갑니다');
   const fn = fnOf('renderReadPanel');
   /* 판을 그리는 두 갈래(판독 전·후) 모두에서 **맨 위**여야 한다 */
-  const a = fn.indexOf("actsRow('글자 판독하기')");
+  const a = fn.indexOf("actsRow('글자 판독하기'");
   const b = fn.indexOf("actsRow('다시 판독'");
   assert.ok(a > 0 && b > 0, '두 갈래에 모두 있어야 합니다');
   assert.ok(a < fn.indexOf('whenBox(it)'), '★ 판독 전 화면에서 도구줄이 아래에 있습니다');
@@ -195,15 +199,18 @@ test('★ 아이콘만 남아도 무슨 단추인지 알 수 있다', () => {
   /* 「지우기」→「삭제」 (대표 지시 2026-08-17) — 지킬 것은 «무슨 단추인지 알 수
      있는가»이지 낱말 하나가 아니다. tests/photos-need-bulk-ack.test.js 가 이름을 못박는다. */
   assert.match(fn, /title="이 사진 삭제"/);
-  assert.match(fn, /title="' \+ esc\(readBtn\) \+ '"/);
+  /* ⚠ 2026-08-29 부터 **모든** 단추가 아이콘이다 — 판독·가리고 판독·사진 편집까지.
+     그래서 title 이 없는 단추가 하나라도 있으면 눌러 보기 전엔 알 수가 없다.
+     자세한 것은 tests/photos-acts-icons.test.js. */
+  assert.match(fn, /title="' \+ esc\(readBtn\) \+ ' — /, '★ 판독 단추의 설명이 없습니다');
+  assert.match(fn, /title="🔒 가리고 판독 — /);
+  assert.match(fn, /title="🖍 사진 편집 — /);
 });
 
-test('단추 글도 이스케이프한다 — title 과 보이는 글 둘 다', () => {
-  /* 한 곳만 거르면 나머지 한 곳으로 화면이 뚫린다. 실제로 그렇게 안 잡혔다 —
-     title 쪽만 esc 해도 검사가 통과했다. */
+test('단추 글도 이스케이프한다 — 밖에서 온 말이 화면을 뚫지 않게', () => {
+  /* readBtn 은 이제 title 에만 나간다(단추 안은 아이콘이다). 그 한 곳을 안 거르면
+     거기로 뚫린다. 「두 곳 다」였던 시절의 검사를 지금 자리에 맞춰 다시 겨눴다. */
   const fn = fnOf('actsRow');
-  assert.equal((fn.match(/esc\(readBtn\)/g) || []).length, 2,
-    '★ title 과 보이는 글 둘 다 걸러야 합니다');
-  assert.match(fn, /title="' \+ esc\(readBtn\) \+ '"/);
-  assert.match(fn, /esc\(readBtn\) \+ '<\/button>'/);
+  assert.match(fn, /title="' \+ esc\(readBtn\) \+ '/, '★ 걸러야 할 한 곳을 안 거릅니다');
+  assert.ok(fn.indexOf('+ readBtn +') < 0, '★ 안 거른 채로 나가는 자리가 있습니다');
 });
