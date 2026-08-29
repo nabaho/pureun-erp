@@ -1831,6 +1831,87 @@ body.portal-mode #moreFab{display:flex;}
     if(portalHanaRole!=='admin' || document.hidden) return;
     portalHanaCall().then(function(items){ renderPortalHanaAlerts(items); }).catch(function(){ /* 다음 조회에서 조용히 재시도 */ });
   }
+  // ── 대량 반출 알림 (총괄관리자 전용, 대표 지시 2026-08-29) ──
+  // 기업정보함에서 200건 이상을 내려받으면 그 타일에 표시가 붙는다.
+  // 설계서: docs/superpowers/specs/2026-08-29-기업정보함-반출기록-design.md
+  // ⚠ 「💰 입금 확인」과 같은 방식이다 — 새로 짓지 않는다.
+  var EXPORT_BIG_N = 200;              // 기업정보함의 EXPORT_BIG 과 같은 수여야 한다
+  var portalExpItems = [];
+  var portalExpSeen = 0;               // 대표가 「확인」한 시각
+  function portalExpRemoveBadge(){ var b=$('portalExpBadge'); if(b) b.remove(); }
+  function portalExpPaintBadge(){
+    portalExpRemoveBadge();
+    var items = portalExpItems.filter(function(x){ return (x.at||0) > portalExpSeen; });
+    if(!items.length) return;          // 0건이면 아예 안 만든다(늘 켜진 등은 아무것도 못 알린다)
+    var tile = document.querySelector('.tile[data-key="cards"]');
+    if(!tile) return;
+    var b = document.createElement('span');
+    b.id = 'portalExpBadge';
+    b.className = 'tile-alert';
+    b.textContent = '반출 ' + items.length;
+    b.title = '🧾 대량 반출 ' + items.length + '건 (' + EXPORT_BIG_N + '건 이상)\n눌러서 누가 무엇을 가져갔는지 봅니다';
+    b.onclick = function(ev){ ev.preventDefault(); ev.stopPropagation(); showPortalExpModal(items); };
+    tile.appendChild(b);
+  }
+  function showPortalExpModal(items){
+    var old=$('portalExpModal'); if(old) old.remove();
+    var wrap=document.createElement('div');
+    wrap.id='portalExpModal';
+    wrap.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;'
+      +'align-items:center;justify-content:center;padding:18px';
+    var rows=items.map(function(v){
+      var d=new Date(v.at||0);
+      var when=(d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'
+              +String(d.getMinutes()).padStart(2,'0');
+      return '<div style="padding:10px 2px;border-bottom:1px solid #eef2f7;font-size:13px">'
+        +'<b>'+esc(v.by||'(이름 없음)')+'</b> · '+esc(v.what||'')
+        +' <b style="color:#c0392b">'+Number(v.n||0).toLocaleString()+'건</b>'
+        +'<div style="color:#8b98b3;font-size:11.5px;margin-top:2px">'+when
+        +(v.why?(' · 사유 '+esc(v.why)):' · <span style="color:#c0392b">사유 없음</span>')+'</div></div>';
+    }).join('');
+    wrap.innerHTML='<div style="background:#fff;border-radius:14px;max-width:520px;width:100%;'
+      +'max-height:80vh;overflow:auto;padding:18px">'
+      +'<div style="font-weight:800;font-size:15px;margin-bottom:4px">🧾 대량 반출 '+items.length+'건</div>'
+      +'<div style="color:#8b98b3;font-size:12.5px;margin-bottom:10px">'+EXPORT_BIG_N
+      +'건 이상 내려받은 기록입니다. 전체 기록은 기업정보함 → 환경설정 → 계정·AI → 반출 기록.</div>'
+      +rows
+      +'<div style="display:flex;gap:8px;margin-top:14px">'
+      +'<button type="button" id="portalExpOk" style="flex:1;padding:11px;border-radius:10px;'
+      +'border:none;background:#1e2a47;color:#fff;font-weight:700;cursor:pointer">확인 (표시 지우기)</button>'
+      +'<button type="button" id="portalExpClose" style="padding:11px 16px;border-radius:10px;'
+      +'border:1px solid #dde3ee;background:#fff;cursor:pointer">닫기</button></div></div>';
+    wrap.onclick=function(e){ if(e.target===wrap) wrap.remove(); };
+    document.body.appendChild(wrap);
+    $('portalExpClose').onclick=function(){ wrap.remove(); };
+    $('portalExpOk').onclick=function(){
+      var now=Date.now();
+      try{
+        var u=auth.currentUser;
+        if(u) db.ref('exportSeen/'+u.uid).set(now);
+      }catch(e){}
+      portalExpSeen=now; wrap.remove(); portalExpPaintBadge();
+    };
+  }
+  function pollPortalExpAlerts(){
+    var u=null; try{ u=auth.currentUser; }catch(e){}
+    if(!u) return;
+    db.ref('exportSeen/'+u.uid).once('value').then(function(s){
+      portalExpSeen = Number(s.val()||0);
+      return db.ref('exportLog').limitToLast(50).once('value');
+    }).then(function(s){
+      var v=s.val()||{};
+      portalExpItems = Object.keys(v).map(function(k){ return v[k]||{}; })
+        .filter(function(x){ return (x.n||0) >= EXPORT_BIG_N; })
+        .sort(function(a,b){ return (b.at||0)-(a.at||0); });
+      portalExpPaintBadge();
+    }).catch(function(){ /* 규칙을 아직 안 넣었으면 조용히 넘긴다 */ });
+  }
+  function initPortalExpAlerts(role){
+    portalExpItems=[]; portalExpSeen=0; portalExpRemoveBadge();
+    if(role!=='admin') return;         // 관리자가 아니면 조회조차 안 한다
+    pollPortalExpAlerts();
+  }
+
   function initPortalHanaAlerts(role){
     stopPortalHanaAlerts();
     if(role!=='admin') return;
@@ -2074,9 +2155,11 @@ body.portal-mode #moreFab{display:flex;}
     // 건의함: 현재 사용자 정보 전달 + 플로팅 버튼 표시
     if(window.sgSetUser) window.sgSetUser(acct);
     initPortalHanaAlerts(role);
+    initPortalExpAlerts(role);
     /* 타일을 방금 새로 만들었으므로 이미 아는 알림은 곧바로 다시 붙인다 —
        다음 조회(3분)까지 기다리면 그 사이에는 표시가 사라져 있다. */
     portalHanaPaintBadge();
+    portalExpPaintBadge();
   }
 
   // ══════════ 타일 순서: 드래그 이동 + 고정 (사용자별, 기기 간 동기화) ══════════
