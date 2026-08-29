@@ -13764,8 +13764,19 @@ function whoPageHtml(){
     const shown = list.slice(0, 200);
     const cos = mbCoNames();
     const gidx = mbWhoIndex();   /* 짚기가 쓸 표 — 한 번만 찾는다 */
-    const opts = (sel)=>cos.map(c=>
-      `<option value="${esc(c)}" ${sel===c?'selected':''}>${esc(c)}</option>`).join('');
+    /* ══════════════════════════════════════════════════════════════════════
+       자문사 고르는 칸은 «목록을 한 벌만» 둔다 (2026-08-29 그 자리에서 고침)
+       ══════════════════════════════════════════════════════════════════════
+       ★ 처음에는 줄마다 <select> 에 자문사를 통째로 넣었다. 실측: 줄 200개 ×
+         자문사 212곳 = <option> 42,400개, 화면 하나가 «2MB».
+         브라우저가 그리다 멈춰 «눌러도 아무 일이 안 일어났다»(대표 보고 2026-08-29).
+       ★ datalist 는 한 벌만 두고 줄마다 input 이 그것을 가리킨다 — 212개면 끝이다.
+         덤으로 «쳐서 찾을» 수 있다. 212곳을 굴려 찾는 것보다 「현진」을 치는 것이 빠르다.
+       ⚠ 친 이름이 자문사 목록에 없으면 «안 잇는다»(mbCoSet 이 막는다) — 안 막으면
+         오타 하나가 아무 데도 안 걸리는 이름으로 저장된다.
+       ⚠ flex:none 을 준다. 이 줄은 flex 라 .sub(flex:1) 옆에서 칸이 짜부라진다. */
+    const dl = `<datalist id="mbCoDL">${cos.map(c=>
+      `<option value="${esc(c)}"></option>`).join('')}</datalist>`;
     body = hide
       ? `<div class="dm-hint" style="text-align:left;padding:8px 2px 10px;line-height:1.75">
           「자문사 아님」으로 치운 보낸이 <b>${list.length.toLocaleString()}곳</b><br>
@@ -13780,6 +13791,7 @@ function whoPageHtml(){
           ${list.length>200?`<br><span style="color:#c0392b">아래 200곳만 보입니다 — 이어 주시면 다음 것이 올라옵니다</span>`:''}
         </div>
         <div class="dm-list">`;
+    if(!hide) body += dl;   /* 자문사 목록은 «한 벌만» — 줄마다 넣으면 화면이 2MB 가 된다 */
     if(!shown.length) body += `<div class="dm-none">${hide
       ? '치워 둔 것이 없습니다.' : '담당자를 못 찾은 메일이 없습니다. 🎉'}</div>`;
     shown.forEach(o=>{
@@ -13798,13 +13810,14 @@ function whoPageHtml(){
           <span class="dm-who na" onclick="mbNotCoSet('${esc(o.e)}',false,false)"
             title="잇기 목록으로 되돌립니다">↩ 되돌리기</span>`
         : `
-          <select onchange="mbCoSet('${esc(o.e)}',this.value,false)"
-            style="font-family:inherit;font-size:12px;padding:4px 6px;border:1px solid #d5d7dc;
-                   border-radius:6px;max-width:210px">
-            <option value="">— 어느 자문사입니까 —</option>
-            ${o.guess?`<option value="${esc(o.guess.name)}">💡 ${esc(o.guess.name)} (${esc(o.guess.who)})</option>`:''}
-            ${opts(o.co)}
-          </select>
+          ${o.guess?`<span class="dm-who na" style="background:#fffbeb;border-color:#fde68a;color:#8a6d1f"
+            onclick="mbCoSet('${esc(o.e)}','${esc(o.guess.name)}',false)"
+            title="명함의 「${esc(o.guess.from)}」 — 이 자문사로 잇습니다">💡 ${esc(o.guess.name)} 로</span>`:''}
+          <input list="mbCoDL" value="${esc(o.co||'')}" placeholder="자문사 이름을 치세요"
+            onchange="mbCoSet('${esc(o.e)}',this.value,false)"
+            title="이름 한두 글자만 쳐도 목록이 좁혀집니다 — 목록에 있는 자문사만 이어집니다"
+            style="flex:none;width:180px;font-family:inherit;font-size:12px;padding:4px 6px;
+                   border:1px solid #d5d7dc;border-radius:6px">
           ${who?`<span class="dm-who" title="이 자문사의 담당자입니다">👤 ${esc(who)}</span>`:''}
           <span class="dm-who na" onclick="mbNotCoSet('${esc(o.e)}',true,false)"
             title="자문사가 아니면 목록에서 치웁니다 — 메일은 그대로 있습니다">✕ 자문사 아님</span>
@@ -14096,6 +14109,11 @@ function mbCoSet(email, coName, byDomain){
   if(!nm) return mbCfgSet('mailCo', _mbCo, key, null,
     '↩ ' + (byDomain ? d + ' 전체' : em) + ' 의 이은 것을 지웠습니다');
   const rec = mbCoRec(nm);
+  /* ⚠ 목록에 «없는» 이름이면 안 잇는다 (2026-08-29 — 쳐서 고르게 바꾸면서 생긴 자리).
+       안 막으면 오타 하나가 아무 데도 안 걸리는 이름으로 저장되고, 화면에는
+       「이었습니다」가 뜬다 — 이어진 줄 알았는데 아무 일도 안 일어난다. */
+  if(!rec) return toast('「' + nm + '」 은 푸른이알피 자문사 목록에 없습니다 — '
+    + '이름 한두 글자를 치면 목록이 좁혀집니다', 8000);
   const who = rec && rec.main ? rec.main : '';
   const what = byDomain ? ('🏢 ' + d + ' 전체') : em;
   /* ⚠ 담당자가 «없는» 자문사에 이어도 막지 않는다 — 이어 두면 담당자를 나중에 적는
