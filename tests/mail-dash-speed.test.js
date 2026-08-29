@@ -250,3 +250,58 @@ test('★ 빨라졌어도 «누가 그 칸에 들어가는가»는 그대로다'
   }));
   assert.equal(fast, slow.sort().join(','), '표를 넘겼더니 답이 달라졌습니다');
 });
+
+/* ══════ 두 대시보드 줄을 «같은 자리»로 (대표 승인 목업 2026-08-29) ══════
+   "담당자와 업무별 누를때 … 열의 위치가 움직이고 아이콘이나 글자위치 크기다 모두 다르다"
+   ⚠ 픽셀은 여기서 못 잰다(화면이 없다). 대신 «자리를 만드는 것들»이 두 줄에 다 있는지 본다 —
+     그것이 어긋남의 참된 까닭이고, 실제 픽셀은 브라우저로 따로 확인한다
+     (docs/mockups/mail-dash-align.html — 이름 18px·숫자 21px 어긋남이 0 이 되는 것을 봤다). */
+
+test('★★ 담당자 줄에도 손잡이·메뉴 «자리»가 있다 — 없으면 칩을 바꿀 때 줄이 밀린다', () => {
+  const c = load();
+  c.state.mbDash = 'who';
+  const h = c.mailSideHtml();
+  const who = (h.match(/<div class="dm-f sub whobin[\s\S]*?<\/div>/g) || []);
+  assert.ok(who.length, '담당자 줄이 없습니다 — 검사 밑그림이 틀렸습니다');
+  who.forEach(r => {
+    assert.ok(/class="grip ghost"/.test(r), '이름 앞 손잡이 자리가 없습니다 (이름이 18px 밀립니다)');
+    assert.ok(/class="fmenu ghost"/.test(r), '오른쪽 메뉴 자리가 없습니다 (숫자가 21px 밀립니다)');
+  });
+});
+
+test('★ 빈 자리는 «보이지 않되 자리는 차지한다» — display:none 이면 아무 소용이 없다', () => {
+  assert.match(src, /\.dm-f \.ghost\{visibility:hidden/,
+    '빈 자리를 visibility 로 감추지 않습니다');
+  assert.ok(!/\.dm-f \.ghost\{[^}]*display:\s*none/.test(src),
+    'display:none 이면 자리를 안 차지해 줄이 그대로 어긋납니다');
+  assert.match(src, /\.dm-f \.ghost\{[^}]*pointer-events:none/,
+    '보이지 않는 자리가 눌립니다');
+});
+
+test('★ 숫자 칸이 두 대시보드 모두 «하나»다 — 칸 수가 다르면 어차피 안 맞는다', () => {
+  const c = load();
+  c.state.mbDash = 'who';
+  const who = (c.mailSideHtml().match(/<div class="dm-f sub whobin[\s\S]*?<\/div>/g) || []);
+  who.forEach(r => {
+    assert.ok(!/class="n">/.test(r),
+      '담당자 줄에 전체 통수가 남아 있습니다 — 업무 칸은 안읽음 하나뿐입니다');
+  });
+  c.state.mbDash = 'topic';
+  const topic = (c.mailSideHtml().match(/<div class="dm-f sub topicbin[\s\S]*?<\/div>/g) || []);
+  topic.forEach(r => assert.ok(!/class="n">/.test(r), '업무 칸에 전체 통수가 돌아왔습니다'));
+});
+
+test('★ 아이콘이 «같은 상자·같은 굵기»다 — 이모지는 PC 마다 다르게 그려진다', () => {
+  const c = load();
+  assert.ok(/<svg/.test(c.mbWhoIcoSvg()) && /<svg/.test(c.mbTopicIcoSvg()),
+    '아이콘을 글자로 그렸습니다');
+  const sizeOf = h => (h.match(/width="(\d+)" height="(\d+)"/) || []).slice(1).join("x");
+  assert.equal(sizeOf(c.mbWhoIcoSvg()), sizeOf(c.mbTopicIcoSvg()),
+    '두 아이콘의 크기가 다릅니다 — 칩을 바꿀 때마다 눈이 자리를 다시 찾습니다');
+  assert.notEqual(c.mbWhoIcoSvg(), c.mbTopicIcoSvg(),
+    '두 아이콘이 똑같습니다 — 사람과 칸이 안 갈립니다');
+  /* 이모지 담당자 아이콘이 남아 있으면 안 된다 */
+  c.state.mbDash = 'who';
+  const who = (c.mailSideHtml().match(/<div class="dm-f sub whobin[\s\S]*?<\/div>/g) || []);
+  who.forEach(r => assert.ok(r.indexOf('\u{1F464}') < 0, '담당자 줄에 이모지가 남아 있습니다'));
+});
