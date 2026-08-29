@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<title>푸른 메일 — 줄 맞음 실측(앱 코드 그대로)</title>
+<style>
+  body{font-family:'Malgun Gothic','맑은 고딕',sans-serif;margin:0;padding:22px;background:#f6f7f9;color:#222}
+  h1{font-size:18px;margin:0 0 6px}
+  .sub{font-size:12.5px;color:#6b6f76;line-height:1.8;max-width:820px;margin-bottom:16px}
+  .pane{background:#fff;border:1px solid #e6e8ec;border-radius:9px;padding:8px 6px;
+    width:300px;position:relative}
+  .guide{position:absolute;top:8px;bottom:8px;width:1px;background:#e0392b;opacity:.55}
+  .guide.r{background:#2563d1}
+  #out{margin-top:16px;font-family:Consolas,monospace;font-size:12.5px;line-height:1.9;
+    background:#fff;border:1px solid #e6e8ec;border-radius:9px;padding:12px 14px;max-width:820px}
+  .ok{color:#166534;font-weight:700} .no{color:#991b1b;font-weight:700}
+</style></head><body>
+<h1>줄 맞음 실측 — 목업이 아니라 «앱이 그리는 그대로»</h1>
+<div class="sub">
+  앱의 <b>진짜 CSS 와 진짜 그리는 함수</b>(mailSideHtml)를 떠 와서, 두 대시보드를 각각 그린 뒤
+  <b>같은 것끼리의 x 좌표</b>를 잰다. 목업은 내가 손으로 짠 줄이라 실제와 다를 수 있다 —
+  이 화면은 앱이 만든 줄을 잰다.
+</div>
+<div class="pane" id="pane"><div id="rows"></div>
+  <div class="guide" id="g1"></div><div class="guide r" id="g2"></div></div>
+<div id="out">재는 중…</div>
+<script>
+fetch('../../pu-cards.html').then(r=>r.text()).then(src=>{
+  const css = (src.match(/<style[^>]*>[\s\S]*?<\/style>/g)||[]).join('\n').replace(/<\/?style[^>]*>/g,'');
+  const st=document.createElement('style'); st.textContent=css; document.head.appendChild(st);
+
+  /* 앱의 그리는 덩어리를 그대로 떠 온다 */
+  const i = src.indexOf('function pcItem(attrs'), j = src.indexOf('\nfunction switchTab(');
+  const slice = src.slice(i, j);
+
+  const NAMES=['박한별','김혜민','박재원','김동현'];
+  const FOLDERS={}, MSGS={}, ITEMS={}, BYNAME={};
+  for(let b=0;b<4;b++){
+    const slug='B'+b;
+    FOLDERS[slug]={path:'F'+b,name:(b+1)+'.업무칸 이름이 길 때',kind:'custom',order:7,total:400,unseen:18-b*4};
+    const box={};
+    for(let m=0;m<12;m++){
+      const co='회사'+(b*12+m);
+      box[String(b*100+m)]={u:b*100+m,f:'보낸이',e:'p'+m+'@co'+(b*12+m)+'.kr',
+        t:'x@daum.net',s:'제목',d:1756000000000+m,r:m%3?1:0,g:0,a:0,z:1};
+      ITEMS['i'+b+m]={id:'i'+b+m,email:'p'+m+'@co'+(b*12+m)+'.kr',company:co};
+      BYNAME[co]={company:co,main:NAMES[(b+m)%NAMES.length],subs:[],left:false};
+    }
+    MSGS[slug]=box;
+  }
+  const DIR=NAMES.map((n,k)=>({sid:'P-00'+k,name:n,sortOrder:(k+1)*10,role:'member',title:'노무사',status:'active'}));
+
+  const stub={ esc:s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
+    Store:{mode:'firebase'}, DB_ROOT:'pucards',
+    matMailCfg:()=>({from:'x@daum.net'}), matList:()=>[], matCat:()=>'', MAT_CATS_NOW:()=>[],
+    _matMeta:{}, _matLoaded:true, loadMaterials(){}, schedList:()=>[], staffName:b=>String(b||''),
+    fmtDate:()=>'2026.08.29', fmtMB:n=>n+'B', allItems:()=>ITEMS, allGroups:()=>({}),
+    isPrivGroup:()=>false, canSeeGroup:()=>true, coList:()=>[], coTagList:()=>[],
+    coFTabList:()=>[], coFTabCounts:()=>({all:0,byTab:{}}), _coFolders:{}, _coTagHidden:{},
+    toast(){}, confirm:()=>true, closeFolderMenu(){}, toggleSidebar(){}, openSettingsPage(){},
+    openMatPage(){}, openMailPage(){}, openSentBox(){}, openSchedBox(){}, openInbox(){},
+    closeMailPage(){}, openPrivateVault(){}, migrateLockedFolders(){},
+    inboxBoxHtml:()=>'', schedBoxHtml:()=>'', sentBoxHtml:()=>'', mailWriteHtml:()=>'',
+    wireMailWrite(){}, pickOf:()=>({}), pickOn:()=>false, pickList:()=>[], pickAllOn:()=>false,
+    pickClear(){}, pickHit(){}, pickToggleAll(){}, pickRedraw(){},
+    renderPCSide(){}, renderMailPage(){}, render(){}, $:()=>null,
+    firebase:{auth:()=>({currentUser:{uid:'U1'}}),database:()=>({ref:()=>({once:()=>Promise.resolve({val:()=>null}),set:()=>Promise.resolve(),update:()=>Promise.resolve()})})},
+    fetch:()=>Promise.resolve({json:()=>Promise.resolve({ok:true})}) };
+  const state={view:'mail',mailSent:'box',mbBox:'',tab:'card',group:'all',owner:'all',
+    isAdmin:true,groups:{},pick:{},matPick:'',sentBox:{},schedBox:{},mbQ:'',mbFilter:'',
+    mbTab:'',mbCursor:-1,mbOpen:null,mbDash:'topic',items:ITEMS,mbMineOpen:true};
+
+  const args=Object.keys(stub).concat(['state','__erp','__fold','__msgs']);
+  const vals=args.map(k=> k==='state'?state : k==='__erp'?null : k==='__fold'?FOLDERS
+                       : k==='__msgs'?MSGS : stub[k]);
+  const body = 'const ErpMatch={ready:true,byName:{},byBiz:{},staff:{},companies:[],'
+    + '_norm(s){return String(s||"").toLowerCase().replace(/[\\s\\-_.,·()\\[\\]{}\'"]/g,"");},'
+    + 'match(it){const n=this._norm(it&&it.company);return n&&this.byName[n]||null;}};\n'
+    + slice + '\n'
+    + '_mbFolders=__fold; _mbMsgs=__msgs; _mbBins={}; _mbPut={}; _mbHide={}; _mbOwner={};'
+    + '_mbSucc={}; _mbOrder={}; _mbMeta={at:1,ok:true};\n'
+    + 'return { mailSideHtml, ErpMatch, mbMemoClear };';
+  const M = new Function(...args, body)(...vals);
+  const byName={}, staff={};
+  Object.keys(BYNAME).forEach(n=>{ byName[M.ErpMatch._norm(n)] = BYNAME[n]; });
+  DIR.forEach(u=>{ staff[M.ErpMatch._norm(u.name)]={sid:u.sid,name:u.name,ord:u.sortOrder,
+    role:u.role,title:u.title,status:u.status}; });
+  M.ErpMatch.byName=byName; M.ErpMatch.staff=staff;
+
+  /* 업무별 · 담당자를 «각각» 그려 이어 붙인다 — 실제로 칩을 바꾼 것과 같다 */
+  state.mbDash='topic'; M.mbMemoClear(); const a = M.mailSideHtml();
+  state.mbDash='who';   M.mbMemoClear(); const b = M.mailSideHtml();
+  document.getElementById('rows').innerHTML = a + b;
+
+  const p = document.getElementById('pane').getBoundingClientRect();
+  const t = document.querySelector('.topicbin');
+  const w = document.querySelector('.whobin:not(.meRow)') || document.querySelector('.whobin');
+  const out = document.getElementById('out');
+  if(!t || !w){ out.textContent = '줄을 못 찾았습니다 (업무:'+!!t+' 담당자:'+!!w+')'; return; }
+  const xf = (row, sel) => { const e = row.querySelector(sel); return e ? e.getBoundingClientRect() : null; };
+  const tn = xf(t,'.nm'), wn = xf(w,'.nm');
+  const tu = xf(t,'.nu'),  wu = xf(w,'.nu');
+  document.getElementById('g1').style.left = (tn.left - p.left) + 'px';
+  if(tu) document.getElementById('g2').style.left = (tu.right - p.left) + 'px';
+  const dName = Math.round(wn.left - tn.left);
+  const dNum  = (tu && wu) ? Math.round(wu.right - tu.right) : '못 잼';
+  const twoNum = !!w.querySelector('.n');
+  const emoji  = w.innerHTML.indexOf('\u{1F464}') >= 0;
+  const mark = v => (v === 0 ? '<span class="ok">같음 ✔</span>' : '<span class="no">'+v+'px 어긋남 ✘</span>');
+  out.innerHTML =
+      '이름 시작  ' + mark(dName) + '<br>'
+    + '숫자 끝    ' + (dNum === 0 ? '<span class="ok">같음 ✔</span>'
+                                 : '<span class="no">'+dNum+' 어긋남 ✘</span>') + '<br>'
+    + '담당자 숫자 칸  ' + (twoNum ? '<span class="no">둘 ✘</span>' : '<span class="ok">하나 ✔</span>') + '<br>'
+    + '담당자 이모지   ' + (emoji ? '<span class="no">남아 있음 ✘</span>' : '<span class="ok">없음(그림) ✔</span>');
+  window.__live = { 이름차이:dName, 숫자차이:dNum, 숫자칸둘:twoNum, 이모지:emoji };
+}).catch(e=>{ document.getElementById('out').textContent = '실패 — ' + e.message; });
+</script>
+</body></html>

@@ -780,8 +780,29 @@ test('★ 메일 옆줄을 조금 넓혔다 — 240px 에서는 칸 이름이 �
 });
 
 test('★ 담당자 줄과 업무 줄의 «아이콘 폭»이 같다 — 다르면 칩을 옮길 때 이름이 밀린다', () => {
-  assert.match(src, /\.dm-f\.topicbin \.dot\{[^}]*width:17px/, '업무 줄 아이콘 폭이 다르다');
-  assert.match(src, /\.dm-f \.ic\{[^}]*width:17px/, '담당자 줄 아이콘 폭이 17px 이 아니다');
+  /* ⚠ 선택자 «모양»을 못 박지 않는다. 2026-08-29 에 둘을 한 줄로 묶으면서
+       (.dm-f .ic,.dm-f .dot{width:17px}) 규칙은 그대로인데 이 검사만 깨졌다.
+     지킬 것은 「두 아이콘 상자의 폭이 같다」이지, 어느 선택자가 그것을 적었는가가 아니다. */
+  /* ⚠ 옆줄의 «줄»(.dm-f) 안으로만 본다. 그냥 「.ic 가 든 규칙」을 다 세면 폰 서랍
+       (.dmm-f .ic 20px)·기업정보함 폴더(.pcfold .ic 11px)까지 잡혀 엉뚱한 답이 나온다
+       — 실제로 그렇게 잡혀 「11px vs 17px」이라고 틀리게 말했다. */
+  /* ⚠ 주석을 «먼저 걷는다». 규칙 위의 설명 주석이 선택자 자리에 묻어 들어와,
+       걸러 내려다 규칙 자체를 놓쳤다(내가 실제로 그렇게 틀렸다). */
+  const cssOnly = src.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const widthOf = (name) => {
+    const re = new RegExp('([^{}]*\\.dm-f[^{}]*\\' + name + '[^{}]*)\\{([^}]*)\\}', 'g');
+    let m, found = null;
+    while ((m = re.exec(cssOnly))) {
+      const w = /width:\s*(\d+)px/.exec(m[2]);
+      if (w) found = Number(w[1]);            /* 뒤에 나온 것이 이긴다(CSS 결) */
+    }
+    return found;
+  };
+  const ic = widthOf('.ic'), dot = widthOf('.dot');
+  assert.ok(ic, '담당자 줄 아이콘 폭을 정한 곳이 없습니다');
+  assert.ok(dot, '업무 줄 아이콘 폭을 정한 곳이 없습니다');
+  assert.equal(ic, dot,
+    '두 아이콘 상자 폭이 다릅니다(담당자 ' + ic + 'px · 업무 ' + dot + 'px) — 이름이 밀립니다');
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
