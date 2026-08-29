@@ -244,6 +244,131 @@ test('★ 한 사람에게만 받았으면 칩을 안 그린다 — 위 단추�
     '★ 한 사람뿐인데 칩을 그리면 같은 말이 두 번입니다');
 });
 
+/* ══════ ③-3 「누구 사진」 고르개에 «준 사람 이름» (대표 지시 2026-08-29) ══════
+   "받은사진의 사람이름이 있어야 선택한다."
+   ⚠ 왼쪽 칸의 사람 칩은 **둘 이상**일 때만 나온다. 한 사람에게만 받으면 칩이 없어서,
+     고르개에는 「받은 사진 — 다른 해까지 16장」뿐이고 **누가 준 것인지 이름이 어디에도
+     안 보인다.** 사람은 이름을 보고 고른다. */
+function selCtx(people, over) {
+  const opts = [{ value: '', textContent: '내 사진' },
+                { value: '__shared__', textContent: '받은 사진 — 다른 해까지' }];
+  const sel = {
+    options: opts,
+    value: '',
+    appendChild: function (o) { opts.push(o); },
+    removeChild: function (o) { const i = opts.indexOf(o); if (i >= 0) opts.splice(i, 1); }
+  };
+  const ctx = Object.assign({
+    Object, String,
+    $: function () { return sel; },
+    document: { createElement: function () { return { value: '', textContent: '' }; } },
+    sharedPeople: function () { return people; },
+    gridOwner: null, sharedWho: '',
+    _sel: sel, _opts: opts
+  }, over || {});
+  vm.createContext(ctx);
+  vm.runInContext("var FROM_PREFIX = 'from:'; var _whoSig = null;\n" +
+    cutFn(app, 'function syncSharedWhoOptions('), ctx);
+  return ctx;
+}
+
+test('★★ 고르개에 «👤 이름»이 줄로 들어간다 — 이름이 없으면 고를 수가 없다', () => {
+  const c = selCtx([{ uid: 'U2', name: '권형하', n: 16 }]);
+  c.syncSharedWhoOptions(c._sel);
+  const added = c._opts.filter(function (o) { return String(o.value).indexOf('from:') === 0; });
+  assert.equal(added.length, 1, '★ 한 사람뿐이어도 이름 줄은 있어야 합니다(칩은 안 나옵니다)');
+  assert.match(added[0].textContent, /권형하/, '★ 이름이 없으면 사람이 고를 수가 없습니다');
+  assert.match(added[0].textContent, /16장/, '몇 장인지 함께 보여야 눌러 볼 값을 정합니다');
+  assert.equal(added[0].value, 'from:U2');
+});
+
+test('★ 다시 불러도 줄이 겹치지 않는다 — 옛 줄을 걷어내고 붙인다', () => {
+  const c = selCtx([{ uid: 'U2', name: '권형하', n: 16 }]);
+  c.syncSharedWhoOptions(c._sel);
+  c.sharedPeople = function () { return [{ uid: 'U2', name: '권형하', n: 17 }]; };
+  c.syncSharedWhoOptions(c._sel);
+  const added = c._opts.filter(function (o) { return String(o.value).indexOf('from:') === 0; });
+  assert.equal(added.length, 1, '★ 겹쳐 붙이면 같은 이름이 여러 줄이 됩니다');
+  assert.match(added[0].textContent, /17장/, '숫자가 안 따라가면 거짓이 됩니다');
+});
+
+test('★★ 고르개를 통째로 다시 만든 뒤에도 줄이 돌아온다 — 표만 믿으면 영영 안 돌아온다', () => {
+  const c = selCtx([{ uid: 'U2', name: '권형하', n: 16 }]);
+  c.syncSharedWhoOptions(c._sel);
+  /* renderOwnerPick 이 innerHTML 로 통째로 다시 만든 상황 */
+  c._opts.length = 0;
+  c._opts.push({ value: '', textContent: '내 사진' });
+  c.syncSharedWhoOptions(c._sel);
+  assert.equal(c._opts.filter(function (o) { return String(o.value).indexOf('from:') === 0; }).length, 1,
+    '★ 「바뀐 것 없음」으로 건너뛰면 사람 줄이 사라진 채로 남습니다');
+});
+
+test('★ 남을 골라 보는 화면에는 안 넣는다 — 거기에는 받은 사진이 없다', () => {
+  const c = selCtx([{ uid: 'U2', name: '권형하', n: 16 }], { gridOwner: 'OTHER' });
+  c.syncSharedWhoOptions(c._sel);
+  assert.equal(c._opts.filter(function (o) { return String(o.value).indexOf('from:') === 0; }).length, 0);
+});
+
+test('★ 골라 둔 사람 줄로 고르개를 되돌린다 — 줄을 지웠다 붙이면 첫 줄로 튄다', () => {
+  const c = selCtx([{ uid: 'U2', name: '권형하', n: 16 }], { sharedWho: 'U2' });
+  c.syncSharedWhoOptions(c._sel);
+  assert.equal(c._sel.value, 'from:U2', '★ 고르개가 「내 사진」으로 튀면 무엇을 보는지 어긋납니다');
+});
+
+test('★★ 사람 줄을 고르면 «거르기»만 한다 — 목록을 다시 읽지 않는다', () => {
+  const calls = { load: 0, grid: 0 };
+  const ctx = {
+    String,
+    FROM_PREFIX: 'from:',
+    gridOwner: null, sharedWho: '', sharedOnly: false,
+    needOnly: true, failOnly: true, oldOnly: true,
+    gridItems: [{ id: 'a' }],
+    selected: { clear: function () {} },
+    resetGridRenderLimit: function () {},
+    renderGrid: function () { calls.grid++; },
+    renderNeedBox: function () {}, renderOldBox: function () {}, renderPhSummary: function () {},
+    loadGrid: function () { calls.load++; },
+    _calls: calls
+  };
+  vm.createContext(ctx);
+  vm.runInContext(cutFn(app, 'function pickOwner('), ctx);
+  ctx.pickOwner('from:U2');
+  assert.equal(ctx.sharedWho, 'U2');
+  assert.equal(ctx.sharedOnly, true, '★ 안 켜면 내 사진이 섞여 나옵니다');
+  assert.equal(ctx.needOnly, false);
+  assert.equal(calls.load, 0,
+    '★ 이미 「내 사진」인데 목록을 다시 읽으면 헛되이 클라우드를 두드립니다');
+  assert.equal(ctx.gridItems.length, 1, '★ 목록을 비우면 화면이 한 번 깜빡입니다');
+  assert.ok(calls.grid > 0, '다시 그리지 않으면 아무 일도 안 일어난 것처럼 보입니다');
+});
+
+test('★ 「받은 사진 — 다른 해까지」에서 사람을 고르면 «내 사진»으로 돌아온 뒤 거른다', () => {
+  const calls = { load: 0 };
+  const ctx = {
+    String, Date, Set,
+    FROM_PREFIX: 'from:',
+    gridOwner: '__shared__', sharedWho: '', sharedOnly: false,
+    needOnly: false, failOnly: false, oldOnly: false, gridQ: '',
+    gridItems: [{ id: 'a' }], gridYear: '2026', gridYears: [],
+    selected: { clear: function () {} },
+    resetGridRenderLimit: function () {},
+    renderGrid: function () {}, renderNeedBox: function () {}, renderOldBox: function () {},
+    renderPhSummary: function () {}, renderYearSel: function () {}, renderGotCard: function () {},
+    loadFolders: function () {}, refreshYears: function () {},
+    viewingOnlyOther: function () { return false; },
+    loadGrid: function () { calls.load++; },
+    $: function () { return null; },
+    _calls: calls
+  };
+  vm.createContext(ctx);
+  vm.runInContext(cutFn(app, 'function pickOwner('), ctx);
+  ctx.pickOwner('from:U2');
+  assert.equal(ctx.gridOwner, null, '★ 그 화면에는 「누가 줬나」가 뜻이 없습니다 — 내 사진으로 돌아와야 합니다');
+  assert.equal(calls.load, 1, '화면을 바꿨으면 목록은 다시 읽어야 합니다');
+  assert.equal(ctx.sharedWho, 'U2');
+  assert.equal(ctx.sharedOnly, true);
+});
+
 /* ══════ ④ 섞이면서 생긴 위험을 막는가 — 이 파일의 절반 ══════ */
 
 test('★★ 공유받은 사진은 «손댈 수 없다» — 화면이 아니라 사진으로 가른다', () => {

@@ -222,6 +222,9 @@ test('★★ 고르개 줄에도 장수를 적는다 — 폰에는 옆 칸이 �
     sharedCount: 25
   };
   ctx.$ = function () { return { options: Object.assign(opts, { length: 2 }) }; };
+  /* 2026-08-29: 같은 함수가 「👤 …님이 준 사진」 줄도 맞춘다 — 여기서는 받은 것이
+     없다고 두고, 사람 줄은 아래 제 검사에서 본다. */
+  ctx.syncSharedWhoOptions = function () {};
   vm.createContext(ctx);
   vm.runInContext(cutFn(app, 'function renderOwnerSelLabel('), ctx);
   ctx.renderOwnerSelLabel();

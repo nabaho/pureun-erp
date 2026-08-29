@@ -68,7 +68,7 @@ function bar(over) {
     worthRetry: function () { return o.readable !== false; },
     needsCheck: function () { return !!o.needAll; },
     renderNeedBox() {}, renderOldBox() {}, renderBackBar() {}, renderUidCard() {},
-    renderPhMenuBtn() {}, renderPhNeedBtn() {}, renderGotCard() {},
+    renderPhMenuBtn() {}, renderPhNeedBtn() {}, renderGotCard() {}, renderOwnerSelLabel() {},
     /* 2026-08-29: 내 사진에 공유받은 것이 섞인다 — 칩·거르기가 이 셋을 쓴다 */
     isSharedItem() { return false; }, sharedByName() { return ''; }, sharedOnly: false,
     ALL_OWNERS: '__all__', gridOwner: null, renderPayNote() {},
