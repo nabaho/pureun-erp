@@ -48,6 +48,22 @@ const plain = v => JSON.parse(JSON.stringify(v));
 
 const asObj = list => { const o = {}; (list||[]).forEach(c => { o[c.id] = c; }); return o; };
 
+/* 색인을 진짜 load() 가 만드는 것과 «같은 꼴»로 채운다.
+   ⚠ 2026-08-29: cardMarkLeft 가 어느 업체인지 가릴 때 ErpMatch.match 를 쓰도록
+     고쳤다 — 그전에는 it.bizno 를 곧장 봤는데, 사업자번호는 사업자등록증 칸이라
+     «명함에는 없다». 읽는 쪽은 이름으로도 찾으므로 딱지는 보이는데 눌러도 거절당했다.
+     이제 읽기와 쓰기가 같은 함수를 쓰니, 검사도 색인을 실어야 진짜와 같아진다. */
+function indexInto(M, companies){
+  M.ready = true; M.byBiz = {}; M.byName = {};
+  (companies||[]).forEach(c => {
+    const rec = { id:c.id, coName:c.name, bizNo:c.bizNo,
+      people: (c.contacts||[]).map(p => ({ name:p.name||'', email:p.email||'',
+        phone:p.phone||'', bizPhone:p.bizPhone||'', left:!!p.left, leftAt:p.leftAt||0 })) };
+    const b = M._digits(c.bizNo); if (b.length >= 10 && !M.byBiz[b]) M.byBiz[b] = rec;
+    const n = M._norm(c.name);    if (n && !M.byName[n]) M.byName[n] = rec;
+  });
+}
+
 /* data/companies 를 흉내 내고, 무엇을 썼는지 받아 둔다.
    ⚠ ErpMatch 는 «진짜»를 싣는다 — 사람 가리는 규칙(keyOfCard·samePerson)이 읽을 때와
      같은지가 이 검사의 핵심이라, 대역을 쓰면 아무것도 안 보게 된다. */
@@ -76,6 +92,7 @@ function load(companies){
   vm.createContext(ctx);
   vm.runInContext(src.slice(i, end).replace(/^const /, 'var ') + ';', ctx);
   ctx.ErpMatch.load = () => { ctx._reloaded = true; };
+  indexInto(ctx.ErpMatch, companies);
   vm.runInContext(fnBody('cardMarkLeft'), ctx);
   return ctx;
 }
@@ -175,19 +192,25 @@ test('★ 다시 누르면 «푼다»', () => {
 /* ══════ ⑤ 업체관리에 없는 회사 ══════ */
 
 test('★ 업체관리에 없는 회사면 아무것도 안 쓰고 그렇게 말한다', () => {
+  /* 번호도 이름도 «둘 다» 업체관리에 없어야 진짜 없는 회사다 */
   const C = load([ co([]) ]);
-  return C.cardMarkLeft(card({ bizno:'505-86-00987', email:'park@x.kr' }), true).then(r => {
+  return C.cardMarkLeft(card({ company:'없는회사', bizno:'505-86-00987',
+    email:'park@x.kr' }), true).then(r => {
     assert.equal(r.ok, false);
     assert.equal(C._writes.length, 0, '★ 없는 업체를 만들면 업체관리에 유령이 쌓인다');
     assert.match(r.message, /업체관리/);
   });
 });
 
-test('사업자번호가 없는 명함도 거절한다', () => {
-  const C = load([ co([]) ]);
-  return C.cardMarkLeft(card({ bizno:'', email:'park@x.kr' }), true).then(r => {
-    assert.equal(r.ok, false);
-    assert.equal(C._writes.length, 0);
+test('★ 사업자번호가 없는 명함도 «회사 이름으로» 찾는다', () => {
+  /* ⚠ 2026-08-29 대표 보고로 드러난 결함. 사업자번호는 «사업자등록증 칸»이라
+     명함에는 원래 없다. 그런데 쓰는 쪽만 번호를 요구해서, 🚪 딱지는 보이는데
+     눌러도 「사업자번호가 없다」며 거절당했다 — 명함에서는 사실상 못 쓰는 단추였다.
+     읽는 쪽(match)은 번호가 없으면 이름으로 찾는다. 같은 함수를 쓰게 고쳤다. */
+  const C = load([ co([{ id:'p1', email:'park@gana.co.kr' }]) ]);
+  return C.cardMarkLeft(card({ bizno:'', email:'park@gana.co.kr' }), true).then(r => {
+    assert.equal(r.ok, true, '★ 명함에 없는 칸을 요구하면 명함에서는 못 쓰는 단추가 된다');
+    assert.equal(C._writes[0]['data/companies/v/c1'].contacts[0].left, true);
   });
 });
 
@@ -254,6 +277,7 @@ test('★ 업체관리가 배열꼴이어도 쓴다 — 두 꼴이 실제로 다
   vm.createContext(ctx);
   vm.runInContext(src.slice(i, end).replace(/^const /, 'var ') + ';', ctx);
   ctx.ErpMatch.load = () => {};
+  indexInto(ctx.ErpMatch, arr);
   vm.runInContext(fnBody('cardMarkLeft'), ctx);
   return ctx.cardMarkLeft(card({ email:'park@gana.co.kr' }), true).then(r => {
     assert.equal(r.ok, true);
