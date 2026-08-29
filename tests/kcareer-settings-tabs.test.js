@@ -29,7 +29,8 @@ function panelDepths() {
 
 test('환경설정 탭 패널은 모두 같은 깊이의 «형제»다 — 하나라도 더 깊으면 갇힌 것이다', () => {
   const { panels } = panelDepths();
-  assert.ok(panels.length >= 8, '탭 패널이 여덟 이상이어야 합니다 (' + panels.length + ')');
+  /* 개수를 박지 않는다 — 탭을 합치거나 늘려도 «형제인가»라는 규칙은 그대로다 */
+  assert.ok(panels.length >= 2, '탭 패널이 둘 이상이어야 합니다 (' + panels.length + ')');
   const d0 = panels[0].depth;
   panels.forEach((p) => {
     assert.equal(p.depth, d0,
@@ -45,7 +46,7 @@ test('탭 단추마다 짝이 되는 패널이 있다 — id 는 tab-<이름>', 
   const src = lines.join('\n');
   const seg = src.slice(src.indexOf('id="page-settings"'), src.indexOf('</section>', src.indexOf('id="page-settings"')));
   const names = [...seg.matchAll(/<button class="tab[^"]*" data-tab="([^"]+)"/g)].map((m) => m[1]);
-  assert.ok(names.length >= 8, '탭 단추가 여덟 이상이어야 합니다');
+  assert.ok(names.length >= 2, '탭 단추가 둘 이상이어야 합니다');
   names.forEach((n) => assert.ok(seg.indexOf('id="tab-' + n + '"') > 0, n + ' 짝 패널이 없습니다'));
 });
 
@@ -83,4 +84,36 @@ test('붙여넣기는 «도장 칸을 누른 뒤»에만 받는다 — 화면 �
   assert.doesNotMatch(bare, /document\.addEventListener\('paste'/,
     '문서 전체에 붙여넣기를 걸면 안 됩니다');
   assert.match(bare, /sDrop\.tabIndex/, '누를 수 있어야 붙여넣기를 받습니다');
+});
+
+test('★ 공통 탭 초기화는 «자기 짝 패널이 있는» 단추만 맡는다', () => {
+  /* 이력서 화면 탭은 rhTab 으로 움직이고 패널 이름이 tab- 로 시작하지 않는다.
+     그런데 initTabs 가 onclick 을 덮어써서, 누르면 없는 패널을 찾다가 네 패널을 «전부 껐다».
+     처음엔 보이다가 한 번 누르면 빈 화면이 됐다(대표 제보 2026-08-29). */
+  const at = bare.indexOf('function initTabs');
+  const fn = bare.slice(at, at + 1600);
+  assert.match(fn, /page\.querySelector\('#tab-'\s*\+\s*btn\.dataset\.tab\)/,
+    '짝 패널이 없는 단추는 건드리지 말아야 합니다');
+});
+
+test('이력서 화면 탭은 제 함수(rhTab)를 그대로 쓴다 — 덮이면 화면이 빈다', () => {
+  const seg = src.slice(src.indexOf('id="rh-tabrow"'), src.indexOf('id="rh-tabrow"') + 900);
+  ['rh-edit', 'rh-resume', 'rh-profile', 'rh-pdf'].forEach((id) => {
+    assert.ok(seg.indexOf("rhTab('" + id + "'") > 0, id + ' 단추가 rhTab 을 불러야 합니다');
+    assert.equal(src.indexOf('id="tab-' + id + '"'), -1,
+      'tab-' + id + ' 패널을 만들면 공통 초기화가 다시 가로챕니다');
+  });
+});
+
+test('신분증과 계좌는 한 탭이다 — 둘 다 민감한 개인 서류다 (대표 지시 2026-08-29)', () => {
+  assert.equal(src.indexOf('data-tab="account"'), -1, '계좌 탭 단추는 없어야 합니다');
+  const seg = src.slice(src.indexOf('id="tab-idmgr"'), src.indexOf('id="tab-navmgr"'));
+  assert.ok(seg.indexOf('id="idDocs"') > 0, '신분증 목록이 있어야 합니다');
+  assert.ok(seg.indexOf('id="acList"') > 0, '계좌 목록이 같은 탭에 있어야 합니다');
+  assert.ok(seg.indexOf('class="pi-side"') > 0, '둘을 한 줄에 나란히 놓아야 합니다');
+});
+
+test('합친 탭을 열면 계좌도 함께 그린다 — 안 그리면 빈 목록만 보인다', () => {
+  const at = bare.indexOf("'idmgr':");
+  assert.match(bare.slice(at, at + 200), /renderAccounts/);
 });
