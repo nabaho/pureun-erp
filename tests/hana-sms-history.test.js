@@ -111,7 +111,12 @@ test('★★ 지난 문자를 넣어도 lastOkAt 을 찍지 않는다 — 진짜
   assert.ok(at > 0, 'lastOkAt 을 찍는 자리가 없어졌습니다');
   /* 그 줄이 「알림으로 온 것일 때만」 도는지 본다 */
   const before = b.slice(0, at);
-  assert.match(before.slice(-300), /if\s*\(!fromHistory\)\s*\{/,
+  /* ⚠ 2026-08-29: 갈래가 두 가지로 늘었다 — 지난 문자에는 lastHistoryAt 을 따로 찍는다
+     (안 찍으면 화면이 「지난 문자 가져오기를 누르세요」를 영영 되풀이한다).
+     그래서 모양이 if(!fromHistory){…} 에서 if(fromHistory){…} else {…} 로 바뀌었다.
+     못 박을 것은 모양이 아니라 «lastOkAt 이 fromHistory 로 갈린 자리에 있는가» 다. */
+  assert.match(before.slice(-400),
+    /if\s*\(!fromHistory\)\s*\{|if\s*\(fromHistory\)\s*\{[\s\S]*\}\s*else\s*\{/,
     '★ 지난 문자를 끌어와도 「폰이 살아 있다」로 찍힙니다 — ' +
     '알림이 막힌 채 「멀쩡함」이 되어 진짜 끊김을 영영 못 알아챕니다');
 });

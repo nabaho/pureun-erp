@@ -207,3 +207,25 @@ test('★★ 연결됐는데 한 건도 없을 때 «할 일»을 표가 바로 
     '★ 무엇을 눌러야 하는지 안 적는다 — 「받은 문자 없음」만 보면 고장인 줄 안다');
   assert.ok(/,\s*true\s*\)$/.test(call), '★ 눌러서 고치는 창으로 갈 수 없다');
 });
+
+test('★★ 지난 문자를 «이미 끌어왔으면» 또 누르라고 하지 않는다', () => {
+  /* 대표 2026-08-29: 지난 문자 가져오기를 눌러 카드 72건이 들어왔는데도
+     화면은 「앱에서 지난 문자 가져오기를 누르세요」를 그대로 띄우고 있었다.
+     lastOkAt 은 «알림 다리가 살아 있다»는 뜻이라 지난 문자로는 안 찍는다(맞는 판단).
+     그래서 «지난 문자를 받았다»를 따로 적어 두고, 화면이 그것을 본다. */
+  const ing = bare(cutBlock(FN, 'if (action === "ingest") {'));
+  assert.ok(/lastHistoryAt:\s*Date\.now\(\)/.test(ing),
+    '★ 지난 문자를 넣고도 아무 자국을 안 남긴다 — 화면이 영영 「누르세요」를 되풀이한다');
+  assert.ok(/if\s*\(fromHistory\)/.test(ing),
+    '★ 지난 문자와 새 문자를 안 가른다 — 지난 것으로 「살아 있음」을 찍으면 진짜 끊김을 못 알아챈다');
+
+  const st = bare(cutBlock(FN, 'if (action === "pairStatus") {'));
+  assert.ok(/(^|[^\w$])lastHistoryAt\s*:/.test(st), '★ 서버는 적는데 화면에 안 보내 준다');
+
+  const chip = bare(cutBlock(ERP, 'function hanaStatChip(){'));
+  assert.ok(/if\(d\.lastHistoryAt\)/.test(chip),
+    '★ 화면이 그 자국을 안 본다 — 이미 한 일을 또 시킨다');
+  const done = chipCalls(chip).find((c) => /지난 문자 받음/.test(c));
+  assert.ok(done, '★ 「지난 문자 받음」이라고 말해 주는 갈래가 없다');
+  assert.ok(/,\s*true\s*\)$/.test(done), '그 표에서도 고치는 창으로 갈 수 있어야 한다');
+});

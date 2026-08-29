@@ -2220,7 +2220,13 @@ exports.hanaMessageBridge = functions
              「폰과 말이 통한다」가 아니다. 지난 것을 넣었다고 살아 있다고 찍으면,
              알림이 막힌 채로 「멀쩡함」이 되어 진짜 끊김을 영영 못 알아챈다.
              PC 붙여넣기도 같은 까닭으로 안 찍는다(아래). */
-        if (!fromHistory) {
+        if (fromHistory) {
+          /* ★ 지난 문자는 lastOkAt 을 안 찍는다(위 까닭). 그렇다고 아무 자국도
+             안 남기면, 화면이 「앱에서 지난 문자 가져오기를 누르세요」를 «영영»
+             되풀이한다 — 방금 눌러 72건이 들어왔는데도 그랬다(2026-08-29 대표).
+             그래서 «지난 문자를 받았다»는 것만 따로 적는다. 살아 있음과는 다른 말이다. */
+          await hanaDeviceRef(linked).update({ lastHistoryAt: Date.now() }).catch(() => {});
+        } else {
           await hanaDeviceRef(linked).update({ lastOkAt: Date.now(), lastSkip: null }).catch(() => {});
         }
         hanaJson(res, 200, { ok: true, saved: true, id: tx.id }); return;
@@ -2361,6 +2367,9 @@ exports.hanaMessageBridge = functions
           /* 「열쇠가 죽어 거절했다」 — 화면이 「앱이 없다」와 가르는 데 쓴다. */
           lastReject: (d.lastReject && d.lastReject.at)
             ? { reason: String(d.lastReject.reason || "bad_token"), at: Number(d.lastReject.at || 0) } : null,
+          /* 「지난 문자를 끌어온 적이 있다」 — 살아 있음(lastOkAt)과 다른 말이다.
+             이걸 안 보내면 화면이 이미 한 일을 또 시킨다. */
+          lastHistoryAt: Number(d.lastHistoryAt || 0),
           disabled: d.disabled === true,
         }));
         hanaJson(res, 200, { ok: true, devices }); return;
