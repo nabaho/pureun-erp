@@ -177,7 +177,10 @@ test('★ 고르기 창은 하나를 같이 쓴다 — 창을 두 벌 만들면 
   assert.match(picker, /albumPickTarget\s*=\s*\{/, '고를 대상을 안 적어 둡니다');
   assert.match(picker, /slotIdx\s*:\s*slotIdx/, '어느 칸에 넣을지를 안 담습니다');
   assert.match(picker, /ref\s*:\s*!!ref/, '참고 캡처인지를 안 담으면 증빙 칸으로 들어갑니다');
-  assert.match(fnOf('openRefCapPicker'), /openAlbumPicker\(sid, null, true\)/);
+  /* ⚠ 여기 openRefCapPicker 를 보던 줄이 있었다 — 2026-08-29 에 참고 캡처의
+     「사진첩에서 고르기」를 «일부러» 뺐다(대표 결정). 없어진 함수를 붙들고 있어
+     main 이 빨간불이 됐다. 넣는 길은 Ctrl+V 와 끌어다 놓기로 남아 있고,
+     그 둘은 아래 검사가 따로 지킨다. */
   /* 고른 뒤 참고 캡처 쪽으로 갈라지는 자리.
      ⚠ 2026-08-25 재조정 — 「한 번에 모두 보고 고르기」(1e86c9f9)로 바뀌며
        pickAlbumPhoto 가 pkPut 으로 갈렸는데 이 검사가 옛 이름을 붙잡아

@@ -546,9 +546,15 @@ test('고르는 창은 방문일을 먼저 보여주되, 그 날 사진이 없�
      아무것도 없다」고 오해한다. */
   assert.match(fn[0], /visitOnly\s*=\s*false/, '★ 그 날 사진이 없을 때 전체로 되돌리지 않습니다');
   assert.match(fn[0], /DayKey\(/, '어느 날 사진인지 견주는 곳이 없습니다');
-  // 방문일을 «켠 채로» 연다는 뜻은 창을 여는 쪽이 지킨다
+  /* ⚠ 2026-08-29 또 바뀌었다 — 「방문일만 켜고 열기」를 껐다. 방문일에 찍힌 것이
+     명함·서류뿐인 일이 많아 «빈 화면부터» 보게 됐기 때문이다(대표 보고).
+     대신 ㉮회의·현장 사진만 가져오고 ㉯방문일 묶음을 격자 맨 위에 둔다.
+     지켜야 할 뜻은 처음과 같다 — 「빈 화면부터 보여 주지 않는다」. */
   const opener = gov.match(/function openAlbumPicker\([\s\S]*?\n\}/)[0];
-  assert.match(opener, /visitOnly\s*=\s*!ref/, '방문일을 먼저 보여주지 않습니다');
+  assert.match(opener, /PK\.visitOnly\s*=\s*false/,
+    '방문일만 켜고 열면 그 날 사진이 없을 때 빈 화면부터 보게 됩니다');
+  assert.match(opener, /PK\.onlyMeeting\s*=\s*!ref/,
+    '증빙 칸인데 명함·서류까지 가져옵니다 — 고를 것이 묻힙니다');
 });
 
 test('사진첩이 사람별로 갈려 있다 — 내 uid 를 owner 로 넘긴다', () => {
