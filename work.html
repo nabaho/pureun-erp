@@ -682,6 +682,19 @@
   .sucw select{padding:3px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px;
     max-width:118px;min-width:0;font-family:inherit;background:#fff}
   .sucw button{font-size:10.5px;padding:2px 7px;flex:0 0 auto}
+  /* 인수인계 표 머리 걸러 보기 */
+  .hofh{cursor:pointer;user-select:none;white-space:nowrap}
+  .hofh:hover{color:var(--acc2)}
+  .hofh.on{color:var(--acc2);font-weight:800}
+  .hofp{position:absolute;z-index:30;margin-top:4px;min-width:170px;max-width:260px;
+    background:#fff;border:1px solid var(--acc2);border-radius:10px;box-shadow:0 8px 24px rgba(24,34,52,.14);
+    padding:8px;font-weight:400;text-transform:none;letter-spacing:0}
+  .hotbl thead th{position:sticky;overflow:visible}
+  /* 인수인계 위 줄 — 제목과 등록칸을 한 줄에 */
+  .horeg{gap:7px;flex-wrap:wrap;margin-bottom:10px}
+  .horeg .rl{font-size:12.5px;font-weight:800;color:var(--sub);white-space:nowrap}
+  .horeg .tin{padding:4px 10px;border:1px solid var(--line);border-radius:13px;font-size:12px;font-family:inherit}
+  .horeg button.primary{padding:5px 14px;font-size:12.5px}
   .hocard{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px}
   /* 카드 머리(부재자 이름·진행률)도 함께 고정한다 — 내리다 보면 누구 건을 넘기는
      중인지가 사라져 이름 없이 회사 목록만 보게 된다.
@@ -1452,12 +1465,15 @@ function confirmM(msg,opts){
     m.innerHTML='<div style="background:#fff;border-radius:14px;padding:22px 24px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.28)">'
       +'<div style="font-size:14px;line-height:1.6;white-space:pre-line;margin-bottom:18px">'+esc(msg)+'</div>'
       +'<div class="row" style="justify-content:flex-end;gap:8px"><button id="cf-no">'+esc(opts.cancel||'취소')+'</button>'
+      // 세 번째 길 — 안 주면 예전 그대로 둘이다. 「되돌릴까 말까」처럼 둘로는 못 묻는 것에 쓴다.
+      +(opts.alt?'<button id="cf-alt">'+esc(opts.alt)+'</button>':'')
       +'<button id="cf-yes" class="primary" style="background:'+danger+'">'+esc(opts.ok||'확인')+'</button></div></div>';
     document.body.appendChild(m);
     function done(v){ m.remove(); document.removeEventListener('keydown',key,true); resolve(v); }
     function key(e){ if(e.key==='Escape'){e.stopPropagation();done(false);} else if(e.key==='Enter'){e.stopPropagation();done(true);} }
     m.querySelector('#cf-yes').onclick=function(){done(true);};
     m.querySelector('#cf-no').onclick=function(){done(false);};
+    var al=m.querySelector('#cf-alt'); if(al) al.onclick=function(){done('alt');};
     m.onclick=function(e){ if(e.target===m) done(false); };
     document.addEventListener('keydown',key,true);
     var y=m.querySelector('#cf-yes'); if(y)y.focus();
@@ -4503,7 +4519,8 @@ function _handoverTo(id,sid,name,why){
        (되돌아가지는 않는다 — 미러는 푸른이알피가 «실제로 바뀌었을 때만» 덮는다.
         그래도 어긋난 채로 두면 언젠가 푸른이알피를 손댄 순간 여기가 덮인다) */
   if(peLinked(it)) f.pe_setmain={sid:sid,name:name,from:old.sid||'',at:new Date().toISOString()};
-  patchItem(id,f).then(function(ok){
+  // ⚠ 약속을 돌려준다 — 여러 건을 한꺼번에 넘기고 「다 끝난 뒤」에 무엇을 하려면 필요하다
+  return patchItem(id,f).then(function(ok){
     if(!ok)return;   // 담당 변경이 실패했으면 감사 로그를 남기지 않는다
     addLog(id,'담당 '+old.name+' → '+name+' (인수 확인 대기)'+(why?' · '+why:''),todayStr(),'ho');
     toast('🔄 담당 변경: '+name+' — 인수 확인 대기'); if(S.drawerId===id)renderDrawer(); route();
@@ -4788,6 +4805,69 @@ function saveAiQa(id,n){
     S.noteOpen=true; renderDrawer(); route(); });
 }
 
+/* ── 인수인계 걸러 보기 ──
+   값이 몇 가지로 갈리는 칸(구분·노트·후임)만 단다. 기업·업무는 값이 제각각이라
+   거르는 것보다 검색이 낫다. 카드마다 따로 걸리게 부재자 아이디로 나눠 담는다 —
+   한 곳에 담으면 사람 A 에서 고른 조건이 사람 B 목록까지 좁힌다. */
+var HO_FCOLS=[
+  ['cat','구분',    function(it){ return catNorm(it.cat)||'기타'; }],
+  ['note','노트',   function(it){ return noteDone(it)?'작성됨':'미작성'; }],
+  ['suc','후임',    function(it){ return (it.mgr_main&&it.mgr_main.name)||'(미지정)'; }]
+];
+function hoFSel(sid,k){ var v=S.hoF&&S.hoF[sid]&&S.hoF[sid][k]; return (v instanceof Array)?v:null; }
+function hoFPass(it,sid,except){
+  for(var i=0;i<HO_FCOLS.length;i++){
+    var c=HO_FCOLS[i]; if(c[0]===except) continue;
+    var sel=hoFSel(sid,c[0]); if(!sel) continue;
+    if(!sel.length) return false;                 // 하나도 안 골랐다 = 아무것도 안 남는다
+    if(sel.indexOf(c[2](it))<0) return false;
+  }
+  return true;
+}
+function hoFVals(arr,sid,k){
+  var c=HO_FCOLS.filter(function(x){return x[0]===k;})[0]; if(!c) return [];
+  var m={}, out=[];
+  arr.forEach(function(it){ if(!hoFPass(it,sid,k)) return;
+    var v=c[2](it); if(!(v in m)){ m[v]=0; out.push(v); } m[v]++; });
+  return out.sort(function(a,b){ return String(a).localeCompare(String(b),'ko'); })
+    .map(function(v){ return [v,m[v]]; });
+}
+function hoFAny(sid){ return HO_FCOLS.some(function(c){ return !!hoFSel(sid,c[0]); }); }
+function hoFPop(sid,k){ var t=sid+':'+k; S.hoPop=(S.hoPop===t)?'':t; renderHo(); }
+function hoFToggle(sid,k,v,on){
+  S.hoF=S.hoF||{}; S.hoF[sid]=S.hoF[sid]||{};
+  var cur=hoFSel(sid,k);
+  if(!cur){ // 처음 누르면 「그것만」 — 하나 고르려고 나머지를 다 끄게 하지 않는다
+    S.hoF[sid][k]=[v];
+  }else{
+    var a=cur.filter(function(x){ return x!==v; });
+    if(on) a.push(v);
+    S.hoF[sid][k]=a;
+  }
+  renderHo();
+}
+function hoFClear(sid){ if(S.hoF) delete S.hoF[sid]; S.hoPop=''; renderHo(); }
+function hoTh(sid,arr,k,label,w){
+  var sel=hoFSel(sid,k), open=S.hoPop===(sid+':'+k);
+  var h='<th'+(w?' style="'+w+'"':'')+'>'
+    +'<span class="hofh'+(sel?' on':'')+'" onclick="event.stopPropagation();hoFPop(\''+escJ(sid)+'\',\''+k+'\')" '
+    +'title="'+esc(label)+'로 걸러 봅니다">'+esc(label)+' ▽'+(sel?' '+sel.length:'')+'</span>';
+  if(open){
+    h+='<div class="fbk" onclick="hoFPop(\''+escJ(sid)+'\',\''+k+'\')"></div>'
+      +'<div class="hofp" onclick="event.stopPropagation()"><div class="fpl">'
+      +hoFVals(arr,sid,k).map(function(pair){
+          var on=!sel||sel.indexOf(pair[0])>=0;
+          return '<label><input type="checkbox"'+(on?' checked':'')
+            +' onchange="hoFToggle(\''+escJ(sid)+'\',\''+k+'\',\''+escJ(String(pair[0]))+'\',this.checked)">'
+            +'<span>'+esc(pair[0])+'</span><span class="c">'+pair[1]+'</span></label>';
+        }).join('')
+      +'</div><div class="fpa"><span class="lnk" onclick="hoFClear(\''+escJ(sid)+'\')">모두 풀기</span>'
+      +'<span style="flex:1"></span>'
+      +'<span class="lnk" onclick="hoFPop(\''+escJ(sid)+'\',\''+k+'\')">닫기</span></div></div>';
+  }
+  return h+'</th>';
+}
+
 /* ── 인수인계 화면 (부재 관리·체크아웃·문서철) ── */
 function renderHo(){
   var app=$('app'); if(!app)return;
@@ -4806,22 +4886,25 @@ function renderHo(){
       +'<span style="flex:1"></span>'
       +'<span class="chipbtn" onclick="window.scrollTo({top:0,behavior:\'smooth\'})" title="맨 위로 올려 등록 칸을 폅니다">▲ 맨 위</span>'
       +'</div><div class="hofull">'
-      +'<div class="row"><h1>인수인계</h1><span class="muted" style="font-size:12.5px">퇴사·휴직·연차 등 부재 전 업무 인계 관리</span></div>';
+      /* 제목과 등록칸을 한 줄에. 종전에는 제목줄·패널 제목·입력줄·설명줄로 네 줄을
+         먹었는데, 등록은 어쩌다 한 번 하는 일이라 그만한 자리를 늘 내줄 것이 아니다.
+         설명은 등록 단추의 툴팁으로 내렸다 — 매번 읽을 내용이 아니다. */
+      +'<div class="row horeg"><h1>인수인계</h1>';
     // 등록 폼 (대표만 — 정책⑥)
     if(admin){
-      h+='<div class="panel"><h2 style="margin-bottom:10px">🚪 부재 예정 등록</h2>'
-        +'<div class="row" style="flex-wrap:wrap">'
-        +'<select id="lv-sid" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px">'
+      h+='<span class="sepv"></span><span class="rl">🚪 부재 예정</span>'
+        +'<select id="lv-sid" class="tool">'
         +st.map(function(u){return '<option value="'+esc(u.sid)+'" data-name="'+esc(u.name)+'">'+esc(u.name)+(u.title?' · '+esc(u.title):'')+'</option>';}).join('')+'</select>'
-        +'<select id="lv-type" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px">'
+        +'<select id="lv-type" class="tool">'
         +LV_TYPES.map(function(t){return '<option>'+t+'</option>';}).join('')+'</select>'
-        +'<input id="lv-date" type="date" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px">'
-        +'<input id="lv-note" placeholder="메모 (선택)" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px;min-width:160px">'
-        +'<button class="primary" onclick="addLeaving()">등록</button></div>'
-        +'<div class="muted" style="font-size:11.5px;margin-top:7px">등록하면 당사자 화면에 인수인계 배너가 뜨고, 아래에 체크아웃 현황이 생깁니다.</div></div>';
+        +'<input id="lv-date" type="date" class="tin">'
+        +'<input id="lv-note" class="tin" placeholder="메모 (선택)" style="min-width:130px">'
+        +'<button class="primary" onclick="addLeaving()" '
+        +'title="등록하면 당사자 화면에 인수인계 배너가 뜨고, 아래에 체크아웃 현황이 생깁니다">등록</button>';
     } else {
-      h+='<div class="panel muted" style="font-size:12.5px">부재 예정 등록은 대표만 가능합니다. 아래에서 진행 현황을 볼 수 있습니다.</div>';
+      h+='<span class="sepv"></span><span class="muted" style="font-size:12px">부재 예정 등록은 대표만 가능합니다 — 아래에서 진행 현황을 볼 수 있습니다.</span>';
     }
+    h+='</div>';
     h+='</div></div>';                 // .hofull / .hohead 닫기 — 여기까지가 고정되는 위 영역
     // 인수 확인 지연 (대표 배지 — 정책③)
     var od=hoOverdue();
@@ -4855,9 +4938,19 @@ function renderHo(){
       else{
         // 체크아웃 현황도 잔여 업무 표와 같은 틀고정을 쓴다 — 부재자 건이 많으면
         // 내리는 동안 「노트 / 후임 / 인수 확인」이 사라져 어느 칸인지 알 수 없었다
-        h+='<div class="hotbl"><table><thead><tr><th style="width:52px">구분</th><th>기업 / 업무</th>'
-          +'<th style="width:74px">노트</th><th style="width:186px">후임</th><th style="width:74px">인수 확인</th></tr></thead><tbody>';
-        its.forEach(function(it){
+        /* 걸러 보기를 거친 것만 그린다. 몇 건이 걸렸는지는 머리행 이름 옆에 적힌다. */
+        var shown=its.filter(function(it){ return hoFPass(it,lv._sid,''); });
+        h+='<div class="hotbl"><table><thead><tr>'
+          +'<th class="rowno">'+(hoFAny(lv._sid)
+              ?'<span class="fx" onclick="hoFClear(\''+escJ(lv._sid)+'\')" title="걸러 보기를 모두 해제합니다">✕</span>':'#')+'</th>'
+          +hoTh(lv._sid,its,'cat','구분','width:64px')
+          +'<th>기업 / 업무</th>'
+          +hoTh(lv._sid,its,'note','노트','width:82px')
+          +hoTh(lv._sid,its,'suc','후임','width:190px')
+          +'<th style="width:74px">인수 확인</th></tr></thead><tbody>';
+        if(!shown.length) h+='<tr><td colspan="6" class="moremark">조건에 맞는 업무가 없습니다.'
+          +' <span class="lnk" onclick="hoFClear(\''+escJ(lv._sid)+'\')">조건 풀기</span></td></tr>';
+        shown.forEach(function(it,_i){
           var asg=it.ho&&it.ho.from&&(it.ho.from.sid===lv._sid||it.ho.from.name===lv.name);
           var stillMine=(it.mgr_main&&(it.mgr_main.sid===lv._sid||it.mgr_main.name===lv.name));
           var sucSel;
@@ -4877,7 +4970,7 @@ function renderHo(){
           } else {
             sucSel='<b>'+esc(it.mgr_main&&it.mgr_main.name||'—')+'</b>';
           }
-          h+='<tr><td>'+catBadge(it.cat)+'</td>'
+          h+='<tr><td class="rowno">'+(_i+1)+'</td><td>'+catBadge(it.cat)+'</td>'
             +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
             +'<div class="sub">'+esc(it.title||'')+'</div></td>'
             +'<td>'+(noteDone(it)?'<span class="ck">✓</span>':'<span class="ckno">미작성</span>')+'</td>'
@@ -4926,7 +5019,7 @@ function renderHo(){
               +'title="앞으로 이 사람 몫을 누가 받는지 적어 둡니다 — 메일함도 같은 표를 봅니다">🔗 승계표에 적기</button>'
               +'</span>')
           +'</div>'
-          +'<div class="hotbl"><table><thead><tr><th style="width:52px">구분</th><th>기업 / 업무</th>'
+          +'<div class="hotbl"><table><thead><tr><th class="rowno">#</th><th style="width:64px">구분</th><th>기업 / 업무</th>'
           +'<th style="width:74px">노트</th><th style="width:186px">후임 지정</th></tr></thead><tbody>';
         /* ── 회사별로 묶어 낸다 (대표 지시 2026-08-27 「사업장 등을 각각 배분」) ──
            묶음 머리줄에서 그 회사 것을 «한 번에» 넘길 수 있다.
@@ -4938,7 +5031,7 @@ function renderHo(){
         succCoGroups(nm).forEach(function(g){
           // ⚠ 사람 이름에는 빈칸·따옴표가 들어올 수 있다 — 그대로 id 에 쓰면 못 찾는다
           var gid='sucCo-'+safeKey(nm)+'-'+safeKey(g.k);
-          h+='<tr class="hogrp"><td colspan="2"><b>🏢 '+esc(g.name)+'</b>'
+          h+='<tr class="hogrp"><td colspan="3"><b>🏢 '+esc(g.name)+'</b>'
             +' <span class="muted">'+g.items.length+'건</span></td>'
             +'<td colspan="2" onclick="event.stopPropagation()" style="text-align:right">'
             +'<select id="'+gid+'" style="padding:3px 6px;border:1px solid var(--line);border-radius:6px;font-size:11.5px">'
@@ -4947,8 +5040,8 @@ function renderHo(){
             +'onclick="succCoBulk(\''+escJ(nm)+'\',\''+escJ(g.k)+'\',document.getElementById(\''+gid+'\'))" '
             +'title="'+esc(g.name+' 의 '+g.items.length+'건을 한 번에 넘깁니다')+'">🔄 이 회사 넘기기</button>'
             +'</td></tr>';
-          g.items.forEach(function(it){
-            h+='<tr><td>'+catBadge(it.cat)+'</td>'
+          g.items.forEach(function(it,_j){
+            h+='<tr><td class="rowno">'+(_j+1)+'</td><td>'+catBadge(it.cat)+'</td>'
               +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
               +'<div class="sub">'+esc(it.title||'')+(it.last?' · 최근 '+esc(md(it.last.d)):'')+'</div></td>'
               +'<td>'+(noteDone(it)?'<span class="ck">✓</span>':'<span class="ckno">미작성</span>')+'</td>'
@@ -5031,10 +5124,41 @@ function addLeaving(){
     .then(function(){ toast('🚪 부재 예정 등록: '+name); })
     .catch(function(e){ toast('등록 실패: '+e.message,'err'); });
 }
+/* 이 부재 때문에 넘어간 건 — ho.from 이 그 사람이고 아직 되돌리지 않은 것.
+   ⚠ 「지금 담당이 그 사람이 아니다」만으로는 안 된다. 원래부터 남의 건일 수 있다. */
+function hoMovedBy(sid,name){
+  return allItems().filter(function(it){
+    var f=it.ho&&it.ho.from; if(!f) return false;
+    if(!(f.sid===sid||(name&&f.name===name))) return false;
+    return (it.mgr_main&&it.mgr_main.sid)!==sid;      // 아직 안 돌아온 것만
+  });
+}
 function cancelLeaving(sid){
-  confirmM('이 부재 예정을 취소(삭제)할까요?\n작성된 노트·인수 기록은 그대로 남습니다.',{ok:'취소 처리',danger:true}).then(function(ok){
-    if(!ok)return;
-    fbDb.ref(NS+'/leaving/'+sid).remove().then(function(){ toast('부재 예정 취소됨'); });
+  var lv=leaving[sid]||{}, moved=hoMovedBy(sid,lv.name);
+  var base='이 부재 예정을 취소(삭제)할까요?\n작성된 노트·인수 기록은 그대로 남습니다.';
+  if(!moved.length){
+    confirmM(base,{ok:'취소 처리',danger:true}).then(function(ok){
+      if(!ok)return;
+      fbDb.ref(NS+'/leaving/'+sid).remove().then(function(){ toast('부재 예정 취소됨'); });
+    });
+    return;
+  }
+  /* 이미 넘어간 것이 있으면 그냥 지우면 안 된다 — 부재는 없던 일이 되는데
+     담당은 후임에게 남아 두 사실이 어긋난다. 되돌릴지 반드시 고르게 한다. */
+  confirmM(base+'\n\n⚠ 이 부재로 이미 '+moved.length+'건이 후임에게 넘어갔습니다.\n'
+    +'그냥 취소하면 담당은 돌아오지 않습니다.',
+    {ok:'되돌리고 취소',alt:'그대로 두고 취소',danger:true}).then(function(ans){
+    if(!ans)return;                         // 닫거나 [취소] — 아무것도 안 한다
+    var undo=(ans===true);                  // true = 되돌리고 취소, 'alt' = 그대로 두고 취소
+    var job=undo?Promise.all(moved.map(function(it){
+        var back=(it.ho&&it.ho.from)||{};
+        return _handoverTo(it._id,back.sid||sid,back.name||lv.name||'',"부재 예정 취소로 되돌림");
+      })):Promise.resolve();
+    job.then(function(){
+      fbDb.ref(NS+'/leaving/'+sid).remove().then(function(){
+        toast(undo?('↩ '+moved.length+'건을 되돌리고 부재 예정 취소됨'):'부재 예정 취소됨 — 담당은 그대로입니다');
+      });
+    });
   });
 }
 function assignSuccessor(id,selEl){
