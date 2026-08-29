@@ -142,7 +142,106 @@ test('★ 켤 때 다른 거르개를 끈다 — 겹치면 지금 무엇을 보�
 });
 
 test('★ 사람을 바꾸면 「공유받은 것만」이 풀린다 — 다른 사람 화면에는 뜻이 없다', () => {
-  assert.match(cutFn(app, 'function pickOwner('), /sharedOnly = false/);
+  assert.match(cutFn(app, 'function pickOwner('), /sharedOnly = false; sharedWho = ''/);
+});
+
+/* ══════ ③-2 «누가 준 것만» 골라 보기 (대표 지시 2026-08-29 두 번째) ══════
+   "다른직원들과 공유하는경우 공유된 사람의 사진만 골라서 볼 수 있게 해달라." */
+
+test('★★ 그 사람이 준 것만 남는다 — 여럿에게 받으면 누구 것인지로 좁혀야 일이 된다', () => {
+  const fn = cutFn(app, 'function shownItemsFresh(');
+  assert.match(fn, /if \(sharedWho\) list = list\.filter/, '★ 사람으로 좁히는 자리가 없습니다');
+  assert.match(fn, /__ownerUid === sharedWho/, '준 사람이 아니라 다른 것으로 가르고 있습니다');
+  /* 「공유받은 것만」 **다음**이어야 한다 — 앞에 두면 순서만 다를 뿐이지만,
+     둘 다 같은 자리에 있어야 분류 탭·찾기와 함께 걸린다. */
+  assert.ok(fn.indexOf('sharedOnly) list') < fn.indexOf('sharedWho) list'));
+});
+
+test('★★ 사람을 고르면 «공유받은 것만»도 함께 켜진다 — 안 켜면 내 사진이 섞여 나온다', () => {
+  const ctx = {
+    selected: { clear: function () {} },
+    resetGridRenderLimit: function () {}, renderGrid: function () {},
+    renderNeedBox: function () {}, renderOldBox: function () {},
+    sharedWho: '', sharedOnly: false, needOnly: true, failOnly: true, oldOnly: true
+  };
+  vm.createContext(ctx);
+  vm.runInContext(cutFn(app, 'function pickSharedWho('), ctx);
+  ctx.pickSharedWho('U2');
+  assert.equal(ctx.sharedWho, 'U2');
+  assert.equal(ctx.sharedOnly, true,
+    '★ 「사람은 골랐는데 왜 내 사진이 있지」가 됩니다');
+  assert.equal(ctx.needOnly, false, '다른 거르개와 겹치면 무엇을 보는지 알 수 없습니다');
+  assert.equal(ctx.oldOnly, false);
+});
+
+test('★ 같은 이름을 다시 누르면 풀린다 — 칩이 켜고 끄는 단추다', () => {
+  const ctx = {
+    selected: { clear: function () {} },
+    resetGridRenderLimit: function () {}, renderGrid: function () {},
+    renderNeedBox: function () {}, renderOldBox: function () {},
+    sharedWho: 'U2', sharedOnly: true, needOnly: false, failOnly: false, oldOnly: false
+  };
+  vm.createContext(ctx);
+  vm.runInContext(cutFn(app, 'function pickSharedWho('), ctx);
+  ctx.pickSharedWho('U2');
+  assert.equal(ctx.sharedWho, '', '★ 풀 길이 없으면 그 사람 것에 갇힙니다');
+  assert.equal(ctx.sharedOnly, true, '받은 것 보기는 그대로 둔다 — 사람만 푼 것이다');
+});
+
+test('★★ 「공유받은 것만」을 끄면 골라 둔 사람도 함께 풀린다', () => {
+  const ctx = {
+    selected: { clear: function () {} },
+    resetGridRenderLimit: function () {}, renderGrid: function () {},
+    renderNeedBox: function () {}, renderOldBox: function () {}, renderGotCard: function () {},
+    sharedOnly: true, sharedWho: 'U2', needOnly: false, failOnly: false, oldOnly: false
+  };
+  vm.createContext(ctx);
+  vm.runInContext(cutFn(app, 'function toggleShared('), ctx);
+  ctx.toggleShared();
+  assert.equal(ctx.sharedOnly, false);
+  assert.equal(ctx.sharedWho, '',
+    '★ 사람을 안 풀면 다음에 켤 때 그 사람 것만 나와 「왜 세 장뿐이지」가 됩니다');
+});
+
+test('★★ 누가 몇 장을 줬는지 «지금 격자에 있는 것»으로 센다 — 칩 숫자가 곧 나올 장수다', () => {
+  const ctx = {
+    Object, String,
+    gridItems: [
+      { meta: { __ownerUid: 'A', __ownerName: '권형하' } },
+      { meta: { __ownerUid: 'A', __ownerName: '권형하' } },
+      { meta: { __ownerUid: 'B', __ownerName: '박은비' } },
+      { meta: {} }                                   // 내 사진
+    ],
+    isSharedItem: function (it) { return !!(it.meta && it.meta.__ownerUid); },
+    sharedByName: function (it) { return it.meta.__ownerName || ''; },
+    idsOf: function () { return [1]; }
+  };
+  vm.createContext(ctx);
+  vm.runInContext(cutFn(app, 'function sharedPeople('), ctx);
+  const out = ctx.sharedPeople();
+  assert.equal(out.length, 2, '내 사진이 섞이면 안 됩니다');
+  assert.equal(out[0].name, '권형하');
+  assert.equal(out[0].n, 2, '★ 칩에 적힌 수와 눌렀을 때 나올 수가 다르면 못 믿습니다');
+  assert.equal(out[1].n, 1);
+});
+
+test('★ 이름을 몰라도 «가는 길»은 남긴다 — 빼면 그 사람 사진으로 갈 수가 없다', () => {
+  const ctx = {
+    Object, String,
+    gridItems: [{ meta: { __ownerUid: 'U9' } }],
+    isSharedItem: function () { return true; },
+    sharedByName: function () { return ''; },          // 명단을 못 읽었다
+    idsOf: function () { return [1]; }
+  };
+  vm.createContext(ctx);
+  vm.runInContext(cutFn(app, 'function sharedPeople('), ctx);
+  assert.equal(ctx.sharedPeople()[0].name, 'U9');
+});
+
+test('★ 한 사람에게만 받았으면 칩을 안 그린다 — 위 단추와 같은 말이라 자리만 먹는다', () => {
+  const fn = cutFn(app, 'function renderGotCard(');
+  assert.match(fn, /if \(list\.length < 2\) \{ who\.style\.display = 'none'/,
+    '★ 한 사람뿐인데 칩을 그리면 같은 말이 두 번입니다');
 });
 
 /* ══════ ④ 섞이면서 생긴 위험을 막는가 — 이 파일의 절반 ══════ */

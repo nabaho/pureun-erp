@@ -141,28 +141,39 @@ test('못 읽어도 화면은 산다 — 규칙이 막혀도 사진첩 자체가
    대표 지시: "받은사진으로 나오지 말고 전체사진에서 같이 보이게 하고, 공유된 사진만
    따로 선택할 수 있게." 그래서 숫자도 «색인 전체»가 아니라 **지금 격자에 섞여 있는
    받은 사진 수**를 쓴다 — 색인은 다른 해 것까지 세므로 이 단추의 숫자로는 틀리다. */
-function cardCtx(nShared, owner, on) {
+function cardCtx(nShared, owner, on, opt) {
+  opt = opt || {};
   const el = function () {
-    const o = { style: {}, textContent: '', options: [], _cls: {} };
+    const o = { style: {}, textContent: '', innerHTML: '', options: [], _cls: {} };
     o.classList = { toggle: function (k, v) { o._cls[k] = !!v; } };
     return o;
   };
-  const nodes = { gotCard: el(), gotBox: el(), gotHint: el() };
+  const nodes = { gotCard: el(), gotBox: el(), gotHint: el(), gotWho: el() };
   const items = [];
-  for (let i = 0; i < nShared; i++) items.push({ id: 's' + i, _shared: true });
-  items.push({ id: 'mine', _shared: false });     // 내 사진도 섞여 있다
+  /* 준 사람이 여럿일 수 있다(대표 지시 2026-08-29) — 기본은 한 사람이다 */
+  const from = opt.from || [];
+  for (let i = 0; i < nShared; i++) {
+    items.push({ id: 's' + i, _shared: true,
+      meta: { __ownerUid: from[i] || 'U2', __ownerName: (from[i] || 'U2') === 'U2' ? '권형하' : '박은비' } });
+  }
+  items.push({ id: 'mine', _shared: false, meta: {} });     // 내 사진도 섞여 있다
   const ctx = {
-    Number, String,
+    Number, String, Object,
     $: function (id) { return nodes[id] || null; },
+    esc: function (s) { return String(s == null ? '' : s); },
+    idsOf: function () { return [1]; },
     SHARED_OWNER: '__shared__',
     gridItems: items,
     isSharedItem: function (it) { return !!(it && it._shared); },
+    sharedByName: function (it) { return (it && it.meta && it.meta.__ownerName) || ''; },
     sharedOnly: !!on,
+    sharedWho: opt.who || '',
     gridOwner: owner,
     _nodes: nodes
   };
   vm.createContext(ctx);
-  vm.runInContext(cutFn(app, 'function renderGotCard('), ctx);
+  vm.runInContext(cutFn(app, 'function sharedPeople(') + '\n' +
+    cutFn(app, 'function renderGotCard('), ctx);
   ctx.renderGotCard();
   return ctx;
 }
