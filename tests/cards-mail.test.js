@@ -24,7 +24,9 @@ function load(){
     '/* ══════ 메일 보내기 — 순수 로직 (테스트 대상) ══════',
     '/* ══════ 메일 보내기 — 화면 ══════');
   const ctx = { console, Object, Array, String, JSON, Date, Math, RegExp, Set,
-                inLockedGroup: () => false };
+                inLockedGroup: () => false,
+    /* 2026-08-29: 단체 메일이 퇴사한 거래처 담당자를 뺀다 — 이 검사는 그 부분을 안 본다 */
+    ErpMatch: { leftOfCard: () => false } };
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
   ctx.read = expr => vm.runInContext(expr, ctx);
@@ -103,7 +105,10 @@ test('센 숫자가 실제와 맞는다', () => {
     card('d','이','', {}),
     card('e','박','park@c.com',{noMail:1})
   ], {});
-  assert.equal(JSON.stringify(r.stat), JSON.stringify({ready:2, noEmail:1, blocked:1, dup:1}));
+  /* ⚠ 2026-08-29: 「퇴사」가 한 칸 늘었다 — 단체 메일이 그 회사를 떠난 거래처 담당자를
+     빼고, 몇 명이 빠졌는지 「수신거부 N」처럼 말해 준다. 여기서는 퇴사자가 없어 0이다. */
+  assert.equal(JSON.stringify(r.stat),
+    JSON.stringify({ready:2, noEmail:1, blocked:1, dup:1, left:0}));
 });
 
 test('붙여넣은 글에서 이메일만 골라낸다', () => {

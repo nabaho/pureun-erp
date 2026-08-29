@@ -776,17 +776,25 @@
 
   /* 같이 볼 사람을 정한다 — 넘긴 목록이 그대로 최종본이다(빠진 사람은 풀린다).
      ⚠ 사진 옆과 받는 사람 자리를 **한 묶음**으로 적는다. 나눠서 하다 끊기면
-     「사진에는 공유 표시가 있는데 목록에는 안 뜨는」 반쪽 상태가 남는다. */
-  function setShare(year, id, uids, before) {
+     「사진에는 공유 표시가 있는데 목록에는 안 뜨는」 반쪽 상태가 남는다.
+
+     ⚠ **주인을 받는다**(2026-08-29). 안 받던 동안 이 함수는 언제나 «내 자리»에 대고
+       썼다. 총괄관리자가 「전체 근로자」 화면에서 남의 사진을 열어 주면
+       ① 있지도 않은 내 사진 밑에 shareWith 만 있는 유령이 생기고
+       ② 받는 사람 목록에는 그 유령을 가리키는 줄이 놓여
+       ③ 받는 쪽에서는 «빈 사진 한 장»이 뜬다 — 화면은 「공유했습니다」라고 말한다.
+       addShare·saveNote·markUsed 가 모두 주인을 받게 된 뒤에도 여기만 남아 있었다. */
+  function setShare(year, id, uids, before, owner) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     if (!deps.uid) return Promise.reject(new Error('로그인을 확인해 주세요'));
+    var who0 = owner || deps.uid;
     var now = Object.create(null), was = Object.create(null);
-    (uids || []).forEach(function (u) { if (u && u !== deps.uid) now[u] = 1; });
-    (before || []).forEach(function (u) { if (u && u !== deps.uid) was[u] = 1; });
-    var u = {}, base = metaPath(year, id);
+    (uids || []).forEach(function (u) { if (u && u !== who0) now[u] = 1; });
+    (before || []).forEach(function (u) { if (u && u !== who0) was[u] = 1; });
+    var u = {}, base = metaPath(year, id, who0);
     Object.keys(now).forEach(function (who) {
       u[base + '/shareWith/' + who] = true;
-      u[sharedToPath(who, id)] = { owner: deps.uid, year: String(year), at: Date.now() };
+      u[sharedToPath(who, id)] = { owner: who0, year: String(year), at: Date.now() };
     });
     /* 뺀 사람은 두 곳에서 다 지운다 — 한 곳만 지우면 목록에 유령이 남는다.
        ⚠ 「왜 열렸는지」(shareBy)도 함께 지운다(2026-08-28). 안 지우면 뺀 사람의 설명이
@@ -896,6 +904,28 @@
         return out;
       });
     });
+  }
+
+  /* ── 나에게 몇 장이 와 있나 (대표 보고 2026-08-29) ──
+     "권형하가 공유했는데 전혀 공유가 안되었다."
+
+     보낸 쪽은 초록 알림을 받는데 **받는 쪽에는 아무 신호가 없었다.** 받은 사진으로
+     가는 길은 「누구 사진」 고르개 안의 한 줄뿐이라, 말해 주지 않으면 평생 안 연다.
+     그래서 화면이 «장수»를 먼저 알 수 있어야 한다 — 0장이면 아무것도 안 그린다.
+
+     ⚠ 목록(listSharedToMe)과 달리 **사진을 한 장도 안 읽는다.** 색인 한 칸만 세므로
+       사진첩을 열 때마다 불러도 부담이 없다. 사진까지 읽어 세면 그 순간 「받은 사진」을
+       늘 통째로 불러오는 셈이 된다.
+     ⚠ **once 가 아니라 구독이다.** 첫 값이 곧 「지금 몇 장」이고, 그 뒤 누가 나에게
+       열어 주면 화면을 새로 고치지 않아도 숫자가 는다. once 로 읽고 다시 on 을 걸면
+       같은 자리를 두 번 받는다(요금이 두 배). 첫 값을 초기값으로 쓴다. */
+  function watchSharedCount(cb) {
+    if (!deps.db || !deps.uid) { cb(0); return function () {}; }
+    var ref = deps.db.ref(sharedToPath(deps.uid));
+    var handler = function (s) { cb(s.numChildren ? s.numChildren() : 0); };
+    /* 못 읽어도 화면은 살아 있어야 한다 — 그냥 0장으로 둔다(칸이 안 그려질 뿐이다) */
+    ref.on('value', handler, function () { cb(0); });
+    return function () { ref.off('value', handler); };
   }
 
   /* 공유받은 사람 이름을 붙여 준다 — uid 만 보이면 누구인지 모른다 */
@@ -2018,6 +2048,7 @@
     addShare: addShare,
     uidBySid: uidBySid,
     listSharedToMe: listSharedToMe,
+    watchSharedCount: watchSharedCount,
     fillSharedNames: fillSharedNames,
     sharedToPath: sharedToPath,
     saveNote: saveNote,
