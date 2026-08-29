@@ -11,7 +11,7 @@
   /* ===== 라벨 사전 =====
      양식마다 칸 이름이 다르다(성명/이름/신청자). 공백·괄호·별표는 떼고 본다. */
   var FIELD_LABELS = [
-    { re: /^(성명|이름|신청자명?|성함|성명한글|한글성명)$/, key: 'name' },
+    { re: /^(성명|이름|신청자명?|신청인|성함|성명한글|한글성명|위촉대상자|추천인|대상자)$/, key: 'name' },
     { re: /^(한자|한자성명|성명한자)$/, key: 'nameHanja' },
     { re: /^(생년월일|생일|출생연월일|생년월일주민번호)$/, key: 'birth' },
     { re: /^성별$/, key: 'gender' },
@@ -21,7 +21,11 @@
     { re: /^(자격증?|보유자격|자격사항|자격면허)$/, key: 'license' },
     { re: /^(소속|소속기관|근무처|현근무처|회사명|직장명?|기관명|근무기관)$/, key: 'org' },
     { re: /^(부서|부서명|소속부서)$/, key: 'dept' },
-    { re: /^(직위|직책|현직위|담당직위)$/, key: 'title' }
+    { re: /^(직위|직책|현직위|담당직위)$/, key: 'title' },
+    /* 주민등록번호는 «알아보되 채우지 않는다» — 자동으로 나가면 안 되는 정보다.
+       열쇠를 rrn 으로 따로 두어, 칸 지도가 「무슨 칸인지는 알려 주고 값은 비워」 둘 수 있게 한다.
+       ⚠ 여기에 값을 담는 자리(fields.rrn)를 만들지 말 것 — 담으면 언젠가 자동으로 나간다. */
+    { re: /^(주민등록번호|주민번호|생년월일주민등록번호)$/, key: 'rrn' }
   ];
   /* 칸 안에 「자택:______ 직장:______」처럼 라벨과 빈자리가 함께 있는 양식이 많다.
      이런 자리는 라벨 바로 뒤(밑줄·공백)를 값으로 바꾼다. */
@@ -129,12 +133,27 @@
       /* <hp:t> 안의 글자만 바꾼다 — 태그를 건드리면 문서가 깨진다 */
       out = out.replace(/(<hp:t[^>]*>)([\s\S]*?)(<\/hp:t>)/g, function (m, a, inner, b) {
         if (did >= hits.length) return m;
-        /* 라벨 + (콜론) + 밑줄/공백 자리
+        /* 라벨 + 콜론 + «값 자리»
+           ⚠ 값 자리는 밑줄만이 아니다. 실측(2026-08-29) 「기관명 : 부서명 : 직위 :」에서
+             끝에 붙은 「직위」가 늘 빠졌다 — 뒤에 밑줄도 넉넉한 공백도 없이 문장이 끝난다.
+             사이 공백이 좁으면 셋 다 빠졌다. 그래서 «끝» 과 «바로 다음 라벨» 도 값 자리로 본다.
+           ⚠ 그렇다고 아무 데나 넣으면 안 된다 — 뒤에 이미 «글자»가 오면 건드리지 않는다.
+             앞을 내다보기(?=…)로만 판단하고, 실제로 바꾸는 자리는 라벨+콜론까지다.
            ⚠ L.re.source 를 (?:…) 로 감싸야 한다 — 「직장|사무실」처럼 교대가 들어 있으면
-           괄호 없이는 '직장' 또는 '사무실\s*[:：]?\s*' 로 갈라져 뒤가 통째로 사라진다. */
-        var re = new RegExp('((?:' + L.re.source + ')\\s*[:：]?\\s*)(_{2,}|\\u3000{2,}|\\s{4,})');
+             괄호 없이는 '직장' 또는 '사무실\s*[:：]?\s*' 로 갈라져 뒤가 통째로 사라진다. */
+        var ANY = INCELL_LABELS.map(function (x) { return x.re.source; }).join('|');
+        var BLANK = '_{2,}|\\u3000{2,}|[ \\t]{4,}';
+        /* 밑줄·넓은 공백은 «값 자리»이므로 삼켜서 값으로 바꾼다(안 삼키면
+           「직장:041-556-0035_______」처럼 밑줄이 남아 줄이 넘친다).
+           삼킬 것이 없으면(끝이거나 바로 다음 라벨이면) 자리만 잡고 끼워 넣는다. */
+        var re = new RegExp('((?:' + L.re.source + ')\\s*[:：]\\s*)(' + BLANK + ')?'
+          + '(?=$|' + BLANK + '|\\s*(?:' + ANY + ')\\s*[:：])');
         if (!re.test(inner)) return m;
-        var next = inner.replace(re, function (mm, head) { return head + esc(fields[L.key]); });
+        var next = inner.replace(re, function (mm, head, blank, off, whole) {
+          /* 뒤에 다른 라벨이 이어지면 사이를 벌린다 — 「푸른노무법인부서명」이 되지 않게 */
+          var rest = whole.slice(off + mm.length);
+          return head + esc(fields[L.key]) + (rest.replace(/^[\s_　]+/, '') ? '  ' : '');
+        });
         if (next === inner) return m;
         did++; report.fields.push({ key: L.key, value: fields[L.key] });
         report.usedKeys[L.key] = true;
@@ -244,7 +263,10 @@
   var api = {
     autoFill: autoFill, summarize: summarize,
     fieldKeyOf: fieldKeyOf, colKeyOf: colKeyOf,
-    cellText: cellText, isEmptyCell: isEmptyCell, fillCell: fillCell
+    cellText: cellText, isEmptyCell: isEmptyCell, fillCell: fillCell,
+    /* 칸 지도(kcareer-formmap.js)가 «같은 자»를 쓰도록 내보낸다 —
+       따로 만들면 두 곳의 셈이 어긋나 「지도에는 있는데 안 채워지는 칸」이 생긴다 */
+    splitRows: splitRows, splitCells: splitCells, eachTable: eachTable, normLabel: normLabel
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KcareerHwpxFill = api;
