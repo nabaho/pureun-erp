@@ -58,7 +58,8 @@ function makeEnv(opts) {
   let fullCalls = 0;
 
   const sandbox = {
-    console: { log() {}, warn() {}, table() {} },
+    /* warn 을 «모아 둔다» — 되돌아갈 때 어디까지 왔는지 적는지 확인해야 한다(2026-08-29) */
+    console: { log() {}, warn(...a) { this.warn.calls.push(a.join(' ')); }, table() {} },
     Promise, JSON, Object, Array, String, Number, Date, Error, parseInt,
     setTimeout, clearTimeout, encodeURIComponent,
     KEY: 'pureun_v6_',
@@ -154,6 +155,7 @@ function makeEnv(opts) {
     _fbInitialSyncFull() { fullCalls++; return Promise.resolve(99); },
     window: {}
   };
+  sandbox.console.warn.calls = [];
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script(SRC_EXCLUDE + '\n' + SRC_CONSTS + '\n' + SRC_ALLKEYS + '\n' + SRC_BOOT, { filename: 'boot-sync.js' })
@@ -220,6 +222,20 @@ test('★ 조회가 실패해도 화면이 안 빈다 — 다만 통째로는 «
     await env.sync();
     assert.equal(env.fullCalls(), 0, '★ 되돌아온 길에서 통째 읽기를 불렀습니다: ' + JSON.stringify(opts));
   }
+});
+
+/* ★ 대표 콘솔 2026-08-29: 「서버 명단을 못 받았다(계획 지연)」.
+   되돌아갈 자리가 제대로 돌아 통째 받기는 없었지만, «왜 늦었는지» 를 알 수가 없었다 —
+   역할 조회가 늦은 것인지, 명단 조회가 늦은 것인지, 둘 다 왔는데 화면이 바빠 늦은 것인지.
+   못 고치는 진단은 진단이 아니다. 그래서 되돌아간 자리에는 «어디까지 왔는지» 를 함께 남긴다. */
+test('★ 되돌아갈 때 «어느 쪽이 늦었는지» 를 함께 남긴다', async () => {
+  const env = makeEnv({ fin: true, shallowFail: true });
+  const plan = await env.plan();
+  assert.ok(plan.fallback, '되돌아온 길이 아닙니다');
+  const line = env.sandbox.console.warn.calls.join('\n');
+  assert.match(line, /역할/, '★ 역할 조회가 언제 왔는지 안 적습니다.');
+  assert.match(line, /표/, '★ 명단 조회가 언제 왔는지 안 적습니다.');
+  assert.match(line, /여기까지 \d+ms/, '★ 얼마나 기다렸는지 안 적습니다.');
 });
 
 test('★ 자동으로 도는 길에는 통째 읽기가 «하나도» 없다', async () => {

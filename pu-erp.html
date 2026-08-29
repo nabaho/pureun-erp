@@ -8265,7 +8265,18 @@ var _BOOT_PLAN_TIMEOUT_MS = 8000;   // 계획이 이보다 늦으면 굳은 명�
    ⚠ 통째로 받는 길이 아주 사라지지는 않는다 — 사람이 일부러 켜는 스위치
      (`pureun_v6_boot_full`)와 환경설정의 「서버에서 받아오기」가 남아 있다.
      **자동으로 도는 길에만 없다.** */
-function _fbFallbackPlan(why){
+/* ⚠ «어느 쪽이 늦었는지» 를 함께 남긴다 (2026-08-29 대표 콘솔에서 「계획 지연」을 보고).
+   전에는 「못 받았다」만 적혀 있어, 역할 조회가 늦은 것인지 명단 조회가 늦은 것인지
+   —— 아니면 둘 다 왔는데 화면이 바빠 늦은 것인지 —— 알 길이 없었다.
+   못 고치는 진단은 진단이 아니다. 한 번만 더 켜 보면 어디인지 드러나게 한다. */
+function _fbPlanMark(mark, t0){
+  var p = [];
+  p.push('역할 ' + (mark.roles == null ? '아직' : mark.roles + 'ms'));
+  p.push('표 ' + (mark.token == null ? '아직(토큰)' : (mark.list == null ? '토큰 ' + mark.token + 'ms · 명단 아직' : mark.list + 'ms')));
+  p.push('여기까지 ' + (Date.now() - t0) + 'ms');
+  return p.join(' · ');
+}
+function _fbFallbackPlan(why, detail){
   var keys = FB_ALL_SYNC_KEYS
     .filter(fbShouldSync)                                          // 올리지 않는 것은 받지도 않는다
     .filter(function(k){ return FB_COLD_KEYS.indexOf(k) < 0; });
@@ -8273,7 +8284,8 @@ function _fbFallbackPlan(why){
      (「조회 실패 → 전부」는 원래 규칙 그대로다. 여기서 임의로 좁히면 재무
       담당자가 빈 화면을 본다.) */
   console.warn('[Firebase] 서버 명단을 못 받았다(' + why + ') — 굳은 명단 '
-    + keys.length + '개로 열쇠별 받기 (통째 받기 안 함)');
+    + keys.length + '개로 열쇠별 받기 (통째 받기 안 함)'
+    + (detail ? '\n         ↳ ' + detail : ''));
   return { mode:'perKey', keys: keys, fin: undefined, why: why, fallback: true };
 }
 
@@ -8285,27 +8297,35 @@ function _bootKeyPlan(){
   } catch(_){}
   var u = (typeof firebase !== 'undefined' && firebase.auth) ? firebase.auth().currentUser : null;
   if(!u || !u.uid) return Promise.resolve(_fbFallbackPlan('인증 전'));
-  var work = Promise.all([
-    fbDb.ref('uid_roles/' + u.uid + '/fin').once('value').then(function(s){ return s.val(); }),
-    u.getIdToken().then(function(tok){
-      return _bootFetch(FB_DB_REST + '/data.json?shallow=true&auth=' + encodeURIComponent(tok));
-    })
-  ]).then(function(r){
+  var t0 = Date.now(), mark = {};
+  var roles = fbDb.ref('uid_roles/' + u.uid + '/fin').once('value')
+    .then(function(s){ mark.roles = Date.now() - t0; return s.val(); });
+  /* ⚠ 명단 부르기의 시간 제한을 «판 전체» 보다 조금 짧게 준다. 둘이 같으면 어느
+     쪽이 먼저 울렸는지 알 수 없어, 그물이 늦은 것도 「계획 지연」으로 뭉뚱그려진다. */
+  var list = u.getIdToken().then(function(tok){
+    mark.token = Date.now() - t0;
+    return _bootFetch(FB_DB_REST + '/data.json?shallow=true&auth=' + encodeURIComponent(tok),
+                      _BOOT_PLAN_TIMEOUT_MS - 1500);
+  }).then(function(j){ mark.list = Date.now() - t0; return j; });
+
+  var work = Promise.all([roles, list]).then(function(r){
     var fin = r[0], shallow = r[1];
-    if(!shallow || typeof shallow !== 'object') return _fbFallbackPlan('명단 없음');
+    if(!shallow || typeof shallow !== 'object') return _fbFallbackPlan('명단 없음', _fbPlanMark(mark, t0));
     var keys = Object.keys(shallow).filter(fbShouldSync);           // 올리지 않는 것은 받지도 않는다
     keys = keys.filter(function(k){ return FB_COLD_KEYS.indexOf(k) < 0; });
     if(fin === false) keys = keys.filter(function(k){ return FB_FIN_GATED.indexOf(k) < 0; });
     return { mode:'perKey', keys: keys, fin: fin };
   });
-  var timeout = new Promise(function(res){ setTimeout(function(){ res(_fbFallbackPlan('계획 지연')); }, _BOOT_PLAN_TIMEOUT_MS); });
-  return Promise.race([work, timeout]).catch(function(){ return _fbFallbackPlan('계획 실패'); });
+  var timeout = new Promise(function(res){ setTimeout(function(){ res(_fbFallbackPlan('계획 지연', _fbPlanMark(mark, t0))); }, _BOOT_PLAN_TIMEOUT_MS); });
+  return Promise.race([work, timeout]).catch(function(e){
+    return _fbFallbackPlan('계획 실패', ((e && e.message) || '') + ' · ' + _fbPlanMark(mark, t0));
+  });
 }
 /* 주입 가능한 fetch — 검사에서 가짜로 갈아끼운다.
    ⚠ fetchT(시간제한 래퍼)를 거친다 — 이 저장소 규칙: 바깥으로 나가는 부름에
      시간 제한 없는 fetch 를 두지 않는다(답이 안 오면 영영 기다린다). */
-function _bootFetch(url){
-  return fetchT(url, null, _BOOT_PLAN_TIMEOUT_MS)
+function _bootFetch(url, ms){
+  return fetchT(url, null, ms || _BOOT_PLAN_TIMEOUT_MS)
     .then(function(r){ if(!r.ok) throw new Error('shallow ' + r.status); return r.json(); });
 }
 var FB_DB_REST = 'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app';
