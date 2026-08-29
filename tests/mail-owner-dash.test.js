@@ -1328,3 +1328,176 @@ test('★ 자문사 칸이 «짜부라지지» 않는다 — 이 줄은 flex 라
   const box = h.slice(i, i + 420);
   assert.match(box, /flex:none/, '★ flex:none 이 없어 칸이 짜부라집니다');
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+   공동작업 — 같이 보이고, 누가 먼저 봤는지 남는다 (대표 지시 2026-08-29)
+   ══════════════════════════════════════════════════════════════════════════
+   "공동 작업의 경우 … 같이보이는것으로 하고 싶은데"
+   "누군가가 먼저 확인했다는것을 기록 남기고 싶은데"
+   "주담당 부담당만 본 기록 남게 하면 된다. 나머지는 기록은 권형하만 확인이 된다."
+
+   ★ 지키는 것 다섯
+     1. 부담당 칸에도 «같이» 보인다 — 다만 주담당이 없으면 부담당만으로는 안 넣는다
+     2. 옆줄 «숫자»와 칸에 «담기는 통수»가 같다 — 어긋나면 「4통이라는데 열면 1통」
+     3. 「열어봄」은 먼저 본 사람을 «안 덮는다» — 덮으면 「누가 먼저」를 잃는다
+     4. 공동이면 공용 자리, 아니면 «대표 전용 자리» — 어디에 적을지는 한 곳에서만 정한다
+     5. 볼 자격이 없으면 «아무것도 안 그린다» — 「기록이 있다」는 것조차 힌트가 된다 */
+function loadSeen(over){
+  const o = over || {};
+  const c = loadStaff(o);
+  vm.runInContext('_mbCo = ' + JSON.stringify(o.co || {}) + ';'
+    + '_mbNotCo = ' + JSON.stringify(o.notco || {}) + ';'
+    + '_mbSeen = ' + JSON.stringify(o.seen || {}) + ';'
+    + '_mbSeenSolo = ' + JSON.stringify(o.solo || {}) + ';', c);
+  if(o.me){
+    vm.runInContext('myEmail = "me@pureun.kr";', c);
+    vm.runInContext('function staffName(e){ return (e === "me@pureun.kr") ? '
+      + JSON.stringify(o.me) + ' : String(e||""); }', c);
+  }
+  /* 부담당을 붙인다 — 푸른이알피 업체관리의 managerSubs 가 ErpMatch 에서 이 모양이 된다 */
+  if(o.subs){
+    const EM = c.ErpMatch;
+    Object.keys(o.subs).forEach(co=>{
+      const k = EM._norm(co);
+      EM.byName[k] = Object.assign({}, EM.byName[k], { subs: o.subs[co] });
+    });
+    c.mbWhoBust();
+  }
+  return c;
+}
+const SROW = e => ({ e: e, r: 1, _slug: 'B_JAMUN', _key: 'B_JAMUN:9' });
+
+/* ── ① 같이 보인다 ── */
+
+test('★★ 공동작업이면 «부담당 칸에도» 같이 보인다', () => {
+  const c = loadSeen({ co: { 'zzz@nowhere,kr': '한빛물산' },
+                       subs: { '한빛물산': ['최기운'] } });
+  assert.equal(c.mbWhoOfRow(SROW('zzz@nowhere.kr')), '박한별', '주담당이 안 잡힌다');
+  assert.equal(c.mbSubsOfRow(SROW('zzz@nowhere.kr')).join(' '), '최기운', '부담당이 안 잡힌다');
+  assert.equal(c.mbRowFits(SROW('zzz@nowhere.kr'), '@최기운'), true,
+    '★ 부담당 칸에 안 보입니다');
+  assert.equal(c.mbRowFits(SROW('zzz@nowhere.kr'), '@박한별'), true, '주담당 칸에서 사라졌다');
+});
+
+test('★ 맡지 «않은» 사람 칸에는 안 보인다 — 공동이라고 온 세상에 보이면 안 된다', () => {
+  const c = loadSeen({ co: { 'zzz@nowhere,kr': '한빛물산' },
+                       subs: { '한빛물산': ['최기운'] } });
+  assert.equal(c.mbRowFits(SROW('zzz@nowhere.kr'), '@김보람'), false,
+    '★ 아무 상관 없는 사람 칸에 보입니다');
+});
+
+test('★ 주담당이 «없으면» 부담당만으로는 안 넣는다 — 덜 채워진 자료지 맡은 것이 아니다', () => {
+  const c = loadSeen({ co: { 'zzz@nowhere,kr': '나래산업' },
+                       subs: { '나래산업': ['최기운'] } });
+  assert.equal(c.mbWhoOfRow(SROW('zzz@nowhere.kr')), '', '검사 밑그림이 틀렸다 — 주담당이 있다');
+  assert.equal(c.mbRowFits(SROW('zzz@nowhere.kr'), '@최기운'), false,
+    '★ 주담당 없이 부담당 칸에만 들어갔습니다');
+});
+
+test('★ 퇴사한 부담당은 «뺀다»', () => {
+  const c = loadSeen({ co: { 'zzz@nowhere,kr': '한빛물산' },
+                       subs: { '한빛물산': ['박성수'] } });   /* 박성수 = 퇴사 */
+  assert.equal(c.mbSubsOfRow(SROW('zzz@nowhere.kr')).length, 0, '퇴사자가 부담당으로 남았다');
+});
+
+test('★★ 옆줄 «숫자»와 칸에 «담기는 통수»가 같다 — 어긋나면 「4통이라는데 열면 1통」', () => {
+  const c = loadSeen({ subs: { '한빛물산': ['최기운'] } });
+  const row = c.mbWhoList().find(w => w.name === '최기운');
+  assert.ok(row, '최기운이 목록에 없다');
+  c.state.mbBox = '@최기운';
+  assert.equal(c.mbAllRows().length, row.n,
+    '★ 옆줄은 ' + row.n + '통이라는데 칸에는 ' + c.mbAllRows().length + '통입니다');
+});
+
+/* ── ② 누가 봤나 ── */
+
+test('★ 열면 「누가 열어봤나」가 남는다', () => {
+  const c = loadSeen({ me: '박한별', subs: { '한빛물산': ['최기운'] } });
+  const v = SROW('a@hanbit.co.kr');
+  c.mbSeenMark(v, 'open');
+  const seen = c.mbSeenOf(v);
+  assert.equal(seen.length, 1, '기록이 안 남았다');
+  assert.equal(seen[0].n, '박한별');
+  assert.equal(seen[0].k, 'open');
+});
+
+test('★★ 「열어봄」은 «먼저 본 사람을 안 덮는다» — 덮으면 「누가 먼저」를 잃는다', () => {
+  /* ⚠ 「두 번 적고 시각을 견준다」로는 못 잡는다 — 같은 밀리초면 시각이 같아서
+       덮어써도 통과한다(실제로 그렇게 통과했다). 그래서 «옛 시각»을 미리 심어 둔다. */
+  const c = loadSeen({ me: '박한별', subs: { '한빛물산': ['최기운'] },
+    seen: { 'b_jamun:9': { 'P-003': { k:'open', at: 100, n:'박한별' } } } });
+  const v = SROW('a@hanbit.co.kr');
+  c.mbSeenMark(v, 'open');
+  assert.equal(c.mbSeenOf(v)[0].at, 100,
+    '★ 나중에 연 것이 먼저 본 때를 덮었습니다 (' + c.mbSeenOf(v)[0].at + ')');
+});
+
+test('★ 「내가 봤다」(처리함)는 «열어봄»을 덮는다 — 그쪽이 더 센 말이다', () => {
+  const c = loadSeen({ me: '박한별', subs: { '한빛물산': ['최기운'] } });
+  const v = SROW('a@hanbit.co.kr');
+  c.mbSeenMark(v, 'open');
+  c.mbSeenMark(v, 'done');
+  assert.equal(c.mbSeenOf(v)[0].k, 'done', '처리함이 안 남았다');
+});
+
+test('★ 먼저 본 사람이 «앞»에 온다 — 늦게 본 사람이 앞에 서면 뜻이 뒤집힌다', () => {
+  const c = loadSeen({ me: '박한별',
+    subs: { '한빛물산': ['최기운'] },
+    seen: { 'b_jamun:9': { 'A-001': { k:'open', at: 100, n:'최기운' } } } });
+  const v = SROW('a@hanbit.co.kr');
+  c.mbSeenMark(v, 'open');
+  const seen = c.mbSeenOf(v);
+  assert.equal(seen[0].n, '최기운', '먼저 본 사람이 앞이 아니다: ' + seen.map(x=>x.n).join(' '));
+});
+
+/* ── ③ 어디에 적히나 · 누가 보나 ── */
+
+test('★★ 공동이면 «공용 자리», 아니면 «대표 전용 자리»', () => {
+  const c = loadSeen({ me: '박한별', subs: { '한빛물산': ['최기운'] } });
+  const shared = SROW('a@hanbit.co.kr');       /* 한빛물산 — 부담당 있음 */
+  const solo   = SROW('b@daehan.kr');          /* 대한산업 — 부담당 없음 */
+  assert.equal(c.mbSeenShared(shared), true, '공동인데 공동이 아니라고 한다');
+  assert.equal(c.mbSeenShared(solo), false, '단독인데 공동이라고 한다');
+  assert.match(c.mbSeenPath(shared), /pucards/, '공동 기록이 공용 자리가 아니다');
+  assert.doesNotMatch(c.mbSeenPath(solo), /^pucards/,
+    '★ 단독 기록이 «전 직원이 읽는» pucards 밑에 적힙니다 — 대표님만 보셔야 합니다');
+});
+
+test('★★ 볼 자격 — 대표님 · 그 메일을 맡은 사람만', () => {
+  const shared = SROW('a@hanbit.co.kr');
+  const boss = loadSeen({ me: '권형하', subs: { '한빛물산': ['최기운'] }, state:{ isAdmin:true } });
+  assert.equal(boss.mbSeenCanSee(shared), true, '대표님이 못 보신다');
+  const main = loadSeen({ me: '박한별', subs: { '한빛물산': ['최기운'] } });
+  assert.equal(main.mbSeenCanSee(shared), true, '주담당이 못 본다');
+  const sub = loadSeen({ me: '최기운', subs: { '한빛물산': ['최기운'] } });
+  assert.equal(sub.mbSeenCanSee(shared), true, '부담당이 못 본다');
+  const other = loadSeen({ me: '김보람', subs: { '한빛물산': ['최기운'] } });
+  assert.equal(other.mbSeenCanSee(shared), false,
+    '★ 맡지 않은 사람이 「누가 봤나」를 봅니다');
+});
+
+test('★ 볼 자격이 없으면 «아무것도 안 그린다» — 「기록이 있다」는 것조차 힌트다', () => {
+  const c = loadSeen({ me: '김보람', subs: { '한빛물산': ['최기운'] },
+    seen: { 'b_jamun:9': { 'P-003': { k:'done', at: 100, n:'박한별' } } } });
+  assert.equal(c.mbSeenTag(SROW('a@hanbit.co.kr')), '',
+    '★ 맡지 않은 사람 목록에 「누가 봤나」가 보입니다');
+});
+
+test('★ 자리를 고르는 판단이 «한 곳»에만 있다 — 두 곳이면 언젠가 어긋난다', () => {
+  /* 어디에 적을지를 여러 곳에서 따지면, 한 곳만 고쳤을 때 단독 기록이 공용 자리로 샌다.
+     규칙이 못 막는 자리이므로(쓰기는 규칙이 못 가린다) 코드가 지켜야 한다. */
+  /* ⚠ 주석을 걷고 센다 — 설명에 적은 이름이 «쓰인 곳»으로 세이면 안 된다 */
+  const body = src.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const n = (body.match(/MB_SEEN_SOLO/g) || []).length;
+  assert.ok(n <= 4, '단독 자리 이름이 ' + n + '곳에서 쓰입니다 — 한 곳으로 모아 주세요');
+  assert.match(body, /function mbSeenPath/, '자리를 정하는 함수가 없습니다');
+});
+
+test('★ 규칙을 콘솔에 붙여넣으라는 안내가 저장소에 있다', () => {
+  /* 이 규칙이 없으면 단독 기록이 아예 안 적힌다 — 왜 안 적히는지 적어 둘 자리가 필요하다 */
+  const doc = path.join(__dirname, '..', 'docs', '메일-확인기록-콘솔붙여넣기.md');
+  assert.ok(fs.existsSync(doc), '★ 콘솔에 붙여넣을 안내 문서가 없습니다');
+  const t = fs.readFileSync(doc, 'utf8');
+  assert.match(t, /pu_mailseen/, '붙여넣을 규칙 원문이 없습니다');
+  assert.match(t, /isAdmin/, '대표님만 읽는다는 조건이 없습니다');
+});
