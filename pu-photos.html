@@ -797,6 +797,12 @@ button{font-family:inherit;cursor:pointer}
 /* 자르기 — 자르개가 사진 둘레를 제 짜임으로 바꾼다. 비를 박지 않고 칸을 통째로 쓴다. */
 .edwrap.crop{aspect-ratio:auto !important;width:100%;height:100%}
 .edwrap.crop img{width:auto;height:auto;max-width:100%;max-height:100%}
+/* ✏️ 글자·도형 — fabric 이 제 짜임(.canvas-container)을 만들어 넣는다.
+   사진은 판이 «배경으로» 들고 그리므로 img 는 자리만 잡고 숨는다. */
+.edwrap .canvas-container{position:absolute !important;inset:0;width:100% !important;height:100% !important}
+.edwrap .canvas-container canvas{width:100% !important;height:100% !important}
+.edtools button.col{padding:6px}
+.edtools button.col.on{box-shadow:0 0 0 2px var(--blue) inset}
 /* 지우개일 때 «무엇을 지우는지» — 이 한 줄이 없어서 마우스가 고장 난 줄 아셨다 */
 .note.edmode{margin:6px 0 0;font-size:11.5px;line-height:1.6;background:#fff7ed;
   border:1px solid #fed7aa;color:#b45309;border-radius:8px;padding:7px 9px}
@@ -12029,7 +12035,8 @@ const ED_BRUSH = [0.012, 0.028, 0.055];
 const ED_MODES = [
   { k: 'ai', t: '✨ 지우기·고치기', pay: true },
   { k: 'crop', t: '✂️ 자르기', pay: false },
-  { k: 'tone', t: '☀️ 밝기·대비', pay: false }
+  { k: 'tone', t: '☀️ 밝기·대비', pay: false },
+  { k: 'mark', t: '✏️ 글자·도형', pay: false }
 ];
 
 function startPhotoEdit() {
@@ -12064,6 +12071,7 @@ function photoEditing() {
 
 function photoEdCancel() {
   edCropStop();
+  edMarkStop();
   photoEd = null;
   renderReadPanel(maskItem());
   renderViewerEdit();
@@ -12075,6 +12083,7 @@ function photoEdCancel() {
 function setEdMode(m) {
   if (!photoEd || photoEd.mode === m) return;
   edCropStop();
+  edMarkStop();
   photoEd.mode = m;
   photoEd.strokes = [];
   photoEd.erasing = false;
@@ -12176,6 +12185,145 @@ function edToneReset() {
   renderReadPanel(maskItem());
   renderViewerEdit();
 }
+/* ══════ ✏️ 글자·도형 — 요금 0원 (대표 지시 2026-08-29 「3단계」) ══════
+   검토 문서 docs/사진편집-라이브러리-검토.md 의 3단계.
+
+   ⚠ **왜 남의 것을 쓰나** — 끌어 옮기기·모서리로 크기 조절·돌리기·글자 그 자리에서
+     고치기는 손으로 만들면 손잡이 여덟과 맞히기 셈을 한 벌 더 갖게 된다.
+     여기는 라이브러리가 값어치를 하는 자리다(2026-08-29 검토에서 그렇게 적었다).
+   ⚠ **우리 사본을 먼저** 쓴다(vendor/fabric.min.js). 자르개와 같은 규칙 —
+     관공서·큰 기업 방화벽이 cdnjs 를 흔히 막는다.
+   ⚠ **쓸 때만** 받는다(292KB). 안 쓰는 사람은 한 글자도 안 받는다.
+   ⚠⚠ **fabric 의 「저장」을 안 쓴다** — 그린 것을 얹은 그림만 받아 우리 저장 층으로 담는다.
+   ★ 내보낼 때 **배수(multiplier)**를 준다 — 화면은 800px 라도 원본 2000px 로
+     «또렷하게» 다시 그려진다(글자가 흐려지지 않는다). 실측으로 확인했다. */
+const FAB_LIB_HERE = 'vendor/fabric.min.js';
+const FAB_LIB_CDN = 'https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js';
+/* 눈에 잘 띄는 색 넷 — 증빙 사진 위에 표시하는 것이라 원색이 낫다 */
+const MARK_COLORS = ['#dc2626', '#2563eb', '#16a34a', '#111827'];
+
+async function loadFabricLib() {
+  if (window.fabric) return window.fabric;
+  try { await loadScriptOnce(FAB_LIB_HERE); }
+  catch (_) {
+    try { await loadScriptOnce(FAB_LIB_CDN); }
+    catch (_2) { throw new Error('글자·도형 도구를 불러오지 못했습니다'); }
+  }
+  if (!window.fabric) throw new Error('글자·도형 도구를 불러오지 못했습니다');
+  return window.fabric;
+}
+
+let edFab = null;
+function edMarkStop() {
+  if (edFab) { try { edFab.dispose(); } catch (_) { /* 이미 없어졌다 */ } edFab = null; }
+}
+
+/* 사진을 다 불러오면 그리는 판을 얹는다 */
+async function edMarkStart(im) {
+  if (!photoEd || photoEd.mode !== 'mark' || photoEd.done) return;
+  try {
+    const F = await loadFabricLib();
+    if (!photoEd || photoEd.mode !== 'mark') return;   // 그 사이에 도구를 바꾸셨다
+    const el = $('edFab'), wrap = $('edWrap');
+    if (!el || !wrap || !im.naturalWidth) return;
+    edMarkStop();
+    /* 칸을 사진 비에 맞춘 뒤 그 크기로 판을 만든다 — 사진과 그린 것이 한 자리여야 한다 */
+    wrap.style.aspectRatio = im.naturalWidth + ' / ' + im.naturalHeight;
+    const r = wrap.getBoundingClientRect();
+    const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+    edFab = new F.Canvas(el, { width: w, height: h });
+    edFab.backgroundImage = new F.Image(im, {
+      left: 0, top: 0, scaleX: w / im.naturalWidth, scaleY: h / im.naturalHeight,
+      selectable: false, evented: false
+    });
+    edFab.renderAll();
+    photoEd.markW = w;                    // 내보낼 때 배수를 셈하는 데 쓴다
+    renderReadPanel(maskItem());
+  } catch (e) {
+    console.warn('[글자·도형]', e);
+    toast((e && e.message) || '글자·도형 도구를 불러오지 못했습니다');
+  }
+}
+
+function edMarkColor() { return (photoEd && photoEd.mcolor) || MARK_COLORS[0]; }
+function setEdMarkColor(c) {
+  if (!photoEd) return;
+  photoEd.mcolor = c;
+  /* 골라 둔 것이 있으면 그 색도 함께 바꾼다 — 고르고 색을 누르는 것이 자연스럽다 */
+  const o = edFab && edFab.getActiveObject();
+  if (o) {
+    if (o.type === 'textbox' || o.type === 'text') o.set('fill', c);
+    else o.set('stroke', c);
+    edFab.renderAll();
+  }
+  renderReadPanel(maskItem());
+}
+
+/* 가운데에 얹는다 — 어디에 생겼는지 못 찾는 일이 없게 */
+function edMarkAdd(kind) {
+  if (!edFab || !window.fabric) { toast('아직 준비 중입니다 — 잠시 뒤에 눌러 주세요'); return; }
+  const F = window.fabric, c = edMarkColor();
+  const w = edFab.getWidth(), h = edFab.getHeight();
+  let o;
+  if (kind === 'text') {
+    o = new F.Textbox('여기에 글자', {
+      left: w * 0.2, top: h * 0.45, width: w * 0.5, fontSize: Math.max(16, Math.round(h / 14)),
+      fill: c, fontFamily: 'Malgun Gothic', fontWeight: '700'
+    });
+  } else if (kind === 'rect') {
+    o = new F.Rect({ left: w * 0.3, top: h * 0.35, width: w * 0.35, height: h * 0.25,
+      fill: 'transparent', stroke: c, strokeWidth: Math.max(2, Math.round(h / 160)) });
+  } else if (kind === 'ellipse') {
+    o = new F.Ellipse({ left: w * 0.3, top: h * 0.35, rx: w * 0.16, ry: h * 0.12,
+      fill: 'transparent', stroke: c, strokeWidth: Math.max(2, Math.round(h / 160)) });
+  } else {
+    o = new F.Line([w * 0.25, h * 0.6, w * 0.6, h * 0.4],
+      { stroke: c, strokeWidth: Math.max(3, Math.round(h / 120)) });
+  }
+  edFab.add(o);
+  edFab.setActiveObject(o);
+  edFab.renderAll();
+  renderReadPanel(maskItem());
+}
+
+function edMarkDel() {
+  if (!edFab) return;
+  const os = edFab.getActiveObjects ? edFab.getActiveObjects() : [edFab.getActiveObject()];
+  const live = (os || []).filter(Boolean);
+  if (!live.length) { toast('지울 것을 먼저 눌러서 골라 주세요'); return; }
+  live.forEach(function (o) { edFab.remove(o); });
+  if (edFab.discardActiveObject) edFab.discardActiveObject();
+  edFab.renderAll();
+  renderReadPanel(maskItem());
+}
+
+function edMarkCount() {
+  return (edFab && edFab.getObjects) ? edFab.getObjects().length : 0;
+}
+
+/* 그린 것을 사진에 얹어 «고친 결과»로 넘긴다 — 담는 것은 edKeep 하나뿐이다 */
+async function edMarkApply() {
+  if (!edFab) { toast('아직 준비 중입니다'); return; }
+  if (!edMarkCount()) { toast('글자나 도형을 먼저 넣어 주세요'); return; }
+  try {
+    /* ★ 원본 크기로 «다시 그려» 받는다 — 화면 크기로 받아 늘리면 글자가 흐려진다 */
+    const im = await loadImg(photoEd.url);
+    const mult = im.naturalWidth / (photoEd.markW || edFab.getWidth() || 1);
+    if (edFab.discardActiveObject) { edFab.discardActiveObject(); edFab.renderAll(); }
+    const full = edFab.toDataURL({ format: 'jpeg', quality: 0.92, multiplier: mult });
+    const n = edMarkCount();
+    edMarkStop();
+    photoEd.done = { full: full, before: photoEd.url, n: n, how: 'mark',
+      want: '글자·도형 ' + n + '개 넣기' };
+    renderReadPanel(maskItem());
+    renderViewerEdit();
+    toast('✏️ 넣었습니다 — 보시고 골라 주세요 (요금 없음)');
+  } catch (e) {
+    console.warn('[글자·도형]', e);
+    alert('넣지 못했습니다 — ' + ((e && e.message) || e) + '\n사진은 그대로입니다.');
+  }
+}
+
 async function edToneApply() {
   if (!photoEd) return;
   const css = edFilterCss();
@@ -12612,7 +12760,7 @@ function renderViewerEdit() {
   const on = !!(photoEd && photoEd.status === 'ready');
   const pic0 = $('viewerPic');
   if (pic0) pic0.classList.toggle('editing', on);
-  if (!on) { edCropStop(); box.style.display = 'none'; box.innerHTML = ''; return; }
+  if (!on) { edCropStop(); edMarkStop(); box.style.display = 'none'; box.innerHTML = ''; return; }
   box.style.display = 'flex';
   /* 결과를 보고 계실 때는 도구를 안 얹는다 — 무엇이 고쳐졌는지 보시는 자리다 */
   const mode = photoEd.done ? 'done' : photoEd.mode;
@@ -12623,15 +12771,20 @@ function renderViewerEdit() {
     '<div id="edWrap" class="edwrap' + (crop ? ' crop' : '') + '" ondragstart="return false">' +
     '<img id="edImg" src="' + esc(photoEd.done ? photoEd.done.full : photoEd.url) +
     '" alt="" draggable="false"' +
-    (crop ? ' onload="edCropStart(this)"' : ' onload="edFitWrap(this)"') +
-    (mode === 'tone' ? ' style="filter:' + esc(edFilterCss()) + '"' : '') + '>' +
+    (crop ? ' onload="edCropStart(this)"'
+      : mode === 'mark' ? ' onload="edMarkStart(this)"' : ' onload="edFitWrap(this)"') +
+    (mode === 'tone' ? ' style="filter:' + esc(edFilterCss()) + '"' : '') +
+    /* ✏️ 글자·도형일 때는 사진을 판이 «배경으로» 들고 그린다 — 두 장이 겹쳐 보이면 안 된다 */
+    (mode === 'mark' ? ' style="visibility:hidden"' : '') + '>' +
     /* 칠하는 판 — 「지우기·고치기」일 때만. 사진과 «똑같은 자리»여야 한다(08-29 그 병) */
     (mode === 'ai'
       ? '<canvas id="edCv" onpointerdown="edDown(event)" onpointermove="edMove(event)"' +
         ' onpointerup="edUp()" onpointercancel="edUp()"></canvas>'
       : '') +
+    (mode === 'mark' ? '<canvas id="edFab"></canvas>' : '') +
     '</div>';
   if (mode !== 'crop') edCropStop();
+  if (mode !== 'mark') edMarkStop();
   if (mode === 'ai') edRepaint();
 }
 
@@ -12700,6 +12853,35 @@ function edPanelHtml() {
       '<b>원본은 그대로 두고</b> 자른 것을 새 사진으로 담습니다.</p>' +
       '<div class="maskfoot"><button class="again" onclick="photoEdCancel()">그만두기</button></div>' +
       '<button class="again pri" onclick="edCropApply()">✂️ 이대로 자르기 (요금 없음)</button>' +
+      '</div>';
+  }
+
+  /* ── ✏️ 글자·도형 — 요금 0원 (대표 지시 2026-08-29 「3단계」) ── */
+  if (e.mode === 'mark') {
+    const cnt = edMarkCount();
+    return '<div class="box"><b>✏️ 글자·도형</b>' + tabs +
+      '<p class="note" style="margin:8px 0 0">넣은 것을 <b>끌어 옮기고</b>, 모서리로 <b>크기를 바꾸고</b>, ' +
+      '글자는 <b>두 번 눌러 고칩니다.</b><br>' +
+      '<b>요금이 들지 않습니다</b> — 이 창 안에서 끝납니다.</p>' +
+      '<div class="edtools">' +
+      '<button onclick="edMarkAdd(\'text\')">🅰 글자</button>' +
+      '<button onclick="edMarkAdd(\'rect\')">▭ 네모</button>' +
+      '<button onclick="edMarkAdd(\'ellipse\')">◯ 동그라미</button>' +
+      '<button onclick="edMarkAdd(\'line\')">／ 선</button>' +
+      '</div>' +
+      '<div class="edtools"><span class="lb">색</span>' +
+      MARK_COLORS.map(function (c) {
+        return '<button class="col' + (edMarkColor() === c ? ' on' : '') + '" title="' + esc(c) +
+          '" onclick="setEdMarkColor(\'' + c + '\')">' +
+          '<span class="dot" style="width:15px;height:15px;background:' + c + '"></span></button>';
+      }).join('') +
+      '<button style="margin-left:auto" onclick="edMarkDel()">🗑 고른 것 지우기</button>' +
+      '</div>' +
+      '<div class="maskfoot"><button class="again" onclick="photoEdCancel()">그만두기</button>' +
+      '<span class="note" style="margin:0 0 0 auto">' +
+      (cnt ? cnt + '개 넣음' : '아직 없음') + '</span></div>' +
+      '<button class="again pri"' + (cnt ? '' : ' disabled') + ' onclick="edMarkApply()">' +
+      (cnt ? '✏️ 이대로 넣기 (요금 없음)' : '글자나 도형을 먼저 넣어 주세요') + '</button>' +
       '</div>';
   }
 

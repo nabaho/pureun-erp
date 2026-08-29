@@ -31,7 +31,9 @@ test('★★ 도구 셋 가운데 «요금이 드는 것은 하나»라고 화�
   /* ⚠ const 로 선언한 값은 칸(context) 밖으로 안 나온다 — 돌린 «결과»로 받는다.
      처음에 ctx.ED_MODES 로 읽다가 undefined 를 봤다. */
   const modes = vm.runInContext(APP.match(/const ED_MODES = \[[\s\S]*?\];/)[0] + '\nED_MODES;', ctx);
-  assert.equal(modes.length, 3);
+  /* ⚠ 도구는 늘어난다(2026-08-29 에 셋 → 넷). **수를 못 박지 않는다** —
+     지켜야 하는 것은 「요금 드는 것이 하나뿐」이다. */
+  assert.ok(modes.length >= 3, '★ 도구가 ' + modes.length + '개뿐입니다');
   const pay = modes.filter(function (m) { return m.pay; });
   assert.equal(pay.length, 1, '★★ 요금이 드는 갈래가 ' + pay.length + '개입니다');
   assert.equal(pay[0].k, 'ai', '★★ 요금이 드는 것은 AI 로 고치기 하나뿐이어야 합니다');
