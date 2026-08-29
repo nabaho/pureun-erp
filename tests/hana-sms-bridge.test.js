@@ -34,8 +34,19 @@ test('서버는 연결번호·기기키·중복차단·최소 거래정보만 �
   assert.doesNotMatch(fn, /rawText\s*:/);
 });
 
-test('Android 앱은 SMS 권한 없이 알림 접근만 사용한다', () => {
-  assert.doesNotMatch(manifest, /READ_SMS|RECEIVE_SMS/);
+test('Android 앱은 평소에 알림만 쓰고, 문자를 가로채지 않는다', () => {
+  /* ⚠ 2026-08-29 에 이 줄이 「READ_SMS 도 없어야 한다」였고, 대표 지시로 바뀌었다.
+       「이미 문자로 온 거 확인할 수 없나, 최근 1개월」 — 알림은 지나가면 사라져서
+       앱을 깔기 «전»에 온 문자는 문자함에서 끌어오는 수밖에 없다.
+     ★ 그래도 «가로채기»(RECEIVE_SMS)는 여전히 안 된다. 둘은 아주 다르다:
+       READ_SMS  = 대표가 단추를 누를 때 문자함을 «들여다본다»
+       RECEIVE_SMS = 문자가 올 때마다 앱이 «먼저 받는다» (평소에 늘 깨어 있다)
+       뒤엣것을 넣으면 이 앱은 문자 감시기가 된다 — 넣을 까닭이 없다.
+     지난 문자 가져오기 자체는 tests/hana-sms-history.test.js 가 지킨다. */
+  assert.doesNotMatch(manifest, /RECEIVE_SMS/,
+    '★ 문자를 가로채는 권한입니다 — 지난 문자 가져오기에는 필요 없습니다');
+  assert.doesNotMatch(manifest, /SMS_DELIVER|BROADCAST_SMS/,
+    '★ 문자를 먼저 받는 자리에 끼어들고 있습니다');
   assert.match(manifest, /BIND_NOTIFICATION_LISTENER_SERVICE/);
   assert.match(manifest, /usesCleartextTraffic="false"/);
   assert.match(listener, /NotificationListenerService/);
