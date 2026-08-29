@@ -13,6 +13,9 @@ const vm = require('vm');
 
 const ROOT = path.join(__dirname, '..');
 const BA = require(path.join(ROOT, 'functions', 'billing-alert.js'));
+/* 함수를 **글자 수가 아니라 괄호 짝**으로 뜬다 — 자리를 숫자로 떠 두면 그 함수가
+   길어질 때 기능이 멀쩡한데 검사가 깨진다(2026-08-29 에 그래서 main 이 빨개졌다). */
+const { cutFn } = require('./cut-fn');
 
 /* ── 서버: 기록 한 줄을 어디에 무엇으로 담나 ── */
 function alert(o) {
@@ -307,11 +310,19 @@ test('0 과 「—」 뜻풀이가 표에 붙어 있다', () => {
 
 test('「전체」 열에 실제 값이 들어간다', () => {
   /* ★ 열 이름만 있고 값은 «늘 비어» 있던 자리다(2026-08-17 발견).
-     대표 지시의 「몇 시에 «얼마»」가 바로 이 열이다 — 비어 있으면 지시의 절반이 없는 것이다. */
-  const fn = P.slice(P.indexOf('function billPaintHist'), P.indexOf('function billPaintHist') + 2600);
-  const row = fn.slice(fn.indexOf("':00</td>'"), fn.indexOf("':00</td>'") + 500);
-  assert.strictEqual(/cumKnown/.test(row), true, '누적값을 안 쓴다');
-  assert.strictEqual(/fmtWon\(\s*b\.cum\s*\)/.test(row), true, '누적값을 그리지 않는다');
+     대표 지시의 「몇 시에 «얼마»」가 바로 이 열이다 — 비어 있으면 지시의 절반이 없는 것이다.
+
+     ⚠ 2026-08-29 다시 겨눔 — 예전에는 `slice(i, i + 2600)` · `slice(j, j + 500)` 로
+       **자리를 글자 수로** 떠서 봤다. 그 함수가 조금만 길어지면 창이 그 줄을 못 덮어
+       **기능이 멀쩡한데 검사가 깨진다.** 실제로 그렇게 깨져 main 이 빨개졌고,
+       모든 앱 배포가 막혔다(CLAUDE.md 「지금 값이 아니라 규칙을 못 박는다」).
+       이제 함수를 **통째로** 떠서 «누적값을 그리는가»라는 **규칙**만 본다. */
+  const fn = cutFn(P, 'function billPaintHist(');
+  assert.ok(fn, 'billPaintHist 를 찾지 못했습니다');
+  assert.strictEqual(/b\.cumKnown/.test(fn), true, '누적값을 안 쓴다');
+  assert.strictEqual(/fmtWon\(\s*b\.cum\s*\)/.test(fn), true, '누적값을 그리지 않는다');
+  /* 시각 칸과 «같은 줄»에서 그린다 — 표가 어긋나면 「몇 시에 얼마」가 안 맞는다 */
+  assert.strictEqual(/':00<\/td>'/.test(fn), true, '시각 칸이 없어졌습니다');
 });
 
 test('기록이 켜는 날부터 쌓인다고 «두 곳에서» 말한다', () => {
