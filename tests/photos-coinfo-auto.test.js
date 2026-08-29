@@ -100,7 +100,10 @@ function runSend(o) {
     Date, Promise, Object, String, Boolean
   };
   vm.createContext(ctx);
-  vm.runInContext(fnOf('canSendCoInfo') + '\n' + fnOf('coInfoFields') + '\n' + fnOf('autoCmsOn') + '\n' + fnOf('sendCoInfoWith') + '\n' + fnOf('sendCoInfo'), ctx);
+  /* 2026-08-28: 보낸 뒤 「증빙으로 씀」을 남긴다(markFiledUsed) — 안 주면 그 자리에서 멎는다 */
+  vm.runInContext(fnOf('canSendCoInfo') + '\n' + fnOf('coInfoFields') + '\n' +
+    fnOf('autoCmsOn') + '\n' + fnOf('markFiledUsed') + '\n' +
+    fnOf('sendCoInfoWith') + '\n' + fnOf('sendCoInfo'), ctx);
   return { ctx, calls, job };
 }
 const settle = function () { return new Promise(function (r) { setTimeout(r, 20); }); };
