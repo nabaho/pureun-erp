@@ -59,7 +59,7 @@ function makeEnv(opts) {
 
   const sandbox = {
     /* warn 을 «모아 둔다» — 되돌아갈 때 어디까지 왔는지 적는지 확인해야 한다(2026-08-29) */
-    console: { log() {}, warn(...a) { this.warn.calls.push(a.join(' ')); }, table() {} },
+    console: { log(...a) { this.log.calls.push(a.join(' ')); }, warn(...a) { this.warn.calls.push(a.join(' ')); }, table() {} },
     Promise, JSON, Object, Array, String, Number, Date, Error, parseInt,
     setTimeout, clearTimeout, encodeURIComponent,
     KEY: 'pureun_v6_',
@@ -156,6 +156,7 @@ function makeEnv(opts) {
     window: {}
   };
   sandbox.console.warn.calls = [];
+  sandbox.console.log.calls = [];
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script(SRC_EXCLUDE + '\n' + SRC_CONSTS + '\n' + SRC_ALLKEYS + '\n' + SRC_BOOT, { filename: 'boot-sync.js' })
@@ -222,6 +223,32 @@ test('★ 조회가 실패해도 화면이 안 빈다 — 다만 통째로는 «
     await env.sync();
     assert.equal(env.fullCalls(), 0, '★ 되돌아온 길에서 통째 읽기를 불렀습니다: ' + JSON.stringify(opts));
   }
+});
+
+/* ★ 2026-08-29, 두 번째 콘솔에서 잡은 것 — «거짓 경고»
+   ↳ 역할 783ms · 표 376ms · 여기까지 8010ms
+   둘 다 0.8초 안에 왔는데도 8초에 「계획 지연」이 찍혔다. Promise.race 는 먼저 온
+   쪽으로 끝나지만 **자명종은 그와 상관없이 반드시 울리기** 때문이다.
+   나는 그 한 줄을 보고 「매번 되돌아가고 있다」고 읽었고, 그것은 틀린 읽기였다.
+   ★ 거짓 경고는 없는 경고보다 나쁘다 — 없는 문제를 쫓게 만든다. */
+test('★ 계획이 제때 섰으면 늦게 울린 자명종은 «아무 말도 하지 않는다»', async () => {
+  const env = makeEnv({ fin: true });
+  env.sandbox._BOOT_PLAN_TIMEOUT_MS = 20;          // 자명종을 코앞으로 당겨 놓고
+  const plan = await env.plan();
+  assert.equal(plan.mode, 'perKey');
+  assert.ok(!plan.fallback, '제때 섰는데 되돌아간 것으로 적혔습니다');
+  await new Promise((r) => setTimeout(r, 80));      // 자명종이 울리고도 남을 만큼 기다린다
+  const warned = env.sandbox.console.warn.calls.join('\n');
+  assert.ok(warned.indexOf('계획 지연') < 0,
+    '★ 계획이 멀쩡히 섰는데 「계획 지연」이 찍힙니다 — 없는 문제를 쫓게 됩니다:\n  ' + warned);
+});
+
+test('★ 계획이 섰으면 «섰다고» 도 남긴다 — 실패만 적으면 잘 되는 줄을 알 수 없다', async () => {
+  const env = makeEnv({ fin: true });
+  await env.plan();
+  const said = env.sandbox.console.log.calls.join('\n');
+  assert.match(said, /서버 명단 \d+개/, '★ 계획이 선 것을 아무 데도 안 적습니다.');
+  assert.match(said, /재무 [OX모]/, '★ 재무 권한을 어떻게 봤는지 안 적습니다.');
 });
 
 /* ★ 대표 콘솔 2026-08-29: 「서버 명단을 못 받았다(계획 지연)」.
