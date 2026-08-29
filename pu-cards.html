@@ -18740,6 +18740,11 @@ function coListHtml(info){
            ⚠ PC 에만 둔다 — 폰에서 CSV 를 내려받아 다음 주소록에 넣을 일이 없다. */''}
       <button onclick="coMailCsv()"
         title="고른 회사의 담당자 주소록을 CSV 로 내려받습니다 — 수신거부는 자동으로 빠집니다">📇 주소록 내보내기</button>
+      ${/* 계약해지 (대표 지시 2026-08-29).
+           ⚠ 「거는지 푸는지」는 «누를 때» 정한다. 그리는 때 정하려면 그릴 때마다 회사
+             4,147곳을 훑어야 하고, 도구줄이 그 셈에 매달리게 된다. */''}
+      <button onclick="coAskTerminate()"
+        title="푸른이알피 업체관리 상태를 종료로 바꾸고 명함·사업자를 종료 폴더로 옮깁니다. 이미 해지된 곳만 골랐으면 푸는 쪽으로 묻습니다 — 담당자는 퇴사로 만들지 않습니다">🚪 계약해지</button>
       <button onclick="state.coSel={};renderCoAny()">선택 해제</button>
       <button class="coclear" onclick="coClearOrg()"
         title="고른 회사에 붙여 둔 폴더·탭을 뗍니다 — 명함은 지워지지 않습니다">🧹 폴더·탭 비우기</button>
@@ -19232,6 +19237,146 @@ function coClearPlan(list, chunk){
   }
   return out;
 }
+/* ══════ 기업 상세에서 «계약해지로 처리» (대표 지시 2026-08-29) ══════
+   대표님: 「클릭해서 계약해지사업장으로 처리하면 명함, 사업자도 모두 계약해지로
+   보내지게 … 푸른이알피에서 계약해지하는 경우에도 서로 동기화되게」
+
+   ■ 두 방향 가운데 «읽는 쪽»은 이미 있었다
+     업체관리 status 가 inactive·terminated·closed 면 ErpMatch 가 left 로 읽어
+     명함·사업자·기업상세·담당 칸에 🚪 를 붙인다. 저쪽에서 해지하면 이쪽은 저절로 따라온다.
+   ■ 없던 것은 «쓰는 쪽» — 여기서 눌러 업체관리 상태를 바꾸는 길이 아예 없었다.
+
+   ⚠ 원본은 «업체관리의 status» 하나다. 기업정보함에 따로 안 적는다 — 두 곳에 적으면
+     어느 쪽이 참인지 알 수 없게 되고, 반드시 한쪽이 뒤처진다.
+   ⚠ 담당자 개개인은 «퇴사로 만들지 않는다» (대표 결정 2026-08-29). 계약해지는 «업체»의
+     상태고 퇴사는 «사람»의 상태다. 그분들은 여전히 그 회사에 다니신다 — 섞으면 진짜
+     퇴사와 구별이 안 되고, 재계약할 때 한 명씩 풀어야 한다.
+   ⚠ 폴더는 «이미 있는 것»을 찾아 쓴다. 새로 만들면 해지 업체가 두 곳으로 갈린다
+     (2026-08-29 에 명함 쪽에서 실제로 겪은 일이다). */
+const CO_CLOSED_ST = { inactive:1, terminated:1, closed:1 };
+/* 「2. 계약해지사업장」 — 「업체」가 들고 「해지·종료·퇴사」가 함께 든 폴더만.
+   ⚠ 「1. 업체관리」는 살아 있는 거래처 폴더다. 걸리면 안 된다. */
+function coClosedFolder(){
+  const list = Object.keys(_coFolders || {}).map(k=>_coFolders[k]).filter(Boolean);
+  for(let i=0;i<list.length;i++){
+    const nm = _canon(list[i].name || '');
+    if(nm.indexOf('업체') < 0 && nm.indexOf('사업장') < 0) continue;
+    if(nm.indexOf('해지') >= 0 || nm.indexOf('종료') >= 0 || nm.indexOf('퇴사') >= 0) return list[i];
+  }
+  return null;
+}
+/* 셈만 한다 — 서버를 안 만진다. 확인창이 보여 주는 것과 실제로 쓰는 것이 «같은 셈»이다 */
+function coTerminatePlan(keys, on){
+  const want = {}; (keys||[]).forEach(k=>{ want[k] = 1; });
+  const rows = [], already = [], noErp = [];
+  let cards = 0, bizs = 0;
+  coList().forEach(function(o){
+    if(!o || !want[o.key]) return;
+    const m = o.erp || null;
+    if(!m || !m.id){ noErp.push({ key:o.key, name:o.name||'' }); return; }
+    const isClosed = !!CO_CLOSED_ST[String(m.status||'')];
+    if(isClosed === !!on){ already.push({ key:o.key, name:o.name||'' }); return; }
+    rows.push({ key:o.key, name:o.name||'', id:m.id });
+    cards += (o.cards||[]).length; bizs += (o.bizs||[]).length;
+  });
+  return { rows, already, noErp, cards, bizs };
+}
+async function coTerminate(plan, on, byName){
+  const db = firebase.database();
+  const snap = await db.ref('data/companies').once('value');   /* 한 번만 읽는다 */
+  const wrap = snap.val();
+  const rawv = (wrap && wrap.v !== undefined) ? wrap.v : wrap;
+  const isObj = rawv && !Array.isArray(rawv) && typeof rawv === 'object';
+  const list = Array.isArray(rawv) ? rawv.filter(Boolean)
+             : (isObj ? Object.keys(rawv).map(k=>rawv[k]).filter(Boolean) : []);
+  const now = Date.now();
+  const up = {};
+  let done = 0;
+  plan.rows.forEach(function(r){
+    const cur = list.find(c => c && c.id === r.id);
+    if(!cur) return;
+    const merged = Object.assign({}, cur, { status: on ? 'terminated' : 'active', updatedAt: now });
+    if(byName) merged.updatedBy = byName;
+    if(isObj) up['data/companies/v/'+cur.id] = merged;
+    else { const i = list.findIndex(c => c && c.id === cur.id); if(i>=0) list[i] = merged; }
+    done++;
+  });
+  if(!isObj) up['data/companies/v'] = list;
+  up['data/companies/u'] = now;   /* 갱신시각 — 푸른이알피가 이걸 보고 다시 읽는다 */
+  await db.ref().update(up);      /* 한 번만 쓴다 */
+  ErpMatch.load();
+
+  /* ⚠ 폴더는 «거는» 쪽만 옮긴다. 풀 때도 옮기면 정리해 둔 것이 되돌아가 버린다
+     (대표 결정 2026-08-29: 「해지 풀기」는 상태만). */
+  let movedCo = 0, movedItem = 0;
+  if(on){
+    const folder = coClosedFolder();
+    if(folder){
+      const upd = {};
+      plan.rows.forEach(function(r){ upd['coInfo/'+r.key+'/folder'] = folder.id; movedCo++; });
+      if(movedCo) await Store.db.ref(DB_ROOT).update(upd);
+    }
+    const byKey = {}; coList().forEach(function(o){ byKey[o.key] = o; });
+    const toMove = [];
+    ['card','biz'].forEach(function(kind){
+      const g = erpClosedFolderOf(kind); if(!g) return;
+      plan.rows.forEach(function(r){
+        const o = byKey[r.key]; if(!o) return;
+        ((kind === 'card') ? (o.cards||[]) : (o.bizs||[])).forEach(function(it){
+          if(it && (it.group||'') !== g.id){ it.group = g.id; toMove.push(it); }
+        });
+      });
+    });
+    if(toMove.length){ autoFolderFlush(toMove); movedItem = toMove.length; }
+  }
+  return { done, movedCo, movedItem };
+}
+/* ⚠ 「거는지 푸는지」를 «누를 때» 정한다 — 걸 것이 하나도 없고 풀 것이 있으면 푸는 쪽이다.
+   단추 둘을 나란히 두면 어느 것이 지금 할 일인지 매번 골라야 하고, 그리는 때 정하면
+   도구줄을 그릴 때마다 회사 4,147곳을 훑게 된다. */
+function coAskTerminate(){
+  const keys = Object.keys(state.coSel);
+  if(!keys.length) return toast('회사를 먼저 선택하세요');
+  let on = true;
+  let p = coTerminatePlan(keys, true);
+  if(!p.rows.length){
+    const back = coTerminatePlan(keys, false);
+    if(back.rows.length){ on = false; p = back; }
+  }
+  if(!p.rows.length){
+    return toast(p.noErp.length && !p.already.length
+      ? '푸른이알피 업체관리에 없는 곳이라 상태를 바꿀 수 없습니다'
+      : `고른 ${keys.length}곳은 이미 계약해지입니다`, 8000);
+  }
+  const folder = on ? coClosedFolder() : null;
+  const head = on
+    ? `${p.rows.length}곳을 계약해지로 처리합니다.\n\n`
+      + `· 푸른이알피 업체관리 상태 → 종료 (여기가 원본입니다)\n`
+      + (folder ? `· 회사 ${p.rows.length}곳 → 「${folder.name}」 폴더\n` : '')
+      + (p.cards||p.bizs ? `· 명함 ${p.cards}장 · 사업자 ${p.bizs}장 → 종료 폴더\n` : '')
+      + `· 🚪 딱지가 명함·사업자·기업상세·담당 칸에 저절로 붙습니다\n`
+      + `· 담당자는 퇴사로 만들지 않습니다 — 그분들은 여전히 그 회사에 다니십니다\n`
+      + (p.noErp.length ? `\n⚠ ${p.noErp.map(x=>x.name).join(' · ')} — 업체관리에 없어 상태를 못 바꿉니다\n` : '')
+      + `\n계속할까요?`
+    : `${p.rows.length}곳의 계약해지를 풉니다.\n\n`
+      + `· 푸른이알피 업체관리 상태 → 계약중\n`
+      + `· 폴더는 그대로 둡니다 — 손으로 옮겨 두신 것을 되돌리지 않습니다\n\n계속할까요?`;
+  if(!confirm(head)) return;
+  (async function(){
+    try{
+      let me = '';
+      try{ const w = window.PuWhoami && PuWhoami.get && PuWhoami.get(); me = (w && w.name) || ''; }catch(_){}
+      const r = await coTerminate(p, on, me);
+      state.coSel = {}; coListBust(); renderCoAny(); render();
+      toast(on
+        ? `🚪 ${r.done}곳을 계약해지로 처리했습니다`
+          + (r.movedCo ? ` · 회사 ${r.movedCo}곳` : '')
+          + (r.movedItem ? ` · 명함·사업자 ${r.movedItem}장을 폴더로 옮겼습니다` : '')
+        : `${r.done}곳의 계약해지를 풀었습니다`, 9000);
+    }catch(e){ toast('❌ 바꾸지 못했습니다: ' + ((e&&e.message)||''), 9000); }
+  })();
+}
+
 /* ══════ 고른 회사의 폴더·탭 비우기 — 화면 ══════ */
 async function coClearOrg(){
   const keys = Object.keys(state.coSel);
