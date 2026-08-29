@@ -368,6 +368,9 @@ function runGridBar(over) {
   vm.runInContext(fnOf(app, 'readableSel'), ctx);
   /* 2026-08-28: 도구줄이 숫자 규칙(cnt)을 쓴다 — 안 주면 그 자리에서 멎는다 */
   vm.runInContext(fnOf(app, 'cnt'), ctx);
+  /* 2026-08-29: 「👥 공유」가 도구줄에서 «누구 사진 아래»로 내려갔고, 도구줄이 그 칸을
+     함께 그린다(기준이 하나여야 하므로) — 안 주면 그 자리에서 멎는다 */
+  vm.runInContext(fnOf(app, 'renderShareCard'), ctx);
   vm.runInContext(fnOf(app, 'renderGridBar'), ctx);
   ctx.renderGridBar();
   return el;

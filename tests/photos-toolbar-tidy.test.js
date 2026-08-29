@@ -76,10 +76,31 @@ function bar(over) {
     cutFn(app, 'function idsOf(') + '\n' +
     cutFn(app, 'function shownCount(') + '\n' +
     cutFn(app, 'function readableSel(') + '\n' +
+    /* 👥 공유 칸은 도구줄이 부른다(2026-08-29 에 왼쪽 대시보드로 옮겼다).
+       시늉이 아니라 **진짜를 함께 띄운다** — 시늉으로 두면 도구줄이 그것을 안 불러도 통과한다. */
+    cutFn(app, 'function renderShareCard(') + '\n' +
     cutFn(app, 'function renderGridBar('), ctx);
   ctx.renderGridBar();
   return el;
 }
+
+/* 대표 지시 2026-08-29 — 「공유버튼은 누구사진아래 대시보드로」.
+   ⚠ 「renderShareCard(n, touch) 라는 글자가 있나」로는 못 잡는다 —
+     `0 && renderShareCard(n, touch)` 로 막아도 통과한다(되돌림에서 실제로 새어 나갔다).
+     **돌려서** 그 칸이 진짜로 그려졌는지 본다. */
+test('★★ 도구줄이 왼쪽 공유 칸을 «실제로» 그린다 — 안 그리면 공유할 길이 사라진다', () => {
+  const el = bar({});                       // 세 장 고른 상태
+  assert.equal(el.shareCard.style.display, 'block',
+    '★ 도구줄에서 뺐으므로, 이 칸을 안 그리면 공유 단추가 화면 어디에도 없습니다');
+  assert.match(el.shareSideBtn.textContent, /3장/, '몇 장에 걸리는지 적어야 합니다');
+});
+
+test('★ 고른 것이 없거나 남의 사진이면 공유 칸이 안 뜬다 — 도구줄과 같은 기준', () => {
+  assert.equal(bar({ sel: [] }).shareCard.style.display, 'none',
+    '★ 고른 것이 없는데 떠 있으면 눌러도 아무 일이 없습니다');
+  assert.equal(bar({ ctx: { mayTouch: function () { return false; } } }).shareCard.style.display, 'none',
+    '★ 손댈 수 없는 사진에 뜨면 눌러도 막힙니다');
+});
 
 test('★ 세 장을 골랐으면 내려받기·삭제·묶기에 숫자가 «없다»', () => {
   const el = bar({});
@@ -129,11 +150,16 @@ test('★ 「☑ 전부 N장」은 그대로 둔다 — 고른 수가 아니라 
 
 /* ══════ ③ 안 건드린 것 ══════ */
 
-test('★ 단추를 하나도 지우지 않았다 — 접거나 숨기지도 않았다', () => {
-  ['selAllBtn', 'ackSelBtn', 'dlBtn', 'cpBtn', 'coBtn', 'shareBtn', 'tagBtn',
+test('★ 단추를 하나도 «없애지» 않았다 — 접거나 숨기지도 않았다', () => {
+  /* ⚠ 「👥 공유」는 2026-08-29 에 도구줄에서 **왼쪽 대시보드(누구 사진 아래)로 옮겼다**
+     — 대표 지시다. 없앤 것이 아니라 자리를 바꾼 것이라 여기서는 빠지고,
+     photos-company-share 가 「누구 사진 아래에 있는가」로 이어서 지킨다. */
+  ['selAllBtn', 'ackSelBtn', 'dlBtn', 'cpBtn', 'coBtn', 'tagBtn',
    'readSelBtn', 'sendSelBtn', 'mergeBtn', 'delBtn', 'selCancel'].forEach(function (id) {
     assert.ok(app.indexOf('id="' + id + '"') > 0, '★ ' + id + ' 가 없어졌습니다');
   });
+  assert.ok(app.indexOf('id="shareSideBtn"') > 0,
+    '★ 공유 단추가 아예 없어졌습니다 — 옮긴 것이지 없앤 것이 아닙니다');
   assert.ok(!/더보기|⋯/.test(app.slice(app.indexOf('<div id="gridBar">'),
     app.indexOf('id="sortSeg"'))), '★ 접어 두면 있는 기능을 못 찾습니다');
 });
