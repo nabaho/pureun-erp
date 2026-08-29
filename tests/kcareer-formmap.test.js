@@ -248,3 +248,39 @@ test('빈 글자를 넣으면 그 칸은 비워 둔다 — 지우개로도 쓸 �
   const r = M.apply(xml, { picks: { t0r0c1: 'name' }, values: { t0r0c1: '' }, data: WHO });
   assert.equal(r.changed, false);
 });
+
+/* ── 한 글자씩 쪼개진 칸 (대표 서식 실물 2026-08-29) ──
+   「생 년 월 일 | 7 | 5 | 0 | 1 | 0 | 7 | 나이 | 만 43세」처럼
+   날짜를 «한 자리씩» 나눠 적는 서식이 흔하다. 한 칸에 통째로 넣으면 첫 칸만 차고 나머지가 빈다. */
+
+test('★ 라벨 뒤에 «좁은 빈 칸이 여럿» 이어지면 한 글자씩 나눠 넣는다', () => {
+  const xml = tbl([['생년월일', '', '', '', '', '', '']]);
+  const m = M.guess(M.scan(xml), WHO);
+  const run = M.digitRun(m, 0, 0, 1);
+  assert.ok(run, '한 글자씩 넣을 자리를 알아봐야 합니다');
+  assert.equal(run.length, 6, '빈 칸 여섯이 이어져 있습니다');
+});
+
+test('날짜에서 숫자만 뽑아 칸 수에 맞춘다 — 1975.01.07 → 750107', () => {
+  assert.equal(M.digitsFor('1975.01.07', 6), '750107');
+  assert.equal(M.digitsFor('1975.01.07', 8), '19750107');
+  assert.equal(M.digitsFor('750107', 6), '750107');
+});
+
+test('칸 수가 안 맞으면 «나눠 넣지 않는다» — 어긋나게 적느니 비워 둔다', () => {
+  assert.equal(M.digitsFor('1975.01.07', 5), '');
+  assert.equal(M.digitsFor('충남 천안시', 6), '', '숫자가 아닌 값은 나누지 않습니다');
+});
+
+test('★ 실제로 한 칸에 한 글자씩 들어간다', () => {
+  const xml = tbl([['생년월일', '', '', '', '', '', '']]);
+  const r = M.apply(xml, { picks: { t0r0c1: 'birth' }, data: WHO });
+  const cells = (r.xml.match(/<hp:t[^>]*>([\s\S]*?)<\/hp:t>/g) || [])
+    .map((x) => x.replace(/<[^>]*>/g, ''));
+  assert.deepEqual(cells.slice(1, 7), ['7', '5', '0', '1', '0', '7']);
+});
+
+test('보통 칸에는 그대로 통째로 넣는다 — 나누기가 끼어들면 안 된다', () => {
+  const r = M.apply(tbl([['생년월일', '']]), { picks: { t0r0c1: 'birth' }, data: WHO });
+  assert.ok(r.xml.indexOf('1975.01.07') > 0);
+});

@@ -154,3 +154,17 @@ test('머리를 «없애지는» 않는다 — 다른 서식으로 바꿔 올릴
   assert.doesNotMatch(css, /\.rh-fold\{display:none\}/, '접이칸 자체를 숨기면 안 됩니다');
   assert.match(css, /\.rh-fold>summary\{padding/, '요약 줄은 남아야 합니다');
 });
+
+test('머리를 한 줄 줄였다 — 모드 단추가 편집 줄 안에 있다 (대표 지적 2026-08-29)', () => {
+  /* 「편집」 딱지만 있던 줄과 모드 줄이 따로 있어 머리가 세 줄이었다.
+     딱지는 뺀다 — 단추가 이미 무슨 화면인지 말해 준다. */
+  const at = source.indexOf('class="rc-bar"');
+  const bar = source.slice(at, at + 1800);
+  assert.ok(bar.indexOf('id="kfModes"') > 0, '모드 단추가 편집 줄 안에 있어야 합니다');
+  assert.equal((source.match(/id="kfModes"/g) || []).length, 1, '모드 줄이 둘이면 안 됩니다');
+});
+
+test('안내문은 «따로» 한 줄 — 단추 줄에 끼우면 단추가 밀린다', () => {
+  assert.match(source, /id="kfHintBar"/);
+  assert.match(source, /\.kf-hintbar\{/);
+});

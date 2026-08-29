@@ -154,7 +154,35 @@
     return tc.replace(m[0], m[1] + m[2] + ' ' + esc(value) + m[3]);
   }
 
-  /* 이 자리에 «직접 친 글자»가 있나 — 없으면 null(고른 열쇠로 간다), 있으면 {단일} 또는 {라벨별} */
+  /* ── 한 글자씩 쪼개진 칸 ──
+     「생 년 월 일 | 7 | 5 | 0 | 1 | 0 | 7」처럼 날짜를 «한 자리씩» 나눠 적는 서식이 흔하다
+     (대표 서식 실물 2026-08-29). 한 칸에 통째로 넣으면 첫 칸만 차고 나머지가 빈 채로 나간다.
+     라벨 뒤로 «빈 칸이 여럿 이어지면» 그 줄을 한 벌로 본다. */
+  function digitRun(map, tbl, row, col) {
+    var run = [];
+    for (var c = col; ; c++) {
+      var s = map.slots.filter(function (x) {
+        return x.tbl === tbl && x.row === row && x.col === c && x.kind === '빈칸';
+      })[0];
+      if (!s) break;
+      run.push(s);
+    }
+    return run.length >= 4 ? run : null;   /* 넷 미만은 그냥 옆 칸이다(날짜가 아니다) */
+  }
+
+  /* 값에서 숫자만 뽑아 칸 수에 맞춘다. 안 맞으면 «넣지 않는다» —
+     어긋나게 적는 것이 비워 두는 것보다 나쁘다. */
+  function digitsFor(value, n) {
+    var d = String(value == null ? '' : value).replace(/\D/g, '');
+    if (!d) return '';
+    if (d.length === n) return d;
+    /* 1975.01.07(8자리) → 여섯 칸이면 앞 두 자리(19)를 뗀다 */
+    if (d.length === 8 && n === 6) return d.slice(2);
+    if (d.length === 6 && n === 8) return '';   /* 세기를 지어내지 않는다 */
+    return '';
+  }
+
+  /* 이 자리에 «직접 친 글자»가 있나— 없으면 null(고른 열쇠로 간다), 있으면 {단일} 또는 {라벨별} */
   function typedFor(id, values) {
     if (Object.prototype.hasOwnProperty.call(values, id)) return { one: String(values[id] == null ? '' : values[id]) };
     var byKey = null;
@@ -237,6 +265,17 @@
       }
       var val = fields[key];
       if (val == null || val === '') { failed.push({ id: id, why: '넣을 값이 없습니다' }); return; }
+      /* 라벨 뒤로 빈 칸이 여럿 이어지면 한 글자씩 나눠 넣는다(생년월일 7|5|0|1|0|7) */
+      var run = (s.kind === '빈칸') ? digitRun(map, s.tbl, s.row, s.col) : null;
+      var ds = run ? digitsFor(val, run.length) : '';
+      if (run && ds) {
+        var okN = 0;
+        run.forEach(function (cell, i) {
+          var rr = eachCellAt(xml, cell.tbl, cell.row, cell.col, function (tc) { return X.fillCell(tc, ds[i]); });
+          if (rr.ok) { xml = rr.xml; okN++; }
+        });
+        if (okN) { filled.push({ id: id, key: key, value: ds }); return; }
+      }
       r = eachCellAt(xml, s.tbl, s.row, s.col, function (tc) {
         return s.kind === '안내글뒤' ? appendAfter(tc, val) : X.fillCell(tc, val);
       });
@@ -292,7 +331,8 @@
   }
 
   var api = { scan: scan, classify: classify, detectList: detectList,
-              guess: guess, hintKey: hintKey, apply: apply, fingerprint: fingerprint };
+              guess: guess, hintKey: hintKey, apply: apply, fingerprint: fingerprint,
+              digitRun: digitRun, digitsFor: digitsFor };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KcareerFormMap = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window);
