@@ -1597,7 +1597,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
     <div class="mbody">
       <div class="fld"><label class="flbl">사업장명</label><input class="fi" id="mCoName" placeholder="예: 디와이엠솔루션"></div>
       <div class="fld"><label class="flbl">주담당 노무사</label><select class="fsel" id="mCoAtt" onchange="renderCoCoAtts()"></select></div>
-      <div class="fld"><label class="flbl">부담당(협업) 노무사 <span style="font-size:10px;color:var(--t2);font-weight:600;">(복수 선택)</span></label><div id="mCoCoAttChips" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;"></div></div>
+      <div class="fld"><label class="flbl">부담당(협업) 노무사 <span style="font-size:10px;color:var(--t2);font-weight:600;">(복수 선택)</span></label><div id="mCoCoAttChips" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;"></div><div id="mCoSubSyncNote" style="font-size:10.5px;color:var(--t2);margin-top:7px;line-height:1.55;"></div></div>
       <div class="fld">
         <label class="flbl">진행 컨설팅 (복수선택)</label>
         <div id="mCoTypes" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;"></div>
@@ -1625,7 +1625,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
         <div class="edit-main">
           <div class="fld"><label class="flbl">방문일</label><div id="mEditDate" style="font-size:14px;font-weight:900;color:var(--accent)"></div></div>
           <div class="fld"><label class="flbl">주담당 노무사</label><select class="fsel" id="mEditAtt" onchange="renderEditCoAtts()"></select></div>
-          <div class="fld"><label class="flbl">부담당(협업) 노무사 <span style="font-size:10px;color:var(--t2);font-weight:600;">(복수 선택)</span></label><div id="mEditCoAttChips" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;"></div></div>
+          <div class="fld"><label class="flbl">부담당(협업) 노무사 <span style="font-size:10px;color:var(--t2);font-weight:600;">(복수 선택)</span></label><div id="mEditCoAttChips" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;"></div><div id="mEditSubSyncNote" style="font-size:10.5px;color:var(--t2);margin-top:7px;line-height:1.55;"></div></div>
           <div class="f2">
             <div class="fld"><label class="flbl">컨설팅</label><div id="mEditType" style="font-size:13px;font-weight:700;"></div></div>
             <div class="fld"><label class="flbl">회차 <span style="font-size:10px;color:var(--t2);font-weight:600;">(날짜순 자동)</span></label><input class="fi" id="mEditRound" type="text" readonly style="background:var(--sf2);color:var(--t2);cursor:not-allowed;"><div id="mEditRoundAlert" class="last-round-alert"></div></div>
@@ -6660,6 +6660,8 @@ async function saveEdit(){
   const scheds=getScheds();
   const idx=scheds.findIndex(s=>s.id===edit_id);
   if(idx===-1)return;
+  /* 새로 더한 사람은 사업장 부담당·이알피로도 올라간다 — 고치기 «전» 명단이 있어야 안다 */
+  const beforeCoAtts=getCoAtts(scheds[idx]);
   scheds[idx].attId=attId;
   scheds[idx].coAttIds=coAttIds;
   /* ★ 옛 「부담당 한 명」 칸을 없애는 자리다. undefined 를 «넣으면» 안 된다 —
@@ -6669,6 +6671,10 @@ async function saveEdit(){
   scheds[idx].isField=edit_isField;
   scheds[idx].memo=q('#mEditMemo').value.trim();
   setScheds(scheds);closeModal('mbEdit');renderCal();renderDash();toast('수정됨');
+  /* 일정은 거울이 아니라 **더하기만** 하는 입구다.
+     여기서 뺀 사람은 이 날짜 방문에서만 빠진다 — 사업장·이알피는 그대로. */
+  const addedCoAtts=coAttIds.filter(id=>beforeCoAtts.indexOf(id)<0);
+  if(addedCoAtts.length)coAddSubsFromSched(scheds[idx].coId,addedCoAtts).catch(e=>console.warn('[부담당 올리기]',e));
 }
 
 async function deleteEdit(){
@@ -6780,8 +6786,40 @@ function _renderCoAttChips(boxId,mainSelId,selArr,rerender){
   });
   return selArr;
 }
-function renderCoCoAtts(){ co_selCoAtts=_renderCoAttChips('mCoCoAttChips','mCoAtt',co_selCoAtts,renderCoCoAtts); }
-function renderEditCoAtts(){ edit_selCoAtts=_renderCoAttChips('mEditCoAttChips','mEditAtt',edit_selCoAtts,renderEditCoAtts); }
+function renderCoCoAtts(){
+  co_selCoAtts=_renderCoAttChips('mCoCoAttChips','mCoAtt',co_selCoAtts,renderCoCoAtts);
+  renderSubSyncNote('mCoSubSyncNote',co_editId,co_selCoAtts,'co');
+}
+function renderEditCoAtts(){
+  edit_selCoAtts=_renderCoAttChips('mEditCoAttChips','mEditAtt',edit_selCoAtts,renderEditCoAtts);
+  const sc=getScheds().find(s=>s.id===edit_id);
+  renderSubSyncNote('mEditSubSyncNote',sc&&sc.coId,edit_selCoAtts,'sched');
+}
+
+/* 부담당 칸 밑 안내 — 이알피와 이어진 사업장에만 뜬다.
+   ⚠ 「어디까지 따라가는지」를 창 안에서 말해 준다. 안 적어 두면
+     일정에서 뺐는데 이알피에 남아 있는 것을 «고장» 으로 읽는다. */
+function renderSubSyncNote(boxId,coId,sel,kind){
+  const box=q('#'+boxId); if(!box)return;
+  box.innerHTML='';
+  if(!ERP.loaded||!coId)return;
+  const linked=erpConsByCo()[coId]||[];
+  if(!linked.length)return;                    // 이알피와 안 이어진 사업장
+  const staff=getStaff();
+  const noSid=(sel||[]).map(id=>staff.find(a=>a&&a.id===id))
+    .filter(s=>s&&!s.erpSid).map(s=>s.name);
+  const many=linked.length>1?` 이어진 컨설팅 ${linked.length}건 모두에 같이 적용됩니다.`:'';
+  const body=kind==='sched'
+    ? `🔗 <b style="color:var(--accent);">새로 더한 사람은 푸른이알피 부담당으로도 올라갑니다.</b>
+       여기서 빼는 것은 이 날짜 방문에만 적용됩니다 — 이알피에서 떼려면 사업장 수정에서 빼세요.${many}`
+    : `🔗 <b style="color:var(--accent);">푸른이알피 부담당과 같이 바뀝니다.</b>
+       여기서 더하거나 빼면 이알피에도 그대로 반영됩니다.${many}`;
+  const warn=noSid.length
+    ? `<div style="color:#cc7700;font-weight:700;margin-top:4px;">⚠️ ${escAttr(noSid.join(', '))}${eunNeun(noSid[noSid.length-1])} 푸른이알피에 못 올립니다 —
+         환경설정 → 직원에서 「🔗 사번 잇기」를 해 주세요.</div>`
+    : '';
+  box.innerHTML=body+warn;
+}
 
 async function saveCo(){
   const name=q('#mCoName').value.trim();
@@ -6803,7 +6841,11 @@ async function saveCo(){
     }
   }
   else cos.push({id:uid(),name,defAtt,defCoAtts,types:[...co_selTypes],deadlines:{...co_deadlines},customRounds:{...co_rounds},customMandatory:{...co_mandatory},active:true});
+  const savedId=co_editId||cos[cos.length-1].id;
   setCos(cos);closeModal('mbCo');renderDash();renderCal();toast(co_editId?'수정됨':'추가됨');
+  /* 여기가 거울이다 — 부담당을 더했든 뺐든 이알피에 그대로 옮긴다.
+     저장을 막지 않으려고 기다리지 않는다(못 올리면 그때 알려 준다). */
+  erpSyncSubsUp(savedId).catch(e=>console.warn('[부담당 올리기]',e));
 }
 
 async function delCo(){
@@ -6864,6 +6906,9 @@ async function erpLoadAll(){
     /* 명부를 읽었으면 곧바로 맞춘다 — 대표 지시(휴직·퇴사는 자동으로 빠지게).
        바뀐 것이 없으면 아무것도 저장하지 않는다. */
     try{ syncStaffFromErp(); }catch(err){ console.warn('[직원 맞춤]',err); }
+    /* 부담당도 함께 맞춘다 — 직원 맞춤 **뒤에** 와야 한다.
+       사번·재직 여부가 정해진 뒤라야 누구를 올릴 수 있는지 판단할 수 있다. */
+    try{ erpSyncSubsDown(); }catch(err){ console.warn('[부담당 맞춤]',err); }
   }catch(e){ ERP.err=e.message||'불러오기 실패'; ERP.loaded=false; }
 }
 // ERP 사번 → 이름 → 정부컨설팅 직원 id (이름으로 매칭)
@@ -7182,6 +7227,233 @@ function findCoForErp(cos, erpId, name){
     if(loose.length===1)return {co:loose[0],how:'loose'};
   }
   return {co:null,how:''};
+}
+
+/* ══════ 부담당 맞추기 — 푸른이알피 ↔ 정부컨설팅 (대표 지시 2026-08-29) ══════
+
+   거울은 **한 자리**다 — 정부컨설팅 「사업장 부담당(defCoAtts)」 ↔ 이알피 「컨설팅
+   부담당(managerSubs)」. 한쪽에서 더하면 저쪽에 생기고, 한쪽에서 빼면 저쪽에서도 빠진다.
+
+   ★ 거울을 하나로 둔 까닭 — 두 자리를 다 거울로 두면 두 앱이 서로 되돌린다.
+     이알피에서 뺀 사람이 정부컨설팅 일정에 남아 있으면 그 일정이 다시 올려 버리고,
+     그것을 이알피가 또 되돌린다. 「일정 부담당」은 거울이 아니라 **더하기만** 하는 입구다.
+
+   ⚠ 일정에서 빼는 것은 그 날짜 방문에만 적용한다 — 「이번엔 안 갔다」와
+     「이 컨설팅 담당이 아니다」는 다른 말이다. 아예 떼려면 사업장 부담당에서 뺀다.
+   ⚠ 지난 일정(오늘 이전)은 절대 손대지 않는다. 「그 날 누가 갔다」는 증빙 사진과
+     묶인 기록이라, 나중에 담당이 바뀌었다고 지워지면 안 된다.
+   ⚠ 사번(erpSid)이 안 걸린 사람은 올리지 않고 **말해 준다**. 이름으로 밀어 넣으면
+     동명이인에게 남의 컨설팅이 붙는다.
+   ⚠ 주담당(managerMain)은 건드리지 않는다. */
+
+/* 은/는 가리기 — 「손님노무사은(는)」처럼 괄호를 달아 두면 읽다 걸린다.
+   마지막 글자의 받침으로 고른다(한글이 아니면 '는'). */
+function eunNeun(word){
+  const w=String(word||'');
+  if(!w)return '는';
+  const c=w.charCodeAt(w.length-1);
+  if(c<0xAC00||c>0xD7A3)return '는';
+  return ((c-0xAC00)%28)===0?'는':'은';
+}
+
+/* 같은 사람 묶음인가 — 순서는 상관없다 */
+function sameIdSet(a,b){
+  const x=[...new Set((a||[]).filter(Boolean))].sort();
+  const y=[...new Set((b||[]).filter(Boolean))].sort();
+  return x.length===y.length&&x.every((v,i)=>v===y[i]);
+}
+
+/* 이알피 컨설팅 → 정부컨설팅 사업장 짝짓기를 **한 번에** 만든다.
+   사업장마다 따로 찾으면 이름 다듬기가 사업장×컨설팅×사업장 번 돌아 눈에 띄게 느리다. */
+function erpConsByCo(){
+  const map={};
+  if(!ERP.loaded)return map;
+  const cos=getCos();
+  ERP.consultings.forEach(c=>{
+    if(!c||!c.id||c.closedDate||c.closedAt)return;      // 종료된 건은 맞추지 않는다
+    const nm=String(c.companyName||'').trim();
+    if(!nm)return;
+    const hit=findCoForErp(cos,c.id,nm);
+    if(!hit.co)return;
+    (map[hit.co.id]=map[hit.co.id]||[]).push(c);
+  });
+  return map;
+}
+
+/* 이 브라우저의 이알피 사본에서 컨설팅 한 건의 부담당 칸만 고친다.
+   ⚠ 이알피는 localStorage 를 **먼저** 읽는다. 클라우드에만 쓰면 이 앱이 다음에
+     읽을 때 옛 값을 보고 「아직 안 맞았다」며 또 쓴다. */
+function erpLocalWriteSubs(id,next,ts,by){
+  try{
+    const raw=JSON.parse(localStorage.getItem(ERP_LS_PREFIX+'consultings')||'null');
+    if(!Array.isArray(raw))return;
+    const i=raw.findIndex(x=>x&&x.id===id);
+    if(i<0)return;
+    raw[i]={...raw[i],managerSubs:next,updatedAt:ts,updatedBy:by};
+    localStorage.setItem(ERP_LS_PREFIX+'consultings',JSON.stringify(raw));
+  }catch(e){ console.warn('[부담당 맞추기] 이알피 사본',e); }
+}
+
+/* 이알피가 컨설팅을 **건별 칸**으로 저장하고 있는가.
+   ★ 이 확인이 없으면 안 된다 — 배열형으로 저장돼 있으면 data/consultings/v/<id> 는
+     없는 자리이고, 자칫 자리번호로 쓰면 **엉뚱한 컨설팅**의 부담당을 덮는다.
+     확인되지 않으면 클라우드에는 쓰지 않는다. */
+let _erpConsObjForm=null;
+async function erpConsObjForm(sampleId){
+  if(_erpConsObjForm!==null)return _erpConsObjForm;
+  if(!FB_READY||!_fbDB||!sampleId)return false;
+  try{
+    const snap=await _fbDB.ref('data/consultings/v/'+sampleId+'/id').once('value');
+    _erpConsObjForm=(snap.val()===sampleId);
+  }catch(e){ _erpConsObjForm=false; }
+  return _erpConsObjForm;
+}
+
+/* 이알피에 부담당 칸 **하나만** 쓴다.
+   ⚠ 레코드를 통째로 보내지 않는다 — 이알피도 칸 단위로 저장한다. 통째로 보내면
+     그사이 남이 고친 다른 칸(연락처·금액 등)이 옛 값으로 조용히 되돌아간다. */
+async function erpWriteSubs(c,next){
+  const me=getStaff().find(a=>a&&a.id===myId());
+  const by=(((me&&me.name)||'')+' · 정부컨설팅').trim();
+  const ts=Date.now();
+  erpLocalWriteSubs(c.id,next,ts,by);
+  c.managerSubs=next; c.updatedAt=ts; c.updatedBy=by;   // 이 앱의 메모리 사본
+  if(!FB_READY||!_fbDB)return true;                     // 이 기기에만 — 다음에 접속되면 이알피가 읽어 간다
+  if(!await erpConsObjForm(c.id)){
+    toast('푸른이알피 저장 형식을 확인하지 못해 이 기기에만 반영했습니다 — 관리자에게 알려 주세요','err');
+    return false;
+  }
+  const up={};
+  up['data/consultings/v/'+c.id+'/managerSubs']=next.length?next:null;
+  up['data/consultings/v/'+c.id+'/updatedAt']=ts;
+  up['data/consultings/v/'+c.id+'/updatedBy']=by;
+  up['data/consultings/u']=ts;
+  try{ await _fbDB.ref().update(up); }
+  catch(e){
+    console.warn('[부담당 맞추기] 클라우드',e);
+    toast('푸른이알피에 못 올렸습니다 — 다시 저장해 주세요','err');
+    return false;
+  }
+  return true;
+}
+
+/* ── 올리기: 정부컨설팅 → 푸른이알피 ──
+   사업장 부담당을 이알피의 이어진 컨설팅 전부에 그대로 쓴다. */
+async function erpSyncSubsUp(coId,opt){
+  opt=opt||{};
+  if(!ERP.loaded||!myId()||!coId)return null;
+  const co=getCos().find(c=>c&&c.id===coId);
+  if(!co||co.deleted)return null;
+  const linked=erpConsByCo()[coId]||[];
+  if(!linked.length)return null;              // 이알피와 안 이어진 사업장 — 여기서만 관리한다
+  const staff=getStaff();
+  const one=id=>staff.find(a=>a&&a.id===id);
+  const want=[],missing=[];
+  getCoAtts(co).forEach(id=>{
+    const s=one(id);
+    if(s&&s.erpSid){ if(want.indexOf(s.erpSid)<0)want.push(s.erpSid); }
+    else missing.push((s&&s.name)||id);
+  });
+  let wrote=0;
+  for(const c of linked){
+    const next=want.filter(sid=>sid&&sid!==c.managerMain);   // 주담당이 부담당에도 들어가면 안 된다
+    if(sameIdSet(c.managerSubs||[],next))continue;
+    if(await erpWriteSubs(c,next))wrote++;
+  }
+  if(!opt.silent){
+    if(missing.length)toast(`⚠️ ${missing.join(', ')}${eunNeun(missing[missing.length-1])} 푸른이알피에 못 올렸습니다 — 환경설정 → 직원에서 「사번 잇기」를 해 주세요`,'err');
+    else if(wrote)toast('🔗 푸른이알피 부담당에도 맞췄습니다');
+  }
+  return {wrote,missing};
+}
+
+/* 일정에서 **더한** 사람을 사업장 부담당에도 붙인다(거울로 가는 유일한 입구).
+   뺀 사람은 여기서 다루지 않는다 — 그 날짜 방문에서만 빠진다. */
+async function coAddSubsFromSched(coId,added){
+  if(!ERP.loaded||!coId||!added||!added.length)return;
+  const cos=getCos();
+  const co=cos.find(c=>c&&c.id===coId);
+  if(!co||co.deleted)return;
+  const cur=getCoAtts(co);
+  const next=cur.slice();
+  added.forEach(id=>{ if(id&&id!==co.defAtt&&next.indexOf(id)<0)next.push(id); });
+  if(next.length===cur.length)return;
+  co.defCoAtts=next; delete co.defCoAtt;
+  setCos(cos);
+  await erpSyncSubsUp(coId,{silent:true});
+  const st=getStaff();
+  const nm=added.map(id=>(st.find(a=>a&&a.id===id)||{}).name).filter(Boolean).join(', ');
+  if(nm)toast(`🔗 ${nm}을(를) 사업장·푸른이알피 부담당에도 더했습니다`);
+}
+
+/* ── 내려받기: 푸른이알피 → 정부컨설팅 ──
+   이알피를 읽을 때마다 한 번. 바뀐 것이 없으면 아무것도 저장하지 않는다. */
+function erpSyncSubsDown(){
+  if(!ERP.loaded||!myId())return 0;
+  if(!ERP.consultings.length)return 0;        // 덜 읽힌 판으로 지우지 않는다
+  const byCo=erpConsByCo();
+  const coIds=Object.keys(byCo);
+  if(!coIds.length)return 0;
+  const seeding=!localStorage.getItem('p_subSyncSeeded');
+  const staff=getStaff();
+  const one=id=>staff.find(a=>a&&a.id===id);
+  const cos=getCos(),scheds=getScheds(),today=todayStr();
+  let coChanged=false,scChanged=false;
+  const touched=[],seedUp=[];
+  coIds.forEach(coId=>{
+    const co=cos.find(c=>c&&c.id===coId);
+    if(!co||co.deleted)return;
+    const want=[];
+    byCo[coId].forEach(c=>{
+      (c.managerSubs||[]).forEach(sid=>{
+        const gid=govStaffIdByErp(sid,erpSidName(sid));
+        if(gid&&gid!==co.defAtt&&want.indexOf(gid)<0)want.push(gid);
+      });
+    });
+    const cur=getCoAtts(co);
+    /* 이알피에 **보이지 않는** 사람은 이알피가 판단할 수 없다 — 그대로 둔다.
+       사번이 안 걸린 직원을 이알피 명단으로 지워 버리면, 손으로 넣어 둔 것이
+       이알피를 읽을 때마다 조용히 사라진다. */
+    cur.forEach(id=>{ const s=one(id); if((!s||!s.erpSid)&&want.indexOf(id)<0)want.push(id); });
+    /* ★ 첫 한 번은 **지우지 않고 합친다**.
+       거울을 세우기 전 정부컨설팅에만 있던 부담당은 이알피가 모르는 사람일 뿐,
+       「빠진 사람」이 아니다. 처음부터 이알피를 잣대로 삼으면 그동안 손으로 넣어 둔
+       부담당이 한꺼번에 지워진다. 첫 판은 합쳐서 이알피에 올려 거울을 맞춘다. */
+    if(seeding){
+      cur.forEach(id=>{ if(want.indexOf(id)<0)want.push(id); });
+      if(!sameIdSet(cur,want)){ co.defCoAtts=want; delete co.defCoAtt; coChanged=true; touched.push(co.name); }
+      seedUp.push(coId);
+      return;
+    }
+    if(sameIdSet(cur,want))return;
+    co.defCoAtts=want; delete co.defCoAtt; coChanged=true;
+    /* 빠진 사람은 **아직 안 지난** 일정에서도 뺀다.
+       이 한 줄이 진동을 막는다 — 안 그러면 남아 있는 일정이 그 사람을 도로 올린다. */
+    const gone=cur.filter(id=>want.indexOf(id)<0);
+    if(gone.length){
+      scheds.forEach(sc=>{
+        if(!sc||sc.coId!==coId)return;
+        if(String(sc.date||'')<today)return;      // 지난 일정은 기록이다
+        const has=getCoAtts(sc);
+        const nx=has.filter(id=>gone.indexOf(id)<0);
+        if(nx.length===has.length)return;
+        sc.coAttIds=nx; delete sc.coAttId; scChanged=true;
+      });
+    }
+    touched.push(co.name);
+  });
+  if(coChanged)setCos(cos);
+  if(scChanged)setScheds(scheds);
+  if(seeding){
+    lsSet('p_subSyncSeeded',todayStr());
+    /* 합친 판을 이알피에도 올려 거울을 맞춘다. 조용히 — 첫 로그인에 창이 쏟아지면 안 된다. */
+    (async()=>{ for(const id of seedUp){ try{ await erpSyncSubsUp(id,{silent:true}); }catch(e){ console.warn('[부담당 맞추기 첫판]',e); } } })();
+  }
+  if(touched.length){
+    toast(`🔗 푸른이알피 부담당과 맞췄습니다 — ${touched.slice(0,3).join(', ')}${touched.length>3?` 외 ${touched.length-3}곳`:''}`);
+    try{ renderDash();renderCal(); }catch(e){}
+  }
+  return touched.length;
 }
 
 // ===== 사업장 가져오기 =====
