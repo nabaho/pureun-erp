@@ -1951,6 +1951,32 @@ body.pc #pcDetail{display:flex}
 .codocprow>b{flex:1;min-width:0;font-weight:600;color:#33415e;word-break:break-word}
 .cohist-none{border:1px dashed #dbe1ec;border-radius:10px;padding:14px;text-align:center;
   font-size:12px;color:#8b98b3;background:#fbfcfe;line-height:1.7}
+
+/* ── 🧾 세무사무실 띠·저장 창 (대표 승인 2026-08-28) ─────────────────────── */
+.tax-strip{display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+  padding:9px 12px;border-radius:9px;margin:8px 0;font-size:12.5px;line-height:1.55}
+.tax-strip b{font-weight:800}
+.tax-strip i{font-style:normal;opacity:.75}
+.tax-strip.known{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
+.tax-strip.ask{background:#fffbeb;border:1px solid #fde68a;color:#854d0e}
+.tax-b{border:none;border-radius:7px;padding:5px 12px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit}
+.tax-b.g{background:#fff;color:#166534;border:1px solid #bbf7d0}
+.tax-b.a{background:#fff;color:#854d0e;border:1px solid #fde68a}
+.tax-b.n{background:#fff;color:#8b98b3;border:1px solid #e8ecf3}
+.tax-b.p{background:#1e2a47;color:#fff}
+.tax-modal{position:fixed;inset:0;z-index:9990;background:rgba(20,28,45,.45);
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.tax-card{background:#fff;border-radius:14px;padding:18px 20px;width:100%;max-width:380px;
+  box-shadow:0 16px 50px rgba(10,20,50,.28);box-sizing:border-box}
+.tax-card .tax-t{font-size:14.5px;font-weight:800;color:#1b2536}
+.tax-card .tax-sub{font-size:12px;color:#8b98b3;margin:2px 0 14px}
+.tax-card label{display:block;font-size:11.5px;color:#5a6885;margin:9px 0 4px}
+.tax-card input{width:100%;padding:8px 10px;border:1px solid #e8ecf3;border-radius:8px;
+  font-size:12.5px;font-family:inherit;box-sizing:border-box}
+.tax-card input:disabled{background:#f7f9fc;color:#8b98b3}
+.tax-card .tax-note{margin-top:12px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;
+  border-radius:8px;padding:8px 10px;font-size:11.5px;line-height:1.6}
+.tax-card .tax-row{display:flex;gap:7px;justify-content:flex-end;margin-top:14px}
 #cardsLogin{position:fixed;inset:0;z-index:9999;background:#f4f6fb;display:none;align-items:center;justify-content:center;padding:20px}
 #cardsLogin .cl-card{width:100%;max-width:360px;background:#fff;border:1px solid #e8ecf3;border-radius:16px;padding:28px 24px;box-shadow:0 10px 40px rgba(20,30,50,.08)}
 #cardsLogin .cl-brand{display:flex;align-items:center;gap:12px;margin-bottom:22px}
@@ -2833,7 +2859,7 @@ const ERP_TYPES = ['자문','급여','노조','기금','사무대행'];
    "푸른담당: OOO" 배지를 보여준다. 거래처에서 전화가 오면 ERP를 따로 검색하지 않고
    담당 노무사를 바로 확인할 수 있다. (포털·ERP와 같은 Firebase 세션 공유) */
 const ErpMatch = {
-  ready:false, byBiz:{}, byName:{}, nameByEmail:{}, staff:{},
+  ready:false, byBiz:{}, byName:{}, byTaxEmail:{}, nameByEmail:{}, staff:{},
   _norm(s){ return String(s||'').toLowerCase()
       .replace(/㈜|\(주\)|주식회사|유한회사|유한책임회사|합자회사|합명회사|재단법인|사단법인|의료법인|\(재\)|\(사\)/g,'')
       .replace(/[\s\-_.,·・()[\]{}'"]/g,''); },
@@ -2856,6 +2882,7 @@ const ErpMatch = {
       /* 로그인 계정 → 직원 이름. 보낸 메일에 「p001」 대신 「권형하」가 나오게 한다
          (대표 지시 2026-08-10). 사번의 붙임표를 떼면 로그인 계정이 된다 —
          포털(enter.html sidToEmail)과 같은 규칙이어야 사람이 안 어긋난다. */
+      const byTaxEmail = {};
       const nameByEmail = {};
       dir.forEach(u=>{
         if(!u || !u.sid || !u.name) return;
@@ -2905,12 +2932,26 @@ const ErpMatch = {
           ceoRaw: co.ceo||'', ceo2Raw: co.ceo2||'', contactsRaw: _contactsRaw,
           ceo: ErpMatch._norm(co.ceo||''), ceo2: ErpMatch._norm(co.ceo2||''),
           contacts: _contactsRaw.map(x=>ErpMatch._norm(x)).filter(Boolean),
+          /* ── 세무사무실 (대표 지시 2026-08-28) ──────────────────────────────
+             보수총액 신고·연말정산 메일이 여기서 온다. 보낸 주소로 «어느 업체의
+             세무사무실인지» 알아보려면 이 값들이 손에 있어야 한다.
+             ⚠ id 도 함께 싣는다 — 저장할 때 그 업체를 되짚어야 한다. */
+          id: co.id||'',
+          coName: co.name||'',
+          taxOfficeName: co.taxOfficeName||'', taxContact: co.taxContact||'',
+          taxPhone: co.taxPhone||'', taxEmail: co.taxEmail||'',
           bizNo: co.bizNo||'' };
-        if(!main && !subs.length && !rec.type && !rec.ceo && !rec.contacts.length) return;
+        /* ⚠ 「세무사무실만 적힌」 업체가 여기서 걸러지면 안 된다 —
+           담당자·유형이 비어 있어도 세무 메일은 온다. rec.taxEmail 을 함께 본다. */
+        if(!main && !subs.length && !rec.type && !rec.ceo && !rec.contacts.length && !rec.taxEmail) return;
         const b = ErpMatch._digits(co.bizNo); if(b.length>=10 && !byBiz[b]) byBiz[b]=rec;
         const n = ErpMatch._norm(co.name);    if(n && !byName[n]) byName[n]=rec;
+        /* 세무사무실 주소로도 찾는다 — 한 사무실이 여러 업체를 맡으므로 목록으로 담는다 */
+        const te = String(co.taxEmail||'').trim().toLowerCase();
+        if(te.indexOf('@')>0){ (byTaxEmail[te] = byTaxEmail[te] || []).push(rec); }
       });
-      ErpMatch.byBiz=byBiz; ErpMatch.byName=byName; ErpMatch.companies=cos; ErpMatch.ready=true;
+      ErpMatch.byBiz=byBiz; ErpMatch.byName=byName; ErpMatch.byTaxEmail=byTaxEmail;
+      ErpMatch.companies=cos; ErpMatch.ready=true;
       coListBust();
       try{ render(); }catch(_){}
       /* 자문사 폴더 자동 분류 — 명함 데이터가 늦게 로드될 수 있어 4초 뒤 한 번 더(멱등) */
@@ -5363,11 +5404,13 @@ function renderMailPage(){
      갈래가 늘 때 **두 곳을 함께** 고쳐야 한다(폰은 renderMailMobile). */
   /* ⚠ 갈래가 늘 때 «두 곳을 함께» 고쳐야 한다(폰은 renderMailMobile).
      'box' 는 다음메일함을 비추는 목록이다 — 2026-08-24 에 더했다. */
-  el.innerHTML = state.mailSent==='box' ? mbBoxHtml()
+  el.innerHTML = (state.mailSent==='box' ? mbBoxHtml()
                 : state.mailSent==='who' ? whoPageHtml()
                 : state.mailSent==='inbox' ? inboxBoxHtml()
                 : state.mailSent==='sched' ? schedBoxHtml()
-                : state.mailSent ? sentBoxHtml() : mailWriteHtml();
+                : state.mailSent ? sentBoxHtml() : mailWriteHtml())
+                /* 세무사무실 저장 창 — 열려 있을 때만 뒤에 붙는다 (2026-08-28) */
+                + taxSaveHtml();
   if(!state.mailSent) wireMailWrite();
 }
 
@@ -5397,10 +5440,12 @@ function renderMailMobile(){
       <button class="mmtab" onclick="openMatPage()" title="메일에 붙일 자료">📎 자료함</button>
     </div><div id="mmBody"></div>`;
   const body=$('mmBody'); if(!body) return;
-  body.innerHTML = state.mailSent==='box' ? mbMobileHtml()
+  body.innerHTML = (state.mailSent==='box' ? mbMobileHtml()
                  : state.mailSent==='inbox' ? inboxBoxHtml()
                  : state.mailSent==='sched' ? schedBoxHtml()
-                 : state.mailSent ? sentBoxHtml() : mailWriteHtml();
+                 : state.mailSent ? sentBoxHtml() : mailWriteHtml())
+                 /* 폰에서도 같은 저장 창을 쓴다 — 한쪽만 달면 기기에 따라 안 뜬다 */
+                 + taxSaveHtml();
   if(!state.mailSent) wireMailWrite();
 }
 /* ── 쓰기 화면 ── */
@@ -13992,6 +14037,190 @@ function mbTrashOne(slug, uid){
   mbMoveTo([v], trash.slug, '휴지통');
 }
 
+
+/* ══════ 세무사무실 담당자 채우기 (대표 승인 2026-08-28, 가·나) ══════════════
+   ★ 무엇을 하나
+     가) 업체관리에 세무사무실 이메일이 «이미 적힌» 곳에서 메일이 오면
+         「○○사의 세무사무실입니다」 를 붙이고, 한 번 눌러 담당자를 채운다.
+     나) 아직 안 적힌 곳인데 본문에 업체 이름이 보이면
+         「이 주소를 그 업체의 세무사무실로 등록할까요?」 를 묻는다.
+
+   ★ 무엇을 «안» 하나
+     본문 서명에서 담당자 이름·담당 세무서를 읽어내지 않는다.
+     사무실마다 서명 모양이 달라 틀리게 넣는다 — 틀린 담당자는 안 넣느니만 못하다.
+     기계는 «어느 업체인지» 까지만 하고, 이름은 보낸 사람 이름을 그대로 두어 사람이 고친다.
+
+   ⚠ 메일함은 다음메일을 비추는 거울이다 — 다음메일은 한 글자도 안 건드린다.
+     여기서 쓰는 것은 푸른이알피 업체관리뿐이다. */
+const TAX_SKIP_KEY = 'pu_tax_hint_skip';      /* 「아니오」 한 주소 — 다시 안 묻는다 */
+
+function taxSkipSet(){
+  try { return JSON.parse(localStorage.getItem(TAX_SKIP_KEY) || '{}') || {}; }
+  catch(e){ return {}; }
+}
+function taxSkipAdd(email){
+  try {
+    const m = taxSkipSet();
+    m[String(email||'').toLowerCase()] = 1;
+    localStorage.setItem(TAX_SKIP_KEY, JSON.stringify(m));
+  } catch(e){}
+}
+
+/* 이 메일이 «어느 업체의 세무사무실»에서 온 것인가.
+   반환: null | {kind:'known', cos:[rec…]} | {kind:'ask', co:rec} */
+function taxHintFor(email, name, subject, body){
+  if(!ErpMatch.ready) return null;
+  const e = String(email||'').trim().toLowerCase();
+  if(e.indexOf('@') < 1) return null;
+  /* 우리 직원 메일은 볼 것 없다 */
+  if(ErpMatch.nameByEmail && ErpMatch.nameByEmail[e]) return null;
+
+  /* 가) 이미 아는 주소 */
+  const known = (ErpMatch.byTaxEmail || {})[e];
+  if(known && known.length) return { kind:'known', cos:known };
+
+  if(taxSkipSet()[e]) return null;             /* 「아니오」 했던 주소 */
+
+  /* 나) 모르는 주소 — 제목·본문에 «업체 이름»이 보이나
+     ⚠ 짧은 이름은 아무 데나 걸린다(예: 「보문사」). 네 글자 이상만 본다. */
+  const hay = (String(subject||'') + ' ' + String(body||'')).slice(0, 4000);
+  if(!hay.trim()) return null;
+  const cos = ErpMatch.companies || [];
+  let hit = null;
+  for(let i=0;i<cos.length;i++){
+    const co = cos[i];
+    const nm = String((co && co.name) || '').trim();
+    if(nm.length < 4) continue;
+    if(co && String(co.taxEmail||'').trim()) continue;   /* 이미 적힌 곳은 안 묻는다 */
+    if(hay.indexOf(nm) >= 0){ hit = co; break; }
+  }
+  if(!hit) return null;
+  return { kind:'ask', co:{ id:hit.id||'', coName:hit.name||'',
+    taxOfficeName:hit.taxOfficeName||'', taxContact:hit.taxContact||'',
+    taxPhone:hit.taxPhone||'', taxEmail:hit.taxEmail||'' } };
+}
+
+/* 메일 아래 붙는 띠 */
+function taxStripHtml(v){
+  const o = state.mbOpen || {};
+  const hint = taxHintFor(v.e, v.f, v.s, o.text || '');
+  if(!hint) return '';
+  const em = esc(String(v.e||''));
+  const nm = esc(String(v.f||''));
+  if(hint.kind === 'known'){
+    const names = hint.cos.map(c=>c.coName).filter(Boolean);
+    const office = (hint.cos[0] && hint.cos[0].taxOfficeName) || '';
+    return `<div class="tax-strip known">
+      <span>🧾 <b>${esc(names.slice(0,3).join(' · '))}</b>${names.length>3?(' 외 '+(names.length-3)+'곳'):''} 의 세무사무실입니다${office?(' <i>'+esc(office)+'</i>'):''}</span>
+      <span style="flex:1"></span>
+      <button class="tax-b g" onclick="taxSaveOpen('${em}','${nm}')">담당자 저장</button>
+    </div>`;
+  }
+  return `<div class="tax-strip ask">
+    <span>❓ 본문에 <b>${esc(hint.co.coName)}</b> 이(가) 보입니다 — 이 주소를 그 업체의 세무사무실로 등록할까요?</span>
+    <span style="flex:1"></span>
+    <button class="tax-b a" onclick="taxSaveOpen('${em}','${nm}','${esc(hint.co.id)}')">등록</button>
+    <button class="tax-b n" onclick="taxHintNo('${em}')">아니오</button>
+  </div>`;
+}
+function taxHintNo(email){ taxSkipAdd(email); toast('이 주소는 다시 묻지 않습니다'); renderMailPage(); }
+
+/* 저장 창 — 빈 칸만 채운다 */
+function taxSaveOpen(email, sender, coId){
+  const e = String(email||'').toLowerCase();
+  let targets = [];
+  if(coId){
+    const co = (ErpMatch.companies||[]).find(c=>c && c.id===coId);
+    if(co) targets = [{ id:co.id, coName:co.name, taxOfficeName:co.taxOfficeName||'',
+      taxContact:co.taxContact||'', taxPhone:co.taxPhone||'', taxEmail:co.taxEmail||'' }];
+  } else {
+    targets = ((ErpMatch.byTaxEmail||{})[e] || []).slice();
+  }
+  if(!targets.length) return toast('업체를 찾지 못했습니다');
+  state.taxSave = { email:e, sender:String(sender||''), targets:targets,
+                    contact:String(sender||''), phone:'', office: targets[0].taxOfficeName || '' };
+  renderMailPage();
+}
+function taxSaveClose(){ state.taxSave = null; renderMailPage(); }
+function taxSaveField(k, val){ if(state.taxSave){ state.taxSave[k] = val; } }
+
+async function taxSaveDo(){
+  const t = state.taxSave;
+  if(!t) return;
+  const u = firebase.auth().currentUser;
+  if(!u) return toast('로그인이 필요합니다');
+  try{
+    const db = firebase.database();
+    const snap = await db.ref('data/companies').once('value');
+    const wrap = snap.val();
+    const rawv = (wrap && wrap.v !== undefined) ? wrap.v : wrap;
+    const isObj = rawv && !Array.isArray(rawv) && typeof rawv === 'object';
+    const list = Array.isArray(rawv) ? rawv.filter(Boolean)
+               : (isObj ? Object.keys(rawv).map(k=>rawv[k]).filter(Boolean) : []);
+    const now = Date.now();
+    const up = {};
+    let n = 0, kept = 0;
+    t.targets.forEach(function(tg){
+      const cur = list.find(c=>c && c.id===tg.id);
+      if(!cur) return;
+      /* ★ 이미 있는 값은 «안 덮는다» — 사람이 업체관리에서 고쳐 둔 것을
+         메일 한 통이 조용히 지우면 안 된다. 빈 칸만 채운다. */
+      const blank = v => v===undefined || v===null || String(v).trim()==='';
+      const patch = {};
+      if(blank(cur.taxEmail))      patch.taxEmail = t.email;      else kept++;
+      if(blank(cur.taxContact) && String(t.contact||'').trim()) patch.taxContact = String(t.contact).trim(); else if(!blank(cur.taxContact)) kept++;
+      if(blank(cur.taxOfficeName) && String(t.office||'').trim()) patch.taxOfficeName = String(t.office).trim(); else if(!blank(cur.taxOfficeName)) kept++;
+      if(blank(cur.taxPhone) && String(t.phone||'').trim())     patch.taxPhone = String(t.phone).trim(); else if(!blank(cur.taxPhone)) kept++;
+      if(!Object.keys(patch).length) return;
+      patch.updatedAt = now;
+      const merged = Object.assign({}, cur, patch);
+      if(isObj) up['data/companies/v/'+cur.id] = merged;
+      n++;
+      if(!isObj){
+        const idx = list.findIndex(c=>c && c.id===cur.id);
+        if(idx>=0) list[idx] = merged;
+      }
+    });
+    if(!n) { toast('채울 빈 칸이 없습니다 — 이미 다 들어 있습니다'); state.taxSave=null; return renderMailPage(); }
+    if(!isObj) up['data/companies/v'] = list;
+    up['data/companies/u'] = now;      /* 갱신시각 — 푸른이알피가 이걸 보고 다시 읽는다 */
+    await db.ref().update(up);
+    toast('✅ 업체관리에 저장했습니다 ('+n+'곳'+(kept?(' · 이미 있던 값 '+kept+'개는 그대로'):'')+')');
+    state.taxSave = null;
+    ErpMatch.load();                   /* 색인을 다시 만들어 띠가 바로 바뀌게 */
+    renderMailPage();
+  }catch(e){
+    console.error(e);
+    toast('저장 실패 — 권한 또는 연결을 확인하세요');
+  }
+}
+
+/* 저장 창 그리기 */
+function taxSaveHtml(){
+  const t = state.taxSave;
+  if(!t) return '';
+  const names = t.targets.map(x=>x.coName).filter(Boolean).join(' · ');
+  return `<div class="tax-modal" onclick="if(event.target===this)taxSaveClose()">
+    <div class="tax-card">
+      <div class="tax-t">🧾 세무사무실 담당자 저장</div>
+      <div class="tax-sub">${esc(names)}</div>
+      <label>세무사무실</label>
+      <input value="${esc(t.office)}" oninput="taxSaveField('office',this.value)" placeholder="○○세무회계">
+      <label>담당자</label>
+      <input value="${esc(t.contact)}" oninput="taxSaveField('contact',this.value)" placeholder="보낸 사람 이름이 들어 있습니다 — 고치셔도 됩니다">
+      <label>이메일</label>
+      <input value="${esc(t.email)}" disabled>
+      <label>연락처</label>
+      <input value="${esc(t.phone)}" oninput="taxSaveField('phone',this.value)" placeholder="비어 있음 — 적으면 채워집니다">
+      <div class="tax-note">★ 이미 들어 있는 값은 <b>안 덮습니다</b> — 빈 칸만 채웁니다.</div>
+      <div class="tax-row">
+        <button class="tax-b n" onclick="taxSaveClose()">그만두기</button>
+        <button class="tax-b p" onclick="taxSaveDo()">업체관리에 저장</button>
+      </div>
+    </div>
+  </div>`;
+}
+
 function mbReadHtml(){
   const o = state.mbOpen||{};
   const box = _mbMsgs[o.slug]||{};
@@ -14027,6 +14256,9 @@ function mbReadHtml(){
       ${/* 사람이 다음메일에서 보는 이름으로 적는다 — 「INBOX」라고 쓰면 같은 칸인지 모른다 */''}
       <span><b>폴더</b> ${esc(mbBoxName(o.slug))}</span>
     </div>
+    ${/* 🧾 세무사무실 띠 — 아는 주소면 「누구의 세무사무실인지」, 모르는 주소면 「등록할까요」
+          (대표 승인 2026-08-28). 본문을 봐야 하므로 본문을 가져온 뒤에만 뜬다. */''}
+    ${taxStripHtml(v)}
     ${(o.atts&&o.atts.length) ? `<div class="atts">${o.atts.map((a,i)=>
       `<button onclick="mbAtt(${i})" title="내려받기">📎 ${esc(a.name||'첨부')}${a.size?' · '+fmtMB(a.size):''}</button>`
     ).join('')}</div>` : ''}
