@@ -34,7 +34,7 @@ function code(s) { return String(s).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\
 
 /* 넘기기 세 함수를 가짜 목록 위에 올려 **실제로 돌린다.**
    shownItems·idsOf·openViewer 를 우리가 끼워 넣어, 어디로 갔는지 받아 본다. */
-function navWorld(list, startId) {
+function navWorld(list, startId, editing) {
   /* 뽑아 온 함수들은 바깥의 전역 `viewerId` 를 읽는다 —
      가짜 세상에서도 같은 이름이 보이도록 `var viewerId` 를 함께 선언해 둔다. */
   const src = 'var viewerId;\n' +
@@ -47,11 +47,14 @@ function navWorld(list, startId) {
 
   const opened = [];
   const els = { picPrev: { style: {}, disabled: false }, picNext: { style: {}, disabled: false } };
-  const api = new Function('shownItems', 'idsOf', 'openViewer', '$', src)(
+  /* 2026-08-29: 편집 중에는 사진을 안 넘긴다(그은 사각형이 엉뚱한 사진에 얹힌다).
+     여기서는 편집 중이 아니라고 둔다 — 넘기기 자체가 이 파일의 주제다. */
+  const api = new Function('shownItems', 'idsOf', 'openViewer', '$', 'photoEditing', src)(
     function () { return list; },
     function (it) { return (it && it._pages && it._pages.length) ? it._pages.slice() : (it ? [it.id] : []); },
     function (id) { opened.push(id); api.set(id); },
-    function (k) { return els[k]; });
+    function (k) { return els[k]; },
+    function () { return !!editing; });
   api.set(startId);
   return { api: api, opened: opened, els: els };
 }

@@ -739,8 +739,17 @@ button{font-family:inherit;cursor:pointer}
 /* 편집 중에는 사진을 크게 — 벽시계처럼 작은 것을 마우스로 짚어야 한다
    (대표 보고 2026-08-29 「마우스로 체크해서 편집하고 싶다」). 커서도 십자로 바꿔
    「여기를 그으면 된다」가 손끝에 보이게 한다. */
-.maskwrap.edit{max-height:70vh;cursor:crosshair}
-.maskwrap.edit img{max-height:70vh}
+.maskwrap.edit{cursor:crosshair}
+/* ── 큰 사진 위에서 긋기 (대표 지시 2026-08-29 「편집위해 큰사진위에서」) ──
+   뷰어의 사진 자리를 통째로 쓴다. 배경을 안 깔아 원래 사진과 같은 자리에 겹치게 —
+   「사진 위에서 긋는다」가 눈으로 그대로 보인다. */
+#viewerEdit{position:absolute;inset:0;display:none;align-items:center;justify-content:center;padding:8px}
+#viewerEdit .maskwrap.big{background:transparent;max-height:100%;max-width:100%}
+#viewerEdit .maskwrap.big img{max-height:100%;max-width:100%;object-fit:contain}
+/* 편집 중에는 원래 사진과 넘기기·돌리기를 감춘다 — 그리는 중에 사진이 바뀌면
+   그은 사각형이 엉뚱한 사진에 얹힌다. */
+#viewerPic.editing>#viewerImg,#viewerPic.editing>#rotBar,#viewerPic.editing>.picnav{display:none}
+#viewerPic.editing{cursor:crosshair}
 .maskbox{position:absolute;background:#000;border:2px solid #4ade80}
 /* 모자이크·흐리게를 고르면 네모도 그렇게 보인다 — 까맣게만 보이면
    무엇이 저장될지 알 수 없다(고르개는 켰는데 화면은 그대로였다). */
@@ -1995,7 +2004,15 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
         <button class="picnav prev" id="picPrev" onclick="event.stopPropagation();gotoPhoto(-1)"
                 title="이전 사진 (← 키)" aria-label="이전 사진">◀</button>
         <button class="picnav next" id="picNext" onclick="event.stopPropagation();gotoPhoto(1)"
-                title="다음 사진 (→ 키)" aria-label="다음 사진">▶</button></div>
+                title="다음 사진 (→ 키)" aria-label="다음 사진">▶</button>
+        <!-- 🖍 사진 편집 — **큰 사진 위에서** 긋는다 (대표 지시 2026-08-29).
+             왼쪽 판(440px·절반)에서는 벽시계 하나를 마우스로 짚을 수가 없었다.
+             ⚠ 긋기 층(pu-rrn-mask-ui)은 **id 로만** 자리를 찾는다(maskImg·maskPreview).
+                그래서 «같은 짜임을 여기에 그리면» 계산이 그대로 따라온다 —
+                긋기 층은 한 줄도 안 고쳤다.
+             ⚠ 편집 중에는 사진 넘기기·돌리기·확대를 막는다. 그리는 중에 사진이 바뀌면
+                그은 사각형이 엉뚱한 사진에 얹힌다. -->
+        <div id="viewerEdit" style="display:none"></div></div>
       <!-- 가운데 손잡이 — 마우스로 끌어 좌우 폭을 바꾼다(대표 지시 2026-08-13).
            ⚠ 판(readPanel) **앞**에 둔다. 판은 order:-1 로 왼쪽에 서므로
              이 손잡이가 그 사이(사진 ↔ 판)에 놓인다.
@@ -10309,6 +10326,9 @@ function renderPicNav() {
   next.disabled = p.at < 0 || p.at >= p.list.length - 1;
 }
 function gotoPhoto(step) {
+  /* ⚠ 편집 중에는 사진을 안 넘긴다 — 그리는 중에 사진이 바뀌면 그은 사각형이
+     **엉뚱한 사진에 얹힌다.** 키(← →)로도 이 길을 지난다. */
+  if (photoEditing()) return;
   const p = photoNavAt();
   if (p.at < 0) return;
   const to = p.at + step;
@@ -10592,6 +10612,10 @@ function closeViewer() {
   $('viewerPic').classList.remove('zoom');   // 다음 사진은 다시 맞춰 보이게
   $('viewerImg').src = '';
   $('readPanel').innerHTML = '';
+  /* ⚠ 편집 중이었으면 **그 상태를 비운다.** 안 비우면 다음에 다른 사진을 열 때
+     앞 사진의 네모가 그대로 얹혀 있고, 저장하면 엉뚱한 사진이 고쳐진다. */
+  photoMask = PuRrnMaskUi.blank();
+  renderViewerEdit();
   viewerId = null;
   /* 단추·바깥·Esc 로 닫았다 — 열 때 쌓아 둔 역사 칸을 빼 준다.
      안 빼면 다음 뒤로 가기가 그 헛칸을 밟아 「눌렀는데 아무 일도 없는」 게 된다. */
@@ -10676,6 +10700,10 @@ function dataUrlToBlobUrl(src) {
 }
 
 function picClick(e) {
+  /* ⚠ 편집 중에는 사진 자리를 눌러도 아무 일이 없어야 한다(대표 지시 2026-08-29).
+     안 막으면 네모를 하나 그을 때마다 **창이 닫힌다** — 사진 바깥을 누른 것으로
+     읽히기 때문이다. 그리고 그은 것이 통째로 사라진다. */
+  if (photoEditing()) return;
   if (e.target && e.target.id === 'viewerImg') {
     const pic = $('viewerPic');
     const zoom = pic.classList.toggle('zoom');
@@ -11566,18 +11594,19 @@ function renderReadPanel(it) {
   /* 가림 화면이 열려 있으면 그것이 판 자리를 차지한다 — 판독 결과와 동시에 뜨면
      사람이 「지금 무엇을 하는 중인지」를 잃는다. */
   if (maskOn()) {
-    /* ── 편집 중에는 판을 «넓게» 쓴다 (대표 보고 2026-08-29) ──
-       "여기 시계지우기 등이 필요한데 마우스로 체크해서 편집하고 싶다."
-       440px 짜리 옆 칸에서는 벽시계 하나를 마우스로 짚을 수가 없다 — 사진이
-       엄지손톱만 해진다. 편집일 때만 절반을 쓰고, 창을 닫으면 제 폭으로 돌아온다.
-       ⚠ 사람이 끌어 좁혀 둔 폭(applySplit)도 편집 중에는 잠시 밀어 둔다 —
-         260px 로 줄여 둔 분은 아예 그을 수가 없다. */
-    const editing = !!(photoMask && photoMask.purpose === 'edit');
-    el.classList.toggle('wide', editing);
+    /* ── 편집은 «큰 사진 위»에서 (대표 지시 2026-08-29 「편집위해 큰사진위에서」) ──
+       옆 칸에는 **도구만** 남는다(결 고르기·되돌리기·저장). 판을 넓히면 오히려
+       사진 자리를 빼앗으므로 **좁은 채로 둔다** — 이제 사진이 커야 할 쪽은 오른쪽이다.
+       ⚠ 「가리고 판독」은 예전 그대로 옆 칸에서 긋는다(주민번호 한 줄이라 충분하고,
+         그 길을 건드리면 08-17 보안 고침이 흔들린다). */
+    el.classList.remove('wide');
     el.innerHTML = maskPanelHtml();
-    if (editing) el.style.flex = ''; else applySplit();
+    applySplit();
+    renderViewerEdit();
     return;
   }
+  /* 편집을 나갔으면 큰 사진 위의 긋는 판도 함께 걷는다 — 안 걷으면 사진이 안 보인다 */
+  renderViewerEdit();
   /* 근태표·서식은 판이 **화면 절반**을 쓴다 — A4 를 원본과 나란히 대조하려면
      표가 좁으면 안 된다. 다른 서류는 그대로 440px.
      ⚠ 사람이 끌어 정한 폭이 있으면 그것이 이긴다(applySplit). */
@@ -11863,6 +11892,12 @@ function readPhoto(id, masked) {
    시작 코드가 이 줄보다 먼저 돌아 화면이 통째로 죽는다(2026-08-17 백지 사고). */
 
 function maskOn() { return !!(photoMask && photoMask.status !== 'idle'); }
+/* 지금 «큰 사진 위에서» 긋는 중인가 — 사진 넘기기·확대·닫기를 막는 기준이다.
+   ⚠ 한 곳에서만 판단한다. 세 자리가 저마다 재면 한 곳이 꼭 빠지고,
+     그 자리에서 그은 것이 통째로 사라진다. */
+function photoEditing() {
+  return !!(photoMask && photoMask.purpose === 'edit' && photoMask.status !== 'idle');
+}
 function maskItem() { return gridItems.find(function (x) { return x.id === viewerId; }); }
 
 /* 지금 보는 사진이 이미 민감한 것으로 밝혀졌는가 — 목록은 저장 층 한 곳에서 온다. */
@@ -12002,6 +12037,49 @@ function photoMaskConfirm() {
   });
 }
 
+/* ── 긋는 판의 짜임 — «한 곳»에서 만든다 ──
+   같은 것을 두 자리(옆 칸 · 큰 사진 위)에 그리므로, 두 벌로 두면 한쪽만 고쳐진다.
+   ⚠ **id 는 하나뿐이어야 한다**(maskImg·maskPreview). 긋기 층이 id 로 자리를 찾으므로
+     둘이 동시에 떠 있으면 좌표가 엉뚱한 쪽에서 계산된다 — 그래서 편집일 때는
+     옆 칸에 안 그리고, 옆 칸에 그릴 때는 큰 사진 위를 비운다.
+   ⚠ ondragstart 를 막는 것이 핵심이다 — 브라우저의 「사진 끌어다 놓기」가 긋기를
+     가로챈다(2026-08-16 급여데이터함에서 겪은 그 문제). */
+function maskWrapHtml(ms, boxes, big) {
+  return '<div id="maskWrap" class="maskwrap' + (big ? ' edit big' : '') + '" ondragstart="return false"' +
+    ' onpointerdown="maskDown(event)" onpointermove="maskMove(event)"' +
+    ' onpointerup="maskUp(event)" onpointercancel="maskCancelDrag()">' +
+    '<img id="maskImg" src="' + esc((ms && ms.url) || '') + '" alt="" draggable="false">' + boxes +
+    '<div id="maskPreview" class="maskbox" style="display:none"></div>' +
+    '</div>';
+}
+
+/* ── 큰 사진 위에서 긋기 (대표 지시 2026-08-29 「편집위해 큰사진위에서」) ──
+   ⚠ 편집 중에는 원래 사진(viewerImg)과 넘기기·돌리기 단추를 감춘다.
+     그리는 중에 사진이 바뀌면 그은 사각형이 **엉뚱한 사진에 얹힌다.**
+   ⚠ 긋기 층은 한 줄도 안 고쳤다 — id 로 자리를 찾으므로 같은 짜임을 여기에
+     그리기만 하면 계산이 그대로 따라온다. */
+function renderViewerEdit() {
+  const box = $('viewerEdit'); if (!box) return;
+  const ms = photoMask || {};
+  const on = ms.purpose === 'edit' && ms.status === 'ready';
+  box.style.display = on ? 'flex' : 'none';
+  box.innerHTML = on ? maskWrapHtml(ms, maskBoxesHtml(ms), true) : '';
+  const pic = $('viewerPic');
+  if (pic) pic.classList.toggle('editing', on);
+}
+
+/* 그어 둔 네모들 — 옆 칸과 큰 사진이 같은 것을 그린다 */
+function maskBoxesHtml(ms) {
+  const edit = ms && ms.purpose === 'edit';
+  return ((ms && ms.boxes) || []).map(function (b, i) {
+    /* 고른 결대로 보여 준다 — 까맣게만 보이면 무엇이 저장될지 알 수 없다 */
+    return '<div class="maskbox' + (edit && ms.style && ms.style !== 'black' ? ' ' + ms.style : '') +
+      '" style="left:' + (b.x * 100) + '%;top:' + (b.y * 100) +
+      '%;width:' + (b.w * 100) + '%;height:' + (b.h * 100) + '%">' +
+      '<span class="x" onpointerdown="event.stopPropagation()" onclick="maskDelBox(' + i + ')">✕</span></div>';
+  }).join('');
+}
+
 /* 가림 화면 — 판독 결과 판 자리에 그대로 그린다(폰에서도 위아래로 쌓인다). */
 function maskPanelHtml() {
   const ms = photoMask || {};
@@ -12015,15 +12093,9 @@ function maskPanelHtml() {
       '<button class="again" onclick="photoMaskCancel()">닫기</button></div>';
   }
   const n = (ms.boxes || []).length;
-  /* 「가리기」로 들어왔는가 — 나가는 문과 안내가 통째로 달라진다 */
+  /* 「사진 편집」으로 들어왔는가 — 나가는 문·안내·긋는 자리가 통째로 달라진다 */
   const edit = ms.purpose === 'edit';
-  const boxes = (ms.boxes || []).map(function (b, i) {
-    /* 고른 결대로 보여 준다 — 까맣게만 보이면 무엇이 저장될지 알 수 없다 */
-    return '<div class="maskbox' + (edit && ms.style && ms.style !== 'black' ? ' ' + ms.style : '') +
-      '" style="left:' + (b.x * 100) + '%;top:' + (b.y * 100) +
-      '%;width:' + (b.w * 100) + '%;height:' + (b.h * 100) + '%">' +
-      '<span class="x" onpointerdown="event.stopPropagation()" onclick="maskDelBox(' + i + ')">✕</span></div>';
-  }).join('');
+  const boxes = maskBoxesHtml(ms);
   /* 칠하는 결 — 「가리기」일 때만 고른다.
      ⚠ 판독으로 보내는 길에는 안 준다. 모자이크·흐리게는 **밑이 비쳐 AI 가 읽어 낼 수
        있어서**, 가린 셈 치고 주민번호를 그대로 내보내게 된다. */
@@ -12042,14 +12114,11 @@ function maskPanelHtml() {
       ? '<div class="maskwarn">⚠ 저장하면 <b>되돌릴 수 없습니다</b> — 원본을 덮어씁니다</div>'
       : '<div class="maskwarn">⚠ 눈으로 한 번 훑어 주세요 — 못 보고 지나친 자리가 있을 수 있습니다</div>') +
     styles +
-    /* ⚠ ondragstart 를 막는 것이 핵심이다 — 브라우저의 「사진 끌어다 놓기」가
-       긋기를 가로챈다(2026-08-16 급여데이터함에서 겪은 그 문제). */
-    '<div id="maskWrap" class="maskwrap' + (edit ? ' edit' : '') + '" ondragstart="return false"' +
-    ' onpointerdown="maskDown(event)" onpointermove="maskMove(event)"' +
-    ' onpointerup="maskUp(event)" onpointercancel="maskCancelDrag()">' +
-    '<img id="maskImg" src="' + esc(ms.url || '') + '" alt="" draggable="false">' + boxes +
-    '<div id="maskPreview" class="maskbox" style="display:none"></div>' +
-    '</div>' +
+    /* ⚠ **편집일 때는 긋는 판을 여기에 안 그린다** — 큰 사진 위에 그린다
+       (대표 지시 2026-08-29 「편집위해 큰사진위에서」). 440px 짜리 옆 칸에서는
+       벽시계 하나를 짚을 수가 없었다. 짜임은 maskWrapHtml 한 곳에서 만든다 —
+       두 벌로 두면 한쪽만 고쳐진다. */
+    (edit ? '' : maskWrapHtml(ms, boxes, false)) +
     (edit
       ? '<p class="note" style="margin:8px 0 0">지울 것(벽시계·이름표·배경 글씨 등) 위를 ' +
         '<b>마우스로 드래그</b>하면 그 자리가 덮입니다 — 폰에서는 손가락으로 긋습니다.<br>' +
