@@ -152,7 +152,10 @@
         var next = inner.replace(re, function (mm, head, blank, off, whole) {
           /* 뒤에 다른 라벨이 이어지면 사이를 벌린다 — 「푸른노무법인부서명」이 되지 않게 */
           var rest = whole.slice(off + mm.length);
-          return head + esc(fields[L.key]) + (rest.replace(/^[\s_　]+/, '') ? '  ' : '');
+          /* 밑줄 자리가 있으면 «그 자리에 딱» 넣는다(서식이 정한 간격을 따른다).
+             빈자리가 아예 없을 때만 한 칸 띄운다 — 안 그러면 「직위 :대표노무사」로 붙는다. */
+          var pre = (blank || /\s$/.test(head)) ? '' : ' ';
+          return head + pre + esc(fields[L.key]) + (rest.replace(/^[\s_　]+/, '') ? '  ' : '');
         });
         if (next === inner) return m;
         did++; report.fields.push({ key: L.key, value: fields[L.key] });
@@ -266,7 +269,10 @@
     cellText: cellText, isEmptyCell: isEmptyCell, fillCell: fillCell,
     /* 칸 지도(kcareer-formmap.js)가 «같은 자»를 쓰도록 내보낸다 —
        따로 만들면 두 곳의 셈이 어긋나 「지도에는 있는데 안 채워지는 칸」이 생긴다 */
-    splitRows: splitRows, splitCells: splitCells, eachTable: eachTable, normLabel: normLabel
+    splitRows: splitRows, splitCells: splitCells, eachTable: eachTable, normLabel: normLabel,
+    /* 「자택:____ 직장:____」 같은 칸 안 라벨 목록 — 입력판(kcareer-formhtml.js)이 같은 자를 쓴다.
+       사전을 두 곳에 두면 한쪽만 늘어나 「화면엔 칸이 있는데 안 채워지는」 자리가 생긴다. */
+    incellLabels: function () { return INCELL_LABELS.slice(); }
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KcareerHwpxFill = api;

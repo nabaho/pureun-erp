@@ -53,3 +53,10 @@ test('밑줄은 «값 자리»라 삼켜서 바꾼다 — 남기면 「041-556-0
     .map((x) => x.replace(/<[^>]*>/g, '')).join(' ');
   assert.doesNotMatch(txt, /041-556-0035_/, '값 뒤에 밑줄이 남으면 안 됩니다');
 });
+
+test('콜론 바로 뒤에 붙지 않는다 — 「직위 :대표노무사」로 보였다', () => {
+  const r = F.autoFill(tbl([['현 근무처', '기관명 : 부서명 : 직위 :']]), { fields: WHO });
+  const txt = (r.xml.match(/<hp:t[^>]*>([\s\S]*?)<\/hp:t>/g) || [])
+    .map((x) => x.replace(/<[^>]*>/g, '')).join(' ');
+  assert.doesNotMatch(txt, /[:：]\S/, '콜론 뒤에는 한 칸이 있어야 읽힙니다');
+});

@@ -211,3 +211,40 @@ test('★ 서식 지문은 «채운 값»에 흔들리지 않는다 — 한 번 
   const after = M.apply(before, { picks: { t0r0c1: 'name' }, data: WHO }).xml;
   assert.equal(M.fingerprint(before), M.fingerprint(after));
 });
+
+/* ── 입력판에서 «직접 친 글자»를 그대로 넣기 (2026-08-29 대표 승인) ── */
+
+test('★ 직접 친 글자를 그 칸에 넣는다 — 사전에 없는 칸도 채울 수 있어야 한다', () => {
+  const xml = tbl([['위촉희망분야', '']]);
+  const r = M.apply(xml, { values: { t0r0c1: '노동관계 자문' }, data: WHO });
+  assert.ok(r.xml.indexOf('노동관계 자문') > 0);
+  assert.equal(r.filled.length, 1);
+});
+
+test('직접 친 글자는 «고른 열쇠»보다 앞선다 — 사람이 고쳐 쓴 것이 최종이다', () => {
+  const xml = tbl([['성명', '']]);
+  const r = M.apply(xml, { picks: { t0r0c1: 'name' }, values: { t0r0c1: '홍길동' }, data: WHO });
+  assert.ok(r.xml.indexOf('홍길동') > 0);
+  assert.equal(r.xml.indexOf('권형하'), -1, '직접 친 것이 이겨야 합니다');
+});
+
+test('안내글 뒤에 직접 친 글자도 «이어» 쓴다', () => {
+  const xml = tbl([['성  명', '(한글)']]);
+  const r = M.apply(xml, { values: { t0r0c1: '홍길동' }, data: WHO });
+  assert.ok(r.xml.indexOf('(한글)') > 0, '안내글은 남아야 합니다');
+  assert.ok(r.xml.indexOf('홍길동') > 0);
+});
+
+test('칸 안 라벨은 라벨마다 «따로» 친 값을 넣는다 — 자택과 직장이 섞이면 안 된다', () => {
+  const xml = tbl([['전화번호', '자택:______  직장:______']]);
+  const r = M.apply(xml, { values: { 't0r0c1:phoneHome': '041-111-1111', 't0r0c1:phoneWork': '041-222-2222' }, data: WHO });
+  const txt = (r.xml.match(/<hp:t[^>]*>([\s\S]*?)<\/hp:t>/g) || []).map((x) => x.replace(/<[^>]*>/g, '')).join(' ');
+  assert.match(txt, /자택:\s*041-111-1111/);
+  assert.match(txt, /직장:\s*041-222-2222/);
+});
+
+test('빈 글자를 넣으면 그 칸은 비워 둔다 — 지우개로도 쓸 수 있어야 한다', () => {
+  const xml = tbl([['성명', '']]);
+  const r = M.apply(xml, { picks: { t0r0c1: 'name' }, values: { t0r0c1: '' }, data: WHO });
+  assert.equal(r.changed, false);
+});

@@ -95,3 +95,42 @@ test('도장 자리를 못 찾으면 찍지 않고 알린다 — 아무 데나 �
   const fn = bare.slice(at, at + 3000);
   assert.match(fn, /if\(!done\)/, '자리를 못 찾았을 때의 길이 있어야 합니다');
 });
+
+/* ── ✍ 서식 입력판 (대표 제안·승인 2026-08-29) ── */
+
+test('입력판 모듈을 읽어 들인다 — 캐시 번호를 붙여서', () => {
+  assert.match(source, /js\/kcareer-formhtml\.js\?v=\d+/);
+});
+
+test('입력판과 「한글로 보기」를 오갈 수 있다 — 친 값이 진짜 A4에 어떻게 들어갔는지 본다', () => {
+  assert.match(bare, /function rhSetMode/);
+  assert.match(source, /id="kfSheet"/);
+  assert.match(bare, /function rhPreviewHwp/);
+});
+
+test('★ 저장은 «원본 한글»에 넣는다 — HTML 을 그대로 내면 서식이 달라진다', () => {
+  const at = bare.indexOf('function rhComposeBytes');
+  const fn = bare.slice(at, at + 1400);
+  assert.match(fn, /KcareerFormMap\.apply/, '원본 XML 의 그 칸에 넣어야 합니다');
+  assert.match(fn, /values:\s*vals/, '입력판에 친 값을 넘겨야 합니다');
+  assert.doesNotMatch(fn, /innerHTML/, 'HTML 을 그대로 내면 안 됩니다');
+});
+
+test('저장과 미리보기가 «같은 길»을 쓴다 — 갈라지면 보이는 것과 저장이 어긋난다', () => {
+  ['rhSaveInput', 'rhPreviewHwp'].forEach((fn) => {
+    const at = bare.indexOf('function ' + fn);
+    assert.match(bare.slice(at, at + 800), /rhComposeBytes\(\)/, fn + ' 도 같은 길을 써야 합니다');
+  });
+});
+
+test('「내 정보」를 누르면 «지금 짚은 칸»에 들어간다 — 커서 자리가 가장 안 헷갈린다', () => {
+  const at = bare.indexOf('function insertToEditor');
+  assert.match(bare.slice(at, at + 400), /rhPutValue\(text\)/);
+});
+
+test('못 그리는 것(글상자·칸 안의 표)을 화면에 적는다', () => {
+  const at = bare.indexOf('function rhBuildInput');
+  const fn = bare.slice(at, at + 2200);
+  assert.match(fn, /textBoxes/);
+  assert.match(fn, /nested/);
+});
