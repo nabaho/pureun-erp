@@ -774,6 +774,21 @@
     return deps.db.ref().update(u);
   }
 
+  /* ── 「손댄 사진」 자국 (대표 지시 2026-08-29 AI 지우개) ──
+     사진첩은 정부사업·컨설팅 **증빙**으로 쓰는 사진이 많다. AI 가 없던 배경을 그려
+     메운 사진에 아무 자국이 없으면, 나중에 「이 사진 손댔나」에 아무도 답할 수 없다.
+     ⚠ 까맣게·모자이크에는 안 단다 — 그것은 «덮은 것»이라 보면 안다. 자국이 필요한 것은
+       **눈으로 안 보이는 고침**뿐이다.
+     ⚠ 이 표가 실패해도 사진 고치기를 되돌리지 않는다 — 자국이 없을 뿐이다. */
+  function markEdited(year, id, how, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    u[metaPath(year, id, owner) + '/edited'] = {
+      at: Date.now(), by: deps.name || '', how: String(how || 'ai').slice(0, 20)
+    };
+    return deps.db.ref().update(u);
+  }
+
   /* 같이 볼 사람을 정한다 — 넘긴 목록이 그대로 최종본이다(빠진 사람은 풀린다).
      ⚠ 사진 옆과 받는 사람 자리를 **한 묶음**으로 적는다. 나눠서 하다 끊기면
      「사진에는 공유 표시가 있는데 목록에는 안 뜨는」 반쪽 상태가 남는다.
@@ -2117,6 +2132,7 @@
     loadThumb: loadThumb,
     loadThumbsYear: loadThumbsYear,
     thumbUrl: thumbUrl,
+    markEdited: markEdited,
     rememberThumbUrl: rememberThumbUrl,
     forgetThumbUrl: forgetThumbUrl,
     loadFull: loadFull,
