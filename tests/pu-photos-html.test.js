@@ -1493,7 +1493,10 @@ test('사람이 확인한 것은 할 일에서 빠진다', () => {
 
 test('확인했음 단추는 할 일인 것에만 나온다', () => {
   // 할 일이 아닌 사진에까지 단추를 두면 무슨 뜻인지 알 수 없다.
-  assert.match(app, /actsRow\('다시 판독', needsCheck\(it\)\)/);
+  /* ⚠ 2026-08-29 부터 도구줄이 «사진 자체»도 봐야 한다(읽을 글자가 없는 사진에는
+     판독을 안 보여 준다) — 그래서 인자가 하나 늘었다. 지키는 뜻은 그대로다:
+     할 일인 것에만 ✓ 가 나온다. */
+  assert.match(app, /actsRow\('다시 판독', needsCheck\(it\), it\)/);
   const fn = app.match(/function actsRow\([\s\S]*?\n\}/)[0];
   assert.match(fn, /showAck/);
   assert.match(fn, /확인했음/);
