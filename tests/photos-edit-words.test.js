@@ -135,7 +135,8 @@ test('★★ «무엇을 시켰는지»를 사진에 남긴다 — 증빙 사진
   const fn = cutFn(APP, 'async function edKeep(');
   assert.match(fn, /what: String\(photoEd\.done\.want \|\| ''\)/,
     '★★ 시킨 말을 안 남깁니다 — 「이 사진 무엇을 했나」에 답할 수 없습니다');
-  assert.match(fn, /how: 'ai'/, '★ 손댐 자국 자체가 없어졌습니다');
+  /* ⚠ 2026-08-29 부터 도구가 셋이라 무엇으로 고쳤는지 그때그때 적는다(ai·crop·tone) */
+  assert.match(fn, /how: photoEd\.done\.how \|\| 'ai'/, '★ 손댐 자국 자체가 없어졌습니다');
   /* 서버가 실제로 쓴 말을 남긴다 — 화면에 적힌 것과 다를 수 있다(잘림·기본값) */
   const run = cutFn(APP, 'async function edRun(');
   assert.match(run, /did = got\.want \|\| did;/,
