@@ -115,7 +115,7 @@ test('목록 표 조립문이 끊기지 않는다 — 배제 목록·안내가 �
   // exBar(배제된 건·외부기관 안내)와 스크롤 힌트가 사라진 일이 있었다.
   const src = funcSource('renderCareer');
   // 빈 목록 분기에도 box.innerHTML= 이 있으므로 표 조립문을 정확히 겨냥한다
-  const i = src.indexOf("box.innerHTML='<table><thead>");
+  const i = src.indexOf("box.innerHTML=selBar+'<table><thead>");
   assert.ok(i >= 0, '표를 그리는 문장이 있어야 합니다');
   const j = src.indexOf('exBar', i);
   assert.ok(j > i, '조립문에 exBar가 있어야 합니다');
@@ -129,7 +129,7 @@ test('목록 화면은 제목·설명을 숨기고 보조 컨트롤을 툴바로
   assert.match(source, /function _tbExtra\(/);
   const src = funcSource('renderCareer');
   assert.match(src, /_tbExtra\(sec,/, '원본없음·표시개수를 툴바로 옮겨야 합니다');
-  const i = src.indexOf("box.innerHTML='<table><thead>");
+  const i = src.indexOf("box.innerHTML=selBar+'<table><thead>");
   const stmt = src.slice(i, src.indexOf(';', src.indexOf('exBar', i)) + 1);
   assert.ok(!/nofileBar|pgSel/.test(stmt), '표 위에 다시 붙이면 한 줄이 되지 않습니다');
 });
@@ -862,6 +862,59 @@ test('브라우저 자료가 지워져 기본 데이터로 돌아가면 크게 �
   // 되살리기 버튼이 붙어 있어야 한다
   const i = source.indexOf('id="fbLossNotice"');
   assert.match(source.slice(i, i + 900), /onclick="fbPull\(\);return false"/);
+});
+
+/* ===== 목록 화면 공통 — 틀고정·한 줄 툴바·선택 체크 (2026-08-29) =====
+   ⚠ 이 셋은 renderCareer 한 곳에서 만들어져 모든 목록 화면에 같이 적용돼야 한다.
+   화면 하나만 따로 고치면 다시 제각각이 된다. */
+
+test('툴바가 틀고정되고 표 머리줄은 그 아래에 붙는다', () => {
+  assert.match(source, /\.page-view\.active \.toolbar\{position:sticky;top:0/);
+  // ⚠ 머리줄이 top:0 이면 툴바와 겹친다 — 툴바 높이(--tbH) 아래에 붙어야 한다
+  assert.match(source, /\.dt thead th\{top:var\(--tbH,0px\)!important\}/);
+  const src = funcSource('_stickyTop');
+  assert.match(src, /setProperty\('--tbH'/, '툴바 높이를 재서 알려줘야 합니다');
+  assert.match(src, /ResizeObserver/, '툴바가 줄바꿈되면 높이가 바뀝니다');
+  // 목록이 있든 없든 둘 다 불려야 한다
+  assert.equal((funcSource('renderCareer').match(/_stickyTop\(sec\)/g) || []).length, 2);
+});
+
+test('OCR 자동등록은 툴바 안 칩으로 — 한 줄을 통째로 먹지 않는다', () => {
+  const src = funcSource('_ocrToToolbar');
+  assert.match(src, /tb\.insertBefore\(oz, tb\.firstChild\)/, '옮기기만 해야 등록 기능이 살아 있습니다');
+  assert.match(src, /if\(oz\.parentNode===tb\) return;/, '두 번 옮기면 안 됩니다');
+  // 폭은 「1280px 화면에서 툴바가 한 줄에 들어가는지」 실측해 정한 값이다(실측 58px = 한 줄).
+  // 늘리면 툴바가 두 줄이 되어 틀고정 높이가 두 배가 된다.
+  const m = source.match(/\.toolbar \.ocr-zone\{[^}]*max-width:(\d+)px/);
+  assert.ok(m, 'OCR 칩 폭 제한이 있어야 합니다');
+  assert.ok(Number(m[1]) <= 140, 'OCR 칩이 140px를 넘으면 툴바가 두 줄이 됩니다 (지금 ' + m[1] + 'px)');
+  assert.match(source, /\.toolbar \.tb-input\{min-width:132px!important/, '검색창도 좁혀야 한 줄이 됩니다');
+  // 표시개수 문구도 짧아야 한다 — 「79건 중 20건 표시」는 툴바를 넘겼다
+  assert.match(funcSource('renderCareer'), />표시 <select/);
+  assert.ok(!/건 중 '\+Math\.min/.test(funcSource('renderCareer')), '「N건 중 M건 표시」는 툴바를 넘겼습니다');
+  assert.equal((funcSource('renderCareer').match(/_ocrToToolbar\(sec\)/g) || []).length, 2);
+});
+
+test('넘버 옆 □ 로 여러 건을 골라 한 번에 지운다', () => {
+  const src = funcSource('renderCareer');
+  assert.match(src, /class="rownum-h"><input type="checkbox" onclick="careerSelAll/, '머리줄에 전체선택');
+  assert.match(src, /class="row-chk" data-id="'\+_jsAttr\(r\.id\)/, '행마다 체크 — 값은 레코드 id');
+  assert.match(src, /careerSelSync\(name\)/);
+  assert.match(src, /id="selbar-'\+name/, '선택했을 때만 뜨는 일괄 작업 줄');
+  const del = funcSource('careerDelSelected');
+  assert.match(del, /confirm\(/, '되돌릴 수 없으니 반드시 물어봐야 합니다');
+  assert.match(del, /deleteFile\(r\.id\)/, '첨부 원본도 함께 지웁니다');
+  assert.match(del, /set\(cfg\.store, arr\.filter/);
+});
+
+test('선택 기능은 목록 화면 전부가 공유한다 — 화면별 따로 만들지 않는다', () => {
+  // renderCareer 가 유일한 생산지: 경력·실적·비용·제출서류가 모두 이 함수를 쓴다
+  ['careerSelAll', 'careerSelSync', 'careerSelIds', 'careerDelSelected'].forEach((fn) => {
+    assert.equal((source.match(new RegExp('function ' + fn + '\\(', 'g')) || []).length, 1,
+      fn + ' 은 한 곳에만 있어야 합니다');
+  });
+  // 목록 표를 만드는 innerHTML 조립문도 하나뿐이어야 한다
+  assert.equal((source.match(/box\.innerHTML=selBar\+'<table><thead>/g) || []).length, 1);
 });
 
 /* ===== 이력서 생성·보관 — 내 정보로 채우기 + 임시저장 (2026-08-29) ===== */
