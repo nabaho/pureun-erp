@@ -1061,6 +1061,14 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
 /* 켜 두면 채워서 — 지금 걸러 보는 중이라는 것이 한눈에 보여야 한다
    (「확인 필요」·「지난 사진」이 .on 으로 하는 것과 같은 규칙) */
 #gotBox.on{background:var(--blue);border-color:var(--blue);color:#fff}
+/* 👤 준 사람 칩 — 여럿에게 받았을 때 누구 것인지로 좁혀 본다(대표 지시 2026-08-29).
+   ⚠ 이름이 길어도 줄이 안 깨지게 감싼다. 사람이 여덟이어도 칸이 무너지면 안 된다. */
+#gotWho{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+#gotWho button{border:1px solid #b6c6ee;background:#fff;color:var(--blue);border-radius:20px;
+  padding:4px 9px;font:700 11.5px inherit;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+#gotWho button b{font-weight:800;opacity:.7;margin-left:2px}
+#gotWho button.on{background:var(--blue);border-color:var(--blue);color:#fff}
 #gotCard #gotHint{margin:5px 2px 0;font-size:11px;line-height:1.5;color:var(--sub)}
 /* 서식으로 잡힌 고유번호증 — 「확인 필요」와 같은 결이되 색이 다르다(다른 할 일이다) */
 #uidCard{margin-top:12px}
@@ -1450,6 +1458,9 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
          ⚠ 0장이면 칸 자체를 안 그린다 — 늘 있는 회색 칸은 눌러 볼 값이 없다(uidCard 와 같은 규칙). -->
     <div id="gotCard" style="display:none">
       <button id="gotBox" onclick="toggleShared()"></button>
+      <!-- 👤 준 사람 칩 — 둘 이상에게 받았을 때만 나온다(대표 지시 2026-08-29
+           「공유된 사람의 사진만 골라서 볼 수 있게」). 한 사람뿐이면 위 단추와 같은 말이다. -->
+      <div id="gotWho" style="display:none"></div>
       <p id="gotHint"></p>
     </div>
     <div id="needCard" style="display:none">
@@ -7962,6 +7973,11 @@ let oldOnly = false;           // 「보유기간 지난 것」만 걸러 보는
 /* 「공유받은 것」만 걸러 보는 중인가 (대표 지시 2026-08-29 「공유된사진만 따로 선택할 수 있게」).
    ⚠ 걸러 «보기»일 뿐 딴 화면이 아니다 — 끄면 내 사진과 다시 섞인다. 그것이 이 지시의 뜻이다. */
 let sharedOnly = false;
+/* 「그 사람이 준 것만」 (대표 지시 2026-08-29: "다른직원들과 공유하는경우 공유된 사람의
+   사진만 골라서 볼 수 있게 해달라")
+   ⚠ 빈 값이면 준 사람을 안 가린다(받은 것 전부). 사람을 고르면 «공유받은 것만»도 함께
+     켜진다 — 따로 두면 「사람은 골랐는데 내 사진이 섞여 나오는」 반쪽 상태가 된다. */
+let sharedWho = '';
 const selected = new Set();
 
 /* ── 확인이 필요한 사진 ──
@@ -8183,6 +8199,10 @@ function shownItemsFresh() {
   if (oldOnly) list = list.filter(isOldItem);
   /* 공유받은 것만 — 분류 탭·찾기와 **함께** 걸린다(따로 걸면 서로 어긋난다) */
   if (sharedOnly) list = list.filter(isSharedItem);
+  /* 그 사람이 준 것만 — 여럿에게 받으면 누구 것인지로 좁혀 봐야 일이 된다 */
+  if (sharedWho) list = list.filter(function (it) {
+    return !!(it && it.meta && it.meta.__ownerUid === sharedWho);
+  });
   /* 찾는 말도 같은 자리에서 건다 — 걸러보기·분류 탭과 어긋나면 안 된다. */
   if (gridQ) list = list.filter(matchQ);
   const folded = foldDocs(list);
@@ -12364,6 +12384,24 @@ function renderShareCard(n, touch) {
    대표 지시: "받은사진으로 나오지 말고 전체사진에서 같이 보이게 하고, 공유된 사진만
    따로 선택할 수 있게." 받은 사진은 이미 「내 사진」 격자에 섞여 있고, 이 단추는
    그 가운데 «받은 것만» 남긴다. 한 번 더 누르면 다시 섞인다. */
+/* ── 누가 몇 장을 열어 줬나 (대표 지시 2026-08-29) ──
+   "다른직원들과 공유하는경우 공유된 사람의 사진만 골라서 볼 수 있게 해달라."
+   ⚠ **지금 격자에 섞여 있는 것**으로 센다 — 사람 칩의 숫자가 곧 눌렀을 때 나올 장수여야
+     한다. 색인 전체로 세면 「16장」이라 적어 놓고 눌러 보면 3장이 나온다.
+   ⚠ 이름을 모르는 사람은 빼지 않고 uid 로라도 남긴다 — 빼면 그 사람 사진으로 갈 길이
+     아예 없어진다(칸의 칩은 이름이 없으면 안 달지만, 여기는 «가는 길»이다). */
+function sharedPeople() {
+  const by = {};
+  gridItems.forEach(function (it) {
+    if (!isSharedItem(it)) return;
+    const uid = it.meta.__ownerUid;
+    if (!by[uid]) by[uid] = { uid: uid, name: sharedByName(it) || uid, n: 0 };
+    by[uid].n += idsOf(it).length;
+  });
+  return Object.keys(by).map(function (k) { return by[k]; })
+    .sort(function (a, b) { return b.n - a.n; });   // 많이 준 사람이 앞
+}
+
 function renderGotCard() {
   const card = $('gotCard'); if (!card) return;
   /* 지금 화면에 실제로 섞여 있는 받은 사진 수 — 그것이 걸러질 장수다.
@@ -12374,16 +12412,47 @@ function renderGotCard() {
   if (!show) return;
   const box = $('gotBox'), hint = $('gotHint');
   if (box) {
-    box.classList.toggle('on', sharedOnly);
+    box.classList.toggle('on', sharedOnly && !sharedWho);
     box.textContent = sharedOnly
       ? '👥 공유받은 것만 ' + here + '장 · ✕ 전체 보기'
       : '👥 공유받은 것만 ' + here + '장';
   }
-  if (hint) {
-    hint.textContent = sharedOnly
-      ? '다시 누르면 내 사진과 함께 봅니다.'
-      : '다른 분이 나에게 열어 준 사진입니다 — 칸에 👤 이름이 붙어 있습니다. 보기만 됩니다.';
+  /* 사람 칩 — **둘 이상에게 받았을 때만** 그린다. 한 사람뿐이면 위 단추와 같은 말이라
+     자리만 먹는다(0장이면 칸 자체를 안 그리는 것과 같은 규칙). */
+  const who = $('gotWho');
+  if (who) {
+    const list = sharedPeople();
+    if (list.length < 2) { who.style.display = 'none'; who.innerHTML = ''; }
+    else {
+      who.style.display = 'flex';
+      who.innerHTML = list.map(function (p) {
+        return '<button class="' + (sharedWho === p.uid ? 'on' : '') + '"' +
+          ' title="' + esc(p.name + ' 님이 열어 준 사진만 봅니다') + '"' +
+          ' onclick="pickSharedWho(\'' + esc(p.uid) + '\')">' +
+          esc(p.name) + ' <b>' + p.n + '</b></button>';
+      }).join('');
+    }
   }
+  if (hint) {
+    hint.textContent = sharedWho
+      ? '그분이 열어 준 사진만 보고 있습니다 — 이름을 다시 누르면 풉니다.'
+      : sharedOnly
+        ? '다시 누르면 내 사진과 함께 봅니다.'
+        : '다른 분이 나에게 열어 준 사진입니다 — 칸에 👤 이름이 붙어 있습니다. 보기만 됩니다.';
+  }
+}
+
+/* 그 사람이 준 것만 — 같은 이름을 다시 누르면 풀린다(칩이 켜고 끄는 단추다).
+   ⚠ 사람을 고르면 «공유받은 것만»도 함께 켠다. 안 켜면 내 사진이 섞여 나와
+     「사람을 골랐는데 왜 내 사진이 있지」가 된다. */
+function pickSharedWho(uid) {
+  if (sharedWho === uid) { sharedWho = ''; }
+  else { sharedWho = uid; sharedOnly = true; needOnly = false; failOnly = false; oldOnly = false; }
+  selected.clear();
+  resetGridRenderLimit();
+  renderGrid();
+  renderNeedBox();
+  renderOldBox();
 }
 
 /* 「공유받은 것만」 켜고 끄기 — 걸러보기라 화면(gridOwner)은 안 바꾼다.
@@ -12391,6 +12460,9 @@ function renderGotCard() {
      (「확인 필요」·「지난 사진」이 서로에게 하는 것과 같은 규칙). */
 function toggleShared() {
   sharedOnly = !sharedOnly;
+  /* 「받은 것 전부」로 돌아간다 — 사람을 골라 둔 채 끄면 다음에 켤 때 그 사람 것만
+     나와 「왜 세 장뿐이지」가 된다. */
+  sharedWho = '';
   if (sharedOnly) { needOnly = false; failOnly = false; oldOnly = false; }
   selected.clear();
   resetGridRenderLimit();
@@ -12419,7 +12491,7 @@ function pickOwner(uid) {
   gridItems = [];
   selected.clear(); needOnly = false; failOnly = false; oldOnly = false;
   /* 사람이 바뀌면 「공유받은 것만」도 푼다 — 다른 사람 화면에는 뜻이 없는 거르개다 */
-  sharedOnly = false;
+  sharedOnly = false; sharedWho = '';
   /* 사람이 바뀌면 찾던 말도 지운다 — 남의 사진에 내 검색어를 물려 두면 헷갈린다. */
   gridQ = '';
   if ($('q')) $('q').value = '';
