@@ -97,3 +97,46 @@ test('빈 자리와 채운 자리를 갈라 표시한다 — 노랑·초록', ()
   assert.match(html, /data-slot="t0r1c1"/);
   assert.doesNotMatch(html.slice(html.indexOf('t0r1c1') - 120, html.indexOf('t0r1c1')), /kf-done/);
 });
+
+/* ── 표가 밖으로 밀리던 것 (대표 제보 2026-08-29) ── */
+
+test('★ 열 개수는 «표가 말해 주는» colCnt 를 따른다 — 행마다 칸 수가 다르다(병합)', () => {
+  const xml = '<hp:tbl colCnt="6" rowCnt="1"><hp:tr>'
+    + cellXml('전화번호', 0, 1, 1, 7000) + cellXml('자택:__', 1, 1, 1, 12000)
+    + cellXml('휴대폰', 2, 1, 1, 5000) + cellXml('', 3, 1, 1, 8000)
+    + cellXml('E-mail', 4, 1, 1, 5000) + cellXml('', 5, 1, 1, 8000)
+    + '</hp:tr></hp:tbl>';
+  const b = V.build(xml).blocks[0];
+  assert.equal(b.cols, 6);
+  assert.equal(V.toHtml({ blocks: [b] }, {}).match(/<col /g).length, 6);
+});
+
+test('★ 세로 병합된 열도 너비를 잰다 — 안 재면 그 열이 0이 되어 옆 칸이 밖으로 밀린다', () => {
+  /* 대표 서식: 「성 명」·「생년월일」이 세로 두 줄 병합이라 그 열은 rowSpan>1 인 칸뿐이다 */
+  const xml = '<hp:tbl colCnt="3" rowCnt="2">'
+    + '<hp:tr>' + cellXml('성 명', 0, 1, 2, 7000) + cellXml('(한글)', 1, 1, 1, 15000)
+    + cellXml('생년월일', 2, 1, 2, 8000) + '</hp:tr>'
+    + '<hp:tr>' + cellXml('(한자)', 1, 1, 1, 15000) + '</hp:tr></hp:tbl>';
+  const b = V.build(xml).blocks[0];
+  assert.equal(b.widths.length, 3);
+  b.widths.forEach((w, i) => assert.ok(w > 0, i + '번째 열이 너비를 못 받았습니다'));
+  const pct = V.toHtml({ blocks: [b] }, {}).match(/width:([\d.]+)%/g).map((x) => parseFloat(x.slice(6)));
+  assert.ok(Math.abs(pct.reduce((a, c) => a + c, 0) - 100) < 1.5, '열 폭 합이 100%여야 표가 안 밀립니다');
+});
+
+test('너비를 하나도 모르면 «고정하지 않는다» — 반만 알고 고정하면 표가 깨진다', () => {
+  const xml = '<hp:tbl colCnt="2" rowCnt="1"><hp:tr>'
+    + '<hp:tc><hp:subList><hp:p><hp:run><hp:t>가</hp:t></hp:run></hp:p></hp:subList><hp:cellAddr colAddr="0" rowAddr="0"/></hp:tc>'
+    + '<hp:tc><hp:subList><hp:p><hp:run><hp:t></hp:t></hp:run></hp:p></hp:subList><hp:cellAddr colAddr="1" rowAddr="0"/></hp:tc>'
+    + '</hp:tr></hp:tbl>';
+  const html = V.toHtml(V.build(xml), {});
+  assert.doesNotMatch(html, /kf-fixed/);
+  assert.doesNotMatch(html, /<colgroup>/);
+});
+
+function cellXml(text, col, cs, rs, w) {
+  return '<hp:tc><hp:subList><hp:p><hp:run><hp:t>' + text + '</hp:t></hp:run></hp:p></hp:subList>'
+    + '<hp:cellAddr colAddr="' + col + '" rowAddr="0"/>'
+    + '<hp:cellSpan colSpan="' + cs + '" rowSpan="' + rs + '"/>'
+    + '<hp:cellSz width="' + w + '" height="1000"/></hp:tc>';
+}

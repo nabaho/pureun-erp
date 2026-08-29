@@ -112,6 +112,9 @@
 
   function table(tblXml, ti) {
     var rows = [], widths = [];
+    /* 표가 몇 칸짜리인지는 «표가 말해 준다». 행마다 칸 수가 다르므로(병합) 세어서는 안 된다. */
+    var cc = /<hp:tbl[^>]*\bcolCnt="(\d+)"/.exec(tblXml);
+    var colCnt = cc ? num(cc[1], 0) : 0;
     X.splitRows(tblXml).forEach(function (tr, ri) {
       var out = [];
       X.splitCells(tr).forEach(function (tc, ci) {
@@ -120,7 +123,10 @@
         var g = cellGeom(tc, ci);
         /* 가르는 것은 «칸 지도와 같은 글자»(raw)로 — 그래야 이름표가 어긋나지 않는다 */
         var kind = MAP.classify(raw);
-        if (g.rowSpan === 1 && g.colSpan === 1 && g.width) widths[g.col] = g.width;
+        /* ⚠ 열 너비는 «가로»로만 갈린다. 세로 병합된 칸도 자기 열의 너비를 안다.
+           rowSpan 까지 따지면 「성 명」·「생년월일」처럼 세로로 합친 열이 너비를 못 받아
+           그 열이 0 이 되고, 옆 칸들이 표 밖으로 밀려난다(대표 제보 2026-08-29). */
+        if (g.colSpan === 1 && g.width && !widths[g.col]) widths[g.col] = g.width;
         out.push({
           /* ⚠ 이름표는 «자리 순서»로 짓는다 — 칸 지도(scan)와 같아야 한다 */
           slotId: kind ? ('t' + ti + 'r' + ri + 'c' + ci) : null,
@@ -131,7 +137,15 @@
       });
       rows.push(out);
     });
-    return { kind: 'table', tbl: ti, rows: rows, widths: widths };
+    /* 성긴 자리를 메워 «촘촘한» 배열로 만든다 — 구멍이 있으면 <col> 이 모자라 표가 깨진다.
+       한 열도 못 잰 경우(옛 서식)는 너비를 아예 안 쓰고 브라우저에 맡긴다. */
+    var n = colCnt || widths.length;
+    var known = [], i;
+    for (i = 0; i < n; i++) if (widths[i]) known.push(widths[i]);
+    var avg = known.length ? Math.round(known.reduce(function (a, b) { return a + b; }, 0) / known.length) : 0;
+    var dense = [];
+    for (i = 0; i < n; i++) dense.push(widths[i] || avg);
+    return { kind: 'table', tbl: ti, cols: n, widths: known.length ? dense : [], rows: rows };
   }
 
   /* ── HTML 로 뽑기 ──
@@ -142,12 +156,12 @@
     var out = [];
     (built.blocks || []).forEach(function (b) {
       if (b.kind === 'para') { out.push('<p class="kf-p">' + esc(b.text) + '</p>'); return; }
-      var cols = b.widths.filter(function (w) { return w; });
-      var total = cols.reduce(function (a, c) { return a + c; }, 0);
-      out.push('<table class="kf-t">');
+      var total = b.widths.reduce(function (a, c) { return a + c; }, 0);
+      /* 너비를 다 알 때만 «칸 폭 고정»으로 그린다 — 반만 알고 고정하면 표가 밖으로 밀린다 */
+      out.push('<table class="kf-t' + (total ? ' kf-fixed' : '') + '">');
       if (total) {
         out.push('<colgroup>' + b.widths.map(function (w) {
-          return '<col style="width:' + (Math.round((w || 0) / total * 1000) / 10) + '%">';
+          return '<col style="width:' + (Math.round(w / total * 1000) / 10) + '%">';
         }).join('') + '</colgroup>');
       }
       b.rows.forEach(function (r) {

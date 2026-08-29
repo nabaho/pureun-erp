@@ -134,3 +134,23 @@ test('못 그리는 것(글상자·칸 안의 표)을 화면에 적는다', () =
   assert.match(fn, /textBoxes/);
   assert.match(fn, /nested/);
 });
+
+test('★ 입력판과 한글을 «나란히» 볼 수 있다 — 눈을 옮기지 않고 견준다', () => {
+  assert.match(source, /id="kfM3"/);
+  assert.match(source, /id="kfPair"/);
+  assert.match(bare, /rhSetMode\('both'\)/);
+  assert.match(source, /#kfPair\.kf-both\{display:grid;grid-template-columns:1fr 1fr/);
+});
+
+test('서식을 열면 머리 부분을 접는다 — 「너무 많이 공간을 차지한다」(대표 지적)', () => {
+  assert.match(bare, /rh-doc-on/);
+  assert.match(source, /\.rh-doc-on \.page>h2/, '서식을 보는 동안 제목 줄은 접습니다');
+  assert.match(source, /\.rh-doc-on \.rh-fold>\.rh-fold-b\{display:none\}/);
+});
+
+test('머리를 «없애지는» 않는다 — 다른 서식으로 바꿔 올릴 길이 사라진다', () => {
+  const at = source.indexOf('.rh-doc-on');
+  const css = source.slice(at, at + 700);
+  assert.doesNotMatch(css, /\.rh-fold\{display:none\}/, '접이칸 자체를 숨기면 안 됩니다');
+  assert.match(css, /\.rh-fold>summary\{padding/, '요약 줄은 남아야 합니다');
+});
