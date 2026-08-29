@@ -1,0 +1,121 @@
+'use strict';
+/* 직원끼리도 공유한다 (대표 지시 2026-08-29 「직원끼리도 공유하게 해라」)
+
+   ■ 무엇이 막혀 있었나
+   받는 것은 처음부터 됐다. **보내는 것이 막혀 있었다** — 사람 명단(`puphotos/owners`)을
+   총괄관리자만 읽을 수 있어서, 직원 화면에서는 고를 사람이 아무도 안 떴다.
+   「👥 공유」를 눌러도 「고를 사람이 없습니다」 — 단추는 있는데 아무 일도 안 일어나는
+   자리였다. 「직원끼리 주고받는 것이 목적」이라는 설계와 정면으로 어긋나 있었다.
+
+   ■ 무엇을 열었나 — «이름표»뿐이다
+   `puphotos/owners` 에 담긴 것은 **이름과 마지막 올린 때**뿐이다. 사진은 여기 없다 —
+   그것이 이 칸을 사진과 갈라 둔 까닭이다(관리자가 전 직원 사진 본문을 통째로 받는
+   일을 막으려고 만들었다).
+
+   ■ 무엇을 안 열었나 — 이쪽이 더 중요하다
+   **남의 사진은 그대로 잠겨 있다.** `u/{주인}` 은 주인과 총괄관리자만 읽는다.
+   직원 고르개에는 사람 줄이 없고, 「전체 근로자」로 훑는 셋은 저마다 제 isAdmin 을 든다.
+   이 검사가 그 경계를 못박는다 — 열어 준 것이 이름표에서 끝나는지 본다.
+
+   실행: node --test tests/*.test.js */
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { cutFn } = require('./cut-fn');
+
+const R = path.join(__dirname, '..');
+const app = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
+const store = fs.readFileSync(path.join(R, 'js', 'pu-photo-store.js'), 'utf8');
+const PASTE = path.join(R, 'docs', 'firebase-rules-현재적용본+분류이름표(붙여넣기용).json');
+const CONSOLE = path.join(R, 'docs', 'firebase-rules-콘솔원문-2026-08-29.json');
+const rules = JSON.parse(fs.readFileSync(PASTE, 'utf8')).rules;
+
+/* ══════ ① 열린 것 — 이름표 ══════ */
+
+test('★★ 직원이 사람 명단을 읽는다 — 못 읽으면 공유할 사람을 고를 수가 없다', () => {
+  const r = rules.puphotos.owners['.read'];
+  assert.ok(/auth != null/.test(r), '명단 읽기 조건이 없습니다.');
+  assert.ok(!/isAdmin/.test(r),
+    '★ 관리자만 읽으면 직원 화면의 「👥 공유」는 늘 「고를 사람이 없습니다」입니다.');
+});
+
+test('★ 저장 층도 직원을 막지 않는다 — 규칙만 열고 코드가 막으면 아무 일도 안 일어난다', () => {
+  const fn = cutFn(store, 'function listOwners(');
+  assert.ok(!/deps\.isAdmin/.test(fn),
+    '★ 한쪽만 열면 규칙을 고쳐도 화면은 그대로 빈 목록을 받습니다.');
+});
+
+test('★ 명단은 내 칸만 쓴다 — 남의 이름을 바꿀 수는 없다', () => {
+  const w = rules.puphotos.owners['$uid']['.write'];
+  assert.ok(/auth\.uid === \$uid/.test(w),
+    '★ 아무나 쓰면 남의 이름표를 바꿔 「누가 공유했는지」를 속일 수 있습니다.');
+});
+
+/* ══════ ② 안 열린 것 — 사진. 이쪽이 더 중요하다 ══════ */
+
+test('★★ 남의 사진은 그대로 잠겨 있다 — 이름표를 열었다고 사진첩이 열리면 안 된다', () => {
+  const r = rules.puphotos.u['$uid']['.read'];
+  assert.ok(/auth\.uid === \$uid/.test(r) && /isAdmin/.test(r),
+    '★ 사진 본체는 주인과 총괄관리자만입니다.');
+  assert.ok(!/owners/.test(r),
+    '★ 사진 읽기가 명단을 보면, 명단에 있는 사람 모두에게 사진첩이 열립니다.');
+});
+
+test('★★ 직원 고르개에는 «사람 줄»이 없다 — 넣으면 「남의 사진 보기」가 된다', () => {
+  const fn = app.match(/function renderOwnerPick\(\)[\s\S]*?\n\}/)[0];
+  const i = fn.indexOf('amAdmin()');
+  const staff = fn.slice(0, i);          // 관리자 판정 «앞» = 직원도 지나는 자리
+  assert.ok(i > 0, 'renderOwnerPick 을 찾지 못했습니다.');
+  /* 직원 자리에서 고르개를 만드는 줄은 두 줄짜리 하나뿐이어야 한다 */
+  const staffBranch = fn.slice(i, fn.indexOf('migAllowed = true'));
+  assert.ok(!/ids\.map\(/.test(staffBranch),
+    '★ 직원 고르개에 사람을 넣으면 눌러도 안 열리는 줄이 되고, 「왜 안 보이지」가 됩니다.');
+  assert.ok(/SHARED_OWNER/.test(staffBranch), '「나와 공유된 사진」 줄은 있어야 합니다.');
+  assert.ok(/watchShared\(\)/.test(staff), '받은 사진 세기는 직원도 지나야 합니다.');
+});
+
+test('★ 직원 자리에서도 이름표는 챙긴다 — 그것이 이번에 연 것이다', () => {
+  const fn = app.match(/function renderOwnerPick\(\)[\s\S]*?\n\}/)[0];
+  const staffBranch = fn.slice(fn.indexOf('amAdmin()'), fn.indexOf('migAllowed = true'));
+  assert.ok(/listOwners\(\)/.test(staffBranch),
+    '★ 이름표를 안 챙기면 규칙만 열어 두고 화면은 그대로 「고를 사람이 없습니다」입니다.');
+  assert.ok(/ownerNames\[k\]/.test(staffBranch), '이름표를 담는 자리가 없습니다.');
+});
+
+/* ══════ ③ 붙여넣을 규칙이 «콘솔에서» 만들어졌는가 ══════
+   ⚠ 2026-08-29 대조에서 드러났다 — 저장소 붙여넣기용 파일에는 콘솔에 있는 네 칸이
+     **없었다**(rules_mgmt/index · scal_erpConsHold · scal_serverBackups ·
+     scal_serverBackupsIndex). 그대로 붙여넣었으면 그 네 칸이 지워져 취업규칙 이력
+     색인과 일정관리 백업이 통째로 막혔다. 콘솔이 진짜다. */
+
+test('★★ 붙여넣을 파일이 콘솔에 있던 칸을 «하나도 안 지운다»', () => {
+  assert.ok(fs.existsSync(CONSOLE), '콘솔 원문 기록이 없습니다 — 대조할 것이 없습니다.');
+  const con = JSON.parse(fs.readFileSync(CONSOLE, 'utf8')).rules;
+  const lost = Object.keys(con).filter(function (k) { return !rules[k]; });
+  assert.deepEqual(lost, [],
+    '★ 붙여넣으면 이 칸들이 «지워집니다»: ' + lost.join(', ') + '\n' +
+    '  실시간DB 규칙은 통째로 갈아 끼우는 것이라, 빠진 칸은 사라집니다.\n' +
+    '  붙여넣을 파일은 반드시 «콘솔 원문»에서 만드세요.');
+});
+
+test('★ 콘솔과 다른 곳은 «일부러 고친 두 곳»뿐이다', () => {
+  const con = JSON.parse(fs.readFileSync(CONSOLE, 'utf8')).rules;
+  const diff = [];
+  (function walk(a, b, p) {
+    const keys = {};
+    Object.keys(a || {}).forEach(function (k) { keys[k] = 1; });
+    Object.keys(b || {}).forEach(function (k) { keys[k] = 1; });
+    Object.keys(keys).forEach(function (k) {
+      const av = a[k], bv = b[k], q = p + '/' + k;
+      const obj = function (v) { return v && typeof v === 'object' && !Array.isArray(v); };
+      if (obj(av) && obj(bv)) return walk(av, bv, q);
+      if (JSON.stringify(av) !== JSON.stringify(bv)) diff.push(q);
+    });
+  })(con, rules, '');
+  assert.deepEqual(diff.sort(), [
+    '/puphotos/owners/.read',
+    '/puphotos/sharedTo/$uid/$pid/.write'
+  ], '★ 뜻하지 않은 곳이 바뀌었습니다: ' + diff.join(', ') +
+     '\n  규칙은 한 번에 통째로 바뀝니다 — 곁다리 변경이 섞이면 무엇이 깨졌는지 못 짚습니다.');
+});

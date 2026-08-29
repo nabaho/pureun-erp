@@ -855,13 +855,27 @@ test('사진첩을 쓰는 사람 명단 — 내 칸만 쓰고, 관리자만 훑�
   assert.deepEqual(Object.keys(owners).sort(), ['U1', 'U2']);
 });
 
-test('관리자가 아니면 사람 명단을 읽지 않는다', async () => {
-  // 규칙이 막지만, 화면이 헛되게 두드려 오류를 만들 이유도 없다
+test('★ 직원도 사람 명단은 읽는다 — 안 읽히면 공유할 사람을 고를 수가 없다', async () => {
+  /* 대표 지시 2026-08-29 「직원끼리도 공유하게 해라」.
+     담긴 것은 이름과 마지막 올린 때뿐이다 — 사진은 여기 없다(그래서 칸을 갈라 뒀다).
+     ⚠ 관리자만 읽던 동안 직원 화면의 「👥 공유」는 늘 「고를 사람이 없습니다」였다 —
+       단추는 있는데 아무 일도 안 일어나는 자리였다. */
   const S = loadStore();
-  const db = fakeDb({ U1: {} });
+  const db = fakeDb({ U1: { name: '가' }, U2: { name: '나' } });
   S.init({ uid: 'U1', db, isAdmin: false });
-  assert.deepEqual({ ...(await S.listOwners()) }, {});
-  assert.equal(db.calls.once.length, 0);
+  const owners = await S.listOwners();
+  assert.deepEqual(Object.keys(owners).sort(), ['U1', 'U2'],
+    '★ 직원이 명단을 못 읽으면 공유는 «받는 것만» 되고 보내는 것이 막힙니다');
+});
+
+test('★ 명단을 열어도 «남의 사진»을 훑는 길은 그대로 관리자만이다', async () => {
+  /* 이름표 하나 열었다고 사진첩이 열리면 안 된다 — 그 셋은 저마다 제 자물쇠를 든다. */
+  const S = loadStore();
+  const db = fakeDb({ U1: {}, U2: {} });
+  S.init({ uid: 'U1', db, isAdmin: false });
+  await assert.rejects(() => S.listYearAll('2026'), /관리자/);
+  await assert.rejects(() => S.listYearsAll(), /관리자/);
+  await assert.rejects(() => S.migrateToStorage(), /관리자/);
 });
 
 /* ── 옮기기 전에도 옛 사진이 보여야 한다 ──
