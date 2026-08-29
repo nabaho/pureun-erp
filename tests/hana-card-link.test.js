@@ -146,8 +146,12 @@ test('하나 것이 아니면 안 받는다', () => {
 });
 
 test('휴대폰 거르개도 취소를 «보낸다» (서버만 고치면 오지 않는다)', () => {
-  const f = fs.readFileSync(path.join(ROOT, 'android', 'hana-sms-bridge', 'app', 'src', 'main',
-    'java', 'kr', 'pureun', 'hanabridge', 'HanaMessageFilter.java'), 'utf8');
-  assert.ok(f.indexOf('value.contains("취소")') >= 0, '휴대폰이 취소 문자를 거른다');
-  assert.ok(f.indexOf('value.contains("하나카드")') >= 0, '휴대폰이 카드 문자를 거른다');
+  /* ⚠ 예전에는 자바 소스에 「value.contains("하나카드")」 라는 «글자»가 있는지만 봤다.
+       그래서 2026-08-29 까지 버그를 놓쳤다 — 실제 카드 문자는 「하나9950 승인 …」 처럼
+       오는데 「하나카드」 라는 낱말이 없어 폰이 통째로 버리고 있었다.
+       글자 말고 «실제 문자를 넣어 보고» 판단한다. */
+  const { phoneAccepts, REAL } = require('./phone-filter');
+  assert.ok(phoneAccepts(REAL.카드취소), '휴대폰이 카드 취소 문자를 버린다: ' + REAL.카드취소);
+  assert.ok(phoneAccepts(REAL.카드승인), '휴대폰이 카드 승인 문자를 버린다: ' + REAL.카드승인);
+  assert.ok(phoneAccepts('하나카드 취소 08/25 13:00 71,700원 (주)루나'), '「하나카드」 꼴도 보내야 한다');
 });

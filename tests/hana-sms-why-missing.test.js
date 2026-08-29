@@ -33,23 +33,41 @@ const filter = fs.readFileSync(path.join(ROOT, 'android', 'hana-sms-bridge', 'ap
 const NOW = new Date('2026-08-24T09:00:00+09:00');
 
 test('★ 휴대폰이 「하나 문자」로 보는 것은 서버도 받는다 — 두 거르개가 갈라지면 대기함이 빈다', () => {
-  /* 휴대폰 쪽 낱말을 «코드에서» 읽어 온다. 여기 손으로 베껴 두면 한쪽만 고치는 날이 온다. */
-  const words = (filter.match(/value\.contains\("([^"]+)"\)/g) || [])
-    .map(s => s.slice(16, -2))
-    .filter(w => w.indexOf('하나') === 0 || w.indexOf('keb') === 0);
-  assert.ok(words.length >= 3, '휴대폰 거르개의 낱말을 못 읽었습니다: ' + words.join(','));
-  words.forEach(function (w) {
-    /* 그 낱말이 실제로 쓰이는 «문자 모양»으로 물어본다 — 카드는 승인, 통장은 입금이다.
-       (카드 낱말에 「입금」을 붙인 문자는 하나도 오지 않는다 — 그런 모양을 지어내
-        검사하면 코드가 아니라 검사가 틀린 것이 된다.) */
-    const name = w.replace(/^keb/, 'KEB');
-    const text = /카드/.test(w)
-      ? '[Web발신] ' + name + ' 승인 권*하 26,000원 일시불 08/24 08:09 스시리두정'
-      : '[Web발신] ' + name + ' 08/24 08:09 입금 165,000원 주식회사주원테 잔액 53,709,193원';
+  /* ⚠ 예전에는 자바 소스의 «낱말 목록»(value.contains("…"))을 긁어 왔다.
+       2026-08-29 에 그 목록을 정규식 하나로 바꾸자 이 검사가 0개를 읽고 깨졌다 —
+       뜻은 그대로인데 «모양»을 못 박고 있었던 것이다.
+       더 나쁜 것: 낱말만 보다 보니 «실제 카드 문자 모양»(하나9950 승인)을 한 번도
+       시험하지 않아, 폰이 카드 문자를 통째로 버리는 것을 여태 못 잡았다.
+       이제 «실제 문자»를 넣어, 폰이 보내는 것은 서버도 받는지 본다. */
+  const { phoneAccepts } = require('./phone-filter');
+  const REAL_MSGS = [
+    '[Web발신] 하나9950 승인 권*하 26,000원 일시불 08/24 08:09 스시리두정',
+    '하나9950 승인취소 26,000원 08/24 09:02 스시리',
+    '[Web발신] 하나카드 승인 권*하 26,000원 일시불 08/24 08:09 스시리두정',
+    '[Web발신] 하나은행 08/24 08:09 입금 165,000원 주식회사주원테 잔액 53,709,193원',
+    '[Web발신] 하나 08/24 08:09 입금 165,000원 주식회사주원테 잔액 53,709,193원',
+    '[Web발신] KEB하나 08/24 08:09 입금 165,000원 주식회사주원테 잔액 53,709,193원',
+  ];
+  let sent = 0;
+  REAL_MSGS.forEach(function (text) {
+    if (!phoneAccepts(text)) return;      /* 폰이 안 보내면 서버 몫이 아니다 */
+    sent++;
     const got = HM.parseHanaMessage(text, { now: NOW });
-    assert.equal(got.ok, true,
-      '★ 휴대폰은 «' + w + '» 를 하나 문자로 보고 보내는데 서버가 버립니다(' + got.reason + ') — 대기함에 영영 안 들어옵니다.');
+    assert.ok(got.ok || got.reason === 'card_cancel_review_required',
+      '★ 휴대폰은 보내는데 서버가 버립니다(' + got.reason + ') — 대기함에 영영 안 들어옵니다.\n   ' + text);
   });
+  assert.ok(sent >= 4, '휴대폰이 실제 문자를 너무 많이 버립니다 — 보낸 것 ' + sent + '/' + REAL_MSGS.length);
+});
+
+test('★ 휴대폰이 «실제 카드 문자» 를 버리지 않는다 (2026-08-29 에 여기서 끊겨 있었다)', () => {
+  /* 카드는 「하나9950 승인 …」 처럼 하나+숫자로 온다. 폰 거르개가 「하나카드」 같은
+     낱말만 보면 이 꼴을 통째로 버리고, 서버는 아무것도 못 듣는다 —
+     화면에는 「연결 뒤 문자 0건」 으로만 보여 어디가 막혔는지 알 길이 없었다. */
+  const { phoneAccepts, REAL } = require('./phone-filter');
+  assert.ok(phoneAccepts(REAL.카드승인), '카드 승인 문자를 폰이 버린다');
+  assert.ok(phoneAccepts(REAL.카드취소), '카드 취소 문자를 폰이 버린다');
+  assert.ok(!phoneAccepts(REAL.인증번호), '인증번호가 든 문자를 폰이 내보낸다');
+  assert.ok(!phoneAccepts(REAL.남의은행), '하나가 아닌 문자를 폰이 내보낸다');
 });
 
 test('★ 은행 이름을 줄여 보내는 실제 형식을 받는다 — 이것이 안 되던 바로 그 문자다', () => {
