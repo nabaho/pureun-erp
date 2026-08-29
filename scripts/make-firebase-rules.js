@@ -122,18 +122,38 @@ rules.data = {
   consultings:    { '.read': LOGIN, '.write': LOGIN },   /* 컨설팅 사업(금액 포함) */
   presence_hours: { '.read': LOGIN, '.write': LOGIN },   /* 근무 시간 */
 
-  /* 포털 — 앱 공용 설정과 개인 타일 순서 */
-  app_config:       { '.read': LOGIN, '.write': LOGIN }, /* 포털 공용 설정(FCM 키 등) */
-  portal_prefs:     { '.read': LOGIN, '.write': LOGIN }, /* 옛 타일 순서 */
-  portal_prefs_uid: { '.read': LOGIN, '.write': LOGIN }, /* 지금 타일 순서 */
+  /* 포털 — 앱 공용 설정과 개인 타일 순서 (대표 지시 2026-08-29 「셋 좁」으로 좁혔다) */
+
+  /* 공용 설정: 모든 앱이 읽어 쓴다 → 읽기는 직원 그대로.
+     쓰기는 «포털 설정 창»에서만 나오고 그 단추는 이미 관리자에게만 보인다(cfgShowFab).
+     화면에서만 감추면 1차 방어일 뿐이라, 규칙으로 한 겹 더 잠근다. */
+  app_config:       { '.read': LOGIN, '.write': ADMIN },
+
+  portal_prefs:     { '.read': LOGIN, '.write': LOGIN }, /* 옛 타일 순서(안 쓴다) */
+
+  /* 타일 순서: «남이 내 배치를 바꾸는 것»을 막는다.
+     ⚠ 부모 자리를 관리자에게 열어 두는 까닭 — 백업이 통째로 읽고, 복원이 통째로 되쓴다.
+       자식 규칙만 두면 백업이 멈추고 복원이 거부된다(둘 다 조용히 실패한다). */
+  portal_prefs_uid: {
+    '.read': MGR, '.write': MGR,
+    $uid: {
+      '.read':  `auth != null && (auth.uid === $uid || ${MGR})`,
+      '.write': `auth != null && (auth.uid === $uid || ${MGR})`
+    }
+  },
 
   /* 옛 건의 자리 — 관리자가 포털에 들어오면 suggestions_private 로 옮기고 여기를 «지운다»
      (enter.html 의 sgEnsurePrivateMigration). 이사가 끝나면 이 넷은 빈 자리가 된다.
      ⚠ 그때까지는 «건의 원문»이 여기 남아 있을 수 있다 — 좁힐 첫 후보다(대표 판단). */
-  suggestions:     { '.read': LOGIN, '.write': LOGIN },
-  sg_meta:         { '.read': LOGIN, '.write': LOGIN },
-  sg_resolved:     { '.read': LOGIN, '.write': LOGIN },
-  sg_resolved_uid: { '.read': LOGIN, '.write': LOGIN },
+  /* ★ 2026-08-29 대표 지시로 «관리자·위임관리인»에게만 남겼다.
+     건의는 직원이 대표께 올린 글이다 — 직원끼리 볼 자리가 아니다.
+     ⚠ 관리자«만»으로 하지 않은 까닭: 백업을 위임관리인도 돌리는데,
+       백업은 읽기 실패를 삼키지 않아 한 자리만 막혀도 통째로 멈춘다.
+     이사(enter.html sgEnsurePrivateMigration)가 끝나면 이 넷은 빈 자리가 된다. */
+  suggestions:     { '.read': MGR, '.write': MGR },
+  sg_meta:         { '.read': MGR, '.write': MGR },
+  sg_resolved:     { '.read': MGR, '.write': MGR },
+  sg_resolved_uid: { '.read': MGR, '.write': MGR },
 
   /* ⚠ 여기 이름이 없는 자리는 아래로 떨어져 «재직 직원 누구나» 읽고 쓴다.
      새 자리를 만들 때는 권한을 정해 위에 이름을 적을 것 —

@@ -10,14 +10,15 @@ const rules = JSON.parse(fs.readFileSync(rulesPath, 'utf8')).rules;
    사라졌다는 것은 안전해졌다는 뜻이 아니다: data/$other 가 받아
    «재직 직원 누구나» 읽고 쓴다. 그러니 「없다」를 못 박아,
    누가 그 자리를 되살릴 때 제 규칙 없이 되살리지 못하게 한다. */
-/* 2026-08-29 — 이름을 적었다. 권한은 그때 열려 있던 그대로다(재직 직원).
-   ⚠ 좁힐지는 대표 판단으로 남아 있다 — 「내 타일 순서를 남이 바꾼다」가 지금 상태다.
-     좁히려면 auth.uid === $uid 로 바꾸면 된다. 여기서 조용히 정하지 않는다. */
-test('개인 포털 설정 자리에 이름이 있다 (권한은 아직 재직 직원)', () => {
+/* 2026-08-29 — 이름을 적고, 같은 날 대표 지시 「셋 좁」으로 «좁혔다».
+   이제 제 것만 만지고 남의 것은 못 만진다(백업·복원 길만 관리자에게 남겼다).
+   규칙을 실제로 돌려 보는 것은 tests/rules-narrow-three.test.js 가 한다. */
+test('개인 포털 설정 자리가 자식 규칙으로 좁혀져 있다', () => {
   const node = rules.data.portal_prefs_uid;
   assert.ok(node, '★ 이름이 없어졌다 — $other 로 떨어져 아무도 세지 못하게 된다');
-  assert.match(node['.read'], /sign_in_provider|passkey/);
-  assert.match(node['.write'], /sign_in_provider|passkey/);
+  assert.ok(node.$uid, '★ 자식 규칙이 없어졌다 — 남의 타일 순서를 만질 수 있게 된다');
+  assert.match(node.$uid['.write'], /auth\.uid === \$uid/,
+    '★ 「제 것만」 조건이 사라졌다');
 });
 
 test('건의 수정과 답변은 관리자만 가능하고 신규 작성자는 UID를 남긴다', () => {
