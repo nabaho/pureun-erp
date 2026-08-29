@@ -2780,7 +2780,7 @@ const Store = {
       modeBadge.textContent='실시간 공유'; modeBadge.classList.add('live');
       modeBadge.title='전 직원 실시간 공유 중';
       const subscribe = (seed) => {
-        watchCardMap(this.db.ref(DB_ROOT+'/items'), value => { state.items = value||{}; }, () => { coListBust(); renderSoon();
+        watchCardMap(this.db.ref(DB_ROOT+'/items'), value => { state.items = value||{}; mbCardsRevBump(); }, () => { coListBust(); renderSoon();
           /* 명함이 도착한 **뒤에** 마지막 보던 화면으로 옮긴다(대표 지시 2026-08-10).
              먼저 옮기면 빈 화면이 잠깐 보이고, 자료함·보낸 메일은 아직 읽히지도 않았다. */
           if(!Store._itemsReady){
@@ -12646,6 +12646,19 @@ const MB_PUB_DOM = ['naver.com','gmail.com','hanmail.net','daum.net','nate.com',
   'hotmail.com','outlook.com','yahoo.com','korea.com','empas.com','icloud.com','네이버.com'];
 
 let _mbOwner = null;      /* {열쇠: 담당자이름} — 사람이 정해 준 것만 */
+/* ══════════════════════════════════════════════════════════════════════════
+   명함이 «바뀌었나»를 O(1) 로 안다 (대표 보고 2026-08-29 「반응속도가 최악」)
+   ══════════════════════════════════════════════════════════════════════════
+   예전에는 Object.keys(items).length 로 판정했다. 명함이 6,646장이라 그 «판정»만으로
+   6,646번을 세고, 그 함수가 줄마다 불려 7,360줄 × 6,646 = 4,900만 번이 됐다.
+   목록 한 번 그리는 데 22초였다(실측).
+   ★ 대신 «바뀔 때 번호를 올린다». 세지 않으니 값이 0 이다.
+   ⚠ 신원(===)만으로는 못 잡는다 — watchCardMap 은 «같은 객체를 고쳐 쓰며»
+     assign(map) 을 되풀이한다. 그래서 번호가 필요하다.
+   ⚠ 그래도 신원도 «함께» 본다 — state.items 를 통째로 갈아 끼우는 자리가 있다
+     (로컬 모드·검사). 둘 중 하나만 보면 한쪽이 새는 날이 온다. */
+let _mbCardsRev = 0;
+function mbCardsRevBump(){ _mbCardsRev++; }
 let _mbWhoIdx = null;     /* 기업정보함에서 뽑아 둔 {주소:담당자} · {도메인:담당자} — 캐시 */
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -12701,9 +12714,19 @@ function mbDomOf(email){
 
 /* 기업정보함 + ErpMatch 로 만든 주소표. 명함이 늦게 오므로 캐시를 비울 길을 둔다. */
 function mbWhoIndex(){
+  /* ══════════════════════════════════════════════════════════════════════
+     ★★ 그리는 «동안»에는 한 번만 (대표 보고 2026-08-29 「반응속도가 최악」)
+     ══════════════════════════════════════════════════════════════════════
+     아래 「명함 수가 바뀌면 다시 만든다」 판정이 Object.keys(items) 를 «부를 때마다»
+     돌린다. 명함이 6,646장이라 그 한 줄이 6,646번이다.
+     그런데 이 함수는 «줄마다» 불린다(mbWhoOfRow·mbSubsOfRow·mbWhoTag·mbSeenTag) —
+     실측 2026-08-29: 전체메일 7,360줄 × 6,646 = «4,900만 번». 목록 한 번에 22초.
+     ★ 그리는 동안만 사는 셈(mbMemo)에 담아 «한 번»으로 줄인다. 낡을 틈이 없다 —
+       그리기가 시작될 때마다 버려진다(mbMemoClear).
+     ⚠ 아래 stamp 판정은 «그대로 둔다» — 그리기와 그리기 «사이»에 명함이 흘러 들어오는
+       것을 잡는 자리다(2026-08-27 고장). 없애면 그 고장이 돌아온다. */
   const items = (typeof state!=='undefined' && state.items) ? state.items : {};
-  const keys = Object.keys(items);
-  /* ⚠ 명함 수가 «바뀌면» 다시 만든다 (2026-08-27).
+  /* ⚠ 명함이 «바뀌면» 다시 만든다 (2026-08-27).
        예전에는 한 번 만들고 끝이었다. 그런데 기업정보함은 watchCardMap 으로 «흘러 들어온다» —
        메일 화면이 먼저 그려지면 그때는 명함이 0장이라 표가 통째로 비고, 그 빈 표가
        그대로 굳었다. 그러면 담당자가 «전부 담당 모름»으로 보이고, 새로고침을 해야만
@@ -12712,8 +12735,9 @@ function mbWhoIndex(){
   /* ⚠ 업체 자료(푸른이알피)도 «늦게» 온다 — ErpMatch.load 가 끝나야 채워진다.
        명함 수만 보면, 업체가 뒤에 도착해도 표가 그대로 굳는다. 둘 다 센다. */
   const cos = (typeof ErpMatch!=='undefined' && ErpMatch.companies) ? ErpMatch.companies : [];
-  const stamp = keys.length + ':' + cos.length;
-  if(_mbWhoIdx && _mbWhoIdx._n === stamp) return _mbWhoIdx;
+  if(_mbWhoIdx && _mbWhoIdx._obj === items && _mbWhoIdx._rev === _mbCardsRev
+     && _mbWhoIdx._cos === cos.length) return _mbWhoIdx;
+  const keys = Object.keys(items);
   const byAddr = {}, domHit = {}, endAddr = {}, endDomHit = {}, coAddr = {}, rawCo = {};
 
   /* 주소 하나를 표에 넣는다 — 기업정보함과 푸른이알피가 «같은 길»을 쓰게 한 자리.
@@ -12804,10 +12828,13 @@ function mbWhoIndex(){
   Object.keys(endDomHit).forEach(d=>{
     if(endDomHit[d].end && !endDomHit[d].live) endDom[d] = 1;
   });
-  _mbWhoIdx = { byAddr, byDom, endAddr, endDom, coAddr, rawCo, _n: stamp };
+  _mbWhoIdx = { byAddr, byDom, endAddr, endDom, coAddr, rawCo,
+    _obj: items, _rev: _mbCardsRev, _cos: cos.length };
   return _mbWhoIdx;
 }
-function mbWhoBust(){ _mbWhoIdx = null; }
+/* ⚠ 그리는 동안의 셈도 함께 버린다 — 오래 사는 것만 지우면 «이번 그리기»는 옛 표를
+     그대로 쓴다(담당자를 바꿨는데 화면이 안 바뀐다). */
+function mbWhoBust(){ _mbWhoIdx = null; const m0 = mbMemoOf(); delete m0.tally; }
 
 /* ══════════════════════════════════════════════════════════════════════════
    자문이 끝난 업체 — 따로 모은다 (대표 지시 2026-08-26)
@@ -13619,7 +13646,15 @@ function mbAllRows(){
    되살릴 일이 생기면 git 에서 되돌린다: 이 자리에 MB_KIND_WORDS · mbClassify 가 있었다. */
 
 /* 지금 화면에 보일 줄 — 거르개(안읽음·중요·첨부)·찾기를 거친 것 */
-function mbVisibleRows(){
+/* 거르개·찾는 말까지 통과한 «모든» 줄 — 세는 데 쓴다(그리는 데는 안 쓴다). */
+function mbMatchedRows(){
+  /* ⚠ 셈의 «열쇠»에 칸·거르개·찾는 말을 넣는다. 안 넣으면 거르개를 바꿔도 옛 목록이
+       그대로 나온다 — 화면은 그릴 때마다 셈을 버리니 앱에서는 안 드러나지만,
+       그리기 없이 묻는 자리(검사·단축키)에서 조용히 틀린다. */
+  const m = mbMemoOf();
+  const tag = String(mbNow()) + '|' + String(state.mbFilter||'') + '|' + String(state.mbQ||'');
+  if(m.matched && m.matchedTag === tag) return m.matched;
+  m.matchedTag = tag;
   let rows = mbAllRows();
   const f = state.mbFilter||'';
   if(f==='unread') rows = rows.filter(v=>!Number(v.r||0));
@@ -13631,7 +13666,28 @@ function mbVisibleRows(){
       .toLowerCase().replace(/\s/g,'');
     return hay.indexOf(q)>=0;
   });
-  return rows;
+  return (m.matched = rows);
+}
+/* ══════════════════════════════════════════════════════════════════════════
+   ★★ 화면에는 «한 쪽»만 그린다 (대표 보고 2026-08-29 「반응속도가 최악」)
+   ══════════════════════════════════════════════════════════════════════════
+   예전에는 받아 온 것을 «전부» 그렸다. 「전체메일」에서는 7,360줄이고, 줄 하나가
+   1.5KB 남짓이라 화면 하나가 11MB 짜리 글이 된다 — 브라우저가 그것을 만들고 붙이는
+   데만 11초다(실측 2026-08-29). 조각들을 아무리 빠르게 해도 이 값은 안 준다.
+   ★ 다음메일도 100통씩 그린다. 같은 수(mbPageSize)로 끊는다.
+   ⚠ 「보이는 것 모두 고르기」·방향키·고른 것 세기가 모두 이 함수를 본다 — 그래서
+     «보인다»는 말의 뜻이 한 곳에서만 정해진다. 여기서 끊으면 그 셋이 함께 맞는다.
+   ⚠ 더 보려면 「이전 메일 더 보기」다. 이미 받아 둔 것이 있으면 «그 자리에서» 늘고,
+     다 보였을 때만 서버에 더 달라고 한다(mbMore). */
+function mbVisibleRows(){
+  /* ⚠ 칸·거르개·찾는 말이 바뀌면 «처음 한 쪽»으로 되돌린다 — 한 곳에서만 따진다.
+       여기저기서 state.mbShow=0 을 하면 언젠가 한 군데를 빠뜨리고, 그러면 딴 칸으로
+       옮겼는데 500줄이 그려져 「왜 여기서만 느리지」가 된다. */
+  const tag = String(mbNow()) + '|' + String(state.mbFilter||'') + '|' + String(state.mbQ||'');
+  if(state.mbShowFor !== tag){ state.mbShowFor = tag; state.mbShow = 0; }
+  const rows = mbMatchedRows();
+  const n = Number(state.mbShow) || mbPageSize();
+  return rows.length > n ? rows.slice(0, n) : rows;
 }
 function mbVisibleKeys(){ return mbVisibleRows().map(v=>v._key); }
 
@@ -13640,12 +13696,19 @@ function mbVisibleKeys(){ return mbVisibleRows().map(v=>v._key); }
    우리에게는 기업정보함이 있다 — 그 주소가 명함에 있으면 «이름·회사»를 가져와 붙인다.
    ⚠ 명함이 6천 장이라 줄마다 훑으면 목록이 버벅인다. 한 번 만들어 두고, 명함 수가
      바뀔 때만 다시 만든다(중복 판정에서 쓰는 것과 같은 결). */
-let _mbWho = { n:-1, map:null };
+let _mbWho = { obj:null, rev:-1, map:null };
 function mbWhoMap(){
+  /* ★★ mbWhoIndex 와 «똑같은» 까닭으로 그리는 동안 한 번만 (대표 보고 2026-08-29).
+       아래 「명함 수가 바뀌면」 판정이 Object.keys(all) 를 부를 때마다 돌린다 —
+       명함 6,646장 × 줄 7,360개다. 이 함수는 줄마다 보낸이 이름을 지으려고 불린다
+       (mbWho → mbNameOf). 실측: 이 한 자리가 4.4초.
+     ⚠ 아래 판정은 그대로 둔다 — 그리기 «사이»에 명함이 흘러 들어오는 것을 잡는다. */
   let all = {};
   try{ all = allItems()||{}; }catch(_){ all = {}; }
+  /* ★ 「명함이 바뀌었나」를 O(1) 로 — mbWhoIndex 와 같은 도장이다.
+       세는 판정(Object.keys)이 줄마다 6,646번 돌아 이 한 자리가 4.4초였다. */
+  if(_mbWho.map && _mbWho.obj === all && _mbWho.rev === _mbCardsRev) return _mbWho.map;
   const keys = Object.keys(all);
-  if(_mbWho.n === keys.length && _mbWho.map) return _mbWho.map;
   const m = {};
   keys.forEach(k=>{
     const it = all[k]; if(!it) return;
@@ -13653,7 +13716,7 @@ function mbWhoMap(){
     if(!e || m[e]) return;
     m[e] = { name: String(it.name||'').trim(), company: String(it.company||'').trim() };
   });
-  _mbWho = { n: keys.length, map: m };
+  _mbWho = { obj: all, rev: _mbCardsRev, map: m };
   return m;
 }
 /* 주소 하나를 사람이 읽을 이름으로. 명함에 없으면 메일이 알려 준 이름, 그것도 없으면 주소. */
@@ -15044,11 +15107,24 @@ function mbFilter(k){
   if(state.mailSent!=='box') return openMailBox(mbNow());
   renderPCSide(); renderMailPage();
 }
+/* 「이전 메일 더 보기」 — 두 걸음이다.
+   ① 이미 받아 둔 것이 아직 안 보이고 있으면 «그 자리에서» 더 보여 준다(서버를 안 부른다).
+   ② 받아 둔 것을 다 보였을 때만 서버에 더 달라고 한다.
+   ⚠ 예전에는 늘 서버부터 불렀다. 그런데 「전체메일」에는 이미 7,360통이 손에 있었다 —
+     기다릴 까닭이 없는 자리에서 기다렸다. */
 function mbMore(){
+  const shown = Number(state.mbShow) || mbPageSize();
+  const have  = mbMatchedRows().length;
+  if(have > shown){
+    state.mbShow = shown + mbPageSize();
+    renderMailPage();
+    return;
+  }
   const id = mbNow();
   const slugs = mbNeedSlugs(id);
   const n = (state.mbLimit||mbPageSize()) + mbPageSize();
   state.mbLimit = n;
+  state.mbShow = shown + mbPageSize();
   let left = slugs.length; if(!left) return;
   toast('더 가져오고 있습니다…', 2000);
   slugs.forEach(s=>loadMailBox(s, n, ()=>{ if(!--left) renderMailPage(); }));
