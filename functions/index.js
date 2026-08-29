@@ -2145,6 +2145,77 @@ exports.hanaMessageBridge = functions
         hanaJson(res, 200, { ok: true, saved: true, id: tx.id }); return;
       }
 
+
+      /* ══ PC 에서 붙여넣기 (대표 지시 2026-08-29) ══════════════════════════
+         폰 앱이 막히면 거래내역이 통째로 비는데, 그때 손쓸 길이 없었다.
+         문자를 PC 에서 붙여넣으면 «폰과 똑같은 길»로 들어가게 한다.
+
+         ★ 파서·대기함·중복막이를 그대로 쓴다 — 여기서 따로 만들면 두 길이
+           갈라지고, 갈라지면 이번처럼 한쪽만 조용히 막힌다.
+         ⚠ 대표만 쓸 수 있다 (휴대폰 연결과 같은 규칙, 2026-08-27 결정).
+         ⚠ 문자 원문은 저장하지 않는다 — 폰 길과 같다.
+         ⚠ 폰의 lastOkAt 은 건드리지 않는다. 이것은 폰이 보낸 것이 아니다 —
+           찍어 버리면 「폰이 살아 있다」고 잘못 읽는다. */
+      if (action === "ingestPaste") {
+        const admin = await requireTotalAdmin(req);
+        const uid = String(admin.uid || "");
+        const text = String(body.text || "");
+        if (!text.trim()) { hanaJson(res, 400, { ok: false, error: "붙여넣은 글이 비어 있습니다." }); return; }
+        if (text.length > 20000) { hanaJson(res, 400, { ok: false, error: "한 번에 너무 많습니다 — 나눠서 넣어 주세요." }); return; }
+
+        /* 여러 통을 한 번에 붙여넣는다. 빈 줄로 나뉜 덩이를 한 통으로 본다 —
+           문자 한 통이 여러 줄인 경우가 많아 줄 단위로 자르면 토막 난다. */
+        const chunks = text.split(/\n\s*\n+/).map((x) => x.trim()).filter(Boolean);
+        const blocks = chunks.length ? chunks : [text.trim()];
+        if (blocks.length > 100) { hanaJson(res, 400, { ok: false, error: "한 번에 100통까지 넣을 수 있습니다." }); return; }
+
+        const results = [];
+        const updates = {};
+        const seen = {};
+        let saved = 0, dup = 0, skipped = 0;
+
+        for (const block of blocks) {
+          const parsed = HanaMessage.parseHanaMessage(block);
+          if (!parsed.ok) {
+            skipped++;
+            results.push({ ok: false, reason: parsed.reason, head: block.slice(0, 40) });
+            continue;
+          }
+          const tx = parsed.transaction;
+          if (seen[tx.id]) { dup++; results.push({ ok: false, reason: "duplicate", head: block.slice(0, 40) }); continue; }
+          const inboxRef = db.ref(`hanaSmsBridge/inbox/${uid}/${tx.id}`);
+          const existing = await inboxRef.once("value");
+          if (existing.exists()) { dup++; results.push({ ok: false, reason: "duplicate", head: block.slice(0, 40) }); continue; }
+          seen[tx.id] = true;
+
+          const receivedAt = Date.now();
+          updates[`inbox/${uid}/${tx.id}`] = {
+            id: tx.id, src: tx.src, type: tx.type, date: tx.date,
+            amount: tx.amount, balance: tx.balance || 0,
+            memo: tx.memo, note: tx.note, rawHash: tx.rawHash,
+            status: "pending", receivedAt,
+            deviceName: "PC 붙여넣기",
+          };
+          if (tx.type === "income") {
+            const alertKey = hanaAdminAlertKey(uid, tx.id);
+            updates[`adminAlerts/${alertKey}`] = {
+              alertKey, txId: tx.id, linkedUid: uid,
+              src: tx.src, date: tx.date, amount: tx.amount,
+              memo: String(tx.memo || "").slice(0, 200),
+              status: "new", officeStatus: "unknown", receivedAt,
+              deviceName: "PC 붙여넣기",
+            };
+          }
+          saved++;
+          results.push({ ok: true, id: tx.id, src: tx.src, type: tx.type,
+                         date: tx.date, amount: tx.amount, memo: tx.memo });
+        }
+
+        if (Object.keys(updates).length) await db.ref("hanaSmsBridge").update(updates);
+        hanaJson(res, 200, { ok: true, saved, duplicate: dup, skipped, results });
+        return;
+      }
+
       if (action === "adminAlerts") {
         await requireTotalAdmin(req);
         const snap = await db.ref("hanaSmsBridge/adminAlerts")

@@ -38773,6 +38773,39 @@ function FinanceLedger(props){
     }catch(e){showToast('❌ 확인 상태를 저장하지 못했습니다: '+e.message);}
   }
 
+
+  /* ── PC 에서 문자 붙여넣기 (대표 지시 2026-08-29) ─────────────────────────
+     폰 앱이 막히면 거래내역이 통째로 빈다 — 2026-08-29 에 실제로 그랬다
+     (폰 거르개가 카드 문자를 통째로 버리고 있었고, 서버는 아무것도 못 들었다).
+     그때 손쓸 길이 없었다. PC 에서 붙여넣으면 «폰과 똑같은 길»로 들어가게 한다.
+     ⚠ 서버가 같은 파서·같은 대기함을 쓴다(ingestPaste) — 여기서 따로 읽지 않는다.
+       화면이 스스로 읽으면 길이 셋이 되고, 셋이 갈라지면 또 조용히 막힌다. */
+  var pasteS = useState(false); var pasteOpen = pasteS[0]; var setPasteOpen = pasteS[1];
+  var pasteTS = useState('');   var pasteText = pasteTS[0]; var setPasteText = pasteTS[1];
+  var pasteRS = useState(null); var pasteRes = pasteRS[0];  var setPasteRes = pasteRS[1];
+
+  async function sendHanaPaste(){
+    var t = String(pasteText || '').trim();
+    if(!t){ showToast('붙여넣은 글이 없습니다'); return; }
+    setHanaBusy(true); setPasteRes(null);
+    try{
+      var d = await hanaSmsCall('ingestPaste', { text: t });
+      setPasteRes(d);
+      if(d.saved > 0){
+        /* 폰으로 받은 것과 «같은 길»이라, 가져오기도 그대로 쓴다 */
+        await importHanaSms(true);
+        showToast('📥 ' + d.saved + '건을 넣었습니다');
+        setPasteText('');
+      } else {
+        showToast(d.duplicate ? '이미 들어와 있는 문자입니다' : '넣을 수 있는 거래문자가 없습니다');
+      }
+    }catch(e){
+      showToast('❌ 넣지 못했습니다: ' + (e && e.message ? e.message : e));
+    }
+    setHanaBusy(false);
+    refreshHanaStatus();
+  }
+
   async function importHanaSms(silent){
     if(hanaBusy) return;
     setHanaBusy(true);
@@ -40468,11 +40501,58 @@ function FinanceLedger(props){
         title:'새로 받은 하나은행·하나카드 거래문자를 가져와 기존 거래내역과 자동으로 맞춥니다',
         style:{padding:'5px 9px',border:'1px solid #bbf7d0',background:'#f0fdf4',color:'#16a34a',borderRadius:'6px',fontSize:'11px',fontWeight:800,cursor:hanaBusy?'wait':'pointer',whiteSpace:'nowrap'}},
         hanaBusy?'⏳ 확인 중':'📱 문자 가져오기'),
+      /* ★ 폰이 막혔을 때 손으로 넣는 길 (대표 지시 2026-08-29).
+         폰 하나에만 매달려 있으면, 폰이 막힌 이틀 동안 아무것도 못 한다. */
+      _meNow().isOwner &&
+      h('button',{type:'button',disabled:hanaBusy,onClick:function(e){e.stopPropagation();setPasteOpen(true);},
+        title:'하나 거래문자를 PC 에서 붙여넣어 넣습니다 — 폰이 막혔을 때 쓰는 길입니다',
+        style:{padding:'5px 9px',border:'1px solid #cbd5e1',background:'#f8fafc',color:'#475569',borderRadius:'6px',fontSize:'11px',fontWeight:800,cursor:hanaBusy?'wait':'pointer',whiteSpace:'nowrap'}},
+        '📋 PC 에서 붙여넣기'),
       _meNow().isAdmin && hanaAlerts.length>0 && h('button',{type:'button',onClick:function(e){e.stopPropagation();setHanaAlertOpen(true);},
         title:'입금 사업장 확인이 필요한 거래를 봅니다',
         style:{padding:'5px 9px',border:'1px solid #fbbf24',background:'#fffbeb',color:'#d97706',borderRadius:'6px',fontSize:'11px',fontWeight:900,cursor:'pointer',whiteSpace:'nowrap'}},
         '🔔 입금 확인 '+hanaAlerts.length+'건'),
       hanaStatChip(),
+      pasteOpen && h('div',{onClick:function(e){ e.stopPropagation(); if(e.target===e.currentTarget && !hanaBusy) setPasteOpen(false); },
+        style:{position:'fixed',inset:0,background:'rgba(15,23,42,0.45)',zIndex:9400,
+          display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}},
+        h('div',{onClick:function(e){e.stopPropagation();},
+          style:{background:'#fff',borderRadius:'10px',padding:'18px 20px',width:'520px',maxWidth:'94vw',
+            maxHeight:'86vh',overflowY:'auto',boxShadow:'0 12px 40px rgba(0,0,0,0.25)'}},
+          h('div',{style:{fontSize:'14px',fontWeight:800,color:'#1e293b'}},'📋 하나 거래문자 붙여넣기'),
+          h('div',{style:{fontSize:'11.5px',color:'#64748b',margin:'3px 0 12px',lineHeight:1.6}},
+            '폰에서 문자를 복사해 아래에 붙여넣으세요. 여러 통이면 ',
+            h('b',null,'빈 줄로 나눠'),' 붙여넣습니다.',
+            h('br'),'폰으로 들어온 것과 같은 자리로 들어가고, 같은 문자는 두 번 안 잡힙니다.'),
+          h('textarea',{ value:pasteText, disabled:hanaBusy,
+            onChange:function(e){ setPasteText(e.target.value); },
+            placeholder:'[Web발신] 하나9950 승인 26,000원 08/18 12:59 스시리두정\n\n[Web발신] 하나은행 입금 1,250,000원 08/22 15:31 주식회사 예시',
+            style:{width:'100%',minHeight:'170px',padding:'9px 11px',border:'1px solid #cbd5e1',
+              borderRadius:'6px',fontSize:'12px',fontFamily:'inherit',resize:'vertical',lineHeight:1.6} }),
+          /* 무엇이 들어가고 무엇이 걸러졌는지 그 자리에서 보여 준다 —
+             조용히 삼키면 「넣었는데 왜 없나」를 또 겪는다 */
+          pasteRes && h('div',{style:{marginTop:'10px',padding:'9px 11px',borderRadius:'6px',
+            background:'#f8fafc',border:'1px solid #e2e8f0',fontSize:'11.5px',lineHeight:1.7}},
+            h('b',{style:{color:'#166534'}},'들어감 '+(pasteRes.saved||0)+'건'),
+            (pasteRes.duplicate ? h('span',{style:{color:'#854d0e'}},' · 이미 있던 것 '+pasteRes.duplicate+'건') : null),
+            (pasteRes.skipped ? h('span',{style:{color:'#991b1b'}},' · 거래문자가 아님 '+pasteRes.skipped+'건') : null),
+            (pasteRes.results||[]).filter(function(r){ return !r.ok; }).slice(0,6).map(function(r,i){
+              return h('div',{key:'pr'+i,style:{color:'#94a3b8',fontSize:'10.5px',marginTop:'3px'}},
+                '· ' + (r.head||'') + ' — ' + (HANA_SKIP_KO[r.reason] || r.reason));
+            })
+          ),
+          h('div',{style:{display:'flex',alignItems:'center',gap:'7px',marginTop:'13px'}},
+            h('span',{style:{fontSize:'10.5px',color:'#94a3b8',flex:1}},'문자 원문은 저장하지 않습니다'),
+            h('button',{type:'button',disabled:hanaBusy,onClick:function(){ setPasteOpen(false); setPasteRes(null); },
+              style:{padding:'6px 13px',border:'1px solid #cbd5e1',background:'#fff',color:'#475569',
+                borderRadius:'5px',fontSize:'12px',fontWeight:700,cursor:'pointer'}},'닫기'),
+            h('button',{type:'button',disabled:hanaBusy,onClick:sendHanaPaste,
+              style:{padding:'6px 15px',border:'none',background:'#1e40af',color:'#fff',
+                borderRadius:'5px',fontSize:'12px',fontWeight:800,cursor:hanaBusy?'wait':'pointer',
+                opacity:hanaBusy?0.6:1}}, hanaBusy?'⏳ 넣는 중':'넣기')
+          )
+        )
+      ),
       h('span',{className:'ld-up-sep',style:{width:'1px',height:'18px',background:'#e2e8f0'}}),
       // 드롭존 (1줄) — 폰에는 «끌어다 놓기» 가 없어 css 에서 접는다(.ld-up-drophint)
       h('span',{className:'ld-up-drophint',style:{fontSize:'17px',lineHeight:1}}, busy ? '⏳' : dragOver ? '📂' : '📥'),
