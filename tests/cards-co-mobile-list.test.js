@@ -27,9 +27,16 @@ function loadBlock(list){
     coPagerHtml: () => '',
     coVisible: () => list,
     coTagsOf: o => Object.keys(o.tags||{}),
+    /* 2026-08-29 — 폰 목록도 「목록의 모양이 바뀌었나」를 보고 맨 위로 올려 준다.
+       여기서는 그리는 내용만 보므로 대역으로 둔다(자리 옮기기 자체는
+       cards-co-scroll-keep.test.js 가 따로 지킨다). */
+    coListShapeKey: () => 'shape',
+    _coScrollShape: '',
+    window: { scrollTo: () => { calls.top = true; } },
     $: id => {
       if(id==='list') return { set innerHTML(v){ calls.html=v; }, get innerHTML(){ return calls.html; } };
       if(id==='groupBtn') return { set innerHTML(v){ calls.groupBtnHtml=v; }, get innerHTML(){ return calls.groupBtnHtml; } };
+      if(id==='listwrap') return { scrollTop: 0 };
       return null;
     }
   };
