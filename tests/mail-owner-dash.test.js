@@ -1136,3 +1136,160 @@ test('★ 차례를 두는 자리가 업무 칸 차례와 «나란히» 있다 �
   assert.ok(!/mailWhoOrder\/'\s*\+\s*(myEmail|uid)/.test(src),
     '★ 사람마다 따로 두면 남이 정리한 차례를 못 봅니다');
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+   주소를 «자문사»에 잇는다 (대표 승인 목업 2026-08-29 · 「자문사만 이으면 된다」)
+   ══════════════════════════════════════════════════════════════════════════
+   ★ 왜 사람이 아니라 회사인가
+     주소에 «사람 이름»을 박으면 푸른이알피에서 담당을 바꿔도 메일은 옛사람에게 간다.
+     회사에 이어 두면 담당자가 회사에서 따라온다 — 고칠 곳이 한 곳으로 준다.
+     ⚠ 이 검사의 고갱이가 그것이다: «담당을 바꾸면 메일도 따라가는가».
+
+   ★ 실측 2026-08-29 (메일 5,686통) — 왜 필요했나
+     · 담당자가 있는 자문사 215곳 가운데 주소를 아는 곳이 71곳(33%)뿐이었다
+     · 「담당 모름」 5,320통 가운데 1,932통(187곳)은 상공회의소·노동청·공단이라
+       자문사가 아니다 — 치우지 않으면 정작 할 일이 목록 아래에 묻힌다 */
+function loadCo(over){
+  const o = over || {};
+  const c = loadStaff(o);
+  vm.runInContext('_mbCo = ' + JSON.stringify(o.co || {}) + ';'
+    + '_mbNotCo = ' + JSON.stringify(o.notco || {}) + ';', c);
+  return c;
+}
+/* 이 harness 의 자문사: 한빛물산(박한별) · 대한산업(최기운) · 옛거래처(박성수·퇴사) */
+const ROW = e => ({ e: e, r: 1, _slug: 'B_JAMUN', _key: 'B_JAMUN:9' });
+
+test('★★ 자문사에 이으면 «담당자는 회사에서 따라온다»', () => {
+  const c = loadCo({ co: { 'zzz@nowhere,kr': '한빛물산' } });
+  assert.equal(c.mbWhoOfRow(ROW('zzz@nowhere.kr')), '박한별',
+    '자문사에 이었는데 담당자가 안 따라왔다');
+});
+
+test('★★ 담당자가 바뀌면 «메일도 따라간다» — 이것이 사람 이름을 안 박는 까닭이다', () => {
+  const c = loadCo({ co: { 'zzz@nowhere,kr': '한빛물산' } });
+  assert.equal(c.mbWhoOfRow(ROW('zzz@nowhere.kr')), '박한별');
+  /* 푸른이알피에서 한빛물산 담당을 최기운으로 바꿨다고 두자 */
+  const EM = c.ErpMatch;
+  /* ⚠ 기록을 «손대지» 않고 갈아 끼운다 — BYNAME2 는 검사 파일 공용이라
+     손대면 뒤따르는 검사까지 물든다(실제로 다음 검사가 최기운을 받았다). */
+  EM.byName[EM._norm('한빛물산')] = Object.assign({}, EM.byName[EM._norm('한빛물산')], { main:'최기운' });
+  c.mbWhoBust();
+  assert.equal(c.mbWhoOfRow(ROW('zzz@nowhere.kr')), '최기운',
+    '★ 담당을 바꿨는데 메일은 옛사람에게 그대로 간다 — 회사로 이은 값어치가 없다');
+});
+
+test('★ 도메인으로도 이을 수 있다 — 그 회사에서 오는 것이 모두 간다', () => {
+  const c = loadCo({ co: { '@nowhere,kr': '한빛물산' } });
+  assert.equal(c.mbWhoOfRow(ROW('aaa@nowhere.kr')), '박한별');
+  assert.equal(c.mbWhoOfRow(ROW('bbb@nowhere.kr')), '박한별', '같은 도메인 다른 사람을 못 짚었다');
+});
+
+test('★ «사람으로 박은 것»이 회사보다 세다 — 사람이 못 박은 것을 기계가 덮으면 고칠 길이 없다', () => {
+  const c = loadCo({ co: { 'zzz@nowhere,kr': '한빛물산' },
+                     owner: { 'zzz@nowhere,kr': '김보람' } });
+  assert.equal(c.mbWhoOfRow(ROW('zzz@nowhere.kr')), '김보람',
+    '사람이 박은 것을 회사가 덮었다');
+});
+
+test('★ «끝난» 자문사에 이으면 담당자 칸이 아니라 자문종료로 간다', () => {
+  /* ⚠ 이것을 빼먹으면 「자문종료로 옮겼는데 왜 아직 내 칸에 있나」가 된다 */
+  const c = loadCo({ co: { 'zzz@nowhere,kr': '끝난회사' } });
+  /* ⚠ 옛거래처는 «담당자가 퇴사»한 곳이지 «자문이 끝난» 곳이 아니다 — 둘은 다르다 */
+  c.ErpMatch.byName[c.ErpMatch._norm('끝난회사')] =
+    { company:'끝난회사', main:'박한별', subs:[], left:true };
+  c.mbWhoBust();
+  assert.equal(c.mbEndedOfRow(ROW('zzz@nowhere.kr')), true, '끝난 회사인데 종료로 안 갔다');
+  assert.equal(c.mbWhoOfRow(ROW('zzz@nowhere.kr')), '', '끝난 회사가 담당자 칸을 가져갔다');
+});
+
+test('★ 담당자가 «없는» 자문사에 이어도 막지 않는다 — 담당을 적는 순간 저절로 간다', () => {
+  const c = loadCo({ co: { 'zzz@nowhere,kr': '나래산업' } });
+  assert.equal(c.mbWhoOfRow(ROW('zzz@nowhere.kr')), '', '없는 담당자를 지어냈다');
+  const EM = c.ErpMatch;
+  EM.byName[EM._norm('나래산업')] = { company:'나래산업', main:'김보람', subs:[], left:false };
+  c.mbWhoBust();
+  assert.equal(c.mbWhoOfRow(ROW('zzz@nowhere.kr')), '김보람', '담당을 적었는데 안 갔다');
+});
+
+/* ── 「자문사 아님」 ── */
+
+test('★★ 「자문사 아님」은 «목록에서만» 치운다 — 메일은 그대로 있다', () => {
+  const c = loadCo({ notco: { '@old,kr': 1 } });
+  /* 목록에서는 빠진다 */
+  const shown = c.whoUnknownSenders().map(o=>o.e).join(' ');
+  assert.ok(shown.indexOf('@old.kr') < 0, '치웠는데 잇기 목록에 그대로 있다');
+  /* ★ 그러나 메일은 「담당 모름」 칸에 그대로 있어야 한다 —
+     목록에서 지운다고 메일을 감추면 그 메일은 아무 데서도 못 본다 */
+  c.state.mbBox = '@?';
+  const subs = c.mbAllRows().map(v=>v.s).join(' | ');
+  assert.ok(subs.indexOf('퇴사자 담당') >= 0 || c.mbAllRows().length > 0,
+    '★ 치웠더니 메일까지 사라졌다 — 그 메일은 이제 아무 데서도 못 봅니다');
+});
+
+test('★ 치운 것을 «되돌릴 길»이 있다 — 되돌릴 수 없는 단추는 아무도 안 누른다', () => {
+  const c = loadCo({ notco: { '@old,kr': 1 }, state:{ mailSent:'who', whoTab:'notco' } });
+  const h = c.whoPageHtml();
+  assert.match(h, /mbNotCoSet\([^)]*false/, '되돌리는 길이 화면에 없다');
+  assert.ok(c.whoUnknownSenders({ all:true }).some(o=>o.hid),
+    '치운 것을 다시 꺼내 볼 수가 없다');
+});
+
+/* ── 「이 회사 아닌가요?」 ── */
+
+test('★ 이름이 조금 다른 자문사를 «짚어» 준다 — 다만 혼자 잇지 않는다', () => {
+  /* 실제로 겪은 모양(2026-08-29 실측): 명함은 「현진글로벌」, 자문사는
+     「주식회사 현진글로벌당진공장」 — 한쪽이 다른 쪽을 품고 있다.
+     ⚠ 두 글자로는 안 짚는다(아래 검사) — 여기 이름은 세 글자를 넘겨야 한다. */
+  const items = { z: { id:'z', email:'z@han.kr', company:'한빛물산당진공장' } };
+  const c = loadCo({ state:{ items: Object.assign({}, ITEMS2, items) } });
+  const g = c.mbCoGuess('z@han.kr');
+  assert.ok(g, '짚어 주지 않는다');
+  assert.equal(g.name, '한빛물산', '엉뚱한 회사를 짚었다: ' + JSON.stringify(g));
+  /* ★ 짚기만 하고 «잇지는 않는다» — 이름이 겹치는 회사가 있어(서산시 ↔ 서산시시설관리공단)
+       혼자 이으면 틀린다. 사람이 눌러야 이어진다. */
+  assert.equal(c.mbWhoOfRow(ROW('z@han.kr')), '',
+    '★ 기계가 «혼자» 이었습니다 — 사람이 고르기 전에 이으면 안 됩니다');
+});
+
+test('두 글자짜리 이름으로는 안 짚는다 — 엉뚱한 회사가 걸린다', () => {
+  const items = { z: { id:'z', email:'z@ab.kr', company:'한빛' } };
+  const c = loadCo({ state:{ items: Object.assign({}, ITEMS2, items) } });
+  const EM = c.ErpMatch;
+  EM.byName['한'] = { company:'한', main:'박한별', subs:[], left:false };
+  c.mbWhoBust();
+  const g = c.mbCoGuess('z@ab.kr');
+  assert.ok(!g || g.name !== '한', '두 글자 이름으로 짚었다');
+});
+
+/* ── 저장 ── */
+
+test('★ 이으면 «저장»된다 — 화면만 바뀌면 새로고침에 사라진다', () => {
+  const c = loadCo();
+  c.mbCoSet('zzz@nowhere.kr', '한빛물산', false);
+  const w = c._held.wrote['pucards/config/mailCo/zzz@nowhere,kr'];
+  assert.equal(w, '한빛물산', '이은 것이 저장되지 않았다: ' + JSON.stringify(c._held.wrote));
+});
+
+test('★ 개인 메일은 «도메인으로» 못 잇는다 — 네이버 하나로 온 세상이 한 회사가 된다', () => {
+  const c = loadCo();
+  c.mbCoSet('someone@naver.com', '한빛물산', true);
+  assert.equal(c._held.wrote['pucards/config/mailCo/@naver,com'], undefined,
+    '★ 무료 메일 도메인을 통째로 이었습니다');
+  assert.ok(c._held.toasts.join(' ').indexOf('개인') >= 0, '왜 안 되는지 말해 주지 않는다');
+});
+
+test('★ 두 표 모두 «전 직원 공용»이다 — 사람마다 따로 두면 남이 이어 둔 것을 못 본다', () => {
+  assert.match(src, /config\/mailCo/, '자문사 표를 두는 자리가 없다');
+  assert.match(src, /config\/mailNotCo/, '치운 것을 두는 자리가 없다');
+  assert.ok(!/mail(Not)?Co\/'\s*\+\s*(myEmail|uid)/.test(src),
+    '★ 사람마다 따로 두면 대표님이 이어 둔 것을 직원이 못 봅니다');
+  assert.ok(src.indexOf('mailbox/config/mailCo') < 0,
+    '★ 아무도 못 쓰는 곳(mailbox)에 적고 있습니다');
+});
+
+test('★ 자문사 갈래가 «메일함에서 이은 주소»도 센다 — 안 세면 이은 것이 어디 갔는지 모른다', () => {
+  const c = loadCo({ co: { 'zzz@nowhere,kr': '한빛물산' } });
+  const a = c.whoAddrOfName('한빛물산').join(' ');
+  assert.ok(a.indexOf('zzz@nowhere.kr') >= 0,
+    '이었는데 그 회사 주소로 안 잡힌다: ' + a);
+});
