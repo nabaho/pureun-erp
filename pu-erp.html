@@ -440,8 +440,37 @@ window.erpBlameMark = function(name, t0){
   try{
     if(!window.performance || !performance.now) return;
     var SI=window.setInterval, ST=window.setTimeout, LIMIT=200, last={};
+
+    /* ★ 「누가 걸었나」를 «걸 때» 잡아 둔다 (대표 지시 2026-08-29 「100초마다 도는 것도 잡아라」).
+       본문만 찍었더니 이렇게 나왔다 —
+         🐌 느린 setTimeout(100351ms 주기) — 284ms 걸림
+            function () { [native code] }
+       묶인 함수(.bind)나 라이브러리 안쪽 함수는 본문이 «저것뿐» 이라, 그것만으로는
+       영영 못 찾는다. 함수가 아니라 **건 자리**를 알아야 한다.
+       ⚠ Error 는 만들어만 두고 .stack 은 «느릴 때만» 읽는다 — 글자로 펴는 일이 비싸다.
+       ⚠ 0ms 타이머는 조각내기(chunking)에 수천 번 쓰인다. 거기까지 Error 를 만들면
+         고치려던 느림을 우리가 만든다. 그래서 «긴 타이머만» 자리를 잡아 둔다. */
+    var WHERE_MIN_MS = 200;
+    function whereFrom(err){
+      if(!err) return '';
+      var st = '';
+      try { st = String(err.stack || ''); } catch(_){ return ''; }
+      var lines = st.split('\n').slice(1);           // 첫 줄은 'Error' 라 버린다
+      var out = [];
+      for(var i=0;i<lines.length && out.length<3;i++){
+        var L = lines[i].trim();
+        if(!L) continue;
+        /* 이 감시기 자신은 건너뛴다 — 늘 맨 위에 있어 아무 도움이 안 된다 */
+        if(/whereFrom|at skin\b|window\.set(Timeout|Interval)/.test(L)) continue;
+        out.push(L);
+      }
+      return out.length ? ('\n   ↳ 건 자리: ' + out.join('\n              ')) : '';
+    }
+
     function skin(fn,kind,ms){
       if(typeof fn!=='function') return fn;
+      var born = null;
+      try { if(ms >= WHERE_MIN_MS) born = new Error(); } catch(_){}
       return function(){
         var t=performance.now();
         try{ return fn.apply(this,arguments); }
@@ -449,11 +478,16 @@ window.erpBlameMark = function(name, t0){
           var d=performance.now()-t;
           if(d>=LIMIT){
             // 같은 타이머가 30초마다 계속 찍히면 시끄럽다 — 5초에 하나만
-            var body=String(fn).replace(/\s+/g,' ').slice(0,110);
+            var raw=String(fn).replace(/\s+/g,' ');
+            var native=/\[native code\]/.test(raw);
+            var body=native ? '(묶인 함수 — 본문을 볼 수 없습니다. 아래 «건 자리»로 찾으세요)'
+                            : raw.slice(0,110);
             var now=Date.now();
-            if(!last[body] || now-last[body]>5000){
-              last[body]=now;
-              console.warn('🐌 느린 '+kind+'('+ms+'ms 주기) — '+Math.round(d)+'ms 걸림\n   '+body);
+            var key = native ? (kind+':'+ms) : body;      // 본문이 같으면 다 같아 보인다
+            if(!last[key] || now-last[key]>5000){
+              last[key]=now;
+              console.warn('🐌 느린 '+kind+'('+ms+'ms 주기) — '+Math.round(d)+'ms 걸림\n   '+body
+                + whereFrom(born));
             }
           }
         }

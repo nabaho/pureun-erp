@@ -96,3 +96,65 @@ test('앱 코드보다 먼저 놓여 있다 (나중이면 이미 등록된 타�
   const firstInterval = app.indexOf('setInterval(checkSelfStatus, 30000)');
   assert.ok(hook > 0 && firstInterval > hook, '이름표가 첫 타이머 등록보다 앞에 있어야 한다');
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ★ 「누가 걸었나」를 알려 준다 (대표 지시 2026-08-29 「100초마다 도는 것도 잡아라」)
+
+   대표 콘솔에 이렇게 찍혔다 —
+     🐌 느린 setTimeout(100351ms 주기) — 284ms 걸림
+        function () { [native code] }
+   묶인 함수(.bind)나 라이브러리 안쪽 함수는 본문이 «저것뿐» 이라, 그것만으로는
+   영영 못 찾는다. 함수가 아니라 **건 자리** 를 알아야 한다.
+
+   ⚠ 0ms 타이머는 조각내기에 수천 번 쓰인다. 거기까지 자리를 잡아 두면
+     고치려던 느림을 우리가 만든다 — 그래서 «긴 타이머만» 잡는다. */
+
+/* 이 검사만은 «진짜 타이머» 로 돌린다 — Error().stack 은 흉내로는 안 나온다 */
+function loadReal() {
+  const from = app.indexOf('/* 느린 타이머 이름표');
+  const to = app.indexOf('// fb_data_changed 디바운스');
+  const warns = [];
+  const sandbox = {
+    console: { warn(...a) { warns.push(a.join(' ')); }, log() {} },
+    performance: { now: () => Date.now() },
+    Date, Error, String, Math,
+    setInterval: global.setInterval, setTimeout: global.setTimeout,
+  };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(app.slice(from, to), sandbox);
+  return { sandbox, warns };
+}
+const 느리게 = () => { const t = Date.now(); while (Date.now() - t < 230); };
+
+test('★ 묶인 함수여도 «건 자리» 로 찾을 수 있다', async () => {
+  const { sandbox, warns } = loadReal();
+  const 묶인것 = 느리게.bind(null);
+  assert.match(String(묶인것), /\[native code\]/, '묶인 함수는 본문이 안 보이는 것이 맞습니다');
+
+  function 백초마다도는일을건다() { sandbox.setTimeout(묶인것, 250); }   // 긴 타이머(≥200ms)
+  백초마다도는일을건다();
+  await new Promise((r) => setTimeout(r, 700));
+
+  const 말 = warns.join('\n');
+  assert.match(말, /🐌 느린 setTimeout\(250ms/, '느린 것을 알아채지 못했습니다');
+  assert.match(말, /묶인 함수/,
+    '★ 본문이 「function () { [native code] }」 인데 그대로 찍으면 아무 도움이 안 됩니다.');
+  assert.match(말, /건 자리/, '★ 어디서 걸었는지를 안 알려 줍니다 — 그러면 영영 못 찾습니다.');
+  assert.match(말, /백초마다도는일을건다/,
+    '★ 건 자리에 부른 함수 이름이 없습니다:\n  ' + 말);
+});
+
+test('★ 짧은 타이머(조각내기)에는 자리를 «잡아 두지 않는다» — 고치려던 느림을 만들지 않게', async () => {
+  const { sandbox, warns } = loadReal();
+  function 조각내기가건다() { sandbox.setTimeout(느리게, 0); }
+  조각내기가건다();
+  await new Promise((r) => setTimeout(r, 700));
+
+  const 말 = warns.join('\n');
+  assert.match(말, /🐌 느린 setTimeout\(0ms/, '느린 것 자체는 알려 줘야 합니다');
+  assert.ok(말.indexOf('건 자리') < 0,
+    '★ 0ms 타이머까지 자리를 잡으면 조각내기 수천 번마다 Error 를 만듭니다.');
+  /* 본문이 보이는 함수는 자리가 없어도 찾을 수 있다 — 그래서 잃는 것이 없다 */
+  assert.match(말, /느리게|Date\.now/, '본문은 그대로 보여야 합니다');
+});
