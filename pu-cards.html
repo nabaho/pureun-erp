@@ -3133,6 +3133,11 @@ const ErpMatch = {
       const dir = ErpMatch._arr(du.val()), cos = ErpMatch._arr(dc.val());
       const nameBySid = {};
       dir.forEach(u=>{ if(u&&u.sid) nameBySid[u.sid]=u.name||u.sid; });
+      /* ⚠ 사번 → 이름 표를 «밖에도» 내놓는다 (대표 지시 2026-08-29 「사무관리 공동작업」).
+           사무관리 기록(컨설팅·사건·기금)의 담당자는 사번으로 적혀 있어(P-007),
+           이 표가 없으면 메일함 옆줄에 「P-007」이 사람 이름 자리에 그대로 뜬다.
+           ⚠ 여기서만 만든다 — 두 곳에서 만들면 한쪽만 고쳐지는 날이 온다. */
+      ErpMatch.nameBySid = nameBySid;
       /* 로그인 계정 → 직원 이름. 보낸 메일에 「p001」 대신 「권형하」가 나오게 한다
          (대표 지시 2026-08-10). 사번의 붙임표를 떼면 로그인 계정이 된다 —
          포털(enter.html sidToEmail)과 같은 규칙이어야 사람이 안 어긋난다. */
@@ -5706,6 +5711,7 @@ function closeMailPage(){ state.view='list'; render(); }
 function renderMailPage(){
   mbMemoClear();   /* 그리는 «동안»만 사는 셈을 버린다 — 낡을 틈을 안 준다 */
   mbSeenLoad();    /* 「누가 봤나」는 한 번만 읽어 온다 (두 번째부터는 그 자리에서 돌아온다) */
+  mbBizSubsLoad(); /* 사무관리 건의 부담당도 한 번만 — 앱이 이미 읽는 자료를 그대로 쓴다 */
   /* ⚠ 메일 칸(#pcMail)은 PC 전용 틀(#pcRoot) 안에 있어 폰에서는 아예 안 그려졌다 —
      그래서 폰에는 메일 화면 자체가 없었다(대표 지시 2026-08-20 "폰에서도 쓰게").
      폰은 목록 자리(#list)에 그린다 — 「기업 상세」가 이미 쓰는 방식이라 새 틀이 필요 없다. */
@@ -13117,6 +13123,57 @@ function mbWhoOfRow(v, idx0){
      그건 「이 사람」이라고 못 박은 것이라 회사를 거치지 않는다.
    ⚠ 퇴사자는 뺀다. 승계표를 태우지 않는 까닭은, 부담당은 «곁드는» 자리라
      이어받을 것이 아니기 때문이다(주담당은 mbWhoOfRow 가 이미 이어받는다). */
+/* ══════════════════════════════════════════════════════════════════════════
+   사무관리(컨설팅·사건·기금·기타)의 부담당도 «같이» 본다 (대표 지시 2026-08-29)
+   ══════════════════════════════════════════════════════════════════════════
+   "푸른이알피에서 사무관리 업무를 주담당 부담당으로 같이 업무처리하는경우
+    이부분도 같이 본인들이 볼수 있게 가능한가?"
+
+   ★ 새로 받아 오는 것이 «없다». 앱은 이미 사무관리 기록을 읽는다(loadErpCaseCons) —
+     기업 상세의 「이력」을 그리려고 넣어 둔 것이다. 그 표를 그대로 쓴다.
+   ⚠ 「진행 중」인 건만 본다. 끝난 컨설팅의 부담당이 그 회사 메일을 계속 보면 안 된다 —
+     저절로 빠져야 사람이 잊어도 안전하다.
+   ⚠ 담당자가 «사번»으로 적혀 있다(P-007). ErpMatch.nameBySid 로 이름을 찾는다 —
+     안 찾으면 옆줄 사람 이름 자리에 「P-007」이 그대로 뜬다.
+   ⚠ 메일에는 「이건 컨설팅 건」이라고 «안 적혀 있다». 그래서 그 회사 메일을 통째로 본다
+     (대표 결정 2026-08-29 「그 회사 메일 전부」). 자문·급여 메일도 함께 보인다는 뜻이다.
+   ⚠ 실측 2026-08-29 — 컨설팅 80건 중 부담당 32건(살아 있는 것 15건) · 사건 19건 중 4건 ·
+     기금·기타는 살아 있는 것 0건. 지금 새로 갈라지는 메일은 4통이다.
+     값어치는 «앞으로 저절로» 쪽에 있다 — 건이 늘고 주소가 이어질수록 늘어난다. */
+let _mbBizSubs = null;          /* {회사norm: [부담당 이름]} — 진행 중인 사무관리 건에서 */
+function mbBizSubsLoad(){
+  if(_mbBizSubs !== null) return;
+  _mbBizSubs = {};
+  if(typeof loadErpCaseCons !== 'function') return;
+  loadErpCaseCons(function(m){
+    const map = {};
+    const nameBySid = (typeof ErpMatch!=='undefined' && ErpMatch.nameBySid) || {};
+    const put = (co, rec)=>{
+      const key = ErpMatch._norm(co||''); if(!key) return;
+      /* 끝난 건은 안 본다 — 「진행 중」만 */
+      if(/종료|closed|inactive|취소|완료/.test(String(rec.status||''))) return;
+      (rec.managerSubs||[]).forEach(s=>{
+        const n = String(nameBySid[String(s||'')] || s || '').trim();
+        if(!n || mbRetired(n)) return;
+        (map[key] = map[key] || []);
+        if(map[key].indexOf(n) < 0) map[key].push(n);
+      });
+    };
+    if(m && m.byName) Object.keys(m.byName).forEach(k=>
+      (m.byName[k]||[]).forEach(r=>put(r.companyName||r.company||r.name||k, r)));
+    if(m && m.byBiz) Object.keys(m.byBiz).forEach(k=>
+      (m.byBiz[k]||[]).forEach(r=>put(r.companyName||r.company||r.name||'', r)));
+    _mbBizSubs = map;
+    if(state.view==='mail'){ mbWhoBust(); renderPCSide(); renderMailPage(); }
+  });
+}
+/* 이 주소의 회사 이름 — 사람이 이은 자문사가 먼저, 없으면 기업정보함이 아는 이름 */
+function mbCoNameOf(em, idx0){
+  const c1 = mbCoOf(em); if(c1) return c1;
+  const idx = idx0 || mbWhoIndex();
+  return String((idx.coAddr||{})[em] || (idx.rawCo||{})[em] || '');
+}
+
 function mbSubsOfRow(v, idx0){
   const em = String((v&&v.e)||'').trim().toLowerCase();
   if(!em) return [];
@@ -13127,13 +13184,27 @@ function mbSubsOfRow(v, idx0){
     const co = (idx.coAddr||{})[em];
     rec = co ? mbCoRec(co) : null;
   }
-  if(!rec || rec.left || !Array.isArray(rec.subs)) return [];
   const out = [];
-  rec.subs.forEach(s=>{
-    const n = String(s||'').trim();
-    if(!n || mbRetired(n)) return;
-    if(n !== rec.main && out.indexOf(n) < 0) out.push(n);
-  });
+  const main = (rec && rec.main) || '';
+  if(rec && !rec.left && Array.isArray(rec.subs)){
+    rec.subs.forEach(s=>{
+      const n = String(s||'').trim();
+      if(!n || mbRetired(n)) return;
+      if(n !== main && out.indexOf(n) < 0) out.push(n);
+    });
+  }
+  /* ★ 사무관리 건의 부담당도 더한다 — 회사가 «끝난» 곳이면 안 더한다 */
+  if(!(rec && rec.left)){
+    const co = mbCoNameOf(em, idx0);
+    const biz = co ? ((_mbBizSubs||{})[ErpMatch._norm(co)] || []) : [];
+    /* ⚠ 퇴사 여부를 «여기서도» 본다. 표를 만들 때 한 번 걸렀지만 표는 세션 내내 산다 —
+         표를 만든 «뒤»에 퇴사한 사람이 그대로 남는다. 업체 부담당과 «같은 규칙»이어야
+         한쪽만 걸러지는 일이 없다(검사가 두 길을 같은 잣대로 잰다). */
+    biz.forEach(n=>{
+      if(!n || mbRetired(n)) return;
+      if(n !== main && out.indexOf(n) < 0) out.push(n);
+    });
+  }
   return out;
 }
 /* 이 메일을 맡은 사람 «모두» — 주담당 하나 + 부담당 여럿 */
