@@ -104,3 +104,28 @@ test('★ 거르는 줄은 «머리 칸이 아니다» (th 로 세면 칸 수가
   assert.ok(seg.indexOf("h('th',") < 0,
     '★ 거르는 줄을 th 로 그리면 「머리 칸 수 == 더보기 colSpan」 검사가 어긋난다');
 });
+
+/* ══ 좁게·얇게 (대표 지시 2026-08-29: 「한줄로 해라」·「이거 왜 이렇게 있나」) ══ */
+test('★★ 카드 칸은 «한 줄»이다 (번호와 승인이 나란히)', () => {
+  const src = bare(ERP);
+  const at = src.indexOf("var isC = !!row.cancel;");
+  assert.ok(at > 0, '카드 칸을 못 찾았다');
+  const seg = src.slice(at, at + 700);
+  assert.ok(/display:'flex',alignItems:'center'/.test(seg),
+    '★ 두 줄로 쌓으면 카드 칸만 줄 높이를 밀어 올려 표가 성글어 보인다');
+  assert.ok(seg.indexOf("h('div',{style:{marginTop:'2px'") < 0,
+    '★ 아직 아래로 내려 그린다');
+});
+
+test('★★ 거르는 줄은 «얇다» — 손잡이가 폭을 다 먹지 않는다', () => {
+  const src = bare(ERP);
+  const at = src.indexOf("var fTd = Object.assign({}, tdS, { padding:'2px 6px' });");
+  assert.ok(at > 0, '★ 거르는 줄이 아직 굵다 — 칸 여백을 안 줄였다');
+  const seg = src.slice(at, at + 1400);
+  assert.ok(/width:'150px'/.test(seg),
+    "★ 찾기 칸이 폭 100% 다 — 굵은 띠가 표 위에 얹힌다");
+  assert.ok(!/width:'100%',fontSize:'11px'/.test(seg),
+    '★ 아직 폭을 100% 로 늘린다');
+  assert.ok(/colSpan:4/.test(seg),
+    '★ 빈 칸 넷을 따로 그린다 — 한 칸으로 묶으면 줄이 얇아진다');
+});
