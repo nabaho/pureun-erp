@@ -21,8 +21,8 @@
 <!-- ?v= 저장 층을 고치면 반드시 올린다 — 캐시에 묵으면 고친 것이 통째로 묻힌다. -->
 <script src="js/pu-photo-store.js?v=14"></script>
 <!-- 주민번호 가림 — 계산 층과, 급여데이터함과 나눠 쓰는 긋기 층 -->
-<script src="js/pu-rrn-mask.js?v=3"></script>
-<script src="js/pu-rrn-mask-ui.js?v=2"></script>
+<script src="js/pu-rrn-mask.js?v=4"></script>
+<script src="js/pu-rrn-mask-ui.js?v=3"></script>
 <script src="js/pu-photo-queue.js?v=1"></script>
 <!-- ?v= 는 판독기 판 번호(READ_VERSION)와 **같이 올린다**(2026-08-15).
      이 파일이 캐시에 묵으면 옛 지시로 읽어 제목이 안 생기는데, 화면(pu-photos.html)은
@@ -741,6 +741,13 @@ button{font-family:inherit;cursor:pointer}
   background:#fff;border:1px solid var(--line);font-size:10px;line-height:16px;
   text-align:center;color:var(--ink);cursor:pointer}
 .maskfoot{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px}
+/* 칠하는 결 고르개 — 「✏ 가리기」에서만 나온다(대표 지시 2026-08-29 사진 편집).
+   ⚠ 「가리고 판독」에는 안 준다 — 모자이크·흐리게는 밑이 비쳐 AI 가 읽어 낼 수 있다. */
+.maskstyle{display:flex;gap:6px;margin:8px 0 0}
+.maskstyle button{flex:1 1 0;border:1px solid var(--line);background:#fff;color:var(--ink);
+  border-radius:8px;padding:7px 6px;font:700 11.5px inherit;white-space:nowrap;min-width:0}
+.maskstyle button.on{background:var(--blue);border-color:var(--blue);color:#fff}
+#readPanel .again.pri:disabled{opacity:.5}
 #readPanel .again.pri{background:var(--blue);color:#fff;border-color:var(--blue);
   width:100%;margin-top:8px}
 /* 판독 단추 옆의 🔒 — 눌러야 할 것이 둘이라 헷갈리지 않게 살짝 갈라 둔다 */
@@ -10836,6 +10843,13 @@ function actsRow(readBtn, showAck) {
        (종류를 정하는 것이 판독이다) 사람이 고를 수 있어야 한다. */
   const maskBtn = '<button class="rd mask" title="주민번호를 가린 뒤 판독합니다"' +
     ' onclick="startPhotoMask()">🔒 가리고 판독</button>';
+  /* ✏ 가리기 — 사진 자체를 고친다(대표 지시 2026-08-29). 「가리고 판독」과 **다른 일**이다:
+     그쪽은 AI 에게 보낼 사본만 가리고 원본은 그대로 두는데, 이쪽은 **원본을 덮는다.**
+     ⚠ 남의 사진에는 안 보인다 — 눌러도 서버가 막는다. */
+  const editBtn = mayTouch(viewerId)
+    ? '<button class="rd" title="사진에서 특정 부분을 가려 저장합니다 (요금 없음)"' +
+      ' onclick="startPhotoEdit()">✏ 가리기</button>'
+    : '';
   return '<div class="acts">' +
     docNavBtns() +
     '<button class="dl" title="내려받기" onclick="downloadOne(viewerId)">⬇</button>' +
@@ -10845,7 +10859,7 @@ function actsRow(readBtn, showAck) {
     '<button class="dl" title="복사 — 클로드코드·한글·메일에서 Ctrl+V"' +
     ' onclick="copyPhotoImage(viewerId)">📋</button>' +
     '<button class="rd" title="' + esc(readBtn) + '" onclick="readAgain()">' + esc(readBtn) + '</button>' +
-    maskBtn +
+    maskBtn + editBtn +
     share + ack +
     /* 되돌릴 수 없는 단추라 **맨 끝**이다 — 앞 단추와 틈을 벌려 둔다(.rm 의 margin-left) */
     '<button class="rm" title="이 사진 삭제" onclick="deleteOne()">🗑</button></div>';
@@ -11794,21 +11808,91 @@ function maskForced(it) {
   return !!(it && PuPhotoStore.isSensitiveRead(it.meta && it.meta.read));
 }
 
-function startPhotoMask() {
+/* ══════ ✏ 가리기 — 사진에서 «특정 부분을 없앤다» (대표 지시 2026-08-29) ══════
+   "특정부분 없어지게하거나 만들고 싶은데" · "편집기능에 최소 비용이 들게"
+
+   ⚠ **요금이 0원이다.** 브라우저 안에서 캔버스로 칠하고 끝난다 — 사진이 밖으로
+     안 나가고 AI 도 안 부른다. 「최소 비용」 지시에 가장 곧은 답이다.
+   ⚠ 네모 긋기는 **이미 있는 것을 그대로 쓴다**(🔒 가리고 판독). 새로 만들면 좌표
+     계산·끌기 가로채기·폰 손가락 자리를 한 벌 더 갖게 되고, 한쪽만 고쳐지는 날이 온다.
+     같은 화면에 **나가는 문만 둘**이다 — 「가리고 판독」과 「가려서 저장」.
+   ⚠ **원본을 덮는다.** 개인정보를 지우려고 가리는 것인데 원본이 남아 있으면 가린
+     뜻이 없다. 되돌릴 수 없으므로 한 번 묻는다(돌리기와 같은 규칙).
+   ⚠ **남의 사진은 못 고친다** — 공유받은 사진이 「내 사진」에 섞여 있다(2026-08-29). */
+function startPhotoEdit() {
   const id = viewerId;
   if (!id) return;
-  photoMask = Object.assign(PuRrnMaskUi.blank(), { status: 'loading' });
+  if (blockedIfOther(id)) return;
+  startPhotoMask('edit');
+}
+
+function startPhotoMask(purpose) {
+  const id = viewerId;
+  if (!id) return;
+  photoMask = Object.assign(PuRrnMaskUi.blank(),
+    { status: 'loading', purpose: purpose === 'edit' ? 'edit' : 'read', style: 'black' });
   renderReadPanel(maskItem());
   PuPhotoStore.loadFull(photoYearOf(id), id, photoOwner(id)).then(function (full) {
     if (viewerId !== id) return;              // 다른 사진으로 옮겨 갔다 — 이 답은 버린다
     if (!safeSrc(full)) throw new Error('사진 본문을 불러오지 못했습니다');
-    photoMask = Object.assign(PuRrnMaskUi.blank(), { status: 'ready', url: full });
+    /* ⚠ 무엇을 하러 들어왔는지(purpose)와 칠하는 결(style)을 **그대로 들고 간다.**
+       blank() 로 새로 만들면서 잃어버리면, 「가리기」로 들어왔는데 확인 단추가
+       「가리고 판독」으로 나온다 — 사람이 누르면 원본이 안 고쳐지고 AI 만 불린다. */
+    photoMask = Object.assign(PuRrnMaskUi.blank(),
+      { status: 'ready', url: full, purpose: photoMask.purpose, style: photoMask.style });
     renderReadPanel(maskItem());
   }).catch(function (e) {
     if (viewerId !== id) return;
-    photoMask = Object.assign(PuRrnMaskUi.blank(), { status: 'err', err: (e && e.message) || String(e) });
+    photoMask = Object.assign(PuRrnMaskUi.blank(),
+      { status: 'err', err: (e && e.message) || String(e), purpose: photoMask.purpose });
     renderReadPanel(maskItem());
   });
+}
+
+/* 칠하는 결 고르기 — 다시 그리기만 한다(그은 네모는 그대로 둔다) */
+function photoMaskStyle(s) {
+  if (!photoMask) return;
+  photoMask.style = s;
+  renderReadPanel(maskItem());
+}
+
+/* ── 가려서 «저장» — 원본을 덮는다 ──
+   ⚠ 되돌릴 수 없다. 그래서 한 번 묻는다(돌리기와 같은 규칙).
+   ⚠ 못 만들었으면 **아무것도 안 쓴다.** 조용히 넘어가면 안 가려진 원본이 그대로 남는데,
+     사람은 가린 줄 안다 — 이 기능이 막으려던 바로 그 일이다.
+   ⚠ 미리보기도 **가린 사진에서 다시 만든다.** 옛 미리보기를 두면 격자에서는
+     가리기 전 그림이 계속 보인다(가장 놓치기 쉬운 자리다). */
+async function photoEditSave() {
+  const id = viewerId;
+  if (!id || !photoMask || photoMask.status !== 'ready') return;
+  if (blockedIfOther(id)) return;
+  const n = (photoMask.boxes || []).length;
+  if (!n) { alert('가릴 곳을 먼저 그어 주세요.'); return; }
+  const label = { black: '까맣게', mosaic: '모자이크로', blur: '흐리게' }[photoMask.style] || '까맣게';
+  if (!confirm(n + '군데를 ' + label + ' 가려 저장합니다.\n\n' +
+    '**되돌릴 수 없습니다** — 원본을 덮어씁니다.\n계속할까요?')) return;
+  const btn = document.querySelector('.maskgo');
+  if (btn) { btn.disabled = true; btn.textContent = '저장 중…'; }
+  try {
+    const full = PuRrnMaskUi.maskedDataUrl({ style: photoMask.style });
+    const thumb = await shrinkDataUrl(full, 240, 0.8);
+    await PuPhotoStore.replaceImage(photoYearOf(id), id, full, thumb, photoOwner(id));
+    const it = gridItems.find(function (x) { return x.id === id; });
+    if (it) { it.full = full; it.thumb = thumb; }
+    photoMask = PuRrnMaskUi.blank();
+    const vi = $('viewerImg'); if (vi) vi.src = full;
+    renderReadPanel(maskItem());
+    renderGrid();
+    /* 판독해 둔 값은 «가리기 전»의 것이다 — 가린 자리가 읽힌 자리였으면 어긋난다 */
+    toast('가려서 저장했습니다' + (it && it.meta && it.meta.read
+      ? ' — 가린 자리가 읽힌 곳이면 「다시 판독」을 눌러 주세요' : ''));
+  } catch (e) {
+    console.warn('[가려서 저장]', e);
+    alert('저장하지 못했습니다 — ' + ((e && e.message) || e) + '\n원본은 그대로입니다.');
+  } finally {
+    if (btn) { btn.disabled = false; }
+    renderReadPanel(maskItem());
+  }
 }
 
 /* 가림을 그만두면 판독도 안 한다 — 안 가린 채로 새는 길을 두지 않는다. */
@@ -11869,14 +11953,31 @@ function maskPanelHtml() {
       '<button class="again" onclick="photoMaskCancel()">닫기</button></div>';
   }
   const n = (ms.boxes || []).length;
+  /* 「가리기」로 들어왔는가 — 나가는 문과 안내가 통째로 달라진다 */
+  const edit = ms.purpose === 'edit';
   const boxes = (ms.boxes || []).map(function (b, i) {
     return '<div class="maskbox" style="left:' + (b.x * 100) + '%;top:' + (b.y * 100) +
       '%;width:' + (b.w * 100) + '%;height:' + (b.h * 100) + '%">' +
       '<span class="x" onpointerdown="event.stopPropagation()" onclick="maskDelBox(' + i + ')">✕</span></div>';
   }).join('');
-  return '<div class="box"><b>가릴 곳 고르기</b>' +
+  /* 칠하는 결 — 「가리기」일 때만 고른다.
+     ⚠ 판독으로 보내는 길에는 안 준다. 모자이크·흐리게는 **밑이 비쳐 AI 가 읽어 낼 수
+       있어서**, 가린 셈 치고 주민번호를 그대로 내보내게 된다. */
+  const styles = edit
+    ? '<div class="maskstyle">' +
+      [['black', '⬛ 까맣게', '확실히 지웁니다 — 개인정보는 이것'],
+       ['mosaic', '🔲 모자이크', '무엇이 있었는지는 남습니다'],
+       ['blur', '💧 흐리게', '부드럽게 뭉갭니다']].map(function (s) {
+        return '<button class="' + ((ms.style || 'black') === s[0] ? 'on' : '') + '"' +
+          ' title="' + esc(s[2]) + '" onclick="photoMaskStyle(\'' + s[0] + '\')">' + s[1] + '</button>';
+      }).join('') + '</div>'
+    : '';
+  return '<div class="box"><b>' + (edit ? '가릴 곳 고르기 — 사진을 고칩니다' : '가릴 곳 고르기') + '</b>' +
     /* 이 문구는 몇 곳을 가렸든 사라지지 않는다 — 마지막 판단은 사람이다. */
-    '<div class="maskwarn">⚠ 눈으로 한 번 훑어 주세요 — 못 보고 지나친 자리가 있을 수 있습니다</div>' +
+    (edit
+      ? '<div class="maskwarn">⚠ 저장하면 <b>되돌릴 수 없습니다</b> — 원본을 덮어씁니다</div>'
+      : '<div class="maskwarn">⚠ 눈으로 한 번 훑어 주세요 — 못 보고 지나친 자리가 있을 수 있습니다</div>') +
+    styles +
     /* ⚠ ondragstart 를 막는 것이 핵심이다 — 브라우저의 「사진 끌어다 놓기」가
        긋기를 가로챈다(2026-08-16 급여데이터함에서 겪은 그 문제). */
     '<div id="maskWrap" class="maskwrap" ondragstart="return false"' +
@@ -11885,19 +11986,27 @@ function maskPanelHtml() {
     '<img id="maskImg" src="' + esc(ms.url || '') + '" alt="" draggable="false">' + boxes +
     '<div id="maskPreview" class="maskbox" style="display:none"></div>' +
     '</div>' +
-    '<p class="note" style="margin:8px 0 0">사진 위를 손가락이나 마우스로 그으면 그 자리가 가려집니다.<br>' +
-    '주민번호가 한 줄로 있으면 <b>가로로 길게 한 번</b>만 그으면 됩니다.<br>' +
-    /* ⚠ 왜 좁게 그어야 하는지를 적어 둔다 — 「넓게 덮을수록 안전하다」고 생각하기 쉬운데
-       사실은 반대다. 계약기간·보수가 덮이면 판독이 «틀린 채로» 들어온다. */
-    '<b>주민번호 자리만</b> 가리십시오 — 계약기간·보수까지 덮이면 판독 결과가 비거나 틀립니다.</p>' +
+    (edit
+      ? '<p class="note" style="margin:8px 0 0">사진 위를 손가락이나 마우스로 그으면 그 자리가 가려집니다.<br>' +
+        '여러 군데를 그을 수 있고, 저장하기 전에는 언제든 되돌릴 수 있습니다.<br>' +
+        '<b>요금은 들지 않습니다</b> — 이 창 안에서 처리하고 사진은 밖으로 나가지 않습니다.</p>'
+      : '<p class="note" style="margin:8px 0 0">사진 위를 손가락이나 마우스로 그으면 그 자리가 가려집니다.<br>' +
+        '주민번호가 한 줄로 있으면 <b>가로로 길게 한 번</b>만 그으면 됩니다.<br>' +
+        /* ⚠ 왜 좁게 그어야 하는지를 적어 둔다 — 「넓게 덮을수록 안전하다」고 생각하기 쉬운데
+           사실은 반대다. 계약기간·보수가 덮이면 판독이 «틀린 채로» 들어온다. */
+        '<b>주민번호 자리만</b> 가리십시오 — 계약기간·보수까지 덮이면 판독 결과가 비거나 틀립니다.</p>') +
     '<div class="maskfoot">' +
     (n ? '<button class="again" onclick="maskUndo()">되돌리기</button>' +
          '<button class="again" onclick="maskClear()">다 지우기</button>' : '') +
     '<button class="again" onclick="photoMaskCancel()">그만두기</button>' +
     '<span class="note" style="margin:0 0 0 auto">' + (n ? n + '군데 가림' : '가린 곳 없음') + '</span>' +
     '</div>' +
-    '<button class="again pri" onclick="photoMaskConfirm()">' +
-    (n ? n + '군데 가리고 판독' : '가릴 것 없음 — 그대로 판독') + '</button>' +
+    (edit
+      ? '<button class="again pri maskgo"' + (n ? '' : ' disabled') +
+        ' onclick="photoEditSave()">' +
+        (n ? n + '군데 가려서 저장' : '가릴 곳을 먼저 그어 주세요') + '</button>'
+      : '<button class="again pri" onclick="photoMaskConfirm()">' +
+        (n ? n + '군데 가리고 판독' : '가릴 것 없음 — 그대로 판독') + '</button>') +
     '</div>';
 }
 

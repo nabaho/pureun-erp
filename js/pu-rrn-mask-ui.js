@@ -159,11 +159,14 @@
        가릴 것이 없다고 사람이 보고 누른 것이므로.
      ⚠ 못 만들었으면 **던진다.** 조용히 원본을 돌려주면, 가리려던 것을 못 가린 채
        내보내게 된다 — 이 기능이 막으려던 바로 그 일이다. */
-  function maskedDataUrl() {
+  /* ⚠ opts.style — 「까맣게 / 모자이크 / 흐리게」(대표 지시 2026-08-29 사진 편집).
+     안 주면 **까맣게**다. 판독으로 보내는 길(가리고 판독)은 그대로 까맣게 써야 한다 —
+     모자이크·흐리게는 밑이 비쳐 AI 가 읽어 낼 수 있다. */
+  function maskedDataUrl(opts) {
     var s = st();
     if (!s) throw new Error('가림 상태가 없습니다');
     if (!s.boxes || !s.boxes.length) return s.url;
-    return calc().maskToDataUrl(el('maskImg'), s.boxes);
+    return calc().maskToDataUrl(el('maskImg'), s.boxes, opts || {});
   }
 
   /* ── 얼마나 덮였나 (0~1) ──

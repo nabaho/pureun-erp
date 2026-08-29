@@ -376,6 +376,9 @@ test('★ 판독 자리에 「가리고 판독」이 함께 있다', () => {
     esc: function (s) { return String(s == null ? '' : s); },
     docNavBtns: function () { return ''; },
     canShareFiles: function () { return false; },
+    /* 2026-08-29: 옆에 「✏ 가리기」가 늘었다 — 사진 «자체»를 고치는 다른 일이다.
+       남의 사진에는 안 나오므로 판정을 준다. 안 주면 그 자리에서 멎는다. */
+    mayTouch: function () { return true; },
     viewerId: 'p1'
   };
   vm.createContext(ctx);
@@ -385,4 +388,26 @@ test('★ 판독 자리에 「가리고 판독」이 함께 있다', () => {
     '누를 길이 없으면 아무도 가릴 수 없습니다 — 단추를 만들어만 두고 줄에 안 붙였을 수 있습니다.');
   assert.match(h, /onclick="readAgain\(\)"/,
     '보통 판독 단추도 그대로 있어야 합니다(다른 서류는 한 단계가 늘면 안 됩니다).');
+  /* 「가리고 판독」(사본만 가려 AI 로)과 「가리기」(원본을 덮음)는 **다른 일**이다 —
+     둘이 한 줄에 함께 있어야 사람이 고를 수 있다. */
+  assert.match(h, /onclick="startPhotoEdit\(\)"/,
+    '사진을 고치는 길이 화면에 없습니다(대표 지시 2026-08-29).');
+});
+
+test('★★ 남의 사진에는 「✏ 가리기」가 안 나온다 — 눌러도 서버가 막는다', () => {
+  const ctx = {
+    console, Object, String,
+    esc: function (s) { return String(s == null ? '' : s); },
+    docNavBtns: function () { return ''; },
+    canShareFiles: function () { return false; },
+    mayTouch: function () { return false; },       // 공유받은 사진
+    viewerId: 'p1'
+  };
+  vm.createContext(ctx);
+  vm.runInContext(cutFn(app, 'function actsRow(') + '\nvar __h = actsRow("글자 판독하기", false);', ctx);
+  assert.ok(!/startPhotoEdit/.test(ctx.__h),
+    '★ 「눌러도 아무 일이 없는」 단추가 생깁니다 — 도구줄과 같은 기준(mayTouch)이라야 합니다.');
+  /* 판독은 그대로 열려 있다 — 남의 사진을 «읽어» 기업정보함에 더하는 일은 막지 않는다
+     (2026-08-10 대표 지시). 고치는 것만 막는다. */
+  assert.match(ctx.__h, /onclick="readAgain\(\)"/);
 });
