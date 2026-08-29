@@ -96,7 +96,35 @@
     return { slots: slots, lists: lists, warn: warn };
   }
 
-  var api = { scan: scan, classify: classify, detectList: detectList };
+  /* 안내글 「(한글)」「(한자)」「(인)」이 무엇을 뜻하는지 —
+     ⚠ 「(한글)」은 그 자체로는 아무 뜻이 없다. «왼쪽 칸이 성명일 때만» 이름이다.
+       성명 행이 아닌 곳의 「(한글)」에 이름을 넣으면 엉뚱한 자리에 이름이 박힌다. */
+  function hintKey(slot) {
+    var t = X.normLabel(slot.text);
+    if (/^한자$/.test(t)) return 'nameHanja';
+    if (/^한글$/.test(t)) return X.fieldKeyOf(slot.left) === 'name' ? 'name' : '';
+    if (/^(인|서명|서명또는인|印)$/.test(t)) return '__stamp';
+    return X.fieldKeyOf(slot.text);
+  }
+
+  /* ── 짝 맞추기 ──
+     모르면 «모른다»고 남긴다. 지어내면 엉뚱한 자리에 값이 박히고,
+     그건 안 채운 것보다 나쁘다 — 잘못 낸 서류는 되돌릴 수 없다.
+     rrn(주민등록번호)은 알아보되 채우지 않는다. hint 로만 알린다. */
+  function guess(map, data) {
+    map.slots.forEach(function (s) {
+      var k = s.kind === '안내글뒤' ? hintKey(s)
+            : s.kind === '칸안라벨' ? '__incell'
+            : X.fieldKeyOf(s.left);
+      if (k === 'rrn') { s.guess = ''; s.hint = 'rrn'; return; }
+      s.guess = k || '';
+    });
+    map.lists.forEach(function (l) { l.guess = l.kind; });
+    return map;
+  }
+
+  var api = { scan: scan, classify: classify, detectList: detectList,
+              guess: guess, hintKey: hintKey };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KcareerFormMap = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

@@ -106,3 +106,47 @@ test('중첩 표(칸 안의 표)를 세어서 알린다 — 건드리지 않되 
   const outer = '<hp:tbl><hp:tr><hp:tc><hp:p><hp:run>' + inner + '</hp:run></hp:p></hp:tc></hp:tr></hp:tbl>';
   assert.equal(M.scan(outer).warn.nested, 1);
 });
+
+/* ── 짝 맞추기 ── 모르면 «모른다»고 남긴다. 지어내면 엉뚱한 자리에 값이 박힌다. */
+
+test('★ 왼쪽이 성명이면 그 행의 「(한글)」은 이름 — 여기서 이름이 통째로 빠졌었다', () => {
+  const m = M.guess(M.scan(tbl([['성  명', '(한글)', '생년월일', '']])), {});
+  assert.equal(m.slots.find((s) => s.text === '(한글)').guess, 'name');
+});
+
+test('왼쪽이 성명이 «아니면» 「(한글)」에 이름을 넣지 않는다 — 엉뚱한 자리에 박힌다', () => {
+  const m = M.guess(M.scan(tbl([['비고', '(한글)']])), {});
+  assert.equal(m.slots.find((s) => s.text === '(한글)').guess, '');
+});
+
+test('「(한자)」는 한자 이름', () => {
+  const m = M.guess(M.scan(tbl([['성  명', '(한자)']])), {});
+  assert.equal(m.slots.find((s) => s.text === '(한자)').guess, 'nameHanja');
+});
+
+test('「(인)」은 도장 자리로 따로 표시한다 — 글자를 넣으면 안 된다', () => {
+  const m = M.guess(M.scan(tbl([['성명', '(인)']])), {});
+  assert.equal(m.slots.find((s) => s.text === '(인)').guess, '__stamp');
+});
+
+test('흔한 말을 알아본다 — 신청인·위촉대상자·추천인', () => {
+  const m = M.guess(M.scan(tbl([['신청인', ''], ['위촉대상자', ''], ['추천인', '']])), {});
+  m.slots.forEach((s) => assert.equal(s.guess, 'name', s.left + ' 을(를) 이름으로 봐야 합니다'));
+});
+
+test('주민등록번호는 알아보되 기본은 «비워 둠» — 자동으로 나가면 안 되는 정보다', () => {
+  const m = M.guess(M.scan(tbl([['주민등록번호', '']])), {});
+  const s = m.slots[0];
+  assert.equal(s.guess, '', '짐작으로 채우지 않는다');
+  assert.equal(s.hint, 'rrn', '무슨 칸인지는 알려 주되 값은 사람이 넣는다');
+});
+
+test('목록 표에도 짐작을 붙인다 — 경력 표면 경력을 넣는다', () => {
+  const m = M.guess(M.scan(tbl([['기간', '기관명', '직위'], ['', '', '']])), {});
+  assert.equal(m.lists[0].guess, 'career');
+});
+
+test('사전에 없는 말은 «모름»으로 남긴다 — 지어내지 않는다', () => {
+  const m = M.guess(M.scan(tbl([['추천사유', ''], ['비상연락망', '']])), {});
+  assert.ok(m.slots.every((s) => s.guess === ''), '모르면 모른다고 해야 사람이 고른다');
+});
