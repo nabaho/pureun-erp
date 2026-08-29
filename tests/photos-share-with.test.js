@@ -13,7 +13,7 @@ const vm = require('node:vm');
 const R = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
 const store = fs.readFileSync(path.join(R, 'js', 'pu-photo-store.js'), 'utf8');
-const rules = JSON.parse(fs.readFileSync(path.join(R, 'docs', 'firebase-rules-현재적용본.json'), 'utf8')).rules;
+const rules = JSON.parse(fs.readFileSync(path.join(R, 'docs', 'firebase-rules-전체-적용본.json'), 'utf8')).rules;
 
 function fnFrom(name, ctx) {
   const m = store.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n  \\}'));

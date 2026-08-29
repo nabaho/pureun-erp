@@ -123,7 +123,7 @@ test('★ 폴더 창구도 «직원인지»를 먼저 본다 — 관리자 표�
 
 test('아무도 쓰지 못한다 — mailbox 는 서버만 적는다', () => {
   const rules = JSON.parse(fs.readFileSync(
-    path.join(ROOT, 'docs', 'firebase-rules-전체(붙여넣기용).json'), 'utf8'));
+    path.join(ROOT, 'docs', 'firebase-rules-전체-적용본.json'), 'utf8'));
   assert.equal(rules.rules.mailbox['.write'], false,
     '★ mailbox 에 쓰기가 열렸습니다 — 앱이 메일 목록을 직접 고치게 됩니다');
 });
@@ -132,7 +132,7 @@ test('아무도 쓰지 못한다 — mailbox 는 서버만 적는다', () => {
 
 test('★ 콘솔 규칙과 서버 함수가 같은 것을 본다 — 한쪽만 열면 반쪽만 보인다', () => {
   const rules = JSON.parse(fs.readFileSync(
-    path.join(ROOT, 'docs', 'firebase-rules-전체(붙여넣기용).json'), 'utf8'));
+    path.join(ROOT, 'docs', 'firebase-rules-전체-적용본.json'), 'utf8'));
   const r = String(rules.rules.mailbox['.read']);
   assert.match(r, /uid_roles/, '규칙이 uid_roles 를 안 봅니다');
   assert.match(r, /'sid'/, '★ 규칙이 «사번»을 안 봅니다 — 서버는 봅니다');

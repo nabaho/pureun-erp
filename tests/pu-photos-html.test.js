@@ -54,7 +54,7 @@ test('파일 창고 SDK를 불러온다', () => {
    예전 검사는 p_cos·p_scheds 를 금지했는데, 그건 컨설팅 앱의 '브라우저 로컬 저장 키'이고
    실제 클라우드 루트가 아니었다(gov-consulting.html 의 FB_NODES 가 p_cos → scal_cos,
    p_scheds → scal_scheds 로 바꿔 쓴다). 엉뚱한 이름을 막고 있었으니 실데이터를
-   지켜주지 못했다. 그래서 현재 적용된 규칙 파일(docs/firebase-rules-현재적용본.json)의
+   지켜주지 못했다. 그래서 현재 적용된 규칙 파일(docs/firebase-rules-전체-적용본.json)의
    실제 최상위 루트 이름으로 다시 썼다.
 
    이 앱이 쓸 루트는 puphotos(실시간DB)·pu_photos(파일 창고) 두 개뿐이다. */

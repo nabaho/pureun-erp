@@ -72,7 +72,7 @@ test('★ Firebase 배포 설정이 실시간DB 규칙을 건드리지 않는다
 /* 콘솔에 붙여넣는 파일이 원본이므로, 건의함이 관리자 전용인지는 그 파일에서 확인한다. */
 test('붙여넣기용 규칙에서 건의 원문·메타는 관리자만 읽는다', () => {
   const rules = JSON.parse(fs.readFileSync(
-    path.resolve(__dirname, '..', 'docs', 'firebase-rules-급여데이터함-포함(붙여넣기용).json'), 'utf8')).rules;
+    path.resolve(__dirname, '..', 'docs', 'firebase-rules-전체-적용본.json'), 'utf8')).rules;
   for (const node of ['suggestions_private', 'suggestions_meta_private']) {
     assert.match(rules[node]['.read'], /isAdmin'\)\.val\(\) == true/, node + ' 읽기는 관리자 전용이어야 한다');
   }

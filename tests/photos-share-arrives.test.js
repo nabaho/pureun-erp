@@ -31,7 +31,7 @@ const { cutFn } = require('./cut-fn');
 const R = path.join(__dirname, '..');
 const app = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
 const store = fs.readFileSync(path.join(R, 'js', 'pu-photo-store.js'), 'utf8');
-const RULES = path.join(R, 'docs', 'firebase-rules-현재적용본+분류이름표(붙여넣기용).json');
+const RULES = path.join(R, 'docs', 'firebase-rules-전체-적용본.json');
 const rules = JSON.parse(fs.readFileSync(RULES, 'utf8')).rules;
 
 /* ══════ ① 규칙 — 사진 자리와 목록 자리는 «한 묶음»이다 ══════

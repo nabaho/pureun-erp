@@ -14,7 +14,7 @@ const root = path.join(__dirname, '..');
 const app = fs.readFileSync(path.join(root, 'pu-photos.html'), 'utf8');
 const store = fs.readFileSync(path.join(root, 'js', 'pu-photo-store.js'), 'utf8');
 const rules = fs.readFileSync(
-  path.join(root, 'docs', 'firebase-rules-현재적용본.json'), 'utf8');
+  path.join(root, 'docs', 'firebase-rules-전체-적용본.json'), 'utf8');
 
 /* 2026-08-13 창고 이전으로 deletePhoto 는 分기만 하고, 실제 자리 읽기·쓰기는
    deleteStorageMeta(창고 사진)·deleteRtdbBody(옛 방식) 두 갈래로 나뉘었다 —
