@@ -580,6 +580,10 @@
     var KEEP = ['company','ceo','corpno','address','companyTel','mobile','email','homepage','companyFax',
                 'bizType','bizItem','openDate','smeType','product','sales','workers',
                 'docName','applyNo','applyItems',
+                /* 세금계산서 발급처 (대표 지시 2026-08-30) — 등록증에서 읽는다.
+                   ⚠ pu-cards.html 의 CO_FIELDS 와 짝이다. 여기만 늘리면 값은 쌓이는데
+                     화면에 안 나오고, 저쪽만 늘리면 값이 아예 안 온다. */
+                'taxInvoiceEmail','taxInvoiceContact',
                 'applyField','applyDetail','applyDate','dueDays','birth',
                 /* ── 은행·자동이체 (대표 지시 2026-08-28) — CMS 신청서에서 온다 ──
                    ⚠ 계좌번호를 **온전히** 담는다. 대표 결정: "뒤 계좌 모두 보여야 한다.
