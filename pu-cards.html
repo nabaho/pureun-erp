@@ -2054,6 +2054,37 @@ body.pc #pcDetail{display:flex}
 .tax-b.a{background:#fff;color:#854d0e;border:1px solid #fde68a}
 .tax-b.n{background:#fff;color:#8b98b3;border:1px solid #e8ecf3}
 .tax-b.p{background:#1e2a47;color:#fff}
+/* ══════ 물어보는 창 — 다음메일처럼 «화면 가운데» (대표 지시 2026-08-30) ══════
+   브라우저가 주는 confirm() 은 창 «맨 위»에 붙어 뜨고, 생김새를 못 만진다.
+   글자를 굵게 할 수도 없어 「**버리고**」의 별표가 그대로 보였다.
+   ⚠ 층(z-index)은 «가장 위»여야 한다 — 자료 보내기 시트(.smbg 9998) 안에서도
+     물어볼 수 있기 때문이다. 낮추면 물음 창이 그 시트 «뒤»에 숨어 눌리지 않는다.
+   ⚠ confirm() 을 «전부» 갈아 끼우지는 않았다. 몇 자리(분류 되돌리기·옮기기)는
+     confirm() 이 «JS를 멈춘다»는 성질에 기대어, 창이 떠 있는 동안 파이어베이스
+     알림이 안 들어온다고 적어 두고 짜여 있다. 이 창은 안 멈춘다 —
+     그 자리들을 바꾸려면 그 가정부터 다시 봐야 한다. */
+.puask{position:fixed;inset:0;z-index:10000;background:rgba(20,28,45,.45);
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.puask .card{background:#fff;border-radius:14px;width:100%;max-width:440px;box-sizing:border-box;
+  box-shadow:0 16px 50px rgba(10,20,50,.28);padding:26px 26px 18px;
+  animation:puaskIn .13s ease-out}
+@keyframes puaskIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.puask .t{font-size:15px;font-weight:800;color:#1b2536;line-height:1.6;text-align:center}
+.puask .b{font-size:12.5px;color:#5a6885;line-height:1.85;text-align:center;margin-top:13px}
+.puask .b b{color:#1b2536}
+.puask .b .k{color:#8b98b3}
+/* 적어 둔 내용(받는 곳·제목) — 가운데 글과 갈라 보이게 한 칸 안에 */
+.puask .box{margin-top:13px;background:#f7f9fc;border:1px solid #e8ecf3;border-radius:9px;
+  padding:10px 13px;font-size:12.5px;color:#42506e;line-height:1.85;text-align:left;
+  word-break:break-all}
+.puask .box i{font-style:normal;color:#8b98b3;margin-right:6px}
+.puask .row{display:flex;gap:8px;justify-content:center;margin-top:22px}
+.puask button{font-family:inherit;font-size:13.5px;height:40px;padding:0 30px;
+  border-radius:7px;cursor:pointer;border:1px solid #d8d8d8;background:#fff;color:#333}
+.puask button:hover{background:#f4f6fa}
+.puask button.ok{background:#1e6cf0;border-color:#1e6cf0;color:#fff;font-weight:700}
+.puask button.ok:hover{background:#1858cc}
+@media(max-width:560px){ .puask .card{padding:22px 18px 16px} .puask button{padding:0 20px} }
 .tax-modal{position:fixed;inset:0;z-index:9990;background:rgba(20,28,45,.45);
   display:flex;align-items:center;justify-content:center;padding:20px}
 .tax-card{background:#fff;border-radius:14px;padding:18px 20px;width:100%;max-width:380px;
@@ -5547,25 +5578,46 @@ function openMailPage(pre){
   if(mailModeOf(matMailCfg())!=='auto')
     return toast('자료함 → ✉️ 메일 본문에서 「회사 메일로 바로 보내기」를 켜면 여기서 바로 쓸 수 있습니다', 8000);
   state.view='mail'; state.mailSent=false;
-  /* 쓰다 만 글이 있으면 이어서 쓴다 — 명함에서 새로 들어온 경우(pre)는 그것이 먼저다 */
+  /* ── 쓰다 만 글이 있으면 이어서 쓴다 (명함에서 새로 들어온 경우 pre 가 먼저다) ──
+     ★ 물음 창을 «화면 가운데»로 바꿨다 (대표 지시 2026-08-30 「다음메일처럼 중앙에」).
+       브라우저 confirm() 은 창 맨 위에 붙어 뜨고 생김새를 못 만져,
+       굵게 하려던 「**버리고**」의 별표가 그대로 보였다.
+     ⚠ puAsk 는 confirm 과 달리 «JS를 안 멈춘다». 그래서 뒤에 오던 일을 통째로
+       mailPageBuild 로 떼어 내고, 답을 받은 뒤에 부른다. 안 그러면 물어보는 동안
+       화면이 먼저 그려져 «답하기 전에» 새 편지가 열린다. */
   if(!_compose && !pre){
     const d = loadDraft();
     if(d && composeTouched(d)){
       const when = new Date(d.at).toTimeString().slice(0,5);
-      if(confirm(`${when} 에 쓰다 만 메일이 있습니다.\n\n받는 곳 · ${d.to||'(비어 있음)'}\n제목 · ${d.subject||'(없음)'}\n\n이어서 쓸까요?\n\n[취소]를 누르면 쓰다 만 글을 **버리고** 새 메일로 시작합니다.`)){
-        _compose = Object.assign({ picking:true }, d);
-        state.draftAt = when;
-        if(d.lostFiles && d.lostFiles.length)
-          setTimeout(()=>toast(`💻 내 PC 파일(${d.lostFiles.join(' · ')})은 다시 붙여 주세요 — 임시저장에는 담기지 않습니다`, 9000), 400);
-      } else {
-        /* 취소 = 버리고 새로. 지우기만 하면 자동저장이 되살릴 수 있으므로
-           쓰던 편지도 함께 비운다 (대표 지시 2026-08-10). */
-        clearDraft();
-        _compose = null;
-        toast('쓰다 만 메일을 버리고 새로 시작합니다', 5000);
-      }
+      return puAsk({
+        title: esc(when)+' 에 쓰다 만 메일이 있습니다.<br>이어서 쓸까요?',
+        box: '<i>받는 곳</i>'+esc(d.to||'(비어 있음)')
+             +'<br><i>제 목</i>'+esc(d.subject||'(없음)'),
+        body: '<span class="k">[취소]를 누르면 쓰다 만 글을 <b>버리고</b> 새 메일로 시작합니다.</span>',
+        ok: '이어서 쓰기', cancel: '버리고 새로'
+      }).then(yes=>{
+        if(yes){
+          _compose = Object.assign({ picking:true }, d);
+          state.draftAt = when;
+          if(d.lostFiles && d.lostFiles.length)
+            setTimeout(()=>toast(`💻 내 PC 파일(${d.lostFiles.join(' · ')})은 다시 붙여 주세요 — 임시저장에는 담기지 않습니다`, 9000), 400);
+        } else {
+          /* 취소 = 버리고 새로. 지우기만 하면 자동저장이 되살릴 수 있으므로
+             쓰던 편지도 함께 비운다 (대표 지시 2026-08-10). */
+          clearDraft();
+          _compose = null;
+          toast('쓰다 만 메일을 버리고 새로 시작합니다', 5000);
+        }
+        mailPageBuild(pre);
+      });
     }
   }
+  mailPageBuild(pre);
+}
+/* 물음이 끝난 뒤(또는 물을 것이 없을 때) 실제로 편지 쓰기 화면을 짓는다.
+   ⚠ openMailPage 에서 떼어 낸 부분이다 — 여기서 바로 부르지 말고 openMailPage 를 부른다.
+     쓰다 만 글을 물어보는 걸음을 건너뛰게 된다. */
+function mailPageBuild(pre){
   if(!_compose || pre){
     const p = pre || {};
     /* ★ 제목도 본문도 «빈 채로» 연다 (대표 지시 2026-08-30 — "메일작성시 이내용
@@ -5755,6 +5807,54 @@ function renderMailMobile(){
   if(!state.mailSent) wireMailWrite();
 }
 /* ── 쓰기 화면 ── */
+/* ══════════════════════════════════════════════════════════════════════════
+   puAsk — 다음메일처럼 «화면 가운데»에서 물어본다 (대표 지시 2026-08-30)
+   ══════════════════════════════════════════════════════════════════════════
+   "다음메일처럼 중앙에 만들어줘"
+
+   ★ 답은 Promise 로 온다 — true(확인) / false(취소).
+     confirm() 과 달리 «JS를 안 멈춘다». 그래서 부르는 쪽을 이어서 쓰려면
+     .then() 안으로 옮겨야 한다.
+
+   ⚠ Esc 로 닫으면 «취소»다 — 되돌릴 수 없는 일이 조용히 일어나면 안 된다.
+   ⚠ 바깥 어두운 곳을 눌러도 취소. 다음메일의 ✕ 와 같은 뜻이다.
+   ⚠ [확인]에 처음부터 초점을 준다 — Enter 로 바로 넘어가진다.
+   ⚠ 두 번 겹쳐 뜨지 않는다. 이미 떠 있으면 그것부터 닫는다. */
+let _puAskEl = null;
+function puAsk(o){
+  const q = o || {};
+  if(_puAskEl){ try{ _puAskEl.remove(); }catch(_){} _puAskEl = null; }
+  return new Promise(done=>{
+    const el = document.createElement('div');
+    el.className = 'puask';
+    el.innerHTML = `<div class="card">
+      <div class="t">${q.title||'계속할까요?'}</div>
+      ${q.box ? `<div class="box">${q.box}</div>` : ''}
+      ${q.body ? `<div class="b">${q.body}</div>` : ''}
+      <div class="row">
+        <button class="ok">${esc(q.ok||'확인')}</button>
+        <button class="no">${esc(q.cancel||'취소')}</button>
+      </div></div>`;
+    let over = false;
+    const shut = (yes)=>{
+      if(over) return; over = true;
+      document.removeEventListener('keydown', key, true);
+      try{ el.remove(); }catch(_){}
+      if(_puAskEl === el) _puAskEl = null;
+      done(!!yes);
+    };
+    const key = e=>{
+      if(e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); shut(false); }
+    };
+    el.querySelector('.ok').onclick = ()=>shut(true);
+    el.querySelector('.no').onclick = ()=>shut(false);
+    el.onclick = e=>{ if(e.target === el) shut(false); };
+    document.addEventListener('keydown', key, true);
+    document.body.appendChild(el);
+    _puAskEl = el;
+    try{ el.querySelector('.ok').focus(); }catch(_){}
+  });
+}
 function mailWriteHtml(){
   const c = _compose || {}; c.files = c.files || []; c.ids = c.ids || [];
   const from = matMailCfg().from || '(보내는 주소 없음)';
