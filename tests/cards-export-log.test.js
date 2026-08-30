@@ -74,7 +74,10 @@ const TRIGGER = /\.download\s*=|XLSX\.writeFile\(|PureunHwp\.download\(|navigato
 /* 이 함수들은 «스스로 문이 아니다» — 문지기를 지난 함수가 부르는 도우미다.
    ⚠ 면제는 「부르는 곳이 문지기 뒤뿐」일 때만 참이다. 그 사실은 바로 아래 검사가 지킨다 —
      누가 딴 데서 부르기 시작하면 이 면제가 «조용한 구멍»이 되기 때문이다. */
-const HELPERS = ['fallbackCopy', 'exportXlsx', 'coExportXlsx'];
+/* vcfSave — 연락처 파일을 내려주는 손. 한 장짜리(downloadVcf)와 여러 장(selVcf)이
+   «같은 손»을 쓰려고 갈라 둔 것이라, 둘 다 문지기를 지난 뒤에 부른다.
+   두 벌로 만들면 다듬기 고침이 한쪽에만 들어간다(2026-08-30). */
+const HELPERS = ['fallbackCopy', 'exportXlsx', 'coExportXlsx', 'vcfSave'];
 
 test('★ 방아쇠는 «모두» 문지기를 지난 함수 안에 있다 — 여덟 번째 문이 생겨도 여기서 걸린다', () => {
   const body = code(src);
