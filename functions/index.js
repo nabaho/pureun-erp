@@ -2535,10 +2535,23 @@ exports.hanaMessageBridge = functions
       }
 
       if (action === "list") {
-        const snap = await base.child(`inbox/${staff.uid}`).orderByChild("receivedAt").limitToLast(200).once("value");
-        const items = Object.values(snap.val() || {})
+        /* ★★ 예전에는 «최근 200건을 먼저 자른 뒤» 대기중을 걸렀다 (코덱스 지적 2026-08-30).
+             그러면 최근 200건이 모두 처리완료일 때 그보다 «오래된 대기 거래»가
+             영영 안 나온다 — 서버에는 남아 있는데 화면은 「새 거래문자 없음」만 말한다.
+             한 번 그 자리에 빠진 거래는 스스로 되돌아올 길이 없다.
+           ★ 그래서 «거른 뒤에» 자른다. 대기중만 골라 «오래된 것부터» 200건.
+           ⚠ 자르고 남은 것이 있으면 그 수를 함께 보낸다 — 안 보내면 화면이
+             「다 가져왔다」고 잘못 말한다. 한 번 더 부르면 그다음 200건이 온다.
+           ⚠ 통째로 읽는다 — status 로 물으려면 콘솔 규칙에 색인이 있어야 하는데 없다.
+             대기함은 처리해도 지워지지 않고 imported 로 바뀔 뿐이라 계속 늘어난다.
+             커지면 색인을 넣거나 오래된 imported 를 «옮긴다» — 회계기록이라 지우지 말 것. */
+        const snap = await base.child(`inbox/${staff.uid}`).once("value");
+        const pending = Object.values(snap.val() || {})
           .filter((x) => x && x.status === "pending")
-          .sort((a, b) => Number(a.receivedAt || 0) - Number(b.receivedAt || 0))
+          .sort((a, b) => Number(a.receivedAt || 0) - Number(b.receivedAt || 0));
+        const LIST_MAX = 200;
+        const more = Math.max(0, pending.length - LIST_MAX);
+        const items = pending.slice(0, LIST_MAX)
           .map((x) => ({
             id: String(x.id || ""), src: x.src === "card" ? "card" : "bank",
             type: x.type === "expense" ? "expense" : "income", date: String(x.date || ""),
@@ -2547,7 +2560,7 @@ exports.hanaMessageBridge = functions
             /* 적어 두고도 안 보내면 화면의 cancel 은 늘 거짓이 된다. */
             cancel: x.cancel === true,
           }));
-        hanaJson(res, 200, { ok: true, items }); return;
+        hanaJson(res, 200, { ok: true, items, more }); return;
       }
 
       if (action === "ack") {
