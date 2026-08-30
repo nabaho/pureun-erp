@@ -28,7 +28,7 @@ const R = path.join(__dirname, '..');
 const app = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
 const store = fs.readFileSync(path.join(R, 'js', 'pu-photo-store.js'), 'utf8');
 const PASTE = path.join(R, 'docs', 'firebase-rules-전체-적용본.json');
-const CONSOLE = path.join(R, 'docs', 'firebase-rules-콘솔원문-2026-08-29.json');
+const CONSOLE = path.join(R, 'docs', 'firebase-rules-콘솔원문-2026-08-30.json');
 const rules = JSON.parse(fs.readFileSync(PASTE, 'utf8')).rules;
 
 /* ══════ ① 열린 것 — 이름표 ══════ */
@@ -129,17 +129,14 @@ test('★ 콘솔과 다른 곳은 «일부러 고친 두 곳»뿐이다', () => 
        ③ docs/firebase-rules-콘솔원문-….json 을 그 내용으로 맞춘다
      ③을 빠뜨리면 이 검사가 걸린다 — 그것이 「콘솔에 아직 안 넣었다」는 신호다.
 
-     ★ 2026-08-30 — 지금이 바로 그 «아직 안 넣은» 상태다.
-     되전달(대표 지시 ㉮ 「다른 사람들끼리도 서로 공유를 쉽게」)을 위해 puphotos
-     아래 세 자리를 열었고, 대표가 콘솔에 붙여넣기 전이다. 그러니 이 셋이 다른 것이
-     «맞다» — 붙여넣으신 뒤 콘솔 원문을 새로 받아 이 목록을 다시 비운다.
-     ⚠ 여기에 **아무거나 더 적어 넣지 말 것.** 이 목록은 「아직 콘솔에 안 올라간
-       것이 무엇인가」를 말해 주는 유일한 자리다. */
-  assert.deepEqual(diff.sort(), [
-      "/puphotos/sharedTo/$uid/$pid/.write",
-      "/puphotos/u/$uid/items/$year/$id/shareBy",
-      "/puphotos/u/$uid/items/$year/$id/shareWith"
-  ],
+     ★ 2026-08-30 — 그 얼개가 «실제로 한 바퀴 돌았다».
+     되전달(대표 지시 ㉮ 「다른 사람들끼리도 서로 공유를 쉽게」)로 puphotos 아래
+     세 자리를 열었을 때 이 목록이 그 셋을 들고 걸려 주었고, 대표가 콘솔에 게시하신
+     뒤 콘솔 원문을 2026-08-30 판으로 갈아 끼워 다시 비웠다.
+     ⚠ 여기에 **아무거나 적어 넣지 말 것.** 목록이 비어 있지 않다는 것은 곧
+       「콘솔에 아직 안 올라간 규칙이 있다」는 뜻이고, 이 자리 말고는 그것을
+       알려 주는 곳이 없다. 채워서 넘기면 그 신호를 스스로 꺼 버리는 것이다. */
+  assert.deepEqual(diff.sort(), [],
     '★ 뜻하지 않은 곳이 바뀌었습니다: ' + diff.join(', ') +
      '\n  규칙은 한 번에 통째로 바뀝니다 — 곁다리 변경이 섞이면 무엇이 깨졌는지 못 짚습니다.');
 });
