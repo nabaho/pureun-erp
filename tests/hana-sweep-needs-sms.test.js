@@ -36,38 +36,39 @@ test('★ 훑기는 문자 읽기 권한이 있어야만 돈다 — 이 검사�
     '권한이 없을 때 훑기가 무엇을 하는지 알 수 없습니다');
 });
 
-test('★★ 권한이 없으면 «화면이 그 말을 한다» — 없으면 「연결됨」만 보고 안심한다', () => {
-  /* ⚠ 「showSweepWarning()」로 찾으면 «함수 정의»에도 걸린다 — 부르는 줄을 지워도
-       통과한다(일부러 지워 보고 잡았다). 세미콜론까지 봐야 «부르는 자리»다. */
-  assert.match(MAIN, /showSweepWarning\(\);/, '★ 알리는 자리를 아무도 안 부릅니다');
-  assert.match(MAIN, /문자 읽기가 꺼져 있습니다/,
-    '★ 사람이 읽고 무엇을 해야 할지 아는 말이 없습니다');
-  /* 무엇을 누르면 되는지까지 적어야 한다 — 「꺼져 있다」만으로는 손 쓸 데가 없다.
-     ⚠ 파일 전체에서 찾으면 «단추 이름»에 걸려 헛통과한다 — 실제로 그랬다
-       (경고문에서 그 말을 지워도 검사가 안 물었다). 경고문 «안»만 본다. */
-  const at = MAIN.indexOf('private void showSweepWarning()');
-  assert.ok(at > 0, 'showSweepWarning 을 못 찾았습니다');
-  assert.match(MAIN.slice(at, at + 1200), /「지난 문자 가져오기」/,
-    '★ 경고문이 어디를 눌러 켜는지 안 알려 줍니다');
-});
-
-test('★ 화면을 새로 그릴 때마다 다시 본다 — 한 번만 보면 허용한 뒤에도 경고가 남는다', () => {
+/* refresh 의 몸통만 — 괄호를 세어 끝까지 본다(고정 폭 자르기 금지) */
+function refreshBody() {
   const at = MAIN.indexOf('private void refresh()');
   assert.ok(at > 0, 'refresh 를 못 찾았습니다');
-  /* ⚠ 창을 넉넉히 잡았더니 «바로 뒤에 있는 함수 정의»까지 넘겨봐서, 부르는 줄을
-       지워도 통과했다. refresh 의 «닫는 괄호까지»만 본다. */
-  const end = MAIN.indexOf('\n    }', at);
-  assert.ok(end > at, 'refresh 의 끝을 못 찾았습니다');
-  assert.match(MAIN.slice(at, end), /showSweepWarning\(\);/,
-    '★ refresh 에서 안 부르면 권한을 허용해도 경고가 안 사라집니다');
+  let d = 0, j = MAIN.indexOf('{', at);
+  for (;; j++) { if (MAIN[j] === '{') d++; else if (MAIN[j] === '}') { d--; if (!d) { j++; break; } } }
+  return MAIN.slice(at, j);
+}
+
+test('★★ 권한이 없으면 «화면이 그 말을 한다» — 없으면 「연결됨」만 보고 안심한다', () => {
+  /* ⚠ 2026-08-30 에 방식이 바뀌었다 (대표: 「불필요한 설명 모두 없애라」).
+       예전에는 showSweepWarning 이 경고문만 띄웠다. 지금은 refresh 가 그 상태에서
+       «다른 것을 다 감추고» 「문자 읽기 켜기」 한 단추만 남긴다 — 오히려 더 세다.
+     지킬 것은 함수 이름이 아니라 «그 상태를 사람이 알고 고칠 수 있는가» 다. */
+  assert.match(refreshBody(), /canRead/, '★ refresh 가 문자 읽기 권한을 안 봅니다');
+  assert.match(MAIN, /문자 읽기가 꺼져 있어/, '★ 무엇이 막혔는지 말해 주지 않습니다');
+  assert.match(MAIN, /문자 읽기 켜기/, '★ 켜는 단추가 없습니다');
 });
 
-test('★ 허용돼 있으면 경고를 숨긴다 — 늘 떠 있으면 아무도 안 읽는다', () => {
-  const at = MAIN.indexOf('private void showSweepWarning()');
-  assert.ok(at > 0, 'showSweepWarning 을 못 찾았습니다');
-  const fn = MAIN.slice(at, at + 900);
-  assert.match(fn, /if\s*\(canRead\)[\s\S]{0,120}GONE/,
-    '★ 권한이 있어도 경고가 계속 뜹니다');
+test('★★ 권한이 없을 때는 «그 단추만» 남는다 — 여럿이 함께 뜨면 무엇부터인지 모른다', () => {
+  const b = refreshBody();
+  const at = b.indexOf('if (!canRead)');
+  assert.ok(at > 0, '★ 권한 없는 갈래가 없습니다');
+  const branch = b.slice(at, b.indexOf('return;', at));
+  assert.match(branch, /show\(grantSms,\s*true\)/, '★ 켜기 단추를 안 보여 줍니다');
+  assert.match(branch, /show\(history,\s*false\)/, '★ 다른 단추가 함께 떠 있습니다');
+});
+
+test('★ 허용되면 그 단추가 사라진다 — 늘 떠 있으면 아무도 안 읽는다', () => {
+  const b = refreshBody();
+  const tail = b.slice(b.lastIndexOf('show(sweepWarn, false)'));
+  assert.match(tail, /show\(grantSms,\s*false\)/, '★ 권한이 있어도 켜기 단추가 남습니다');
+  assert.match(tail, /show\(history,\s*true\)/, '★ 다 된 뒤 쓸 단추가 안 나옵니다');
 });
 
 test('★★ 안내문이 「무조건 훑는다」로 되돌아가지 않는다 — 화면이 거짓말하면 안 하느니만 못하다', () => {
@@ -75,12 +76,12 @@ test('★★ 안내문이 「무조건 훑는다」로 되돌아가지 않는다
      — 권한이 없을 때는 «거짓»이다. 조건을 함께 적어야 한다. */
   assert.ok(!/알림을 엿보고,\s*"?\s*\+?\s*\w*\s*\+?\s*"?분마다/.test(MAIN),
     '★ 조건 없이 「엿보고 …분마다 훑습니다」로 적혀 있습니다');
-  assert.match(MAIN, /허용하시면[\s\S]{0,120}훑습니다/,
-    '★ 「허용해야 훑는다」는 조건이 안내에 없습니다');
+  assert.match(MAIN, /켜면[\s\S]{0,160}훑습니다[\s\S]{0,80}안 훑습니다/,
+    '★ 「켜야 훑는다」는 조건이 안내에 없습니다');
 });
 
 test('★ 판 번호를 올렸다 — 안 올리면 새로 깔았는지 폰에서 못 가린다', () => {
   const g = fs.readFileSync(path.join(R, 'android', 'hana-sms-bridge', 'app', 'build.gradle.kts'), 'utf8');
   const code = Number((g.match(/versionCode\s*=\s*(\d+)/) || [])[1]);
-  assert.ok(code >= 6, '★ versionCode 가 ' + code + ' 입니다 — 앱을 고쳤으면 올려야 합니다');
+  assert.ok(code >= 8, '★ versionCode 가 ' + code + ' 입니다 — 앱을 고쳤으면 올려야 합니다');
 });
