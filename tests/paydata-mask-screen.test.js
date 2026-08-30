@@ -197,8 +197,12 @@ test('다 지우기는 기계가 칠한 것까지 다 뺀다', () => {
    readTableText: 엑셀·한글에서 뽑은 **글자**를 보낸다(2026-08-23). 사진이 아니라
    칠할 자리를 틀릴 일이 없고, 판독 층 자신이 주민번호를 한 번 더 지운다
    — tests/paydata-file-read.test.js 가 그것을 지킨다. */
+/* summarizeText: 한 줄 요약(2026-08-29). readTableText 와 **같은 길**이다 —
+   사진이 아니라 엑셀·한글에서 뽑은 **글자**를 보내고, 판독 층 자신이 마지막
+   문지기로 주민번호를 한 번 더 지운다(tests/paydata-auto-summary.test.js 가
+   「보내는 글에 주민번호가 안 들어간다」로 그것을 지킨다). */
 const DOCREAD_SAFE = ['init', 'bizNoDigits', 'bizNoValid', 'fmtBizNo', 'mapTo', 'keysFrom',
-  'MODELS', 'PROMPTS', 'READ_VERSION', 'autoOk', 'readTableText'];
+  'MODELS', 'PROMPTS', 'READ_VERSION', 'autoOk', 'readTableText', 'summarizeText'];
 
 test('★ 판독기를 부르는 곳은 runRead 하나뿐이다 — 이름을 늘어놓지 않고 막는다', () => {
   const runRead = cut('runRead');
