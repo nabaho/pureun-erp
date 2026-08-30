@@ -66,7 +66,14 @@ test('빠진 서류를 눈에 띄게 알린다', () => {
   /* 288곳 중 어디에 서류가 비었는지 지금은 알 길이 없다 — 이게 이 화면의 값어치다 */
   assert.match(source, /miss\('없음'\)/, '사업자번호가 빈 것을 안 짚는다');
   assert.match(source, /등록증 없음/);
-  assert.match(source, /\.corow \.bits i\.miss\{background:#fee2e2/);
+  /* 2026-08-30 값(#fee2e2) 대신 규칙을 본다 — 「빠진 것이 빨간 바탕으로 갈라진다」 */
+  const P = require('./lib-palette.js');
+  const miss = (source.match(/i\.miss\{(background[^}]*)\}/) || [])[1] || '';
+  assert.ok(P.isRed(P.colorOf(miss, 'background')),
+    '빠진 서류 바탕이 빨간 계열이 아니다: ' + miss);
+  const plain = (source.match(/\.corow \.bits i\{([^}]*)\}/) || [])[1] || '';
+  assert.notStrictEqual(P.colorOf(miss, 'background'), P.colorOf(plain, 'background'),
+    '빠진 것과 멀쩡한 것의 바탕이 같다 — 눈에 안 띈다');
 });
 
 test('사업 갈래(탭)는 서식 이름으로 저절로 생긴다', () => {

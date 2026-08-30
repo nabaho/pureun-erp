@@ -278,7 +278,16 @@ test('★ 고른 탭·「＃ 전체」가 켜진 것으로 보인다', () => {
   const off = loadTabsHtml(Object.assign({}, TABS_FIXTURE, { state:{ coFolder:'f1' } })).renderCoFTabsHtml();
   const on  = loadTabsHtml(Object.assign({}, TABS_FIXTURE, { state:{ coFolder:'f1', coFTab:'t1' } })).renderCoFTabsHtml();
   assert.notEqual(off, on, '탭을 골라도 칩 모양이 그대로다 — 어느 탭을 보고 있는지 모른다');
-  assert.match(on, /#1d4ed8/, '고른 탭이 짙게 안 칠해진다');
+  /* 2026-08-30 값(#1d4ed8) 대신 «규칙»을 본다 — 「켜진 칩 하나만 짙게 채워진다」.
+     ⚠ 옛 검사는 `on` 안에 #1d4ed8 이 있는지만 봤는데 그 색은 `off` 에도 있어서
+       사실상 아무것도 안 지키고 있었다. 채워진 칩을 «세는» 쪽으로 조인다. */
+  const P = require('./lib-palette.js');
+  const filled = (s) => (s.match(/background:(#[0-9a-fA-F]{3,6})/g) || [])
+    .map(x => x.split(':')[1]).filter(P.isDark).length;
+  assert.strictEqual(filled(off), 1, '아무 탭도 안 골랐을 때 채워진 칩이 하나가 아니다');
+  assert.strictEqual(filled(on), 1, '탭을 골랐을 때 채워진 칩이 하나가 아니다 — 어디를 보는지 흐려진다');
+  const dark = (s) => (s.match(/background:(#[0-9a-fA-F]{3,6})/g) || []).findIndex(x => P.isDark(x.split(':')[1]));
+  assert.notStrictEqual(dark(off), dark(on), '탭을 골라도 채워지는 칩이 그대로다');
 });
 
 test('★ 옆줄에는 탭이 더 이상 없다 — 옆줄은 폴더만 있는 곳이다', () => {

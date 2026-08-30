@@ -57,8 +57,13 @@ test('로고와 갈래가 붙박이 덩어리 안에 들어 있다', () => {
 
 test('붙박이가 실제로 붙게 돼 있다', () => {
   assert.match(source, /\.pcside-top\{position:sticky;top:0/);
-  /* 배경이 없으면 밑의 폴더가 글자 뒤로 비쳐 보인다 */
-  assert.match(source, /\.pcside-top\{[^}]*background:#1e2a47/);
+  /* 배경이 없으면 밑의 폴더가 글자 뒤로 비쳐 보인다.
+     2026-08-30 값 대신 규칙 — 「짙은 바탕이라 흰 글자가 읽히고 밑엣것이 안 비친다」 */
+  const P = require('./lib-palette.js');
+  const top = (source.match(/\.pcside-top\{([^}]*)\}/) || [])[1] || '';
+  const bg = P.colorOf(top, 'background');
+  assert.ok(bg, '붙박이 머리에 바탕색이 없다 — 밑의 폴더가 글자 뒤로 비친다');
+  assert.ok(P.isDark(bg), '바탕이 짙지 않다 — 흰 글자가 안 읽힌다: ' + bg);
   /* 좌우만 음수로 물린다 — 배경이 옆줄 끝까지 닿게 하되 흐름은 안 건드린다 */
   assert.match(source, /\.pcside-top\{[^}]*margin:0 -14px 0/);
 });
