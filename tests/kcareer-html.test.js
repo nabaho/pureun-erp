@@ -704,9 +704,14 @@ test('이력서관리 네 화면이 같은 모양이다 — 접이식 또는 툴
   const folds = source.match(/<details class="rh-fold"/g) || [];
   assert.ok(folds.length >= 3, '접이식 묶음이 있어야 합니다 (지금 ' + folds.length + '개)');
   // 이력서 생성·보관은 카드 3개 대신 목록 화면과 같은 툴바 한 줄을 쓴다(2026-08-29)
-  const i = source.indexOf('<div class="tabpanel active" id="rh-edit">');
-  const panel = source.slice(i, source.indexOf('<!-- 탭2', i));
-  assert.match(panel, /<div class="toolbar"/, '업로드·모드·보관함은 툴바 한 줄이어야 합니다');
+  /* ⚠ «어느 칸 안에» 있는지는 규칙이 아니다 — 2026-08-30 탭줄과 한 줄로 합치며 패널 밖으로 나갔다.
+     규칙은 「업로드·모드·보관함이 한 줄에 모여 있는가」다. */
+  const bar = source.indexOf('id="rhUploadBar"');
+  assert.ok(bar > 0, '업로드·모드·보관함은 툴바 한 줄이어야 합니다');
+  const seg = source.slice(bar, bar + 1800);
+  ['id="rcDrop"', 'id="rhModeSel"', 'id="rcSaveLib"'].forEach((x) => {
+    assert.ok(seg.indexOf(x) > 0, x + ' 도 같은 줄에 있어야 합니다');
+  });
 });
 
 test('빠른 이력서에서 중복 카드를 없앴다 — 서류 만들기 버튼은 같은 화면 안 중복이었다', () => {
@@ -956,7 +961,9 @@ test('최종 저장 전까지 계속 임시저장한다', () => {
 test('이력서 생성 화면의 중복을 없앴다', () => {
   // 「완성본 생성」이 위·아래 두 번, 「이력서 작성/프로필 작성」 버튼과 「이력서 모드」 딱지가
   // 같은 말을 두 번 하고 있었다. 카드 3개가 화면 절반을 먹던 것도 툴바 한 줄로.
-  const i = source.indexOf('<div class="tabpanel active" id="rh-edit">');
+  /* 올리기 줄은 2026-08-30 부터 탭줄과 «한 줄»로 합쳐져 패널 밖에 있다 —
+     보는 자리를 「올리기 줄부터 탭2 앞까지」로 넓힌다. */
+  const i = source.indexOf('id="rhUploadBar"');
   const j = source.indexOf('<!-- 탭2', i);
   const panel = source.slice(i, j);
   assert.ok(!/① 양식 업로드/.test(panel), '카드 번호(①②③)는 툴바로 합치며 없앴습니다');
