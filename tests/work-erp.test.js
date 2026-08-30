@@ -178,8 +178,10 @@ const ENG = (function () {
 })();
 ok('진행 필드는 project_progress 에 담기고 배열 통째로 저장된다',
   ENG.indexOf("dbGet('project_progress', [])") > 0 && ENG.indexOf("dbSet('project_progress', PP)") > 0);
+/* ⚠ «코드»만 본다. 업무시트 주석에는 「왜 그 배열을 안 건드리는가」가 적혀 있어서,
+   글자 그대로 훑으면 설명해 둔 것을 위반으로 잡는다(2026-08-27 실제로 걸렸다). */
 ok('업무시트가 그 배열을 직접 쓰지 않는다 (다음 전체 저장에 덮인다)',
-  W.indexOf('project_progress') < 0);
+  W.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '').indexOf('project_progress') < 0);
 ok('진행 필드는 담당자 본인 것만 맞춘다 (남의 행을 만들면 안 된다)',
   ENG.indexOf('var mine = !!(w.mgr_main && w.mgr_main.sid && w.mgr_main.sid === sid)') > 0);
 ok('진행률은 진행 단계에서 뽑는다', ENG.indexOf('function wsProg(wid)') > 0);
