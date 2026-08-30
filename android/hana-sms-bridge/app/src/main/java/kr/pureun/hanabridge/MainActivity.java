@@ -5,7 +5,9 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.provider.Settings;
 import android.text.InputFilter;
 import android.view.Gravity;
@@ -38,6 +40,7 @@ public final class MainActivity extends Activity {
     /* 「한 번에 하나만」을 위한 조각들 (대표 2026-08-30) */
     private LinearLayout stepPair;   // 번호칸 + 연결하기
     private Button grantSms;         // 문자 읽기 켜기
+    private Button battery;          // 절전 예외로 두기 (없으면 15분 훑기가 안 돈다)
     private Button more;             // ⋯ 더보기
     private LinearLayout moreBox;    // 평소엔 쓸 일 없는 것들
     private boolean moreOpen = false;
@@ -134,6 +137,18 @@ public final class MainActivity extends Activity {
         grantSms.setMinHeight(dp(58));
         grantSms.setOnClickListener(v -> askThenImport());
         root.addView(grantSms, withTop(matchWrap(), 8));
+
+        /* ── ②-b 절전 예외 (2026-08-30) ──
+           문자 읽기까지 켰는데도 15분 훑기가 «한 번도» 안 도는 폰이 있다.
+           절전이 WorkManager 를 무기한 미루기 때문이다 — 앱도 권한도 멀쩡한데
+           그렇다. 20:42 에 연결한 폰이 두 시간 가까이 안 훑은 것이 그 경우다.
+           ⚠ 설명으로 적어 두는 것으로는 아무도 안 한다(예전엔 안내글만 있었다).
+             지금 안 되어 있을 때만 «단추 하나»로 낸다. */
+        battery = button("절전 예외로 두기", Color.rgb(190, 24, 93));
+        battery.setTextSize(17);
+        battery.setMinHeight(dp(58));
+        battery.setOnClickListener(v -> askBattery());
+        root.addView(battery, withTop(matchWrap(), 8));
 
         /* ── ③ 다 됐을 때 — 가끔 쓰는 것 하나만 ── */
         history = button("지난 문자 가져오기", Color.rgb(100, 116, 139));
@@ -332,8 +347,6 @@ public final class MainActivity extends Activity {
                     (skipped > 0 ? "\n• 거래로 안 읽힌 것 " + skipped + "건" : "") +
                     (failed > 0 ? "\n• 실패 " + failed + "건 — 다시 눌러 주세요" : "") +
                     /* ⚠ 잘렸으면 «잘렸다»고 말한다. 예전에는 조용히 300통에서 끊고
-                         「300통을 살펴봤습니다」로만 알려, 남은 것을 아무도 몰랐다. */
-                    /* ⚠ 잘렸으면 «잘렸다»고 말한다. 예전에는 조용히 300통에서 끊고
                          「300통을 살펴봤습니다」로만 알려, 남은 것을 아무도 몰랐다.
                        ⚠ 새것부터 읽으므로 다시 눌러도 같은 자리에서 끊긴다 —
                          「다시 눌러 보세요」라고 하면 안 된다. 사람 손이 필요하다. */
@@ -368,6 +381,7 @@ public final class MainActivity extends Activity {
             show(stepPair, true);
             show(sweepWarn, false);
             show(grantSms, false);
+            show(battery, false);
             show(history, false);
             return;
         }
@@ -381,7 +395,25 @@ public final class MainActivity extends Activity {
                     + "아래를 누르고 «허용»만 눌러 주세요.");
             show(sweepWarn, true);
             show(grantSms, true);
+            show(battery, false);
             show(history, false);
+            return;
+        }
+
+        if (!batteryFree()) {
+            /* ②-b 절전이 켜져 있다 — 훑기가 «한 번도» 안 돈다.
+               ⚠ 여기서 「다 됐습니다」라고 하면 안 된다. 실제로 2026-08-30 에
+                 연결·권한이 다 됐는데도 두 시간 가까이 한 번도 안 훑었다.
+                 그때 앱은 「다 됐습니다」라고 적고 있었다 — 그 말이 거짓이었다. */
+            status.setText("● 연결됨 — 한 가지만 더");
+            status.setTextColor(Color.rgb(146, 64, 14));
+            sweepWarn.setText("절전이 켜져 있어 " + HanaSweepWorker.PERIOD_MINUTES
+                    + "분마다 문자함 훑는 일이 미뤄집니다.\n"
+                    + "아래를 누르고 «허용»만 눌러 주세요.");
+            show(sweepWarn, true);
+            show(grantSms, false);
+            show(battery, true);
+            show(history, true);
             return;
         }
 
@@ -390,7 +422,39 @@ public final class MainActivity extends Activity {
         status.setTextColor(Color.rgb(21, 128, 61));
         show(sweepWarn, false);
         show(grantSms, false);
+        show(battery, false);
         show(history, true);
+    }
+
+    /* 절전 예외가 되어 있나. 안 되어 있으면 15분 훑기가 무기한 미뤄진다. */
+    private boolean batteryFree() {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            return pm == null || pm.isIgnoringBatteryOptimizations(getPackageName());
+        } catch (Exception unknown) {
+            /* 못 물어봤으면 «된 것으로» 친다 — 알 수 없는 것 때문에 다 된 화면을
+               「한 가지만 더」로 붙잡아 두면, 할 일이 없는데 할 일이 있어 보인다. */
+            return true;
+        }
+    }
+
+    /* 절전 예외를 «한 번 눌러» 끝낸다. 설정 앱을 헤매게 하면 아무도 안 한다.
+       ⚠ 기기에 따라 이 창이 아예 안 뜬다 — 그때는 설정 화면으로 데려다준다. */
+    private void askBattery() {
+        try {
+            Intent ask = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+            ask.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(ask);
+        } catch (Exception noDialog) {
+            try {
+                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+                Toast.makeText(this, "목록에서 «푸른 하나문자»를 찾아 «허용»으로 바꿔 주세요.",
+                        Toast.LENGTH_LONG).show();
+            } catch (Exception noSettings) {
+                Toast.makeText(this, "이 폰에서는 설정 → 배터리에서 «푸른 하나문자»를 "
+                        + "«제한 없음»으로 바꿔 주세요.", Toast.LENGTH_LONG).show();
+            }
+        }
     }
 
     private void show(android.view.View v, boolean on) {

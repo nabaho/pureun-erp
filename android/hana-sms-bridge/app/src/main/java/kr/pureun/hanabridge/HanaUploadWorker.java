@@ -52,6 +52,14 @@ public final class HanaUploadWorker extends Worker {
     }
 
     static JSONObject post(JSONObject body, String token) throws Exception {
+        /* ★★ 판 번호를 «모든» 말에 실어 보낸다 (2026-08-30).
+             예전에는 15분 훑기만 보냈다. 그런데 훑기가 «안 도는» 폰에서는 —
+             절전이 재웠거나 옛 앱이거나 — 판 번호가 영영 안 올라온다.
+             실제로 2026-08-30 20:42 에 연결한 폰이 두 시간 가까이 판 번호를
+             한 번도 못 보냈고, 그래서 「새 앱을 깔긴 하신 건가」를 물어볼 수조차 없었다.
+             연결·지난 문자는 사람이 «지금 눌러서» 도는 길이라 반드시 닿는다. */
+        try { if (!body.has("appVersion")) body.put("appVersion", BridgeConfig.APP_VERSION); }
+        catch (Exception ignored) { /* 판 번호 하나 때문에 보내기를 막지 않는다 */ }
         HttpURLConnection connection = (HttpURLConnection) new URL(BridgeConfig.ENDPOINT).openConnection();
         connection.setRequestMethod("POST");
         connection.setConnectTimeout(15000);
