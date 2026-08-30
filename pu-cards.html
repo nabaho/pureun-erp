@@ -809,6 +809,19 @@ table.sbox tr.bad td{background:#fdf4f4}
 .dm-read .rbtn{font-family:inherit;font-size:12.5px;color:#333;background:#fff;
   border:1px solid #d8d8d8;border-radius:4px;height:30px;padding:0 11px;cursor:pointer}
 .dm-read .rbtn:hover{background:#f2f6fd;border-color:#9db6e3;color:#1a4fa0}
+/* ── 위 단추줄 — 왼쪽은 이 메일에 하는 일, 오른쪽은 오가는 길 (다음메일과 같다) ── */
+.dm-read .rtop{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-bottom:2px}
+.dm-read .rtop .lft,.dm-read .rtop .rgt{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.dm-read .rtop .rgt{margin-left:auto}
+.dm-read .rsep{width:1px;height:18px;background:#e2e4e9;margin:0 2px}
+/* 목록·위·아래는 «오가는 길»이라 눈에 더 띄게 — 돌아갈 길이 안 보인다는 말씀이 있었다 */
+.dm-read .rbtn.list{background:#f2f6fd;border-color:#9db6e3;color:#1a4fa0;font-weight:700}
+.dm-read .rbtn.list:hover{background:#e4edfb}
+.dm-read .rbtn.list i{font-style:normal;font-weight:400;color:#7b93bd;margin-left:6px;font-size:11.5px}
+.dm-read .rbtn.nav{min-width:58px}
+.dm-read .rbtn[disabled]{color:#c9ccd2;border-color:#ececec;background:#fafafa;cursor:default}
+.dm-read .rbtn[disabled]:hover{background:#fafafa;border-color:#ececec;color:#c9ccd2}
+@media(max-width:760px){ .dm-read .rbtn.list i{display:none} }
 .dm-read h3{margin:6px 0 12px;font-size:18px;font-weight:700;color:#111;line-height:1.45}
 .dm-read .meta{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:#6e6e6e;
   border-top:1px solid #ececec;border-bottom:1px solid #ececec;padding:10px 2px}
@@ -15488,30 +15501,120 @@ function mbShowDetail(){
 
 /* ══════ 메일 한 통 열기 ══════
    본문은 실시간DB에 없다 — 서버가 그 자리에서 IMAP 으로 가져온다. */
+/* ══════════════════════════════════════════════════════════════════════════
+   읽은 본문을 담아 둔다 — 뒤로 갔다 다시 열 때 서버를 다시 안 부른다
+   ══════════════════════════════════════════════════════════════════════════
+   대표 보고 2026-08-30: "새창열고 메일 열어보고 뒤로가고 다시 다른 메일을
+   열어보려고 하는데 너무 속도가 늦다."
+
+   ★ 왜 늦었나 — 메일을 열 때마다 서버가 «다음메일에 새로 접속하고 로그인»한다
+     (functions/mail-sync.js 의 withFolder: 접속 → 로그인 → 폴더 열기 → 읽기 → 끊기).
+     그 왕복이 통마다 통째로 되풀이됐다. 방금 본 메일을 다시 열어도 마찬가지였다.
+
+   ★ 고친 결 셋
+     ① 한 번 받은 본문은 담아 둔다 — 다시 열면 «서버를 아예 안 부른다»
+     ② 읽는 동안 위·아래 통을 «조용히 미리» 받아 둔다 — 넘길 때 이미 손에 있다
+     ③ 목록을 거치지 않고 위·아래로 바로 넘긴다 (mbStep)
+
+   ⚠ 담는 것은 «본문»뿐이다. 읽음·「누가 봤나」는 안 담는다 — 그것은 바뀐다.
+   ⚠ 무한정 담지 않는다. 통수와 크기로 끊는다 — 큰 메일 수십 통을 담으면 창이 죽는다.
+   ⚠ 미리 받기는 peek 로 «읽음 표시를 안 건드린다». 안 그러면 열어 보시지도 않은
+     메일이 읽음으로 바뀌어 조용히 사라진 것처럼 된다. */
+const MB_BODY_KEEP = 30;        /* 담아 두는 통수 */
+const MB_BODY_MAX  = 400000;    /* 이보다 큰 본문은 안 담는다 (글자 수) */
+let _mbBody = {};               /* 'slug:uid' → {html,text,atts} */
+let _mbBodyOrder = [];          /* 담은 차례 — 넘치면 앞에서 버린다 */
+function mbBodyKey(slug, uid){ return String(slug)+':'+String(uid); }
+function mbBodyGet(slug, uid){ return _mbBody[mbBodyKey(slug, uid)] || null; }
+function mbBodyPut(slug, uid, o){
+  if(!o) return;
+  if((String(o.html||'').length + String(o.text||'').length) > MB_BODY_MAX) return;
+  const k = mbBodyKey(slug, uid);
+  if(!_mbBody[k]) _mbBodyOrder.push(k);
+  _mbBody[k] = { html:o.html||'', text:o.text||'', atts:o.atts||[] };
+  while(_mbBodyOrder.length > MB_BODY_KEEP){
+    const old = _mbBodyOrder.shift(); if(old !== k) delete _mbBody[old];
+  }
+}
+/* 한 통을 손에 넣는다 — 담아 둔 것이 있으면 «서버를 안 부른다».
+   peek 이면 읽음 표시를 안 건드린다(미리 받기 전용). */
+function mbFetchBody(slug, uid, peek){
+  const hit = mbBodyGet(slug, uid);
+  if(hit) return Promise.resolve(hit);
+  const u = firebase.auth().currentUser;
+  if(!u) return Promise.reject(new Error('로그인이 필요합니다'));
+  return u.getIdToken()
+    .then(tok=>fetch(MB_FN+'readMailMessage', { method:'POST',
+      headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
+      body: JSON.stringify({ slug:slug, uid:String(uid), peek: peek?1:0 }) }))
+    .then(r=>r.json().catch(()=>({})))
+    .then(j=>{
+      if(!j.ok) throw new Error(j.error||'열지 못했습니다');
+      const o = { html:j.html||'', text:j.text||'', atts:j.atts||[] };
+      mbBodyPut(slug, uid, o);
+      return o;
+    });
+}
+/* 지금 보는 통에서 step 칸 떨어진 통. 없으면 null.
+   ⚠ 그리는 100통(mbVisibleRows)이 아니라 «거른 전부»(mbMatchedRows)에서 센다 —
+     101번째로 넘어갈 때 「마지막입니다」가 뜨면 안 된다. */
+function mbNeighbor(step){
+  const o = state.mbOpen; if(!o) return null;
+  const rows = mbMatchedRows();
+  let i = -1;
+  for(let k=0;k<rows.length;k++){
+    if(rows[k]._slug === o.slug && String(rows[k].u) === String(o.uid)){ i = k; break; }
+  }
+  if(i < 0) return null;
+  const j = i + step;
+  return (j >= 0 && j < rows.length) ? rows[j] : null;
+}
+/* 위·아래로 넘기기 — 목록을 거치지 않는다 (다음메일과 같은 자리) */
+function mbStep(step){
+  const n = mbNeighbor(step);
+  if(!n) return toast(step > 0 ? '마지막 메일입니다' : '첫 메일입니다', 3000);
+  mbOpenMsg(n._slug, n.u);
+}
+/* 읽는 동안 위·아래 통을 조용히 받아 둔다.
+   ⚠ 조용히 한다 — 실패해도 아무 말 안 하고, 화면도 안 건드린다.
+   ⚠ peek 이라 읽음 표시가 안 바뀐다. */
+let _mbPreBusy = 0;
+function mbPrefetchNear(){
+  [1, -1].forEach(step=>{
+    const n = mbNeighbor(step);
+    if(!n || mbBodyGet(n._slug, n.u) || _mbPreBusy >= 2) return;
+    _mbPreBusy++;
+    mbFetchBody(n._slug, n.u, true).catch(()=>{}).then(()=>{ _mbPreBusy--; });
+  });
+}
 function mbOpenMsg(slug, uid){
-  state.mailSent='box'; state.mbOpen = { slug:slug, uid:String(uid), loading:true };
+  state.mailSent='box';
+  /* 담아 둔 것이 있으면 «기다림 없이» 그 자리에서 펼친다 */
+  const hit = mbBodyGet(slug, uid);
+  state.mbOpen = hit
+    ? Object.assign({ slug:slug, uid:String(uid), loading:false, err:'' }, hit)
+    : { slug:slug, uid:String(uid), loading:true };
   renderMailPage();
   try{ $('pcMain').scrollTop=0; }catch(_){}
   const u = firebase.auth().currentUser;
   if(!u){ state.mbOpen.loading=false; state.mbOpen.err='로그인이 필요합니다'; return renderMailPage(); }
-  u.getIdToken()
-    .then(tok=>fetch(MB_FN+'readMailMessage', { method:'POST',
-      headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
-      body: JSON.stringify({ slug:slug, uid:String(uid) }) }))
-    .then(r=>r.json().catch(()=>({})))
-    .then(j=>{
+  mbFetchBody(slug, uid)
+    .then(o=>{
       if(!state.mbOpen || state.mbOpen.uid!==String(uid)) return;   /* 그새 딴 것을 열었다 */
-      if(!j.ok) throw new Error(j.error||'열지 못했습니다');
-      state.mbOpen = Object.assign(state.mbOpen, { loading:false, err:'', html:j.html||'', text:j.text||'', atts:j.atts||[] });
-      /* 읽음 표시 — 서버가 다음메일에도 같이 해 두었다. 목록도 굵기를 풀어 준다. */
+      state.mbOpen = Object.assign(state.mbOpen, { loading:false, err:'' }, o);
+      /* 읽음 표시 — 서버가 다음메일에도 같이 해 두었다. 목록도 굵기를 풀어 준다.
+         ⚠ 담아 둔 것으로 펼쳤을 때도 여기를 지난다 — 미리 받기(peek)로 담긴 통은
+           아직 «안 읽음»이라, 여기서 처음으로 읽음이 된다. */
       const box = _mbMsgs[slug]; if(box && box[uid]) box[uid].r = 1;
       /* ★ 「누가 열어봤나」를 남긴다 (대표 지시 2026-08-29).
-         ⚠ 본문이 «실제로 온 뒤»에 적는다 — 누르자마자 적으면 못 열린 것도 「봤다」가 된다.
+         ⚠ 본문이 «실제로 손에 온 뒤»에 적는다 — 누르자마자 적으면 못 연 것도 「봤다」가 된다.
          ⚠ 먼저 본 사람이 이미 있으면 안 덮는다(mbSeenMark 가 지킨다). */
       if(box && box[uid]) mbSeenMark(Object.assign({}, box[uid], { _slug:slug, _key:slug+':'+uid }), 'open');
       const f = _mbFolders && _mbFolders[slug];
       if(f && Number(f.unseen||0)>0) f.unseen = Number(f.unseen)-1;
       renderPCSide(); renderMailPage();
+      /* 다음에 누르실 자리를 미리 받아 둔다 — 넘길 때 기다림이 없다 */
+      setTimeout(mbPrefetchNear, 150);
       /* 목록에서 [답장]을 눌러 본문부터 가져온 경우 — 이제 답장 화면으로 간다 */
       if(state.mbReplyAfterOpen){ const all = state.mbReplyAfterOpen==='all';
         state.mbReplyAfterOpen=''; mbReply(all); }
@@ -15773,30 +15876,47 @@ function mbReadHtml(){
     : '';
   const held = o.html ? _mbImgHold : 0;   /* 방금 막은 바깥 그림 수 — 위에서 세어 둔다 */
   return `<div class="dm-read">
-    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-      <button class="back" onclick="mbBack()">‹ ${esc(mbBoxName(o.slug))}</button>
-      <span style="flex:1"></span>
-      ${/* 읽는 자리에 손이 갈 것들 — 다음메일도 여기 둔다 */''}
-      <button class="rbtn" onclick="mbReply(false)">답장</button>
-      <button class="rbtn" onclick="mbReply(true)">전체답장</button>
-      <button class="rbtn" onclick="mbForwardOne('${o.slug}','${o.uid}')">전달</button>
-      <button class="rbtn" title="중요 표시 — 다음메일에도 함께 켜집니다"
-        onclick="mbStar('${o.slug}','${o.uid}')">${Number(v.g||0)?'★ 중요':'☆ 중요'}</button>
-      ${/* ⚠ 메일을 열면 읽음이 된다 — 그런데 여기서 «안 읽음으로 되돌릴 길»이 없었다
-            (대표 지시 2026-08-29 「읽고 다시 안읽음」). 나중에 다시 볼 것을 표시해 두는
-            자리라 다음메일에도 있다. 목록으로 나가지 않고 그 자리에서 되돌린다. */''}
-      <button class="rbtn" title="나중에 다시 보려고 안 읽음으로 되돌립니다 — 다음메일에도 함께 바뀝니다"
-        onclick="mbUnreadOne('${o.slug}','${o.uid}')">✉ 안 읽음으로</button>
-      ${/* ── 「내가 봤다」 (대표 지시 2026-08-29) ──
-           ⚠ 「열어봄」은 저절로 남는다. 이것은 «처리했다»는 뜻이라 눌러야 남는다.
-             스쳐 지나가다 연 것과 정말 맡은 것은 다르다.
-           ⚠ 볼 자격이 없는 사람에게는 단추도 안 보인다 — 눌러도 남의 눈에 안 보일
-             기록이면 「눌렀는데 아무 일도 안 난다」가 된다. */''}
-      ${mbSeenCanSee(v) ? `<button class="rbtn" ${mbSeenMine(v)==='done'?'style="color:#0f7b4f;font-weight:700"':''}
-        title="이 메일을 «내가 처리했다»고 남깁니다 — 함께 맡은 사람이 두 번 일하지 않게"
-        onclick="mbSeenDone('${o.slug}','${o.uid}')">${
-          mbSeenMine(v)==='done' ? '✅ 내가 봤다' : '내가 봤다'}</button>` : ''}
-      <button class="rbtn" onclick="mbTrashOne('${o.slug}','${o.uid}')">삭제</button>
+    ${/* ── 위 단추줄 — 다음메일과 «같은 자리»에 둔다 (대표 지시 2026-08-30) ──
+         왼쪽: 이 메일에 하는 일   오른쪽: 목록 · 위 · 아래
+         ⚠ 예전에는 손댈 것이 모두 오른쪽에 몰려 있고, 돌아가는 길은 왼쪽 끝의
+           흐린 글씨 하나뿐이었다 — 대표께서 「벡 할 수 있는방법이 없다」고 하셨다.
+         ⚠ 위·아래가 이 자리의 핵심이다. 목록으로 나갔다 다시 들어오지 않아도
+           다음 통으로 넘어간다 — 그 왕복이 느림의 절반이었다. */''}
+    <div class="rtop">
+      <div class="lft">
+        <button class="rbtn" onclick="mbReply(false)">답장</button>
+        <button class="rbtn" onclick="mbReply(true)">전체답장</button>
+        <button class="rbtn" onclick="mbForwardOne('${o.slug}','${o.uid}')">전달</button>
+        <button class="rbtn" onclick="mbTrashOne('${o.slug}','${o.uid}')">삭제</button>
+        <span class="rsep"></span>
+        <button class="rbtn" title="중요 표시 — 다음메일에도 함께 켜집니다"
+          onclick="mbStar('${o.slug}','${o.uid}')">${Number(v.g||0)?'★ 중요':'☆ 중요'}</button>
+        ${/* ⚠ 메일을 열면 읽음이 된다 — 그런데 여기서 «안 읽음으로 되돌릴 길»이 없었다
+              (대표 지시 2026-08-29 「읽고 다시 안읽음」). 나중에 다시 볼 것을 표시해 두는
+              자리라 다음메일에도 있다. 목록으로 나가지 않고 그 자리에서 되돌린다. */''}
+        <button class="rbtn" title="나중에 다시 보려고 안 읽음으로 되돌립니다 — 다음메일에도 함께 바뀝니다"
+          onclick="mbUnreadOne('${o.slug}','${o.uid}')">✉ 안 읽음으로</button>
+        ${/* ── 「내가 봤다」 (대표 지시 2026-08-29) ──
+             ⚠ 「열어봄」은 저절로 남는다. 이것은 «처리했다»는 뜻이라 눌러야 남는다.
+               스쳐 지나가다 연 것과 정말 맡은 것은 다르다.
+             ⚠ 볼 자격이 없는 사람에게는 단추도 안 보인다 — 눌러도 남의 눈에 안 보일
+               기록이면 「눌렀는데 아무 일도 안 난다」가 된다. */''}
+        ${mbSeenCanSee(v) ? `<button class="rbtn" ${mbSeenMine(v)==='done'?'style="color:#0f7b4f;font-weight:700"':''}
+          title="이 메일을 «내가 처리했다»고 남깁니다 — 함께 맡은 사람이 두 번 일하지 않게"
+          onclick="mbSeenDone('${o.slug}','${o.uid}')">${
+            mbSeenMine(v)==='done' ? '✅ 내가 봤다' : '내가 봤다'}</button>` : ''}
+      </div>
+      <div class="rgt">
+        <button class="rbtn list" onclick="mbBack()"
+          title="목록으로 돌아갑니다 (Esc)">‹ 목록<i>${esc(mbBoxName(o.slug))}</i></button>
+        ${(function(){
+          const up = mbNeighbor(-1), dn = mbNeighbor(1);
+          return `<button class="rbtn nav" onclick="mbStep(-1)" ${up?'':'disabled'}
+              title="${up ? '윗 메일 — '+esc(String(up.s||'(제목 없음)')).slice(0,40) : '첫 메일입니다'}">▲ 위</button>
+            <button class="rbtn nav" onclick="mbStep(1)" ${dn?'':'disabled'}
+              title="${dn ? '아랫 메일 — '+esc(String(dn.s||'(제목 없음)')).slice(0,40) : '마지막 메일입니다'}">▼ 아래</button>`;
+        })()}
+      </div>
     </div>
     ${/* ── 누가 봤나 — 읽는 자리에는 «다» 적는다 (목록에서는 한 줄만) ──
          ⚠ 볼 자격이 없으면 아무것도 안 그린다. */''}
