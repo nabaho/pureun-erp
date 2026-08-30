@@ -545,3 +545,39 @@ test('★ 「남기기」 예외 판정을 화면과 부품이 «한 곳»에서
   assert.equal(D.keepOnSiteReason({}), '');
   assert.match(D.keepOnSiteReason({ keepOnSite: { why: '세종지사장' } }), /세종지사장/);
 });
+
+/* ══════ 어느 칸이 다른가 (대표 지시 「홈페이지 연결 계속」) ══════
+   ★ 채우기 단추는 «경력사항 칸»만 채운다. 그런데 대조는 이름·직책1·직책2·경력을 함께 본다.
+     그래서 직책이 다르면 단추를 눌러도 딱지가 안 바뀐다 — 「내용이 다름」만 보고는
+     무엇을 고쳐야 하는지 알 수 없어, 단추가 고장 난 줄 알고 다시 누르게 된다. */
+
+test('★ 무엇이 다른지 «칸 이름»으로 말한다 — 「내용이 다름」만으로는 고칠 데를 모른다', () => {
+  const ours = [{ key: 'a', srl: '10', name: '권형하', position1: '대표', position2: '노무사',
+                  careers: ['現 가'] }];
+  const live = [{ srl: '10', name: '권형하', position1: '대표', position2: '공인노무사',
+                  careers: ['現 가'] }];
+  const r = D.memberStatus(ours, live, [{ name: '권형하' }], '2026-08-30')[0];
+  assert.equal(r.status, 'pending');
+  assert.match(r.reason, /직책2/, '★ 어느 칸이 다른지 안 말한다: ' + r.reason);
+  assert.doesNotMatch(r.reason, /경력사항/, '안 다른 칸까지 다르다고 한다: ' + r.reason);
+  /* 화면이 사유 «글자»를 다시 뜯어 읽지 않아도 되게, 자료로도 함께 담는다 */
+  assert.deepEqual(plain(r.fields), ['직책2'], '어느 칸인지 자료로 안 담았다');
+});
+
+test('★ 경력만 다르면 경력사항이라고 말한다 — 그때는 단추로 끝난다', () => {
+  const ours = [{ key: 'a', srl: '10', name: '권형하', position1: '대표', position2: '노무사',
+                  careers: ['現 가', '現 나'] }];
+  const live = [{ srl: '10', name: '권형하', position1: '대표', position2: '노무사',
+                  careers: ['現 가'] }];
+  const r = D.memberStatus(ours, live, [{ name: '권형하' }], '2026-08-30')[0];
+  assert.deepEqual(plain(r.fields), ['경력사항']);
+});
+
+test('★ 칸을 «이어붙여» 견주지 않는다 — 「김」+「가나」 와 「김가」+「나」 는 다른 사람이다', () => {
+  const A = { name: '김', position1: '가나', position2: '', careers: [] };
+  const B = { name: '김가', position1: '나', position2: '', careers: [] };
+  assert.notEqual(D.signature(A), D.signature(B),
+    '★ 서로 다른 자료를 «같음»으로 읽는다 — 이어붙이면 칸 경계가 사라진다');
+  /* 그리고 어느 칸이 다른지도 제대로 짚어야 한다 */
+  assert.deepEqual(plain(D.diffFields(A, B)), ['이름', '직책1']);
+});

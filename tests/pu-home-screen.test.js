@@ -71,6 +71,8 @@ function box(extra) {
   ['pu-home-parse.js', 'pu-home-career.js', 'pu-home-export.js', 'pu-home-diff.js',
      'pu-home-fill.js']
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(R, 'js', f), 'utf8'), ctx));
+  /* 편집칸도 붙여넣기 안내도 이 둘을 부른다 — 상자에 늘 실어 둔다 */
+  vm.runInContext(fnSource('fillGapFields') + '\n' + fnSource('fillGapNote'), ctx);
   return ctx;
 }
 function run(ctx, code) { vm.runInContext(code, ctx); return ctx; }
@@ -2391,4 +2393,46 @@ test('★ 되돌리면 다시 원래 글자다 — 되돌린 뒤 복사하면 �
   assert.equal(ctx.pageFixList('work1').length, 1);
   ctx.pageRunEdit('work1', '첫 줄', '첫 줄');
   assert.equal(ctx.pageFixList('work1').length, 0, '★ 원래 글자로 되돌렸는데 고친 줄로 남아 있다');
+});
+
+/* ══════ 채우기로 «안 되는» 칸을 미리 말한다 ══════
+   ★ 단추는 경력사항 칸만 채운다. 직책이 다르면 눌러도 딱지가 그대로 「안 올라감」이다.
+     그것을 말해 주지 않으면 사람은 단추가 고장 난 줄 알고 다시 누른다. */
+
+test('★ 직책이 다르면 «채우기로는 안 된다»고 먼저 말한다 — 단추를 누른 뒤에 알면 늦다', () => {
+  const ctx = box();
+  ctx.esc = escStub();
+  const note = ctx.fillGapNote({ status: 'pending', fields: ['직책2', '경력사항'] }, '');
+  assert.ok(note, '★ 직책이 다른데 아무 말도 안 한다');
+  assert.match(note, /직책2/, '어느 칸인지 안 말한다');
+  assert.match(note, /손으로|직접/, '그럼 어떻게 하라는 건지 안 말한다');
+});
+
+test('★ 경력사항만 다르면 «군말을 안 한다» — 그때는 단추로 끝난다', () => {
+  const ctx = box();
+  ctx.esc = escStub();
+  assert.equal(ctx.fillGapNote({ status: 'pending', fields: ['경력사항'] }, ''), '',
+    '★ 단추로 되는 일에까지 «손으로 고치라»고 한다');
+  assert.equal(ctx.fillGapNote({ status: 'same' }, ''), '', '같은데도 무언가를 말한다');
+  assert.equal(ctx.fillGapNote({}, ''), '', '딱지가 없는데 지어내 말한다');
+});
+
+test('★ 「어느 칸이 다른가」는 대조가 담아 준 자료를 그대로 쓴다 — 사유 글자를 다시 뜯지 않는다', () => {
+  /* 사유 글자를 뜯어 읽으면, 글자를 다듬는 순간 화면이 조용히 틀린다.
+     그래서 딱지에 fields 를 «자료로» 담고 화면은 그것만 본다. */
+  const ctx = box();
+  ctx.App = { members: { a: { name: '권형하', srl: '10', position1: '대표', position2: '노무사',
+                             careers: ['現 가'] } },
+              staff: [{ name: '권형하' }], pages: {}, check: null, pageLines: {}, pageRuns: {},
+              pageFix: {}, render() {} };
+  run(ctx, constSource('PAGE_IDS') + '\n' + fnSource('todayString') + '\n' + fnSource('applyStatus'));
+  ctx.db = { ref: () => ({ set: () => Promise.resolve() }) };
+  const live = [{ srl: '10', name: '권형하', position1: '대표', position2: '공인노무사',
+                 careers: ['現 가'] }];
+  return ctx.applyStatus(live, {}, []).then(() => {
+    const rec = ctx.App.check.members.a;
+    assert.equal(rec.status, 'pending');
+    assert.ok(rec.fields && rec.fields.indexOf('직책2') >= 0,
+      '★ 어느 칸이 다른지 딱지에 안 담겼다 — 화면이 말할 방법이 없다');
+  });
 });

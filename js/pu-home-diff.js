@@ -8,11 +8,35 @@
     return String(s || '').replace(/\s+/g, ' ').trim();
   };
 
+  /* 견주는 칸 넷. 「어디가 다른가」를 말하려면 칸마다 이름이 있어야 한다 —
+     「내용이 다름」만 보면 무엇을 고쳐야 하는지 알 수 없어, 사람이 네 칸을 다 뒤진다. */
+  const FIELDS = [
+    { key: 'name', label: '이름' },
+    { key: 'position1', label: '직책1' },
+    { key: 'position2', label: '직책2' },
+    { key: 'careers', label: '경력사항' }
+  ];
+
+  function fieldValue(m, key) {
+    if (key === 'careers') return ((m && m.careers) || []).map(tidy).filter(Boolean).join('\n');
+    return tidy(m && m[key]);
+  }
+
+  /* ★ 칸을 «이어붙이지» 않는다. 이어붙이면 이름 「김 가」·직책1 「나」 와
+     이름 「김」·직책1 「가 나」 가 같은 글자가 되어, 서로 다른 자료를 «같음»으로 읽는다.
+     드물지만 조용히 틀리는 자리라 칸 경계가 남는 모양으로 담는다. */
   function signature(m) {
-    return [
-      tidy(m.name), tidy(m.position1), tidy(m.position2),
-      (m.careers || []).map(tidy).filter(Boolean).join('\n')
-    ].join('');
+    return JSON.stringify(FIELDS.map(function (f) { return fieldValue(m, f.key); }));
+  }
+
+  /* 어느 칸이 다른가 — 딱지 사유에 그대로 실어 보낸다 */
+  function diffFields(a, b) {
+    return FIELDS.filter(function (f) { return fieldValue(a, f.key) !== fieldValue(b, f.key); })
+      .map(function (f) { return f.label; });
+  }
+  function diffReason(a, b) {
+    const d = diffFields(a, b);
+    return d.length ? '내용이 다름 — ' + d.join('·') : '내용이 다름';
   }
 
   // 이름이 같은 직원을 전부 찾는다. Array.find 로 첫 사람만 집으면
@@ -139,7 +163,8 @@
         if (signature(m) === signature(onLive)) {
           return { key: key, name: m.name, status: 'same', reason: '동명이인이 있어 입·퇴사 판단을 보류함' };
         }
-        return { key: key, name: m.name, status: 'pending', reason: '내용이 다름 · 동명이인이 있어 입·퇴사 판단을 보류함' };
+        return { key: key, name: m.name, status: 'pending', fields: diffFields(m, onLive),
+                 reason: diffReason(m, onLive) + ' · 동명이인이 있어 입·퇴사 판단을 보류함' };
       }
       // 홈페이지에도 없고 동명이인이라 퇴사 여부도 못 가리면, 「새로 올릴 것」으로 두되
       // «왜 퇴사 판단을 못 했는지»를 반드시 적는다. 말없이 올리라고 시키지 않는다.
@@ -172,8 +197,8 @@
       if (signature(m) === signature(onLive)) {
         return { key: key, name: m.name, status: 'same', reason: joinReasons([notInStaff, kept]) };
       }
-      return { key: key, name: m.name, status: 'pending',
-               reason: joinReasons(['내용이 다름', notInStaff, kept]) };
+      return { key: key, name: m.name, status: 'pending', fields: diffFields(m, onLive),
+               reason: joinReasons([diffReason(m, onLive), notInStaff, kept]) };
     });
 
     // 「홈페이지에만」 판정도 «글 번호»로 견준다. 우리 열쇠로 견주면 글 번호를 적어 넣은
@@ -261,6 +286,7 @@
   global.PuHomeDiff = {
     memberStatus: memberStatus, pageStatus: pageStatus, isTrustworthy: isTrustworthy,
     nameLeftovers: nameLeftovers, signature: signature, duplicateLiveKeys: duplicateLiveKeys,
+    diffFields: diffFields, diffReason: diffReason,
     duplicateOurKeys: duplicateOurKeys, matchKeyOf: matchKeyOf,
     /* 화면도 이 둘을 그대로 쓴다 — 「퇴사인가」·「사유 있는 예외인가」를 두 곳에서
        따로 만들면 목록 딱지와 판정 결과가 조용히 어긋난다. */
