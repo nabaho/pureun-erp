@@ -123,7 +123,9 @@ test('기업 상세 거르기에 걸려 있다', () => {
   /* ⚠ 2026-08-27: 서명에 두 번째 인자(skipCares)가 붙었다 — 여는 괄호까지만 잡는다.
      서명을 통째로 못 박으면 인자 하나 늘 때마다 상관없는 검사가 깨진다. */
   const body = slice(HTML, 'function coFilteredList(skipCol', '/* 「🏢 거래처」·「🏢 전체」');
-  assert.match(body, /if\(state\.coOnlyUid\) list = list\.filter\(coIsUid\);/);
+  /* ⚠ 2026-08-30: 셋째 인자(skipTodo)가 붙었다 — 할 일 수를 셀 때만 이 거르개를 뺀다.
+     거르개 자체는 그대로 걸린다. 여는 조건까지만 잡아 인자가 또 늘어도 안 깨지게 둔다. */
+  assert.match(body, /if\(state\.coOnlyUid[^)]*\) list = list\.filter\(coIsUid\);/);
 });
 
 /* ⚠ 2026-08-28 자리가 옮겨졌다 — 대표 지시로 탭 줄은 「거래관계 여부」만 나누고,
@@ -145,7 +147,10 @@ test('탭 줄에는 도로 안 남아 있다 — 두 곳에서 같은 일을 하
 
 test('개수는 폴더·검색을 그대로 두고 센다 — 종료 개수와 같은 결', () => {
   const body = slice(HTML, 'function coUidCount(){', 'function coFilteredList(');
-  assert.match(body, /coFilteredList\(null\)\.filter\(coIsUid\)/);
+  /* ⚠ 2026-08-30: 셋째 자리(skipTodo)가 붙었다. 다른 「할 일」이 켜져 있으면 그 안에서
+     세게 되어 수가 서로 붙던 것을 고친 것이다(대표 화면 「종료 5·번호 없음 5·정보부족 5」).
+     폴더·검색은 여전히 그대로 두고 센다 — 이 검사의 뜻은 그대로다. */
+  assert.match(body, /coFilteredList\(null,\s*false,\s*true\)\.filter\(coIsUid\)/);
 });
 
 test('state 에 칸이 있다 — 없으면 새로고침 때 undefined 로 새다', () => {
