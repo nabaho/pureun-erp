@@ -343,7 +343,11 @@ test('★ 차례 고르개가 폰에서 그냥 보인다 — 찾기를 펴지 �
      합치면서 뜻은 그대로인데 검사만 울었다. 보아야 할 것은 «무엇이 보이느냐»다. */
 function runGridBar(over) {
   const el = {};
-  const mk = function (id) { return (el[id] = el[id] || { style: {}, textContent: '', disabled: false }); };
+  const mk = function (id) { return (el[id] = el[id] || { style: {}, textContent: '', innerHTML: '', disabled: false, title: '',
+    /* 2026-08-30: 장수 딱지가 꾸밈을 붙였다 떼고 속을 갈아 끼운다 */
+    classList: { _on: {},
+      toggle: function (c, on) { if (on) this._on[c] = 1; else delete this._on[c]; },
+      add: function (c) { this._on[c] = 1; }, remove: function (c) { delete this._on[c]; } } }); };
   const ctx = Object.assign({
     Object, Array, Set, String,
     selected: new Set(),

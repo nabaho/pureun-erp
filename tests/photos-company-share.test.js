@@ -225,8 +225,12 @@ test('★ 업체 지정은 도구줄에, 공유는 «누구 사진 아래» 대�
   /* ⚠ 「'coBtn'」만 찾으면 안 된다 — 아래 «남의 사진 숨기기» 줄에도 같은 글자가 있어,
      보여 주는 줄에서 빠져도 그쪽이 검사를 통과시킨다(2026-08-28 되돌림에서 실제로
      새어 나갔다). **그 줄**을 통째로 못박는다. */
-  assert.match(bar, /'selCancel', 'tagBtn',\s*'coBtn'\]\.forEach/,
-    '★ 고른 것이 있을 때 안 나옵니다');
+  /* ⚠ 줄을 «글자 그대로» 박지 않는다 — 단추가 하나 늘거나 줄 때마다(2026-08-30
+     「취소」를 걷었다) 기능이 좋아졌는데 검사가 깨진다. 보는 것은 **coBtn 이
+     「고른 것이 있을 때 나오는」 그 줄에 들어 있는가** 하나다. */
+  const showRow = (bar.match(/\[[^\]]*'coBtn'\]\.forEach\(function \(id\) \{\s*\$\(id\)\.style\.display = n \?/) || [''])[0];
+  assert.ok(showRow, '★ 고른 것이 있을 때 나오는 줄에 coBtn 이 없습니다');
+  assert.match(showRow, /'tagBtn'/, '★ 같은 줄에 분류 지정이 없습니다');
 });
 
 test('★★ 공유 칸은 도구줄과 «한 기준»으로 뜬다 — 따로 정하면 한쪽만 막힌다', () => {
@@ -309,17 +313,23 @@ test('★ 업체를 단 «그 순간» 자동 공유가 걸린다 — 만들고 
 });
 
 test('★ 공유 창은 그 업체 담당자를 «미리 골라» 둔다 — 누구인지 찾아 헤매지 않게', () => {
-  const fn = cutFn(photos, 'function openShareMany(');
+  /* ⚠ 2026-08-30: 한 장 볼 때와 여러 장 고를 때가 «한 창»으로 합쳐졌다
+     (openShareMany → openSharePeople). 지키는 뜻은 그대로다 —
+     **담당자를 앱이 찾아 미리 골라 둔다.** */
+  const fn = cutFn(photos, 'function openSharePeople(');
   assert.match(fn, /coMgrsFor\(coName\)/, '★ 담당자를 안 알아봅니다');
-  assert.match(fn, /pre\.indexOf\(u\) >= 0 \? ' checked' : ''/, '★ 미리 체크하지 않습니다');
   assert.match(fn, /주담당/, '누가 주담당인지 안 보여 줍니다');
   assert.match(fn, /부담당/, '누가 부담당인지 안 보여 줍니다');
+  /* 미리 고른 사람은 체크된 채로 나온다 */
+  assert.match(cutFn(photos, 'function sharePeopleHtml('), /o\.on \? ' checked' : ''/,
+    '★ 미리 체크하지 않습니다');
+  assert.match(fn, /_sharePick = \{[\s\S]*?pre: pre/, '★ 미리 고른 사람을 안 들고 있습니다');
 });
 
 test('★ 손으로 고른 사람에게는 「담당」 표를 안 단다 — 무엇이 자동인지 갈려야 한다', () => {
-  const fn = cutFn(photos, 'function submitShareMany(');
-  assert.match(fn, /_shareManyPre\.indexOf\(u\) >= 0/, '자동으로 고른 사람을 안 가립니다');
-  assert.match(fn, /_shareManyPre\.indexOf\(u\) < 0/, '손으로 고른 사람을 안 가립니다');
+  const fn = cutFn(photos, 'function submitSharePeople(');
+  assert.match(fn, /p\.pre\.indexOf\(u\) >= 0/, '자동으로 고른 사람을 안 가립니다');
+  assert.match(fn, /p\.pre\.indexOf\(u\) < 0/, '손으로 고른 사람을 안 가립니다');
   /* 저장 층도 빈 까닭이면 표를 안 달아야 한다 */
   assert.match(cutFn(store, 'function addShare('), /\.trim\(\)\.slice\(0, 60\) \|\| null/,
     '★ 빈 까닭에도 표를 답니다 — 손으로 넣은 사람이 「업무」로 보입니다');

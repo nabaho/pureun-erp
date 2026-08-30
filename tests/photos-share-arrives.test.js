@@ -258,7 +258,9 @@ test('★ 세는 일은 관리자만의 것이 아니다 — 누구나 받는다
 function noComments(s) { return s.replace(/\/\*[\s\S]*?\*\//g, ''); }
 
 test('★★ 「내가 올린 사진에만」이라고 하지 않는다 — 관리자에게는 틀린 말이고 엉뚱한 데를 뒤지게 한다', () => {
-  ['function submitShareMany(', 'function autoShareByCo('].forEach(function (f) {
+  /* ⚠ 2026-08-30: 한 장 볼 때와 여러 장 고를 때가 «한 창»으로 합쳐졌다
+     (submitShareMany → submitSharePeople). 지키는 뜻은 그대로다. */
+  ['function submitSharePeople(', 'function autoShareByCo('].forEach(function (f) {
     const fn = noComments(cutFn(app, f));
     assert.ok(!/내가 올린 사진에만/.test(fn),
       '★ ' + f + ' — 총괄관리자는 사진 자리에 쓸 수 있습니다.\n' +
