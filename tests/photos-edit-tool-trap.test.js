@@ -28,6 +28,17 @@ const { cutFn } = require('./cut-fn');
 const R = path.join(__dirname, '..');
 const APP = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
 
+function fakeCtx() {
+  return { clearRect: function () {}, beginPath: function () {}, moveTo: function () {},
+    lineTo: function () {}, stroke: function () {}, arc: function () {}, fill: function () {},
+    save: function () {}, restore: function () {}, setLineDash: function () {},
+    drawImage: function () {}, canvas: null,
+    set fillStyle(v) {}, get fillStyle() { return ''; },
+    set strokeStyle(v) {}, get strokeStyle() { return ''; },
+    set lineWidth(v) {}, set lineCap(v) {}, set lineJoin(v) {},
+    set globalCompositeOperation(v) {} };
+}
+
 function box() {
   const said = [];
   const el = {};
@@ -41,14 +52,12 @@ function box() {
       return el[id] || (el[id] = {
         width: 0, height: 0, style: {},
         getBoundingClientRect: function () { return { left: 0, top: 0, width: 800, height: 600 }; },
-        getContext: function () {
-          return { clearRect: function () {}, beginPath: function () {}, moveTo: function () {},
-            lineTo: function () {}, stroke: function () {}, arc: function () {}, fill: function () {},
-            set fillStyle(v) {}, set strokeStyle(v) {}, set lineWidth(v) {},
-            set lineCap(v) {}, set lineJoin(v) {} };
-        }
+        classList: { toggle: function () {}, add: function () {}, remove: function () {} },
+        getContext: fakeCtx
       });
     },
+    /* 테두리는 «따로 그린 판»을 얹어 만든다 — 그 판을 내줄 곳이 있어야 돈다 */
+    document: { createElement: function () { return { width: 0, height: 0, getContext: fakeCtx }; } },
     Math: Math, Object: Object, String: String, Number: Number, Uint8Array: Uint8Array, JSON: JSON
   };
   ctx.globalThis = ctx;
@@ -59,7 +68,8 @@ function box() {
   vm.runInContext(APP.match(/const ED_MODES = \[[\s\S]*?\];/)[0], ctx);
   ['function edBrushR(', 'function setEdBrush(', 'function setEdErase(', 'function edUndo(',
    'function edClear(', 'function edPoint(', 'function edDown(', 'function edMove(',
-   'function edUp(', 'function edEraseAt(', 'function edPaintTo(', 'function edRepaint(',
+   'function edUp(', 'function edEraseAt(', 'function edBandPath(', 'function edPaintTo(',
+   'function edDrawCursor(', 'function edRepaint(', 'function edMarkWrapMode(',
    'function edAreas(', 'function edPanelHtml('].forEach(function (n) {
     vm.runInContext(cutFn(APP, n), ctx);
   });

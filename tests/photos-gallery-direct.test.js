@@ -23,8 +23,12 @@ test('PDF·서류 파일 길은 남아 있다', () => {
   assert.match(photos, /id="phDocBtn" onclick="phUploadDoc\(\)"/, '시트에 PDF 길이 없습니다.');
   const doc = photos.slice(photos.indexOf('function phUploadDoc()'), photos.indexOf('function phUploadDoc()') + 500);
   assert.match(doc, /\$\('docInput'\)/, 'PDF 길이 그림 칸을 열면 뜻이 없습니다.');
-  /* 서류 칸은 여전히 pdf 를 받는다 */
-  assert.match(photos, /id="docInput" accept="image\/\*,application\/pdf"/);
+  /* 서류 칸은 여전히 pdf 를 받는다.
+     ⚠ 목록을 «글자 그대로» 박지 않는다 — 받는 형식이 하나 늘 때마다(2026-08-29 팩스 tif)
+       기능이 좋아졌는데 검사가 깨진다. 보는 것은 **그림도 PDF도 받는가**다. */
+  const doci = (photos.match(/<input type="file" id="docInput"[^>]*>/) || [''])[0];
+  assert.match(doci, /accept="[^"]*image\/\*/, '서류 칸이 그림을 안 받습니다: ' + doci);
+  assert.match(doci, /accept="[^"]*application\/pdf/, '서류 칸이 PDF 를 안 받습니다: ' + doci);
 });
 
 test('★ 두 칸이 «같은 손잡이»를 쓴다 — 갈라 두면 한쪽만 고친다', () => {

@@ -773,6 +773,12 @@ button{font-family:inherit;cursor:pointer}
   display:block;user-select:none}
 /* 칠하는 판은 사진과 **똑같은 자리**를 덮는다 — 어긋나면 칠한 곳과 지워지는 곳이 다르다 */
 .edwrap canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair}
+/* ── 커서가 도구마다 다르다 (대표 지시 2026-08-29 "마우스 포인트 좀 다양하게") ──
+   ⚠ 굵기는 **판 위에 그리는 동그라미**가 보여 준다(edDrawCursor) — 커서 모양만으로는
+     「얼마나 굵은지」를 알 길이 없다. 여기서는 «무슨 일을 하는 도구인지»만 가른다. */
+.edwrap.mode-ai canvas{cursor:crosshair}
+.edwrap.mode-erase canvas{cursor:cell}
+.edwrap.mode-mark canvas{cursor:default}
 .edtools{display:flex;gap:6px;margin:8px 0 0;align-items:center}
 .edtools button{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;
   padding:7px 8px;font:700 11.5px inherit;display:flex;align-items:center;justify-content:center;gap:5px}
@@ -803,6 +809,9 @@ button{font-family:inherit;cursor:pointer}
 .edwrap .canvas-container canvas{width:100% !important;height:100% !important}
 .edtools button.col{padding:6px}
 .edtools button.col.on{box-shadow:0 0 0 2px var(--blue) inset}
+/* 요금 없이 되는 길 — 눈에 띄되 잔소리로 안 보이게 */
+.note.edfree{background:#f0fdf4;border:1px solid #86efac;color:#15803d;border-radius:8px;
+  padding:7px 9px;font-size:11.5px;line-height:1.7}
 /* 지우개일 때 «무엇을 지우는지» — 이 한 줄이 없어서 마우스가 고장 난 줄 아셨다 */
 .note.edmode{margin:6px 0 0;font-size:11.5px;line-height:1.6;background:#fff7ed;
   border:1px solid #fed7aa;color:#b45309;border-radius:8px;padding:7px 9px}
@@ -1470,14 +1479,18 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
            계속 넣으면 다 넣은 뒤 **한 번만** 읽는다. -->
       <button class="sec doc" id="collectBtn" onclick="startCollect()">📑 한 문서로 모으기</button>
     </div>
-    <input type="file" id="docInput" accept="image/*,application/pdf" multiple hidden>
+    <!-- ⚠ .tif 를 따로 적어 둔다 — 팩스로 온 서류가 이 형식인데, image/* 만으로는
+       고르는 창에서 회색으로 죽는 기기가 있다(대표 지시 2026-08-29) -->
+  <input type="file" id="docInput" accept="image/*,.tif,.tiff,application/pdf" multiple hidden>
     <!-- ── 그림만 받는 칸 (대표 지적 2026-08-20) ──
          accept 에 pdf 가 섞여 있으면 안드로이드가 «갤러리»를 아예 안 띄우고
          「카메라 / 파일」만 준다 — 사진을 고르러 파일 관리자를 뒤져야 했다.
          그림만 받으면 요즘 안드로이드는 사진 고르개를 바로 연다.
          ⚠ 받는 자리(onchange)는 docInput 과 «같은 것»을 쓴다 — 두 갈래로 갈라 두면
            한쪽만 고치게 된다. 아래 부팅 코드가 두 칸에 같은 함수를 건다. -->
-    <input type="file" id="picInput" accept="image/*" multiple hidden>
+    <!-- ⚠ 여기는 «그림만» 이어야 한다 — 확장자를 하나라도 섞으면 안드로이드가 갤러리를
+       안 띄우고 파일 탐색기를 연다. 팩스 tif 는 📄 서류 단추로 받는다 -->
+  <input type="file" id="picInput" accept="image/*" multiple hidden>
     <!-- 본문 다시 올리기(2026-08-15) — 원본이 없는 사진에서만 쓴다. docInput 과
          따로 두는 이유: docInput 은 여러 장·PDF 를 받아 새 항목을 만드는 자리라,
          "이 자리에 사진 한 장만 채워 넣기"와 흐름이 다르다. -->
@@ -4820,6 +4833,77 @@ function pdfTextUsable(t) {
   return String(t || '').replace(/\s/g, '').length >= PDF_TEXT_MIN;
 }
 
+/* ══════ 팩스·스캐너가 보내는 TIF (대표 지시 2026-08-29) ══════
+   "노무계약서.tif 못읽는데 이런것도 개선안되나 해결할 수 없나?"
+
+   브라우저는 tif 를 **아예 못 연다** — 크롬도 사파리도 <img> 로 열지 않는다.
+   그런데 팩스로 온 계약서·노동청 서류가 바로 이 형식이다. 지금까지 화면은
+   「아이폰 설정 → 카메라 → 높은 호환성」을 안내했는데, 그건 아이폰 사진(HEIC)
+   이야기라 **팩스 파일에는 아무 소용이 없었다** — 시킨 대로 해 보고 또 막힌다.
+   ⚠ 엉뚱한 안내는 안내가 없는 것보다 나쁘다.
+
+   → 이 기기 안에서 풀어 JPG 로 바꿔 담는다. **요금 0원**이고 밖으로 안 나간다.
+   ⚠ tif 는 **한 파일에 여러 쪽**인 것이 흔하다(팩스 원고 그대로). PDF 와 똑같이
+     쪽으로 펼쳐, 「한 문서로 / 쪽마다 따로」를 **같은 창에서** 묻는다.
+   ⚠ 도구는 **우리 사본 먼저**(vendor/utif.js), 바깥(unpkg)은 물러설 곳.
+   ⚠⚠ pako 를 **먼저** 올려야 한다 — UTIF 는 실릴 때 self.pako 를 «한 번» 집어 두고
+     그 뒤에 넣어 주는 것은 안 본다. 뒤에 올리면 zip 으로 눌린 tif 에서 그대로 멎는다. */
+const TIF_LIB_HERE = 'vendor/utif.js';
+const TIF_LIB_CDN = 'https://unpkg.com/utif@3.1.0/UTIF.js';
+const TIF_ZIP_HERE = 'vendor/pako.min.js';
+const TIF_ZIP_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js';
+
+function isTif(f) {
+  const t = String((f && f.type) || '').toLowerCase();
+  return t === 'image/tiff' || t === 'image/tif' || /\.tiff?$/i.test((f && f.name) || '');
+}
+
+async function loadTifLib() {
+  if (window.UTIF) return window.UTIF;
+  /* 압축 푸는 것을 먼저 — 못 받아도 그냥 간다(zip 으로 눌린 tif 만 못 연다) */
+  if (!window.pako) {
+    try { await loadScriptOnce(TIF_ZIP_HERE); }
+    catch (_) { try { await loadScriptOnce(TIF_ZIP_CDN); } catch (_2) { /* 그냥 간다 */ } }
+  }
+  try { await loadScriptOnce(TIF_LIB_HERE); }
+  catch (_) {
+    try { await loadScriptOnce(TIF_LIB_CDN); }
+    catch (_2) { throw new Error('TIF를 여는 도구를 불러오지 못했습니다'); }
+  }
+  if (!window.UTIF) throw new Error('TIF를 여는 도구를 불러오지 못했습니다');
+  return window.UTIF;
+}
+
+/* TIF 한 파일 → 쪽마다 { blob, page, text }. PDF 와 «같은 모양»으로 돌려준다 —
+   그래야 묻고 담는 길을 새로 만들지 않고 그대로 탄다. */
+async function tifToPages(file) {
+  const U = await loadTifLib();
+  const buf = await readFileBytes(file);
+  const ifds = U.decode(buf);
+  const total = ifds.length;
+  const take = Math.min(total, PDF_MAX_PAGES);
+  const pages = [];
+  for (let i = 0; i < take; i++) {
+    const p = ifds[i];
+    U.decodeImage(buf, p, ifds);
+    const rgba = U.toRGBA8(p);
+    const w = p.width, h = p.height;
+    if (!w || !h || !rgba || !rgba.length) continue;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    /* 화소를 판째로 옮긴다 — 한 점씩 돌면 1656×2271 에서 눈에 띄게 느리다 */
+    cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba), w, h), 0, 0);
+    /* ⚠ 여기서 구운 것은 «중간 그림»이다 — 담을 때 저장 층이 한 번 더 굽는다.
+       0.92 로 두 번 구우면 팩스 잔글씨의 획 가장자리에 울림이 남는다(CAM_MID_Q 와 같은 까닭). */
+    const blob = await new Promise(function (res) { cv.toBlob(res, 'image/jpeg', CAM_MID_Q); });
+    /* 큰 판을 바로 놓아준다 — 팩스 원고는 한 쪽이 1600×2300 쯤이라 쌓이면 무겁다 */
+    cv.width = cv.height = 0;
+    if (blob) pages.push({ blob: blob, page: i + 1, text: '' });
+  }
+  if (!pages.length) throw new Error('이 TIF 안에서 그림을 찾지 못했습니다');
+  return { pages: pages, total: total, taken: pages.length };
+}
+
 /* ══════ 여러 쪽 PDF — 「한 문서로」냐 「쪽마다 따로」냐 (대표 지시 2026-08-24) ══════
    "여러 장의 pdf 가 하나의 화일일 경우 팝업으로 질문하게 하는 건 어떤가"
 
@@ -5106,6 +5190,17 @@ async function addFiles(fileList, isDoc, opts) {
        있고, 그것이 있어야 권할 수 있다. 펼치는 것은 이 기기에서 하는 일이라 공짜다. */
   const spread = [];
   for (const f of picked) {
+    /* 팩스 tif 도 «쪽으로» 펼친다 — PDF 와 같은 모양이라 아래 길을 그대로 탄다 */
+    if (isTif(f)) {
+      try {
+        spread.push({ raw: f, pdf: await tifToPages(f) });
+      } catch (e) {
+        console.warn('[TIF 읽기]', e);
+        alert('TIF 파일을 열지 못했습니다: ' + (f.name || '') + '\n' + ((e && e.message) || e) +
+          '\n\n이 파일은 아직 담기지 않았습니다.');
+      }
+      continue;
+    }
     if (!isPdf(f)) { spread.push({ raw: f }); continue; }
     try {
       spread.push({ raw: f, pdf: await pdfToPages(f) });
@@ -5116,7 +5211,7 @@ async function addFiles(fileList, isDoc, opts) {
   }
   const asks = spread.filter(function (x) { return x.pdf && x.pdf.pages.length > 1; })
     .map(function (x) {
-      const nm = (x.raw.name || '스캔').replace(/\.pdf$/i, '');
+      const nm = (x.raw.name || '스캔').replace(/\.(pdf|tiff?)$/i, '');
       return { name: nm, pages: x.pdf.pages.length, hint: pdfSplitHint(x.pdf.pages) };
     });
   let splitBy = {};
@@ -5140,7 +5235,8 @@ async function addFiles(fileList, isDoc, opts) {
     if (!x.pdf) { files.push(f); continue; }
     {
       const r = x.pdf;
-      const base = (f.name || '스캔').replace(/\.pdf$/i, '');
+      /* ⚠ tif 도 여기를 탄다 — 확장자를 안 떼면 「노무계약서.tif (1/2쪽)」이 된다 */
+      const base = (f.name || '스캔').replace(/\.(pdf|tiff?)$/i, '');
       if (pageUsed && pageUsed + r.pages.length > PDF_PAGE_BUDGET) {
         dropDocs.push(base + ' (' + r.pages.length + '쪽)');
         continue;
@@ -5394,6 +5490,25 @@ function decodeViaObjectUrl(file) {
   });
 }
 
+/* 왜 못 여는지 «그 파일에 맞게» 말한다 (대표 지시 2026-08-29).
+   ⚠ 예전에는 무엇이 오든 「아이폰 → 설정 → 카메라 → 높은 호환성」이라고 했다.
+     팩스로 온 tif 에 그 안내를 하면 시킨 대로 해 보고 또 막힌다 —
+     **엉뚱한 안내는 안내가 없는 것보다 나쁘다.** 어디로 가야 할지를 말한다. */
+function cantOpenWhy(file) {
+  const n = String((file && file.name) || '').toLowerCase();
+  const t = String((file && file.type) || '').toLowerCase();
+  if (/\.hei[cf]$/.test(n) || /hei[cf]/.test(t)) {
+    return '아이폰이 만든 HEIC 사진은 이 브라우저가 못 엽니다.\n' +
+      '설정 → 카메라 → 포맷 → 「높은 호환성」으로 바꾼 뒤 다시 찍어 주세요.';
+  }
+  if (/\.tiff?$/.test(n) || /tiff?$/.test(t)) {
+    return 'TIF를 여는 도구를 불러오지 못했습니다.\n잠시 뒤 다시 올려 주세요.';
+  }
+  const ext = (n.match(/\.[a-z0-9]+$/) || [''])[0];
+  return '이 형식(' + (ext || t || '알 수 없음') + ')은 브라우저가 사진으로 못 엽니다.\n' +
+    'JPG·PNG로 바꾼 뒤 올려 주세요.\n(PDF·한글 등 서류 파일은 📄 단추로 올립니다)';
+}
+
 function decodeViaDataUrl(file) {
   return new Promise(function (res, rej) {
     const reader = new FileReader();
@@ -5401,9 +5516,7 @@ function decodeViaDataUrl(file) {
     reader.onload = function () {
       const img = new Image();
       img.onload = function () { res(img); };
-      img.onerror = function () {
-        rej(new Error('이 사진 형식은 아이폰 브라우저에서 열 수 없습니다. 설정 → 카메라 → 포맷 → 높은 호환성으로 바꾼 뒤 다시 찍어 주세요.'));
-      };
+      img.onerror = function () { rej(new Error(cantOpenWhy(file))); };
       img.src = reader.result;
     };
     reader.readAsDataURL(file);
@@ -12245,6 +12358,26 @@ async function edMarkStart(im) {
   }
 }
 
+/* ── 속을 채운 도형 = «요금 0원 가리기» (대표 지시 2026-08-29) ──
+   "가급적 무료로 사용하고 싶은데"
+   ★ AI 지우기는 한 군데에 약 54원이 든다(구글이 이 모델에 무료 한도를 안 준다).
+     그런데 «가리기만 하면 되는» 일이 많다 — 벽시계·이름표·창밖 간판 같은 것.
+     속을 채운 네모/동그라미를 얹으면 **요금 없이** 그 일이 끝난다.
+   ⚠ 지우는 것과 «다른 일»이다 — 덮는 것이라 무엇이 있었는지는 자국이 남는다.
+     그 사실을 화면에 적어 사람이 골라 쓰게 한다. */
+function edMarkFill() { return !!(photoEd && photoEd.mfill); }
+function setEdMarkFill(on) {
+  if (!photoEd) return;
+  photoEd.mfill = !!on;
+  /* 골라 둔 도형이 있으면 그것도 함께 바꾼다 — 넣고 나서 「채워」가 자연스럽다 */
+  const o = edFab && edFab.getActiveObject();
+  if (o && (o.type === 'rect' || o.type === 'ellipse')) {
+    o.set('fill', photoEd.mfill ? edMarkColor() : 'transparent');
+    edFab.renderAll();
+  }
+  renderReadPanel(maskItem());
+}
+
 function edMarkColor() { return (photoEd && photoEd.mcolor) || MARK_COLORS[0]; }
 function setEdMarkColor(c) {
   if (!photoEd) return;
@@ -12253,7 +12386,10 @@ function setEdMarkColor(c) {
   const o = edFab && edFab.getActiveObject();
   if (o) {
     if (o.type === 'textbox' || o.type === 'text') o.set('fill', c);
-    else o.set('stroke', c);
+    else {
+      o.set('stroke', c);
+      if (edMarkFill() && (o.type === 'rect' || o.type === 'ellipse')) o.set('fill', c);
+    }
     edFab.renderAll();
   }
   renderReadPanel(maskItem());
@@ -12272,10 +12408,12 @@ function edMarkAdd(kind) {
     });
   } else if (kind === 'rect') {
     o = new F.Rect({ left: w * 0.3, top: h * 0.35, width: w * 0.35, height: h * 0.25,
-      fill: 'transparent', stroke: c, strokeWidth: Math.max(2, Math.round(h / 160)) });
+      fill: edMarkFill() ? c : 'transparent', stroke: c,
+      strokeWidth: Math.max(2, Math.round(h / 160)) });
   } else if (kind === 'ellipse') {
     o = new F.Ellipse({ left: w * 0.3, top: h * 0.35, rx: w * 0.16, ry: h * 0.12,
-      fill: 'transparent', stroke: c, strokeWidth: Math.max(2, Math.round(h / 160)) });
+      fill: edMarkFill() ? c : 'transparent', stroke: c,
+      strokeWidth: Math.max(2, Math.round(h / 160)) });
   } else {
     o = new F.Line([w * 0.25, h * 0.6, w * 0.6, h * 0.4],
       { stroke: c, strokeWidth: Math.max(3, Math.round(h / 120)) });
@@ -12353,7 +12491,22 @@ async function edToneApply() {
 
 /* ── 칠하기 ── */
 function edBrushR() { return ED_BRUSH[photoEd && photoEd.brush !== undefined ? photoEd.brush : 1]; }
-function setEdBrush(i) { if (photoEd) { photoEd.brush = i; renderReadPanel(maskItem()); } }
+/* 굵기를 바꾸면 «커서 동그라미»도 그 자리에서 커진다 — 골라 보고 정하려면 보여야 한다 */
+function setEdBrush(i) {
+  if (!photoEd) return;
+  photoEd.brush = i;
+  renderReadPanel(maskItem());
+  edRepaint();
+}
+
+/* 도구가 바뀌면 커서도 바뀐다 — 칸에 적어 두면 꾸밈이 따라온다.
+   ⚠ 판을 통째로 다시 그리지 않는다(칠한 것을 다시 그리는 값이 아깝다) — 이름표만 갈아 끼운다. */
+function edMarkWrapMode() {
+  const wrap = $('edWrap');
+  if (!wrap || !photoEd) return;
+  wrap.classList.toggle('mode-erase', photoEd.mode === 'ai' && !!photoEd.erasing);
+  wrap.classList.toggle('mode-ai', photoEd.mode === 'ai' && !photoEd.erasing);
+}
 /* ── 무엇을 할까 — 사람이 한글로 적은 말 (대표 지시 2026-08-29) ──
    ⚠ **여기서 판을 다시 그리지 않는다.** 한 글자 칠 때마다 다시 그리면 칸이 새로
      만들어지며 **글자를 치던 자리가 튕긴다.** 값만 담아 둔다.
@@ -12375,6 +12528,8 @@ function setEdErase(on) {
   }
   photoEd.erasing = !!on;
   renderReadPanel(maskItem());
+  edMarkWrapMode();
+  edRepaint();               // 커서 동그라미가 그 자리에서 갈린다(주황 ↔ 회색 점선)
 }
 function edUndo() { if (photoEd) { photoEd.strokes.pop(); edRepaint(); renderReadPanel(maskItem()); } }
 function edClear() { if (photoEd) { photoEd.strokes = []; edRepaint(); renderReadPanel(maskItem()); } }
@@ -12446,16 +12601,15 @@ function edEraseAt(p) {
 /* 칠한 것을 캔버스에 그린다.
    ⚠ 화면용은 «반투명 주황», AI 로 보낼 모양은 «불투명»이다 — 같은 함수가 둘 다 그린다.
      두 벌로 두면 화면에 보이는 것과 실제로 지우는 자리가 어긋난다. */
-function edPaintTo(ctx, w, h, opaque) {
+/* 칠한 자취를 «띠»로 그린다 — 색은 부르는 쪽이 정한다 */
+function edBandPath(ctx, w, h, wide) {
   const short = Math.min(w, h);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.strokeStyle = opaque ? '#fff' : 'rgba(249,115,22,.45)';
-  ctx.fillStyle = ctx.strokeStyle;
   ((photoEd && photoEd.strokes) || []).forEach(function (s) {
     const pts = s.pts || [];
     if (!pts.length) return;
-    const rad = (s.r || 0) * short;
+    const rad = Math.max(0.5, (s.r || 0) * short + (wide || 0));
     ctx.lineWidth = rad * 2;
     ctx.beginPath();
     ctx.moveTo(pts[0].x * w, pts[0].y * h);
@@ -12468,6 +12622,66 @@ function edPaintTo(ctx, w, h, opaque) {
   });
 }
 
+/* ── 화면에는 «테두리 선»으로, AI 에게는 «꽉 찬 모양»으로 (대표 지시 2026-08-29) ──
+   "선으로 먼저 표시하게 한다"
+   ★ 까닭: 꽉 찬 주황 덩어리로 덮으면 **지우려는 그것이 안 보인다.** 벽시계를 덮어
+     놓고 「다 덮였나」를 볼 수가 없다. 그래서 화면에는 테두리와 아주 옅은 속만 둔다.
+   ⚠ **AI 에게 보내는 모양은 그대로 꽉 찬 것**이다 — 테두리만 보내면 그 자리를
+     안 지운다. 화면용과 보내는 것이 «같은 자취»에서 나오되 모양만 다르다.
+   ⚠ 테두리는 「굵게 칠한 뒤 안쪽을 도로 파내는」 방법으로 만든다 — 띠의 «겉모양»을
+     따라가는 선은 이렇게 해야 나온다. */
+function edPaintTo(ctx, w, h, opaque) {
+  if (opaque) {
+    ctx.strokeStyle = '#fff';
+    ctx.fillStyle = '#fff';
+    edBandPath(ctx, w, h, 0);
+    return;
+  }
+  /* ① 아주 옅은 속 — 어디를 칠했는지는 알되 밑이 비친다 */
+  ctx.strokeStyle = 'rgba(249,115,22,.16)';
+  ctx.fillStyle = ctx.strokeStyle;
+  edBandPath(ctx, w, h, 0);
+  /* ② 테두리 — 따로 그린 뒤 안쪽을 파낸다 */
+  const make = (ctx.canvas && ctx.canvas.ownerDocument ? ctx.canvas.ownerDocument : document)
+    .createElement('canvas');
+  make.width = Math.max(1, w); make.height = Math.max(1, h);
+  const m = make.getContext('2d');
+  m.strokeStyle = '#f97316'; m.fillStyle = '#f97316';
+  edBandPath(m, w, h, 0);
+  m.globalCompositeOperation = 'destination-out';
+  m.strokeStyle = '#000'; m.fillStyle = '#000';
+  edBandPath(m, w, h, -2);          // 2px 안쪽을 파내면 테두리만 남는다
+  ctx.drawImage(make, 0, 0);
+}
+
+/* ── 붓 자리 — 굵기가 얼마인지 «커서로» 보인다 (대표 지시 2026-08-29) ──
+   "마우스 포인트 좀 다양하게 해라"
+   ⚠ 도구마다 다르게 그린다 — 칠하기는 주황 동그라미, 지우개는 회색 점선.
+     그래야 지금 무슨 도구인지 손끝에서 안다(2026-08-29 「지우개에 갇힌」 사고의 뒷마무리). */
+function edDrawCursor(ctx, w, h) {
+  const p = photoEd && photoEd.hover;
+  if (!p) return;
+  const rad = Math.max(2, edBrushR() * Math.min(w, h));
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(p.x * w, p.y * h, rad, 0, Math.PI * 2);
+  if (photoEd.erasing) {
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = '#64748b';
+    ctx.lineWidth = 1.5;
+  } else {
+    ctx.strokeStyle = '#f97316';
+    ctx.lineWidth = 2;
+  }
+  ctx.stroke();
+  /* 한가운데 점 — 어디가 «중심»인지 알아야 작은 것을 짚는다 */
+  ctx.beginPath();
+  ctx.arc(p.x * w, p.y * h, 1.5, 0, Math.PI * 2);
+  ctx.fillStyle = photoEd.erasing ? '#64748b' : '#f97316';
+  ctx.fill();
+  ctx.restore();
+}
+
 function edRepaint() {
   const cv = $('edCv');
   if (!cv) return;
@@ -12477,6 +12691,21 @@ function edRepaint() {
   const ctx = cv.getContext('2d');
   ctx.clearRect(0, 0, w, h);
   edPaintTo(ctx, w, h, false);
+  edDrawCursor(ctx, w, h);
+}
+
+/* 붓이 지금 어디 있나 — 그리지 않을 때도 따라다녀야 굵기를 보고 고른다 */
+function edHover(ev) {
+  if (!photoEd || photoEd.status !== 'ready' || photoEd.done) return;
+  const p = edPoint(ev);
+  if (!p) return;
+  photoEd.hover = p;
+  edRepaint();
+}
+function edHoverOut() {
+  if (!photoEd) return;
+  photoEd.hover = null;
+  edRepaint();
 }
 
 /* 지울 «군데»들 — 몇 군데인지가 곧 요금 몇 번이다 */
@@ -12767,8 +12996,12 @@ function renderViewerEdit() {
   /* ⚠ 자르기는 자르개가 사진 둘레를 제 짜임으로 바꾼다 — 그래서 «비를 안 박고»
      칸을 통째로 쓴다. 칠하기는 반대로 비가 박혀야 자리가 안 어긋난다. */
   const crop = mode === 'crop';
+  /* 도구를 칸에 적어 둔다 — 커서가 도구마다 달라진다(꾸밈이 이것을 본다) */
+  const modeCls = crop ? ' crop'
+    : mode === 'mark' ? ' mode-mark'
+      : mode === 'ai' ? (photoEd.erasing ? ' mode-erase' : ' mode-ai') : '';
   box.innerHTML =
-    '<div id="edWrap" class="edwrap' + (crop ? ' crop' : '') + '" ondragstart="return false">' +
+    '<div id="edWrap" class="edwrap' + modeCls + '" ondragstart="return false">' +
     '<img id="edImg" src="' + esc(photoEd.done ? photoEd.done.full : photoEd.url) +
     '" alt="" draggable="false"' +
     (crop ? ' onload="edCropStart(this)"'
@@ -12778,8 +13011,9 @@ function renderViewerEdit() {
     (mode === 'mark' ? ' style="visibility:hidden"' : '') + '>' +
     /* 칠하는 판 — 「지우기·고치기」일 때만. 사진과 «똑같은 자리»여야 한다(08-29 그 병) */
     (mode === 'ai'
-      ? '<canvas id="edCv" onpointerdown="edDown(event)" onpointermove="edMove(event)"' +
-        ' onpointerup="edUp()" onpointercancel="edUp()"></canvas>'
+      ? '<canvas id="edCv" onpointerdown="edDown(event)"' +
+        ' onpointermove="edMove(event);edHover(event)"' +
+        ' onpointerleave="edHoverOut()" onpointerup="edUp()" onpointercancel="edUp()"></canvas>'
       : '') +
     (mode === 'mark' ? '<canvas id="edFab"></canvas>' : '') +
     '</div>';
@@ -12875,8 +13109,17 @@ function edPanelHtml() {
           '" onclick="setEdMarkColor(\'' + c + '\')">' +
           '<span class="dot" style="width:15px;height:15px;background:' + c + '"></span></button>';
       }).join('') +
+      '<button class="' + (edMarkFill() ? 'on' : '') +
+      '" title="속을 채우면 그 자리가 가려집니다 — 요금 없이 가리는 길입니다"' +
+      ' onclick="setEdMarkFill(' + (edMarkFill() ? 'false' : 'true') + ')">' +
+      (edMarkFill() ? '■ 속 채움' : '▢ 속 비움') + '</button>' +
       '<button style="margin-left:auto" onclick="edMarkDel()">🗑 고른 것 지우기</button>' +
       '</div>' +
+      /* ★ 요금 없이 «가리는» 길 — 대표께서 「가급적 무료로 쓰고 싶다」 하셨다 */
+      (edMarkFill()
+        ? '<p class="note edfree">■ 속을 채운 네모·동그라미를 얹으면 <b>요금 없이 가려집니다.</b><br>' +
+          '지우는 것과는 다릅니다 — 덮는 것이라 자국이 남습니다.</p>'
+        : '') +
       '<div class="maskfoot"><button class="again" onclick="photoEdCancel()">그만두기</button>' +
       '<span class="note" style="margin:0 0 0 auto">' +
       (cnt ? cnt + '개 넣음' : '아직 없음') + '</span></div>' +
@@ -12965,7 +13208,15 @@ function edPanelHtml() {
     '<button class="again ai"' + (n ? '' : ' disabled') + ' onclick="edRun()">' +
     (n ? '✨ ' + n + '군데 고치기 (요금 ' + n + '번)' : '편집할 곳을 먼저 칠해 주세요') + '</button>' +
     (n ? '<p class="note" style="margin:6px 0 0;font-size:11px">' +
-      '<b>떨어진 곳마다 한 번씩</b> 요금이 듭니다 — 가까이 있는 것은 하나로 셉니다.</p>' : '') +
+      '<b>떨어진 곳마다 한 번씩</b> 요금이 듭니다(한 군데 약 50원) — 가까이 있는 것은 하나로 셉니다.</p>' : '') +
+    /* ★ 요금 없이 되는 길을 «여기서» 알려 준다 (대표 물음 2026-08-29:
+       "스마트폰에서는 무료로 자동으로 사진을 변경 가능한데 왜 여기는 비용을 내야 하나")
+       ⚠ 답: 폰의 지우개는 폰 안(또는 폰값에 포함된 서비스)에서 돌지만, 이 화면은
+         구글의 그림 모델을 불러야 하고 **구글이 이 모델에 무료 한도를 안 준다.**
+         그러니 「무료로 하려면 어떻게 하나」를 그 자리에서 일러 주는 것이 맞다. */
+    '<p class="note edfree" style="margin:8px 0 0">💡 <b>요금 없이 하려면</b><br>' +
+    '· 가리기만 하면 될 때 → <b>✏️ 글자·도형</b>에서 「■ 속 채움」 네모를 덮으세요<br>' +
+    '· 폰의 지우개(갤럭시·아이폰)로 고친 뒤 <b>공유 → 푸른사진첩</b>으로 보내면 그대로 담깁니다</p>' +
     '</div>';
 }
 
