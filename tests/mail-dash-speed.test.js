@@ -282,7 +282,7 @@ test('★★ 두 대시보드 줄의 «부품 차례»가 같다 — 순서가 �
   const topic = rowsOf(c, 'topic', 'topicbin');
   assert.ok(who.length && topic.length, '검사 밑그림이 틀렸습니다');
   const want = partsOf(topic[0]).join(' > ');
-  assert.equal(want, 'dot > grip > nm > fmenu',
+  assert.equal(want, 'ic > grip > nm > fmenu',
     '업무 줄의 부품 차례가 바뀌었습니다 — 담당자 줄도 함께 고쳐야 합니다: ' + want);
   who.forEach((r, i) => assert.equal(partsOf(r).join(' > '), want,
     '담당자 ' + (i + 1) + '번째 줄의 부품 차례가 업무 줄과 다릅니다 (칩을 바꾸면 이름이 뜁니다)'));
