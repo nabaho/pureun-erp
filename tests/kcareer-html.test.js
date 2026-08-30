@@ -1862,3 +1862,38 @@ test('★★ 이미 [] 가 들어간 기기를 부팅 때 바로잡는다', () =
   const seg = source.slice(i - 200, i + 60);
   assert.match(seg, /var o=get\('profile_info'\)/, '먼저 읽고 배열일 때만 바로잡습니다');
 });
+
+/* ===== ★★ 원본 비교 화면을 «모든 화면에서 같게» (2026-08-30) ===== */
+
+test('★★ 원본이 있으면 어느 화면이든 좌우 비교로 열린다 — 부르는 쪽에 맡기지 않는다', () => {
+  // 전에는 openEditDrawer 로 «켜 준» 화면만 비교가 떴다. 신분증·계좌·사용자 정의 화면은
+  // 원본이 붙어 있어도 좁은 창만 나왔다(대표 지적 2026-08-30).
+  const fn = funcSource('openForm');
+  assert.match(fn, /if\(showPrev!==false\) showPrev = !!\(editId && fileExists\(editId\)\)/,
+    '⚠ 부르는 쪽에 맡기면 화면마다 달라집니다');
+  assert.match(fn, /classList\.toggle\('as-drawer', !!showPrev\)/, '모양도 같아야 합니다');
+  // 옛 이름은 그냥 넘긴다
+  assert.match(funcSource('openEditDrawer'), /openForm\(page,id\)/);
+});
+
+test('★★ 실적·강의·비용 화면에도 OCR 프롬프트가 있다 — 없으면 「지원하지 않습니다」가 뜬다', () => {
+  ['consult', 'case', 'fund', 'etc', 'lecture', 'meetfee', 'etcfee'].forEach((p) => {
+    assert.ok(source.indexOf('\n  ' + p + ": '") > 0, p + ' 프롬프트가 있어야 합니다');
+  });
+  // ⚠ 실적은 수행기관과 고객사가 바뀌면 내·외부 구분이 어긋난다
+  // ⚠ '  certdoc:' 은 DOMAINS 에도 있어 파일 «앞쪽»에서 먼저 잡힌다 — 표 안에서만 찾는다
+  const at = source.indexOf('const PAGE_OCR_PROMPT={');
+  const seg = source.slice(at, source.indexOf('  certdoc:', at));
+  assert.match(seg, /기관과 고객사를 혼동하지 마세요/);
+  assert.match(seg, /금액은 «총액»을 적으세요/, '영수증은 총액을 집어야 합니다');
+});
+
+test('★★ 읽어 놓고 버리지 않는다 — 다시읽기가 실적·비용 칸도 채운다', () => {
+  // ⚠ async function 이라 funcSource 로 못 잡는다 — 이름부터 다음 함수까지를 직접 자른다
+  const rs = source.indexOf('async function reOcrForm(');
+  const r = source.slice(rs, source.indexOf('\nfunction ', rs));
+  ['project', 'agency', 'main', 'type', 'status', 'amt', 'topic', 'duration',
+    'participants', 'speaker', 'content'].forEach((k) => {
+    assert.ok(r.indexOf("setF('" + k + "'") > 0, k + ' 칸을 채워야 합니다');
+  });
+});

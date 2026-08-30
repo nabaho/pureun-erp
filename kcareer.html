@@ -4908,7 +4908,11 @@ const FORM_DEFS={
 };
 let _formCtx=null;
 function autoDate(el){ let x=el.value.replace(/[^0-9]/g,''); if(x.length>=5)x=x.slice(0,4)+'.'+x.slice(4); if(x.length>=8)x=x.slice(0,7)+'.'+x.slice(7); el.value=x.slice(0,10); }
+/* ★ 원본이 붙어 있으면 «어느 화면이든» 왼쪽에 원본, 오른쪽에 입력칸을 나란히 편다.
+   ⚠ 부르는 쪽에 맡기지 말 것 — 화면마다 달라져서 「위촉장만 되고 나머지는 안 된다」가 됐다.
+      showPrev 를 «명시적으로 false» 로 넘긴 곳(옆 미리보기를 이미 띄워 둔 자리)만 뺀다. */
 function openForm(page,editId,showPrev){ const def=FORM_DEFS[page]; if(!def) return; _formCtx={page,editId};
+  if(showPrev!==false) showPrev = !!(editId && fileExists(editId));
   const rec=editId?get(def.store).find(r=>r.id===editId)||{}:{};
   $('modalTitle').textContent=(editId?'수정: ':'새 등록: ')+def.title;
   const fields='<div class="field-grid">'+def.fields.map(f=>{
@@ -4941,11 +4945,14 @@ function openForm(page,editId,showPrev){ const def=FORM_DEFS[page]; if(!def) ret
     $('modalBody').innerHTML='<div class="form-split"><div class="fs-prev"><div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">첨부 원본 <span style="margin-left:auto;display:flex;gap:6px"><button type="button" class="btn sm" onclick="reOcrForm()">🔍 다시 읽기(OCR)</button><button type="button" class="btn sm" onclick="extractTextForm()">📄 원문 텍스트</button></span></div><div id="fsPrevBox"><div style="text-align:center;padding:30px;color:#94a3b8">⏳ 원본 로딩 중...</div></div><div id="fsTextBox" style="margin-top:8px"></div></div><div class="fs-form">'+fields+'</div></div>';
     if(modal) modal.classList.add('wide'); _renderFormPreview(editId);
   } else { $('modalBody').innerHTML=fields; if(modal) modal.classList.remove('wide'); }
-  $('modalForm').classList.add('open');
+  /* 모양도 같게 — 비교 화면이면 늘 좌우로 편다(as-drawer). 화면마다 다르면 안 된다. */
+  var _ov=$('modalForm'); if(_ov) _ov.classList.toggle('as-drawer', !!showPrev);
+  _ov.classList.add('open');
   var _arSel=document.getElementById('ff-acct'); if(_arSel) checkTongjang(_arSel.value);
 }
 function closeForm(){ const ov=$('modalForm'); ov.classList.remove('open'); ov.classList.remove('as-drawer'); _formCtx=null; unpinSidePreview(); }
-function openEditDrawer(page,id){ openForm(page,id,true); const ov=document.getElementById('modalForm'); if(ov) ov.classList.add('as-drawer'); }
+/* 옛 이름 — 이제 openForm 이 스스로 판단하므로 그냥 넘긴다 */
+function openEditDrawer(page,id){ openForm(page,id); }
 /* 편집창에서 첨부 원본을 다시 OCR로 읽어 폼 채우기 (파일명으로만 등록된 기존 기록 보정) */
 async function reOcrForm(){
   if(!_formCtx || !_formCtx.editId){ toast('저장된 항목에서 열어야 다시 읽기가 됩니다'); return; }
@@ -4966,6 +4973,11 @@ async function reOcrForm(){
   var setF=function(key,val){ if(val==null||val==='') return; var el=document.getElementById('ff-'+key); if(el) el.value=val; };
   setF('org',parsed.org); setF('issuer',parsed.issuer); setF('titleVal',parsed.titleVal||parsed.title); setF('issueDate',parsed.issueDate||parsed.date);
   setF('note',parsed.note); setF('num',parsed.num); setF('school',parsed.school); setF('degree',parsed.degree); setF('graduated',parsed.graduated); setF('date',parsed.date);
+  /* 실적·강의·비용 칸도 채운다 — 프롬프트만 있고 여기 없으면 읽어 놓고 «버린다» */
+  setF('project',parsed.project); setF('agency',parsed.agency); setF('main',parsed.main);
+  setF('type',parsed.type); setF('status',parsed.status); setF('amt',parsed.amt);
+  setF('topic',parsed.topic); setF('duration',parsed.duration); setF('participants',parsed.participants);
+  setF('speaker',parsed.speaker); setF('content',parsed.content);
   setF('bank',parsed.bank); setF('number',parsed.number); setF('holder',parsed.holder); setF('name',parsed.name); setF('kind',parsed.kind); setF('expiry',parsed.expiry); setF('memo',parsed.memo);
   if(parsed.period){ var pm=String(parsed.period).split(/~|—|-(?=\s*\d)/); var s=(pm[0]||'').trim(), e=(pm[1]||'').trim();
     var es=document.getElementById('ff-periodStart'), ee=document.getElementById('ff-periodEnd'); if(es&&s) es.value=s; if(ee&&e) ee.value=e; }
@@ -5729,6 +5741,37 @@ async function _geminiOCR(prompt,b64,mt){ if(!aiReady()) return null;
     var m=raw.match(/\{[\s\S]*\}/); return m?{parsed:JSON.parse(m[0])}:null;
   }catch(e){ console.warn('Gemini',e); return (e&&e.status)?{err:'Gemini '+e.status}:null; } }
 const PAGE_OCR_PROMPT={
+  /* ── 실적 네 화면(컨설팅·사건·기금·기타) ──
+     ⚠ 수행기관(agency)과 고객사(org)를 바꾸지 말 것 — 바뀌면 내·외부 구분이 어긋난다. */
+  consult: '이 문서에서 컨설팅 수행 내역을 읽어 JSON 으로만 답하세요.\n'
+    +'{"org":"컨설팅을 받은 고객사·사업장","project":"과제·사업명","agency":"주관·발주 기관(없으면 빈칸)",'
+    +'"main":"담당자 이름","year":"YYYY","type":"유형","amt":"금액(숫자만, 없으면 빈칸)","note":"비고"}\n'
+    +'모르는 값은 빈 문자열로 두세요. 지어내지 마세요. 기관과 고객사를 혼동하지 마세요.',
+  case: '이 문서에서 사건 수행 내역을 읽어 JSON 으로만 답하세요.\n'
+    +'{"org":"의뢰인·사업장","project":"사건 내용","type":"사건 유형(부당해고·임금체불 등)",'
+    +'"agency":"수행기관(없으면 빈칸)","main":"담당자","year":"YYYY","status":"진행|완료","amt":"금액","note":"비고"}\n'
+    +'모르는 값은 빈 문자열로 두세요. 지어내지 마세요.',
+  fund: '이 문서에서 기금 관련 수행 내역을 읽어 JSON 으로만 답하세요.\n'
+    +'{"org":"기업·기금명","project":"내용(설립·관리 등)","agency":"수행기관(없으면 빈칸)",'
+    +'"main":"담당자","year":"YYYY","status":"진행|완료","amt":"금액","note":"비고"}\n'
+    +'모르는 값은 빈 문자열로 두세요. 지어내지 마세요.',
+  etc: '이 문서에서 수행 내역을 읽어 JSON 으로만 답하세요.\n'
+    +'{"org":"기관·고객","project":"내용","type":"유형","agency":"수행기관(없으면 빈칸)",'
+    +'"main":"담당자","year":"YYYY","amt":"금액","note":"비고"}\n'
+    +'모르는 값은 빈 문자열로 두세요. 지어내지 마세요.',
+  lecture: '이 문서(강의계획서·확인서·위촉장)에서 강의 내역을 읽어 JSON 으로만 답하세요.\n'
+    +'{"topic":"강의 주제","org":"주관기관","date":"YYYY.MM.DD","duration":"시간(숫자만)",'
+    +'"participants":"인원(숫자만)","speaker":"강사 이름","year":"YYYY","note":"비고"}\n'
+    +'모르는 값은 빈 문자열로 두세요. 지어내지 마세요.',
+  /* ── 회의·강의비 / 기타비용 — 영수증·청구서 ── */
+  meetfee: '이 영수증·청구서에서 비용 내역을 읽어 JSON 으로만 답하세요.\n'
+    +'{"date":"YYYY.MM.DD","type":"구분(회의비·강의료·교통비 등)","content":"내용·사유",'
+    +'"amt":"금액(숫자만, 쉼표 없이)","org":"지출처·수령인"}\n'
+    +'모르는 값은 빈 문자열로 두세요. 금액은 «총액»을 적으세요. 지어내지 마세요.',
+  etcfee: '이 영수증·청구서에서 비용 내역을 읽어 JSON 으로만 답하세요.\n'
+    +'{"date":"YYYY.MM.DD","type":"구분","content":"내용·사유",'
+    +'"amt":"금액(숫자만, 쉼표 없이)","org":"지출처·수령인"}\n'
+    +'모르는 값은 빈 문자열로 두세요. 금액은 «총액»을 적으세요. 지어내지 마세요.',
   /* 외부기관 실적 — 확인서·참여명단·계약서에서 「누가 발주했고 어느 회사를 봐 줬는가」를 읽는다.
      ⚠ 수행기관(agency)과 고객사(org)를 «절대 바꾸지 말 것» — 바뀌면 묶음이 통째로 어긋난다.
         수행기관 = 사업을 주관·발주한 곳(진흥원·협회 등), 고객사 = 컨설팅을 받은 회사. */
