@@ -781,6 +781,19 @@ table.sbox tr.bad td{background:#fdf4f4}
 .dm-size{height:32px;margin-left:8px;border:1px solid #d8d8d8;border-radius:4px;background:#fff;
   font-family:inherit;font-size:13px;color:#333;padding:0 6px;cursor:pointer}
 .dm-size:hover{background:#f7f8fa}
+/* ══ 새 담당자 등록 창 (대표 물음 2026-08-30) ══
+   ⚠ 점검 창(.mck)과 «같은 벌»을 쓴다 — 창을 두 벌로 그리면 언젠가 한쪽만 고쳐진다. */
+.mnc-r{display:flex;align-items:center;gap:12px;padding:7px 0;border-bottom:1px solid #f0f2f5}
+.mnc-r .k{flex:0 0 96px;font-size:13px;color:#33415e}
+.mnc-r .v{flex:1;min-width:0;font-size:13.5px}
+.mnc-r .v input{width:100%;border:none;border-bottom:1px solid #dde3ee;padding:5px 2px;
+  font:inherit;background:none;outline:none}
+.mnc-p-wrap{display:flex;gap:8px;margin:14px 0 2px;flex-wrap:wrap}
+.mnc-p{display:flex;align-items:center;gap:7px;border:1px solid #e3e6eb;border-radius:9px;
+  padding:9px 12px;font-size:13px;cursor:pointer;background:#fff;flex:1;min-width:240px}
+.mnc-p.on{border-color:#c5d8f5;background:#eef3fb}
+.mnc-p small{display:block;color:#6b7280;font-size:11.5px;margin-top:2px}
+.mnc-none{margin:14px 0 2px;font-size:12.5px;color:#6b7280}
 /* ══ 메일함 점검 창 (대표 지시 2026-08-30 「이상한 부분이 있으면 팝업형태로」) ══
    ⚠ 이름을 .dm- 집안으로 두지 «않는다». 이것은 옆줄이 아니라 «팝업»이라,
      옆줄 색을 지키는 검사(mail-dash-unify)와 헛부딪힌다 — 실제로 부딪혔다.
@@ -13016,7 +13029,7 @@ function mbRuleBinOf(v){
   const one = m[mbWhoKey(em)];
   if(one && mbBinBy(one)) return String(one);
   const d = mbDomOf(em);
-  if(d && MB_PUB_DOM.indexOf(d) < 0){
+  if(d){
     const dd = m[mbWhoKey('@' + d)];
     if(dd && mbBinBy(dd)) return String(dd);
   }
@@ -16635,7 +16648,8 @@ function mbListHtml(){
          예전에는 「이전 메일 더 보기」 단추 하나였다. 몇 쪽인지도, 지금 몇 쪽인지도
          알 수 없어 「다음 개수를 볼 수 없다」고 하셨다. */''}
     ${mbPagerHtml()}
-    ${mbCheckHtml()}`;
+    ${mbCheckHtml()}
+    ${mbNewHtml()}`;
 }
 
 /* ── 방향키로 이동 · 스페이스로 선택 ──
@@ -16912,6 +16926,213 @@ function taxSkipAdd(email){
 
 /* 이 메일이 «어느 업체의 세무사무실»에서 온 것인가.
    반환: null | {kind:'known', cos:[rec…]} | {kind:'ask', co:rec} */
+/* ══════════════════════════════════════════════════════════════════════════
+   거래처 담당자가 바뀌었을 때 — 메일에서 바로 정리 (대표 물음 2026-08-30)
+   ══════════════════════════════════════════════════════════════════════════
+   "직원의 메일인데 거래처에서 담당자가 바뀌어서 새로운 메일로 자료가 왔거나,
+    추가 담당자가 생겨 메일이 오면, 그 메일을 체크해서 기업정보함에 정리 보관시키고
+    업무관리·급여데이터함에 자동으로 연결시킬 수 있나?"
+
+   ★ 새로 만드는 것은 «이 한 자리»뿐이다. 주소가 업체 담당자 칸에 들어가는 순간부터
+     나머지는 저절로 이어진다 —
+       · 메일함 담당자 : mbWhoIndex 가 이미 co.contacts[].email 을 본다
+       · 급여데이터함 : 서버가 업체 기록을 네 겹까지 훑어 주소를 모은다(collectEmails).
+         그래서 «아는 주소»가 되어 첨부가 공용 대기 칸이 아니라 그 업체 주담당 자리로 간다
+       · 업무관리   : 업무는 «업체»가 단위(co_id)라 업체가 이어지면 함께 이어진다
+   ★ 쓰는 길도 새로 짓지 않는다 — 세무사무실 담당자를 푸른이알피 업체 기록에 적는
+     길(taxSaveDo)이 이미 있다. 같은 원칙으로 쓴다: «빈 칸만 채우고, 있는 값은 안 덮는다».
+
+   ⚠ 짚는 법은 둘이다(대표 결정 2026-08-30 「둘 다」).
+     ⓐ 도메인이 그 업체 주소와 같다  ⓑ 제목·본문·서명에 업체 이름이 보인다
+     무료메일(naver·gmail…)은 ⓐ로 못 짚는다 — 하나를 이으면 온 세상이 한 회사가 된다.
+   ⚠ 등록은 «직원 누구나» 한다(대표 결정). 빈 칸만 채우고 전임자를 안 지우므로 되돌릴 수 있다.
+   ⚠ 우리 직원 주소는 묻지 않는다. 이미 담당자가 잡힌 주소도 묻지 않는다. */
+let _mbNewSkip = null;      /* 「아니오」 한 주소 */
+function mbNewSkipSet(){
+  if(_mbNewSkip) return _mbNewSkip;
+  _mbNewSkip = {};
+  if(typeof Store!=='undefined' && Store.mode==='firebase'){
+    firebase.database().ref(DB_ROOT+'/config/mailNewSkip').once('value')
+      .then(s=>{ _mbNewSkip = s.val()||{}; renderMailPage(); }).catch(()=>{});
+  }
+  return _mbNewSkip;
+}
+function mbNewNo(email){
+  const k = mbWhoKey(email);
+  mbNewSkipSet()[k] = 1;
+  if(typeof Store!=='undefined' && Store.mode==='firebase')
+    firebase.database().ref(DB_ROOT+'/config/mailNewSkip/'+k).set(1).catch(()=>{});
+  toast('이 주소는 다시 묻지 않습니다');
+  renderMailPage();
+}
+
+/* 이 주소가 «어느 업체의 새 담당자»로 보이나 — 아니면 빈 값 */
+function mbNewCoHint(v){
+  if(typeof ErpMatch==='undefined' || !ErpMatch.ready) return null;
+  const em = String((v&&v.e)||'').trim().toLowerCase();
+  if(em.indexOf('@') < 1) return null;
+  if(ErpMatch.nameByEmail && ErpMatch.nameByEmail[em]) return null;   /* 우리 직원 */
+  if(mbNewSkipSet()[mbWhoKey(em)]) return null;                       /* 「아니오」 했다 */
+  /* 이미 어느 업체에 이어진 주소면 물을 것이 없다 */
+  const idx = mbWhoIndex();
+  if(idx.coAddr[em]) return null;
+  if((_mbOwner||{})[mbWhoKey(em)]) return null;                       /* 사람이 이미 정했다 */
+  if(typeof mbCoOf === 'function' && mbCoOf(em)) return null;          /* 자문사 이메일 잇기로 이었다 */
+
+  const cos = ErpMatch.companies || [];
+  const d = mbDomOf(em);
+  /* ⓐ 도메인으로 — 그 업체에 이미 적힌 주소와 «도메인이 같다» */
+  if(d && MB_PUB_DOM.indexOf(d) < 0){
+    for(let i=0;i<cos.length;i++){
+      const co = cos[i]; if(!co) continue;
+      const list = [co.email, co.primaryContactEmail]
+        .concat((co.contacts||[]).map(c=>c && c.email));
+      for(let k=0;k<list.length;k++){
+        const e2 = String(list[k]||'').trim().toLowerCase();
+        if(e2 && e2 !== em && mbDomOf(e2) === d)
+          return { co:co, why:'도메인', dom:d };
+      }
+    }
+  }
+  /* ⓑ 제목·본문·서명에 «업체 이름»이 보인다
+     ⚠ 짧은 이름은 아무 데나 걸린다 — 네 글자 이상만 본다(세무사무실 물음과 같은 잣대). */
+  const o = state.mbOpen || {};
+  const hay = (String(v.s||'') + ' ' + String(v.f||'') + ' ' + String(o.text||'')).slice(0, 4000);
+  if(hay.trim()){
+    for(let i=0;i<cos.length;i++){
+      const co = cos[i];
+      const nm = String((co && co.name) || '').trim();
+      if(nm.length < 4) continue;
+      if(hay.indexOf(nm) >= 0) return { co:co, why:'이름', dom:d };
+    }
+  }
+  return null;
+}
+
+/* 메일 위에 붙는 띠 */
+function mbNewStripHtml(v){
+  const h = mbNewCoHint(v);
+  if(!h) return '';
+  const em = esc(String(v.e||''));
+  const why = h.why === '도메인'
+    ? `도메인 <b>${esc(h.dom)}</b> 은 <b>${esc(h.co.name)}</b> 의 것입니다`
+    : `본문에 <b>${esc(h.co.name)}</b> 이(가) 보입니다`;
+  return `<div class="tax-strip ask">
+    <span>❓ <b>처음 보는 주소</b>입니다 — ${why}. 그 업체 담당자로 등록할까요?</span>
+    <span style="flex:1"></span>
+    <button class="tax-b a" onclick="mbNewOpen('${em}','${esc(h.co.id||'')}')">등록</button>
+    <button class="tax-b n" onclick="mbNewNo('${em}')">아니오</button>
+  </div>`;
+}
+
+/* 등록 창 — 빈 칸만 채운다 */
+function mbNewOpen(email, coId){
+  const co = (ErpMatch.companies||[]).filter(c=>c && String(c.id)===String(coId))[0];
+  if(!co) return toast('그 업체를 찾지 못했습니다');
+  const v = mbOneRow((state.mbOpen||{}).slug, (state.mbOpen||{}).uid) || {};
+  state.mbNew = { email:String(email||'').toLowerCase(), coId:String(co.id),
+    coName:String(co.name||''), name:String(v.f||''), role:'', phone:'', mode:'replace' };
+  renderMailPage();
+}
+function mbNewClose(){ state.mbNew = null; renderMailPage(); }
+function mbNewSet(k, val){ if(state.mbNew) state.mbNew[k] = val; }
+function mbNewMode(m){ if(state.mbNew){ state.mbNew.mode = m; renderMailPage(); } }
+
+function mbNewHtml(){
+  const t = state.mbNew; if(!t) return '';
+  const co = (ErpMatch.companies||[]).filter(c=>c && String(c.id)===String(t.coId))[0] || {};
+  const cur = (co.contacts||[]).filter(c=>c && String(c.email||'').trim() && !c.left);
+  const pick = (m, ttl, sub)=>`<label class="mnc-p ${t.mode===m?'on':''}" onclick="mbNewMode('${m}')">
+    <input type="radio" ${t.mode===m?'checked':''}><span><b>${ttl}</b><small>${sub}</small></span></label>`;
+  return `<div class="mck-dim" onclick="if(event.target===this)mbNewClose()">
+    <div class="mck" style="max-width:640px">
+      <header><span>🏢</span><h2>${esc(t.coName)} 담당자로 등록</h2>
+        <span class="x" onclick="mbNewClose()" title="닫기">✕</span></header>
+      <div class="body">
+        <div class="mnc-r"><span class="k">이메일</span><span class="v"><b>${esc(t.email)}</b></span></div>
+        <div class="mnc-r"><span class="k">이름</span><span class="v">
+          <input value="${esc(t.name)}" oninput="mbNewSet('name',this.value)" placeholder="보낸 사람 이름"></span></div>
+        <div class="mnc-r"><span class="k">직위</span><span class="v">
+          <input value="${esc(t.role)}" oninput="mbNewSet('role',this.value)" placeholder="대리 · 과장 …"></span></div>
+        <div class="mnc-r"><span class="k">연락처</span><span class="v">
+          <input value="${esc(t.phone)}" oninput="mbNewSet('phone',this.value)" placeholder="필요할 때만"></span></div>
+        ${cur.length ? `<div class="mnc-p-wrap">
+          ${pick('replace', '이분으로 바뀌었습니다',
+              '전임 <b>' + esc(cur.map(c=>c.name||c.email).slice(0,2).join(' · ')) + '</b> 님은 「자리를 떠남」으로 표시합니다 — 지우지 않습니다')}
+          ${pick('add', '담당자가 늘었습니다',
+              '전임 분도 그대로 두고 두 분 다 담당자로 둡니다')}
+        </div>` : `<div class="mnc-none">이 업체에는 아직 적힌 담당자가 없습니다 — 이분이 첫 담당자가 됩니다.</div>`}
+      </div>
+      <footer><span style="font-size:12.5px;color:#6b7280">⚠ 이미 적힌 값은 안 덮습니다 — 빈 칸만 채웁니다</span>
+        <span class="sp"></span>
+        <button onclick="mbNewClose()">취소</button>
+        <button class="pri" onclick="mbNewSave()">등록하기</button></footer>
+    </div></div>`;
+}
+
+/* 푸른이알피 업체 기록에 적는다 — 세무사무실 저장(taxSaveDo)과 «같은 길»이다.
+   ⚠ 빈 칸만 채운다. 사람이 업체관리에서 고쳐 둔 것을 메일 한 통이 조용히 지우면 안 된다.
+   ⚠ 전임자를 «지우지 않는다» — left 표만 붙인다. 지우면 지난 메일이 담당 모름으로 쏟아진다. */
+async function mbNewSave(){
+  const t = state.mbNew; if(!t) return;
+  const u = firebase.auth().currentUser;
+  if(!u) return toast('로그인이 필요합니다');
+  const em = String(t.email||'').toLowerCase();
+  if(em.indexOf('@') < 1) return toast('이메일이 이상합니다');
+  try{
+    const db = firebase.database();
+    const snap = await db.ref('data/companies').once('value');
+    const wrap = snap.val();
+    const rawv = (wrap && wrap.v !== undefined) ? wrap.v : wrap;
+    const isObj = rawv && !Array.isArray(rawv) && typeof rawv === 'object';
+    const list = Array.isArray(rawv) ? rawv.filter(Boolean)
+               : (isObj ? Object.keys(rawv).map(k=>rawv[k]).filter(Boolean) : []);
+    const cur = list.filter(c=>c && String(c.id)===String(t.coId))[0];
+    if(!cur) return toast('그 업체를 찾지 못했습니다 — 새로고침 후 다시');
+
+    const arr = (cur.contacts||[]).map(c=>Object.assign({}, c));
+    const has = arr.filter(c=>String(c.email||'').trim().toLowerCase()===em)[0];
+    if(has) return toast('이미 그 업체 담당자로 적혀 있습니다', 7000);
+    /* 바뀐 것이면 전임자에게 «떠났다» 표를 붙인다 */
+    let leftN = 0;
+    if(t.mode === 'replace'){
+      arr.forEach(c=>{ if(String(c.email||'').trim() && !c.left){ c.left = true;
+        c.leftAt = Date.now(); leftN++; } });
+    }
+    arr.push({ id:'mc-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+      name:String(t.name||'').trim(), role:String(t.role||'').trim(),
+      phone:String(t.phone||'').trim(), bizPhone:'', fax:'', email:em,
+      isPrimary: (t.mode === 'replace' || !arr.filter(c=>c.isPrimary && !c.left).length) });
+    /* 대표 담당자 거울 칸 — «빈 칸만» 채운다 */
+    const blank = x => x===undefined || x===null || String(x).trim()==='';
+    const patch = { contacts:arr, updatedAt:Date.now() };
+    if(t.mode === 'replace' || blank(cur.primaryContactEmail)){
+      patch.primaryContactEmail = em;
+      if(String(t.name||'').trim()) patch.primaryContactName = String(t.name).trim();
+      if(String(t.phone||'').trim() && blank(cur.primaryContactPhone))
+        patch.primaryContactPhone = String(t.phone).trim();
+    }
+    const merged = Object.assign({}, cur, patch);
+    const up = {};
+    if(isObj) up['data/companies/v/' + cur.id] = merged;
+    else {
+      const i = list.indexOf(cur);
+      up['data/companies/v/' + i] = merged;
+    }
+    await db.ref().update(up);
+    state.mbNew = null;
+    /* 표를 다시 만들게 한다 — 안 그러면 방금 등록한 담당자가 화면에 안 잡힌다 */
+    mbWhoBust(); mbCardsRevBump();
+    if(typeof ErpMatch!=='undefined' && ErpMatch.load) ErpMatch.load();
+    renderPCSide(); renderMailPage();
+    toast('🏢 「' + t.coName + '」 담당자로 등록했습니다'
+      + (leftN ? ' · 전임 ' + leftN + '분은 「자리를 떠남」으로 표시' : '')
+      + ' — 이 주소 메일이 이제 그 업체 담당자에게 갑니다', 10000);
+  }catch(e){
+    toast('등록하지 못했습니다 — ' + ((e&&e.message)||e), 9000);
+  }
+}
+
 function taxHintFor(email, name, subject, body){
   if(!ErpMatch.ready) return null;
   const e = String(email||'').trim().toLowerCase();
@@ -17147,6 +17368,11 @@ function mbReadHtml(){
     </div>
     ${/* 🧾 세무사무실 띠 — 아는 주소면 「누구의 세무사무실인지」, 모르는 주소면 「등록할까요」
           (대표 승인 2026-08-28). 본문을 봐야 하므로 본문을 가져온 뒤에만 뜬다. */''}
+    ${/* ── 새 담당자 물음 (대표 물음 2026-08-30) ──
+         세무사무실 띠 «위»에 둔다 — 담당자가 바뀐 것이 더 자주 있는 일이라
+         먼저 눈에 들어와야 한다. 둘이 함께 뜰 일은 거의 없다(둘 다 «모르는
+         주소»일 때만 뜨는데, 세무사무실 물음은 본문에 업체 이름이 있을 때뿐이다). */''}
+    ${mbNewStripHtml(v)}
     ${taxStripHtml(v)}
     ${/* ── 첨부 (대표 결정 2026-08-30 「자료를 다른 앱으로 바로」) ──
          내려받기 옆에 «급여데이터함으로»를 나란히 둔다. 예전에는 내려받아 →
