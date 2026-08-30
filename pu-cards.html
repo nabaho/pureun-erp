@@ -16601,10 +16601,11 @@ function mbOneRow(slug, uid){
 }
 function mbForwardOne(slug, uid){
   const v = mbOneRow(slug, uid); if(!v) return toast('그 메일을 찾지 못했습니다');
-  const head = `\n\n────────── 아래는 전달받은 메일입니다 ──────────\n`
-    + `보낸이 · ${v.f||v.e||''}\n받은 때 · ${fmtDate(v.d)}\n제목 · ${v.s||''}\n`;
-  openMailPage({ to:'', subject:'[전달] '+String(v.s||''), body:head });
-  if(Number(v.a||0)) toast('첨부는 함께 가지 않습니다 — 첨부를 내려받은 뒤 붙여 주세요', 9000);
+  /* 열어 둔 메일이면 첨부 목록을 «이미» 손에 들고 있다 — 다시 안 묻는다 */
+  const o = state.mbOpen || {};
+  const have = (String(o.slug||'')===String(slug) && String(o.uid||'')===String(uid))
+    ? (o.atts||null) : null;
+  mbFwdGo(v, slug, uid, have);
 }
 function mbTrashOne(slug, uid){
   const v = mbOneRow(slug, uid); if(!v) return toast('그 메일을 찾지 못했습니다');
@@ -17216,14 +17217,78 @@ function mbPicked(){
   const i = Number(state.mbCursor);
   return (Number.isInteger(i) && i>=0 && i<rows.length) ? [rows[i]] : [];
 }
+/* ══════════════════════════════════════════════════════════════════════════
+   전달할 때 첨부도 «함께» (대표 결정 2026-08-30)
+   ══════════════════════════════════════════════════════════════════════════
+   여태 「첨부는 함께 가지 않습니다 — 내려받은 뒤 붙여 주세요」로 알리고 말았다.
+   급여자료·계약서를 전달하는 일이 하루에도 여러 번인데, 그때마다 열고→내려받고→
+   찾아 붙이는 세 걸음이 더 있었다.
+
+   ★ 새로 만드는 창구가 «없다». 첨부를 읽는 길(readMailAttachment)과 붙이는 자리
+     (_compose.files)가 이미 있었는데 이어져 있지 않았을 뿐이다.
+   ⚠ 한 개씩 차례로 가져온다. 한꺼번에 부르면 큰 첨부 여럿에서 서버가 막힌다.
+   ⚠ 8MB 넘는 것은 «건너뛰고 말해 준다». 조용히 빠뜨리면 「보냈는데 없다」가 된다 —
+     보낸 뒤에는 되돌릴 수 없는 종류의 잘못이다.
+   ⚠ 못 가져온 것이 하나라도 있으면 그것도 말한다. 「다 붙었겠지」로 두면 안 된다. */
+function mbFwdAtts(slug, uid, atts){
+  const list = (atts||[]).slice(0, 20);          /* 스무 개면 충분하다 — 그 이상은 사람이 고른다 */
+  if(!list.length) return Promise.resolve({ n:0, big:[], bad:[] });
+  const u = firebase.auth().currentUser;
+  if(!u) return Promise.reject(new Error('로그인이 필요합니다'));
+  const big = [], bad = [];
+  let n = 0;
+  return u.getIdToken().then(tok=>{
+    /* 차례로 — reduce 로 약속을 이어 붙인다 */
+    return list.reduce((p, a, i)=>p.then(()=>{
+      if(Number(a.size||0) > 8*1024*1024){ big.push(String(a.name||'첨부')); return; }
+      return fetch(MB_FN+'readMailAttachment', { method:'POST',
+        headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
+        body: JSON.stringify({ slug:slug, uid:String(uid), index:i, part:String(a.part||'') }) })
+        .then(r=>r.json().catch(()=>({})))
+        .then(j=>{
+          if(!j.ok) throw new Error(j.error||'못 가져왔습니다');
+          const mime = j.mime || 'application/octet-stream';
+          _compose = _compose || {};
+          _compose.files = _compose.files || [];
+          _compose.files.push({ name: j.name || a.name || '첨부',
+            size: Number(a.size||0), dataUrl: 'data:' + mime + ';base64,' + (j.b64||'') });
+          n++;
+        })
+        .catch(()=>{ bad.push(String(a.name||'첨부')); });
+    }), Promise.resolve()).then(()=>({ n:n, big:big, bad:bad }));
+  });
+}
+/* 전달 한 통 — 머리글을 붙이고, 첨부가 있으면 그것도 나른다.
+   ⚠ 화면을 «먼저» 연다. 첨부를 다 가져온 뒤에 열면 큰 첨부에서 몇 초 동안 아무 일도
+     안 일어나 「눌렀는데 안 되네」가 된다. */
+function mbFwdGo(v, slug, uid, atts0){
+  const head = `\n\n────────── 아래는 전달받은 메일입니다 ──────────\n`
+    + `보낸이 · ${v.f||v.e||''}\n받은 때 · ${fmtDate(v.d)}\n제목 · ${v.s||''}\n`;
+  openMailPage({ to:'', subject:'[전달] '+String(v.s||''), body:head });
+  if(!Number(v.a||0)) return;
+  toast('📎 첨부를 함께 가져오고 있습니다…', 4000);
+  const got = atts0 ? Promise.resolve({ atts:atts0 }) : mbFetchBody(slug, uid, true);
+  got.then(o=>mbFwdAtts(slug, uid, o.atts||[]))
+    .then(r=>{
+      redrawCompose();
+      const bits = [];
+      if(r.n) bits.push('📎 첨부 ' + r.n + '개를 함께 붙였습니다');
+      if(r.big.length) bits.push('8MB 가 넘어 못 붙인 것 — ' + r.big.join(', '));
+      if(r.bad.length) bits.push('못 가져온 것 — ' + r.bad.join(', '));
+      if(!r.n && !r.big.length && !r.bad.length) bits.push('붙일 첨부가 없습니다');
+      toast(bits.join(' · '), (r.big.length||r.bad.length) ? 12000 : 6000);
+    })
+    .catch(e=>toast('첨부를 가져오지 못했습니다 — '+((e&&e.message)||e)
+      +' · 메일을 열어 내려받은 뒤 붙여 주세요', 12000));
+}
+
 function mbForward(){
   const picked = mbPicked();
   if(picked.length>1) return toast('전달은 한 통씩 합니다 — 하나만 골라 주세요', 6000);
   const v = picked[0]; if(!v) return toast('전달할 메일을 하나 고르세요');
-  const head = `\n\n────────── 아래는 전달받은 메일입니다 ──────────\n`
-    + `보낸이 · ${v.f||v.e||''}\n받은 때 · ${fmtDate(v.d)}\n제목 · ${v.s||''}\n`;
-  openMailPage({ to:'', subject:'[전달] '+String(v.s||''), body:head });
-  if(Number(v.a||0)) toast('첨부는 함께 가지 않습니다 — 메일을 열어 첨부를 내려받은 뒤 붙여 주세요', 9000);
+  /* ⚠ 머리글 만들기와 첨부 나르기를 «한 곳»(mbFwdGo)에 둔다 — 두 벌로 두면
+       한쪽만 고쳐 「읽기 화면에서는 첨부가 가는데 목록에서는 안 간다」가 된다. */
+  mbFwdGo(v, v._slug, v.u, null);
 }
 function mbResend(){
   const picked = mbPicked();
