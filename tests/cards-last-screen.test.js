@@ -31,6 +31,9 @@ function boot(who) {
     /* 「푸른 메일」 아이콘으로 들어오면 주소가 첫 화면을 정한다 — 여기서는 보통 주소다 */
     location: { search: '' },
     state: { view: 'list', tab: 'card', mailSent: false },
+    /* 쓰다 만 편지 — 「쓰기 화면을 기억할까」를 이것으로 가른다 (2026-08-30).
+       null 이면 빈 창이라 기억하지 않는다. */
+    _compose: null,
     localStorage: {
       getItem: k => (k in store ? store[k] : null),
       setItem: (k, v) => { store[k] = String(v); }
@@ -56,7 +59,7 @@ function boot(who) {
      그것을 가르는 mailToFromUrl 이 restoreLastScreen 안에서 돌므로 함께 실어 준다. */
   ctx.URLSearchParams = URLSearchParams;
   ctx.String = String;
-  ['lastScreenKey', 'mailToFromUrl', 'urlWantsMail', 'saveLastScreen', 'restoreLastScreen']
+  ['lastScreenKey', 'mailToFromUrl', 'urlWantsMail', 'composeTouched', 'saveLastScreen', 'restoreLastScreen']
     .forEach(n => vm.runInContext(fn(n), ctx));
   return ctx;
 }
@@ -117,7 +120,8 @@ test('★ 열쇠에 계정이 들어간다', () => {
 test('★ 화면마다 제자리로 돌아온다', () => {
   const cases = [
     [{ view: 'mat' }, 'mat'],
-    [{ view: 'mail', mailSent: false }, 'mail'],
+    /* 2026-08-30 — «빈» 쓰기 화면은 메일함으로 돌아온다(아래 전용 검사 참고).
+       쓰다 만 편지가 있을 때만 쓰기로 돌아온다. */
     [{ view: 'mail', mailSent: true }, 'sent'],
     [{ view: 'mail', mailSent: 'sched' }, 'sched'],
     [{ view: 'list', tab: 'biz' }, 'tab:biz']
@@ -247,11 +251,41 @@ test('★ 메일함을 보다 나갔다 들어오면 «그 칸»으로 돌아온
     '메일함이 아니라 딴 화면이 열립니다: ' + JSON.stringify(back.opened));
 });
 
-test('쓰기 화면을 보다 나갔으면 쓰기로 돌아온다 — 예전 그대로', () => {
+/* ══════ 「누른 것도 아닌데 자꾸 메일 쓰기 창이 열린다」 (대표 2026-08-30) ══════
+   Ctrl+C(복사)가 「C = 새 메일」 단축키에 걸려 빈 편지창이 열렸다. 그 창이
+   「마지막 본 화면」으로 적혀, 그 뒤로는 «들어올 때마다» 편지 쓰기가 열렸다.
+   단축키는 mail-ctrl-key.test.js 가, 기억하는 자리는 여기가 지킨다. */
+
+test('★ «빈» 쓰기 화면은 기억하지 않는다 — 한 번 잘못 열린 창이 영영 따라오면 안 된다', () => {
   const c = boot('uid-N');
-  c.state.view = 'mail'; c.state.mailSent = false;
+  c.state.view = 'mail'; c.state.mailSent = false;   // 빈 편지창 (_compose 는 null)
+  c.state.mbBox = 'INBOX-abc12345';                  // 그 전에 보던 칸
   c.saveLastScreen();
   const back = boot('uid-N');
+  back.__store[back.lastScreenKey()] = c.__store[c.lastScreenKey()];
+  back.restoreLastScreen();
+  assert.deepEqual(back.opened, ['box:INBOX-abc12345'],
+    '빈 편지창을 기억해 들어올 때마다 쓰기가 열립니다: ' + JSON.stringify(back.opened));
+});
+
+test('★ 쓰다 «만» 편지는 예전 그대로 기억한다 — 돌아갈 자리가 진짜로 있다', () => {
+  const c = boot('uid-N2');
+  c.state.view = 'mail'; c.state.mailSent = false;
+  c._compose = { to: 'kim@example.com', base: {} };   // 받는 곳을 적어 두었다
+  c.saveLastScreen();
+  const back = boot('uid-N2');
+  back.__store[back.lastScreenKey()] = c.__store[c.lastScreenKey()];
+  back.restoreLastScreen();
+  assert.deepEqual(back.opened, ['mail'],
+    '쓰다 만 편지가 있는데 쓰기로 안 돌아옵니다: ' + JSON.stringify(back.opened));
+});
+
+test('제목·본문만 건드린 편지도 기억한다 (받는 곳이 아직 비어 있어도)', () => {
+  const c = boot('uid-N3');
+  c.state.view = 'mail'; c.state.mailSent = false;
+  c._compose = { to: '', subject: '급여자료 요청', base: { subject: '' } };
+  c.saveLastScreen();
+  const back = boot('uid-N3');
   back.__store[back.lastScreenKey()] = c.__store[c.lastScreenKey()];
   back.restoreLastScreen();
   assert.deepEqual(back.opened, ['mail']);

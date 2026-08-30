@@ -693,7 +693,11 @@ table.sbox tr.bad td{background:#f8fafc}
 /* 담당자 줄이 «자리만» 빌려 쓰는 빈 칸 — 보이지도, 눌리지도 않는다.
    ⚠ display:none 이면 자리를 안 차지해 아무 소용이 없다. visibility 여야 한다. */
 .dm-f .ghost{visibility:hidden;pointer-events:none}
-.dm-f:hover .ghost{visibility:hidden}
+/* ⚠ 「손을 얹었을 때」와 「고른 줄(.on)」을 «둘 다» 눌러야 한다.
+     .dm-f.on .fmenu 는 셈이 더 세서, 아래 .on 이 빠져 있으면 «고른 담당자 줄에만»
+     파란 ⋮ 가 떠오른다 — 눌러도 아무 일이 없는데 단추처럼 보인다
+     (대표 2026-08-30 「담당자 옆에 점 세 개 무슨 의미냐」). */
+.dm-f:hover .ghost,.dm-f.on .ghost{visibility:hidden}
 /* 손잡이는 «자리를 차지한 채» 숨는다 — 나타날 때 이름이 밀리면 안 된다.
    ⚠ 담당자 줄(whobin)도 이제 끌 수 있다(대표 지시 2026-08-29) — 두 대시보드가
      «같은 규칙»을 쓴다. 한쪽만 늘 보이게 두면 그쪽 이름만 흔들린다. */
@@ -6877,14 +6881,30 @@ function mySignHtml(){
     <p class="setnote" style="margin:8px 0 0">사진이 없는 명함을 고르면 글자 서명만 나갑니다.
       개인 폴더 명함은 쓸 수 없습니다.</p>`;
 }
+/* 「내 서명 명함」에 설 수 있는 명함인가 — 푸른노무법인 사람 것만
+   (대표 지시 2026-08-30 「여기에는 다른 사람 필요 없다. 푸른노무법인 노무사 또는
+   직원만 있으면 된다」). 거래처 명함 수천 장 속에서 내 명함을 찾아야 했다.
+   ⚠ 명부(이알피 재직자)가 «아직 안 왔으면 거르지 않는다» — 거르면 목록이 통째로
+     비고, 그 빈 목록이 그대로 굳는다(2026-08-27 에 명함으로 똑같이 겪었다).
+   ⚠ 퇴사자는 뺀다 — 내가 «지금» 보내는 메일에 붙일 서명이다. */
+function msIsOurs(it){
+  if(!mbStaffReady()) return true;
+  return !!(it && it.name && mbPickable(it.name));
+}
 /* 결과 목록만. 찾기 칸을 안 건드리므로 한글 조합이 끊기지 않는다. */
 function mySignListHtml(){
   const rec = mySign() || {};
   const q = String(_msQ||'').trim();
-  const pool = Object.values(state.items||{}).filter(it=>it && it.kind==='card' && it.id);
-  const hits = (q ? findPeople(state.items, q, 40) : pool.slice(0, 40)).filter(it=>it && it.kind==='card');
+  /* ⚠ 거르기를 «먼저» 하고 40장을 센다 — 뒤에 거르면 바깥 명함이 자리를 다 차지해
+       정작 우리 사람은 한 명도 안 나온다. */
+  const pool = Object.values(state.items||{})
+    .filter(it=>it && it.kind==='card' && it.id && msIsOurs(it));
+  const hits = (q ? findPeople(state.items, q, 0).filter(msIsOurs) : pool).slice(0, 40)
+    .filter(it=>it && it.kind==='card');
   if(!hits.length) return `<div class="cpnone" style="padding:16px 2px">${
-    q?'찾은 명함이 없습니다':'명함이 없습니다'}</div>`;
+    q ? '찾은 명함이 없습니다'
+      : (mbStaffReady() ? '푸른노무법인 사람의 명함이 아직 기업정보함에 없습니다 — 내 명함을 먼저 담아 주세요'
+                        : '명함이 없습니다')}</div>`;
   /* ⚠ «명함 그림»을 함께 보여 준다 (대표 지시 2026-08-30 「명함 화면 나오게 해라 —
        내가 보내는 것 명함 보고 보낼 수 있어야 한다」). 이름·회사 글자만으로는
        어느 명함이 나가는지 알 수 없다 — 같은 이름의 옛 명함이 여러 장 있다.
@@ -8308,8 +8328,17 @@ function saveLastScreen(){
   if(!myUid && !myEmail) return;
   /* box 는 다음메일함의 «어느 칸»인가 — 이것까지 적어야 받은메일함을 보다 나갔을 때
      받은메일함으로 돌아온다(칸만 기억하면 늘 첫 칸으로 열린다). */
-  const s = { view: state.view || 'list', tab: state.tab || 'card', mail: state.mailSent || false,
-              box: (state.mailSent === 'box' ? (state.mbBox || '') : '') };
+  /* 「쓰기」는 «자리»가 아니라 «하던 일»이다 — 빈 편지창은 기억하지 않는다.
+     ⚠ 기억하면, 한 번 잘못 열린 빈 창(Ctrl+C 오류가 그랬다) 때문에 그 뒤로
+       «들어올 때마다» 편지 쓰기가 열린다. 다른 메일 화면을 한 번 볼 때까지 안 풀린다
+       (대표 2026-08-30 「메일쓰기 누른 것도 아닌데 왜 자꾸 메일 쓰기 창으로 열리냐」).
+     ⚠ 쓰다 «만» 편지는 예전 그대로 기억한다 — 그때는 돌아갈 자리가 진짜로 있다.
+     ⚠ typeof 로 감싼다 — 이 함수만 잘라 돌리는 검사에서 _compose 가 없어도 죽지 않게. */
+  let mail = state.mailSent || false;
+  if(state.view === 'mail' && !mail
+     && !(typeof _compose !== 'undefined' && _compose && composeTouched(_compose))) mail = 'box';
+  const s = { view: state.view || 'list', tab: state.tab || 'card', mail: mail,
+              box: (mail === 'box' ? (state.mbBox || '') : '') };
   const sig = JSON.stringify(s);
   if(sig === _lastScreenSig) return;   // 바뀔 때만 적는다 — render 는 수시로 돈다
   _lastScreenSig = sig;
@@ -16990,6 +17019,13 @@ function mbKeyNav(e){
   if(state.view!=='mail') return;
   const t = e.target;
   if(t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||'') || t.isContentEditable)) return;
+  /* ⚠ Ctrl·⌘·Alt 가 눌린 것은 «우리 것이 아니다» — 브라우저·윈도우 몫이다.
+       이 줄이 없으면 Ctrl+C(복사)가 아래 「C = 새 메일」에 걸려, 목록에서 회사
+       이름 하나 복사하려다 편지 쓰기 창이 열리고 복사는 안 됐다(preventDefault).
+       그렇게 열린 빈 창이 「마지막 본 화면」으로 적혀, 그 뒤로는 들어올 때마다
+       편지 쓰기가 열렸다 (대표 2026-08-30 「누른 것도 아닌데 왜 자꾸」).
+     ⚠ Shift 는 «빼면 안 된다» — Shift+A(모두 고르기)와 ?(Shift+/)가 우리 것이다. */
+  if(e.ctrlKey || e.metaKey || e.altKey) return;
   /* ── 읽는 화면에서 되는 것 (대표 검토 2026-08-29 · 다음메일 단축키) ──
      ⚠ 다음메일도 Esc 로 목록에 돌아간다. 없으면 마우스로 「‹ 메일함」을 찾아야 한다. */
   if(state.mbOpen){
