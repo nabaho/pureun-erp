@@ -13431,7 +13431,7 @@ function mbWhoIndex(){
     if(!coAddr[em] && rec.company) coAddr[em] = String(rec.company);
     /* 푸른이알피의 업체 유형(자문·급여·노조·기금·사무대행) — 담긴 칸과 견주려고 담는다 */
     if(!typeAddr[em] && rec.type) typeAddr[em] = String(rec.type);
-    const who = rec.main ? String(rec.main) : '';
+    const who = mbPerson(rec.main);   /* ⚠ 사번이 사람 이름 자리에 굳지 않게 */
     if(!who) return;
     if(!byAddr[em]) byAddr[em] = who;
     if(!pub) (domHit[d] = domHit[d] || {})[who] = 1;
@@ -13925,6 +13925,34 @@ function mbStaffOf(name){
   const k = (typeof ErpMatch!=='undefined' && ErpMatch._norm) ? ErpMatch._norm(name) : String(name||'');
   return s[k] || null;
 }
+/* ══════════════════════════════════════════════════════════════════════════
+   사람 이름인가, 사번인가 (대표 보고 2026-08-30 「004 번호 어떻게 된 것인가」)
+   ══════════════════════════════════════════════════════════════════════════
+   ★ 무엇이 있었나 — 옆줄 담당자 칸에 「김혜민」 옆에 「P-004」가 «따로» 생겼다.
+     P-004 는 김혜민의 사번이다. 한 사람이 두 칸이 된 것이다.
+
+   ★ 왜 — 업체·사무관리 자료의 담당자는 «사번»으로 적혀 있고(P-004), 이름으로 바꾸는
+     표(ErpMatch.nameBySid)는 «늦게» 온다(data/companies 310KB 를 함께 읽는다).
+     표가 오기 «전»에 바꾸려 하면 원래 코드가 사번을 그대로 되돌려 준다
+     (nameBySid[s] || s). 그 값이 표에 굳고, 그 표는 세션 내내 산다.
+     ⚠ 저장된 자료는 «깨끗하다» — 실측 2026-08-30: 명부 32명 모두 이름이 있고,
+       회사 372곳·사무관리 99건의 담당자 사번이 «전부» 이름으로 바뀐다.
+       그래서 자료를 고칠 일이 아니라, 읽는 차례를 안 타게 만드는 일이다.
+
+   ★ 그래서 «쓰는 자리»에서 한 번 더 바꾼다. 그리는 때에는 표가 늘 와 있다.
+   ⚠ 끝내 못 바꾸면 «빈 값»을 준다. 번호를 사람인 척 보여 주는 것보다 낫다 —
+     대표께서 「004 번호 어떻게 된 것인가」로 시간을 쓰셨다.
+   ⚠ 사번 «꼴»이 아닌 것은 손대지 않는다. 사람 이름을 잘못 지우면 훨씬 나쁘다. */
+const MB_SID_RE = /^[A-Za-z]-?\d{2,4}$/;
+function mbPerson(s){
+  const n = String(s||'').trim();
+  if(!n) return '';
+  if(mbStaffOf(n)) return n;                 /* 아는 이름이면 그대로 */
+  if(!MB_SID_RE.test(n)) return n;           /* 사번 꼴이 아니면 안 건드린다 */
+  const m = (typeof ErpMatch!=='undefined' && ErpMatch.nameBySid) || {};
+  const got = String(m[n] || m[n.toUpperCase()] || '').trim();
+  return (got && got !== n) ? got : '';      /* 못 바꾸면 «없는 것»으로 */
+}
 /* 퇴사한 사람인가.
    ⚠ «휴직»은 여기 안 든다 — 돌아오는 사람이라 칸을 그대로 둔다(검사가 지킨다).
    ⚠ 명부에 «없는» 이름도 안 든다 — 모른다고 물리면 그 이름으로 잡혀 있던 메일이
@@ -14104,6 +14132,10 @@ function mbWhoOfRow(v, idx0){
 let _mbBizSubs = null;          /* {회사norm: [부담당 이름]} — 진행 중인 사무관리 건에서 */
 function mbBizSubsLoad(){
   if(_mbBizSubs !== null) return;
+  /* ⚠ 사번→이름 표가 아직 안 왔으면 «만들지 않는다» — 만들면 사번이 그대로 굳고,
+       이 표는 세션 내내 산다. ErpMatch 가 온 뒤 다시 부르면 그때 만든다. */
+  if(typeof ErpMatch==='undefined' || !ErpMatch.nameBySid ||
+     !Object.keys(ErpMatch.nameBySid).length){ setTimeout(mbBizSubsLoad, 400); return; }
   _mbBizSubs = {};
   if(typeof loadErpCaseCons !== 'function') return;
   loadErpCaseCons(function(m){
@@ -14149,7 +14181,7 @@ function mbSubsOfRow(v, idx0){
   const main = (rec && rec.main) || '';
   if(rec && !rec.left && Array.isArray(rec.subs)){
     rec.subs.forEach(s=>{
-      const n = String(s||'').trim();
+      const n = mbPerson(s);   /* ⚠ 사번이면 여기서 이름으로 — 표가 이미 와 있다 */
       if(!n || mbRetired(n)) return;
       if(n !== main && out.indexOf(n) < 0) out.push(n);
     });
@@ -14359,7 +14391,7 @@ function mbWhoList(){
        「끌리긴 하는데 안 옮겨진다」가 된다 — 고장으로 보이지도 않아 더 나쁘다. */
   const me = mbMyName();
   return Object.keys(cnt)
-    .filter(w=>!mbRetired(w))
+    .filter(w=>!mbRetired(w) && mbPerson(w) === w)   /* ⚠ 사번 칸은 안 만든다 */
     .map(w=>({ name:w, n:cnt[w]||0, un:un[w]||0, me:(!!me && w===me),
                pos:mbWhoPosOf(w), ord:mbWhoOrd(w), sid:(mbStaffOf(w)||{}).sid||'',
                title:(mbStaffOf(w)||{}).title||'' }))
