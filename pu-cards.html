@@ -2010,6 +2010,10 @@ body.pc #pcDetail{display:flex}
 #pcDetail .pdhead .ttl{font-size:13px;color:#7c89a6;font-weight:700}
 #pcDetail .pdhead .x{font-size:20px;color:#8b98b3;padding:6px 8px;border-radius:8px}
 #pcDetail .pdhead .x:hover{background:#f1f4fa}
+/* 담당 직원 — 눌러서 그 자리에서 고친다(대표 지시 2026-08-30).
+   비어 있어도 「담당 없음」으로 보인다 — 안 보이면 없는 것인지 빠뜨린 것인지 모른다. */
+#pcDetail .pdmeta .pdown{cursor:pointer;border-bottom:1px dashed #b9c4da;padding-bottom:1px}
+#pcDetail .pdmeta .pdown:hover{color:#1d4fc4;border-bottom-color:#1d4fc4}
 #pcDetail .pdbody{padding:14px 18px;flex:1}
 #pcDetail .pdphoto{width:100%;border-radius:9px;border:1px solid #e4e8f0;background:#fff;cursor:zoom-in}
 #pcDetail .pdname{font-size:18px;font-weight:800;color:#16223c;line-height:1.3}
@@ -3601,6 +3605,17 @@ ErpMatch.autoFolderFlushImpl = function(list){
   return plan.length;
 };
 function autoFolderFlush(list){ return ErpMatch.autoFolderFlushImpl(list); }
+
+/* ── 푸른 직원 이름 목록 (대표 지시 2026-08-30 「푸른직원 담당 연결」) ──
+   직원 명부(data/user_dir)는 이미 읽고 있다 — 사번→이름 표(nameBySid)가 그것이다.
+   ⚠ 새로 받아오지 않는다. 이미 손에 든 것을 이름만 뽑아 준다.
+   ⚠ 명부를 «보여 줘야» 한다. 외워 치게 하면 「박재원」과 「박 재원」이 따로 쌓여
+     담당으로 거를 때 한 사람이 둘이 된다. */
+ErpMatch.staffNames = function(){
+  const m = ErpMatch.nameBySid || {};
+  return [...new Set(Object.keys(m).map(k=>String(m[k]||'').trim()).filter(Boolean))]
+    .sort((a,b)=>a.localeCompare(b,'ko'));
+};
 
 /* ══════ 옛 명함에 박힌 썸네일을 밖으로 빼내기 (대표 지시 2026-08-16) ══════
    items 는 `.on('value')` 로 통째 구독한다. 대표 기기에서 재 보니 items 4.92MB 중
@@ -8518,6 +8533,23 @@ function thumbWatch(){
 /* 상세·수정 화면은 썸네일이 있어야 사진 자리가 만들어진다(`it.thumb ? <img> : ''`).
    목록에서 아직 안 받은 명함도 검색·바로가기로 열 수 있으므로 여기서 한 번 챙긴다.
    앞·뒷면 두 장을 한 번에 받아 두면 그 뒤 화면들은 손댈 것이 없다. */
+/* ══════ 상세에 «첫 그림»을 즉시 (대표 보고 2026-08-30 「팝업창이 늦게 나온다」) ══════
+   창은 원래 바로 그려진다. 늦는 것은 사진이었다 —
+     ① it.thumb 이 아직 undefined 면 ensureThumbs 가 서버를 한 번 더 갔다.
+        그런데 목록이 이미 그 그림을 받아 Store.thumbCache 에 쥐고 있다.
+     ② 열자마자 Store.getPhoto 로 «원본 두 장»을 무조건 받았다. 원본은 증빙용이라
+        일부러 크게 저장한 것이라(2026-08-09 에 창고로 옮긴 그것), 명함을 훑기만 해도
+        계속 내려왔다 — 느린 것도, 요금도 그 값이다.
+   ⚠ 빈 글자('')는 «사진 없는 명함»이라는 뜻이다. 없는 것과 다르다 — 되살리면
+     화면이 없는 그림을 매번 받으러 간다(photoSlot 주석과 같은 규칙). */
+function detailThumbOf(it){
+  const c = (Store && Store.thumbCache) || {};
+  const pick = (own, key) => {
+    if (own !== undefined) return own;             /* 빈 글자도 «답»이다 */
+    return c[key] !== undefined ? c[key] : '';
+  };
+  return { front: pick(it.thumb, it.id), back: pick(it.thumb2, it.id + '_b') };
+}
 function ensureThumbs(id){
   const it = state.items[id];
   if(!it || it.thumb !== undefined) return Promise.resolve(it);
@@ -9546,14 +9578,10 @@ function fillDetailPhotos(id){
   };
   if (mine('dphoto')){ put('dphoto', it.thumb); put('dphoto2', it.thumb2); }
   if (mine('pcdphoto')){ put('pcdphoto', it.thumb); put('pcdphoto2', it.thumb2); }
-  /* 흐린 썸네일에서 멈추지 않게 원본까지 이어 받는다 — 창을 열 때 도는 것과 같은 길이다.
-     ⚠ 이 줄이 없으면 사진이 흐린 채로 남는다(열 때는 thumb 이 undefined 라 그 길이 안 돌았다). */
-  ['dphoto','pcdphoto'].forEach(el=>{
-    if (it.thumb && mine(el)) Store.getPhoto(id).then(p=>{ const im=document.getElementById(el); if(p&&im&&mine(el)) im.src=p; });
-  });
-  ['dphoto2','pcdphoto2'].forEach(el=>{
-    if (it.thumb2 && mine(el)) Store.getPhoto(id+'_b').then(p=>{ const im=document.getElementById(el); if(p&&im&&mine(el)) im.src=p; });
-  });
+  /* ⚠ 여기서도 원본을 «안» 받는다 (대표 보고 2026-08-30 「팝업창이 늦게 나온다」).
+     예전에는 썸네일을 채운 뒤 곧바로 원본까지 이어 받았다. 그러면 열 때 안 받기로
+     고친 것이 이 자리에서 되살아나, 명함을 훑을 때마다 큰 사진이 계속 내려온다.
+     흐린 것이 걸리면 사진을 누르면 된다 — zoom() 이 그때 원본을 받는다. */
 }
 /* ══════ 팝업은 먼저, 사진은 나중 — 화면 ══════ */
 
@@ -9883,7 +9911,8 @@ function openDetail(id){
      팝업을 만들었다. 재 보니 팝업 만드는 데 드는 시간은 4ms 인데 서버 응답을 그대로
      기다려(350ms 면 361ms) 폰에서는 2초가 됐다.
      이름·회사·전화·이메일은 **이미 손안에 있다.** 먼저 띄우고 사진은 오면 끼워 넣는다. */
-  if (it.thumb === undefined) ensureThumbs(id).then(()=>fillDetailPhotos(id));
+  const _th = detailThumbOf(it);
+  if (it.thumb === undefined && !_th.front) ensureThumbs(id).then(()=>fillDetailPhotos(id));
   const isCard = it.kind==='card';
   const fields = isCard ? CARD_FIELDS : BIZ_FIELDS;
   const rows = fields.filter(([k])=>it[k]).map(([k,label])=>{
@@ -9908,8 +9937,8 @@ function openDetail(id){
     <div class="mhead"><b>${isCard?'명함':'사업자등록증'} <span style="font-size:12px;color:var(--sub);font-weight:400">· ${esc(gname)} · ${fmtDate(it.createdAt)} 등록</span></b>
       <div><button class="iconbtn" onclick="toggleFav('${id}')" title="즐겨찾기">${it.fav?'⭐':'☆'}</button>
       <button class="iconbtn" onclick="closeDetail()">✕</button></div></div>
-    ${ photoSlot('dphoto', it.thumb, id, 'dphoto') }
-    ${ photoSlot('dphoto2', it.thumb2, id+'_b', 'dphoto', 'margin-top:-6px') }
+    ${ photoSlot('dphoto', _th.front, id, 'dphoto') }
+    ${ photoSlot('dphoto2', _th.back, id+'_b', 'dphoto', 'margin-top:-6px') }
     <div class="dname">${esc(isCard?(it.name||it.company||'(이름 없음)'):(it.company||'(상호 없음)'))}</div>
     <div class="dsub">${esc(isCard ? [it.company,it.dept,it.title].filter(Boolean).join(' · ')
                                    : [it.ceo&&('대표자 '+it.ceo), fmtBizno(it.bizno)].filter(Boolean).join(' · '))}</div>
@@ -9930,8 +9959,8 @@ function openDetail(id){
   /* 보낸 기록은 명함을 열 때 그 명함 것만 읽는다 — 온 뒤에 그 자리만 갈아 끼운다 */
   if(!(state.priv.items||{})[id])
     loadSendLog(id, ()=>{ const box=$('dSendLog'); if(box) box.innerHTML = sendLogHtml(id); });
-  if (it.thumb) Store.getPhoto(id).then(p=>{ const im=$('dphoto'); if(p&&im) im.src=p; });
-  if (it.thumb2) Store.getPhoto(id+'_b').then(p=>{ const im=$('dphoto2'); if(p&&im) im.src=p; });
+  /* ⚠ 원본(Store.getPhoto)을 여기서 «안» 받는다 — PC 쪽과 같은 규칙(2026-08-30).
+     사진을 누르면 zoom() 이 그때 받는다. */
 }
 function toggleFav(id){ const it=state.items[id]; if(!it) return;
   it.fav=!it.fav; Store.put(it); openDetail(id);
@@ -9965,7 +9994,9 @@ function closePcDetail(){ state.coPick=''; closeDetail(); }
 function openPcDetail(id){
   const it=state.items[id]; if(!it) return;
   /* 폰과 같다 — 사진을 기다리지 않고 먼저 띄운다(대표 보고 2026-08-15) */
-  if (it.thumb === undefined) ensureThumbs(id).then(()=>fillDetailPhotos(id));
+  /* 목록이 이미 쥔 그림을 그대로 쓴다 — 첫 그림이 즉시 뜬다(대표 보고 2026-08-30) */
+  const _th = detailThumbOf(it);
+  if (it.thumb === undefined && !_th.front) ensureThumbs(id).then(()=>fillDetailPhotos(id));
   const isCard = it.kind==='card';
   const fields = isCard ? CARD_FIELDS : BIZ_FIELDS;
   /* 주소만 두 칸을 다 쓴다 — 좁은 칸에 넣으면 네 줄로 접혀 오히려 길어진다.
@@ -10006,22 +10037,29 @@ function openPcDetail(id){
   /* ── 한 화면에 담기(대표 지시 2026-08-10) ──
      사진을 위에 통째로 깔면 그것만으로 화면 반이 갔다. 이름 옆에 작게 두고,
      정보는 두 칸씩 놓고, 그룹·담당자·등록일은 이름 밑 한 줄로 올린다. */
-  const meta = [gname, it.owner||'', fmtDate(it.createdAt)].filter(Boolean).join(' · ');
+  /* ⚠ 담당이 비어 있어도 «담당 없음»으로 적는다 (대표 지시 2026-08-30).
+     안 보이면 담당이 없는 것인지 화면이 빠뜨린 것인지 알 수 없다 — 눌러서 그 자리에서
+     지정한다(askCardOwner). 예전에는 목록으로 나가 ⋯ 메뉴를 거쳐야 했다. */
+  const _own = `<span class="pdown" onclick="askCardOwner('${id}')"
+      title="이 명함을 맡을 푸른 직원을 고릅니다">👤 ${it.owner ? esc(it.owner) : '담당 없음'}</span>`;
+  const meta = [esc(gname), fmtDate(it.createdAt)].filter(Boolean).join(' · ') + ' · ' + _own;
   $('pcDetail').innerHTML = `
     <div class="pdhead"><span class="ttl">${isCard?'명함':'사업자등록증'}</span>
       <button class="x" onclick="closeDetail()">✕</button></div>
     <div class="pdbody">
       <div class="pdtop">
         <div class="pdshots">
-          ${ photoSlot('pcdphoto', it.thumb, id, 'pdphoto') }
-          ${ photoSlot('pcdphoto2', it.thumb2, id+'_b', 'pdphoto') }
+          ${ photoSlot('pcdphoto', _th.front, id, 'pdphoto') }
+          ${ photoSlot('pcdphoto2', _th.back, id+'_b', 'pdphoto') }
         </div>
         <div class="pdwho">
           <div class="pdname">${esc(isCard?(it.name||it.company||'(이름 없음)'):(it.company||'(상호 없음)'))}
             <span class="star" onclick="toggleFav('${id}')">${it.fav?'⭐':'☆'}</span></div>
           <div class="pdsub">${esc(isCard ? [it.title,it.dept,it.company].filter(Boolean).join(' / ')
                                            : [it.ceo&&('대표자 '+it.ceo), fmtBizno(it.bizno)].filter(Boolean).join(' · '))}</div>
-          <div class="pdmeta">${esc(meta)}</div>
+          ${/* ⚠ meta 안에 담당 단추가 들어 있어 여기서 esc 하지 않는다 — 조각마다
+               이미 esc 했다(2026-08-30). 통째로 esc 하면 단추가 글자로 보인다. */''}
+          <div class="pdmeta">${meta}</div>
         </div>
       </div>
       ${(function(){var f=ErpMatch.full(it);return f?`<div class="erpmgr-box">🏢 푸른 거래처 · ${esc(f)}</div>`:'';})()}
@@ -10036,8 +10074,31 @@ function openPcDetail(id){
   $('pcDetail').dataset.cardId = id;   /* 늦게 온 사진을 «이 명함» 창에만 넣으려고 */
   $('pcDetail').classList.add('open');
   const ov=$('pcDetailOverlay'); if(ov) ov.style.display='block';
-  if (it.thumb) Store.getPhoto(id).then(p=>{ const im=$('pcdphoto'); if(p&&im) im.src=p; });
-  if (it.thumb2) Store.getPhoto(id+'_b').then(p=>{ const im=$('pcdphoto2'); if(p&&im) im.src=p; });
+  /* ⚠ 원본(Store.getPhoto)을 여기서 «안» 받는다 (대표 보고 2026-08-30).
+     원본은 증빙용이라 크게 저장한 것이라, 명함을 훑기만 해도 두 장씩 계속 내려왔다.
+     사진을 누르면 zoom() 이 그때 받아 온다 — 새 길이 아니라 이미 있던 길이다. */
+}
+/* ── 팝업에서 «그 자리에서» 담당 직원 지정 (대표 지시 2026-08-30) ──
+   예전에는 목록으로 나가 여러 장을 고른 뒤 ⋯ 메뉴를 거쳐야 했다. 한 장만 바꾸려는데
+   길이 그것뿐이었다.
+   ⚠ 명부를 «보여 준다» — 외워 치면 「박재원」과 「박 재원」이 따로 쌓인다.
+   ⚠ 빈 글자를 넣으면 담당을 «뗀다». 뗄 길이 없으면 잘못 넣은 것을 못 지운다.
+   ⚠ 취소(null)와 빈 글자('')는 다르다 — 취소는 아무것도 안 쓴다. */
+function askCardOwner(id){
+  const it = state.items[id]; if(!it) return;
+  let names = [];
+  try{ names = ErpMatch.staffNames() || []; }catch(_){}
+  const list = names.length ? '\n\n푸른 직원 — ' + names.join(' · ') : '';
+  const v = prompt('이 명함을 맡을 푸른 직원을 적어 주세요.\n(비우고 확인하면 담당을 뗍니다)'
+    + list, it.owner || '');
+  if(v === null) return;                       /* 취소 — 아무것도 안 쓴다 */
+  const next = String(v).trim();
+  if(next === String(it.owner || '')) return;  /* 그대로면 서버를 안 만진다 */
+  it.owner = next;
+  Store.put(it);
+  toast(next ? `👤 담당을 「${next}」으로 바꿨습니다` : '담당을 뗐습니다', 5000);
+  render();
+  if(document.body.classList.contains('pc')) openPcDetail(id); else openDetail(id);
 }
 function delItem(id){
   if(!confirm('정말 삭제할까요? (전 직원 기업정보함에서 삭제됩니다)')) return;
