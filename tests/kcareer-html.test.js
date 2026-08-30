@@ -1518,3 +1518,54 @@ test('★ 명부 열쇠가 바뀌어도 이름 가림을 잃지 않는다', () =
   assert.match(funcSource('setStaffStatus'), /name:\(r&&r\.name\)/, '가림 기록에 이름을 남겨야 합니다');
   assert.match(funcSource('fbLoadStaff'), /_staffMigrateMeta\(roster\)/, '불러올 때 옮겨야 합니다');
 });
+
+/* ===== ★ 대표 전용 잠금 (2026-08-30) ===== */
+
+test('★ 대표가 아니면 잠긴다 — 신원을 못 알아내도 잠근다(열어 두지 않는다)', () => {
+  const st = funcSource('kcOwnerState');
+  assert.match(st, /return 'locked'/, '잠그는 갈래가 있어야 합니다');
+  // ⚠ 예전 기본값은 「모르면 전체표시」였다. 그 fail-open 을 되살리면 안 된다.
+  assert.match(st, /if\(!_me\.resolved\) return 'checking'/, '확인 중에는 섣불리 잠그지 않습니다');
+  assert.match(source, /var OWNER_SID='P-001', OWNER_NAME='권형하'/, '대표를 못박아야 합니다');
+});
+
+test('★ 대표가 스스로 잠기지 않는다 — 한 번 확인되면 그 기기에 표식', () => {
+  const st = funcSource('kcOwnerState');
+  assert.match(st, /pin===uid\) return 'owner'/, '표식이 있으면 통과해야 합니다');
+  assert.match(st, /LS\.set\(NS\+'owner_uid', uid\)/, '대표로 확인될 때 표식을 남겨야 합니다');
+  // ⚠ 표식은 «대표로 확인됐을 때만» 생겨야 한다 — 직원이 스스로 만들면 잠금이 무너진다
+  const setAt = st.indexOf("LS.set(NS+'owner_uid'");
+  const ownerAt = st.indexOf('kcIsOwnerId()');
+  assert.ok(ownerAt > 0 && ownerAt < setAt, '⚠ 대표 확인 «뒤»에만 표식을 남겨야 합니다');
+});
+
+test('★ 잠기면 어느 화면으로도 못 옮긴다', () => {
+  assert.match(funcSource('nav_to'), /kcApplyLock\(\)==='locked'\) return/,
+    '잠긴 동안에는 화면 이동을 막아야 합니다');
+  assert.match(source, /firebase\.auth\(\)\.onAuthStateChanged[\s\S]{0,200}kcApplyLock\(\)/,
+    '로그인·로그아웃 때 다시 판정해야 합니다');
+});
+
+test('★ 대표 기록(시드 185건)을 남의 브라우저에 심지 않는다', () => {
+  const ls = funcSource('loadSeed');
+  assert.match(ls, /if\(owner\) Object\.keys\(map\)/, '기록은 대표에게만 깔아야 합니다');
+  assert.match(ls, /if\(owner\) LS\.set\(NS\+'_seeded','1'\)/,
+    '⚠ 확인 전에 표시를 남기면 대표도 영영 시드를 못 받습니다');
+  // 빈 보관함 만들기는 누구에게나 — 안 하면 첫 화면이 깨진다
+  assert.match(ls, /\['license','complete'/, '빈 보관함은 갈래 밖에 있어야 합니다');
+  const gate = ls.indexOf('if(owner) Object.keys(map)');
+  const empty = ls.indexOf("['license','complete'");
+  assert.ok(empty > gate, '빈 보관함 만들기가 뒤에 와야 합니다');
+});
+
+test('★ 미로그인은 authGate 가 맡는다 — 잠금창을 둘 겹치지 않는다', () => {
+  assert.match(funcSource('kcOwnerState'), /if\(!uid\) return 'checking'/,
+    '로그인 안 된 상태는 통합 로그인 안내가 덮습니다');
+});
+
+test('★ 잠금 화면은 «왜» 잠겼는지 밝힌다 — 대표가 잠기면 고칠 수 있어야 한다', () => {
+  const a = funcSource('kcApplyLock');
+  assert.match(a, /지금 접속/, '누구로 접속했는지 보여야 합니다');
+  assert.match(a, /uid /, 'uid 를 보여야 진단할 수 있습니다');
+  assert.match(a, /fbLogout\(\)/, '다른 계정으로 바꿀 길이 있어야 합니다');
+});

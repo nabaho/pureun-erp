@@ -215,6 +215,17 @@ body{font-family:"Malgun Gothic","맑은 고딕",system-ui,sans-serif;color:var(
      일부러 그렇게 둔 것이다 — 세로로 세우면 개인정보 화면이 두 배로 길어져
      사진·도장을 보려고 매번 스크롤해야 한다(대표 지시 2026-08-29 「한 화면에」). */
 .pi-grp{margin-bottom:16px}
+/* ── 대표 전용 잠금 (대표 지시 2026-08-30) ── */
+#kcLock{position:fixed;inset:0;z-index:99999;background:var(--bg,#f5f7fa);display:flex;
+  align-items:center;justify-content:center;padding:24px}
+#kcLock .kl-card{max-width:560px;width:100%;background:var(--card,#fff);border:1px solid var(--border,#e2e8f0);
+  border-radius:14px;padding:28px 30px;box-shadow:0 8px 30px rgba(0,0,0,.08)}
+#kcLock .kl-ico{font-size:38px;line-height:1;margin-bottom:12px}
+#kcLock h2{font-size:19px;color:var(--navy,#1e3a5f);margin:0 0 8px}
+#kcLock p{font-size:13.5px;color:var(--text-mute,#64748b);line-height:1.8;margin:0 0 6px}
+#kcLock .kl-who{margin-top:14px;padding:10px 12px;background:var(--soft,#f1f5f9);border-radius:8px;
+  font-size:12px;color:var(--text-mute,#64748b);line-height:1.7;word-break:break-all}
+#kcLock .kl-act{margin-top:16px;display:flex;gap:8px;flex-wrap:wrap}
 /* ── 한자 고르기 ──
    브라우저 글자칸에서는 한글 IME 의 한자 키가 안 먹는 일이 잦아, 「한자 성명」 칸에
    한자를 넣을 방법이 사실상 없었다(대표 제보 2026-08-30).
@@ -1954,10 +1965,17 @@ function _jsAttr(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/
 /* 시드 1회 로드 (스토어가 비었을 때만) */
 function loadSeed(){
   const map = { wiccok:'wiccok', cert:'cert', consult:'consult', lecture:'lecture', case:'case' };
+  /* ⚠ 시드(SEED)는 «대표 개인의 기록» 185건이다 — 다른 사람 브라우저에 심지 않는다.
+     화면 잠금이 보이는 것만 가리는 것과 달리, 이건 자료가 남의 기기에 눌러앉는 것을 막는다.
+     ⚠ 빈 보관함 만들기는 누구에게나 한다 — 안 하면 첫 화면들이 깨진다.
+     ⚠ 대표로 확인되기 «전»에는 '_seeded' 표시를 남기지 않는다. 부팅 순간에는 아직
+        로그인이 안 잡혀 있어서, 표시를 남기면 대표도 영영 시드를 못 받는다.
+        확인되는 순간 kcApplyLock 이 이 함수를 한 번 더 부른다(_seeded 로 멱등). */
+  var owner=(typeof kcOwnerState!=='function') || kcOwnerState()==='owner';
   if(!LS.get(NS+'_seeded')){
-    Object.keys(map).forEach(k=>{ if(SEED[k]) set(map[k], SEED[k]); });
+    if(owner) Object.keys(map).forEach(k=>{ if(SEED[k]) set(map[k], SEED[k]); });
     ['license','complete','award','edu','fund','etc','meetfee','etcfee','resume','profile','certdoc','personal','account','id_docs','gallery','submission'].forEach(k=>{ if(!LS.get(NS+k)) set(k,[]); });
-    LS.set(NS+'_seeded','1');
+    if(owner) LS.set(NS+'_seeded','1');
   }
 }
 
@@ -3113,6 +3131,8 @@ function syncGroupUI(id){ const inf=(typeof navInfo==='function')?navInfo(id):{g
   const gt=document.getElementById('groupTabs'); if(!gt) return;
   if(grp){ renderGroupTabs(grp,id); gt.style.display=''; } else { gt.style.display='none'; gt.innerHTML=''; } }
 function nav_to(id,label,grp){
+  /* 대표 전용 — 잠겨 있으면 어느 화면으로도 옮기지 않는다 */
+  if(typeof kcApplyLock==='function' && kcApplyLock()==='locked') return;
   /* 환경설정은 관리자(대표)만 진입 가능 */
   if(id==='page-settings' && typeof _me!=='undefined' && _me.resolved && !_me.isAdmin){ toast('🔒 환경설정은 관리자만 사용할 수 있습니다'); return; }
   document.querySelectorAll('.page-view').forEach(s=>s.classList.remove('active'));
@@ -7634,6 +7654,64 @@ function initSettings(){
   renderMenuManager(); renderPersonal(); renderAccounts(); renderGallery(); renderStamps(); _safe(initIDSecurity);
 }
 
+/* ===== ★ 대표 전용 잠금 =====
+   대표 지시 2026-08-30: 「경력관리 전체데이터는 권형하만 볼 수 있게 해달라(우선)」.
+
+   ⚠ 이것은 «화면 잠금»이지 파일을 감추는 것이 아니다. kcareer.html 안에는 아직
+      대표의 기록 185건이 시드(window.__SEED__, 43KB)로 들어 있고, 이 파일은 누구나
+      주소만 알면 받을 수 있다 — 소스 보기로 읽힌다. 진짜로 감추려면 시드를 파일에서
+      빼야 한다(대표 자료를 클라우드에 올린 것을 확인한 뒤에 해야 안전).
+   ⚠ 그래서 여기서는 «다른 직원이 열었을 때 보이지 않게» 하는 데까지 한다.
+
+   ⚠ 대표가 스스로 잠기면 안 된다 — 신원 확인은 전에도 몇 번 어긋났다(구글 SSO·봉투 버그).
+      그래서 한 번 대표로 확인되면 그 기기에 표식(owner_uid)을 남겨, 다음부터 신원 확인이
+      실패해도 잠그지 않는다. 표식은 «대표로 확인됐을 때만» 생기므로 직원이 스스로 못 만든다. */
+var OWNER_SID='P-001', OWNER_NAME='권형하';
+function _kcUid(){ try{ var cu=firebase.auth().currentUser; return cu?cu.uid:null; }catch(e){ return null; } }
+function kcIsOwnerId(){ return (_me.sid&&String(_me.sid)===OWNER_SID) || (_me.name&&_me.name===OWNER_NAME); }
+/* 'owner' | 'locked' | 'checking' */
+function kcOwnerState(){
+  var uid=_kcUid();
+  var pin=null; try{ pin=LS.get(NS+'owner_uid')||null; }catch(e){}
+  if(uid && pin && pin===uid) return 'owner';          /* 이 기기에서 전에 대표로 확인됨 */
+  if(typeof firebase==='undefined' || !firebase.auth) return 'checking';
+  /* 로그인 안 된 상태는 이미 authGate(통합 로그인 안내)가 화면을 덮는다 — 창을 두 개 겹치지 않는다 */
+  if(!uid) return 'checking';
+  if(kcIsOwnerId()){
+    try{ LS.set(NS+'owner_uid', uid); }catch(e){}
+    return 'owner';
+  }
+  if(!_me.resolved) return 'checking';                 /* 아직 확인 중 — 섣불리 잠그지 않는다 */
+  return 'locked';
+}
+function kcLockReason(){
+  if(_me.resolved && _me.name && _me.name!==OWNER_NAME)
+    return {t:OWNER_NAME+' 대표노무사 전용입니다', d:'이 앱의 자료는 대표 개인의 위촉·자격·경력 기록입니다. '+_me.name+' 님께는 열리지 않습니다.'};
+  return {t:OWNER_NAME+' 대표노무사 전용입니다', d:'신원을 확인하지 못했습니다. 대표 계정으로 로그인하면 열립니다.'};
+}
+function kcApplyLock(){
+  var st=kcOwnerState();
+  var box=document.getElementById('kcLock');
+  /* 대표로 «막 확인된» 순간 — 부팅 때 미뤄 둔 시드를 이제 깐다(_seeded 로 멱등) */
+  if(st==='owner' && !LS.get(NS+'_seeded')){ _safe(loadSeed); _safe(function(){ if(typeof renderCareer==='function') renderCareer(); }); }
+  if(st==='owner' || st==='checking'){ if(box) box.remove(); return st; }
+  if(box) return st;                                    /* 이미 잠겨 있으면 그대로 */
+  var r=kcLockReason(), uid=_kcUid();
+  box=document.createElement('div'); box.id='kcLock';
+  box.innerHTML='<div class="kl-card"><div class="kl-ico">🔒</div>'
+    +'<h2>'+escapeHtml(r.t)+'</h2><p>'+escapeHtml(r.d)+'</p>'
+    +'<div class="kl-who">지금 접속: '+escapeHtml(uid?((_me.name||'(이름 미확인)')+(_me.sid?' · '+_me.sid:'')):'로그인 안 됨')
+    +(uid?'<br>uid '+escapeHtml(uid):'')+'</div>'
+    +'<div class="kl-act">'
+    +'<button class="btn" onclick="fbLogout()">로그아웃</button>'
+    +'<a class="btn primary" href="enter.html" style="text-decoration:none">푸른 통합시스템으로</a>'
+    +'</div></div>';
+  document.body.appendChild(box);
+  return st;
+}
+/* 신원이 늦게 잡히는 일이 있어 몇 번 더 확인한다 — 대표를 잠그지 않기 위해서다 */
+function kcLockWatch(){ [400,1200,3000,6000].forEach(function(ms){ setTimeout(function(){ _safe(kcApplyLock); }, ms); }); }
+
 /* ===== 직원(담당자) 관리 — 정부컨설팅 scal_staff 연동 + 재직/퇴직(이름 가리기) ===== */
 var _staffRoster=null;
 function getStaffRoster(){ if(_staffRoster) return _staffRoster; try{ _staffRoster=JSON.parse(LS.get(NS+'staff_roster')||'[]'); }catch(e){ _staffRoster=[]; } return _staffRoster; }
@@ -7919,6 +7997,7 @@ async function resolveMe(){
     /* 이미 그려진 실적 화면 갱신 */
     Object.keys(PU_COLLS).forEach(function(coll){ var cache=null; try{ cache=JSON.parse(LS.get(NS+PU_COLLS[coll].cache)||'null'); }catch(e){} if(cache&&cache.byMgr){ try{ renderPuPerf(coll,cache.byMgr); }catch(e){} } });
     try{ applyPerfAccess(); }catch(e){}
+    try{ kcApplyLock(); }catch(e){}
   }catch(e){ console.warn('resolveMe',e); }
 }
 /* 화면에 보일 담당자 이름: 대표/미해결=전체, 직원=본인만 */
@@ -8145,6 +8224,7 @@ function fbInit(){ if(location.protocol==='file:') return; if(typeof firebase===
          한동안 안 써도(관리 안 해도) 세션이 풀리지 않습니다. */
     try{ if(firebase.auth().setPersistence) firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){ console.warn('[persistence]',e&&e.message); }
     firebase.auth().onAuthStateChanged(function(u){ fbUid=u?u.uid:null; fbUpdateUI(u);
+      if(typeof kcApplyLock==='function'){ try{ kcApplyLock(); kcLockWatch(); }catch(e){} }
       if(u){ authGate(false); if(typeof resolveMe==='function'){ try{ resolveMe(); }catch(e){} } if(typeof puSyncAuto==='function'){ try{ puSyncAuto(); }catch(e){} } if(typeof fbLoadApiKeys==='function'){ try{ fbLoadApiKeys(); }catch(e){} } if(typeof navSyncWatch==='function'){ try{ navSyncWatch(); }catch(e){} } if(typeof fbCheckLoss==='function'){ try{ fbCheckLoss(); }catch(e){} } }
       else { _me={resolved:false,name:'',sid:'',role:'',isAdmin:true}; _fbWatching=false; _fbBase=null;
         if(typeof navSyncStop==='function'){ try{ navSyncStop(); }catch(e){} }
