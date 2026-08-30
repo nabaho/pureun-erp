@@ -21,6 +21,9 @@ const R = path.join(__dirname, '..');
 const HTML = fs.readFileSync(path.join(R, 'pu-paydata.html'), 'utf8');
 const STORE = fs.readFileSync(path.join(R, 'js', 'pu-paydata-store.js'), 'utf8');
 const READ = fs.readFileSync(path.join(R, 'js', 'pu-doc-read.js'), 'utf8');
+/* 실제 화면과 **같이** 싣는다 — 판독 층은 주민번호 지우개가 없으면 글자 판독을
+   막는다(2026-08-17). 안 실으면 진짜 화면과 다른 조건으로 시험하는 셈이다. */
+const MASK = fs.readFileSync(path.join(R, 'js', 'pu-rrn-mask.js'), 'utf8');
 
 function cut(name) {
   const m = HTML.match(new RegExp('function ' + name + '\\s*\\([\\s\\S]*?\\n\\}'));
@@ -41,6 +44,7 @@ function reader(reply) {
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox; sandbox.self = sandbox;
   vm.createContext(sandbox);
+  new vm.Script(MASK, { filename: 'mask.js' }).runInContext(sandbox);
   new vm.Script(READ, { filename: 'read.js' }).runInContext(sandbox);
   const D = sandbox.PuDocRead;
   D.init({ fetch: sandbox.fetch, getKey: () => 'K' });
