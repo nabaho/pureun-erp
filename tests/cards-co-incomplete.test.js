@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 /* 기업 상세 — 「정보부족」 거르기 (대표 지시 2026-08-24, 보강 검토 3순위)
    ═══════════════════════════════════════════════════════════════════════════
    ■ 무엇이 문제였나
@@ -250,7 +250,9 @@ function drawRow(o){
     "function coMgrCell(){ return ''; }",
     "function coSizeSelHtml(){ return ''; }",
     "function coPagerHtml(){ return ''; }",
-    "function coOrphanBarHtml(){ return ''; }"
+    "function coOrphanBarHtml(){ return ''; }",
+    /* 2026-08-30: 도구줄의 「자주 쓰는 폴더」 단추 — 이 검사는 안 본다 */
+    "function coQuickFolderBtns(){ return ''; }"
   ].join('\n'), ctx);
   /* 부족 판정은 «진짜» 것을 쓴다 — 스텁을 쓰면 아무것도 못 잡는다 */
   vm.runInContext(constLine('CO_CORE').replace(/^const /, 'var ') + '\n'
