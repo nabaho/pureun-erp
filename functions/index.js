@@ -2472,7 +2472,7 @@ exports.hanaMessageBridge = functions
            이것이 없어서 2026-08-30 에 답을 못 했다 — 대기함이 비었을 때
            「폰이 못 보낸 것」인지 「폰에 아예 없는 것」인지 가릴 길이 없었다.
            둘은 고칠 곳이 아주 다르다(앱·권한 vs 은행 문자 자체). */
-        await hanaDeviceRef(linked).update({
+        const mark = {
           lastSweepAt: Date.now(),
           lastTalkAt: Date.now(),
           appVersion: String(body.appVersion || "").slice(0, 16),
@@ -2481,7 +2481,17 @@ exports.hanaMessageBridge = functions
           /* 문자함 권한이 없으면 훑기는 돌아도 «아무것도 못 줍는다» —
              그 상태를 화면이 알아야 「권한을 주세요」라고 짚어 줄 수 있다. */
           sweepCanReadSms: body.canReadSms === true,
-        }).catch(() => {});
+        };
+        /* ★★ 「지난 문자를 훑어 봤다」 — 찾은 것이 «0통이어도» 봤다고 적는다 (2026-08-30).
+             대표: 「눌렀는데 왜 이러나」. 눌렀는데도 화면이 「누르세요」를 되풀이했다.
+             까닭: 지난 문자 가져오기가 0통을 찾으면 서버로 아무것도 안 보냈다 —
+             그래서 lastHistoryAt 이 영영 비어 있었다.
+             ⚠ 「봤다」와 「받았다」는 다른 말이다. 문자함을 읽을 수 있었을 때만 찍는다 —
+               권한이 없어 못 본 것을 「봤다」로 적으면 화면이 또 거짓말을 한다. */
+        if (body.historyDone === true && body.canReadSms === true) {
+          mark.lastHistoryAt = Date.now();
+        }
+        await hanaDeviceRef(linked).update(mark).catch(() => {});
         hanaJson(res, 200, { ok: true, pong: true }); return;
       }
 

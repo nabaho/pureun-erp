@@ -50,6 +50,11 @@ function chipRunner() {
     return ctx.__out;
   };
 }
+/* ⚠ 2026-08-30: 표가 «아이콘 하나 + 마우스 설명»으로 바뀌었다
+     (대표: 「이 부분 아이콘으로 만들고 마우스 올렸을 때 설명하게 하면 좋겠다」).
+     그래서 «보이는 글»은 그림 하나뿐이고, 원래 문장은 설명(title) 맨 앞에 온다.
+   지킬 것은 자리가 아니라 «그 말을 사람이 볼 수 있는가» 다 — title 에서 본다.
+   ★ 아이콘만 남고 뜻이 사라지지 않았는지는 아래 「그림만 보인다」 검사가 지킨다. */
 const run = chipRunner();
 const MIN = 60 * 1000;
 const now = Date.now();
@@ -59,7 +64,7 @@ const BASE = { deviceName: '권형하 휴대폰', pairedAt: now - 15 * 60 * MIN,
 
 test('★★ 폰이 훑고 있으면 «앱 탓을 하지 않는다»', () => {
   const out = run(Object.assign({}, BASE, { lastSweepAt: now - 5 * MIN, sweepCanReadSms: true }));
-  assert.ok(/폰 잘 있음/.test(out.text),
+  assert.ok(/폰 잘 있음/.test(out.title),
     '★★ 폰이 5분 전에 신호를 보냈는데 「문자 0건」이라고만 하면, 멀쩡한 앱을 다시 깔러 간다');
   assert.ok(!/다시 깔|지워졌/.test(out.title),
     '★★ 앱을 다시 깔라고 하면 연결까지 풀려 «더 나빠진다»');
@@ -69,14 +74,14 @@ test('★★ 폰이 훑고 있으면 «앱 탓을 하지 않는다»', () => {
 
 test('★★ 문자함 권한이 꺼졌으면 «그것을» 짚는다', () => {
   const out = run(Object.assign({}, BASE, { lastSweepAt: now - 5 * MIN, sweepCanReadSms: false }));
-  assert.ok(/문자함 읽기 권한/.test(out.text),
+  assert.ok(/문자함 읽기 권한/.test(out.title),
     '★★ 훑기는 도는데 권한이 없으면 영영 아무것도 안 줍는다 — 그 사실을 안 말하면 아무도 모른다');
   assert.strictEqual(out.tag, 'button', '★ 고칠 것이 있으면 갈 곳이 있어야 한다');
 });
 
 test('★★ 폰이 한참 조용하면 «절전»을 짚는다 — 앱을 다시 깔라고 하지 않는다', () => {
   const out = run(Object.assign({}, BASE, { lastSweepAt: now - 200 * MIN, sweepCanReadSms: true }));
-  assert.ok(/조용/.test(out.text), '★ 조용하다는 것을 안 알린다');
+  assert.ok(/조용/.test(out.title), '★ 조용하다는 것을 안 알린다');
   assert.ok(/절전/.test(out.title),
     '★★ 절전이 재운 것인데 앱을 다시 깔면 헛수고에 연결까지 풀린다');
   /* ⚠ 「다시 깔」이 있나 없나로 겨누면 안 된다 — 이 안내는 「다시 깔 것이 «아니라»」로
@@ -87,14 +92,14 @@ test('★★ 폰이 한참 조용하면 «절전»을 짚는다 — 앱을 다�
 
 test('★ 잠깐 밀린 것(30분)은 «조용하다고 하지 않는다»', () => {
   const out = run(Object.assign({}, BASE, { lastSweepAt: now - 30 * MIN, sweepCanReadSms: true }));
-  assert.ok(!/조용/.test(out.text),
+  assert.ok(!/조용/.test(out.title),
     '★ 15분 주기가 한 번 밀린 것까지 「조용하다」고 하면, 멀쩡한 폰에 늘 경고가 뜬다');
 });
 
 test('★★ 옛 서버(훑기를 모름)에서는 «옛 안내» 그대로다', () => {
   /* lastSweepAt 자체가 없다 — 서버를 아직 안 올린 상태 */
   const out = run(Object.assign({}, BASE, { lastOkAt: 0 }));
-  assert.ok(/문자 0건|지난 문자/.test(out.text),
+  assert.ok(/문자 0건|지난 문자/.test(out.title),
     '★★ 훑기를 모르는 서버에서 새 안내가 나오면, 있지도 않은 기능을 보라고 시킨다');
 });
 
@@ -102,7 +107,7 @@ test('★ 문자가 실제로 들어오면 그것을 먼저 보인다', () => {
   const out = run(Object.assign({}, BASE, {
     lastOkAt: now - 3 * MIN, lastSweepAt: now - 5 * MIN, sweepCanReadSms: true,
   }));
-  assert.ok(/연결됨/.test(out.text),
+  assert.ok(/연결됨/.test(out.title),
     '★ 문자가 들어오고 있는데 「훑는 중」이라고만 하면 무엇이 되고 있는지 흐려진다');
 });
 
@@ -111,7 +116,7 @@ test('★★ 연결이 끊긴 것(열쇠 거절)이 «훑기보다 먼저»다',
     lastSweepAt: now - 5 * MIN, sweepCanReadSms: true,
     lastReject: { reason: 'bad_token', at: now - 2 * MIN },
   }));
-  assert.ok(/연결이 끊겼/.test(out.text),
+  assert.ok(/연결이 끊겼/.test(out.title),
     '★★ 열쇠가 죽었는데 「폰 잘 있음」이라고 하면, 고쳐야 할 것을 덮는다');
 });
 
@@ -122,7 +127,7 @@ test('★★ 폰은 도는데 문자함에 하나 문자가 «없으면» 그렇
   const out = run(Object.assign({}, BASE, {
     lastSweepAt: now - 5 * MIN, sweepCanReadSms: true, sweepFound: 0,
   }));
-  assert.ok(/문자함에 하나 문자가 없/.test(out.text),
+  assert.ok(/문자함에 하나 문자가 없/.test(out.title),
     '★★ 「폰 잘 있음」이라고만 하면, 왜 안 들어오는지 아무도 못 짚는다');
   assert.ok(/앱 푸시/.test(out.title),
     '★★ 하나원큐 앱 푸시로 오는 길을 안 알려 주면, 영영 문자만 기다린다');
@@ -134,7 +139,7 @@ test('★ 문자함에서 «보고 있으면» 몇 건인지 알려 준다', () 
   const out = run(Object.assign({}, BASE, {
     lastSweepAt: now - 5 * MIN, sweepCanReadSms: true, sweepFound: 7, appVersion: '1.8.0',
   }));
-  assert.ok(/폰 잘 있음/.test(out.text), '★ 보고 있는데 「없다」고 하면 안 된다');
+  assert.ok(/폰 잘 있음/.test(out.title), '★ 보고 있는데 「없다」고 하면 안 된다');
   assert.ok(/7건/.test(out.title), '★ 몇 건을 보고 있는지 알려 주면 사람이 스스로 판단한다');
   assert.ok(/1\.8\.0/.test(out.title),
     '★★ 판 번호를 안 보이면 「새 앱을 깔긴 하신 건가」를 또 못 묻는다');
@@ -144,6 +149,14 @@ test('★ 권한이 없을 때는 «문자함이 비었다»고 하지 않는다
   const out = run(Object.assign({}, BASE, {
     lastSweepAt: now - 5 * MIN, sweepCanReadSms: false, sweepFound: 0,
   }));
-  assert.ok(/권한/.test(out.text),
+  assert.ok(/권한/.test(out.title),
     '★★ 못 읽어서 0건인 것을 「문자가 없다」고 하면, 볼 곳을 완전히 반대로 짚는다');
+});
+
+test('★ 표는 «그림 하나»만 보인다 — 길어지면 상단 줄을 도로 밀어낸다', () => {
+  const out = run(Object.assign({}, BASE, { lastSweepAt: now - 5 * MIN, sweepCanReadSms: true }));
+  /* 그림 + (누를 수 있으면) › 까지. 글자가 붙으면 줄이 다시 길어진다. */
+  assert.ok(out.text.replace(/[\s›]/g, '').length <= 3,
+    '★ 표에 글자가 다시 붙었습니다: ' + JSON.stringify(out.text));
+  assert.ok(out.title.length > 10, '★ 설명이 비어 있습니다 — 그림만 남고 뜻이 사라졌습니다');
 });

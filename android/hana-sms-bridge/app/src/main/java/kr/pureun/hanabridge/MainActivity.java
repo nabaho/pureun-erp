@@ -277,9 +277,16 @@ public final class MainActivity extends Activity {
                 return;
             }
             if (found.isEmpty()) {
+                /* ★★ 찾은 것이 없어도 «봤다»고 알린다 (2026-08-30).
+                     대표: 「눌렀는데 왜 이러나」 — 누르셨는데도 ERP 화면이
+                     「앱에서 지난 문자 가져오기를 누르세요」를 되풀이했다.
+                     까닭이 여기였다: 0통이면 서버로 아무것도 안 보내서
+                     lastHistoryAt 이 영영 비어 있었다. 이미 한 일을 또 시키는
+                     화면은 못 믿게 된다. */
+                tellHistoryDone();
                 importing = false;
                 runOnUiThread(() -> {
-                    status.setText("최근 " + HISTORY_DAYS + "일 문자함에서 하나 거래문자를 찾지 못했습니다.\n" +
+                    status.setText("최근 " + HISTORY_DAYS + "일 문자함에 하나 거래문자가 없었습니다.\n" +
                             "문자를 지우셨거나, 알림이 문자가 아닌 앱 푸시로 오는 경우입니다.");
                     history.setEnabled(true);
                 });
@@ -319,6 +326,10 @@ public final class MainActivity extends Activity {
                     "• 이미 있던 것 " + already + "건" +
                     (skipped > 0 ? "\n• 거래로 안 읽힌 것 " + skipped + "건" : "") +
                     (failed > 0 ? "\n• 실패 " + failed + "건 — 다시 눌러 주세요" : "");
+            /* ★ 다 보내고 나서도 «봤다»를 남긴다. 서버는 «새로 담은 것»이 있을 때만
+                 lastHistoryAt 을 찍는데, 전부 이미 있던 것이면 한 건도 안 담긴다 —
+                 그러면 눌렀는데도 화면이 「누르세요」를 되풀이한다(2026-08-30 대표 물음). */
+            tellHistoryDone();
             SecureStore.setLastStatus(this, report);
             importing = false;
             runOnUiThread(() -> {
@@ -369,6 +380,24 @@ public final class MainActivity extends Activity {
         show(sweepWarn, false);
         show(grantSms, false);
         show(history, true);
+    }
+
+    /* 「지난 문자를 훑어 봤다」를 서버에 남긴다 — 찾은 것이 0통이어도.
+       ⚠ 새 길을 내지 않는다. 이미 있는 sweepPing 에 표 하나를 얹을 뿐이다.
+       ⚠ 문자함을 «읽을 수 있었을 때만» 보낸다 — 권한이 없어 못 본 것을
+         「봤다」로 적으면 화면이 또 거짓말을 한다(서버도 같은 조건으로 막는다). */
+    private void tellHistoryDone() {
+        try {
+            JSONObject ping = new JSONObject();
+            ping.put("action", "sweepPing");
+            ping.put("uid", SecureStore.uid(this));
+            ping.put("deviceId", SecureStore.deviceId(this));
+            ping.put("canReadSms", true);
+            ping.put("historyDone", true);
+            HanaUploadWorker.post(ping, SecureStore.token(this));
+        } catch (Exception ignore) {
+            /* 못 알려도 앱은 그대로 돈다 — 15분 훑기가 곧 같은 자리를 다시 찍는다 */
+        }
     }
 
     private void show(android.view.View v, boolean on) {
