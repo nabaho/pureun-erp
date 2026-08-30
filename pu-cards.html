@@ -2640,7 +2640,13 @@ function byKeyOf(it){
 function writeIdx(it){
   try{ if(Store.mode!=='firebase' || !it || !it.id) return;
     /* 🔒 잠긴 폴더의 명함은 공유 검색목록에 넣지 않는다 (다른 프로그램에서 당겨오기 차단) */
-    const r = inLockedGroup(it) ? null : idxRecord(it);
+    /* ⚠ 「🔒 개인으로」 한 명함도 뺀다 (대표 결정 2026-08-30 ㉮).
+       예전에는 잠긴 폴더만 뺐다. 그래서 개인이라 눌러 둔 명함의 이름·회사·휴대폰이
+       공유 색인에 그대로 들어가, 그것을 읽는 푸른이알피와 업무관리 «검색에 나왔다» —
+       자물쇠 그림만 붙고 아무것도 안 가려진 것이다.
+       ⚠ scope 를 «안 적은» 옛 명함은 공용이다. 없는 것을 개인으로 보면 6,295장이
+         통째로 검색에서 사라진다 — 반드시 === 'private' 로만 본다. */
+    const r = (inLockedGroup(it) || it.scope === 'private') ? null : idxRecord(it);
     if(r) Store.db.ref(DB_ROOT+'/idx/'+it.id).set(r);
     else Store.db.ref(DB_ROOT+'/idx/'+it.id).remove();
     const k = byKeyOf(it);
@@ -9967,7 +9973,10 @@ function openDetail(id){
     <div id="dSendLog">${sendLogHtml(id)}</div>
     <div class="dlist">${rows||'<div class="empty" style="padding:20px">저장된 정보가 없습니다</div>'}</div>
     <div class="mfoot">
-      <button class="btn ghost" onclick="toggleScope('${id}')">${it.scope==='private'?'공용으로':'🔒 개인으로'}</button>
+      ${/* ⚠ 대표만 보인다 (대표 결정 2026-08-30). 개인 창고는 대표님 전용이라
+           (openPrivateVault 가 isAdmin 으로 막는다) 직원이 눌러도 넣을 곳이 없다 —
+           눌리는데 아무 일도 안 나는 단추를 두면 안 된다. */''}
+      ${state.isAdmin ? `<button class="btn ghost" onclick="toggleScope('${id}')">${isPrivItem(it)?'공용으로':'🔒 개인으로'}</button>` : ''}
       <button class="btn danger" onclick="delItem('${id}')">삭제</button>
       <button class="btn ghost" onclick="downloadPhoto('${id}')">📥 원본</button>
       ${ photoBackBtn(it) }
@@ -9984,9 +9993,74 @@ function openDetail(id){
 function toggleFav(id){ const it=state.items[id]; if(!it) return;
   it.fav=!it.fav; Store.put(it); openDetail(id);
   toast(it.fav?'⭐ 즐겨찾기에 고정했습니다':'즐겨찾기를 해제했습니다'); }
-function toggleScope(id){ const it=state.items[id]; if(!it) return;
-  it.scope = it.scope==='private'?'shared':'private'; Store.put(it); openDetail(id);
-  toast(it.scope==='private'?'🔒 개인 명함으로 지정했습니다':'공용 명함으로 되돌렸습니다'); }
+/* ══════ 「🔒 개인으로」 — «진짜로» 가린다 (대표 결정 2026-08-30 ㉮) ══════
+   3차 점검에서 드러난 것: 예전에는 scope 글자만 바꿨다. 명함은 전 직원 공유 창고에
+   그대로 있고 색인에도 들어가, 「개인」이라 눌러 둔 명함이 푸른이알피·업무관리
+   검색에 그대로 나왔다. 이름이 거짓말을 하고 있었다.
+
+   이제 개인 창고(pucards_private/{uid})로 «옮긴다». 서버 규칙이 auth.uid === $uid 로
+   막으므로 남이 아예 못 읽는다 — 화면에서 가리는 것이 아니다.
+   ⚠ 새 길을 내지 않는다. 「개인 폴더 잠금」이 폴더째로 하는 그 배관(movePaths·
+     lockKeyUpdates)을 한 장짜리로 그대로 쓴다.
+   ⚠ 목록에서 «사라진다». 다시 보려면 [🔒 개인 폴더 열기]로 비밀번호를 넣어야 한다 —
+     묻지 않고 하면 자료가 없어진 줄 안다.
+   ⚠ 되돌리는 쪽은 안 묻는다. 되돌리기를 막을 까닭이 없다. */
+function cardPrivPaths(id, on){
+  const P = privRoot(); const out = {};
+  out[`${P}/items/${id}`]  = on ? 1 : null;
+  out[`${P}/photos/${id}`] = on ? 1 : null;
+  out[`${P}/thumbs/${id}`] = on ? 1 : null;
+  out[`${DB_ROOT}/items/${id}`]  = on ? null : 1;
+  out[`${DB_ROOT}/photos/${id}`] = on ? null : 1;
+  out[`${DB_ROOT}/thumbs/${id}`] = on ? null : 1;
+  /* 색인은 «지우기»만 넣는다 — 되돌아올 때 값은 Store.put 이 다시 적는다 */
+  out[`${DB_ROOT}/idx/${id}`] = on ? null : 1;
+  return out;
+}
+async function toggleScope(id){
+  const priv = !!(state.priv && state.priv.items && state.priv.items[id]);
+  const it = priv ? state.priv.items[id] : state.items[id]; if(!it) return;
+  if(!state.isAdmin) return toast('대표만 개인 명함으로 둘 수 있습니다');
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
+  if(!privRoot()) return toast('로그인 정보를 읽지 못했습니다');
+  const on = !priv;                       /* 지금 공유에 있으면 «개인으로» 간다 */
+  if(on && !confirm(`「${it.name||it.company||'이 명함'}」을 개인 명함으로 옮깁니다.\n\n`
+    + `· 대표님 전용 창고로 옮겨져 다른 직원은 «서버에서» 못 읽습니다\n`
+    + `· 푸른이알피·업무관리 검색에서도 빠집니다\n`
+    + `· 목록에서 사라집니다 — 보시려면 [🔒 개인 폴더 열기]로 비밀번호를 넣으세요\n\n계속할까요?`)) return;
+  let rec = null;
+  try{ rec = await privLockRec(); }
+  catch(e){ return toast('개인 창고를 읽지 못했습니다 — ' + ((e&&e.message)||'')); }
+  if(!rec){ const ok = await setPrivatePassword(); if(!ok) return; }
+  try{
+    const upd = cardPrivPaths(id, on);
+    const P = privRoot();
+    const body = {...it}; delete body.thumb; delete body.thumb2;
+    body.scope = on ? 'private' : 'shared';
+    if(on){
+      upd[`${P}/items/${id}`] = body;
+      const ph = await Store.getPhoto(id).catch(()=>'');
+      if(ph) upd[`${P}/photos/${id}`] = ph; else delete upd[`${P}/photos/${id}`];
+      const th = it.thumb || await Store.getThumb(id).catch(()=>'');
+      if(th) upd[`${P}/thumbs/${id}`] = th; else delete upd[`${P}/thumbs/${id}`];
+    }else{
+      upd[`${DB_ROOT}/items/${id}`] = body;
+      const ph = await Store.getPhoto(id).catch(()=>'');
+      if(ph) upd[`${DB_ROOT}/photos/${id}`] = ph; else delete upd[`${DB_ROOT}/photos/${id}`];
+      const th = it.thumb || await Store.getThumb(id).catch(()=>'');
+      if(th) upd[`${DB_ROOT}/thumbs/${id}`] = th; else delete upd[`${DB_ROOT}/thumbs/${id}`];
+      delete upd[`${DB_ROOT}/idx/${id}`];   /* 되돌아온 뒤 Store.put 이 색인을 다시 적는다 */
+    }
+    /* 사진첩이 다시 찍었을 때 「이미 있다」를 알아보는 지문 — 폴더 잠금과 같은 규칙 */
+    Object.assign(upd, await lockKeyUpdates([it], !on));
+    await Store.db.ref().update(upd);
+    if(!on){ const back = {...body}; back.thumb = it.thumb||''; back.thumb2 = it.thumb2||''; Store.put(back); }
+    closeDetail();
+    toast(on ? '🔒 개인 명함으로 옮겼습니다 — [🔒 개인 폴더 열기]에서 보실 수 있습니다'
+             : '공용 명함으로 되돌렸습니다', 9000);
+    render();
+  }catch(e){ toast('옮기지 못했습니다: ' + ((e&&e.message)||''), 8000); }
+}
 function closeDetail(){ $('detailBg').classList.remove('open');
   const pd=$('pcDetail'); if(pd) pd.classList.remove('open');
   const ov=$('pcDetailOverlay'); if(ov) ov.style.display='none';
@@ -10048,6 +10122,12 @@ function openPcDetail(id){
       ${/* 거래처 담당자 퇴사 (대표 지시 2026-08-29) — 적는 곳은 푸른이알피 담당자 줄 하나다.
            ⚠ 「수신거부」와 뜻이 다르다: 수신거부는 «그 사람이 보내지 말라»고 한 것이고,
              퇴사는 «그 회사를 떠났다»는 것이다. 그래서 단추를 따로 둔다. */''}
+      ${/* 「🔒 개인으로」 — 대표만 보인다(2026-08-30). 개인 창고가 대표님 전용이다.
+           PC 팝업에는 여태 이 단추가 «아예 없었다» — 대표님이 일하시는 화면인데
+           폰에서만 할 수 있었다. */''}
+      ${state.isAdmin ? `<button onclick="toggleScope('${id}')"
+        title="${isPrivItem(it)?'공용 명함으로 되돌립니다':'대표님 전용 창고로 옮깁니다 — 다른 직원은 서버에서 못 읽고, 푸른이알피·업무관리 검색에서도 빠집니다'}"
+        >${isPrivItem(it)?'🔓 공용으로':'🔒 개인으로'}</button>` : ''}
       <button onclick="askCardLeft('${id}')" class="${ErpMatch.leftOfCard(it)?'nomail-on':''}"
         title="${ErpMatch.leftOfCard(it)?'퇴사 표시를 풉니다':'그 회사를 떠났다고 표시합니다 — 푸른이알피 담당자 줄에 적히고, 단체 메일에서 빠집니다'}"
         >${ErpMatch.leftOfCard(it)?'🚪 퇴사 처리됨':'🚪 퇴사'}</button>
