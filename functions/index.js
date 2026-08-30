@@ -2560,6 +2560,7 @@ exports.syncMailbox = MSYNC.syncMailbox;
 exports.pullMailbox = MSYNC.pullMailbox;
 exports.readMailMessage = MSYNC.readMailMessage;
 exports.readMailAttachment = MSYNC.readMailAttachment;
+exports.searchMailbox = MSYNC.searchMailbox;
 exports.moveMailMessages = MSYNC.moveMailMessages;
 exports.manageMailFolder = MSYNC.manageMailFolder;
 exports.flagMailMessages = MSYNC.flagMailMessages;

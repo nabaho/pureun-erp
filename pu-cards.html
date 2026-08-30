@@ -759,6 +759,11 @@ table.sbox tr.bad td{background:#fdf4f4}
 .dm-search input{flex:1;min-width:0;border:none;outline:none;font-family:inherit;font-size:13px;
   color:#1a1a1a;background:none;padding:0}
 .dm-search input:focus{outline:none;box-shadow:none;border:none}
+/* 「본문까지 찾기」 — 찾는 말이 있을 때만 나온다(대표 결정 2026-08-30) */
+.dm-findbtn{height:32px;padding:0 11px;margin-left:8px;border:1px solid #c5d8f5;
+  border-radius:4px;background:#eef3fb;color:#1d4ed8;font-size:12.5px;font-weight:600;cursor:pointer}
+.dm-findbtn:hover:not([disabled]){background:#e2ecfb}
+.dm-findbtn[disabled]{color:#9db0d8;cursor:default}
 .dm-bar{width:1px;height:14px;background:#dcdde1;margin:0 10px}
 /* 몇 통씩 볼까 — 도구줄 오른쪽 끝. 찾기 칸과 같은 높이·테두리로 둔다 */
 .dm-size{height:32px;margin-left:8px;border:1px solid #d8d8d8;border-radius:4px;background:#fff;
@@ -12583,7 +12588,10 @@ function mbEnsureFolders(){
    전부 받지 않는 까닭: 몇 년치가 만 통이면 한 번에 2MB 가 오간다. 「더 보기」로 늘린다. */
 function loadMailBox(slug, n, cb){
   if(Store.mode!=='firebase'){ if(cb) cb(); return; }
-  firebase.database().ref(MB_ROOT+'/msgs/'+slug).orderByKey().limitToLast(n||mbPageSize()).once('value')
+  /* ⚠ n 이 0 이면 그 칸을 «다» 받아 온다 — 본문 찾기에 걸린 줄은 대개 받아 둔 100통
+       밖에 있다. 안 받아 오면 「몇 통 찾았습니다」라 해 놓고 목록이 비어 보인다. */
+  const base = firebase.database().ref(MB_ROOT+'/msgs/'+slug).orderByKey();
+  (Number(n) === 0 ? base : base.limitToLast(n||mbPageSize())).once('value')
     .then(s=>{ _mbMsgs[slug] = s.val()||{}; _mbErr=''; if(cb) cb(); })
     .catch(e=>{
       _mbErr = (e&&e.code)||(e&&e.message)||'읽지 못했습니다';
@@ -14189,9 +14197,13 @@ function mbMatchedRows(){
   else if(f==='att')  rows = rows.filter(v=>Number(v.a||0));
   const q = String(state.mbQ||'').trim().toLowerCase().replace(/\s/g,'');
   if(q) rows = rows.filter(v=>{
-    const hay = (String(v.f||'')+String(v.e||'')+String(v.t||'')+String(v.tn||'')+String(v.s||''))
+    /* ⚠ 미리보기(v.p)도 «함께» 본다 — 서버가 이미 본문 앞 140자를 적어 두었는데
+         찾기가 그것을 안 봤다. 새로 받아 오는 것 없이 찾을 수 있는 자리가 는다. */
+    const hay = (String(v.f||'')+String(v.e||'')+String(v.t||'')+String(v.tn||'')
+               +String(v.s||'')+String(v.p||''))
       .toLowerCase().replace(/\s/g,'');
-    return hay.indexOf(q)>=0;
+    /* 다음메일에게 물어 찾은 것도 함께 — 그것은 본문 «전체»를 뒤진 결과다 */
+    return hay.indexOf(q)>=0 || mbFindHit(v);
   });
   return (m.matched = rows);
 }
@@ -15721,6 +15733,69 @@ function mbMore(){ mbPageGo((Number(state.mbPage)||1) + 1); }
 
 /* ══════ 새로고침 — 서버에 지금 보라고 시킨다 ══════
    10분을 기다리지 않는다. 서버가 IMAP 으로 붙어 목록을 새로 적고, 그것을 다시 읽는다. */
+/* ══════════════════════════════════════════════════════════════════════════
+   본문까지 찾기 (대표 결정 2026-08-30)
+   ══════════════════════════════════════════════════════════════════════════
+   화면의 찾기는 «받아 둔 것»의 보낸이·제목만 봤다. 그래서 「그 말이 본문에 분명히
+   있는데 안 나온다」가 됐다 — 7,337통 가운데 손에 든 것은 100통뿐이기도 했다.
+
+   길을 둘로 나눈다.
+   ① 그 자리에서 — 미리보기(서버가 이미 적어 둔 140자)까지 함께 본다. 공짜다.
+   ② 다음메일에게 묻기 — 「본문까지 찾기」를 누를 때만. IMAP 이 본문을 뒤져
+     «번호»만 돌려주고, 줄 내용은 우리 실시간DB 에서 그 번호만 받아 온다.
+
+   ⚠ ②를 «저절로» 하지 않는다. 글자를 칠 때마다 다음메일에 붙으면 느리고, 서버를
+     붙잡는다. 사람이 누를 때만 한다.
+   ⚠ 찾은 결과는 «찾는 말이 바뀌면» 버린다. 안 버리면 새 말로 찾는데 옛 결과가
+     섞여, 왜 나오는지 알 수 없는 줄이 남는다. */
+let _mbFind = null;        /* { q, hit:{slug:[uid…]}, n, at, bad:[] } */
+let _mbFinding = false;
+function mbFindOn(){
+  const q = String(state.mbQ||'').trim();
+  return !!(_mbFind && q && _mbFind.q === q);
+}
+/* 이 줄이 «본문 찾기»에 걸렸나 */
+function mbFindHit(v){
+  if(!mbFindOn()) return false;
+  const a = _mbFind.hit[v._slug];
+  return !!(a && a.indexOf(Number(v.u)) >= 0);
+}
+function mbFindClear(){ _mbFind = null; }
+
+function mbFindBody(){
+  if(_mbFinding) return;
+  const q = String(state.mbQ||'').trim();
+  if(q.length < 2) return toast('두 글자 이상 적어 주세요');
+  const u = firebase.auth().currentUser;
+  if(!u) return toast('로그인이 필요합니다');
+  _mbFinding = true; renderMailPage();
+  u.getIdToken()
+    .then(tok=>fetch(MB_FN+'searchMailbox', { method:'POST',
+      headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
+      body: JSON.stringify({ q:q }) }))
+    .then(r=>r.json().catch(()=>({})))
+    .then(j=>{
+      if(!j.ok) throw new Error(j.error||'찾지 못했습니다');
+      _mbFind = { q:q, hit:j.hit||{}, n:Number(j.n||0), at:Date.now(), bad:j.bad||[] };
+      /* ⚠ 걸린 폴더의 줄을 «다» 받아 온다 — 받아 둔 100통 밖에 있는 것이 대부분이라,
+           안 받아 오면 「몇 통 찾았습니다」라고 해 놓고 목록이 비어 보인다. */
+      const slugs = Object.keys(_mbFind.hit);
+      let left = slugs.length || 1;
+      const fin = ()=>{ if(!--left){
+        _mbFinding = false;
+        renderPCSide(); renderMailPage();
+        const miss = _mbFind.bad.length ? ` (못 읽은 칸 ${_mbFind.bad.length}개)` : '';
+        toast(_mbFind.n ? `🔎 본문까지 찾아 ${_mbFind.n.toLocaleString()}통${miss}`
+                        : `🔎 본문에도 없습니다${miss}`, 7000);
+      } };
+      if(!slugs.length) fin(); else slugs.forEach(s=>loadMailBox(s, 0, fin));
+    })
+    .catch(e=>{
+      _mbFinding = false; renderMailPage();
+      toast('찾지 못했습니다 — '+((e&&e.message)||e), 9000);
+    });
+}
+
 function mbPull(){
   if(_mbBusy) return;
   _mbBusy = true; renderMailPage();
@@ -16252,6 +16327,14 @@ function mbListHtml(){
         <input id="mbQ" placeholder="메일 검색" value="${esc(state.mbQ||'')}"
           oninput="state.mbQ=this.value;if(!event.isComposing)renderMailPage()"
           oncompositionend="state.mbQ=this.value;renderMailPage()"></span>
+      ${/* ── 본문까지 찾기 (대표 결정 2026-08-30) ──
+           ⚠ «찾는 말이 있을 때만» 나온다. 늘 두면 평소에 손잡이가 하나 늘고,
+             무엇을 찾을지 안 적은 채 누르면 아무 일도 안 일어나 고장처럼 보인다. */''}
+      ${String(state.mbQ||'').trim().length >= 2 ? `<button class="dm-findbtn"
+        ${_mbFinding?'disabled':''} onclick="mbFindBody()"
+        title="다음메일에 직접 물어 «본문까지» 뒤집니다 — 받아 둔 것 밖도 함께">${
+        _mbFinding ? '찾는 중…' : (mbFindOn() ? `🔎 본문 ${_mbFind.n.toLocaleString()}통`
+                                              : '🔎 본문까지 찾기')}</button>` : ''}
       <span class="dm-bar"></span>
       <button onclick="mbShowDetail()">상세</button>
       ${/* ── 점검 (대표 지시 2026-08-30 「이상한 부분이 있으면 팝업으로」) ──

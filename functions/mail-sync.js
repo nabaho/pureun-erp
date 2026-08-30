@@ -773,6 +773,59 @@ module.exports = function build(deps) {
         reply(res, 200, { ok: true, n: uids.length });
       })),
 
+    /* ══════ 본문까지 찾기 (대표 결정 2026-08-30) ══════
+       화면의 찾기는 «받아 둔 것»의 보낸이·제목만 본다. 그래서 「그 말이 본문에 있는데
+       안 나온다」가 된다 — 7,337통 가운데 손에 든 것은 100통뿐이기도 했다.
+
+       ★ 여기서는 다음메일에게 «직접» 묻는다. IMAP 이 본문까지 뒤져 번호만 돌려준다.
+       ⚠ 돌려주는 것은 «번호»뿐이다. 본문을 여기서 실어 나르면 한 번에 수십 MB 가 되고,
+         화면은 어차피 목록만 그린다. 줄 내용은 우리 실시간DB 에 이미 있다.
+       ⚠ 폴더마다 한 번씩 묻는다. 한꺼번에 뒤지는 길은 IMAP 에 없다.
+       ⚠ 찾는 말은 «두 글자 이상»만 받는다. 한 글자면 거의 전부가 걸려 뜻이 없고,
+         서버만 오래 붙잡는다.
+       ⚠ 다음메일을 «고치지 않는다» — 읽기만 한다. */
+    searchMailbox: F
+      .region(REGION)
+      .runWith({ secrets: ['DAUM_MAIL_PASSWORD'], timeoutSeconds: 300, memory: '512MB' })
+      .https.onRequest((req, res) => gate(req, res, async () => {
+        const b = req.body || {};
+        const q = String(b.q || '').trim();
+        if (q.length < 2) { reply(res, 400, { ok: false, error: '두 글자 이상 적어 주세요.' }); return; }
+
+        /* 어느 폴더를 뒤질까 — 안 적으면 «우리가 아는 폴더 전부» */
+        const fsnap = await deps.getDatabase().ref(ROOT + '/folders').once('value');
+        const folders = fsnap.val() || {};
+        const want = Array.isArray(b.slugs) && b.slugs.length
+          ? b.slugs.map(String).filter((s) => folders[s])
+          : Object.keys(folders);
+        if (!want.length) { reply(res, 200, { ok: true, q, hit: {}, n: 0, seen: 0 }); return; }
+
+        const hit = {};
+        let n = 0;
+        let seen = 0;
+        const bad = [];
+        for (let i = 0; i < want.length; i++) {
+          const slug = want[i];
+          try {
+            /* ⚠ or 로 묶는다 — body 만 뒤지면 제목에만 있는 말을 놓친다.
+                 IMAP 의 TEXT 는 머리글+본문을 함께 보지만 서버마다 셈이 달라,
+                 우리가 뜻하는 세 자리를 그대로 적는다. */
+            const uids = await withFolder(deps, slug, async (client) => (
+              await client.search(
+                { or: [{ body: q }, { header: { subject: q } }, { header: { from: q } }] },
+                { uid: true }
+              )
+            ) || []);
+            seen++;
+            if (uids.length) { hit[slug] = uids.map(Number).filter((u) => u > 0); n += hit[slug].length; }
+          } catch (e) {
+            /* 한 폴더가 안 되어도 나머지는 돌려준다 — 「하나도 못 찾았다」로 보이면 안 된다 */
+            bad.push(slug);
+          }
+        }
+        reply(res, 200, { ok: true, q, hit, n, seen, bad });
+      })),
+
     /* ══════ 휴지통으로 · 폴더 옮기기 ══════
        ⚠ 여기가 거울이 원본을 «고치는» 유일한 자리다(읽음 표시 빼고). 그래서 좁게 만든다 —
          옮기는 것만 되고, 지우는 것(\Deleted+EXPUNGE)은 아예 없다. 다음메일 휴지통에서
