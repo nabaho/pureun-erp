@@ -108,11 +108,28 @@ test('★ 앱 판 번호가 올라갔다 — 안 올리면 폰이 새것을 안 
 });
 
 /* ── 서버: 훑어 온 것을 받는가 ── */
-test('★★ 서버가 «훑어 온 것»을 받는다 (알림 꾸러미 이름이 없다)', () => {
+test('★★ 서버가 «훑어 온 것»을 받는다', () => {
   assert.ok(/const fromSweep = String\(body\.source \|\| ""\) === "sweep";/.test(SV),
     '★ 훑기를 아예 모른다');
-  assert.ok(/if \(!fromHistory && !fromSweep && !HANA_MESSAGE_PACKAGES\.has\(packageName\)\)/.test(SV),
-    '★★ 문자함에서 읽은 것에는 알림 꾸러미 이름이 없다 — 꾸러미로 막으면 통째로 버려진다');
+});
+
+/* ⚠★ 2026-08-30 에 규칙을 바꿨다. 처음에는 「문자함에서 읽은 것은 꾸러미 검사를
+     건너뛴다」고만 했는데, 하나 «앱 푸시»로 오는 입금이 여전히 400 으로 되돌아갔다.
+     문자함에도 없고(문자가 아니니) 알림에서도 버려져 두 길 모두에서 사라진 것이다.
+     이제 꾸러미로 «미리» 막지 않는다 — 막이는 parseHanaMessage 하나로 충분하다. */
+test('★★ 꾸러미 이름으로 «미리» 막지 않는다 — 앱 푸시 입금이 사라진다', () => {
+  assert.ok(!/reason: "unsupported_message_app"/.test(SV),
+    '★★ 꾸러미로 되돌려보내면 하나원큐 앱 푸시로 오는 입금이 통째로 사라진다');
+  assert.ok(/lastPkg: packageName\.slice\(0, 64\)/.test(SV),
+    '★★ 어디서 왔는지를 안 적으면, 나중에 좁힐 때 또 짐작으로 좁히게 된다');
+  /* 막이가 «사라진 것은 아니다» — 내용 검사는 그대로 있어야 한다.
+     ⚠ 파일 전체에서 찾으면 안 된다 — 붙여넣기 길(ingestPaste)에도 같은 부름이 있어,
+       정작 이 자리에서 파서를 빼도 «다른 자리 것»에 걸려 통과한다.
+       실제로 그렇게 통과했다. 반드시 «이 가지 안»에서 본다. */
+  const ing = cutBranch(SV, 'if (action === "ingest") {');
+  assert.ok(/const parsed = HanaMessage\.parseHanaMessage\(/.test(ing)
+    && /if \(!parsed\.ok\) \{/.test(ing),
+    '★★ 꾸러미 검사를 풀면서 내용 검사까지 풀면 아무 알림이나 들어온다');
 });
 
 /* 중괄호로 «그 가지만» 자른다.
@@ -130,10 +147,55 @@ function cutBranch(src, header) {
 }
 
 test('★★ 훑기가 lastOkAt 을 «찍지 않는다» — 알림이 도는 것과 다른 말이다', () => {
-  const block = cutBranch(SV, 'if (fromSweep) {');
-  assert.ok(/lastSweepAt: Date\.now\(\)/.test(block), '★ 훑기가 돌았다는 것을 안 적는다');
-  assert.ok(!/lastOkAt/.test(block),
-    '★★ 훑기가 lastOkAt 을 찍으면, 알림이 죽은 채로 「멀쩡함」이 되어 왜 늦는지 영영 모른다');
+  const stamp = cutBranch(SV, 'const hanaStampAlive = async (linked, how) => {');
+  assert.ok(/if \(how === "sweep"\) \{ patch\.lastSweepAt = at;/.test(stamp),
+    '★ 훑기가 돌았다는 것을 안 적는다');
+  assert.ok(/else if \(how === "history"\) patch\.lastHistoryAt = at;/.test(stamp),
+    '★ 지난 문자를 끌어온 것을 안 적는다');
+  /* lastOkAt 은 «알림으로 온 것»에만 — else 가지에만 있어야 한다 */
+  assert.ok(/else \{ patch\.lastOkAt = at;/.test(stamp),
+    '★★ 훑기·지난문자가 lastOkAt 을 찍으면, 알림이 죽은 채로 「멀쩡함」이 되어 왜 늦는지 영영 모른다');
+  assert.strictEqual((stamp.match(/lastOkAt/g) || []).length, 1,
+    '★★ lastOkAt 이 두 갈래 이상에 있다 — 알림이 도는지를 더는 알 수 없게 된다');
+});
+
+/* ══ 중복이어도 「폰이 말을 걸었다」를 남기는가 (2026-08-30) ══
+   ⚠★ 이것이 없어서 대표가 두 번이나 헛되이 앱을 다시 깔았다.
+      「지난 문자 가져오기」로 110건을 올렸는데 전부 이미 담은 것이라
+      중복으로 되돌아갔고, 서버에 자국이 하나도 안 남았다.
+      화면은 그대로 「연결 뒤 문자 0건 — 앱이 지워졌거나…」라고 했다.
+      폰은 멀쩡히 말을 걸고 있었는데 화면이 «거짓말»을 한 것이다. */
+test('★★ 중복이어도 «폰이 말을 걸었다»는 남긴다', () => {
+  const sameRaw = cutBranch(SV, 'if (sameRaw && sameRaw.exists()) {');
+  assert.ok(/await hanaStampAlive\(linked, howCame\);/.test(sameRaw),
+    '★★ 중복만 잔뜩 온 날, 화면이 「문자 0건」이라 거짓말하고 사람이 앱을 다시 깐다');
+  const existing = cutBranch(SV, 'if (existing.exists()) {');
+  assert.ok(/await hanaStampAlive\(linked, howCame\);/.test(existing),
+    '★★ 같은 열쇠로 또 온 것도 마찬가지다');
+});
+
+test('★★ 걸러진 것도 «말은 걸었다»로 남긴다', () => {
+  assert.ok(/await hanaNoteSkip\(linked, parsed\.reason\);\s*await hanaDeviceRef\(linked\)\.update\(\{ lastTalkAt: Date\.now\(\) \}\)/.test(SV),
+    '★★ 걸러졌다고 「말을 건 사실」까지 지우면, 폰이 살아 있는데도 죽은 것으로 보인다');
+});
+
+test('★★ 폰이 «판 번호»와 «문자함에서 본 것»을 알린다', () => {
+  const ping = cutBranch(SV, 'if (action === "sweepPing") {');
+  assert.ok(/appVersion: String\(body\.appVersion \|\| ""\)/.test(ping),
+    '★★ 판 번호가 없으면 「새 앱을 깔긴 하신 건가」를 물어볼 수조차 없다');
+  assert.ok(/sweepFound: Number\(body\.foundCount \|\| 0\)/.test(ping),
+    '★★ 폰이 몇 건을 봤는지 모르면, 「폰이 못 보낸 것」과 「폰에 아예 없는 것」을 못 가른다');
+  assert.ok(/put\("appVersion", BridgeConfig\.APP_VERSION\)/.test(SW), '★ 폰이 판 번호를 안 보낸다');
+  assert.ok(/put\("foundCount", foundCount\)/.test(SW), '★ 폰이 찾은 개수를 안 보낸다');
+});
+
+test('★ 판 번호가 «세 곳에서 같다» — 폰이 거짓 판을 알리면 엉뚱한 데를 뒤진다', () => {
+  const gradle = /versionName = "([\d.]+)"/.exec(GRADLE);
+  const cfg = /APP_VERSION = "([\d.]+)"/.exec(
+    fs.readFileSync(path.join(A, 'BridgeConfig.java'), 'utf8'));
+  assert.ok(gradle && cfg, '★ 판 번호를 못 찾음');
+  assert.strictEqual(cfg[1], gradle[1],
+    '★★ 앱이 알리는 판(' + cfg[1] + ')과 실제 판(' + gradle[1] + ')이 다르다');
 });
 
 test('★★ 「살아 있다」 알림을 서버가 받는다', () => {

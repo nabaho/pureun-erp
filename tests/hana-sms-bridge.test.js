@@ -57,9 +57,13 @@ test('Android 앱은 평소에 알림만 쓰고, 문자를 가로채지 않는�
   assert.match(listener, /NotificationListenerService/);
 });
 
-test('휴대폰은 메시지 앱을 제한하고 금융 보안문자를 거부한다', () => {
-  assert.match(filter, /SAMSUNG_MESSAGES/);
-  assert.match(filter, /GOOGLE_MESSAGES/);
+test('★★ 휴대폰은 «자기 알림»을 되읽지 않고 금융 보안문자를 거부한다', () => {
+  /* ⚠★ 2026-08-30 에 규칙을 바꿨다. 예전에는 삼성·구글 «메시지» 앱 둘만 받았는데,
+     하나 입금 알림이 「하나원큐 앱 푸시」로 오면 문자함에도 없고 여기서도 버려져
+     두 길 모두에서 사라졌다 — 대표: 「문자입금 여전히 안들어온다」.
+     이제 꾸러미로 미리 막지 않고 «내용»으로 가린다. 아래 넷이 그 그물이다. */
+  assert.match(filter, /!"kr\.pureun\.hanabridge"\.equals\(packageName\)/,
+    '★★ 제가 띄운 알림을 제가 다시 읽으면 끝없이 맴돈다');
   assert.match(filter, /인증번호/);
   assert.match(filter, /otp/i);
   assert.match(filter, /보안카드/);

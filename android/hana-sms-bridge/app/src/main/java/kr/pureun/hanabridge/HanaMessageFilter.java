@@ -14,9 +14,22 @@ final class HanaMessageFilter {
 
     private HanaMessageFilter() {}
 
+    /* ★★ 어느 앱이 띄운 알림까지 볼 것인가 (2026-08-30 에 넓혔다).
+       ⚠ 여태 삼성·구글 «메시지» 앱 둘만 봤다. 그런데 하나은행 입금 알림이
+         문자가 아니라 «하나원큐 앱 푸시»로 오는 경우가 있다 — 그러면
+         문자함에도 없고(문자가 아니니) 알림에서도 버려져(꾸러미가 다르니)
+         두 길 모두에서 사라진다. 화면에는 「문자 0건」으로만 보인다.
+         대표: 「문자입금 여전히 안들어온다」 — 이 갈래를 못 보고 있었다.
+       ★ 그래서 꾸러미로 «미리» 막지 않고 내용으로 가린다.
+         isTransaction 이 넷을 모두 요구한다 — 하나 + 승인/입금/출금/이체 + 금액 + 날짜.
+         게다가 인증번호·OTP·비밀번호가 든 것은 앞에서 통째로 뺀다.
+         그 그물을 지나는 «하나 거래 알림»은 어느 앱이 띄웠든 진짜다.
+       ⚠ 대신 꾸러미 이름을 서버로 그대로 올린다 — 실제로 무엇이 물어다 주는지
+         기록에 남아야, 나중에 좁힐 때 짐작이 아니라 기록을 보고 좁힌다.
+       ⚠ 이 앱 자신의 알림은 뺀다 — 제가 띄운 것을 제가 다시 읽으면 안 된다. */
     static boolean supportedPackage(String packageName) {
-        return BridgeConfig.SAMSUNG_MESSAGES.equals(packageName) ||
-                BridgeConfig.GOOGLE_MESSAGES.equals(packageName);
+        if (packageName == null || packageName.isEmpty()) return false;
+        return !"kr.pureun.hanabridge".equals(packageName);
     }
 
     /* ★ 「하나」를 알아보는 규칙 — 서버(functions/hana-message.js)와 «같아야» 한다.

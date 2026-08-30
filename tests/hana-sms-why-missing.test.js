@@ -146,8 +146,11 @@ test('★ 걸러진 «까닭»은 남기고 «원문»은 안 남긴다', () => 
   const body = fn.slice(at, fn.indexOf('\n}', at));
   assert.doesNotMatch(body, /body\.text|body\.title|rawText/,
     '★ 걸러진 문자 원문을 저장하면 안 됩니다 — 까닭만 적습니다.');
-  /* 잘 들어온 뒤에는 걸러짐 표시를 지운다 — 안 지우면 옛 까닭이 계속 붙어 있다 */
-  assert.match(fn, /lastOkAt: Date\.now\(\), lastSkip: null/);
+  /* 잘 들어온 뒤에는 걸러짐 표시를 지운다 — 안 지우면 옛 까닭이 계속 붙어 있다.
+     ⚠ 2026-08-30: 자국 찍기가 한 자리(hanaStampAlive)로 모였다. 못 박을 것은
+       «어느 줄에 적혔나»가 아니라 «잘 들어오면 지워지는가» 다. */
+  assert.match(fn, /patch\.lastOkAt = at; patch\.lastSkip = null;/,
+    '★ 잘 들어와도 옛 걸러짐 표시가 안 지워지면, 지난 까닭이 계속 화면에 붙어 있습니다');
   assert.match(fn, /lastSkip: \(d\.lastSkip && d\.lastSkip\.reason\)/,
     '★ pairStatus 가 안 돌려주면 화면에서 볼 수가 없습니다.');
 });

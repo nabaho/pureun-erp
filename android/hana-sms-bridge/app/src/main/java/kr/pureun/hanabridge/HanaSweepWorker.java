@@ -89,7 +89,12 @@ public final class HanaSweepWorker extends Worker {
         String token = SecureStore.token(context);
         if (uid.isEmpty() || token.isEmpty()) return Result.success();
 
-        int sent = 0, already = 0, failed = 0;
+        int sent = 0, already = 0, failed = 0, foundCount = 0;
+        /* ★★ 「폰에 하나 문자가 있기는 한가」 — 폰만 아는 것이라 폰이 말해야 한다.
+           2026-08-30 에 대기함이 비었을 때 «폰이 못 보낸 것»인지 «폰에 아예 없는 것»인지
+           가릴 길이 없어 하루를 헤맸다. 고칠 곳이 아주 다른데도 그랬다 —
+           앞은 앱·권한 문제이고, 뒤는 은행 문자가 안 오는 것이다. */
+        long newestAt = 0L;
         boolean canRead = context.checkSelfPermission(Manifest.permission.READ_SMS)
                 == PackageManager.PERMISSION_GRANTED;
 
@@ -101,7 +106,9 @@ public final class HanaSweepWorker extends Worker {
                 found = null;
             }
             if (found != null) {
+                foundCount = found.size();
                 for (SmsHistoryReader.Item item : found) {
+                    if (item.receivedAt > newestAt) newestAt = item.receivedAt;
                     try {
                         JSONObject body = new JSONObject();
                         body.put("action", "ingest");
@@ -133,6 +140,13 @@ public final class HanaSweepWorker extends Worker {
             ping.put("uid", uid);
             ping.put("deviceId", SecureStore.deviceId(context));
             ping.put("canReadSms", canRead);
+            /* ⚠ 판 번호를 «반드시» 보낸다 — 이것이 없어서 2026-08-30 에
+               「새 앱을 깔긴 하신 건가」를 물어볼 수조차 없었다. */
+            ping.put("appVersion", BridgeConfig.APP_VERSION);
+            /* 폰이 문자함에서 «본» 것. 0 이면 폰에 하나 문자가 아예 없다는 뜻이다 —
+               그때는 앱을 아무리 고쳐도 소용없고, 은행 문자 쪽을 봐야 한다. */
+            ping.put("foundCount", foundCount);
+            ping.put("newestAt", newestAt);
             HanaUploadWorker.post(ping, token);
         } catch (Exception error) {
             /* 알림 한 번 못 보낸 것으로 다시 시도하지는 않는다 — 15분 뒤에 또 온다. */

@@ -2182,6 +2182,27 @@ exports.hanaMessageBridge = functions
         hanaJson(res, 200, { ok: true, uid: pair.uid, deviceToken: token, deviceName }); return;
       }
 
+      /* ══ 「폰이 말을 걸었다」를 남기는 한 자리 (2026-08-30) ═══════════════
+         ⚠★ 여태 이 자국은 «새로 담았을 때만» 찍혔다. 그래서 이런 일이 있었다 —
+            대표가 「지난 문자 가져오기」를 눌러 폰이 110건을 올렸는데,
+            그것이 어제 이미 담은 것들이라 «전부 중복»으로 되돌아갔고,
+            서버에는 아무 자국도 안 남았다. 화면은 그대로
+            「연결 뒤 문자 0건 — 앱이 지워졌거나 알림이 꺼졌습니다」라고 했다.
+            폰은 멀쩡히 말을 걸고 있었는데 화면이 «거짓말»을 한 것이다.
+            대표는 그 말을 믿고 두 번이나 앱을 다시 깔았다.
+         ★ 「무엇이 담겼나」와 「폰이 살아 있나」는 다른 물음이다.
+           담긴 것이 없어도 말을 걸었으면 살아 있는 것이다. */
+      const hanaStampAlive = async (linked, how) => {
+        const at = Date.now();
+        const patch = { lastTalkAt: at };
+        /* ⚠ lastOkAt 은 «알림 다리가 돈다»는 뜻이라 알림으로 온 것에만 찍는다.
+           지난 문자·훑기가 대신 찍어 주면 알림이 죽은 채로 「멀쩡함」이 된다. */
+        if (how === "sweep") { patch.lastSweepAt = at; patch.lastSkip = null; }
+        else if (how === "history") patch.lastHistoryAt = at;
+        else { patch.lastOkAt = at; patch.lastSkip = null; }
+        await hanaDeviceRef(linked).update(patch).catch(() => {});
+      };
+
       if (action === "ingest") {
         const linked = await requireHanaDevice(req, body);
         /* ══ 온 길이 둘이다 (대표 지시 2026-08-29) ══════════════════════════
@@ -2206,10 +2227,19 @@ exports.hanaMessageBridge = functions
            ⚠ 같은 문자가 15분마다 또 와도 괜찮다 — rawHash 가 막는다.
               그 막이가 없었다면 이 방법 자체를 못 썼다. */
         const fromSweep = String(body.source || "") === "sweep";
+        const howCame = fromSweep ? "sweep" : (fromHistory ? "history" : "notify");
         const packageName = String(body.packageName || "").trim();
-        if (!fromHistory && !fromSweep && !HANA_MESSAGE_PACKAGES.has(packageName)) {
-          await hanaNoteSkip(linked, "unsupported_message_app");
-          hanaJson(res, 400, { ok: false, ignored: true, reason: "unsupported_message_app" }); return;
+        /* ★★ 꾸러미로 «미리» 막지 않는다 (2026-08-30 에 풀었다).
+           ⚠ 여태 삼성·구글 메시지 앱 둘만 받았다. 그런데 하나 입금 알림이
+             «하나원큐 앱 푸시»로 오면 문자함에도 없고 여기서도 400 으로 되돌아가,
+             두 길 모두에서 사라졌다 — 화면에는 「문자 0건」으로만 보였다.
+           ★ 막이는 그대로 있다 — 아래 parseHanaMessage 가 하나 거래가 아닌 것을
+             모두 걸러 낸다. 꾸러미 검사는 그 위에 덧댄 «두 번째» 그물이었을 뿐인데,
+             그 그물코가 진짜 물고기까지 막고 있었다.
+           ⚠ 어디서 왔는지는 «반드시» 적어 둔다. 실제로 무엇이 물어다 주는지
+             기록에 남아야, 나중에 좁힐 때 짐작이 아니라 기록을 보고 좁힌다. */
+        if (packageName && !HANA_MESSAGE_PACKAGES.has(packageName)) {
+          await hanaDeviceRef(linked).update({ lastPkg: packageName.slice(0, 64) }).catch(() => {});
         }
         const title = String(body.title || "").slice(0, 200);
         const text = String(body.text || "").slice(0, 1200);
@@ -2219,6 +2249,8 @@ exports.hanaMessageBridge = functions
              까닭이 안 남으면 「문자는 왔는데 ERP에 없다」를 아무도 설명할 수 없다
              (2026-08-24 대표 물음이 바로 그것이었다). */
           await hanaNoteSkip(linked, parsed.reason);
+          /* ⚠ 걸러졌어도 폰은 말을 걸었다 — 그 사실까지 지우면 안 된다. */
+          await hanaDeviceRef(linked).update({ lastTalkAt: Date.now() }).catch(() => {});
           hanaJson(res, 200, { ok: true, ignored: true, reason: parsed.reason }); return;
         }
         const tx = parsed.transaction;
@@ -2233,11 +2265,14 @@ exports.hanaMessageBridge = functions
         const sameRaw = await db.ref(`hanaSmsBridge/inbox/${linked.uid}`)
           .orderByChild("rawHash").equalTo(tx.rawHash).limitToFirst(1).once("value")
           .catch(() => null);
+        /* ⚠★ 중복이어도 «자국은 남긴다» — 안 남기면 화면이 「문자 0건」이라 거짓말한다. */
         if (sameRaw && sameRaw.exists()) {
+          await hanaStampAlive(linked, howCame);
           hanaJson(res, 200, { ok: true, duplicate: true, sameRaw: true, id: tx.id }); return;
         }
         const existing = await inboxRef.once("value");
         if (existing.exists()) {
+          await hanaStampAlive(linked, howCame);
           hanaJson(res, 200, { ok: true, duplicate: true, id: tx.id }); return;
         }
         const receivedAt = Date.now();
@@ -2288,19 +2323,15 @@ exports.hanaMessageBridge = functions
              알림이 막힌 채로 「멀쩡함」이 되어 진짜 끊김을 영영 못 알아챈다.
              PC 붙여넣기도 같은 까닭으로 안 찍는다(아래). */
         if (fromSweep) {
-          /* ★ 스스로 훑어 온 것은 lastSweepAt 에 찍는다.
-             ⚠ lastOkAt 에 찍지 않는다 — 그 값이 뜻하는 것은 「알림 다리가 돈다」이다.
-               훑기가 대신 찍어 주면, 알림이 죽은 채로 「멀쩡함」이 되어
-               왜 늦게 들어오는지를 영영 못 알아챈다. */
-          await hanaDeviceRef(linked).update({ lastSweepAt: Date.now(), lastSkip: null }).catch(() => {});
+          await hanaStampAlive(linked, "sweep");
         } else if (fromHistory) {
           /* ★ 지난 문자는 lastOkAt 을 안 찍는다(위 까닭). 그렇다고 아무 자국도
              안 남기면, 화면이 「앱에서 지난 문자 가져오기를 누르세요」를 «영영»
              되풀이한다 — 방금 눌러 72건이 들어왔는데도 그랬다(2026-08-29 대표).
              그래서 «지난 문자를 받았다»는 것만 따로 적는다. 살아 있음과는 다른 말이다. */
-          await hanaDeviceRef(linked).update({ lastHistoryAt: Date.now() }).catch(() => {});
+          await hanaStampAlive(linked, "history");
         } else {
-          await hanaDeviceRef(linked).update({ lastOkAt: Date.now(), lastSkip: null }).catch(() => {});
+          await hanaStampAlive(linked, "notify");
         }
         hanaJson(res, 200, { ok: true, saved: true, id: tx.id }); return;
       }
@@ -2437,8 +2468,16 @@ exports.hanaMessageBridge = functions
            여기서는 «훑기가 돌았다»는 것과 «문자함을 읽을 수 있나»를 더 적는다. */
       if (action === "sweepPing") {
         const linked = await requireHanaDevice(req, body);
+        /* ★★ 「폰에 문자가 있기는 한가」를 폰이 «직접» 알려 준다 (2026-08-30).
+           이것이 없어서 2026-08-30 에 답을 못 했다 — 대기함이 비었을 때
+           「폰이 못 보낸 것」인지 「폰에 아예 없는 것」인지 가릴 길이 없었다.
+           둘은 고칠 곳이 아주 다르다(앱·권한 vs 은행 문자 자체). */
         await hanaDeviceRef(linked).update({
           lastSweepAt: Date.now(),
+          lastTalkAt: Date.now(),
+          appVersion: String(body.appVersion || "").slice(0, 16),
+          sweepFound: Number(body.foundCount || 0),
+          sweepNewestAt: Number(body.newestAt || 0),
           /* 문자함 권한이 없으면 훑기는 돌아도 «아무것도 못 줍는다» —
              그 상태를 화면이 알아야 「권한을 주세요」라고 짚어 줄 수 있다. */
           sweepCanReadSms: body.canReadSms === true,
@@ -2466,6 +2505,17 @@ exports.hanaMessageBridge = functions
              「폰이 죽은 것」이 아니라고 화면이 짚어 줄 수 있다. */
           lastSweepAt: Number(d.lastSweepAt || 0),
           sweepCanReadSms: d.sweepCanReadSms === true,
+          /* 「폰이 마지막으로 말을 건 때」 — 무엇이 담겼는지와 상관없다.
+             중복만 잔뜩 보냈어도 이 값은 최근이다. 그것이 살아 있다는 뜻이다. */
+          lastTalkAt: Number(d.lastTalkAt || 0),
+          /* 폰에 깔린 «판». 이것이 없어서 「새 앱을 깔았나」를 못 물었다. */
+          appVersion: String(d.appVersion || ""),
+          /* 폰이 문자함에서 «본» 것 — 0 이면 폰에 하나 문자가 아예 없다는 뜻이다. */
+          sweepFound: Number(d.sweepFound || 0),
+          sweepNewestAt: Number(d.sweepNewestAt || 0),
+          /* 메시지 앱이 «아닌» 곳에서 온 마지막 알림 — 하나원큐 같은 은행 앱 푸시.
+             이 값이 채워지면 「입금이 앱 푸시로 온다」는 것이 기록으로 확인된 것이다. */
+          lastPkg: String(d.lastPkg || ""),
           disabled: d.disabled === true,
         }));
         hanaJson(res, 200, { ok: true, devices }); return;

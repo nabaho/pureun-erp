@@ -114,3 +114,36 @@ test('★★ 연결이 끊긴 것(열쇠 거절)이 «훑기보다 먼저»다',
   assert.ok(/연결이 끊겼/.test(out.text),
     '★★ 열쇠가 죽었는데 「폰 잘 있음」이라고 하면, 고쳐야 할 것을 덮는다');
 });
+
+/* ══ 「폰이 못 보낸 것」과 「폰에 아예 없는 것」 (2026-08-30) ══
+   ⚠★ 대표: 「문자입금 여전히 안들어온다」. 이 갈래가 없어서 못 갈랐다.
+      둘은 고칠 곳이 아주 다르다 — 앞은 앱·권한이고, 뒤는 은행 문자 자체다. */
+test('★★ 폰은 도는데 문자함에 하나 문자가 «없으면» 그렇게 말한다', () => {
+  const out = run(Object.assign({}, BASE, {
+    lastSweepAt: now - 5 * MIN, sweepCanReadSms: true, sweepFound: 0,
+  }));
+  assert.ok(/문자함에 하나 문자가 없/.test(out.text),
+    '★★ 「폰 잘 있음」이라고만 하면, 왜 안 들어오는지 아무도 못 짚는다');
+  assert.ok(/앱 푸시/.test(out.title),
+    '★★ 하나원큐 앱 푸시로 오는 길을 안 알려 주면, 영영 문자만 기다린다');
+  assert.ok(/다시 깔 것이 아닙니다/.test(out.title),
+    '★★ 못 박아 두지 않으면 사람은 늘 하던 대로 앱을 다시 깐다');
+});
+
+test('★ 문자함에서 «보고 있으면» 몇 건인지 알려 준다', () => {
+  const out = run(Object.assign({}, BASE, {
+    lastSweepAt: now - 5 * MIN, sweepCanReadSms: true, sweepFound: 7, appVersion: '1.8.0',
+  }));
+  assert.ok(/폰 잘 있음/.test(out.text), '★ 보고 있는데 「없다」고 하면 안 된다');
+  assert.ok(/7건/.test(out.title), '★ 몇 건을 보고 있는지 알려 주면 사람이 스스로 판단한다');
+  assert.ok(/1\.8\.0/.test(out.title),
+    '★★ 판 번호를 안 보이면 「새 앱을 깔긴 하신 건가」를 또 못 묻는다');
+});
+
+test('★ 권한이 없을 때는 «문자함이 비었다»고 하지 않는다', () => {
+  const out = run(Object.assign({}, BASE, {
+    lastSweepAt: now - 5 * MIN, sweepCanReadSms: false, sweepFound: 0,
+  }));
+  assert.ok(/권한/.test(out.text),
+    '★★ 못 읽어서 0건인 것을 「문자가 없다」고 하면, 볼 곳을 완전히 반대로 짚는다');
+});

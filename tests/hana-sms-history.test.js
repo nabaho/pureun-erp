@@ -106,19 +106,31 @@ test('★ 서버도 «같은» 해석기·대기함·중복막이를 쓴다', ()
 /* ══════ ③ 지난 문자를 「폰이 살아 있다」로 읽지 않는다 ══════ */
 
 test('★★ 지난 문자를 넣어도 lastOkAt 을 찍지 않는다 — 진짜 끊김을 가린다', () => {
-  const b = ingestBranch();
-  const at = b.indexOf('lastOkAt: Date.now()');
-  assert.ok(at > 0, 'lastOkAt 을 찍는 자리가 없어졌습니다');
-  /* 그 줄이 「알림으로 온 것일 때만」 도는지 본다 */
-  const before = b.slice(0, at);
-  /* ⚠ 2026-08-29: 갈래가 두 가지로 늘었다 — 지난 문자에는 lastHistoryAt 을 따로 찍는다
-     (안 찍으면 화면이 「지난 문자 가져오기를 누르세요」를 영영 되풀이한다).
-     그래서 모양이 if(!fromHistory){…} 에서 if(fromHistory){…} else {…} 로 바뀌었다.
-     못 박을 것은 모양이 아니라 «lastOkAt 이 fromHistory 로 갈린 자리에 있는가» 다. */
-  assert.match(before.slice(-400),
-    /if\s*\(!fromHistory\)\s*\{|if\s*\(fromHistory\)\s*\{[\s\S]*\}\s*else\s*\{/,
+  /* ⚠ 2026-08-30: 자국 찍기가 «한 자리»(hanaStampAlive)로 모였다.
+     중복으로 되돌아갈 때도 자국을 남겨야 했는데, 세 군데에 흩어져 있으면
+     한 군데만 고치고 나머지를 잊는다 — 실제로 그래서 화면이
+     「연결 뒤 문자 0건」이라 거짓말했다.
+     ⚠ 못 박을 것은 모양이 아니라 «lastOkAt 이 알림으로 온 것에만 찍히는가» 다. */
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'functions', 'index.js'), 'utf8');
+  const i = src.indexOf('const hanaStampAlive = async (linked, how) => {');
+  assert.ok(i > 0, '자국 찍는 자리를 못 찾았습니다');
+  let d = 0, end = -1;
+  for (let k = src.indexOf('{', i + 40); k < src.length; k++) {
+    if (src[k] === '{') d++;
+    else if (src[k] === '}') { d--; if (d === 0) { end = k + 1; break; } }
+  }
+  /* ⚠ 주석을 «먼저 걷는다» — 이 함수의 주석에도 lastOkAt 이 적혀 있어서,
+     걷지 않으면 「두 갈래에 있다」로 잘못 센다. 잘 쓴 주석이 검사를 깨뜨리면
+     다음 사람은 주석을 지우게 된다. */
+  const stamp = src.slice(i, end).replace(/\/\*[\s\S]*?\*\//g, ' ');
+  assert.match(stamp, /else \{ patch\.lastOkAt = at;/,
     '★ 지난 문자를 끌어와도 「폰이 살아 있다」로 찍힙니다 — ' +
     '알림이 막힌 채 「멀쩡함」이 되어 진짜 끊김을 영영 못 알아챕니다');
+  assert.strictEqual((stamp.match(/lastOkAt/g) || []).length, 1,
+    '★★ lastOkAt 이 두 갈래 이상에 있습니다 — 알림이 도는지를 더는 알 수 없습니다');
+  assert.match(stamp, /else if \(how === "history"\) patch\.lastHistoryAt = at;/,
+    '★ 지난 문자를 넣고도 아무 자국을 안 남기면 화면이 영영 「누르세요」를 되풀이합니다');
 });
 
 test('어디서 왔는지 남는다 — 받은 때가 쓴 때보다 한참 뒤인 줄을 설명할 수 있어야 한다', () => {

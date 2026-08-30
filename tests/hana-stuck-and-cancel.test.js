@@ -213,11 +213,17 @@ test('★★ 지난 문자를 «이미 끌어왔으면» 또 누르라고 하지
      화면은 「앱에서 지난 문자 가져오기를 누르세요」를 그대로 띄우고 있었다.
      lastOkAt 은 «알림 다리가 살아 있다»는 뜻이라 지난 문자로는 안 찍는다(맞는 판단).
      그래서 «지난 문자를 받았다»를 따로 적어 두고, 화면이 그것을 본다. */
-  const ing = bare(cutBlock(FN, 'if (action === "ingest") {'));
-  assert.ok(/lastHistoryAt:\s*Date\.now\(\)/.test(ing),
+  /* ⚠ 2026-08-30: 자국 찍기가 한 자리(hanaStampAlive)로 모였다 —
+     중복으로 되돌아갈 때도 남겨야 했는데, 세 군데에 흩어져 있으니 한 군데만
+     고치고 잊었다. 그래서 폰이 110건을 보낸 날에도 화면이 「문자 0건」이라 했다. */
+  const stamp = bare(cutBlock(FN, 'const hanaStampAlive = async (linked, how) => {'));
+  assert.ok(/patch\.lastHistoryAt = at;/.test(stamp),
     '★ 지난 문자를 넣고도 아무 자국을 안 남긴다 — 화면이 영영 「누르세요」를 되풀이한다');
-  assert.ok(/if\s*\(fromHistory\)/.test(ing),
+  assert.ok(/how === "history"/.test(stamp),
     '★ 지난 문자와 새 문자를 안 가른다 — 지난 것으로 「살아 있음」을 찍으면 진짜 끊김을 못 알아챈다');
+  const ing = bare(cutBlock(FN, 'if (action === "ingest") {'));
+  assert.ok(/hanaStampAlive\(linked, "history"\)/.test(ing),
+    '★ 담은 뒤에 그 자국을 안 부른다');
 
   const st = bare(cutBlock(FN, 'if (action === "pairStatus") {'));
   assert.ok(/(^|[^\w$])lastHistoryAt\s*:/.test(st), '★ 서버는 적는데 화면에 안 보내 준다');
