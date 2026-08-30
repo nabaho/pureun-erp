@@ -39,11 +39,17 @@
   ];
   /* 목록 표 머리행 열쇠 — 학력·경력 표의 열을 알아본다 */
   var COL_LABELS = [
-    { re: /^(기간|연도|년도|재직기간|재학기간|활동기간)$/, key: 'period' },
+    { re: /^(기간|연도|년도|재직기간|재학기간|활동기간|기간근무년수|근무기간)$/, key: 'period' },
     { re: /^(학교명?|출신학교)$/, key: 'school' },
-    { re: /^(전공|학위|전공\/학위|졸업여부|전공·학위)$/, key: 'major' },
-    { re: /^(기관명?|근무처|소속|발급기관|기관\/단체|위촉기관)$/, key: 'org' },
-    { re: /^(직위|직책|내용|담당업무|활동내용|직책\/내용|주요활동|업무내용)$/, key: 'role' }
+    { re: /^(전공|학위|전공\/학위|졸업여부|전공·학위|학과명?|단과대학)$/, key: 'major' },
+    { re: /^(기관명?|근무처|소속|발급기관|기관\/단체|위촉기관|직장명?|회사명)$/, key: 'org' },
+    { re: /^(직위|직책|내용|담당업무|활동내용|직책\/내용|주요활동|업무내용|담당업무구체적)$/, key: 'role' },
+    /* ⚠ 아래 셋은 «채우지 않는다» — 머리행인 줄 알아보아 «경계»로 삼기 위한 것뿐이다.
+       열 이름을 못 알아보면 머리행인 줄 몰라 남의 표에 값이 박힌다
+       (실측 2026-08-29: 자격증 표에 경력이 죽 박혔다). */
+    { re: /^(자격증명|자격명|면허명|자격사항)$/, key: 'certName' },
+    { re: /^(취득년도|취득일자?|발급일자?|취득연월일)$/, key: 'gotAt' },
+    { re: /^(비고|참고|기타)$/, key: 'note' }
   ];
 
   function normLabel(s) {
@@ -204,36 +210,71 @@
       : (map.indexOf('org') >= 0 && (map.indexOf('role') >= 0 || map.indexOf('period') >= 0)) ? 'career' : '';
     return kind ? { kind: kind, map: map } : null;
   }
+  /* ── 여기서부터는 «남의 자리» ──
+     ① 다음 머리행 — 열 이름이 둘 이상 잡히면 새 목록 표가 시작된 것이다
+     ② 소제목 행 — 한 칸에만 글자가 있고 나머지가 빈 행(「5. 관련 분야 자격증 보유 사항」)
+     둘 중 하나를 만나면 «멈춘다». 넘어가면 자격증 표에 경력이 박힌다. */
+  function isBoundary(cells) {
+    if (!cells.length) return false;
+    /* ⚠ detectHeader 로만 보면 안 된다 — 그건 «채울 수 있는» 목록 표(학력·경력)만 참이다.
+       자격증 머리행은 채울 대상이 아니라 detectHeader 가 거짓이고, 그래서 그냥 지나쳐
+       그 아래에 경력이 박혔다. 여기서는 «열 이름이 둘 이상 잡히면» 머리행으로 본다. */
+    var keys = 0;
+    for (var k = 0; k < cells.length; k++) if (colKeyOf(cellText(cells[k]))) keys++;
+    if (keys >= 2) return true;
+    var filled = 0, first = -1;
+    for (var i = 0; i < cells.length; i++) {
+      if (!isEmptyCell(cells[i])) { filled++; if (first < 0) first = i; }
+    }
+    /* 첫 칸에만 글자가 있고 다른 칸이 여럿 비어 있으면 소제목 줄로 본다 */
+    return filled === 1 && first === 0 && cells.length >= 3;
+  }
+
   function rowIsEmpty(cells) {
     for (var i = 0; i < cells.length; i++) if (!isEmptyCell(cells[i])) return false;
     return true;
   }
+  /* ── 목록 표 채우기 ──
+     ⚠ 표 하나에 «구역이 여럿» 있을 수 있다. 대표 서식(2026-08-29)은 큰 표 하나 안에
+       「3. 최종학력」「4. 경력사항」「5. 자격증」이 소제목으로 이어져 있었다.
+     전에는 ①머리행을 «하나만» 찾고 ②그 아래를 «표 끝까지» 채웠다. 그래서
+       · 첫 머리행이 학력인데 학력이 비면 표 전체를 포기해 경력이 안 들어갔고
+       · 경력이 잡히면 자격증 표까지 죽 채워 «잘못 낸 서류»가 됐다.
+     이제 구역마다 머리행을 찾고, 그 구역의 «연속된 빈 행»만 채운다. */
   function fillList(tbl, data, report) {
     var rows = splitRows(tbl);
-    var head = null, headIdx = -1;
+    var newTbl = tbl;
     for (var r = 0; r < rows.length; r++) {
-      head = detectHeader(splitCells(rows[r]));
-      if (head) { headIdx = r; break; }
-    }
-    if (!head) return tbl;
-    var items = data[head.kind] || [];
-    if (!items.length) return tbl;
-    var newTbl = tbl, put = 0;
-    for (var q = headIdx + 1; q < rows.length && put < items.length; q++) {
-      var cells = splitCells(rows[q]);
-      if (!rowIsEmpty(cells)) continue;                    // 이미 쓴 행은 건너뛴다
-      var item = items[put], newTr = rows[q], ok = false;
-      for (var c = 0; c < cells.length && c < head.map.length; c++) {
-        var k = head.map[c];
-        if (!k || item[k] == null || item[k] === '') continue;
-        var filled = fillCell(cells[c], item[k]);
-        if (!filled) continue;
-        newTr = replaceOnce(newTr, cells[c], filled);
-        cells[c] = filled; ok = true;
+      var head = detectHeader(splitCells(rows[r]));
+      if (!head) continue;
+      var items = data[head.kind] || [];
+      var put = 0;
+      /* 이 구역의 끝까지만 — 다음 머리행이나 소제목을 만나면 남의 자리다 */
+      var q = r + 1;
+      for (; q < rows.length; q++) {
+        var cells = splitCells(rows[q]);
+        if (isBoundary(cells)) break;
+        if (put >= items.length) continue;              /* 넣을 것이 없어도 구역 끝까지는 지나간다 */
+        if (!rowIsEmpty(cells)) continue;               /* 값이 이미 있는 행은 건너뛴다 */
+        var item = items[put], newTr = rows[q], ok = false, used = {};
+        for (var c = 0; c < cells.length && c < head.map.length; c++) {
+          var k = head.map[c];
+          if (!k || item[k] == null || item[k] === '') continue;
+          /* ⚠ 같은 열쇠가 두 열에 잡히면 «첫 열에만» 넣는다.
+             「학과명」과 「학 위」가 둘 다 major 로 잡혀 「인문계」가 두 칸에 들어갔다
+             (실측 2026-08-29). 「담당업무(구체적)」와 「직 위」도 같은 일이 났다. */
+          if (used[k]) continue;
+          used[k] = true;
+          var filled = fillCell(cells[c], item[k]);
+          if (!filled) continue;
+          newTr = replaceOnce(newTr, cells[c], filled);
+          cells[c] = filled; ok = true;
+        }
+        if (ok) { newTbl = replaceOnce(newTbl, rows[q], newTr); put++; }
       }
-      if (ok) { newTbl = replaceOnce(newTbl, rows[q], newTr); put++; }
+      if (items.length) report.lists.push({ kind: head.kind, put: put, total: items.length });
+      r = q - 1;                                        /* 이 구역은 다 봤다 — 다음 구역부터 */
     }
-    report.lists.push({ kind: head.kind, put: put, total: items.length });
     return newTbl;
   }
 
