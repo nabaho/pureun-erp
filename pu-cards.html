@@ -4734,24 +4734,47 @@ function bulkCancel(){
 function toggleNoMail(id){
   const it = state.items[id]; if(!it) return;
   const on = !it.noMail;
-  if(on && !confirm(`「${it.name||it.company||'이 명함'}」을 수신거부로 표시합니다.\n\n`+
-                    `앞으로 단체 발송에서 빠집니다. 한 곳에만 보내는 메일은 그대로 됩니다.`)) return;
+  /* ⚠ «켤 때만» 묻는다 — 푸는 것은 되돌리기 쉬워, 물으면 손만 한 번 더 간다. */
+  if(!on) return nmSet(id, false);
+  puAsk({
+    title: '「'+esc(it.name||it.company||'이 명함')+'」을<br>수신거부로 표시할까요?',
+    body: '앞으로 <b>단체 발송에서 빠집니다.</b><br>한 곳에만 보내는 메일은 그대로 됩니다.',
+    ok: '수신거부', cancel: '그만두기'
+  }).then(yes=>{ if(yes) nmSet(id, true); });
+}
+/* 실제로 적는 자리 — 묻는 것과 적는 것을 갈라 둔다(묶음 쪽도 같은 값을 쓴다) */
+function nmSet(id, on){
+  const it = state.items[id]; if(!it) return;
   it.noMail = on ? true : null;
   Store.put(it);
   toast(on ? '🚫 수신거부로 표시했습니다 — 단체 발송에서 빠집니다'
            : '수신거부를 풀었습니다', 6000);
-  if(document.body.classList.contains('pc')) openPcDetail(id); else openDetail(id);
+  /* ⚠ «열려 있는» 상세만 다시 그린다. 그냥 열면, 목록 줄의 ⋯ 메뉴에서 눌렀을 때
+       누른 적 없는 상세 창이 튀어나온다 — 그 메뉴에는 「상세 보기」가 따로 있다. */
+  if(nmDetailOpen()){
+    if(document.body.classList.contains('pc')) openPcDetail(id); else openDetail(id);
+  }
+}
+function nmDetailOpen(){
+  const a = $('detailBg'), b = $('pcDetail');
+  return !!((a && a.classList.contains('open')) || (b && b.classList.contains('open')));
 }
 /* 고른 명함을 한꺼번에 — 회신이 여러 곳에서 오면 하나씩 열기 번거롭다 */
 function selNoMail(){
   const ids = Object.keys(state.sel); if(!ids.length) return toast('명함을 먼저 선택하세요');
-  if(!confirm(`고른 ${ids.length}개를 수신거부로 표시합니다.\n앞으로 단체 발송에서 빠집니다.`)) return;
-  /* 모아서 한 번에 (점검 D1) — 예전에는 한 장씩 Store.put 이라 100장이면 200번이 넘었다 */
-  const hit = ids.map(id=>state.items[id]).filter(it=>it && !it.noMail);
-  hit.forEach(it=>{ it.noMail=true; });
-  bulkPatchFlush(hit, ['noMail']).catch(e=>toast('저장 실패: '+((e&&e.message)||''), 7000));
-  state.sel={}; render();
-  toast(`🚫 ${hit.length}개를 수신거부로 표시했습니다`, 6000);
+  puAsk({
+    title: '고른 '+ids.length.toLocaleString()+'개를<br>수신거부로 표시할까요?',
+    body: '앞으로 <b>단체 발송에서 빠집니다.</b>',
+    ok: '수신거부', cancel: '그만두기'
+  }).then(yes=>{
+    if(!yes) return;
+    /* 모아서 한 번에 (점검 D1) — 예전에는 한 장씩 Store.put 이라 100장이면 200번이 넘었다 */
+    const hit = ids.map(id=>state.items[id]).filter(it=>it && !it.noMail);
+    hit.forEach(it=>{ it.noMail=true; });
+    bulkPatchFlush(hit, ['noMail']).catch(e=>toast('저장 실패: '+((e&&e.message)||''), 7000));
+    state.sel={}; render();
+    toast(`🚫 ${hit.length}개를 수신거부로 표시했습니다`, 6000);
+  });
 }
 
 /* ① 시험 발송 — 첫 곳 기준으로 «실제로 나갈 모습»을 나에게 한 통 */
@@ -23905,13 +23928,10 @@ async function coMailCsv(){
   await downloadCsvFile(r.ok, `기업정보함_주소록_${tag}_${csvYmd()}.csv`);
   toast(`📇 ${_mailStatText(r.stat)}\n처음에는 2~3명만 먼저 가져와 형식을 확인하세요`, 9000);
 }
-/* 전화로 "그만 보내주세요" 할 때 그 자리에서 누른다. */
-function toggleNoMail(id){
-  const it = state.items[id]; if(!it) return;
-  if(it.noMail) delete it.noMail; else it.noMail = 1;
-  Store.put(it);
-  toast(it.noMail ? '🚫 이 분께는 메일을 보내지 않습니다' : '✅ 다시 메일을 받습니다');
-}
+/* ⚠ 여기 있던 toggleNoMail 을 지웠다 (대표 지시 2026-08-30 「물어보고 켜기」).
+     같은 이름이 위(수신거부 묶음 옆)에 하나 더 있었고, JS는 «뒤엣것»이 이긴다 —
+     그래서 «묻지 않고 바로 켜는» 이쪽이 돌고, 물어보는 쪽은 죽어 있었다.
+     구문오류도 없고 검사도 다 통과해서 아무도 몰랐다. [[new-name-collides-silently]] */
 /* 메일에서 반송·수신거부된 주소를 그대로 긁어 붙여넣는 자리. */
 function openMailBlock(){
   const list = Object.keys(state.mailBlock||{}).map(keyEmail).sort();

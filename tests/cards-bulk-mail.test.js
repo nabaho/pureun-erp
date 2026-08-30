@@ -130,11 +130,15 @@ test('보낼 곳은 이메일 없음·수신거부·중복을 걸러낸 것만',
 
 /* ── ② 수신거부 ── */
 
+/* ⚠ 2026-08-30 「물어보고 켜기」로 정리하면서 «묻는 자리»(toggleNoMail)와
+     «적는 자리»(nmSet)를 갈랐고, 묻는 방법도 브라우저 confirm 에서 가운데 창(puAsk)으로
+     바뀌었다. 지키는 규칙은 그대로다 — 표시를 달고, 저장하고, «묻고» 켠다.
+     그래서 둘을 «함께» 본다. 자세한 것은 tests/cards-nomail-ask.test.js. */
 test('★ 명함에서 수신거부를 켜고 끌 수 있다', () => {
-  const fn = fnBody('toggleNoMail');
+  const fn = fnBody('toggleNoMail') + fnBody('nmSet');
   assert.match(fn, /it\.noMail/, '수신거부 표시를 안 답니다');
   assert.match(fn, /Store\.put\(it\)/, '저장을 안 합니다');
-  assert.match(fn, /confirm\(/, '묻지 않고 끕니다');
+  assert.match(fn, /puAsk\(|confirm\(/, '묻지 않고 켭니다');
   assert.match(src, /onclick="toggleNoMail\('\$\{id\}'\)"/, '명함 상세에 단추가 없습니다');
 });
 
@@ -144,7 +148,7 @@ test('수신거부한 명함은 단체 발송에서 빠진다', () => {
 });
 
 test('고른 명함을 한꺼번에 수신거부로 표시할 수 있다', () => {
-  assert.match(fnBody('selNoMail'), /confirm\(/);
+  assert.match(fnBody('selNoMail'), /puAsk\(|confirm\(/, '묻지 않고 켭니다');
   assert.match(src, /onclick="closeFolderMenu\(\);selNoMail\(\)"/, '⋯ 메뉴에 없습니다');
 });
 

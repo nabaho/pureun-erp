@@ -38,23 +38,16 @@ test('★★ 새로 지은 이름이 «이미 있는 이름»과 안 겹친다',
   /* ⚠ 이 검사가 있는 까닭 — mbGo 로 지었더니 「칸 열기」 mbGo 가 이미 있었다.
        뒤에 선언된 것이 이기므로 쪽 넘김이 통째로 안 먹었는데, 구문오류도 없고
        검사도 다 통과했다. 화면에서 눌러 보고서야 알았다. */
-  /* ⚠ 이미 겹쳐 있던 것 — 이 일과 상관없이 «예전부터» 둘이다. 따로 고치기로 하고
-       여기서는 «더 늘지 않게»만 잠근다. 고친 뒤에는 이 줄을 지운다.
-       · toggleNoMail — 명함 수신거부. 확인을 묻는 쪽(앞)이 죽고, 묻지 않는 쪽(뒤)이 돈다. */
-  const KNOWN = ['toggleNoMail'];
+  /* ⚠ 예외 없음. 2026-08-30 에 하나 있었다(toggleNoMail — 명함 수신거부) —
+       대표께서 「물어보고 켜기」로 정하셔서 묻지 않는 쪽을 지웠다. 다시 예외를
+       늘리지 말 것. 겹친 채로 두면 어느 쪽이 도는지 아무도 모른다. */
   const names = {};
   const re = /\nfunction\s+([A-Za-z_$][\w$]*)\s*\(/g;
   let m;
   while ((m = re.exec(src))) names[m[1]] = (names[m[1]] || 0) + 1;
-  const dup = Object.keys(names).filter(k => names[k] > 1 && KNOWN.indexOf(k) < 0);
+  const dup = Object.keys(names).filter(k => names[k] > 1);
   assert.deepEqual(dup, [],
     '★ 같은 이름의 함수가 둘입니다 — 뒤엣것이 이깁니다: ' + dup.join(', '));
-  /* 예외로 적어 둔 것이 «정말 아직 겹쳐 있는지»도 본다 — 고쳐졌는데 예외만 남으면
-     다음에 같은 이름을 또 지어도 안 걸린다. */
-  for (const k of KNOWN) {
-    assert.ok(names[k] > 1,
-      '★ ' + k + ' 는 이제 안 겹칩니다 — 위 KNOWN 에서 지우십시오');
-  }
 });
 
 /* ══════ ① 그 쪽을 그린다 ══════ */
