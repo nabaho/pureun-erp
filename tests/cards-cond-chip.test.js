@@ -9,7 +9,12 @@
      · listNarrowed() 가 이 둘을 안 본다
      · narrowLabel() 이 이 둘을 말하지 않는다
    거르개를 새로 만들 때마다 이 네 자리를 따라 고쳐야 한다는 것 자체가 결함이므로,
-   단추는 «상태만 뒤집고» 칠하기는 render() 한 곳이 맡게 바꿨다. */
+   단추는 «상태만 뒤집고» 칠하기는 render() 한 곳이 맡게 바꿨다.
+
+   ⚠ 뒷이야기(2026-08-30): 위 거르개 둘(onlyLeft·onlyClosed)은 «없앴다». 단추를 뺀 뒤로
+     켤 길이 아예 없어서, 코드만 남고 아무도 못 쓰는 기능이 되어 있었기 때문이다.
+     그러나 이 파일이 지키는 «규칙»은 그대로 산다 — 걸린 조건은 늘 보이고 늘 풀린다.
+     남은 조건(정보부족·개인)으로 같은 것을 지킨다. 새 거르개를 만들 때도 마찬가지다. */
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -35,14 +40,10 @@ function ctx(extra) {
     tab: 'card', group: 'all', owner: 'all', vtab: '', erpFilter: '', erpMgr: '',
     region: '', colFilter: {}, groups: {}, views: {}, page: 1, view: 'grid', sel: { a: 1 },
     onlyPhone: false, onlyEmail: false, onlyDup: false, onlyIncomplete: false,
-    onlyPrivate: false, onlyLeft: false, onlyClosed: false, q: 'x'
+    onlyPrivate: false, q: 'x'
   }, extra || {});
   const painted = {};
-  const els = {
-    search: { value: '' }, pcSearch: { value: '' },
-    leftBtn: { classList: { toggle: (c, on) => { painted.leftBtn = !!on; } } },
-    closedBtn: { classList: { toggle: (c, on) => { painted.closedBtn = !!on; } } }
-  };
+  const els = { search: { value: '' }, pcSearch: { value: '' } };
   const box = {
     state, painted, els, rendered: 0,
     $: id => els[id] || null,
@@ -73,22 +74,6 @@ function condLabel() {
 }
 
 /* ── ① 조건 모두 풀기가 «둘 다» 푼다 ───────────────────────────────── */
-test('showAllInFolder 가 퇴사자·계약종료도 푼다', () => {
-  const box = ctx({ onlyLeft: true, onlyClosed: true, onlyIncomplete: true });
-  run(box, fn('showAllInFolder'));
-  run(box, 'showAllInFolder()');
-  assert.equal(box.state.onlyLeft, false, '퇴사자가 안 풀렸다 — 대표님이 0건에서 못 빠져나온다');
-  assert.equal(box.state.onlyClosed, false, '계약종료가 안 풀렸다');
-  assert.equal(box.state.onlyIncomplete, false);
-});
-
-/* ── ② 도구줄에 거르개 단추가 «없다» (대표 지시 2026-08-29) ──────────
-   "명함 사업자에 캡쳐내용 모두 빼라 이부분은 검색할 필요 없다.
-    폴더로 분류하거나 탭으로 분류하면 된다."
-   조건 자체는 살아 있다(저장한 탭이 쥐고 있다). 단추만 없앤 것이다.
-   ⚠ 조건을 «켜는» 단추를 다시 만들 때는 classList 를 직접 만지지 말고 toggleCond 를
-     쓸 것 — 그것이 2026-08-29 오전에 겉모습과 상태가 어긋났던 까닭이다. 그 규칙은
-     아래 toggleCond 검사가 그대로 지킨다. */
 test('★ 도구줄에 거르개 단추가 다시 생기지 않았다', () => {
   const head = SRC.slice(SRC.indexOf('id="pcTools"'), SRC.indexOf('id="pcMgrFilter"'));
   ['incompleteBtn', 'leftBtn', 'closedBtn', 'privateBtn'].forEach(id => {
@@ -98,22 +83,11 @@ test('★ 도구줄에 거르개 단추가 다시 생기지 않았다', () => {
   });
 });
 
-test('toggleCond 는 뒤집고 첫 쪽으로 보내고 다시 그린다', () => {
-  const box = ctx({ onlyLeft: false, page: 7 });
-  run(box, fn('toggleCond'));
-  run(box, "toggleCond('onlyLeft')");
-  assert.equal(box.state.onlyLeft, true);
-  assert.equal(box.state.page, 0, '첫 쪽으로 안 갔다 — 3쪽에서 걸면 빈 화면이 된다');
-  assert.equal(box.rendered, 1, '다시 안 그렸다');
-  run(box, "toggleCond('onlyLeft')");
-  assert.equal(box.state.onlyLeft, false, '두 번 누르면 풀려야 한다');
-});
-
 test('clearCond 는 «푸는 쪽»만 한다 — 다시 눌러 켜지면 안 된다', () => {
-  const box = ctx({ onlyClosed: false });
+  const box = ctx({ onlyPrivate: false });
   run(box, fn('clearCond'));
-  run(box, "clearCond('onlyClosed')");
-  assert.equal(box.state.onlyClosed, false, '✕ 가 조건을 «켰다»');
+  run(box, "clearCond('onlyPrivate')");
+  assert.equal(box.state.onlyPrivate, false, '✕ 가 조건을 «켰다»');
 });
 
 /* ── ③ 걸 수 있는 조건은 «하나도 빠짐없이» 딱지에 있다 ─────────────
@@ -135,26 +109,38 @@ test('★ showAllInFolder 가 푸는 조건이 모두 딱지에 있다', () => {
       '★ ' + k + ' 은(는) 걸 수 있는데 딱지(COND_LABEL)에 없다 — '
       + '걸려도 아무 말이 없고, 왜 몇 건만 나오는지 알 길이 없다');
   });
+
+  /* ★ 반대쪽도 본다. 위만 있으면 «푸는 목록에서 하나 빼기»가 그냥 통과한다
+     (2026-08-30 고장넣기에서 실제로 샜다) — 그런데 그쪽이 더 큰 사고다.
+     딱지에 있는데 안 풀리는 조건은 «걸 수는 있고 풀 수는 없는» 조건이고,
+     그것이 2026-08-29 오전의 「0건에서 못 빠져나온다」 그 자체였다. */
+  [...labels.matchAll(/(only[A-Za-z]+)\s*:/g)].map(m => m[1]).forEach(k => {
+    assert.ok(clears.includes(k),
+      '★ ' + k + ' 은(는) 걸리는데 「조건 모두 풀기」가 안 푼다 — '
+      + '풀 길 없는 조건은 자료를 잃은 것과 같다. showAllInFolder 에 함께 적을 것');
+  });
 });
 
 /* ── ④ 조건 띠 — 걸린 것을 «글로» 보여 주고 ✕ 로 푼다 ───────────── */
 test('조건 띠가 걸린 것만 보여 준다', () => {
+  /* ⚠ 2026-08-30 대표 결정으로 퇴사자·계약종료 거르개를 걷었다. 남은 둘
+     (정보부족·개인)로 같은 것을 지킨다 — 지키는 뜻은 그대로다. */
   const code = condLabel() + '\n' + fn('condChipHtml') + '\n' + fn('condChipsHtml');
   let box = ctx({});
   run(box, code);
   assert.equal(vm.runInContext('condChipsHtml()', box), '', '아무 조건도 없는데 띠가 떴다');
 
-  box = ctx({ onlyLeft: true });
+  box = ctx({ onlyIncomplete: true });
   run(box, code);
   const one = vm.runInContext('condChipsHtml()', box);
-  assert.ok(one.includes('퇴사자'), '퇴사자 띠가 없다');
-  assert.ok(!one.includes('계약종료'), '안 건 조건까지 띠에 나왔다');
-  assert.ok(one.includes("clearCond('onlyLeft')"), '✕ 로 풀 길이 없다');
+  assert.ok(one.includes('정보부족'), '걸린 조건 띠가 없다');
+  assert.ok(!one.includes('개인'), '안 건 조건까지 띠에 나왔다');
+  assert.ok(one.includes("clearCond('onlyIncomplete')"), '✕ 로 풀 길이 없다');
 
-  box = ctx({ onlyLeft: true, onlyClosed: true });
+  box = ctx({ onlyIncomplete: true, onlyPrivate: true });
   run(box, code);
   const two = vm.runInContext('condChipsHtml()', box);
-  assert.ok(two.includes('퇴사자') && two.includes('계약종료'), '둘 다 걸었는데 하나만 보인다');
+  assert.ok(two.includes('정보부족') && two.includes('개인'), '둘 다 걸었는데 하나만 보인다');
 });
 
 test('조건 띠를 담당 띠와 «함께» 내보낸다', () => {
@@ -168,26 +154,30 @@ test('조건 띠를 담당 띠와 «함께» 내보낸다', () => {
 });
 
 /* ── ⑤ 좁혀진 상태 판단·설명에도 든다 ─────────────────────────────── */
-test('listNarrowed 가 퇴사자·계약종료를 «좁혀진 것»으로 본다', () => {
-  const code = fn('listNarrowed');
-  [['onlyLeft'], ['onlyClosed']].forEach(([k]) => {
-    const box = ctx({ [k]: true });
-    run(box, code);
-    assert.equal(vm.runInContext('listNarrowed()', box), true,
-      k + ' 을 걸었는데 안 좁혀진 것으로 본다 — 「→ N건 모두」 단추가 안 뜬다');
+test('★ 딱지에 있는 조건은 listNarrowed 도 «좁혀졌다»고 본다', () => {
+  /* 이것이 2026-08-29 의 진짜 결함이었다. 조건은 걸리는데 listNarrowed 가 모르니
+     「조건 모두 풀기」 안내가 안 뜨고, 대표님이 0건에서 못 빠져나왔다.
+     ★ 딱지 목록에서 읽어 견준다 — 사람이 두 곳을 따로 적다 어긋나는 것을 막는다. */
+  const keys = [...condLabel().matchAll(/(only[A-Za-z]+)\s*:/g)].map(m => m[1]);
+  assert.ok(keys.length >= 2, '딱지에서 조건을 못 읽었다 (' + keys.length + '개)');
+  const nar = fn('listNarrowed');
+  keys.forEach(k => {
+    assert.ok(nar.includes(k),
+      '★ ' + k + ' 이 listNarrowed 에 없다 — 걸어 놓고도 «좁혀지지 않았다»고 여겨 '
+      + '「조건 모두 풀기」가 안 뜬다. 0건에서 빠져나올 길이 사라진다');
   });
-  const box = ctx({});
-  run(box, code);
-  assert.equal(vm.runInContext('listNarrowed()', box), false, '아무 조건도 없는데 좁혀졌다고 한다');
 });
 
-test('narrowLabel 이 퇴사자·계약종료를 말한다', () => {
-  const code = condLabel() + '\n' + fn('narrowLabel');
-  let box = ctx({ onlyLeft: true });
-  run(box, code);
-  assert.ok(vm.runInContext('narrowLabel()', box).includes('퇴사자'),
-    '무엇을 골랐는지 안 말한다 — 모르고 지우게 된다');
-  box = ctx({ onlyClosed: true });
-  run(box, code);
-  assert.ok(vm.runInContext('narrowLabel()', box).includes('계약종료'));
+test('★ 좁힘 설명이 한 조건을 «두 번» 말하지 않는다', () => {
+  /* ⚠ 실제로 그랬다(2026-08-30, 점검 A2 때 드러났다). 정보부족·개인을 손으로 밀어
+     넣는 두 줄이 남아 있는데 이름표 돌기가 또 넣어, 「정보부족 · 정보부족」이 됐다.
+     새 조건을 딱지에 더할 때 손으로도 미는 실수가 되풀이되므로 여기서 못 박는다. */
+  const box = ctx({ onlyIncomplete: true, onlyPrivate: true, group: 'all', vtab: '', q: '' });
+  run(box, condLabel() + '\n' + fn('narrowLabel'));
+  const lab = vm.runInContext('narrowLabel()', box);
+  const bits = lab.split(' · ');
+  assert.deepEqual(bits, [...new Set(bits)],
+    '★ 같은 말이 두 번 나온다: ' + lab);
+  assert.equal(bits.length, 2, '걸린 조건은 둘인데 ' + bits.length + '개를 말한다: ' + lab);
 });
+
