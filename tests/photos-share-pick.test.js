@@ -71,9 +71,11 @@ test('★★ 한 장 볼 때도 «같은 창»을 연다 — 「번호를 적으
     assert.ok(!/[^a-zA-Z_$.]prompt\s*\(/.test(cutFn(APP, n)),
       '★★ 공유 길에 prompt 가 남아 있습니다: ' + n);
   });
-  /* 여러 장 길도 같은 창을 쓴다 */
+  /* 여러 장 길도 «같은 목록»을 쓴다.
+     ⚠ 어느 칸에 그리는지(둘째 값)는 2026-08-30 에 늘었다 — 보는 것은
+       「같은 함수를 부르는가」이지 인자를 몇 개 넘기는가가 아니다. */
   assert.match(cutFn(APP, 'function openShareMany('),
-    /openSharePeople\(Array\.from\(selected\)\)/, '★★ 여러 장 길이 딴 창을 엽니다');
+    /openSharePeople\(Array\.from\(selected\)/, '★★ 여러 장 길이 딴 목록을 씁니다');
 });
 
 test('★★ 사람을 «무리로» 나눠 늘어놓는다 — 아홉 줄을 그냥 쌓으면 훑을 곳이 없다', () => {
@@ -101,13 +103,18 @@ test('★★ 「이미 보고 있는 사람」은 «모두에게» 열린 사람
     '★★ 한 장에만 열린 사람도 「보는 중」으로 셉니다');
 });
 
-test('★★ 체크를 풀면 «그 자리에서» 뺀다 — 빼는 자리가 딴 데 있으면 두 화면을 오간다', () => {
+test('★★ 체크를 풀면 «그 자리에서» 거둔다 — 거두는 자리가 딴 데 있으면 두 화면을 오간다', () => {
+  /* ⚠ 2026-08-30: 더할 사람·거둘 사람을 세는 곳이 sharePickChanges 한 곳으로 모였다
+     (단추에 적는 말과 실제로 하는 일이 같은 셈에서 나와야 한다). 지키는 뜻은 그대로. */
+  assert.match(cutFn(APP, 'function sharePickChanges('),
+    /p\.mayDrop \? p\.has\.filter/, '★★ 체크를 풀어도 아무 일이 없습니다');
   const fn = cutFn(APP, 'function submitSharePeople(');
-  assert.match(fn, /const drop = p\.mayDrop\s*\?\s*p\.has\.filter/,
-    '★★ 체크를 풀어도 아무 일이 없습니다');
-  assert.match(fn, /PuPhotoStore\.setShare\(/, '★ 빼는 일을 저장 층에 안 시킵니다');
-  /* 더하지도 빼지도 않았으면 말해 준다 — 조용히 닫히면 된 줄 아신다 */
-  assert.match(fn, /더하거나 뺄 사람을 골라 주세요/, '★ 아무것도 안 골랐을 때 말이 없습니다');
+  assert.match(fn, /const c = sharePickChanges\(\)/, '★★ 단추 말과 하는 일이 딴 셈에서 나옵니다');
+  assert.match(fn, /PuPhotoStore\.setShare\(/, '★ 거두는 일을 저장 층에 안 시킵니다');
+  /* ⚠ 「더하거나 뺄 사람을 골라 주세요」는 걷었다(대표 지시 2026-08-30 「필요없다」) —
+     이제 바뀐 것이 없으면 **단추가 아예 안 눌린다.** 꾸짖을 일이 없다. */
+  assert.match(cutFn(APP, 'function sharePickTouched('), /go\.disabled = !n/,
+    '★★ 바뀐 것이 없는데도 단추가 눌립니다');
 });
 
 test('★ 자주 함께 보는 사람은 «이 기기에만» 남긴다 — 서버에 기록을 또 쌓지 않는다', () => {

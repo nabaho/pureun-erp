@@ -65,12 +65,22 @@ const FORBIDDEN_ROOTS = [
   'companies', 'pucards', 'improve_requests', 'kcareer', 'esign', 'rules_mgmt', 'chwieop'
 ];
 
+/* ⚠ 주석을 «먼저 걷고» 본다 (2026-08-30). 이 울타리가 막으려는 것은 **코드가** 남의 앱
+   자리를 만지는 일이다. 그런데 글자로만 찾다가 「uid_roles 에 사번이 없는 경우」라고
+   적어 둔 **설명 한 줄**에 걸렸다 — 코드는 아무 데도 안 만졌는데도.
+   ⚠⚠ 그대로 두면 다음 사람은 「검사가 걸리니 주석을 지우자」로 간다. 검사가 기록을
+     지우라고 시키는 꼴이라, 걸린 쪽이 아니라 **검사를 고치는 것이 맞다**
+     (저장소 규칙: 소스를 글자로 보는 검사는 주석을 먼저 걷는다). */
+const appCode = app.replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/<!--[\s\S]*?-->/g, '')
+  .replace(/^[ \t]*\/\/.*$/gm, '');
+
 test('다른 앱의 실제 클라우드 루트를 건드리지 않는다', () => {
   for (const rootName of FORBIDDEN_ROOTS) {
     // 단어 경계로 감싼다. 그냥 부분 문자열로 찾으면 이 앱이 쓰는 pu_photos 나
     // 무관한 낱말(예: esign ⊂ design) 때문에 헛걸림이 난다.
     const re = new RegExp('\\b' + rootName + '\\b');
-    assert.ok(!re.test(app), '다른 앱의 클라우드 루트를 건드리면 안 됩니다: ' + rootName);
+    assert.ok(!re.test(appCode), '다른 앱의 클라우드 루트를 건드리면 안 됩니다: ' + rootName);
   }
 });
 
@@ -644,7 +654,9 @@ test('주소가 아니라 사람 이름이 뜬다', () => {
 
 test('관리자 여부를 화면에서 짐작하지 않는다', () => {
   // uid_roles 는 서버가 아는 값이고, 화면에 그 경로가 들어오면 실데이터 가드가 깨진다
-  assert.ok(!/uid_roles/.test(app), '화면이 권한 경로를 직접 읽습니다');
+  // ⚠ 여기도 주석을 걷고 본다 — 「그 자리를 안 만진다」고 적어 둔 설명에 걸리면
+  //   다음 사람이 설명을 지우게 된다(2026-08-30)
+  assert.ok(!/uid_roles/.test(appCode), '화면이 권한 경로를 직접 읽습니다');
   assert.match(app, /PuPhotoStore\.amAdmin\(\)/);
 });
 

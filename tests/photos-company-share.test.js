@@ -238,7 +238,11 @@ test('★★ 공유 칸은 도구줄과 «한 기준»으로 뜬다 — 따로 �
   assert.match(bar, /renderShareCard\(n, touch\)/,
     '★ 도구줄이 쓰는 그 판정을 그대로 넘겨야 합니다');
   const fn = cutFn(photos, 'function renderShareCard(');
-  const ctx = { _card: { style: {} }, _btn: { textContent: '' } };
+  /* 2026-08-30: 도구줄이 «왼쪽 칸에 고르기가 열려 있나»를 함께 본다 — 고른 장수가
+     바뀌면 열려 있던 목록을 닫아야 화면이 거짓말을 안 한다. 그 상태를 여기서도 준다. */
+  const ctx = { _card: { style: {} },
+    _btn: { textContent: '', classList: { add() {}, remove() {}, contains() { return false; } } },
+    _sharePick: null, closeSharePick: function () {} };
   ctx.$ = function (id) { return id === 'shareCard' ? ctx._card : ctx._btn; };
   vm.createContext(ctx);
   vm.runInContext(fn, ctx);

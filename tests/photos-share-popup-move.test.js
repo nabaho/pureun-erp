@@ -41,16 +41,39 @@ test('★★ 창을 여는 자리가 저마다 display 를 안 켠다 — 한 �
   assert.ok(doors >= 9, '여는 자리가 모자랍니다 (지금 ' + doors + ')');
 });
 
-test('★★ 옮길 수 있게 여는 것은 «공유 하나»뿐이다 — 요금도 위험도 없는 창까지 흔들 일이 아니다', () => {
+/* ★ 2026-08-30 — 대표 지시가 «한 걸음 더» 갔다.
+     "공유하기 클릭하면 캡쳐3셀에 사람을 선택할 수 있게 해달라"
+   그래서 격자에서 누를 때는 창을 띄우지 않고 **왼쪽 칸(대시보드) 안에서** 고른다 —
+   「단추바로옆」이 바라던 것의 가장 센 꼴이다(옮길 것도 없이 늘 그 자리에 있다).
+   ⚠ 창을 없애지는 «않았다» — 사진 한 장을 크게 보고 공유할 때는 왼쪽 칸이 화면에
+     없으므로 그대로 창을 쓴다. 그때는 붙일 단추도 없어 손잡이(anchor)를 안 준다.
+   ⚠⚠ 그래서 이 검사가 지키는 것은 「손잡이 붙은 창이 «하나뿐»인가」가 아니라
+     **「공유 아닌 창에 손잡이가 새지 않는가」**다 — 원래 걱정하던 그 병 그대로다. */
+test('★★ 손잡이가 «공유 아닌 창»에 새지 않는다 — 분류·폴더 창까지 흔들 일이 아니다', () => {
   const withAnchor = bare.match(/showKindPopup\(\s*'[^']+'\s*\)/g) || [];
-  assert.equal(withAnchor.length, 1,
-    '★★ 옮길 수 있는 창이 둘 이상입니다 — 대표가 정한 것은 «공유창»뿐입니다');
-  assert.match(withAnchor[0], /shareSideBtn/,
-    '★ 붙일 단추가 「고른 N장 공유하기」가 아닙니다 (대표 지시 「단추바로옆」)');
-  /* 그 자리가 실제로 공유 창을 여는 곳인가 */
-  const fn = cutFn(app, 'function openSharePeople(');
-  assert.match(fn, /showKindPopup\('shareSideBtn'\)/,
-    '★★ 공유 창이 아닌 데에 손잡이를 달았습니다');
+  assert.ok(withAnchor.length <= 1,
+    '★★ 옮길 수 있는 창이 둘 이상입니다 — 대표가 정한 것은 «공유창»뿐입니다: ' +
+    withAnchor.join(', '));
+  withAnchor.forEach(function (c) {
+    assert.match(c, /shareSideBtn/,
+      '★★ 공유 창이 아닌 데에 손잡이를 달았습니다: ' + c);
+  });
+  /* 분류·폴더·업체 창을 여는 자리에는 손잡이가 없어야 한다 */
+  ['function openAssignKind(', 'function askPdfSplit('].forEach(function (n) {
+    let fn = '';
+    try { fn = cutFn(app, n); } catch (_) { return; }
+    assert.ok(!/showKindPopup\(\s*'/.test(fn), '★★ ' + n + ' 에 손잡이가 붙었습니다');
+  });
+});
+
+test('★★ 격자에서는 창이 아니라 «왼쪽 칸 안»에서 고른다 (대표 지시 2026-08-30)', () => {
+  assert.match(cutFn(app, 'function openShareMany('),
+    /openSharePeople\(Array\.from\(selected\), 'sharePickBox'\)/,
+    '★★ 격자에서 누르면 아직 창이 뜹니다 — 대시보드 칸 안에서 고르셔야 합니다');
+  assert.match(app, /<div id="sharePickBox"/, '★★ 고를 칸이 없습니다');
+  /* 크게 보기(한 장)는 그 칸이 화면에 없으므로 창 그대로 */
+  assert.match(cutFn(app, 'function openSharePick('), /openSharePeople\(\[viewerId\]\)/,
+    '★ 크게 보기에서 있지도 않은 칸에 그리려 합니다');
 });
 
 test('★★ 닫을 때 «옮기는 성질»을 끈다 — 안 끄면 다음에 연 분류 창이 손잡이를 달고 나온다', () => {
