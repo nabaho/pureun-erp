@@ -18,6 +18,8 @@ function loadBlock(list){
   assert.ok(at > 0 && end > at + 2, 'renderCoMobileList 를 찾지 못했습니다');
   const calls = { html:'', groupBtnHtml:'' };
   const ctx = {
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     esc: s => String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
     state: { coSel:{}, selMode:false, coTag:'', coFolder:'' },
     _coFolders: {},

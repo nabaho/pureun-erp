@@ -58,6 +58,8 @@ function loadEntryChain(){
   const fabEl = { style:{} }, sortEl = { style:{} }, selbarEl = { style:{} };
   const searchEl = { placeholder:'', value:'' };
   const ctx = {
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     state: { tab:'card', view:'list', q:'', coQ:'', coPick:'keep-me' },
     calls: { rendered:0, selbar:0 },
     localStorage: { getItem: () => null, setItem(){} },
@@ -149,6 +151,8 @@ function loadResetWithRealSelbar(){
   const selbarEl = { style:{ display:'flex' }, innerHTML:'' };
   const fabEl = { style:{} }, sortEl = { style:{} };
   const ctx = {
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     state: { tab:'card', view:'list', selMode:true, sel:{ a:1 }, coSel:{}, q:'', coQ:'', coPick:'' },
     localStorage: { getItem: () => null, setItem(){} },
     $: id => {
@@ -208,6 +212,8 @@ function loadSortBlock(view){
   const sortFn = slice('toggleSort');
   const sortEl = { style:{} }, fabEl = { style:{} };
   const ctx = {
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     state: { tab:'card', view: view, sort:'date', coSort:{ key:'name', dir:'asc' }, selMode:false },
     calls: { rendered:0 },
     label: '등록일순',
@@ -288,6 +294,8 @@ test('★ M4 — render() 는 화면이 바뀔 때마다 이 규칙을 다시 �
 function loadCoMobileList(list, folders){
   const calls = { html:'', groupBtnHtml:'' };
   const ctx = {
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     esc,
     state: { coSel:{}, selMode:false, coTag:'', coFolder:'' },
     _coFolders: folders || {},
@@ -352,6 +360,8 @@ function loadSearchChain(){
   const tabEnd = source.indexOf('\nfunction toggleSort', tabAt);
   const searchEl = { placeholder:'', value:'' };
   const ctx = {
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     state: { tab:'card', view:'list', q:'', coQ:'', coPick:'', sel:{}, coSel:{}, selMode:false },
     localStorage: { getItem: () => null, setItem(){} },
     $: id => {
@@ -471,6 +481,8 @@ function loadFolderSheet(){
   assert.ok(at > 0 && end > at, 'openTopSheet~renderSubbar 사이를 찾지 못했습니다');
   const calls = { html:'' };
   const ctx = {
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     esc,
     state: { view:'co', coFolder:'', coTag:'' },
     _coFolders: { f1:{ id:'f1', name:'현장클리닉' } },
@@ -512,6 +524,8 @@ function loadRestore(isPc){
   const store = {};
   const opened = [];
   const ctx = {
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     JSON, Object,
     myUid: 'uid-A', myEmail: '',
     state: { view:'list', tab:'card', mailSent:false },
