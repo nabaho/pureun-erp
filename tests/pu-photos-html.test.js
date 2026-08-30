@@ -1441,7 +1441,13 @@ test('사진을 누르면 원본 크기, 바깥을 누르면 닫힌다', () => {
   const fn = app.match(/function picClick\([\s\S]*?\n\}/);
   assert.ok(fn, 'picClick 본문을 찾을 수 없습니다');
   assert.match(fn[0], /viewerImg/, '사진 자체를 눌렀는지 가리지 않습니다');
-  assert.match(fn[0], /classList\.toggle\('zoom'\)/);
+  /* ⚠ 「toggle('zoom') 이라고 적혀 있나」로 보지 않는다 — 2026-08-30 에 확대를
+     «누른 자리로» 맞추면서 켜기와 끄기가 갈렸다. 지킬 것은 「눌러서 확대가
+     켜지고 꺼진다」이지 어느 낱말로 적었는가가 아니다. */
+  assert.match(fn[0], /classList\.(toggle|add)\('zoom'\)|zoomToPoint\(/,
+    '눌러도 확대가 안 켜집니다');
+  assert.match(fn[0], /classList\.(toggle|remove)\('zoom'\)/,
+    '한 번 확대하면 «되돌릴 길»이 없습니다');
   assert.match(fn[0], /closeViewer\(\)/, '바깥을 눌러 닫는 길이 없습니다');
   assert.match(app, /#viewerPic\.zoom img\{max-width:none;max-height:none/);
 });
@@ -1464,8 +1470,16 @@ test('다음 사진을 열 때 확대가 풀려 있다', () => {
 });
 
 test('안내 문구가 실제 동작과 같다', () => {
-  // 예전 문구는 '누르면 닫힘'이었는데 이제 사진을 누르면 확대된다.
-  assert.match(app, /사진을 누르면 원본 크기 · 바깥을 누르면 닫힘/);
+  /* 예전 문구는 '누르면 닫힘'이었는데 이제 사진을 누르면 확대된다.
+     ⚠ 문장을 «글자 그대로» 박지 않는다 — 손짓이 늘 때마다 문구도 늘어야 하는데,
+       그때 검사가 「기능이 망가져서가 아니라」 깨진다. 세 가지 «뜻»만 본다. */
+  const hint = /\$\('viewerHint'\)\.textContent = \(it && it\.meta\.w[\s\S]*?;/.exec(app);
+  assert.ok(hint, '크게 보기 안내 줄을 찾을 수 없습니다');
+  assert.match(hint[0], /원본 크기/, '눌러서 확대된다는 것을 안 알려 줍니다');
+  assert.match(hint[0], /끌어서/,
+    '★ 확대하면 한 귀퉁이만 듭니다 — 끌어서 움직일 수 있다는 것을 모르면\n' +
+    '  「사진이 잘린 채로 나온다」가 됩니다 (대표 지시 2026-08-30)');
+  assert.match(hint[0], /닫힘/, '닫는 길을 안 알려 줍니다');
   assert.ok(!/'누르면 닫힘'/.test(app), '옛 안내 문구가 남아 있습니다');
 });
 
