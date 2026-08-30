@@ -123,12 +123,51 @@ test('지운 사진은 「넣은 적」으로 세지 않는다', async () => {
     '지운 뒤 상태를 판단하지 못합니다');
 });
 
-test('사번이 없는 옛 기록은 «이름»으로 맞춘다', async () => {
+test('사번이 없는 옛 기록은 «이름»으로 맞춘다 — 「남이 넣음」으로 새지 않는다', async () => {
   const d = fixture();
   d.scal_photoLog = [{ t: '2026-08-24T09:40:00.000Z', action: 'add', sid: 's1', slot: 0, who: '권형하' }];
   const { box, app } = world(d, ME);
   await box.renderVisits();
   assert.match(app.innerHTML, /1장/, '★ 사번 없는 옛 기록을 못 맞춥니다');
+  /* 사번이 없어도 이름이 나와 같으면 «내가» 넣은 것이다 */
+  assert.doesNotMatch(app.innerHTML, /· [^<]*넣음/, '★ 내가 넣은 것을 남이 넣은 것으로 봅니다');
+});
+
+test('★ 남이 대신 넣어 준 사진도 «있음»으로 센다 — 「없음」으로 겁주지 않는다', async () => {
+  /* 부담당이나 관리자가 대신 넣으면 예전에는 내 화면에만 「없음」으로 떴다.
+     「내가 언제 넣었나」와 「이 방문에 증빙이 있나」는 다른 물음이다. */
+  const d = fixture();
+  d.scal_photoLog = [
+    { t: '2026-08-24T09:40:00.000Z', action: 'add', sid: 's1', slot: 0, whoSid: 'pjw', who: '박재원' }
+  ];
+  const { box, app } = world(d, ME);
+  await box.renderVisits();
+  assert.match(app.innerHTML, /1장/, '★ 남이 넣은 증빙을 안 셉니다');
+  assert.match(app.innerHTML, /박재원/, '★ 누가 넣었는지 안 적습니다');
+  assert.doesNotMatch(app.innerHTML, /사진 없음 2건/, '★ 남이 넣은 방문을 「없음」으로 셌습니다');
+});
+
+test('★ 공용 기록보다 앞선 방문은 「기록 없음」 — 빨간 「없음」이 아니다', async () => {
+  /* 사진 이력을 공용으로 올리기 시작한 것은 2026-08-30 부터다. 그 전 것은
+     각자 PC 안에만 있어, 넣었는지 «알 수가 없다». */
+  const d = fixture();
+  d.scal_photoLog = [{ t: '2026-08-22T00:00:00.000Z', action: 'add', sid: 's2', slot: 0, whoSid: 'khh' }];
+  const { box, app } = world(d, ME);
+  await box.renderVisits();
+  /* s2(8/20)는 기록 있음 · s1(8/24)은 기록 뒤라 진짜 「없음」 · 사무실 s3 은 안 셈 */
+  assert.match(app.innerHTML, /기록 없음/, '★ 「기록 없음」을 안 가릅니다');
+  assert.match(app.innerHTML, /사진 없음 1건/, '★ 기록 뒤 방문까지 「기록 없음」으로 묻었습니다');
+});
+
+test('★ 기록이 하나도 없으면 전부 「기록 없음」 — 온통 빨갛게 만들지 않는다', async () => {
+  const d = fixture();
+  d.scal_photoLog = [];
+  const { box, app } = world(d, ME);
+  await box.renderVisits();
+  assert.doesNotMatch(app.innerHTML, /사진 없음/, '★ 기록 0건인데 「사진 없음」이라고 합니다');
+  /* 머리 칩과 표 칸 «둘 다» — 한쪽만 보면 다른 쪽이 사라져도 모른다 */
+  assert.match(app.innerHTML, /기록 없음 2건/, '★ 머리에 몇 건인지 안 적습니다');
+  assert.match(app.innerHTML, />기록 없음</, '★ 표 칸이 「기록 없음」이 아닙니다');
 });
 
 test('사번이 안 이어져 있으면 «무엇을 하라고» 알려 준다 — 빈 화면으로 두지 않는다', async () => {
