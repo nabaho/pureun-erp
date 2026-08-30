@@ -43,6 +43,9 @@
 <!-- AI 판독 호출기 — 열쇠는 서버가 든다(2026-08-17). 브라우저는 사진만 보낸다. -->
 <script src="js/pu-ai-call.js?v=2"></script>
 <script src="js/pu-rules-history.js?v=3"></script>
+<!-- 급여담당자 엑셀 읽개 — 업체관리(pu-erp.html)가 «같은 파일»을 읽을 때 쓰는 그것.
+     여기서 따로 읽으면 두 화면이 같은 엑셀을 다르게 읽게 된다. -->
+<script src="js/pu-co-xls.js?v=3"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
@@ -2350,6 +2353,8 @@ body.pc #pcDetail{display:flex}
 <input type="file" id="fileInput" accept="image/*,.pdf" multiple hidden onchange="onFiles(this.files);this.value=''">
 <input type="file" id="importInput" accept=".xlsx,.xls,.csv,.vcf,text/csv,text/vcard" hidden onchange="onImportFile(this.files);this.value=''">
 <input type="file" id="restoreInput" accept=".json,application/json" hidden onchange="onRestoreFile(this.files);this.value=''">
+<!-- 급여담당자 엑셀 — 담당자별 파일을 한꺼번에 고를 수 있다 (대표 2026-08-30) -->
+<input type="file" id="payXlsInput" accept=".xlsx,.xls" multiple hidden onchange="onPayXlsFiles(this.files);this.value=''">
 
 <div class="modalbg" id="addBg" onclick="if(event.target===this)this.classList.remove('open')"><div class="modal" id="addM"></div></div>
 <div class="modalbg" id="groupSheetBg" onclick="if(event.target===this)this.classList.remove('open')"><div class="modal" id="groupSheetM"></div></div>
@@ -10291,6 +10296,11 @@ function openMenu(){
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');restoreInput.click()">📂 백업 복원
       <span class="msub">JSON 불러오기</span></button>
 
+    <!-- 급여담당자는 «종이명함이 없는 경우가 많다» (대표 2026-08-30).
+         찍어서 들어올 길이 없으니 엑셀에서 직접 넣는다. -->
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');payXlsInput.click()">🧾 급여담당자 엑셀
+      <span class="msub">종이명함 없는 담당자를 명함으로</span></button>
+
     ${hd('🔗 푸른이알피 연동')}
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openErpNameCheck()">🔗 대표자·담당자 대조
       <span class="msub">ERP에만 있는 이름 찾기</span></button>
@@ -10508,6 +10518,42 @@ async function needXLSX(){
     s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
     s.onload=res; s.onerror=rej; document.head.appendChild(s); });
 }
+/* ════════════ 🧾 급여담당자 엑셀 → 명함 (대표 2026-08-30) ════════════
+   「급여담당자 종이명함 없는 경우도 많다. 그래서 기업정보함에 별도로 넣어야 한다」
+
+   찍어서 들어올 길이 없는 분들이라 엑셀이 유일한 입구다.
+
+   ★ 읽는 일은 js/pu-co-xls.js 가 한다 — 업체관리가 «같은 파일»을 읽을 때 쓰는 그것이다.
+     여기서 따로 읽으면 두 화면이 같은 엑셀을 다르게 읽게 된다.
+   ★ 넣는 일은 previewImport 가 한다 — 중복막이·미리보기·「건너뛰기/빈칸만/덮어쓰기」가
+     이미 거기 있다. 새 길을 내면 그중 하나만 고쳐지는 날이 온다.
+   ⚠ saveEditor 를 거치지 않는다. 그 길은 새 명함마다 「그 자리에 계시던 분인가요」를
+     묻는데(2026-08-30), 수십 장을 한꺼번에 넣으면 장마다 창이 뜬다. */
+async function onPayXlsFiles(files){
+  const list = Array.from(files || []);
+  if(!list.length) return;
+  const X = window.PuCoXls;
+  if(!X) return toast('읽기 모듈을 못 불렀습니다 (js/pu-co-xls.js)');
+  try{
+    toast('엑셀을 읽는 중…', 9000);
+    await needXLSX();
+    const rows = [], parts = [];
+    for(const f of list){
+      const wb = XLSX.read(await f.arrayBuffer(), {type:'array'});
+      const grid = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, defval:''});
+      /* 둘째 담당자까지 살린다 — 업체관리는 안 쓰지만 명함으로는 그분도 한 사람이다 */
+      const got = X.parseGrid(grid, {keepSecondContacts:true});
+      if(got.error){ toast(`${f.name} — ${got.error}`, 6000); continue; }
+      const staff = X.staffFromFileName(f.name);
+      const made = X.cardRows(got.rows, staff);
+      rows.push(...made);
+      parts.push(`${staff||f.name}(${made.length}명)`);
+    }
+    if(!rows.length) return toast('엑셀에서 담당자를 찾지 못했습니다');
+    previewImport(rows, `급여담당자 엑셀 — ${parts.join(' · ')}`);
+  }catch(e){ console.error(e); toast('엑셀을 읽지 못했습니다'); }
+}
+
 async function onImportFile(files){
   const f=files[0]; if(!f) return;
   try{
