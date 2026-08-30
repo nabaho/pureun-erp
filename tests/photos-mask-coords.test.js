@@ -24,6 +24,7 @@
 
 'use strict';
 const test = require('node:test');
+const { stripComments } = require('./strip-comments');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -137,7 +138,7 @@ test('★★ 칸과 사진이 다르면 손댄 자리가 어디로 가는지 —
 });
 
 test('★ 없어진 옛 함수를 안 남겨 둔다 — 부르는 곳 없는 것은 다음 사람을 헷갈린다', () => {
-  const code = APP.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
+  const code = stripComments(APP);
   assert.ok(code.indexOf('maskFitWrap') < 0,
     '★ 큰 사진 위 «가리기» 판이 없어졌는데 그 함수가 남아 있습니다');
   assert.ok(code.indexOf('.maskwrap.big') < 0, '★ 없어진 판의 꾸밈이 남아 있습니다');

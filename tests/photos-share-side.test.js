@@ -24,6 +24,7 @@
 
 'use strict';
 const test = require('node:test');
+const { stripComments } = require('./strip-comments');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -32,7 +33,7 @@ const { cutFn } = require('./cut-fn');
 
 const R = path.join(__dirname, '..');
 const APP = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
-const CODE = APP.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
+const CODE = stripComments(APP);
 
 /* 고르개를 «실제로» 열어 본다 — 글자로 찾으면 몸통을 바꿔도 통과한다 */
 function pick(over) {

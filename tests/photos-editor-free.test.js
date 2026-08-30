@@ -18,6 +18,7 @@
 
 'use strict';
 const test = require('node:test');
+const { stripComments } = require('./strip-comments');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -54,7 +55,7 @@ test('★★ 편집과 가리기가 «다른 길»이다 — 한 화면에 나�
 test('★★ 세 가지 결이 없다 — 편집은 «가리는 일»이 아니다', () => {
   ['photoMaskStyle', '.maskstyle', '모자이크', '흐리게'].forEach(function (w) {
     /* 주석에 「걷었다」고 적는 것은 괜찮다 — 코드에 남으면 안 된다 */
-    const code = APP.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
+    const code = stripComments(APP);
     assert.ok(code.indexOf(w) < 0, '★★ 「' + w + '」가 아직 살아 있습니다');
   });
 });
