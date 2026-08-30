@@ -145,6 +145,7 @@ function runTerminate(on, cos) {
   vm.createContext(b);
   const at = SRC.indexOf('const CO_CLOSED_ST');
   vm.runInContext(SRC.slice(at, SRC.indexOf('\n', at)).replace(/^const /, 'var '), b);
+  vm.runInContext(fn('closedFolderName'), b);
   vm.runInContext(fn('coClosedFolder'), b);
   vm.runInContext(fn('coTerminatePlan'), b);
   vm.runInContext(fn('coTerminate'), b);
@@ -184,6 +185,7 @@ test('★ 계약해지 회사 폴더를 이름으로 «찾아» 쓴다 — 새�
               _coFolders: { f1:{id:'f1',name:'1. 업체관리'},
                             f2:{id:'f2',name:'2. 계약해지사업장'} } };
   vm.createContext(b);
+  vm.runInContext(fn('closedFolderName'), b);
   vm.runInContext(fn('coClosedFolder'), b);
   const g = vm.runInContext('coClosedFolder()', b);
   assert.ok(g, '「2. 계약해지사업장」을 못 찾았다 — 새로 만들면 해지 업체가 두 곳으로 갈린다');
@@ -196,7 +198,8 @@ test('★ 엉뚱한 폴더에는 안 걸린다 — 「업체」나 「사업장�
     const b = { _canon: s => String(s||'').replace(/^\s*\d+\s*[.)\-]?\s*/,'').replace(/\s/g,''),
                 _coFolders: f };
     vm.createContext(b);
-    vm.runInContext(fn('coClosedFolder'), b);
+    vm.runInContext(fn('closedFolderName'), b);
+  vm.runInContext(fn('coClosedFolder'), b);
     return vm.runInContext('coClosedFolder()', b);
   };
   assert.equal(mk(['1. 업체관리']), null, '★ 살아 있는 거래처 폴더로 해지 업체를 보낸다');

@@ -48,7 +48,11 @@ function ctx(extra) {
     $: id => els[id] || null,
     render() { box.rendered++; },
     _syncSearchX() {},
-    toast() {}
+    toast() {},
+    /* 띠를 만드는 곳이 공용(condChipHtml)으로 갈리면서 esc 를 쓴다 (2026-08-30, 점검 A3).
+       ⚠ 그냥 넘기는 대역을 쓰면 「꺾쇠를 안 내보낸다」가 늘 통과한다 — 진짜처럼 만든다. */
+    esc: s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
   };
   vm.createContext(box);
   return box;
@@ -135,7 +139,7 @@ test('★ showAllInFolder 가 푸는 조건이 모두 딱지에 있다', () => {
 
 /* ── ④ 조건 띠 — 걸린 것을 «글로» 보여 주고 ✕ 로 푼다 ───────────── */
 test('조건 띠가 걸린 것만 보여 준다', () => {
-  const code = condLabel() + '\n' + fn('condChipsHtml');
+  const code = condLabel() + '\n' + fn('condChipHtml') + '\n' + fn('condChipsHtml');
   let box = ctx({});
   run(box, code);
   assert.equal(vm.runInContext('condChipsHtml()', box), '', '아무 조건도 없는데 띠가 떴다');

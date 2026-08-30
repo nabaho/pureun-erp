@@ -172,8 +172,14 @@ test('★ 갈 폴더의 «이름»을 물어볼 때 보여 준다 — 어디로 
 });
 
 test('★ 이미 있는 종료 폴더를 «먼저» 찾는다 — 새로 만들면 두 곳으로 갈린다', () => {
-  const fn = fnBody('erpClosedFolderOf');
-  assert.match(fn, /_canon/, '이름을 다듬어 견줘야 「2.업체종료 및 퇴사」가 걸린다');
+  /* ⚠ 2026-08-30: 잣대를 closedFolderName 한 곳으로 모았다(점검 A4). 예전에는 명함용과
+     회사용이 «다른 글자»를 봐서, 폴더 이름을 「2. 계약해지」로 바꾸면 명함 쪽만 못 찾고
+     새 폴더를 만들었다. 여기서는 그 공용 잣대를 쓰는지만 본다 — 이름 다듬기(_canon)는
+     이제 그 안에 있다. */
+  assert.match(fnBody('erpClosedFolderOf'), /closedFolderName\(/,
+    '★ 제 잣대를 따로 갖고 있다 — 한쪽만 고치면 다시 갈린다');
+  assert.match(fnBody('closedFolderName'), /_canon/,
+    '이름을 다듬어 견줘야 「2.업체종료 및 퇴사」가 걸린다');
 });
 
 /* ══════ 종료 폴더 고르기 — 실제로 돌려 본다 ══════ */
@@ -183,6 +189,8 @@ function pickFolder(groups, kind){
     _canon: s => String(s||'').replace(/^\s*\d+\s*[.)\-]?\s*/,'').replace(/\s/g,''),
     state: { groups: groups } };
   vm.createContext(ctx);
+  /* 잣대는 공용(closedFolderName)에 있다 — 함께 실어야 진짜와 같은 답이 나온다 */
+  vm.runInContext(fnBody('closedFolderName'), ctx);
   vm.runInContext(fnBody('erpClosedFolderOf'), ctx);
   return ctx.erpClosedFolderOf(kind || 'card');
 }
