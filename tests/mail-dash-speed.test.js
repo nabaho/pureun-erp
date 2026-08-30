@@ -263,10 +263,16 @@ test('★★ 담당자 줄에도 손잡이·메뉴 «자리»가 있다 — 없�
   const h = c.mailSideHtml();
   const who = (h.match(/<div class="dm-f sub whobin[\s\S]*?<\/div>/g) || []);
   assert.ok(who.length, '담당자 줄이 없습니다 — 검사 밑그림이 틀렸습니다');
+  /* ⚠ 2026-08-29 부터 담당자 줄도 «끌 수 있다» — 그래서 내 줄만 빈 손잡이(ghost)이고
+     나머지는 진짜 손잡이다. 자리는 둘 다 같은 폭이라 줄은 안 밀린다.
+     지킬 뜻은 그대로 — 「손잡이 칸과 메뉴 칸이 있다」. */
   who.forEach(r => {
-    assert.ok(/class="grip ghost"/.test(r), '이름 앞 손잡이 자리가 없습니다 (이름이 18px 밀립니다)');
+    assert.ok(/class="grip(?: ghost)?"/.test(r), '이름 앞 손잡이 자리가 없습니다 (이름이 18px 밀립니다)');
     assert.ok(/class="fmenu ghost"/.test(r), '오른쪽 메뉴 자리가 없습니다 (숫자가 21px 밀립니다)');
   });
+  /* 「나」 줄은 붙박이라 끌 수 없어야 한다 — 끌어 내리면 「내 메일이 어디 갔나」가 된다 */
+  who.filter(r => /meRow/.test(r)).forEach(r =>
+    assert.ok(!/draggable="true"/.test(r), '「나」 줄이 끌립니다 — 맨 위 붙박이여야 합니다'));
 });
 
 test('★ 빈 자리는 «보이지 않되 자리는 차지한다» — display:none 이면 아무 소용이 없다', () => {

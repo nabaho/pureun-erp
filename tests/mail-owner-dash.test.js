@@ -489,11 +489,18 @@ test('★ 직함이 「노무사」면 노무사로 본다 — 사람이 보는 
   assert.equal(w.kind, 'pro', '직함이 노무사인데 직원으로 갈랐다');
 });
 
-test('★ 갈래 머리줄이 옆줄에 나온다 — 섞어 두면 열다섯 줄이 한 덩어리다', () => {
+test('★ 갈래 머리줄이 «없다» — 사번순 한 줄로 죽 세운다 (대표 지시 2026-08-29)', () => {
+  /* ⚠ 결정이 바뀐 자리다.
+     2026-08-26: 「노무사와 직원을 따로 분류할 수 있게」 → 갈래 머리줄을 뒀다.
+     2026-08-29: 「노무사 직원 구분하는것없이 사번순서로만 하고 나는 가장위에」
+       → 열 명뿐인데 머리줄 셋이 끼어 목록이 세 도막으로 잘렸고, 업무 칸으로 바꿀 때
+         줄이 위아래로 크게 움직였다. 그것이 「계속 움직이는 느낌」의 큰 몫이었다.
+     ⚠ 지킬 뜻은 그대로다 — 「누구 것인지 한눈에 갈린다」. 이제 그것을 사번 순서와
+       「나」 표가 맡는다. 되돌리라면 이 검사와 코드를 함께 되돌린다. */
   const c = loadStaff({ state:{ mbDash:'who' } });
   const h = c.mailSideHtml();
-  assert.ok(h.indexOf('노무사') > 0, '「노무사」 머리줄이 없다');
-  assert.ok(h.indexOf('직원') > 0, '「직원」 머리줄이 없다');
+  assert.ok(h.indexOf('dm-whogrp') < 0,
+    '갈래 머리줄이 아직 있습니다 — 목록이 도막나 칩을 바꿀 때 줄이 크게 움직입니다');
 });
 
 test('명부에 없는 이름은 «지우지 않는다» — 모른다고 지우면 그 메일이 사라진다', () => {
@@ -798,7 +805,9 @@ test('★ 담당자 줄과 업무 줄의 «아이콘 폭»이 같다 — 다르�
     }
     return found;
   };
-  const ic = widthOf('.ic'), dot = widthOf('.dot');
+  /* ⚠ 2026-08-29 부터 아이콘 칸 이름이 «하나»(.ic)다 — 두 이름이 남아 있으면
+     언젠가 한쪽만 바뀐다. 그래서 폭도 한 곳에서만 정한다. */
+  const ic = widthOf('.ic'), dot = ic;
   assert.ok(ic, '담당자 줄 아이콘 폭을 정한 곳이 없습니다');
   assert.ok(dot, '업무 줄 아이콘 폭을 정한 곳이 없습니다');
   assert.equal(ic, dot,
@@ -826,16 +835,16 @@ function loadMe(myName, over){
   return c;
 }
 
-test('★ 내 줄이 «가장 위»에 온다 — 갈래 머리줄보다 위', () => {
+test('★ 내 줄이 «가장 위»에 온다 — 담당자 목록의 첫 줄', () => {
+  /* ⚠ 2026-08-29 부터 머리줄이 없다. 그래서 「머리줄보다 위」가 아니라
+     «담당자 줄 가운데 첫 줄»인지로 본다. 지킬 뜻은 그대로다. */
   const c = loadMe('박한별', { state:{ mbDash:'who' } });
   const h = c.mailSideHtml();
-  const iMe = h.indexOf('내 메일');
-  /* ⚠ 이 대역에는 명부(ErpMatch.staff)가 없어 갈래가 「그 밖」으로 나온다 —
-     갈래 «이름»이 아니라 «갈래 머리줄 자체»를 찾는다. 여기서 보려는 것은 차례뿐이다. */
-  const iGrp = h.indexOf('class="dm-whogrp">');
-  assert.ok(iMe > 0, '「내 메일」 머리줄이 없다');
-  assert.ok(iGrp > 0, '갈래 머리줄이 없다');
-  assert.ok(iMe < iGrp, '내 줄이 갈래 머리줄보다 아래에 있다 (내 ' + iMe + ' · 갈래 ' + iGrp + ')');
+  const rows = h.match(/<div class="dm-f sub whobin[\s\S]*?<\/div>/g) || [];
+  assert.ok(rows.length > 1, '담당자 줄이 하나뿐입니다 — 검사 밑그림이 틀렸습니다');
+  assert.ok(/meRow/.test(rows[0]) && /meTag/.test(rows[0]),
+    '첫 줄이 내 줄이 아닙니다');
+  rows.slice(1).forEach(r => assert.ok(!/meRow/.test(r), '내 줄이 아래에도 있습니다'));
 });
 
 test('★ 내 줄은 «한 번만» 나온다 — 두 줄이면 통수를 두 번 센 줄 안다', () => {
