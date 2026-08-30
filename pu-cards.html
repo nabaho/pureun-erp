@@ -3385,6 +3385,12 @@ const ErpMatch = {
           coName: co.name||'',
           taxOfficeName: co.taxOfficeName||'', taxContact: co.taxContact||'',
           taxPhone: co.taxPhone||'', taxEmail: co.taxEmail||'',
+          /* ── 세금계산서 발급처 (대표 지시 2026-08-30) ──
+             «세무사무실(taxEmail)과 다른 자리»다 — 여기는 우리가 계산서를 보낼 곳이다.
+             ⚠ 색인에 싣는 까닭: 자동 채우기가 「이알피에 이미 들어 있나」를 물어야 하는데,
+               회사가 4,000곳이라 그때마다 서버를 읽으면 그게 그대로 요금이 된다.
+               손에 든 것으로 가리면 채울 것이 없을 때 서버를 아예 안 건드린다. */
+          taxInvoiceEmail: co.taxInvoiceEmail||'', taxInvoiceContact: co.taxInvoiceContact||'',
           bizNo: co.bizNo||'' };
         /* ⚠ 「세무사무실만 적힌」 업체가 여기서 걸러지면 안 된다 —
            담당자·유형이 비어 있어도 세무 메일은 온다. rec.taxEmail 을 함께 본다. */
@@ -20408,7 +20414,7 @@ function coEffectiveExtra(key, name, coInfoMap){
      푸른이알피), 그 문에서만 표를 새로 뽑는다(coListBust). 문이 아닌 곳에서 값이
      바뀌는 길은 없다 — 저장은 모두 그 문을 되돌아 들어온다. */
 let _coListMemo = null;
-function coListBust(){ _coListMemo = null; }
+function coListBust(){ _coListMemo = null; taxAutoSoon(); }
 function coList(){
   if(_coListMemo) return _coListMemo;
   return (_coListMemo = coListBuild());
@@ -20624,14 +20630,73 @@ function taxInvoicePatch(cur, o){
   return patch;
 }
 
+/* ══════ 저절로 채우기 (대표 지시 2026-08-30 「자동으로 채우게」) ══════
+   값이 들어오는 길이 «둘»이다 —
+     ① 기업정보함에서 등록증을 손으로 고치거나 찍어 넣을 때(saveEditor)
+     ② 사진첩이 판독해 pucards/items 에 «직접» 쓸 때(pu-doc-file fillOne·createOne)
+   ②는 기업정보함의 저장 함수를 거치지 «않는다». 저장 자리에만 걸면 사진첩으로 들어온
+   값은 영영 이알피로 못 간다. 자료가 바뀌는 «문»은 하나뿐이므로(coListBust) 거기 건다.
+
+   ⚠ 값싸게 도는 것이 이 일의 어려운 점이다:
+     · 「이미 들어 있나」는 손에 든 색인(ErpMatch)으로 가린다 — 서버를 안 읽는다
+     · 채울 것이 하나도 없으면 서버를 아예 안 건드린다
+     · 여러 곳을 모아 «한 번만» 쓴다
+     · 이 판에서 이미 해 본 회사는 다시 안 한다 */
+let _taxAutoDone = {};      /* 이 판(세션)에서 이미 해 본 회사 */
+let _taxAutoTimer = null;
+
+/* 채울 회사만 고른다 — 순수한 셈이라 따로 떠서 검사한다 */
+function taxAutoTargets(list, o){
+  const opt = o || {};
+  const val = opt.coVal || (typeof coVal === 'function' ? coVal : (x,f)=>x[f]);
+  const find = opt.match || (x => (typeof ErpMatch !== 'undefined'
+    ? ErpMatch.match({ bizno:x.bizno, company:x.name }) : null));
+  const done = opt.done || _taxAutoDone;
+  const blank = v => !String(v == null ? '' : v).trim();
+  const out = [];
+  (list || []).forEach(function(x){
+    if(!x || done[x.key]) return;
+    const em = String(val(x, 'taxInvoiceEmail') || '').trim();
+    const ct = String(val(x, 'taxInvoiceContact') || '').trim();
+    if(!em && !ct) return;                       /* 등록증에 없다 */
+    const m = find(x);
+    if(!m || !m.id) return;                      /* 업체관리에 없다 — 쓸 자리가 없다 */
+    const needEm = em && blank(m.taxInvoiceEmail);
+    const needCt = ct && blank(m.taxInvoiceContact);
+    if(!needEm && !needCt) return;               /* 이미 들어 있다 */
+    out.push(x.key);
+  });
+  return out;
+}
+
+/* 자료가 바뀔 때마다 부른다 — 잔물결을 묶어 한 번만 돈다 */
+function taxAutoSoon(){
+  if(typeof Store === 'undefined' || Store.mode !== 'firebase') return;
+  if(_taxAutoTimer) return;
+  _taxAutoTimer = setTimeout(function(){ _taxAutoTimer = null; try{ taxAutoRun(); }catch(_){} }, 2500);
+}
+function taxAutoRun(){
+  if(typeof Store === 'undefined' || Store.mode !== 'firebase') return;
+  if(typeof ErpMatch === 'undefined' || !ErpMatch.ready) return;   /* 색인이 아직이면 다음에 */
+  let me = null;
+  try{ me = firebase.auth().currentUser; }catch(_){}
+  if(!me) return;
+  const keys = taxAutoTargets(coList());
+  if(!keys.length) return;                        /* ★ 여기서 끝난다 — 서버를 안 건드린다 */
+  keys.forEach(function(k){ _taxAutoDone[k] = 1; });
+  pushTaxInvoiceToErp(keys, { quiet:true });
+}
+
 /* 고른 회사(들)의 값을 업체관리에 채운다. 채울 것이 없으면 아무것도 안 쓴다. */
-async function pushTaxInvoiceToErp(keys){
+async function pushTaxInvoiceToErp(keys, opt){
+  /* 저절로 도는 것이 말을 걸면 화면마다 알림이 뜬다 — quiet 이면 «채운 것»만 알린다 */
+  const quiet = !!(opt && opt.quiet);
   const list0 = coList();
   const rows = (keys && keys.length ? keys : Object.keys(state.coSel))
     .map(k => list0.find(o => o.key === k)).filter(Boolean);
-  if(!rows.length) return toast('회사를 골라 주세요');
+  if(!rows.length){ if(!quiet) toast('회사를 골라 주세요'); return; }
   const u = firebase.auth().currentUser;
-  if(!u) return toast('로그인이 필요합니다');
+  if(!u){ if(!quiet) toast('로그인이 필요합니다'); return; }
   try{
     const db = firebase.database();
     const snap = await db.ref('data/companies').once('value');
@@ -20664,15 +20729,17 @@ async function pushTaxInvoiceToErp(keys){
     if(kept) why.push('이미 들어 있음 '+kept+'곳');
     if(noco) why.push('업체관리에 없음 '+noco+'곳');
     if(noval) why.push('등록증에 없음 '+noval+'곳');
-    if(!n) return toast('채울 곳이 없습니다' + (why.length ? ' — ' + why.join(' · ') : ''), 7000);
+    if(!n){ if(!quiet) toast('채울 곳이 없습니다' + (why.length ? ' — ' + why.join(' · ') : ''), 7000); return; }
     if(!isObj) up['data/companies/v'] = arr;
     up['data/companies/u'] = now;   /* 갱신시각 — 푸른이알피가 이걸 보고 다시 읽는다 */
     await db.ref().update(up);
-    toast('🧾 업체관리에 채웠습니다 ('+n+'곳'+(why.length ? ' · ' + why.join(' · ') : '')+')', 8000);
+    /* 저절로 채웠을 때도 «채운 것»은 알린다 — 모르는 새 바뀌면 안 된다. 다만 짧게. */
+    toast(quiet ? ('🧾 계산서 발급처를 업체관리에 저절로 채웠습니다 (' + n + '곳)')
+                : ('🧾 업체관리에 채웠습니다 ('+n+'곳'+(why.length ? ' · ' + why.join(' · ') : '')+')'), 8000);
     ErpMatch.load();
   }catch(e){
     console.error(e);
-    toast('채우지 못했습니다 — 권한 또는 연결을 확인하세요', 8000);
+    if(!quiet) toast('채우지 못했습니다 — 권한 또는 연결을 확인하세요', 8000);
   }
 }
 

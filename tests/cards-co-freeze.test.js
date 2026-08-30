@@ -32,6 +32,9 @@ function loadCoCache(){
   assert.ok(j > i, 'coListBuild 를 못찾음');
   const ctx = { console, Object, Array, String, Number, Math, JSON };
   ctx.builds = 0;
+  /* 2026-08-30: 자료가 바뀌는 문(coListBust)에서 세금계산서 발급처 «자동 채우기»가
+     깨어난다. 이 검사가 보는 것은 «다시 조립하는가» 뿐이라 대역은 아무 일도 안 한다. */
+  ctx.taxAutoSoon = () => {};
   vm.createContext(ctx);
   vm.runInContext(src.slice(i, j) + '\nfunction coListBuild(){ builds++; return [{key:"k"+builds}]; }', ctx);
   return ctx;
