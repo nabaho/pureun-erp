@@ -105,9 +105,14 @@ const { cutFn } = require('./cut-fn');
 const erp = fs.readFileSync(path.join(ROOT, 'pu-erp.html'), 'utf8').split('\r\n').join('\n');
 const ledger = cutFn(erp, 'function FinanceLedger');
 
-ok('붙여넣기 단추가 있다', /'📋 PC 에서 붙여넣기'/.test(ledger));
-ok('대표만 보인다', /_meNow\(\)\.isOwner &&\s*\n\s*h\('button',\{type:'button',disabled:hanaBusy,onClick:function\(e\)\{e\.stopPropagation\(\);setPasteOpen\(true\);\}/.test(ledger),
-   '휴대폰 연결과 같은 규칙이어야 한다');
+/* ⚠ 아래 둘은 단추의 «생김새»를 못 박고 있었다. 2026-08-30 에 하나문자 손잡이 셋을
+     「📱 하나문자 ▾」 차림표 하나로 묶으면서(대표: 「2줄 1줄로 줄여라」) 깨졌다 —
+     코드는 멀쩡했고 검사만 옛 모양을 붙들고 있었다.
+   지킬 것은 「누를 수 있는가」와 「아무나 못 누르는가」다. */
+ok('붙여넣기로 가는 길이 있다', /PC 에서 붙여넣기/.test(ledger) && /setPasteOpen\(true\)/.test(ledger),
+   '화면에서 붙여넣기 창을 열 수 없습니다');
+ok('대표만 보인다', /_meNow\(\)\.isOwner &&[\s\S]{0,1400}setPasteOpen\(true\)/.test(ledger),
+   '휴대폰 연결과 같은 규칙이어야 한다 (대표 가리개 안에 있어야 한다)');
 ok('서버의 같은 길을 부른다', /hanaSmsCall\('ingestPaste', \{ text: t \}\)/.test(ledger),
    '화면이 스스로 문자를 읽으면 길이 셋이 되고, 셋이 갈라지면 또 조용히 막힌다');
 ok('넣은 뒤 바로 가져온다', /await importHanaSms\(true\);/.test(ledger),

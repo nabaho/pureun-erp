@@ -139,12 +139,20 @@ test('★ 줄마다 «한 번만» 찾는다 (표를 그릴 때마다 다시 찾
 
 /* ── 휴대폰 연결은 권형하만 ── */
 test('★★ 「휴대폰 연결」·「문자 가져오기」는 대표만 보인다', () => {
+  /* ⚠ 예전에는 «단추 한 개의 생김새»(startHanaSmsPair();},)와 그 앞 260자를 봤다.
+       2026-08-30 에 손잡이 셋을 「📱 하나문자 ▾」 차림표 하나로 묶으면서 깨졌다 —
+       규칙은 그대로였고 모양만 바뀐 것이다(대표: 「2줄 1줄로 줄여라」).
+     지킬 것은 «누르는 자리가 대표 가리개 안에 있는가» 다. */
   const B = bare(SRC);
-  const p = B.indexOf('startHanaSmsPair();},');
-  const q = B.indexOf('importHanaSms();},');
-  assert.ok(p >= 0 && q >= 0, '단추를 못 찾았다');
-  assert.ok(B.slice(Math.max(0, p - 260), p).indexOf('_meNow().isOwner &&') >= 0, '연결 단추가 모두에게 보인다');
-  assert.ok(B.slice(Math.max(0, q - 260), q).indexOf('_meNow().isOwner &&') >= 0, '가져오기 단추가 모두에게 보인다');
+  const gate = B.indexOf('_meNow().isOwner &&');
+  /* ⚠ 이름만 찾으면 «함수 정의»가 먼저 걸린다(파일 앞쪽에 있다) — 부르는 자리는
+       세미콜론과 닫는 괄호가 붙는다. 정의를 가리개 «밖»으로 읽어 헛걸렸다. */
+  const p = B.indexOf('startHanaSmsPair();}');
+  const q = B.indexOf('importHanaSms();}');
+  assert.ok(p >= 0 && q >= 0, '누르는 자리를 못 찾았다');
+  assert.ok(gate >= 0, '★ 대표 가리개가 아예 없다 — 모두에게 보인다');
+  assert.ok(p > gate && q > gate,
+    '★ 휴대폰 연결·문자 가져오기가 대표 가리개 «밖»에 있다 — 모두에게 보인다');
 });
 
 test('★★ 사번을 «못 박지» 않는다 (사번은 바뀔 수 있다)', () => {

@@ -10,8 +10,13 @@ const filter = fs.readFileSync('android/hana-sms-bridge/app/src/main/java/kr/pur
 const secure = fs.readFileSync('android/hana-sms-bridge/app/src/main/java/kr/pureun/hanabridge/SecureStore.java', 'utf8');
 
 test('ERP에 휴대폰 연결과 문자 가져오기 동작이 있다', () => {
-  assert.match(erp, /🔗 휴대폰 연결/);
-  assert.match(erp, /📱 문자 가져오기/);
+  /* ⚠ 단추 «글자»를 못 박고 있었다. 2026-08-30 에 손잡이 셋을 「📱 하나문자 ▾」
+       차림표 하나로 묶으면서(대표: 「2줄 1줄로 줄여라」) 글자가 나뉘어 깨졌다 —
+       코드는 멀쩡했다. 지킬 것은 모양이 아니라 «그 일을 할 수 있는가» 다. */
+  assert.match(erp, /휴대폰 연결/, '휴대폰을 잇는 길이 화면에 없습니다');
+  assert.match(erp, /문자 가져오기/, '문자를 가져오는 길이 화면에 없습니다');
+  assert.match(erp, /startHanaSmsPair\(\)/, '연결을 시작하는 자리가 없습니다');
+  assert.match(erp, /importHanaSms\(\)/, '가져오기를 부르는 자리가 없습니다');
   assert.match(erp, /hanaSmsCall\('list'\)/);
   assert.match(erp, /hanaSmsCall\('ack'/);
   assert.match(erp, /erpBankMergeDraft/);
