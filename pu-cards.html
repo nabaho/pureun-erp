@@ -9046,12 +9046,18 @@ function clearCond(k){ state[k] = false; state.page = 0; render(); }
 /* 걸린 조건을 목록 위에 띠로. 없으면 빈 글자 — 조건이 없는데 띠가 뜨면 눈이 그걸 배운다.
    ⚠ 2026-08-29 로 도구줄 단추가 사라진 뒤로, 이 딱지가 「조건이 걸려 있다」를 말하는
      «유일한» 자리다. 조건을 새로 만들면 COND_LABEL 에 반드시 함께 적는다. */
-function condChipsHtml(){
-  return Object.keys(COND_LABEL).filter(k=>state[k]).map(k=>
+/* ══════ 걸린 조건 띠 — «만드는 곳은 하나»다 (점검 A3, 2026-08-30) ══════
+   명함 쪽과 기업 상세 쪽에 글자 하나만 다른 같은 함수가 두 벌 있었다. 한쪽만 고치면
+   다른 화면이 조용히 낡는데, 이 띠는 「왜 몇 곳만 나오나」에 답하는 «유일한» 표시라
+   낡으면 그 화면에서 다시 갇힌다(2026-08-30 아침에 겪은 그 일).
+   다른 것은 넘겨받는다 — 이름표(labels)와 ✕ 가 부를 함수 이름(clearFn). */
+function condChipHtml(labels, clearFn){
+  return Object.keys(labels||{}).filter(k=>state[k]).map(k=>
     `<span class="mgrchip" title="이 조건이 걸려 있습니다 — ✕ 로 풉니다">
-       ${COND_LABEL[k]}만 보는 중
-       <span class="x" onclick="clearCond('${k}')" title="이 조건 풀기">✕</span></span>`).join('');
+       ${esc(labels[k])}만 보는 중
+       <span class="x" onclick="${esc(clearFn)}('${esc(k)}')" title="이 조건 풀기">✕</span></span>`).join('');
 }
+function condChipsHtml(){ return condChipHtml(COND_LABEL, 'clearCond'); }
 /* 지금 화면에 걸린 조건을 사람 말로 — 무엇을 지우는지 알고 눌러야 한다 */
 function narrowLabel(){
   const q = ($('search') && $('search').value.trim()) || ($('pcSearch') && $('pcSearch').value.trim()) || '';
@@ -11672,15 +11678,35 @@ function openSimilar(){
      함께 든 것만 본다 — 「1. 업체관리」는 안 걸린다. 어느 것을 골랐는지는 물어볼 때
      이름으로 말해 준다(사람이 보고 멈출 수 있게).
    ⚠ 명함용·사업자용 폴더는 따로다. 이름이 같아도 섞이면 안 된다. */
+/* ══════ 「이 폴더가 계약종료 폴더인가」 — 잣대는 «한 곳»뿐 (점검 A4, 2026-08-30) ══════
+   예전에는 같은 물음에 답이 두 벌이었고, 보는 글자가 서로 달랐다 —
+     명함·사업자용: 「업체」가 있고 (종료|퇴사)
+     회사용:       (업체|사업장) 이 있고 (해지|종료|퇴사)
+   대표님 폴더 이름이 «우연히» 둘 다 통과했을 뿐이다. 명함 폴더를 「2. 계약해지」로
+   바꾸시면 「업체」가 빠져 명함 쪽이 못 찾고 «새 폴더를 만든다» — 종료 업체가 두 곳으로
+   갈린다. 2026-08-29 에 실제로 겪은 그 일이다.
+   ⚠ 두 갈래로 본다. 어느 한쪽만 두면 반드시 새는 이름이 있다 —
+     ① 「계약해지」·「계약종료」가 통째로 든 이름  → 그것만으로 뜻이 분명하다.
+        (「2. 계약해지」처럼 «업체·사업장이 없는» 이름이 여기서 걸린다. 예전 명함용
+         잣대가 바로 이것을 놓쳐 새 폴더를 만들었다.)
+     ② 「업체·사업장」이 들고 «그리고» 해지·종료·퇴사가 든 이름
+        (「2.업체종료 및 퇴사」·「업체퇴사」)
+   ⚠ ②에 「업체·사업장」을 요구하는 까닭 — 「연말정산 종료분」·「퇴사자 서류」에 업체를
+     보내면 안 된다. 「1. 업체관리」는 해지·종료·퇴사가 없어 걸러진다. */
+function closedFolderName(name){
+  const nm = _canon(name || '');
+  if(nm.indexOf('계약해지') >= 0 || nm.indexOf('계약종료') >= 0) return true;
+  if(nm.indexOf('업체') < 0 && nm.indexOf('사업장') < 0) return false;
+  return nm.indexOf('해지') >= 0 || nm.indexOf('종료') >= 0 || nm.indexOf('퇴사') >= 0;
+}
 function erpClosedFolderOf(kind){
   const want = (kind === 'biz') ? 'biz' : 'card';
   const list = Object.values((state && state.groups) || {});
   for(let i=0;i<list.length;i++){
     const g = list[i]; if(!g) continue;
+    /* ⚠ 갈래는 그대로 가른다 — 이름이 같아도 명함과 사업자가 섞이면 안 된다 */
     if(((g.kind) || 'card') !== want) continue;
-    const nm = _canon(g.name);
-    if(nm === '업체퇴사') return g;                       /* 예전 이름 그대로 */
-    if(nm.indexOf('업체') >= 0 && (nm.indexOf('종료') >= 0 || nm.indexOf('퇴사') >= 0)) return g;
+    if(closedFolderName(g.name)) return g;
   }
   return null;
 }
@@ -22045,12 +22071,8 @@ const CO_TODO_LABEL = { coOnlyClosed:'🚪 종료', coOnlyNoBiz:'🔢 번호 없
                         coOnlyIncomplete:'📋 정보부족', coOnlyUid:'🏛 고유번호증',
                         coNoFolder:'📂 아직 안 담음' };
 function clearCoTodo(k){ state[k] = false; state.coPage = 0; renderCoAny(); }
-function coTodoChipsHtml(){
-  return Object.keys(CO_TODO_LABEL).filter(k=>state[k]).map(k=>
-    `<span class="mgrchip" title="이 조건이 걸려 있습니다 — ✕ 로 풉니다">
-       ${CO_TODO_LABEL[k]}만 보는 중
-       <span class="x" onclick="clearCoTodo('${k}')" title="이 조건 풀기">✕</span></span>`).join('');
-}
+/* ⚠ 띠 모양은 condChipHtml 한 곳에만 있다 (점검 A3) — 여기 다시 적으면 두 벌이 된다 */
+function coTodoChipsHtml(){ return condChipHtml(CO_TODO_LABEL, 'clearCoTodo'); }
 /* 「🏢 거래처」·「🏢 전체」 두 칩의 수 — 폴더·태그·검색 «안»에서, 거래처 거르개만 빼고 센다.
    그래야 두 수가 「지금 고른 것에 따라」 흔들리지 않고, 저마다 누르면 몇 곳이 되는지를 말한다. */
 function coScopeCounts(){
@@ -22858,12 +22880,11 @@ function coClearPlan(list, chunk){
 const CO_CLOSED_ST = { inactive:1, terminated:1, closed:1 };
 /* 「2. 계약해지사업장」 — 「업체」가 들고 「해지·종료·퇴사」가 함께 든 폴더만.
    ⚠ 「1. 업체관리」는 살아 있는 거래처 폴더다. 걸리면 안 된다. */
+/* ⚠ 잣대는 closedFolderName 한 곳뿐이다 (점검 A4) — 여기에 다시 적으면 두 벌이 된다 */
 function coClosedFolder(){
   const list = Object.keys(_coFolders || {}).map(k=>_coFolders[k]).filter(Boolean);
   for(let i=0;i<list.length;i++){
-    const nm = _canon(list[i].name || '');
-    if(nm.indexOf('업체') < 0 && nm.indexOf('사업장') < 0) continue;
-    if(nm.indexOf('해지') >= 0 || nm.indexOf('종료') >= 0 || nm.indexOf('퇴사') >= 0) return list[i];
+    if(closedFolderName(list[i].name)) return list[i];
   }
   return null;
 }
