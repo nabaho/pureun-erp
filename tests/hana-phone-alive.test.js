@@ -119,8 +119,11 @@ test('★★ 연결이 끊긴 것(열쇠 거절)이 «훑기보다 먼저»다',
    ⚠★ 대표: 「문자입금 여전히 안들어온다」. 이 갈래가 없어서 못 갈랐다.
       둘은 고칠 곳이 아주 다르다 — 앞은 앱·권한이고, 뒤는 은행 문자 자체다. */
 test('★★ 폰은 도는데 문자함에 하나 문자가 «없으면» 그렇게 말한다', () => {
+  /* ⚠ 2026-08-30 다시 겨눔: 「없다」고 «단정»하려면 폰이 문자함을 끝까지
+     읽었어야 한다(sweepReadOk). 권한이 있어도 조회는 튕길 수 있고, 그때도
+     0 건이 올라온다 — 그것까지 「없다」로 말하면 은행 쪽을 뒤지게 된다. */
   const out = run(Object.assign({}, BASE, {
-    lastSweepAt: now - 5 * MIN, sweepCanReadSms: true, sweepFound: 0,
+    lastSweepAt: now - 5 * MIN, sweepCanReadSms: true, sweepFound: 0, sweepReadOk: true,
   }));
   assert.ok(/문자함에 하나 문자가 없/.test(out.text),
     '★★ 「폰 잘 있음」이라고만 하면, 왜 안 들어오는지 아무도 못 짚는다');
@@ -128,6 +131,29 @@ test('★★ 폰은 도는데 문자함에 하나 문자가 «없으면» 그렇
     '★★ 하나원큐 앱 푸시로 오는 길을 안 알려 주면, 영영 문자만 기다린다');
   assert.ok(/다시 깔 것이 아닙니다/.test(out.title),
     '★★ 못 박아 두지 않으면 사람은 늘 하던 대로 앱을 다시 깐다');
+});
+
+test('★★ 문자함을 «못 읽었으면» 없다고 단정하지 않는다 — 은행이 아니라 폰이다', () => {
+  const out = run(Object.assign({}, BASE, {
+    lastSweepAt: now - 5 * MIN, sweepCanReadSms: true, sweepFound: 0, sweepReadOk: false,
+  }));
+  assert.ok(/읽지 못했/.test(out.text),
+    '★★ 못 읽은 것을 「문자가 없다」고 하면, 멀쩡한 은행 쪽을 뒤지게 된다');
+  assert.ok(!/문자함에 하나 문자가 없/.test(out.text),
+    '★★ 세어 보지도 못한 것을 「없다」고 단정하고 있다');
+});
+
+test('★ 옛 판 폰(대답이 «모름»)은 없다고 «단정»하지 않는다', () => {
+  /* 옛 앱은 sweepReadOk 를 아예 안 보낸다. 그것을 「읽었다」로 쳐서 단정하면
+     못 읽은 폰까지 「문자가 없다」로 나간다 — 그래서 말투를 낮춘다. */
+  const out = run(Object.assign({}, BASE, {
+    lastSweepAt: now - 5 * MIN, sweepCanReadSms: true, sweepFound: 0,
+  }));
+  assert.ok(!/문자함에 하나 문자가 없/.test(out.text),
+    '★★ 대답을 못 받았는데 「없습니다」라고 단정하고 있다');
+  assert.ok(/못 찾/.test(out.text), '★ 그래도 무엇이 문제인지는 말해 줘야 한다');
+  assert.ok(/옛 판/.test(out.title),
+    '★ 왜 확실히 못 말하는지 안 적으면, 새 앱을 깔 까닭도 안 생긴다');
 });
 
 test('★ 문자함에서 «보고 있으면» 몇 건인지 알려 준다', () => {

@@ -21,7 +21,17 @@ import java.util.List;
 final class SmsHistoryReader {
     /* 한 번에 너무 많이 올리지 않는다 — 문자함에 수천 통이 있는 폰이 있다.
        거른 뒤(하나 거래문자만) 남는 것은 보통 한 달에 수십 통이다. */
-    static final int MAX_MESSAGES = 300;
+    /* ⚠ 300 은 너무 낮았다 (코덱스 지적 2026-08-30). 사업장 카드·통장 문자가
+         하루 열 통이면 30일에 300통을 넘는다 — 넘는 순간 «오래된 것부터» 조용히
+         잘리고, 앱은 「300통을 살펴봤다」고만 말했다. 잘렸다는 말이 어디에도 없었다.
+       ★ 넉넉히 올리고, 그래도 닿으면 «닿았다»고 알린다(lastCapped). */
+    static final int MAX_MESSAGES = 3000;
+
+    /* 마지막 읽기가 상한에 닿았나 — 닿았으면 더 오래된 문자가 남아 있다는 뜻이다.
+       ⚠ 한 번에 하나만 읽으므로(단일 스레드 executor · 15분 일꾼) 이 값으로 충분하다. */
+    static volatile boolean lastCapped = false;
+    /* 문자함을 «읽지 못했나» — 0통과 다르다. 0통은 「없다」이고 이것은 「모른다」다. */
+    static volatile boolean lastFailed = false;
 
     private SmsHistoryReader() {}
 
@@ -44,6 +54,10 @@ final class SmsHistoryReader {
     /* 최근 days 일치 «하나 거래문자»만 골라 새것부터 돌려준다. */
     static List<Item> recent(Context context, int days, long now) {
         List<Item> out = new ArrayList<>();
+        lastCapped = false;
+        /* ⚠ 「못 읽었다」로 시작한다. 끝까지 읽어야 «봤다»로 바꾼다 —
+             중간에 튕기면 0통이 아니라 «모름»으로 남아야 한다. */
+        lastFailed = true;
         /* ⚠ 기간을 반드시 건다. 조건 없이 읽으면 몇 해치 문자를 전부 훑는다. */
         long cutoff = cutoffFor(days, now);
         Uri inbox = Telephony.Sms.Inbox.CONTENT_URI;
@@ -52,11 +66,12 @@ final class SmsHistoryReader {
                 inbox, columns,
                 Telephony.Sms.DATE + " >= ?", new String[]{ String.valueOf(cutoff) },
                 Telephony.Sms.DATE + " DESC")) {
-            if (cursor == null) return out;
+            if (cursor == null) return out;          /* 못 읽었다 — lastFailed 그대로 true */
             int addressAt = cursor.getColumnIndex(Telephony.Sms.ADDRESS);
             int bodyAt = cursor.getColumnIndex(Telephony.Sms.BODY);
             int dateAt = cursor.getColumnIndex(Telephony.Sms.DATE);
-            while (cursor.moveToNext() && out.size() < MAX_MESSAGES) {
+            while (cursor.moveToNext()) {
+                if (out.size() >= MAX_MESSAGES) { lastCapped = true; break; }
                 String address = addressAt < 0 ? "" : safe(cursor.getString(addressAt));
                 String body = bodyAt < 0 ? "" : safe(cursor.getString(bodyAt));
                 long at = dateAt < 0 ? 0L : cursor.getLong(dateAt);
@@ -65,6 +80,7 @@ final class SmsHistoryReader {
                 if (!HanaMessageFilter.isTransaction(address, body)) continue;
                 out.add(new Item(address, body, at));
             }
+            lastFailed = false;                      /* 여기까지 왔으면 «봤다» */
         }
         return out;
     }
