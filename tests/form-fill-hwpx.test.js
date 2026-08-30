@@ -153,7 +153,21 @@ test('채우는 값은 서버로 가지 않는다 (주민번호가 든 서식이
 test('못 채운 자리는 화면에 말해 준다', () => {
   const at = erp.indexOf('function doFillOriginal()');
   const body = erp.slice(at, erp.indexOf('function doEmailMulti()', at));
+  /* 「채웠습니다」만 하면 빈 칸이 있는 줄 모르고 그대로 접수한다 */
   assert.match(body, /leftover/, '못 채운 토큰을 확인하지 않습니다');
-  assert.match(body, /showToast\([^)]*leftover|leftover[\s\S]{0,80}showToast/,
+  assert.match(body, /자동빈칸/, '이름표로 못 알아본 자리를 확인하지 않습니다');
+  const 말한자리 = body.indexOf('못 채운 자리');
+  assert.ok(말한자리 > 0, '못 채운 자리를 화면에 말하지 않습니다');
+  assert.match(body.slice(말한자리), /showToast/,
     '못 채운 자리를 조용히 넘깁니다 — 그대로 접수하면 되돌아옵니다');
+});
+
+test('준비 없이 채운다 — 서식마다 토큰을 심게 하지 않는다', () => {
+  const at = erp.indexOf('function doFillOriginal()');
+  const body = erp.slice(at, erp.indexOf('function doEmailMulti()', at));
+  assert.match(body, /eachSection/, '이름표 자동 채우기를 안 태웁니다');
+  assert.match(body, /PuFormAuto\.채우기/);
+  /* 값은 한 곳(fillContractVars)에서만 나와야 한다 — 두 벌이 되면 서로 어긋난다 */
+  assert.match(body, /fillContractVars\(항\.토큰, contract\)/,
+    '자동 채우기 값을 딴 데서 만들고 있습니다');
 });

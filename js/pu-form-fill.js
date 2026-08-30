@@ -107,7 +107,7 @@
        한글도 같은 자리를 본다. 그래서 새 묶음을 만들어 mimetype 부터 넣는다. */
   function fillHwpx(bytes, replace, opts) {
     var Z = zipLib(opts);
-    var 남은 = [];
+    var 남은 = [], 자동채움 = [], 자동빈칸 = [];
     return Z.loadAsync(bytes).then(function (zip) {
       var 이름들 = [];
       zip.forEach(function (name, f) { if (!f.dir) 이름들.push(name); });
@@ -118,6 +118,16 @@
         var 글자 = /\.(xml|rdf|hpf|txt)$/i.test(n) || n === 'mimetype' || n === 'version.xml';
         return zip.file(n).async(글자 ? 'string' : 'uint8array').then(function (data) {
           if (본문.indexOf(n) >= 0) {
+            /* 이름표를 보고 «준비 없이» 채우는 층이 있으면 먼저 태운다.
+               (js/pu-form-auto.js — 서식마다 토큰을 심지 않아도 되게 한 까닭) */
+            if (opts && typeof opts.eachSection === 'function') {
+              var 결과 = opts.eachSection(data);
+              if (결과 && typeof 결과 === 'object') {
+                data = 결과.xml != null ? 결과.xml : data;
+                (결과.채운것 || []).forEach(function (x) { 자동채움.push(x); });
+                (결과.빈것 || []).forEach(function (x) { 자동빈칸.push(x); });
+              } else if (typeof 결과 === 'string') { data = 결과; }
+            }
             data = fillSectionXml(data, replace);
             leftoverTokens(data).forEach(function (t) { if (남은.indexOf(t) < 0) 남은.push(t); });
           }
@@ -133,7 +143,7 @@
         });
         return out.generateAsync({ type: (opts && opts.type) || 'uint8array' });
       }).then(function (out) {
-        return { bytes: out, leftover: 남은 };
+        return { bytes: out, leftover: 남은, 자동채움: 자동채움, 자동빈칸: 자동빈칸 };
       });
     });
   }
