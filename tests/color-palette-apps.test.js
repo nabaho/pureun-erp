@@ -29,6 +29,16 @@ const DONE = [
   ['pu-photos.html', '푸른사진첩'],
   ['rules.html', '취업규칙'],
   ['enter.html', '푸른포털'],
+  ['fund.html', '근로복지기금'],
+  ['pu-paydata.html', '급여데이터함'],
+  ['pu-home.html', '푸른홈'],
+  ['payroll-os.html', '급여OS'],
+  ['docs-esign.html', '전자서명'],
+  ['chwieop.html', '취업규칙작성'],
+  ['fund-poc.html', '기금시안'],
+  ['sign.html', '서명'],
+  ['ieum-view.html', '이음보기'],
+  ['install.html', '설치안내'],
 ];
 
 /* 일부러 남긴 것. ★ 이 목록을 늘리지 말 것 — 예외가 늘면 팔레트가 무너진다. */
@@ -50,6 +60,16 @@ const EXCEPT = {
   'pu-photos.html': new Set([]),
   'rules.html': new Set([]),
   'enter.html': new Set([]),
+  'fund.html': new Set([]),
+  'pu-paydata.html': new Set([]),
+  'pu-home.html': new Set([]),
+  'payroll-os.html': new Set([]),
+  'docs-esign.html': new Set([]),
+  'chwieop.html': new Set([]),
+  'fund-poc.html': new Set([]),
+  'sign.html': new Set([]),
+  'ieum-view.html': new Set([]),
+  'install.html': new Set([]),
   'kcareer.html': new Set([]),
 };
 
