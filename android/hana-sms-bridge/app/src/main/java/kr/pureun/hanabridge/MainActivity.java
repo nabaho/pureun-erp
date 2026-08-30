@@ -33,6 +33,8 @@ public final class MainActivity extends Activity {
     private EditText code;
     private Button connect;
     private Button history;
+    /* 훑기가 «돌지 않는다»는 것을 크게 알리는 자리 — 조용한 실패를 시끄럽게 만든다 */
+    private TextView sweepWarn;
     /* ⚠ 권한 창이 닫히면 onResume → refresh() 가 돈다. 그때 가져오는 중이면
          화면 글이 지워지고 단추가 다시 눌리게 된다 — 두 번 돌지 않게 막는다. */
     private volatile boolean importing = false;
@@ -83,6 +85,13 @@ public final class MainActivity extends Activity {
         status.setPadding(dp(14), dp(14), dp(14), dp(14));
         root.addView(status, matchWrap());
 
+        /* 연결 상태 «바로 아래»에 둔다 — 「연결됨」만 보고 안심하는 자리가 여기다 */
+        sweepWarn = text("", 14, Color.rgb(146, 64, 14));
+        sweepWarn.setBackgroundColor(Color.rgb(255, 251, 235));
+        sweepWarn.setPadding(dp(14), dp(14), dp(14), dp(14));
+        sweepWarn.setVisibility(android.view.View.GONE);
+        root.addView(sweepWarn, withTop(matchWrap(), 8));
+
         TextView guide = text("1. PC의 푸른ERP 거래내역에서 ‘휴대폰 연결’을 누릅니다.\n2. 표시된 8자리 연결번호를 아래에 입력합니다.\n3. 연결 후 ‘알림 접근 허용’을 눌러 이 앱을 허용합니다.", 14, Color.DKGRAY);
         guide.setPadding(0, dp(20), 0, dp(10));
         root.addView(guide);
@@ -125,7 +134,11 @@ public final class MainActivity extends Activity {
              지난 문자 가져오기를 넣으면서 그 말이 «거짓»이 되었다 —
              화면의 약속과 앱이 하는 일이 어긋나면 그 안내는 안 하느니만 못하다.
              언제 쓰는지까지 그대로 적는다. */
-        TextView security = text("보안 안내\n• 알림을 엿보고, 15분마다 문자함의 최근 " + HanaSweepWorker.SWEEP_DAYS + "일치도 훑습니다.\n• 알림이 막히거나 꺼져도 놓치지 않기 위해서입니다.\n• 어느 쪽이든 하나 거래문자만 골라 보냅니다.\n• 삼성 메시지/Google 메시지의 하나 거래 알림만 골라 처리합니다.\n• 인증번호·OTP·비밀번호는 전송하지 않습니다.\n• 서버에는 문자 원문 대신 날짜·금액·입출금·가맹점만 저장됩니다.", 13, Color.rgb(71, 85, 105));
+        /* ⚠ 「15분마다 훑습니다」라고 잘라 적었더니 «권한이 없을 때는 거짓»이 됐다.
+             훑기는 문자 읽기 권한이 있어야만 돈다(HanaSweepWorker: if (canRead)).
+             화면의 약속과 하는 일이 어긋나면 그 안내는 안 하느니만 못하다 —
+             2026-08-30 「문자 안 온다」가 정확히 이 자리에서 났다. */
+        TextView security = text("보안 안내\n• 알림을 엿봅니다.\n• 문자 읽기를 허용하시면, 그때부터 " + HanaSweepWorker.PERIOD_MINUTES + "분마다 문자함의 최근 " + HanaSweepWorker.SWEEP_DAYS + "일치도 훑습니다 (허용 전에는 훑지 않습니다).\n• 알림이 막히거나 꺼져도 놓치지 않기 위해서입니다.\n• 어느 쪽이든 하나 거래문자만 골라 보냅니다.\n• 삼성 메시지/Google 메시지의 하나 거래 알림만 골라 처리합니다.\n• 인증번호·OTP·비밀번호는 전송하지 않습니다.\n• 서버에는 문자 원문 대신 날짜·금액·입출금·가맹점만 저장됩니다.", 13, Color.rgb(71, 85, 105));
         security.setPadding(dp(14), dp(14), dp(14), dp(14));
         security.setBackgroundColor(Color.rgb(248, 250, 252));
         root.addView(security, withTop(matchWrap(), 20));
@@ -272,6 +285,31 @@ public final class MainActivity extends Activity {
         status.setTextColor(linked ? Color.rgb(21, 128, 61) : Color.rgb(185, 28, 28));
         connect.setEnabled(true);
         if (history != null) history.setEnabled(true);
+        showSweepWarning();
+    }
+
+    /* ★ 15분 훑기는 «문자 읽기 권한이 있어야만» 돈다 (HanaSweepWorker: if (canRead)).
+         그런데 그 권한은 「지난 문자 가져오기」를 눌러야 물어본다. 안 누르면
+         훑기가 조용히 아무것도 안 하는데, 화면 아래 안내는 「15분마다 훑습니다」라고
+         적혀 있다 — 화면이 거짓말을 하고, 사람은 「연결됐는데 문자가 안 온다」만 본다.
+
+       2026-08-30 대표: 「핸드폰과 계속 연결 안 된다, 문자 안 온다」.
+       연결은 멀쩡했다. 훑기가 권한이 없어 돌지 않고 있었고, 그 사실이 «어디에도
+       안 보였다». 조용한 실패를 시끄럽게 만든다. */
+    private void showSweepWarning() {
+        if (sweepWarn == null) return;
+        boolean canRead = checkSelfPermission(Manifest.permission.READ_SMS)
+                == PackageManager.PERMISSION_GRANTED;
+        if (canRead) {
+            sweepWarn.setVisibility(android.view.View.GONE);
+            return;
+        }
+        sweepWarn.setVisibility(android.view.View.VISIBLE);
+        sweepWarn.setText("⚠ 문자 읽기가 꺼져 있습니다\n\n" +
+                "지금은 «알림이 뜰 때만» 문자를 보냅니다. 알림이 막히거나 절전이 앱을 재우면 " +
+                "아무것도 안 옵니다.\n\n" +
+                "위 「지난 문자 가져오기」를 한 번 눌러 허용하시면, 그때부터 " +
+                HanaSweepWorker.PERIOD_MINUTES + "분마다 문자함을 스스로 훑어 놓치지 않습니다.");
     }
 
     private TextView text(String value, int sp, int color) {
