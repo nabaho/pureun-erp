@@ -324,6 +324,22 @@ body{font-family:"Malgun Gothic","맑은 고딕",system-ui,sans-serif;color:var(
    툴바 높이(--tbH=83px)만큼 표 안쪽으로 내려앉아 2번 줄을 덮었다(실측 2026-08-30:
    머리 343 / 첫 줄 299 — 순서가 뒤집혀 보였다). 모서리는 네 귀퉁이 칸으로 굴린다. */
 .dt table{width:100%;background:#fff;border-radius:10px;border-collapse:collapse;border:1px solid var(--border)}
+/* ── 외부기관 실적 줄 (대표 지시 2026-08-30 「넘버링과 열 정렬」) ──
+   flex 로 그렸더니 고객사 이름 길이에 따라 사업명이 줄마다 다른 자리에서 시작해
+   세로로 훑어 읽을 수가 없었다. 열 너비를 못 박아 줄을 세운다.
+   ⚠ 숫자·연도는 tabular-nums — 자릿수가 흔들리면 줄이 맞아도 안 맞아 보인다. */
+.pa-row{display:grid;grid-template-columns:34px 58px 52px minmax(120px,220px) minmax(140px,1fr) 74px 32px;
+  gap:8px;align-items:center;font-size:12px;padding:5px 0;border-top:1px solid var(--border-soft)}
+.pa-row>*{min-width:0}
+.pa-c{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pa-n{text-align:right;color:var(--text-mute);font-variant-numeric:tabular-nums}
+.pa-y{font-variant-numeric:tabular-nums;white-space:nowrap}
+.pa-head{font-size:10.5px;color:var(--text-mute);font-weight:700;letter-spacing:.02em;
+  border-top:none;padding-bottom:3px}
+.pa-head .pa-n{color:inherit}
+@media(max-width:900px){
+  .pa-row{grid-template-columns:28px 52px 46px minmax(90px,1fr) minmax(90px,1fr) 60px 26px;gap:6px}
+}
 .dt thead th:first-child{border-top-left-radius:12px}
 .dt thead th:last-child{border-top-right-radius:12px}
 .dt tbody tr:last-child td:first-child{border-bottom-left-radius:12px}
@@ -2814,6 +2830,14 @@ function toggleExcluded(name){ _showExcluded[name] = !_showExcluded[name]; rende
 
 /* ===== 외부기관 실적 — agency별 그룹 + 그 기관이 발급한 증명서(certdoc) 자동 연결 ===== */
 function _agencyNorm(s){ return String(s||'').replace(/[\s\(\)（）\-·]/g,'').toLowerCase(); }
+/* 외부기관 실적 줄 세우기 — 연도 «내림차순», 연도가 없는 줄은 맨 뒤.
+   같은 해면 고객사 이름 순. 순서가 뒤죽박죽이면 번호를 붙여도 못 읽는다. */
+function _paOrder(a,b){
+  var ya=String(a.year||''), yb=String(b.year||'');
+  if(!ya !== !yb) return ya ? -1 : 1;            /* 연도 없는 줄은 뒤로 */
+  if(ya !== yb) return yb.localeCompare(ya);     /* 최근 해가 위로 */
+  return String(a.org||'').localeCompare(String(b.org||''), 'ko');
+}
 function renderPuAgency(){
   var box = $('puagBody'); if(!box) return;
   var q = _agencyNorm(($('puagQ')||{}).value||'');
@@ -2857,14 +2881,22 @@ function renderPuAgency(){
     return '<div class="card" style="margin-bottom:12px">'
       + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><strong style="font-size:14px">🏛 ' + escapeHtml(g.name) + '</strong>'
       + '<span style="font-size:11px;color:var(--text-mute)">' + g.rows.length + '건' + (yr ? ' · ' + yr : '') + '</span></div>'
-      + g.rows.map(function(r){
-          return '<div style="display:flex;gap:6px;align-items:center;font-size:12px;padding:5px 0;border-top:1px solid var(--border-soft);flex-wrap:wrap">'
-            + '<span class="tag navy">' + r._label + '</span>'
-            + '<span style="white-space:nowrap">' + escapeHtml(r.year||'-') + '</span>'
-            + '<strong style="min-width:90px">' + escapeHtml(r.org||'-') + '</strong>'
-            + '<span style="flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(r.project||r.type||'') + '</span>'
-            + '<span style="color:var(--text-mute);white-space:nowrap">' + escapeHtml(r.main||'-') + '</span>'
-            + (r.src==='pu' ? '<span class="tag" style="font-size:10px">pu</span>' : '')
+      /* ── 줄을 «격자»로 그린다 (대표 지시 2026-08-30) ──
+         전에는 flex 라 고객사 이름 길이에 따라 사업명이 줄마다 다른 자리에서 시작했다.
+         칸이 안 맞으니 세로로 훑어 읽을 수가 없었다. 열 너비를 못 박아 줄을 세운다.
+         ⚠ 연도 내림차순 — 연도가 «없는» 줄은 맨 뒤로. 전에는 「-」가 맨 위에 몰려 있었다. */
+      + '<div class="pa-row pa-head">'
+      + '<span class="pa-n">№</span><span>유형</span><span>연도</span><span>고객사</span>'
+      + '<span>사업명</span><span>담당자</span><span></span></div>'
+      + g.rows.slice().sort(_paOrder).map(function(r,i){
+          return '<div class="pa-row">'
+            + '<span class="pa-n">' + (i+1) + '</span>'
+            + '<span><span class="tag navy">' + r._label + '</span></span>'
+            + '<span class="pa-y">' + escapeHtml(r.year||'-') + '</span>'
+            + '<strong class="pa-c" title="' + escapeHtml(r.org||'') + '">' + escapeHtml(r.org||'-') + '</strong>'
+            + '<span class="pa-c" title="' + escapeHtml(r.project||r.type||'') + '">' + escapeHtml(r.project||r.type||'') + '</span>'
+            + '<span class="pa-c" style="color:var(--text-mute)">' + escapeHtml(r.main||'-') + '</span>'
+            + '<span>' + (r.src==='pu' ? '<span class="tag" style="font-size:10px">pu</span>' : '') + '</span>'
             + '</div>';
         }).join('')
       + '<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12px">'
