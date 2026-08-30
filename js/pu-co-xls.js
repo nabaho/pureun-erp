@@ -45,7 +45,12 @@
   /* ── 시트 읽기 ──
      머리줄을 「사업장명」으로 찾고, 열은 이름의 일부로 맞춘다 —
      사무대행 가져오기(importSubofficeXlsx)가 쓰는 방식과 같게 둔다. */
-  function parseGrid(grid) {
+  /* 「비었다」를 «글로» 적어 둔 칸들 — 값으로 넣으면 그 글자가 명함에 박힌다.
+     ⚠ 통째로 그 말일 때만 본다. 「없음상사」 같은 진짜 이름을 지우면 안 된다. */
+  var EMPTY_MARK = /^(?:x|X|-|–|—|\.|없음|없다|없습니다|무|미상|모름|해당없음|[가-힣]*\s*없음)$/;
+
+  function parseGrid(grid, opt) {
+    var o = opt || {};
     var rows = Array.isArray(grid) ? grid : [];
     var hi = -1;
     for (var i = 0; i < rows.length && i < 20; i++) {
@@ -80,22 +85,68 @@
     function cell(r, c) {
       if (c < 0) return '';
       var v = String((r || [])[c] == null ? '' : (r || [])[c]).trim().normalize('NFC');
-      /* 엑셀에 「x」로 적어 둔 것은 「없다」는 뜻이다 — 값으로 넣으면 안 된다 */
-      return (v === 'x' || v === 'X' || v === '-') ? '' : v;
+      /* 엑셀에 「x」로 적어 둔 것은 「없다」는 뜻이다 — 값으로 넣으면 안 된다.
+         ⚠ 2026-08-30 실제 파일에 「메일 없음」이라고 «글로» 적힌 칸이 있었다.
+           그대로 두면 그 글자가 메일 주소가 되어 명함에 박힌다. */
+      return EMPTY_MARK.test(v) ? '' : v;
     }
 
     var out = [];
+    var lastSite = '';
     for (var r2 = hi + 1; r2 < rows.length; r2++) {
       var row = rows[r2] || [];
       var site = cell(row, cSite);
-      if (!site) continue;
+      var nm = cell(row, cName);
+      /* ★ 사업장명이 빈 줄 = «윗줄 사업장의 둘째 담당자» (예: 「(주)위드유」의
+           김영식 대표 아래 김안아 과장). 업체관리는 한 곳에 담당자 하나면 되니
+           예전부터 이 줄을 버렸다 — 그런데 «명함»으로는 그분도 한 사람이다.
+         2026-08-30 네 파일에서 이렇게 버려지던 사람이 5명이었다.
+         ⚠ 켤 때만 살린다(keepSecondContacts). 업체관리 쪽 셈이 달라지면 안 된다. */
+      if (!site) {
+        if (!o.keepSecondContacts || !nm || !lastSite) continue;
+        site = lastSite;
+      } else {
+        lastSite = site;
+      }
       out.push({
         site: site,
-        cName: cell(row, cName), cPhone: cell(row, cPhone), cMail: cell(row, cMail),
-        tName: cell(row, cTax), tPhone: cell(row, cTaxPhone), tMail: cell(row, cTaxMail)
+        cName: nm, cPhone: cell(row, cPhone), cMail: cell(row, cMail),
+        tName: cell(row, cTax), tPhone: cell(row, cTaxPhone), tMail: cell(row, cTaxMail),
+        /* 윗줄에서 사업장을 물려받은 줄인가 — 화면이 「둘째 담당자」로 보여 줄 수 있게 */
+        second: !cell(row, cSite) ? 1 : 0
       });
     }
     return { error: '', rows: out };
+  }
+
+  /* ── 「전광식 대표」·「남유라주임」 을 이름과 직책으로 가른다 ──
+     엑셀에는 둘이 한 칸에 들어 있다. 명함으로 넣을 때는 갈라야
+     이름으로 찾고 직책으로 부를 수 있다.
+     ⚠ 띄어쓰기가 «있을 수도 없을 수도» 있다 — 「전광식 대표」와 「남유라주임」이
+       같은 파일에 섞여 있다.
+     ⚠ 못 가르면 통째로 이름에 둔다. 억지로 자르면 「김안」+「아 과장」처럼 된다. */
+  /* ⚠ 긴 것을 «먼저» 둔다 — 「대표이사」가 「대표」로 잘리면 안 된다.
+     ⚠ 2026-08-30 실제 파일에서 「이지해 전무」가 안 갈렸다 — 「전무이사」만 있고
+       「전무」가 없었다. 목록에 없는 직책은 통째로 이름이 된다. */
+  var TITLES = ['대표이사', '전무이사', '상무이사', '부사장', '부회장',
+    '본부장', '사무국장', '사무장', '관리자', '담당자',
+    '대표', '사장', '회장', '전무', '상무', '감사', '이사', '고문',
+    '원장', '실장', '부장', '차장', '과장', '팀장', '대리', '주임', '사원',
+    '점장', '소장', '반장', '조장', '주무관', '담당',
+    '간호사', '약사', '세무사', '회계사', '노무사', '변호사'];
+
+  function splitNameTitle(v) {
+    var s = String(v == null ? '' : v).trim().normalize('NFC').replace(/\s+/g, ' ');
+    if (!s) return { name: '', title: '' };
+    for (var i = 0; i < TITLES.length; i++) {
+      var t = TITLES[i];
+      if (s.length > t.length && s.slice(-t.length) === t) {
+        var nm = s.slice(0, s.length - t.length).trim();
+        /* 이름이 한 글자만 남으면 안 가른 것으로 본다 — 「김 대표」는 그대로 둔다 */
+        if (nm.length >= 2) return { name: nm, title: t };
+      }
+    }
+    return { name: s, title: '' };
   }
 
   /* ── 빈칸 물려받기 (대표 결정 2026-08-24) ──
@@ -348,6 +399,36 @@
     return out;
   }
 
+  /* ── 명함으로 넣을 줄 만들기 (대표 2026-08-30) ──
+     「급여담당자는 종이명함이 없는 경우가 많다. 그래서 기업정보함에 별도로 넣어야 한다」
+     찍어서 들어올 길이 없는 분들이라 엑셀이 유일한 입구다.
+
+     ★ 기업정보함의 «가져오기»가 쓰는 줄 모양 그대로 돌려준다(name·company·mobile…).
+       그래야 이미 있는 중복막이·미리보기·넣기를 그대로 탄다 — 새 길을 안 낸다.
+     ⚠ fillDown 은 쓰지 «않는다». 그것은 「같은 업체의 지점」끼리 연락처를 물려받는
+       것이라, 명함으로 만들면 같은 사람이 지점 수만큼 생긴다.
+     ⚠ 이름이 없는 줄은 «사람이 아니다» — 사업장만 적힌 줄이라 명함이 될 수 없다. */
+  function cardRows(rows, staff) {
+    var out = [];
+    (rows || []).forEach(function (r) {
+      if (!r || !r.cName) return;
+      var nt = splitNameTitle(r.cName);
+      if (!nt.name) return;
+      var ph = String(r.cPhone || '').trim();
+      var isMobile = /^01[016789]/.test(ph.replace(/\D/g, ''));
+      out.push({
+        name: nt.name, title: nt.title, company: String(r.site || '').trim(), dept: '',
+        mobile: isMobile ? ph : '', tel: isMobile ? '' : ph,
+        email: String(r.cMail || '').trim(),
+        /* 어디서 왔는지·누가 맡는지를 적어 둔다 — 「이 명함은 왜 사진이 없지」에 답이 된다 */
+        memo: '급여담당자 (종이명함 없음)'
+          + (staff ? '\n푸른 담당: ' + staff : '')
+          + (r.second ? '\n※ 같은 사업장의 둘째 담당자' : '')
+      });
+    });
+    return out;
+  }
+
   function counts(items) {
     var c = { all: 0, ok: 0, type: 0, attach: 0, none: 0, clash: 0, inherited: 0, noStaff: 0 };
     (items || []).forEach(function (it) {
@@ -361,7 +442,8 @@
 
   root.PuCoXls = {
     normName: normName, stemName: stemName, staffFromFileName: staffFromFileName,
-    parseGrid: parseGrid, fillDown: fillDown, plan: plan,
+    parseGrid: parseGrid, fillDown: fillDown, plan: plan, splitNameTitle: splitNameTitle,
+    cardRows: cardRows,
     taxMailSafe: taxMailSafe, mergeContact: mergeContact, patchFor: patchFor,
     writes: writes, counts: counts
   };
