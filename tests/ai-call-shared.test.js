@@ -9,6 +9,7 @@
    ⚠ 글자 찾기로는 못 박히지 않는다 — 주석·죽은 문자열·딴 구역의 같은 낱말에
      여러 번 속았다. 그래서 **함수를 뽑아 실제로 돌려** 확인한다. */
 const test = require('node:test');
+const { stripComments } = require('./strip-comments');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -228,7 +229,6 @@ test('경력관리(kcareer.html)', async (t) => {
 
 /* 주석과 이어진-줄 주석을 걷어 낸다 — 주석 속 낱말에 검사가 속지 않게. */
 function strip(s) {
-  return s.replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
+  return stripComments(s)
     .replace(/(^|[^:'"\w])\/\/[^\n]*/g, '$1');
 }

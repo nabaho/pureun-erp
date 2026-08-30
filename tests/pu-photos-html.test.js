@@ -2,6 +2,7 @@
 // pu-photos.html · 매니페스트 · 포털 등록 정적 검사 — 실행: node --test tests/*.test.js
 //   (이 환경의 node는 --test 에 디렉터리 인자를 주면 죽는다. 반드시 glob으로 파일을 넘긴다.)
 const test = require('node:test');
+const { stripComments } = require('./strip-comments');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -71,8 +72,7 @@ const FORBIDDEN_ROOTS = [
    ⚠⚠ 그대로 두면 다음 사람은 「검사가 걸리니 주석을 지우자」로 간다. 검사가 기록을
      지우라고 시키는 꼴이라, 걸린 쪽이 아니라 **검사를 고치는 것이 맞다**
      (저장소 규칙: 소스를 글자로 보는 검사는 주석을 먼저 걷는다). */
-const appCode = app.replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/<!--[\s\S]*?-->/g, '')
+const appCode = stripComments(app)
   .replace(/^[ \t]*\/\/.*$/gm, '');
 
 test('다른 앱의 실제 클라우드 루트를 건드리지 않는다', () => {

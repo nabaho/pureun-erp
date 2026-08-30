@@ -21,6 +21,7 @@
 
 'use strict';
 const test = require('node:test');
+const { stripComments } = require('./strip-comments');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -30,7 +31,7 @@ const { cutFn } = require('./cut-fn');
 const R = path.join(__dirname, '..');
 const APP = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
 /* 주석에 적어 둔 말이 검사를 통과시키면 안 된다 */
-const CODE = APP.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
+const CODE = stripComments(APP);
 
 function load(names, over) {
   const ctx = Object.assign({ console: { warn: function () {} }, window: {},

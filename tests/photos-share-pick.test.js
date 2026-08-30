@@ -19,6 +19,7 @@
 
 'use strict';
 const test = require('node:test');
+const { stripComments } = require('./strip-comments');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -61,7 +62,7 @@ test('★★ 한 장 볼 때도 «같은 창»을 연다 — 「번호를 적으
   assert.match(fn, /openSharePeople\(\[viewerId\]\)/,
     '★★ 한 장 볼 때가 아직 딴 길입니다 — 갈라 두면 한쪽만 좋아집니다');
   /* ⚠ 주석에 「걷었다」고 적는 것은 괜찮다 — 코드에 남으면 안 된다 */
-  const code = APP.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
+  const code = stripComments(APP);
   assert.ok(code.indexOf('번호를 적어 주세요') < 0,
     '★★ 번호를 타자로 치는 상자가 아직 살아 있습니다');
   /* ⚠ prompt 를 앱 전체에서 찾으면 안 된다 — 「문서 이름 적기」처럼 그 자리가 맞는
