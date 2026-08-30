@@ -1650,3 +1650,26 @@ test('★ 빠른 이력서의 기관 양식 접이식은 없앴다 — 보관함
   assert.equal(source.indexOf('id="cvFold"'), -1, '⚠ 되살리면 보관함이 또 둘이 됩니다');
   assert.equal(source.indexOf('id="homeCvRecent"'), -1);
 });
+
+/* ===== ★ 이력서가 비던 진짜 원인 + 두 줄 정리 (2026-08-30) ===== */
+
+test('★ 이력서는 기본정보 화면과 «같은 값»을 본다 — 날로 읽으면 이력서만 빈다', () => {
+  // 기본정보 화면(renderPersonal)은 getProfileInfo() 로 읽어 USER_INFO 기본값으로 되메꾼다.
+  // 그래서 「기본정보 저장」을 안 눌러도 화면에는 값이 보인다. 이력서가 get('profile_info')를
+  // 날로 읽으면 그 되메꿈을 놓쳐 화면엔 있는데 이력서만 비는 일이 생긴다(실제로 그랬다).
+  assert.match(funcSource('getProfileInfo'), /USER_INFO/, '기본값 되메꿈이 있어야 합니다');
+  ['renderQuickCV', '_cvPersonalPairs', 'renderCVPalette'].forEach((fn) => {
+    assert.match(funcSource(fn), /getProfileInfo\(\)/, fn + ' 도 되메꿈을 거쳐야 합니다');
+  });
+});
+
+test('★ 빠른 이력서 툴바는 탭줄과 «한 줄» — 패널 안에 두면 세 줄이 된다', () => {
+  const hub = source.slice(source.indexOf('id="page-resume-hub"'), source.indexOf('id="page-docbox"'));
+  const bar = hub.indexOf('class="rh-topbar"');
+  const panel = hub.indexOf('id="dm-quick"');
+  const cvbar = hub.indexOf('id="cvToolbar"');
+  assert.ok(bar >= 0 && panel > bar && cvbar > bar, '툴바는 topbar 안에 있어야 합니다');
+  assert.ok(cvbar < panel, '⚠ 패널 안으로 되돌리면 다시 세 줄이 됩니다');
+  // 올리기 줄과 같은 방식으로 탭마다 여닫는다
+  assert.match(funcSource('rhTab'), /cvToolbar[\s\S]{0,80}dm-quick/, '그 탭에서만 보여야 합니다');
+});
