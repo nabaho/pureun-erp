@@ -12,6 +12,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { cutFn } = require('./cut-fn');
 
 const R = path.join(__dirname, '..');
 const ERP = fs.readFileSync(path.join(R, 'pu-erp.html'), 'utf8');
@@ -127,7 +128,7 @@ test('★★ 치우기 단추는 «있을 때만» 나오고, 묻고 나서 치�
      내 화면만 깨끗해지고 합계도 남의 화면도 그대로였다. */
   assert.ok(/dropRowsFromBatches\(ps\.map\(function\(p\)\{ return p\.drop\._k; \}\)\)/.test(src),
     '★★ 화면에서만 감추면 내 눈에만 깨끗하고, 합계와 남의 화면은 그대로다');
-  assert.ok(/dbSet\(LEDGER_BATCH_KEY, next\)/.test(src),
+  assert.ok(/dbUpsert\(LEDGER_BATCH_KEY, changed\[i\]\)/.test(src),
     '★ 묶음을 고쳐 놓고 저장을 안 하면 새로고침에 되살아난다');
   assert.ok(/if\(!r \|\| !want\[r\._k\]\) return true;/.test(src),
     '★★ 치울 쪽(drop)만 빼야 한다 — 남길 쪽까지 빼면 큰일이다');
@@ -142,9 +143,7 @@ test('★ 무엇을 치우는지 «보여 주고» 묻는다', () => {
 /* ══ 묶음에서 «진짜로» 빼는가 (2026-08-30) ══ */
 test('★★ 지울 수 있는 묶음만 건드리고, 못 지운 것은 «말해 준다»', () => {
   const src = bare(ERP);
-  const at = src.indexOf('function dropRowsFromBatches(keys){');
-  assert.ok(at > 0, '★ 묶음에서 빼는 일꾼이 없다');
-  const fn = src.slice(at, at + 1400);
+  const fn = cutFn(src, 'function dropRowsFromBatches(');
   assert.ok(/erpCanDropBatch\(b, me\)/.test(fn),
     '★★ 남이 올린 묶음까지 지운다 — 지울 수 있는 것만 건드려야 한다');
   assert.ok(/if\(!can\)\{ blocked\+\+; return true; \}/.test(fn),
@@ -155,7 +154,7 @@ test('★★ 지울 수 있는 묶음만 건드리고, 못 지운 것은 «말�
 
 test('★★ 저장이 실패하면 «치웠다고 하지 않는다»', () => {
   const src = bare(ERP);
-  assert.ok(/if\(!dbSet\(LEDGER_BATCH_KEY, next\)\) return \{ removed:0, blocked:blocked, failed:true \};/.test(src),
+  assert.ok(/if\(!dbUpsert\(LEDGER_BATCH_KEY, changed\[i\]\)\) return \{ removed:0, blocked:blocked, failed:true \};/.test(src),
     '★★ 저장에 실패했는데 「치웠습니다」라고 하면, 다음에 또 그대로인 것을 보고 헤맨다');
   assert.ok(/_r\.failed/.test(src), '★ 실패를 화면이 안 본다');
 });
@@ -164,4 +163,20 @@ test('★ 한 줄도 못 뺐으면 «그렇게 말한다»', () => {
   const src = bare(ERP);
   assert.ok(/if\(!_r\.removed\)\{/.test(src),
     '★ 아무것도 안 됐는데 성공했다고 하면 아무도 못 알아챈다');
+});
+
+/* ══ 묶음 열쇠를 갈아엎지 않는가 (2026-08-30) ══
+   ⚠★ 처음에 dbSet(LEDGER_BATCH_KEY, next) 로 «목록을 통째로» 덮었다.
+      서버의 묶음은 lb-… 열쇠를 가진 객체인데, 목록으로 덮으면 열쇠가 0,1,2 가 된다.
+      그러면 다음에 dbUpsert 로 올라오는 묶음이 옛 lb-… 열쇠로 «또» 들어가
+      — 겹침을 지우려다 겹침을 만든다. */
+test('★★ 묶음은 «바뀐 것만» 올린다 — 목록을 통째로 덮지 않는다', () => {
+  const src = bare(ERP);
+  const fn = cutFn(src, 'function dropRowsFromBatches(');
+  assert.ok(!/dbSet\(LEDGER_BATCH_KEY/.test(fn),
+    '★★ 목록으로 덮으면 묶음 열쇠(lb-…)가 0,1,2 로 바뀌어 다음 자료가 두 벌이 된다');
+  assert.ok(/dbUpsert\(LEDGER_BATCH_KEY, changed\[i\]\)/.test(fn),
+    '★ 이웃 코드와 같은 길(dbUpsert)로 올려야 열쇠가 그대로다');
+  assert.ok(/if\(!changed\.length\) return \{ removed:0, blocked:blocked \};/.test(fn),
+    '★ 바뀐 것이 없는데 서버에 쓰면 남이 만진 것을 되돌린다');
 });

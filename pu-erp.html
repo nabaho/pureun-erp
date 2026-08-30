@@ -40128,7 +40128,7 @@ function FinanceLedger(props){
     var prev = dbGet(LEDGER_BATCH_KEY, []) || [];
     if(!Array.isArray(prev)) return { removed:0, blocked:0 };
     var me = _meNow();
-    var removed = 0, blocked = 0;
+    var removed = 0, blocked = 0, changed = [];
     var next = prev.map(function(b){
       if(!b || !Array.isArray(b.rows)) return b;
       var can = (typeof erpCanDropBatch === 'function') ? erpCanDropBatch(b, me) : true;
@@ -40138,14 +40138,21 @@ function FinanceLedger(props){
         removed++; return false;
       });
       if(kept.length === b.rows.length) return b;
-      return Object.assign({}, b, { rows:kept, n:kept.length });
+      var fixed = Object.assign({}, b, { rows:kept, n:kept.length });
+      changed.push(fixed);
+      return fixed;
     });
-    if(removed > 0){
-      if(!dbSet(LEDGER_BATCH_KEY, next)) return { removed:0, blocked:blocked, failed:true };
-      setBatches(next);
-      var view = _rowsOfBatches(next, hidRow);
-      setRows({inc:view.inc, exp:view.exp, colMap:{}, hdrRow:[]});
+    if(!changed.length) return { removed:0, blocked:blocked };
+    /* ⚠★ 여기서 dbSet(전체 목록) 을 쓰면 안 된다 —
+       서버의 묶음은 «lb-… 열쇠를 가진 객체»인데, 목록으로 통째로 덮으면
+       열쇠가 0,1,2 로 바뀐다. 그러면 다음에 dbUpsert 로 올라온 묶음이
+       옛 lb-… 열쇠로 «또» 들어가 같은 자료가 두 벌이 된다. */
+    for(var i = 0; i < changed.length; i++){
+      if(!dbUpsert(LEDGER_BATCH_KEY, changed[i])) return { removed:0, blocked:blocked, failed:true };
     }
+    setBatches(next);
+    var view = _rowsOfBatches(next, hidRow);
+    setRows({inc:view.inc, exp:view.exp, colMap:{}, hdrRow:[]});
     return { removed:removed, blocked:blocked };
   }
 
