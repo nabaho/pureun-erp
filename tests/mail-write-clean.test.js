@@ -30,20 +30,45 @@ function fnBody(name) {
   return src.slice(i, src.indexOf('\n}', i) + 2);
 }
 
-/* ══════ ① 본문은 비어서 열린다 ══════ */
-test('★★ 새 메일의 본문은 «비어» 있다 — 자료함 틀이 저절로 안 들어온다', () => {
+/* ══════ ① 제목도 본문도 비어서 열린다 ══════ */
+/* ⚠ 2026-08-30 대표께서 본문에 이어 「제목」이라고 짚으셨다 — 둘 다 비운다. */
+function emptyInit(which) {
   const fn = fnBody('openMailPage');
-  const m = fn.match(/const\s+body0\s*=([\s\S]*?);/);
-  assert.ok(m, 'openMailPage 에서 body0 를 찾지 못했습니다');
+  const m = fn.match(new RegExp('const\\s+' + which + '\\s*=([\\s\\S]*?);'));
+  assert.ok(m, 'openMailPage 에서 ' + which + ' 를 찾지 못했습니다');
   const rhs = m[1].trim();
-  assert.ok(!/mailFill|MAIL_TPL_DEFAULT|tpl\.body/.test(rhs),
-    '★ 본문을 다시 틀로 채웁니다(' + rhs + ') — 대표께서 매번 지우셔야 합니다');
-  assert.ok(/^(''|""|``)$/.test(rhs), '★ 본문이 빈 글이 아닙니다: ' + rhs);
+  assert.ok(!/mailFill|MAIL_TPL_DEFAULT|tpl\./.test(rhs),
+    '★ 다시 틀로 채웁니다(' + which + ' = ' + rhs + ') — 대표께서 매번 지우셔야 합니다');
+  assert.ok(/^(''|""|``)$/.test(rhs), '★ ' + which + ' 가 빈 글이 아닙니다: ' + rhs);
+}
+test('★★ 새 메일의 본문은 «비어» 있다 — 자료함 틀이 저절로 안 들어온다', () => {
+  emptyInit('body0');
 });
 
-test('제목은 그대로 채운다 — 본문만 비우라는 지시였다', () => {
-  assert.match(fnBody('openMailPage'), /const\s+subject0\s*=\s*mailFill\(/,
-    '제목까지 비었습니다 — 지시는 본문(캡처4)이었습니다');
+test('★★ 새 메일의 제목도 «비어» 있다 (대표 지시 2026-08-30 「제목」)', () => {
+  emptyInit('subject0');
+});
+
+test('★★ 빈 제목으로는 못 보낸다 — 비워 두는 대신 나갈 때 막아야 한다', () => {
+  /* 제목을 안 채우기로 했으니, 「제목 없음」으로 고객에게 나가는 길이 열리면 안 된다.
+     막는 자리는 composeCheck 하나다 — 화면이 아니라 여기서 막아야 묶음 발송도 걸린다. */
+  const fn = fnBody('composeCheck');
+  assert.match(fn, /p\.subject[\s\S]*?ok:\s*false/,
+    '★ 제목이 비어도 보내집니다 — 「제목 없음」이 고객에게 나갑니다');
+});
+
+test('★ 제목 칸에 무엇을 적을지 «일러 준다» — 빈 칸만 있으면 고장으로 보인다', () => {
+  const fn = fnBody('mailWriteHtml');
+  const i = fn.indexOf('id="cpSubj"');
+  assert.ok(i > 0, '제목 칸을 찾지 못했습니다');
+  assert.match(fn.slice(i, i + 300), /placeholder=/,
+    '★ 제목 칸이 아무 말 없이 비어 있습니다');
+});
+
+test('★ 전달·다시보내기는 안 깨진다 — 넘어온 제목·본문이 빈 값을 덮어쓴다', () => {
+  const fn = fnBody('openMailPage');
+  assert.match(fn, /if\(p\.subject\)/, '★ 전달할 제목이 빈 값에 덮여 사라집니다');
+  assert.match(fn, /if\(p\.body\)/, '★ 전달할 본문이 빈 값에 덮여 사라집니다');
 });
 
 test('서명은 그대로 따라간다 — 본문을 비운다고 서명까지 날리면 안 된다', () => {
