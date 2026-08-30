@@ -239,3 +239,84 @@ test('건너온 것이 아니면 아무 일도 안 한다', () => {
   assert.equal(w.opened.length, 0, '★ 부르지도 않은 창을 엽니다');
   assert.equal(w.said.length, 0);
 });
+
+/* ══════ ⑧ 자동백업에 「사진 이력」 (대표 결정 2026-08-30) ══════
+   「누가 언제 넣었나」가 없으면 되살려도 증빙을 언제 넣었는지 못 밝힌다.
+   ⚠ 새로 읽지 않는다 — 구독으로 이미 손에 든 것을 담는다.
+   ⚠ «이 기기 스냅샷»에는 안 담는다 — 여덟 벌이 쌓이면 브라우저 저장칸을 밀어낸다.
+   ⚠ 되돌릴 때는 «덮어쓰지 않고 없는 것만 채운다». */
+function bkBox(cloud) {
+  const pushed = [], reads = [], writes = [];
+  let keyN = 0;
+  const box = {
+    console,
+    BK_KEYS: ['p_cos', 'p_scheds'],
+    localStorage: { getItem: k => (k === 'p_cos' ? '[{"id":"c1"}]' : '[{"id":"s1"},{"id":"s2"}]') },
+    photoLogAll: () => [
+      { t: '2026-08-01T00:00:00.000Z', action: 'add', sid: 's1', slot: 0, who: '권형하' },
+      { t: '2026-08-02T00:00:00.000Z', action: 'add', sid: 's2', slot: 0, who: '박재원' }
+    ],
+    PHOTO_LOG_KEEP: 600,
+    PHOTO_LOG_NODE: 'scal_photoLog',
+    FB_READY: true,
+    _fbDB: {
+      ref: () => ({
+        once: () => { reads.push(1); return Promise.resolve({ val: () => cloud || {} }); },
+        /* 값 없이 부르면 «열쇠만» 준다 — 진짜 파이어베이스와 같은 버릇 */
+        push: () => ({ key: 'k' + (++keyN) }),
+        update: o => { Object.keys(o).forEach(k => pushed.push(o[k])); writes.push(1); return Promise.resolve(); }
+      })
+    },
+    Date, Object, Array, String, JSON, Promise
+  };
+  vm.createContext(box);
+  vm.runInContext(fnSrc('logKey') + '\n' + fnSrc('buildBackupData') + '\n' + fnSrc('restorePhotoLog'), box);
+  return { box, pushed, reads, writes };
+}
+
+test('★ 서버 백업·파일 내보내기에는 사진 이력이 «들어간다»', () => {
+  const d = bkBox().box.buildBackupData(true);
+  assert.ok(Array.isArray(d.photoLog), '★ 사진 이력이 안 담깁니다');
+  assert.equal(d.photoLog.length, 2);
+});
+
+test('★ «이 기기 스냅샷»에는 안 담는다 — 브라우저 저장칸을 밀어낸다', () => {
+  /* 여덟 벌 × 120KB 면 정작 일정이 저장 안 되는 일이 생긴다(용량 초과). */
+  const d = bkBox().box.buildBackupData();
+  assert.equal(d.photoLog, undefined, '★ 기기 스냅샷에까지 이력을 담았습니다');
+  assert.ok(d.p_cos, '나머지 칸은 그대로여야 합니다');
+});
+
+test('★ 되돌릴 때 «덮어쓰지 않고 없는 것만» 채운다', async () => {
+  /* 덮어쓰면 백업을 뜬 뒤에 남이 넣은 기록이 통째로 사라진다. */
+  const already = { k1: { t: '2026-08-01T00:00:00.000Z', action: 'add', sid: 's1', slot: 0 } };
+  const w = bkBox(already);
+  const n = await w.box.restorePhotoLog(w.box.buildBackupData(true).photoLog);
+  assert.equal(n, 1, '★ 이미 있는 것까지 다시 넣었습니다');
+  assert.equal(w.pushed.length, 1);
+  assert.equal(w.pushed[0].sid, 's2', '★ 엉뚱한 것을 넣었습니다');
+  /* ★ 한 줄씩이 아니라 «한 번에» — 3,000줄이면 몇 분이 걸리고 도중에 끊기면 절반만 들어간다 */
+  assert.equal(w.writes.length, 1, '★ 한 줄씩 밀어 넣습니다');
+});
+
+test('★ 여러 줄이어도 «한 번에» 쓴다 — 도중에 끊겨 절반만 들어가면 안 된다', async () => {
+  const w = bkBox();
+  const n = await w.box.restorePhotoLog(w.box.buildBackupData(true).photoLog);
+  assert.equal(n, 2, '★ 두 줄을 다 안 넣었습니다');
+  assert.equal(w.writes.length, 1, '★ 줄 수만큼 나눠 씁니다');
+});
+
+test('★ 되돌릴 것이 없으면 «읽지도» 않는다 — 읽기도 요금이다', async () => {
+  const w = bkBox();
+  assert.equal(await w.box.restorePhotoLog(undefined), 0);
+  assert.equal(await w.box.restorePhotoLog([]), 0);
+  assert.equal(w.pushed.length, 0, '★ 빈 이력으로 뭔가 썼습니다');
+  assert.equal(w.reads.length, 0, '★ 담긴 것이 없는데 클라우드를 읽었습니다');
+});
+
+test('클라우드에 연결 안 됐으면 조용히 넘어간다 — 되살리기 전체를 깨뜨리지 않는다', async () => {
+  const w = bkBox();
+  w.box.FB_READY = false;
+  assert.equal(await w.box.restorePhotoLog([{ t: '1', sid: 's9' }]), 0);
+  assert.equal(w.pushed.length, 0);
+});

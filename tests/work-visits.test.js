@@ -37,12 +37,13 @@ assert.ok(KEEP_DECL, '★ 사진 이력을 몇 줄까지 붙들지 정한 곳이
 const FNS = ['visYm', 'visShift', 'visToday', 'visSetMode', 'visSetScope', 'visSetPick',
   'visAdmin', 'visGo', 'visLoad', 'visRows', 'visName', 'visMine', 'visGovStaffId',
   'visForGid', 'visEnded', 'visPhotoMap', 'visSince', 'visDaysAgo', 'visLateRows',
-  'visStaffSummary', 'renderVisits', 'visLateTable', 'visSeg', 'visPill', 'visDay', 'visWhen'];
+  'visStaffSummary', 'renderVisits', 'visBadge', 'visLateTable', 'visSeg', 'visPill', 'visDay', 'visWhen'];
 
 /* 가짜 세상 하나 — 화면과 DB 를 흉내 낸다 */
 function world(data, me, opt) {
   const o = opt || {};
   const app = { innerHTML: '' };
+  const badge = { textContent: '', style: {}, title: '' };
   const opened = [], asked = [];
   /* 「오늘」을 못 박는다 — 인자 없이 부르면 늘 2026-08-30 */
   const RealDate = Date;
@@ -50,7 +51,7 @@ function world(data, me, opt) {
   FakeDate.now = () => new RealDate(TODAY).getTime();
   const box = {
     console,
-    $: id => (id === 'app' ? app : null),
+    $: id => (id === 'app' ? app : id === 'cnt-visits' ? badge : null),
     esc: s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;'),
     loadingHTML: () => '<div>…</div>',
     viewer: () => me,
@@ -74,7 +75,7 @@ function world(data, me, opt) {
   vm.createContext(box);
   vm.runInContext([VIS_DECL, KEEP_DECL].concat(FNS.map(fnSrc)).join('\n'), box);
   box.VIS.ym = '2026-08';
-  return { box, app, opened, asked };
+  return { box, app, opened, asked, badge };
 }
 
 /* 이 달치 자료 한 벌 */
@@ -325,6 +326,46 @@ test('밀린 것이 없으면 그렇게 말한다 — 빈 표를 보여 주지 �
   box.visSetMode('late');
   await box.renderVisits();
   assert.match(app.innerHTML, /밀린 것 없음|빠진 지난 방문이 없습니다/, '★ 밀린 것이 없는데 안 알려 줍니다');
+});
+
+/* ══════ ⑦ 옆줄 숫자 뱃지 ══════ */
+
+test('★ 뱃지는 «밀린 건수»다 — 들어가지 않아도 몇 건인지 안다', async () => {
+  const d = fixture();
+  d.scal_photoLog = [{ t: '2026-06-01T00:00:00.000Z', action: 'add', sid: 'sZ', slot: 0 }];
+  const w = world(d, ME);
+  await w.box.renderVisits();
+  /* s1(8/24)·s2(8/20)·s5(7/30) 셋이 증빙 없는 지난 현장 방문 */
+  assert.equal(w.badge.textContent, 3, '★ 밀린 건수를 안 띄웁니다');
+  assert.match(w.badge.title || '', /증빙/, '★ 무슨 숫자인지 안 알려 줍니다');
+});
+
+test('★ 뱃지 때문에 자료를 «새로 읽지» 않는다 — 숫자 하나로 요금을 올리지 않는다', () => {
+  /* 대표 결정 2026-08-30 ㉯: 로그인마다 미리 읽는 길은 안 고른다.
+     아직 안 읽었으면 «읽으러 가지 말고» 빈칸으로 둔다. */
+  const w = world(fixture(), ME);
+  w.box.VIS.scheds = null; w.box.VIS.log = null;
+  w.box.visBadge();
+  assert.equal(w.badge.textContent, '', '★ 안 읽었는데 숫자를 띄웁니다');
+  assert.equal(w.asked.length, 0, '★ 뱃지가 자료를 읽으러 갔습니다');
+});
+
+test('★ 「기록 없음」은 뱃지에 안 센다 — 없는 일로 사람을 부르면 안 된다', async () => {
+  const d = fixture();
+  /* 기록이 8/22 부터 → 8/20·7/30 은 「기록 없음」, 8/24 만 진짜 밀림 */
+  d.scal_photoLog = [{ t: '2026-08-22T00:00:00.000Z', action: 'add', sid: 'sZ', slot: 0 }];
+  const w = world(d, ME);
+  await w.box.renderVisits();
+  assert.equal(w.badge.textContent, 1, '★ 알 수 없는 것까지 셌습니다');
+});
+
+test('밀린 것이 없으면 뱃지는 «빈칸» — 0 을 띄우지 않는다', async () => {
+  const d = fixture();
+  d.scal_scheds = [{ id: 's1', date: '2026-08-24', coId: 'c1', typeId: 't1', round: 2, attId: 'g1', isField: true }];
+  d.scal_photoLog = [{ t: '2026-08-01T00:00:00.000Z', action: 'add', sid: 's1', slot: 0, whoSid: 'khh' }];
+  const w = world(d, ME);
+  await w.box.renderVisits();
+  assert.equal(w.badge.textContent, '', '★ 0 을 띄웁니다');
 });
 
 /* ══════ ⑤ 전 직원 한눈에 (관리자) ══════ */
