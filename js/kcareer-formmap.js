@@ -285,9 +285,15 @@
 
     /* 목록 표는 기존 fillList(autoFill 안)가 이미 잘 한다 — 다시 만들지 않는다 */
     var wantLists = plan.lists || {};
-    if (Object.keys(wantLists).length) {
+    /* ⚠ colMap(AI 짝짓기)이 있으면 «목록 표가 없다고 적혀 있어도» 시도한다.
+       칸 지도는 AI에게 묻기 «전»에 훑으므로, 사전이 못 알아본 표는 lists 가 비어 있다.
+       그대로 두면 AI에게 물어 놓고도 채우기가 시작조차 안 된다(실측 2026-08-30). */
+    if (Object.keys(wantLists).length || plan.colMap) {
       var before = xml;
-      var r2 = X.autoFill(xml, { fields: {}, edu: data.edu || [], career: data.career || [] });
+      /* colMap: AI에게 물어 얻은 «열 짝짓기». 사전이 못 알아본 서식을 위해 흘려보낸다.
+         ⚠ 없으면 사전으로 간다 — AI가 없어도 앱은 그대로 돌아야 한다. */
+      var r2 = X.autoFill(xml, { fields: {}, edu: data.edu || [], career: data.career || [] },
+                          { colMap: plan.colMap });
       if (r2.changed) {
         xml = r2.xml;
         (r2.report.lists || []).forEach(function (l) {

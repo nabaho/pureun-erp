@@ -731,10 +731,11 @@ input.kf-in.kf-done{background:#EDF7F3;border-bottom:1.5px solid var(--teal);fon
 <script src="js/pu-backup.js?v=1"></script>
 <script src="js/kcareer-scan.js?v=1"></script>
 <script src="js/kcareer-pusync.js?v=1"></script>
-<script src="js/kcareer-hwpxfill.js?v=7"></script>
-<script src="js/kcareer-formmap.js?v=4"></script>
+<script src="js/kcareer-hwpxfill.js?v=8"></script>
+<script src="js/kcareer-formmap.js?v=5"></script>
 <script src="js/kcareer-hwpstamp.js?v=2"></script>
 <script src="js/kcareer-formhtml.js?v=2"></script>
+<script src="js/kcareer-colmap-ai.js?v=1"></script>
 <script src="js/kcareer-overlay.js?v=1"></script>
 <!-- AI 판독 호출기 — 열쇠는 회사 서버가 든다(브라우저는 모른다) -->
 <script src="js/pu-ai-call.js?v=2"></script>
@@ -906,6 +907,7 @@ input.kf-in.kf-done{background:#EDF7F3;border-bottom:1.5px solid var(--teal);fon
               </div>
               <div class="rc-actions">
                 <button class="btn primary" onclick="rhAutoFillDoc()" title="프로필·경력에서 성명·연락처·학력·경력을 끌어와 양식 칸에 넣습니다">✨ 내 정보로 채우기</button>
+                <button class="btn" id="rhUndoBtn" style="display:none" onclick="rhUndoFill()" title="채우기 전으로 되돌립니다">↩ 되돌리기</button>
                 <button class="btn" style="border-color:#D9B9B9;color:var(--red)" onclick="rhStampDoc()" title="★기본 도장을 「(인)」 자리에 찍습니다 — 글자를 다 확인한 뒤 마지막에">🖋 도장 찍기</button>
                 <button class="btn primary" onclick="rhSaveInput()" id="kfSaveBtn" title="입력판에 친 값을 원본 한글 서식의 그 칸에 넣습니다">💾 원본 한글에 넣기</button>
                 <button class="btn" onclick="rhOpenBigPopup()" id="rhBigBtn" title="올린 한글 서식을 큰 창으로 — 실제 A4 쪽 그대로 보입니다">🔍 큰 창으로 보기</button>
@@ -6850,6 +6852,12 @@ async function rhFillByMap(){
   var src=null;
   try{ src=await _rhToHwpx(_rhDoc.bytes,_rhDoc.name); }catch(e){ src=null; }
   if(!src){ toast('이 형식은 채울 수 없습니다 — 한글에서 HWPX로 저장해 올려주세요'); return; }
+  /* ★ 되돌릴 수 있게 «채우기 전»을 먼저 담아 둔다(대표 제보 2026-08-30 — 잘못 들어가도
+     되돌릴 방법이 없었다). 원본 그대로를 들고 있어야 「↩ 되돌리기」가 뜻이 있다. */
+  _rhUndo={ name:_rhDoc.name, ext:_rhDoc.ext, bytes:_rhDoc.bytes };
+  /* 목록 표의 열 짝짓기를 «AI에게» 물어 둔다 — 사전이 못 알아본 서식을 위해서다.
+     ⚠ 못 물어도 그냥 간다(사전으로). AI가 없어도 앱은 돌아야 한다. */
+  var colMap=await rhColMap(src);
   var zip=await JSZip.loadAsync(src), data=_cvFillData();
   var filled=[], failed=[];
   var names=Object.keys(zip.files).filter(function(n){ return /Contents\/section\d+\.xml$/i.test(n); }).sort();
@@ -6862,7 +6870,7 @@ async function rhFillByMap(){
     });
     var wantLists={}; _rhMap.lists.forEach(function(l){ if(l.sec===n) wantLists[l.id]=l.guess; });
     var xml=await zip.file(n).async('string');
-    var r=KcareerFormMap.apply(xml,{picks:picks,lists:wantLists,data:data});
+    var r=KcareerFormMap.apply(xml,{picks:picks,lists:wantLists,data:data,colMap:colMap});
     if(r.changed) zip.file(n,r.xml);
     filled=filled.concat(r.filled); failed=failed.concat(r.failed);
   }
@@ -6873,8 +6881,83 @@ async function rhFillByMap(){
   rhDraftSave();
   await mountEditor(bytes.buffer.slice(0), _rhDoc.name);
   try{ await rhBuildInput(); rhPrefillInput(); }catch(e){}
+  rhUndoBtn();
   toast('✅ '+filled.length+'칸 채웠습니다'+(failed.length?' · '+failed.length+'칸은 못 넣었습니다':''));
   if(failed.length) console.warn('[칸지도] 못 넣은 자리', failed);
+}
+
+/* ── 목록 표 「열 짝짓기」를 AI에게 묻기 (대표 결정 2026-08-30 「을로」) ──
+   인적사항은 사전으로 잘 되는데 목록 표(학력·경력·자격증)는 열 이름이 서식마다 달라
+   사전으로 끝이 안 난다. 실측 사고는 전부 목록 표였다.
+
+   ★ AI에게 «값»을 만들라고 하지 않는다 — 값은 우리가 갖고 있다.
+     «머리행 글자만» 보내 「어느 열에 무엇을 넣을지」만 묻는다.
+     그래서 개인정보가 한 글자도 안 나가고, 싸고, 한 번 물으면 기억한다.
+   ⚠ 못 물어도(인터넷·로그인·AI 고장) 그냥 간다 — 사전으로 돌아갈 뿐 멈추지 않는다. */
+var RH_COLMEM='col_maps';
+function _rhColAll(){ try{ return JSON.parse(LS.get(NS+RH_COLMEM)||'{}')||{}; }catch(e){ return {}; } }
+function _rhColSave(all){ try{ LS.set(NS+RH_COLMEM, JSON.stringify(all)); }catch(e){} }
+
+async function rhColMap(srcBytes){
+  if(!window.KcareerColMapAi || !window.PuAiCall) return null;
+  var all=_rhColAll(), out={}, ask=[];
+  try{
+    var zip=await JSZip.loadAsync(srcBytes);
+    var names=Object.keys(zip.files).filter(function(n){ return /Contents\/section\d+\.xml$/i.test(n); }).sort();
+    for(const n of names){
+      var xml=await zip.file(n).async('string');
+      KcareerHwpxFill.eachTable(xml, function(tbl){
+        KcareerHwpxFill.splitRows(tbl).forEach(function(tr){
+          var cells=KcareerHwpxFill.splitCells(tr).map(KcareerHwpxFill.cellText);
+          if(cells.length<2) return;
+          /* 글자가 «다» 차 있는 줄만 머리행 후보다 — 빈 칸이 섞인 줄은 자료 줄이다 */
+          if(cells.some(function(c){ return !String(c||'').trim(); })) return;
+          var key=KcareerColMapAi.headerKey(cells);
+          if(out[key]||all[key]) return;
+          /* 사전이 이미 알아본 머리행은 «묻지 않는다» — 돈과 시간을 아낀다 */
+          var hit=cells.filter(function(c){ return KcareerHwpxFill.colKeyOf(c); }).length;
+          if(hit>=2) return;
+          ask.push({key:key, cells:cells});
+        });
+        return tbl;
+      });
+    }
+  }catch(e){ return null; }
+  Object.keys(all).forEach(function(k){ out[k]=all[k]; });
+  if(!ask.length) return Object.keys(out).length?out:null;
+
+  toast('⏳ 표의 열 이름을 살펴보는 중… ('+ask.length+'개)');
+  for(const q of ask){
+    var prompt=KcareerColMapAi.buildPrompt(q.cells);
+    if(!prompt) continue;
+    var cols=null;
+    try{
+      var reply=await PuAiCall.ask([{text:prompt}], { auth:(typeof firebase!=='undefined'&&firebase.auth)?firebase.auth():null });
+      cols=KcareerColMapAi.parseReply(PuAiCall.textOf(reply), q.cells.length);
+    }catch(e){ console.warn('[열짝짓기] 못 물었습니다 — 사전으로 갑니다', e && e.message); break; }
+    if(!cols) continue;                       /* 이상하면 버린다 — 사전으로 */
+    out[q.key]=cols; all[q.key]=cols;
+  }
+  _rhColSave(all);
+  return Object.keys(out).length?out:null;
+}
+
+/* ── ↩ 되돌리기 ──
+   채우기 전 원본을 들고 있다가 되돌린다. 잘못 들어가도 손해가 없어야
+   사람이 마음 놓고 「채우기」를 누른다(대표 제보 2026-08-30). */
+var _rhUndo=null;
+async function rhUndoFill(){
+  if(!_rhUndo||!_rhUndo.bytes){ toast('되돌릴 것이 없습니다'); return; }
+  _rhDoc={ name:_rhUndo.name, ext:_rhUndo.ext, bytes:_rhUndo.bytes };
+  _rhUndo=null; _rhVals={};
+  rhDraftSave();
+  await mountEditor(_rhDoc.bytes.buffer.slice(0), _rhDoc.name);
+  toast('↩ 채우기 전으로 되돌렸습니다');
+  rhUndoBtn();
+}
+function rhUndoBtn(){
+  var b=document.getElementById('rhUndoBtn'); if(!b) return;
+  b.style.display=(_rhUndo&&_rhUndo.bytes)?'':'none';
 }
 
 /* ── 서식별 기억 ──
