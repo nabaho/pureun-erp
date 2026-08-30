@@ -5233,6 +5233,18 @@ function erpFindFeeSubset(target, companies, refDay){
 // ── 통장 행 지문 · 처리 완료 기록 (중복 처리 방지) ──
 // 겹치는 기간의 엑셀을 다시 올려도, 이미 확정·등록한 행은 다시 처리하지 않는다.
 // 지문 형태: 'YYYY-MM-DD|금액|정리된적요' (시간은 버리고 적요는 노이즈 제거 후 정규화)
+/* 통장 파일의 「메모」 칸에 뜻 없는 값이 들어온다 (대표 화면 2026-08-30).
+   출금 322건이 «전부» 적요 아래 「0」을 한 줄씩 달고 있었다 — 그 한 줄 때문에
+   폰에서 한 건이 두 줄이 됐다. 은행이 빈 칸을 0 으로 채워 보내는 것이지
+   사람이 적은 메모가 아니다.
+   ⚠ 「0」만 지운다. 「0원 확인」 같은 진짜 메모는 그대로 둔다 — 다 지우면
+     사람이 적어 둔 것까지 사라진다. */
+function erpCleanNote(v){
+  var t = (v === null || v === undefined) ? '' : String(v).trim();
+  return (t === '0' || t === '-' || t === '0.0') ? '' : t;
+}
+window.erpCleanNote = erpCleanNote;
+
 function erpBankRowKey(row){
   try {
     row = row || {};
@@ -39761,7 +39773,7 @@ function FinanceLedger(props){
         var _pst2 = erpBankProcessedStore();       // 이미 확정·등록한 행 — store 는 한 번만 받는다
         var _inc = [], _exp = [];
         _mg.rows.forEach(function(x){
-          var row = { _k:x._k, src:x.src||'bank', date:x.date||'', memo:x.memo||'', note:x.note||'',
+          var row = { _k:x._k, src:x.src||'bank', date:x.date||'', memo:x.memo||'', note:erpCleanNote(x.note),
                       amount:parseInt(x.amount,10)||0, balance:parseInt(x.balance,10)||0,
                       /* 방금 올린 파일에서도 곧바로 보여야 한다 — 안 옮기면 새로 고쳐야 뜬다 */
                       _hint: x.dupHint ? 1 : 0 };
@@ -42592,7 +42604,13 @@ function FinanceLedger(props){
               var dupInfoE=row._dup?erpIsBankRowProcessed(row):null;
               return h('tr',{key:row._k,style:{background:cat?'#fffbeb':'#fff',opacity:row._dup?0.55:1}},
                 h('td',{style:Object.assign({},tdS,{textAlign:'right',color:'#94a3b8',fontSize:'10.5px',fontVariantNumeric:'tabular-nums'})},_re+1),
-                h('td',{style:tdS},row.date),
+                /* ⚠ 「2026-01-12 04:50:40」을 그대로 두면 좁은 칸에서 «석 줄» 로 접힌다
+                   (대표 화면 2026-08-30: 「2중 3중으로 만들지 말고 한 줄씩」).
+                   연도와 초는 어느 출금인지 가리는 데 안 쓰인다 — 온전한 값은 title 에 남긴다.
+                   ⚠ 줄바꿈을 막는 것만으로는 모자라다. 막기만 하면 칸이 넓어져
+                     옆 칸들이 밀려난다 — 글자 자체를 줄여야 한 줄이 된다. */
+                h('td',{style:Object.assign({},tdS,{whiteSpace:'nowrap',fontVariantNumeric:'tabular-nums'}),
+                  title:row.date||''}, String(row.date||'').slice(5,16)),
                 h('td',{style:Object.assign({},tdS,{fontWeight:700,color:'#854d0e',whiteSpace:'nowrap'})},row.amount.toLocaleString()+'원'),
                 /* 카드 칸 — 없으면 비워 둔다(은행 줄). 「-」 같은 것을 채우지 않는다. */
                 h('td',{style:Object.assign({},tdS,{whiteSpace:'nowrap'})},
