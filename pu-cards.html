@@ -13543,6 +13543,20 @@ function mbWhoBust(){ _mbWhoIdx = null; const m0 = mbMemoOf(); delete m0.tally; 
    ⚠ 한 통은 한 곳에만 — 종료업체 메일은 담당자 칸에서도 「담당 모름」에서도 뺀다.
      두 곳에 겹치면 몇 통인지 알 수 없다. */
 const MB_WHO_END = '@!';   /* 자문종료 칸 */
+/* ══════════════════════════════════════════════════════════════════════════
+   「그 밖」 칸 (대표 지시 2026-08-30 「담당자에게 지정되지 않는 메일 정리해라」)
+   ══════════════════════════════════════════════════════════════════════════
+   ★ 무엇이었나 — 「자문사 아님」으로 치운 곳(노동청·근복공단·상공회의소·타 노무법인·
+     뉴스레터)이 «잇는 목록»에서만 빠지고, 「담당 모름」 칸에는 그대로 쌓였다.
+     실측 2026-08-29 로 그런 곳이 1,932통(187곳)이라, 대표 화면의 「담당 모름 1,582」가
+     거의 그것이었다 — 정작 이어야 할 자문사가 그 속에 묻힌다.
+   ★ 이제 치운 곳은 「담당 모름」에서 빠지고 이 칸으로 온다. 그러면 담당 모름에는
+     «정말 이어야 할 것»만 남는다.
+   ⚠ 메일을 «감추지 않는다» — 화면에서 사라지면 「어디 갔지」가 된다(대표 결정).
+     업무 칸에도 그대로 있고, 여기서도 볼 수 있다.
+   ⚠ 치운 것을 되돌리면(자문사 이메일 잇기 → 「자문사 아님」 갈래) 곧바로 담당 모름으로
+     돌아간다 — 두 곳이 같은 표(_mbNotCo)를 본다. */
+const MB_WHO_OTH = '@#';   /* 그 밖 — 「자문사 아님」으로 치운 곳 */
 
 /* ⚠ 찾아 둔 표(idx0)를 받아 쓸 수 있게 열어 둔다 — 만 통을 훑는 자리(mbWhoTally)에서
      줄마다 표를 다시 찾으면 그것이 곧 느림이다(명함 수만큼 열쇠 배열을 새로 만든다).
@@ -13561,6 +13575,14 @@ function mbEndedOfRow(v, idx0){
   const d = mbDomOf(em);
   return !!(d && idx.endDom[d]);
 }
+/* 이 메일이 「그 밖」인가 — 「자문사 아님」으로 치운 주소에서 왔나.
+   ⚠ 판정을 «한 자리»에서만 한다. 세는 곳(mbWhoTally)과 거르는 곳(mbRowFits)이
+     따로 셈하면 「12통이라는데 열면 3통」이 된다 — 담당자 칸에서 이미 겪은 일이다. */
+function mbOtherOfRow(v){
+  const em = String((v&&v.e)||'').trim().toLowerCase();
+  return !!(em && typeof mbNotCo === 'function' && mbNotCo(em));
+}
+function mbOtherCount(){ return mbWhoTally().other; }
 function mbEndedCount(){ return mbWhoTally().ended; }
 /* ══════════════════════════════════════════════════════════════════════════
    메일함 점검 — 「이상한 곳」을 모아 본다 (대표 지시 2026-08-30)
@@ -14356,6 +14378,7 @@ function mbWhoTally(){
   const cnt = {}, un = {};
   const none = { n:0, un:0, ret:0 };
   const ended = { n:0, un:0 };
+  const other = { n:0, un:0 };
   const idx = mbWhoIndex();                       /* 표는 «여기서 한 번»만 찾는다 */
   const v = { e:'', r:0, _slug:'', _key:'' };      /* 돌려 쓰는 한 개 */
   Object.keys(_mbMsgs||{}).forEach(slug=>{
@@ -14367,6 +14390,9 @@ function mbWhoTally(){
       const unread = !Number(row.r||0);
       if(mbEndedOfRow(v, idx)){ ended.n++; if(unread) ended.un++; return; }
       const w = mbWhoOfRow(v, idx);
+      /* ⚠ 「그 밖」은 «담당자가 없을 때만» 본다 — 담당이 잡히면 그 사람 칸이 먼저다.
+           치워 둔 주소라도 사람이 담당자를 박아 두었으면 그 뜻이 더 세다. */
+      if(!w && mbOtherOfRow(v)){ other.n++; if(unread) other.un++; return; }
       if(w){
         cnt[w] = (cnt[w]||0) + 1; if(unread) un[w] = (un[w]||0) + 1;
         /* ⚠ 공동작업이면 «부담당 칸에도» 센다 (대표 지시 2026-08-29).
@@ -14382,7 +14408,7 @@ function mbWhoTally(){
       if(mbWasRetired(v, idx)) none.ret++;
     });
   });
-  return (m.tally = { cnt:cnt, un:un, none:none, ended:ended });
+  return (m.tally = { cnt:cnt, un:un, none:none, ended:ended, other:other });
 }
 
 function mbWhoList(){
@@ -14438,7 +14464,11 @@ function mbRowFits(v, id, idx0){
     if(id === MB_WHO_END) return ended;
     if(ended) return false;
     const w = mbWhoOfRow(v, idx);
-    if(id === MB_WHO_NA) return !w;
+    /* ⚠ 「그 밖」을 «담당 모름보다 먼저» 본다 — 세는 곳(mbWhoTally)과 같은 차례다.
+         두 곳의 차례가 다르면 「1,582통이라는데 열면 60통」이 된다. */
+    const oth = !w && mbOtherOfRow(v);
+    if(id === MB_WHO_OTH) return oth;
+    if(id === MB_WHO_NA) return !w && !oth;
     /* ⚠ 공동작업 — 부담당 칸에도 «같이» 보인다 (대표 지시 2026-08-29).
          담당자 칸은 자리가 아니라 «거르개»라, 두 사람 칸에 함께 보여도 업무 칸 통수는
          안 변한다(한 통을 두 눈으로 본다).
@@ -14582,6 +14612,7 @@ function mbBoxName(id){
   /* 담당자 칸 */
   if(String(id).charAt(0)===MB_WHO_P)
     return (id === MB_WHO_NA)  ? '담당 모름'
+         : (id === MB_WHO_OTH) ? '📭 그 밖'
          : (id === MB_WHO_END) ? '🚪 자문종료'
          : ('👤 ' + String(id).slice(1));
   /* 푸른 분류 칸 — 대표가 붙인 이름을 그대로 */
@@ -15017,6 +15048,18 @@ function mailSideHtml(){
        ⚠ 처음에는 비어 있다. 실측 2026-08-26 — 종료 100곳 가운데 기업정보함에 이메일이
          있는 곳이 25곳뿐이고, 그 주소에서 온 메일은 최근 400통 안에 0통이었다.
          «빈 것이 고장이 아니다» — 그 말을 title 에 적어 둔다. */
+    /* ── 「그 밖」 (대표 지시 2026-08-30) ──
+       「자문사 아님」으로 치운 곳에서 온 메일. 담당 모름 «바로 아래»에 둔다 —
+       둘은 「담당이 없다」는 한 갈래이고, 그중 «영영 없을 것»이 여기다.
+       ⚠ 0통이어도 줄을 «남긴다». 치운 것을 되돌릴 길이 여기밖에 없는데 줄이
+         사라지면 되돌릴 자리를 못 찾는다(자문종료 줄과 같은 셈). */
+    const ot = mbOtherCount();
+    h += `<div class="dm-f sub othbin ${now===MB_WHO_OTH?'on':''}" onclick="openMailBox('${MB_WHO_OTH}')"
+      title="「자문사 아님」으로 치운 곳에서 온 메일 — 노동청·근로복지공단·상공회의소 같은 곳입니다. 담당자 칸과 「담당 모름」에서는 빠지고, 업무 칸에는 그대로 있습니다.${
+        ot.n ? ' · '+ot.n.toLocaleString()+'통' : ' (아직 없습니다)'}">
+      <span class="ic">📭</span><span class="grip ghost">⋮⋮</span><span class="nm">그 밖</span>
+      ${ot.un?`<span class="nu">${ot.un}</span>`:''}
+      <span class="fmenu ghost">⋮</span></div>`;
     const en = mbEndedCount();
     h += `<div class="dm-f sub endbin ${now===MB_WHO_END?'on':''}" onclick="openMailBox('${MB_WHO_END}')"
       title="자문이 끝난 업체에서 온 메일 — 담당자 칸에서는 빠집니다${

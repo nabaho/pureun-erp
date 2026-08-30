@@ -1220,12 +1220,20 @@ test('★★ 「자문사 아님」은 «목록에서만» 치운다 — 메일�
   /* 목록에서는 빠진다 */
   const shown = c.whoUnknownSenders().map(o=>o.e).join(' ');
   assert.ok(shown.indexOf('@old.kr') < 0, '치웠는데 잇기 목록에 그대로 있다');
-  /* ★ 그러나 메일은 「담당 모름」 칸에 그대로 있어야 한다 —
-     목록에서 지운다고 메일을 감추면 그 메일은 아무 데서도 못 본다 */
-  c.state.mbBox = '@?';
-  const subs = c.mbAllRows().map(v=>v.s).join(' | ');
-  assert.ok(subs.indexOf('퇴사자 담당') >= 0 || c.mbAllRows().length > 0,
+  /* ★ 그러나 메일은 «어딘가에» 그대로 있어야 한다 —
+     목록에서 지운다고 메일을 감추면 그 메일은 아무 데서도 못 본다.
+     ⚠ 2026-08-30 대표 지시로 그 자리가 「담당 모름」에서 「그 밖」(@#)으로 옮겼다.
+       치운 곳이 담당 모름에 쌓여 있어(실측 1,932통) 정작 이어야 할 자문사가
+       그 속에 묻혔기 때문이다. 지킬 규칙은 그대로 — «못 보게 되면 안 된다». */
+  c.state.mbBox = '@#';
+  assert.ok(c.mbAllRows().length > 0,
     '★ 치웠더니 메일까지 사라졌다 — 그 메일은 이제 아무 데서도 못 봅니다');
+  /* 그리고 담당 모름에서는 «빠져야» 한다 — 그것이 이번에 고친 것이다 */
+  c.mbMemoClear();
+  c.state.mbBox = '@?';
+  const na = c.mbAllRows().map(v=>String(v.e||'').toLowerCase()).join(' ');
+  assert.ok(na.indexOf('@old.kr') < 0,
+    '치운 곳이 「담당 모름」에 그대로 남아 있습니다 — 이어야 할 자문사가 묻힙니다');
 });
 
 test('★ 치운 것을 «되돌릴 길»이 있다 — 되돌릴 수 없는 단추는 아무도 안 누른다', () => {
