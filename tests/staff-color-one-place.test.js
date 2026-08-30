@@ -139,6 +139,30 @@ test('★ 푸른이알피는 «다 푼 색»을 올린다 — 읽는 쪽이 순�
     '★ 같은 값을 또 씁니다(쓰기가 폭주합니다)');
 });
 
+test('★ 「한 칸만 넣기」 안내문이 적용본과 «같은 규칙»이다', () => {
+  /* 두 글이 어긋나면, 전문을 붙여넣은 날과 한 칸만 넣은 날의 규칙이 달라진다 —
+     그 어긋남은 콘솔에 넣고 나서야 드러나고, 그때는 이미 앱이 멈춰 있다.
+     (반출기록 안내문이 같은 방식으로 지켜지고 있다 — 그 얼개를 그대로 쓴다) */
+  const f = path.join(R, 'docs', 'firebase-rules-직원색-한칸만-넣기.txt');
+  assert.ok(fs.existsSync(f), '대표가 콘솔에 넣을 규칙 글이 없습니다');
+  const doc = fs.readFileSync(f, 'utf8');
+  const m = doc.match(/"staff_colors": \{[\s\S]*?\n\},/);
+  assert.ok(m, '★ 붙여넣을 조각을 찾지 못했습니다');
+  const fromDoc = JSON.parse('{' + m[0].replace(/,\s*$/, '') + '}');
+  assert.deepEqual(fromDoc.staff_colors, RULES.data.staff_colors,
+    '★ 안내문과 적용본의 규칙이 다릅니다');
+});
+
+test('★ 안내문이 «어디에 넣는지»와 «안 넣으면 어떻게 되는지»를 말한다', () => {
+  /* 붙여넣을 글자만 있고 자리를 안 알려 주면, 엉뚱한 데 넣어 규칙이 통째로 깨진다.
+     ⚠ 「지금도 돈다」도 반드시 적는다 — 급한 일로 오해하면 다른 일을 밀친다. */
+  const doc = fs.readFileSync(
+    path.join(R, 'docs', 'firebase-rules-직원색-한칸만-넣기.txt'), 'utf8');
+  assert.match(doc, /sg_resolved_uid/, '★ 어느 칸 아래에 넣는지 안 적었습니다');
+  assert.match(doc, /지금도 잘 돕니다/, '★ 안 넣어도 도는지를 안 적었습니다');
+  assert.match(doc, /전체를 갈아끼우지 마세요/, '★ 통째 배포를 안 말립니다');
+});
+
 test('★ 규칙에 이름이 있고, 쓰기는 «아무나»가 아니다', () => {
   const c = RULES.data && RULES.data.staff_colors;
   assert.ok(c, '★ data/staff_colors 가 규칙에 없습니다 — 이름 없는 자리로 떨어집니다');
