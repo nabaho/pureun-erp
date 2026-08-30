@@ -5881,6 +5881,7 @@ function openSentBox(){ state.view='mail'; state.mailSent=true; render();
 function closeMailPage(){ state.view='list'; render(); }
 function renderMailPage(){
   mbMemoClear();   /* 그리는 «동안»만 사는 셈을 버린다 — 낡을 틈을 안 준다 */
+  mbAutoFill();    /* 받아 온 줄이 없으면 «스스로» 받아 온다 (대표 보고 2026-08-30) */
   mbSeenLoad();    /* 「누가 봤나」는 한 번만 읽어 온다 (두 번째부터는 그 자리에서 돌아온다) */
   mbBizSubsLoad(); /* 사무관리 건의 부담당도 한 번만 — 앱이 이미 읽는 자료를 그대로 쓴다 */
   /* ⚠ 메일 칸(#pcMail)은 PC 전용 틀(#pcRoot) 안에 있어 폰에서는 아예 안 그려졌다 —
@@ -15740,6 +15741,46 @@ function mailToMe(){
 }
 
 /* ══════ 칸 고르기 ══════ */
+/* ══════════════════════════════════════════════════════════════════════════
+   스스로 채운다 (대표 보고 2026-08-30)
+   ══════════════════════════════════════════════════════════════════════════
+   "시작할때 또는 로그인 때마다 왜 이렇게 동기화된 메일이 계속 없다고 나오나
+    자동으로 나오게 하면 안되나?"
+
+   ★ 무엇이었나 — 줄을 받아 오는 곳이 «문 하나»(openMailBox)뿐이었다. 그 문을
+     안 거치고 화면이 그려지는 순간이 있으면(로그인이 붙는 차례가 조금만 달라져도)
+     폴더·쪽수는 다 보이는데 목록만 빈 채로 «굳었다». 화면은 「동기화된 메일이
+     없습니다」라고 말하지만 사실은 «아직 안 받아 온 것»이라, 새로고침을 누르면
+     그제야 나온다 — 고장으로 보이지도 않는 종류의 고장이다.
+   ★ 고치는 자리를 «문»이 아니라 «그리는 자리»로 옮긴다. 어느 길로 들어와도
+     그릴 때 스스로 살펴 없으면 받아 온다.
+   ⚠ 칸마다 «한 번»만 스스로 받아 온다(_mbFilled). 안 그러면 못 읽었을 때
+     받아오기 → 그리기 → 받아오기 로 끝없이 돈다.
+   ⚠ 이미 받아 둔 칸은 «다시 안 받는다» — _mbMsgs[slug] 가 빈 표({})라도 그것은
+     「받아 봤더니 없더라」는 답이다. 요금과 시간을 두 번 쓰지 않는다.
+   ⚠ 로그인 전에는 아무것도 안 한다 — 거절만 쌓인다. */
+let _mbFilled  = {};   /* {slug:1} — 스스로 받아 온 칸 */
+let _mbFilling = 0;    /* 지금 스스로 받아 오는 중인 칸 수 */
+function mbAutoFill(){
+  if(state.view!=='mail' || state.mailSent!=='box') return;
+  if(!mbAuthOk() || _mbFolders===null || _mbBusy) return;
+  const need = mbNeedSlugs(mbNow()).filter(x=>x && !_mbMsgs[x] && !_mbFilled[x]);
+  if(!need.length) return;
+  need.forEach(x=>{ _mbFilled[x] = 1; });
+  _mbFilling += need.length;
+  need.forEach(x=>loadMailBox(x, mbPageSize(), ()=>{
+    if(--_mbFilling > 0) return;
+    if(state.view==='mail' && state.mailSent==='box'){ renderPCSide(); renderMailPage(); }
+  }));
+}
+/* 지금 이 칸을 «받아 오는 중»인가 — 빈 화면에 무슨 말을 할지 가른다.
+   ⚠ 「없습니다」와 「읽고 있습니다」를 가르는 것이 이 함수다. 둘을 뭉뚱그리면
+     사람이 없는 줄 알고 새로고침을 누르거나, 있는 줄 알고 기다리기만 한다. */
+function mbLoadingBox(){
+  if(_mbFilling > 0) return true;
+  return mbNeedSlugs(mbNow()).some(x=>x && !_mbMsgs[x]);
+}
+
 function openMailBox(id){
   state.view='mail'; state.mailSent='box'; state.mbBox=id; state.mbOpen=null;
   pickClear('mbox');
@@ -15865,6 +15906,9 @@ function mbFindBody(){
 
 function mbPull(){
   if(_mbBusy) return;
+  /* ⚠ 스스로 받아 온 표를 지운다 — 한 번 못 읽은 칸은 그 표 때문에 다시 안 받는다.
+       사람이 새로고침을 눌렀다는 것은 «다시 해 보라»는 뜻이다. */
+  _mbFilled = {};
   _mbBusy = true; renderMailPage();
   const done = (msg, ms)=>{
     _mbBusy=false;
@@ -15984,7 +16028,9 @@ function mbMobileHtml(){
       _mbErr ? esc(mbErrTell())
       : _mbFolders===null ? '읽고 있습니다…'
       : (state.mbQ||state.mbFilter) ? '찾은 메일이 없습니다.'
-      : mbNoMsgBox(mbNow()) ? '이 칸은 <b>다음메일에서 보십시오</b>.<br>지운 메일은 안 가져옵니다.'      : '아직 동기화된 메일이 없습니다.<br>위 <b>↻</b> 를 눌러 가져오세요.'}</div>`;
+      : mbNoMsgBox(mbNow()) ? '이 칸은 <b>다음메일에서 보십시오</b>.<br>지운 메일은 안 가져옵니다.'
+      : mbLoadingBox() ? '읽고 있습니다…'
+      : '아직 동기화된 메일이 없습니다.<br>위 <b>↻</b> 를 눌러 가져오세요.'}</div>`;
 
   return `<div class="dmm ${state.mbDrawerOpen?'open':''}">
     <div class="dmm-top">
@@ -16347,7 +16393,11 @@ function mbListHtml(){
         _mbErr ? esc(mbErrTell())
         : _mbFolders===null ? '읽고 있습니다…'
         : (state.mbQ||state.mbFilter) ? '찾은 메일이 없습니다.'
-        : mbNoMsgBox(mbNow()) ? '이 칸은 <b>다음메일에서 보십시오</b>.<br>지운 메일은 푸른 메일함으로 가져오지 않습니다(대표 지시 2026-08-29).'        : '아직 동기화된 메일이 없습니다.<br><b>새로고침 ↻</b> 를 눌러 다음메일에서 가져오세요.'}</div>`;
+        : mbNoMsgBox(mbNow()) ? '이 칸은 <b>다음메일에서 보십시오</b>.<br>지운 메일은 푸른 메일함으로 가져오지 않습니다(대표 지시 2026-08-29).'
+        /* ⚠ «아직 안 받아 온 것»을 「없습니다」라고 하면 안 된다 — 새로고침을 눌러야만
+             나오는 것처럼 보인다(대표 보고 2026-08-30). 받아 오는 중이면 그렇게 말한다. */
+        : mbLoadingBox() ? '읽고 있습니다…'
+        : '아직 동기화된 메일이 없습니다.<br><b>새로고침 ↻</b> 를 눌러 다음메일에서 가져오세요.'}</div>`;
 
   const meta = _mbMeta && _mbMeta.at
     ? `마지막 동기화 ${fmtDate(_mbMeta.at)} ${new Date(_mbMeta.at).toTimeString().slice(0,5)}`
