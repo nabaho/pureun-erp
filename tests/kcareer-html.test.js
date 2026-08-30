@@ -1673,3 +1673,42 @@ test('★ 빠른 이력서 툴바는 탭줄과 «한 줄» — 패널 안에 두
   // 올리기 줄과 같은 방식으로 탭마다 여닫는다
   assert.match(funcSource('rhTab'), /cvToolbar[\s\S]{0,80}dm-quick/, '그 탭에서만 보여야 합니다');
 });
+
+/* ===== ★ 환경설정 정리 (2026-08-30) ===== */
+
+test('★ 기본정보 라벨은 «한 줄»로 못박는다 — 접히면 옆 칸과 줄이 어긋난다', () => {
+  // 한자 성명·주민등록번호 라벨이 두 줄로 접혀 그 아래 입력칸이 밀렸다
+  assert.match(source, /\.field label\{[^}]*white-space:nowrap/,
+    '⚠ nowrap 을 빼면 라벨이 접혀 다시 어긋납니다');
+  assert.match(source, /\.field label\{[^}]*height:17px/, '높이를 고정해야 줄이 맞습니다');
+  const rp = funcSource('renderPersonal');
+  assert.ok(!/漢 을 눌러 고릅니다<\/span>/.test(rp), '긴 꼬리말은 툴팁으로 옮겼습니다');
+  assert.ok(!/🔒 골라야 들어감<\/span>/.test(rp), '주민번호 꼬리말도 툴팁으로');
+});
+
+test('★ 환경설정은 넓게 쓰고 머리줄을 숨긴다 — 탭줄이 맨 위로', () => {
+  assert.match(source, /#page-settings>\.page\{max-width:1700px\}/);
+  assert.match(source, /#page-settings>\.page>h2,#page-settings>\.page>\.desc\{display:none\}/);
+});
+
+test('★ 메뉴 관리 탭은 없앴다 — 사이드바 「＋ 대시보드 추가」와 같은 일이었다', () => {
+  ['tab-navmgr', 'nmList', 'nmGrpName', 'nmItemName'].forEach((id) => {
+    assert.equal(source.indexOf('id="' + id + '"'), -1, id + ' 은 없어야 합니다');
+  });
+  assert.equal(source.indexOf('data-tab="navmgr"'), -1, '탭 단추도 없어야 합니다');
+  ['renderMenuManager', 'addCustomGrp', 'addCustomItem'].forEach((fn) => {
+    assert.equal(source.indexOf('function ' + fn), -1, fn + ' 도 함께 없앴습니다');
+  });
+});
+
+test('★ 만든 메뉴를 «지우는 길»은 사라지지 않았다 — 사이드바로 옮겼다', () => {
+  // ⚠ 삭제는 메뉴 관리 탭에만 있었다. 탭만 지우면 만든 메뉴를 영영 못 지운다.
+  assert.match(source, /id="navAddList"/, '사이드바에 목록 자리가 있어야 합니다');
+  const r = funcSource('renderNavAddList');
+  assert.match(r, /delCustomGrp\(/, '그룹 삭제');
+  assert.match(r, /delCustomItem\(/, '항목 삭제');
+  ['delCustomGrp', 'delCustomItem'].forEach((fn) => {
+    assert.match(funcSource(fn), /renderNavAddList\(\)/, fn + ' 이 목록을 다시 그려야 합니다');
+  });
+  assert.match(funcSource('toggleNavAddForm'), /renderNavAddList/, '칸을 열면 목록을 그립니다');
+});
