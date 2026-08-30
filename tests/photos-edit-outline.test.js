@@ -29,6 +29,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { cutFn } = require('./cut-fn');
+/* 색은 «값»이 아니라 «뜻»으로 본다 — 팔레트를 정리해도 안 깨지게 */
+const P = require('./lib-palette.js');
 
 const R = path.join(__dirname, '..');
 const APP = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
@@ -122,8 +124,9 @@ test('★★ 붓 굵기가 «커서 동그라미»로 보인다 — 커서 모�
   c.edDrawCursor(c._ctx, 400, 300);
   const drew = c._calls.filter(function (x) { return x[0] === '화면'; });
   assert.ok(drew.length >= 2, '★★ 커서를 안 그립니다');
-  assert.ok(drew.some(function (x) { return x[2] === '#f97316'; }),
-    '★ 칠하기일 때 주황이 아닙니다');
+  /* ⚠ 색값을 박지 않는다 — 규칙은 「칠하기가 따뜻한 색으로 보인다」다 */
+  assert.ok(drew.some(function (x) { return P.isAmber(String(x[2] || '')); }),
+    '★ 칠하기일 때 따뜻한 색이 아닙니다: ' + drew.map(function (x) { return x[2]; }).join(' '));
   assert.ok(!drew.some(function (x) { return x[1] === 'dash'; }),
     '★ 칠하기인데 점선입니다 — 지우개와 안 갈립니다');
 });

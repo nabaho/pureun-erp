@@ -24,6 +24,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { cutFn } = require('./cut-fn');
+/* 색은 «값»이 아니라 «뜻»으로 본다 — 팔레트를 정리해도 안 깨지게 */
+const P = require('./lib-palette.js');
 
 const R = path.join(__dirname, '..');
 const APP = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
@@ -84,8 +86,22 @@ test('★★ 셋을 «색으로» 갈라 둔다 — 아이콘만 남으면 한 �
   assert.match(html, /class="rd mask"/, '가리고 판독');
   assert.match(html, /class="rd edit"/, '사진 편집');
   const css = APP.replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.match(css, /\.acts \.rd\.mask\{[^}]*color:#b45309/, '★ 가리고 판독의 색이 없어졌습니다');
-  assert.match(css, /\.acts \.rd\.edit\{[^}]*color:#15803d/, '★ 사진 편집의 색이 없어졌습니다');
+  /* ⚠ 색값을 박지 않는다 — 지켜야 할 것은 「셋이 서로 다른가」다.
+     팔레트를 정리하면 값은 바뀌지만 «갈라져 있어야 한다»는 규칙은 그대로다. */
+  const pick = (sel) => {
+    const m = css.match(new RegExp('\\.acts \\.rd' + sel + '\\{[^}]*color:(#[0-9a-fA-F]{3,8})'));
+    return m && m[1].toLowerCase();
+  };
+  const base = pick(''), mask = pick('\\.mask'), edit_ = pick('\\.edit');
+  assert.ok(mask, '★ 가리고 판독의 색 규칙이 없어졌습니다');
+  assert.ok(edit_, '★ 사진 편집의 색 규칙이 없어졌습니다');
+  /* ⚠ 기본 단추는 «제 색 규칙이 없다» — 물려받는다. 그러니 있는 것끼리만 견준다.
+     셋이 다 정해져 있어야 한다고 박으면 물려받는 쪽이 억울하게 걸린다. */
+  const got = [base, mask, edit_].filter(Boolean);
+  assert.notEqual(mask, edit_,
+    '★ 「가리고 판독」과 「사진 편집」이 같은 색입니다: ' + mask);
+  assert.equal(new Set(got).size, got.length,
+    '★ 겹치는 색이 있습니다 — 아이콘만 남으면 한 덩어리로 보입니다: ' + got.join(' '));
 });
 
 test('★ 판독 단추가 «남은 자리를 다 먹지» 않는다 — 이제 한 글자다', () => {

@@ -26,6 +26,9 @@ const DONE = [
   ['kcareer.html', '경력관리'],
   ['work.html', '업무관리'],
   ['pu-cards.html', '기업정보함'],
+  ['pu-photos.html', '푸른사진첩'],
+  ['rules.html', '취업규칙'],
+  ['enter.html', '푸른포털'],
 ];
 
 /* 일부러 남긴 것. ★ 이 목록을 늘리지 말 것 — 예외가 늘면 팔레트가 무너진다. */
@@ -42,6 +45,11 @@ const EXCEPT = {
     '#ffaabb',   // 실제로는 색이 아니라 id 이름(#fab) 이다 — 바꾸면 그 화면이 깨진다
   ]),
   'work.html': new Set([]),
+  /* 세 앱은 예외가 «하나도 없다» — 팔레트만으로 다 됐다는 뜻이다.
+     ⚠ 여기에 색을 채워 넣어 통과시키지 말 것. 예외가 늘면 팔레트가 무너진다. */
+  'pu-photos.html': new Set([]),
+  'rules.html': new Set([]),
+  'enter.html': new Set([]),
   'kcareer.html': new Set([]),
 };
 

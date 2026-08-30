@@ -19,6 +19,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { cutFn } = require('./cut-fn');
+/* 색은 «값»이 아니라 «뜻»으로 본다 — 팔레트를 정리해도 안 깨지게 */
+const P = require('./lib-palette.js');
 
 const R = path.join(__dirname, '..');
 const APP = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
@@ -51,7 +53,10 @@ test('★ 꺽쇠는 걷고 가운데 동그라미로 바꾼다', () => {
 });
 
 test('★ 찾았을 때와 못 찾았을 때가 눈에 갈린다', () => {
-  assert.match(APP, /#camAim\.found\{[^}]*border-color:#34d399/, '찾아도 그대로면 언제 찍을지 모릅니다');
+  /* ⚠ 색값을 박지 않는다 — 「초록 계열로 갈라지는가」가 규칙이다 */
+  const found = (APP.match(/#camAim\.found\{[^}]*border-color:(#[0-9a-fA-F]{3,8})/) || [])[1];
+  assert.ok(found, '찾아도 그대로면 언제 찍을지 모릅니다');
+  assert.ok(P.isGreen(found), '★ 찾았다는 표가 초록이 아닙니다: ' + found);
   assert.match(APP, /#camAim\.found::after\{content:'✓'/, '찾았다는 표가 없습니다');
   const fn = cutFn(APP, 'function applyFrameUI(');
   assert.match(fn, /aim\.className = on \? \(showFrame\(\) \? 'on found' : 'on'\) : ''/,

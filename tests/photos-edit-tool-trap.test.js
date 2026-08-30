@@ -183,7 +183,11 @@ test('★★ 지우개일 때 «무엇을 지우는지» 그 자리에 적는다
     '★ 칠하기일 때도 경고가 떠 있습니다');
   /* 눈에 띄는 꾸밈이어야 한다 */
   const css = APP.replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.match(css, /\.note\.edmode\{[^}]*background:#fff7ed/, '★ 그냥 흐린 글씨면 안 읽힙니다');
+  /* ⚠ 색값을 박지 않는다 — 규칙은 「바탕이 따로 있어 눈에 띄는가」다 */
+  const bg = (css.match(/\.note\.edmode\{[^}]*background:(#[0-9a-fA-F]{3,8})/) || [])[1];
+  assert.ok(bg, '★ 그냥 흐린 글씨면 안 읽힙니다 — 바탕 규칙이 없습니다');
+  assert.ok(bg.toLowerCase() !== '#ffffff' && bg.toLowerCase() !== '#fff',
+    '★ 바탕이 흰색이라 띠가 안 보입니다');
 });
 
 test('★ 붓 굵기는 모드와 «따로» 산다 — 지우개일 때도 크기를 고른다', () => {

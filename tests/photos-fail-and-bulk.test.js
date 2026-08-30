@@ -18,6 +18,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { cutFn } = require('./cut-fn');
+/* 색은 «값»이 아니라 «뜻»으로 본다 — 팔레트를 정리해도 안 깨지게 */
+const P = require('./lib-palette.js');
 
 const R = path.join(__dirname, '..');
 const app = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
@@ -460,6 +462,9 @@ test('★ 실패가 하나도 없으면 칩을 아예 안 만든다 — 0장 나
 });
 
 test('칩 글자색을 정해 둔다 — 띠의 파란 글자를 물려받으면 켜졌는지 알 수 없다', () => {
-  assert.match(app, /#backWhere \.failchip\{[^}]*color:#b42318/);
+  /* ⚠ 색값을 박지 않는다 — 규칙은 「빨간 계열로 물려받지 않고 제 색을 갖는가」다 */
+  const chip = (app.match(/#backWhere \.failchip\{[^}]*color:(#[0-9a-fA-F]{3,8})/) || [])[1];
+  assert.ok(chip, '★ 칩 글자색을 안 정해 두면 띠의 파란 글자를 물려받습니다');
+  assert.ok(P.isRed(chip), '★ 실패 칩이 빨간 계열이 아닙니다: ' + chip);
   assert.match(app, /#backWhere \.failchip\.on\{/);
 });

@@ -9,6 +9,8 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+/* 색은 «값»이 아니라 «뜻»으로 본다 — 팔레트를 정리해도 안 깨지게 */
+const P = require('./lib-palette.js');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8');
 
@@ -187,7 +189,11 @@ test('★ 「지우기」는 맨 끝에, 틈을 두고 놓는다', () => {
   });
   assert.match(app, /#readPanel \.acts \.rm\{[^}]*margin-left:5px/,
     '★ 틈이 없으면 「다시 판독」을 누르려다 지웁니다');
-  assert.match(app, /#readPanel \.acts \.rm\{border-color:#f0b4b4;color:#b91c1c/, '빨강으로 갈라야 합니다');
+  /* ⚠ 색값을 박지 않는다 — 규칙은 「빨간 계열로 갈라지는가」다 */
+  const rm = app.match(/#readPanel \.acts \.rm\{border-color:(#[0-9a-fA-F]{3,8});color:(#[0-9a-fA-F]{3,8})/);
+  assert.ok(rm, '★ 지우기 단추의 색 규칙이 없어졌습니다');
+  assert.ok(P.isRed(rm[1]) && P.isRed(rm[2]),
+    '★ 빨강으로 안 갈라집니다: 테두리 ' + rm[1] + ' 글자 ' + rm[2]);
 });
 
 test('★ 아이콘만 남아도 무슨 단추인지 알 수 있다', () => {

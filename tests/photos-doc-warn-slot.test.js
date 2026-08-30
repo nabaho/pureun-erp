@@ -19,6 +19,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+/* 색은 «값»이 아니라 «뜻»으로 본다 — 팔레트를 정리해도 안 깨지게 */
+const P = require('./lib-palette.js');
 
 const R = path.join(__dirname, '..');
 const app = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
@@ -143,8 +145,11 @@ test('★ 칸에서 경고를 아예 없애지 않았다 — 8/15 「보이게 �
 /* ══════ ④ 색·자리 규칙 ══════ */
 
 test('★ 주황 딱지 규칙이 있고, 비우기는 .wnpad 에만 걸린다', () => {
-  assert.match(css, /#grid \.cell \.tag\.need\{background:#b45309/,
-    '★ .need 색 규칙이 없으면 「⚠ 서류」가 파란 딱지 그대로라 안 보입니다');
+  /* ⚠ 색값을 박지 않는다 — 규칙은 「파란 딱지와 갈라지는 따뜻한 색인가」다 */
+  const need = (css.match(/#grid \.cell \.tag\.need\{background:(#[0-9a-fA-F]{3,8})/) || [])[1];
+  assert.ok(need, '★ .need 색 규칙이 없으면 「⚠ 서류」가 파란 딱지 그대로라 안 보입니다');
+  assert.ok(P.isAmber(need) || P.isRed(need),
+    '★ 따뜻한 색이 아니라 파란 딱지와 안 갈라집니다: ' + need);
   assert.match(css, /#grid \.cell\.doc\.wnpad \.bd\{padding-bottom:20px\}/,
     '★ 비우기가 .wnpad 에 안 걸리면 모든 카드가 다시 한 줄을 잃습니다');
   assert.ok(!/#grid \.cell\.doc \.bd\{padding-bottom:20px\}/.test(css),
