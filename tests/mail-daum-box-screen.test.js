@@ -653,14 +653,27 @@ test('★ 이 칸에 모두 몇 통인지 함께 보여 준다 — 보이는 수
   assert.match(h, /이 칸에 모두 120통/, '이 칸의 전체 통수가 안 나온다');
 });
 
-test('★ 남은 것이 없으면 「더 보기」를 안 보여 준다 — 눌러도 아무 일이 없으면 고장으로 읽힌다', () => {
+/* ⚠ 2026-08-30 「이전 메일 더 보기」 단추가 «쪽번호»로 바뀌었다 (대표 지시, 다음메일 캡처3).
+     지키는 규칙은 그대로다 — «눌러도 아무 일이 안 나는 것을 그리지 않는다».
+     한 쪽이면 쪽번호가 없고, 남았으면 나온다. */
+test('★ 남은 것이 없으면 쪽번호를 안 보여 준다 — 눌러도 아무 일이 없으면 고장으로 읽힌다', () => {
   const folders = Object.assign({}, FOLDERS, {
     B_INBOX: { path:'INBOX', name:'INBOX', kind:'inbox', order:1, total:2, unseen:0 }
   });
   const c = load({ folders: folders, msgs: MSGS });
-  assert.ok(c.mbBoxHtml().indexOf('mbMore()') < 0, '다 보고 있는데 더 보기가 있다');
+  assert.equal(c.mbPageCount(), 1, '두 통뿐인데 쪽이 여럿이다');
+  assert.ok(c.mbBoxHtml().indexOf('dm-pg') < 0, '다 보고 있는데 쪽번호가 있다');
   const c2 = load({ folders: FOLDERS, msgs: MSGS });     // 모두 120통 · 손에는 2통
-  assert.ok(c2.mbBoxHtml().indexOf('mbMore()') > 0, '남았는데 더 보기가 없다');
+  assert.ok(c2.mbPageCount() > 1, '120통인데 쪽이 하나다');
+  assert.ok(c2.mbBoxHtml().indexOf('dm-pg') > 0, '남았는데 쪽번호가 없다');
+});
+
+test('★ 쪽이 하나여도 «보기설정»은 남는다 — 몇 통씩 볼지는 늘 고칠 수 있어야 한다', () => {
+  const folders = Object.assign({}, FOLDERS, {
+    B_INBOX: { path:'INBOX', name:'INBOX', kind:'inbox', order:1, total:2, unseen:0 }
+  });
+  const c = load({ folders: folders, msgs: MSGS });
+  assert.ok(c.mbBoxHtml().indexOf('mbViewSetOpen()') > 0, '보기설정까지 함께 사라졌다');
 });
 
 test('전체메일은 폴더들의 통수를 합쳐 센다', () => {
