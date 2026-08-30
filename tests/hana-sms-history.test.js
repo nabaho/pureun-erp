@@ -113,7 +113,10 @@ test('★★ 지난 문자를 넣어도 lastOkAt 을 찍지 않는다 — 진짜
      ⚠ 못 박을 것은 모양이 아니라 «lastOkAt 이 알림으로 온 것에만 찍히는가» 다. */
   const src = require('fs').readFileSync(
     require('path').join(__dirname, '..', 'functions', 'index.js'), 'utf8');
-  const i = src.indexOf('const hanaStampAlive = async (linked, how) => {');
+  /* ⚠ 부르는 «모양»(칸 개수)을 박지 않는다 — 2026-08-30 에 판 번호 한 칸을
+       더 넘기자, (linked, how) 를 글자로 박아 둔 검사 넷이 한꺼번에 깨졌다.
+       기능은 멀쩡했다. 그런 검사를 몇 번 보면 사람은 검사를 «지울 것»으로 여긴다. */
+  const i = src.indexOf('const hanaStampAlive = async (');
   assert.ok(i > 0, '자국 찍는 자리를 못 찾았습니다');
   let d = 0, end = -1;
   for (let k = src.indexOf('{', i + 40); k < src.length; k++) {

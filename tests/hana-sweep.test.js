@@ -147,7 +147,9 @@ function cutBranch(src, header) {
 }
 
 test('★★ 훑기가 lastOkAt 을 «찍지 않는다» — 알림이 도는 것과 다른 말이다', () => {
-  const stamp = cutBranch(SV, 'const hanaStampAlive = async (linked, how) => {');
+  /* ⚠ 부르는 «모양»(칸 개수)을 박지 않는다 — 2026-08-30 에 판 번호 한 칸을
+       더 넘기자 이 줄을 포함해 넷이 한꺼번에 깨졌다. 기능은 멀쩡했다. */
+  const stamp = cutBranch(SV, 'const hanaStampAlive = async (');
   assert.ok(/if \(how === "sweep"\) \{ patch\.lastSweepAt = at;/.test(stamp),
     '★ 훑기가 돌았다는 것을 안 적는다');
   assert.ok(/else if \(how === "history"\) patch\.lastHistoryAt = at;/.test(stamp),
@@ -167,10 +169,10 @@ test('★★ 훑기가 lastOkAt 을 «찍지 않는다» — 알림이 도는 �
       폰은 멀쩡히 말을 걸고 있었는데 화면이 «거짓말»을 한 것이다. */
 test('★★ 중복이어도 «폰이 말을 걸었다»는 남긴다', () => {
   const sameRaw = cutBranch(SV, 'if (sameRaw && sameRaw.exists()) {');
-  assert.ok(/await hanaStampAlive\(linked, howCame\);/.test(sameRaw),
+  assert.ok(/await hanaStampAlive\(linked, howCame[,)]/.test(sameRaw),
     '★★ 중복만 잔뜩 온 날, 화면이 「문자 0건」이라 거짓말하고 사람이 앱을 다시 깐다');
   const existing = cutBranch(SV, 'if (existing.exists()) {');
-  assert.ok(/await hanaStampAlive\(linked, howCame\);/.test(existing),
+  assert.ok(/await hanaStampAlive\(linked, howCame[,)]/.test(existing),
     '★★ 같은 열쇠로 또 온 것도 마찬가지다');
 });
 
