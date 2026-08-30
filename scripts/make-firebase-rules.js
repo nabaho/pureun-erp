@@ -191,7 +191,10 @@ function scal() {
   };
 }
 ['scal_staff','scal_types','scal_cos','scal_scheds','scal_env','scal_fieldState',
- 'scal_conflictMatrix','scal_roundlog','scal_erpConsHold','scal_erpTypeMap']
+ 'scal_conflictMatrix','scal_roundlog','scal_erpConsHold','scal_erpTypeMap',
+ /* 사진 변경 이력 — 회차 이력과 같은 «한 줄씩 쌓는» 자리 (2026-08-29 대표 결정 「가」).
+    직원은 남길 수 있고, 지우기는 관리자만. */
+ 'scal_photoLog']
   .forEach(function(k){ rules[k] = scal(); });
 
 /* ══ 백업 ══════════════════════════════════════════════════════════════
