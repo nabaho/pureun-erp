@@ -112,6 +112,28 @@ test('★ 기록이 하나도 없으면 아무것도 안 묻는다 — 전부 �
   assert.equal(notify({ log: () => [] }).length, 0, '★ 기록 0건인데 물었습니다');
 });
 
+test('★ 끝난 컨설팅은 안 묻는다 — 업무관리 「밀린 것 모두」와 «같은 규칙»이어야 한다', () => {
+  /* 한쪽만 걸러 두면 두 화면이 서로 다른 말을 하고, 그때부터 어느 쪽도 안 믿게 된다.
+     제출이 끝난 건을 매일 물으면 알림 자체를 안 보게 된다. */
+  const box = {
+    console,
+    todayStr: () => TODAY,
+    getEnv: () => ({ warnDeadlineDays: 14 }),
+    getCos: () => [{ id: 'c1', name: '이피아', active: true, types: [], endedTypes: { t1: 1 } }],
+    getTypes: () => [{ id: 't1', name: '현장클리닉' }],
+    getScheds: scheds,
+    getCoAtts: () => [], getCoMandatory: () => 0, getCoMaxRounds: () => 0,
+    mainPhaseScheds: a => a, myId: () => 'me', isAdmin: () => false,
+    photoLogAll: log, PHOTO_LOG_KEEP: 600,
+    _erpAskRows: [], _erpAskBlocked: [],
+    Date, Math, Object, Array, String, Number, JSON
+  };
+  vm.createContext(box);
+  vm.runInContext(fnSrc('buildNotifications'), box);
+  const got = box.buildNotifications().filter(x => x.type === 'noev');
+  assert.equal(got.length, 0, '★ 끝난 컨설팅을 물었습니다');
+});
+
 test('지운 사진은 «있음»으로 안 친다', () => {
   const got = notify({
     log: () => [

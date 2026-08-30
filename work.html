@@ -259,6 +259,8 @@
   .panel.tbl{padding:0;overflow:auto;max-height:calc(100vh - 250px)}
   /* 「내 현장 방문」 — 증빙이 빠진 줄은 옅은 빨강. 색만으로 알리지 않고
      칸 안에 「없음」 딱지를 함께 둔다(색을 못 가리는 분도 있다). */
+  /* 폰에서 표만 옆으로 굴린다 — 쪽 전체가 옆으로 밀리면 읽을 수가 없다 */
+  .vis-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
   tr.vis-no > td{background:#fff7f7}
   tr.vis-no:hover > td{background:#ffeded}
   /* 도구줄 드롭다운 — 브라우저 기본 네모가 둥근 칩들 사이에 섞여 어수선했다.
@@ -5007,6 +5009,11 @@ function visShift(delta) {
   VIS.ym = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
   renderVisits();
 }
+/* 사진 이력을 몇 줄까지 붙들 것인가 — 한 해에 1,500줄 안팎이라 두 해치다.
+   ⚠ 숫자를 늘리면 내려받는 양이 그만큼 는다. 줄이면 옛 방문이 「기록 없음」으로
+     되돌아간다 — 「기록이 닿는 데까지만 말한다」는 규칙 그대로다. */
+var LOG_KEEP = 3000;
+
 function visToday() {
   var d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
@@ -5036,8 +5043,12 @@ function visGo(sid) {
 /* 컨설팅일정 자료 — 한 번 읽고 캐시한다(달을 넘겨도 다시 안 읽는다). */
 function visLoad() {
   if (VIS.scheds && VIS.log) return Promise.resolve();
-  function one(node, fallback) {
-    return fbDb.ref(node).once('value')
+  function one(node, fallback, keep) {
+    /* keep 이 있으면 «마지막 몇 줄»만 — 사진 이력은 지우는 곳이 없어 해마다 쌓인다.
+       통째로 읽으면 화면을 열 때마다 내려받는 양이 끝없이 늘어난다. */
+    var r = fbDb.ref(node);
+    if (keep) { try { r = r.limitToLast(keep); } catch (e) { } }
+    return r.once('value')
       .then(function (s) { return s.val() || fallback; })
       .catch(function () { return null; });   // 권한이 없거나 못 읽음 — null 로 구분한다
   }
@@ -5046,7 +5057,7 @@ function visLoad() {
     ? pcAmFin().catch(function () { return false; }) : Promise.resolve(false);
   return Promise.all([
     one('scal_scheds', {}), one('scal_cos', {}), one('scal_types', {}),
-    one('scal_staff', {}), one('scal_photoLog', {}), amAdmin
+    one('scal_staff', {}), one('scal_photoLog', {}, LOG_KEEP), amAdmin
   ]).then(function (r) {
     VIS.scheds = r[0]; VIS.cos = r[1]; VIS.types = r[2]; VIS.gstaff = r[3]; VIS.log = r[4];
   });
@@ -5243,7 +5254,7 @@ function renderVisits() {
         + (tN ? visPill('사진 없음 ' + tN + '건', '#fee2e2', '#991b1b') : '')
         + (tU ? visPill('기록 없음 ' + tU + '건', '#e5e7eb', '#4b5563') : '')
         + '</div>';
-      h += '<table class="tbl"><tr><th>담당</th><th>방문</th><th>사진 넣음</th><th>사진 없음</th>'
+      h += '<div class="vis-wrap"><table><tr><th>담당</th><th>방문</th><th>사진 넣음</th><th>사진 없음</th>'
         + '<th>가장 오래 밀린 것</th></tr>';
       sum.forEach(function (r) {
         var d = r.late ? visDaysAgo(r.late.date) : 0;
@@ -5258,7 +5269,7 @@ function renderVisits() {
             + (r.lateN > 1 ? ' <span class="muted">외 ' + (r.lateN - 1) + '건</span>' : '')
             : '<span class="muted">—</span>') + '</td></tr>';
       });
-      h += '</table><p class="note muted" style="margin-top:9px;font-size:11.5px;line-height:1.7">'
+      h += '</table></div><p class="note muted" style="margin-top:9px;font-size:11.5px;line-height:1.7">'
         + '줄을 누르면 그 사람의 목록이 열립니다.<br>'
         + '<b>일을 잘하나 재는 표가 아닙니다</b> — 증빙이 빠진 곳을 마감 전에 찾는 것이 전부라, '
         + '방문 건수가 아니라 <b>밀린 날수</b>로 줄을 세웁니다.</p></div>';
@@ -5325,7 +5336,7 @@ function renderVisits() {
       app.innerHTML = h; return;
     }
 
-    h += '<table class="tbl"><tr><th>방문일</th><th>사업장</th><th>컨설팅 · 회차</th>'
+    h += '<div class="vis-wrap"><table><tr><th>방문일</th><th>사업장</th><th>컨설팅 · 회차</th>'
       + '<th>구분</th><th>사진</th><th>사진 넣은 때</th></tr>';
     rows.forEach(function (r) {
       var s = r.s;
@@ -5355,7 +5366,7 @@ function renderVisits() {
               : visPill('없음', '#fee2e2', '#991b1b')) + '</td>'
         + '<td>' + when + '</td></tr>';
     });
-    h += '</table>';
+    h += '</table></div>';
     h += '<p class="muted" style="margin-top:9px;font-size:11.5px;line-height:1.7">'
       + '정부사업일정에 담긴 것을 그대로 읽어 보여 줍니다 — <b>줄을 누르면 그 일정이 열립니다</b>(사진은 거기서 넣습니다).<br>'
       + '「사진 넣은 때」가 방문일보다 늦으면 며칠 뒤인지 함께 적습니다.'
@@ -5374,7 +5385,7 @@ function renderVisits() {
 
 /* 밀린 목록 한 벌 — 「사진 없음」과 「기록 없음」이 같은 모양을 쓴다 */
 function visLateTable(list, unknown) {
-  var h = '<table class="tbl"><tr><th>방문일</th><th>사업장</th><th>컨설팅 · 회차</th>'
+  var h = '<div class="vis-wrap"><table><tr><th>방문일</th><th>사업장</th><th>컨설팅 · 회차</th>'
     + '<th>얼마나</th><th>사진</th></tr>';
   list.forEach(function (s) {
     var d = visDaysAgo(s.date);
@@ -5388,7 +5399,7 @@ function visLateTable(list, unknown) {
       + '<td>' + (unknown ? visPill('기록 없음', '#e5e7eb', '#4b5563') : visPill('없음', '#fee2e2', '#991b1b'))
       + '</td></tr>';
   });
-  return h + '</table>';
+  return h + '</table></div>';
 }
 
 /* 두 갈래 단추 한 벌 */

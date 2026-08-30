@@ -31,6 +31,8 @@ function fnSrc(name) {
 }
 const VIS_DECL = (SRC.match(/var VIS = \{[^}]*\};/) || [])[0];
 assert.ok(VIS_DECL, 'VIS 선언을 찾을 수 없습니다');
+const KEEP_DECL = (SRC.match(/var LOG_KEEP = \d+;/) || [])[0];
+assert.ok(KEEP_DECL, '★ 사진 이력을 몇 줄까지 붙들지 정한 곳이 없습니다');
 
 const FNS = ['visYm', 'visShift', 'visToday', 'visSetMode', 'visSetScope', 'visSetPick',
   'visAdmin', 'visGo', 'visLoad', 'visRows', 'visName', 'visMine', 'visGovStaffId',
@@ -41,7 +43,7 @@ const FNS = ['visYm', 'visShift', 'visToday', 'visSetMode', 'visSetScope', 'visS
 function world(data, me, opt) {
   const o = opt || {};
   const app = { innerHTML: '' };
-  const opened = [];
+  const opened = [], asked = [];
   /* 「오늘」을 못 박는다 — 인자 없이 부르면 늘 2026-08-30 */
   const RealDate = Date;
   function FakeDate(...a) { return a.length ? new RealDate(...a) : new RealDate(TODAY); }
@@ -57,18 +59,22 @@ function world(data, me, opt) {
     S: { perfFin: !!o.admin },
     window: { open: (u) => opened.push(u) },
     fbDb: {
-      ref: node => ({
-        once: () => Promise.resolve({
-          val: () => (Object.prototype.hasOwnProperty.call(data, node) ? data[node] : {})
-        })
-      })
+      ref: node => {
+        const r = {
+          once: () => Promise.resolve({
+            val: () => (Object.prototype.hasOwnProperty.call(data, node) ? data[node] : {})
+          }),
+          limitToLast: k => { asked.push(node + ':' + k); return r; }
+        };
+        return r;
+      }
     },
     Promise, Date: FakeDate, Object, Array, String, Number, Math, isNaN, JSON
   };
   vm.createContext(box);
-  vm.runInContext([VIS_DECL].concat(FNS.map(fnSrc)).join('\n'), box);
+  vm.runInContext([VIS_DECL, KEEP_DECL].concat(FNS.map(fnSrc)).join('\n'), box);
   box.VIS.ym = '2026-08';
-  return { box, app, opened };
+  return { box, app, opened, asked };
 }
 
 /* 이 달치 자료 한 벌 */
@@ -204,6 +210,31 @@ test('컨설팅일정을 못 읽으면 그렇게 말한다 — 조용히 비우�
   box.VIS.scheds = null; box.VIS.log = null;
   await box.renderVisits();
   assert.match(app.innerHTML, /읽지 못했|정부사업일정/, '★ 못 읽었는데 조용합니다');
+});
+
+test('★ 사진 이력을 «통째로» 읽지 않는다 — 지우는 곳이 없어 해마다 쌓인다', async () => {
+  /* 이력은 지우는 곳이 없다. 통째로 읽으면 이 화면을 열 때마다 내려받는 양이
+     끝없이 늘어난다 — 요금이 «조용히» 오르는 자리다. */
+  const w = world(fixture(), ME);
+  await w.box.renderVisits();
+  const hit = w.asked.filter(function (x) { return x.indexOf('scal_photoLog:') === 0; });
+  assert.equal(hit.length, 1, '★ 사진 이력에 창을 안 씌웁니다(통째로 읽습니다)');
+  /* 다른 칸까지 자르면 일정이 사라진다 — 창은 «이력에만» */
+  assert.equal(w.asked.filter(function (x) { return x.indexOf('scal_scheds:') === 0; }).length, 0,
+    '★ 일정 목록까지 잘랐습니다 — 옛 일정이 통째로 사라집니다');
+});
+
+test('★ 표는 «스스로» 옆으로 구른다 — 쪽 전체가 밀리면 폰에서 못 읽는다', () => {
+  /* 칸이 여섯이고 머리글이 안 접혀(nowrap) 폰에서는 화면 밖으로 나간다.
+     ⚠ 굴러야 하는 것은 «표»지 쪽이 아니다. */
+  const css = (SRC.match(/\.vis-wrap\{[^}]*\}/) || [''])[0];
+  assert.match(css, /overflow-x:\s*auto/, '★ 표를 옆으로 굴릴 수 없습니다');
+  /* 「내 현장 방문」이 그리는 표는 «모두» 그 안에 있어야 한다 */
+  const blk = SRC.slice(SRC.indexOf('function renderVisits'), SRC.indexOf('function visSeg'));
+  const tables = blk.match(/<table/g) || [];
+  const wraps = blk.match(/<div class="vis-wrap"><table/g) || [];
+  assert.ok(tables.length >= 2, '표를 못 찾았습니다');
+  assert.equal(wraps.length, tables.length, '★ 감싸지 않은 표가 있습니다');
 });
 
 /* ══════ ④ 줄을 눌러 그 일정으로 ══════ */
