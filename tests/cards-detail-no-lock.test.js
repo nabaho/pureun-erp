@@ -89,18 +89,46 @@ test('capture 로 듣는다 — 줄의 onclick 보다 먼저 닫아야 다른 �
 /* ── 「가진 것」 한 줄 ── */
 
 test('★ 「가진 것」이 한 줄이다 — 두 줄이면 한 화면에 보이는 회사가 절반이 된다', () => {
-  assert.match(HTML, /\.corow \.bits\{[^}]*flex-wrap:nowrap/,
-    'wrap 이면 딱지 셋이 두 줄로 접힌다');
-  assert.match(HTML, /\.corow \.bits\{[^}]*overflow:hidden/, '넘치면 자른다');
+  /* ⚠ 2026-08-30 에 flex → grid 로 바꿨다(대표 지시 「가진것 열 정리하고 순서도 정리해라」).
+     flex 로 «이어 붙이면» 앞엣것이 없는 줄은 뒤엣것이 당겨져 세로로 안 맞는다.
+     여기서 볼 것은 «한 줄인가»이지 어느 배치 방식인가가 아니다 — 자리가 셋으로
+     못 박혀 있으면(줄 수가 하나로 정해지면) 접힐 길이 없다. */
+  const bits = HTML.match(/\.corow \.bits\{([^}]*)\}/);
+  assert.ok(bits, '.corow .bits 규칙을 찾지 못했다');
+  const cols = bits[1].match(/grid-template-columns:([^;]+)/);
+  assert.ok(cols, '★ 자리를 못 박지 않았다 — 이어 붙이면 줄마다 어긋난다');
+  assert.equal(cols[1].trim().split(/\s+/).length, 3,
+    '★ 자리가 셋이 아니다 — 명함·등록증·빠진 것이 각자 제 자리에 서야 한다');
+  assert.ok(!/grid-template-rows|wrap/.test(bits[1]),
+    '★ 줄을 늘리면 한 화면에 보이는 회사가 절반이 된다');
 });
 
 test('딱지 하나하나는 안 접힌다', () => {
   assert.match(HTML, /\.corow \.bits i\{[^}]*white-space:nowrap/);
+  assert.match(HTML, /\.corow \.bits>span\{[^}]*white-space:nowrap/,
+    '자리 안에서 글이 접히면 줄 높이가 들쭉날쭉해진다');
 });
 
-test('빠진 것 딱지만 줄어든다 — 개수 딱지는 온전히 보여야 한다', () => {
-  assert.match(HTML, /\.corow \.bits i\{[^}]*flex:0 0 auto/, '개수는 안 줄어든다');
-  assert.match(HTML, /\.corow \.bits i\.miss\{[^}]*flex:0 1 auto/, '빠진 것은 줄어든다');
+test('★ 없는 것도 «자리를 지킨다» — 빼면 뒤엣것이 앞으로 당겨진다', () => {
+  /* 이것이 대표님이 본 화면 그대로다(2026-08-30): 명함이 없는 줄만 「등록증 1」이
+     맨 앞으로 당겨져, 눈으로 세로로 훑을 수가 없었다. */
+  const td = slice('<td class="bits"', '</td>');
+  const spans = td.match(/<span>/g) || [];
+  assert.equal(spans.length, 3,
+    '★ 자리가 ' + spans.length + '개다 — 셋이 «늘» 있어야 줄마다 같은 x 에 선다');
+  assert.ok(!/\$\{[^}]*\?[^}]*<span>/.test(td),
+    '★ 자리 자체를 조건으로 만들면 없는 줄에서 자리가 사라진다');
+});
+
+test('빠진 것 딱지만 줄어든다 — 개수는 온전히 보여야 한다', () => {
+  /* ⚠ grid 로 바뀐 뒤로 «줄어들고 말고»는 자리 폭이 정한다: 앞 둘은 못 박은 px 이고
+     빠진 것만 minmax(0,1fr) 로 남는 폭을 먹는다. flex 값을 찾던 옛 검사는 그대로면
+     늘 실패한다 — 지키려던 뜻(붉은 딱지만 접힌다)을 지금 방식으로 다시 적는다. */
+  const cols = HTML.match(/\.corow \.bits\{[^}]*grid-template-columns:([^;}]+)/)[1].trim().split(/\s+/);
+  assert.match(cols[0], /^\d+px$/, '★ 명함 자리가 못 박혀 있지 않다 — 수가 늘면 뒤가 밀린다');
+  assert.match(cols[1], /^\d+px$/, '★ 등록증 자리가 못 박혀 있지 않다');
+  assert.match(cols[2], /minmax\(0,\s*1fr\)/,
+    '★ 빠진 것이 남는 폭을 안 먹는다 — minmax 의 0 이 빠지면 넘쳐서 옆 칸을 민다');
   assert.match(HTML, /\.corow \.bits i\.miss\{[^}]*text-overflow:ellipsis/, '말줄임으로');
 });
 
@@ -117,9 +145,18 @@ test('★ 자른 것은 말풍선에 온전히 남는다 — 자른 채 아무 �
 });
 
 test('★ 말풍선과 딱지가 «한 값»에서 나온다 — 두 벌이면 한쪽만 고쳐진다', () => {
+  /* ⚠ 2026-08-30: missTxt 에서 ' 없음' 두 글자를 뺐다. 그 두 글자가 딱지 폭을 24px 먹어
+     정작 어느 칸이 빠졌는지가 잘렸다(「대표번…」). 이제 딱지는 ✕ 로, 말풍선은 「없음」으로
+     말하되 «가리키는 값은 하나»다 — 그 하나임을 여기서 지킨다. */
   assert.match(bitsDecl(), /coMissing\(o\)/, '빠진 것은 화면과 같은 함수로 센다');
-  assert.match(bitsDecl(), /care \? missTxt : ''/, '말풍선도 같은 missTxt 를 쓴다');
-  assert.match(bitsTd(), /missTxt \? miss\(missTxt\)/, '딱지도 같은 missTxt 를 쓴다');
+  assert.match(bitsDecl(), /care && missTxt \? missTxt \+ ' 없음' : ''/,
+    '말풍선도 같은 missTxt 를 쓴다');
+  assert.match(bitsTd(), /missTxt \? miss\('✕ ' \+ missTxt\)/, '딱지도 같은 missTxt 를 쓴다');
+  /* ⚠ 선언 «한 줄»만 본다. 덩이째 보면 아래 bitsAll 의 「없음」이 걸려 늘 실패한다. */
+  const decl = bitsDecl().split('\n').find(l => l.indexOf('const missTxt') >= 0);
+  assert.ok(decl, 'missTxt 선언을 찾지 못했다');
+  assert.ok(decl.indexOf('없음') < 0,
+    "★ missTxt 안에 '없음'을 도로 넣었다 — 딱지 폭을 먹어 칸 이름이 잘린다: " + decl.trim());
 });
 
 test('말풍선에 명함·등록증·빠진 것이 다 담긴다', () => {
