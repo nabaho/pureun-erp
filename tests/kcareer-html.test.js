@@ -700,9 +700,11 @@ test('이력서관리 두 화면은 제목·설명을 숨긴다 — 빵부스러
 
 test('이력서관리 네 화면이 같은 모양이다 — 접이식 또는 툴바 한 줄', () => {
   assert.match(source, /\.rh-fold>summary\{/, '.rh-fold 요약줄 스타일이 있어야 합니다');
-  // 빠른이력서·프로필·경력증명서 = 접이식 3개
+  // 프로필·경력증명서 = 접이식 2개.
+  // ⚠ 빠른 이력서의 접이식(기관 제출 양식·최근 생성)은 2026-08-30 없앴다 —
+  //    기관 양식 보관함을 「기관 양식 채우기」 탭 한 곳으로 합쳤는데 여기 또 있어 둘이 됐다.
   const folds = source.match(/<details class="rh-fold"/g) || [];
-  assert.ok(folds.length >= 3, '접이식 묶음이 있어야 합니다 (지금 ' + folds.length + '개)');
+  assert.ok(folds.length >= 2, '접이식 묶음이 있어야 합니다 (지금 ' + folds.length + '개)');
   // 이력서 생성·보관은 카드 3개 대신 목록 화면과 같은 툴바 한 줄을 쓴다(2026-08-29)
   /* ⚠ «어느 칸 안에» 있는지는 규칙이 아니다 — 2026-08-30 탭줄과 한 줄로 합치며 패널 밖으로 나갔다.
      규칙은 「업로드·모드·보관함이 한 줄에 모여 있는가」다. */
@@ -718,8 +720,10 @@ test('빠른 이력서에서 중복 카드를 없앴다 — 서류 만들기 버
   // 주석에는 남아 있어도 된다 — 화면에 그려지는 마크업만 본다
   assert.ok(!/>📑 서류 만들기</.test(source), '「서류 만들기」 카드를 되살리지 말 것');
   assert.ok(!/onclick="goCV\('resume'\)"/.test(source), '같은 화면에서 goCV 버튼은 드롭다운과 중복입니다');
-  // 최근 생성 기록 자리는 남아 있어야 한다 (renderCvRecent가 이 id를 찾는다)
-  assert.match(source, /id="homeCvRecent"/);
+  // ⚠ 최근 생성 자리는 2026-08-30 없앴다(대표 지시 「불필요한 장면 없애라」).
+  //    renderCvRecent 는 «자리가 없어도 안전»해야 한다 — 없으면 조용히 지나간다.
+  assert.match(funcSource('renderCvRecent'), /if\(!box\) return/,
+    '자리가 없을 때 터지지 않아야 합니다');
 });
 
 test('A4 쪽 나눔 자 — 자는 #cvSheet 밖에 있고 인쇄에서 막힌다', () => {
@@ -1604,4 +1608,45 @@ test('★ 표 아래 안내는 한 줄 — 표보다 눈에 띄면 표를 못 �
   const f = funcSource('_staffFoot');
   assert.ok(!/<br>/.test(f), '⚠ 줄바꿈을 넣어 다시 늘리지 말 것');
   assert.ok(f.length < 500, '짧게 유지해야 합니다 (지금 ' + f.length + '자)');
+});
+
+/* ===== ★ 빠른 이력서 툴바 한 줄 + 기본정보 전부 채움 (2026-08-30) ===== */
+
+test('★ 「한글로 보기」가 두 번 있지 않다 — 배지가 같은 함수를 부른다', () => {
+  const bar = source.slice(source.indexOf('class="cv-toolbar"'), source.indexOf('id="cvSheet"'));
+  assert.equal((bar.match(/cvHwpView\(\)/g) || []).length, 2,
+    '배지 + 더보기 안 한 개 = 두 곳이어야 합니다 (툴바에 또 두면 세 곳)');
+  assert.match(bar, /id="cvPageCnt"[^>]*onclick="cvHwpView\(\)"/, '배지는 눌러서 한글로 봅니다');
+});
+
+test('★ 툴바는 한 줄이다 — 두 줄이 되면 미리보기가 그만큼 밀린다', () => {
+  const bar = source.slice(source.indexOf('class="cv-toolbar"'), source.indexOf('id="cvSheet"'));
+  assert.match(bar, /flex-wrap:nowrap/, '⚠ wrap 으로 되돌리면 다시 두 줄이 됩니다');
+  // 자주 안 쓰는 것은 ⋯ 더보기로 접는다 (지우지 않는다)
+  assert.match(bar, /more-wrap/, '더보기 묶음이 있어야 합니다');
+  ['cvSendToEditor', 'cvExportHwpx', 'cvClearAll'].forEach((fn) => {
+    const at = bar.indexOf('more-menu');
+    assert.ok(bar.indexOf(fn, at) > 0, fn + ' 은 더보기 안에 있어야 합니다');
+  });
+  assert.match(bar, /printCV\(\)/, 'PDF 는 바깥에 남습니다');
+});
+
+test('★ 이력서는 기본정보를 «빠짐없이» 끌어와 채운 채로 시작한다', () => {
+  const r = funcSource('renderQuickCV');
+  assert.match(r, /const _pick=function/, '여러 칸을 순서대로 보는 도우미가 있어야 합니다');
+  // 한자 성명·직위·부서까지 쓴다 — 18칸으로 늘렸는데 여덟 칸만 읽고 있었다
+  assert.match(r, /nameHanja/, '한자 성명을 이름 옆에 넣어야 합니다');
+  assert.match(r, /_pick\('phone','phoneWork','phoneHome'\)/, '연락처는 세 칸을 차례로 봅니다');
+  assert.match(r, /_pick\('email','emailWork'\)/, '이메일도 두 칸을 봅니다');
+  assert.match(r, /_pick\('addr','addrHome'\)/, '주소도 두 칸을 봅니다');
+  assert.match(r, /\[_pick\('org'\),_pick\('dept'\),_pick\('title'\)\]/, '소속·부서·직위를 이어 붙입니다');
+  // ⚠ 없는 값을 지어내지 않는다
+  assert.match(r, /return ''/, '없으면 빈 칸으로 둬야 합니다');
+  // 두 서식 모두 같은 값을 쓴다
+  assert.equal((r.match(/ce\(F\.nameFull\)/g) || []).length, 2, '이력서·증명서 둘 다');
+});
+
+test('★ 빠른 이력서의 기관 양식 접이식은 없앴다 — 보관함은 한 곳뿐', () => {
+  assert.equal(source.indexOf('id="cvFold"'), -1, '⚠ 되살리면 보관함이 또 둘이 됩니다');
+  assert.equal(source.indexOf('id="homeCvRecent"'), -1);
 });
