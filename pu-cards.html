@@ -3631,6 +3631,47 @@ ErpMatch.autoFolderFlushImpl = function(list){
 };
 function autoFolderFlush(list){ return ErpMatch.autoFolderFlushImpl(list); }
 
+/* ══════ 여러 장의 «몇 칸»만 모아서 한 번에 (점검 D1, 2026-08-30) ══════
+   2026-08-16 에 명함을 한 장씩 저장하다 5,000건 오류를 냈다. 그 뒤 «자동» 분류는
+   「모아서 한 번」으로 고쳤는데, «손으로 하는» 한꺼번에 작업 일곱 가지는 그대로
+   한 장씩이었다 — Store.put 한 번이 서버 자리 여럿을 건드리므로 100장이면 200번이 넘는다.
+
+   ⚠ 고친 «칸만» 쓴다. 명함을 통째로 되쓰면 남이 그 사이 고친 칸을 덮는다.
+   ⚠ 창고(공용/개인)마다 갈라 쓴다 — 개인 명함을 공용 자리에 쓰면 남이 못 읽는 자리로
+     옮겨 둔 것을 도로 꺼내는 셈이다.
+   ⚠ 색인(idxRecord)에 드는 칸은 이 길로 고치지 «않는다». 여기서는 색인을 안 건드리므로
+     검색이 옛 값을 보여 준다. 그런 칸은 Store.put 을 써야 한다. */
+const BULK_PATCH_CHUNK = 200;
+function bulkPatchPlan(items, keys, chunk){
+  const size = Math.max(1, Math.floor(Number(chunk)) || BULK_PATCH_CHUNK);
+  const byRoot = {};
+  (items||[]).forEach(it=>{
+    if(!it || !it.id) return;
+    const R = Store._rootOf(it.id);
+    (byRoot[R] = byRoot[R] || []).push(it);
+  });
+  const now = Date.now();
+  const out = [];
+  Object.keys(byRoot).forEach(R=>{
+    const arr = byRoot[R];
+    for(let i=0;i<arr.length;i+=size){
+      const upd = {};
+      arr.slice(i, i+size).forEach(it=>{
+        (keys||[]).forEach(k=>{ upd[`${R}/items/${it.id}/${k}`] = it[k] === undefined ? null : it[k]; });
+        upd[`${R}/items/${it.id}/updatedAt`] = now;
+      });
+      out.push(upd);
+    }
+  });
+  return out;
+}
+async function bulkPatchFlush(items, keys){
+  if(Store.mode!=='firebase'){ (items||[]).forEach(it=>{ if(it) Store.put(it); }); return 0; }
+  const plan = bulkPatchPlan(items, keys, BULK_PATCH_CHUNK);
+  for(const upd of plan) await Store.db.ref().update(upd);
+  return plan.length;
+}
+
 /* ── 푸른 직원 이름 목록 (대표 지시 2026-08-30 「푸른직원 담당 연결」) ──
    직원 명부(data/user_dir)는 이미 읽고 있다 — 사번→이름 표(nameBySid)가 그것이다.
    ⚠ 새로 받아오지 않는다. 이미 손에 든 것을 이름만 뽑아 준다.
@@ -4698,10 +4739,12 @@ function toggleNoMail(id){
 function selNoMail(){
   const ids = Object.keys(state.sel); if(!ids.length) return toast('명함을 먼저 선택하세요');
   if(!confirm(`고른 ${ids.length}개를 수신거부로 표시합니다.\n앞으로 단체 발송에서 빠집니다.`)) return;
-  let n=0;
-  ids.forEach(id=>{ const it=state.items[id]; if(!it||it.noMail) return; it.noMail=true; Store.put(it); n++; });
+  /* 모아서 한 번에 (점검 D1) — 예전에는 한 장씩 Store.put 이라 100장이면 200번이 넘었다 */
+  const hit = ids.map(id=>state.items[id]).filter(it=>it && !it.noMail);
+  hit.forEach(it=>{ it.noMail=true; });
+  bulkPatchFlush(hit, ['noMail']).catch(e=>toast('저장 실패: '+((e&&e.message)||''), 7000));
   state.sel={}; render();
-  toast(`🚫 ${n}개를 수신거부로 표시했습니다`, 6000);
+  toast(`🚫 ${hit.length}개를 수신거부로 표시했습니다`, 6000);
 }
 
 /* ① 시험 발송 — 첫 곳 기준으로 «실제로 나갈 모습»을 나에게 한 통 */
@@ -8385,8 +8428,11 @@ function onGroupChoice(id){
   if (selPick){
     selPick=false;
     const gid = id==='all' ? '' : id;
-    Object.keys(state.sel).forEach(sid=>{ const it=state.items[sid]; if(it){ it.group=gid; Store.put(it); } });
-    toast(Object.keys(state.sel).length+'개 항목을 이동했습니다');
+    /* 모아서 한 번에 (점검 D1) */
+    const hit = Object.keys(state.sel).map(sid=>state.items[sid]).filter(Boolean);
+    hit.forEach(it=>{ it.group=gid; });
+    bulkPatchFlush(hit, ['group']).catch(e=>toast('저장 실패: '+((e&&e.message)||''), 7000));
+    toast(hit.length+'개 항목을 이동했습니다');
     state.sel={}; renderSelbar(); renderList();
   } else { state.group=id; render(); }
 }
@@ -8988,12 +9034,14 @@ function renderSelbar(){
     <button class="btn ghost" onclick="selPickGroup()">📁 그룹 이동</button>
     <button class="btn danger" onclick="delSel()">삭제</button>`;
 }
+/* ⚠ 여러 장을 한꺼번에 「개인」으로 두는 길은 «없앴다» (점검 D1·E1, 2026-08-30).
+   이것은 scope 글자만 바꿨다 — 2026-08-30 에 고친 그 거짓말을 여기서 되살리고 있었다.
+   진짜로 가리려면 명함·사진·썸네일을 개인 창고로 «옮겨야» 한다(toggleScope).
+   그것을 여러 장에 한꺼번에 하면 되돌리기 어렵고, 사진까지 옮기느라 오래 걸린다 —
+   한 장씩 상세에서 확인하며 하는 편이 안전하다. */
 function setSelScope(scope){
-  const ids=Object.keys(state.sel);
-  if(!ids.length) return toast('명함을 먼저 선택하세요');
-  ids.forEach(id=>{ const it=state.items[id]; if(it){ it.scope=scope; Store.put(it); } });
-  toast(ids.length+'개 명함을 '+(scope==='private'?'개인':'공용')+'으로 지정했습니다');
-  state.sel={}; renderSelbar(); renderList();
+  return toast('개인/공용은 명함을 하나씩 열어 「🔒 개인으로」로 바꿔 주세요 — '
+    + '개인으로 두면 사진까지 대표님 전용 창고로 옮겨집니다', 9000);
 }
 let selPick=false;
 function selPickGroup(){
@@ -9016,8 +9064,11 @@ function selPickGroup(){
   $('folderDlgBg').classList.add('open');
 }
 function moveSelTo(gid){
-  Object.keys(state.sel).forEach(sid=>{ const it=state.items[sid]; if(it){ it.group=gid; Store.put(it); } });
-  const n=Object.keys(state.sel).length;
+  /* 모아서 한 번에 (점검 D1) */
+  const hit = Object.keys(state.sel).map(sid=>state.items[sid]).filter(Boolean);
+  hit.forEach(it=>{ it.group=gid; });
+  bulkPatchFlush(hit, ['group']).catch(e=>toast('저장 실패: '+((e&&e.message)||''), 7000));
+  const n=hit.length;
   $('folderDlgBg').classList.remove('open');
   state.sel={}; renderSelbar(); render();
   toast(n+'개 명함을 폴더로 옮겼습니다');
@@ -9028,8 +9079,11 @@ function selPickOwner(){
   const name=prompt('선택한 명함의 담당자(직원) 이름을 입력하세요\n(비우면 담당자 해제)');
   if(name===null) return;
   const owner=name.trim();
-  Object.keys(state.sel).forEach(sid=>{ const it=state.items[sid]; if(it){ it.owner=owner; Store.put(it); } });
-  const n=Object.keys(state.sel).length;
+  /* 모아서 한 번에 (점검 D1) */
+  const hit = Object.keys(state.sel).map(sid=>state.items[sid]).filter(Boolean);
+  hit.forEach(it=>{ it.owner=owner; });
+  bulkPatchFlush(hit, ['owner']).catch(e=>toast('저장 실패: '+((e&&e.message)||''), 7000));
+  const n=hit.length;
   state.sel={}; renderSelbar(); render();
   toast(owner ? `${n}개 명함의 담당자를 '${owner}'로 지정했습니다` : `${n}개 명함의 담당자를 해제했습니다`);
 }
@@ -18617,8 +18671,11 @@ function rowMenuMove(id){
 }
 function moveCardsHere(id){
   const ids=Object.keys(state.sel); if(!ids.length) return toast('먼저 표에서 명함을 선택하세요');
-  ids.forEach(sid=>{ const it=state.items[sid]; if(it){ it.group=id; Store.put(it); } });
-  toast(ids.length+'건을 폴더로 옮겼습니다'); state.sel={}; render();
+  /* 모아서 한 번에 (점검 D1) */
+  const hit = ids.map(sid=>state.items[sid]).filter(Boolean);
+  hit.forEach(it=>{ it.group=id; });
+  bulkPatchFlush(hit, ['group']).catch(e=>toast('저장 실패: '+((e&&e.message)||''), 7000));
+  toast(hit.length+'건을 폴더로 옮겼습니다'); state.sel={}; render();
 }
 function renameFolder(id){
   const g=state.groups[id]; if(!g) return;
@@ -19089,12 +19146,12 @@ function selRemoveFromTab(){
   const ids=Object.keys(state.sel);
   if(!ids.length) return toast('명함을 먼저 선택하세요');
   if(!confirm(`선택한 ${ids.length}개를 '${v.name}' 탭에서 뺄까요?\n\n· 탭에서만 빠지고 명함은 그대로 남습니다.`)) return;
-  let n=0;
-  ids.forEach(sid=>{ const it=state.items[sid]; if(!it) return;
-    const arr=(it.vtabs||[]).filter(x=>x!==state.vtab);
-    it.vtabs=arr; Store.put(it); n++; });
+  /* 모아서 한 번에 (점검 D1) */
+  const hit = ids.map(sid=>state.items[sid]).filter(Boolean);
+  hit.forEach(it=>{ it.vtabs = (it.vtabs||[]).filter(x=>x!==state.vtab); });
+  bulkPatchFlush(hit, ['vtabs']).catch(e=>toast('저장 실패: '+((e&&e.message)||''), 7000));
   state.sel={}; render();
-  toast(`${n}개를 '${v.name}' 탭에서 뺐습니다`);
+  toast(`${hit.length}개를 '${v.name}' 탭에서 뺐습니다`);
 }
 /* 지금 보고 있는 곳(대시보드) 이름 — 탭은 이 안에서만 보인다 */
 function curScopeName(){
