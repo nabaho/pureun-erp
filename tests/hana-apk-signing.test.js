@@ -78,7 +78,12 @@ test('★★ 키가 없으면 «조용히» 넘어가지 않는다', () => {
 });
 
 test('★★ 일감이 금고에서 키를 «꺼내 파일로» 푼다', () => {
-  assert.match(FLOW, /secrets\.HANA_KEYSTORE_B64/, '★ 금고에서 키를 안 가져옵니다');
+  /* ⚠★ 2026-08-30: 이 줄이 «틀린 이름을 지켜 주고» 있었다.
+     금고에 있는 것은 HANA_RELEASE_* 인데 여기서 HANA_KEYSTORE_B64 를 못 박아,
+     엉뚱한 이름을 부르는 워크플로가 이 검사를 통과했다 — 그 사이 몇 주를 잃었다.
+     못 박을 것은 «어느 이름이냐»가 아니라 «금고에서 가져오느냐»다.
+     이름이 금고와 맞는지는 아래 「금고에 있는 이름을 부른다」 검사가 따로 본다. */
+  assert.match(FLOW, /HANA_KEYSTORE_B64:\s*\$\{\{\s*secrets\./, '★ 금고에서 키를 안 가져옵니다');
   assert.match(FLOW, /base64\s+-d/, '★ 꺼낸 값을 파일로 안 풉니다');
   assert.match(FLOW, /HANA_KEYSTORE_FILE=.*>>\s*"?\$GITHUB_ENV/,
     '★ 푼 파일의 자리를 빌드에 안 알려 줍니다');
@@ -94,4 +99,41 @@ test('★ 금고가 비어 있어도 빌드는 «돌아간다»', () => {
     '★ 금고가 비어 있을 때를 안 가릅니다 — 포크 PR 빌드가 죽습니다');
   assert.ok(!/exit\s+1/.test(FLOW.slice(FLOW.indexOf('HANA_KEYSTORE_B64'))),
     '★ 금고가 비었다고 빌드를 죽입니다');
+});
+
+/* ══ 금고에 «있는» 이름을 부르는가 (2026-08-30) ═══════════════════════════
+   ⚠★ 이것이 「하나 문자가 안 들어온다」의 진짜 까닭이었다.
+      2026-08-23 에 서명키 넷이 HANA_RELEASE_* 이름으로 금고에 들어갔는데,
+      2026-08-29 에 워크플로를 새로 쓰면서 «있는지 보지 않고»
+      HANA_KEYSTORE_* 라는 다른 이름을 불렀다.
+      금고는 차 있는데 빌드는 「비었다」로 읽어 임시 키로 서명했고,
+      대표 폰은 덮어쓰기 설치가 막혀 새 앱이 «한 번도» 안 깔렸다.
+   ★ 금고가 비어도 빌드는 조용히 성공한다 — 그래서 아무도 못 알아챈다.
+     그러니 이름이 맞는지는 «검사»가 봐야 한다.
+   ⚠ 실제 금고를 여기서 볼 수는 없다. 대신 2026-08-23 에 등록된 이름을
+     여기 적어 두고, 워크플로가 그 이름을 부르는지 본다.
+     금고에 새 이름을 넣었다면 여기도 함께 고친다 — 그때는 손이 한 번 더 가는 편이
+     낫다. 잘못 부르면 «몇 주» 를 잃는다는 것을 이미 겪었다. */
+const VAULT = [
+  'HANA_RELEASE_KEYSTORE_BASE64',
+  'HANA_RELEASE_STORE_PASSWORD',
+  'HANA_RELEASE_KEY_ALIAS',
+  'HANA_RELEASE_KEY_PASSWORD',
+];
+
+test('★★ 워크플로가 «금고에 있는» 서명키 이름을 부른다', () => {
+  const wf = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'build-hana-sms-bridge.yml'), 'utf8');
+  const called = (wf.match(/secrets\.([A-Z0-9_]+)/g) || []).map((s) => s.replace('secrets.', ''));
+  const signing = called.filter((n) => /KEYSTORE|KEY_|STORE_/.test(n));
+  assert.ok(signing.length >= 4, '★ 서명키를 넷 다 안 부른다 (지금 ' + signing.length + '개)');
+  signing.forEach((n) => {
+    assert.ok(VAULT.indexOf(n) >= 0,
+      '★★ 금고에 없는 이름 「' + n + '」 을 부릅니다 — 빌드는 조용히 성공하고 '
+      + '임시 키로 서명되어 «덮어쓰기 설치가 안 되는» APK 가 나옵니다.\n'
+      + '   금고에 있는 이름: ' + VAULT.join(' · '));
+  });
+  VAULT.forEach((n) => {
+    assert.ok(called.indexOf(n) >= 0, '★ 금고에 있는 「' + n + '」 을 안 부릅니다');
+  });
 });
