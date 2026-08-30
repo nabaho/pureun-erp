@@ -122,12 +122,46 @@ test('★★ 치우기 단추는 «있을 때만» 나오고, 묻고 나서 치�
     '★ 겹친 것이 없는데도 단추가 있으면, 누를 일 없는 단추가 늘 자리를 차지한다');
   assert.ok(/await popConfirm\('겹친 줄 ' \+ ps\.length/.test(src),
     '★★ 묻지 않고 치우면, 잘못 골랐을 때 되돌릴 틈이 없다');
-  assert.ok(/removeRow\(p\.drop\._k,'exp'\)/.test(src),
-    '★ 치울 쪽(drop)이 아니라 남길 쪽을 지우면 큰일이다');
+  /* ⚠★ 2026-08-30: 처음에는 removeRow 를 썼는데, 그것은 «이 기기 화면에서만»
+     감춘다(hidRow). 대표가 치웠는데 서버는 961줄 그대로였다 —
+     내 화면만 깨끗해지고 합계도 남의 화면도 그대로였다. */
+  assert.ok(/dropRowsFromBatches\(ps\.map\(function\(p\)\{ return p\.drop\._k; \}\)\)/.test(src),
+    '★★ 화면에서만 감추면 내 눈에만 깨끗하고, 합계와 남의 화면은 그대로다');
+  assert.ok(/dbSet\(LEDGER_BATCH_KEY, next\)/.test(src),
+    '★ 묶음을 고쳐 놓고 저장을 안 하면 새로고침에 되살아난다');
+  assert.ok(/if\(!r \|\| !want\[r\._k\]\) return true;/.test(src),
+    '★★ 치울 쪽(drop)만 빼야 한다 — 남길 쪽까지 빼면 큰일이다');
 });
 
 test('★ 무엇을 치우는지 «보여 주고» 묻는다', () => {
   const src = bare(ERP);
   assert.ok(/p\.drop\.memo \+ '」 → 「' \+ p\.keep\.memo/.test(src),
     '★ 어느 줄이 어느 줄로 합쳐지는지 안 보여 주면, 세어 보지도 못하고 누르게 된다');
+});
+
+/* ══ 묶음에서 «진짜로» 빼는가 (2026-08-30) ══ */
+test('★★ 지울 수 있는 묶음만 건드리고, 못 지운 것은 «말해 준다»', () => {
+  const src = bare(ERP);
+  const at = src.indexOf('function dropRowsFromBatches(keys){');
+  assert.ok(at > 0, '★ 묶음에서 빼는 일꾼이 없다');
+  const fn = src.slice(at, at + 1400);
+  assert.ok(/erpCanDropBatch\(b, me\)/.test(fn),
+    '★★ 남이 올린 묶음까지 지운다 — 지울 수 있는 것만 건드려야 한다');
+  assert.ok(/if\(!can\)\{ blocked\+\+; return true; \}/.test(fn),
+    '★ 못 지운 것을 안 센다 — 눌렀는데 왜 그대로인지 모르게 된다');
+  assert.ok(/return \{ removed:removed, blocked:blocked \};/.test(fn),
+    '★ 몇 줄을 뺐는지 안 돌려준다');
+});
+
+test('★★ 저장이 실패하면 «치웠다고 하지 않는다»', () => {
+  const src = bare(ERP);
+  assert.ok(/if\(!dbSet\(LEDGER_BATCH_KEY, next\)\) return \{ removed:0, blocked:blocked, failed:true \};/.test(src),
+    '★★ 저장에 실패했는데 「치웠습니다」라고 하면, 다음에 또 그대로인 것을 보고 헤맨다');
+  assert.ok(/_r\.failed/.test(src), '★ 실패를 화면이 안 본다');
+});
+
+test('★ 한 줄도 못 뺐으면 «그렇게 말한다»', () => {
+  const src = bare(ERP);
+  assert.ok(/if\(!_r\.removed\)\{/.test(src),
+    '★ 아무것도 안 됐는데 성공했다고 하면 아무도 못 알아챈다');
 });
