@@ -583,6 +583,9 @@ module.exports = function build(deps) {
         const b = req.body || {};
         const slug = String(b.slug || '');
         const uid = String(b.uid || '');
+        /* 미리 받기 — 읽는 동안 위·아래 통을 조용히 받아 둘 때 쓴다.
+           ⚠ 이때는 읽음 표시를 «안» 건드린다 (아래 if (!peek)). */
+        const peek = !!b.peek;
         if (!slug || !/^\d+$/.test(uid)) { reply(res, 400, { ok: false, error: '어느 메일인지 알 수 없습니다.' }); return; }
 
         const got = await withFolder(deps, slug, async (client) => {
@@ -591,11 +594,16 @@ module.exports = function build(deps) {
 
           /* 읽음 표시 — 다음메일에서 열었을 때와 «같게» 만든다. 이것을 안 하면 앱에서
              다 읽었는데도 옆줄의 「안읽음」이 영원히 그 수로 남는다.
-             ⚠ 실패해도 본문은 보여 준다. 표시가 안 된 것보다 못 읽는 것이 나쁘다. */
-          try { await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true }); } catch (_) { /* 표시만 못 했다 */ }
-          try {
-            await deps.getDatabase().ref(ROOT + '/msgs/' + slug + '/' + uid + '/r').set(1);
-          } catch (_) { /* 목록 쪽 표시는 다음 회차에 맞춰진다 */ }
+             ⚠ 실패해도 본문은 보여 준다. 표시가 안 된 것보다 못 읽는 것이 나쁘다.
+             ★ peek 이면 «아무것도 안 건드린다» (2026-08-30) — 앱이 다음·이전 통을
+               미리 받아 둘 때 쓰는 길이다. 미리 받았다고 안 읽은 메일이 읽음으로
+               바뀌면, 대표께서 열어 보시지도 않은 메일이 조용히 사라진 것처럼 된다. */
+          if (!peek) {
+            try { await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true }); } catch (_) { /* 표시만 못 했다 */ }
+            try {
+              await deps.getDatabase().ref(ROOT + '/msgs/' + slug + '/' + uid + '/r').set(1);
+            } catch (_) { /* 목록 쪽 표시는 다음 회차에 맞춰진다 */ }
+          }
 
           /* ── 첨부 목록은 «한 벌»로 만든다 (2026-08-27) ──
              ⚠ 예전에는 작은 메일은 mailparser 가, 첨부를 내려받는 쪽은 pickParts 가
