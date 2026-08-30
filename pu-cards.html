@@ -2620,6 +2620,8 @@ function idxRecord(it){
     put('bz', it.bizno); put('ceo', it.ceo);
     /* 업태·종목·법인번호 — 계약관리·업체관리에 그대로 들어가는 칸이라 함께 담는다 */
     put('bt', it.bizType); put('bi', it.bizItem); put('cno', it.corpno);
+    /* 세금계산서 발급처 — 푸른이알피가 이 색인을 읽어 업체에 채운다(대표 지시 2026-08-30) */
+    put('tie', it.taxInvoiceEmail); put('tic', it.taxInvoiceContact);
   }
   r.k = (it.kind==='biz') ? 'biz' : 'card';
   if(!r.n && !r.c && !r.bz) return null;   /* 검색에 쓸 정보가 없으면 기록 안 함 */
@@ -9669,6 +9671,11 @@ const CARD_FIELDS=[['name','이름'],['company','회사'],['dept','부서'],['ti
   ['owner','담당자'],['address','개인 주소'],['memo','메모']];
 const BIZ_FIELDS=[['company','상호(법인명)'],['ceo','대표자'],['bizno','사업자등록번호'],['corpno','법인등록번호'],
   ['openDate','개업연월일'],['bizType','업태'],['bizItem','종목'],['companyTel','대표번호'],['companyFax','팩스'],
+  /* ⚠ 세금계산서 발급 이메일·담당자 (대표 지시 2026-08-30) — 등록증에 「전자세금계산서
+     전용 전자우편주소」로 찍혀 나오는 칸이다. 아래 owner(우리 쪽 담당 직원)와 «다른
+     사람»이므로 이름표를 분명히 갈라 둔다.
+     ⚠ 푸른이알피의 taxEmail 과도 다르다 — 그쪽은 «세무사무실»(보수총액신고 요청처)이다. */
+  ['taxInvoiceEmail','세금계산서 이메일'],['taxInvoiceContact','세금계산서 담당자'],
   ['owner','담당자'],['address','사업장 소재지'],['memo','메모']];
 
 /* ══════ 팝업은 먼저, 사진은 나중 — 순수 로직 (테스트 대상) ══════
@@ -20285,6 +20292,9 @@ const CO_FIELDS = [
        추후 데이터를 이용해서 cms 자동입력할 수 있다." **가리도록 되돌리지 말 것.**
      ⚠ 예금주 주민번호는 여기 없다 — 판독기가 아예 안 읽는다.
      ⚠ js/pu-doc-file.js 의 KEEP 과 짝이다. 한쪽만 늘리면 값은 쌓이는데 화면에 안 나온다. */
+  /* ── 세금계산서 발급 (대표 지시 2026-08-30) — 사업자등록증에서 읽는다 ──
+     ⚠ js/pu-doc-file.js 의 KEEP 과 짝이다. 한쪽만 늘리면 값은 쌓이는데 화면에 안 나온다. */
+  ['taxInvoiceEmail','세금계산서 이메일'], ['taxInvoiceContact','세금계산서 담당자'],
   ['bankName','은행'], ['bankAcct','계좌번호'], ['bankHolder','예금주'],
   ['payDay','자동이체 출금일'], ['payerNo','납부자번호'], ['applyType','자동이체 신청']
 ];
@@ -20392,7 +20402,9 @@ function coListBuild(){
        이미 있었다. 칸을 늘릴 때는 CO_FIELDS·CO_CORE 와 함께 본다. */
     const o = take(k, { name:it.company, bizno:it.bizno, ceo:it.ceo, address:it.address,
       corpno:it.corpno, bizType:it.bizType, bizItem:it.bizItem, openDate:it.openDate,
-      smeType:it.smeType, companyTel:it.companyTel },
+      smeType:it.smeType, companyTel:it.companyTel,
+      /* 세금계산서 발급처 — 등록증에 찍혀 나온다(대표 지시 2026-08-30) */
+      taxInvoiceEmail:it.taxInvoiceEmail, taxInvoiceContact:it.taxInvoiceContact },
       '사업자등록증');
     o.docs++;
     /* ⚠ 세는 것만으로는 지울 수 없다 — 어느 등록증인지 알아야 한다(대표 지시 2026-08-26
@@ -20550,6 +20562,82 @@ function coWatchStart(){
   }, 5000);
 }
 function pickCo(k){ if(state.coPick===k){ state.coPick=''; closePcDetail(); return; } state.coPick = k; openCoDetailPanel(k); }
+
+/* ══════ 세금계산서 발급처를 푸른이알피 업체에 채운다 (대표 지시 2026-08-30) ══════
+   「내용 집어넣어서 푸른이알피에 세금계산서 발급 메일 및 담당자도 자동 찾아 입력 가능하게」
+
+   ⚠⚠ 푸른이알피의 taxEmail·taxContact·taxOfficeName·taxPhone 은 «세무사무실» 자리다 —
+     보수총액신고 자료 요청 메일이 그리로 나간다(pu-erp taxMailSubject).
+     등록증의 「전자세금계산서 전용 전자우편주소」는 «우리가 계산서를 보낼» 곳이라
+     완전히 다른 자리다. 섞으면 신고자료 요청이 엉뚱한 주소로 나간다.
+     그래서 taxInvoiceEmail·taxInvoiceContact 로 «따로» 쓴다 — 이름은 이미 있는
+     taxInvoiceIssueDay·taxInvoicePaymentDay 와 결을 맞췄다.
+   ⚠ 이미 적힌 값은 «안 덮는다». 업체관리에서 사람이 고쳐 둔 것을 등록증 한 장이
+     조용히 지우면 안 된다(taxSaveDo 와 같은 규칙). */
+function taxInvoicePatch(cur, o){
+  const patch = {};
+  if(!cur || !o) return patch;
+  const blank = v => v===undefined || v===null || String(v).trim()==='';
+  ['taxInvoiceEmail','taxInvoiceContact'].forEach(function(k){
+    const val = String(o[k]==null?'':o[k]).trim();
+    if(!val) return;                 /* 빈 값을 밀어 넣으면 「채워졌다」고 잘못 보인다 */
+    if(!blank(cur[k])) return;       /* 이미 있는 것은 그대로 둔다 */
+    patch[k] = val;
+  });
+  return patch;
+}
+
+/* 고른 회사(들)의 값을 업체관리에 채운다. 채울 것이 없으면 아무것도 안 쓴다. */
+async function pushTaxInvoiceToErp(keys){
+  const list0 = coList();
+  const rows = (keys && keys.length ? keys : Object.keys(state.coSel))
+    .map(k => list0.find(o => o.key === k)).filter(Boolean);
+  if(!rows.length) return toast('회사를 골라 주세요');
+  const u = firebase.auth().currentUser;
+  if(!u) return toast('로그인이 필요합니다');
+  try{
+    const db = firebase.database();
+    const snap = await db.ref('data/companies').once('value');
+    const wrap = snap.val();
+    const rawv = (wrap && wrap.v !== undefined) ? wrap.v : wrap;
+    const isObj = rawv && !Array.isArray(rawv) && typeof rawv === 'object';
+    const arr = Array.isArray(rawv) ? rawv.filter(Boolean)
+              : (isObj ? Object.keys(rawv).map(k=>rawv[k]).filter(Boolean) : []);
+    const now = Date.now();
+    const up = {};
+    let n = 0, kept = 0, noco = 0, noval = 0;
+    rows.forEach(function(o){
+      /* 어느 업체인지는 «읽을 때와 같은 함수»로 가린다 — 따로 만들면 엉뚱한 곳에 쓴다 */
+      const m = ErpMatch.match({ bizno:o.bizno, company:o.name });
+      if(!m || !m.id){ noco++; return; }
+      const cur = arr.find(c => c && c.id === m.id);
+      if(!cur){ noco++; return; }
+      const want = { taxInvoiceEmail: coVal(o,'taxInvoiceEmail'),
+                     taxInvoiceContact: coVal(o,'taxInvoiceContact') };
+      if(!String(want.taxInvoiceEmail||'').trim() && !String(want.taxInvoiceContact||'').trim()){ noval++; return; }
+      const patch = taxInvoicePatch(cur, want);
+      if(!Object.keys(patch).length){ kept++; return; }
+      patch.updatedAt = now;
+      const merged = Object.assign({}, cur, patch);
+      if(isObj) up['data/companies/v/'+cur.id] = merged;
+      else { const i = arr.findIndex(c=>c && c.id===cur.id); if(i>=0) arr[i] = merged; }
+      n++;
+    });
+    const why = [];
+    if(kept) why.push('이미 들어 있음 '+kept+'곳');
+    if(noco) why.push('업체관리에 없음 '+noco+'곳');
+    if(noval) why.push('등록증에 없음 '+noval+'곳');
+    if(!n) return toast('채울 곳이 없습니다' + (why.length ? ' — ' + why.join(' · ') : ''), 7000);
+    if(!isObj) up['data/companies/v'] = arr;
+    up['data/companies/u'] = now;   /* 갱신시각 — 푸른이알피가 이걸 보고 다시 읽는다 */
+    await db.ref().update(up);
+    toast('🧾 업체관리에 채웠습니다 ('+n+'곳'+(why.length ? ' · ' + why.join(' · ') : '')+')', 8000);
+    ErpMatch.load();
+  }catch(e){
+    console.error(e);
+    toast('채우지 못했습니다 — 권한 또는 연결을 확인하세요', 8000);
+  }
+}
 
 
 /* ── 이알피(사무관리) 사업 기록 — 읽기 전용 ──
@@ -22105,6 +22193,10 @@ function coListHtml(info){
       ${/* 자주 쓰는 폴더 셋은 창을 안 거치고 곧장 (대표 지시 2026-08-30 「폴더별 쉽게」) */''}
       ${coQuickFolderBtns()}
       <button onclick="coAssignTag()">🏷 서류 탭에 담기</button>
+      ${/* 세금계산서 발급처를 업체관리에 채운다 (대표 지시 2026-08-30).
+           ⚠ 세무사무실 칸(taxEmail)은 안 건드린다 — 거기로 보수총액신고 요청이 나간다. */''}
+      <button onclick="pushTaxInvoiceToErp()"
+        title="고른 회사의 «세금계산서 발급 이메일·담당자»를 푸른이알피 업체관리에 채웁니다 — 이미 적힌 값은 그대로 둡니다">🧾 계산서 발급처 채우기</button>
       ${state.coFolder ? '<button onclick="coAssignFTab()" title="이 폴더 안의 탭에 담습니다">＃ 탭에 담기</button>' : ''}
       ${/* 고른 회사에 붙은 담당자 주소록 (대표 지시 2026-08-24 「주소록 내보내기 만들어라」).
            수신거부·이메일 없음·잠긴 폴더는 mailTargets 가 걸러 준다.
@@ -23352,6 +23444,10 @@ function renderCoMobileList(){
       <b>${nSel}곳 선택</b>
       <button onclick="coMoveToFolder()">📁 폴더로 옮기기</button>
       <button onclick="coAssignTag()">🏷 서류 탭에 담기</button>
+      ${/* 세금계산서 발급처를 업체관리에 채운다 (대표 지시 2026-08-30).
+           ⚠ 세무사무실 칸(taxEmail)은 안 건드린다 — 거기로 보수총액신고 요청이 나간다. */''}
+      <button onclick="pushTaxInvoiceToErp()"
+        title="고른 회사의 «세금계산서 발급 이메일·담당자»를 푸른이알피 업체관리에 채웁니다 — 이미 적힌 값은 그대로 둡니다">🧾 계산서 발급처 채우기</button>
     </div>` : '';
   /* renderSubbar() 의 groupBtn 은 이 화면(state.view==='co')에서는 render() 가 건너뛴다
      — 그대로 두면 명함 탭의 마지막 값(예: "전체 (6,271)")이 굳어 붙어 있게 된다.
