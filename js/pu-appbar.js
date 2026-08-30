@@ -37,7 +37,7 @@
     { key: 'erp',     name: '푸른이알피',   icon: '🏢', url: 'pu-erp.html',         desc: '인사·급여·재무' },
     { key: 'consult', name: '정부사업일정', icon: '📅', url: 'gov-consulting.html', desc: '보고서 일정및사진관리' },
     { key: 'work',    name: '업무관리',     icon: '📋', url: 'work.html',           desc: '주간 업무기록' },
-    { key: 'career',  name: '경력관리',     icon: '🗂', url: 'kcareer.html',        desc: '개인 이력서' },
+    { key: 'career',  name: '경력관리',     icon: '🗂', url: 'kcareer.html',        desc: '개인 이력서', adminOnly: true },
     { key: 'cards',   name: '기업정보함',    icon: '📇', url: 'pu-cards.html',       desc: '사업자·명함·계약서' },
     /* ⚠ 메일은 기업정보함과 같은 파일이고 주소만 다르다. whoAmI() 는 파일 이름만
        견주므로(물음표 뒤는 안 본다) 메일 창에서도 「지금 앱」은 기업정보함으로 잡힌다 —
@@ -49,7 +49,7 @@
     { key: 'rules',   name: '취업규칙 관리', icon: '📋', url: 'rules.html',          desc: '작성·검토·개정·신고' },
     { key: 'docs',    name: '문서관리',     icon: '📄', url: 'docs-esign.html',     desc: '계약서 전자송부' },
     { key: 'payroll', name: '급여관리',     icon: '💰', url: 'payroll-os.html',     desc: '급여 아웃소싱' },
-    { key: 'home',    name: '홈페이지 관리', icon: '🌐', url: 'pu-home.html',        desc: '구성원·주요업무 글' }
+    { key: 'home',    name: '홈페이지 관리', icon: '🌐', url: 'pu-home.html',        desc: '구성원·주요업무 글', adminOnly: true }
   ];
 
   /* 단추에 적는 말 — 한 곳에서만 정한다. 바꾸려면 여기 한 줄. */
@@ -75,9 +75,22 @@
   }
   /* 별표를 단 것이 위로. 같은 무리 안에서는 정해 둔 차례 그대로 —
      사람마다 순서가 달라져도 무리 안 차례는 같아서 서로 안내하기 쉽다. */
+  /* 총괄관리자만 보는 것 — 대표 지시 2026-08-17.
+     「흐리게도 보이지 않게」 하라 하셨으므로 목록에서 아예 뺀다.
+     ★ 모를 때는 «감춘다»(닫는 쪽으로 실패). 아닌 사람에게 잠깐이라도 보이는 것보다,
+       관리자에게 잠깐 늦게 보이는 편이 낫다 — 알아내는 즉시 다시 그린다.
+     근거는 포털 타일과 같은 잣대(명부의 role)다. 근거가 둘이면 언젠가 어긋난다. */
+  function isAdminNow() {
+    try {
+      var me = global.PuWhoami && global.PuWhoami.get && global.PuWhoami.get();
+      return !!(me && me.role === 'admin');
+    } catch (e) { return false; }
+  }
+
   function ordered() {
     var f = favs();
-    return APPS.slice().sort(function (a, b) {
+    var admin = isAdminNow();
+    return APPS.filter(function (a) { return !a.adminOnly || admin; }).sort(function (a, b) {
       var fa = f.indexOf(a.key) >= 0 ? 0 : 1, fb = f.indexOf(b.key) >= 0 ? 0 : 1;
       return fa - fb;   // 같으면 원래 차례 (안정 정렬)
     });
@@ -218,6 +231,11 @@
       });
     }
     draw();
+    /* 신원은 파이어베이스가 늦게 알려 준다. 관리자 전용 줄이 처음엔 감춰져 있으므로,
+       알아내는 즉시 다시 그린다 — 안 그리면 관리자에게 영영 안 보인다. */
+    try {
+      if (global.PuWhoami && global.PuWhoami.onChange) global.PuWhoami.onChange(function () { draw(); });
+    } catch (e) { }
 
     var foot = document.createElement('div');
     foot.style.cssText = 'padding:7px 10px;border-top:1px solid #eef2f6;background:#f8fafc';
@@ -359,6 +377,9 @@
 
   global.PuAppBar = {
     APPS: APPS,
+    // 검사용 — 관리자 전용 줄이 실제로 빠지는지 본다
+    _ordered: ordered,
+    _isAdminNow: isAdminNow,
     mount: mount,
     auto: auto,
     open: open,
