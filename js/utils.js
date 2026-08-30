@@ -119,15 +119,6 @@ function _excelToISO(v){
 }
 function todayYMD(){ return localYMD(new Date()); }
 function todayYM(){ return todayYMD().slice(0,7); }
-// 날짜 빠른 선택 헬퍼: today/yesterday/monthEnd/nextMonthStart 반환 (YYYY-MM-DD)
-function dateQuickValue(kind){
-  var d = new Date();
-  if(kind === 'today') return localYMD(d);
-  if(kind === 'yesterday'){ d.setDate(d.getDate()-1); return localYMD(d); }
-  if(kind === 'monthEnd'){ d.setMonth(d.getMonth()+1, 0); return localYMD(d); }
-  if(kind === 'nextMonthStart'){ d.setMonth(d.getMonth()+1, 1); return localYMD(d); }
-  return localYMD(d);
-}
 // 정렬 헬퍼: 배열 + 키 + 방향(asc/desc) → 새 배열
 function sortArray(arr, key, dir){
   if(!Array.isArray(arr) || !key) return arr;
