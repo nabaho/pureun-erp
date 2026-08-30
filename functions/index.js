@@ -2196,8 +2196,18 @@ exports.hanaMessageBridge = functions
            ⚠ 그 밖의 것은 «하나도» 다르지 않다 — 같은 해석기, 같은 대기함,
              같은 중복막이. 여기서 갈라지면 한쪽만 조용히 막힌다(2026-08-29 사고). */
         const fromHistory = String(body.source || "") === "history";
+        /* ③ 스스로 훑기 (source==="sweep") — 폰이 15분마다 문자함을 훑어 보낸 것.
+           ★★ 왜 만들었나 (2026-08-30): 알림만 엿듣던 다리가 하루 내내 조용했다.
+              지난 문자 가져오기는 됐으니 열쇠도 그물도 멀쩡했는데, 알림이 안 왔다.
+              알림은 앱 재설치·절전·방해금지 어느 하나에만 걸려도 통째로 끊긴다.
+              그래서 폰이 «스스로» 문자함을 줍는 길을 하나 더 냈다.
+           ⚠ 이 길도 알림 꾸러미 이름이 없다 — 문자함에서 직접 읽은 것이라 그렇다.
+              지난 문자와 같은 까닭으로 꾸러미 검사를 건너뛴다.
+           ⚠ 같은 문자가 15분마다 또 와도 괜찮다 — rawHash 가 막는다.
+              그 막이가 없었다면 이 방법 자체를 못 썼다. */
+        const fromSweep = String(body.source || "") === "sweep";
         const packageName = String(body.packageName || "").trim();
-        if (!fromHistory && !HANA_MESSAGE_PACKAGES.has(packageName)) {
+        if (!fromHistory && !fromSweep && !HANA_MESSAGE_PACKAGES.has(packageName)) {
           await hanaNoteSkip(linked, "unsupported_message_app");
           hanaJson(res, 400, { ok: false, ignored: true, reason: "unsupported_message_app" }); return;
         }
@@ -2277,7 +2287,13 @@ exports.hanaMessageBridge = functions
              「폰과 말이 통한다」가 아니다. 지난 것을 넣었다고 살아 있다고 찍으면,
              알림이 막힌 채로 「멀쩡함」이 되어 진짜 끊김을 영영 못 알아챈다.
              PC 붙여넣기도 같은 까닭으로 안 찍는다(아래). */
-        if (fromHistory) {
+        if (fromSweep) {
+          /* ★ 스스로 훑어 온 것은 lastSweepAt 에 찍는다.
+             ⚠ lastOkAt 에 찍지 않는다 — 그 값이 뜻하는 것은 「알림 다리가 돈다」이다.
+               훑기가 대신 찍어 주면, 알림이 죽은 채로 「멀쩡함」이 되어
+               왜 늦게 들어오는지를 영영 못 알아챈다. */
+          await hanaDeviceRef(linked).update({ lastSweepAt: Date.now(), lastSkip: null }).catch(() => {});
+        } else if (fromHistory) {
           /* ★ 지난 문자는 lastOkAt 을 안 찍는다(위 까닭). 그렇다고 아무 자국도
              안 남기면, 화면이 「앱에서 지난 문자 가져오기를 누르세요」를 «영영»
              되풀이한다 — 방금 눌러 72건이 들어왔는데도 그랬다(2026-08-29 대표).
@@ -2412,6 +2428,24 @@ exports.hanaMessageBridge = functions
         hanaJson(res, 200, { ok: true, code, expiresAt }); return;
       }
 
+      /* ══ 훑기가 「살아 있다」고 알린다 (2026-08-30) ══════════════════════
+         ⚠★ 찾은 것이 없어도 «반드시» 온다. 이것이 없으면 서버는
+            「폰이 죽었다」와 「문자가 안 왔다」를 못 가른다 —
+            2026-08-30 에 대표가 「문자 여전히 안 들어온다」고 했을 때
+            그 둘을 못 갈라, 할 수 있는 말이 「알림 권한을 다시 보세요」뿐이었다.
+         ★ requireHanaDevice 가 lastSeenAt 을 찍어 준다 — 열쇠가 살아 있다는 뜻이다.
+           여기서는 «훑기가 돌았다»는 것과 «문자함을 읽을 수 있나»를 더 적는다. */
+      if (action === "sweepPing") {
+        const linked = await requireHanaDevice(req, body);
+        await hanaDeviceRef(linked).update({
+          lastSweepAt: Date.now(),
+          /* 문자함 권한이 없으면 훑기는 돌아도 «아무것도 못 줍는다» —
+             그 상태를 화면이 알아야 「권한을 주세요」라고 짚어 줄 수 있다. */
+          sweepCanReadSms: body.canReadSms === true,
+        }).catch(() => {});
+        hanaJson(res, 200, { ok: true, pong: true }); return;
+      }
+
       if (action === "pairStatus") {
         const snap = await base.child(`devices/${staff.uid}`).once("value");
         const devices = Object.values(snap.val() || {}).map((d) => ({
@@ -2427,6 +2461,11 @@ exports.hanaMessageBridge = functions
           /* 「지난 문자를 끌어온 적이 있다」 — 살아 있음(lastOkAt)과 다른 말이다.
              이걸 안 보내면 화면이 이미 한 일을 또 시킨다. */
           lastHistoryAt: Number(d.lastHistoryAt || 0),
+          /* 「폰이 15분마다 스스로 훑고 있다」 — 알림이 도는 것(lastOkAt)과 다른 말이다.
+             이것이 최근이면 폰은 살아 있다. 그러면 「문자가 안 온 것」이지
+             「폰이 죽은 것」이 아니라고 화면이 짚어 줄 수 있다. */
+          lastSweepAt: Number(d.lastSweepAt || 0),
+          sweepCanReadSms: d.sweepCanReadSms === true,
           disabled: d.disabled === true,
         }));
         hanaJson(res, 200, { ok: true, devices }); return;

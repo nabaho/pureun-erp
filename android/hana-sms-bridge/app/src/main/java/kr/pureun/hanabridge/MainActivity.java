@@ -48,6 +48,11 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refresh();
+        /* ★ 훑기를 걸어 둔다 (2026-08-30). 알림이 막혀도 15분마다 문자함을 줍는다.
+           ⚠ 앱을 열 때마다 부르는 까닭: WorkManager 예약은 앱을 다시 깔면 사라진다.
+             KEEP 이라 이미 걸려 있으면 그대로 둔다 — 열 때마다 시계를 되감지 않는다.
+           ⚠ 연결 안 된 폰에는 안 건다 — 보낼 곳이 없다. */
+        if (SecureStore.connected(this)) HanaSweepWorker.schedule(this);
     }
 
     @Override
@@ -109,6 +114,8 @@ public final class MainActivity extends Activity {
         Button clear = button("이 휴대폰의 연결정보 지우기", Color.rgb(100, 116, 139));
         clear.setOnClickListener(v -> {
             SecureStore.clearConnection(this);
+            /* ⚠ 훑기도 함께 멈춘다 — 안 멈추면 연결을 지운 폰이 15분마다 서버를 두드린다. */
+            HanaSweepWorker.cancel(this);
             SecureStore.setLastStatus(this, "이 휴대폰의 연결정보를 지웠습니다.");
             refresh();
         });
@@ -118,7 +125,7 @@ public final class MainActivity extends Activity {
              지난 문자 가져오기를 넣으면서 그 말이 «거짓»이 되었다 —
              화면의 약속과 앱이 하는 일이 어긋나면 그 안내는 안 하느니만 못하다.
              언제 쓰는지까지 그대로 적는다. */
-        TextView security = text("보안 안내\n• 평소에는 문자를 읽지 않습니다. 알림만 엿봅니다.\n• ‘지난 문자 가져오기’를 누를 때만 문자함을 읽고, 하나 거래문자만 골라 보냅니다.\n• 삼성 메시지/Google 메시지의 하나 거래 알림만 골라 처리합니다.\n• 인증번호·OTP·비밀번호는 전송하지 않습니다.\n• 서버에는 문자 원문 대신 날짜·금액·입출금·가맹점만 저장됩니다.", 13, Color.rgb(71, 85, 105));
+        TextView security = text("보안 안내\n• 알림을 엿보고, 15분마다 문자함의 최근 " + HanaSweepWorker.SWEEP_DAYS + "일치도 훑습니다.\n• 알림이 막히거나 꺼져도 놓치지 않기 위해서입니다.\n• 어느 쪽이든 하나 거래문자만 골라 보냅니다.\n• 삼성 메시지/Google 메시지의 하나 거래 알림만 골라 처리합니다.\n• 인증번호·OTP·비밀번호는 전송하지 않습니다.\n• 서버에는 문자 원문 대신 날짜·금액·입출금·가맹점만 저장됩니다.", 13, Color.rgb(71, 85, 105));
         security.setPadding(dp(14), dp(14), dp(14), dp(14));
         security.setBackgroundColor(Color.rgb(248, 250, 252));
         root.addView(security, withTop(matchWrap(), 20));
@@ -144,6 +151,7 @@ public final class MainActivity extends Activity {
                 SecureStore.saveConnection(this,
                         response.getString("uid"), response.getString("deviceToken"));
                 SecureStore.setLastStatus(this, "연결 완료 — 하나 거래 알림을 기다리고 있습니다.");
+                HanaSweepWorker.schedule(this);
                 runOnUiThread(() -> {
                     code.setText("");
                     refresh();
