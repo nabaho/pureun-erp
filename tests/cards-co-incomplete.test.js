@@ -68,6 +68,8 @@ function loadFilter(state, cos){
                            coOnlyClosed:false, coOnlyNoBiz:false, coOnlyIncomplete:false }, state||{}),
     coList: () => cos || [],
     coFTabsOf: () => [], coTagsOf: o => (o && o.tags) || [],
+    /* 2026-08-30: 줄이 «보여줄 이름»을 쓴다 (상호 못 읽은 회사도 남으므로) */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     CO_SORT: { type: o => (o.erp && o.erp.type) || '' },
     coSorted: l => l };
   vm.createContext(ctx);
@@ -243,6 +245,7 @@ function drawRow(o){
     "var state = { coSel:{}, coColFilter:{}, coSort:{}, coTag:'' };",
     "function coArrow(){ return ''; }",
     "function coTagsOf(x){ return (x && x.tags) || []; }",
+    "function coDisplayName(o){ return (o && String(o.name||'').trim()) || (o && o.bizno) || ''; }",
     "function coDocIcons(){ return ''; }",
     "function coMgrCell(){ return ''; }",
     "function coSizeSelHtml(){ return ''; }",

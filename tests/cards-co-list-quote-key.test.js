@@ -36,6 +36,8 @@ function run(list, sel){
     'var state = { coSel: SEL, coColFilter: {}, coSort:{}, coTag:\'\' };',
     'function coArrow(){ return \'\'; }',
     'function coTagsOf(o){ return (o && o.tags) || []; }',
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 줄이 «보여줄 이름»을 쓴다 */
+    "function coDisplayName(o){ return (o && String(o.name||'').trim()) || (o && o.bizno) || ''; }",
     'function coDocIcons(){ return \'\'; }',
     'function coMgrCell(){ return \'\'; }'
   ].join('\n').replace('SEL', JSON.stringify(sel || {})), ctx);

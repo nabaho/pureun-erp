@@ -48,6 +48,8 @@ function runList(rows, sel, extra){
       { coSel: sel || {}, coColFilter: {}, coSort: {}, coTag: '', coFolder: '' }, extra || {})) + ';',
     "function coArrow(){ return ''; }",
     'function coTagsOf(o){ return (o && o.tags) || []; }',
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 줄이 «보여줄 이름»을 쓴다 */
+    "function coDisplayName(o){ return (o && String(o.name||'').trim()) || (o && o.bizno) || ''; }",
     "function coSizeSelHtml(){ return ''; }",
     "function coPagerHtml(){ return '<div class=\"copager\">쪽넘김</div>'; }",
     /* 2026-08-24(2순위): 회사 목록 위 «고아 기업정보» 알림 띠 — 이 검사는 안 본다 */
