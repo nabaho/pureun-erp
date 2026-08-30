@@ -239,10 +239,37 @@
     });
   }
 
+  /* ── 얼마나 «또렷하게» 돌아왔나 (대표 지시 2026-08-30 「1번부터」) ──
+     남은 일이 「실사진으로 해 보고 시원찮으면 조각 크기(MAX_EDGE·MIN_CROP)를 맞춘다」
+     였는데, **잴 눈금이 없었다.** 결과가 흐린지 아닌지를 눈대중으로만 말하면
+     조율값을 어느 쪽으로 얼마나 옮길지 영영 못 정한다.
+
+     ★ 재는 것은 하나다 — **원본 1픽셀을 조각 몇 픽셀이 그리고 있나.**
+       되붙일 때 조각에서 (bw/sw × 돌아온너비) 만큼을 떠서 원본 bw 픽셀에 그린다.
+       그러니 배수 = 돌아온너비 ÷ 자른너비(sw). 이 값이
+         1 이상 → 줄여 붙인다. 또렷하다.
+         1 미만 → **늘려 붙인다. 그 자리가 흐려지고, 그 흐린 자국이 곧 「시원찮다」다.**
+     ⚠ 보낸 크기(outW)가 아니라 **자른 크기(sw)** 로 잰다 — 되붙는 곳이 원본이라서다.
+       크게 칠할수록 sw 가 커지고, 모델이 돌려주는 크기는 대개 정해져 있어
+       «넓게 칠할수록 흐려진다». 그 관계를 숫자로 보여 주려는 것이다. */
+  function fitOf(spec, patchImg) {
+    if (!spec) return null;
+    var pw = (patchImg && (patchImg.naturalWidth || patchImg.width)) || 0;
+    var ph = (patchImg && (patchImg.naturalHeight || patchImg.height)) || 0;
+    if (!pw || !ph) return null;
+    return {
+      cut: spec.sw + '×' + spec.sh,          // 원본에서 떠낸 조각
+      sent: spec.outW + '×' + spec.outH,     // 줄여서 보낸 것
+      back: pw + '×' + ph,                   // 돌아온 것
+      /* 소수 둘째 자리까지 — 0.68 과 0.7 은 눈에 다르게 보인다 */
+      per: Math.round((pw / spec.sw) * 100) / 100
+    };
+  }
+
   global.PuPhotoEdit = {
     EDIT_URL: EDIT_URL, MAX_EDGE: MAX_EDGE, PAD_RATIO: PAD_RATIO, MARK: MARK,
     MIN_CROP: MIN_CROP,
-    cropSpec: cropSpec, buildCrop: buildCrop, pasteBack: pasteBack,
+    cropSpec: cropSpec, buildCrop: buildCrop, pasteBack: pasteBack, fitOf: fitOf,
     splitDataUrl: splitDataUrl, callEdit: callEdit
   };
 })(typeof window !== 'undefined' ? window : globalThis);
