@@ -28,7 +28,11 @@ const sandbox = {
   erpCleanMemo: s => String(s || ''),
 };
 vm.createContext(sandbox);
-vm.runInContext(grab('erpBankRowKey') + '\n' + grab('erpBankMergeDraft')
+/* ⚠ erpBankMergeDraft 가 부르는 것을 «다» 실어야 한다. 2026-08-29 에 겹침 표
+     (erpMarkDupHints)가 그 안으로 들어오면서 여기가 ReferenceError 로 깨졌다 —
+     코드는 멀쩡했고 모의환경이 모자랐던 것이다. */
+vm.runInContext(grab('erpBankRowKey') + '\n' + grab('erpDupHintPair') + '\n'
+  + grab('erpMarkDupHints') + '\n' + grab('erpBankMergeDraft')
   + '\nvar BANK_DRAFT_MAX = 4000;\nthis.merge = erpBankMergeDraft;\nthis.rowKey = erpBankRowKey;', sandbox);
 const merge = sandbox.merge;
 

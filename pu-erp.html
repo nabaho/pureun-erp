@@ -36566,6 +36566,53 @@ var BANK_DRAFT_MAX = 4000;    // 용량 가드 — 넘으면 «오래된» 것�
      두 번 보내는 경우). 그것까지 지우면 돈이 사라진다. 그래서 나온 순서대로 #1, #2 를
      붙인다 — 순서 기준이 같으니 같은 파일을 다시 올려도 키가 그대로라 늘어나지 않는다.
      (나이스빌 CMS 보관분이 쓰는 방식과 같다) */
+/* 같은 결제인데 «가게 이름을 다르게 적어» 두 줄이 된 것을 표시한다 (2026-08-29).
+
+   왜: 하나카드는 두 길로 들어온다 — 휴대폰 문자와 홈페이지 이용내역 엑셀.
+   둘이 같은 결제를 다르게 적는다: 문자 「스시리두정」 · 엑셀 「스시리두정점」.
+   그러면 중복막이(날짜|금액|가맹점)를 빠져나가 같은 결제가 두 줄이 된다.
+
+   ★ 왜 «합치지» 않고 «보여만» 주는가
+     가맹점을 빼고 날짜+금액으로만 걸러 합치면 훨씬 깔끔해 보인다. 그런데
+     같은 날 같은 금액의 «다른 가게»가 있고 문자가 그중 하나를 놓쳤을 때,
+     줄 차례에 따라 엉뚱한 가게 이름으로 합쳐지고 진짜 한 건이 사라진다.
+     장부에서 한 건이 조용히 사라지는 것은 두 줄이 보이는 것보다 훨씬 나쁘다.
+     그래서 «사람이 보고 고르게» 한다.
+
+   ⚠ 앞부분이 통째로 같을 때만 짚는다. 「이마트」·「이마트24」처럼 헛짚어도
+     표만 뜰 뿐 아무것도 안 지우므로 손해가 없다. 반대로 「스타벅스강남」과
+     「스타벅스역삼」은 앞부분이 안 같아 안 뜬다. */
+function erpDupHintPair(a, b){
+  a = String(a || ''); b = String(b || '');
+  if(!a || !b || a === b) return false;
+  var lo = a.length < b.length ? a : b;
+  var hi = a.length < b.length ? b : a;
+  return lo.length >= 2 && hi.indexOf(lo) === 0;
+}
+
+function erpMarkDupHints(rows){
+  var by = {};
+  (rows||[]).forEach(function(r){
+    if(!r) return;
+    var d = String(r.date||'').replace(/[.\/]/g,'-').slice(0,10);
+    if(!d) return;
+    var k = (r.src||'bank') + '|' + (r.type||'income') + '|' + d + '|' + (parseInt(r.amount,10)||0);
+    (by[k] = by[k] || []).push(r);
+  });
+  Object.keys(by).forEach(function(k){
+    var g = by[k];
+    if(g.length < 2) return;
+    var memo = g.map(function(r){
+      var m = r.memo || r.note || '';
+      try { return erpNormName(erpCleanMemo(m)); } catch(_e){ return erpNormName(m); }
+    });
+    for(var i=0;i<g.length;i++) for(var j=i+1;j<g.length;j++){
+      if(erpDupHintPair(memo[i], memo[j])){ g[i].dupHint = 1; g[j].dupHint = 1; }
+    }
+  });
+  return rows;
+}
+
 function erpBankMergeDraft(curRows, newRows){
   var out = [], have = {}, remap = {}, dup = 0, skip = 0;
   function sigOf(r){
@@ -36596,6 +36643,7 @@ function erpBankMergeDraft(curRows, newRows){
   }
   addAll(curRows, false);      // 있던 것이 먼저 — 그래야 뒤에 온 같은 행이 버려진다
   addAll(newRows, true);
+  erpMarkDupHints(out);
   // 통장 순서대로 (오래된 것이 위) — 종전 한 파일만 보던 때와 같은 차례
   out.sort(function(a,b){
     var da = String(a.date||''), db = String(b.date||'');
@@ -39043,7 +39091,10 @@ function FinanceLedger(props){
     mg.rows.forEach(function(x){
       if(hidden && hidden[x._k]) return;
       var row = { _k:String(x._k), _b:x._b||'', src:(x.src||'bank'), date:x.date||'', memo:x.memo||'',
-                  note:x.note||'', amount:parseInt(x.amount,10)||0, balance:parseInt(x.balance,10)||0 };
+                  note:x.note||'', amount:parseInt(x.amount,10)||0, balance:parseInt(x.balance,10)||0,
+                  /* ⚠ 여기 칸을 «하나하나 적어» 만든다 — 안 적으면 그대로 사라진다.
+                     같은 결제를 두 길(문자·이용내역)이 다르게 적어 두 줄이 된 표시다. */
+                  _hint: x.dupHint ? 1 : 0 };
       var pk = erpBankRowKey(row);
       if(pk && pst[pk]) row._dup = true;
       if(x.type === 'expense') exp.push(row); else inc.push(row);
@@ -39644,7 +39695,9 @@ function FinanceLedger(props){
         var _inc = [], _exp = [];
         _mg.rows.forEach(function(x){
           var row = { _k:x._k, src:x.src||'bank', date:x.date||'', memo:x.memo||'', note:x.note||'',
-                      amount:parseInt(x.amount,10)||0, balance:parseInt(x.balance,10)||0 };
+                      amount:parseInt(x.amount,10)||0, balance:parseInt(x.balance,10)||0,
+                      /* 방금 올린 파일에서도 곧바로 보여야 한다 — 안 옮기면 새로 고쳐야 뜬다 */
+                      _hint: x.dupHint ? 1 : 0 };
           var _pk = erpBankRowKey(row);
           if(_pk && _pst2[_pk]) row._dup = true;
           if(x.type === 'expense') _exp.push(row); else _inc.push(row);
@@ -42516,7 +42569,16 @@ function FinanceLedger(props){
                     return h('div',{title:'인사관리 '+pl.ym+' 에 '+pl.name+' 급여 기록이 없습니다',
                       style:Object.assign({},box,{background:'#f8fafc',color:'#64748b',border:'1px solid #e2e8f0'})},
                       '👤 인사 '+pl.ym+' 기록 없음');
-                  })()),
+                  })()
+                  /* 같은 결제를 두 길(휴대폰 문자·이용내역 엑셀)이 다르게 적어 두 줄이 됐을 때.
+                     ★ 지우지 않고 «보여만» 준다 — 합치다가 엉뚱한 가게로 묶이면
+                       장부에서 한 건이 조용히 사라진다. 고르는 것은 사람이 한다.
+                     ⚠ 인사 급여 표(바로 위)와 «나란히» 산다 — 2026-08-30 리베이스에서
+                       둘이 같은 자리를 다퉜다. 한쪽을 고르면 다른 쪽 일이 통째로 사라진다. */
+                  ,row._hint && h('div',{title:'날짜·금액이 같고 가게 이름의 앞부분도 같은 줄이 또 있습니다.\n휴대폰 문자와 카드사 이용내역이 같은 결제를 다르게 적으면 이렇게 됩니다.\n같은 것이면 한 줄을 지우세요 — 다른 가게라면 그냥 두시면 됩니다.',
+                    style:{marginTop:'2px',marginLeft:'3px',display:'inline-block',background:'#eff6ff',color:'#1e40af',
+                      border:'1px solid #bfdbfe',borderRadius:'8px',padding:'0 5px',fontSize:'9.5px',fontWeight:700}},
+                    '↔ 같은 결제일 수 있음')),
                 h('td',{style:tdS},
                   /* ══ 고르는 «그 자리»에서 끝낸다 (대표 지시 2026-08-29) ══════════
                      「이렇게 멀리서 클릭하는거 마우스 움직임 불편하다,
