@@ -269,13 +269,73 @@ test('★★ 원본을 «안 덮는다» — 새 사진으로 담는다 (대표 
   assert.match(fn, /editedFrom: photoEd\.id/, '★ 어느 사진에서 나왔는지 안 적습니다');
 });
 
-test('★★ 정보를 이어받는다 — 안 이어받으면 사본만 «아무나» 볼 수 있게 된다', () => {
+test('★ 사본의 «실제» 크기를 적는다', () => {
   const fn = cutFn(APP, 'async function edKeep(');
-  assert.match(fn, /Object\.assign\(\{\}, \(src && src\.meta\) \|\| \{\}/,
-    '★★ 찍은 날·종류·판독 결과를 안 이어받습니다.\n' +
-    '  계약서처럼 «민감»으로 밝혀진 것은 사본도 민감해야 합니다 — 떼면 사본만 열립니다.');
   assert.match(fn, /w: size\.w, h: size\.h/,
     '★ 사본의 크기를 안 적으면 「원본이 작습니다」 판정이 사본을 못 잽니다');
+});
+
+/* ── 물려받는 것과 «떼는» 것 ──────────────────────────────────────────
+   이어받는 쪽이 옳다(찍은 날·종류·판독 결과) — 계약서처럼 «민감»으로 밝혀진 것은
+   사본도 민감해야 한다. 떼는 것은 **「이 사진이 무엇을 겪었나」의 기록**이다.
+   새 사진은 아직 아무것도 안 겪었는데, 물려받으면 겪은 척이 된다.
+   ⚠ 이 자리가 이 일에서 가장 «조용히» 틀리는 곳이다 — 화면에 아무 표시가 없고,
+     보유기간·공유·묶음 쪽수에서 나중에 드러난다. */
+function copyMeta(srcMeta) {
+  const ctx = { Object: Object };
+  vm.createContext(ctx);
+  vm.runInContext(cutFn(APP, 'function edCopyMeta('), ctx);
+  return ctx.edCopyMeta(srcMeta);
+}
+
+test('★★ 물려받는 것 — 안 이어받으면 사본만 «아무나» 볼 수 있게 된다', () => {
+  const m = copyMeta({ at: 111, kind: 'doc', company: '가야', note: '실태조사',
+    read: { kind: 'contract', secret: true, fields: { a: 1 } } });
+  assert.equal(m.at, 111, '★★ 찍은 날을 떼면 사본이 딴 날에 담겨 못 찾습니다');
+  assert.equal(m.kind, 'doc');
+  assert.equal(m.company, '가야');
+  assert.equal(m.note, '실태조사');
+  assert.equal(m.read.secret, true,
+    '★★ 계약서처럼 «민감»으로 밝혀진 것은 사본도 민감해야 합니다 — 떼면 사본만 열립니다');
+  assert.deepEqual(m.read.fields, { a: 1 }, '★ 판독 값까지 떼면 사본을 다시 판독해야 합니다');
+});
+
+test('★★ 떼는 것 — 새 사진은 아직 아무것도 «안 겪었다»', () => {
+  const src = {
+    at: 111,
+    used: { at: 1, where: '일자리도약장려금' },
+    doc: { group: 'g1', page: 2, taken: 3, collecting: true },
+    shareWith: { U2: true }, shareBy: { U2: '권형하' },
+    read: { kind: 'bizreg', secret: false,
+      filed: { id: 'c1', at: 5 }, filedError: '어쩌고',
+      filedInfo: { at: 5, by: '권형하' }, filedInfoError: '어쩌고',
+      filedCo: { at: 5, filled: true }, filedCoError: '어쩌고' }
+  };
+  const m = copyMeta(src);
+  assert.equal(m.used, undefined,
+    '★★ used 가 **보유기준을 정합니다**(증빙 5년/나머지 1년).\n' +
+    '  안 쓴 사본이 증빙으로 잡혀 5년을 남고, 쓰지도 않은 사업 이름이 화면에 뜹니다');
+  assert.equal(m.doc, undefined,
+    '★★ 사본이 같은 묶음에 같은 쪽 번호로 끼어 「모으는 중」이 안 끝나고 쪽수가 어긋납니다');
+  assert.equal(m.shareWith, undefined,
+    '★★ 원본에 걸린 공유입니다 — 물려받으면 새 사진이 «말없이» 남에게 열립니다');
+  assert.equal(m.shareBy, undefined);
+  ['filed', 'filedError', 'filedInfo', 'filedInfoError', 'filedCo', 'filedCoError']
+    .forEach(function (k) {
+      assert.equal(m.read[k], undefined,
+        '★★ read.' + k + ' 는 «보냈다는 표»입니다 — 사본은 아직 아무 데도 안 갔는데\n' +
+        '  보낸 날짜와 보낸 사람이 찍혀 나옵니다');
+    });
+  assert.equal(m.read.kind, 'bizreg', '★ 보낸 표만 떼야지 판독까지 떼면 안 됩니다');
+});
+
+test('★★ 떼면서 «원본을 안 건드린다» — 원본에서 보낸 표가 사라진다', () => {
+  const read = { kind: 'bizreg', filed: { id: 'c1' } };
+  const src = { read: read, used: { at: 1 } };
+  copyMeta(src);
+  assert.deepEqual(src.used, { at: 1 }, '★★ 원본 meta 를 그 자리에서 고쳤습니다');
+  assert.deepEqual(read.filed, { id: 'c1' },
+    '★★ 원본의 read 를 그 자리에서 고쳤습니다 — 원본이 「안 보낸 것」이 되어 두 번 갑니다');
 });
 
 /* 저장하는 걸음을 «실제로» 돌린다 — 읽어서 보는 것으로는 다음 둘을 못 잡는다 */
@@ -286,7 +346,10 @@ function keeper(over) {
     console: { warn: function () {} },
     photoEd: { status: 'ready', id: 'p1', url: 'ORIG', strokes: [], brush: 1, erasing: false,
       done: { full: 'ERASED', before: 'ORIG', n: 2 } },
-    gridItems: [{ id: 'p1', full: 'ORIG', thumb: 'ORIG_T', meta: { w: 2000, h: 1500, at: 111 } }],
+    /* 원본에는 «겪은 기록»이 붙어 있다 — 사본이 그대로 물려받으면 안 된다 */
+    gridItems: [{ id: 'p1', full: 'ORIG', thumb: 'ORIG_T',
+      meta: { w: 2000, h: 1500, at: 111, used: { at: 1, where: '일자리도약장려금' },
+        doc: { group: 'g1', page: 2 }, shareWith: { U2: true } } }],
     PuPhotoStore: {
       newId: function () { return 'p2'; },
       savePhoto: function (p) { saved.push(p); return Promise.resolve(); }
@@ -303,6 +366,7 @@ function keeper(over) {
   ctx.globalThis = ctx;
   Object.assign(ctx, over || {});
   vm.createContext(ctx);
+  vm.runInContext(cutFn(APP, 'function edCopyMeta('), ctx);
   vm.runInContext(cutFn(APP, 'async function edKeep('), ctx);
   ctx._saved = saved; ctx._said = said;
   return ctx;
@@ -331,6 +395,14 @@ test('★★ 저장을 누르면 그때 «새 사진»으로 담는다 — 원�
   assert.equal(c._saved[0].meta.editedFrom, 'p1');
   assert.equal(c._saved[0].meta.at, 111, '★★ 찍은 날을 안 이어받으면 사본이 딴 날에 담깁니다');
   assert.equal(c._saved[0].meta.w, 1900, '★ 사본의 «실제» 크기를 적어야 합니다');
+  /* ⚠ 「떼는 규칙」을 담는 걸음이 **실제로 부르는지** — 규칙만 있고 안 부르면 소용없다 */
+  assert.equal(c._saved[0].meta.used, undefined,
+    '★★ 담는 걸음이 edCopyMeta 를 안 부릅니다 — 안 쓴 사본이 증빙으로 잡혀 5년을 남습니다');
+  assert.equal(c._saved[0].meta.doc, undefined);
+  assert.equal(c._saved[0].meta.shareWith, undefined,
+    '★★ 새 사진이 «말없이» 남에게 열립니다');
+  assert.deepEqual(c.gridItems.find(function (x) { return x.id === 'p1'; }).meta.used,
+    { at: 1, where: '일자리도약장려금' }, '★★ 원본의 기록을 그 자리에서 지웠습니다');
   assert.equal(c.gridItems.find(function (x) { return x.id === 'p1'; }).full, 'ORIG',
     '★★ 원본이 바뀌었습니다');
   assert.equal(c.gridItems[0].id, 'p2', '★ 새 사진이 목록 맨 앞에 안 옵니다');
