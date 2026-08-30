@@ -2481,6 +2481,15 @@ exports.hanaMessageBridge = functions
           /* 문자함 권한이 없으면 훑기는 돌아도 «아무것도 못 줍는다» —
              그 상태를 화면이 알아야 「권한을 주세요」라고 짚어 줄 수 있다. */
           sweepCanReadSms: body.canReadSms === true,
+          /* ★★ 「문자함을 끝까지 읽었나」 (코덱스 지적 2026-08-30).
+             권한이 있어도 조회가 튕길 수 있다. 그때 sweepFound 는 0 으로 오는데,
+             예전 화면은 그걸 「폰에 하나 문자가 아예 없습니다」로 단정해 읽었다 —
+             그 한마디에 대표는 엉뚱하게 은행 쪽을 뒤지게 된다.
+             ⚠ 옛 판(1.8.0 이하)은 이 값을 안 보낸다. 안 보내면 «모름»으로 두고,
+                화면은 없다고 «단정하지 않는다» (undefined 로 남긴다). */
+          ...(typeof body.readOk === "boolean" ? { sweepReadOk: body.readOk } : {}),
+          /* 상한에 닿았나 — 닿았으면 그보다 오래된 거래가 폰에 더 남아 있다. */
+          sweepCapped: body.capped === true,
         }).catch(() => {});
         hanaJson(res, 200, { ok: true, pong: true }); return;
       }
@@ -2512,6 +2521,10 @@ exports.hanaMessageBridge = functions
           appVersion: String(d.appVersion || ""),
           /* 폰이 문자함에서 «본» 것 — 0 이면 폰에 하나 문자가 아예 없다는 뜻이다. */
           sweepFound: Number(d.sweepFound || 0),
+          /* ★ 「끝까지 읽었나」. null 이면 «모름»이다 — 옛 판이 안 보낸 것.
+               화면은 참일 때만 「폰에 문자가 없다」고 말할 수 있다. */
+          sweepReadOk: typeof d.sweepReadOk === "boolean" ? d.sweepReadOk : null,
+          sweepCapped: d.sweepCapped === true,
           sweepNewestAt: Number(d.sweepNewestAt || 0),
           /* 메시지 앱이 «아닌» 곳에서 온 마지막 알림 — 하나원큐 같은 은행 앱 푸시.
              이 값이 채워지면 「입금이 앱 푸시로 온다」는 것이 기록으로 확인된 것이다. */

@@ -98,6 +98,13 @@ public final class HanaSweepWorker extends Worker {
         boolean canRead = context.checkSelfPermission(Manifest.permission.READ_SMS)
                 == PackageManager.PERMISSION_GRANTED;
 
+        /* ★★ 「봤는데 없다」와 「못 봤다」는 «다른 말»이다 (코덱스 지적 2026-08-30).
+             예전에는 문자함 조회가 튕겨도 foundCount 가 0 으로 나갔고,
+             화면은 그걸 「폰에 하나 문자가 아예 없습니다」로 단정해 읽었다.
+             그러면 대표는 은행 쪽을 뒤지게 된다 — 정작 고칠 곳은 폰인데. */
+        boolean readOk = false;
+        boolean capped = false;
+
         if (canRead) {
             List<SmsHistoryReader.Item> found;
             try {
@@ -105,6 +112,8 @@ public final class HanaSweepWorker extends Worker {
             } catch (Exception unreadable) {
                 found = null;
             }
+            readOk = found != null && !SmsHistoryReader.lastFailed;
+            capped = SmsHistoryReader.lastCapped;
             if (found != null) {
                 foundCount = found.size();
                 for (SmsHistoryReader.Item item : found) {
@@ -144,8 +153,13 @@ public final class HanaSweepWorker extends Worker {
                「새 앱을 깔긴 하신 건가」를 물어볼 수조차 없었다. */
             ping.put("appVersion", BridgeConfig.APP_VERSION);
             /* 폰이 문자함에서 «본» 것. 0 이면 폰에 하나 문자가 아예 없다는 뜻이다 —
-               그때는 앱을 아무리 고쳐도 소용없고, 은행 문자 쪽을 봐야 한다. */
+               그때는 앱을 아무리 고쳐도 소용없고, 은행 문자 쪽을 봐야 한다.
+               ⚠ 단, 그 말은 readOk 가 참일 때만 할 수 있다. */
             ping.put("foundCount", foundCount);
+            /* ★ 「문자함을 끝까지 읽었나」. 거짓이면 foundCount 0 은 «모름»이다. */
+            ping.put("readOk", readOk);
+            /* ★ 상한(MAX_MESSAGES)에 닿았나 — 닿았으면 더 오래된 거래가 남아 있다. */
+            ping.put("capped", capped);
             ping.put("newestAt", newestAt);
             HanaUploadWorker.post(ping, token);
         } catch (Exception error) {
@@ -155,6 +169,9 @@ public final class HanaSweepWorker extends Worker {
 
         if (!canRead) {
             SecureStore.setLastStatus(context, "문자함 읽기 권한이 없어 훑지 못했습니다. 앱을 열어 「지난 문자 가져오기」를 한 번 눌러 주세요.");
+        } else if (!readOk) {
+            /* ⚠ 여기를 «0건»으로 말하면 안 된다 — 세어 보지도 못한 것이다. */
+            SecureStore.setLastStatus(context, "문자함을 읽지 못했습니다. 폰을 한 번 껐다 켠 뒤 앱을 열어 주세요.");
         } else if (sent > 0) {
             SecureStore.setLastStatus(context, "문자함을 훑어 " + sent + "건을 보냈습니다."
                     + (failed > 0 ? " (실패 " + failed + "건 — 다음에 다시 보냅니다)" : ""));

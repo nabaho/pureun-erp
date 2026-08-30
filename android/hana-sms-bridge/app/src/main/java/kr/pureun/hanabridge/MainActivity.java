@@ -276,6 +276,18 @@ public final class MainActivity extends Activity {
                 });
                 return;
             }
+            /* ⚠★ 문자함을 «열지도 못한» 경우가 있다 — 그때 0통은 「없다」가 아니라
+                 「모른다」다. 예전에는 둘을 같은 말로 알려 「문자를 지우셨나」를
+                 물었고, 대표는 멀쩡한 문자함을 뒤졌다 (코덱스 지적 2026-08-30). */
+            if (SmsHistoryReader.lastFailed) {
+                importing = false;
+                runOnUiThread(() -> {
+                    status.setText("문자함을 읽지 못했습니다.\n" +
+                            "문자가 없는 것이 아니라 열지 못한 것입니다 — 폰을 껐다 켠 뒤 다시 눌러 주세요.");
+                    history.setEnabled(true);
+                });
+                return;
+            }
             if (found.isEmpty()) {
                 importing = false;
                 runOnUiThread(() -> {
@@ -318,7 +330,17 @@ public final class MainActivity extends Activity {
                     "• 새로 보낸 것 " + sent + "건\n" +
                     "• 이미 있던 것 " + already + "건" +
                     (skipped > 0 ? "\n• 거래로 안 읽힌 것 " + skipped + "건" : "") +
-                    (failed > 0 ? "\n• 실패 " + failed + "건 — 다시 눌러 주세요" : "");
+                    (failed > 0 ? "\n• 실패 " + failed + "건 — 다시 눌러 주세요" : "") +
+                    /* ⚠ 잘렸으면 «잘렸다»고 말한다. 예전에는 조용히 300통에서 끊고
+                         「300통을 살펴봤습니다」로만 알려, 남은 것을 아무도 몰랐다. */
+                    /* ⚠ 잘렸으면 «잘렸다»고 말한다. 예전에는 조용히 300통에서 끊고
+                         「300통을 살펴봤습니다」로만 알려, 남은 것을 아무도 몰랐다.
+                       ⚠ 새것부터 읽으므로 다시 눌러도 같은 자리에서 끊긴다 —
+                         「다시 눌러 보세요」라고 하면 안 된다. 사람 손이 필요하다. */
+                    (SmsHistoryReader.lastCapped
+                            ? "\n\n⚠ 한 번에 " + SmsHistoryReader.MAX_MESSAGES
+                              + "통까지만 봅니다. 더 오래된 문자는 못 가져왔으니 푸른에 알려 주세요."
+                            : "");
             SecureStore.setLastStatus(this, report);
             importing = false;
             runOnUiThread(() -> {
