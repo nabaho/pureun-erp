@@ -840,7 +840,7 @@ input.kf-in.kf-done{background:#f8fafc;border-bottom:1.5px solid var(--teal);fon
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <script src="js/pu-backup.js?v=1"></script>
-<script src="js/kcareer-scan.js?v=1"></script>
+<script src="js/kcareer-scan.js?v=2"></script>
 <script src="js/kcareer-pusync.js?v=1"></script>
 <script src="js/kcareer-hwpxfill.js?v=9"></script>
 <script src="js/kcareer-formmap.js?v=6"></script>
@@ -4836,6 +4836,7 @@ const FORM_DEFS={
     {key:'type',label:'유형',type:'select',options:['표창','포상','감사패','공로패','기타'],default:'표창'},
     {key:'org',label:'수여기관',required:true},
     {key:'issuer',label:'수여자(서명자)'},
+    {key:'recipient',label:'수상 대상'},
     {key:'titleVal',label:'표창 내용',full:true},
     {key:'issueDate',label:'수상일',date:true},
     {key:'note',label:'문서번호'}]},
@@ -4971,7 +4972,7 @@ async function reOcrForm(){
     if(resp.ok){ var rd=await resp.json(); var raw=rd.content.map(function(c){return c.text||'';}).join('').replace(/```json|```/g,'').trim(); var m=raw.match(/\{[\s\S]*\}/); if(m) parsed=JSON.parse(m[0]); } else { err='Claude '+resp.status; } }catch(e){ console.warn('reOCR claude',e); } }
   if(!parsed){ toast('읽기 실패'+(err?' ('+err+')':'')+' — 키·크레딧 확인'); return; }
   var setF=function(key,val){ if(val==null||val==='') return; var el=document.getElementById('ff-'+key); if(el) el.value=val; };
-  setF('org',parsed.org); setF('issuer',parsed.issuer); setF('titleVal',parsed.titleVal||parsed.title); setF('issueDate',parsed.issueDate||parsed.date);
+  setF('org',parsed.org); setF('issuer',parsed.issuer); setF('recipient',parsed.recipient); setF('titleVal',parsed.titleVal||parsed.title); setF('issueDate',parsed.issueDate||parsed.date);
   setF('note',parsed.note); setF('num',parsed.num); setF('school',parsed.school); setF('degree',parsed.degree); setF('graduated',parsed.graduated); setF('date',parsed.date);
   /* 실적·강의·비용 칸도 채운다 — 프롬프트만 있고 여기 없으면 읽어 놓고 «버린다» */
   setF('project',parsed.project); setF('agency',parsed.agency); setF('main',parsed.main);
@@ -5785,7 +5786,11 @@ const PAGE_OCR_PROMPT={
     +'모르는 값은 빈 문자열로 두세요. 지어내지 마세요. 기관과 고객사를 혼동하지 마세요.',
   certdoc:`이 문서(실적증명서·경력증명서·참여확인서·수행확인서)를 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 문서에 적힌 그대로 정확히(YYYY.MM.DD), 추측하지 마세요.\n{"kind":"실적증명서/경력증명서/참여확인/용역수행확인 중 해당","issuer":"이 증명서를 발급해준 기관의 전체 명칭(직인·발급기관란)","date":"발급일 YYYY.MM.DD","coverage":"증명하는 기간(수행기간·경력기간). 예: 2019.01.01 ~ 2021.12.31 또는 2024","usage":"용도·제출처가 적혀 있으면"}\n※ 발급기관은 증명서를 떼어준 곳입니다(신청인이 아님). 없는 항목만 빈 문자열. 다른 말 없이 JSON만.`,
   wiccok:`이 문서(위촉장·협약서·임명장)를 아주 꼼꼼히 읽고 JSON으로만 답하세요. 문서에 적힌 날짜를 그대로 정확히 옮기고, 추측하거나 지어내지 마세요. 날짜는 반드시 YYYY.MM.DD 형식으로.\n{"docType":"위촉장/협약서/임명장 중 해당","org":"발급·위촉 기관의 전체 명칭","issuer":"위촉하는 사람·기관장 직함(예: ○○원장·○○회장·○○지사장, 서명자)","titleVal":"직책 또는 위촉 내용(예: 컨설턴트, 위원, 전담노무사)","issueDate":"발급일(문서에 적힌 날짜) YYYY.MM.DD","period":"위촉기간이 있으면 시작일 ~ 종료일 (YYYY.MM.DD ~ YYYY.MM.DD)","year":"발급연도 YYYY","note":"문서번호(제○호 등)"}\n※ 발급일과 위촉기간(시작·종료)은 서로 다를 수 있으니 각각 정확히 구분해 읽으세요. 없는 항목만 빈 문자열. 다른 말 없이 JSON만.`,
-  award:`이 표창장/포상장/감사장을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 문서 그대로 정확히(YYYY.MM.DD).\n{"docType":"표창/포상/감사장 중 해당","org":"수여기관 전체 명칭","titleVal":"표창·포상 명칭 또는 공적 내용","issueDate":"수여일 YYYY.MM.DD","year":"YYYY","note":"문서번호(제○호)"}\n없는 항목만 빈 문자열. JSON만.`,
+  /* ⚠ 표창장은 «주는 쪽»과 «받는 쪽»이 한 장에 같이 있다 — 이걸 안 가르면 뒤섞인다.
+     실측(2026-08-30): 「충청남도노사민정협의회 위원장 김태흠」이 주고
+     「충청남도 노사분쟁 조정·중재단」이 받은 표창이, 수여기관 「충청남도(노사분쟁조정중재단)」
+     한 칸에 뭉개져 들어가 있었고 수여자는 비어 있었다. 셋을 또렷이 갈라 묻는다. */
+  award:`이 표창장/포상장/감사장을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 문서 그대로 정확히(YYYY.MM.DD).\n{"docType":"표창/포상/감사장 중 해당","org":"상을 «준» 기관의 전체 명칭 — 보통 맨 아래 서명 줄에 있다(예: 충청남도노사민정협의회)","issuer":"상을 준 사람의 직위와 이름(예: 위원장 김태흠). 없으면 빈칸","recipient":"상을 «받은» 대상 — 문서 위쪽에 적힌 개인·단체 이름","titleVal":"표창 사유·공적 내용을 한 줄로(예: 2025년 지역 노사민정협력활성화 추진 실적 평가 우수)","issueDate":"수여일 YYYY.MM.DD","year":"YYYY","note":"문서번호(제○호)"}\n⚠ org 는 «주는 쪽»입니다. 받는 쪽(recipient)을 org 에 넣지 마세요. 둘을 바꾸면 기록이 뒤집힙니다.\n⚠ titleVal 에 「표창장」 같은 문서 이름만 적지 말고 «무엇으로 받았는지»를 적으세요.\n없는 항목만 빈 문자열. 지어내지 마세요. JSON만.`,
   license:`이 자격증/면허증을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜·번호는 그대로 정확히.\n{"title":"자격·면허 명칭","org":"발급기관 전체 명칭","date":"취득/발급일 YYYY.MM.DD","num":"자격증/등록 번호","note":"등급·비고"}\n없는 항목만 빈 문자열. JSON만.`,
   complete:`이 수료증/이수증을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 그대로 정확히.\n{"title":"과정명(수료/이수)","org":"발급기관 전체 명칭","date":"수료일 YYYY.MM.DD","num":"증명번호","note":"교육시간·비고"}\n없는 항목만 빈 문자열. JSON만.`,
   edu:`이 졸업증명서/학위증을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 그대로 정확히.\n{"school":"학교명 전체","degree":"학위/전공/과정","period":"재학기간 YYYY ~ YYYY (있으면)","graduated":"졸업/수료/재학 중","year":"졸업연도 YYYY","date":"졸업일 YYYY.MM.DD"}\n없는 항목만 빈 문자열. JSON만.`,

@@ -56,7 +56,12 @@
   var CERT_ANY = /실적\s*증명|수행실적\s*증명|경력증명|재직증명|참여확인서|수행확인서|용역수행|수행\s*확인/;
   var RESULT_ANY = /위촉장|위촉계약|재위촉|표창|포상|상장|자격증|수료증|이수증|협약서|경력증명|실적증명|참여확인|수행확인/;
   // ⚠ 부정어에 '회의'를 넣지 말 것 — '상공회의소 위촉장'이 오탐된다(설계서 7.3).
-  var NEGATIVE = /동의서|신청서|제출|공고|양식|서식|명단|시나리오|좌석|추천\s*계획|모집|목록|초안|회의록|회의자료|교재|자료집|매뉴얼/;
+  /* ⚠ 「추천서·후보자·유공자 추천」은 상을 «받기 전» 서류다 — 표창으로 세면 안 된다.
+        표창을 이름 어느 자리에서나 찾게 넓히면서 함께 막는다(2026-08-30).
+     ⚠ 여기에 '회의'를 넣지 말 것 — 상공회의소 위촉장이 오탐된다(회귀테스트 있음). */
+  var NEGATIVE = /동의서|신청서|제출|공고|양식|서식|명단|시나리오|좌석|추천\s*계획|추천서|후보자|모집|목록|초안|회의록|회의자료|교재|자료집|매뉴얼/;
+  /* 표창 계열만 «이름 어느 자리에든» — 기관명이 뒤에 붙은 파일을 놓치지 않는다 */
+  var AWARD_ANY = /표창장|포상장|감사장|공로패|표창|포상|상장/;
 
   // 이름 끝 단어 → 어느 목록으로 갈지 (증명서는 CERT_ANY로 따로 판정한다)
   var KIND_MAP = [
@@ -96,11 +101,13 @@
         var ck = certKindOf(core);
         if (ck) return { level: 'sure', store: 'certdoc', type: '', titleHint: '', certKind: ck };
       }
-      /* 위촉장·표창·자격증 계열 — 이름 끝만 */
+      /* 위촉장·자격증 계열 — 이름 끝만(오탐 방지) */
       if (RESULT_END.test(core)) {
         var k = mapKind(core);
         if (k) return { level: 'sure', store: k.store, type: k.type, titleHint: k.titleHint };
       }
+      /* 표창 계열 — 이름 어느 자리에든 (끝만 보면 기관명이 뒤에 온 파일을 놓친다) */
+      if (AWARD_ANY.test(core)) return { level: 'sure', store: 'wiccok', type: '표창', titleHint: '' };
     }
     if (RESULT_ANY.test(core) && !neg) return { level: 'maybe' };
     return { level: 'submission' };
