@@ -132,6 +132,7 @@ function load(over){
     '_mbBins = {}; _mbPut = {}; _mbHide = {}; _mbOwner = {}; _mbSucc = {};' +
     '_mbOrder = {}; _mbWhoOrder = {};' +
     '_mbCkSkip = ' + JSON.stringify(o.skip || {}) + ';' +
+    '_mbBinRule = ' + JSON.stringify(o.rule || {}) + ';' +
     '_mbMeta = { at:1, ok:true };', ctx);
 
   /* 푸른이알피 표를 «앱이 만드는 그대로» 채운다 — 손으로 지으면 진짜와 어긋난다 */
@@ -157,7 +158,13 @@ function load(over){
   EM.nameByEmail = { 'p001@pureun.kr': '권형하' };
   ctx._held = held;
   ctx.__ck  = () => vm.runInContext('_mbCk', ctx);
-  ctx.__put = () => vm.runInContext('_mbPut', ctx);
+  ctx.__put  = () => vm.runInContext('_mbPut', ctx);
+  ctx.__rule = () => vm.runInContext('_mbBinRule', ctx);
+  /* ⚠ 열쇠 모양을 «손으로 적지 않는다» — mbWhoKey 는 점을 ',' 로 바꾼다.
+       '_' 로 적었다가 규칙이 한 번도 안 걸려 그 검사가 통째로 헛돌았다(2026-08-30). */
+  ctx.__setRule = (em, binId) => vm.runInContext(
+    '_mbBinRule[mbWhoKey(' + JSON.stringify(em) + ')] = ' + JSON.stringify(binId) + ';mbMemoClear();', ctx);
+  ctx.__setPut = (k,b) => vm.runInContext('_mbPut[' + JSON.stringify(k) + '] = ' + JSON.stringify(b) + ';mbMemoClear();', ctx);
   return ctx;
 }
 const find = (list, co) => list.filter(x => x.co === co)[0];
@@ -248,12 +255,72 @@ test('★★ 「자문 칸으로」를 누르면 그 주소 메일이 «다» �
   assert.equal(x.n, 2, '밑그림에 그 업체 메일이 2통 있어야 합니다');
   c.mbCheckMoveTo(x.key);
   /* ⚠ 「그 한 통」이 아니라 «그 주소에서 온 것 전부»가 가야 한다.
-       한 통만 옮기면 다음에 열었을 때 같은 것이 또 떠서, 눌러도 안 사라지는 것처럼 보인다. */
-  const put = c.__put();
-  const moved = Object.keys(put).filter(k => put[k] === 'F1');
-  assert.equal(moved.length, 2, '그 주소 메일이 다 안 갔습니다: ' + JSON.stringify(put));
+       한 통만 옮기면 다음에 열었을 때 같은 것이 또 떠서, 눌러도 안 사라지는 것처럼 보인다.
+     ⚠★ 2026-08-30 부터 쪽지가 아니라 «규칙 한 줄»로 정한다(대표 지시). 그래야
+        «앞으로 올 메일»도 함께 간다 — 쪽지는 지난 것만 옮기고 내일 또 어긋났다. */
+  const rule = c.__rule();
+  assert.equal(rule[c.mbWhoKey(x.em)], 'F1',
+    '규칙으로 정해 두지 않았습니다: ' + JSON.stringify(rule));
+  const gone = c.mbCkRows().filter(v => String(v.e||'').toLowerCase() === x.em)
+    .map(v => { const b = c.mbBinOfRow(v); return b ? b.id : ''; });
+  assert.equal(gone.join(','), 'F1,F1', '그 주소 메일이 다 안 갔습니다: ' + gone.join(','));
   assert.ok(!find(c.mbCheckAll().mix, '씨티에스(주)'),
     '옮겼는데 아직 어긋난 것으로 남아 있습니다');
+});
+
+test('★★ 정해 둔 규칙은 «앞으로 올 메일»에도 걸린다 — 쪽지였다면 내일 또 어긋난다', () => {
+  const c = load();
+  const x = find(c.mbCheckAll().mix, '씨티에스(주)');
+  c.mbCheckMoveTo(x.key);
+  /* 내일 같은 주소에서 «새 메일»이 「2.급여+사무대행」 폴더로 들어온다 */
+  const fresh = { u:99, f:'보낸이', e:'lmk@cts.co.kr', t:'x@daum.net', s:'내일 온 메일',
+                  d:1756009999, r:0, g:0, a:0, z:1, _slug:'F2', _key:'F2:99' };
+  const bin = c.mbBinOfRow(fresh);
+  assert.ok(bin && bin.id === 'F1',
+    '새로 온 메일이 규칙을 안 따릅니다: ' + (bin ? bin.name : '(칸 없음)'));
+});
+
+test('★★ 「이 한 통만 따로」 옮긴 것은 규칙에 «안 눌린다»', () => {
+  /* ⚠ 눌리면 「분류」 단추가 뜻을 잃는다 — 눌러도 도로 규칙 칸으로 가 버린다 */
+  const c = load();
+  const x = find(c.mbCheckAll().mix, '씨티에스(주)');
+  c.mbCheckMoveTo(x.key);                       /* 그 주소는 «자문 칸»으로 정해 둔다 */
+  const one = c.mbCkRows().filter(v => String(v.e||'').toLowerCase() === x.em)[0];
+  c.__setPut(one._key, 'F2');                   /* 그 가운데 한 통만 손으로 되돌린다 */
+  const b = c.mbBinOfRow(one);
+  assert.ok(b && b.id === 'F2', '손으로 옮긴 한 통이 규칙에 눌렸습니다: ' + (b ? b.name : '(없음)'));
+});
+
+test('★★ 지워진 칸을 가리키는 규칙은 «없는 셈» 친다 — 아니면 그 메일이 사라진다', () => {
+  const c = load();
+  c.__setRule('lmk@cts.co.kr', 'ZZZ');            /* 그런 칸은 없다 */
+  const v = c.mbCkRows().filter(x => String(x.e||'').toLowerCase() === 'lmk@cts.co.kr')[0];
+  const b = c.mbBinOfRow(v);
+  assert.ok(b && b.id === 'F2', '지워진 칸을 가리키는 규칙을 그대로 따랐습니다: '
+    + (b ? b.name : '(어느 칸에도 없음)'));
+  /* 목록에서도 제자리에 있어야 한다 — 딱지만 맞고 목록에서 빠지면 사라진 것과 같다 */
+  assert.ok(c.mbRowFits(v, 'F2'), '지워진 칸 규칙 때문에 목록에서 빠졌습니다');
+});
+
+test('★★ 규칙은 «목록»에도 걸린다 — 딱지만 바뀌고 목록이 그대로면 두 곳에 겹쳐 보인다', () => {
+  const c = load();
+  c.__setRule('lmk@cts.co.kr', 'F1');             /* 「2.급여+사무대행」 에 있는 것을 자문 칸으로 */
+  const v = c.mbCkRows().filter(x => String(x.e||'').toLowerCase() === 'lmk@cts.co.kr')[0];
+  assert.ok(c.mbRowFits(v, '~F1'), '정한 칸의 목록에 안 나옵니다');
+  assert.ok(!c.mbRowFits(v, '~F2'), '옛 칸의 목록에도 그대로 남아 있습니다 — 두 곳에 겹칩니다');
+  assert.ok(!c.mbRowFits(v, 'F2'), '제 폴더 목록에도 그대로 남아 있습니다');
+});
+
+test('★ 정해 둔 것을 «무를» 수 있다 — 무르면 다시 다음메일 자리로', () => {
+  const c = load();
+  const x = find(c.mbCheckAll().mix, '씨티에스(주)');
+  c.mbCheckMoveTo(x.key);
+  const list = c.mbRuleList();
+  assert.ok(list.length, '정해 둔 것이 목록에 안 보입니다');
+  c.mbRuleUndo(list[0].key);
+  const v = c.mbCkRows().filter(y => String(y.e||'').toLowerCase() === x.em)[0];
+  const b = c.mbBinOfRow(v);
+  assert.ok(b && b.id === 'F2', '물렀는데 제자리로 안 돌아왔습니다: ' + (b ? b.name : '(없음)'));
 });
 
 test('★ 옮길 «칸이 없으면» 조용히 넘어가지 않고 말해 준다', () => {

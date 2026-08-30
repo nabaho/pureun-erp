@@ -12735,7 +12735,14 @@ function mbBins(){
 function mbBinBy(id){
   const key = String(id||'');
   const bare = key.charAt(0)===MB_BIN_P ? key.slice(1) : key;
-  return mbBins().find(b=>b.id===bare) || null;
+  /* ⚠ 예전에는 여기서 mbBins().find(…) 를 했다 — 메일 «한 통마다» 칸 목록을 훑는 셈이라
+       만 통이면 만 번이다. 「늘 이 칸으로」 규칙이 줄마다 이 함수를 부르면서 드러났다
+       (검사 `mail-dash-speed` 가 잡았다 — 240통에 482번). mbBinOfFolder 와 같은 길로
+       표를 «한 번» 만든다. 표는 그릴 때마다 버려지므로 낡을 틈이 없다. */
+  const _m = mbMemoOf();
+  let by = _m.binById;
+  if(!by){ by = _m.binById = {}; mbBins().forEach(b=>{ if(!by[b.id]) by[b.id] = b; }); }
+  return by[bare] || null;
 }
 /* 이 메일이 «옮겨진» 칸. 안 옮겼으면 빈 값 — 그러면 다음 자리를 그대로 따른다. */
 function mbPutOf(key){ return String((_mbPut||{})[key] || ''); }
@@ -12760,10 +12767,99 @@ function mbBinOfFolder(slug){
   if(!by){ by = _m.binByLink = {}; mbBins().forEach(b=>{ if(b.link && !by[b.link]) by[b.link] = b; }); }
   return by[slug] || null;
 }
-/* 이 메일이 «지금 어느 칸에 있나» — 옮긴 칸이 있으면 그것, 없으면 제 폴더를 맡은 칸 */
-function mbBinOfRow(v){
+/* ══════════════════════════════════════════════════════════════════════════
+   「이 주소는 «늘» 이 칸으로」 (대표 지시 2026-08-30)
+   ══════════════════════════════════════════════════════════════════════════
+   점검이 어긋난 분류를 찾아 한 번에 옮겨 줘도, 규칙이 없으면 «내일 온 메일»이
+   또 어긋난다. 옮기는 것은 손이고, 정해 두는 것은 규칙이다.
+
+   ★ 규칙은 «쪽지를 안 쓴다». 메일 한 통마다 자리를 적으면 7,000장을 적어야 하고,
+     새로 오는 메일에는 아무 소용이 없다. 규칙은 «묻는 자리»에서 한 번 본다 —
+     그래서 지난 메일과 앞으로 올 메일이 «같이» 제자리를 찾는다.
+
+   ⚠ 센 차례는 셋이다. ①한 통을 손으로 옮긴 쪽지(_mbPut) ②이 규칙 ③제 폴더.
+     ①이 가장 세다 — 「이 한 통만 따로」가 규칙에 눌리면 그 단추가 뜻을 잃는다.
+   ⚠ 다음메일에는 아무것도 안 쓴다. 우리 앱 안에서만 나누는 일이다.
+   ⚠ 두는 자리는 config/mailBinRule — mailbox 는 서버만 쓸 수 있고, 이것은 취향이다.
+   ⚠ 열쇠에서 점을 지운다(mbWhoKey). 이메일에는 점이 반드시 있어 안 지우면
+     저장이 통째로 실패한다. */
+let _mbBinRule = null;
+function mbBinRuleMap(){
+  if(_mbBinRule) return _mbBinRule;
+  _mbBinRule = {};
+  if(typeof Store!=='undefined' && Store.mode==='firebase'){
+    firebase.database().ref(DB_ROOT+'/config/mailBinRule').once('value')
+      .then(s=>{ _mbBinRule = s.val()||{}; renderPCSide(); renderMailPage(); })
+      .catch(()=>{});
+  }
+  return _mbBinRule;
+}
+/* 이 메일에 걸리는 규칙의 «칸 id» — 없으면 빈 값.
+   ⚠ 주소가 도메인보다 세다. 「그 회사는 급여 칸인데 이 사람만 자문」이 가능해야 한다.
+   ⚠ 지워진 칸을 가리키는 규칙은 «없는 셈» 친다 — 아니면 그 메일이 어느 칸에도
+     안 들어가 화면에서 통째로 사라진다. */
+function mbRuleBinOf(v){
+  const em = String((v&&v.e)||'').trim().toLowerCase();
+  if(!em) return '';
+  const m = _mbBinRule || mbBinRuleMap();
+  const one = m[mbWhoKey(em)];
+  if(one && mbBinBy(one)) return String(one);
+  const d = mbDomOf(em);
+  if(d && MB_PUB_DOM.indexOf(d) < 0){
+    const dd = m[mbWhoKey('@' + d)];
+    if(dd && mbBinBy(dd)) return String(dd);
+  }
+  return '';
+}
+/* 이 메일이 «지금 어느 칸에 있나» — 한 곳에서만 정한다.
+   ⚠ 목록을 거르는 곳(mbRowFits)과 화면에 적는 곳(mbBinOfRow)이 «같은 답»을 봐야 한다.
+     예전에는 둘이 따로 셈해서, 한쪽만 고치면 「목록에는 있는데 딱지는 다른 칸」이 됐다. */
+function mbBinIdOfRow(v){
   const put = mbPutOf(v._key);
-  return put ? mbBinBy(put) : mbBinOfFolder(v._slug);
+  if(put) return put;
+  const r = mbRuleBinOf(v);
+  if(r) return r;
+  const b = mbBinOfFolder(v._slug);
+  return b ? b.id : '';
+}
+/* 규칙을 정한다·지운다 — 화면을 먼저 고치고, 저장이 실패하면 되돌린다 */
+function mbRuleSet(email, binId, byDomain){
+  const em = String(email||'').trim().toLowerCase(); if(!em) return;
+  const key = mbWhoKey(byDomain ? ('@' + mbDomOf(em)) : em);
+  const bin = binId ? mbBinBy(binId) : null;
+  if(binId && !bin) return toast('그 칸을 찾지 못했습니다');
+  closeFolderMenu();
+  _mbBinRule = _mbBinRule || {};
+  const before = _mbBinRule[key];
+  if(bin) _mbBinRule[key] = bin.id; else delete _mbBinRule[key];
+  renderPCSide(); renderMailPage();
+  const what = byDomain ? ('🏢 ' + mbDomOf(em) + ' 전체') : ('✉ ' + em);
+  const msg = bin ? `${what} → 「${bin.name}」 으로 정했습니다 — 지난 메일도 앞으로 올 메일도 함께 갑니다`
+                  : `↩ ${what} 의 정해 둔 칸을 지웠습니다`;
+  if(typeof Store==='undefined' || Store.mode!=='firebase') return toast(msg, 7000);
+  const ref = firebase.database().ref(DB_ROOT+'/config/mailBinRule/'+key);
+  (bin ? ref.set(bin.id) : ref.remove())
+    .then(()=>toast(msg, 7000))
+    .catch(e=>{
+      if(before==null) delete _mbBinRule[key]; else _mbBinRule[key] = before;
+      renderPCSide(); renderMailPage();
+      toast('정하지 못했습니다 — '+((e&&e.message)||e), 9000);
+    });
+}
+/* 정해 둔 규칙 목록 — 점검 창에서 되돌리려고 */
+function mbRuleList(){
+  const m = mbBinRuleMap();
+  return Object.keys(m).map(k=>{
+    const bin = mbBinBy(m[k]);
+    return { key:k, who:k.replace(/_/g, '.'), binId:String(m[k]||''),
+             bin: bin ? bin.name : '(지워진 칸)', gone: !bin };
+  }).sort((a,b)=> String(a.bin).localeCompare(String(b.bin),'ko')
+    || String(a.who).localeCompare(String(b.who),'ko'));
+}
+
+function mbBinOfRow(v){
+  const id = mbBinIdOfRow(v);
+  return id ? mbBinBy(id) : null;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -13175,18 +13271,31 @@ function mbCheckMoveTo(key){
   if(!x) return;
   const to = mbBins().filter(b=>mbCkTypesOf(b.name).indexOf(x.want) >= 0)[0];
   if(!to) return toast('「'+x.want+'」 이 든 업무 칸이 없습니다 — 칸을 먼저 만들어 주세요', 7000);
-  const up = {};
-  let n = 0;
-  mbCkRows().forEach(v=>{
-    if(String((v&&v.e)||'').trim().toLowerCase() !== x.em) return;
-    /* 이어진 다음 폴더 그대로면 쪽지가 필요 없다 — mbBinPut 과 같은 셈 */
-    up[v._key] = (to.link && v._slug === to.link) ? null : to.id;
-    n++;
-  });
-  if(!n) return;
-  mbPutWrite(up, '📂 ' + (x.co ? '「'+x.co+'」 ' : '') + n + '통을 「' + to.name
-    + '」 으로 옮겼습니다 — 다음메일은 그대로입니다');
+  /* ★ 쪽지를 메일마다 적지 않고 «규칙 한 줄»로 정한다 (대표 지시 2026-08-30).
+       ⚠ 예전에는 그 주소 메일 전부에 쪽지를 붙였다. 지난 것은 그것으로 옮겨졌지만
+         «내일 온 메일»은 또 어긋났다 — 점검을 눌러도 같은 줄이 계속 되살아난다.
+       ⚠ 규칙은 묻는 자리에서 한 번 본다(mbBinIdOfRow). 그래서 지난 메일과 앞으로 올
+         메일이 «같이» 제자리를 찾고, 적어 두는 것도 한 줄뿐이다. */
+  mbRuleSet(x.em, to.id, false);
   mbCheckAll();
+}
+
+/* 정해 둔 칸을 무른다 — 열쇠 그대로 지운다(주소인지 도메인인지 여기서 안 따진다) */
+function mbRuleUndo(key){
+  const k = String(key||''); if(!k) return;
+  _mbBinRule = _mbBinRule || {};
+  const before = _mbBinRule[k];
+  delete _mbBinRule[k];
+  mbCheckAll(); renderPCSide(); renderMailPage();
+  if(typeof Store==='undefined' || Store.mode!=='firebase')
+    return toast('↩ 정해 둔 칸을 무릅니다', 6000);
+  firebase.database().ref(DB_ROOT+'/config/mailBinRule/'+k).remove()
+    .then(()=>toast('↩ 정해 둔 칸을 물렀습니다 — 다시 다음메일 자리를 따릅니다', 7000))
+    .catch(e=>{
+      if(before!=null) _mbBinRule[k] = before;
+      mbCheckAll(); renderPCSide(); renderMailPage();
+      toast('무르지 못했습니다 — '+((e&&e.message)||e), 9000);
+    });
 }
 
 /* ══ 점검 창 ══ */
@@ -13199,6 +13308,10 @@ function mbCheckHtml(){
     ['none', '담당을 모릅니다', r.none],
     ['ended','끝난 업체',       r.ended],
     ['dup',  '주소가 겹칩니다', r.dup],
+    /* ⚠ 「정해 둔 것」은 «이상한 것»이 아니다 — 그래서 칩 수(mbCkCount)에는 안 넣는다.
+         여기 두는 까닭은 되돌릴 자리가 달리 없어서다. 정한 곳과 무르는 곳이 멀면
+         아무도 정하지 않는다. */
+    ['rule', '정해 둔 칸',      mbRuleList()],
   ];
   const list = (TABS.filter(t=>t[0]===tab)[0] || TABS[0])[2] || [];
   /* ⚠ 무엇이 「이상하다」는 뜻인지 «그 칸 안»에 적는다 — 밖에 적으면 아무도 안 읽는다.
@@ -13211,8 +13324,21 @@ function mbCheckHtml(){
         + '회사를 이어 주면 그 회사 담당자가 저절로 따라옵니다.',
     ended:'자문이 <b>끝난 업체</b>인데 아직 메일이 옵니다. 담당자 칸에서는 빠져 있습니다.',
     dup:  '한 주소가 <b>두 업체</b>에 이어져 있습니다 — 담당자가 어느 쪽으로 잡힐지 흔들립니다.',
+    rule: '<b>「늘 이 칸으로」</b> 정해 둔 것입니다. 지난 메일도 앞으로 올 메일도 함께 갑니다. '
+        + '잘못 정했으면 여기서 무르십시오 — 무르면 다시 다음메일이 넣은 자리를 따릅니다.',
   };
   const H = [];
+  /* ⚠ 「정해 둔 칸」은 다른 넷과 «세우는 칸이 다르다» — 메일이 아니라 규칙 한 줄이다.
+       같은 표에 억지로 끼우면 빈 칸이 셋 생겨 무엇을 보는 표인지 알 수 없다. */
+  if(tab === 'rule'){
+    list.forEach(x=>{
+      H.push('<tr><td colspan="2"><div class="co">' + esc(x.who) + '</div></td>'
+        + '<td colspan="2"><span class="t">' + esc(x.bin) + '</span>'
+        + (x.gone ? ' <span class="em">— 칸이 지워졌습니다</span>' : '') + '</td>'
+        + '<td class="act"><button onclick="mbRuleUndo(\'' + esc(x.key) + '\')"'
+        + ' title="다시 다음메일이 넣은 자리를 따릅니다">무르기</button></td></tr>');
+    });
+  } else
   list.forEach(x=>{
     const act = tab==='mix'
       ? '<button class="pri" onclick="mbCheckMoveTo(\'' + esc(x.key) + '\')"'
@@ -13238,11 +13364,17 @@ function mbCheckHtml(){
   });
   const skipN = Object.keys(mbCkSkipMap()).length;
   const table = H.length
-    ? '<table><tr><th style="width:26%">업체 · 보낸이</th>'
+    ? (tab === 'rule'
+      ? '<table><tr><th colspan="2">주소 · 도메인</th><th colspan="2">늘 이 칸으로</th>'
+        + '<th style="width:17%"></th></tr>' + H.join('') + '</table>'
+      : '<table><tr><th style="width:26%">업체 · 보낸이</th>'
       + '<th style="width:11%">' + (tab==='mix' ? '푸른이알피' : '') + '</th>'
       + '<th style="width:20%">' + (tab==='mix' ? '지금 담긴 칸' : '') + '</th>'
-      + '<th>메일</th><th style="width:17%"></th></tr>' + H.join('') + '</table>'
-    : '<div class="mck-empty"><b>여기는 깨끗합니다</b>볼 것이 없습니다.</div>';
+      + '<th>메일</th><th style="width:17%"></th></tr>' + H.join('') + '</table>')
+    : (tab === 'rule'
+      ? '<div class="mck-empty"><b>아직 정해 둔 칸이 없습니다</b>'
+        + '「분류 ˅」 에서 <b>📌 늘 이 칸으로</b> 를 누르면 여기 쌓입니다.</div>'
+      : '<div class="mck-empty"><b>여기는 깨끗합니다</b>볼 것이 없습니다.</div>');
   return '<div class="mck-dim" onclick="if(event.target===this)mbCheckClose()">'
     + '<div class="mck">'
     + '<header><span>🔎</span><h2>메일함 점검</h2>'
@@ -13857,18 +13989,20 @@ function mbRowFits(v, id, idx0){
     if(w === me) return true;
     return !!w && mbSubsOfRow(v, idx).indexOf(me) >= 0;
   }
-  const put = mbPutOf(v._key);
   if(String(id).charAt(0)===MB_BIN_P){
     const bin = mbBinBy(id); if(!bin) return false;
-    return put ? (put === bin.id) : (!!bin.link && v._slug === bin.link);
+    return mbBinIdOfRow(v) === bin.id;
   }
   if(id==='*all' || id==='*tome'){
     /* 숨긴 칸의 메일은 전체에서도 뺀다 — 광고가 섞이면 「전체메일」이 광고함이 된다 */
     const b0 = mbBinOfRow(v);
     return !(b0 && mbHidden(b0.id));
   }
-  if(!put) return true;                                    /* 안 옮긴 것은 제자리 */
-  const bin = mbBinBy(put);                                /* 옮겼으면 그 칸에서만 */
+  /* ⚠ 규칙으로 다른 칸에 간 메일은 «제 폴더 목록»에서도 빠진다 — 손으로 옮긴 것과
+       같은 셈이다. 한쪽만 빼면 같은 메일이 두 칸에 겹쳐 통수가 안 맞는다. */
+  const cur = mbBinIdOfRow(v);
+  if(!cur) return true;                                    /* 맡은 칸이 없다 = 제자리 */
+  const bin = mbBinBy(cur);
   return !!(bin && bin.link === v._slug);
 }
 
@@ -14904,6 +15038,15 @@ function mbBinDelete(binId){
     + `메일은 하나도 사라지지 않습니다 — 다음메일은 처음부터 그대로였습니다.\n\n진행할까요?`)) return;
   const up = {};
   Object.keys(_mbPut||{}).forEach(k=>{ if(_mbPut[k]===b.id) up[k] = null; });
+  /* ⚠ 그 칸을 가리키던 «규칙»도 함께 지운다 — 남겨 두면 지워진 칸을 가리켜
+       그 주소 메일이 어느 칸에도 안 들어간다(mbRuleBinOf 가 한 번 더 막지만,
+       쓰레기를 남기지 않는 것이 낫다). */
+  const ruleUp = {};
+  Object.keys(_mbBinRule||{}).forEach(k=>{
+    if(_mbBinRule[k]===b.id){ ruleUp[k] = null; delete _mbBinRule[k]; } });
+  if(Object.keys(ruleUp).length && typeof Store!=='undefined' && Store.mode==='firebase'){
+    firebase.database().ref(DB_ROOT+'/config/mailBinRule').update(ruleUp).catch(()=>{});
+  }
   _mbBins = _mbBins || {};
   delete _mbBins[b.id];
   if(state.mbBox === MB_BIN_P + b.id) state.mbBox = '';
@@ -17119,6 +17262,53 @@ function mbOwnerPut(name){
 /* ⚠ 2026-08-26 로 이 창이 «우리 칸» 창이 되었다. 고르면 다음메일이 아니라 쪽지가 바뀐다.
      다음메일에서도 옮기는 옛 길은 맨 아래 한 줄로 접어 두었다 — 없애지는 않았다.
      (2026-08-25 에 만든 길이고, 다음메일 폴더를 진짜로 정리하려는 날이 올 수 있다) */
+/* 고른 메일이 «모두 한 주소»에서 온 것이면 그 주소, 아니면 빈 값.
+   ⚠ 여러 주소를 한꺼번에 정하지 않는다 — 무엇을 정했는지 모르는 채 규칙이 쌓인다. */
+function mbPickedOneAddr(){
+  const em = {};
+  mbPicked().forEach(v=>{ const e = String((v&&v.e)||'').trim().toLowerCase(); if(e) em[e] = 1; });
+  const ks = Object.keys(em);
+  return ks.length === 1 ? ks[0] : '';
+}
+/* 「늘 이 칸으로」 — 어느 칸인지 고르는 창 */
+function mbRuleAsk(email, ev){
+  if(ev) ev.stopPropagation();
+  const em = String(email||'').trim().toLowerCase(); if(!em) return;
+  const m = $('folderMenu'); if(!m) return;
+  const d = mbDomOf(em);
+  const pub = !d || MB_PUB_DOM.indexOf(d) >= 0;
+  const cur = mbBinRuleMap()[mbWhoKey(em)] || '';
+  const bins = mbBins().filter(b=>!mbHidden(b.id));
+  m.innerHTML = `<div class="fmhead">${esc(em)} <span>앞으로 늘 어느 칸으로</span></div>
+    <div class="fmlist">${bins.map(b=>`
+      <div class="fmi" style="padding-left:${14+Number(b.depth||0)*13}px"
+        onclick="mbRuleSet('${esc(em)}','${b.id}',false)">
+        ${cur===b.id?'✔ ':'📂 '}${esc(b.name)}</div>`).join('')}</div>
+    ${pub ? `<div class="dm-side-hint" style="padding:6px 9px">
+        ⚠ ${esc(d||'주소')} 는 «개인» 메일이라 회사 전체로는 정하지 않습니다</div>`
+      : `<div class="fmi" style="border-top:1px solid #eee;color:#2563d1;font-size:12px"
+          onclick="mbRuleAskDom('${esc(em)}',event)">🏢 ${esc(d)} «전체»를 한 칸으로 ›
+          <small>그 회사에서 오는 메일이 모두 그 칸으로 갑니다</small></div>`}
+    ${cur ? `<div class="fmi danger" onclick="mbRuleSet('${esc(em)}','',false)">↩ 정한 것 지우기
+        <small>다시 다음메일이 넣은 자리를 따릅니다</small></div>` : ''}`;
+  mbPlaceMenu(m, ev);
+}
+/* 도메인 전체를 한 칸으로 */
+function mbRuleAskDom(email, ev){
+  if(ev) ev.stopPropagation();
+  const em = String(email||'').trim().toLowerCase();
+  const d = mbDomOf(em); if(!d) return;
+  const m = $('folderMenu'); if(!m) return;
+  const cur = mbBinRuleMap()[mbWhoKey('@'+d)] || '';
+  const bins = mbBins().filter(b=>!mbHidden(b.id));
+  m.innerHTML = `<div class="fmhead">🏢 ${esc(d)} 전체 <span>앞으로 늘 어느 칸으로</span></div>
+    <div class="fmlist">${bins.map(b=>`
+      <div class="fmi" style="padding-left:${14+Number(b.depth||0)*13}px"
+        onclick="mbRuleSet('${esc(em)}','${b.id}',true)">
+        ${cur===b.id?'✔ ':'📂 '}${esc(b.name)}</div>`).join('')}</div>
+    ${cur ? `<div class="fmi danger" onclick="mbRuleSet('${esc(em)}','',true)">↩ 정한 것 지우기</div>` : ''}`;
+  mbPlaceMenu(m, ev);
+}
 function mbMove(ev){
   const picked = mbPicked(); if(!picked.length) return toast('고른 것이 없습니다');
   /* 숨긴 칸은 옮길 곳으로 내놓지 않는다 — 치운 칸에 넣으면 그 자리에서 사라진다 */
@@ -17138,6 +17328,20 @@ function mbMove(ev){
         onkeydown="if(event.key==='Enter')mbBinCreate();if(event.key==='Escape')closeFolderMenu()">
       <button onclick="mbBinCreate()">만들기</button>
     </div>
+    ${/* ── 「늘 이 칸으로」 (대표 지시 2026-08-30) ──
+         옮기는 것은 «이번 것»이고, 정해 두는 것은 «앞으로»다. 둘을 같은 창에 둔다 —
+         옮기고 나서 「또 오면 어떡하지」가 바로 드는 자리가 여기이기 때문이다.
+         ⚠ 고른 것이 «한 주소»일 때만 내놓는다. 여러 주소를 한꺼번에 정하면
+           무엇을 정했는지 모르는 채로 규칙이 쌓인다. */''}
+    ${(()=>{ const em = mbPickedOneAddr();
+      if(!em) return '';
+      const cur = mbBinRuleMap()[mbWhoKey(em)];
+      const b0 = cur ? mbBinBy(cur) : null;
+      return `<div class="fmi" style="border-top:1px solid #eee;color:#2563d1;font-size:12px"
+        onclick="mbRuleAsk('${esc(em)}',event)">
+        📌 ${esc(em)} 은 «늘» 이 칸으로 ›
+        <small>${b0 ? '지금은 「'+esc(b0.name)+'」 으로 정해 두었습니다'
+                    : '지난 메일도 앞으로 올 메일도 함께 갑니다'}</small></div>`; })()}
     <div class="fmi" style="border-top:1px solid #eee;color:#8c8c8c;font-size:12px"
       onclick="mbMoveDaum(event)" title="다음메일 폴더 자체를 옮깁니다 — 다음메일에서도 바뀝니다">
       ⚠ 다음메일에서도 옮기기 ›</div>`;
