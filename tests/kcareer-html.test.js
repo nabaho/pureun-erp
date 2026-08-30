@@ -1504,7 +1504,8 @@ test('★ 「퇴사」와 「이름 가림」은 다른 것이다 — 섞으면 
   assert.ok(!/pu==='retired'[\s\S]{0,120}setStaffStatus/.test(r),
     '⚠ 퇴사자의 이름 가림을 저절로 켜면 실적증명서 발급이 말없이 막힙니다');
   // 안내 문구는 표 아래 한 곳(_staffFoot)에서만 만든다
-  assert.match(funcSource('_staffFoot'), /저절로 켜지지 않습니다/, '다르다는 것을 화면에 적어야 합니다');
+  // 규칙은 화면 위 설명에 «한 번»만 적는다(표 아래 안내는 한 줄로 줄였다)
+  assert.match(source, /퇴사했다고 저절로 켜지지 않습니다/, '다르다는 것을 화면에 적어야 합니다');
   // 무엇이 막히는지 밝히고 묻는다
   assert.match(funcSource('staffRetire'), /실적증명서를 발급할 수 없게/,
     '무엇이 막히는지 확인창에 적어야 합니다');
@@ -1568,4 +1569,39 @@ test('★ 잠금 화면은 «왜» 잠겼는지 밝힌다 — 대표가 잠기�
   assert.match(a, /지금 접속/, '누구로 접속했는지 보여야 합니다');
   assert.match(a, /uid /, 'uid 를 보여야 진단할 수 있습니다');
   assert.match(a, /fbLogout\(\)/, '다른 계정으로 바꿀 길이 있어야 합니다');
+});
+
+/* ===== ★ 화면 군더더기 정리 (2026-08-30) ===== */
+
+test('★ 「양식 올리기」가 한 화면에 두 번 나오지 않는다', () => {
+  // 기관 양식 채우기 탭은 바로 위 툴바에 이미 올리기 단추가 있다
+  assert.match(source, /id="rcTplLib"[^>]*data-noadd/, 'rcTplLib 은 단추를 빼야 합니다');
+  assert.match(funcSource('renderFormLib'), /noAdd\?''/, 'data-noadd 면 단추를 안 그려야 합니다');
+});
+
+test('★ 긴 설명은 «한 자리»에서만 — 네 자리에 다 두면 네 번 나온다', () => {
+  const mounts = source.match(/data-formlib/g) || [];
+  // ⚠ 태그 «안»에서만 센다 — [^>]* 만 쓰면 아래 JS 주석의 data-help 까지 건너가 잡힌다
+  const helps = source.match(/<div[^>]*data-formlib[^>]*data-help[^>]*>/g) || [];
+  assert.ok(mounts.length >= 4, '그리는 자리는 넷 이상');
+  assert.equal(helps.length, 1, '설명은 한 자리에서만 (지금 ' + helps.length + ')');
+  assert.match(funcSource('renderFormLib'), /if\(help\) html\+=/, 'help 인 자리에서만 그려야 합니다');
+});
+
+test('★ 직원 표는 열 너비를 못박는다 — 안 주면 이름·직위·소속이 붙어 보인다', () => {
+  assert.match(source, /#staffMgrBody table\{width:100%;table-layout:fixed\}/);
+  ['c-no', 'c-nm', 'c-ti', 'c-br', 'c-st', 'c-ac'].forEach((c) => {
+    assert.match(source, new RegExp('col\.' + c + '\{width:'), c + ' 너비가 있어야 합니다');
+  });
+  const r = funcSource('renderStaffMgr');
+  assert.match(r, /<colgroup>/, '표에 colgroup 이 있어야 합니다');
+  assert.equal((r.match(/<col class="c-/g) || []).length, 6, '열 여섯 개와 짝이 맞아야 합니다');
+  // ⚠ /<th/ 로 세면 <thead> 까지 걸린다
+  assert.equal((r.match(/<th[ >]/g) || []).length, 6, '머리칸도 여섯 개');
+});
+
+test('★ 표 아래 안내는 한 줄 — 표보다 눈에 띄면 표를 못 읽는다', () => {
+  const f = funcSource('_staffFoot');
+  assert.ok(!/<br>/.test(f), '⚠ 줄바꿈을 넣어 다시 늘리지 말 것');
+  assert.ok(f.length < 500, '짧게 유지해야 합니다 (지금 ' + f.length + '자)');
 });
