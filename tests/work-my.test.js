@@ -51,9 +51,17 @@ const document = {
 function wkPut(el) { if (!el) return false; FOCUSED = el; return true; }
 function wkSplitOn() { return S.wkSplit !== false; }
 let PATCHED = null;
-function patchItem(id, f) { PATCHED = { id: id, f: f }; return Promise.resolve(true); }
+/* ⚠ «곧바로» 답하는 흉내다. 이 파일은 위에서 아래로 훑으며 검사하므로,
+   진짜 Promise 를 주면 .then 이 파일이 끝난 뒤에 돌아 아무것도 못 본다. */
+function patchItem(id, f) {
+  PATCHED = { id: id, f: f };
+  const done = { then(cb) { if (cb) cb(true); return done; }, catch() { return done; } };
+  return done;
+}
 
 const NS = 'work_erp';
+/* 상태를 바꾸면 «전에 무엇이었나»를 알아야 기록에 「A → B」로 적을 수 있다 */
+let items = { W1: { status: '진행중' } };
 let steps = {}, itemLogsCache = {};
 let SET = null, UPDATED = null, LOGGED = null, DELETED = null, _lastLogId = '';
 const fbDb = {
@@ -428,12 +436,28 @@ ok('줄 열기로 번지지 않는다 (상태를 바꾸려다 드로어가 열�
   stSelect('진행중', 'W1').indexOf('event.stopPropagation()') > 0);
 ok('따옴표가 든 업무ID도 안 깨진다', stSelect('진행중', "W'1").indexOf("W\\'1") > 0);
 
-PATCHED = null;
+PATCHED = null; LOGGED = null;
 setStatus('W1', '보류');
 ok('고른 값이 저장된다', PATCHED && PATCHED.id === 'W1' && PATCHED.f.status === '보류');
 PATCHED = null;
 setStatus('W1', '이상한값');
 ok('목록에 없는 값은 저장하지 않는다', PATCHED === null);
+/* ── 상태를 바꾸면 기록 한 줄이 저절로 남는다 (대표 지시 2026-08-27) ──
+   주간 기록이 이백오십칠 건 전부 0줄이었다. 아무 일도 없었던 것이 아니라
+   일어난 일을 아무도 «타자로 치지» 않았을 뿐이다. 상태를 바꾸는 것은 그 자체가 일이다. */
+PATCHED = null; LOGGED = null;
+items.W1.status = '진행중';
+setStatus('W1', '검토');
+ok('상태를 바꾸면 기록이 남는다', !!LOGGED);
+ok('무엇에서 무엇으로 갔는지 적는다', LOGGED && LOGGED.t === '상태 진행중 → 검토');
+ok('나중에 걸러 볼 수 있게 종류를 남긴다', LOGGED && LOGGED.k === 'st');
+PATCHED = null; LOGGED = null;
+setStatus('W1', '진행중');
+ok('제자리는 아무것도 안 한다 (표·보드에서 같은 값을 다시 고르는 일이 흔하다)',
+  PATCHED === null && LOGGED === null);
+ok('드로어 상태 칩도 같은 길로 간다 (patchItem 을 바로 부르면 기록이 안 남는다)',
+  grab('renderDrawer').indexOf("setStatus(\\'") > 0
+  && grab('renderDrawer').indexOf("patchItem(\\''+id+'\\',{status:") < 0);
 ok('눌러서 한 칸씩 도는 방식은 없앴다',
   W.indexOf('function cycleStatus(') < 0 && W.indexOf('cycleStatus(') < 0);
 ok('푸른이알피 원본 상태는 그대로 아래에 붙는다',
