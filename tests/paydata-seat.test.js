@@ -21,6 +21,9 @@ function cut(name) {
    그리는지 본다(글자 찾기가 아니라 렌더 결과를 본다). */
 function loadApp(appState) {
   const sandbox = { window: {}, console, Date, document: { getElementById: () => null } };
+  /* 파일 갈래를 보는 부품 — 한 줄 요약이 「글자를 뽑을 수 있는 것인가」를 이것으로
+     가린다(2026-08-29). 이 파일은 자리 권한을 보는 곳이라 갈래는 아무거나 좋다. */
+  sandbox.PuPaydataFiles = { fileKind: () => 'sheet' };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script(store, { filename: 'store.js' }).runInContext(sandbox);
@@ -39,6 +42,10 @@ function loadApp(appState) {
     /* 사업장 머리에 담당자 메일 한 줄이 붙는다(2026-08-29) — 이 파일이 보는 것은
        「남의 자리에서 지우기·폴더 만들기가 없는가」라 그 줄은 있기만 하면 된다. */
     cut('coMailChip'), cut('coMailDropHtml'), cut('coOwnerName'), cut('fixPeople'),
+    /* 대기 칸에 한 줄 요약이 붙는다(2026-08-29) — 이 파일이 보는 것은
+       「남의 자리에서 올리기·지우기가 없는가」라 요약은 있기만 하면 된다. */
+    "const READ_TEXT_KINDS = ['sheet','doc','pdf','text'];",
+    cut('sumBarHtml'), cut('sumTagHtml'), cut('canSumRow'), cut('sumRows'), cut('sumLeft'),
     cut('guessTag'), cut('pendTagOf'), cut('setPendTag'), cut('screenPending'),
     cut('drawerCounts'), cut('drawerModel'), cut('searchRows'),
     cut('folderCounts'), cut('folderRows'), cut('folderBar'), cut('folderEditorHtml'),

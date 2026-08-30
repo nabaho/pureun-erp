@@ -551,6 +551,82 @@
     return runParts([{ text: prompt }]);
   }
 
+  /* ══════ 한 줄 요약 (대표 지시 2026-08-29) ══════
+     대표: 「첨부메일을 자동으로 인식해서 어떤 내용인지 요약정리」
+
+     대기 칸에 자료가 예순 건 넘게 쌓이는데, 무엇인지 알려면 **하나씩 열어 봐야**
+     했다. 파일 이름이 「직현병국퇴.pdf」·「@@근로계약서(2026)-텃골팜--.xls」 같아서
+     이름만으로는 아무것도 알 수 없다.
+
+     ⚠ 표를 뽑는 것(readTableText)과 **다른 일**이다. 그것은 사람별 금액을 값으로
+       만드는 무거운 일이고, 이것은 「무엇인가」 한 줄이다. 프롬프트도 답도 작다.
+     ⚠ 값으로 쓰지 않는다 — **보고 고르는 데만** 쓴다. 그래서 틀려도 자료가
+       망가지지 않는다. 그 대신 사람 이름·금액을 **지어내지 말라**고 못 박는다. */
+  var SUM_PROMPT =
+    '아래는 급여 업무 서류에서 그대로 뽑아 낸 글자입니다.\n' +
+    '이것이 **무슨 서류인지** 한 줄로 알려 주십시오. JSON 으로만 답하십시오.\n' +
+    '{"sum":"한 줄 요약","kind":"ledger|attend|contract|output|etc",' +
+    '"month":"YYYY-MM 또는 빈 문자열","company":"사업장 이름 또는 빈 문자열",' +
+    '"people":0,"amount":"총액이 뚜렷하면 그대로, 아니면 빈 문자열"}\n' +
+    '규칙:\n' +
+    '- sum 은 **40자 안쪽 한 줄**. 예) 「8월 급여대장 · 12명」 「근로계약서 1부 · 박선희」\n' +
+    '- kind: 급여대장=ledger, 근태·출근부=attend, 근로계약서=contract,\n' +
+    '  명세서·이체·신고·원천징수=output, 그 밖=etc\n' +
+    '- **글자에 없는 것은 지어내지 마십시오.** 모르면 빈 문자열, 사람 수는 0.\n' +
+    '- people 은 표에 든 **근로자 줄 수**입니다. 합계 줄은 세지 마십시오.\n' +
+    '- 주민등록번호·계좌번호는 답에 **옮기지 마십시오.**';
+
+  function summarizeText(text, hint) {
+    if (!deps.fetch) return Promise.resolve({ ok: false, error: '판독 준비가 되지 않았습니다' });
+    var body = String(text == null ? '' : text).trim();
+    if (!body) return Promise.resolve({ ok: false, error: '읽을 글자가 없습니다' });
+    /* ⚠ 마지막 문지기 — 표 판독과 같은 자리에서 주민번호를 지운다.
+       요약이라고 덜 지키면 안 된다(나가는 것은 똑같다). */
+    var RM = global.PuRrnMask;
+    if (RM && RM.maskRrnInText) body = RM.maskRrnInText(body).text;
+    /* 요약은 앞부분만 봐도 된다 — 통째로 보내면 느리고 그대로 요금이다 */
+    if (body.length > SUM_MAX) body = body.slice(0, SUM_MAX) + '\n…(뒤는 줄임)';
+    var where = String(hint || '').trim();
+    var prompt = SUM_PROMPT
+      + (where ? '\n\n[이 글자는 여기서 뽑았습니다: ' + where + ']' : '')
+      + '\n\n=== 글자 시작 ===\n' + body + '\n=== 글자 끝 ===';
+    return runSum([{ text: prompt }]);
+  }
+
+  var SUM_MAX = 6000;
+
+  /* 요약은 표 판독과 **배관은 같고 뒤처리만 다르다** — afterWageRead 를 안 탄다
+     (사업자번호 조회·되메우기는 요약에 쓸데없고 그만큼 느리다). */
+  function runSum(parts) {
+    var after = function (j) {
+      var p = parseReply(j);
+      if (!p) return { ok: false, error: 'AI가 알아볼 수 없는 답을 보냈습니다' };
+      var n = Number(p.people || 0);
+      return {
+        ok: true,
+        sum: String(p.sum || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 80),
+        kind: String(p.kind || ''),
+        month: /^\d{4}-\d{2}$/.test(String(p.month || '')) ? String(p.month) : '',
+        company: String(p.company || '').trim().slice(0, 60),
+        people: (n > 0 && n < 10000) ? n : 0,
+        amount: String(p.amount || '').trim().slice(0, 40)
+      };
+    };
+    var fail = function (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    };
+    if (useProxy()) return askProxy(parts).then(after).catch(fail);
+    var keyP = deps.getKey ? Promise.resolve().then(deps.getKey) : Promise.resolve('');
+    return keyP.catch(function () { return ''; }).then(function (key) {
+      if (!key) return { ok: false, error: 'AI 키가 없습니다 — 포털 설정에서 등록해 주세요' };
+      return askAny(key, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: parts }], generationConfig: { temperature: 0 } })
+      }).then(after).catch(fail);
+    });
+  }
+
   /* 급여표(급여명세서·임금대장) 한 장(또는 여러 쪽)을 사람별 금액까지 판독한다.
      read() 와 같은 모델·재시도·키 조달 배관을 그대로 쓰되, 프롬프트와 결과 꼴만 다르다. */
   function readWageTable(dataUrl) { return readPairsWith(WAGE_PROMPT, dataUrl); }
@@ -947,6 +1023,8 @@
     readDocText: readDocText,
     readWageTable: readWageTable,
     readTableText: readTableText,
+    summarizeText: summarizeText,
+    SUM_MAX: SUM_MAX,
     readChangeNotice: readChangeNotice,
     autoOk: autoOk,
     /* 검사 전용 — 바깥 함수들은 실패를 한국어 글로 감싸 버려서, 서버가 준

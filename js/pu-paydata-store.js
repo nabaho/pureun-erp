@@ -1272,6 +1272,57 @@
     return deps.db.ref().update(up).then(function () { return true; });
   }
 
+  /* ══════ 한 줄 요약 적어 두기 (대표 지시 2026-08-29) ══════
+     읽는 것은 한 번만 하고 **적어 둔다** — 화면을 열 때마다 다시 읽으면
+     그것이 그대로 요금이고, 사람마다 따로 읽으면 같은 값을 여러 번 낸다.
+
+     ⚠ 자리는 그 줄이 있는 곳이다. 내 대기 칸이면 내 자리(내가 쓸 수 있다),
+       공용 칸이면 공용 칸(직원 누구나 쓸 수 있다) — 콘솔 규칙 그대로다.
+     ⚠ 값으로 쓰지 않는다. 보고 고르는 데만 쓰므로 틀려도 자료가 안 망가진다. */
+  function sumPath(id, seat) {
+    return seat
+      ? (DB_ROOT + '/u/' + seat + '/pending/' + id + '/sum')
+      : (DB_ROOT + '/pending_shared/' + id + '/sum');
+  }
+
+  /* 적어 둔 요약을 지운다 — 「다시 읽기」가 쓴다. 자리 규칙은 saveSum 과 같다. */
+  function clearSum(id, seat) {
+    if (!id) return Promise.reject(new Error('자료 번호가 없습니다'));
+    var up = {};
+    up[sumPath(id, seat)] = null;
+    return deps.db.ref().update(up);
+  }
+
+  function saveSum(id, seat, sum) {
+    if (!id) return Promise.reject(new Error('자료 번호가 없습니다'));
+    var s = sum || {};
+    /* 못 읽은 것도 적어 둔다 — 안 적으면 화면을 열 때마다 다시 읽는다(요금) */
+    var rec = {
+      at: Date.now(),
+      ok: s.ok === true,
+      text: String(s.sum || '').slice(0, 80),
+      kind: String(s.kind || ''),
+      month: String(s.month || ''),
+      people: Number(s.people || 0),
+      amount: String(s.amount || ''),
+      err: s.ok === true ? '' : String(s.error || '').slice(0, 80)
+    };
+    var up = {};
+    up[sumPath(id, seat)] = rec;
+    return deps.db.ref().update(up).then(function () { return rec; });
+  }
+
+  /* 아직 안 읽은 줄 — 요약이 없고, 글자를 뽑을 수 있는 것만.
+     ⚠ 한 번 실패한 것은 다시 안 읽는다(같은 까닭으로 또 실패한다).
+        사람이 「다시 읽기」를 누르면 그때 지운다. */
+  function needSum(rows, canRead) {
+    return (rows || []).filter(function (r) {
+      if (!r || !r.id) return false;
+      if (r.sum && r.sum.at) return false;
+      return canRead ? canRead(r) : true;
+    });
+  }
+
   /* 한 사업장의 담당자 메일 줄 — 화면이 그대로 그린다.
      ⚠ 같은 주소가 contacts 와 딸림값에 둘 다 있으면 한 번만 보인다.
      ⚠ 세무사무소는 **갈라서** 준다 — 업체 담당자와 뜻이 다르다(한 주소가 여러
@@ -1814,6 +1865,10 @@
     setCompanyOwner: setCompanyOwner,
     addCompanyEmail: addCompanyEmail,
     companyMails: companyMails,
+    saveSum: saveSum,
+    clearSum: clearSum,
+    needSum: needSum,
+    sumPath: sumPath,
     normalizeCompanies: normalizeCompanies,
     listCompanies: listCompanies,
     isPayrollCompany: isPayrollCompany,
