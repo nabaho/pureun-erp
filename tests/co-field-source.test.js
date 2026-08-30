@@ -174,6 +174,11 @@ function buildList(bizItems, cardItems, erp){
     ErpMatch: { ready: true, match: () => erp || null,
       /* 2026-08-28: coListBuild 가 전체를 한 번에 맞춘다 — 대역도 같은 답을 준다 */
       matchAll: list => { const out = {}; (list||[]).forEach(o=>{ if(o && erp) out[o.key] = erp; }); return out; } },
+    /* 2026-08-30: 예전에 판독한 등록증은 세금계산서 발급 메일이 «메모»에만 있다 —
+       회사로 올릴 때 그것을 되살린다. 대역도 «진짜와 같은 답»을 준다.
+       ⚠ 점(.)은 줄바꿈을 안 먹으므로 [^\n] 을 따로 쓰지 않는다. */
+    taxInvoiceFromText: v => { const m = String(v == null ? '' : v)
+      .match(/세금계산서.{0,60}?([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/); return m ? m[1] : ''; },
     coEffectiveExtra: () => null };
   vm.createContext(ctx);
   vm.runInContext(fnBody('coListBuild'), ctx);
