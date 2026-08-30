@@ -2555,12 +2555,21 @@ exports.hanaMessageBridge = functions
 const MSYNC = require("./mail-sync")({
   functions, getDatabase, getAuth, MD, MAIL_REGION,
   setCors, requireStaff, mailUserAsync, mailPass,
+  /* 메일 첨부를 급여데이터함 대기 칸으로 — 서버가 «스스로 훑을 때»와 같은 길이다.
+     ⚠ 여기서 새로 짓지 않는다. 갈래가 둘이 되면 한쪽만 고쳐, 손으로 넘긴 것만
+       임자를 못 찾거나 창고 자리가 달라지는 일이 생긴다. */
+  payMailStore: async (att, mail) => {
+    const db = getDatabase();
+    await payMailKnownList(db);
+    return payMailStoreOne(db, getStorage().bucket(PAYDATA_BUCKET), att, mail);
+  },
 });
 exports.syncMailbox = MSYNC.syncMailbox;
 exports.pullMailbox = MSYNC.pullMailbox;
 exports.readMailMessage = MSYNC.readMailMessage;
 exports.readMailAttachment = MSYNC.readMailAttachment;
 exports.searchMailbox = MSYNC.searchMailbox;
+exports.mailAttToPaydata = MSYNC.mailAttToPaydata;
 exports.moveMailMessages = MSYNC.moveMailMessages;
 exports.manageMailFolder = MSYNC.manageMailFolder;
 exports.flagMailMessages = MSYNC.flagMailMessages;

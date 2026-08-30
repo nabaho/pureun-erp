@@ -759,6 +759,13 @@ table.sbox tr.bad td{background:#fdf4f4}
 .dm-search input{flex:1;min-width:0;border:none;outline:none;font-family:inherit;font-size:13px;
   color:#1a1a1a;background:none;padding:0}
 .dm-search input:focus{outline:none;box-shadow:none;border:none}
+/* 첨부 한 개 = 내려받기 + 급여데이터함으로. 둘을 «붙여» 한 덩이로 보이게 한다 —
+   떨어뜨려 두면 어느 첨부의 단추인지 헷갈린다(첨부가 여럿일 때 실제로 그렇다). */
+.atts .attone{display:inline-flex;align-items:stretch;margin:0 6px 6px 0}
+.atts .attone .topay{border-left:none;border-radius:0 6px 6px 0;
+  color:#0f7a4d;background:#eafaf1;border-color:#bfe6d2;font-size:12px}
+.atts .attone .topay:hover{background:#dcf4e7}
+.atts .attone>button:first-child{border-radius:6px 0 0 6px;margin:0}
 /* 「본문까지 찾기」 — 찾는 말이 있을 때만 나온다(대표 결정 2026-08-30) */
 .dm-findbtn{height:32px;padding:0 11px;margin-left:8px;border:1px solid #c5d8f5;
   border-radius:4px;background:#eef3fb;color:#1d4ed8;font-size:12.5px;font-weight:600;cursor:pointer}
@@ -16883,8 +16890,15 @@ function mbReadHtml(){
     ${/* 🧾 세무사무실 띠 — 아는 주소면 「누구의 세무사무실인지」, 모르는 주소면 「등록할까요」
           (대표 승인 2026-08-28). 본문을 봐야 하므로 본문을 가져온 뒤에만 뜬다. */''}
     ${taxStripHtml(v)}
+    ${/* ── 첨부 (대표 결정 2026-08-30 「자료를 다른 앱으로 바로」) ──
+         내려받기 옆에 «급여데이터함으로»를 나란히 둔다. 예전에는 내려받아 →
+         급여데이터함을 열어 → 다시 올리는 세 걸음이었다.
+         ⚠ 담기는 곳은 «대기 칸»이다. 사업장·귀속월은 사람이 고른다 —
+           기계가 짐작해 내려놓으면 틀린 자리에 들어가도 아무도 모른다. */''}
     ${(o.atts&&o.atts.length) ? `<div class="atts">${o.atts.map((a,i)=>
-      `<button onclick="mbAtt(${i})" title="내려받기">📎 ${esc(a.name||'첨부')}${a.size?' · '+fmtMB(a.size):''}</button>`
+      `<span class="attone"><button onclick="mbAtt(${i})" title="내려받기">📎 ${esc(a.name||'첨부')}${a.size?' · '+fmtMB(a.size):''}</button>
+        <button class="topay" onclick="mbAttToPay(${i})"
+          title="급여데이터함 «대기 칸»으로 담습니다 — 사업장·귀속월은 거기서 고르십니다">→ 급여데이터함</button></span>`
     ).join('')}</div>` : ''}
     ${held ? `<div class="imghold">🖼 바깥에서 오는 그림 ${held}개를 막았습니다 —
       부르는 순간 보낸 쪽이 <b>언제 열었는지</b> 알게 됩니다.
@@ -17048,6 +17062,36 @@ function mbAtt(i){
       toast('📥 '+(j.name||a.name||'첨부')+' 를 내려받았습니다');
     })
     .catch(e=>toast('내려받지 못했습니다 — '+((e&&e.message)||e), 8000));
+}
+
+/* 첨부 하나를 급여데이터함 «대기 칸»으로 (대표 결정 2026-08-30).
+   ⚠ 여기서 창고에 직접 쓰지 않는다 — 그러려면 규칙을 새로 열어야 하고, 한 번 연
+     문은 닫기 어렵다. 서버가 대신 담는다(mailAttToPaydata).
+   ⚠ 보낸이·제목을 함께 보낸다 — 서버가 그것으로 «누구 자리»인지 짚는다.
+     못 짚으면 공용 대기 칸에 남고, 그 까닭(why)도 함께 알려 준다. */
+function mbAttToPay(i){
+  const o = state.mbOpen||{}; const a = (o.atts||[])[i]; if(!a) return;
+  const v = mbOneRow(o.slug, o.uid) || {};
+  const u = firebase.auth().currentUser;
+  if(!u) return toast('로그인이 필요합니다');
+  toast('📤 급여데이터함으로 담고 있습니다…', 4000);
+  u.getIdToken()
+    .then(tok=>fetch(MB_FN+'mailAttToPaydata', { method:'POST',
+      headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
+      body: JSON.stringify({ slug:o.slug, uid:o.uid, index:i, part:String(a.part||''),
+        from:String(v.e||''), subject:String(v.s||'') }) }))
+    .then(r=>r.json().catch(()=>({})))
+    .then(j=>{
+      if(!j.ok) throw new Error(j.error||'담지 못했습니다');
+      /* ⚠ «어디로» 갔는지 반드시 말한다 — 담았다고만 하면 급여데이터함을 열어
+           한참 찾게 된다. 임자를 못 찾았으면 그 까닭까지. */
+      toast(j.shared
+        ? '📥 '+(j.name||'첨부')+' 를 급여데이터함 «공용 대기 칸»에 담았습니다'
+          + (j.why?' — '+j.why:'')+' · 사업장·귀속월을 골라 주세요'
+        : '📥 '+(j.name||'첨부')+' 를 급여데이터함 대기 칸에 담았습니다'
+          + (j.seat?' ('+j.seat+' 자리)':'')+' · 사업장·귀속월을 골라 주세요', 10000);
+    })
+    .catch(e=>toast('담지 못했습니다 — '+((e&&e.message)||e), 9000));
 }
 
 /* ══════ 표시 켜고 끄기 — 중요(★) · 읽음 (대표 지시 2026-08-25) ══════
