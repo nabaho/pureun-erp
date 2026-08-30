@@ -149,7 +149,11 @@ test('★ 채울 때 secrets 를 건네준다 — 안 건네면 골라도 안 �
 
 test('★ 이미 넣어 둔 여덟 칸은 그대로 둔다 — 저장이 남의 칸을 지우면 안 된다', () => {
   const fn = cutFn(bare, 'function savePersonalInfo(');
-  assert.match(fn, /const o=get\('profile_info'\)\|\|\{\}/,
+  /* ⚠ 예전 기준은 get('profile_info')||{} 였는데 «그것이 바로 버그였다».
+     get 은 없는 키에 [] 를 준다 → [] 는 참이라 배열을 그대로 쓰게 되고,
+     배열에 이름표(o.name=…)를 붙이면 JSON 으로 바뀔 때 통째로 버려져 저장이 안 됐다.
+     piObj() 가 늘 «보통 객체»를 준다. 뜻은 그대로 — 있던 것을 읽어 얹는다. */
+  assert.match(fn, /const o=piObj\(\)/,
     '있던 것을 읽어 얹어야 합니다 — 빈 것으로 시작하면 화면에 없는 칸이 지워집니다');
   assert.match(fn, /if\(el\)/, '화면에 없는 칸은 건드리지 않아야 합니다');
 });

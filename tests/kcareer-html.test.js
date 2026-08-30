@@ -1807,3 +1807,58 @@ test('★ 이 화면에서도 푸른이알피에서 가져올 수 있다', () =>
   assert.match(sec, /onclick="puSyncNow\(\)"/, '가져오기 단추가 있어야 합니다');
   assert.match(sec, /onclick="puUndoLastSync\(\)"/, '되돌리기도 있어야 합니다');
 });
+
+/* ===== ★ 이력서가 왜 비었는지 알려 준다 (2026-08-30) ===== */
+
+test('★ 기본정보가 없으면 «왜» 비었는지 이력서 위에 알려 준다', () => {
+  // 개인정보를 파일에서 빼기 전에는 박아 둔 기본값이 이 사정을 가렸다.
+  // 이제 비면 빈 표만 보이므로 고장으로 보인다 — 이유와 갈 길을 함께 준다.
+  assert.match(source, /id="cvNeedInfo"/, '알림 자리가 있어야 합니다');
+  const r = funcSource('renderQuickCV');
+  assert.match(r, /_cvNeedInfo\(!\(F\.name\|\|F\.birth/, '비었는지 보고 띠를 켜야 합니다');
+  const n = funcSource('_cvNeedInfo');
+  assert.match(n, /goPersonalInfo\(\)/, '넣으러 가는 단추가 있어야 합니다');
+  assert.match(n, /cvAutoFill\(\)/, '넣고 온 뒤 다시 채우는 단추도 있어야 합니다');
+  assert.match(n, /if\(!show\)\{[\s\S]{0,80}display='none'/, '채워지면 스스로 사라져야 합니다');
+});
+
+test('★ 알림 띠는 시트 «밖»에 있고 인쇄에 찍히지 않는다', () => {
+  const i = source.indexOf('id="cvNeedInfo"');
+  const j = source.indexOf('id="cvSheet"');
+  assert.ok(i > 0 && j > i, '⚠ 시트 안에 넣으면 renderQuickCV 가 지우고 PDF 에도 찍힙니다');
+  assert.match(source, /@media print\{ #cvNeedInfo\{display:none!important\} \}/);
+});
+
+test('★ 「기본정보 넣으러 가기」는 그 칸까지 데려간다', () => {
+  const g = funcSource('goPersonalInfo');
+  assert.match(g, /nav_to\('page-settings'/, '환경설정으로 가야 합니다');
+  assert.match(g, /data-tab="personal"/, '개인정보보관 탭을 열어야 합니다');
+  assert.match(g, /getElementById\('pi-name'\)/, '성명 칸까지 데려가야 합니다');
+});
+
+/* ===== ★★ 기본정보가 저장되지 않던 진짜 원인 (2026-08-30) ===== */
+
+test('★★ profile_info 는 «보통 객체»로만 다룬다 — 배열이면 저장이 통째로 버려진다', () => {
+  // get() 은 없는 키에 [] 를 준다. [] 는 참이라 get(...)||{} 가 배열을 그대로 넘기고,
+  // 배열에 o.name='…' 을 붙여도 JSON.stringify 는 그것을 버린다 → localStorage 에 [] 만 남는다.
+  const po = funcSource('piObj');
+  assert.match(po, /!Array\.isArray\(o\)/, '배열이면 빈 객체로 봐야 합니다');
+  assert.match(po, /typeof o==='object'/);
+  // ⚠ 쓰는 곳은 반드시 piObj() 를 거친다
+  ['savePersonalInfo', 'cvSetPhoto'].forEach((fn) => {
+    const src = funcSource(fn);
+    assert.match(src, /piObj\(\)/, fn + ' 은 piObj() 를 써야 합니다');
+    assert.ok(!/get\('profile_info'\)\|\|\{\}/.test(src),
+      '⚠ ' + fn + ' 에서 get(...)||{} 로 되돌리면 저장이 다시 사라집니다');
+  });
+  assert.match(funcSource('printCV'), /const info=piObj\(\)/, '이력서 메모도 마찬가지입니다');
+});
+
+test('★★ 이미 [] 가 들어간 기기를 부팅 때 바로잡는다', () => {
+  assert.match(source, /if\(Array\.isArray\(o\)\) set\('profile_info',\{\}\)/,
+    '옛 배열을 빈 객체로 되돌려야 합니다');
+  // ⚠ 값이 있으면 손대지 않아야 한다(멱등)
+  const i = source.indexOf("if(Array.isArray(o)) set('profile_info',{})");
+  const seg = source.slice(i - 200, i + 60);
+  assert.match(seg, /var o=get\('profile_info'\)/, '먼저 읽고 배열일 때만 바로잡습니다');
+});
