@@ -169,6 +169,15 @@ public final class MainActivity extends Activity {
                     code.setText("");
                     refresh();
                     Toast.makeText(this, "연결되었습니다. 알림 접근을 허용해 주세요.", Toast.LENGTH_LONG).show();
+                    /* ★★ 연결되자마자 문자 읽기를 «바로» 묻는다 (2026-08-30 대표: 「휴대폰
+                         문자 연결할 수 있게 해라」 — 연결은 됐는데 문자가 0건이었다).
+                       왜 여기인가: 15분 훑기는 이 권한이 있어야만 돈다. 그런데 여태는
+                       「지난 문자 가져오기」를 눌러야만 물어봤고, 그 한 번을 안 누르면
+                       훑기가 조용히 아무것도 안 했다 — 연결만 해 놓고 며칠을 기다린 것이
+                       그래서다. 방금 «스스로 연결한» 참이라 무엇에 쓰는 권한인지도 가장 분명하다.
+                       ⚠ 거절해도 앱은 그대로 돈다(알림 길은 이 권한과 무관). 거절하면
+                         화면에 노란 띠가 남아 언제든 다시 켤 수 있다. */
+                    askThenImport();
                 });
             } catch (Exception error) {
                 runOnUiThread(() -> {
