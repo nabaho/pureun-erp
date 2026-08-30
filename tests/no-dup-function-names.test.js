@@ -18,6 +18,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { stripComments, stripJs } = require('./strip-comments');
+
 const ROOT = path.join(__dirname, '..');
 const 안봄 = new Set(['node_modules', '.git', 'docs', 'backups', 'templates', '.claude', 'coverage']);
 
@@ -31,8 +33,15 @@ function 파일들(dir, out) {
   return out;
 }
 
-/* ⚠ 주석을 먼저 걷는다 — 잘 쓴 «설명»이 검사를 통과시키면 안 된다 */
-const 걷기 = s => s.replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, ' ');
+/* ⚠ 주석을 먼저 걷는다 — 잘 쓴 «설명»이 검사를 통과시키면 안 된다.
+   ⚠ 손으로 `/\*…\*\/` 를 지우지 말 것. 마크업의 accept="image/별표" 가 주석
+     여는 표로 읽혀 «진짜 코드»를 통째로 삼킨다(2026-08-30: 673KB 중 230KB).
+     삼켜지면 여기 있어야 할 function 선언이 사라져 «겹쳐도 초록»이 된다.
+     그래서 공용 걷개를 쓴다 — 까닭은 tests/strip-comments.js 머리글에 있다. */
+const 걷기 = (raw, p) => {
+  const s = String(raw).replace(/\r\n/g, '\n');
+  return /\.js$/i.test(p) ? stripJs(s) : stripComments(s);
+};
 
 function 겹친이름(src) {
   const 셈 = {};
@@ -45,7 +54,7 @@ function 겹친이름(src) {
 test('★★ 한 파일 안에 «같은 이름의 함수»가 둘이 아니다 (저장소 전체)', () => {
   const 걸린것 = [];
   for (const p of 파일들(ROOT, [])) {
-    const dup = 겹친이름(걷기(fs.readFileSync(p, 'utf8')));
+    const dup = 겹친이름(걷기(fs.readFileSync(p, 'utf8'), p));
     if (dup.length) 걸린것.push(path.relative(ROOT, p).replace(/\\/g, '/') + ' → ' + dup.join(', '));
   }
   assert.deepEqual(걸린것, [],
