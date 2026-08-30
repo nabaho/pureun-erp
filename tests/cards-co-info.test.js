@@ -216,7 +216,14 @@ test('유형(자문·급여)은 제 칸을 갖는다', () => {
   const labels = th.map(x => x.replace(/<[^>]+>/g, '').replace(/\$\{[^}]*\}/g, '').trim());
   const iName = labels.indexOf('상호');
   const iType = labels.findIndex(l => l.indexOf('유형') === 0);
-  assert.ok(iName >= 0 && iType === iName + 1, '상호 바로 다음 칸이 유형이 아니다');
+  /* ⚠ 「상호 바로 다음」이 아니라 「제 칸을 갖는다」를 본다 (2026-08-30).
+     이 검사가 지키려던 것은 «유형이 상호 칸 안에 붙어 밀리는 것»이지 자리 차례가
+     아니다. 폴더가 제 칸으로 빠지면서 둘 사이에 들어왔는데, 그것으로 이 검사가
+     깨지면 검사가 뜻보다 좁게 적힌 것이다. */
+  assert.ok(iName >= 0, '상호 칸이 없다');
+  assert.ok(iType > iName, '유형이 제 칸을 못 갖거나 상호보다 앞에 있다');
+  const nameTh = th[iName].replace(/<[^>]+>/g, '');
+  assert.ok(nameTh.indexOf('유형') < 0, '유형이 상호 칸 «안»에 있다 — 상호가 길면 밀린다');
 });
 
 test('마지막에 남는 폭을 먹는 빈 칸을 둔다', () => {
