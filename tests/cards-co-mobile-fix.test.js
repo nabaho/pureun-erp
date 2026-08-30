@@ -438,18 +438,31 @@ test('★ I5 — 이알피 이력 칸 글자에 어두운 색이 정해져 있�
 });
 
 test('★ I5 — .erpimport-row 안 사업 이름에 어두운 색이 정해져 있다 (이알피에서 가져오기)', () => {
+  /* 2026-08-30 색을 팔레트로 줄이며 값이 바뀌었다. 지켜야 할 것은 값이 아니라
+     「밝은 바탕 + 짙은 글자, 그리고 PC(.modal)가 쓰는 그 색과 같다」는 것이다. */
+  const P = require('./lib-palette.js');
   const rule = cssRule('.erpimport-row');
-  assert.match(rule, /background:#f7f9fc/, '전제: 바탕은 밝은 색이다');
+  const bg = P.colorOf(rule, 'background');
+  assert.ok(bg && P.isLight(bg), '전제: 바탕은 밝은 색이다 — 지금은 ' + bg);
   const m = rule.match(/color:(#[0-9a-fA-F]{3,6})/);
   assert.ok(m, '회색 설명줄과 파란 「가져오기」 사이에서 사업 이름만 안 보이게 됩니다');
-  assert.doesNotMatch(m[1].toLowerCase(), /^#(fff|f{6}|f3f3f3)$/);
-  /* PC 는 #folderDlg 가 .modal 이라 body.pc .modal 이 #1b2536 으로 덮고 있었다 —
-     같은 색을 써야 PC 모양이 안 달라진다. */
-  assert.equal(m[1].toLowerCase(), '#1b2536', 'PC(.modal)가 쓰던 색과 달라지면 PC 모양이 바뀝니다');
+  assert.ok(P.contrast(m[1], bg) >= 4.5,
+    '바탕과 글자가 안 갈라진다 — 사업 이름이 안 보입니다: ' + m[1] + ' on ' + bg);
+  /* PC 는 #folderDlg 가 .modal 이라 body.pc .modal 이 덮고 있었다 —
+     «같은 색»을 써야 PC 모양이 안 달라진다(어떤 색인지는 팔레트가 정한다). */
+  const pcInk = P.colorOf((source.match(/body\.pc \.modal\{([^}]*)\}/g) || [])
+    .map(r => r).find(r => /background/.test(r)) || '', 'color');
+  assert.strictEqual(P.norm(m[1]), pcInk, 'PC(.modal)가 쓰던 색과 달라지면 PC 모양이 바뀝니다');
 });
 
 test('★ I5 — PC 쪽 밝은 테마 덮기(body.pc .modal)는 그대로다', () => {
-  assert.match(source, /body\.pc \.modal\{background:#fff;border-color:#e4e8f0;color:#1b2536\}/);
+  /* 2026-08-30 값 대신 규칙 — 「밝은 바탕 · 옅은 테두리 · 짙은 글자」 */
+  const P = require('./lib-palette.js');
+  const rule = (source.match(/body\.pc \.modal\{([^}]*background[^}]*)\}/) || [])[1] || '';
+  assert.ok(rule, 'body.pc .modal 의 밝은 테마 덮기가 사라졌다');
+  assert.ok(P.isLight(P.colorOf(rule, 'background')), '모달 바탕이 밝지 않다: ' + rule);
+  assert.ok(P.isLight(P.colorOf(rule, 'border-color')), '테두리가 옅지 않다: ' + rule);
+  assert.ok(P.isDark(P.colorOf(rule, 'color')), '글자가 짙지 않다 — 안 읽힌다: ' + rule);
 });
 
 /* ══════════════════════════════════════════════════════════════════════

@@ -181,6 +181,12 @@ ok('★★ 공휴일 이름이 «날짜 줄»에 붙어 있다 — 칩 줄을 �
    /<div class="mc-dl">.*\$\{holLabel\}/.test(CODE),
    '공휴일이 칩 자리로 돌아갔다 — 진짜 일정이 「+n건」으로 숨는다');
 
-ok('★ 공휴일 날짜가 빨갛다 — 이름과 한 덩어리로 읽히게',
-   /\.mc-date\.hol-c\{[^}]*color:#d93025/.test(CODE),
-   '공휴일 날짜 색이 사라졌다');
+test('★ 공휴일 날짜가 빨갛다 — 이름과 한 덩어리로 읽히게', () => {
+  /* 2026-08-30 팔레트로 줄이며 #d93025 가 #dc2626 이 됐다. 값이 아니라
+     「빨간 계열인가」를 본다 — 안 그러면 색을 정리할 때마다 여기가 깨진다. */
+  const P = require('./lib-palette.js');
+  const rule = (CODE.match(/\.mc-date\.hol-c\{([^}]*)\}/) || [])[1] || '';
+  const c = P.colorOf(rule, 'color');
+  assert.ok(c, '공휴일 날짜 색이 사라졌다');
+  assert.ok(P.isRed(c), '공휴일 날짜가 빨간 계열이 아니다: ' + c);
+});

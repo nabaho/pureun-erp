@@ -233,11 +233,15 @@ t('복사에서 확인 필요를 밝힌다', /\(확인 필요\)/.test(WORK), tru
 // 캘린더 레이어
 t('캘린더에 단계 기한 층이 있다', /\['sdue','단계 기한'/.test(WORK), true);
 // 네 번째 칸이 기본 켬. 뒤에 짧은 이름·묶음이 더 붙어도 뜻은 같다.
-t('기본으로 켜져 있다', /\['sdue','단계 기한',\s*'#b91c1c',\s*1\s*[,\]]/.test(WORK), true);
+/* 2026-08-30 색을 팔레트로 줄이며 값이 바뀌었다 — 못 박는 것은 «색값»이 아니라
+   「네 번째 칸이 기본 켬(1)」이다 (CLAUDE.md 「검사를 쓰는 규칙」) */
+t('기본으로 켜져 있다', /\['sdue','단계 기한',\s*'#[0-9a-fA-F]{3,6}',\s*1\s*[,\]]/.test(WORK), true);
 t('★ 캘린더에서 끌어 옮길 수 없다',
   /if\(L\.sdue\)[\s\S]{0,400}?add\(pd\.date,\{k:'sdue'[^}]*\}\)/.test(WORK)
   && !/k:'sdue'[^}]*drag:1/.test(WORK), true);
-t('확인 여부로 색을 나눈다', /pd\.verified\?'#b91c1c':'#b45309'/.test(WORK), true);
+/* 지켜야 할 것은 「확인된 것과 아닌 것의 색이 «서로 다르다»」이지 어떤 색인지가 아니다 */
+const _sd = WORK.match(/pd\.verified\?'(#[0-9a-fA-F]{3,6})':'(#[0-9a-fA-F]{3,6})'/);
+t('확인 여부로 색을 나눈다', !!_sd && _sd[1].toLowerCase() !== _sd[2].toLowerCase(), true);
 t('그 달에 없는 날짜는 안 넣는다', /if\(!pd\|\|!pd\.date\|\|!map\[pd\.date\]\) return;/.test(WORK), true);
 t('남의 건은 안 보인다(팀 보기 제외)',
   /if\(L\.sdue\)[\s\S]{0,200}?if\(!teamWide&&!isOf\(it,who\)\) return;/.test(WORK), true);

@@ -120,7 +120,13 @@ test('한 칩만 끄고 켜는 길도 그대로 있다', () => {
 });
 
 test('묶음에 켜진 게 하나도 없으면 이름도 흐려진다', () => {
-  assert.match(CSS, /\.laygp\.on\{color:#7d8899\}/);
+  /* 2026-08-30 값 대신 규칙 — 「켜진 게 없으면 이름이 «흐린 회색»으로 물러난다」 */
+  const P = require('./lib-palette.js');
+  const on = (CSS.match(/\.laygp\.on\{([^}]*)\}/) || [])[1] || '';
+  const c = P.colorOf(on, 'color');
+  assert.ok(c && P.isGray(c), '흐린 회색이 아니다: ' + on);
+  assert.ok(P.lum(c) > 0.05 && P.lum(c) < 0.5,
+    '까맣거나 너무 밝다 — 「흐리다」로 안 읽힌다: ' + c);
   assert.match(html, /class="laygp on" onclick="calLayGroup\('mine'\)"/);
 });
 

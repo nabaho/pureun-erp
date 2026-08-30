@@ -189,7 +189,12 @@ test('삭제 단추가 「명함·등록증이 지워진다」고 딱지에 적�
 
 test('삭제 단추가 다른 단추와 다르게 보인다', () => {
   assert.ok(HTML.includes('.codel{'), '같은 회색이면 손이 미끄러진다');
-  assert.match(HTML, /\.codel\{[^}]*#a50e0e/);
+  /* 2026-08-30 색을 팔레트로 줄이며 #a50e0e 가 사라졌다. 지켜야 할 것은 «어떤 빨강»이
+     아니라 「삭제가 빨간 계열이라 다른 단추와 갈라진다」는 것이다 (CLAUDE.md). */
+  const P = require('./lib-palette.js');
+  const codel = (HTML.match(/\.codel\{([^}]*)\}/) || [])[1] || '';
+  assert.ok(P.colorsIn(codel).some(P.isRed),
+    '삭제 단추에 빨간 계열이 없다 — 손이 미끄러진다: ' + codel);
 });
 
 /* ── 개수 보기 ── */

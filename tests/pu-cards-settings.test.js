@@ -137,9 +137,14 @@ t('★ 인라인일 때 setbtn 을 만드는 코드가 있다', /class="setbtn" 
 t('설명에서 태그를 지우는 정리 함수가 있다', /const plain = s=>String\(s\)\.replace\(\/<\[\^>\]\+>\/g,''\);/.test(src), true);
 
 /* ═══ 7. ★ 안 보이던 글자 — CSS 변수 덮어쓰기가 환경설정 화면까지 간다 ═══ */
+/* 2026-08-30 색을 팔레트로 줄이며 값이 바뀌었다 — «어떤 색»이 아니라
+   「밝은 테마 변수가 두 곳에 함께 걸린다 · 모달만 밝은 바탕과 짙은 글자를 갖는다」를 본다 */
+const CP = require('./lib-palette.js');
 t('★ 밝은 색 변수가 #pcSettings 에도 적용된다',
-  /body\.pc \.modal,body\.pc #pcSettings\{\s*\n\s*--ink:#1b2536;/.test(src), true);
-t('모달 전용 배경·글자색은 그대로 모달에만', /body\.pc \.modal\{background:#fff;border-color:#e4e8f0;color:#1b2536\}/.test(src), true);
+  /body\.pc \.modal,body\.pc #pcSettings\{\s*\n\s*--ink:#[0-9a-fA-F]{3,6};/.test(src), true);
+const pcModal = (src.match(/body\.pc \.modal\{([^}]*background[^}]*)\}/) || [])[1] || '';
+t('모달 전용 배경·글자색은 그대로 모달에만',
+  !!pcModal && CP.isLight(CP.colorOf(pcModal, 'background')) && CP.isDark(CP.colorOf(pcModal, 'color')), true);
 
 /* ═══ 8. 사이드바 — 자료함·환경설정 사이 간격 ═══ */
 t('★ 사이드바 설정 버튼에 아래쪽 여백이 생겼다', /\.pcside-settings\{[^}]*margin-bottom:8px/.test(src), true);
