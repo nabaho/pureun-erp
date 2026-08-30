@@ -22,20 +22,23 @@ function tabBar(){
   return src.slice(i, j);
 }
 
-test('기업 상세 단추에 개수가 붙어 있다', () => {
+/* ⚠ 예전에는 「기업 상세」라는 «글자»로 이 단추를 찾았다. 2026-08-30 에 등록증
+   서류함 단추의 말풍선에 「기업 상세」가 들어가자(회사는 저기서 본다는 안내다) 그것이
+   먼저 걸려 엉뚱한 단추를 집었다 — 검사는 깨졌는데 화면은 멀쩡했다.
+   단추가 «하는 일»(openCoPage)로 찾는다. 글귀는 바뀌어도 하는 일은 안 바뀐다. */
+function coTabBtn(){
   const bar = tabBar();
-  const i = bar.indexOf('기업 상세');
-  assert.ok(i > 0, '기업 상세 단추가 없다');
-  /* 그 단추 안(</button> 까지)에 숫자 칸이 있어야 한다 */
-  const btn = bar.slice(i, bar.indexOf('</button>', i));
-  assert.match(btn, /<span>/, '개수 칸이 없다');
+  const i = bar.indexOf('openCoPage()');
+  assert.ok(i > 0, '기업 상세로 가는 단추가 없다');
+  return bar.slice(i, bar.indexOf('</button>', i));
+}
+
+test('기업 상세 단추에 개수가 붙어 있다', () => {
+  assert.match(coTabBtn(), /<span>/, '개수 칸이 없다');
 });
 
 test('개수를 coList() 에서 가져온다 — 폴더 「전체」와 같은 셈이어야 한다', () => {
-  const bar = tabBar();
-  const i = bar.indexOf('기업 상세');
-  const btn = bar.slice(i, bar.indexOf('</button>', i));
-  assert.match(btn, /coList\(\)\.length/, '따로 세면 두 숫자가 어긋난다');
+  assert.match(coTabBtn(), /coList\(\)\.length/, '따로 세면 두 숫자가 어긋난다');
 });
 
 test('폴더 「전체」도 같은 셈을 쓴다 — 두 곳이 갈라지지 않는다', () => {

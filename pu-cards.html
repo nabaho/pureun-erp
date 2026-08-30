@@ -11812,7 +11812,11 @@ function renderPCSide(){
      지금 어디에 있는지 알 수 없다 — 켜지는 것은 언제나 하나여야 한다. */
   h += `<div class="sidetab sidetabv">
     <button class="${!onCo&&state.tab==='card'?'on':''}" onclick="switchTab('card')" title="명함">📇<em>명함</em><span>${all.filter(i=>i.kind==='card').length.toLocaleString()}</span></button>
-    <button class="${!onCo&&state.tab==='biz'?'on':''}" onclick="switchTab('biz')" title="사업자등록증">📄<em>사업자</em><span>${all.filter(i=>i.kind==='biz').length.toLocaleString()}</span></button>
+    ${/* ⚠ 이름이 「사업자」였다 (대표 지시 2026-08-30 으로 바꿨다). 그때는 이 목록이
+         대표자·업태·종목까지 늘어놓아 «회사 명부»처럼 보였고, 기업 상세와 두 벌로
+         읽혔다 — 대표 물음 「이중으로 하는 느낌이 있다」의 뿌리다.
+         여기는 «등록증 서류 보관함»이다. 회사를 찾는 입구는 기업 상세 하나로 모은다. */''}
+    <button class="${!onCo&&state.tab==='biz'?'on':''}" onclick="switchTab('biz')" title="사업자등록증·고유번호증 — 서류 보관함 (회사는 「기업 상세」에서 봅니다)">📄<em>등록증 서류함</em><span>${all.filter(i=>i.kind==='biz').length.toLocaleString()}</span></button>
     ${/* 개수는 coList() 에서 가져온다 — 옆줄 「폴더 › 전체」와 «같은 셈»이어야 한다(대표 지시
          2026-08-17). 따로 세면 두 숫자가 어긋나는데, 어느 쪽이 맞는지 아무도 모르게 된다.
          ⚠ 값: 이제 명함 화면에서도 회사 목록을 만든다. 재 보니 자료가 바뀐 직후 한 번
@@ -16551,7 +16555,27 @@ const COL_DEFS = {
          ['bizType','업태'],['bizItem','종목'],
          ['address','소재지'],['date','등록일']]
 };
-function colHidden(key){ return !!(state.hiddenCols[state.tab]||{})[key]; }
+/* ══════ 기본으로 «감춰 두는» 열 (대표 지시 2026-08-30, 안 ⓓ 1걸음) ══════
+   대표 물음 「사업자와 기업상세를 … 이중으로 하는 느낌」의 뿌리는 화면이었다 —
+   사업자 탭이 대표자·업태·종목·소재지까지 늘어놓아 «회사 명부»처럼 생겼다.
+   그것은 «회사» 이야기라 기업 상세에서 본다. 여기는 «등록증 서류 보관함»이므로
+   서류를 가리는 데 필요한 것만 둔다 — 상호·사업자번호·서류이름·등록일.
+   ⚠ 지우는 것이 «아니다». COL_DEFS 에 그대로 두어 「열 ▾」에서 다시 켤 수 있다.
+     한 번 켠 뜻은 기억한다(아래 colHiddenKeys) — 도로 감추면 고장으로 읽힌다. */
+const COL_HIDDEN_DEFAULT = { biz: ['ceo', 'bizType', 'bizItem', 'address'] };
+/* 지금 갈래에서 «실제로 감춰지는» 열 이름들 — 판정은 여기 한 곳에서만 나온다.
+   ⚠ 예전에는 머리글 쪽(colHidden)과 CSS 쪽(renderPCTable)이 각각 state.hiddenCols 를
+     직접 뒤졌다. 기본 감춤이 한쪽에만 먹으면 «머리글은 있는데 값이 없는» 칸이 생겨
+     그 뒤 이름표가 통째로 한 칸씩 밀린다 — 2026-08-26 에 실제로 겪은 그 고장이다. */
+function colHiddenKeys(){
+  const saved = state.hiddenCols[state.tab] || {};
+  const def = COL_HIDDEN_DEFAULT[state.tab] || [];
+  const out = {};
+  def.forEach(k => { out[k] = true; });
+  Object.keys(saved).forEach(k => { out[k] = !!saved[k]; });   /* 사람이 정한 것이 이긴다 */
+  return out;
+}
+function colHidden(key){ return !!colHiddenKeys()[key]; }
 
 /* 열 순서: 저장된 순서(colOrder) 우선, 없으면 COL_DEFS 기본 순서. 새 열은 뒤에 붙임 */
 function orderedColKeys(){
@@ -16599,8 +16623,10 @@ function toggleColMenu(ev){
 function closeColMenu(){ const m=$('colMenu'); if(m) m.style.display='none'; }
 function setColVisible(key, visible){
   if(!state.hiddenCols[state.tab]) state.hiddenCols[state.tab]={};
-  if(visible) delete state.hiddenCols[state.tab][key];
-  else state.hiddenCols[state.tab][key]=true;
+  /* ⚠ 「켰다」를 «지우기»로 적지 않는다 (2026-08-30). 예전에는 켜면 칸을 지웠는데,
+     이제 기본으로 감추는 열이 있으므로(COL_HIDDEN_DEFAULT) 지우면 곧바로 기본이
+     되살아나 도로 감춰진다 — 켜도 안 켜지는 단추가 된다. 정한 뜻을 그대로 적어 둔다. */
+  state.hiddenCols[state.tab][key] = !visible;
   saveColPrefs();
   renderPCTable();
 }
@@ -17103,7 +17129,16 @@ function renderPCTable(){
     companyAddr:it => `<td class="col-companyAddr" style="font-size:12px;color:#5a6885" ondblclick="startCellEdit(event,'${it.id}','companyAddr')">${esc(it.companyAddr||it.address||'')}</td>`,
     date:       it => `<td class="dt col-date">${fmtDate(it.createdAt)}</td>`,
   } : {
-    company: it => `<td class="nm col-company">${it.fav?'⭐ ':''}${esc(it.company||'(상호 없음)')}</td>`,
+    /* 상호를 누르면 그 회사의 «기업 상세»로 간다 (대표 지시 2026-08-30, 안 ⓓ 1걸음).
+       여기는 서류함이라 회사 이야기가 없다 — 대표자·업태·담당이 궁금하면 회사로 가야
+       하는데, 예전에는 상호를 보고 기업 상세에서 «다시 찾아» 들어가야 했다.
+       ⚠ 줄을 누르면 등록증 상세가 열린다(openDetail) — 그것은 그대로 둔다.
+         서류를 보러 오는 사람이 훨씬 많다. stopPropagation 으로 둘이 안 겹치게 한다. */
+    company: it => `<td class="nm col-company">${it.fav?'⭐ ':''}${
+      it.company
+        ? `<a href="#" class="mailto" onclick="event.stopPropagation();openCoFromItem('${it.id}');return false"
+             title="이 회사의 기업 상세로 갑니다 — 대표자·업태·담당·명함을 한자리에서 봅니다">${esc(it.company)}</a>`
+        : `<span style="color:#b6bfd0">(상호 없음)</span>`}</td>`,
     ceo:     it => `<td class="col-ceo">${esc(it.ceo||'')}</td>`,
     bizno:   it => `<td class="col-bizno">${esc(fmtBizno(it.bizno))}</td>`,
     /* 서류이름 — 사업자등록증인지 고유번호증인지 가르는 칸(대표 지시 2026-08-26).
@@ -17126,7 +17161,14 @@ function renderPCTable(){
   const cgBack  = state.tab==='card'
     ? `<col data-col="manager" style="width:${managerW}"><col style="width:54px">`
     : `<col data-col="manager" style="width:${managerW}"><col style="width:60px">`;
-  const colg = `<colgroup>${cgFront}${order.map(colFrag).join('')}${cgBack}</colgroup>`;
+  /* ⚠ 감춘 칸의 <col> 은 «빼야» 한다 (2026-08-30 실측).
+     표가 table-layout:fixed 라 <col> 폭은 «자리 순서대로» 먹힌다. 감춘 칸이 자리를
+     비켜 주지 않으면 뒤 칸들이 앞 칸의 폭을 하나씩 물려받는다 — 사업자번호가 대표자
+     몫(9%)을 먹어 「783-85-02…」로 잘렸고, 쓰이지 못한 폭이 오른쪽에 272px 빈 띠로
+     남았다. 원래 있던 버그다(「열 ▾」로 아무 칸이나 감추면 지금도 그랬다) — 기본으로
+     넷을 감추게 되었으니 이제는 모두가 겪는다. */
+  const hidden = colHiddenKeys();   /* 감춤 판정은 여기 한 번 — colgroup 과 CSS 가 같은 것을 본다 */
+  const colg = `<colgroup>${cgFront}${order.filter(k=>!hidden[k]).map(colFrag).join('')}${cgBack}</colgroup>`;
   const filterRow = '';
   const allChecked = pageItems.length>0 && pageItems.every(it=>state.sel[it.id]);
   const headChk = `<th><input type="checkbox" ${allChecked?'checked':''} onchange="toggleSelectAll(this.checked)" title="이 페이지 전체 선택"></th>`;
@@ -17195,7 +17237,7 @@ function renderPCTable(){
   if (!rows) rows = `<tr><td class="pcempty" colspan="${order.length+4}">등록된 항목이 없습니다 — 우측 상단 [＋ 명함 등록] 또는 이미지·PDF를 화면에 끌어다 놓으세요. (Ctrl+V 붙여넣기 가능)</td></tr>`;
   $('pcTable').innerHTML = `${colg}<thead>${thead}</thead><tbody>${rows}</tbody>`;
   /* 숨긴 열 적용: 해당 클래스 셀을 display:none */
-  const hidden = state.hiddenCols[state.tab] || {};
+  /* hidden 은 위(colgroup 만들 때) 한 번 구했다 — 두 번 구하면 갈라질 자리가 생긴다 */
   const hideCss = Object.keys(hidden).filter(k=>hidden[k])
     .map(k=>`#pcTable .col-${k}{display:none}`).join('');
   let st=$('colHideStyle'); if(!st){ st=document.createElement('style'); st.id='colHideStyle'; document.head.appendChild(st); }
@@ -18587,8 +18629,23 @@ function coListBuild(){
     const ex = coEffectiveExtra(o.key, o.name, _coInfo);
     if(ex){ o.extra = ex; o.folder = ex.folder || ''; }
   });
-  return Object.values(by).filter(o=>o.name)
-    .sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
+  /* ⚠ 이름이 없어도 «사업자번호가 있으면» 남긴다 (대표 지시 2026-08-30, 안 ⓓ 선행).
+     등록증 사진에서 번호는 또렷한데 상호가 흐려 못 읽는 일이 있다. 예전에는 여기서
+     걸러 버려 그 등록증이 기업 상세 어디에도 없었다 — 채워 넣을 자리조차 없으니
+     서류가 미아가 된다. 회사를 찾는 입구를 기업 상세로 모으는 이상 더 그럴 수 없다.
+     ⚠ o.name 에 번호를 «집어넣지 않는다». name 은 푸른이알피가 이름으로 업체를 맞출
+       때 쓰는 칸이라(ErpMatch), 숫자를 넣으면 숫자 이름을 가진 엉뚱한 업체와 맞는다.
+       보여줄 이름은 coDisplayName 이 따로 만든다.
+     ⚠ 이름도 번호도 없으면 여전히 안 남긴다 — 가리킬 것이 없는 빈 줄이다. */
+  return Object.values(by).filter(o=>o.name || o.bizno)
+    .sort((a,b)=>String(coDisplayName(a)).localeCompare(String(coDisplayName(b)),'ko'));
+}
+/* 회사 줄에 «보여줄» 이름. 상호가 있으면 상호, 없으면 사업자번호다.
+   ⚠ o.name 과 갈라 둔 까닭은 위 주석에 있다 — 여기 값을 name 에 되돌려 넣지 말 것. */
+function coDisplayName(o){
+  if(!o) return '';
+  const nm = String(o.name == null ? '' : o.name).trim();
+  return nm || fmtBizno(o.bizno) || '';
 }
 /* ⚠ 사업자번호가 없는 회사는 이 이름꼴이 그대로 Realtime DB 열쇠(coInfo/n회사이름/...)가
    된다. DB 열쇠에 못 쓰는 글자(. # $ [ ] /)가 이름에 있으면 쓰기가 그 자리에서 막히거나
@@ -18689,6 +18746,24 @@ function coWatchStart(){
   }, 5000);
 }
 function pickCo(k){ if(state.coPick===k){ state.coPick=''; closePcDetail(); return; } state.coPick = k; openCoDetailPanel(k); }
+
+/* ══════ 등록증·명함 한 장에서 «그 회사»로 건너간다 (대표 지시 2026-08-30, 안 ⓓ 1걸음) ══════
+   등록증 서류함에서 상호를 누르면 여기로 온다. 예전에는 상호를 눈으로 읽고 기업 상세로
+   가서 «다시 찾아» 들어가야 했다 — 4,154곳에서.
+   ⚠ 회사를 가르는 열쇠는 목록을 세울 때와 «같은 함수»(coKeyOf)여야 한다. 여기서 따로
+     만들면 사업자번호가 없는 회사에서 이름꼴 열쇠가 어긋나 엉뚱한 곳이 열린다.
+   ⚠ 열쇠가 이름꼴(n…)일 때는 이름이 바뀐 옛 열쇠일 수 있다 — 그때는 짚지 못해도
+     기업 상세 화면까지는 연다. 아무 데도 못 가는 것보다 낫다. */
+function openCoFromItem(id){
+  const it = state.items[id];
+  if(!it) return;
+  const k = coKeyOf(it);
+  openCoPage();
+  if(!k) return;
+  /* pickCo 는 «같은 회사를 다시 누르면 닫는» 손놀림이다 — 건너온 길에서는 늘 열어야 한다 */
+  state.coPick = '';
+  pickCo(k);
+}
 
 /* ── 이알피(사무관리) 사업 기록 — 읽기 전용 ──
    회사 상세 팝업에 이력을 보여주고, 폴더를 이알피 사업 유형에서 골라 만들 때 쓴다
@@ -20263,7 +20338,11 @@ function coListHtml(info){
         title="끌어서 여러 곳을 한 번에 고를 수 있습니다"><input type="checkbox" ${coOn?'checked':''}
         onchange="coToggle('${kJs}')"></td>
       <td class="num">${info.from + i}</td>
-      <td class="conm"><span class="nm">${esc(o.name)}</span>
+      ${/* ⚠ 상호를 못 읽은 등록증은 이 자리가 «빈칸»이었다 — 이제 번호를 대신 보여준다
+           (coDisplayName). 다만 조용히 번호만 그리면 그 숫자를 회사 이름으로 알고
+           그대로 계약서에 옮겨 적는다. 그래서 「상호 못 읽음」을 함께 붙인다. */''}
+      <td class="conm"><span class="nm">${esc(coDisplayName(o))}</span>
+        ${o.name ? '' : `<i class="miss" title="등록증에서 상호를 못 읽었습니다 — 회사를 열어 채워 주세요">상호 못 읽음</i>`}
         ${o.erp && o.erp.left ? `<span class="mgq" title="업체관리에서 종료·해지·폐업으로 표시된 거래처 (계약해지)">🚪</span>` : ''}
         ${(function(){ const n = coConflictN(o); return n
           ? `<span class="mgw" title="사진첩에서 읽은 값이 지금 값과 다릅니다 — 눌러서 확인해 주세요 (${n}개 칸)">⚠</span>` : ''; })()}
