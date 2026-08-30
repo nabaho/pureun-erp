@@ -25452,6 +25452,18 @@ function roleInfo(v){ return ROLES.find(function(r){return r.v===v;}) || ROLES[2
     var raw = localStorage.getItem(key);
     if(!raw) return;
     var data; try{ data = JSON.parse(raw); }catch(e){ showToast("백업 파일 형식 오류"); window._erpErrLog&&window._erpErrLog(e); return; }
+    /* ★★ 옛 자료 교정은 «한 번만» 돈다 (2026-08-30, 대표 지시로 잡음).
+       여태는 새로고침할 때마다 직책 교정이 다시 걸려,
+       인사관리에서 최기운·신욱임 직책을 고쳐도 «원위치»했다.
+     ⚠ 게다가 아래 저장은 «사람 수가 줄었을 때»만 했다 —
+       고쳐 놓고 저장을 안 하니 다음 새로고침에 또 고치는 일이 되풀이됐다.
+     ★ 「돌았다는 표」 없이 두면, 사람이 고친 것을 매번 되돌리는 코드가 된다.
+       그리고 아무도 그것을 의심하지 않는다. */
+    var TITLE_FIX_KEY = 'pureun_v6_title_fix_done';
+    var titleFixDone = false;
+    try { titleFixDone = localStorage.getItem(TITLE_FIX_KEY) === '1'; }
+    catch(e){ window._erpErrLog && window._erpErrLog(e); }
+
     var seen = {};
     var deduped = [];
     // 구버전 loginId(P002~A006) → 이름 기반 ID 마이그레이션 맵
@@ -25460,15 +25472,29 @@ function roleInfo(v){ return ROLES.find(function(r){return r.v===v;}) || ROLES[2
       var sid = u.sid || '';
       if(!sid || seen[sid]) return; // 중복 제거
       seen[sid] = true;
-      // 잘못된 직책 교정
+      /* 옛 자료 교정 — 한 번만. 그 뒤로는 사람이 고친 직책을 그대로 둔다. */
       var fixedTitle = u.title;
-      if(sid === 'A-001' && u.name === '최기운') fixedTitle = '사무장';
-      if(sid === 'A-002' && u.name === '신욱임')  fixedTitle = '차장';
+      if(!titleFixDone){
+        if(sid === 'A-001' && u.name === '최기운') fixedTitle = '사무장';
+        if(sid === 'A-002' && u.name === '신욱임')  fixedTitle = '차장';
+      }
       // 구버전 loginId → 이름 기반 ID 교정
       var fixedLoginId = loginIdMigrate[u.loginId] ? loginIdMigrate[u.loginId] : u.loginId;
       deduped.push(Object.assign({}, u, { title: fixedTitle, loginId: fixedLoginId }));
     });
-    if(deduped.length !== data.length) localStorage.setItem(key, JSON.stringify(deduped));
+    /* ⚠ 여태는 «사람 수가 줄었을 때»만 저장했다 — 직책·아이디를 고쳐 놓고도
+       저장을 안 해, 다음 새로고침에 또 고치는 일이 되풀이됐다.
+       이제 «무엇이든 바뀌었으면» 저장한다. */
+    var _uaChanged = (deduped.length !== data.length);
+    if(!_uaChanged){
+      try { _uaChanged = JSON.stringify(deduped) !== JSON.stringify(data); }
+      catch(e){ _uaChanged = true; }
+    }
+    if(_uaChanged) localStorage.setItem(key, JSON.stringify(deduped));
+    /* 한 번 돌았으면 표를 남긴다 — 저장에 실패했더라도 다시 덮어쓰지 않는다.
+       (덮어쓰는 것보다 안 고쳐진 채로 두고 사람이 고치는 편이 낫다) */
+    try { localStorage.setItem(TITLE_FIX_KEY, '1'); }
+    catch(e){ window._erpErrLog && window._erpErrLog(e); }
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 })();
 
