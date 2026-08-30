@@ -168,3 +168,24 @@ test('안내문은 «따로» 한 줄 — 단추 줄에 끼우면 단추가 밀�
   assert.match(source, /id="kfHintBar"/);
   assert.match(source, /\.kf-hintbar\{/);
 });
+
+test('★ 탭줄과 「양식 올리기」가 한 줄이다 (대표 지시 2026-08-30)', () => {
+  assert.match(source, /class="rh-topbar"/);
+  const seg = source.slice(source.indexOf('class="rh-topbar"'), source.indexOf('class="rh-topbar"') + 1800);
+  assert.ok(seg.indexOf('id="rh-tabrow"') > 0, '탭줄이 그 안에 있어야 합니다');
+  assert.ok(seg.indexOf('id="rhUploadBar"') > 0, '올리기 줄도 같은 칸에 있어야 합니다');
+  assert.match(source, /\.rh-topbar\{display:flex[^}]*flex-wrap:wrap/, '좁아지면 내려가야 합니다');
+});
+
+test('★ 탭줄은 패널 «밖»에 있다 — 안에 넣으면 다른 탭에서 탭줄이 사라진다', () => {
+  const hub = source.slice(source.indexOf('id="page-resume-hub"'));
+  const iTab = hub.indexOf('id="rh-tabrow"');
+  const iPanel = hub.indexOf('class="tabpanel active" id="rh-edit"');
+  assert.ok(iTab > 0 && iPanel > 0);
+  assert.ok(iTab < iPanel, '탭줄이 첫 패널보다 앞이어야 합니다');
+});
+
+test('올리기 줄은 «양식 편집» 탭에서만 뜬다 — 보관함 탭에서는 쓸 일이 없다', () => {
+  const at = bare.indexOf('function rhTab');
+  assert.match(bare.slice(at, at + 900), /rhUploadBar[\s\S]{0,120}tabId==='rh-edit'/);
+});
