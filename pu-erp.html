@@ -9084,6 +9084,23 @@ if(fbDb){
   };
   var _startFbSync = function(){
     fbInitialSync().then(function(n){
+      /* ★★ 자료가 내려왔으니 «누구로 로그인했는지»를 다시 정한다 (2026-08-30).
+           CURRENT_USER 는 화면이 뜨는 그 순간 한 번만 정해지는데(784줄), 그때는
+           직원 명단(user_accounts)이 아직 안 내려와 있을 수 있다 — SSO 로 들어오면 특히.
+           그러면 「아무도 아님」이 되고, 여태 그 뒤로 «다시 계산하지 않았다».
+         2026-08-30 대표 신고: 김동현 님 「나의 업무」에 남의 업무 82건이 들어오고
+           상단에 이름이 안 떴다 — 두 증상의 뿌리가 이것이었다.
+         ⚠ refreshCurrentUser 는 이미 있고 sid·name·isAdmin·isOwner 를 다 옮긴다.
+           고칠 것은 «부르지 않는다»는 것 하나뿐이었다(로그인할 때만 불렀다).
+         ⚠ 반드시 fb_initial_done «앞»에서 부른다 — 그 알림이 화면을 다시 그리게 하므로,
+           뒤에서 부르면 자료만 맞고 화면은 「아무도 아님」인 채로 남는다. */
+      try {
+        var _who0 = CURRENT_USER.sid || '';
+        refreshCurrentUser();
+        if((CURRENT_USER.sid || '') !== _who0){
+          console.log('[로그인] 직원 명단이 내려온 뒤 사용자를 다시 잡았습니다: ' + (CURRENT_USER.name || '-'));
+        }
+      } catch(e){ window._erpErrLog && window._erpErrLog(e); }
       if(n > 0){
         _dbCacheClear();
         try { window.dispatchEvent(new CustomEvent('fb_initial_done', {detail:n})); } catch(e){}
@@ -37094,13 +37111,53 @@ function erpNbGroupByDate(rows){
   return by;
 }
 // 집계 {ok,pending,fail,total,okAmt}
+/* ══ 출금은 실패했지만 «다른 길로 입금된» 줄 (대표 2026-08-30) ══════════════
+   「출금실패는 입금된 부분 확인되면 자동으로 정리되게 해야 한다」
+
+   자동이체가 실패해도 업체가 계좌이체로 따로 넣어 주는 일이 흔하다. 그러면
+   그 달 자문료 입금표시가 «이미» 있는데, CMS 목록에는 여전히 「❌ 미수로 남음」이
+   남아 손볼 것 75건처럼 보인다.
+
+   ★ 줄을 «지우지 않는다». CMS 출금이 실패한 것은 사실이고, 나중에 「왜 이 달
+     자동이체가 안 됐지」를 물을 때 그 기록이 있어야 한다. 숫자에서만 뺀다.
+   ⚠ 판정 기준은 「같은 업체 + 같은 달에 업체입금(자문료) 기록이 있는가」다 —
+     입금 매칭 창이 「이미 입금표시된 업체+월은 제외」할 때 쓰는 것과 같은 잣대. */
+function erpNbPaidKeys(incomes){
+  var out = {};
+  (incomes || []).forEach(function(i){
+    if(!i || i.sourceKind !== 'company' || !i.companyName) return;
+    var ym = String(i.date || '').slice(0, 7);
+    if(ym.length === 7) out[erpNormName(i.companyName) + '|' + ym] = 1;
+  });
+  return out;
+}
+/* 어느 달의 출금인가 — 정산예정일이 「미정」인 실패 줄이 많아 출금일로 물러선다 */
+function erpNbRowYm(r){
+  var d = String((r && (r.setdate || r.wdate)) || '');
+  return d.length >= 7 ? d.slice(0, 7) : '';
+}
+function erpNbMarkPaid(rows, incomes){
+  var keys = erpNbPaidKeys(incomes), n = 0;
+  (rows || []).forEach(function(r){
+    if(!r) return;
+    r.paidElse = 0;
+    if(r.status !== 'fail') return;
+    var nm = (r.co && r.co.name) || r.name || '';
+    var ym = erpNbRowYm(r);
+    if(!nm || !ym) return;
+    if(keys[erpNormName(nm) + '|' + ym]){ r.paidElse = 1; n++; }
+  });
+  return n;
+}
+
 function erpNbStat(rows){
-  var st = { ok:0, pending:0, fail:0, total:0, okAmt:0 };
+  var st = { ok:0, pending:0, fail:0, total:0, okAmt:0, paidElse:0 };
   (rows || []).forEach(function(r){
     if(!r) return;
     st.total++;
     if(r.status === 'ok'){ st.ok++; st.okAmt += parseInt(r.amount, 10) || 0; }
-    else if(r.status === 'fail') st.fail++;
+    /* 실패지만 그 달 입금이 확인된 줄은 «손볼 것»이 아니다 — 따로 센다 */
+    else if(r.status === 'fail'){ if(r.paidElse) st.paidElse++; else st.fail++; }
     else st.pending++;
   });
   return st;
@@ -39151,6 +39208,8 @@ function FinanceLedger(props){
       if(c && c.rows && c.rows.length){
         var rs = c.rows.map(function(x){ return erpNbSlimRow(x); });
         var linked = erpNicebillAttachCo(rs);                 // 업체 색인은 여기서 1회만
+        /* ★ 업체를 이은 «뒤에» 표시한다 — 업체 이름을 알아야 그 달 입금을 찾을 수 있다 */
+        erpNbMarkPaid(rs, dbGet('finance_income', []) || []);
         setNb({ fileName:c.fileName||'', uploadedAt:c.uploadedAt||'', rows:rs,
                 byDate:erpNbGroupByDate(rs), stat:erpNbStat(rs), linked:linked });
         setNbRestored(true);
@@ -39314,6 +39373,8 @@ function FinanceLedger(props){
       }
     });
   }, [hanaFix, hanaPair]);
+  /* 하나문자 손잡이 셋을 담은 작은 차림표 — 상단을 한 줄로 줄이려고 묶었다 (2026-08-30) */
+  var hanaMenuS = useState(false); var hanaMenu = hanaMenuS[0]; var setHanaMenu = hanaMenuS[1];
   var pasteS = useState(false); var pasteOpen = pasteS[0]; var setPasteOpen = pasteS[1];
   var pasteTS = useState('');   var pasteText = pasteTS[0]; var setPasteText = pasteTS[1];
   var pasteRS = useState(null); var pasteRes = pasteRS[0];  var setPasteRes = pasteRS[1];
@@ -39650,6 +39711,8 @@ function FinanceLedger(props){
           var _saved = erpCmsLedgerSave(file.name, new Date().toISOString(), _p.rows) || null;
           var _rows = _saved ? _saved.rows.map(function(x){ return erpNbSlimRow(x); }) : _p.rows;
           var _linked = erpNicebillAttachCo(_rows);            // 업체 색인은 파싱당 1회
+          /* ★ 업체를 이은 «뒤에» 표시한다 — 업체 이름을 알아야 그 달 입금을 찾을 수 있다 */
+          erpNbMarkPaid(_rows, dbGet('finance_income', []) || []);
           setFileType('nicebill');
           setNb({ fileName:file.name, uploadedAt:(_saved && _saved.uploadedAt) || new Date().toISOString(),
                   rows:_rows, byDate:erpNbGroupByDate(_rows), stat:erpNbStat(_rows), linked:_linked });
@@ -41410,26 +41473,45 @@ function FinanceLedger(props){
       }
     },
       h('span',{className:'ld-up-sep',style:{width:'1px',height:'18px',background:'#e2e8f0'}}),
-      /* ★ 「휴대폰 연결」·「문자 가져오기」는 권형하(대표)만 보인다 (2026-08-26 지시).
-         이어진 휴대폰이 «권형하 것 하나»뿐이라, 다른 사람에게는 누를 일이 없는 단추다.
-         ⚠ 사번을 못 박지 않는다 — isOwner(대표·총괄) 로 가린다. 사번은 바뀔 수 있다. */
+      /* ★ 「하나문자」 손잡이 셋을 «단추 하나»로 묶는다 (대표 2026-08-30:
+           「캡쳐2 2줄 1줄로 줄여라, 아이콘으로 또는 셀로 해서 양을 줄여라」).
+         묶기 전에는 연결·가져오기·붙여넣기가 각각 한 자리씩 차지해, 라디오·파일·표들과
+         함께 줄이 둘로 접혔다. 접힌 줄은 화면 밖으로 밀려 «단추가 아예 없는 것처럼» 보인다 —
+         대표 물음 「휴대폰 연결 되게 화면 어떻게 실행하나」가 바로 그것이었다.
+
+         ⚠ 가리개는 isOwner 그대로 둔다 — 「휴대폰 연결·문자 가져오기는 권형하만」이
+           2026-08-26 대표 지시이고, tests/card-cancel-pair.test.js 가 그것을 지킨다.
+           묶으면서 넓혔다가 되돌렸다: 안 보이는 까닭이 «접힌 줄»인지 «권한»인지
+           확인하지 않은 채 규칙을 흔드는 것은 순서가 틀렸다.
+           (혹시 대표께 안 보이면 그건 계정의 role 이 'admin' 이 아니라는 뜻이고,
+            그때는 규칙을 넓힐 게 아니라 계정을 고치는 것이 맞다.) */
       _meNow().isOwner &&
-      h('button',{type:'button',disabled:hanaBusy,onClick:function(e){e.stopPropagation();startHanaSmsPair();},
-        title:'권형하 휴대폰을 하나은행·하나카드 거래문자와 연결합니다',
-        style:{padding:'5px 9px',border:'1px solid #bfdbfe',background:'#eff6ff',color:'#1e40af',borderRadius:'6px',fontSize:'11px',fontWeight:800,cursor:hanaBusy?'wait':'pointer',whiteSpace:'nowrap'}},
-        '🔗 휴대폰 연결'),
-      _meNow().isOwner &&
-      h('button',{type:'button',disabled:hanaBusy,onClick:function(e){e.stopPropagation();importHanaSms();},
-        title:'새로 받은 하나은행·하나카드 거래문자를 가져와 기존 거래내역과 자동으로 맞춥니다',
-        style:{padding:'5px 9px',border:'1px solid #bbf7d0',background:'#f0fdf4',color:'#16a34a',borderRadius:'6px',fontSize:'11px',fontWeight:800,cursor:hanaBusy?'wait':'pointer',whiteSpace:'nowrap'}},
-        hanaBusy?'⏳ 확인 중':'📱 문자 가져오기'),
+      h('div',{style:{position:'relative'},onClick:function(e){e.stopPropagation();}},
+        h('button',{type:'button',disabled:hanaBusy,
+          onClick:function(e){e.stopPropagation();setHanaMenu(!hanaMenu);},
+          title:'하나 거래문자 — 휴대폰 연결 · 문자 가져오기 · PC 에서 붙여넣기',
+          style:{padding:'5px 9px',border:'1px solid '+(hanaMenu?'#2563eb':'#bfdbfe'),
+            background:hanaMenu?'#2563eb':'#eff6ff',color:hanaMenu?'#fff':'#1e40af',
+            borderRadius:'6px',fontSize:'11px',fontWeight:800,
+            cursor:hanaBusy?'wait':'pointer',whiteSpace:'nowrap'}},
+          hanaBusy ? '⏳ 확인 중' : '📱 하나문자 ▾'),
+        hanaMenu && h('div',{
+          style:{position:'absolute',top:'calc(100% + 4px)',left:0,zIndex:60,minWidth:'184px',
+            background:'#fff',border:'1px solid #e2e8f0',borderRadius:'8px',
+            boxShadow:'0 10px 26px rgba(15,23,42,.16)',padding:'4px'}},
+          [['🔗','휴대폰 연결','새 연결번호를 만들어 폰 앱에 넣습니다',function(){startHanaSmsPair();}],
+           ['📱','문자 가져오기','새로 온 하나 거래문자를 지금 가져옵니다',function(){importHanaSms();}],
+           ['📋','PC 에서 붙여넣기','폰이 막혔을 때 손으로 넣는 길입니다',function(){setPasteOpen(true);}]
+          ].map(function(m){
+            return h('button',{key:m[1],type:'button',disabled:hanaBusy,title:m[2],
+              onClick:function(e){e.stopPropagation();setHanaMenu(false);m[3]();},
+              style:{display:'block',width:'100%',textAlign:'left',border:0,background:'transparent',
+                padding:'7px 9px',borderRadius:'6px',fontSize:'12px',fontWeight:700,color:'#1e293b',
+                cursor:hanaBusy?'wait':'pointer',whiteSpace:'nowrap'}},
+              m[0]+' '+m[1]);
+          }))),
       /* ★ 폰이 막혔을 때 손으로 넣는 길 (대표 지시 2026-08-29).
          폰 하나에만 매달려 있으면, 폰이 막힌 이틀 동안 아무것도 못 한다. */
-      _meNow().isOwner &&
-      h('button',{type:'button',disabled:hanaBusy,onClick:function(e){e.stopPropagation();setPasteOpen(true);},
-        title:'하나 거래문자를 PC 에서 붙여넣어 넣습니다 — 폰이 막혔을 때 쓰는 길입니다',
-        style:{padding:'5px 9px',border:'1px solid #cbd5e1',background:'#f8fafc',color:'#475569',borderRadius:'6px',fontSize:'11px',fontWeight:800,cursor:hanaBusy?'wait':'pointer',whiteSpace:'nowrap'}},
-        '📋 PC 에서 붙여넣기'),
       pasteOpen && h('div',{onClick:function(e){ e.stopPropagation(); if(e.target===e.currentTarget && !hanaBusy) setPasteOpen(false); },
         style:{position:'fixed',inset:0,background:'rgba(15,23,42,0.45)',zIndex:9400,
           display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}},
@@ -41575,6 +41657,11 @@ function FinanceLedger(props){
         nbChip('✅ 출금성공 '+nbStat.ok+'건 · 합계 '+nbStat.okAmt.toLocaleString()+'원','#f0fdf4','#166534','#bbf7d0','업체 통장에서 정상 출금된 건 — 정산예정일에 법인 통장으로 입금됩니다'),
         nbChip('⏳ 출금중 '+nbStat.pending+'건','#fffbeb','#d97706','#fde68a','아직 결과가 나오지 않은 건 (자동재출금 대기 포함)'),
         nbChip('❌ 출금실패 '+nbStat.fail+'건','#fef2f2','#991b1b','#fecaca','잔액부족·지급정지·취소 등 — 후속 조치가 필요합니다'),
+        /* 실패했지만 그 달 자문료 입금이 확인된 줄 — 손볼 것에서 뺀다 (대표 2026-08-30).
+           숫자를 그냥 줄이지 않고 «따로 보여» 준다. 몇 건이 어떻게 정리됐는지 알아야
+           「75건이 갑자기 63건이 됐네」에서 멈추지 않는다. */
+        nbStat.paidElse>0 && nbChip('✔ 입금 확인 '+nbStat.paidElse+'건','#f0fdf4','#166534','#bbf7d0',
+          '자동이체는 실패했지만 그 달 자문료 입금이 확인된 건입니다 — 계좌이체 등 다른 길로 받은 경우로, 손볼 것이 없어 출금실패에서 뺐습니다. 줄은 그대로 남아 있습니다.'),
         nbChip('📅 정산예정일 '+nbDateCnt+'일','#eff6ff','#2563eb','#bfdbfe','정산예정일별 납부금액 합계가 통장 더빌이체 입금액과 맞아야 합니다'),
         nbUnlinked>0 && nbChip('⚠️ 미연결 '+nbUnlinked+'곳','#fffbeb','#d97706','#fde68a','회원명·사업자번호로 ERP 업체를 찾지 못한 행입니다'),
         h('div',{style:{flex:1}}),
@@ -41623,7 +41710,9 @@ function FinanceLedger(props){
           h('tbody',null, (function(){
             var out = [], seq = 0;
             nbGroups.forEach(function(g){
-              var list = nbFailOnly ? g.rows.filter(function(r){ return r.status==='fail'; }) : g.rows;
+              /* 「출금실패만 보기」 — 입금이 확인된 줄은 손볼 것이 아니므로 여기서도 뺀다.
+         (표 숫자와 목록이 어긋나면 「63건이라더니 왜 75줄이지」가 된다) */
+      var list = nbFailOnly ? g.rows.filter(function(r){ return r.status==='fail' && !r.paidElse; }) : g.rows;
               // 제목 클릭 정렬 — 묶음 «안에서» 세운다 (정산예정일 묶음 자체는 그대로 둔다)
               if(nbSort && NB_SORT[nbSort.col]) list = erpSortRows(list, NB_SORT[nbSort.col], nbSort.dir);
               if(!list.length) return;
@@ -41703,9 +41792,16 @@ function FinanceLedger(props){
                     r.status==='ok'
                       ? (r.co ? '입금표시 대상' : '업체 연결 필요')
                       : (r.status==='fail'
-                          ? h('span',{style:{color:'#991b1b',fontWeight:700},
-                              title:'이 업체는 이번에 걷히지 않았습니다 — 미수로 남습니다.\n사유: '+(r.reason||r.statusRaw||'-')},
-                              '❌ 미수로 남음')
+                          /* 자동이체는 실패했지만 그 달 자문료 입금이 «이미 확인된» 줄.
+                             줄을 지우지 않고 표만 바꾼다 — 출금이 실패한 것은 사실이고,
+                             나중에 「왜 이 달 자동이체가 안 됐지」에 답하려면 기록이 남아야 한다. */
+                          ? (r.paidElse
+                              ? h('span',{style:{color:'#166534',fontWeight:700},
+                                  title:'자동이체는 실패했지만 '+erpNbRowYm(r)+' 자문료 입금이 확인됐습니다 — 손볼 것이 없습니다.\n(계좌이체 등 다른 길로 받은 경우입니다)\n출금 실패 사유: '+(r.reason||r.statusRaw||'-')},
+                                  '✔ 입금 확인됨')
+                              : h('span',{style:{color:'#991b1b',fontWeight:700},
+                                  title:'이 업체는 이번에 걷히지 않았습니다 — 미수로 남습니다.\n사유: '+(r.reason||r.statusRaw||'-')},
+                                  '❌ 미수로 남음'))
                           : '결과 대기'))
                 ));
               });
