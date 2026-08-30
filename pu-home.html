@@ -34,11 +34,11 @@
 (function(){ function go(){ if(window.PuWhoami){ PuWhoami.mount(false); return true; } return false; }
   if(!go()) document.addEventListener('DOMContentLoaded', go); })();
 </script>
-<script src="js/pu-home-parse.js?v=3"></script>
+<script src="js/pu-home-parse.js?v=4"></script>
 <script src="js/pu-home-career.js?v=1"></script>
 <script src="js/pu-home-export.js?v=2"></script>
 <script src="js/pu-home-diff.js?v=6"></script>
-<script src="js/pu-home-fill.js?v=1"></script>
+<script src="js/pu-home-fill.js?v=2"></script>
 <style>
 /* ★ 색값·간격은 승인된 목업(docs/mockups/homepage-manage-v4.html)에서 그대로 가져왔다.
    새로 만들지 말 것 — 목업이 배치·색·글귀의 기준이다. */
@@ -250,6 +250,17 @@ main{flex:1;min-height:0;width:100%;padding:10px 12px;
 .rows .l.sec .t{font-weight:800;color:var(--warn);font-size:12px;letter-spacing:.4px}
 .rows .l.tel .t{color:var(--sub);font-size:12.5px}
 /* 옛 이름(tag) — 아직 이 이름으로 그리는 곳이 있으면 구획번호와 같게 보이게 둔다 */
+/* 줄을 «그 자리에서» 고친다 — 칸처럼 보이지 않게 두다가, 손을 대면 칸이 된다.
+   ★ 고친 줄은 눈에 띄어야 한다. 무엇을 홈페이지로 보내는지 모르고 누르면 안 된다. */
+.rows input.t{border:0;background:transparent;font:inherit;color:inherit;padding:0;
+  width:100%;border-bottom:1px dashed transparent}
+.rows input.t:hover{border-bottom-color:var(--line)}
+.rows input.t:focus{outline:0;border-bottom-color:var(--navy);background:#fff}
+.rows .l.ch{background:var(--ok-bg);box-shadow:inset 3px 0 0 var(--ok)}
+.rows .l.ch input.t{color:var(--ok);font-weight:700}
+.rows .l.lock .t{color:var(--faint)}
+.lockmk{font-size:11px;opacity:.7}
+.pfixbar{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:6px}
 .legend2{display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;font-size:11.5px;color:var(--faint)}
 .legend2 b{font-weight:800}
 .legend2 .k-head{color:var(--navy)}
@@ -635,7 +646,12 @@ const App = {
      pageLines — 홈페이지에서 읽어온 «줄 목록». 보여주기 전용이고 저장하지 않는다.
      ★ 우리가 저장해 둔 대조 기준 글자는 줄을 뭉쳐 놓은 것이라 줄 모양을 «지어낼 수 없다».
        그래서 홈페이지를 읽기 전에는 비어 있고, 화면은 그 사실을 정직하게 알린다. */
-  pageConfig: {}, pageLines: {},
+  /* pageRuns — 홈페이지 본문에서 «갈아 끼울 수 있는 줄» 목록([{text,ok,why}]).
+       pageLines 와 «같은 자리»(PuHomeParse.pageBodyHtml)에서 나온다.
+     pageFix  — 사람이 고쳐 둔 줄({쪽:{줄번호:고친글}}). 화면에서만 쓰고 저장하지 않는다.
+       ★ 저장하지 않는 까닭: 이것은 «홈페이지에 채울 것»이지 우리 자료가 아니다.
+         자료로 남기면 채우지도 않은 글이 대조 기준인 양 굳는다. */
+  pageConfig: {}, pageLines: {}, pageRuns: {}, pageFix: {},
   /* reading — 지금 어느 쪽을 읽고 있는지(단추를 잠그고 「읽는 중…」으로 바꾼다) */
   reading: '',
   /* filter — 목록을 «누른 딱지»로 걸러 본다. 화면에서만 쓰는 상태로 저장하지 않는다.
@@ -1573,7 +1589,7 @@ async function checkHomepage() {
       /* ★ «보는 글»과 «대조하는 글»을 나눈다(2차 설계 ②).
          대조는 위의 뭉친 글자로 하고, 화면에 보여줄 줄 목록은 따로 담는다.
          못 읽은 쪽은 손대지 않는다 — 지난 줄 목록이 그대로 남는다(빈 줄로 지어내지 않는다). */
-      App.pageLines[mid] = PuHomeParse.parsePageLines(html);
+      keepPageHtml(mid, html);
     }
 
     await applyStatus(live, livePages, failed);
@@ -1712,8 +1728,16 @@ function openPaste() {
      게다가 부서진 쪽을 다시 읽으면 같은 글자가 나와 「같음」이 떠서 조용히 틀린다.
      안전하게 만들 방법이 없어 «붙여넣기 기능 자체»를 두지 않는다. */
   if (d.kind !== 'member') {
-    openModal('<h2>' + esc(PAGE_LABEL[d.key] || d.key) + ' — 붙여넣기를 드리지 않습니다</h2>'
-      + '<div class="bar bad">' + pagePasteWhy() + '</div>' + modalFoot(''));
+    /* ★ 쪽은 «줄 단위»로 채운다. 고쳐 둔 줄이 있으면 바로 그 길로 보낸다 —
+       「안 됩니다」만 말하고 길을 안 알려 주면 사람은 결국 통째로 붙여넣는다. */
+    if (pageFixList(d.key).length) { copyPageFix(d.key); return; }
+    openModal('<h2>' + esc(PAGE_LABEL[d.key] || d.key) + ' — 고칠 줄을 먼저 고르십시오</h2>'
+      + '<div class="bar warn">' + pagePasteWhy() + '</div>'
+      + '<div class="guide"><b>하는 법</b><ol>'
+      + '<li>위 <b>홈페이지 화면</b> 칸에서 고칠 줄을 <b>그 자리에서</b> 고친다</li>'
+      + '<li><b>홈페이지에 채우기용 복사</b>를 누른다</li>'
+      + '<li>홈페이지 편집 화면에서 <b>★ 푸른ERP 쪽 채우기</b>를 누르고 <b>저장</b></li>'
+      + '</ol></div>' + modalFoot(''));
     return;
   }
 
@@ -1786,9 +1810,23 @@ window.openPaste = openPaste;
    ★ 왜 — 얼굴 사진이 «숨은 칸» 안에 있어서, 서버가 경력사항만 보내면 사진이
      지워진 채 저장되고 오류도 안 난다(정찰로 확인). 단추는 이미 열려 있는
      화면을 쓰므로 숨은 칸을 건드릴 일이 아예 없다. */
+/* 즐겨찾기 단추 하나를 그리는 조각 — 둘(구성원용·쪽용)이 같은 모양이어야 헷갈리지 않는다 */
+function fillDragBtn(url, label, sub) {
+  return '<div style="margin:12px 0;padding:14px;border:1px dashed var(--line);border-radius:10px;text-align:center">'
+    + '<a href="' + url + '" '
+    + 'style="display:inline-block;background:var(--navy);color:#fff;text-decoration:none;'
+    + 'padding:9px 16px;border-radius:9px;font-weight:800;font-size:14px" '
+    + 'onclick="return false" draggable="true">' + esc(label) + '</a>'
+    + '<div class="sub" style="margin-top:8px">' + sub + '</div></div>';
+}
+
 function openFillSetup() {
   const url = (window.PuHomeFill && window.PuHomeFill.bookmarkletUrl)
     ? window.PuHomeFill.bookmarkletUrl() : '';
+  /* ★ 단추가 «둘»이다. 하나로 합치지 않는다 — 구성원 채우기는 이미 잘 돌고 있고,
+     여기에 쪽 채우기를 얹다 잘못되면 «되던 것까지» 함께 멈춘다. */
+  const purl = (window.PuHomeFill && window.PuHomeFill.pageBookmarkletUrl)
+    ? window.PuHomeFill.pageBookmarkletUrl() : '';
   let h = modalHead('★ 푸른ERP 채우기 — 한 번만 넣으면 됩니다');
   if (!url) {
     h += '<div class="bar bad">단추를 만들지 못했습니다(부품을 못 읽었습니다). 화면을 새로 고쳐 주십시오.</div>';
@@ -1796,20 +1834,28 @@ function openFillSetup() {
   }
   h += '<div class="guide"><b>넣는 법</b><ol>'
     + '<li>브라우저에 <b>즐겨찾기 막대</b>를 켠다 <span class="kbd">Ctrl+Shift+B</span></li>'
-    + '<li>아래 <b>★ 푸른ERP 채우기</b>를 <b>즐겨찾기 막대로 끌어다 놓는다</b></li>'
+    + '<li>아래 <b>두 단추</b>를 <b>즐겨찾기 막대로 끌어다 놓는다</b> '
+    + '<span class="sub">(구성원용·쪽용이 따로입니다)</span></li>'
     + '</ol><div class="sub">한 번만 하면 됩니다. 다음부터는 홈페이지 편집 화면에서 그 단추만 누르면 됩니다.</div></div>';
-  h += '<div style="margin:12px 0;padding:14px;border:1px dashed var(--line);border-radius:10px;text-align:center">'
-    + '<a href="' + url + '" '
-    + 'style="display:inline-block;background:var(--navy);color:#fff;text-decoration:none;'
-    + 'padding:9px 16px;border-radius:9px;font-weight:800;font-size:14px" '
-    + 'onclick="return false" draggable="true">★ 푸른ERP 채우기</a>'
-    + '<div class="sub" style="margin-top:8px">↑ 이것을 <b>끌어서</b> 즐겨찾기 막대에 놓으십시오 '
-    + '(여기서 눌러도 아무 일도 안 납니다)</div></div>';
+  h += '<div class="fld"><label>① 구성원 — 경력사항 채우기</label></div>';
+  h += fillDragBtn(url, '★ 푸른ERP 채우기',
+        '↑ <b>끌어서</b> 즐겨찾기 막대에 놓으십시오 (여기서 눌러도 아무 일도 안 납니다)');
   h += '<div class="bar ok"><b>이 단추가 하는 일은 하나뿐입니다</b> — 홈페이지 편집 화면의 '
     + '<b>경력사항 칸</b>에 복사해 둔 내용을 채웁니다.<br>'
     + '<span class="sub">사진·본문·다른 칸은 건드리지 않습니다. <b>저장(등록)도 누르지 않습니다</b> — 사람이 확인하고 누릅니다.</span></div>';
+  if (purl) {
+    h += '<div class="fld" style="margin-top:14px"><label>② 쪽 — 고친 줄만 채우기 '
+      + '<span class="tip">주요업무·오시는길·인사말</span></label></div>';
+    h += fillDragBtn(purl, '★ 푸른ERP 쪽 채우기',
+          '↑ 이것도 <b>끌어서</b> 즐겨찾기 막대에 놓으십시오');
+    h += '<div class="bar ok"><b>본문 모양은 한 글자도 안 건드립니다.</b> '
+      + '고치신 <b>줄의 글자만</b> 제자리에서 갈아 끼웁니다 — 지도·표·구획·지사 탭은 그대로입니다.<br>'
+      + '<span class="sub">자리는 «줄 번호»가 아니라 «원래 글자»로 찾습니다. 그 사이 홈페이지가 바뀌어 '
+      + '원래 글을 못 찾으면 <b>그 줄만 건너뛰고 무엇을 건너뛰었는지 알려 줍니다</b> — '
+      + '남이 고친 글을 덮지 않기 위해서입니다. <b>저장도 누르지 않습니다.</b></span></div>';
+  }
   h += '<div class="bar warn"><b>엉뚱한 화면에서 누르면 아무 일도 안 합니다.</b> '
-    + '구성원 편집 화면이 아니거나 경력사항 칸을 못 찾으면, 다른 칸에 잘못 쓰지 않으려고 그냥 멈춥니다.</div>';
+    + '편집 화면이 아니거나 채울 칸을 못 찾으면, 다른 칸에 잘못 쓰지 않으려고 그냥 멈춥니다.</div>';
   h += modalFoot('클립보드를 읽어도 되는지 브라우저가 물으면 「허용」을 눌러 주십시오.');
   openModal(h);
 }
@@ -2946,15 +2992,18 @@ function memberEdit(d) {
 
 /* 쪽에서 «왜» 붙여넣을 내용을 안 주는지. 덧창과 편집 화면이 같은 말을 쓴다 —
    두 곳에 따로 쓰면 한쪽만 고쳐져 서로 다른 말을 하게 된다. */
+/* 왜 «통째로 붙여넣기»는 여전히 없는가 — 줄 단위로 고치는 길이 생긴 뒤에도 그렇다.
+   ★ 이 글을 지우지 않는다. 나중에 「편하게 통째로 넣자」는 말이 반드시 다시 나온다. */
 function pagePasteWhy() {
-  return '<b>이 쪽의 글은 «대조용»으로만 씁니다.</b><br>'
-    + '여기 보이는 글자는 홈페이지에서 태그를 걷고 줄을 뭉쳐 만든 것입니다. '
-    + '이 글자를 홈페이지에 붙여넣으면 <b>지도·표·구획·지사 탭</b>이 통째로 사라집니다. '
+  return '<b>통째로 붙여넣기는 드리지 않습니다 — 대신 «줄마다» 고칩니다.</b><br>'
+    + '아래 <b>대조 기준 글자</b>는 홈페이지에서 태그를 걷고 줄을 뭉쳐 만든 것입니다. '
+    + '이 글자를 홈페이지에 통째로 붙여넣으면 <b>지도·표·구획·지사 탭</b>이 통째로 사라집니다. '
     + '(오시는길은 한 줄 275자, 노동사건대리는 한 줄 2412자가 됩니다.)<br>'
     + '게다가 그렇게 부서진 쪽을 다시 읽으면 같은 글자가 나와 딱지가 <b>「같음」</b>으로 떠서, '
     + '부서진 줄도 모르게 됩니다.<br>'
-    + '쪽 내용은 <b>홈페이지 관리자 화면에서 직접</b> 고치십시오. '
-    + '통합시스템은 <b>올라갔는지 안 올라갔는지 대조만</b> 해 드립니다.';
+    + '그래서 위 <b>홈페이지 화면</b> 칸에서 <b>줄을 하나씩</b> 고치고 '
+    + '<b>「홈페이지에 채우기용 복사」</b>를 누르십시오 — '
+    + '고치신 줄의 <b>글자만</b> 제자리에서 갈아 끼우고, 태그는 한 글자도 건드리지 않습니다.';
 }
 
 /* 편집칸 맨 위 «한 줄» 안내 (5차 지시 — 「불필요한 설명은 모두 정리」).
@@ -2985,6 +3034,7 @@ async function readOnePage(mid) {
   App.reading = mid;
   App.render();
   let 잘못 = null;
+  let 버린고침 = 0;
   try {
     const token = await firebase.auth().currentUser.getIdToken();
     const res = await fetch(READ_HOMEPAGE_URL, {
@@ -2995,7 +3045,7 @@ async function readOnePage(mid) {
     if (!res.ok) throw new Error('서버가 ' + res.status + ' 을 돌려줬습니다');
     const data = await res.json();
     if (typeof data.html !== 'string') throw new Error('내용이 비어 있습니다');
-    App.pageLines[mid] = PuHomeParse.parsePageLines(data.html);
+    버린고침 = keepPageHtml(mid, data.html);
   } catch (e) {
     console.warn('[쪽 읽기]', e);
     잘못 = (e && e.message) || String(e);
@@ -3009,16 +3059,97 @@ async function readOnePage(mid) {
     return;
   }
   const n = (App.pageLines[mid] || []).length;
-  toast(n ? (n + '줄을 읽었습니다 — 홈페이지에 보이는 그대로입니다.')
-          : '읽었지만 본문 줄을 찾지 못했습니다.');
+  toast((n ? (n + '줄을 읽었습니다 — 홈페이지에 보이는 그대로입니다.')
+           : '읽었지만 본문 줄을 찾지 못했습니다.')
+    + (버린고침 ? ' 고쳐 두신 ' + 버린고침 + '줄은 홈페이지에서 사라져 지웠습니다.' : ''));
 }
 window.readOnePage = readOnePage;
+
+/* 읽어온 쪽 하나를 «두 가지 모양»으로 담는다 — 보여줄 줄과 고칠 줄.
+   ★ 한 군데서만 담는다. 두 군데서 따로 담으면 한쪽만 고쳐지고 어긋난다.
+   ★ 고쳐 두신 줄은 «원래 글자»로 붙들어 둔다(줄 번호가 아니라). 다시 읽는 사이
+     홈페이지 줄이 하나 늘어도 고친 것이 엉뚱한 줄로 옮겨 붙지 않는다. */
+function keepPageHtml(mid, html) {
+  App.pageLines[mid] = PuHomeParse.parsePageLines(html);
+  App.pageRuns[mid] = PuHomeFill.fixableRuns(PuHomeParse.pageBodyHtml(html));
+  /* 이제 없는 줄에 걸린 고침은 버린다 — 없는 자리를 채울 수는 없다 */
+  const fix = App.pageFix[mid];
+  if (!fix) return 0;
+  const 있는글 = {};
+  App.pageRuns[mid].forEach(r => { 있는글[r.text] = 1; });
+  let 버림 = 0;
+  Object.keys(fix).forEach(k => { if (!있는글[k]) { delete fix[k]; 버림++; } });
+  return 버림;
+}
 
 function readPageBtn(mid, label) {
   return '<button class="btn sm" onclick="readOnePage(\'' + esc(mid) + '\')"'
     + (App.reading === mid ? ' disabled' : '') + '>'
     + (App.reading === mid ? '읽는 중…' : esc(label || '이 쪽 다시 읽기')) + '</button>';
 }
+
+/* ══════ 쪽 본문 고치기 (대표 지시 「모두 다 — 쪽 본문 안 깨지게」) ══════
+   ★ 여기서 고친 글은 «우리 자료가 아니다». 홈페이지에 채울 쪽지가 될 뿐이다.
+     그래서 저장하지 않고, 채운 뒤에는 「홈페이지 다시 확인」으로 되읽는다. */
+function pageFixOf(mid) { return (App.pageFix[mid] = App.pageFix[mid] || {}); }
+function pageFixList(mid) {
+  const fix = App.pageFix[mid] || {};
+  return Object.keys(fix)
+    .filter(k => String(fix[k]).trim() && String(fix[k]) !== k)
+    .map(k => ({ before: k, after: String(fix[k]) }));
+}
+function pageRunEdit(mid, text, val) {
+  const fix = pageFixOf(mid);
+  if (String(val) === text) delete fix[text]; else fix[text] = String(val);
+  /* ★ 다시 그리지 않는다 — 글을 치는 중에 다시 그리면 커서가 맨 앞으로 튄다.
+     단추의 숫자만 손으로 갈아 끼운다. */
+  const b = document.getElementById('pfixBtn');
+  if (b) {
+    const n = pageFixList(mid).length;
+    b.disabled = !n;
+    b.textContent = n ? ('홈페이지에 채우기용 복사 (' + n + '줄)') : '고친 줄이 없습니다';
+  }
+}
+window.pageRunEdit = pageRunEdit;
+
+function resetPageFix(mid) {
+  App.pageFix[mid] = {};
+  App.render();
+  toast('고친 줄을 모두 되돌렸습니다.');
+}
+window.resetPageFix = resetPageFix;
+
+/* 「홈페이지에 채우기용 복사」 — 쪽지를 만들어 클립보드에 담고, 순서를 알려 준다. */
+async function copyPageFix(mid) {
+  const edits = pageFixList(mid);
+  if (!edits.length) return;
+  copyText(PuHomeFill.packPageEdits(mid, edits));
+
+  const url = PuHomeExport.editUrl('page', mid);
+  let h = '<h2>' + esc(PAGE_LABEL[mid] || mid) + ' — 고친 ' + edits.length + '줄을 복사했습니다</h2>';
+  h += '<div class="bar ok"><b>본문 모양은 건드리지 않습니다.</b> '
+    + '지도·표·구획·지사 탭은 그대로 두고 <b>고치신 줄의 글자만</b> 제자리에서 갈아 끼웁니다.</div>';
+  h += '<div class="fld"><label>바뀌는 줄</label><div class="rows">'
+    + edits.map(e => '<div class="l"><span class="t">'
+        + '<span style="color:var(--faint);text-decoration:line-through">' + esc(e.before) + '</span><br>'
+        + '<b>' + esc(e.after) + '</b></span></div>').join('')
+    + '</div></div>';
+  h += '<div class="guide"><b>채우는 순서</b><ol>'
+    + '<li>아래 <b>홈페이지 편집 화면 열기</b>를 누른다 <span class="sub">(로그인은 처음 한 번만)</span></li>'
+    + '<li>즐겨찾기의 <b>★ 푸른ERP 쪽 채우기</b>를 누른다'
+    + ' <span class="sub">— 고친 줄만 저절로 바뀝니다</span></li>'
+    + '<li>눈으로 확인하고 <b>저장</b>을 누른다 <span class="sub">(저장은 사람이 합니다)</span></li>'
+    + '<li>통합시스템으로 돌아와 <b>이 쪽 다시 읽기</b> → <b>대조 기준 저장</b> → <b>홈페이지 다시 확인</b></li>'
+    + '</ol><div class="sub" style="margin-top:5px">'
+    + '단추가 아직 없으면 <b><a href="#" onclick="openFillSetup();return false;">여기에서 한 번만</a></b> 넣으십시오. '
+    + '원래 글을 못 찾은 줄은 <b>건너뛰고 무엇을 건너뛰었는지 알려 줍니다</b> — '
+    + '그 사이 남이 고친 글을 덮지 않기 위해서입니다.</div></div>';
+  h += '<div style="margin-top:10px"><a class="btn pri" href="' + esc(url)
+    + '" target="_blank" rel="noopener">홈페이지 편집 화면 열기</a></div>';
+  h += modalFoot('');
+  openModal(h);
+}
+window.copyPageFix = copyPageFix;
 
 function pageLinesHtml(mid) {
   const lines = (App.pageLines || {})[mid];
@@ -3047,16 +3178,55 @@ function pageLinesHtml(mid) {
     if (t.length <= 16 && !/\s/.test(t)) return ' head';        // 자문서비스·법률자문·천안본사
     return '';
   };
-  return '<div class="fld"><label>홈페이지 화면 — ' + lines.length + '줄'
-    + '<span class="tip">번호는 화면에서 세는 용도입니다</span>'
+  /* ★ 줄을 «고칠 수 있게» 한다 (대표 지시 「모두 다 — 쪽 본문 안 깨지게」).
+     보여주는 줄(pageLines)과 고치는 줄(pageRuns)은 같은 자리에서 나오지만 나누는 결이
+     다르다 — 굵은 글씨처럼 줄 안에 태그가 끼면 고치는 줄이 더 잘게 나뉜다.
+     ★ 잘게 나뉜 쪽을 «고치는 줄»로 삼는다. 갈아 끼울 수 있는 것이 그 단위이기 때문이다.
+       (뭉쳐 보여 주고 잘게 채우면, 고친 줄이 조용히 안 채워진다.) */
+  const runs = (App.pageRuns || {})[mid];
+  if (!Array.isArray(runs) || !runs.length) {
+    return '<div class="fld"><label>홈페이지 화면 — ' + lines.length + '줄'
+      + '<span style="flex:1"></span>' + readPageBtn(mid) + '</label>'
+      + '<div class="rows">' + lines.map((l, i) =>
+          '<div class="l' + kindOf(String(l)) + '"><span class="n">' + (i + 1) + '</span>'
+          + '<span class="t">' + esc(l) + '</span></div>').join('')
+      + '</div></div>';
+  }
+  const fix = App.pageFix[mid] || {};
+  const 고친수 = pageFixList(mid).length;
+  const 못고침 = runs.filter(r => !r.ok).length;
+  return '<div class="fld"><label>홈페이지 화면 — ' + runs.length + '줄'
+    + '<span class="tip">여기서 고치면 홈페이지에 그대로 채웁니다</span>'
     + '<span style="flex:1"></span>' + readPageBtn(mid) + '</label>'
-    + '<div class="rows">' + lines.map((l, i) =>
-        '<div class="l' + kindOf(String(l)) + '"><span class="n">' + (i + 1) + '</span>'
-        + '<span class="t">' + esc(l) + '</span></div>').join('')
+    + '<div class="rows">' + runs.map((r, i) => {
+        const now = fix[r.text] != null ? fix[r.text] : r.text;
+        const 바뀜 = String(now) !== r.text && String(now).trim();
+        return '<div class="l' + kindOf(r.text) + (바뀜 ? ' ch' : '') + (r.ok ? '' : ' lock')
+          + '"><span class="n">' + (i + 1) + '</span>'
+          + (r.ok
+            ? '<input class="t" value="' + esc(now) + '" spellcheck="false"'
+              /* ★ 원래 글자를 «그대로» 실어 보낸다 — 이것이 홈페이지에서 자리를 찾는 열쇠다.
+                 따옴표·꺾쇠가 든 줄이 있으므로 JSON 으로 싸고 HTML 로 한 번 더 감싼다. */
+              + ' oninput="pageRunEdit(\'' + esc(mid) + '\',' + esc(JSON.stringify(r.text))
+              + ',this.value)">'
+            : '<span class="t" title="' + esc(r.why) + '">' + esc(r.text)
+              + ' <b class="lockmk">🔒</b></span>')
+          + '</div>';
+      }).join('')
     + '</div>'
+    + '<div class="pfixbar">'
+    + '<button class="btn pri sm" id="pfixBtn" onclick="copyPageFix(\'' + esc(mid) + '\')"'
+    + (고친수 ? '' : ' disabled') + '>'
+    + (고친수 ? '홈페이지에 채우기용 복사 (' + 고친수 + '줄)' : '고친 줄이 없습니다') + '</button>'
+    + (고친수 ? '<button class="btn sm" onclick="resetPageFix(\'' + esc(mid)
+               + '\')">고친 줄 되돌리기</button>' : '')
+    + '<span class="tip" style="flex:1">고친 줄만 갈아 끼웁니다 — 지도·표·구획은 그대로입니다. '
+    + '저장은 홈페이지에서 사람이 누릅니다.</span></div>'
     + '<div class="legend2"><span><b class="k-head">굵은 남색</b> 쪽 제목·소제목</span>'
     + '<span><b class="k-sec">주황 숫자</b> 구획(01·02)</span>'
-    + '<span class="k-tel">회색 연락처</span><span>보통 본문</span></div></div>';
+    + '<span class="k-tel">회색 연락처</span>'
+    + (못고침 ? '<span>🔒 ' + 못고침 + '줄 — 똑같은 글이 여럿이라 자동으로 못 고칩니다</span>' : '')
+    + '</div></div>';
 }
 
 /* 기준 글자를 «홈페이지에서 읽어온 줄»로 나눈다 (5차 지시).
@@ -3102,8 +3272,8 @@ function pageEdit(d) {
   /* 한 줄 + 접기 (5차 지시 ②) — 네 줄짜리 띠를 쪽마다 매번 읽지 않는다.
      이유는 없애지 않고 「왜 안 되나」에 접어 둔다. */
   h += '<div class="ehd">' + noteOneLine(
-        '<b>이 쪽은 대조만</b> 합니다 — 붙여넣기를 드리지 않습니다.',
-        pagePasteWhy(), '왜 안 되나') + '</div>';
+        '<b>줄을 하나씩</b> 고쳐 홈페이지에 채웁니다 — 지도·표·구획은 그대로입니다.',
+        pagePasteWhy(), '통째로는 왜 안 되나') + '</div>';
   h += '<div class="esc">';
   h += pageLinesHtml(d.key);
   /* ★ 편집칸은 «읽기 전용으로 만들지 않았다». 이 글자는 대조 기준값이라, 홈페이지를 직접
@@ -3128,7 +3298,9 @@ function pageEdit(d) {
     + '<textarea rows="9" oninput="fieldEdit(\'text\',this.value)">' + esc(d.text) + '</textarea></div>';
   /* 「고치는 순서」는 접어 둔다 — 한 번 익히면 매번 읽을 글이 아니다 */
   h += '<details class="why1"><summary>이 쪽을 고치는 순서</summary><div class="w"><ol>'
-    + '<li><b>홈페이지에서 이 쪽 열기</b> → 관리자 화면에서 직접 고치고 저장</li>'
+    + '<li>위 <b>홈페이지 화면</b> 칸에서 <b>고칠 줄을 그 자리에서 고친다</b> → '
+    + '<b>홈페이지에 채우기용 복사</b> → 홈페이지 편집 화면에서 <b>★ 푸른ERP 쪽 채우기</b> → <b>저장</b>'
+    + ' <span class="sub">(홈페이지 관리자 화면에서 직접 고치셔도 됩니다)</span></li>'
     + '<li>돌아와 <b>홈페이지 다시 확인</b> → 딱지가 「안 올라감」으로 바뀝니다</li>'
     + '<li>바꾼 내용을 그대로 두려면 <b>대조 기준 글자</b>를 홈페이지와 맞춘 뒤 <b>대조 기준 저장</b> — '
     + '<b>대조 기준 저장만으로는 딱지가 바뀌지 않습니다.</b> 그 뒤 <b>홈페이지 다시 확인</b>을 '

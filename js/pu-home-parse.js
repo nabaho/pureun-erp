@@ -79,7 +79,11 @@
         보여주는 줄 모양을 지운 뒤 다시 지어내지 않는다.
      4) 각 줄을 tidy() 로 다듬는다 — 남은 태그를 걷고, 개체표기를 풀고, 겹공백을 하나로
         만들고, 앞뒤를 다듬는다. 빈 줄은 버린다. */
-  function parsePageLines(html) {
+  /* 쪽에서 «본문 자리»만 잘라 낸다 (위 1)2) 를 그대로 한다).
+     ★ 따로 빼 둔 까닭: «보여줄 줄»과 «고칠 줄»이 반드시 같은 자리에서 나와야 한다.
+       자리가 어긋나면 머리띠·메뉴 글자가 고칠 줄로 잡히고, 사람이 고친 줄은
+       조용히 안 채워진다. 한 군데서만 자른다. */
+  function pageBodyHtml(html) {
     const src = String(html || '');
     const noScript = src
       .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -87,13 +91,19 @@
       .replace(/<!--[\s\S]*?-->/g, ' ');
 
     const markerIdx = noScript.indexOf('bh_page_widget_inner');
-    if (markerIdx === -1) return [];
+    if (markerIdx === -1) return '';
     const gt = noScript.indexOf('>', markerIdx);
-    if (gt === -1) return [];
+    if (gt === -1) return '';
     let body = noScript.slice(gt + 1);
 
     const footerIdx = body.search(/<footer/i);
     if (footerIdx !== -1) body = body.slice(0, footerIdx);
+    return body;
+  }
+
+  function parsePageLines(html) {
+    const body = pageBodyHtml(html);
+    if (!body) return [];
 
     const withBreaks = body
       .replace(/<\/(div|p|li|h[1-6]|td|tr|section|article)\s*>/gi, '\n')
@@ -106,6 +116,7 @@
     tidy: tidy,
     parseMembers: parseMembers,
     parsePageText: parsePageText,
-    parsePageLines: parsePageLines
+    parsePageLines: parsePageLines,
+    pageBodyHtml: pageBodyHtml
   };
 })(typeof window !== 'undefined' ? window : globalThis);
