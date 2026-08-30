@@ -322,6 +322,47 @@ test('★★ 덮개를 «옅게라도» 남긴다 — 아주 지우면 뒤가 �
   assert.ok(a < 0.3, '★ 너무 진하면 정작 그 사진이 안 보입니다 (지금 ' + a + ')');
 });
 
+/* ── 좌우 넓이 (대표 지시 2026-08-30 「좌우 넓이 1/3 줄여라」) ──
+   ⚠ **227 이라는 숫자가 아니라 «⅔ 라는 비»를 못박는다.** 붙박이 창 넓이를 나중에
+     고치면 공유 창도 함께 따라와야 한다 — 숫자로 박으면 그때 검사가
+     「기능이 망가져서가 아니라」 깨진다(CLAUDE.md 검사 규칙).
+   ⚠ 제목이 한 줄에 드는지는 브라우저에서 실제로 재어 확인했다(161/161px). */
+test('★★ 공유 창 좌우가 붙박이 창의 «⅔»다 — 대표 지시 「1/3 줄여라」', () => {
+  const base = Number(/#kindPopup \.pop\{[^}]*max-width:(\d+)px/.exec(app)[1]);
+  const m = /@media \(min-width:761px\)\{[\s\S]*?#kindPopup\.move \.pop\{[^}]*max-width:(\d+)px/.exec(app);
+  assert.ok(m, '★★ 공유 창을 안 좁혔습니다');
+  const narrow = Number(m[1]);
+  const r = narrow / base;
+  assert.ok(Math.abs(r - 2 / 3) < 0.03,
+    '★★ 좌우를 ⅓ 줄이라 하셨습니다 — 지금은 ' + base + 'px 의 ' +
+    Math.round(r * 100) + '% (' + narrow + 'px) 입니다');
+});
+
+test('★★ 좁히는 것은 «넓은 화면에서만» — 폰에서 더 좁히는 것은 거꾸로다', () => {
+  /* ⚠ 이 파일에는 폰 규칙 묶음이 여럿이고, 한 줄짜리도 있다 — 「공유 창으로 시작하는」
+     묶음에 딱 붙여 찾는다. 안 그러면 엉뚱한 묶음부터 수백 줄을 통째로 집는다. */
+  const phone = /@media \(max-width:760px\)\{\r?\n\s*#kindPopup\.move[\s\S]*?\r?\n\}/.exec(app);
+  assert.ok(phone, '★ 공유 창의 폰 규칙이 없습니다');
+  /* ⚠ 묶음의 «조건»(max-width:760px)이 아니라 «안의 규칙»만 본다 */
+  const inner = phone[0].replace(/^@media[^{]*\{/, '');
+  assert.ok(!/max-width:\d+px/.test(inner),
+    '★★ 폰에서까지 좁히면 한 손으로 짚기 어려워집니다 — 좁은 화면은 원래 가운데 붙박이입니다');
+  /* 좁히는 규칙이 넓은 화면 쪽 안에 «들어 있어야» 한다 */
+  const wide = /@media \(min-width:761px\)\{\r?\n\s*#kindPopup\.move[\s\S]*?\r?\n\}/.exec(app);
+  assert.ok(wide && /#kindPopup\.move \.pop\{[^}]*max-width/.test(wide[0]),
+    '★★ 좁히는 규칙이 넓은 화면 밖에 있습니다 — 폰까지 따라 좁아집니다');
+});
+
+test('★ 좁아진 만큼 «여백과 글씨»도 줄인다 — 안 줄이면 제목이 두 줄이 된다', () => {
+  const wide = /@media \(min-width:761px\)\{\r?\n\s*#kindPopup\.move[\s\S]*?\r?\n\}/.exec(app)[0];
+  assert.match(wide, /#kindPopup\.move \.h\{[^}]*font-size:/,
+    '★ 제목 글씨를 그대로 두면 「이 사진을 같이 볼 사람」이 접힙니다');
+  ['\\.h\\{', '\\.b\\{', '\\.btns\\{'].forEach(function (sel) {
+    assert.match(wide, new RegExp('#kindPopup\\.move ' + sel + '[^}]*padding:'),
+      '★ 좌우 여백이 그대로면 좁힌 만큼이 여백에 먹힙니다 (' + sel + ')');
+  });
+});
+
 test('★ 폰에서는 «가운데 붙박이»로 되돌린다 — 좁은 화면은 옮길 자리가 없다', () => {
   const m = /@media \(max-width:760px\)\{\s*#kindPopup\.move[\s\S]*?\n\}/.exec(app);
   assert.ok(m, '★ 폰 규칙이 없습니다');
