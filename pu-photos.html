@@ -25,7 +25,7 @@
 <script src="js/pu-rrn-mask-ui.js?v=3"></script>
 <!-- ✨ AI 지우개 계산 층 (대표 지시 2026-08-29) — 자르기·마젠타 표시·제자리 붙이기.
      ⚠ 사진첩만 쓴다(급여데이터함은 가리기까지만). -->
-<script src="js/pu-photo-edit.js?v=4"></script>
+<script src="js/pu-photo-edit.js?v=5"></script>
 <!-- 🖍 사진 편집 — 칠한 자취를 «군데»로 나누는 셈 (대표 지시 2026-08-29 「자유롭게 편집」).
      ⚠ 몇 군데인지가 곧 «요금 몇 번»이라, 이 셈은 노드에서 그대로 돌려 볼 수 있어야 한다. -->
 <script src="js/pu-photo-paint.js?v=1"></script>
@@ -13269,6 +13269,69 @@ function startPhotoMask() {
      멀쩡한 배경까지 「지우라」고 시키는 셈이다.
    ⚠ 한 군데가 실패해도 **나머지는 살린다** — 다섯 군데 중 하나 때문에 넷을 잃으면 안 된다.
    ⚠ **저장하지 않는다.** 결과를 보여 드리고 대표님이 고르신다. */
+/* ── 「흐리게 나왔다」를 «숫자»로 (대표 지시 2026-08-30 「1번부터 순서대로」) ──
+   남아 있던 일이 「실사진으로 해 보고 시원찮으면 조각 크기를 맞춘다」였다.
+   그런데 시원찮은지 아닌지를 **눈대중으로만** 말하면, 조율값(MAX_EDGE·MIN_CROP)을
+   어느 쪽으로 얼마나 옮길지 영영 못 정한다. 그래서 한 줄로 재어 보여 준다.
+
+   ★ 읽는 법 — 「원본 1픽셀을 조각 몇 픽셀이 그렸나」
+     1.0 이상 : 줄여 붙였다. 또렷하다.
+     1.0 미만 : **늘려 붙였다.** 그 자리가 흐려진다 — 그것이 「시원찮다」의 정체다.
+   ⚠ 넓게 칠할수록 이 값이 떨어진다(모델이 돌려주는 크기는 대개 정해져 있다).
+     그래서 흐릴 때 할 말은 「AI 가 시원찮다」가 아니라 **「나눠서 칠하시라」**다 —
+     요금은 같고 결과는 또렷해진다.
+   ⚠ 늘 떠들지 않는다. 또렷하면 접어 두고, 흐릴 때만 눈에 띄게 말한다. */
+function edFitNote(f) {
+  if (!f || !f.per) return '';
+  const soft = f.per < 1;
+  const detail = '보낸 조각 ' + esc(f.sent) + ' → 돌아온 것 ' + esc(f.back) +
+    ' · 원본 1픽셀당 ' + f.per + '픽셀';
+  if (!soft) {
+    return '<p class="note" style="margin:6px 0 0;font-size:11px;color:var(--sub)">' +
+      '또렷하게 붙었습니다 <span style="opacity:.75">(' + detail + ')</span></p>';
+  }
+  return '<p class="note" style="margin:6px 0 0;font-size:11.5px;background:#fff7ed;' +
+    'border:1px solid #fed7aa;color:#92400e;border-radius:8px;padding:7px 9px">' +
+    '⚠ 고친 자리가 <b>흐릴 수 있습니다</b> — 칠한 곳이 넓어 늘려 붙였습니다.<br>' +
+    '<b>나눠서 칠하면</b> 또렷해집니다(요금은 군데 수만큼으로 같습니다).' +
+    '<br><span style="opacity:.8;font-size:11px">' + detail + '</span></p>';
+}
+
+/* ── 돈을 쓰기 «전»에 흐릴지 말해 준다 (대표 지시 2026-08-30) ──
+   재 보니 이렇다(돌아온 것을 1024 로 놓고 셈): 폰 사진(4032×3024)은 칠한 넓이가
+   짧은 변의 **12%** 를 넘으면, 줄여 담은 사진(2000×1500)은 **24%** 를 넘으면
+   늘려 붙게 되어 그 자리가 흐려진다.
+   ⚠ 흐린 것을 «치른 뒤»에 아는 것은 늦다 — 요금은 이미 나갔다. 미리 말한다.
+   ⚠ 조각 크기를 키운다고 안 흐려진다(모델이 돌려주는 크기는 우리가 보낸 크기와
+     상관없이 대개 정해져 있다). 답은 **나눠서 칠하기**다 — 요금은 군데 수만큼으로 같다.
+   ⚠ 한 번이라도 진짜로 불러 봤으면 그때 돌아온 크기를 쓴다(아래 edBackPx) —
+     짐작이 사실로 바뀐다. */
+const ED_BACK_PX_KEY = 'puphotos.edBackPx';
+const ED_BACK_PX_GUESS = 1024;
+function edBackPx() {
+  try {
+    const v = Number(localStorage.getItem(ED_BACK_PX_KEY));
+    return (isFinite(v) && v >= 128) ? v : ED_BACK_PX_GUESS;
+  } catch (_) { return ED_BACK_PX_GUESS; }
+}
+function noteEdBackPx(f) {
+  const n = f && Number(String(f.back || '').split('×')[0]);
+  if (!isFinite(n) || n < 128) return;
+  try { localStorage.setItem(ED_BACK_PX_KEY, String(n)); } catch (_) { /* 사생활 모드 */ }
+}
+/* 지금 칠해 둔 군데들이 «몇 배»로 붙을지 미리 재어 가장 나쁜 것을 돌려준다 */
+function edSoftAreas(areas, img) {
+  const back = edBackPx();
+  const out = [];
+  (areas || []).forEach(function (a, i) {
+    const spec = window.PuPhotoEdit.cropSpec(a, img.naturalWidth, img.naturalHeight);
+    if (!spec) return;
+    const per = Math.round((back / spec.sw) * 100) / 100;
+    if (per < 1) out.push({ i: i + 1, per: per });
+  });
+  return out;
+}
+
 async function edRun() {
   if (!photoEd || photoEd.status !== 'ready' || photoEd.done) return;
   if (blockedIfOther(photoEd.id)) return;
@@ -13279,8 +13342,15 @@ async function edRun() {
   if (!areas.length) { alert('편집할 곳을 먼저 칠해 주세요.'); return; }
   /* 사람이 한글로 적은 «무엇을 할까» (대표 지시 2026-08-29). 안 적으면 지우고 메운다. */
   const want = edWant();
+  /* ⚠ 넓게 칠하면 흐리게 돌아온다 — **요금을 치르기 전에** 말한다(2026-08-30) */
+  const soft = edSoftAreas(areas, $('edImg'));
+  const softLine = soft.length
+    ? '\n⚠ ' + (soft.length === areas.length ? '칠한 곳이' : soft.length + '군데가') +
+      ' 넓어 그 자리가 **흐리게** 나올 수 있습니다.\n' +
+      '   나눠서 칠하시면 또렷해집니다 — 요금은 군데 수만큼으로 같습니다.\n'
+    : '';
   if (!confirm('칠한 ' + areas.length + '군데를 ' + (want || '지우고 그 자리를 배경으로 메웁니다') +
-    (want ? '\n— 이렇게 고칩니다.' : '.') + '\n\n' +
+    (want ? '\n— 이렇게 고칩니다.' : '.') + '\n' + softLine + '\n' +
     '· **요금이 ' + areas.length + '번** 듭니다(떨어진 곳마다 한 번).\n' +
     '· 결과를 **먼저 보여 드립니다** — 마음에 안 들면 버리시면 됩니다.\n' +
     '· 저장하면 **새 사진으로** 담깁니다 — 원본은 그대로입니다.\n\n계속할까요?')) return;
@@ -13288,7 +13358,7 @@ async function edRun() {
   photoEd.busy = { done: 0, all: areas.length };
   renderReadPanel(maskItem());
   let full = photoEd.url;
-  let failed = 0, last = '', did = '';
+  let failed = 0, last = '', did = '', fit = null;
   try {
     const shape = edShapeCanvas($('edImg'));
     for (let i = 0; i < areas.length; i++) {
@@ -13305,6 +13375,13 @@ async function edRun() {
         }, cut.dataUrl, want);
         const patch = await loadImg(got.src);
         full = window.PuPhotoEdit.pasteBack(img, cut.spec, patch);
+        /* ── 얼마나 «또렷하게» 돌아왔나를 잰다 (대표 지시 2026-08-30) ──
+           남은 일이 「해 보고 시원찮으면 조각 크기를 맞춘다」였는데 **잴 눈금이 없었다.**
+           ⚠ 여러 군데면 **가장 나쁜 것**을 남긴다 — 한 군데만 흐려도 사진은 흐리다. */
+        const f = window.PuPhotoEdit.fitOf(cut.spec, patch);
+        if (f && (!fit || f.per < fit.per)) fit = f;
+        /* 짐작을 사실로 — 다음부터는 «진짜 돌아온 크기»로 미리 알려 준다 */
+        noteEdBackPx(f);
         /* 서버가 실제로 쓴 말 — 사진에 기록으로 남길 것이다(무엇을 시켰나) */
         did = got.want || did;
       } catch (e) {
@@ -13316,7 +13393,8 @@ async function edRun() {
       renderReadPanel(maskItem());
     }
     if (failed === areas.length) throw new Error(last);
-    photoEd.done = { full: full, before: photoEd.url, n: areas.length - failed, want: did };
+    photoEd.done = { full: full, before: photoEd.url, n: areas.length - failed,
+      want: did, fit: fit };
     photoEd.busy = null;
     renderReadPanel(maskItem());
     renderViewerEdit();
@@ -13387,8 +13465,12 @@ async function edKeep() {
       /* ⚠ **무엇을 시켰는지**(what)까지 남긴다 — 사람이 한글로 시킬 수 있게 된
          2026-08-29 부터는 「손댔나」만으로 부족하다. 증빙 사진에서 「무엇을 했나」에
          답하려면 그 말이 있어야 한다. 서버가 실제로 쓴 말을 그대로 적는다. */
+      /* ⚠ 얼마나 또렷하게 붙었는지도 «기록에» 남긴다(2026-08-30) — 조율값을 옮길지
+         말지는 실사진 몇 장이 답한다. 화면에서만 보여 주고 안 남기면, 창을 닫는
+         순간 그 답이 사라져 다음에 또 처음부터 재게 된다. */
       edited: { at: Date.now(), how: photoEd.done.how || 'ai', n: photoEd.done.n,
-        what: String(photoEd.done.want || '').slice(0, 200) }
+        what: String(photoEd.done.want || '').slice(0, 200),
+        fit: photoEd.done.fit || null }
     });
     await PuPhotoStore.savePhoto({ id: id, meta: meta, full: full, thumb: thumb });
     gridItems.unshift({ id: id, meta: meta, full: full, thumb: thumb });
@@ -13566,6 +13648,7 @@ function edPanelHtml() {
         esc(e.done.want) + '</b></p>' : '') +
       '<p class="note" style="margin:8px 0 0">어떻습니까? 아래 단추를 <b>누르고 있으면</b> ' +
       '고치기 전이 보입니다.</p>' +
+      edFitNote(e.done.fit) +
       '<button class="again" style="width:100%;margin-top:8px"' +
       ' onpointerdown="edPeek(true)" onpointerup="edPeek(false)"' +
       ' onpointerleave="edPeek(false)" onpointercancel="edPeek(false)">' +

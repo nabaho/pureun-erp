@@ -53,10 +53,22 @@ test('★★ 편집과 가리기가 «다른 길»이다 — 한 화면에 나�
 });
 
 test('★★ 세 가지 결이 없다 — 편집은 «가리는 일»이 아니다', () => {
-  ['photoMaskStyle', '.maskstyle', '모자이크', '흐리게'].forEach(function (w) {
-    /* 주석에 「걷었다」고 적는 것은 괜찮다 — 코드에 남으면 안 된다 */
-    const code = stripComments(APP);
+  /* 주석에 「걷었다」고 적는 것은 괜찮다 — 코드에 남으면 안 된다 */
+  const code = stripComments(APP);
+  /* 이름은 그대로 못 박는다 — 다른 뜻으로 쓰일 일이 없는 말이다 */
+  ['photoMaskStyle', '.maskstyle'].forEach(function (w) {
     assert.ok(code.indexOf(w) < 0, '★★ 「' + w + '」가 아직 살아 있습니다');
+  });
+  /* ⚠ 「모자이크」·「흐리게」는 **낱말로 찾으면 안 된다**(2026-08-30).
+     둘 다 예사로 쓰는 우리말이라, 「고친 자리가 흐리게 나올 수 있습니다」 같은
+     **전혀 다른 뜻의 안내문**에도 걸린다 — 실제로 걸렸다.
+     막으려는 것은 «도구 이름표»다. 그래서 이름표로 쓰인 꼴만 본다:
+       단추 글자( >흐리게< ) · 값( '흐리게' ) · 이름( style: "흐리게" ) */
+  ['모자이크', '흐리게'].forEach(function (w) {
+    const re = new RegExp('[\'">]\\s*' + w + '\\s*[\'"<]');
+    const hit = re.exec(code);
+    assert.ok(!hit, '★★ 「' + w + '」가 도구 이름표로 아직 살아 있습니다: ' +
+      (hit ? code.slice(Math.max(0, hit.index - 40), hit.index + 30) : ''));
   });
 });
 
