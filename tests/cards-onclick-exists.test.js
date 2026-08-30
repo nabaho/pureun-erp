@@ -74,7 +74,8 @@ test('메일 쓰기 화면의 단추는 특히 하나하나 확인한다', () =>
   for (const n of ['sendCompose','saveDraft','previewMail','openAddrBook','abToggle',
                    'addrBookAdd','edCmd','edFontSize','edMode','edSyncBar','toggleAtt',
                    'insertSign','editSign','toggleSchedule','setSchedule','closeMailPage',
-                   'toggleMailDrawer','addLocalFiles','dropAttach','dropLocalFile',
+                   /* 2026-08-30: toggleMailDrawer 는 자료 서랍과 함께 없앴다 */
+                   'addLocalFiles','dropAttach','dropLocalFile',
                    'setComposeFlag','toggleBcc',
                    /* 2026-08-24: 찾기 칸을 다시 그리지 않게 바꿨다 — focusAbQ·focusMsQ 는
                       더 이상 필요 없어 지웠고(안 건드리니 초점을 다시 잡을 일이 없다),
