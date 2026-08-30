@@ -187,6 +187,14 @@
   .mlrow .t{font-size:12.5px;font-weight:700;color:var(--ink);line-height:1.4}
   .mlrow .s{font-size:10.5px;color:var(--faint);margin-top:1px}
   .mlrow .p{font-size:11.5px;color:var(--sub);margin-top:3px;line-height:1.5}
+  /* 확인한 줄은 흐리게 — 지우지는 않는다. 「무엇을 봤는지」도 자료다. */
+  .mlrow.seen{opacity:.55}
+  .mlrow .mlb{display:flex;align-items:center;gap:5px;margin-top:5px;flex-wrap:wrap}
+  .mlrow .mlb button{font-size:11px;padding:2px 8px;border:1px solid var(--line);
+    border-radius:6px;background:var(--panel);cursor:pointer;color:var(--sub);font-weight:700}
+  .mlrow .mlb button:hover{border-color:var(--acc);color:var(--acc2)}
+  .mlrow .mlb .ok{font-size:10.5px;font-weight:700;color:#0f766e}
+  .mlrow .mlb .undo{font-size:10.5px;color:var(--faint);cursor:pointer;text-decoration:underline}
   .cgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}
   .cgrid.hd{border-top:1px solid #eef2f8;background:#fcfdff}
   .cdow{font-size:10px;font-weight:800;color:#a2adbe;text-align:center;padding:7px 0 6px;letter-spacing:.07em}
@@ -994,6 +1002,10 @@ var S={view:'my', week:null, f:null, me:null, year:new Date().getFullYear(), dra
 var leaving={};            // leaving/{sid} live — 부재(퇴사·휴직·연차) 예정
 var pesync={};             // pesync/{type}-{id} live — 푸른이알피 종료 상태 동기화 스냅샷
 var items={};              // items/{year} live
+/* mailchk/{메일키} = {by,byName,at,item,log} — 「이 메일은 봤다」 표시.
+   ⚠ 자리를 «메일»에 둔다. 같은 메일이 여러 업무에 붙을 수 있는데 업무마다
+     따로 두면 한 통을 여러 번 확인해야 한다. */
+var mailchk={};
 var wkCache={};            // {weekKey:{itemId:{logId:log}}}
 var wkLoaded={};           // {weekKey:true}
 var itemLogsCache={};      // {itemId:{logId:log}}
@@ -1102,6 +1114,10 @@ function start(){
     watchMapChildren(NS+'/steps',function(value){ steps=value||{}; },function(){
       if(appHasFocus()){ S._pend=true; return; } route(); },function(){ steps={}; });
     watchMapChildren(NS+'/tpl',function(value){ tpls=value||{}; },null,function(){ tpls={}; });
+    // 메일 확인 표시 — 다른 사람이 확인하면 내 화면의 ✉ 숫자도 함께 줄어야 한다
+    watchMapChildren(NS+'/mailchk',function(value){ mailchk=value||{}; },function(){
+      if(appHasFocus()){ S._pend=true; return; }
+      route(); if(S.drawerId) renderDrawer(); },function(){ mailchk={}; });
     peWatch();                                   // 푸른이알피 등록 → 자동 연동
     succAutoSoon();                              // 승계표 → 퇴사자 업무 자동 승계
     /* 받은 메일은 «업체 이름표»가 있어야 이어 붙는다 — 업체 목록을 먼저 받고 읽는다.
@@ -2962,27 +2978,112 @@ function _mailWhen(at){
 /* 드로어 블록 — 이 업체에서 온 메일.
    ⚠ 「요약」이라고 적지 않는다. 여기 있는 것은 서버가 본 미리보기 몇 줄이고
      본문은 다음메일에 있다. 요약인 척하면 읽는 사람이 그것을 본문으로 믿는다. */
-function dMailHTML(it){
+/* ── 메일 한 통을 «한 줄»로 줄인다 ────────────────────────────────
+   ⚠ 여기서 「요약」이라고 부를 수 있는 것은 제목뿐이다. 본문이 없다.
+     제목은 대개 이미 요약이고, 모자라면 미리보기 앞머리를 조금 붙인다.
+     ⚠ AI 로 지어내지 않는다 — 재료가 제목 한 줄뿐이라, 지어내면 그럴듯한
+       거짓말이 기록에 남는다. 기록은 나중에 근거로 쓰이는 자료다.
+   ⚠ 대괄호 안의 발송 표시([광고], [푸른노무법인] 같은 것)는 떼어 낸다 —
+     한 줄에서 자리만 먹고 무슨 일인지는 안 알려 준다. */
+function mailBrief(m){
+  var t=String((m&&m.subject)||'').replace(/^\s*(\[[^\]]{1,20}\]\s*)+/,'').replace(/\s+/g,' ').trim();
+  if(!t) t=String((m&&m.preview)||'').replace(/\s+/g,' ').trim();
+  /* ⚠ 우리말 제목은 짧아도 알차다 — 「취업규칙 개정 문의」 열 자면 충분하다.
+     여덟 자 밑일 때만 미리보기를 붙인다(「문의」·「회신」처럼 그것만으론 모를 때). */
+  if(t.length<8 && m && m.preview){
+    var p=String(m.preview).replace(/\s+/g,' ').trim();
+    if(p && p.indexOf(t)!==0) t=(t?t+' — ':'')+p;
+  }
+  if(!t) return '(제목 없음)';
+  return t.length>46?t.slice(0,46)+'…':t;
+}
+// 기록에 들어갈 한 줄 — 「언제 온 메일인지」를 앞에 세운다
+function mailLogLine(m){ return '✉ '+_mailWhen(m.at).split(' ')[0]+' 메일 — '+mailBrief(m); }
+function mailKey(m){ return String((m&&m._k)||''); }
+function mailChk(m){ var k=mailKey(m); return (k&&mailchk&&mailchk[k])||null; }
+/* 확인 표시 — 「이 메일은 봤다」.
+   ⚠ 자리는 업무가 아니라 «메일»이다. 같은 메일이 여러 업무에 붙을 수 있는데
+     업무마다 따로 두면 한 통을 여러 번 확인해야 한다. */
+function mailSee(itemId,k,withLog){
+  if(!k){ toast('메일을 찾지 못했습니다','warn'); return; }
+  var m=null;
+  (mailSrc||[]).forEach(function(x){ if(mailKey(x)===k) m=x; });
+  if(!m){ toast('메일을 찾지 못했습니다','warn'); return; }
+  var rec={ by:(S.me&&S.me.sid)||'', byName:(S.me&&S.me.name)||'',
+    at:new Date().toISOString(), item:String(itemId||'') };
+  if(withLog) rec.log=1;
+  var done=function(){
+    if(!mailchk) mailchk={};
+    mailchk[k]=rec;
+    if(S.drawerId) renderDrawer();
+    route();
+  };
+  if(!withLog){
+    fbDb.ref(NS+'/mailchk/'+k).set(rec)
+      .then(function(){ done(); toast('✓ 확인 표시'); })
+      .catch(function(e){ toast('표시 실패: '+((e&&e.message)||''),'err'); });
+    return;
+  }
+  /* ⚠ 기록이 먼저다. 기록이 실패했는데 「담김」으로 표시하면
+     본 사람은 담긴 줄 알고 넘어가고, 그 메일은 어디에도 안 남는다. */
+  addLog(itemId,mailLogLine(m),todayStr(),'mail').then(function(ok){
+    if(!ok) return;
+    fbDb.ref(NS+'/mailchk/'+k).set(rec).then(done).catch(function(){ done(); });
+  });
+}
+function mailUnsee(k){
+  if(!k) return;
+  fbDb.ref(NS+'/mailchk/'+k).remove().then(function(){
+    if(mailchk) delete mailchk[k];
+    if(S.drawerId) renderDrawer();
+    route();
+  }).catch(function(e){ toast('되돌리지 못했습니다: '+((e&&e.message)||''),'err'); });
+}
+// 아직 확인 안 한 메일 — 목록 표식과 정렬이 이것을 본다
+function mailNew(it){ return mailFor(it).filter(function(m){ return !mailChk(m); }); }
+/* ⚠ 업무 번호를 «받아서» 쓴다. it._id 는 allItems() 가 지나가며 붙여 주는 칸이라
+   드로어가 items[id] 를 곧바로 집어 왔을 때는 비어 있을 수 있다. */
+function dMailHTML(it,itemId){
   if(!mailSrc) return '';                    // 아직 안 읽었거나 못 읽었다 — 조용히 없다
   var arr=mailFor(it);
   if(!arr.length) return '';
+  /* 안 본 것이 위로. 「무엇을 아직 안 봤나」가 이 상자를 여는 까닭이다. */
+  arr=arr.slice().sort(function(a,b){
+    var ca=mailChk(a)?1:0, cb=mailChk(b)?1:0;
+    if(ca!==cb) return ca-cb;
+    return Number(b.at||0)-Number(a.at||0);
+  });
+  var nNew=arr.filter(function(m){ return !mailChk(m); }).length;
+  var id=itemId||it._id;
   return '<div class="dbox"><div class="bh">✉️ 이 업체에서 온 메일'+hlp('mail')
-    +'<span class="r">'+arr.length+'건</span></div><div class="bb">'
-    +arr.slice(0,8).map(function(m){
-      return '<div class="mlrow"><div class="t">'+esc(m.subject||'(제목 없음)')+'</div>'
+    +'<span class="r">'+(nNew?'<b style="color:var(--danger)">안 본 '+nNew+'</b> / ':'')+arr.length+'건</span></div><div class="bb">'
+    +arr.slice(0,10).map(function(m){
+      var k=mailKey(m), c=mailChk(m);
+      return '<div class="mlrow'+(c?' seen':'')+'">'
+        +'<div class="t">'+esc(mailBrief(m))+'</div>'
         +'<div class="s">'+esc(_mailWhen(m.at))+' · '+esc(m.from||'(보낸이 모름)')
         +(Number(m.took||0)?' · <b>자료 '+Number(m.took)+'건 담김</b>':'')+'</div>'
         +(m.preview?'<div class="p">'+esc(String(m.preview).slice(0,160))+'</div>':'')
-        +'</div>';
+        +'<div class="mlb">'
+        +(c
+          ? '<span class="ok">'+(c.log?'✎ 기록에 담김':'✓ 확인함')
+              +' · '+esc(c.byName||'')+' '+esc(String(c.at||'').slice(5,10))+'</span>'
+            +'<span class="undo" onclick="mailUnsee(\''+escJ(k)+'\')" title="확인 표시를 지웁니다 (기록은 그대로 남습니다)">되돌리기</span>'
+          : '<button onclick="mailSee(\''+escJ(id)+'\',\''+escJ(k)+'\',1)" '
+              +'title="'+esc('주간 기록에 한 줄로 남깁니다: '+mailLogLine(m))+'">✎ 기록에 담기</button>'
+            +'<button onclick="mailSee(\''+escJ(id)+'\',\''+escJ(k)+'\',0)" '
+              +'title="기록할 것은 없지만 봤다고 표시합니다">✓ 확인만</button>')
+        +'</div></div>';
     }).join('')
-    +(arr.length>8?'<div class="kbempty">외 '+(arr.length-8)+'건</div>':'')
+    +(arr.length>10?'<div class="kbempty">외 '+(arr.length-10)+'건</div>':'')
     +'</div></div>';
 }
-// 목록에 붙는 작은 표식 — 몇 통인지만. 자세한 것은 열어서 본다.
+/* 목록에 붙는 작은 표식 — «아직 안 본» 것만 센다.
+   ⚠ 전부 세면 숫자가 안 줄어서, 확인해도 화면이 그대로라 밀린 것을 못 찾는다. */
 function mailFlag(it){
-  var n=mailFor(it).length;
+  var n=mailNew(it).length;
   if(!n) return '';
-  return ' <span class="mlf" title="'+esc('이 업체에서 온 메일 '+n+'통 — 업무를 열면 볼 수 있습니다')
+  return ' <span class="mlf" title="'+esc('아직 안 본 메일 '+n+'통 — 업무를 열면 볼 수 있습니다')
     +'">✉ '+n+'</span>';
 }
 // 푸른이알피 연동 이상만 표시한다 (정상 연동은 종료 버튼의 🔗로 이미 드러난다)
@@ -4344,7 +4445,7 @@ function renderDrawer(){
     +'<span class="lb">⚖ 단계 기한</span>'+sdueHTML(it)+'</div>';
   h+=dStepsHTML(id,it);
   h+=dPeopleHTML(id,it);
-  h+=dMailHTML(it);
+  h+=dMailHTML(it,id);
   // 관련 지식 — 같은 업체·유형·관계자에서 얻은 카드가 자동으로 따라온다
   var rel=kbRelated(it);
   h+='<div class="dbox"><div class="bh">📚 관련 지식'+hlp('kb')
@@ -5830,7 +5931,11 @@ var HELP={
       +'⚠ <b>여기에는 본문이 없습니다.</b> 서버가 남긴 것은 제목과 미리보기 몇 줄뿐이라 '
       +'요약이 아니라 <b>「이런 메일이 왔다」</b>는 알림입니다. '
       +'본문·답장·삭제는 <b>다음메일</b>에서 하십시오.<br>'
-      +'붙는 기준이 넉넉해 가끔 남의 메일이 섞일 수 있습니다 — 보낸이를 확인하세요.'
+      +'붙는 기준이 넉넉해 가끔 남의 메일이 섞일 수 있습니다 — 보낸이를 확인하세요.<br>'
+      +'<b>✎ 기록에 담기</b>를 누르면 <b>「✉ 8.27 메일 — 제목」</b> 한 줄이 그 주 기록으로 들어갑니다. '
+      +'그때부터 주간표·팀 전체·전체 검색(Ctrl+K)에서 다른 기록과 똑같이 찾힙니다.<br>'
+      +'<b>✓ 확인만</b>은 기록할 것이 없는 메일을 치울 때 씁니다. '
+      +'목록의 <b>✉</b> 숫자는 <b>아직 안 본 것</b>만 셉니다.'
 };
 function hlp(k){
   return '<span class="hlp" onclick="event.stopPropagation();hlpPop(this,\''+k+'\')" title="설명 보기">ⓘ</span>';
