@@ -210,6 +210,16 @@ body{font-family:"Malgun Gothic","맑은 고딕",system-ui,sans-serif;color:var(
 }
 @media (max-width:780px){ .scroll-hint{display:block;text-align:center;font-size:11px;color:var(--text-mute);margin-top:6px} }
 .field-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+/* 기본정보 묶음 — 열여덟 칸을 한 줄로 늘어놓으면 어디가 어딘지 안 보인다.
+   ⚠ 묶음들도 #piGrid 의 두 칸 격자에 «나란히» 앉는다(사람|연락 / 주소|일).
+     일부러 그렇게 둔 것이다 — 세로로 세우면 개인정보 화면이 두 배로 길어져
+     사진·도장을 보려고 매번 스크롤해야 한다(대표 지시 2026-08-29 「한 화면에」). */
+.pi-grp{margin-bottom:16px}
+.pi-grp:last-child{margin-bottom:0}
+.pi-grp-h{display:flex;align-items:baseline;gap:8px;margin-bottom:9px;padding-bottom:6px;border-bottom:1px solid var(--border-soft)}
+.pi-grp-h b{font-size:12.5px;color:var(--navy)}
+.pi-grp-h span{font-size:11px;color:var(--text-mute)}
+.pi-lock{font-size:10px;font-weight:400;color:var(--amber);margin-left:4px}
 .field label{display:block;font-size:12px;color:var(--text-mute);margin-bottom:4px}
 .field input,.field select{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none}
 .field input:focus,.field select:focus{border-color:var(--navy)}
@@ -741,8 +751,8 @@ input.kf-in.kf-done{background:#EDF7F3;border-bottom:1.5px solid var(--teal);fon
 <script src="js/pu-backup.js?v=1"></script>
 <script src="js/kcareer-scan.js?v=1"></script>
 <script src="js/kcareer-pusync.js?v=1"></script>
-<script src="js/kcareer-hwpxfill.js?v=8"></script>
-<script src="js/kcareer-formmap.js?v=5"></script>
+<script src="js/kcareer-hwpxfill.js?v=9"></script>
+<script src="js/kcareer-formmap.js?v=6"></script>
 <script src="js/kcareer-hwpstamp.js?v=2"></script>
 <script src="js/kcareer-formhtml.js?v=2"></script>
 <script src="js/kcareer-colmap-ai.js?v=1"></script>
@@ -5908,13 +5918,67 @@ function initApiTab(){ const gv=document.getElementById('apiGV'),an=document.get
 }
 
 /* ===== 환경설정: 개인정보·계좌·데이터·백업 ===== */
-const PI_FIELDS=[['name','성명'],['license','자격'],['birth','생년월일'],['gender','성별'],['phone','전화'],['email','이메일'],['addr','주소'],['org','소속']];
-function getProfileInfo(){ const o=get('profile_info'); if(o&&!Array.isArray(o)&&Object.keys(o).length) return o;
+/* ===== 기본정보 =====
+   대표 지시 2026-08-30: 「더 많은 개인정보를 넣어둬야할 것 같다 — 핸드폰 번호,
+   개인 이메일, 집주소 등」. 여덟 칸이던 것을 «네 묶음 열일곱 칸»으로 늘린다.
+
+   왜 갈라 담나 — 서식을 채우는 쪽은 벌써 열셋을 알아보는데 담아 두는 칸이 여덟이라,
+   ① 한자 성명·부서·직위는 서식에 칸이 있어도 «영영 안 채워졌고»
+   ② 전화·주소·이메일은 칸이 하나뿐이라 개인 것과 회사 것이 섞였다.
+     (실측 2026-08-29: 사무실 번호 041-556-0035 가 어느 서식의 「휴대폰」 칸에 박혔다.) */
+const PI_GROUPS=[
+  ['사람','서식이 가장 먼저 묻는 것', [
+    ['name','성명'],['nameHanja','한자 성명'],['nameEng','영문 성명'],
+    ['birth','생년월일'],['gender','성별'],['rrn','주민등록번호']]],
+  ['연락','번호를 갈라 담으면 짐작할 일이 없다', [
+    ['phone','휴대폰'],['phoneWork','사무실 전화'],['phoneHome','자택 전화'],
+    ['fax','팩스'],['email','개인 이메일'],['emailWork','회사 이메일']]],
+  ['주소','지원서는 집을, 위촉 서류는 사무실을 묻는다', [
+    ['addrHome','집 주소'],['addr','사무실 주소']]],
+  ['일','「푸른노무법인 대표」가 한 칸에 뭉쳐 있었다', [
+    ['org','소속'],['dept','부서'],['title','직위'],['license','자격']]]
+];
+const PI_FIELDS=PI_GROUPS.reduce((a,g)=>a.concat(g[2]),[]);
+/* ⚠ 주민등록번호는 «자동으로 나가지 않는다». 담아는 두되, 사람이 그 자리에 직접
+   골라 넣을 때만 쓴다(_cvFillData 가 fields 가 아니라 secrets 로 내보낸다).
+   화면에서도 가려 두고 「보기」를 눌러야 보인다 — 어깨너머로 읽히지 않게. */
+const PI_SECRET={rrn:true};
+const PI_WIDE={addr:true,addrHome:true};
+
+function getProfileInfo(){ const o=get('profile_info'); if(o&&!Array.isArray(o)&&Object.keys(o).length) return _piMigrate(o);
   return {name:USER_INFO['성명'],license:USER_INFO['자격'],birth:USER_INFO['생년월일'],phone:USER_INFO['전화'],email:USER_INFO['이메일'],addr:USER_INFO['주소'],org:USER_INFO['소속']}; }
+
+/* ── 한 번만 하는 자리 옮기기 ──
+   전에는 번호 칸이 하나(phone)뿐이라 사무실 번호가 거기 들어 있었다.
+   그 칸이 이제 「휴대폰」이 되므로, 그대로 두면 사무실 번호가 «휴대폰이라고 단언»되어
+   서식에 박힌다 — 전보다 나빠진다. 그래서 모양을 보고 제자리로 옮긴다.
+   ⚠ 옮기기만 하고 지우지 않는다. 옮길 곳이 이미 차 있으면 손대지 않는다. */
+function _piMigrate(o){
+  var tel=String(o.phone||'').trim();
+  if(tel && !o.phoneWork && !/^01[016789][-.\s]?\d{3,4}[-.\s]?\d{4}$/.test(tel.replace(/\s/g,''))){
+    o.phoneWork=tel; o.phone='';
+  }
+  return o;
+}
 function renderPersonal(){ const g=document.getElementById('piGrid'); if(!g) return; const info=getProfileInfo();
-  g.innerHTML=PI_FIELDS.map(([k,l])=>`<div class="field"${k==='addr'?' style="grid-column:1/-1"':''}><label>${l}</label><input id="pi-${k}" value="${String(info[k]||'').replace(/"/g,'&quot;')}"></div>`).join('');
+  g.innerHTML=PI_GROUPS.map(([title,hint,fs])=>
+    `<div class="pi-grp"><div class="pi-grp-h"><b>${title}</b><span>${hint}</span></div>`
+    +`<div class="field-grid">`+fs.map(([k,l])=>{
+      const v=String(info[k]||'').replace(/"/g,'&quot;');
+      const wide=PI_WIDE[k]?' style="grid-column:1/-1"':'';
+      if(!PI_SECRET[k]) return `<div class="field"${wide}><label>${l}</label><input id="pi-${k}" value="${v}"></div>`;
+      /* 가려 둔 칸 — 「보기」를 눌러야 글자가 보인다 */
+      return `<div class="field"${wide}><label>${l} <span class="pi-lock" title="자동으로 채우지 않습니다. 그 자리에 직접 고를 때만 들어갑니다">🔒 골라야 들어감</span></label>`
+        +`<div style="display:flex;gap:6px"><input id="pi-${k}" type="password" autocomplete="off" value="${v}" style="flex:1">`
+        +`<button type="button" class="btn sm" onclick="piPeek('${k}',this)" title="잠깐 보기">보기</button></div></div>`;
+    }).join('')+`</div></div>`).join('');
   renderPersonalDocs(); }
-function savePersonalInfo(){ const o={}; PI_FIELDS.forEach(([k])=>o[k]=document.getElementById('pi-'+k).value.trim()); set('profile_info',o); toast('기본정보 저장됨'); }
+/* 가린 칸을 잠깐 보여 준다 — 다시 누르면 가린다 */
+function piPeek(k,btn){ var el=document.getElementById('pi-'+k); if(!el) return;
+  var show=el.type==='password'; el.type=show?'text':'password'; if(btn) btn.textContent=show?'가리기':'보기'; }
+function savePersonalInfo(){ const o=get('profile_info')||{};
+  PI_FIELDS.forEach(([k])=>{ const el=document.getElementById('pi-'+k); if(el) o[k]=el.value.trim(); });
+  set('profile_info',o); toast('기본정보 저장됨'); }
 /* ===== 사진 보관함 (IDB 저장, gallery 메타) ===== */
 function renderGallery(){ const grid=document.getElementById('galleryGrid'); if(!grid) return;
   const arr=get('gallery'); const cnt=document.getElementById('galleryCnt'); if(cnt) cnt.textContent=arr.length?arr.length+'장 보관 중':'';
@@ -6568,10 +6632,15 @@ var _rhMap = null;        /* {slots,lists,warn,fp} */
 var _rhPicks = {};        /* {자리이름표: 열쇠} — 사람이 고른 것 */
 
 var RH_KEYS = [
-  ['name','성명'],['nameHanja','한자 성명'],['birth','생년월일'],['gender','성별'],
-  ['phone','휴대폰'],['phoneHome','자택 전화'],['phoneWork','사무실 전화'],
-  ['email','이메일'],['addr','주소'],['org','소속'],['dept','부서'],
-  ['title','직위'],['license','자격증']
+  ['name','성명'],['nameHanja','한자 성명'],['nameEng','영문 성명'],
+  ['birth','생년월일'],['gender','성별'],
+  ['phone','휴대폰'],['phoneHome','자택 전화'],['phoneWork','사무실 전화'],['fax','팩스'],
+  ['email','개인 이메일'],['emailWork','회사 이메일'],
+  ['addr','집 주소'],['addrWork','사무실 주소'],
+  ['org','소속'],['dept','부서'],['title','직위'],['license','자격증'],
+  /* ★ 주민등록번호는 «이 목록에서 골랐을 때만» 들어간다 — 자동 채우기는 건드리지 않는다.
+     골라야 나가므로 목록 맨 끝에 두고, 고를 때 무슨 값인지 알도록 이름을 그대로 적는다. */
+  ['rrn','주민등록번호 🔒']
 ];
 
 function rhDrawerTab(which){
@@ -6635,7 +6704,10 @@ function rhRenderMap(){
   if(_rhMap.warn.nested) msgs.push('칸 안에 표가 또 있는 자리 '+_rhMap.warn.nested+'곳은 건드리지 않습니다');
   if(w) w.innerHTML=msgs.length?'<div class="rh-warn">⚠ '+msgs.join('<br>⚠ ')+'</div>':'';
 
-  var f=(_cvFillData().fields)||{};
+  var _d=_cvFillData(), f=_d.fields||{}, _sec=_d.secrets||{};
+  /* 가려 둔 값(주민등록번호)도 «있는지 없는지»는 알아야 한다 — 골랐는데 노랗게 뜨면
+     「채운다더니 안 채웠다」로 읽힌다. 다만 값 자체는 화면에 내보이지 않는다. */
+  var hasVal=function(k){ return (f[k]!=null&&f[k]!=='')||(_sec[k]!=null&&_sec[k]!==''); };
   /* 이름도 왼쪽 라벨도 없는 순수 빈 칸(병합 칸의 잔여 등)은 감춘다 — 목록이 지저분해진다 */
   var shown=_rhMap.slots.filter(function(s){ return s.guess||s.left||s.kind!=='빈칸'; });
   var hidden=_rhMap.slots.length-shown.length;
@@ -6646,7 +6718,7 @@ function rhRenderMap(){
     var p=(_rhPicks[s.id]!=null)?_rhPicks[s.id]:s.guess;
     if(!p) return '';
     if(p==='__incell'||p==='__stamp') return p;
-    return (f[p]!=null && f[p]!=='') ? p : '';
+    return hasVal(p) ? p : '';
   };
   var known=shown.filter(function(s){ return willFill(s); }).length;
 
@@ -6666,8 +6738,11 @@ function rhRenderMap(){
     var isStamp=(pick==='__stamp');
     var opts='<option value="">— 비워 둠 —</option>'
       +RH_KEYS.map(function(p){
+        /* 가려 둔 값은 «담겨 있다»만 알리고 글자는 안 내보인다 — 목록은 어깨너머로 읽힌다 */
+        var pv=f[p[0]] ? ' · '+escapeHtml(String(f[p[0]])).slice(0,18)
+                       : (_sec[p[0]] ? ' · 담겨 있음' : '');
         return '<option value="'+p[0]+'"'+(pick===p[0]?' selected':'')+'>'+p[1]
-          +(f[p[0]]?' · '+escapeHtml(String(f[p[0]])).slice(0,18):'')+'</option>'; }).join('')
+          +pv+'</option>'; }).join('')
       +'<option value="__incell"'+(pick==='__incell'?' selected':'')+'>칸 안 라벨 자동</option>'
       +'<option value="__stamp"'+(isStamp?' selected':'')+'>🖋 도장 자리</option>';
     var ok=willFill(s);
@@ -6943,7 +7018,9 @@ async function rhFillByMap(){
     });
     var wantLists={}; _rhMap.lists.forEach(function(l){ if(l.sec===n) wantLists[l.id]=l.guess; });
     var xml=await zip.file(n).async('string');
-    var r=KcareerFormMap.apply(xml,{picks:picks,lists:wantLists,data:data,colMap:colMap});
+    var r=KcareerFormMap.apply(xml,{picks:picks,lists:wantLists,data:data,colMap:colMap,
+      /* 가려 둔 값 — 사람이 그 자리에 직접 고른 경우에만 쓰인다(자동으로는 안 나간다) */
+      secrets:data.secrets});
     if(r.changed) zip.file(n,r.xml);
     filled=filled.concat(r.filled); failed=failed.concat(r.failed);
   }
@@ -7169,20 +7246,28 @@ function _cvFillData(){
     get('consult').map(function(r){ return { period:r.date||r.period||r.year||'', org:r.org||r.client||'', role:'[컨설팅] '+(r.title||r.content||'') }; }),
     get('case').map(function(r){ return { period:r.date||r.period||r.year||'', org:r.org||'', role:'[사건] '+(r.title||r.content||'') }; }),
     get('lecture').map(function(r){ return { period:r.date||r.period||r.year||'', org:r.org||'', role:'[강의] '+(r.title||'') }; }));
-  /* ── 전화번호는 «모양»으로 갈라 담는다 ──
-     프로필에 번호 칸이 하나뿐이라, 예전에는 그 하나가 「휴대폰」 칸에 그대로 들어갔다.
-     실측(2026-08-29) 사무실 번호 041-556-0035 가 「휴대폰」 자리에 박혔다 — 틀린 번호다.
-     010·011·016~019 로 시작하면 휴대폰, 아니면 사무실 번호로 본다.
-     ⚠ 모르는 것은 «비워 둔다». 틀린 번호를 적어 내는 것이 안 적는 것보다 나쁘다
-       (칸 지도가 빈 자리를 노랗게 띄워 사람에게 묻는다). */
-  var tel=String(info.phone||'').trim();
-  var isMobile=/^01[016789][-.\s]?\d{3,4}[-.\s]?\d{4}$/.test(tel.replace(/\s/g,''));
+  /* ── 번호·주소·이메일은 이제 «갈라 담긴» 것을 그대로 쓴다 ──
+     2026-08-30 부터 기본정보에 휴대폰·사무실·자택·팩스 칸이 따로 있다.
+     전에는 칸이 하나라 번호 «모양»으로 짐작했고, 짐작이 틀려 사무실 번호가
+     「휴대폰」 자리에 박힌 적이 있다(실측 2026-08-29). 이제 짐작할 일이 없다.
+     ⚠ 옛 자료를 위해 아래로 «흘려 준다» — 갈라 담기 전에는 phone 하나에만 값이 있었다.
+       그때 값이 사무실 번호였다면 _piMigrate 가 이미 phoneWork 로 옮겨 두었다. */
+  var 집=String(info.addrHome||'').trim(), 사무실=String(info.addr||'').trim();
   return {
-    fields:{ name:info.name||'', nameHanja:info.nameHanja||'',
+    fields:{ name:info.name||'', nameHanja:info.nameHanja||'', nameEng:info.nameEng||'',
              birth:info.birth||'', gender:info.gender||'',
-             phone:isMobile?tel:'', phoneWork:isMobile?'':tel, phoneHome:'',
-             email:info.email||'', addr:info.addr||'', license:info.license||'',
+             phone:info.phone||'', phoneWork:info.phoneWork||'', phoneHome:info.phoneHome||'',
+             fax:info.fax||'',
+             email:info.email||info.emailWork||'', emailWork:info.emailWork||'',
+             /* 「현주소」는 집 주소다. 집을 안 적어 두셨으면 지금까지처럼 사무실 주소로 간다 —
+                여기서 비워 버리면 오늘까지 되던 것이 안 되는 뒷걸음질이 된다. */
+             addr:집||사무실, addrWork:사무실,
+             license:info.license||'',
              org:info.org||'', dept:info.dept||'', title:info.title||'' },
+    /* ★ 주민등록번호는 fields 에 «담지 않는다» — 담으면 자동 채우기가 알아서 써 낸다.
+       사람이 칸 지도에서 그 자리에 「주민등록번호」를 직접 고를 때만 여기서 꺼내 간다.
+       (대표 지시 2026-08-30 「넣어라」 + 「누를 때만 꺼내 쓰는 방식으로」) */
+    secrets:{ rrn:info.rrn||'' },
     edu:edu, career:wic.concat(acts)
   };
 }
