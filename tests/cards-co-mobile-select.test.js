@@ -23,6 +23,8 @@ function loadToggleSelMode(){
   const fabEl = { style:{} };
   const sortEl = { style:{} };
   const ctx = {
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     state: { selMode:false, sel:{a:1}, coSel:{b:1} },
     $: id => id==='selLabel' ? { set textContent(v){ ctx._label=v; } }
            : (id==='fab' ? fabEl : (id==='sortBtn' ? sortEl : null)),
@@ -104,6 +106,8 @@ function loadListBlockWithSelBar(items){
   const end = source.indexOf('\n}', at) + 2;
   const calls = { html:'' };
   const ctx = {
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     /* (다) [Important] 무동작 esc 스텁은 이스케이프 순서가 바뀌어도 못 잡는다
        (cards-co-mobile-list.test.js 가 쓰는 진짜 이스케이프로 맞춘다). */
     esc: s => String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),

@@ -56,6 +56,8 @@ const plain = v => JSON.parse(JSON.stringify(v));
 /* ── 출처 읽기만 떼어 돌린다 ── */
 function loadSrc(){
   const ctx = { console, Object, Array, String, Number,
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     CO_FIELDS: [['ceo','대표자'], ['address','소재지'], ['sales','매출액'], ['name','상호']] };
   vm.createContext(ctx);
   vm.runInContext(fnBody('coVal') + '\n' + fnBody('coSrcOf'), ctx);
@@ -161,6 +163,8 @@ test('값이 아예 없는 칸도 아무 말 안 한다', () => {
 function buildList(bizItems, cardItems, erp){
   const items = [].concat(bizItems || [], cardItems || []);
   const ctx = { console, Object, String, Number, Array,
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     _coWatch: null, _coListMemo: null, _coInfo: {},
     allItems: () => items,
     digits: v => String(v || '').replace(/\D/g, ''),
@@ -217,6 +221,8 @@ function loadSend(existing){
   assert.ok(i > 0 && j > i, 'sendToCoInfo 를 찾지 못했습니다');
   const writes = [];
   const ctx = {
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     Promise, Object, String, Date, Error,
     CARDS_ROOT: 'pucards',
     CO_LABEL: { ceo:'대표자', address:'소재지', sales:'매출액' },
@@ -301,6 +307,8 @@ test('값이 하나도 안 채워지면 src 때문에 쓰기가 생기지 않는
 
 function drawPanel(o){
   const ctx = { console, Object, Array, String, Number,
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     esc: s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
     fmtDate: t => '2026-08-13',
     CO_FIELDS: [['ceo','대표자'], ['sales','매출액']],

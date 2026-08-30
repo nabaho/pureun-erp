@@ -173,3 +173,18 @@ test('★ 화면이 「상호를 못 읽었다」고 «보이는 글»로 말한
   assert.match(row, />[^<>]*상호[^<>]*못\s*읽[^<>]*</,
     '★ 조용히 번호만 그리면 그 숫자가 회사 이름인 줄 알고 계약서에 그대로 옮겨 적는다');
 });
+
+/* ══════ ⑧ 이름을 그리는 «모든» 자리 ══════
+   PC 표만 고치고 끝내면 폰에서는 여전히 빈 줄이고, 상세 패널은 제목이 빈칸이다.
+   회사 이름이 나오는 자리는 셋이다 — 한 곳만 고치면 나머지 둘이 거짓말을 한다. */
+for (const [fn, where] of [['coListHtml', 'PC 표'],
+                           ['renderCoMobileList', '폰 목록'],
+                           ['coDetailPanelHtml', '상세 패널']]) {
+  test(`★ ${where}도 «보여줄 이름»을 쓴다 — 한 곳만 고치면 나머지가 빈칸이 된다`, () => {
+    const s = code(fnBody(fn));
+    assert.doesNotMatch(s, /esc\(o\.name\)/,
+      `★ ${where}에서 o.name 을 그대로 그리면 상호 못 읽은 회사가 이름 없이 나온다`);
+    assert.match(s, /coDisplayName\(o\)/,
+      `★ ${where}가 «보여줄 이름»을 안 쓴다`);
+  });
+}

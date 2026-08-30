@@ -36,6 +36,8 @@ function loadPanelBlock(items){
 
   const calls = { panelHtml:'', panelOpen:false, overlayOn:false, detailClosed:0 };
   const ctx = {
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     esc: s => String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
     state: { coPick:'' },
     _coFolders: {},
@@ -112,6 +114,8 @@ function loadPanelBlockAsync(items){
      불리지만 state.coPick 검사에서 걸러진다"는 것을 정확히 증명할 수 있다. */
   let pendingCbs = [];
   const ctx = {
+    /* 2026-08-30: 상호 못 읽은 회사도 목록에 남는다 — 화면이 «보여줄 이름»을 쓴다 */
+    coDisplayName: o => (o && String(o.name||'').trim()) || (o && o.bizno) || '',
     esc: s => String(s ?? ''),
     state: { coPick:'' },
     _coFolders: {},
