@@ -10177,25 +10177,87 @@ function fallbackCopy(text){
   ta.select(); try{ document.execCommand('copy'); toast('명함 정보를 복사했습니다'); }catch(e){ toast('복사 실패'); }
   document.body.removeChild(ta);
 }
+/* ── 연락처 한 사람분을 만든다 — 한 장짜리와 여러 장이 «이것 하나»를 쓴다 ──
+   두 벌로 두면 한쪽만 고쳐지는 날이 온다(2026-08-27 짝 파수꾼이 잡던 바로 그 모양).
+   ⚠ **글자를 반드시 다듬는다.** vCard 는 `;` 와 `,` 로 칸을 가르므로, 회사 이름에
+     쉼표가 하나만 있어도(「(주)대운토건, 서울지사」) 그 뒤가 **딴 칸으로 밀린다** —
+     폰 연락처에 이상한 값이 들어앉고, 눈에 잘 안 띈다.
+   ⚠ 주소는 «칸이 나뉜» 값이라 칸을 가르는 `;` 는 그대로 두고 **안쪽 글자만** 다듬는다. */
+function vcEsc(s){
+  return String(s==null?'':s)
+    .replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,')
+    .replace(/\r?\n/g,'\\n');
+}
+function vcardLines(it){
+  const nm = it.name || '';
+  return ['BEGIN:VCARD','VERSION:3.0',
+    `N:${vcEsc(nm)};;;;`,`FN:${vcEsc(nm)}`,
+    it.company && `ORG:${vcEsc(it.company)}${it.dept?';'+vcEsc(it.dept):''}`,
+    it.title && `TITLE:${vcEsc(it.title)}`,
+    it.mobile && `TEL;TYPE=CELL:${vcEsc(it.mobile)}`,
+    it.tel && `TEL;TYPE=WORK:${vcEsc(it.tel)}`,
+    it.fax && `TEL;TYPE=FAX:${vcEsc(it.fax)}`,
+    it.email && `EMAIL:${vcEsc(it.email)}`,
+    it.address && `ADR;TYPE=WORK:;;${vcEsc(it.address)};;;;`,
+    it.memo && `NOTE:${vcEsc(it.memo)}`,
+    'END:VCARD'].filter(Boolean);
+}
+
+/* 연락처에 «빈 사람»이 생기지 않게 — 이름도 번호도 메일도 없으면 넣을 값이 없다.
+   그런 것이 들어가면 찾아 지우는 일이 넣는 일보다 크다. */
+function vcUsable(it){
+  return !!(it && (it.name || it.mobile || it.tel || it.companyTel || it.email));
+}
+
+/* 파일로 내려준다 — 한 장짜리와 여러 장이 같은 자리를 쓴다 */
+function vcfSave(items, fileName){
+  const body = items.map(vcardLines).map(l=>l.join('\r\n')).join('\r\n');
+  const blob = new Blob([body],{type:'text/vcard;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = fileName;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
 async function downloadVcf(id){
   if(!await puExport('vcf', 1, '연락처 파일')) return;
   const it=state.items[id]; if(!it) return;
-  const lines=['BEGIN:VCARD','VERSION:3.0',
-    `N:${it.name||''};;;;`,`FN:${it.name||''}`,
-    it.company && `ORG:${it.company}${it.dept?';'+it.dept:''}`,
-    it.title && `TITLE:${it.title}`,
-    it.mobile && `TEL;TYPE=CELL:${it.mobile}`,
-    it.tel && `TEL;TYPE=WORK:${it.tel}`,
-    it.fax && `TEL;TYPE=FAX:${it.fax}`,
-    it.email && `EMAIL:${it.email}`,
-    it.address && `ADR;TYPE=WORK:;;${it.address};;;;`,
-    it.memo && `NOTE:${it.memo.replace(/\n/g,'\\n')}`,
-    'END:VCARD'].filter(Boolean);
-  const blob=new Blob([lines.join('\r\n')],{type:'text/vcard;charset=utf-8'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob); a.download=(it.name||'contact')+'.vcf';
-  a.click(); URL.revokeObjectURL(a.href);
+  vcfSave([it], (it.name||'contact')+'.vcf');
   toast('내려받은 파일을 열면 연락처에 저장됩니다');
+}
+
+/* ══════ 고른 명함을 «폰 연락처»로 — 한 번에 (대표 지시 2026-08-30) ══════
+   "내 폰에서 저장한 명함들 자동으로 내 폰 연락처로 저장되게 할 수 있나" → 「고른 것만」
+   (대표 승인 목업 docs/mockups/cards-vcf-selected.html)
+
+   ⚠ **웹은 폰 연락처에 직접 못 쓴다.** 그래서 파일 하나를 만들어 드리고, 그것을
+     한 번 여시면 폰이 전부 한꺼번에 넣는다 — 3명이든 200명이든 여는 것은 한 번이다.
+   ⚠ **되돌릴 수 없다.** 한 번 폰에 들어가면 이 앱에서는 못 지운다. 그래서 만들기 전에
+     묻고, 무엇이 되돌릴 수 없는지 그 자리에서 말한다.
+   ⚠ 「📇 주소록 내보내기」와 **다른 물건**이다. 그쪽은 메일 보내려는 표라 수신거부·중복을
+     걸러 내지만, 이것은 폰 연락처라 **고르신 사람을 그대로** 담는다. */
+async function selVcf(){
+  const ids = Object.keys(state.sel);
+  if(!ids.length) return toast('명함을 먼저 선택하세요');
+  const picked = ids.map(id=>state.items[id]).filter(Boolean);
+  const good = picked.filter(vcUsable);
+  const skipped = picked.length - good.length;
+  if(!good.length){
+    return toast('고른 명함에 이름도 번호도 메일도 없습니다 — 연락처에 넣을 값이 없습니다');
+  }
+  if(!confirm(
+    good.length + '명을 폰 연락처로 저장할 파일을 만듭니다.\n\n' +
+    '· 내려받은 파일을 열면 ' + good.length + '명이 한꺼번에 들어갑니다.\n' +
+    '· 이미 폰에 있는 사람은 두 벌이 될 수 있습니다.\n' +
+    '· 한 번 넣으면 이 앱에서는 못 지웁니다 — 폰에서 지우셔야 합니다.\n\n' +
+    '계속할까요?')) return;
+  if(!await puExport('vcf', good.length, '연락처 파일 · ' + good.length + '명')) return;
+  const d = new Date();
+  const md = String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+  vcfSave(good, `명함_연락처_${good.length}명_${md}.vcf`);
+  toast((skipped
+    ? good.length + '명을 담았습니다 (이름·번호·메일이 모두 없는 ' + skipped + '장 제외)\n'
+    : good.length + '명을 담았습니다\n') +
+    '내려받은 파일을 열면 연락처에 들어갑니다. 처음에는 두세 명만 먼저 넣어 확인해 보십시오.', 9000);
 }
 
 /* ════════════ ERP 거래처(companies) 연동 — 명함 → ERP ════════════ */
@@ -18228,6 +18290,9 @@ function openSelMore(ev){
     <div class="fmi" onclick="closeFolderMenu();bulkMailStart()">📧 푸른메일로 한 통씩 보내기 · ${n}곳</div>
     <div class="fmi" onclick="closeFolderMenu();mailSel()">✉️ 내 메일앱으로 열기</div>
     <div class="fmi" onclick="closeFolderMenu();selMailCsv()">📇 주소록 내보내기</div>
+    <!-- ⚠ 바로 위 「주소록 내보내기」와 **다른 물건**이다(메일용 표 ↔ 폰 연락처).
+         아이콘을 📇/📱 로 갈라 두었다 — 나란히 있어 헷갈리면 엉뚱한 것을 내보낸다. -->
+    <div class="fmi" onclick="closeFolderMenu();selVcf()">📱 폰 연락처로 저장 · ${n}명</div>
     <div class="fmi" onclick="closeFolderMenu();selNoMail()">🚫 수신거부로 표시</div>
     ${state.vtab?`<div class="fmi" onclick="closeFolderMenu();selRemoveFromTab()">🚫 탭에서 빼기</div>`:''}
     <div class="fmi danger" onclick="closeFolderMenu();delSel()">🗑 삭제 (휴지통)</div>`;
