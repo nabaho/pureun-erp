@@ -2150,7 +2150,21 @@ try {
         try{ window.dispatchEvent(new CustomEvent('pu-cfg',{detail:window.PU_CFG})); }catch(_){}
       }).catch(function(){}); } catch(e){}
     fbDb.ref('.info/connected').on('value', function(snap){
+      /* ══ 끊겼다 이어지면 «못 보낸 것»을 다시 보낸다 (2026-08-30) ═══════════
+         ⚠★ 여태 다시 보내기는 «부팅 때 딱 한 번»만 돌았다(_startFbSync 안).
+            그 순간 못 보낸 목록은 아직 비어 있으니, 일하는 중에 잠깐 끊겨서
+            못 보낸 것은 «영영» 안 올라갔다 — 이 기기에만 남고 남들은 모른다.
+            사람은 「이 기기에 저장됨」 알림만 보고 지나간다.
+         ⚠ 끊김→이어짐 «넘어가는 순간»에만 부른다. 이어진 채로 되풀이해
+            부르면 실패한 것을 계속 다시 밀어 대는 꼴이 된다.
+         ⚠ fbConnected 는 처음부터 false 라 «첫 연결»도 여기 걸린다.
+         ⚠ 그것을 막는 것은 이 줄이 아니라 _fbFlushPending 안의 _fbSynced 검사다 —
+            초기 동기화 전에는 밀지 않는다(옛 자료가 서버를 덮는다). */
+      var _wasConn = fbConnected;
       fbConnected = !!snap.val();
+      if(_wasConn === false && fbConnected === true){
+        try { window._fbFlushPending && window._fbFlushPending(); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+      }
       try { window.dispatchEvent(new CustomEvent('fb_status', {detail: fbConnected})); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
     });
     // ── Phase 1 보안: 익명 인증 (Rules: auth != null 검증 활성화) ──
@@ -9061,6 +9075,13 @@ if(fbDb){
       });
     } catch(e){ window._erpErrLog && window._erpErrLog(e); }
   }
+  /* ⚠ 연결이 돌아왔을 때도 부를 수 있게 내놓는다 — 이 자리는 if(fbDb) 안이라
+     바깥(.info/connected 듣는 곳)에서 이름만으로는 못 부른다.
+   ⚠ 초기 동기화 전에는 안 돈다 — 그때 밀면 옛 자료가 서버를 덮는다. */
+  window._fbFlushPending = function(){
+    if(!_fbSynced) return;
+    _flushPendingLocalNewer();
+  };
   var _startFbSync = function(){
     fbInitialSync().then(function(n){
       if(n > 0){
