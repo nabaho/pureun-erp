@@ -81,18 +81,28 @@ test('올린 파일 이름을 그대로 쓰지 않는다 — 바로잡은 이름
     '보관함·이어서 하기로 들어오는 길에도 관문이 있어야 합니다');
 });
 
-test('받은 한글 서식은 큰 창으로 뜨고, 그 창에서 바로 채울 수 있다', () => {
+/* ⚠ 2026-08-30 규칙이 바뀌었다(대표 지시 「팝업 창 없이 현재 화면에서」).
+   전에는 「올리면 큰 창이 떠야 한다」를 못 박았는데, 편집기에 원본이 그대로 나오므로
+   팝업은 같은 것을 한 번 더 덮어 보여 주면서 닫기·저장을 그 안에 가뒀다.
+   이제 큰 창은 «눌렀을 때만» 뜬다 — 열려 있을 때 채우기가 되는 것은 그대로 지킨다. */
+test('올리는 것만으로 큰 창이 뜨지는 않는다 — 편집기에 원본이 이미 나온다', () => {
   const body = stripComments(grab('importTemplateFile'));
-  assert.match(body, /openHwpViewer\(/, '올리면 큰 창이 떠야 합니다');
-  /* 큰 창의 발판에 채우기 단추가 있는가 — 창을 닫았다 열지 않고 그 자리에서 채운다 */
+  assert.doesNotMatch(body, /openHwpViewer\(/, '팝업이 화면을 덮으면 안 됩니다');
+  assert.match(source, /onclick="rhOpenBigPopup\(\)"/, '크게 보고 싶을 때 열 길은 있어야 합니다');
+});
+
+test('큰 창이 열려 있으면 그 창에서 바로 채울 수 있다', () => {
+  /* 창을 닫았다 다시 열지 않고 그 자리에서 채운다 */
   const modal = source.slice(source.indexOf('id="modalHwpView"'));
   const foot = modal.slice(modal.indexOf('modal-foot'), modal.indexOf('modal-foot') + 800);
   assert.match(foot, /rhAutoFillDoc\(\)/);
 });
 
-test('큰 창에 떠 있는 문서를 채운다 — 보관함에서 바로 연 서식도 채워져야 한다', () => {
+test('★ 큰 창에 «다른 문서»가 떠 있으면 그것을 채운다 — 보이는 것과 채우는 것이 달라선 안 된다', () => {
   const body = stripComments(grab('rhAutoFillDoc'));
   assert.match(body, /_hwpView/, '지금 화면에 보이는 문서를 채움 대상으로 삼아야 합니다');
+  assert.match(body, /mountEditor\(/,
+    '보이는 문서를 편집기에 올려야 칸 지도가 생기고 제대로 채웁니다');
 });
 
 /* ── 큰 창에서 A4 쪽이 실제로 커지는가 ──
