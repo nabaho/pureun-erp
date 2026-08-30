@@ -126,7 +126,7 @@ test('표 머리를 그릴 때 이 도우미를 실제로 쓴다', () => {
 test('서류이름 열에 머리글과 그리는 함수가 «둘 다» 있다 — 이번에 빠진 것은 머리글이었다', () => {
   assert.ok(thKeys().biz.indexOf('docName') >= 0, '머리글이 없다');
   assert.ok(tdKeys().biz.indexOf('docName') >= 0, '그리는 함수가 없다');
-  assert.match(HTML, /docName: `<th class="col-docName"[^`]*>서류이름/);
+  assert.match(HTML, /docName: `<th class="col-docName"[^`]*>구분/);
 });
 
 test('서류이름 열에도 그리는 함수가 있다 — 이번에 빠졌던 그 칸', () => {
