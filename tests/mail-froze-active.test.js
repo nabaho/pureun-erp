@@ -216,3 +216,31 @@ test('★ 「누구 담당입니까」 창이 그 목록을 그대로 쓴다 —
   assert.ok(html.indexOf('박성수') < 0, '창에 퇴사자가 나옵니다');
   assert.ok(html.indexOf('하윤서') >= 0, '창에 재직자가 안 나옵니다');
 });
+
+/* ══════ ③ 목록 안내줄 — 설명만 뺐다 (대표 지시 2026-08-30 「이 내용이 필요한가?」) ══════ */
+
+test('★★ 「방향키로 이동, 스페이스로 선택」 안내가 «없다» — 한 번 읽고 다시 안 읽는다', () => {
+  /* ⚠ 이 줄은 이제 늘 붙박여 있다(틀고정). 한 번 읽고 마는 설명이 자리를 영영 차지했다. */
+  const h = load().mbListHtml();
+  assert.ok(h.indexOf('방향키로 이동') < 0, '안내가 아직 있습니다');
+  assert.ok(h.indexOf('스페이스로 선택') < 0, '안내가 아직 있습니다');
+});
+
+test('★★ 안내만 뺐고 «방향키·스페이스는 그대로 된다» — 길까지 없애면 안 된다', () => {
+  /* ⚠ 설명을 빼는 것과 길을 없애는 것은 다르다. 예전에는 반대로 「적어 두고 안 되게」
+       두었다가 그 줄이 거짓말이 됐다 — 이번에는 「되는데 안 적는다」다. */
+  const c = load();
+  assert.equal(typeof c.mbKeyNav, 'function', '방향키로 옮기는 길이 사라졌습니다');
+  const i = src.indexOf('function mbKeyNav');
+  assert.ok(i > 0, '방향키 다루는 자리를 못 찾았습니다');
+  const seg = src.slice(i, i + 2500);
+  ['ArrowDown', 'ArrowUp'].forEach(k =>
+    assert.ok(seg.indexOf(k) > 0, k + ' 를 안 봅니다 — 방향키가 죽었습니다'));
+  assert.ok(/Space|' '/.test(seg), '스페이스로 고르는 길이 사라졌습니다');
+});
+
+test('★ 통수·마지막 동기화는 «남는다» — 거울이니 언제 것인지가 늘 보여야 한다', () => {
+  const h = load().mbListHtml();
+  assert.ok(/통 보는 중/.test(h), '몇 통 보는지 안 알려 줍니다');
+  assert.ok(/동기화/.test(h), '언제 가져온 것인지 안 알려 줍니다');
+});
