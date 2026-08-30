@@ -375,6 +375,16 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
    ⚠ 배경을 반드시 준다 — 없으면 아래 글자가 비쳐 겹쳐 읽힌다.
    ⚠ z-index 를 준다 — 없으면 본문·자료 서랍이 위로 올라와 단추를 덮는다.
    ⚠ #pcMail 안에서만. 폰(#mmBody)은 화면이 좁아 붙이면 본문이 반으로 줄어든다. */
+/* ── 단추줄·안내줄 붙박이 (대표 지시 2026-08-30 「이부분 틀고정해라」) ──
+   목록을 내려도 삭제·답장·분류·검색이 «늘 그 자리»에 있다. 예전에는 100통을
+   내려가다 메일을 고른 뒤 단추를 누르러 «맨 위까지» 도로 올라와야 했다.
+   ⚠ 읽기 화면 머리줄(.mtop)과 «같은 길»이다 — 붙는 곳은 #pcMail 이 스크롤 칸이라
+     그 위쪽 0 이다. 새 틀을 만들지 않는다.
+   ⚠ z-index 를 준다 — 없으면 줄들이 위로 올라와 단추를 덮는다.
+   ⚠ 바탕을 흰색으로 «반드시» 준다. 없으면 줄이 단추 뒤로 비쳐 글자가 겹쳐 보인다.
+   ⚠ #pcMail 안에서만 — 폰(#mmBody)은 화면이 좁아 붙이면 목록이 그만큼 줄어든다
+     (.mtop 을 폰에서 뺀 것과 같은 까닭). */
+#pcMail .dm-froze{position:sticky;top:0;z-index:7;background:#fff}
 #pcMail .mtop{position:sticky;top:0;z-index:6;background:#fff;padding:10px 0 12px;
   border-bottom:1px solid #e8ecf3;margin:0 0 2px}
 .mtop .cpsendbtn{background:#fff;color:#1e2a47;border:1px solid #1e2a47;border-radius:6px;
@@ -13374,6 +13384,10 @@ function mbStaffOf(name){
   const k = (typeof ErpMatch!=='undefined' && ErpMatch._norm) ? ErpMatch._norm(name) : String(name||'');
   return s[k] || null;
 }
+/* 퇴사한 사람인가.
+   ⚠ «휴직»은 여기 안 든다 — 돌아오는 사람이라 칸을 그대로 둔다(검사가 지킨다).
+   ⚠ 명부에 «없는» 이름도 안 든다 — 모른다고 물리면 그 이름으로 잡혀 있던 메일이
+     어느 칸에도 안 들어가 화면에서 통째로 사라진다(검사가 지킨다). */
 function mbRetired(name){
   const st = mbStaffOf(name);
   return !!(st && st.status === 'retired');
@@ -15306,7 +15320,37 @@ function mbWhoAskDom(email){
       <div class="fmi" onclick="mbWhoSet('${esc(email)}','${esc(n)}',true)">🏢 ${esc(n)}</div>`).join('')}</div>`;
 }
 /* 고를 수 있는 담당자 — 자문사를 맡은 사람 + 이미 정해 둔 사람 */
+/* 푸른이알피 명부에 «재직»으로 있는 사람인가 (대표 지시 2026-08-30
+     「퇴사자가 나온다 퇴사자는 완전히 배제시켜라 푸른이알피에 재직자만 나오게 해라」)
+   ⚠ 푸른이알피가 «담당 배정»에 쓰는 잣대와 같다 — status === 'active' 하나뿐이다
+     (pu-erp.html: `u.status !== 'active'` → assignable:false). 여기서 따로 셈하면
+     두 곳이 언젠가 어긋나, 이알피에서는 못 맡기는 사람을 메일함이 권하게 된다. */
+function mbStaffReady(){
+  const s = (typeof ErpMatch!=='undefined' && ErpMatch.staff) ? ErpMatch.staff : null;
+  return !!(s && Object.keys(s).length);
+}
+/* 담당자로 «고를 수 있는» 사람인가 — 명부에 있고, 퇴사하지 않았다.
+   ⚠ 휴직자는 «든다». 돌아오는 사람이고, 옆줄에도 칸이 그대로 서 있다 —
+     여기서만 빼면 그 사람 칸은 있는데 고를 수는 없는 이상한 자리가 된다. */
+function mbPickable(name){
+  const st = mbStaffOf(name);
+  return !!(st && st.status !== 'retired');
+}
+/* 담당자로 «고를 수 있는» 사람 — 재직자 전부, 사번 순.
+   ⚠ 예전에는 「이미 어느 주소를 맡고 있는 사람」만 세웠다. 그래서 ①퇴사자가 그대로
+     남았고(이알피 기록에는 담당으로 적혀 있으니까) ②새로 온 사람은 아직 맡은 것이
+     없어 «고를 수조차 없었다». 명부를 그대로 세우면 둘 다 없어진다.
+   ⚠ 명부가 «아직 안 왔으면» 예전 길로 돌아간다 — 거르면 목록이 통째로 비고, 그
+     빈 목록이 그대로 굳는다(2026-08-27 에 명함으로 똑같이 겪었다).
+   ⚠ 차례는 옆줄과 «같은 사번 순»이다. 여기만 이름순이면 눈이 자리를 두 번 익혀야 한다. */
 function mbWhoNames(){
+  if(mbStaffReady()){
+    const st = ErpMatch.staff;
+    return Object.keys(st).map(k=>st[k])
+      .filter(u=>u && u.name && mbPickable(u.name))
+      .map(u=>String(u.name))
+      .sort((a,b)=> mbWhoOrd(a) - mbWhoOrd(b) || a.localeCompare(b,'ko'));
+  }
   const s = {};
   const idx = mbWhoIndex();
   Object.keys(idx.byAddr).forEach(a=>{ s[idx.byAddr[a]] = 1; });
@@ -16029,6 +16073,9 @@ function mbListHtml(){
      지금 어느 칸인지는 왼쪽 옆줄이 파랗게 켜져서 알려 준다.
      되살리려거든 낱말로 갈래를 짚던 mbClassify 도 함께 되살려야 한다(git 에 있다). */
   return `
+    ${/* ⚠ 단추줄과 안내줄을 «한 덩이»로 묶어 붙박는다(.dm-froze).
+         따로 붙이면 둘의 z-index·바탕을 각각 맞춰야 하고, 언젠가 한쪽만 어긋난다. */''}
+    <div class="dm-froze">
     <div class="dm-tools">
       <input type="checkbox" class="chk" ${allOn?'checked':''} onclick="pickToggleAll('mbox')"
         title="보이는 것 모두 고르기">
@@ -16091,6 +16138,7 @@ function mbListHtml(){
           + (nPick?` · ${nPick}통 고름`:'') + ' · '
         : ''}${esc(meta)}</span>
       <span>＊ 메일 목록, 방향키로 이동, 스페이스로 선택</span></div>
+    </div>
     <div class="dm-list ${mbDense()}">${body}</div>
     ${/* ── 아래 영역 — 쪽번호와 보기설정 (대표 지시 2026-08-30, 다음메일 캡처3·4) ──
          예전에는 「이전 메일 더 보기」 단추 하나였다. 몇 쪽인지도, 지금 몇 쪽인지도
