@@ -233,47 +233,13 @@ test('★ 몇 명이 퇴사로 빠졌는지 «말해 준다» — 조용히 빼�
   assert.equal(r.stat.left, 1, '★ 「수신거부 N」처럼 「퇴사 N」도 보여야 한다');
 });
 
-/* ══════ ⑦ 명함 목록의 「🚪 퇴사자」 거르개 ══════ */
-
-test('★ 목록에서 «퇴사자만» 골라 볼 수 있다 — 「어떻게 확인하나」의 답이다', () => {
-  /* ⚠ 소스에 글자가 있는지만 보면 모자란다 — 지워도 아무 일 없이 통과한다
-     (2026-08-29 고장넣기에서 실제로 샜다). 그래서 «걸러 보고» 확인한다. */
-  /* ⚠ 인자가 아니라 «그 함수»를 찾는다. 2026-08-29 에 listItems 가 갈래를 받게 되자
-     'function listItems()' 로 찾던 검사 셋이 한꺼번에 못 찾았다 — 기능은 멀쩡했다
-     (CLAUDE.md 「지금 값이 아니라 규칙」). */
-  const at = src.indexOf('function listItems(');
-  assert.ok(at > 0, 'listItems 를 찾지 못했습니다');
-  const open = src.indexOf('{', at);
-  let d = 0, end = -1;
-  for (let k = open; k < src.length; k++) {
-    if (src[k] === '{') d++;
-    else if (src[k] === '}') { d--; if (!d) { end = k + 1; break; } }
-  }
-  /* 거르는 대목만 떼어 «그 조건들»을 그대로 돌린다 */
-  const body = src.slice(open + 1, end - 1);
-  const a = body.indexOf('if (state.onlyPhone');
-  const b = body.indexOf('if (state.onlyPrivate');
-  assert.ok(a > 0 && b > a, '조건 거르개 대목을 찾지 못했습니다');
-  const ctx = { console, Object, Array, String,
-    ErpMatch: { leftOfCard: it => !!(it && it.__left) } };
-  vm.createContext(ctx);
-  vm.runInContext('var state = {}; var keep = function(it){ ' + body.slice(a, b)
-    + ' return true; };', ctx);
-
-  const 사람 = [{ id:'a', __left:true }, { id:'b' }];
-  ctx.state.onlyLeft = true;
-  assert.deepEqual(사람.filter(ctx.keep).map(x => x.id), ['a'],
-    '★ 「🚪 퇴사자」를 켜도 그대로면, 만들어 놓고 아무 데서도 안 쓰는 단추가 된다');
-  ctx.state.onlyLeft = false;
-  assert.equal(사람.filter(ctx.keep).length, 2, '꺼져 있으면 전부 보여야 한다');
-});
-
-test('★ 목록과 메일이 «같은 판단»을 쓴다 — 두 벌이면 결과가 어긋난다', () => {
-  /* ⚠ 고정 폭으로 자르지 «않는다» — 함수가 길어지면 끝에 못 닿아 검사가 조용히
-     헛돈다(저장소에 그것을 막는 검사가 따로 있고, 실제로 여기서 걸렸다). */
-  assert.match(fnBody('listItems'), /state\.onlyLeft && !ErpMatch\.leftOfCard\(it\)/,
-    '★ 목록이 제 나름으로 퇴사를 가리면 메일과 다른 사람을 뺀다');
-});
+/* ══════ ⑦ 명함 목록의 「🚪 퇴사자」 거르개 — 걷어냈다 ══════
+   2026-08-30 대표 결정으로 없앴다. 2026-08-29 에 도구줄 단추를 빼면서 «켤 길»이 함께
+   사라져, 코드만 남고 아무도 못 쓰는 기능이 되어 있었다.
+   ⚠ 없앤 것은 «목록에서 골라 보기» 하나뿐이다. 위 ①~⑥ — 퇴사 판단(ErpMatch), 🚪 딱지,
+     단체 메일에서 빼기 — 은 «그대로 산다». 그 셋이 이 기능의 알맹이다.
+   ⚠ 되살아나지 않는지는 tests/cards-erp-closed.test.js 가 지킨다. 지운 기능을 지키는
+     검사를 여기 남겨 두면 다음 사람이 되살린다. */
 
 test('하던 거르기(수신거부·이메일 없음·중복)는 그대로다', () => {
   const C = loadMail();

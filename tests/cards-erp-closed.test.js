@@ -50,65 +50,23 @@ function fnBody(name){
   assert.fail(name + ' 의 끝을 찾을 수 없습니다');
 }
 
-/* ══════ ①② 딱지와 거르개 ══════ */
-
-test('★ 계약이 끝난 업체의 명함·사업자만 골라 볼 수 있다', () => {
-  /* ⚠ 소스에 글자가 있나만 보면 지워도 통과한다 — «걸러 보고» 확인한다 */
-  /* ⚠ 인자가 아니라 «그 함수»를 찾는다. 2026-08-29 에 listItems 가 갈래를 받게 되자
-     'function listItems()' 로 찾던 검사 셋이 한꺼번에 못 찾았다 — 기능은 멀쩡했다
-     (CLAUDE.md 「지금 값이 아니라 규칙」). */
-  const at = src.indexOf('function listItems(');
-  const open = src.indexOf('{', at);
-  let d = 0, end = -1;
-  for (let k = open; k < src.length; k++) {
-    if (src[k] === '{') d++;
-    else if (src[k] === '}') { d--; if (!d) { end = k + 1; break; } }
-  }
-  const body = src.slice(open + 1, end - 1);
-  const a = body.indexOf('if (state.onlyPhone');
-  const b = body.indexOf('if (state.onlyPrivate');
-  assert.ok(a > 0 && b > a, '조건 거르개 대목을 찾지 못했습니다');
-  const ctx = { console, Object, Array, String,
-    ErpMatch: { leftOfCard: () => false,
-                match: it => it && it.__erp ? it.__erp : null } };
-  vm.createContext(ctx);
-  vm.runInContext('var state = {}; var keep = function(it){ ' + body.slice(a, b)
-    + ' return true; };', ctx);
-
-  const 목록 = [
-    { id:'a', kind:'card', __erp:{ left:true } },      /* 끝난 업체의 명함 */
-    { id:'b', kind:'biz',  __erp:{ left:true } },      /* 끝난 업체의 등록증 */
-    { id:'c', kind:'card', __erp:{ left:false } },     /* 계약 중 */
-    { id:'d', kind:'card' }                            /* 업체관리에 없음 */
-  ];
-  ctx.state.onlyClosed = true;
-  assert.deepEqual(목록.filter(ctx.keep).map(x => x.id), ['a','b'],
-    '★ 명함과 사업자 «둘 다» 나와야 한다 — 한쪽만이면 반만 정리된다');
-  ctx.state.onlyClosed = false;
-  assert.equal(목록.filter(ctx.keep).length, 4, '꺼져 있으면 전부 보인다');
-});
-
-test('★ 업체관리에 «없는» 곳은 종료가 아니다 — 정보가 없을 뿐이다', () => {
-  const at = src.indexOf('function listItems(');
-  const open = src.indexOf('{', at);
-  let d = 0, end = -1;
-  for (let k = open; k < src.length; k++) {
-    if (src[k] === '{') d++;
-    else if (src[k] === '}') { d--; if (!d) { end = k + 1; break; } }
-  }
-  const body = src.slice(open + 1, end - 1);
-  const a = body.indexOf('if (state.onlyPhone');
-  const b = body.indexOf('if (state.onlyPrivate');
-  const ctx = { console, Object, Array, String,
-    ErpMatch: { leftOfCard: () => false, match: () => null } };
-  vm.createContext(ctx);
-  vm.runInContext('var state = { onlyClosed:true }; var keep = function(it){ '
-    + body.slice(a, b) + ' return true; };', ctx);
-  assert.equal([{ id:'x' }].filter(ctx.keep).length, 0);
-});
-
-test('거르는 일은 listItems 한 곳에만 둔다 — 딴 곳에서 거르면 어긋난다', () => {
-  assert.match(fnBody('listItems'), /state\.onlyClosed/);
+/* ══════ ①② 딱지 ══════
+   ⚠ 「🚪 퇴사자」·「🏚 계약종료」 «거르개»를 지키던 검사 넷은 2026-08-30 대표 결정으로
+     걷어냈다. 2026-08-29 에 도구줄 단추를 빼면서 켜는 길이 함께 사라져, 코드만 남고
+     아무도 못 쓰는 기능이 되어 있었다 — 되살리는 대신 걷기로 정했다.
+     지운 기능을 지키는 검사를 남겨 두면 다음 사람이 되살린다. 그래서 지우고,
+     그 자리에 «되살아나지 않는지»만 남긴다(「거래처만」 때와 같은 방식).
+   ⚠ 없앤 것은 «골라 보기» 하나뿐이다. 아래 🚪 딱지도, 「🚪 퇴사」 처리도, 정리 도구도
+     그대로 산다 — 그 셋은 이 파일이 계속 지킨다. */
+test('★ 명함·사업자 거르개가 되살아나지 않았다 (대표 결정 2026-08-30)', () => {
+  ['onlyLeft', 'onlyClosed', 'toggleCond'].forEach(k => {
+    assert.equal(src.split(k).length - 1, 0,
+      '★ ' + k + ' 이 되살아났다 — 켜는 길이 없으면 또 코드만 남는다. '
+      + '되살리려면 기업 상세처럼 옆줄 「할 일」에 넣어 «켤 길»을 함께 만들 것');
+  });
+  /* 기업 상세 쪽(coOnlyClosed)은 «다른 기능»이다 — 그건 살아 있어야 한다 */
+  assert.ok(src.indexOf('coOnlyClosed') > 0,
+    '★ 기업 상세의 「🚪 종료」까지 함께 지웠다 — 그건 켤 길이 있는 산 기능이다');
 });
 
 test('목록 줄의 🚪 딱지는 «이미 있다» — 새로 만들지 않는다', () => {
@@ -119,16 +77,6 @@ test('목록 줄의 🚪 딱지는 «이미 있다» — 새로 만들지 않는
   assert.match(src, /if \(_m && _m\.left\) h \+= `<span class="mgq"/,
     '★ 딱지가 없어지면 그 회사가 끝난 줄 모르고 그냥 지나친다');
   assert.match(src, /계약해지/, '딱지 말풍선이 «업체» 상태임을 말해야 한다');
-});
-
-test('첫 값은 «꺼짐»이다 — 켜진 채로 시작하면 명함이 사라진 줄 안다', () => {
-  /* ⚠ 첫 값을 두는 자리가 넷이다(기본 state·저장한 조건 되돌리기 등). 하나만 보면
-     나머지가 켜져 있어도 통과한다 — «모두» 꺼져 있는지 본다. */
-  const all = src.match(/onlyClosed\s*:\s*(true|false)/g) || [];
-  assert.ok(all.length >= 2, 'state 에 onlyClosed 첫 값이 없다 (' + all.length + '곳)');
-  all.forEach(function (m) {
-    assert.match(m, /false/, '★ 어느 한 곳이라도 켜져 있으면 그 길로 들어올 때 명함이 사라진다');
-  });
 });
 
 /* ══════ ④⑤⑥ 정리 도구 ══════ */
