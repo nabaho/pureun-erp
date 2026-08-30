@@ -154,6 +154,31 @@ test('★★ 확대가 «아닐 때»는 안 잡는다 — 그때 끄는 것은 
   assert.equal(c._cls.panning, undefined);
 });
 
+test('★★ 폰(손가락)은 «안 잡는다» — 브라우저가 이미 굴리고 있어 두 배로 튄다', () => {
+  const c = picCtx();
+  c.picClick({ target: c._img, clientX: 500, clientY: 350 });
+  const was = c._pic.scrollLeft;
+  const t = down(500, 350); t.pointerType = 'touch';
+  c.picPanStart(t);
+  c.picPanMove({ clientX: 300, clientY: 200 });
+  assert.equal(c._pic.scrollLeft, was,
+    '★★ 손가락 굴리기 위에 우리가 한 번 더 굴리면 두 배로 튀고,\n' +
+    '  브라우저가 굴리기 시작하는 순간 pointercancel 이 와서 덜컥 멈춥니다');
+  assert.equal(c._cls.panning, undefined);
+});
+
+test('★ 마우스·펜은 그대로 잡는다 — 폰만 비켜 가야지 다 비키면 안 된다', () => {
+  ['mouse', 'pen', undefined].forEach(function (kind) {
+    const c = picCtx();
+    c.picClick({ target: c._img, clientX: 500, clientY: 350 });
+    const d = down(500, 350); if (kind) d.pointerType = kind;
+    c.picPanStart(d);
+    c.picPanMove({ clientX: 400, clientY: 350 });
+    assert.equal(c._pic.scrollLeft, 700,
+      '★ ' + (kind || '(안 알려 주는 브라우저)') + ' 에서 끌기가 안 됩니다');
+  });
+});
+
 test('★★ 편집 중에는 «안 잡는다» — 네모를 긋는 손짓과 겹친다', () => {
   const c = picCtx({ photoEditing: function () { return true; } });
   c._cls.zoom = 1;
