@@ -1687,7 +1687,14 @@ test('★ 기본정보 라벨은 «한 줄»로 못박는다 — 접히면 옆 �
 });
 
 test('★ 환경설정은 넓게 쓰고 머리줄을 숨긴다 — 탭줄이 맨 위로', () => {
-  assert.match(source, /#page-settings>\.page\{max-width:1700px\}/);
+  /* ⚠ 2026-08-30 규칙이 바뀌었다(대표 지시 「모든 css 같게 해라」).
+     전에는 환경설정만 1700px 로 넓혀 다른 화면과 폭이 어긋났다.
+     이제 .page 하나가 «모든» 화면을 가로로 다 쓰므로, 여기만 따로 넓히지 않는다.
+     지켜야 할 것은 숫자가 아니라 «넓게 쓴다»는 규칙이다. */
+  assert.doesNotMatch(source, /#page-settings>\.page\{max-width/,
+    '환경설정만 따로 넓히면 다시 어긋납니다 — .page 가 이미 다 씁니다');
+  assert.doesNotMatch(source, /\n\.page\{[^}]*max-width:\s*\d/,
+    '.page 를 숫자로 묶으면 환경설정도 함께 좁아집니다');
   assert.match(source, /#page-settings>\.page>h2,#page-settings>\.page>\.desc\{display:none\}/);
 });
 
@@ -1710,5 +1717,9 @@ test('★ 만든 메뉴를 «지우는 길»은 사라지지 않았다 — 사�
   ['delCustomGrp', 'delCustomItem'].forEach((fn) => {
     assert.match(funcSource(fn), /renderNavAddList\(\)/, fn + ' 이 목록을 다시 그려야 합니다');
   });
-  assert.match(funcSource('toggleNavAddForm'), /renderNavAddList/, '칸을 열면 목록을 그립니다');
+  /* ⚠ 2026-08-30: 「＋ 대시보드 추가」 단추와 toggleNavAddForm 을 없앴다(대표 지시 「필요없다」).
+     그래서 목록을 그리는 일은 buildNav 가 맡는다 — 안 부르면 지우기 칸이 영영 안 뜬다.
+     규칙은 그대로다: «지우는 길이 사라지면 안 된다». */
+  assert.match(funcSource('buildNav'), /renderNavAddList/,
+    '메뉴를 그릴 때 지우기 칸도 함께 판정해야 합니다');
 });
