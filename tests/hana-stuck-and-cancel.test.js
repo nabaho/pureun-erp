@@ -216,13 +216,15 @@ test('★★ 지난 문자를 «이미 끌어왔으면» 또 누르라고 하지
   /* ⚠ 2026-08-30: 자국 찍기가 한 자리(hanaStampAlive)로 모였다 —
      중복으로 되돌아갈 때도 남겨야 했는데, 세 군데에 흩어져 있으니 한 군데만
      고치고 잊었다. 그래서 폰이 110건을 보낸 날에도 화면이 「문자 0건」이라 했다. */
-  const stamp = bare(cutBlock(FN, 'const hanaStampAlive = async (linked, how) => {'));
+  /* ⚠ 부르는 «모양»(칸 개수)을 박지 않는다 — 2026-08-30 에 판 번호 한 칸을
+       더 넘기자 이 줄을 포함해 넷이 한꺼번에 깨졌다. 기능은 멀쩡했다. */
+  const stamp = bare(cutBlock(FN, 'const hanaStampAlive = async ('));
   assert.ok(/patch\.lastHistoryAt = at;/.test(stamp),
     '★ 지난 문자를 넣고도 아무 자국을 안 남긴다 — 화면이 영영 「누르세요」를 되풀이한다');
   assert.ok(/how === "history"/.test(stamp),
     '★ 지난 문자와 새 문자를 안 가른다 — 지난 것으로 「살아 있음」을 찍으면 진짜 끊김을 못 알아챈다');
   const ing = bare(cutBlock(FN, 'if (action === "ingest") {'));
-  assert.ok(/hanaStampAlive\(linked, "history"\)/.test(ing),
+  assert.ok(/hanaStampAlive\(linked, "history"[,)]/.test(ing),
     '★ 담은 뒤에 그 자국을 안 부른다');
 
   const st = bare(cutBlock(FN, 'if (action === "pairStatus") {'));

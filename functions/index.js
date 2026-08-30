@@ -2192,9 +2192,16 @@ exports.hanaMessageBridge = functions
             대표는 그 말을 믿고 두 번이나 앱을 다시 깔았다.
          ★ 「무엇이 담겼나」와 「폰이 살아 있나」는 다른 물음이다.
            담긴 것이 없어도 말을 걸었으면 살아 있는 것이다. */
-      const hanaStampAlive = async (linked, how) => {
+      const hanaStampAlive = async (linked, how, ver) => {
         const at = Date.now();
         const patch = { lastTalkAt: at };
+        /* ★★ 판 번호는 «어느 길로 왔든» 적는다 (2026-08-30).
+           여태 15분 훑기만 적었다. 그런데 훑기가 안 도는 폰 — 절전이 재웠거나
+           옛 앱이거나 — 은 판 번호를 영영 안 보낸다. 실제로 20:42 에 연결한 폰이
+           두 시간 가까이 판을 못 알려, 「새 앱을 깔긴 하신 건가」를 못 물었다.
+           연결·지난 문자는 사람이 눌러서 도는 길이라 반드시 닿는다. */
+        const v = String(ver || "").slice(0, 16);
+        if (v) patch.appVersion = v;
         /* ⚠ lastOkAt 은 «알림 다리가 돈다»는 뜻이라 알림으로 온 것에만 찍는다.
            지난 문자·훑기가 대신 찍어 주면 알림이 죽은 채로 「멀쩡함」이 된다. */
         if (how === "sweep") { patch.lastSweepAt = at; patch.lastSkip = null; }
@@ -2267,12 +2274,12 @@ exports.hanaMessageBridge = functions
           .catch(() => null);
         /* ⚠★ 중복이어도 «자국은 남긴다» — 안 남기면 화면이 「문자 0건」이라 거짓말한다. */
         if (sameRaw && sameRaw.exists()) {
-          await hanaStampAlive(linked, howCame);
+          await hanaStampAlive(linked, howCame, body.appVersion);
           hanaJson(res, 200, { ok: true, duplicate: true, sameRaw: true, id: tx.id }); return;
         }
         const existing = await inboxRef.once("value");
         if (existing.exists()) {
-          await hanaStampAlive(linked, howCame);
+          await hanaStampAlive(linked, howCame, body.appVersion);
           hanaJson(res, 200, { ok: true, duplicate: true, id: tx.id }); return;
         }
         const receivedAt = Date.now();
@@ -2323,15 +2330,15 @@ exports.hanaMessageBridge = functions
              알림이 막힌 채로 「멀쩡함」이 되어 진짜 끊김을 영영 못 알아챈다.
              PC 붙여넣기도 같은 까닭으로 안 찍는다(아래). */
         if (fromSweep) {
-          await hanaStampAlive(linked, "sweep");
+          await hanaStampAlive(linked, "sweep", body.appVersion);
         } else if (fromHistory) {
           /* ★ 지난 문자는 lastOkAt 을 안 찍는다(위 까닭). 그렇다고 아무 자국도
              안 남기면, 화면이 「앱에서 지난 문자 가져오기를 누르세요」를 «영영»
              되풀이한다 — 방금 눌러 72건이 들어왔는데도 그랬다(2026-08-29 대표).
              그래서 «지난 문자를 받았다»는 것만 따로 적는다. 살아 있음과는 다른 말이다. */
-          await hanaStampAlive(linked, "history");
+          await hanaStampAlive(linked, "history", body.appVersion);
         } else {
-          await hanaStampAlive(linked, "notify");
+          await hanaStampAlive(linked, "notify", body.appVersion);
         }
         hanaJson(res, 200, { ok: true, saved: true, id: tx.id }); return;
       }
