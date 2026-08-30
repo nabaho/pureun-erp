@@ -174,7 +174,9 @@ test('증명서 행에서 그 기관 실적으로 건너갈 수 있다', () => {
 });
 
 test('증명서 OCR 프롬프트는 발급기관·발급일·증명기간·종류를 뽑는다', () => {
-  assert.match(source, /PAGE_OCR_PROMPT=\{[\s\S]{0,200}?certdoc:/);
+  // ⚠ 「표에서 몇 번째냐」는 규칙이 아니다 — 2026-08-30 extperf 가 앞에 들어왔다.
+  //    규칙은 「certdoc 프롬프트가 이 표 안에 있는가」다.
+  assert.match(source, /PAGE_OCR_PROMPT=\{[\s\S]*?certdoc:/);
   const m = source.match(/certdoc:`([\s\S]*?)`,/);
   assert.ok(m, 'certdoc 프롬프트가 있어야 합니다');
   ['issuer', 'date', 'coverage', 'kind'].forEach((k) => {
@@ -1722,4 +1724,49 @@ test('★ 만든 메뉴를 «지우는 길»은 사라지지 않았다 — 사�
      규칙은 그대로다: «지우는 길이 사라지면 안 된다». */
   assert.match(funcSource('buildNav'), /renderNavAddList/,
     '메뉴를 그릴 때 지우기 칸도 함께 판정해야 합니다');
+});
+
+/* ===== ★ 외부기관 실적 — 묶음·OCR·pu-erp 가져오기 (2026-08-30) ===== */
+
+test('★ 외부기관 실적을 기관·사업·연도로 갈라 본다', () => {
+  ['agency', 'project', 'year'].forEach((k) => {
+    assert.ok(source.indexOf('<option value="' + k + '">') > 0, k + ' 갈래가 있어야 합니다');
+  });
+  assert.match(source, /var PUAG_BY = \{/, '묶음 규칙표가 있어야 합니다');
+  const r = funcSource('renderPuAgency');
+  assert.match(r, /var B = PUAG_BY\[by\]/, '고른 갈래로 묶어야 합니다');
+  assert.match(r, /id="puagYear"|puagYear/, '연도 거르개가 있어야 합니다');
+});
+
+test('★ 증명서 묶음은 «기관별»일 때만 붙인다 — 사업·연도에 붙이면 엉뚱한 짝이 된다', () => {
+  const r = funcSource('renderPuAgency');
+  assert.match(r, /\(by !== 'agency'\) \? \[\] : certs\.filter/, '기관 묶음에서만 매칭합니다');
+  assert.match(r, /by !== 'agency' \? '' :/, '증명서 칸도 기관 묶음에서만 그립니다');
+});
+
+test('★ 외부기관 실적을 OCR 로 담는다 — 기관과 고객사를 바꾸지 않는다', () => {
+  assert.ok(source.indexOf("extperf: '") > 0, 'extperf 프롬프트가 있어야 합니다');
+  ['agency', 'org', 'project', 'kind', 'year'].forEach((k) => {
+    assert.ok(source.indexOf('"' + k + '":') > 0, k + ' 를 요구해야 합니다');
+  });
+  // ⚠ 수행기관과 고객사가 바뀌면 묶음이 통째로 어긋난다 — 프롬프트에 못박아 둔다
+  assert.match(source, /기관과 고객사를 혼동하지 마세요/);
+  assert.match(source, /지어내지 마세요/, '없는 값을 지어내지 않게 해야 합니다');
+  // 저장 갈래
+  const sv = funcSource('saveOCRRecord');
+  assert.match(sv, /page==='extperf'/, '저장 갈래가 있어야 합니다');
+  assert.match(sv, /agency:parsed\.agency/, 'agency 를 담아야 이 화면에 남습니다');
+});
+
+test('★ OCR 드롭존은 «한 번만» 묶는다 — 여러 번 묶으면 한 번 놓아도 여러 번 처리된다', () => {
+  const b = funcSource('bindPuAgencyOcr');
+  assert.match(b, /z\.dataset\.bound/, '중복 바인딩을 막아야 합니다');
+  assert.match(b, /ocrDrop\(files,'extperf'\)/, 'extperf 로 읽어야 합니다');
+  assert.match(source, /page-puagency'\)\{ _safe\(bindPuAgencyOcr\)/, '화면에 들어올 때 묶어야 합니다');
+});
+
+test('★ 이 화면에서도 푸른이알피에서 가져올 수 있다', () => {
+  const sec = source.slice(source.indexOf('id="page-puagency"'), source.indexOf('id="page-submission"'));
+  assert.match(sec, /onclick="puSyncNow\(\)"/, '가져오기 단추가 있어야 합니다');
+  assert.match(sec, /onclick="puUndoLastSync\(\)"/, '되돌리기도 있어야 합니다');
 });
