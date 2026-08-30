@@ -1012,6 +1012,9 @@ var items={};              // items/{year} live
    ⚠ 자리를 «메일»에 둔다. 같은 메일이 여러 업무에 붙을 수 있는데 업무마다
      따로 두면 한 통을 여러 번 확인해야 한다. */
 var mailchk={};
+/* ppchk/{업무|사번} = {by,byName,at,txt} — 푸른이알피 진행 메모를 기록으로 담은 표시.
+   ⚠ 담은 «글»을 함께 둔다. 「담았다」만 두면 그 뒤에 메모를 고쳐도 담을 수 없다. */
+var ppchk={};
 var wkCache={};            // {weekKey:{itemId:{logId:log}}}
 var wkLoaded={};           // {weekKey:true}
 var itemLogsCache={};      // {itemId:{logId:log}}
@@ -1121,6 +1124,9 @@ function start(){
       if(appHasFocus()){ S._pend=true; return; } route(); },function(){ steps={}; });
     watchMapChildren(NS+'/tpl',function(value){ tpls=value||{}; },null,function(){ tpls={}; });
     // 메일 확인 표시 — 다른 사람이 확인하면 내 화면의 ✉ 숫자도 함께 줄어야 한다
+    watchMapChildren(NS+'/ppchk',function(value){ ppchk=value||{}; },function(){
+      if(appHasFocus()){ S._pend=true; return; }
+      if(S.drawerId) renderDrawer(); },function(){ ppchk={}; });
     watchMapChildren(NS+'/mailchk',function(value){ mailchk=value||{}; },function(){
       if(appHasFocus()){ S._pend=true; return; }
       route(); if(S.drawerId) renderDrawer(); },function(){ mailchk={}; });
@@ -1132,6 +1138,9 @@ function start(){
     coLoad().then(mailLoad).then(function(){
       if(mailSrc&&mailSrc.length){ route(); if(S.drawerId) renderDrawer(); }
     }).catch(function(){});
+    /* 진행 메모는 업무 항목 안에 이미 들어 있다(엔진이 내려보낸 pe_notes).
+       사람 이름만 있으면 누가 쓴 것인지 적을 수 있다. */
+    peUsers().then(function(){ if(S.drawerId) renderDrawer(); }).catch(function(){});
     calLoadPrefs().then(function(){ route(); }); // 캘린더 개인 설정(보임·보기·레이어)
   });
   document.addEventListener('focusout',function(){ setTimeout(function(){
@@ -2984,6 +2993,98 @@ function _mailWhen(at){
 /* 드로어 블록 — 이 업체에서 온 메일.
    ⚠ 「요약」이라고 적지 않는다. 여기 있는 것은 서버가 본 미리보기 몇 줄이고
      본문은 다음메일에 있다. 요약인 척하면 읽는 사람이 그것을 본문으로 믿는다. */
+/* ══════════════════════════════════════════════════════════════════════
+   푸른이알피 진행 메모를 여기로 (대표 지시 2026-08-27 「다음」)
+   ══════════════════════════════════════════════════════════════════════
+   팀 전체가 진행 이백오십칠 건인데 주간 기록이 «0줄»이었다.
+   까닭 하나를 코드에서 찾았다 — 푸른이알피 「나의 업무」 진행 모달에는
+   진행률·상태·다음 할 일·**메모** 칸이 있는데,
+
+     상태·다음 할 일 … 양방향으로 맞춘다 (pesync pick3)
+     메모(note)      … **업무관리 → 푸른이알피 한 방향뿐**
+                        (pu-erp: pp.note 가 비어 있을 때만 w.last.t 를 넣는다)
+
+   그래서 담당자가 푸른이알피에 적은 진행 메모는 업무관리로 영영 오지 않았다.
+   같은 이야기를 두 곳에 쓰라는 꼴이라 한쪽이 비는 것이 당연했다.
+
+   ⚠ 자동으로 기록을 만들지 않는다. 메모는 «덮어쓰는 한 칸»이라 돌 때마다 기록으로
+     옮기면 같은 줄이 쌓이거나, 고친 흔적이 기록에 뒤죽박죽 남는다.
+     메일과 같은 방식 — 보여 주고, 담당자가 [기록에 담기]를 누른다.
+   ⚠ 여기서 data/project_progress 를 «직접 읽지 않는다».
+     ① 그 자리는 배열 통째로 저장되는 키다 — 잘못 건드리면 다음 전체 저장에 덮인다.
+     ② 그리고 이 앱이 새 data 자리를 읽기 시작하면 보안규칙에 이름을 붙여야 하고,
+        그러면 대표가 콘솔에 붙여넣기 전까지 규칙 파일과 콘솔이 어긋난다.
+     대신 푸른이알피의 동기화 엔진이 «내려보낸» 것을 읽는다 —
+     사건 단계 기한(pe_due)이 이미 그렇게 오고 있다. 같은 길을 쓴다.
+   ⚠ 엔진은 «자기 것»만 내려보낸다(project_progress 가 사람별 기록이라
+     남의 행을 대신 옮기면 안 된다). 그래서 사람마다 제 브라우저에서 채워진다. */
+/* 그 업무에 달린 진행 메모들 — 사람마다 한 줄씩 있을 수 있다.
+   items/{id}/pe_notes/{사번} = {t:메모, at:고친때, id:메모줄번호} */
+function ppFor(it){
+  if(!it||!it.pe_notes) return [];
+  return Object.keys(it.pe_notes).map(function(sd){
+    var n=it.pe_notes[sd]||{};
+    return { sid:sd, id:n.id||sd, note:String(n.t||''), updatedAt:String(n.at||''), progress:n.pg };
+  }).filter(function(p){ return p.note.trim(); })
+    .sort(function(a,b){ return String(b.updatedAt||'').localeCompare(String(a.updatedAt||'')); });
+}
+function ppLine(p){
+  var t=String((p&&p.note)||'').replace(/\s+/g,' ').trim();
+  if(t.length>46) t=t.slice(0,46)+'…';
+  return '🔗 푸른이알피 메모 — '+t;
+}
+/* 담은 표시의 자리 — «그 메모 줄»을 가리킨다.
+   ⚠ 사번으로 가리키지 않는다. 사번은 «사람»이고, 사람으로 경로를 만들면
+     그 값이 잘못 왔을 때 엉뚱한 사람 자리를 건드리게 된다([[perf-confirm-loop]] 에서
+     사본의 sid 를 안 믿기로 한 것과 같은 까닭). 메모 줄에는 저마다 번호(pp-…)가 있다. */
+function ppKey(it,p){ return String((it&&it._id)||'')+'|'+String((p&&p.id)||''); }
+/* 이미 담은 메모인지 — «그때 담은 글»과 견준다.
+   ⚠ 「담았다」만 표시하면 그 뒤에 메모를 고쳐도 담을 수 없게 된다. */
+function ppTaken(it,p){
+  var r=ppchk&&ppchk[ppKey(it,p)];
+  return !!(r&&String(r.txt||'')===String((p&&p.note)||'').trim());
+}
+function ppTake(itemId,rowId){
+  var it=items[itemId]; if(!it){ toast('업무를 찾지 못했습니다','warn'); return; }
+  it._id=itemId;
+  var p=ppFor(it).filter(function(x){ return String(x.id||'')===String(rowId||''); })[0];
+  if(!p){ toast('메모를 찾지 못했습니다','warn'); return; }
+  var txt=String(p.note||'').trim();
+  /* ⚠ 기록이 먼저다. 기록이 안 됐는데 「담김」으로 표시하면 담긴 줄 알고 넘어간다. */
+  addLog(itemId,ppLine(p),todayStr(),'pe').then(function(ok){
+    if(!ok) return;
+    var rec={ by:(S.me&&S.me.sid)||'', byName:(S.me&&S.me.name)||'',
+      at:new Date().toISOString(), txt:txt };
+    fbDb.ref(NS+'/ppchk/'+safeKey(ppKey(it,p))).set(rec).then(function(){
+      if(!ppchk) ppchk={};
+      ppchk[ppKey(it,p)]=rec;
+      if(S.drawerId) renderDrawer();
+      route();
+    }).catch(function(){ if(S.drawerId) renderDrawer(); });
+  });
+}
+function dPpHTML(it,itemId){
+  if(it&&!it._id) it._id=itemId;
+  var arr=ppFor(it);
+  if(!arr.length) return '';
+  return '<div class="dbox"><div class="bh">🔗 푸른이알피 진행 메모'+hlp('ppnote')
+    +'<span class="r">'+arr.length+'건</span></div><div class="bb">'
+    +arr.map(function(p){
+      var who=(_peU2N&&_peU2N[p.sid])||p.sid||'';
+      var done=ppTaken(it,p);
+      return '<div class="mlrow'+(done?' seen':'')+'">'
+        +'<div class="p" style="margin-top:0">'+esc(String(p.note||''))+'</div>'
+        +'<div class="s">'+esc(who)+(p.updatedAt?' · '+esc(String(p.updatedAt).slice(0,10)):'')
+        +(p.progress?' · 진행 '+Number(p.progress)+'%':'')+'</div>'
+        +'<div class="mlb">'
+        +(done
+          ? '<span class="ok">✎ 기록에 담김</span>'
+          : '<button onclick="ppTake(\''+escJ(itemId)+'\',\''+escJ(p.id||'')+'\')" '
+            +'title="'+esc('주간 기록에 한 줄로 남깁니다: '+ppLine(p))+'">✎ 기록에 담기</button>')
+        +'</div></div>';
+    }).join('')
+    +'</div></div>';
+}
 /* ── 메일 한 통을 «한 줄»로 줄인다 ────────────────────────────────
    ⚠ 여기서 「요약」이라고 부를 수 있는 것은 제목뿐이다. 본문이 없다.
      제목은 대개 이미 요약이고, 모자라면 미리보기 앞머리를 조금 붙인다.
@@ -4451,6 +4552,7 @@ function renderDrawer(){
     +'<span class="lb">⚖ 단계 기한</span>'+sdueHTML(it)+'</div>';
   h+=dStepsHTML(id,it);
   h+=dPeopleHTML(id,it);
+  h+=dPpHTML(it,id);
   h+=dMailHTML(it,id);
   // 관련 지식 — 같은 업체·유형·관계자에서 얻은 카드가 자동으로 따라온다
   var rel=kbRelated(it);
@@ -6163,6 +6265,12 @@ var HELP={
     +'다음에 같은 대상을 만나면 업무를 열 때 여기로 자동으로 따라옵니다.',
   note:'평소에 조금씩 적어 두는 인수인계 자료입니다. 갑자기 자리를 비우게 되어도 '
       +'남은 사람이 그대로 이어받을 수 있습니다.',
+  ppnote:'푸른이알피 <b>「나의 업무」 진행 모달</b>의 메모 칸입니다. 거기서만 고칠 수 있습니다.<br>'
+        +'⚠ 상태·다음 할 일은 두 곳이 자동으로 맞춰지지만, <b>메모는 그렇지 않습니다</b> — '
+        +'푸른이알피에 적은 메모는 여기로 저절로 오지 않습니다. 그래서 <b>✎ 기록에 담기</b>를 둡니다.<br>'
+        +'담으면 <b>「🔗 푸른이알피 메모 — …」</b> 한 줄이 그 주 기록으로 들어가, '
+        +'주간표·팀 전체·전체 검색에서 다른 기록과 똑같이 찾힙니다.<br>'
+        +'메모를 <b>고치면 다시 담을 수 있습니다</b> — 담은 글이 달라지면 단추가 다시 나옵니다.',
   mail:'푸른 메일함으로 <b>들어온</b> 메일 중 이 업체에서 온 것입니다. '
       +'보낸이 주소·회사 도메인·회사 이름으로 이어 붙입니다.<br>'
       +'⚠ <b>여기에는 본문이 없습니다.</b> 서버가 남긴 것은 제목과 미리보기 몇 줄뿐이라 '
