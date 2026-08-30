@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 // 푸른 메일함에서 들어온 메일을 업무 옆에 붙인다 — node --test tests/work-mail-hint.test.js
 //
 // ⚠ 먼저 알아야 할 것 — 여기에는 «메일 본문이 없다».
@@ -30,11 +30,25 @@ function grab(name){
 
 function makeBox(opts){
   opts = opts || {};
+  const log = { added:[], set:[], removed:[], toast:[] };
   const box = {
     console, Date, String, Number, Array, Object, isNaN,
     mailSrc: opts.mail === undefined ? [] : opts.mail,
+    mailchk: JSON.parse(JSON.stringify(opts.chk || {})),
+    NS: 'work_erp',
+    S: { me:{ sid:'P-001', name:'권형하' }, drawerId:null },
+    todayStr: () => '2026-08-27',
+    toast(m){ log.toast.push(String(m)); },
+    route(){}, renderDrawer(){},
+    addLog(id, t, d, k){ log.added.push({ id, t, d, k }); return Promise.resolve(opts.logOk !== false); },
+    fbDb: { ref(p){ return {
+      set(v){ log.set.push({ p, v });
+        return opts.setOk === false ? Promise.reject(new Error('막힘')) : Promise.resolve(); },
+      remove(){ log.removed.push(p); return Promise.resolve(); }
+    }; } },
     _normCo: s => String(s || '').replace(/\(주\)|㈜|주식회사|\(유\)|유한회사|[\s·.,\-()]/g, '').toLowerCase(),
     esc: x => String(x == null ? '' : x).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),
+    escJ: x => String(x == null ? '' : x).replace(/\\/g, '\\\\').replace(/'/g, "\\'"),
     hlp: k => '<span class="hlp" data-k="' + k + '">ⓘ</span>',
     // ⚠ 흉내라도 «그 업무의» 업체를 돌려줘야 한다 — 무엇을 물어도 같은 업체를 주면
     //   「남의 업무에 안 붙는다」를 검사할 수가 없다
@@ -47,8 +61,14 @@ function makeBox(opts){
   vm.runInContext(
     W.match(/var MAIL_PUBLIC=\{[^}]*\};/)[0] + '\n'
     + grab('_mailAddr') + '\n' + grab('_mailDom') + '\n' + grab('mailKeysOf') + '\n'
-    + grab('mailFor') + '\n' + grab('_mailWhen') + '\n' + grab('dMailHTML') + '\n' + grab('mailFlag') + '\n'
-    + 'this.keys=mailKeysOf; this.forIt=mailFor; this.flag=mailFlag; this.block=dMailHTML;', box);
+    + grab('mailFor') + '\n' + grab('_mailWhen') + '\n'
+    + grab('mailBrief') + '\n' + grab('mailLogLine') + '\n' + grab('mailKey') + '\n' + grab('mailChk') + '\n'
+    + grab('mailSee') + '\n' + grab('mailUnsee') + '\n' + grab('mailNew') + '\n'
+    + grab('dMailHTML') + '\n' + grab('mailFlag') + '\n'
+    + 'this.keys=mailKeysOf; this.forIt=mailFor; this.flag=mailFlag; this.block=dMailHTML;'
+    + 'this.brief=mailBrief; this.logLine=mailLogLine; this.see=mailSee; this.unsee=mailUnsee;'
+    + 'this.fresh=mailNew;', box);
+  box._log = log;
   return box;
 }
 
@@ -176,12 +196,178 @@ test('자료가 담긴 메일은 그렇게 표시한다', () => {
   assert.match(makeBox({ mail:메일, co:업체 }).block(업무), /자료 2건 담김/);
 });
 
-test('너무 많으면 여덟 줄만 — 나머지는 몇 건인지만', () => {
+test('너무 많으면 열 줄만 — 나머지는 몇 건인지만', () => {
   const many = [];
-  for(let i = 0; i < 12; i++) many.push({ at:i + 1, from:'a@gana.co.kr', subject:'메일' + i });
-  const h = makeBox({ mail:many, co:업체 }).block(업무);
-  assert.equal((h.match(/class="mlrow"/g) || []).length, 8);
+  for(let i = 0; i < 14; i++) many.push({ _k:'k' + i, at:i + 1, from:'a@gana.co.kr', subject:'메일' + i });
+  const h = makeBox({ mail:many, co:업체 }).block(업무, 'W1');
+  assert.equal((h.match(/class="mlrow"/g) || []).length, 10);
   assert.match(h, /외 4건/);
+});
+
+/* ══════════════════════════════════════════════════════════════════
+   ⑥ 한 줄로 줄이기 — 「요약」이라고 부를 수 있는 것은 제목뿐이다
+   ══════════════════════════════════════════════════════════════════ */
+test('제목이 곧 한 줄이다 — 본문이 없으니 지어내지 않는다', () => {
+  assert.equal(makeBox({}).brief({ subject:'취업규칙 개정 문의' }), '취업규칙 개정 문의');
+});
+
+test('대괄호 발송 표시는 뗀다 — 자리만 먹고 무슨 일인지는 안 알려 준다', () => {
+  const b = makeBox({});
+  assert.equal(b.brief({ subject:'[광고] 특가 안내' }), '특가 안내');
+  assert.equal(b.brief({ subject:'[푸른노무법인][알림] 회신 바랍니다' }), '회신 바랍니다');
+});
+
+test('제목이 너무 짧으면 미리보기 앞머리를 조금 붙인다', () => {
+  const t = makeBox({}).brief({ subject:'문의', preview:'취업규칙 관련해서 여쭙습니다' });
+  assert.match(t, /문의 — 취업규칙 관련해서/);
+});
+
+test('⚠ 알찬 제목에는 미리보기를 안 붙인다 — 우리말 제목은 짧아도 다 말한다', () => {
+  const t = makeBox({}).brief({ subject:'취업규칙 개정 문의', preview:'검토 부탁드립니다' });
+  assert.equal(t, '취업규칙 개정 문의');
+});
+
+test('제목이 없으면 미리보기로, 그것도 없으면 그렇게 말한다', () => {
+  const b = makeBox({});
+  assert.equal(b.brief({ preview:'내용만 있습니다' }), '내용만 있습니다');
+  assert.equal(b.brief({}), '(제목 없음)');
+});
+
+test('한 줄은 짧게 자른다 — 기록 한 줄이 화면을 넘기면 표가 무너진다', () => {
+  const t = makeBox({}).brief({ subject:'가'.repeat(120) });
+  assert.ok(t.length <= 47, '길이: ' + t.length);
+  assert.match(t, /…$/);
+});
+
+test('기록 한 줄은 «언제 온 메일인지»를 앞에 세운다', () => {
+  const b = makeBox({});
+  const line = b.logLine({ at:new Date('2026-08-27T10:30:00').getTime(), subject:'취업규칙 문의' });
+  assert.match(line, /^✉ 8\.27 메일 — 취업규칙 문의$/);
+});
+
+/* ══════════════════════════════════════════════════════════════════
+   ⑦ 담당자가 체크한다
+   ══════════════════════════════════════════════════════════════════ */
+const 한통 = [{ _k:'m1', at:new Date('2026-08-27T09:00:00').getTime(),
+  from:'kim@gana.co.kr', subject:'취업규칙 개정 문의', preview:'검토 부탁드립니다' }];
+
+test('[기록에 담기] 를 누르면 그 주 기록에 한 줄이 들어간다', () => {
+  const b = makeBox({ mail:한통, co:업체 });
+  b.see('W1', 'm1', 1);
+  assert.equal(b._log.added.length, 1);
+  assert.equal(b._log.added[0].id, 'W1');
+  assert.match(b._log.added[0].t, /^✉ 8\.27 메일 — 취업규칙 개정 문의$/);
+  assert.equal(b._log.added[0].k, 'mail', '나중에 걸러 볼 수 있게 종류를 남긴다');
+});
+
+test('⚠ 기록이 먼저다 — 기록이 안 되면 「담김」으로 표시하지 않는다', async () => {
+  const b = makeBox({ mail:한통, co:업체, logOk:false });
+  b.see('W1', 'm1', 1);
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(b._log.set.length, 0, '기록도 못 했는데 담긴 것으로 표시했다');
+});
+
+test('[확인만] 은 기록을 안 남긴다 — 기록할 것이 없는 메일이 있다', () => {
+  const b = makeBox({ mail:한통, co:업체 });
+  b.see('W1', 'm1', 0);
+  assert.equal(b._log.added.length, 0);
+  assert.equal(b._log.set.length, 1);
+  assert.ok(!b._log.set[0].v.log);
+});
+
+test('누가 언제 확인했는지 남긴다', () => {
+  const b = makeBox({ mail:한통, co:업체 });
+  b.see('W1', 'm1', 0);
+  const v = b._log.set[0].v;
+  assert.equal(v.by, 'P-001');
+  assert.equal(v.byName, '권형하');
+  assert.ok(v.at);
+});
+
+test('⚠ 확인 표시는 «메일»에 붙는다 — 업무마다 두면 한 통을 여러 번 확인해야 한다', () => {
+  const b = makeBox({ mail:한통, co:업체 });
+  b.see('W1', 'm1', 0);
+  assert.equal(b._log.set[0].p, 'work_erp/mailchk/m1');
+});
+
+test('없는 메일을 확인하라고 하면 조용히 지나가지 않는다', () => {
+  const b = makeBox({ mail:한통, co:업체 });
+  b.see('W1', '없는키', 0);
+  assert.equal(b._log.set.length, 0);
+  assert.match(b._log.toast.join(''), /메일을 찾지 못했습니다/);
+});
+
+test('되돌리기는 확인 표시만 지운다 — 이미 남긴 기록은 그대로 둔다', () => {
+  const b = makeBox({ mail:한통, co:업체, chk:{ m1:{ by:'P-001', log:1 } } });
+  b.unsee('m1');
+  assert.equal(b._log.removed.join(','), 'work_erp/mailchk/m1');
+  assert.equal(b._log.added.length, 0, '기록을 건드렸다');
+});
+
+/* ══════════════════════════════════════════════════════════════════
+   ⑧ 안 본 것이 눈에 띈다
+   ══════════════════════════════════════════════════════════════════ */
+test('목록의 ✉ 숫자는 «아직 안 본» 것만 센다 — 전부 세면 확인해도 안 줄어든다', () => {
+  const two = [한통[0], { _k:'m2', at:2, from:'hr@gana.co.kr', subject:'회신' }];
+  assert.match(makeBox({ mail:two, co:업체 }).flag(업무), /✉ 2/);
+  assert.match(makeBox({ mail:two, co:업체, chk:{ m1:{ by:'x' } } }).flag(업무), /✉ 1/);
+  assert.equal(makeBox({ mail:two, co:업체, chk:{ m1:{by:'x'}, m2:{by:'x'} } }).flag(업무), '');
+});
+
+test('상자 머리에 안 본 것이 몇 통인지 적는다', () => {
+  const h = makeBox({ mail:한통, co:업체 }).block(업무, 'W1');
+  assert.match(h, /안 본 1/);
+});
+
+test('안 본 것이 위로 온다 — 그것이 이 상자를 여는 까닭이다', () => {
+  const two = [{ _k:'old', at:9, from:'kim@gana.co.kr', subject:'먼저온것' },
+               { _k:'new', at:1, from:'kim@gana.co.kr', subject:'나중것' }];
+  const h = makeBox({ mail:two, co:업체, chk:{ old:{ by:'x' } } }).block(업무, 'W1');
+  assert.ok(h.indexOf('나중것') < h.indexOf('먼저온것'), '확인한 것이 위에 있다');
+});
+
+test('확인한 줄은 흐리게 두되 지우지 않는다 — 「무엇을 봤는지」도 자료다', () => {
+  const h = makeBox({ mail:한통, co:업체, chk:{ m1:{ by:'x', byName:'권형하', at:'2026-08-27T00:00:00' } } })
+    .block(업무, 'W1');
+  assert.match(h, /class="mlrow seen"/);
+  assert.match(h, /✓ 확인함/);
+  assert.match(h, /권형하/);
+});
+
+test('기록에 담은 것과 확인만 한 것을 갈라 적는다', () => {
+  const h = makeBox({ mail:한통, co:업체, chk:{ m1:{ by:'x', log:1, at:'2026-08-27T00:00:00' } } })
+    .block(업무, 'W1');
+  assert.match(h, /✎ 기록에 담김/);
+});
+
+test('아직 안 본 줄에만 단추가 있다', () => {
+  const h1 = makeBox({ mail:한통, co:업체 }).block(업무, 'W1');
+  assert.match(h1, /✎ 기록에 담기/);
+  assert.match(h1, /✓ 확인만/);
+  const h2 = makeBox({ mail:한통, co:업체, chk:{ m1:{ by:'x' } } }).block(업무, 'W1');
+  assert.ok(h2.indexOf('✎ 기록에 담기') < 0);
+});
+
+test('단추에 무엇이 기록될지 미리 적어 둔다 — 눌러 보고 알면 늦다', () => {
+  const h = makeBox({ mail:한통, co:업체 }).block(업무, 'W1');
+  assert.match(h, /title="[^"]*✉ 8\.27 메일 — 취업규칙 개정 문의/);
+});
+
+/* ══════════════════════════════════════════════════════════════════
+   ⑨ 쉽게 찾을 수 있다
+   ══════════════════════════════════════════════════════════════════ */
+test('기록으로 들어가므로 이미 있는 검색·주간표·팀 전체가 그대로 훑는다', () => {
+  // 표식(✉)을 «글자»로 넣는다 — 그래야 네 군데 그리는 곳을 안 고쳐도 어디서나 보인다
+  assert.match(grab('mailLogLine'), /'✉ '\+/);
+});
+
+test('확인 표시는 함께 본다 — 남이 확인하면 내 ✉ 숫자도 줄어야 한다', () => {
+  assert.match(W, /watchMapChildren\(NS\+'\/mailchk'/);
+});
+
+test('업무 번호를 받아서 쓴다 — it._id 는 비어 있을 수 있다', () => {
+  assert.match(grab('dMailHTML'), /function dMailHTML\(it,itemId\)\{/);
+  assert.match(grab('dMailHTML'), /var id=itemId\|\|it\._id;/);
 });
 
 /* ══════════════════════════════════════
@@ -204,7 +390,7 @@ test('내 업무와 팀 전체 두 곳에 표식이 붙는다', () => {
 });
 
 test('드로어에 블록이 붙는다', () => {
-  assert.match(W, /h\+=dMailHTML\(it\);/);
+  assert.match(W, /h\+=dMailHTML\(it,id\);/);
 });
 
 test('업체 목록을 먼저 받고 읽는다 — 이름표가 없으면 이어 붙일 수가 없다', () => {
