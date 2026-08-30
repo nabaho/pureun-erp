@@ -58,6 +58,23 @@
   다음에 만들 때 조용히 사라진다 (`tests/firebase-rules-apply.test.js` 가 막는다).
 - 채팅에 올릴 때는 **무엇이 바뀌었는지 먼저 한 줄**, 그다음 전문.
 
+## 붙여 둔 도구 — 설치 단계가 없다 (2026-08-30)
+
+계정·PC 가 바뀌어도 같은 도구로 시작하도록 **저장소에 붙여** 두었다.
+
+- `.claude/skills/hwpx/` — 한글(.hwp/.hwpx) 변환·양식 채우기 스킬 (jkf87/hwpx-skill, MIT).
+  사업장·공단 서식이 대부분 .hwp 다 — 한글 프로그램 없이 리눅스에서 바꾼다.
+  개인정보를 화면에 안 찍고 채우는 `secure_fill.py` 가 주민번호 서식용이다.
+  출처·판·쓰는 법은 `.claude/skills/hwpx/푸른-메모.md`.
+  한 번만: `python3 -m pip install python-hwpx lxml --break-system-packages`
+- `.mcp.json` — 인사(HRMCP)·법령(korean-law) MCP 연결. 법령은 `LAW_OC` 가 있어야 산다.
+- 앱 쪽 짝은 `js/pu-form-fill.js` — **브라우저에서** 원본 서식의 `{{토큰}}` 만 바꾼다.
+  주민번호가 서버로 안 가야 해서 이 일은 화면 안에서 끝낸다.
+  설계와 다음 단계는 `docs/한글서식함-설계.md`.
+
+⚠ 이 셋은 개발용이라 **배포본에 올라가면 안 된다** —
+`tests/dev-tools-not-published.test.js` 가 지우는 대목을 실제로 돌려서 확인한다.
+
 ## MCP Skills
 
 ### korean-law-mcp
