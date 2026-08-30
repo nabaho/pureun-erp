@@ -82,6 +82,9 @@ function load(){
     coPage: () => ({ rows: [], total: 0, from: 1, page: 0, pages: 3 }),
     syncPcSearchFor: () => {},
     coListHtml: () => '<table class="cotbl"></table>',
+    /* 걸린 「할 일」을 알려 주는 띠 — 2026-08-30 에 목록 «위»로 붙었다.
+       ⚠ coListHtml 안이 아니라 밖이다: 0곳일 때도 떠야 하기 때문이다. */
+    coTodoChipsHtml: () => '',
     coPagerHtml: () => '',
     esc: s => String(s)
   };

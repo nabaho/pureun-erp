@@ -20297,13 +20297,19 @@ function coIsUid(o){
   return Object.keys(ex.tags || {}).some(isUidDocName);
 }
 /* 몇 곳인가 — 폴더·태그·검색은 그대로 두고 센다(종료 개수와 같은 결) */
-function coUidCount(){ return coFilteredList(null).filter(coIsUid).length; }
+function coUidCount(){ return coFilteredList(null, false, true).filter(coIsUid).length; }
 
 /* skipCares — 「🏢 거래처 / ＃ 전체」 두 칩의 수를 셀 때만 쓴다(coScopeCounts).
    ⚠ 다른 거르개와 달리 이것은 «뺄 자신»이 있어야 한다. 두 칩은 «고르는 것»이라
      저마다 «누르면 몇 곳이 되는지»를 보여야 하는데, 거래처 거르개를 켠 채로 세면
      「＃ 전체」가 거래처 수를 그대로 되풀이해 누를 까닭이 안 보인다. */
-function coFilteredList(skipCol, skipCares){
+/* skipTodo — 「할 일」 넷(종료·번호 없음·정보부족·고유번호증)을 «빼고» 거른다.
+   ⚠ 할 일 수를 셀 때 쓴다. 이미 걸러진 목록에서 세면 하나를 켠 순간 나머지 수까지
+     그 수로 붙는다 — 대표님 화면의 「종료 5 · 번호 없음 5 · 정보부족 5」가 그것이다
+     (대표 보고 2026-08-30). 2026-08-28 에 탭 줄에서 똑같은 것을 고쳤는데 할 일을
+     옆줄로 내리면서 그 결함이 따라왔다.
+   ⚠ 폴더·태그·검색은 «그대로 둔다» — 「지금 보는 것 안에서 몇 곳인가」는 뜻이 있다. */
+function coFilteredList(skipCol, skipCares, skipTodo){
   const q = String(state.coQ||'').trim().toLowerCase();
   let list = coList();
   if(state.coFolder) list = list.filter(o=>o.folder===state.coFolder);
@@ -20333,21 +20339,37 @@ function coFilteredList(skipCol, skipCares){
      o.erp.left 는 이미 ErpMatch 가 계산해 둔 값이다(companies[].status==='closed').
      ERP 에 없는 회사(o.erp 가 null)는 정보가 없을 뿐 종료가 아니다 — left 가
      undefined 라 아래 필터에서 자연히 빠진다. */
-  if(state.coOnlyClosed) list = list.filter(o=>o.erp && o.erp.left);
+  if(state.coOnlyClosed && !skipTodo) list = list.filter(o=>o.erp && o.erp.left);
   /* ── 사업자번호 없는 회사만 (대표 지시 2026-08-24, 2순위) ──
      회사를 가르는 열쇠가 사업자번호다(coKeyOf). 번호가 없으면 이름으로 열쇠를 만드는데,
      사진첩은 언제나 coInfo/{사업자번호} 로 보낸다 — 그래서 번호 없는 회사는
      사진첩이 보낸 정보를 «받을 수 없다». 채워야 할 곳을 눈에 보이게 한다. */
-  if(state.coOnlyNoBiz) list = list.filter(o=>!String(o.bizno||'').trim());
+  if(state.coOnlyNoBiz && !skipTodo) list = list.filter(o=>!String(o.bizno||'').trim());
   /* ── 정보부족만 (대표 지시 2026-08-24, 3순위) ──
      대표자·소재지·대표번호 중 하나라도 비면 부족이다. 명함의 「정보부족」과 같은 결
      (명함도 전화 또는 이메일이 없으면 부족으로 본다) — 어디부터 채울지 정할 수 있게 한다. */
-  if(state.coOnlyIncomplete) list = list.filter(coLacks);
+  if(state.coOnlyIncomplete && !skipTodo) list = list.filter(coLacks);
   /* ── 고유번호증만 (대표 지시 2026-08-26) ──
      비영리법인·국가기관은 사업자등록증이 아니라 고유번호증을 받는다. 다루는 법은
      같지만 «따로 모아 봐야 할» 때가 있다(법인·단체만 골라 서식을 보낼 때). */
-  if(state.coOnlyUid) list = list.filter(coIsUid);
+  if(state.coOnlyUid && !skipTodo) list = list.filter(coIsUid);
   return list;
+}
+/* ── 걸린 「할 일」을 목록 위에 띠로 (대표 보고 2026-08-30) ──────────────
+   대표님: 「업체관리로 이동시켰는데 이동 안 하고 남아있다 … 계약해지사업장으로
+   보냈는데 안 간다」. 옮기기는 «되고 있었다» — 옆줄 수가 180·4 에서 167·17 로
+   바뀌어 있었다. 안 간 것이 아니라 «안 보인 것»이다.
+   할 일이 켜져 있다는 표시가 «옆줄 한 줄이 진해지는 것»뿐이라, 폴더를 눌러도
+   그 조건이 함께 걸려 텅 빈 목록이 나오는 까닭을 알 길이 없었다.
+   ⚠ 명함 쪽은 2026-08-29 에 같은 것을 겪고 조건 띠로 고쳤다 — 같은 결로 맞춘다. */
+const CO_TODO_LABEL = { coOnlyClosed:'🚪 종료', coOnlyNoBiz:'🔢 번호 없음',
+                        coOnlyIncomplete:'📋 정보부족', coOnlyUid:'🏛 고유번호증' };
+function clearCoTodo(k){ state[k] = false; state.coPage = 0; renderCoAny(); }
+function coTodoChipsHtml(){
+  return Object.keys(CO_TODO_LABEL).filter(k=>state[k]).map(k=>
+    `<span class="mgrchip" title="이 조건이 걸려 있습니다 — ✕ 로 풉니다">
+       ${CO_TODO_LABEL[k]}만 보는 중
+       <span class="x" onclick="clearCoTodo('${k}')" title="이 조건 풀기">✕</span></span>`).join('');
 }
 /* 「🏢 거래처」·「🏢 전체」 두 칩의 수 — 폴더·태그·검색 «안»에서, 거래처 거르개만 빼고 센다.
    그래야 두 수가 「지금 고른 것에 따라」 흔들리지 않고, 저마다 누르면 몇 곳이 되는지를 말한다. */
@@ -20355,16 +20377,17 @@ function coScopeCounts(){
   const base = coFilteredList(null, true);
   return { all: base.length, cares: base.filter(coCares).length };
 }
-/* 번호 없는 회사 수 — 폴더·태그·검색은 그대로 두고 센다(종료 개수와 같은 결). */
+/* 번호 없는 회사 수 — 폴더·태그·검색은 그대로 두고, «할 일끼리는» 서로 안 걸고 센다. */
 function coNoBizCount(){
-  return coFilteredList(null).filter(o=>!String(o.bizno||'').trim()).length;
+  return coFilteredList(null, false, true).filter(o=>!String(o.bizno||'').trim()).length;
 }
-/* 종료 개수 — 폴더·태그·검색·다른 열 거르기는 그대로 두고 센다.
-   ⚠ coColFilter 의 skipCol 과 달리 여기는 «뺄 자신»이 없다 — 마지막에 붙이는
-     .filter(erp.left) 가 이미 종료만 남기므로, coOnlyClosed 가 켜져 있어 한 번 더
-     걸러져도 «같은 조건을 두 번 거는 것»일 뿐 결과가 달라지지 않는다. */
+/* 종료 개수 — 폴더·태그·검색은 그대로 두고, «할 일끼리는» 서로 안 걸고 센다.
+   ⚠ 예전 주석은 「제 조건은 두 번 걸어도 같으니 뺄 자신이 없다」고 했는데, 그건
+     «제 조건»만 본 것이었다. 남의 할 일이 켜져 있으면 그 안에서 세게 되어 수가 서로
+     붙는다 — 대표님 화면의 「종료 5 · 번호 없음 5 · 정보부족 5」(2026-08-30).
+     그러면 무엇을 고르는 것인지 알 수 없다. */
 function coClosedCount(){
-  return coFilteredList(null).filter(o=>o.erp && o.erp.left).length;
+  return coFilteredList(null, false, true).filter(o=>o.erp && o.erp.left).length;
 }
 /* ⚠ 여기에 «거른 결과 기억하기»를 넣었다가 되돌렸다 (2026-08-26).
    도구줄에 개수를 적으면서 coVisible() 이 한 번 그릴 때 두 번 불리게 됐는데,
@@ -20554,7 +20577,10 @@ function renderCoPage(){
   const sameList = (shape === _coScrollShape);
   _coScrollShape = shape;
   el.classList.add('cosplit');
-  el.innerHTML = `<div class="cobody"><div class="setwrap">${coListHtml(info)}</div></div>`
+  /* ⚠ 조건 띠는 coListHtml «밖»에 둔다. 안에 넣으면 찾은 것이 0곳일 때 그 함수가
+     「회사를 찾지 못했습니다」로 먼저 돌아나가 띠가 안 뜬다 — 바로 그때가 왜 비었는지
+     알아야 할 때다(대표 보고 2026-08-30 「보냈는데 안 간다」). */
+  el.innerHTML = `<div class="cobody"><div class="setwrap">${coTodoChipsHtml()}${coListHtml(info)}</div></div>`
     + `<div class="cofoot">${coPagerHtml(info)}</div>`;
   /* 새로 만들어진 칸에 자리를 되꽂는다. 목록이 짧아졌으면 브라우저가 알아서 끝까지만
      내려 준다 — 우리가 자를 필요가 없다. */
@@ -21283,7 +21309,10 @@ async function coMoveSelTo(folderId){
   }
   $('folderDlgBg').classList.remove('open');
   state.coSel={};
-  toast(`${keys.length}곳을 옮겼습니다`);
+  /* ⚠ «어디로» 옮겼는지 이름으로 말한다 (대표 보고 2026-08-30). 「N곳을 옮겼습니다」
+     로만 말하면, 걸려 있는 할 일 때문에 목록이 그대로일 때 옮겨진 것인지 알 길이 없다. */
+  const _f = folderId ? (_coFolders[folderId]||{}).name : '';
+  toast(`${keys.length}곳을 ${_f ? `「${_f}」 폴더로 ` : '폴더에서 빼서 '}옮겼습니다`, 6000);
   renderCoAny();
 }
 function coAssignTag(){
@@ -21641,7 +21670,7 @@ function coLacks(o){
   return coCares(o) && coMissing(o).length > 0;
 }
 function coIncompleteCount(){
-  return coFilteredList(null).filter(coLacks).length;
+  return coFilteredList(null, false, true).filter(coLacks).length;
 }
 function coDetailPanelHtml(o){
   const val = f => coVal(o, f);
