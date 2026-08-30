@@ -773,6 +773,60 @@ module.exports = function build(deps) {
         reply(res, 200, { ok: true, n: uids.length });
       })),
 
+    /* ══════ 첨부를 «급여데이터함으로» 바로 넘기기 (대표 결정 2026-08-30) ══════
+       급여자료가 메일로 오면 여태 «내려받아 → 급여데이터함을 열어 → 다시 올리는»
+       세 걸음이었다. 서버가 10분마다 스스로 훑는 길(receivePaydataMail)은 이미
+       있지만 그것은 «아는 곳에서 온 것»만 담는다 — 모르는 주소로 온 자료, 지난
+       메일에서 뒤늦게 찾은 자료는 사람이 손으로 옮겨야 했다.
+
+       ★ 새로 짓는 것이 «없다». 첨부를 읽는 길(바로 아래 readMailAttachment 와 같은
+         셈)과 창고에 담아 대기 칸에 적는 길(deps.payMailStore)이 이미 있다 —
+         그 둘을 잇는다.
+       ⚠ 화면에서 창고에 «직접» 쓰지 않는다. 그러려면 규칙을 새로 열어야 하고,
+         한 번 연 문은 닫기 어렵다. 서버가 대신 담는다.
+       ⚠ 대기 칸까지만이다. «판독은 안 돌린다» — 받자마자 AI 로 보내면 주민번호
+         가림을 통째로 건너뛴다(pu-paydata 의 끌어다 놓기와 같은 원칙).
+       ⚠ 다음메일을 고치지 않는다. 읽기만 한다. */
+    mailAttToPaydata: F
+      .region(REGION)
+      .runWith({ secrets: ['DAUM_MAIL_PASSWORD'], timeoutSeconds: 300, memory: '1GB' })
+      .https.onRequest((req, res) => gate(req, res, async () => {
+        if (typeof deps.payMailStore !== 'function') {
+          reply(res, 500, { ok: false, error: '급여데이터함으로 담는 길이 없습니다.' }); return;
+        }
+        const b = req.body || {};
+        const slug = String(b.slug || '');
+        const uid = String(b.uid || '');
+        const idx = Number(b.index);
+        const part = /^[0-9]+(\.[0-9]+)*$/.test(String(b.part || '')) ? String(b.part) : '';
+        if (!slug || !/^\d+$/.test(uid) || (!part && !(Number.isInteger(idx) && idx >= 0))) {
+          reply(res, 400, { ok: false, error: '어느 첨부인지 알 수 없습니다.' }); return;
+        }
+
+        const got = await withFolder(deps, slug, async (client) => {
+          const head = await client.fetchOne(uid, { uid: true, size: true, bodyStructure: true }, { uid: true });
+          if (!head) throw Object.assign(new Error('그 메일이 없습니다'), { status: 404 });
+          const parts = pickParts(head.bodyStructure, null, 0);
+          /* ⚠ 조각 이름이 있으면 «반드시» 첨부 목록 안에 있는 것이어야 한다 —
+               아무 조각이나 받아 주면 이 창구가 본문을 통째로 꺼내는 길이 된다
+               (readMailAttachment 와 같은 잣대). */
+          const a = part ? parts.atts.find((x) => x.part === part) : parts.atts[idx];
+          if (!a) throw Object.assign(new Error('그 첨부가 없습니다'), { status: 404 });
+          if (Number(a.size || 0) > ATT_MAX) throw Object.assign(new Error('너무 큽니다 — 다음메일에서 내려받아 주세요'), { status: 413 });
+          const d = await client.download(uid, a.part, { uid: true });
+          const buf = await drain(d.content, ATT_MAX);
+          return { name: a.name, mime: a.mime || 'application/octet-stream', buf: buf };
+        });
+
+        const r = await deps.payMailStore({
+          filename: got.name, content: got.buf,
+          contentType: got.mime, size: got.buf.length,
+        }, { from: String(b.from || ''), subject: String(b.subject || ''), box: slug });
+
+        reply(res, 200, { ok: true, id: r.id, seat: r.seat, shared: r.shared,
+          why: r.why, name: got.name, bytes: got.buf.length });
+      })),
+
     /* ══════ 본문까지 찾기 (대표 결정 2026-08-30) ══════
        화면의 찾기는 «받아 둔 것»의 보낸이·제목만 본다. 그래서 「그 말이 본문에 있는데
        안 나온다」가 된다 — 7,337통 가운데 손에 든 것은 100통뿐이기도 했다.
