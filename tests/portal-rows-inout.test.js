@@ -56,27 +56,39 @@ test('★ 모든 타일이 «실제로 있는 줄»에 있다 (없는 줄이면 
   used.forEach((r) => assert.ok(ids.indexOf(r) >= 0, '★ 없는 줄을 가리킨다: ' + r));
 });
 
-/* ── ⚙ 설정·백업·복구 타일 ── */
-test('★★ ⚙ 설정·백업·복구가 «타일»로 들어왔다 — 관리자에게만', () => {
+/* ── ⚙ 설정·백업·복구는 «타일이 아니다» ──
+   2026-08-30 대표 지시로 뒤집혔다: "이것 중복되는거 아닌가 … 중복은 삭제해라".
+   화면 왼쪽 아래 떠 있는 단추(#cfgFab · pu-backup-admin-button)와 같은 일이라,
+   타일로도 두면 한 가지 일에 문이 둘이 된다.
+   ⚠ 앞선 검사는 「타일로 들어왔다」를 지키고 있었다 — 지금은 그 반대를 지킨다. */
+test('★★ ⚙ 설정·백업·복구를 «타일로 되돌리지 않는다» — 떠 있는 단추와 중복이다', () => {
   ['cfg', 'backup'].forEach((k) => {
-    assert.strictEqual(rowOf(k), 'inout', k + ' 타일이 내외관리에 없다');
-    const m = new RegExp("key:'" + k + "'[\\s\\S]{0,400}?adminOnly:true").test(APPS);
-    assert.ok(m, '★★ ' + k + ' 이 «전원»에게 보인다 — 관리자 전용이어야 한다');
+    assert.strictEqual(rowOf(k), null,
+      '★ ' + k + ' 이 다시 타일로 들어왔다 — 왼쪽 아래 떠 있는 단추와 중복이다.'
+      + ' 타일로 두려면 떠 있는 단추를 먼저 없애야 한다');
   });
-  /* ★ 여기서 «코드 한 줄을 글자 그대로» 못 박고 있었다. 그 바람에 옳은 수정이 막혔다 —
-     sgIsAdmin() 은 건의함이 뜰 때 채워져 타일을 그리는 시점엔 비어 있었고,
-     그래서 대표님에게까지 타일이 사라졌다(2026-08-17). 고치려니 이 검사가 걸렸다.
-     지키려는 뜻은 「adminOnly 를 적어 놓고 보지 않는 일이 없게」이지 「이 글자 그대로」가 아니다.
-     무엇을 보고 판정하는지는 tests/portal-admin-tiles.test.js 가 따로 지킨다. */
-  assert.ok(/if\(app\.adminOnly[\s\S]{0,160}?\) return;/.test(E),
-    '★ adminOnly 를 적어 놓고 «보고 있지 않다»');
+  /* 내외관리 줄은 이 둘뿐이다 */
+  ['career', 'home'].forEach((k) =>
+    assert.strictEqual(rowOf(k), 'inout', k + ' 이 내외관리에 없다'));
 });
 
-test('★★ 이미 있는 단추를 «그대로 누른다» (하는 일을 옮겨 적지 않는다)', () => {
-  assert.ok(/if\(typeof cfgOpen === 'function'\) cfgOpen\(\);/.test(E),
-    '★ 설정 여는 일을 두 벌로 적었다 — 한쪽만 고치고 지나가게 된다');
-  assert.ok(/getElementById\('pu-backup-admin-button'\)[\s\S]{0,120}?b\.click\(\)/.test(E),
-    '★ 백업 여는 일을 두 벌로 적었다');
+test('★★ 떠 있는 단추는 남아 있다 — 타일을 걷어내며 같이 지우면 길이 사라진다', () => {
+  assert.match(E, /id="cfgFab"/, '★ ⚙ 설정 단추가 없어졌다');
+  /* 이 화면은 $() 로 집는다 — 실제로 쓰이고 있는지만 본다(집는 방법은 안 따진다) */
+  assert.match(E, /cfgFab'\)[\s\S]{0,80}?addEventListener/, '★ ⚙ 설정 단추를 아무도 안 누른다');
+  /* 백업 단추는 js/pu-backup.js 가 만든다 — 포털은 그것을 싣기만 한다 */
+  assert.match(E, /js\/pu-backup\.js/, '★ 백업 도구를 안 싣는다');
+});
+
+test('★★ 설정·백업은 «언제나» 관리자에게만 보인다 (대표 지시 2026-08-30)', () => {
+  /* ⚙ 단추: 기본이 숨김이고(CSS) 관리자일 때만 켠다 — 모를 때 새지 않는다 */
+  assert.match(E, /#cfgFab\{display:none/, '★ ⚙ 단추 기본이 숨김이 아니다 — 잠깐이라도 샌다');
+  assert.match(E, /cfgFab[\s\S]{0,120}?sgIsAdmin\(\)/,
+    '★ ⚙ 단추가 관리자인지 안 보고 켜진다');
+  /* 백업 단추: uid_roles 를 보고 만든다 (js/pu-backup.js) */
+  const bk = fs.readFileSync(path.join(__dirname, '..', 'js', 'pu-backup.js'), 'utf8');
+  assert.match(bk, /uid_roles/, '★ 백업 단추가 권한을 안 본다');
+  assert.match(bk, /isAdmin/, '★ 백업 단추가 관리자인지 안 본다');
 });
 
 test('★★ act 타일도 «같은 길»로 그린다 (그림·글자가 하나뿐이다)', () => {
