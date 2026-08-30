@@ -113,7 +113,11 @@ test('★ 도구줄이 장수를 쓴다 — 실제로 돌려 본다', () => {
      shownItems().length 로 돌아가도 통과한다(처음에 그 변형이 안 잡혔다).
      그래서 돌려서 화면에 적히는 숫자를 본다. */
   const el = {};
-  const mk = function (id) { return (el[id] = el[id] || { style: {}, textContent: '', disabled: false }); };
+  const mk = function (id) { return (el[id] = el[id] || { style: {}, textContent: '', innerHTML: '', disabled: false, title: '',
+    /* 2026-08-30: 장수 딱지가 꾸밈을 붙였다 떼고 속을 갈아 끼운다 */
+    classList: { _on: {},
+      toggle: function (c, on) { if (on) this._on[c] = 1; else delete this._on[c]; },
+      add: function (c) { this._on[c] = 1; }, remove: function (c) { delete this._on[c]; } } }); };
   const ctx = {
     Object, Array, Set, String,
     selected: new Set(),
@@ -153,7 +157,13 @@ test('★ 도구줄이 장수를 쓴다 — 실제로 돌려 본다', () => {
      그 말을 하고, gridCount 는 비워 둔다(윗줄을 한 줄로 합치며 같은 말을 두 번
      적지 않기로 했다). 그래서 «화면 어딘가에» 4장이 적혔는지를 본다 —
      자리가 또 옮겨져도 숫자가 거짓이 되는 것만은 잡힌다. */
-  const said = Object.keys(el).map(function (k) { return el[k].textContent; }).join(' | ');
+  /* ⚠ 2026-08-30 — 장수가 또 옮겨졌다. 「☑ 전부」 단추에서 숫자를 뺐다(같은 수가 바로
+     위 칸에 이미 있었다). 이제 얹었을 때 나오는 말(title)과 고른 딱지에 있다.
+     ⚠ 이 검사가 지키는 것은 **자리**가 아니라 「접힌 문서를 칸이 아니라 장으로 세는가」다.
+       그래서 «적히는 곳을 다 모아» 본다 — 또 옮겨져도 숫자가 거짓이 되는 것만은 잡는다. */
+  const said = Object.keys(el).map(function (k) {
+    return [el[k].textContent, el[k].title, el[k].innerHTML].filter(Boolean).join(' ');
+  }).join(' | ');
   assert.match(said, /4장/,
     '접힌 문서를 한 칸으로 세면 「2장」이라 적고 4장을 지웁니다: ' + said);
   assert.ok(!/(^|[^\d])2장/.test(said),

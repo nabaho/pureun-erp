@@ -119,7 +119,10 @@ test('화면은 실시간DB에 직접 쓰지 않는다 — 쓰기는 저장 층�
 
 test('사진 고르기 — 앨범에서 여러 장', () => {
   assert.match(app, /<input[^>]*type="file"[^>]*multiple/);
-  assert.match(app, /accept="image\/\*,application\/pdf"/);
+  /* ⚠ 받는 형식 목록을 글자 그대로 박지 않는다 — 하나 늘 때마다(팩스 tif 등) 깨진다.
+     보는 것은 «그림도 서류도 받는가»다. */
+  assert.match(app, /accept="[^"]*image\/\*[^"]*"/);
+  assert.match(app, /accept="[^"]*application\/pdf[^"]*"/);
 });
 
 test('카메라는 확인형 파일 입력 없이 화면 안 연속촬영만 쓴다', () => {

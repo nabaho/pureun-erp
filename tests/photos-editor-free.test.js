@@ -68,6 +68,17 @@ test('★ 「🔒 가리고 판독」은 그대로다 — 그 길은 보안 고�
 
 /* ── ② 붓 ── */
 
+function fakeCtx() {
+  return { clearRect: function () {}, beginPath: function () {}, moveTo: function () {},
+    lineTo: function () {}, stroke: function () {}, arc: function () {}, fill: function () {},
+    save: function () {}, restore: function () {}, setLineDash: function () {},
+    drawImage: function () {}, canvas: null,
+    set fillStyle(v) {}, get fillStyle() { return ''; },
+    set strokeStyle(v) {}, get strokeStyle() { return ''; },
+    set lineWidth(v) {}, set lineCap(v) {}, set lineJoin(v) {},
+    set globalCompositeOperation(v) {} };
+}
+
 function ed(over) {
   const el = {};
   const ctx = {
@@ -76,17 +87,16 @@ function ed(over) {
     /* ⚠ 붓 굵기는 **원본에서 떠 온다** — 여기 손으로 적으면 원본의 값을 바꿔도
        검사가 제 값만 보고 통과한다(되돌림에서 실제로 새어 나갔다). */
     ED_BRUSH: JSON.parse(APP.match(/const ED_BRUSH = (\[[^\]]*\]);/)[1]),
-    window: {}, document: { querySelector: function () { return null; } },
+    window: {},
+    /* 테두리는 «따로 그린 판»을 얹어 만든다 — 그 판을 내줄 곳이 있어야 돈다 */
+    document: { querySelector: function () { return null; },
+      createElement: function () { return { width: 0, height: 0, getContext: fakeCtx }; } },
     $: function (id) {
       return el[id] || (el[id] = {
         src: '', style: {}, width: 0, height: 0, naturalWidth: 2000, naturalHeight: 1500,
+        classList: { toggle: function () {}, add: function () {}, remove: function () {} },
         getBoundingClientRect: function () { return { left: 0, top: 0, width: 800, height: 600 }; },
-        getContext: function () {
-          return { clearRect: function () {}, beginPath: function () {}, moveTo: function () {},
-            lineTo: function () {}, stroke: function () {}, arc: function () {}, fill: function () {},
-            set fillStyle(v) {}, set strokeStyle(v) {}, set lineWidth(v) {},
-            set lineCap(v) {}, set lineJoin(v) {} };
-        }
+        getContext: fakeCtx
       });
     },
     renderReadPanel: function () {}, maskItem: function () { return null; },
@@ -99,8 +109,9 @@ function ed(over) {
   vm.runInContext(PAINT, ctx);
   ['function edBrushR(', 'function setEdBrush(', 'function setEdErase(',
    'function edUndo(', 'function edClear(', 'function edPoint(', 'function edDown(',
-   'function edMove(', 'function edUp(', 'function edEraseAt(', 'function edPaintTo(',
-   'function edRepaint(', 'function edAreas('].forEach(function (n) {
+   'function edMove(', 'function edUp(', 'function edEraseAt(', 'function edBandPath(',
+   'function edPaintTo(', 'function edDrawCursor(', 'function edRepaint(',
+   'function edMarkWrapMode(', 'function edAreas('].forEach(function (n) {
     vm.runInContext(cutFn(APP, n), ctx);
   });
   ctx.photoEd = { status: 'ready', id: 'p1', url: 'ORIG', strokes: [], brush: 1, erasing: false, done: null };
@@ -214,9 +225,13 @@ test('★★ 칠한 «모양 그대로» 보낸다 — 네모로 덮으면 멀�
 });
 
 test('★ 화면에 보이는 것과 보내는 모양을 «한 함수»가 그린다', () => {
-  /* 두 벌로 두면 화면에 보이는 자리와 실제로 지워지는 자리가 어긋난다 */
+  /* 두 벌로 두면 화면에 보이는 자리와 실제로 지워지는 자리가 어긋난다.
+     ⚠ 2026-08-29: 화면은 «테두리», 보내는 것은 «꽉 찬 것»으로 갈렸다. 그래도
+     **자취를 그리는 붓질은 한 벌**(edBandPath)이어야 어긋나지 않는다 — 그것을 본다. */
   const paint = cutFn(APP, 'function edPaintTo(');
-  assert.match(paint, /opaque \? '#fff'/, '★ 한 함수가 둘 다 그리지 않습니다');
+  assert.match(paint, /opaque/, '★ 한 함수가 둘 다 그리지 않습니다');
+  assert.match(paint, /edBandPath\(/, '★★ 자취를 그리는 붓질이 두 벌입니다 — 어긋납니다');
+  assert.match(cutFn(APP, 'function edBandPath('), /photoEd && photoEd\.strokes/);
   assert.match(cutFn(APP, 'function edRepaint('), /edPaintTo\(/);
   assert.match(cutFn(APP, 'function edShapeCanvas('), /edPaintTo\(/);
 });

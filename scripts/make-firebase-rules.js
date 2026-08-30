@@ -292,7 +292,30 @@ rules.puphotos = {
     '.read':  `(${LOGIN}) && (auth.uid === $uid || ${ADMIN})`,
     '.write': `(${LOGIN}) && (auth.uid === $uid || ${ADMIN})`,
     /* 직원끼리 나눠 본 것만 열린다 — 명단(shareWith)에 있는 사람에게만 */
-    items:  { $year: { $id: { '.read': `(${LOGIN}) && data.child('shareWith').child(auth.uid).exists()` } } },
+    items:  { $year: { $id: {
+      '.read': `(${LOGIN}) && data.child('shareWith').child(auth.uid).exists()`,
+      /* ── 되전달 (대표 지시 2026-08-30 ㉮) ──
+         "다른 사람들끼리도 서로 공유를 쉽게 해야된다"
+         지금까지 「열어 주기」는 올린 사람과 총괄관리자만이었다. 그래서 받은 사람이
+         동료에게 넘기려면 올린 사람에게 다시 부탁해야 했고 — 걸음이 하나 더 끼니까
+         **실제로는 카톡으로 보내고 만다.** 그게 훨씬 위험하다.
+         ⚠ 여는 것은 **명단 칸 둘뿐**이다. 사진·글·분류에는 손도 못 댄다.
+         ⚠ **더하기만** 된다(newData.val() === true). 빼는 것은 위의 주인·관리자
+           규칙만 할 수 있다 — 아니면 한 직원이 남의 사진을 동료에게서 거둬 간다.
+         ⚠ 조건은 「**내가 이미 이 사진을 보고 있는가**」다. 안 그러면 아무 사진에나
+           명단을 붙일 수 있게 된다. */
+      shareWith: { $who: {
+        '.write': `(${LOGIN}) && newData.val() === true && ` +
+          `root.child('puphotos').child('u').child($uid).child('items').child($year)` +
+          `.child($id).child('shareWith').child(auth.uid).exists()`
+      } },
+      /* 「누가 넘겼는지」 한 줄 — 있어야 한 다리 건너 퍼져도 자취가 남는다 */
+      shareBy: { $who: {
+        '.write': `(${LOGIN}) && newData.isString() && newData.val().length <= 60 && ` +
+          `root.child('puphotos').child('u').child($uid).child('items').child($year)` +
+          `.child($id).child('shareWith').child(auth.uid).exists()`
+      } }
+    } } },
     blobs:  { $year: { $id: { '.read': `(${LOGIN}) && root.child('puphotos').child('u').child($uid).child('items').child($year).child($id).child('shareWith').child(auth.uid).exists()` } } },
     thumbs: { $year: { $id: { '.read': `(${LOGIN}) && root.child('puphotos').child('u').child($uid).child('items').child($year).child($id).child('shareWith').child(auth.uid).exists()` } } }
   } },
@@ -300,10 +323,21 @@ rules.puphotos = {
   kindLabels:  { '.read': LOGIN, '.write': `(${LOGIN}) && ${ADMIN}` },
   kindHidden:  { '.read': LOGIN, '.write': `(${LOGIN}) && ${ADMIN}` },
   retention:   { '.read': LOGIN, '.write': `(${LOGIN}) && (${ADMIN} || data.child('uid').val() === auth.uid)` },
+  /* ⚠ 받는 사람 쪽 「가리키는 표」. 여기가 안 열리면 화면은 「공유했습니다」라고
+     말해 놓고 받는 사람 목록에는 아무것도 안 뜬다 — 가장 나쁜 실패다. */
   sharedTo: { $uid: {
     '.read': `(${LOGIN}) && (auth.uid === $uid || ${ADMIN})`,
     $pid: {
-      '.write': `(${LOGIN}) && (${ADMIN} || (newData.exists() && newData.child('owner').val() === auth.uid) || (!newData.exists() && (data.child('owner').val() === auth.uid || auth.uid === $uid)))`,
+      /* ⑤ 되전달(2026-08-30 ㉮): **내가 이미 보고 있는 사진**이면 동료를 가리켜 줄 수
+         있다. 위의 shareWith 규칙과 «똑같은 조건»이라, 한쪽만 열려 반쪽으로 끝나는
+         일이 없다. 지우는 것은 여기서 안 넓혔다 — 주인과 본인만 뗀다. */
+      '.write': `(${LOGIN}) && (${ADMIN}`
+        + ` || (newData.exists() && newData.child('owner').val() === auth.uid)`
+        + ` || (newData.exists() && root.child('puphotos').child('u')`
+        + `.child(newData.child('owner').val()).child('items')`
+        + `.child(newData.child('year').val()).child($pid)`
+        + `.child('shareWith').child(auth.uid).exists())`
+        + ` || (!newData.exists() && (data.child('owner').val() === auth.uid || auth.uid === $uid)))`,
       '.validate': "!newData.exists() || newData.hasChildren(['owner','year','at'])"
     }
   } },
