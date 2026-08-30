@@ -30,10 +30,16 @@ function fnBody(name) {
   return src.slice(i, src.indexOf('\n}', i) + 2);
 }
 
+
+/* ⚠ openMailPage 는 2026-08-30 에 앞뒤로 «갈렸다» — 앞(openMailPage)은 「쓰다 만 글이
+     있는데 이어서 쓸까요」를 물어보고, 뒤(mailPageBuild)가 실제로 편지를 «짓는다».
+     가운데 물음 창(puAsk)이 confirm 과 달리 JS를 안 멈춰서 그렇게 갈랐다.
+     «무엇을 짓는지» 보는 검사는 둘을 함께 봐야 한다 — 나뉜 것은 짜임새일 뿐 한 흐름이다. */
+function openFlow(){ return fnBody('openMailPage') + fnBody('mailPageBuild'); }
 /* ══════ ① 제목도 본문도 비어서 열린다 ══════ */
 /* ⚠ 2026-08-30 대표께서 본문에 이어 「제목」이라고 짚으셨다 — 둘 다 비운다. */
 function emptyInit(which) {
-  const fn = fnBody('openMailPage');
+  const fn = openFlow();
   const m = fn.match(new RegExp('const\\s+' + which + '\\s*=([\\s\\S]*?);'));
   assert.ok(m, 'openMailPage 에서 ' + which + ' 를 찾지 못했습니다');
   const rhs = m[1].trim();
@@ -66,14 +72,19 @@ test('★ 제목 칸에 무엇을 적을지 «일러 준다» — 빈 칸만 있
 });
 
 test('★ 전달·다시보내기는 안 깨진다 — 넘어온 제목·본문이 빈 값을 덮어쓴다', () => {
-  const fn = fnBody('openMailPage');
+  const fn = openFlow();
   assert.match(fn, /if\(p\.subject\)/, '★ 전달할 제목이 빈 값에 덮여 사라집니다');
   assert.match(fn, /if\(p\.body\)/, '★ 전달할 본문이 빈 값에 덮여 사라집니다');
 });
 
 test('서명은 그대로 따라간다 — 본문을 비운다고 서명까지 날리면 안 된다', () => {
-  assert.match(fnBody('openMailPage'), /signBlockHtml\(\)/,
-    '★ 서명이 사라졌습니다 (대표 지시 2026-08-24 「한번 저장하면 계속 보낼수 있게」)');
+  /* ⚠ 「어딘가에 signBlockHtml 이 있다」로는 모자란다 — 전달 갈래(p.body)에도 있어서
+       «새 편지»의 서명을 빼도 그 검사는 통과한다(되돌리기에서 실제로 안 걸렸다).
+       새 편지가 쓰는 html0 을 콕 집어 본다. */
+  const m = openFlow().match(/const\s+html0\s*=([^;]*);/);
+  assert.ok(m, 'html0 을 찾지 못했습니다');
+  assert.match(m[1], /signBlockHtml\(\)/,
+    '★ 새 편지에 서명이 안 들어갑니다 (대표 지시 2026-08-24 「한번 저장하면 계속 보낼수 있게」)');
 });
 
 /* ══════ ② 되살릴 길 ══════ */
@@ -116,7 +127,7 @@ test('★ 서랍 CSS 도 없앴다 — 안 쓰는 규칙이 남으면 다음 사
 test('★★ 자료함에서 «골라 온 것»은 그대로 붙는다 — 서랍을 없앴다고 첨부가 막히면 안 된다', () => {
   assert.match(fnBody('openCompose'), /openMailPage\(\{[\s\S]*ids:\s*ids/,
     '★ 고른 자료가 쓰기 화면으로 안 넘어갑니다');
-  assert.match(fnBody('openMailPage'), /ids:\s*p\.ids/,
+  assert.match(openFlow(), /ids:\s*p\.ids/,
     '★ 넘어온 자료를 편지에 안 담습니다');
 });
 

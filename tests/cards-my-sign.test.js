@@ -128,11 +128,21 @@ test('표시 이름(cid)이 서버와 같다', () => {
     '★ 이름이 다르면 본문의 표시와 붙는 그림이 안 이어진다');
 });
 
+
+/* ⚠ openMailPage 는 2026-08-30 에 앞뒤로 «갈렸다» — 앞(openMailPage)은 「쓰다 만 글이
+     있는데 이어서 쓸까요」를 물어보고, 뒤(mailPageBuild)가 실제로 편지를 «짓는다».
+     가운데 물음 창(puAsk)이 confirm 과 달리 JS를 안 멈춰서 그렇게 갈랐다.
+     «무엇을 짓는지» 보는 검사는 둘을 함께 봐야 한다 — 나뉜 것은 짜임새일 뿐 한 흐름이다. */
+function openFlow(){ return fnBody('openMailPage') + fnBody('mailPageBuild'); }
 /* ══════ ③ · ④ 새 메일에 이미 들어가 있다 ══════ */
 
 test('★ 새 메일을 열면 서명이 이미 들어가 있다', () => {
-  const fn = fnBody('openMailPage');
-  assert.match(fn, /signBlockHtml\(\)/,
+  const fn = openFlow();
+  /* ⚠ 「어딘가에 signBlockHtml 이 있다」로는 모자라다 — 전달 갈래(p.body)에도 있어서
+       «새 편지»의 서명을 빼도 통과한다. 새 편지가 쓰는 html0 을 콕 집어 본다. */
+  const m = fn.match(/const\s+html0\s*=([^;]*);/);
+  assert.ok(m, 'html0 을 찾지 못했습니다');
+  assert.match(m[1], /signBlockHtml\(\)/,
     '★ 안 넣으면 「한번 저장하면 계속 보낼수 있게」가 안 된다 — 매번 눌러야 한다');
   assert.match(fn, /html:\s*html0/, '서식 몫에 담아야 화면에 보인다');
 });
@@ -141,7 +151,7 @@ test('★ 새 메일을 열면 서명이 이미 들어가 있다', () => {
    견주므로, 서명이 든 본문을 보여 주면서 잣대는 서명 없는 것으로 두면 «아무것도 안 쓴
    편지»가 늘 「손댔다」로 나와 임시저장이 쌓이고, 나갈 때마다 「이어서 쓸까요」를 묻는다. */
 test('★ 잣대(base)가 처음 보여 준 본문과 똑같다 — 안 그러면 빈 편지도 「손댔다」가 된다', () => {
-  const fn = fnBody('openMailPage');
+  const fn = openFlow();
   const bodyLine = fn.match(/subject:\s*subject0,\s*body:\s*([^,]+),/);
   assert.ok(bodyLine, '본문을 담는 줄을 찾지 못했습니다');
   const baseAt = fn.indexOf('base: {');
@@ -153,7 +163,7 @@ test('★ 잣대(base)가 처음 보여 준 본문과 똑같다 — 안 그러�
 });
 
 test('고른 명함 사진을 미리 받아 둔다 — 없으면 본문에 빈 자리가 보인다', () => {
-  assert.match(fnBody('openMailPage'), /loadSignThumb\(/);
+  assert.match(openFlow(), /loadSignThumb\(/);
 });
 
 /* ══════ ⑤ 사람마다 따로 ══════ */
