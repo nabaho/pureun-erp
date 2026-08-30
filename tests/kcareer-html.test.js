@@ -1244,6 +1244,30 @@ test('한글 쪽 수 세기가 겹쳐 돌지 않는다', () => {
   assert.match(src, /finally\{ _cvHwpCountBusy=false; \}/);
 });
 
+/* ===== 이력서관리 중복 정리 1단계 (2026-08-30) =====
+   보관함을 그리는 곳이 둘(renderDocStore / renderRhDocList)이라 생긴 문제들.
+   근본 해결(화면 통합)은 브랜치 kcareer-ia-refactor 에 준비돼 있다. */
+
+test('저장·삭제하면 화면의 보관함 탭도 함께 갱신된다', () => {
+  // ⚠ renderDocStore 는 사이드바에 없는 화면(page-resume-store)을 그린다.
+  //    그것만 부르면 「저장했는데 보관함에 안 보인다」가 된다.
+  ['confirmResumeSave', 'delDoc'].forEach((fn) => {
+    const src = funcSource(fn);
+    assert.match(src, /renderDocStore\(domain\)/, fn + ' 이 보관함을 그려야 합니다');
+    assert.match(src, /renderRhDocList\(domain\)/, fn + ' 이 화면의 보관함 탭도 갱신해야 합니다');
+  });
+});
+
+test('죽은 화면 page-resume-create 를 되살리지 않는다 — 같은 id 20개가 겹쳤다', () => {
+  // 사이드바에도 없고 아무도 nav_to 하지 않는데 rhwpEditor·rcEditCard 등 id 20개가 중복이었다.
+  // getElementById 는 앞의 것만 주므로 섹션 순서가 바뀌면 편집 화면이 안 보이는 쪽에 붙는다.
+  assert.equal(source.indexOf('page-resume-create'), -1, '⚠ 죽은 화면을 되살리지 말 것');
+  ['rcDrop', 'rcEditCard', 'rhwpEditor', 'docxEditor', 'rcDragList', 'rcSaveBtn'].forEach((id) => {
+    assert.equal((source.match(new RegExp('id="' + id + '"', 'g')) || []).length, 1,
+      id + ' 은 한 곳에만 있어야 합니다 (중복이면 조용히 엉뚱한 곳에 붙습니다)');
+  });
+});
+
 test('한글 뷰어는 형식을 못박지 않고 인라인 스타일을 정리한다', () => {
   const dl = funcSource('hwpViewDownload');
   assert.ok(!/'hwpx'\)/.test(dl), "⚠ 형식을 'hwpx'로 못박으면 옛 .hwp가 잘못된 MIME으로 저장됩니다");
