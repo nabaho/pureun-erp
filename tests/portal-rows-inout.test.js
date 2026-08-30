@@ -63,7 +63,12 @@ test('★★ ⚙ 설정·백업·복구가 «타일»로 들어왔다 — 관리
     const m = new RegExp("key:'" + k + "'[\\s\\S]{0,400}?adminOnly:true").test(APPS);
     assert.ok(m, '★★ ' + k + ' 이 «전원»에게 보인다 — 관리자 전용이어야 한다');
   });
-  assert.ok(/if\(app\.adminOnly && !\(typeof sgIsAdmin === 'function' && sgIsAdmin\(\)\)\) return;/.test(E),
+  /* ★ 여기서 «코드 한 줄을 글자 그대로» 못 박고 있었다. 그 바람에 옳은 수정이 막혔다 —
+     sgIsAdmin() 은 건의함이 뜰 때 채워져 타일을 그리는 시점엔 비어 있었고,
+     그래서 대표님에게까지 타일이 사라졌다(2026-08-17). 고치려니 이 검사가 걸렸다.
+     지키려는 뜻은 「adminOnly 를 적어 놓고 보지 않는 일이 없게」이지 「이 글자 그대로」가 아니다.
+     무엇을 보고 판정하는지는 tests/portal-admin-tiles.test.js 가 따로 지킨다. */
+  assert.ok(/if\(app\.adminOnly[\s\S]{0,160}?\) return;/.test(E),
     '★ adminOnly 를 적어 놓고 «보고 있지 않다»');
 });
 
