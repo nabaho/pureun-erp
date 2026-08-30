@@ -68,16 +68,22 @@ test('★ 쓰기는 그대로 좁다 — 열린 것은 «보기»뿐이다', () 
 
 test('★★ 화면이 «사유 없이» 남의 자리로 못 들어간다 — 규칙은 이것을 못 지킨다', () => {
   /* 규칙은 「먼저 기록을 남겨라」를 요구할 수 없다. 그래서 이 한 걸음은 화면이 지킨다.
-     화면에서 이 순서가 무너지면 「기록이 남는다」가 조용히 거짓말이 된다. */
-  const at = app.indexOf('function submitReason(');
-  assert.ok(at > 0, 'submitReason 을 찾지 못했습니다');
-  const body = app.slice(at, app.indexOf('\n}', at));
-  const iLog = body.indexOf('logAccess');
-  const iEnter = body.indexOf('enterSeat');
-  assert.ok(iLog > 0 && iEnter > iLog,
-    '★★ 기록보다 «들어가기»가 먼저입니다 — 기록이 실패해도 들어가게 됩니다');
-  assert.match(body, /if \(!reason\)/,
-    '★ 사유가 비어도 들어가면, 사유를 묻는 뜻이 없습니다');
+     화면에서 이 순서가 무너지면 「기록이 남는다」가 조용히 거짓말이 된다.
+
+     ⚠★ 남의 자리로 드는 문은 «둘»이다 — 위쪽 「🔁 담당자」와 옆줄 사업장 목록.
+       2026-08-30 에 일부러 깨 보다가 알았다: 앞문만 보고 있었고, 옆문을 부수면
+       검사가 아무 말도 안 했다. 문이 둘이면 검사도 둘을 봐야 한다. */
+  ['function submitReason(', 'function submitSideReason('].forEach(function (head) {
+    const at = app.indexOf(head);
+    assert.ok(at > 0, head + ' 을 찾지 못했습니다');
+    const body = app.slice(at, app.indexOf('\n}', at));
+    const iLog = body.indexOf('logAccess');
+    const iEnter = body.search(/enterSeat/);
+    assert.ok(iLog > 0 && iEnter > iLog,
+      '★★ ' + head + ' — 기록보다 «들어가기»가 먼저입니다. 기록이 실패해도 들어가게 됩니다');
+    assert.match(body, /if \(!reason\)/,
+      '★ ' + head + ' — 사유가 비어도 들어가면, 사유를 묻는 뜻이 없습니다');
+  });
 
   /* 관리자는 사유를 안 적는다(대표 지시 2026-08-17). 그래도 «기록»은 남는다 —
      없어지는 것은 기록이 아니라 적는 손이다. */
