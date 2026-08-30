@@ -521,6 +521,11 @@ function nextSync(sync, seen, uidValidity, done) {
     n: Number(s.n || 0),
     prunedAt: Number(s.prunedAt || 0),
     lastN: Number(s.lastN || 0),
+    /* ⚠ 표시 맞추기가 적어 둔 값도 «그대로 이어 준다» (2026-08-30).
+         여기서 떨어뜨리면 다음 회차에 «처음»으로 보여, 폴더를 회차마다 통째로 읽는다 —
+         셈(n)·prunedAt 을 이어 주는 것과 같은 까닭이다. */
+    unread: Number.isFinite(Number(s.unread)) ? Number(s.unread) : -1,
+    sweptAt: Number(s.sweptAt || 0),
   };
 }
 

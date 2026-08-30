@@ -60,8 +60,14 @@ function fakeMail(folders, hooks) {
     },
     async status(p) {
       const uids = Object.keys(folders[p].msgs).map(Number);
+      /* ⚠ 안읽음 수는 «표시대로» 센다 — 늘 0 을 주면 실제와 달라,
+           「다음에서 읽으면 우리도 따라온다」를 확인할 수가 없다(2026-08-30). */
+      const unseen = uids.filter((u) => {
+        const f = (folders[p].msgs[String(u)] || {}).flags || [];
+        return f.indexOf('\\Seen') < 0;
+      }).length;
       return {
-        messages: uids.length, unseen: 0,
+        messages: uids.length, unseen: unseen,
         uidNext: (uids.length ? Math.max.apply(null, uids) : 0) + 1,
         uidValidity: folders[p].uv || 1,
       };
@@ -100,7 +106,9 @@ function fakeMail(folders, hooks) {
         i++;
         if (h.breakAt && h.breakAt(fetches, i)) throw new Error('가짜 끊김');
         const m = folders[opened].msgs[u];
-        yield { uid: u, flags: new Set(), size: 1000, envelope: m,
+        /* ⚠ 표시를 «그 메일이 든 대로» 돌려준다 — 늘 빈 것을 주면 「다음에서 읽으면
+             우리도 따라온다」를 확인할 수가 없다(2026-08-30). */
+        yield { uid: u, flags: new Set(m.flags || []), size: 1000, envelope: m,
                 bodyStructure: m.__body
                   ? { part: '1', type: 'text/plain', encoding: '7bit', parameters: { charset: 'utf-8' } }
                   : undefined };
@@ -387,12 +395,44 @@ test('★ 통수가 그대로면 폴더를 다시 읽지 않는다 — 예전엔
   const folders = { INBOX: box(10) };
   const db = fakeDb();
   const d = deps(db);
+  /* ⚠ 처음 두 회차는 «한 번씩 읽을 일»이 있다 — 첫 회차에 정리가 돌고, 폴더를 다 채운
+       뒤 한 번 표시를 맞춘다(2026-08-30 「다음에서 읽음이면 같이 동기화」).
+       여기서 지키는 것은 «아무것도 안 바뀌었는데 회차마다 읽는 것»을 막는 일이다. */
   await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });   // 첫 회차 — 정리도 한 번 돈다
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });   // 다 채운 뒤 표시 맞추기 한 번
   const before = fullReads(db, slug('INBOX'));
   await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
   await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
   assert.equal(fullReads(db, slug('INBOX')), before,
     '바뀐 것이 없는데 폴더를 또 읽었다 — 회차마다 이러면 그것이 요금이다');
+});
+
+/* ★ 다음메일에서 읽으면 우리 줄도 따라와야 한다 (대표 보고 2026-08-30
+     「다음에서 읽음이면 푸른메일도 같이 동기화 되어야 하는데 따로 논다」).
+   ⚠ 실측 2026-08-30: 받은메일함은 다음이 «안읽음 0» 이라는데 우리 줄에는 34통이
+     안읽음이었다 — 한 번 가져온 구간을 다시 안 읽어서다. */
+test('★★ 다음메일에서 읽으면 우리 줄의 «안읽음»도 풀린다', async () => {
+  const folders = { INBOX: box(3) };
+  const db = fakeDb();
+  const d = deps(db);
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+
+  const path = MS.ROOT + '/msgs/' + slug('INBOX');
+  const before = db.__get(path) || {};
+  const uid = Object.keys(before)[0];
+  assert.ok(uid, '줄이 하나도 안 적혔습니다');
+  assert.equal(Number((before[uid] || {}).r || 0), 0, '처음부터 읽음이면 이 검사가 뜻이 없습니다');
+
+  /* 다음메일 쪽에서 «읽음»으로 바뀐 것처럼 만든다 */
+  const m = folders.INBOX.msgs[uid];
+  assert.ok(m, '흉내 낸 메일함에 그 번호가 없습니다');
+  m.flags = (m.flags || []).concat(['\\Seen']);
+
+  await MS.runSync(d, { client: fakeMail(folders), deadlineMs: 60000 });
+  const after = (db.__get(path) || {})[uid] || {};
+  assert.equal(Number(after.r || 0), 1,
+    '★ 다음에서 읽었는데 우리 줄은 그대로 «안읽음»입니다 — 두 곳이 따로 놉니다');
 });
 
 test('★ 통수가 줄면 그 자리에서 정리한다 — 하루를 기다리지 않는다', async () => {

@@ -156,6 +156,7 @@ async function runSync(deps, opts) {
          줄에서 빼는 것으로 끝난다 — 폴더 기록은 위에서 이미 적었으므로 [삭제]가 그대로 된다. */
     const queue = plan.filter((p) => MB.wantsMsgs(p.box));
     let pruned = 0;
+    let swept = 0;   /* 한 회차에 표시를 맞추는 폴더 수 — 시간이 한쪽으로 쏠리지 않게 */
     let turns = 0;
     while (queue.length && turns < MAX_TURNS && nowMs() < deadline && out.rows < MAX_ROWS) {
       turns++;
@@ -352,6 +353,79 @@ async function runSync(deps, opts) {
             p.sync.prunedAt = nowMs();
           } catch (e) {
             console.warn('syncMailbox 정리 실패:', p.box.path, String((e && e.message) || e));
+          }
+        }
+
+        /* ⑤ ── 다음메일에서 «읽은 것»을 우리 목록에도 옮긴다 (대표 보고 2026-08-30) ──
+           "안읽금이 매칭이 안된다 … 다음에서 읽음이면 푸른메일도 같이 동기화 되어야
+            하는데 따로 논다."
+
+           ★ 왜 따로 놀았나 — 우리는 [lo … hi] 사이를 «다시 읽지 않는다»(pickToFetch).
+             한 번 가져온 줄의 r(읽음)·g(중요)·w(답장함)은 «그때 찍힌 그대로» 굳는다.
+             그 뒤 다음메일에서 읽어도 우리 줄은 안 바뀐다.
+             한편 옆줄·머리의 「안읽음」 수는 STATUS 가 주는 값이라 늘 최신이다 —
+             그래서 두 수가 어긋나 「엉망」으로 보였다.
+             ⚠ 실측 2026-08-30: 받은메일함은 다음이 «안읽음 0» 이라는데 우리 줄에는
+               34통이 안읽음이었다. 전체로 다음 28 vs 우리 80 — 52통이 어긋나 있었다.
+
+           ★ 표시만 다시 받는 것은 «싸다» — envelope·bodyStructure 없이 flags 만이라
+             400통짜리 폴더도 한 번 왕복이면 끝난다.
+           ⚠ 그래도 회차마다 하지 않는다. «다음메일이 말하는 안읽음 수»가 지난번과
+             다를 때만 훑는다 — 그 값이 곧 「누가 뭘 읽었다」는 신호다.
+             하루가 지나면 그물로 한 번 더 훑는다(중요·답장함만 바뀐 경우).
+           ⚠ 바뀐 줄만 적는다. 400줄을 늘 덮어쓰면 요금도 요금이고, 보고 있는 화면이
+             까닭 없이 다시 그려진다. */
+        /* ★ 신호는 «두 수가 다른가»다 — 다음메일이 말하는 안읽음(STATUS, 늘 최신)과
+             우리가 들고 있는 안읽음(sync.unread, 훑을 때마다 다시 셈).
+           ⚠ 「다음 쪽 수가 지난번과 달라졌나」로는 모자란다. 다음이 «이미 0» 인데
+             우리만 34통이 안읽음인 지금 상황을 못 잡는다 — 0 은 더 안 줄어든다.
+             두 수를 곧바로 견주면 그 어긋남이 바로 신호가 되고, 맞춘 뒤에는 조용해진다. */
+        const unseenNow = Number(p.st.unseen || 0);
+        const knownUnread = Number(p.sync.unread);
+        const sweptGap = nowMs() - Number(p.sync.sweptAt || 0) > PRUNE_GAP_MS;
+        const needSweep = !!p.sync.done && p.uids && p.uids.length &&
+          (!Number.isFinite(knownUnread) || knownUnread !== unseenNow || sweptGap);
+        if (needSweep && swept < 2 && nowMs() < deadline) {
+          swept++;
+          try {
+            const flags = {};
+            for await (const m of client.fetch(
+              MB.uidSet(p.uids), { uid: true, flags: true }, { uid: true }
+            )) {
+              flags[String(m.uid)] = {
+                r: MB.hasFlag(m.flags, '\\Seen') ? 1 : 0,
+                g: MB.hasFlag(m.flags, '\\Flagged') ? 1 : 0,
+                w: MB.hasFlag(m.flags, '\\Answered') ? 1 : 0,
+              };
+            }
+            const have = (await db.ref(ROOT + '/msgs/' + p.slug).once('value')).val() || {};
+            const patch = {};
+            let moved = 0;
+            Object.keys(flags).forEach((u) => {
+              const row = have[u]; if (!row) return;      /* 아직 안 가져온 줄은 건드리지 않는다 */
+              const f = flags[u];
+              ['r', 'g', 'w'].forEach((k) => {
+                if (Number(row[k] || 0) !== f[k]) {
+                  patch[ROOT + '/msgs/' + p.slug + '/' + u + '/' + k] = f[k];
+                  moved++;
+                }
+              });
+            });
+            if (moved) await db.ref().update(patch);
+            out.synced = (out.synced || 0) + moved;
+            /* ⚠ 맞춘 «뒤»의 안읽음 수를 세어 둔다 — 다음 회차에 다음메일이 말하는 수와
+                 견줄 값이다. 안 세어 두면 어긋남을 못 알아채거나(안 훑음),
+                 늘 어긋난 것으로 보여 회차마다 폴더를 통째로 읽는다(요금). */
+            let unread = 0;
+            Object.keys(have).forEach((u) => {
+              const f = flags[u];
+              const r = f ? f.r : Number(have[u].r || 0);
+              if (!r) unread++;
+            });
+            p.sync.unread = unread;
+            p.sync.sweptAt = nowMs();
+          } catch (e) {
+            console.warn('syncMailbox 표시 맞추기 실패:', p.box.path, String((e && e.message) || e));
           }
         }
       } finally {
