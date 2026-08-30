@@ -68,7 +68,8 @@ function constLine(name) {
 function box(extra) {
   const ctx = Object.assign({ window: undefined, console: { warn() {}, log() {} } }, extra || {});
   vm.createContext(ctx);
-  ['pu-home-parse.js', 'pu-home-career.js', 'pu-home-export.js', 'pu-home-diff.js']
+  ['pu-home-parse.js', 'pu-home-career.js', 'pu-home-export.js', 'pu-home-diff.js',
+     'pu-home-fill.js']
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(R, 'js', f), 'utf8'), ctx));
   return ctx;
 }
@@ -549,14 +550,31 @@ function pageBox() {
   return ctx;
 }
 
-test('★ 쪽에서는 붙여넣을 내용을 «복사해 주지 않는다»', () => {
-  const ctx = pageBox();
-  ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '오시는길 본문 한 줄로 뭉친 글자' },
-              lineFormat: 'plain', pages: {}, dirty: false };
-  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('modalFoot') + '\n' + fnSource('riskReport') + '\n'
-    + fnSource('openPaste'));
-  ctx.openPaste();
-  assert.equal(ctx.copied.length, 0, '쪽 본문을 복사해 줬습니다 — 이대로 붙여넣으면 홈페이지가 부서집니다');
+test('★ 쪽 본문을 «통째로» 복사해 주지 않는다 — 고친 줄이 있을 때도 그렇다', () => {
+  const 본문 = "오시는길 본문 한 줄로 뭉친 글자";
+  const 차리기 = fix => {
+    const ctx = pageBox();
+    ctx.App = { draft: { kind: 'page', key: 'inquiry', text: 본문 },
+                lineFormat: 'plain', pages: {}, dirty: false, pageFix: fix ? { inquiry: fix } : {},
+                pageRuns: {}, pageLines: {} };
+    run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('modalFoot') + '\n' + fnSource('riskReport') + '\n'
+      + fnSource('pageFixOf') + '\n' + fnSource('pageFixList') + '\n' + fnSource('copyPageFix') + '\n'
+      + fnSource('openPaste'));
+    ctx.openPaste();
+    return ctx;
+  };
+  /* 고친 줄이 없으면 복사할 것이 없다 — 빈 쪽지를 내주지 않는다 */
+  assert.equal(차리기(null).copied.length, 0, '고친 줄도 없는데 무언가를 복사해 줬습니다');
+  /* 고친 줄이 있으면 «그 줄만» 담은 쪽지가 나간다. 본문은 절대 안 나간다 */
+  const ctx1 = 차리기({ '첫 줄': '고친 첫 줄' });
+  const 쪽지 = ctx1.copied;
+  assert.equal(쪽지.length, 1, '고친 줄이 있는데 복사해 주지 않았습니다');
+  assert.ok(쪽지[0].indexOf(본문) < 0,
+    '★ 뭉친 본문을 복사해 줬습니다 — 이대로 붙여넣으면 지도·표·구획이 사라집니다');
+  const 푼것 = ctx1.PuHomeFill.unpackPageEdits(쪽지[0]);
+  assert.equal(푼것.ok, true, '복사된 것이 «쪽 채우기» 쪽지가 아닙니다');
+  assert.equal(푼것.edits.length, 1, '고친 줄만 담겨야 합니다');
+  assert.equal(푼것.edits[0].before, '첫 줄', '원래 글자가 안 담겼습니다 — 자리를 못 찾습니다');
 });
 
 test('★ 쪽 화면에 「붙여넣을 내용 복사」 단추가 없다', () => {
@@ -564,15 +582,17 @@ test('★ 쪽 화면에 「붙여넣을 내용 복사」 단추가 없다', () =
   assert.ok(src.indexOf('openPaste') < 0, '쪽에 붙여넣기 단추가 남아 있습니다');
 });
 
-test('★ 쪽 화면이 «왜» 붙여넣기를 안 주는지 한국어로 적는다', () => {
+test('★ 쪽 화면이 «왜 통째로는 안 되는지»와 «그럼 어떻게 하는지»를 한국어로 적는다', () => {
   const ctx = pageBox();
   ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '가나다' }, pages: {}, dirty: false };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
     + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
-  assert.match(h, /대조/, '대조용이라는 말이 없습니다');
-  assert.match(h, /지도|표|구획/, '무엇이 사라지는지 안 적혀 있습니다');
-  assert.match(h, /관리자/, '그럼 어디서 고치라는 건지 안 적혀 있습니다');
+  assert.match(h, /지도|표|구획/, '통째로 넣으면 무엇이 사라지는지 안 적혀 있습니다');
+  assert.match(h, /줄/, '그럼 어떻게 고치라는 건지 안 적혀 있습니다');
+  /* ★ 「안 됩니다」만 말하고 길을 안 알려 주면 사람은 결국 통째로 붙여넣는다 */
+  assert.match(h, /채우기용 복사|줄을 하나씩|줄마다/,
+    '★ 대신 어떻게 하는지가 없습니다 — 길을 안 알려 주면 통째로 붙여넣게 됩니다');
 });
 
 test('★ 쪽 화면에서 홈페이지 관리자 화면으로 갈 길을 준다', () => {
@@ -1188,7 +1208,7 @@ test('★ 「홈페이지 다시 확인」이 줄 목록도 함께 채운다 (�
   };
   ctx.App = {
     checking: false, checkMsg: '', checkBad: false, members: {}, pages: {}, staff: [],
-    check: null, saveErr: '', pageLines: {}, render() {}
+    check: null, saveErr: '', pageLines: {}, pageRuns: {}, pageFix: {}, render() {}
   };
   ctx.db = { ref: () => ({ set: () => Promise.resolve() }) };
   ctx.firebase = { auth: () => ({ currentUser: { getIdToken: () => Promise.resolve('T') } }) };
@@ -1199,7 +1219,7 @@ test('★ 「홈페이지 다시 확인」이 줄 목록도 함께 채운다 (�
     return Promise.resolve({ ok: true, json: () => Promise.resolve({ html: 표본[p] }) });
   };
   run(ctx, constSource('PAGE_IDS') + '\n' + constLine('READ_HOMEPAGE_URL') + '\n'
-    + fnSource('todayString') + '\n' + fnSource('applyStatus') + '\n'
+    + fnSource('todayString') + '\n' + fnSource('applyStatus') + '\n' + fnSource('keepPageHtml') + '\n'
     + fnSource('checkFailText') + '\n' + fnSource('showCheckFailed') + '\n' + fnSource('checkHomepage'));
   await ctx.checkHomepage();
 
@@ -1209,6 +1229,19 @@ test('★ 「홈페이지 다시 확인」이 줄 목록도 함께 채운다 (�
   assert.ok(lines.work1.every(l => l.indexOf('<') < 0 && l.indexOf('>') < 0),
     '줄에 태그 찌꺼기가 섞였습니다');
   assert.ok(!lines.work2, '못 읽은 쪽의 줄 목록을 지어냈습니다');
+
+  /* ★ «보여줄 줄»만 채우고 «고칠 줄»을 안 채우면, 쪽을 열었을 때 고칠 칸이 하나도 없다.
+     둘은 반드시 함께 채워져야 한다 — 한 군데서만 담기 때문이다. */
+  const runs = ctx.App.pageRuns;
+  assert.ok(runs.work1 && runs.work1.length, '★ 고칠 줄 목록을 안 채웠습니다 — 쪽을 열어도 고칠 칸이 없습니다');
+  assert.ok(runs.inquiry && runs.inquiry.length, '★ 오시는길의 고칠 줄 목록을 안 채웠습니다');
+  assert.ok(!runs.work2, '못 읽은 쪽의 고칠 줄을 지어냈습니다');
+  assert.ok(runs.work1.some(r => r.ok), '★ 고칠 수 있는 줄이 하나도 없다고 합니다');
+  /* 고칠 줄은 «본문 자리»에서만 나온다 — 대조 글자 안에 다 들어 있어야 한다 */
+  const 대조 = ctx.PuHomeParse.tidy(ctx.PuHomeParse.parsePageText(표본.work1));
+  const 밖 = runs.work1.filter(r => 대조.indexOf(r.text) < 0);
+  assert.equal(밖.length, 0, '★ 본문 밖 글자를 고치라고 내놓았습니다: '
+    + 밖.slice(0, 3).map(r => r.text).join(' | '));
 });
 
 /* ══════ ③ 주요업무 쪽 추가·분리 ══════ */
@@ -1913,8 +1946,8 @@ test('★ 늘 뜨는 설명은 «접어» 둔다 — 쪽마다 네 줄을 다시
   /* 이유를 «없애지» 않았다 — 접어 두었을 뿐이다. 펼치면 그대로 나온다. */
   assert.match(h, /<details/, '접어 두는 곳이 없습니다 — 설명이 그대로 펼쳐져 있습니다');
   assert.match(h, /지도·표·구획/, '접어 두면서 이유까지 없앴습니다');
-  /* 붙여넣기를 안 준다는 «결론»은 접지 않고 한 줄로 보인다 */
-  assert.match(h, /대조만/, '무엇을 하는 갈래인지 한 줄로 안 적혀 있습니다');
+  /* 무엇을 하는 갈래인지는 접지 않고 한 줄로 보인다 */
+  assert.match(h, /줄을 하나씩|줄마다|대조만/, '무엇을 하는 갈래인지 한 줄로 안 적혀 있습니다');
 });
 
 test('★ 홈페이지 줄을 «저장 없이» 다시 읽을 수 있다 — 새로 접속해도 볼 수 있다', () => {
@@ -2284,4 +2317,78 @@ test('★ 확인을 안 눌러도 명부상 퇴사자가 있으면 카드에 빨
   ctx.App.check = null;
   ctx.App.members = { '193': { name: '박성수', keepOnSite: { at: 'x', by: 'y', why: '지사장' } } };
   assert.equal(hot(), 0, '「남김」으로 둔 사람 때문에 빨간 점이 남습니다');
+});
+
+/* ══════ 쪽 본문 고치기 (대표 지시 「모두 다 — 쪽 본문 안 깨지게」) ══════
+   ★ 여기서 지키는 것은 «화면과 부품이 같은 말을 하는가»다.
+     부품이 「이 줄은 못 채운다」고 하는데 화면이 고칠 칸을 내주면, 사람은 고쳐 놓고
+     채워졌다고 믿는다 — 가장 조용하고 가장 나쁜 어긋남이다. */
+
+function 쪽화면(runs, fix) {
+  const ctx = box({
+    App: { pageLines: { work1: runs.map(r => r.text) }, pageRuns: { work1: runs },
+           pageFix: fix ? { work1: fix } : {}, reading: '' },
+    document: { getElementById: () => null }
+  });
+  ctx.esc = escStub();
+  run(ctx, fnSource('readPageBtn'));
+  run(ctx, fnSource('pageFixOf'));
+  run(ctx, fnSource('pageFixList'));
+  run(ctx, fnSource('pageRunEdit'));
+  run(ctx, fnSource('pageLinesHtml'));
+  return ctx;
+}
+
+test('★ 쪽의 줄은 «그 자리에서» 고칠 수 있다 — 고칠 칸이 줄마다 있다', () => {
+  const runs = [{ text: '첫 줄', ok: true, why: '' }, { text: '둘째 줄', ok: true, why: '' }];
+  const out = 쪽화면(runs).pageLinesHtml('work1');
+  const 칸수 = (out.match(/<input[^>]*/g) || []).length;
+  assert.equal(칸수, 2, '★ 고칠 수 있는 줄이 ' + runs.length + '개인데 고칠 칸은 ' + 칸수 + '개다');
+  assert.ok(out.indexOf('pageRunEdit') > 0, '고친 것을 받아 줄 길이 없다');
+});
+
+test('★ 못 채우는 줄에는 고칠 칸을 내주지 않는다 — 고쳐 놓고 채워진 줄 알게 된다', () => {
+  const runs = [{ text: '겹친 줄', ok: false, why: '똑같은 글이 2군데' },
+                { text: '혼자 줄', ok: true, why: '' }];
+  const out = 쪽화면(runs).pageLinesHtml('work1');
+  const 칸수 = (out.match(/<input[^>]*/g) || []).length;
+  assert.equal(칸수, 1, '★ 못 채우는 줄에도 고칠 칸을 내줬다');
+  assert.ok(out.indexOf('똑같은 글이 2군데') > 0, '왜 못 고치는지 화면에 없다');
+});
+
+test('★ 고친 줄이 없으면 «채우기용 복사»가 안 눌린다 — 빈 쪽지를 복사하게 두지 않는다', () => {
+  const runs = [{ text: '첫 줄', ok: true, why: '' }];
+  const 안고침 = 쪽화면(runs).pageLinesHtml('work1');
+  const 고침 = 쪽화면(runs, { '첫 줄': '고친 첫 줄' }).pageLinesHtml('work1');
+  const 잠김 = h => {
+    const i = h.indexOf('copyPageFix');
+    assert.ok(i > 0, '채우기용 복사 단추가 없다');
+    const 단추 = h.slice(h.lastIndexOf('<button', i), h.indexOf('</button>', i));
+    return / disabled/.test(단추);
+  };
+  assert.equal(잠김(안고침), true, '★ 고친 줄이 없는데 복사 단추가 열려 있다');
+  assert.equal(잠김(고침), false, '★ 고친 줄이 있는데 복사 단추가 잠겨 있다');
+  assert.ok(고침.indexOf('고친 첫 줄') > 0, '고친 글이 칸에 안 남아 있다');
+});
+
+test('★ 고친 줄은 «원래 글자»로 붙들어 둔다 — 줄 번호로 붙들면 엉뚱한 줄로 옮겨 붙는다', () => {
+  const ctx = 쪽화면([{ text: '둘째 줄', ok: true, why: '' }]);
+  ctx.pageRunEdit('work1', '둘째 줄', '고친 글');
+  const list = ctx.pageFixList('work1');
+  assert.equal(list.length, 1);
+  assert.equal(list[0].before, '둘째 줄', '★ 원래 글자를 안 담았다 — 홈페이지에서 자리를 못 찾는다');
+  assert.equal(list[0].after, '고친 글');
+  /* 홈페이지가 바뀌어 줄이 하나 늘어도, 원래 글자로 찾으므로 그대로 맞는다 */
+  const 바뀐본문 = '<p>새로 끼어든 줄</p><p>둘째 줄</p>';
+  const out = ctx.PuHomeFill.applyLineEdits(바뀐본문, list);
+  assert.equal(out.done.length, 1, '★ 줄이 하나 늘었다고 못 채웠다');
+  assert.ok(out.html.indexOf('<p>고친 글</p>') >= 0, '★ 엉뚱한 자리에 채웠다');
+});
+
+test('★ 되돌리면 다시 원래 글자다 — 되돌린 뒤 복사하면 빈 쪽지가 나가면 안 된다', () => {
+  const ctx = 쪽화면([{ text: '첫 줄', ok: true, why: '' }]);
+  ctx.pageRunEdit('work1', '첫 줄', '고친 글');
+  assert.equal(ctx.pageFixList('work1').length, 1);
+  ctx.pageRunEdit('work1', '첫 줄', '첫 줄');
+  assert.equal(ctx.pageFixList('work1').length, 0, '★ 원래 글자로 되돌렸는데 고친 줄로 남아 있다');
 });
