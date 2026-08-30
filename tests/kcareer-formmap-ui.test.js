@@ -3,6 +3,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { cutFn } = require('./cut-fn');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -61,12 +62,18 @@ test('주민등록번호 자리는 「자동으로 안 넣는다」고 화면에
   assert.match(bare, /rrn/);
 });
 
-test('★ 전화번호는 «모양»으로 갈라 담는다 — 사무실 번호가 「휴대폰」 칸에 박히면 안 된다', () => {
-  const fn = bare.slice(bare.indexOf('function _cvFillData'));
-  const body = fn.slice(0, fn.indexOf('\n}'));
-  assert.match(body, /phoneWork/, '사무실 번호 자리가 있어야 합니다');
-  assert.doesNotMatch(body, /phone:\s*info\.phone/,
-    '번호 하나를 그대로 휴대폰에 넣으면 틀린 번호가 서류에 나갑니다');
+test('★ 사무실 번호가 「휴대폰」 칸에 박히면 안 된다', () => {
+  /* ⚠ 이 규칙을 지키는 «방법»이 2026-08-30 에 바뀌었다.
+     전에는 번호 칸이 하나뿐이라 번호 «모양»을 보고 짐작해 갈랐다.
+     이제 기본정보에 휴대폰·사무실이 따로 있어 짐작할 일이 없다 —
+     대신 갈라 담기 «전»에 넣어 둔 옛 번호를 한 번 제자리로 옮긴다(_piMigrate).
+     지켜야 할 것은 방법이 아니라 «사무실 번호가 휴대폰이라고 단언되지 않는 것»이다. */
+  const fill = cutFn(bare, 'function _cvFillData(');
+  assert.match(fill, /phoneWork/, '사무실 번호 자리가 있어야 합니다');
+  const mig = cutFn(bare, 'function _piMigrate(');
+  assert.match(mig, /01\[016789\]/, '휴대폰 모양을 보고 갈라야 합니다');
+  assert.match(mig, /phoneWork=tel/, '휴대폰이 아니면 사무실 자리로 옮겨야 합니다');
+  assert.match(mig, /o\.phone=''/, '옮겼으면 휴대폰 칸은 비워야 합니다 — 안 비우면 두 곳에 남습니다');
 });
 
 test('초록은 «실제로 채워진다»는 뜻이어야 한다 — 값이 없으면 노랑', () => {

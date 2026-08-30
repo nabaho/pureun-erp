@@ -264,6 +264,11 @@
         return;
       }
       var val = fields[key];
+      /* ★ 가려 둔 값(주민등록번호)은 fields 가 아니라 secrets 에 있다 —
+         자동 채우기(autoFill)는 secrets 를 아예 못 보므로 «저절로는 절대 안 나가고»,
+         사람이 이 자리에 그 열쇠를 «직접 고른» 지금만 꺼내 온다.
+         ⚠ secrets 를 fields 에 합치지 말 것. 합치는 순간 자동으로 나간다. */
+      if ((val == null || val === '') && plan.secrets) val = plan.secrets[key];
       if (val == null || val === '') { failed.push({ id: id, why: '넣을 값이 없습니다' }); return; }
       /* 라벨 뒤로 빈 칸이 여럿 이어지면 한 글자씩 나눠 넣는다(생년월일 7|5|0|1|0|7) */
       var run = (s.kind === '빈칸') ? digitRun(map, s.tbl, s.row, s.col) : null;
