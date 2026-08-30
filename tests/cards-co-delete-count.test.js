@@ -176,11 +176,12 @@ test('고른 것이 없으면 아무 일도 안 한다', () => {
 /* ── 단추 ── */
 
 test('삭제 단추가 「선택 해제」 옆이 아니라 줄 맨 끝에 있다', () => {
+  /* 2026-08-31 — 삭제가 도구줄 «겉»에서 ⋯ 안으로 들어갔다. 지키는 뜻은 그대로다:
+     끄는 단추(선택 해제/✕) 옆에 두지 않는다 — 손이 미끄러진다. */
   const bar = slice('${nSel}곳 선택', 'codraghint');
-  const clear = bar.indexOf('선택 해제');
-  const del = bar.indexOf('coDelSel()');
-  assert.ok(del > 0, '삭제 단추가 있어야 한다');
-  assert.ok(del > clear, '선택 해제 옆에 두면 손이 미끄러진다');
+  assert.equal(bar.indexOf('coDelSel()'), -1,
+    '삭제가 도구줄 겉에 있다 — ⋯ 안으로 넣기로 했다');
+  assert.ok(HTML.indexOf('coDelSel()') > 0, '삭제하는 길 자체가 사라졌다');
 });
 
 test('삭제 단추가 「명함·등록증이 지워진다」고 딱지에 적는다', () => {

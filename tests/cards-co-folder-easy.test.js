@@ -165,43 +165,46 @@ test('제 거르개를 켜 놓아도 수는 그대로다', () => {
 });
 
 /* ── ③ 도구줄에서 곧장 폴더로 ────────────────────────────────────── */
-test('★ 도구줄에 «이미 있는» 폴더 단추가 붙는다', () => {
+/* 📁 폴더 ▾ 메뉴를 «열어» 그 안을 본다 (2026-08-31 — 도구줄 겉에서 내려왔다) */
+function openMoveMenu(folders, sel, cur){
+  const box = { style:{}, innerHTML:"" };
   const b = {
-    state: { coSel: { a: 1 } },
-    _coFolders: FOLDERS,
-    esc: s => String(s == null ? '' : s)
+    state: { coSel: sel || { a:1 }, coFolder: cur || "" },
+    _coFolders: folders,
+    esc: s => String(s == null ? "" : s),
+    closeFolderMenu(){}, setTimeout(){},
+    document: { addEventListener(){} }, window: { innerWidth: 1600 },
+    $: () => box, Object, Array, String, Number
   };
   vm.createContext(b);
-  vm.runInContext(fn('coQuickFolderBtns'), b);
-  const h = vm.runInContext('coQuickFolderBtns()', b);
+  vm.runInContext(fn("coQuickFolders"), b);
+  vm.runInContext(fn("openMenuAbove"), b);
+  vm.runInContext(fn("openCoMoveMenu"), b);
+  vm.runInContext("openCoMoveMenu({ preventDefault(){}, stopPropagation(){}, currentTarget:{ getBoundingClientRect: () => ({ left:100, top:400 }) } })", b);
+  return box.innerHTML;
+}
+
+test('★ 폴더 메뉴에 «이미 있는» 폴더가 나온다', () => {
+  const h = openMoveMenu(FOLDERS);
   assert.ok(h.includes('1. 업체관리'), '자주 쓰는 폴더가 안 나온다');
   assert.ok(/coMoveSelTo\('f1'\)/.test(h), '눌러도 옮겨지지 않는다');
+  assert.ok(h.includes('다른 폴더 고르기'), '나머지 폴더로 갈 길이 없다');
 });
 
-test('★ 폴더가 없으면 단추도 없다 — 새로 만들지 않는다', () => {
-  const b = { state: { coSel: { a: 1 } }, _coFolders: {}, esc: s => String(s == null ? '' : s) };
-  vm.createContext(b);
-  vm.runInContext(fn('coQuickFolderBtns'), b);
-  assert.equal(vm.runInContext('coQuickFolderBtns()', b), '',
-    '★ 없는 폴더로 옮기는 단추가 생겼다');
+test('★ 폴더가 없으면 «자주 쓰는» 자리도 없다 — 새로 만들지 않는다', () => {
+  const h = openMoveMenu({});
+  assert.equal(/coMoveSelTo\(/.test(h), false, '★ 없는 폴더로 옮기는 줄이 생겼다');
+  assert.ok(h.includes('다른 폴더 고르기'), '폴더가 없어도 만들러 갈 길은 있어야 한다');
 });
 
-test('★ 폴더가 많아도 도구줄을 밀어내지 않는다', () => {
+test('★ 폴더가 많아도 셋까지만 — 메뉴가 화면을 넘지 않는다', () => {
   const many = {};
   for (let i = 0; i < 12; i++) many['x' + i] = { id: 'x' + i, name: '폴더' + i, order: i };
-  const b = { state: { coSel: { a: 1 } }, _coFolders: many, esc: s => String(s == null ? '' : s) };
-  vm.createContext(b);
-  vm.runInContext(fn('coQuickFolderBtns'), b);
-  const n = (vm.runInContext('coQuickFolderBtns()', b).match(/coMoveSelTo\(/g) || []).length;
-  assert.ok(n > 0 && n <= 3, '★ 폴더 열둘이 다 나와 도구줄이 두 줄로 접힌다 (지금 ' + n + '개)');
+  const n = (openMoveMenu(many).match(/coMoveSelTo\(/g) || []).length;
+  assert.ok(n > 0 && n <= 3, '★ 폴더 열둘이 다 나온다 (지금 ' + n + '개)');
 });
-
 test('보고 있는 폴더로 옮기는 단추는 안 낸다 — 이미 거기 있다', () => {
-  const b = { state: { coSel: { a: 1 }, coFolder: 'f1' }, _coFolders: FOLDERS,
-              esc: s => String(s == null ? '' : s) };
-  vm.createContext(b);
-  vm.runInContext(fn('coQuickFolderBtns'), b);
-  const h = vm.runInContext('coQuickFolderBtns()', b);
+  const h = openMoveMenu(FOLDERS, { a:1 }, 'f1');
   assert.ok(!/coMoveSelTo\('f1'\)/.test(h), '지금 보는 폴더로 옮기는 단추가 떴다');
 });
 
@@ -209,6 +212,6 @@ test('★ 도구줄이 이 단추를 실제로 내보낸다', () => {
   const src = bare(fn('coListHtml'));
   const at = src.indexOf('coselbar');
   assert.ok(at >= 0, '도구줄을 못 찾았다');
-  assert.ok(/coQuickFolderBtns\(\)/.test(src.slice(at, at + 2500)),
-    '★ 만들어 놓고 도구줄에 안 붙였다');
+  assert.ok(/openCoMoveMenu\(event\)/.test(src.slice(at, at + 2500)),
+    '★ 만들어 놓고 도구줄에 안 붙였다 — 📁 폴더 ▾ 가 메뉴를 열어야 한다');
 });

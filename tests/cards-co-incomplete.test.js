@@ -200,24 +200,34 @@ test('거르는 일은 coFilteredList 한 곳에만 둔다', () => {
 /* ══════ ⑤ 옆줄 「할 일」에 뜬다 · 0곳이면 안 보인다 ══════
    ⚠ 2026-08-28 자리가 옮겨졌다 — 대표 지시 「기업상세 탭은 거래관계가 있었는지
      여부만 나누면 된다」. 탭 줄에 뜻이 둘(고르기·거르기)이라 서로의 수를 갉아먹었다.
-     기능은 그대로고 자리만 옆줄(coTodoSideHtml)로 내렸다. */
+     기능은 그대로고 자리만 옆줄(coFilterDefs)로 내렸다. */
 
+/* 거르개 메뉴를 열어 「정보부족」 줄을 본다 (2026-08-31 — 옆줄에서 내려왔다) */
 function drawTodo(lack, on){
+  const box = { style:{}, innerHTML:"" };
   const ctx = { console, Object, Array, String, Number,
     esc: s => String(s==null?'':s),
-    state: { coOnlyClosed:false, coOnlyNoBiz:false, coOnlyIncomplete:!!on, coOnlyUid:false },
+    state: { coOnlyClosed:false, coOnlyNoBiz:false, coOnlyIncomplete:!!on, coOnlyUid:false, coPage:0 },
     coClosedCount: () => 0, coNoBizCount: () => 0,
     coIncompleteCount: () => lack, coUidCount: () => 0,
-    pcItem: (attrs, label, cnt, isOn) =>
-      `<div class="pcitem ${isOn?'on':''}" ${attrs}>${label}<span>${cnt}</span></div>` };
+    closeFolderMenu(){}, renderCoAny(){}, setTimeout(){},
+    document: { addEventListener(){} }, window: { innerWidth: 1600 },
+    $: () => box };
   vm.createContext(ctx);
-  vm.runInContext(fnBody('coTodoSideHtml'), ctx);
-  return ctx.coTodoSideHtml();
+  vm.runInContext(fnBody('coFilters'), ctx);
+  vm.runInContext(fnBody('coFilterDefs'), ctx);
+  vm.runInContext(fnBody('openCoFilterMenu'), ctx);
+  ctx.openCoFilterMenu({ preventDefault(){}, stopPropagation(){},
+    currentTarget: { getBoundingClientRect: () => ({ left:100, bottom:200 }) } });
+  return box.innerHTML;
 }
 
-test('★ 부족한 곳이 0이면 줄이 안 뜬다', () => {
-  assert.equal(drawTodo(0, false).indexOf('정보부족'), -1,
-    '★ 0곳인데도 뜨면 무엇을 누르라는 건지 모른다');
+test('★ 부족한 곳이 0이어도 «흐리게» 남는다 — 열 때마다 항목이 달라지면 못 찾는다', () => {
+  /* ⚠ 옛 규칙을 일부러 뒤집었다. 옆줄(늘 보이는 자리)에서는 0곳이면 숨겼지만,
+     메뉴는 열어야 보이는 자리라 항목이 사라지면 어디 있는지 못 찾는다. */
+  const h = drawTodo(0, false);
+  assert.ok(h.indexOf('정보부족') > 0, '메뉴에서 통째로 사라졌다');
+  assert.match(h, /fmoff/, '0곳인데 흐리게 안 보인다');
 });
 
 test('부족한 곳이 있으면 뜨고 몇 곳인지 말한다', () => {
@@ -278,9 +288,10 @@ test('빠진 것이 없는 회사 줄에는 그 표시가 안 붙는다', () => 
 
 /* onclick 을 «실제로 실행»해 본다 — 글자만 맞춰 보면 =true 로 바꿔 놔도 못 잡는다 */
 function clickIncomplete(h, state){
-  const m = h.match(/onclick="(state\.coOnlyIncomplete[^"]*)"/);
+  /* 메뉴 항목이라 앞에 「closeFolderMenu();」가 붙는다 — 누르는 흉내는 그대로 낸다 */
+  const m = h.match(/onclick="([^"]*coOnlyIncomplete[^"]*)"/);
   assert.ok(m, '정보부족 줄에 누를 코드가 없다');
-  const cx = { state, renderCoAny: () => {} };
+  const cx = { state, renderCoAny: () => {}, closeFolderMenu: () => {} };
   vm.createContext(cx);
   vm.runInContext(m[1].replace(/&#39;/g, "'").replace(/&quot;/g, '"'), cx);
   return cx.state;

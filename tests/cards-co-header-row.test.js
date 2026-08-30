@@ -71,7 +71,7 @@ function renderTabsRow(state, cos){
   const a = '/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════';
   const b = '/* ══════ 폴더 안의 탭 — 화면 ══════ */';
   const i = src.indexOf(a), j = src.indexOf(b);
-  vm.runInContext(src.slice(i, j) + '\n' + fnBody('coFTabChipsHtml') + '\n' + fnBody('coToolsHtml') + '\n' + fnBody('renderCoFTabsHtml'), ctx);
+  vm.runInContext(src.slice(i, j) + '\n' + fnBody('coFTabChipsHtml') + '\n' + fnBody('coFilters') + '\n' + fnBody('coFilterOnCount') + '\n' + fnBody('coFilterBtnHtml') + '\n' + fnBody('coToolsHtml') + '\n' + fnBody('renderCoFTabsHtml'), ctx);
   return ctx.renderCoFTabsHtml();
 }
 
@@ -86,7 +86,9 @@ test('★ 쪽 크기 고르기가 탭 줄에 «실제로» 나온다', () => {
 test('★ 쪽 크기 고르기가 오른쪽 끝으로 밀려 있다 — 사업자의 #pcTools 와 같은 자리', () => {
   const h = renderTabsRow();
   const i = h.indexOf('class="copgsize"');
-  const before = h.slice(Math.max(0, i - 120), i);
+  /* ⚠ 거리를 넓게 잡는다 — 2026-08-31 에 이 앞으로 「🔎 거르개」 단추가 들어왔다.
+     지키는 것은 «오른쪽으로 미는가»이지 몇 자 앞에 있는가가 아니다. */
+  const before = h.slice(Math.max(0, i - 400), i);
   assert.match(before, /margin-left:\s*auto/,
     '★ 밀지 않으면 탭 옆에 바짝 붙어 사업자의 오른쪽 정렬과 달라 보인다');
 });

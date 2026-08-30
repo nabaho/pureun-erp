@@ -184,7 +184,7 @@ function drawTabs(state){
   /* ⚠ coToolsHtml 은 저 조각 «밖»에 있다 — 따로 실어 준다. 대역을 쓰면 이 검사가
      보려는 것(두 칩이 실제로 그려지는가)을 아무것도 안 보게 된다. */
   vm.runInContext(src.slice(src.indexOf(a), src.indexOf(b)) + '\n'
-    + fnBody('coToolsHtml') + '\n' + fnBody('renderCoFTabsHtml'), ctx);
+    + fnBody('coFilters') + '\n' + fnBody('coFilterOnCount') + '\n' + fnBody('coFilterBtnHtml') + '\n' + fnBody('coToolsHtml') + '\n' + fnBody('renderCoFTabsHtml'), ctx);
   return ctx.renderCoFTabsHtml();
 }
 

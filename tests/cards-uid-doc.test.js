@@ -133,14 +133,14 @@ test('기업 상세 거르기에 걸려 있다', () => {
    기능은 그대로다. 0곳 숨김·켜고 끄기는 tests/cards-co-chips-two.test.js 가
    «그려서» 확인한다 — 여기서는 고유번호증 몫이 그 안에 들어 있는지만 본다. */
 test('옆줄 「할 일」에 「고유번호증 N」이 있다', () => {
-  const body = slice(HTML, 'function coTodoSideHtml(){', '\n}');
+  const body = slice(HTML, 'function coFilters(){', '\n}');
   assert.match(body, /coUidCount\(\)/, '몇 곳인지 세야 한다');
   assert.match(body, /coOnlyUid/, '눌러서 켜고 끈다');
   assert.match(body, /고유번호증/, '이름표가 없다');
 });
 
 test('탭 줄에는 도로 안 남아 있다 — 두 곳에서 같은 일을 하면 한쪽만 고쳐진다', () => {
-  const body = slice(HTML, 'function coToolsHtml(){', 'function coTodoSideHtml(');
+  const body = slice(HTML, 'function coToolsHtml(){', 'function coFilters(');
   assert.equal(body.indexOf('coUidCount'), -1, '탭 줄이 아직 고유번호증을 센다');
   assert.equal(body.indexOf('고유번호증'), -1, '탭 줄에 아직 단추가 있다');
 });

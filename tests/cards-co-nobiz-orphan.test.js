@@ -221,7 +221,7 @@ test('★ 자동으로 이어 붙이지 않는다 — 사람이 정할 일이다
 test('「번호 없음」 토글이 옆줄 「할 일」에 있다', () => {
   /* ⚠ 2026-08-28 자리가 옮겨졌다 — 탭 줄은 「거래관계 여부」만 나눈다(대표 지시).
      기능은 그대로고 자리만 옆줄로 내렸다. */
-  const fn = fnBody('coTodoSideHtml');
+  const fn = fnBody('coFilters');
   assert.match(fn, /coOnlyNoBiz/, '고를 길이 없다');
   assert.match(fn, /coNoBizCount\(\)/, '개수를 안 보여 준다');
   assert.equal(fnBody('coToolsHtml').indexOf('coOnlyNoBiz'), -1,
