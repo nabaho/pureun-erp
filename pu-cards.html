@@ -12155,6 +12155,17 @@ function renderPCSide(){
           <span class="gmenu" onclick="event.stopPropagation();openCoFolderMenu(event,'${f.id}')" title="관리">⋮</span>
         </div>`;
     });
+    /* ── 아직 폴더에 안 담긴 회사 (대표 지시 2026-08-30 「폴더별 쉽게」) ──
+       정리할 대상을 찾는 입구다. 0곳이면 «안 보여 준다» — 다 담았는데 「0곳」이 남아
+       있으면 할 일이 남은 것처럼 보인다(할 일 줄과 같은 규칙).
+       ⚠ 폴더 목록 «안»에 둔다. 폴더를 고르는 것과 한 갈래의 일이라 자리가 붙어야 한다. */
+    const _nf = coNoFolderCount();
+    if(_nf) h += `<div class="pcitem folderrow ${state.coNoFolder?'on':''}" style="padding-left:11px"
+          title="아직 어느 폴더에도 안 담긴 회사만 봅니다 — 여기서부터 폴더로 나누면 됩니다">
+          <span style="width:13px;display:inline-block"></span>
+          <span class="gname" onclick="pickCoNoFolder()">📂 아직 안 담음</span>
+          <span class="gcount">${_nf.toLocaleString()}</span>
+        </div>`;
     h += `</div>`;
     /* ── 「서류 탭」을 접는다 (대표 지시 2026-08-26) ──
        "기업상세에 사업자등록증 고유번호증으로 다시 나눌 필요가 없다."
@@ -20544,6 +20555,9 @@ function pickCoFolder(k){
   /* ⚠ 폴더가 바뀌면 그 안에서 고른 탭도 푼다 — 다른 폴더의 탭이 남아 있으면
      그 조건에 맞는 회사가 없어 «빈 목록»이 나온다. */
   state.coFTab='';
+  /* ⚠ 「아직 안 담음」과 «같이» 걸리면 결과가 늘 0곳이다 — 폴더를 골랐다는 것은
+     「담긴 것을 보겠다」이므로 반대쪽을 푼다 (대표 지시 2026-08-30). */
+  state.coNoFolder = false;
   if(k.indexOf('t:')===0){ state.coTag=k.slice(2); state.coFolder=''; }
   else if(k.indexOf('f:')===0){ state.coFolder=k.slice(2); state.coTag=''; }
   else { state.coTag=''; state.coFolder=''; }
@@ -20645,7 +20659,36 @@ function coFilteredList(skipCol, skipCares, skipTodo){
      비영리법인·국가기관은 사업자등록증이 아니라 고유번호증을 받는다. 다루는 법은
      같지만 «따로 모아 봐야 할» 때가 있다(법인·단체만 골라 서식을 보낼 때). */
   if(state.coOnlyUid && !skipTodo) list = list.filter(coIsUid);
+  /* ── 아직 폴더에 안 담긴 회사만 (대표 지시 2026-08-30 「폴더별 쉽게」) ──
+     4,154곳을 폴더로 나누려면 «어디부터 손댈지»를 알아야 한다. 예전에는 아직 안 담긴
+     회사를 찾을 길이 아예 없어, 정리할 대상이 어디 있는지 모르는 채 시작해야 했다.
+     ⚠ 폴더 고르기와 «같이» 걸리면 결과가 늘 0곳이다 — pickCoFolder·pickCoNoFolder 가
+       서로를 푼다. */
+  if(state.coNoFolder && !skipTodo) list = list.filter(o=>!String(o.folder||'').trim());
   return list;
+}
+function coNoFolderCount(){
+  return coFilteredList(null, false, true).filter(o=>!String(o.folder||'').trim()).length;
+}
+/* ── 도구줄에서 «곧장» 폴더로 (대표 지시 2026-08-30 「폴더별 쉽게」) ──
+   같은 폴더로 계속 옮길 때마다 「폴더로 옮기기」를 누르고 창에서 다시 골랐다 —
+   스무 곳을 나누면 마흔 번을 누른다. 자주 쓰는 폴더를 도구줄에 바로 세운다.
+   ⚠ «이미 있는» 폴더만 세운다. 새로 만들지 않는다.
+   ⚠ 셋까지만. 열둘이 다 나오면 도구줄이 두 줄로 접혀 아래 표를 덮는다.
+   ⚠ 지금 보고 있는 폴더는 뺀다 — 거기 있는 것을 거기로 옮길 까닭이 없다. */
+function coQuickFolderBtns(){
+  const all = Object.keys(_coFolders||{}).map(k=>_coFolders[k]).filter(Boolean)
+    .sort((a,b)=>(a.order||0)-(b.order||0))
+    .filter(f=>f.id !== state.coFolder)
+    .slice(0,3);
+  return all.map(f=>`<button onclick="coMoveSelTo('${esc(String(f.id).replace(/'/g,"\\'"))}')"
+    title="고른 곳을 「${esc(f.name)}」 폴더로 바로 옮깁니다">📁 ${esc(f.name)}</button>`).join('');
+}
+function pickCoNoFolder(){
+  state.coNoFolder = !state.coNoFolder;
+  state.coFolder = ''; state.coFTab = ''; state.coTag = '';
+  state.coPage = 0; state.coSel = {};
+  closePcDetail(); render();
 }
 /* ── 걸린 「할 일」을 목록 위에 띠로 (대표 보고 2026-08-30) ──────────────
    대표님: 「업체관리로 이동시켰는데 이동 안 하고 남아있다 … 계약해지사업장으로
@@ -20655,7 +20698,8 @@ function coFilteredList(skipCol, skipCares, skipTodo){
    그 조건이 함께 걸려 텅 빈 목록이 나오는 까닭을 알 길이 없었다.
    ⚠ 명함 쪽은 2026-08-29 에 같은 것을 겪고 조건 띠로 고쳤다 — 같은 결로 맞춘다. */
 const CO_TODO_LABEL = { coOnlyClosed:'🚪 종료', coOnlyNoBiz:'🔢 번호 없음',
-                        coOnlyIncomplete:'📋 정보부족', coOnlyUid:'🏛 고유번호증' };
+                        coOnlyIncomplete:'📋 정보부족', coOnlyUid:'🏛 고유번호증',
+                        coNoFolder:'📂 아직 안 담음' };
 function clearCoTodo(k){ state[k] = false; state.coPage = 0; renderCoAny(); }
 function coTodoChipsHtml(){
   return Object.keys(CO_TODO_LABEL).filter(k=>state[k]).map(k=>
@@ -20900,6 +20944,8 @@ function coListHtml(info){
   const selbar = nSel ? `<div class="cosellift"><div class="coselbar">
       <b>${nSel}곳 선택</b>${moreBtn}
       <button onclick="coMoveToFolder()">📁 폴더로 옮기기</button>
+      ${/* 자주 쓰는 폴더 셋은 창을 안 거치고 곧장 (대표 지시 2026-08-30 「폴더별 쉽게」) */''}
+      ${coQuickFolderBtns()}
       <button onclick="coAssignTag()">🏷 서류 탭에 담기</button>
       ${state.coFolder ? '<button onclick="coAssignFTab()" title="이 폴더 안의 탭에 담습니다">＃ 탭에 담기</button>' : ''}
       ${/* 고른 회사에 붙은 담당자 주소록 (대표 지시 2026-08-24 「주소록 내보내기 만들어라」).
@@ -21003,10 +21049,17 @@ function coListHtml(info){
              ⚠ 폴더 목록(_coFolders)은 구독으로 «나중에» 온다. 아직 없을 때 표를
                그리다 터지면 화면이 통째로 빈다 — typeof 로 막는다.
              ⚠ 없어진 폴더면 아무것도 안 붙인다. 이름을 지어내면 안 된다. */''}
+        ${/* ⚠ 누르면 «그 폴더로 간다» (대표 지시 2026-08-30 「폴더별 쉽게」).
+             예전에는 읽기만 되어, 그 폴더를 보려면 눈을 옆줄까지 옮겨 같은 이름을
+             다시 찾아 눌러야 했다.
+             ⚠ stopPropagation 이 «반드시» 있어야 한다. 줄 전체에 상세 열기(pickCo)가
+               걸려 있어, 안 막으면 폴더로 가면서 패널이 함께 열린다. */''}
         ${(function(){
           const fs_ = (typeof _coFolders!=='undefined' && _coFolders) || {};
           const nm = o.folder ? String((fs_[o.folder]||{}).name || '') : '';
-          return nm ? `<span class="fd" title="이 회사가 담긴 폴더">📁 ${esc(nm)}</span>` : '';
+          return nm ? `<span class="fd" title="이 폴더만 보기 — 「${esc(nm)}」"
+            onclick="event.stopPropagation();pickCoFolder('f:${esc(String(o.folder).replace(/'/g,"\\'"))}')"
+            >📁 ${esc(nm)}</span>` : '';
         })()}
         ${coTagsOf(o).map(x=>`<span class="tg">${esc(x)}</span>`).join('')}</td>
       <td>${t?`<span class="ty">${esc(t)}</span>`:''}</td>

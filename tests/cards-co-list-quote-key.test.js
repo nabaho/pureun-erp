@@ -1,4 +1,4 @@
-/* PC 기업 상세 표 — 회사 열쇠에 작은따옴표가 들어 있으면 줄을 눌러도 아무 일이 안 일어난다
+﻿/* PC 기업 상세 표 — 회사 열쇠에 작은따옴표가 들어 있으면 줄을 눌러도 아무 일이 안 일어난다
    (2026-08-15)
 
    ★ 무엇이 문제였나
@@ -46,7 +46,7 @@ function run(list, sel){
      여기서 볼 것은 열쇠 이스케이프뿐이라 한 쪽에 다 담아 넘긴다. */
   /* 2026-08-24(2순위): 회사 목록 위에 «고아 기업정보» 알림 띠가 붙었다 —
      이 검사는 열쇠 이스케이프만 보므로 빈 값으로 둔다. */
-  vm.runInContext("function coSizeSelHtml(){return ''} function coPagerHtml(){return ''} function coOrphanBarHtml(){return ''} function coMissing(){return []} function coCares(o){return !!(o&&(o.erp||((o.tags||[]).length)))}", ctx);
+  vm.runInContext("function coSizeSelHtml(){return ''} function coPagerHtml(){return ''} function coOrphanBarHtml(){return ''} function coQuickFolderBtns(){return ''} function coMissing(){return []} function coCares(o){return !!(o&&(o.erp||((o.tags||[]).length)))}", ctx);
   vm.runInContext(src.slice(src.indexOf('function coListHtml(info){'),
                             src.indexOf('function coDocsHtml(')), ctx);
   return ctx.coListHtml({ rows:list, total:list.length, page:0, pages:1, size:200,

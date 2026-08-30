@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 /* 기업 상세(PC) — ① 고른 회사 도구줄이 «늘 보인다» ② 고른 회사를 끌어서 옆줄 폴더에 놓는다
    (대표 지시 2026-08-17: "클릭한 것 마우스 드래그해서 폴더로 옮길 수 있게 하고,
     클릭한 사업장들 어떻게 해야할지 팝업이 나와야 할 것 같다")
@@ -54,6 +54,8 @@ function runList(rows, sel, extra){
     "function coPagerHtml(){ return '<div class=\"copager\">쪽넘김</div>'; }",
     /* 2026-08-24(2순위): 회사 목록 위 «고아 기업정보» 알림 띠 — 이 검사는 안 본다 */
     "function coOrphanBarHtml(){ return ''; }",
+    /* 2026-08-30: 도구줄의 「자주 쓰는 폴더」 단추 — 이 검사는 안 본다 */
+    "function coQuickFolderBtns(){ return ''; }",
     /* 2026-08-24(3순위): 줄마다 «빠진 칸»을 알린다 — 이 검사는 안 본다 */
     "function coMissing(){ return []; }",
     "function coCares(o){ return !!(o && (o.erp || ((o.tags||[]).length))); }"
