@@ -1212,7 +1212,8 @@ test('보관한 한글 문서는 내려받지 않고 앱 안에서 본다', () =
   assert.match(src, /openHwpViewer\(b64ToAb\(f\.base64\)/);
   assert.match(funcSource('_isHwpName'), /hwp\|hwpx/);
   // 기관 양식 칩과 값채우기 결과도 바로 볼 수 있어야 한다
-  assert.match(funcSource('renderCvForms'), /cvFormHwpView/);
+  // 보관함을 그리는 코드는 renderFormLib 하나다(2026-08-30 통합)
+  assert.match(funcSource('renderFormLib'), /cvFormHwpView/);
   assert.match(funcSource('hwpxFill'), /openHwpViewer\(await blob\.arrayBuffer\(\)/);
 });
 
@@ -1410,4 +1411,57 @@ test('fsUndoScan은 scanId가 일치하는 레코드만 지운다', () => {
   ];
   vm.runInNewContext(funcSource('fsUndoScan') + '\nfsUndoScan("S1");', ctx);
   assert.deepEqual(store.wiccok.map((r) => r.id), ['B', 'C']);
+});
+
+/* ===== ★ 한자 성명 + 기관 양식 보관함 하나로 (2026-08-30) ===== */
+
+test('★ 한자 성명 칸에 「漢」 고르기가 붙어 있다 — IME 한자 키가 안 먹던 칸이다', () => {
+  assert.match(source, /<script src="js\/kcareer-hanja\.js/, '한자 모듈을 불러와야 합니다');
+  const rp = funcSource('renderPersonal');
+  assert.match(rp, /k==='nameHanja'/, '한자 성명만 따로 그려야 합니다');
+  assert.match(rp, /hjOpen\(\)/, '漢 단추가 있어야 합니다');
+});
+
+test('★ 한자는 «고르게만» 한다 — 지어서 넣으면 위촉 서류에 틀린 이름이 박힌다', () => {
+  const open = funcSource('hjOpen');
+  // 후보를 자동으로 골라 넣는 코드가 있으면 안 된다
+  assert.ok(!/_hjPick\s*=\s*cands\.map\(function\s*\(c[^)]*\)\s*\{\s*return\s+c\.list\[0\]/.test(open),
+    '⚠ 첫 후보를 자동으로 고르면 안 됩니다 — 어느 한자가 본인 이름인지는 본인만 압니다');
+  assert.match(open, /직접 입력/, '표에 없는 소리를 위해 직접 입력을 열어 둬야 합니다');
+  // 넣기만 하고 저장까지 하지 않는다 — 다른 칸을 고치던 중일 수 있다
+  const apply = funcSource('hjApply');
+  assert.ok(!/savePersonalInfo\(\)/.test(apply), '⚠ 자동 저장하지 말 것 — 다른 칸이 함께 덮입니다');
+  assert.match(apply, /기본정보 저장/, '저장하라고 알려 줘야 합니다');
+});
+
+test('★ 기관 양식 보관함은 «하나»다 — 담는 곳도 그리는 곳도', () => {
+  // 종류별로 갈라 담던 것을 없앴다
+  ['resume_tpl', 'profile_tpl', 'certdoc_tpl'].forEach((k) => {
+    assert.equal(source.indexOf("tplKey:'" + k + "'"), -1, k + ' 로 갈라 담지 않습니다');
+  });
+  assert.equal(source.indexOf('function renderTplLib'), -1,
+    '⚠ 두 번째 렌더러를 되살리면 「어디서 올렸느냐」에 따라 안 보이는 보관함이 다시 생깁니다');
+  assert.equal(source.indexOf('function tplList'), -1, 'tplList 도 함께 없앴습니다');
+  // 그리는 자리는 data-formlib 로만 늘린다
+  const mounts = (source.match(/data-formlib/g) || []).length;
+  assert.ok(mounts >= 4, '그리는 자리가 네 곳 이상이어야 합니다 (지금 ' + mounts + ')');
+  assert.match(funcSource('renderFormLib'), /querySelectorAll\('\[data-formlib\]'\)/,
+    '한 코드가 모든 자리를 그려야 합니다');
+});
+
+test('★ 옛 양식 보관함을 옮기는 코드가 «불리고» 있다 — 만들어만 두면 소용없다', () => {
+  assert.match(source, /_safe\(_tplMerge\)/, '부팅 순서에 넣어야 합니다');
+  const m = funcSource('_tplMerge');
+  assert.match(m, /seen\[t\.id\]/, '이미 있는 것은 두 번 담지 않아야 합니다(멱등)');
+  assert.match(m, /set\(k,\[\]\)/, '옮긴 뒤 비워야 다음에 또 옮기지 않습니다');
+  // ⚠ 파일 자체를 지우면 안 된다 — 목록만 합친다
+  assert.ok(!/deleteFile/.test(m), '⚠ 이사하면서 원본 파일을 지우면 안 됩니다');
+});
+
+test('★ 보관함의 양식을 이 화면 편집기로 열 수 있다 — 전에는 한쪽에서만 되던 일', () => {
+  const f = funcSource('renderFormLib');
+  ['fbOpenInEditor', 'cvFormHwpView', 'hwpxFill', 'downloadFile', 'cvDelForm'].forEach((fn) => {
+    assert.ok(f.indexOf(fn) > 0, fn + ' 이 칩에 있어야 합니다');
+  });
+  assert.match(funcSource('fbOpenInEditor'), /mountEditor\(/, '편집기에 얹어야 합니다');
 });

@@ -131,7 +131,8 @@ test('★ 한글 서식은 «화면 하나»만 — 옆 미리보기를 또 띄�
 });
 
 test('보관함에서 열 때도 한글이면 옆 미리보기를 닫는다', () => {
-  assert.match(bare, /_isHwpName\(t\.name\)[\s\S]{0,80}hideSidePreview\(\)/);
+  // 2026-08-30 보관함 통합으로 fbOpenInEditor 가 맡는다 — 규칙은 그대로다
+  assert.match(bare, /_isHwpName\(rec\.name\)[\s\S]{0,80}hideSidePreview\(\)/);
 });
 
 test('이력서관리는 «만들기»와 «보관함» 둘뿐이다 — 만들기가 첫 자리', () => {
