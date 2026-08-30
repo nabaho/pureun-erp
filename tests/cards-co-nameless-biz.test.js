@@ -69,6 +69,11 @@ function buildList(items){
     coKeyOf: it => { const d = String(it.bizno || '').replace(/\D/g, '');
                      return d.length >= 10 ? d : ('n' + String(it.company || '').replace(/\s+/g, '')); },
     ErpMatch: { ready: true, match: () => null, matchAll: () => ({}) },
+    /* 2026-08-30: 예전에 판독한 등록증은 세금계산서 발급 메일이 «메모»에만 있다 —
+       회사로 올릴 때 그것을 되살린다. 대역도 «진짜와 같은 답»을 준다.
+       ⚠ 점(.)은 줄바꿈을 안 먹으므로 [^\n] 을 따로 쓰지 않는다. */
+    taxInvoiceFromText: v => { const m = String(v == null ? '' : v)
+      .match(/세금계산서.{0,60}?([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/); return m ? m[1] : ''; },
     coEffectiveExtra: () => null,
     /* 줄 세우기가 «보여줄 이름»으로 정렬하므로 대역에도 실어 준다 — 진짜와 같은 것을 쓴다 */
     fmtBizno: v => { const d = String(v || '').replace(/\D/g, '');
