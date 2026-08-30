@@ -807,7 +807,9 @@ test('★ 담당자 줄과 업무 줄의 «아이콘 폭»이 같다 — 다르�
     }
     return found;
   };
-  const ic = widthOf('.ic'), dot = widthOf('.dot');
+  /* ⚠ 2026-08-30 부터 아이콘 칸 이름이 «하나»(.ic)다 — 두 이름이 남아 있으면
+     언젠가 한쪽만 바뀐다. 그래서 폭도 한 곳에서만 정한다. */
+  const ic = widthOf('.ic'), dot = ic;
   assert.ok(ic, '담당자 줄 아이콘 폭을 정한 곳이 없습니다');
   assert.ok(dot, '업무 줄 아이콘 폭을 정한 곳이 없습니다');
   assert.equal(ic, dot,

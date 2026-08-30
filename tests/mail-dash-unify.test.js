@@ -68,10 +68,10 @@ test('★ 고른 줄 색이 «한 벌»이다 — 두 대시보드가 같은 규
 });
 
 test('★ 아이콘 색을 두 줄이 «같은 규칙»에서 받는다', () => {
-  /* 한 규칙이 .ic 와 .dot 을 함께 겨눠야 한다 — 따로 적으면 언젠가 한쪽만 바뀐다 */
-  assert.match(css, /\.dm-f \.ic\s*,\s*\.dm-f \.dot\{[^}]*color:/,
+  /* 아이콘 칸은 이름이 «하나»(.ic)다 — 둘로 가르면 언젠가 한쪽만 바뀐다 */
+  assert.match(css, /\.dm-f \.ic\{[^}]*color:/,
     '아이콘 색을 두 줄이 따로 받습니다');
-  assert.match(css, /\.dm-f\.on \.ic\s*,\s*\.dm-f\.on \.dot\{[^}]*color:/,
+  assert.match(css, /\.dm-f\.on \.ic\{[^}]*color:/,
     '고른 줄 아이콘 색을 따로 받습니다');
 });
 

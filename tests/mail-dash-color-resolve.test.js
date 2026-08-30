@@ -117,24 +117,31 @@ const ICON = (kind, extra, ico) => [
 
 /* ── 견주는 자리 ── */
 const CASES = [
-  ['줄 바탕(평소)',      ROW('whobin'),        ROW('topicbin'),        'background'],
+  /* 넷째 자리 true = «일부러» 정한 곳이 없는 자리. 줄 바탕은 평소엔 투명이 맞다. */
+  ['줄 바탕(평소)',      ROW('whobin'),        ROW('topicbin'),        'background', true],
   ['줄 글자(평소)',      ROW('whobin'),        ROW('topicbin'),        'color'],
   ['줄 높이',            ROW('whobin'),        ROW('topicbin'),        'height'],
   ['글자 크기',          ROW('whobin'),        ROW('topicbin'),        'font-size'],
   ['고른 줄 바탕',       ROW('whobin', ['on']), ROW('topicbin', ['on']), 'background'],
   ['고른 줄 글자',       ROW('whobin', ['on']), ROW('topicbin', ['on']), 'color'],
   ['고른 줄 굵기',       ROW('whobin', ['on']), ROW('topicbin', ['on']), 'font-weight'],
-  ['아이콘 색(평소)',    ICON('whobin', [], 'ic'), ICON('topicbin', [], 'dot'), 'color'],
-  ['아이콘 색(고른 줄)', ICON('whobin', ['on'], 'ic'), ICON('topicbin', ['on'], 'dot'), 'color'],
-  ['아이콘 상자 폭',     ICON('whobin', [], 'ic'), ICON('topicbin', [], 'dot'), 'width'],
+  ['아이콘 색(평소)',    ICON('whobin', [], 'ic'), ICON('topicbin', [], 'ic'), 'color'],
+  ['아이콘 색(고른 줄)', ICON('whobin', ['on'], 'ic'), ICON('topicbin', ['on'], 'ic'), 'color'],
+  ['아이콘 상자 폭',     ICON('whobin', [], 'ic'), ICON('topicbin', [], 'ic'), 'width'],
   ['안읽음 숫자 색',     ICON('whobin', [], 'nu'), ICON('topicbin', [], 'nu'), 'color'],
 ];
 
 test('★★ 두 대시보드의 «최종 색·크기»가 모두 같다 (계단을 풀어서 견준다)', () => {
   const bad = [];
-  CASES.forEach(([what, a, b, prop]) => {
+  CASES.forEach(([what, a, b, prop, mayBeNone]) => {
     const x = resolve(a, prop), y = resolve(b, prop);
     const xv = x ? x.v : '(정한 곳 없음)', yv = y ? y.v : '(정한 곳 없음)';
+    /* ⚠ 둘 다 «없음»이면 같다고 볼 수 없다 — 규칙을 통째로 지워도 초록이 된다.
+       .ic 로 이름을 합칠 때 실제로 이 구멍이 열렸었다(2026-08-30). */
+    if (!x && !y) {
+      if (!mayBeNone) bad.push(what + ' — 양쪽 다 정한 곳이 없습니다(규칙이 사라졌나)');
+      return;
+    }
     if (xv !== yv) bad.push(what + ' — 담당자 ' + xv + ' (' + (x && x.sel) + ')'
       + ' vs 업무별 ' + yv + ' (' + (y && y.sel) + ')');
   });
