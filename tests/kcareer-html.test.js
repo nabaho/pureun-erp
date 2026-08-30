@@ -1100,17 +1100,54 @@ test('백업 재촉은 실제로 불리고, 안 사라지는 띠로 보인다', 
   assert.match(source.slice(i, i + 800), /onclick="backupExport\(\);return false"/);
 });
 
-test('시드(기본 데이터) 건수 — 지금 화면과 대조할 진단 기준', () => {
-  // 시드 wiccok 86건 = 위촉장 79 + 표창 7. 위촉장 탭이 79건이면 시드로 되돌아간 것이다.
-  const i = source.indexOf('window.__SEED__=');
-  assert.ok(i > 0, '시드 데이터를 찾을 수 없습니다');
-  const j = source.indexOf('</script>', i);
-  const seed = JSON.parse(source.slice(i + 'window.__SEED__='.length, j).replace(/;\s*$/, ''));
-  const w = seed.wiccok || [];
-  assert.equal(w.length, 86, '시드 wiccok 건수가 바뀌면 진단 기준도 바뀝니다');
-  assert.equal(w.filter((r) => r.type === '위촉장').length, 79);
-  assert.equal(w.filter((r) => r.src || r.relPath || r.genFileId || r.origFileId).length, 0,
-    '시드에는 원본이 붙어 있지 않다 — 그래서 시드로 돌아가면 원본도 전부 사라진 것처럼 보인다');
+/* ===== ★★ 개인정보를 «파일에» 두지 않는다 (2026-08-30, 대표 지시 「시드 제거」) =====
+   kcareer.html 은 nabaho.github.io 에서 누구나 받을 수 있고 «소스 보기»로 통째로 읽힌다.
+   화면 잠금은 보이는 것만 가릴 뿐 파일을 비밀로 만들지 못한다.
+   전에는 이 파일 안에 대표 기록 185건(43KB) · 도장 그림 2개(32KB) ·
+   성명·생년월일·전화·이메일·주소가 그대로 들어 있었다. 전부 뺐다.
+   ⚠ 아래 검사를 느슨하게 고치거나 지우지 말 것 — 그 순간 다시 새어 나간다. */
+
+test('★★ 기본데이터(시드)를 파일에 다시 넣지 않는다', () => {
+  assert.equal(source.indexOf('window.__SEED__='), -1,
+    '⚠ 실제 기록을 파일에 넣으면 소스 보기로 누구나 읽습니다');
+  // SEED 상수 자체는 남아 있어도 된다 — 늘 비어 있기만 하면 된다
+  assert.match(source, /const SEED = window\.__SEED__ \|\| \{\};/);
+});
+
+test('★★ 도장 그림을 파일에 두지 않는다 — 떼어다 다른 서류에 붙일 수 있다', () => {
+  assert.match(source, /const STAMP_SEED=\[\];/, '⚠ 도장 그림을 다시 넣지 말 것');
+  // 큰 base64 덩어리가 통째로 들어오는 것을 막는다(API 키 확인용 1×1 PNG는 아주 짧다)
+  const blobs = (source.match(/'iVBORw0KGgo[A-Za-z0-9+/=]{200,}'/g) || []);
+  assert.equal(blobs.length, 0, '⚠ 그림을 base64 로 박아 넣지 말 것 (지금 ' + blobs.length + '개)');
+});
+
+test('★★ 개인정보 기본값이 비어 있다 — 성명·생년월일·연락처·주소', () => {
+  const m = source.match(/const USER_INFO=\{[\s\S]*?\};/);
+  assert.ok(m, 'USER_INFO 를 찾을 수 없습니다');
+  const body = m[0];
+  ['성명', '자격', '생년월일', '전화', '이메일', '주소', '소속'].forEach((k) => {
+    assert.match(body, new RegExp(k + ":'?'"), k + ' 는 비어 있어야 합니다');
+  });
+});
+
+test('★★ 실제 연락처·주소·생년월일이 파일 어디에도 없다 (주석 포함)', () => {
+  // 주석에 「실측」이라며 진짜 번호를 적어 두는 일이 실제로 있었다
+  const leaks = [
+    [/\b0\d{2,3}-\d{3,4}-\d{4}\b/, '전화번호'],
+    [/[A-Za-z0-9._%+-]+@(daum|naver|gmail|hanmail|kakao)\.[a-z]+/i, '개인 이메일'],
+    [/\b19\d{2}\.\d{2}\.\d{2}\b/, '생년월일'],
+    [/제\s?\d{4}호/, '자격번호'],
+  ];
+  leaks.forEach(([re, what]) => {
+    const hit = source.match(re);
+    assert.equal(hit, null, '⚠ ' + what + ' 가 파일에 남아 있습니다: ' + (hit && hit[0]));
+  });
+});
+
+test('★ 「기본데이터 복원」은 되살릴 것이 없으면 어디서 되살리는지 알려 준다', () => {
+  const r = funcSource('reseed');
+  assert.match(r, /Object\.keys\(SEED\)\.length/, '비었는지 먼저 봐야 합니다');
+  assert.match(r, /백업에서 되살리기/, '되살릴 곳을 알려 줘야 합니다');
 });
 
 /* ===== 메뉴·대시보드 배치 기기 간 동기화 (2026-08-24) ===== */
