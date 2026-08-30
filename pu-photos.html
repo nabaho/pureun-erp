@@ -1364,9 +1364,16 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
 #viewerBody{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;padding:0 12px 10px}
 #viewerPic{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:auto}
 #viewerPic img{max-width:100%;max-height:100%;object-fit:contain;cursor:zoom-in}
-/* 원본 크기로 확대 — 서류는 글씨를 봐야 하므로 줄여 놓은 것만으로는 부족하다 */
+/* 원본 크기로 확대 — 서류는 글씨를 봐야 하므로 줄여 놓은 것만으로는 부족하다.
+   ⚠ 확대하면 사진이 제 크기가 되어 **화면에는 한 귀퉁이만 든다.** 그래서 확대한 뒤에는
+     «끌어서 움직이는 것»이 반드시 있어야 한다 (대표 지시 2026-08-30
+     "확대이후에 마우스 움직임이 필요하다" · "화면이 한참 잘린채로 나온다").
+     굴림막대만으로는 안 된다 — 어두운 바탕이라 막대가 거의 안 보인다. */
 #viewerPic.zoom{align-items:flex-start;justify-content:flex-start}
-#viewerPic.zoom img{max-width:none;max-height:none;cursor:zoom-out}
+#viewerPic.zoom img{max-width:none;max-height:none;cursor:grab}
+#viewerPic.zoom.panning img{cursor:grabbing}
+/* 끄는 동안 글자·그림이 «선택»되면 파랗게 덮여 사진이 안 보인다 */
+#viewerPic.zoom.panning{user-select:none}
 
 /* 크게 보기 안 — 서류 판독 결과.
    2026-08-06 대표 지시: 판독 정보를 **왼쪽**에, **밝은색**으로.
@@ -2131,7 +2138,9 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
       <!-- draggable="false": 이 그림을 끌면 창이 남의 파일로 오해해 같은 사진을
            새 번호로 다시 올린다(재복사). 새 그림을 넣을 때도 반드시 붙일 것 —
            tests/pu-photos-html.test.js 가 못 박아 두었다. -->
-      <div id="viewerPic" onclick="picClick(event)"><img id="viewerImg" alt="" draggable="true"
+      <div id="viewerPic" onclick="picClick(event)"
+        onpointerdown="picPanStart(event)" onpointermove="picPanMove(event)"
+        onpointerup="picPanEnd()" onpointercancel="picPanEnd()"><img id="viewerImg" alt="" draggable="true"
         ondragstart="viewerDragOut(event)" title="끌어서 다른 프로그램에 넣습니다 · 안 들어가면 「📋 복사」 뒤 Ctrl+V">
         <!-- 돌리기 — 폰으로 찍으면 누워 들어오는 것이 있고, 누우면 글씨를 못 읽는다.
              사진을 누르면 원본 크기로 열리므로 이 단추는 클릭이 위로 안 새게 막는다. -->
@@ -10933,7 +10942,9 @@ function openViewer(id) {
       /* ← → 안내는 **넘길 수 있을 때만** 적는다 — 한 장뿐인데 적어 두면
          눌러도 아무 일이 안 일어나 「고장났나」가 된다. */
       const navTip = photoWhere() ? '← → 키로 앞뒤 사진 · ' : '';
-      $('viewerHint').textContent = (it && it.meta.w ? capTxt + '저장본 ' + it.meta.w + '×' + it.meta.h + sh + ' · ' : '') + navTip + '사진을 누르면 원본 크기 · 바깥을 누르면 닫힘';
+      /* ⚠ 확대한 뒤 «끌어서 움직인다»는 것을 반드시 적는다(대표 지시 2026-08-30) —
+         확대하면 한 귀퉁이만 들어, 움직일 수 있다는 걸 모르면 「잘린 채로 나온다」가 된다. */
+      $('viewerHint').textContent = (it && it.meta.w ? capTxt + '저장본 ' + it.meta.w + '×' + it.meta.h + sh + ' · ' : '') + navTip + '사진을 누르면 그 자리가 원본 크기로 · 그 뒤 끌어서 움직임 · 바깥을 누르면 닫힘';
     } else if (!src) {
       showNoBody(it, got.why || '');
     }
@@ -11201,6 +11212,9 @@ function closeViewer() {
    ⚠ 다른 프로그램이 알아듣는 것은 **DownloadURL** 이다. data: 주소로는 잘 안 되므로
       blob: 주소를 만들어 준다. 만든 주소는 잠시 뒤 놓아 준다(안 놓으면 기억이 샌다). */
 function viewerDragOut(e) {
+  /* ⚠ 확대 중에 끄는 것은 «사진을 움직이는 것»이다(대표 지시 2026-08-30).
+     여기서 막지 않으면 움직이려 할 때마다 파일이 딸려 나가 사진이 안 움직인다. */
+  if ($('viewerPic').classList.contains('zoom')) { e.preventDefault(); return; }
   const img = $('viewerImg');
   const dt = e.dataTransfer;
   if (!img || !img.src || !dt) return;
@@ -11257,15 +11271,80 @@ function dataUrlToBlobUrl(src) {
   } catch (_) { return null; }
 }
 
+/* ══════ 확대한 사진을 «끌어서» 본다 (대표 지시 2026-08-30) ══════
+   "확대이후에 마우스 움직임이 필요하다" · "화면이 한참 잘린채로 나온다"
+
+   확대하면 사진이 제 크기가 되어 화면에는 한 귀퉁이만 든다. 지금까지 움직이는 길은
+   굴림막대뿐이었는데 **어두운 바탕이라 막대가 거의 안 보인다** — 그래서 사진이
+   잘린 채로 멈춰 있는 것처럼 보였다.
+
+   ⚠ **끈 것을 「누른 것」으로 세면 안 된다.** 그러면 손을 떼는 순간 확대가 풀려
+     방금 찾아간 자리를 잃는다. 몇 픽셀이라도 움직였으면 누른 것이 아니다.
+   ⚠ **확대가 아닐 때는 손대지 않는다** — 그때 사진을 끄는 것은 예전부터
+     「다른 프로그램으로 끌어내기」다. 한 손짓에 두 뜻을 담지 않는다. */
+let _picPan = null;
+let _picPanned = false;     /* 방금 끌었나 — 눌린 것으로 세지 않으려고 */
+
+function picPanStart(e) {
+  const pic = $('viewerPic');
+  if (photoEditing() || !pic.classList.contains('zoom')) return;
+  _picPan = { x: e.clientX, y: e.clientY, l: pic.scrollLeft, t: pic.scrollTop,
+    id: e.pointerId, moved: false };
+  pic.classList.add('panning');
+  /* 손가락을 붙잡는다 — 안 그러면 빨리 끌 때 커서가 사진을 벗어나 그 자리에 멈춘다 */
+  try { pic.setPointerCapture(e.pointerId); } catch (_) { /* 오래된 웹뷰 */ }
+  e.preventDefault();       /* 확대 중에는 「끌어내기」가 아니다 */
+}
+
+function picPanMove(e) {
+  if (!_picPan) return;
+  const pic = $('viewerPic');
+  const dx = e.clientX - _picPan.x;
+  const dy = e.clientY - _picPan.y;
+  /* 3px 은 «손떨림»이다 — 이보다 작으면 끈 것이 아니라 누른 것이다 */
+  if (Math.abs(dx) > 3 || Math.abs(dy) > 3) _picPan.moved = true;
+  pic.scrollLeft = _picPan.l - dx;
+  pic.scrollTop = _picPan.t - dy;
+}
+
+function picPanEnd() {
+  const pic = $('viewerPic');
+  if (_picPan) {
+    try { pic.releasePointerCapture(_picPan.id); } catch (_) {}
+    _picPanned = _picPan.moved;
+  }
+  _picPan = null;
+  pic.classList.remove('panning');
+}
+
+/* 누른 «그 자리»가 가운데 오게 맞춘다 — 늘 왼쪽 위로 튀면, 보려던 곳은
+   화면 밖이라 「확대했더니 엉뚱한 데가 나온다」가 된다. */
+function zoomToPoint(pic, img, cx, cy) {
+  const r = img.getBoundingClientRect();          /* 확대 «전» 사진 자리 */
+  if (!r.width || !r.height) return;
+  const rx = (cx - r.left) / r.width;
+  const ry = (cy - r.top) / r.height;
+  pic.classList.add('zoom');
+  /* 여기서 offsetWidth 를 읽으면 확대된 «뒤» 크기가 온다 */
+  pic.scrollLeft = rx * img.offsetWidth - pic.clientWidth / 2;
+  pic.scrollTop = ry * img.offsetHeight - pic.clientHeight / 2;
+}
+
 function picClick(e) {
   /* ⚠ 편집 중에는 사진 자리를 눌러도 아무 일이 없어야 한다(대표 지시 2026-08-29).
      안 막으면 네모를 하나 그을 때마다 **창이 닫힌다** — 사진 바깥을 누른 것으로
      읽히기 때문이다. 그리고 그은 것이 통째로 사라진다. */
   if (photoEditing()) return;
+  /* 끌어서 옮긴 것이면 «누른 것»이 아니다 — 확대를 풀지도, 창을 닫지도 않는다 */
+  if (_picPanned) { _picPanned = false; return; }
   if (e.target && e.target.id === 'viewerImg') {
     const pic = $('viewerPic');
-    const zoom = pic.classList.toggle('zoom');
-    if (!zoom) { pic.scrollTop = 0; pic.scrollLeft = 0; }
+    if (pic.classList.contains('zoom')) {
+      pic.classList.remove('zoom');
+      pic.scrollTop = 0; pic.scrollLeft = 0;
+    } else {
+      zoomToPoint(pic, e.target, e.clientX, e.clientY);
+    }
     return;
   }
   closeViewer();
