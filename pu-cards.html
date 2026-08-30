@@ -14594,9 +14594,37 @@ function mbVisibleRows(){
 function mbFiltering(){
   return !!(state.mbFilter || String(state.mbQ||'').trim());
 }
+/* ══════════════════════════════════════════════════════════════════════════
+   손에 드는 양의 «한도» (대표 검토 2026-08-30 「1년치를 갖고 있으면 느려지나」)
+   ══════════════════════════════════════════════════════════════════════════
+   ★ 재 보고 정했다 — 한 줄이 184바이트다.
+       3,300줄(로그인 직후) 0.6MB · 목록 106ms
+       30,000줄(1년치를 다 받으면) 5.3MB · 목록 687ms · 옆줄 929ms
+     서버에 얼마가 «쌓이든» 로그인은 그대로다 — 칸마다 끝에서 100통만 받는다.
+     느려지는 자리는 «쪽번호로 깊이 들어갈 때» 하나뿐이었다.
+   ⚠ 예전에는 칸마다 «같은 수»를 요구했다 — 전체메일 2쪽을 눌렀을 뿐인데
+     33칸 × 200 = 6,600줄이었다. 300쪽으로 뛰면 5MB 를 한 번에 끌어와
+     브라우저가 멎는다. 1년치가 쌓이기 «전»에 막아 둔다.
+   ⚠ 한도를 넘는 옛 메일은 «없어지는 것이 아니다» — 서버에 그대로 있고,
+     🔎 찾기(본문까지)로 곧장 간다. 300쪽을 눌러 8개월 전 메일을 찾는 사람은 없다.
+   ⚠ 「이 칸에 모두 몇 통」은 «줄이지 않는다». 손에 든 것과 실제 통수가 다르다는
+     것을 숨기면, 안 보이는 메일이 없는 메일이 된다. */
+const MB_HOLD_MAX = 5000;   /* 한 번에 손에 드는 줄 수 — 0.9MB · 목록 150ms 쯤 */
+/* 이 칸에서 «칸마다» 몇 줄까지 받아도 되나 */
+function mbHoldPer(){
+  const n = Math.max(1, mbNeedSlugs(mbNow()).length);
+  return Math.max(mbPageSize(), Math.floor(MB_HOLD_MAX / n));
+}
+/* 지금 «보여 줄 수 있는» 줄 수 — 한도까지 */
+function mbHoldMax(){
+  return mbHoldPer() * Math.max(1, mbNeedSlugs(mbNow()).length);
+}
 function mbPageCount(){
   const have = mbMatchedRows().length;
-  const total = mbFiltering() ? have : Math.max(have, mbBoxTotal());
+  /* 찾는 중이면 손에 든 것이 곧 전부다 */
+  if(mbFiltering()) return Math.max(1, Math.ceil(have / mbPageSize()));
+  /* ⚠ 한도까지만 쪽을 내놓는다 — 못 갈 쪽을 그려 두면 눌렀을 때 빈 화면이 된다 */
+  const total = Math.min(Math.max(have, mbBoxTotal()), mbHoldMax());
   return Math.max(1, Math.ceil(total / mbPageSize()));
 }
 /* 그 쪽으로 간다. 아직 안 받아 온 쪽이면 «먼저 받아 온 뒤» 그린다 —
@@ -14605,8 +14633,11 @@ function mbPageGo(p){
   const last = mbPageCount();
   p = Math.min(Math.max(1, Number(p)||1), last);
   state.mbPage = p;
-  const need = p * mbPageSize();
-  if(!mbFiltering() && mbMatchedRows().length < need && mbBoxTotal() > mbMatchedRows().length){
+  /* ⚠ 칸마다 «한도까지만» 요구한다. 예전에는 p × 100 을 칸마다 그대로 요구해서,
+       전체메일 2쪽을 눌렀을 뿐인데 33칸 × 200 = 6,600줄이었다. */
+  const need = Math.min(p * mbPageSize(), mbHoldPer());
+  if(!mbFiltering() && mbMatchedRows().length < p * mbPageSize()
+     && mbBoxTotal() > mbMatchedRows().length){
     const slugs = mbNeedSlugs(mbNow());
     let left = slugs.length;
     if(left){
@@ -16775,7 +16806,10 @@ function mbListHtml(){
       ? `${rows.length.toLocaleString()}통 보는 중`
         + (mbBoxTotal() > rows.length ? ` · 이 칸에 모두 ${mbBoxTotal().toLocaleString()}통` : '')
         + (nPick?` · ${nPick}통 고름`:'') + ' · '
-      : ''}${esc(meta)}</div>
+      : ''}${esc(meta)}${/* ⚠ 한도에 닿았으면 «어디로 가면 되는지»를 적는다.
+           안 적으면 「옛 메일이 없어졌다」로 읽힌다 — 서버에는 그대로 있다. */''}${
+      (!mbFiltering() && mbBoxTotal() > mbHoldMax())
+        ? ` · 더 옛 메일은 <b>🔎 찾기</b>로 보십시오` : ''}</div>
     </div>
     <div class="dm-list ${mbDense()}">${body}</div>
     ${/* ── 아래 영역 — 쪽번호와 보기설정 (대표 지시 2026-08-30, 다음메일 캡처3·4) ──
