@@ -6,7 +6,8 @@
    자료를 새로 만들지 않으므로, 지킬 것은 «세는 법»과 «사람 맞추기» 둘이다.
 
    ⚠ 글자를 찾지 않고 함수를 돌린다. 가짜 화면·가짜 DB 를 끼워 진짜 코드를 태운다.
-   ⚠ 숫자를 박지 않는다 — 규칙(사무실은 사진을 안 센다 처럼)만 본다. */
+   ⚠ 숫자를 박지 않는다 — 규칙(사무실은 사진을 안 센다 처럼)만 본다.
+   ⚠ 「오늘」을 가짜로 넣는다 — 안 그러면 내일 이 검사가 저절로 깨진다. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -14,6 +15,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'work.html'), 'utf8');
+const TODAY = '2026-08-30T09:00:00';
 
 function fnSrc(name) {
   const m = new RegExp('(?:^|\\n)((?:async )?function ' + name + '\\s*\\()').exec(SRC);
@@ -28,10 +30,22 @@ function fnSrc(name) {
   return SRC.slice(start, k + 1);
 }
 const VIS_DECL = (SRC.match(/var VIS = \{[^}]*\};/) || [])[0];
+assert.ok(VIS_DECL, 'VIS 선언을 찾을 수 없습니다');
+
+const FNS = ['visYm', 'visShift', 'visToday', 'visSetMode', 'visSetScope', 'visSetPick',
+  'visAdmin', 'visGo', 'visLoad', 'visRows', 'visName', 'visMine', 'visGovStaffId',
+  'visForGid', 'visEnded', 'visPhotoMap', 'visSince', 'visDaysAgo', 'visLateRows',
+  'visStaffSummary', 'renderVisits', 'visLateTable', 'visSeg', 'visPill', 'visDay', 'visWhen'];
 
 /* 가짜 세상 하나 — 화면과 DB 를 흉내 낸다 */
-function world(data, me) {
+function world(data, me, opt) {
+  const o = opt || {};
   const app = { innerHTML: '' };
+  const opened = [];
+  /* 「오늘」을 못 박는다 — 인자 없이 부르면 늘 2026-08-30 */
+  const RealDate = Date;
+  function FakeDate(...a) { return a.length ? new RealDate(...a) : new RealDate(TODAY); }
+  FakeDate.now = () => new RealDate(TODAY).getTime();
   const box = {
     console,
     $: id => (id === 'app' ? app : null),
@@ -39,6 +53,9 @@ function world(data, me) {
     loadingHTML: () => '<div>…</div>',
     viewer: () => me,
     viewingSelf: () => true,
+    isAdmin: () => !!o.admin,
+    S: { perfFin: !!o.admin },
+    window: { open: (u) => opened.push(u) },
     fbDb: {
       ref: node => ({
         once: () => Promise.resolve({
@@ -46,17 +63,12 @@ function world(data, me) {
         })
       })
     },
-    Promise, Date, Object, Array, String, Number, Math, isNaN, JSON
+    Promise, Date: FakeDate, Object, Array, String, Number, Math, isNaN, JSON
   };
   vm.createContext(box);
-  vm.runInContext([
-    VIS_DECL,
-    fnSrc('visYm'), fnSrc('visShift'), fnSrc('visLoad'), fnSrc('visRows'),
-    fnSrc('visName'), fnSrc('visMine'), fnSrc('visGovStaffId'),
-    fnSrc('renderVisits'), fnSrc('visPill'), fnSrc('visDay'), fnSrc('visWhen')
-  ].join('\n'), box);
+  vm.runInContext([VIS_DECL].concat(FNS.map(fnSrc)).join('\n'), box);
   box.VIS.ym = '2026-08';
-  return { box, app };
+  return { box, app, opened };
 }
 
 /* 이 달치 자료 한 벌 */
@@ -81,6 +93,8 @@ function fixture() {
   };
 }
 const ME = { sid: 'khh', name: '권형하' };
+
+/* ══════ 이 달 — 세는 법 ══════ */
 
 test('내 일정만 센다 — 남의 것과 지난 달은 안 나온다', async () => {
   const { box, app } = world(fixture(), ME);
@@ -117,8 +131,6 @@ test('지운 사진은 「넣은 적」으로 세지 않는다', async () => {
   ];
   const { box, app } = world(d, ME);
   await box.renderVisits();
-  /* 넣었다 지웠으면 「1장」이 남으면 안 된다 — 그래야 증빙 없는 방문이 드러난다.
-     ⚠ 지금은 add 가 남아 1장으로 잡힌다면 이 검사가 그것을 알려 준다. */
   assert.ok(/사진 없음/.test(app.innerHTML) || /1장/.test(app.innerHTML),
     '지운 뒤 상태를 판단하지 못합니다');
 });
@@ -148,15 +160,23 @@ test('★ 남이 대신 넣어 준 사진도 «있음»으로 센다 — 「없�
 });
 
 test('★ 공용 기록보다 앞선 방문은 「기록 없음」 — 빨간 「없음」이 아니다', async () => {
-  /* 사진 이력을 공용으로 올리기 시작한 것은 2026-08-30 부터다. 그 전 것은
-     각자 PC 안에만 있어, 넣었는지 «알 수가 없다». */
   const d = fixture();
-  d.scal_photoLog = [{ t: '2026-08-22T00:00:00.000Z', action: 'add', sid: 's2', slot: 0, whoSid: 'khh' }];
+  /* 기록은 8/22 부터 있다(딴 일정 것) → 8/20 방문은 «알 수 없음», 8/24 는 진짜 없음 */
+  d.scal_photoLog = [{ t: '2026-08-22T00:00:00.000Z', action: 'add', sid: 'sZ', slot: 0, whoSid: 'khh' }];
   const { box, app } = world(d, ME);
   await box.renderVisits();
-  /* s2(8/20)는 기록 있음 · s1(8/24)은 기록 뒤라 진짜 「없음」 · 사무실 s3 은 안 셈 */
-  assert.match(app.innerHTML, /기록 없음/, '★ 「기록 없음」을 안 가릅니다');
+  /* ★ 설명 글이 아니라 «표 칸»을 본다 — 글만 보면 줄이 사라져도 통과한다 */
+  assert.match(app.innerHTML, />기록 없음</, '★ 표 칸이 「기록 없음」이 아닙니다');
+  assert.match(app.innerHTML, /기록 없음 1건/, '★ 「기록 없음」을 따로 안 셉니다');
   assert.match(app.innerHTML, /사진 없음 1건/, '★ 기록 뒤 방문까지 「기록 없음」으로 묻었습니다');
+});
+
+test('★ 「기록 없음」이 없으면 그 설명도 안 적는다 — 없는 문제를 찾게 만들지 않는다', async () => {
+  const d = fixture();
+  d.scal_photoLog = [{ t: '2026-07-01T00:00:00.000Z', action: 'add', sid: 'sZ', slot: 0, whoSid: 'khh' }];
+  const { box, app } = world(d, ME);
+  await box.renderVisits();
+  assert.doesNotMatch(app.innerHTML, /기록 없음/, '★ 「기록 없음」이 없는데 설명이 붙습니다');
 });
 
 test('★ 기록이 하나도 없으면 전부 「기록 없음」 — 온통 빨갛게 만들지 않는다', async () => {
@@ -184,4 +204,157 @@ test('컨설팅일정을 못 읽으면 그렇게 말한다 — 조용히 비우�
   box.VIS.scheds = null; box.VIS.log = null;
   await box.renderVisits();
   assert.match(app.innerHTML, /읽지 못했|정부사업일정/, '★ 못 읽었는데 조용합니다');
+});
+
+/* ══════ ④ 줄을 눌러 그 일정으로 ══════ */
+
+test('★ 줄을 누르면 정부사업일정의 «그» 일정이 열린다', async () => {
+  const { box, app, opened } = world(fixture(), ME);
+  await box.renderVisits();
+  assert.match(app.innerHTML, /visGo\('s1'\)/, '★ 줄에 건너갈 길이 없습니다');
+  box.visGo('s1');
+  assert.equal(opened.length, 1, '★ 아무것도 안 열립니다');
+  assert.match(opened[0], /gov-consulting\.html#sc=s1/, '★ 그 일정으로 안 갑니다');
+});
+
+test('★ 여기서 «고치지» 않는다 — 넣는 일은 원래 자리에서만', () => {
+  /* 업무관리가 컨설팅일정 자료를 쓰기 시작하면 같은 일을 두 곳에서 하게 되고,
+     언젠가 한쪽이 어긋난다. 읽기만 하는 것이 이 화면의 규칙이다. */
+  const blk = SRC.slice(SRC.indexOf('var VIS = {'), SRC.indexOf('function renderHo'));
+  assert.doesNotMatch(blk, /\.set\(|\.update\(|\.push\(|fbPush/, '★ 이 화면이 자료를 씁니다');
+});
+
+/* ══════ ⑥ 밀린 것 모두 ══════ */
+
+test('★ 「밀린 것 모두」는 지난 달 것도 담는다 — 달을 넘겨 가며 찾지 않게', async () => {
+  const d = fixture();
+  d.scal_photoLog = [{ t: '2026-06-01T00:00:00.000Z', action: 'add', sid: 'sZ', slot: 0 }];
+  const { box, app } = world(d, ME);
+  box.visSetMode('late');
+  await box.renderVisits();
+  assert.match(app.innerHTML, /9회/, '★ 지난 달에 밀린 것을 안 보여 줍니다');
+  assert.match(app.innerHTML, /지남/, '★ 며칠 밀렸는지 안 적습니다');
+});
+
+test('★ 밀린 목록은 «오래된 것 먼저» — 급한 것이 아래로 가면 안 된다', async () => {
+  const d = fixture();
+  d.scal_photoLog = [{ t: '2026-06-01T00:00:00.000Z', action: 'add', sid: 'sZ', slot: 0 }];
+  const { box, app } = world(d, ME);
+  box.visSetMode('late');
+  await box.renderVisits();
+  assert.ok(app.innerHTML.indexOf('9회') < app.innerHTML.indexOf('5회'),
+    '★ 오래된 것이 뒤에 있습니다');
+});
+
+test('★ 오늘·앞으로의 방문은 밀린 것이 아니다', async () => {
+  const d = fixture();
+  d.scal_scheds.push({ id: 's6', date: '2026-08-30', coId: 'c1', typeId: 't1', round: 7, attId: 'g1', isField: true });
+  d.scal_scheds.push({ id: 's7', date: '2026-09-05', coId: 'c1', typeId: 't1', round: 8, attId: 'g1', isField: true });
+  d.scal_photoLog = [{ t: '2026-06-01T00:00:00.000Z', action: 'add', sid: 'sZ', slot: 0 }];
+  const { box, app } = world(d, ME);
+  box.visSetMode('late');
+  await box.renderVisits();
+  assert.doesNotMatch(app.innerHTML, /7회/, '★ 오늘 방문을 밀린 것으로 셌습니다');
+  assert.doesNotMatch(app.innerHTML, /8회/, '★ 앞으로의 방문을 밀린 것으로 셌습니다');
+});
+
+test('★ 끝난 컨설팅은 안 담는다 — 제출이 끝난 건을 매일 보여 주면 목록을 안 보게 된다', async () => {
+  const d = fixture();
+  d.scal_cos = [{ id: 'c1', name: '이피아', endedTypes: { t1: 1 } }, { id: 'c2', name: '삼화케미칼' }];
+  d.scal_photoLog = [{ t: '2026-06-01T00:00:00.000Z', action: 'add', sid: 'sZ', slot: 0 }];
+  const { box, app } = world(d, ME);
+  box.visSetMode('late');
+  await box.renderVisits();
+  assert.doesNotMatch(app.innerHTML, /9회/, '★ 끝난 컨설팅을 담았습니다');
+  assert.match(app.innerHTML, /5회/, '살아 있는 건까지 걸렀습니다');
+});
+
+test('★ 「기록 없음」은 빨간 것과 «섞지 않는다» — 진짜 빠진 것이 묻힌다', async () => {
+  const d = fixture();
+  /* 기록이 8/22 부터 → 8/20(s2)·7/30(s5)은 「기록 없음」 */
+  d.scal_photoLog = [{ t: '2026-08-22T00:00:00.000Z', action: 'add', sid: 'sZ', slot: 0 }];
+  const { box, app } = world(d, ME);
+  box.visSetMode('late');
+  await box.renderVisits();
+  /* 8/24 만 진짜 「없음」이고, 그보다 앞선 둘은 「기록 없음」이어야 한다 */
+  assert.match(app.innerHTML, /사진 없음 1건/, '★ 알 수 없는 것까지 「없음」으로 셌습니다');
+  assert.match(app.innerHTML, /기록 없음 2건/, '★ 「기록 없음」을 따로 안 셉니다');
+  assert.match(app.innerHTML, /알 수 없는 것/, '★ 왜 따로 두는지 안 적습니다');
+  /* ★ 두 표가 «갈라져» 있어야 한다 — 섞이면 진짜 빠진 것이 묻힌다 */
+  const cut = app.innerHTML.indexOf('알 수 없는 것');
+  assert.ok(app.innerHTML.indexOf("visGo('s1')") < cut, '★ 진짜 빠진 것이 아래로 밀렸습니다');
+  assert.ok(app.innerHTML.indexOf("visGo('s5')") > cut, '★ 알 수 없는 것이 위에 섞였습니다');
+});
+
+test('밀린 것이 없으면 그렇게 말한다 — 빈 표를 보여 주지 않는다', async () => {
+  const d = fixture();
+  d.scal_scheds = [{ id: 's1', date: '2026-08-24', coId: 'c1', typeId: 't1', round: 2, attId: 'g1', isField: true }];
+  d.scal_photoLog = [{ t: '2026-08-01T00:00:00.000Z', action: 'add', sid: 's1', slot: 0, whoSid: 'khh' }];
+  const { box, app } = world(d, ME);
+  box.visSetMode('late');
+  await box.renderVisits();
+  assert.match(app.innerHTML, /밀린 것 없음|빠진 지난 방문이 없습니다/, '★ 밀린 것이 없는데 안 알려 줍니다');
+});
+
+/* ══════ ⑤ 전 직원 한눈에 (관리자) ══════ */
+
+test('★ 「전 직원」 단추는 관리자에게만 보인다', async () => {
+  const a = world(fixture(), ME, { admin: false });
+  await a.box.renderVisits();
+  assert.doesNotMatch(a.app.innerHTML, /전 직원/, '★ 관리자가 아닌데 전 직원 단추가 보입니다');
+  const b = world(fixture(), ME, { admin: true });
+  await b.box.renderVisits();
+  assert.match(b.app.innerHTML, /전 직원/, '관리자에게 안 보입니다');
+});
+
+test('★ 관리자가 아니면 전 직원으로 «넘어갈 수도» 없다 — 단추만 숨기면 뚫린다', async () => {
+  const { box, app } = world(fixture(), ME, { admin: false });
+  box.visSetScope('all');
+  await box.renderVisits();
+  assert.doesNotMatch(app.innerHTML, /담당<\/th>/, '★ 권한 없이 전 직원 표가 열렸습니다');
+  assert.doesNotMatch(app.innerHTML, /박재원/, '★ 남의 이름이 보입니다');
+});
+
+test('전 직원은 사람마다 «한 줄» — 처음부터 다 늘어놓지 않는다', async () => {
+  const { box, app } = world(fixture(), ME, { admin: true });
+  box.visSetScope('all');
+  await box.renderVisits();
+  assert.match(app.innerHTML, /권형하/);
+  assert.match(app.innerHTML, /박재원/, '★ 일정이 있는 사람이 빠졌습니다');
+  /* 줄을 눌러 펼치는 길이 있어야 한다 */
+  assert.match(app.innerHTML, /visSetPick\('g2'\)/, '★ 그 사람 목록으로 갈 길이 없습니다');
+});
+
+test('★ 전 직원은 «밀린 날수»로 줄을 세운다 — 건수로 줄 세우는 표가 아니다', async () => {
+  const d = fixture();
+  /* 박재원에게 아주 오래 밀린 것을 하나 준다 */
+  d.scal_scheds.push({ id: 's8', date: '2026-06-01', coId: 'c1', typeId: 't1', round: 6, attId: 'g2', isField: true });
+  d.scal_photoLog = [{ t: '2026-05-01T00:00:00.000Z', action: 'add', sid: 'sZ', slot: 0 }];
+  const { box, app } = world(d, ME, { admin: true });
+  box.visSetScope('all');
+  await box.renderVisits();
+  /* 권형하가 방문 건수는 더 많지만, 더 오래 밀린 박재원이 위로 와야 한다 */
+  assert.ok(app.innerHTML.indexOf('박재원') < app.innerHTML.indexOf('권형하'),
+    '★ 오래 밀린 사람이 아래에 있습니다');
+});
+
+test('★ 남을 펼쳐 보면 «그 사람 눈»으로 본다 — 본인이 넣은 것에 제 이름이 붙으면 안 된다', async () => {
+  /* 「누가 넣었나」를 보는 사람(관리자) 기준으로 재면, 박재원 님 화면에
+     「박재원 넣음」이 붙는다 — 본인이 넣은 것인데 남이 넣은 것처럼 읽힌다. */
+  const { box, app } = world(fixture(), ME, { admin: true });
+  box.visSetScope('all');
+  box.visSetPick('g2');
+  await box.renderVisits();
+  assert.match(app.innerHTML, /1장/, '★ 그 사람 사진을 안 셉니다');
+  assert.doesNotMatch(app.innerHTML, /· [^<]*넣음/, '★ 본인이 넣은 것에 제 이름을 붙였습니다');
+});
+
+test('한 사람을 펼치면 «그 사람» 것이 나오고, 돌아갈 길이 있다', async () => {
+  const { box, app } = world(fixture(), ME, { admin: true });
+  box.visSetScope('all');
+  box.visSetPick('g2');
+  await box.renderVisits();
+  assert.match(app.innerHTML, /박재원 님/, '★ 누구 것인지 안 적습니다');
+  assert.match(app.innerHTML, /1회/, '★ 그 사람 일정이 안 나옵니다');
+  assert.match(app.innerHTML, /전 직원으로/, '★ 돌아갈 길이 없습니다');
 });

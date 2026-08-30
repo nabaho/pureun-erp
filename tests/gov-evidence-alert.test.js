@@ -159,3 +159,61 @@ test('같은 줄인지 가리는 열쇠에 «칸 번호»가 들어간다 — �
   const c = b.logKey({ t: '1', sid: 's1', slot: 1, action: 'add' });
   assert.notEqual(a, c, '★ 다른 칸인데 같은 줄로 봅니다');
 });
+
+/* ══════ ④ 업무관리에서 「줄을 눌러」 건너오기 ══════
+   주소 끝에 #sc=<일정번호> 가 붙어 온다. 자료는 클라우드에서 «늦게» 오므로
+   바로 열면 없다고 나온다 — 나타날 때까지 기다리는 것이 규칙이다. */
+function linkBox(opt) {
+  const o = opt || {};
+  const opened = [], said = [];
+  let hash = o.hash != null ? o.hash : '#sc=s1';
+  let seen = 0;                                  // 몇 번째 확인에서 일정이 나타나나
+  const box = {
+    console,
+    location: { get hash() { return hash; }, pathname: '/gov-consulting.html', search: '' },
+    history: { replaceState: () => { hash = ''; } },
+    setTimeout: (fn) => { fn(); },               // 기다림을 건너뛴다(검사는 바로 돈다)
+    getScheds: () => (++seen >= (o.appearAt || 1) ? [{ id: 's1' }] : []),
+    openEditModal: sid => opened.push(sid),
+    toast: (m, k) => said.push(String(m)),
+    decodeURIComponent, String, Object, Array
+  };
+  vm.createContext(box);
+  vm.runInContext(
+    (SRC.match(/const LINK_TRIES=[^\n]*\n/) || [''])[0]
+    + fnSrc('linkSid') + '\n' + fnSrc('linkClear') + '\n' + fnSrc('openFromLink'), box);
+  return { box, opened, said, getHash: () => hash };
+}
+
+test('주소에 붙어 온 일정 번호를 읽는다', () => {
+  assert.equal(linkBox({ hash: '#sc=abc123' }).box.linkSid(), 'abc123');
+  assert.equal(linkBox({ hash: '' }).box.linkSid(), '', '★ 없는데 있다고 합니다');
+});
+
+test('★ 자료가 «늦게» 와도 기다렸다가 연다 — 바로 열면 늘 「없다」가 된다', () => {
+  const w = linkBox({ appearAt: 5 });
+  w.box.openFromLink();
+  assert.deepEqual(w.opened, ['s1'], '★ 늦게 온 일정을 못 엽니다');
+});
+
+test('★ 한 번 열면 주소에서 지운다 — 새로고침마다 또 열리면 안 된다', () => {
+  const w = linkBox();
+  w.box.openFromLink();
+  assert.equal(w.getHash(), '', '★ 주소에 그대로 남아 있습니다');
+});
+
+test('★ 못 찾으면 «그렇게 말한다» — 조용하면 고장으로 보인다', () => {
+  const w = linkBox({ appearAt: 9999 });
+  w.box.openFromLink();
+  assert.equal(w.opened.length, 0);
+  assert.equal(w.said.length, 1, '★ 못 찾았는데 아무 말이 없습니다');
+  assert.match(w.said[0], /찾지 못했/);
+  assert.equal(w.getHash(), '', '★ 못 찾고도 주소를 안 지웁니다');
+});
+
+test('건너온 것이 아니면 아무 일도 안 한다', () => {
+  const w = linkBox({ hash: '' });
+  w.box.openFromLink();
+  assert.equal(w.opened.length, 0, '★ 부르지도 않은 창을 엽니다');
+  assert.equal(w.said.length, 0);
+});

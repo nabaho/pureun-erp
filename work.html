@@ -257,6 +257,10 @@
      42건·235건을 훑을 때 열 이름과 요일이 위로 사라지면 어느 칸인지 알 수 없다. */
   /* min-height는 두지 않는다 — 세 줄짜리 표(종료·업무량)가 빈 칸으로 길어진다 */
   .panel.tbl{padding:0;overflow:auto;max-height:calc(100vh - 250px)}
+  /* 「내 현장 방문」 — 증빙이 빠진 줄은 옅은 빨강. 색만으로 알리지 않고
+     칸 안에 「없음」 딱지를 함께 둔다(색을 못 가리는 분도 있다). */
+  tr.vis-no > td{background:#fff7f7}
+  tr.vis-no:hover > td{background:#ffeded}
   /* 도구줄 드롭다운 — 브라우저 기본 네모가 둥근 칩들 사이에 섞여 어수선했다.
      칩과 같은 모양으로 맞추고 화살표는 삼각형 두 조각으로 얇게 그린다. */
   select.tool{appearance:none;-webkit-appearance:none;border:1px solid var(--line);background-color:#fff;
@@ -4985,7 +4989,12 @@ function hoTh(sid,arr,k,label,w){
    ⚠ 사람 맞추기는 «사번 먼저, 없으면 이름». 옛 사진 이력에는 사번이 없다
      (2026-08-30 부터 남긴다). 이름만으로도 맞도록 두 길을 다 둔다. */
 
-var VIS = { ym: '', scheds: null, log: null, staff: null };
+var VIS = {
+  ym: '', scheds: null, log: null, staff: null,
+  mode: 'month',    // month | late  — 이 달 / 밀린 것 모두
+  scope: 'me',      // me | all      — 나만 / 전 직원(관리자)
+  pick: ''          // 전 직원에서 «한 사람»을 펼쳐 볼 때 그 사람 번호
+};
 
 function visYm() {
   if (VIS.ym) return VIS.ym;
@@ -4998,6 +5007,31 @@ function visShift(delta) {
   VIS.ym = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
   renderVisits();
 }
+function visToday() {
+  var d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+    + '-' + String(d.getDate()).padStart(2, '0');
+}
+function visSetMode(m) { VIS.mode = (m === 'late') ? 'late' : 'month'; renderVisits(); }
+function visSetScope(s) { VIS.scope = (s === 'all') ? 'all' : 'me'; VIS.pick = ''; renderVisits(); }
+function visSetPick(gid) { VIS.pick = gid || ''; renderVisits(); }
+
+/* 「전 직원」은 관리자만. 대표(직함)이거나, 서버가 아는 총괄·대행이면 보인다.
+   ⚠ 서버 값이 아직 안 왔으면 «안 보이는 쪽»으로 틀린다 — 권한은 막는 쪽이 옳다. */
+function visAdmin() {
+  try { if (typeof isAdmin === 'function' && isAdmin()) return true; } catch (e) { }
+  try { return S.perfFin === true; } catch (e) { return false; }
+}
+
+/* 줄을 누르면 정부사업일정의 그 일정이 열린다 (대표 지시 2026-08-30 ④).
+   ⚠ 여기서 «고치지 않는다» — 업무관리는 읽기만 하고, 사진은 원래 자리에서 넣는다.
+     같은 일을 두 곳에서 할 수 있으면 언젠가 한쪽이 어긋난다.
+   ⚠ 새 창으로 연다 — 보던 업무 목록을 잃지 않게. */
+function visGo(sid) {
+  if (!sid) return;
+  try { window.open('gov-consulting.html#sc=' + encodeURIComponent(sid), '_blank'); }
+  catch (e) { location.href = 'gov-consulting.html#sc=' + encodeURIComponent(sid); }
+}
 
 /* 컨설팅일정 자료 — 한 번 읽고 캐시한다(달을 넘겨도 다시 안 읽는다). */
 function visLoad() {
@@ -5007,9 +5041,12 @@ function visLoad() {
       .then(function (s) { return s.val() || fallback; })
       .catch(function () { return null; });   // 권한이 없거나 못 읽음 — null 로 구분한다
   }
+  /* 관리자인지도 함께 물어 둔다 — 나중에 물으면 단추가 «뒤늦게» 나타난다 */
+  var amAdmin = (typeof pcAmFin === 'function')
+    ? pcAmFin().catch(function () { return false; }) : Promise.resolve(false);
   return Promise.all([
     one('scal_scheds', {}), one('scal_cos', {}), one('scal_types', {}),
-    one('scal_staff', {}), one('scal_photoLog', {})
+    one('scal_staff', {}), one('scal_photoLog', {}), amAdmin
   ]).then(function (r) {
     VIS.scheds = r[0]; VIS.cos = r[1]; VIS.types = r[2]; VIS.gstaff = r[3]; VIS.log = r[4];
   });
@@ -5042,6 +5079,105 @@ function visGovStaffId(me) {
   return hit ? hit.id : '';
 }
 
+/* 이 일정이 «이 사람» 담당인가 — 주담당이거나 협업이거나 */
+function visForGid(s, gid) {
+  if (!s || !gid) return false;
+  if (s.attId === gid) return true;
+  var co = visRows(VIS.cos).filter(function (c) { return c && c.id === s.coId; })[0];
+  var subs = [].concat(s.coAttIds || s.defCoAtts || [], (co && (co.coAttIds || co.defCoAtts)) || []);
+  return subs.indexOf(gid) >= 0;
+}
+
+/* 끝난 컨설팅인가 — 밀린 목록에 담지 않는다.
+   이미 제출이 끝난 건을 매일 보여 주면 목록 자체를 안 보게 된다. */
+function visEnded(s) {
+  var co = visRows(VIS.cos).filter(function (c) { return c && c.id === s.coId; })[0];
+  if (!co) return false;
+  if (co.active === false || co.deleted) return true;
+  return !!(co.endedTypes && co.endedTypes[s.typeId]);
+}
+
+/* 사진 이력을 일정별로 모은다 — 「몇 장·언제·누가」
+   ★ «내가 넣은 것»만 세지 않는다(2026-08-30 고침). 부담당이나 관리자가 대신
+     넣어 주면 내 화면에만 「없음」으로 떠, 넣은 증빙을 안 넣은 것처럼 보였다.
+     「내가 언제 넣었나」와 「이 방문에 증빙이 있나」는 «다른 물음»이다 —
+     세는 것은 뒤엣것이고, 앞엣것은 「누가 넣었나」로 따로 적는다. */
+function visPhotoMap(me) {
+  var byS = {};
+  visRows(VIS.log).forEach(function (e) {
+    if (!e || !e.sid) return;
+    if (e.action === 'delete') return;                  // 지운 것은 「넣은 적」으로 안 센다
+    var b = byS[e.sid] || (byS[e.sid] = { n: 0, first: '', last: '', slots: {}, mine: false, who: '' });
+    var isMine = visMine(e, me);
+    if (isMine) b.mine = true; else if (!b.who) b.who = String(e.who || '');
+    if (e.slot != null && b.slots[e.slot]) return;      // 같은 칸을 여러 번 바꿔도 한 장
+    if (e.slot != null) b.slots[e.slot] = 1;
+    b.n++;
+    if (!b.first || e.t < b.first) b.first = e.t;
+    if (!b.last || e.t > b.last) b.last = e.t;
+  });
+  return byS;
+}
+
+/* ★ 공용 기록이 «언제부터» 있는지 — 그 전 방문은 「없음」이 아니라 「기록 없음」.
+   사진 이력을 공용 자리에 올리기 시작한 것은 2026-08-30 부터다. 그 전 것은
+   각자 PC 안에만 있어, 여기서는 넣었는지 «알 수가 없다». 빨간 「없음」으로
+   보이면 넣은 증빙을 안 넣은 것으로 읽게 된다 — 그것이 더 나쁘다.
+   ⚠ 날짜를 박지 않는다. 직원이 옛 기록을 올리면 이 선이 «저절로» 뒤로 간다. */
+function visSince() {
+  var s = '';
+  visRows(VIS.log).forEach(function (e) { if (e && e.t && (!s || e.t < s)) s = e.t; });
+  return String(s).slice(0, 10);
+}
+function visDaysAgo(ds) {
+  return Math.round((new Date(visToday()) - new Date(ds)) / 86400000);
+}
+
+/* 밀린 것 — 증빙이 빠진 «지난» 현장 방문을 오래된 순으로 (대표 지시 ⑥).
+   달을 넘겨 가며 찾을 일이 없어진다. */
+function visLateRows(gid, byS, sinceDay, wantUnknown) {
+  var today = visToday();
+  return visRows(VIS.scheds).filter(function (s) {
+    if (!s || !s.date || s.isField === false) return false;
+    if (s.date >= today) return false;                    // 오늘·미래는 아직 밀린 게 아니다
+    if (!visForGid(s, gid)) return false;
+    if (visEnded(s)) return false;
+    var b = byS[s.id];
+    if (b && b.n) return false;
+    /* 「기록 없음」은 «안 넣은 것»이 아니라 «알 수 없는 것» — 따로 담는다.
+       빨간 것과 섞으면 진짜 빠진 것이 묻힌다. */
+    var unknown = !sinceDay || String(s.date) < sinceDay;
+    return wantUnknown ? unknown : !unknown;
+  }).sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+}
+
+/* 전 직원 — 사람마다 한 줄. 처음부터 스무 줄을 늘어놓으면 누가 밀렸는지가 안 보인다.
+   ⚠ 일 잘한다/못한다를 재는 표가 아니다. 「증빙이 빠진 곳」을 마감 전에 찾는 것이
+     전부라, 방문 «건수»가 아니라 «밀린 날수»로 세운다.
+   ⚠ 새로 읽어 오는 자료가 없다 — 이미 읽은 것을 사람별로 묶기만 한다(요금 그대로). */
+function visStaffSummary(byS, sinceDay, ym) {
+  return visRows(VIS.gstaff).map(function (g) {
+    var nF = 0, nW = 0, nN = 0, nU = 0;
+    visRows(VIS.scheds).forEach(function (s) {
+      if (!s || !s.date || String(s.date).slice(0, 7) !== ym) return;
+      if (!visForGid(s, g.id)) return;
+      if (s.isField === false) return;
+      nF++;
+      var b = byS[s.id];
+      if (b && b.n) nW++;
+      else if (!sinceDay || String(s.date) < sinceDay) nU++;
+      else nN++;
+    });
+    var late = visLateRows(g.id, byS, sinceDay, false);
+    return { g: g, nF: nF, nW: nW, nN: nN, nU: nU, late: late[0] || null, lateN: late.length };
+  }).filter(function (r) { return r.nF || r.lateN; })
+    .sort(function (a, b) {
+      var da = a.late ? visDaysAgo(a.late.date) : -1;
+      var db = b.late ? visDaysAgo(b.late.date) : -1;
+      return db - da;
+    });
+}
+
 function renderVisits() {
   var app = $('app'); if (!app) return;
   app.innerHTML = loadingHTML();
@@ -5056,47 +5192,114 @@ function renderVisits() {
       return;
     }
     var ym = visYm();
-    var gid = visGovStaffId(me);
-    var cos = VIS.cos, types = VIS.types;
+    var admin = visAdmin();
+    if (!admin) { VIS.scope = 'me'; VIS.pick = ''; }     // 권한 없이 전 직원으로 갈 수 없다
+    var sinceDay = visSince();
+    var myGid = visGovStaffId(me);
+    /* 전 직원에서 한 사람을 펼쳐 보는 중이면 «그 사람 눈으로» 본다 —
+       ⚠ 「누가 넣었나」까지 그 사람 기준으로 봐야 한다. 안 그러면 박재원 님 화면에
+         「박재원 넣음」이 붙는다(본인이 넣은 것인데 남이 넣은 것처럼 읽힌다). */
+    var pick = (VIS.scope === 'all' && VIS.pick)
+      ? visRows(VIS.gstaff).filter(function (s) { return s && s.id === VIS.pick; })[0] : null;
+    var eye = pick ? { sid: pick.erpSid || '', name: pick.name || '' } : me;
+    var byS = visPhotoMap(eye);
+    var gid = pick ? pick.id : myGid;
+    var gName = pick ? (pick.name || '') : '';
 
-    /* 이 달, 이 사람이 «담당(주·협업)» 인 일정 */
+    var title = (VIS.scope === 'all' && !VIS.pick) ? '현장 방문 — 전 직원'
+      : gName ? esc(gName) + ' 님 현장 방문'
+        : (viewingSelf() ? '내 현장 방문' : esc(me.name) + ' 님 현장 방문');
+
+    var h = '<div class="panel"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
+      + '<h2 style="margin:0">🚩 ' + title + '</h2>';
+    if (VIS.mode === 'month') {
+      h += '<span class="muted">' + ym.replace('-', '년 ') + '월</span>'
+        + '<button class="ghost" onclick="visShift(-1)">◀</button>'
+        + '<button class="ghost" onclick="visShift(1)">▶</button>';
+    } else {
+      h += '<span class="muted">밀린 것 모두</span>';
+    }
+    h += '<span style="flex:1"></span>'
+      + visSeg([['이 달', VIS.mode === 'month', "visSetMode('month')"],
+      ['밀린 것 모두', VIS.mode === 'late', "visSetMode('late')"]]);
+    if (admin) {
+      h += ' ' + visSeg([['나만', VIS.scope === 'me', "visSetScope('me')"],
+      ['전 직원', VIS.scope === 'all', "visSetScope('all')"]]);
+    }
+    h += '</div>';
+    if (VIS.pick) {
+      h += '<div style="margin-bottom:9px"><button class="ghost" onclick="visSetPick(\'\')">← 전 직원으로</button></div>';
+    }
+
+    /* ── 전 직원 요약 ─────────────────────────────────────────── */
+    if (VIS.scope === 'all' && !VIS.pick) {
+      var sum = visStaffSummary(byS, sinceDay, ym);
+      if (!sum.length) { app.innerHTML = h + '<p class="muted">이 달에 배정된 일정이 없습니다.</p></div>'; return; }
+      var tF = 0, tW = 0, tN = 0, tU = 0;
+      sum.forEach(function (r) { tF += r.nF; tW += r.nW; tN += r.nN; tU += r.nU; });
+      h += '<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:11px;font-size:12px">'
+        + visPill('방문 ' + tF + '건', '#dbeafe', '#1d4ed8')
+        + visPill('사진 넣음 ' + tW + '건', '#dcfce7', '#166534')
+        + (tN ? visPill('사진 없음 ' + tN + '건', '#fee2e2', '#991b1b') : '')
+        + (tU ? visPill('기록 없음 ' + tU + '건', '#e5e7eb', '#4b5563') : '')
+        + '</div>';
+      h += '<table class="tbl"><tr><th>담당</th><th>방문</th><th>사진 넣음</th><th>사진 없음</th>'
+        + '<th>가장 오래 밀린 것</th></tr>';
+      sum.forEach(function (r) {
+        var d = r.late ? visDaysAgo(r.late.date) : 0;
+        h += '<tr style="cursor:pointer" onclick="visSetPick(\'' + esc(r.g.id) + '\')">'
+          + '<td><b>' + esc(r.g.name || '?') + '</b></td>'
+          + '<td>' + r.nF + '건</td><td>' + r.nW + '건</td>'
+          + '<td>' + (r.nN ? visPill(r.nN + '건', '#fee2e2', '#991b1b') : '<span class="muted">0건</span>') + '</td>'
+          + '<td>' + (r.late
+            ? '<span style="color:' + (d >= 30 ? '#991b1b' : d >= 7 ? '#92400e' : 'inherit') + ';'
+            + (d >= 30 ? 'font-weight:800' : '') + '">'
+            + esc(visName(VIS.cos, r.late.coId) || '-') + ' · ' + d + '일</span>'
+            + (r.lateN > 1 ? ' <span class="muted">외 ' + (r.lateN - 1) + '건</span>' : '')
+            : '<span class="muted">—</span>') + '</td></tr>';
+      });
+      h += '</table><p class="note muted" style="margin-top:9px;font-size:11.5px;line-height:1.7">'
+        + '줄을 누르면 그 사람의 목록이 열립니다.<br>'
+        + '<b>일을 잘하나 재는 표가 아닙니다</b> — 증빙이 빠진 곳을 마감 전에 찾는 것이 전부라, '
+        + '방문 건수가 아니라 <b>밀린 날수</b>로 줄을 세웁니다.</p></div>';
+      app.innerHTML = h; return;
+    }
+
+    if (!gid) {
+      h += '<p class="muted">정부사업일정의 직원 목록에서 «사번»이 이어져 있지 않습니다. '
+        + '정부사업일정 → 환경설정 → 직원 관리에서 이어 주세요.</p></div>';
+      app.innerHTML = h; return;
+    }
+
+    /* ── 밀린 것 모두 ─────────────────────────────────────────── */
+    if (VIS.mode === 'late') {
+      var late = visLateRows(gid, byS, sinceDay, false);
+      var unk = visLateRows(gid, byS, sinceDay, true);
+      h += '<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:11px;font-size:12px">'
+        + (late.length ? visPill('사진 없음 ' + late.length + '건', '#fee2e2', '#991b1b') : '')
+        + (unk.length ? visPill('기록 없음 ' + unk.length + '건', '#e5e7eb', '#4b5563') : '')
+        + (!late.length && !unk.length ? visPill('밀린 것 없음', '#dcfce7', '#166534') : '')
+        + '</div>';
+      if (!late.length && !unk.length) {
+        h += '<p class="muted">증빙이 빠진 지난 방문이 없습니다. 👍</p></div>';
+        app.innerHTML = h; return;
+      }
+      if (late.length) h += visLateTable(late, false);
+      if (unk.length) {
+        h += '<div class="muted" style="margin:16px 0 6px;font-size:12px;font-weight:800">🕘 기록 없음 — 넣었는지 알 수 없는 것</div>'
+          + visLateTable(unk, true);
+      }
+      h += '<p class="note muted" style="margin-top:9px;font-size:11.5px;line-height:1.7">'
+        + '증빙이 빠진 <b>지난</b> 현장 방문만 오래된 순으로 모았습니다. 끝난 컨설팅은 담지 않습니다.<br>'
+        + '줄을 누르면 정부사업일정의 그 일정이 열립니다 — 사진은 거기서 넣습니다.</p></div>';
+      app.innerHTML = h; return;
+    }
+
+    /* ── 이 달 ────────────────────────────────────────────────── */
     var mine = visRows(VIS.scheds).filter(function (s) {
       if (!s || !s.date || String(s.date).slice(0, 7) !== ym) return false;
-      if (!gid) return false;
-      var co = visRows(cos).filter(function (c) { return c && c.id === s.coId; })[0];
-      var subs = [].concat(s.coAttIds || s.defCoAtts || [], (co && (co.coAttIds || co.defCoAtts)) || []);
-      return s.attId === gid || subs.indexOf(gid) >= 0;
+      return visForGid(s, gid);
     }).sort(function (a, b) { return a.date < b.date ? 1 : -1; });
-
-    /* 사진 이력을 일정별로 모은다 — 「몇 장·언제·누가」
-       ★ «내가 넣은 것»만 세지 않는다(2026-08-30 고침). 부담당이나 관리자가 대신
-         넣어 주면 내 화면에만 「없음」으로 떠, 넣은 증빙을 안 넣은 것처럼 보였다.
-         「내가 언제 넣었나」와 「이 방문에 증빙이 있나」는 «다른 물음»이다 —
-         세는 것은 뒤엣것이고, 앞엣것은 「누가 넣었나」로 따로 적는다. */
-    var byS = {};
-    visRows(VIS.log).forEach(function (e) {
-      if (!e || !e.sid) return;
-      if (e.action === 'delete') return;                  // 지운 것은 「넣은 적」으로 안 센다
-      var b = byS[e.sid] || (byS[e.sid] = { n: 0, first: '', last: '', slots: {}, mine: false, who: '' });
-      var isMine = visMine(e, me);
-      if (isMine) b.mine = true; else if (!b.who) b.who = String(e.who || '');
-      if (e.slot != null && b.slots[e.slot]) return;      // 같은 칸을 여러 번 바꿔도 한 장
-      if (e.slot != null) b.slots[e.slot] = 1;
-      b.n++;
-      if (!b.first || e.t < b.first) b.first = e.t;
-      if (!b.last || e.t > b.last) b.last = e.t;
-    });
-
-    /* ★ 공용 기록이 «언제부터» 있는지 — 그 전 방문은 「없음」이 아니라 「기록 없음」.
-       사진 이력을 공용 자리에 올리기 시작한 것은 2026-08-30 부터다. 그 전 것은
-       각자 PC 안에만 있어, 여기서는 넣었는지 «알 수가 없다». 빨간 「없음」으로
-       보이면 넣은 증빙을 안 넣은 것으로 읽게 된다 — 그것이 더 나쁘다.
-       ⚠ 날짜를 박지 않는다. 직원이 옛 기록을 올리면 이 선이 «저절로» 뒤로 간다. */
-    var logSince = '';
-    visRows(VIS.log).forEach(function (e) {
-      if (e && e.t && (!logSince || e.t < logSince)) logSince = e.t;
-    });
-    var sinceDay = String(logSince || '').slice(0, 10);
 
     var nField = 0, nOffice = 0, nWith = 0, nWithout = 0, nUnknown = 0;
     var rows = mine.map(function (s) {
@@ -5109,12 +5312,6 @@ function renderVisits() {
       return { s: s, b: b, isField: isField, unknown: unknown };
     });
 
-    var h = '<div class="panel"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
-      + '<h2 style="margin:0">🚩 ' + (viewingSelf() ? '내' : esc(me.name) + ' 님') + ' 현장 방문</h2>'
-      + '<span class="muted">' + ym.replace('-', '년 ') + '월</span>'
-      + '<button class="ghost" onclick="visShift(-1)">◀</button>'
-      + '<button class="ghost" onclick="visShift(1)">▶</button></div>';
-
     h += '<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:11px;font-size:12px">'
       + visPill('방문 ' + nField + '건', '#dbeafe', '#1d4ed8')
       + visPill('사진 넣음 ' + nWith + '건', '#dcfce7', '#166534')
@@ -5123,11 +5320,6 @@ function renderVisits() {
       + (nOffice ? visPill('사무실 ' + nOffice + '건', '#fef3c7', '#92400e') : '')
       + '</div>';
 
-    if (!gid) {
-      h += '<p class="muted">정부사업일정의 직원 목록에서 «사번»이 이어져 있지 않습니다. '
-        + '정부사업일정 → 환경설정 → 직원 관리에서 이어 주세요.</p></div>';
-      app.innerHTML = h; return;
-    }
     if (!rows.length) {
       h += '<p class="muted">이 달에 배정된 일정이 없습니다.</p></div>';
       app.innerHTML = h; return;
@@ -5137,8 +5329,8 @@ function renderVisits() {
       + '<th>구분</th><th>사진</th><th>사진 넣은 때</th></tr>';
     rows.forEach(function (r) {
       var s = r.s;
-      var co = visName(cos, s.coId) || '-';
-      var ty = visName(types, s.typeId) || '-';
+      var co = visName(VIS.cos, s.coId) || '-';
+      var ty = visName(VIS.types, s.typeId) || '-';
       var late = '';
       var when = '<span class="muted">—</span>';
       if (r.b && r.b.last) {
@@ -5149,31 +5341,65 @@ function renderVisits() {
         when = visWhen(r.b.last) + late;
       }
       var noPhoto = r.isField && !(r.b && r.b.n) && !r.unknown;
-      h += '<tr' + (noPhoto ? ' style="background:#fff7f7"' : '') + '>'
+      h += '<tr style="cursor:pointer"' + (noPhoto ? ' class="vis-no"' : '')
+        + ' onclick="visGo(\'' + esc(s.id) + '\')">'
         + '<td>' + esc(visDay(s.date)) + '</td>'
         + '<td>' + esc(co) + '</td>'
         + '<td>' + esc(ty) + ' ' + (s.round || 0) + '회</td>'
         + '<td>' + (r.isField ? visPill('현장', '#dbeafe', '#1d4ed8') : visPill('사무실', '#fef3c7', '#92400e')) + '</td>'
         + '<td>' + (!r.isField ? '<span class="muted">필요 없음</span>'
-            : r.b && r.b.n
-              ? visPill(r.b.n + '장', '#dcfce7', '#166534')
-                + (r.b.mine ? '' : '<span class="muted" style="font-size:11px"> · ' + esc(r.b.who || '다른 사람') + ' 넣음</span>')
-              : r.unknown ? visPill('기록 없음', '#e5e7eb', '#4b5563')
+          : r.b && r.b.n
+            ? visPill(r.b.n + '장', '#dcfce7', '#166534')
+            + (r.b.mine ? '' : '<span class="muted" style="font-size:11px"> · ' + esc(r.b.who || '다른 사람') + ' 넣음</span>')
+            : r.unknown ? visPill('기록 없음', '#e5e7eb', '#4b5563')
               : visPill('없음', '#fee2e2', '#991b1b')) + '</td>'
         + '<td>' + when + '</td></tr>';
     });
     h += '</table>';
     h += '<p class="muted" style="margin-top:9px;font-size:11.5px;line-height:1.7">'
-      + '정부사업일정에 담긴 것을 그대로 읽어 보여 줍니다 — 여기서 고치지 않습니다.<br>'
-      + '「사진 넣은 때」가 방문일보다 늦으면 며칠 뒤인지 함께 적습니다.<br>'
-      + '<b>기록 없음</b>은 «안 넣었다»가 아닙니다 — 사진 이력을 함께 보기 시작한 '
-      + (sinceDay ? esc(sinceDay.replace(/-/g, '.')) : '그때') + ' 전 방문이라 여기서는 알 수 없습니다. '
-      + '정부사업일정 → 환경설정 → 백업의 「이 PC 것 공용으로 올리기」를 누르면 그 전 것도 보입니다.</p></div>';
+      + '정부사업일정에 담긴 것을 그대로 읽어 보여 줍니다 — <b>줄을 누르면 그 일정이 열립니다</b>(사진은 거기서 넣습니다).<br>'
+      + '「사진 넣은 때」가 방문일보다 늦으면 며칠 뒤인지 함께 적습니다.'
+      /* ⚠ 「기록 없음」 설명은 «그런 줄이 있을 때만» 적는다. 없는데 적어 두면
+         읽는 사람이 없는 문제를 찾게 된다. */
+      + (nUnknown ? '<br><b>기록 없음</b>은 «안 넣었다»가 아닙니다 — 사진 이력을 함께 보기 시작한 '
+        + (sinceDay ? esc(sinceDay.replace(/-/g, '.')) : '그때') + ' 전 방문이라 여기서는 알 수 없습니다. '
+        + '정부사업일정 → 환경설정 → 백업의 「이 PC 것 공용으로 올리기」를 누르면 그 전 것도 보입니다.' : '')
+      + '</p></div>';
     app.innerHTML = h;
   }).catch(function (e) {
     app.innerHTML = '<div class="panel"><h2>🚩 내 현장 방문</h2><p class="muted">불러오지 못했습니다: '
       + esc((e && e.message) || e) + '</p></div>';
   });
+}
+
+/* 밀린 목록 한 벌 — 「사진 없음」과 「기록 없음」이 같은 모양을 쓴다 */
+function visLateTable(list, unknown) {
+  var h = '<table class="tbl"><tr><th>방문일</th><th>사업장</th><th>컨설팅 · 회차</th>'
+    + '<th>얼마나</th><th>사진</th></tr>';
+  list.forEach(function (s) {
+    var d = visDaysAgo(s.date);
+    h += '<tr style="cursor:pointer"' + (unknown ? '' : ' class="vis-no"')
+      + ' onclick="visGo(\'' + esc(s.id) + '\')">'
+      + '<td>' + esc(visDay(s.date)) + '</td>'
+      + '<td>' + esc(visName(VIS.cos, s.coId) || '-') + '</td>'
+      + '<td>' + esc(visName(VIS.types, s.typeId) || '-') + ' ' + (s.round || 0) + '회</td>'
+      + '<td>' + (unknown ? '<span class="muted">' + d + '일 지남</span>'
+        : '<b style="color:' + (d >= 30 ? '#991b1b' : '#92400e') + '">' + d + '일 지남</b>') + '</td>'
+      + '<td>' + (unknown ? visPill('기록 없음', '#e5e7eb', '#4b5563') : visPill('없음', '#fee2e2', '#991b1b'))
+      + '</td></tr>';
+  });
+  return h + '</table>';
+}
+
+/* 두 갈래 단추 한 벌 */
+function visSeg(opts) {
+  return '<span style="display:inline-flex;border:1.5px solid var(--border,#e3e6ea);border-radius:8px;overflow:hidden">'
+    + opts.map(function (o) {
+      return '<button onclick="' + o[2] + '" style="border:0;padding:5px 12px;font:inherit;font-size:11.5px;'
+        + 'font-weight:800;cursor:pointer;'
+        + (o[1] ? 'background:var(--accent,#2563eb);color:#fff' : 'background:transparent;color:var(--t2,#6b7280)') + '">'
+        + esc(o[0]) + '</button>';
+    }).join('') + '</span>';
 }
 
 function visPill(txt, bg, fg) {
