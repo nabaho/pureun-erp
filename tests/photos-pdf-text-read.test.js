@@ -161,8 +161,15 @@ test('★ 빈 글자로 AI 를 부르지 않는다 — 헛돈이고 답도 쓸 �
   assert.match(fnOf(readjs, 'readDocText'), /if \(!body\) return Promise\.resolve\(fail\(/);
 });
 
-test('★ 주민번호는 글자에서도 지운다 — 문지기가 한 곳뿐이면 그 한 곳을 빠뜨린다', () => {
-  assert.match(fnOf(readjs, 'readDocText'), /RM\.maskRrnInText/);
+/* ⚠ 2026-08-17: 지우개 판정이 **한 곳(rrnScrub)** 으로 모였고, 없으면 **막는다**
+   (예전에는 없으면 안 지우고 그냥 보냈다). 지킬 것은 「글자에서도 지운다 ·
+   못 지우면 안 보낸다」이지 그 줄이 어느 함수에 적혀 있는가가 아니다. */
+test('★ 주민번호는 글자에서도 지운다 — 못 지우면 아예 안 보낸다', () => {
+  const f = fnOf(readjs, 'readDocText');
+  assert.match(f, /rrnScrub\(body\)/, '지우개를 안 거칩니다');
+  assert.match(f, /body === null/, '못 지웠을 때를 안 봅니다');
+  assert.match(readjs, /if \(!RM \|\| !RM\.maskRrnInText\) return null/,
+    '지우개가 없을 때 막지 않습니다');
 });
 
 test('글자 판독을 내보낸다', () => {

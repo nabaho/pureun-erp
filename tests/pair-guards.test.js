@@ -54,6 +54,9 @@ function readerWithSpy() {
   };
   ctx.window = ctx; ctx.globalThis = ctx; ctx.self = ctx;
   vm.createContext(ctx);
+  /* 실제 화면과 **같이** 싣는다 — 판독 층은 주민번호 지우개가 없으면 글자 판독을
+     막는다(2026-08-17). 여기서 안 실으면 진짜 화면과 다른 조건으로 시험하는 셈이다. */
+  vm.runInContext(fs.readFileSync(path.join(R, 'js', 'pu-rrn-mask.js'), 'utf8'), ctx);
   vm.runInContext(fs.readFileSync(path.join(R, 'js', 'pu-doc-read.js'), 'utf8'), ctx);
   ctx.PuDocRead.init({
     fetch: ctx.fetch,

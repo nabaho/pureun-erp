@@ -544,6 +544,21 @@
     '- 머리글이 여러 줄이거나 칸이 합쳐져 어느 항목인지 확실치 않으면 그 줄에 iffy:true 를 주십시오.\n' +
     '- 사람 이름을 못 찾으면 rows 를 빈 배열로 두십시오. 억지로 만들지 마십시오.';
 
+  /* ⚠ 지우개(가림 층)를 못 찾으면 **막는다** (대표 지시 2026-08-17).
+     예전에는 `if (RM && RM.maskRrnInText)` 라 **없으면 안 지우고 그냥 보냈다** —
+     오류도 없고 아무 말도 없었다. 그러면 새 화면이 판독 층만 싣고 가림 층을
+     빠뜨렸을 때 **아무도 모르게 새 나간다**(자문관리가 실제로 그 상태였다).
+     조용히 새는 것보다 시끄럽게 멈추는 편이 낫다.
+     ⚠ 사진 길(read)에는 이 문지기가 없다 — 사진은 화면의 가림 창이 맡는다.
+       그쪽 울타리는 검사(tests/read-fence-apps.test.js)가 따로 지킨다. */
+  function rrnScrub(body) {
+    var RM = global.PuRrnMask;
+    if (!RM || !RM.maskRrnInText) return null;      // null = 막는다
+    return RM.maskRrnInText(body).text;
+  }
+  var NO_SCRUB = '주민번호 지우개(js/pu-rrn-mask.js)가 이 화면에 실려 있지 않아 판독을 멈췄습니다'
+    + ' — 그대로 보내면 주민번호가 AI 로 나갑니다. 화면에 가림 층을 실어 주세요.';
+
   function readTableText(text, hint) {
     if (!deps.fetch) return Promise.resolve(wageFail('판독 준비가 되지 않았습니다'));
     var body = String(text == null ? '' : text).trim();
@@ -553,8 +568,8 @@
        지우는 것을 잊어도 AI 로는 안 나가게 한다(사진 가림과 같은 원칙:
        문지기가 한 곳뿐이면 그 한 곳을 빠뜨렸을 때 그대로 나간다).
        글자는 사진과 달리 **자리를 틀릴 일이 없다.** */
-    var RM = global.PuRrnMask;
-    if (RM && RM.maskRrnInText) body = RM.maskRrnInText(body).text;
+    body = rrnScrub(body);
+    if (body === null) return Promise.resolve(wageFail(NO_SCRUB));
     var where = String(hint || '').trim();
     var prompt = TABLE_PROMPT
       + (where ? '\n\n[이 글자는 여기서 뽑았습니다: ' + where + ']' : '')
@@ -592,9 +607,10 @@
     var body = String(text == null ? '' : text).trim();
     if (!body) return Promise.resolve({ ok: false, error: '읽을 글자가 없습니다' });
     /* ⚠ 마지막 문지기 — 표 판독과 같은 자리에서 주민번호를 지운다.
-       요약이라고 덜 지키면 안 된다(나가는 것은 똑같다). */
-    var RM = global.PuRrnMask;
-    if (RM && RM.maskRrnInText) body = RM.maskRrnInText(body).text;
+       요약이라고 덜 지키면 안 된다(나가는 것은 똑같다).
+       지우개가 없으면 **막는다**(2026-08-17) — 요약도 나가는 것은 똑같다. */
+    body = rrnScrub(body);
+    if (body === null) return Promise.resolve({ ok: false, error: NO_SCRUB });
     /* 요약은 앞부분만 봐도 된다 — 통째로 보내면 느리고 그대로 요금이다 */
     if (body.length > SUM_MAX) body = body.slice(0, SUM_MAX) + '\n…(뒤는 줄임)';
     var where = String(hint || '').trim();
@@ -701,8 +717,8 @@
     var body = String(text == null ? '' : text).trim();
     /* 빈 글자로 AI 를 부르면 헛돈이고 답도 쓸 수 없다 — 부르는 쪽이 그림으로 가야 한다. */
     if (!body) return Promise.resolve(fail('읽을 글자가 없습니다'));
-    var RM = global.PuRrnMask;
-    if (RM && RM.maskRrnInText) body = RM.maskRrnInText(body).text;
+    body = rrnScrub(body);
+    if (body === null) return Promise.resolve(fail(NO_SCRUB));
     return runDocParts([{ text: PROMPT_ALL + TEXT_NOTE + '\n\n' + body }], 'text');
   }
 
