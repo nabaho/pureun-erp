@@ -97,7 +97,10 @@ ok('이상한 날짜도 안 터진다', ctx.pcDay('') === '' && ctx.pcDay(null) 
 
 /* ── 배선 ── */
 ok('메뉴에 성과급이 붙었다', /id="nav-perf"/.test(html));
-ok('라우팅에 perf 가 있다', /'my','team','stats','kb','ho','archive','perf'/.test(html));
+/* ⚠ 메뉴 목록을 통째로 박지 않는다 — 한 칸만 늘려도 깨졌다
+     (2026-08-30 「내 현장 방문」을 더하자 바로 걸렸다).
+     지키려는 규칙은 «perf 가 그 목록 안에 있다» 하나다. */
+ok('라우팅에 perf 가 있다', /\[[^\]]*'perf'[^\]]*\]\.forEach\(function\(v\)\{var n=\$\('nav-'\+v\)/.test(html));
 ok('perf 이면 성과급 화면을 그린다', /S\.view==='perf'\) renderPerf\(\)/.test(html));
 ok('제목이 내 성과급', /perf:'내 성과급'/.test(html));
 ok('안 한 달 수를 배지로 보여 준다', /cnt-perf/.test(html) && /filter\(function\(x\)\{return !x\.p\.done;\}\)/.test(html));

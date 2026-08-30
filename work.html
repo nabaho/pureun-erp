@@ -1143,6 +1143,7 @@ function shell(){
     +'<button onclick="itemModal()" style="margin:0 10px 10px;padding:8px;width:calc(100% - 20px);background:var(--acc);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer">＋ 새 업무 <span style="opacity:.6;font-weight:400">N</span></button>'
     +'<div class="side-sec">메뉴</div>'
     +'<div class="sitem" id="nav-my" onclick="go(\'my\')">📝 내 업무 <span class="cnt" id="cnt-my"></span></div>'
+    +'<div class="sitem" id="nav-visits" onclick="go(\'visits\')" title="정부사업일정에 담긴 내 방문과 사진 등록 시각 — 여기서는 보기만 합니다">🚩 내 현장 방문 <span class="cnt" id="cnt-visits"></span></div>'
     +'<div class="sitem" id="nav-team" onclick="go(\'team\')">👥 팀 전체</div>'
     +'<div class="sitem" id="nav-stats" onclick="go(\'stats\')">📊 업무량</div>'
     +'<div class="sitem" id="nav-kb" onclick="go(\'kb\')" title="업무에서 얻은 암묵지 — 사람·업체·유형·기관별">📚 지식 <span class="cnt" id="cnt-kb"></span></div>'
@@ -2484,8 +2485,8 @@ function go(v){ S.view=v; S.f=null; S.q=''; sideDrawer(false);
 function goBack(){ if(history.length>1) history.back(); else { S.view='my'; route(); } }
 window.addEventListener('popstate',function(ev){ var st=ev.state; S.view=(st&&st.view)||'my'; route(); });
 function route(){
-  ['my','team','stats','kb','ho','archive','perf'].forEach(function(v){var n=$('nav-'+v);if(n)n.className='sitem'+(S.view===v?' on':'');});
-  var crumbs={my:'내 업무',team:'팀 전체',stats:'업무량',kb:'지식',ho:'인수인계',archive:'종료',perf:'내 성과급'};
+  ['my','visits','team','stats','kb','ho','archive','perf'].forEach(function(v){var n=$('nav-'+v);if(n)n.className='sitem'+(S.view===v?' on':'');});
+  var crumbs={my:'내 업무',visits:'내 현장 방문',team:'팀 전체',stats:'업무량',kb:'지식',ho:'인수인계',archive:'종료',perf:'내 성과급'};
   var c=$('crumb'); if(c)c.textContent=crumbs[S.view]||'업무관리';
   var qw=$('qwrap'); if(qw)qw.style.display=(S.view==='my'||S.view==='team')?'':'none';
   var cm=$('cnt-my'); if(cm)cm.textContent=viewOpen().length||'';
@@ -2497,7 +2498,8 @@ function route(){
     var n3=(S.perfData||[]).filter(function(x){return !x.p.done;}).length + pcAdmPending().n;
     cp.textContent=n3||''; cp.style.color=n3?'#c0392b':''; cp.style.fontWeight=n3?'800':''; }
   pcBand();   /* 화면을 옮길 때마다 띠를 다시 판단한다 (성과급 화면에서는 숨긴다) */
-  if(S.view==='team') renderTeam();
+  if(S.view==='visits') renderVisits();
+  else if(S.view==='team') renderTeam();
   else if(S.view==='stats') renderStats();
   else if(S.view==='kb') renderKb();
   else if(S.view==='ho') renderHo();
@@ -4869,6 +4871,199 @@ function hoTh(sid,arr,k,label,w){
 }
 
 /* ── 인수인계 화면 (부재 관리·체크아웃·문서철) ── */
+/* ══════ 🚩 내 현장 방문 (대표 지시 2026-08-30) ══════
+   「언제 사진 등록했는지 본인 업무관리에서 확인할 수 있게.」
+
+   ⚠ 자료를 «새로 만들지 않는다». 컨설팅일정이 이미 갖고 있는 것을 읽기만 한다 —
+     일정(scal_scheds)과 사진 이력(scal_photoLog). 여기에 사본을 두면 두 곳이
+     어긋나고, 어긋나면 어느 쪽이 맞는지 아무도 모른다.
+   ⚠ 사진 «그림»은 안 가져온다. 「몇 장·언제」만 센다. 그림까지 끌면 느리고
+     창고 요금이 붙는다(요금은 «받은 양»에 붙는다).
+   ⚠ 본인 것만 본다. 열람 대상을 바꾸면(총괄) 그 사람 것을 본다 — 업무관리의
+     다른 화면과 같은 규칙이다.
+   ⚠ 사람 맞추기는 «사번 먼저, 없으면 이름». 옛 사진 이력에는 사번이 없다
+     (2026-08-30 부터 남긴다). 이름만으로도 맞도록 두 길을 다 둔다. */
+
+var VIS = { ym: '', scheds: null, log: null, staff: null };
+
+function visYm() {
+  if (VIS.ym) return VIS.ym;
+  var d = new Date();
+  VIS.ym = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  return VIS.ym;
+}
+function visShift(delta) {
+  var a = visYm().split('-'), d = new Date(+a[0], +a[1] - 1 + delta, 1);
+  VIS.ym = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  renderVisits();
+}
+
+/* 컨설팅일정 자료 — 한 번 읽고 캐시한다(달을 넘겨도 다시 안 읽는다). */
+function visLoad() {
+  if (VIS.scheds && VIS.log) return Promise.resolve();
+  function one(node, fallback) {
+    return fbDb.ref(node).once('value')
+      .then(function (s) { return s.val() || fallback; })
+      .catch(function () { return null; });   // 권한이 없거나 못 읽음 — null 로 구분한다
+  }
+  return Promise.all([
+    one('scal_scheds', {}), one('scal_cos', {}), one('scal_types', {}),
+    one('scal_staff', {}), one('scal_photoLog', {})
+  ]).then(function (r) {
+    VIS.scheds = r[0]; VIS.cos = r[1]; VIS.types = r[2]; VIS.gstaff = r[3]; VIS.log = r[4];
+  });
+}
+
+/* 컨설팅일정은 목록을 «배열 그대로» 담기도 하고 번호를 붙여 담기도 한다.
+   둘 다 배열로 편다 — 한쪽만 다루면 어느 날 갑자기 빈 화면이 된다. */
+function visRows(v) {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.filter(Boolean);
+  return Object.keys(v).map(function (k) { return v[k]; }).filter(Boolean);
+}
+function visName(list, id) {
+  var hit = visRows(list).filter(function (x) { return x && x.id === id; })[0];
+  return hit ? (hit.name || '') : '';
+}
+
+/* 이 사진 이력이 «이 사람» 것인가 — 사번 먼저, 없으면 이름 */
+function visMine(e, me) {
+  if (!e) return false;
+  if (e.whoSid && me.sid) return String(e.whoSid) === String(me.sid);
+  return String(e.who || '') === String(me.name || '');
+}
+
+/* 컨설팅일정 쪽 직원 번호 — 이 사람의 사번·이름에 맞는 것 */
+function visGovStaffId(me) {
+  var hit = visRows(VIS.gstaff).filter(function (s) {
+    return (s.erpSid && me.sid && String(s.erpSid) === String(me.sid)) || s.name === me.name;
+  })[0];
+  return hit ? hit.id : '';
+}
+
+function renderVisits() {
+  var app = $('app'); if (!app) return;
+  app.innerHTML = loadingHTML();
+  var me = viewer();                       // 보고 있는 사람(기본은 본인)
+
+  /* ⚠ «끝났다»를 돌려준다. 안 돌려주면 부르는 쪽도 검사도 언제 끝나는지 알 수 없다. */
+  return visLoad().then(function () {
+    /* 컨설팅일정을 못 읽는 경우 — 조용히 빈 화면을 보이지 않는다 */
+    if (VIS.scheds === null) {
+      app.innerHTML = '<div class="panel"><h2>🚩 내 현장 방문</h2>'
+        + '<p class="muted">컨설팅일정 자료를 읽지 못했습니다. 정부사업일정을 한 번 열어 로그인한 뒤 다시 와 주세요.</p></div>';
+      return;
+    }
+    var ym = visYm();
+    var gid = visGovStaffId(me);
+    var cos = VIS.cos, types = VIS.types;
+
+    /* 이 달, 이 사람이 «담당(주·협업)» 인 일정 */
+    var mine = visRows(VIS.scheds).filter(function (s) {
+      if (!s || !s.date || String(s.date).slice(0, 7) !== ym) return false;
+      if (!gid) return false;
+      var co = visRows(cos).filter(function (c) { return c && c.id === s.coId; })[0];
+      var subs = [].concat(s.coAttIds || s.defCoAtts || [], (co && (co.coAttIds || co.defCoAtts)) || []);
+      return s.attId === gid || subs.indexOf(gid) >= 0;
+    }).sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+
+    /* 사진 이력을 일정별로 모은다 — 「몇 장·언제」만 */
+    var byS = {};
+    visRows(VIS.log).forEach(function (e) {
+      if (!e || !e.sid || !visMine(e, me)) return;
+      if (e.action === 'delete') return;                  // 지운 것은 「넣은 적」으로 안 센다
+      var b = byS[e.sid] || (byS[e.sid] = { n: 0, first: '', last: '', slots: {} });
+      if (e.slot != null && b.slots[e.slot]) return;      // 같은 칸을 여러 번 바꿔도 한 장
+      if (e.slot != null) b.slots[e.slot] = 1;
+      b.n++;
+      if (!b.first || e.t < b.first) b.first = e.t;
+      if (!b.last || e.t > b.last) b.last = e.t;
+    });
+
+    var nField = 0, nOffice = 0, nWith = 0, nWithout = 0;
+    var rows = mine.map(function (s) {
+      var b = byS[s.id];
+      var isField = s.isField !== false;
+      if (isField) nField++; else nOffice++;
+      if (isField) { if (b && b.n) nWith++; else nWithout++; }
+      return { s: s, b: b, isField: isField };
+    });
+
+    var h = '<div class="panel"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
+      + '<h2 style="margin:0">🚩 ' + (viewingSelf() ? '내' : esc(me.name) + ' 님') + ' 현장 방문</h2>'
+      + '<span class="muted">' + ym.replace('-', '년 ') + '월</span>'
+      + '<button class="ghost" onclick="visShift(-1)">◀</button>'
+      + '<button class="ghost" onclick="visShift(1)">▶</button></div>';
+
+    h += '<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:11px;font-size:12px">'
+      + visPill('방문 ' + nField + '건', '#dbeafe', '#1d4ed8')
+      + visPill('사진 넣음 ' + nWith + '건', '#dcfce7', '#166534')
+      + (nWithout ? visPill('사진 없음 ' + nWithout + '건', '#fee2e2', '#991b1b') : '')
+      + (nOffice ? visPill('사무실 ' + nOffice + '건', '#fef3c7', '#92400e') : '')
+      + '</div>';
+
+    if (!gid) {
+      h += '<p class="muted">정부사업일정의 직원 목록에서 «사번»이 이어져 있지 않습니다. '
+        + '정부사업일정 → 환경설정 → 직원 관리에서 이어 주세요.</p></div>';
+      app.innerHTML = h; return;
+    }
+    if (!rows.length) {
+      h += '<p class="muted">이 달에 배정된 일정이 없습니다.</p></div>';
+      app.innerHTML = h; return;
+    }
+
+    h += '<table class="tbl"><tr><th>방문일</th><th>사업장</th><th>컨설팅 · 회차</th>'
+      + '<th>구분</th><th>사진</th><th>사진 넣은 때</th></tr>';
+    rows.forEach(function (r) {
+      var s = r.s;
+      var co = visName(cos, s.coId) || '-';
+      var ty = visName(types, s.typeId) || '-';
+      var late = '';
+      var when = '<span class="muted">—</span>';
+      if (r.b && r.b.last) {
+        var d0 = new Date(s.date + 'T00:00:00'), d1 = new Date(r.b.last);
+        var gap = Math.floor((d1 - d0) / 86400000);
+        /* 미룬 날수를 적는다 — 증빙을 미뤄 두면 잊는다 */
+        if (gap >= 1) late = ' <span class="muted">· ' + gap + '일 뒤</span>';
+        when = visWhen(r.b.last) + late;
+      }
+      var noPhoto = r.isField && !(r.b && r.b.n);
+      h += '<tr' + (noPhoto ? ' style="background:#fff7f7"' : '') + '>'
+        + '<td>' + esc(visDay(s.date)) + '</td>'
+        + '<td>' + esc(co) + '</td>'
+        + '<td>' + esc(ty) + ' ' + (s.round || 0) + '회</td>'
+        + '<td>' + (r.isField ? visPill('현장', '#dbeafe', '#1d4ed8') : visPill('사무실', '#fef3c7', '#92400e')) + '</td>'
+        + '<td>' + (r.isField
+            ? (r.b && r.b.n ? visPill(r.b.n + '장', '#dcfce7', '#166534') : visPill('없음', '#fee2e2', '#991b1b'))
+            : '<span class="muted">필요 없음</span>') + '</td>'
+        + '<td>' + when + '</td></tr>';
+    });
+    h += '</table>';
+    h += '<p class="muted" style="margin-top:9px;font-size:11.5px;line-height:1.7">'
+      + '정부사업일정에 담긴 것을 그대로 읽어 보여 줍니다 — 여기서 고치지 않습니다.<br>'
+      + '「사진 넣은 때」가 방문일보다 늦으면 며칠 뒤인지 함께 적습니다.</p></div>';
+    app.innerHTML = h;
+  }).catch(function (e) {
+    app.innerHTML = '<div class="panel"><h2>🚩 내 현장 방문</h2><p class="muted">불러오지 못했습니다: '
+      + esc((e && e.message) || e) + '</p></div>';
+  });
+}
+
+function visPill(txt, bg, fg) {
+  return '<span style="display:inline-block;font-size:10.5px;font-weight:800;border-radius:999px;'
+    + 'padding:1px 8px;background:' + bg + ';color:' + fg + '">' + esc(txt) + '</span>';
+}
+function visDay(ds) {
+  var a = String(ds || '').split('-'); if (a.length < 3) return ds || '';
+  var w = ['일', '월', '화', '수', '목', '금', '토'][new Date(ds + 'T00:00:00').getDay()];
+  return (+a[1]) + '/' + (+a[2]) + ' (' + w + ')';
+}
+function visWhen(iso) {
+  var d = new Date(iso); if (isNaN(d)) return esc(String(iso).slice(0, 16));
+  return (d.getMonth() + 1) + '/' + d.getDate() + ' '
+    + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
 function renderHo(){
   var app=$('app'); if(!app)return;
   app.innerHTML=loadingHTML();
