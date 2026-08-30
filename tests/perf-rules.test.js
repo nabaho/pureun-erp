@@ -92,7 +92,11 @@ const allowTop = ['systemAlerts','systemBackups','systemBackupsIndex','systemRes
      아예 없던 칸들이라 「모르는 게 생겼다」로 잡혔다. 일부러 넣은 것이 맞다:
      billing(요금) · backup_key(백업열쇠) · homepage · mailbox · pu_mailseen(메일 읽음)
      · scal_*(일정관리) · exportLog·exportSeen(반출 기록). */
-  'billing','backup_key','homepage','mailbox','pu_mailseen','scal_erpConsHold','scal_serverBackups','scal_serverBackupsIndex','exportLog','exportSeen'];
+  'billing','backup_key','homepage','mailbox','pu_mailseen','scal_erpConsHold','scal_serverBackups','scal_serverBackupsIndex','exportLog','exportSeen',
+  /* 2026-08-29 사진 변경 이력을 «이 PC 안»에서 «모두가 보는 공용 자리»로 옮겼다.
+     답해야 할 때 그 사람 PC 에만 있는 기록은 없는 것과 같다. 회차 이력과 같은 모양 —
+     남기는 것은 직원 누구나, 지우는 것은 총괄관리자만. */
+  'scal_photoLog'];
 
 const keys = Object.keys(R);
 const removed = baseTop.filter(function (k) { return keys.indexOf(k) < 0; });
