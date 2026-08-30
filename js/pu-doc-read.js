@@ -480,16 +480,19 @@
   /* 프롬프트만 갈아 끼우고 나머지(모델·재시도·키 조달·결과 다듬기)는 함께 쓴다. */
   function readPairsWith(prompt, dataUrl) {
     if (!deps.fetch) return Promise.resolve(wageFail('판독 준비가 되지 않았습니다'));
-    var imgs = (Array.isArray(dataUrl) ? dataUrl : [dataUrl])
-      .map(function (u) { return String(u || '').split(',')[1] || ''; })
-      .filter(Boolean);
-    if (!imgs.length) return Promise.resolve(wageFail('사진을 읽을 수 없습니다'));
+    /* ⚠ 보낼 크기부터 줄인다(AI_SEND_EDGE) — 담는 크기를 올려도 요금이 안 오르게 */
+    return shrinkAllForAi(dataUrl).then(function (small) {
+      var imgs = small
+        .map(function (u) { return String(u || '').split(',')[1] || ''; })
+        .filter(Boolean);
+      if (!imgs.length) return wageFail('사진을 읽을 수 없습니다');
 
-    var parts = imgs.map(function (b64) {
-      return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
+      var parts = imgs.map(function (b64) {
+        return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
+      });
+      parts.push({ text: prompt + (imgs.length > 1 ? MULTI_NOTE : '') });
+      return runParts(parts);
     });
-    parts.push({ text: prompt + (imgs.length > 1 ? MULTI_NOTE : '') });
-    return runParts(parts);
   }
 
   /* 모델·재시도·키 조달·결과 다듬기 — 사진으로 보낼 때와 글자로 보낼 때가
@@ -672,23 +675,74 @@
     ' 인사말·잡담은 담지 마세요. **주민등록번호는 담지 마세요.**' +
     ' 사람 이름이 없으면 그 줄을 담지 마세요. JSON 외 텍스트 금지.';
 
+  /* ══════ AI 에게 «보낼 크기» 상한 (대표 결정 2026-08-30) ══════
+     담는 크기와 보내는 크기는 **다른 물건**이다.
+
+     · 담는 크기 = 사람이 확대해서 읽는다 → 클수록 좋다(서류 2600px).
+     · 보내는 크기 = AI 가 읽는다 → **큰 만큼 그대로 요금**이다.
+
+     AI 는 그림을 768px 조각으로 나눠 세어 값을 매긴다. A4 를 2000px 로 보내면
+     6조각이고 2600px 로 보내면 12조각이다 — **판독 한 번 값이 두 배**가 된다.
+     지금까지 잘 읽히던 크기가 2000px 이므로 여기서 끊는다. 담는 크기를 올려도
+     **판독 요금은 그대로**다.
+
+     ⚠ 이 상한이 없으면, 담는 크기를 올리는 순간 판독 요금이 조용히 따라 오른다 —
+       사진첩·기업정보함·급여데이터함이 모두 이 층으로 판독한다.
+     ⚠ 이미 작은 것은 **키우지 않는다.** 키워 봐야 없던 글자가 생기지 않고 값만 는다.
+     ⚠ 줄일 수 없는 자리(노드 검사 등)에서는 **그대로 보낸다** — 못 줄인다고
+       판독 자체가 막히면 안 된다. */
+  var AI_SEND_EDGE = 2000;
+
+  function shrinkForAi(dataUrl) {
+    var u = String(dataUrl || '');
+    if (!u) return Promise.resolve(u);
+    if (typeof document === 'undefined' || typeof Image === 'undefined') return Promise.resolve(u);
+    return new Promise(function (res) {
+      var im = new Image();
+      im.onload = function () {
+        try {
+          var w = im.naturalWidth || im.width, h = im.naturalHeight || im.height;
+          var edge = Math.max(w, h);
+          if (!edge || edge <= AI_SEND_EDGE) return res(u);      // 이미 작다 — 그대로
+          var k = AI_SEND_EDGE / edge;
+          var c = document.createElement('canvas');
+          c.width = Math.round(w * k); c.height = Math.round(h * k);
+          var x = c.getContext('2d');
+          x.imageSmoothingQuality = 'high';
+          x.drawImage(im, 0, 0, c.width, c.height);
+          res(c.toDataURL('image/jpeg', 0.92));
+        } catch (_) { res(u); }
+      };
+      im.onerror = function () { res(u); };             // 못 읽으면 그대로 보낸다
+      im.src = u;
+    });
+  }
+
+  function shrinkAllForAi(dataUrl) {
+    var list = Array.isArray(dataUrl) ? dataUrl : [dataUrl];
+    return Promise.all(list.map(shrinkForAi));
+  }
+
   function readChangeNotice(dataUrl) {
     return readPairsWith(NOTICE_PROMPT, dataUrl);
   }
 
   function read(dataUrl) {
     if (!deps.fetch) return Promise.resolve(fail('판독 준비가 되지 않았습니다'));
-    /* 한 장이면 그대로, 여러 장이면 **한 문서의 여러 쪽**으로 본다. */
-    var imgs = (Array.isArray(dataUrl) ? dataUrl : [dataUrl])
-      .map(function (u) { return String(u || '').split(',')[1] || ''; })
-      .filter(Boolean);
-    if (!imgs.length) return Promise.resolve(fail('사진을 읽을 수 없습니다'));
+    /* ⚠ 보낼 크기부터 줄인다(AI_SEND_EDGE) — 담는 크기를 올려도 요금이 안 오르게 */
+    return shrinkAllForAi(dataUrl).then(function (small) {
+      /* 한 장이면 그대로, 여러 장이면 **한 문서의 여러 쪽**으로 본다. */
+      var imgs = small
+        .map(function (u) { return String(u || '').split(',')[1] || ''; })
+        .filter(Boolean);
+      if (!imgs.length) return fail('사진을 읽을 수 없습니다');
 
-    var parts = imgs.map(function (b64) {
-      return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
+      var parts = imgs.map(function (b64) {
+        return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
+      });
+      parts.push({ text: PROMPT_ALL + (imgs.length > 1 ? MULTI_NOTE : '') });
+      return runDocParts(parts, 'image');
     });
-    parts.push({ text: PROMPT_ALL + (imgs.length > 1 ? MULTI_NOTE : '') });
-    return runDocParts(parts, 'image');
   }
 
   /* ── 글자로 된 서류를 판독한다 (대표 결정 2026-08-24) ──
