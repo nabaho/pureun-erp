@@ -42,6 +42,14 @@ function fnBody(name){
   assert.fail(name + ' 의 끝을 찾을 수 없습니다');
 }
 
+function constBody(name){
+  const i = src.indexOf(LFCH + "const " + name + " = [");
+  assert.ok(i >= 0, name + " 를 찾을 수 없습니다");
+  const end = src.indexOf("];", i);
+  return src.slice(i, end + 2);
+}
+const LFCH = String.fromCharCode(10);
+
 /* 탭 줄 */
 function drawTools(state){
   const ctx = { console, Object, Array, String, Number,
@@ -50,23 +58,35 @@ function drawTools(state){
     coSizeSelHtml: () => '<select></select>',
     coScopeCounts: () => ({ cares: 312, all: 4147 }) };
   vm.createContext(ctx);
+  /* 거르개 단추는 탭 줄이 부른다 — 세는 함수는 «안» 부른다(아래 검사가 그것을 지킨다) */
+  
+  vm.runInContext(fnBody('coFilters') + '\n' + fnBody('coFilterOnCount'), ctx);
+  vm.runInContext(fnBody('coFilterBtnHtml'), ctx);
   vm.runInContext(fnBody('coToolsHtml'), ctx);
   return ctx.coToolsHtml();
 }
-/* 옆줄 할 일 */
-function drawTodo(state, counts){
+/* 거르개 메뉴 — 옆줄에서 내려온 넷 (2026-08-31 대표 지시).
+   메뉴를 «열어» 보고, 항목을 눌러 무슨 일이 일어나는지까지 본다. */
+function drawFilterMenu(state, counts){
   const c = Object.assign({ closed:0, nobiz:0, lack:0, uid:0 }, counts||{});
+  const box = { style:{}, innerHTML:"" };
   const ctx = { console, Object, Array, String, Number,
-    esc: s => String(s==null?'':s),
+    esc: s => String(s==null?"":s),
     state: Object.assign({ coOnlyClosed:false, coOnlyNoBiz:false,
-      coOnlyIncomplete:false, coOnlyUid:false }, state||{}),
+      coOnlyIncomplete:false, coOnlyUid:false, coPage:3 }, state||{}),
     coClosedCount: () => c.closed, coNoBizCount: () => c.nobiz,
     coIncompleteCount: () => c.lack, coUidCount: () => c.uid,
-    pcItem: (attrs, label, cnt, on) =>
-      `<div class="pcitem ${on?'on':''}" ${attrs}>${label}<span class="gcount">${cnt}</span></div>` };
+    closeFolderMenu(){}, renderCoAny(){ ctx.drew = (ctx.drew||0) + 1; },
+    setTimeout(){}, document: { addEventListener(){} },
+    window: { innerWidth: 1600 },
+    $: () => box };
   vm.createContext(ctx);
-  vm.runInContext(fnBody('coTodoSideHtml'), ctx);
-  return ctx.coTodoSideHtml();
+  vm.runInContext(fnBody("coFilters"), ctx);
+  vm.runInContext(fnBody("coFilterDefs"), ctx);
+  vm.runInContext(fnBody("openCoFilterMenu"), ctx);
+  ctx.openCoFilterMenu({ preventDefault(){}, stopPropagation(){},
+    currentTarget: { getBoundingClientRect: () => ({ left:100, bottom:200 }) } });
+  return { html: box.innerHTML, ctx: ctx };
 }
 
 /* ══════ ① 탭 줄에는 둘만 ══════ */
@@ -79,10 +99,12 @@ test('★ 탭 줄에 「거래처」와 「전체」가 있다', () => {
 });
 
 test('★ 탭 줄에 «할 일» 넷이 없다 — 한 줄에 뜻이 둘이면 서로의 수를 갉아먹는다', () => {
-  const h = drawTools({});
+  /* ⚠ 도움말(title="…")은 걷어내고 본다. 지키는 것은 «칩이 없다»이지 «글자가 하나도
+     없다»가 아니다 — 거르개 단추의 도움말에는 무엇이 들어 있는지 적혀 있어야 한다. */
+  const h = drawTools({}).replace(/title="[^"]*"/g, '');
   ['종료', '번호 없음', '정보부족', '고유번호증'].forEach(function (label) {
     assert.equal(h.indexOf(label), -1,
-      '★ 「' + label + '」이 탭 줄에 남아 있다 — 대표 지시는 「거래관계 여부만」이다');
+      '★ 「' + label + '」이 탭 줄에 칩으로 남아 있다 — 대표 지시는 「거래관계 여부만」이다');
   });
 });
 
@@ -100,41 +122,47 @@ test('쪽 크기 고르기는 그대로 오른쪽 끝에 남는다', () => {
   assert.match(fn, /coSizeSelHtml\(/);
 });
 
-/* ══════ ② 할 일 넷은 옆줄에 그대로 ══════ */
+/* ══════ ② 할 일 넷은 «거르개 메뉴»에 그대로 ══════ */
 
-test('★ 할 일 넷이 옆줄에 «그대로» 있다 — 자리만 옮겼지 기능을 없앤 것이 아니다', () => {
-  const h = drawTodo({}, { closed:47, nobiz:88, lack:37, uid:3 });
+test('★ 할 일 넷이 거르개 메뉴에 «그대로» 있다 — 자리만 옮겼지 기능을 없앤 것이 아니다', () => {
+  const r = drawFilterMenu({}, { closed:47, nobiz:88, lack:37, uid:3 });
   ['종료', '번호 없음', '정보부족', '고유번호증'].forEach(function (label) {
-    assert.ok(h.indexOf(label) > 0, '★ 「' + label + '」이 옆줄에도 없다 — 기능이 사라졌다');
+    assert.ok(r.html.indexOf(label) > 0, '★ 「' + label + '」이 거르개에도 없다 — 기능이 사라졌다');
   });
   ['47', '88', '37', '3'].forEach(function (n) {
-    assert.ok(h.indexOf(n) > 0, n + '곳이라는 수가 안 보인다');
+    assert.ok(r.html.indexOf(n) > 0, n + '곳이라는 수가 안 보인다');
   });
 });
 
-test('★ 옆줄 할 일이 «옆줄에서 그려진다» — 함수만 있고 안 부르면 소용없다', () => {
+test('★ 거르개가 «목록 위 줄에서» 열린다 — 함수만 있고 안 부르면 소용없다', () => {
+  /* 옆줄에서 내려왔으니 이제 탭 줄이 그 단추를 내놓아야 한다. */
+  assert.match(fnBody('coToolsHtml'), /coFilterBtnHtml\(\)/,
+    '★ 목록 위 줄이 거르개 단추를 안 그린다 — 넷이 화면 어디에서도 안 보이게 된다');
+  assert.match(fnBody('coFilterBtnHtml'), /openCoFilterMenu\(event\)/,
+    '단추를 눌러도 메뉴가 안 열린다');
+});
+
+test('★ 옆줄에는 할 일이 «없다» — 폴더와 같은 것을 두 번 세면 어느 쪽이 진짜인지 모른다', () => {
+  /* 대표 지시 2026-08-31: 「계약해지 사업장으로 분류하려는데 중복되어서 이상하다」.
+     같은 17곳이 「2. 계약해지사업장」 폴더와 「할 일 · 종료」 두 군데 있었다. */
   const i = src.indexOf("if(state.view==='co'){");
-  /* ⚠ 끝 경계는 「옆줄을 갈아 끼우는 그 줄」이다 — 그 줄 «뒤»에 무엇이 더 붙는지는
-   이 검사가 볼 일이 아니다. 예전에는 `= h; return;` 까지 글자 그대로 붙들어,
-   2026-08-29 에 그 줄 뒤로 구르던 자리 되꽂기(pcSideRestoreTop)가 붙자 형제 검사
-   다섯이 «기능이 멀쩡한데» 한꺼번에 깨졌다(CLAUDE.md 「지금 값이 아니라 규칙」). */
   const end = src.indexOf("$('pcSide').innerHTML", i);
   assert.ok(i > 0 && end > i, '기업 상세 옆줄을 찾지 못했습니다');
-  assert.match(src.slice(i, end), /coTodoSideHtml\(\)/,
-    '★ 옆줄이 할 일 칸을 안 그린다 — 넷이 화면 어디에서도 안 보이게 된다');
+  assert.equal(src.slice(i, end).indexOf('coTodoSideHtml('), -1,
+    '★ 옆줄이 아직 할 일을 그린다 — 폴더와 겹쳐 보인다');
 });
 
-/* ══════ ③ 0곳이면 안 보인다 ══════ */
+/* ══════ ③ 0곳이어도 «흐리게» 보인다 ══════ */
 
-test('★ 0곳인 할 일은 안 보인다 — 누를 값이 없는 줄을 두지 않는다', () => {
-  const h = drawTodo({}, { closed:0, nobiz:5, lack:0, uid:0 });
-  assert.equal(h.indexOf('종료'), -1, '0곳인데 종료가 보인다');
-  assert.ok(h.indexOf('번호 없음') > 0, '5곳인데 번호 없음이 안 보인다');
-  assert.equal(h.indexOf('정보부족'), -1, '0곳인데 정보부족이 보인다');
-});
-
-test('넷 다 0곳이면 「할 일」 머리까지 통째로 안 나온다 — 빈 머리만 남으면 안 된다', () => {
-  assert.equal(drawTodo({}, {}).trim(), '');
+test('★ 0곳인 것도 메뉴에는 흐리게 남는다 — 열 때마다 항목이 달라지면 못 찾는다', () => {
+  /* ⚠ 옛 규칙을 «일부러» 뒤집었다. 옆줄에 있을 때는 0곳이면 숨겼다(늘 보이는 자리라
+     빈 줄이 눈에 거슬렸다). 메뉴는 열어야 보이는 자리라 규칙이 반대다. */
+  const r = drawFilterMenu({}, { closed:0, nobiz:5, lack:0, uid:0 });
+  ['종료', '번호 없음', '정보부족', '고유번호증'].forEach(function (label) {
+    assert.ok(r.html.indexOf(label) > 0, label + ' 가 메뉴에서 사라졌다');
+  });
+  assert.match(row(r.html, '종료'), /fmoff/, '0곳인데 흐리게 안 보인다');
+  assert.equal(/fmoff/.test(row(r.html, '번호 없음')), false, '5곳인데 흐리다');
 });
 
 /* ══════ ④ 눌러서 켜고 끈다 ══════ */
@@ -147,22 +175,25 @@ function row(html, label){
   return html.slice(start, end);
 }
 
-test('★ 줄마다 «저마다» 켜고 끈다 · 첫 쪽으로 돌아온다', () => {
-  const h = drawTodo({}, { closed:47, nobiz:88, lack:37, uid:3 });
+test('★ 저마다 켜고 끈다 · 첫 쪽으로 돌아온다', () => {
+  const r = drawFilterMenu({}, { closed:47, nobiz:88, lack:37, uid:3 });
   [['종료','coOnlyClosed'], ['번호 없음','coOnlyNoBiz'],
    ['정보부족','coOnlyIncomplete'], ['고유번호증','coOnlyUid']].forEach(function (p) {
-    const r = row(h, p[0]);
-    assert.match(r, new RegExp('state\\.' + p[1] + '\\s*=\\s*!state\\.' + p[1]),
+    const one = row(r.html, p[0]);
+    assert.match(one, new RegExp('state\\.' + p[1] + '\\s*=\\s*!state\\.' + p[1]),
       p[0] + ' 가 눌러도 안 뒤집힌다 — 켜기만 되면 전체로 못 돌아온다');
-    assert.match(r, /coPage\s*=\s*0/, p[0] + ' 가 쪽수를 안 되돌린다 — 5쪽에서 걸면 빈 화면이다');
+    assert.match(one, /coPage\s*=\s*0/, p[0] + ' 가 쪽수를 안 되돌린다 — 5쪽에서 걸면 빈 화면이다');
   });
 });
 
-test('★ 지금 켜진 줄이 «저마다» 눈에 보인다', () => {
-  const on = drawTodo({ coOnlyClosed:true }, { closed:47, nobiz:88 });
-  assert.match(row(on, '종료'), /class="pcitem on"/, '켜 놓고도 안 켜져 보인다');
-  assert.equal(/class="pcitem on"/.test(row(on, '번호 없음')), false,
-    '안 켠 줄이 켜져 보인다');
+test('★ 지금 켜진 것이 눈에 보인다 — 메뉴 안에서도, 단추에서도', () => {
+  const on = drawFilterMenu({ coOnlyClosed:true }, { closed:47, nobiz:88 });
+  assert.match(row(on.html, '종료'), /✓/, '켜 놓고도 안 켜져 보인다');
+  assert.equal(/✓/.test(row(on.html, '번호 없음')), false, '안 켠 것이 켜져 보인다');
+  /* 단추 자체에도 몇 개 걸렸는지 숫자가 붙는다 — 메뉴를 열지 않아도 알 수 있어야 한다 */
+  const btn = drawTools({ coOnlyClosed:true, coOnlyIncomplete:true });
+  assert.match(btn, /거르개/, '거르개 단추가 없다');
+  assert.match(btn, />2</, '걸린 수(2)가 단추에 안 붙는다');
 });
 
 /* ══════ ⑤ 두 곳이 같은 state 를 본다 ══════ */
@@ -173,13 +204,14 @@ test('★ 거르는 일은 coFilteredList 한 곳에만 둔다 — 옮겼다고 
     .forEach(function (k) { assert.match(fn, new RegExp(k), k + ' 가 거르기에서 빠졌다'); });
   /* 옆줄은 «켜고 끄기»만 한다 — 회사 목록을 제 나름으로 거르면 화면마다 결과가 어긋난다.
      (세는 것은 coClosedCount 등에 맡기고, 그것들이 coFilteredList 를 거친다) */
-  const side = fnBody('coTodoSideHtml');
+  const side = fnBody('openCoFilterMenu') + fnBody('coFilterBtnHtml');
   ['coList(', 'coFilteredList(', 'coVisible('].forEach(function (bad) {
     assert.equal(side.indexOf(bad), -1,
-      '★ 옆줄이 «' + bad + '»으로 회사를 직접 훑는다 — 거르기는 한 곳에만 있어야 한다');
+      '★ 거르개가 «' + bad + '»으로 회사를 직접 훑는다 — 거르기는 한 곳에만 있어야 한다');
   });
 });
 
 test('★ 새 Firebase 쓰기가 없다 — 자리만 옮겼다', () => {
-  assert.equal(/db\.ref\(|Store\.db|Store\.put|\.update\(/.test(fnBody('coTodoSideHtml')), false);
+  const moved = fnBody('coFilterDefs') + fnBody('coFilterBtnHtml') + fnBody('openCoFilterMenu');
+  assert.equal(/db\.ref\(|Store\.db|Store\.put|\.update\(/.test(moved), false);
 });

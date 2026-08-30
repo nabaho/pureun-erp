@@ -83,10 +83,13 @@ test('한 곳이라도 고르면 도구줄이 뜨고 몇 곳인지 말한다', (
 });
 
 test('★ 예전 단추가 하나도 안 빠졌다 — 자리만 옮겼지 기능을 손대지 않았다', () => {
-  const h = runList(ROWS, { k1: 1 }, { coFolder: 'f1' });
-  ['onclick="coMoveToFolder()"', 'onclick="coAssignTag()"', 'onclick="coAssignFTab()"',
-   'onclick="state.coSel={};renderCoAny()"', 'onclick="coClearOrg()"'
-  ].forEach(s => assert.ok(h.indexOf(s) >= 0, '단추가 사라졌다: ' + s));
+  /* 2026-08-31 「폴더 한 겹」 — 겉에 넷만 남기고 나머지는 📁 폴더 ▾ · ⋯ 안으로 갔다.
+     지키는 뜻은 «하는 일이 하나도 안 없어졌는가»다 — 도구줄과 두 메뉴를 함께 본다. */
+  const h = runList(ROWS, { k1: 1 }, { coFolder: 'f1' })
+    + block('function openCoMoveMenu(', '\n}\n') + block('function openCoSelMore(', '\n}\n');
+  ['coMoveToFolder()', 'coAssignTag()', 'coAssignFTab()',
+   'state.coSel={};renderCoAny()', 'coClearOrg()', 'coMailCsv()', 'coDelSel()'
+  ].forEach(s => assert.ok(h.indexOf(s) >= 0, '하던 일이 사라졌다: ' + s));
 });
 
 test('「→ N곳 모두」도 그대로 도구줄 안에 있다', () => {

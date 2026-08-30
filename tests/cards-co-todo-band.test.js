@@ -180,7 +180,7 @@ test('★ 찾은 것이 0곳이어도 띠가 뜬다 — 그때가 가장 알아�
 
 /* ── ③ 할 일 목록과 딱지 이름표가 «어긋나지 않는다» ──────────────── */
 test('★ 옆줄 할 일 넷이 모두 딱지에 있다', () => {
-  const side = bare(fn('coTodoSideHtml'));
+  const side = bare(fn('coFilters'));
   const keys = [...side.matchAll(/k:\s*'(coOnly[A-Za-z]+)'/g)].map(m => m[1]);
   assert.ok(keys.length >= 4, '할 일을 못 찾았다 (' + keys.length + '개)');
   const labels = topConst('CO_TODO_LABEL');

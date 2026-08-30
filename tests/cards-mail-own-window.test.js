@@ -59,7 +59,7 @@ function load(over){
     _coFolders: o.coFolders || {},
     _coTagHidden: {},
     /* 2026-08-28: 옆줄에 「할 일」 칸이 붙었다 — 이 검사는 그 부분을 안 본다 */
-    coTodoSideHtml: () => '',
+    coFilterDefs: () => '',
     /* 2026-08-30: 폴더 목록 끝에 「📂 아직 안 담음」 줄이 붙었다 — 여기서는 안 본다 */
     coNoFolderCount: () => 0,
     MAT_CATS_NOW: () => o.matCats || [],

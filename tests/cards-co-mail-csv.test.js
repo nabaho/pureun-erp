@@ -169,11 +169,11 @@ test('파일 이름이 무엇을 뽑은 것인지 알려 준다', () => {
 /* ══════ 단추가 걸려 있나 ══════ */
 
 test('★ 고르기 도구줄에 「주소록 내보내기」가 있다', () => {
-  const fn = fnBody('coListHtml');
-  const bar = fn.indexOf('coselbar');
-  assert.ok(bar > 0, '도구줄을 찾지 못했습니다');
-  const end = fn.indexOf('</div></div>', bar);
-  assert.ok(fn.slice(bar, end).indexOf('coMailCsv()') > 0,
+  const fn = (fnBody('coListHtml') + fnBody('openCoSelMore') + fnBody('openCoMoveMenu'));
+  /* 2026-08-31 — 가끔 쓰는 것들이 ⋯ 안으로 들어갔다. 지키는 것은 «눌러서 뽑을 길이
+     있는가»이지 그것이 도구줄 겉에 있는가가 아니다. */
+  assert.ok(fn.indexOf('coselbar') > 0, '도구줄을 찾지 못했습니다');
+  assert.ok(fn.indexOf('coMailCsv()') > 0,
     '★ 눌러서 뽑을 길이 없다');
 });
 

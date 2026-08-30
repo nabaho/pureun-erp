@@ -235,6 +235,8 @@ test('화면: 선택 도구줄이 목록에 그려진다', () => {
   const at = source.indexOf('function coListHtml');
   const fn = source.slice(at, source.indexOf('function coDocsHtml', at));
   assert.match(fn, /class="coselbar"/);
-  assert.match(fn, /onclick="coMoveToFolder\(\)"/);
+  /* 2026-08-31 「폴더 한 겹」 — 폴더 옮기기는 📁 폴더 ▾ 메뉴 안으로 갔다.
+     지키는 뜻은 «도구줄에서 폴더로 갈 길이 있는가»다. */
+  assert.match(fn, /openCoMoveMenu\(event\)/);
   assert.match(fn, /onclick="coAssignTag\(\)"/);
 });

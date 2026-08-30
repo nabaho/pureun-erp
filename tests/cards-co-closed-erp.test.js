@@ -82,7 +82,7 @@ const COS = [
 test('★ 종료 배지가 명함 목록과 같은 모양(class="mgq")·같은 문구다', () => {
   const cardBadge = src.match(/<span class="mgq"[^>]*>🚪<\/span>/);
   assert.ok(cardBadge, '명함 목록의 배지를 못 찾았다');
-  const coDesktop = fnBody('coListHtml');
+  const coDesktop = (fnBody('coListHtml') + fnBody('openCoSelMore') + fnBody('openCoMoveMenu'));
   const coMobile = fnBody('renderCoMobileList');
   for (const [name, fn] of [['데스크톱 표', coDesktop], ['폰 목록', coMobile]]) {
     assert.match(fn, /class="mgq"[^>]*>🚪</, name + '에 종료 배지가 없다');
@@ -92,7 +92,7 @@ test('★ 종료 배지가 명함 목록과 같은 모양(class="mgq")·같은 �
 });
 
 test('배지는 o.erp.left 를 그대로 본다 — 새 판정을 만들지 않는다', () => {
-  for (const fn of [fnBody('coListHtml'), fnBody('renderCoMobileList')]) {
+  for (const fn of [(fnBody('coListHtml') + fnBody('openCoSelMore') + fnBody('openCoMoveMenu')), fnBody('renderCoMobileList')]) {
     assert.match(fn, /o\.erp\s*&&\s*o\.erp\.left/, '이미 있는 ErpMatch 판정을 안 쓴다');
   }
 });
@@ -161,14 +161,16 @@ test('★ 종료 토글이 옆줄 「할 일」에 있다', () => {
      여부만 나누면 된다」. 탭 줄에 뜻이 둘(고르기·거르기)이라 서로의 수를 갉아먹었다:
      「종료」를 켜면 거래처 16 · 전체 16 · 정보부족 16 으로 모두 붙어 버렸다.
      기능은 그대로고 자리만 옆줄로 내렸다(coTodoSideHtml). */
-  const fn = fnBody('coTodoSideHtml');
-  assert.match(fn, /coOnlyClosed/, '옆줄에서 토글을 안 켠다');
+  /* 2026-08-31 자리가 또 옮겼다 — 옆줄에 두었더니 「2. 계약해지사업장」 폴더와
+     같은 곳을 두 번 세어 헷갈렸다(대표 지시). 이제 목록 위 「🔎 거르개」다. */
+  const fn = fnBody('coFilters') + fnBody('openCoFilterMenu');
+  assert.match(fn, /coOnlyClosed/, '거르개에서 토글을 안 켠다');
   assert.match(fn, /coClosedCount\(\)/, '개수를 안 보여 준다');
   assert.equal(fnBody('coToolsHtml').indexOf('coOnlyClosed'), -1,
     '★ 탭 줄에 도로 남아 있으면 두 곳에서 같은 일을 한다');
 });
 
-test('종료가 0곳이면 단추가 안 보인다 — 늘 있는 회색 단추는 눌러볼 값이 없다', () => {
+test('종료가 0곳이면 탭 줄에는 안 나온다 — 거르개 메뉴 안에만 흐리게 남는다', () => {
   const noClosed = COS.filter(o => !(o.erp && o.erp.left));   /* 종료 0곳으로 만든다 */
   const ctx = { console, Object, Array, String, esc,
     state: { coFolder:'f1', isAdmin:true, coOnlyClosed:false, coPageSize:100, coColFilter:{}, coQ:'' },
@@ -195,6 +197,7 @@ test('종료가 0곳이면 단추가 안 보인다 — 늘 있는 회색 단추�
   const a = '/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════';
   const b = '/* ══════ 폴더 안의 탭 — 화면 ══════ */';
   const i = src.indexOf(a), j = src.indexOf(b);
+  vm.runInContext(fnBody('coFilters') + '\n' + fnBody('coFilterOnCount') + '\n' + fnBody('coFilterBtnHtml'), ctx);
   vm.runInContext(src.slice(i, j) + '\n' + fnBody('coFilteredList') + '\n'
     + fnBody('coClosedCount') + '\n' + fnBody('coFTabChipsHtml') + '\n' + fnBody('coToolsHtml') + '\n' + fnBody('renderCoFTabsHtml'), ctx);
   const h = ctx.renderCoFTabsHtml();

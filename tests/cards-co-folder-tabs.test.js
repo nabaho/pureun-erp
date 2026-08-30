@@ -387,11 +387,12 @@ test('「폴더·탭 비우기」가 폴더 안 탭도 함께 뗀다', () => {
 });
 
 test('막대의 두 단추 이름이 서로 다른 것을 가리킨다', () => {
-  assert.ok(src.includes('🏷 서류 탭에 담기'), '서류 탭인지 폴더 탭인지 알 수 없다');
+  assert.ok(src.includes('🏷 서류 탭'), '서류 탭인지 폴더 탭인지 알 수 없다');
   assert.ok(src.includes('＃ 탭에 담기'), '폴더 탭에 담는 길이 없다');
   /* 폴더를 안 고르면 폴더 탭 담기는 안 보인다 — 눌러도 안 되는 단추를 보이면 안 된다.
      ⚠ 함수 «정의»가 아니라 «단추»를 봐야 한다 — indexOf 는 정의를 먼저 만난다. */
-  const i = src.indexOf('onclick="coAssignFTab()"');
+  /* 2026-08-31 — ⋯ 메뉴 안으로 갔다. 「폴더를 고른 때만」이라는 규칙은 그대로다. */
+  const i = src.indexOf('closeFolderMenu();coAssignFTab()');
   assert.ok(i > 0, '단추가 없다');
   assert.ok(src.slice(Math.max(0, i - 200), i).includes('state.coFolder'), '폴더와 상관없이 늘 보인다');
 });
