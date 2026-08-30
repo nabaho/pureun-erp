@@ -97,6 +97,9 @@ test('★★ 옮길 수 있는 창은 «바깥 클릭으로 안 닫힌다» — 
 
 /* ══════ ③ 끌어 옮기기 ══════ */
 
+/* 기억 칸 이름은 소스가 정한다 — 검사에 글자로 박지 않는다 */
+const POS_KEY = (/const SHARE_POP_POS = '([^']+)'/.exec(app) || [])[1];
+
 /* 가짜 화면 — 창은 340×300, 화면은 1000×600 */
 function dragCtx(over) {
   const box = { offsetLeft: 310, offsetTop: 100, offsetWidth: 340, style: {} };
@@ -111,19 +114,29 @@ function dragCtx(over) {
   };
   const head = { captured: null, setPointerCapture: function (id) { head.captured = id; },
     releasePointerCapture: function () { head.captured = null; } };
+  /* 가짜 기억 칸 — 사생활 모드도 흉내 낼 수 있게 */
+  const mem = { v: {}, fail: false };
+  const localStorage = {
+    getItem: function (k) { if (mem.fail) throw new Error('막힘'); return mem.v[k] === undefined ? null : mem.v[k]; },
+    setItem: function (k, s) { if (mem.fail) throw new Error('막힘'); mem.v[k] = String(s); }
+  };
   const ctx = Object.assign({
-    Math: Math, parseFloat: parseFloat, window: { innerWidth: 1000, innerHeight: 600,
-      addEventListener: function () {} },
+    Math: Math, parseFloat: parseFloat, JSON: JSON, isFinite: isFinite, Error: Error,
+    window: { innerWidth: 1000, innerHeight: 600, addEventListener: function () {} },
+    localStorage: localStorage,
     $: function (id) {
       return id === 'kindPopupBox' ? box : id === 'kindPopup' ? pop : id === 'kindPopupHead' ? head : null;
     },
-    _box: box, _pop: pop, _head: head
+    _box: box, _pop: pop, _head: head, _mem: mem
   }, over || {});
   vm.createContext(ctx);
-  ['function popPlace(', 'function popGrab(', 'function popMove(', 'function popDrop(']
+  ['function popPlace(', 'function popGrab(', 'function popMove(', 'function popDrop(',
+    'function popSavedPos(', 'function popSavePos(', 'function popAnchor(']
     .forEach(function (f) { vm.runInContext(cutFn(app, f), ctx); });
-  vm.runInContext('var _popDrag = null;', ctx);
-  /* let 로 선언된 것을 vm 에서 쓰려면 위처럼 다시 만들어야 한다 */
+  /* let / const 로 선언된 것은 vm 에서 다시 만들어 준다.
+     ⚠ 기억 칸 이름은 «소스에서» 읽는다 — 여기에 글자로 박으면 이름을 고칠 때
+       검사가 「기능이 망가져서가 아니라」 깨진다. */
+  vm.runInContext('var _popDrag = null; var SHARE_POP_POS = ' + JSON.stringify(POS_KEY) + ';', ctx);
   return ctx;
 }
 
@@ -197,9 +210,97 @@ test('★★ 누른 단추 «바로 옆»에 뜬다 (대표 지시 「단추바�
 
 test('★ 단추를 못 찾아도 «창은 뜬다» — 안 뜨면 공유를 아예 못 한다', () => {
   const c = dragCtx();
-  vm.runInContext(cutFn(app, 'function popAnchor('), c);
   c.popAnchor('없는단추');
   assert.equal(c._box.style.left, '8px', '★ 자리를 못 잡아 창이 화면 밖에 있습니다');
+});
+
+/* ══════ ⑤ 옮겨 둔 자리를 기억한다 (대표 지시 2026-08-30 「기억하게」) ══════ */
+
+test('★★ 이름을 소스가 정한다 — 검사에 글자로 박지 않는다', () => {
+  assert.ok(POS_KEY, '★ 기억 칸 이름을 못 찾았습니다');
+});
+
+test('★★ 끌어서 옮기면 «그 자리를 적는다», 다음에 열면 그리로 뜬다', () => {
+  const c = dragCtx();
+  c._pop.classList.add('move');
+  c.popGrab({ clientX: 350, clientY: 110, target: {}, pointerId: 1, preventDefault: function () {} });
+  c.popMove({ clientX: 550, clientY: 260 });
+  c.popDrop();
+  assert.deepEqual(JSON.parse(c._mem.v[POS_KEY]), { x: 510, y: 250 },
+    '★★ 옮긴 자리를 안 적으면 열 때마다 다시 끌어야 합니다');
+
+  /* 다음에 열 때 — 단추가 어디에 있든 «적어 둔 자리»가 이긴다 */
+  const d = dragCtx();
+  d._mem.v[POS_KEY] = JSON.stringify({ x: 510, y: 250 });
+  d.$ = (function (o) {
+    return function (id) {
+      if (id === 'shareSideBtn') return { getBoundingClientRect: function () { return { right: 286, top: 214 }; } };
+      return o(id);
+    };
+  })(d.$);
+  vm.runInContext(cutFn(app, 'function popAnchor('), d);
+  d.popAnchor('shareSideBtn');
+  assert.equal(d._box.style.left, '510px', '★★ 적어 둔 자리를 안 씁니다 — 늘 단추 옆으로 되돌아갑니다');
+  assert.equal(d._box.style.top, '250px');
+});
+
+test('★★ 열고 닫기만 해서는 «안 적는다» — 자리가 스멀스멀 밀린다', () => {
+  const c = dragCtx();
+  c._pop.classList.add('move');
+  /* 잡았다 놓기만 — 끌지 않았다 */
+  c.popGrab({ clientX: 350, clientY: 110, target: {}, pointerId: 1, preventDefault: function () {} });
+  c.popDrop();
+  assert.equal(c._mem.v[POS_KEY], undefined,
+    '★★ 안 옮겼는데 적으면, 가두기가 고쳐 놓은 값이 다시 적혀 자리가 밀립니다');
+  /* 아예 잡지도 않았을 때도 마찬가지 */
+  c.popDrop();
+  assert.equal(c._mem.v[POS_KEY], undefined);
+});
+
+test('★★ 적어 둔 자리가 «화면 밖»이면 도로 가둔다 — 큰 화면에서 작은 화면으로 옮겨 앉는다', () => {
+  const c = dragCtx();
+  c._mem.v[POS_KEY] = JSON.stringify({ x: 3000, y: 2000 });   /* 넓은 모니터에서 적어 둔 자리 */
+  c.popAnchor('shareSideBtn');
+  assert.equal(c._box.style.left, (1000 - 340 - 8) + 'px',
+    '★★ 적어 둔 대로만 두면 창이 화면 밖에 뜹니다 — 아예 못 씁니다');
+  assert.equal(c._box.style.top, (600 - 40) + 'px');
+});
+
+test('★★ 기억 칸이 막혀 있어도 «공유는 된다» — 사생활 모드', () => {
+  const c = dragCtx();
+  c._mem.fail = true;
+  c.$ = (function (o) {
+    return function (id) {
+      if (id === 'shareSideBtn') return { getBoundingClientRect: function () { return { right: 286, top: 214 }; } };
+      return o(id);
+    };
+  })(c.$);
+  vm.runInContext(cutFn(app, 'function popAnchor('), c);
+  assert.doesNotThrow(function () { c.popAnchor('shareSideBtn'); },
+    '★★ 자리를 못 외운다고 창이 안 뜨면 공유 자체가 막힙니다');
+  assert.equal(c._box.style.left, '296px', '★ 못 외웠으면 예전처럼 단추 옆입니다');
+
+  c._pop.classList.add('move');
+  c.popGrab({ clientX: 350, clientY: 110, target: {}, pointerId: 1, preventDefault: function () {} });
+  c.popMove({ clientX: 550, clientY: 260 });
+  assert.doesNotThrow(function () { c.popDrop(); }, '★★ 적다 막히면 끌기가 통째로 터집니다');
+});
+
+test('★★ 적힌 것이 «망가져 있어도» 창은 뜬다 — 남이 손댔거나 옛 모양일 수 있다', () => {
+  [null, '{', '{"x":"저쪽","y":3}', '{"y":3}', '[]'].forEach(function (bad) {
+    const c = dragCtx();
+    if (bad !== null) c._mem.v[POS_KEY] = bad;
+    c.$ = (function (o) {
+      return function (id) {
+        if (id === 'shareSideBtn') return { getBoundingClientRect: function () { return { right: 286, top: 214 }; } };
+        return o(id);
+      };
+    })(c.$);
+    vm.runInContext(cutFn(app, 'function popAnchor('), c);
+    assert.doesNotThrow(function () { c.popAnchor('shareSideBtn'); }, '터짐: ' + bad);
+    assert.equal(c._box.style.left, '296px',
+      '★★ 「' + bad + '」 이 적혀 있을 때 창이 엉뚱한 데 떴습니다');
+  });
 });
 
 /* ══════ ⑤ 꾸밈 — 손잡이는 옮길 수 있는 창에만 ══════ */
