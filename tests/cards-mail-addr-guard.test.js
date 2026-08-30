@@ -175,10 +175,20 @@ test('보내는 주소는 대표만 바꾼다 — 전 직원이 함께 쓰는 �
 /* ══════ 머리 고정 ══════ */
 
 test('★ 본문을 내려도 보내기·받는사람이 붙어 있다', () => {
-  const css = src.match(/#pcMail \.mtop\{[^}]*\}/);
-  assert.ok(css, '메일 화면의 머리줄 규칙을 찾지 못했습니다');
+  /* ⚠ 붙는 자리가 «.mtop 하나»이던 것을 2026-08-30 에 .cphead 한 덩이로 넓혔다
+       (대표 지시 「여기 틀고정」) — 단추줄만 붙고 받는사람·제목은 밀려 올라갔기
+       때문이다. 여기서 지키는 것은 «어느 선택자냐»가 아니라 「보내기와 받는사람이
+       함께 붙어 있는가」다. 이름을 박아 두면 넓힐 때마다 멀쩡한 개선이 깨진다. */
+  const css = src.match(/#pcMail \.cphead\{[^}]*\}/);
+  assert.ok(css, '메일 쓰기 화면의 붙박이 규칙을 찾지 못했습니다');
   assert.match(css[0], /position:sticky/, '★ 안 붙이면 100줄을 올라와야 보내기를 누른다');
   assert.match(css[0], /top:\s*0/, '위에 붙어야 한다');
   assert.match(css[0], /z-index/, '★ 겹칠 때 위로 오지 않으면 글자에 가린다');
   assert.match(css[0], /background/, '★ 배경이 없으면 아래 글자가 비쳐 겹쳐 보인다');
+  /* 그 덩이 «안»에 보내기와 받는사람이 둘 다 있어야 뜻이 있다 */
+  const i = src.indexOf('<div class="cphead">');
+  assert.ok(i > 0, '붙박이 덩이가 화면에 없습니다');
+  const seg = src.slice(i, src.indexOf('class="edbar"', i));
+  assert.ok(/>보내기</.test(seg), '보내기가 붙박이 덩이 밖에 있습니다');
+  assert.ok(seg.indexOf('받는사람') > 0, '받는사람이 붙박이 덩이 밖에 있습니다');
 });
