@@ -2310,12 +2310,6 @@ body.pc #pcDetail{display:flex}
 .sm-send:disabled{opacity:.5;cursor:default}
 .sm-note{font-size:12px;color:#94a3b8;line-height:1.6;margin:12px 2px 0}
 .sm-empty{text-align:center;color:#94a3b8;font-size:13px;padding:24px 10px;line-height:1.7}
-.shelf-add{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;box-sizing:border-box;height:44px;border:1px dashed #bfdbfe;background:#f8fafc;color:#1e40af;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;margin-bottom:14px}
-.shelf-add:hover{background:#e2e8f0}
-#matShelfSheet.dragging{outline:2px dashed #1e40af;outline-offset:-6px;background:#f8fafc}
-.shelf-acts{display:flex;gap:2px;flex-shrink:0}
-.shelf-acts button,.shelf-rep{border:none;background:none;font-size:16px;padding:6px;cursor:pointer;color:#64748b;border-radius:6px;display:inline-flex;align-items:center}
-.shelf-acts button:hover,.shelf-rep:hover{background:#f8fafc}
 </style>
   <!-- 프로그램 사이 이동 (공용 앱바) -->
   <script src="js/pu-appbar.js?v=7"></script>
@@ -2339,10 +2333,6 @@ body.pc #pcDetail{display:flex}
 
 <div id="sendMatBg" class="smbg" onclick="if(event.target===this)closeSendMat()">
   <div class="smsheet" id="sendMatSheet"></div>
-</div>
-
-<div id="matShelfBg" class="smbg" onclick="if(event.target===this)closeMatShelf()">
-  <div class="smsheet" id="matShelfSheet"></div>
 </div>
 
 <div id="appbar">
@@ -5217,6 +5207,11 @@ function renderMatPage(){
         </div>
         <div class="matacts">
           <button onclick="previewMat('${m.id}')" title="오른쪽 칸에서 내용 보기">👁 보기</button>
+          ${/* 「보기」와 다른 것이다 — 이쪽은 «원본 파일»을 새 창으로 열거나 내려받는다.
+                옛 팝업에만 있던 길이라 팝업을 걷으면서 여기로 옮겼다(2026-08-30). */''}
+          <button onclick="previewMaterial('${m.id}')" title="원본 파일을 새 창으로 엽니다 — 브라우저가 못 여는 형식이면 내려받습니다">📄 원본</button>
+          ${/* 한글 문서일 때만 보인다 — .pdf 에 달아 두면 눌러도 「한글만 됩니다」만 뜬다 */''}
+          ${/^(hwp|hwpx)$/.test(matExt(m.fileName||'')) ? `<button onclick="openMatEditor('${m.id}')" title="한글 서식을 표 모양 그대로 펼쳐 한 화면에서 고칩니다">✏ 서식</button>` : ''}
           <label class="matrep" title="파일 교체">🔄 교체<input type="file" accept="${MAT_ACCEPT}" style="display:none" onchange="replaceMaterialFile('${m.id}',this)"></label>
           <button class="matdel" onclick="deleteMaterial('${m.id}')" title="삭제">🗑</button>
         </div>
@@ -7876,66 +7871,21 @@ function initMatDrop(){
   });
 }
 
-/* ── 자료함 (대시보드에서: 관리 — 올리기·교체·미리보기·삭제) ── */
-function openMaterialShelf(){
-  initShelfDnd();
-  renderMaterialShelf();
-  $('matShelfBg').classList.add('open');
-  loadMaterials(renderMaterialShelf);
-}
-/* PDF를 자료함 시트 위로 끌어다 놓으면 업로드 */
-function initShelfDnd(){
-  const sh=$('matShelfSheet'); if(sh._dnd) return; sh._dnd=true;
-  ['dragenter','dragover'].forEach(ev=>sh.addEventListener(ev, e=>{ e.preventDefault(); sh.classList.add('dragging'); }));
-  sh.addEventListener('dragleave', e=>{ if(!sh.contains(e.relatedTarget)) sh.classList.remove('dragging'); });
-  sh.addEventListener('drop', async e=>{
-    /* 본문 자료함(initMatDrop)과 같은 이유로 여기서 이벤트를 끊는다 */
-    e.preventDefault(); e.stopPropagation(); sh.classList.remove('dragging');
-    const files=[...((e.dataTransfer&&e.dataTransfer.files)||[])];
-    const ok=files.filter(f=>matType(f.name));
-    if(!ok.length){ toast('지원하지 않는 파일 형식입니다 (PDF·워드·한글·PPT·엑셀·이미지 등)'); return; }
-    if(ok.length<files.length) toast(`지원하지 않는 형식 ${files.length-ok.length}개는 건너뜁니다`);
-    for(const f of ok){
-      await putMaterial('m'+Date.now()+Math.random().toString(36).slice(2,6), matNameOf(f.name), f);
-    }
-  });
-}
-function closeMatShelf(){ $('matShelfBg').classList.remove('open'); }
+/* ── 자료함 (본문 pcMat 한 화면) ──
+   ⚠ 2026-08-30 에 «옛 팝업»(matShelfBg/matShelfSheet)을 걷었다. 여는 단추가
+     오래전에 사라져 아무도 못 들어가는 화면이었는데, 그 안에만 있던
+     「📄 원본 열기」와 「✏ 서식 편집」은 본문 자료함 줄로 옮겼다.
+     ⚠ 화면을 다시 둘로 늘리지 말 것 — 같은 목록이 두 곳에 있으면 언젠가 한쪽만 고쳐진다. */
 /* 새 자료가 들어갈 갈래 — 지금 열어 둔 탭. 「전체」나 탭이 아닌 화면(묶음·메일틀)에서
    올렸으면 갈래를 정하지 않는다(= 기타). */
 function matNewCat(){
   const c = state.matCat || 'all';
   return (MAT_CATS_NOW().indexOf(c) >= 0 && c !== MAT_CAT_ETC) ? c : '';
 }
-/* 자료함은 화면이 둘이다 — 본문(pcMat)과 옛 팝업(matShelfSheet).
-   올리기·삭제 뒤에 **지금 보고 있는 쪽**을 다시 그린다. 한쪽만 그리면
-   "올렸는데 목록에 안 나온다"가 된다. */
+/* 올리기·삭제 뒤에 자료함을 다시 그린다 — 안 그리면 "올렸는데 목록에 안 나온다"가 된다.
+   ⚠ 자료함을 보고 있지 않을 때는 아무 일도 안 한다(다른 화면을 엉뚱하게 새로 그리지 않는다). */
 function matRefresh(){
   try{ if(state.view==='mat') renderMatPage(); }catch(_){}
-  try{ if($('matShelfBg') && $('matShelfBg').classList.contains('open')) renderMaterialShelf(); }catch(_){}
-}
-function renderMaterialShelf(){
-  const list = matList();
-  const rows = list.length ? list.map(m=>`
-      <div class="sm-slot">
-        <span class="sm-ic">${matIcon(m.fileName)}</span>
-        <div class="sm-sinfo"><div class="n">${esc(m.name||'자료')}</div><div class="f">${esc(m.fileName||'')} · ${fmtDate(m.uploadedAt)}</div></div>
-        <div class="shelf-acts">
-          <button title="미리보기" onclick="previewMaterial('${m.id}')">👁</button>
-          <button title="서식을 표 모양 그대로 펼쳐 한 화면에서 고칩니다" onclick="openMatEditor('${m.id}')">✏</button>
-          <label title="파일 교체" class="shelf-rep">🔄<input type="file" accept="${MAT_ACCEPT}" style="display:none" onchange="replaceMaterialFile('${m.id}',this)"></label>
-          <button title="삭제" onclick="deleteMaterial('${m.id}')">🗑</button>
-        </div>
-      </div>`).join('')
-    : `<div class="sm-empty">아직 자료가 없습니다.<br>아래 <b>＋ 새 자료 올리기</b>로 회사소개서·계약서 등을 올리세요.</div>`;
-  $('matShelfSheet').innerHTML = `
-    <div class="sm-head">
-      <div class="sm-htxt"><div class="t">📎 자료함</div><div class="s">고객에게 보낼 자료를 여기서 관리합니다</div></div>
-      <button class="sm-x" onclick="closeMatShelf()">✕</button>
-    </div>
-    <label class="shelf-add">＋ 새 자료 올리기 (파일 끌어다 놓기도 가능)<input type="file" accept="${MAT_ACCEPT}" style="display:none" onchange="addMaterial(this)"></label>
-    ${rows}
-    <div class="sm-note">여기 올린 자료가 고객 명함의 "자료 보내기"에 자동으로 나타납니다. PDF·워드·한글(hwp/hwpx)·PPT·엑셀·이미지 파일을 이 창에 끌어다 놓아도 올라갑니다 (8MB 이하).</div>`;
 }
 /* 올린 파일 이름을 그대로 자료 이름으로 쓴다 (대표 지시 2026-08-09).
    예전에는 이름을 물어봤는데, 파일 이름을 이미 그렇게 지어 두고 올리므로
@@ -7994,8 +7944,7 @@ async function putMaterial(id, name, file){
     await firebase.database().ref(DB_ROOT+'/materialFiles/'+id).set(dataUrl);
     await firebase.database().ref(DB_ROOT+'/materials/'+id).set(meta);
     _matMeta[id]=meta;
-    /* ⚠ 두 화면이 있다. 옛 팝업(renderMaterialShelf)만 새로 그리면 본문 자료함은
-       그대로라 **올렸는데 목록에 안 나타난다.** 지금 보고 있는 쪽을 다시 그린다. */
+    /* ⚠ 올린 뒤 반드시 다시 그린다 — 안 그리면 **올렸는데 목록에 안 나타난다.** */
     matRefresh();
     toast('✅ 올렸습니다');
     return true;

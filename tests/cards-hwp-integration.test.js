@@ -668,13 +668,25 @@ test('자료를 눌러 격자 편집기를 열 수 있다', () => {
 });
 
 test('👁(원본 보기)와 ✏(고치기)를 갈라 둔다 — 하나로 합치면 무엇이 열릴지 모르게 된다', () => {
-  /* ⚠ 「shelf-acts」는 <style> 안의 클래스 정의에도 나온다 — 거기서부터 자르면
-     실제 단추 줄을 못 보고도 통과한다. class="shelf-acts" 로 실제 마크업을 짚는다. */
-  const at = source.indexOf('class="shelf-acts"');
+  /* ⚠ 2026-08-30: 이 단추들은 «옛 팝업»(shelf-acts) 안에 있었다. 그 팝업은 여는 단추가
+       사라져 아무도 못 들어가는 화면이었고, 통째로 걷으면서 단추를 본문 자료함
+       (matacts) 으로 옮겼다. 규칙은 그대로다 — 목록에서 «갈라진 두 단추»로 갈 수 있어야 한다.
+     ⚠ 「matacts」는 <style> 안의 클래스 정의에도 나온다 — 거기서부터 자르면
+       실제 단추 줄을 못 보고도 통과한다. class="matacts" 로 실제 마크업을 짚는다. */
+  const at = source.indexOf('class="matacts"');
   assert.ok(at > 0, '단추 묶음 자리를 찾지 못했습니다');
-  const shelf = source.slice(at, at + 400);
+  const shelf = source.slice(at, at + 1200);
   assert.match(shelf, /onclick="previewMaterial\(/, '원본 보기 단추가 없어졌습니다');
   assert.match(shelf, /onclick="openMatEditor\(/, '고치기 단추가 없습니다');
+  /* 「보기(오른쪽 칸)」와 「원본(새 창·내려받기)」은 다른 것이다 — 둘 다 있어야 한다 */
+  assert.match(shelf, /onclick="previewMat\(/, '오른쪽 칸 보기 단추가 없어졌습니다');
+});
+
+test('★ 옛 자료함 팝업이 되살아나지 않는다 — 같은 목록이 두 곳이면 한쪽만 고쳐진다', () => {
+  for (const 흔적 of ['matShelfBg', 'matShelfSheet', 'renderMaterialShelf', 'openMaterialShelf']) {
+    assert.equal(source.indexOf(흔적 + '(') , -1, '★ 옛 팝업(' + 흔적 + ')이 돌아왔습니다');
+  }
+  assert.ok(source.indexOf('id="matShelfBg"') < 0, '★ 옛 팝업 화면이 돌아왔습니다');
 });
 
 test('한글이 아닌 자료는 고치기를 막고 까닭을 말한다', () => {
@@ -687,12 +699,25 @@ test('한글이 아닌 자료는 고치기를 막고 까닭을 말한다', () =>
    엉뚱한 값을 넘겨도 정규식 검사는 통과한다. 목록을 그리는 함수를 실제로
    돌려 무엇이 찍히는지로 증명한다. */
 test('[실행] 자료 목록에서 ✏ 을 누르면 그 자료의 id 로 openMatEditor 가 불린다', () => {
-  const i = source.indexOf('function renderMaterialShelf');
-  assert.ok(i > 0, 'renderMaterialShelf 를 찾지 못했습니다 — 목록을 그리는 함수 이름이 바뀌었을 수 있습니다');
+  const i = source.indexOf('function renderMatPage');
+  assert.ok(i > 0, 'renderMatPage 를 찾지 못했습니다 — 목록을 그리는 함수 이름이 바뀌었을 수 있습니다');
   const j = source.indexOf('\nfunction ', i + 20);
-  const fn = source.slice(i, j > i ? j : i + 4000);
+  const fn = source.slice(i, j > i ? j : i + 8000);
   assert.match(fn, /openMatEditor\('\$\{m\.id\}'\)/,
     '단추가 그 줄의 자료 id 를 안 넘기면, 눌러도 늘 첫 자료나 undefined 가 열립니다');
+  assert.match(fn, /previewMaterial\('\$\{m\.id\}'\)/,
+    '원본 열기도 그 줄의 자료 id 를 넘겨야 합니다');
+});
+
+test('★ ✏(고치기)는 한글 문서 줄에만 붙는다 — PDF 에 달면 눌러도 「한글만 됩니다」만 뜬다', () => {
+  const i = source.indexOf('function renderMatPage');
+  const j = source.indexOf('\nfunction ', i + 20);
+  const fn = source.slice(i, j > i ? j : i + 8000);
+  const at = fn.indexOf('openMatEditor(');
+  assert.ok(at > 0, '고치기 단추를 찾지 못했습니다');
+  /* 단추 «바로 앞»에서 확장자를 가리는지 본다 — 어딘가에서 한 번 가리는 것으로는 부족하다 */
+  assert.match(fn.slice(Math.max(0, at - 260), at), /hwpx?[\s\S]*matExt\(/,
+    '★ 한글인지 안 가리고 늘 붙입니다');
 });
 
 /* ══════ 저장이 실패했는데 성공했다고 말하지 않는가 ══════
