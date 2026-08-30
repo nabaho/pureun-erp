@@ -31,6 +31,11 @@ const CHECKS = [
    예전엔 이 검사가 다른 폴더를 보고 있어, 깨끗하다고 하는 동안 실명·집주소·계좌번호가 남아 있었다. */
 const PII = ['pii_scan.js', '서식에 남의 개인정보가 없는가'];
 
+/* 서식을 «진짜로 그려» 보는 검사. 문자열만 보는 검사는 «차례가 바뀐 것»을 못 잡는다 —
+   실제로 stripBaked 를 나중에 넣으며 지원신청서 금액·신청일이 조용히 비었다.
+   jsdom 이 있어야 돌고, 없으면 SKIP 이라 말한다(조용히 통과하지 않는다). */
+const FORMS = ['check_forms.js', '서식이 정말 채워지는가'];
+
 for (const [file, what] of CHECKS) {
   test('기금 결산 검사 — ' + what + ' (' + file + ')', () => {
     const p = path.join(TOOLS, file);
@@ -55,6 +60,17 @@ test('기금 서식 검사 — ' + PII[1] + ' (' + PII[0] + ')', () => {
   assert.ok(/전 서식 깨끗함/.test(out),
     '서식 템플릿에 남의 개인정보가 남아 있습니다:\n' + out.slice(-2000));
   assert.strictEqual(r.status, 0, PII[0] + ' 실패:\n' + out.slice(-2000));
+});
+
+test('기금 서식 검사 — ' + FORMS[1] + ' (' + FORMS[0] + ')', () => {
+  const p = path.join(TOOLS, FORMS[0]);
+  assert.ok(fs.existsSync(p), FORMS[0] + ' 이 없습니다');
+  const r = spawnSync(process.execPath, [p], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
+  const out = (r.stdout || '') + (r.stderr || '');
+  // SKIP 도 «통과»로 본다 — 다만 무엇을 건너뛰었는지 화면에 남는다
+  if (/^SKIP:/m.test(out)) { console.log('  ' + out.trim().split(/\r?\n/)[0]); return; }
+  assert.ok(/ALL PASS/.test(out), '서식이 제대로 안 채워집니다:\n' + out.slice(-2500));
+  assert.strictEqual(r.status, 0, FORMS[0] + ' 실패:\n' + out.slice(-2500));
 });
 
 /* 검사가 «몇 건을 돌았는지»도 못 박는다.

@@ -656,7 +656,7 @@ ok('사업계획서를 예산으로 채운다', src.includes('function bizplanRo
   && src.includes("if(kind==='bizplan') fillBizplanDoc(d,f);"));
 /* ⚠ 이것은 «계획»이다 — 실적(computeFin)을 넣으면 내년 계획 자리에 올해 실적이 들어간다.
    예산이 비면 «비운 채로» 둔다. */
-ok('예산이 없으면 안 채운다', src.includes('if(!interest&&!etcRev&&!pur&&!adm) return null;')
+ok('예산이 없으면 안 채운다', src.includes('if(!_hasBudget(S.fundId,yr)) return null;')
   && src.slice(src.indexOf('function bizplanRows'), src.indexOf('function fillBizplanDoc')).indexOf('computeFin') < 0);
 /* 목적사업 회계와 기금관리 회계가 «따로» 0 으로 맞물린다(제출본이 그렇게 짜여 있다) */
 ok('두 회계가 따로 맞물린다', src.includes('var pNonopExp=spare, pNonopRev=spare-pOp;')
@@ -668,13 +668,36 @@ ok('음수를 △ 로 적는다', src.includes("return (n<0?'△':'')+Math.abs(n
 // 예비비는 예산의 「그 밖의 비용」이다
 ok('예비비를 그 밖의 비용에서 가져온다', src.includes("spare=g('exp_etc')"));
 
+/* ⚠ 차례가 어긋나면 조용히 빈다 — 실제로 그랬다.
+   지원신청서는 «박힌 값을 우리 값으로 바꾸는» 방식이라 걷어내기보다 먼저 돌아야 한다.
+   나중에 돌리면 이미 밑줄로 바뀐 뒤라 바꿀 것을 못 찾고, 금액·신청일이 통째로 비었다.
+   문자열이 있는지만 보는 검사는 이것을 못 잡았다. 차례를 못 박는다. */
+ok('지원신청서를 걷어내기보다 먼저 채운다',
+  src.indexOf("if(kind==='subsidy') fillSubsidyDoc(d,f);") < src.indexOf('  stripBaked(d);')
+  && src.indexOf("if(kind==='subsidy') fillSubsidyDoc(d,f);") > 0);
+// 채운 칸에 표를 남겨야 걷어내기가 도로 지우지 않는다
+ok('채운 칸을 걷어내기가 건너뛴다', src.includes("td.setAttribute('data-kept','1');")
+  && src.includes("if(td.getAttribute('data-kept')) return;")
+  && src.includes("if(el.getAttribute&&el.getAttribute('data-kept')) continue;"));
+/* ⚠ 확정 스냅샷은 자산총계를 «assets» 로 담는다(computeFin 의 totalAssets 가 아니다).
+   그것을 몰라 추정재무상태표가 실데이터로는 한 번도 안 채워졌다 —
+   지어낸 시험자료로만 통과했다. */
+ok('스냅샷의 assets 를 읽는다', src.includes('function _bizFinOf(){')
+  && src.includes('var assets=(f.assets!=null)?f.assets:f.totalAssets;')
+  && src.includes('if(f.res1==null||f.res2==null||f.secu==null) return null;'));
+ok('스냅샷이 증권·준비금을 담는다', src.includes('secu:fin.secu, res1:fin.res1, res2:fin.res2,'));
+// 예산이 있나 하는 잣대는 «한 곳»에서 — 두 벌이면 서로 어긋난다
+ok('예산 있나를 한 곳에서 본다', src.includes('function _hasBudget(fid,yr){')
+  && src.includes('var BUDGET_KEYS=[')
+  && (src.match(/_hasBudget\(S\.fundId,yr\)/g)||[]).length===2);
+
 /* ══ 추정재무상태표 ══ 올해 기말에 내년 계획을 얹는다 */
 ok('추정재무상태표를 셈한다', src.includes('function bizplanBS(f,yr,fin){')
   && src.includes('var BIZ_BS_ROWS=['));
 // 예비비도 «쓸 돈»으로 보아 현금에서 뺀다 — 안 빼면 그만큼 대차가 어긋난다
 ok('예비비를 현금에서 뺀다', src.includes('var cash=fin.cash+contrib+interest-pur-adm-spare;'));
 // 올해 기말이 없으면 바탕이 없다 — 0 을 바탕으로 삼으면 «올해 재산이 0» 이라 적는 셈이다
-ok('확정 결산이 없으면 안 채운다', src.includes('if(!fin||fin.totalAssets==null) return;'));
+ok('확정 결산이 없으면 안 채운다', src.includes('var fin=_bizFinOf();') && src.includes('if(!fin) return;'));
 /* 회계 가름은 기금마다 다르다(제출본도 한쪽을 비웠다) — 「계」만 적는다 */
 ok('계 칸만 적는다', src.includes('blanks[2].textContent=W(BIZ_BS_ROWS[i][1](P));'));
 // 계획이 재원보다 크면 추정 잔액이 음수가 된다 — 조용히 인쇄하면 안 된다
@@ -725,7 +748,7 @@ ok('박힌 남의 날짜를 오늘로',
    출연」은 공동기금이면 늘 그러하므로 그대로 둔다. */
 ok('기금마다 다른 체크를 지운다', src.includes("공동근로복지기금에") && src.includes("t0.indexOf('■')")
   && src.includes("td.innerHTML=td.innerHTML.replace(/■/g,'□');"));
-ok('서명란에 이름을 넣는다', src.includes("if(nm) td.textContent=nm+' (서명 또는 인)';"));
+ok('서명란에 이름을 넣는다', src.includes("td.textContent=nm+' (서명 또는 인)'"));
 /* 지원신청서에는 신청인 말고도 «대기업·도급업체»와 «수급업체» 칸이 있다 —
    안 걸면 그 칸에 기금 주소·전화가 들어간다. */
 ok('소재지·전화에 칸이 걸려 있다',

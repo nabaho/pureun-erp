@@ -23,7 +23,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="hwpx_gen.js?v=14"></script>
 <script src="hwpx_doc.js?v=2"></script>
-<script src="fund_forms.js?v=1"></script>
+<script src="fund_forms.js?v=2"></script>
 <style>
   :root{--acc:#2563eb;--acc2:#1b4bc0;--acc-soft:#e9f0fe;--ink:#182234;--sub:#59637a;--faint:#8b94a6;
     --line:#e2e6ee;--panel:#fff;--bg:#eef1f6;--ok:#1f7a4d;--ok-bg:#e7f6ee;--warn:#b45309;--warn-bg:#fdf1e1;
@@ -3194,6 +3194,7 @@ function stripBaked(root){
     for(var i=0;i<el.childNodes.length;i++){
       var n=el.childNodes[i];
       if(n.nodeType===3){                                  // 글자 마디만 손댄다 — 표 짜임새는 안 건드린다
+        if(el.getAttribute&&el.getAttribute('data-kept')) continue;   // 우리가 채운 칸
         var t=n.nodeValue||'';
         if(/㎜|㎡|g\//.test(t)) continue;                   // 용지 규격
         var v=_bakeText(t);
@@ -3212,6 +3213,7 @@ function stripBaked(root){
     [].slice.call(tr.children).forEach(function(td,ci){
       /* 칸 안에 여러 줄이 든 곳이 있다(「가.이자수입 / 나.대부이자수입」).
          칸째로 보면 그런 칸이 통째로 빠지므로 «글자 마디»마다 본다. */
+      if(td.getAttribute('data-kept')) return;            // 우리가 채운 칸은 그대로 둔다
       var kids=[];
       (function walk2(el){ for(var i=0;i<el.childNodes.length;i++){
         var n=el.childNodes[i];
@@ -3254,6 +3256,32 @@ function fillRoster(root,f){
     if(v) el.textContent=m[1]+' : '+v;
   });
 }
+/* 예산이 «하나라도» 적혔나 — 손익예산과 추정재무상태표가 같은 잣대를 써야 한다.
+   따로 적어 두었더니 서로 어긋났다: 손익 쪽은 예비비를, 재무상태표 쪽은 그 밖의 수입과
+   예비비를 빠뜨려, 예비비만 있는 계획은 손익만 비고 재무상태표는 차는 일이 생겼다. */
+var BUDGET_KEYS=['rev_contrib','rev_interest','rev_etc','exp_purpose','exp_admin','exp_etc'];
+function _hasBudget(fid,yr){
+  var b=budgetOf(fid,yr)||{};
+  for(var i=0;i<BUDGET_KEYS.length;i++) if(num(b[BUDGET_KEYS[i]])) return true;
+  return false;
+}
+/* 익년도 추정의 «바탕»이 되는 올해 기말. 확정 결산 스냅샷에서 온다.
+   ⚠ 스냅샷의 이름은 assets 다(computeFin 의 totalAssets 와 다르다).
+   ⚠ 증권·준비금1·2 는 2026-08-30 부터 담는다 — 그 전 스냅샷에는 없다.
+     없는 것을 0 으로 메우면 «준비금이 0인 기금»으로 셈해 표가 통째로 틀린다.
+     그래서 하나라도 없으면 «안 채운다». 빈 칸이 틀린 숫자보다 낫다. */
+function _bizFinOf(){
+  var c=(typeof S!=='undefined'&&S.f15Close)||null;
+  var f=c&&c.fin; if(!f) return null;
+  var assets=(f.assets!=null)?f.assets:f.totalAssets;
+  if(assets==null) return null;
+  if(f.res1==null||f.res2==null||f.secu==null) return null;   // 옛 스냅샷
+  return { cash:num(f.cash)||0, savings:num(f.savings)||0, secu:num(f.secu)||0,
+           loan:num(f.loan)||0, otherAsset:num(f.otherAsset)||0,
+           res1:num(f.res1)||0, res2:num(f.res2)||0,
+           basic:num(f.basic)||0, retained:num(f.retained)||0,
+           liab:num(f.liab)||0, totalAssets:num(assets)||0 };
+}
 /* ══ 사업계획서 — 손익예산 열 단계 ══
    서식의 열 단계는 손익계산서와 «같은 짜임새»다. 그래서 예산만 있으면 나머지는 셈으로 나온다:
      3=1-2 · 5=3-4 · 8=5+6-7 · 10=8-9
@@ -3272,7 +3300,7 @@ function bizplanRows(f,yr){
   var g=function(k){ return num(b[k])||0; };
   var interest=g('rev_interest'), etcRev=g('rev_etc');
   var pur=g('exp_purpose'), adm=g('exp_admin'), spare=g('exp_etc');   // 그 밖의 비용 = 예비비
-  if(!interest&&!etcRev&&!pur&&!adm) return null;    // 예산이 없으면 채우지 않는다
+  if(!_hasBudget(S.fundId,yr)) return null;          // 예산이 없으면 채우지 않는다
   /* ── 목적사업 회계 ── 수익은 기타뿐이고, 모자란 만큼 준비금에서 꺼내 쓴다
      ── 기금관리 회계 ── 이자를 벌어 그만큼 준비금에 넣는다
      둘 다 «따로» 0 으로 맞물린다(원본 제출본이 그렇게 짜여 있다). */
@@ -3310,7 +3338,7 @@ function bizplanBS(f,yr,fin){
   var g=function(k){ return num(b[k])||0; };
   var contrib=g('rev_contrib'), interest=g('rev_interest');
   var pur=g('exp_purpose'), adm=g('exp_admin'), spare=g('exp_etc');
-  if(!contrib&&!interest&&!pur&&!adm) return null;
+  if(!_hasBudget(S.fundId,yr)) return null;
   var setup=Math.round(contrib*_reserveRate(S.fundId));   // 출연금의 정해진 몫을 준비금2로
   var back2=pur+adm+spare-interest;                       // 준비금2 환입(손익예산과 같은 셈)
   var cash=fin.cash+contrib+interest-pur-adm-spare;
@@ -3365,8 +3393,11 @@ function fillBizplanDoc(root,f){
   /* 추정재무상태표 — «계» 칸만 적는다(회계 가름은 기금마다 다르다).
      올해 기말은 «확정 결산 스냅샷»에서 온다. 없으면 추정할 바탕이 없으니 안 채운다 —
      0 을 바탕으로 삼으면 «올해 재산이 0» 이라 적는 셈이다. */
-  var fin=(S.f15Close||{}).fin;
-  if(!fin||fin.totalAssets==null) return;
+  /* ⚠ 확정 스냅샷은 자산총계를 «assets» 로 담는다(totalAssets 가 아니다).
+       그리고 옛 스냅샷에는 증권·준비금1·2 가 아예 없다 — 그것 없이 추정하면
+       «준비금이 0인 기금»으로 셈해 엉뚱한 표가 나온다. 그럴 땐 안 채운다. */
+  var fin=_bizFinOf();
+  if(!fin) return;
   var P=bizplanBS(f,yr,fin);
   if(!P) return;
   [].slice.call(root.querySelectorAll('tr')).forEach(function(tr){
@@ -3418,12 +3449,14 @@ function fillSubsidyDoc(root,f){
     if(/^[0-9,]+\s*원$/.test(t)){
       var lab=(i>0?(tds[i-1].textContent||''):'').replace(/\s/g,'');
       td.textContent=/지원신청/.test(lab) ? won(su.request_amount) : '';
+      td.setAttribute('data-kept','1');            // 걷어내기가 도로 지우지 않게
       return;
     }
     // 신청일 — 오늘로
     if(/^20\d{2}\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일$/.test(t)){
       var n=new Date();
       td.textContent=n.getFullYear()+'년 '+(n.getMonth()+1)+'월 '+n.getDate()+'일';
+      td.setAttribute('data-kept','1');
       return;
     }
     /* 체크 — 기금마다 다른 것은 지운다(복지사업 종류·지원받은 사실).
@@ -3432,7 +3465,7 @@ function fillSubsidyDoc(root,f){
        줄 자리에만 이름을 넣고 «(서명 또는 인)»은 그대로 둔다. */
     if(/^[＿_\s]+\(서명\s*또는\s*인\)$/.test(t)){
       var nm=_boss(f).name||f.chairman;
-      if(nm) td.textContent=nm+' (서명 또는 인)';
+      if(nm){ td.textContent=nm+' (서명 또는 인)'; td.setAttribute('data-kept','1'); }
     }
   });
 }
@@ -3446,10 +3479,14 @@ function hwpFormHTML(kind,f,sites){
                               .replace(/\[V\] 공동근로복지기금법인/g,'[ ] 공동근로복지기금법인');
   var d=document.createElement('div'); d.innerHTML=html;
   /* 남의 값을 «가장 먼저» 걷어낸다 — 걷어낸 자리가 곧 채울 자리가 된다 */
+  /* ⚠ 차례가 중요하다. 지원신청서는 «박힌 값을 우리 값으로 바꾸는» 방식이라
+       걷어내기보다 «먼저» 돌아야 한다. 나중에 돌리면 이미 밑줄로 바뀐 뒤라
+       바꿀 것을 못 찾고, 금액·신청일이 통째로 비었다(실제로 그랬다).
+       바꾼 칸에는 표를 남겨, 뒤이은 걷어내기가 도로 지우지 않게 한다. */
+  if(kind==='subsidy') fillSubsidyDoc(d,f);
   stripBaked(d);
   /* 위원 격자를 «먼저» 채운다 — 그 줄에 표를 남겨야 아래 라벨 채우기가 비껴간다 */
   fillCommittee(d,f);
-  if(kind==='subsidy') fillSubsidyDoc(d,f);
   if(kind==='bizplan') fillBizplanDoc(d,f);
   if(kind==='reg_roster') fillRoster(d,f);
   /* 사람이 읽듯 «지금 어느 칸 아래인지»를 따라간다.
@@ -9030,6 +9067,9 @@ function closeSnapshot(arr,fid,yr,rep,sites,welf){
   var fin=computeFin(arr,fid,yr), R=buildF15(arr,fid,yr,rep,sites,welf);
   return {
     cash:fin.cash, savings:fin.savings, loan:fin.loan, otherAsset:fin.otherAsset,
+    /* 증권과 준비금 1·2 — 익년도 «추정재무상태표»가 이 셋을 봐야 셈이 된다.
+       없던 탓에 그 표가 실데이터로는 한 번도 안 채워졌다(지어낸 시험자료로만 통과했다). */
+    secu:fin.secu, res1:fin.res1, res2:fin.res2,
     assets:fin.totalAssets, liab:fin.liab, basic:fin.basic, retained:fin.retained,
     equity:fin.equity, liabEq:fin.totalLiabEq, balanced:!!fin.balanced,
     revenue:fin.interest, purpose:fin.purpose, admin:fin.admin, otherExp:fin.otherExp, net:fin.net,
