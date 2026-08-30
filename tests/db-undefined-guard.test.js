@@ -81,3 +81,29 @@ test('★★ 한 건·여러 건 저장도 «이 길»로 온다 (칸마다 막�
       '★ ' + h + ' 이 dbSet 을 안 거친다 — 그 길로 들어온 undefined 는 못 막는다');
   });
 });
+
+/* ══ 서버 저장이 «즉시» 터질 때도 알린다 (2026-08-30) ══
+   비동기 실패(.catch)는 이미 알리는데, «동기»로 터지는 것은 기록만 남고 조용했다.
+   2026-06-09 입금 사고가 정확히 그 길이었다 — undefined 가 있으면 Firebase 는
+   «부르는 그 자리에서» 던지므로 .catch 에 안 걸린다. */
+test('★★ 서버 쓰기가 즉시 터지면 «사람에게 알린다»', () => {
+  const at = DBSET.indexOf("fbDb.ref('data/'+k).set(");
+  assert.ok(at > 0, '서버로 쓰는 곳을 못 찾았다');
+  const tail = DBSET.slice(at);
+  const c = tail.indexOf('} catch(e){');
+  assert.ok(c > 0, '★ 서버 쓰기를 감싸는 catch 가 없다');
+  const seg = tail.slice(c, c + 700);
+  assert.ok(/showToast\('⚠ 서버 저장 실패/.test(seg),
+    '★★ 기록만 남기고 조용하다 — 화면은 저장된 줄 알고 넘어간다(6월 사고가 그랬다)');
+  assert.ok(/_markPending\(\)/.test(seg),
+    '★ 「못 보낸 것」 표를 안 남기면 나중에 다시 보낼 수가 없다');
+  assert.ok(/_metaRollback\(\)/.test(seg),
+    '★★ 시각만 올라가면 이 기기가 「더 최신」으로 오인돼 옛 자료를 서버로 민다');
+});
+
+test('★ 되돌리개가 «아직 없을 때»도 안 죽는다', () => {
+  const at = DBSET.indexOf('try { _metaRollback(); }');
+  assert.ok(at > 0, '되돌리개를 감싸지 않았다');
+  assert.ok(/try \{ _metaRollback\(\); \} catch\(_\)\{\}/.test(DBSET),
+    '★ 터진 자리가 되돌리개를 만들기 «전»이면, 알리려다 또 터진다');
+});
