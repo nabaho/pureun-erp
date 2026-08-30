@@ -284,3 +284,20 @@ test('보통 칸에는 그대로 통째로 넣는다 — 나누기가 끼어들�
   const r = M.apply(tbl([['생년월일', '']]), { picks: { t0r0c1: 'birth' }, data: WHO });
   assert.ok(r.xml.indexOf('1975.01.07') > 0);
 });
+
+test('★ AI 짝짓기가 있으면 «목록 표가 없다고 적혀 있어도» 채운다', () => {
+  /* 칸 지도는 AI에게 묻기 «전»에 훑으므로 사전이 못 알아본 표는 lists 가 비어 있다.
+     그대로 두면 AI에게 물어 놓고도 채우기가 시작조차 안 된다(실측 2026-08-30). */
+  const xml = tbl([['복무기간', '수행단체', '맡은 일'], ['', '', ''], ['', '', '']]);
+  const colMap = { '복무기간|수행단체|맡은일': ['period', 'org', 'role'] };
+  const r = M.apply(xml, { picks: {}, data: WHO, colMap: colMap });
+  const all = (r.xml.match(/<hp:t[^>]*>([\s\S]*?)<\/hp:t>/g) || [])
+    .map((x) => x.replace(/<[^>]*>/g, '')).join(' ');
+  assert.ok(all.indexOf('충청남도') >= 0, 'AI 가 짝지은 표가 채워져야 합니다');
+});
+
+test('AI 짝짓기가 없으면 지금까지처럼 — lists 가 비면 목록을 안 건드린다', () => {
+  const xml = tbl([['복무기간', '수행단체', '맡은 일'], ['', '', '']]);
+  const r = M.apply(xml, { picks: {}, data: WHO });
+  assert.equal(r.changed, false, '사전도 AI도 모르면 비워 둡니다');
+});

@@ -199,11 +199,25 @@
   }
 
   /* ===== ② 목록 표: 머리행을 알아보고 아래 빈 행에 한 줄씩 ===== */
-  function detectHeader(cells) {
-    var map = [], hit = 0;
-    for (var i = 0; i < cells.length; i++) {
-      var k = colKeyOf(cellText(cells[i]));
-      map.push(k); if (k) hit++;
+  /* colMap: 머리행 이름표 → 열쇠 배열. AI에게 물어 얻은 짝짓기를 여기로 건넨다
+     (js/kcareer-colmap-ai.js). 사전이 못 알아본 서식을 사람 손 없이 채우기 위한 것이다.
+     ⚠ 사전보다 «앞선다» — 사전은 서식마다 새로 빗나가지만 AI는 그 표를 보고 답한다.
+     ⚠ 없으면 지금까지처럼 사전으로 간다. AI가 없어도 앱은 그대로 돌아야 한다. */
+  function detectHeader(cells, colMap) {
+    var map = [], hit = 0, i;
+    if (colMap) {
+      var key = cells.map(function (c) { return cellText(c).replace(/[\s　]+/g, ''); }).join('|');
+      var given = colMap[key];
+      if (given && given.length === cells.length) {
+        map = given.map(function (k) { return k === 'none' ? '' : k; });
+        hit = map.filter(Boolean).length;
+      }
+    }
+    if (!hit) {
+      for (i = 0; i < cells.length; i++) {
+        var k = colKeyOf(cellText(cells[i]));
+        map.push(k); if (k) hit++;
+      }
     }
     if (hit < 2) return null;
     var kind = map.indexOf('school') >= 0 ? 'edu'
@@ -241,11 +255,11 @@
        · 첫 머리행이 학력인데 학력이 비면 표 전체를 포기해 경력이 안 들어갔고
        · 경력이 잡히면 자격증 표까지 죽 채워 «잘못 낸 서류»가 됐다.
      이제 구역마다 머리행을 찾고, 그 구역의 «연속된 빈 행»만 채운다. */
-  function fillList(tbl, data, report) {
+  function fillList(tbl, data, report, opts) {
     var rows = splitRows(tbl);
     var newTbl = tbl;
     for (var r = 0; r < rows.length; r++) {
-      var head = detectHeader(splitCells(rows[r]));
+      var head = detectHeader(splitCells(rows[r]), opts && opts.colMap);
       if (!head) continue;
       var items = data[head.kind] || [];
       var put = 0;
@@ -281,12 +295,12 @@
   /* ===== 입구 =====
      data = { fields:{name,birth,gender,phone,email,addr,license,org},
               edu:[{period,school,major}], career:[{period,org,role}] } */
-  function autoFill(sectionXml, data) {
+  function autoFill(sectionXml, data, opts) {
     data = data || {};
     var report = { fields: [], lists: [], kept: [], usedKeys: {} };
     var xml = eachTable(sectionXml, function (tbl) {
       var t = fillFields(tbl, data.fields || {}, report);
-      t = fillList(t, data, report);
+      t = fillList(t, data, report, opts);
       return t;
     });
     delete report.usedKeys;
