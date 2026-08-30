@@ -936,11 +936,17 @@ test('.hwp 양식도 자동 채움된다 — 한글 엔진으로 hwpx로 바꿔�
 
 test('✨ 내 정보로 채우기 — 손으로 타이핑하지 않는다', () => {
   assert.match(source, /onclick="rhAutoFillDoc\(\)"/);
-  const src = funcSource('rhAutoFillDoc');
+  /* ⚠ 2026-08-30: 채우는 길이 «하나»로 모였다. 단추가 부르는 것은 갈림길이고,
+     칸 지도를 못 만든 서식만 사전 길(rhAutoFillDoc_사전)로 간다. */
+  const 갈림길 = funcSource('rhAutoFillDoc');
+  assert.match(갈림길, /rhFillByMap\(\)/, '칸 지도가 있으면 좋은 길로 가야 합니다');
+  const src = funcSource('rhAutoFillDoc_사전');
   assert.match(src, /_rhToHwpx\(_rhDoc\.bytes, _rhDoc\.name\)/);
   assert.match(src, /KcareerHwpxFill\.autoFill\(s, data\)/);
   assert.match(src, /_cvFillData\(\)/, '프로필·경력에서 끌어옵니다');
-  assert.match(src, /openHwpViewer\(filled/, '채운 결과를 바로 보여줘야 확인할 수 있습니다');
+  /* 전에는 「팝업으로 보여준다」를 못 박았다 — 대표 지시로 규칙이 바뀌었다.
+     보여 주는 것은 그대로 지키되, 보던 화면 «그 자리»에 나와야 한다. */
+  assert.match(src, /mountEditor\(filled/, '채운 결과를 바로 보여줘야 확인할 수 있습니다');
   assert.match(src, /rhDraftSave\(\)/, '채운 결과도 임시저장돼야 합니다');
 });
 
