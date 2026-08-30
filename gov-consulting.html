@@ -314,10 +314,14 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 /* 주간 화면에서도 오늘 칸을 같은 방식으로 */
 .wc-hd.today-col{background:rgba(26,115,232,.06);box-shadow:inset 0 -2px 0 var(--gc-today);}
 .wc-hd.today-col .wc-num{color:var(--accent);font-weight:900;}
-/* 구글 월 화면은 일·토·공휴일 날짜에 색을 넣지 않는다 — 색은 일정 칩이 진다 */
-.mc-date.sun-c,.mc-date.sat-c,.mc-date.hol-c{color:var(--gc-text);font-weight:500;}
-/* 공휴일 이름 — 구글처럼 «작은 칩»으로. 칸을 물들이지 않는다 */
-.hol-name{display:inline-block;font-size:12px;font-weight:500;color:#a50e0e;background:#fce8e6;border-radius:4px;padding:1px 6px;line-height:1.5;margin-bottom:2px;}
+.mc-date.sun-c,.mc-date.sat-c{color:var(--gc-text);font-weight:500;}
+/* 공휴일 «날짜»는 빨갛게 — 이름과 함께 한 덩어리로 읽히게 한다 */
+.mc-date.hol-c{color:#d93025;font-weight:700;}
+/* 날짜와 공휴일 이름을 한 줄에 묶는다 */
+.mc-dl{display:flex;align-items:center;gap:5px;min-width:0;}
+/* 공휴일 이름 — «배경 없는 글씨». 일정 칩(채운 알약)과 모양부터 다르게 하고,
+   칩 줄을 안 뺏는다(예전 알약은 진짜 일정을 「+1건」으로 밀어냈다). */
+.hol-name{font-size:11.5px;font-weight:700;color:#d93025;letter-spacing:-.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .wc-hol{font-size:11px;font-weight:500;color:#a50e0e;line-height:1.3;margin-top:1px;}
 .chips{display:flex;flex-direction:column;gap:2px;}
 /* 일정 칩 — 바탕·글자색은 일정마다 달라 JS(gcalTint)가 넣는다. 여기서는 크기·굵기만. */
@@ -2367,7 +2371,10 @@ function getHoliday(ds){
   if(HOLIDAYS[mm])return HOLIDAYS[mm];
   return null;
 }
-function getTypes(){const s=localStorage.getItem('p_types');if(!s){lsSet('p_types',JSON.stringify(DEFAULT_TYPES));return DEFAULT_TYPES;}return JSON.parse(s).map(t=>({mandatoryField:0,fullName:'',agency:'',exclusiveDay:false,onePhoto:false,...t}));}
+/* dayRule — 이 사업이 쉬는 날에도 나가는가.
+   ''(빈 값) = 전체 설정을 따른다(처음 값) · 'exceptSun' = 일요일만 빼고 아무 날이나.
+   ⚠ 새 갈래를 늘릴 때는 isBlocked 도 함께 봐야 한다 — 여기만 늘리면 조용히 무시된다. */
+function getTypes(){const s=localStorage.getItem('p_types');if(!s){lsSet('p_types',JSON.stringify(DEFAULT_TYPES));return DEFAULT_TYPES;}return JSON.parse(s).map(t=>({mandatoryField:0,fullName:'',agency:'',exclusiveDay:false,onePhoto:false,dayRule:'',...t}));}
 function setTypes(v){lsSet('p_types',JSON.stringify(v));fbPush('p_types',v);}
 function getCos(){return JSON.parse(localStorage.getItem('p_cos')||'[]');}
 // ===== 데이터 안전장치: 대량 삭제(비정상 축소) 감지 =====
@@ -4003,13 +4010,34 @@ const ST={sid:null,photos:[null,null],times:[null,null],done:[false,false],pos:'
 function todayStr(){const d=new Date();return `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;}
 function p2(n){return String(n).padStart(2,'0');}
 function uid(){return Math.random().toString(36).slice(2,10);}
-function isBlocked(ds){
+/* 이 날짜에 «이 사업»을 넣을 수 있는가. 막히면 까닭을, 되면 null 을 준다.
+   ⚠ typeId 를 반드시 넘길 것 — 안 넘기면 전체 설정만 보고 판단해서
+     「사업별로 연 날」이 조용히 막힌다(예전에는 날짜만 보고 판단했다). */
+function isBlocked(ds,typeId){
   const env=getEnv();
-  if(getHoliday(ds)&&env.allowHoliday!==false)return null; // 공휴일은 등록 허용
   const dow=new Date(ds).getDay();
+  const t=typeId?getTypes().find(x=>x.id===typeId):null;
+  /* 사업별 규칙이 전체 설정을 덮는다.
+     일요일만은 못 연다 — 사업이 아무리 급해도 일요일은 일요일이다. */
+  if(t&&t.dayRule==='exceptSun')return dow===0?'일요일은 등록 불가':null;
+  const hol=getHoliday(ds);
+  if(hol){
+    if(env.allowHoliday!==false)return null; // 공휴일은 등록 허용 (일요일 공휴일 포함)
+    /* ⚠ 2026-08-30 이전에는 여기서 그냥 흘려보냈다 — 「공휴일 허용」을 꺼도
+       평일에 걸린 공휴일(대체공휴일 등)은 아무나 등록됐다. 이름표는 「등록 허용」인데
+       끄면 아무 일도 안 일어났으니 이름표가 거짓말이었다. 이제 정말로 막는다. */
+    return hol+'에는 등록 불가 (환경설정)';
+  }
   if(dow===0)return'일요일은 등록 불가';
   if(dow===6&&!env.allowWeekend)return'토요일 등록은 환경설정에서 허용 필요';
   return null;
+}
+/* 달력 «칸»을 열지 말지. 칸은 사업을 모르므로 «하나라도 되는 사업이 있으면» 연다.
+   다 막아 두면 「왜 안 눌리지」가 되고, 실제로 넣을 때 isBlocked 가 다시 본다. */
+function dayOpenForAny(ds){
+  const act=getTypes().filter(t=>t.active!==false);
+  if(!act.length)return !isBlocked(ds,null);
+  return act.some(t=>!isBlocked(ds,t.id));
 }
 function korDate(ds){if(!ds)return'';const[y,m,d]=ds.split('-');const dw=['일','월','화','수','목','금','토'][new Date(ds).getDay()];return `${y}년 ${+m}월 ${+d}일 (${dw})`;}
 function q(s){return document.querySelector(s);}
@@ -4287,11 +4315,8 @@ function renderSingleCal(){
   for(let i=first-1;i>=0;i--)h+=`<div class="bulk-cell dis"></div>`;
   for(let d=1;d<=dim;d++){
     const ds=`${y}-${p2(m+1)}-${p2(d)}`;
-    const dow=new Date(y,m,d).getDay();
-    const sun=dow===0,sat=dow===6;
-    const env=getEnv();
-    const hol=getHoliday(ds);
-    const blocked=(hol&&env.allowHoliday!==false)?false:(sun||(sat&&!env.allowWeekend));
+    /* 여기는 «사업이 정해진» 고르개다 — 그 사업 규칙 그대로 본다 */
+    const blocked=!!isBlocked(ds,single.typeId);
     const pick=single.multi?single.picks.find(x=>x.date===ds):null;
     const isTaken=taken.has(ds),isSel=single.multi?!!pick:(single.selDate===ds),isToday=ds===today;
     let cls='bulk-cell';
@@ -4379,7 +4404,7 @@ async function saveSingle(){
   if(single.multi){return saveMultiSingle();}
   if(!await verifyCompanyEditLock(single.coId))return;
   if(!single.selDate){toast('날짜를 선택해주세요','err');return;}
-  const blockMsg=isBlocked(single.selDate);
+  const blockMsg=isBlocked(single.selDate,single.typeId);
   if(blockMsg){toast(blockMsg,'err');return;}
   const co=getCos().find(c=>c.id===single.coId);
   const t=getTypes().find(x=>x.id===single.typeId);
@@ -4430,7 +4455,7 @@ async function saveMultiSingle(){
   const okIds=[]; const skipped=[];
   for(const pk of sorted){
     const ds=pk.date;
-    const blockMsg=isBlocked(ds);
+    const blockMsg=isBlocked(ds,single.typeId);
     if(blockMsg){skipped.push(`${ds.slice(5)}(${blockMsg})`);continue;}
     const scheds=getScheds();
     if(scheds.find(x=>x.date===ds&&x.coId===single.coId&&x.typeId===single.typeId)){skipped.push(`${ds.slice(5)}(중복)`);continue;}
@@ -6332,12 +6357,13 @@ function bindChipDrag(){
 }
 
 function moveChip(sid,newDate){
-  const blockMsg=isBlocked(newDate);
-  if(blockMsg){toast(blockMsg,'err');return;}
+  /* ⚠ 일정을 먼저 찾는다 — 날짜만 보고 막으면 「사업별로 연 날」로 못 옮긴다 */
   const scheds=getScheds();
   const idx=scheds.findIndex(s=>s.id===sid);
   if(idx===-1)return;
   const sc=scheds[idx];
+  const blockMsg=isBlocked(newDate,sc.typeId);
+  if(blockMsg){toast(blockMsg,'err');return;}
   if(isEndedSchedule(sc)){toast('종료된 컨설팅은 이동할 수 없습니다','err');return;}
   const oldDate=sc.date;
   if(oldDate===newDate)return;
@@ -6447,7 +6473,7 @@ function renderMonth(){
     const dow=new Date(py,pm,d).getDay();
     const sun=dow===0;
     const hol=getHoliday(ds);
-    const omBlock=(hol&&env.allowHoliday!==false)?false:sun;
+    const omBlock=!dayOpenForAny(ds);
     const sc=getFilteredScheds(ds);
     const chips=sc.map(chipHtml).join('');
     cells+=`<div class="mc om ${omBlock?'disabled':'clickable'}" data-date="${ds}"><div class="mc-date-wrap"><div class="mc-date om-c">${d}</div></div><div class="chips">${chips}</div></div>`;
@@ -6458,7 +6484,8 @@ function renderMonth(){
     const sun=dow===0,sat=dow===6,isToday=ds===today;
     const hol=getHoliday(ds);
     const isHol=hol&&!sun;
-    const blocked=(hol&&env.allowHoliday!==false)?false:(sun||(sat&&!env.allowWeekend));
+    /* 달력 «칸»은 사업을 모른다 — 되는 사업이 하나라도 있으면 연다(dayOpenForAny) */
+    const blocked=!dayOpenForAny(ds);
     const cls='mc'+(blocked?' disabled':' clickable')+(isToday?' today-cell':'');
     const sc=getFilteredScheds(ds);
     const MAX=4;
@@ -6466,11 +6493,14 @@ function renderMonth(){
     const moreCount=sc.length-MAX;
     const moreBtn=moreCount>0?`<button class="mc-more-btn" data-date="${ds}">+${moreCount}건</button>`:'';
     const dc=`mc-date${isToday?' today-c':(sun||isHol)?' hol-c':sat?' sat-c':''}`;
-    const holLabel=hol?`<div class="hol-name">${hol}</div>`:'';
+    /* 공휴일 이름은 «날짜 줄»에 붙인다(대표 결정 2026-08-30 「㉮ 날짜 옆 글씨」).
+       예전에는 일정 칩과 똑같은 «알약»이라 광복절이 일정으로 읽혔고,
+       칩 한 줄을 먹어 진짜 일정이 「+1건」으로 숨었다. 배경을 없애 모양부터 가른다. */
+    const holLabel=hol?`<span class="hol-name">${hol}</span>`:'';
     const warn=dayConflictMsg(ds);
-    cells+=`<div class="${cls}" data-date="${ds}" /* ⚠ 공휴일 «칸» 바탕색을 뺐다 — 구글은 칸을 칠하지 않고 공휴일을 칩으로 보인다(.hol-name).
+    cells+=`<div class="${cls}" data-date="${ds}" /* ⚠ 공휴일 «칸» 바탕색은 넣지 않는다 — 충돌 경고 테두리와 겹치면 칸이 시끄러워진다.
        경고 테두리는 남긴다. 그건 색이 아니라 «지금 손봐야 하는 신호»다. */
-      style="${warn?'box-shadow:inset 0 0 0 2px var(--danger)':''}"><div class="mc-date-wrap"><div class="${dc}">${d}</div>${warn?`<span title="${warn}" style="font-size:13px;margin-left:3px;cursor:help;">⚠️</span>`:''}${moreBtn}</div>${holLabel}<div class="chips">${chips}</div></div>`;
+      style="${warn?'box-shadow:inset 0 0 0 2px var(--danger)':''}"><div class="mc-date-wrap"><div class="mc-dl"><div class="${dc}">${d}</div>${holLabel}</div>${warn?`<span title="${warn}" style="font-size:13px;margin-left:3px;cursor:help;">⚠️</span>`:''}${moreBtn}</div><div class="chips">${chips}</div></div>`;
   }
   // 다음 달 날짜
   let ny=y,nm=m+1;if(nm>11){nm=0;ny++;}
@@ -6480,7 +6510,7 @@ function renderMonth(){
     const dow=new Date(ny,nm,d).getDay();
     const sun=dow===0;
     const hol=getHoliday(ds);
-    const omBlock=(hol&&env.allowHoliday!==false)?false:sun;
+    const omBlock=!dayOpenForAny(ds);
     const sc=getFilteredScheds(ds);
     const chips=sc.map(chipHtml).join('');
     cells+=`<div class="mc om ${omBlock?'disabled':'clickable'}" data-date="${ds}"><div class="mc-date-wrap"><div class="mc-date om-c">${d}</div></div><div class="chips">${chips}</div></div>`;
@@ -6713,7 +6743,7 @@ function revertRoundChange(id){
 }
 
 async function handleDrop(date,item){
-  const blockMsg=isBlocked(date);
+  const blockMsg=isBlocked(date,item.typeId);
   if(blockMsg){toast(blockMsg,'err');return;}
   const co=getCos().find(c=>c.id===item.coId);
   if(!co||co.active===false){toast('비활성 사업장입니다','err');return;}
@@ -8035,8 +8065,8 @@ function renderEnv(){
   const rows=[
     {key:'maxDailyPerAtt',label:'노무사 당일 최대 담당 건수',desc:'같은 날 정담당+협업 포함. 0 = 무제한.',type:'number',min:0,max:20},
     {key:'warnDeadlineDays',label:'종료일 경고 기준 (일)',desc:'이 날짜 이내이면 빨간색으로 표시.',type:'number',min:1,max:90},
-    {key:'allowWeekend',label:'토요일 일정 등록 허용',desc:'켜면 토요일에도 일정 등록 가능.',type:'toggle'},
-    {key:'allowHoliday',label:'법정공휴일 일정 등록 허용',desc:'켜면 어린이날·삼일절 등 공휴일에도 등록 가능 (일요일 공휴일 포함).',type:'toggle'},
+    {key:'allowWeekend',label:'토요일 일정 등록 허용',desc:'전체 기본값입니다. 컨설팅 종류에서 「쉬는 날 — 일요일 빼고」를 켠 사업은 이 설정과 상관없이 토요일에도 등록됩니다.',type:'toggle'},
+    {key:'allowHoliday',label:'법정공휴일 일정 등록 허용',desc:'전체 기본값입니다. 켜면 모든 사업이 공휴일에 등록됩니다(일요일 공휴일 포함). 특정 사업만 열려면 이것을 끄고, 컨설팅 종류에서 「쉬는 날 — 일요일 빼고」를 켜십시오.',type:'toggle'},
     {key:'autoStampOnField',label:'현장 등록 시 타임스탬프 자동 팝업',desc:'현장방문 등록 직후 사진 팝업 자동 표시.',type:'toggle'},
     {key:'stampDefault',label:'타임스탬프 기본으로 찍기',desc:'끄면 날짜·시간·로고가 안 찍히고 정사각형으로 자르지도 않습니다. 각자 사진 넣는 자리에서 바꾼 것이 우선입니다.',type:'toggle'},
   ];
@@ -8176,6 +8206,7 @@ function renderSettings(){
       <td><input class="num-sm" type="number" min="0" value="${t.rounds||0}" onchange="saveTypeField('${t.id}','rounds',+this.value)" title="0=무제한"></td>
       <td><input class="num-sm" type="number" min="0" value="${t.mandatoryField||0}" onchange="saveTypeField('${t.id}','mandatoryField',+this.value)"></td>
       <td style="text-align:center;"><label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;color:var(--t2);white-space:nowrap;"><input type="checkbox" ${t.onePhoto?'checked':''} onchange="saveTypeField('${t.id}','onePhoto',this.checked)">1장만</label></td>
+      <td style="text-align:center;"><label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;color:var(--t2);white-space:nowrap;" title="켜면 이 사업은 토요일·공휴일에도 등록됩니다. 일요일은 켜도 막힙니다."><input type="checkbox" ${t.dayRule==='exceptSun'?'checked':''} onchange="saveTypeField('${t.id}','dayRule',this.checked?'exceptSun':'')">일요일 빼고</label></td>
       <td style="text-align:center;">${onceCell}</td>
       <td>${pairCell}</td>
       <td>${erpCell}</td>
@@ -8191,6 +8222,7 @@ function renderSettings(){
         <th>색상</th><th>약칭</th><th>전체 이름</th><th>수행기관</th>
         <th title="0=무제한">최대회차</th><th>의무방문</th>
         <th title="켜면 이 컨설팅은 사진을 1장(시작)만 등록합니다 (예: 비즈니스지원단)">사진 1장</th>
+        <th title="켜면 이 컨설팅만 토요일·공휴일에도 등록됩니다 (전체 설정을 덮어씁니다). 일요일은 켜도 막힙니다.">쉬는 날</th>
         <th title="켜면 이 컨설팅은 하루에 1건만 등록됩니다">하루 1건</th>
         <th title="같은 날 함께 등록할 수 없는 컨설팅 (사업장이 달라도 적용)">같은 날 불가</th>
         <th title="이 종류가 푸른ERP의 어떤 컨설팅 유형과 이어져 있는지. 이어두면 ERP 사업장을 그대로 가져올 수 있습니다">ERP 연결</th>

@@ -83,8 +83,10 @@ test('좁은 화면에서도 눈을 찡그리지 않는다 — 9px 을 없앴다
 
 /* ══════ ③ 날짜·칸에 색을 칠하지 않는다 ══════ */
 
-test('일·토·공휴일 날짜에 빨강·파랑을 넣지 않는다', () => {
-  const r = ruleOf('.mc-date.sun-c,.mc-date.sat-c,.mc-date.hol-c');
+test('일·토 날짜에 빨강·파랑을 넣지 않는다', () => {
+  /* 2026-08-30 공휴일이 여기서 빠졌다 — 대표가 「공휴일은 좀 다르게 표시나게 해라」
+     하셔서 공휴일 날짜만 일부러 물들인다(바로 아래 검사). 일·토는 구글대로 그대로. */
+  const r = ruleOf('.mc-date.sun-c,.mc-date.sat-c');
   assert.match(r, /color:var\(--gc-text\)/);
   assert.ok(!/var\(--hol\)|var\(--info\)/.test(r), '아직 요일별로 색을 넣는다');
 });
@@ -94,12 +96,17 @@ test('달밖 칸·못 쓰는 칸에 바탕색을 칠하지 않는다', () => {
   assert.match(ruleOf('.mc.disabled'), /background:var\(--surface\)/);
 });
 
-test('공휴일 «칸»을 칠하지 않고 «칩»으로 보여준다', () => {
-  /* 구글도 공휴일을 칩으로 보인다. 칸을 칠하면 그 줄 전체가 붉어져 눈이 먼저 지친다. */
+test('공휴일 «칸»은 칠하지 않고, 이름은 일정 칩과 «모양이 달라야» 한다', () => {
+  /* 칸을 칠하면 그 줄 전체가 붉어져 눈이 먼저 지친다 — 이건 그대로.
+     2026-08-30 바뀐 것: 예전에는 공휴일도 «채운 알약»이라 일정 칩과 똑같이 보였다.
+     대표가 「광복절이 일정으로 보인다」 하셔서 바탕을 없앴다.
+     ⚠ 여기서 못 박는 것은 «어떤 색»이 아니라 «칩과 갈라져 있는가»다. */
   assert.ok(!/background:rgba\(209,26,42,\.07\)/.test(src), '공휴일 칸 바탕색이 남아 있다');
-  const r = ruleOf('.hol-name');
-  assert.match(r, /background:#fce8e6/, '구글 Tomato 바탕이 아니다');
-  assert.match(r, /color:#a50e0e/, '구글 Tomato 글자색이 아니다');
+  /* 일정 칩의 바탕은 CSS 가 아니라 JS(gcalTint)가 일정마다 넣는다 — 그것이 이 검사의 밑돌 */
+  assert.ok(/chipHtml/.test(src) && /background:\$\{/.test(src),
+    '일정 칩이 «채운» 모양이 아니게 됐다 — 이 검사의 밑돌이 무너졌다');
+  const hol = ruleOf('.hol-name');
+  assert.ok(!/background/.test(hol), '공휴일이 다시 «채운 알약»이 됐다 — 일정 칩과 구별이 안 된다');
 });
 
 test('오늘 칸은 아주 옅게만 — 2px 테두리를 뺐다', () => {
