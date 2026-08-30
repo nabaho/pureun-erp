@@ -689,8 +689,8 @@ test('실적 4탭은 외부기관·배제 건을 걸러낸다', () => {
 
 /* ===== 이력서관리 네 화면 정리 (2026-08-23) ===== */
 
-test('이력서관리 네 화면은 제목·설명을 숨긴다 — 빵부스러기와 세 번 중복이었다', () => {
-  ['page-quickcv', 'page-resume-hub', 'page-profile', 'page-certdoc'].forEach((id) => {
+test('이력서관리 두 화면은 제목·설명을 숨긴다 — 빵부스러기와 세 번 중복이었다', () => {
+  ['page-resume-hub', 'page-docbox'].forEach((id) => {
     assert.ok(
       new RegExp('#' + id + '>\\.page>h2,#' + id + '>\\.page>\\.desc').test(source),
       id + ' 의 제목·설명 숨김 규칙이 있어야 합니다'
@@ -970,7 +970,7 @@ test('이력서 생성 화면의 중복을 없앴다', () => {
   /* 올리기 줄은 2026-08-30 부터 탭줄과 «한 줄»로 합쳐져 패널 밖에 있다 —
      보는 자리를 「올리기 줄부터 탭2 앞까지」로 넓힌다. */
   const i = source.indexOf('id="rhUploadBar"');
-  const j = source.indexOf('<!-- 탭2', i);
+  const j = source.indexOf('<!-- 탭4', i);
   const panel = source.slice(i, j);
   assert.ok(!/① 양식 업로드/.test(panel), '카드 번호(①②③)는 툴바로 합치며 없앴습니다');
   assert.ok(!/rhSetDomain\('resume'\)/.test(panel), '모드 버튼 두 개 대신 드롭다운 하나');
@@ -1244,18 +1244,51 @@ test('한글 쪽 수 세기가 겹쳐 돌지 않는다', () => {
   assert.match(src, /finally\{ _cvHwpCountBusy=false; \}/);
 });
 
-/* ===== 이력서관리 중복 정리 1단계 (2026-08-30) =====
-   보관함을 그리는 곳이 둘(renderDocStore / renderRhDocList)이라 생긴 문제들.
-   근본 해결(화면 통합)은 브랜치 kcareer-ia-refactor 에 준비돼 있다. */
+/* ===== ★ 이력서관리 통합 (2026-08-30) =====
+   전에는 문이 넷(이력서 생성·보관 / 빠른 이력서 / 프로필 작성보관 / 경력증명서 보관)이고
+   보관함이 «다섯 자리»에 흩어져 있었다 — 세 화면 + 허브 안쪽 탭 둘. 게다가 그리는 코드가
+   둘(renderDocStore / renderRhDocList)이라 저장해도 한쪽이 갱신되지 않았다.
+   이제 문은 둘, 보관함은 한 화면 세 탭, 그리는 코드는 하나다. */
 
-test('저장·삭제하면 화면의 보관함 탭도 함께 갱신된다', () => {
-  // ⚠ renderDocStore 는 사이드바에 없는 화면(page-resume-store)을 그린다.
-  //    그것만 부르면 「저장했는데 보관함에 안 보인다」가 된다.
+test('★ 보관함을 그리는 코드는 «하나»다 — renderRhDocList 를 되살리지 않는다', () => {
+  assert.equal(source.indexOf('function renderRhDocList'), -1,
+    '⚠ 두 번째 렌더러를 되살리면 「저장했는데 보관함에 안 보인다」가 돌아옵니다');
   ['confirmResumeSave', 'delDoc'].forEach((fn) => {
-    const src = funcSource(fn);
-    assert.match(src, /renderDocStore\(domain\)/, fn + ' 이 보관함을 그려야 합니다');
-    assert.match(src, /renderRhDocList\(domain\)/, fn + ' 이 화면의 보관함 탭도 갱신해야 합니다');
+    assert.match(funcSource(fn), /renderDocStore\(domain\)/, fn + ' 이 보관함을 그려야 합니다');
   });
+  // 저장한 종류의 탭으로 옮겨 줘야 방금 담은 것이 보인다
+  assert.match(funcSource('confirmResumeSave'), /dbTab\(domain\)/,
+    '저장하면 그 종류 탭으로 옮겨야 방금 담은 것이 바로 보입니다');
+});
+
+test('★ 보관함은 한 화면 세 탭이다 — 종류가 늘어도 화면을 새로 만들지 않는다', () => {
+  ['page-quickcv', 'page-resume-store'].forEach((dead) => {
+    assert.equal(source.indexOf('id="' + dead + '"'), -1, dead + ' 화면은 통합됐습니다');
+  });
+  ['db-resume', 'db-profile', 'db-certdoc'].forEach((id) => {
+    assert.ok(source.indexOf('id="' + id + '"') > 0, id + ' 탭이 있어야 합니다');
+  });
+  // 세 종류가 «같은 화면»을 가리켜야 한 곳에서 그려진다
+  const dm = source.slice(source.indexOf('const DOMAINS={'), source.indexOf('const KIND_DEFAULTS'));
+  assert.equal((dm.match(/page:'page-docbox'/g) || []).length, 3,
+    '이력서·프로필·증명서가 모두 page-docbox 를 가리켜야 합니다');
+  /* ⚠ 칸 id 는 종류마다 달라야 한다(rs*·pf*·cd*) — 같게 만들면 숨은 탭을 그릴 때
+     서로 덮어써서 목록이 뒤섞인다. renderDocStore 를 손대지 않은 이유이기도 하다. */
+  ['rsBody', 'pfBody', 'cdBody'].forEach((id) => {
+    assert.equal((source.match(new RegExp('id="' + id + '"', 'g')) || []).length, 1,
+      id + ' 는 한 곳에만 있어야 합니다');
+  });
+});
+
+test('★ 빠른 이력서는 「서류 만들기」의 첫 탭이다 — 화면이 사라진 게 아니다', () => {
+  const hub = source.slice(source.indexOf('id="page-resume-hub"'), source.indexOf('id="page-docbox"'));
+  assert.ok(hub.indexOf('id="dm-quick"') > 0, '빠른 이력서 탭이 허브 안에 있어야 합니다');
+  assert.ok(hub.indexOf('id="cvSheet"') > 0, '이력서 시트가 함께 옮겨져야 합니다');
+  assert.match(funcSource('rhTab'), /dm-quick[\s\S]{0,40}renderQuickCV/,
+    '탭을 누르면 빠른 이력서를 다시 그려야 합니다');
+  // 다른 화면에서 부르는 goCV 도 새 자리를 가리켜야 한다
+  assert.match(funcSource('goCV'), /page-resume-hub[\s\S]{0,220}dm-quick/,
+    'goCV 가 허브의 빠른 이력서 탭으로 가야 합니다');
 });
 
 test('죽은 화면 page-resume-create 를 되살리지 않는다 — 같은 id 20개가 겹쳤다', () => {

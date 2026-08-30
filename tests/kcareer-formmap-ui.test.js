@@ -187,7 +187,7 @@ test('★ 탭줄과 「양식 올리기」가 한 줄이다 (대표 지시 2026-
 test('★ 탭줄은 패널 «밖»에 있다 — 안에 넣으면 다른 탭에서 탭줄이 사라진다', () => {
   const hub = source.slice(source.indexOf('id="page-resume-hub"'));
   const iTab = hub.indexOf('id="rh-tabrow"');
-  const iPanel = hub.indexOf('class="tabpanel active" id="rh-edit"');
+  const iPanel = hub.indexOf('class="tabpanel active" id="dm-quick"');
   assert.ok(iTab > 0 && iPanel > 0);
   assert.ok(iTab < iPanel, '탭줄이 첫 패널보다 앞이어야 합니다');
 });

@@ -134,11 +134,16 @@ test('보관함에서 열 때도 한글이면 옆 미리보기를 닫는다', ()
   assert.match(bare, /_isHwpName\(t\.name\)[\s\S]{0,80}hideSidePreview\(\)/);
 });
 
-test('「이력서 생성·보관」이 첫 자리다 (대표 지시 2026-08-29)', () => {
+test('이력서관리는 «만들기»와 «보관함» 둘뿐이다 — 만들기가 첫 자리', () => {
+  /* 2026-08-30 통합: 문이 넷(생성·보관 / 빠른 이력서 / 프로필 / 경력증명서)이었고
+     보관함은 세 화면 + 허브 안쪽 탭 두 개에 흩어져 있었다. ⚠ 문을 다시 늘리지 말 것. */
   const at = bare.indexOf("{g:'이력서관리'");
   const line = bare.slice(at, at + 260);
   const iHub = line.indexOf('page-resume-hub');
-  const iQuick = line.indexOf('page-quickcv');
-  assert.ok(iHub > 0 && iQuick > 0, '두 화면이 모두 있어야 합니다');
-  assert.ok(iHub < iQuick, '이력서 생성·보관이 빠른 이력서보다 앞이어야 합니다');
+  const iBox = line.indexOf('page-docbox');
+  assert.ok(iHub > 0 && iBox > 0, '만들기·보관함 두 화면이 있어야 합니다');
+  assert.ok(iHub < iBox, '서류 만들기가 보관함보다 앞이어야 합니다');
+  ['page-quickcv', 'page-resume-store'].forEach((dead) => {
+    assert.equal(line.indexOf(dead), -1, dead + ' 는 통합돼 사라진 화면입니다');
+  });
 });

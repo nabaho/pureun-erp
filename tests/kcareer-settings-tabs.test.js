@@ -98,7 +98,7 @@ test('★ 공통 탭 초기화는 «자기 짝 패널이 있는» 단추만 맡�
 
 test('이력서 화면 탭은 제 함수(rhTab)를 그대로 쓴다 — 덮이면 화면이 빈다', () => {
   const seg = src.slice(src.indexOf('id="rh-tabrow"'), src.indexOf('id="rh-tabrow"') + 900);
-  ['rh-edit', 'rh-resume', 'rh-profile', 'rh-pdf'].forEach((id) => {
+  ['dm-quick', 'rh-edit', 'rh-pdf'].forEach((id) => {
     assert.ok(seg.indexOf("rhTab('" + id + "'") > 0, id + ' 단추가 rhTab 을 불러야 합니다');
     assert.equal(src.indexOf('id="tab-' + id + '"'), -1,
       'tab-' + id + ' 패널을 만들면 공통 초기화가 다시 가로챕니다');
