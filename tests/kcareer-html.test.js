@@ -1465,3 +1465,56 @@ test('★ 보관함의 양식을 이 화면 편집기로 열 수 있다 — 전�
   });
   assert.match(funcSource('fbOpenInEditor'), /mountEditor\(/, '편집기에 얹어야 합니다');
 });
+
+/* ===== ★ 직원 관리를 푸른이알피에서 (2026-08-30) ===== */
+
+test('★ 직원 명부는 푸른이알피(data/user_dir)에서 온다 — 정부컨설팅이 아니다', () => {
+  const src = funcSource('fbLoadStaff');
+  assert.match(src, /ref\('data\/user_dir'\)/, 'pu-erp 명부를 읽어야 합니다');
+  assert.ok(!/scal_staff/.test(src), '⚠ 정부컨설팅 명부로 되돌리면 재직자 5명만 옵니다');
+  assert.ok(source.indexOf('푸른이알피에서 직원 불러오기') > 0, '단추 이름도 바뀌어야 합니다');
+});
+
+test('★ pu-erp 봉투를 벗긴다 — 안 벗기면 「직원 2명」이 나온다', () => {
+  // data/{키}={v:값,u:시각} 이라 그대로 세면 v·u 둘을 직원으로 센다
+  assert.match(funcSource('fbLoadStaff'), /_puUnwrap\(snap\.val\(\)\)/,
+    '⚠ _puUnwrap 을 빼면 배열 대신 [값,시각] 두 개를 받습니다');
+});
+
+test('★ 재직·휴직·퇴사를 «모두» 받아 상태를 그대로 담는다', () => {
+  const src = funcSource('fbLoadStaff');
+  // 상태로 걸러내면 안 된다 — 대표 지시는 「모든 직원」이다
+  assert.ok(!/filter\([^)]*status[^)]*retired/.test(src), '⚠ 퇴사자를 걸러내면 안 됩니다');
+  assert.match(src, /pu:String\(u\.status\|\|'active'\)/, '상태를 그대로 담아야 합니다');
+  assert.match(source, /PU_STAFF_STATUS=\{active:'재직', leave:'휴직', retired:'퇴사'\}/);
+});
+
+test('★ 퇴사자를 갈라 본다 — 기본은 재직', () => {
+  const r = funcSource('renderStaffMgr');
+  ['active', 'leave', 'retired', 'all'].forEach((v) => {
+    assert.ok(r.indexOf("['" + v + "'") > 0, v + ' 칸이 있어야 합니다');
+  });
+  assert.match(source, /var _staffView='active'/, '기본은 재직입니다');
+  assert.match(r, /_staffView==='all' \|\| \(s\.pu\|\|'active'\)===_staffView/, '고른 상태만 보여야 합니다');
+});
+
+test('★ 「퇴사」와 「이름 가림」은 다른 것이다 — 섞으면 증명서 발급이 저절로 막힌다', () => {
+  const r = funcSource('renderStaffMgr');
+  // pu-erp 가 퇴사라고 해서 자동으로 가림을 켜면 안 된다
+  assert.ok(!/pu==='retired'[\s\S]{0,120}setStaffStatus/.test(r),
+    '⚠ 퇴사자의 이름 가림을 저절로 켜면 실적증명서 발급이 말없이 막힙니다');
+  // 안내 문구는 표 아래 한 곳(_staffFoot)에서만 만든다
+  assert.match(funcSource('_staffFoot'), /저절로 켜지지 않습니다/, '다르다는 것을 화면에 적어야 합니다');
+  // 무엇이 막히는지 밝히고 묻는다
+  assert.match(funcSource('staffRetire'), /실적증명서를 발급할 수 없게/,
+    '무엇이 막히는지 확인창에 적어야 합니다');
+});
+
+test('★ 명부 열쇠가 바뀌어도 이름 가림을 잃지 않는다', () => {
+  // 전에는 정부컨설팅 id, 이제는 푸른이알피 사번(sid)
+  const m = funcSource('_staffMigrateMeta');
+  assert.match(m, /r\.name===byName/, '이름으로 옮겨 줘야 합니다');
+  assert.match(m, /!m\[hit\.id\]/, '이미 옮긴 것은 건드리지 않아야 합니다(멱등)');
+  assert.match(funcSource('setStaffStatus'), /name:\(r&&r\.name\)/, '가림 기록에 이름을 남겨야 합니다');
+  assert.match(funcSource('fbLoadStaff'), /_staffMigrateMeta\(roster\)/, '불러올 때 옮겨야 합니다');
+});

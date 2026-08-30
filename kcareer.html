@@ -1547,12 +1547,13 @@ input.kf-in.kf-done{background:#EDF7F3;border-bottom:1.5px solid var(--teal);fon
             <div style="font-size:11px;color:var(--text-mute);margin-top:8px">데이터 + 첨부파일 전체를 하나의 JSON으로 저장/복원합니다.</div></div>
         </div>
         <div class="tabpanel" id="tab-staff">
-          <div class="desc">정부컨설팅 직원 목록을 불러와 담당자를 관리합니다. 퇴직 처리 시 이름은 '퇴직자'로 가려지고, 실적·사건 기록은 법인에 그대로 보존됩니다.</div>
+          <div class="desc">푸른이알피 직원 명부를 그대로 불러옵니다 — 재직·휴직·퇴사 <b>전원</b>. 퇴사자는 따로 갈라 볼 수 있습니다.<br>
+            경력관리에서 <b>이름 가림</b>을 켜면 그 사람 이름이 '퇴직자'로 가려지고 실적증명서 발급이 막힙니다(실적·사건 기록은 법인에 그대로 보존).</div>
           <div class="card">
             <div class="rc-bar">
               <div class="rc-h" style="margin:0">👥 직원(담당자) 관리</div>
               <div class="tb-spacer"></div>
-              <button class="btn primary" id="staffReload" onclick="fbLoadStaff(true)">↻ 정부컨설팅에서 직원 불러오기</button>
+              <button class="btn primary" id="staffReload" onclick="fbLoadStaff(true)">↻ 푸른이알피에서 직원 불러오기</button>
             </div>
             <div id="staffMgrBody" style="margin-top:10px"></div>
           </div>
@@ -7643,43 +7644,122 @@ function staffIsRetired(id){ return staffStatus(id)==='퇴직'; }
 /* 담당자 표시명: 퇴직자는 이름을 가림(법인 실적은 보존) */
 function staffDisplayName(id){ if(!id) return ''; if(staffIsRetired(id)) return '퇴직자'; var r=getStaffRoster().find(function(s){return s.id===id;}); return r?r.name:'(직원)'; }
 function staffColor(id){ if(staffIsRetired(id)) return '#94a3b8'; var r=getStaffRoster().find(function(s){return s.id===id;}); return (r&&r.color)||'#94a3b8'; }
-function setStaffStatus(id,status){ var m=getStaffMeta(); m[id]=Object.assign({},m[id],{status:status, at:(status==='퇴직'?new Date().toISOString().slice(0,10):'')}); setStaffMeta(m); renderStaffMgr(); if(typeof _refreshAttachUI==='function') _safe(_refreshAttachUI); }
+function setStaffStatus(id,status){ var m=getStaffMeta();
+  /* 이름도 함께 적어 둔다 — 명부 열쇠가 바뀌어도 _staffMigrateMeta 가 따라갈 수 있게 */
+  var r=getStaffRoster().find(function(s){return s.id===id;});
+  m[id]=Object.assign({},m[id],{status:status, name:(r&&r.name)||(m[id]&&m[id].name)||'', at:(status==='퇴직'?new Date().toISOString().slice(0,10):'')});
+  setStaffMeta(m); renderStaffMgr(); if(typeof _refreshAttachUI==='function') _safe(_refreshAttachUI); }
 function staffRetire(id){ var r=getStaffRoster().find(function(s){return s.id===id;}); var nm=r?r.name:'직원';
-  if(!confirm(nm+' 님을 퇴직 처리합니다.\n이름은 \'퇴직자\'로 가려지고, 실적·사건 기록은 법인에 그대로 보존됩니다.\n(나중에 다시 재직으로 되돌릴 수 있습니다.)\n\n계속할까요?')) return;
-  setStaffStatus(id,'퇴직'); toast(nm+' 님 퇴직 처리됨 (이름 가림)'); }
+  /* ⚠ 되돌릴 수는 있으나 «발급을 막는» 처리다 — 무엇이 막히는지 그대로 적어 두고 묻는다 */
+  if(!confirm(nm+' 님의 이름을 경력관리에서 가립니다.\n\n· 이름이 \'퇴직자\'로 가려집니다\n· 그 사람의 실적증명서를 발급할 수 없게 됩니다\n· 실적·사건 기록은 법인에 그대로 보존됩니다\n· 푸른이알피 직원 정보는 건드리지 않습니다\n\n(나중에 「가림 끄기」로 되돌릴 수 있습니다.)\n계속할까요?')) return;
+  setStaffStatus(id,'퇴직'); toast(nm+' 님 이름 가림 켜짐'); }
+/* pu-erp 직원 상태: active(재직) · leave(휴직) · retired(퇴사).
+   ⚠ 이 값은 «푸른이알피의 사실»이다. 경력관리의 「이름 가림」과 다른 것이니 섞지 말 것 —
+      가림은 실적증명서 발급까지 막으므로 사람이 켜야 한다(아래 staffMask). */
+var PU_STAFF_STATUS={active:'재직', leave:'휴직', retired:'퇴사'};
+function puStaffStatus(id){ var r=getStaffRoster().find(function(s){return s.id===id;}); return (r&&r.pu)||'active'; }
+/* 사번에서 늘 같은 색을 만든다 — user_dir 에는 색이 없다 */
+function _staffColor(sid){
+  var h=0, t=String(sid||''); for(var i=0;i<t.length;i++) h=(h*31+t.charCodeAt(i))|0;
+  var pal=['#2563eb','#7c3aed','#db2777','#ea580c','#059669','#0891b2','#ca8a04','#dc2626','#4f46e5','#65a30d'];
+  return pal[Math.abs(h)%pal.length];
+}
 async function fbLoadStaff(force){
   renderStaffMgr();
   if(typeof fbDb==='undefined' || !fbDb){ if(force) toast('클라우드 준비 중 — 잠시 후 다시 시도하세요'); return; }
   try{
-    var snap=await fbDb.ref('scal_staff').once('value'); var v=snap.val();
-    if(!v){ if(force) toast('정부컨설팅 직원 목록이 비어있습니다'); return; }
+    /* ⚠ pu-erp 는 data/{키}={v:값,u:시각} 봉투로 담는다 — _puUnwrap 을 반드시 거친다.
+       이걸 빠뜨리면 배열 대신 [값,시각] 두 개를 직원으로 세어 「직원 2명」이 나온다. */
+    var snap=await fbDb.ref('data/user_dir').once('value'); var v=_puUnwrap(snap.val());
+    if(!v){ if(force) toast('푸른이알피 직원 명부를 읽지 못했습니다 — 로그인 상태를 확인해 주세요'); return; }
     var arr=Array.isArray(v)?v:Object.keys(v).map(function(k){return v[k];});
-    var roster=arr.filter(function(s){return s&&s.id&&s.name;}).map(function(s){return {id:String(s.id),name:String(s.name),color:s.color||'#94a3b8'};});
-    if(roster.length){ _staffRoster=roster; LS.set(NS+'staff_roster', JSON.stringify(roster)); renderStaffMgr(); if(force) toast('직원 '+roster.length+'명 불러옴'); }
-    else if(force) toast('불러올 직원이 없습니다');
-  }catch(e){ console.warn('scal_staff load',e); if(force) toast('불러오기 실패 — 클라우드 로그인 후 다시 시도하세요'); }
+    var prev=getStaffRoster();
+    var roster=arr.filter(function(u){ return u&&u.sid&&u.name; }).map(function(u){
+      var id=String(u.sid);
+      var old=prev.find(function(x){ return x.id===id||x.name===u.name; });
+      return { id:id, name:String(u.name), color:(old&&old.color)||_staffColor(id),
+               pu:String(u.status||'active'), title:u.title||'', branch:u.branch||'',
+               ord:(typeof u.sortOrder==='number'?u.sortOrder:999) };
+    });
+    /* 재직 → 휴직 → 퇴사 차례로, 같은 상태 안에서는 푸른이알피 차례대로 */
+    var rank={active:0,leave:1,retired:2};
+    roster.sort(function(a,b){
+      var d=(rank[a.pu]==null?9:rank[a.pu])-(rank[b.pu]==null?9:rank[b.pu]); if(d) return d;
+      if(a.ord!==b.ord) return a.ord-b.ord; return a.name.localeCompare(b.name,'ko');
+    });
+    if(!roster.length){ if(force) toast('푸른이알피 명부에 직원이 없습니다'); return; }
+    _staffRoster=roster; LS.set(NS+'staff_roster', JSON.stringify(roster));
+    _staffMigrateMeta(roster);
+    renderStaffMgr();
+    if(force){ var n={active:0,leave:0,retired:0};
+      roster.forEach(function(r){ if(n[r.pu]!=null) n[r.pu]++; });
+      toast('직원 '+roster.length+'명 — 재직 '+n.active+' · 휴직 '+n.leave+' · 퇴사 '+n.retired); }
+  }catch(e){ console.warn('user_dir load',e); if(force) toast('불러오기 실패 — 클라우드 로그인 후 다시 시도하세요'); }
 }
+/* ── 열쇠가 바뀌어도 「이름 가림」을 잃지 않는다 ──
+   전에는 정부컨설팅 id 로, 이제는 푸른이알피 사번(sid)으로 잡는다. 이름이 같으면 옮겨 준다.
+   ⚠ 멱등 — 이미 옮긴 것은 건드리지 않는다. */
+function _staffMigrateMeta(roster){
+  var m=getStaffMeta(), changed=false;
+  Object.keys(m).forEach(function(oldId){
+    if(roster.some(function(r){ return r.id===oldId; })) return;   /* 아직 쓰는 열쇠면 그대로 */
+    var byName=m[oldId]&&m[oldId].name;
+    var hit=byName?roster.find(function(r){ return r.name===byName; }):null;
+    if(hit && !m[hit.id]){ m[hit.id]=m[oldId]; changed=true; }
+  });
+  if(changed) setStaffMeta(m);
+}
+/* ===== 직원 목록 — 재직·휴직·퇴사를 «갈라» 본다 (대표 지시 2026-08-30) =====
+   전에는 정부컨설팅에서 재직자만 가져와 다섯 명뿐이었고 퇴사자는 아예 보이지 않았다.
+   이제 푸른이알피 명부를 그대로 받아 상태별로 나눠 보여 준다.
+   ⚠ 「상태」는 푸른이알피의 사실이고, 「이름 가림」은 경력관리만의 처리다 — 섞지 말 것.
+      가림은 실적증명서 발급까지 막으므로 «사람이 켠다». 퇴사했다고 저절로 켜지 않는다. */
+var _staffView='active';
+function staffView(v){ _staffView=v; renderStaffMgr(); }
 function renderStaffMgr(){ var box=document.getElementById('staffMgrBody'); if(!box) return;
   var roster=getStaffRoster();
-  if(!roster.length){ box.innerHTML='<div class="empty" style="padding:22px"><div class="emp-ico">👥</div>불러온 직원이 없습니다<br><span style="font-size:12px">위 [정부컨설팅에서 직원 불러오기]를 누르세요 (클라우드 로그인 필요)</span></div>'; return; }
-  var retiredCnt=roster.filter(function(s){return staffIsRetired(s.id);}).length;
-  box.innerHTML='<table><thead><tr><th class="rownum-h">№</th><th>이름</th><th>상태</th><th>관리</th></tr></thead><tbody>'
-    +roster.map(function(s,i){ var retired=staffIsRetired(s.id);
-      var nameCell=retired
+  if(!roster.length){ box.innerHTML='<div class="empty" style="padding:22px"><div class="emp-ico">👥</div>불러온 직원이 없습니다<br><span style="font-size:12px">위 [푸른이알피에서 직원 불러오기]를 누르세요 (클라우드 로그인 필요)</span></div>'; return; }
+  var n={all:roster.length,active:0,leave:0,retired:0};
+  roster.forEach(function(s){ var p=s.pu||'active'; if(n[p]!=null) n[p]++; });
+  var maskCnt=roster.filter(function(s){return staffIsRetired(s.id);}).length;
+  var TABS=[['active','● 재직',n.active],['leave','◐ 휴직',n.leave],['retired','🚪 퇴사',n.retired],['all','전체',n.all]];
+  var html='<div class="tabrow" id="staffTabs" style="margin-bottom:10px">'
+    +TABS.map(function(t){
+      return '<button class="tab'+(_staffView===t[0]?' active':'')+'" data-sv="'+t[0]+'" onclick="staffView(\''+t[0]+'\')">'
+        +t[1]+' <b>'+t[2]+'</b></button>';
+    }).join('')+'</div>';
+  var rows=roster.filter(function(s){ return _staffView==='all' || (s.pu||'active')===_staffView; });
+  if(!rows.length){
+    html+='<div class="empty" style="padding:18px">이 상태의 직원이 없습니다</div>';
+    box.innerHTML=html+_staffFoot(maskCnt); return;
+  }
+  html+='<table><thead><tr><th class="rownum-h">№</th><th>이름</th><th>직위</th><th>소속</th><th>상태</th><th>경력관리 표시</th></tr></thead><tbody>'
+    +rows.map(function(s,i){
+      var masked=staffIsRetired(s.id), pu=s.pu||'active';
+      var nameCell=masked
         ? '<span style="color:var(--text-mute)">퇴직자 <s style="opacity:.5">'+escapeHtml(s.name)+'</s></span>'
         : '<b>'+escapeHtml(s.name)+'</b>';
-      var statCell=retired
-        ? '<span style="color:var(--red);font-size:12px">🚪 퇴직</span>'
+      var statCell=pu==='retired' ? '<span style="color:var(--red);font-size:12px">🚪 퇴사</span>'
+        : pu==='leave' ? '<span style="color:var(--gold,#b8902f);font-size:12px">◐ 휴직</span>'
         : '<span style="color:var(--teal);font-size:12px">● 재직</span>';
       var sidJs=_jsAttr(s.id);
-      var act=retired
-        ? '<button class="btn sm" onclick="setStaffStatus(\''+sidJs+'\',\'재직\')">↩ 재직 전환</button>'
-        : '<button class="btn sm" style="color:var(--red)" onclick="staffRetire(\''+sidJs+'\')">🚪 퇴직 처리</button>';
+      var act=masked
+        ? '<span style="font-size:11px;color:var(--text-mute)">이름 가림 켜짐</span> '
+          +'<button class="btn sm" onclick="setStaffStatus(\''+sidJs+'\',\'재직\')">↩ 가림 끄기</button>'
+        : '<button class="btn sm" style="color:var(--red)" onclick="staffRetire(\''+sidJs+'\')">🙈 이름 가림</button>';
       return '<tr><td class="rownum">'+(i+1)+'</td>'
-        +'<td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+escapeHtml(s.color)+';margin-right:6px;vertical-align:middle"></span>'+nameCell+'</td>'
+        +'<td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+escapeHtml(s.color||'#94a3b8')+';margin-right:6px;vertical-align:middle"></span>'+nameCell+'</td>'
+        +'<td>'+escapeHtml(s.title||'-')+'</td><td>'+escapeHtml(s.branch||'-')+'</td>'
         +'<td>'+statCell+'</td><td>'+act+'</td></tr>';
-    }).join('')+'</tbody></table>'
-    +'<div style="font-size:11px;color:var(--text-mute);margin-top:10px;line-height:1.7">※ 직원 추가·이름 변경은 <b>정부컨설팅 앱</b>에서 하면 여기 자동 반영됩니다.<br>※ 퇴직 처리는 경력관리에만 적용됩니다 (정부컨설팅 직원 정보는 그대로 유지). 현재 퇴직 '+retiredCnt+'명.</div>';
+    }).join('')+'</tbody></table>';
+  box.innerHTML=html+_staffFoot(maskCnt);
+}
+function _staffFoot(maskCnt){
+  return '<div style="font-size:11px;color:var(--text-mute);margin-top:10px;line-height:1.7">'
+    +'※ 직원 추가·이름 변경·퇴사 처리는 <b>푸른이알피</b>에서 하면 여기 그대로 반영됩니다(↻ 다시 불러오기).<br>'
+    +'※ <b>상태</b>는 푸른이알피의 재직·휴직·퇴사입니다. <b>이름 가림</b>은 경력관리에만 적용되며, '
+    +'켜면 이름이 \'퇴직자\'로 가려지고 실적증명서 발급이 막힙니다 — 퇴사했다고 저절로 켜지지 않습니다. '
+    +'현재 가림 '+maskCnt+'명.</div>';
 }
 
 /* ===== pu-erp 컨설팅 실적 연동 (data/consultings + data/user_dir, 주담당별) ===== */
