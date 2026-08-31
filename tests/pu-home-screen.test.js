@@ -2508,3 +2508,48 @@ test('★ 글 번호가 없으면 내리지 않는다 — 어느 글인지 모�
   assert.equal(ctx.copied.length, 0, '★ 어느 글인지도 모르는데 쪽지를 만들었다');
   assert.ok(말한것.length, '왜 못 하는지 말하지 않았다');
 });
+
+/* ══════ 화면이 부르는 부품을 부품이 «다» 내놓는가 ══════
+   ★ 2026-08-31 실제로 여기서 사고가 났다 — 부품에 함수 하나를 더하다가
+     내놓는 목록에서 divInLine·riskReport 가 통째로 빠졌다. 화면은 그대로라
+     검사도 대부분 통과했는데, 그 둘을 쓰는 자리에서만 조용히 터진다. */
+
+test('★ 화면이 부르는 부품 함수는 모두 «내놓아져» 있다 — 하나만 빠져도 그 자리에서 조용히 터진다', () => {
+  const ctx = box();
+  const 부품 = ['PuHomeParse', 'PuHomeCareer', 'PuHomeExport', 'PuHomeDiff', 'PuHomeFill'];
+  /* 주석은 걷고 본다 — 주석에 적힌 이름까지 잡으면 «잘 쓴 주석»이 검사를 깨뜨린다 */
+  const 코드 = html.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+  const 빠진것 = [];
+  부품.forEach(모듈 => {
+    const mod = ctx[모듈];
+    if (!mod) return;
+    const re = new RegExp(모듈 + '\\.([A-Za-z_$][\\w$]*)', 'g');
+    let m;
+    while ((m = re.exec(코드))) {
+      if (!(m[1] in mod)) 빠진것.push(모듈 + '.' + m[1]);
+    }
+  });
+  assert.deepEqual([...new Set(빠진것)], [],
+    '★ 화면이 부르는데 부품이 안 내놓는 것이 있습니다 — 그 자리를 누르면 터집니다');
+});
+
+/* ══════ 로그인 — 여기서 막혔다 (2026-08-31) ══════
+   ★ 편집 주소는 «로그인돼 있어야만» 열린다(아니면 서버가 403 을 내고,
+     브라우저에는 그냥 홈페이지 화면이 뜬다). 곁말로 「(로그인은 처음 한 번만)」이라고만
+     적어 두었더니, 어디서 막힌 건지 알 길이 없었다. */
+
+test('★ 홈페이지로 보내는 안내는 «로그인»을 걸음으로 말하고, 로그인할 자리를 준다', async () => {
+  const ctx = pageBox();
+  ctx.App = { draft: { kind: 'member', key: 'a', srl: '193', name: '박성수' },
+              members: { a: { name: '박성수', srl: '193' } } };
+  ctx.say = async () => {};
+  run(ctx, fnSource('modalFoot') + '\n' + fnSource('copyPrivate'));
+  await ctx.copyPrivate('a');
+  const h = ctx.shown[0];
+  assert.match(h, /로그인/, '★ 로그인해야 한다는 말이 없습니다 — 여기서 막힙니다');
+  /* 말만 하지 않고 «누를 자리»를 준다 */
+  assert.ok(h.indexOf(ctx.PuHomeExport.loginUrl()) >= 0,
+    '★ 로그인하라면서 어디서 하는지는 안 알려 줍니다');
+  /* 안 될 때 «무엇이 보이는지»를 미리 말해 준다 */
+  assert.match(h, /그냥 홈페이지/, '★ 로그인이 안 됐을 때 무엇이 보이는지 안 알려 줍니다');
+});
