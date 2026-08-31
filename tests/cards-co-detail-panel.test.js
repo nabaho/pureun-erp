@@ -7,6 +7,20 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'pu-cards.html'), 'utf8');
+/* ⚠ 2026-08-31(점검 B2): 상세에 계약 기간 한 줄이 붙었다. 그 둘은 패널 «앞»에
+   있어 위 자르기에 안 들어온다 — 대역을 넣는 대신 «진짜»를 함께 실어 준다.
+   대역을 넣으면 그 줄이 터져도 이 검사가 모른다. */
+function fnBody2(name){
+  const i = source.indexOf(String.fromCharCode(10) + 'function ' + name + '(');
+  assert.ok(i >= 0, name + ' 을 찾지 못했습니다');
+  const open = source.indexOf('{', i);
+  let d = 0;
+  for (let k = open; k < source.length; k++) {
+    if (source[k] === '{') d++;
+    else if (source[k] === '}') { d--; if (!d) return source.slice(i, k + 1); }
+  }
+  assert.fail(name + ' 의 끝을 찾지 못했습니다');
+}
 
 test('coDetailHtml(예전 화면-전환용 함수)이 없다 — 팝업으로 대체됐다', () => {
   assert.doesNotMatch(source, /function coDetailHtml/, 'coDetailHtml 을 지우지 않고 남겨 두면 죽은 코드가 된다');
@@ -61,7 +75,8 @@ function loadPanelBlock(items){
       return null;
     }
   };
-  const code = source.slice(panelAt, openEnd) + '\n' + source.slice(pickAt, pickEnd) + '\n' + source.slice(closeAt, closeEnd);
+  const code = fnBody2('erpContractPeriod') + String.fromCharCode(10) + fnBody2('todayYmd') + String.fromCharCode(10)
+    + source.slice(panelAt, openEnd) + '\n' + source.slice(pickAt, pickEnd) + '\n' + source.slice(closeAt, closeEnd);
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
   ctx._calls = calls;
@@ -139,7 +154,8 @@ function loadPanelBlockAsync(items){
       return null;
     }
   };
-  const code = source.slice(panelAt, openEnd) + '\n' + source.slice(pickAt, pickEnd) + '\n' + source.slice(closeAt, closeEnd);
+  const code = fnBody2('erpContractPeriod') + String.fromCharCode(10) + fnBody2('todayYmd') + String.fromCharCode(10)
+    + source.slice(panelAt, openEnd) + '\n' + source.slice(pickAt, pickEnd) + '\n' + source.slice(closeAt, closeEnd);
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
   ctx._calls = calls;

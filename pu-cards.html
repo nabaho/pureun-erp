@@ -2130,6 +2130,10 @@ body.pc #pcDetail{display:flex}
 #pcDetail .pdname{font-size:18px;font-weight:800;color:#1e293b;line-height:1.3}
 #pcDetail .pdname .star{font-size:16px;cursor:pointer;color:#fbbf24;margin-left:5px}
 #pcDetail .pdsub{color:#64748b;font-size:12.5px;margin:3px 0 0;line-height:1.5}
+/* 종료일이 지난 계약 (점검 B2) — «날짜 사실»이라 붉게 하지 않는다.
+   붉게 칠하면 계약해지(🚪)와 같은 말로 읽히는데, 자동 연장으로 계속 가는 곳이 있다. */
+#pcDetail .pdsub .ctold{display:inline-block;font-size:11px;font-weight:700;border-radius:7px;
+  padding:1px 6px;margin-left:5px;background:#fffbeb;color:#854d0e;border:1px solid #fde68a}
 #pcDetail .pdsec{font-size:11.5px;font-weight:700;color:#94a3b8;letter-spacing:1px;margin:12px 0 6px}
 #pcDetail .pdrow{display:flex;padding:6px 0;border-bottom:1px solid #f8fafc;font-size:13px}
 #pcDetail .pdrow .k{width:66px;flex-shrink:0;color:#94a3b8;font-size:11.5px;padding-top:1px}
@@ -3440,6 +3444,16 @@ const ErpMatch = {
              ⚠ 새로 받아오는 것이 없다 — cos 는 이미 손에 든 자료다. */
           bizType: co.bizType||'', bizItem: co.bizCategory||'',
           fax: co.fax||'', email: co.email||'',
+          /* ── 계약 기간 (점검 B2, 2026-08-31) ────────────────────────────
+             업체관리가 계약 시작일·종료일을 갖고 있는데 여기서 안 꺼내 쓰고 있었다.
+             회사를 열어도 «언제부터 언제까지» 계약인지 알 길이 없어, 자문료 청구나
+             재계약 이야기를 할 때마다 이알피를 따로 열어야 했다.
+             ⚠ 이 값은 «보여 주기만» 한다. 기업정보함 제 칸(CO_FIELDS)으로 들이지
+               않는다 — 들이면 여기서 고친 날짜가 업체관리를 이기고 눌러앉아, 계약이
+               언제 끝나는지 두 앱이 다른 말을 하게 된다. 계약의 임자는 업체관리다
+               (🚪 계약해지를 그렇게 다루는 것과 같은 결).
+             ⚠ 새로 받아오는 것이 없다 — cos 는 이미 손에 든 자료다. */
+          ctFrom: co.contractStartDate||'', ctTo: co.contractEndDate||'',
           /* ── 담당자 줄 — 퇴사한 사람을 가리는 데 쓴다 (대표 지시 2026-08-29) ──
              거래처 «담당자 개인»의 퇴사는 지금까지 적을 자리가 아예 없었다. 그래서
              떠난 사람에게 메일이 계속 나갔다. 적는 자리는 여기 하나다 —
@@ -23949,6 +23963,30 @@ function coLacks(o){
 function coIncompleteCount(){
   return coFilteredList(null, false, true).filter(coLacks).length;
 }
+/* ══════ 계약 기간 — 업체관리가 아는 것을 그대로 읽어 보여 준다 (점검 B2, 2026-08-31) ══════
+   ⚠ 오늘 날짜를 «받는다». 안에서 new Date() 를 부르면 검사가 해마다 달라진다 —
+     「종료일이 지났나」는 재는 날에 따라 답이 바뀌는 값이라 더욱 그렇다.
+   ⚠ 「종료일 지남」은 «날짜 사실»이지 계약해지가 아니다. 해지는 업체관리의 상태(🚪)가
+     따로 말한다 — 종료일이 지났어도 자동 연장으로 계속 가는 곳이 있다. 둘을 섞으면
+     멀쩡한 거래처를 끝난 곳으로 읽는다. */
+function erpContractPeriod(m, today){
+  const d = v => { const s = String(v == null ? '' : v).trim();
+    const g = s.match(/(19|20)\d{2}[-.\/]\d{1,2}[-.\/]\d{1,2}/);
+    return g ? g[0].replace(/[.\/]/g, '-') : ''; };
+  const from = d(m && m.ctFrom), to = d(m && m.ctTo);
+  if(!from && !to) return null;
+  /* 글자로 견준다 — 2026-03-01 꼴은 글자 차례가 곧 날짜 차례다(자리 맞춤만 하면 된다) */
+  const pad = s => s.replace(/-(\d)(?=-|$)/g, '-0$1');
+  const past = !!(to && today && pad(to) < pad(String(today)));
+  return { from: from, to: to, past: past,
+           text: (from || '?') + ' ~ ' + (to || '?') };
+}
+/* 오늘을 YYYY-MM-DD 로 — 나라 설정에 안 흔들리게 손으로 짓는다 */
+function todayYmd(){
+  const t = new Date();
+  return t.getFullYear() + '-' + String(t.getMonth()+1).padStart(2,'0')
+       + '-' + String(t.getDate()).padStart(2,'0');
+}
 function coDetailPanelHtml(o){
   const val = f => coVal(o, f);
   const rows = CO_FIELDS.filter(([f])=>val(f)).map(([f,label])=>
@@ -23959,6 +23997,14 @@ function coDetailPanelHtml(o){
          여기가 바로 상호를 채워 넣는 자리이므로, 무엇이 비었는지 제목 옆에서 말한다. */''}
     <div class="pdname">${esc(coDisplayName(o))}${o.name?'':` <i class="miss">상호 못 읽음</i>`}${o.erp&&o.erp.type?` <span class="ty">${esc(o.erp.type)}</span>`:''}${
       o.erp&&o.erp.left?` <span class="mgq" title="업체관리에서 종료·해지·폐업으로 표시된 거래처 (계약해지)">🚪</span>`:''}</div>
+    ${/* ── 계약 기간 (점검 B2) — 업체관리가 아는 것을 «읽기만» 한다 ──
+         고칠 수 있는 칸으로 두지 않는다. 여기서 고친 날짜가 업체관리를 이기고
+         눌러앉으면, 계약이 언제 끝나는지 두 앱이 다른 말을 하게 된다. */''}
+    ${(function(){ const p = erpContractPeriod(o.erp, todayYmd()); if(!p) return '';
+        return `<div class="pdsub" title="푸른이알피 업체관리의 계약 시작일·종료일입니다 — 여기서는 고칠 수 없습니다">`
+          + `📄 계약 ${esc(p.text)}`
+          + (p.past ? ` <span class="ctold" title="종료일이 지났습니다. 계약해지와는 «다른 말»입니다 — 해지 여부는 🚪 가 따로 말합니다(자동 연장으로 계속 가는 곳이 있습니다)">종료일 지남</span>` : '')
+          + `</div>`; })()}
     ${folder?`<div class="pdsub">📁 ${esc(folder.name)}</div>`:''}
     ${/* ── 사업·사건을 «맨 위 축»으로 (대표 지시 2026-08-26, 1단계) ──
          "기업의 정보와 기업이 수행했던 사업·사건 등을 관리하고…"
