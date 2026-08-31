@@ -3,6 +3,7 @@ package kr.pureun.hanabridge;
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.os.PowerManager;
 
 import androidx.annotation.NonNull;
 import androidx.work.Constraints;
@@ -71,6 +72,17 @@ public final class HanaSweepWorker extends Worker {
                 .build();
         WorkManager.getInstance(context)
                 .enqueueUniquePeriodicWork(UNIQUE_NAME, ExistingPeriodicWorkPolicy.KEEP, work);
+    }
+
+    /* 절전 예외가 되어 있나 — 안 되어 있으면 이 훑기가 무기한 미뤄진다.
+       ⚠ 못 물어봤으면 «된 것»으로 친다. 알 수 없는 것으로 화면이 겁주면 안 된다. */
+    static boolean batteryFree(Context context) {
+        try {
+            PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            return pm == null || pm.isIgnoringBatteryOptimizations(context.getPackageName());
+        } catch (Exception unknown) {
+            return true;
+        }
     }
 
     static void cancel(Context context) {
@@ -158,6 +170,9 @@ public final class HanaSweepWorker extends Worker {
             ping.put("foundCount", foundCount);
             /* ★ 「문자함을 끝까지 읽었나」. 거짓이면 foundCount 0 은 «모름»이다. */
             ping.put("readOk", readOk);
+            /* 절전이 풀렸나 — 이 훑기가 «돌기는 했다»는 뜻이므로 대개 참이지만,
+               한 번 돌고 다시 재워지는 폰도 있어 그대로 적어 둔다. */
+            ping.put("batteryFree", batteryFree(context));
             /* ★ 상한(MAX_MESSAGES)에 닿았나 — 닿았으면 더 오래된 거래가 남아 있다. */
             ping.put("capped", capped);
             ping.put("newestAt", newestAt);

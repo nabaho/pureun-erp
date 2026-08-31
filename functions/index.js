@@ -2506,6 +2506,12 @@ exports.hanaMessageBridge = functions
           ...(typeof body.readOk === "boolean" ? { sweepReadOk: body.readOk } : {}),
           /* 상한에 닿았나 — 닿았으면 그보다 오래된 거래가 폰에 더 남아 있다. */
           sweepCapped: body.capped === true,
+          /* ★★ 「절전이 풀렸나」를 폰이 «직접» 말한다 (2026-08-31).
+             이것이 없어서 「절전 예외를 누르셨습니까」를 두 번 묻고 두 번 다 답을
+             못 받았다 — 폰이 이미 아는 것을 사람에게 묻고 있었던 것이다.
+             ⚠ 옛 판은 안 보낸다. 안 보내면 «모름»으로 둔다(거짓으로 치면 안 된다). */
+          ...(typeof body.batteryFree === "boolean"
+            ? { sweepBatteryFree: body.batteryFree } : {}),
         }).catch(() => {});
         hanaJson(res, 200, { ok: true, pong: true }); return;
       }
@@ -2541,6 +2547,9 @@ exports.hanaMessageBridge = functions
                화면은 참일 때만 「폰에 문자가 없다」고 말할 수 있다. */
           sweepReadOk: typeof d.sweepReadOk === "boolean" ? d.sweepReadOk : null,
           sweepCapped: d.sweepCapped === true,
+          /* ★ 「절전이 풀렸나」. null 이면 «모름»(옛 판이 안 보낸 것)이다 —
+               모름을 「절전 켜짐」으로 읽으면 멀쩡한 폰에 없는 고장을 씌운다. */
+          sweepBatteryFree: typeof d.sweepBatteryFree === "boolean" ? d.sweepBatteryFree : null,
           sweepNewestAt: Number(d.sweepNewestAt || 0),
           /* 메시지 앱이 «아닌» 곳에서 온 마지막 알림 — 하나원큐 같은 은행 앱 푸시.
              이 값이 채워지면 「입금이 앱 푸시로 온다」는 것이 기록으로 확인된 것이다. */
