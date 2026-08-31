@@ -2165,3 +2165,23 @@ test('★★ 원본 없는 쪽을 기준으로 고르면 미리 알려 준다', 
   assert.match(m, /var primHas=hasOriginal\(prim\)/);
   assert.match(m, /에는 원본이 «없고»/, '기준에 원본이 없으면 경고해야 합니다');
 });
+
+/* ===== ★★ 저장 폴더를 «그 자리에서» 묻는다 (2026-08-31) ===== */
+
+test('★★ 폴더가 없으면 ⬇ 저장을 누른 그 자리에서 묻는다', () => {
+  // 더보기 메뉴에 숨겨 두었더니 못 찾아 계속 내려받기 폴더로 갔다(실측).
+  const d = funcSource('downloadToFolder');
+  assert.match(d, /if\(!have && !window\._fsAskedOnce\)/, '폴더가 없을 때만 묻습니다');
+  assert.match(d, /await fsPickSaveFolder\(\)/, '「예」면 바로 고르게 합니다');
+  assert.match(d, /window\._fsAskedOnce=true/, '한 번 거절하면 다시 묻지 않습니다');
+});
+
+test('★★ 폴더 묻기는 «파일을 읽기 전»에 한다 — 늦으면 폴더 창이 안 뜬다', () => {
+  /* ⚠ 브라우저는 클릭 직후 잠깐만 폴더 고르기를 허락한다(transient activation).
+     파일을 먼저 읽으면(await) 그 허락이 풀려 showDirectoryPicker 가 조용히 실패한다. */
+  const d = funcSource('downloadToFolder');
+  const askAt = d.indexOf('fsPickSaveFolder()');
+  const readAt = d.indexOf('await getFileAsync(id)');
+  assert.ok(askAt > 0 && readAt > 0, '두 곳이 다 있어야 합니다');
+  assert.ok(askAt < readAt, '⚠ 파일 읽기보다 «먼저» 물어야 폴더 창이 뜹니다');
+});
