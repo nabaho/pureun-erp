@@ -1897,3 +1897,35 @@ test('★★ 읽어 놓고 버리지 않는다 — 다시읽기가 실적·비�
     assert.ok(r.indexOf("setF('" + k + "'") > 0, k + ' 칸을 채워야 합니다');
   });
 });
+
+/* ===== ★★ PDF 를 OCR 이 못 읽던 것 (2026-08-30) ===== */
+
+test('★★ PDF 는 그림으로 바꿔 보낸다 — 그대로 보내면 읽히지 않았다', () => {
+  // 실측: 표창 폴더에서 JPG 한 장만 읽히고 PDF 는 모두 실패했다(「OCR 완료: 1건」).
+  const p = funcSource('_ocrPayload');
+  assert.match(p, /if\(ext!=='pdf'\) return/, '그림 파일은 그대로 보냅니다');
+  assert.match(p, /_pdfFirstPageJpeg/, 'PDF 는 첫 쪽을 그림으로 바꿉니다');
+  assert.match(p, /return \{b64:b64, mt:'application\/pdf', asImage:false\}/,
+    '못 바꾸면 원래 PDF 로 되돌아가야 합니다');
+  // 일괄 읽기·다시읽기 «둘 다» 같은 길을 써야 한다
+  assert.match(source, /const pay=await _ocrPayload\(b64,ext\)/, '일괄 읽기');
+  assert.match(source, /var pay=await _ocrPayload\(f\.base64,ext\)/, '편집창 다시읽기');
+});
+
+test('★★ PDF 변환이 멈춰도 OCR 이 통째로 멈추지 않는다', () => {
+  // ⚠ 깨진 PDF·막힌 망을 만나면 pdf.js 는 영영 기다린다 → 「눌러도 아무 일이 없다」
+  const f = funcSource('_pdfFirstPageJpeg');
+  assert.match(f, /_timeout/, '시간을 끊어야 합니다');
+  assert.match(f, /workerSrc="";?/, '일터를 못 받으면 일터 없이 다시 해 봅니다');
+  assert.match(f, /catch\(e\)\{ console\.warn\('PDF→그림 실패'/, '실패하면 null 로 돌아갑니다');
+});
+
+test('★★ OCR 이 실패하면 «왜» 인지 말한다 — 조용히 넘기지 않는다', () => {
+  const g = funcSource('_geminiOCR');
+  // ⚠ 예전엔 대부분 null 을 돌려줘 이유가 사라졌다
+  assert.match(g, /return \{err:'AI가 표 모양으로 답하지 않았습니다'\}/);
+  assert.match(g, /return \{err:'AI 답을 읽지 못했습니다'\}/);
+  assert.ok(!/\?\{err:'Gemini '\+e\.status\}:null/.test(g), '⚠ 이유를 null 로 삼키지 말 것');
+  assert.match(source, /if\(!done && failed\) toast\('❌ 한 건도 못 읽었습니다'/,
+    '한 건도 못 읽으면 또렷이 알려야 합니다');
+});
