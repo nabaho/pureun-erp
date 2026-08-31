@@ -42,7 +42,7 @@
 <!-- 새 홈페이지를 «자료로» 그리는 부품. 명령줄(scripts/build-people.js)도 같은 것을 쓴다 -->
 <script src="js/pu-site-people.js?v=1"></script>
 <script src="js/pu-site-page.js?v=1"></script>
-<script src="js/pu-site-partner.js?v=1"></script>
+<script src="js/pu-site-partner.js?v=2"></script>
 <style>
 /* ★ 색값·간격은 승인된 목업(docs/mockups/homepage-manage-v4.html)에서 그대로 가져왔다.
    새로 만들지 말 것 — 목업이 배치·색·글귀의 기준이다. */
@@ -3219,16 +3219,8 @@ async function publishPeople() {
       '\n\n올리면 1~2분 뒤 홈페이지에 뜹니다.', '올리기');
     if (!ok) return;
 
-    const token = await firebase.auth().currentUser.getIdToken();
-    const up = await fetch(PUBLISH_URL, {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: 'site/people/index.html', content: 새쪽,
-                             note: '구성원 ' + 고른것.갈것.length + '명' })
-    });
-    const 답 = await up.json().catch(() => ({}));
-    if (!up.ok) throw new Error(답.error || ('서버가 ' + up.status + ' 을 돌려줬습니다'));
-
+    const 답 = await 올리기('site/people/index.html', 새쪽,
+      '구성원 ' + 고른것.갈것.length + '명');
     toast('올렸습니다 — 1~2분 뒤 홈페이지에 뜹니다' + (답.commit ? ' (' + 답.commit + ')' : ''));
   } catch (e) {
     console.warn('[홈페이지 올리기]', e);
@@ -3275,15 +3267,8 @@ async function publishPage(mid) {
       '\n\n올리면 1~2분 뒤 홈페이지에 뜹니다.', '올리기');
     if (!ok) return;
 
-    const token = await firebase.auth().currentUser.getIdToken();
-    const up = await fetch(PUBLISH_URL, {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: 'site/' + mid + '/index.html', content: out.html,
-                             note: (PAGE_LABEL[mid] || mid) + ' ' + out.done.length + '줄' })
-    });
-    const 답 = await up.json().catch(() => ({}));
-    if (!up.ok) throw new Error(답.error || ('서버가 ' + up.status + ' 을 돌려줬습니다'));
+    const 답 = await 올리기('site/' + mid + '/index.html', out.html,
+      (PAGE_LABEL[mid] || mid) + ' ' + out.done.length + '줄');
 
     /* 올린 줄은 «고칠 줄» 목록에서 지운다 — 남겨 두면 다음에 또 올리게 된다 */
     const 남길것 = {};
@@ -3380,6 +3365,19 @@ async function movePartnerLogo(srl, 어디로) {
 }
 window.movePartnerLogo = movePartnerLogo;
 
+/* 쪽 하나를 저장소에 올린다 — 여러 쪽을 올려야 하는 곳이 생겨 하나로 모았다 */
+async function 올리기(path, content, note) {
+  const token = await firebase.auth().currentUser.getIdToken();
+  const up = await fetch(PUBLISH_URL, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: path, content: content, note: note })
+  });
+  const 답 = await up.json().catch(() => ({}));
+  if (!up.ok) throw new Error(답.error || ('서버가 ' + up.status + ' 을 돌려줬습니다'));
+  return 답;
+}
+
 async function publishPartner() {
   if (App.publishing) return;
   if (!App.isAdmin) { await say('총괄관리자만 올릴 수 있습니다', ''); return; }
@@ -3390,25 +3388,44 @@ async function publishPartner() {
     const 지금쪽 = await res.text();
     const 고른것 = PuSitePartner.올릴로고(지금쪽, App.partnerLogos);
     const 새쪽 = PuSitePartner.쪽그리기(지금쪽, 고른것.갈것);
-    if (새쪽 === 지금쪽) {
+
+    /* ★ 메인에도 «같은 로고 띠»가 흐른다. 자문사 쪽만 고치고 메인을 그대로 두면
+       뺀 로고가 메인에서는 계속 돈다 — 그래서 «함께» 올린다.
+       (원래 홈페이지는 한 자료를 두 쪽이 끌어다 썼는데, 굳히면서 그 연결이 끊겼다.) */
+    let 새메인 = null, 지금메인 = null;
+    try {
+      const mres = await fetch(SITE_BASE + '/index.html?t=' + Date.now());
+      if (mres.ok) {
+        지금메인 = await mres.text();
+        const 모든로고 = PuSitePartner.로고읽기(지금쪽);
+        const 그린것 = PuSitePartner.메인그리기(지금메인, 고른것.갈것, 모든로고);
+        if (그린것 !== 지금메인) 새메인 = 그린것;
+      }
+    } catch (e) {
+      console.warn('[메인 로고 띠]', e);   // 메인을 못 읽어도 자문사 쪽은 올린다
+    }
+
+    if (새쪽 === 지금쪽 && !새메인) {
       await say('바뀐 것이 없습니다', '지금 올라가 있는 것과 같습니다 — 올리지 않았습니다.');
       return;
     }
     const ok = await askYes('홈페이지에 올릴까요?',
       '자문사 로고 ' + 고른것.갈것.length + '장을 이 차례로 보입니다.' +
       (고른것.숨긴것.length ? '\n숨기는 로고 ' + 고른것.숨긴것.length + '장' : '') +
+      (새메인 ? '\n메인 화면의 흐르는 로고 띠도 함께 바꿉니다.' : '') +
       '\n\n올리면 1~2분 뒤 홈페이지에 뜹니다.', '올리기');
     if (!ok) return;
-    const token = await firebase.auth().currentUser.getIdToken();
-    const up = await fetch(PUBLISH_URL, {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: 'site/partner/index.html', content: 새쪽,
-                             note: '자문사 로고 ' + 고른것.갈것.length + '장' })
-    });
-    const 답 = await up.json().catch(() => ({}));
-    if (!up.ok) throw new Error(답.error || ('서버가 ' + up.status + ' 을 돌려줬습니다'));
-    toast('올렸습니다 — 1~2분 뒤 홈페이지에 뜹니다' + (답.commit ? ' (' + 답.commit + ')' : ''));
+
+    let 올린쪽 = 0;
+    if (새쪽 !== 지금쪽) {
+      await 올리기('site/partner/index.html', 새쪽, '자문사 로고 ' + 고른것.갈것.length + '장');
+      올린쪽++;
+    }
+    if (새메인) {
+      await 올리기('site/index.html', 새메인, '메인 로고 띠 ' + 고른것.갈것.length + '장');
+      올린쪽++;
+    }
+    toast(올린쪽 + '쪽을 올렸습니다 — 1~2분 뒤 홈페이지에 뜹니다');
   } catch (e) {
     console.warn('[자문사 올리기]', e);
     await say('올리지 못했습니다', (e && e.message) || String(e));
