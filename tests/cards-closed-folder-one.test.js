@@ -99,6 +99,9 @@ test('명함용·사업자용을 여전히 가른다 — 이름이 같아도 섞
                                  b: { id: 'b', kind: 'biz', name: '2. 계약해지' } } } };
   vm.createContext(b);
   vm.runInContext(fn('closedFolderName'), b);
+  /* ⚠ 2026-08-31: 같은 뜻의 폴더가 둘일 때 «쓰이는 쪽»을 고르는 잣대가 갈라져 나왔다.
+     대역이 아니라 진짜를 함께 싣는다 — 대역을 넣으면 그 고름이 틀려도 모른다. */
+  vm.runInContext(fn('pickBusiestGroup'), b);
   vm.runInContext(fn('erpClosedFolderOf'), b);
   assert.equal(vm.runInContext("erpClosedFolderOf('card').id", b), 'a');
   assert.equal(vm.runInContext("erpClosedFolderOf('biz').id", b), 'b');
@@ -108,6 +111,9 @@ test('없으면 null — 새로 만들지 않는다', () => {
   const b = { _canon: s => String(s || ''), state: { groups: { a: { id: 'a', kind: 'card', name: '1. 업체관리' } } } };
   vm.createContext(b);
   vm.runInContext(fn('closedFolderName'), b);
+  /* ⚠ 2026-08-31: 같은 뜻의 폴더가 둘일 때 «쓰이는 쪽»을 고르는 잣대가 갈라져 나왔다.
+     대역이 아니라 진짜를 함께 싣는다 — 대역을 넣으면 그 고름이 틀려도 모른다. */
+  vm.runInContext(fn('pickBusiestGroup'), b);
   vm.runInContext(fn('erpClosedFolderOf'), b);
   assert.equal(vm.runInContext("erpClosedFolderOf('card')", b), null);
 });
