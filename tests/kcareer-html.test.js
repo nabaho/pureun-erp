@@ -1915,9 +1915,21 @@ test('★★ PDF 는 그림으로 바꿔 보낸다 — 그대로 보내면 읽�
 test('★★ PDF 변환이 멈춰도 OCR 이 통째로 멈추지 않는다', () => {
   // ⚠ 깨진 PDF·막힌 망을 만나면 pdf.js 는 영영 기다린다 → 「눌러도 아무 일이 없다」
   const f = funcSource('_pdfFirstPageJpeg');
-  assert.match(f, /_timeout/, '시간을 끊어야 합니다');
-  assert.match(f, /workerSrc="";?/, '일터를 못 받으면 일터 없이 다시 해 봅니다');
-  assert.match(f, /catch\(e\)\{ console\.warn\('PDF→그림 실패'/, '실패하면 null 로 돌아갑니다');
+  assert.match(f, /_pdfRaceMs/, '시간을 끊어야 합니다');
+  assert.match(f, /workerSrc=''/, '일터를 못 받으면 일터 없이 다시 해 봅니다');
+  assert.match(f, /console\.warn\('PDF→그림 실패'/, '실패하면 null 로 돌아갑니다');
+  /* ★★ 여러 장을 한 번에 넣을 때 «장마다» 기다리면 안 된다 —
+     실측: 123장을 넣었더니 한 장에 최대 55초로 멈춘 것처럼 보였다(대표 제보 2026-08-30). */
+  assert.match(f, /if\(_pdfRaster === false\) return null/,
+    '⚠ 안 되는 기기로 판가름나면 그 뒤로는 시도하지 않아야 합니다');
+  assert.match(f, /if\(_pdfNoWorkerTried\)\{ _pdfRaster=false; return null; \}/,
+    '⚠ 일터 없이 재시도는 «딱 한 번»이어야 합니다');
+  /* 한 단계라도 10초를 넘으면 여러 장 넣기가 멈춘 것처럼 보인다 */
+  // open(6000) 처럼 넘기는 것도 있어 「함수 안의 1000 이상 숫자」를 모두 본다
+  const waits = (f.match(/\b\d{4,5}\b/g) || []).map(Number).filter((n) => n >= 1000);
+  assert.ok(waits.length >= 3, '시간 제한이 여러 곳에 있어야 합니다 (지금 ' + waits.join(',') + ')');
+  assert.ok(Math.max.apply(null, waits) <= 10000,
+    '한 단계가 10초를 넘으면 안 됩니다 (지금 ' + Math.max.apply(null, waits) + ')');
 });
 
 test('★★ OCR 이 실패하면 «왜» 인지 말한다 — 조용히 넘기지 않는다', () => {

@@ -5738,42 +5738,75 @@ function aiReady(){
 /* Gemini(무료) 멀티모달 OCR — 이미지/PDF를 직접 읽어 JSON 반환.
    ⚠ 프롬프트·온도·최대 길이(1500)는 그대로다 — 바꾸면 이미 읽힌 서류와 답이 갈린다. */
 /* PDF 첫 쪽을 JPEG 로 바꾼다. 못 바꾸면 null — 부르는 쪽이 원래 PDF 로 시도한다. */
-async function _pdfFirstPageJpeg(b64){
+/* ★ PDF 첫 쪽을 그림으로 — «한 번 안 되면 그 뒤로는 시도하지 않는다».
+   ⚠ 이걸 안 하면 여러 장을 한 번에 넣을 때 «장마다» 기다림이 곱해진다.
+      실측(대표 제보 2026-08-30): 123장을 넣었더니 한 장에 최대 55초씩 걸려 멈춘 것처럼 보였다.
+   ⚠ 시간도 짧게 잡는다 — 되는 환경에서는 1초 안에 끝난다. 오래 걸리면 그 환경은 안 되는 것이다. */
+var _pdfRaster = null;      /* null=아직 모름 · true=됨 · false=이 기기에서는 안 됨 */
+/* ⚠ 열기는 되는데 «그리기»에서 시간이 다 가는 환경이 있다(일터를 못 받는 망).
+   그때 장마다 10초씩 물면 여러 장 넣기가 멈춘 것처럼 보인다.
+   그렇다고 한 번 실패로 못박으면 «깨진 파일 한 장» 때문에 나머지가 다 손해다.
+   → 연속 두 번 실패하면 그때 그만둔다. 한 번이라도 되면 셈을 되돌린다. */
+var _pdfFailRun = 0;
+var _pdfNoWorkerTried = false;
+function _pdfRaceMs(p, ms, what){
+  return Promise.race([p, new Promise(function(_, rj){
+    setTimeout(function(){ rj(new Error((what||'PDF')+' 시간 초과')); }, ms); })]);
+}
+async function _pdfLoadLib(){
+  if(window._pdfjs) return true;
   try{
-    if(!window._pdfjs){
-      await new Promise(function(res,rej){
-        var sc=document.createElement('script');
-        sc.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-        sc.onload=function(){ window._pdfjs=window.pdfjsLib; if(window._pdfjs&&window._pdfjs.GlobalWorkerOptions)
+    await _pdfRaceMs(new Promise(function(res, rej){
+      var sc=document.createElement('script');
+      sc.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      sc.onload=function(){
+        window._pdfjs=window.pdfjsLib;
+        if(window._pdfjs&&window._pdfjs.GlobalWorkerOptions)
           window._pdfjs.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-          res(); };
-        sc.onerror=rej; document.head.appendChild(sc);
-      });
-    }
-    if(!window._pdfjs) return null;
-    /* ⚠ 깨진 PDF 를 만나면 pdf.js 가 «영영 기다린다» — 그러면 OCR 이 통째로 멈춰
-       「눌러도 아무 일이 없다」가 된다(실측 2026-08-30). 반드시 시간을 끊는다. */
-    var _timeout=function(p,ms){ return Promise.race([p, new Promise(function(_,rj){ setTimeout(function(){ rj(new Error("PDF 읽기 시간 초과")); }, ms); })]); };
-    /* ⚠ 일터(worker) 파일을 CDN 에서 못 받는 망이 있다 — 그러면 여기서 영영 멈춘다.
-       한 번 끊고 «일터 없이»(주 스레드) 다시 해 본다. 느리지만 읽히기는 한다. */
-    var _open=function(ms){ return _timeout(window._pdfjs.getDocument({ isEvalSupported:false, data:b64ToAb(b64) }).promise, ms); };
+        res();
+      };
+      sc.onerror=function(){ rej(new Error('pdf.js 를 받지 못했습니다')); };
+      document.head.appendChild(sc);
+    }), 8000, 'pdf.js 내려받기');
+  }catch(e){ console.warn('pdf.js', e&&e.message); return false; }
+  return !!window._pdfjs;
+}
+async function _pdfFirstPageJpeg(b64){
+  if(_pdfRaster === false) return null;              /* 이 기기에서는 안 되는 것으로 이미 판가름났다 */
+  try{
+    if(!await _pdfLoadLib()){ _pdfRaster=false; return null; }
+    var open=function(ms){ return _pdfRaceMs(
+      window._pdfjs.getDocument({ isEvalSupported:false, data:b64ToAb(b64) }).promise, ms, 'PDF 열기'); };
     var pdf=null;
-    try{ pdf=await _open(12000); }
+    try{ pdf=await open(6000); }
     catch(e1){
-      console.warn("PDF 일터 실패 — 일터 없이 다시", e1&&e1.message);
-      try{ if(window._pdfjs.GlobalWorkerOptions) window._pdfjs.GlobalWorkerOptions.workerSrc=""; }catch(e){}
-      pdf=await _open(20000);
+      /* ⚠ 일터(worker) 를 CDN 에서 못 받는 망이 있다. «딱 한 번만» 일터 없이 해 본다 —
+         장마다 다시 해 보면 여러 장 넣기가 통째로 느려진다. */
+      if(_pdfNoWorkerTried){ _pdfRaster=false; return null; }
+      _pdfNoWorkerTried=true;
+      console.warn('PDF 일터 실패 — 일터 없이 한 번 더', e1&&e1.message);
+      try{ if(window._pdfjs.GlobalWorkerOptions) window._pdfjs.GlobalWorkerOptions.workerSrc=''; }catch(e){}
+      try{ pdf=await open(8000); }
+      catch(e2){ _pdfRaster=false; console.warn('PDF→그림: 이 기기에서는 쓰지 않습니다'); return null; }
     }
-    var pg=await _timeout(pdf.getPage(1), 8000);
-    /* 글씨가 뭉개지면 못 읽는다 — 긴 변을 1600px 안팎으로 맞춘다 */
-    var v1=pg.getViewport({scale:1}); var sc=Math.min(2.5, Math.max(1, 1600/Math.max(v1.width,v1.height)));
+    var pg=await _pdfRaceMs(pdf.getPage(1), 5000, 'PDF 쪽 열기');
+    /* 글씨가 뭉개지면 못 읽는다 — 긴 변을 1600px 안팎으로 */
+    var v1=pg.getViewport({scale:1});
+    var sc=Math.min(2.5, Math.max(1, 1600/Math.max(v1.width, v1.height)));
     var vp=pg.getViewport({scale:sc});
     var cv=document.createElement('canvas'); cv.width=vp.width; cv.height=vp.height;
     var cx=cv.getContext('2d'); cx.fillStyle='#fff'; cx.fillRect(0,0,cv.width,cv.height);
-    await _timeout(pg.render({canvasContext:cx, viewport:vp}).promise, 15000);
+    await _pdfRaceMs(pg.render({canvasContext:cx, viewport:vp}).promise, 10000, 'PDF 그리기');
     var url=cv.toDataURL('image/jpeg',0.92);
+    _pdfRaster=true; _pdfFailRun=0;
     return url.slice(url.indexOf(',')+1) || null;
-  }catch(e){ console.warn('PDF→그림 실패',e); return null; }
+  }catch(e){
+    /* 한 장이 깨진 것일 수도 있으니 여기서 곧바로 «안 됨»으로 못박지는 않는다 —
+       열기 단계에서 판가름난 것만 위에서 못박았다. */
+    console.warn('PDF→그림 실패', e&&e.message);
+    if(++_pdfFailRun>=2 && _pdfRaster!==true){ _pdfRaster=false; console.warn('PDF→그림: 이 기기에서는 쓰지 않습니다'); }
+    return null;
+  }
 }
 /* 보낼 것을 고른다 — PDF 면 그림으로 바꿔 본다 */
 async function _ocrPayload(b64,ext){
@@ -5905,6 +5938,10 @@ async function ocrDrop(files,page){ files=[...files]; if(!files.length) return;
     /* ⚠ PDF 는 그림으로 바꿔 보낸다 — 그대로 보내면 읽히지 않는다(실측 2026-08-30).
        저장되는 원본은 그대로 PDF 다. */
     const pay=await _ocrPayload(b64,ext);
+    /* PDF 를 그림으로 못 바꾸는 기기라면 한 번만 알려 준다 — 장마다 띄우면 시끄럽다 */
+    if(ext==='pdf' && !pay.asImage && _pdfRaster===false && !window._pdfWarned){
+      window._pdfWarned=true; toast('⚠ 이 기기에서는 PDF를 그림으로 바꾸지 못합니다 — PDF는 그대로 보냅니다', 5000);
+    }
     const isPDF=!pay.asImage, mt=pay.mt, sendB64=pay.b64;
     const prompt=PAGE_OCR_PROMPT[page]||PAGE_OCR_PROMPT.wiccok; let parsed=null;
     if(['hwp','hwpx'].includes(ext)){ const fb=quickParseFilename(file.name,page); if(fb){ await saveOCRRecord(page,fb,file,ext,b64); done++; toast('📝 HWP는 OCR 불가 — 파일명 등록+첨부'); } else failed++; continue; }
