@@ -41,6 +41,7 @@
 <script src="js/pu-home-fill.js?v=6"></script>
 <!-- 새 홈페이지를 «자료로» 그리는 부품. 명령줄(scripts/build-people.js)도 같은 것을 쓴다 -->
 <script src="js/pu-site-people.js?v=1"></script>
+<script src="js/pu-site-page.js?v=1"></script>
 <style>
 /* ★ 색값·간격은 승인된 목업(docs/mockups/homepage-manage-v4.html)에서 그대로 가져왔다.
    새로 만들지 말 것 — 목업이 배치·색·글귀의 기준이다. */
@@ -3213,6 +3214,68 @@ async function publishPeople() {
 }
 window.publishPeople = publishPeople;
 
+/* 쪽 본문을 새 홈페이지에 올린다 (대표 지시 2026-08-31 「나머지도 순서대로」).
+   ★ 구성원은 카드를 «찍어 내면» 됐다. 쪽은 본문 안에 지도·표·구획·지사 탭이 들어 있어
+     통째로 갈아 끼우면 그것들이 사라진다 — 그래서 «고치신 줄의 글자만» 갈아 끼운다.
+     그 일은 이미 증명해 둔 부품이 한다(실제 열두 쪽으로 「태그가 한 글자도 안 바뀐다」).
+   ★ 고치는 자리는 «본문»뿐이다. 쪽 전체에 대고 하면 발에도 있는 글(회사 이름·전화번호)이
+     「두 군데라 못 한다」고 헛걸린다. */
+async function publishPage(mid) {
+  if (App.publishing) return;
+  if (!App.isAdmin) { await say('총괄관리자만 올릴 수 있습니다', ''); return; }
+  const 고칠것 = PuSitePage.고칠줄(App.pageFix[mid]);
+  if (!고칠것.length) {
+    await say('고친 줄이 없습니다',
+      '위 「홈페이지 화면」 칸에서 고칠 줄을 «그 자리에서» 고치신 뒤에 눌러 주십시오.');
+    return;
+  }
+  App.publishing = true; App.render();
+  try {
+    const res = await fetch(SITE_BASE + '/' + mid + '/index.html?t=' + Date.now());
+    if (!res.ok) throw new Error('새 홈페이지의 이 쪽을 읽지 못했습니다 (' + res.status + ')');
+    const 지금쪽 = await res.text();
+
+    const out = PuSitePage.쪽고치기(지금쪽, 고칠것, PuHomeFill.applyLineEdits);
+    if (!out.done.length) {
+      await say('채운 줄이 없습니다',
+        out.skipped.map(x => '· ' + x.before + '\n   → ' + x.why).join('\n'));
+      return;
+    }
+
+    const ok = await askYes('새 홈페이지에 올릴까요?',
+      out.done.length + '줄을 갈아 끼웁니다. 지도·표·구획은 그대로입니다.\n\n' +
+      out.done.map(d => '· ' + d.before + '\n   → ' + d.after).join('\n') +
+      (out.skipped.length ? '\n\n[건너뛴 줄]\n' +
+        out.skipped.map(x => '· ' + x.before + ' — ' + x.why).join('\n') : '') +
+      '\n\n올리면 1~2분 뒤 홈페이지에 뜹니다.', '올리기');
+    if (!ok) return;
+
+    const token = await firebase.auth().currentUser.getIdToken();
+    const up = await fetch(PUBLISH_URL, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: 'site/' + mid + '/index.html', content: out.html,
+                             note: (PAGE_LABEL[mid] || mid) + ' ' + out.done.length + '줄' })
+    });
+    const 답 = await up.json().catch(() => ({}));
+    if (!up.ok) throw new Error(답.error || ('서버가 ' + up.status + ' 을 돌려줬습니다'));
+
+    /* 올린 줄은 «고칠 줄» 목록에서 지운다 — 남겨 두면 다음에 또 올리게 된다 */
+    const 남길것 = {};
+    Object.keys(App.pageFix[mid] || {}).forEach(k => {
+      if (!out.done.some(d => d.before === k)) 남길것[k] = App.pageFix[mid][k];
+    });
+    App.pageFix[mid] = 남길것;
+    toast('올렸습니다 — 1~2분 뒤 홈페이지에 뜹니다' + (답.commit ? ' (' + 답.commit + ')' : ''));
+  } catch (e) {
+    console.warn('[쪽 올리기]', e);
+    await say('올리지 못했습니다', (e && e.message) || String(e));
+  } finally {
+    App.publishing = false; App.render();
+  }
+}
+window.publishPage = publishPage;
+
 /* 쪽 하나만 홈페이지에서 읽어 온다 (5차 지시 ③).
    ★ 「홈페이지 다시 확인」과 «다른 것»이다: 이건 어떻게 보이는지 보려고 읽는 것이라
      읽은 결과로 딱지를 새로 붙이지 않는다. 딱지는 확인을 누를 때만 바뀐다 —
@@ -3413,6 +3476,11 @@ function pageLinesHtml(mid) {
     + '<button class="btn pri sm" id="pfixBtn" onclick="copyPageFix(\'' + esc(mid) + '\')"'
     + (고친수 ? '' : ' disabled') + '>'
     + (고친수 ? '홈페이지에 채우기용 복사 (' + 고친수 + '줄)' : '고친 줄이 없습니다') + '</button>'
+    + (고친수 ? '<button class="btn sm" onclick="publishPage(\'' + esc(mid) + '\')"'
+               + (App.publishing ? ' disabled' : '')
+               + ' title="새 홈페이지(미리보기)에 고친 줄만 갈아 끼워 올립니다">'
+               + (App.publishing ? '올리는 중…' : '새 홈페이지에 올리기 (' + 고친수 + '줄)')
+               + '</button>' : '')
     + (고친수 ? '<button class="btn sm" onclick="resetPageFix(\'' + esc(mid)
                + '\')">고친 줄 되돌리기</button>' : '')
     + '<span class="tip" style="flex:1">고친 줄만 갈아 끼웁니다 — 지도·표·구획은 그대로입니다. '
