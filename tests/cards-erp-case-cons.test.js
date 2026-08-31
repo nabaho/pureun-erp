@@ -60,8 +60,14 @@ function loadErpCaseConsBlock(){
 
 /* ⚠ 2026-08-24: 대표 지시로 기금·기타사업까지 넷을 읽는다(넷 + 유형 사전 셋 = 일곱).
    지킬 것은 「정해진 자리만 읽고, 그 밖은 안 건드린다」이지 「두 자리」라는 숫자가 아니다. */
+/* ⚠ 2026-08-31: 계약(data/contracts/v)을 더했다 — 이 앱의 이름표가 「사업자·명함·계약서」인데
+     정작 계약을 한 번도 안 읽고 있었다(점검 C1).
+   ⚠ 이 목록은 «손으로» 적는다. ERP_HIST_KINDS 에서 뽑아 만들면 무엇을 더해도 저절로
+     맞아떨어져 검사가 아무것도 안 지키게 된다 — 자리가 느는 것은 요금이 느는 일이라
+     사람이 한 번 더 보고 적어야 한다. */
 const ERP_READ_PATHS = ['data/biz_cons_types','data/biz_fund_types','data/biz_other_types',
-                        'data/cases/v','data/consultings/v','data/funds/v','data/other_projects/v'];
+                        'data/cases/v','data/consultings/v','data/contracts/v',
+                        'data/funds/v','data/other_projects/v'];
 
 test('loadErpCaseCons 는 이알피의 정해진 자리만 읽는다', async () => {
   const c = loadErpCaseConsBlock();

@@ -188,11 +188,15 @@ test('★ 사업마다 유형 사전을 제 자리에 담는다 — 한 벌로 �
   assert.equal(c._erpConsTypes[0].name, '현장클리닉', '옛 이름(_erpConsTypes)도 이어져야 합니다');
 });
 
-test('★ 넷과 사전 셋, 일곱 자리를 읽는다 — 그 밖은 안 건드린다', async () => {
+test('★ 다섯과 사전 셋, 여덟 자리를 읽는다 — 그 밖은 안 건드린다', async () => {
+  /* ⚠ 2026-08-31: 계약(data/contracts/v)을 더했다(점검 C1). 지킬 것은 「정해진 자리만
+     읽는다」이지 「여덟」이라는 숫자가 아니다 — 다만 자리가 느는 것은 요금이 느는 일이라
+     손으로 적어 두고 사람이 한 번 더 보게 한다. */
   const c = loadIndexer({});
   await new Promise(res => c.loadErpCaseCons(res));
   same(c._seen.slice().sort(), ['data/biz_cons_types', 'data/biz_fund_types', 'data/biz_other_types',
-    'data/cases/v', 'data/consultings/v', 'data/funds/v', 'data/other_projects/v']);
+    'data/cases/v', 'data/consultings/v', 'data/contracts/v',
+    'data/funds/v', 'data/other_projects/v']);
 });
 
 /* ══════ ① 잇는 방법 — 이것이 안 나오던 까닭이다 ══════ */
@@ -235,9 +239,13 @@ test('byName 이 없는 옛 꼴로 와도 터지지 않는다', () => {
 test('★ 읽는 자리에 기금·기타사업이 들어 있다 — 「한 번에 관리」가 되려면 한자리여야 한다', () => {
   const c = load();
   const stores = c._C.KINDS.map(s => s.store).sort();
-  same(stores, ['cases', 'consultings', 'funds', 'other_projects']);
+  same(stores, ['cases', 'consultings', 'contracts', 'funds', 'other_projects']);
+  /* 사전이 «필요 없는» 갈래는 여기 이름으로 적어 둔다 — 제 안에 이름을 담는 것들이다
+     (사건은 typeName, 계약은 kind). 목록으로 적어야 사전을 빠뜨린 새 갈래가
+     조용히 섞여 들어와 「(이름 없음)」이 되는 것을 막는다. */
+  const 사전없이도되는것 = ['case', 'contract'];
   c._C.KINDS.forEach(s => {
-    if (s.kind === 'case') return;
+    if (사전없이도되는것.includes(s.kind)) return;
     assert.ok(s.types, s.kind + ' 의 유형 사전 자리가 없습니다 — 이름 대신 코드가 그대로 나옵니다');
   });
 });
