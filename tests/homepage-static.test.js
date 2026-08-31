@@ -114,3 +114,53 @@ test('★ 부르는 자산이 실제로 있다 — 없으면 화면이 통째로
   assert.deepEqual(없는것.slice(0, 5), [],
     '★ 부르는데 없는 파일이 ' + 없는것.length + '개다 (화면이 깨진다)');
 });
+
+/* ══════ 잔뼈 — 없으면 «나중에» 아픈 것들 ══════ */
+
+test('★ .nojekyll 이 있다 — 없으면 밑줄(_)로 시작하는 파일이 통째로 사라진다', () => {
+  /* 깃허브는 올린 쪽을 «지킬(Jekyll)»로 한 번 더 굽는다. 굽게 두면 밑줄 파일·폴더가
+     사라지고, 굽다가 멎으면 홈페이지가 통째로 안 올라간다. 지금은 밑줄 파일이 없지만
+     «나중에 생기면» 그날 홈페이지가 조용히 반쪽이 된다. */
+  assert.ok(fs.existsSync(path.join(SITE, '.nojekyll')), '★ .nojekyll 이 없다');
+});
+
+test('★ 404 쪽이 «한국어»로 있고, 홈페이지 모양을 그대로 쓴다', () => {
+  const p = path.join(SITE, '404.html');
+  assert.ok(fs.existsSync(p), '★ 404 쪽이 없다 — 깃허브의 영어 404 가 뜬다');
+  const h = fs.readFileSync(p, 'utf8');
+  assert.match(h, /찾으시는 쪽이 없습니다/, '한국어 안내가 없다');
+  /* 머리띠·발이 그대로 있어야 «홈페이지처럼» 보인다 */
+  ['footer', '041-556-0035'].forEach(표시 =>
+    assert.ok(h.indexOf(표시) > 0, '★ 404 쪽에 홈페이지 틀(' + 표시 + ')이 없다'));
+  /* 갈 곳을 준다 — 막다른 길로 두지 않는다 */
+  assert.match(h, /홈으로 돌아가기/, '★ 돌아갈 길이 없다');
+  assert.ok((h.match(/href="\/[a-z0-9_]+\//g) || []).length >= 5,
+    '★ 다른 쪽으로 가는 길이 거의 없다');
+});
+
+test('★ robots.txt 와 쪽의 검색 차단이 «같은 말»을 한다', () => {
+  const p = path.join(SITE, 'robots.txt');
+  assert.ok(fs.existsSync(p), '★ robots.txt 가 없다');
+  const r = fs.readFileSync(p, 'utf8');
+  const 어느쪽 = 쪽[0];
+  const 미리보기 = /굳힌 사본 \(미리보기용/.test(fs.readFileSync(어느쪽, 'utf8'));
+  /* ★ 값을 박지 않는다 — 「미리보기면 막고, 운영용이면 연다」가 규칙이다.
+     둘이 어긋나면(쪽은 막는데 robots 는 열려 있거나) 어느 쪽이 참인지 모르게 된다. */
+  if (미리보기) {
+    assert.match(r, /Disallow: \//, '★ 미리보기인데 robots 가 열려 있다');
+  } else {
+    assert.match(r, /Allow: \//, '★ 운영용인데 robots 가 막고 있다 — 검색에서 통째로 사라진다');
+    assert.match(r, /Sitemap:/, '운영용이면 sitemap 자리를 알려야 한다');
+  }
+});
+
+test('★ sitemap 에 굳힌 쪽이 «다» 들어 있고, 주소가 우리 도메인이다', () => {
+  const p = path.join(SITE, 'sitemap.xml');
+  assert.ok(fs.existsSync(p), '★ sitemap.xml 이 없다');
+  const x = fs.readFileSync(p, 'utf8');
+  const 적힌것 = [...x.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1]);
+  assert.equal(적힌것.length, 쪽.length,
+    '★ 굳힌 쪽은 ' + 쪽.length + '개인데 sitemap 에는 ' + 적힌것.length + '개다');
+  적힌것.forEach(u => assert.ok(u.indexOf(진짜도메인) === 0,
+    '★ sitemap 에 우리 도메인이 아닌 주소가 있다: ' + u));
+});

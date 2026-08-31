@@ -278,6 +278,66 @@ function 게시글주소들(html, mid) {
     console.log('  · ' + 파일);
   });
 
+  /* ══════ 잔뼈들 — 없으면 «나중에» 아픈 것들 ══════ */
+
+  /* ① .nojekyll — 깃허브가 이 쪽들을 «지킬(Jekyll)»로 한 번 더 굽지 않게 한다.
+     굽게 두면 밑줄(_)로 시작하는 파일·폴더가 통째로 사라지고, 굽다가 멎으면
+     홈페이지가 통째로 안 올라간다. 지금은 밑줄 파일이 없지만 «나중에 생기면»
+     그날 홈페이지가 조용히 반쪽이 된다. */
+  담기('.nojekyll', Buffer.from('', 'utf8'));
+
+  /* ② 404 쪽 — 없는 주소로 들어온 사람을 «한국어로» 맞이한다.
+     ★ 없으면 깃허브의 영어 404 가 뜬다. 옛 홈페이지 주소(/index.php?…,
+       /partner_board/185)가 검색에 남아 있어 옮긴 뒤 한동안 그리로 들어온다.
+     ★ 쪽을 새로 그리지 않는다 — 인사말 쪽의 «본문만» 갈아 끼워 머리띠·메뉴·발을
+       그대로 쓴다. 그래야 404 도 홈페이지처럼 보인다. */
+  const 바탕 = 쪽글['greeting'] || 쪽글[''] || '';
+  if (바탕) {
+    let h = 쪽고치기(바탕, '');            // 뿌리에 놓이므로 깊이 0
+    const i = h.indexOf('bh_page_widget_inner');
+    const 시작 = i >= 0 ? h.indexOf('>', i) + 1 : -1;
+    const m = 시작 > 0 ? /<footer/i.exec(h.slice(시작)) : null;
+    if (시작 > 0 && m) {
+      const 단추 = PAGES.filter(p => p.mid).map(p =>
+        '<a href="/' + p.mid + '/" style="display:inline-block;padding:9px 15px;margin:3px;'
+        + 'border:1px solid #e2e8f0;border-radius:9px;text-decoration:none;color:#1e293b">'
+        + p.이름 + '</a>').join('');
+      const 안내 = '<div style="max-width:900px;margin:0 auto;padding:110px 20px;text-align:center">'
+        + '<div style="font-size:64px;font-weight:800;color:#1e40af;line-height:1">404</div>'
+        + '<h2 style="margin:18px 0 10px;font-size:24px">찾으시는 쪽이 없습니다</h2>'
+        + '<p style="color:#64748b;line-height:1.7;margin:0 0 26px">'
+        + '주소가 바뀌었거나 없어진 쪽입니다.<br>아래에서 찾으시는 곳으로 가 주십시오.</p>'
+        + '<div>' + 단추 + '</div>'
+        + '<p style="margin-top:26px"><a href="/" style="color:#1e40af;font-weight:700;'
+        + 'text-decoration:none">홈으로 돌아가기</a></p></div>';
+      h = h.slice(0, 시작) + 안내 + h.slice(시작 + m.index);
+      h = h.replace(/<title>[^<]*<\/title>/i, '<title>푸른노무법인 - 쪽을 찾지 못했습니다</title>');
+      담기('404.html', Buffer.from(h, 'utf8'));
+      console.log('\n■ 404 쪽을 만들었습니다 (한국어 · 메뉴 그대로)');
+    }
+  }
+
+  /* ③ robots.txt — 미리보기 동안에는 «통째로» 막는다.
+     쪽마다 넣은 noindex 와 겹치는 듯하지만 막는 때가 다르다:
+     noindex 는 «읽고 나서» 안 싣는 것이고, robots 는 «읽지도 말라»는 것이다. */
+  담기('robots.txt', Buffer.from(LIVE
+    ? ['User-agent: *', 'Allow: /', '', 'Sitemap: ' + REAL_ORIGIN + '/sitemap.xml', ''].join('\n')
+    : ['# 아직 미리보기입니다 — 검색에 싣지 마십시오',
+       'User-agent: *', 'Disallow: /', ''].join('\n'), 'utf8'));
+
+  /* ④ sitemap.xml — 네이버·구글에 «이 쪽들이 있다»고 알린다.
+     주소를 그대로 지켰으므로 옮긴 뒤 색인이 빨리 따라온다. */
+  const 오늘 = new Date().toISOString().slice(0, 10);
+  const 목록 = Object.keys(쪽글).map(mid =>
+    '  <url><loc>' + REAL_ORIGIN + '/' + mid + '</loc>'
+    + '<lastmod>' + 오늘 + '</lastmod></url>').join('\n');
+  담기('sitemap.xml', Buffer.from(
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    + '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    + 목록 + '\n</urlset>\n', 'utf8'));
+  console.log('■ 잔뼈: .nojekyll · robots.txt(' + (LIVE ? '열림' : '막음')
+    + ') · sitemap.xml(' + Object.keys(쪽글).length + '쪽)');
+
   /* 굳힌 것이 무엇인지 한 장으로 남긴다 */
   const 적바림 = [
     '# 홈페이지 굳힌 사본',
