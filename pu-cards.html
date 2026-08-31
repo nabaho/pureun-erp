@@ -21694,6 +21694,33 @@ function erpHistStat(rec){
   if(rec && rec.permanentArchived) return 'done';
   return ERP_HIST_STAT[s] || (s ? 'run' : 'wait');
 }
+/* ══════ 「사업내역」은 늘 숨는 것이 셋 있다 (대표 지시 2026-08-31) ══════
+   "사업이 중복되거나 잘못된 경우가 있다. 계약에서 이관된 경우 계약은 사라져야한다.
+    계약에서도 컨설팅에 따른 선택이 있는데 그부분은 굳이 표시할 필요 없다.
+    취소된 경우는 잘못입력한 경우가 많기 때문에 입력을 안한는게 좋다."
+
+   ⚠ 사람이 거르개(칩·상태)로 켜고 끄는 것과 «다르다» — 이 셋은 «전체」를 눌러도
+     안 나온다. coHistPaint 가 all(합계·건수·칩의 바탕)을 만들 때 미리 거른다 —
+     안 그러면 「모두 N건」이 안 보이는 것까지 센 거짓 숫자가 된다.
+
+   ① 취소(cancel) — 잘못 입력한 경우가 많다. 갈래를 안 가린다(계약뿐 아니라
+      사건·컨설팅·기금·기타 어디서든).
+   ② «이관된» 계약 — 이알피는 계약이 사건·컨설팅·기금·기타로 넘어가면 그 계약에
+      status:'transferred' 를 적는다(계약관리의 「이관완료」 딱지와 같은 값).
+      넘어간 결과물이 이미 따로 한 줄로 잡히므로, 원본 계약까지 같이 보이면
+      «같은 일»이 두 줄로 보인다. ⚠ 이 판정은 계약(kind==='contract')에만 매인다 —
+      다른 갈래에는 애초에 없는 상태값이다.
+   ③ «컨설팅에 따른 선택» 계약 — kind:'biz_cons' 인 계약. 실제 일감은 이관된 뒤
+      컨설팅 기록으로 잡히므로, 그 전 단계인 이 계약 자체는 늘어놓을 필요가 없다. */
+function erpHistVisible(rec){
+  if(!rec) return false;
+  if(erpHistStat(rec) === 'cancel') return false;
+  if(rec._kind === 'contract'){
+    if(String(rec.status||'').toLowerCase() === 'transferred') return false;
+    if(String(rec.kind||'') === 'biz_cons') return false;
+  }
+  return true;
+}
 /* 이 기록의 유형 이름. 사건만 레코드에 박혀 있고 나머지는 사전을 찾아야 한다. */
 function erpHistName(rec, typesByKind){
   const kind = (rec && rec._kind) || 'consulting';
@@ -22154,7 +22181,10 @@ function coHistPaint(){
   /* 기록이 없으면 칸 자체를 안 그린다 — 메모 없으면 메모 칸을 안 그리는 것과 같은 결 */
   if(!recs.length){ box.innerHTML=''; return; }
 
-  const all = recs.map(r=>erpHistRow(r, _erpHistTypes));
+  /* ⚠ 여기서 거른다(erpHistVisible) — 이관된 계약·컨설팅에 따른 선택 계약·취소는
+     사람이 칩을 안 켜도 안 나온다. all 은 합계·건수·칩의 바탕이라, 여기서 안 빼면
+     그 숫자에 안 보이는 것까지 섞인다(대표 지시 2026-08-31). */
+  const all = recs.filter(erpHistVisible).map(r=>erpHistRow(r, _erpHistTypes));
   /* 어느 사업인지 셀 때 쓰는 자리표 — 걸러 보거나 정렬을 바꿔도 붙임새가 따라온다 */
   all.forEach(function(r, i){ r._i = i; });
   /* 2단계 — 서류를 사업에 붙인다(이름 대조). 서버에 쓰지 않고 그릴 때마다 맞춰 본다. */
@@ -24391,10 +24421,43 @@ function todayYmd(){
   return t.getFullYear() + '-' + String(t.getMonth()+1).padStart(2,'0')
        + '-' + String(t.getDate()).padStart(2,'0');
 }
-function coDetailPanelHtml(o){
+/* ══════ 기업정보 — 접혔다 펼 수 있다 (대표 지시 2026-08-31) ══════
+   "기업상세의 사업내역을 정리할 때는 이부분이 모두 보일 필요없다.
+    기업상단에서 기업정보를 접었다 펼 수 있게 만들면 된다.
+    그리고 이부분을 한줄로 만들면 안될까"
+
+   CO_FIELDS 스무 칸 남짓(사업자번호~매출액)이 늘 펼쳐져 있어, 정작 보고 싶어 한
+   «이 회사에서 한 일»(계약·컨설팅·사건)을 보려면 이 긴 목록을 지나쳐야 했다.
+   ⚠ 기본은 «접힘»이다. 접혀도 아무것도 안 보이면 무슨 회사인지 잊으므로,
+     회사를 가장 잘 가리키는 네 칸만 한 줄 요약으로 남긴다. */
+let _coInfoOpen = false;
+function coInfoSummary(o){
+  const val = f => coVal(o, f);
+  return ['bizno','ceo','bizType','bizItem'].map(val).filter(Boolean).join(' · ');
+}
+function coInfoBoxHtml(o){
   const val = f => coVal(o, f);
   const rows = CO_FIELDS.filter(([f])=>val(f)).map(([f,label])=>
     `<div class="pdrow"><div class="k">${esc(label)}</div><div class="v">${esc(val(f))}${coSrcTagHtml(o,f)}</div></div>`).join('');
+  return `<div class="pdsec coinfo-head" onclick="coInfoToggle('${esc(String(o.key).replace(/'/g,"\\'"))}')"
+      style="cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap"
+      title="눌러서 ${_coInfoOpen?'접기':'펼치기'}">
+      기업정보 <span class="chev">${_coInfoOpen?'▾':'▸'}</span>
+      ${_coInfoOpen?'':`<span style="font-weight:400;color:#94a3b8;font-size:12px">${esc(coInfoSummary(o))}</span>`}
+    </div>
+    ${_coInfoOpen?`<div class="pdgrid cogrid" style="margin-top:12px">
+      ${rows || '<div class="pdrow"><div class="v" style="color:#94a3b8">아직 읽어 둔 항목이 없습니다</div></div>'}
+    </div>`:''}`;
+}
+/* 펼침 단추 — 패널 «전체»를 다시 그리지 않는다. 통째로 다시 그리면 이력 칸
+   (#coErpHistBox)이 같이 날아가 서버를 다시 불러오게 된다 — #coInfoBox 만 바꾼다. */
+function coInfoToggle(key){
+  _coInfoOpen = !_coInfoOpen;
+  const o = coList().find(x=>x.key===key); if(!o) return;
+  const box = $('coInfoBox');
+  if(box) box.innerHTML = coInfoBoxHtml(o);
+}
+function coDetailPanelHtml(o){
   const folder = o.folder ? _coFolders[o.folder] : null;
   return `
     ${/* 상호를 못 읽은 등록증은 번호가 제목이 된다 — 목록과 «같은 함수».
@@ -24419,11 +24482,9 @@ function coDetailPanelHtml(o){
            그대로다(loadErpCaseCons 가 이미 읽고 있던 값이다).
          ⚠ 칸은 비어 있고 loadErpCaseCons 가 나중에 채운다 — 자리만 위로 옮겼다. */''}
     <div id="coErpHistBox"></div>
-    ${/* ⚠ cogrid — 기업 상세만의 «한 줄에 한 칸» 배치. 명함 상세와 자리를 함께 쓰므로
-         갈래를 붙여 가른다(대표 화면 2026-08-31). */''}
-    <div class="pdgrid cogrid" style="margin-top:12px">
-      ${rows || '<div class="pdrow"><div class="v" style="color:#94a3b8">아직 읽어 둔 항목이 없습니다</div></div>'}
-    </div>
+    ${/* 기업정보는 접힌 채로 시작한다(대표 지시 2026-08-31) — #coInfoBox 한 칸에
+         담아 펼침 단추가 «이 칸만» 다시 그리게 한다. */''}
+    <div id="coInfoBox" style="margin-top:12px">${coInfoBoxHtml(o)}</div>
     ${/* 어긋난 칸을 «서류 목록보다 위»에 둔다 — 사람이 판단해야 하는 것이 먼저다 */''}
     ${coConflictHtml(o)}
     ${coDocsHtml(o)}

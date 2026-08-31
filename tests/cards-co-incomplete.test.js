@@ -110,8 +110,11 @@ test('빈칸·공백만 든 값은 «없는 것»으로 본다', () => {
 /* ══════ ② 값 찾는 규칙이 상세 패널과 같다 ══════ */
 
 test('★ 상세 패널이 «같은 함수»(coVal)로 값을 찾는다 — 두 벌이면 어긋난다', () => {
-  assert.match(fnBody('coDetailPanelHtml'), /coVal\(/,
+  /* ⚠ 2026-08-31: 기업정보 접기/펼치기(대표 지시)로 값 찾는 자리가 coDetailPanelHtml
+     에서 coInfoBoxHtml·coInfoSummary 로 옮겨 갔다 — 규칙은 그대로다. */
+  assert.match(fnBody('coInfoBoxHtml'), /coVal\(/,
     '★ 상세 패널이 제 규칙을 따로 쓰면, 화면엔 보이는데 부족으로 세는 일이 생긴다');
+  assert.match(fnBody('coInfoSummary'), /coVal\(/, '접힌 요약도 같은 함수로 값을 찾아야 한다');
 });
 
 test('★ 서식에서 읽은 값(extra)도 «있는 것»으로 센다', () => {
