@@ -42,7 +42,7 @@
 <!-- 새 홈페이지를 «자료로» 그리는 부품. 명령줄(scripts/build-people.js)도 같은 것을 쓴다 -->
 <script src="js/pu-site-people.js?v=1"></script>
 <script src="js/pu-site-page.js?v=1"></script>
-<script src="js/pu-site-partner.js?v=2"></script>
+<script src="js/pu-site-partner.js?v=3"></script>
 <style>
 /* ★ 색값·간격은 승인된 목업(docs/mockups/homepage-manage-v4.html)에서 그대로 가져왔다.
    새로 만들지 말 것 — 목업이 배치·색·글귀의 기준이다. */
@@ -3330,6 +3330,10 @@ function drawPartnerLogos() {
     });
     h += '</div>';
   }
+  h += '<div class="guide"><b>새 로고 넣기</b> — 그림을 고르면 «저장소»에 담고 목록 맨 뒤에 붙입니다. '
+    + '<span class="sub">png·jpg·svg, 700KB 까지. 홈페이지 로고는 보통 5~70KB 입니다.</span>'
+    + '<div style="margin-top:7px"><input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"'
+    + ' onchange="addPartnerLogo(this)"></div></div>';
   h += '<div style="margin-top:12px;display:flex;gap:7px">'
     + '<button class="btn pri" onclick="publishPartner()"' + (App.publishing ? ' disabled' : '') + '>'
     + (App.publishing ? '올리는 중…' : '홈페이지에 올리기 (' + 고른것.갈것.length + '장)') + '</button>'
@@ -3378,6 +3382,61 @@ async function 올리기(path, content, note) {
   return 답;
 }
 
+/* ★ 새 자문사 로고를 넣는다 — 그림을 «저장소»에 담고 목록 뒤에 붙인다.
+   ★ 왜 창고(Storage)가 아니라 저장소인가:
+     ① 홈페이지가 «통째로 한 덩어리»로 남아 어느 곳으로 옮겨도 그대로 돈다
+     ② 창고는 무료 한도가 없다 — 로고 몇 장에 셈을 붙일 이유가 없다
+     ③ 창고 주소는 토큰이 붙어 길고, 토큰이 사라지면 그림이 통째로 안 보인다
+   ★ 여기서는 «담기»까지만 한다. 쪽에 실제로 실리는 것은 「올리기」를 눌렀을 때다. */
+async function addPartnerLogo(el) {
+  const f = el && el.files && el.files[0];
+  if (!f) return;
+  el.value = '';                       // 같은 그림을 다시 골라도 다시 돌게
+  try {
+    if (!App.isAdmin) throw new Error('총괄관리자만 올릴 수 있습니다.');
+    const 한도 = 700 * 1024;
+    if (f.size > 한도) throw new Error('그림이 너무 큽니다(' + Math.round(f.size / 1024) + 'KB). '
+      + '한도는 700KB 입니다 — 로고는 보통 5~70KB 입니다.');
+    const 끝 = (f.name.split('.').pop() || '').toLowerCase();
+    const 되는것 = { png: 1, jpg: 1, jpeg: 1, webp: 1, svg: 1 };
+    if (!되는것[끝]) throw new Error('png·jpg·webp·svg 만 넣을 수 있습니다 (' + 끝 + ')');
+
+    /* 파일 이름은 «우리가» 짓는다 — 한글·빈칸·따옴표가 든 이름이 주소가 되면 깨진다 */
+    const 열쇠 = 'n' + Date.now();
+    const 이름 = 열쇠 + '.' + 끝;
+    const 자리 = 'site/files/logo/' + 이름;
+
+    const base64 = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onerror = () => reject(new Error('그림을 읽지 못했습니다.'));
+      r.onload = () => resolve(String(r.result).split(',')[1] || '');
+      r.readAsDataURL(f);
+    });
+    if (!base64) throw new Error('그림이 비어 있습니다.');
+
+    const token = await firebase.auth().currentUser.getIdToken();
+    const up = await fetch(PUBLISH_URL, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: 자리, content: base64, image: true,
+                             note: '자문사 로고 ' + f.name })
+    });
+    const 답 = await up.json().catch(() => ({}));
+    if (!up.ok) throw new Error(답.error || ('서버가 ' + up.status + ' 을 돌려줬습니다'));
+
+    /* 목록에 붙여 둔다 — 쪽에 실리는 것은 「올리기」를 눌렀을 때다 */
+    App.partnerLogos.추가 = (App.partnerLogos.추가 || [])
+      .concat([{ srl: 열쇠, 그림: '../files/logo/' + 이름 }]);
+    await savePartnerLogos();
+    toast('로고를 담았습니다 — 아래 «홈페이지에 올리기»를 눌러야 실립니다.');
+    drawPartnerLogos();
+  } catch (e) {
+    console.warn('[로고 넣기]', e);
+    await say('로고를 넣지 못했습니다', (e && e.message) || String(e));
+  }
+}
+window.addPartnerLogo = addPartnerLogo;
+
 async function publishPartner() {
   if (App.publishing) return;
   if (!App.isAdmin) { await say('총괄관리자만 올릴 수 있습니다', ''); return; }
@@ -3424,6 +3483,12 @@ async function publishPartner() {
     if (새메인) {
       await 올리기('site/index.html', 새메인, '메인 로고 띠 ' + 고른것.갈것.length + '장');
       올린쪽++;
+    }
+    /* ★ 올리고 나면 «새로 넣은 것» 목록을 비운다. 이제 쪽에서 읽히므로,
+       안 비우면 다음에 열 때 같은 로고가 한 번 더 붙는다. */
+    if ((App.partnerLogos.추가 || []).length) {
+      App.partnerLogos.추가 = [];
+      await savePartnerLogos();
     }
     toast(올린쪽 + '쪽을 올렸습니다 — 1~2분 뒤 홈페이지에 뜹니다');
   } catch (e) {

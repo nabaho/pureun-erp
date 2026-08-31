@@ -49,7 +49,10 @@
   /* 지금 쪽 → 로고 목록 */
   function 로고읽기(html) {
     return 칸들(html).map(function (c) {
-      var srl = (/data-srl="(\d+)"/.exec(c.html) || [, ''])[1];
+      /* ★ 열쇠가 «숫자만»은 아니다 — 우리가 새로 넣은 로고는 「n1756…」 모양이다.
+         숫자만 읽으면 새 로고의 열쇠가 빈 글자가 되어, 숨김·차례로 가리킬 수도 없고
+         올린 뒤에도 «아직 없는 것»으로 보여 같은 로고가 한 번 더 붙는다. */
+      var srl = (/data-srl="([A-Za-z0-9_-]*)"/.exec(c.html) || [, ''])[1];
       var 그림 = (/<img[^>]+src="([^"]+)"/.exec(c.html) || [, ''])[1];
       return { srl: srl, 그림: 그림 };
     }).filter(function (x) { return x.그림; });
@@ -94,6 +97,17 @@
     var 뒤 = 있는것.filter(function (x) { return !담긴것[x.srl]; });
 
     var 다 = 앞.concat(뒤);
+
+    /* ★ «새로 넣은» 로고는 아직 쪽에 없다 — 목록 뒤에 붙여 준다.
+       (올리고 나면 쪽에서 읽히므로 다음부터는 이 길로 안 온다.) */
+    var 있는열쇠 = {};
+    다.forEach(function (x) { 있는열쇠[x.srl] = 1; });
+    ((정한것 && 정한것.추가) || []).forEach(function (x) {
+      if (!x || !x.그림 || 있는열쇠[x.srl]) return;
+      다.push({ srl: String(x.srl), 그림: String(x.그림) });
+      있는열쇠[x.srl] = 1;
+    });
+
     return {
       갈것: 다.filter(function (x) { return !숨김[x.srl]; }),
       숨긴것: 다.filter(function (x) { return !!숨김[x.srl]; })

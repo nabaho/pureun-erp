@@ -20,7 +20,8 @@ const {
   safeGithubNumber,
   githubRequest,
 } = require("./dev-automation");
-const { MAX_BYTES, 올릴자리인가, 사연, 올리기 } = require("./site-publish");
+const { MAX_BYTES, MAX_IMAGE_BYTES, 올릴자리인가, 올릴그림자리인가, 사연, 올리기 }
+  = require("./site-publish");
 const { homepageUrl } = require("./homepage-fetch");
 const HanaMessage = require("./hana-message");
 
@@ -2061,21 +2062,33 @@ exports.publishSite = functions
 
       const path = (req.body && req.body.path) || "";
       const content = (req.body && req.body.content) || "";
-      if (!올릴자리인가(path)) {
+      /* ★ 그림(base64)인지 쪽(글자)인지에 따라 «자리도 한도도» 다르다.
+         그림은 site/files/logo/ 아래만, 700KB 까지. 한 규칙으로 뭉뚱그리면
+         쪽 자리에 그림을, 그림 자리에 쪽을 넣을 수 있게 된다. */
+      const 그림인가 = (req.body && req.body.image) === true;
+      if (그림인가 ? !올릴그림자리인가(path) : !올릴자리인가(path)) {
         res.status(400).json({ error: "올릴 수 없는 자리입니다: " + String(path).slice(0, 80) });
         return;
       }
-      const bytes = Buffer.byteLength(String(content), "utf8");
+      if (그림인가 && !/^[A-Za-z0-9+/=]+$/.test(String(content))) {
+        res.status(400).json({ error: "그림이 base64 모양이 아닙니다." });
+        return;
+      }
+      const bytes = 그림인가
+        ? Math.floor(String(content).length * 3 / 4)      // base64 는 4글자가 3바이트다
+        : Buffer.byteLength(String(content), "utf8");
       if (!bytes) { res.status(400).json({ error: "올릴 내용이 비어 있습니다." }); return; }
-      if (bytes > MAX_BYTES) {
-        res.status(413).json({ error: "너무 큽니다(" + Math.round(bytes / 1024) + "KB)." });
+      const 한도 = 그림인가 ? MAX_IMAGE_BYTES : MAX_BYTES;
+      if (bytes > 한도) {
+        res.status(413).json({ error: "너무 큽니다(" + Math.round(bytes / 1024) + "KB). "
+          + "한도는 " + Math.round(한도 / 1024) + "KB 입니다." });
         return;
       }
 
       const 누가 = decoded.name || decoded.email || decoded.uid;
       const 답 = await 올리기(
         githubRequest, process.env.GITHUB_AUTOMATION_TOKEN, REPO,
-        path, content, 사연(누가, path, (req.body && req.body.note) || "")
+        path, content, 사연(누가, path, (req.body && req.body.note) || ""), 그림인가
       );
       res.json({
         ok: true,

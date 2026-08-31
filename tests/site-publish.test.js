@@ -108,3 +108,67 @@ test('★ 처음 올리는 파일이면 sha 없이 올린다 — 없는 것을 �
   assert.equal(부른것.length, 1);
   assert.equal('sha' in 부른것[0], false, '★ 없는 파일에 sha 를 붙여 보냈다');
 });
+
+/* ══════ 그림 올리기 (대표 지시 2026-08-31 「다음」) ══════
+   ★ 새 자문사 로고를 넣으려면 그림을 올려야 한다. 여기가 «두 번째로 위험한» 자리다 —
+     글자만 받던 통로가 이제 아무 바이트나 받게 된다.
+   ★ 그래서 자리를 «아주 좁게» 연다: site/files/logo/ 아래 그림 한 겹만. */
+
+test('★ 로고 그림은 올릴 수 있다', () => {
+  ['site/files/logo/wookwang.png',
+   'site/files/logo/a-b_1.svg',
+   'site/files/logo/x.jpg',
+   'site/files/logo/x.jpeg',
+   'site/files/logo/x.webp'].forEach(p => {
+    assert.equal(S.올릴그림자리인가(p), true, '올려야 할 그림을 막았다: ' + p);
+  });
+});
+
+test('★ 그림 자리 밖에는 못 올린다 — 글자 통로보다 «더» 좁아야 한다', () => {
+  ['site/people/index.html',        // 쪽은 그림 통로로 올리면 안 된다
+   'site/files/x.png',              // 로고 칸 밖
+   'site/files/logo/깊은/x.png',    // 한 겹만
+   'site/files/logo/x.php',
+   'site/files/logo/x.html',
+   'site/files/logo/x.js',
+   'site/files/logo/x.svgz',
+   'files/logo/x.png',
+   'site/files/logo/../../pu-home.html',
+   'site/files/logo/x.png?a=1',
+   'SITE/files/logo/x.png',
+   'site/files/logo/x.PNG',         // 대문자로 규칙을 비켜 가려는 것
+   ''].forEach(p => {
+    assert.equal(S.올릴그림자리인가(p), false, '★ 여기에 그림을 쓸 수 있으면 안 된다: ' + p);
+  });
+});
+
+test('★ 두 통로가 «서로 넘나들지» 않는다 — 쪽 자리에 그림, 그림 자리에 쪽', () => {
+  assert.equal(S.올릴자리인가('site/files/logo/x.png'), false,
+    '★ 그림을 «쪽 통로»로 올릴 수 있다');
+  assert.equal(S.올릴그림자리인가('site/people/index.html'), false,
+    '★ 쪽을 «그림 통로»로 올릴 수 있다');
+});
+
+test('★ 그림 한도는 쪽 한도보다 «작다» — 사진기 원본이 그대로 들어오면 저장소가 부푼다', () => {
+  assert.ok(S.MAX_IMAGE_BYTES < S.MAX_BYTES, '★ 그림 한도가 쪽 한도보다 헐겁다');
+  assert.ok(S.MAX_IMAGE_BYTES >= 100 * 1024, '홈페이지 로고(5~70KB)도 못 올릴 만큼 빡빡하다');
+  assert.ok(S.MAX_IMAGE_BYTES <= 1024 * 1024, '★ 한도가 너무 헐겁다');
+});
+
+test('★ 그림은 «다시 감싸지» 않는다 — 감싸면 글자가 그대로 파일이 되어 그림이 깨진다', async () => {
+  const 보낸것 = [];
+  const 가짜 = async (token, route, options) => {
+    if (!options) { const e = new Error("Not Found"); e.status = 404; throw e; }
+    보낸것.push(JSON.parse(options.body));
+    return { commit: { sha: "NEW" } };
+  };
+  const 그림base64 = Buffer.from('가짜 그림 바이트').toString('base64');
+  await S.올리기(가짜, 'T', 'r', 'site/files/logo/x.png', 그림base64, '사연', true);
+  assert.equal(보낸것[0].content, 그림base64,
+    '★ 이미 base64 인 그림을 다시 감쌌다 — 그림이 깨진다');
+
+  보낸것.length = 0;
+  await S.올리기(가짜, 'T', 'r', 'site/people/index.html', '<html>글</html>', '사연');
+  assert.equal(Buffer.from(보낸것[0].content, 'base64').toString('utf8'), '<html>글</html>',
+    '글자는 감싸서 보내야 한다');
+});
