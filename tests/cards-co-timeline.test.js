@@ -28,7 +28,9 @@ function slice(fromMark, toMark) {
 test('★ 사업·사건 칸이 회사 정보 «위»에 온다 — 무슨 일을 했나가 먼저다', () => {
   const body = slice('function coDetailPanelHtml(o){', 'function openCoDetailPanel(');
   const hist = body.indexOf('id="coErpHistBox"');
-  const grid = body.indexOf('class="pdgrid"');
+  /* ⚠ 갈래가 늘 수 있다(2026-08-31 에 cogrid 가 붙었다) — 「pdgrid"」로 딱 맞추면
+     갈래를 하나 더할 때마다 애먼 자리에서 깨진다. 여기서 볼 것은 «차례»다. */
+  const grid = body.search(/class="pdgrid[ "]/);
   assert.ok(hist > 0, '이력 칸을 못 찾았다');
   assert.ok(grid > 0, '정보 칸을 못 찾았다');
   assert.ok(hist < grid, '이력이 정보보다 아래면 스무 칸을 지나야 나온다');
