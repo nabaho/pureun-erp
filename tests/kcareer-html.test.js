@@ -2237,3 +2237,31 @@ test('★★ 중복은 «만든 것»으로 세지 않는다 — 숫자가 거�
   assert.ok(!/saveOCRRecord\([^)]*\); done\+\+/.test(d), '⚠ done++ 로 되돌리면 숫자가 거짓이 됩니다');
   assert.match(d, /이미 있는 서류 '\+dup\+'건은 «새로 만들지 않았습니다»/, '몇 건인지 알려야 합니다');
 });
+
+/* ===== ★★ 표시 개수 기억 + 끌어서 선택 (2026-08-31) ===== */
+
+test('★★ 표시 개수는 «전체»가 기본이고, 고르면 기억한다', () => {
+  assert.match(funcSource('pageLimitOf'), /return \(typeof saved==='number'\) \? saved : -1;/,
+    '⚠ 기본은 전체(-1)입니다');
+  const sp = funcSource('setPageLimit');
+  assert.match(sp, /LS\.set\(NS\+_PGLIMIT_KEY, JSON\.stringify\(o\)\)/, '고른 값을 담아야 합니다');
+  assert.match(funcSource('_pgLimitLoad'), /!Array\.isArray\(o\)/, '배열이 오면 빈 것으로 봐야 합니다');
+  // 화면마다 따로 기억한다
+  assert.match(sp, /o\[name\]=n/, '화면 이름으로 갈라 담아야 합니다');
+  // ⚠ 검색·거르개를 만졌다고 개수를 바꾸면 안 된다
+  assert.ok(!/_pageLimit\[name\]=40/.test(source),
+    '⚠ 거르개가 표시 개수를 40으로 바꾸면 「전체로 보던 것」이 갑자기 줄어듭니다');
+});
+
+test('★★ 체크를 누른 채 끌면 지나간 줄이 모두 같은 상태가 된다', () => {
+  const dg = funcSource('careerDragSel');
+  assert.match(dg, /addEventListener\('mousedown'/, '누를 때 시작합니다');
+  assert.match(dg, /addEventListener\('mouseover'/, '끌면서 칠합니다');
+  // ⚠ 누른 «뒤»의 값으로 칠해야 켜며 끌면 켜지고 끄며 끌면 꺼진다
+  assert.match(dg, /setTimeout\(function\(\)\{ _dragSel=\{name:name, on:c\.checked\}/,
+    '⚠ 누르기 «전» 값으로 칠하면 반대로 동작합니다');
+  assert.match(dg, /document\.body\.style\.userSelect='none'/, '끌 때 글자가 잡히지 않게 합니다');
+  assert.match(source, /document\.addEventListener\('mouseup'/, '손을 떼면 끝나야 합니다');
+  // 표를 다시 그릴 때마다 새로 묶는다
+  assert.match(source, /_safe\(function\(\)\{ careerDragSel\(name\); \}\)/, '그릴 때마다 묶어야 합니다');
+});

@@ -5395,6 +5395,29 @@ function careerSelAll(name,on){
   box.querySelectorAll('.row-chk').forEach(function(c){ c.checked=!!on; });
   careerSelSync(name);
 }
+/* ★ 체크를 누른 채 «끌면» 지나간 줄이 모두 같은 상태가 된다 (대표 지시 2026-08-31).
+   ⚠ 처음 누른 칸의 «바뀐 상태»를 그대로 칠한다 — 켜며 끌면 켜고, 끄며 끌면 끈다.
+   ⚠ 표를 다시 그릴 때마다 새로 묶는다(renderCareer 가 innerHTML 을 갈아 끼우므로).
+   ⚠ 끌기 중에는 글자가 잡히지 않게 막는다 — 파랗게 번지면 지저분하다. */
+var _dragSel=null;
+function careerDragSel(name){
+  var box=document.querySelector('#page-'+name+' .dt'); if(!box) return;
+  box.addEventListener('mousedown', function(e){
+    var c=e.target.closest('.row-chk'); if(!c) return;
+    /* 이 시점의 checked 는 «누르기 전» 값 — 눌린 뒤 값으로 칠해야 한다 */
+    setTimeout(function(){ _dragSel={name:name, on:c.checked}; }, 0);
+    document.body.style.userSelect='none';
+  });
+  box.addEventListener('mouseover', function(e){
+    if(!_dragSel || _dragSel.name!==name) return;
+    var c=e.target.closest('.row-chk'); if(!c) return;
+    if(c.checked!==_dragSel.on){ c.checked=_dragSel.on; careerSelSync(name); }
+  });
+}
+document.addEventListener('mouseup', function(){
+  if(_dragSel){ var n=_dragSel.name; _dragSel=null; document.body.style.userSelect='';
+    try{ careerSelSync(n); }catch(e){} }
+});
 function careerSelSync(name){
   var box=_selBox(name); if(!box) return;
   var ids=careerSelIds(name);
@@ -5501,7 +5524,7 @@ function renderCareer(name){ const cfg=CAREER_CFG[name]; if(!cfg) return;
     }
   }
   const box=sec.querySelector('.dt');
-  const raw=(_pageLimit[name]==null)?20:_pageLimit[name]; const limit=raw<0?rows.length:raw; const view=rows.slice(0,limit);
+  const raw=pageLimitOf(name); const limit=raw<0?rows.length:raw; const view=rows.slice(0,limit);
   const label=(typeof FORM_DEFS!=='undefined'&&FORM_DEFS[name]&&FORM_DEFS[name].title)||'항목';
   if(!rows.length){ _tbExtra(sec, nofileBar); _ocrToToolbar(sec); _stickyTop(sec); box.innerHTML=(_noFileOnly[name]?'<div class="empty"><div class="emp-ico">✅</div>미첨부 항목이 없습니다 — 모든 원본이 첨부되어 있습니다.</div>':'<div class="empty"><div class="emp-ico">📭</div>아직 등록된 '+label+'이(가) 없습니다.<br><span style="font-size:12px">상단 <b>＋ 새 '+label+'</b> 버튼으로 첫 항목을 등록하세요.</span></div>')+exBar; return; }
   /* 툴바 한 줄에 들어가도록 짧게 — 「표시 개수 … 79건 중 20건 표시」는 너무 길었다 */
@@ -5522,6 +5545,7 @@ function renderCareer(name){ const cfg=CAREER_CFG[name]; if(!cfg) return;
   stampCellLabels(box);
   _stickyTop(sec);               /* 표 머리줄이 툴바 아래에 붙도록 높이를 알려준다 */
   careerSelSync(name);
+  _safe(function(){ careerDragSel(name); });
   box.querySelectorAll('th').forEach((th,idx)=>{ if(th.textContent==='관리'||th.textContent==='№') return; th.style.cursor='pointer'; th.title='클릭하면 정렬'; th.onclick=()=>sortTable(box,th,idx); });
   /* ⚠ 합친 표(비용관리)에서는 줄마다 «온 곳»이 다르다. 그걸 잃으면 기타비용 기록을
      고칠 때 회의비용 쪽에 새로 저장돼 원본이 남고 사본이 생긴다. */
@@ -5542,7 +5566,24 @@ function toggleNoFile(name){ _noFileOnly[name]=!_noFileOnly[name]; renderCareer(
 function sortCol(name,i){ const s=_sortState[name]; if(s&&s.col===i){ s.dir*=-1; } else { _sortState[name]={col:i,dir:1}; } renderCareer(name); }
 function _cellText(trHtml,i){ const t=document.createElement('table'); t.innerHTML='<tbody>'+trHtml+'</tbody>'; const tr=t.querySelector('tr'); if(!tr) return ''; const td=tr.children[i]; return td?(td.textContent||'').trim():''; }
 function toggleTheme(){ const on=!document.documentElement.classList.contains('dark'); document.documentElement.classList.toggle('dark',on); try{ localStorage.setItem('kc_theme',on?'dark':'light'); }catch(e){} const b=document.getElementById('themeBtn'); if(b) b.textContent=on?'☀️':'🌙'; }
-function setPageLimit(name,n){ _pageLimit[name]=n; renderCareer(name); }
+/* ★ 표시 개수 — 기본은 «전체»(-1). 사람이 고르면 그 값을 기억해 다음에도 그대로 쓴다.
+   ⚠ 화면마다 따로 기억한다 — 위촉장은 전체로 보고 실적은 20건으로 보고 싶을 수 있다.
+   ⚠ 저장은 브라우저에만(cm3_pglimit). 자료가 아니라 «보는 방식»이다. */
+var _PGLIMIT_KEY='pglimit';
+function _pgLimitLoad(){
+  try{ var o=JSON.parse(LS.get(NS+_PGLIMIT_KEY)||'{}'); if(o&&typeof o==='object'&&!Array.isArray(o)) return o; }catch(e){}
+  return {};
+}
+function pageLimitOf(name){
+  if(_pageLimit[name]!=null) return _pageLimit[name];
+  var saved=_pgLimitLoad()[name];
+  return (typeof saved==='number') ? saved : -1;      /* 기본 = 전체 */
+}
+function setPageLimit(name,n){
+  _pageLimit[name]=n;
+  try{ var o=_pgLimitLoad(); o[name]=n; LS.set(NS+_PGLIMIT_KEY, JSON.stringify(o)); }catch(e){}
+  renderCareer(name);
+}
 function sortTable(box,th,idx){
   const tb=box.querySelector('tbody'); if(!tb) return; const rows=[...tb.querySelectorAll('tr')]; if(rows.length<2&&rows[0]&&rows[0].querySelector('[colspan]')) return;
   const dir=th.dataset.dir==='asc'?'desc':'asc'; box.querySelectorAll('th').forEach(h=>{ h.dataset.dir=''; h.textContent=h.textContent.replace(/ [▲▼]$/,''); }); th.dataset.dir=dir;
@@ -5896,7 +5937,8 @@ function renderFeeChips(sec, data, cur){
 }
 
 function bindCareer(){ Object.keys(CAREER_CFG).forEach(name=>{ const sec=document.getElementById('page-'+name); if(!sec||sec.dataset.bound) return; sec.dataset.bound='1';
-  sec.querySelectorAll('[data-f]').forEach(el=>el.addEventListener(el.tagName==='SELECT'?'change':'input',()=>{ _pageLimit[name]=40; renderCareer(name); }));
+  /* ⚠ 검색·거르개를 만졌다고 표시 개수를 바꾸지 않는다 — 「전체로 보던 것」이 갑자기 40건이 됐다 */
+  sec.querySelectorAll('[data-f]').forEach(el=>el.addEventListener(el.tagName==='SELECT'?'change':'input',()=>{ renderCareer(name); }));
   const z=sec.querySelector('.ocr-zone'); if(z){ z.onclick=()=>{ const inp=document.createElement('input'); inp.type='file'; inp.multiple=true; inp.accept='.pdf,.jpg,.jpeg,.png,.hwp,.hwpx'; inp.onchange=()=>ocrDrop(inp.files,name); inp.click(); };
     z.ondragover=e=>{e.preventDefault();z.classList.add('drag');}; z.ondragleave=()=>z.classList.remove('drag');
     z.ondrop=e=>{e.preventDefault();z.classList.remove('drag');ocrDrop(e.dataTransfer.files,name);}; }
