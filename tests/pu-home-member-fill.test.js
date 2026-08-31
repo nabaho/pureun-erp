@@ -295,3 +295,68 @@ test('★ 엉뚱한 쪽지·모르는 쪽지에는 아무것도 하지 않는다
   assert.equal(r.눌린것.length, 0, '★ 쪽지가 아닌데 저장했다');
   assert.equal(r.fields[0].value, '', '★ 쪽지가 아닌데 칸을 건드렸다');
 });
+
+/* ══════ 화면 접기 (대표 지시 2026-08-31) ══════
+   「현재 화면은 너무 크고 눈에 보이지도 않는다. 전체화면도 다 안 들어온다」
+   홈페이지 편집 화면은 큰 머리 그림이 한 장을 통째로 먹고, 아래에는 떠 있는 띠가 칸을 가린다.
+   ★ 접는 잣대는 «이름»이 아니라 «자리와 크기»다 — 홈페이지 반죽(스킨)이 바뀌면
+     이름은 언제든 달라지지만, 「고칠 칸보다 위에 있는 큰 덩어리」는 그대로다.
+   ★ 절대 접으면 안 되는 것: 안에 고칠 것이 든 덩어리. 접으면 아무것도 못 고친다. */
+
+function 접기화면() {
+  const 만들기 = (이름, o) => ({
+    이름: 이름,
+    style: {}, tagName: 'DIV',
+    contains: () => false,
+    querySelector: () => (o.칸있음 ? { tagName: 'INPUT' } : null),
+    getBoundingClientRect: () => ({ top: o.top, bottom: o.top + o.h, height: o.h })
+  });
+  const 칸 = { tagName: 'INPUT', type: 'text',
+    getBoundingClientRect: () => ({ top: 900, bottom: 930, height: 30 }),
+    scrollIntoView() {} };
+  const 것들 = [
+    만들기('큰 머리 그림', { top: 0, h: 640 }),
+    만들기('작은 띠', { top: 650, h: 40 }),
+    /* ★ 칸보다 «위»에 있으면서 안에 고칠 것이 든 큰 상자(예: 위쪽 검색칸 묶음).
+       크기와 자리만 보면 접힐 자리인데, 접으면 그 안의 칸을 못 쓴다. */
+    만들기('위쪽 상자 — 고칠 것이 들었다', { top: 300, h: 300, 칸있음: true }),
+    만들기('고칠 칸이 든 상자', { top: 800, h: 500, 칸있음: true }),
+    만들기('아래 큰 덩어리(등록 단추 자리)', { top: 1400, h: 400 }),
+    만들기('떠 있는 상담문의 띠', { top: 980, h: 80, 뜸: true })
+  ];
+  const doc = {
+    body: { children: 것들 },
+    defaultView: {
+      scrollY: 0, scrollBy() {},
+      getComputedStyle: el => ({ position: el.이름 === '떠 있는 상담문의 띠' ? 'fixed' : 'static' })
+    }
+  };
+  return { doc, 것들, 칸 };
+}
+
+test('★ 고칠 칸보다 «위»에 있는 큰 덩어리를 접는다 — 한 화면에 들어오게', () => {
+  const { doc, 것들, 칸 } = 접기화면();
+  const n = F.tidyEditScreen(doc, 칸);
+  const 접힘 = 이름 => 것들.find(x => x.이름 === 이름).style.display === 'none';
+  assert.ok(n > 0, '아무것도 안 접었다');
+  assert.equal(접힘('큰 머리 그림'), true, '★ 화면을 통째로 먹는 그림을 그대로 뒀다');
+  assert.equal(접힘('떠 있는 상담문의 띠'), true, '★ 떠 있는 띠가 칸을 가린 채로 남았다');
+});
+
+test('★ 고칠 것이 든 덩어리는 «절대» 안 접는다 — 접으면 아무것도 못 고친다', () => {
+  const { doc, 것들, 칸 } = 접기화면();
+  F.tidyEditScreen(doc, 칸);
+  const 접힘 = 이름 => 것들.find(x => x.이름 === 이름).style.display === 'none';
+  assert.equal(접힘('고칠 칸이 든 상자'), false, '★ 고칠 칸을 통째로 숨겼다');
+  assert.equal(접힘('위쪽 상자 — 고칠 것이 들었다'), false,
+    '★ 위에 있고 크다고 접었는데, 그 안에 고칠 것이 들어 있다');
+  assert.equal(접힘('아래 큰 덩어리(등록 단추 자리)'), false,
+    '★ 칸보다 «아래»엣것을 접었다 — 저장 단추가 거기 있다');
+  assert.equal(접힘('작은 띠'), false, '작은 것까지 접을 이유가 없다');
+});
+
+test('★ 기준으로 삼을 칸이 없으면 아무것도 안 접는다', () => {
+  const { doc, 것들 } = 접기화면();
+  assert.equal(F.tidyEditScreen(doc, null), 0, '★ 기준도 없이 접었다');
+  assert.equal(것들[0].style.display, undefined, '건드리지 않았어야 한다');
+});

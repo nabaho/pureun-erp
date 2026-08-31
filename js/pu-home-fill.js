@@ -451,6 +451,54 @@
       + '화면에서 직접 바꿔 주시고, 어떤 화면인지 사진으로 알려 주시면 맞추겠습니다.' };
   }
 
+/* ★ 홈페이지 편집 화면을 «한 화면에» 들어오게 접는다 (대표 지시 2026-08-31).
+       「현재 화면은 너무 크고 눈에 보이지도 않는다. 전체화면도 다 안 들어온다」
+
+     그 화면은 큰 머리 그림이 화면을 통째로 한 장 먹고, 아래에는 떠 있는 상담문의 띠가
+     칸을 가린다. 고칠 칸을 보려면 한참 굴려 내려야 하고, 굴리면 무엇을 고치는지 잊는다.
+
+     ★ 무엇을 접는가 — «이름으로 짐작하지 않는다». 자리와 크기로 고른다:
+       ① 고칠 칸보다 «위»에 있고 ② 높이가 200px 넘고 ③ 안에 «고칠 것이 하나도 없는» 덩어리.
+       ③ 이 없으면 칸이 든 상자를 통째로 접어 아무것도 못 고치게 된다.
+     ★ 떠 있는 띠(position:fixed)도 접는다 — 저장 단추를 가리는 것이 그것이다.
+     ★ 화면에서만 접는다. 저장되는 내용과는 아무 상관이 없다(새로 고치면 되돌아온다). */
+  function tidyEditScreen(doc, 기준칸) {
+    if (!doc || !doc.body || !기준칸 || !기준칸.getBoundingClientRect) return 0;
+    var win = doc.defaultView;
+    if (!win || !win.getComputedStyle) return 0;
+    var 접음 = 0;
+    var 기준 = 기준칸.getBoundingClientRect().top + (win.scrollY || 0);
+
+    var kids = doc.body.children || [];
+    for (var i = 0; i < kids.length; i++) {
+      var el = kids[i];
+      if (el === 기준칸 || (el.contains && el.contains(기준칸))) continue;
+      /* 고칠 것이 하나라도 들었으면 손대지 않는다 */
+      if (el.querySelector && el.querySelector('input,textarea,select,button')) continue;
+      var r = el.getBoundingClientRect();
+      var 높이 = r.height;
+      var 아래 = r.bottom + (win.scrollY || 0);
+      var 떠있나 = false;
+      try { 떠있나 = win.getComputedStyle(el).position === 'fixed'; } catch (e) { }
+      if (떠있나 || (아래 <= 기준 && 높이 >= 200)) {
+        el.style.display = 'none';
+        접음++;
+      }
+    }
+    try { 기준칸.scrollIntoView({ block: 'start' }); } catch (e) { }
+    try { win.scrollBy(0, -80); } catch (e) { }
+    return 접음;
+  }
+
+  /* 고칠 칸 가운데 «맨 위»엣것 — 어디까지 접을지 재는 기준이 된다 */
+  function firstEditField(doc) {
+    var el = doc.querySelector ? doc.querySelector('[name="title"]') : null;
+    if (isField(el)) return el;
+    var all = doc.querySelectorAll ? doc.querySelectorAll('input,textarea,select') : [];
+    for (var i = 0; i < all.length; i++) if (isField(all[i])) return all[i];
+    return null;
+  }
+
   /* 저장 단추를 찾는다 — 누르는 것은 «사람이 그러라고 했을 때»만 */
   function findSaveButton(doc) {
     var cands = doc.querySelectorAll
@@ -513,6 +561,7 @@
     var parts = [splitHtml, isTag, tagName, tidy, escText, textRuns, applyLineEdits,
                  unpackPageEdits, findPageEditor, tidyLabel, isField, fieldNear,
                  findFieldByLabel, setFieldValue, fillMemberFields, setPrivate,
+                 tidyEditScreen, firstEditField,
                  findSaveButton, readPacket].map(function (f) { return String(f); });
     var src = '(async function(){' + parts.join('\n') + '\n'
       + 'MEMBER_FIELDS=' + JSON.stringify(MEMBER_FIELDS) + ';'
@@ -539,6 +588,9 @@
       + '+out.skipped.map(function(s){return "· "+s.before+"\\n   → "+s.why;}).join("\\n\\n"));}'
       + 'return;}'
       /* ── 구성원 채우기 ── */
+      + 'if(p.kind==="구성원 채우기"||p.kind==="비공개"){'
+      + 'var 접음=tidyEditScreen(document,firstEditField(document));'
+      + 'if(접음)알림("화면을 정리했습니다 — 큰 그림과 떠 있는 띠를 접었습니다("+접음+"군데)");}'
       + 'if(p.kind==="구성원 채우기"){'
       + 'if(p.srl&&location.search.indexOf(p.srl)<0){'
       + 'if(!confirm("이 화면은 글 번호 "+p.srl+" 이 아닌 것 같습니다.\\n\\n그래도 채울까요?"))return;}'
@@ -591,6 +643,8 @@
     fillMemberFields: fillMemberFields,
     setPrivate: setPrivate,
     findSaveButton: findSaveButton,
+    tidyEditScreen: tidyEditScreen,
+    firstEditField: firstEditField,
     packMemberFields: packMemberFields,
     packPrivate: packPrivate,
     readPacket: readPacket,
