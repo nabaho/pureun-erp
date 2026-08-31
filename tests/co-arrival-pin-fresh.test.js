@@ -33,8 +33,12 @@ const bare = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm,
 
 const ctx = { window: {}, Date };
 vm.createContext(ctx);
+/* ⚠ ARV_HOURS 를 여기 손으로 적으면 안 된다 — 소스에서 그 값을 줄여도 검사가
+     모른다(2026-08-31 일부러 깨 보고 알았다). «진짜 값»을 읽어 온다. */
+const ARV_LINE = src.match(/var ARV_HOURS = \d+;/);
+assert.ok(ARV_LINE, 'ARV_HOURS 를 소스에서 못 찾았습니다');
 vm.runInContext(
-  'var ARV_HOURS = 48;\n'
+  ARV_LINE[0] + '\n'
   + cutFn(src, 'function arvIsNew(') + '\n'
   + src.slice(src.indexOf('var ARV_FRESH_HOURS'), src.indexOf('function arvIsFresh(')) + '\n'
   + cutFn(src, 'function arvIsFresh(') + '\n'
