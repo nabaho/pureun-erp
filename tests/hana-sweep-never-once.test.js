@@ -79,6 +79,13 @@ test('★★ «한 번도 안 돈» 폰을 알아본다 — 예전엔 「앱이 
   assert.ok(at > 0, 'hanaStatChip 을 찾지 못했습니다');
   const body = erp.slice(at, erp.indexOf('\n}', erp.indexOf('연결 뒤 문자 0건', at)));
 
+  /* ⚠★ 「서버가 훑기를 모른다」와 「폰이 한 번도 안 돌았다」를 가려야 한다.
+       옛 서버는 이 칸을 아예 안 보낸다(undefined). 안 가르면 서버만 옛것인 곳에서
+       «모든» 폰에 경고가 뜬다 — 2026-08-31 에 처음 쓴 갈래가 정확히 그랬고,
+       hana-phone-alive.test.js 가 그 자리에서 잡아 줬다. */
+  assert.match(body, /typeof d\.lastSweepAt !== 'undefined'[\s\S]{0,120}!d\.lastSweepAt/,
+    '★★ 옛 서버(칸을 아예 안 보냄)와 「한 번도 안 돎」(0)을 안 가르면, '
+    + '서버만 옛것인 곳에서 멀쩡한 폰 모두에 경고가 뜹니다');
   const iNever = body.indexOf('!d.lastSweepAt && d.pairedAt');
   const iStopped = body.indexOf('sweepAgo > 0 && !sweepAlive');
   const iGhost = body.indexOf('연결 뒤 문자 0건');
