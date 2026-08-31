@@ -43,7 +43,10 @@ function run(cos, skip) {
     'function coIsAuto(c){ return !!(c && c.auto); }',
     'function coHead(a){ return String(a||"").slice(0, 10); }',
     ERP.match(/var CompanyRef = \{[\s\S]*?\n\};/)[0],
-    cut('coGroupScore'), cut('coSubNo'), cut('coDupGroups'),
+    /* ⚠ 2026-08-31: coDupGroups 가 coIsSub 를 쓰기 시작했다(사무대행과 업체관리를
+         가른다). «진짜 코드»를 그대로 실어야 한다 — 여기서 흉내를 내면 실제와
+         갈라지고, 그러면 이 검사가 지키는 것이 실제가 아니게 된다. */
+    cut('coGroupScore'), cut('coSubNo'), cut('coIsSub'), cut('coDupGroups'),
     'globalThis.__out = coDupGroups();'
   ].join('\n'), { filename: 'dup.js' }).runInContext(sandbox);
   return sandbox.__out;
@@ -74,10 +77,15 @@ test('★ 종사업장번호가 다르면 안 묶는다 — 합치면 두 사업
 });
 
 test('본사업장 둘 + 다른 사업장 하나면, 본사업장 둘만 묶는다', () => {
+  /* ⚠ 2026-08-31 에 이 줄을 고쳤다. 예전에는 a(업체관리)와 b(사무대행)를 묶는 것으로
+     적혀 있었는데, 대표가 「사무대행과 업체관리는 다른 곳이다」로 정했다.
+     이 검사가 보려던 것은 «종사업장 -6 을 빼는가» 이지 «사무대행을 묶는가» 가
+     아니므로, 종류를 맞추고 원래 보려던 것만 남긴다.
+     사무대행이 섞인 경우는 tests/co-dup-suboffice-apart.test.js 가 본다. */
   const out = run([
     { id: 'a', name: '성지정보통신', bizNo: '312-81-95374', status: 'active', managerMain: 'A-003' },
-    { id: 'b', name: '성지정보통신(본사)', bizNo: '312-81-95374-0', status: 'suboffice', managerMain: '' },
-    { id: 'c', name: '성지정보통신(현장)', bizNo: '312-81-95374-6', status: 'suboffice', managerMain: '' }
+    { id: 'b', name: '성지정보통신(본사)', bizNo: '312-81-95374-0', status: 'active', managerMain: '' },
+    { id: 'c', name: '성지정보통신(현장)', bizNo: '312-81-95374-6', status: 'active', managerMain: '' }
   ]);
   assert.equal(out.length, 1);
   assert.equal(out[0].list.map(c => c.id).sort().join(','), 'a,b');

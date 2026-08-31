@@ -6760,12 +6760,25 @@ function coDupGroups(){
   });
 
   var out = [], seen = {};
+  var subMixed = 0;                             // 사무대행과 겹쳐 빼 둔 묶음 수
   function addGroup(prefix, g, extraWhy){
     if(g.length < 2) return;
     var ids = g.map(function(c){ return c.id; }).sort().join('|');
     if(seen[ids]) return;                       // 이름으로도 번호로도 걸린 것 — 한 번만
     var key = prefix + '|' + ids;
     if(skip[key]) return;
+    /* ★★ 사무대행과 업체관리는 «다른 곳»이다 (대표 지시 2026-08-31).
+       ⚠ 종사업장 막이(coSubNo)로는 못 막는다 — 「312-81-95374」 와
+         「312-81-95374-0」 은 둘 다 본사업장(0)이라 같은 번호로 읽힌다.
+         실제로 성지정보통신이 그렇게 합치기 후보로 올라왔다:
+         왼쪽은 급여(업체관리) 김보람 담당, 오른쪽은 자문(사무대행).
+       ⚠ 예전에는 합치면서 사무대행 표시를 이어받게 해 두었다(coSubRoleFill).
+         그러면 한 줄이 두 곳에 걸치는데, 대표 판단은 «갈라 둔다» 이다.
+       ★ 둘 다 사무대행이거나 둘 다 아니면 그대로 합친다 — 막는 것은 «섞인 것»뿐이다.
+       ⚠ 추후 사무대행 처리방법을 따로 정하기로 했다(2026-08-31 보류).
+         그 전까지는 여기서 갈라만 두고, 어느 쪽으로도 옮기지 않는다. */
+    var subs = g.filter(coIsSub).length;
+    if(subs > 0 && subs < g.length){ subMixed++; return; }
     seen[ids] = 1;
     var sc = coGroupScore(g);
     /* 남길 쪽 기본값 — 살아 있는 것 > 담당 있는 것 > 사업자번호 있는 것 >
@@ -6801,6 +6814,9 @@ function coDupGroups(){
     if(b.score !== a.score) return b.score - a.score;
     return String(a.name||'').localeCompare(String(b.name||''));
   });
+  /* ⚠ 빼 둔 것을 «조용히» 없애지 않는다 — 26건이 22건이 되는데 까닭이 안 보이면,
+     사람은 자기가 뭘 잘못 눌렀나 찾는다. 화면이 이 수를 한 줄로 알려 준다. */
+  out.subMixed = subMixed;
   return out;
 }
 
@@ -7464,6 +7480,15 @@ function CoMergeModal(props){
         h('div', { className:'t' }, '🔀 중복 업체 정리'),
         h('button', { className:'x', onClick:props.onClose }, '×')),
       h('div', { className:'modal-b', style:{ maxHeight:'72vh', overflowY:'auto' } },
+
+        /* 사무대행과 겹쳐 뺀 묶음이 있으면 «왜 안 보이는지» 먼저 밝힌다 (대표 지시 2026-08-31).
+           빼 놓고 말을 안 하면, 사람은 목록이 줄어든 까닭을 자기 실수에서 찾는다. */
+        groups.subMixed > 0 && h('div', { style:{ background:'#f0fdf4', border:'1px solid #bbf7d0',
+            borderRadius:'8px', padding:'8px 11px', marginBottom:'10px', fontSize:'11.5px', color:'#166534', lineHeight:1.7 } },
+          h('b', null, '🏛 사무대행과 겹치는 ' + groups.subMixed + '건은 빼 두었습니다.'),
+          h('br'),
+          '사무대행과 업체관리는 «다른 곳»이라 합치지 않습니다 — 사업자번호가 같아도 그렇습니다. ',
+          h('span', { style:{ color:'#475569' } }, '(사무대행을 어떻게 다룰지는 따로 정하기로 했습니다)')),
 
         !groups.length
           ? h('div', { style:{ padding:'36px 12px', textAlign:'center', color:'#64748b', fontSize:'13px' } },
