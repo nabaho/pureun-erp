@@ -321,7 +321,10 @@ function drawPanel(o){
     coConflictHtml: () => '', coDocsHtml: () => '',
     coErpHtml: () => '', coCardsHtml: () => '', coTagsOf: () => [] };
   vm.createContext(ctx);
+  /* ⚠ 2026-08-31(점검 B2): 상세에 계약 기간 한 줄이 붙었다. 대역을 넣는 대신 «진짜»를
+     실어 준다 — 대역을 넣으면 그 줄이 터져도 이 검사가 모른다. */
   vm.runInContext(fnBody('coVal') + '\n' + fnBody('coSrcOf') + '\n'
+    + fnBody('erpContractPeriod') + '\n' + fnBody('todayYmd') + '\n'
     + fnBody('coSrcTagHtml') + '\n' + fnBody('coDetailPanelHtml'), ctx);
   return ctx.coDetailPanelHtml(o);
 }
