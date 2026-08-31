@@ -99,16 +99,35 @@ test('★★ 명함을 도는 자리도 «최근 것부터»다', () => {
     '명함도 최근 순이어야 합니다');
 });
 
-test('빈 칸만 채우는 규칙은 그대로다 — 최근 것이 이기는 근거가 이것이다', () => {
-  const take = slice('const take = (k, src, from)', 'return o;');
-  assert.ok(/if\(src\[f\] && !o\[f\]\)/.test(take),
-    '빈 칸만 채우기 + 최근 순 돌기 = 최근 것이 이긴다');
+test('★★ 이제 «시각»으로 겨룬다 — 빈 칸만 채우던 규칙을 걷었다 (대표 결정 「최근 이김」)', () => {
+  /* 2026-08-31: 갈래 차례(등록증 → 명함)가 승부를 갈랐던 것을 없앴다.
+     더 최근에 올린 것이 이미 든 값을 «덮는다». */
+  const take = slice('const take = (k, src, from, stamp)', 'return o;');
+  assert.ok(/ts > \(o\.stampOf\[f\]\|\|0\)/.test(take), '더 최근이면 덮어야 합니다');
+  assert.ok(/stampOf/.test(take), '칸마다 어느 시각의 값인지 적어 두어야 합니다');
+  assert.ok(!/if\(src\[f\] && !o\[f\]\)\{ o\[f\]=src\[f\]/.test(take),
+    '「빈 칸만 채우기」가 남아 있으면 최근 것이 못 이깁니다');
 });
 
-test('갈래 차례(등록증 → 명함 → 이알피)는 «그대로» 둔다', () => {
-  const body = slice('function coListBuild(', 'const erpBy = ErpMatch.matchAll');
-  const iBiz = body.indexOf("kind==='biz'");
-  const iCard = body.indexOf("kind!=='biz'");
-  assert.ok(iBiz > 0 && iCard > iBiz, '등록증을 명함보다 먼저 돌아야 합니다');
-  /* 이알피는 맨 나중 — matchAll 이 그 뒤에 온다는 것이 이 slice 로 이미 확인된다 */
+test('★ 시각이 «같으면» 덮지 않는다 — 흔들리면 값이 저절로 바뀌는 것처럼 보인다', () => {
+  const take = slice('const take = (k, src, from, stamp)', 'return o;');
+  assert.ok(/ts > /.test(take) && !/ts >= /.test(take),
+    '같을 때 덮으면 시각 없는 옛 자료끼리 순서에 따라 값이 흔들립니다');
+});
+
+test('시각이 이상해도 정렬·비교가 안 깨진다 — 엑셀 자료는 시각이 글자다', () => {
+  const take = slice('const take = (k, src, from, stamp)', 'return o;');
+  assert.ok(/isFinite\(t\)/.test(take), 'NaN 을 0 으로 눌러야 비교가 뜻을 가집니다');
+});
+
+test('두 갈래 모두 «시각을 넘겨준다» — 안 넘기면 늘 0 이라 아무도 못 이긴다', () => {
+  const body = slice('/* ① 사업자등록증', 'const erpBy = ErpMatch.matchAll');
+  assert.ok(/'사업자등록증', _coStamp\(it\)\)/.test(body), '등록증이 시각을 넘겨야 합니다');
+  assert.ok(/'명함', _coStamp\(it\)\)/.test(body), '명함도 시각을 넘겨야 합니다');
+});
+
+test('푸른이알피는 여전히 «빈 칸만» 채운다 — 올린 자료가 아니라 다른 앱의 거울이다', () => {
+  const body = slice('const fromErp = (f, v)', 'fromErp(\'ceo\'');
+  assert.ok(/if\(v && !o\[f\]\)/.test(body),
+    '이알피에는 올린 시각이 없다 — 겨루게 하면 무엇이 최근인지 알 수 없다');
 });
