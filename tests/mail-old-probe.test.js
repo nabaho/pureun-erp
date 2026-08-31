@@ -26,12 +26,13 @@ const app = fs.readFileSync(path.join(root, 'pu-cards.html'), 'utf8');
 
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 
-/* 다음메일이 짚어 준 번호 / 우리가 든 번호 */
+/* 다음메일이 짚어 준 번호(칸마다) / 우리가 든 번호(칸마다) */
 function boot(o) {
   const opt = o || {};
   const asked = [];
   const loaded = [];
   const toasts = [];
+  const mine = opt.mine || {};      /* {slug:[uid…]} — 우리가 든 것 */
   const ctx = {
     Object, Number, Math, String, JSON, Promise, Date, Array,
     console,
@@ -45,63 +46,104 @@ function boot(o) {
     /* 손에 든 줄 — n===0 이면 「다 달라」는 뜻이다 */
     loadMailBox(slug, n, cb) {
       loaded.push({ slug, n });
-      const all = opt.mine || [];
+      const all = mine[slug] || [];
       const box = {};
-      /* 「다 달라」가 아니면 뒤에서 두 개만 준다 — 진짜 화면이 그렇게 군다 */
-      (Number(n) === 0 ? all : all.slice(-2)).forEach(u => { box[String(u)] = { u }; });
+      /* 「다 달라」가 아니면 뒤에서 하나만 준다 — 진짜 화면이 그렇게 군다 */
+      (Number(n) === 0 ? all : all.slice(-1)).forEach(u => { box[String(u)] = { u }; });
       ctx._mbMsgs[slug] = box;
       if (cb) cb();
     },
-    $: (id) => (id === 'mbProbeQ' ? { value: opt.q === undefined ? '엠쓰리' : opt.q } : null),
+    $: (id) => (id === 'mbProbeQ' ? { value: opt.q === undefined ? '맘스터치' : opt.q } : null),
     firebase: { auth: () => ({ currentUser: opt.noUser ? null : { getIdToken: () => Promise.resolve('tok') } }) },
     fetch(url, init) {
       const body = JSON.parse((init && init.body) || '{}');
       asked.push({ url, body });
       if (opt.serverBad) return Promise.resolve({ json: () => Promise.resolve({ ok: false, error: '못 했습니다' }) });
-      /* ⚠ «물어본 그 칸»으로 돌려준다 — 붙임틀이 칸 이름을 박아 두면, 코드가 엉뚱한
-           칸을 두드려도 검사가 통과한다(처음에 그래서 헛통과할 뻔했다). */
+      /* ⚠ 서버는 «칸을 안 좁혔을 때» 아는 칸 전부를 뒤진다. 붙임틀이 그것을 흉내 내야
+           「한 칸만 두드리는」 코드가 조용히 통과하지 않는다 — 대표께서 실제로 그 탓에
+           「찾은 것이 없습니다」를 보셨다(2026-08-31). */
+      const all = opt.theirs || {};
+      const want = (body.slugs && body.slugs.length) ? body.slugs : Object.keys(all);
       const hit = {};
-      if ((opt.theirs || []).length) hit[(body.slugs || [])[0]] = opt.theirs;
+      want.forEach(s => { if ((all[s] || []).length) hit[s] = all[s]; });
       return Promise.resolve({ json: () => Promise.resolve({ ok: true, hit }) });
     },
     mbFolders: () => opt.folders || [
       { slug: 'big', name: '1.자문사답변', kind: 'user', total: 406, path: 'x' },
-      { slug: 'inb', name: '받은메일함', kind: 'inbox', total: 411, path: 'y' },
-      { slug: 'bin', name: '휴지통', kind: 'trash', total: 9000, path: 'z' }
+      { slug: 'inb', name: '받은메일함', kind: 'inbox', total: 411, path: 'y' }
     ],
     mbFolderBy: (s) => (ctx.mbFolders().filter(f => f.slug === s)[0] || null),
     mbFolderLabel: (f) => (f && (f.name || f.path)) || '',
     asked, loaded, toasts
   };
   vm.createContext(ctx);
-  ['mbProbeSlug', 'mbProbeTell', 'mbOldProbe'].forEach(n =>
+  ['mbProbeTell', 'mbOldProbe'].forEach(n =>
     vm.runInContext(sliceFn(app, 'function ' + n + '('), ctx));
   return ctx;
 }
 
+/* ══════ ★ 모든 칸을 뒤진다 (대표께서 실제로 헛답을 보신 자리) ══════ */
+
+test('★★ 「맘스터치」가 업무 칸에 있어도 찾아낸다 — 한 칸만 두드리면 헛답이 나온다', async () => {
+  /* 2026-08-31 실제로 그랬다 — 가장 큰 칸(받은메일함) 하나만 두드려
+     「찾은 것이 없습니다」가 나왔는데, 그 회사 메일은 업무 칸에 있었다.
+     「답이 안 나온 것」을 「옛 메일이 없다」로 읽는 것이 이 물음에서 가장 나쁜 틀림이다. */
+  const c = boot({ mine: { big: [30] }, theirs: { big: [7, 8, 30] } });
+  c.mbOldProbe();
+  await flush();
+  assert.equal(c.asked.length, 1, '서버에 안 물었습니다');
+  assert.ok(!(c.asked[0].body.slugs || []).length,
+    '칸을 좁혀 물었습니다 — 그 칸에 없으면 「없다」는 헛답이 나옵니다: '
+    + JSON.stringify(c.asked[0].body));
+  assert.equal(c._mbProbe.unknown, 2,
+    '업무 칸의 옛 메일을 못 셉니다: ' + JSON.stringify(c._mbProbe));
+});
+
+test('★★ 걸린 칸을 «다» 세어 합친다 — 한 칸만 세면 나머지 옛 메일이 묻힌다', async () => {
+  const c = boot({
+    mine:   { big: [30], inb: [50, 51] },
+    theirs: { big: [7, 30], inb: [40, 50, 51] }
+  });
+  c.mbOldProbe();
+  await flush();
+  assert.equal(c._mbProbe.boxes, 2, '걸린 칸 수가 틀립니다');
+  assert.equal(c._mbProbe.theirs, 5, '짚어 준 통수가 틀립니다');
+  assert.equal(c._mbProbe.unknown, 2, '못 가져온 통수가 틀립니다');
+});
+
 /* ══════ ① 견주기 전에 다 펼친다 (가장 틀리기 쉬운 자리) ══════ */
 
 test('★★ 견주기 «전»에 그 칸을 다 펼친다 — 안 그러면 있지도 않은 옛 메일을 알린다', async () => {
-  /* 다음이 짚어 준 다섯 통을 우리가 «이미 다» 들고 있다. 그런데 손에 두 통만 든 채로
-     견주면 세 통이 「우리가 못 가져온 것」으로 세어진다 — 새빨간 거짓말이다. */
-  const c = boot({ mine: [11, 12, 13, 14, 15], theirs: [11, 12, 13, 14, 15] });
+  /* 다음이 짚어 준 다섯 통을 우리가 «이미 다» 들고 있다. 그런데 손에 한 통만 든 채로
+     견주면 네 통이 「우리가 못 가져온 것」으로 세어진다 — 새빨간 거짓말이다. */
+  const c = boot({ mine: { big: [11, 12, 13, 14, 15] }, theirs: { big: [11, 12, 13, 14, 15] } });
   c.mbOldProbe();
   await flush();
-  assert.equal(c.loaded.length, 1, '칸을 안 펼쳤습니다');
-  assert.equal(c.loaded[0].n, 0,
-    '손에 든 것만으로 견줍니다 — 받아 두지 않았을 뿐인 번호가 「못 가져온 것」이 됩니다');
+  assert.ok(c.loaded.length >= 1, '칸을 안 펼쳤습니다');
+  c.loaded.forEach(l => assert.equal(l.n, 0,
+    '손에 든 것만으로 견줍니다 — 받아 두지 않았을 뿐인 번호가 「못 가져온 것」이 됩니다'));
   assert.equal(c._mbProbe.unknown, 0,
     '이미 든 메일을 「못 가져왔다」고 합니다: ' + JSON.stringify(c._mbProbe));
 });
 
 test('★★ 우리가 «든 것»과 견준다 — 다음이 준 수를 그냥 세면 늘 옛 메일이 있다고 한다', async () => {
-  const c = boot({ mine: [30, 31, 32], theirs: [7, 8, 30, 31, 32] });
+  const c = boot({ mine: { big: [30, 31, 32] }, theirs: { big: [7, 8, 30, 31, 32] } });
   c.mbOldProbe();
   await flush();
   assert.equal(c._mbProbe.theirs, 5);
   assert.equal(c._mbProbe.unknown, 2, '못 가져온 옛 메일을 못 셉니다');
-  assert.equal(c._mbProbe.theirLow, 7, '다음이 준 가장 옛 번호가 틀립니다');
-  assert.equal(c._mbProbe.ourLow, 30, '우리가 든 가장 옛 번호가 틀립니다');
+});
+
+test('★★ «가장 많은 칸»을 짚어 준다 — 어디를 봐야 하는지 알려 줘야 한다', async () => {
+  const c = boot({
+    mine:   { big: [30], inb: [50] },
+    theirs: { big: [1, 2, 3, 30], inb: [40, 50] }
+  });
+  c.mbOldProbe();
+  await flush();
+  assert.equal((c._mbProbe.top || {}).slug, 'big',
+    '못 가져온 것이 가장 많은 칸을 안 짚습니다: ' + JSON.stringify(c._mbProbe.top));
+  assert.match(c.mbProbeTell(), /1\.자문사답변/, '어느 칸인지 화면에 안 적습니다');
 });
 
 /* ══════ ③ 읽기만 한다 ══════ */
@@ -115,33 +157,20 @@ test('★★ 다음메일도 우리 DB 도 «한 글자도» 안 고친다', () 
     assert.ok(f.indexOf(bad) < 0, '읽기 말고 딴 것을 부릅니다: ' + bad));
 });
 
-test('★ 한 칸만 물어본다 — 서른세 칸을 다 뒤지면 대표께서 몇 분을 기다리신다', async () => {
-  const c = boot({ mine: [1], theirs: [1] });
+test('★ 서버에 «한 번만» 붙는다 — 칸마다 따로 붙으면 서른세 번이 된다', async () => {
+  const c = boot({ mine: { big: [1] }, theirs: { big: [1] } });
   c.mbOldProbe();
   await flush();
-  assert.equal(c.asked.length, 1);
-  assert.deepEqual(Array.from(c.asked[0].body.slugs || []), [c.mbProbeSlug()],
-    '칸을 안 좁혔습니다: ' + JSON.stringify(c.asked[0].body));
+  assert.equal(c.asked.length, 1, '서버에 ' + c.asked.length + '번 붙었습니다');
 });
 
-/* ══════ 어느 칸을 두드리나 ══════ */
-
-test('★ 「모두 몇 통」이 가장 많은 칸을 두드린다 — 거기가 400 에 부딪혔을 자리다', () => {
-  assert.equal(boot().mbProbeSlug(), 'inb');
-});
-
-test('★★ 휴지통·스팸은 안 두드린다 — 애초에 안 가져오는 칸이라 견줄 것이 없다', () => {
-  /* 휴지통이 9,000통으로 가장 크다. 안 거르면 늘 휴지통이 뽑힌다. */
-  const c = boot();
-  assert.notEqual(c.mbProbeSlug(), 'bin', '휴지통을 두드립니다 — 우리는 그 칸을 안 가져옵니다');
-});
-
-test('칸이 하나도 없으면 조용히 멈춘다', async () => {
-  const c = boot({ folders: [] });
+test('한 칸도 안 걸리면 조용히 「없다」고 한다 — 굳지 않는다', async () => {
+  const c = boot({ mine: { big: [1] }, theirs: {} });
   c.mbOldProbe();
   await flush();
-  assert.equal(c.asked.length, 0);
   assert.equal(c._mbProbing, false, '누른 채로 굳었습니다');
+  assert.equal(c._mbProbe.theirs, 0);
+  assert.equal(c.loaded.length, 0, '걸린 칸이 없는데 칸을 펼쳤습니다');
 });
 
 /* ══════ ④⑤ 손놀림 ══════ */
@@ -161,7 +190,7 @@ test('★ 한 글자면 안 묻는다 — 거의 전부가 걸려 뜻이 없고 
 });
 
 test('★★ 두 번 눌러도 두 번 묻지 않는다', async () => {
-  const c = boot({ mine: [1], theirs: [1] });
+  const c = boot({ mine: { big: [1] }, theirs: { big: [1] } });
   c.mbOldProbe();
   c.mbOldProbe();
   await flush();
@@ -169,7 +198,7 @@ test('★★ 두 번 눌러도 두 번 묻지 않는다', async () => {
 });
 
 test('★ 물어보다 실패해도 단추가 «풀린다» — 안 풀면 다시 눌러 볼 수도 없다', async () => {
-  const c = boot({ mine: [1], theirs: [1], serverBad: true });
+  const c = boot({ mine: { big: [1] }, theirs: { big: [1] }, serverBad: true });
   c.mbOldProbe();
   await flush();
   assert.equal(c._mbProbing, false, '누른 채로 굳었습니다');
@@ -182,19 +211,40 @@ test('★★ 셋을 «갈라» 말한다 — 숫자만 내놓으면 어떻게 �
   const none = boot();
   assert.match(none.mbProbeTell(), /알아봅니다|고치지/, '아직 안 눌렀을 때 안내가 없습니다');
 
-  const good = boot({ mine: [30], theirs: [7, 30] });
+  const good = boot({ mine: { big: [30] }, theirs: { big: [7, 30] } });
   good.mbOldProbe(); await flush();
   assert.match(good.mbProbeTell(), /옛 메일이 더 있습니다/, '희소식을 안 알립니다');
   assert.match(good.mbProbeTell(), /저절로/, '그래서 어떻게 되는지 안 알려 줍니다');
 
-  const same = boot({ mine: [30, 31], theirs: [30, 31] });
+  const same = boot({ mine: { big: [30, 31] }, theirs: { big: [30, 31] } });
   same.mbOldProbe(); await flush();
   assert.match(same.mbProbeTell(), /폴더를 갈라/,
     '옛 메일이 없을 때 «그럼 어떻게 하나»를 안 알려 줍니다');
 
-  const zero = boot({ mine: [30], theirs: [] });
+  const zero = boot({ mine: { big: [30] }, theirs: {} });
   zero.mbOldProbe(); await flush();
   assert.match(zero.mbProbeTell(), /찾은 것이 없습니다/, '한 통도 못 찾았을 때를 안 가릅니다');
+});
+
+test('★★ 알림(토스트)도 «셋을 가른다» — 대표께서 어긋난 알림을 보셨다', async () => {
+  /* 2026-08-31 실제로 그랬다 — 화면에는 「찾은 것이 없습니다」인데 알림은
+     「모두 우리가 이미 든 것입니다」였다. 둘이 다른 말을 하면 무엇을 믿을지 모른다. */
+  const zero = boot({ mine: { big: [30] }, theirs: {} });
+  zero.mbOldProbe(); await flush();
+  const t0 = zero.toasts.join(' ');
+  assert.ok(t0.indexOf('찾지 못했습니다') >= 0,
+    '한 통도 못 찾았는데 알림이 딴말을 합니다: ' + t0);
+  assert.ok(t0.indexOf('이미 든 것') < 0, '못 찾았는데 「이미 든 것」이라 합니다: ' + t0);
+
+  const same = boot({ mine: { big: [30, 31] }, theirs: { big: [30, 31] } });
+  same.mbOldProbe(); await flush();
+  assert.ok(same.toasts.join(' ').indexOf('이미 든 것') >= 0,
+    '다 우리 것일 때 알림이 틀립니다: ' + same.toasts.join(' '));
+
+  const good = boot({ mine: { big: [30] }, theirs: { big: [7, 30] } });
+  good.mbOldProbe(); await flush();
+  assert.ok(good.toasts.join(' ').indexOf('찾았습니다') >= 0,
+    '옛 메일을 찾았는데 알림이 틀립니다: ' + good.toasts.join(' '));
 });
 
 /* 붙어 있는 자리 */
