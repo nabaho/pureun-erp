@@ -58,6 +58,13 @@
     return { risky: risky, broken: broken, soft: soft };
   }
 
+  /* 홈페이지 관리자 로그인 화면.
+     ★ 편집 주소는 로그인돼 있어야만 열린다(안 돼 있으면 서버가 403 을 내고,
+       브라우저에는 «그냥 홈페이지 화면»이 뜬다). 그래서 로그인할 자리를 함께 준다. */
+  function loginUrl() {
+    return ORIGIN + '/index.php?act=dispMemberLoginForm';
+  }
+
   function editUrl(kind, key) {
     if (kind !== 'member' && kind !== 'page') return null;
     if (kind === 'member') {
@@ -70,6 +77,6 @@
 
   global.PuHomeExport = {
     ORIGIN: ORIGIN, careersText: careersText, riskyLines: riskyLines, editUrl: editUrl,
-    divInLine: divInLine, riskReport: riskReport
+    divInLine: divInLine, riskReport: riskReport, loginUrl: loginUrl
   };
 })(typeof window !== 'undefined' ? window : globalThis);
