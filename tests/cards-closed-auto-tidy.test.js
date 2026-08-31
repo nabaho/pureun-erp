@@ -65,7 +65,13 @@ function runAutoFolder(groups, items, erpByKey){
   vm.createContext(ctx);
   /* 잣대는 공용에 있다 — 대역이 아니라 «진짜»를 실어야 같은 답이 나온다 */
   vm.runInContext(fnBody('closedFolderName'), ctx);
+  /* ⚠ 2026-08-31: 같은 뜻의 폴더가 둘일 때 «쓰이는 쪽»을 고르는 잣대가 갈라져 나왔다.
+     대역이 아니라 진짜를 함께 싣는다 — 대역을 넣으면 그 고름이 틀려도 모른다. */
+  vm.runInContext(fnBody('pickBusiestGroup'), ctx);
   vm.runInContext(fnBody('erpClosedFolderOf'), ctx);
+  /* 새 폴더 «이름»을 짓는 잣대도 진짜를 싣는다 — 안 실으면 자동 정리가 조용히
+     멈춘다(밖의 try 가 삼킨다). 2026-08-31 에 실제로 그렇게 헛돌았다. */
+  vm.runInContext(fnBody('newClosedFolderName'), ctx);
   vm.runInContext('ErpMatch.autoFolder = function()' + fnBody('autoFolder').replace(/^[\s\S]*?\(\)\s*\{/, '{'), ctx);
   ctx.ErpMatch.autoFolder();
   return { moved: put, madeGroups: madeGroups, groups: ctx.state.groups };
@@ -144,6 +150,122 @@ test('종료 폴더가 «하나도 없으면» 그때만 만든다', () => {
   const r = runAutoFolder(gs, items, { a: 끝난업체 });
   assert.equal(r.madeGroups.length, 1, '갈 곳이 없으면 만들어야 한다');
   assert.equal(r.madeGroups[0].kind, 'biz');
+});
+
+/* ══════ ⑦ 새 종료 폴더의 «이름» (대표 결정 2026-08-31 「앱이 이름을 따라 짓게」) ══════
+   「5.계약해지」는 사업자 쪽 폴더다. 명함 쪽에 종료 폴더가 없으면 앱이 하나 만드는데,
+   그 이름이 「업체퇴사」면 같은 뜻인데 이름이 둘로 갈린다 — 어느 폴더를 말하는지
+   매번 다시 물어야 한다. 반대쪽에 이미 있는 이름을 그대로 따른다. */
+
+test('★ 명함용 종료 폴더를 만들 때 «사업자 쪽 이름»을 그대로 따른다', () => {
+  const gs = { g1: G('g1','1. 업체관리','biz'), g2: G('g2','5.계약해지','biz'),
+               c1: G('c1','1. 업체관리','card') };
+  const items = { c: { id:'c', kind:'card', group:'c1', erpAutoFoldered:1 } };
+  const r = runAutoFolder(gs, items, { c: 끝난업체 });
+  assert.equal(r.madeGroups.length, 1, '명함용 종료 폴더를 만들어야 한다');
+  assert.equal(r.madeGroups[0].name, '5.계약해지',
+    '★ 「업체퇴사」로 만들었다 — 같은 뜻인데 이름이 둘로 갈린다');
+  assert.equal(r.madeGroups[0].kind, 'card');
+  assert.equal(items.c.group, r.madeGroups[0].id);
+});
+
+test('대표님이 이름을 바꾸면 다음에 만들어지는 것도 따라간다', () => {
+  const gs = { g2: G('g2','9. 계약종료 사업장','biz'), c1: G('c1','1. 업체관리','card') };
+  const items = { c: { id:'c', kind:'card', group:'c1', erpAutoFoldered:1 } };
+  const r = runAutoFolder(gs, items, { c: 끝난업체 });
+  assert.equal(r.madeGroups[0].name, '9. 계약종료 사업장');
+});
+
+test('반대쪽에도 없으면 그때만 예전 이름(업체퇴사)을 쓴다', () => {
+  const gs = { c1: G('c1','1. 업체관리','card') };
+  const items = { c: { id:'c', kind:'card', group:'c1', erpAutoFoldered:1 } };
+  const r = runAutoFolder(gs, items, { c: 끝난업체 });
+  assert.equal(r.madeGroups[0].name, '업체퇴사');
+});
+
+test('★ 손으로 누르는 정리 도구도 «같은 이름 규칙»을 쓴다 — 두 길이 달라지면 안 된다', () => {
+  const tidy = fnBody('openErpClosedTidy');
+  assert.match(tidy, /newClosedFolderName\(/,
+    '★ 정리 도구가 제 이름을 따로 갖고 있다 — 자동 쪽과 다른 폴더를 만든다');
+  assert.ok(tidy.indexOf("name:'업체퇴사'") < 0, '이름을 글자로 박아 두면 안 된다');
+});
+
+/* ══════ ⑧ 같은 뜻인데 «비어 있는» 폴더 (대표 결정 2026-08-31 「빈 쪽을 자동으로 치운다」) ══════
+   대표 화면에 「1. 업체관리 88」과 「업체관리 0」이 함께 있었다. 앱이 새 등록증을
+   넣을 때 어느 쪽을 고를지 정해져 있지 않아, 나중에 88 과 0 으로 갈린다. */
+
+test('★ 같은 뜻인데 비어 있는 폴더는 치운다 — 안 그러면 88 과 0 으로 갈린다', () => {
+  const gs = { g1: G('g1','1. 업체관리','biz'), g0: G('g0','업체관리','biz') };
+  const items = { a: { id:'a', kind:'biz', group:'g1' } };
+  const r = runAutoFolder(gs, items, { a: 사는업체 });
+  assert.ok(!r.groups.g0, '★ 빈 중복 폴더가 남았다 — 새 등록증이 어디로 갈지 흔들린다');
+  assert.ok(r.groups.g1, '★ 항목이 든 쪽을 지웠다');
+});
+
+test('★ 항목이 «하나라도» 들어 있으면 절대 안 지운다 — 지우면 그 안의 것이 미아가 된다', () => {
+  const gs = { g1: G('g1','1. 업체관리','biz'), g0: G('g0','업체관리','biz') };
+  const items = { a: { id:'a', kind:'biz', group:'g1' }, b: { id:'b', kind:'biz', group:'g0' } };
+  const r = runAutoFolder(gs, items, { a: 사는업체 });
+  assert.ok(r.groups.g0 && r.groups.g1, '★ 둘 다 쓰이고 있으면 그대로 둔다');
+});
+
+test('둘 다 비어 있으면 아무것도 안 지운다 — 하나는 남아야 갈 곳이 있다', () => {
+  const gs = { g1: G('g1','1. 업체관리','biz'), g0: G('g0','업체관리','biz'),
+               z: G('z','5.계약해지','biz') };
+  const items = { a: { id:'a', kind:'biz', group:'z' } };
+  const r = runAutoFolder(gs, items, { a: 끝난업체 });
+  assert.ok(r.groups.g0 && r.groups.g1);
+});
+
+test('★ 「업체퇴사 0」과 「5.계약해지 30」도 같은 뜻으로 본다 — 갈린 것을 합친다', () => {
+  const gs = { g2: G('g2','5.계약해지','biz'), gx: G('gx','업체퇴사','biz'),
+               g1: G('g1','1. 업체관리','biz') };
+  const items = { a: { id:'a', kind:'biz', group:'g2' } };
+  const r = runAutoFolder(gs, items, { a: 끝난업체 });
+  assert.ok(!r.groups.gx,
+    '★ 이름만 다른 빈 종료 폴더가 남았다 — 종료 업체가 두 곳으로 갈린 채로 있다');
+  assert.ok(r.groups.g2);
+});
+
+test('뜻이 «다른» 빈 폴더는 안 건드린다 — 대표님이 만들어 둔 자리다', () => {
+  const gs = { g1: G('g1','1. 업체관리','biz'), a: G('a','2. 기타 사업장','biz'),
+               b: G('b','3.공공기관','biz'), c: G('c','우리법인','biz') };
+  const items = { x: { id:'x', kind:'biz', group:'g1' } };
+  const r = runAutoFolder(gs, items, { x: 사는업체 });
+  ['a','b','c'].forEach(k => assert.ok(r.groups[k],
+    '★ 비었다고 「' + gs[k].name + '」을 지웠다 — 대표님이 쓰려고 만들어 둔 폴더다'));
+});
+
+test('잠긴 폴더·아래 폴더가 있는 폴더는 안 건드린다', () => {
+  const locked = Object.assign(G('g0','업체관리','biz'), { locked:1 });
+  const parent = G('p','업체관리','biz');
+  const kid = Object.assign(G('k','아래','biz'), { parent:'p' });
+  const gs = { g1: G('g1','1. 업체관리','biz'), g0: locked, p: parent, k: kid };
+  const items = { a: { id:'a', kind:'biz', group:'g1' } };
+  const r = runAutoFolder(gs, items, { a: 사는업체 });
+  assert.ok(r.groups.g0, '★ 잠긴 폴더를 지웠다');
+  assert.ok(r.groups.p, '★ 아래에 폴더를 둔 것을 지웠다 — 아래 것이 미아가 된다');
+});
+
+test('명함용과 사업자용은 «따로» 센다 — 이름이 같아도 다른 폴더다', () => {
+  const gs = { g1: G('g1','업체관리','biz'), c1: G('c1','업체관리','card') };
+  const items = { a: { id:'a', kind:'biz', group:'g1' } };
+  const r = runAutoFolder(gs, items, { a: 사는업체 });
+  assert.ok(r.groups.c1, '★ 사업자 쪽이 쓰인다고 명함 쪽 폴더를 지웠다');
+});
+
+test('★ 같은 뜻의 폴더가 둘이면 «쓰이는 쪽»을 고른다 — 늘 같은 답이라야 한다', () => {
+  const ctx = { console, Object, String, Array,
+    state: { items: { a:{ group:'few' }, b:{ group:'many' }, c:{ group:'many' } } } };
+  vm.createContext(ctx);
+  vm.runInContext(fnBody('pickBusiestGroup'), ctx);
+  const list = [{ id:'few', order:1 }, { id:'many', order:9 }];
+  assert.equal(ctx.pickBusiestGroup(list).id, 'many',
+    '★ 담긴 것이 적은 쪽을 골랐다 — 새 등록증이 빈 폴더로 흩어진다');
+  assert.equal(ctx.pickBusiestGroup(list.slice().reverse()).id, 'many',
+    '★ 차례가 바뀌면 답도 바뀐다 — 그것이 88 과 0 으로 갈리던 까닭이다');
+  assert.equal(ctx.pickBusiestGroup([]), null);
+  assert.equal(ctx.pickBusiestGroup(null), null);
 });
 
 /* ══════ ④⑤⑥ 유형 탭 ══════ */

@@ -139,6 +139,9 @@ function pickFolder(groups, kind){
   vm.createContext(ctx);
   /* 잣대는 공용(closedFolderName)에 있다 — 함께 실어야 진짜와 같은 답이 나온다 */
   vm.runInContext(fnBody('closedFolderName'), ctx);
+  /* ⚠ 2026-08-31: 같은 뜻의 폴더가 둘일 때 «쓰이는 쪽»을 고르는 잣대가 갈라져 나왔다.
+     대역이 아니라 진짜를 함께 싣는다 — 대역을 넣으면 그 고름이 틀려도 모른다. */
+  vm.runInContext(fnBody('pickBusiestGroup'), ctx);
   vm.runInContext(fnBody('erpClosedFolderOf'), ctx);
   return ctx.erpClosedFolderOf(kind || 'card');
 }
