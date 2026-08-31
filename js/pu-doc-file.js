@@ -283,6 +283,7 @@
 
      redundant = 이 사진이 더한 것이 하나도 없다는 뜻. 화면은 이때만 사진을
      스스로 치운다(휴지통으로 — 30일 안에 되살릴 수 있다). */
+
   function fillOne(hit, mapped, want, o) {
     o = o || {};
     return deps.db.ref(CARDS_ROOT + '/items/' + hit.id).once('value').then(function (s) {
@@ -846,6 +847,40 @@
 
   /* 한 장 — 여러 장 길을 그대로 쓴다(길이 둘이면 한쪽만 고쳐진다). */
 
+  /* ══════ 이미 만들어진 명함의 «빠진 회사»를 되짚어 채운다 (대표 지시 2026-08-31) ══════
+     「두장 합친 사진인경우 이부분을 다시 확인하고 자동으로 수정 변경해라」
+
+     서식(form)에서 온 명함은 이제 sendToCards 가 만들 때부터 회사를 달고 온다.
+     그런데 그 전에 손으로 만들었거나 다른 사정으로 회사가 안 붙은 채 «이미 있는»
+     명함은 저절로 안 고쳐진다 — 실제로 「대천맛김」 담당자 「이권우」 명함이 그랬다.
+     사진첩이 «두 장 이상 합친 서식»을 다시 볼 때마다 그 명함을 되짚어 채운다.
+     바로 위 sendToCompanyMany(«업체가 나중에 생기면 스스로 맞춰 본다»)와 같은 결이다.
+
+     ⚠ 이미 값이 있으면 손대지 «않는다»(gap-fill) — 사람이 넣어 둔 다른 회사 이름을
+       지우면 안 된다. fillGaps 와 같은 규칙이지만, 여기는 회사 «한 칸»만 본다.
+     ⚠ 카드가 이미 지워졌으면 조용히 넘어간다 — 지운 명함을 되살리지 않는다.
+     ⚠ 채울 것이 하나도 없으면 update 를 «안 부른다» — 헛돈이 나가지 않는다. */
+  function repairCardCompanyMany(list) {
+    var items = (list || []).filter(function (o) { return o && o.id && !blank(o.company); });
+    if (!items.length) return Promise.resolve([]);
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return Promise.all(items.map(function (o) {
+      return deps.db.ref(CARDS_ROOT + '/items/' + o.id).once('value');
+    })).then(function (snaps) {
+      var u = {}, out = [];
+      snaps.forEach(function (s, i) {
+        var cur = s.val();
+        var o = items[i];
+        if (!cur) { out.push({ id: o.id, patched: false }); return; }
+        if (!blank(cur.company)) { out.push({ id: o.id, patched: false }); return; }
+        u[CARDS_ROOT + '/items/' + o.id + '/company'] = o.company;
+        out.push({ id: o.id, patched: true });
+      });
+      if (!Object.keys(u).length) return out;
+      return deps.db.ref().update(u).then(function () { return out; });
+    });
+  }
+
   function sendToCompany(o) {
     return sendToCompanyMany([o || {}]).then(function (r) { return r[0]; });
   }
@@ -950,6 +985,7 @@
     sendToCoInfo: sendToCoInfo,
     backfillPairs: backfillPairs,
     sendToCompany: sendToCompany,
-    sendToCompanyMany: sendToCompanyMany
+    sendToCompanyMany: sendToCompanyMany,
+    repairCardCompanyMany: repairCardCompanyMany
   };
 })(typeof window !== 'undefined' ? window : globalThis);
