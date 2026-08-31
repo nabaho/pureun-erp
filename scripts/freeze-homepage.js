@@ -46,6 +46,15 @@ const OUT = (() => {
   return path.resolve(i > 0 ? process.argv[i + 1] : 'site');
 })();
 
+/* ★ 사람에게 보이는 «진짜 주소». 검색엔진에게 「원본은 여기」라고 말하는 데 쓴다.
+   대표 지시 2026-08-31: 「홈페이지가 외부로 나갈 경우 원래 있던 도메인으로 나가야 한다.
+   나바호 깃허브로 나가면 안 된다」 */
+const REAL_ORIGIN = 'https://푸른노무법인.kr';
+
+/* --live : 도메인을 옮긴 «실제 운영»용으로 굳힌다(검색 차단을 빼고).
+   붙이지 않으면 미리보기용 — 검색에 잡히지 않게 막는다. */
+const LIVE = process.argv.indexOf('--live') > 0;
+
 /* ── 내려받기 (한 번에 넷까지, 예의 있게) ── */
 function fetchBin(url) {
   return new Promise(resolve => {
@@ -120,7 +129,8 @@ function 담기(파일, buf) {
 
 /* ── 쪽 글자 고치기 ── */
 function 쪽고치기(html, mid) {
-  const 깊이 = mid ? '../' : '';        // 쪽은 <mid>/index.html 에 담긴다
+  /* 쪽은 <mid>/index.html 에 담긴다. 게시판 글은 <mid>/<번호>/index.html 이라 한 겹 더 깊다 */
+  const 깊이 = mid ? '../'.repeat(mid.split('/').length) : '';
   let s = html;
 
   /* ① 우리 도메인 절대주소 → 뿌리 상대주소 */
@@ -132,6 +142,24 @@ function 쪽고치기(html, mid) {
     const re = new RegExp('(href=")\\/' + p.mid + '(\\/?)(")', 'g');
     s = s.replace(re, '$1' + 깊이 + p.mid + '/$3');
   });
+  /* 게시판 글로 가는 길: /notice/139 → ../notice/139/ (뒤 빗금이 있어야 폴더로 바로 간다) */
+  s = s.replace(/(href=")\/(notice)\/(\d+)(\/?)(")/g, '$1' + 깊이 + '$2/$3/$5');
+  s = s.replace(/(href=")(\.\.\/)+(notice)\/(\d+)(")/g, '$1' + 깊이 + '$3/$4/$5');
+
+  /* ★ 게시판 글로 가는 «가짜 주소»는 제자리걸음(#)으로 바꾼다.
+     자문사 로고·구성원 사진의 href 는 /partner_board/185 같은 주소인데,
+     지금 홈페이지에서도 그 주소는 «열리지 않는다»(403). 실제로는 자바스크립트가
+     창을 띄우고 주소는 안 쓴다. 그대로 두면 우리 쪽에서는 «없는 쪽»으로 튄다.
+     data-srl 은 건드리지 않으므로 창은 그대로 열린다. */
+  s = s.replace(/(<a[^>]*\shref=")[^"]*\/[a-z_]+_board\/\d+(")/gi, '$1#$2');
+
+  /* ★ RSS·Atom 구독 주소는 «뺀다».
+     라이믹스가 만들어 주던 것이라 굳힌 사본에는 만들 것이 없다. 그대로 두면
+     눌렀을 때 없는 쪽이 뜬다 — 있는 척하는 것보다 없는 편이 낫다.
+     (공지사항은 다음 단계에서 우리 자료로 다시 그린다.) */
+  s = s.replace(/<link[^>]+href="[^"]*\/(?:rss|atom)"[^>]*>/gi, '');
+  s = s.replace(/<a[^>]+href="[^"]*\/(?:rss|atom)"[^>]*>[\s\S]*?<\/a>/gi, '');
+
   /* 메인으로 가는 길 */
   s = s.replace(/(href=")\/(")/g, '$1' + (깊이 || './') + '$2');
 
@@ -139,12 +167,41 @@ function 쪽고치기(html, mid) {
   s = s.replace(/((?:src|href)=")\/(?!\/)/g, '$1' + 깊이);
   s = s.replace(/(url\((['"]?))\/(?!\/)/g, '$1' + 깊이);
 
-  /* ④ 굳힌 사본임을 남긴다 — 나중에 이 파일을 여는 사람이 헷갈리지 않게 */
+  /* ④ ★ 「이 쪽의 진짜 주소」는 언제나 «우리 도메인»이다.
+        위 ③에서 절대주소를 상대주소로 바꾸다 보면 canonical·og:url 까지 상대주소가 되는데,
+        그러면 임시 주소가 «자기가 원본»이라고 검색엔진에 말하게 된다 —
+        진짜 홈페이지와 검색에서 서로 잡아먹고, 검색 결과에 깃허브 주소가 뜬다.
+        도메인을 옮긴 뒤에는 이 주소가 곧 제 주소라 그대로 맞다. */
+  const 진짜주소 = REAL_ORIGIN + '/' + mid;
+  s = s.replace(/<link[^>]+rel=["']canonical["'][^>]*>/gi,
+    '<link rel="canonical" href="' + 진짜주소 + '" />');
+  s = s.replace(/(<meta[^>]+property=["']og:url["'][^>]*content=")[^"]*(")/gi,
+    '$1' + 진짜주소 + '$2');
+
+  /* ⑤ 미리보기 동안에는 «검색에 잡히지 않게» 한다.
+        임시 주소가 색인되면 진짜 홈페이지의 노출을 갉아먹는다.
+        도메인을 옮길 때 --live 로 굳히면 이 줄이 빠진다. */
+  if (!LIVE) {
+    s = s.replace(/<head([^>]*)>/i,
+      '<head$1>\n<meta name="robots" content="noindex, nofollow" />'
+      + '   <!-- 미리보기 동안만: 검색에 안 잡히게. --live 로 굳히면 빠진다 -->');
+  }
+
+  /* ⑥ 굳힌 사본임을 남긴다 — 나중에 이 파일을 여는 사람이 헷갈리지 않게 */
   const 표시 = '\n<!-- 푸른노무법인 홈페이지 — ' + new Date().toISOString().slice(0, 10)
-    + ' 굳힌 사본. scripts/freeze-homepage.js 로 다시 만든다.\n'
-    + '     손으로 고치지 말 것: 다시 굳히면 사라진다. -->\n';
+    + ' 굳힌 사본 (' + (LIVE ? '실제 운영용' : '미리보기용 · 검색 차단') + ').\n'
+    + '     scripts/freeze-homepage.js 로 다시 만든다. 손으로 고치지 말 것: 다시 굳히면 사라진다. -->\n';
   s = s.replace(/<\/head>/i, 표시 + '</head>');
   return s;
+}
+
+/* 게시판 글(공지사항)을 찾아낸다 — 목록 쪽에서 «글로 가는 길»을 긁는다.
+   ★ 처음 정찰에서 이것을 놓쳤다. `document_srl=` 로만 찾았는데 주소가 `/notice/139` 모양이라
+     「공지사항은 비어 있다」고 잘못 읽었다. 화면에 보이는 길을 그대로 따라가는 것이 맞다. */
+function 게시글주소들(html, mid) {
+  /* 떠 오기 «전»의 글이라 주소가 /notice/139 모양이다(고치기 전). 상대주소 모양도 함께 본다. */
+  const re = new RegExp('href="(?:\\/|(?:\\.\\.\\/)+)?' + mid + '\\/(\\d+)\\/?"', 'g');
+  return [...new Set([...html.matchAll(re)].map(m => m[1]))];
 }
 
 /* ── 본 일 ── */
@@ -164,6 +221,26 @@ function 쪽고치기(html, mid) {
     쪽글[p.mid] = html;
     자산주소들(html, url).forEach(a => 자산.add(a));
     console.log('  · ' + p.이름.padEnd(10) + ' ' + String(html.length).padStart(6) + '자');
+  }
+
+  /* 게시판 글 — 목록만 떠 오면 「제목은 보이는데 눌러도 없는 쪽」이 된다 */
+  const 글목록 = [];
+  for (const mid of ['notice']) {
+    if (!쪽글[mid]) continue;
+    const 번호들 = 게시글주소들(쪽글[mid], mid);
+    if (!번호들.length) { console.log('\n■ ' + mid + ' 에는 글이 없습니다'); continue; }
+    console.log('\n■ ' + mid + ' 글 ' + 번호들.length + '개를 떠 옵니다');
+    for (const no of 번호들) {
+      const url = ORIGIN + '/' + mid + '/' + no;
+      const r = await fetchBin(url);
+      if (r.code !== 200 || !r.buf.length) { console.log('  ✗ ' + no + ' (' + r.code + ')'); continue; }
+      const html = r.buf.toString('utf8');
+      쪽글[mid + '/' + no] = html;
+      글목록.push(mid + '/' + no);
+      자산주소들(html, url).forEach(a => 자산.add(a));
+      const 제목 = (/<title>([^<]*)<\/title>/i.exec(html) || [, ''])[1].trim();
+      console.log('  · ' + no + '  ' + 제목.slice(0, 40));
+    }
   }
 
   console.log('\n■ 자산 ' + 자산.size + '개를 떠 옵니다 (CSS 안의 그림까지 한 겹 더)');
