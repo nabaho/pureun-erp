@@ -38,10 +38,11 @@
 <script src="js/pu-home-career.js?v=1"></script>
 <script src="js/pu-home-export.js?v=3"></script>
 <script src="js/pu-home-diff.js?v=7"></script>
-<script src="js/pu-home-fill.js?v=6"></script>
+<script src="js/pu-home-fill.js?v=7"></script>
 <!-- 새 홈페이지를 «자료로» 그리는 부품. 명령줄(scripts/build-people.js)도 같은 것을 쓴다 -->
 <script src="js/pu-site-people.js?v=1"></script>
 <script src="js/pu-site-page.js?v=1"></script>
+<script src="js/pu-site-partner.js?v=1"></script>
 <style>
 /* ★ 색값·간격은 승인된 목업(docs/mockups/homepage-manage-v4.html)에서 그대로 가져왔다.
    새로 만들지 말 것 — 목업이 배치·색·글귀의 기준이다. */
@@ -266,6 +267,18 @@ main{flex:1;min-height:0;width:100%;padding:10px 12px;
 .rows .l.lock .t{color:var(--faint)}
 .lockmk{font-size:11px;opacity:.7}
 .pfixbar{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:6px}
+/* 자문사 로고 고르기 — 그림이 주인공이라 칸을 작게, 손잡이는 그림 위에 얹는다 */
+.logos{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.logos .lg{position:relative;width:120px;height:64px;border:1px solid var(--line);
+  border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.logos .lg img{max-width:100%;max-height:100%;object-fit:contain}
+.logos .lgb{position:absolute;right:2px;bottom:2px;display:flex;gap:2px;opacity:0;transition:opacity .12s}
+.logos .lg:hover .lgb{opacity:1}
+.logos .lgb .x{border:1px solid var(--line);background:#fff;border-radius:5px;cursor:pointer;
+  font-size:11px;line-height:1;padding:3px 5px}
+.logos .lgb .x[disabled]{opacity:.35;cursor:default}
+.logos.dim .lg{opacity:.45}
+.logos.dim .lg .lgb{opacity:1}
 .legend2{display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;font-size:11.5px;color:var(--faint)}
 .legend2 b{font-weight:800}
 .legend2 .k-head{color:var(--navy)}
@@ -488,6 +501,8 @@ const GROUPS = [
 /* 자문사 표시가 남는 자리. 업체 열쇠는 업체관리의 id(co-…)를 그대로 쓴다 —
    이름으로 짝지으면 같은 이름의 업체가 둘일 때 남의 표시를 덮는다. */
 const PARTNER_PATH = 'homepage/partners';
+/* 자문사 쪽에 «어느 로고를 어떤 차례로» 보일지. 로고 그림 자체는 홈페이지 것을 쓴다. */
+const PARTNER_LOGO_PATH = 'homepage/partnerLogos';
 
 /* 경력관리(kcareer)에서 당겨올 갈래.
    ★ 갈래 이름과 «저장통 이름»은 다르다. cm3_license·cm3_complete 라는 저장통은 «없다» —
@@ -667,6 +682,11 @@ const App = {
   pageConfig: {}, pageLines: {}, pageRuns: {}, pageFix: {},
   /* publishing — 지금 홈페이지에 올리는 중인지(두 번 눌러 두 번 올리지 않게) */
   publishing: false,
+  /* partnerLogos — 자문사 쪽에 «어느 로고를 어떤 차례로» 보일지(homepage/partnerLogos).
+     로고 그림 자체는 홈페이지 것을 그대로 쓴다 — 우리는 고르고 늘어놓기만 한다. */
+  partnerLogos: { 숨김: {}, 차례: [] },
+  /* siteLogos — 지금 새 홈페이지에 올라가 있는 로고 목록(읽어 온 것) */
+  siteLogos: null,
   /* reading — 지금 어느 쪽을 읽고 있는지(단추를 잠그고 「읽는 중…」으로 바꾼다) */
   reading: '',
   /* filter — 목록을 «누른 딱지»로 걸러 본다. 화면에서만 쓰는 상태로 저장하지 않는다.
@@ -902,9 +922,11 @@ function loadAll() {
     read('homepage/config/pages', '쪽 목록', null),
     /* 자문사현황 — 업체관리는 «읽기만» 한다. 표시(올림/안 올림)만 우리 자리에 쓴다. */
     read('data/companies', '푸른ERP 업체관리', null),
-    read(PARTNER_PATH, '자문사 표시', null)
-  ]).then(([members, pages, lineFormat, check, roster, pageCfg, companies, partners]) => {
+    read(PARTNER_PATH, '자문사 표시', null),
+    read(PARTNER_LOGO_PATH, '자문사 로고 차례', null)
+  ]).then(([members, pages, lineFormat, check, roster, pageCfg, companies, partners, logoCfg]) => {
     App.members = members || {};
+    App.partnerLogos = logoCfg || { 숨김: {}, 차례: [] };
     App.pages = pages || {};
     // 「쪽 목록」 자리가 failed 에 있으면 «자료가 없음»이 아니라 «못 읽음»이다 — 갈라 남긴다.
     // (read() 의 catch 만 failed 에 쌓는다. null 값을 정상적으로 읽은 것은 안 쌓인다.)
@@ -2328,6 +2350,9 @@ function appbarHtml() {
     /* ★ 「홈페이지에 올리기」는 «구성원 갈래를 볼 때»만 보인다.
        늘 보이면 쪽·자문사를 보다가 눌러 구성원이 올라간다 —
        무엇이 올라가는지와 지금 보는 화면이 맞아야 사람이 안 헷갈린다. */
+    + (App.group === 'partner'
+        ? '<button class="btn" onclick="openPartnerLogos()" title="자문사 쪽에 보일 로고와 차례를 정합니다">자문사 로고 관리</button>'
+        : '')
     + (App.group === 'members'
         ? '<button class="btn" onclick="publishPeople()"' + (App.publishing ? ' disabled' : '')
           + ' title="여기 자료로 «구성원 소개» 쪽을 다시 만들어 올립니다. 무엇이 올라가는지 먼저 보여드립니다.">'
@@ -3275,6 +3300,123 @@ async function publishPage(mid) {
   }
 }
 window.publishPage = publishPage;
+
+/* ══════ 자문사 로고 관리 (대표 지시 2026-08-31 「나머지도 순서대로」) ══════
+   ★ 이 쪽에는 «글자가 없다» — 로고 그림만 늘어서 있다. 그래서 우리가 정할 수 있는 것은
+     «어느 로고를, 어떤 차례로» 보이느냐뿐이다.
+   ★ 새 로고 «올리기»는 아직 없다 — 그림을 어디에 둘지 정하고 나서 붙인다. */
+async function openPartnerLogos() {
+  try {
+    const res = await fetch(SITE_BASE + '/partner/index.html?t=' + Date.now());
+    if (!res.ok) throw new Error('자문사 쪽을 읽지 못했습니다 (' + res.status + ')');
+    App.siteLogos = await res.text();
+  } catch (e) {
+    await say('자문사 쪽을 읽지 못했습니다', (e && e.message) || String(e));
+    return;
+  }
+  drawPartnerLogos();
+}
+window.openPartnerLogos = openPartnerLogos;
+
+function drawPartnerLogos() {
+  const 고른것 = PuSitePartner.올릴로고(App.siteLogos, App.partnerLogos);
+  const 다 = 고른것.갈것.concat(고른것.숨긴것);
+  let h = modalHead('자문사 로고 — ' + 고른것.갈것.length + '장이 홈페이지에 보입니다');
+  h += '<div class="bar ok">보일 로고와 «차례»를 정합니다. 로고 그림 자체는 홈페이지 것을 그대로 씁니다.<br>'
+    + '<span class="sub">새 로고를 «넣는» 것은 아직 안 됩니다 — 그림을 어디에 둘지 정하고 붙이겠습니다.</span></div>';
+  h += '<div class="logos">';
+  고른것.갈것.forEach((x, i) => {
+    h += '<div class="lg">'
+      + '<img src="' + esc(SITE_BASE + '/' + x.그림.replace(/^\.\.\//, '')) + '" alt="">'
+      + '<div class="lgb">'
+      + '<button class="x" title="앞으로" onclick="movePartnerLogo(\'' + esc(x.srl) + '\',-1)"' + (i ? '' : ' disabled') + '>◀</button>'
+      + '<button class="x" title="뒤로" onclick="movePartnerLogo(\'' + esc(x.srl) + '\',1)"' + (i < 고른것.갈것.length - 1 ? '' : ' disabled') + '>▶</button>'
+      + '<button class="x" title="숨기기" onclick="hidePartnerLogo(\'' + esc(x.srl) + '\',true)">✕</button>'
+      + '</div></div>';
+  });
+  h += '</div>';
+  if (고른것.숨긴것.length) {
+    h += '<div class="fld"><label>숨긴 로고 ' + 고른것.숨긴것.length + '장</label></div><div class="logos dim">';
+    고른것.숨긴것.forEach(x => {
+      h += '<div class="lg">'
+        + '<img src="' + esc(SITE_BASE + '/' + x.그림.replace(/^\.\.\//, '')) + '" alt="">'
+        + '<div class="lgb"><button class="x" title="다시 보이기" onclick="hidePartnerLogo(\'' + esc(x.srl) + '\',false)">＋</button></div>'
+        + '</div>';
+    });
+    h += '</div>';
+  }
+  h += '<div style="margin-top:12px;display:flex;gap:7px">'
+    + '<button class="btn pri" onclick="publishPartner()"' + (App.publishing ? ' disabled' : '') + '>'
+    + (App.publishing ? '올리는 중…' : '홈페이지에 올리기 (' + 고른것.갈것.length + '장)') + '</button>'
+    + '<a class="btn" style="text-decoration:none" href="' + esc(SITE_BASE + '/partner/') + '" target="_blank" rel="noopener">지금 홈페이지 보기</a></div>';
+  h += modalFoot('');
+  openModal(h);
+}
+
+/* 차례·숨김은 «자료»에 남긴다 — 화면을 닫아도, 다른 PC 에서도 그대로다 */
+async function savePartnerLogos() {
+  await db.ref(PARTNER_LOGO_PATH).set(App.partnerLogos);
+}
+
+async function hidePartnerLogo(srl, 숨길까) {
+  App.partnerLogos.숨김 = App.partnerLogos.숨김 || {};
+  if (숨길까) App.partnerLogos.숨김[srl] = true; else delete App.partnerLogos.숨김[srl];
+  await savePartnerLogos();
+  drawPartnerLogos();
+}
+window.hidePartnerLogo = hidePartnerLogo;
+
+async function movePartnerLogo(srl, 어디로) {
+  /* ★ 차례는 «지금 보이는 것 전부»로 다시 적는다. 일부만 적어 두면 다음에 열 때
+     안 적힌 것이 뒤로 밀려 차례가 저절로 바뀐다. */
+  const 지금 = PuSitePartner.올릴로고(App.siteLogos, App.partnerLogos).갈것.map(x => x.srl);
+  const i = 지금.indexOf(String(srl));
+  const j = i + 어디로;
+  if (i < 0 || j < 0 || j >= 지금.length) return;
+  지금.splice(j, 0, 지금.splice(i, 1)[0]);
+  App.partnerLogos.차례 = 지금;
+  await savePartnerLogos();
+  drawPartnerLogos();
+}
+window.movePartnerLogo = movePartnerLogo;
+
+async function publishPartner() {
+  if (App.publishing) return;
+  if (!App.isAdmin) { await say('총괄관리자만 올릴 수 있습니다', ''); return; }
+  App.publishing = true;
+  try {
+    const res = await fetch(SITE_BASE + '/partner/index.html?t=' + Date.now());
+    if (!res.ok) throw new Error('자문사 쪽을 읽지 못했습니다 (' + res.status + ')');
+    const 지금쪽 = await res.text();
+    const 고른것 = PuSitePartner.올릴로고(지금쪽, App.partnerLogos);
+    const 새쪽 = PuSitePartner.쪽그리기(지금쪽, 고른것.갈것);
+    if (새쪽 === 지금쪽) {
+      await say('바뀐 것이 없습니다', '지금 올라가 있는 것과 같습니다 — 올리지 않았습니다.');
+      return;
+    }
+    const ok = await askYes('홈페이지에 올릴까요?',
+      '자문사 로고 ' + 고른것.갈것.length + '장을 이 차례로 보입니다.' +
+      (고른것.숨긴것.length ? '\n숨기는 로고 ' + 고른것.숨긴것.length + '장' : '') +
+      '\n\n올리면 1~2분 뒤 홈페이지에 뜹니다.', '올리기');
+    if (!ok) return;
+    const token = await firebase.auth().currentUser.getIdToken();
+    const up = await fetch(PUBLISH_URL, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: 'site/partner/index.html', content: 새쪽,
+                             note: '자문사 로고 ' + 고른것.갈것.length + '장' })
+    });
+    const 답 = await up.json().catch(() => ({}));
+    if (!up.ok) throw new Error(답.error || ('서버가 ' + up.status + ' 을 돌려줬습니다'));
+    toast('올렸습니다 — 1~2분 뒤 홈페이지에 뜹니다' + (답.commit ? ' (' + 답.commit + ')' : ''));
+  } catch (e) {
+    console.warn('[자문사 올리기]', e);
+    await say('올리지 못했습니다', (e && e.message) || String(e));
+  } finally {
+    App.publishing = false;
+  }
+}
+window.publishPartner = publishPartner;
 
 /* 쪽 하나만 홈페이지에서 읽어 온다 (5차 지시 ③).
    ★ 「홈페이지 다시 확인」과 «다른 것»이다: 이건 어떻게 보이는지 보려고 읽는 것이라
