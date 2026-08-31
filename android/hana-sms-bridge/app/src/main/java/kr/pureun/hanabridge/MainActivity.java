@@ -64,6 +64,38 @@ public final class MainActivity extends Activity {
              KEEP 이라 이미 걸려 있으면 그대로 둔다 — 열 때마다 시계를 되감지 않는다.
            ⚠ 연결 안 된 폰에는 안 건다 — 보낼 곳이 없다. */
         if (SecureStore.connected(this)) HanaSweepWorker.schedule(this);
+        /* ★★ 앱을 열면 «서버에 인사한다» (2026-08-31).
+             2026-08-31 에 대표가 앱을 새로 깔았는데, 서버 기록은 옛 판 그대로였다.
+             앱을 여는 것만으로는 서버에 아무 말도 안 했기 때문이다 — 판 번호도
+             절전 상태도 올라오지 않아, 「깔긴 깔았나」를 사람에게 되물어야 했다.
+             여는 것은 사람이 «지금 여기 있다»는 뜻이니, 그때 알리는 것이 맞다.
+           ⚠ 가져오는 중이면 건너뛴다 — 그쪽이 이미 알린다.
+           ⚠ 화면을 막지 않는다(딴 갈래에서 보낸다). 서버가 느려도 앱은 열린다. */
+        if (SecureStore.connected(this) && !importing) {
+            executor.execute(this::sayHello);
+        }
+    }
+
+    /* 「나 여기 있다」만 알린다 — 문자함은 «들여다보지 않았다».
+       ⚠★ 여기서 foundCount 0 · readOk false 를 보내면 안 된다. 그러면 서버가
+         「문자함을 못 읽었다」로 적고, 화면이 「폰이 문자함을 읽지 못했습니다」라고
+         거짓말한다 — 열어 봤을 뿐인데 고장 났다고 하는 꼴이다.
+         그래서 hello 를 붙여 «문자함 이야기는 빼고» 판 번호·권한·절전만 보낸다. */
+    private void sayHello() {
+        try {
+            JSONObject ping = new JSONObject();
+            ping.put("action", "sweepPing");
+            ping.put("uid", SecureStore.uid(this));
+            ping.put("deviceId", SecureStore.deviceId(this));
+            ping.put("byHand", true);      /* 스스로 훑은 것이 아니다 */
+            ping.put("hello", true);       /* 문자함은 안 봤다 */
+            ping.put("canReadSms", checkSelfPermission(Manifest.permission.READ_SMS)
+                    == PackageManager.PERMISSION_GRANTED);
+            ping.put("batteryFree", batteryFree());
+            HanaUploadWorker.post(ping, SecureStore.token(this));
+        } catch (Exception ignored) {
+            /* 인사 한 번 못 했다고 앱이 멈추지는 않는다 */
+        }
     }
 
     @Override
@@ -108,9 +140,36 @@ public final class MainActivity extends Activity {
         root.addView(stepPair, matchWrap());
 
         code = new EditText(this);
-        code.setHint("8자리 숫자");
+        code.setHint("8자리 숫자 — 붙여넣기도 됩니다");
         code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-        code.setFilters(new InputFilter[]{new InputFilter.LengthFilter(8)});
+        /* ★★ 붙여넣은 글에서 «숫자만» 남긴다 (대표 지시 2026-08-31: 「계속 헤깔린다」).
+             ⚠ 예전에는 여덟 «글자»에서 잘랐다. 화면에 「1234 5678」로 띄어 적혀 있어
+               그대로 복사해 붙이면 아홉 글자다 — 앞 여덟 자만 남아 「1234 567」이
+               되고, 숫자로는 일곱이라 연결이 안 된다. 왜 안 되는지 알 길도 없다.
+             ★ 이제 띄어쓰기·붙임표가 섞여 있어도 숫자만 골라 여덟 자까지 받는다. */
+        code.setFilters(new InputFilter[]{ new InputFilter(){
+            @Override
+            public CharSequence filter(CharSequence src, int start, int end,
+                                       android.text.Spanned dest, int dstart, int dend) {
+                StringBuilder kept = new StringBuilder();
+                for (int i = start; i < end; i++) {
+                    char c = src.charAt(i);
+                    if (c >= '0' && c <= '9') kept.append(c);
+                }
+                int room = 8 - (dest.length() - (dend - dstart));
+                if (room <= 0) return "";
+                if (kept.length() > room) kept.setLength(room);
+                /* 바꿀 것이 없으면 null 을 돌려준다 — 그래야 커서가 안 튄다 */
+                if (kept.length() == end - start) {
+                    boolean same = true;
+                    for (int i = 0; i < kept.length(); i++) {
+                        if (kept.charAt(i) != src.charAt(start + i)) { same = false; break; }
+                    }
+                    if (same) return null;
+                }
+                return kept.toString();
+            }
+        } });
         code.setTextSize(30);
         code.setGravity(Gravity.CENTER);
         stepPair.addView(code, matchWrap());

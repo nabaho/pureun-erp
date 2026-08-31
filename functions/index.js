@@ -2543,15 +2543,24 @@ exports.hanaMessageBridge = functions
            한 번도 안 도는 폰이 화면에서 «멀쩡»해 보인다 — 그러면 절전을 영영 못 짚는다.
            나머지(판 번호·권한·본 통수)는 손으로 눌렀어도 그대로 참이라 함께 적는다. */
         const byHand = body.byHand === true;
+        /* ★★ 「나 여기 있다」만 하는 인사 — 앱을 열면 온다 (2026-08-31).
+           ⚠ 인사에는 «문자함 이야기가 없다». 그런데도 sweepFound 0 · sweepReadOk false 를
+             적으면 화면이 「폰이 문자함을 읽지 못했습니다」라고 거짓말한다 —
+             열어 봤을 뿐인데 고장 났다고 하는 꼴이다.
+           ⚠ 「지난 문자를 끌어왔다」로도 적지 않는다. 연 것과 끌어온 것은 다르다 —
+             적으면 화면이 「이미 가져오셨네요」로 읽어 안내를 그만둔다. */
+        const hello = body.hello === true;
         await hanaDeviceRef(linked).update({
           ...(byHand ? {} : { lastSweepAt: Date.now() }),
           /* 사람이 눌렀으면 「지난 문자를 끌어왔다」로 남긴다 — 찾은 것이 0통이어도
              그렇다. 안 남기면 화면이 「앱에서 눌러 주세요」를 영영 되풀이한다. */
-          ...(byHand ? { lastHistoryAt: Date.now() } : {}),
+          ...(byHand && !hello ? { lastHistoryAt: Date.now() } : {}),
           lastTalkAt: Date.now(),
           appVersion: String(body.appVersion || "").slice(0, 16),
-          sweepFound: Number(body.foundCount || 0),
-          sweepNewestAt: Number(body.newestAt || 0),
+          ...(hello ? {} : {
+            sweepFound: Number(body.foundCount || 0),
+            sweepNewestAt: Number(body.newestAt || 0),
+          }),
           /* 문자함 권한이 없으면 훑기는 돌아도 «아무것도 못 줍는다» —
              그 상태를 화면이 알아야 「권한을 주세요」라고 짚어 줄 수 있다. */
           sweepCanReadSms: body.canReadSms === true,
@@ -2561,9 +2570,9 @@ exports.hanaMessageBridge = functions
              그 한마디에 대표는 엉뚱하게 은행 쪽을 뒤지게 된다.
              ⚠ 옛 판(1.8.0 이하)은 이 값을 안 보낸다. 안 보내면 «모름»으로 두고,
                 화면은 없다고 «단정하지 않는다» (undefined 로 남긴다). */
-          ...(typeof body.readOk === "boolean" ? { sweepReadOk: body.readOk } : {}),
+          ...(!hello && typeof body.readOk === "boolean" ? { sweepReadOk: body.readOk } : {}),
           /* 상한에 닿았나 — 닿았으면 그보다 오래된 거래가 폰에 더 남아 있다. */
-          sweepCapped: body.capped === true,
+          ...(hello ? {} : { sweepCapped: body.capped === true }),
           /* ★★ 「절전이 풀렸나」를 폰이 «직접» 말한다 (2026-08-31).
              이것이 없어서 「절전 예외를 누르셨습니까」를 두 번 묻고 두 번 다 답을
              못 받았다 — 폰이 이미 아는 것을 사람에게 묻고 있었던 것이다.
