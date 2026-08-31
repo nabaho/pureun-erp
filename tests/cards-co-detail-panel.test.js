@@ -75,7 +75,12 @@ function loadPanelBlock(items){
       return null;
     }
   };
-  const code = fnBody2('erpContractPeriod') + String.fromCharCode(10) + fnBody2('todayYmd') + String.fromCharCode(10)
+  /* 2026-08-31: coDetailPanelHtml 이 #coInfoBox 를 coInfoBoxHtml 로 채운다
+     (기업정보 접기/펼치기, 대표 지시). 그 함수는 coDetailPanelHtml «앞»에 있어
+     panelAt~openEnd 자르기에 안 들어온다 — 대역이 아니라 «진짜»를 함께 싣는다. */
+  const code = 'let _coInfoOpen = false;\n'
+    + fnBody2('coInfoSummary') + '\n' + fnBody2('coInfoBoxHtml') + '\n'
+    + fnBody2('erpContractPeriod') + String.fromCharCode(10) + fnBody2('todayYmd') + String.fromCharCode(10)
     + source.slice(panelAt, openEnd) + '\n' + source.slice(pickAt, pickEnd) + '\n' + source.slice(closeAt, closeEnd);
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
@@ -154,7 +159,12 @@ function loadPanelBlockAsync(items){
       return null;
     }
   };
-  const code = fnBody2('erpContractPeriod') + String.fromCharCode(10) + fnBody2('todayYmd') + String.fromCharCode(10)
+  /* 2026-08-31: coDetailPanelHtml 이 #coInfoBox 를 coInfoBoxHtml 로 채운다
+     (기업정보 접기/펼치기, 대표 지시). 그 함수는 coDetailPanelHtml «앞»에 있어
+     panelAt~openEnd 자르기에 안 들어온다 — 대역이 아니라 «진짜»를 함께 싣는다. */
+  const code = 'let _coInfoOpen = false;\n'
+    + fnBody2('coInfoSummary') + '\n' + fnBody2('coInfoBoxHtml') + '\n'
+    + fnBody2('erpContractPeriod') + String.fromCharCode(10) + fnBody2('todayYmd') + String.fromCharCode(10)
     + source.slice(panelAt, openEnd) + '\n' + source.slice(pickAt, pickEnd) + '\n' + source.slice(closeAt, closeEnd);
   vm.createContext(ctx);
   vm.runInContext(code, ctx);

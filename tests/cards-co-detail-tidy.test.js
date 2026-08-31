@@ -69,7 +69,10 @@ const 등록증 = { label:'사업자등록증', by:'권형하', at:1, photoId:'p
 test('★ 기업 상세는 «한 줄에 한 칸»이다', () => {
   assert.match(css('#pcDetail .cogrid'), /grid-template-columns:1fr(?![ 0-9])/,
     '★ 두 칸이면 값 하나에 160px 뿐이라 소재지·업태·종목이 서너 줄로 접힌다');
-  assert.match(fnBody('coDetailPanelHtml'), /class="pdgrid cogrid"/,
+  /* ⚠ 2026-08-31: 기업정보 접기/펼치기(대표 지시)로 이 배치가 coDetailPanelHtml
+     안이 아니라 coInfoBoxHtml(펼쳤을 때만 그리는 자리)로 옮겨 갔다 — 규칙은
+     그대로다, 어느 함수가 그리는지만 바뀌었다. */
+  assert.match(fnBody('coInfoBoxHtml'), /class="pdgrid cogrid"/,
     '★ 상세가 그 배치를 안 쓴다 — 규칙만 있고 아무 데도 안 걸린다');
 });
 
