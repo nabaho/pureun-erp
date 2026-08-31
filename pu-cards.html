@@ -2863,6 +2863,29 @@ function seedErpTabs(){
     try{ render(); }catch(_){}
   }catch(e){ console.warn('[seedErpTabs]', e&&e.message); }
 }
+/* ── 「🚪 해지」 탭 (대표 보고 2026-08-31) ────────────────────────────────────
+   유형 탭(자문·급여…)이 이제 «지금 일하는 곳»만 센다. 끝난 곳을 볼 자리가 함께
+   있어야 한다 — 빼기만 하고 갈 곳을 안 만들면 자료를 잃은 것과 같다.
+   ⚠ 위 씨앗(v1)과 «따로» 심는다. 같은 열쇠로 묶으면, 대표님이 지운 유형 탭 다섯이
+     이 탭 하나 때문에 통째로 되살아난다 — 탭은 지우고 이름 바꾸는 것이 자유다. */
+function seedClosedTab(){
+  try{
+    if(Store.mode!=='firebase') return;
+    if(localStorage.getItem('pucards_closedtab_v1')) return;
+    ['card','biz'].forEach(kind=>{
+      const dup = Object.values(state.views||{}).find(v=>v&&(v.kind||'card')===kind
+        &&(v.scope||'all')==='all'&&((v.f||{}).erpFilter)==='closed');
+      if(dup) return;
+      const f = { q:'', group:'all', owner:'all', region:'', erpFilter:'closed', colFilter:{},
+        onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false,
+        sort:'date', sortKey:null, sortDir:'desc' };
+      const v = { id:uid(), name:'🚪 해지', kind, scope:'all', order:1100, f };
+      Store.putView(v); state.views[v.id]=v;
+    });
+    localStorage.setItem('pucards_closedtab_v1','1');
+    try{ render(); }catch(_){}
+  }catch(e){ console.warn('[seedClosedTab]', e&&e.message); }
+}
 
 /* 사업자등록증 탭 기본 폴더 1회 생성 — ERP와 무관한 서류 정리용.
    (ERP 거래처는 업체관리/업체퇴사로 자동 분류되고, 나머지는 여기에 손으로 넣는다)
@@ -3076,7 +3099,9 @@ const Store = {
           if(!Store._profTabSeedDone){ Store._profTabSeedDone=true; setTimeout(seedProfTabs, 6000); } });
         /* 내 탭(저장된 검색·필터 조건) — 전 직원 공유 */
         watchCardMap(this.db.ref(DB_ROOT+'/views'), value => { state.views = value||{}; }, () => { renderSoon();
-          if(!Store._erpTabSeedDone){ Store._erpTabSeedDone=true; setTimeout(seedErpTabs, 3500); } });
+          if(!Store._erpTabSeedDone){ Store._erpTabSeedDone=true; setTimeout(seedErpTabs, 3500); }
+          /* 「🚪 해지」 탭은 유형 탭 «뒤»에 심는다 — 탭 줄 맨 끝에 서야 한다 */
+          if(!Store._closedTabSeedDone){ Store._closedTabSeedDone=true; setTimeout(seedClosedTab, 4000); } });
         /* ── 휴지통은 «구독하지 않는다» — 한 번만 읽는다 (요금 조사 2026-08-18) ──
            실측: 휴지통 1,888건 = **0.71MB**. `.on('value')` 로 구독하면 누가 명함을
            한 장 지우거나 되살릴 때마다 **그 0.71MB 가 기업정보함을 켜 둔 모든 기기로**
@@ -3372,6 +3397,8 @@ const Store = {
 
 /* 푸른이알피 업체관리의 업체 유형 (COMPANY_TYPE_SEED와 동일하게 유지) */
 const ERP_TYPES = ['자문','급여','노조','기금','사무대행'];
+/* 유형이 아닌 거르개는 «사람 말»로 적는다 — 화면에 'closed' 라고 뜨면 아무도 못 읽는다 */
+const ERP_FILTER_LABEL = { closed:'🚪 계약해지', linked:'업체관리 연결', none:'업체관리에 없음' };
 
 /* ══════ 🏢 ERP 거래처 담당자 매칭 ══════
    푸른 ERP(업체관리)의 회사·담당자를 읽어와, 명함의 회사명/사업자번호가 맞으면
@@ -3697,9 +3724,28 @@ const ErpMatch = {
         if(!g){ g={id:uid(), name:nm, kind:k, order:Date.now()}; Store.putGroup(g); state.groups[g.id]=g; }
         cache[ck]=g; return g;
       }
-      /* 자동 관리 대상 폴더(여기 있으면 상태 변화에 따라 재배치 허용) */
+      /* ── 종료 업체가 갈 폴더 (대표 보고 2026-08-31) ───────────────────────────
+         ★ 여기가 「이알피에서 계약종료했는데 폴더가 안 정리된다」의 까닭이었다.
+           이 자리는 이름이 «업체퇴사»인 폴더를 찾는데, 대표님 것은 「5.계약해지」다.
+           앞 번호를 떼도 «계약해지»라 못 알아보고, 계약이 끝나면 «업체퇴사»라는
+           폴더를 새로 만들어 그리로 보냈다 — 종료 업체가 두 폴더로 갈린다.
+         ⚠ 2026-08-29 에 손으로 누르는 도구(erpClosedFolderOf)는 이 잣대로 고쳤는데
+           «자동» 쪽은 그대로 남아 있었다. 고칠 때 둘 다 봐야 했다.
+         ⚠ 이제 잣대는 closedFolderName 한 곳이다 — 「업체퇴사」·「업체종료 및 퇴사」·
+           「5.계약해지」를 모두 같은 뜻으로 읽는다. 없을 때만 새로 만든다. */
+      const _closedCache = {};
+      const closedG = k => (_closedCache[k] = _closedCache[k]
+        || erpClosedFolderOf(k) || ensure('업체퇴사', k));
+      /* 자동 관리 대상 폴더(여기 있으면 상태 변화에 따라 재배치 허용)
+         ⚠ 대표님이 만든 종료 폴더도 «자동 관리 대상»에 넣는다. 안 넣으면 이알피에서
+           계약을 «되살려도» 그 명함이 종료 폴더에 영영 갇힌다 — 들어가는 길만 있고
+           나오는 길이 없는 폴더가 된다.
+         ⚠ 그래도 손으로 옮긴 것은 안 건드린다 — 아래에서 erpAutoFoldered 를 먼저 본다.
+           앱이 넣어 둔 것만 앱이 다시 옮긴다. */
       const AUTO_NAMES=['업체관리','업체퇴사','자문사','급여','기금','노조','사무대행'];
-      const autoIds = new Set(Object.values(state.groups||{}).filter(g=>g&&AUTO_NAMES.indexOf(_canon(g.name))>=0).map(g=>g.id));
+      const autoIds = new Set(Object.values(state.groups||{})
+        .filter(g=>g && (AUTO_NAMES.indexOf(_canon(g.name))>=0 || closedFolderName(g.name)))
+        .map(g=>g.id));
       /* ⚠ 예전에는 여기서 명함 한 장마다 Store.put(it) 을 불렀다. 그 한 번이 서버로 가는
          메시지 «세 개»다(items 한 번 + 공유 색인 idx·bykey 두 번). 명함 6,616장이면
          2만 개가 한꺼번에 나간다 — 그것도 화면을 열 때마다, 4초 뒤 한 번 더.
@@ -3714,20 +3760,20 @@ const ErpMatch = {
         if(!it) return;
         const m = ErpMatch.match(it);
         const matched = !!m && ERP_TYPES.indexOf(m.type)>=0;   /* 자문·급여·노조·기금·사무대행 */
-        const targetNm = matched ? (m.left ? '업체퇴사' : '업체관리') : null;
         const k = kindOf(it);
+        /* ⚠ 갈 곳을 «이름»이 아니라 «폴더»로 정한다. 이름으로 정하면 대표님이 만든
+           종료 폴더를 못 알아보고 같은 뜻의 폴더를 하나 더 만든다(위 주석). */
+        const target = matched ? (m.left ? closedG(k) : ensure('업체관리',k)) : null;
         if(it.erpAutoFoldered){
           /* 자동 배정분: 현재 자동 폴더 안에 있을 때만 상태 따라 재배치 (사용자가 딴 폴더로 옮겼으면 존중) */
-          if(targetNm && autoIds.has(it.group)){
-            const tg = ensure(targetNm,k);
-            if(it.group !== tg.id){ it.group=tg.id; it.updatedAt=Date.now(); pend.push(it); n++; }
+          if(target && autoIds.has(it.group)){
+            if(it.group !== target.id){ it.group=target.id; it.updatedAt=Date.now(); pend.push(it); n++; }
           }
           return;
         }
         /* 미지정 + 매칭 → 대상 폴더로 자동 배정 */
-        if((it.group||'')==='' && targetNm){
-          const tg = ensure(targetNm,k);
-          it.group=tg.id; it.erpAutoFoldered=1; it.updatedAt=Date.now(); pend.push(it); n++;
+        if((it.group||'')==='' && target){
+          it.group=target.id; it.erpAutoFoldered=1; it.updatedAt=Date.now(); pend.push(it); n++;
         }
       });
       if(pend.length) autoFolderFlush(pend);
@@ -8356,12 +8402,26 @@ function listItems(kind){
          ⚠ 🚪 딱지와 「🚪 퇴사」 처리는 «그대로»다 — 없앤 것은 «골라 보기»뿐이다.
          ⚠ 기업 상세의 「🚪 종료」(coOnlyClosed)는 다른 기능이다. 거긴 살아 있다. */
       if (state.onlyPrivate && it.scope!=='private') return false;
-      /* ERP 연결 필터: 자문/급여/노조/기금(유형) · linked(연결만) · none(미연결) */
+      /* ERP 연결 필터: 자문/급여/노조/기금(유형) · linked(연결만) · none(미연결) · closed(해지) */
       if (state.erpFilter){
         const m = ErpMatch.match(it);
         if (state.erpFilter==='none'){ if(m) return false; }
         else if (state.erpFilter==='linked'){ if(!m) return false; }
-        else { if(!m || (m.type||'')!==state.erpFilter) return false; }
+        /* ── 🚪 해지 탭 (대표 보고 2026-08-31) ────────────────────────────────
+           끝난 곳을 «어디선가는» 볼 수 있어야 한다. 유형 탭에서 뺐는데 볼 곳이
+           없으면 그것은 자료를 잃은 것과 같다(2026-08-29 「0건에 갇힘」의 교훈). */
+        else if (state.erpFilter==='closed'){ if(!(m && m.left)) return false; }
+        else {
+          if(!m || (m.type||'')!==state.erpFilter) return false;
+          /* ★ 유형 탭은 «지금 일하는 곳»만 센다 (대표 보고 2026-08-31).
+             대표 화면: 「자문 60」에 계약이 끝난 사업장이 섞여 있었다. 이알피에서
+             계약을 종료해도 유형(자문)은 그대로 남기 때문이다 — 유형은 «무슨 일을
+             하던 곳인가»이지 «지금 일하는가»가 아니다. 그 둘을 한 탭에 담으면
+             자문 몇 곳과 일하는지를 이 화면에서 셀 수가 없다.
+             ⚠ 「전체」는 그대로 다 보여 준다 — 아무것도 숨기지 않는다.
+             ⚠ 끝난 곳은 「🚪 해지」 탭에 모인다. 빼기만 하고 갈 곳을 안 만들면 안 된다. */
+          if(m.left) return false;
+        }
       }
       /* 담당 노무사 필터 — 표의 「담당」 배지를 눌러 걸린다(대표 지시 2026-08-11).
          유형 필터(위)와 따로 걸린다 — 「급여」만 보기와 「김보람 담당만 보기」는 다른 일이고,
@@ -9245,7 +9305,7 @@ function narrowLabel(){
   if(q) bits.push(`"${q}" 검색`);
   if(state.group && state.group!=='all'){ const g=state.groups[state.group]; if(g) bits.push(`📁 ${g.name}`); }
   if(state.vtab){ const v=(state.views||{})[state.vtab]; if(v) bits.push(`🏷 ${v.name}`); }
-  if(state.erpFilter) bits.push(state.erpFilter);
+  if(state.erpFilter) bits.push(ERP_FILTER_LABEL[state.erpFilter] || state.erpFilter);
   if(state.erpMgr) bits.push('담당 '+state.erpMgr);
   /* ⚠ 정보부족·개인은 아래 이름표 돌기가 넣는다. 여기 또 적으면 두 번 들어간다
      — 이름표에 그 둘이 더해진 뒤로 실제로 그랬다(점검 A2 때 드러났다). */
@@ -19606,7 +19666,7 @@ function saveCurrentAsView(){
   const cond=[]; const c=f.colFilter||{};
   if(f.q) cond.push(`검색 "${f.q}"`);
   if(f.region) cond.push('지역 '+f.region);
-  if(f.erpFilter) cond.push('ERP '+f.erpFilter);
+  if(f.erpFilter) cond.push('ERP '+(ERP_FILTER_LABEL[f.erpFilter]||f.erpFilter));
   if(f.erpMgr) cond.push('담당 '+f.erpMgr);
   if(c.company) cond.push(`회사에 "${c.company}"`);
   if(c.name) cond.push(`이름에 "${c.name}"`);
@@ -19748,7 +19808,7 @@ function openViewManager(){
     if(f.group&&f.group!=='all') out.push('폴더 '+((state.groups[f.group]||{}).name||'(삭제된 폴더)'));
     if(f.owner&&f.owner!=='all') out.push('담당 '+f.owner);
     if(f.region) out.push('지역 '+f.region);
-    if(f.erpFilter) out.push('ERP '+f.erpFilter);
+    if(f.erpFilter) out.push('ERP '+(ERP_FILTER_LABEL[f.erpFilter]||f.erpFilter));
     if(f.erpMgr) out.push('담당 '+f.erpMgr);
     if(c.company) out.push(`회사에 "${c.company}"`);
     if(c.name) out.push(`이름에 "${c.name}"`);
