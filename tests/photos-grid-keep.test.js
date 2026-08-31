@@ -29,6 +29,7 @@ const app = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
 /* ══════ ① 되읽어도 미리보기를 들고 넘어간다 ══════ */
 
 function loadCtx(over) {
+  const seeded = [];
   const ctx = Object.assign({
     Object: Object, Promise: Promise, console: { warn: function () {} },
     gridItems: [
@@ -48,9 +49,17 @@ function loadCtx(over) {
     resetGridRenderLimit: function () {}, showGridError: function () {},
     renderGrid: function () {}, fillThumbs: function () {},
     openAskedPhoto: function () {}, resumeCollectIfAny: function () {},
-    autoReadPending: function () {}, coSweep: function () {}
+    autoReadPending: function () {}, coSweep: function () {},
+    /* 씨앗 층 — 여기서는 «담기만» 본다(그리는 쪽은 아래 따로 본다) */
+    gridSeedKey: function () { return 'K'; },
+    drawGridSeed: function () { seeded.push('draw'); },
+    gridSeedPut: function (k, items) { seeded.push({ key: k, n: Object.keys(items).length }); },
+    _seeded: seeded
   }, over || {});
   vm.createContext(ctx);
+  vm.runInContext('var _gridLoadToken = 0; var _gridSeeded = false;', ctx);
+  /* 목록을 만드는 «같은 손»을 그대로 쓴다 — 대역을 넣으면 화면과 다른 것을 보게 된다 */
+  vm.runInContext(cutFn(app, 'function itemsToGrid('), ctx);
   vm.runInContext(cutFn(app, 'function loadGrid('), ctx);
   return ctx;
 }
@@ -111,14 +120,56 @@ test('★★ 격자에 글을 쓰는 곳이 «하나»다 — 딴 데서 비우�
 
 /* ══════ ③ 되읽기를 부르는 자리 — 왜 자주 겪으셨나 ══════ */
 
-test('★ 탭을 다시 볼 때·남이 올릴 때 되읽는다 — 그래서 이 고침이 크게 듣는다', () => {
+/* ══════ ④ 창을 다시 봤다고 «다시 읽지 않는다» (대표 지시 2026-08-31) ══════
+   "쓸데없이 창을 연 것만으로 비용이 나가면 사용 의미가 없다."
+   「전체 근로자」는 되읽을 때마다 직원 아홉 사람의 한 해 치 정보를 통째로 받는다.
+   탭을 스물쯤 띄워 두고 오가시므로 하루에 수십~수백 번 그 값을 치르고 있었다. */
+
+test('★★ 창에 다시 눈이 갔다고 «되읽지 않는다» — 여기가 새던 자리다', () => {
+  const bare = app.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
+  assert.ok(!/addEventListener\('focus',\s*scheduleRemotePhotoRefresh\)/.test(bare),
+    '★★ 창을 다시 볼 때마다 아홉 사람 몫을 처음부터 다시 읽습니다');
+  assert.ok(!/visibilitychange[\s\S]{0,120}scheduleRemotePhotoRefresh/.test(bare),
+    '★★ 창을 다시 보이게 할 때마다 같은 값을 치릅니다');
+});
+
+test('★★ 대신 «바뀌었다는 신호»로 읽는다 — 안 그러면 남이 올린 사진이 영영 안 보인다', () => {
   const bare = app.replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.match(bare, /addEventListener\('focus', scheduleRemotePhotoRefresh\)/,
-    '탭을 다시 볼 때 되읽는 길이 없어졌습니다');
   assert.match(bare, /watchUploadIndex\(scheduleRemotePhotoRefresh\)/,
-    '남이 올릴 때 되읽는 길이 없어졌습니다');
+    '★★ 되읽는 길을 «전부» 없애면 남이 올린 사진이 안 들어옵니다');
   /* 되읽기는 몰아서 한 번만 — 여러 장이 한꺼번에 올라와도 한 번이다 */
   const fn = cutFn(app, 'function scheduleRemotePhotoRefresh(');
   assert.match(fn, /clearTimeout\(remoteRefreshTimer\)/,
     '★ 몰아 주지 않으면 열 장이 올라올 때 열 번 되읽습니다');
+});
+
+/* ══════ ⑤ 씨앗 — 열면 곧바로 그린다 (0원) ══════ */
+
+test('★★ 최신본이 오면 «씨앗으로 담는다» — 다음에 열 때 기다림이 없다', async () => {
+  const c = loadCtx();
+  await c.loadGrid();
+  const put = c._seeded.find(function (x) { return x && x.key; });
+  assert.ok(put, '★★ 담지 않으면 다음에 열 때 또 처음부터 읽습니다');
+  assert.equal(put.n, 3, '★ 받은 것을 그대로 담아야 합니다');
+});
+
+test('★★ 씨앗은 «보기마다 따로» 담는다 — 섞으면 남의 사진이 내 화면에 뜬다', () => {
+  const fn = cutFn(app, 'function gridSeedKey(');
+  assert.match(fn, /gridYear/, '★★ 해를 안 가르면 작년 사진이 올해에 뜹니다');
+  assert.match(fn, /gridOwner/, '★★ 사람을 안 가르면 남의 사진이 내 화면에 뜹니다');
+});
+
+test('★★ 씨앗으로 그린 것을 «다시 담지 않는다» — 지워진 사진이 영영 살아남는다', () => {
+  const fn = cutFn(app, 'function drawGridSeed(');
+  assert.ok(fn.indexOf('gridSeedPut') < 0,
+    '★★ 씨앗을 다시 담으면, 그 사이 지운 사진이 되살아나 영영 안 사라집니다');
+  assert.match(fn, /if \(gridItems\.length\) return/,
+    '★★ 최신본이 이미 왔는데 옛것으로 덮으면 안 됩니다');
+});
+
+test('★★ «늦게 온 옛 답»이 새 답을 덮지 않는다 — 해를 바꾸면 남의 목록이 그려진다', () => {
+  const fn = cutFn(app, 'function loadGrid(');
+  assert.match(fn, /const want = \+\+_gridLoadToken/, '★ 읽기를 가릴 표가 없습니다');
+  assert.match(fn, /if \(want !== _gridLoadToken\) return;/,
+    '★★ 늦게 온 답을 안 버리면, 해를 바꾼 뒤 옛 해 사진이 그려집니다');
 });

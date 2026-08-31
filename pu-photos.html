@@ -19,7 +19,7 @@
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <!-- ?v= 저장 층을 고치면 반드시 올린다 — 캐시에 묵으면 고친 것이 통째로 묻힌다. -->
-<script src="js/pu-photo-store.js?v=17"></script>
+<script src="js/pu-photo-store.js?v=18"></script>
 <!-- 주민번호 가림 — 계산 층과, 급여데이터함과 나눠 쓰는 긋기 층 -->
 <script src="js/pu-rrn-mask.js?v=4"></script>
 <script src="js/pu-rrn-mask-ui.js?v=3"></script>
@@ -2481,10 +2481,17 @@ function startUploadWatch() {
   if (stopUploadWatch) stopUploadWatch();
   stopUploadWatch = PuPhotoStore.watchUploadIndex(scheduleRemotePhotoRefresh);
 }
-window.addEventListener('focus', scheduleRemotePhotoRefresh);
-document.addEventListener('visibilitychange', function () {
-  if (!document.hidden) scheduleRemotePhotoRefresh();
-});
+/* ── 창을 다시 봤다고 «다시 읽지 않는다» (대표 지시 2026-08-31) ──
+   "쓸데없이 창을 연 것만으로 비용이 나가면 사용 의미가 없다."
+
+   예전에는 창에 다시 눈이 갈 때마다(focus·visibilitychange) 목록을 통째로 다시 읽었다.
+   「전체 근로자」는 그때마다 **직원 아홉 사람의 한 해 치 사진 정보**를 처음부터 받는다.
+   대표님은 탭을 스물쯤 띄워 두고 오가시므로 **하루에 수십~수백 번** 그 값을 치렀다.
+
+   ⚠ 대신 **바뀌었다는 신호가 올 때만** 읽는다 — 누가 사진을 올리면
+     watchUploadIndex 가 그 자리에서 알려 주므로 **늦어지지 않는다**.
+   ⚠ 신호는 창이 뒤에 있을 때도 살아 있다(실시간 구독) — 다시 보는 순간 이미 최신이다.
+     그래도 막히는 자리(권한·연결)가 있으면 **브라우저 새로고침**이 그대로 남아 있다. */
 /* 앱 전환·뒤로가기·탭 닫기 때 브라우저가 페이지를 보관하더라도 카메라는 놓는다.
    그렇지 않으면 녹화 표시와 손전등이 남고, 돌아왔을 때 죽은 스트림을 재사용한다. */
 window.addEventListener('pagehide', function () { camStop(); });
@@ -7451,7 +7458,105 @@ function listMineAndShared(year) {
   });
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   사진 목록 씨앗 — 지난번 받아 둔 것을 이 기기(IndexedDB)에 담아 둔다
+   ══════════════════════════════════════════════════════════════════════════
+   대표 지시 2026-08-31: "쓸데없이 창을 연 것만으로 비용이 나가면 사용 의미가 없다."
+
+   「전체 근로자」로 열면 직원 아홉 사람의 한 해 치 사진 정보를 통째로 읽는다.
+   그 값을 **열 때마다** 치르지 않도록, 지난번 받은 것을 먼저 그리고 최신본은
+   뒤에서 갈아 끼운다. 기업정보함(pu-cards)이 이미 쓰는 검증된 방식이다.
+
+   ⚠ localStorage 가 아니라 IndexedDB 다 — 수백 KB 를 localStorage 에 넣으면
+     쓸 때마다 화면이 멈칫하고(동기), 다른 앱 몫의 한도까지 갉아먹는다.
+   ⚠ 씨앗은 **보기마다 따로** 담는다(해·누구 사진). 섞으면 남의 사진이 내 화면에 뜬다.
+   ⚠ 씨앗에는 «그 사이 지워진 사진»이 남아 있을 수 있다. 그래서 씨앗으로 그린 동안에는
+     **아무것도 저장하지 않는다** — 최신본이 온 뒤에 다시 담는다.
+   ⚠ 그리는 것은 로그인이 붙은 뒤다(loadGrid 를 부르는 자리가 그렇다).
+   ⚠ 기기에 담긴 것은 그 브라우저를 여는 사람이 읽을 수 있다. 회사 PC 에서 쓰는 앱이라
+     두기로 한다 — 지우려면 브라우저 「사이트 데이터 삭제」다. */
+const GRID_SEED_DB = 'pu-photos-cache';
+function gridSeedKey() {
+  return 'items|' + gridYear + '|' + (gridOwner || 'mine');
+}
+function gridSeedOpen(cb) {
+  let done = false; const fin = v => { if (!done) { done = true; cb(v); } };
+  try {
+    const rq = indexedDB.open(GRID_SEED_DB, 1);
+    rq.onupgradeneeded = e => { e.target.result.createObjectStore('kv'); };
+    rq.onsuccess = e => fin(e.target.result);
+    rq.onerror = () => fin(null);
+    rq.onblocked = () => fin(null);
+  } catch (_) { fin(null); }
+}
+function gridSeedGet(key, cb) {
+  let done = false; const fin = v => { if (!done) { done = true; cb(v); } };
+  gridSeedOpen(function (db) {
+    if (!db) return fin(null);
+    try {
+      const g = db.transaction('kv', 'readonly').objectStore('kv').get(key);
+      g.onsuccess = () => { fin((g.result && g.result.items) || null); try { db.close(); } catch (_) {} };
+      g.onerror = () => { fin(null); try { db.close(); } catch (_) {} };
+    } catch (_) { fin(null); }
+  });
+}
+function gridSeedPut(key, items) {
+  gridSeedOpen(function (db) {
+    if (!db) return;
+    try {
+      db.transaction('kv', 'readwrite').objectStore('kv')
+        .put({ at: Date.now(), items: items }, key);
+      setTimeout(function () { try { db.close(); } catch (_) {} }, 800);
+    } catch (_) {}
+  });
+}
+/* 씨앗으로 그렸고 아직 최신본이 안 왔다 — 그 동안은 씨앗을 다시 담지 않는다 */
+let _gridSeeded = false;
+
+/* ── 받은 지도를 «화면 목록»으로 — 씨앗과 최신본이 «같은 손»을 쓴다 ──
+   두 벌로 두면 한쪽만 고쳐진다. 실제로 씨앗을 넣자마자 되메우기(healRead)가
+   씨앗 쪽에만 빠질 뻔했고, 검사가 그것을 잡았다(2026-08-31).
+
+   ⚠ 이미 읽어 둔 서식 가운데, 값이 pairs 에만 담기고 «이름 붙은 칸»은 빈 것이 있다.
+     그러면 화면에는 사업자등록번호가 또렷이 보이는데 그 아래에는 「사업자번호를
+     읽지 못해 기업 상세로 보낼 수 없습니다」가 뜬다 — 화면이 스스로 모순된 말을
+     한다(대표 캡처 2026-08-26, 서식 25장 가운데 5장). 다시 판독하면 요금이므로
+     **읽어 온 자리에서** 되메운다. 저장소에는 다시 안 쓴다. */
+function itemsToGrid(items, keepThumb) {
+  const out = Object.keys(items).map(id => ({
+    id: id, meta: items[id] || {}, thumb: (keepThumb && keepThumb[id]) || null
+  }));
+  try {
+    if (window.PuDocRead && PuDocRead.healRead) {
+      out.forEach(function (it) { PuDocRead.healRead(it.meta && it.meta.read); });
+    }
+  } catch (_) { /* 되메우기가 안 돼도 목록은 그대로 보여야 한다 */ }
+  out.sort(comparePhotosNewest);
+  return out;
+}
+
+/* 씨앗을 그린다 — 최신본이 벌써 왔으면 아무 일도 안 한다(옛것으로 덮으면 안 된다) */
+function drawGridSeed(key, want) {
+  gridSeedGet(key, function (items) {
+    if (!items || key !== gridSeedKey() || want !== _gridLoadToken) return;
+    if (gridItems.length) return;              // 최신본이 이미 왔다
+    gridItems = itemsToGrid(items, null);
+    _gridSeeded = true;
+    renderGrid();
+    fillThumbs();
+  });
+}
+/* 읽기가 겹칠 때 «늦게 온 옛 답»이 새 답을 덮지 않게 하는 표 */
+let _gridLoadToken = 0;
+
 function loadGrid() {
+  /* ⚠ 씨앗을 «먼저» 그린다 — 서버 답을 기다리는 동안 화면이 비어 있지 않게.
+     읽기가 겹칠 수 있으므로 표(token)를 들려 보내, 늦게 온 옛 답이 새 답을 안 덮게 한다. */
+  const seedKey = gridSeedKey();
+  const want = ++_gridLoadToken;
+  _gridSeeded = false;
+  if (!gridItems.length) drawGridSeed(seedKey, want);
+
   /* 전체 근로자 모드 — 판독·자동등록 대기열은 돌리지 않는다. 그건 '내가 올린
      것'을 처리하는 일이라, 남의 사진까지 자동으로 건드리면 안 된다. */
   const call = gridOwner === SHARED_OWNER
@@ -7474,22 +7579,15 @@ function loadGrid() {
          띄워 두고 오가시므로 사실상 수시로 겪으신다.
        ⚠ 같은 사진이면 주소도 같다 — 들고 넘어가도 «옛 그림»이 남을 일이 없다.
          사진 본문이 바뀌는 길(편집)은 **새 사진으로 담기**라 id 부터 다르다. */
+    /* ⚠ 늦게 온 옛 답은 버린다 — 그 사이 해·사람을 바꿨으면 남의 목록을 그리게 된다 */
+    if (want !== _gridLoadToken) return;
     const keepThumb = {};
     gridItems.forEach(function (o) { if (o && o.thumb) keepThumb[o.id] = o.thumb; });
-    gridItems = Object.keys(items).map(id => ({
-      id: id, meta: items[id] || {}, thumb: keepThumb[id] || null
-    }));
-    /* ⚠ 이미 읽어 둔 서식 가운데, 값이 pairs 에만 담기고 «이름 붙은 칸»은 빈 것이 있다.
-       그러면 화면에는 사업자등록번호가 또렷이 보이는데 그 아래에는 「사업자번호를
-       읽지 못해 기업 상세로 보낼 수 없습니다」가 뜬다 — 화면이 스스로 모순된 말을
-       한다(대표 캡처 2026-08-26, 서식 25장 가운데 5장). 다시 판독하면 요금이므로
-       **읽어 온 자리에서** 되메운다. 저장소에는 다시 안 쓴다. */
-    try {
-      if (window.PuDocRead && PuDocRead.healRead) {
-        gridItems.forEach(function (it) { PuDocRead.healRead(it.meta && it.meta.read); });
-      }
-    } catch (_) { /* 되메우기가 안 돼도 목록은 그대로 보여야 한다 */ }
-    gridItems.sort(comparePhotosNewest);
+    gridItems = itemsToGrid(items, keepThumb);
+    /* 최신본이 왔다 — 이제 이것을 씨앗으로 담는다(다음에 열 때 곧바로 그린다).
+       ⚠ 씨앗으로 그린 것을 다시 담으면 «그 사이 지워진 사진»이 영영 살아남는다. */
+    _gridSeeded = false;
+    gridSeedPut(seedKey, items);
     resetGridRenderLimit();
     showGridError('');
     renderGrid();
@@ -7736,14 +7834,24 @@ function renderGrid() {
        lazy 는 화면에 들어올 때까지 미루고, async 는 푸는 일을 화면 그리기와 갈라 놓는다. */
     const img = t ? '<img src="' + t + '" alt="" loading="lazy" decoding="async" draggable="false">' : '';
     /* 다른 앱(정부사업 컨설팅 등)으로 끌어다 놓을 수 있다. */
-    if (it.meta.kind === 'doc') {
+    /* ── 종이 카드는 «보여 줄 글자가 있을 때만» (대표 결정 2026-08-31, 안 ㉮) ──
+       "사진이 모두 안 나온다."
+       2026-08-16 에 서류 칸을 종이 카드로 뒤집으면서 사진을 26px 띠로 줄였다. 까닭은
+       「작은 미리보기로는 어차피 안 읽히니 그 자리를 제목에 주자」였다 — 그런데
+       **제목은 판독이 끝나야 생긴다.** 방금 올린 서류는 제목도 업체도 없어서
+       사진도 글자도 없는 **통째로 하얀 칸**이 됐다(대표 화면 2026-08-31, 8월 30일 5장).
+       ⚠ 그래서 «글자가 하나라도 있을 때만» 카드다. 없으면 사진을 꽉 채운다 —
+         판독이 끝나 제목이 생기면 저절로 카드로 바뀐다.
+       ⚠ 「서류」 딱지는 어느 쪽이든 그대로 붙는다 — 무엇인지는 늘 알아야 한다. */
+    const l1 = tt || capTxt;
+    const l2 = tt ? capTxt : '';
+    if (it.meta.kind === 'doc' && l1) {
       /* ── 서류: 종이 카드 (대표 결정 2026-08-16) ──
          제목이 주인공이고 미리보기는 위쪽 띠로 줄인다. 종이 스캔은 104px 에서
          어차피 안 읽히므로, 그 자리를 글자에 내주는 쪽이 훨씬 많이 알려 준다.
-         ⚠ 제목이 없으면(아직 판독 전·제목순 보기) 업체·설명을 제목 자리로 올린다 —
-           빈 줄을 남겨 두면 카드가 절반만 쓰인다. */
-      const l1 = tt || capTxt;
-      const l2 = tt ? capTxt : '';
+         ⚠ 제목이 없으면(제목순 보기) 업체·설명을 제목 자리로 올린다 —
+           빈 줄을 남겨 두면 카드가 절반만 쓰인다.
+         ⚠ 둘 다 없을 때는 여기 안 온다 — 위에서 사진을 꽉 채우는 쪽으로 갈렸다. */
       html += '<div class="cell doc' + (warn ? ' wnpad' : '') + on + '" data-id="' + esc(it.id) + '" draggable="true">' +
         '<span class="strip">' + img + tag + '</span>' +
         '<span class="bd">' +

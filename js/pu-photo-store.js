@@ -1286,19 +1286,35 @@
 
   /* 한 연도의 사진 목록(정보만). 본문·미리보기는 안 딸려 온다 — 경로가 갈라져 있어서.
      owner 를 넘기면 그 사람 것을 읽는다(관리자만 규칙이 허락한다). */
+  /* ── 옛 자리는 «한 해에 한 번만» 읽는다 (대표 지시 2026-08-31) ──
+     "쓸데없이 창을 연 것만으로 비용이 나가면 사용 의미가 없다."
+
+     옛 자리(2026-08-03 사람별로 가르기 전 자리)는 **사람마다 다르지 않고 모두 한 곳**이다.
+     그런데 「전체 근로자」로 열면 아홉 사람 몫으로 **같은 것을 아홉 번** 읽고 있었다.
+     ⚠ 지우지는 않는다 — 옛 사진이 하나라도 남아 있는데 안 읽으면 «사진이 사라져 보인다»
+       (2026-08-03 에 실제로 겪었다). 값만 한 번으로 줄인다.
+     ⚠ 한 번 읽은 것은 이 화면이 열려 있는 동안만 들고 있다 — 새로고침하면 다시 읽는다.
+       옛 자리는 이제 아무도 안 쓰므로 그 사이에 바뀔 일이 없다. */
+  var _legacyYear = {};
+  function legacyYear(year) {
+    var k = String(year);
+    if (!_legacyYear[k]) {
+      _legacyYear[k] = deps.db.ref(legacyRoot('items') + '/' + k).once('value')
+        .then(function (s) { return s.val() || {}; })
+        .catch(function () { return {}; });
+    }
+    return _legacyYear[k];
+  }
+
   function listYear(year, owner) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var who = owner || deps.uid;
     return Promise.all([
       deps.db.ref(base(owner) + '/items/' + year).once('value'),
-      /* 옛 자리도 함께 읽는다 — 옮기기 전에 사진이 사라져 보이면 그것만으로도 사고다.
-         (실사용 보고 2026-08-03: 자리를 바꾸자 올린 사진이 모두 사라져 보였다)
-         옛 자리를 지운 뒤에는 여기서 아무것도 안 나오므로 그대로 두어도 된다. */
-      deps.db.ref(legacyRoot('items') + '/' + year).once('value')
-        .catch(function () { return { val: function () { return null; } }; })
+      legacyYear(year)
     ]).then(function (snaps) {
       var mine = snaps[0].val() || {};
-      var old = snaps[1].val() || {};
+      var old = snaps[1] || {};
       var out = {};
       Object.keys(old).forEach(function (id) {
         var m = old[id] || {};

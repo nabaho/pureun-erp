@@ -63,7 +63,15 @@ test('관리자 PC는 다른 휴대폰 업로드를 감지하고 자동으로 �
   assert.match(store, /DB_ROOT \+ '\/owners'/);
   assert.match(store, /ref\.on\('value'/);
   assert.match(html, /watchUploadIndex\(scheduleRemotePhotoRefresh\)/);
-  assert.match(html, /addEventListener\('visibilitychange'/);
+  /* ⚠ 예전에는 「창을 다시 볼 때(visibilitychange)도 갱신한다」를 함께 못박았다.
+     2026-08-31 대표 지시로 그 길을 **없앴다** — "쓸데없이 창을 연 것만으로 비용이
+     나가면 사용 의미가 없다". 「전체 근로자」는 창을 다시 볼 때마다 아홉 사람의 한 해 치를
+     통째로 다시 읽고 있었고, 탭을 스물쯤 띄워 두고 오가시므로 하루 수십~수백 번이었다.
+     지켜야 하는 것은 «남이 올린 사진이 저절로 들어오는 것»이고, 그것은 위의 실시간
+     신호가 한다(창이 뒤에 있어도 살아 있다). 갱신을 몰아 주는 것까지만 함께 본다. */
+  assert.match(html, /function scheduleRemotePhotoRefresh\(/);
+  assert.match(html, /clearTimeout\(remoteRefreshTimer\)/,
+    '몰아 주지 않으면 열 장이 한꺼번에 올라올 때 열 번 다시 읽는다');
 });
 
 test('회의사진은 독립 분류로 유지되고 확인필요 오류로 취급하지 않는다', () => {
