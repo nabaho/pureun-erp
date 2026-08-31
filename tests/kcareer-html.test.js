@@ -2213,3 +2213,27 @@ test('★★ 못 그리면 «왜» 인지 적고 다른 길을 알려 준다 —
   // 여러 쪽 중 일부만 그려졌으면 그건 지우지 않는다
   assert.match(r, /if\(!drawn\)\{/, '이미 그린 것이 있으면 지우지 않습니다');
 });
+
+/* ===== ★★ OCR 이 이미 있는 것을 또 만들던 것 (2026-08-31) ===== */
+
+test('★★ 완전히 같은 서류는 «새로 만들지 않는다»', () => {
+  // 여러 번 올리다 보니 같은 서류가 계속 쌓였다. 중복관리로 뒤늦게 지우기보다
+  // 애초에 안 만드는 것이 맞다(대표 지시).
+  const sv = funcSource('saveOCRRecord');
+  assert.match(sv, /var _k=dupKey\(rec\)/, '⚠ 기준은 중복관리와 «같은 것»(dupKey)을 써야 합니다');
+  assert.match(sv, /if\(_same\)\{/, '있으면 만들지 않아야 합니다');
+  assert.match(sv, /return \{ dup:true, id:_same\.id, attached:_added \}/, '중복이라고 알려야 합니다');
+  // ⚠ 중복이어도 원본이 «없던» 기록에는 붙여 준다 — 그건 더해 주는 것이다
+  assert.match(sv, /if\(!hasOriginal\(_same\)\)\{/, '원본 없으면 붙여 줘야 합니다');
+});
+
+test('★★ 중복은 «만든 것»으로 세지 않는다 — 숫자가 거짓이 된다', () => {
+  const d = funcSource('ocrDrop');
+  assert.match(d, /var tally=function\(res\)\{/, '세는 곳이 한 군데여야 합니다');
+  assert.match(d, /if\(res && res\.dup\)\{ dup\+\+;/, '중복은 따로 셉니다');
+  // ⚠ 세 갈래가 모두 tally 를 거쳐야 한다 — 하나라도 done++ 이면 숫자가 어긋난다
+  assert.equal((d.match(/tally\(await saveOCRRecord\(/g) || []).length, 3,
+    '⚠ 세 갈래(HWP·OCR·파일명) 모두 tally 를 거쳐야 합니다');
+  assert.ok(!/saveOCRRecord\([^)]*\); done\+\+/.test(d), '⚠ done++ 로 되돌리면 숫자가 거짓이 됩니다');
+  assert.match(d, /이미 있는 서류 '\+dup\+'건은 «새로 만들지 않았습니다»/, '몇 건인지 알려야 합니다');
+});

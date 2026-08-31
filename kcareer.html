@@ -6178,7 +6178,24 @@ async function saveOCRRecord(page,parsed,file,ext,b64){
   } else if(page==='id_doc'){ store='id_docs'; recId=nextId('ID','id_docs');
     rec={id:recId,kind:parsed.kind||'신분증',name:parsed.name||'',number:parsed.number||'',expiry:parsed.expiry||'',memo:parsed.memo||'',fname:file.name,savedAt:new Date().toISOString()};
   } else return null;
-  const db=get(store); db.unshift(rec); set(store,db);
+  /* ★ 이미 «완전히 같은» 것이 있으면 새로 만들지 않는다 (대표 지시 2026-08-31).
+     여러 번 올리다 보니 같은 서류가 계속 쌓였다 — 중복관리로 뒤늦게 지우는 것보다
+     «애초에 안 만드는» 것이 맞다.
+     ⚠ 기준은 중복관리와 «같은 것»(dupKey = 기관·내용·시기)을 쓴다. 다르게 잡으면
+        「여기선 중복인데 저기선 아니다」가 되어 더 헷갈린다.
+     ⚠ 다만 원본이 «없던» 기존 기록에는 이번 파일을 붙여 준다 — 그건 더해 주는 것이다. */
+  const db=get(store);
+  var _k=dupKey(rec);
+  var _same=db.find(function(r){ return r && dupKey(r)===_k; });
+  if(_same){
+    var _added=false;
+    if(!hasOriginal(_same)){
+      try{ await saveFileUnified(_same.id,{id:_same.id,name:file.name,ext,size:file.size,base64:b64,savedAt:new Date().toISOString()}); _added=true; }catch(e){}
+      if(_added && !_same.fname){ _same.fname=file.name; set(store,db); }
+    }
+    return { dup:true, id:_same.id, attached:_added };
+  }
+  db.unshift(rec); set(store,db);
   saveFileUnified(recId,{id:recId,name:file.name,ext,size:file.size,base64:b64,savedAt:new Date().toISOString()});
   return recId; }
 async function ocrDrop(files,page){ files=[...files]; if(!files.length) return;
@@ -6186,7 +6203,13 @@ async function ocrDrop(files,page){ files=[...files]; if(!files.length) return;
   const apiKey=getApiKey(),gvKey=getGVisionKey();
   /* 2026-08-17: Gemini 는 열쇠가 아니라 로그인이 조건이다(서버가 열쇠를 든다) */
   if(!apiKey&&!gvKey&&!aiReady()){ toast('로그인이 필요합니다 — 또는 환경설정→API키 설정'); return; }
-  let done=0,failed=0,apiErr=null;
+  let done=0,failed=0,dup=0,dupAttached=0,apiErr=null;
+  /* ⚠ saveOCRRecord 가 「이미 있다」를 돌려주면 «만든 것»으로 세면 안 된다 —
+     그러면 화면엔 「10건 등록」인데 실제로는 하나도 안 늘어 이상해 보인다. */
+  var tally=function(res){
+    if(res && res.dup){ dup++; if(res.attached) dupAttached++; return false; }
+    done++; return true;
+  };
   for(const file of files){ try{
     const ext=(file.name.split('.').pop()||'').toLowerCase();
     if(!['pdf','jpg','jpeg','png','hwp','hwpx'].includes(ext)){ failed++; continue; }
@@ -6201,7 +6224,7 @@ async function ocrDrop(files,page){ files=[...files]; if(!files.length) return;
     }
     const isPDF=!pay.asImage, mt=pay.mt, sendB64=pay.b64;
     const prompt=PAGE_OCR_PROMPT[page]||PAGE_OCR_PROMPT.wiccok; let parsed=null;
-    if(['hwp','hwpx'].includes(ext)){ const fb=quickParseFilename(file.name,page); if(fb){ await saveOCRRecord(page,fb,file,ext,b64); done++; toast('📝 HWP는 OCR 불가 — 파일명 등록+첨부'); } else failed++; continue; }
+    if(['hwp','hwpx'].includes(ext)){ const fb=quickParseFilename(file.name,page); if(fb){ tally(await saveOCRRecord(page,fb,file,ext,b64)); toast('📝 HWP는 OCR 불가 — 파일명 등록+첨부'); } else failed++; continue; }
     if(!parsed && aiReady()){ const gj=await _geminiOCR(prompt,sendB64,mt); if(gj){ if(gj.parsed) parsed=gj.parsed; else if(gj.err) apiErr=gj.err; } }
     if(gvKey&&!isPDF){ try{ const r=await kcFetch(`https://vision.googleapis.com/v1/images:annotate?key=${gvKey}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requests:[{image:{content:b64},features:[{type:'DOCUMENT_TEXT_DETECTION'}]}]})});
       if(r.ok){ const d=await r.json(); const text=d.responses?.[0]?.fullTextAnnotation?.text||d.responses?.[0]?.textAnnotations?.[0]?.description||'';
@@ -6213,11 +6236,13 @@ async function ocrDrop(files,page){ files=[...files]; if(!files.length) return;
       const resp=await kcFetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1200,messages:[{role:'user',content}]})});
       if(resp.ok){ const rd=await resp.json(); const raw=rd.content.map(c=>c.text||'').join('').replace(/```json|```/g,'').trim(); const m=raw.match(/\{[\s\S]*\}/); if(m) parsed=JSON.parse(m[0]); }
       else{ apiErr='Claude '+resp.status; console.warn('Claude',resp.status,await resp.text().catch(()=>'')); } }catch(e){ console.warn('Claude',e); } }
-    if(parsed&&(parsed.org||parsed.title||parsed.school||parsed.name||parsed.bank||parsed.kind)){ await saveOCRRecord(page,parsed,file,ext,b64); done++; toast(`✅ ${(parsed.org||parsed.title||parsed.school||parsed.name||parsed.bank||parsed.kind||'').slice(0,20)}`); }
-    else { const fb=quickParseFilename(file.name,page); if(fb){ await saveOCRRecord(page,fb,file,ext,b64); done++; toast(`📄 파일명 등록: ${file.name.slice(0,18)}`); } else failed++; }
+    if(parsed&&(parsed.org||parsed.title||parsed.school||parsed.name||parsed.bank||parsed.kind)){ tally(await saveOCRRecord(page,parsed,file,ext,b64)); toast(`✅ ${(parsed.org||parsed.title||parsed.school||parsed.name||parsed.bank||parsed.kind||'').slice(0,20)}`); }
+    else { const fb=quickParseFilename(file.name,page); if(fb){ tally(await saveOCRRecord(page,fb,file,ext,b64)); toast(`📄 파일명 등록: ${file.name.slice(0,18)}`); } else failed++; }
   }catch(e){ failed++; console.error(e); } }
   renderCareer(page);
   /* ⚠ 실패를 조용히 넘기지 않는다 — 「왜 안 되는지 모르겠다」가 가장 나쁘다 */
+  if(dup) toast('🔁 이미 있는 서류 '+dup+'건은 «새로 만들지 않았습니다»'
+    +(dupAttached?' (그중 '+dupAttached+'건은 원본만 붙였습니다)':''), 6000);
   if(!done && failed) toast('❌ 한 건도 못 읽었습니다'+(apiErr?' — '+apiErr:' — 로그인·API 키를 확인해 주세요'), 6000);
   else toast(`OCR 완료: ${done}건${failed?' / 실패 '+failed:''}${apiErr?' · ⚠️ API 오류('+apiErr+') — 키·크레딧 확인 필요, 일부는 파일명으로만 등록됨':''}`); }
 
