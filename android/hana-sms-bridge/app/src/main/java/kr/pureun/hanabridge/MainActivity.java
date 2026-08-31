@@ -274,16 +274,45 @@ public final class MainActivity extends Activity {
         }
     }
 
+    /* ★★ 「눌렀다」는 것을 «반드시» 서버에 알린다 (2026-08-31).
+         2026-08-31 아침에 이 자리에서 하루를 잃을 뻔했다 — 대표가 단추를 눌렀는데
+         서버 기록이 꿈쩍도 안 했다. 찾을 것이 없거나 문자함을 못 열면 아래 갈래들이
+         «그냥 되돌아갔고», 서버는 아무것도 못 들었다. 그러면 판 번호도, 권한 상태도,
+         「사람이 눌렀다」는 사실도 영영 안 올라온다 — 정작 그때가 가장 궁금한 때다.
+
+       ⚠ lastSweepAt 은 찍지 않는다(byHand). 그것은 「폰이 «스스로» 15분마다 돈다」는
+         뜻이라, 사람이 누른 것으로 찍으면 절전에 재워진 폰이 멀쩡해 보인다. */
+    private void tellServer(boolean canRead, int foundCount, boolean readOk, boolean capped) {
+        try {
+            if (!SecureStore.connected(this)) return;
+            JSONObject ping = new JSONObject();
+            ping.put("action", "sweepPing");
+            ping.put("uid", SecureStore.uid(this));
+            ping.put("deviceId", SecureStore.deviceId(this));
+            ping.put("byHand", true);          /* 사람이 눌렀다 — 스스로 돈 것이 아니다 */
+            ping.put("canReadSms", canRead);
+            ping.put("foundCount", foundCount);
+            ping.put("readOk", readOk);
+            ping.put("capped", capped);
+            HanaUploadWorker.post(ping, SecureStore.token(this));
+        } catch (Exception ignored) {
+            /* 알리기 하나 실패했다고 가져오기를 막지 않는다 */
+        }
+    }
+
     private void importHistory() {
         if (importing) return;
         importing = true;
         history.setEnabled(false);
         status.setText("문자함에서 지난 " + HISTORY_DAYS + "일치를 찾는 중입니다…");
         executor.execute(() -> {
+            boolean canRead = checkSelfPermission(Manifest.permission.READ_SMS)
+                    == PackageManager.PERMISSION_GRANTED;
             List<SmsHistoryReader.Item> found;
             try {
                 found = SmsHistoryReader.recent(this, HISTORY_DAYS, System.currentTimeMillis());
             } catch (Exception error) {
+                tellServer(canRead, 0, false, false);
                 importing = false;
                 runOnUiThread(() -> {
                     status.setText("문자함을 읽지 못했습니다.");
@@ -295,6 +324,7 @@ public final class MainActivity extends Activity {
                  「모른다」다. 예전에는 둘을 같은 말로 알려 「문자를 지우셨나」를
                  물었고, 대표는 멀쩡한 문자함을 뒤졌다 (코덱스 지적 2026-08-30). */
             if (SmsHistoryReader.lastFailed) {
+                tellServer(canRead, 0, false, SmsHistoryReader.lastCapped);
                 importing = false;
                 runOnUiThread(() -> {
                     status.setText("문자함을 읽지 못했습니다.\n" +
@@ -304,6 +334,7 @@ public final class MainActivity extends Activity {
                 return;
             }
             if (found.isEmpty()) {
+                tellServer(canRead, 0, true, SmsHistoryReader.lastCapped);
                 importing = false;
                 runOnUiThread(() -> {
                     status.setText("최근 " + HISTORY_DAYS + "일 문자함에서 하나 거래문자를 찾지 못했습니다.\n" +
@@ -354,6 +385,9 @@ public final class MainActivity extends Activity {
                             ? "\n\n⚠ 한 번에 " + SmsHistoryReader.MAX_MESSAGES
                               + "통까지만 봅니다. 더 오래된 문자는 못 가져왔으니 푸른에 알려 주세요."
                             : "");
+            /* 잘 가져온 경우에도 알린다 — 전부 중복이면 ingest 는 자국을 남기지만,
+               판 번호·권한·본 통수는 이 한 줄로만 올라간다. */
+            tellServer(canRead, found.size(), true, SmsHistoryReader.lastCapped);
             SecureStore.setLastStatus(this, report);
             importing = false;
             runOnUiThread(() -> {
