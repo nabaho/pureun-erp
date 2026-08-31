@@ -1431,7 +1431,7 @@ function loadAllBox(dbRef) {
     + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
     + fnSource('rowsOf') + '\n' + fnSource('firstPickOf') + '\n' + fnSource('loadDraft') + '\n'
     /* 자문사현황도 같은 자리에서 읽는다(업체관리·표시) — 그 부품이 없으면 loadAll 이 터진다 */
-    + noConst(constLine('PARTNER_PATH')) + '\n' + fnSource('companiesFrom') + '\n'
+    + noConst(constLine('PARTNER_PATH')) + '\n' + noConst(constLine('PARTNER_LOGO_PATH')) + '\n' + fnSource('companiesFrom') + '\n'
     + fnSource('partnerMark') + '\n' + noConst(constLine('POSTED_TEXT')) + '\n'
     + fnSource('postedOf') + '\n' + fnSource('partnerRows') + '\n'
     + fnSource('loadAll') + '\n'
