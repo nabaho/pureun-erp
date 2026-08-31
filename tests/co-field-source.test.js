@@ -323,7 +323,11 @@ function drawPanel(o){
   vm.createContext(ctx);
   /* ⚠ 2026-08-31(점검 B2): 상세에 계약 기간 한 줄이 붙었다. 대역을 넣는 대신 «진짜»를
      실어 준다 — 대역을 넣으면 그 줄이 터져도 이 검사가 모른다. */
-  vm.runInContext(fnBody('coVal') + '\n' + fnBody('coSrcOf') + '\n'
+  /* ⚠ 2026-08-31: 출처를 «짧게» 적는 잣대가 갈라져 나왔다(coSrcShort). 대역이 아니라
+     진짜를 함께 싣는다 — 안 실으면 상세가 통째로 터지고, 그 까닭이 안 보인다. */
+  vm.runInContext(src.match(/^const CO_SRC_SHORT = \{[^}]*\};/m)[0].replace(/^const /, 'var ')
+    + '\n' + fnBody('coSrcShort') + '\n'
+    + fnBody('coVal') + '\n' + fnBody('coSrcOf') + '\n'
     + fnBody('erpContractPeriod') + '\n' + fnBody('todayYmd') + '\n'
     + fnBody('coSrcTagHtml') + '\n' + fnBody('coDetailPanelHtml'), ctx);
   return ctx.coDetailPanelHtml(o);
