@@ -2185,3 +2185,31 @@ test('★★ 폴더 묻기는 «파일을 읽기 전»에 한다 — 늦으면 �
   assert.ok(askAt > 0 && readAt > 0, '두 곳이 다 있어야 합니다');
   assert.ok(askAt < readAt, '⚠ 파일 읽기보다 «먼저» 물어야 폴더 창이 뜹니다');
 });
+
+/* ===== ★★ PDF 미리보기가 «빈 칸»으로 끝나던 것 (2026-08-31) ===== */
+
+test('★★ pdf.js 를 심는 곳은 «하나»다 — 다섯 벌이면 하나만 고쳐진다', () => {
+  const plant = (source.match(/cdnjs\.cloudflare\.com\/ajax\/libs\/pdf\.js\/[\d.]+\/pdf\.min\.js/g) || []);
+  assert.equal(plant.length, 1, '⚠ 심는 자리를 늘리지 말 것 (지금 ' + plant.length + '곳)');
+  assert.match(source, /async function _pdfLoadLib\(\)/, '한 곳에서만 싣습니다');
+  // 부르는 곳은 여럿이어도 된다 — 심는 곳이 하나면 된다
+  assert.ok((source.match(/_pdfLoadLib\(\)/g) || []).length >= 4, '여러 화면이 이 하나를 씁니다');
+});
+
+test('★★ PDF 그리기도 «한 곳»에서 — 시간 제한이 있어야 멈추지 않는다', () => {
+  const r = funcSource('pdfRenderInto');
+  assert.match(r, /_pdfRaceMs\([\s\S]{0,120}'PDF 열기'\)/, '문서 열기에 제한');
+  assert.match(r, /_pdfRaceMs\(pg\.getPage|_pdfRaceMs\(pdf\.getPage/, '쪽 열기에 제한');
+  assert.match(r, /_pdfRaceMs\(pg\.render[\s\S]{0,140}'PDF 그리기'\)/, '⚠ 그리기에 제한이 없으면 빈 칸으로 끝납니다');
+  // 부르는 곳이 «둘 다» 이 하나를 쓴다
+  assert.ok((source.match(/await pdfRenderInto\(/g) || []).length >= 2, '미리보기 두 곳이 같은 코드를 씁니다');
+});
+
+test('★★ 못 그리면 «왜» 인지 적고 다른 길을 알려 준다 — 조용히 비우지 않는다', () => {
+  const r = funcSource('pdfRenderInto');
+  assert.match(r, /이 환경에서는 PDF 를 화면에 그리지 못했습니다/, '이유를 적어야 합니다');
+  assert.match(r, /↗ 새 탭/, '다른 길을 알려 줘야 합니다');
+  assert.match(r, /⏳ 원본을 그리는 중/, '그리는 중이라고 먼저 알려야 합니다');
+  // 여러 쪽 중 일부만 그려졌으면 그건 지우지 않는다
+  assert.match(r, /if\(!drawn\)\{/, '이미 그린 것이 있으면 지우지 않습니다');
+});
