@@ -51,8 +51,47 @@ function errorHint(err) {
   return '메일 서버가 받지 않았습니다: ' + msg + hint;
 }
 
+/* ── 💻 내 PC 파일이 창고를 거쳐 온다 (대표 물음 2026-08-31) ──
+   "용량이 너무 작은 것 아닌가"
+
+   ★ 예전에는 파일을 «글자로 바꿔 요청에 실어» 보냈다. 그런데 이 함수는 1세대라
+     요청 한 번에 10MB 까지만 받고, 글자로 바꾸면 크기가 1.33배로 분다 —
+     그래서 8MB 라 적어 두고도 7.5MB 언저리부터 조용히 실패할 수 있었다.
+   ★ 이제 브라우저가 파일을 창고에 먼저 올리고, 요청에는 «자리(path)»만 실어 보낸다.
+     여기서 창고에서 꺼내 붙인다 — 10MB 한도와 무관해져 다음메일의 18MB 를 다 쓴다.
+
+   ⚠ 자리를 «그대로 믿지 않는다» — 보낸 사람 제 자리(mailout/<uid>/…)만 꺼낸다.
+     안 막으면 주소만 바꿔 «남의 파일»을 첨부로 빼낼 수 있다.
+   ⚠ 예전 길(dataUrl)도 그대로 받는다 — 창고 규칙이 아직 안 올라갔거나 막혔을 때
+     브라우저가 그리로 되돌아간다. 한쪽만 남기면 그때 붙이기가 통째로 죽는다. */
+const MAILOUT_MAX = 20 * 1024 * 1024;
+/* ⚠ pu-cards.html 의 storageBucket 과 «같은 이름»이어야 한다 — 다르면 브라우저가 올린
+   자리를 서버가 못 찾아, 첨부가 조용히 빠진 채 메일이 나간다. */
+const CARDS_BUCKET = 'pureun-erp-photos';
+function mailOutPathOk(path, uid) {
+  const p = String(path || '');
+  if (!uid) return false;
+  if (p.indexOf('..') >= 0) return false;
+  return p.indexOf('pucards/mailout/' + uid + '/') === 0;
+}
+async function readMailOut(deps, path) {
+  const file = deps.getStorage().bucket(CARDS_BUCKET).file(String(path));
+  const [meta] = await file.getMetadata();
+  if (Number(meta.size || 0) > MAILOUT_MAX) throw new Error('첨부가 너무 큽니다');
+  const [buf] = await file.download();
+  return buf;
+}
+/* 보낸 뒤 치운다 — 안 치우면 창고에 임시 파일이 영영 쌓인다(요금이 붙는다).
+   ⚠ 못 치워도 «보내기는 성공»이다 — 치우다 실패해서 보낸 메일이 실패로 보이면 안 된다. */
+async function sweepMailOut(deps, paths) {
+  for (const p of (paths || [])) {
+    try { await deps.getStorage().bucket(CARDS_BUCKET).file(String(p)).delete(); }
+    catch (e) { console.warn('mailout 치우기 실패:', p, String((e && e.message) || e)); }
+  }
+}
+
 /* 첨부 모으기 — 자료함 자료(번호만 받아 서버가 읽는다) + 이번 편지에만 붙일 파일 */
-async function collectAttachments(db, body) {
+async function collectAttachments(db, body, deps, uid) {
   const matIds = Array.isArray(body.matIds) ? body.matIds.slice(0, 10) : [];
   const attachments = [], names = [];
   for (const id of matIds) {
@@ -71,15 +110,34 @@ async function collectAttachments(db, body) {
   const found = attachments.length;
   // ⚠ 자료함에 저장하지 않는다. 저장하면 매번 고친 사본이 자료함에 쌓인다.
   const extras = Array.isArray(body.files) ? body.files.slice(0, 10) : [];
+  const used = [];          /* 창고에서 꺼내 쓴 자리 — 보낸 뒤 치운다 */
   for (const f of extras) {
     if (!f || typeof f !== 'object') continue;
-    const att = MS.toAttachment({ fileName: f.name }, f.dataUrl);
+    let att = null;
+    if (f.path) {
+      if (!deps || !uid) { console.warn('mailout 을 읽을 길이 없다 — 건너뛴다'); continue; }
+      /* 창고 길 — 자리가 «제 자리»인지 먼저 본다(머리글의 까닭) */
+      if (!mailOutPathOk(f.path, uid)) {
+        console.warn('mailout 남의 자리 요청:', String(f.path));
+        continue;
+      }
+      try {
+        const buf = await readMailOut(deps, f.path);
+        att = { filename: String(f.name || '첨부'), content: buf };
+        used.push(String(f.path));
+      } catch (e) {
+        console.warn('mailout 읽기 실패:', String(f.path), String((e && e.message) || e));
+        continue;
+      }
+    } else {
+      att = MS.toAttachment({ fileName: f.name }, f.dataUrl);   /* 예전 길 */
+    }
     if (!att) continue;
     attachments.push(att);
     names.push(String(f.name || '첨부'));
   }
   return {
-    attachments, names, extras,
+    attachments, names, extras, used,
     wanted: matIds.length,
     missing: matIds.length - found,
     noneFound: !!(matIds.length && !found),
@@ -89,7 +147,9 @@ async function collectAttachments(db, body) {
 /* 실제 발송 + 기록.
    돌려주는 것: { ok:true, ... } 또는 { ok:false, status, error } */
 async function deliver(opts) {
-  const { db, body, from, pass, envId, byEmail } = opts;
+  /* ⚠ deps·uid 는 «창고 첨부»에만 쓴다(2026-08-31). 안 넘어오면 창고 길은 조용히
+     건너뛰고 예전 길(dataUrl)만 붙는다 — 부르는 곳을 하나 빠뜨려도 메일은 나간다. */
+  const { db, body, from, pass, envId, byEmail, deps, uid } = opts;
   if (!from) {
     return { ok: false, status: 500,
       error: '보내는 주소가 비어 있습니다.\n기업정보함 → 자료함 → ✉️ 메일 본문에서 「보내는 주소」를 넣어 주세요.' };
@@ -99,7 +159,7 @@ async function deliver(opts) {
       error: '메일 비밀번호가 아직 없습니다.\nDAUM_MAIL_PASSWORD(앱 비밀번호)를 넣고 다시 배포하세요.' };
   }
 
-  const got = await collectAttachments(db, body);
+  const got = await collectAttachments(db, body, deps, uid);
   if (got.noneFound) {
     return { ok: false, status: 400, error: '붙일 자료를 찾지 못했습니다. 자료함에서 파일을 다시 올려 주세요.' };
   }
@@ -224,6 +284,9 @@ async function deliver(opts) {
     if (!kept.ok) console.warn('archiveSent 못 남김:', kept.why, kept.box);
     else if (kept.dropped) console.warn('archiveSent 상한 초과 —', kept.dropped, '통은 사본 없음');
   } catch (e) { console.warn('archiveSent', (e && e.message) || e); }
+  /* 창고에서 꺼내 쓴 임시 파일을 치운다 — 나간 «뒤»에 치운다(먼저 치우면 못 붙인다).
+     ⚠ 치우다 실패해도 보내기는 성공이다 — 안에서 삼킨다(sweepMailOut). */
+  if (deps && got.used && got.used.length) await sweepMailOut(deps, got.used);
   const cardId = String(body.cardId || '');
   if (cardId && !/[.#$/\[\]]/.test(cardId)) {
     try {
@@ -299,5 +362,6 @@ function slimPayload(body) {
 
 module.exports = {
   deliver, collectAttachments, loginIds, errorHint, fromLine,
+  mailOutPathOk, sweepMailOut, CARDS_BUCKET, MAILOUT_MAX,
   errorsBefore, slimPayload, CARDS_ROOT,
 };

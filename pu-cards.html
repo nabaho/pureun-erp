@@ -4700,13 +4700,67 @@ function toggleComposeMat(id){
    한글에서 조항을 고친 계약서처럼 **이번 편지에만** 쓰는 파일.
    ⚠ 자료함에 저장하지 않는다 — 저장하면 고친 사본이 매번 자료함에 쌓인다.
      계속 쓸 것이면 자료함 [교체]로 올린다(안내 문구로 알린다). */
+/* ══════════════════════════════════════════════════════════════════════════
+   왜 8MB 였나, 그리고 왜 창고를 거치게 됐나 (대표 물음 2026-08-31)
+   ══════════════════════════════════════════════════════════════════════════
+   "용량이 너무 작은 것 아닌가. 좀 더 용량을 넓혀야 되는 것 아닌가?"
+
+   ★ 8MB 는 «다음메일 한도»가 아니다 — 다음은 18MB 를 준다(MAIL_MAX_BYTES).
+     막고 있던 것은 «우리 서버로 가는 길»이다. 보내는 함수(sendMaterialMail)는
+     1세대(gen1) 라 요청 한 번에 «10MB»까지만 받는다. 그런데 파일을 글자로 바꿔
+     실어 보내면(base64) 크기가 «1.33배»로 분다.
+     ⚠ 그래서 8MB 파일은 실려 갈 때 10.7MB 가 되어 «이미 한도를 넘었다» —
+       숫자만 8MB 로 두고 있었을 뿐, 7.5MB 언저리부터는 보내기가 「서버 응답 413」
+       으로 조용히 실패할 수 있었다. 숫자를 올리는 것으로는 못 넓힌다.
+
+   ★ 그래서 길을 바꿨다 — 파일을 «창고(Storage)»에 먼저 올리고, 요청에는
+     「어디에 있는지」만 실어 보낸다. 서버가 창고에서 꺼내 붙인다.
+     그러면 10MB 한도와 무관해지고, 다음메일이 주는 18MB 를 다 쓸 수 있다.
+     ⚠ 자료함 자료(matIds)는 «원래부터» 이 방식이었다(서버가 실시간DB 에서 직접
+       읽는다). 💻 내 PC 파일만 예외로 남아 있던 것을 이제 맞췄다.
+
+   ⚠ 창고 규칙 한 칸(pucards/mailout)이 올라가야 한다. 아직 안 올라갔거나 창고가
+     막히면 «예전 길»로 되돌아간다 — 작은 파일은 그대로 붙는다. 큰 파일만
+     「규칙이 올라가야 합니다」로 막고, 왜 안 되는지 말해 준다.
+     안 그러면 규칙이 올라가기 전까지 «붙이기가 통째로» 죽는다. */
+const MAIL_FILE_MAX  = 18 * 1024 * 1024;   /* 다음메일이 주는 만큼 */
+const MAIL_INLINE_MAX = 6 * 1024 * 1024;   /* 창고가 막혔을 때 예전 길로 갈 수 있는 크기
+                                              (6MB → 실려 갈 때 8MB, 10MB 한도 안) */
+/* 창고에 올릴 자리 — 사람마다 따로, 편지마다 따로. 보낸 뒤 서버가 치운다. */
+function mailOutRef(name){
+  const u = firebase.auth().currentUser;
+  if(!u) throw new Error('로그인이 필요합니다');
+  const id = 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+  /* ⚠ 이름은 자리에 안 쓴다 — 한글·빈칸·슬래시가 든 파일 이름이 그대로 주소가 되면
+       올라가지 않는 것이 생긴다. 이름은 보낼 때 따로 실어 보낸다. */
+  return { path: `pucards/mailout/${u.uid}/${id}`,
+           ref: firebase.storage().ref(`pucards/mailout/${u.uid}/${id}`) };
+}
 async function addLocalFiles(input){
   const files=[...((input&&input.files)||[])]; if(input) input.value='';
   grabCompose(); if(!_compose || !files.length) return;
   _compose.files = _compose.files || [];
   let added=0;
   for(const f of files){
-    if(f.size > 8*1024*1024){ toast(`${f.name} — 파일이 너무 큽니다 (${fmtMB(f.size)}). 8MB 이하만 붙일 수 있습니다`, 8000); continue; }
+    if(f.size > MAIL_FILE_MAX){
+      toast(`${f.name} — 파일이 너무 큽니다 (${fmtMB(f.size)}). ${fmtMB(MAIL_FILE_MAX)} 이하만 붙일 수 있습니다`, 8000);
+      continue;
+    }
+    /* ① 창고로 (제 길) */
+    try{
+      const { path, ref } = mailOutRef(f.name);
+      await ref.put(f);
+      _compose.files.push({ name:f.name, size:f.size, path:path });
+      added++;
+      continue;
+    }catch(e){
+      /* ② 창고가 막혔다 — 예전 길로. 작은 것만 갈 수 있다. */
+      if(f.size > MAIL_INLINE_MAX){
+        toast(`${f.name} (${fmtMB(f.size)}) — 큰 파일을 붙이려면 창고 규칙 한 칸이 올라가야 합니다`
+            + `\n(${fmtMB(MAIL_INLINE_MAX)} 이하는 지금도 붙습니다)`, 12000);
+        continue;
+      }
+    }
     try{
       const dataUrl = await new Promise((res,rej)=>{
         const r=new FileReader();
@@ -5055,7 +5109,9 @@ async function sendCompose(){
       matIds: c.ids, set: _sendMatSetName || '',
       /* 보낸 메일함에 '누구에게'를 사람 이름으로 보이게 — 주소만 남으면 알아보기 어렵다 */
       toName: (state.items[c.cardId]||{}).name || (state.items[c.cardId]||{}).company || '',
-      files: (c.files||[]).map(f=>({ name:f.name, dataUrl:f.dataUrl }))
+      /* ⚠ path 든 것은 «창고에 있다»는 뜻이라 dataUrl 이 없다 — 둘 다 실어 보내고
+           서버가 있는 쪽을 쓴다(위 addLocalFiles 머리글). 지우면 큰 첨부가 조용히 빠진다. */
+      files: (c.files||[]).map(f=>({ name:f.name, dataUrl:f.dataUrl, path:f.path }))
     });
     const cardId = c.cardId, wasMail = (state.view==='mail');
     const lost = (c.files||[]).length;

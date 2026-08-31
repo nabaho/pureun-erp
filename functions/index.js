@@ -603,6 +603,9 @@ exports.sendMaterialMail = functions
     const r = await MD.deliver({
       db: db, body: body, from: from, pass: mailPass(),
       envId: process.env.DAUM_MAIL_ID, byEmail: sender.email || "",
+      /* 💻 내 PC 파일이 창고를 거쳐 온다 (2026-08-31) — 창고를 열 길(deps)과
+         「누구 자리인가」(uid)가 있어야 꺼낸다. 빠뜨리면 큰 첨부가 조용히 빠진다. */
+      deps: { getStorage: getStorage }, uid: sender.uid || "",
     });
     if (!r.ok) { res.status(r.status || 500).json({ ok: false, error: r.error }); return; }
     res.json(r);
