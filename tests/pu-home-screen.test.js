@@ -2414,13 +2414,15 @@ test('★ 되돌리면 다시 원래 글자다 — 되돌린 뒤 복사하면 �
 test('★ 직책이 다르면 «채우기로는 안 된다»고 먼저 말한다 — 단추를 누른 뒤에 알면 늦다', () => {
   const ctx = box();
   ctx.esc = escStub();
-  /* ★ 「채울 수 있는 칸」은 부품이 정한다 — 검사가 목록을 따로 박아 두지 않는다 */
+  /* ★ 「채울 수 있는 칸」은 부품이 정한다 — 검사가 목록을 따로 박아 두지 않는다.
+     오늘은 견주는 네 칸을 모두 채울 수 있어 이 안내가 할 말이 없다. 그래도 그물은 남긴다 —
+     채우는 칸이 줄거나, 채울 수 없는 칸이 새로 대조에 들어오면 그때 일해야 한다. */
   const 채움 = ctx.PuHomeFill.MEMBER_FIELDS.map(f => f.key);
-  const 못채움 = ['이름', '직책1', '직책2', '경력사항'].filter(k => 채움.indexOf(k) < 0);
-  assert.ok(못채움.length, '채울 수 없는 칸이 하나도 없다면 이 안내 자체가 필요 없다');
-  const note = ctx.fillGapNote({ status: 'pending', fields: 못채움.concat(채움) }, '');
+  const 못채움 = '메인 설명';   // 부품이 채우지 못하는 칸(홈페이지에서 읽어올 수도 없다)
+  assert.equal(채움.indexOf(못채움), -1, '이 검사의 전제가 깨졌다');
+  const note = ctx.fillGapNote({ status: 'pending', fields: [못채움].concat(채움) }, '');
   assert.ok(note, '★ 채우기로 안 되는 칸이 있는데 아무 말도 안 한다');
-  assert.match(note, new RegExp(못채움[0]), '어느 칸인지 안 말한다');
+  assert.match(note, new RegExp(못채움), '어느 칸인지 안 말한다');
   assert.match(note, /손으로|직접/, '그럼 어떻게 하라는 건지 안 말한다');
   assert.doesNotMatch(note, new RegExp(채움[0]),
     '★ 단추가 채우는 칸까지 «손으로 고치라»고 한다');
