@@ -27,10 +27,70 @@ test('판정 모듈을 외부 파일로 로드한다', () => {
   assert.match(source, /<script src="js\/kcareer-scan\.js(\?v=\d+)?"><\/script>/);
 });
 
-test('서류 폴더는 읽기 전용으로만 연다 — readwrite 요청이 없어야 한다', () => {
-  assert.ok(!/mode:\s*'readwrite'/.test(source), '원본 폴더에 쓰기 권한을 요청하면 안 됩니다');
-  assert.ok(!/createWritable/.test(source), '원본 파일에 쓰기를 시도하면 안 됩니다');
-  assert.ok(!/removeEntry/.test(source), '원본 파일을 삭제하면 안 됩니다');
+/* ★★ 2026-08-31 대표 요청으로 「서류 폴더 제자리에 저장」이 생겼다.
+   안전장치를 «풀지 않고» 더 정확하게 겨눈다 —
+   연결·스캔은 여전히 읽기 전용이고, 쓰기는 «저장하는 그 순간»에만, 덮기·지우기는 여전히 금지. */
+
+test('★★ 폴더 «연결·스캔»은 여전히 읽기 전용이다', () => {
+  // 평소에 쓰기 권한을 들고 있으면 실수 한 번에 원본이 날아간다
+  assert.match(source, /showDirectoryPicker\(\{id:'kcareer-docs', mode:'read'\}\)/,
+    '⚠ 폴더를 열 때는 읽기로만 엽니다');
+  assert.match(funcSource('fsEnsurePermission'), /var opt = \{mode:'read'\}/,
+    '⚠ 평소 권한 확인은 읽기입니다');
+});
+
+test('★★ 쓰기 권한은 «저장할 때만» 묻는다', () => {
+  const w = funcSource('fsEnsureWrite');
+  assert.match(w, /mode:'readwrite'/, '저장용 권한 함수가 있어야 합니다');
+  // ⚠ readwrite 는 이 한 곳에서만 — 여기저기 퍼지면 통제가 안 된다
+  assert.equal((source.match(/mode:'readwrite'/g) || []).length, 1,
+    '⚠ readwrite 는 fsEnsureWrite 한 곳에서만 써야 합니다');
+  assert.match(funcSource('fsSaveToFolder'), /await fsEnsureWrite\(root\)/,
+    '저장 직전에 물어야 합니다');
+});
+
+test('★★ 원본을 덮지도 지우지도 옮기지도 않는다', () => {
+  // ⚠ 같은 이름이 있으면 「이름 (2).pdf」로 비켜 쓴다 — 덮으면 되돌릴 수 없다
+  const f = funcSource('fsFreeName');
+  assert.match(f, /await dir\.getFileHandle\(want\);/, '있는지 먼저 봐야 합니다');
+  assert.match(f, /base\+' \('\+n\+'\)'\+ext/, '겹치면 번호를 붙여 비켜 씁니다');
+  // 지우기·옮기기는 어디에도 없다
+  assert.ok(!/removeEntry/.test(source), '⚠ 원본을 지우면 안 됩니다');
+  assert.ok(!/\bmove\(/.test(source), '⚠ 원본을 옮기면 안 됩니다');
+  // 폴더를 새로 만들지 않는다 — 오타 폴더가 생기면 자료가 흩어진다
+  assert.ok(!/getDirectoryHandle\([^)]*create\s*:\s*true/.test(source),
+    '⚠ 없는 폴더를 새로 만들지 않습니다');
+});
+
+test('★★ 어느 폴더로 갈지는 한 표에서 정한다 — 화면마다 흩어지면 어긋난다', () => {
+  assert.match(source, /var KC_FOLDER = \[/);
+  ['1. 위촉장', '2. 자격증 및 수료증', '3. 포상 및 표창', '4. 경력증명서',
+   '5. 이력서 및 프로필', '6. 컨설팅 실적증명', '7. 컨설턴트,위원신청등'].forEach((d) => {
+    assert.ok(source.indexOf("'" + d + "'") > 0, d + ' 이 표에 있어야 합니다');
+  });
+  // 표창은 위촉장과 «같은 상자»에 살므로 유형까지 봐야 갈린다
+  const seg = source.slice(source.indexOf('var KC_FOLDER = ['), source.indexOf('function fsFolderFor'));
+  assert.match(seg, /type: \/표창\|포상\|감사\|공로\|상장\/, dir: '3\. 포상 및 표창'/);
+});
+
+test('★★ 파일 이름을 기록에서 짓는다 — 년도·기관·내용(일자)', () => {
+  const f = funcSource('fsFileName');
+  assert.match(f, /\[year, org, what\]\.filter\(Boolean\)\.join\(' '\)/,
+    '⚠ 없는 칸은 빼고 이어야 합니다 — 「(없음)」을 지어 넣지 않습니다');
+  assert.match(f, /head\.slice\(0, 90\)/, '길면 잘라야 합니다(경로 길이 제한)');
+  /* ⚠ 정규식 [\/…] 은 \/ 가 «슬래시 이스케이프»로 먹혀 역슬래시가 안 지워진다(실측 2026-08-31).
+     글자 목록으로 한 글자씩 견줘야 윈도우가 못 쓰는 아홉 글자가 다 걸린다. */
+  const safe = funcSource('fsSafe');
+  assert.match(safe, /var bad = /, '못 쓰는 글자를 목록으로 둬야 합니다');
+  assert.match(safe, /bad\.indexOf\(c\) >= 0/, '한 글자씩 견줘야 합니다');
+  assert.ok(!/new RegExp/.test(safe), '⚠ 정규식으로 되돌리면 역슬래시가 새어 나갑니다');
+});
+
+test('★★ 폴더에 못 넣으면 «평소대로» 내려받기 폴더로 — 조용히 실패하지 않는다', () => {
+  const d = funcSource('downloadToFolder');
+  assert.match(d, /if\(where\)\{ toast\('📁 '\+where\+' 에 저장했습니다'\); return; \}/,
+    '어디에 저장됐는지 알려야 합니다');
+  assert.match(d, /downloadFile\(id\);/, '안 되면 평소 내려받기로 떨어뜨립니다');
 });
 
 test('폴더 연결 함수가 있다', () => {
@@ -627,7 +687,11 @@ test('rowActions는 fs 레코드에 다운로드·원본삭제를 주지 않는�
   assert.match(src, /isFs/);
   assert.match(src, /openLocalOriginal/);
   // fs 분기가 base64용 버튼보다 앞에 와야 한다
-  assert.ok(src.indexOf('isFs?') < src.indexOf('downloadFile'));
+  // ⚠ 2026-08-31 내려받기가 downloadToFolder(서류 폴더 제자리 저장)로 바뀌었다.
+  //    규칙은 그대로 — 이미 폴더에 있는 원본에는 저장 단추를 주지 않는다.
+  assert.ok(src.indexOf('isFs?') < src.indexOf('downloadToFolder'));
+  assert.ok(!/isFs[sS]{0,200}downloadToFolder/.test(src.slice(0, src.indexOf(':has?'))),
+    'fs 레코드 갈래에는 저장 단추가 없어야 합니다');
 });
 
 test('원본 없는 항목만 필터와 중복관리 표시가 fs 레코드를 인식한다', () => {
