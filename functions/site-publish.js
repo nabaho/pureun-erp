@@ -12,6 +12,22 @@
      site/ 아래 .html 만. 이 규칙 하나로 앱 코드·검사·보안규칙·워크플로가 모두 막힌다.
      느슨하게 하면(폴더를 늘리거나 확장자를 열면) 그 통로가 그대로 열린다. */
 
+/* ★ 홈페이지가 «실제로 서 있는» 저장소.
+   ═══════════════════════════════════════════════════════════════════════════
+   도메인(푸른노무법인.kr)은 이 저장소를 가리킨다. 우리 저장소(nabaho/pureunall)의
+   뿌리는 이미 푸른ERP 가 쓰고 있어서, 도메인을 그리로 붙이면 뿌리에 ERP 가 뜬다.
+
+   ★ 두 곳에 «함께» 쓴다:
+     ① nabaho/pureun-site — 사람이 보는 홈페이지 (쪽 자리에서 site/ 를 뗀다)
+     ② nabaho/pureunall/site — 우리 쪽 사본. 검사가 이것을 잣대로 삼는다.
+   한 곳만 쓰면 곧 서로 어긋나고, 어느 쪽이 진짜인지 아무도 모르게 된다. */
+const SITE_REPO = "nabaho/pureun-site";
+
+/* 우리 자리(site/people/index.html) → 홈페이지 자리(people/index.html) */
+function 홈페이지자리(p) {
+  return String(p == null ? "" : p).replace(/^site\//, "");
+}
+
 /* 올려도 되는 자리 — site/ 아래 .html 만.
    ‥(상위 이동)·빗금 두 개·물음표·역슬래시·인코딩된 빗금은 규칙 자체가 걸러 낸다. */
 const PATH_RE = /^site\/(?:[a-z0-9_-]+\/){0,3}[a-z0-9_-]+\.html$/;
@@ -85,5 +101,5 @@ async function 올리기(githubRequest, token, repo, path, content, message, bas
   });
 }
 
-module.exports = { PATH_RE, MAX_BYTES, IMAGE_RE, MAX_IMAGE_BYTES,
+module.exports = { PATH_RE, MAX_BYTES, IMAGE_RE, MAX_IMAGE_BYTES, SITE_REPO, 홈페이지자리,
                    올릴자리인가, 올릴그림자리인가, 사연, 올리기 };

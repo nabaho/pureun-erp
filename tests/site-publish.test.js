@@ -172,3 +172,27 @@ test('★ 그림은 «다시 감싸지» 않는다 — 감싸면 글자가 그�
   assert.equal(Buffer.from(보낸것[0].content, 'base64').toString('utf8'), '<html>글</html>',
     '글자는 감싸서 보내야 한다');
 });
+
+/* ══════ 홈페이지가 «실제로 서 있는» 저장소 ══════
+   도메인은 전용 저장소를 가리킨다 — 우리 저장소 뿌리는 이미 푸른ERP 가 쓴다.
+   두 곳에 «함께» 쓴다: 사람이 보는 홈페이지 + 검사가 잣대로 삼는 우리 사본. */
+
+test('★ 전용 저장소는 우리 저장소와 «다른» 곳이다 — 같으면 도메인 뿌리에 ERP 가 뜬다', () => {
+  assert.match(S.SITE_REPO, /^[\w.-]+\/[\w.-]+$/, '저장소 이름 모양이 아니다');
+  assert.notEqual(S.SITE_REPO, 'nabaho/pureunall',
+    '★ 홈페이지를 푸른ERP 저장소에 두면 도메인 뿌리에 ERP 가 뜬다');
+});
+
+test('★ 우리 자리에서 «site/» 를 떼어 홈페이지 자리로 옮긴다', () => {
+  [
+    ['site/index.html', 'index.html'],
+    ['site/people/index.html', 'people/index.html'],
+    ['site/notice/139/index.html', 'notice/139/index.html'],
+    ['site/files/logo/n1.png', 'files/logo/n1.png']
+  ].forEach(([a, b]) => {
+    assert.equal(S.홈페이지자리(a), b, '★ 자리를 잘못 옮겼다: ' + a);
+  });
+  /* 앞이 site/ 가 아니면 건드리지 않는다 — 엉뚱한 데를 자르지 않게 */
+  assert.equal(S.홈페이지자리('people/site/x.html'), 'people/site/x.html');
+  assert.equal(S.홈페이지자리(''), '');
+});
