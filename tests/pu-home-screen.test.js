@@ -134,14 +134,25 @@ test('홈페이지에 글을 쓰는 경로가 없다', () => {
   assert.ok(!/document\.forms\[[^\]]*\]\.submit\(\)/.test(html));
 });
 
-test('바깥으로 나가는 길은 홈페이지를 «읽는» 것 하나뿐이다', () => {
-  /* 이 화면은 홈페이지를 직접 바꾸지 않는다. 지켜야 할 약속은 «어디로 보내는가»이지
-     «몇 번 보내는가»가 아니다 — 개수를 못 박으면 정당한 읽기 하나가 늘 때 깨지고,
-     이 저장소에서 검사 하나가 모든 앱 배포를 막은 적이 있다. 대상만 못 박는다. */
+test('★ 바깥으로 나가는 길은 «이름 붙은 우리 주소»뿐이다 — 주소를 코드에 박아 나가지 않는다', () => {
+  /* 지켜야 할 약속은 «어디로 보내는가»이지 «몇 번 보내는가»가 아니다 —
+     개수를 못 박으면 정당한 요청 하나가 늘 때 깨진다(이 저장소에서 검사 하나가
+     모든 앱 배포를 막은 적이 있다). 대상만 못 박는다.
+     2026-08-31: 홈페이지를 새로 만들기로 하면서 «올리기»와 «새 쪽 읽기»가 늘었다.
+     늘어난 것도 모두 «이름 붙은 상수»여야 한다 — 주소를 그 자리에 박으면 걸린다. */
+  const 허용 = ['READ_HOMEPAGE_URL', 'PUBLISH_URL', 'SITE_BASE'];
   const targets = [...html.matchAll(/\bfetch\s*\(\s*([A-Za-z_$][\w$]*|['"`][^'"`]*['"`])/g)].map(m => m[1]);
-  assert.ok(targets.length > 0, 'fetch 를 하나도 찾지 못했습니다 — 홈페이지를 읽는 길이 사라졌습니다');
-  targets.forEach(t => assert.equal(t, 'READ_HOMEPAGE_URL',
-    '홈페이지를 «읽는» 곳 말고 다른 데로 나가는 요청이 있습니다: ' + t));
+  assert.ok(targets.length > 0, 'fetch 를 하나도 찾지 못했습니다 — 홈페이지로 가는 길이 사라졌습니다');
+  targets.forEach(t => assert.ok(허용.indexOf(t) >= 0,
+    '★ 이름 없는 주소로 나가는 요청이 있습니다: ' + t));
+
+  /* 그 이름들이 «우리 것»을 가리키는지까지 본다 — 이름만 붙이고 남의 서버면 소용없다 */
+  허용.forEach(이름 => {
+    const m = new RegExp('const ' + 이름 + " = '([^']+)'").exec(html);
+    if (!m) return;                       // 아직 안 쓰는 이름은 넘어간다
+    assert.match(m[1], /^https:\/\/(us-central1-pureun-erp\.cloudfunctions\.net|nabaho\.github\.io)\//,
+      '★ ' + 이름 + ' 이 우리 것이 아닌 곳을 가리킵니다: ' + m[1]);
+  });
   assert.match(html, /READ_HOMEPAGE_URL/);
 });
 

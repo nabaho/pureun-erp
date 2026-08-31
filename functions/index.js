@@ -20,6 +20,7 @@ const {
   safeGithubNumber,
   githubRequest,
 } = require("./dev-automation");
+const { MAX_BYTES, 올릴자리인가, 사연, 올리기 } = require("./site-publish");
 const { homepageUrl } = require("./homepage-fetch");
 const HanaMessage = require("./hana-message");
 
@@ -2028,6 +2029,60 @@ exports.readHomepage = functions
       res.json({ path: req.body.path, html: html, readAt: Date.now() });
     } catch (err) {
       res.status(err.status || 500).json({ error: err.message || "홈페이지를 읽지 못했습니다." });
+    }
+  });
+
+/* 홈페이지 쪽을 «저장소에 올린다» — 대표가 단추를 눌렀을 때만 (대표 결정 2026-08-31).
+   ★ 저절로 올라가지 않는다. 고치다 만 내용이 실수로 홈페이지에 나가지 않게,
+     사람이 「지금 올린다」를 알고 누른다.
+   ★ 무엇을 올릴지는 «화면»이 만든다. 서버는 올려 주기만 한다 —
+     화면과 명령줄이 같은 부품(js/pu-site-people.js)을 써서 미리 본 것과 올라가는 것이 같다.
+   ★ site/ 아래 .html 만 받는다. 그 규칙 하나로 앱 코드·검사·보안규칙·워크플로가 다 막힌다. */
+exports.publishSite = functions
+  .runWith({ timeoutSeconds: 120, memory: "256MB", secrets: ["GITHUB_AUTOMATION_TOKEN"] })
+  .https.onRequest(async (req, res) => {
+    setAutomationCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+
+    try {
+      const match = /^Bearer (.+)$/.exec(req.headers.authorization || "");
+      if (!match) { res.status(401).json({ error: "로그인이 필요합니다." }); return; }
+      const decoded = await getAuth().verifyIdToken(match[1], true);
+      const roleSnapshot = await getDatabase().ref(`uid_roles/${decoded.uid}`).once("value");
+      const role = roleSnapshot.val() || {};
+      if (role.isAdmin !== true) {
+        res.status(403).json({ error: "총괄관리자만 홈페이지를 올릴 수 있습니다." });
+        return;
+      }
+
+      const path = (req.body && req.body.path) || "";
+      const content = (req.body && req.body.content) || "";
+      if (!올릴자리인가(path)) {
+        res.status(400).json({ error: "올릴 수 없는 자리입니다: " + String(path).slice(0, 80) });
+        return;
+      }
+      const bytes = Buffer.byteLength(String(content), "utf8");
+      if (!bytes) { res.status(400).json({ error: "올릴 내용이 비어 있습니다." }); return; }
+      if (bytes > MAX_BYTES) {
+        res.status(413).json({ error: "너무 큽니다(" + Math.round(bytes / 1024) + "KB)." });
+        return;
+      }
+
+      const 누가 = decoded.name || decoded.email || decoded.uid;
+      const 답 = await 올리기(
+        githubRequest, process.env.GITHUB_AUTOMATION_TOKEN, REPO,
+        path, content, 사연(누가, path, (req.body && req.body.note) || "")
+      );
+      res.json({
+        ok: true,
+        path: path,
+        bytes: bytes,
+        commit: (답 && 답.commit && 답.commit.sha) ? 답.commit.sha.slice(0, 7) : "",
+        publishedAt: Date.now()
+      });
+    } catch (err) {
+      res.status(err.status || 500).json({ error: err.message || "홈페이지를 올리지 못했습니다." });
     }
   });
 
