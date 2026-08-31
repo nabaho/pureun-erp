@@ -20,8 +20,8 @@ const {
   safeGithubNumber,
   githubRequest,
 } = require("./dev-automation");
-const { MAX_BYTES, MAX_IMAGE_BYTES, 올릴자리인가, 올릴그림자리인가, 사연, 올리기 }
-  = require("./site-publish");
+const { MAX_BYTES, MAX_IMAGE_BYTES, SITE_REPO, 홈페이지자리,
+        올릴자리인가, 올릴그림자리인가, 사연, 올리기 } = require("./site-publish");
 const { homepageUrl } = require("./homepage-fetch");
 const HanaMessage = require("./hana-message");
 
@@ -2086,15 +2086,29 @@ exports.publishSite = functions
       }
 
       const 누가 = decoded.name || decoded.email || decoded.uid;
-      const 답 = await 올리기(
-        githubRequest, process.env.GITHUB_AUTOMATION_TOKEN, REPO,
-        path, content, 사연(누가, path, (req.body && req.body.note) || ""), 그림인가
-      );
+      const 사연글 = 사연(누가, path, (req.body && req.body.note) || "");
+      const 토큰 = process.env.GITHUB_AUTOMATION_TOKEN;
+
+      /* ★ «사람이 보는 홈페이지»부터 올린다. 우리 사본이 실패해도 홈페이지는 이미 바뀐다 —
+         거꾸로 하면 사본만 바뀌고 홈페이지는 그대로인, 가장 헷갈리는 상태가 된다. */
+      const 답 = await 올리기(githubRequest, 토큰, SITE_REPO,
+        홈페이지자리(path), content, 사연글, 그림인가);
+
+      /* 우리 쪽 사본 — 검사가 이것을 잣대로 삼는다. 실패해도 «알리기만» 하고 멈추지 않는다. */
+      let 사본 = "";
+      try {
+        await 올리기(githubRequest, 토큰, REPO, path, content, 사연글, 그림인가);
+      } catch (e) {
+        사본 = (e && e.message) || "사본을 올리지 못했습니다";
+        console.warn("[publishSite] 사본 올리기 실패", 사본);
+      }
+
       res.json({
         ok: true,
-        path: path,
+        path: 홈페이지자리(path),
         bytes: bytes,
         commit: (답 && 답.commit && 답.commit.sha) ? 답.commit.sha.slice(0, 7) : "",
+        copyError: 사본,
         publishedAt: Date.now()
       });
     } catch (err) {
