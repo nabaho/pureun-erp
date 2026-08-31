@@ -2479,8 +2479,17 @@ exports.hanaMessageBridge = functions
            이것이 없어서 2026-08-30 에 답을 못 했다 — 대기함이 비었을 때
            「폰이 못 보낸 것」인지 「폰에 아예 없는 것」인지 가릴 길이 없었다.
            둘은 고칠 곳이 아주 다르다(앱·권한 vs 은행 문자 자체). */
+        /* ★★ 「사람이 눌러서」 온 것과 「폰이 스스로」 온 것을 가른다 (2026-08-31).
+           lastSweepAt 은 «폰이 15분마다 스스로 돈다»는 뜻이다. 사람이 앱에서
+           「지난 문자 가져오기」를 눌러 온 것으로 그 자국을 찍으면, 절전에 재워져
+           한 번도 안 도는 폰이 화면에서 «멀쩡»해 보인다 — 그러면 절전을 영영 못 짚는다.
+           나머지(판 번호·권한·본 통수)는 손으로 눌렀어도 그대로 참이라 함께 적는다. */
+        const byHand = body.byHand === true;
         await hanaDeviceRef(linked).update({
-          lastSweepAt: Date.now(),
+          ...(byHand ? {} : { lastSweepAt: Date.now() }),
+          /* 사람이 눌렀으면 「지난 문자를 끌어왔다」로 남긴다 — 찾은 것이 0통이어도
+             그렇다. 안 남기면 화면이 「앱에서 눌러 주세요」를 영영 되풀이한다. */
+          ...(byHand ? { lastHistoryAt: Date.now() } : {}),
           lastTalkAt: Date.now(),
           appVersion: String(body.appVersion || "").slice(0, 16),
           sweepFound: Number(body.foundCount || 0),
