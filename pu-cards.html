@@ -2221,6 +2221,8 @@ body.pc #pcDetail{display:flex}
 .cohist-chip.on.k-case{background:#e2e8f0;color:#1e40af}
 .cohist-chip.on.k-fund{background:#f8fafc;color:#854d0e}
 .cohist-chip.on.k-other{background:#f8fafc;color:#166534}
+/* 계약 (점검 C1) — 이 앱의 이름표가 「사업자·명함·계약서」인데 여태 없던 갈래다 */
+.cohist-chip.on.k-contract{background:#fffbeb;color:#854d0e}
 .cohist-chip.k-all.on{background:#e2e8f0;color:#1e40af}
 .cohist-picks{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center}
 .cohist-picks label{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#94a3b8}
@@ -2239,6 +2241,7 @@ body.pc #pcDetail{display:flex}
 .cohist-row .bd.k-case{background:#e2e8f0;color:#1e40af}
 .cohist-row .bd.k-fund{background:#f8fafc;color:#854d0e}
 .cohist-row .bd.k-other{background:#f8fafc;color:#166534}
+.cohist-row .bd.k-contract{background:#fffbeb;color:#854d0e}
 .cohist-row .nm{font-size:12.5px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cohist-row .fee{font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
 .cohist-row .l2{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:11px;color:#94a3b8}
@@ -21137,7 +21140,17 @@ const ERP_HIST_KINDS = [
   { kind:'consulting',    store:'consultings',    types:'biz_cons_types',  label:'컨설팅' },
   { kind:'case',          store:'cases',          types:'',                label:'사건' },
   { kind:'fund',          store:'funds',          types:'biz_fund_types',  label:'기금' },
-  { kind:'other',         store:'other_projects', types:'biz_other_types', label:'기타' }
+  { kind:'other',         store:'other_projects', types:'biz_other_types', label:'기타' },
+  /* ── 계약 (점검 C1, 2026-08-31) ────────────────────────────────────────
+     이 앱의 이름표가 「사업자·명함·계약서」인데 정작 계약을 «한 번도 안 읽고» 있었다.
+     이알피 계약관리(data/contracts)에 계약번호·갈래·담당·금액이 다 있는데, 회사를
+     열어도 그 회사와 무슨 계약을 맺었는지 알 길이 없었다 — 계약서를 찾으려면
+     이알피를 따로 열어야 했다.
+     ⚠ 유형 사전이 «없다»(types:''). 계약은 코드표를 안 쓰고 제 안에 갈래(kind)를
+       글자로 담는다 — 사건(case)과 같은 결이라, 이름은 erpHistName 이 따로 짓는다.
+     ⚠ 새 서버 읽기가 «한 번» 는다. 다만 이 조회는 회사 상세를 처음 열 때 한 번뿐이고
+       (loadErpCaseCons), 나머지 넷과 «같은 묶음»으로 함께 읽는다 — 왕복이 안 는다. */
+  { kind:'contract',      store:'contracts',      types:'',                label:'계약' }
 ];
 let _erpCaseCons = null;
 let _erpCaseConsLoading = false;
@@ -21242,7 +21255,12 @@ function erpTypeNameFrom(types, typeCode){
    화면이 쓰는 값은 모두 여기서 뽑는다. 그려 보지 않고도 「해가 맞나·금액이 맞나·
    걸러기가 맞나」를 잴 수 있어야 한다. */
 
-const ERP_HIST_LABEL = { consulting:'컨설팅', case:'사건', fund:'기금', other:'기타' };
+const ERP_HIST_LABEL = { consulting:'컨설팅', case:'사건', fund:'기금', other:'기타', contract:'계약' };
+/* 계약의 갈래 — 이알피가 레코드 안에 글자로 담는다(코드표가 없다).
+   ⚠ 못 찾은 갈래는 «그 글자 그대로» 보여 준다(erpHistName). 빈칸으로 두면
+     「이름 없는 계약」이 여럿 생겨 어느 것이 어느 것인지 알 수 없다. */
+const ERP_CONTRACT_KIND = { advisory:'자문', payroll:'급여', case:'사건',
+  biz_cons:'컨설팅', fund:'기금', other_project:'기타사업' };
 /* 이알피의 상태값을 넷으로 모은다. 이알피는 사업마다 조금씩 다른 낱말을 쓴다
    (open/active, closed/done) — 화면에서 갈라지면 「완료」와 「종료」가 따로 세어진다. */
 const ERP_HIST_STAT = { pending:'wait', wait:'wait', open:'run', active:'run', ongoing:'run',
@@ -21258,8 +21276,13 @@ function erpHistGrouped(sort){ return sort === 'newest' || sort === 'oldest'; }
 /* 이 기록의 해. 시작일 → 접수일 → 끝난일 → 종료 도장 차례로 본다.
    ⚠ 못 찾으면 0 을 준다 — 오늘 해로 메우면 십 년 전 사건이 올해 것으로 올라온다. */
 function erpHistYear(rec){
+  /* ⚠ 계약은 상담에서 넘어온 것이라 시작일이 비고 consultDate·createdAt 만 있는 일이
+     흔하다(점검 C1). 그 둘을 «맨 뒤»에 둔다 — 앞의 날짜들이 있으면 그것이 먼저다.
+     ⚠ createdAt 은 그 기록이 «만들어진» 날이지 오늘이 아니다. 오늘 해로 메우면
+       십 년 전 것이 올해 것으로 올라온다 — 그래서 여기까지만 본다. */
   const cand = [rec && rec.startDate, rec && rec.receiveDate, rec && rec.endDate,
-                rec && rec.closeDate, rec && rec.closedDate, rec && rec.closedAt];
+                rec && rec.closeDate, rec && rec.closedDate, rec && rec.closedAt,
+                rec && rec.consultDate, rec && rec.createdAt];
   for(let i=0;i<cand.length;i++){
     const m = String(cand[i]||'').match(/(19|20)\d{2}/);
     if(m) return Number(m[0]);
@@ -21289,6 +21312,11 @@ function erpHistStat(rec){
 function erpHistName(rec, typesByKind){
   const kind = (rec && rec._kind) || 'consulting';
   if(kind === 'case') return String((rec && rec.typeName) || '').trim();
+  /* 계약도 사전을 안 쓴다 — 제 안의 갈래 글자를 사람 말로 바꿔 준다 (점검 C1) */
+  if(kind === 'contract'){
+    const k = String((rec && rec.kind) || '').trim();
+    return ERP_CONTRACT_KIND[k] || k;
+  }
   const dict = (typesByKind || {})[kind] || null;
   return erpTypeNameFrom(dict, erpTypeCodeOf(rec, kind));
 }
@@ -21298,10 +21326,12 @@ function erpHistRow(rec, typesByKind){
     kind: (rec && rec._kind) || 'consulting',
     name: erpHistName(rec, typesByKind) || '(이름 없음)',
     year: erpHistYear(rec),
-    from: erpHistMd(rec && (rec.startDate || rec.receiveDate)),
+    from: erpHistMd(rec && (rec.startDate || rec.receiveDate || rec.consultDate)),
     to:   erpHistMd(rec && (rec.endDate || rec.closeDate || rec.closedDate)),
     mgr:  String((rec && rec.managerMain) || ''),
-    no:   String((rec && (rec.no || rec.mgmtNo)) || ''),
+    /* ⚠ 계약은 번호를 contractNo 에 담는다 — 빠뜨리면 계약번호가 안 보여
+       이알피에서 그 계약을 되찾을 길이 없다 (점검 C1) */
+    no:   String((rec && (rec.no || rec.mgmtNo || rec.contractNo)) || ''),
     fee:  erpHistFee(rec),
     stat: erpHistStat(rec),
     byName: !!(rec && rec._byName)
@@ -21336,7 +21366,9 @@ function erpHistPick(rows, pick){
 }
 function erpHistSort(rows, sort){
   const a = (rows||[]).slice();
-  const ord = ['consulting','case','fund','other'];
+  /* ⚠ 갈래별 정렬의 «차례»다. 여기 빠진 갈래는 -1 이 되어 맨 앞으로 튄다 —
+     새 갈래를 ERP_HIST_KINDS 에 더할 때 여기도 함께 적는다 (검사가 지킨다). */
+  const ord = ['contract','consulting','case','fund','other'];
   if(sort==='oldest') a.sort((x,y)=> (x.year-y.year) || String(x.from).localeCompare(String(y.from)));
   else if(sort==='fee') a.sort((x,y)=> (y.fee-x.fee) || (y.year-x.year));
   else if(sort==='kind') a.sort((x,y)=> (ord.indexOf(x.kind)-ord.indexOf(y.kind)) || (y.year-x.year));
