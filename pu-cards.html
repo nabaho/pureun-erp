@@ -13364,9 +13364,26 @@ function mbProbeTell(){
   const p = _mbProbe;
   if(!p) return '적어 넣고 누르시면, 다음메일이 <b>옛 메일까지 짚어 주는지</b> 알아봅니다. '
               + '읽기만 하고 아무것도 고치지 않습니다.';
-  if(!p.theirs)
+  /* ⚠★ 못 읽은 칸을 «먼저» 말한다 — 칸이 통째로 안 읽혔는데 「없습니다」라고 하면
+       그것이 곧 거짓말이다. 「답이 안 나온 것」을 「옛 메일이 없다」로 읽는 것이
+       이 물음에서 가장 나쁜 틀림이다(2026-08-31 에 한 번 그렇게 헛답을 냈다). */
+  if(p.bad)
+    return `<b>못 읽은 칸이 ${p.bad}개</b> 있습니다 — 이 답은 믿으실 수 없습니다. `
+         + '다시 한 번 눌러 보시고, 그래도 같으면 알려 주십시오.';
+  if(!p.theirs){
+    /* ⚠ 「정말 없다」와 「찾기 자체가 안 된다」는 아주 다른 이야기다.
+         그래서 한 통도 못 찾았을 때 영문 낱말로 한 번 더 물어 스스로 가른다. */
+    if(p.ascii && !p.ascii.n)
+      return '<b>찾기 자체가 안 됩니다.</b> 영문 낱말로도 한 통도 못 찾았습니다 — '
+           + '다음메일이 우리 찾기 요청을 받아 주지 않는다는 뜻입니다. '
+           + '<b>이 길로는 옛 메일을 확인할 수 없습니다</b> — 다음메일에서 폴더를 갈라 주셔야 합니다.';
+    if(p.ascii)
+      return `찾기는 됩니다(영문 낱말로 ${p.ascii.n.toLocaleString()}통 찾았습니다). `
+           + `그런데 <b>어느 칸에서도</b> 「${esc(p.q)}」는 못 찾았습니다 — `
+           + '옛 메일에 <b>정말 들어 있는 말</b>로 다시 해 보십시오(거래처 이름·담당자 이름 등).';
     return `<b>어느 칸에서도</b> 「${esc(p.q)}」로 찾은 것이 없습니다 — `
          + '옛 메일에 <b>정말 들어 있는 말</b>로 다시 해 보십시오(거래처 이름·담당자 이름 등).';
+  }
   const top = p.top ? (mbFolderLabel(mbFolderBy(p.top.slug) || {}) || p.top.slug) : '';
   if(p.unknown > 0)
     return `<b>옛 메일이 더 있습니다.</b> 다음메일이 ${p.boxes}개 칸에서 `
@@ -13378,6 +13395,18 @@ function mbProbeTell(){
        + '<b>모두 우리가 이미 든 것</b>입니다. 찾기도 그 400통 창을 못 넘는다는 뜻이라, '
        + '옛 메일은 다음메일에서 폴더를 갈라 주셔야 합니다.';
 }
+/* 다음메일에 한 번 물어본다 — 칸을 안 좁힌다(서버가 아는 칸 전부를 뒤진다) */
+function mbProbeAsk(tok, q){
+  return fetch(MB_FN+'searchMailbox', { method:'POST',
+      headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
+      body: JSON.stringify({ q:q }) })
+    .then(r=>r.json().catch(()=>({})))
+    .then(j=>{ if(!j.ok) throw new Error(j.error||'물어보지 못했습니다'); return j; });
+}
+/* 「찾기 자체가 도는가」를 재는 낱말 — 거의 모든 메일 주소에 들어 있는 영문이라
+   이것으로도 0통이면 «찾기가 막힌 것»이지 옛 메일이 없는 것이 아니다.
+   ⚠ 한글이 아니어야 한다 — 가리려는 것이 바로 「한글 찾기가 막혔나」이기 때문이다. */
+const MB_PROBE_ASCII = 'kr';
 function mbOldProbe(){
   if(_mbProbing) return;
   let q = '';
@@ -13387,16 +13416,13 @@ function mbOldProbe(){
   if(!u) return toast('로그인이 필요합니다');
   _mbProbing = true; _mbProbe = null; renderMailPage();
   const done = ()=>{ _mbProbing = false; renderMailPage(); };
+  let tok = '';
   u.getIdToken()
-    /* ⚠ 칸을 안 좁힌다 — 서버가 «우리가 아는 칸 전부»를 뒤진다(머리글의 까닭) */
-    .then(tok=>fetch(MB_FN+'searchMailbox', { method:'POST',
-      headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
-      body: JSON.stringify({ q:q }) }))
-    .then(r=>r.json().catch(()=>({})))
+    .then(t=>{ tok = t; return mbProbeAsk(tok, q); })
     .then(j=>{
-      if(!j.ok) throw new Error(j.error||'물어보지 못했습니다');
       const hit = j.hit || {};
       const slugs = Object.keys(hit);
+      const bad = (j.bad||[]).length;
       /* ⚠ 걸린 칸을 «다» 펼친 뒤에 견준다 — 머리글의 까닭 그대로다 */
       return Promise.all(slugs.map(s=>new Promise(ok=>loadMailBox(s, 0, ok))))
         .then(()=>{
@@ -13409,16 +13435,29 @@ function mbOldProbe(){
             theirs += list.length; unknown += miss;
             if(miss && (!top || miss > top.unknown)) top = { slug:s, unknown:miss };
           });
-          _mbProbe = { q:q, theirs:theirs, unknown:unknown,
-            boxes: slugs.length, top: top, at: Date.now() };
-          done();
-          /* ⚠ 「한 통도 못 찾았다」와 「찾았는데 다 우리 것이다」를 «가른다» —
-               안 가르면 아무것도 못 찾았을 때 「모두 이미 든 것입니다」라고 말한다.
-               대표께서 2026-08-31 에 실제로 그 어긋난 알림을 보셨다. */
-          toast(!theirs ? `🕰 어느 칸에서도 「${q}」를 찾지 못했습니다 — 다른 말로 해 보십시오`
-              : unknown ? `🕰 우리가 못 가져온 옛 메일 ${unknown.toLocaleString()}통을 찾았습니다`
-              : `🕰 짚어 준 ${theirs.toLocaleString()}통이 모두 우리가 이미 든 것입니다`, 9000);
+          const rec = { q:q, theirs:theirs, unknown:unknown, bad:bad,
+            boxes: slugs.length, top: top, ascii: null, at: Date.now() };
+          /* ⚠★ 한 통도 못 찾았으면 «영문 낱말로 한 번 더» 물어 스스로 가른다 —
+               「정말 없다」와 「찾기 자체가 안 된다」는 아주 다른 이야기인데,
+               둘 다 화면에는 「없습니다」로 똑같이 보인다. 그 둘을 못 가르면
+               대표를 헛되이 폴더 가르기로 보내게 된다. */
+          if(theirs || bad) return rec;
+          return mbProbeAsk(tok, MB_PROBE_ASCII)
+            .then(j2=>{ rec.ascii = { q: MB_PROBE_ASCII, n: Number(j2.n||0) }; return rec; })
+            .catch(()=>rec);
         });
+    })
+    .then(rec=>{
+      _mbProbe = rec; done();
+      /* ⚠ 「못 읽었다」·「한 통도 못 찾았다」·「찾았는데 다 우리 것이다」를 «가른다» —
+           안 가르면 아무것도 못 찾았을 때 「모두 이미 든 것입니다」라고 말한다.
+           대표께서 2026-08-31 에 실제로 그 어긋난 알림을 보셨다. */
+      toast(rec.bad ? `⚠ 못 읽은 칸이 ${rec.bad}개 있습니다 — 이 답은 믿으실 수 없습니다`
+          : (!rec.theirs && rec.ascii && !rec.ascii.n)
+            ? '⚠ 찾기 자체가 안 됩니다 — 영문 낱말로도 한 통도 못 찾았습니다'
+          : !rec.theirs ? `🕰 어느 칸에서도 「${rec.q}」를 찾지 못했습니다 — 다른 말로 해 보십시오`
+          : rec.unknown ? `🕰 우리가 못 가져온 옛 메일 ${rec.unknown.toLocaleString()}통을 찾았습니다`
+          : `🕰 짚어 준 ${rec.theirs.toLocaleString()}통이 모두 우리가 이미 든 것입니다`, 9000);
     })
     .catch(e=>{ done(); toast('물어보지 못했습니다 — '+((e&&e.message)||e), 9000); });
 }

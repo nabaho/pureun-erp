@@ -59,6 +59,11 @@ function boot(o) {
       const body = JSON.parse((init && init.body) || '{}');
       asked.push({ url, body });
       if (opt.serverBad) return Promise.resolve({ json: () => Promise.resolve({ ok: false, error: '못 했습니다' }) });
+      /* 영문 낱말로 다시 물을 때 — 「찾기 자체가 도나」를 흉내 낸다 */
+      if (body.q === 'kr') return Promise.resolve({ json: () => Promise.resolve({
+        ok: true, hit: {}, n: Number(opt.asciiN || 0), bad: [] }) });
+      if ((opt.badBoxes || []).length) return Promise.resolve({ json: () => Promise.resolve({
+        ok: true, hit: {}, n: 0, bad: opt.badBoxes }) });
       /* ⚠ 서버는 «칸을 안 좁혔을 때» 아는 칸 전부를 뒤진다. 붙임틀이 그것을 흉내 내야
            「한 칸만 두드리는」 코드가 조용히 통과하지 않는다 — 대표께서 실제로 그 탓에
            「찾은 것이 없습니다」를 보셨다(2026-08-31). */
@@ -77,7 +82,8 @@ function boot(o) {
     asked, loaded, toasts
   };
   vm.createContext(ctx);
-  ['mbProbeTell', 'mbOldProbe'].forEach(n =>
+  vm.runInContext(app.match(/const MB_PROBE_ASCII\s*=[^;]*;/)[0], ctx);
+  ['mbProbeAsk', 'mbProbeTell', 'mbOldProbe'].forEach(n =>
     vm.runInContext(sliceFn(app, 'function ' + n + '('), ctx));
   return ctx;
 }
@@ -149,7 +155,10 @@ test('★★ «가장 많은 칸»을 짚어 준다 — 어디를 봐야 하는�
 /* ══════ ③ 읽기만 한다 ══════ */
 
 test('★★ 다음메일도 우리 DB 도 «한 글자도» 안 고친다', () => {
-  const f = sliceFn(app, 'function mbOldProbe(').replace(/\/\*[\s\S]*?\*\//g, ' ');
+  /* ⚠ 묻는 일은 mbProbeAsk 로 떼어 냈다 — 둘을 «함께» 봐야 한다.
+       한쪽만 보면 다른 쪽에 고치는 코드를 넣어도 그냥 지나간다. */
+  const f = (sliceFn(app, 'function mbOldProbe(') + '\n' + sliceFn(app, 'function mbProbeAsk('))
+    .replace(/\/\*[\s\S]*?\*\//g, ' ');
   ['.set(', '.update(', '.remove(', '.push('].forEach(bad =>
     assert.ok(f.indexOf(bad) < 0, '무언가를 고치고 있습니다: ' + bad));
   assert.ok(/searchMailbox/.test(f), '찾기(읽기)를 안 부릅니다');
@@ -221,15 +230,18 @@ test('★★ 셋을 «갈라» 말한다 — 숫자만 내놓으면 어떻게 �
   assert.match(same.mbProbeTell(), /폴더를 갈라/,
     '옛 메일이 없을 때 «그럼 어떻게 하나»를 안 알려 줍니다');
 
-  const zero = boot({ mine: { big: [30] }, theirs: {} });
+  /* ⚠ 「찾기는 도는데 그 말이 없다」를 재는 자리다 — 그래서 영문 낱말에는 걸리게 둔다.
+       안 그러면 「찾기 자체가 안 된다」 갈래로 빠져 딴 것을 재게 된다. */
+  const zero = boot({ mine: { big: [30] }, theirs: {}, asciiN: 100 });
   zero.mbOldProbe(); await flush();
-  assert.match(zero.mbProbeTell(), /찾은 것이 없습니다/, '한 통도 못 찾았을 때를 안 가릅니다');
+  assert.match(zero.mbProbeTell(), /못 찾았습니다|찾은 것이 없습니다/,
+    '한 통도 못 찾았을 때를 안 가릅니다');
 });
 
 test('★★ 알림(토스트)도 «셋을 가른다» — 대표께서 어긋난 알림을 보셨다', async () => {
   /* 2026-08-31 실제로 그랬다 — 화면에는 「찾은 것이 없습니다」인데 알림은
      「모두 우리가 이미 든 것입니다」였다. 둘이 다른 말을 하면 무엇을 믿을지 모른다. */
-  const zero = boot({ mine: { big: [30] }, theirs: {} });
+  const zero = boot({ mine: { big: [30] }, theirs: {}, asciiN: 100 });
   zero.mbOldProbe(); await flush();
   const t0 = zero.toasts.join(' ');
   assert.ok(t0.indexOf('찾지 못했습니다') >= 0,
@@ -245,6 +257,58 @@ test('★★ 알림(토스트)도 «셋을 가른다» — 대표께서 어긋�
   good.mbOldProbe(); await flush();
   assert.ok(good.toasts.join(' ').indexOf('찾았습니다') >= 0,
     '옛 메일을 찾았는데 알림이 틀립니다: ' + good.toasts.join(' '));
+});
+
+/* ══════ 「없다」와 「못 읽었다」와 「찾기가 막혔다」를 가른다 (2026-08-31 실제 답) ══════
+   대표께서 「맘스터치」로 누르시니 0통이 나왔다. 그런데 0통은 세 가지 뜻이 있다 —
+   ①정말 없다 ②칸을 못 읽었다 ③찾기 자체가 막혔다(한글 찾기가 안 될 수 있다).
+   셋을 못 가르면 대표를 «헛되이» 폴더 가르기로 보내게 된다. */
+
+test('★★ 못 읽은 칸이 있으면 «먼저» 말한다 — 「없습니다」라고 하면 그것이 거짓말이다', async () => {
+  const c = boot({ mine: {}, theirs: {}, badBoxes: ['big', 'inb', 'x1'] });
+  c.mbOldProbe();
+  await flush();
+  assert.equal(c._mbProbe.bad, 3, '못 읽은 칸을 안 셉니다');
+  assert.match(c.mbProbeTell(), /못 읽은 칸/, '못 읽은 칸을 화면에 안 알립니다');
+  assert.ok(c.mbProbeTell().indexOf('찾은 것이 없습니다') < 0,
+    '칸을 못 읽었는데 「없습니다」라고 합니다');
+  assert.ok(c.toasts.join(' ').indexOf('믿으실 수 없습니다') >= 0,
+    '알림이 「믿을 수 없다」를 안 말합니다: ' + c.toasts.join(' '));
+});
+
+test('★★ 한 통도 못 찾으면 «영문 낱말로 한 번 더» 물어 스스로 가른다', async () => {
+  const c = boot({ mine: {}, theirs: {}, asciiN: 0 });
+  c.mbOldProbe();
+  await flush();
+  assert.equal(c.asked.length, 2, '영문으로 다시 안 물었습니다: ' + c.asked.length + '번');
+  assert.equal(c.asked[1].body.q, 'kr', '영문이 아닌 말로 다시 물었습니다');
+  assert.ok(!/[가-힣]/.test(c.asked[1].body.q),
+    '다시 묻는 말에 한글이 들어 있습니다 — 가리려는 것이 바로 한글 찾기입니다');
+});
+
+test('★★ 영문으로도 0통이면 «찾기 자체가 안 된다»고 말한다', async () => {
+  const c = boot({ mine: {}, theirs: {}, asciiN: 0 });
+  c.mbOldProbe();
+  await flush();
+  assert.match(c.mbProbeTell(), /찾기 자체가 안 됩니다/, '찾기가 막힌 것을 안 알립니다');
+  assert.match(c.mbProbeTell(), /폴더를 갈라/, '그럼 어떻게 하나를 안 알려 줍니다');
+  assert.ok(c.toasts.join(' ').indexOf('찾기 자체가 안 됩니다') >= 0, '알림이 틀립니다');
+});
+
+test('★★ 영문으로는 찾아지면 «찾기는 된다»고 말한다 — 그 말이 없을 뿐이다', async () => {
+  const c = boot({ mine: {}, theirs: {}, asciiN: 3300 });
+  c.mbOldProbe();
+  await flush();
+  assert.match(c.mbProbeTell(), /찾기는 됩니다/, '찾기가 도는 것을 안 알립니다');
+  assert.match(c.mbProbeTell(), /3,300/, '몇 통 찾았는지 안 알려 줍니다');
+  assert.match(c.mbProbeTell(), /맘스터치/, '무슨 말로 찾았는지 안 알려 줍니다');
+});
+
+test('★ 찾은 것이 있으면 «영문으로 다시 묻지 않는다» — 헛걸음이다', async () => {
+  const c = boot({ mine: { big: [30] }, theirs: { big: [7, 30] } });
+  c.mbOldProbe();
+  await flush();
+  assert.equal(c.asked.length, 1, '찾았는데도 다시 물었습니다');
 });
 
 /* 붙어 있는 자리 */
