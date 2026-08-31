@@ -19,7 +19,7 @@
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <!-- ?v= 저장 층을 고치면 반드시 올린다 — 캐시에 묵으면 고친 것이 통째로 묻힌다. -->
-<script src="js/pu-photo-store.js?v=19"></script>
+<script src="js/pu-photo-store.js?v=20"></script>
 <!-- 주민번호 가림 — 계산 층과, 급여데이터함과 나눠 쓰는 긋기 층 -->
 <script src="js/pu-rrn-mask.js?v=4"></script>
 <script src="js/pu-rrn-mask-ui.js?v=3"></script>
@@ -34,7 +34,7 @@
      이 파일이 캐시에 묵으면 옛 지시로 읽어 제목이 안 생기는데, 화면(pu-photos.html)은
      새것이라 제목 자리만 비어 보인다 — 고친 것이 통째로 묻힌 것처럼 된다.
      tests/photos-doc-title.test.js 가 둘이 어긋나지 않는지 지킨다. -->
-<script src="js/pu-doc-read.js?v=25"></script>
+<script src="js/pu-doc-read.js?v=26"></script>
 <script src="js/pu-lockkey.js?v=2"></script>
 <!-- ?v= 는 등록 층을 고칠 때 올린다 — 캐시에 묵으면 고친 안내가 안 보인다. -->
 <script src="js/pu-doc-file.js?v=15"></script>
@@ -5897,7 +5897,8 @@ function onQueueChange(list) {
 /* ⚠ contract 가 빠져 있었다(2026-08-15 발견) — 계약서는 readLabel() 에서
      '알 수 없음' 으로 떨어졌다. 갈래는 제대로 가려 놓고 이름만 없던 것이다. */
 const READ_LABEL = { chat: '카톡·메일 대화', timesheet: '근태·휴무표', form: '서식·신청서', card: '명함', bizreg: '사업자등록증', sme: '중소기업확인서',
-  payslip: '급여서류', meeting: '회의·현장 사진', contract: '계약서', cms: 'CMS 자동이체 신청서', other: '서류로 보이지 않음' };
+  payslip: '급여서류', meeting: '회의·현장 사진', contract: '계약서', cms: 'CMS 자동이체 신청서',
+  bankbook: '통장·계좌', other: '서류로 보이지 않음' };
 
 /* ══════ 서류 제목 (대표 지시 2026-08-15) ══════
    "사업자등록증명 도 제목을 정확하게 인지하게해라. 그리고 모든 서식에 제목을 찾고
@@ -6119,6 +6120,25 @@ function readPromptVer(r) {
   if (!r) return 0;
   return (r.pv != null) ? (r.pv || 0) : (r.rv || 0);
 }
+/* ── 실패했지만 «다시 걸어 볼 값이 있는» 사진 (직원 보고 2026-08-31) ──
+   "OCR 안 읽히는 게 많다."
+
+   ★ 지금까지 실패한 판독은 **사람이 골라서 눌러야만** 다시 읽혔다(readableSel).
+     자동 대기열은 「한 번도 안 읽은 것」(neverRead)과 「물음이 바뀐 것」(staleRead)만
+     보았고, **실패한 것은 아예 안 봤다.** 그래서 AI 가 잠시 바빴다는 이유로 한 번
+     실패한 사진이 «영영» 안 읽힌 채 쌓였다 — 400장 가운데 그런 것이 많아진 것이다.
+
+   ⚠ 아무거나 다시 걸지 않는다 — worthRetry 가 가른다(원본이 없거나 설정 문제면
+     눌러도 같은 답이고, 세 번 실패했으면 손으로 적는 편이 낫다).
+   ⚠ 조금씩 한다(AUTO_RETRY_MAX) — 바빠서 실패한 것을 한꺼번에 다시 걸면 또 바쁘다. */
+const AUTO_RETRY_MAX = 5;
+function failedRead(it) {
+  if (collectingNow(it)) return false;
+  const r = it && it.meta && it.meta.read;
+  if (!r || !r.error) return false;              // 실패한 것만 — 성공한 것은 staleRead 몫
+  return worthRetry(r);
+}
+
 function staleRead(it) {
   if (collectingNow(it)) return false;           // ★ 모으는 중 — 다 모은 뒤 한 번만
   const r = it && it.meta && it.meta.read;
@@ -6174,12 +6194,20 @@ function autoReadPending() {
        그때는 총괄관리자라 mayTouch 가 참이다. */
   const canRead = function (it) { return mayTouch(it.id); };
   const fresh = gridItems.filter(canRead).filter(neverRead).filter(oneDoc);
-  const stale = gridItems.filter(canRead).filter(staleRead).filter(oneDoc);
+  /* ⚠ 실패한 것을 «먼저» 거른다 — 아래 staleRead 는 실패한 것도 참일 수 있어,
+     안 가르면 같은 사진이 두 자리에 들어가 한 번에 두 번 읽힌다. */
+  const failed = gridItems.filter(canRead).filter(failedRead).filter(oneDoc);
+  const failedId = {};
+  failed.forEach(function (it) { failedId[it.id] = 1; });
+  const stale = gridItems.filter(canRead).filter(staleRead).filter(oneDoc)
+    .filter(function (it) { return !failedId[it.id]; });
   const take = fresh.slice(0, AUTO_READ_MAX)
+    .concat(failed.slice(0, AUTO_RETRY_MAX))
     .concat(stale.slice(0, AUTO_RESTALE_MAX));
   if (!take.length) { $('autoNote').style.display = 'none'; return; }
   take.forEach(function (it) { queuePhotoRead(it.id); });
   const rest = (fresh.length - Math.min(fresh.length, AUTO_READ_MAX)) +
+    (failed.length - Math.min(failed.length, AUTO_RETRY_MAX)) +
     (stale.length - Math.min(stale.length, AUTO_RESTALE_MAX));
   const el = $('autoNote');
   el.style.display = 'block';
