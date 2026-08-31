@@ -12959,6 +12959,14 @@ function mailSetHtml(){
         <b>혼자 맡은 건은 대표님만</b> 보십니다 —
         그 자리는 콘솔 규칙 한 칸이 올라가야 켜집니다
         (<b>docs/메일-확인기록-콘솔붙여넣기.md</b>).</div>`)}
+    ${row('옛 메일 더 있나',
+      `<input id="mbProbeQ" value="${esc(_mbProbe ? _mbProbe.q : '')}"
+         placeholder="옛 메일에 있을 만한 말 (예: 회사 이름)"
+         style="width:230px;padding:6px 8px;border:1px solid #e2e8f0;border-radius:7px;
+                font-family:inherit;font-size:12.5px">
+       <button class="edbtn" onclick="mbOldProbe()"${_mbProbing ? ' disabled' : ''}>${
+         _mbProbing ? '물어보는 중…' : '알아보기'}</button>
+       <div class="mshint">${mbProbeTell()}</div>`)}
   </div>
 
   <div class="msec"><h4>④ 단축키</h4>
@@ -12990,6 +12998,91 @@ function mailSetHtml(){
     ${daum('부재중 응답', 'https://mail.daum.net/setting/Absence',
       '자리를 비울 때 자동 답장입니다. 다음이 보내야 하는 것이라 우리 쪽에 만들 수 없습니다.')}
   </div>`;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   옛 메일이 더 있나 — 다음메일의 「400통 창」을 두드려 본다 (대표 물음 2026-08-31)
+   ══════════════════════════════════════════════════════════════════════════
+   "과거자료가 더 들어왔으면 좋겠는데 그건 안되나?"
+
+   ★ 지금까지 아는 것 — 다음메일 IMAP 은 폴더마다 «최근 400통»만 목록으로 내준다
+     (실측 2026-08-28: 13개 폴더가 나란히 400 에서 멈췄다). 그 창 밖의 옛 메일은
+     목록에 아예 안 나오므로 가져올 길이 없다. 다음메일 설정에도 「동기화 범위」
+     칸이 없다(2026-08-31 대표 화면으로 확인).
+
+   ★ 그런데 «한 번도 안 재 본 것»이 있다 — 그 400 이 «목록»에만 걸리는가,
+     «찾기»에도 걸리는가. 찾기가 그 너머를 짚어 준다면 옛 메일을 저절로 끌어올 수
+     있다. 그러면 대표께서 다음메일에서 수천 통을 손으로 옮기실 까닭이 없어진다.
+     이 단추 하나가 그 답을 낸다.
+
+   ⚠ 읽기만 한다 — 다음메일도, 우리 실시간DB 도 한 글자도 안 고친다.
+   ⚠ 견주기 «전»에 그 칸을 다 펼친다(loadMailBox 의 0). 손에 100통만 든 채로
+     견주면 «받아 두지 않았을 뿐인» 번호가 죄다 「모르는 것」으로 세어져,
+     있지도 않은 희소식을 만든다. 이 검사에서 가장 틀리기 쉬운 자리다. */
+let _mbProbe   = null;    /* {slug,q,theirs,unknown,ourLow,theirLow,at} */
+let _mbProbing = false;
+
+/* 어느 칸을 두드릴까 — 다음메일이 「모두 몇 통」이라 말해 준 것이 가장 많은 칸.
+   거기가 400 에 부딪혔을 가능성이 가장 높다.
+   ⚠ 휴지통·스팸은 뺀다 — 애초에 안 가져오는 칸이라 견줄 것이 없다. */
+function mbProbeSlug(){
+  const pick = mbFolders()
+    .filter(f=>f && f.slug && f.kind!=='trash' && f.kind!=='spam')
+    .sort((a,b)=>Number(b.total||0) - Number(a.total||0))[0];
+  return pick ? pick.slug : '';
+}
+/* 알아낸 것을 «사람 말»로. 숫자만 내놓으면 그래서 어떻게 하라는 것인지 모른다. */
+function mbProbeTell(){
+  if(_mbProbing) return '다음메일에 물어보는 중입니다 — 1분쯤 걸립니다.';
+  const p = _mbProbe;
+  if(!p) return '적어 넣고 누르시면, 다음메일이 <b>옛 메일까지 짚어 주는지</b> 알아봅니다. '
+              + '읽기만 하고 아무것도 고치지 않습니다.';
+  const nm = mbFolderLabel(mbFolderBy(p.slug) || {}) || p.slug;
+  if(!p.theirs)
+    return `<b>${esc(nm)}</b> 칸에서 「${esc(p.q)}」로 찾은 것이 없습니다 — `
+         + '그 칸의 옛 메일에 정말 들어 있는 말로 다시 해 보십시오.';
+  if(p.unknown > 0)
+    return `<b>옛 메일이 더 있습니다.</b> <b>${esc(nm)}</b> 칸에서 다음메일이 `
+         + `${p.theirs.toLocaleString()}통을 짚어 줬는데, 그 가운데 `
+         + `<b>${p.unknown.toLocaleString()}통</b>은 우리가 아직 못 가져온 것입니다. `
+         + '이대로 알려 주시면 <b>저절로 끌어오게</b> 만들겠습니다 — 손으로 옮기실 것 없습니다.';
+  return `<b>${esc(nm)}</b> 칸에서 다음메일이 짚어 준 ${p.theirs.toLocaleString()}통이 `
+       + '<b>모두 우리가 이미 든 것</b>입니다. 찾기도 그 400통 창을 못 넘는다는 뜻이라, '
+       + '옛 메일은 다음메일에서 폴더를 갈라 주셔야 합니다.';
+}
+function mbOldProbe(){
+  if(_mbProbing) return;
+  const slug = mbProbeSlug();
+  if(!slug) return toast('알아볼 칸이 없습니다');
+  let q = '';
+  try{ q = String(($('mbProbeQ')||{}).value||'').trim(); }catch(_){ }
+  if(q.length < 2) return toast('옛 메일에 있을 만한 말을 두 글자 이상 적어 주세요');
+  const u = firebase.auth().currentUser;
+  if(!u) return toast('로그인이 필요합니다');
+  _mbProbing = true; _mbProbe = null; renderMailPage();
+  const done = ()=>{ _mbProbing = false; renderMailPage(); };
+  /* ⚠ 우리가 «든 것»을 먼저 다 펼친다 — 머리글의 까닭 그대로다 */
+  new Promise(ok=>loadMailBox(slug, 0, ok))
+    .then(()=>u.getIdToken())
+    .then(tok=>fetch(MB_FN+'searchMailbox', { method:'POST',
+      headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
+      body: JSON.stringify({ q:q, slugs:[slug] }) }))
+    .then(r=>r.json().catch(()=>({})))
+    .then(j=>{
+      if(!j.ok) throw new Error(j.error||'물어보지 못했습니다');
+      const theirs = (((j.hit||{})[slug])||[]).map(Number).filter(n=>n>0);
+      const mine = Object.keys(_mbMsgs[slug]||{}).map(Number).filter(n=>n>0);
+      const have = {}; mine.forEach(n=>{ have[n] = 1; });
+      const unknown = theirs.filter(n=>!have[n]);
+      _mbProbe = { slug:slug, q:q, theirs:theirs.length, unknown:unknown.length,
+        ourLow:  mine.length   ? Math.min.apply(null, mine)   : 0,
+        theirLow: theirs.length ? Math.min.apply(null, theirs) : 0, at: Date.now() };
+      done();
+      toast(unknown.length
+        ? `🕰 우리가 못 가져온 옛 메일 ${unknown.length.toLocaleString()}통을 찾았습니다`
+        : '🕰 다음메일이 짚어 준 것이 모두 우리가 이미 든 것입니다', 9000);
+    })
+    .catch(e=>{ done(); toast('물어보지 못했습니다 — '+((e&&e.message)||e), 9000); });
 }
 
 function mbSetPageSize(v){
