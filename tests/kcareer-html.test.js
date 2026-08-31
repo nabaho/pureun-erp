@@ -1929,3 +1929,43 @@ test('★★ OCR 이 실패하면 «왜» 인지 말한다 — 조용히 넘기�
   assert.match(source, /if\(!done && failed\) toast\('❌ 한 건도 못 읽었습니다'/,
     '한 건도 못 읽으면 또렷이 알려야 합니다');
 });
+
+/* ===== ★★ 이력서 자료 정리 — 경력과 포상을 갈라 세운다 (2026-08-30) ===== */
+
+test('★★ 표창·포상은 경력 표에 섞지 않는다 — 사유가 직책 칸을 먹었다', () => {
+  // wiccok 한 스토어에 위촉장 79 + 표창 7 이 같이 산다. 통째로 부으니
+  // 「표창장 제19대 대통령선거 승리에 기여하고…」가 직책 칸에 세 줄로 들어가 A4 13장이 됐다.
+  const r = funcSource('renderQuickCV');
+  assert.match(r, /const _isAward=function\(t\)\{ return \/표창\|포상\|감사패\|공로패\|상장\//,
+    '표창을 가려내야 합니다');
+  assert.match(r, /const wic=wicAll\.filter\(function\(r\)\{ return !_isAward\(r\.type\); \}\)/,
+    '경력에는 표창을 넣지 않습니다');
+  assert.match(r, /const awards=wicAll\.filter\(function\(r\)\{ return _isAward\(r\.type\); \}\)/,
+    '포상은 따로 모읍니다');
+  assert.match(r, /id="cvAwardBody"/, '이력서에 포상 절이 있어야 합니다');
+  // ⚠ 받은 것이 없으면 빈 표를 만들지 않는다
+  assert.match(r, /awards\.length \? '<div[^']*>표창 및 포상/, '없으면 절을 만들지 않습니다');
+});
+
+test('★★ 최신순으로 세운다 — 뒤죽박죽이면 번호를 붙여도 못 읽는다', () => {
+  const r = funcSource('renderQuickCV');
+  assert.match(r, /const _ymd=function/, '날짜를 같은 자로 재야 합니다');
+  assert.match(r, /_ymd\(b\.sort\|\|b\.period\)-_ymd\(a\.sort\|\|a\.period\)/, '내림차순');
+  ['wic', 'awards'].forEach(() => {});
+  assert.equal((r.match(/\.sort\(_newest\)/g) || []).length, 3,
+    '경력·포상·실적 셋 다 세워야 합니다');
+});
+
+test('★★ 직책 칸은 짧게 — 긴 사유는 포상 표에서 본다', () => {
+  const r = funcSource('renderQuickCV');
+  assert.match(r, /const _short=function\(v,n\)/, '길면 줄여야 합니다');
+  assert.match(r, /_short\(r\.titleVal\|\|r\.type\|\|'', 40\)/, '경력 직책은 40자');
+});
+
+test('★★ 사진은 보관함에 있으면 저절로 들어간다 — 고른 것을 덮지 않는다', () => {
+  const r = funcSource('renderQuickCV');
+  assert.match(r, /if\(!_pid\)\{ var _g=get\('gallery'\)/, '고른 것이 없을 때만 보관함을 봅니다');
+  // ⚠ 자동으로 쓴 것을 profile_info 에 담으면 「고른 것」이 되어 버린다
+  const at = r.indexOf("var _g=get('gallery')");
+  assert.ok(!/set\('profile_info'/.test(r.slice(at, at + 300)), '⚠ 자동으로 쓴 것은 기억하지 않습니다');
+});

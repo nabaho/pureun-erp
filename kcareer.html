@@ -6285,13 +6285,32 @@ function renderQuickCV(){ const sheet=document.getElementById('cvSheet'); if(!sh
   };
   function ce(v){ return '<div contenteditable="true" onfocus="_cvFocus=this">'+escapeHtml(v||'')+'</div>'; }
   function rowOf(r,tag){ return {period:r.date||r.period||r.year||'', org:r.org||r.client||r.title||'', role:'['+tag+'] '+(r.title||r.content||r.titleVal||'')}; }
-  const wic=get('wiccok').map(function(r){ return {period:r.period||r.issueDate||r.year||'',org:r.org||'',role:(r.type||'')+(r.titleVal?' '+r.titleVal:'')}; });
+  /* 날짜를 견주려고 숫자만 남긴다 — 「2025.12.23」·「2025」 섞여 있어도 같은 자로 잰다 */
+  const _ymd=function(v){ return String(v||'').replace(/[^0-9]/g,'').slice(0,8).padEnd(8,'0'); };
+  const _newest=function(a,b){ return _ymd(b.sort||b.period)-_ymd(a.sort||a.period); };
+  /* 표창·포상은 «경력이 아니다» — 이력서에서도 따로 세운다 */
+  const _isAward=function(t){ return /표창|포상|감사패|공로패|상장/.test(String(t||'')); };
+  /* ⚠ 직책 칸은 «짧게». 표창 사유 전문을 넣으면 줄이 세 줄씩 늘어 A4 가 13장이 된다.
+     긴 사유는 포상 표의 「내용」 칸에서 보고, 경력 표에는 직책만 남긴다. */
+  const _short=function(v,n){ v=String(v||'').trim(); return v.length>n ? v.slice(0,n)+'…' : v; };
+  const wicAll=get('wiccok');
+  const wic=wicAll.filter(function(r){ return !_isAward(r.type); }).map(function(r){
+    var when=r.period||r.issueDate||r.year||'';
+    return {period:when, sort:(r.issueDate||r.year||when), org:r.org||'',
+            role:_short(r.titleVal||r.type||'', 40)};
+  }).sort(_newest);
+  /* 포상 — 받은 날 내림차순. 내용은 표창명 위주로 짧게 */
+  const awards=wicAll.filter(function(r){ return _isAward(r.type); }).map(function(r){
+    var when=r.issueDate||r.year||r.period||'';
+    return {period:when, sort:when, org:r.org||'', role:_short(r.titleVal||r.type||'', 60)};
+  }).sort(_newest);
   const acts=[].concat(get('consult').map(function(r){return rowOf(r,'컨설팅');}),get('case').map(function(r){return rowOf(r,'사건');}),get('lecture').map(function(r){return rowOf(r,'강의');}),get('fund').map(function(r){return rowOf(r,'기금');}),get('etc').map(function(r){return rowOf(r,'기타');}));
   const edu=get('edu').map(function(r){ return {period:r.period||r.year||'',school:r.school||'',deg:(r.degree||'')+(r.graduated?(' / '+r.graduated):'')}; });
   const eduRows=(edu.length?edu:[{},{}]).map(function(e){ return '<tr><td>'+ce(e.period)+'</td><td>'+ce(e.school)+'</td><td>'+ce(e.deg)+'</td>'+_cvDelTd()+'</tr>'; }).join('');
   /* 인적사항이 통째로 비었으면 «왜» 비었는지 알려 준다 — 빈 표만 보여 주면 고장으로 보인다 */
   _cvNeedInfo(!(F.name||F.birth||F.phone||F.email||F.addr||F.org));
-  const career=[].concat(wic,acts); const careerRows=(career.length?career:[{},{},{}]).map(function(a){ return '<tr><td>'+ce(a.period)+'</td><td>'+ce(a.org)+'</td><td>'+ce(a.role)+'</td>'+_cvDelTd()+'</tr>'; }).join('');
+  const awardRows=awards.map(function(a){ return '<tr><td>'+ce(a.period)+'</td><td>'+ce(a.org)+'</td><td>'+ce(a.role)+'</td>'+_cvDelTd()+'</tr>'; }).join('');
+  const career=[].concat(wic,acts.sort(_newest)); const careerRows=(career.length?career:[{},{},{}]).map(function(a){ return '<tr><td>'+ce(a.period)+'</td><td>'+ce(a.org)+'</td><td>'+ce(a.role)+'</td>'+_cvDelTd()+'</tr>'; }).join('');
   if(tpl==='cert'){
     const d=new Date(); const today=d.getFullYear()+'년 '+(d.getMonth()+1)+'월 '+d.getDate()+'일';
     sheet.innerHTML='<h2>경 력 증 명 서</h2>'
@@ -6320,9 +6339,19 @@ function renderQuickCV(){ const sheet=document.getElementById('cvSheet'); if(!sh
       +'<table><thead><tr><th style="width:130px">기간</th><th>학교</th><th>전공/학위·졸업</th><th class="cv-noprint"></th></tr></thead><tbody id="cvEduBody">'+eduRows+'</tbody></table>'+_cvAddBtn('edu')
       +'<div style="font-weight:700;margin:6px 0 4px">경력 및 주요활동</div>'
       +'<table><thead><tr><th style="width:130px">기간</th><th>기관</th><th>직책/내용</th><th class="cv-noprint"></th></tr></thead><tbody id="cvCareerBody">'+careerRows+'</tbody></table>'+_cvAddBtn('career')
+      /* ⚠ 표창·포상은 «경력이 아니다» — 절을 따로 세운다. 한 표에 부으면
+         표창 사유가 직책 칸을 세 줄씩 먹어 A4 가 13장이 됐다(대표 지적 2026-08-30).
+         받은 것이 없으면 절 자체를 만들지 않는다 — 빈 표는 군더더기다. */
+      +(awards.length ? '<div style="font-weight:700;margin:6px 0 4px">표창 및 포상</div>'
+        +'<table><thead><tr><th style="width:130px">수상일</th><th>수여기관</th><th>표창 내용</th><th class="cv-noprint"></th></tr></thead><tbody id="cvAwardBody">'+awardRows+'</tbody></table>' : '')
       +'<div style="font-weight:700;margin:6px 0 4px">기타사항 / 자기소개</div>'
       +'<div contenteditable="true" onfocus="_cvFocus=this" style="border:1px solid #1e293b;min-height:80px;padding:8px">'+escapeHtml(info.cvNote||'')+'</div>';
-    if(_cvPhotoId) fileURLAsync(_cvPhotoId).then(function(u){ const c=document.getElementById('cvPhotoCell'); if(c&&u) c.innerHTML='<img src="'+u+'">'; });
+    /* ⚠ 고른 사진이 없으면 «보관함의 첫 장»을 쓴다 — 한 장뿐인데도 「사진」 글자만
+       떠 있어 매번 눌러 고르게 하는 것은 군더더기다(대표 지적 2026-08-30).
+       ⚠ 고른 것을 덮지 않는다. 자동으로 쓴 것은 «기억하지 않는다» — 사람이 고르면 그때 담긴다. */
+    var _pid=_cvPhotoId;
+    if(!_pid){ var _g=get('gallery')||[]; if(_g.length&&_g[0]&&_g[0].id) _pid=_g[0].id; }
+    if(_pid) fileURLAsync(_pid).then(function(u){ const c=document.getElementById('cvPhotoCell'); if(c&&u) c.innerHTML='<img src="'+u+'">'; });
   }
   renderCVPalette(info); renderFormLib(); renderCvStampSelect(); cvApplyStamp();
   cvApplyPages(); setTimeout(cvApplyPages,350);
