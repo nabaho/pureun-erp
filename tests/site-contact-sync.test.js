@@ -429,13 +429,17 @@ ok('컨설팅·기금·기타가 사업장명을 넘긴다', /companyName: f\.co
 
 /* ── 6. 기업정보함 찾기 창을 여는 모든 곳이 초기검색을 넘긴다 ── */
 (function(){
-  // 세는 방법: 'h(PucardsContactPickerModal, {' 가 있는 줄의 바로 다음 줄에 initialQuery 가 있는지
+  /* ⚠ 「바로 다음 줄」로 못 박지 않는다 — 2026-08-31 에 «왜 그렇게 넘기는지» 적은
+       주석 한 덩이를 앞에 넣었더니 여기서 깨졌다. 기능은 멀쩡했다.
+       볼 것은 «그 창을 여는 곳마다 초기검색을 넘기는가» 이지 몇째 줄인가가 아니다.
+       열두 줄 안이면 같은 속성 목록으로 본다 — 그보다 멀면 다른 것을 보고 있는 것이다. */
   const lines = pe.split('\n');
   let mounts = 0, withQ = 0; const missing = [];
   lines.forEach(function(L, i){
     if(L.indexOf('h(PucardsContactPickerModal, {') < 0) return;
     mounts++;
-    if((lines[i+1] || '').indexOf('initialQuery') >= 0) withQ++; else missing.push(i + 1);
+    if(lines.slice(i + 1, i + 13).join('\n').indexOf('initialQuery') >= 0) withQ++;
+    else missing.push(i + 1);
   });
   ok('기업정보함 찾기 창을 여는 곳이 4군데', mounts === 4, '실제 ' + mounts + '곳');
   ok('네 곳 모두 초기검색을 넘긴다', withQ === mounts, '빠진 줄: ' + missing.join(','));

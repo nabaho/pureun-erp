@@ -12206,6 +12206,144 @@ function pcGroupCompanies(){
   });
   return groups;
 }
+/* ══ 세무사무실 자동완성 (대표 지시 2026-08-31) ═══════════════════════════
+   「세무사무실 회계사무실 담당자 정보도 자동으로 당겨오게 기업정보함에서 찾을 수 있게」
+
+   후보가 «두 곳»에서 온다 —
+     ① 기업정보함 명함        — 회사명이 맞는 명함
+     ② 이미 다른 업체에 적어 둔 세무사무실
+   ②가 핵심이다. 한 세무사무실이 여러 사업장을 맡는데, 명함이 없어도 한 번만
+   적어 두면 그다음부터는 골라 쓰기만 하면 된다.
+
+   ⚠ 왜 오타를 막아야 하나: 보수총액 일괄요청은 «이메일로 묶는다»(buildTaxGroups).
+     한 글자만 달라도 같은 사무실이 둘로 갈라져 메일이 두 번 간다. */
+function taxOfficeFromCard(x){
+  x = x || {};
+  return {
+    office: x.c || '',
+    contact: x.n || '',
+    /* 사무실 전화가 먼저다 — 세무사무실은 개인 휴대폰보다 대표번호로 건다 */
+    phone: x.ct || x.t || x.m || '',
+    fax: x.cfx || x.fx || '',
+    email: x.e || '',
+    src: '기업정보함', n: 0
+  };
+}
+
+function taxOfficeSuggest(q, companies){
+  var ql = String(q || '').trim().toLowerCase();
+  if(ql.length < 2) return [];
+  var byKey = {};                       // 사무실명(정규화) → 후보 한 줄
+  var norm = function(s){ return String(s || '').replace(/\s+/g, '').toLowerCase(); };
+
+  /* ① 기업정보함 명함 — 회사명이 맞는 것만. 사람 이름으로는 안 찾는다:
+       이 칸은 «사무실 이름» 칸이라, 사람 이름으로 찾으면 엉뚱한 회사가 올라온다.
+       사람으로 찾고 싶으면 옆의 「기업정보함에서 찾기」 단추가 있다. */
+  try{
+    var idx = (typeof window !== 'undefined' && window.pucardsIdx) || null;
+    if(idx){
+      Object.keys(idx).forEach(function(id){
+        var r = idx[id]; if(!r || r.k === 'biz') return;      // 사업자등록증은 사람이 아니다
+        if(norm(r.c).indexOf(norm(ql)) < 0) return;
+        var k = norm(r.c); if(!k || byKey[k]) return;
+        byKey[k] = taxOfficeFromCard(r);
+      });
+    }
+  }catch(e){ /* 색인이 아직 안 왔으면 조용히 넘어간다 */ }
+
+  /* ② 이미 다른 업체에 적어 둔 세무사무실 — 몇 곳에 쓰이는지도 센다.
+     ⚠ 명함보다 «뒤»에 넣되, 이미 명함으로 잡힌 사무실이면 그 줄에 «곳 수»만 더한다.
+       두 줄로 갈라 놓으면 사람이 어느 쪽을 골라야 할지 모른다. */
+  (companies || []).forEach(function(co){
+    var name = String((co && co.taxOfficeName) || '').trim();
+    if(!name) return;
+    var k = norm(name); if(!k) return;
+    if(norm(name).indexOf(norm(ql)) < 0) return;
+    if(!byKey[k]){
+      byKey[k] = { office:name, contact:co.taxContact || '', phone:co.taxPhone || '',
+        fax:co.taxFax || '', email:co.taxEmail || '', src:'업체', n:0 };
+    }
+    byKey[k].n++;
+    /* 명함에 없던 칸은 «이미 적어 둔 업체»에서 메운다 — 둘을 합치면 빈칸이 줄어든다 */
+    ['contact','phone','fax','email'].forEach(function(f2){
+      var v = co[({ contact:'taxContact', phone:'taxPhone', fax:'taxFax', email:'taxEmail' })[f2]];
+      if(!byKey[k][f2] && v) byKey[k][f2] = v;
+    });
+  });
+
+  /* 많이 쓰이는 사무실을 위로 — 자주 쓰는 것이 위에 있어야 손이 덜 간다 */
+  return Object.keys(byKey).map(function(k){ return byKey[k]; })
+    .sort(function(a, b){ return (b.n || 0) - (a.n || 0); })
+    .slice(0, 8);
+}
+if(typeof window !== 'undefined'){
+  window.taxOfficeSuggest = taxOfficeSuggest;
+  window.taxOfficeFromCard = taxOfficeFromCard;
+}
+
+/* ══ 계약서에서 계약정보 당겨오기 (대표 지시 2026-08-31) ═══════════════════
+   업체관리의 계약정보(유형·기간·자문료·부가세)는 원래 계약관리에서 «이관»될 때
+   한 번 채워진다(transferContract). 그런데 —
+     · 이관 전에 업체를 손으로 먼저 만든 경우
+     · 이관 뒤에 계약서가 고쳐진 경우
+     · 이관이 「빈 칸만 채우기」라 그때 비어 있지 않아 건너뛴 칸
+   이 세 경우에는 업체관리 쪽이 계약서와 어긋난 채로 남는다. 그때 손으로 다시 친다.
+
+   ⚠ 저절로 덮어쓰지 않는다. 사람이 «누를 때»만, 그것도 «빈 칸만» 채운다 —
+     업체관리에서 고쳐 둔 값을 계약서 값으로 조용히 되돌리면 그게 더 나쁘다. */
+function erpContractForCompany(co, contracts){
+  co = co || {};
+  var list = contracts || [];
+  var norm = function(s){ return String(s || '').replace(/\s+/g, '').toLowerCase(); };
+  var digits = function(s){ return String(s || '').replace(/\D/g, ''); };
+  var myBiz = digits(co.bizNo);
+  var myName = norm(co.name);
+  var hits = list.filter(function(ct){
+    if(!ct) return false;
+    /* ① 이관될 때 적어 둔 계약번호가 가장 확실하다 */
+    if(co.sourceContractNo && ct.contractNo === co.sourceContractNo) return true;
+    /* ② 업체 번호가 붙어 있으면 그것 */
+    if(co.id && ct.companyId && ct.companyId === co.id) return true;
+    /* ③ 사업자번호 — 이름이 달라도 같은 회사다 */
+    if(myBiz && myBiz.length >= 10 && digits(ct.bizNo || (ct.company || {}).bizNo) === myBiz) return true;
+    /* ④ 마지막으로 이름. 띄어쓰기·대소문자는 무시한다 */
+    return !!myName && norm(ct.companyName || (ct.company || {}).name) === myName;
+  });
+  if(!hits.length) return null;
+  /* 여럿이면 «가장 최근에 맺은» 것 — 옛 계약으로 지금 값을 채우면 안 된다 */
+  return hits.sort(function(a, b){
+    return String(b.signDate || '').localeCompare(String(a.signDate || ''));
+  })[0];
+}
+
+/* 계약서 한 장에서 «업체관리 계약정보» 칸으로 옮길 값만 뽑는다.
+   ⚠ 월 자문료는 종류별로 나뉘어 있다(amounts). 업체계약(company) 금액이 먼저다. */
+function erpContractToCoFields(ct){
+  ct = ct || {};
+  var amounts = ct.amounts || {};
+  var fee = amounts.company || ct.amount || 0;
+  var typeCodes = ct.typeCodes || {};
+  var end = ct.contractEndDate || '';
+  if(!end && ct.signDate){
+    /* 이관 때 쓰는 규칙과 «같게» — 계약일 + 1년. 두 곳이 다르면 값이 갈라진다. */
+    try{ var d = new Date(ct.signDate); d.setFullYear(d.getFullYear() + 1); end = localYMD(d); }
+    catch(e){ end = ''; }
+  }
+  return {
+    contractNo: ct.contractNo || '',
+    typeCode: typeCodes.company || ct.typeCode || '',
+    contractStartDate: ct.signDate || '',
+    contractEndDate: end,
+    monthlyAdvisoryFee: parseInt(fee, 10) || 0,
+    /* 계약서에 적힌 것이 없으면 「별도」 — 이관 때와 같은 값이다 */
+    vatType: ct.vatType || 'separate'
+  };
+}
+if(typeof window !== 'undefined'){
+  window.erpContractForCompany = erpContractForCompany;
+  window.erpContractToCoFields = erpContractToCoFields;
+}
+
 function pcCompanyRows(q){
   var out = [];
   try{
@@ -22012,7 +22150,8 @@ function CompanyEditModal(props){
   useEscClose(props.onClose);
   useEnterSave(function(){ var saveBtn=document.querySelector('.modal-bg .modal .btn-primary'); if(saveBtn) saveBtn.click(); });
   var s = useState(props.cur); var f = s[0]; var setF = s[1];
-  var pcpk = useState(null); var pcPickMode = pcpk[0]; var setPcPickMode = pcpk[1];  // 기업정보함 찾기: 'ceo' | 'contact'
+  var pcpk = useState(null); var pcPickMode = pcpk[0]; var setPcPickMode = pcpk[1];  // 기업정보함 찾기: 'ceo' | 'contact' | 'tax'
+  var txh = useState([]); var taxHits = txh[0]; var setTaxHits = txh[1];             // 세무사무실 자동완성 후보
   var pccp = useState(false); var pcCoPick = pccp[0]; var setPcCoPick = pccp[1];     // 기업정보함에서 사업자등록증(회사정보) 찾기
   var users = getAssignableUsers();
   var assignable = getAssignableUsers();   // 휴직·배제 제외
@@ -22112,6 +22251,68 @@ function CompanyEditModal(props){
     showToast('대표자 채움: ' + (p.n || '')
       + (got.length ? (' · ' + got.join('·') + ' 함께 채움') : '')
       + (none.length ? (' · 명함에 ' + none.join('·') + ' 없음') : ''));
+  }
+  /* 세무사무실 다섯 칸을 한꺼번에 채운다 (대표 지시 2026-08-31).
+     ★ 대표자 채우기와 «같은 규칙» — 이미 적어 둔 칸은 덮어쓰지 않고, 무엇을 채웠는지
+       무엇이 없었는지 말해 준다. 손으로 고쳐 둔 것이 말없이 바뀌면 안 된다.
+     ⚠ 사무실 «이름»만은 덮어쓴다 — 그것을 고르러 온 것이기 때문이다
+       (대표자 이름을 늘 넣는 것과 같은 결). */
+  function fillTaxOffice(t){
+    t = t || {};
+    var got = [], none = [];
+    setF(function(prev){
+      var nx = Object.assign({}, prev);
+      if(t.office) nx.taxOfficeName = t.office;
+      if(t.contact && !String(nx.taxContact || '').trim()){ nx.taxContact = t.contact; got.push('담당자'); }
+      if(t.phone && !String(nx.taxPhone || '').trim()){ nx.taxPhone = t.phone; got.push('전화'); }
+      if(t.fax && !String(nx.taxFax || '').trim()){ nx.taxFax = t.fax; got.push('팩스'); }
+      if(t.email && !String(nx.taxEmail || '').trim()){ nx.taxEmail = t.email; got.push('이메일'); }
+      return nx;
+    });
+    if(!t.contact) none.push('담당자');
+    if(!t.phone) none.push('전화');
+    if(!t.fax) none.push('팩스');
+    /* ⚠ 이메일이 빈 것은 «따로» 크게 말한다 — 보수총액 일괄요청이 이메일로 묶기 때문에,
+         이 칸이 비면 그 사업장은 요청에서 통째로 빠진다. */
+    if(!t.email) none.push('이메일');
+    showToast('🧾 세무사무실 채움: ' + (t.office || '')
+      + (got.length ? (' · ' + got.join('·') + ' 함께 채움') : '')
+      + (none.length ? (' · ' + (t.src === '업체' ? '적어 둔 업체' : '명함') + '에 ' + none.join('·') + ' 없음') : '')
+      + (!t.email && !String(f.taxEmail || '').trim() ? ' ⚠ 이메일이 없으면 보수총액 일괄요청에서 빠집니다' : ''));
+  }
+  /* 계약서에서 계약정보 당겨오기 (대표 지시 2026-08-31).
+     ★ 세무사무실·대표자 채우기와 «같은 규칙» — 빈 칸만 채우고, 무엇을 채웠는지
+       무엇을 그냥 뒀는지 말해 준다. 업체관리에서 고쳐 둔 값을 말없이 되돌리지 않는다. */
+  function fillFromContract(){
+    var ct = erpContractForCompany(f, dbGet('contracts', []) || []);
+    if(!ct){
+      showToast('📄 이 업체의 계약서를 못 찾았습니다 — 계약관리에 등록된 계약이 없거나 업체명·사업자번호가 다릅니다');
+      return;
+    }
+    var v = erpContractToCoFields(ct);
+    var LABEL = { typeCode:'업체유형', contractStartDate:'계약 시작', contractEndDate:'계약 종료',
+      monthlyAdvisoryFee:'월 자문료', vatType:'부가세' };
+    var got = [], kept = [];
+    setF(function(prev){
+      var nx = Object.assign({}, prev);
+      Object.keys(LABEL).forEach(function(k){
+        var now = nx[k];
+        /* 「비어 있다」의 뜻이 칸마다 다르다 — 자문료는 0 이 빈 것이고,
+           부가세는 «미확정»(unspecified)이 빈 것이다. */
+        var blank = (k === 'monthlyAdvisoryFee') ? !(parseInt(now, 10) > 0)
+          : (k === 'vatType') ? (!now || now === 'unspecified')
+          : !String(now || '').trim();
+        if(!v[k] && v[k] !== 0) return;                 // 계약서에도 없으면 건드리지 않는다
+        if(!blank){ kept.push(LABEL[k]); return; }
+        nx[k] = v[k]; got.push(LABEL[k]);
+      });
+      /* 어느 계약서에서 왔는지 남긴다 — 나중에 「이 값 어디서 왔나」를 물을 수 있게 */
+      if(v.contractNo && !String(nx.sourceContractNo || '').trim()) nx.sourceContractNo = v.contractNo;
+      return nx;
+    });
+    showToast('📄 ' + (v.contractNo || '계약서') + ' 에서 당겨옴'
+      + (got.length ? (' · ' + got.join('·') + ' 채움') : ' · 채울 빈 칸이 없었습니다')
+      + (kept.length ? (' · ' + kept.join('·') + ' 은 적어 두신 값 그대로 뒀습니다') : ''));
   }
   // 기업정보함에서 담당자 추가 (pcId 기록 — 자동연동 아님)
   function addContactFromPc(p){
@@ -22284,10 +22485,48 @@ function CompanyEditModal(props){
         ),
         // 세무사무실 정보 (보수총액신고·연말정산 등 세무 연계용)
         h('div', { style:{ background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:'6px', padding:'10px 12px', marginBottom:'10px' } },
-          h('div', { style:{ fontSize:'12px', fontWeight:700, color:'#166534', marginBottom:'8px' } }, '🧾 세무사무실 정보'),
+          h('div', { style:{ fontSize:'12px', fontWeight:700, color:'#166534', marginBottom:'8px',
+              display:'flex', alignItems:'center', gap:'8px' } }, '🧾 세무사무실 정보',
+            /* 사람 이름으로 찾고 싶을 때 — 이름 칸 자동완성은 «사무실 이름»만 본다 */
+            h('button', { type:'button', onClick:function(){ setPcPickMode('tax'); },
+              title:'기업정보함에서 세무사무실 담당자를 찾아 사무실명·담당자·전화·팩스·이메일을 채웁니다\n'
+                   +'— 이미 적어 둔 칸은 그대로 둡니다',
+              style:{ marginLeft:'auto', background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe',
+                borderRadius:'5px', padding:'4px 9px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
+              '📇 기업정보함에서 찾기')),
           h('div', { className:'fld' }, h('label', null, '세무사무실명 / 담당자'),
-            h('div', { style:{ display:'flex', gap:'6px' } },
-              h('input', { type:'text', value:f.taxOfficeName || '', onChange:set('taxOfficeName'), placeholder:'○○세무회계', style:{ flex:1 } }),
+            h('div', { style:{ display:'flex', gap:'6px', alignItems:'flex-start' } },
+              h('div', { style:{ flex:1, position:'relative' } },
+                h('input', { type:'text', value:f.taxOfficeName || '', placeholder:'○○세무회계',
+                  'data-autocomplete-input':'1',
+                  onChange:function(e){
+                    set('taxOfficeName')(e);
+                    setTaxHits(taxOfficeSuggest(e.target.value, dbGet('companies', [])));
+                  },
+                  onKeyDown:function(e){ if(e.key === 'Escape') setTaxHits([]); },
+                  style:{ width:'100%', boxSizing:'border-box' } }),
+                /* ⚠ onMouseDown 으로 고른다 — onClick 이면 칸이 먼저 흐려지며(blur)
+                     목록이 닫혀 클릭이 허공을 친다. 회사 자동완성이 쓰는 방식과 같다. */
+                taxHits.length > 0 && h('div', { 'data-autocomplete':'1',
+                  style:{ position:'absolute', top:'100%', left:0, right:0, zIndex:8000, background:'#fff',
+                    border:'1px solid #bfdbfe', borderRadius:'0 0 6px 6px', boxShadow:'0 4px 16px rgba(0,0,0,0.12)',
+                    maxHeight:'220px', overflow:'auto' } },
+                  taxHits.map(function(t, i){
+                    return h('div', { key:i,
+                      onMouseDown:function(e){ e.preventDefault(); fillTaxOffice(t); setTaxHits([]); },
+                      style:{ padding:'6px 9px', borderBottom:'1px solid #f8fafc', cursor:'pointer', fontSize:'11.5px' },
+                      onMouseEnter:function(e){ e.currentTarget.style.background = '#eff6ff'; },
+                      onMouseLeave:function(e){ e.currentTarget.style.background = ''; } },
+                      h('span', { style:{ fontWeight:700 } }, t.office),
+                      t.contact ? h('span', { style:{ color:'#475569' } }, ' — ' + t.contact) : null,
+                      /* 어디서 온 후보인지 밝힌다 — 「업체 4곳에 이미 있음」이면
+                         명함이 없어도 믿고 고를 수 있다는 뜻이다 */
+                      h('span', { style:{ float:'right', color:'#94a3b8', fontSize:'10px' } },
+                        t.n > 0 ? ('업체 ' + t.n + '곳에 이미 있음') : t.src),
+                      /* 이메일이 없으면 미리 알린다 — 고르고 나서 알면 늦다 */
+                      !t.email ? h('div', { style:{ color:'#854d0e', fontSize:'10px', marginTop:'2px' } },
+                        '⚠ 이메일 없음 — 보수총액 일괄요청에서 빠집니다') : null);
+                  }))),
               h('input', { type:'text', value:f.taxContact || '', onChange:set('taxContact'), placeholder:'담당자', style:{ flex:1 } })
             )),
           h('div', { className:'fld' }, h('label', null, '연락처 / 팩스'),
@@ -22304,7 +22543,15 @@ function CompanyEditModal(props){
         ),
         // 계약 정보
         h('div', { style:{ background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'6px', padding:'10px 12px', marginBottom:'10px' } },
-          h('div', { style:{ fontSize:'12px', fontWeight:700, color:'#854d0e', marginBottom:'8px' } }, '📋 계약정보'),
+          h('div', { style:{ fontSize:'12px', fontWeight:700, color:'#854d0e', marginBottom:'8px',
+              display:'flex', alignItems:'center', gap:'8px' } }, '📋 계약정보',
+            h('button', { type:'button', onClick:fillFromContract,
+              title:'계약관리에 등록된 이 업체의 «가장 최근» 계약서에서\n'
+                   +'업체유형·계약기간·월 자문료·부가세를 가져옵니다\n'
+                   +'— 이미 적어 둔 칸은 그대로 둡니다',
+              style:{ marginLeft:'auto', background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe',
+                borderRadius:'5px', padding:'4px 9px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
+              '📄 계약서에서 당겨오기')),
           h('div', { className:'fld' }, h('label', null, '업체유형'),
             h('select', { value:f.typeCode || '', onChange:set('typeCode') },
               typeMasters.map(function(t){ return h('option', { key:t.code, value:t.code }, t.name); }))),
@@ -22319,10 +22566,18 @@ function CompanyEditModal(props){
              자동이체가 익월·익익월이면 늦게 들어온 돈은 «옛 금액» 이다.
              여기에 「언제부터 얼마」를 적어 두면 그 달 귀속으로 셈한다.
              ⚠ 안 적어도 된다 — 비어 있으면 위 「월 자문료」를 그대로 쓴다(예전과 같다). */
-          h('div', { className:'fld', style:{ gridColumn:'1 / -1' } },
-            h('label', null, '자문료가 바뀐 이력 ',
+          /* ⚠ 이름표 칸이 110px 이라, 긴 설명을 거기 넣으면 넉 줄로 접혀 자리를 먹는다
+               (대표 2026-08-31: 「1줄로 행을 길게 해달라」).
+               이 칸만 한 칸 그리드로 바꿔 «이름표가 한 줄»로 펴지게 한다.
+             ⚠ 긴 설명은 마우스를 올렸을 때로 옮긴다 — 지워 버리면 왜 적는 칸인지 모른다. */
+          h('div', { className:'fld', style:{ gridColumn:'1 / -1', gridTemplateColumns:'1fr' } },
+            h('label', { style:{ whiteSpace:'nowrap' },
+              title:'자동이체가 익월·익익월이면 늦게 들어온 돈은 «옛 금액»입니다.\n'
+                   +'여기에 「언제부터 얼마」를 적어 두면 그 달 금액으로 맞춰 셈합니다.\n'
+                   +'안 적으면 위의 「월 자문료」를 그대로 씁니다.' },
+              '자문료가 바뀐 이력 ',
               h('span', { style:{ fontWeight:400, color:'#94a3b8', fontSize:'10.5px' } },
-                '— 늦게 들어오는 자동이체를 그 달 금액으로 맞춥니다 (안 적어도 됩니다)')),
+                '— 늦게 오는 자동이체를 그 달 금액으로 맞춥니다 (안 적어도 됩니다)')),
             h('div', { style:{ display:'flex', flexDirection:'column', gap:'5px' } },
               erpFeeHistorySort(f.feeHistory || []).map(function(hrec, hi){
                 return h('div', { key:'fh'+hi, style:{ display:'flex', gap:'6px', alignItems:'center' } },
@@ -22563,9 +22818,17 @@ function CompanyEditModal(props){
       )
     ),
     pcPickMode && h(PucardsContactPickerModal, {
-      initialQuery: f.name || '',            // 그 업체 이름으로 먼저 찾아 준다
+      /* ⚠ 세무사무실을 찾을 때는 «그 업체 이름»으로 먼저 찾으면 안 된다 —
+           찾는 것은 사업장이 아니라 그 사업장의 세무사무실이다. 이미 적어 둔
+           사무실 이름이 있으면 그것으로, 없으면 빈칸으로 시작한다. */
+      initialQuery: pcPickMode === 'tax' ? (f.taxOfficeName || '') : (f.name || ''),
       onClose:function(){ setPcPickMode(null); },
-      onSelect:function(p){ (pcPickMode==='ceo' ? fillCeoFromPc : addContactFromPc)(p); setPcPickMode(null); }
+      onSelect:function(p){
+        if(pcPickMode === 'tax') fillTaxOffice(taxOfficeFromCard(p));
+        else if(pcPickMode === 'ceo') fillCeoFromPc(p);
+        else addContactFromPc(p);
+        setPcPickMode(null);
+      }
     }),
     /* 사업자등록증 찾기 — 계약관리가 쓰던 창을 그대로 쓴다.
        같은 일에 창이 둘이면 한쪽만 고치는 사고가 난다(기업정보함 카메라에서 겪었다). */
