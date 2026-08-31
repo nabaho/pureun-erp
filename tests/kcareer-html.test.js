@@ -42,9 +42,18 @@ test('★★ 폴더 «연결·스캔»은 여전히 읽기 전용이다', () => 
 test('★★ 쓰기 권한은 «저장할 때만» 묻는다', () => {
   const w = funcSource('fsEnsureWrite');
   assert.match(w, /mode:'readwrite'/, '저장용 권한 함수가 있어야 합니다');
-  // ⚠ readwrite 는 이 한 곳에서만 — 여기저기 퍼지면 통제가 안 된다
-  assert.equal((source.match(/mode:'readwrite'/g) || []).length, 1,
-    '⚠ readwrite 는 fsEnsureWrite 한 곳에서만 써야 합니다');
+  /* ⚠ readwrite 는 «저장 길»에서만 — 스캔 길로 새면 원본이 위험해진다.
+     2026-08-31 저장 폴더 지정이 생기며 두 곳이 되었다:
+       fsEnsureWrite  — 저장 직전 권한 확인
+       fsPickSaveFolder — 저장 폴더를 고를 때(고르는 순간 쓰기로 연다)
+     ⚠ 이 둘 말고 다른 곳에 readwrite 가 생기면 안 된다. */
+  assert.equal((source.match(/mode:'readwrite'/g) || []).length, 2,
+    '⚠ readwrite 는 fsEnsureWrite·fsPickSaveFolder 두 곳에서만 써야 합니다');
+  assert.match(funcSource('fsPickSaveFolder'), /showDirectoryPicker\(\{id:'kcareer-save', mode:'readwrite'\}\)/,
+    '저장 폴더는 «따로» 고른다 — 스캔용 손잡이를 쓰기로 바꾸지 않습니다');
+  // 저장용과 스캔용은 «다른» 손잡이여야 한다
+  assert.match(source, /put\(\{key:'saveDir'/, '저장 폴더는 따로 담습니다');
+  assert.match(source, /put\(\{key:'rootDir'/, '스캔 폴더는 그대로입니다');
   assert.match(funcSource('fsSaveToFolder'), /await fsEnsureWrite\(root\)/,
     '저장 직전에 물어야 합니다');
 });
@@ -2086,4 +2095,35 @@ test('★★ 다섯 화면은 «각자» OCR 지시문을 갖는다 — 돌려 �
   ['wiccok', 'award', 'license', 'complete', 'edu'].forEach((k) => {
     assert.ok(source.indexOf('\n  ' + k + ':', at) > 0, k + ' 지시문이 있어야 합니다');
   });
+});
+
+/* ===== ★★ 저장 폴더 지정 — 한 번 정하면 계속 거기로 (2026-08-31) ===== */
+
+test('★★ 저장 폴더를 지정하면 «기억»하고 다음부터 자동으로 거기로 간다', () => {
+  // 실측: 지정 전에는 내려받기 폴더로 「Untitled_20260801_014956.pdf」가 쌓였다.
+  assert.match(source, /async function fsPickSaveFolder\(\)/, '폴더를 고르는 길이 있어야 합니다');
+  assert.match(source, /async function fsSaveDirPut\(handle\)/, '기억해야 합니다');
+  assert.match(source, /async function fsSaveDirGet\(\)/, '다음에 다시 꺼내 써야 합니다');
+  // 저장할 때 «지정한 폴더»를 먼저 본다
+  assert.match(funcSource('fsSaveToFolder'), /await fsSaveDirGet\(\) \|\| _fsRoot/,
+    '지정한 저장 폴더가 먼저여야 합니다');
+  // 화면에 단추가 있어야 쓸 수 있다
+  assert.ok((source.match(/onclick="fsPickSaveFolder\(\)"/g) || []).length >= 1,
+    '[저장 폴더 지정] 단추가 있어야 합니다');
+});
+
+test('★★ 지금 어디로 저장되는지 화면에 보여 준다 — 모르면 「왜 내려받기로 가지」가 된다', () => {
+  const r = funcSource('fsRenderSaveDir');
+  assert.match(r, /querySelectorAll\('\[data-savedir\]'\)/,
+    '⚠ 자리가 여러 곳이라 id 가 아니라 data-savedir 로 찾아야 합니다');
+  assert.match(r, /저장 폴더가 지정되지 않았습니다/, '없으면 없다고 말해야 합니다');
+  assert.match(funcSource('toggleMore'), /fsRenderSaveDir\(\)/, '더보기를 열 때 갱신합니다');
+});
+
+test('★★ 폴더에 못 넣어도 «지은 이름»으로 내려받는다', () => {
+  // ⚠ 이걸 안 하면 「Untitled_20260801_014956.pdf」로 쌓여 나중에 아무도 못 알아본다
+  const d = funcSource('downloadToFolder');
+  assert.match(d, /var nice=rec \? fsFileName\(rec, type, ext\)/, '이름을 지어야 합니다');
+  assert.match(d, /a\.download=nice/, '그 이름으로 내려받아야 합니다');
+  assert.match(d, /저장 폴더 지정/, '어떻게 하면 폴더로 가는지 알려 줘야 합니다');
 });

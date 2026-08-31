@@ -1313,6 +1313,10 @@ input.kf-in.kf-done{background:#f8fafc;border-bottom:1.5px solid var(--teal);fon
               <button class="btn orig-lock-btn" type="button" onclick="toggleOrigLock()">🔒 원본 보호</button>
               <div style="border-top:1px dashed var(--border);margin:4px 0"></div>
               <button class="btn fs-ui" type="button" onclick="fsConnectFolder()">📁 서류 폴더 연결</button>
+              <!-- ★ 저장 폴더 — 한 번 지정하면 그 뒤로는 ⬇ 저장이 자동으로 여기로 들어간다.
+                   ⚠ 스캔용 연결과 «다른» 손잡이다. 스캔용은 읽기 전용으로 두어야 원본이 안전하다. -->
+              <button class="btn fs-ui" type="button" onclick="fsPickSaveFolder()" title="⬇ 저장이 들어갈 폴더를 정합니다 (종류에 맞는 하위 폴더로)">💾 저장 폴더 지정</button>
+              <div class="fs-savedir" data-savedir style="font-size:11px;color:var(--text-mute);padding:3px 8px;line-height:1.6"></div>
               <button class="btn fs-ui" type="button" onclick="openScanPreview()">🔍 서류 폴더 스캔</button>
               <button class="btn fs-ui" type="button" onclick="fsUndoLast()">↩ 이번 스캔 되돌리기</button>
               <div style="border-top:1px dashed var(--border);margin:4px 0"></div>
@@ -1607,6 +1611,10 @@ input.kf-in.kf-done{background:#f8fafc;border-bottom:1.5px solid var(--teal);fon
             <div style="font-size:12px;color:var(--text-mute);margin-bottom:10px">서류 폴더를 한 번 지정하면 앱이 파일 이름·크기만 읽어 목록을 만듭니다. 원본은 볼 때만 그 자리에서 읽으므로 저장공간을 쓰지 않습니다. 폴더는 읽기 전용으로만 열립니다.</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <button class="btn fs-ui" type="button" onclick="fsConnectFolder()">📁 서류 폴더 연결</button>
+              <!-- ★ 저장 폴더 — 한 번 지정하면 그 뒤로는 ⬇ 저장이 자동으로 여기로 들어간다.
+                   ⚠ 스캔용 연결과 «다른» 손잡이다. 스캔용은 읽기 전용으로 두어야 원본이 안전하다. -->
+              <button class="btn fs-ui" type="button" onclick="fsPickSaveFolder()" title="⬇ 저장이 들어갈 폴더를 정합니다 (종류에 맞는 하위 폴더로)">💾 저장 폴더 지정</button>
+              <div class="fs-savedir" data-savedir style="font-size:11px;color:var(--text-mute);padding:3px 8px;line-height:1.6"></div>
               <button class="btn fs-ui" type="button" onclick="openScanPreview()">🔍 서류 폴더 스캔</button>
               <button class="btn fs-ui" type="button" onclick="fsUndoLast()">↩ 이번 스캔 되돌리기</button>
             </div>
@@ -2145,6 +2153,59 @@ async function fsLoadRoot(){
   }catch(e){ return null; }
 }
 
+/* ===== 저장 폴더 — «지정해 두면 그 뒤로는 자동으로» 거기에 들어간다 ===== */
+var _fsSaveRoot = null;
+async function fsSaveDirPut(handle){
+  try{ var db = await _openFsDB();
+    return new Promise(function(res){
+      var tx = db.transaction('handles','readwrite');
+      tx.objectStore('handles').put({key:'saveDir', handle:handle});
+      tx.oncomplete = function(){ res(true); }; tx.onerror = function(){ res(false); };
+    });
+  }catch(e){ return false; }
+}
+async function fsSaveDirGet(){
+  if(_fsSaveRoot) return _fsSaveRoot;
+  try{ var db = await _openFsDB();
+    _fsSaveRoot = await new Promise(function(res){
+      var req = db.transaction('handles','readonly').objectStore('handles').get('saveDir');
+      req.onsuccess = function(){ res(req.result ? req.result.handle : null); };
+      req.onerror = function(){ res(null); };
+    });
+  }catch(e){ _fsSaveRoot=null; }
+  return _fsSaveRoot;
+}
+/* 사람이 폴더를 고른다 — «누른 그 순간»에만 뜬다(브라우저 규칙) */
+async function fsPickSaveFolder(){
+  if(!fsSupported()){ toast('이 브라우저는 폴더 지정을 지원하지 않습니다 — Chrome 또는 Edge에서 열어 주세요'); return null; }
+  try{
+    var h = await window.showDirectoryPicker({id:'kcareer-save', mode:'readwrite'});
+    _fsSaveRoot = h; await fsSaveDirPut(h);
+    toast('✅ 저장 폴더 지정됨: ' + h.name + ' — 앞으로 ⬇ 저장은 여기로 들어갑니다', 5000);
+    _safe(fsRenderSaveDir);
+    return h;
+  }catch(e){
+    if(e && e.name === 'AbortError') return null;
+    toast('폴더 지정 실패: ' + e.message); return null;
+  }
+}
+async function fsClearSaveFolder(){
+  _fsSaveRoot = null; await fsSaveDirPut(null);
+  toast('저장 폴더 지정을 풀었습니다 — 이제 내려받기 폴더로 갑니다');
+  _safe(fsRenderSaveDir);
+}
+/* 지금 어디로 저장되는지 화면에 보여 준다 — 모르면 「왜 내려받기로 가지」가 된다 */
+async function fsRenderSaveDir(){
+  /* ⚠ 자리가 여러 곳이라 id 가 아니라 data-savedir 로 찾는다 — id 를 여럿 두면 앞의 것만 잡힌다 */
+  var boxes=document.querySelectorAll('[data-savedir]'); if(!boxes.length) return;
+  var h=await fsSaveDirGet();
+  var html = h
+    ? '지금 저장 폴더: <b>' + escapeHtml(h.name) + '</b> — 종류에 맞는 하위 폴더로 들어갑니다'
+      + ' <a href="#" onclick="fsClearSaveFolder();return false" style="color:var(--red)">해제</a>'
+    : '<span style="color:var(--red)">저장 폴더가 지정되지 않았습니다 — 지금은 내려받기 폴더로 갑니다</span>';
+  boxes.forEach(function(b){ b.innerHTML=html; });
+}
+
 /* 권한 확인 — 읽기만. 'prompt'면 사용자 클릭(제스처) 안에서 호출돼야 승인창이 뜬다. */
 async function fsEnsurePermission(handle){
   if(!handle) return false;
@@ -2232,7 +2293,8 @@ async function fsFreeName(dir, name){
 /* 한 건을 제자리에 저장. 되면 저장한 경로를 돌려준다 */
 async function fsSaveToFolder(fileRec, store, type, rec){
   if(!fsSupported()) return null;
-  var root=_fsRoot || await fsLoadRoot(); if(!root) return null;
+  /* ⚠ 지정해 둔 «저장 폴더»가 먼저다. 없으면 스캔용 폴더라도 써 본다(있으면 거기가 서류 폴더다). */
+  var root=await fsSaveDirGet() || _fsRoot || await fsLoadRoot(); if(!root) return null;
   var sub=fsFolderFor(store,type); if(!sub) return null;
   if(!await fsEnsureWrite(root)) return null;
   var dir;
@@ -4899,7 +4961,7 @@ function _nextDocQueue(){
 
 function $(id){ return document.getElementById(id); }
 function toggleMore(btn){ var m=btn.nextElementSibling; var open=m.classList.toggle('open');
-  if(open){ try{ refreshOrigLockBtns(); }catch(e){} setTimeout(function(){ document.addEventListener('click', _moreAway); },0); } }
+  if(open){ try{ refreshOrigLockBtns(); }catch(e){} try{ fsRenderSaveDir(); }catch(e){} setTimeout(function(){ document.addEventListener('click', _moreAway); },0); } }
 /* 원본 보호 토글 — 환경설정이 비관리자에게 숨겨지므로 더보기에서도 켜고 끌 수 있어야 한다 */
 function refreshOrigLockBtns(){
   var on = origLocked();
@@ -5741,8 +5803,17 @@ async function downloadToFolder(id, store, type, rec){
   var where=null;
   try{ where=await fsSaveToFolder(f, store, type, rec); }catch(e){ console.warn('폴더 저장',e); }
   if(where){ toast('📁 '+where+' 에 저장했습니다'); return; }
-  downloadFile(id);
-  toast('내려받기 폴더에 저장했습니다 — 서류 폴더에 넣으려면 폴더 연결·쓰기 허용이 필요합니다', 5000);
+  /* 폴더에 못 넣어도 «이름은 제대로» 붙여 내려받는다 —
+     안 그러면 「Untitled_20260801_014956.pdf」로 쌓여 나중에 아무도 못 알아본다. */
+  var ext=(f.ext || String(f.name||'').split('.').pop() || '').toLowerCase();
+  var nice=rec ? fsFileName(rec, type, ext) : (f.name||'문서');
+  try{
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([b64ToAb(f.base64)]));
+    a.download=nice; a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 4000);
+  }catch(e){ downloadFile(id); }
+  toast('내려받기 폴더에 「'+nice+'」로 저장했습니다 — 서류 폴더로 넣으려면 [저장 폴더 지정]을 눌러 주세요', 6000);
 }
 function downloadFile(id){ const go=function(f){ const blob=new Blob([b64ToAb(f.base64)]); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=f.name||id; a.click(); };
   const f=getFile(id); if(f){ go(f); } else { getFileAsync(id).then(function(g){ if(g) go(g); else toast('원본 없음'); }); } }
