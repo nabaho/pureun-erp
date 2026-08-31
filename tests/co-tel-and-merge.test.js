@@ -114,10 +114,45 @@ test('★ 명함의 «개인» 전화·휴대폰은 대표번호가 아니다 �
     '★ 직통전화·휴대폰을 회사 대표번호로 올리면 그 사람이 퇴사해도 계약서에 남는다');
 });
 
-test('★ 등록증이 명함보다 앞선다', () => {
+test('★ 시각이 같으면 등록증이 명함보다 앞선다', () => {
+  /* ⚠ 2026-08-31 규칙이 바뀌었다(대표 결정 「최근 이김」).
+     이제 승부는 «올린 시각»으로 갈린다 — 갈래 차례는 끼지 않는다.
+     시각이 «같거나 없을 때»만 먼저 온 것(등록증)이 남는다. 아래 두 검사가 새 규칙이다. */
   const items = [BIZ, { kind:'card', company:'가나테크', bizno:'134-86-05772',
                         name:'박대리', companyTel:'02-777-1234' }];
   assert.equal(buildList(items)[0].companyTel, '041-556-0035');
+});
+
+test('★★ 명함이 «더 최근»이면 등록증을 덮는다 (대표 결정 2026-08-31 「최근 이김」)', () => {
+  const items = [
+    Object.assign({}, BIZ, { createdAt: 1000 }),
+    { kind:'card', company:'가나테크', bizno:'134-86-05772',
+      name:'박대리', companyTel:'02-777-1234', createdAt: 2000 }
+  ];
+  assert.equal(buildList(items)[0].companyTel, '02-777-1234',
+    '최근에 올린 명함의 회사 대표번호가 옛 등록증의 것을 덮어야 합니다');
+});
+
+test('★★ 등록증이 «더 최근»이면 명함이 못 덮는다 — 시각으로만 겨룬다', () => {
+  const items = [
+    Object.assign({}, BIZ, { createdAt: 3000 }),
+    { kind:'card', company:'가나테크', bizno:'134-86-05772',
+      name:'박대리', companyTel:'02-777-1234', createdAt: 1000 }
+  ];
+  assert.equal(buildList(items)[0].companyTel, '041-556-0035');
+});
+
+test('★★ 「최근 이김」이 «개인» 번호를 회사 칸으로 끌어오지는 않는다', () => {
+  /* 대표께 짚은 걱정이 여기서 막힌다 — 명함이 회사로 올리는 것은 companyTel·companyFax 뿐이다 */
+  const items = [
+    Object.assign({}, BIZ, { createdAt: 1000 }),
+    { kind:'card', company:'가나테크', bizno:'134-86-05772', name:'박대리',
+      tel:'02-333-4444', mobile:'010-5555-6666', fax:'02-333-4445',
+      email:'park@example.com', createdAt: 9000 }
+  ];
+  const o = buildList(items)[0];
+  assert.equal(o.companyTel, '041-556-0035', '개인 직통이 대표번호를 덮으면 안 됩니다');
+  assert.ok(!o.mobile && !o.email, '개인 휴대폰·이메일은 회사 값이 아닙니다');
 });
 
 test('번호가 아무 데도 없으면 그대로 「대표번호 없음」이다', () => {
