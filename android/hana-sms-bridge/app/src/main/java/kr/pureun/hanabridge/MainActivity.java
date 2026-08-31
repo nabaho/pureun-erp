@@ -290,6 +290,10 @@ public final class MainActivity extends Activity {
             ping.put("uid", SecureStore.uid(this));
             ping.put("deviceId", SecureStore.deviceId(this));
             ping.put("byHand", true);          /* 사람이 눌렀다 — 스스로 돈 것이 아니다 */
+            /* ★★ 절전이 풀렸나를 «폰이 직접» 말한다 (2026-08-31).
+                 이것이 없어서 「절전 예외를 누르셨습니까」를 두 번 물었고 두 번 다
+                 답을 못 받았다. 폰이 이미 아는 것을 사람에게 묻고 있었던 것이다. */
+            ping.put("batteryFree", batteryFree());
             ping.put("canReadSms", canRead);
             ping.put("foundCount", foundCount);
             ping.put("readOk", readOk);
