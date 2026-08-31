@@ -2127,3 +2127,41 @@ test('★★ 폴더에 못 넣어도 «지은 이름»으로 내려받는다', (
   assert.match(d, /a\.download=nice/, '그 이름으로 내려받아야 합니다');
   assert.match(d, /저장 폴더 지정/, '어떻게 하면 폴더로 가는지 알려 줘야 합니다');
 });
+
+/* ===== ★★ 중복을 합치면 원본이 사라지던 것 (2026-08-31) ===== */
+
+test('★★ 중복 줄은 원본이 «있는지 없는지» 둘 다 말한다', () => {
+  // 있을 때만 말하면 「없는 것」과 「아직 안 그린 것」을 가릴 수 없다.
+  // 합칠 때 어느 쪽에 원본이 있는지가 가장 중요하다.
+  const r = funcSource('_dupRow');
+  assert.match(r, /📎 원본 있음/);
+  assert.match(r, /⛔ 원본 없음/, '⚠ 없을 때도 말해야 합니다');
+});
+
+test('★★ 합치기는 원본을 «진짜로» 읽는다 — getFile 은 IndexedDB 를 못 본다', () => {
+  /* ★ 자료를 잃던 자리:
+       fileExists(배지) = 캐시 + 파일id목록(IndexedDB 반영) → 「원본 있음」
+       getFile(합칠 때) = 캐시 + localStorage 만        → 캐시에 없으면 null
+     그래서 「있다」고 해 놓고 못 옮긴 채 아래에서 지워 버렸다. */
+  const m = source.slice(source.indexOf('async function mergeInto('), source.indexOf('async function mergeInto(') + 3000);
+  assert.match(m, /await getFileAsync\(primaryId\)/, '기준 쪽을 비동기로 읽어야 합니다');
+  assert.match(m, /await getFileAsync\(others\[i\]\.id\)/, '옮겨올 쪽도 비동기로 읽어야 합니다');
+  assert.ok(!/getFile\(primaryId\)/.test(m), '⚠ 동기 getFile 로 되돌리면 원본이 사라집니다');
+  assert.ok(!/var f=getFile\(others/.test(m), '⚠ 동기 getFile 로 되돌리면 안 됩니다');
+});
+
+test('★★ 옮기지 못했으면 «아무것도 지우지 않는다»', () => {
+  const m = source.slice(source.indexOf('async function mergeInto('), source.indexOf('async function mergeInto(') + 3000);
+  assert.match(m, /if\(!primFile && !moved && otherHas\)\{/, '옮기기 실패를 봐야 합니다');
+  assert.match(m, /아무것도 지우지 않았습니다/, '멈췄다고 알려야 합니다');
+  // 지우기는 «맨 마지막»에 와야 한다
+  const delAt = m.indexOf('others.forEach(function(r){deleteFile(r.id);});');
+  const moveAt = m.indexOf('await getFileAsync(others[i].id)');
+  assert.ok(moveAt > 0 && delAt > moveAt, '⚠ 옮기기보다 먼저 지우면 안 됩니다');
+});
+
+test('★★ 원본 없는 쪽을 기준으로 고르면 미리 알려 준다', () => {
+  const m = source.slice(source.indexOf('async function mergeInto('), source.indexOf('async function mergeInto(') + 3000);
+  assert.match(m, /var primHas=hasOriginal\(prim\)/);
+  assert.match(m, /에는 원본이 «없고»/, '기준에 원본이 없으면 경고해야 합니다');
+});

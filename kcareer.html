@@ -5726,9 +5726,13 @@ function _dupLooseKey(r){ function norm(s){ return (s||'').replace(/[\s\-·\(\)�
   if(r.bank!==undefined) return norm(r.bank)+'|'+norm(r.number);
   return norm(r.org||'').slice(0,10)+'|'+norm(r.titleVal||r.title||r.topic||r.project||r.kind||'').slice(0,6); }
 function _dupRow(r){ var info=[r.id, formatDate(r.issueDate||r.date)||r.year||'', r.number||''].filter(Boolean).join(' · '); var hasFile=hasOriginal(r);
+  /* ⚠ 있을 때만 말하면 «없는 것»과 «아직 안 그린 것»을 가릴 수 없다.
+     합칠 때 어느 쪽에 원본이 있는지가 가장 중요하므로 둘 다 또렷이 적는다(대표 지시 2026-08-31). */
   return '<div style="display:flex;gap:6px;align-items:center;font-size:12px;padding:6px 0;border-top:1px solid var(--border);flex-wrap:wrap">'
     +'<span class="id-chip">'+escapeHtml(r.id)+'</span><span style="flex:1;min-width:100px">'+escapeHtml(info)+'</span>'
-    +(hasFile?'<span style="color:var(--teal);font-size:11px">📎원본</span>':'')
+    +(hasFile
+      ? '<span style="color:var(--teal);font-size:11px;font-weight:700">📎 원본 있음</span>'
+      : '<span style="color:var(--text-mute);font-size:11px">⛔ 원본 없음</span>')
     +'<button class="btn sm primary" onclick="mergeInto(\''+_jsAttr(r.id)+'\')">✅ 기준으로 합치기</button>'
     +'<button class="btn sm" onclick="dupDel(\''+_jsAttr(r.id)+'\')" style="color:#fff;background:var(--red);border-color:var(--red)">🗑 삭제</button></div>'; }
 function renderDup(){ const page=_dupPage; const data=getDupData(page);
@@ -5753,20 +5757,43 @@ function renderDup(){ const page=_dupPage; const data=getDupData(page);
 function dupDel(id){ if(!confirm('이 항목을 삭제할까요?\n(첨부 원본도 함께 삭제됩니다)')) return;
   const page=_dupPage, store=getDupStore(page); set(store, get(store).filter(function(x){return x.id!==id;})); deleteFile(id);
   renderDup(); if(CAREER_CFG&&CAREER_CFG[page]) renderCareer(page); if(page==='personal_doc') renderPersonalDocs(); if(page==='account') renderAccounts(); toast('삭제됨'); }
-function mergeInto(primaryId){ const page=_dupPage, store=getDupStore(page);
+async function mergeInto(primaryId){ const page=_dupPage, store=getDupStore(page);
   const allData=getDupData(page); const prim=allData.find(function(r){return r.id===primaryId;}); if(!prim) return;
   const key=dupKey(prim), group=allData.filter(function(r){return dupKey(r)===key;});
   if(group.length<2){ toast('합칠 중복 없음'); return; }
-  if(!confirm('선택 항목('+primaryId+')을 기준으로 '+( group.length-1)+'건을 합치고 나머지를 삭제합니다.\n비어있는 필드만 채워집니다.')) return;
+  /* ⚠ 원본이 «없는» 쪽을 기준으로 고르면, 있는 쪽 것을 끌어와야 한다. 미리 알려 준다. */
+  var primHas=hasOriginal(prim);
+  var otherHas=group.filter(function(r){ return r.id!==primaryId && hasOriginal(r); }).length;
+  var warn = (!primHas && otherHas)
+    ? '\n\n⚠ 기준으로 고른 '+primaryId+' 에는 원본이 «없고», 합쳐질 '+otherHas+'건에는 원본이 있습니다.\n   그 원본을 기준 쪽으로 옮긴 뒤 지웁니다.' : '';
+  if(!confirm('선택 항목('+primaryId+')을 기준으로 '+( group.length-1)+'건을 합치고 나머지를 삭제합니다.\n비어있는 필드만 채워집니다.'+warn)) return;
   const others=group.filter(function(r){return r.id!==primaryId;});
   // 빈 필드를 다른 항목에서 채움
   others.forEach(function(other){ Object.keys(other).forEach(function(k){ if(k==='id'||k==='savedAt'||k==='fname') return; if(!prim[k]&&other[k]) prim[k]=other[k]; }); });
-  // 원본 파일: primary에 없으면 다른 항목에서 가져옴
-  if(!getFile(primaryId)){ for(var i=0;i<others.length;i++){ var f=getFile(others[i].id); if(f){ saveFileUnified(primaryId,Object.assign({},f,{id:primaryId})); break; } } }
+  /* ★★ 원본 옮기기 — 여기가 자료를 잃던 자리였다.
+     ⚠ getFile 은 «캐시와 localStorage 만» 본다. 파일은 IndexedDB 에 있으므로 캐시에 없으면
+        null 이 돌아온다. 그런데 화면 배지(fileExists)는 IndexedDB 목록을 보고 「원본 있음」이라
+        말한다 — 그래서 「있다」고 해 놓고 못 옮긴 채 아래에서 지워 버렸다(실측 확인).
+     ⚠ 반드시 getFileAsync 로 «진짜» 읽고, 옮긴 것을 확인한 뒤에만 지운다. */
+  var moved=false;
+  var primFile=await getFileAsync(primaryId);
+  if(!primFile){
+    for(var i=0;i<others.length;i++){
+      var f=await getFileAsync(others[i].id);
+      if(f&&f.base64){ await saveFileUnified(primaryId,Object.assign({},f,{id:primaryId})); moved=true; break; }
+    }
+  }
+  /* 옮길 원본이 있었는데 못 옮겼다면 «지우지 않고» 멈춘다 — 지우면 되돌릴 수 없다 */
+  if(!primFile && !moved && otherHas){
+    toast('❌ 원본을 옮기지 못해 합치기를 멈췄습니다 — 아무것도 지우지 않았습니다', 6000);
+    return;
+  }
   prim.savedAt=new Date().toISOString();
   const otherIds=new Set(others.map(function(r){return r.id;}));
   const fullStore=get(store); const merged=fullStore.map(function(r){return r.id===primaryId?prim:r;}).filter(function(r){return !otherIds.has(r.id);});
-  set(store,merged); others.forEach(function(r){deleteFile(r.id);});
+  set(store,merged);
+  /* 여기까지 왔으면 원본은 기준 쪽에 있다(또는 애초에 없었다) — 이제 지워도 안전하다 */
+  others.forEach(function(r){deleteFile(r.id);});
   renderDup(); if(CAREER_CFG&&CAREER_CFG[page]) renderCareer(page); if(page==='personal_doc') renderPersonalDocs(); if(page==='account') renderAccounts();
   toast('합치기 완료 — '+primaryId+'에 병합됨'); }
 
