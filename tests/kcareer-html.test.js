@@ -1981,3 +1981,45 @@ test('★★ 사진은 보관함에 있으면 저절로 들어간다 — 고른 
   const at = r.indexOf("var _g=get('gallery')");
   assert.ok(!/set\('profile_info'/.test(r.slice(at, at + 300)), '⚠ 자동으로 쓴 것은 기억하지 않습니다');
 });
+
+/* ===== ★★ 탭이 유형 «글자»로 갈리던 것 (2026-08-31) ===== */
+
+test('★★ 표창 계열은 «모양»으로 본다 — 「표창장」이면 위촉장 탭으로 샜다', () => {
+  // 위촉장과 표창은 wiccok 한 상자에 살고 탭은 type 으로만 갈린다.
+  // OCR 은 「표창장」·「감사장」처럼 답하므로 ===‘표창’ 비교로는 새어 나간다.
+  // 실측: 위촉장 목록에 「표창장2025-001」이 앉아 있었다.
+  assert.match(source, /function isAwardType\(t\)\{ return \/표창\|포상\|감사\|공로\|상장\//);
+  // ⚠ FORM_DEFS 가 파일 «앞»에 있다 — 앞에서 자르면 구간이 빈다
+  const cfgAt = source.indexOf('const CAREER_CFG={');
+  const cfg = source.slice(cfgAt, cfgAt + 4000);
+  assert.match(cfg, /wiccok:\{store:'wiccok',filter:r=>!isAwardType\(r\.type\)/);
+  assert.match(cfg, /award:\{store:'wiccok',filter:r=>isAwardType\(r\.type\)/);
+  // ⚠ 글자가 꼭 맞아야 하는 비교로 되돌리지 말 것
+  assert.ok(!/filter:r=>r\.type!=='표창'/.test(cfg), '⚠ === 비교로 되돌리면 다시 샙니다');
+});
+
+test('★★ 담을 때 유형을 탭이 아는 말로 다듬는다', () => {
+  const sv = funcSource('saveOCRRecord');
+  assert.match(sv, /const _normType=function/, '담기 전에 다듬어야 합니다');
+  ['감사/.test(t)) return \'감사패\'', '공로/.test(t)) return \'공로패\'',
+   '포상/.test(t)) return \'포상\'', '표창|상장/.test(t)) return \'표창\'',
+   '위촉|임명|委囑/.test(t)) return \'위촉장\''].forEach((frag) => {
+    assert.ok(sv.indexOf(frag) > 0, frag.slice(0, 12) + ' 갈래가 있어야 합니다');
+  });
+});
+
+test('★★ 이미 어긋나게 담긴 기록을 부팅 때 한 번 다듬는다 — id 는 손대지 않는다', () => {
+  assert.match(source, /유형 '\+n\+'건을 탭에 맞게 다듬었습니다/, '부팅 때 다듬어야 합니다');
+  const at = source.indexOf("유형 '+n+'건을 탭에 맞게");
+  const seg = source.slice(at - 700, at);
+  assert.match(seg, /if\(v!==r\.type\)\{ r\.type=v; n\+\+; \}/, '바뀐 것만 세야 합니다(멱등)');
+  // ⚠ id 를 다시 매기면 다른 곳에서 그 이름표로 못 찾는다
+  assert.ok(!/r\.id\s*=/.test(seg), '⚠ id 를 손대면 안 됩니다');
+});
+
+test('★★ 다섯 화면은 «각자» OCR 지시문을 갖는다 — 돌려 쓰면 엉뚱한 칸을 읽는다', () => {
+  const at = source.indexOf('const PAGE_OCR_PROMPT={');
+  ['wiccok', 'award', 'license', 'complete', 'edu'].forEach((k) => {
+    assert.ok(source.indexOf('\n  ' + k + ':', at) > 0, k + ' 지시문이 있어야 합니다');
+  });
+});

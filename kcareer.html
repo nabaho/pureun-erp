@@ -5106,8 +5106,11 @@ function stampCellLabels(box){
     });
   }catch(e){ /* 이름표가 없어도 표는 그대로 보인다 */ }
 }
+/* 표창 계열인가 — 「표창장·포상장·감사장·공로패·상장」을 모두 같게 본다.
+   ⚠ ===‘표창’ 처럼 «글자가 꼭 맞아야» 하는 비교로 되돌리지 말 것. 한 글자 달라 새어 나간다. */
+function isAwardType(t){ return /표창|포상|감사|공로|상장/.test(String(t||'')); }
 const CAREER_CFG={
-  wiccok:{store:'wiccok',filter:r=>r.type!=='표창'&&r.type!=='포상',qFields:['org','titleVal','issuer'],
+  wiccok:{store:'wiccok',filter:r=>!isAwardType(r.type),qFields:['org','titleVal','issuer'],
     cols:['ID','유형','위촉내용(직책)','발급기관','위촉인','발급일','위촉시작','위촉종료','관리'],
     row:(r,p)=>{const w=validateRecord('wiccok',r),sp=splitPeriod(r.period),_pg=(r.type==='표창'||r.type==='포상')?'award':'wiccok';return `<tr class="${w.length?'row-warn':''}" style="cursor:pointer">
       <td><span class="id-chip">${r.id}</span>${w.length?`<span class="warn-ico" title="${w.join(' / ')}">⚠️</span>`:''}</td>
@@ -5119,7 +5122,7 @@ const CAREER_CFG={
       <td style="font-size:11px;white-space:nowrap">${formatDate(r.periodStart||sp[0])||'-'}</td>
       <td style="font-size:11px;white-space:nowrap">${formatDate(r.periodEnd||sp[1])||'-'}</td>
       <td onclick="event.stopPropagation()">${rowActions(r.id,'wiccok',r.org||r.titleVal,p,r)}</td></tr>`;}},
-  award:{store:'wiccok',filter:r=>r.type==='표창'||r.type==='포상',qFields:['org','titleVal','issuer'],
+  award:{store:'wiccok',filter:r=>isAwardType(r.type),qFields:['org','titleVal','issuer'],
     cols:['ID','유형','수여기관','수여자','내용','수상일','문서번호','관리'],
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td><span class="tag amber">${r.type}</span></td>
       <td><strong>${r.org||'-'}</strong></td><td style="font-size:11px;color:var(--text-mute)">${r.issuer||'-'}</td>
@@ -5898,7 +5901,19 @@ function quickParseFilename(fname,page){ const y=(fname.match(/(20\d{2})/)||[])[
   return null; }
 async function saveOCRRecord(page,parsed,file,ext,b64){
   let store,recId,rec; const year=parsed.year||(parsed.issueDate||parsed.date||'').slice(0,4)||String(new Date().getFullYear());
-  if(page==='wiccok'||page==='award'){ store='wiccok'; const type=page==='award'?(parsed.docType||'표창'):(parsed.docType||'위촉장'); recId=wiccokId(type,year);
+  if(page==='wiccok'||page==='award'){ store='wiccok';
+    /* ⚠ OCR 은 「표창장」·「임명장」처럼 답한다. 담기 전에 «탭이 아는 말»로 다듬는다 —
+       안 다듬으면 표창이 위촉장 탭에 앉는다. 감사패·공로패는 그대로 둔다(칸 선택지에 있다). */
+    const _normType=function(v,fallback){
+      var t=String(v||'').trim(); if(!t) return fallback;
+      if(/감사/.test(t)) return '감사패';
+      if(/공로/.test(t)) return '공로패';
+      if(/포상/.test(t)) return '포상';
+      if(/표창|상장/.test(t)) return '표창';
+      if(/위촉|임명|委囑/.test(t)) return '위촉장';
+      return t;
+    };
+    const type=_normType(parsed.docType, page==='award'?'표창':'위촉장'); recId=wiccokId(type,year);
     rec={id:recId,type,org:parsed.org||'',titleVal:parsed.titleVal||'',issueDate:parsed.issueDate||'',period:parsed.period||'',year,note:parsed.note||'',fname:file.name,savedAt:new Date().toISOString()};
   } else if(page==='license'||page==='complete'){ store='cert'; recId=nextId('C','cert');
     rec={id:recId,title:parsed.title||'',org:parsed.org||'',date:parsed.date||'',num:parsed.num||'',note:parsed.note||'',fname:file.name,savedAt:new Date().toISOString()};
@@ -8803,6 +8818,19 @@ function fbAutoPush(){ if(!fbUid||!fbDb||!fbAutoOn()) return;
 /* ⚠ 위 버그로 profile_info 에 [] 가 들어간 기기가 있다 — 그대로 두면 계속 배열로 취급된다.
    부팅 때 한 번 «빈 객체»로 바로잡는다(담긴 값이 있으면 손대지 않는다). */
 _safe(function(){ var o=get('profile_info'); if(Array.isArray(o)) set('profile_info',{}); });
+/* ⚠ 「표창장」·「임명장」으로 담겨 탭이 어긋난 기록을 부팅 때 한 번 다듬는다(멱등).
+   ⚠ id 는 손대지 않는다 — 다른 곳에서 그 이름표로 찾는다. */
+_safe(function(){
+  var a=get('wiccok'), n=0;
+  a.forEach(function(r){
+    if(!r||!r.type) return;
+    var t=String(r.type);
+    var v = /감사/.test(t)?'감사패' : /공로/.test(t)?'공로패' : /포상/.test(t)?'포상'
+          : /표창|상장/.test(t)?'표창' : /위촉|임명/.test(t)?'위촉장' : t;
+    if(v!==r.type){ r.type=v; n++; }
+  });
+  if(n){ set('wiccok',a); console.log('유형 '+n+'건을 탭에 맞게 다듬었습니다'); }
+});
 _safe(loadSeed); _safe(_cdNormalize); _safe(_tplMerge); _safe(_puBackfill); _safe(loadCustomNav); _safe(buildNav); _safe(initTabs); _safe(()=>initDocCreate('resume')); _safe(()=>initDocStore('resume')); _safe(()=>initDocCreate('profile')); _safe(()=>initDocStore('profile')); _safe(()=>initDocCreate('certdoc')); _safe(()=>initDocStore('certdoc')); _safe(bindCareer); _safe(initApiTab); _safe(initSettings); _safe(seedStamps); _safe(fbInit);
 /* ⚠ checkBackupReminder는 만들어만 놓고 아무도 부르지 않아 백업 재촉이 한 번도 안 떴다.
    그래서 마지막 백업이 두 달 넘도록 아무도 몰랐다 — 반드시 부팅 때 부른다. */
