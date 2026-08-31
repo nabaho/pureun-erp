@@ -1075,6 +1075,23 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
 #camShip .shrow .btn{border:1px solid var(--line);background:#fff;border-radius:13px;
   padding:4px 10px;font-size:11.5px;font-weight:800;font-family:inherit;color:var(--ink);flex:none}
 
+/* ── 찍은 것을 «한 번 정리해» 보여 주는 화면 (대표 지시 2026-08-30) ──
+   ⚠ 촬영 화면(camOv, z-index 60)보다 위에 있어야 한다. 아래 두면 카메라가 덮어
+     아무것도 안 보인다. 검토 화면(camRev, 61)과 같은 층에 둔다 — 둘이 동시에
+     뜰 일은 없다(검토는 「완료」를 누른 뒤다). */
+#camOk{display:none;position:fixed;inset:0;z-index:61;background:#000;flex-direction:column}
+/* ⚠ 색은 «팔레트 안에서만» 고른다(tests/color-palette-apps). 새 색을 만들면
+     한 해 사이에 앱마다 색이 늘어난다 — 잘된 것은 초록, 못 자른 것은 노랑. */
+#camOk .ok-hd{color:#bbf7d0;font-size:12.5px;text-align:center;
+  padding:calc(env(safe-area-inset-top) + 14px) 16px 8px;line-height:1.6}
+#camOk .ok-hd.warn{color:#fde68a}
+#camOk .ok-pic{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:8px 12px}
+#camOk .ok-pic img{max-width:100%;max-height:100%;object-fit:contain;border-radius:4px;
+  box-shadow:0 8px 26px rgba(0,0,0,.6)}
+#camOk .ok-bt{display:flex;gap:10px;padding:14px 16px calc(env(safe-area-inset-bottom) + 18px)}
+#camOk .ok-bt button{flex:1;border:1px solid #475569;background:none;color:#fff;
+  border-radius:11px;padding:15px 0;font-size:15px;font-weight:700;font-family:inherit}
+#camOk .ok-bt .pri{background:#fff;color:#1e293b;border-color:#fff}
 #camRev,#shareRev{display:none;position:fixed;inset:0;z-index:61;background:var(--bg);flex-direction:column}
 #camRev .hd,#shareRev .hd{display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top) + 12px) 14px 10px;background:#1e293b;color:#fff}
 #camRev .hd b,#shareRev .hd b{font-size:15px}
@@ -2041,6 +2058,20 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
       <div id="camAsk">
         <button class="pri" onclick="camAskBack(true)">뒷면도 촬영</button>
         <button onclick="camAskBack(false)">이 명함은 끝</button>
+      </div>
+    </div>
+    <!-- ── 찍은 것을 «한 번 정리해» 보여 준다 (대표 지시 2026-08-30) ──
+         "리멤버에서는 명함사진이 한 번 정리된다 — 사진첩도 이 기능 넣어라"
+         사진첩은 **이미** 명함만 잘라내고 비뚤어진 것을 바로 세운다. 그런데 그 결과를
+         아무 데서도 안 보여 줘서, 잘못 잘려도 그 자리에서는 몰랐다.
+         ⚠ 명함·서류 모드에서 **손으로 누른** 셔터에만 뜬다(대표 결정 2026-08-30):
+           일반 현장사진은 여러 장을 빠르게 찍는 일이고, 「저절로 찍기」는 안 묻는다. -->
+    <div id="camOk">
+      <div class="ok-hd" id="camOkNote"></div>
+      <div class="ok-pic"><img id="camOkImg" alt="" draggable="false"></div>
+      <div class="ok-bt">
+        <button onclick="camShotRedo()">재촬영</button>
+        <button class="pri" onclick="camShotKeep()">확인</button>
       </div>
     </div>
     <div id="camCtl">
@@ -3764,6 +3795,65 @@ function setCamAsk(on) {
   const el = $('camAsk');
   if (el) el.style.display = on ? 'flex' : 'none';
 }
+/* ══════ 찍은 것을 «한 번 정리해» 보여 준다 (대표 지시 2026-08-30) ══════
+   "명함사진 찍으면 리멤버에서는 명함사진이 한 번 정리된다 — 사진첩도 이 기능 넣어라"
+
+   사진첩은 **이미** 명함만 잘라내고 비뚤어진 것을 바로 세운다(findCardRect·cropRotated).
+   빠져 있던 것은 «그 결과를 보여 주는 것»뿐이었다 — 잘못 잘려도 그 자리에서는 모르고,
+   나중에 작은 미리보기에서야 알게 되어 다시 찾아가 지우고 다시 찍어야 했다.
+
+   ⚠ **못 잘랐을 때를 반드시 말한다.** 테두리를 못 찾으면 안 자른다(잘못 잘라 글자를
+     날리느니 낫다). 그때 조용히 원본을 담으면 「왜 이건 안 잘렸지」가 된다.
+   ⚠ 뜨는 자리를 좁힌다(대표 결정 2026-08-30): **명함·서류 모드**에서 **손으로 누른**
+     셔터에만. 일반 현장사진은 여러 장을 빠르게 찍는 일이고, 「저절로 찍기」는 안 묻는다 —
+     물으면 저절로 찍는 뜻이 없어진다.
+   ⚠ 「뒷면도?」 물음과 겹치지 않게 **이것을 먼저** 보여 주고, 확인한 뒤에 뒷면을 묻는다. */
+let _shotAskBack = false;
+
+function shouldConfirmShot(opts) {
+  return frameOn() && !(opts && opts.settled);
+}
+
+function showShotConfirm(shot, askBack) {
+  const box = $('camOk'), img = $('camOkImg'), note = $('camOkNote');
+  if (!box || !img || !shot) return false;
+  _shotAskBack = !!askBack;
+  img.src = shot.url;
+  note.className = 'ok-hd' + (shot.cropped ? '' : ' warn');
+  note.textContent = shot.cropped
+    ? '✓ 명함만 잘라내고 바로 세웠습니다'
+    : '⚠ 테두리를 못 찾아 «자르지 않고» 그대로 담습니다 — 배경이 넓으면 글씨가 흐려집니다';
+  box.style.display = 'flex';
+  return true;
+}
+
+function hideShotConfirm() {
+  const box = $('camOk');
+  if (box) { box.style.display = 'none'; }
+  const img = $('camOkImg');
+  if (img) img.removeAttribute('src');   /* 다음 장에서 옛 그림이 스치지 않게 */
+}
+
+/* 「확인」 — 그대로 두고, 미뤄 둔 「뒷면도?」를 그제야 묻는다 */
+function camShotKeep() {
+  hideShotConfirm();
+  if (_shotAskBack) { _shotAskBack = false; setCamAsk(true); }
+}
+
+/* 「재촬영」 — 방금 찍은 **한 장만** 무른다.
+   ⚠ 주소를 놓아 준다(revokeObjectURL). 안 놓으면 다시 찍을 때마다 기억이 샌다.
+   ⚠ 앞면을 무르면 뒷면 고리(camPairWith)도 함께 푼다 — 없는 앞면을 가리키면
+     올릴 때 짝이 어긋난다. */
+function camShotRedo() {
+  const s = camShots.pop();
+  if (s) { try { URL.revokeObjectURL(s.url); } catch (_) {} }
+  camPairWith = -1;
+  camCardStage = 'front';
+  _shotAskBack = false;
+  hideShotConfirm();
+  renderCamStrip();
+}
+
 function camAskBack(yes) {
   setCamAsk(false);
   if (!yes) { camCardStage = 'front'; camPairWith = -1; return; }
@@ -3854,6 +3944,10 @@ function camStop() {
   camCardSeen = false; camSeenRect = null; seenHit = 0; seenMiss = 0;
   camCardStage = 'front'; camPairWith = -1;
   setCamAsk(false);
+  /* ⚠ 정리해 보여 주던 화면도 반드시 내린다 — 안 내리면 카메라를 닫아도 검은 화면에
+     방금 찍은 명함이 덮인 채 남아, 사진첩으로 못 돌아간다(2026-08-30). */
+  _shotAskBack = false;
+  hideShotConfirm();
   /* 손전등을 켜 둔 채 끊으면 기기에 따라 불이 남는다 — 먼저 끈다. */
   if (camTrack && torchOn) {
     try {
@@ -4468,8 +4562,12 @@ async function camShoot(opts) {
        계속 찍는 것이 먼저이며, 불필요한 장은 사진첩에서 나중에 사람이 삭제한다. */
     /* 명함 모드에서 앞면을 찍었으면 뒷면을 물어본다(대표 선택 '가').
        뒷면을 막 찍은 참이면 묻지 않는다 — 한 장에 뒷면은 하나다. */
-    if (camCardMode && camCardStage === 'front') setCamAsk(true);
+    const askBack = camCardMode && camCardStage === 'front';
     camCardStage = 'front';
+    /* ⚠ 찍은 것을 «한 번 정리해» 보여 준다(대표 지시 2026-08-30).
+       두 물음이 겹치지 않게, 이것을 먼저 보여 주고 **확인한 뒤에** 뒷면을 묻는다. */
+    if (shouldConfirmShot(opts) && showShotConfirm(camShots[camShots.length - 1], askBack)) return;
+    if (askBack) setCamAsk(true);
   } catch (e) {
     console.warn('[촬영]', e);
     toast('촬영하지 못했습니다 — ' + ((e && e.message) || e));
