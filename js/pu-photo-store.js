@@ -1822,18 +1822,29 @@
       .then(function (s) { return s.val() || {}; });
   }
 
-  /* 관리자가 사진첩을 켜 둔 동안 다른 휴대폰에서 업로드하면 owners/{uid}.lastAt 이
-     함께 바뀐다. 큰 사진 목록 전체를 계속 감시하지 않고 이 작은 색인만 감시해
-     PC 목록을 다시 읽을 때를 알려 준다. 첫 value는 구독 직후의 현재값이므로 넘긴다. */
+  /* 사진첩을 켜 둔 동안 다른 휴대폰에서 올리면 owners/{uid}.lastAt 이 함께 바뀐다.
+     큰 사진 목록 전체를 감시하지 않고 이 **작은 색인**만 감시해 다시 읽을 때를 알려 준다.
+     첫 value 는 구독 직후의 현재값이므로 넘긴다.
+
+     ⚠ ★ **직원에게도 신호가 가야 한다** (직원 민원 2026-08-31 「사진이 안 올라간다」).
+       예전에는 총괄관리자만 받았다. 그동안은 «창을 다시 볼 때마다 통째로 다시 읽는 길»이
+       그 빈자리를 메우고 있었는데, 요금 때문에 그 길을 없애자(2026-08-31)
+       직원에게는 **새로고침 길이 하나도 안 남아** 폰에서 올린 사진이 PC 화면에
+       영영 안 나타났다 — 그것이 「안 올라간다」로 보였다.
+     ⚠ 직원은 «제 자리»만 본다(owners/{내 uid}) — 남의 올림까지 알 까닭이 없고,
+       그 작은 칸 하나는 값이 사실상 0 이다. 관리자는 「전체 근로자」 화면을 보므로
+       모두의 자리를 본다.
+     ⚠ 못 붙어도(권한·연결) 조용히 넘어간다 — 그때는 새로고침이 남는다. */
   function watchUploadIndex(changed) {
-    if (!deps.isAdmin || !deps.db || typeof changed !== 'function') return function () {};
-    var ref = deps.db.ref(DB_ROOT + '/owners');
+    if (!deps.db || typeof changed !== 'function') return function () {};
+    var ref = deps.isAdmin ? deps.db.ref(DB_ROOT + '/owners')
+                           : deps.db.ref(ownerPath(deps.uid));
     var first = true;
     function handler() {
       if (first) { first = false; return; }
       changed();
     }
-    function failed() { /* 실시간 알림이 막혀도 수동 새로고침과 포커스 갱신은 남는다 */ }
+    function failed() { /* 실시간 알림이 막혀도 새로고침은 남는다 */ }
     ref.on('value', handler, failed);
     return function () { ref.off('value', handler); };
   }
