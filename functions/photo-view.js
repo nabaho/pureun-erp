@@ -44,8 +44,12 @@
    · payslip   급여서류 — 사진첩에 두지 않기로 한 것이지만(「지워 주세요」),
                           남아 있는 동안은 가장 민감하다
    · cms       자동이체 신청서 — **은행 계좌번호**와 예금주 주민번호가 적혀 있다
-                          (대표 지시 2026-08-28) */
-const SENSITIVE_KINDS = { contract: 1, timesheet: 1, payslip: 1, cms: 1 };
+                          (대표 지시 2026-08-28)
+   · bankbook  통장·계좌 — 통장 사본·계좌확인서에 **계좌번호가 그대로** 담긴다
+                          (대표 지시 2026-08-31 「통장이나 계좌도 OCR」)
+   ⚠ 이 목록을 고치면 **이 함수를 다시 올려야 한다.** 안 올리면 화면은 원본 주소를
+     안 적는데 서버는 「민감 아니다」로 물러나 그 사진이 아예 안 열린다. */
+const SENSITIVE_KINDS = { contract: 1, timesheet: 1, payslip: 1, cms: 1, bankbook: 1 };
 
 function isSensitiveKind(kind) {
   return !!SENSITIVE_KINDS[String(kind || "")];

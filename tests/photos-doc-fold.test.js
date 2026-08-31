@@ -133,6 +133,11 @@ test('★ 도구줄이 장수를 쓴다 — 실제로 돌려 본다', () => {
        「N장 확인했음」은 확인이 필요한 것만 센다(needsCheck). 둘을 안 주면 도구줄이
        그 자리에서 멎어 이 검사가 통째로 운다. */
     worthRetry: function () { return true; },
+    /* ⚠ 2026-08-31: 자동 판독이 «실패한 것»도 다시 건다(직원 보고 「OCR 안 읽히는 게 많다」).
+       이 파일의 주제는 여러 쪽 문서를 한 번만 읽는가이므로, 여기서는 실패한 것이
+       없다고 둔다 — 안 주면 autoReadPending 이 그 자리에서 멎는다. */
+    failedRead: function () { return false; },
+    AUTO_RETRY_MAX: 5,
     needsCheck: function () { return false; },
     renderNeedBox() {}, renderOldBox() {}, renderBackBar() {},
     renderUidCard() {},   /* 2026-08-26: 서식으로 잡힌 고유번호증 칸이 늘었다 */
@@ -324,6 +329,10 @@ test('★ 판독은 문서마다 한 번만, 그러나 다른 문서는 빠뜨�
        문서마다 한 번씩 거르는 규칙은 두 갈래에 **똑같이** 걸려야 한다. */
     neverRead: function () { return true; },
     staleRead: function () { return false; },
+    /* 2026-08-31: 실패한 것도 자동으로 다시 건다 — 여기서는 실패한 것이 없다고 둔다.
+       ⚠ 그 갈래에도 «문서마다 한 번» 규칙이 똑같이 걸려야 한다(화면에서 filter(oneDoc) 로). */
+    failedRead: function () { return false; },
+    AUTO_RETRY_MAX: 5,
     /* 2026-08-29: 자동 판독이 **손댈 수 있는 사진만** 읽는다(내 사진에 공유받은 것이
        섞이므로). 여기서는 전부 내 것으로 둔다 — 문서 거르기가 이 검사의 주제다. */
     mayTouch: function () { return true; },

@@ -58,6 +58,12 @@ function load(items) {
     /* ⚠ 2026-08-27: 「모으는 중」 판정을 collectingNow 한 곳으로 모았다. 안 넣으면
        두 판정이 그 자리에서 멎어 이 파일의 검사가 통째로 운다. */
     fnOf('collectingNow'),
+    /* ⚠ 2026-08-31: 실패한 판독도 «자동으로» 다시 건다(직원 보고 「OCR 안 읽히는 게 많다」).
+       그 판단(worthRetry)과 딸린 것들을 **원본 그대로** 넣는다 — 대역을 만들면
+       화면과 다른 규칙을 보게 된다. */
+    constOf('AUTO_RETRY_MAX'), constOf('FAIL_GIVEUP'),
+    app.match(/^const READ_FAIL_RULES = \[[\s\S]*?^\];/m)[0].replace('const ', 'var '),
+    fnOf('readFailKind'), fnOf('worthRetry'), fnOf('failedRead'),
     fnOf('neverRead'), fnOf('staleRead'), fnOf('autoReadPending')
   ].join('\n'), ctx);
   return ctx;
