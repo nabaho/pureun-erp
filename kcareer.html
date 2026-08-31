@@ -337,6 +337,12 @@ body{font-family:"Malgun Gothic","맑은 고딕",system-ui,sans-serif;color:var(
    flex 로 그렸더니 고객사 이름 길이에 따라 사업명이 줄마다 다른 자리에서 시작해
    세로로 훑어 읽을 수가 없었다. 열 너비를 못 박아 줄을 세운다.
    ⚠ 숫자·연도는 tabular-nums — 자릿수가 흔들리면 줄이 맞아도 안 맞아 보인다. */
+/* 종류 고르기 딱지 — 목록을 거르고, 올린 문서를 어느 통에 넣을지도 여기서 정한다 */
+.puag-kinds{display:inline-flex;gap:4px;flex-wrap:wrap}
+.puag-kind{font-size:12px;padding:5px 11px;border:1px solid var(--border);border-radius:999px;
+  background:#fff;color:var(--text-sub);cursor:pointer;white-space:nowrap;font-weight:600}
+.puag-kind:hover{background:var(--hover)}
+.puag-kind.on{background:var(--navy);border-color:var(--navy);color:#fff}
 .pa-row{display:grid;grid-template-columns:34px 58px 52px minmax(120px,220px) minmax(140px,1fr) 74px 32px;
   gap:8px;align-items:center;font-size:12px;padding:5px 0;border-top:1px solid var(--border-soft)}
 .pa-row>*{min-width:0}
@@ -1521,6 +1527,9 @@ input.kf-in.kf-done{background:#f8fafc;border-bottom:1.5px solid var(--teal);fon
             <option value="year">📅 연도별</option>
           </select>
           <select class="tb-select" id="puagYear" onchange="renderPuAgency()"><option value="">전체 연도</option></select>
+          <!-- 종류 고르기 (대표 지시 2026-08-30 「기관 실적 종류별로 선택할 수 있게」) —
+               고른 종류가 두 가지 일을 한다: ① 목록을 거른다 ② 올린 문서를 어느 통에 넣을지 정한다. -->
+          <div class="puag-kinds" id="puagKinds"></div>
           <div class="tb-spacer"></div>
           <span class="cnt" id="puagCnt" style="font-size:11px;color:var(--text-mute)"></span>
           <button class="btn" type="button" onclick="puSyncNow()">🔄 푸른이알피에서 가져오기</button>
@@ -3038,11 +3047,13 @@ function renderPuAgency(){
   var B = PUAG_BY[by] || PUAG_BY.agency;
   var yf = ($('puagYear')||{}).value || '';
   var LABEL = { case:'사건', consult:'컨설팅', fund:'기금', etc:'기타' };
+  renderPuagKinds();
   var groups = {}, years = {};
   PU_SYNC_STORES.forEach(function(k){
     get(k).forEach(function(r){
       if(!r || !_isExternal(r) || r.excluded) return;
-      if(r.year) years[r.year] = 1;
+      if(r.year) years[r.year] = 1;             /* 연도 목록은 «거르기 전»에 모은다 */
+      if(_puagKind && k !== _puagKind) return;  /* 고른 종류만 */
       if(yf && String(r.year||'') !== yf) return;
       var key = B.key(r);
       if(!groups[key]) groups[key] = { name: B.name(r), rows: [] };
@@ -3067,7 +3078,10 @@ function renderPuAgency(){
   });
   var total = keys.reduce(function(s,k){ return s + groups[k].rows.length; }, 0);
   var cnt = $('puagCnt'); if(cnt) cnt.textContent = keys.length + '개 ' + B.unit + ' · ' + total + '건';
-  if(!keys.length){ box.innerHTML = '<div style="font-size:12px;color:var(--text-mute);padding:20px;text-align:center">외부기관 실적이 없습니다 — 실적 행을 열어 수행기관을 채우면 여기로 모입니다</div>'; return; }
+  if(!keys.length){ box.innerHTML = '<div style="font-size:12px;color:var(--text-mute);padding:20px;text-align:center">'
+    + (_puagKind ? '이 종류의 외부기관 실적이 없습니다 — 위에서 «전체»를 눌러 보세요'
+                 : '외부기관 실적이 없습니다 — 실적 행을 열어 수행기관을 채우면 여기로 모입니다')
+    + '</div>'; return; }
   box.innerHTML = keys.map(function(key){
     var g = groups[key];
     var years = g.rows.map(function(r){ return r.year; }).filter(Boolean).sort();
@@ -3130,9 +3144,24 @@ function renderPuAgency(){
 
 /* 외부기관 실적 OCR 드롭존 — 이 화면은 CAREER_CFG 가 아니라 bindCareer 가 묶어 주지 않는다.
    ⚠ 한 번만 묶는다(dataset.bound) — 화면에 들어올 때마다 묶으면 한 번 놓아도 여러 번 처리된다. */
+/* ===== 종류 고르기 (대표 지시 2026-08-30 「기관 실적 종류별로 선택할 수 있게」) =====
+   ★ 고른 종류는 «두 가지 일»을 한다:
+     ① 목록을 거른다  ② 올린 문서를 «어느 통»에 넣을지 정한다.
+   ⚠ 「전체」일 때만 OCR 이 읽은 종류(parsed.kind)를 따른다. 사람이 「컨설팅」을 골라 두고
+     올렸는데 AI 짐작으로 사건에 들어가면 나중에 찾을 수가 없다 — 사람이 고른 것이 이긴다. */
+var PUAG_KINDS=[['','전체'],['case','사건'],['consult','컨설팅'],['fund','기금'],['etc','기타']];
+var _puagKind='';
+function puagKind(k){ _puagKind=k||''; renderPuAgency(); }
+function renderPuagKinds(){
+  var box=document.getElementById('puagKinds'); if(!box) return;
+  box.innerHTML=PUAG_KINDS.map(function(p){
+    return '<button type="button" class="puag-kind'+(_puagKind===p[0]?' on':'')+'"'
+      +' onclick="puagKind(\''+p[0]+'\')">'+escapeHtml(p[1])+'</button>'; }).join('');
+}
 function bindPuAgencyOcr(){
   var z=document.getElementById('puagOcr'); if(!z||z.dataset.bound) return; z.dataset.bound='1';
   function take(files){ if(!files||!files.length) return;
+    /* 어느 통에 넣을지는 saveOCRRecord 가 _puagKind 를 보고 정한다 — 고른 것이 이긴다 */
     ocrDrop(files,'extperf').then(function(){ _safe(renderPuAgency); }); }
   z.onclick=function(){ var inp=document.createElement('input'); inp.type='file'; inp.multiple=true;
     inp.accept='.pdf,.jpg,.jpeg,.png,.hwp,.hwpx';
@@ -6212,7 +6241,11 @@ async function saveOCRRecord(page,parsed,file,ext,b64){
        ⚠ agency 가 비면 «내부 실적»으로 빠져 이 화면에서 사라진다 —
           못 읽었으면 사람이 채우도록 표시를 남긴다. */
     var _KM={'컨설팅':'consult','사건':'case','기금':'fund','기타':'etc'};
-    store=_KM[String(parsed.kind||'').trim()]||'consult';
+    /* ★ 화면에서 «고른 종류»가 있으면 그것이 이긴다 — AI 짐작보다 사람이 앞선다.
+       사람이 「컨설팅」을 골라 두고 올렸는데 사건에 들어가면 나중에 찾을 수가 없다.
+       「전체」로 두었을 때만 OCR 이 읽은 kind 를 따른다(대표 지시 2026-08-30). */
+    store=(typeof _puagKind!=='undefined' && _puagKind)
+          || _KM[String(parsed.kind||'').trim()] || 'consult';
     recId=nextId('X', store);
     rec={id:recId, org:parsed.org||'', project:parsed.project||'', agency:parsed.agency||'',
       year:parsed.year||year, period:parsed.period||'', main:parsed.main||'',
