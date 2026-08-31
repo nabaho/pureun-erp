@@ -56,8 +56,13 @@ test('새 갈래를 만들지 않는다 — 사업자등록증과 같은 자리�
   /* 새 kind 를 만들면 같은 회사가 두 줄로 갈라지고 업체관리 연동도 끊긴다 */
   assert.match(READ, /var KINDS = \{[^}]*bizreg: 1/);
   assert.ok(!/uid:\s*1|corpid:\s*1/.test(READ), '고유번호증용 새 갈래를 만들면 안 된다');
-  assert.match(READ, /var CARDS_KIND = \{ card: 'card', bizreg: 'biz' \};/,
-    '기업정보함 갈래도 그대로여야 한다');
+  /* ⚠ 예전에는 이 줄을 «글자 그대로» 박아 두었다. 2026-08-31 에 서식(form)이 명함으로
+     갈 수 있게 되면서 상수에 한 칸이 늘자 깨졌다 — 이 검사가 지키려던 뜻(고유번호증이
+     제 갈래를 갖지 않는다)은 하나도 안 바뀌었는데도. 뜻으로 겨눈다. */
+  const ck = READ.match(/var CARDS_KIND = \{[^}]*\}/);
+  assert.ok(ck, 'CARDS_KIND 를 찾을 수 없다');
+  assert.match(ck[0], /bizreg:\s*'biz'/, '등록증은 사업자 갈래(biz)로 담겨야 한다');
+  assert.ok(!/uid|corpid/i.test(ck[0]), '고유번호증용 새 갈래를 만들면 안 된다');
 });
 
 test('서류이름을 «항목»에도 담는다 — 없으면 한 장 단위로 가릴 수 없다', () => {

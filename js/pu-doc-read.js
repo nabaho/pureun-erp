@@ -80,6 +80,21 @@
          가능하게」). 예전에는 서류이름이 coInfo 의 갈래(tags)에만 남아서, 사업자 목록
          에서는 그 한 장이 사업자등록증인지 고유번호증인지 알 길이 «전혀» 없었다.
          회사 단위가 아니라 서류 한 장 단위로 골라 봐야 할 때가 그래서 막혔다. */
+      /* ── 서식·신청서 → «명함» (대표 지시 2026-08-31) ──────────────────────
+         「사진은 각각 2장으로 넣었지만 하나의 회사이다. 기업정보함에 명함 내용과
+          기업 상세를 각각 넣어 정리해라」
+         신청서 2쪽의 «담당자 정보»(담당자명·이메일·부서·직위·유선·휴대전화)가 사람이고,
+         1쪽이 회사다. 회사는 sendToCoInfo 로 기업 상세에, 사람은 여기 표를 거쳐 명함으로.
+         ⚠⚠ company 를 «반드시» 싣는다. 실제로 명함 「이권우」의 회사 칸이 비어 있었는데,
+           회사가 없으면 기업 상세가 회사를 사업자번호·상호로 묶으므로 그 사람은 어느
+           회사에도 안 붙는다 — 사람 따로 회사 따로 뜨는 것이 그 증상이다.
+         ⚠ 담당자 «유선»은 직통전화(tel)다. 회사 대표번호(companyTel)와 다른 번호이므로
+           같은 칸에 넣으면 그 사람이 떠난 뒤에도 개인 번호가 회사 번호로 남는다.
+         ⚠ 주소는 «회사 주소»(companyAddr)다. 개인 주소 칸에 넣으면 안 된다. */
+      form: { name: 'name', title: 'title', dept: 'dept', tel: 'tel',
+              mobile: 'mobile', email: 'email',
+              company: 'company', companyTel: 'companyTel', companyFax: 'companyFax',
+              address: 'companyAddr', homepage: 'website', bizno: 'bizno' },
       bizreg: { company: 'company', ceo: 'ceo', bizno: 'bizno', corpno: 'corpno',
                 openDate: 'openDate', bizType: 'bizType', bizItem: 'bizItem',
                 companyTel: 'companyTel', companyFax: 'companyFax', address: 'address',
@@ -103,7 +118,9 @@
   };
 
   /* 기업정보함 레코드는 종류를 kind 로 구분한다(card / biz). 다른 앱은 종류 칸이 없다. */
-  var CARDS_KIND = { card: 'card', bizreg: 'biz' };
+  /* 서식도 «명함»으로 담는다 (대표 지시 2026-08-31) — 담긴 것은 그 서식의 담당자다.
+     회사 쪽은 명함이 아니라 기업 상세(sendToCoInfo)로 따로 간다. */
+  var CARDS_KIND = { card: 'card', bizreg: 'biz', form: 'card' };
 
   /* 사업자등록번호에 해당하는 이름들 — 담을 때 보기 좋은 꼴로 바꿔 넣는다. */
   var BIZNO_KEYS = { bizno: 1, bizNo: 1, biz_no: 1 };
@@ -232,7 +249,7 @@
        근로자수)가 pairs 에만 있어 기업 상세 화면까지 오지 못했다. pairs 는 사람이
        눈으로 대조할 차례이고, 기업정보함으로 넘어가는 것은 «이름 붙은 키»뿐이다
        (js/pu-doc-file.js 의 sendToCoInfo 의 KEEP 목록). */
-    '\nkind=form 이면 키: docName(서식 제목 그대로), company(업체·기관명), ceo(대표자), bizno(사업자등록번호), corpno(법인등록번호), address(주소), companyTel(전화번호), companyFax(팩스번호), homepage(홈페이지), openDate(설립일자·개업일), bizType(업태), bizItem(업종·종목), product(주생산품), sales(직전년도 매출액 — 숫자만, 단위 표기는 빼세요), workers(상시근로자수 — 숫자만), name(담당자 이름), title(담당자 직위), mobile(담당자 휴대폰), email(이메일), pairs(문서의 **모든** 칸 — 아래 규칙).' +
+    '\nkind=form 이면 키: docName(서식 제목 그대로), company(업체·기관명), ceo(대표자), bizno(사업자등록번호), corpno(법인등록번호), address(주소), companyTel(전화번호), companyFax(팩스번호), homepage(홈페이지), openDate(설립일자·개업일), bizType(업태), bizItem(업종·종목), product(주생산품), sales(직전년도 매출액 — 숫자만, 단위 표기는 빼세요), workers(상시근로자수 — 숫자만), name(담당자 이름), title(담당자 직위), dept(담당자 부서), tel(담당자 유선전화), mobile(담당자 휴대폰), email(이메일), pairs(문서의 **모든** 칸 — 아래 규칙).' +
     /* 문서 차례 그대로(대표 지시 2026-08-13): "데이터를 읽을 때 맨 위에서부터
        순서대로 읽었으면 좋겠다. 데이터 순서가 바뀐다. 모든 데이터들 순서가 같다."
        ⚠ 예전에는 "위 키에 이미 담은 칸은 다시 담지 마세요" 였다. 그래서 화면이

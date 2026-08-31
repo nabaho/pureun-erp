@@ -68,7 +68,9 @@
   }
 
   /* 기업정보함 레코드 종류 — 판독 종류와 이름이 다르다. */
-  var TO_CARD_KIND = { card: 'card', bizreg: 'biz' };
+  /* 서식·신청서도 받는다 (대표 지시 2026-08-31) — 담기는 것은 그 서식의 «담당자»다.
+     회사 정보는 명함이 아니라 기업 상세(sendToCoInfo)로 따로 간다. */
+  var TO_CARD_KIND = { card: 'card', bizreg: 'biz', form: 'card' };
 
   /* 화면에 "무엇을 채웠는지" 한국어로 알리려고 쓰는 표. */
   var FIELD_LABEL = {
@@ -226,6 +228,12 @@
   /* ── 기업정보함에 보내기 ──
      자동으로 부를 수도 있고(검증 통과분), 사람이 버튼으로 부를 수도 있다.
      돌려주는 것: { id, created, filled[], message } */
+  /* 서식에 «사람»이 적혀 있는가 — 이름이 알맹이다. 이름 없이 연락처만 있으면
+     누구 것인지 알 수 없어 명함으로 쓸 수 없다. */
+  function formHasContact(fields) {
+    return !blank((fields || {}).name);
+  }
+
   function sendToCards(o) {
     o = o || {};
     var kind = o.kind;
@@ -238,6 +246,13 @@
     /* 판독 결과를 기업정보함 필드 이름으로 바꾼다(변환표는 판독 층에 있다). */
     var mapped = global.PuDocRead.mapTo('cards', kind, o.fields || {});
     delete mapped.kind;                       // 종류는 아래에서 직접 넣는다
+    /* ⚠ 서식은 «담당자 이름이 있을 때만» 명함이 된다 (대표 지시 2026-08-31).
+       신청서에는 회사 이름이 늘 있으므로, 이름을 안 보면 서식마다 「회사명만 있는
+       명함」이 하나씩 생긴다 — 지우기도 어렵고 목록만 어지럽다.
+       회사 정보는 여기서 막혀도 기업 상세(sendToCoInfo)로 이미 간다. */
+    if (kind === 'form' && !formHasContact(o.fields)) {
+      return Promise.reject(new Error('이 서식에는 담당자 이름이 없어 명함으로 만들지 않았습니다 — 회사 정보는 기업 상세로 들어갑니다'));
+    }
     if (!Object.keys(mapped).length) {
       return Promise.reject(new Error('읽어낸 정보가 없어 기업정보함에 보낼 수 없습니다'));
     }
