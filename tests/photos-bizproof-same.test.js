@@ -30,8 +30,14 @@ const 증명원 = { kind: 'bizreg', fields: { docName: '사업자등록증명', 
 /* 화면의 판정 함수들을 그대로 떠와서 돌린다 */
 function loadGates() {
   const ctx = { CARD_KINDS: null, CO_KINDS: null, String, Object };
-  ['const CARD_KINDS = { card: 1, bizreg: 1 };', 'const CO_KINDS = { bizreg: 1, sme: 1 };'].forEach(function (line) {
-    assert.ok(app.indexOf(line) >= 0, '상수가 바뀌었습니다: ' + line);
+  /* ⚠ 예전에는 상수 «전문»을 글자로 박아 두었다. 2026-08-31 에 서식(form)이 늘자
+     깨졌다 — 이 검사가 보는 것은 «등록증·증명원이 세 길로 다 가는가»이지 상수에 몇
+     칸이 있는가가 아니다. 이름으로 찾아 그 줄을 그대로 가져온다. */
+  ['CARD_KINDS', 'CO_KINDS'].map(function (nm) {
+    const m = app.match(new RegExp('const ' + nm + ' = \\{[^}]*\\};'));
+    assert.ok(m, nm + ' 상수를 찾을 수 없습니다');
+    return m[0];
+  }).forEach(function (line) {
   });
   vm.createContext(ctx);
   ['CARD_KINDS', 'CO_KINDS'].forEach(function (n) {
