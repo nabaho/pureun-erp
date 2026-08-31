@@ -20,6 +20,8 @@ const {
   safeGithubNumber,
   githubRequest,
 } = require("./dev-automation");
+const 브리핑부품 = require("./news-brief");
+const NoticeLib = require("./notice-lib");
 const { MAX_BYTES, MAX_IMAGE_BYTES, SITE_REPO, 홈페이지자리,
         올릴자리인가, 올릴그림자리인가, 사연, 올리기 } = require("./site-publish");
 const { homepageUrl } = require("./homepage-fetch");
@@ -2042,6 +2044,108 @@ exports.readHomepage = functions
    ★ 무엇을 올릴지는 «화면»이 만든다. 서버는 올려 주기만 한다 —
      화면과 명령줄이 같은 부품(js/pu-site-people.js)을 써서 미리 본 것과 올라가는 것이 같다.
    ★ site/ 아래 .html 만 받는다. 그 규칙 하나로 앱 코드·검사·보안규칙·워크플로가 다 막힌다. */
+/* ══════ 매일 아침 «노동 뉴스·법령 브리핑»을 공지사항에 올린다 ══════
+   대표 결정 2026-08-31: 「노동뉴스 + 법령 완전자동」.
+
+   ★ 기사 «본문»은 옮기지 않는다 — 제목과 원문 링크까지다(저작권).
+   ★ 자동이라 사람이 못 막는다. 그래서 «안 하는 쪽»으로 기운다:
+     · 못 읽으면 아무것도 안 올린다(그날 것을 건너뛴다. 빈 공지를 올리지 않는다)
+     · 오늘 것이 이미 있으면 두 번 올리지 않는다
+     · 자료에 스위치를 둔다(homepage/newsBrief/off = true 면 아예 안 돈다)
+   ★ 「사람이 보는 홈페이지」에 먼저, 우리 사본에 나중에 — publishSite 와 같은 차례다. */
+const 브리핑샘 = {
+  뉴스: "https://www.labortoday.co.kr/rss/allArticle.xml",
+  뉴스이름: "매일노동뉴스",
+  법령말: ["근로", "노동", "산업안전", "고용", "임금", "퇴직급여"]
+};
+
+/* 한글이 깨지지 않게 «바이트로» 받아서 한 번에 푼다.
+   ★ 글자로 이어 붙이면 여러 바이트짜리 한글이 조각 사이에서 잘려 깨진다
+     (실제로 「소관부처명」이 「소관부처」로 깨져 왔다). */
+async function 글자로받기(url) {
+  const r = await fetch(url, { headers: { "User-Agent": "pureun-erp-news-brief" } });
+  if (!r.ok) throw new Error(url + " 응답 " + r.status);
+  const buf = Buffer.from(await r.arrayBuffer());
+  return buf.toString("utf8");
+}
+
+async function 브리핑거리모으기() {
+  let 뉴스 = [], 법령 = [];
+  try {
+    뉴스 = 브리핑부품.뉴스읽기(await 글자로받기(브리핑샘.뉴스), 브리핑샘.뉴스이름);
+  } catch (e) { console.warn("[브리핑] 뉴스를 못 읽었습니다", e.message); }
+  for (const w of 브리핑샘.법령말) {
+    try {
+      const xml = await 글자로받기("https://www.law.go.kr/DRF/lawSearch.do?OC=test"
+        + "&target=law&type=XML&sort=ddes&display=5&query=" + encodeURIComponent(w));
+      법령 = 법령.concat(브리핑부품.법령읽기(xml));
+    } catch (e) { console.warn("[브리핑] 법령(" + w + ")을 못 읽었습니다", e.message); }
+  }
+  return { 뉴스: 뉴스, 법령: 브리핑부품.법령추리기(법령, 5) };
+}
+
+/* 새 홈페이지에서 한 쪽을 읽어 온다 */
+async function 새홈페이지쪽(자리) {
+  const r = await fetch("https://nabaho.github.io/pureun-site/" + 자리
+    + "?t=" + Date.now(), { headers: { "User-Agent": "pureun-erp-news-brief" } });
+  if (!r.ok) throw new Error(자리 + " 응답 " + r.status);
+  return await r.text();
+}
+
+exports.dailyNewsBrief = functions
+  .runWith({ timeoutSeconds: 300, memory: "256MB", secrets: ["GITHUB_AUTOMATION_TOKEN"] })
+  .pubsub.schedule("every day 07:30")
+  .timeZone("Asia/Seoul")
+  .onRun(async () => {
+    const 자리 = getDatabase().ref("homepage/newsBrief");
+    const 설정 = (await 자리.once("value")).val() || {};
+    if (설정.off === true) { console.log("[브리핑] 꺼져 있습니다"); return null; }
+
+    /* 오늘 날짜(서울) */
+    const 오늘 = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    if (설정.lastDate === 오늘) { console.log("[브리핑] 오늘 것은 이미 올렸습니다"); return null; }
+
+    const 거리 = await 브리핑거리모으기();
+    const 글 = 브리핑부품.브리핑(거리.뉴스, 거리.법령, 오늘);
+    if (!글) { console.warn("[브리핑] 실을 것이 없어 건너뜁니다"); return null; }
+
+    /* 공지 목록과 «본으로 쓸» 글 쪽을 읽는다 */
+    const 목록쪽 = await 새홈페이지쪽("notice/");
+    const 있던글 = NoticeLib.글읽기(목록쪽);
+    if (!있던글.length) { console.warn("[브리핑] 공지 목록을 못 읽어 건너뜁니다"); return null; }
+    const 본쪽 = await 새홈페이지쪽("notice/" + 있던글[0].번호 + "/");
+
+    /* 글 번호는 «있던 것 가운데 가장 큰 수 + 1» — 겹치면 서로 덮어쓴다 */
+    const 새번호 = String(있던글.reduce((a, g) => Math.max(a, Number(g.번호) || 0), 0) + 1);
+    const 새글 = {
+      번호: 새번호, 제목: 글.제목, 요약: 글.요약, 본문: 글.본문,
+      날짜: 오늘.replace(/-/g, ".") + " 07:30"
+    };
+
+    const 글쪽 = NoticeLib.글쪽만들기(본쪽, 새글);
+    const 새목록 = NoticeLib.목록그리기(목록쪽, [{
+      번호: 새번호, 제목: 글.제목, 날짜: 오늘 + " 07:30:00"
+    }].concat(있던글));
+
+    const 토큰 = process.env.GITHUB_AUTOMATION_TOKEN;
+    const 사연글 = 사연("푸른ERP 자동 브리핑", "notice", 글.제목);
+    /* 글 쪽을 «먼저» 올린다 — 목록에 먼저 실으면 «누르면 없는 쪽»이 잠깐 뜬다 */
+    for (const [자리이름, 내용] of [
+      ["site/notice/" + 새번호 + "/index.html", 글쪽],
+      ["site/notice/index.html", 새목록]
+    ]) {
+      await 올리기(githubRequest, 토큰, SITE_REPO, 홈페이지자리(자리이름), 내용, 사연글);
+      try {
+        await 올리기(githubRequest, 토큰, REPO, 자리이름, 내용, 사연글);
+      } catch (e) { console.warn("[브리핑] 사본 올리기 실패", e.message); }
+    }
+
+    await 자리.update({ lastDate: 오늘, lastNo: 새번호, lastTitle: 글.제목,
+                        뉴스수: 거리.뉴스.length, 법령수: 거리.법령.length });
+    console.log("[브리핑] 올렸습니다 — " + 글.제목);
+    return null;
+  });
+
 exports.publishSite = functions
   .runWith({ timeoutSeconds: 120, memory: "256MB", secrets: ["GITHUB_AUTOMATION_TOKEN"] })
   .https.onRequest(async (req, res) => {
