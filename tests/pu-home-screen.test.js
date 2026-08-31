@@ -617,8 +617,20 @@ test('구성원은 지금처럼 붙여넣을 내용을 만들어 준다 (쪽만 
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('modalFoot') + '\n' + fnSource('riskReport') + '\n'
     + fnSource('srlConflict') + '\n' + fnSource('openPaste'));
   ctx.openPaste();
-  assert.equal(ctx.copied.length, 1, '구성원 붙여넣기까지 막혔습니다');
-  assert.equal(ctx.copied[0], '現 가\n現 나');
+  assert.equal(ctx.copied.length, 1, '구성원 채우기까지 막혔습니다');
+  /* ★ 쪽지에는 «부품이 채울 수 있다고 한 칸»이 다 들어 있어야 한다.
+     경력사항만 담으면 직책이 다를 때 채워도 딱지가 안 바뀐다. */
+  const 푼것 = ctx.PuHomeFill.readPacket(ctx.copied[0]);
+  assert.equal(푼것.ok, true, '복사된 것이 푸른ERP 쪽지가 아닙니다');
+  assert.equal(푼것.kind, '구성원 채우기');
+  assert.equal(푼것['칸']['경력사항'], '現 가\n現 나', '경력사항이 안 담겼습니다');
+  ctx.PuHomeFill.MEMBER_FIELDS.forEach(f => {
+    assert.ok(Object.prototype.hasOwnProperty.call(푼것['칸'], f.key),
+      '★ 채울 수 있다고 한 칸(' + f.key + ')이 쪽지에 안 담겼습니다');
+  });
+  /* ★ 예전에 넣어 두신 «경력사항 단추»가 이 쪽지를 그대로 붙여넣으면 안 된다 */
+  assert.match(ctx.copied[0], /<\s*div/i,
+    '★ 옛 단추가 거절할 표시가 없습니다 — 쪽지가 경력사항 칸에 통째로 박힙니다');
 });
 
 /* ══════ 최종 검토 3 — 우리 자료에서 글 번호가 겹치면 붙여넣기를 막는다 ══════
@@ -2402,16 +2414,24 @@ test('★ 되돌리면 다시 원래 글자다 — 되돌린 뒤 복사하면 �
 test('★ 직책이 다르면 «채우기로는 안 된다»고 먼저 말한다 — 단추를 누른 뒤에 알면 늦다', () => {
   const ctx = box();
   ctx.esc = escStub();
-  const note = ctx.fillGapNote({ status: 'pending', fields: ['직책2', '경력사항'] }, '');
-  assert.ok(note, '★ 직책이 다른데 아무 말도 안 한다');
-  assert.match(note, /직책2/, '어느 칸인지 안 말한다');
+  /* ★ 「채울 수 있는 칸」은 부품이 정한다 — 검사가 목록을 따로 박아 두지 않는다 */
+  const 채움 = ctx.PuHomeFill.MEMBER_FIELDS.map(f => f.key);
+  const 못채움 = ['이름', '직책1', '직책2', '경력사항'].filter(k => 채움.indexOf(k) < 0);
+  assert.ok(못채움.length, '채울 수 없는 칸이 하나도 없다면 이 안내 자체가 필요 없다');
+  const note = ctx.fillGapNote({ status: 'pending', fields: 못채움.concat(채움) }, '');
+  assert.ok(note, '★ 채우기로 안 되는 칸이 있는데 아무 말도 안 한다');
+  assert.match(note, new RegExp(못채움[0]), '어느 칸인지 안 말한다');
   assert.match(note, /손으로|직접/, '그럼 어떻게 하라는 건지 안 말한다');
+  assert.doesNotMatch(note, new RegExp(채움[0]),
+    '★ 단추가 채우는 칸까지 «손으로 고치라»고 한다');
 });
 
 test('★ 경력사항만 다르면 «군말을 안 한다» — 그때는 단추로 끝난다', () => {
   const ctx = box();
   ctx.esc = escStub();
-  assert.equal(ctx.fillGapNote({ status: 'pending', fields: ['경력사항'] }, ''), '',
+  /* 단추가 채우는 칸만 다르면 아무 말도 안 한다 — 그때는 단추로 끝난다 */
+  const 채움 = ctx.PuHomeFill.MEMBER_FIELDS.map(f => f.key);
+  assert.equal(ctx.fillGapNote({ status: 'pending', fields: 채움 }, ''), '',
     '★ 단추로 되는 일에까지 «손으로 고치라»고 한다');
   assert.equal(ctx.fillGapNote({ status: 'same' }, ''), '', '같은데도 무언가를 말한다');
   assert.equal(ctx.fillGapNote({}, ''), '', '딱지가 없는데 지어내 말한다');
@@ -2435,4 +2455,56 @@ test('★ 「어느 칸이 다른가」는 대조가 담아 준 자료를 그대
     assert.ok(rec.fields && rec.fields.indexOf('직책2') >= 0,
       '★ 어느 칸이 다른지 딱지에 안 담겼다 — 화면이 말할 방법이 없다');
   });
+});
+
+/* ══════ 「홈페이지에서 비공개로」 (대표 지시 2026-08-31) ══════
+   ★ 퇴사자를 내리는 마지막 걸음이 여태 «사람이 관리자 화면에서 직접»이었다.
+     그 걸음에서 자주 멈춰, 퇴사자가 홈페이지에 오래 남았다.
+   ★ 그렇다고 늘 보이면 안 된다 — 잘못 누르면 재직자가 홈페이지에서 사라진다. */
+
+test('★ 내리는 단추는 «내릴 것(퇴사)»일 때만 보인다 — 늘 보이면 잘못 누른다', () => {
+  const 그리기 = status => {
+    const ctx = pageBox();
+    ctx.App = { draft: { kind: 'member', key: 'a', srl: '193', name: '박성수',
+                         position1: '', position2: '공인노무사', careers: ['現 가'], intro: '' },
+                members: { a: { name: '박성수', srl: '193' } }, staff: [], lineFormat: 'plain',
+                check: status ? { members: { a: { status: status } } } : null, dirty: false };
+    run(ctx, fnSource('todayString') + '\n' + fnSource('riskReport') + '\n' + fnSource('srlConflict') + '\n'
+      + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n' + fnSource('stamp') + '\n'
+      + fnSource('memberBandHtml') + '\n' + fnSource('memberEdit'));
+    return ctx.memberEdit(ctx.App.draft);
+  };
+  assert.match(그리기('toRemove'), /비공개/, '★ 내릴 사람인데 내리는 길이 없다');
+  assert.doesNotMatch(그리기('same'), /copyPrivate/,
+    '★ 내릴 것이 아닌데 내리는 단추가 보인다 — 잘못 누르면 재직자가 사라진다');
+  assert.doesNotMatch(그리기(null), /copyPrivate/,
+    '★ 대조도 안 했는데 내리라고 한다');
+});
+
+test('★ 내리기 쪽지는 «그 사람 글 번호»를 담는다 — 엉뚱한 글을 내리지 않게', async () => {
+  const ctx = pageBox();
+  ctx.App = { draft: { kind: 'member', key: 'a', srl: '193', name: '박성수' },
+              members: { a: { name: '박성수', srl: '193' } } };
+  ctx.say = async () => {};
+  run(ctx, fnSource('modalFoot') + '\n' + fnSource('copyPrivate'));
+  await ctx.copyPrivate('a');
+  assert.equal(ctx.copied.length, 1, '쪽지를 안 만들었다');
+  const p = ctx.PuHomeFill.readPacket(ctx.copied[0]);
+  assert.equal(p.kind, '비공개');
+  assert.equal(p.srl, '193', '★ 글 번호가 안 담겼다 — 어느 글을 내릴지 알 수 없다');
+  /* 「지우는 것이 아니라 감추는 것」이 안내에 있어야 한다 */
+  assert.match(ctx.shown[0], /지우는 것이 아니라|되살릴 수 있습니다/,
+    '★ 지우는 것으로 오해할 안내다');
+});
+
+test('★ 글 번호가 없으면 내리지 않는다 — 어느 글인지 모르면 아무것도 안 한다', async () => {
+  const ctx = pageBox();
+  ctx.App = { draft: { kind: 'member', key: 'a', srl: '', name: '박성수' },
+              members: { a: { name: '박성수' } } };
+  const 말한것 = [];
+  ctx.say = async (t) => { 말한것.push(t); };
+  run(ctx, fnSource('modalFoot') + '\n' + fnSource('copyPrivate'));
+  await ctx.copyPrivate('a');
+  assert.equal(ctx.copied.length, 0, '★ 어느 글인지도 모르는데 쪽지를 만들었다');
+  assert.ok(말한것.length, '왜 못 하는지 말하지 않았다');
 });

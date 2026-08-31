@@ -222,7 +222,8 @@
   function packPageEdits(mid, edits) {
     return JSON.stringify({ 푸른ERP: '쪽 채우기', 쪽: String(mid || ''), 줄: (edits || []).map(function (e) {
       return { 전: String(e.before == null ? '' : e.before), 후: String(e.after == null ? '' : e.after) };
-    }) }, null, 0);
+      /* 안내 — 예전에 넣어 두신 «경력사항 단추»가 이 쪽지를 거절하게 하는 <div> 한 줄 */
+    }), 안내: 쪽지안내 }, null, 0);
   }
   /* 쪽지를 푼다. 모양이 아니면 «아무것도 하지 않는다» */
   function unpackPageEdits(text) {
@@ -279,34 +280,291 @@
     return null;
   }
 
-  /* 즐겨찾기에 넣을 주소 — «쪽 본문» 채우기.
-     ★ 검사한 부품(textRuns·applyLineEdits…)을 «그 소스 그대로» 실어 보낸다.
-       단추에 따로 베껴 쓰면 검사가 지키는 코드와 실제로 도는 코드가 갈라진다.
-     ★ 저장(등록)은 누르지 않는다. 사람이 눈으로 보고 누른다. */
-  function pageBookmarkletUrl() {
+
+/* ═══════════════════════════════════════════════════════════════════════
+     구성원 칸 채우기 · 비공개 (대표 지시 2026-08-31)
+     ═══════════════════════════════════════════════════════════════════════
+     대표 지시: 「비공개 버튼 만들어달라. 여기 화면에서 직접 수정하면
+                니가 직접 고치는 형태로 연결해달라」
+
+     ★ 여태는 «경력사항 칸 하나»만 채웠다. 이름·직책1·직책2가 다르면 채워도
+       딱지가 그대로 「안 올라감」이었다 — 단추가 고장 난 것처럼 보이는 자리였다.
+
+     ★ 칸 이름을 «짐작하지 않는다». 경력사항만 이름을 안다(extra_vars4).
+       나머지는 화면에 «보이는 칸 이름»(직책1·직책2)으로 찾는다. 찾은 것이
+       하나가 아니면 그 칸은 «건너뛰고» 무엇을 못 했는지 말한다.
+       짐작해서 쓰면 엉뚱한 칸을 덮는데, 그건 되돌릴 수 없다.
+
+     ★ 저장은 «물어보고» 누른다. 기계가 말없이 저장하면 되돌릴 틈이 없다. */
+
+  /* 칸 이름을 견줄 때 쓰는 다듬기 — 「직책1 :」·「직책1*」 이 다 같은 이름이다 */
+  function tidyLabel(s) {
+    return String(s == null ? '' : s).replace(/[\s:：*()]/g, '');
+  }
+
+  /* 글자를 넣을 수 있는 칸인가. 숨은 칸·단추·파일은 아니다 —
+     숨은 칸에 쓰면 화면에 아무 표시도 안 나면서 자료만 바뀐다. */
+  function isField(el) {
+    if (!el || !el.tagName) return false;
+    var t = String(el.tagName).toLowerCase();
+    if (t === 'textarea' || t === 'select') return true;
+    if (t !== 'input') return false;
+    var ty = String(el.type || 'text').toLowerCase();
+    return ['hidden', 'submit', 'button', 'reset', 'file', 'checkbox', 'radio', 'image']
+      .indexOf(ty) < 0;
+  }
+
+  /* 「보이는 이름」 옆의 칸을 찾는다 — for → 안쪽 → 다음 형제 → 가까운 어버이 순 */
+  function fieldNear(el) {
+    var doc = el.ownerDocument;
+    var id = el.getAttribute && el.getAttribute('for');
+    if (id && doc.getElementById) {
+      var byId = doc.getElementById(id);
+      if (isField(byId)) return byId;
+    }
+    var inside = el.querySelector && el.querySelector('input,textarea,select');
+    if (isField(inside)) return inside;
+    var n = el.nextElementSibling;
+    var hop = 0;
+    while (n && hop++ < 4) {
+      if (isField(n)) return n;
+      var f = n.querySelector && n.querySelector('input,textarea,select');
+      if (isField(f)) return f;
+      n = n.nextElementSibling;
+    }
+    var p = el.parentElement, up = 0;
+    while (p && up++ < 3) {
+      var g = p.querySelector && p.querySelector('input,textarea,select');
+      if (isField(g)) return g;
+      p = p.parentElement;
+    }
+    return null;
+  }
+
+  /* ★ 화면에 보이는 이름으로 칸을 찾는다. 하나로 좁혀지지 않으면 «없는 것으로 본다». */
+  function findFieldByLabel(doc, label) {
+    var want = tidyLabel(label);
+    if (!want || !doc || !doc.querySelectorAll) return null;
+    var tags = doc.querySelectorAll('label,th,legend,dt,.title,.tit,strong,b,span');
+    var hits = [];
+    for (var i = 0; i < tags.length; i++) {
+      var el = tags[i];
+      if (tidyLabel(el.textContent) !== want) continue;
+      var f = fieldNear(el);
+      if (isField(f) && hits.indexOf(f) < 0) hits.push(f);
+    }
+    return hits.length === 1 ? hits[0] : null;
+  }
+
+  /* 값을 넣고 «바뀐 것을 알린다» — 알리지 않으면 라이믹스가 못 알아채고 저장에서 빠진다 */
+  function setFieldValue(el, val) {
+    var before = String(el.value == null ? '' : el.value);
+    el.value = val;
+    try {
+      var W = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+      el.dispatchEvent(new W.Event('input', { bubbles: true }));
+      el.dispatchEvent(new W.Event('change', { bubbles: true }));
+    } catch (e) { }
+    return before;
+  }
+
+  /* 우리 칸 이름 ↔ 홈페이지 편집 화면의 칸.
+     name 이 있으면 그것으로 먼저 찾는다(확실히 아는 칸). 없으면 보이는 이름으로. */
+  /* ★ 「이름」은 «일부러» 빠져 있다.
+     지금 홈페이지 목록 카드는 「권형하대표」 한 덩어리로 찍히고, 펼친 창은
+     「권형하 + 대표」로 갈려 있다 — 글 제목이 '권형하'인지 '권형하대표'인지
+     편집 화면을 봐야 안다. '권형하'로 덮었는데 제목이 '권형하대표'였다면
+     카드에서 「대표」가 «조용히» 사라진다. 확인 전에는 손대지 않는다.
+     (이름이 다를 때는 화면이 「손으로 고치십시오」라고 말한다.) */
+  var MEMBER_FIELDS = [
+    { key: '직책1', label: '직책1', name: '' },
+    { key: '직책2', label: '직책2', name: '' },
+    { key: '경력사항', label: '경력사항', name: FIELD }
+  ];
+
+  function fillMemberFields(doc, 칸) {
+    var done = [], skipped = [];
+    MEMBER_FIELDS.forEach(function (f) {
+      if (!칸 || !Object.prototype.hasOwnProperty.call(칸, f.key)) return;
+      var want = String(칸[f.key] == null ? '' : 칸[f.key]);
+      var el = null;
+      if (f.name && doc.querySelector) el = doc.querySelector('[name="' + f.name + '"]');
+      if (!isField(el)) el = findFieldByLabel(doc, f.label);
+      if (!isField(el)) el = findFieldByLabel(doc, f.key);
+      if (!isField(el)) {
+        skipped.push({ 칸: f.key, why: '이 화면에서 「' + f.key + '」 칸을 하나로 찾지 못했습니다' });
+        return;
+      }
+      var before = String(el.value == null ? '' : el.value);
+      if (before === want) { skipped.push({ 칸: f.key, why: '이미 같습니다' }); return; }
+      setFieldValue(el, want);
+      try { el.scrollIntoView({ block: 'center' }); } catch (e) { }
+      done.push({ 칸: f.key, before: before, after: want });
+    });
+    return { done: done, skipped: skipped };
+  }
+
+  /* ★ 비공개로 바꾼다 — «지우지» 않는다. 잘못 내렸어도 되살릴 수 있어야 한다.
+     고르개(select)에 「비공개」가 있으면 그것을, 없으면 「비밀글」 같은 딸깍 칸을 본다.
+     둘 다 하나로 안 좁혀지면 «아무것도 하지 않는다». */
+  function setPrivate(doc) {
+    var sels = doc.querySelectorAll ? doc.querySelectorAll('select') : [];
+    var 고른것 = [];
+    for (var i = 0; i < sels.length; i++) {
+      var opts = sels[i].options || [];
+      for (var j = 0; j < opts.length; j++) {
+        var t = tidyLabel(opts[j].textContent);
+        if (t === '비공개' || t === '비밀' || t === '비밀글') {
+          고른것.push({ sel: sels[i], idx: j, text: opts[j].textContent });
+        }
+      }
+    }
+    if (고른것.length === 1) {
+      var g = 고른것[0];
+      g.sel.selectedIndex = g.idx;
+      try {
+        var W = (doc.defaultView) || window;
+        g.sel.dispatchEvent(new W.Event('change', { bubbles: true }));
+      } catch (e) { }
+      try { g.sel.scrollIntoView({ block: 'center' }); } catch (e) { }
+      return { ok: true, how: '고르개를 「' + tidyLabel(g.text) + '」로 바꿨습니다' };
+    }
+    if (고른것.length > 1) {
+      return { ok: false, why: '「비공개」를 고를 곳이 ' + 고른것.length
+        + '군데라 어느 것인지 단정할 수 없습니다.\n\n화면에서 직접 바꿔 주십시오.' };
+    }
+
+    var boxes = doc.querySelectorAll ? doc.querySelectorAll('input[type="checkbox"]') : [];
+    var 딸깍 = [];
+    for (var k = 0; k < boxes.length; k++) {
+      var b = boxes[k];
+      var 이름 = tidyLabel((b.parentElement && b.parentElement.textContent) || '')
+        + tidyLabel(b.name || '');
+      if (/비공개|비밀글|secret/i.test(이름)) 딸깍.push(b);
+    }
+    if (딸깍.length === 1) {
+      if (!딸깍[0].checked) { 딸깍[0].click(); }
+      try { 딸깍[0].scrollIntoView({ block: 'center' }); } catch (e) { }
+      return { ok: true, how: '「비밀글」에 표시했습니다' };
+    }
+    return { ok: false, why: '이 화면에서 «비공개로 바꾸는 자리»를 찾지 못했습니다.\n\n'
+      + '화면에서 직접 바꿔 주시고, 어떤 화면인지 사진으로 알려 주시면 맞추겠습니다.' };
+  }
+
+  /* 저장 단추를 찾는다 — 누르는 것은 «사람이 그러라고 했을 때»만 */
+  function findSaveButton(doc) {
+    var cands = doc.querySelectorAll
+      ? doc.querySelectorAll('button,input[type="submit"],a.btn,.btn_save,#save')
+      : [];
+    var hits = [];
+    for (var i = 0; i < cands.length; i++) {
+      var el = cands[i];
+      var t = tidyLabel(el.textContent || el.value || '');
+      if (t === '저장' || t === '등록' || t === '수정' || t === '확인') hits.push(el);
+    }
+    return hits.length === 1 ? hits[0] : null;
+  }
+
+  /* ── 쪽지(클립보드) ─────────────────────────────────────────────
+     ★ 「안내」 칸에 <div> 를 넣어 둔다. 예전에 넣어 두신 «경력사항 단추»가
+       이 쪽지를 받으면 «화면 조각이 섞였다»며 거절한다 — 쪽지가 경력사항 칸에
+       통째로 박히는 사고를 막는다. 새 단추는 이 칸을 그냥 무시한다. */
+  var 쪽지안내 = '<div>푸른ERP 쪽지입니다 — 붙여넣지 마시고 「★ 푸른ERP 채우기」를 누르십시오</div>';
+
+  function packMemberFields(srl, 칸) {
+    return JSON.stringify({ 푸른ERP: '구성원 채우기', 글번호: String(srl || ''),
+      칸: 칸 || {}, 안내: 쪽지안내 }, null, 0);
+  }
+  function packPrivate(srl, name) {
+    return JSON.stringify({ 푸른ERP: '비공개', 글번호: String(srl || ''),
+      이름: String(name || ''), 안내: 쪽지안내 }, null, 0);
+  }
+
+  /* 쪽지를 푼다 — 세 갈래(쪽 채우기·구성원 채우기·비공개)를 한 자리에서 가른다 */
+  function readPacket(text) {
+    var o = null;
+    try { o = JSON.parse(String(text || '')); } catch (e) { o = null; }
+    if (!o || !o['푸른ERP']) {
+      return { ok: false, why: '복사된 것이 푸른ERP 쪽지가 아닙니다.\n\n'
+        + '통합시스템에서 「홈페이지에 채우기용 복사」를 먼저 눌러 주십시오.' };
+    }
+    var kind = String(o['푸른ERP']);
+    if (kind === '쪽 채우기') {
+      var got = unpackPageEdits(text);
+      return got.ok ? { ok: true, kind: kind, mid: got.mid, edits: got.edits } : got;
+    }
+    if (kind === '구성원 채우기') {
+      var 칸 = o['칸'] || {};
+      var n = 0;
+      for (var k in 칸) { if (Object.prototype.hasOwnProperty.call(칸, k)) n++; }
+      if (!n) return { ok: false, why: '채울 칸이 없습니다.' };
+      return { ok: true, kind: kind, srl: String(o['글번호'] || ''), 칸: 칸 };
+    }
+    if (kind === '비공개') {
+      return { ok: true, kind: kind, srl: String(o['글번호'] || ''), name: String(o['이름'] || '') };
+    }
+    return { ok: false, why: '모르는 쪽지입니다(' + kind + ').' };
+  }
+
+  /* ★ 즐겨찾기 단추 하나로 셋을 다 한다 — 쪽 채우기·구성원 채우기·비공개.
+     ★ 검사한 부품 소스를 «그대로» 실어 보낸다. 단추에 따로 베껴 쓰면
+       검사가 지키는 코드와 실제로 도는 코드가 조용히 갈라진다. */
+  function fillBookmarkletUrl() {
     var parts = [splitHtml, isTag, tagName, tidy, escText, textRuns, applyLineEdits,
-                 unpackPageEdits, findPageEditor].map(function (f) { return String(f); });
+                 unpackPageEdits, findPageEditor, tidyLabel, isField, fieldNear,
+                 findFieldByLabel, setFieldValue, fillMemberFields, setPrivate,
+                 findSaveButton, readPacket].map(function (f) { return String(f); });
     var src = '(async function(){' + parts.join('\n') + '\n'
-      + 'var ed=findPageEditor(window);'
-      + 'if(!ed){alert("본문 칸을 찾지 못했습니다.\\n\\n쪽을 «고치는» 화면에서 눌러 주십시오.\\n'
-      + '그래도 안 되면 이 화면을 사진으로 찍어 보내 주십시오 — 화면에 맞춰 고치겠습니다.");return;}'
+      + 'MEMBER_FIELDS=' + JSON.stringify(MEMBER_FIELDS) + ';'
+      + 'function 알림(msg,색){var d=document.createElement("div");'
+      + 'd.style.cssText="position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:99999;'
+      + 'background:"+(색||"#0F7B4F")+";color:#fff;padding:10px 16px;border-radius:9px;'
+      + 'font:700 14px Malgun Gothic,sans-serif;box-shadow:0 6px 22px rgba(0,0,0,.22);max-width:80vw";'
+      + 'd.textContent=msg;document.body.appendChild(d);setTimeout(function(){d.remove();},9000);}'
       + 'var t="";try{t=await navigator.clipboard.readText();}catch(e){'
       + 't=prompt("클립보드를 못 읽었습니다. 여기에 붙여넣기(Ctrl+V) 해 주십시오")||"";}'
-      + 'var pack=unpackPageEdits(t);'
-      + 'if(!pack.ok){alert(pack.why);return;}'
-      + 'var out=applyLineEdits(ed.get(),pack.edits);'
+      + 'var p=readPacket(t);'
+      + 'if(!p.ok){alert(p.why);return;}'
+      /* ── 쪽 채우기 ── */
+      + 'if(p.kind==="쪽 채우기"){'
+      + 'var ed=findPageEditor(window);'
+      + 'if(!ed){alert("본문 칸을 찾지 못했습니다.\\n\\n쪽을 «고치는» 화면에서 눌러 주십시오.");return;}'
+      + 'var out=applyLineEdits(ed.get(),p.edits);'
       + 'if(!out.done.length){alert("채운 줄이 없습니다.\\n\\n"'
       + '+out.skipped.map(function(s){return "· "+s.before+"\\n   → "+s.why;}).join("\\n"));return;}'
       + 'ed.set(out.html);'
-      + 'var msg=out.done.length+"줄을 채웠습니다 — 확인하고 «저장»을 누르십시오";'
-      + 'if(out.skipped.length){msg+=" (건너뛴 "+out.skipped.length+"줄은 아래에)";}'
-      + 'var d=document.createElement("div");'
-      + 'd.style.cssText="position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:99999;'
-      + 'background:#0F7B4F;color:#fff;padding:10px 16px;border-radius:9px;'
-      + 'font:700 14px Malgun Gothic,sans-serif;box-shadow:0 6px 22px rgba(0,0,0,.22);max-width:80vw";'
-      + 'd.textContent=msg;document.body.appendChild(d);setTimeout(function(){d.remove();},8000);'
+      + '알림(out.done.length+"줄을 채웠습니다 — 확인하고 저장하십시오"'
+      + '+(out.skipped.length?" (건너뛴 "+out.skipped.length+"줄은 아래에)":""));'
       + 'if(out.skipped.length){alert("건너뛴 줄\\n\\n"'
       + '+out.skipped.map(function(s){return "· "+s.before+"\\n   → "+s.why;}).join("\\n\\n"));}'
+      + 'return;}'
+      /* ── 구성원 채우기 ── */
+      + 'if(p.kind==="구성원 채우기"){'
+      + 'if(p.srl&&location.search.indexOf(p.srl)<0){'
+      + 'if(!confirm("이 화면은 글 번호 "+p.srl+" 이 아닌 것 같습니다.\\n\\n그래도 채울까요?"))return;}'
+      + 'var r=fillMemberFields(document,p["칸"]);'
+      + 'if(!r.done.length){alert("바뀐 칸이 없습니다.\\n\\n"'
+      + '+r.skipped.map(function(s){return "· "+s["칸"]+" → "+s.why;}).join("\\n"));return;}'
+      + '알림(r.done.map(function(d){return d["칸"];}).join("·")+" 를 채웠습니다");'
+      + 'if(r.skipped.length){alert("채우지 못한 칸\\n\\n"'
+      + '+r.skipped.map(function(s){return "· "+s["칸"]+" → "+s.why;}).join("\\n"));}'
+      + 'var sb=findSaveButton(document);'
+      + 'if(sb&&confirm("이대로 저장할까요?\\n\\n채운 칸: "'
+      + '+r.done.map(function(d){return d["칸"];}).join(", ")+"\\n\\n"'
+      + '+"「취소」를 누르시면 화면에 채워만 두고 저장하지 않습니다."))sb.click();'
+      + 'else if(!sb)알림("저장 단추를 못 찾았습니다 — 화면에서 직접 눌러 주십시오","#B45309");'
+      + 'return;}'
+      /* ── 비공개 ── */
+      + 'if(p.kind==="비공개"){'
+      + 'if(!confirm((p.name||"이 사람")+" 님의 글을 «비공개»로 바꿉니다.\\n\\n'
+      + '지우는 것이 아니라 감추는 것이라 언제든 되살릴 수 있습니다.\\n\\n계속할까요?"))return;'
+      + 'var pr=setPrivate(document);'
+      + 'if(!pr.ok){alert(pr.why);return;}'
+      + '알림("비공개로 바꿨습니다 — "+pr.how);'
+      + 'var sb2=findSaveButton(document);'
+      + 'if(sb2&&confirm("이대로 저장할까요?\\n\\n저장해야 홈페이지에서 내려갑니다."))sb2.click();'
+      + 'else if(!sb2)알림("저장 단추를 못 찾았습니다 — 화면에서 직접 눌러 주십시오","#B45309");'
+      + 'return;}'
       + '})();';
     return 'javascript:' + encodeURIComponent(src);
   }
@@ -325,6 +583,17 @@
     applyLineEdits: applyLineEdits,
     packPageEdits: packPageEdits,
     unpackPageEdits: unpackPageEdits,
-    pageBookmarkletUrl: pageBookmarkletUrl
+    /* 구성원 칸 채우기·비공개 (대표 지시 2026-08-31) */
+    MEMBER_FIELDS: MEMBER_FIELDS,
+    tidyLabel: tidyLabel,
+    isField: isField,
+    findFieldByLabel: findFieldByLabel,
+    fillMemberFields: fillMemberFields,
+    setPrivate: setPrivate,
+    findSaveButton: findSaveButton,
+    packMemberFields: packMemberFields,
+    packPrivate: packPrivate,
+    readPacket: readPacket,
+    fillBookmarkletUrl: fillBookmarkletUrl
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -213,7 +213,7 @@ test('★ 고칠 줄은 «본문 자리»에서만 나온다 — 머리띠·메�
 /* ══════ 즐겨찾기 단추 ══════ */
 
 test('★ 단추는 «검사한 그 부품»을 그대로 싣는다 — 따로 베껴 쓰면 조용히 갈라진다', () => {
-  const src = decodeURIComponent(F.pageBookmarkletUrl());
+  const src = decodeURIComponent(F.fillBookmarkletUrl());
   [F.applyLineEdits, F.textRuns, F.unpackPageEdits].forEach(fn => {
     assert.ok(src.indexOf(String(fn)) >= 0,
       '★ 단추가 부품을 그대로 싣지 않았다 — 여기 검사가 지키는 코드와 실제로 도는 코드가 다르다');
@@ -221,16 +221,16 @@ test('★ 단추는 «검사한 그 부품»을 그대로 싣는다 — 따로 �
 });
 
 test('★ 단추는 저장을 누르지 않는다 — 사람이 눈으로 보고 누른다', () => {
-  const src = decodeURIComponent(F.pageBookmarkletUrl());
+  const src = decodeURIComponent(F.fillBookmarkletUrl());
   [/\.submit\s*\(/, /procFileUpload/, /doDocumentInsert/].forEach(re =>
     assert.ok(!re.test(src), '★ 단추가 스스로 저장·전송한다: ' + re));
   assert.ok(src.indexOf('javascript:') !== 0 || true);
-  assert.ok(F.pageBookmarkletUrl().indexOf('javascript:') === 0, '즐겨찾기 주소 모양이 아니다');
+  assert.ok(F.fillBookmarkletUrl().indexOf('javascript:') === 0, '즐겨찾기 주소 모양이 아니다');
 });
 
 test('★ 본문 칸을 못 찾으면 아무것도 하지 않는다 — 엉뚱한 칸에 쓰면 쪽이 통째로 망가진다', () => {
   assert.equal(F.findPageEditor ? 1 : 1, 1);
-  const src = decodeURIComponent(F.pageBookmarkletUrl());
+  const src = decodeURIComponent(F.fillBookmarkletUrl());
   const i = src.indexOf('findPageEditor(window)');
   assert.ok(i > 0, '본문 칸 찾기를 부르지 않는다');
   /* 못 찾았을 때 «되돌아 나가는지» — 알리기만 하고 이어서 쓰면 안 된다 */
