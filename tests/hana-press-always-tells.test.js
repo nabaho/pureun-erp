@@ -88,7 +88,10 @@ test('★★ 서버는 «사람이 누른 것»으로 lastSweepAt 을 찍지 않
     '★★ 손으로 누른 것을 안 가르면, 절전에 재워진 폰이 화면에서 멀쩡해 보입니다');
   assert.match(body, /byHand \? \{\} : \{ lastSweepAt/,
     '★★ 사람이 누른 것으로 「스스로 훑었다」를 찍고 있습니다 — 절전을 영영 못 짚습니다');
-  assert.match(body, /byHand \? \{ lastHistoryAt/,
+  /* ⚠ 2026-08-31 에 「앱을 열면 하는 인사(hello)」가 생겨 조건이 하나 늘었다 —
+       연 것은 «끌어온 것»이 아니므로 그때는 안 적는다. 볼 것은 여전히
+       «사람이 눌러 가져왔으면 남기는가» 다. */
+  assert.match(body, /byHand[^?]*\?\s*\{ lastHistoryAt/,
     '★ 0통이어도 「눌렀다」는 남겨야 화면이 「눌러 주세요」를 그만합니다');
   /* 판 번호·권한은 손으로 눌렀어도 그대로 참이라 함께 적힌다 */
   assert.match(body, /appVersion:/, '★ 판 번호는 어느 길로 왔든 참입니다');
