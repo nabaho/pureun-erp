@@ -32,9 +32,12 @@ function scheduleOf(src, exportName) {
   return parseInt(m[1], 10);
 }
 
-test('★★ 자동으로 도는 것은 «셋»이다', () => {
+test('★★ 자동으로 도는 것은 «넷»이다', () => {
+  /* ★ 지키는 것은 「숫자」가 아니라 «화면에 적힌 것과 코드가 같은가»다.
+     2026-08-31 홈페이지 뉴스·법령 브리핑(하루 한 번)이 늘어 셋에서 넷이 됐다 —
+     화면 문구도 같이 고쳤다. 다음에 또 늘면 여기와 화면을 함께 고쳐야 한다. */
   const all = (FIDX + FSYNC).match(/\.pubsub\.schedule\(/g) || [];
-  assert.strictEqual(all.length, 3, '스케줄 함수 수가 바뀌었다 — 화면 문구도 같이 고쳐야 한다');
+  assert.strictEqual(all.length, 4, '스케줄 함수 수가 바뀌었다 — 화면 문구도 같이 고쳐야 한다');
 });
 
 test('★★ 화면에 적힌 주기가 «코드와 같다»', () => {
@@ -45,9 +48,11 @@ test('★★ 화면에 적힌 주기가 «코드와 같다»', () => {
   assert.strictEqual(pay, 30, '급여자료 주기가 바뀌었다');
   assert.strictEqual(sync, 10, '메일 받기 주기가 바뀌었다');
 
-  assert.ok(ENTER.indexOf('메일 받기 10분 · 메일 보내기 15분 · 급여자료 30분마다') >= 0,
+  assert.ok(ENTER.indexOf('메일 받기 10분 · 메일 보내기 15분 · 급여자료 30분마다 · 홈페이지 브리핑 하루 한 번') >= 0,
     '뜻풀이의 주기가 코드와 다르다');
   assert.ok(ENTER.indexOf('메일 받기 10분마다 · 메일 보내기 15분마다 · 급여자료 30분마다') >= 0,
+    '줄 설명의 주기가 코드와 다르다');
+  assert.ok(ENTER.indexOf('홈페이지 브리핑 하루 한 번') >= 0,
     '줄 설명의 주기가 코드와 다르다');
 });
 
@@ -55,10 +60,11 @@ test('★★ 하루 몇 번인지도 코드와 맞는다', () => {
   const send = scheduleOf(FIDX, 'sendScheduledMail');
   const pay = scheduleOf(FIDX, 'receivePaydataMail');
   const sync = scheduleOf(FSYNC, 'syncMailbox');
-  const perDay = Math.round(1440 / send) + Math.round(1440 / pay) + Math.round(1440 / sync);
-  assert.strictEqual(perDay, 288, '셈이 바뀌었다');
-  assert.ok(ENTER.indexOf('하루 <b>288번</b>') >= 0, '뜻풀이에 하루 횟수가 없거나 틀렸다');
-  assert.ok(ENTER.indexOf('셋이 하루 288번, 밤낮 같이 돕니다') >= 0, '줄 설명에 하루 횟수가 없거나 틀렸다');
+  const perDay = Math.round(1440 / send) + Math.round(1440 / pay) + Math.round(1440 / sync)
+    + 1;   // 홈페이지 브리핑 — 하루 한 번
+  assert.strictEqual(perDay, 289, '셈이 바뀌었다');
+  assert.ok(ENTER.indexOf('하루 <b>289번</b>') >= 0, '뜻풀이에 하루 횟수가 없거나 틀렸다');
+  assert.ok(ENTER.indexOf('넷이 하루 289번, 밤낮 같이 돕니다') >= 0, '줄 설명에 하루 횟수가 없거나 틀렸다');
 });
 
 test('★★ 옛 «틀린» 숫자가 어디에도 안 남아 있다', () => {
