@@ -101,6 +101,21 @@ test('★ 색인이 아직 안 왔어도 «적어 둔 업체»는 나온다 — 
     '★ 기업정보함을 아직 안 열었다고 아무것도 못 고르면, 기능이 반쪽입니다');
 });
 
+test('★★ 색인을 읽다 «튕겨도» 적어 둔 업체는 나온다', () => {
+  /* ⚠ 「없을 때」와 「읽다 튕길 때」는 다르다. 앞엣것만 시험하면 try/catch 를
+       걷어내도 검사가 통과한다 — 2026-08-31 에 일부러 깨 보고 알았다.
+       색인은 다른 앱(기업정보함)이 채우는 것이라, 모양이 어긋날 수 있다. */
+  Object.defineProperty(ctx.window, 'pucardsIdx', {
+    configurable: true,
+    get() { throw new Error('색인이 깨졌다'); },
+  });
+  let got;
+  assert.doesNotThrow(() => { got = suggest('세무', [{ taxOfficeName: '대흥세무회계' }]); },
+    '★★ 색인이 깨지면 세무사무실 칸이 통째로 죽습니다 — 글자도 못 칩니다');
+  assert.equal(got.length, 1, '★ 튕겼어도 적어 둔 업체는 나와야 합니다');
+  delete ctx.window.pucardsIdx;
+});
+
 test('★ 명함 한 장에서 다섯 칸을 뽑는다 — 사무실 전화가 휴대폰보다 먼저', () => {
   const t = fromCard({ c: '한재정세무회계', n: '한재전',
     m: '010-1111-2222', ct: '041-555-3355', cfx: '041-555-3356', e: 'h@sema.kr' });
