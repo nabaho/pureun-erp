@@ -36,7 +36,11 @@ const SLICE = (function () {
   /* ⚠ 칸을 닫는 글자는 «두 번» 나온다 — 서류 카드와 일반 사진. 첫 번째에서
      자르면 if/else 가 반토막 나 「Unexpected end of input」이 된다(여기서 한 번
      당했다). 서류 분기의 여닫는 중괄호를 세어 else 까지 온전히 담는다. */
-  const ifAt = app.indexOf("if (it.meta.kind === 'doc') {", a);
+  /* ⚠ 갈림길의 «조건»이 2026-08-31 에 늘었다 — 글자가 하나도 없는 서류는 종이 카드로
+     안 가고 사진을 꽉 채운다(하얀 칸을 없앤 고침). 이 검사가 지키는 것은
+     「서류와 사진이 갈린다」이지 조건이 무엇인가가 아니므로 느슨하게 찾는다. */
+  const m0 = /if \(it\.meta\.kind === 'doc'[^)]*\) \{/.exec(app.slice(a));
+  const ifAt = m0 ? a + m0.index : -1;
   assert.ok(ifAt > a, '서류/사진 갈림길을 찾지 못했습니다');
   let d = 0, end = -1;
   for (let k = app.indexOf('{', ifAt); k < app.length; k++) {
@@ -115,10 +119,22 @@ test('★ 경고가 «없는» 서류 카드도 아래를 안 비운다 — 예�
 /* ══════ ② 합치지 «않는» 자리 — 얹을 딱지가 없거나, 이유를 적어야 할 때 ══════ */
 
 test('★ 딱지가 없는 서류 칸(회의로 읽힌 것)은 모서리 표를 쓰고, 그때만 비운다', () => {
-  const h = cellFor({ it: MEET, need: true });
+  /* ⚠ 2026-08-31: 보여 줄 글자가 하나도 없으면 종이 카드로 안 간다(하얀 칸을 없앤 고침).
+     그러니 여기서는 **업체가 있는** 회의-서류로 본다 — 카드로 가는 바로 그 경우다. */
+  const h = cellFor({ it: { id: 'p2', thumb: 't', meta: { kind: 'doc', company: '그린파이', read: { kind: 'meeting' } } }, need: true });
   assert.ok(!/class="tag/.test(h), '회의로 읽힌 서류에는 딱지를 안 붙입니다(8/17 지시)');
   assert.match(h, /class="wn">⚠/, '★ 얹을 딱지가 없는데 경고까지 사라지면 놓칩니다');
   assert.match(h, /wnpad/, '★ 모서리 표가 마지막 줄 글자를 덮습니다');
+});
+
+test('★★ 보여 줄 글자가 «하나도 없으면» 사진을 꽉 채운다 — 하얀 칸이 되면 안 된다', () => {
+  /* 대표 보고 2026-08-31 「사진이 모두 안 나온다」 — 방금 올린 서류는 판독 전이라
+     제목도 업체도 없어, 26px 띠만 있는 **통째로 하얀 칸**이었다. */
+  const h = cellFor({ it: MEET, need: true });
+  assert.ok(!/class="cell doc/.test(h),
+    '★★ 글자가 없는데 종이 카드로 갑니다 — 사진도 글자도 없는 하얀 칸이 됩니다');
+  assert.match(h, /<img /, '★★ 사진이 안 실리면 여전히 하얗습니다');
+  assert.match(h, /class="wn">⚠/, '★ 사진 칸으로 가도 경고는 놓치면 안 됩니다');
 });
 
 test('★ 「확인 필요」만 볼 때는 합치지 않는다 — 왜 걸렸는지가 더 중요하다', () => {

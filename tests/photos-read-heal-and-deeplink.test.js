@@ -159,13 +159,25 @@ test('★ 새로 읽을 때도 같은 되메우기가 걸린다 — 앞으로 �
 });
 
 test('★ 사진첩이 목록을 실을 때 되메우기를 실제로 건다', () => {
-  const i = APP.indexOf('gridItems = Object.keys(items).map');
-  const j = APP.indexOf('gridItems.sort(comparePhotosNewest)', i);
+  /* ⚠ 2026-08-31: 목록을 만드는 자리가 «둘»이 될 뻔했다(최신본 · 기기에 담아 둔 씨앗).
+     그때 되메우기가 씨앗 쪽에만 빠지면 「보이는데 못 보낸다」가 씨앗 화면에서만
+     되살아난다. 그래서 만드는 손을 itemsToGrid 하나로 모았다 — 여기서 그것을 본다. */
+  const i = APP.indexOf('function itemsToGrid(');
+  const j = APP.indexOf('return out;', i);
   assert.ok(i > 0 && j > i, '목록 싣는 자리를 못 찾았습니다');
   const seg = APP.slice(i, j);
   assert.match(seg, /PuDocRead\.healRead\(/,
     '★ 읽어 둔 서식의 모순(보이는데 못 보낸다)이 그대로 남습니다');
   assert.match(seg, /catch/, '되메우기가 넘어지면 목록이 통째로 안 보입니다');
+});
+
+test('★★ 목록을 만드는 손이 «하나»다 — 두 벌이면 씨앗 화면에서만 모순이 되살아난다', () => {
+  const made = (APP.match(/Object\.keys\(items\)\.map\(id => \(\{/g) || []).length;
+  assert.equal(made, 1,
+    '★★ 목록을 만드는 자리가 ' + made + '곳입니다 — 되메우기·정렬이 한쪽에만 들어갑니다');
+  /* 씨앗도 최신본도 그 손을 쓴다 */
+  assert.match(APP, /gridItems = itemsToGrid\(items, keepThumb\)/, '최신본이 그 손을 안 씁니다');
+  assert.match(APP, /gridItems = itemsToGrid\(items, null\)/, '씨앗이 그 손을 안 씁니다');
 });
 
 /* ── ② 주소에 남은 사진 표시 ── */
