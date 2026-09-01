@@ -50,6 +50,7 @@ function makeEnv(opts) {
   opts = opts || {};
   const serverU = opts.serverU || {};             // k → u (없으면 1000)
   const reads = { watch: [], live: [], recLive: [], once: [], shallow: 0 };
+  const writes = [];
   const shallowObj = {};
   (opts.serverKeys || MEASURED_KEYS).forEach(k => { shallowObj[k] = true; });
 
@@ -96,11 +97,17 @@ function makeEnv(opts) {
               }
               snap = { val: () => (opts.fin === undefined ? null : opts.fin) };
             } else {
-              snap = { val: () => null };
+              const mV = p.match(/^data\/([^/]+)\/v$/);
+              if (mV) {
+                const rows = (opts.records && opts.records[mV[1]]) || [{ id: 'r1' }];
+                const map = {}; rows.forEach(r => { map[r.id] = r; });
+                snap = { val: () => map };
+              } else snap = { val: () => null };
             }
             if (cb) { setTimeout(() => cb(snap), 0); return; }
             return Promise.resolve(snap);
           },
+          update(u) { writes.push(u); return Promise.resolve(); },
           off() { /* 오류 갈래에서 구독을 뗀다 */ },
           on(_ev, cb, err) {
             const mU = p.match(/^data\/([^/]+)\/u$/);
@@ -162,7 +169,7 @@ function makeEnv(opts) {
   new vm.Script(SRC_EXCLUDE + '\n' + SRC_CONSTS + '\n' + SRC_ALLKEYS + '\n' + SRC_BOOT, { filename: 'boot-sync.js' })
     .runInContext(sandbox);
   return {
-    sandbox, reads, applied, uListeners, liveListeners, recListeners,
+    sandbox, reads, writes, applied, uListeners, liveListeners, recListeners,
     fullCalls: () => fullCalls,
     plan: () => sandbox._bootKeyPlan(),
     sync: (r) => sandbox.fbInitialSync(r)
@@ -554,6 +561,27 @@ test('★ 큰 칸은 data/{칸}/v 에 붙는다 — 칸 통째로 안 붙는다'
   assert.ok(env.recListeners.contracts, '건별 구독이 없습니다');
   assert.ok(env.reads.once.every(p => p !== 'data/contracts'),
     '★ 칸을 통째로 한 번 더 받았습니다 — 그 「두 번 받기」로 이미 두 번 당했습니다');
+});
+
+test('★ 거래내역 묶음도 건별 구독하고 서버 1/로컬 17이면 빠진 16개만 복구한다', async () => {
+  const local = [];
+  for (let i = 0; i < 17; i++) local.push({ id: 'b' + i, rows: [{ date: '2026-01-01' }] });
+  const ls = {
+    pureun_v6_ledger_batches: JSON.stringify(local),
+    pureun_v6__meta_ledger_batches: '1'
+  };
+  const env = makeEnv({
+    fin: true, serverKeys: ['ledger_batches'], serverU: { ledger_batches: 900 }, ls,
+    records: { ledger_batches: [local[0]] }
+  });
+  await env.sync();
+  await tick();
+  assert.deepEqual(env.reads.recLive, ['ledger_batches'], '통째 구독이면 17→1 급감 경고가 다시 뜹니다');
+  const repair = env.writes.find(u => Object.keys(u).some(k => k.indexOf('data/ledger_batches/v/') === 0));
+  assert.ok(repair, '서버에서 빠진 묶음을 복구하지 않았습니다');
+  assert.equal(Object.keys(repair).filter(k => k.indexOf('data/ledger_batches/v/') === 0).length, 16);
+  assert.equal(Object.prototype.hasOwnProperty.call(repair, 'data/ledger_batches'), false,
+    '서버 전체를 덮으면 동료가 동시에 올린 묶음이 사라집니다');
 });
 
 test('★ 붙일 때 오는 건들이 초기 적재다 — 따로 통째로 안 받는다', async () => {
