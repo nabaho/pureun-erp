@@ -63,16 +63,16 @@ t('★ 둘 다 비어 있으면 못 지운다', ctx.erpCanDropBatch({ id:'x', by
 t('묶음이 없으면 false', ctx.erpCanDropBatch(null, { role:'admin' }), false);
 t('로그인 정보가 없어도 안 터진다', ctx.erpCanDropBatch(bA, null), false);
 
-console.log('\n[④ 한도 — 오래된 묶음부터 «통째로» 버린다]');
-/* 줄 단위로 자르면 한 묶음이 반토막 나서 「이 파일 몇 줄」이 안 맞는다 */
+console.log('\n[④ 한도 — 넘겨도 기존 묶음을 자동삭제하지 않는다]');
+/* 큰 파일 하나로 17묶음→1묶음이 된 실제 사고 뒤, 한도는 화면 처리 권장선일 뿐이다. */
 function big(n, at){ var rows = []; for(var i=0;i<n;i++) rows.push(r('2026-01-' + String((i%28)+1).padStart(2,'0'), i+1, 'm'+i));
   return ctx.erpMakeBatch(rows, { at:at, by:'P-001' }); }
 const t1 = ctx.erpTrimBatches([big(30,'2026-08-01'), big(30,'2026-08-02'), big(30,'2026-08-03')], 70);
-t('★ 한도를 넘으면 가장 오래된 묶음이 빠진다', t1.dropped.length, 1);
-t('빠진 것은 가장 오래된 것', t1.dropped[0].at, '2026-08-01');
-t('남은 묶음은 둘', t1.keep.length, 2);
+t('★ 한도를 넘어도 빠진 묶음은 없다', t1.dropped.length, 0);
+t('★ 묶음 셋이 모두 보존된다', t1.keep.length, 3);
+t('권장선 초과 줄 수만 알려 준다', t1.overflowRows, 20);
 t('한도 안이면 아무것도 안 버린다', ctx.erpTrimBatches([big(10,'2026-08-01')], 70).dropped.length, 0);
-t('★ 마지막 한 묶음은 남긴다 (방금 올린 것까지 지우면 영문을 모른다)',
+t('한 묶음이 커도 그대로 보존한다',
   ctx.erpTrimBatches([big(500,'2026-08-01')], 70).keep.length, 1);
 t('빈 목록도 안 터진다', ctx.erpTrimBatches(null, 70).keep, []);
 
@@ -87,9 +87,13 @@ t('로그인 정보가 없으면 전부 남의 것으로 본다', ctx.erpBatchSu
 console.log('\n[⑥ 서버에 «묶음마다 따로» 실린다 — 이것이 이 기능의 뼈대]');
 /* 한 덩어리로 저장하면 A와 B가 동시에 올릴 때 나중 사람이 앞사람 묶음을 지운다 */
 t('★ 건별 저장 목록(DIFF_KEYS)에 들어 있다', /'employment_contracts','ledger_batches'\]/.test(src), true);
+t('★ 실시간 수신도 묶음별이다 (통째 17→1 급감 모달 경로로 가지 않는다)',
+  /'leave_grants', 'leave_of_absence', 'closed_archive', 'ledger_batches'/.test(src), true);
 t('★ 올릴 때 묶음 하나만 고쳐 쓴다 (통째로 덮어쓰지 않는다)',
   /dbUpsert\(LEDGER_BATCH_KEY, _bat\);/.test(src), true);
 t('지울 때도 그 묶음만', /dbRemoveMany\(LEDGER_BATCH_KEY, \[b\.id\]\)/.test(src), true);
+t('★ 용량 초과를 이유로 기존 묶음을 자동삭제하지 않는다',
+  /dbRemoveMany\(LEDGER_BATCH_KEY, _tr\.dropped/.test(src), false);
 t('다른 PC 도 받아 볼 수 있게 동기화 목록에 있다',
   /'ledger_batches','ledger_held','ledger_split_recipes'/.test(src), true);
 t('★ 백업 스냅샷에는 안 담는다 (16MB 한도를 넘겨 백업이 통째로 실패했던 그 원인)',

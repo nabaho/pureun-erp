@@ -103,6 +103,7 @@ rules.data = {
   mgr_rates: finOnly, pay_items: finOnly, dc_contributions: finOnly,
   retirement_settlements: finOnly, recurring_expenses: finOnly,
   expense_budget: finOnly, finance_bank_fee: finOnly, user_accounts: finOnly,
+  ledger_batches: finOnly,
 
   /* 직원 명부 — 모두 보고, 관리자·위임관리인만 고친다 */
   user_dir: { '.read': LOGIN, '.write': `${ADMIN} || ${SUB}` },

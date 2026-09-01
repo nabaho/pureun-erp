@@ -4570,7 +4570,18 @@ function _recServerWrite(k, childPaths){ // childPaths: { '{id}' 또는 '{id}/{f
   var _pre = parseInt(localStorage.getItem(KEY+'_meta_'+k) || '0', 10);
   try { localStorage.setItem(KEY+'_meta_'+k, String(ts)); } catch(_){}
   var updates = {};
-  Object.keys(childPaths).forEach(function(p){ updates['data/'+k+'/v/'+p] = (childPaths[p] === undefined ? null : childPaths[p]); });
+  Object.keys(childPaths).forEach(function(p){
+    var val = (childPaths[p] === undefined ? null : childPaths[p]);
+    /* 거래내역 묶음은 삭제도 기록으로 남긴다. null 로 없애 버리면 오래 닫혀 있던 PC가
+       그 묶음을 다시 올렸을 때 「의도한 삭제」인지 「자동삭제 사고」인지 가를 수 없다.
+       같은 id 자리에 삭제표시를 남기면 오래된 PC도 child_added 로 받아 로컬에서 지우고,
+       아래 복구기는 이 id 를 다시 살리지 않는다. (2026-09-01 동시접속 근본개선) */
+    if(k === 'ledger_batches' && val === null && p.indexOf('/') < 0){
+      val = { id:p, _deleted:true, deletedAt:ts,
+              deletedBy:(typeof getSessionSid === 'function' && getSessionSid()) || '' };
+    }
+    updates['data/'+k+'/v/'+p] = val;
+  });
   updates['data/'+k+'/u'] = ts;
   fbDb.ref().update(updates).catch(function(e){
     try { localStorage.setItem(KEY+'_meta_'+k, String(_pre)); } catch(_){}
@@ -4578,7 +4589,9 @@ function _recServerWrite(k, childPaths){ // childPaths: { '{id}' 또는 '{id}/{f
   });
 }
 function _recCanDirect(k){
-  return !!(fbDb && fbShouldSync(k) && _fbSynced && _fbObjForm[k] === true);
+  /* ledger_batches 는 이 코드가 만든 id 지도임이 확정돼 있다. 서버형식 표식이 아직 안 온
+     첫 순간에도 통째 저장으로 떨어지면 동시 업로드가 다시 충돌하므로 언제나 묶음 경로만 쓴다. */
+  return !!(fbDb && fbShouldSync(k) && _fbSynced && (_fbObjForm[k] === true || k === 'ledger_batches'));
 }
 
 // ── 한 건을 저장할 때 «바뀐 칸만» 보낸다 (2026-08-11) ───────────────
@@ -8366,6 +8379,11 @@ function _fbApplyRecord(k, v, opts){
       if(opts.storm){ try { opts.storm(k); } catch(_s){} }
       // #4 Tier 3: 객체 형식이면 배열화 (LS는 배열 유지)
       var arrValue = normalizeFbValue(v.v);
+      /* 통째 동기화 되돌림 모드에서도 삭제표시는 화면 자료로 풀지 않는다.
+         건별 모드는 _fbApplyOne 이 같은 처리를 한다. */
+      if(k === 'ledger_batches' && Array.isArray(arrValue)){
+        arrValue = arrValue.filter(function(b){ return b && !b._deleted; });
+      }
       try { // [버그수정] 정규식 근사 제거 — 최상위 항목 수만 비교 (_fbLocalCountForShrink 참고)
         var _oldN = _fbLocalCountForShrink(k);
         if(_oldN !== null && Array.isArray(arrValue) && _oldN >= 10 && arrValue.length < _oldN * 0.5){
@@ -8599,7 +8617,7 @@ function _fbHasLocal(k){
 var FB_RECORD_KEYS = [
   'contracts', 'cases', 'consultings', 'companies', 'funds', 'other_projects',
   'payroll_monthly', 'attendance_records', 'finance_income', 'finance_expense',
-  'leave_grants', 'leave_of_absence', 'closed_archive'
+  'leave_grants', 'leave_of_absence', 'closed_archive', 'ledger_batches'
 ];
 function _fbIsRecordKey(k){ return FB_RECORD_KEYS.indexOf(k) >= 0; }
 
@@ -8643,12 +8661,47 @@ function _fbRecordUpdate(k, diff, ts){
 
 /* 건 하나를 로컬 배열에 끼워 넣는다(있으면 갈아 끼우고, 없으면 더한다). */
 function _fbApplyOne(k, id, val){
+  /* 삭제표시는 서버에는 남지만 화면 자료는 아니다. 오래된 기기도 이 표시를 받는 즉시
+     해당 묶음을 로컬에서 빼므로, 삭제한 자료가 다시 살아나는 일을 막는다. */
+  if(k === 'ledger_batches' && val && val._deleted){ _fbRemoveOne(k, id); return; }
   if(!val || typeof val !== 'object') return;
   var arr = _fbLocalArr(k);
   var at = -1;
   for(var i = 0; i < arr.length; i++){ if(arr[i] && String(arr[i].id) === String(id)){ at = i; break; } }
   if(at >= 0) arr[at] = val; else arr.push(val);
   _fbWriteArr(k, arr, _fbServerU[k]);
+}
+
+/* 거래내역 자동삭제 사고 복구.
+   옛 코드는 4,000줄을 넘으면 기존 묶음을 서버에서 null 로 지웠다. 그래서 서버 1묶음,
+   이 PC 17묶음처럼 갈라졌다. 서버에 없는 로컬 묶음만 id 경로로 다시 얹는다.
+   삭제표시도 서버 id 로 세므로, 새 코드에서 사람이 지운 묶음은 절대 되살리지 않는다. */
+function _fbRepairLedgerBatches(serverValue){
+  if(!fbDb) return Promise.resolve(0);
+  var local = _fbLocalArr('ledger_batches').filter(function(b){ return b && b.id && !b._deleted; });
+  if(!local.length) return Promise.resolve(0);
+  var sv = (serverValue && typeof serverValue === 'object') ? serverValue : {};
+  var serverIds = {};
+  Object.keys(sv).forEach(function(path){
+    var b = sv[path];
+    if(b && b.id) serverIds[String(b.id)] = true;
+    else serverIds[String(path)] = true;
+  });
+  var missing = local.filter(function(b){ return !serverIds[String(b.id)]; });
+  if(!missing.length) return Promise.resolve(0);
+  var updates = {}, ts = Date.now();
+  missing.forEach(function(b){ updates['data/ledger_batches/v/'+b.id] = b; });
+  updates['data/ledger_batches/u'] = ts;
+  return fbDb.ref().update(updates).then(function(){
+    try { localStorage.setItem(KEY+'_meta_ledger_batches', String(ts)); } catch(_){}
+    try { showToast('✅ 서버에서 빠졌던 거래내역 '+missing.length+'묶음을 안전하게 복구했습니다'); } catch(_){}
+    console.warn('[거래내역복구] 서버에 없던 로컬 '+missing.length+'묶음을 id별로 복구');
+    return missing.length;
+  }).catch(function(e){
+    console.warn('[거래내역복구] 서버 복구 실패 — 로컬 자료는 유지:', e && (e.message || e.code || e));
+    try { showToast('⚠ 거래내역 서버 복구가 보류됐습니다 — 이 기기의 자료는 그대로 유지됩니다'); } catch(_){}
+    return 0;
+  });
 }
 
 /* ── 건별 지우기 + 급감 차단 ──
@@ -8709,8 +8762,13 @@ function _fbLiveRecords(k, opts){
       }, onErr);
       vref.on('child_removed', function(s){ _fbRemoveOne(k, s.key); }, onErr);
       /* 첫 적재가 끝나는 시점 — 위 구독이 이미 받아 둔 것을 쓰므로 새로 안 받는다 */
-      vref.once('value', function(){
-        if(!done){ done = true; clearTimeout(to); res(true); }
+      vref.once('value', function(snap){
+        /* 서버 전체를 덮지 않고, 빠진 묶음만 복구한다. once 는 같은 구독 자리의 완료
+           신호라 별도 한 벌을 내려받지 않는다. */
+        var repair = (k === 'ledger_batches') ? _fbRepairLedgerBatches(snap && snap.val && snap.val()) : Promise.resolve(0);
+        Promise.resolve(repair).then(function(){
+          if(!done){ done = true; clearTimeout(to); res(true); }
+        });
       }, onErr);
     } catch(_e){ onErr(); }
   });
@@ -37150,13 +37208,13 @@ function erpBankMergeDraft(curRows, newRows){
    전에는 올린 자료가 bank_ledger_draft 하나에 뭉쳐 «그 PC 안에만» 남아,
    서로의 것을 볼 수 없었다.
 
-   ★ 묶음마다 서버에 따로 실린다(data/ledger_batches/{묶음번호}) — 계약·사건이 쓰는
+   ★ 묶음마다 서버에 따로 실린다(data/ledger_batches/v/{묶음번호}) — 계약·사건이 쓰는
      건별 저장과 같은 방식이다. 그래서 A가 올리는 순간 B의 묶음은 건드려지지 않는다.
      한 덩어리로 저장하면 동시에 올릴 때 나중 사람이 앞사람 것을 지운다.
    ★ 백업 스냅샷에는 담지 않는다 — 통장 임시분이 16MB 한 번 쓰기 한도를 넘겨
      백업이 통째로 실패했던 그 원인과 같다(2026-08-09 에 실제로 났다). */
 var LEDGER_BATCH_KEY = 'ledger_batches';
-var LEDGER_BATCH_MAX_ROWS = 4000;      // 쌓인 줄 합계 한도 — 넘으면 «오래된 묶음부터» 버린다
+var LEDGER_BATCH_MAX_ROWS = 4000;      // 화면 처리 권장선 — 넘겨도 서버 자료를 자동삭제하지 않는다
 
 function erpMakeBatch(rows, meta){
   meta = meta || {};
@@ -37202,22 +37260,16 @@ function erpCanDropBatch(batch, me){
   return !!(me.sid && batch.by && String(batch.by) === String(me.sid));
 }
 
-/* 한도를 넘으면 «오래된 묶음부터 통째로» 버린다.
-   줄 단위로 자르면 한 묶음이 반토막 나서 「이 파일 몇 줄」 이 안 맞는다.
-   마지막 한 묶음은 남긴다 — 방금 올린 것까지 지우면 올린 사람이 영문을 모른다. */
+/* 과거에는 한도를 넘으면 오래된 묶음을 서버에서 자동삭제했다.
+   큰 파일 하나가 들어오자 17묶음→1묶음이 된 실제 사고의 원인이므로 이제 용량은 알려만 주고
+   모든 묶음을 보존한다. 화면 행은 erpBankMergeDraft 가 별도로 잘라 성능을 지킨다. */
 function erpTrimBatches(batches, maxRows){
   var lim = parseInt(maxRows, 10) || LEDGER_BATCH_MAX_ROWS;
   var bs = (batches || []).filter(function(b){ return !!b; }).slice();
   bs.sort(function(a, b){ return String(a.at || '').localeCompare(String(b.at || '')); });
   var total = 0;
   bs.forEach(function(b){ total += (b.rows ? b.rows.length : 0); });
-  var dropped = [];
-  while(total > lim && bs.length > 1){
-    var old = bs.shift();
-    total -= (old.rows ? old.rows.length : 0);
-    dropped.push(old);
-  }
-  return { keep:bs, dropped:dropped };
+  return { keep:bs, dropped:[], totalRows:total, overflowRows:Math.max(0, total - lim) };
 }
 
 /* 요약 — 몇 묶음·몇 줄·내가 올린 것이 몇 개인가 */
@@ -39934,12 +39986,9 @@ function FinanceLedger(props){
       if(bat){
         if(!dbUpsert(LEDGER_BATCH_KEY, bat)) throw new Error('거래내역 저장에 실패했습니다');
         var tr = erpTrimBatches(prev.concat([bat]), LEDGER_BATCH_MAX_ROWS);
-        if(tr.dropped.length){
-          try { dbRemoveMany(LEDGER_BATCH_KEY, tr.dropped.map(function(b){return b.id;})); }
-          catch(_de){ if(window._erpErrLog) window._erpErrLog(_de); }
-        }
         keep = tr.keep;
         setBatches(keep);
+        if(tr.overflowRows) console.log('[거래내역] 권장선 초과 '+tr.overflowRows+'줄 — 기존 묶음은 보존, 화면만 최신 4,000줄 처리');
       }
 
       var view = _rowsOfBatches(keep, hidRow);
@@ -40249,14 +40298,10 @@ function FinanceLedger(props){
         var _mg = erpBankMergeDraft(_cur, _new);
         if(_bat){
           dbUpsert(LEDGER_BATCH_KEY, _bat);
-          // 한도를 넘으면 오래된 묶음부터 통째로 버린다 — 조용히 자르지 않고 아래 요약에 적는다
+          // 한도를 넘어도 기존 묶음은 서버에 보존한다. 화면 행만 별도 제한해 성능을 지킨다.
           var _tr = erpTrimBatches(_prev.concat([_bat]), LEDGER_BATCH_MAX_ROWS);
-          if(_tr.dropped.length){
-            try { dbRemoveMany(LEDGER_BATCH_KEY, _tr.dropped.map(function(b){ return b.id; })); }
-            catch(_de){ if(window._erpErrLog) window._erpErrLog(_de); }
-          }
           setBatches(_tr.keep);
-          _mg.dropBatch = _tr.dropped.length;
+          if(_tr.overflowRows) console.log('[거래내역] 권장선 초과 '+_tr.overflowRows+'줄 — 자동삭제하지 않음');
         }
         var _pst2 = erpBankProcessedStore();       // 이미 확정·등록한 행 — store 는 한 번만 받는다
         var _inc = [], _exp = [];
