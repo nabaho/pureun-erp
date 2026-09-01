@@ -99,7 +99,7 @@ test('★★ 붙여넣을 파일이 콘솔에 있던 칸을 «하나도 안 지�
     '  붙여넣을 파일은 반드시 «콘솔 원문»에서 만드세요.');
 });
 
-test('★ 콘솔과 다른 곳은 «일부러 고친 두 곳»뿐이다', () => {
+test('★ 콘솔과 다른 곳은 «일부러 고친 세 곳»뿐이다', () => {
   const con = JSON.parse(fs.readFileSync(CONSOLE, 'utf8')).rules;
   const diff = [];
   (function walk(a, b, p) {
@@ -150,7 +150,10 @@ test('★ 콘솔과 다른 곳은 «일부러 고친 두 곳»뿐이다', () => 
        읽기·쓰기 모두 로그인한 직원 — 종류 색은 담당 노무사가 직접 고른다.
      ⚠ 이 자리는 지금도 `$other` 로 떨어져 «같은 권한»으로 돌아간다. 콘솔에 올리는 것은
        기능을 바꾸려는 게 아니라 «이름을 또렷이 적어» 나중에 좁힐 수 있게 하려는 것이다. */
-  const PENDING = ['/data/staff_colors', '/data/cons_type_colors'];
+  /* ⏳ 2026-09-02 — 거래내역 묶음:
+       /data/ledger_batches — 재무권한자만 읽고 쓴다. 지금 콘솔에서는 $other 로 떨어져
+       로그인한 직원 누구나 접근할 수 있으므로, 동시접속 개선 배포 뒤 전체 규칙도 게시해야 한다. */
+  const PENDING = ['/data/staff_colors', '/data/cons_type_colors', '/data/ledger_batches'];
   assert.deepEqual(diff.sort(), PENDING.sort(),
     '★ 뜻하지 않은 곳이 바뀌었습니다: ' + diff.join(', ') +
      '\n  규칙은 한 번에 통째로 바뀝니다 — 곁다리 변경이 섞이면 무엇이 깨졌는지 못 짚습니다.');
