@@ -133,15 +133,31 @@
     try { z = parseInt(getComputedStyle(el).zIndex, 10) || 0; } catch (e) {}
     return z;
   }
+  /* ★ 사람이 «누를 수 있는» 단추인가 — 화면 안에 실제로 들어와 있어야 한다.
+     ⚠ 서랍은 닫혀 있어도 화면 밖으로 밀어 둔 것뿐이라(transform:translateX(-101%))
+       display 로는 «보인다»고 나온다. 그 안의 단추를 누르면 사람 눈에는 아무 일도
+       없이 화면이 바뀐다 — 2026-09-02 대표 제보 「메일에서 뒤로가기 하면 명함으로 간다」가
+       바로 이것이었다. */
+  function 누를수있나(el) {
+    if (!보이나(el)) return false;
+    var r;
+    try { r = el.getBoundingClientRect(); } catch (e) { return false; }
+    if (!r.width || !r.height) return false;
+    var W = window.innerWidth || 0, H = window.innerHeight || 0;
+    return r.right > 0 && r.bottom > 0 && r.left < W && r.top < H;
+  }
+
   function 닫기단추(box) {
-    var 뻔한 = box.querySelector('[data-close],.close,.btn-close,.x,.modal-x');
-    if (뻔한) return 뻔한;
+    var 뻔한 = box.querySelectorAll('[data-close],.close,.btn-close,.x,.modal-x');
+    for (var j = 0; j < 뻔한.length; j++) if (누를수있나(뻔한[j])) return 뻔한[j];
     var 단추들 = box.querySelectorAll('button,a[role="button"],span[onclick]');
     for (var i = 0; i < 단추들.length; i++) {
       var t = (단추들[i].textContent || '').trim();
-      var on = String(단추들[i].getAttribute('onclick') || '');
-      if (닫기말.indexOf(t) >= 0) return 단추들[i];
-      if (/close|닫기/i.test(on) && !/save|저장/i.test(on)) return 단추들[i];
+      /* ⚠⚠ 함수 «이름»으로 짐작하지 않는다. 이름은 거짓말을 한다 —
+         closeMailPage() 는 창을 닫는 것이 아니라 «기업정보함으로 나가는» 함수였다.
+         그것을 눌러 버려서, 메일에서 뒤로가기를 하면 명함 목록이 떴다.
+         화면에 «닫기»라고 적혀 있는 것만 누른다. */
+      if (닫기말.indexOf(t) >= 0 && 누를수있나(단추들[i])) return 단추들[i];
     }
     return null;
   }

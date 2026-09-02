@@ -153,3 +153,42 @@ test('제 화면 기록을 쓴 걸음에는 비켜선다', () => {
   assert.equal(닫혔나, 0, '★ 앱이 화면을 되돌렸는데 창까지 닫았습니다 — 한 번에 둘입니다');
   assert.equal(PuBack.depth(), 1, '층이 그대로 남아 있어야 합니다');
 });
+
+/* ── 2026-09-02 회귀 — 대표 제보 「메일에서 뒤로가기 하면 명함 목록으로 간다」 ──
+   내가 넣은 «맨 위 덮개 닫기»가 저지른 일이다.
+   푸른 메일(.dmm)은 화면을 다 덮으므로 «덮개»로 잡혔고, 그 안 서랍에 숨어 있던
+   「‹ 기업정보함으로」 단추를 눌러 버렸다. 그 함수 이름이 closeMailPage 라서다.
+   ★ 이름은 거짓말을 한다 — close 로 시작한다고 «창을 닫는» 함수가 아니다.
+     그것은 «앱을 나가는» 함수였다. */
+test('★★ 닫기 단추를 함수 «이름»으로 짐작하지 않는다', () => {
+  const lib = 읽기('js/pu-back.js');
+  const at = lib.indexOf('function 닫기단추(');
+  assert.ok(at > 0, '닫기 단추를 고르는 함수가 사라졌습니다');
+  const fn = lib.slice(at, lib.indexOf('\n  }', at));
+  assert.ok(!/getAttribute\('onclick'\)[\s\S]{0,200}close/i.test(fn),
+    '★★ onclick 이름으로 닫기 단추를 짐작하고 있습니다 — '
+    + 'closeMailPage() 처럼 «나가는» 함수를 눌러 버립니다(2026-09-02 실제 사고)');
+});
+
+test('★ 화면 밖으로 밀어 둔 단추는 누르지 않는다 — 서랍은 닫혀도 «보인다»고 나온다', () => {
+  const lib = 읽기('js/pu-back.js');
+  assert.match(lib, /function 누를수있나\(el\)/,
+    '누를 수 있는지 재는 자리가 없습니다');
+  const at = lib.indexOf('function 누를수있나(el)');
+  const fn = lib.slice(at, lib.indexOf('\n  }', at));
+  assert.match(fn, /getBoundingClientRect/, '자리를 안 재고 있습니다');
+  assert.match(fn, /r\.right > 0 && r\.bottom > 0/,
+    '화면 안에 들어와 있는지 안 봅니다 — translateX 로 밀어 둔 서랍이 걸립니다');
+  /* 고른 단추가 이 검사를 지나야 뜻이 있다 */
+  const at2 = lib.indexOf('function 닫기단추(');
+  assert.match(lib.slice(at2, lib.indexOf('\n  }', at2)), /누를수있나\(/,
+    '재기만 하고 안 쓰고 있습니다');
+});
+
+test('화면에 «닫기»라고 적힌 것만 누른다', () => {
+  const lib = 읽기('js/pu-back.js');
+  assert.match(lib, /var 닫기말 = \['닫기', '취소'/, '닫기라고 볼 말 목록이 사라졌습니다');
+  const at = lib.indexOf('function 닫기단추(');
+  const fn = lib.slice(at, lib.indexOf('\n  }', at));
+  assert.match(fn, /닫기말\.indexOf\(t\) >= 0/, '적힌 글자를 안 봅니다');
+});
