@@ -107,6 +107,53 @@ test('자료가 없어도 안 터진다', () => {
   assert.equal(T.counts(null).all, 0);
 });
 
+/* ══════ 주소를 나눠 쓰는 곳 (2026-09-02 실제 자료에서 드러남) ══════
+
+   받은 메일 72줄 가운데 33줄이 «여러 사업장»에 한꺼번에 붙었다. 한 사장이
+   여러 사업장을 하면서 메일 주소를 하나만 쓰기 때문이다 —
+   「프랫안경원 입사자 근로계약서」 한 통이 안경원 네 곳 모두에 걸렸다.
+
+   제목이 한 곳을 집어 말하면 그곳 것이다. 서버(mail-receive.companyOf)가
+   자료를 나눌 때 이미 그렇게 하는데, 화면이 달리 보면 «자료는 A 로 갔는데
+   목록에는 네 곳에 다 보이는» 어긋남이 생긴다. */
+
+const GROUP = [
+  { id: 'g1', name: '프랫안경원', primaryContactEmail: 'boss@optic.kr' },
+  { id: 'g2', name: '서독안경원', primaryContactEmail: 'boss@optic.kr' },
+  { id: 'g3', name: '아이데코안경원', primaryContactEmail: 'boss@optic.kr' }
+];
+const GROUP_MAIL = { k1: { at: 100, from: 'boss@optic.kr', subject: '프랫안경원 입사자 근로계약서' } };
+
+test('★ 주소를 나눠 쓰는데 제목이 한 곳을 집으면 그곳만 본다', () => {
+  const src = [T.fromMailLog(GROUP_MAIL)];
+  const n = GROUP.map(co => T.thread(co, src, { all: GROUP }).length);
+  assert.equal(n.join(','), '1,0,0', '한 통이 여러 곳에 걸립니다');
+});
+
+test('★ 제목이 아무 곳도 안 집으면 다 남긴다 — 함부로 지우면 아예 안 보인다', () => {
+  const src = [T.fromMailLog({ k2: { at: 100, from: 'boss@optic.kr', subject: '8월 급여자료' } })];
+  const n = GROUP.map(co => T.thread(co, src, { all: GROUP }).length);
+  assert.equal(n.join(','), '1,1,1');
+});
+
+test('★ 제목이 둘을 집으면 다 남긴다 — 어느 쪽인지 모른다', () => {
+  const src = [T.fromMailLog({ k3: { at: 100, from: 'boss@optic.kr', subject: '프랫안경원·서독안경원 급여' } })];
+  const n = GROUP.map(co => T.thread(co, src, { all: GROUP }).length);
+  assert.equal(n.join(','), '1,1,0');
+});
+
+test('업체 명단을 안 주면 좁히지 않는다 — 예전처럼 돈다', () => {
+  const src = [T.fromMailLog(GROUP_MAIL)];
+  assert.equal(GROUP.map(co => T.thread(co, src).length).join(','), '1,1,1');
+});
+
+test('★ 줄에 사업장 번호가 적혀 있으면 좁히기가 그것을 못 뒤집는다', () => {
+  /* 서버가 이미 「이 사업장 것」이라고 적어 둔 것이 가장 확실하다 */
+  const src = [T.fromMailLog({ k4: { at: 100, from: 'boss@optic.kr',
+    subject: '프랫안경원 근로계약서', companyId: 'g2' } })];
+  assert.equal(T.thread(GROUP[1], src, { all: GROUP }).length, 1, '서버가 적은 것을 지웠습니다');
+});
+
 /* ══════ 갈래를 밖에서 넣는다 ══════ */
 
 test('★ 새 갈래를 더해도 줄기·셈이 그대로 돈다 — 문자·카톡이 이 길로 온다', () => {
