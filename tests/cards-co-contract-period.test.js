@@ -49,7 +49,7 @@ function load(){
 }
 /* 업체관리 자료를 «훑는 대목»을 그대로 돌린다 */
 function scanErp(cos){
-  const a = SRC.indexOf('      const byBiz={}, byName={};');
+  const a = SRC.indexOf('      const byBiz={}, byName={}');
   const b = SRC.indexOf('      ErpMatch.byBiz=byBiz;');
   assert.ok(a > 0 && b > a, '업체 훑는 자리를 찾지 못했다');
   const ctx = { console, Object, String, Number, Array,

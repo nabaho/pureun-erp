@@ -52,7 +52,7 @@ const plain = v => JSON.parse(JSON.stringify(v));
 /* ══════ ①② ErpMatch 가 무엇을 꺼내는가 — «돌려서» 본다 ══════ */
 
 function buildErp(cos){
-  const a = src.indexOf('      const byBiz={}, byName={};');
+  const a = src.indexOf('      const byBiz={}, byName={}');
   const b = src.indexOf('      ErpMatch.byBiz=byBiz;');
   assert.ok(a > 0 && b > a, 'ErpMatch 업체 훑는 자리를 찾지 못했습니다');
   const ctx = { console, Object, String, Number, Array,

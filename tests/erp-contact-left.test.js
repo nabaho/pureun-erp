@@ -162,7 +162,7 @@ test('빈 값을 줘도 터지지 않는다', () => {
 /* ══════ ⑤ 담당자 줄을 실어 둔다 ══════ */
 
 test('★ 업체를 훑을 때 담당자 줄을 실어 둔다 — 서버를 더 읽지 않는다', () => {
-  const a = src.indexOf('      const byBiz={}, byName={};');
+  const a = src.indexOf('      const byBiz={}, byName={}');
   const b = src.indexOf('      ErpMatch.byBiz=byBiz;');
   assert.ok(a > 0 && b > a, '업체 훑는 자리를 찾지 못했습니다');
   const ctx = { console, Object, String, Number, Array,
@@ -182,7 +182,7 @@ test('★ 업체를 훑을 때 담당자 줄을 실어 둔다 — 서버를 더 
 });
 
 test('담당자에 퇴사 표시가 없는 곳도 터지지 않는다', () => {
-  const a = src.indexOf('      const byBiz={}, byName={};');
+  const a = src.indexOf('      const byBiz={}, byName={}');
   const b = src.indexOf('      ErpMatch.byBiz=byBiz;');
   const ctx = { console, Object, String, Number, Array,
     cos: [{ name:'다라산업', bizNo:'505-86-00987', typeCode:'급여', status:'active' }],

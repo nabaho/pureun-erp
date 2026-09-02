@@ -63,7 +63,7 @@ function buildList(items, erp){
 /* 업체관리 자료를 «훑는 대목»을 그대로 돌린다 — 이름 맞바꾸기(bizCategory→bizItem)가
    여기서 일어나므로, 손으로 지어낸 rec 로는 그 어긋남을 영영 못 잡는다. */
 function scanErp(cos){
-  const a = src.indexOf('      const byBiz={}, byName={};');
+  const a = src.indexOf('      const byBiz={}, byName={}');
   const b = src.indexOf('      ErpMatch.byBiz=byBiz;');
   assert.ok(a > 0 && b > a, '업체 훑는 자리를 찾지 못했습니다');
   const ctx = { console, Object, String, Number, Array,
