@@ -310,6 +310,21 @@
   .mgt.hi{outline:1.5px solid var(--acc);outline-offset:-1.5px}
   /* 팀 전체는 한 건이 한 줄이라 담당·의뢰인 담당자를 기업명 옆으로 붙인다 */
   .mgl.inl{display:inline-flex;margin-top:0;margin-left:5px;vertical-align:1px}
+  /* 말로 기록 */
+  .vobox .vrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .vodot{width:9px;height:9px;border-radius:50%;background:var(--danger);flex:0 0 auto;
+    animation:vopulse 1.1s ease-in-out infinite}
+  @keyframes vopulse{0%,100%{opacity:1}50%{opacity:.25}}
+  .votime{font-variant-numeric:tabular-nums;font-weight:800;font-size:13px}
+  .vomut{font-size:11.5px;color:var(--faint)}
+  .voai{font-size:10px;font-weight:700;padding:0 5px;border-radius:4px;background:#eff6ff;color:var(--acc2)}
+  .vobox textarea{width:100%;box-sizing:border-box;min-height:52px;resize:vertical;
+    border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;font-size:12.5px;line-height:1.55}
+  .vobox input.vt{box-sizing:border-box;border:1px solid var(--line);border-radius:8px;
+    padding:5px 9px;font:inherit;font-size:12.5px}
+  .voerr{font-size:12px;color:var(--danger);background:#fef2f2;border:1px solid #fecaca;
+    border-radius:8px;padding:7px 10px}
+  .volab{font-size:11px;font-weight:800;color:var(--sub);margin:9px 0 3px}
   .ofc{font-size:11px;color:var(--faint);margin-left:5px}
   /* 이관한 계약에 붙는 꼬리표 — 어디로 넘어갔는지. 감춤을 풀고 볼 때 까닭이 보인다. */
   /* 할 일 알림 칩 — 경고색으로 눈에 띄되 자리는 안 먹는다 */
@@ -907,6 +922,8 @@
   <script src="js/pu-authsync.js?v=1"></script>
   <!-- 상단 우측에 「지금 로그인한 사람」 (2026-08-16) — 로그인 화면·공개 화면에는 넣지 않는다 -->
   <script src="js/pu-whoami.js?v=1"></script>
+<!-- 말로 기록 — 소리를 판독 서버(Gemini)로 보낸다. 업무관리의 aiCall 은 글자만 보내는 길이라 소리를 못 싣는다. -->
+<script src="js/pu-ai-call.js?v=2"></script>
 </head>
 <body>
 <div id="root"><div class="gate">불러오는 중…</div></div>
@@ -4562,7 +4579,9 @@ function openDrawer(id){ S.drawerId=id;
   loadItemLogs(id).then(renderDrawer);
   renderDrawer();
 }
-function closeDrawer(){ S.drawerId=null; var b=$('drawerbg'),d=$('drawer'); if(b)b.remove(); if(d)d.remove(); }
+function closeDrawer(){
+  voReset();                     // 켜 둔 채 닫으면 마이크가 계속 열려 있다
+ S.drawerId=null; var b=$('drawerbg'),d=$('drawer'); if(b)b.remove(); if(d)d.remove(); }
 function loadItemLogs(id){
   if(itemLogsCache[id]) return Promise.resolve(itemLogsCache[id]);
   return fbDb.ref(NS+'/itemlogs/'+id).once('value').then(function(s){ itemLogsCache[id]=s.val()||{}; return itemLogsCache[id]; });
@@ -4595,6 +4614,7 @@ function renderDrawer(){
   // 사건 단계 기한 — 계산된 값이라 입력칸으로 두지 않는다. 위 "다음 할 일"과 별개다.
   if(it.pe_due&&it.pe_due.date) h+='<div class="nextbox" style="border-color:#fecaca">'
     +'<span class="lb">⚖ 단계 기한</span>'+sdueHTML(it)+'</div>';
+  h+=dVoiceHTML(id,it);          // 말로 기록 — 결과가 위 「다음 할 일」·기록으로 간다
   h+=dStepsHTML(id,it);
   h+=dPeopleHTML(id,it);
   h+=dPpHTML(it,id);
@@ -5151,6 +5171,218 @@ function hoTh(sid,arr,k,label,w){
       +'<span class="lnk" onclick="hoFPop(\''+escJ(sid)+'\',\''+k+'\')">닫기</span></div></div>';
   }
   return h+'</th>';
+}
+
+/* ══════════════════════════════════════════════════════════════
+   말로 기록 — 그날 진행을 말로 남기면 AI 가 정리한다
+   ══════════════════════════════════════════════════════════════
+   ⚠ 대표 승인 목업(2026-08-29)에서 정한 셋 —
+     ① **소리는 남기지 않는다.** 정리된 글만 저장한다. 12MB 짜리를 실시간DB 에
+        넣으면 안 된다(명함 원본 417장으로 이미 겪었다).
+     ② **[정리하기] 를 누를 때만** AI 를 부른다 — 부르는 만큼 요금이다.
+        녹음하는 동안에는 아무것도 안 보낸다.
+     ③ **AI 가 바로 저장하지 않는다.** 초안을 보여주고 사람이 고쳐 저장한다 —
+        사투리·전문용어는 틀린다.
+   ⚠ 판독 서버(readDoc·Gemini)를 쓴다. 업무관리의 aiCall 은 **글자만** 보내는
+     길이라 소리를 실을 수 없다. 시간 제한은 aiFetch 를 그대로 넘겨 쓴다
+     (바깥 부름에 제한이 없으면 답이 안 올 때 영영 갇힌다 — work-ai-timeout).
+   ⚠ 서버 한도가 12MB 이고 base64 가 4/3 으로 부푼다 — 소리는 8MB 까지만 받는다. */
+var VO_MAX_BYTES=8*1024*1024;
+var VO_MAX_SEC=45*60;                       // 그보다 길면 스스로 멈춘다
+var VO={id:'',rec:null,chunks:[],sec:0,tick:null,blob:null,url:'',res:null,busy:false,err:''};
+
+function voReset(){
+  try{ if(VO.rec&&VO.rec.state==='recording') VO.rec.stop(); }catch(e){}
+  try{ if(VO.rec&&VO.rec.stream) VO.rec.stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+  clearInterval(VO.tick);
+  if(VO.url){ try{ URL.revokeObjectURL(VO.url); }catch(e){} }
+  VO={id:'',rec:null,chunks:[],sec:0,tick:null,blob:null,url:'',res:null,busy:false,err:''};
+}
+function voFmt(n){ n=Math.max(0,Math.round(n)); return Math.floor(n/60)+':'+('0'+(n%60)).slice(-2); }
+function voMB(b){ return (b/1048576).toFixed(1)+'MB'; }
+
+/* 서랍 안 칸. 상태가 넷이다 — 없음 · 녹음 중 · 멈춤 · 정리 결과. */
+function dVoiceHTML(id,it){
+  var mine=VO.id===id;
+  var h='<div class="dbox vobox"><div class="bh">🎤 말로 기록'
+    +'<span class="r">'+(mine&&VO.rec?'녹음 중':'말하면 AI 가 기록·다음 할 일로 정리합니다')+'</span></div><div class="bb">';
+  if(mine&&VO.err) h+='<div class="voerr">'+esc(VO.err)+'</div>';
+  if(!mine||(!VO.rec&&!VO.blob&&!VO.res)){
+    h+='<div class="vrow"><button onclick="voStart(\''+escJ(id)+'\')" '
+      +'title="마이크로 말한 것을 AI 가 정리합니다. 소리는 저장하지 않습니다">🎤 말로 기록</button>'
+      +'<span class="vomut">최대 45분 · 소리는 저장하지 않습니다</span></div>';
+  }else if(VO.rec){
+    h+='<div class="vrow"><span class="vodot"></span><span class="votime">'+voFmt(VO.sec)+'</span>'
+      +'<span class="vomut">남은 '+voFmt(VO_MAX_SEC-VO.sec)+'</span>'
+      +'<span style="flex:1"></span>'
+      +'<button onclick="voStop()">⏹ 멈춤</button>'
+      +'<button onclick="voDiscard()" style="font-size:11.5px">취소</button></div>'
+      +'<div class="vomut" style="margin-top:6px">말하는 동안은 아무것도 안 보냅니다. 멈춘 뒤 [정리하기]를 눌러야 AI 가 듣습니다.</div>';
+  }else if(VO.res){
+    h+=voResHTML(id,it);
+  }else{
+    h+='<div class="vrow">'+(VO.url?'<audio controls src="'+VO.url+'" style="height:30px"></audio>':'')
+      +'<span class="vomut">'+voFmt(VO.sec)+' · 약 '+voMB(VO.blob.size)+'</span>'
+      +'<span style="flex:1"></span>'
+      +'<button onclick="voStart(\''+escJ(id)+'\')" style="font-size:11.5px">↺ 다시 녹음</button>'
+      +'<button class="primary" onclick="voTidy(\''+escJ(id)+'\')"'+(VO.busy?' disabled':'')+'>'
+      +(VO.busy?'정리 중…':'✨ 정리하기')+'</button></div>'
+      +'<div class="vomut" style="margin-top:6px">정리하면 소리는 버리고 글만 남습니다.</div>';
+  }
+  return h+'</div></div>';
+}
+
+/* 정리 결과 — AI 가 채운 칸에는 표시를 붙인다. 사람이 고쳐 저장한다. */
+function voResHTML(id,it){
+  var r=VO.res||{};
+  var sts=STATUSES.map(function(x){ return x[0]; });
+  var h='<div class="volab">오늘 한 일</div>'
+    +'<textarea id="vo-done">'+esc(r.done||'')+'</textarea>'
+    +'<div class="vomut">→ 주간 기록 '+esc(md(todayStr()))+' 칸에 들어갑니다 <span class="voai">AI</span></div>'
+    +'<div class="volab">다음 할 일</div>'
+    +'<div class="vrow"><input class="vt" id="vo-next" style="flex:1;min-width:150px" value="'+esc((r.next&&r.next.text)||'')+'">'
+    +'<input class="vt" type="date" id="vo-date" value="'+esc((r.next&&r.next.date)||'')+'">'
+    +(r.next&&r.next.date?'<span class="voai">AI</span>':'')+'</div>';
+  if(r.status&&sts.indexOf(r.status)>=0&&r.status!==(it.status||'진행중')){
+    h+='<div class="volab">상태</div><div class="vrow">'
+      +'<label style="font-size:12.5px;display:flex;gap:6px;align-items:center;cursor:pointer">'
+      +'<input type="checkbox" id="vo-st" checked>'
+      +'<span>'+esc(it.status||'진행중')+' → <b>'+esc(r.status)+'</b></span></label>'
+      +'<span class="voai">AI</span>'
+      +'<span class="vomut">아니면 체크를 끄세요</span></div>';
+  }
+  if(r.heard){
+    h+='<div class="volab">받아쓴 글 <span style="font-weight:400;color:var(--faint)">— 저장하지 않습니다</span></div>'
+      +'<div class="vomut" style="background:var(--bg);border-radius:8px;padding:8px 10px;line-height:1.55;'
+      +'max-height:120px;overflow:auto">'+esc(r.heard)+'</div>';
+  }
+  h+='<div class="vrow" style="margin-top:11px;border-top:1px solid var(--line);padding-top:10px">'
+    +'<span class="vomut">고친 뒤 저장하면 기록과 일정에 함께 들어갑니다.</span>'
+    +'<span style="flex:1"></span>'
+    +'<button onclick="voDiscard()" style="font-size:11.5px">버리기</button>'
+    +'<button class="primary" onclick="voSave(\''+escJ(id)+'\')"'+(VO.busy?' disabled':'')+'>💾 저장</button></div>';
+  return h;
+}
+
+function voStart(id){
+  voReset();
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    VO.id=id; VO.err='이 브라우저에서는 녹음을 쓸 수 없습니다'; renderDrawer(); return;
+  }
+  if(typeof MediaRecorder==='undefined'){
+    VO.id=id; VO.err='이 브라우저에서는 녹음을 쓸 수 없습니다'; renderDrawer(); return;
+  }
+  VO.id=id;
+  navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
+    var rec;
+    /* 되는 꼴을 골라 쓴다 — 브라우저마다 다르다. 고르지 않으면 기본값이 되고,
+       그 기본값이 판독 서버가 못 읽는 꼴일 수 있다. */
+    var want=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'];
+    var mime='';
+    for(var i=0;i<want.length;i++){
+      if(MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported(want[i])){ mime=want[i]; break; }
+    }
+    try{ rec=mime?new MediaRecorder(stream,{mimeType:mime,audioBitsPerSecond:32000}):new MediaRecorder(stream); }
+    catch(e){ rec=new MediaRecorder(stream); }
+    VO.rec=rec; VO.chunks=[]; VO.sec=0; VO.err='';
+    rec.ondataavailable=function(e){ if(e.data&&e.data.size) VO.chunks.push(e.data); };
+    rec.onstop=function(){
+      clearInterval(VO.tick);
+      try{ stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+      var type=(VO.chunks[0]&&VO.chunks[0].type)||mime||'audio/webm';
+      VO.blob=new Blob(VO.chunks,{type:type});
+      VO.rec=null;
+      if(VO.blob.size>VO_MAX_BYTES){
+        VO.err='녹음이 너무 깁니다('+voMB(VO.blob.size)+') — 나눠서 녹음해 주세요';
+        VO.blob=null;
+      }else{
+        try{ VO.url=URL.createObjectURL(VO.blob); }catch(e){ VO.url=''; }
+      }
+      if(S.drawerId===VO.id) renderDrawer();
+    };
+    rec.start(1000);                                  // 1초마다 조각 — 멈출 때 통째로 모은다
+    VO.tick=setInterval(function(){
+      VO.sec++;
+      if(VO.sec>=VO_MAX_SEC){ voStop(); return; }
+      var el=$('vo-clock'); if(el) el.textContent=voFmt(VO.sec); else if(S.drawerId===VO.id) renderDrawer();
+    },1000);
+    renderDrawer();
+  }).catch(function(e){
+    VO.err=(e&&e.name==='NotAllowedError')
+      ? '마이크를 쓸 수 없습니다 — 브라우저 주소창의 자물쇠에서 마이크를 허용해 주세요'
+      : '마이크를 열지 못했습니다: '+((e&&e.message)||'');
+    renderDrawer();
+  });
+}
+function voStop(){ try{ if(VO.rec&&VO.rec.state!=='inactive') VO.rec.stop(); }catch(e){ VO.rec=null; renderDrawer(); } }
+function voDiscard(){ var id=VO.id; voReset(); if(S.drawerId===id) renderDrawer(); }
+
+/* 소리를 판독 서버로 보낸다. 돌아온 JSON 을 사람이 고칠 수 있게 담아 둔다. */
+function voTidy(id){
+  if(!VO.blob||VO.busy) return;
+  if(!window.PuAiCall){ VO.err='판독 호출기를 싣지 못했습니다'; renderDrawer(); return; }
+  VO.busy=true; VO.err=''; renderDrawer();
+  var it=items[id]||{};
+  var sts=STATUSES.map(function(x){ return x[0]; }).join('|');
+  var ask='업무 진행 상황을 말로 녹음한 것이다. 듣고 **JSON 하나만** 답하라. 다른 말은 붙이지 마라.\n'
+    +'{"done":"오늘 한 일 한두 문장","next":{"text":"다음 할 일","date":"YYYY-MM-DD"},'
+    +'"status":"'+sts+' 중 하나","heard":"받아쓴 글 전문"}\n'
+    +'오늘은 '+todayStr()+' 이다. 「다음 주 목요일」처럼 말한 것은 날짜로 바꿔라.\n'
+    +'말에 없는 것은 지어내지 말고 빈 문자열로 두어라. 상태는 말에서 분명히 바뀐 때만 적어라.\n'
+    +'회사·업무 이름은 이미 알고 있다("'+String(it.company||it.client||'')+'") — done 에 넣지 말고 한 일만 적어라.';
+  voB64(VO.blob).then(function(b64){
+    return PuAiCall.ask(
+      [{inline_data:{mime_type:(VO.blob.type||'audio/webm').split(';')[0],data:b64}},{text:ask}],
+      {auth:(typeof firebase!=='undefined'&&firebase.auth)?firebase.auth():null,
+       fetch:(typeof aiFetch==='function'?aiFetch:null),
+       generationConfig:{maxOutputTokens:2000}});
+  }).then(function(d){
+    var t=PuAiCall.textOf?PuAiCall.textOf(d):'';
+    var r=aiJson(t);
+    VO.res={done:String(r.done||'').trim(),
+      next:{text:String((r.next&&r.next.text)||'').trim(),date:String((r.next&&r.next.date)||'').trim()},
+      status:String(r.status||'').trim(),
+      heard:String(r.heard||'').trim()};
+    // 소리는 여기서 버린다 — 정리가 끝나면 남길 까닭이 없다
+    if(VO.url){ try{ URL.revokeObjectURL(VO.url); }catch(e){} VO.url=''; }
+    VO.blob=null; VO.busy=false;
+    if(S.drawerId===id) renderDrawer();
+  }).catch(function(e){
+    VO.busy=false;
+    VO.err=(e&&e.message)||'정리하지 못했습니다';
+    if(S.drawerId===id) renderDrawer();
+  });
+}
+function voB64(blob){
+  return new Promise(function(res,rej){
+    var fr=new FileReader();
+    fr.onload=function(){ var s=String(fr.result||''); var i=s.indexOf(','); res(i<0?s:s.slice(i+1)); };
+    fr.onerror=function(){ rej(new Error('녹음을 읽지 못했습니다')); };
+    fr.readAsDataURL(blob);
+  });
+}
+
+/* 사람이 고친 값을 저장한다. 기록·다음 할 일·상태가 한 번에 간다. */
+function voSave(id){
+  if(VO.busy) return;
+  var dn=$('vo-done'), nx=$('vo-next'), dt=$('vo-date'), st=$('vo-st');
+  var done=dn?dn.value.trim():'';
+  if(!done){ toast('오늘 한 일을 적어 주세요','warn'); return; }
+  VO.busy=true; renderDrawer();
+  var jobs=[addLog(id,done,todayStr(),'vo')];
+  var f={};
+  var nt=nx?nx.value.trim():'', nd=dt?dt.value:'';
+  if(nt||nd) f.next={text:nt,date:nd};
+  if(st&&st.checked&&VO.res&&VO.res.status) f.status=VO.res.status;
+  if(Object.keys(f).length) jobs.push(patchItem(id,f));
+  Promise.all(jobs).then(function(){
+    voReset();
+    toast('🎤 말로 기록 저장됨');
+    if(S.drawerId===id) renderDrawer();
+    route();
+  }).catch(function(e){
+    VO.busy=false; VO.err='저장 실패: '+((e&&e.message)||''); renderDrawer();
+  });
 }
 
 /* ── 인수인계 화면 (부재 관리·체크아웃·문서철) ── */
