@@ -2192,6 +2192,77 @@ exports.dailyNewsCollect = functions
 /* ══════════════════════════════════════════════════════════════════════════
    ② 월요일 아침 «뉴스레터 한 장» (대표 지시 2026-09-02 「1주일에 1개씩」)
    ══════════════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════════════
+   🧾 반출 기록 정리 — 2년이 지난 줄만 (대표 결정 2026-09-02: 「2년 · 서버가 달마다」)
+   ══════════════════════════════════════════════════════════════════════════
+
+   ■ 왜 서버가 하나
+   반출 기록(exportLog)은 규칙이 `!data.exists()` 다 — **새로 만드는 것만** 된다.
+   고치기·지우기는 대표도 못 한다. 일부러 그렇게 두었다: 자기 기록을 지울 수 있으면
+   기록이 아무 뜻이 없다. 그래서 정리는 앱 «밖»에서만 되고, 관리자 권한으로 도는
+   여기가 그 자리다. **앱의 「아무도 못 지운다」는 그대로 남는다.**
+
+   ■ ⚠⚠ 감사 기록을 지우는 일이다 — 조심하는 자리는 순수 로직에 못박아 두었다
+   (functions/export-log-tidy.js · 검사 functions/export-log-tidy.test.js)
+     ① 날짜를 못 읽는 줄은 안 지운다   ② 앞날 날짜도 안 지운다
+     ③ 자르는 날이 이상하면 아무것도 안 지운다   ④ 한 번에 500개 상한
+     ⑤ 오래된 것부터   ⑥ 지운 셈을 exportLog «밖»에 남긴다
+
+   ■ 끄는 자리
+   exportLogTidy/off = true 로 두면 안 돈다. 감사 기록을 지우는 일은
+   언제든 멈출 수 있어야 한다.
+
+   ⚠ 배포는 «이름을 찍어서» — firebase deploy --only functions:monthlyExportLogTidy
+     (이 저장소는 functions 통째 배포가 막혀 있다) */
+const 반출정리 = require("./export-log-tidy.js");
+
+exports.monthlyExportLogTidy = functions
+  .runWith({ timeoutSeconds: 120, memory: "256MB" })
+  /* 달마다 1일 새벽 4시 — 사람이 안 쓰는 때다. 유닉스 cron 으로 적는다(달마다는 이 꼴이 또렷하다) */
+  .pubsub.schedule("0 4 1 * *")
+  .timeZone("Asia/Seoul")
+  .onRun(async () => {
+    const 셈자리 = getDatabase().ref("exportLogTidy");
+    const 설정 = (await 셈자리.once("value")).val() || {};
+    /* ⚠ 끄면 «아무것도» 하지 않는다 — 세지도 않는다 */
+    if (설정.off === true) { console.log("[반출정리] 꺼져 있습니다"); return null; }
+
+    const 지금 = Date.now();
+    const 뿌리 = getDatabase().ref("exportLog");
+    const rows = (await 뿌리.once("value")).val() || {};
+
+    /* ⚠ 지울 것을 «순수 로직»이 고른다. 여기서 직접 고르면 규칙이 두 벌이 되고,
+       그 두 벌 중 하나는 검사가 안 지킨다. */
+    const 결과 = 반출정리.고르기(rows, 지금);
+    const 셈 = 반출정리.셈기록(결과, 지금);
+
+    if (결과.멈춤) {
+      /* 멈춘 까닭도 남긴다 — 왜 안 지워졌는지 아무도 모르면 안 된다 */
+      await 셈자리.child(서울달(지금)).set(셈);
+      console.warn("[반출정리] 멈춤 — " + 결과.멈춤);
+      return null;
+    }
+    if (!결과.지울것.length) {
+      await 셈자리.child(서울달(지금)).set(셈);
+      console.log("[반출정리] 지울 것 없음 — 남김 " + 셈.남김 + " · 못본것 " + 셈.못본것);
+      return null;
+    }
+
+    /* 지우는 자리표도 순수 로직이 만든다 — 빈 열쇠가 뿌리를 지우는 일을 그쪽이 막는다 */
+    const 자리표 = 반출정리.지울자리(결과.지울것, "exportLog");
+    await getDatabase().ref().update(자리표);
+    await 셈자리.child(서울달(지금)).set(셈);
+    console.log("[반출정리] 지움 " + 셈.지움 + " · 남김 " + 셈.남김
+      + " · 못본것 " + 셈.못본것 + " · 다음 달로 " + 셈.남은것);
+    return null;
+  });
+
+/* 셈을 남길 자리 이름 — 「2026-09」. 달마다 한 줄이라 덮어써도 잃을 것이 없다. */
+function 서울달(ms) {
+  const d = new Date(Number(ms) + 9 * 60 * 60 * 1000);
+  return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+}
+
 exports.weeklyNewsBrief = functions
   .runWith({ timeoutSeconds: 300, memory: "256MB", secrets: ["GITHUB_AUTOMATION_TOKEN"] })
   .pubsub.schedule("every monday 07:30")
