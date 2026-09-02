@@ -85,6 +85,8 @@ function load(){
     /* 걸린 「할 일」을 알려 주는 띠 — 2026-08-30 에 목록 «위»로 붙었다.
        ⚠ coListHtml 안이 아니라 밖이다: 0곳일 때도 떠야 하기 때문이다. */
     coTodoChipsHtml: () => '',
+    /* 2026-09-02: 「번호 없음」만 볼 때 도구줄 한 줄이 붙는다 — 이 검사는 안 본다 */
+    coNoBizBarHtml: () => '',
     coPagerHtml: () => '',
     esc: s => String(s)
   };
