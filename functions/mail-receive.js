@@ -211,7 +211,13 @@ function mailLogRecord(o) {
     why: String(o.why == null ? '' : o.why),
     /* 지난 회차에 이미 처리한 메일 — 담긴 결과를 알 수 없다.
        0건이라고 적으면 화면에 「안 담김」으로 보여 거짓말이 된다. */
-    old: o.old === true
+    old: o.old === true,
+    /* ── 어느 사업장 것인가 (대표 목표 2026-08-30) ──
+       이 칸이 없어서 「사업장별로 오간 메일」을 모을 수가 없었다.
+       ⚠ 배달(routeFor)과 **같은 함수**(companyOf)로 정한다 — 따로 판단하면
+         자료는 A 칸으로 가고 목록엔 B 로 적혀 오간 것이 두 곳으로 갈린다. */
+    companyId: String(o.companyId == null ? '' : o.companyId),
+    companyName: String(o.companyName == null ? '' : o.companyName)
   };
 }
 
@@ -527,6 +533,27 @@ function tagFor(o, company) {
   };
 }
 
+/* ── 이 메일이 **어느 사업장 것인가** (대표 목표 2026-08-30) ──
+   배달(routeFor)과 목록(mailLogRecord)이 **같은 답**을 내야 한다. 따로 판단하면
+   자료는 A사업장 칸으로 가고 목록에는 B사업장으로 적혀, 사업장별로 모아 볼 때
+   오간 것이 두 곳으로 갈린다.
+
+   차례: ① 주소가 한 곳만 가리키면 그 업체 ② 여러 곳에 걸리면 제목·파일 이름으로
+   좁힌다 ③ 아예 모르는 주소여도 제목에 사업장 이름이 있으면 그것으로. */
+function companyOf(o, index, companies) {
+  o = o || {};
+  const text = String(o.filename || '') + ' ' + String(o.subject || '');
+  const cands = companiesFor(o.from, index);
+  if (cands.length === 1) return { co: cands[0], how: 'addr' };
+  if (cands.length > 1) {
+    const hit = coFromText(text, cands);
+    if (hit) return { co: hit, how: 'addr+text' };
+    return { co: null, how: 'many' };
+  }
+  const hit = coFromText(text, companies);
+  return hit ? { co: hit, how: 'text' } : { co: null, how: '' };
+}
+
 /* 이 메일 한 통을 어디로 보낼지 — 자리 하나와 까닭 한 줄.
    ⚠ 차례: **폴더가 사람을 가리키면 그것이 이긴다** > 업체관리 자동 배정.
    사람이 손으로 옮긴 것이 자동보다 뒤로 밀리면 옮긴 뜻이 없다(대표 결정 2026-08-23). */
@@ -539,29 +566,20 @@ function routeFor(o, index, owners, box, companies) {
      ⚠ 업체를 찾기 **전에** 답한다: 사람이 손으로 옮긴 것이 자동보다 세다. */
   const byBox = seatFromBox(box, owners);
   if (byBox) {
-    const one = companiesFor(o.from, index);
     return {
       seat: byBox, shared: false, byBox: true, why: '',
-      tag: tagFor(o, one.length === 1 ? one[0] : coFromText(text, one.length ? one : companies))
+      tag: tagFor(o, companyOf(o, index, companies).co)
     };
   }
 
   const cands = companiesFor(o.from, index);
-  let co = cands.length === 1 ? cands[0] : null;
-  let found = '';
-
-  /* 한 주소가 여러 사업장에 걸렸다(회계사무소) — 제목·파일 이름으로 좁힌다.
-     대표 요청 2026-08-24: 「회계사무소 메일도 담당자 칸으로 가게 해라」 */
-  if (!co && cands.length > 1) {
-    co = coFromText(text, cands);
-    if (co) found = '여러 사업장에 걸린 주소 — 제목에서 사업장을 찾음';
-  }
-  /* 아예 모르는 주소 — 그래도 제목에 사업장 이름이 있으면 임자를 알 수 있다.
-     여태 이런 메일은 통째로 공용 칸에 떨어져 아무도 안 챘다. */
-  if (!co && !cands.length) {
-    co = coFromText(text, companies);
-    if (co) found = '주소는 모르지만 제목에서 사업장을 찾음';
-  }
+  /* ⚠ 사업장 찾기는 **companyOf 한 곳**에서 한다 — 목록(mailLogRecord)도 같은
+     함수를 쓴다. 따로 판단하면 자료는 A 로 가고 목록엔 B 로 적힌다. */
+  const pick = companyOf(o, index, companies);
+  const co = pick.co;
+  const found = co && pick.how === 'addr+text'
+    ? '여러 사업장에 걸린 주소 — 제목에서 사업장을 찾음'
+    : (co && pick.how === 'text' ? '주소는 모르지만 제목에서 사업장을 찾음' : '');
 
   const tag = tagFor(o, co);
 
@@ -644,7 +662,8 @@ module.exports = {
   UPLOAD_MAX, BAD_EXT,
   normEmail, senderOf, collectEmails, sidToEmail,
   buildKnownList, isKnownSender,
-  buildCompanyIndex, coList, companyFor, companiesFor, coFromText, seatFor, tagFor, routeFor,
+  buildCompanyIndex, coList, companyFor, companiesFor, coFromText, companyOf,
+  seatFor, tagFor, routeFor,
   mailFromNote, regroupOne,
   mailConfOf, pickMailboxes, MAILBOX_HINT,
   trustBox,

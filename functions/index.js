@@ -1255,6 +1255,15 @@ async function runPaydataMailOnce() {
          soft=true 는 「이미 적혀 있으면 덮지 말라」는 뜻이다. */
       const logRowOf = function (mkey, parsed, item, who, subject, more) {
         const m = more || {};
+        /* ── 어느 사업장 것인가 (대표 목표 2026-08-30) ──
+           세 갈래 **모두**에 붙인다. 「지난 회차」·「모르는 주소」 갈래는 배달을
+           안 타므로, 여기서 안 붙이면 그 메일들만 사업장 없이 남는다 —
+           사업장별로 모아 볼 때 통째로 빠진다.
+           ⚠ 배달과 **같은 함수**(companyOf)를 쓴다. */
+        const pick = MR.companyOf(
+          { from: who, subject: subject },
+          payMailKnownCache.index, payMailKnownCache.cos);
+        const co = pick.co || null;
         return {
           key: mkey,
           soft: m.soft === true,
@@ -1263,7 +1272,8 @@ async function runPaydataMailOnce() {
             box: item.box, at: parsed.date ? +new Date(parsed.date) : Date.now(),
             atts: Array.isArray(parsed.attachments) ? parsed.attachments.length : 0,
             took: m.took || 0, seatName: m.seatName || '',
-            shared: m.shared === true, why: m.why || '', old: m.old === true
+            shared: m.shared === true, why: m.why || '', old: m.old === true,
+            companyId: co ? co.id : '', companyName: co ? co.name : ''
           })
         };
       };
