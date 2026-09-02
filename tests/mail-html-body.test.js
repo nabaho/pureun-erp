@@ -122,12 +122,17 @@ test('다음메일 도구줄이 내는 태그는 다 남는다', () => {
   assert.ok(h.indexOf('text-align:center') > 0, '정렬이 사라졌다');
 });
 
+/* ⚠ 예전에는 <table> 을 「모르는 태그」의 보기로 썼다. 2026-09-02 에 표를 허용해
+     (뉴스레터가 표로 짜인다) 보기가 낡았다 — 규칙은 그대로 두고 보기만 바꾼다.
+     표가 «살아남는지»는 바로 아래 검사가 따로 본다. */
 test('모르는 태그는 «글자는 살리고 태그만» 버린다', () => {
-  const h = MS.sanitizeHtml('<table><tr><td>표 안 글자</td></tr></table><marquee>흐름</marquee>');
-  assert.equal(h.indexOf('<table'), -1);
+  const h = MS.sanitizeHtml('<marquee>흐름</marquee><details><summary>접힘</summary>속</details>');
   assert.equal(h.indexOf('<marquee'), -1);
-  assert.ok(h.indexOf('표 안 글자') >= 0, '글자를 잃으면 편지 내용이 사라진다');
-  assert.ok(h.indexOf('흐름') >= 0);
+  assert.equal(h.indexOf('<details'), -1);
+  assert.equal(h.indexOf('<summary'), -1);
+  assert.ok(h.indexOf('흐름') >= 0, '글자를 잃으면 편지 내용이 사라진다');
+  assert.ok(h.indexOf('접힘') >= 0);
+  assert.ok(h.indexOf('속') >= 0);
 });
 
 test('img 는 버린다 — 첨부로 보내는 것이 우리 방식이다', () => {

@@ -66,7 +66,15 @@
     paydata:{ name:'급여데이터함', file:'pu-paydata.html', primaryRoots:['paydata'],
       entityTypes:['Organization','Person','PayrollRecord','Document','Message'] },
     home:{ name:'홈페이지 관리', file:'pu-home.html', primaryRoots:['homepage'], sharedRoots:['kcareer/{uid}/ls'],
-      entityTypes:['Person','Organization','Document'] }
+      entityTypes:['Person','Organization','Document'] },
+    /* 뉴스레터 관리 — 주간뉴스레터를 짓고 보낸다.
+       소유: newsletter (설정·회차 초안·받는 명단).
+       빌려 읽는 곳: homepage/newsBrief(자동으로 담을 기사) · pucards/scheduled(보낸 결과).
+       ⚠ 명단은 «여기가 정본»이다 — 기업정보함 명함을 실시간으로 끌어오지 않는다.
+         끌어오면 명함 한 장이 바뀔 때 누구에게 갈지가 조용히 달라진다. */
+    news:{ name:'뉴스레터 관리', file:'pu-news.html', primaryRoots:['newsletter'],
+      sharedRoots:['homepage/newsBrief','pucards/scheduled'],
+      entityTypes:['Organization','Person','Message','Document'] }
   };
 
   var STORE_TYPES = {
