@@ -74,6 +74,36 @@ T.push({ _id:'d', date:'2026-08-01', approved:true, nocash:1, amount:5000000,
 fin = computeFin(T, 'X', 2026); R = stmtIS(fin, {}, fin.tb, {});
 ok('환입은 사업수익에 안 섞인다', val('1. 사업수익') === 100000, val('1. 사업수익'));
 
+/* ── 3-2. 글머리(가·나·다…)는 «적은 줄만» 세어 붙인다 ───
+
+   목록 자리로 글머리를 고르면, 앞의 것이 없는 해에 「나.」로 시작한다.
+   사업수익 세부에서 그러다 고쳤는데, 사업외수익(준비금 환입)에도 같은 것이 있었다. */
+console.log('\n■ 사업외수익 글머리');
+{
+  /* 준비금2 환입만 있는 해 — 준비금1 줄은 없다 */
+  funds.X = { fund_type:'공동', years:{2026:{opening:{},reserve_auto:false}} };
+  const A = [
+    { _id:'o', date:'2026-01-02', approved:true, deposit:10000000, withdraw:0,
+      debit:'현금성자산', credit:'기본재산' },
+    { _id:'p', date:'2026-12-31', approved:true, nocash:1, amount:3000000,
+      debit:'기본재산', credit:'고유목적사업준비금2' },
+    { _id:'q', date:'2026-12-31', approved:true, nocash:1, amount:3000000,
+      debit:'고유목적사업준비금2', credit:'고유목적사업준비금환입' },
+  ];
+  const fi = computeFin(A, 'X', 2026);
+  const RR = stmtIS(fi, {}, fi.tb, {});
+  const L = RR.map(r => r.lbl);
+  ok('준비금1 환입이 없으면 그 줄도 없다',
+     L.indexOf('가. 고유목적사업준비금1 환입') < 0, L.join('/'));
+  ok('준비금2 환입이 「가.」로 시작한다',
+     L.indexOf('가. 고유목적사업준비금2 환입') >= 0, L.join('/'));
+  const rr = RR.find(r => r.lbl === '가. 고유목적사업준비금2 환입');
+  ok('그 금액이 3,000,000', rr && rr.cur === 3000000, rr && rr.cur);
+  ok('6. 사업외수익과 같다',
+     rr && rr.cur === RR.find(r => r.lbl === '6. 사업외수익').cur,
+     RR.find(r => r.lbl === '6. 사업외수익').cur);
+}
+
 /* ── 4. 비교 재무상태표의 전기 부호 ──────────────────────── */
 console.log('\n■ 재무상태표 — 당기 결손·전기 잉여');
 const B = stmtBS({ retained:-500000, tb:{} }, { retained:300000 });
