@@ -156,6 +156,12 @@ test('★ 화면이 모으는 셈을 스스로 하지 않는다 — 갈래가 �
   assert.match(HTML, /pu-co-thread\.js\?v=\d+/, '읽개를 안 불렀거나 캐시 번호가 없습니다');
 });
 
+test('★ 좁히라고 업체 명단을 함께 준다 — 안 주면 한 통이 네 곳에 다 걸린다', () => {
+  /* 2026-09-02 실제 자료: 받은 메일 72줄 중 33줄이 여러 곳에 한꺼번에 붙었다 */
+  const src = cut('coThreadList') + cut('coThreadHtml');
+  assert.match(src, /thread\([^)]*\{\s*all:/, '명단 없이 부르면 좁히지 않습니다');
+});
+
 test('★ 업체 명단은 급여데이터함과 같은 자리를 읽는다 — 사본을 만들지 않는다', () => {
   assert.match(cut('loadCoThread'), /data\/companies/);
 });

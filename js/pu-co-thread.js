@@ -67,12 +67,49 @@
     return out;
   }
 
+  /* 주소 → 그 주소를 적어 둔 사업장들.
+     ⚠ 한 사장이 여러 사업장을 하면서 «메일 주소는 하나»만 쓰는 곳이 많다.
+       2026-09-02 실제 자료로 재 보니 받은 메일 72줄 중 33줄이 여러 곳에
+       한꺼번에 걸렸다(안경원 네 곳 등). 그때 제목이 한 곳을 집어 말하면
+       그곳 것으로 좁힌다 — 서버(mail-receive.companyOf)가 자료를 나눌 때
+       쓰는 것과 «같은 규칙»이다. 달리 보면 자료는 A 로 갔는데 목록에는
+       네 곳에 다 보이는 어긋남이 생긴다. */
+  var _ixCache = (typeof WeakMap === 'function') ? new WeakMap() : null;
+  function addrIndex(all) {
+    if (!Array.isArray(all)) return null;
+    if (_ixCache && _ixCache.has(all)) return _ixCache.get(all);
+    var ix = {};
+    all.forEach(function (co) {
+      if (!co) return;
+      Object.keys(addrsOf(co)).forEach(function (e) {
+        (ix[e] = ix[e] || []).push(co);
+      });
+    });
+    if (_ixCache) _ixCache.set(all, ix);
+    return ix;
+  }
+
+  /* 여럿 가운데 제목이 «집어 말한» 곳들. 한 곳도 안 집으면 빈손을 준다 —
+     그때는 아무 곳도 지우지 않는다(함부로 지우면 아예 안 보이게 된다).
+     둘을 집으면 그 둘만 남는다 — 안 집힌 곳은 그 통과 상관이 없다. */
+  function named(row, cands) {
+    var text = norm(String((row && row.subject) || '') + ' ' + String((row && row.text) || ''));
+    var out = [];
+    (cands || []).forEach(function (c) {
+      var n = norm(c && c.name);
+      if (n.length >= 3 && text.indexOf(n) >= 0) out.push(c);
+    });
+    return out;
+  }
+
   /* 한 줄기로 세운다 — 갈래가 몇이든 시각 내림차순 한 줄기.
      sources: [{ key, label, rows: [표준 줄] }]
-     표준 줄: { id, at, who, subject, text, companyId, from, to, atts, meta } */
+     표준 줄: { id, at, who, subject, text, companyId, from, to, atts, meta }
+     opt.all: 업체 명단 전체(주면 주소를 나눠 쓰는 곳을 제목으로 좁힌다) */
   function thread(co, sources, opt) {
     var o = opt || {};
     var addrs = addrsOf(co);
+    var ix = addrIndex(o.all);
     var out = [];
     (sources || []).forEach(function (s) {
       if (!s || !Array.isArray(s.rows)) return;
@@ -80,6 +117,17 @@
         var how = matchRow(r, co, addrs);
         if (!how) return;
         if (o.sureOnly && how === 'text') return;   // 짐작은 빼고 본다
+        /* 주소로 걸린 것만 좁힌다 — 사업장 번호(id)는 서버가 이미 정한 것이라
+           뒤집지 않고, 제목으로 걸린 것(text)은 이미 그 이름이 나온 것이다. */
+        if (how === 'addr' && ix) {
+          var e = mailOf(r.from) || mailOf(r.to);
+          var share = ix[e] || [];
+          if (share.length > 1) {
+            var pick = named(r, share);
+            /* 제목이 어느 곳을 집었는데 그 안에 내가 없으면 다른 곳 것이다 */
+            if (pick.length && !pick.some(function (c) { return String(c.id) === String(co.id); })) return;
+          }
+        }
         out.push({
           key: s.key, label: s.label,
           id: String((r && r.id) || ''),
@@ -161,7 +209,7 @@
 
   root.PuCoThread = {
     norm: norm, mailOf: mailOf, addrsOf: addrsOf, matchRow: matchRow,
-    thread: thread, counts: counts,
+    addrIndex: addrIndex, named: named, thread: thread, counts: counts,
     fromMailLog: fromMailLog, fromSentBox: fromSentBox,
     PLANNED: PLANNED
   };
