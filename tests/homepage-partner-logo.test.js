@@ -79,10 +79,13 @@ test('★ 담기와 «올리기»가 갈라져 있다고 말해 준다 — 담�
 });
 
 /* ── 담는 쪽이 스스로 지켜야 하는 것 ── */
+/* ⚠ 2026-09-02 붙여넣기를 붙이면서 «담는 일»을 로고담기() 한 곳으로 모았다 —
+   파일 고르기와 붙여넣기가 길이 갈리면 한도·이름 규칙이 두 벌이 된다.
+   그래서 여기서 보는 것도 addPartnerLogo 가 아니라 그 공용 함수다. */
 function 담기() {
-  const i = RAW.indexOf('async function addPartnerLogo');
-  const j = RAW.indexOf('\nwindow.addPartnerLogo', i);
-  assert.ok(i >= 0 && j > i, '★ addPartnerLogo 를 못 찾았다');
+  const i = RAW.indexOf('async function 로고담기');
+  const j = RAW.indexOf('\nasync function addPartnerLogo', i);
+  assert.ok(i >= 0 && j > i, '★ 로고담기 를 못 찾았다 — 담는 일을 모아 둔 곳이 없다');
   return 알맹이(RAW.slice(i, j));
 }
 
@@ -98,17 +101,37 @@ test('★★ 파일 이름을 «우리가» 짓는다 — 남이 준 이름을 �
 });
 
 test('★★ 700KB 한도를 «고르는 순간» 잡는다 — 올릴 때 실패하면 늦다', () => {
+  /* ⚠ 2026-09-02 담는 일이 둘로 나뉘었다(붙여넣기가 생겨서):
+       · addPartnerLogo — 파일을 «고르는 순간» f.size 로 잡는다 (가장 이르다)
+       · 로고담기       — 담기 직전에 한 번 더 잡는다 (붙여넣기도 지나는 길)
+     둘 다 있어야 한다 — 하나만 있으면 다른 길로 들어온 큰 그림이 서버까지 가서 거부된다. */
+  const 고르기 = (function () {
+    const i = RAW.indexOf('async function addPartnerLogo');
+    const j = RAW.indexOf('\nwindow.addPartnerLogo', i);
+    assert.ok(i >= 0 && j > i, '★ addPartnerLogo 를 못 찾았다');
+    return 알맹이(RAW.slice(i, j));
+  })();
+  assert.match(고르기, /f\.size\s*>/, '★ 고른 그림의 크기를 «고르는 순간» 안 본다');
+
   const s = 담기();
-  assert.match(s, /f\.size\s*>/, '★ 고른 그림의 크기를 안 본다');
+  /* ⚠ 처음에 «바이트 셈»(length*3/4)만 봐도 통과하게 썼다가 고쳤다 —
+       셈은 남겨 두고 «비교»만 없애도 통과해 버렸다. 재는 것이 아니라 «막는 것»을 봐야 한다. */
+  assert.match(s, /바이트\s*>\s*[가-힣A-Za-z0-9]/,
+    '★ 담기 직전에 크기를 «견주지» 않는다 — 붙여넣기로 들어온 큰 그림이 그냥 지나간다');
+  assert.match(s, /throw new Error\([^)]*너무 큽니다|너무 큽니다/,
+    '★ 크다는 것을 알고도 «막지» 않는다');
+
   /* 서버 한도와 어긋나면 «화면은 통과시키고 서버가 거부»한다 — 가장 나쁜 짝이다 */
   const 서버 = fs.readFileSync(path.join(R, 'functions', 'site-publish.js'), 'utf8');
   const m = /MAX_IMAGE_BYTES\s*=\s*(\d+)\s*\*\s*1024/.exec(서버);
   assert.ok(m, '★ 서버의 그림 한도를 못 읽었다');
-  const 화면 = /(\d+)\s*\*\s*1024/.exec(s);
-  assert.ok(화면, '★ 화면의 한도를 못 읽었다');
-  assert.strictEqual(화면[1], m[1],
-    '★★ 화면 한도(' + 화면[1] + 'KB)와 서버 한도(' + m[1] + 'KB)가 다르다'
-    + ' — 화면이 통과시킨 그림을 서버가 거부한다');
+  [['고르는 순간', 고르기], ['담기 직전', s]].forEach(function (짝) {
+    const 화면 = /(\d+)\s*\*\s*1024/.exec(짝[1]);
+    assert.ok(화면, '★ ' + 짝[0] + '의 한도를 못 읽었다');
+    assert.strictEqual(화면[1], m[1],
+      '★★ ' + 짝[0] + ' 한도(' + 화면[1] + 'KB)와 서버 한도(' + m[1] + 'KB)가 다르다'
+      + ' — 화면이 통과시킨 그림을 서버가 거부한다');
+  });
 });
 
 test('★ 관리자만 담을 수 있다 (홈페이지는 관리자 전용 — 대표 지시)', () => {
