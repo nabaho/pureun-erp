@@ -333,6 +333,15 @@ rules.puphotos = {
     blobs:  { $year: { $id: { '.read': `(${LOGIN}) && root.child('puphotos').child('u').child($uid).child('items').child($year).child($id).child('shareWith').child(auth.uid).exists()` } } },
     thumbs: { $year: { $id: { '.read': `(${LOGIN}) && root.child('puphotos').child('u').child($uid).child('items').child($year).child($id).child('shareWith').child(auth.uid).exists()` } } }
   } },
+  /* ── 열람 기록 (대표 지시 2026-09-01) ──
+     민감 서류 원본을 «누가 언제» 열었나. 근로자 신분증을 담기 시작하면 이 물음에
+     답할 수 있어야 한다(급여데이터함에는 이미 있다 — paydata/access_log).
+     ⚠ **읽기는 총괄관리자만.** 「누가 누구 서류를 봤나」는 그 자체로 민감하다 —
+       이름 없는 자리($other)에 두면 전 직원이 읽는다.
+     ⚠ **아무도 못 쓴다(.write:false).** 적는 것은 서버 함수(photoView) 하나뿐이고
+       그것은 Admin SDK 라 규칙을 지나지 않는다. 화면에서 쓸 길을 열어 두면
+       **기록을 꾸며 낼 수 있다** — 꾸밀 수 있는 기록은 기록이 아니다. */
+  access_log: { '.read': `auth != null && ${ADMIN}`, '.write': false },
   customKinds: { '.read': LOGIN, '.write': LOGIN },
   kindLabels:  { '.read': LOGIN, '.write': `(${LOGIN}) && ${ADMIN}` },
   kindHidden:  { '.read': LOGIN, '.write': `(${LOGIN}) && ${ADMIN}` },

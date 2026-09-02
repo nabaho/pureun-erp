@@ -68,9 +68,13 @@ test('★ 표시가 있으면 5년, 없으면 1년 — 사진첩이 실제로 �
   const photos = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
   const ctx = { Date, Number, String, Math };
   vm.createContext(ctx);
-  vm.runInContext('const KEEP_USED_YEARS = ' + (photos.match(/KEEP_USED_YEARS\s*=\s*(\d+)/) || [, '?'])[1] + ';' +
+  vm.runInContext(photos.match(/const KEEP_MONTHS_BY_KIND = \{[\s\S]*?\};/)[0].replace(/\bconst /, 'var ') + '\n' +
+    'const KEEP_USED_YEARS = ' + (photos.match(/KEEP_USED_YEARS\s*=\s*(\d+)/) || [, '?'])[1] + ';' +
     'const KEEP_PLAIN_YEARS = ' + (photos.match(/KEEP_PLAIN_YEARS\s*=\s*(\d+)/) || [, '?'])[1] + ';' +
-    fnOf(photos, 'isUsed') + '\n' + fnOf(photos, 'keepUntil'), ctx);
+    fnOf(photos, 'isUsed') + '\n' +
+    /* 2026-09-01: 서류마다 다른 보유기한 — keepUntil 이 이것을 먼저 본다 */
+    'var keepMonthsOverride = {};\n' + fnOf(photos, 'keepMonthsOf') + '\n' +
+    fnOf(photos, 'keepUntil'), ctx);
   const day = 86400000;
   const base = { takenAt: Date.now() - 400 * day, upAt: Date.now() - 400 * day };
   const plain = ctx.keepUntil(base);

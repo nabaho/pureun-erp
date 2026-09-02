@@ -38,7 +38,7 @@ function load(over) {
     gridItems: []
   }, over || {});
   vm.createContext(ctx);
-  ['isUsed', 'usedWhere', 'usedWhereShort', 'keepUntil', 'keepUntilText', 'usedWarnText']
+  ['isUsed', 'usedWhere', 'usedWhereShort', 'keepMonthsOf', 'keepUntil', 'keepUntilText', 'usedWarnText']
     .forEach(function (n) { vm.runInContext(fnOf(n), ctx); });
   return ctx;
 }

@@ -153,7 +153,14 @@ test('★ 콘솔과 다른 곳은 «일부러 고친 세 곳»뿐이다', () => 
   /* ⏳ 2026-09-02 — 거래내역 묶음:
        /data/ledger_batches — 재무권한자만 읽고 쓴다. 지금 콘솔에서는 $other 로 떨어져
        로그인한 직원 누구나 접근할 수 있으므로, 동시접속 개선 배포 뒤 전체 규칙도 게시해야 한다. */
-  const PENDING = ['/data/staff_colors', '/data/cons_type_colors', '/data/ledger_batches'];
+  /* ⏳ 2026-09-01 — 사진첩 열람 기록:
+       /puphotos/access_log — 「민감 서류를 누가 언제 열었나」. 근로자 신분증을 담기
+       시작하면서 만들었다(검토안 Ⅱ-4). 읽기는 **총괄관리자만**, 쓰기는 **아무도 못 한다**
+       (적는 것은 서버 함수 photoView 하나뿐이고, 그것은 Admin SDK 라 규칙을 안 지난다).
+       ⚠ 지금 콘솔에서는 이름 없는 자리($other)로 떨어져 **전 직원이 읽는다** —
+         「누가 누구 서류를 봤나」는 그 자체로 민감하다. 게시하면 좁혀진다. */
+  const PENDING = ['/data/staff_colors', '/data/cons_type_colors', '/data/ledger_batches',
+    '/puphotos/access_log'];
   assert.deepEqual(diff.sort(), PENDING.sort(),
     '★ 뜻하지 않은 곳이 바뀌었습니다: ' + diff.join(', ') +
      '\n  규칙은 한 번에 통째로 바뀝니다 — 곁다리 변경이 섞이면 무엇이 깨졌는지 못 짚습니다.');
