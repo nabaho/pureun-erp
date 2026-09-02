@@ -1657,8 +1657,13 @@ test('★ 대표가 스스로 잠기지 않는다 — 한 번 확인되면 그 �
 });
 
 test('★ 잠기면 어느 화면으로도 못 옮긴다', () => {
-  assert.match(funcSource('nav_to'), /kcApplyLock\(\)==='locked'\) return/,
-    '잠긴 동안에는 화면 이동을 막아야 합니다');
+  /* ⚠ 2026-09-02 — 세 갈래가 되었다(대표 지시 「경력관리 이부분만 다른 직원들이」).
+     'locked' 는 그대로 다 막고, 재직 직원은 'staff' 가 되어 «경력관리 다섯 화면»만 열린다.
+     지켜야 할 것은 그대로다 — 열어 준 곳 «밖»으로는 못 나간다. */
+  const nt = funcSource('nav_to');
+  assert.match(nt, /_lk==='locked'\) return/, '잠긴 동안에는 화면 이동을 막아야 합니다');
+  assert.match(nt, /_lk==='staff' && KC_PUB_PAGES\.indexOf\(id\)<0/,
+    '직원 보기에서 열어 준 화면 밖으로 나가면 안 됩니다');
   assert.match(source, /firebase\.auth\(\)\.onAuthStateChanged[\s\S]{0,200}kcApplyLock\(\)/,
     '로그인·로그아웃 때 다시 판정해야 합니다');
 });
