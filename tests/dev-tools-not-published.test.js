@@ -28,7 +28,10 @@ function stripScript() {
     if (lines[i].trim() && !/^\s{10}/.test(lines[i])) break;
     body.push(lines[i].replace(/^\s{10}/, ''));
   }
-  return body.join('\n');
+  /* ⚠ 줄끝의 \r 을 걷어 낸다. 이 저장소는 윈도우에서 CRLF 로 내려받히는데,
+     그대로 bash 에 넘기면 줄마다 \r 이 붙어 이어짓기(\)와 for 문이 깨진다 —
+     CI(리눅스·LF)에서는 멀쩡하고 «여기서만» 깨져, 검사 판정이 곳마다 달라진다. */
+  return body.join('\n').replace(/\r/g, '');
 }
 
 /* 앱이 실제로 부르는 것 / 개발용인 것 */

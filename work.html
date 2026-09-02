@@ -21,6 +21,7 @@
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <script src="js/pu-backup.js?v=1"></script>
+<script src="js/pu-rules-history.js?v=3"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <style>
   :root{--acc:#2563eb;--acc2:#1e40af;--acc-soft:#e2e8f0;--ink:#1e293b;--sub:#475569;--faint:#94a3b8;
@@ -581,6 +582,19 @@
   .dbox .bh .r{margin-left:auto;font-size:11px;font-weight:600;color:var(--sub);
     overflow:hidden;text-overflow:ellipsis;min-width:0}
   .dbox .bb{padding:8px 11px;display:flex;flex-direction:column;gap:6px}
+  /* 취업규칙 이력 — 규정관리가 쌓은 회차를 «읽기만» 한다 */
+  .rhrow{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:start;
+    background:var(--bg);border-radius:7px;padding:6px 9px}
+  .rhrow .k{font-size:10px;font-weight:800;border-radius:5px;padding:2px 7px;white-space:nowrap;
+    background:#f0fdf4;color:#166534}
+  /* ⚠ min-width:0 이 없으면 격자 1fr 칸이 글자 길이만큼 벌어져 서랍 밖으로 밀린다 */
+  .rhrow .x{font-size:11.5px;color:var(--ink);min-width:0}
+  .rhrow .x .ln{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* 바뀐 조는 아랫줄로 접어 다 보이게 — 무엇이 바뀌었는지가 이 칸의 존재 이유다 */
+  .rhrow .x .ar{display:block;color:var(--sub);font-size:10.5px;line-height:1.45;margin-top:2px;
+    white-space:normal;word-break:keep-all}
+  .rhrow .go{background:none;border:none;color:var(--acc);font-size:10.5px;font-weight:800;
+    cursor:pointer;white-space:nowrap;padding:2px 3px;font-family:inherit}
   /* 설명은 제목 옆 ⓘ에 넣고 누를 때만 보여준다 — 안내문을 화면에 깔지 않는다 */
   .hlp{flex-shrink:0;font-size:11.5px;color:#94a3b8;cursor:pointer;font-weight:400;line-height:1}
   .hlp:hover{color:var(--acc)}
@@ -888,7 +902,7 @@
   }
 </style>
   <!-- 프로그램 사이 이동 (공용 앱바) -->
-  <script src="js/pu-appbar.js?v=7"></script>
+  <script src="js/pu-appbar.js?v=8"></script>
   <!-- 로그아웃·사람 바뀜을 모든 프로그램에 퍼뜨린다 (2026-08-16) — 로그인 화면·공개 화면에는 넣지 않는다 -->
   <script src="js/pu-authsync.js?v=1"></script>
   <!-- 상단 우측에 「지금 로그인한 사람」 (2026-08-16) — 로그인 화면·공개 화면에는 넣지 않는다 -->
@@ -1070,7 +1084,12 @@ try{
   fbDb=firebase.database();
   // 포털 공용 설정(data/app_config) — AI 프록시 주소 등을 포털 설정에서 함께 관리
   try{ fbDb.ref('data/app_config').once('value').then(function(s){ window.PU_CFG = s.val() || {}; }).catch(function(){}); }catch(e){}
-  firebase.auth().onAuthStateChanged(function(u){ if(u){ start(); } else { gate(); } });
+  firebase.auth().onAuthStateChanged(function(u){ if(u){
+    /* 취업규칙 이력 색인을 미리 받아 둔다 — 업무를 열 때 기다리지 않게.
+       못 읽어도(권한·그물) 그 칸만 빠지고 나머지는 그대로 뜬다. */
+    try{ if(window.PuRulesHistory) PuRulesHistory.load(fbDb, function(){ if(S.drawerId) renderDrawer(); }); }catch(e){}
+    start();
+  } else { gate(); } });
 }catch(e){ $('root').innerHTML='<div class="gate">초기화 실패: '+esc(e.message)+'</div>'; }
 /* 로그아웃 화면은 푸른 통합이 «모두 같은 것»을 쓴다 (js/pu-gate.js) */
 function gate(){ PuGate.show({ name:'업무관리', desc:'푸른노무법인 · 업무·일정' }); }
@@ -4550,6 +4569,9 @@ function loadItemLogs(id){
 }
 function renderDrawer(){
   var dr=$('drawer'); if(!dr||!S.drawerId)return;
+  /* 업체 목록이 아직이면 받아 온 뒤 한 번 더 그린다 — 사업자번호로 이어야
+     상호가 조금 달라도 같은 회사의 취업규칙 이력이 붙는다 */
+  if(!coSrc && typeof coLoad==='function'){ coLoad().then(function(){ if(S.drawerId) renderDrawer(); }); }
   var it=items[S.drawerId]; if(!it){ closeDrawer(); return; }
   var id=S.drawerId;
   var logs=itemLogsCache[id];
@@ -4577,7 +4599,36 @@ function renderDrawer(){
   h+=dPeopleHTML(id,it);
   h+=dPpHTML(it,id);
   h+=dMailHTML(it,id);
-  // 관련 지식 — 같은 업체·유형·관계자에서 얻은 카드가 자동으로 따라온다
+  h+=dRulesHTML(it);
+  /* ── 취업규칙 이력 (대표 지시 2026-08-29: 「보여주기만」) ──
+   규정관리가 쌓은 회차를 읽기만 한다. 여기서 고치지 않고, 업무 기록에도
+   자동으로 글을 쓰지 않는다 — 남의 업무 목록에 손대지 않는다.
+   회사는 사업자번호 › 상호명으로 맞춘다(공용 읽개가 정한 같은 규칙). */
+function dRulesHTML(it){
+  if(!window.PuRulesHistory) return '';
+  var co = (typeof coFind==='function' ? coFind(it) : null) || {};
+  var list = PuRulesHistory.forCompany({ bizno: co.bizNo || '', company: it.company || co.name || '' });
+  /* 회차가 없으면 칸 자체를 안 그린다 — 메모 없으면 메모 칸을 안 그리는 것과 같은 결 */
+  if(!list.length) return '';
+  var rows = list.slice(0,5).map(function(r){
+    var ar = PuRulesHistory.artsOf(r);
+    return '<div class="rhrow"><span class="k">'+esc(r.kind)+'</span>'
+      +'<span class="x"><span class="ln" title="'+esc(PuRulesHistory.lineOf(r))+'">'
+      +esc(PuRulesHistory.lineOf(r))+'</span>'
+      +(ar?'<span class="ar">'+esc(ar)+'</span>':'')+'</span>'
+      +'<button class="go" onclick="wkOpenRuleRev(\''+escJ(PuRulesHistory.openUrl(r))+'\')" '
+      +'title="규정관리에서 이 회차의 신구대조표를 엽니다">열기 ↗</button></div>';
+  }).join('');
+  return '<div class="dbox"><div class="bh">📕 취업규칙 이력'
+    +'<span class="r">'+list.length+'회차</span></div>'
+    +'<div class="bb">'+rows
+    +(list.length>5?'<div style="font-size:10.5px;color:var(--faint)">외 '+(list.length-5)
+      +'회차 — 규정관리 📁 보관함 › 📜 이력에서 모두 봅니다</div>':'')
+    +'<div style="font-size:10.5px;color:var(--faint)">보기만 합니다 · 고치는 곳은 규정관리입니다</div>'
+    +'</div></div>';
+}
+function wkOpenRuleRev(url){ try{ window.open(url,'_blank'); }catch(e){} }
+// 관련 지식 — 같은 업체·유형·관계자에서 얻은 카드가 자동으로 따라온다
   var rel=kbRelated(it);
   h+='<div class="dbox"><div class="bh">📚 관련 지식'+hlp('kb')
     +'<span class="r">'+(rel.length?rel.length+'건':'아직 없음')+'</span></div>'

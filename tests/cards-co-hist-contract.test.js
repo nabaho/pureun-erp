@@ -52,7 +52,10 @@ function decl(name){
 }
 /* 진짜 함수들을 실어 돌린다 */
 function load(){
-  const ctx = { console, Object, String, Number, Array, JSON };
+  /* 2026-08-29: coHistPaint 가 취업규칙 회차를 함께 붙인다 —
+     이 검사는 계약 줄만 보므로 «회차가 없다»고 답하는 대역을 준다. */
+  const ctx = { console, Object, String, Number, Array, JSON,
+    coRulesRecs: function(){ return []; } };
   vm.createContext(ctx);
   vm.runInContext(decl('ERP_HIST_KINDS'), ctx);
   vm.runInContext(decl('ERP_HIST_LABEL').replace(/^var ERP_HIST_LABEL/, 'var ERP_HIST_LABEL'), ctx);

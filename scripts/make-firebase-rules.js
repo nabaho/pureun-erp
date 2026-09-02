@@ -494,6 +494,22 @@ rules.pu_mailseen = {
   } }
 };
 rules.homepage = { '.read': `auth != null && ${ADMIN}`, '.write': `auth != null && ${ADMIN}` };
+
+/* ══ 뉴스레터 (대표 지시 2026-09-02 「푸른내외관리에 뉴스레터관리를 넣고 매주 관리하고 싶다」) ══
+   화면: pu-news.html · 판단: js/pu-news-core.js · 편지: js/pu-news-tpl.js
+
+   ⚠ homepage 와 «같은 잣대»(총괄관리자만)로 둔다. 셋 다 그럴 까닭이 있다.
+     · recipients — 거래처 담당자 이름·이메일이 든 명단이다. 밖으로 나가면 안 된다.
+     · issues     — 법인 이름으로 나갈 편지의 초안이다. 남이 고치면 그대로 나간다.
+     · config     — 여기의 「범위」가 (광고) 표기를 켜고 끈다. 곧 법 판단이라 더 그렇다.
+
+   ⚠ 직원에게 열지 말 것. 열려면 homepage 읽기도 함께 열어야 하는데
+     (자동으로 담을 밑감이 homepage/newsBrief 에 있다) 그러면 홈페이지 관리의 문이
+     함께 열린다. 여는 것이 옳다고 판단되면 «두 곳을 같이» 보고 정할 것.
+
+   ★ 서버(sendBulkMail)는 관리자 SDK 로 돌아 이 규칙을 지나지 않는다 —
+     보내기가 막히지 않는다. */
+rules.newsletter = { '.read': `auth != null && ${ADMIN}`, '.write': `auth != null && ${ADMIN}` };
 rules.kcareer  = { $uid: { '.read': 'auth != null && auth.uid === $uid', '.write': 'auth != null && auth.uid === $uid' } };
 
 /* ══ 경력관리 «직원 공개용 사본» ═══════════════════════════════════════

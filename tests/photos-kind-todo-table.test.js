@@ -63,6 +63,11 @@ function load() {
     fnOf(app, 'canSendCoInfo'),
     fnOf(app, 'formTodo'),
     fnOf(app, 'chatTodo'),
+    /* ⚠ 2026-09-02 💰 임금 확인 — checkWhy 가 이 판정을 본다 */
+    fnOf(app, 'wageRead'),
+    fnOf(app, 'wageOkOf'),
+    fnOf(app, 'wageBoxOn'),
+    fnOf(app, 'wageNeedsOk'),
     fnOf(app, 'checkWhy'),
     fnOf(app, 'needsCheck')
   ].join('\n');
@@ -121,6 +126,10 @@ const TABLE = {
   resident:  [true,  /근로자 정보함/, { fields: { name: '강석', company: '해찬솔에프쓰리' } }],
   mandate:   [true,  /근로자 정보함/, { fields: { name: '강석', company: '해찬솔에프쓰리' } }],
   consent:   [true,  /근로자 정보함/, { fields: { name: '강석', company: '해찬솔에프쓰리' } }],
+  /* ── 근로계약서 (대표 지시 2026-09-02) ──
+     ⚠ 바로 위 contract 와 «갈 곳이 다르다». 우리 사무소 계약은 사진첩에만 두지만,
+       근로계약서는 근로자와 사업주의 것이라 «사람»에게 간다(WORKER_KINDS). */
+  wcontract: [true,  /근로자 정보함/, { fields: { name: '강석', company: '해찬솔에프쓰리' } }],
   other:     [true,  /분류 지정/]              // 종류를 못 가렸다(내용은 읽었다)
 };
 

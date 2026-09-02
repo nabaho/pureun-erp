@@ -105,7 +105,11 @@
      열쇠가 없으면(휴대폰 없는 명함 등) 찾지 않는다 — 이름만으로 붙이면
      동명이인이 서로를 덮는다. */
   function dedupKey(kind, fields) {
-    if (kind === 'card') return digits(fields && fields.mobile);
+    /* ⚠ 서식도 «명함»이다 (대표 지시 2026-08-31) — CARDS_KIND.form 이 'card' 다.
+       그런데 여기서 서식을 빼 두어 «중복을 아예 안 봤다». 그래서 같은 담당자가
+       서식 한 장마다 새 명함으로 쌓이고, 나중에 들어온 쪽에만 회사가 붙는 일이 생겼다.
+       명함과 «같은 기준»(휴대폰 숫자)으로 본다 — 기준이 다르면 같은 사람이 두 번 쌓인다. */
+    if (kind === 'card' || kind === 'form') return digits(fields && fields.mobile);
     if (kind === 'bizreg') return digits(fields && fields.bizno);
     return '';
   }
@@ -167,6 +171,50 @@
           return { id: id, idx: row };
         });
       });
+  }
+
+  /* ══════ 담당자 명함이 «어느 회사» 것인지 (대표 지시 2026-08-31) ══════
+     「사진첩에 기업의 정보를 화면 캡처로 합쳐서 정리하는 경우가 여러 번 있다.
+      이럴 경우 담당자 정보를 별도 기업정보함에서 기업의 이름이 보이지 않더라도
+      정확하게 찾아서 연결시켜 기업정보함 명함에 정확히 넣어라」
+
+     ■ 무엇이 문제인가
+       캡처한 화면에 «회사 이름이 안 보이는» 일이 흔하다 — 두 쪽짜리 신청서의 2쪽에는
+       담당자 정보만 있고 상호는 1쪽에 있다. 판독은 문서 통째로 하지만 상호 칸을 못 읽으면
+       mapTo 가 «빈 값을 아예 안 싣기» 때문에, 명함의 회사 칸이 빈 채로 만들어진다.
+       회사가 없는 명함은 기업 상세에서 어느 회사에도 안 붙는다 — 사람 따로, 회사 따로 뜬다.
+
+     ■ 어떻게 찾나 — 사업자번호가 «회사를 가리키는 유일한 값»이다
+       ① pucards/bykey/b{번호} → 그 번호를 가진 등록증의 번호
+       ② pucards/idx/{그 번호} → 그 등록증의 상호(c)
+       ③ 그래도 없으면 pucards/coInfo/{번호}/company — 서식이 채워 둔 회사 이름
+     ⚠ «두세 칸»만 읽는다. 목록을 통째로 훑지 않는다 — 사진 한 장마다 색인 6천 줄을
+       내려받던 그 실수를 되풀이하지 않는다(바로 위 findByKey 와 같은 결).
+     ⚠ 이름으로는 찾지 «않는다». 이름이 없어서 찾는 것이므로 애초에 쓸 수 없다.
+     ⚠ 찾아간 등록증의 번호를 «다시 맞춰 본다» — 번호를 고친 등록증의 옛 열쇠가 남아
+       있을 수 있는데, 그대로 믿으면 «남의 회사» 이름을 이 사람 명함에 적는다.
+     ⚠ 못 찾으면 빈 글자를 준다. 지어내지 않는다 — 틀린 회사에 붙는 것보다 빈 것이 낫다. */
+  function findCoNameByBizNo(bizno) {
+    var key = bizKey(bizno);
+    if (!key || !deps.db) return Promise.resolve('');
+    return deps.db.ref(CARDS_ROOT + '/' + BYKEY + '/b' + key).once('value')
+      .then(function (s) {
+        var id = s.val();
+        if (!id || typeof id !== 'string') return '';
+        return deps.db.ref(CARDS_ROOT + '/idx/' + id).once('value').then(function (s2) {
+          var row = s2.val();
+          if (!row || (row.k || 'card') !== 'biz') return '';   /* 지워졌거나 종류가 다르다 */
+          if (digits(row.bz) !== key) return '';                /* 번호가 바뀐 옛 열쇠 */
+          return String(row.c == null ? '' : row.c).trim();
+        });
+      })
+      .then(function (nm) {
+        if (nm) return nm;
+        /* 등록증이 아직 없는 회사 — 서식이 기업 상세에 적어 둔 이름이 있을 수 있다 */
+        return deps.db.ref(CARDS_ROOT + '/coInfo/' + key + '/company').once('value')
+          .then(function (s3) { return String(s3.val() == null ? '' : s3.val()).trim(); });
+      })
+      .catch(function () { return ''; });                       /* 못 찾으면 그냥 빈 채로 간다 */
   }
 
   function findExisting(kind, fields) {
@@ -257,7 +305,20 @@
       return Promise.reject(new Error('읽어낸 정보가 없어 기업정보함에 보낼 수 없습니다'));
     }
 
+    /* ── 회사 이름을 못 읽었으면 «사업자번호로 찾아» 채운다 (대표 지시 2026-08-31) ──
+       캡처 화면에 상호가 안 보여도 사업자번호만 있으면 어느 회사인지 정해진다.
+       ⚠ 이미 읽어 낸 이름이 있으면 손대지 «않는다» — 서류에 적힌 것이 먼저다.
+       ⚠ 못 찾아도 명함은 그대로 만든다. 사람은 실재하므로, 회사를 못 찾았다고
+         명함을 통째로 버리면 그 담당자를 잃는다. 못 찾았다는 것만 알린다. */
+    var coFilled = '';
+    var pre = (blank(mapped.company) && bizKey((o.fields || {}).bizno))
+      ? findCoNameByBizNo((o.fields || {}).bizno).then(function (nm) {
+          if (nm) { mapped.company = nm; coFilled = nm; }
+        })
+      : Promise.resolve();
+
     /* 개인 폴더 확인이 **먼저다.** 뒤에 두면 이미 만들고 난 뒤가 된다. */
+    return pre.then(function () {
     return inPrivateVault(kind, o.fields).then(function (hidden) {
       if (hidden) {
         /* 왜 아무 일도 안 일어났는지는 알려야 한다. 다만 **어디에 있는지는
@@ -271,6 +332,15 @@
       return findExisting(kind, o.fields).then(function (hit) {
         return hit ? fillOne(hit, mapped, want, o) : createOne(o, mapped, want);
       });
+    });
+    }).then(function (res) {
+      /* 무엇을 «찾아» 붙였는지 알린다 — 조용히 붙이면 틀렸을 때 알아챌 길이 없다.
+         회사를 끝내 못 찾았으면 그것도 말한다(빈 회사 칸은 나중에 미아가 된다). */
+      if (res && !res.blocked) {
+        if (coFilled) res.coFilled = coFilled;
+        else if (blank(mapped.company)) res.coMissing = true;
+      }
+      return res;
     });
   }
 
@@ -991,17 +1061,19 @@
 
   var WORKER_ROOT = CARDS_ROOT + '/workerInfo';
 
-  /* 이 갈래는 근로자 정보함으로 간다. 넷은 «사람 것»이라 회사가 아니라 사람에게 붙는다
-     (신분증·주민등록서류·위임장·개인정보동의서), 둘은 «사람이 여럿 적힌 표»다.
+  /* 이 갈래는 근로자 정보함으로 간다. 다섯은 «사람 것»이라 회사가 아니라 사람에게 붙는다
+     (신분증·주민등록서류·위임장·개인정보동의서·근로계약서), 둘은 «사람이 여럿 적힌 표»다.
      ⚠ pu-photos.html 의 WORKER_KINDS 와 짝이다 — 한쪽만 늘리면 값이 안 오거나
-       할 일이 안 뜬다(tests/cards-worker-box.test.js 가 둘을 견준다). */
+       할 일이 안 뜬다(tests/cards-worker-box.test.js 가 둘을 견준다).
+     ⚠ wcontract(근로계약서, 대표 지시 2026-09-02)는 «근로자와 사업주»의 것이다.
+       우리 사무소가 당사자인 contract 는 여기 없다 — 그것은 사람이 아니라 업체에 붙는다. */
   /* ⚠⚠ 근태표(timesheet)·급여서류(payslip)는 **일부러 빠져 있다** (대표 지시 2026-09-02
        「근태표등은 필요없다. 주로 푸른이알피에서 근로자 사건등에 대한 부분이다」).
      한 번 넣어 봤더니 근태표 한 장에 적힌 일곱 명이 근로자 정보함 목록 앞머리를
      통째로 먹었다 — 근태표에 이름이 있다는 것은 「그 달에 일했다」는 뜻일 뿐,
      우리가 그 사람 일을 맡았다는 뜻이 아니다.
      ⚠ 다시 넣지 말 것. 넣으면 사람이 아닌 것이 사람으로 목록에 쌓인다. */
-  var WORKER_DOC_KINDS = { idcard: 1, resident: 1, mandate: 1, consent: 1 };
+  var WORKER_DOC_KINDS = { idcard: 1, resident: 1, mandate: 1, consent: 1, wcontract: 1 };
 
   /* 실시간DB 열쇠로 쓸 수 있게 다듬는다. 한글은 그대로 쓸 수 있지만
      . # $ / [ ] 는 자리 이름에 못 쓴다 — 이름에 점이 든 경우가 실제로 있다. */

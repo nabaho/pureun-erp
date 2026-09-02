@@ -258,7 +258,10 @@ function photoCtx() {
   }).join('\n');
   const fns = ['readAnyField', 'tooSmall', 'smallCheckedOk', 'coFilledOk', 'coTodo',
     'readFailKind', 'readFailAdvice', 'canSendCoInfo', 'formTodo', 'chatTodo',
-    'canSendWorker', 'workerWhyNot', 'checkWhy', 'needsCheck']
+    'canSendWorker', 'workerWhyNot',
+     /* ⚠ 2026-09-02 💰 임금 확인 */
+    'wageRead', 'wageOkOf', 'wageBoxOn', 'wageNeedsOk', 
+    'checkWhy', 'needsCheck']
     .map(function (n) { return cutFn(APP, 'function ' + n + '('); }).join('\n');
   const ctx = { Math, Number, String, Object, Boolean, Date, RegExp, Array };
   vm.createContext(ctx);
@@ -345,12 +348,20 @@ test('★★★ 급여서류도 «아무에게도» 안 붙는다', () => {
   assert.equal(t.targets.length, 0, '★★★ 급여서류가 사람에게 붙었습니다');
 });
 
-test('★★ 받는 갈래는 «근로자 서류 넷»뿐이다', () => {
+test('★★ 받는 갈래에 근태표·급여서류가 «없다»', () => {
+  /* ⚠ 「정확히 넷」으로 못 박았다가 2026-09-02 에 깨졌다 — 다른 세션이 근로계약서
+     (wcontract)를 옳게 더했는데 그것이 걸렸다. 갈래는 앞으로도 늘 수 있다.
+     지켜야 하는 규칙은 «근태표·급여서류가 없다»는 것뿐이다. */
   const { F } = rig({});
-  const got = Object.keys(F.WORKER_DOC_KINDS).sort();
-  assert.deepEqual(got, ['consent', 'idcard', 'mandate', 'resident'],
-    '★★ 받는 갈래가 바뀌었습니다: ' + got.join(',') +
-    '\n  근태표·급여서류를 다시 넣으면 목록이 다시 덮입니다.');
+  const got = Object.keys(F.WORKER_DOC_KINDS);
+  ['timesheet', 'payslip'].forEach(function (k) {
+    assert.ok(!F.WORKER_DOC_KINDS[k],
+      '★★ ' + k + ' 가 되살아났습니다: ' + got.join(',') +
+      '\n  근태표 한 장에 적힌 이름들이 사람으로 목록에 쌓입니다(2026-09-02 대표 화면).');
+  });
+  ['idcard', 'resident', 'mandate', 'consent'].forEach(function (k) {
+    assert.ok(F.WORKER_DOC_KINDS[k], k + ' 가 사라졌습니다 — 민감 서류가 갈 곳을 잃습니다');
+  });
 });
 
 test('★★ 사진첩에 «조용히 잇는» 길이 없다 — 그것이 목록을 덮었다', () => {

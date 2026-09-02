@@ -596,9 +596,12 @@ test('hasOriginal은 fs 레코드와 기존 base64 레코드를 모두 처리한
 
 test('matchByFilename은 fs 원본이 붙은 레코드도 이미 첨부된 것으로 본다', () => {
   // fileExists는 base64만 보므로 fs 레코드에 두 번째 파일이 붙어버린다
-  const src = funcSource('matchByFilename');
+  // ⚠ 점수 매기는 부분이 _fnScore 로 떨어져 나갔다(일대일 짝짓기와 잫대를 함께 쓰려고).
+  //    규칙은 그대로다 — 겨누는 자리만 옆긴다.
+  const src = funcSource('_fnScore');
   assert.match(src, /hasOriginal\(r\)/);
   assert.ok(!/fileExists\(r\.id\)/.test(src));
+  assert.match(funcSource('matchByFilename'), /_fnScore\(/, '같은 잫대를 써야 합니다');
 });
 
 test('fsFindAttachTarget은 원본 없는 기존 레코드만 돌려준다', () => {
@@ -2269,4 +2272,31 @@ test('★★ 체크를 누른 채 끌면 지나간 줄이 모두 같은 상태�
   assert.match(source, /document\.addEventListener\('mouseup'/, '손을 떼면 끝나야 합니다');
   // 표를 다시 그릴 때마다 새로 묶는다
   assert.match(source, /_safe\(function\(\)\{ careerDragSel\(name\); \}\)/, '그릴 때마다 묶어야 합니다');
+});
+
+/* ===== ★★ OCR 칩이 세 줄로 접히던 것 (2026-09-02) ===== */
+
+test('★★ 툴바 OCR 칩 제목은 «한 줄»이다 — 접히면 툴바가 두 배가 된다', () => {
+  /* ⚠ 예전 규칙은 `.toolbar .ocr-zone b` 를 겨눴는데 마크업에 <b> 가 없어 «걸리지 않았다».
+     그래서 「위촉장·협약서 OCR 자동 등록」이 118px 안에서 세 줄로 접혔다.
+     실제로 그려지는 것(div)을 겨눠야 한다. */
+  assert.match(source, /\.toolbar \.ocr-zone \.r>div:last-child>div:first-child\{[\s\S]{0,120}white-space:nowrap/,
+    '⚠ 제목 줄을 한 줄로 못박아야 합니다');
+  assert.match(source, /\.toolbar \.ocr-zone \.r>div:last-child>div:nth-child\(3\)\{display:none\}/,
+    '툴바에서는 셋째 줄을 접습니다');
+});
+
+test('★★ 칩 글자는 짧게, 긴 설명은 툴팁으로', () => {
+  // 화면 이름이 이미 「위촉장」이다 — 칩에 또 적을 이유가 없다
+  assert.ok(!/>위촉장·협약서 OCR 자동 등록</.test(source), '⚠ 긴 이름을 되돌리지 말 것');
+  const chips = (source.match(/title="[^"]*끌어놓거나 클릭[^"]*">OCR 등록</g) || []);
+  assert.ok(chips.length >= 4, '칩마다 설명을 툴팁으로 달아야 합니다 (지금 ' + chips.length + ')');
+});
+
+test('★★ 「137/137」처럼 왼쪽 건수와 겹치는 말은 적지 않는다', () => {
+  const r = funcSource('renderCareer');
+  assert.match(r, /limit<rows\.length \? '<span class="pglimit-info">'/,
+    '⚠ 다 보여 줄 때는 왼쪽 「N건」과 같은 말이라 적지 않습니다');
+  // ⚠ 전체 건수(.cnt)는 숨기면 안 된다 — 원본없음 필터가 걸리면 그것만 남아 자료가 준 것처럼 보인다
+  assert.match(source, /class="cnt"/, '전체 건수는 늘 보여야 합니다');
 });

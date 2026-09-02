@@ -1,0 +1,190 @@
+/* 뉴스레터 편지 — 짓는 층(js/pu-news-tpl.js)과 발송기(functions/mail-send.js)를 «맞물려» 본다
+   ═══════════════════════════════════════════════════════════════════════════
+   ★ 이 파일의 급소는 「편지가 발송기를 통과하는가」다.
+     둘을 따로 보면 둘 다 통과하는데 실제로는 줄글 뭉치가 도착한다 —
+     2026-09-02 이전에 실제로 그런 상태였다(발송기가 표를 통째로 버렸다).
+     그래서 «지은 편지를 씻겨 본 뒤» 뼈대가 남아 있는지 확인한다. */
+
+const test = require('node:test');
+const assert = require('node:assert');
+const C = require('../js/pu-news-core.js');
+const T = require('../js/pu-news-tpl.js');
+const MS = require('../functions/mail-send.js');
+
+const 설정 = {
+  회사이름: '푸른노무법인', 회신주소: '370-6@daum.net', 꼬리한줄: '대표노무사 권형하'
+};
+
+function 회차자료(더할것) {
+  return Object.assign({
+    회차: C.회차('2026-08-31'),
+    안: {
+      news: [
+        { 갈래: '기사', 제목: '유급 난임치료휴가 2일에서 4일로', 링크: 'https://n.kr/a', 언론사: '매일노동뉴스' },
+        { 갈래: '기사', 제목: '마트배송 기사 표준계약서 마련', 링크: 'https://n.kr/b', 언론사: '매일노동뉴스' }
+      ],
+      policy: [
+        { 갈래: '법령', 제목: '근로기준법 시행령', 구분: '대통령령', 고친결: '일부개정',
+          공포일: '20260826', 시행일: '20260915', 부처: '고용노동부',
+          링크: 'https://www.law.go.kr/x' }
+      ],
+      case: [{ 갈래: '기사', 제목: '대법 퇴직금 분할 약정 무효', 링크: 'https://n.kr/c' }],
+      hr: []
+    },
+    우리글: '9월부터 유급 난임치료휴가가 2일에서 4일로 늘어납니다.',
+    범위: '자문중'
+  }, 더할것 || {});
+}
+
+/* ══════ ① 편지 뼈대 ══════ */
+
+test('받으신 뉴스레터의 뼈대가 그대로 있다', () => {
+  const 편 = T.편지짓기(회차자료(), 설정);
+  const h = 편.서식;
+  assert.ok(h.indexOf('WEEKLY NEWS LETTER') >= 0, '배너 글자가 없다');
+  assert.ok(h.indexOf('2026년 8월 5주차') >= 0, '회차가 배너에 없다');
+  assert.ok(h.indexOf('>Best<') >= 0, 'Best 딱지가 없다');
+  C.꼭지들.forEach((g) => {
+    assert.ok(h.indexOf(g.이름) >= 0, '차림표에 «' + g.이름 + '» 이 없다');
+  });
+});
+
+test('제목은 회차 이름을 그대로 쓴다 — 거래처가 회차로 찾는다', () => {
+  const 편 = T.편지짓기(회차자료(), 설정);
+  assert.equal(편.제목, '푸른노무법인 2026년 08월 5주차 주간뉴스레터 입니다.');
+});
+
+test('기사는 «제목·언론사·링크»까지다 — 본문은 옮기지 않는다', () => {
+  const 자료 = 회차자료();
+  자료.안.news[0].본문 = '기사 본문을 통째로 넣어 보았다';
+  const h = T.편지짓기(자료, 설정).서식;
+  assert.ok(h.indexOf('유급 난임치료휴가') >= 0);
+  assert.ok(h.indexOf('https://n.kr/a') >= 0);
+  assert.ok(h.indexOf('기사 본문을 통째로') < 0, '남의 기사 본문이 편지에 실렸다');
+});
+
+test('법령은 공포일·시행일·부처까지 싣는다 — 저작권 대상이 아니다', () => {
+  const h = T.편지짓기(회차자료(), 설정).서식;
+  assert.ok(h.indexOf('2026-08-26') >= 0, '공포일이 없다');
+  assert.ok(h.indexOf('2026-09-15') >= 0, '시행일이 없다');
+  assert.ok(h.indexOf('고용노동부') >= 0);
+});
+
+test('법령이 정책 꼭지 «맨 위»에 온다', () => {
+  const 자료 = 회차자료();
+  자료.안.policy.push({ 갈래: '기사', 제목: '정책 관련 신문 기사', 링크: 'https://n.kr/p' });
+  const h = T.편지짓기(자료, 설정).서식;
+  assert.ok(h.indexOf('근로기준법 시행령') < h.indexOf('정책 관련 신문 기사'));
+});
+
+test('빈 꼭지는 «아예 안 그린다» — 제목만 덩그러니 남으면 흉하다', () => {
+  const 자료 = 회차자료();
+  자료.안.case = [];
+  const h = T.편지짓기(자료, 설정).서식;
+  /* 차림표에는 남지만(늘 넷이다), 꼭지 «제목 덩이»로는 안 그려진다 */
+  const 큰제목 = new RegExp('font-size:19px[^>]*>판례·재결례');
+  assert.ok(!큰제목.test(h), '빈 꼭지가 제목만 남기고 그려졌다');
+  assert.ok(h.indexOf('판례·재결례') >= 0, '차림표에서는 사라지면 안 된다');
+});
+
+test('실을 것이 하나도 없으면 «만들지 않는다»', () => {
+  const 편 = T.편지짓기({ 회차: C.회차('2026-08-31'), 안: {}, 우리글: '' }, 설정);
+  assert.equal(편, null, '빈 뉴스레터를 보내면 그 주 한 통이 빈 껍데기가 된다');
+});
+
+test('우리 글만 있어도 편지가 된다', () => {
+  const 편 = T.편지짓기({ 회차: C.회차('2026-08-31'), 안: {}, 우리글: '이번 주 안내 말씀' }, 설정);
+  assert.ok(편 && 편.서식.indexOf('이번 주 안내 말씀') >= 0);
+});
+
+test('평문 몫을 «따로» 짓는다 — 서버가 표에서 뽑게 두면 뼈대가 글자로 쏟아진다', () => {
+  const 편 = T.편지짓기(회차자료(), 설정);
+  assert.ok(편.본문.indexOf('<') < 0, '평문에 태그가 섞였다: ' + 편.본문.slice(0, 120));
+  assert.ok(편.본문.indexOf('유급 난임치료휴가') >= 0);
+  assert.ok(편.본문.indexOf('https://n.kr/a') >= 0, '평문에서는 링크를 글자로 보여야 누른다');
+  assert.ok(편.본문.indexOf('[주간노동뉴스]') >= 0);
+});
+
+/* ══════ ② 위험한 값을 넣어도 새 나가지 않는가 ══════ */
+
+test('제목에 든 태그는 글자로 나간다 — 편지를 뚫지 못한다', () => {
+  const 자료 = 회차자료();
+  자료.안.news[0].제목 = '<script>alert(1)</script><b>굵게</b>';
+  const h = T.편지짓기(자료, 설정).서식;
+  assert.ok(h.indexOf('<script') < 0);
+  assert.ok(h.indexOf('&lt;script&gt;') >= 0, '태그가 글자로 감싸지지 않았다');
+});
+
+test('javascript: 링크는 «링크가 되지 않는다»', () => {
+  const 자료 = 회차자료();
+  자료.안.news[0].링크 = 'javascript:alert(1)';
+  const h = T.편지짓기(자료, 설정).서식;
+  assert.ok(h.toLowerCase().indexOf('javascript:') < 0, 'javascript: 주소가 편지에 남았다');
+  assert.ok(h.indexOf('유급 난임치료휴가') >= 0, '주소가 나빠도 제목은 남아야 한다');
+});
+
+test('우리 글에 든 태그도 글자로 나간다', () => {
+  const 자료 = 회차자료({ 우리글: '<img src=x onerror=alert(1)>안내' });
+  const h = T.편지짓기(자료, 설정).서식;
+  assert.ok(h.indexOf('onerror') < 0 || h.indexOf('&lt;img') >= 0);
+  assert.ok(h.indexOf('안내') >= 0);
+});
+
+/* ══════ ③ 급소 — 편지가 «발송기»를 통과하는가 ══════ */
+
+test('★ 지은 편지가 발송기를 지나도 뼈대가 남는다', () => {
+  const 편 = T.편지짓기(회차자료(), 설정);
+  const 씻긴것 = MS.sanitizeHtml(편.서식);
+
+  assert.ok(씻긴것.indexOf('<table') >= 0, '표가 버려졌다 — 편지가 줄글 뭉치로 도착한다');
+  assert.ok(씻긴것.indexOf('<td') >= 0, '칸이 버려졌다');
+  assert.ok(씻긴것.indexOf('WEEKLY NEWS LETTER') >= 0);
+  assert.ok(씻긴것.indexOf('2026년 8월 5주차') >= 0);
+  assert.ok(씻긴것.indexOf('>Best<') >= 0);
+  assert.ok(씻긴것.indexOf('background-color:#6f5a48') >= 0, '배너 빛깔이 버려졌다');
+  assert.ok(/padding:\s*\d/.test(씻긴것), '여백이 버려졌다 — 글자가 서로 붙는다');
+  assert.ok(씻긴것.indexOf('border-top:1px solid') >= 0, '테두리가 버려졌다');
+  assert.ok(씻긴것.indexOf('https://n.kr/a') >= 0, '기사 링크가 버려졌다');
+});
+
+test('★ 씻긴 뒤에도 기사 제목이 하나도 안 사라진다', () => {
+  const 자료 = 회차자료();
+  const 씻긴것 = MS.sanitizeHtml(T.편지짓기(자료, 설정).서식);
+  [].concat(자료.안.news, 자료.안.case).forEach((x) => {
+    assert.ok(씻긴것.indexOf(x.제목) >= 0, '제목이 사라졌다: ' + x.제목);
+  });
+});
+
+/* ══════ ④ (광고) 표기 — 명단을 넓히면 저절로 ══════ */
+
+test('명단이 자문중이면 (광고) 가 안 붙고, 넓히면 붙는다', () => {
+  const 좁게 = T.편지짓기(회차자료({ 범위: '자문중' }), 설정);
+  const 넓게 = T.편지짓기(회차자료({ 범위: '명함전부' }), 설정);
+  assert.ok(!/^\(광고\)/.test(좁게.제목));
+  assert.ok(/^\(광고\) /.test(넓게.제목));
+  assert.ok(넓게.서식.indexOf('광고성 정보') >= 0, '꼬리에도 알려야 한다');
+});
+
+test('수신거부 길은 «언제나» 꼬리에 있다', () => {
+  ['자문중', '자문끝', '명함전부'].forEach((범위) => {
+    const h = T.편지짓기(회차자료({ 범위: 범위 }), 설정).서식;
+    assert.ok(h.indexOf('받지 않으시려면') >= 0, 범위 + ' 에서 수신거부 안내가 없다');
+  });
+});
+
+/* ══════ ⑤ 배너 그림 — 넣으면 나가고, 남의 것이면 안 나간다 ══════ */
+
+test('우리 홈페이지 배너 그림은 발송기를 통과한다', () => {
+  const 설 = Object.assign({}, 설정, {
+    배너그림: 'https://nabaho.github.io/pureunall/img/newsletter-banner.png'
+  });
+  const 씻긴것 = MS.sanitizeHtml(T.편지짓기(회차자료(), 설).서식);
+  assert.ok(씻긴것.indexOf('newsletter-banner.png') >= 0, '우리 배너 그림이 버려졌다');
+  assert.ok(/<img[^>]*width=/.test(씻긴것), '그림 크기가 버려지면 편지 폭을 넘는다');
+});
+
+test('남의 서버 그림은 넣어도 안 나간다 — 열람 시각이 새 나간다', () => {
+  const 설 = Object.assign({}, 설정, { 배너그림: 'https://남의서버.example.com/b.png' });
+  const 씻긴것 = MS.sanitizeHtml(T.편지짓기(회차자료(), 설).서식);
+  assert.ok(씻긴것.indexOf('example.com') < 0, '바깥 그림이 편지에 남았다');
+});
