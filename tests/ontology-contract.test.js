@@ -169,3 +169,29 @@ test('관계망 검증은 Firebase 금지 열쇠와 민감 필드를 거부한�
   assert.ok(r.errors.some(x => x.startsWith('firebaseKey:')));
   assert.ok(r.errors.some(x => x.startsWith('sensitiveField:')));
 });
+
+test('4단계 업체 360은 이름으로 찾고 모든 직접 관계를 유형별로 묶는다', () => {
+  const data = {
+    companies:[{id:'co1',name:'가나다산업'}],
+    user_accounts:[{sid:'P-001',name:'담당자'}],
+    contracts:[{id:'CT1',companyId:'co1',companyName:'가나다산업',managerMain:'P-001'}],
+    cases:[{id:'CA1',companyId:'co1',companyName:'가나다산업'}],
+    finance_invoice:[{id:'IV1',companyId:'co1',companyName:'가나다산업'}]
+  };
+  const report = O.auditIntegrated(data, {}, {});
+  const hits = O.searchEntities(report, '가나다', {type:'Organization'});
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].key, O.canonicalId('Organization','co1'));
+  const view = O.organization360(report, 'co1');
+  assert.equal(view.ok, true);
+  assert.ok(view.groups.Contract.some(x => x.id === 'CT1'));
+  assert.ok(view.groups.Case.some(x => x.id === 'CA1'));
+  assert.ok(view.groups.Invoice.some(x => x.id === 'IV1'));
+  assert.ok(view.connections.every(x => x.confidence === 1));
+});
+
+test('업체 360 조회는 서버 쓰기 없이 화면에 연결돼 있다', () => {
+  assert.match(erp, /O\.searchEntities\(report,query/);
+  assert.match(erp, /O\.organization360\(report,selected\)/);
+  assert.match(erp, /업체 360° 관계 조회/);
+});

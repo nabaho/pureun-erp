@@ -125,6 +125,12 @@
     return [];
   }
   function clean(v){ return String(v == null ? '' : v).trim(); }
+  function recordLabel(r,type,id){
+    r=r||{};
+    if(type==='Organization')return clean(r.name||r.companyName||r.company||id);
+    if(type==='Person')return clean(r.name||r.userName||r.sid||id);
+    return clean(r.title||r.name||r.companyName||r.company||r.no||r.filename||r.월||id);
+  }
   function normName(v){ return clean(v).toLowerCase().replace(/[\s()（）·.,_\-주식회사㈜]/g,''); }
   function normBiz(v){ return clean(v).replace(/\D/g,''); }
   /* encodeURIComponent가 점(.)은 남기므로 Firebase 열쇠 금지문자까지 한 번 더 막는다. */
@@ -177,7 +183,7 @@
         var id = clean((store==='user_accounts'||store==='user_dir') ? (r.sid||r.id) : r.id);
         if(!id){ issue(issues,'high','missing_id',store,'',store+' '+(pos+1)+'번째', '관계를 고정할 ID가 없습니다.'); return; }
         if(seen[id]) issue(issues,'high','duplicate_id',store,id,id,'같은 ID가 두 번 이상 존재합니다.');
-        seen[id] = 1; indexes[store][id] = r; entities[canon(type,id)] = { type:type, store:store, id:id };
+        seen[id] = 1; indexes[store][id] = r; entities[canon(type,id)] = { type:type, store:store, program:'erp', id:id, label:recordLabel(r,type,id) };
       });
     });
 
@@ -349,6 +355,29 @@
       severity:sev,entities:graph.entities,edges:dedup,issues:issues,coverage:coverage,coverageCount:ready,programCount:Object.keys(PROGRAMS).length,readOnly:true});
   }
 
+  /* 4단계 조회 엔진. 화면에 이미 올라온 관계망만 검색하며 서버를 다시 읽거나 쓰지 않는다. */
+  function searchEntities(report,query,options){
+    report=report||{};options=options||{};var q=clean(query).toLowerCase(),type=clean(options.type),limit=Math.max(1,Math.min(200,Number(options.limit)||30));
+    return Object.keys(report.entities||{}).map(function(key){var e=report.entities[key]||{};return {key:key,id:e.id,type:e.type,label:clean(e.label||e.id),program:clean(e.program||'erp'),source:clean(e.source||e.store)};})
+      .filter(function(e){return (!type||e.type===type)&&(!q||(e.label+' '+e.id).toLowerCase().indexOf(q)>=0);})
+      .sort(function(a,b){return a.label.localeCompare(b.label,'ko');}).slice(0,limit);
+  }
+  function entityConnections(report,entityKey){
+    report=report||{};var entities=report.entities||{},rows=[];
+    (report.edges||[]).forEach(function(e){
+      var other=null,direction='out';if(e.subject===entityKey)other=e.object;else if(e.object===entityKey){other=e.subject;direction='in';}else return;
+      var n=entities[other]||{};rows.push({edgeId:e.id,predicate:e.predicate,direction:direction,confidence:Number(e.confidence),
+        key:other,id:n.id||other,type:n.type||'Unknown',label:clean(n.label||n.id||other),program:clean(n.program||'erp'),sourceStore:e.sourceStore,sourceId:e.sourceId});
+    });
+    return rows.sort(function(a,b){return (a.type+a.label).localeCompare(b.type+b.label,'ko');});
+  }
+  function organization360(report,organizationId){
+    var key=clean(organizationId);if(key.indexOf('Organization:')!==0)key=canon('Organization',key);
+    var org=report&&report.entities&&report.entities[key];if(!org)return {ok:false,key:key,organization:null,total:0,groups:{},connections:[]};
+    var connections=entityConnections(report,key),groups={};connections.forEach(function(x){if(!groups[x.type])groups[x.type]=[];groups[x.type].push(x);});
+    return {ok:true,key:key,organization:{id:org.id,label:clean(org.label||org.id),program:clean(org.program||'erp')},total:connections.length,groups:groups,connections:connections};
+  }
+
   /* 3단계 파생 색인 꾸러미. 확실한 관계(confidence=1)만 싣고, 원본 내용과
      사람·업체 이름(label)은 싣지 않는다. 서버 쓰기는 이 모듈의 책임이 아니다. */
   var VISIBILITY = {
@@ -412,6 +441,7 @@
   }
 
   return { VERSION:VERSION, TERMS:TERMS, PROGRAMS:PROGRAMS, STORE_TYPES:STORE_TYPES, READ_ADAPTERS:READ_ADAPTERS,
-    audit:audit, auditIntegrated:auditIntegrated, getReadPlan:getReadPlan, buildSnapshot:buildSnapshot, validateSnapshot:validateSnapshot, auditPrograms:auditPrograms,
+    audit:audit, auditIntegrated:auditIntegrated, getReadPlan:getReadPlan, searchEntities:searchEntities, entityConnections:entityConnections,
+    organization360:organization360, buildSnapshot:buildSnapshot, validateSnapshot:validateSnapshot, auditPrograms:auditPrograms,
     canonicalId:canon, sourceCanonicalId:sourceCanon, normalizeCompanyName:normName, normalizeBusinessNumber:normBiz };
 });
