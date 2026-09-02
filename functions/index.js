@@ -2077,7 +2077,11 @@ async function 글자로받기(url) {
   return buf.toString("utf8");
 }
 
-async function 브리핑거리모으기() {
+/* 법령을 «몇 건까지» 가져올지 받는다.
+   ★ 여기서 5건에 자르면, 뉴스레터가 8건까지 싣겠다 해도 8건이 될 수 없다 —
+     한 주치는 하루치보다 많이 실어야 하는데 여기가 목을 조른다. */
+async function 브리핑거리모으기(법령몇) {
+  const 몇 = 법령몇 || 5;
   let 뉴스 = [], 법령 = [];
   try {
     뉴스 = 브리핑부품.뉴스읽기(await 글자로받기(브리핑샘.뉴스), 브리핑샘.뉴스이름);
@@ -2085,11 +2089,11 @@ async function 브리핑거리모으기() {
   for (const w of 브리핑샘.법령말) {
     try {
       const xml = await 글자로받기("https://www.law.go.kr/DRF/lawSearch.do?OC=test"
-        + "&target=law&type=XML&sort=ddes&display=5&query=" + encodeURIComponent(w));
+        + "&target=law&type=XML&sort=ddes&display=" + 몇 + "&query=" + encodeURIComponent(w));
       법령 = 법령.concat(브리핑부품.법령읽기(xml));
     } catch (e) { console.warn("[브리핑] 법령(" + w + ")을 못 읽었습니다", e.message); }
   }
-  return { 뉴스: 뉴스, 법령: 브리핑부품.법령추리기(법령, 5) };
+  return { 뉴스: 뉴스, 법령: 브리핑부품.법령추리기(법령, 몇) };
 }
 
 /* 새 홈페이지에서 한 쪽을 읽어 온다.
@@ -2169,7 +2173,7 @@ exports.weeklyNewsBrief = functions
     const 주간뉴스 = 브리핑부품.주간뉴스고르기(모아둔것, 오늘, 7);
     let 법령 = [];
     try {
-      법령 = (await 브리핑거리모으기()).법령;
+      법령 = (await 브리핑거리모으기(8)).법령;   /* 한 주치라 하루치(5건)보다 넉넉히 */
     } catch (e) { console.warn("[브리핑] 법령을 못 읽었습니다", e.message); }
 
     const 글 = 브리핑부품.주간브리핑(주간뉴스, 법령, 오늘, 7);
