@@ -96,7 +96,12 @@ const allowTop = ['systemAlerts','systemBackups','systemBackupsIndex','systemRes
   /* 2026-08-29 사진 변경 이력을 «이 PC 안»에서 «모두가 보는 공용 자리»로 옮겼다.
      답해야 할 때 그 사람 PC 에만 있는 기록은 없는 것과 같다. 회차 이력과 같은 모양 —
      남기는 것은 직원 누구나, 지우는 것은 총괄관리자만. */
-  'scal_photoLog'];
+  'scal_photoLog',
+  /* 2026-09-02 경력관리 «직원 공개용 사본» — 대표가 경력관리 세 통(위촉장·자격·학력)만
+     골라 올린 것. 읽기는 재직 직원 전원, 쓰기는 관리자(대표)만.
+     ⚠ 대표 칸(kcareer/{uid})을 여는 대신 사본을 둔 까닭: 그 칸에는 실적·비용·개인정보·
+       신분증이 함께 들어 있어 통째로 열면 「경력관리만」 보여 줄 수가 없다. */
+  'kcareer_pub'];
 
 const keys = Object.keys(R);
 const removed = baseTop.filter(function (k) { return keys.indexOf(k) < 0; });

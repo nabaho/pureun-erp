@@ -333,6 +333,15 @@ rules.puphotos = {
     blobs:  { $year: { $id: { '.read': `(${LOGIN}) && root.child('puphotos').child('u').child($uid).child('items').child($year).child($id).child('shareWith').child(auth.uid).exists()` } } },
     thumbs: { $year: { $id: { '.read': `(${LOGIN}) && root.child('puphotos').child('u').child($uid).child('items').child($year).child($id).child('shareWith').child(auth.uid).exists()` } } }
   } },
+  /* ── 열람 기록 (대표 지시 2026-09-01) ──
+     민감 서류 원본을 «누가 언제» 열었나. 근로자 신분증을 담기 시작하면 이 물음에
+     답할 수 있어야 한다(급여데이터함에는 이미 있다 — paydata/access_log).
+     ⚠ **읽기는 총괄관리자만.** 「누가 누구 서류를 봤나」는 그 자체로 민감하다 —
+       이름 없는 자리($other)에 두면 전 직원이 읽는다.
+     ⚠ **아무도 못 쓴다(.write:false).** 적는 것은 서버 함수(photoView) 하나뿐이고
+       그것은 Admin SDK 라 규칙을 지나지 않는다. 화면에서 쓸 길을 열어 두면
+       **기록을 꾸며 낼 수 있다** — 꾸밀 수 있는 기록은 기록이 아니다. */
+  access_log: { '.read': `auth != null && ${ADMIN}`, '.write': false },
   customKinds: { '.read': LOGIN, '.write': LOGIN },
   kindLabels:  { '.read': LOGIN, '.write': `(${LOGIN}) && ${ADMIN}` },
   kindHidden:  { '.read': LOGIN, '.write': `(${LOGIN}) && ${ADMIN}` },
@@ -486,6 +495,19 @@ rules.pu_mailseen = {
 };
 rules.homepage = { '.read': `auth != null && ${ADMIN}`, '.write': `auth != null && ${ADMIN}` };
 rules.kcareer  = { $uid: { '.read': 'auth != null && auth.uid === $uid', '.write': 'auth != null && auth.uid === $uid' } };
+
+/* ══ 경력관리 «직원 공개용 사본» ═══════════════════════════════════════
+   대표 지시 2026-09-02: 「경력관리 이부분만 다른 직원들이 볼 수 있게」 → 방식 「나」 승인.
+
+   ★ 왜 사본을 따로 두나 — 대표 칸(kcareer/{uid})을 직원에게 열어 주면 경력관리만이
+     아니라 실적·비용·개인정보·신분증까지 «같은 칸»이라 함께 열린다.
+     그래서 대표가 «경력관리 세 통만» 골라 올린 사본을 두고, 직원은 그것만 읽는다.
+
+   ⚠ 읽기: 재직 직원 전원. 쓰기: 관리자(대표)만 —
+     직원이 쓸 수 있으면 대표 경력 기록을 남이 고칠 수 있다.
+   ⚠ 담는 것은 위촉장·자격·학력 세 통뿐이다(앱의 kcPubStores 가 정한다).
+     여기에 개인정보·계좌·신분증·비용을 올리는 코드를 만들지 말 것. */
+rules.kcareer_pub = { '.read': STAFF, '.write': `auth != null && ${ADMIN}` };
 
 /* ══ 전자서명 ══════════════════════════════════════════════════════════
    ⚠ 근로자는 링크로 들어와 «암호화된 채로» 낸다. meta 는 그래서 열려 있다.

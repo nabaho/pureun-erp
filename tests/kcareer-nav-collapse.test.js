@@ -276,3 +276,40 @@ test('★ 상위 단추의 여백을 «한 곳»에서만 정한다 — 두 곳�
   const 덮개 = bare.lastIndexOf('.nav-group>.g-title{background:linear-gradient');
   assert.ok(덮개 > 0 && 자리 > 덮개, '★ 덮는 규칙보다 «뒤»에 있어야 이깁니다');
 });
+
+/* ══════ ⑨ 상위 단추는 «자기 칸 안에서만» 움직인다 ══════
+   대표 제보 2026-09-01: 「상위대시보드가 아래로 내려오면 안된다 —
+   상위 대시보드들만 움직인다」. 화면에서 「경력관리」가 하위 목록 «아래»에 있었다.
+
+   까닭: initGroupDrag 이 #nav 를 기준으로 insertBefore 했다. 상위 단추는 .nav-tops
+   «안»에 있으므로, 끌어 놓는 순간 그 칸 밖으로 튀어나가 하위 목록 뒤에 붙었다. */
+test('★★ 상위 순서 바꾸기는 «.nav-tops 안»에서만 논다 — #nav 기준이면 칸 밖으로 튄다', () => {
+  const i = bare.indexOf('\nfunction initGroupDrag(');
+  const fn = bare.slice(i, bare.indexOf('\nfunction ', i + 20));
+  assert.match(fn, /querySelector\('\.nav-tops'\)/,
+    '★ #nav 를 기준으로 잡으면 상위 단추가 .nav-tops 밖으로 나갑니다');
+  assert.ok(!/getElementById\('nav'\)/.test(fn),
+    '★ #nav 기준이 남아 있습니다 — 그것이 이 사고의 원인이었습니다');
+});
+
+test('★★ 하위 목록 칸이 «상위 차례»에 끼어들지 않는다', () => {
+  /* 하위 목록 칸도 .nav-group[data-g] 다. .nav-tops 로 좁히면 자연히 빠진다 —
+     안 빼면 setGroupOrder 에 하위 칸이 섞여 담긴 차례가 망가진다. */
+  const i = bare.indexOf('\nfunction initGroupDrag(');
+  const fn = bare.slice(i, bare.indexOf('\nfunction ', i + 20));
+  const 자리 = fn.indexOf(".nav-tops");
+  const 덩이 = fn.indexOf("querySelectorAll('.nav-group[data-g]')");
+  assert.ok(자리 > 0 && 덩이 > 자리, '★ 덩이를 .nav-tops 안에서 세야 합니다');
+});
+
+test('★★ 하위 순서는 «감싼 칸의 data-g» 로 담는다 — 글자에서 떼면 이름이 빈다', () => {
+  /* 옆줄이 바뀌면서 하위 목록에는 제목 줄이 없어졌다(상위 단추가 그 일을 한다).
+     그래서 previousElementSibling 의 글자로 이름을 떼면 «빈 문자열»이 되고,
+     하위 순서가 이름 없는 칸에 담겨 다시 열면 사라졌다(실측 2026-09-01). */
+  const i = bare.indexOf('\nfunction initNavDrag(');
+  const fn = bare.slice(i, bare.indexOf('\nfunction ', i + 20));
+  assert.match(fn, /closest\('\.nav-group\[data-g\]'\)/, '★ 감싼 칸에서 이름을 얻어야 합니다');
+  assert.match(fn, /box&&box\.dataset\.g/);
+  assert.match(fn, /previousElementSibling/,
+    '★ 글자에서 떼는 길은 즐겨찾기 칸(data-g 가 없다)을 위해 남겨야 합니다');
+});

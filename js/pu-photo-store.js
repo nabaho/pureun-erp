@@ -1089,10 +1089,31 @@
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     if (!uid) return Promise.reject(new Error('담당자를 고르지 않았습니다'));
     /* 담당자가 바뀌면 **앞사람의 점검 기록은 지운다** — 앞사람이 본 것을 뒷사람이
-       본 것으로 칠 수 없다. 새 담당자에게는 곧바로 알림이 뜬다. */
-    return deps.db.ref(retentionPath()).set({
+       본 것으로 칠 수 없다. 새 담당자에게는 곧바로 알림이 뜬다.
+       ⚠ set 이 아니라 **update** 다(2026-09-01). set 으로 통째로 덮으면 같은 자리에
+         있는 **서류별 보유기한(months)이 함께 날아간다** — 담당자를 바꿨을 뿐인데
+         신분증 3개월이 조용히 사라지는 셈이다. 비울 것만 콕 집어 비운다. */
+    return deps.db.ref(retentionPath()).update({
       uid: uid, name: name || '', lastAt: 0, lastBy: '', setAt: Date.now()
     });
+  }
+
+  /* ── 서류별 보유기한(달) (대표 지시 2026-09-01) ──
+     「증빙 5년 / 나머지 1년」 둘로는 근로자 서류를 못 담는다 —
+     신분증·등본은 가장 짧게, 개인정보 동의서는 가장 길게 두어야 한다.
+     ⚠ 처음 값은 화면(KEEP_MONTHS_BY_KIND)이 들고 있다. 여기 담기는 것은
+       «고친 것»뿐이라, 비워 두면 처음 값 그대로 돈다. */
+  function setKeepMonths(map) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var clean = {};
+    Object.keys(map || {}).forEach(function (k) {
+      var n = Number(map[k]);
+      /* ⚠ 말 안 되는 값은 안 담는다 — 글자·음수·터무니없이 긴 것(100년 넘게).
+         한 글자만 잘못 들어가도 사진이 통째로 「지난 것」이 되거나 영영 안 지워진다. */
+      if (!/^[a-z]+$/.test(k) || !isFinite(n) || n < 0 || n > 1200) return;
+      clean[k] = Math.round(n);
+    });
+    return deps.db.ref(retentionPath() + '/months').set(clean);
   }
 
   function markRetentionChecked(name) {
@@ -2146,6 +2167,7 @@
     setKindHidden: setKindHidden,
     getRetention: getRetention,
     setRetentionOwner: setRetentionOwner,
+    setKeepMonths: setKeepMonths,
     markRetentionChecked: markRetentionChecked,
     retentionPath: retentionPath,
     addCustomKind: addCustomKind,

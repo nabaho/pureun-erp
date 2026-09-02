@@ -68,6 +68,36 @@ function isSensitiveItem(item) {
   return !!(item && item.read && isSensitiveKind(item.read.kind));
 }
 
+/* ══════ 열람 기록 (대표 지시 2026-09-01 · 검토안 Ⅱ-4) ══════
+   근로자 신분증·주민등록등본을 담기 시작하면 「누가 언제 그 사람 서류를 열었나」에
+   답할 수 있어야 한다. 급여데이터함에는 이미 있는데(paydata/access_log) 사진첩에는
+   없었다.
+
+   ★ **여기가 유일한 문**이라 여기서 적는다. 민감 서류 원본은 반드시 이 함수를
+     거친다(화면에는 주소가 안 적혀 있다). 화면에서 적으면 화면을 안 거치고
+     부르는 길로 빠져나갈 수 있다 — 기록은 «지나갈 수밖에 없는 자리»에 둔다.
+   ⚠ **사유는 안 묻는다.** 급여데이터함은 「남의 자리를 들여다볼 때」라 사유를 받지만,
+     여기는 볼 자격이 있는 사람이 제 일을 하는 것이다. 한 장 열 때마다 사유를 받으면
+     사람이 앱을 피해 다른 길(카톡)로 간다 — 그게 더 나쁘다.
+   ⚠ 기록이 실패해도 **사진은 내준다.** 기록 때문에 일이 막히면 안 된다.
+     대신 서버 기록(console.error)에는 남긴다. */
+function logRow(o) {
+  o = o || {};
+  return {
+    at: Date.now(),
+    byUid: String(o.byUid || ""),
+    byName: String(o.byName || "").slice(0, 40),
+    as: String(o.as || ""),              // owner | admin | shared — 무슨 자격으로 봤나
+    owner: String(o.owner || ""),        // 누구 자리의 사진인가
+    year: String(o.year || ""),
+    id: String(o.id || ""),
+    kind: String(o.kind || ""),          // 어떤 서류였나(신분증·계약서…)
+    who: String(o.who || "").slice(0, 40) // 누구의 서류인가(판독이 읽은 이름)
+  };
+}
+/* 사진첩 열람 기록 자리 — 한 줄씩 덧붙인다(고칠 수 없다) */
+function logPath(id) { return "puphotos/access_log/" + id; }
+
 /* 창고 파일 경로 — js/pu-photo-store.js 의 filePath 와 **반드시 같아야 한다**.
    어긋나면 서버가 없는 파일을 찾아 「원본이 없습니다」가 된다. */
 const BUCKET_ROOT = "pu_photos";
@@ -153,5 +183,6 @@ function clearPaths(hits, dbRoot) {
 module.exports = {
   SENSITIVE_KINDS, BUCKET_ROOT,
   isSensitiveKind, isSensitiveItem,
-  storagePath, badPart, validate, canSee, decide, sweep, clearPaths
+  storagePath, badPart, validate, canSee, decide, sweep, clearPaths,
+  logRow, logPath
 };

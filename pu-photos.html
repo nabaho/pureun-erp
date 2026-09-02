@@ -19,7 +19,7 @@
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <!-- ?v= 저장 층을 고치면 반드시 올린다 — 캐시에 묵으면 고친 것이 통째로 묻힌다. -->
-<script src="js/pu-photo-store.js?v=21"></script>
+<script src="js/pu-photo-store.js?v=22"></script>
 <!-- 주민번호 가림 — 계산 층과, 급여데이터함과 나눠 쓰는 긋기 층 -->
 <script src="js/pu-rrn-mask.js?v=4"></script>
 <script src="js/pu-rrn-mask-ui.js?v=3"></script>
@@ -1884,6 +1884,19 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
        <div class="card">
          <div class="row" style="border:none"><span>🗂 보유기간이 지난 사진</span><b id="oldText">-</b></div>
          <p class="mignote">증빙으로 쓴 사진은 <b>5년</b>, 나머지는 <b>1년</b>입니다. <b>자동으로 지우지 않습니다.</b></p>
+         <!-- ── 서류마다 다른 보유기한 (대표 지시 2026-09-01) ──
+              「증빙 5년 / 나머지 1년」 둘로는 근로자 서류를 못 담는다.
+              ⚠ 숫자를 **화면에서 고칠 수 있게** 둔다 — 법이 바뀌거나 판단이 서면
+                코드를 고치러 오지 않아도 되게. 처음 값은 코드가 들고 있다. -->
+         <div id="keepBox" style="border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin:8px 0">
+           <div style="font-size:12px;font-weight:800;color:var(--sub);margin-bottom:5px">서류마다 다른 보유기한</div>
+           <div id="keepRows"></div>
+           <p class="mignote" style="margin:6px 0 0">신분증·주민등록등본은 <b>가장 짧게</b>,
+             개인정보 동의서는 <b>가장 길게</b> 둡니다 — 동의서가 없으면 나머지를 처리한
+             근거가 사라집니다.</p>
+           <button class="wide" id="keepSave" onclick="saveKeepMonths()"
+             style="background:#fff;color:var(--blue);border:1px solid var(--blue);margin-top:7px">보유기한 저장</button>
+         </div>
          <div class="row" style="border:none"><span>점검 담당자</span><b id="retWho">-</b></div>
          <!-- 못 읽었을 때 이유를 여기 적는다 — 「-」만 보이면 원인을 못 짚는다 -->
          <div id="retWhy" style="display:none;border:1px solid #fecaca;background:#fef2f2;color:#991b1b;border-radius:9px;padding:8px 10px;font-size:12px;line-height:1.6;margin:6px 0"></div>
@@ -15634,9 +15647,16 @@ let retError = '';    // 못 읽었을 때 그 이유 — 화면이 직접 말�
 function loadRetention() {
   return PuPhotoStore.getRetention().then(function (v) {
     retInfo = v || {};
+    /* ── 서류마다 고쳐 둔 보유기한(달) (2026-09-01) ──
+       ⚠ 못 읽거나 값이 이상하면 **처음 값으로 물러선다**(keepMonthsOf).
+         보유기간을 못 읽었다고 앱이 멈추거나, 0 으로 읽혀 사진이 죄다
+         「지난 것」이 되면 안 된다. */
+    keepMonthsOverride = (retInfo && retInfo.months && typeof retInfo.months === 'object')
+      ? retInfo.months : {};
     retError = '';
     renderRetBox();
     renderRetNote();
+    renderKeepRows();
   }).catch(function (e) {
     /* ⚠ 못 읽어도 사진첩은 그대로 쓴다. 다만 **조용히 넘기지 않는다** —
        예전에는 담당자 칸이 그냥 「-」로만 보여서, 대표님이 규칙을 두 번 게시하고도
@@ -15646,6 +15666,58 @@ function loadRetention() {
     retError = String((e && e.message) || e);
     renderRetBox();
   });
+}
+
+/* ── 서류마다 다른 보유기한을 «고치는» 칸 (대표 지시 2026-09-01) ──
+   ⚠ 여기 나오는 것은 **종류가 정한 기한이 있는 서류만**이다. 그 밖은 예전 그대로
+     (증빙 5년 / 나머지 1년)라 여기서 건드릴 것이 없다 — 못 고치는 칸을 내놓으면
+     「왜 안 바뀌지」가 된다. */
+const KEEP_EDIT_ORDER = ['idcard', 'resident', 'mandate', 'contract', 'cms', 'consent'];
+function renderKeepRows() {
+  const box = $('keepRows');
+  if (!box) return;
+  box.innerHTML = KEEP_EDIT_ORDER.map(function (k) {
+    const now = keepMonthsOf(k);
+    return '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;' +
+      'border-top:1px solid var(--line);font-size:12.5px">' +
+      '<span style="flex:1">' + esc(READ_LABEL[k] || k) + '</span>' +
+      '<input type="number" min="0" max="1200" step="1" class="keepM" data-k="' + esc(k) + '"' +
+      ' value="' + (now === null ? '' : now) + '"' +
+      ' style="width:64px;text-align:right;border:1px solid var(--line);border-radius:7px;' +
+      'padding:4px 6px;font:inherit;font-size:12.5px">' +
+      '<span style="color:var(--sub);font-size:11.5px;width:44px">개월</span></label>';
+  }).join('');
+}
+
+async function saveKeepMonths() {
+  const btn = $('keepSave');
+  const rows = Array.prototype.slice.call(document.querySelectorAll('#keepRows .keepM'));
+  const map = {};
+  for (const el of rows) {
+    const n = Number(el.value);
+    /* ⚠ 사람이 잘못 적었으면 **저장하기 전에** 막는다. 0 으로 들어가면 그 종류
+       사진이 통째로 「지난 것」이 되고, 그 화면에서 지우면 되돌릴 수 없다. */
+    if (el.value === '' || !isFinite(n) || n < 0 || n > 1200) {
+      alert('「' + (READ_LABEL[el.getAttribute('data-k')] || '') + '」의 개월 수가 이상합니다.\n' +
+        '0 부터 1200(100년) 사이의 숫자로 적어 주세요.');
+      el.focus();
+      return;
+    }
+    map[el.getAttribute('data-k')] = Math.round(n);
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '저장하는 중…'; }
+  try {
+    await PuPhotoStore.setKeepMonths(map);
+    keepMonthsOverride = map;
+    toast('보유기한을 저장했습니다');
+    renderKeepRows();
+    renderOldBox();          // 기한이 바뀌면 「지난 사진」 수도 바뀐다
+  } catch (e) {
+    console.warn('[보유기한]', e);
+    alert('저장하지 못했습니다 — ' + ((e && e.message) || e) +
+      '\n총괄관리자만 고칠 수 있습니다.');
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '보유기한 저장'; }
 }
 
 /* 점검할 때가 됐나 — 한 번도 안 했으면 바로 할 때다 */
@@ -15782,6 +15854,36 @@ function goRetCheck() {
 const KEEP_USED_YEARS = 5;   // 증빙으로 쓴 사진
 const KEEP_PLAIN_YEARS = 1;  // 나머지
 
+/* ── 서류마다 다른 보유기한 (대표 지시 2026-09-01 · 검토안 Ⅱ) ──
+   「증빙 5년 / 나머지 1년」 둘로는 근로자 서류를 못 담는다.
+
+   ★ **신분증·주민등록등본은 가장 짧게, 개인정보 동의서는 가장 길게.**
+     거꾸로처럼 보이지만 이것이 맞다 —
+     · 신분증·등본은 «확인용»이다. 신고가 끝나면 들고 있을 까닭이 없고,
+       들고 있으면 지키는 것이 아니라 짐이다. 새면 가장 크게 다친다.
+     · 동의서는 «근거»다. 이것이 없으면 **나머지를 처리한 근거 자체가 사라진다.**
+       그 동의로 한 일보다 오래 남아 있어야 한다.
+   ⚠ 달(月)로 센다 — 「3개월」을 해(年)로는 적을 수 없다.
+   ⚠ 여기 없는 종류는 예전 그대로(증빙 5년 / 나머지 1년)다.
+   ⚠ 숫자는 설정에서 고칠 수 있다(puphotos/retention/months). 여기 것은 «처음 값»이다 —
+     법이 바뀌거나 대표 판단이 서면 화면에서 바꾼다. */
+const KEEP_MONTHS_BY_KIND = {
+  payslip: 0,                       // 받지 않기로 한 서류 — 지금 즉시
+  idcard: 3, resident: 3,           // 확인용 — 일이 끝나면 곧
+  contract: 60, cms: 60, mandate: 60,   // 5년
+  consent: 120                      // 가장 길게 — 나머지를 처리한 근거다
+};
+/* 설정에서 고친 값(달). 못 읽으면 처음 값으로 물러선다 — 보유기간을 못 읽었다고
+   앱이 멈추면 안 된다. */
+let keepMonthsOverride = {};
+function keepMonthsOf(kind) {
+  const k = String(kind || '');
+  if (!k) return null;
+  const o = keepMonthsOverride[k];
+  if (o !== undefined && o !== null && isFinite(o) && Number(o) >= 0) return Number(o);
+  return KEEP_MONTHS_BY_KIND[k] === undefined ? null : KEEP_MONTHS_BY_KIND[k];
+}
+
 function isUsed(meta) {
   return !!(meta && meta.used && meta.used.at);
 }
@@ -15830,8 +15932,20 @@ function usedWarnText(ids) {
 function keepUntil(meta) {
   const m = meta || {};
   const r = m.read || {};
-  if (r.kind === 'payslip') return 0;              // 보관하지 않는 서류 — 지금 즉시
-  const y = new Date();
+  /* ── 종류가 정한 기한이 «먼저»다 (2026-09-01) ──
+     ⚠ 증빙 표시(used)보다 앞에 둔다. 신분증을 어딘가에 증빙으로 썼다고 5년을 두면
+       가장 위험한 자료를 가장 오래 들고 있는 것이 된다 — 그 반대로 가려는 것이다.
+     ⚠ 기산점은 **찍은 날**이다. 「일이 끝난 날」을 앱이 알 수 없으므로,
+       가장 가까우면서 «늘 있는» 값을 쓴다(늦게 잡히면 오래 들고 있게 된다). */
+  const months = keepMonthsOf(r.kind);
+  if (months !== null) {
+    if (months === 0) return 0;                    // 보관하지 않는 서류 — 지금 즉시
+    const base0 = m.takenAt || m.upAt || 0;
+    if (!base0) return Infinity;                   // 언제 것인지 모르면 세지 않는다
+    const d0 = new Date(base0);
+    d0.setMonth(d0.getMonth() + months);
+    return d0.getTime();
+  }
   if (isUsed(m)) {
     const d = new Date(m.used.at);
     d.setFullYear(d.getFullYear() + KEEP_USED_YEARS);
