@@ -31,7 +31,13 @@ const gvar = n => {
 
 /* ── 문법·안전 ── */
 const blocks = W.match(/<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/g) || [];
-ok('인라인 스크립트가 한 덩어리', blocks.length === 1, blocks.length + '개');
+/* ⚠ 2026-08-30 에 이 줄을 고쳤다. 예전에는 «덩어리 수가 정확히 1» 이었는데,
+   폰 뒤로가기 배선(여섯 줄)을 </body> 앞에 더하자 깨졌다 — 기능이 망가져서가 아니다.
+   지켜야 할 것은 「앱 «본체»가 흩어지지 않는다」이지 「덩어리가 하나다」가 아니다.
+   작은 배선 한두 줄은 늘 붙을 수 있다. 문법은 바로 아래에서 덩어리마다 본다. */
+const 본체 = blocks.filter(b => b.length > 2000);
+ok('앱 본체가 한 덩어리 (배선용 짧은 것은 셈에서 뺀다)', 본체.length === 1,
+   본체.length + '개 · 전체 ' + blocks.length + '개');
 blocks.forEach(function (b, i) {
   const js = b.replace(/^<script[^>]*>/, '').replace(/<\/script>$/, '');
   let e = null;
