@@ -115,6 +115,33 @@ test('★★ 기사 «본문»은 싣지 않는다 — 남의 글이다', () => 
   assert.match(b.본문, /제목과 링크만/, '★ 왜 제목만 있는지 안 밝힙니다');
 });
 
+/* ══════ 두 번 감싸지 않는다 ══════ */
+test('★★ 링크를 «두 번» 감싸지 않는다 — 누르면 엉뚱한 곳으로 간다', () => {
+  /* 실제로 그랬다. 법제처가 준 XML 은 `?OC=test&amp;target=law` 인데
+     그대로 두고 다시 감싸 `&amp;amp;` 가 되었고, 브라우저는 그것을
+     `&amp;target=law` 로 읽는다 — 그 법령이 안 나오는데 오류도 안 난다. */
+  const 조각 = '<law><법령명한글>근로기준법</법령명한글>'
+    + '<법령상세링크>/DRF/lawService.do?OC=test&amp;target=law&amp;MST=1</법령상세링크></law>';
+  const 읽은것 = B.법령읽기(조각);
+  assert.equal(읽은것[0].링크, '/DRF/lawService.do?OC=test&target=law&MST=1',
+    '★ XML 이 감싼 것을 안 풀었습니다');
+
+  const b = B.주간브리핑([], 읽은것, '2026-09-02');
+  assert.ok(!/&amp;amp;/.test(b.본문), '★ 두 번 감쌌습니다 — 링크가 깨집니다');
+  assert.match(b.본문, /OC=test&amp;target=law/, '★ 한 번은 감싸야 합니다');
+});
+
+test('★ 기사 제목의 &amp; 도 그대로 읽힌다 — 「A&amp;B 노조」가 아니라 「A&B 노조」', () => {
+  const 조각 = '<item><title>A&amp;B 노동조합 &quot;합의&quot;</title>'
+    + '<link>https://a.kr/1</link></item>';
+  const 읽은것 = B.뉴스읽기(조각, '매일노동뉴스');
+  assert.equal(읽은것[0].제목, 'A&B 노동조합 "합의"');
+});
+
+test('★ 풀기는 «한 번만» 푼다 — &amp;lt; 가 꺾쇠까지 되면 안 된다', () => {
+  assert.equal(B.풀기('&amp;lt;script&amp;gt;'), '&lt;script&gt;');
+});
+
 test('★★ 꺾쇠가 새지 않는다 — 기사 제목에 <script> 가 들어와도', () => {
   const b = B.주간브리핑(
     [{ 제목: '<script>나쁜것</script>', 링크: 'https://a.kr/1"onerror="x', 언론사: '' }],
@@ -161,6 +188,17 @@ test('★★ 같은 주에 두 번 올리지 않는다', () => {
   const 몸통 = 알맹이.slice(자리, 자리 + 3000);
   assert.match(몸통, /lastWeek/,
     '★ 「이번 주에 이미 올렸나」를 안 봅니다 — 다시 돌면 같은 글이 두 번 실립니다');
+});
+
+test('★★ 법령을 «싣겠다는 만큼» 가져온다 — 가져오는 쪽이 목을 조르면 안 된다', () => {
+  /* 실제로 그럴 뻔했다: 뉴스레터는 8건까지 싣겠다 해 두고, 거리를 모으는 쪽이
+     5건에서 잘라 8건이 될 수 없었다. 조용해서 아무도 모를 자리다. */
+  const 자리 = 알맹이.indexOf('weeklyNewsBrief');
+  const 몸통 = 알맹이.slice(자리, 자리 + 3000);
+  const m = /브리핑거리모으기\(\s*(\d+)\s*\)/.exec(몸통);
+  assert.ok(m, '★ 주간치가 법령을 몇 건 가져올지 안 밝힙니다 — 하루치와 같은 5건에 잘립니다');
+  assert.ok(Number(m[1]) >= 8,
+    '★ 법령을 ' + m[1] + '건만 가져옵니다 — 한 주치인데 하루치보다 적거나 같습니다');
 });
 
 test('★★ 끄는 손잡이가 살아 있다 — 자동으로 나가는 글은 멈출 수 있어야 한다', () => {
