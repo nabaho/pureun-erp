@@ -1915,7 +1915,35 @@ async function photoGate(decoded, v) {
   const item = itemSnap.val();
   const seen = PV.canSee({ viewerUid: decoded.uid, owner: v.owner, role: roleSnap.val() || {}, item: item });
   if (!seen.ok) return seen;
-  return PV.decide(item);
+  const ok = PV.decide(item);
+  if (!ok.ok) return ok;
+  /* ⚠ 자격(as)과 사진 정보(item)를 «함께» 돌려준다 — 열람 기록에 「무슨 자격으로
+     무슨 서류를 봤나」를 적어야 하는데, 여기서 버리면 밖에서 다시 읽어야 한다.
+     같은 것을 두 번 읽는 셈이고, 그 사이에 값이 달라질 수도 있다. */
+  return { ok: true, as: seen.as, item: item };
+}
+
+/* 열람 기록 한 줄 — 민감 서류 원본을 «실제로 내준 뒤에» 적는다.
+   ⚠ 내주기 «전»에 적으면 창고에 원본이 없어 실패한 것까지 「봤다」로 남는다.
+   ⚠ 적기가 실패해도 **사진은 이미 나갔다.** 여기서 throw 하면 안 된다 —
+     기록 때문에 일이 막히는 것이 기록이 없는 것보다 나쁘다. 대신 서버 기록에 남긴다. */
+async function photoNoteView(decoded, v, gate) {
+  try {
+    const item = (gate && gate.item) || {};
+    const read = item.read || {};
+    const fields = read.fields || {};
+    const row = PV.logRow({
+      byUid: decoded.uid,
+      byName: decoded.name || decoded.email || "",
+      as: gate && gate.as,
+      owner: v.owner, year: v.year, id: v.id,
+      kind: read.kind || "",
+      who: fields.name || ""
+    });
+    await getDatabase().ref(PV.logPath(String(Date.now()) + "_" + v.id)).set(row);
+  } catch (e) {
+    console.error("photoView log", e && e.message);
+  }
 }
 
 exports.photoView = functions
@@ -1957,6 +1985,8 @@ exports.photoView = functions
       const file = getStorage().bucket(PHOTO_BUCKET).file(PV.storagePath(v.owner, v.year, v.id, "full"));
       const [buf] = await file.download();
       res.json({ ok: true, dataUrl: "data:image/jpeg;base64," + buf.toString("base64") });
+      /* 내준 «뒤에» 적는다 — 기다리지 않는다(사람은 이미 사진을 받았다) */
+      photoNoteView(decoded, v, gate);
     } catch (e) {
       /* 파일이 없는 경우와 그 밖의 실패를 갈라 준다 — 「원본이 없습니다」와
          「서버가 못 줬습니다」는 사람이 해야 할 일이 다르다. */
