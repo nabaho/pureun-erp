@@ -63,6 +63,11 @@ function load() {
     fnOf(app, 'canSendCoInfo'),
     fnOf(app, 'formTodo'),
     fnOf(app, 'chatTodo'),
+    /* ⚠ 2026-09-02 💰 임금 확인 — checkWhy 가 이 판정을 본다 */
+    fnOf(app, 'wageRead'),
+    fnOf(app, 'wageOkOf'),
+    fnOf(app, 'wageBoxOn'),
+    fnOf(app, 'wageNeedsOk'),
     fnOf(app, 'checkWhy'),
     fnOf(app, 'needsCheck')
   ].join('\n');

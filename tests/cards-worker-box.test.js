@@ -296,7 +296,10 @@ function photoCtx() {
   }).join('\n');
   const fns = ['readAnyField', 'tooSmall', 'smallCheckedOk', 'coFilledOk', 'coTodo',
     'readFailKind', 'readFailAdvice', 'canSendCoInfo', 'formTodo', 'chatTodo',
-    'canSendWorker', 'workerWhyNot', 'checkWhy', 'needsCheck']
+    'canSendWorker', 'workerWhyNot',
+     /* ⚠ 2026-09-02 💰 임금 확인 */
+    'wageRead', 'wageOkOf', 'wageBoxOn', 'wageNeedsOk', 
+    'checkWhy', 'needsCheck']
     .map(function (n) { return cutFn(APP, 'function ' + n + '('); }).join('\n');
   const ctx = { Math, Number, String, Object, Boolean, Date, RegExp, Array };
   vm.createContext(ctx);

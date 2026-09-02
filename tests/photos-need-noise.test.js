@@ -60,6 +60,11 @@ const J = (function () {
     app.match(/^const WORKER_KINDS = \{[^}]*\};/m)[0],
     cutFn(app, 'function canSendWorker('),
     cutFn(app, 'function workerWhyNot('),
+    /* ⚠ 2026-09-02 💰 임금 확인 */
+    cutFn(app, 'function wageRead('),
+    cutFn(app, 'function wageOkOf('),
+    cutFn(app, 'function wageBoxOn('),
+    cutFn(app, 'function wageNeedsOk('),
     cutFn(app, 'function checkWhy('),
     cutFn(app, 'function needsCheck(')
   ].join('\n'), c);

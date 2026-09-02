@@ -54,8 +54,10 @@ function loadNeedsCheck() {
   /* ⚠ 2026-09-01 근로자 서류 넷 — 안 실으면 checkWhy 가 ReferenceError 로 멎는다 */
   const wk = app.match(/^const WORKER_KINDS = \{[^}]*\};/m);
   assert.ok(wk, 'WORKER_KINDS 를 찾지 못했습니다');
+  /* ⚠ 2026-09-02 💰 임금 확인 — checkWhy 가 이 판정을 본다. 안 실으면 같은 자리에서 멎는다 */
   vm.runInContext(minEdge[0].replace('const ', 'var ') + '\n' + wk[0].replace('const ', 'var ') + '\n' +
     pick('canSendWorker') + '\n' + pick('workerWhyNot') + '\n' + pick('tooSmall') + '\n' +
+    pick('wageRead') + '\n' + pick('wageOkOf') + '\n' + pick('wageBoxOn') + '\n' + pick('wageNeedsOk') + '\n' +
     pick('coFilledOk') + '\n' + pick('coTodo') + '\n' + pick('needsCheck') + '\n' + pick('checkWhy'), ctx);
   return ctx;
 }
