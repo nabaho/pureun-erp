@@ -145,7 +145,14 @@ ok('두 표가 결산 탭에 있다', src.includes("['cf','현금흐름표'],['i
   && src.includes("case 'cf':      return cashFlowView(arr);") && src.includes("case 'ie':      return ieView(arr);"));
 /* ⚠ 현금이 오가지 않는 분개(준비금 설정·환입·전입)를 빼야 한다 —
    넣으면 흐름 합계가 통장 잔액과 어긋나고, 기말 현금이 재무상태표와 달라진다. */
-ok('현금 안 움직인 분개를 뺀다', /function cashMoves\([\s\S]{0,400}?if\(x\.nocash\) return;/.test(src));
+ok('현금 안 움직인 분개를 뺀다', /function cashMoves\([\s\S]{0,1400}?if\(x\.nocash\) return;/.test(src));
+/* ⚠ 쪼갠 조각은 첫 것만 통장 금액을 지니고 나머지엔 nocash 표가 붙는다.
+   그래서 «조각을 먼저» 보지 않으면 둘째부터 통째로 빠지고 첫 조각에 전액이 몰린다.
+   실제로 그랬다 — 100,500 을 100,000+500 으로 쪼갰더니 «100,500 · 0» 으로 찍혔다.
+   합계는 맞아서 기말현금 대조로는 안 드러났다. */
+ok('쪼갠 조각을 먼저 본다', /if\(x\._split\){[\s\S]{0,400}?if\(x\.nocash\) return;/.test(src)
+  && src.includes('var oth=x._splitDep?x.credit:x.debit;')
+  && src.includes('o._splitDep=isDep?1:0;'));
 ok('활동 셋으로 가른다', src.includes("add('Ⅰ. 영업활동으로 인한 현금흐름'")
   && src.includes("add('Ⅱ. 투자활동으로 인한 현금흐름'") && src.includes("add('Ⅲ. 재무활동으로 인한 현금흐름'"));
 // 대부금·예금·증권은 투자활동이다 — 영업활동에 섞으면 «본디 활동»이 부풀어 보인다

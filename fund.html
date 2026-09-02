@@ -7040,7 +7040,10 @@ function expandSplits(arr){
       /* 조각임을 남긴다 — 금액은 amount 에만 있다. deposit 은 첫 조각이 통장 한 줄 전체를
          지니고 있어(잔액 대사용) 금액으로 쓰면 다른 조각 몫까지 딸려 온다.
          _nocashSrc 는 «원래 줄이 현물출연이었나» — 조각에 붙는 nocash 와 뜻이 다르다. */
-      o._split=1; o._nocashSrc=x.nocash?1:0;
+      /* _splitDep — 이 조각이 «들어온 돈»인지 «나간 돈»인지.
+         조각만 보고는 어느 쪽이 현금 계정인지 알 수 없어, 여기서 적어 둔다.
+         (첫 조각만 deposit/withdraw 를 지니므로 그것으로는 못 가린다.) */
+      o._split=1; o._nocashSrc=x.nocash?1:0; o._splitDep=isDep?1:0;
       if(isDep){ o.debit=cash; o.credit=s.acct; } else { o.debit=s.acct; o.credit=cash; }
       if(i>0){ o.deposit=0; o.withdraw=0; o.nocash=1; }   // 통장 금액은 첫 조각만 지닌다
       out.push(o);
@@ -7481,6 +7484,20 @@ function cashMoves(arr){
   var appr=expandSplits(arr).filter(function(x){ return x.approved&&x.debit&&x.credit; });
   var by={}, In=0, Out=0;
   appr.forEach(function(x){
+    /* ⚠ 쪼갠 조각을 «먼저» 본다. 조각은 첫 것만 통장 금액(deposit/withdraw)을 지니고
+       나머지는 nocash 표가 붙는다 — 그대로 두면 아래 nocash 걸러내기에 걸려
+       둘째 조각부터 통째로 빠지고, 첫 조각에 통장 한 줄이 전부 몰린다.
+       실제로 그랬다: 100,500원을 경조사비 100,000 + 수수료 500 으로 쪼갰더니
+       현금흐름표·수입지출명세서에 «경조사비 100,500 · 수수료 0» 으로 찍혔다.
+       합계는 맞아서 기말현금 대조로는 드러나지 않았다. */
+    if(x._split){
+      if(x._nocashSrc) return;                 // 원래 줄이 현물출연이면 현금은 안 움직였다
+      var amt=num(x.amount)||0; if(!amt) return;
+      var oth=x._splitDep?x.credit:x.debit;
+      var bb=(by[oth]=by[oth]||{in:0,out:0});
+      if(x._splitDep){ bb.in+=amt; In+=amt; } else { bb.out+=amt; Out+=amt; }
+      return;
+    }
     if(x.nocash) return;                       // 현금이 안 움직인 분개
     var dep=num(x.deposit)||0, wd=num(x.withdraw)||0;
     if(!dep&&!wd) return;
