@@ -37,7 +37,7 @@
 <script src="js/pu-doc-read.js?v=29"></script>
 <script src="js/pu-lockkey.js?v=2"></script>
 <!-- ?v= 는 등록 층을 고칠 때 올린다 — 캐시에 묵으면 고친 안내가 안 보인다. -->
-<script src="js/pu-doc-file.js?v=19"></script>
+<script src="js/pu-doc-file.js?v=20"></script>
 <script src="js/pu-drag.js?v=2"></script>
 <script src="js/pu-billing.js?v=7"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -6738,8 +6738,17 @@ function sendCards(id, year, job) {
       byName: (it && it.meta && it.meta.__ownerName) || PuPhotoStore.myName() || (u && u.email) || ''
     });
   }).then(function (res) {
+    /* ── 회사를 «찾아» 붙였으면 그렇다고 말한다 (대표 지시 2026-08-31) ──
+       「기업의 이름이 보이지 않더라도 정확하게 찾아서 연결시켜 명함에 정확히 넣어라」
+       ⚠ 조용히 붙이면 «틀리게» 붙었을 때 알아챌 길이 없다. 무엇에 붙였는지 적는다.
+       ⚠ 끝내 못 찾았으면 그것도 적는다 — 회사 칸이 빈 명함은 어느 회사에도 안 붙어
+         사람 따로 회사 따로 뜬다. 나중에 찾기보다 지금 아는 편이 낫다. */
+    const coNote = res.coFilled ? ' · 회사를 찾아 붙였습니다 — ' + res.coFilled
+      : (res.coMissing ? ' · ⚠ 회사를 못 찾았습니다 — 명함의 회사 칸이 비어 있습니다' : '');
     read.filed = {
-      id: res.id, at: Date.now(), created: res.created, message: res.message,
+      id: res.id, at: Date.now(), created: res.created,
+      message: (res.message || '') + coNote,
+      coFilled: res.coFilled || '', coMissing: !!res.coMissing,
       dup: !!res.dup, dupAt: res.dupAt || 0, blocked: !!res.blocked
     };
     if (it) it.meta = Object.assign({}, it.meta, { read: read });
@@ -6747,8 +6756,12 @@ function sendCards(id, year, job) {
     if (viewerId === id) renderReadPanel(it);
     renderUp();
     /* 이 사진이 기업정보함 기록의 근거가 됐다 — 증빙 5년(위 markFiledUsed 참고) */
+    /* ⚠ 찾아 붙인 회사도 «업체 이름»이다 (대표 지시 2026-08-31). 이것을 안 보면
+       상호를 못 읽은 캡처가 「기업정보함 — 한재일」처럼 «사람 이름»으로 남는다 —
+       나중에 증빙을 되짚을 때 어느 회사 것인지 알 수가 없다. */
     markFiledUsed(id, year, '기업정보함 — ' +
-      ((read.fields && (read.fields.company || read.fields.name)) || '업체 미상'));
+      ((read.fields && read.fields.company) || res.coFilled ||
+       (read.fields && read.fields.name) || '업체 미상'));
     /* 기록을 먼저 남기고 나서 치운다 — 순서가 바뀌면 휴지통에 담긴 사본에
        '기업정보함 어디로 갔는지'가 빠져 되살려도 고리가 끊긴다. */
     return PuPhotoStore.saveRead(year, id, read, owner).then(function () {
