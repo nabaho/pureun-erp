@@ -101,7 +101,12 @@ const allowTop = ['systemAlerts','systemBackups','systemBackupsIndex','systemRes
      골라 올린 것. 읽기는 재직 직원 전원, 쓰기는 관리자(대표)만.
      ⚠ 대표 칸(kcareer/{uid})을 여는 대신 사본을 둔 까닭: 그 칸에는 실적·비용·개인정보·
        신분증이 함께 들어 있어 통째로 열면 「경력관리만」 보여 줄 수가 없다. */
-  'kcareer_pub'];
+  'kcareer_pub',
+  /* 2026-09-02 뉴스레터 — 주간뉴스레터의 설정·회차 초안·받는 명단.
+     읽기·쓰기 모두 총괄관리자만(homepage 와 같은 잣대). 화면은 pu-news.html.
+     ⚠ 직원에게 열지 말 것 — 자동으로 담을 밑감이 homepage/newsBrief 에 있어,
+       열려면 홈페이지 관리의 문까지 함께 열어야 한다. */
+  'newsletter'];
 
 const keys = Object.keys(R);
 const removed = baseTop.filter(function (k) { return keys.indexOf(k) < 0; });

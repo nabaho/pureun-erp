@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>뉴스레터 관리</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>📰</text></svg>">
+<!--
+  뉴스레터 관리 — 매주 한 통을 «짓고 · 보고 · 보낸다».
+  ═══════════════════════════════════════════════════════════════════════════
+  대표 지시 2026-09-02: 「푸른내외관리에 뉴스레터관리를 넣고 매주 관리하고 싶다.
+  우선 매주 공인노무사회에서 받아서 전달하는 구조이다 이부분을 똑같은 디자인으로
+  새로만들고 매주 푸른노무법인에서 직접 메일로 보내고 싶다. … 직접만드는 방식과
+  전달방식 그리고 직접만드는것도 전달된것을 똑같이 만드는 방식등 여러가지 검토해서 완성해달라」
+
+  목업: docs/mockups/newsletter-letter.html (편지) · newsletter-screen.html (화면)
+
+  ★ 판단은 전부 js/pu-news-core.js 가, 편지 짓기는 js/pu-news-tpl.js 가 한다.
+    화면은 그 답을 보여주고 손잡이만 단다. 같은 판단을 화면 안에서 다시 만들면
+    두 곳이 서로 다른 답을 낸다(홈페이지 관리와 같은 짜임).
+
+  ★ 보내는 것은 «새 발송기를 만들지 않는다» — 이미 도는 sendBulkMail 에 건다.
+    한 곳마다 예약 한 건씩 걸리고 sendScheduledMail 이 15분마다 빼 간다.
+    한꺼번에 쏟으면 다음메일 계정이 막히고, 막히면 평소 자료 발송까지 멈춘다.
+
+  ★ 총괄관리자 전용이다 — 경력관리·홈페이지 관리와 «같은 줄, 같은 잣대».
+    한때 「짓는 것은 직원도」로 두려 했으나, 자동으로 담을 밑감(homepage/newsBrief)이
+    관리자만 읽는 자리라 직원에게 열려면 홈페이지 관리의 문까지 함께 열어야 했다.
+    권한을 «못 읽었을 때»도 열지 않는다 — 못 읽은 것을 권한 있음으로 치면 막는 뜻이 없다.
+-->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
+<script src="js/pu-version.js?v=3"></script>
+<script src="js/pu-gate.js?v=1"></script>
+<script src="js/pu-whoami.js?v=1"></script>
+<script src="js/pu-appbar.js?v=8"></script>
+<script>
+(function(){ function go(){ if(window.PuWhoami){ PuWhoami.mount(false); return true; } return false; }
+  if(!go()) document.addEventListener('DOMContentLoaded', go); })();
+</script>
+<script src="js/pu-news-core.js?v=1"></script>
+<script src="js/pu-news-tpl.js?v=1"></script>
+<style>
+:root{
+  --navy:#1e40af; --ink:#1e293b; --sub:#64748b; --faint:#94a3b8;
+  --line:#e2e8f0; --paper:#f8fafc; --card:#fff;
+  --brown:#6f5a48; --brown-soft:#f5f1ec;
+  --ok:#166534; --warn:#d97706; --bad:#dc2626;
+}
+*{box-sizing:border-box;margin:0}
+body{font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif;
+  background:var(--paper);color:var(--ink);font-size:14px}
+button{font-family:inherit;cursor:pointer}
+input,select,textarea{font-family:inherit;font-size:14px}
+
+#bar{display:flex;align-items:center;gap:10px;padding:13px 16px;background:#fff;
+  border-bottom:1px solid var(--line);flex-wrap:wrap}
+#bar .logo{font-size:19px;font-weight:800;letter-spacing:-.4px}
+#bar .sp{flex:1}
+#whoami{font-size:11.5px;font-weight:700;color:var(--sub)}
+
+#tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);background:#fff;
+  padding:0 10px;overflow-x:auto}
+#tabs button{padding:11px 15px;font-size:15px;font-weight:700;color:var(--sub);
+  border:0;background:none;border-bottom:3px solid transparent;white-space:nowrap}
+#tabs button.on{color:var(--ink);border-bottom-color:var(--brown)}
+
+.wrap{max-width:1180px;margin:0 auto;padding:0 14px 70px}
+#gate{max-width:520px;margin:60px auto;background:#fff;border:1px solid var(--line);
+  border-radius:14px;padding:26px;text-align:center}
+#gate .sub{font-size:13px;color:var(--sub);margin-top:8px;line-height:1.7}
+
+.hdbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff;
+  border:1px solid var(--line);border-radius:12px;padding:13px 15px;margin-top:14px}
+.hdbar .no{font-size:18px;font-weight:800}
+.hdbar .sp{flex:1}
+.badge{font-size:11px;font-weight:800;padding:3px 9px;border-radius:99px}
+.b-draft{background:#f1f5f9;color:var(--sub)}
+.b-test{background:#fef3c7;color:var(--warn)}
+.b-sent{background:#dcfce7;color:var(--ok)}
+.btn{font-weight:700;font-size:13px;padding:8px 14px;border-radius:9px;
+  border:1px solid var(--line);background:#fff;color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.pri{background:var(--brown);border-color:var(--brown);color:#fff}
+.btn.warn{border-color:#fcd34d;color:var(--warn)}
+.mini{font-size:12px;font-weight:700;padding:5px 10px;border-radius:8px;
+  border:1px solid var(--line);background:#fff;color:var(--sub)}
+.mini.on{background:var(--brown);border-color:var(--brown);color:#fff}
+
+.ways{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:12px}
+.way{background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px 14px;text-align:left}
+.way.on{border-color:var(--brown);box-shadow:0 0 0 2px var(--brown-soft)}
+.way b{display:block;font-size:14px;margin-bottom:4px}
+.way p{font-size:12px;color:var(--sub);line-height:1.65}
+.way .law{display:inline-block;margin-top:7px;font-size:11px;font-weight:800;padding:2px 7px;border-radius:99px}
+.law-ok{background:#dcfce7;color:var(--ok)}
+.law-mid{background:#fef3c7;color:var(--warn)}
+.law-bad{background:#fee2e2;color:var(--bad)}
+
+.cols{display:grid;grid-template-columns:1fr 420px;gap:14px;margin-top:14px;align-items:start}
+@media(max-width:980px){.cols{grid-template-columns:1fr}}
+.box{background:#fff;border:1px solid var(--line);border-radius:12px;margin-bottom:12px}
+.box>h3{font-size:14px;font-weight:800;padding:12px 15px;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.box>h3 .cnt{font-size:11px;font-weight:800;color:var(--sub);background:var(--paper);
+  padding:2px 8px;border-radius:99px}
+.box>h3 .sp{flex:1}
+.item{display:flex;align-items:center;gap:9px;padding:9px 15px;border-bottom:1px solid #f1f5f9}
+.item:last-child{border-bottom:0}
+.item .t{flex:1;min-width:0;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item .src{font-size:11px;color:var(--faint);flex:0 0 auto}
+.item .x,.item .mv{border:0;background:none;color:var(--faint);font-size:13px;padding:2px 5px}
+.item .x:hover{color:var(--bad)}
+.empty{padding:16px 15px;font-size:13px;color:var(--faint)}
+.pad{padding:12px 15px}
+textarea,input[type=text],input[type=url],select{width:100%;border:1px solid var(--line);
+  border-radius:9px;padding:9px 11px;line-height:1.7}
+textarea{resize:vertical}
+label.f{display:block;font-size:12px;font-weight:800;color:var(--sub);margin:12px 0 5px}
+.hint{font-size:11.5px;color:var(--faint);margin-top:6px;line-height:1.65}
+
+.pv{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;position:sticky;top:12px}
+.pv .pvhd{font-size:13px;font-weight:800;padding:11px 14px;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:8px}
+.pv .pvhd .sp{flex:1}
+.pv .paper{background:#e9e7e3;padding:12px;max-height:70vh;overflow:auto}
+.pv iframe{width:100%;border:0;background:#fff;display:block}
+
+table.list{width:100%;border-collapse:collapse;font-size:13px}
+table.list th,table.list td{padding:8px 14px;text-align:left;border-bottom:1px solid #f1f5f9}
+table.list th{background:var(--paper);font-size:11.5px;font-weight:800;color:var(--sub);white-space:nowrap}
+table.list tr:hover td{background:#fcfcfd}
+
+#toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#0f172a;color:#fff;
+  padding:12px 18px;border-radius:11px;font-size:13.5px;font-weight:600;max-width:88vw;
+  line-height:1.6;opacity:0;pointer-events:none;transition:opacity .18s;z-index:90;white-space:pre-line}
+#toast.on{opacity:1}
+#big{position:fixed;inset:0;background:rgba(15,23,42,.6);display:none;z-index:80;padding:22px}
+#big.on{display:flex;align-items:center;justify-content:center}
+#big .in{background:#fff;border-radius:14px;width:min(680px,96vw);max-height:92vh;
+  display:flex;flex-direction:column;overflow:hidden}
+#big .in h4{font-size:15px;font-weight:800;padding:13px 16px;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:8px}
+#big .in h4 .sp{flex:1}
+#big .bd{overflow:auto;background:#e9e7e3;padding:14px;flex:1}
+.note{margin-top:14px;background:#fff;border:1px solid var(--line);border-left:4px solid var(--brown);
+  border-radius:10px;padding:12px 15px;font-size:13px;line-height:1.8;color:#334155}
+.note.bad{border-left-color:var(--bad)}
+.note b{color:var(--brown)}
+.note.bad b{color:var(--bad)}
+</style>
+</head>
+<body>
+
+<div id="bar">
+  <div class="logo">📰 뉴스레터 관리</div>
+  <div class="sp"></div>
+  <div id="whoami"></div>
+</div>
+
+<div id="tabs" style="display:none">
+  <button data-t="now" class="on">이번 회차</button>
+  <button data-t="past">지난 회차 <span id="cPast" style="color:var(--faint)"></span></button>
+  <button data-t="who">받는 명단 <span id="cWho" style="color:var(--faint)"></span></button>
+  <button data-t="cfg">설정</button>
+</div>
+
+<div id="gate"><div style="font-size:15px;font-weight:700">불러오는 중…</div></div>
+<div class="wrap" id="main" style="display:none"></div>
+
+<div id="toast"></div>
+<div id="big"><div class="in">
+  <h4><span id="bigT">미리보기</span><span class="sp"></span>
+    <button class="mini" onclick="closeBig()">닫기</button></h4>
+  <div class="bd" id="bigB"></div>
+</div></div>
+
+<script>
+'use strict';
+var FB_APPCHECK_ON = false;
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',
+  databaseURL: 'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',
+  projectId: 'pureun-erp',
+  storageBucket: 'pureun-erp.firebasestorage.app',
+  appId: '1:936817166182:web:9bd31f70d0afdf5fca2aa7',
+  messagingSenderId: '936817166182'
+};
+/* 이미 도는 발송기에 건다 — 새 발송기를 만들지 않는다(윗머리 주석 참고) */
+const BULK_FN_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/sendBulkMail';
+const BULK_GAP_SEC = 15;
+
+const Core = window.PuNewsCore, Tpl = window.PuNewsTpl;
+var db = null;
+var App = {
+  me: null, isAdmin: false, tab: 'now',
+  설정: {}, 회차들: {}, 명단: {}, 막은주소: {}, 브리핑: {},
+  지금열쇠: '', 길: 'auto', 보내는중: false
+};
+
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s==null?'':s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+var _tt = null;
+function toast(msg, ms){
+  const t = $('toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(_tt); _tt = setTimeout(()=>t.classList.remove('on'), ms || 4200);
+}
+/* 이메일을 자리 열쇠로 — 파이어베이스가 못 쓰는 글자가 있다: . # $ / [ ] */
+function 주소열쇠(e){ return String(e||'').trim().toLowerCase().replace(/[.#$/[\]]/g,'_'); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   시작
+   ══════════════════════════════════════════════════════════════════════════ */
+firebase.initializeApp(FIREBASE_CONFIG);
+db = firebase.database();
+
+firebase.auth().onAuthStateChanged(function(user){
+  if(user){ App.me = user; afterLogin(); return; }
+  if(!/[?&]login=1/.test(location.search) && location.protocol !== 'file:'){
+    location.replace('enter.html?v=' + Math.floor(Date.now()/600000)); return;
+  }
+  PuGate.show({ name:'뉴스레터 관리', desc:'푸른노무법인 · 주간뉴스레터' });
+});
+
+function afterLogin(){
+  $('whoami').textContent = App.me.email || '';
+  /* 권한을 «못 읽었을 때»도 열지 않는다 — 못 읽은 것을 권한 있음으로 치면 막는 뜻이 없다 */
+  db.ref('uid_roles/' + App.me.uid).once('value')
+    .then(s => { App.isAdmin = (s.val()||{}).isAdmin === true; })
+    .catch(e => { console.warn('[권한]', e && e.code); App.isAdmin = false; })
+    .then(function(){
+      if(!App.isAdmin){ 잠그기('총괄관리자만 쓸 수 있습니다.'); return; }
+      불러오기();
+    });
+}
+
+function 잠그기(말){
+  $('tabs').style.display = 'none';
+  $('main').style.display = 'none';
+  $('gate').style.display = '';
+  $('gate').innerHTML = '<div style="font-size:15px;font-weight:700;margin-bottom:6px">'
+    + esc(말) + '</div><div class="sub">법인 이름으로 거래처에 나가는 편지라 '
+    + '총괄관리자에게만 열려 있습니다.</div>';
+}
+
+function 불러오기(){
+  Promise.all([
+    db.ref('newsletter/config').once('value'),
+    db.ref('newsletter/issues').once('value'),
+    db.ref('newsletter/recipients').once('value'),
+    db.ref('config/mailBlock').once('value').catch(()=>({val:()=>({})})),
+    /* 자동으로 담을 밑감 — 매일 07:00 이 모아 두는 자리 */
+    db.ref('homepage/newsBrief/모음').once('value').catch(()=>({val:()=>({})}))
+  ]).then(function(v){
+    App.설정  = v[0].val() || {};
+    App.회차들 = v[1].val() || {};
+    App.명단  = v[2].val() || {};
+    App.막은주소 = v[3].val() || {};
+    App.브리핑 = v[4].val() || {};
+    if(!App.설정.회사이름) App.설정.회사이름 = '푸른노무법인';
+    if(!App.설정.회신주소) App.설정.회신주소 = '370-6@daum.net';
+    if(!App.설정.범위)    App.설정.범위 = '자문중';
+
+    const 보냄 = {};
+    Object.keys(App.회차들).forEach(k=>{ if((App.회차들[k]||{}).상태==='발송') 보냄[k]=1; });
+    App.지금열쇠 = Core.이번회차(오늘(), 보냄).열쇠;
+
+    $('gate').style.display='none';
+    $('tabs').style.display='';
+    $('main').style.display='';
+    document.querySelectorAll('#tabs button').forEach(b=>{
+      b.onclick = ()=>{ App.tab = b.dataset.t; render(); };
+    });
+    render();
+  }).catch(function(e){
+    $('gate').innerHTML = '<div style="font-size:15px;font-weight:700">자료를 읽지 못했습니다</div>'
+      + '<div class="sub">' + esc((e&&e.message)||'') + '</div>';
+  });
+}
+
+function 오늘(){ return new Date().toISOString().slice(0,10); }
+
+/* 지금 회차 한 벌(없으면 빈 것을 만들어 준다 — 자리에 쓰지는 않는다) */
+function 지금회차(){
+  const 열쇠 = App.지금열쇠;
+  const 있는것 = App.회차들[열쇠];
+  const 회 = Core.회차(오늘());
+  const 회차한벌 = (있는것 && 있는것.회차) || (열쇠 === 회.열쇠 ? 회 : 회차로부터(열쇠));
+  return Object.assign({
+    열쇠: 열쇠, 회차: 회차한벌, 상태: '초안',
+    안: { news:[], policy:[], case:[], hr:[] }, 우리글: ''
+  }, 있는것 || {});
+}
+/* 열쇠(2026-08-w5)에서 회차 한 벌을 되살린다 — 지난 회차를 열 때 쓴다 */
+function 회차로부터(열쇠){
+  const m = /^(\d{4})-(\d{2})-w(\d+)$/.exec(String(열쇠||''));
+  if(!m) return Core.회차(오늘());
+  /* 그 달 1일부터 훑어 같은 열쇠가 나오는 날을 찾는다 — 규칙을 여기서 다시 만들지 않는다 */
+  for(let d=1; d<=31; d++){
+    const 날 = m[1] + '-' + m[2] + '-' + (d<10?'0':'') + d;
+    const r = Core.회차(날);
+    if(r && r.열쇠 === 열쇠) return r;
+  }
+  return Core.회차(오늘());
+}
+
+function 회차저장(자료){
+  App.회차들[자료.열쇠] = 자료;
+  return db.ref('newsletter/issues/' + 자료.열쇠).update({
+    회차: 자료.회차, 상태: 자료.상태 || '초안', 안: 자료.안 || {},
+    우리글: 자료.우리글 || '', 범위: 자료.범위 || App.설정.범위 || '자문중',
+    고친이: (App.me && App.me.email) || '', 고친때: Date.now()
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   그리기
+   ══════════════════════════════════════════════════════════════════════════ */
+function render(){
+  document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on', b.dataset.t===App.tab));
+  $('cPast').textContent = Object.keys(App.회차들).length || '';
+  $('cWho').textContent  = Object.keys(App.명단).length || '';
+  const m = $('main');
+  if(App.tab==='now')  m.innerHTML = 이번회차화면();
+  if(App.tab==='past') m.innerHTML = 지난회차화면();
+  if(App.tab==='who')  m.innerHTML = 명단화면();
+  if(App.tab==='cfg')  m.innerHTML = 설정화면();
+  if(App.tab==='now') 미리보기그리기();
+}
+
+function 명단셈(){
+  return Core.명단다듬기(Object.keys(App.명단).map(k=>App.명단[k]), App.막은주소);
+}
+
+function 이번회차화면(){
+  const d = 지금회차();
+  const r = 명단셈();
+  const 갈수있나 = Core.보낼수있나(d, r.셈);
+  const 상태딱지 = { 초안:'b-draft', 시험:'b-test', 발송:'b-sent' }[d.상태] || 'b-draft';
+  const 실린수 = Core.꼭지들.map(g => g.갈래==='우리글'
+      ? (String(d.우리글||'').trim()?1:0) : ((d.안[g.키]||[]).length))
+    .reduce((a,b)=>a+b,0);
+
+  return `
+  <div class="hdbar">
+    <span class="no">${esc(d.회차.이름)}</span>
+    <span class="badge ${상태딱지}">${esc(d.상태)}</span>
+    <span style="font-size:12px;color:var(--sub)">${esc(d.회차.기간)} · 실린 것 ${실린수}</span>
+    <span class="sp"></span>
+    <button class="btn" onclick="크게보기()">👁 크게 보기</button>
+    <button class="btn warn" onclick="시험발송()" ${갈수있나.ok?'':'disabled'}>✉ 나에게 시험 발송</button>
+    <button class="btn pri" onclick="진짜보내기()" ${갈수있나.ok && App.isAdmin?'':'disabled'}>
+      📨 ${r.셈.보낼곳.toLocaleString()}곳에 보내기</button>
+  </div>
+  ${갈수있나.ok ? '' : `<div class="note bad"><b>아직 못 보냅니다</b> — ${esc(갈수있나.까닭)}</div>`}
+
+  <div class="ways">
+    <button class="way ${App.길==='auto'?'on':''}" onclick="길바꾸기('auto')">
+      <b>① 자동으로 담기</b>
+      <p>매일 모아 둔 노동뉴스와 법령을 꼭지에 나눠 담습니다.
+         지금 모아 둔 기사 <b>${Object.keys(App.브리핑).length}건</b>.</p>
+      <span class="law law-ok">저작권 · 안전</span></button>
+    <button class="way ${App.길==='paste'?'on':''}" onclick="길바꾸기('paste')">
+      <b>② 받은 것을 옮겨 담기</b>
+      <p>공인노무사회 뉴스레터를 붙여넣으면 <b>제목·링크만</b> 뽑아 우리 꼭지로 옮깁니다.</p>
+      <span class="law law-mid">제목·링크만</span></button>
+    <button class="way ${App.길==='fwd'?'on':''}" onclick="길바꾸기('fwd')">
+      <b>③ 그대로 전달</b>
+      <p>받은 뉴스레터를 손대지 않고 전달합니다. 지금 하시던 방식입니다.</p>
+      <span class="law law-bad">남의 저작물 재배포</span></button>
+  </div>
+
+  ${App.길==='auto' ? `
+   <div class="box" style="margin-top:12px">
+    <div class="pad" style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+     <button class="btn pri" onclick="자동담기()">⟳ 이 주치로 채우기</button>
+     <span class="hint" style="margin:0">지난 한 주(${esc(d.회차.기간)}) 기사를 꼭지에 나눠 담습니다.
+       이미 담긴 것은 <b>지워지고 새로 채워집니다.</b></span>
+    </div></div>` : ''}
+
+  ${App.길==='paste' ? `
+   <div class="box" style="margin-top:12px">
+    <h3>받은 뉴스레터를 붙여넣으세요</h3>
+    <div class="pad">
+     <textarea id="pasteBox" rows="5" placeholder="다음메일에서 뉴스레터 본문을 통째로 골라 복사해 여기에 붙여넣으세요. 서식이 있어도, 그냥 글자여도 됩니다."></textarea>
+     <div style="display:flex;gap:9px;margin-top:9px;flex-wrap:wrap">
+      <button class="btn pri" onclick="붙여넣기옮기기(false)">↧ 꼭지로 옮겨 담기</button>
+      <button class="btn" onclick="붙여넣기옮기기(true)">＋ 지금 것에 더하기</button>
+     </div>
+     <div class="hint">제목과 <b>원문 링크</b>만 가져옵니다. 짜임·그림·해설은 안 가져옵니다 —
+       남이 만든 것을 통째로 옮기면 저작물 재배포가 됩니다.</div>
+    </div></div>` : ''}
+
+  ${App.길==='fwd' ? `
+   <div class="box" style="margin-top:12px">
+    <h3>받은 것을 그대로 전달</h3>
+    <div class="pad">
+     <textarea id="fwdBox" rows="5" placeholder="받은 뉴스레터 본문을 통째로 붙여넣으세요."></textarea>
+     <div style="display:flex;gap:9px;margin-top:9px;flex-wrap:wrap">
+      <button class="btn warn" onclick="전달시험()">✉ 나에게 시험 발송</button>
+      <button class="btn" onclick="전달보내기()" ${App.isAdmin?'':'disabled'}>
+        📨 ${명단셈().셈.보낼곳.toLocaleString()}곳에 그대로 전달</button>
+     </div>
+     <div class="note bad" style="margin-top:11px"><b>권해 드리지 않습니다.</b>
+      남이 만든 뉴스레터를 우리 이름으로 통째로 다시 보내는 것이라 저작권 자리가 불편합니다.
+      또 <b>원본 그대로는 아닙니다</b> — 발송기가 위험한 것(스크립트·남의 서버 그림)을
+      씻어 내므로 받는 쪽에서 조금 달라 보일 수 있습니다.<br>
+      지금 하시던 일을 못 쓰게 막지는 않으려고 남겨 두었습니다.</div>
+    </div></div>` : ''}
+
+  <div class="cols">
+   <div>${꼭지칸들(d)}</div>
+   <div class="pv">
+    <div class="pvhd">👁 나갈 모습<span class="sp"></span>
+      <button class="mini" onclick="크게보기()">크게</button></div>
+    <div class="paper"><iframe id="pvFrame" title="미리보기"></iframe></div>
+   </div>
+  </div>`;
+}
+
+function 꼭지칸들(d){
+  return Core.꼭지들.map(function(g){
+    if(g.갈래==='우리글'){
+      return `<div class="box"><h3>${esc(g.이름)} <span class="cnt">우리 글</span></h3>
+        <div class="pad">
+         <textarea id="myWrite" rows="4" oninput="우리글바뀜(this.value)"
+           placeholder="이번 주 한마디 — 이 칸만 우리가 씁니다.">${esc(d.우리글||'')}</textarea>
+         <div class="hint">나머지 세 꼭지는 <b>제목과 원문 링크</b>만 싣습니다.
+           기사 본문은 남의 글이라 옮기지 않습니다.</div>
+        </div></div>`;
+    }
+    const 것 = d.안[g.키] || [];
+    const 줄 = 것.length ? 것.map(function(x,i){
+      return `<div class="item">
+        <button class="mv" title="위로" onclick="옮기기('${g.키}',${i},-1)">▲</button>
+        <button class="mv" title="아래로" onclick="옮기기('${g.키}',${i},1)">▼</button>
+        <span class="t" title="${esc(x.제목||'')}">${esc(x.제목||'')}</span>
+        <span class="src">${esc(x.갈래==='법령' ? (x.부처||'법령') : (x.언론사||''))}</span>
+        <button class="x" title="빼기" onclick="빼기('${g.키}',${i})">✕</button>
+      </div>`;
+    }).join('') : '<div class="empty">아직 담긴 것이 없습니다 — 빈 꼭지는 편지에 안 나옵니다.</div>';
+    return `<div class="box"><h3>${esc(g.이름)}
+      <span class="cnt">${것.length}건</span><span class="sp"></span>
+      <button class="mini" onclick="손으로담기('${g.키}')">＋ 손으로 담기</button></h3>${줄}</div>`;
+  }).join('');
+}
+
+/* ══════ 손잡이 — 꼭지 고치기 ══════ */
+function 길바꾸기(v){ App.길 = v; render(); }
+
+function 우리글바뀜(v){
+  const d = 지금회차(); d.우리글 = v;
+  App.회차들[d.열쇠] = d;
+  clearTimeout(우리글바뀜._t);
+  우리글바뀜._t = setTimeout(()=>{ 회차저장(d); 미리보기그리기(); }, 700);
+}
+function 옮기기(칸, i, 어디){
+  const d = 지금회차(); const a = d.안[칸] || [];
+  const j = i + 어디; if(j<0 || j>=a.length) return;
+  const t = a[i]; a[i] = a[j]; a[j] = t;
+  회차저장(d).then(render);
+}
+function 빼기(칸, i){
+  const d = 지금회차(); (d.안[칸]||[]).splice(i,1);
+  회차저장(d).then(render);
+}
+function 손으로담기(칸){
+  const 제목 = prompt('제목을 적어 주세요'); if(!제목) return;
+  const 링크 = prompt('원문 링크 (없으면 비워 두세요)') || '';
+  const d = 지금회차();
+  (d.안[칸] = d.안[칸] || []).push({ 갈래:'기사', 제목:제목.slice(0,200), 링크:링크, 언론사:'' });
+  회차저장(d).then(render);
+}
+
+/* ══════ 길 ① 자동으로 담기 ══════ */
+function 자동담기(){
+  const d = 지금회차();
+  /* 법령은 서버가 모아 둔 자리가 따로 없다 — 지금은 뉴스만 자동이고,
+     법령은 주간 브리핑이 만들어 둔 것이 있으면 그것을 쓴다. */
+  db.ref('homepage/newsBrief/법령').once('value').catch(()=>({val:()=>null}))
+    .then(function(s){
+      const 법령 = s.val() || [];
+      d.안 = Core.자동으로담기(App.브리핑, Array.isArray(법령)?법령:[], d.회차);
+      d.안.hr = [];
+      return 회차저장(d);
+    })
+    .then(function(){
+      render();
+      const n = Core.꼭지들.reduce((a,g)=>a+((d.안[g.키]||[]).length),0);
+      toast(n ? `⟳ ${n}건을 담았습니다 — 필요 없는 것은 ✕ 로 빼세요`
+              : '이 주치에 모아 둔 기사가 없습니다 — 붙여넣어 담거나 손으로 담아 주세요', 7000);
+    })
+    .catch(e=>toast('담지 못했습니다: ' + ((e&&e.message)||''), 7000));
+}
+
+/* ══════ 길 ② 붙여넣어 옮겨 담기 ══════ */
+function 붙여넣기옮기기(더하기){
+  const box = $('pasteBox'); if(!box) return;
+  const r = Core.붙여넣기읽기(box.value);
+  if(!r.찾은수) return toast('뽑을 것을 못 찾았습니다 — 본문을 통째로 골라 복사해 보세요', 7000);
+  const d = 지금회차();
+  Core.꼭지들.forEach(function(g){
+    if(g.갈래==='우리글') return;
+    const 새것 = r.안[g.키] || [];
+    d.안[g.키] = 더하기 ? (d.안[g.키]||[]).concat(새것) : 새것;
+  });
+  회차저장(d).then(function(){
+    render();
+    toast(`↧ ${r.찾은수}건을 옮겨 담았습니다`
+      + (r.꼭지로갈랐나 ? ' — 꼭지 이름을 찾아 갈랐습니다' : ' — 꼭지 이름을 못 찾아 말로 갈랐습니다'), 8000);
+  });
+}
+
+/* ══════ 미리보기 ══════ */
+function 지금편지(){
+  const d = 지금회차();
+  return Tpl.편지짓기(Object.assign({}, d, { 범위: App.설정.범위 }), App.설정);
+}
+function 미리보기그리기(){
+  const f = $('pvFrame'); if(!f) return;
+  const 편 = 지금편지();
+  const html = 편 ? 편.서식
+    : '<div style="padding:26px;font-family:sans-serif;color:#94a3b8;font-size:13px">'
+      + '실을 것이 없습니다 — 위에서 담아 주세요.</div>';
+  f.srcdoc = '<!doctype html><meta charset="utf-8"><body style="margin:0">' + html;
+  /* 속 높이에 맞춰 늘린다 — 안 하면 미리보기가 잘려서 아무도 안 본다 */
+  f.onload = function(){
+    try{ f.style.height = (f.contentDocument.body.scrollHeight + 8) + 'px'; }catch(_){}
+  };
+}
+function 크게보기(){
+  const 편 = 지금편지();
+  if(!편) return toast('실을 것이 없습니다');
+  $('bigT').textContent = 편.제목;
+  $('bigB').innerHTML = '<iframe id="bigF" style="width:100%;border:0;background:#fff" title="미리보기"></iframe>';
+  const f = $('bigF');
+  f.srcdoc = '<!doctype html><meta charset="utf-8"><body style="margin:0">' + 편.서식;
+  f.onload = function(){ try{ f.style.height = (f.contentDocument.body.scrollHeight + 8) + 'px'; }catch(_){} };
+  $('big').classList.add('on');
+}
+function closeBig(){ $('big').classList.remove('on'); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   보내기 — 이미 도는 sendBulkMail 에 건다
+   ══════════════════════════════════════════════════════════════════════════ */
+async function 걸기(payload){
+  const u = firebase.auth().currentUser;
+  if(!u) throw new Error('로그인이 풀렸습니다');
+  const token = await u.getIdToken();
+  const res = await fetch(BULK_FN_URL, {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + token },
+    body: JSON.stringify(payload)
+  });
+  let j=null; try{ j = await res.json(); }catch(_){}
+  if(!res.ok || !j || !j.ok) throw new Error((j&&j.error) || ('서버 응답 ' + res.status));
+  return j;
+}
+
+async function 시험발송(){
+  const 편 = 지금편지(); if(!편) return toast('실을 것이 없습니다');
+  const 나 = (App.me && App.me.email) || '';
+  if(!나) return toast('내 주소를 모르겠습니다');
+  if(!confirm(`「${편.제목}」을\n내 주소(${나})로 한 통만 보냅니다.\n\n거래처에는 나가지 않습니다.`)) return;
+  try{
+    await 걸기({ to:[{ email:나, name:'시험', company:'푸른노무법인' }],
+                 subject:'[시험] ' + 편.제목, body:편.본문, html:편.서식, spacingSec:5 });
+    const d = 지금회차(); if(d.상태==='초안'){ d.상태='시험'; await 회차저장(d); render(); }
+    toast('✉️ 시험 메일을 걸었습니다 — 1분 안에 내 메일함에서 확인하세요', 9000);
+  }catch(e){ toast('시험 발송 실패: ' + ((e&&e.message)||''), 9000); }
+}
+
+async function 진짜보내기(){
+  if(App.보내는중) return toast('보내는 중입니다 — 잠시만 기다려 주세요');
+  if(!App.isAdmin) return toast('보내기는 총괄관리자만 누를 수 있습니다');
+  const d = 지금회차();
+  const r = 명단셈();
+  const 갈수있나 = Core.보낼수있나(d, r.셈);
+  if(!갈수있나.ok) return toast(갈수있나.까닭, 8000);
+  const 편 = 지금편지(); if(!편) return toast('실을 것이 없습니다');
+
+  const 분 = Math.max(1, Math.round((r.ok.length * BULK_GAP_SEC)/60));
+  if(!confirm(
+    `「${편.제목}」\n\n`
+    + `· 받는 곳 — ${r.ok.length.toLocaleString()}곳 (한 곳에 한 통씩, 서로 주소가 안 보입니다)\n`
+    + `· 뺀 곳 — 수신거부 ${r.셈.수신거부} · 주소없음 ${r.셈.주소없음} · 겹침 ${r.셈.겹침}\n`
+    + `· 다 나가는 데 약 ${분}분\n\n`
+    + `천천히 나가는 까닭 — 한꺼번에 보내면 다음메일이 막습니다.\n`
+    + `창을 닫아도 서버가 계속 보냅니다.\n\n보낼까요?`)) return;
+
+  App.보내는중 = true; render();
+  try{
+    const j = await 걸기({ to:r.ok, subject:편.제목, body:편.본문, html:편.서식,
+                           spacingSec: BULK_GAP_SEC });
+    d.상태 = '발송'; d.보낸때 = Date.now(); d.받는수 = r.ok.length; d.batchId = j.batchId || '';
+    d.보낸이 = (App.me && App.me.email) || '';
+    await db.ref('newsletter/issues/' + d.열쇠).update({
+      상태:'발송', 보낸때:d.보낸때, 받는수:d.받는수, batchId:d.batchId, 보낸이:d.보낸이
+    });
+    App.회차들[d.열쇠] = d;
+    /* 보냈으니 «다음 회차»로 넘어간다 — 같은 회차를 두 번 보내지 않는다 */
+    const 보냄 = {}; Object.keys(App.회차들).forEach(k=>{ if((App.회차들[k]||{}).상태==='발송') 보냄[k]=1; });
+    App.지금열쇠 = Core.이번회차(오늘(), 보냄).열쇠;
+    toast(`📨 ${(j.n||r.ok.length).toLocaleString()}곳에 걸었습니다 (${j.eta||('약 '+분+'분')})`, 12000);
+  }catch(e){
+    toast('걸지 못했습니다: ' + ((e&&e.message)||''), 12000);
+  }finally{ App.보내는중 = false; render(); }
+}
+
+/* ══════ 길 ③ 그대로 전달 ══════ */
+async function 전달시험(){
+  const box = $('fwdBox'); const html = box ? box.value : '';
+  if(!String(html).trim()) return toast('받은 뉴스레터를 먼저 붙여넣으세요');
+  const 나 = (App.me && App.me.email) || '';
+  const 회 = 지금회차().회차;
+  try{
+    await 걸기({ to:[{ email:나, name:'시험' }], subject:'[시험] ' + 회.제목,
+                 body:'서식이 있는 편지입니다.', html:html, spacingSec:5 });
+    toast('✉️ 시험 메일을 걸었습니다 — 원본과 얼마나 다른지 꼭 확인하세요', 9000);
+  }catch(e){ toast('시험 발송 실패: ' + ((e&&e.message)||''), 9000); }
+}
+async function 전달보내기(){
+  if(!App.isAdmin) return toast('보내기는 총괄관리자만 누를 수 있습니다');
+  const box = $('fwdBox'); const html = box ? box.value : '';
+  if(!String(html).trim()) return toast('받은 뉴스레터를 먼저 붙여넣으세요');
+  const r = 명단셈(); if(!r.ok.length) return toast('받는 곳이 없습니다');
+  const 회 = 지금회차().회차;
+  if(!confirm(`받은 뉴스레터를 «그대로» ${r.ok.length.toLocaleString()}곳에 전달합니다.\n\n`
+    + `이것은 남이 만든 뉴스레터를 우리 이름으로 다시 보내는 것입니다.\n`
+    + `저작권 문제가 생길 수 있습니다.\n\n그래도 보낼까요?`)) return;
+  try{
+    const j = await 걸기({ to:r.ok, subject:회.제목, body:'서식이 있는 편지입니다.',
+                           html:html, spacingSec:BULK_GAP_SEC });
+    toast(`📨 ${(j.n||r.ok.length).toLocaleString()}곳에 걸었습니다`, 12000);
+  }catch(e){ toast('걸지 못했습니다: ' + ((e&&e.message)||''), 12000); }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   지난 회차
+   ══════════════════════════════════════════════════════════════════════════ */
+function 지난회차화면(){
+  const 열쇠들 = Object.keys(App.회차들).sort().reverse();
+  if(!열쇠들.length) return '<div class="note">아직 만든 회차가 없습니다.</div>';
+  const 줄 = 열쇠들.map(function(k){
+    const d = App.회차들[k] || {};
+    const 회 = d.회차 || 회차로부터(k);
+    const 수 = Core.꼭지들.reduce((a,g)=>a+(((d.안||{})[g.키]||[]).length),0);
+    const 딱지 = { 초안:'b-draft', 시험:'b-test', 발송:'b-sent' }[d.상태] || 'b-draft';
+    return `<tr>
+      <td><b>${esc(회.이름||k)}</b><div style="font-size:11px;color:var(--faint)">${esc(회.기간||'')}</div></td>
+      <td><span class="badge ${딱지}">${esc(d.상태||'초안')}</span></td>
+      <td>${수}건</td>
+      <td>${d.받는수 ? d.받는수.toLocaleString()+'곳' : '—'}</td>
+      <td>${d.보낸때 ? new Date(d.보낸때).toLocaleString('ko-KR') : '—'}</td>
+      <td style="text-align:right">
+        <button class="mini" onclick="회차열기('${k}')">열기</button></td>
+    </tr>`;
+  }).join('');
+  return `<div class="box" style="margin-top:14px">
+    <h3>지난 회차 <span class="cnt">${열쇠들.length}</span></h3>
+    <table class="list"><tr><th>회차</th><th>상태</th><th>실린 것</th><th>받는 곳</th>
+      <th>보낸 때</th><th></th></tr>${줄}</table></div>
+   <div class="note">회차를 열면 「이번 회차」 칸에서 보고 고칠 수 있습니다.
+    <b>이미 보낸 회차는 다시 못 보냅니다</b> — 같은 뉴스레터를 두 번 받는 일이 없게 막아 두었습니다.</div>`;
+}
+function 회차열기(k){ App.지금열쇠 = k; App.tab='now'; render(); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   받는 명단
+   ══════════════════════════════════════════════════════════════════════════ */
+function 명단화면(){
+  const r = 명단셈();
+  const 열쇠들 = Object.keys(App.명단);
+  const 줄 = 열쇠들.length ? 열쇠들.map(function(k){
+    const x = App.명단[k] || {};
+    const 막힘 = x.noMail || App.막은주소[주소열쇠(x.email)] || App.막은주소[String(x.email||'').toLowerCase()];
+    return `<tr>
+      <td><b>${esc(x.company||'')}</b></td>
+      <td>${esc(x.name||'')}${x.title?' <span style="color:var(--faint)">'+esc(x.title)+'</span>':''}</td>
+      <td style="color:${막힘?'var(--faint)':'inherit'}">${esc(x.email||'')}</td>
+      <td>${막힘?'<span class="badge b-draft">수신거부</span>':''}</td>
+      <td style="text-align:right"><button class="x mini" onclick="명단빼기('${esc(k)}')">빼기</button></td>
+    </tr>`;
+  }).join('') : '';
+
+  return `
+  <div class="hdbar">
+    <span class="no">받는 곳 ${r.셈.보낼곳.toLocaleString()}곳</span>
+    <span style="font-size:12px;color:var(--sub)">
+      수신거부 ${r.셈.수신거부} · 주소없음 ${r.셈.주소없음} · 겹침 ${r.셈.겹침}</span>
+    <span class="sp"></span>
+    <span class="badge ${Core.광고표기필요한가(App.설정.범위)?'b-test':'b-sent'}">
+      ${esc(App.설정.범위||'자문중')}${Core.광고표기필요한가(App.설정.범위)?' · (광고) 표기 켜짐':''}</span>
+  </div>
+
+  <div class="box" style="margin-top:12px">
+   <h3>담기</h3>
+   <div class="pad">
+    <label class="f">① 기업정보함에서 내보낸 CSV 를 붙여넣기 <span style="font-weight:400">(가장 빠릅니다)</span></label>
+    <textarea id="addBox" rows="4" placeholder="이름,이메일,회사,직책,휴대폰
+홍길동,hong@abc.co.kr,주식회사 에이비씨,과장,010-0000-0000
+
+— 또는 이메일만 한 줄에 하나씩 붙여넣으셔도 됩니다."></textarea>
+    <div style="display:flex;gap:9px;margin-top:9px;flex-wrap:wrap">
+     <button class="btn pri" onclick="명단담기()">＋ 명단에 담기</button>
+     <button class="btn" onclick="명단내보내기()">↧ 지금 명단 CSV 로 받기</button>
+    </div>
+    <div class="hint">
+     기업정보함에서 <b>자문 중인 곳을 골라 → ⋯ → 엑셀(CSV) 내보내기</b> 한 다음
+     그 내용을 그대로 붙여넣으시면 됩니다. 새 연결을 만들지 않으려고 이렇게 두었습니다.<br>
+     담을 때 <b>수신거부·겹치는 주소·형식이 틀린 주소</b>는 저절로 빠지고, 몇이 왜 빠졌는지 알려 드립니다.
+    </div>
+   </div>
+  </div>
+
+  ${열쇠들.length ? `<div class="box"><h3>명단 <span class="cnt">${열쇠들.length}</span></h3>
+    <table class="list"><tr><th>회사</th><th>담당자</th><th>이메일</th><th></th><th></th></tr>
+    ${줄}</table></div>` : '<div class="note">아직 명단이 비어 있습니다 — 위에서 담아 주세요.</div>'}
+
+  <div class="note bad"><b>명단 범위가 곧 법 판단입니다 (정보통신망법 50조).</b><br>
+   <b>자문 계약이 살아 있는 곳</b>에만 보내면 거래관계 안이라 대체로 수월합니다.
+   <b>명함 전부</b>로 넓히면 사전 동의 · 제목 (광고) 표기 · 수신거부 방법 ·
+   2년마다 동의 확인이 필요해집니다.<br>
+   설정에서 범위를 넓히시면 <b>(광고) 표기와 안내가 저절로 켜집니다</b> — 잊고 넓히는 일이 없게.
+   다만 <b>사전 동의를 받는 일은 사람이 해야 합니다.</b></div>`;
+}
+
+/* CSV 든 이메일 목록이든 한 길로 받는다 — 두 길로 두면 「어느 쪽이었지」가 된다 */
+function 명단담기(){
+  const box = $('addBox'); if(!box) return;
+  const 줄들 = String(box.value||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  if(!줄들.length) return toast('붙여넣은 것이 없습니다');
+  const 후보 = [];
+  줄들.forEach(function(줄, i){
+    if(i===0 && /이메일|email/i.test(줄) && /,/.test(줄)) return;   /* CSV 머리줄 */
+    const 칸 = 줄.split(',').map(s=>s.replace(/^"|"$/g,'').trim());
+    /* 어느 칸이 이메일인지 «찾는다» — 칸 차례를 못 박으면 열이 하나 바뀔 때 통째로 어긋난다 */
+    let e = '', 나머지 = [];
+    칸.forEach(function(c){
+      if(!e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c)) e = c; else 나머지.push(c);
+    });
+    if(!e){ 후보.push({ email:줄 }); return; }        /* 형식이 틀린 것도 넘긴다 — 세어서 알려 준다 */
+    후보.push({ email:e, name:나머지[0]||'', company:나머지[1]||'', title:나머지[2]||'' });
+  });
+  const r = Core.명단다듬기(후보, App.막은주소);
+  if(!r.ok.length){
+    return toast(`담을 수 있는 주소가 없습니다 — 주소없음 ${r.셈.주소없음} · 수신거부 ${r.셈.수신거부} · 겹침 ${r.셈.겹침}`, 9000);
+  }
+  const upd = {};
+  let 새로 = 0;
+  r.ok.forEach(function(x){
+    const k = 주소열쇠(x.email);
+    if(App.명단[k]) return;                          /* 이미 있는 곳은 덮어쓰지 않는다 */
+    upd[k] = Object.assign({}, x, { 담은때: Date.now(), 담은이: (App.me&&App.me.email)||'' });
+    App.명단[k] = upd[k]; 새로++;
+  });
+  if(!새로){ box.value=''; render(); return toast('모두 이미 담겨 있습니다'); }
+  db.ref('newsletter/recipients').update(upd)
+    .then(function(){
+      box.value=''; render();
+      toast(`＋ ${새로}곳을 담았습니다`
+        + (r.셈.수신거부||r.셈.주소없음||r.셈.겹침
+           ? `\n뺀 것 — 수신거부 ${r.셈.수신거부} · 주소없음 ${r.셈.주소없음} · 겹침 ${r.셈.겹침}` : ''), 9000);
+    })
+    .catch(e=>toast('담지 못했습니다: ' + ((e&&e.message)||''), 8000));
+}
+function 명단빼기(k){
+  const x = App.명단[k] || {};
+  if(!confirm(`${x.company||''} ${x.name||''} (${x.email||''})\n명단에서 뺄까요?`)) return;
+  delete App.명단[k];
+  db.ref('newsletter/recipients/' + k).remove().then(render);
+}
+function 명단내보내기(){
+  const 머리 = '이름,이메일,회사,직책';
+  const 몸 = Object.keys(App.명단).map(function(k){
+    const x = App.명단[k]||{};
+    return [x.name,x.email,x.company,x.title]
+      .map(v=>{ const s=String(v==null?'':v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; })
+      .join(',');
+  }).join('\r\n');
+  /* 첫머리 BOM — 없으면 엑셀이 한글을 깨뜨린다 (기업정보함 toCsv 와 같은 규칙) */
+  const blob = new Blob(['﻿' + 머리 + '\r\n' + 몸 + '\r\n'], { type:'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '뉴스레터-명단-' + 오늘() + '.csv';
+  a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 3000);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   설정
+   ══════════════════════════════════════════════════════════════════════════ */
+function 설정화면(){
+  const s = App.설정;
+  const 옵 = Core.범위들.map(v=>`<option value="${v}" ${s.범위===v?'selected':''}>${v}</option>`).join('');
+  return `
+  <div class="box" style="margin-top:14px">
+   <h3>뉴스레터 설정</h3>
+   <div class="pad">
+    <label class="f">받는 명단의 범위 — 이 값이 (광고) 표기를 켜고 끕니다</label>
+    <select id="cfgScope" onchange="설정저장()">${옵}</select>
+    <div class="hint">
+     <b>자문중</b> — 자문 계약이 살아 있는 곳만. 거래관계 안이라 (광고) 표기가 없습니다.<br>
+     <b>자문끝 · 명함전부</b> — 제목 앞에 <b>(광고)</b> 가 붙고 꼬리에 안내가 들어갑니다.
+     사전 수신동의는 <b>사람이 받아 두셔야 합니다.</b></div>
+
+    <label class="f">회사 이름</label>
+    <input type="text" id="cfgName" value="${esc(s.회사이름||'')}" onchange="설정저장()">
+
+    <label class="f">회신·수신거부를 받을 주소</label>
+    <input type="text" id="cfgReply" value="${esc(s.회신주소||'')}" onchange="설정저장()">
+
+    <label class="f">꼬리 한 줄</label>
+    <input type="text" id="cfgFoot" value="${esc(s.꼬리한줄||'대표노무사 권형하')}" onchange="설정저장()">
+
+    <label class="f">배너 그림 주소 <span style="font-weight:400">(비워 두면 색칠한 칸으로 그립니다)</span></label>
+    <input type="text" id="cfgBanner" value="${esc(s.배너그림||'')}"
+      placeholder="https://nabaho.github.io/pureunall/img/…" onchange="설정저장()">
+    <div class="hint">
+     ⚠ <b>우리 홈페이지에 올린 그림만</b> 나갑니다 (<code>nabaho.github.io/pureunall/</code>).
+     남의 서버 그림은 발송기가 버립니다 — 받는 쪽이 열 때 「언제 읽었나」가
+     남의 서버로 새 나가는 것을 막는 규칙입니다.</div>
+
+    <label class="f">로고 그림 주소 <span style="font-weight:400">(비워 두면 「푸」 표시로 그립니다)</span></label>
+    <input type="text" id="cfgLogo" value="${esc(s.로고그림||'')}" onchange="설정저장()">
+   </div>
+  </div>
+  <div class="note"><b>보내는 때</b>는 아직 손으로 누르십니다.
+   몇 주 눈으로 보시고 탈이 없으면 그때 예약으로 돌리는 것이 안전합니다 —
+   빈 뉴스레터나 잘못 담긴 회차가 사람 눈을 안 거치고 나가는 일이 없게.</div>`;
+}
+function 설정저장(){
+  const g = id => { const el=$(id); return el ? el.value : ''; };
+  App.설정 = Object.assign({}, App.설정, {
+    범위: g('cfgScope') || '자문중',
+    회사이름: g('cfgName') || '푸른노무법인',
+    회신주소: g('cfgReply'),
+    꼬리한줄: g('cfgFoot'),
+    배너그림: g('cfgBanner'),
+    로고그림: g('cfgLogo')
+  });
+  db.ref('newsletter/config').update(App.설정)
+    .then(()=>toast('저장했습니다'))
+    .catch(e=>toast('저장 실패: ' + ((e&&e.message)||''), 7000));
+}
+</script>
+</body>
+</html>
