@@ -36,6 +36,24 @@ const ROOT = 'mailbox';
        그 회차를 건너뛴다) 그쪽이 훨씬 그럴듯하다. 원인을 못 가렸으면 «못 가렸다»고
        적어야지, 그럴듯한 것을 원인으로 적으면 다음 사람이 엉뚱한 것을 고친다. */
 const MB_DIAG = false;
+/* ══ ★★ POP3 는 30,000통을 준다 — IMAP 의 400통과 «75배» 차이다 (2026-09-02 실측) ══
+   MB_POP {"stat":"+OK 30000 36783009165","imapCap":400}   ← 05:18 회차
+   즉 30,000통 · 36.8GB. 1년치(약 17,000통)를 «넉넉히 덮는다».
+   ★ 그러므로 「1년치 완전 동기화」는 «가능하다» — 다만 IMAP 이 아니라 POP3 로.
+     앞서 IMAP 만 보고 「불가능」이라 적었던 것을 이 값이 뒤집는다.
+
+   ⚠★ 여기서 내가 두 번 틀렸다, 둘 다 «성급한 판정»이었다 —
+     ① 04:46·05:15 회차가 «빠졌다»고 보고 탐침을 두 번 껐다. 그런데 05:18 에 그 회차가
+        멀쩡히 돌아 있었다. 빠진 것이 아니라 «로그가 늦게 올라온 것»이었다.
+        로그가 안 보이는 것을 「안 돈 것」으로 읽으면 안 된다 — 1~3분은 예사로 늦는다.
+     ② 그 «안 빠진» 회차를 근거로 탐침을 껐는데, 정작 그 회차가 답을 내놓고 있었다.
+   ⚠ 탐침은 답을 얻었으므로 꺼 둔다 — 다시 잴 까닭이 없다. 다음에 무언가를 잴 때는
+     로그가 «늦다»는 것을 셈에 넣고, 최소 3회차는 보고 판단할 것.
+   ⚠ POP3 로 실제로 끌어오려면 챙길 것: ①DELE 를 «절대» 안 부른다 ②다음메일 설정의
+     「가져온 메일 남겨두기」가 켜져 있어야 한다 ③UIDL 로 이미 받은 것을 가린다
+     ④TOP 으로 머리글만 받는다(36.8GB 를 통째로 받을 일이 아니다). */
+const POP_PROBE = false;
+let _popTried = false;
 const CHUNK = 400;          // 한 폴더에서 한 바퀴에 볼 통수
 const MAX_ROWS = 9000;      // 한 회차 전체 통수 — 한 줄이 250바이트쯤이니 2MB 남짓
 const MAX_TURNS = 400;      // 줄에서 꺼내 볼 횟수 — 끝나지 않는 회차를 막는 뒷그물
@@ -582,6 +600,43 @@ async function runSync(deps, opts) {
       at: nowMs(), ok: true, folders: out.folders, rows: out.rows,
       removed: out.removed, ready: out.ready, waiting: out.waiting, turns: turns, err: '',
     });
+
+    /* ══ POP3 로는 더 주는가 — «그릇당 한 번», 일이 다 끝난 뒤에만 (2026-09-02) ══
+       IMAP 은 폴더당 400통이 끝인 것이 확정됐다. 남은 «모르는 답»이 이것 하나다:
+       다음은 POP3 에 「가져올 범위」를 따로 두는데, 거기서 전체를 준다면 옛 메일을
+       끌어올 길이 남는다.
+       ⚠★ 앞서 이 탐침을 회차 «가운데»에 두었다가, 회차가 9초→14초로 늘어 곧 껐다.
+         이번에는 ①메일 일이 «다 끝난 뒤» ②그릇당 «한 번»만 ③예산이 1분 넘게 남았을 때만
+         ④10초 안에 안 끝나면 스스로 접는다. 그래서 동기화를 늦추지 않는다.
+       ⚠ STAT 하나만 묻는다 — 통수와 크기만 돌려주는 명령이라 메일을 건드리지 않는다.
+         RETR·DELE 는 부르지 않는다. 읽음 표시도 안 바뀐다.
+       ⚠ 답을 얻으면 이 덩이를 걷어낸다. 남겨 두면 그릇이 새로 뜰 때마다 헛일을 한다. */
+    if (POP_PROBE && !_popTried && nowMs() < deadline - 60000) {
+      _popTried = true;
+      try {
+        const stat = await new Promise((ok) => {
+          const tls = require('tls');
+          let buf = '', step = 0, done = false;
+          const fin = (v) => { if (!done) { done = true; try { s.end(); } catch (_) {} ok(v); } };
+          const s = tls.connect({ host: 'pop.daum.net', port: 995, servername: 'pop.daum.net' });
+          const t = setTimeout(() => fin('TIMEOUT'), 10000);
+          s.on('error', (e) => { clearTimeout(t); fin('ERR ' + String((e && e.message) || e)); });
+          s.on('data', (d) => {
+            buf += d.toString('utf8');
+            let i;
+            while ((i = buf.indexOf('\r\n')) >= 0) {
+              const line = buf.slice(0, i); buf = buf.slice(i + 2);
+              if (line.charAt(0) === '-') { clearTimeout(t); return fin('DENIED ' + line.slice(0, 60)); }
+              if (step === 0) { step = 1; s.write('USER ' + user + '\r\n'); continue; }
+              if (step === 1) { step = 2; s.write('PASS ' + pass + '\r\n'); continue; }
+              if (step === 2) { step = 3; s.write('STAT\r\n'); continue; }
+              clearTimeout(t); return fin(line.trim().slice(0, 40));   /* +OK <통수> <바이트> */
+            }
+          });
+        });
+        console.log('MB_POP', JSON.stringify({ stat: stat, imapCap: 400 }));
+      } catch (e) { console.warn('MB_POP 실패:', String((e && e.message) || e)); }
+    }
   } catch (e) {
     out.ok = false;
     out.err = String((e && e.message) || e);
