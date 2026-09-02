@@ -59,6 +59,8 @@ function load(over){
     canSeeGroup: () => true,
     /* 기업 상세 쪽 */
     coList: () => o.cos || [],
+    /* 👷 근로자 정보함 (2026-09-01) — 옆줄 단추가 사람 수를 센다 */
+    wkList: () => o.wks || [],
     coTagList: () => o.coTags || [],
     coFTabCounts: () => ({ all: 0, byTab: {} }),
     coFTabList: () => o.coFTabs || [],

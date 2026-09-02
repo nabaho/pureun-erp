@@ -1007,9 +1007,21 @@
   /* 사람 열쇠 = 회사 + 이름. 회사 다듬기는 업체 찾기(coNameKey)와 **같은 규칙**이다 —
      「(주)승진텍라인」과 「승진텍 라인」이 다른 사람으로 갈라지면 안 된다.
      ⚠ 둘 중 하나라도 비면 빈 문자열을 준다. 부르는 쪽은 그때 아무것도 안 붙인다. */
+  /* ⚠⚠ 회사 다듬기는 **pu-cards.html 의 _norm 과 한 글자도 같아야 한다.**
+     그쪽이 같은 열쇠로 사람을 찾는다 — 규칙이 어긋나면 여기서 이은 서류가
+     근로자 정보함에서 «딴 사람»에게 붙거나 아무에게도 안 붙는다.
+     ⚠ 업체 찾기의 coNameKey 와는 «다르다»(그쪽은 유한회사 표기도 걷어낸다).
+       업체를 찾는 일과 사람을 가르는 일은 잣대가 다르다 — 섞지 않는다.
+     검사(cards-worker-box)가 두 규칙을 같은 이름들로 돌려 견준다. */
+  function wkCompanyNorm(v) {
+    return String(v == null ? '' : v)
+      .replace(/\s|\(주\)|주식회사|㈜/g, '')
+      .replace(/[.#$/[\]]/g, '')
+      .toLowerCase();
+  }
   function workerKey(name, company) {
     var n = wkSafe(name);
-    var c = wkSafe(coNameKey(company));
+    var c = wkSafe(wkCompanyNorm(company));
     if (!n || !c) return '';
     return c + '__' + n;
   }

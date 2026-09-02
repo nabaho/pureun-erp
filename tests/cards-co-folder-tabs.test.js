@@ -328,7 +328,9 @@ test('★ 기업 상세에서 탭 줄을 숨기지 않는다 — 숨기면 탭�
     '★ 폴더를 안 골랐다고 머리줄을 접으면 첫 화면에서 정보부족·종료 단추가 사라진다');
   assert.match(fn, /hd\.style\.display = \(isSet\|\|isMat\|\|isMail\) \?/,
     '기업 상세에서 머리줄을 접는 조건이 남아 있다');
-  assert.match(fn, /classList\.toggle\('cohead', isCo\)/,
+  /* ⚠ isCo 하나만 박아 두었더니 근로자 정보함(2026-09-01)이 붙어 isCo||isWk 가 되면서
+     기능은 그대로인데 검사가 깨졌다. 규칙은 「기업 상세에서 접는다」다 — 그것만 본다. */
+  assert.match(fn, /classList\.toggle\('cohead', isCo/,
     '기업 상세에서 명함 목록의 제목·보기도구를 안 접는다');
   assert.match(fn, /if\(isCo\)\{ renderErpTabs\(\)/, '기업 상세에서 탭 줄을 안 그린다');
 });
