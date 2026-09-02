@@ -347,7 +347,7 @@
      ⚠ 여기를 고쳤으면 `functions/photo-view.js` 도 함께 고치고 **그 함수를 다시
        올려야** 한다. 안 올리면 화면은 원본 주소를 안 적는데 서버는 「민감 아니다」로
        물러나 그 사진이 «아예 안 열린다». 검사가 두 목록이 같은지 못박는다. */
-  var SENSITIVE_KINDS = { contract: 1, timesheet: 1, payslip: 1, cms: 1, bankbook: 1,
+  var SENSITIVE_KINDS = { contract: 1, wcontract: 1, timesheet: 1, payslip: 1, cms: 1, bankbook: 1,
     idcard: 1, resident: 1, mandate: 1, consent: 1 };
   /* 판독 전(read 없음)이면 **민감이 아니다** — 그렇게 안 하면 회의사진 수백 장이
      죄다 서버를 거치게 된다. 민감 여부는 판독이 정한다. */

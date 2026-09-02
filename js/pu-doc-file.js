@@ -1061,11 +1061,13 @@
 
   var WORKER_ROOT = CARDS_ROOT + '/workerInfo';
 
-  /* 이 갈래는 근로자 정보함으로 간다. 넷은 «사람 것»이라 회사가 아니라 사람에게 붙는다
-     (신분증·주민등록서류·위임장·개인정보동의서), 둘은 «사람이 여럿 적힌 표»다.
+  /* 이 갈래는 근로자 정보함으로 간다. 다섯은 «사람 것»이라 회사가 아니라 사람에게 붙는다
+     (신분증·주민등록서류·위임장·개인정보동의서·근로계약서), 둘은 «사람이 여럿 적힌 표»다.
      ⚠ pu-photos.html 의 WORKER_KINDS 와 짝이다 — 한쪽만 늘리면 값이 안 오거나
-       할 일이 안 뜬다(tests/cards-worker-box.test.js 가 둘을 견준다). */
-  var WORKER_DOC_KINDS = { idcard: 1, resident: 1, mandate: 1, consent: 1,
+       할 일이 안 뜬다(tests/cards-worker-box.test.js 가 둘을 견준다).
+     ⚠ wcontract(근로계약서, 대표 지시 2026-09-02)는 «근로자와 사업주»의 것이다.
+       우리 사무소가 당사자인 contract 는 여기 없다 — 그것은 사람이 아니라 업체에 붙는다. */
+  var WORKER_DOC_KINDS = { idcard: 1, resident: 1, mandate: 1, consent: 1, wcontract: 1,
     timesheet: 1, payslip: 1 };
 
   /* 실시간DB 열쇠로 쓸 수 있게 다듬는다. 한글은 그대로 쓸 수 있지만
