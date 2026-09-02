@@ -721,7 +721,15 @@ function warmDone(client, ok) {
   if (_warm && _warm.client === client) {
     _warm.busy = false;
     _warm.at = nowMs();
-    if (!ok) { try { _warm.client.logout(); } catch (_) { /* 이미 끊겼다 */ } _warm = null; }
+    /* 못 쓰게 된 연결을 버린다. ★ 여기서도 «기다리지 않는다»(warmConnect 와 같은 까닭).
+       ⚠ try/catch 만으로는 못 막는다 — 그것은 «던져진 것»만 잡고, logout 이 되돌려 준
+         실패는 그냥 새어 나간다. 아무도 안 붙잡은 실패는 그릇을 통째로 죽인다
+         (Node 18+ 기본값이 그렇다). 그래서 .catch 를 붙인다. */
+    if (!ok) {
+      try { Promise.resolve(_warm.client.logout()).catch(function () { /* 버릴 것이다 */ }); }
+      catch (_) { /* 부르는 것조차 터졌다 — 그래도 버린다 */ }
+      _warm = null;
+    }
     return true;    /* 살려 둔다 */
   }
   return false;     /* 남는 것으로 붙은 것 — 부른 쪽이 끊는다 */
