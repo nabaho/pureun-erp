@@ -150,7 +150,8 @@ test('★ 바깥으로 나가는 길은 «이름 붙은 우리 주소»뿐이다
   허용.forEach(이름 => {
     const m = new RegExp('const ' + 이름 + " = '([^']+)'").exec(html);
     if (!m) return;                       // 아직 안 쓰는 이름은 넘어간다
-    assert.match(m[1], /^https:\/\/(us-central1-pureun-erp\.cloudfunctions\.net|nabaho\.github\.io)\//,
+    /* ★ raw 는 «우리 계정(nabaho)» 것만 — 남의 저장소 원본을 읽어 홈페이지를 그리면 안 된다 */
+    assert.match(m[1], /^https:\/\/(us-central1-pureun-erp\.cloudfunctions\.net|nabaho\.github\.io|raw\.githubusercontent\.com\/nabaho)\//,
       '★ ' + 이름 + ' 이 우리 것이 아닌 곳을 가리킵니다: ' + m[1]);
   });
   assert.match(html, /READ_HOMEPAGE_URL/);
