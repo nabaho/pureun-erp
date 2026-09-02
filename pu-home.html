@@ -271,6 +271,27 @@ main{flex:1;min-height:0;width:100%;padding:10px 12px;
 .pfixbar{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:6px}
 /* 자문사 로고 고르기 — 그림이 주인공이라 칸을 작게, 손잡이는 그림 위에 얹는다 */
 .logos{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+/* 로고 붙여넣기 — Ctrl+V 로 받는 칸과, «실제 배경 위» 미리보기 */
+.lpaste{border:2px dashed var(--navy);border-radius:9px;background:#f8fafc;
+  padding:13px;text-align:center;margin:9px 0 0;cursor:text}
+.lpaste:focus{outline:2px solid var(--navy);outline-offset:1px}
+.lpaste b{color:var(--ink)}
+.lpaste .k{display:inline-block;border:1px solid var(--line);background:#fff;border-radius:5px;
+  padding:1px 6px;font-family:ui-monospace,monospace;font-weight:800;font-size:11.5px;margin:0 1px}
+.lpaste .sub{display:block;margin-top:5px}
+.lpick{border:1px solid var(--line);border-radius:9px;padding:9px;margin:9px 0 0;background:#fff}
+.lpick-h{font-size:12px;color:var(--sub);margin-bottom:6px}
+/* ★ 미리보기 바탕은 홈페이지의 «회색 칸»을 흉내 낸다 — 흰 네모가 생기는지 눈에 보인다.
+   ⚠ 홈페이지가 쓰는 그 회색은 팔레트 밖 색이고, 팔레트 예외 목록은
+     일부러 잠가 둔 것이다(tests/color-palette-apps 「예외를 늘리지 말 것」).
+     ⚠ 그 색값을 «주석에도 적지 말 것» — 팔레트 검사는 주석을 걷지 않아 그대로 걸린다.
+     여기서 지킬 것은 «정확한 색»이 아니라 「흰 네모가 눈에 보이나」이므로
+     팔레트 안의 밝은 회색으로 충분하다 — 흰색이 아니기만 하면 된다. */
+.lpick-bg{background:#fff;border:1px solid var(--line);border-radius:7px;padding:11px;
+  display:flex;justify-content:center}
+.lpick-card{background:#e2e8f0;border-radius:11px;width:154px;height:62px;
+  display:flex;align-items:center;justify-content:center}
+.lpick-card img{max-width:88%;max-height:78%;object-fit:contain}
 .logos .lg{position:relative;width:120px;height:64px;border:1px solid var(--line);
   border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden}
 .logos .lg img{max-width:100%;max-height:100%;object-fit:contain}
@@ -332,6 +353,11 @@ main{flex:1;min-height:0;width:100%;padding:10px 12px;
 /* 칸 이름 아래 놓이는 작은 단추줄 (예: 「홈페이지 줄 모양으로 나누기」) */
 .fldbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 5px}
 .fld{margin-bottom:13px}
+/* 빈 칸은 라벨을 «옆에» 둔다 — 라벨이 위에 따로 있으면 빈 칸 하나가 두 줄을 쓴다
+   (대표 지적 2026-09-02 「한줄 안되나」). 글이 들어오면 .oneline 이 떨어져 위로 올라간다. */
+.fld.oneline{display:flex;align-items:center;gap:9px}
+.fld.oneline > label{margin-bottom:0;flex:0 0 auto;white-space:nowrap}
+.fld.oneline > textarea{flex:1;min-width:0;resize:none}
 .fld > label{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:800;color:var(--sub);margin-bottom:5px}
 .fld > label .tip{font-weight:700;color:var(--faint)}
 .fld input,.fld textarea{width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:8px 11px;
@@ -713,6 +739,10 @@ const App = {
        ★ 저장하지 않는 까닭: 이것은 «홈페이지에 채울 것»이지 우리 자료가 아니다.
          자료로 남기면 채우지도 않은 글이 대조 기준인 양 굳는다. */
   pageConfig: {}, pageLines: {}, pageRuns: {}, pageFix: {},
+  /* logoPick — 붙여넣은(또는 고른) 로고 그림 «한 장». 담기를 누를 때까지만 산다.
+     logoPasteOn — 로고 창이 열려 있는 동안만 Ctrl+V 를 받는다.
+     ★ 저장하지 않는다 — 담으면 저장소로 가고, 안 담으면 없던 일이 된다. */
+  logoPick: null, logoPasteOn: false,
   /* publishing — 지금 홈페이지에 올리는 중인지(두 번 눌러 두 번 올리지 않게) */
   publishing: false,
   /* partnerLogos — 자문사 쪽에 «어느 로고를 어떤 차례로» 보일지(homepage/partnerLogos).
@@ -2325,7 +2355,12 @@ function openModal(html) {
   $('modalCard').innerHTML = html;
   $('modal').classList.add('on');
 }
-function closeModal() { $('modal').classList.remove('on'); Pull.open = false; }
+/* ★ 창을 닫으면 붙여넣기를 «끈다» — 안 끄면 다른 화면에서 Ctrl+V 를 눌러도
+     로고로 받아 버린다. 붙여 두었던 그림도 함께 버린다(담지 않은 것은 없던 일이다). */
+function closeModal() {
+  $('modal').classList.remove('on'); Pull.open = false;
+  App.logoPasteOn = false; App.logoPick = null;
+}
 function modalBackdrop(e) { if (e.target === $('modal')) closeModal(); }
 function modalFoot(note) {
   return '<div class="foot">' + (note ? '<span class="sub">' + esc(note) + '</span>' : '')
@@ -2334,6 +2369,10 @@ function modalFoot(note) {
 window.closeModal = closeModal; window.modalBackdrop = modalBackdrop;
 /* Esc — 화면 안 창이 떠 있으면 그것부터 닫는다(덧창 위에 떠 있기 때문이다).
    그만두기와 같은 뜻이라 dlgCancel 을 쓴다 — 답을 안 준 채 닫으면 부른 쪽이 멈춘다. */
+/* ★ 붙여넣기는 문서에 «한 번만» 단다 — 창을 그릴 때마다 달면 겹쳐서 여러 번 돈다.
+   실제로 받는지는 App.logoPasteOn 이 가른다(로고 창이 열려 있을 때만). */
+document.addEventListener('paste', onLogoPaste);
+
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (Dlg.done) { dlgCancel(); return; }
@@ -3158,11 +3197,16 @@ function memberEdit(d) {
   /* ★ 비어 있으면 «한 줄»로 접는다 (대표 지적 2026-09-02) — 빈 칸이 세 줄을 먹고 있었다.
      누르면(onfocus) 펴진다. 글이 있으면 처음부터 펴져 있다.
    ★ 긴 설명은 라벨 «글자»가 아니라 물음표에 넣는다 — 라벨이 칸보다 길었다.
-     뜻을 지우는 것이 아니다: 마우스를 올리면 그대로 뜬다. */
-  h += '<div class="fld"><label>메인 설명'
+     뜻을 지우는 것이 아니다: 마우스를 올리면 그대로 뜬다.
+   ★ 비어 있으면 라벨을 «칸과 한 줄»에 둔다 (대표 지적 2026-09-02 「한줄 안되나」) —
+     라벨이 위에 따로 있으면 빈 칸 하나가 두 줄을 쓴다. 글이 있으면 라벨을 위로 올린다
+     (글이 여러 줄로 늘어나는데 라벨이 옆에 붙어 있으면 어디까지가 그 칸인지 흐려진다).
+   ★ 안내 글도 짧게 — 「비어 있습니다 — 누르면 펴집니다」는 칸보다 길었다. */
+  const 설명있나 = !!String(d.intro || '').trim();
+  h += '<div class="fld' + (설명있나 ? '' : ' oneline') + '"><label>메인 설명'
     + '<span class="tip" title="홈페이지 공개 화면에 안 나와 읽어올 수 없습니다 — 홈페이지 편집 화면을 보고 채우십시오">?</span></label>'
-    + '<textarea rows="' + (d.intro ? '3' : '1') + '" onfocus="this.rows=3"'
-    + ' placeholder="비어 있습니다 — 누르면 펴집니다"'
+    + '<textarea rows="' + (설명있나 ? '3' : '1') + '" onfocus="this.rows=3"'
+    + ' placeholder="비어 있음"'
     + ' oninput="fieldEdit(\'intro\',this.value)">' + esc(d.intro) + '</textarea></div>';
 
   h += '<div class="fld"><label>경력사항 — ' + d.careers.length + '줄</label>'
@@ -3410,7 +3454,36 @@ function drawPartnerLogos() {
     });
     h += '</div>';
   }
-  h += '<div class="guide"><b>새 로고 넣기</b> — 그림을 고르면 «저장소»에 담고 목록 맨 뒤에 붙입니다. '
+  /* ★ 로고 창이 열려 있는 동안만 Ctrl+V 를 받는다 */
+  App.logoPasteOn = true;
+  h += '<div class="lpaste" tabindex="0" onclick="focusLogoPaste(this)">'
+    + '<b>여기를 누르고 <span class="k">Ctrl</span>+<span class="k">V</span></b>'
+    + '<span class="sub">홈페이지의 로고에 <b>우클릭 → 「이미지 복사」</b> 한 뒤 붙여넣으시면 가장 깔끔합니다'
+    + ' — 투명 배경이 그대로 옵니다.<br>화면 캡쳐도 됩니다(흰 배경이 딸려오면 알려 드립니다).</span></div>';
+
+  if (App.logoPick) {
+    const p = App.logoPick;
+    h += '<div class="lpick">'
+      + '<div class="lpick-h">붙인 그림 — <b>홈페이지에 실리면 이렇게 보입니다</b></div>'
+      + '<div class="lpick-bg"><div class="lpick-card">'
+      + '<img src="' + esc(p.dataUrl) + '" alt=""></div></div>'
+      + '<div class="sub" style="margin-top:5px">' + p.w + '×' + p.h
+      + ' · ' + Math.round(p.바이트 / 1024) + 'KB'
+      + (p.줄였나 ? ' · 가로 ' + p.원래폭 + 'px 을 ' + LOGO_MAX_W + 'px 으로 줄였습니다' : '')
+      + '</div>';
+    if (p.흰테두리) {
+      h += '<div class="bar warn"><b>흰 배경이 딸려왔습니다</b> — 위 회색 칸 안에 흰 네모가 보입니다. '
+        + '홈페이지의 로고에 <b>우클릭 → 「이미지 복사」</b>로 다시 해 보시면 투명하게 들어옵니다.'
+        + '<br><span class="sub">그래도 이대로 쓰시겠다면 「담기」를 누르십시오 — 막지는 않습니다.</span></div>';
+    } else {
+      h += '<div class="bar ok">투명 배경이 살아 있어 옆 로고들과 같습니다.</div>';
+    }
+    h += '<div style="margin-top:7px;display:flex;gap:7px">'
+      + '<button class="btn pri" onclick="keepPastedLogo()">담기</button>'
+      + '<button class="btn" onclick="dropPastedLogo()">버리기</button></div></div>';
+  }
+
+  h += '<div class="guide"><b>파일로 넣기</b> — 그림을 고르면 «저장소»에 담고 목록 맨 뒤에 붙입니다. '
     + '<span class="sub">png·jpg·svg, 700KB 까지. 홈페이지 로고는 보통 5~70KB 입니다.</span>'
     + '<div style="margin-top:7px"><input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"'
     + ' onchange="addPartnerLogo(this)"></div></div>';
@@ -3462,12 +3535,161 @@ async function 올리기(path, content, note) {
   return 답;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   로고 붙여넣기 (대표 요청 2026-09-02 「캡쳐 후 붙여넣기로 쉽게 해결하고 싶다」)
+   ══════════════════════════════════════════════════════════════════════════
+   ★ 캡쳐로 넣으면 «흰 네모»가 생긴다 — 재 봤다(2026-09-02):
+     자문사 로고들은 «투명 배경» PNG(9~13KB)이고, 로고가 앉는 자리는 «연한 회색» 칸이다.
+     캡쳐는 그 사이트의 흰 배경이 박히므로, 회색 칸 안에 흰 네모가 남는다.
+     로고가 나란히 늘어서는 자리라 한 장만 달라도 눈에 띈다.
+   ★ 그래서 «막지 않고» 미리보기를 실제 배경색 위에 깔아 눈으로 보이게 하고,
+     흰 테두리가 잡히면 「우클릭 → 이미지 복사」를 권한다. 그것이 손도 덜 간다
+     (캡쳐 도구를 열 필요가 없고, 원본 PNG 가 투명 그대로 온다).
+   ★ 흰색을 «자동으로 투명하게 만들지 않는다» — 로고 안의 흰 글자·흰 도형에 구멍이 뚫린다.
+     조용히 망가지는 쪽이라, 알려만 주고 사람이 고른다. */
+
+/* 홈페이지에서 로고는 120~180px 로 보인다 — 600px 이면 넉넉하고, 700KB 한도에 안 걸린다 */
+const LOGO_MAX_W = 600;
+
+/* 붙인(또는 고른) 그림을 다룬다 — 줄이고, 흰 테두리인지 잰다.
+   ★ 캔버스를 지나므로 결과는 늘 PNG 다(투명이 있으면 그대로 살아 있다). */
+function 로고그림다루기(file) {
+  return new Promise(function (resolve, reject) {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onerror = function () {
+      URL.revokeObjectURL(url);
+      reject(new Error('그림을 읽지 못했습니다 — 그림이 아닌 것을 붙이셨을 수 있습니다.'));
+    };
+    img.onload = function () {
+      URL.revokeObjectURL(url);
+      const w0 = img.naturalWidth, h0 = img.naturalHeight;
+      if (!w0 || !h0) { reject(new Error('그림 크기를 알 수 없습니다.')); return; }
+      const 배 = Math.min(1, LOGO_MAX_W / w0);
+      const w = Math.max(1, Math.round(w0 * 배));
+      const h = Math.max(1, Math.round(h0 * 배));
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h);
+      let 흰테두리 = false;
+      try { 흰테두리 = 흰테두리인가(cv); } catch (e) { /* 못 읽으면 알리지 않는다 */ }
+      const dataUrl = cv.toDataURL('image/png');
+      resolve({
+        dataUrl: dataUrl, w: w, h: h, 원래폭: w0,
+        줄였나: 배 < 1,
+        바이트: Math.round((String(dataUrl).split(',')[1] || '').length * 3 / 4),
+        흰테두리: 흰테두리
+      });
+    };
+    img.src = url;
+  });
+}
+
+/* 네 변이 «거의 흰색이고 속이 안 비쳤나» — 캡쳐로 넣은 그림의 표시다.
+   ★ 투명한 로고는 변이 «비어 있다»(알파가 낮다). 그것을 흰색으로 세면 안 된다 —
+     제대로 넣은 로고에도 경고가 떠서, 다음부터 경고를 안 읽게 된다. */
+function 흰테두리인가(cv) {
+  const cx = cv.getContext('2d');
+  const w = cv.width, h = cv.height;
+  if (w < 4 || h < 4) return false;
+  const 점들 = [];
+  const N = 12;
+  for (let i = 0; i < N; i++) {
+    const x = Math.round((w - 1) * i / (N - 1));
+    const y = Math.round((h - 1) * i / (N - 1));
+    [[x, 0], [x, h - 1], [0, y], [w - 1, y]].forEach(function (p) {
+      점들.push(cx.getImageData(p[0], p[1], 1, 1).data);
+    });
+  }
+  let 흰것 = 0, 비친것 = 0;
+  점들.forEach(function (d) {
+    if (d[3] < 32) { 비친것++; return; }
+    if (d[0] > 238 && d[1] > 238 && d[2] > 238) 흰것++;
+  });
+  if (비친것 > 점들.length * 0.2) return false;      // 투명 로고다
+  return 흰것 > 점들.length * 0.8;
+}
+
+/* Ctrl+V — 로고 창이 열려 있을 때만 받는다.
+   ★ 그림이 아니면 «아무것도 안 한다» — 글자 붙여넣기를 막으면 다른 칸이 못 쓰게 된다. */
+async function onLogoPaste(e) {
+  if (!App.logoPasteOn) return;
+  const items = (e.clipboardData && e.clipboardData.items) || [];
+  let f = null;
+  for (let i = 0; i < items.length; i++) {
+    if (String(items[i].type || '').indexOf('image/') === 0) { f = items[i].getAsFile(); break; }
+  }
+  if (!f) return;
+  e.preventDefault();
+  try {
+    if (!App.isAdmin) throw new Error('총괄관리자만 올릴 수 있습니다.');
+    App.logoPick = await 로고그림다루기(f);
+    drawPartnerLogos();
+  } catch (err) {
+    console.warn('[로고 붙여넣기]', err);
+    await say('붙여넣지 못했습니다', (err && err.message) || String(err));
+  }
+}
+
+/* 붙인 그림을 담는다 — 저장소로 보내고 목록 뒤에 붙인다 */
+async function keepPastedLogo() {
+  const p = App.logoPick;
+  if (!p) return;
+  try {
+    await 로고담기(String(p.dataUrl).split(',')[1] || '', 'png', '붙여넣은 로고');
+    App.logoPick = null;
+    toast('로고를 담았습니다 — 아래 «홈페이지에 올리기»를 눌러야 실립니다.');
+    drawPartnerLogos();
+  } catch (e) {
+    console.warn('[로고 담기]', e);
+    await say('담지 못했습니다', (e && e.message) || String(e));
+  }
+}
+window.keepPastedLogo = keepPastedLogo;
+
+function dropPastedLogo() { App.logoPick = null; drawPartnerLogos(); }
+window.dropPastedLogo = dropPastedLogo;
+
+/* 붙여넣기 칸을 누르면 그 자리에 초점을 준다 — 어디에 붙는지 눈에 보이게 */
+function focusLogoPaste(el) { try { el.focus(); } catch (e) {} }
+window.focusLogoPaste = focusLogoPaste;
+
 /* ★ 새 자문사 로고를 넣는다 — 그림을 «저장소»에 담고 목록 뒤에 붙인다.
    ★ 왜 창고(Storage)가 아니라 저장소인가:
      ① 홈페이지가 «통째로 한 덩어리»로 남아 어느 곳으로 옮겨도 그대로 돈다
      ② 창고는 무료 한도가 없다 — 로고 몇 장에 셈을 붙일 이유가 없다
      ③ 창고 주소는 토큰이 붙어 길고, 토큰이 사라지면 그림이 통째로 안 보인다
    ★ 여기서는 «담기»까지만 한다. 쪽에 실제로 실리는 것은 「올리기」를 눌렀을 때다. */
+/* 로고 한 장을 저장소에 담는다 — 파일 고르기와 붙여넣기가 «같은 길»을 쓴다.
+   ★ 길이 둘이면 한쪽만 고쳐진다. 실제로 한도·이름 규칙이 두 벌이 될 자리였다.
+   ★ 파일 이름은 «우리가» 짓는다 — 한글·빈칸·따옴표가 든 이름이 주소가 되면 깨지고,
+     붙여넣기에는 파일 이름이 아예 «없다». 시각으로 지으면 겹치지도 않는다.
+   ★ 여기서는 «담기»까지만 한다. 쪽에 실리는 것은 「올리기」를 눌렀을 때다. */
+async function 로고담기(base64, 끝, 사연) {
+  if (!App.isAdmin) throw new Error('총괄관리자만 올릴 수 있습니다.');
+  if (!base64) throw new Error('그림이 비어 있습니다.');
+  const 바이트 = Math.round(base64.length * 3 / 4);
+  const 한도 = 700 * 1024;
+  if (바이트 > 한도) throw new Error('그림이 너무 큽니다(' + Math.round(바이트 / 1024) + 'KB). '
+    + '한도는 700KB 입니다 — 로고는 보통 5~70KB 입니다.');
+  const 열쇠 = 'n' + Date.now();
+  const 이름 = 열쇠 + '.' + 끝;
+  const 자리 = 'site/files/logo/' + 이름;
+  const token = await firebase.auth().currentUser.getIdToken();
+  const up = await fetch(PUBLISH_URL, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: 자리, content: base64, image: true,
+                           note: '자문사 로고 ' + (사연 || '') })
+  });
+  const 답 = await up.json().catch(() => ({}));
+  if (!up.ok) throw new Error(답.error || ('서버가 ' + up.status + ' 을 돌려줬습니다'));
+  App.partnerLogos.추가 = (App.partnerLogos.추가 || [])
+    .concat([{ srl: 열쇠, 그림: '../files/logo/' + 이름 }]);
+  await savePartnerLogos();
+  return 답;
+}
+
 async function addPartnerLogo(el) {
   const f = el && el.files && el.files[0];
   if (!f) return;
@@ -3481,33 +3703,13 @@ async function addPartnerLogo(el) {
     const 되는것 = { png: 1, jpg: 1, jpeg: 1, webp: 1, svg: 1 };
     if (!되는것[끝]) throw new Error('png·jpg·webp·svg 만 넣을 수 있습니다 (' + 끝 + ')');
 
-    /* 파일 이름은 «우리가» 짓는다 — 한글·빈칸·따옴표가 든 이름이 주소가 되면 깨진다 */
-    const 열쇠 = 'n' + Date.now();
-    const 이름 = 열쇠 + '.' + 끝;
-    const 자리 = 'site/files/logo/' + 이름;
-
     const base64 = await new Promise((resolve, reject) => {
       const r = new FileReader();
       r.onerror = () => reject(new Error('그림을 읽지 못했습니다.'));
       r.onload = () => resolve(String(r.result).split(',')[1] || '');
       r.readAsDataURL(f);
     });
-    if (!base64) throw new Error('그림이 비어 있습니다.');
-
-    const token = await firebase.auth().currentUser.getIdToken();
-    const up = await fetch(PUBLISH_URL, {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: 자리, content: base64, image: true,
-                             note: '자문사 로고 ' + f.name })
-    });
-    const 답 = await up.json().catch(() => ({}));
-    if (!up.ok) throw new Error(답.error || ('서버가 ' + up.status + ' 을 돌려줬습니다'));
-
-    /* 목록에 붙여 둔다 — 쪽에 실리는 것은 「올리기」를 눌렀을 때다 */
-    App.partnerLogos.추가 = (App.partnerLogos.추가 || [])
-      .concat([{ srl: 열쇠, 그림: '../files/logo/' + 이름 }]);
-    await savePartnerLogos();
+    await 로고담기(base64, 끝, f.name);
     toast('로고를 담았습니다 — 아래 «홈페이지에 올리기»를 눌러야 실립니다.');
     drawPartnerLogos();
   } catch (e) {
