@@ -2339,6 +2339,7 @@ body.pc #pcDetail{display:flex}
 .cohist-chip.on.k-other{background:#f8fafc;color:#166534}
 /* 계약 (점검 C1) — 이 앱의 이름표가 「사업자·명함·계약서」인데 여태 없던 갈래다 */
 .cohist-chip.on.k-contract{background:#fffbeb;color:#854d0e}
+.cohist-chip.on.k-rules{background:#f0fdf4;color:#166534}
 .cohist-chip.k-all.on{background:#e2e8f0;color:#1e40af}
 .cohist-picks{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center}
 .cohist-picks label{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#94a3b8}
@@ -2358,6 +2359,10 @@ body.pc #pcDetail{display:flex}
 .cohist-row .bd.k-fund{background:#f8fafc;color:#854d0e}
 .cohist-row .bd.k-other{background:#f8fafc;color:#166534}
 .cohist-row .bd.k-contract{background:#fffbeb;color:#854d0e}
+.cohist-row .bd.k-rules{background:#f0fdf4;color:#166534}
+/* 취업규칙 줄에만 붙는 「대조표 ↗」 — 신구대조표는 규정관리 한 곳에서만 그린다 */
+.cohist-row .go{font-size:10.5px;font-weight:800;color:#2563eb;background:none;border:none;
+  cursor:pointer;white-space:nowrap;padding:2px 3px;flex:none;font-family:inherit}
 .cohist-row .nm{font-size:12.5px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cohist-row .fee{font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
 .cohist-row .l2{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:11px;color:#94a3b8}
@@ -22082,7 +22087,7 @@ function erpTypeNameFrom(types, typeCode){
    화면이 쓰는 값은 모두 여기서 뽑는다. 그려 보지 않고도 「해가 맞나·금액이 맞나·
    걸러기가 맞나」를 잴 수 있어야 한다. */
 
-const ERP_HIST_LABEL = { consulting:'컨설팅', case:'사건', fund:'기금', other:'기타', contract:'계약' };
+const ERP_HIST_LABEL = { consulting:'컨설팅', case:'사건', fund:'기금', other:'기타', contract:'계약', rules:'취업규칙' };
 /* 계약의 갈래 — 이알피가 레코드 안에 글자로 담는다(코드표가 없다).
    ⚠ 못 찾은 갈래는 «그 글자 그대로» 보여 준다(erpHistName). 빈칸으로 두면
      「이름 없는 계약」이 여럿 생겨 어느 것이 어느 것인지 알 수 없다. */
@@ -22176,6 +22181,20 @@ function erpHistName(rec, typesByKind){
 }
 /* 기록 하나 → 화면 한 줄 */
 function erpHistRow(rec, typesByKind){
+  /* 취업규칙은 금액도 진행 상태도 없다 — 확정된 회차만 담으므로 늘 「완료」다.
+     바뀐 조 제목은 tail 에 붙이고, 「대조표 ↗」로 규정관리의 그 회차를 연다. */
+  if(rec && rec._kind === 'rules'){
+    const H = window.PuRulesHistory;
+    const n = (rec.kind === '일부개정' && rec.changed) ? (' ' + rec.changed + '개 조') : '';
+    return {
+      kind:'rules', name:(rec.kind || '개정') + n,
+      year:String(rec.asof || '').slice(0, 4),
+      from:'', to:'', mgr:String(rec.doneBy || rec.savedBy || rec.ownerName || ''),
+      no:String(rec.asof || '') + (rec.asof ? ' 시행' : ''),
+      fee:0, stat:'done', byName:!!rec._byName,
+      sub:(H ? H.artsOf(rec) : ''), open:(H ? H.openUrl(rec) : '')
+    };
+  }
   return {
     kind: (rec && rec._kind) || 'consulting',
     name: erpHistName(rec, typesByKind) || '(이름 없음)',
@@ -22222,7 +22241,7 @@ function erpHistSort(rows, sort){
   const a = (rows||[]).slice();
   /* ⚠ 갈래별 정렬의 «차례»다. 여기 빠진 갈래는 -1 이 되어 맨 앞으로 튄다 —
      새 갈래를 ERP_HIST_KINDS 에 더할 때 여기도 함께 적는다 (검사가 지킨다). */
-  const ord = ['contract','consulting','case','fund','other'];
+  const ord = ['contract','consulting','case','fund','other','rules'];
   if(sort==='oldest') a.sort((x,y)=> (x.year-y.year) || String(x.from).localeCompare(String(y.from)));
   else if(sort==='fee') a.sort((x,y)=> (y.fee-x.fee) || (y.year-x.year));
   else if(sort==='kind') a.sort((x,y)=> (ord.indexOf(x.kind)-ord.indexOf(y.kind)) || (y.year-x.year));
@@ -22296,8 +22315,10 @@ function erpHistRowHtml(row, grouped){
       <span class="nm">${esc(row.name)}</span>
       ${row.byName?`<span class="cohist-byname" title="사업자번호가 없어 이름으로 이었습니다 — 같은 이름 다른 회사일 수 있습니다">이름</span>`:''}
       <span class="fee">${row.fee?row.fee.toLocaleString()+'원':'—'}</span></div>
-    <div class="l2"><span class="sp">${esc(tail)}</span>
-      <span class="st s-${row.stat}">${esc(ERP_HIST_STAT_LABEL[row.stat]||'')}</span></div>
+    <div class="l2"><span class="sp" title="${esc(tail + (row.sub ? ' / ' + row.sub : ''))}">${esc(tail)}${
+        row.sub ? ' · ' + esc(row.sub) : ''}</span>
+      <span class="st s-${row.stat}">${esc(ERP_HIST_STAT_LABEL[row.stat]||'')}</span>
+      ${row.open ? `<button class="go" onclick="coOpenRuleRev('${esc(row.open)}')" title="규정관리에서 이 회차의 신구대조표를 엽니다">대조표 ↗</button>` : ''}</div>
   </div>`;
 }
 
@@ -22614,11 +22635,33 @@ async function coDocDetach(docKey, why){
                 : '뗐습니다 — 「아직 안 붙은 서류」로 돌아갑니다', 6000);
   }catch(err){ toast('❌ 떼지 못했습니다: ' + ((err&&err.message)||''), 8000); }
 }
+/* 이 회사의 취업규칙 회차 — 공용 읽개가 사업자번호 › 상호명으로 맞춘다.
+   색인을 아직 못 받았으면 빈 목록이라 그 갈래만 안 보이고 나머지는 그대로 뜬다. */
+function coRulesRecs(o){
+  /* ⚠ window 를 곧바로 보면 안 된다 — 이 토막은 검사가 조각으로 떼어 node 에서
+     돌린다(vm 안에는 window 가 없다). 없으면 ReferenceError 로 이력 칸 전체가 죽는다. */
+  var H = (typeof window!=='undefined' && window.PuRulesHistory) || null;
+  if(!H || !o) return [];
+  try{
+    return H.forCompany({ bizno:o.bizno, company:o.name })
+      .map(r=>Object.assign({}, r, { _kind:'rules', bizNo:r.bizno, companyName:r.site }));
+  }catch(e){ return []; }
+}
+/* 규정관리의 그 회차를 연다 — 대조표는 한 곳에서만 그린다 */
+function coOpenRuleRev(url){ try{ window.open(url, '_blank'); }catch(e){} }
 function coHistPaint(){
   const box = $('coErpHistBox'); if(!box) return;
   const o = _coHist.o, data = _coHist.data, pick = _coHist.pick || coHistFresh();
   if(!o || !data){ box.innerHTML=''; return; }
-  const recs = erpHistRecsFor(data, o.bizno, o.name);
+  /* 취업규칙 회차는 «그릴 때» 붙인다 (대표 지시 2026-08-29).
+     자리가 다르다(rules_mgmt/index) 뿐이지 「그 회사와 있었던 일」인 것은 같다 —
+     컨설팅·사건과 한 줄기로 보여야 「올해 이 회사와 무슨 일이 있었나」가 잡힌다.
+     ⚠ loadErpCaseCons 에 끼워 넣지 않는다. 그 함수는 「이알피의 정해진 자리만
+       읽는다」는 약속이 있다(검사가 지킨다). 그릴 때 붙이는 편이 더 옳기도 하다 —
+       회차가 새로 확정돼도 캐시가 낡지 않는다.
+     ⚠ 회차 «원본»이 아니라 가벼운 색인만 본다. 원본에는 신구대조표 전문이 들어 있어
+       회사 하나 보자고 통째로 받으면 안 된다. */
+  const recs = erpHistRecsFor(data, o.bizno, o.name).concat(coRulesRecs(o));
   /* 기록이 없으면 칸 자체를 안 그린다 — 메모 없으면 메모 칸을 안 그리는 것과 같은 결 */
   if(!recs.length){ box.innerHTML=''; return; }
 

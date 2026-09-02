@@ -44,6 +44,9 @@ function load() {
     coLeftDocsPaint: function(){},
     /* 2026-08-26(3단계): 사업 줄이 받는 자리가 되면서 열쇠를 짓는다 —
        이 검사들은 이력 줄만 보므로 빈 열쇠를 주는 대역으로 둔다. */
+    /* 2026-08-29: coHistPaint 가 취업규칙 회차를 함께 붙인다 —
+       이 검사들은 이알피 이력 줄만 보므로 «회차가 없다»고 답하는 대역을 준다. */
+    coRulesRecs: function(){ return []; },
     caseKeyOf: function(){ return ''; },
     coCaseDocsHtml: function(){ return ''; },
     $: id => (id === 'coErpHistBox'
