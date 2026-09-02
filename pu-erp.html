@@ -22776,6 +22776,8 @@ function CompanyEditModal(props){
   var pcpk = useState(null); var pcPickMode = pcpk[0]; var setPcPickMode = pcpk[1];  // 기업정보함 찾기: 'ceo' | 'contact' | 'tax'
   var txh = useState([]); var taxHits = txh[0]; var setTaxHits = txh[1];             // 세무사무실 자동완성 후보
   var pccp = useState(false); var pcCoPick = pccp[0]; var setPcCoPick = pccp[1];     // 기업정보함에서 사업자등록증(회사정보) 찾기
+  var wss = useState(null); var webSearch = wss[0]; var setWebSearch = wss[1];       // 홈페이지 자동 찾기: null|{loading,candidates,error}
+  var FIND_WEBSITE_URL = 'https://us-central1-pureun-erp.cloudfunctions.net/findCompanyWebsite';
   var users = getAssignableUsers();
   var assignable = getAssignableUsers();   // 휴직·배제 제외
   var typeMasters = dbGet('biz_company_types', COMPANY_TYPE_SEED);
@@ -22797,6 +22799,38 @@ function CompanyEditModal(props){
   function save(){
     if(!f.name){ showToast('업체명 입력'); return; }
     props.onSave(f);
+  }
+  /* ── 홈페이지 자동 찾기 (대표 지시 2026-09-02) ──
+     회사명·주소가 검색결과 본문에 함께 나오면 서버가 자동으로 확정해 준다 —
+     그 자리에서 바로 채우고 저장은 대표가 「저장」을 눌러야 확정된다(다른 칸과 같다).
+     애매하면(주소까지 안 맞으면) 후보만 보여주고 사람이 고른다. */
+  function searchCompanyWebsite(){
+    if(!f.name){ showToast('업체명을 먼저 입력하세요'); return; }
+    setWebSearch({ loading:true, candidates:null, error:'' });
+    postMail(FIND_WEBSITE_URL, { name:f.name, address:f.address||'' })
+      .then(function(r){ return r.json().then(function(data){ return { status:r.status, data:data }; }); })
+      .then(function(res){
+        if(res.status !== 200){
+          setWebSearch({ loading:false, candidates:null, error:(res.data && res.data.error) || '검색에 실패했습니다' });
+          return;
+        }
+        var data = res.data;
+        if(data.matched && data.url){
+          setF(function(prev){ return Object.assign({}, prev, { website:data.url }); });
+          setWebSearch(null);
+          showToast('✅ 홈페이지 자동 등록됨: ' + data.url);
+        } else {
+          setWebSearch({ loading:false, candidates:data.candidates || [], error:'' });
+        }
+      })
+      .catch(function(e){
+        setWebSearch({ loading:false, candidates:null, error:(e && e.message) || '검색에 실패했습니다' });
+      });
+  }
+  function pickWebsite(url){
+    setF(function(prev){ return Object.assign({}, prev, { website:url }); });
+    setWebSearch(null);
+    showToast('🔗 홈페이지로 채움 — 저장을 눌러야 확정됩니다');
   }
   /* ── 기업정보함의 사업자등록증에서 회사정보 채우기 (2026-08-10 대표 지시) ──
      사업자번호·업태·종목은 사업자등록증에만 있는 것이라, 대표자 명함으로는 못 채운다.
@@ -23082,6 +23116,40 @@ function CompanyEditModal(props){
             )),
           h('div', { className:'fld' }, h('label', null, '대표 이메일'),
             h('input', { type:'email', value:f.email || '', onChange:set('email'), placeholder:'contact@company.kr' })),
+          h('div', { className:'fld' }, h('label', null, '홈페이지'),
+            h('div', { style:{ display:'flex', gap:'6px' } },
+              h('input', { type:'text', value:f.website || '', onChange:set('website'),
+                placeholder:'https://example.co.kr', style:{ flex:1 } }),
+              h('button', { type:'button',
+                title:'회사명·주소로 홈페이지를 검색합니다',
+                disabled: !!(webSearch && webSearch.loading),
+                onClick:searchCompanyWebsite,
+                style:{ padding:'7px 12px', background:'#1e40af', color:'#fff', border:'none', borderRadius:'4px',
+                  fontSize:'12px', fontWeight:600, cursor:(webSearch && webSearch.loading) ? 'default' : 'pointer',
+                  flexShrink:0, whiteSpace:'nowrap', opacity:(webSearch && webSearch.loading) ? .6 : 1 } },
+                (webSearch && webSearch.loading) ? '검색 중…' : '🔍 찾기')
+            ),
+            webSearch && !webSearch.loading && webSearch.error &&
+              h('div', { style:{ fontSize:'11px', color:'#dc2626', marginTop:'4px' } }, '⚠ ' + webSearch.error),
+            webSearch && !webSearch.loading && webSearch.candidates &&
+              h('div', { style:{ marginTop:'6px', border:'1px solid #e2e8f0', borderRadius:'6px', padding:'6px', background:'#f8fafc' } },
+                webSearch.candidates.length === 0
+                  ? h('div', { style:{ fontSize:'11px', color:'#94a3b8' } }, '검색 결과가 없습니다 — 직접 입력해 주세요')
+                  : h('div', null,
+                      h('div', { style:{ fontSize:'10.5px', color:'#64748b', marginBottom:'4px' } },
+                        '자동으로 확정하지 못했습니다 — 아래 중에서 골라 주세요'),
+                      webSearch.candidates.map(function(c, i){
+                        return h('div', { key:i, style:{ padding:'5px 4px',
+                            borderTop: i > 0 ? '1px solid #e2e8f0' : 'none' } },
+                          h('div', { style:{ fontSize:'11.5px', fontWeight:600, color:'#1e293b' } }, c.title),
+                          h('div', { style:{ fontSize:'10.5px', color:'#64748b', wordBreak:'break-all' } }, c.link),
+                          h('button', { type:'button', onClick:function(){ pickWebsite(c.link); },
+                            style:{ marginTop:'3px', padding:'3px 8px', fontSize:'10.5px', fontWeight:600,
+                              color:'#2563eb', background:'#eff6ff', border:'1px solid #bfdbfe',
+                              borderRadius:'4px', cursor:'pointer' } }, '이 주소로 쓰기'));
+                      })
+                    )
+              )),
           h('div', { className:'fld' }, h('label', null, '4대보험 가입자수 (고용 / 산재)'),
             h('div', { style:{ display:'flex', gap:'6px' } },
               h('input', { type:'text', value:(f.employmentInsuredCount||0).toLocaleString(), onChange:setNum('employmentInsuredCount'), placeholder:'고용', style:{ flex:1, fontFamily:'monospace', textAlign:'right' } }),

@@ -2078,6 +2078,70 @@ exports.readHomepage = functions
     }
   });
 
+const companyWebsiteMatch = require("./company-website-match");
+
+/* 업체 홈페이지 자동 찾기 (대표 지시 2026-09-02) — 업체관리에 홈페이지 URL이 없을 때
+   회사명으로 검색해 찾아 준다. 회사명·주소가 검색결과 «본문(제목+요약)»에 함께 나오는
+   것이 있으면 자동으로 확정해 저장하고, 없으면 후보만 돌려줘 사람이 고르게 한다.
+   ⚠ 검색 1등 결과를 그냥 등록하면 동명 회사·블로그·뉴스기사가 걸릴 수 있다 —
+     주소까지 맞아야만 자동 확정한다(안전 쪽으로 기운 판정).
+   총괄관리자만 부를 수 있다. API 키·검색엔진 ID는 비밀값(secrets)으로만 읽는다 —
+   설정: `firebase functions:secrets:set GOOGLE_SEARCH_API_KEY` /
+        `firebase functions:secrets:set GOOGLE_SEARCH_CX` */
+exports.findCompanyWebsite = functions
+  .runWith({ timeoutSeconds: 30, memory: "256MB", secrets: ["GOOGLE_SEARCH_API_KEY", "GOOGLE_SEARCH_CX"] })
+  .https.onRequest(async (req, res) => {
+    setAutomationCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ error: "POST 요청만 허용됩니다." }); return; }
+
+    try {
+      const match = /^Bearer (.+)$/.exec(req.headers.authorization || "");
+      if (!match) { res.status(401).json({ error: "로그인이 필요합니다." }); return; }
+      const decoded = await getAuth().verifyIdToken(match[1], true);
+      const roleSnapshot = await getDatabase().ref(`uid_roles/${decoded.uid}`).once("value");
+      const role = roleSnapshot.val() || {};
+      if (role.isAdmin !== true) {
+        res.status(403).json({ error: "총괄관리자만 홈페이지를 검색할 수 있습니다." });
+        return;
+      }
+
+      const name = String((req.body && req.body.name) || "").trim();
+      if (!name) { res.status(400).json({ error: "업체명이 없습니다." }); return; }
+      const address = String((req.body && req.body.address) || "").trim();
+
+      const apiKey = process.env.GOOGLE_SEARCH_API_KEY;
+      const cx = process.env.GOOGLE_SEARCH_CX;
+      if (!apiKey || !cx) {
+        res.status(500).json({
+          error: "검색 도구가 아직 설정되지 않았습니다 — GOOGLE_SEARCH_API_KEY / GOOGLE_SEARCH_CX 를 먼저 등록해 주세요.",
+        });
+        return;
+      }
+
+      const qs = new URLSearchParams({ key: apiKey, cx: cx, q: name, num: "5", hl: "ko" });
+      const resp = await fetch("https://www.googleapis.com/customsearch/v1?" + qs.toString());
+      if (!resp.ok) {
+        const body = await resp.text();
+        console.error("[findCompanyWebsite] google error", resp.status, body.slice(0, 300));
+        res.status(502).json({ error: "검색 서비스에서 응답을 받지 못했습니다 (" + resp.status + ")" });
+        return;
+      }
+      const data = await resp.json();
+      const items = Array.isArray(data.items) ? data.items : [];
+      const candidates = items
+        .map((it) => ({ title: it.title || "", link: it.link || "", snippet: it.snippet || "" }))
+        .filter((c) => c.link);
+
+      const matched = companyWebsiteMatch.findMatch(candidates, name, address);
+
+      res.json({ matched: !!matched, url: matched ? matched.link : null, candidates: candidates });
+    } catch (err) {
+      console.error("[findCompanyWebsite]", err);
+      res.status(err.status || 500).json({ error: err.message || "검색하지 못했습니다." });
+    }
+  });
+
 /* 홈페이지 쪽을 «저장소에 올린다» — 대표가 단추를 눌렀을 때만 (대표 결정 2026-08-31).
    ★ 저절로 올라가지 않는다. 고치다 만 내용이 실수로 홈페이지에 나가지 않게,
      사람이 「지금 올린다」를 알고 누른다.
