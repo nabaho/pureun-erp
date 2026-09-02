@@ -208,9 +208,15 @@ test('수입 항목끼리 겹치지 않는다 — 같은 돈을 두 번 세지 �
   assert.match(a, /bizRev:num\(fin\.bizRev\)/, '사업수익을 안 쓴다');
   assert.match(a, /nonopRev:num\(fin\.nonopRev\)/, '사업외수익을 안 쓴다');
 
-  /* computeFin 이 정말 interest = bizRev + nonopRev 인지 — 이 전제가 깨지면 갈래를 다시 짜야 한다 */
-  const cf = grabFn('computeFin');
-  assert.match(cf, /var interest=revenue/, 'interest 의 뜻이 바뀌었다 — 예산 갈래를 다시 볼 것');
+  /* ⚠ 2026-09-02 (94234546) computeFin 이 **interest 를 없앴다.** 그 값은 `revenue` 곧
+       수익 «전체»여서 이자수익도 사업수익도 아니었고(수익 계정은 이자수익·잡수익·
+       준비금환입 셋이다), 예산 쪽에서 bizRev 와 겹쳐 «같은 돈이 두 번» 세어졌다.
+     그래서 이제 보는 것이 뒤집혔다 — 「있는지」가 아니라 «되살아나지 않았는지»다.
+     ⚠ 주석을 걷고 본다. computeFin 주석에 「예전엔 interest=revenue 를 만들었다」는
+       기록이 남아 있어, 안 걷으면 그 주석이 이 검사를 속인다. */
+  const cf = grabFn('computeFin').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(!/interest/.test(cf),
+    'computeFin 에 interest 가 되살아났다 — 예산 쪽에서 또 두 번 세어진다');
   assert.match(cf, /var nonopRev=revenue-bizRev/, 'nonopRev 의 뜻이 바뀌었다');
 
   /* 항목이 쓰는 이름이 서로 달라야 겹치지 않는다 */

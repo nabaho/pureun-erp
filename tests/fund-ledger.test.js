@@ -143,7 +143,12 @@ test('재무제표가 대차 일치하고, 연도별로 따로 계산된다', ()
   assert.equal(cur.basic, 65000000, '기본재산 = 이월 500만 + 출연 6,000만');
   assert.equal(cur.purpose, 8500000, '목적사업비 = 장학 600만 + 경조 250만');
   assert.equal(cur.admin, 220000);
-  assert.equal(cur.interest, 412000);
+  /* ⚠ 2026-09-02 (94234546) interest 를 없앴다 — 수익 «전체»라 이자수익도 사업수익도
+       아니었다. 이제 bizRev(준비금 환입을 뺀 사업수익) 와 nonopRev(환입) 로 갈렸다.
+     이 표본은 수익이 이자 412,000원 «하나뿐»이라 bizRev 가 그것을 다 받고 nonopRev 는 0 이다. */
+  assert.equal(cur.bizRev, 412000, '사업수익이 이자 412,000원을 못 받았다');
+  assert.equal(cur.nonopRev, 0, '환입이 없는데 사업외수익이 생겼다');
+  assert.equal(cur.bizRev + cur.nonopRev, 412000, '갈랐는데 합이 달라졌다 — 어딘가로 샜다');
   assert.equal(cur.net, 412000 - 8500000 - 220000);
 
   const prev = b.computeFin([], 'F1', 2024);
