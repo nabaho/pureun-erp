@@ -2084,9 +2084,11 @@ async function 브리핑거리모으기() {
   return { 뉴스: 뉴스, 법령: 브리핑부품.법령추리기(법령, 5) };
 }
 
-/* 새 홈페이지에서 한 쪽을 읽어 온다 */
+/* 새 홈페이지에서 한 쪽을 읽어 온다.
+   ★ «저장소 원본»에서 읽는다 — 도메인·DNS 와 무관하고, 방금 올린 것을 바로 읽는다.
+     (2026-09-02: 도메인이 붙자 github.io 가 301 로 보내고 그 끝이 403 이라 멎었다.) */
 async function 새홈페이지쪽(자리) {
-  const r = await fetch("https://nabaho.github.io/pureun-site/" + 자리
+  const r = await fetch("https://raw.githubusercontent.com/nabaho/pureun-site/main/" + 자리
     + "?t=" + Date.now(), { headers: { "User-Agent": "pureun-erp-news-brief" } });
   if (!r.ok) throw new Error(자리 + " 응답 " + r.status);
   return await r.text();
@@ -2110,10 +2112,10 @@ exports.dailyNewsBrief = functions
     if (!글) { console.warn("[브리핑] 실을 것이 없어 건너뜁니다"); return null; }
 
     /* 공지 목록과 «본으로 쓸» 글 쪽을 읽는다 */
-    const 목록쪽 = await 새홈페이지쪽("notice/");
+    const 목록쪽 = await 새홈페이지쪽("notice/index.html");
     const 있던글 = NoticeLib.글읽기(목록쪽);
     if (!있던글.length) { console.warn("[브리핑] 공지 목록을 못 읽어 건너뜁니다"); return null; }
-    const 본쪽 = await 새홈페이지쪽("notice/" + 있던글[0].번호 + "/");
+    const 본쪽 = await 새홈페이지쪽("notice/" + 있던글[0].번호 + "/index.html");
 
     /* 글 번호는 «있던 것 가운데 가장 큰 수 + 1» — 겹치면 서로 덮어쓴다 */
     const 새번호 = String(있던글.reduce((a, g) => Math.max(a, Number(g.번호) || 0), 0) + 1);
