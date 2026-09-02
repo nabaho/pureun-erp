@@ -132,7 +132,11 @@
     return {
       kind: 'left',
       // 퇴사일이 없으면(공개 명부 폴백) 날짜를 지어내지 않고 「퇴사」로만 적는다
-      label: person.leftAt ? ('퇴사 ' + person.leftAt) : '퇴사',
+      /* ★ 날짜는 딱지에 «안» 적는다 (대표 지적 2026-09-02 「불필요한 내용을 줄여라」).
+         같은 줄의 설명에 detail(「퇴사일 2026-06-30」)이 이미 붙어, 한 줄에 날짜가
+         두 번 적히고 있었다. 날짜는 detail·leftAt 에 그대로 남는다 — 지우는 것이 아니다.
+         ⚠ 앞선 검사는 「딱지에 날짜가 보여야 한다」를 지키고 있었다 — 지금은 그 반대다. */
+      label: '퇴사',
       detail: leftReason(person),
       leftAt: person.leftAt ? String(person.leftAt) : ''
     };
