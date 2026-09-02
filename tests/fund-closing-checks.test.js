@@ -42,6 +42,11 @@ const PII = ['pii_scan.js', '서식에 남의 개인정보가 없는가'];
    jsdom 이 있어야 돌고, 없으면 SKIP 이라 말한다(조용히 통과하지 않는다). */
 const FORMS = ['check_forms.js', '서식이 정말 채워지는가'];
 
+/* 전체 백업을 사이드바 메뉴에서 상단 ⚙ 로 옮겼다 — 단추만 있고
+   창이 안 뜨는 것을 문자열 검사로는 못 잡는다. FORMS와 같은 이유로
+   jsdom 이 있어야 돌고, 없으면 SKIP 이라 말한다(조용히 통과하지 않는다). */
+const BACKUP = ['check_backup.js', '백업·복구 창이 정말 열리는가'];
+
 for (const [file, what] of CHECKS) {
   test('기금 결산 검사 — ' + what + ' (' + file + ')', () => {
     const p = path.join(TOOLS, file);
@@ -77,6 +82,16 @@ test('기금 서식 검사 — ' + FORMS[1] + ' (' + FORMS[0] + ')', () => {
   if (/^SKIP:/m.test(out)) { console.log('  ' + out.trim().split(/\r?\n/)[0]); return; }
   assert.ok(/ALL PASS/.test(out), '서식이 제대로 안 채워집니다:\n' + out.slice(-2500));
   assert.strictEqual(r.status, 0, FORMS[0] + ' 실패:\n' + out.slice(-2500));
+});
+
+test('기금 결산 검사 — ' + BACKUP[1] + ' (' + BACKUP[0] + ')', () => {
+  const p = path.join(TOOLS, BACKUP[0]);
+  assert.ok(fs.existsSync(p), BACKUP[0] + ' 이 없습니다');
+  const r = spawnSync(process.execPath, [p], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
+  const out = (r.stdout || '') + (r.stderr || '');
+  if (/^SKIP:/m.test(out)) { console.log('  ' + out.trim().split(/\r?\n/)[0]); return; }
+  assert.ok(/ALL PASS/.test(out), '백업·복구 창이 제대로 안 열립니다:\n' + out.slice(-2500));
+  assert.strictEqual(r.status, 0, BACKUP[0] + ' 실패:\n' + out.slice(-2500));
 });
 
 /* 검사가 «몇 건을 돌았는지»도 못 박는다.

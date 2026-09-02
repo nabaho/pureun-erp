@@ -144,7 +144,13 @@ test('기록 보기는 최근 것만 읽는다', () => {
   assert.ok(SRC.includes('onclick="openAudit()"'), '기록을 볼 단추가 없다');
 });
 
-/* ══════ ⑨ 전체 백업 ══════ */
+/* ══════ ⑨ 전체 백업 ══════
+ * 2026-09-02: 백업 단추를 사이드바 메뉴(nav-backup)에서 상단 ⚙〈백업·복구〉
+ * 모달(toolsbtn→showBackup())로 옮겼다 — 화면으로 실제로 그려서 여닫히는지
+ * 보는 검사는 fund-erp/tools/check_backup.js 쪽에 있다. 여기서는 여전히
+ * 지켜야 할 «규칙»(통째로 덮어쓰는 길이 없다 / 메뉴 드래그 순서에 안 섞인다)
+ * 만 값이 아니라 규칙으로 확인한다.
+ */
 test('통째로 덮어쓰는 단추는 두지 않는다', () => {
   const e = grabFn('exportAll');
   assert.match(e, /ref\(NS\)\.once\('value'\)/, '전체를 읽어야 백업이다');
@@ -152,13 +158,14 @@ test('통째로 덮어쓰는 단추는 두지 않는다', () => {
   /* 되돌리기 단추가 있으면 잘못 눌러 42개가 한 번에 날아간다 —
      지운 기금은 [🗑 삭제 보관함]에서 되살린다 */
   assert.ok(!/function importAll|restoreAll/.test(SRC), '통째로 덮어쓰는 길이 생겼다');
-  assert.ok(SRC.includes('onclick="exportAll()"'), '백업 단추가 화면에 없다');
+  assert.ok(/onclick="[^"]*\bexportAll\(\)"/.test(SRC), '백업을 부르는 단추가 화면에 없다');
 });
 
-test('백업 단추는 메뉴 순서에서 뺀다 — 메뉴가 아니라 도구다', () => {
-  const i = SRC.indexOf('id="nav-backup"');
-  assert.ok(i > 0, '백업 단추가 없다');
-  const tag = SRC.slice(SRC.lastIndexOf('<div', i), i + 40);
+test('백업 단추는 메뉴 순서에 섞이지 않는다 — 메뉴가 아니라 도구다', () => {
+  assert.ok(!/id="nav-backup"/.test(SRC), '백업이 아직 사이드바 메뉴 항목(nav-backup)으로 남아 있다');
+  const i = SRC.indexOf('id="toolsbtn"');
+  assert.ok(i > 0, '백업을 여는 도구 단추(toolsbtn)가 없다');
+  const tag = SRC.slice(SRC.lastIndexOf('<button', i), i + 40);
   assert.ok(!/data-nav="1"/.test(tag), '드래그 순서에 섞이면 메뉴처럼 읽힌다');
 });
 
