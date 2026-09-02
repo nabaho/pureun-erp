@@ -108,3 +108,81 @@ test('★★ 버릴 연결의 실패를 «붙잡아 둔다» — 안 붙잡으�
   assert.match(seg, /\.catch\(/,
     '★ 버릴 연결의 실패를 안 붙잡습니다 — 나중에 터지면 그릇이 죽습니다');
 });
+
+/* ═══ 일이 «실패해서» 연결을 버릴 때도 같다 (warmDone) ═════════════════════
+   ★ 위쪽 warmConnect 를 고치고 나서 한 자리가 더 있는 것을 봤다.
+     일이 실패하면 warmDone(client, false) 이 그 연결을 버리는데, 거기서도
+     끊기를 기다리지 않는다 — 좋다. 그런데 «되돌아온 실패»를 안 붙잡았다.
+   ⚠ try/catch 로는 못 막는다 — 그것은 «던져진 것»만 잡는다.
+     logout 이 실패한 약속을 돌려주면 그냥 새어 나가고, 아무도 안 붙잡은
+     실패는 그릇을 통째로 죽인다(Node 18+ 기본값). */
+
+function 실패하는자리(logout) {
+  const 기록 = { 붙음: 0 };
+  const deps = {
+    getDatabase: () => ({ ref: () => ({ once: async () => ({ val: () => 'INBOX' }) }) }),
+    mailUserAsync: async () => '370-6',
+    mailPass: () => 'pw',
+    MD: { loginIds: () => ['370-6'] },
+    imapConnect: async () => {
+      기록.붙음++;
+      return {
+        usable: true,
+        async getMailboxLock() { return { release() {} }; },
+        logout: logout,
+      };
+    },
+  };
+  return { 기록, deps };
+}
+
+test('★★ 일이 실패해 연결을 버릴 때, 끊기가 «영원히 안 끝나도» 실패가 곧 올라온다', async () => {
+  const MS = 새로불러오기();
+  const { deps } = 실패하는자리(function () {
+    return new Promise(function () { /* 영원히 안 끝난다 */ });
+  });
+  await assert.rejects(
+    MS.withFolder(deps, 'inbox', async () => { throw new Error('일이 터졌다'); }),
+    /일이 터졌다/,
+    '★ 버릴 연결의 끊기를 기다리다 실패조차 못 올렸습니다');
+});
+
+test('★★ 그때 «아무도 안 붙잡은 실패»를 남기지 않는다 — 남기면 그릇이 죽는다', async () => {
+  const MS = 새로불러오기();
+  const 샌것 = [];
+  const 지킴 = (e) => 샌것.push(e);
+  process.on('unhandledRejection', 지킴);
+  try {
+    const { deps } = 실패하는자리(function () {
+      return Promise.reject(new Error('끊다가 터졌다'));
+    });
+    await assert.rejects(
+      MS.withFolder(deps, 'inbox', async () => { throw new Error('일이 터졌다'); }),
+      /일이 터졌다/);
+    /* ⚠ 안 붙잡은 실패는 «다음 차례»에 알려진다 — 두 번 넘겨 기다린다. */
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+  } finally { process.off('unhandledRejection', 지킴); }
+  assert.deepEqual(샌것.map((e) => String((e && e.message) || e)), [],
+    '★ 버릴 연결의 실패가 새어 나갔습니다 — 이대로면 그릇이 통째로 죽습니다');
+});
+
+test('★ 그래도 «버린다» — 다음 일은 새로 붙는다', async () => {
+  const MS = 새로불러오기();
+  const { 기록, deps } = 실패하는자리(function () {
+    return Promise.reject(new Error('끊다가 터졌다'));
+  });
+  await assert.rejects(MS.withFolder(deps, 'inbox', async () => { throw new Error('ㅁ'); }));
+  await MS.withFolder(deps, 'inbox', async () => 1);
+  assert.equal(기록.붙음, 2, '★ 못 쓰게 된 연결을 그대로 물려줬습니다');
+});
+
+test('★★ warmDone 도 «되돌아온 실패»를 붙잡는다 — try/catch 만으로는 못 막는다', () => {
+  const src = require('node:fs').readFileSync(MS_PATH, 'utf8').replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const i = src.indexOf('function warmDone');
+  const seg = src.slice(i, src.indexOf('async function withFolder', i));
+  assert.match(seg, /\.catch\(/,
+    '★ warmDone 이 버릴 연결의 실패를 안 붙잡습니다');
+  assert.ok(seg.indexOf('await') < 0,
+    '★ warmDone 이 끊기를 기다립니다 — 반쯤 끊긴 소켓에서 몇 분 멈춥니다');
+});
