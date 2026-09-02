@@ -92,13 +92,24 @@ const titleLine = (src.split(/\r?\n/).find(l => l.startsWith('var FM_TITLE=')) |
    결손금 이월 기금(실제 사례 있음)은 **제출 서류에 음수가 찍혔다**. */
 /* 이름 바꾸기는 이제 «한 벌 모델»(stmtRE·stmtBS) 이 맡는다 — 화면과 워크북이 함께 지킨다.
    종전에는 화면만 고치고 워크북 세 곳이 원값을 써서 제출 서류에 음수가 찍혔다. */
-ok('처분계산서가 이름을 바꿔 양수로', src.includes("add(isLoss?'1. 처분전결손금':'1. 처분전이익잉여금',_retVal(fin.retained)")
-  && src.includes("add(isLoss?'4. 차기이월결손금':'4. 차기이월이익잉여금',_retVal(fin.retained)"));
+ok('처분계산서도 당기 기준 부호로 적는다',
+  src.includes('var sgn=isLoss?-1:1, sgnOp=(op<0?-1:1), sgnNet=((num(fin.net)||0)<0?-1:1);')
+  && src.includes("add(isLoss?'1. 처분전결손금':'1. 처분전이익잉여금',sgn*_r,sgn*_rP")
+  && src.includes("add(isLoss?'4. 차기이월결손금':'4. 차기이월이익잉여금',sgn*_r,sgn*_rP"));
 ok('처분계산서에 원값(음수)을 안 쓴다',
   !/add\('1\. 처분전이익잉여금',fin\.retained/.test(src) && !/add\('4\. 차기이월이익잉여금',fin\.retained/.test(src));
-ok('당기순손실도 이름을 바꾼다', src.includes("add((fin.net<0?'2) 당기순손실':'2) 당기순이익'),_retVal(fin.net)"));
-ok('재무상태표 결손금도 이름을 바꿔 양수로',
-  src.includes("add(isLoss?'Ⅱ. 결손금':'Ⅱ. 이익잉여금',_retVal(fin.retained)"));
+ok('당기순손실도 이름을 바꾼다',
+  src.includes("add((fin.net<0?'2) 당기순손실':'2) 당기순이익'),sgnNet*(num(fin.net)||0),sgnNet*(num(prv.net)||0)"));
+/* 전기 칸에 따로 _retVal 을 씌우면 부호가 반대인 해에 값이 뒤집힌다 — 아예 못 쓰게 막는다 */
+ok('비교 칸에 _retVal 을 따로 씌우지 않는다',
+  !/_retVal\((?:prv\.retained|opP|prv\.net)\)/.test(src));
+/* 당기는 이름을 바꿔 양수로, 전기는 «부호 그대로» — 전기에도 _retVal 을 씌우면
+   당기 결손·전기 잉여인 해에 전기 잉여가 결손금 칸에 양수로 앉는다.
+   값이 맞는지는 check_notes.js 가 실제로 표를 만들어 본다. */
+ok('재무상태표 결손금은 당기 기준 부호로 적는다',
+  src.includes('var sgn=isLoss?-1:1;')
+  && src.includes("add(isLoss?'Ⅱ. 결손금':'Ⅱ. 이익잉여금',sgn*(num(fin.retained)||0),sgn*(num(prv.retained)||0)")
+  && !src.includes('_retVal(prv.retained)'));
 
 /* ══ 재무제표 3종을 «제출 양식 그대로» ══
    짜임새는 실제 제출본(2025 결산서)에서 그대로 옮겼다. 화면과 워크북이 각자 줄을 짜면
@@ -191,8 +202,20 @@ ok('빈 칸을 지어내지 않는다', /var dash=function\(v\)\{ v=\(v==null\?'
 ok('우발부채를 없다고 단정하지 않는다', src.includes('장부에 잡힌 것은 없다. 그 밖의 사항은 확인이 필요하다.'));
 /* 기본재산은 들어오기만 하지 않는다 — 준비금2 설정 때 여기서 빠져나간다.
    그 줄을 빠뜨리면 기초+출연 ≠ 기말 이 된다(청신공동 2025: 7,200,000). */
-ok('기본재산에서 빠져나간 몫을 적는다', src.includes("if(x.debit==='기본재산') outB+=amt;")
-  && src.includes("s4.rows.push(['고유목적사업준비금2 설정',-Math.round(outB),null]);"));
+/* 기본재산 차변을 다 합쳤다가 「준비금2 설정」이라 적던 것을 고침 — 맞바꿈 기금은
+   설정이 준비금1로 나가고, 준비금과 무관한 감소까지 설정액으로 둔갑했다.
+   값이 맞는지는 check_notes.js 가 실제로 주석을 만들어 본다. */
+ok('기본재산 감소를 대변 계정별로 갈라 적는다',
+  src.includes("if(RESERVE_ACCTS.indexOf(x.credit)>=0) outByAcct[x.credit]=(outByAcct[x.credit]||0)+amt;")
+  && src.includes("if(outByAcct[a]) s4.rows.push([a+' 설정',-Math.round(outByAcct[a]),null]);")
+  && src.includes("if(outEtc) s4.rows.push(['그 밖의 감소',-Math.round(outEtc),null]);"));
+/* 준비금 설정·전입·환입은 어느 «번호»가 아니라 어느 «역할»이냐로 간다 —
+   번호로 못 박으면 맞바꿈 기금에서 설정은 준비금1로 나가고 환입은 준비금2에서 빠져
+   준비금2가 음수가 된다. 대차·당기순이익은 맞아서 화면으론 멀쩡해 보인다. */
+ok('준비금 설정·전입·환입이 역할을 따른다',
+  src.includes('bal[_roles.carry]=(bal[_roles.carry]||0)+want;')
+  && src.includes('r.parts=[{acct:_roles.carry,amount:net}]; r.acct=_roles.carry;')
+  && src.includes('[_roles.interest,_roles.carry].forEach(function(a){ if(rest<=0) return;'));
 // 주석 스스로 맞물림을 본다 — 어긋나면 화면이 알려 준다
 /* 전입은 준비금이 «대변», 환입은 «차변»에 선다. 뒤집어 놓아도 두 금액이 같은 해에는
    숫자로 안 드러난다 — 그래서 방향 자체를 못 박는다. */
@@ -286,7 +309,7 @@ ok('이월금은 전기말 현금', /var carry=num\(op\.cash\)\|\|0;/.test(src)
 /* 결손금은 «수입»이 아니다 — 수입에 음수로 넣으면 수입 합계가 그만큼 줄어 예산이 작아 보인다 */
 ok('예산편성안 이월금은 잉여일 때만', src.includes('var _carry=Math.max(0,fin.retained), _loss=Math.max(0,-fin.retained);')
   && src.includes("_xlRow(s,rw++,['수입 — 이월금',_carry,null,null]);")
-  && src.includes('fin.interest+R.bf.employer+R.bf.other+_carry'));
+  && src.includes('fin.bizRev+R.bf.employer+R.bf.other+_carry'));
 ok('이월결손금은 따로 적어 눈에 보이게', src.includes('전기 이월결손금 — 잉여가 생기면 먼저 보전'));
 /* 모르는 해에 2025년 규칙을 그대로 돌려주면, 2027년 화면에도 「접수: 상반기 3.4.~4.18.」 이
    사실처럼 뜬다 — 그대로 믿고 접수 시기를 놓친다. 가장 가까운 해로 셈하되 «미확인»이라고 말한다. */
@@ -724,7 +747,15 @@ ok('남의 값을 걷어낸다', src.includes('function stripBaked(root){')
 // 걷어내기가 «가장 먼저» 돌아야, 걷어낸 자리가 곧 채울 자리가 된다
 ok('걷어낸 뒤에 채운다', /stripBaked\(d\);[\s\S]{0,200}?fillCommittee\(d,f\);/.test(src));
 /* ⚠ 다 지우면 서식이 망가진다 — 이것들은 «서식의 일부»다 */
-ok('법령 개정일은 남긴다', src.includes("return /개정|시행/.test(pre) ? m : pre+BAKE_BLANK;"));
+ok('법령 개정일은 남긴다', src.includes("return /개정|시행|신설|제정|전문개정/.test(pre) ? m : pre+BAKE_BLANK;"));
+/* 구간(미만·이상)은 «윗줄», 금액은 «아랫줄»에 따로 있는 요율표가 있다 —
+   제도도입 비용 청구내역서의 수당 200·300·400·470만원이 통째로 지워지던 것. */
+ok('윗줄이 구간이면 아랫줄 요율도 남긴다', src.includes('function _isRateRow(tr){')
+  && src.includes("if(/미만|이상/.test(up.textContent||'')){ near=true; break; }")
+  && src.includes("if(_isRateRow(tr)) tr.setAttribute('data-rate','1');"));
+/* 다만 스스로 적는 줄(청구액)과, 저 아래 남의 실적은 그대로 비워야 한다 */
+ok('요율표 안에서도 청구·신청 줄은 비운다', src.includes("!/청구|신청|지급|수령|합계|^계$/.test(lbl)"));
+ok('요율 남기기는 «바로 위 두 줄»만 본다', src.includes('for(var k=0;k<2&&up;k++,up=up.previousElementSibling)'));
 ok('요율 구간은 남긴다', src.includes('if(cmp) return m;') && src.includes('미만|이상'));
 ok('용지 규격은 남긴다', src.includes('㎜|㎡|g') && src.includes('// 용지 규격'));
 /* 사업계획서는 쉼표 없는 예산 수치(56·560)가 칸마다 흩어져 있어, 글자 걷어내기만으로는
@@ -957,7 +988,7 @@ ok('재원 부족을 확정 창에서 알림', src.includes('if(rc.deficit>0) ms
 ok('결손금 표시 헬퍼', src.includes('function _retLabel') && src.includes('function _retVal')
   && src.includes("return (num(v)||0)<0?'이월결손금':'이월잉여금';"));
 ok('재무상태표·결산서·별지·전기대비에 결손금 적용',
-  (src.match(/_retLabel\(/g)||[]).length>=4 && (src.match(/_retVal\(/g)||[]).length>=5);
+  (src.match(/_retLabel\(/g)||[]).length>=4 && (src.match(/_retVal\(/g)||[]).length>=1);
 // 전기이월 칸을 늘릴 때 재무제표 집계에서 빠지는 일이 있었다(자산 1억 사라짐) → OPEN_ACCT에서 파생
 ok('재무제표가 전기이월을 OPEN_ACCT에서 파생', src.includes('var _opDone={cash:1,savings:1,loan:1,secu:1,basic:1,retained:1,reserve:1,reserve2:1};')
   && src.includes('otherAsset+=opAssetEtc; liab+=opLiabEtc; otherEquity+=opEquityEtc;'));

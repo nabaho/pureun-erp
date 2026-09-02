@@ -319,6 +319,8 @@ function drawPanel(o){
     CO_FIELDS: [['ceo','대표자'], ['sales','매출액']],
     _coFolders: {},
     coConflictHtml: () => '', coDocsHtml: () => '',
+    /* 2026-09-02: 회사 열쇠 한 줄 — 이 검사는 안 본다 */
+    coErpPinHtml: () => '',
     coErpHtml: () => '', coCardsHtml: () => '', coTagsOf: () => [] };
   vm.createContext(ctx);
   /* ⚠ 2026-08-31(점검 B2): 상세에 계약 기간 한 줄이 붙었다. 대역을 넣는 대신 «진짜»를

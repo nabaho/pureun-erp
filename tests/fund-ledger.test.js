@@ -143,7 +143,13 @@ test('재무제표가 대차 일치하고, 연도별로 따로 계산된다', ()
   assert.equal(cur.basic, 65000000, '기본재산 = 이월 500만 + 출연 6,000만');
   assert.equal(cur.purpose, 8500000, '목적사업비 = 장학 600만 + 경조 250만');
   assert.equal(cur.admin, 220000);
-  assert.equal(cur.interest, 412000);
+  /* ⚠ 2026-09-02: interest 는 «없앴다» — 수익 계정 셋(이자수익·잡수익·준비금환입)을
+     묶은 값이라 이자수익도 사업수익도 아니었다. 그 값은 bizRev 로 옮겨졌다
+     (fund.html computeFin 의 그 자리 주석에 까닭이 적혀 있다). 검사고정-허용:
+     412,000원은 위 TXNS 표본에서 나오는 «규칙»이다(이자 40만 + 잡수익 1만2천). */
+  assert.equal(cur.bizRev, 412000);
+  assert.equal(cur.interest, undefined,
+    'interest 가 되살아났다 — 그 값은 이자수익도 사업수익도 아니라 없앤 것이다');
   assert.equal(cur.net, 412000 - 8500000 - 220000);
 
   const prev = b.computeFin([], 'F1', 2024);

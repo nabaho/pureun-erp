@@ -208,9 +208,16 @@ test('수입 항목끼리 겹치지 않는다 — 같은 돈을 두 번 세지 �
   assert.match(a, /bizRev:num\(fin\.bizRev\)/, '사업수익을 안 쓴다');
   assert.match(a, /nonopRev:num\(fin\.nonopRev\)/, '사업외수익을 안 쓴다');
 
-  /* computeFin 이 정말 interest = bizRev + nonopRev 인지 — 이 전제가 깨지면 갈래를 다시 짜야 한다 */
+  /* ── 2026-09-02: 전제가 «바뀌었다» ──
+     예전에는 computeFin 이 interest=revenue 를 만들어 「이자수익」이라 부르며 내보냈다.
+     그런데 수익 계정은 이자수익·잡수익·준비금환입 셋이라, 그 값은 이자수익도
+     사업수익도 아니었다. 그래서 쓰던 다섯 자리를 bizRev 로 옮기고 **없앴다**
+     (fund.html 의 그 자리 주석에 까닭이 적혀 있다).
+     ⚠ 그러니 여기서 볼 것은 «있는가»가 아니라 «없는가»다 — 그냥 지우면
+       interest=revenue 가 되돌아와도 아무도 안 걸린다. */
   const cf = grabFn('computeFin');
-  assert.match(cf, /var interest=revenue/, 'interest 의 뜻이 바뀌었다 — 예산 갈래를 다시 볼 것');
+  assert.doesNotMatch(cf, /var interest=revenue/,
+    'interest=revenue 가 되살아났다 — 그 값은 이자수익도 사업수익도 아니라 없앤 것이다');
   assert.match(cf, /var nonopRev=revenue-bizRev/, 'nonopRev 의 뜻이 바뀌었다');
 
   /* 항목이 쓰는 이름이 서로 달라야 겹치지 않는다 */
