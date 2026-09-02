@@ -76,8 +76,8 @@ test('★ 되돌리면 레코드는 남기고 경로만 뗀다', () => {
 
 test('★ 폴더가 안 되는 브라우저에서는 폴더 단추를 감춘다', () => {
   const fn = cutFn(source, 'function openBulkMatch(');
-  assert.match(fn, /if\(!fsSupported\(\) && fb\) fb\.style\.display='none'/,
-    '눌러도 안 되는 단추를 보여 주면 안 됩니다');
+  assert.match(fn, /if\(!fsSupported\(\)\)\{ if\(fb\)[\s\S]*?if\(ab\)/,
+    '눌러도 안 되는 단추를 보여 주면 안 됩니다 — 「다섯 화면 모두」도 함께 감춰야 합니다');
   assert.match(fn, /_bulkTargets\(page\)\.length/, '몇 건을 채우는지 먼저 밝혀야 합니다');
 });
 
@@ -88,4 +88,66 @@ test('★ 단추 이름이 하는 일을 말한다 — 다섯 화면 모두', ()
     '다섯 화면 모두 같은 이름·같은 설명이어야 합니다');
   assert.equal(source.indexOf('📦 원본 일괄 매칭'), -1,
     '무엇을 매칭하는지 알 수 없던 옛 이름은 남기지 않습니다');
+});
+
+/* ── 다섯 화면 한꺼번에 (대표 지시 2026-09-02 「니가 직접 다 넣고 짝못찾은것만 알려달라」) ── */
+
+test('★★ 대상은 화면 설정(CAREER_CFG)에서 끌어온다 — 여기서 다시 적으면 어긋난다', () => {
+  const fn = cutFn(source, 'function _bulkTargets(');
+  assert.match(fn, /CAREER_CFG\[page\]/);
+  assert.match(fn, /cfg\.filter\) db=db\.filter\(cfg\.filter\)/,
+    '화면이 거르는 대로 걸러야 합니다 — 따로 적어 두어 학력 화면이 빠져 있었습니다');
+  assert.doesNotMatch(fn, /type!=='표창'/,
+    '갈래를 여기서 다시 적으면 화면과 어긋납니다');
+});
+
+test('★ 다섯 화면이 모두 들어 있다 — 학력을 빠뜨리지 않는다', () => {
+  assert.match(source, /var BULK_PAGES = \['wiccok','award','license','complete','edu'\]/);
+  ['wiccok', 'award', 'license', 'complete', 'edu']
+    .forEach(p => assert.ok(source.indexOf("BULK_LABEL") > 0 && source.indexOf(p + ":'") > 0
+      || source.indexOf(p + ':') > 0, p + ' 이름표가 있어야 합니다'));
+});
+
+test('★★ 파일 하나는 «한 레코드에만» 간다 — 화면을 건너서도', () => {
+  const fn = cutFn(source, 'function bulkAnalyzeAll(');
+  assert.match(fn, /rest=r\.unmatched/,
+    '앞 화면이 쓴 파일을 빼지 않으면 같은 파일이 위촉장에도 수료증에도 붙습니다');
+  assert.match(fn, /m\.page=pg/, '어느 화면 것인지 달아 둬야 저장할 곳을 압니다');
+});
+
+test('★★ 저장은 화면마다 «제 스토어»에 — 하나로 못박으면 다른 화면이 사라진다', () => {
+  const fn = cutFn(source, 'async function bulkSaveMatched(');
+  const 폴더 = fn.slice(fn.indexOf('if(fromFolder){'), fn.indexOf('for(const m of matched)'));
+  assert.match(폴더, /CAREER_CFG\[pg\]/);
+  assert.match(폴더, /byStore\[cfg\.store\]/);
+  assert.doesNotMatch(폴더, /const store=\(page==='license'/,
+    '스토어를 하나로 못박으면 학력·자격증이 위촉장 목록에 덮여 사라집니다');
+});
+
+test('★★ 저장 뒤 «남은 것»을 보여 준다 — 창을 닫아 버리면 알 길이 없다', () => {
+  const fn = cutFn(source, 'async function bulkSaveMatched(');
+  const 폴더 = fn.slice(fn.indexOf('if(fromFolder){'), fn.indexOf('for(const m of matched)'));
+  assert.match(폴더, /bulkLeftoverReport\(pages\)/);
+  assert.doesNotMatch(폴더, /closeBulk\(\)/, '보고를 못 보고 닫히면 안 됩니다');
+});
+
+test('★★ 남은 것 중 «중복으로 보이는 줄»을 갈라 밝힌다', () => {
+  const fn = cutFn(source, 'function bulkLeftoverReport(');
+  assert.match(fn, /중복으로 보임/,
+    '같은 서류가 두 줄인데 한 줄에만 원본이 붙은 경우가 많습니다 — 채울 파일이 없는 것과 다릅니다');
+  assert.match(fn, /haveKeys\[_bulkKeyOf\(r\)\]/);
+  assert.match(fn, /<textarea readonly/, '그대로 복사해 알려 줄 수 있어야 합니다');
+});
+
+test('★ 학력 레코드의 칸 이름도 본다 — school·major', () => {
+  const fn = cutFn(source, 'function _fnScore(');
+  assert.match(fn, /r\.org\|\|r\.school/);
+  assert.match(fn, /r\.major\|\|r\.degree/,
+    '없는 칸만 읽으면 그 화면은 한 건도 못 채웁니다');
+});
+
+test('★★ 자격증·수료증은 «이름»이 열쇠 — 낱말 5점씩으로는 문턱을 못 넘는다', () => {
+  const fn = cutFn(source, 'function _fnScore(');
+  assert.match(fn, /tf=tv\.replace\(\/\[\^a-z가-힣0-9\]\/g,''\); if\(tf\.length>=4&&k\.flat\.includes\(tf\)\) score\+=50/,
+    '「공인노무사 자격증」↔「0.공인노무사자격증.pdf」가 20점이라 못 붙었습니다(실측)');
 });
