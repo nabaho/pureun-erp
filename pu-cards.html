@@ -11255,6 +11255,8 @@ function openMenu(){
       <span class="msub">ERP에만 있는 이름 찾기</span></button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openErpClosedTidy()">🏚 종료업체 명함 정리
       <span class="msub">업체퇴사 폴더로 이동</span></button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');openCardFillCo()">🏢 회사 빠진 명함 채우기
+      <span class="msub">사업자번호로 찾아서</span></button>
 
     ${hd('⚙️ 설정')}
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openViewManager()">🔖 내 탭 관리
@@ -12384,6 +12386,101 @@ function openErpClosedTidy(){
   toMove.forEach(it=>{ it.group = dest[kindOf(it)].id; it.erpAutoFoldered = 1; it.updatedAt = now; });
   autoFolderFlush(toMove);                                     /* 모아서 한 번에 */
   toast(`✅ 명함 ${nCard}장${nBiz?` · 사업자등록증 ${nBiz}장`:''}을 「${갈곳}」으로 정리했습니다`, 6000);
+  render();
+}
+
+/* ══════ 🏢 회사가 빠진 명함을 «한꺼번에» 채운다 (대표 지시 2026-08-31) ══════
+   서식에서 온 명함은 이제 «만들 때부터» 회사를 달고 온다(js/pu-doc-file.js 의
+   findCoNameByBizNo — 상호를 못 읽어도 사업자번호로 찾는다). 그러나 그 전에 «이미»
+   회사 없이 쌓인 명함은 저절로 안 고쳐진다.
+   회사가 없는 명함은 기업 상세에서 어느 회사에도 안 붙는다 — 사람 따로, 회사 따로 뜬다.
+
+   ★ 잣대는 «사업자번호» 하나다. 이름으로는 맞추지 «않는다» —
+     2026-08-28 에 「주식회사 행복한단홍갈비」와 「행복한 단홍갈비」가 섞인 그 사고다.
+   ⚠ 새 서버 읽기가 «없다». 등록증도 기업 상세도 이미 손에 들고 있다.
+   ⚠ 이미 회사가 적힌 명함은 건드리지 «않는다» — 사람이 넣어 둔 이름을 덮으면 안 된다. */
+function cardFillCoIndex(){
+  const byBiz = {};
+  const put = (bz, nm) => {
+    const k = digits(bz || '');
+    const n = String(nm == null ? '' : nm).trim();
+    if(k.length < 10 || !n || byBiz[k]) return;   /* 먼저 넣은 것이 이긴다 */
+    byBiz[k] = n;
+  };
+  /* ① 등록증이 먼저다 — 법적 원본이다 */
+  Object.values(state.items || {}).forEach(it=>{ if(it && it.kind === 'biz') put(it.bizno, it.company); });
+  /* ② 등록증이 아직 없는 회사는 서식이 기업 상세에 적어 둔 이름이 있다 */
+  const info = (typeof _coInfo !== 'undefined' && _coInfo) || {};
+  Object.keys(info).forEach(k=>{ put(k, (info[k] || {}).company); });
+  return byBiz;
+}
+function cardFillCoPlan(){
+  const byBiz = cardFillCoIndex();
+  const hits = [], 번호없음 = [];
+  Object.values(state.items || {}).forEach(it=>{
+    if(!it || it.kind === 'biz') return;
+    if(String(it.company == null ? '' : it.company).trim()) return;   /* 이미 적혀 있다 */
+    const nm = byBiz[digits(it.bizno || '')];
+    if(nm) hits.push({ it: it, name: nm });
+    else 번호없음.push(it);
+  });
+  return { hits: hits, unknown: 번호없음 };
+}
+/* ⚠ 회사 칸은 «공유 검색목록에도» 든다(idxRecord 의 c). 명함만 고치면 이 색인을 읽는
+   푸른이알피·업무관리 검색이 옛 값을 보여 준다 — 그래서 색인 한 칸을 «같은 통»에 적는다.
+   그래서 bulkPatchFlush 를 안 쓴다(그 길은 색인을 일부러 안 건드린다고 못 박혀 있다).
+   ⚠ 잠긴 폴더·개인 명함은 색인에 «없다». 여기서 만들어 넣으면 감춰 둔 것이 드러난다 —
+     writeIdx 와 «같은 잣대»를 쓴다. 한쪽만 고치면 그 자리에서 새어 나간다. */
+function cardFillCoWrites(hits, chunk){
+  const size = Math.max(1, Math.floor(Number(chunk)) || BULK_PATCH_CHUNK);
+  const byRoot = {};
+  (hits || []).forEach(h=>{
+    if(!h || !h.it || !h.it.id) return;
+    const R = Store._rootOf(h.it.id);
+    (byRoot[R] = byRoot[R] || []).push(h);
+  });
+  const now = Date.now();
+  const out = [];
+  Object.keys(byRoot).forEach(R=>{
+    const arr = byRoot[R];
+    for(let i=0;i<arr.length;i+=size){
+      const upd = {};
+      arr.slice(i, i+size).forEach(h=>{
+        upd[`${R}/items/${h.it.id}/company`] = h.name;
+        upd[`${R}/items/${h.it.id}/updatedAt`] = now;
+        const 숨김 = inLockedGroup(h.it) || h.it.scope === 'private';
+        if(R === DB_ROOT && !숨김) upd[`${DB_ROOT}/idx/${h.it.id}/c`] = h.name;
+      });
+      out.push(upd);
+    }
+  });
+  return out;
+}
+async function openCardFillCo(){
+  if(Store.mode !== 'firebase') return toast('실시간DB 연결 상태에서만 됩니다');
+  const plan = cardFillCoPlan();
+  const 빈것 = plan.hits.length + plan.unknown.length;
+  if(!빈것) return toast('회사가 빠진 명함이 없습니다 👍');
+  if(!plan.hits.length){
+    return toast(`회사가 빈 명함 ${빈것}장이 있지만, 사업자번호가 없어 `
+      + `어느 회사인지 알 수 없습니다 — 명함을 열어 번호를 채워 주세요`, 8000);
+  }
+  /* 무엇이 어디에 붙는지 «보여 주고» 묻는다 — 모르고 누르면 안 된다 */
+  const 미리 = plan.hits.slice(0, 3)
+    .map(h=>`· ${h.it.name || '(이름 없음)'} → ${h.name}`).join('\n');
+  if(!confirm(`회사가 빈 명함 ${빈것}장 가운데\n`
+    + `사업자번호로 회사를 찾은 ${plan.hits.length}장에 회사를 채웁니다.\n\n`
+    + `${미리}${plan.hits.length > 3 ? `\n… 그 밖 ${plan.hits.length - 3}장` : ''}\n\n`
+    + `· 이미 적힌 회사는 건드리지 않습니다\n`
+    + `· 사업자번호가 없는 ${plan.unknown.length}장은 그대로 둡니다`)) return;
+  const plans = cardFillCoWrites(plan.hits, BULK_PATCH_CHUNK);
+  try{
+    for(const upd of plans) await Store.db.ref().update(upd);
+  }catch(e){ return toast('저장 실패: ' + ((e && e.message) || ''), 8000); }
+  plan.hits.forEach(h=>{ h.it.company = h.name; });
+  coListBust();
+  toast(`✅ 명함 ${plan.hits.length}장에 회사를 채웠습니다`
+    + (plan.unknown.length ? ` (번호 없는 ${plan.unknown.length}장은 그대로)` : ''), 7000);
   render();
 }
 
@@ -21179,6 +21276,7 @@ function renderSettingsPage(){
     panel = note('푸른이알피 업체관리와 대조하고, 종료된 업체 명함을 정리합니다.')
       + btn(`setSub('erpname')`,'🔗','대표자·담당자 대조','ERP에만 있는 이름')
       + btn('openErpClosedTidy()','🏚','종료업체 명함 정리','업체퇴사 폴더로')
+      + btn('openCardFillCo()','🏢','회사 빠진 명함 채우기','사업자번호로 찾아서')
       + btn('rebuildIdxAll()','🔄','검색목록 다시 만들기','팩스·업태 등 새 항목 채우기')
       + `<div id="setInline" style="grid-column:1/-1;margin-top:6px"></div>`;
   } else if(cur==='tabs'){
