@@ -353,6 +353,13 @@ ok('「지난 기금」이 아니라 「종료기금」', src.includes("['past',
 ok('묶음 나누기는 homeBuckets 한 곳', src.includes('function homeBuckets(')
   && src.includes('function renderNav(') && /renderNav\(\);/.test(src));
 ok('본문 묶음 탭줄은 없앴다', src.includes("var tabbar='';   // 묶음 고르기는 사이드바로 옮겼다"));
+/* 전체 백업은 메뉴가 아니라 «도구»다 — 사이드바에 두면 기금 현황·청구 관리와 같은 층으로
+   보여 「어느 화면으로 가는 것인가」 하고 누르게 된다. 실제로는 파일 내려받기다.
+   상단 ⚙〈백업·복구〉로 옮겼다. 창이 정말 열리는지는 check_backup.js 가 그려서 본다. */
+ok('전체 백업이 사이드바 메뉴에 없다', !/id=['"]nav-backup['"]/.test(src));
+ok('상단 ⚙ 가 백업·복구를 연다', src.includes('id="toolsbtn" onclick="showBackup()"'));
+/* 되돌리기는 아직 없다 — 없는 것을 «없다»고 적어 두지 않으면 있는 줄 알고 기다린다 */
+ok('되돌리기가 없다고 적어 둔다', src.includes('되돌리기</b> — 앱 안에는 아직 없습니다'));
 /* 뜻은 「고른 묶음 기준으로 센다」이다 — 앞에 조건이 붙어도(미완비 묶음 등) 상관없다.
    글자를 통째로 맞추면 다른 사람이 묶음을 늘릴 때마다 «멀쩡한데» 빨개진다. */
 ok('머리줄은 고른 묶음만 말한다', /var curInc=[^;]*_curList\.filter\(/.test(src)
