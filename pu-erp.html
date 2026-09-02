@@ -13323,6 +13323,368 @@ function erpLoadMyContractPhotos(cb){
   });
 }
 
+/* ══════════════ 👷 근로자 정보함에서 당겨오기 (대표 지시 2026-09-02) ══════════════
+   「일반근로자들의 계약서, CMS 등록 개인 주민등록증 및 신분증, 기타 위임장 등을 스캔해서
+     기업정보함 등에 보관 … 스켄후 정보 저장후 **푸른이알피에 연결해서 정보를 당겨와야 한다**」
+
+   ■ 어디가 끊겨 있었나 (검토안 docs/mockups/erp-worker-pull.html)
+   사진첩 → 갈래 가리기 → 민감 처리 → 근로자 정보함까지는 2026-09-01 에 이어졌다.
+   끊긴 것은 **마지막 한 칸**이다 — 사건·계약의 근로자 명부가 그 사람들을 못 당겨왔다.
+   서른 명 집단 진정이면 서류가 이미 다 들어와 있는데도 이름을 서른 번 손으로 쳤다.
+
+   ■ 무엇을 당기고 무엇은 안 당기나
+   ⚠⚠ **이름과 회사만 옮긴다.** 주민번호·주소·연락처는 근로자 서류에서 **애초에 안 읽는다**
+     (2026-09-01 결정 · js/pu-doc-read.js 의 「담지 마세요」). 없는 것을 당길 수는 없고,
+     채워진 것처럼 보이면 사람이 확인을 건너뛴다 — 계약서 판독에서 금액을 안 채우는 것과 같다.
+   ⚠ **계좌는 사람에게 안 붙인다.** 통장(bankbook)은 회사 것일 수 있다 — 잘못 붙으면
+     남의 계좌로 보낸다. 그래서 근로자 서류 갈래(WORKER_DOC_KINDS)에도 통장이 없다.
+   ⚠ **서류 목록은 명부에 담지 않는다.** 볼 때 근로자 정보함에서 읽는다 — 담아 두면
+     사진첩에서 지운 서류가 계속 「있음」으로 보인다(기업 상세가 사진을 안 베끼는 것과 같은 결).
+
+   ■ 자리
+   pucards/workerInfo/{회사__이름} = { name, company, docs:{ 사진열쇠: {kind,docName,at,photo} } }
+   여기에는 사람 정보가 없다 — 「어느 서류가 누구 것인가」 하나뿐이다. */
+
+/* 서류 이름표 — 사진첩(READ_LABEL)·기업정보함과 **같은 말**을 쓴다. 말이 갈리면
+   같은 서류가 화면마다 다른 이름으로 보인다. */
+var WK_DOC_LABEL = { idcard:'신분증', resident:'주민등록서류', mandate:'위임장',
+  consent:'동의서', timesheet:'근태표', payslip:'급여명세서' };
+/* 사건에서 「이만큼은 받아야 한다」고 보는 서류. 없으면 명부 줄에 «없음»으로 뜬다.
+   ⚠ 근태표·급여명세서는 여기 안 넣는다 — 사건마다 필요 여부가 달라, 늘 「없음」이 뜨면
+     그 표시가 통째로 무시된다. 빠지면 곤란한 셋만 본다. */
+var WK_WANT = ['idcard', 'mandate', 'consent'];
+
+/* 사람 열쇠 = 회사 + 이름 (대표 결정 2026-09-01 ①).
+   ⚠⚠ js/pu-doc-file.js 의 workerKey · pu-cards.html 의 wkKeyOf 와 **한 글자도 같아야 한다.**
+     어긋나면 사진첩에서 이은 서류가 여기서 «딴 사람»에게 붙거나 아무에게도 안 붙는다.
+     검사(erp-worker-pull)가 세 규칙을 같은 이름들로 돌려 견준다. */
+function erpWkSafe(v){ return String(v==null?'':v).replace(/[.#$/[\]]/g,'_').replace(/\s+/g,''); }
+function erpWkNorm(v){
+  return String(v==null?'':v).replace(/\s|\(주\)|주식회사|㈜/g,'').replace(/[.#$/[\]]/g,'').toLowerCase();
+}
+function erpWkKey(name, company){
+  var n = erpWkSafe(name), c = erpWkSafe(erpWkNorm(company));
+  if(!n || !c) return '';
+  return c + '__' + n;
+}
+
+/* ── 이 사람이 가진 서류 · 빠진 서류 (순수 로직 · 검사 대상) ──
+   돌려주는 것: { docs:[{kind,docName,at,photo}], has:{kind:개수}, missing:[kind] } */
+function erpWkDocsOf(info, name, company){
+  var out = { docs: [], has: {}, missing: [] };
+  var key = erpWkKey(name, company);
+  var rec = key && info ? info[key] : null;
+  var docs = (rec && rec.docs) || {};
+  Object.keys(docs).forEach(function(dk){
+    var d = docs[dk]; if(!d) return;
+    var kind = String(d.kind||'');
+    out.docs.push({ dk: dk, kind: kind, docName: String(d.docName||''),
+      at: Number(d.at||0) || 0, photo: d.photo || {} });
+    out.has[kind] = (out.has[kind] || 0) + 1;
+  });
+  out.docs.sort(function(a,b){ return (b.at||0) - (a.at||0); });
+  /* 서류가 하나도 없는 사람에게는 «없음»을 안 그린다 — 아직 아무것도 안 받은 사람이라
+     셋이 다 빨갛게 뜨면 명부가 온통 경고가 된다. 한 장이라도 받은 사람만 견준다. */
+  if(out.docs.length){
+    WK_WANT.forEach(function(k){ if(!out.has[k]) out.missing.push(k); });
+  }
+  return out;
+}
+
+/* ── 이 업체의 근로자 후보 (순수 로직 · 검사 대상) ──
+   info: pucards/workerInfo · company: 업체 이름 · have: 이미 명부에 있는 [{name}]
+   돌려주는 것: [{ key,name,company,docs,has,missing,already,last }]
+
+   ⚠ **회사가 같은 사람만** 본다. 이름만으로 모으면 남남인 「김수」 둘이 한 사람이 된다
+     (대표 결정 2026-09-01 ①). 회사를 아직 안 쳤으면 빈 목록을 준다 — 전 직원 서류를
+     펼쳐 보이면 그것이 바로 개인정보 사고다.
+   ⚠ 이미 명부에 있는 사람은 **빼지 않고 «못 고르게»** 한다. 빼 버리면 「내가 아까 넣었나」를
+     알 수 없어 같은 사람을 또 찾게 된다. */
+function erpWkCandidates(info, company, have){
+  var out = [];
+  var ck = erpWkSafe(erpWkNorm(company));
+  if(!ck || !info) return out;
+  var mine = {};
+  (have || []).forEach(function(w){
+    var n = erpWkSafe(w && w.name); if(n) mine[n] = 1;
+  });
+  Object.keys(info).forEach(function(key){
+    var rec = info[key]; if(!rec) return;
+    if(key.indexOf(ck + '__') !== 0) return;
+    var name = String(rec.name||'').trim(); if(!name) return;
+    var d = erpWkDocsOf(info, name, rec.company || company);
+    out.push({ key: key, name: name, company: String(rec.company||'').trim(),
+      docs: d.docs, has: d.has, missing: d.missing,
+      already: !!mine[erpWkSafe(name)],
+      last: d.docs.length ? d.docs[0].at : 0 });
+  });
+  /* 서류를 «가장 최근에» 낸 사람이 위다 — 지금 하고 있는 사건의 사람들이 그들이다 */
+  return out.sort(function(a,b){
+    return (b.last - a.last) || String(a.name).localeCompare(String(b.name), 'ko');
+  });
+}
+
+/* ── 고른 사람을 명부 줄로 (순수 로직 · 검사 대상) ──
+   shape: 'case' = 사건 창(f.workers) · 'contract' = 계약 창(f.company.workers)
+   ⚠⚠ **이름 말고는 다 빈칸이다.** 주민번호·주소·연락처를 지어 넣지 않는다.
+   ⚠ 열쇠(id)는 사람마다 달라야 한다 — 같으면 화면이 한 줄로 겹쳐 보인다. */
+function erpWkToWorkers(picked, shape, haveCount){
+  var n = Number(haveCount||0);
+  return (picked||[]).map(function(p, i){
+    var id = (shape === 'contract' ? 'wk-' : 'w-') + Date.now().toString(36) +
+      '-' + i.toString(36) + Math.random().toString(36).slice(2,5);
+    if(shape === 'contract'){
+      return { id:id, name:p.name, rrn:'', position:'', address:'', phone:'', email:'',
+        hireDate:'', leaveDate:'', note:'', isPrimary: (n + i) === 0 };
+    }
+    return { id:id, name:p.name, phone:'', rrn:'', addr:'', bank:'', account:'',
+      holder:'', pos:'' };
+  });
+}
+
+/* ── 근로자 정보함을 «누를 때 한 번» 읽는다 ──
+   ⚠ 구독하지 «않는다». 늘 받아 두면 누가 서류 한 장을 이을 때마다 사람 전부가
+     모든 기기로 다시 내려간다 — 기업정보함이 건별로 받는 것과 같은 까닭이다
+     (대표 지시 2026-08-23 「하루 천원」). */
+var _erpWkInfo = null;
+var _erpWkInfoLoading = false;
+var _erpWkInfoWaiters = [];
+function erpLoadWorkerInfo(cb){
+  if(_erpWkInfo){ cb && cb(_erpWkInfo); return; }
+  if(_erpWkInfoLoading){ if(cb) _erpWkInfoWaiters.push(cb); return; }
+  if(!fbDb){ cb && cb({}); return; }
+  _erpWkInfoLoading = true;
+  fbDb.ref('pucards/workerInfo').once('value').then(function(snap){
+    _erpWkInfo = snap.val() || {};
+    _erpWkInfoLoading = false;
+    var waiters = _erpWkInfoWaiters; _erpWkInfoWaiters = [];
+    cb && cb(_erpWkInfo);
+    waiters.forEach(function(w){ w(_erpWkInfo); });
+  }).catch(function(e){
+    /* 못 읽었다고 창이 죽으면 안 된다 — 빈손으로 열고 「없다」고 말한다 */
+    window._erpErrLog && window._erpErrLog(e);
+    _erpWkInfoLoading = false;
+    var waiters = _erpWkInfoWaiters; _erpWkInfoWaiters = [];
+    cb && cb({});
+    waiters.forEach(function(w){ w({}); });
+  });
+}
+
+/* 서류 딱지 한 개 — 가진 것은 초록, 빠진 것은 주황. 누르면 원본이 뜬다.
+   ⚠ 「없음」에는 누를 것이 없다 — 커서도 안 바뀌게 둔다(눌러 보고 아무 일도
+     안 일어나면 고장으로 읽힌다). */
+function erpWkChip(text, on, onClick){
+  return h('span', {
+    onClick: onClick || null,
+    style:{ fontSize:'10px', padding:'1px 6px', borderRadius:'5px', whiteSpace:'nowrap',
+      border:'1px solid ' + (on ? '#bbf7d0' : '#fde68a'),
+      background: on ? '#f0fdf4' : '#fffbeb',
+      color: on ? '#166534' : '#854d0e',
+      cursor: onClick ? 'pointer' : 'default' } }, text);
+}
+
+/* 명부 한 줄에 붙는 서류 딱지들 — 이름을 아직 안 쳤으면 아무것도 안 그린다 */
+function erpWkRowChips(info, name, company, onOpen){
+  if(!name || !company) return null;
+  var d = erpWkDocsOf(info || {}, name, company);
+  if(!d.docs.length) return null;
+  var seen = {};
+  var chips = [];
+  d.docs.forEach(function(doc){
+    if(seen[doc.kind]) return;              /* 같은 갈래가 여러 장이면 한 딱지로 */
+    seen[doc.kind] = 1;
+    var n = d.has[doc.kind] || 1;
+    chips.push(erpWkChip('📄 ' + (WK_DOC_LABEL[doc.kind] || doc.kind) + (n > 1 ? ' ' + n : ''),
+      true, function(){ onOpen && onOpen(doc); }));
+  });
+  d.missing.forEach(function(k){
+    chips.push(erpWkChip((WK_DOC_LABEL[k] || k) + ' 없음', false, null));
+  });
+  return h('div', { style:{ display:'flex', gap:'4px', flexWrap:'wrap', marginTop:'4px' } }, chips);
+}
+
+/* ── 👷 근로자 서류 원본 보기 ──
+   ⚠ 근로자 서류는 **민감**이라 사진에 원본 주소가 안 적혀 있다 — 저장 층이 서버를
+     거쳐 받아 온다(functions/photo-view.js). 그 자리에서 **누가 언제 열었는지 기록**된다.
+   ⚠ 판독값을 나란히 안 띄운다 — 이 넷에서 읽은 것은 «이름» 하나뿐이라 볼 것이 없다. */
+function WorkerDocViewModal(props){
+  useEscClose(props.onClose);
+  var doc = props.doc || {};
+  var ph = doc.photo || {};
+  var is = useState(''); var imgUrl = is[0]; var setImgUrl = is[1];
+  var es = useState(''); var imgErr = es[0]; var setImgErr = es[1];
+
+  useEffect(function(){
+    var gone = false;
+    if(!ph.id || !ph.year || typeof PuPhotoStore === 'undefined'){ setImgErr('사진을 찾을 수 없습니다'); return; }
+    PuPhotoStore.loadFullDetail(ph.year, ph.id, ph.owner || undefined)
+      .then(function(got){
+        if(gone) return;
+        if(got.src) setImgUrl(got.src);
+        else setImgErr(got.why || '원본을 찾지 못했습니다 — 사진첩에서 지워졌을 수 있습니다');
+      })
+      .catch(function(e){ if(!gone) setImgErr((e && e.message) || '원본을 열 수 없습니다'); });
+    return function(){ gone = true; };
+  }, [ph.id, ph.year]);
+
+  return h('div', {
+    style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.55)', zIndex:213,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:'16px' },
+    onClick:function(e){ if(e.target === e.currentTarget) props.onClose(); }
+  },
+    h('div', { style:{ background:'#fff', borderRadius:'10px', width:'720px', maxWidth:'96vw',
+      maxHeight:'90vh', display:'flex', flexDirection:'column', overflow:'hidden' } },
+      h('div', { style:{ padding:'11px 15px', borderBottom:'1px solid #e2e8f0', display:'flex',
+        alignItems:'center', gap:'8px', flexShrink:0 } },
+        h('span', { style:{ fontSize:'13px', fontWeight:700 } },
+          '📄 ' + (doc.docName || WK_DOC_LABEL[doc.kind] || '서류') +
+          (props.who ? ' — ' + props.who : '')),
+        h('span', { style:{ fontSize:'10.5px', color:'#94a3b8' } }, '열람 기록이 남습니다'),
+        h('button', { onClick:props.onClose, 'aria-label':'닫기',
+          style:{ marginLeft:'auto', background:'none', border:'none', fontSize:'17px',
+            cursor:'pointer', color:'#64748b' } }, '×')
+      ),
+      h('div', { style:{ padding:'12px', overflow:'auto', background:'#f8fafc', textAlign:'center' } },
+        imgErr
+          ? h('div', { style:{ padding:'40px 16px', fontSize:'12px', color:'#991b1b' } }, imgErr)
+          : (imgUrl
+              ? h('img', { src:imgUrl, alt:'', draggable:false,
+                  style:{ maxWidth:'100%', borderRadius:'6px' } })
+              : h('div', { style:{ padding:'40px 16px', fontSize:'12px', color:'#64748b' } }, '원본을 불러오는 중…'))
+      )
+    )
+  );
+}
+
+/* ── 👷 근로자 정보함에서 고르기 ──
+   props: { company, have:[{name}], shape:'case'|'contract', onAdd(list), onClose }
+
+   ⚠ **처음에 다 골라 둔다** — 담당자 고르기 창(아무도 안 골라 둠)과 «일부러 다르게» 한다.
+     그쪽은 회사 사람이 다 나와 담당자 아닌 사람이 섞이지만, 여기 나오는 사람은
+     그 업체 서류를 실제로 낸 사람들이라 대부분 다 넣는 것이 맞다.
+     서른 명 집단 진정에서 「모두」를 찾아 누르게 하지 않는다.
+   ⚠ 이미 명부에 있는 사람은 회색으로 두고 **못 고르게** 한다(빼지 않는다). */
+function WorkerDocPickerModal(props){
+  useEscClose(props.onClose);
+  var is = useState(null); var info = is[0]; var setInfo = is[1];
+  var ss = useState(null); var sel = ss[0]; var setSel = ss[1];
+  var vs = useState(null); var viewDoc = vs[0]; var setViewDoc = vs[1];
+
+  useEffect(function(){
+    var gone = false;
+    erpLoadWorkerInfo(function(v){ if(!gone) setInfo(v || {}); });
+    return function(){ gone = true; };
+  }, []);
+
+  var rows = info ? erpWkCandidates(info, props.company, props.have || []) : [];
+  /* 처음 한 번만 다 켠다 — 그 뒤에는 사람이 끈 것을 되살리지 않는다 */
+  useEffect(function(){
+    if(!info || sel) return;
+    var n = {};
+    rows.forEach(function(r){ if(!r.already) n[r.key] = 1; });
+    setSel(n);
+  }, [info]);
+
+  var cur = sel || {};
+  var pickable = rows.filter(function(r){ return !r.already; });
+  var picked = pickable.filter(function(r){ return cur[r.key]; });
+  var allOn = pickable.length > 0 && picked.length === pickable.length;
+
+  function toggle(key){
+    setSel(function(p){ var n = Object.assign({}, p || {}); if(n[key]) delete n[key]; else n[key] = 1; return n; });
+  }
+  function toggleAll(){
+    setSel(function(p){
+      if(allOn) return {};
+      var n = Object.assign({}, p || {});
+      pickable.forEach(function(r){ n[r.key] = 1; });
+      return n;
+    });
+  }
+
+  return h('div', {
+    style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:210,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:'16px' },
+    onClick:function(e){ e.stopPropagation(); if(e.target === e.currentTarget) props.onClose(); }
+  },
+    h('div', { style:{ background:'#fff', borderRadius:'9px', width:'620px', maxWidth:'96vw',
+      maxHeight:'84vh', display:'flex', flexDirection:'column', overflow:'hidden' } },
+      h('div', { style:{ padding:'13px 17px', borderBottom:'1px solid #e2e8f0', display:'flex',
+        alignItems:'center', gap:'9px', flexShrink:0 } },
+        h('span', { style:{ fontSize:'14px', fontWeight:700 } }, '👷 근로자 정보함에서 가져오기'),
+        h('span', { style:{ fontSize:'11px', color:'#64748b' } }, props.company || '업체 미지정'),
+        h('button', { onClick:props.onClose, 'aria-label':'닫기',
+          style:{ marginLeft:'auto', background:'none', border:'none', fontSize:'18px',
+            cursor:'pointer', color:'#64748b' } }, '×')
+      ),
+      /* ⚠ **무엇이 안 오는지 먼저 말한다.** 넣고 나서 「주민번호가 왜 비었지」를
+         겪게 하면 사람은 이 길을 안 믿는다. */
+      h('div', { style:{ padding:'8px 17px', background:'#fffbeb', borderBottom:'1px solid #fde68a',
+        fontSize:'10.5px', color:'#854d0e', lineHeight:1.6, flexShrink:0 } },
+        '이름만 들어갑니다 — 주민번호·주소·연락처는 근로자 서류에서 읽지 않습니다(개인정보).'),
+      h('div', { style:{ padding:'9px 17px', borderBottom:'1px solid #e2e8f0', display:'flex',
+        alignItems:'center', gap:'8px', flexShrink:0 } },
+        h('label', { style:{ display:'flex', alignItems:'center', gap:'6px', fontSize:'11.5px',
+          color:'#475569', cursor: pickable.length ? 'pointer' : 'default' } },
+          h('input', { type:'checkbox', checked: allOn, disabled: !pickable.length, onChange: toggleAll }),
+          '모두 (' + pickable.length + '명)'),
+        h('span', { style:{ marginLeft:'auto', fontSize:'11px', color:'#94a3b8' } },
+          info ? (rows.length + '명') : '읽는 중…')
+      ),
+      h('div', { style:{ flex:1, overflowY:'auto', padding:'6px 17px 12px' } },
+        !info
+          ? h('div', { style:{ padding:'30px 0', textAlign:'center', fontSize:'12px', color:'#94a3b8' } }, '근로자 정보함을 읽는 중…')
+          : (rows.length === 0
+              ? h('div', { style:{ padding:'26px 0', textAlign:'center', fontSize:'12px', color:'#94a3b8', lineHeight:1.8 } },
+                  '「' + (props.company || '') + '」 서류가 들어온 근로자가 없습니다.',
+                  h('div', { style:{ fontSize:'11px', marginTop:'4px' } },
+                    '사진첩에서 신분증·위임장·동의서를 판독하면 여기에 나타납니다.'))
+              : rows.map(function(r){
+                  return h('div', { key:r.key,
+                    style:{ display:'flex', alignItems:'flex-start', gap:'9px', padding:'9px 0',
+                      borderTop:'1px solid #e2e8f0', opacity: r.already ? 0.55 : 1 } },
+                    h('input', { type:'checkbox', checked: !!cur[r.key], disabled: r.already,
+                      onChange:function(){ toggle(r.key); }, style:{ marginTop:'3px' } }),
+                    h('div', { style:{ flex:1, minWidth:0 } },
+                      h('div', { style:{ fontSize:'12.5px', fontWeight:700, color:'#1e293b' } },
+                        r.name,
+                        h('span', { style:{ fontWeight:400, color:'#94a3b8', marginLeft:'6px', fontSize:'11px' } },
+                          r.company),
+                        r.already && h('span', { style:{ marginLeft:'6px', fontSize:'10px', fontWeight:700,
+                          color:'#1e40af', background:'#eff6ff', borderRadius:'999px', padding:'1px 7px' } },
+                          '이미 명부에 있음')),
+                      h('div', { style:{ display:'flex', gap:'4px', flexWrap:'wrap', marginTop:'4px' } },
+                        r.docs.map(function(doc, di){
+                          return h('span', { key:doc.dk || di },
+                            erpWkChip('📄 ' + (WK_DOC_LABEL[doc.kind] || doc.kind), true,
+                              function(){ setViewDoc({ doc:doc, who:r.name }); }));
+                        }).concat(r.missing.map(function(k){
+                          return h('span', { key:'m-' + k }, erpWkChip((WK_DOC_LABEL[k] || k) + ' 없음', false, null));
+                        })))
+                    )
+                  );
+                }))
+      ),
+      h('div', { style:{ padding:'11px 17px', borderTop:'1px solid #e2e8f0', display:'flex',
+        alignItems:'center', gap:'8px', flexShrink:0 } },
+        h('span', { style:{ flex:1, fontSize:'11px', color:'#94a3b8' } },
+          picked.length ? (picked.length + '명 고름') : '고른 사람이 없습니다'),
+        h('button', { type:'button', onClick:props.onClose,
+          style:{ padding:'6px 13px', background:'#f8fafc', color:'#475569', border:'1px solid #cbd5e1',
+            borderRadius:'5px', fontSize:'11.5px', fontWeight:600, cursor:'pointer' } }, '닫기'),
+        h('button', { type:'button', disabled: !picked.length,
+          onClick:function(){ if(picked.length) props.onAdd(picked); },
+          style:{ padding:'6px 15px', background: picked.length ? '#1e40af' : '#cbd5e1', color:'#fff',
+            border:'none', borderRadius:'5px', fontSize:'11.5px', fontWeight:700,
+            cursor: picked.length ? 'pointer' : 'default' } },
+          picked.length + '명 명부에 넣기')
+      )
+    ),
+    viewDoc && h(WorkerDocViewModal, { doc: viewDoc.doc, who: viewDoc.who,
+      onClose:function(){ setViewDoc(null); } })
+  );
+}
+
 /* ── 사번(sid) → 계정(uid) 대조표 ──
    사진 권한은 «계정»으로 걸고 담당자는 «사번»으로 적혀 있다. 그 사이를 잇는 것이
    uid_roles 다(로그인할 때 그 사람 계정 밑에 사번이 적힌다).
@@ -13979,6 +14341,29 @@ function ContractModal(props){
   var pcmp = useState(false); var pcMultiOpen = pcmp[0]; var setPcMultiOpen = pcmp[1]; // 기업정보함에서 담당자 여러 명 골라 담기
   var pcco = useState(''); var pcCoPick = pcco[0]; var setPcCoPick = pcco[1];      // 기업정보함 회사 찾기: 누른 첨부칸(businessCardImg/bizLicenseImg)
   var hrw = useState(false); var hideRetiredWk = hrw[0]; var setHideRetiredWk = hrw[1];  // 근로자: 재직자만 보기
+  /* 👷 근로자 정보함에서 가져오기 (대표 지시 2026-09-02) — 사건 창과 «같은 창»을 쓴다.
+     ⚠ 담기는 줄 모양만 다르다(계약 창은 f.company.workers · 주민번호·직책·입사일 칸). */
+  var ctwp = useState(false); var ctWkPickOpen = ctwp[0]; var setCtWkPickOpen = ctwp[1];
+  var ctwi = useState(null); var ctWkInfo = ctwi[0]; var setCtWkInfo = ctwi[1];
+  var ctWkCompany = String((f.company && f.company.name) || '').trim();
+  useEffect(function(){
+    var gone = false;
+    if(!ctWkCompany || ctWkCompany.length < 2) return;
+    erpLoadWorkerInfo(function(v){ if(!gone) setCtWkInfo(v || {}); });
+    return function(){ gone = true; };
+  }, [ctWkCompany]);
+  var ctWkWaiting = ctWkInfo
+    ? erpWkCandidates(ctWkInfo, ctWkCompany, (f.company && f.company.workers) || []).filter(function(r){ return !r.already; }).length
+    : 0;
+  function ctWkAddPicked(list){
+    setCtWkPickOpen(false);
+    setF(function(prev){
+      var ws = ((prev.company && prev.company.workers) || []).slice();
+      var next = ws.concat(erpWkToWorkers(list, 'contract', ws.length));
+      return Object.assign({}, prev, { company: Object.assign({}, prev.company, { workers: next }) });
+    });
+    try { showToast('👷 ' + list.length + '명을 명부에 넣었습니다 — 주민번호·주소는 확인 후 채워 주세요'); } catch(_){ }
+  }
   var ar = useState([]); var autoResults = ar[0]; var setAutoResults = ar[1];
   var aidx = useState(-1); var autoIdx = aidx[0]; var setAutoIdx = aidx[1];   // 자동완성 키보드 선택 인덱스
   var wko = useState(''); var workOpen = wko[0]; var setWorkOpen = wko[1];   // 사업현황을 펼친 회사(그룹 열쇠)
@@ -15481,6 +15866,11 @@ function ContractModal(props){
             style:{ background: hideRetiredWk ? '#1e40af' : '#f8fafc', color: hideRetiredWk ? '#fff' : '#475569', border:'1px solid '+(hideRetiredWk?'#1e40af':'#e2e8f0'), padding:'4px 10px', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer', marginRight:'4px', whiteSpace:'nowrap' } },
             (hideRetiredWk ? '👁 재직자만 (퇴사 '+retiredN+' 숨김)' : '👁 재직자만 보기'));
         })(),
+        /* 👷 근로자 정보함에서 가져오기 (대표 지시 2026-09-02) — 사건 창과 같은 창을 쓴다 */
+        ctWkCompany && h('button', { type:'button', onClick:function(){ setCtWkPickOpen(true); },
+          title: ctWkCompany + ' 서류가 들어온 근로자를 명부로 가져옵니다',
+          style:{ background:'#fffbeb', color:'#854d0e', border:'1px solid #fde68a', padding:'4px 10px', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer', marginRight:'4px', whiteSpace:'nowrap' } },
+          '👷 서류에서' + (ctWkWaiting ? ' ' + ctWkWaiting : '')),
         h('button', { onClick:pasteWorkersFromExcel, type:'button', title:'엑셀에서 일괄 붙여넣기',
           style:{ background:'#f0fdf4', color:'#166534', border:'1px solid #bbf7d0', padding:'4px 10px', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer', marginRight:'4px' } }, '📋 엑셀'),
         h('button', { onClick:addWorker, type:'button',
@@ -17016,6 +17406,13 @@ function ContractModal(props){
       onSelect: function(p){ fillContactFromPucards(pcPickIdx, p); setPcPickIdx(null); }
     }),
     // 기업정보함에서 담당자 여러 명 골라 담기 — 이미 담긴 사람은 다시 안 나오게 넘겨 준다
+    /* 👷 근로자 정보함에서 가져오기 (대표 지시 2026-09-02) */
+    ctWkPickOpen && h(WorkerDocPickerModal, {
+      company: ctWkCompany,
+      have: (f.company && f.company.workers) || [],
+      onClose: function(){ setCtWkPickOpen(false); },
+      onAdd: ctWkAddPicked
+    }),
     pcMultiOpen && h(PucardsContactMultiPickerModal, {
       initialQuery: (f.company && f.company.name) || f.companyName || '',
       /* 계약 종류가 하나면 그 일을 미리 켜 둔다 — 안 정하면 비어 남는다. */
@@ -23590,6 +23987,41 @@ function CaseEditModal(props){
   var ci = useState(true); var coInfoOpen = ci[0]; var setCoInfoOpen = ci[1];
   var ca = useState(true); var contactsOpen = ca[0]; var setContactsOpen = ca[1];
   var cpk = useState(false); var casePcOpen = cpk[0]; var setCasePcOpen = cpk[1];   // 기업정보함에서 담당자 찾기
+  /* 👷 근로자 정보함에서 가져오기 (대표 지시 2026-09-02) — 두 근로자 명부(의뢰인형·회사형)가
+     같은 f.workers 를 쓰므로 창도 하나만 둔다. */
+  var wpk = useState(false); var wkPickOpen = wpk[0]; var setWkPickOpen = wpk[1];
+  var wpi = useState(null); var wkInfo = wpi[0]; var setWkInfo = wpi[1];
+  var wpv = useState(null); var wkViewDoc = wpv[0]; var setWkViewDoc = wpv[1];
+  /* 사건의 «사업장» — 근로자가 의뢰인이면 상대방이 사업장이고, 회사형이면 의뢰인이 사업장이다.
+     둘 다 f.companyName 한 칸에 들어 있다(화면 이름표만 다르다). */
+  var wkCompany = String(f.companyName || '').trim();
+  /* 창을 열기 전에 «몇 명이 기다리는지» 먼저 알려 준다 — 있는 줄 모르면 아무도 안 누른다.
+     ⚠ 창을 안 열어도 한 번은 읽는다. 사람 목록은 가볍고(이름·회사·서류 가리킴표뿐),
+       모르고 서른 번 손으로 치는 값이 그보다 훨씬 크다. */
+  useEffect(function(){
+    var gone = false;
+    if(!wkCompany || wkCompany.length < 2) return;
+    erpLoadWorkerInfo(function(v){ if(!gone) setWkInfo(v || {}); });
+    return function(){ gone = true; };
+  }, [wkCompany]);
+  var wkWaiting = wkInfo ? erpWkCandidates(wkInfo, wkCompany, f.workers || []).filter(function(r){ return !r.already; }).length : 0;
+  function wkAddPicked(list){
+    setWkPickOpen(false);
+    setF(function(prev){
+      var ws = (prev.workers || []).slice();
+      return Object.assign({}, prev, { workers: ws.concat(erpWkToWorkers(list, 'case', ws.length)) });
+    });
+    try { showToast('👷 ' + list.length + '명을 명부에 넣었습니다 — 주민번호·주소는 확인 후 채워 주세요'); } catch(_){ }
+  }
+  /* 근로자 명부 머리에 붙는 단추 — 두 명부가 같은 것을 쓴다(두 벌로 두면 한쪽만 고쳐진다) */
+  function wkPullBtn(){
+    if(!wkCompany) return null;
+    return h('button', { type:'button', onClick:function(){ setWkPickOpen(true); },
+      title: wkCompany + ' 서류가 들어온 근로자를 명부로 가져옵니다',
+      style:{ padding:'3px 9px', background:'#fffbeb', color:'#854d0e', border:'1px solid #fde68a',
+        borderRadius:'4px', fontSize:'10.5px', fontWeight:600, cursor:'pointer', marginRight:'4px' } },
+      '👷 서류에서 가져오기' + (wkWaiting ? ' ' + wkWaiting : ''));
+  }
   function setV(k){ return function(e){ var v = e.target ? e.target.value : e; setF(function(prev){ return Object.assign({}, prev, (function(){var x={}; x[k]=v; return x;})()); }); }; }
   function setNum(k){ return function(e){ var v = parseInt((e.target?e.target.value:e+'').replace(/[^0-9]/g,''))||0; setF(function(prev){ return Object.assign({}, prev, (function(){var x={}; x[k]=v; return x;})()); }); }; }
   function setJ(k){ return function(e){ var v = e.target.value; setF(function(prev){ return Object.assign({}, prev, { judgment: Object.assign({}, prev.judgment, (function(){var x={}; x[k]=v; return x;})()) }); }); }; }
@@ -23725,11 +24157,17 @@ function CaseEditModal(props){
           isWorkerCase && h('div', { style:{ background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'6px', padding:'10px', marginBottom:'12px' } },
             h('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' } },
               h('div', { style:{ fontSize:'11.5px', fontWeight:700, color:'#854d0e' } }, '👷 의뢰인(근로자) (' + (f.workers||[]).length + '명)'),
-              h('button', { type:'button',
-                onClick:function(){ setF(function(prev){ return Object.assign({},prev,{workers:(prev.workers||[]).concat([{id:'w-'+Date.now().toString(36),name:'',phone:'',rrn:'',addr:'',bank:'',account:'',holder:'',pos:''}])}); }); },
-                style:{ padding:'3px 9px', background:'#fffbeb', color:'#854d0e', border:'1px solid #fde68a', borderRadius:'4px', fontSize:'10.5px', fontWeight:600, cursor:'pointer' } }, '+ 추가')),
+              h('div', { style:{ display:'flex', alignItems:'center' } },
+                wkPullBtn(),
+                h('button', { type:'button',
+                  onClick:function(){ setF(function(prev){ return Object.assign({},prev,{workers:(prev.workers||[]).concat([{id:'w-'+Date.now().toString(36),name:'',phone:'',rrn:'',addr:'',bank:'',account:'',holder:'',pos:''}])}); }); },
+                  style:{ padding:'3px 9px', background:'#fffbeb', color:'#854d0e', border:'1px solid #fde68a', borderRadius:'4px', fontSize:'10.5px', fontWeight:600, cursor:'pointer' } }, '+ 추가'))),
             (f.workers||[]).length === 0
-              ? h('div', { style:{ color:'#d97706', fontSize:'11px', textAlign:'center', padding:'6px 0' } }, '+ 버튼으로 근로자를 추가하세요 (계약에서 이관 시 자동 표시)')
+              ? h('div', { style:{ color:'#d97706', fontSize:'11px', textAlign:'center', padding:'6px 0' } },
+                  wkWaiting
+                    ? h('span', null, '「' + wkCompany + '」 서류가 들어온 근로자 ',
+                        h('b', null, wkWaiting + '명'), '이 있습니다 — 👷 서류에서 가져오기')
+                    : '+ 버튼으로 근로자를 추가하세요 (계약에서 이관 시 자동 표시)')
               : h('div', null, (f.workers||[]).map(function(w,wi){
                   function updWL(key){ return function(e){ var v=e.target.value; setF(function(prev){ var ws=(prev.workers||[]).slice(); ws[wi]=Object.assign({},ws[wi],(function(){var x={};x[key]=v;return x;})());return Object.assign({},prev,{workers:ws}); }); }; }
                   return h('div', { key:w.id||wi, style:{ background:'#fff', border:'1px solid #fde68a', borderRadius:'5px', padding:'7px', marginBottom:'5px' } },
@@ -23746,6 +24184,8 @@ function CaseEditModal(props){
                       h('input', { type:'text', value:w.account||'', onChange:updWL('account'), placeholder:'계좌번호', style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px' } }),
                       h('input', { type:'text', value:w.holder||'', onChange:updWL('holder'), placeholder:'예금주', style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px' } }),
                       h('input', { type:'text', value:w.pos||'', onChange:updWL('pos'), placeholder:'직위', style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px' } })),
+                    /* 이 사람이 낸 서류 · 아직 안 낸 서류 — 담지 않고 «볼 때» 읽는다 */
+                    erpWkRowChips(wkInfo, w.name, wkCompany, function(doc){ setWkViewDoc({ doc:doc, who:w.name }); }),
                     wSettleBlock(w, wi, setF));
                 }))),
           h('div', { className:'fld' }, h('label', null, '사건명/제목'),
@@ -23787,6 +24227,18 @@ function CaseEditModal(props){
             onClose:function(){ setCasePcOpen(false); },
             onSelect:function(p){ addContactFromPc(p); setCasePcOpen(false); }
           }),
+          /* 👷 근로자 정보함에서 가져오기 (대표 지시 2026-09-02) — 붙어 뜨는 창이라 자리는 무관 */
+          wkPickOpen && h(WorkerDocPickerModal, {
+            company: wkCompany,
+            have: f.workers || [],
+            onClose:function(){ setWkPickOpen(false); },
+            onAdd: wkAddPicked
+          }),
+          /* 명부 줄의 📄 를 눌러 여는 원본 — 고르는 창을 안 거치고도 열린다 */
+          wkViewDoc && h(WorkerDocViewModal, {
+            doc: wkViewDoc.doc, who: wkViewDoc.who,
+            onClose:function(){ setWkViewDoc(null); }
+          }),
           // 담당자 (접기/펼치기)
           h('div', { onClick:function(){ setContactsOpen(function(v){return !v;}); },
             style:{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px',
@@ -23822,11 +24274,17 @@ function CaseEditModal(props){
           !isWorkerCase && h('div', { style:{ background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'6px', padding:'10px', marginTop:'10px' } },
             h('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' } },
               h('div', { style:{ fontSize:'11.5px', fontWeight:700, color:'#854d0e' } }, '👷 근로자 명부 (' + (f.workers||[]).length + '명)'),
-              h('button', { type:'button',
-                onClick:function(){ setF(function(prev){ return Object.assign({},prev,{workers:(prev.workers||[]).concat([{id:'w-'+Date.now().toString(36),name:'',phone:'',rrn:'',addr:'',bank:'',account:'',holder:'',pos:''}])}); }); },
-                style:{ padding:'3px 9px', background:'#fffbeb', color:'#854d0e', border:'1px solid #fde68a', borderRadius:'4px', fontSize:'10.5px', fontWeight:600, cursor:'pointer' } }, '+ 추가')),
+              h('div', { style:{ display:'flex', alignItems:'center' } },
+                wkPullBtn(),
+                h('button', { type:'button',
+                  onClick:function(){ setF(function(prev){ return Object.assign({},prev,{workers:(prev.workers||[]).concat([{id:'w-'+Date.now().toString(36),name:'',phone:'',rrn:'',addr:'',bank:'',account:'',holder:'',pos:''}])}); }); },
+                  style:{ padding:'3px 9px', background:'#fffbeb', color:'#854d0e', border:'1px solid #fde68a', borderRadius:'4px', fontSize:'10.5px', fontWeight:600, cursor:'pointer' } }, '+ 추가'))),
             (f.workers||[]).length === 0
-              ? h('div', { style:{ color:'#d97706', fontSize:'11px', textAlign:'center', padding:'6px 0' } }, '+ 버튼으로 근로자를 추가하세요 (계약에서 이관 시 자동 표시)')
+              ? h('div', { style:{ color:'#d97706', fontSize:'11px', textAlign:'center', padding:'6px 0' } },
+                  wkWaiting
+                    ? h('span', null, '「' + wkCompany + '」 서류가 들어온 근로자 ',
+                        h('b', null, wkWaiting + '명'), '이 있습니다 — 👷 서류에서 가져오기')
+                    : '+ 버튼으로 근로자를 추가하세요 (계약에서 이관 시 자동 표시)')
               : h('div', null, (f.workers||[]).map(function(w,wi){
                   function updWR(key){ return function(e){ var v=e.target.value; setF(function(prev){ var ws=(prev.workers||[]).slice(); ws[wi]=Object.assign({},ws[wi],(function(){var x={};x[key]=v;return x;})());return Object.assign({},prev,{workers:ws}); }); }; }
                   return h('div', { key:w.id||wi, style:{ background:'#fff', border:'1px solid #fde68a', borderRadius:'5px', padding:'7px', marginBottom:'5px' } },
@@ -23843,6 +24301,8 @@ function CaseEditModal(props){
                       h('input', { type:'text', value:w.account||'', onChange:updWR('account'), placeholder:'계좌번호', style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px' } }),
                       h('input', { type:'text', value:w.holder||'', onChange:updWR('holder'), placeholder:'예금주', style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px' } }),
                       h('input', { type:'text', value:w.pos||'', onChange:updWR('pos'), placeholder:'직위', style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px' } })),
+                    /* 이 사람이 낸 서류 · 아직 안 낸 서류 — 담지 않고 «볼 때» 읽는다 */
+                    erpWkRowChips(wkInfo, w.name, wkCompany, function(doc){ setWkViewDoc({ doc:doc, who:w.name }); }),
                     wSettleBlock(w, wi, setF));
                 })))
         ),
