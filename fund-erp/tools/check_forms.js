@@ -34,8 +34,10 @@ global.BAKE_BLANK = (src.match(/var BAKE_BLANK='([^']*)'/) || [])[1];
 global.S = { fundId: 'X', year: 2026 };
 global.funds = {};
 (0, eval)([gV('OFFICER_ROLES'), gV('FORM_FILL'), gV('BIZ_BS_ROWS'), gV('BUDGET_KEYS'),
+  gV('_KOR_D'), gV('_KOR_P'), gV('_KOR_U'),
   gF('_officersOf'), gF('_boss'), gF('_isBlankCell'), gF('_isLabelCell'), gF('_bakeText'),
-  gF('_isRateRow'), gF('stripBaked'), gF('budgetOf'), gF('_hasBudget'), gF('_reserveRate'), gF('_bizFinOf'),
+  gF('_isRateRow'), gF('stripBaked'), gF('korWon'), gF('_docRok'),
+  gF('_dotDate'), gF('fillContribDoc'), gF('fillChecklistDoc'), gF('budgetOf'), gF('_hasBudget'), gF('_reserveRate'), gF('_bizFinOf'),
   gF('bizplanRows'), gF('bizplanBS'), gF('fillBizplanDoc'), gF('fillCommittee'),
   gF('fillRoster'), gF('fillSubsidyDoc'), gF('hwpFormHTML')].join('\n'));
 
@@ -124,6 +126,110 @@ console.log('\n■ 협의회 위원 격자 — 누가 들어가나 (코덱스 #1
   /* 이사장도 위원이 맞지만 명부에 «측»이 없어 어느 쪽인지를 모른다 —
      한쪽에 밀어 넣으면 그럴듯하게 틀린 채 관청에 나간다. 빈칸으로 둔다. */
   chk('측을 모르는 이사장을 지어내서 넣지 않는다', !t.includes('가대표'), t);
+}
+
+/* ── 장부에서 채우던 서식 둘을 변환본 위로 옮겼다 ──────────
+
+   둘 다 변환본에 «남의 값»이 박혔 있었고, 걷어내기는 숫자만 지우므로
+   한글로 적힌 것은 그대로 남았다 — 출연확인서의 「오백만원」,
+   체크리스트의 「65명」·「서비스」·「생활원조, 체육문화활동, 기타복리후생」,
+   그리고 착안사항 여덟 칸의 「해당·비해당」 — 남이 판단한 것이다. */
+console.log('\n■ 기금 출연 확인서 — 사업장마다 한 장씩');
+{
+  const f = { name:'가나공동', fund_type:'공동', officers:[], years:{} };
+  global.funds.X = f; global.S.formFund = 'X'; global.S.f15Close = null;
+  const sites = [{ _id:'s1', name:'가나기계(주)', ceo:'김가나' },
+                 { _id:'s2', name:'다라전자(주)', ceo:'이다라' },
+                 { _id:'s3', name:'마바산업(주)', ceo:'박마바' }];
+  global.S._docR = { fid:'X', yr:2026, sites:sites,
+                     sy:{ s1:{contrib:3070000}, s2:{contrib:12340000}, s3:{} } };
+  const d = dom.window.document.createElement('div');
+  d.innerHTML = hwpFormHTML('sub_contrib', f, sites);
+  const ps = [].slice.call(d.querySelectorAll('p'))
+    .filter(x => /출 연 확 인 서/.test(T(x.textContent)));
+  chk('출연한 두 곳만 두 장', ps.length === 2, ps.length);
+  const all = T(d.textContent);
+  chk('내지 않은 사업장은 없다', !all.includes('마바산업'), all);
+  chk('금액이 한글로 적힌다 (삼백칠만원정)', all.includes('삼백칠만원정'), all);
+  chk('숫자도 같이 (3,070,000)', all.includes('3,070,000'), all);
+  chk('둘째 장은 12,340,000', all.includes('12,340,000'), all);
+  chk('사업장명·대표가 들어간다', all.includes('가나기계(주)') && all.includes('김가나'), all);
+  /* 변환본에 박혀 있던 남의 금액 — 한글이라 걷어내기가 못 지우던 것 */
+  chk('남의 금액 「오백만원」이 사라졌다', !all.includes('오백만원'), all);
+  chk('남의 숫자 5,000,000 도 없다', !all.includes('5,000,000'), all);
+
+  /* 출연한 곳이 없으면 지어내지 않고 빈 확인서와 까닭을 남긴다 */
+  global.S._docR = { fid:'X', yr:2026, sites:sites, sy:{} };
+  const d2 = dom.window.document.createElement('div');
+  d2.innerHTML = hwpFormHTML('sub_contrib', f, sites);
+  const t2 = T(d2.textContent);
+  chk('출연이 없으면 까닭을 적어 둔다', t2.includes('출연한 사업장이 없어'), t2);
+  chk('그래도 남의 금액은 안 남는다', !t2.includes('오백만원') && !t2.includes('5,000,000'), t2);
+
+  /* ⚠ 장부를 «못 읽었을 때»가 진짜 위험하다. 그냥 돌아가면 원본에 박힌
+     남의 금액 「오백만원」이 그대로 인쇄된다 — 한글이라 걷어내기가 못 지운다.
+     읽었든 못 읽었든 이 서식은 항상 다시 짜야 한다. */
+  global.S._docR = null;
+  const d3 = dom.window.document.createElement('div');
+  d3.innerHTML = hwpFormHTML('sub_contrib', f, sites);
+  const t3 = T(d3.textContent);
+  chk('장부를 못 읽어도 남의 금액은 없다',
+      !t3.includes('오백만원') && !t3.includes('5,000,000'), t3.slice(0, 260));
+  chk('못 읽은 까닭을 따로 적어 둔다', t3.includes('아직 못 읽었습니다'), t3.slice(0, 260));
+  chk('그래도 빈 확인서 한 장은 남긴다', /출 연 확 인 서/.test(t3), t3.slice(0, 260));
+}
+
+console.log('\n■ 자율 체크리스트 — 남의 답을 지우고 우리 자료를 넣는가');
+{
+  const f = { name:'가나공동', fund_type:'공동', region:'대전', chairman:'홍길동',
+              inka_no:'제2024-3호', inka_date:'2024-06-11', officers:[],
+              years:{ 2026:{ subsidy:{ request_amount:80000000 } } } };
+  global.funds.X = f; global.S.formFund = 'X'; global.S.f15Close = null;
+  const sites = [{ _id:'s1', name:'가나기계(주)', company_size:31 },
+                 { _id:'s2', name:'다라전자(주)', company_size:18 }];
+  global.S._docR = { fid:'X', yr:2026, sites:sites,
+    sy:{ s1:{contrib:3070000}, s2:{contrib:12340000} },
+    welf:[{category:'경조사비지원'},{category:'생활안정자금'},
+          {category:'대부사업'},{category:'경조사비지원'}],
+    R:{ bfEnd:154300000 } };
+  const d = dom.window.document.createElement('div');
+  d.innerHTML = hwpFormHTML('sub_checklist', f, sites);
+  const rows = [].slice.call(d.querySelectorAll('tr'));
+  const flat = t => String(t||'').replace(/\s/g,'');
+  const after = h => { for (let i=0;i<rows.length;i++) {
+      const c = [].slice.call(rows[i].children).map(x => flat(x.textContent));
+      if (c[0] === h) return { hd:c, tds:[].slice.call(rows[i+1].children).map(x => (x.textContent||'').trim()) };
+    } return null; };
+  const cur = after('지역');
+  const g = h => { const i = cur.hd.indexOf(h); return i < 0 ? '(칸 없음)' : cur.tds[i]; };
+  chk('지역', g('지역') === '대전', g('지역'));
+  chk('참여회사 두 곳', g('공동기금참여회사') === '가나기계(주), 다라전자(주)', g('공동기금참여회사'));
+  chk('근로자수 = 31+18', g('참여회사근로자수') === '49명', g('참여회사근로자수'));
+  chk('기금규모는 천원 단위', g('기금규모(천원)') === '154,300', g('기금규모(천원)'));
+  chk('출연금액 = 3,070,000+12,340,000', g('출연금액(원)') === '15,410,000', g('출연금액(원)'));
+  chk('지원신청금액', g('지원신청금액(원)') === '80,000,000', g('지원신청금액(원)'));
+  chk('인가번호에 인가일을 괄호로', /제2024-3호.*2024/.test(g('기금인가번호(인가일자)')), g('기금인가번호(인가일자)'));
+  /* 지원내용은 목적사업의 갈래다 — 대부사업은 복지사업이 아니라 뻐다 */
+  chk('지원내용은 갈래만 · 중복 없이',
+      g('지원내용') === '경조사비지원, 생활안정자금', g('지원내용'));
+  chk('대부사업은 지원내용이 아니다', !g('지원내용').includes('대부'), g('지원내용'));
+  /* 업종은 기금 자료에 없다 — 지어내지 않고 비운다 */
+  chk('업종은 비워 둔다 (지어내지 않는다)', g('업종') === '', g('업종'));
+
+  const all = T(d.textContent);
+  chk('남의 근로자수 「65명」이 없다', !all.includes('65명'), all.slice(0, 300));
+  chk('남의 업종 「서비스」가 없다', !all.includes('서비스'), all.slice(0, 300));
+  chk('남의 지원내용이 없다', !all.includes('생활원조'), all.slice(0, 300));
+
+  /* 가장 위험했던 것 — 남이 판단한 「해당·비해당」이 그대로 나가던 것 */
+  const chkRow = after('공동기금법인명');
+  chk('착안사항·제출서류 칸은 모두 비어 있다',
+      chkRow.tds.slice(1).every(v => v === ''), chkRow.tds.join('|'));
+  /* 서식 자체의 안내문에도 「‘해당’, ‘비해당’으로 표시해 주세요」가 있다 —
+     글자 전체에서 찾으면 그것이 걸린다. «칸» 단위로 본다. */
+  const answered = [].slice.call(d.querySelectorAll('td,th'))
+    .map(x => (x.textContent||'').trim()).filter(v => v === '해당' || v === '비해당');
+  chk('남의 판단이 든 칸은 하나도 없다', answered.length === 0, answered.join('|'));
 }
 
 console.log(bad ? '\nFAILURES ' + bad : '\nALL PASS (서식 동작 확인)');

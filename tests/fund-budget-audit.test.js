@@ -159,6 +159,13 @@ test('통째로 덮어쓰는 단추는 두지 않는다', () => {
      지운 기금은 [🗑 삭제 보관함]에서 되살린다 */
   assert.ok(!/function importAll|restoreAll/.test(SRC), '통째로 덮어쓰는 길이 생겼다');
   assert.ok(/onclick="[^"]*\bexportAll\(\)"/.test(SRC), '백업을 부르는 단추가 화면에 없다');
+  /* 없는 기능은 «없다»고, 그 까닭까지 말해 준다 — 안 적어 두면 있는 줄 알고 기다린다.
+     그리고 실수로 지운 기금은 삭제 보관함에서 되살아난다. 그 길을 함께 알려 주어야
+     「되돌릴 방법이 아예 없다」고 읽히지 않는다. */
+  assert.ok(SRC.includes('파일로 통째로 되돌리기</b>는 <b>일부러 두지 않았습니다'),
+    '되돌리기를 안 둔 까닭을 안 적어 두었다');
+  assert.ok(SRC.includes('삭제 보관함</b>에서 <b>↩ 복원'),
+    '실수로 지운 기금을 되살리는 길을 안 알려 준다');
 });
 
 test('백업 단추는 메뉴 순서에 섞이지 않는다 — 메뉴가 아니라 도구다', () => {
@@ -167,6 +174,12 @@ test('백업 단추는 메뉴 순서에 섞이지 않는다 — 메뉴가 아니
   assert.ok(i > 0, '백업을 여는 도구 단추(toolsbtn)가 없다');
   const tag = SRC.slice(SRC.lastIndexOf('<button', i), i + 40);
   assert.ok(!/data-nav="1"/.test(tag), '드래그 순서에 섞이면 메뉴처럼 읽힌다');
+  /* 드래그 순서에서 빼는 것만으로는 모자랐다 — 메뉴 «목록 안»에 남아 있으면
+     옆의 화면 메뉴들과 같은 층으로 보여 화면이 바뀔 줄 알고 누르게 된다. */
+  const s = SRC.indexOf('function shell()');
+  const nav = SRC.slice(SRC.indexOf('id="navlist"', s), SRC.indexOf('margin-top:auto', s));
+  assert.ok(nav.length > 100, '사이드바 목록을 못 찾았다');
+  assert.ok(!/exportAll/.test(nav), '메뉴 목록 안에 백업이 남아 있다');
 });
 
 /* ══════ ⑩ 담당 확인 ══════ */

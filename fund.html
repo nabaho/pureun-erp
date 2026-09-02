@@ -3456,6 +3456,123 @@ function fillBizplanDoc(root,f){
     root.insertBefore(w,root.firstChild);
   }
 }
+/* ══ 공동근로복지기금 지원사업 착안사항 자율 체크리스트 ══
+   부정지원 예방을 위해 신청 기금이 «스스로» 확인해 내는 서류다.
+
+   ⚠ 변환본에 남의 답이 통째로 박혀 있다. 걷어내기는 숫자만 지우므로
+     업종 「서비스」·근로자수 「65명」·지원내용 「생활원조, 체육문화활동, 기타복리후생」이
+     남았고, 무엇보다 착안사항 여덟 칸에 「해당·해당·해당·해당·비해당·비해당·비해당·해당」이
+     그대로 남았다. 이것은 특수관계인 여부·기업 분할 여부에 대한 **남의 판단**이다 —
+     그대로 인쇄하면 확인하지 않은 사실을 확인했다고 공단에 내게 된다.
+
+   ⚠ 착안사항은 앱이 채우지 않는다. 서류를 보고 «사람이» 판단할 일이라,
+     미리 찍어 두면 확인 없이 그대로 나간다. 비워서 고르게 한다.
+   ⚠ 업종도 채우지 않는다 — 기금 자료에 없는 칸이다. 없는 것을 지어내지 않는다. */
+function fillChecklistDoc(root,f,sites){
+  var R=_docRok();
+  var yd=((f.years||{})[S.year]||{}).subsidy||{};
+  var act=(sites||(R&&R.sites)||[]).filter(function(x){ return x.status!=='closed'; });
+  var flat=function(t){ return String(t||'').replace(/\s/g,''); };
+  var rows=[].slice.call(root.querySelectorAll('tr'));
+  /* 머리글 줄을 찾아 «그 다음» 줄을 준다.
+     ⚠ «첫 칸»으로만 찾는다. 아무 칸에서나 찾으면 현황 머리글(지역·공동기금법인명·…)이
+       「공동기금법인명」으로도 걸려, 착안사항을 비우려다 현황 줄을 통째로 지운다. */
+  var rowAfter=function(head){
+    for(var i=0;i<rows.length;i++){
+      var c=[].slice.call(rows[i].children).map(function(x){ return flat(x.textContent); });
+      if(c[0]===head) return {hd:c, tr:rows[i+1]||null};
+    }
+    return null;
+  };
+
+  /* ── ○ 지원신청 현황 ── 머리글 이름으로 칸을 찾는다(자리 번호로 세면 표가 바뀔 때 어긋난다) */
+  var cur=rowAfter('지역');
+  if(cur&&cur.tr){
+    var emp=act.reduce(function(t,x){ return t+(num(x.company_size)||0); },0);
+    var con=R?act.reduce(function(t,x){ return t+(num((R.sy[x._id]||{}).contrib)||0); },0):0;
+    /* 지원내용은 목적사업의 «갈래»다. 대부사업은 복지사업이 아니라 뺀다. */
+    var cat=R?(R.welf||[]).map(function(w){ return String(w.category||''); })
+      .filter(function(c){ return c&&c!=='대부사업'; }):[];
+    var uniq=cat.filter(function(v,i){ return cat.indexOf(v)===i; });
+    var won=function(v){ return v?Number(v).toLocaleString():''; };
+    var VAL={
+      '지역':          f.region||'',
+      '공동기금법인명': f.name||'',
+      '공동기금참여회사': act.map(function(x){ return x.name; }).filter(Boolean).join(', '),
+      '기금인가번호(인가일자)': f.inka_no?(f.inka_no+(f.inka_date?' ('+_dotDate(f.inka_date)+')':'')):'',
+      '업종':          '',                                   // 기금 자료에 없다 — 사람이 적는다
+      '참여회사근로자수': emp?emp+'명':'',
+      '기금규모(천원)':  (R&&R.R)?won(Math.round(R.R.bfEnd/1000)):'',
+      '지원내용':       uniq.join(', '),
+      '출연금액(원)':   won(con),
+      '지원신청금액(원)': won(num(yd.request_amount))
+    };
+    var tds=[].slice.call(cur.tr.children);
+    cur.hd.forEach(function(h,i){
+      if(!(h in VAL)||!tds[i]) return;
+      tds[i].textContent=VAL[h];                            // 빈 값이면 «비운다» — 남의 값을 남기지 않는다
+      tds[i].setAttribute('data-kept','1');
+    });
+  }
+
+  /* ── ○ 착안사항 체크리스트 ── 첫 칸(법인명)만 두고 판단 칸은 모두 비운다 */
+  var chk=rowAfter('공동기금법인명');
+  while(chk&&chk.tr){
+    var cs=[].slice.call(chk.tr.children);
+    /* 「해당/비해당」이 든 줄만 손댄다 — 제출서류 줄(이미 비어 있음)은 건드릴 것이 없다 */
+    for(var j=1;j<cs.length;j++){ cs[j].textContent=''; cs[j].setAttribute('data-kept','1'); }
+    if(cs[0]){ cs[0].textContent=f.name||''; cs[0].setAttribute('data-kept','1'); }
+    /* 같은 머리글이 두 번 나온다(제출서류·착안사항) — 뒤엣것도 처리하려고 이어서 찾는다 */
+    var at=rows.indexOf(chk.tr);
+    rows=rows.slice(at+1);
+    chk=rowAfter('공동기금법인명');
+  }
+}
+/* ══ 기금 출연 확인서 ══
+   출연한 «사업장이» 「우리가 이 기금에 얼마를 냈다」고 확인해 주는 서류다.
+   그래서 사업장 수만큼 장이 나온다 — 한 장에 몰아 적는 서류가 아니다.
+
+   ⚠ 변환본에 남의 값이 박혀 있다 — 「오백만원(￦5,000,000)」·「2020. 05. 08.」.
+     숫자 5,000,000 은 걷어내기가 지우지만 «한글 금액 오백만원»은 한글이라 안 지워졌다.
+     그대로 인쇄하면 남의 금액을 확인서로 내게 된다. 여기서 통째로 다시 짠다.
+
+   금액은 참여사업장 › 연도별 기록의 그 해 출연금(sy[사업장].contrib)이다 —
+   별지15호·체크리스트와 같은 값이라 서류끼리 어긋나지 않는다. */
+function fillContribDoc(root,f,sites){
+  /* ⚠ 장부를 못 읽었다고 «그냥 돌아가면» 안 된다 — 원본에 박힌 남의 금액
+     「오백만원」이 그대로 남아 인쇄된다(한글이라 걷어내기가 못 지운다).
+     읽었든 못 읽었든 이 서식은 «항상» 다시 짠다. 채울 것이 없으면 빈 확인서다. */
+  var R=_docRok();
+  var list=!R?[]:(sites||R.sites||[]).filter(function(x){ return x.status!=='closed'; })
+    .map(function(x){ return {name:x.name||'', ceo:x.ceo||'',
+                              amt:num((R.sy[x._id]||{}).contrib)||0}; })
+    .filter(function(x){ return x.amt>0; });
+  var one=function(c){
+    var d=document.createElement('p');
+    d.setAttribute('data-kept','1');                 // 다시 짠 장이다 — 걷어내기가 손대면 안 된다
+    d.innerHTML='기 금 출 연 확 인 서<br>금&nbsp; 액 : &nbsp;'
+      +(c?esc(korWon(c.amt))+'원정(￦'+Number(c.amt).toLocaleString()+')':BAKE_BLANK)
+      +'<br>상기 금액은 '+esc(f.name||'')+'법인에 위 금액을 출연하였음.'
+      +'<br>'+BAKE_BLANK
+      +'<br>'+(c&&c.name?esc(c.name):BAKE_BLANK)
+      +' 대표 '+(c&&c.ceo?esc(c.ceo):BAKE_BLANK)+' (인)';
+    return d;
+  };
+  /* 출연한 곳이 없으면 «지어내지 않는다» — 빈 확인서 한 장과 까닭을 남긴다.
+     남의 값이 박힌 원본을 그냥 두는 것보다 낫다. */
+  var made=list.length?list.map(one):[one(null)];
+  while(root.firstChild) root.removeChild(root.firstChild);
+  if(!list.length){
+    var w=document.createElement('p'); w.className='note';
+    w.textContent=R
+      ? ('※ '+S.year+'년에 출연한 사업장이 없어 금액을 채우지 못했습니다 —'
+         +' 참여사업장 › 연도별 기록에 그 해 출연금을 넣으면 사업장마다 한 장씩 만들어집니다.')
+      : '※ 회계·결산에서 숫자를 아직 못 읽었습니다 — 잠시 뒤 다시 열어 주세요.'
+         +' (원본에 박혀 있던 남의 금액은 지우고 빈 확인서를 둔 것입니다.)';
+    root.appendChild(w);
+  }
+  made.forEach(function(n){ root.appendChild(n); });
+}
 /* ══ 지원신청서(별지 제1호의2) ══
    ⚠ 이 변환본에는 «남의 실제 값»이 박혀 있다 — 원본 .hwp 가 어느 기금이 실제로 낸 것이라
      금액 10,000,000원·신청일 2020년 05월 13일·복지사업 종류 체크가 그대로 딸려 왔다.
@@ -3515,6 +3632,10 @@ function hwpFormHTML(kind,f,sites){
        바꿀 것을 못 찾고, 금액·신청일이 통째로 비었다(실제로 그랬다).
        바꾼 칸에는 표를 남겨, 뒤이은 걷어내기가 도로 지우지 않게 한다. */
   if(kind==='subsidy') fillSubsidyDoc(d,f);
+  /* 출연확인서·체크리스트도 «박힌 값을 바꾸는» 방식이라 걷어내기보다 먼저 돈다.
+     게다가 출연확인서는 장을 «늘린다» — 출연한 사업장 수만큼. */
+  if(kind==='sub_contrib') fillContribDoc(d,f,sites);
+  if(kind==='sub_checklist') fillChecklistDoc(d,f,sites);
   stripBaked(d);
   /* 위원 격자를 «먼저» 채운다 — 그 줄에 표를 남겨야 아래 라벨 채우기가 비껴간다 */
   fillCommittee(d,f);
@@ -5751,9 +5872,11 @@ function showBackup(){
     +'인가정보·사업장·분개·결산·서식 저장본이 모두 들어갑니다.</p>'
     +'<p>내려받은 파일은 <b>이 컴퓨터에만</b> 남습니다. 클라우드나 외장 디스크처럼 '
     +'다른 곳에도 한 벌 두세요.</p>'
-    +'<p><b>되돌리기</b> — 앱 안에는 아직 없습니다. 자료가 잘못됐을 때는 '
-    +'<b>아무것도 더 고치지 말고</b> 관리자에게 백업 파일과 함께 알리세요. '
-    +'덮어쓰기 전에 손대면 되돌릴 것이 줄어듭니다.</p>'
+    +'<p><b>기금을 실수로 지우셨을 때</b> — 기금 현황 › <b>🗑 삭제 보관함</b>에서 <b>↩ 복원</b>으로 되살립니다. '
+    +'이 파일은 필요 없습니다.</p>'
+    +'<p><b>파일로 통째로 되돌리기</b>는 <b>일부러 두지 않았습니다</b> — 단추 하나로 전 기금이 '
+    +'한 번에 덮어쓰이면 잘못 눌렀을 때 되돌릴 방법이 없습니다. 그럴 일이 생기면 '
+    +'<b>아무것도 더 고치지 말고</b> 관리자에게 이 백업 파일과 함께 알리세요.</p>'
     +'</div>'
     +'<div class="row" style="justify-content:space-between;margin-top:16px">'
     +'<button class="primary" onclick="closeM();exportAll()">⬇ 전체 백업 내려받기</button>'
