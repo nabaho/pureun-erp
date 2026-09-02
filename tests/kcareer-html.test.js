@@ -596,9 +596,12 @@ test('hasOriginal은 fs 레코드와 기존 base64 레코드를 모두 처리한
 
 test('matchByFilename은 fs 원본이 붙은 레코드도 이미 첨부된 것으로 본다', () => {
   // fileExists는 base64만 보므로 fs 레코드에 두 번째 파일이 붙어버린다
-  const src = funcSource('matchByFilename');
+  // ⚠ 점수 매기는 부분이 _fnScore 로 떨어져 나갔다(일대일 짝짓기와 잫대를 함께 쓰려고).
+  //    규칙은 그대로다 — 겨누는 자리만 옆긴다.
+  const src = funcSource('_fnScore');
   assert.match(src, /hasOriginal\(r\)/);
   assert.ok(!/fileExists\(r\.id\)/.test(src));
+  assert.match(funcSource('matchByFilename'), /_fnScore\(/, '같은 잫대를 써야 합니다');
 });
 
 test('fsFindAttachTarget은 원본 없는 기존 레코드만 돌려준다', () => {
