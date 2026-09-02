@@ -1,0 +1,122 @@
+'use strict';
+/* 자문사 로고 — 「할 수 있는 것」과 「화면이 하는 말」이 어긋나지 않는다
+ *
+ * ★ 왜 이 검사가 생겼나 (2026-09-02)
+ *   로고 넣기는 «다 만들어져 있었다» — 크기 검사, 확장자 검사, 파일 이름 새로 짓기,
+ *   저장소에 담기까지. 그런데 같은 화면 맨 위에 이런 문장이 남아 있었다:
+ *
+ *     「새 로고를 «넣는» 것은 아직 안 됩니다 — 그림을 어디에 둘지 정하고 붙이겠습니다」
+ *
+ *   되는 고르개는 그 문장에서 스무 줄 아래에 있었다. 화면을 연 사람은 위를 읽고
+ *   아래를 안 눌러 본다. **기능이 없는 것보다 나쁘다 — 만들어 두고 없다고 말하는 것이다.**
+ *   실제로 이 문장 때문에 「그림은 못 바꾼다」고 판단했고, 목업까지 새로 그렸다.
+ *
+ * ★ 그래서 못 박는 것은 «문장»이 아니라 규칙이다:
+ *     화면에 로고 고르개가 있으면, 그 화면은 「안 된다」고 말하지 않는다.
+ *   고르개를 떼면 이 검사는 조용해진다(할 말이 없어진다) — 그래서 고르개가
+ *   «있는지»도 함께 본다. 안 그러면 고르개를 지워도 통과하는 검사가 된다.
+ *
+ * 실행: node --test tests/*.test.js
+ * (이 환경의 node 는 --test 에 디렉터리 인자를 주면 죽는다. 반드시 glob 으로.)
+ */
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const R = path.join(__dirname, '..');
+const RAW = fs.readFileSync(path.join(R, 'pu-home.html'), 'utf8');
+
+/* 소스를 글자로 볼 때는 주석을 먼저 걷는다 — 잘 쓴 주석이 검사를 통과시킨다.
+   (저장소 규칙: tests-must-strip-comments) */
+function 알맹이(s) {
+  return s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+}
+const H = 알맹이(RAW);
+
+/* 자문사 로고 화면을 그리는 곳만 떼어 낸다 */
+function 로고화면() {
+  const i = H.indexOf('function drawPartnerLogos');
+  assert.ok(i >= 0, '★ 자문사 로고 화면을 그리는 곳을 못 찾았다');
+  /* 다음 함수가 시작하는 곳까지 — 죽은 이름을 이름표로 쓰지 않는다 */
+  const j = H.indexOf('\nasync function ', i + 10);
+  const k = H.indexOf('\nfunction ', i + 10);
+  const 끝 = Math.min(j < 0 ? H.length : j, k < 0 ? H.length : k);
+  return H.slice(i, 끝);
+}
+
+test('★ 로고를 고르는 곳이 «있다» (없으면 아래 검사가 아무것도 안 지킨다)', () => {
+  const s = 로고화면();
+  assert.match(s, /type="file"/, '★ 로고 고르개가 사라졌다');
+  assert.match(s, /addPartnerLogo\(this\)/, '★ 고르개가 아무도 안 부른다 — 눌러도 아무 일이 없다');
+  assert.match(RAW, /async function addPartnerLogo/, '★ 로고를 담는 함수가 없다');
+});
+
+test('★★ 로고를 넣을 수 있는데 «안 된다»고 말하지 않는다', () => {
+  const s = 로고화면();
+  /* 「아직 안 된다 / 아직 없다 / 나중에 붙이겠다」 결의 말 */
+  const 안된다는말 = [
+    /아직\s*안\s*[됩되]/,
+    /아직\s*없습니다/,
+    /나중에\s*붙이/,
+    /안\s*됩니다\s*—/
+  ];
+  안된다는말.forEach((re) => {
+    assert.ok(!re.test(s),
+      '★★ 로고 넣기가 «되는데» 화면이 안 된다고 말한다: ' + re
+      + '\n   만들어 두고 없다고 말하면, 쓰는 사람은 그 단추를 평생 안 누른다.'
+      + '\n   기능을 뺐다면 고르개도 같이 빼고, 남겼다면 이 문장을 지울 것.');
+  });
+});
+
+test('★ 담기와 «올리기»가 갈라져 있다고 말해 준다 — 담아도 아직 안 실린다', () => {
+  const s = 로고화면();
+  /* 이 화면은 담기만 한다. 실리는 것은 「홈페이지에 올리기」를 눌렀을 때다.
+     그 말을 안 해 주면 담고 나서 홈페이지를 보고 「안 올라갔다」고 여긴다. */
+  assert.match(s, /올리기/, '★ 올리는 단추가 없다');
+  assert.ok(/올려야|눌러야/.test(s),
+    '★ 「담은 뒤 올려야 실린다」를 안 알려 준다 — 담고 끝난 줄 안다');
+});
+
+/* ── 담는 쪽이 스스로 지켜야 하는 것 ── */
+function 담기() {
+  const i = RAW.indexOf('async function addPartnerLogo');
+  const j = RAW.indexOf('\nwindow.addPartnerLogo', i);
+  assert.ok(i >= 0 && j > i, '★ addPartnerLogo 를 못 찾았다');
+  return 알맹이(RAW.slice(i, j));
+}
+
+test('★★ 파일 이름을 «우리가» 짓는다 — 남이 준 이름을 주소로 쓰지 않는다', () => {
+  const s = 담기();
+  /* 한글·빈칸·따옴표가 든 이름이 주소가 되면 깨진다. 서버도 영문·숫자만 받는다.
+     ★ 값이 아니라 규칙을 본다: «f.name 을 자리(path)에 그대로 끼우지 않는다». */
+  const 자리줄 = /'site\/files\/logo\/'\s*\+\s*([A-Za-z가-힣_$][\w가-힣_$]*)/.exec(s);
+  assert.ok(자리줄, '★ 로고를 담는 자리를 못 찾았다');
+  assert.notStrictEqual(자리줄[1], 'f', '★ 파일 이름을 그대로 주소에 넣는다');
+  assert.ok(!/site\/files\/logo\/'\s*\+\s*f\.name/.test(s),
+    '★★ 남이 준 파일 이름을 주소로 쓴다 — 한글 이름이면 서버가 거부하고, 까닭도 안 보인다');
+});
+
+test('★★ 700KB 한도를 «고르는 순간» 잡는다 — 올릴 때 실패하면 늦다', () => {
+  const s = 담기();
+  assert.match(s, /f\.size\s*>/, '★ 고른 그림의 크기를 안 본다');
+  /* 서버 한도와 어긋나면 «화면은 통과시키고 서버가 거부»한다 — 가장 나쁜 짝이다 */
+  const 서버 = fs.readFileSync(path.join(R, 'functions', 'site-publish.js'), 'utf8');
+  const m = /MAX_IMAGE_BYTES\s*=\s*(\d+)\s*\*\s*1024/.exec(서버);
+  assert.ok(m, '★ 서버의 그림 한도를 못 읽었다');
+  const 화면 = /(\d+)\s*\*\s*1024/.exec(s);
+  assert.ok(화면, '★ 화면의 한도를 못 읽었다');
+  assert.strictEqual(화면[1], m[1],
+    '★★ 화면 한도(' + 화면[1] + 'KB)와 서버 한도(' + m[1] + 'KB)가 다르다'
+    + ' — 화면이 통과시킨 그림을 서버가 거부한다');
+});
+
+test('★ 관리자만 담을 수 있다 (홈페이지는 관리자 전용 — 대표 지시)', () => {
+  assert.match(담기(), /App\.isAdmin/, '★ 누구인지 안 보고 담는다');
+});
+
+test('★ 담기만 하고 «쪽은 안 건드린다» — 실리는 것은 올리기를 눌렀을 때다', () => {
+  const s = 담기();
+  assert.ok(!/site\/partner\/index\.html/.test(s),
+    '★ 로고를 담으면서 자문사 쪽까지 덮어쓴다 — 되돌릴 틈이 없다');
+});
