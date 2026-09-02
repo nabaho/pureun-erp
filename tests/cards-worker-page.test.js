@@ -19,17 +19,16 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { cutFn } = require('./cut-fn');
 
 const R = path.join(__dirname, '..');
 const SRC = fs.readFileSync(path.join(R, 'pu-cards.html'), 'utf8');
 const FILE_SRC = fs.readFileSync(path.join(R, 'js', 'pu-doc-file.js'), 'utf8');
 
+/* ⚠ 줄끝('\\r\\n}')으로 함수 끝을 찾지 «않는다» — CI(리눅스)는 LF 라 못 찾는다.
+   2026-09-02 에 그것으로 배포가 통째로 막혔다. 공용 도구는 중괄호 짝을 센다. */
 function cut(name) {
-  const i = SRC.indexOf('function ' + name + '(');
-  assert.ok(i > 0, name + ' 을 찾지 못했습니다');
-  const j = SRC.indexOf('\r\n}', i);
-  assert.ok(j > i, name + ' 의 끝을 찾지 못했습니다');
-  return SRC.slice(i, j + 3);
+  return cutFn(SRC, 'function ' + name + '(');
 }
 function grab(re, what) {
   const m = SRC.match(re);
@@ -58,7 +57,7 @@ function load(over) {
   Object.assign(ctx, over || {});
   vm.createContext(ctx);
   vm.runInContext([
-    grab(/^const _norm = [^\n]*;$/m, '_norm'),
+    grab(/^const _norm = [^\n]*;\r?$/m, '_norm'),
     'var _wkInfo = {}, _wkInfoOn = false, _wkListMemo = null, _wkOpen = {}, _wkRrnOpen = {};',
     grab(/const WK_DOC_LABEL = \{[\s\S]*?\};/, 'WK_DOC_LABEL'),
     grab(/const WK_DOC_ICON = \{[\s\S]*?\};/, 'WK_DOC_ICON'),
