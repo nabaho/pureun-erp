@@ -73,6 +73,8 @@ test('푸른ERP에서 공통 사전과 읽기 전용 진단 화면을 실제로 
   assert.match(erp, /js\/pu-ontology\.js\?v=\d+/);
   assert.match(erp, /function OntologyAuditPanel\(/);
   assert.match(erp, /O\.auditIntegrated\(data,sources/);
+  assert.match(erp, /O\.buildSnapshot\(report\)/);
+  assert.match(erp, /확정 관계망 파일/);
   assert.match(erp, /원본을 수정하거나 서버에 저장하지 않습니다/);
 });
 
@@ -132,4 +134,38 @@ test('읽지 못한 프로그램은 삭제나 추정 대신 확인 필요로 남
   assert.equal(r.coverage.work.state, 'denied');
   assert.equal(r.coverage.home.state, 'partial');
   assert.ok(r.issues.some(x => x.code === 'source_unreadable' && x.store === 'work_items'));
+});
+
+test('3단계 관계망은 확정 관계만 권한별로 나누고 이름·본문을 싣지 않는다', () => {
+  const data = {
+    companies:[{id:'co.1',name:'가나다산업'}],
+    user_accounts:[{id:'account-1',sid:'P-001',name:'담당자'}],
+    contracts:[{id:'CT1',companyId:'co.1',companyName:'가나다산업',managerMain:'P-001'}]
+  };
+  const sources = {
+    work_items:{ok:true,value:{W1:{title:'민감한 업무명',co_id:'co.1',mgr_main:{sid:'P-001'}}}},
+    payroll_index:{ok:true,value:{가나다산업:[{id:'PAY1','월':'2026-08'}]}}
+  };
+  const report = O.auditIntegrated(data, sources, {}), before = JSON.stringify(report);
+  const snap = O.buildSnapshot(report, {generatedAt:'2026-09-02T00:00:00.000Z'});
+  const checked = O.validateSnapshot(snap);
+  assert.equal(checked.ok, true, checked.errors.join(', '));
+  assert.equal(snap.meta.schema, 'ontology/v1');
+  assert.equal(snap.meta.sourceMutation, 'never');
+  assert.ok(snap.meta.confirmedEdges > 0);
+  assert.ok(snap.meta.excludedCandidates > 0, '업체명 추정 관계는 관계망에서 제외해야 합니다');
+  assert.ok(snap.partitions.personal.entities[O.canonicalId('Person','P-001')]);
+  assert.ok(snap.partitions.financial.entities[O.sourceCanonicalId('PayrollRecord','payroll','PAY1')]);
+  assert.doesNotMatch(JSON.stringify(snap), /가나다산업|민감한 업무명|담당자/);
+  assert.equal(JSON.stringify(report), before, '관계망 생성이 진단 결과를 바꿨습니다');
+});
+
+test('관계망 검증은 Firebase 금지 열쇠와 민감 필드를 거부한다', () => {
+  const bad = {meta:{schema:'ontology/v1',sourceMutation:'never'},partitions:{
+    internal:{entities:{'Task:bad.key':{label:'비밀'}},edges:{}},source:{entities:{},edges:{}},personal:{entities:{},edges:{}},financial:{entities:{},edges:{}}
+  }};
+  const r = O.validateSnapshot(bad);
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some(x => x.startsWith('firebaseKey:')));
+  assert.ok(r.errors.some(x => x.startsWith('sensitiveField:')));
 });

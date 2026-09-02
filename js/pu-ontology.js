@@ -1,4 +1,4 @@
-/* 푸른통합시스템 온톨로지 v1
+/* 푸른통합시스템 온톨로지 v3
    - 기존 운영 데이터는 정본으로 그대로 둔다.
    - 이 모듈은 읽기·진단·관계 후보 생성만 하며 저장하거나 삭제하지 않는다.
    - 새 프로그램은 PROGRAMS와 TERMS에 먼저 등록한 뒤 데이터를 만든다. */
@@ -9,7 +9,7 @@
 })(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this), function(){
   'use strict';
 
-  var VERSION = 2;
+  var VERSION = 3;
   var TERMS = {
     entityTypes: {
       Organization:'업체·기관', Person:'사람', Employment:'재직관계', Contract:'계약',
@@ -127,7 +127,8 @@
   function clean(v){ return String(v == null ? '' : v).trim(); }
   function normName(v){ return clean(v).toLowerCase().replace(/[\s()（）·.,_\-주식회사㈜]/g,''); }
   function normBiz(v){ return clean(v).replace(/\D/g,''); }
-  function canon(type, id){ return type + ':' + encodeURIComponent(clean(id)); }
+  /* encodeURIComponent가 점(.)은 남기므로 Firebase 열쇠 금지문자까지 한 번 더 막는다. */
+  function canon(type, id){ return type + ':' + encodeURIComponent(clean(id)).replace(/\./g,'%2E'); }
   function sourceCanon(type, program, id){ return canon(type,clean(program)+':'+clean(id)); }
   function edgeId(s, p, o){ return 'edge:' + encodeURIComponent(s+'|'+p+'|'+o); }
   function addEdge(out, subject, predicate, object, sourceStore, sourceId, confidence){
@@ -171,7 +172,9 @@
       var type = STORE_TYPES[store], seen = {};
       indexes[store] = {};
       list.forEach(function(r, pos){
-        var id = clean(r.id || (store==='user_accounts'||store==='user_dir' ? r.sid : ''));
+        /* 사람의 통합 열쇠는 사번(sid)이다. 화면 내부 id보다 먼저 써야 담당관계의
+           도착점과 실제 Person 개체가 같은 열쇠가 된다. */
+        var id = clean((store==='user_accounts'||store==='user_dir') ? (r.sid||r.id) : r.id);
         if(!id){ issue(issues,'high','missing_id',store,'',store+' '+(pos+1)+'번째', '관계를 고정할 ID가 없습니다.'); return; }
         if(seen[id]) issue(issues,'high','duplicate_id',store,id,id,'같은 ID가 두 번 이상 존재합니다.');
         seen[id] = 1; indexes[store][id] = r; entities[canon(type,id)] = { type:type, store:store, id:id };
@@ -346,6 +349,61 @@
       severity:sev,entities:graph.entities,edges:dedup,issues:issues,coverage:coverage,coverageCount:ready,programCount:Object.keys(PROGRAMS).length,readOnly:true});
   }
 
+  /* 3단계 파생 색인 꾸러미. 확실한 관계(confidence=1)만 싣고, 원본 내용과
+     사람·업체 이름(label)은 싣지 않는다. 서버 쓰기는 이 모듈의 책임이 아니다. */
+  var VISIBILITY = {
+    Organization:'internal',Contract:'internal',Case:'internal',Project:'internal',Task:'internal',ScheduleEvent:'internal',
+    Document:'source',MediaAsset:'source',Message:'source',Policy:'source',Submission:'source',
+    Person:'personal',Employment:'personal',FinancialTransaction:'financial',Invoice:'financial',PayrollRecord:'financial'
+  };
+  var VIS_RANK={internal:0,source:1,personal:2,financial:3};
+  function visibilityOf(type){return VISIBILITY[type]||'source';}
+  function edgeVisibility(edge,entities){
+    var a=visibilityOf(entities[edge.subject]&&entities[edge.subject].type),b=visibilityOf(entities[edge.object]&&entities[edge.object].type);
+    return VIS_RANK[a]>=VIS_RANK[b]?a:b;
+  }
+  function stable(v){
+    if(Array.isArray(v))return '['+v.map(stable).join(',')+']';
+    if(v&&typeof v==='object')return '{'+Object.keys(v).sort().map(function(k){return JSON.stringify(k)+':'+stable(v[k]);}).join(',')+'}';
+    return JSON.stringify(v);
+  }
+  function fingerprint(v){
+    var s=stable(v),h=2166136261;
+    for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}
+    return ('00000000'+(h>>>0).toString(16)).slice(-8);
+  }
+  function buildSnapshot(report,options){
+    options=options||{};
+    if(!report||report.readOnly!==true||!report.entities||!Array.isArray(report.edges))throw new Error('읽기 전용 통합 진단 결과가 필요합니다.');
+    var parts={internal:{entities:{},edges:{}},source:{entities:{},edges:{}},personal:{entities:{},edges:{}},financial:{entities:{},edges:{}}};
+    Object.keys(report.entities).sort().forEach(function(key){
+      var e=report.entities[key]||{}, vis=visibilityOf(e.type);
+      parts[vis].entities[key]={id:clean(e.id),type:e.type,program:clean(e.program||'erp'),source:clean(e.source||e.store),schemaVersion:VERSION};
+    });
+    var excluded=0,dangling=0,confirmed=0;
+    report.edges.slice().sort(function(a,b){return clean(a.id).localeCompare(clean(b.id));}).forEach(function(e){
+      if(Number(e.confidence)!==1){excluded++;return;}
+      if(!report.entities[e.subject]||!report.entities[e.object]){dangling++;return;}
+      var vis=edgeVisibility(e,report.entities);
+      parts[vis].edges[e.id]={id:e.id,subject:e.subject,predicate:e.predicate,object:e.object,sourceStore:clean(e.sourceStore),sourceId:clean(e.sourceId),confidence:1,schemaVersion:VERSION};confirmed++;
+    });
+    var core={schema:'ontology/v1',schemaVersion:VERSION,readOnlyDerived:true,sourceMutation:'never',partitions:parts};
+    var fp=fingerprint(core), at=options.generatedAt||new Date().toISOString();
+    return {meta:{schema:'ontology/v1',schemaVersion:VERSION,generationId:'ont-'+fp,generatedAt:at,readOnlyDerived:true,sourceMutation:'never',
+      confirmedEdges:confirmed,excludedCandidates:excluded,danglingEdges:dangling,programCount:report.programCount||Object.keys(PROGRAMS).length,fingerprint:fp},partitions:parts};
+  }
+  function validateSnapshot(snap){
+    var errors=[],forbidden=/[.#$\[\]\/]/;
+    if(!snap||!snap.meta||snap.meta.schema!=='ontology/v1')errors.push('schema');
+    if(!snap||!snap.meta||snap.meta.sourceMutation!=='never')errors.push('sourceMutation');
+    ['internal','source','personal','financial'].forEach(function(vis){
+      var p=snap&&snap.partitions&&snap.partitions[vis];if(!p){errors.push('partition:'+vis);return;}
+      Object.keys(p.entities||{}).forEach(function(k){var e=p.entities[k]||{};if(forbidden.test(k))errors.push('firebaseKey:'+k);if('label' in e||'payload' in e||'content' in e)errors.push('sensitiveField:'+k);});
+      Object.keys(p.edges||{}).forEach(function(k){if(forbidden.test(k))errors.push('firebaseKey:'+k);});
+    });
+    return {ok:errors.length===0,errors:errors};
+  }
+
   function auditPrograms(appKeys){
     appKeys = appKeys || [];
     var missing=appKeys.filter(function(k){ return !PROGRAMS[k]; });
@@ -354,6 +412,6 @@
   }
 
   return { VERSION:VERSION, TERMS:TERMS, PROGRAMS:PROGRAMS, STORE_TYPES:STORE_TYPES, READ_ADAPTERS:READ_ADAPTERS,
-    audit:audit, auditIntegrated:auditIntegrated, getReadPlan:getReadPlan, auditPrograms:auditPrograms,
+    audit:audit, auditIntegrated:auditIntegrated, getReadPlan:getReadPlan, buildSnapshot:buildSnapshot, validateSnapshot:validateSnapshot, auditPrograms:auditPrograms,
     canonicalId:canon, sourceCanonicalId:sourceCanon, normalizeCompanyName:normName, normalizeBusinessNumber:normBiz };
 });
