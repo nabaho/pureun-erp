@@ -47,9 +47,17 @@
                           (대표 지시 2026-08-28)
    · bankbook  통장·계좌 — 통장 사본·계좌확인서에 **계좌번호가 그대로** 담긴다
                           (대표 지시 2026-08-31 「통장이나 계좌도 OCR」)
+   ── 근로자 서류 넷 (대표 지시 2026-09-01) ──
+   · idcard    신분증     — 주민등록증·운전면허증·여권·외국인등록증.
+                          **얼굴 사진과 주민등록번호가 한 장에** 있다. 여섯 중 가장 위험하다
+   · resident  주민등록 서류 — 등본·초본·가족관계증명서. 주민번호·주소·가족사항이 함께 있다
+   · mandate   위임장     — 위임인 이름·서명·도장
+   · consent   개인정보 동의서 — 동의한 사람과 동의 범위. **이것이 없으면 나머지를
+                          처리한 근거가 사라진다** — 그래서 가장 오래 두는 서류다
    ⚠ 이 목록을 고치면 **이 함수를 다시 올려야 한다.** 안 올리면 화면은 원본 주소를
      안 적는데 서버는 「민감 아니다」로 물러나 그 사진이 아예 안 열린다. */
-const SENSITIVE_KINDS = { contract: 1, timesheet: 1, payslip: 1, cms: 1, bankbook: 1 };
+const SENSITIVE_KINDS = { contract: 1, timesheet: 1, payslip: 1, cms: 1, bankbook: 1,
+  idcard: 1, resident: 1, mandate: 1, consent: 1 };
 
 function isSensitiveKind(kind) {
   return !!SENSITIVE_KINDS[String(kind || "")];
