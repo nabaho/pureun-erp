@@ -98,6 +98,16 @@
     work_items:{program:'work',strategy:'remote',path:'work_erp/items',parser:'workItems'},
     career_counts:{program:'career',strategy:'remote',path:'kcareer/{uid}/counts',parser:'coverage'},
     cards_index:{program:'cards',strategy:'remote',path:'pucards/idx',parser:'cardIndex'},
+    /* ── 기업 상세·근로자 정보함 (대표 지시 2026-09-02) ──
+       예전에는 기업정보함에서 pucards/idx 하나만 읽었다. 그런데 값이 모여 있는 곳은
+       coInfo 다(업태·상시근로자수·매출액·은행계좌·세금계산서 발급처, 4,158곳) —
+       통합 화면이 그것을 못 보고 있었다.
+       ⚠⚠ 두 자리 모두 «가벼운 자료»다. 사진 원본·판독 글자·급여 금액은 여기 없다
+         (2단계 문서의 「읽지 않는 자료」 규칙 그대로).
+       ⚠ workerInfo 에는 주민번호·주소·연락처가 «애초에 담기지 않는다»
+         (js/pu-doc-file.js 의 workerDocTargets — 담는 칸은 다섯뿐이다). */
+    cards_coinfo:{program:'cards',strategy:'remote',path:'pucards/coInfo',parser:'coInfo'},
+    cards_workers:{program:'cards',strategy:'remote',path:'pucards/workerInfo',parser:'workerInfo'},
     photos_items:{program:'photos',strategy:'remote',path:'puphotos/u/{uid}/items',parser:'photoItems'},
     payroll_index:{program:'payroll',strategy:'remote',path:'payroll_os/payroll/index',parser:'payrollIndex'},
     paydata_items:{program:'paydata',strategy:'remote',path:'paydata/u/{uid}/items',parser:'paydataItems'},
@@ -262,6 +272,42 @@
     });
     else if(adapter.parser==='cardIndex') entries(value).forEach(function(p){
       var r=p[1]||{}, type=r.k==='biz'?'Document':'Person'; entity(type,p[0],r.n||r.c||r.bz,r);
+    });
+    /* ── 기업 상세 (대표 지시 2026-09-02) ──
+       ★ 여기가 신뢰도 1.0 이 나오는 자리다. 기업정보함이 2026-09-02 부터 사람이 «확정한»
+         이알피 업체 열쇠를 erpCoId 에 적어 둔다 — 그것을 companyId 로 넘기면
+         addForOrganization 이 1.0 으로 잇는다(상호로 맞추면 0.85 가 끝이다).
+       ⚠ 확정하지 않은 회사는 예전처럼 이름으로 0.85 다 — 그것이 3단계로 못 넘어가던 까닭이다.
+       ⚠ 서류는 «있다는 사실»만 개체로 만든다. pairs(문서의 모든 칸)는 읽지 않는다 —
+         거기에는 계좌·주민번호가 딸려 올 수 있다. */
+    else if(adapter.parser==='coInfo') entries(value).forEach(function(p){
+      var r=p[1]||{}, coKey=clean(p[0]);
+      var rec=Object.assign({},r,{companyId:clean(r.erpCoId)});
+      /* ⚠ 회사 개체에는 rec 를 넘기지 «않는다» — 넘기면 addForOrganization 이
+         Organization → Organization 관계를 만든다. 관계 사전에 없는 꼴이다.
+         이알피 업체와 잇는 일은 아래 «서류»가 한다(Document → Organization). */
+      var s0=entity('Organization','coinfo:'+coKey,r.company||coKey);
+      entries(r.docs).forEach(function(d){
+        var dk=clean(d[0]), doc=d[1]||{};
+        var ds=entity('Document',coKey+'/'+dk,doc.docName||doc.kind||dk,rec);
+        if(ds&&s0) addEdge(edges,ds,'attachedTo',s0,key,coKey+'/'+dk,1);
+      });
+    });
+    /* ── 근로자 정보함 (대표 지시 2026-09-01·02) ──
+       사람↔서류 관계를 만들 수 있는 유일한 자리다. 사람은 이알피 사건에서 오고,
+       여기에는 「어느 사진 서류가 누구 것인가」만 있다.
+       ⚠ 이 Person 은 «기업정보함 안의» 사람이다(sourceCanon) — 직원 명부의
+         Person(사번)과 섞이지 않는다. 이름을 프로그램 사이 열쇠로 쓰지 않는다는
+         지침을 그렇게 지킨다.
+       ⚠ 주민번호·주소·연락처는 이 자리에 애초에 없다. */
+    else if(adapter.parser==='workerInfo') entries(value).forEach(function(p){
+      var r=p[1]||{}, wKey=clean(p[0]);
+      var ws=entity('Person',wKey,r.name||wKey,r);
+      entries(r.docs).forEach(function(d){
+        var dk=clean(d[0]), doc=d[1]||{};
+        var ds=entity('Document',wKey+'/'+dk,doc.docName||doc.kind||dk,r);
+        if(ds&&ws) addEdge(edges,ds,'attachedTo',ws,key,wKey+'/'+dk,1);
+      });
     });
     else if(adapter.parser==='photoItems') nestedRecords(value,3).forEach(function(p){
       var r=p.value||{}, id=clean(r.id||p.key), s=entity('MediaAsset',id,r.filename||r.name||r.kind,r); if(!s)return;
