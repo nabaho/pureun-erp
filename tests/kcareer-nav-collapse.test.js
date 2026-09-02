@@ -261,3 +261,18 @@ test('★★ 옆줄을 다시 그려도 «지금 이 화면» 표시가 남는�
   assert.ok(!/toggle\('active', n\.dataset\.id/.test(nt),
     '★ 표시를 두 곳에서 답니다 — 옆줄을 다시 그리면 한쪽만 맞습니다');
 });
+
+/* ══════ ⑧ 상위 단추 사이 간격 (대표 지시 2026-09-01 「사이 간격 넓다 줄여달라」) ══════ */
+test('★ 상위 단추의 여백을 «한 곳»에서만 정한다 — 두 곳이면 또 어긋난다', () => {
+  /* 실측: 틈을 4px 로 정해 놓았는데 화면에서는 27px 이었다.
+     ① 감싼 칸 .nav-group{padding:6px 0} 이 단추마다 붙었고
+     ② 뒤 규칙 .nav-group>.g-title{margin:7px 10px 3px} 이 또 얹혔다.
+     둘 다 풀어 .nav-tops 의 gap 하나만 남긴다 — 그래야 숫자를 고치면 화면이 따라온다. */
+  assert.match(bare, /\.nav-tops \.nav-group\{padding:0\}/,
+    '★ 감싼 칸 여백을 안 풀면 틈이 gap 보다 훨씬 넓어집니다');
+  assert.match(bare, /\.nav-tops \.nav-group>\.g-title\.top\{margin:0!important/,
+    '★ 뒤 규칙의 margin 을 안 풀면 gap 을 줄여도 안 좁아집니다');
+  const 자리 = bare.indexOf('.nav-tops .nav-group>.g-title.top{');
+  const 덮개 = bare.lastIndexOf('.nav-group>.g-title{background:linear-gradient');
+  assert.ok(덮개 > 0 && 자리 > 덮개, '★ 덮는 규칙보다 «뒤»에 있어야 이깁니다');
+});
