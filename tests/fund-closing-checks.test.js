@@ -31,10 +31,14 @@ const CHECKS = [
   /* 재무제표·주석이 «무엇을 적는가» — 잡수익을 이자수익이라 적거나,
      전기 잉여가 결손금 칸에 앉거나, 주석 소재지가 늘 「—」 이던 것들. */
   ['check_notes.js', '재무제표·주석의 값과 이름'],
-  /* 전체 백업을 사이드바 메뉴에서 상단 ⚙ 로 옮겼다 — 단추만 있고
-     창이 안 뜼는 것을 문자열 검사로는 못 잡는다. jsdom 이 없으면 SKIP 한다. */
-  ['check_backup.js', '백업·복구 창이 정말 열리는가'],
 ];
+/* 전체 백업을 사이드바 메뉴에서 상단 ⚙ 로 옮겼다 — 단추만 있고 창이 안 뜨는 것을
+   문자열 검사로는 못 잡아 «그려서» 본다.
+   ⚠ 이 검사는 jsdom 이 없으면 SKIP 을 찍는다. 위 CHECKS 묶음은 «ALL PASS 만»
+     받아들이므로 여기 넣으면 jsdom 없는 곳에서 통째로 빨간불이 된다 —
+     2026-09-02 실제로 그렇게 main 이 멎었고 모든 배포가 막혔다.
+     SKIP 을 받아 주는 아래 자리(FORMS 와 같은 방식)로 옮겼다. */
+const BACKUP = ['check_backup.js', '백업·복구 창이 정말 열리는가'];
 /* pii_scan 은 통과 문구가 다르고(«✓ 전 서식 깨끗함»), 무엇보다
    «서식 템플릿에 남의 개인정보가 없는가»를 본다 — 공개 배포되는 파일이라 이게 제일 급하다.
    예전엔 이 검사가 다른 폴더를 보고 있어, 깨끗하다고 하는 동안 실명·집주소·계좌번호가 남아 있었다. */
@@ -80,6 +84,17 @@ test('기금 서식 검사 — ' + FORMS[1] + ' (' + FORMS[0] + ')', () => {
   if (/^SKIP:/m.test(out)) { console.log('  ' + out.trim().split(/\r?\n/)[0]); return; }
   assert.ok(/ALL PASS/.test(out), '서식이 제대로 안 채워집니다:\n' + out.slice(-2500));
   assert.strictEqual(r.status, 0, FORMS[0] + ' 실패:\n' + out.slice(-2500));
+});
+
+test('기금 결산 검사 — ' + BACKUP[1] + ' (' + BACKUP[0] + ')', () => {
+  const p = path.join(TOOLS, BACKUP[0]);
+  assert.ok(fs.existsSync(p), BACKUP[0] + ' 이 없습니다');
+  const r = spawnSync(process.execPath, [p], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
+  const out = (r.stdout || '') + (r.stderr || '');
+  // SKIP 도 «통과»로 본다 — 다만 무엇을 건너뛰었는지 화면에 남는다
+  if (/^SKIP:/m.test(out)) { console.log('  ' + out.trim().split(/\r?\n/)[0]); return; }
+  assert.ok(/ALL PASS/.test(out), '백업·복구 창이 안 열립니다:\n' + out.slice(-2500));
+  assert.strictEqual(r.status, 0, BACKUP[0] + ' 실패:\n' + out.slice(-2500));
 });
 
 /* 검사가 «몇 건을 돌았는지»도 못 박는다.
