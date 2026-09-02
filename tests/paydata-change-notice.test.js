@@ -99,5 +99,8 @@ test('★ 기존 함수·프롬프트가 그대로다 — 다른 앱이 함께 �
   const R = loadRead();
   assert.equal(typeof R.read, 'function');
   assert.equal(typeof R.readWageTable, 'function');
-  assert.match(R.PROMPTS.all, /금액과 사람 이름은 담지 마세요/);
+  /* ⚠ 「이름도 안 담는다」였던 것이 2026-09-01 대표 결정으로 바뀌었다 —
+     근로자 정보함이 「이 서류가 누구 것인가」를 알아야 한다. **금액은 그대로 안 담는다.** */
+  assert.match(R.PROMPTS.all, /kind=payslip 이면 키: .*금액은 담지 마세요/);
+  assert.match(R.PROMPTS.all, /kind=payslip[^']*name\(/, '급여명세서 이름 칸이 사라졌습니다');
 });

@@ -42,7 +42,7 @@ function fnOf(name) {
 /* 판정하는 함수들을 «실제로 돌린다» — 글자 모양만 보면 어떤 짝에서 어떻게
    갈리는지를 못 잡는다. 여기서 보고 싶은 것이 바로 그 짝이다. */
 function load() {
-  const consts = ['MIN_READ_EDGE', 'KEEP_ONLY', 'CARD_KINDS', 'CO_KINDS', 'TEL_SHAPE', 'MAIL_SHAPE']
+  const consts = ['MIN_READ_EDGE', 'KEEP_ONLY', 'CARD_KINDS', 'CO_KINDS', 'WORKER_KINDS', 'TEL_SHAPE', 'MAIL_SHAPE']
     .map(function (n) {
       const i = app.indexOf('const ' + n + ' =');
       assert.ok(i > 0, n + ' 를 찾지 못했습니다');
@@ -50,7 +50,9 @@ function load() {
       return app.slice(i, app.indexOf(';', i) + 1);
     }).join('\n');
   const src = consts + '\n' +
-    ['tooSmall', 'smallCheckedOk', 'readAnyField', 'coFilledOk', 'coTodo', 'needsCheck', 'checkWhy']
+    ['tooSmall', 'smallCheckedOk', 'readAnyField', 'coFilledOk', 'coTodo',
+     /* ⚠ 2026-09-01 근로자 서류 넷 */
+     'canSendWorker', 'workerWhyNot', 'needsCheck', 'checkWhy']
       .map(fnOf).join('\n');
   const ctx = { Math, Number, String, Object, Boolean, Date };
   vm.createContext(ctx);

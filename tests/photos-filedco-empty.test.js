@@ -51,7 +51,11 @@ function loadNeedsCheck() {
   /* 원본이 작은 서류 판정(2026-08-13)도 needsCheck 가 기댄다 — 진짜 함수를 넣는다 */
   const minEdge = app.match(/^const MIN_READ_EDGE = \{[\s\S]*?\n\};/m);
   assert.ok(minEdge, 'MIN_READ_EDGE 를 찾지 못했습니다');
-  vm.runInContext(minEdge[0].replace('const ', 'var ') + '\n' + pick('tooSmall') + '\n' +
+  /* ⚠ 2026-09-01 근로자 서류 넷 — 안 실으면 checkWhy 가 ReferenceError 로 멎는다 */
+  const wk = app.match(/^const WORKER_KINDS = \{[^}]*\};/m);
+  assert.ok(wk, 'WORKER_KINDS 를 찾지 못했습니다');
+  vm.runInContext(minEdge[0].replace('const ', 'var ') + '\n' + wk[0].replace('const ', 'var ') + '\n' +
+    pick('canSendWorker') + '\n' + pick('workerWhyNot') + '\n' + pick('tooSmall') + '\n' +
     pick('coFilledOk') + '\n' + pick('coTodo') + '\n' + pick('needsCheck') + '\n' + pick('checkWhy'), ctx);
   return ctx;
 }

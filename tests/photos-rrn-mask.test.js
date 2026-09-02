@@ -110,6 +110,10 @@ function runReadPhoto(masked, opts) {
     /* ⚠ 2026-08-24: 판독 결과에 실패 셈을 남긴다 — 안 실으면 그 줄에서
        ReferenceError 로 멎어 이 파일의 가림 검사가 통째로 운다(또 그렇게 걸렸다). */
     cutFn(app, 'function failCountOf('),
+    /* ⚠ 2026-09-01 — 판독 뒤 근로자 정보함으로 스스로 보내는 줄이 붙었다.
+       안 실으면 readPhoto 가 그 줄에서 ReferenceError 로 멎어 가림 검사가 통째로 운다. */
+    app.match(/^const WORKER_KINDS = \{[^}]*\};/m)[0],
+    cutFn(app, 'function canSendWorker('),
     cutFn(app, 'function readPhoto('),
     'var __p = readPhoto("p1", ' +
       (masked === undefined ? 'undefined' : JSON.stringify(masked)) + ');'

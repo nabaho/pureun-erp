@@ -56,6 +56,10 @@ const J = (function () {
     cutFn(app, 'function canSendCoInfo('),
     cutFn(app, 'function formTodo('),
     cutFn(app, 'function chatTodo('),
+    /* ⚠ 2026-09-01 근로자 서류 넷 */
+    app.match(/^const WORKER_KINDS = \{[^}]*\};/m)[0],
+    cutFn(app, 'function canSendWorker('),
+    cutFn(app, 'function workerWhyNot('),
     cutFn(app, 'function checkWhy('),
     cutFn(app, 'function needsCheck(')
   ].join('\n'), c);

@@ -47,6 +47,12 @@ function load() {
     'const CO_KINDS = { bizreg: 1, sme: 1 };',
     minEdge[0],
     keep[0],
+    /* ⚠ 근로자 서류 넷(2026-09-01) — 화면에서 그대로 가져온다. 여기 베껴 적으면
+       화면이 늘어날 때 검사만 옛 목록을 본다. 안 실으면 checkWhy 가 그 줄에서 멎어
+       이 표 검사가 통째로 운다(2026-08-24 formTodo 와 같은 자리). */
+    (function(){ const m = app.match(/^const WORKER_KINDS = {[^}]*};$/m); assert.ok(m, 'WORKER_KINDS 를 찾지 못했습니다'); return m[0]; })(),
+    fnOf(app, 'canSendWorker'),
+    fnOf(app, 'workerWhyNot'),
     rules,
     fnOf(app, 'readAnyField'),
     fnOf(app, 'coFilledOk'),
@@ -101,6 +107,20 @@ const TABLE = {
   card:      [true,  /기업정보함/, { auto: true }],   // 잘 읽혔는데 아직 기업정보함에 안 갔다
   bizreg:    [true,  /기업정보함/, { auto: true }],   // 〃
   sme:       [true,  /업체관리/, { auto: true }], // 업체관리에 못 넣었다
+  /* 통장·계좌 (2026-08-31 갈래 추가 / 2026-09-02 갈 곳 부여) — 서식·CMS 와 같은 자리로 간다.
+     ⚠ 갈래를 만들 때 «보낼 길»을 안 만들어, 은행·계좌·예금주를 읽어 놓고 아무 곳에도
+       안 갔다. 그 서식에도 사업자번호 칸이 없어 업체명으로 찾는다(CMS 와 같은 규칙). */
+  bankbook:  [true,  /기업 상세/, { fields: { company: '아이행복어린이집',
+                                             bankName: '국민은행',
+                                             bankAcct: '123456-04-567890',
+                                             bankHolder: '양유정' } }],
+  /* ── 근로자 서류 넷 (대표 결정 2026-09-01) ──
+     회사가 아니라 «사람»에게 간다. 열쇠가 「이름 + 회사」라 둘 다 있어야 할 일이 된다 —
+     회사가 없으면 보낼 수 없으므로 아래 NOT_TODO 에 그 꼴을 따로 못박는다. */
+  idcard:    [true,  /근로자 정보함/, { fields: { name: '강석', company: '해찬솔에프쓰리' } }],
+  resident:  [true,  /근로자 정보함/, { fields: { name: '강석', company: '해찬솔에프쓰리' } }],
+  mandate:   [true,  /근로자 정보함/, { fields: { name: '강석', company: '해찬솔에프쓰리' } }],
+  consent:   [true,  /근로자 정보함/, { fields: { name: '강석', company: '해찬솔에프쓰리' } }],
   other:     [true,  /분류 지정/]              // 종류를 못 가렸다(내용은 읽었다)
 };
 
@@ -127,7 +147,16 @@ const NOT_TODO = [
     { fields: { bizno: '312-81-49225' }, filedInfo: { at: 1756000000000, n: 4 } }],
   ['대화캡처 — 뽑은 할 일을 다 끝냈다', 'chat',
     { fields: { todos: [{ t: 'ㄱ', done: true }] } }],
-  ['대화캡처 — 뽑은 할 일이 하나도 없다', 'chat', { fields: {} }]
+  ['대화캡처 — 뽑은 할 일이 하나도 없다', 'chat', { fields: {} }],
+  /* ── 근로자 서류 — 이미 근로자 정보함에 보냈다 (2026-09-01) ── */
+  ['신분증 — 근로자 정보함에 이미 보냈다', 'idcard',
+    { fields: { name: '강석', company: '해찬솔에프쓰리' },
+      filedWk: { at: 1756000000000, n: 1 } }],
+  /* ⚠ 통장도 같다 — 보낸 뒤에도 할 일로 남으면 치울 수 없는 ⚠ 가 된다 */
+  ['통장 — 기업 상세로 이미 보냈다', 'bankbook',
+    { fields: { company: '아이행복어린이집', bankName: '국민은행',
+                bankAcct: '123456-04-567890', bankHolder: '양유정' },
+      filedInfo: { at: 1756000000000, n: 3 } }]
 ];
 for (const [name, kind, extra] of NOT_TODO) {
   test('★ ' + name + ' — 할 일이 아니다', () => {

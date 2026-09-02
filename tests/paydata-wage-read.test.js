@@ -150,8 +150,13 @@ test('프롬프트가 항목 이름을 바꿔 적지 말라고 못 박는다', (
   assert.match(src, /지어내지 말고 건너뛰세요/);
 });
 
-test('★ 기존 kind=payslip 프롬프트는 그대로다 — 여전히 금액·이름을 담지 않는다', () => {
+test('★ 기존 kind=payslip 프롬프트는 여전히 «금액»을 담지 않는다', () => {
+  /* ⚠ 2026-09-01 대표 결정으로 **이름은 담는다** — 근로자 정보함이 「누구 것인가」를
+     알아야 한다. 지키는 규칙은 그대로다: 급여데이터함용 함수를 더하면서 사진첩 등이
+     함께 쓰는 payslip 프롬프트에 **금액을 끌어들이면 안 된다.** */
   const R = loadRead();
-  assert.match(R.PROMPTS.all, /금액과 사람 이름은 담지 마세요/,
-    '급여데이터함용 함수를 더하면서 사진첩 등이 쓰는 payslip 프롬프트를 건드리면 안 됩니다');
+  assert.match(R.PROMPTS.all, /kind=payslip 이면 키: .*금액은 담지 마세요/,
+    '급여데이터함용 함수를 더하면서 사진첩 등이 쓰는 payslip 프롬프트에 금액을 넣으면 안 됩니다');
+  assert.doesNotMatch(R.PROMPTS.all, /kind=payslip 이면 키: .*pairs\(/,
+    'payslip 에 pairs 가 생기면 금액이 통째로 딸려 옵니다');
 });

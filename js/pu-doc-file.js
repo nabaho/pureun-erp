@@ -967,6 +967,153 @@
     });
   }
 
+  /* ══════ 👷 근로자 정보함으로 보내기 (대표 결정 2026-09-01) ══════
+     대표 지시 「근로자 정보함을 별도로 만들고 싶다. 사건 등과 관련해서 근로자 정보를
+     사진첩에서 당겨올 경우 연결시켜 만들고 싶다」 + 집단 진정 검토안 ㉯ 승인.
+
+     ── ⚠⚠ 여기에 «사람 정보»를 담지 않는다 ──
+     이 자리에 담는 것은 「어느 사진 서류가 누구 것인가」 **하나**다.
+     주민번호·주소·연락처는 한 글자도 안 온다 — 그것은 이알피 사건 안에 이미 있고,
+     근로자 정보함은 볼 때 그쪽에서 읽는다. 여기 베껴 두면 같은 민감정보가 두 벌이
+     되고, 이 자리는 기업정보함 아래라 직원 누구나 읽는다.
+     (판독기도 그 넷에서 이름만 읽는다 — js/pu-doc-read.js 의 「담지 마세요」 못박음.)
+
+     ── 사람을 가리는 열쇠는 «이름 + 회사» ──
+     대표 결정. 이름만으로 묶으면 동명이인이 한 사람이 되고, 주민번호로 묶으면
+     확실하지만 근태표·급여명세서에는 번호가 없어 그 사람들이 다 빠진다.
+     ⚠ **회사를 못 읽었으면 아무것도 안 붙인다.** 회사 없는 것끼리 묶으면 남남인
+       「김수」 둘이 한 사람이 된다 — 사건 서류에서 그것은 사고다. 그때는 사진첩에
+       할 일로 남겨 사람이 회사를 적게 한다.
+
+     ── 한 장이 여러 사람에게 붙는다 ──
+     근태표·임금대장은 한 장에 사람이 여럿이다(fields.rows). 그 줄마다 한 사람씩
+     붙인다 — 집단 진정에서 근태표 한 장이 서른 명 공용인 것이 이 길이다. */
+
+  var WORKER_ROOT = CARDS_ROOT + '/workerInfo';
+
+  /* 이 갈래는 근로자 정보함으로 간다. 넷은 «사람 것»이라 회사가 아니라 사람에게 붙는다
+     (신분증·주민등록서류·위임장·개인정보동의서), 둘은 «사람이 여럿 적힌 표»다.
+     ⚠ pu-photos.html 의 WORKER_KINDS 와 짝이다 — 한쪽만 늘리면 값이 안 오거나
+       할 일이 안 뜬다(tests/cards-worker-box.test.js 가 둘을 견준다). */
+  var WORKER_DOC_KINDS = { idcard: 1, resident: 1, mandate: 1, consent: 1,
+    timesheet: 1, payslip: 1 };
+
+  /* 실시간DB 열쇠로 쓸 수 있게 다듬는다. 한글은 그대로 쓸 수 있지만
+     . # $ / [ ] 는 자리 이름에 못 쓴다 — 이름에 점이 든 경우가 실제로 있다. */
+  function wkSafe(v) {
+    return String(v == null ? '' : v).replace(/[.#$/[\]]/g, '_').replace(/\s+/g, '');
+  }
+
+  /* 사람 열쇠 = 회사 + 이름. 회사 다듬기는 업체 찾기(coNameKey)와 **같은 규칙**이다 —
+     「(주)승진텍라인」과 「승진텍 라인」이 다른 사람으로 갈라지면 안 된다.
+     ⚠ 둘 중 하나라도 비면 빈 문자열을 준다. 부르는 쪽은 그때 아무것도 안 붙인다. */
+  function workerKey(name, company) {
+    var n = wkSafe(name);
+    var c = wkSafe(coNameKey(company));
+    if (!n || !c) return '';
+    return c + '__' + n;
+  }
+
+  /* 사진 한 장을 가리키는 열쇠 — coInfo/docs 와 **같은 규칙**이다 */
+  function wkDocKey(photo) {
+    var ph = photo || {};
+    if (!ph.id) return '';
+    return String(ph.year || 'unknown') + '_' + String(ph.id).replace(/[.#$/[\]]/g, '_');
+  }
+
+  /* ── 이 사진이 «누구들» 것인가 — 순수 로직 (검사 대상) ──
+     o: { kind, fields, photo:{year,id,owner}, at }
+     돌려주는 것: { targets: [{key,name,company,doc}], skipped: [{name,why}] }
+     ⚠ 서버를 안 만진다. 그래서 검사가 실데이터 없이 규칙을 그대로 볼 수 있다. */
+  function workerDocTargets(o) {
+    o = o || {};
+    var out = { targets: [], skipped: [] };
+    var kind = String(o.kind || '');
+    if (!WORKER_DOC_KINDS[kind]) return out;
+    var f = o.fields || {};
+    var dk = wkDocKey(o.photo);
+    if (!dk) { out.skipped.push({ name: '', why: '사진을 가리킬 수 없습니다' }); return out; }
+    var company = f.company || '';
+
+    /* 한 장에 여러 사람(근태표·임금대장)이면 그 줄마다, 아니면 name 한 사람 */
+    var rows = Array.isArray(f.rows) ? f.rows : [];
+    var people = rows.map(function (r) { return r && r.name; }).filter(function (x) { return !blank(x); });
+    if (!people.length && !blank(f.name)) people = [f.name];
+    if (!people.length) { out.skipped.push({ name: '', why: '이름을 읽지 못했습니다' }); return out; }
+
+    var seen = {};
+    people.forEach(function (nm) {
+      var name = String(nm).trim();
+      var key = workerKey(name, company);
+      if (!key) {
+        out.skipped.push({ name: name, why: blank(company)
+          ? '회사를 읽지 못했습니다 — 회사를 적어야 사람을 가릴 수 있습니다'
+          : '이름을 읽지 못했습니다' });
+        return;
+      }
+      if (seen[key]) return;                       /* 같은 표에 같은 이름이 두 줄 */
+      seen[key] = 1;
+      out.targets.push({
+        key: key, name: name, company: String(company).trim(),
+        doc: {
+          kind: kind,
+          docName: blank(f.docName) ? '' : String(f.docName).trim(),
+          period: blank(f.period) ? '' : String(f.period).trim(),
+          at: o.at || Date.now(),
+          photo: { year: (o.photo && o.photo.year) || '', id: (o.photo && o.photo.id) || '',
+                   owner: (o.photo && o.photo.owner) || '' }
+        },
+        dk: dk
+      });
+    });
+    return out;
+  }
+
+  /* ── 여러 장을 한 번에 보낸다 ──
+     list: [{ kind, fields, photo, at }]
+     ⚠ 사람마다 «한 번» 읽고, 전체를 «한 번» 쓴다. 서류 한 장마다 오가면
+       근태표 서른 줄이 예순 번 왕복이 된다(2026-08-16 에 겪은 그 규모다).
+     ⚠ 이미 붙어 있는 서류는 다시 안 쓴다 — 같은 값을 덮어써도 요금은 든다.
+     돌려주는 것: { sent, already, skipped:[{name,why}], people } */
+  function sendToWorkerMany(list) {
+    var items = Array.isArray(list) ? list : [];
+    var out = { sent: 0, already: 0, skipped: [], people: 0 };
+    var byKey = {};
+    items.forEach(function (it) {
+      var t = workerDocTargets(it);
+      out.skipped = out.skipped.concat(t.skipped);
+      t.targets.forEach(function (g) {
+        var e = byKey[g.key] = byKey[g.key] || { name: g.name, company: g.company, docs: {} };
+        e.docs[g.dk] = g.doc;
+      });
+    });
+    var keys = Object.keys(byKey);
+    out.people = keys.length;
+    if (!keys.length) return Promise.resolve(out);
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+
+    return Promise.all(keys.map(function (k) {
+      return deps.db.ref(WORKER_ROOT + '/' + k).once('value');
+    })).then(function (snaps) {
+      var u = {};
+      snaps.forEach(function (s2, i) {
+        var key = keys[i], e = byKey[key], cur = s2.val() || {};
+        var base = WORKER_ROOT + '/' + key;
+        /* 이름·회사는 «빈 칸만» 채운다 — 사람이 고쳐 둔 표기를 덮지 않는다 */
+        if (blank(cur.name) && !blank(e.name)) u[base + '/name'] = e.name;
+        if (blank(cur.company) && !blank(e.company)) u[base + '/company'] = e.company;
+        var had = cur.docs || {};
+        Object.keys(e.docs).forEach(function (dk) {
+          if (had[dk]) { out.already++; return; }
+          u[base + '/docs/' + dk] = e.docs[dk];
+          out.sent++;
+        });
+      });
+      if (!Object.keys(u).length) return out;
+      return deps.db.ref().update(u).then(function () { return out; });
+    });
+  }
+
   global.PuDocFile = {
     init: init,
     inPrivateVault: inPrivateVault,
@@ -986,6 +1133,10 @@
     backfillPairs: backfillPairs,
     sendToCompany: sendToCompany,
     sendToCompanyMany: sendToCompanyMany,
-    repairCardCompanyMany: repairCardCompanyMany
+    repairCardCompanyMany: repairCardCompanyMany,
+    WORKER_DOC_KINDS: WORKER_DOC_KINDS,
+    workerKey: workerKey,
+    workerDocTargets: workerDocTargets,
+    sendToWorkerMany: sendToWorkerMany
   };
 })(typeof window !== 'undefined' ? window : globalThis);

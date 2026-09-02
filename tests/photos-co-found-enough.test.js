@@ -44,8 +44,11 @@ function objOf(name) {
 
 const ctx = (function () {
   const src = [objOf('MIN_READ_EDGE'), objOf('KEEP_ONLY'), objOf('CARD_KINDS'), objOf('CO_KINDS'),
+    /* ⚠ 2026-09-01 근로자 서류 넷 — 안 실으면 checkWhy 가 ReferenceError 로 멎는다 */
+    objOf('WORKER_KINDS'),
     lineOf('TEL_SHAPE'), lineOf('MAIL_SHAPE')].join('\n') + '\n' +
-    ['tooSmall', 'smallCheckedOk', 'readAnyField', 'coFilledOk', 'coTodo', 'needsCheck', 'checkWhy']
+    ['tooSmall', 'smallCheckedOk', 'readAnyField', 'coFilledOk', 'coTodo',
+     'canSendWorker', 'workerWhyNot', 'needsCheck', 'checkWhy']
       .map(fnOf).join('\n');
   const c = { Math, Number, String, Object, Boolean, Date };
   vm.createContext(c);

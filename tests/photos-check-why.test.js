@@ -59,6 +59,10 @@ function load() {
     grab(/function canSendCoInfo\(read\)[\s\S]*?\n\}/, 'canSendCoInfo'),
     grab(/function formTodo\(read\)[\s\S]*?\n\}/, 'formTodo'),
     grab(/function chatTodo\(read\)[\s\S]*?\n\}/, 'chatTodo'),
+    /* ⚠ 2026-09-01 근로자 서류 넷 — 안 실으면 checkWhy 가 그 줄에서 ReferenceError 로 멎는다 */
+    grab(/^const WORKER_KINDS = \{[^}]*\};/m, 'WORKER_KINDS').replace('const ', 'var '),
+    grab(/function canSendWorker\(read\)[\s\S]*?\n\}/, 'canSendWorker'),
+    grab(/function workerWhyNot\(read\)[\s\S]*?\n\}/, 'workerWhyNot'),
     grab(/function checkWhy\(it\)[\s\S]*?\n\}/, 'checkWhy'),
     grab(/function needsCheck\(it\)[\s\S]*?\n\}/, 'needsCheck')
   ].join('\n');

@@ -152,7 +152,7 @@ test('★★ 민감 목록이 든 층은 «모든 앱»이 같은 판을 쓴다'
   /* ⚠ 한 앱만 옛 번호로 두면 그 앱은 옛 목록을 쓴다 — 신분증을 「민감 아님」으로
      다루게 된다. 사진을 담는 앱이 사진첩 하나가 아니다(정부컨설팅도 담는다). */
   const files = fs.readdirSync(R).filter(function (f) { return /\.html$/.test(f); });
-  [['js/pu-photo-store.js', 21], ['js/pu-doc-read.js', 28]].forEach(function (b) {
+  [['js/pu-photo-store.js', 21], ['js/pu-doc-read.js', 29]].forEach(function (b) {
     const seen = {};
     files.forEach(function (f) {
       const s = fs.readFileSync(path.join(R, f), 'utf8');
@@ -168,4 +168,72 @@ test('★★ 민감 목록이 든 층은 «모든 앱»이 같은 판을 쓴다'
     assert.ok(Number(vers[0]) >= b[1],
       '★★ ' + b[0] + ' 을 고쳤는데 캐시 번호가 ' + vers[0] + ' 입니다 — 올려 주세요');
   });
+});
+
+/* ══════ ⑤ 민감으로 정한 갈래는 «담길 수»도 있어야 한다 ══════
+   2026-09-02 에 이 구멍을 실제로 찾았다. 넷을 물음에 가르치고 민감 목록에도 넣었는데,
+   판독이 **담아도 되는 갈래 목록(KINDS)** 만 안 늘렸다. afterRead 가 거기 없는 갈래를
+   통째로 'other' 로 떨어뜨리므로, 신분증을 읽어도 갈래가 other 로 굳었다 —
+   민감 여부는 갈래로 가리니 **막으려던 바로 그 일(원본 주소가 그대로 적힘)이
+   그대로 열려 있었다.** bankbook 도 2026-08-31 부터 같은 상태였다.
+
+   목록이 «둘»이면 언젠가 한쪽만 고쳐진다. 그래서 둘을 견준다. */
+
+function storable(src) {
+  const m = /var KINDS = \{([\s\S]*?)\};/.exec(src);
+  assert.ok(m, '담아도 되는 갈래 목록(KINDS)을 못 찾았습니다');
+  return m[1].split(',').map(x => x.split(':')[0].trim()).filter(Boolean);
+}
+
+test('★★★ 민감으로 정한 갈래가 모두 «담기는» 갈래다 — 아니면 other 로 굳어 민감이 풀린다', () => {
+  const K = storable(read);
+  kinds(store).forEach(function (k) {
+    assert.ok(K.indexOf(k) >= 0,
+      '★★★ ' + k + ' 은 민감 목록에 있는데 판독의 KINDS 에 없습니다.\n' +
+      "  afterRead 가 'other' 로 떨어뜨리고, other 는 민감이 아닙니다 —\n" +
+      '  **원본 주소가 만료 없이 사진에 적힙니다.**\n' +
+      '  js/pu-doc-read.js 의 var KINDS 에 ' + k + ' 를 더해 주세요.');
+  });
+});
+
+test('물음이 가르친 갈래가 모두 «담기는» 갈래다 — 안 그러면 읽어 놓고 버린다', () => {
+  const K = storable(read);
+  const line = /kind 는 다음 중 하나입니다: ([^']*)/.exec(read);
+  assert.ok(line, '갈래를 가르치는 줄을 못 찾았습니다');
+  const taught = [];
+  const re = /([a-z]+)\(/g;
+  let m;
+  while ((m = re.exec(line[1]))) if (taught.indexOf(m[1]) < 0) taught.push(m[1]);
+  assert.ok(taught.length >= 14, '갈래를 ' + taught.length + '개만 읽었습니다 — 찾는 규칙을 확인하세요');
+  taught.forEach(function (k) {
+    assert.ok(K.indexOf(k) >= 0,
+      '★★ 물음은 ' + k + ' 를 가르치는데 KINDS 에 없습니다 — 읽어 놓고 other 로 버립니다');
+  });
+});
+
+test('물음이 바뀌면 물음 판(PROMPT_VERSION)이 올라가 있다 — 안 그러면 굳은 것이 안 풀린다', () => {
+  const m = /var PROMPT_VERSION = (\d+);/.exec(read);
+  assert.ok(m, '물음 판 번호를 못 찾았습니다');
+  assert.ok(Number(m[1]) >= 13,
+    '★★ 2026-09-01 에 물음을 고쳤습니다(근로자 서류 넷·급여명세서 이름). ' +
+    '물음 판이 ' + m[1] + ' 이면 other 로 굳은 신분증·통장이 스스로 다시 읽히지 않습니다.');
+});
+
+/* ── 급여명세서 이름 (대표 결정 2026-09-01) ──
+   근로자 정보함이 「이 서류가 누구 것인가」를 알아야 한다. 늘어난 것은 이름 하나다 —
+   **금액은 여전히 한 글자도 안 담는다.** 「이름을 읽으니 금액도」로 넓히면 안 된다. */
+
+test('급여명세서에서 이름을 읽는다 — 없으면 급여서류가 사람에게 못 붙는다', () => {
+  const m = /kind=payslip 이면 키: ([^']*)/.exec(read);
+  assert.ok(m, '급여서류 칸 줄을 못 찾았습니다');
+  assert.match(m[1], /name\(/, '★★ 급여명세서에 name 칸이 없습니다');
+});
+
+test('★★ 급여명세서는 «금액»을 여전히 안 담는다', () => {
+  const m = /kind=payslip 이면 키: ([^']*)/.exec(read);
+  assert.ok(m, '급여서류 칸 줄을 못 찾았습니다');
+  assert.doesNotMatch(m[1], /amount|pay\b|금액을 담|wage/,
+    '★★ 급여서류에 금액 칸이 생겼습니다 — 이름만 읽기로 했습니다');
+  assert.match(read, /kind=payslip[^']*금액은 담지 마세요/,
+    '★★ 「금액은 담지 마세요」 못박음이 사라졌습니다 — 없으면 pairs·rows 로 금액이 샙니다');
 });
