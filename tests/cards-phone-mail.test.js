@@ -53,7 +53,14 @@ test('★ 메일은 ☰ 메뉴 «맨 위»에 있고, 그 시트는 「환경설
 test('메일 화면에서는 명함 목록의 줄들을 접는다', () => {
   /* 갈래 줄·거르개 줄은 명함 목록 것이라 메일 화면에서는 누를 것이 없고,
      누르면 엉뚱한 데로 간다. */
-  assert.match(cards, /body\.mailview #tabs,body\.mailview #subbar\{display:none\}/);
+  /* ⚠ 2026-09-02 에 이 줄을 고쳤다. 예전에는 선택자 «문장을 글자 그대로» 박아 두어,
+     html 쪽 규칙을 더하자(첫 그림에서 스치던 것을 막느라) 깨졌다 —
+     기능이 망가져서가 아니다. 지킬 것은 「감춰지는가」이지 「어떻게 적혔는가」가 아니다. */
+  for (const 줄 of ['#tabs', '#subbar']) {
+    assert.match(cards, new RegExp('mailview ' + 줄 + '\\b'),
+      '메일 화면에서 ' + 줄 + ' 이 안 감춰집니다');
+  }
+  assert.match(cards, /\{display:none\}/, '감추는 규칙이 없습니다');
   assert.match(cards, /classList\.toggle\('mailview', state\.view==='mail'\)/);
 });
 
