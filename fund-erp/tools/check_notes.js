@@ -105,6 +105,109 @@ const e3 = erow('2) 당기순손실');
 ok('당기순손실 800,000 양수·전기 이익은 음수',
    e3 && e3.cur === 800000 && e3.prv === -200000, e3 && (e3.cur+'/'+e3.prv));
 
+/* ── 6. 준비금 맞바꿈(reserve_swap) ────────────
+
+   어느 번호가 이자 쪽이고 어느 번호가 이월 쪽인지는 기금마다 다르다.
+   설정·전입을 «번호»로 못 박아 두면 맞바꿈 기금에서 장부와 잔액 셈이 갈라진다 —
+   설정은 준비금1로 나가고 환입은 준비금2에서 빼, 준비금2가 음수가 된다.
+   대차와 당기순이익은 맞아서 화면만 보면 멀줦해 보이는 종류의 결함이다. */
+console.log('\n■ 준비금 맞바꿈');
+const RUN = swap => {
+  funds.X = { fund_type:'공동', reserve_swap:swap, years:{2026:{opening:{},reserve_auto:true}} };
+  const arr = [
+    { _id:'a', date:'2026-01-05', approved:true, deposit:10000000, withdraw:0,
+      memo:'출연금', debit:'현금성자산', credit:'기본재산' },
+    { _id:'b', date:'2026-06-01', approved:true, deposit:0, withdraw:9000000,
+      memo:'경조사비', debit:'경조사비', credit:'현금성자산' },
+  ];
+  const rc = reserveAdjust(arr, 'X', 2026);
+  const all = arr.concat(_reserveEntries(2026, rc).map(x => Object.assign({_id:x.id}, x.e)));
+  const f = computeFin(all, 'X', 2026);
+  const bal = a => { const v = f.tb[a]; return v ? v.credit - v.debit : 0; };
+  return { rc, f, bal, all };
+};
+[false, true].forEach(sw => {
+  const { rc, f, bal } = RUN(sw);
+  const tag = sw ? '맞바꿈 켜짐' : '기본    ';
+  ok(tag + ' — 설정은 이월 쪽(' + rc.acctCarry + ')으로',
+     rc.parts.length === 1 && rc.parts[0].acct === rc.acctCarry, rc.parts.map(p => p.acct).join());
+  RESERVE_ACCTS.forEach(a => ok(tag + ' — ' + a + ' 음수 아님', bal(a) >= 0, bal(a)));
+  ok(tag + ' — 준비금 둘 다 0 으로 맞물림',
+     RESERVE_ACCTS.every(a => bal(a) === 0), RESERVE_ACCTS.map(a => bal(a)).join('/'));
+  ok(tag + ' — 당기순이익 0', Math.round(f.net) === 0, Math.round(f.net));
+  ok(tag + ' — 기본재산 1,000,000', Math.round(f.basic) === 1000000, Math.round(f.basic));
+});
+
+/* ── 7. 주석 4절 — 기본재산 감소를 «실제 계정»으로 갈라 적는가 ─ */
+console.log('\n■ 주석 4절 — 기본재산의 변동');
+[false, true].forEach(sw => {
+  const { rc, f, all } = RUN(sw);
+  const NN = stmtNotes(all, f, {}, 'X', 2026);
+  const s4 = NN.find(x => x.h.indexOf('4.') === 0);
+  const lbls = s4.rows.map(r => r[0]);
+  const tag = sw ? '맞바꿈 켜짐' : '기본    ';
+  ok(tag + ' — 실제 대변 계정(' + rc.acctCarry + ') 이름으로',
+     lbls.indexOf(rc.acctCarry + ' 설정') >= 0, lbls.join(' / '));
+  const other = RESERVE_ACCTS.filter(a => a !== rc.acctCarry)[0];
+  ok(tag + ' — 쓰지도 않은 ' + other + ' 줄은 없다',
+     lbls.indexOf(other + ' 설정') < 0, lbls.join(' / '));
+  const g = l => { const r = s4.rows.find(x => x[0] === l); return r ? r[1] : 0; };
+  ok(tag + ' — 기초 + 출연 + 감소 = 기말',
+     g('기초') + g('당기 출연') + g(rc.acctCarry + ' 설정') === g('기말'),
+     g('기초') + '+' + g('당기 출연') + '+' + g(rc.acctCarry + ' 설정') + ' vs ' + g('기말'));
+});
+
+/* 준비금과 무관한 기본재산 감소를 설정액으로 둔갑시키면 안 된다 */
+funds.X = { fund_type:'공동', years:{2026:{opening:{},reserve_auto:false}} };
+const RB = [
+  { _id:'a', date:'2026-01-05', approved:true, deposit:5000000, withdraw:0,
+    debit:'현금성자산', credit:'기본재산' },
+  { _id:'x', date:'2026-09-01', approved:true, deposit:0, withdraw:400000,
+    memo:'출연금 반환', debit:'기본재산', credit:'현금성자산' },
+];
+const fb = computeFin(RB, 'X', 2026);
+const S4 = stmtNotes(RB, fb, {}, 'X', 2026).find(x => x.h.indexOf('4.') === 0);
+const gb = l => { const r = S4.rows.find(x => x[0] === l); return r ? r[1] : null; };
+ok('준비금 아닌 감소는 「그 밖의 감소」', gb('그 밖의 감소') === -400000, gb('그 밖의 감소'));
+ok('그것을 설정액으로 적지 않는다',
+   !S4.rows.some(r => /설정$/.test(r[0])), S4.rows.map(r => r[0]).join(' / '));
+
+/* ── 6-2. 전입과 환입 차례도 역할을 따라야 한다 ───────
+
+   위의 시험은 «환입하는 해» 하나만 지나고, 준비금도 한 쪽만 잔액이 있어
+   ① 전입(순이익>0)과 ② 둘 다 있을 때의 차례를 전혀 안 본다.
+   되돌림 시험에서 그 둘을 놓쳐 이 두 가지를 더한다. */
+console.log('\n■ 전입·환입 차례');
+[false, true].forEach(sw => {
+  /* 순이익이 나는 해 — 이자 20만만 들어오고 쓴 것이 없다.
+     출연금이 없으므로 설정 한도도 0 이라 전입만 생긴다. */
+  funds.X = { fund_type:'공동', reserve_swap:sw, years:{2026:{opening:{},reserve_auto:true}} };
+  const arr = [
+    { _id:'i', date:'2026-03-01', approved:true, deposit:200000, withdraw:0,
+      memo:'이자', debit:'현금성자산', credit:'이자수익' },
+  ];
+  const rc = reserveAdjust(arr, 'X', 2026);
+  const tag = sw ? '맞바꿈 켜짐' : '기본    ';
+  ok(tag + ' — 순이익이 나면 전입이다', rc.kind === '전입', rc.kind);
+  ok(tag + ' — 전입도 이월 쪽(' + rc.acctCarry + ')으로',
+     rc.parts.length === 1 && rc.parts[0].acct === rc.acctCarry,
+     rc.parts.map(x => x.acct).join());
+
+  /* 두 준비금에 다 잔액이 있고 환입해야 하는 해 — 이자 쪽을 먼저 쓴다
+     (법인세법 제29조 준비금). 번호 순서로 돌면 맞바꿈 기금에서 거꾸로 빠진다. */
+  funds.X = { fund_type:'공동', reserve_swap:sw,
+              years:{2026:{opening:{reserve:1000000, reserve2:1000000}, reserve_auto:true}} };
+  const arr2 = [
+    { _id:'s', date:'2026-06-01', approved:true, deposit:0, withdraw:600000,
+      memo:'경조사비', debit:'경조사비', credit:'현금성자산' },
+  ];
+  const rc2 = reserveAdjust(arr2, 'X', 2026);
+  ok(tag + ' — 모자란 해는 환입이다', rc2.kind === '환입', rc2.kind);
+  ok(tag + ' — 환입은 이자 쪽(' + rc2.acctInterest + ')부터',
+     rc2.parts.length >= 1 && rc2.parts[0].acct === rc2.acctInterest,
+     rc2.parts.map(x => x.acct + ':' + x.amount).join(' '));
+});
+
 /* ── 5. 이름이 잘못됐던 fin.interest ─────────────────────── */
 console.log('\n■ 없앤 항목');
 ok('computeFin 이 interest 를 더는 안 내보낸다', !('interest' in fin), Object.keys(fin).filter(k=>k==='interest'));

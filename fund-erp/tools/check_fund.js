@@ -202,8 +202,20 @@ ok('빈 칸을 지어내지 않는다', /var dash=function\(v\)\{ v=\(v==null\?'
 ok('우발부채를 없다고 단정하지 않는다', src.includes('장부에 잡힌 것은 없다. 그 밖의 사항은 확인이 필요하다.'));
 /* 기본재산은 들어오기만 하지 않는다 — 준비금2 설정 때 여기서 빠져나간다.
    그 줄을 빠뜨리면 기초+출연 ≠ 기말 이 된다(청신공동 2025: 7,200,000). */
-ok('기본재산에서 빠져나간 몫을 적는다', src.includes("if(x.debit==='기본재산') outB+=amt;")
-  && src.includes("s4.rows.push(['고유목적사업준비금2 설정',-Math.round(outB),null]);"));
+/* 기본재산 차변을 다 합쳤다가 「준비금2 설정」이라 적던 것을 고침 — 맞바꿈 기금은
+   설정이 준비금1로 나가고, 준비금과 무관한 감소까지 설정액으로 둔갑했다.
+   값이 맞는지는 check_notes.js 가 실제로 주석을 만들어 본다. */
+ok('기본재산 감소를 대변 계정별로 갈라 적는다',
+  src.includes("if(RESERVE_ACCTS.indexOf(x.credit)>=0) outByAcct[x.credit]=(outByAcct[x.credit]||0)+amt;")
+  && src.includes("if(outByAcct[a]) s4.rows.push([a+' 설정',-Math.round(outByAcct[a]),null]);")
+  && src.includes("if(outEtc) s4.rows.push(['그 밖의 감소',-Math.round(outEtc),null]);"));
+/* 준비금 설정·전입·환입은 어느 «번호»가 아니라 어느 «역할»이냐로 간다 —
+   번호로 못 박으면 맞바꿈 기금에서 설정은 준비금1로 나가고 환입은 준비금2에서 빠져
+   준비금2가 음수가 된다. 대차·당기순이익은 맞아서 화면으론 멀쩡해 보인다. */
+ok('준비금 설정·전입·환입이 역할을 따른다',
+  src.includes('bal[_roles.carry]=(bal[_roles.carry]||0)+want;')
+  && src.includes('r.parts=[{acct:_roles.carry,amount:net}]; r.acct=_roles.carry;')
+  && src.includes('[_roles.interest,_roles.carry].forEach(function(a){ if(rest<=0) return;'));
 // 주석 스스로 맞물림을 본다 — 어긋나면 화면이 알려 준다
 /* 전입은 준비금이 «대변», 환입은 «차변»에 선다. 뒤집어 놓아도 두 금액이 같은 해에는
    숫자로 안 드러난다 — 그래서 방향 자체를 못 박는다. */
