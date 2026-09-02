@@ -441,10 +441,25 @@ html.dark .empty{color:var(--text-mute)}
 .nav-group.dragging{opacity:.45}
 .nav-group>.g-title.drag-over{box-shadow:inset 0 3px 0 var(--teal,#166534)}
 /* 「모두 접기 / 펴기」 — 그룹이 다섯을 넘으면 하나씩 접는 것이 일이 된다 */
-.nav-allfold{display:block;width:calc(100% - 24px);margin:8px 12px;padding:6px;font-size:11.5px;
-  background:rgba(255,255,255,.06);color:#94a3b8;border:1px solid rgba(255,255,255,.12);
-  border-radius:7px;cursor:pointer;font-family:inherit}
-.nav-allfold:hover{background:rgba(255,255,255,.13);color:#e2e8f0}
+/* ── 옆줄: 상위 대시보드 큰 단추 (대표 승인 2026-09-01) ──
+   기업정보함(pu-cards)의 .sidetabv 와 같은 결이다. 상위를 눌러 고르고, 건수를 함께 본다.
+   ⚠ 「⇕ 모두 접기」(.nav-allfold)는 없앴다 — 늘 한 그룹의 하위만 보여 접을 것이 없다. */
+.nav-tops{display:flex;flex-direction:column;gap:5px;padding:10px 10px 2px}
+.g-title.top{display:flex;align-items:center;gap:9px;width:100%;text-align:left;cursor:pointer;
+  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);border-radius:10px;
+  padding:10px 12px;color:#E2E8F0;font:inherit;font-size:13px;font-weight:600}
+.g-title.top:hover{background:rgba(96,165,250,.14)}
+.g-title.top .gname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.g-title.top .gcnt{font-size:12px;color:#60a5fa;font-variant-numeric:tabular-nums}
+.g-title.top.gsel{background:#60a5fa;border-color:#60a5fa;color:#1e293b}
+.g-title.top.gsel .gcnt{color:#1e293b}
+.g-title.top:focus-visible{outline:2px solid #fff;outline-offset:2px}
+/* 하위 머리 — 어느 상위 «안»을 보고 있는지 적는다 */
+.nav-sec{font-size:10.5px;color:#60a5fa;letter-spacing:.1em;font-weight:700;margin:14px 14px 6px}
+/* 하위 줄의 건수 — 별표 «앞»에 붙는다 */
+.nav-item .ncnt{font-size:11.5px;color:#60a5fa;font-variant-numeric:tabular-nums;
+  margin-left:auto;flex-shrink:0}
+.nav-item:hover .ncnt{color:#e2e8f0}
 /* 이력서관리 화면 콤팩트 (양식 가져오기·보관함·편집·증명서 보관함) */
 #page-resume-hub .card,#page-docbox .card{padding:12px;margin-bottom:8px!important}
 #page-resume-hub .rc-h,#page-docbox .rc-h{margin-bottom:6px}
@@ -3407,24 +3422,81 @@ function navItemsOf(g){
   if(saved.length) ord.sort((a,b)=>{ const ai=saved.indexOf(a[0]),bi=saved.indexOf(b[0]); if(ai<0&&bi<0)return 0; if(ai<0)return 1; if(bi<0)return -1; return ai-bi; });
   return ord;
 }
-/* 접힘 표시는 nav_state 에 «접힌 것만» true 로 담는다 — 없으면 펴진 것이다.
-   ⚠ 이 열쇠는 기기끼리 맞춰진다(_navSyncPayload). 뜻을 뒤집지 말 것 —
-     예전 기기에 담긴 값이 반대로 읽힌다. */
-function toggleGroup(g){
-  const st=navState(); if(st[g]) delete st[g]; else st[g]=true;
-  setNavState(st); buildNav();
+/* ═══ 옆줄: 상위 대시보드 + 하위 목록 (대표 승인 2026-09-01 「이대로」) ═══
+   기업정보함(pu-cards)과 같은 결로 바꿨다 — 상위 넷을 «큰 단추»로 세우고, 그 아래에
+   «고른 것의 하위만» 그린다.
+
+   여태는 네 그룹이 접이식이라
+     ① 열어 봐야 안에 무엇이 있는지 알았고
+     ② 다 펴면 열여섯 줄이 겹쳐 「⇕ 모두 접기」로 길이를 줄여야 했다.
+   이제 늘 한 그룹의 하위만 보이므로 접을 일이 없다 — 그 단추를 없앴다.
+
+   ⚠ 화면과 주소는 하나도 안 바뀐다. 옆줄이 «보여 주는 방식»만 바뀐 것이다. */
+
+/* 어느 상위를 펼쳐 두었나. 접힘(nav_state)을 대신한다.
+   ⚠ nav_state 는 «지우지 않는다» — 다른 기기에 남아 있고 _navSyncPayload 가 맞춘다.
+     되돌릴 일이 생기면 그 값이 그대로 쓰인다. */
+function navPicked(){
+  var g = LS.get(NS+'nav_group') || '';
+  return NAV.some(function(x){ return x.g===g; }) ? g : (NAV.find(function(x){ return x.g; })||{}).g || '';
 }
-/* 모두 접기 / 모두 펴기 — 하나라도 펴져 있으면 «다 접고», 다 접혀 있으면 «다 편다» */
-function toggleAllGroups(){
-  const groups=NAV.filter(g=>g.g).map(g=>g.g), st=navState();
-  const 접자 = groups.some(g=>!st[g]);
-  groups.forEach(g=>{ if(접자) st[g]=true; else delete st[g]; });
-  setNavState(st); buildNav();
+function navPick(g, 열기){
+  LS.set(NS+'nav_group', g||''); navSyncPush(); buildNav();
+  /* 상위를 누르면 그 그룹의 «첫 화면»으로 간다 — 한 번 클릭으로 끝난다(대표 결정) */
+  if(열기){ var it=navItemsOf(g)[0]; if(it) nav_to(it[0], it[1], g); }
+}
+/* 하위 한 줄에 붙는 건수. CAREER_CFG 가 그 화면의 통과 거르개를 알고 있다.
+   ⚠ 통이 없는 화면(서류 만들기 등)은 «숫자를 안 그린다» — 0 을 그리면 「비었다」로 읽힌다. */
+function navCount(id){
+  try{
+    var page=String(id||'').replace(/^page-/,'');
+    /* 외부기관 실적은 담긴 통이 없다 — 실적 넷에서 «수행기관이 적힌» 것을 모은 화면이다 */
+    if(page==='puagency'){
+      if(typeof PU_SYNC_STORES==='undefined' || typeof _isExternal!=='function') return null;
+      var n=0; PU_SYNC_STORES.forEach(function(k){
+        (get(k)||[]).forEach(function(r){ if(r && _isExternal(r) && !r.excluded) n++; }); });
+      return n;
+    }
+    var cfg=(typeof CAREER_CFG!=='undefined') && CAREER_CFG[page];
+    if(!cfg || !cfg.store) return null;
+    var arr=get(cfg.store)||[];
+    return cfg.filter ? arr.filter(cfg.filter).length : arr.length;
+  }catch(e){ return null; }
+}
+function navGroupCount(g){
+  var n=0, 있나=false;
+  navItemsOf(g).forEach(function(p){ var c=navCount(p[0]); if(c!=null){ n+=c; 있나=true; } });
+  return 있나 ? n : null;
 }
 function buildNav(){
   const nav=document.getElementById('nav'); nav.innerHTML='';
   const footer=document.getElementById('navFooter'); footer.innerHTML='';
   const st=navState(), favs=favState();
+  const gord=getGroupOrder();
+  const groupEntries=NAV.filter(g=>g.g);
+  if(gord.length) groupEntries.sort((a,b)=>{ const ai=gord.indexOf(a.g),bi=gord.indexOf(b.g); if(ai<0&&bi<0)return 0; if(ai<0)return 1; if(bi<0)return -1; return ai-bi; });
+
+  /* ── ① 상위 대시보드 — 큰 단추 넷, 건수를 달고 ── */
+  const picked = navPicked();
+  const tops=document.createElement('div'); tops.className='nav-tops';
+  groupEntries.forEach(grp=>{
+    /* ⚠ .nav-group[data-g] 짜임을 지킨다 — initGroupDrag 가 이 이름으로 찾아 순서를 바꾼다 */
+    const box=document.createElement('div'); box.className='nav-group'; box.dataset.g=grp.g;
+    const t=document.createElement('button'); t.type='button';
+    t.className='g-title top'+(grp.g===picked?' gsel':''); t.dataset.g=grp.g;
+    /* ⚠ 안쪽 짜임(.gname)을 지킨다 — _saveNavOrder 가 제목에서 그룹 이름을 얻는다 */
+    t.innerHTML='<span class="gname"></span><span class="gcnt"></span>';
+    t.querySelector('.gname').textContent=grp.g;
+    const gn=navGroupCount(grp.g);
+    if(gn!=null) t.querySelector('.gcnt').textContent=gn.toLocaleString();
+    t.title=grp.g+(gn!=null?' · '+gn+'건':'');
+    t.onclick=()=>navPick(grp.g, true);
+    box.appendChild(t);
+    tops.appendChild(box);
+  });
+  nav.appendChild(tops);
+
+  /* 즐겨찾기 — 상위 단추 «아래», 하위 목록 «위». 상위가 늘 맨 위여야 어디인지 안다. */
   if(favs.length){
     const fb=document.createElement('div'); fb.className='nav-group';
     const ft=document.createElement('div'); ft.className='g-title fav'; ft.textContent='⭐ 즐겨찾기'; fb.appendChild(ft);
@@ -3432,35 +3504,25 @@ function buildNav(){
     favs.forEach(id=>{ const {label,grp}=navInfo(id); fi.appendChild(mkItem(id,label,grp,true,true)); });
     nav.appendChild(fb);
   }
-  const gord=getGroupOrder();
-  const groupEntries=NAV.filter(g=>g.g);
-  if(gord.length) groupEntries.sort((a,b)=>{ const ai=gord.indexOf(a.g),bi=gord.indexOf(b.g); if(ai<0&&bi<0)return 0; if(ai<0)return 1; if(bi<0)return -1; return ai-bi; });
-  groupEntries.forEach(grp=>{
-    const 접힘 = !!st[grp.g];
-    const box=document.createElement('div'); box.className='nav-group'; box.dataset.g=grp.g;
-    const t=document.createElement('div'); t.className='g-title'+(접힘?' collapsed':''); t.dataset.g=grp.g;
-    /* ⚠ 화살표는 ▾ 로 둔다 — _saveNavOrder 가 제목에서 [▾▸⭐] 를 떼어 그룹 이름을 얻는다 */
-    t.innerHTML='<span class="caret">▾</span><span class="gname"></span>';
-    t.querySelector('.gname').textContent=grp.g;
-    t.title=(접힘?'펴기':'접기')+' — '+grp.g;
-    t.onclick=()=>toggleGroup(grp.g);
-    box.appendChild(t);
-    /* ⚠ 접혀 있어도 «칸은 만든다» — initNavDrag 가 .g-items 를 짝으로 찾는다.
-       안 만들면 그 그룹만 끌어 옮기기가 조용히 죽는다. */
+
+  /* ── ② 하위 목록 — «고른 것»만 ──
+     ⚠ 하위가 하나뿐이면 줄을 안 그린다(대표 결정) — 상위 단추가 이미 그 화면이다. */
+  const subItems=navItemsOf(picked);
+  if(subItems.length > 1){
+    const lab=document.createElement('div'); lab.className='nav-sec';
+    lab.textContent=picked+' 안에서';
+    nav.appendChild(lab);
+    const box=document.createElement('div'); box.className='nav-group g-open'; box.dataset.g=picked;
+    /* ⚠ .g-items 는 그대로 둔다 — initNavDrag 가 이 이름을 짝으로 찾아 화면 차례를 바꾼다 */
     const items=document.createElement('div'); items.className='g-items';
-    if(접힘) items.style.display='none';
-    else navItemsOf(grp.g).forEach(([id,label])=>items.appendChild(mkItem(id,label,grp.g,favs.includes(id),true)));
-    box.appendChild(items);
-    nav.appendChild(box);
-  });
-  /* 「모두 접기 / 펴기」는 환경설정 «위»에 둔다 — 환경설정이 맨 밑이어야 한다 */
-  if(groupEntries.length > 1){
-    const all=document.createElement('button'); all.className='nav-allfold'; all.type='button';
-    const 다접힘 = groupEntries.every(g=>st[g.g]);
-    all.textContent = 다접힘 ? '⇕ 모두 펴기' : '⇕ 모두 접기';
-    all.title = 다접힘 ? '접어 둔 그룹을 모두 폅니다' : '그룹을 모두 접어 옆줄을 짧게 만듭니다';
-    all.onclick=toggleAllGroups;
-    footer.appendChild(all);
+    subItems.forEach(([id,label])=>{
+      const el=mkItem(id,label,picked,favs.includes(id),true);
+      const c=navCount(id);
+      if(c!=null){ const s=document.createElement('span'); s.className='ncnt';
+        s.textContent=c.toLocaleString(); el.insertBefore(s, el.querySelector('.star')); }
+      items.appendChild(el);
+    });
+    box.appendChild(items); nav.appendChild(box);
   }
   NAV.filter(g=>!g.g).forEach(grp=>{ grp.items.forEach(([id,label])=>{ footer.appendChild(mkItem(id,label,null,favs.includes(id),false)); }); });
   _safe(initGroupDrag);
@@ -3479,10 +3541,20 @@ function renderGroupTabs(g,activeId){ const gt=document.getElementById('groupTab
   /* 차례는 navItemsOf 한 곳에서 — 옆줄 트리와 어긋나면 안 된다 */
   gt.innerHTML=navItemsOf(g).map(([id,label])=>'<button class="gtab'+(id===activeId?' active':'')+'" data-id="'+id+'" onclick="navTile(\''+id+'\')">'+escapeHtml(label)+'</button>').join(''); }
 function syncGroupUI(id){ const inf=(typeof navInfo==='function')?navInfo(id):{grp:null}; const grp=inf?inf.grp:null;
-  /* ⚠ 그룹을 접어 둔 채로 그 안 화면을 보고 있을 수 있다 — 그때 옆줄에 «지금 어디»가
-     하나도 안 남으면 길을 잃는다. 접힌 그룹은 «제목»을 눈에 띄게 해 둔다.
-     (접혀 있다고 저절로 펴지는 않는다 — 그러면 「모두 접기」가 곧바로 풀린다) */
-  document.querySelectorAll('.nav-group>.g-title[data-g]').forEach(b=>b.classList.toggle('gsel', b.dataset.g===grp));
+  /* ★ 옆줄의 «펼친 상위»가 지금 화면을 따라온다 — 즐겨찾기·검색·타일로 다른 그룹 화면에
+     들어가면, 옆줄은 엉뚱한 그룹을 펼친 채라 「지금 어디인지」가 안 보였다.
+     ⚠ buildNav 가 이 함수를 부르므로 다시 그릴 때는 «바뀐 것이 없어야» 한다 —
+       안 그러면 서로 부르며 끝없이 돈다. 그래서 다를 때만 담고 다시 그린다. */
+  if(grp && typeof navPicked==='function' && navPicked()!==grp){
+    try{ LS.set(NS+'nav_group', grp); }catch(e){}
+    if(typeof buildNav==='function'){ buildNav(); return syncGroupUI(id); }
+  }
+  /* 켜진 상위는 «펼친 것»(navPicked)으로 칠한다 — «지금 화면의 그룹»으로 칠하면
+     홈·환경설정처럼 그룹이 없는 화면에서 넷 다 꺼져, 무엇을 펼쳐 두었는지 안 보인다
+     (실측 2026-09-01: 홈에서 상위가 하나도 안 켜졌다).
+     ⚠ 위에서 이미 «펼친 것»이 지금 화면을 따라오게 맞춰 두었다 — 둘은 어긋나지 않는다. */
+  const _pick=(typeof navPicked==='function')?navPicked():grp;
+  document.querySelectorAll('.nav-group>.g-title[data-g]').forEach(b=>b.classList.toggle('gsel', b.dataset.g===_pick));
   /* ⚠ 「지금 이 화면」 표시도 «여기서» 단다. 예전에는 nav_to 안에서만 달았는데,
      옆줄을 다시 그리면(그룹을 접었다 펴면) 새로 만든 줄에는 표시가 없어
      보고 있는 화면이 옆줄에서 «사라져» 보였다. buildNav 도 이 함수를 부르므로
