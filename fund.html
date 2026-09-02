@@ -7733,16 +7733,25 @@ function stmtNotes(arr,fin,prv,fid,yr){
 
 /* 기본재산은 «들어오기만» 하지 않는다 — 준비금2를 설정할 때 여기서 빠져나간다
      (D 기본재산 / C 고유목적사업준비금2). 그 줄을 빠뜨리면 기말이 안 맞물린다. */
-  var s4=sec('4. 기본재산의 변동'), inB=0, outB=0, cl=[];
+  /* ⚠ 기본재산 «차변»을 다 합쳐 「준비금2 설정」이라 적으면 안 된다. 두 가지가 틀린다 —
+       ① 맞바꿈 쓰는 기금은 설정이 준비금**1** 로 나가는데도 준비금2라 적힌다.
+       ② 준비금과 무관한 기본재산 감소(반환·정정)까지 설정액으로 둔갑한다.
+     실제 «대변 계정»으로 갈라 적고, 준비금이 아닌 것은 따로 밝힌다. */
+  var s4=sec('4. 기본재산의 변동'), inB=0, outByAcct={}, outEtc=0, cl=[];
   expandSplits(arr).forEach(function(x){
     if(!x.approved||!x.debit||!x.credit) return;
     var amt=num(x.amount)||num(x.deposit)||num(x.withdraw)||0; if(!amt) return;
     if(x.credit==='기본재산'){ inB+=amt; cl.push([dash(x.date)+'  '+dash(x.memo),amt,null]); }
-    if(x.debit==='기본재산') outB+=amt;
+    if(x.debit==='기본재산'){
+      if(RESERVE_ACCTS.indexOf(x.credit)>=0) outByAcct[x.credit]=(outByAcct[x.credit]||0)+amt;
+      else outEtc+=amt;
+    }
   });
   s4.rows.push(['기초',Math.round(num(op.basic)||0),null]);
   s4.rows.push(['당기 출연',Math.round(inB),null]);
-  s4.rows.push(['고유목적사업준비금2 설정',-Math.round(outB),null]);
+  RESERVE_ACCTS.forEach(function(a){
+    if(outByAcct[a]) s4.rows.push([a+' 설정',-Math.round(outByAcct[a]),null]); });
+  if(outEtc) s4.rows.push(['그 밖의 감소',-Math.round(outEtc),null]);
   s4.rows.push(['기말',Math.round(fin.basic),null]);
   if(cl.length){ s4.rows.push(['〈출연 내역〉',null,null]); cl.forEach(function(r){ s4.rows.push(r); }); }
   s4.note='준비금2는 기본재산에서 설정하므로 그만큼 기본재산이 줄어든다.';
@@ -7786,9 +7795,15 @@ function notesChk(N){
   var s4=null; N.forEach(function(s){ if(s.h.indexOf('4.')===0) s4=s; });
   if(s4){
     var g4=function(l){ for(var i=0;i<s4.rows.length;i++) if(s4.rows[i][0]===l) return s4.rows[i]; return null; };
-    var a=g4('기초'), c=g4('당기 출연'), d=g4('고유목적사업준비금2 설정'), z=g4('기말');
-    if(!a||!c||!d||!z) e.push('기본재산 변동에 빠진 줄');
-    else if(a[1]+c[1]+d[1]!==z[1]) e.push('기본재산 기말');
+    var a=g4('기초'), c=g4('당기 출연'), z=g4('기말');
+    /* 감소는 «대변 계정»별로 갈라 적으므로 줄 이름이 하나가 아니다 —
+       준비금1·2 설정과 「그 밖의 감소」를 다 더해서 맞물리는지 본다.
+       한 줄 이름을 못 박아 찾으면 맞바꿈 기금에서 줄이 없어 헛경보가 난다. */
+    var d=0, dn=0;
+    RESERVE_ACCTS.forEach(function(x){ var r=g4(x+' 설정'); if(r){ d+=r[1]; dn++; } });
+    var re=g4('그 밖의 감소'); if(re){ d+=re[1]; dn++; }
+    if(!a||!c||!z) e.push('기본재산 변동에 빠진 줄');
+    else if(a[1]+c[1]+d!==z[1]) e.push('기본재산 기말');
   } else e.push('기본재산 변동이 통째로 없음');
   // 대부금도 같은 셈이다 — 기말 = 기초 + 대부 − 회수
   var s5=null; N.forEach(function(s){ if(s.h.indexOf('5.')===0) s5=s; });
@@ -9251,10 +9266,14 @@ function reserveAdjust(arr,fid,yr){
   var _bfAvail=Math.max(0,Math.round(fin.basic));
   r.setupWant=want; r.setupCut=0;
   if(want>_bfAvail){ r.setupCut=want-_bfAvail; want=_bfAvail; }
-  if(want>0){ r.setup=want; bal[RESERVE_ACCTS[1]]=(bal[RESERVE_ACCTS[1]]||0)+want;
+  /* ⚠ 어느 «번호»가 아니라 어느 «역할»이냐로 얹는다. 설정 분개는 _reserveEntries 가
+     acctCarry(이월 쪽) 대변에 적는데, 여기서 준비금2에 못 박아 두면 맞바꿈 기금에서
+     장부와 잔액 셈이 갈린다 — 설정은 준비금1로 나가고 환입은 준비금2에서 빼,
+     준비금2가 음수가 되고 두 줄이 다 틀린다. 대차·당기순이익은 맞아 화면으론 멀쩡해 보인다. */
+  if(want>0){ r.setup=want; bal[_roles.carry]=(bal[_roles.carry]||0)+want;
               avail+=want; r.avail=avail; }
   if(net>0){ r.kind='전입'; r.need=net; r.amount=net;
-             r.parts=[{acct:RESERVE_ACCTS[1],amount:net}]; r.acct=RESERVE_ACCTS[1]; return r; }
+             r.parts=[{acct:_roles.carry,amount:net}]; r.acct=_roles.carry; return r; }
   if(net===0) return r;
   r.kind='환입'; r.need=-net;
   /* 재원이 모자라도 **기본재산을 더 쓸 수는 없다.** 기본재산은 대부사업에만 쓸 수 있고,
@@ -9269,7 +9288,8 @@ function reserveAdjust(arr,fid,yr){
   /* 환입은 계정별 잔액 안에서 나눈다 — 한 계정을 음수로 만들지 않는다. 준비금1(법인세법 제29조)을
      먼저 쓰고 남은 만큼 준비금2(근로복지기본법 제62조제2항)에서 환입한다. */
   var rest=r.amount;
-  RESERVE_ACCTS.forEach(function(a){ if(rest<=0) return;
+  /* 차례도 번호가 아니라 역할이다 — 이자 쪽을 먼저 쓴다 */
+  [_roles.interest,_roles.carry].forEach(function(a){ if(rest<=0) return;
     var take=Math.min(rest,Math.max(0,bal[a])); if(take<=0) return;
     r.parts.push({acct:a,amount:take}); rest-=take; });
   if(r.parts.length) r.acct=r.parts[0].acct;
