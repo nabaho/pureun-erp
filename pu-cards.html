@@ -2521,6 +2521,11 @@ body.pc #pcDetail{display:flex}
   border-radius:8px;padding:5px 12px;cursor:pointer;font-weight:600}
 .conbbar button:hover{background:#854d0e;color:#ffffff}
 .conbnote{font-size:11.5px;color:#64748b;margin-left:auto}
+/* 📄 등록증 요청 — 밖으로 나가는 일이라 «다른 색»으로 둔다. 눌러도 바로 안 나가고
+   메일 쓰기로 데려가며, 보내기는 그 화면에서 사람이 누른다. */
+.conbask{font-size:12px;color:#1e40af;background:#bfdbfe;border:none;border-radius:8px;
+  padding:5px 12px;cursor:pointer;font-weight:600}
+.conbask:hover{background:#1e40af;color:#ffffff}
 /* 물음 창 */
 .conbhint{font-size:12px;color:#475569;line-height:1.75;margin:0 0 11px}
 .conbhint b{color:#1e293b}
@@ -5341,6 +5346,9 @@ async function bulkSendAll(){
     const r = await postBulkMail({ to:c.bulk, subject:c.subject, body:c.body,
                                    html: c.html || '',   /* 묶음도 서식을 그대로 (대표 지시 2026-08-24) */
                                    matIds:c.ids, spacingSec: BULK_GAP_SEC });
+    /* 등록증 요청이었으면 「청했다」를 적는다 — 같은 요청이 두 번 가면 그 뒤로 아무도 안 연다.
+       ⚠ «걸린 뒤»에만 적는다. 누르기만 하고 실패했으면 안 적어야 다시 청할 수 있다. */
+    if(c.bizAskKeys) coBizAskStamp(c.bizAskKeys);
     _compose = null; clearDraft();
     state.mailSent='sched'; render();
     toast(`📨 ${r.n.toLocaleString()}곳에 걸었습니다 (${r.eta}) — 여기서 진행을 볼 수 있습니다`, 12000);
@@ -25852,7 +25860,9 @@ function coNoBizBarHtml(){
     <b>🔢 번호 없음 ${n.toLocaleString()}곳</b>
     ${s.ask.length ? `<button onclick="openCoNoBizAsk()">상호로 맞춘 ${s.ask.length}곳 확인하며 채우기</button>`
                    : '<span class="dim">확인할 것이 없습니다</span>'}
-    ${s.none.length ? `<span class="dim">이알피에도 번호가 없는 곳 ${s.none.length}</span>` : ''}
+    ${s.none.length ? `<span class="dim">이알피에도 번호가 없는 곳 ${s.none.length}</span>
+      <button class="conbask" onclick="coBizAskStart()"
+        title="담당자 메일이 있는 곳에 등록증 사본을 청합니다 — 글을 보고 사람이 보냅니다">📄 등록증 요청</button>` : ''}
     <span class="conbnote">확정한 회사는 이미 채워져 이 목록에 없습니다 · 푸른이알피에는 아무것도 안 씁니다</span>
   </div>`;
 }
@@ -25912,6 +25922,89 @@ function renderCoNoBizAsk(){
       ⚠ 같은 이름 업체가 둘 이상인 줄은 <b>「고르기」로 직접 정하세요.</b>
       번호는 법으로 하나뿐인 열쇠라, 틀리면 계약서·신고서에 그대로 나갑니다.</p>
     ${body}`;
+}
+
+/* ══════ 📄 등록증 요청 메일 (대표 승인 2026-09-02, 목업 안 ㉯ 「나」) ══════
+   ㉮ 로도 안 채워지는 곳 — 이알피에도 번호가 없는 회사 — 에 등록증을 청한다.
+
+   ⚠⚠ **새 발송기를 만들지 않는다.** 이미 있는 묶음 메일(bulkMailStart)을 그대로 쓴다.
+     그쪽에는 15초 간격·시험 발송·예약 목록·수신거부·퇴사 걸러내기가 다 들어 있다.
+     여기서 하는 일은 «받는 곳을 골라 메일 쓰기로 데려가는 것»뿐이다.
+   ⚠⚠ **여기서 보내지 않는다.** 사람이 메일 쓰기 화면에서 글을 보고 누른다.
+     밖으로 나가는 일이라, 기계가 스스로 보내는 길을 두지 않는다.
+
+   ⚠ 받는 사람은 그 회사 «명함 담당자»다 — 업체 이메일이 아니다.
+     사람이 받아야 답장이 온다. 그리고 그 길에는 수신거부·퇴사 걸러내기가 이미 있다.
+   ⚠ **한 번 보낸 곳은 다시 안 보낸다.** 같은 요청이 두 번 가면 그 뒤로 아무도 안 연다.
+     보낸 표시는 기업정보함 제 자리(coInfo/{열쇠}/bizAskAt)에 남는다 — 보내기가
+     «실제로 걸린 뒤에» 적는다(누르기만 하고 실패했으면 안 적는다). */
+
+/* 이 회사에 등록증을 청할 수 있나 — 순수 로직(검사 대상).
+   list 는 기업 상세 회사들. 돌려주는 것:
+     { ok:[{co,targets}], noMail:[co], already:[co] } */
+function coBizAskSplit(list){
+  const out = { ok: [], noMail: [], already: [] };
+  const none = coNoBizSplit(list||[]).none;   /* 이알피에도 번호가 없는 곳만 */
+  none.forEach(o=>{
+    if(o.extra && o.extra.bizAskAt){ out.already.push(o); return; }
+    /* 그 회사 명함들을 «이미 있는 걸러개»에 통째로 넘긴다 — 수신거부·퇴사·중복이 여기서 걸린다 */
+    const r = mailTargets(o.cards || [], state.mailBlock);
+    if(!r.ok.length){ out.noMail.push(o); return; }
+    /* 한 회사에 한 통이면 된다 — 담당자가 여럿이면 «첫 사람»에게만 */
+    out.ok.push({ co: o, targets: [r.ok[0]] });
+  });
+  return out;
+}
+
+/* 청하는 글 — 사람이 메일 쓰기에서 보고 고칠 수 있다.
+   ⚠ {회사}·{이름} 은 묶음 메일이 곳마다 바꿔 넣는 자리다(그쪽 규칙 그대로). */
+const BIZ_ASK_SUBJECT = '[푸른노무법인] 사업자등록증 사본 요청 — {회사}';
+const BIZ_ASK_BODY = [
+  '{이름}님 안녕하세요. 푸른노무법인입니다.',
+  '',
+  '{회사} 관련 업무를 처리하면서 사업자등록증 사본이 필요합니다.',
+  '계약서·신고서에 사업자등록번호를 적어야 하는데 저희 쪽에 자료가 없습니다.',
+  '',
+  '사업자등록증 사본 한 장을 이 메일에 회신해 주시면 감사하겠습니다.',
+  '사진으로 찍어 보내 주셔도 됩니다.',
+  '',
+  '감사합니다.',
+  '푸른노무법인'
+].join('\n');
+
+/* 「등록증 요청」을 누르면 — 받는 곳을 잡아 메일 쓰기로 데려간다.
+   ⚠ 보내지 않는다. 사람이 그 화면에서 글을 보고 누른다. */
+function coBizAskStart(){
+  const s = coBizAskSplit(coFilteredList(null, false, true));
+  if(!s.ok.length){
+    toast(`청할 곳이 없습니다 — 담당자 메일 없음 ${s.noMail.length} · 이미 청함 ${s.already.length}`, 7000);
+    return;
+  }
+  const to = s.ok.map(x=>x.targets[0]);
+  _compose = {
+    cardId:'', to:'', cc:'', bcc:'',
+    subject: BIZ_ASK_SUBJECT, body: BIZ_ASK_BODY,
+    ids: [], files: [], picking: true,
+    bulk: to,
+    bulkStat: { ready: to.length, noEmail: s.noMail.length, blocked: 0, dup: 0, left: 0 },
+    /* 보내기가 «실제로 걸린 뒤에» 이 회사들에 「청했다」를 적는다 */
+    bizAskKeys: s.ok.map(x=>x.co.key)
+  };
+  state.view='mail'; state.mailSent=false; render();
+  toast(`📄 ${to.length.toLocaleString()}곳에 등록증을 청할 준비가 됐습니다 — `
+      + `글을 보고 「보내기」를 누르세요 (담당자 메일 없음 ${s.noMail.length}곳은 빠졌습니다)`, 12000);
+}
+
+/* 보내기가 걸린 뒤 — 「청했다」를 적는다. 그래야 같은 요청이 두 번 안 간다.
+   ⚠ 성공한 뒤에만 부른다(bulkSendAll 안에서). 누르기만 하고 실패했으면 안 적는다. */
+function coBizAskStamp(keys){
+  const ks = (keys||[]).filter(Boolean);
+  if(!ks.length || Store.mode!=='firebase') return;
+  const upd = {}, now = Date.now();
+  ks.forEach(k=>{ upd['coInfo/'+k+'/bizAskAt'] = now; });
+  Store.db.ref(DB_ROOT).update(upd)
+    .then(()=>{ coListBust(); renderCoSoon(); })
+    .catch(e=>console.warn('[등록증 청함 표시]', e && e.message));
 }
 
 /* 헤더 클릭 정렬: 같은 칸 누르면 방향 토글 */
