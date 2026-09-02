@@ -2044,14 +2044,22 @@ exports.readHomepage = functions
    ★ 무엇을 올릴지는 «화면»이 만든다. 서버는 올려 주기만 한다 —
      화면과 명령줄이 같은 부품(js/pu-site-people.js)을 써서 미리 본 것과 올라가는 것이 같다.
    ★ site/ 아래 .html 만 받는다. 그 규칙 하나로 앱 코드·검사·보안규칙·워크플로가 다 막힌다. */
-/* ══════ 매일 아침 «노동 뉴스·법령 브리핑»을 공지사항에 올린다 ══════
+/* ══════ «주간 노동 브리핑»을 공지사항에 올린다 ══════
    대표 결정 2026-08-31: 「노동뉴스 + 법령 완전자동」.
+   대표 지시 2026-09-02: 「공지사항은 뉴스레터와 같이 1주일에 1개씩」.
+
+   ★ 일이 «둘»로 갈려 있다 — 왜 그런지가 중요하다:
+     ① dailyNewsCollect  날마다 아침 7:00, 제목·링크만 모아 둔다 (안 올린다)
+     ② weeklyNewsBrief   월요일 아침 7:30, 모아 둔 한 주치로 한 장을 낸다
+     신문사 RSS 는 최근 50개만 주는데 그것이 «이틀치»뿐이다
+     (2026-09-02 실측: 50개 = 8/30~9/1). 주 1회만 읽으면 「주간」이라 이름 붙이고
+     이틀치만 싣게 된다. 그래서 모으는 일과 내는 일을 갈랐다.
 
    ★ 기사 «본문»은 옮기지 않는다 — 제목과 원문 링크까지다(저작권).
    ★ 자동이라 사람이 못 막는다. 그래서 «안 하는 쪽»으로 기운다:
-     · 못 읽으면 아무것도 안 올린다(그날 것을 건너뛴다. 빈 공지를 올리지 않는다)
-     · 오늘 것이 이미 있으면 두 번 올리지 않는다
-     · 자료에 스위치를 둔다(homepage/newsBrief/off = true 면 아예 안 돈다)
+     · 못 읽으면 아무것도 안 올린다(그 주 것을 건너뛴다. 빈 공지를 올리지 않는다)
+     · 이번 주 것이 이미 있으면 두 번 올리지 않는다(lastWeek)
+     · 자료에 스위치를 둔다(homepage/newsBrief/off = true 면 둘 다 안 돈다)
    ★ 「사람이 보는 홈페이지」에 먼저, 우리 사본에 나중에 — publishSite 와 같은 차례다. */
 const 브리핑샘 = {
   뉴스: "https://www.labortoday.co.kr/rss/allArticle.xml",
@@ -2094,21 +2102,77 @@ async function 새홈페이지쪽(자리) {
   return await r.text();
 }
 
-exports.dailyNewsBrief = functions
+/* 서울 기준 오늘 (yyyy-mm-dd) */
+function 서울오늘() {
+  return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ① 날마다 «모으기» — 올리지는 않는다
+   ══════════════════════════════════════════════════════════════════════════
+   ★ 왜 날마다 도는가 — 신문사 RSS 는 최근 50개만 준다.
+     2026-09-02 실측으로 그것이 «이틀치»뿐이었다(50개 = 8/30~9/1, 노동 관련 31건).
+     주 1회만 읽으면 「주간 브리핑」이라 이름 붙이고 이틀치만 싣게 된다.
+     그래서 날마다 제목·링크만 모아 두었다가 월요일에 한 장으로 낸다.
+
+   ★ 여기서는 «아무것도 올리지 않는다» — 글이 나가는 곳은 아래 한 군데뿐이다. */
+exports.dailyNewsCollect = functions
+  .runWith({ timeoutSeconds: 120, memory: "256MB" })
+  .pubsub.schedule("every day 07:00")
+  .timeZone("Asia/Seoul")
+  .onRun(async () => {
+    const 자리 = getDatabase().ref("homepage/newsBrief");
+    const 설정 = (await 자리.once("value")).val() || {};
+    if (설정.off === true) { console.log("[모으기] 꺼져 있습니다"); return null; }
+
+    const 오늘 = 서울오늘();
+    let 거리;
+    try {
+      거리 = await 브리핑거리모으기();
+    } catch (e) {
+      /* ★ 못 읽은 날이 있어도 그냥 넘어간다 — 모아 둔 것은 그대로 남는다 */
+      console.warn("[모으기] 오늘은 못 읽었습니다", e.message);
+      return null;
+    }
+
+    const 모아둔것 = (await 자리.child("모음").once("value")).val() || {};
+    const 결과 = 브리핑부품.모으기(모아둔것, 거리.뉴스, 오늘);
+    const 남길것 = 브리핑부품.오래된것털기(결과.모음, 오늘, 14);
+
+    await 자리.child("모음").set(남길것);
+    await 자리.update({ 모은날: 오늘, 모은수: 결과.새로, 쌓인수: Object.keys(남길것).length });
+    console.log("[모으기] 새로 " + 결과.새로 + "건 · 쌓인 것 " + Object.keys(남길것).length + "건");
+    return null;
+  });
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ② 월요일 아침 «뉴스레터 한 장» (대표 지시 2026-09-02 「1주일에 1개씩」)
+   ══════════════════════════════════════════════════════════════════════════ */
+exports.weeklyNewsBrief = functions
   .runWith({ timeoutSeconds: 300, memory: "256MB", secrets: ["GITHUB_AUTOMATION_TOKEN"] })
-  .pubsub.schedule("every day 07:30")
+  .pubsub.schedule("every monday 07:30")
   .timeZone("Asia/Seoul")
   .onRun(async () => {
     const 자리 = getDatabase().ref("homepage/newsBrief");
     const 설정 = (await 자리.once("value")).val() || {};
     if (설정.off === true) { console.log("[브리핑] 꺼져 있습니다"); return null; }
 
-    /* 오늘 날짜(서울) */
-    const 오늘 = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
-    if (설정.lastDate === 오늘) { console.log("[브리핑] 오늘 것은 이미 올렸습니다"); return null; }
+    const 오늘 = 서울오늘();
+    /* ★ 같은 주에 두 번 올리지 않는다 — 다시 돌면 같은 글이 두 번 실린다.
+       이레의 첫날을 «그 주의 이름»으로 삼는다. */
+    const 이번주 = 브리핑부품.며칠전(오늘, 6);
+    if (설정.lastWeek === 이번주) { console.log("[브리핑] 이번 주 것은 이미 올렸습니다"); return null; }
 
-    const 거리 = await 브리핑거리모으기();
-    const 글 = 브리핑부품.브리핑(거리.뉴스, 거리.법령, 오늘);
+    /* 뉴스는 «모아 둔 것»에서, 법령은 지금 읽는다
+       (법제처는 공포일순으로 주므로 주 1회로도 한 주치가 다 들어온다) */
+    const 모아둔것 = (await 자리.child("모음").once("value")).val() || {};
+    const 주간뉴스 = 브리핑부품.주간뉴스고르기(모아둔것, 오늘, 7);
+    let 법령 = [];
+    try {
+      법령 = (await 브리핑거리모으기()).법령;
+    } catch (e) { console.warn("[브리핑] 법령을 못 읽었습니다", e.message); }
+
+    const 글 = 브리핑부품.주간브리핑(주간뉴스, 법령, 오늘, 7);
     if (!글) { console.warn("[브리핑] 실을 것이 없어 건너뜁니다"); return null; }
 
     /* 공지 목록과 «본으로 쓸» 글 쪽을 읽는다 */
@@ -2142,8 +2206,8 @@ exports.dailyNewsBrief = functions
       } catch (e) { console.warn("[브리핑] 사본 올리기 실패", e.message); }
     }
 
-    await 자리.update({ lastDate: 오늘, lastNo: 새번호, lastTitle: 글.제목,
-                        뉴스수: 거리.뉴스.length, 법령수: 거리.법령.length });
+    await 자리.update({ lastWeek: 이번주, lastDate: 오늘, lastNo: 새번호, lastTitle: 글.제목,
+                        뉴스수: 주간뉴스.length, 법령수: 법령.length });
     console.log("[브리핑] 올렸습니다 — " + 글.제목);
     return null;
   });
