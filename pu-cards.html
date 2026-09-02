@@ -1152,10 +1152,23 @@ table.sbox tr.bad td{background:#f8fafc}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dmm-l1 .clip{flex:none;display:inline-flex;align-items:center;color:var(--dim)}
 .dmm-l1 .at{flex:none;font-size:12.5px;color:var(--dim)}
-.dmm-l2{margin-top:3px;font-size:14px;color:var(--sub);
+/* ⚠⚠ display:block 이 «반드시» 있어야 한다 (대표 지적 2026-08-30 「글자가 화면 밖」).
+   이 둘은 <span> 이다 — 인라인 요소에는 overflow:hidden 도 text-overflow 도
+   «아무 효과가 없다». 자르라고 적어 두었는데 한 줄도 안 잘리고 있었다.
+   실측(411px 폰): 고치기 전 글이 681px 까지 삐져나갔다(270px 가 화면 밖).
+   고친 뒤 411px 로 딱 맞는다. tests/mail-mobile-clip.test.js 가 지킨다. */
+.dmm-l2{display:block;margin-top:3px;font-size:14px;color:var(--sub);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.dmm-l3{margin-top:3px;font-size:13px;color:var(--dim);
+.dmm-l3{display:block;margin-top:3px;font-size:13px;color:var(--dim);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 폰 서랍의 담당자/업무별 고르개 — PC 옆줄(.dm-seg)과 같은 노릇 */
+.dmm-seg{display:flex;gap:6px;padding:6px 12px 8px}
+.dmm-seg button{flex:1 1 0;min-width:0;font-family:inherit;font-size:12.5px;font-weight:600;
+  padding:7px 6px;border-radius:8px;border:1px solid rgba(255,255,255,.14);
+  background:transparent;color:var(--dim);cursor:pointer}
+.dmm-seg button.on{background:#475569;border-color:#475569;color:#fff;font-weight:700}
+.dmm-f .meTag{margin-left:5px;font-size:10.5px;font-weight:700;color:#fff;
+  background:#2563eb;border-radius:4px;padding:1px 5px}
 /* 안 읽은 줄은 굵게 — 앱과 같다 */
 .dmm-row.unread .dmm-l1 .who,.dmm-row.unread .dmm-l2{font-weight:700;color:var(--ink)}
 .dmm-st{position:absolute;right:8px;bottom:12px;color:#475569;font-size:17px;
@@ -17704,6 +17717,14 @@ function mbDrawerHtml(){
   const bins = allBins.filter(b=>!mbHidden(b.id));
   const hidBins = allBins.filter(b=>mbHidden(b.id));
   const openMine = state.mbMineOpen !== false;
+  /* ── 담당자 / 업무별 — PC 옆줄에만 있던 것을 폰에도 (대표 지적 2026-08-30
+       「폴더 피시는 담당자도 있다 폰에서도」) ──
+     ⚠ 잣대를 PC 와 «같은 것»으로 쓴다(state.mbDash · mbMyBox). 폰만 따로 두면
+       PC 에서 담당자를 보다 폰을 열었을 때 업무별로 튄다.
+     ⚠ 끌어서 차례 옮기기는 안 붙인다 — 폰에는 끌기가 없다. */
+  const dash = state.mbDash ? (state.mbDash === 'who' ? 'who' : 'topic')
+             : (mbMyBox() ? 'who' : 'topic');
+  const whos = (dash === 'who') ? mbWhoList() : [];
   h += `<div class="dmm-sec" onclick="mbToggleMine()">
       <span class="nm">● 푸른 분류</span>
       <span class="tool" onclick="event.stopPropagation();mbToggleHidden()"
@@ -17721,6 +17742,28 @@ function mbDrawerHtml(){
       else h += `<div class="r"><span class="nm" style="color:#94a3b8">숨긴 칸이 없습니다</span></div>`;
       h += `</div>`;
     }
+    h += `<div class="dmm-seg">
+      <button class="${dash==='who'?'on':''}" onclick="event.stopPropagation();mbSetDash('who')"
+        title="같은 메일을 «담당자»로 갈라 봅니다">👤 담당자${whos.length?` ${whos.length}`:''}</button>
+      <button class="${dash==='topic'?'on':''}" onclick="event.stopPropagation();mbSetDash('topic')"
+        title="업무별 칸 — 메일이 실제로 담긴 자리입니다">📂 업무별${bins.length?` ${bins.length}`:''}</button>
+    </div>`;
+  }
+  if(openMine && dash === 'who'){
+    /* 담당자 줄 — PC 와 «같은 차례»(이름 → 안읽은수)로 둔다 */
+    if(whos.length) whos.forEach(w=>{
+      const id = MB_WHO_P + w.name;
+      h += `<div class="dmm-f ${now===id?'on':''}" style="padding-left:18px"
+        onclick="mbGo('${esc(id)}')"
+        title="${esc(w.name)} 담당 — 메일은 업무 칸에 그대로 있습니다${w.n?' · '+w.n.toLocaleString()+'통':''}">
+        <span class="ic">👤</span>
+        <span class="nm">${esc(w.name)}${w.me?' <b class="meTag">나</b>':''}</span>
+        ${w.un?`<span class="n">${w.un}</span>`:''}</div>`;
+    });
+    else h += `<div class="dmm-hint">${_mbFolders===null ? '읽고 있습니다…'
+      : '아직 담당자를 아는 메일이 없습니다'}</div>`;
+  }
+  if(openMine && dash === 'topic'){
     /* 층만큼 들여쓰고, 줄 끝에 ⋮ 를 둔다 — 폰에서도 이름 바꾸기·숨기기가 된다 */
     if(bins.length) bins.forEach(b=>{
       const c = mbBinCount(b);
