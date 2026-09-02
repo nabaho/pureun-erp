@@ -2200,15 +2200,45 @@ async function getAllFilesFromIDB(){ try{
     req.onsuccess=function(){ res(req.result||[]); }; req.onerror=function(){ res([]); }; });
 }catch(e){ return []; } }
 
-/* IDB에 저장된 파일 ID만 가져와 동기 존재확인용 인덱스 구성 (보기/첨부 판정 정확화) */
-async function getAllFileIdsFromIDB(){ try{
-  const db=await _openIDB(); return new Promise(function(res){
+/* IDB에 저장된 파일 ID만 가져와 동기 존재확인용 인덱스 구성 (보기/첨부 판정 정확화)
+   ⚠ 실패를 «삼키지 않는다» — 실패를 빈 목록으로 돌려주면 「파일이 없다」와 구별이 안 된다.
+     그 구별이 없어서 아래 두 기능이 원본 있는 줄을 「없음」으로 보고 손댈 수 있었다. */
+async function getAllFileIdsFromIDB(){
+  const db=await _openIDB(); return new Promise(function(res,rej){
     const req=db.transaction('files','readonly').objectStore('files').getAllKeys();
-    req.onsuccess=function(){ res(req.result||[]); }; req.onerror=function(){ res([]); }; });
-}catch(e){ return []; } }
+    req.onsuccess=function(){ res(req.result||[]); }; req.onerror=function(){ rej(req.error||new Error('getAllKeys')); }; });
+}
+
+/* ★ 파일 목차가 «준비됐는가» (대표 지시 2026-09-02 「고쳐」)
+   hasOriginal 은 이 목차(_fileIdSet)를 동기로 본다. 그런데 목차는 앱을 켠 «뒤» 채워지고,
+   전에는 실패해도 조용했다. 그래서 목차가 «반만» 채워진 순간에
+     · 중복 자동 정리 → 원본이 «있는» 줄을 「없음」으로 보고 지웠다
+     · 한꺼번에 채우기 → 이미 있는 원본을 새 파일로 덮었다(파일 고르기 쪽은 되돌리기도 없다)
+   실측(2026-09-02): 목차에 둘 중 하나만 들어온 순간 자동 정리가 「겹침 100%」로 지우려 했다.
+   ⚠ 「원본을 잃지 않는다」고 확인 창에 적어 놓고 그것을 못 지키는 상태였다.
+   ⚠ 지우거나 덮는 일은 이 표시가 'ready' 일 때만 한다. 'loading'·'failed' 는 막는다. */
+var _fileIdxState='loading';                       /* 'loading' | 'ready' | 'failed' */
+function fileIdxReady(){ return _fileIdxState==='ready'; }
+function fileIdxWhy(){
+  return _fileIdxState==='failed'
+    ? '이 브라우저에서 첨부 저장소를 열지 못했습니다 — 원본이 있는지 없는지 알 수 없어 손대지 않습니다.\n\n'
+      + '새로고침해 보시고, 그래도 안 되면 비공개(시크릿) 창이 아닌지·저장 공간이 남았는지 확인해 주세요.'
+    : '첨부 목록을 아직 읽는 중입니다 — 잠시 뒤 다시 눌러 주세요.\n\n'
+      + '지금 하면 원본이 있는 서류를 「없다」고 잘못 볼 수 있습니다.';
+}
+/* 지우거나 덮기 «전»에 반드시 지난다 — 통과하지 못하면 아무 일도 하지 않는다 */
+function fileIdxGuard(){
+  if(fileIdxReady()) return true;
+  alert('⏳ ' + fileIdxWhy());
+  _safe(loadFileIndex);                            /* 실패였으면 한 번 더 해 본다 */
+  return false;
+}
 async function loadFileIndex(){
-  try{ (await getAllFileIdsFromIDB()).forEach(function(id){ _fileIdSet.add(id); }); }catch(e){}
-  try{ for(var k in localStorage){ if(k.indexOf(NS+'pf_meta_')===0) _fileIdSet.add(k.replace(NS+'pf_meta_','')); } }catch(e){}
+  var ok=true;
+  try{ (await getAllFileIdsFromIDB()).forEach(function(id){ _fileIdSet.add(id); }); }
+  catch(e){ ok=false; console.warn('[파일목차] IndexedDB 를 못 읽었습니다', e); }
+  try{ for(var k in localStorage){ if(k.indexOf(NS+'pf_meta_')===0) _fileIdSet.add(k.replace(NS+'pf_meta_','')); } }catch(e){ ok=false; }
+  _fileIdxState = ok ? 'ready' : 'failed';
   _refreshAttachUI();
 }
 function _refreshAttachUI(){ try{
@@ -6157,6 +6187,8 @@ function dupAutoFind(pages){
 var _dupAutoCtx = null;
 
 function dupAutoPreview(pages){
+  /* ⚠ 목차가 준비되기 «전»에는 아무것도 보여 주지 않는다 — 미리보기 자체가 거짓이 된다 */
+  if(!fileIdxGuard()) return;
   pages = pages || [_dupPage];
   var list = dupAutoFind(pages);
   _dupAutoCtx = { pages: pages, list: list };
@@ -6198,6 +6230,8 @@ function _dupAutoStashGet(){ try{ return JSON.parse(LS.get(NS + 'dup_auto_undo')
 
 function dupAutoRun(){
   if(!_dupAutoCtx || !_dupAutoCtx.list.length) return;
+  /* ⚠ 미리보기 뒤에 목차가 어긋날 수도 있다 — 지우기 «바로 앞»에서 한 번 더 본다 */
+  if(!fileIdxGuard()) return;
   var list = _dupAutoCtx.list;
   if(!confirm('원본이 없는 ' + list.length + '건을 지우고 남는 줄에 합칩니다.\n\n'
     + '지우는 줄에는 원본이 없어 파일은 잃지 않습니다.\n되돌리기가 준비됩니다.\n\n계속할까요?')) return;
@@ -6778,7 +6812,11 @@ function bulkPairUp(files, db, page){
      ⑴ 📁 파일 고르기 — 폴더를 연결하지 않은 기기(폰 등)에서. 파일이 앱 안에 «복사»된다.
      ⑵ 🗂 연결된 폴더에서 찾기 — 파일을 고를 필요가 없고 «복사도 하지 않는다»(경로만 참조).
         ⚠ 폴더가 있으면 이쪽이 낫다 — 76건을 base64로 담으면 저장공간이 금방 찬다. */
-function openBulkMatch(page){ _bulkCtx={page,matched:[],unmatched:[]};
+function openBulkMatch(page){
+  /* ⚠ 후보는 «원본 없는 줄»이다 — 목차가 어긋나면 원본 있는 줄이 후보가 되고,
+     붙이는 순간 이미 있는 원본을 덮는다(파일 고르기 쪽은 되돌리기도 없다). */
+  if(!fileIdxGuard()) return;
+  _bulkCtx={page,matched:[],unmatched:[]};
   var noOrig=_bulkTargets(page).length;
   $('bulkBody').innerHTML=`<div style="text-align:center;padding:22px;background:#f8fafc;border:2px dashed var(--border);border-radius:10px">
     <div style="font-size:42px">📦</div>
@@ -6926,7 +6964,9 @@ function bulkLeftoverReport(pages){
   $('bulkSave').style.display='none';
 }
 
-async function bulkSaveMatched(){ if(!_bulkCtx) return; const {page,matched,fromFolder}=_bulkCtx; let n=0;
+async function bulkSaveMatched(){ if(!_bulkCtx) return;
+  if(!fileIdxGuard()) return;      /* 붙이기 «바로 앞»에서 한 번 더 — 덮으면 되돌릴 수 없다 */
+  const {page,matched,fromFolder}=_bulkCtx; let n=0;
   if(fromFolder){
     /* ★ 복사하지 않는다 — 경로만 잇는다. 되돌릴 수 있게 scanId 를 남긴다(↩ 이번 스캔 되돌리기). */
     const sid='B'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'-'+String(Date.now()).slice(-4);
