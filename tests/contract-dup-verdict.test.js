@@ -183,7 +183,12 @@ ok('종류 자체가 안 겹칠 때는 "종류가 달라"라고 말한다 (세�
 ok('지금 작성 중 줄에 세부 종류가 붙는다', count("mySubs ? h('span', null, ' · ', h('b', null, mySubs)) : null") === 1);
 ok('이력 창도 세부 종류를 이름으로 보여준다', count("' 유형: ' + sub.label") === 1);
 ok('이력 창 금액은 종류별 amounts 에서 읽는다', count("var a = Number((c.amounts && c.amounts[k]) || 0);") === 1);
-ok('저장 전 확인창도 세부 종류를 적는다', count("var _sub = contractSubtypeLabel(c, k);") === 1);
+/* ⚠ 2026-08-31: 저장 전 확인창이 텍스트 confirm 에서 «색 카드」로 바뀌었다
+   (대표: 「어떤 사업인지 구분되게 색표시」). 세부 종류 이름은 이제
+   contractSubtypeLabel(rec, k) 를 호출하는 _subText 헬퍼가 카드마다 붙인다 —
+   못 박을 것은 «어느 변수명이냐»가 아니라 「세부 종류를 실제로 붙이는가」다. */
+ok('저장 전 확인창도 세부 종류를 적는다',
+   count("var s = contractSubtypeLabel(rec, k); return s ? s.label : ''") === 1);
 
 /* 기업정보함에서 회사 찾기 */
 ok('PucardsCompanyPickerModal 이 한 번 정의돼 있다', count('function PucardsCompanyPickerModal(props){') === 1);

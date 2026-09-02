@@ -144,7 +144,10 @@ t('그 아래 구분줄도 있다', /'그 전에 등록한 것'/.test(src), true
 t('★ 오늘 건이 없으면 머리줄을 안 넣는다', /if\(todayN === 0\) return cards\.map/.test(src), true);
 t('카드에 오늘 딱지가 붙는다', /'🆕 오늘 ' \+ regTimeText\(c\)/.test(src), true);
 t('★ 카드 왼쪽에 초록 띠', /regIsToday\(c\)\) \? '3px solid #16a34a'/.test(src), true);
-t('이관 딱지(arvBadge)와 따로 둔다', /arvBadge\(c, 'contracts', refreshContracts\),/.test(src), true);
+/* ⚠ 2026-08-31: 카드가 다섯 줄→두 줄로 줄면서(대표 「셀의 길이를 자꾸
+   길게하지 말고」) 회사명·이관딱지·오늘딱지가 «한 줄» 안의 형제 요소가 됐다.
+   못 박을 것은 뒤에 쉼표가 있는 옛 모양이 아니라 「arvBadge 를 부르는가」다. */
+t('이관 딱지(arvBadge)와 따로 둔다', /arvBadge\(c, 'contracts', refreshContracts\)/.test(src), true);
 t('밖에서도 쓸 수 있게 열어 뒀다', /window\.regIsToday\s*=/.test(src), true);
 
 /* ═══ 6. ★ 부가세 말풍선 — 창을 막지 않는가, 언제 뜨는가 ═══ */
