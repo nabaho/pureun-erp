@@ -5077,8 +5077,10 @@ function renderCompose(){
 let _sending = false;
 /* ══════ 여러 곳에 한 통씩 — 순수 로직 (테스트 대상) ══════
    대표 지시 2026-08-15(300곳 미만). 서버(functions/mail-bulk.js)가 받는 곳마다
-   예약 한 건씩을 담고, 이미 돌고 있는 예약 발송기가 5분마다 20통씩 빼 간다.
-   여기서는 **보내기 전에 사람이 알아야 할 숫자**를 만든다. */
+   예약 한 건씩을 담고, 이미 돌고 있는 예약 발송기가 그것을 조금씩 빼 간다.
+   여기서는 **보내기 전에 사람이 알아야 할 숫자**를 만든다.
+   ⚠ 발송기 속도는 아래 BULK_DRAIN_* — functions/mail-bulk.js 의 DRAIN_* 과 «같아야 한다».
+     tests/cards-bulk-mail.test.js 가 화면과 서버의 셈을 곳 수마다 맞춰 본다. */
 
 /* 보내기 확인창에 적을 것들 — 되돌릴 수 없는 일이라 숫자를 다 보여주고 누르게 한다 */
 function bulkSummary(stat, gapSec, matNames){
@@ -5091,16 +5093,37 @@ function bulkSummary(stat, gapSec, matNames){
   if(stat && stat.left)    skip.push(`퇴사 ${stat.left}`);
   if(stat && stat.dup)     skip.push(`중복 ${stat.dup}`);
   if(skip.length) out.push({ k:'빠지는 곳', v: skip.reduce((a,b)=>a+b.replace(/\D+/g,'')*1,0)+`곳 (${skip.join(' · ')})` });
-  out.push({ k:'걸리는 시간', v: bulkEta(n, gapSec)+` (${gapSec}초에 한 통씩)` });
+  out.push({ k:'걸리는 시간', v: bulkEta(n, gapSec)+` (${bulkEtaWhy(n, gapSec)})` });
   if(matNames && matNames.length) out.push({ k:'첨부', v: matNames.join(' · ') });
   return out;
 }
-/* 서버(mail-bulk.js etaText)와 **같은 셈**이어야 한다 — 화면과 실제가 다르면 못 믿는다 */
+/* 예약 발송기가 빼 가는 속도 — functions/mail-bulk.js 의 DRAIN_EVERY_MIN·DRAIN_BATCH 와
+   같은 값이어야 한다. 브라우저는 그 파일을 읽을 수 없어 여기 한 벌을 더 둔다.
+   ⚠ 어긋나면 tests/cards-bulk-mail.test.js 의 「화면과 서버가 같은 셈」이 걸린다. */
+const BULK_DRAIN_EVERY_MIN = 15;
+const BULK_DRAIN_BATCH = 20;
+
+/* 서버(mail-bulk.js etaText)와 **같은 셈**이어야 한다 — 화면과 실제가 다르면 못 믿는다.
+   ★ 늦은 쪽이 답이다 — ①예약 간격으로 차례가 오는 때 ②발송기가 빼 가는 때.
+     간격을 좁혀도 발송기보다 빨리 나가지 않는다(2026-09-02, 세 배 틀려 있었다). */
 function bulkEta(n, gapSec){
-  const min = Math.max(1, Math.round((n * gapSec) / 60));
+  const cnt = Math.max(0, Number(n) || 0);
+  const bySpacing = Math.round((cnt * (Number(gapSec) || 0)) / 60);
+  const byDrain = Math.ceil(cnt / BULK_DRAIN_BATCH) * BULK_DRAIN_EVERY_MIN;
+  const min = Math.max(1, bySpacing, byDrain);
   if(min < 60) return '약 '+min+'분';
   const h = Math.floor(min/60), m = min%60;
   return '약 '+h+'시간'+(m?' '+m+'분':'');
+}
+/* 왜 그만큼 걸리는지 — «실제로 발목을 잡는 쪽»을 적는다.
+   「약 1시간 15분 (15초에 한 통씩)」이라 적으면 88곳×15초=22분이라 셈이 안 맞아 보인다. */
+function bulkEtaWhy(n, gapSec){
+  const cnt = Math.max(0, Number(n) || 0);
+  const bySpacing = Math.round((cnt * (Number(gapSec) || 0)) / 60);
+  const byDrain = Math.ceil(cnt / BULK_DRAIN_BATCH) * BULK_DRAIN_EVERY_MIN;
+  return byDrain > bySpacing
+    ? `발송기가 ${BULK_DRAIN_EVERY_MIN}분마다 ${BULK_DRAIN_BATCH}통씩 빼 갑니다`
+    : `${gapSec}초에 한 통씩`;
 }
 /* 시험 발송에 쓸 한 곳 — 첫 번째 곳으로 «실제로 나갈 모습»을 만든다.
    ⚠ 받는 주소만 나로 바꾸고 글자는 그대로 둔다. 글자까지 바꾸면 시험한 뜻이 없다. */

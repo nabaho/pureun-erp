@@ -5,7 +5,11 @@
    ⚠ 한꺼번에 쏟지 않는다. 다음메일은 대량 발송용 계정이 아니라, 몰아 보내면
      계정이 막힌다. 계정이 막히면 **평소 자료 발송까지 멈춘다** — 그게 가장 나쁘다.
      그래서 받는 곳마다 **예약 한 건씩**을 만들어 시간을 벌려 둔다. 실제 발송은
-     이미 돌고 있는 sendScheduledMail(5분마다 20통)이 맡는다 — 새 발송기를 만들지 않는다.
+     이미 돌고 있는 sendScheduledMail 이 맡는다 — 새 발송기를 만들지 않는다.
+     ⚠ 그 발송기가 «얼마나 빨리 빼 가는가»는 아래 DRAIN_* 에 적어 둔다 — 예상 시간을
+       셈하는 데 그 값이 필요하다. 예전에는 그 속도가 이 주석에만 적혀 있었고
+       index.js 가 따로 정하고 있어서, 한쪽만 낡아 예상 시간이 세 배 틀렸다
+       (2026-09-02). 지금은 어긋나면 검사가 걸린다 — 아래 DRAIN_* 의 ⚠ 을 볼 것.
 
    ⚠ 한 통에 한 곳만 넣는다. 그래서
      · 받는 사람들끼리 서로의 주소가 보이지 않고
@@ -17,11 +21,29 @@
 /* 한 번에 걸 수 있는 최대 — 대표 지시(300곳 미만)보다 조금 넉넉하게.
    상한이 없으면 실수로 6천 곳을 걸어 계정이 막힌다. */
 const MAX_BULK = 400;
-/* 통 사이 기본 간격(초). 15초 ≈ 시간당 240통 — 지금 예약 발송기가 빼 가는 속도와 같다.
+/* 통 사이 기본 간격(초). 간격은 «언제 차례가 되는가»만 정한다 — 실제로 빼 가는
+   속도는 아래 DRAIN_* 이다. 좁혀도 발송기보다 빨리 나가지는 않는다.
    며칠 돌려 탈이 없으면 줄여도 된다. 늘리는 것은 언제든 안전하다. */
 const DEFAULT_SPACING_SEC = 15;
 const MIN_SPACING_SEC = 5;
 const MAX_SPACING_SEC = 600;
+
+/* ★ 예약 발송기(index.js sendScheduledMail)가 빼 가는 속도를 여기에도 적어 둔다.
+     15분마다 20통 = 시간당 80통.
+
+   ⚠ 진짜 값은 index.js 에 있다 — 일정은 `schedule("every 15 minutes")`,
+     한 번에 집는 수는 `limitToFirst(20)`. 그것을 여기서 «불러 쓰지 않고» 베껴 두는
+     까닭은, 일정을 정하는 자리가 곧 비용을 정하는 자리이고
+     tests/rtdb-cost-guards.test.js 가 그 자리를 「너무 자주 깨우지 마라」로 지켜야
+     하기 때문이다. 셈을 위해 그 리터럴을 없애면 비용 지킴이가 볼 자리가 사라진다.
+
+   ⚠ 그래서 «어긋남»은 검사가 막는다 — tests/mail-bulk-drain-truth.test.js 가
+     index.js 의 두 숫자와 이 두 값을 견준다. 어느 쪽만 고쳐도 걸린다.
+     2026-08-23 f315f813 이 index.js 만 15분으로 바꿔 여기가 세 배 틀어졌을 때,
+     그 검사가 있었으면 그 자리에서 걸렸다. 바꿀 때는 «세 곳을 함께» 고친다 —
+     index.js · 여기 · 화면 두 곳(pu-cards.html BULK_DRAIN_*, js/pu-news-core.js). */
+const DRAIN_EVERY_MIN = 15;
+const DRAIN_BATCH = 20;
 
 /* 글 안의 {이름}·{회사} 를 그 곳 값으로 바꾼다.
    화면(pu-cards.html mailFill)과 **같은 규칙**이어야 한다 — 미리보기와 실제가 달라지면
@@ -124,9 +146,19 @@ function buildQueue(v, now, by, batchId) {
   });
 }
 
-/* 언제 다 나가는지 사람 말로 — 「22분」을 보고 눌러야 한다 */
+/* 언제 다 나가는지 사람 말로 — 이 숫자를 보고 «되돌릴 수 없는» 단추를 누른다.
+
+   ★ 두 가지가 함께 정하고, «늦은 쪽»이 답이다.
+     ① 예약 간격 — 마지막 통의 차례가 오는 때        (곳 수 × 간격)
+     ② 발송기 속도 — 한 바퀴에 DRAIN_BATCH 통씩      (ceil(곳 수 ÷ 20) × 15분)
+   ⚠ 간격만 보면 안 된다. 간격을 좁혀도 발송기보다 빨리 나갈 수는 없다.
+     2026-09-02 까지 ①만 보고 있어서 300곳이면 「1시간 15분」이라 해 놓고
+     실제로는 3시간 45분이 걸렸다. 자세한 까닭은 tests/mail-bulk.test.js 에. */
 function etaText(n, gapMs) {
-  const min = Math.max(1, Math.round((n * gapMs) / 60000));
+  const cnt = Math.max(0, Number(n) || 0);
+  const bySpacing = Math.round((cnt * (Number(gapMs) || 0)) / 60000);
+  const byDrain = Math.ceil(cnt / DRAIN_BATCH) * DRAIN_EVERY_MIN;
+  const min = Math.max(1, bySpacing, byDrain);
   if (min < 60) return '약 ' + min + '분';
   const h = Math.floor(min / 60), m = min % 60;
   return '약 ' + h + '시간' + (m ? ' ' + m + '분' : '');
@@ -134,5 +166,6 @@ function etaText(n, gapMs) {
 
 module.exports = {
   MAX_BULK, DEFAULT_SPACING_SEC, MIN_SPACING_SEC, MAX_SPACING_SEC,
+  DRAIN_EVERY_MIN, DRAIN_BATCH,
   fill, cleanTargets, spacingMs, validateBulk, buildQueue, etaText,
 };
