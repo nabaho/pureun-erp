@@ -29,12 +29,19 @@ const ROOT = 'mailbox';
    ⚠★ 켠 채로 두지 말 것 — 진단이 붙은 회차는 9초에서 «14초»로 늘었다(실측).
      진단 하나 때문에 «메일이 안 들어오는 것»은 그 어떤 답보다 나쁘다.
      다시 재려면 여기만 true 로 두고, 답을 읽으면 곧 되돌린다.
-   ⚠ 아래 POP3 탐침은 «한 번도 안 돌았다» — 올리자마자 위험을 없애려고 진단을 껐다.
-     그래서 「POP3 로는 더 주는가」는 아직 «모르는 답»이다. 다시 재려면 이것부터다.
-     ★ 잘못 적었다가 바로잡은 것 하나 — 회차가 하나 빠진 것을 처음에 POP3 탐침 탓으로
-       적었는데, 그 탐침은 돈 적이 없다. 그때 배포를 세 번 했고(예약 함수를 새로 올리면
-       그 회차를 건너뛴다) 그쪽이 훨씬 그럴듯하다. 원인을 못 가렸으면 «못 가렸다»고
-       적어야지, 그럴듯한 것을 원인으로 적으면 다음 사람이 엉뚱한 것을 고친다. */
+   ⚠★ 아래 POP3 탐침은 «답을 얻었다» — 2026-09-02 05:18 회차에 30,000통을 받았다.
+     그 값은 바로 아래 POP_PROBE 주석에 적혀 있다. 다시 잴 까닭이 없다.
+     ★ 이 자리에 한때 「탐침은 한 번도 안 돌았다 · 모르는 답이다 · 다시 재려면
+       이것부터다」라고 적혀 있었다. 뒤에 답을 얻고도 이 줄을 안 고쳐,
+       한 파일 안에서 위아래가 «정면으로» 어긋나 있었다(2026-09-02 검토에서 잡음).
+       그대로 두면 다음 사람이 이 줄을 읽고 탐침을 다시 켠다 — 그것이 바로 회차를
+       9초에서 14초로 늘렸던 일이다. 결론을 뒤집을 때는 «앞서 적은 줄»부터 고칠 것.
+   ⚠ 회차가 하나 빠진 것을 처음에 POP3 탐침 탓으로 적었는데, 그때 그 탐침은 돈 적이
+     없었다. 그때 배포를 세 번 했고(예약 함수를 새로 올리면 그 회차를 건너뛴다)
+     그쪽이 훨씬 그럴듯하다. 원인을 못 가렸으면 «못 가렸다»고 적어야지,
+     그럴듯한 것을 원인으로 적으면 다음 사람이 엉뚱한 것을 고친다.
+   ⚠ 로그는 1~3분 늦게 올라온다 — 「안 보인다」를 「안 돌았다」로 읽지 말 것.
+     무엇을 잴 때는 최소 세 회차를 보고 판단한다. */
 const MB_DIAG = false;
 /* ══ ★★ POP3 는 30,000통을 준다 — IMAP 의 400통과 «75배» 차이다 (2026-09-02 실측) ══
    MB_POP {"stat":"+OK 30000 36783009165","imapCap":400}   ← 05:18 회차
@@ -72,6 +79,15 @@ function nowMs() { return Date.now(); }
    「370-6」인지 「370-6@daum.net」인지가 달라서, 한쪽만 고치면 보내기는 되는데
    받기는 안 되는(또는 그 반대) 일이 생긴다. */
 async function connect(deps, user, pass) {
+  /* ⚠ 검사가 끼우는 자리 — deps 에 imapConnect 가 있으면 그것으로 붙는다.
+       deps 는 이미 getDatabase·mailUserAsync·mailPass·MD 를 끼우는 자리이므로
+       결이 같다(runSync 가 opts.client 로 가짜 메일함을 받는 것과 같은 뜻).
+     ★ 왜 필요한가 — 「붙어 둔 것을 다시 쓴다」는 결은 «돌려 봐야만» 지켜진다.
+       글자만 보는 검사는 busy 를 안 풀어도, 낡음 한도를 아홉 시간으로 바꿔도
+       그대로 통과한다(2026-09-02 되돌리기로 확인). 둘 다 «조용히» 망가지는
+       종류라 — 오류도 안 나고 그저 느려지거나 죽은 연결을 물려준다.
+     ⚠ 진짜로 돌 때는 이 자리가 없다(deps 에 안 넣는다). */
+  if (deps && typeof deps.imapConnect === 'function') return deps.imapConnect(user, pass);
   const { ImapFlow } = require('imapflow');
   let last = null;
   for (const id of deps.MD.loginIds(user, process.env.DAUM_MAIL_ID)) {
@@ -1260,5 +1276,9 @@ module.exports = function build(deps) {
    runSync 는 opts.client 로 가짜 메일함을 끼울 수 있다. */
 module.exports.pickParts = pickParts;
 module.exports.runSync = runSync;
+/* 「붙어 둔 것 다시 쓰기」를 돌려 보려고 함께 내보낸다 — 이 결은 글자로는 못 지킨다.
+   ⚠ 붙어 둔 것은 모듈 자리(_warm)에 산다. 검사는 회마다 require 를 새로 해서
+     («require.cache 를 지워») 깨끗한 자리에서 시작한다. */
+module.exports.withFolder = withFolder;
 module.exports.ROOT = ROOT;
 module.exports.CHUNK = CHUNK;
