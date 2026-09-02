@@ -173,6 +173,7 @@ plugin update superpowers
 `js/pu-ontology.js`의 공통 사전과 프로그램 등록부를 기준으로 개발한다.
 
 - 새 프로그램을 `enter.html`의 `APPS`에 넣기 전에 `PuOntology.PROGRAMS`에 같은 `key`를 등록한다.
+- 새 프로그램은 `PuOntology.READ_ADAPTERS`에도 등록한다. 통합 화면에서 안전하게 읽을 수 없는 민감 자료는 억지로 열지 말고 `strategy:'in_app'`으로 선언한다.
 - 새 업무 개체나 관계를 만들기 전에 `PuOntology.TERMS`에 개체 종류·관계어를 먼저 정의한다.
 - 사람 이름·업체명을 관계 열쇠로 쓰지 않는다. 사람은 `sid`, 업체는 `companyId`, 각 업무는 영구 `id`로 연결한다.
 - 새 레코드는 원칙적으로 `id`, `entityType`, `createdAt`, `updatedAt`을 갖는다.
@@ -180,6 +181,7 @@ plugin update superpowers
 - 온톨로지는 기존 원본을 대신하지 않는 파생 관계층이다. 진단·색인 오류가 원본을 수정하거나 삭제해서는 안 된다.
 - 재무·임금·인사·개인 자료의 관계는 원본보다 넓은 권한으로 공개하지 않는다.
 - `tests/ontology-contract.test.js`가 포털 프로그램 전부의 등록 여부와 사전 무결성을 검사한다. 이 검사를 우회하지 않는다.
+- 통합 진단 경로에 사진 원본·미리보기·문서 본문·전자서명 제출·급여 직원표·메일함을 넣지 않는다. 관계 진단은 경량 메타데이터만 읽는다.
 
 상세 설계와 단계별 범위는 `docs/푸른통합온톨로지-1단계.md`를 따른다.
 
