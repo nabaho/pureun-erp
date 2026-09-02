@@ -122,6 +122,8 @@ function load() {
   const src = consts + '\n' +
     ['tooSmall', 'smallCheckedOk', 'readAnyField', 'coFilledOk', 'coTodo',
      'canSendCoInfo', 'formTodo', 'chatTodo', 'readFailKind', 'readFailAdvice',
+     /* ⚠ 2026-09-02 💰 임금 확인 */
+     'wageRead', 'wageOkOf', 'wageBoxOn', 'wageNeedsOk', 
      'needsCheck', 'checkWhy']
       .map(function (n) { return fnOf(app, n); }).join('\n');
   const rules = ['READ_FAIL_RULES', 'FAIL_GIVEUP'].map(function (n) {

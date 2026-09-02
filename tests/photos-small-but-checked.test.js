@@ -52,7 +52,10 @@ function load() {
   const src = consts + '\n' +
     ['tooSmall', 'smallCheckedOk', 'readAnyField', 'coFilledOk', 'coTodo',
      /* ⚠ 2026-09-01 근로자 서류 넷 */
-     'canSendWorker', 'workerWhyNot', 'needsCheck', 'checkWhy']
+     'canSendWorker', 'workerWhyNot',
+     /* ⚠ 2026-09-02 💰 임금 확인 */
+     'wageRead', 'wageOkOf', 'wageBoxOn', 'wageNeedsOk', 
+     'needsCheck', 'checkWhy']
       .map(fnOf).join('\n');
   const ctx = { Math, Number, String, Object, Boolean, Date };
   vm.createContext(ctx);

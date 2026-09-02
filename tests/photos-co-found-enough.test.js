@@ -48,7 +48,10 @@ const ctx = (function () {
     objOf('WORKER_KINDS'),
     lineOf('TEL_SHAPE'), lineOf('MAIL_SHAPE')].join('\n') + '\n' +
     ['tooSmall', 'smallCheckedOk', 'readAnyField', 'coFilledOk', 'coTodo',
-     'canSendWorker', 'workerWhyNot', 'needsCheck', 'checkWhy']
+     'canSendWorker', 'workerWhyNot',
+     /* ⚠ 2026-09-02 💰 임금 확인 */
+     'wageRead', 'wageOkOf', 'wageBoxOn', 'wageNeedsOk', 
+     'needsCheck', 'checkWhy']
       .map(fnOf).join('\n');
   const c = { Math, Number, String, Object, Boolean, Date };
   vm.createContext(c);

@@ -63,6 +63,11 @@ function load() {
     grab(/^const WORKER_KINDS = \{[^}]*\};/m, 'WORKER_KINDS').replace('const ', 'var '),
     grab(/function canSendWorker\(read\)[\s\S]*?\n\}/, 'canSendWorker'),
     grab(/function workerWhyNot\(read\)[\s\S]*?\n\}/, 'workerWhyNot'),
+    /* ⚠ 2026-09-02 💰 임금 확인 — 안 실으면 checkWhy 가 그 줄에서 멎는다 */
+    grab(/function wageRead\(read\)[\s\S]*?\n\}/, 'wageRead'),
+    grab(/function wageOkOf\(read\)[\s\S]*?\n\}/, 'wageOkOf'),
+    grab(/function wageBoxOn\(read\)[\s\S]*?\n\}/, 'wageBoxOn'),
+    grab(/function wageNeedsOk\(read\)[\s\S]*?\n\}/, 'wageNeedsOk'),
     grab(/function checkWhy\(it\)[\s\S]*?\n\}/, 'checkWhy'),
     grab(/function needsCheck\(it\)[\s\S]*?\n\}/, 'needsCheck')
   ].join('\n');

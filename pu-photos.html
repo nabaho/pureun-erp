@@ -34,7 +34,7 @@
      이 파일이 캐시에 묵으면 옛 지시로 읽어 제목이 안 생기는데, 화면(pu-photos.html)은
      새것이라 제목 자리만 비어 보인다 — 고친 것이 통째로 묻힌 것처럼 된다.
      tests/photos-doc-title.test.js 가 둘이 어긋나지 않는지 지킨다. -->
-<script src="js/pu-doc-read.js?v=30"></script>
+<script src="js/pu-doc-read.js?v=31"></script>
 <script src="js/pu-lockkey.js?v=2"></script>
 <!-- ?v= 는 등록 층을 고칠 때 올린다 — 캐시에 묵으면 고친 안내가 안 보인다. -->
 <script src="js/pu-doc-file.js?v=21"></script>
@@ -1494,6 +1494,23 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
 #readPanel .dupbox .d{font-size:12.5px;color:#854d0e;line-height:1.65}
 #readPanel .dupbox .go{width:100%;margin-top:9px;background:#fff;border:1px solid #d97706;color:#854d0e;
   border-radius:9px;padding:10px;font-size:13.5px;font-weight:700}
+
+/* ── 💰 근로계약서 임금 — 읽되 사람이 확인한다 (대표 지시 2026-09-02) ──
+   확인 전은 노랑(할 일), 확인 뒤는 초록(끝난 일). 「이미 있는 명함」 상자와 같은 결이다. */
+#readPanel .wagebox{margin:10px 0 0;background:#fffbeb;border:1.5px solid #fbbf24;border-radius:10px;padding:11px 12px}
+#readPanel .wagebox.done{background:#f0fdf4;border-color:#4ade80}
+#readPanel .wagebox .t{font-size:13px;font-weight:800;color:#854d0e;margin-bottom:4px}
+#readPanel .wagebox.done .t{color:#166534}
+#readPanel .wagebox .d{font-size:11.5px;color:#854d0e;line-height:1.6;margin-bottom:8px}
+#readPanel .wagebox.done .d{color:#166534}
+#readPanel .wagebox .row{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+#readPanel .wagebox select,#readPanel .wagebox input{padding:6px 7px;border:1px solid #cbd5e1;
+  border-radius:6px;font-size:12.5px;background:#fff;color:#1e293b}
+#readPanel .wagebox input{flex:1;min-width:120px}
+#readPanel .wagebox .ok{background:#16a34a;border:1px solid #16a34a;color:#fff;border-radius:7px;
+  padding:6px 12px;font-size:12.5px;font-weight:700}
+#readPanel .wagebox .redo{background:#fff;border:1px solid #cbd5e1;color:#475569;border-radius:7px;
+  padding:5px 11px;font-size:12px;font-weight:600}
 
 /* 설정 시트 */
 #settings{display:none;position:fixed;inset:0;background:rgba(16,24,40,.45);align-items:flex-end;justify-content:center;z-index:20}
@@ -8921,6 +8938,12 @@ function checkWhy(it) {
   const r = (it && it.meta && it.meta.read) || null;
   if (!r) return '';
   if (r.kind === 'payslip') return '급여서류 — 지워 주세요';
+  /* ── 💰 임금 확인은 「확인했음」으로 못 치운다 (대표 지시 2026-09-02) ──
+     ⚠ **ack 보다 먼저** 본다. ack 는 「봤다」는 표시일 뿐 **값을 담지 않는다** —
+       ack 로 치울 수 있으면 임금은 영영 확인 안 된 채 남는데 ⚠ 만 사라진다.
+       그러면 「확인된 임금만 쓴다」는 규칙이 조용히 비어 버린다.
+     ⚠ 치울 길은 있다 — 임금이 안 적힌 계약서면 **빈 칸으로 확인**하면 된다. */
+  if (wageNeedsOk(r)) return '💰 임금 확인 — 원본과 대조';
   if (r.ack) return '';
   /* 실패 까닭을 갈라 「무엇을 해야 하나」로 적는다(대표 승인 목업 2026-08-24).
      ⚠ 한도 초과 때 본문이 안 써진 사진이 있다(2026-08-09). 다시 판독해도 소용없다 —
@@ -11946,6 +11969,9 @@ const READ_ROWS = [
   ['docName', '서류이름'], ['scope', '위임사무'], ['signDate', '계약일'], ['startDate', '시작일'],
   ['endDate', '종료일'], ['term', '계약기간'], ['fee', '보수'], ['vat', '부가세'],
   ['retainer', '착수금'], ['success', '성공보수'], ['deposit', '계약금'],
+  /* 근로계약서 (대표 지시 2026-09-02) — 임금은 아래 임금 확인 칸이 따로 그리지만,
+     이름표가 없으면 나머지 칸들이 표에서 통째로 빠진다. */
+  ['position', '직위'], ['hireDate', '근로 시작일'], ['termType', '기간의 정함'],
   ['dept', '부서'], ['title', '직책'], ['mobile', '휴대폰'], ['tel', '전화'],
   ['companyTel', '대표번호'], ['email', '이메일'], ['address', '소재지'], ['companyAddr', '회사주소']
 ];
@@ -11972,6 +11998,135 @@ function readRows(read) {
   return READ_ROWS
     .filter(function (p) { return f[p[0]] && typeof f[p[0]] === 'string'; })
     .map(function (p) { return [p[1], f[p[0]]]; });
+}
+
+/* ══════ 💰 근로계약서의 임금 — 읽되, «사람이 확인해야» 산다 (대표 지시 2026-09-02) ══════
+   「임금 읽고 사람 확인하는 단계」
+
+   ■ 왜 확인 단계인가
+   계약서 금액은 **1만 배 틀리게 읽힌 자리**다. 「월 100만원」을 기계가 1,000 으로 읽으면
+   아무도 모르게 1,000원이 들어간다 — 계약관리가 금액 자동채움을 막아 둔 것이 그 까닭이다
+   (pu-erp.html 의 erpContractPhotoApplyPatch). 판독기는 **적힌 그대로** 담고
+   (js/pu-doc-read.js 의 「숫자로 고치지 마세요」), 그것을 쓰려면 사람이 한 번 봐야 한다.
+
+   ■ 읽은 값과 확인한 값을 «둘 다» 담는다
+   read.fields.wage    = 판독이 읽은 것(그대로 둔다)
+   read.wageOk         = { at, by, wage, wageType } — 사람이 확인한 것
+   나중에 「이 금액 어디서 나왔지」에 답하려면 둘이 다 있어야 한다(계약에 출처를 남기는
+   것과 같은 결). 판독값을 덮어쓰면 무엇이 고쳐졌는지 영영 알 수 없다.
+
+   ■ 「적혀 있지 않음」도 확인이다
+   임금이 안 적힌 계약서도 있다. 빈 칸으로 확인하면 그것이 답이다 —
+   그 길이 없으면 치울 수 없는 ⚠ 가 된다. */
+
+const WAGE_TYPES = ['월급', '시급', '일급', '연봉', '기타'];
+
+/* 판독이 읽은 임금 — 적힌 그대로다(숫자가 아니다) */
+function wageRead(read) {
+  const f = (read && read.fields) || {};
+  return { wage: String(f.wage == null ? '' : f.wage).trim(),
+           wageType: String(f.wageType == null ? '' : f.wageType).trim() };
+}
+/* 사람이 확인한 임금 — 없으면 null */
+function wageOkOf(read) {
+  const w = read && read.wageOk;
+  return (w && w.at) ? w : null;
+}
+/* 이 사진에 임금 확인 칸을 그리는가 — 근로계약서에만 그린다 */
+function wageBoxOn(read) {
+  return !!(read && read.kind === 'wcontract' && !read.error);
+}
+/* 아직 확인 안 된 임금이 있는가 — 「⚠ 확인 필요」의 까닭이 된다.
+   ⚠ 읽은 것이 아무것도 없으면 «묻지 않는다». 임금이 안 적힌 계약서에까지 할 일을
+     달면 치울 수 없는 ⚠ 가 쌓인다(그래도 사람이 손으로 적을 길은 아래에 열려 있다). */
+function wageNeedsOk(read) {
+  if (!wageBoxOn(read)) return false;
+  if (wageOkOf(read)) return false;
+  const r = wageRead(read);
+  return !!(r.wage || r.wageType);
+}
+/* 화면·다른 앱이 «믿어도 되는» 임금 — 확인된 것만 내놓는다.
+   ⚠ 확인 안 된 판독값을 여기서 내주면 확인 단계를 만든 뜻이 통째로 없어진다. */
+function wageUsable(read) {
+  const w = wageOkOf(read);
+  if (!w) return '';
+  const t = String(w.wageType || '').trim();
+  const v = String(w.wage || '').trim();
+  if (!v) return '';
+  return t ? (t + ' ' + v) : v;
+}
+
+function wageBox(it) {
+  const read = it && it.meta && it.meta.read;
+  if (!wageBoxOn(read)) return '';
+  const ok = wageOkOf(read);
+  const r = wageRead(read);
+  /* 남의 사진은 «보기만» — 손댈 수 없는데 단추를 내주면 눌러도 아무 일이 안 일어난다 */
+  const readonly = viewingOther();
+  if (ok) {
+    const shown = wageUsable(read);
+    return '<div class="wagebox done">' +
+      '<div class="t">💰 ' + esc(shown || '임금이 적혀 있지 않음') +
+      ' <span style="font-weight:400;font-size:11.5px">· ' + esc(ok.by || '') +
+      ' 확인 ' + esc(whenText(ok.at)) + '</span></div>' +
+      (r.wage ? '<div class="d">판독은 「' + esc(r.wage) + '」으로 읽었습니다.</div>' : '') +
+      (readonly ? '' : '<div class="row"><button class="redo" onclick="wageRedo()">다시 확인</button></div>') +
+      '</div>';
+  }
+  const sel = WAGE_TYPES.map(function (t) {
+    return '<option' + (t === r.wageType ? ' selected' : '') + '>' + esc(t) + '</option>';
+  }).join('');
+  return '<div class="wagebox">' +
+    '<div class="t">💰 임금 — 원본과 맞는지 봐 주세요</div>' +
+    '<div class="d">계약서 금액은 기계가 <b>단위를 틀리게</b> 읽는 자리입니다. 읽은 그대로 띄웠습니다 —' +
+    ' 원본과 다르면 고쳐 주세요. 적혀 있지 않으면 비워 둔 채로 확인하시면 됩니다.</div>' +
+    (readonly
+      ? '<div class="d">' + esc(r.wageType ? r.wageType + ' ' + r.wage : (r.wage || '읽은 임금 없음')) +
+        ' — 올린 분만 확인할 수 있습니다</div>'
+      : '<div class="row">' +
+        '<select id="wgType">' + sel + '</select>' +
+        '<input id="wgVal" type="text" value="' + esc(r.wage) + '" placeholder="예: 월 2,500,000원">' +
+        '<button class="ok" onclick="wageConfirm()">✓ 맞습니다</button></div>') +
+    '</div>';
+}
+
+/* 확인 — 사람이 본(그리고 필요하면 고친) 값을 «따로» 담는다 */
+function wageConfirm() {
+  const id = viewerId;
+  if (!id || blockedIfOther(id)) return;
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it || !it.meta.read) return;
+  const read = Object.assign({}, it.meta.read, {
+    wageOk: {
+      at: Date.now(), by: PuPhotoStore.myName() || '',
+      wage: (($('wgVal') || {}).value || '').trim(),
+      wageType: (($('wgType') || {}).value || '').trim()
+    }
+  });
+  it.meta = Object.assign({}, it.meta, { read: read });
+  renderReadPanel(it);
+  renderGridBar();
+  renderGrid();
+  PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id)).catch(function (e) {
+    console.warn('[임금 확인]', e);
+    alert('임금 확인을 저장하지 못했습니다: ' + ((e && e.message) || e));
+  });
+}
+/* 다시 확인 — 확인 표시만 걷는다. 판독값은 그대로다(다시 읽지 않는다). */
+function wageRedo() {
+  const id = viewerId;
+  if (!id || blockedIfOther(id)) return;
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it || !it.meta.read) return;
+  const read = Object.assign({}, it.meta.read);
+  delete read.wageOk;
+  it.meta = Object.assign({}, it.meta, { read: read });
+  renderReadPanel(it);
+  renderGridBar();
+  renderGrid();
+  PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id)).catch(function (e) {
+    console.warn('[임금 다시 확인]', e);
+  });
 }
 
 /* ══════ 원본이 작아 못 읽었을 수 있는 서류 (대표 지시 2026-08-13) ══════
@@ -13002,6 +13157,9 @@ function renderReadPanel(it) {
     (docTitle(it) ? '<div class="dtitle">' + esc(docTitle(it)) + '</div>' : '') +
     cause +
     (rows ? '<table>' + rows + '</table>' : '') +
+    /* 💰 임금 확인 — 읽은 칸 바로 아래다(대표 지시 2026-09-02). 표에 섞어 두면
+       「고칠 수 있는 칸」인 줄 모르고 그냥 지나친다. */
+    wageBox(it) +
     chatTodoBox(it) +
     timesheetBox(it) +
     formPairsBox(it) +
