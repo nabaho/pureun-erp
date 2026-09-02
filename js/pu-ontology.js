@@ -9,7 +9,7 @@
 })(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this), function(){
   'use strict';
 
-  var VERSION = 1;
+  var VERSION = 2;
   var TERMS = {
     entityTypes: {
       Organization:'업체·기관', Person:'사람', Employment:'재직관계', Contract:'계약',
@@ -33,6 +33,7 @@
       attachedTo:['Document|MediaAsset|Message','Organization|Contract|Case|Project|Person'],
       ownedBy:['Document|MediaAsset|Message','Person'],
       transferredTo:['Task|Case|Project','Person'],
+      forOrganization:['Task|Document|MediaAsset|Message|PayrollRecord|Policy|Submission','Organization'],
       fulfills:['Submission','Contract|Case|Project'],
       supersedes:['Policy|Document','Policy|Document']
     }
@@ -88,6 +89,26 @@
   var STAFF_STORES = ['contracts','cases','consultings','funds','other_projects','my_work_items','my_schedules'];
   var SOURCE_KIND_STORE = { company:'companies', contract:'contracts', case:'cases', consulting:'consultings', fund:'funds', other:'other_projects' };
 
+  /* 2단계 읽기 어댑터. payload(사진 원본·문서 본문·제출 암호문·급여 직원표)는
+     통합 화면에서 절대 읽지 않는다. in_app은 해당 프로그램 안에서만 진단한다. */
+  var READ_ADAPTERS = {
+    erp_core:{program:'erp',strategy:'local',path:'data',parser:'erp'},
+    consult_core:{program:'consult',strategy:'local',path:'data/consultings',parser:'erp'},
+    fund_core:{program:'fund',strategy:'local',path:'data/funds',parser:'erp'},
+    work_items:{program:'work',strategy:'remote',path:'work_erp/items',parser:'workItems'},
+    career_counts:{program:'career',strategy:'remote',path:'kcareer/{uid}/counts',parser:'coverage'},
+    cards_index:{program:'cards',strategy:'remote',path:'pucards/idx',parser:'cardIndex'},
+    photos_items:{program:'photos',strategy:'remote',path:'puphotos/u/{uid}/items',parser:'photoItems'},
+    payroll_index:{program:'payroll',strategy:'remote',path:'payroll_os/payroll/index',parser:'payrollIndex'},
+    paydata_items:{program:'paydata',strategy:'remote',path:'paydata/u/{uid}/items',parser:'paydataItems'},
+    home_members:{program:'home',strategy:'remote',path:'homepage/members',parser:'homeMembers'},
+    home_pages:{program:'home',strategy:'remote',path:'homepage/config/pages',parser:'homePages'},
+    mail_private:{program:'mail',strategy:'in_app',parser:'mailHeaders'},
+    rules_documents:{program:'rules',strategy:'in_app',parser:'ruleMetadata'},
+    esign_cases:{program:'docs',strategy:'in_app',parser:'esignMetadata'},
+    newsletter_issues:{program:'news',strategy:'in_app',parser:'newsletterMetadata'}
+  };
+
   function arr(v){
     if(Array.isArray(v)) return v.filter(function(x){ return x && !x._deleted; });
     if(v && typeof v === 'object') return Object.keys(v).map(function(k){ return v[k]; }).filter(function(x){ return x && !x._deleted; });
@@ -97,11 +118,35 @@
   function normName(v){ return clean(v).toLowerCase().replace(/[\s()（）·.,_\-주식회사㈜]/g,''); }
   function normBiz(v){ return clean(v).replace(/\D/g,''); }
   function canon(type, id){ return type + ':' + encodeURIComponent(clean(id)); }
+  function sourceCanon(type, program, id){ return canon(type,clean(program)+':'+clean(id)); }
   function edgeId(s, p, o){ return 'edge:' + encodeURIComponent(s+'|'+p+'|'+o); }
   function addEdge(out, subject, predicate, object, sourceStore, sourceId, confidence){
     if(!subject || !object) return;
     out.push({ id:edgeId(subject,predicate,object), subject:subject, predicate:predicate, object:object,
       sourceStore:sourceStore, sourceId:sourceId, confidence:confidence == null ? 1 : confidence, schemaVersion:VERSION });
+  }
+  function putEntity(out, type, id, program, source, label){
+    id=clean(id); if(!id) return null;
+    var key=sourceCanon(type,program,id);
+    out[key]={type:type,id:id,program:program,source:source,label:clean(label)};
+    return key;
+  }
+  function entries(v){
+    if(Array.isArray(v)) return v.map(function(x,i){return [String(i),x];});
+    if(v&&typeof v==='object') return Object.keys(v).map(function(k){return [k,v[k]];});
+    return [];
+  }
+  function nestedRecords(v, depth){
+    var out=[];
+    function walk(x,path,left){
+      entries(x).forEach(function(p){
+        var val=p[1], next=path.concat(p[0]);
+        if(!val||typeof val!=='object') return;
+        if(left<=1 || val.id || val.title || val.filename || val.kind || val.name || val.월 || val.label) out.push({key:p[0],path:next,value:val});
+        else walk(val,next,left-1);
+      });
+    }
+    walk(v,[],depth||3); return out;
   }
   function issue(out, severity, code, store, id, label, detail, candidate){
     out.push({ severity:severity, code:code, store:store, id:id||'', label:label||id||store,
@@ -182,6 +227,79 @@
       issueCount:issues.length, severity:sev, stats:stats, entities:entities, edges:edges, issues:issues };
   }
 
+  function resolvePath(path, context){
+    context=context||{};
+    return clean(path).replace(/\{uid\}/g,clean(context.uid));
+  }
+  function getReadPlan(context){
+    context=context||{};
+    return Object.keys(READ_ADAPTERS).map(function(key){
+      var a=READ_ADAPTERS[key], path=resolvePath(a.path,context);
+      if(/\{uid\}/.test(a.path||'')&&!clean(context.uid)) return null;
+      if(a.strategy!=='remote' || !path || /\{[^}]+\}/.test(path)) return null;
+      return {key:key,program:a.program,path:path,parser:a.parser,strategy:a.strategy};
+    }).filter(Boolean);
+  }
+  function addForOrganization(edges, subject, rec, source, id, companies){
+    var cid=clean(rec.companyId||rec.co_id||rec.company_id), name=clean(rec.companyName||rec.company||rec.사업장||rec.site);
+    if(!cid&&name){ var hits=companies.byName[normName(name)]||[]; if(hits.length===1) cid=hits[0].id; }
+    if(cid&&companies.byId[cid]) addEdge(edges,subject,'forOrganization',canon('Organization',cid),source,id,cid===clean(rec.companyId||rec.co_id||rec.company_id)?1:0.85);
+  }
+  function parseExternal(adapter, value, graph, companies){
+    var key=adapter.key, program=adapter.program, entities=graph.entities, edges=graph.edges, count=0;
+    function entity(type,id,label,rec){
+      var subject=putEntity(entities,type,id,program,key,label); if(!subject)return null;
+      count++; if(rec) addForOrganization(edges,subject,rec,key,id,companies); return subject;
+    }
+    if(adapter.parser==='coverage') return {records:value&&typeof value==='object'?1:0,entities:0};
+    if(adapter.parser==='workItems') entries(value).forEach(function(p){
+      var r=p[1]||{}, id=clean(r.id||p[0]), s=entity('Task',id,r.title||r.no,r); if(!s)return;
+      var main=r.mgr_main&&r.mgr_main.sid||r.managerSid||r.ownerSid;
+      if(main) addEdge(edges,s,'assignedTo',canon('Person',main),key,id,1);
+      (Array.isArray(r.mgr_subs)?r.mgr_subs:[]).forEach(function(u){var sid=clean(u&&u.sid||u);if(sid)addEdge(edges,s,'assists',canon('Person',sid),key,id,1);});
+      var ref=r.ref||{}, refType={contract:'Contract',case:'Case',consulting:'Project',fund:'Project',other:'Project'}[clean(ref.type)];
+      if(refType&&ref.id)addEdge(edges,s,'derivedFrom',canon(refType,ref.id),key,id,1);
+    });
+    else if(adapter.parser==='cardIndex') entries(value).forEach(function(p){
+      var r=p[1]||{}, type=r.k==='biz'?'Document':'Person'; entity(type,p[0],r.n||r.c||r.bz,r);
+    });
+    else if(adapter.parser==='photoItems') nestedRecords(value,3).forEach(function(p){
+      var r=p.value||{}, id=clean(r.id||p.key), s=entity('MediaAsset',id,r.filename||r.name||r.kind,r); if(!s)return;
+      var sid=clean(r.sid||r.ownerSid); if(sid)addEdge(edges,s,'ownedBy',canon('Person',sid),key,id,1);
+    });
+    else if(adapter.parser==='payrollIndex') entries(value).forEach(function(site){
+      entries(site[1]).forEach(function(p){var r=p[1]||{},id=clean(r.id||site[0]+'|'+(r.월||p[0]));entity('PayrollRecord',id,site[0]+' '+clean(r.월),Object.assign({site:site[0]},r));});
+    });
+    else if(adapter.parser==='paydataItems') nestedRecords(value,3).forEach(function(p){
+      var r=p.value||{},id=clean(r.id||p.key);entity('Document',id,r.filename||r.kind,r);
+    });
+    else if(adapter.parser==='homeMembers') entries(value).forEach(function(p){var r=p[1]||{};entity('Person',r.id||p[0],r.name||r.label,r);});
+    else if(adapter.parser==='homePages') entries(value).forEach(function(p){var r=p[1]||{};entity('Document',r.id||p[0],r.label||r.name,r);});
+    return {records:count,entities:count};
+  }
+  function auditIntegrated(data, sourceResults, context){
+    var base=audit(data), graph={entities:Object.assign({},base.entities),edges:base.edges.slice()}, issues=base.issues.slice();
+    sourceResults=sourceResults||{}; context=context||{};
+    var companies={byId:{},byName:{}};
+    arr(data&&data.companies).forEach(function(c){if(!c||!c.id)return;companies.byId[c.id]=c;var n=normName(c.name||c.companyName);if(n){if(!companies.byName[n])companies.byName[n]=[];companies.byName[n].push(c);}});
+    var coverage={}; Object.keys(PROGRAMS).forEach(function(k){coverage[k]={program:k,name:PROGRAMS[k].name,state:'not_loaded',records:0,adapters:0,loaded:0,denied:0,inApp:0};});
+    Object.keys(READ_ADAPTERS).forEach(function(key){
+      var a=READ_ADAPTERS[key], c=coverage[a.program]; c.adapters++;
+      if(a.strategy==='local'){c.loaded++;c.records+=(a.program==='consult'?arr(data.consultings).length:a.program==='fund'?arr(data.funds).length:Object.keys(base.stats).reduce(function(n,k){return n+(base.stats[k]||0);},0));return;}
+      if(a.strategy==='in_app'){c.inApp++;return;}
+      var r=sourceResults[key];
+      if(!r)return;
+      if(!r.ok){c.denied++;issue(issues,'medium','source_unreadable',key,'',PROGRAMS[a.program].name,'읽기 권한 또는 연결 문제: '+clean(r.error||'unknown'));return;}
+      c.loaded++;var parsed=parseExternal(Object.assign({key:key},a),r.value,graph,companies); c.records+=parsed.records||0;
+    });
+    Object.keys(coverage).forEach(function(k){var c=coverage[k];c.state=c.denied?(c.loaded?'partial':'denied'):(c.loaded?(c.records?'ready':'empty'):(c.inApp?'in_app':'not_loaded'));});
+    var edgeSeen={},dedup=[];graph.edges.forEach(function(e){if(!edgeSeen[e.id]){edgeSeen[e.id]=1;dedup.push(e);}});
+    var sev={high:0,medium:0,low:0};issues.forEach(function(x){sev[x.severity]=(sev[x.severity]||0)+1;});
+    var ready=Object.keys(coverage).filter(function(k){return ['ready','empty','partial'].indexOf(coverage[k].state)>=0;}).length;
+    return Object.assign({},base,{schemaVersion:VERSION,entityCount:Object.keys(graph.entities).length,edgeCount:dedup.length,issueCount:issues.length,
+      severity:sev,entities:graph.entities,edges:dedup,issues:issues,coverage:coverage,coverageCount:ready,programCount:Object.keys(PROGRAMS).length,readOnly:true});
+  }
+
   function auditPrograms(appKeys){
     appKeys = appKeys || [];
     var missing=appKeys.filter(function(k){ return !PROGRAMS[k]; });
@@ -189,6 +307,7 @@
     return { registered:Object.keys(PROGRAMS).length, missing:missing, extra:extra, ok:missing.length===0 };
   }
 
-  return { VERSION:VERSION, TERMS:TERMS, PROGRAMS:PROGRAMS, STORE_TYPES:STORE_TYPES,
-    audit:audit, auditPrograms:auditPrograms, canonicalId:canon, normalizeCompanyName:normName, normalizeBusinessNumber:normBiz };
+  return { VERSION:VERSION, TERMS:TERMS, PROGRAMS:PROGRAMS, STORE_TYPES:STORE_TYPES, READ_ADAPTERS:READ_ADAPTERS,
+    audit:audit, auditIntegrated:auditIntegrated, getReadPlan:getReadPlan, auditPrograms:auditPrograms,
+    canonicalId:canon, sourceCanonicalId:sourceCanon, normalizeCompanyName:normName, normalizeBusinessNumber:normBiz };
 });
