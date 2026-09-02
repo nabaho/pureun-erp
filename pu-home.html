@@ -80,6 +80,8 @@ main{flex:1;min-height:0;width:100%;padding:10px 12px;
 .btn:hover{background:#f8fafc}
 .btn:disabled{opacity:.5;cursor:default}
 .btn.pri{background:var(--navy);border-color:var(--navy);color:#fff}
+/* 켜 둔 단추 — 미리보기처럼 «지금 켜져 있나»를 알려야 하는 것에 쓴다 */
+.btn.on{background:#bfdbfe;border-color:var(--navy);color:var(--navy);font-weight:800}
 .btn.sm{padding:3px 9px;font-size:11.5px;border-radius:7px}
 .btn.keep{border-color:#cbd5e1;background:var(--ok-bg);color:#166534}
 /* 내리는 단추 — 되돌릴 수 있는 일이지만 «홈페이지가 바뀌는» 일이라 결을 달리한다 */
@@ -195,6 +197,26 @@ main{flex:1;min-height:0;width:100%;padding:10px 12px;
 
 /* ── 몸통: 3단(기둥·목록·편집칸), 높이 붙박이 ── */
 .body{flex:1;min-height:0;display:flex}
+/* 실시간 미리보기 — 편집칸 오른쪽에 붙는다 (대표 결정 2026-09-02 ㉮).
+   ★ 기본은 «접힘»이다 — 안 쓸 때 자리를 먹지 않아 지금 화면과 똑같다. */
+.pane2{flex:1;min-width:0;min-height:0;display:flex}
+.pane2 > .edit{flex:1;min-width:0;border-right:1px solid var(--line)}
+.prev{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:#f8fafc}
+.prev .ph{flex:none;display:flex;align-items:center;gap:7px;flex-wrap:wrap;
+  padding:7px 11px;border-bottom:1px solid var(--line);background:#fff;font-size:12px}
+.prev .ph .t{font-weight:800}
+.prev .seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.prev .seg button{border:0;background:#fff;color:var(--sub);font:inherit;font-size:11.5px;
+  font-weight:800;padding:2px 9px;cursor:pointer}
+.prev .seg button.on{background:var(--navy);color:#fff}
+.prev .same{display:inline-flex;align-items:center;gap:4px;color:#166534;font-weight:800;font-size:11.5px}
+.prev .same::before{content:'';width:7px;height:7px;border-radius:50%;background:#166534}
+.prev iframe{flex:1;min-height:0;width:100%;border:0;background:#fff}
+.prev .why{padding:16px;color:var(--faint);font-size:12.5px;line-height:1.7}
+/* 화면이 좁으면 아래로 내려간다 — 좌우로 쪼개면 둘 다 못 읽는다 */
+@media (max-width:1300px){ .pane2{flex-direction:column}
+  .pane2 > .edit{border-right:0;border-bottom:1px solid var(--line)}
+  .prev{min-height:300px} }
 
 /* 목록 — 360 → 390px (대표 지시). 직책이 「…」로 잘리는 일이 줄어든다. */
 .list{width:390px;flex:none;min-height:0;border-right:1px solid var(--line);background:#f8fafc;
@@ -743,6 +765,13 @@ const App = {
      logoPasteOn — 로고 창이 열려 있는 동안만 Ctrl+V 를 받는다.
      ★ 저장하지 않는다 — 담으면 저장소로 가고, 안 담으면 없던 일이 된다. */
   logoPick: null, logoPasteOn: false,
+  /* preview — 미리보기를 펴 두었나. 기본은 «접힘».
+     previewMode — 'after'(고친 뒤) · 'now'(지금 홈페이지).
+     pageHtml — 읽어 온 쪽의 «원본 HTML». 미리보기가 이것으로 그린다.
+     sitePeople — 지금 올라가 있는 구성원 쪽(읽어 온 것).
+     ★ 저장하지 않는다 — 보기 방식이고, 다음에 열 때 접혀 있는 것이 낫다
+       (켜져 있으면 편집칸이 좁아 「왜 좁나」로 읽힌다). */
+  preview: false, previewMode: 'after', pageHtml: {}, sitePeople: null, previewReading: false,
   /* publishing — 지금 홈페이지에 올리는 중인지(두 번 눌러 두 번 올리지 않게) */
   publishing: false,
   /* partnerLogos — 자문사 쪽에 «어느 로고를 어떤 차례로» 보일지(homepage/partnerLogos).
@@ -2391,7 +2420,10 @@ function screen() {
   if (App.loading) return '<div class="empty">자료를 읽고 있습니다…</div>';
   return '<div class="app">'
     + '<div class="top">' + appbarHtml() + '</div>'
-    + '<div class="body">' + railHtml() + listHtml() + editHtml() + '</div>'
+    /* ★ 미리보기를 펴면 편집칸과 «나란히» 놓는다. 접으면 지금과 똑같다. */
+    + '<div class="body">' + railHtml() + listHtml()
+      + (App.preview ? '<div class="pane2">' + editHtml() + prevHtml() + '</div>' : editHtml())
+      + '</div>'
     + legendHtml()
     + '</div>';
 }
@@ -2417,6 +2449,10 @@ function appbarHtml() {
     + '<option value="plain"' + (App.lineFormat === 'plain' ? ' selected' : '') + '>줄바꿈만 (기본)</option>'
     + '<option value="div"' + (App.lineFormat === 'div' ? ' selected' : '') + '>줄마다 감싸기</option>'
     + '</select></label>'
+    /* ★ 미리보기 — 기본은 접힘. 켜면 편집칸 오른쪽에 붙는다(대표 결정 2026-09-02 ㉮) */
+    + '<button class="btn' + (App.preview ? ' on' : '') + '" onclick="togglePreview()"'
+    + ' title="고치는 대로 홈페이지에 어떻게 보이는지 옆에서 보여 드립니다">'
+    + (App.preview ? '👁 미리보기 끄기' : '👁 미리보기') + '</button>'
     + '<button class="btn pri" onclick="checkHomepage()"' + (App.checking ? ' disabled' : '') + '>'
     + (App.checking ? '확인 중…' : '홈페이지 다시 확인') + '</button>'
     /* ★ 「홈페이지에 올리기」는 «구성원 갈래를 볼 때»만 보인다.
@@ -2967,6 +3003,177 @@ function rowsHtml() {
   }).join('');
   return h;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   실시간 미리보기 (대표 요청 2026-09-02 「수정하는게 바로 보이면 편할 것 같다」)
+   ══════════════════════════════════════════════════════════════════════════
+   ★ 보여 주는 것은 «올릴 바로 그 HTML»이다. 화면과 올라가는 것이 같은 글자에서
+     나오므로 어긋날 수가 없다.
+     ⚠ 목업에서는 ①타이핑 중 DOM 갈아 끼우기 + ②올리기 전 최종 HTML, 두 겹을 그렸다.
+       재 보니 최종 HTML 을 다시 그리는 데 85~99ms 라 «즉시»로 느껴진다.
+       그래서 한 겹으로 줄였다 — 두 겹은 「화면과 올릴 것이 다르다」는 사고를
+       만들 수 있고, 그 위험을 안고 갈 값이 없다.
+
+   ★ 그림·스타일 바탕은 «우리 사본»(이 화면과 같은 곳)을 가리킨다.
+     올릴 때 진짜 홈페이지와 사본에 둘 다 올리므로 그림이 같고,
+     사본은 절대 딴 데로 넘겨지지 않아 도메인이 붙어도 안 깨진다.
+
+   ★ 홈페이지에 «편집용 스크립트를 심지 않는다» — 그것이 방문자에게도 나간다.
+   ★ 미리보기에서 «고치게 하지 않는다» — 어느 쪽이 진짜인지 흐려진다.
+   ★ 미리보기를 열어도 «아무것도 올라가지 않는다». */
+
+function 사본주소(mid) {
+  try { return new URL('site/' + mid + '/', location.href).href; } catch (e) { return ''; }
+}
+
+/* srcdoc 은 «주소가 없다» — 상대 주소로 된 그림·스타일이 다 깨진다.
+   그래서 머리에 base 를 끼운다 (2026-09-02 확인: 이러면 깨진 그림 0개). */
+function base끼우기(html, mid) {
+  const b = 사본주소(mid);
+  if (!b) return html;
+  const t = '<base href="' + b + '">';
+  return /<head[^>]*>/i.test(html)
+    ? html.replace(/<head([^>]*)>/i, '<head$1>' + t)
+    : t + html;
+}
+
+/* 지금 고르신 것의 «올릴 HTML». 못 만들면 왜인지 함께 돌려준다.
+   ★ 아무것도 올리지 않는다 — 글자를 만들어 보기만 한다. */
+function 미리보기HTML() {
+  const g = App.group;
+  if (g === 'partner') {
+    return { why: '자문사현황은 로고 «그림»이라 여기서 미리 볼 것이 없습니다.\n'
+      + '위 「자문사 로고 관리」에서, 붙인 로고를 실제 배경 위에 보여 드립니다.' };
+  }
+  if (g === 'members') {
+    if (!App.sitePeople) {
+      return { why: '구성원 쪽을 아직 안 읽었습니다.', 읽기: true };
+    }
+    if (App.previewMode === 'now') return { mid: 'people', html: App.sitePeople, 지금: true };
+    try {
+      const ours = Object.keys(App.members)
+        .map(function (k) { return Object.assign({}, App.members[k], { key: k }); });
+      const 고른것 = PuSitePeople.올릴사람(App.sitePeople, ours);
+      return { mid: 'people', html: PuSitePeople.쪽그리기(App.sitePeople, 고른것.갈것),
+               몇: 고른것.갈것.length };
+    } catch (e) { return { why: '구성원 쪽을 만들지 못했습니다 — ' + (e && e.message) }; }
+  }
+  /* 쪽 갈래 */
+  const mid = App.pick;
+  if (!mid) return { why: '왼쪽 목록에서 쪽을 하나 고르십시오.' };
+  const 지금쪽 = App.pageHtml[mid];
+  if (!지금쪽) return { mid: mid, why: '이 쪽을 아직 안 읽었습니다.\n'
+    + '편집칸의 「이 쪽 읽어오기」(또는 머리띠의 「홈페이지 다시 확인」)를 누르십시오.' };
+  if (App.previewMode === 'now') return { mid: mid, html: 지금쪽, 지금: true };
+  const 고칠것 = PuSitePage.고칠줄(App.pageFix[mid]);
+  if (!고칠것.length) return { mid: mid, html: 지금쪽, 안바꿈: true };
+  try {
+    const out = PuSitePage.쪽고치기(지금쪽, 고칠것, PuHomeFill.applyLineEdits);
+    return { mid: mid, html: out.html,
+             바뀐줄: out.done.map(function (x) { return x.after; }),
+             건너뜀: out.skipped.length };
+  } catch (e) { return { mid: mid, why: '고친 것을 그리지 못했습니다 — ' + (e && e.message) }; }
+}
+
+/* 미리보기 칸 */
+function prevHtml() {
+  const r = 미리보기HTML();
+  let h = '<div class="prev">';
+  h += '<div class="ph"><span class="t">미리보기</span>'
+    + '<span class="seg">'
+    + '<button onclick="setPreviewMode(\'now\')"' + (App.previewMode === 'now' ? ' class="on"' : '') + '>지금</button>'
+    + '<button onclick="setPreviewMode(\'after\')"' + (App.previewMode === 'after' ? ' class="on"' : '') + '>고친 뒤</button>'
+    + '</span>'
+    + '<span style="flex:1"></span>'
+    + (r.html ? '<span class="same">올릴 것과 같음</span>' : '')
+    + (r.html ? '<button class="btn" onclick="openPreviewWindow()" title="모니터가 둘이면 넓게 보십니다">새 창으로</button>' : '')
+    + '</div>';
+  if (!r.html) {
+    h += '<div class="why">' + esc(r.why || '미리 볼 것이 없습니다.').replace(/\n/g, '<br>')
+      + (r.읽기 ? '<div style="margin-top:9px"><button class="btn pri" onclick="readPeoplePage()"'
+          + (App.previewReading ? ' disabled' : '') + '>'
+          + (App.previewReading ? '읽는 중…' : '구성원 쪽 읽어오기') + '</button></div>' : '')
+      + '</div></div>';
+    return h;
+  }
+  /* ★ srcdoc 으로 넣는다 — 우리가 만든 그 글자를 그대로 그린다.
+     바뀐 줄에 표시를 붙이는 일은 다 그린 «뒤»에 DOM 에서 한다
+     (HTML 글자를 건드리면 올릴 것과 달라진다). */
+  const 표시 = JSON.stringify(r.바뀐줄 || []).replace(/"/g, '&quot;');
+  h += '<iframe id="prevFrame" title="미리보기" data-marks="' + 표시 + '"'
+    + ' onload="markPreview(this)" srcdoc="' + esc(base끼우기(r.html, r.mid)) + '"></iframe>';
+  h += '</div>';
+  return h;
+}
+
+/* 바뀐 자리에 «노란 표시»를 붙인다 — 미리보기에만 붙고 홈페이지에는 안 나간다 */
+function markPreview(fr) {
+  let 말들 = [];
+  try { 말들 = JSON.parse(fr.getAttribute('data-marks') || '[]'); } catch (e) { 말들 = []; }
+  if (!말들.length) return;
+  let d = null;
+  try { d = fr.contentDocument; } catch (e) { return; }
+  if (!d || !d.body) return;
+  const st = d.createElement('style');
+  st.textContent = '.pu-mk{background:#fde68a;color:#854d0e;border-radius:2px;padding:0 2px}';
+  (d.head || d.body).appendChild(st);
+  말들.forEach(function (말) {
+    const 찾을것 = String(말 || '').trim();
+    if (찾을것.length < 2) return;
+    const walk = d.createTreeWalker(d.body, 4 /* TEXT_NODE */);
+    const 걸린것 = [];
+    let n;
+    while ((n = walk.nextNode())) {
+      if (n.nodeValue && n.nodeValue.indexOf(찾을것) >= 0) 걸린것.push(n);
+    }
+    걸린것.forEach(function (t) {
+      const i = t.nodeValue.indexOf(찾을것);
+      if (i < 0) return;
+      const 뒤 = t.splitText(i);
+      뒤.splitText(찾을것.length);
+      const sp = d.createElement('span');
+      sp.className = 'pu-mk';
+      뒤.parentNode.replaceChild(sp, 뒤);
+      sp.appendChild(뒤);
+    });
+  });
+}
+window.markPreview = markPreview;
+
+/* 새 창으로 — 모니터가 둘일 때. 같은 곳이라 창에 그대로 그려 준다. */
+function openPreviewWindow() {
+  const r = 미리보기HTML();
+  if (!r.html) { say('미리 볼 것이 없습니다', r.why || ''); return; }
+  const w = window.open('', 'puPreview');
+  if (!w) { say('새 창이 막혔습니다', '브라우저가 새 창을 막았습니다 — 주소창 오른쪽의 막음 표시를 풀어 주십시오.'); return; }
+  w.document.open();
+  w.document.write(base끼우기(r.html, r.mid));
+  w.document.close();
+  w.focus();
+}
+window.openPreviewWindow = openPreviewWindow;
+
+/* 구성원 쪽을 읽어 둔다 — 미리보기가 그것을 바탕으로 다시 그린다 */
+async function readPeoplePage() {
+  if (App.previewReading) return;
+  App.previewReading = true; App.render();
+  try {
+    const res = await fetch(SITE_BASE + '/people/index.html?t=' + Date.now());
+    if (!res.ok) throw new Error('서버가 ' + res.status + ' 을 돌려줬습니다');
+    App.sitePeople = await res.text();
+  } catch (e) {
+    console.warn('[미리보기 구성원 쪽]', e);
+    await say('구성원 쪽을 읽지 못했습니다', (e && e.message) || String(e));
+  } finally {
+    App.previewReading = false; App.render();
+  }
+}
+window.readPeoplePage = readPeoplePage;
+
+function togglePreview() { App.preview = !App.preview; App.render(); }
+window.togglePreview = togglePreview;
+function setPreviewMode(m) { App.previewMode = m; App.render(); }
+window.setPreviewMode = setPreviewMode;
 
 function editHtml() {
   const d = App.draft;
@@ -3830,6 +4037,9 @@ window.readOnePage = readOnePage;
    ★ 고쳐 두신 줄은 «원래 글자»로 붙들어 둔다(줄 번호가 아니라). 다시 읽는 사이
      홈페이지 줄이 하나 늘어도 고친 것이 엉뚱한 줄로 옮겨 붙지 않는다. */
 function keepPageHtml(mid, html) {
+  /* ★ 원본 HTML 을 남긴다 — 실시간 미리보기가 이것으로 «올릴 그 HTML»을 만든다.
+     예전에는 파싱만 하고 버렸다. 안 남기면 미리보기가 쪽을 다시 받아야 한다. */
+  (App.pageHtml || (App.pageHtml = {}))[mid] = html;
   App.pageLines[mid] = PuHomeParse.parsePageLines(html);
   App.pageRuns[mid] = PuHomeFill.fixableRuns(PuHomeParse.pageBodyHtml(html));
   /* 이제 없는 줄에 걸린 고침은 버린다 — 없는 자리를 채울 수는 없다 */
