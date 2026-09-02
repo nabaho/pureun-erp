@@ -37,7 +37,7 @@
 <script src="js/pu-home-parse.js?v=4"></script>
 <script src="js/pu-home-career.js?v=1"></script>
 <script src="js/pu-home-export.js?v=3"></script>
-<script src="js/pu-home-diff.js?v=7"></script>
+<script src="js/pu-home-diff.js?v=8"></script>
 <script src="js/pu-home-fill.js?v=8"></script>
 <!-- 새 홈페이지를 «자료로» 그리는 부품. 명령줄(scripts/build-people.js)도 같은 것을 쓴다 -->
 <script src="js/pu-site-people.js?v=1"></script>
@@ -217,7 +217,9 @@ main{flex:1;min-height:0;width:100%;padding:10px 12px;
    편집칸 머리 띠에는 늘 통째로 적혀 있다. */
 .list .po{font-size:12px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* 딱지 둘(명부 딱지 · 대조 딱지)을 위아래로 쌓는다 — 나란히 두면 이름을 밀어낸다 */
-.tags{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex:none;margin-left:auto}
+/* ★ 딱지 둘을 «나란히» 놓는다 (대표 지적 2026-09-02 「2줄을 1줄로」).
+   세로로 쌓으면 줄 키가 커지고, 그만큼 설명 자리를 빼앗아 지사장 설명이 잘렸다. */
+.tags{display:flex;align-items:center;gap:3px;flex:none;margin-left:auto}
 
 /* 목록 번호 — 화면에서 세는 용도. 붙여넣을 글자에는 들어가지 않는다 */
 .num{width:20px;flex:none;text-align:right;color:var(--faint);font-size:12px;font-weight:800;
@@ -591,6 +593,24 @@ function todayString() {
 function stamp(ts) {
   if (!ts) return '';
   try { return new Date(ts).toLocaleString('ko-KR'); } catch (e) { return ''; }
+}
+
+/* 짧은 시각 — 「8/23 18:50」.
+   ★ 왜 (대표 지적 2026-09-02): stamp() 는 「2026. 8. 23. 오후 6:50:24」를 내놓아
+     좁은 칸에서 «두 줄로 넘쳤다».
+   ★ 초는 안 적는다 — 확인이 몇 초에 돌았는지는 아무도 안 본다.
+   ★ 올해 것은 해를 안 적지만, 해가 «다르면» 적는다 —
+     안 적으면 작년 확인을 올해 것으로 읽어 「방금 확인했다」고 착각한다. */
+function stampShort(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return '';
+  const 두자리 = function (n) { return String(n).padStart(2, '0'); };
+  const 시각 = 두자리(d.getHours()) + ':' + 두자리(d.getMinutes());
+  if (d.getFullYear() !== new Date().getFullYear()) {
+    return d.getFullYear() + '-' + 두자리(d.getMonth() + 1) + '-' + 두자리(d.getDate()) + ' ' + 시각;
+  }
+  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + 시각;
 }
 function toast(msg) {
   const t = $('toast');
@@ -2351,7 +2371,7 @@ function appbarHtml() {
   const at = App.check && App.check.at;
   return '<div class="appbar">'
     + '<div class="ttl">홈페이지 관리</div>'
-    + '<span class="when">홈페이지 확인: ' + esc(at ? stamp(at) : '아직 안 함') + '</span>'
+    + '<span class="when">홈페이지 확인 ' + esc(at ? stampShort(at) : '아직 안 함') + '</span>'
     + '<div class="sp"></div>'
     + '<label class="sub">줄 모양 '
     + '<select onchange="setLineFormat(this.value)">'
@@ -2643,6 +2663,24 @@ function statOf(group) {
      검사(pu-home-screen.test.js)가 rosterMark 가 돌려주는 모든 kind 에 이름이 있는지 본다.
    nobase — 쪽: 대조 기준 글자가 아직 없다.  ended — 자문사: 올림인데 거래가 끝났다. */
 const OWN_LABEL = { left: '퇴사 (명부)', none: '명부에 없음', dup: '동명이인', nobase: '기준 없음', ended: '자문 종료' };
+
+/* 딱지에 쓸 «짧은» 이름 — 뒤에 붙은 괄호말을 뗀다.
+   ★ 왜 (대표 지적 2026-09-02): 딱지 여섯이 두 줄로 넘쳤고, 줄에서는 「퇴사」 딱지 옆에
+     「내릴 것 (퇴사)」가 붙어 «퇴사»가 한 줄에 두 번 적혔다.
+   ★ 안내 띠·물음 글은 «긴 이름 그대로» 쓴다 — 거기서는 까닭까지 알려 줘야 한다.
+     그래서 STATUS_TEXT·OWN_LABEL 자체는 안 건드리고, 딱지에서만 이것을 지난다. */
+function pillShort(s) { return String(s == null ? '' : s).replace(/\s*\([^)]*\)\s*$/, ''); }
+
+/* 줄 설명 — 있는 것만, «같은 말은 한 번만» 이어 붙인다.
+   ★ 같은 말이 두 번 나오는 일이 실제로 있다: 명부에서 아는 「퇴사일 2026-06-30」과
+     대조 사유가 같은 문장일 수 있다. 그러면 한 줄에 똑같은 말이 두 번 적힌다.
+   ★ 인라인으로 두었더니 없애도 걸리는 검사가 없었다 — 그래서 이름을 붙였다.
+     이름이 있으면 규칙을 «직접» 시험할 수 있다. */
+function joinOnce(parts) {
+  return (parts || []).filter(Boolean)
+    .filter(function (v, i, a) { return a.indexOf(v) === i; })
+    .join(' · ');
+}
 const OWN_CLS = { left: 'rm', none: 'ask', dup: 'ask', nobase: 'ask', ended: 'rm' };
 /* 카드에 적는 «상태 한 마디» (5차 지시).
    ★ 딱지를 갈래마다 넷씩 붙였더니 「정보가 섞여 판단이 어렵다」는 지시를 받았다.
@@ -2680,13 +2718,18 @@ function cardCount(group) {
 
 /* 카드 한 장 = 한 줄이다 (5차 지시): 갈래 이름 · 숫자 · 상태 한 마디. */
 function dashHtml() {
-  return GROUPS.map(g =>
-    '<button class="dcard' + (App.group === g.key ? ' on' : '') + '"'
+  return GROUPS.map(function (g) {
+    /* ★ 0 은 «안 그린다» (저장소 규칙: 빈 값은 자리만 차지한다).
+       「자문사현황 0개사」가 한 칸을 먹으면서 아무것도 안 알려 주고 있었다.
+       상태 한 마디(「대조 못 함」)가 그 자리에서 할 말을 다 한다. */
+    const n = cardCount(g.key);
+    return '<button class="dcard' + (App.group === g.key ? ' on' : '') + '"'
       + ' onclick="App.go(\'' + g.key + '\')">'
       + '<span class="t">' + esc(g.label) + '</span>'
-      + '<span class="n">' + cardCount(g.key) + '<em>' + (GROUP_UNIT[g.key] || '개') + '</em></span>'
+      + '<span class="n">' + (n ? n + '<em>' + (GROUP_UNIT[g.key] || '개') + '</em>' : '') + '</span>'
       + '<span class="st">' + statusChip(g.key) + '</span>'
-      + '</button>').join('');
+      + '</button>';
+  }).join('');
 }
 
 /* 할 일 — 안내 띠를 모아 둔 칸. 몇 건인지 머리에 적는다.
@@ -2697,7 +2740,7 @@ function todoHtml() {
   return '<div class="todo">'
     + '<div class="th">지금 할 일 <span class="c' + (n ? '' : ' zero') + '">' + n + '</span>'
     + '<span style="flex:1"></span>'
-    + '<span class="sub">' + (App.check ? '확인: ' + esc(stamp(App.check.at)) : '아직 대조 안 함')
+    + '<span class="sub">' + (App.check ? '확인 ' + esc(stampShort(App.check.at)) : '아직 대조 안 함')
     + '</span></div>'
     + '<div class="sc">' + (bars || '<div class="empty">손댈 것이 없습니다.</div>') + '</div>'
     + '</div>';
@@ -2781,14 +2824,17 @@ function chipsHtml() {
     });
   }
   if (App.check && App.group !== 'partner') {
-    ['pending', 'toAdd', 'toRemove', 'liveOnly', 'done', 'same'].forEach(st => {
+    /* ★ 「같음」은 만들지 않는다 (대표 결정 2026-09-02 ㉯) — 딱지 여섯이 두 줄로 넘쳤다.
+       손댈 것이 없는 줄은 「전체」에서 보시면 된다. 되살리려면 딱지를 더 줄일 길을
+       함께 가져올 것 — 그냥 되살리면 두 줄로 돌아간다. */
+    ['pending', 'toAdd', 'toRemove', 'liveOnly', 'done'].forEach(st => {
       const n = all.filter(r => r.status === st).length;
       if (n) defs.push({ k: st, label: STATUS_TEXT[st], n: n });
     });
   }
   return '<div class="chips">' + defs.map(d =>
     '<button class="chip' + (App.filter === d.k ? ' on' : '') + '"'
-    + ' onclick="App.filt(\'' + esc(d.k) + '\')">' + esc(d.label)
+    + ' onclick="App.filt(\'' + esc(d.k) + '\')">' + esc(pillShort(d.label))
     + '<span class="c">' + d.n + '</span></button>').join('')
     + (App.group === 'partner'
         ? '<span class="sub">홈페이지는 로고 «그림»이라 대조를 못 합니다 — 올림 표시는 사람이 합니다</span>'
@@ -2861,8 +2907,12 @@ function rowsHtml() {
     /* ★ 설명·사유를 «한 줄»에 이어 붙인다. 줄을 늘리면 사유가 있는 줄만 키가 커져
        62px 고정이 뜻을 잃는다(그게 3차 지시가 고치라던 「줄이 밀린다」이다).
        「남김」 사유는 왜 퇴사 경고가 없는지 알려 주는 것이라 반드시 실린다. */
-    const line = [r.desc, r.kept ? (r.keptWhy || '(사유 없음)') : '', r.reason]
-      .filter(Boolean).join(' · ');
+    /* ★ 명부에서 아는 것(퇴사일 등)도 «줄»에 싣는다.
+       2026-09-02 딱지에서 날짜를 뗐는데, 대조 사유(r.reason)는 「홈페이지 다시 확인」을
+       누른 뒤에만 붙는다 — 그래서 확인 전에는 날짜가 «아무 데도» 안 보이게 됐다.
+       검사가 그것을 잡았다(「목록 줄에 퇴사일이 안 보입니다」). */
+    const 명부말 = (r.roster && r.roster.detail) || '';
+    const line = joinOnce([r.desc, r.kept ? (r.keptWhy || '(사유 없음)') : '', 명부말, r.reason]);
     return '<div class="r ' + (r.key === App.pick ? 'on' : '') + '" onclick="App.select(\'' + esc(r.key) + '\')">'
       + '<span class="num">' + (r._no || (i + 1)) + '</span>'
       + '<div class="who"><div class="nm">' + esc(r.name) + '</div>'
@@ -2873,7 +2923,7 @@ function rowsHtml() {
       + '<span class="tags">' + rosterPillHtml(r)
       + (r.noStatusPill ? postedPillHtml(r)
          : '<span class="pill ' + (r.status || 'none') + '">'
-           + esc(r.status ? (STATUS_TEXT[r.status] || r.status) : '확인 전') + '</span>')
+           + esc(r.status ? pillShort(STATUS_TEXT[r.status] || r.status) : '확인 전') + '</span>')
       + '</span></div>';
   }).join('');
   return h;
@@ -3061,7 +3111,9 @@ function memberBandHtml(d, rec) {
   if (mark && mark.kind === 'left' && !kept) {
     const 내려감 = st.status === 'done';
     h += '<div class="band ' + (내려감 ? 'keep' : 'rm') + '">'
-      + '<b>푸른ERP 명부: ' + esc(mark.label) + '</b> · '
+      /* ★ 딱지에서는 날짜를 뗐지만(2026-09-02) 이 띠는 자리가 넉넉하다 —
+         「언제 퇴사했나」는 내릴지 정할 때 꼭 보이는 값이라 여기서는 적는다. */
+      + '<b>푸른ERP 명부: ' + esc(mark.label + (mark.leftAt ? ' ' + mark.leftAt : '')) + '</b> · '
       + (내려감 ? '홈페이지에서도 <b>내려간 것으로 확인</b>됐습니다.'
          : (st.status ? '홈페이지에는 <b>아직 올라가 있습니다</b>.'
             : '홈페이지에 올라가 있는지는 <b>「홈페이지 다시 확인」</b>을 눌러야 알 수 있습니다.'))
@@ -3098,12 +3150,20 @@ function memberEdit(d) {
     + '<input value="' + esc(d.position1) + '" oninput="fieldEdit(\'position1\',this.value)"></div>'
     + '<div class="fld"><label>직책2</label>'
     + '<input value="' + esc(d.position2) + '" oninput="fieldEdit(\'position2\',this.value)"></div>'
-    + '<div class="fld" style="flex:0 0 130px"><label>홈페이지 글 번호</label>'
+    /* ★ 「홈페이지 글 번호」 → 「글 번호」 · 130px → 90px (대표 지적 2026-09-02).
+       숫자 몇 자리인데 라벨이 길어 칸이 넓었다. 긴 이름은 물음표로 옮긴다. */
+    + '<div class="fld" style="flex:0 0 90px"><label>글 번호'
+    + '<span class="tip" title="홈페이지 글의 번호입니다 — 이 번호로 홈페이지 글과 짝지어집니다">?</span></label>'
     + '<input value="' + esc(d.srl) + '" oninput="fieldEdit(\'srl\',this.value)"></div></div>';
+  /* ★ 비어 있으면 «한 줄»로 접는다 (대표 지적 2026-09-02) — 빈 칸이 세 줄을 먹고 있었다.
+     누르면(onfocus) 펴진다. 글이 있으면 처음부터 펴져 있다.
+   ★ 긴 설명은 라벨 «글자»가 아니라 물음표에 넣는다 — 라벨이 칸보다 길었다.
+     뜻을 지우는 것이 아니다: 마우스를 올리면 그대로 뜬다. */
   h += '<div class="fld"><label>메인 설명'
-    + '<span class="tip" title="홈페이지 공개 화면에 안 나와 읽어올 수 없습니다 — 홈페이지 편집 화면을 보고 채우십시오">'
-    + '홈페이지에서 읽어올 수 없는 칸</span></label>'
-    + '<textarea rows="3" oninput="fieldEdit(\'intro\',this.value)">' + esc(d.intro) + '</textarea></div>';
+    + '<span class="tip" title="홈페이지 공개 화면에 안 나와 읽어올 수 없습니다 — 홈페이지 편집 화면을 보고 채우십시오">?</span></label>'
+    + '<textarea rows="' + (d.intro ? '3' : '1') + '" onfocus="this.rows=3"'
+    + ' placeholder="비어 있습니다 — 누르면 펴집니다"'
+    + ' oninput="fieldEdit(\'intro\',this.value)">' + esc(d.intro) + '</textarea></div>';
 
   h += '<div class="fld"><label>경력사항 — ' + d.careers.length + '줄</label>'
     + '<div class="car" id="careerBox">'

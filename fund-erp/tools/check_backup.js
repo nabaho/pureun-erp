@@ -40,6 +40,10 @@ ok('제목이 「백업·복구」', /백업·복구/.test(t), t.slice(0,60));
 ok('내려받기 단추가 있다', /전체 백업 내려받기/.test(t), t.slice(0,80));
 ok('그 단추가 exportAll 을 부른다',
    [].slice.call(box.querySelectorAll('button')).some(b=>/exportAll\(\)/.test(b.getAttribute('onclick')||'')));
-ok('되돌리기가 아직 없다고 «분명히» 적혀 있다', /되돌리기.{0,20}아직 없습니다/.test(t), t);
+/* 파일로 통째로 되돌리는 길은 «일부러» 두지 않았다 — 잘못 누르면 전 기금이 한 번에 날아간다.
+   다만 실수로 지운 기금은 삭제 보관함에서 되살아나므로, 그 길을 함께 알려 주어야
+   「되돌릴 방법이 아예 없다」고 읽히지 않는다. 둘 다 창에 있어야 한다. */
+ok('되돌리기를 안 둔 까닭이 적혀 있다', /일부러 두지 않았습니다/.test(t), t);
+ok('지운 기금을 되살리는 길을 알려 준다', /삭제 보관함.{0,10}복원/.test(t), t);
 console.log(bad?'\nFAILURES '+bad:'\nALL PASS');
 process.exit(bad?1:0);

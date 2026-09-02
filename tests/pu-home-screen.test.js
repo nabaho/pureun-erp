@@ -96,6 +96,9 @@ function rowDeps() {
     fnSource('memberRows'), fnSource('pageIdsOf'), fnSource('pageRows'), fnSource('rowsOf'),
     fnSource('needsAttentionRow'), fnSource('statOf'),
     fnSource('statusChip'), fnSource('cardCount'), fnSource('dashHtml'),
+    /* 딱지 이름을 짧게 만드는 것 — 딱지 줄과 줄 딱지가 «둘 다» 이것을 지난다
+       (2026-09-02 대표 지적 「2줄을 1줄로」). 안 실으면 딱지를 그리다 그 자리에서 죽는다. */
+    fnSource('pillShort'), fnSource('joinOnce'),
     /* 할 일 목록 — 안내 띠가 «한 줄짜리 할 일»로 바뀌었다(5차 지시) */
     fnSource('rowsWith'), fnSource('someNames'), fnSource('seeBtns'), fnSource('jobCard'),
     fnSource('noteOneLine'), fnSource('readPageBtn'),
@@ -2269,7 +2272,13 @@ test('★ 사유가 빈 「남김」은 예외로 보지 않는다 — 부품과
   ctx.App.members = { '320': { name: '장한돌', keepOnSite: { at: 'x', by: 'y', why: '   ' } } };
   const r = plain(ctx.memberRows())[0];
   assert.equal(r.kept, false, '사유 없는 예외를 예외로 봤습니다 — 딱지 판정과 어긋납니다');
-  assert.ok(ctx.listHtml().indexOf('퇴사 2023-12-31') >= 0, '퇴사 딱지가 사라졌습니다');
+  /* ⚠ 2026-09-02 부터 딱지에는 날짜를 «안» 적는다 —
+     같은 줄 설명에 「퇴사일 …」이 이미 있어 한 줄에 날짜가 두 번 적혔다(대표 지적).
+     그래서 「퇴사 2023-12-31」 한 덩이로 찾지 않고, 딱지와 날짜를 «따로» 본다.
+     둘 다 봐야 한다 — 딱지만 보면 날짜가 사라진 것을 못 잡는다. */
+  const 목록 = ctx.listHtml();
+  assert.match(목록, /class="pill[^"]*">퇴사</, '★ 퇴사 딱지가 사라졌습니다');
+  assert.ok(목록.indexOf('2023-12-31') >= 0, '★ 퇴사일이 줄에서 사라졌습니다');
 });
 
 function bandBox(member, staff, check) {
