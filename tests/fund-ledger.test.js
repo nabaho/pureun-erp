@@ -143,7 +143,11 @@ test('재무제표가 대차 일치하고, 연도별로 따로 계산된다', ()
   assert.equal(cur.basic, 65000000, '기본재산 = 이월 500만 + 출연 6,000만');
   assert.equal(cur.purpose, 8500000, '목적사업비 = 장학 600만 + 경조 250만');
   assert.equal(cur.admin, 220000);
-  assert.equal(cur.interest, 412000);
+  /* ⚠ 2026-09-02 — 예전 cur.interest(수익 «전체») 는 없어졌다. 준비금환입이 섞여
+     사업수익과 두 번 세던 원인이라, 기금 결산 고침에서 bizRev·nonopRev 로 «갈랐다».
+     이 자료에서는 사업외수익이 0 이라 합계는 그대로 412,000 이다 — 둘을 함께 못 박는다. */
+  assert.equal(cur.bizRev, 412000, '사업수익');
+  assert.equal(cur.nonopRev, 0, '사업외수익 — 이 자료에는 없다');
   assert.equal(cur.net, 412000 - 8500000 - 220000);
 
   const prev = b.computeFin([], 'F1', 2024);

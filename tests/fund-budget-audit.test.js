@@ -208,10 +208,18 @@ test('수입 항목끼리 겹치지 않는다 — 같은 돈을 두 번 세지 �
   assert.match(a, /bizRev:num\(fin\.bizRev\)/, '사업수익을 안 쓴다');
   assert.match(a, /nonopRev:num\(fin\.nonopRev\)/, '사업외수익을 안 쓴다');
 
-  /* computeFin 이 정말 interest = bizRev + nonopRev 인지 — 이 전제가 깨지면 갈래를 다시 짜야 한다 */
+  /* ⚠ 2026-09-02 — 이 자리는 예전에 「computeFin 이 정말 interest = bizRev + nonopRev 인지」를
+     보았다(var interest=revenue · var nonopRev=revenue-bizRev). 그런데 기금 결산 고침에서
+     «합쳐 놓은 칸(interest)을 아예 없앴다» — 준비금환입이 섞여 두 번 세던 원인이었다.
+     없어진 변수를 계속 찾으니 검사가 깨졌다. 지켜야 할 «규칙»은 그대로다 —
+     합쳐 놓은 칸을 쓰지 않는 것. 없어졌으면 더 강하게 지켜진 것이므로 그것을 본다. */
   const cf = grabFn('computeFin');
-  assert.match(cf, /var interest=revenue/, 'interest 의 뜻이 바뀌었다 — 예산 갈래를 다시 볼 것');
-  assert.match(cf, /var nonopRev=revenue-bizRev/, 'nonopRev 의 뜻이 바뀌었다');
+  assert.ok(!/\binterest\b/.test(cf.replace(/\/\*[\s\S]*?\*\//g, '')),
+    'computeFin 에 interest 가 되살아났다 — 합쳐 놓은 칸은 bizRev 와 겹쳐 두 번 세어진다');
+  /* ⚠ 선언 모양을 못 박지 않는다 — bizRev 는 한 줄에 여러 칸과 함께 선언돼 있고(var a=0,bizRev=0,…),
+     그 줄은 칸이 늘 때마다 바뀐다. 「그 이름을 쓰는가」만 본다. */
+  assert.match(cf, /\bbizRev\b/, '사업수익 칸이 없다');
+  assert.match(cf, /nonopRev=revenue-bizRev/, '사업외수익 = 총수익 − 사업수익 이어야 한다');
 
   /* 항목이 쓰는 이름이 서로 달라야 겹치지 않는다 */
   const box = {};
