@@ -232,5 +232,41 @@ console.log('\n■ 자율 체크리스트 — 남의 답을 지우고 우리 자
   chk('남의 판단이 든 칸은 하나도 없다', answered.length === 0, answered.join('|'));
 }
 
+/* ── 한글로 적힌 금액·사람 수도 걷어낸다 ─────────────
+
+   걷어내기는 오랫동안 «숫자»만 봤다. 그래서 변환본에 딜려 온 남의 값 중
+   한글로 적힌 것과 「N명」이 그대로 인쇄되고 있었다 — 서식 세 종에서 발견했다.
+     contrib          「오백만원정」
+     bizplan          「신규 출연기금 ( 일천만원)」
+     sub_welfare_plan 「대상인원: 65명」
+
+   ⚠ 서식 «안내문»은 건드리면 안 된다 — 설립인가신청서의
+     「위원이 4명 이상일 경우에는 별도 용지에」는 서식의 일부다.
+     금액과 같이 「미만·이상」이 붙으면 둔다. */
+console.log('\n■ 한글 금액·사람 수도 걷어낸다');
+{
+  const f = { name:'가나공동', fund_type:'공동', officers:[], years:{} };
+  global.funds.X = f; global.S.formFund = 'X'; global.S.f15Close = null; global.S._docR = null;
+  const t = k => T(draw(k, f));
+
+  const c = t('contrib');
+  chk('출연확인서(contrib) — 「오백만원정」이 없다', !c.includes('오백만원'), c.slice(0, 200));
+  chk('그 자리가 빈칸으로 남는다', /금 액 : ＿/.test(c.replace(/\s+/g, ' ')), c.slice(0, 200));
+
+  const b = t('bizplan');
+  chk('사업계획서 — 「일천만원」이 없다', !b.includes('일천만원'), b.slice(0, 200));
+
+  const w = t('sub_welfare_plan');
+  chk('복지사업계획서 — 「65명」이 없다', !w.includes('65명'), w.slice(0, 200));
+  chk('그 자리는 「명」을 남긴 빈칸', /＿명/.test(w), w.slice(0, 200));
+
+  /* 서식 안내문은 그대로 — 지우면 서류를 어떻게 내는지를 모르게 된다 */
+  const k = t('inka');
+  chk('설립인가신청서 — 「4명 이상」 안내문은 남는다', k.includes('4명 이상'), k.slice(0, 200));
+  /* 「사원」·「직원」은 금액이 아니다 — 원 앞에 백·천·만·억이 있어야 금액으로 본다 */
+  const x = t('tax_bizreg');
+  chk('「주주(사원)명부」 같은 말은 안 건드린다', x.includes('사원)명부'), x.slice(0, 200));
+}
+
 console.log(bad ? '\nFAILURES ' + bad : '\nALL PASS (서식 동작 확인)');
 process.exit(bad ? 1 : 0);
