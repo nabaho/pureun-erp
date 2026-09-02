@@ -144,7 +144,7 @@
 <script src="js/pu-billing.js?v=7"></script>
 <script src="js/pu-rrn-seal.js?v=1"></script>
 <!-- 푸른통합 온톨로지 공통 사전·읽기 전용 관계 진단 -->
-<script src="js/pu-ontology.js?v=2"></script>
+<script src="js/pu-ontology.js?v=3"></script>
 <!-- 급여담당자 엑셀 → 업체관리 (대표 결정 2026-08-24). 읽고 대조하는 일은 이 파일이,
      그리기는 아래 화면이 한다 — 검사가 이 파일을 그대로 돌린다. -->
 <script src="js/pu-co-xls.js?v=3"></script>
@@ -37426,7 +37426,7 @@ function ArchiveManagement(){
   );
 }
 
-/* 푸른통합 온톨로지 1단계 — 현재 로그인 권한으로 이미 받은 정본만 읽는다.
+/* 푸른통합 온톨로지 2단계 — 현재 로그인 권한으로 정본과 안전한 경량 색인만 읽는다.
    자동수정·Firebase 쓰기·원본 삭제는 하지 않는다. */
 function OntologyAuditPanel(){
   var rs=useState(null); var report=rs[0]; var setReport=rs[1];
@@ -37438,26 +37438,30 @@ function OntologyAuditPanel(){
     setTimeout(function(){
       try{
         var data={}; Object.keys(O.STORE_TYPES).forEach(function(k){ data[k]=dbGet(k,[]); });
-        setReport(O.audit(data));
-      }catch(e){ window._erpErrLog&&window._erpErrLog(e); showToast('온톨로지 진단 실패: '+(e&&e.message||e)); }
-      setBusy(false);
+        var user=(window.firebase&&firebase.auth&&firebase.auth().currentUser)||null;
+        var plan=O.getReadPlan({uid:user&&user.uid||''});
+        Promise.all(plan.map(function(a){return fbDb.ref(a.path).once('value').then(function(s){return {key:a.key,ok:true,value:s.val(),path:a.path};}).catch(function(e){return {key:a.key,ok:false,error:e&&e.code||e&&e.message||'읽기 실패',path:a.path};});}))
+          .then(function(rows){var sources={};rows.forEach(function(x){sources[x.key]=x;});setReport(O.auditIntegrated(data,sources,{uid:user&&user.uid||''}));setBusy(false);})
+          .catch(function(e){window._erpErrLog&&window._erpErrLog(e);showToast('온톨로지 진단 실패: '+(e&&e.message||e));setBusy(false);});
+      }catch(e){ window._erpErrLog&&window._erpErrLog(e); showToast('온톨로지 진단 실패: '+(e&&e.message||e)); setBusy(false); }
     },50);
   }
   function saveReport(){
     if(!report) return;
     var safe={schemaVersion:report.schemaVersion,readOnly:true,generatedAt:new Date().toISOString(),entityCount:report.entityCount,
-      edgeCount:report.edgeCount,issueCount:report.issueCount,severity:report.severity,stats:report.stats,issues:report.issues};
+      edgeCount:report.edgeCount,issueCount:report.issueCount,severity:report.severity,stats:report.stats,
+      programCount:report.programCount,coverageCount:report.coverageCount,coverage:report.coverage,issues:report.issues};
     var blob=new Blob([JSON.stringify(safe,null,2)],{type:'application/json'}), a=document.createElement('a');
     a.href=URL.createObjectURL(blob); a.download='pureun-ontology-audit-'+todayStr()+'.json'; a.click();
     setTimeout(function(){URL.revokeObjectURL(a.href);},1000);
   }
   var programs=O?Object.keys(O.PROGRAMS):[], byCode={};
   var labels={missing_id:'ID 없음',duplicate_id:'중복 ID',ambiguous_company_name:'동일 업체명',duplicate_business_number:'중복 사업자번호',
-    orphan_company:'끊어진 업체 연결',missing_company_id:'업체 ID 미입력',unresolved_company:'업체 미확정',orphan_person:'끊어진 담당자 연결',orphan_source:'끊어진 원본 연결'};
+    orphan_company:'끊어진 업체 연결',missing_company_id:'업체 ID 미입력',unresolved_company:'업체 미확정',orphan_person:'끊어진 담당자 연결',orphan_source:'끊어진 원본 연결',source_unreadable:'프로그램 읽기 제한'};
   if(report) report.issues.forEach(function(x){byCode[x.code]=(byCode[x.code]||0)+1;});
   return h('div',{className:'env-section',style:{maxWidth:'100%'}},
-    h('h3',null,'🕸️ 푸른통합 온톨로지 1단계'),
-    h('div',{className:'desc'},'포털에 등록된 모든 프로그램의 공통 개체·관계 사전을 기준으로 현재 받은 자료의 연결 상태를 검사합니다. 원본을 수정하거나 서버에 저장하지 않습니다.'),
+    h('h3',null,'🕸️ 푸른통합 온톨로지 2단계'),
+    h('div',{className:'desc'},'등록된 모든 프로그램의 공통 사전과 안전한 경량 색인을 기준으로 연결 상태를 검사합니다. 메일 본문·사진 원본·전자서명 제출·급여 직원표는 읽지 않으며 원본을 수정하거나 서버에 저장하지 않습니다.'),
     h('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',margin:'12px 0'}},
       h('button',{onClick:run,disabled:busy,style:{padding:'8px 16px',background:'#1e40af',color:'#fff',border:'none',borderRadius:'6px',fontWeight:700,cursor:busy?'wait':'pointer'}},busy?'⏳ 관계 검사 중...':'🔍 관계 전수진단'),
       report&&h('button',{onClick:saveReport,style:{padding:'8px 16px',background:'#fff',color:'#1e40af',border:'1px solid #bfdbfe',borderRadius:'6px',fontWeight:700,cursor:'pointer'}},'⬇ 진단 보고서')),
@@ -37467,7 +37471,8 @@ function OntologyAuditPanel(){
     !report&&h('div',{style:{padding:'24px',textAlign:'center',color:'#94a3b8',background:'#f8fafc',borderRadius:'7px',fontSize:'12.5px'}},'진단을 실행하면 ID 누락·중복, 끊어진 업체·담당자·업무·재무 관계를 찾습니다.'),
     report&&h('div',null,
       h('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',marginBottom:'12px'}},
-        [['개체',report.entityCount,'#1e40af'],['관계 후보',report.edgeCount,'#166534'],['위험',report.severity.high,'#dc2626'],['확인 필요',report.severity.medium,'#d97706']].map(function(x){return h('div',{key:x[0],style:{padding:'9px 13px',background:'#f8fafc',borderRadius:'6px',fontSize:'12px'}},h('strong',{style:{color:x[2],marginRight:'5px'}},Number(x[1]).toLocaleString()),x[0]);})),
+        [['프로그램 연결',(report.coverageCount||0)+'/'+(report.programCount||programs.length),'#1e40af'],['개체',report.entityCount,'#1e40af'],['관계 후보',report.edgeCount,'#166534'],['위험',report.severity.high,'#dc2626'],['확인 필요',report.severity.medium,'#d97706']].map(function(x){return h('div',{key:x[0],style:{padding:'9px 13px',background:'#f8fafc',borderRadius:'6px',fontSize:'12px'}},h('strong',{style:{color:x[2],marginRight:'5px'}},typeof x[1]==='number'?Number(x[1]).toLocaleString():x[1]),x[0]);})),
+      report.coverage&&h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'12px'}},Object.keys(report.coverage).map(function(k){var c=report.coverage[k],ready=c.state==='ready'||c.state==='empty',partial=c.state==='partial',bg=ready?'#f0fdf4':c.state==='in_app'?'#eff6ff':'#fffbeb',color=ready?'#166534':c.state==='in_app'?'#1e40af':'#854d0e',word=ready?'연결':partial?'일부 연결':c.state==='in_app'?'앱 내부':'확인 필요';return h('span',{key:k,title:'읽은 레코드 '+c.records+'건'+(c.denied?' · 읽기 제한 '+c.denied+'곳':''),style:{padding:'4px 8px',background:bg,color:color,borderRadius:'10px',fontSize:'10.5px'}},c.name+' · '+word);})),
       report.issueCount===0?h('div',{style:{padding:'14px',background:'#f0fdf4',color:'#166534',borderRadius:'7px',fontWeight:700,textAlign:'center'}},'✅ 끊어진 관계가 발견되지 않았습니다.'):
         h('div',null,
           h('div',{style:{fontSize:'12.5px',fontWeight:700,color:'#1e293b',marginBottom:'7px'}},'발견 항목 '+report.issueCount+'건 — 자동수정하지 않음'),

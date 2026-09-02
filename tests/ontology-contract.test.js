@@ -72,7 +72,7 @@ test('온톨로지 모듈에는 서버·원본 쓰기 명령이 없다', () => {
 test('푸른ERP에서 공통 사전과 읽기 전용 진단 화면을 실제로 사용한다', () => {
   assert.match(erp, /js\/pu-ontology\.js\?v=\d+/);
   assert.match(erp, /function OntologyAuditPanel\(/);
-  assert.match(erp, /O\.audit\(data\)/);
+  assert.match(erp, /O\.auditIntegrated\(data,sources/);
   assert.match(erp, /원본을 수정하거나 서버에 저장하지 않습니다/);
 });
 
@@ -80,4 +80,56 @@ test('향후 새 프로그램도 온톨로지를 먼저 따르도록 저장소 �
   assert.match(guide, /모든 새 프로그램·데이터에 필수/);
   assert.match(guide, /PuOntology\.PROGRAMS/);
   assert.match(guide, /사람 이름·업체명을 관계 열쇠로 쓰지 않는다/);
+});
+
+test('2단계 읽기 계획은 모든 프로그램을 다루되 민감 본문 경로를 읽지 않는다', () => {
+  const covered = new Set(Object.values(O.READ_ADAPTERS).map(a => a.program));
+  Object.keys(O.PROGRAMS).forEach(key => assert.ok(covered.has(key), key + ': 읽기 어댑터 없음'));
+  const plan = O.getReadPlan({ uid:'user-1' });
+  assert.ok(plan.some(x => x.path === 'work_erp/items'));
+  assert.ok(plan.some(x => x.path === 'puphotos/u/user-1/items'));
+  assert.ok(plan.some(x => x.path === 'paydata/u/user-1/items'));
+  const paths = plan.map(x => x.path).join('\n');
+  assert.doesNotMatch(paths, /(?:blobs|thumbs|texts|submissions|secret|payroll\/emp|values|mailbox)/);
+});
+
+test('통합 진단은 프로그램별 개체와 관계를 만들고 원본을 바꾸지 않는다', () => {
+  const local = {
+    companies:[{id:'co1',name:'가나다산업'}],
+    user_accounts:[{id:'u1',sid:'P-001',name:'담당자'}]
+  };
+  const sources = {
+    work_items:{ok:true,value:{W1:{title:'자문 업무',co_id:'co1',mgr_main:{sid:'P-001'}}}},
+    career_counts:{ok:true,value:{total:3}},
+    cards_index:{ok:true,value:{C1:{k:'card',n:'홍길동',c:'가나다산업'}}},
+    photos_items:{ok:true,value:{2026:{PH1:{filename:'현장.jpg',companyId:'co1'}}}},
+    payroll_index:{ok:true,value:{가나다산업:[{id:'PAY1','월':'2026-08'}]}},
+    paydata_items:{ok:true,value:{202608:{D1:{filename:'급여대장.xlsx',companyId:'co1'}}}},
+    home_members:{ok:true,value:{M1:{name:'구성원'}}},
+    home_pages:{ok:true,value:{about:{label:'소개'}}}
+  };
+  const before = JSON.stringify({local,sources});
+  const r = O.auditIntegrated(local, sources, {uid:'user-1'});
+  const workId = O.sourceCanonicalId('Task','work','W1');
+  assert.ok(r.entities[workId]);
+  assert.ok(r.entities[O.sourceCanonicalId('MediaAsset','photos','PH1')]);
+  assert.ok(r.entities[O.sourceCanonicalId('PayrollRecord','payroll','PAY1')]);
+  assert.ok(r.entities[O.sourceCanonicalId('Document','paydata','D1')]);
+  assert.ok(r.edges.some(e => e.subject === workId && e.predicate === 'assignedTo'));
+  assert.ok(r.edges.some(e => e.subject === workId && e.predicate === 'forOrganization'));
+  assert.equal(r.coverage.work.state, 'ready');
+  assert.equal(r.coverage.mail.state, 'in_app');
+  assert.equal(JSON.stringify({local,sources}), before);
+  assert.equal(r.readOnly, true);
+});
+
+test('읽지 못한 프로그램은 삭제나 추정 대신 확인 필요로 남긴다', () => {
+  const r = O.auditIntegrated({}, {
+    work_items:{ok:false,error:'PERMISSION_DENIED'},
+    home_members:{ok:true,value:{}},
+    home_pages:{ok:false,error:'PERMISSION_DENIED'}
+  }, {});
+  assert.equal(r.coverage.work.state, 'denied');
+  assert.equal(r.coverage.home.state, 'partial');
+  assert.ok(r.issues.some(x => x.code === 'source_unreadable' && x.store === 'work_items'));
 });
