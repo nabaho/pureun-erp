@@ -995,8 +995,13 @@
      (신분증·주민등록서류·위임장·개인정보동의서), 둘은 «사람이 여럿 적힌 표»다.
      ⚠ pu-photos.html 의 WORKER_KINDS 와 짝이다 — 한쪽만 늘리면 값이 안 오거나
        할 일이 안 뜬다(tests/cards-worker-box.test.js 가 둘을 견준다). */
-  var WORKER_DOC_KINDS = { idcard: 1, resident: 1, mandate: 1, consent: 1,
-    timesheet: 1, payslip: 1 };
+  /* ⚠⚠ 근태표(timesheet)·급여서류(payslip)는 **일부러 빠져 있다** (대표 지시 2026-09-02
+       「근태표등은 필요없다. 주로 푸른이알피에서 근로자 사건등에 대한 부분이다」).
+     한 번 넣어 봤더니 근태표 한 장에 적힌 일곱 명이 근로자 정보함 목록 앞머리를
+     통째로 먹었다 — 근태표에 이름이 있다는 것은 「그 달에 일했다」는 뜻일 뿐,
+     우리가 그 사람 일을 맡았다는 뜻이 아니다.
+     ⚠ 다시 넣지 말 것. 넣으면 사람이 아닌 것이 사람으로 목록에 쌓인다. */
+  var WORKER_DOC_KINDS = { idcard: 1, resident: 1, mandate: 1, consent: 1 };
 
   /* 실시간DB 열쇠로 쓸 수 있게 다듬는다. 한글은 그대로 쓸 수 있지만
      . # $ / [ ] 는 자리 이름에 못 쓴다 — 이름에 점이 든 경우가 실제로 있다. */
@@ -1047,11 +1052,13 @@
     if (!dk) { out.skipped.push({ name: '', why: '사진을 가리킬 수 없습니다' }); return out; }
     var company = f.company || '';
 
-    /* 한 장에 여러 사람(근태표·임금대장)이면 그 줄마다, 아니면 name 한 사람 */
-    var rows = Array.isArray(f.rows) ? f.rows : [];
-    var people = rows.map(function (r) { return r && r.name; }).filter(function (x) { return !blank(x); });
-    if (!people.length && !blank(f.name)) people = [f.name];
-    if (!people.length) { out.skipped.push({ name: '', why: '이름을 읽지 못했습니다' }); return out; }
+    /* ⚠ 받는 갈래 넷(신분증·주민등록서류·위임장·동의서)은 모두 «한 사람 것»이다.
+       한 장에 여러 사람이 적힌 표(근태표·임금대장)를 그 줄마다 붙이는 길이 있었는데,
+       대표 지시 2026-09-02 로 그 두 갈래가 빠지면서 **아무것도 지나갈 수 없는 길**이
+       되었다 — 검사로 밟을 수 없는 길은 두지 않는다(그런 길은 조용히 썩는다).
+       근태표를 되살릴 일이 생기면 그때 다시 짠다. */
+    if (blank(f.name)) { out.skipped.push({ name: '', why: '이름을 읽지 못했습니다' }); return out; }
+    var people = [f.name];
 
     var seen = {};
     people.forEach(function (nm) {

@@ -52,7 +52,9 @@ function load(over) {
     erpHistName: r => String((r && r.typeName) || ''),
     erpHistStat: r => String((r && r.status) || 'run'),
     erpHistYear: r => Number((r && r.year) || 0),
-    erpHistMd: v => String(v || '')
+    erpHistMd: v => String(v || ''),
+    /* 담당은 사번(p001)으로 오므로 사람 이름으로 바꿔 준다 */
+    erpMgrName: sid => (sid ? '노무사' + sid : '')
   };
   Object.assign(ctx, over || {});
   vm.createContext(ctx);
@@ -62,7 +64,8 @@ function load(over) {
     grab(/const WK_DOC_LABEL = \{[\s\S]*?\};/, 'WK_DOC_LABEL'),
     grab(/const WK_DOC_ICON = \{[\s\S]*?\};/, 'WK_DOC_ICON'),
     grab(/const WK_FOLDERS = \[[\s\S]*?\n\];/, 'WK_FOLDERS'),
-    cut('wkSafe'), cut('wkKeyOf'), cut('wkCaseWorkers'), cut('wkCaseRow'),
+    cut('wkSafe'), cut('wkKeyOf'), cut('wkCaseWorkers'),
+    cut('wkCaseTitle'), cut('wkCaseRow'), cut('wkSiteOf'),
     cut('wkAllCases'), cut('wkListBuild'), cut('wkFoldRows'),
     cut('wkFolderPick'), cut('wkCount'), cut('wkMatch'), cut('wkVisible'),
     cut('wkMaskRrn'), cut('wkRrnShown'), cut('wkRrnCellHtml'),
@@ -117,7 +120,7 @@ test('★ 사건의 근로자와 사진첩 서류가 «같은 사람»으로 합
   const key = c.wkKeyOf('강석', '해찬솔에프쓰리');
   const list = c.wkListBuild(erp([caseRec({ workers: [W('강석', { phone: '010-1' })] })]),
     (function () { const o = {}; o[key] = { name: '강석', company: '해찬솔에프쓰리',
-      docs: { d1: { kind: 'timesheet', at: 100 } } }; return o; })());
+      docs: { d1: { kind: 'idcard', at: 100, docName: '주민등록증' } } }; return o; })());
   assert.equal(list.length, 1, '한 사람이어야 합니다: ' + JSON.stringify(list.map(x => x.key)));
   assert.equal(list[0].cases.length, 1, '사건이 안 붙었습니다');
   assert.equal(list[0].docs.length, 1, '서류가 안 붙었습니다');
@@ -149,13 +152,93 @@ test('★★★ 주민번호는 «사건에서만» 온다 — 사진첩 쪽에�
   const info = {}; info[key] = { name: '강석', company: '가나',
     rrn: '900101-1234567', address: '충남 …',          /* 있어서는 안 되는 값 */
     docs: { d1: { kind: 'idcard', at: 1, rrn: '900101-1234567' } } };
-  const list = c.wkListBuild({ byBiz: {}, byName: {} }, info);
+  /* 사람은 사건에서 생긴다 — 사건 쪽에는 주민번호를 안 적어 둔다 */
+  const cases = { byBiz: {}, byName: { a: [caseRec({ companyName: '가나', bizNo: '',
+    workers: [W('강석')] })] } };
+  const list = c.wkListBuild(cases, info);
   assert.equal(list.length, 1);
+  assert.equal(list[0].docs.length, 1, '서류가 안 붙었습니다');
   assert.equal(list[0].rrn, '',
     '★★★ 사진첩 자리에 있던 주민번호를 그대로 읽었습니다 — 그 자리에는 담기지 않습니다');
   assert.equal(list[0].address, '', '★★★ 주소를 사진첩 자리에서 읽었습니다');
   const flat = JSON.stringify(list[0].docs);
   assert.ok(flat.indexOf('900101') < 0, '★★★ 서류 줄에 주민번호가 남았습니다: ' + flat);
+});
+
+/* ══════════ ⑧ 사람을 만드는 것은 «사건»뿐이다 (대표 지시 2026-09-02) ══════════
+   「근태표등은 필요없다. 주로 푸른이알피에서 근로자 사건등에 대한 부분이다」
+   한 번 근태표에서도 사람을 만들었더니, 근태표 한 장에 적힌 정육식당 일곱 명이
+   목록 앞머리를 통째로 먹고 정작 봐야 할 사건 근로자가 그 아래로 밀렸다. */
+
+test('★★★ 사진첩 서류만 있는 사람은 목록에 «안 나온다»', () => {
+  const c = load();
+  const info = { 'nobody__아무개': { name: '아무개', company: '어딘가',
+    docs: { d1: { kind: 'idcard', at: 100 } } } };
+  const list = c.wkListBuild({ byBiz: {}, byName: {} }, info);
+  assert.equal(list.length, 0,
+    '★★★ 사건에 없는 사람이 목록에 생겼습니다 — 근태표 일곱 명이 목록을 덮던 그 일입니다');
+});
+
+test('★★ 근태표·급여서류는 서류 칸에도 «안 보인다»', () => {
+  const c = load();
+  const key = c.wkKeyOf('강석', '가나');
+  const info = {}; info[key] = { name: '강석', company: '가나', docs: {
+    d1: { kind: 'timesheet', at: 100 }, d2: { kind: 'payslip', at: 101 },
+    d3: { kind: 'idcard', at: 102, docName: '주민등록증' } } };
+  const cases = { byBiz: {}, byName: { a: [caseRec({ companyName: '가나', bizNo: '',
+    workers: [W('강석')] })] } };
+  const list = c.wkListBuild(cases, info);
+  assert.equal(list[0].docs.length, 1,
+    '★★ 근태표·급여서류가 서류 칸에 보입니다: ' + JSON.stringify(list[0].docs.map(d => d.kind)));
+  assert.equal(list[0].docs[0].kind, 'idcard');
+});
+
+test('★ 서류 이름표에 근태표·급여서류가 없다 — 목록 하나가 화면과 조립을 함께 정한다', () => {
+  const m = SRC.match(/const WK_DOC_LABEL = \{([\s\S]*?)\};/);
+  assert.ok(m, 'WK_DOC_LABEL 을 못 찾았습니다');
+  assert.doesNotMatch(m[1], /timesheet|payslip/,
+    '★ 근태표·급여서류가 되살아났습니다 — 목록이 다시 덮입니다');
+  ['idcard', 'resident', 'mandate', 'consent'].forEach(function (k) {
+    assert.match(m[1], new RegExp(k), k + ' 이름표가 없습니다');
+  });
+});
+
+test('★ 옆줄에 「서류만 있는 사람」 갈래가 없다 — 그런 사람이 아예 없다', () => {
+  const m = SRC.match(/const WK_FOLDERS = \[([\s\S]*?)\n\];/);
+  assert.ok(m, 'WK_FOLDERS 를 못 찾았습니다');
+  assert.doesNotMatch(m[1], /서류만 있는 사람/,
+    '★ 근태표로 사람을 만들지 않으므로 그 갈래에는 아무도 없습니다');
+});
+
+/* ── 사건 이름·사업장 다듬기 (대표 화면 2026-09-02) ── */
+
+test('★ 사건 이름이 비면 «사건번호»로 적는다 — 「(이름 없는 사건)」이 여럿이었다', () => {
+  const c = load();
+  const row = c.wkCaseRow({ _kind: 'case', typeName: '', caseNo: '노-2026-041' }, {});
+  assert.equal(row.title, '사건 노-2026-041');
+});
+
+test('★ 사건 이름 꼬리 「(노사)」를 뗀다 — 어느 사건에나 붙어 가려 주는 것이 없다', () => {
+  const c = load();
+  const row = c.wkCaseRow({ _kind: 'case', typeName: '임금퇴직금기타체불노동부대리(노사)' }, {});
+  assert.equal(row.title, '임금퇴직금기타체불노동부대리');
+});
+
+test('★★ 사업장이 사람 이름과 «같은 말»이면 안 그린다 — 한 줄에 두 번 나왔다', () => {
+  const c = load();
+  assert.equal(c.wkSiteOf({ name: '심진숙', company: '심진숙' }), '');
+  assert.equal(c.wkSiteOf({ name: '심진숙', company: '심진숙 산재심사청구(출퇴근재해)' }), '',
+    '★★ 사건 제목이 사업장 칸에 그대로 들어갑니다');
+  assert.equal(c.wkSiteOf({ name: '정우신약 근로자', company: '정우신약' }), '');
+  assert.equal(c.wkSiteOf({ name: '강미향', company: '중원대학교' }), '중원대학교',
+    '★ 진짜 사업장은 보여야 합니다');
+});
+
+test('★ 담당은 «사람 이름»으로 보인다 — 사번(p001)만 적으면 아무 뜻이 없다', () => {
+  const c = load();
+  const row = c.wkCaseRow({ _kind: 'case', typeName: '진정', managerMain: 'p001' }, {});
+  assert.match(row.mgr, /노무사/, '사번을 이름으로 안 바꿨습니다: ' + row.mgr);
+  assert.match(cut('wkCaseRow'), /erpMgrName/, '★ 이름으로 바꾸는 함수를 안 씁니다');
 });
 
 test('이름이 없는 것은 사람으로 세지 않는다 — 빈 껍데기가 목록에 쌓이면 안 된다', () => {

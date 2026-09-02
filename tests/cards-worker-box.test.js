@@ -90,28 +90,6 @@ test('이름에 점이 있어도 자리 이름으로 쓸 수 있다 — 실시�
 
 /* ══════════════ ② 한 장이 여러 사람에게 ══════════════ */
 
-test('★ 근태표 한 장이 «거기 적힌 사람 모두»에게 붙는다 — 집단 진정이 이 길이다', () => {
-  const { F } = rig({});
-  const t = F.workerDocTargets({
-    kind: 'timesheet', photo: PH, at: 1756000000000,
-    fields: { company: '해찬솔에프쓰리', period: '5월',
-              rows: [{ name: '강석' }, { name: '고민' }, { name: '권희' }] }
-  });
-  assert.equal(t.targets.length, 3, '세 사람에게 붙어야 합니다: ' + JSON.stringify(t.targets));
-  /* ⚠ vm 이 돌려준 배열은 다른 realm 것이라 deepEqual 이 «구조는 같은데 다르다»고 한다 */
-  assert.deepEqual(Array.from(t.targets.map(x => x.name)), ['강석', '고민', '권희']);
-  t.targets.forEach(function (g) { assert.equal(g.doc.kind, 'timesheet'); });
-});
-
-test('같은 표에 같은 이름이 두 줄이면 한 번만 붙는다', () => {
-  const { F } = rig({});
-  const t = F.workerDocTargets({
-    kind: 'timesheet', photo: PH,
-    fields: { company: '가나', rows: [{ name: '강석' }, { name: '강석' }] }
-  });
-  assert.equal(t.targets.length, 1);
-});
-
 test('한 사람 것이면 name 하나로 붙는다 — 신분증·위임장이 그렇다', () => {
   const { F } = rig({});
   const t = F.workerDocTargets({
@@ -125,11 +103,11 @@ test('한 사람 것이면 name 하나로 붙는다 — 신분증·위임장이 
 test('★★ 회사를 못 읽으면 «아무것도 안 붙이고» 그 까닭을 말한다', () => {
   const { F } = rig({});
   const t = F.workerDocTargets({
-    kind: 'timesheet', photo: PH,
-    fields: { rows: [{ name: '강석' }, { name: '고민' }] }
+    kind: 'idcard', photo: PH,
+    fields: { name: '강석', docName: '주민등록증' }
   });
   assert.equal(t.targets.length, 0, '★★ 회사 없이 붙었습니다 — 남남이 한 사람이 됩니다');
-  assert.equal(t.skipped.length, 2, '건너뛴 사람마다 까닭이 있어야 합니다');
+  assert.equal(t.skipped.length, 1, '건너뛴 사람마다 까닭이 있어야 합니다');
   t.skipped.forEach(function (s) {
     assert.match(s.why, /회사/, '왜 못 붙였는지 사람 말로 적혀야 합니다: ' + s.why);
   });
@@ -137,7 +115,9 @@ test('★★ 회사를 못 읽으면 «아무것도 안 붙이고» 그 까닭�
 
 test('근로자 서류가 아닌 갈래는 아예 안 건드린다 — 명함·등록증은 회사로 간다', () => {
   const { F } = rig({});
-  ['card', 'bizreg', 'sme', 'contract', 'meeting', 'chat', 'cms', 'bankbook', 'form'].forEach(function (k) {
+  /* ⚠ timesheet·payslip 이 여기 있는 것이 요점이다 (대표 지시 2026-09-02) */
+  ['card', 'bizreg', 'sme', 'contract', 'meeting', 'chat', 'cms', 'bankbook', 'form',
+   'timesheet', 'payslip'].forEach(function (k) {
     const t = F.workerDocTargets({ kind: k, photo: PH, fields: { company: '가나', name: '강석' } });
     assert.equal(t.targets.length, 0, k + ' 이 근로자에게 붙었습니다');
   });
@@ -233,18 +213,6 @@ test('★ 이미 붙어 있는 서류는 «다시 안 쓴다» — 같은 값을
   assert.equal(updates.length, 0, '★ 쓸 것이 없는데 서버에 썼습니다');
 });
 
-test('★ 근태표 서른 줄이라도 «한 번»만 쓴다 — 2026-08-16 대량 쓰기를 되풀이하지 않는다', async () => {
-  const rows = [];
-  for (let i = 0; i < 30; i++) rows.push({ name: '사람' + i });
-  const { F, updates, reads } = rig({});
-  const res = await F.sendToWorkerMany([{
-    kind: 'timesheet', photo: PH, fields: { company: '해찬솔에프쓰리', rows: rows }
-  }]);
-  assert.equal(res.people, 30);
-  assert.equal(updates.length, 1, '★ 쓰기가 ' + updates.length + '번입니다 — 한 번이어야 합니다');
-  assert.equal(reads.length, 30, '사람마다 한 번 읽습니다(있는 서류를 다시 안 쓰려고)');
-});
-
 test('붙일 사람이 없으면 서버를 아예 안 만진다', async () => {
   const { F, updates, reads } = rig({});
   const res = await F.sendToWorkerMany([{ kind: 'timesheet', photo: PH, fields: { rows: [{ name: '강석' }] } }]);
@@ -272,12 +240,6 @@ test('★★ 민감으로 정한 근로자 서류 넷이 모두 이 길을 탄�
   ['idcard', 'resident', 'mandate', 'consent'].forEach(function (k) {
     assert.ok(F.WORKER_DOC_KINDS[k], k + ' 가 근로자 정보함으로 갈 길이 없습니다');
   });
-});
-
-test('근태표·급여서류도 «사람»에게 붙는다 — 여태 읽어 놓고 버렸다', () => {
-  const { F } = rig({});
-  assert.ok(F.WORKER_DOC_KINDS.timesheet, '근태표 사람별 줄이 갈 곳이 없습니다');
-  assert.ok(F.WORKER_DOC_KINDS.payslip, '급여명세서 이름이 갈 곳이 없습니다');
 });
 
 /* ══════════════ ⑥ 사진첩 — 할 일과 단추 ══════════════ */
@@ -357,32 +319,55 @@ test('★ 통장을 이미 보냈으면 할 일이 아니다', () => {
 
 /* ══════════════ ⑦ 이미 읽어 둔 것을 조용히 잇는다(wkSweep) ══════════════ */
 
-test('★ 잇기 후보는 근태표·급여서류뿐이다 — 넷은 단추·자동보내기가 맡는다', () => {
-  const src = cutFn(APP, 'function wkWaiting(');
-  assert.match(src, /timesheet/, '근태표가 후보에 없습니다');
-  assert.match(src, /payslip/, '급여서류가 후보에 없습니다');
-  assert.match(src, /mayTouch/, '★ 남의 사진을 손대면 안 됩니다');
-  assert.match(src, /wkCheck/, '★ 한 번만 해야 합니다 — 열 때마다 하면 요금이 늡니다');
-  assert.match(src, /company/, '★ 회사를 못 읽은 것은 안 잇습니다');
-});
-
-test('★ 한 판에 한 번만 돈다', () => {
-  const src = cutFn(APP, 'function wkSweep(');
-  assert.match(src, /_wkSweptOnce/, '되풀이 막이가 없습니다');
-  assert.match(src, /sendToWorkerMany/, '보내는 층을 안 씁니다');
-  assert.match(src, /wkCheck/, '다시 안 본다는 표를 안 남깁니다');
-});
-
-test('★ 격자를 그릴 때 함께 부른다 — 안 부르면 이 기능이 영영 안 돈다', () => {
-  assert.match(APP, /coCompanySweep\(\);\s*wkSweep\(\);/,
-    '★ wkSweep 을 부르는 자리가 없습니다 — 함수만 있고 아무도 안 부릅니다');
-});
-
 /* ══════════════ ⑧ 판독기 쪽 짝 ══════════════ */
 
-test('★ 급여명세서에서 이름을 읽는다 — 없으면 급여서류가 사람에게 못 붙는다', () => {
-  const m = /kind=payslip 이면 키: ([^']*)/.exec(READ_SRC);
-  assert.ok(m, '급여서류 칸 줄을 못 찾았습니다');
-  assert.match(m[1], /name\(/, '이름 칸이 없습니다');
-  assert.match(m[1], /rows\(/, '여러 사람이 한 장에 있는 임금대장을 담을 길이 없습니다');
+/* ══════════════ ⑨ 근태표·급여서류는 «사람을 만들지 않는다» ══════════════
+   대표 지시 2026-09-02 「근태표등은 필요없다. 주로 푸른이알피에서 근로자 사건등에
+   대한 부분이다」. 한 번 넣어 봤더니 근태표 한 장에 적힌 정육식당 일곱 명이
+   근로자 정보함 목록 앞머리를 통째로 먹었다 — 근태표에 이름이 있다는 것은
+   「그 달에 일했다」는 뜻일 뿐, 우리가 그 사람 일을 맡았다는 뜻이 아니다. */
+
+test('★★★ 근태표를 보내도 «아무에게도» 안 붙는다', () => {
+  const { F } = rig({});
+  const t = F.workerDocTargets({
+    kind: 'timesheet', photo: PH,
+    fields: { company: '해찬솔에프쓰리', rows: [{ name: '강석' }, { name: '고민' }] }
+  });
+  assert.equal(t.targets.length, 0,
+    '★★★ 근태표가 사람에게 붙었습니다 — 목록이 근태표 이름으로 덮입니다');
+});
+
+test('★★★ 급여서류도 «아무에게도» 안 붙는다', () => {
+  const { F } = rig({});
+  const t = F.workerDocTargets({
+    kind: 'payslip', photo: PH, fields: { company: '가나', name: '강석' }
+  });
+  assert.equal(t.targets.length, 0, '★★★ 급여서류가 사람에게 붙었습니다');
+});
+
+test('★★ 받는 갈래는 «근로자 서류 넷»뿐이다', () => {
+  const { F } = rig({});
+  const got = Object.keys(F.WORKER_DOC_KINDS).sort();
+  assert.deepEqual(got, ['consent', 'idcard', 'mandate', 'resident'],
+    '★★ 받는 갈래가 바뀌었습니다: ' + got.join(',') +
+    '\n  근태표·급여서류를 다시 넣으면 목록이 다시 덮입니다.');
+});
+
+test('★★ 사진첩에 «조용히 잇는» 길이 없다 — 그것이 목록을 덮었다', () => {
+  assert.doesNotMatch(APP, /function wkSweep\(/,
+    '★★ wkSweep 이 되살아났습니다 — 근태표가 다시 사람을 만듭니다');
+  assert.doesNotMatch(APP, /function wkWaiting\(/, '★★ wkWaiting 이 되살아났습니다');
+  assert.doesNotMatch(APP, /wkSweep\(\);/, '★★ wkSweep 을 부르는 자리가 되살아났습니다');
+});
+
+test('★ 여러 장을 한 번에 보내도 «쓰기는 한 번»이다', async () => {
+  const { F, updates } = rig({});
+  const list = [];
+  for (let i = 0; i < 12; i++) {
+    list.push({ kind: 'idcard', photo: { year: '2026', id: 'p' + i, owner: 'u1' },
+      fields: { company: '해찬솔에프쓰리', name: '사람' + i, docName: '주민등록증' } });
+  }
+  const res = await F.sendToWorkerMany(list);
+  assert.equal(res.people, 12);
+  assert.equal(updates.length, 1, '★ 쓰기가 ' + updates.length + '번입니다 — 한 번이어야 합니다');
 });

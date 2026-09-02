@@ -37,7 +37,7 @@
 <script src="js/pu-doc-read.js?v=29"></script>
 <script src="js/pu-lockkey.js?v=2"></script>
 <!-- ?v= 는 등록 층을 고칠 때 올린다 — 캐시에 묵으면 고친 안내가 안 보인다. -->
-<script src="js/pu-doc-file.js?v=19"></script>
+<script src="js/pu-doc-file.js?v=20"></script>
 <script src="js/pu-drag.js?v=2"></script>
 <script src="js/pu-billing.js?v=7"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -6583,8 +6583,8 @@ const CARD_KINDS = { card: 1, bizreg: 1, form: 1 };
    ⚠⚠ 가는 것은 「이 서류가 누구 것인가」 **하나**다. 주민번호·주소·연락처는
      한 글자도 안 간다 — 판독기가 애초에 안 읽고(「담지 마세요」 못박음),
      보내는 층도 그 셋을 아예 안 받는다(js/pu-doc-file.js 의 workerDocTargets).
-   ⚠ 근태표·급여서류도 사람에게 붙지만 **단추로 보내지 않는다.** 그 둘은 이미 제
-     할 일이 있다(표 대조 · 지우기). 사람 잇기는 아래 wkSweep 이 조용히 한다.
+   ⚠ 근태표·급여서류는 **아예 안 온다**(대표 지시 2026-09-02 「근태표등은 필요없다」).
+     그 둘은 제 할 일이 따로 있다(표 대조 · 지우기) — 사람으로 세지 않는다.
    ⚠ js/pu-doc-file.js 의 WORKER_DOC_KINDS 와 짝이다 — 한쪽만 늘리면 단추는
      뜨는데 값이 안 가거나, 값은 가는데 단추가 안 뜬다. */
 const WORKER_KINDS = { idcard: 1, resident: 1, mandate: 1, consent: 1 };
@@ -7170,61 +7170,20 @@ function coCompanyWaiting() {
     return true;
   });
 }
-/* ══════ 👷 이미 읽어 둔 서류를 «사람»에게 잇는다 (대표 결정 2026-09-01) ══════
-   근태표는 2026-08 부터 사람별 줄(rows)을 읽어 왔지만 갈 곳이 없어 그대로 버려졌다.
-   급여서류도 이제 이름을 읽는다. 이 둘은 **단추로 보내지 않는다** — 제 할 일이
-   따로 있다(표 대조 · 지우기). 그래서 화면을 열 때 한 번 조용히 잇는다.
+/* ══════ 👷 근로자 서류는 «사건에 걸린 사람»에게만 붙는다 (대표 지시 2026-09-02) ══════
+   여기 근태표·급여서류를 사람에게 조용히 잇는 wkSweep 이 있었다. **걷어냈다.**
 
-   ⚠ 가는 것은 「이 서류가 누구 것인가」 하나다 — 금액·주민번호는 애초에 안 읽는다.
-   ⚠ 한 번만 한다(wkCheck 표시). 열 때마다 하면 같은 값을 다시 쓰는 데 요금이 든다.
-   ⚠ **회사를 못 읽은 것은 안 잇는다.** 사람 열쇠가 「이름 + 회사」라, 회사 없는
-     것끼리 묶으면 남남인 「김수」 둘이 한 사람이 된다(workerDocTargets 가 걸러낸다). */
-let _wkSweptOnce = false;
+   까닭: 대표 화면에서 근태표 한 장에 적힌 정육식당 일곱 명이 근로자 정보함 목록
+   앞머리를 통째로 먹고, 정작 봐야 할 사건 근로자가 그 아래로 밀렸다.
+   「근태표등은 필요없다. 주로 푸른이알피에서 근로자 사건등에 대한 부분이다」
 
-/* 잇기를 기다리는 사진 — 근태표·급여서류만. 넷(신분증 등)은 단추·자동보내기가 맡는다 */
-function wkWaiting() {
-  return gridItems.filter(function (it) {
-    if (!mayTouch(it.id)) return false;
-    const r = it && it.meta && it.meta.read;
-    if (!r || r.error) return false;
-    if (r.kind !== 'timesheet' && r.kind !== 'payslip') return false;
-    if (r.wkCheck) return false;                                     // 이미 한 번 이었다
-    const f = r.fields || {};
-    if (!String(f.company || '').trim()) return false;               // 회사가 없으면 못 가린다
-    const rows = Array.isArray(f.rows) ? f.rows : [];
-    const some = rows.some(function (x) { return x && String(x.name || '').trim(); });
-    return some || !!String(f.name || '').trim();                    // 이름이 하나라도 있어야
-  });
-}
+   근태표에 이름이 적혀 있다는 것은 「그 달에 일했다」는 뜻일 뿐,
+   **우리가 그 사람 일을 맡았다는 뜻이 아니다.**
 
-function wkSweep() {
-  if (_wkSweptOnce) return Promise.resolve(0);
-  const wait = wkWaiting();
-  if (!wait.length) { _wkSweptOnce = true; return Promise.resolve(0); }
-  _wkSweptOnce = true;
-  return PuDocFile.sendToWorkerMany(wait.map(function (it) {
-    return { kind: it.meta.read.kind, fields: it.meta.read.fields || {},
-             photo: { year: gridYear, id: it.id, owner: photoOwner(it.id) || '' } };
-  })).then(function (res) {
-    const saves = [];
-    wait.forEach(function (it) {
-      const read = Object.assign({}, it.meta.read, { wkCheck: { at: Date.now() } });
-      it.meta = Object.assign({}, it.meta, { read: read });
-      saves.push(PuPhotoStore.saveRead(gridYear, it.id, read, photoOwner(it.id)));
-    });
-    return Promise.all(saves).then(function () {
-      renderGrid(); renderGridBar();
-      const n = (res && res.people) || 0;
-      if (n) toast && toast('👷 근로자 ' + n + '명에게 서류를 이었습니다');
-      return n;
-    });
-  }).catch(function (e) {
-    console.warn('[근로자 잇기]', e);
-    _wkSweptOnce = false;
-    return 0;
-  });
-}
-
+   지금 남은 길은 하나다 — 신분증·주민등록서류·위임장·개인정보동의서를 단추(또는
+   판독 뒤 자동)로 보내는 것(canSendWorker·sendWorker). 그 넷은 «사람 것»이라
+   사건에 걸린 사람에게 붙을 자리가 있다.
+   ⚠ 되돌리지 말 것 — 근태표를 다시 이으면 목록이 다시 덮인다. */
 function coCompanySweep() {
   if (_coCompanySweptOnce) return Promise.resolve(0);
   const wait = coCompanyWaiting();
@@ -7848,7 +7807,7 @@ function loadGrid() {
     coSweep();
     /* 두 장 합친 서식의 회사 이음매를 다시 확인한다(대표 지시 2026-08-31) —
        기다리는 것이 없으면 아무 일도 안 하고, 한 판에 한 번만 한다. */
-    coCompanySweep(); wkSweep();
+    coCompanySweep();
   }).catch(function (e) {
     /* ⚠ 예전에는 콘솔에만 적고 **빈 화면**을 보여줬다. 그래서 사진이 안 보일 때
        "아직 올린 사진이 없습니다"라고 **거짓말**을 하고, 왜 안 보이는지 아무도
