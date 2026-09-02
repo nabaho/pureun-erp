@@ -22,10 +22,11 @@ const vm = require('node:vm');
 const src = fs.readFileSync(path.join(__dirname, '..', 'pu-home.html'), 'utf8');
 
 test('ⓐ 경력사항 칸 옆에서 바로 가져올 수 있다', () => {
-  const at = src.indexOf("'<div class=\"fld\"><div class=\"fldbar\">'");
+  /* ⚠ .fldbar 로 시작하는 칸이 여럿이다(이름·담당 업무·경력사항) — 첫 번째를 잡으면
+     엉뚱한 칸을 본다. 「경력사항」 이라는 말이 있는 자리에서부터 찾는다. */
+  const at = src.indexOf("'<label style=\"margin:0\">경력사항 — '");
   assert.ok(at > 0, '경력사항 칸의 머리줄을 못 찾았습니다');
   const 칸 = src.slice(at, at + 700);
-  assert.match(칸, /경력사항 — /, '경력사항 칸이 아닙니다');
   assert.match(칸, /onclick="openPull\(\)/,
     '★ 경력사항 옆에 가져오는 길이 없습니다 — 맨 아래까지 굴려야 찾습니다');
 });

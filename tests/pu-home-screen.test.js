@@ -88,11 +88,17 @@ function run(ctx, code) { vm.runInContext(code, ctx); return ctx; }
      화면 코드를 고치는 것이 아니라 «검사 상자에서만» 눕힌다. */
 function noConst(src) { return String(src).replace(/(^|\n)const /g, '$1var '); }
 
+/* ⚠ 2026-09-02 부터 구성원에 «갈래»(노무사·직원)가 생겼다. 목록·편집칸·초안·저장이
+   모두 memberKind 를 지나므로, 그 넷을 싣는 자리에는 갈래 재료도 함께 실어야 한다 —
+   안 실으면 「memberKind is not defined」로 그 자리에서 죽는다. */
 function rowDeps() {
   return [
     constLine('DONE_STATUS'), constObj('STATUS_TEXT'), constSource('GROUPS'),
     constLine('OWN_LABEL'), constLine('OWN_CLS'), constLine('GROUP_UNIT'),
     fnSource('todayString'), fnSource('keptOf'), fnSource('rosterMarkOf'),
+    /* 구성원 갈래(노무사·직원) — 2026-09-02 에 줄과 딱지가 «둘 다» 이것을 지나게 됐다.
+       안 실으면 목록을 그리다 그 자리에서 죽는다(memberKind is not defined). */
+    constLine('MEMBER_KINDS'), fnSource('memberKind'),
     fnSource('memberRows'), fnSource('pageIdsOf'), fnSource('pageRows'), fnSource('rowsOf'),
     fnSource('needsAttentionRow'), fnSource('statOf'),
     fnSource('statusChip'), fnSource('cardCount'), fnSource('dashHtml'),
@@ -1028,7 +1034,7 @@ function cfgBox(cfg) {
     + fnSource('savePageConfig') + '\n' + fnSource('refuseIfPageConfigUnread') + '\n'
     + fnSource('addPage') + '\n'
     + fnSource('canDetachPage') + '\n' + fnSource('detachPage') + '\n'
-    + fnSource('firstPickOf') + '\n' + fnSource('loadDraft') + '\n'
+    + fnSource('firstPickOf') + '\n' + noConst(constLine('MEMBER_KINDS')) + '\n' + fnSource('memberKind') + '\n' + fnSource('loadDraft') + '\n'
     + fnSource('rosterPillHtml') + '\n' + fnSource('listHtml') + '\n'
     + expose('PAGE_IDS') + expose('PAGE_LABEL') + expose('DEFAULT_PAGES'));
   ctx.syncPageConfig(cfg);
@@ -1085,7 +1091,7 @@ test('★ 화면 번호가 «붙여넣을 글자»에는 절대 안 들어간다
   run(ctx, fnSource('todayString') + '\n' + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
     + fnSource('memberBandHtml') + '\n'
     + fnSource('riskReport') + '\n' + fnSource('srlConflict') + '\n' + fnSource('stamp') + '\n'
-    + fnSource('memberEdit'));
+    + noConst(constLine('MEMBER_KINDS')) + '\n' + fnSource('memberKind') + '\n' + fnSource('memberEdit'));
   const nums = numbersIn(ctx.memberEdit(ctx.App.draft));
   assert.ok(nums.indexOf(1) >= 0 && nums.indexOf(3) >= 0, '경력사항 줄에 번호가 안 보입니다');
 
@@ -1433,7 +1439,7 @@ function loadAllBox(dbRef) {
     + fnSource('pageIdsOf') + '\n' + fnSource('todayString') + '\n'
     + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
     + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
-    + fnSource('rowsOf') + '\n' + fnSource('firstPickOf') + '\n' + fnSource('loadDraft') + '\n'
+    + fnSource('rowsOf') + '\n' + fnSource('firstPickOf') + '\n' + noConst(constLine('MEMBER_KINDS')) + '\n' + fnSource('memberKind') + '\n' + fnSource('loadDraft') + '\n'
     /* 자문사현황도 같은 자리에서 읽는다(업체관리·표시) — 그 부품이 없으면 loadAll 이 터진다 */
     + noConst(constLine('PARTNER_PATH')) + '\n' + noConst(constLine('PARTNER_LOGO_PATH')) + '\n' + fnSource('companiesFrom') + '\n'
     + fnSource('partnerMark') + '\n' + noConst(constLine('POSTED_TEXT')) + '\n'
@@ -1526,8 +1532,8 @@ function keepBox(member) {
   run(ctx, fnSource('todayString') + '\n' + fnSource('currentUserName') + '\n'
     + fnSource('histStamp') + '\n' + fnSource('saveRecord') + '\n'
     + fnSource('writeKeepOnSite') + '\n' + fnSource('keepOnSiteAsk') + '\n'
-    + fnSource('keepOnSiteClear') + '\n' + fnSource('loadDraft') + '\n'
-    + fnSource('markChanged') + '\n' + fnSource('saveDraft'));
+    + fnSource('keepOnSiteClear') + '\n' + noConst(constLine('MEMBER_KINDS')) + '\n' + fnSource('memberKind') + '\n' + fnSource('loadDraft') + '\n'
+    + fnSource('markChanged') + '\n' + noConst(constLine('MEMBER_KINDS')) + '\n' + fnSource('memberKind') + '\n' + fnSource('saveDraft'));
   ctx.loadDraft();
   return ctx;
 }
@@ -1601,7 +1607,7 @@ test('★ 되돌리기도 「남기기」 표시를 지우지 않는다', async 
     })
   };
   run(ctx, fnSource('todayString') + '\n' + fnSource('currentUserName') + '\n' + fnSource('histStamp') + '\n'
-    + fnSource('saveRecord') + '\n' + fnSource('loadDraft') + '\n' + fnSource('markChanged') + '\n'
+    + fnSource('saveRecord') + '\n' + noConst(constLine('MEMBER_KINDS')) + '\n' + fnSource('memberKind') + '\n' + fnSource('loadDraft') + '\n' + fnSource('markChanged') + '\n'
     + fnSource('restoreFrom'));
   await ctx.restoreFrom('320', '1755300000000-aaaaaa');
   assert.equal(ctx.saved.length, 1, '되살리지 못했습니다');
@@ -1644,7 +1650,7 @@ test('★ 편집 화면에 「남기기」 상태와 사유가 보이고, 풀 �
   run(ctx, fnSource('todayString') + '\n' + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
     + fnSource('memberBandHtml') + '\n'
     + fnSource('riskReport') + '\n' + fnSource('srlConflict') + '\n' + fnSource('stamp') + '\n'
-    + fnSource('memberEdit'));
+    + noConst(constLine('MEMBER_KINDS')) + '\n' + fnSource('memberKind') + '\n' + fnSource('memberEdit'));
   const h = ctx.memberEdit(ctx.App.draft);
   assert.ok(h.indexOf('세종지사장 — 고용관계 아님') >= 0, '남긴 사유가 편집 화면에 없습니다');
   assert.match(h, /풀|해제/, '예외를 풀 길이 없습니다');
@@ -2157,7 +2163,7 @@ test('★ 편집칸의 머리와 발이 고정돼 가운데만 구른다', () =>
   };
   run(ctx, fnSource('todayString') + '\n' + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
     + fnSource('memberBandHtml') + '\n' + fnSource('riskReport') + '\n' + fnSource('srlConflict') + '\n'
-    + fnSource('stamp') + '\n' + fnSource('memberEdit'));
+    + fnSource('stamp') + '\n' + noConst(constLine('MEMBER_KINDS')) + '\n' + fnSource('memberKind') + '\n' + fnSource('memberEdit'));
   const h = ctx.memberEdit(ctx.App.draft);
   const 가운데 = h.indexOf('class="esc"');
   const 발 = h.lastIndexOf('class="eft"');
@@ -2291,7 +2297,7 @@ function bandBox(member, staff, check) {
   };
   run(ctx, fnSource('todayString') + '\n' + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
     + fnSource('memberBandHtml') + '\n' + fnSource('riskReport') + '\n' + fnSource('srlConflict') + '\n'
-    + fnSource('stamp') + '\n' + fnSource('memberEdit'));
+    + fnSource('stamp') + '\n' + noConst(constLine('MEMBER_KINDS')) + '\n' + fnSource('memberKind') + '\n' + fnSource('memberEdit'));
   return ctx;
 }
 
@@ -2494,7 +2500,7 @@ test('★ 내리는 단추는 «내릴 것(퇴사)»일 때만 보인다 — 늘
                 check: status ? { members: { a: { status: status } } } : null, dirty: false };
     run(ctx, fnSource('todayString') + '\n' + fnSource('riskReport') + '\n' + fnSource('srlConflict') + '\n'
       + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n' + fnSource('stamp') + '\n'
-      + fnSource('memberBandHtml') + '\n' + fnSource('memberEdit'));
+      + fnSource('memberBandHtml') + '\n' + noConst(constLine('MEMBER_KINDS')) + '\n' + fnSource('memberKind') + '\n' + fnSource('memberEdit'));
     return ctx.memberEdit(ctx.App.draft);
   };
   assert.match(그리기('toRemove'), /비공개/, '★ 내릴 사람인데 내리는 길이 없다');

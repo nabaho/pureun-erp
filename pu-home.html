@@ -1415,6 +1415,7 @@ function memberRows() {
     }
     return {
       key: k, name: m.name || '(이름 없음)',
+      mkind: memberKind(m),
       desc: [m.position1, m.position2].filter(Boolean).join(' · '),
       status: status, reason: reason,
       roster: rosterMarkOf(m.name || ''),
@@ -1487,6 +1488,11 @@ function loadDraft() {
     App.draft = {
       kind: 'member', key: App.pick,
       name: m.name || '', position1: m.position1 || '', position2: m.position2 || '',
+      /* 구분(노무사/직원)과 담당 업무 — 대표 지시 2026-09-02.
+         ⚠ mkind 라 부른다. draft.kind 는 이미 «어느 화면의 초안인가»(member/page/partner)로
+           쓰이고 있다. 같은 이름을 두 뜻으로 쓰면 저장이 엉뚱한 갈래로 간다. */
+      mkind: memberKind(m),
+      duties: (m.duties || []).slice(),
       intro: m.intro || '', srl: m.srl || '', careers: (m.careers || []).slice()
     };
   } else if (App.group === 'partner') {
@@ -1556,6 +1562,43 @@ function careerMove(i, d) {
 window.careerEdit = careerEdit; window.careerAdd = careerAdd;
 window.careerDel = careerDel; window.careerMove = careerMove;
 
+/* ── 담당 업무 (대표 지시 2026-09-02 「직원들 업무도 넣을 수 있게」) ──
+   경력사항과 «같은 손놀림»으로 만든다 — 줄 고치기·위아래·지우기·＋줄 추가.
+   ⚠ 다른 모양으로 만들면 같은 화면에서 두 가지 조작법을 익혀야 한다. */
+function dutyList() { if (App.draft && !App.draft.duties) App.draft.duties = []; return App.draft ? App.draft.duties : null; }
+function dutyEdit(i, value) { const a = dutyList(); if (!a) return; a[i] = value; App.dirty = true; markDirty(); }
+function dutyAdd() {
+  const a = dutyList(); if (!a) return;
+  a.push(''); App.dirty = true; App.render();
+  const boxes = document.querySelectorAll('#dutyBox input');
+  if (boxes.length) boxes[boxes.length - 1].focus();
+}
+function dutyDel(i) { const a = dutyList(); if (!a) return; a.splice(i, 1); App.dirty = true; App.render(); }
+function dutyMove(i, d) {
+  const a = dutyList(); if (!a) return;
+  const j = i + d; if (j < 0 || j >= a.length) return;
+  const t = a[i]; a[i] = a[j]; a[j] = t; App.dirty = true; App.render();
+}
+/* 구분 바꾸기 — 노무사 ↔ 직원 */
+function kindSet(k) {
+  if (!App.draft || App.draft.kind !== 'member') return;
+  App.draft.mkind = (k === 'staff') ? 'staff' : 'labor';
+  App.dirty = true; App.render();
+}
+/* 담당 업무만 따로 복사한다.
+   ⚠ 경력사항 붙여넣기에 «섞지 않는다» — 섞으면 홈페이지 경력 칸에 업무가 들어간다.
+     어느 칸에 넣을지는 홈페이지를 보는 사람이 정한다. */
+function copyDuties() {
+  const d = App.draft;
+  if (!d || d.kind !== 'member') return;
+  const 줄 = (d.duties || []).map(x => String(x || '').trim()).filter(Boolean);
+  if (!줄.length) { toast('담당 업무가 비어 있습니다'); return; }
+  copyText(줄.join('\n'));
+}
+window.dutyEdit = dutyEdit; window.dutyAdd = dutyAdd;
+window.dutyDel = dutyDel; window.dutyMove = dutyMove; window.kindSet = kindSet;
+window.copyDuties = copyDuties;
+
 /* ══════ 저장 ══════
    ★ 덮어쓰기 전에 «직전 값»을 반드시 남긴다. 되돌릴 근거가 없으면 실수를 못 되돌린다.
      되살리기도 이 함수를 그대로 쓴다 — 그래야 되살리기 직전 값도 이력에 남는다. */
@@ -1593,7 +1636,10 @@ async function saveDraft() {
   try {
     if (d.kind === 'member') {
       const careers = d.careers.map(s => String(s || '').trim()).filter(Boolean);
+      const duties = (d.duties || []).map(s => String(s || '').trim()).filter(Boolean);
       const next = { name: d.name.trim(), position1: d.position1.trim(), position2: d.position2.trim(),
+                     kind: d.mkind === 'staff' ? 'staff' : 'labor',
+                     duties: duties,
                      intro: d.intro, srl: d.srl, careers: careers };
       /* ★ 「홈페이지에 남기기」 예외는 편집 칸에 없는 칸이다. 그대로 두지 않고 덮어쓰면
          경력 한 줄 고칠 때마다 예외가 조용히 사라지고, 퇴사 경고가 다시 쏟아진다. */
@@ -1637,6 +1683,27 @@ function markChanged(kind, key) {
       App.render();
     });
   }
+}
+
+/* ══════ 구성원 구분 — 노무사 / 직원 (대표 지시 2026-09-02) ══════
+   「직원들도 변경 가능하게 만들어 달라 그리고 직원들 업무도 넣을 수 있게」
+
+   홈페이지 구성원 쪽에는 노무사 아래에 «직원»(사무장·차장·과장·대리·주임)이 있는데,
+   이 화면은 노무사만 다루고 있었다. 실은 자료 모양은 같았다 — 갈래가 없었을 뿐이다.
+
+   ⚠ 옛 자료에는 kind 가 없다. 지우고 다시 적게 하지 않고 «직책에서 읽어 낸다» —
+     직책에 「노무사」가 있으면 노무사, 아니면 직원. 사람이 한 번 고르면 그 값이 이긴다.
+   ⚠ 이 판정을 두 곳에 두지 않는다. 목록·거르개·편집칸이 모두 이 함수 하나를 쓴다. */
+const MEMBER_KINDS = [{ key: 'labor', label: '노무사' }, { key: 'staff', label: '직원' }];
+function memberKind(m) {
+  const k = String((m || {}).kind || '');
+  if (k === 'labor' || k === 'staff') return k;
+  const 직책 = String((m || {}).position1 || '') + ' ' + String((m || {}).position2 || '');
+  return /노무사/.test(직책) ? 'labor' : 'staff';
+}
+function memberKindLabel(k) {
+  const hit = MEMBER_KINDS.filter(x => x.key === k)[0];
+  return hit ? hit.label : '노무사';
 }
 
 /* 새 구성원 — 푸른ERP 에 입사한 노무사를 여기 올리면 「새로 올릴 것」으로 뜬다.
@@ -2948,6 +3015,7 @@ function visibleRows(group) {
   const f = App.filter;
   if (!f) return all;
   if (f === 'kept') return all.filter(r => r.kept);
+  if (f.indexOf('kind:') === 0) return all.filter(r => r.mkind === f.slice(5));
   /* 자문사 — 사람이 표시한 값으로 걸러 본다 */
   if (f.indexOf('posted:') === 0) {
     const want = f.slice(7) === 'none' ? '' : f.slice(7);
@@ -2975,6 +3043,14 @@ function chipsHtml() {
     defs.push({ k: 'own:' + (k === 'nobase' ? 'nobase' : k), label: OWN_LABEL[k] || k, n: s.own[k] });
   });
   if (s.kept) defs.push({ k: 'kept', label: '남김', n: s.kept });
+  /* 노무사 / 직원 — 홈페이지 구성원 쪽이 그 둘로 나뉘어 있다(대표 지시 2026-09-02).
+     ⚠ 한쪽이 0명이면 딱지를 안 낸다 — 눌러 봐야 빈 화면인 딱지는 자리만 먹는다. */
+  if (App.group === 'members') {
+    MEMBER_KINDS.forEach(mk => {
+      const n = all.filter(r => r.mkind === mk.key).length;
+      if (n) defs.push({ k: 'kind:' + mk.key, label: mk.label, n: n });
+    });
+  }
   /* 자문사 — 「올림/안 올림/표시 안 함」으로 걸러 본다. 대조 딱지는 아예 없다(못 한다). */
   if (App.group === 'partner') {
     [['yes', '올림'], ['no', '안 올림'], ['none', '표시 안 함']].forEach(([v, label]) => {
@@ -3475,7 +3551,16 @@ function memberEdit(d) {
   let h = '<div class="edit">';
   h += '<div class="ehd">' + memberBandHtml(d, rec) + '</div>';
   h += '<div class="esc">';
-  h += '<div class="fld"><label>이름</label>'
+  h += '<div class="fld"><div class="fldbar">'
+    + '<label style="margin:0">이름</label>'
+    /* ── 구분 (대표 지시 2026-09-02 「직원들도 변경 가능하게」) ──
+       홈페이지 구성원 쪽이 노무사·직원 두 덩이로 나뉘어 있다. 어느 쪽 사람인지는
+       이름 옆에서 바로 보이고 바로 바꿀 수 있어야 한다.
+       ⚠ 옛 자료에는 이 값이 없다 — memberKind 가 직책에서 읽어 낸다(지우고 다시 적게 하지 않는다). */
+    + MEMBER_KINDS.map(mk =>
+        '<button class="chip' + (d.mkind === mk.key ? ' on' : '') + '"'
+        + ' onclick="kindSet(\'' + mk.key + '\')">' + esc(mk.label) + '</button>').join('')
+    + '</div>'
     + '<input value="' + esc(d.name) + '" oninput="fieldEdit(\'name\',this.value)"></div>';
   h += '<div class="two"><div class="fld"><label>직책1</label>'
     + '<input value="' + esc(d.position1) + '" oninput="fieldEdit(\'position1\',this.value)"></div>'
@@ -3500,6 +3585,26 @@ function memberEdit(d) {
     + '<textarea rows="' + (설명있나 ? '3' : '1') + '" onfocus="this.rows=3"'
     + ' placeholder="비어 있음"'
     + ' oninput="fieldEdit(\'intro\',this.value)">' + esc(d.intro) + '</textarea></div>';
+
+  /* ── 담당 업무 (대표 지시 2026-09-02 「직원들 업무도 넣을 수 있게」) ──
+     ⚠ 경력사항 «앞»에 둔다 — 직원에게는 경력보다 「무슨 일을 하는가」가 먼저다.
+     ⚠ 홈페이지의 어느 칸에 넣을지는 사람이 정한다. 그래서 경력사항 붙여넣기에
+       섞지 «않고», 이 칸만 따로 복사하는 단추를 준다 — 섞으면 경력 칸에 업무가 들어간다. */
+  const 업무 = d.duties || [];
+  h += '<div class="fld"><div class="fldbar">'
+    + '<label style="margin:0">담당 업무 — ' + 업무.length + '줄</label>'
+    + (업무.length
+        ? '<button class="btn" style="padding:3px 9px;font-size:11.5px" onclick="copyDuties()"'
+          + ' title="홈페이지의 알맞은 칸에 붙여넣으십시오">📋 복사</button>' : '')
+    + '</div>'
+    + '<div class="car" id="dutyBox">'
+    + 업무.map((line, i) =>
+        '<div class="l"><span class="no">' + (i + 1) + '</span>'
+        + '<input value="' + esc(line) + '" oninput="dutyEdit(' + i + ',this.value)">'
+        + '<button class="x" title="위로" onclick="dutyMove(' + i + ',-1)">▲</button>'
+        + '<button class="x" title="아래로" onclick="dutyMove(' + i + ',1)">▼</button>'
+        + '<button class="x" title="줄 삭제" onclick="dutyDel(' + i + ')">✕</button></div>').join('')
+    + '<div class="add" onclick="dutyAdd()">＋ 줄 추가</div></div></div>';
 
   /* ── 「경력관리에서 가져오기」를 «경력사항 옆»에 둔다 (대표 지시 2026-09-02
        「경력사항은 경력관리에 가져오고 선택가능하게해줘」) ──
