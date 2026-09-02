@@ -24,6 +24,12 @@ const MB = require('./mail-box');
 const ROOT = 'mailbox';
 
 /* 한 회차 한도 — 넘으면 다음 회차로 넘긴다. 죽는 것보다 나눠 하는 것이 낫다. */
+/* ⚠ 진단은 «꺼 둔다». 2026-09-02 에 한 번 켜서 답을 다 얻었다(STATUS 참고) —
+     IMAP 은 폴더당 400통이 끝이고, 번호를 직접 짚어도 창 밖은 0통이다.
+   ⚠★ 켠 채로 두지 말 것 — POP3 탐침이 붙는 동안 회차가 길어지고(9초 → 14초),
+     04:36 뒤 두 회차가 빠진 것을 봤다. 진단 하나 때문에 «메일이 안 들어오는 것»은
+     그 어떤 답보다 나쁘다. 다시 재려면 여기만 true 로 두고, 답을 읽으면 곧 되돌린다. */
+const MB_DIAG = false;
 const CHUNK = 400;          // 한 폴더에서 한 바퀴에 볼 통수
 const MAX_ROWS = 9000;      // 한 회차 전체 통수 — 한 줄이 250바이트쯤이니 2MB 남짓
 const MAX_TURNS = 400;      // 줄에서 꺼내 볼 횟수 — 끝나지 않는 회차를 막는 뒷그물
@@ -144,6 +150,107 @@ async function runSync(deps, opts) {
     /* ② 사람이 먼저 보는 폴더부터 — 받은 → 보낸 → 임시 → 손폴더 → 스팸 → 휴지통.
           시간이 모자라 끊기더라도 중요한 것이 먼저 차 있다. */
     plan.sort((a, b) => MB.folderOrder(MB.folderKind(a.box)) - MB.folderOrder(MB.folderKind(b.box)));
+
+    /* ══ 진단 (2026-08-31, 대표 목표 「1년치 완전 동기화 가능한가」) — «읽기만» 하고 기록만 남긴다 ══
+       다음메일이 폴더당 400통만 «목록»으로 내주는 것은 재 봤다(SEARCH ALL). 그런데 아직
+       안 재 본 것이 있다 — ①날짜로 찾으면(SINCE) 그 너머가 나오나 ②번호를 직접 짚어
+       꺼내면(FETCH by UID) 창 밖 옛 메일이 나오나. ②가 되면 1년치를 «자동으로» 끌어올 수 있다.
+       ⚠ 받은메일함 한 칸만, 한 회차에 한 번만, 실패해도 동기화는 그대로 이어 간다.
+       ⚠ 답을 읽은 뒤 «걷어낸다» — 진단은 남겨 두면 회차마다 헛일을 한다.
+       ⚠★ «진짜 메일함일 때만» 돈다(!o.client). 이 진단은 일부러 «목록에 없는 번호»를
+         달라고 해 본다 — 그것이 물음의 핵심이기 때문이다. 그런데 그것은 동기화 길에서는
+         금지 사항이고, 검사가 그 규칙을 지키고 있다(mail-sync-run 「없는 번호를 달라고
+         하지 않는다」). 가짜 메일함으로는 어차피 답이 안 나오므로, 검사가 지키는 규칙을
+         무르지 않고 진단만 비켜 세운다. */
+    if (MB_DIAG && !o.client) {
+      try {
+        const inbox = plan.find((p) => MB.folderKind(p.box) === 'inbox') || plan[0];
+        if (inbox) {
+          const lock = await client.getMailboxLock(inbox.box.path, { readOnly: true });
+          try {
+            const caps = [];
+            try { (client.capabilities || new Map()).forEach((v, k) => caps.push(k)); } catch (_) { /* 없으면 빈 채로 */ }
+            const exists = client.mailbox ? Number(client.mailbox.exists || 0) : -1;
+            const all = (await client.search({ all: true }, { uid: true })) || [];
+            const nums = all.map(Number).filter((n) => n > 0).sort((a, b) => a - b);
+            const lo = nums.length ? nums[0] : 0, hi = nums.length ? nums[nums.length - 1] : 0;
+            const since = new Date(nowMs() - 365 * 86400000);
+            let bySince = -1, below = -1, fetchBelow = 'skip', fetchBelowDate = '';
+            try { bySince = ((await client.search({ since: since }, { uid: true })) || []).length; }
+            catch (e) { bySince = 'ERR ' + String((e && e.message) || e); }
+            if (lo > 1) {
+              try { below = ((await client.search({ uid: '1:' + (lo - 1) }, { uid: true })) || []).length; }
+              catch (e) { below = 'ERR ' + String((e && e.message) || e); }
+              try {
+                /* 창 바로 밑 번호부터 20개를 «직접 짚어» 꺼내 본다 — 있으면 목록 밖 옛 메일이 산 것이다 */
+                const got = [];
+                for await (const m of client.fetch({ uid: Math.max(1, lo - 20) + ':' + (lo - 1) }, { uid: true, envelope: true }, { uid: true })) {
+                  got.push({ u: m.uid, d: m.envelope && m.envelope.date ? new Date(m.envelope.date).toISOString().slice(0, 10) : '' });
+                }
+                fetchBelow = got.length;
+                fetchBelowDate = got.length ? (got[0].d + '~' + got[got.length - 1].d) : '';
+              } catch (e) { fetchBelow = 'ERR ' + String((e && e.message) || e); }
+            }
+            const oldest = nums.length ? await (async () => {
+              try { const m = await client.fetchOne(String(lo), { envelope: true }, { uid: true });
+                return m && m.envelope && m.envelope.date ? new Date(m.envelope.date).toISOString().slice(0, 10) : ''; }
+              catch (_) { return ''; }
+            })() : '';
+            /* ── POP3 로도 물어본다 (2026-09-02) ──
+               IMAP 은 폴더당 400통에서 막혔다(위 값으로 확정). 그런데 다음은 POP3 에
+               «가져올 범위»를 따로 둔다 — 거기서 전체를 준다면 옛 메일을 끌어올 길이 남는다.
+               ⚠ STAT 하나만 묻는다 — 통수와 크기만 돌려주는 명령이라 메일을 건드리지 않는다.
+                 (RETR·DELE 는 안 부른다. 읽음 표시도 안 바뀐다.) */
+            let pop = 'skip';
+            try {
+              pop = await new Promise((ok) => {
+                const tls = require('tls');
+                let buf = '', step = 0, done = false;
+                const fin = (v) => { if (!done) { done = true; try { s.end(); } catch (_) {} ok(v); } };
+                const s = tls.connect({ host: 'pop.daum.net', port: 995, servername: 'pop.daum.net' });
+                const t = setTimeout(() => fin('TIMEOUT'), 15000);
+                s.on('error', (e) => { clearTimeout(t); fin('ERR ' + String((e && e.message) || e)); });
+                s.on('data', (d) => {
+                  buf += d.toString('utf8');
+                  if (buf.indexOf('\r\n') < 0) return;
+                  const line = buf.slice(0, buf.indexOf('\r\n')); buf = buf.slice(line.length + 2);
+                  if (line.charAt(0) === '-') { clearTimeout(t); return fin('DENIED ' + line.slice(0, 60)); }
+                  if (step === 0) { step = 1; s.write('USER ' + user + '\r\n'); return; }
+                  if (step === 1) { step = 2; s.write('PASS ' + pass + '\r\n'); return; }
+                  if (step === 2) { step = 3; s.write('STAT\r\n'); return; }
+                  clearTimeout(t); return fin(line.trim().slice(0, 40));   /* +OK <통수> <바이트> */
+                });
+              });
+            } catch (e) { pop = 'ERR ' + String((e && e.message) || e); }
+            console.log('MB_DIAG_POP', JSON.stringify({ stat: pop }));
+            /* ── 칸마다 «다음이 보여 주는 수»와 «우리가 든 수» ──
+               400 이라는 벽이 어느 칸에 «실제로» 걸리는지 본다. 대부분의 업무 칸은
+               400 밑이라 이미 완전하다 — 그 사실이 「얼마나 완벽한가」의 답이다. */
+            try {
+              const held = (await deps.getDatabase().ref(ROOT + '/msgs').once('value')).val() || {};
+              const rows = plan.map((p) => ({
+                n: String(p.box.path).slice(0, 18),
+                daum: Number(p.st.messages || 0),
+                ours: Object.keys(held[p.slug] || {}).length,
+              })).sort((a, b) => b.daum - a.daum);
+              const capped = rows.filter((r) => r.daum >= 400).length;
+              console.log('MB_DIAG_BOXES', JSON.stringify({
+                folders: rows.length, cappedAt400: capped,
+                oursTotal: rows.reduce((s, r) => s + r.ours, 0),
+                top: rows.slice(0, 8),
+              }));
+            } catch (e) { console.warn('MB_DIAG_BOXES 실패:', String((e && e.message) || e)); }
+            console.log('MB_DIAG', JSON.stringify({
+              box: inbox.box.path, statusMessages: Number(inbox.st.messages || 0), exists: exists,
+              searchAll: nums.length, uidLo: lo, uidHi: hi, oldestVisible: oldest,
+              searchSince365d: bySince, searchUidBelowLo: below,
+              fetchBelowLo: fetchBelow, fetchBelowDates: fetchBelowDate,
+              uidNext: Number(inbox.st.uidNext || 0), caps: caps.join(' '),
+            }));
+          } finally { try { lock.release(); } catch (_) { /* 이미 놓였다 */ } }
+        }
+      } catch (e) { console.warn('MB_DIAG 실패:', String((e && e.message) || e)); }
+    }
 
     /* ③ 예산이 남는 동안 «줄 서서 몇 바퀴» 돈다.
        첫 배포 회차를 재 보니 폴더 33개를 한 바퀴 도는 데 30초였다 — 예산은 460초다.
@@ -492,6 +599,44 @@ async function folderPath(deps, slug) {
   return path;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   붙어 둔 것을 «다시 쓴다» (대표 목표 2026-08-31 「팝업 열리는 속도」)
+   ══════════════════════════════════════════════════════════════════════════
+   ★ 예전에는 메일 한 통을 열 때마다 다음메일에 «새로 붙었다» — TLS 악수 + 로그인 +
+     폴더 열기. 본문을 받는 시간보다 «붙는 시간»이 더 긴 일이 흔하다.
+   ★ 이 함수가 도는 그릇(1세대 함수 한 대)은 부름과 부름 사이에도 «살아 있다».
+     그래서 붙어 둔 것을 모듈 자리에 두고 다음 부름이 그대로 쓴다.
+
+   ⚠ 죽은 것을 물려주면 «더 나쁘다» — 첫 명령에서 실패하고 그제야 다시 붙으니
+     오히려 느려진다. 그래서 ①usable 을 보고 ②그래도 실패하면 «한 번만» 새로 붙어
+     다시 해 본다. 두 번째 실패는 진짜 실패다.
+   ⚠ 오래 놀린 것은 버린다 — 다음메일이 조용히 끊어 두어도 usable 이 참일 수 있다.
+   ⚠ 한 그릇은 한 번에 한 부름만 받는다(1세대) — 그래서 «쓰는 중» 표시로 충분하다.
+     동시에 들어오면 그때는 새로 붙는다(빌려 쓰다 서로 명령이 섞이면 안 된다). */
+const WARM_IDLE_MS = 4 * 60 * 1000;   /* 이보다 오래 놀렸으면 버린다 */
+let _warm = null;                      /* { client, at, busy } */
+
+async function warmConnect(deps, user, pass) {
+  const w = _warm;
+  if (w && !w.busy && w.client && w.client.usable && (nowMs() - w.at) < WARM_IDLE_MS) {
+    w.busy = true;
+    return { client: w.client, reused: true };
+  }
+  if (w && w.client && !w.busy) { try { await w.client.logout(); } catch (_) { /* 이미 끊겼다 */ } _warm = null; }
+  const client = await connect(deps, user, pass);
+  if (!w || !w.busy) _warm = { client: client, at: nowMs(), busy: true };
+  return { client: client, reused: false, spare: !!(w && w.busy) };
+}
+function warmDone(client, ok) {
+  if (_warm && _warm.client === client) {
+    _warm.busy = false;
+    _warm.at = nowMs();
+    if (!ok) { try { _warm.client.logout(); } catch (_) { /* 이미 끊겼다 */ } _warm = null; }
+    return true;    /* 살려 둔다 */
+  }
+  return false;     /* 남는 것으로 붙은 것 — 부른 쪽이 끊는다 */
+}
+
 async function withFolder(deps, slug, fn, opts) {
   const write = !!(opts && opts.write);
   const path = await folderPath(deps, slug);
@@ -500,15 +645,45 @@ async function withFolder(deps, slug, fn, opts) {
   const pass = deps.mailPass();
   if (!user || !pass) { const e = new Error('메일 계정이 설정되지 않았습니다'); e.status = 500; throw e; }
 
-  const client = await connect(deps, user, pass);
-  try {
-    const lock = await client.getMailboxLock(path, { readOnly: !write });
-    try { return await fn(client); } finally {
-      try { lock.release(); } catch (_) { /* 이미 놓였다 */ }
+  /* ⚠ 시간을 «갈라» 적는다 (2026-08-31, 대표 목표 「팝업 열리는 속도」).
+       본문을 열 때마다 여기서 다음메일에 «새로 붙고»(TLS+로그인) 끝나면 끊는다.
+       느린 것이 «붙는 데»인지 «본문 받는 데»인지 갈라야 무엇을 고칠지 정해진다 —
+       합쳐 재면 둘 다 의심스럽고 아무것도 못 고친다. */
+  /* ⚠ 붙어 둔 것이 죽어 있었으면 «한 번만» 새로 붙어 다시 해 본다 — 물려받은 것이
+       조용히 끊겨 있는 일은 늘 있다. 두 번째 실패는 진짜 실패로 올린다. */
+  let lastErr = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const t0 = nowMs();
+    const got = await warmConnect(deps, user, pass);
+    const client = got.client;
+    const tConn = nowMs() - t0;
+    let ok = false;
+    try {
+      const t1 = nowMs();
+      const lock = await client.getMailboxLock(path, { readOnly: !write });
+      const tOpen = nowMs() - t1;
+      try {
+        const t2 = nowMs();
+        const r = await fn(client);
+        ok = true;
+        console.log('MB_TIME', JSON.stringify({ slug: slug, connect: tConn, select: tOpen,
+          work: nowMs() - t2, reused: !!got.reused }));
+        return r;
+      } finally {
+        try { lock.release(); } catch (_) { /* 이미 놓였다 */ }
+      }
+    } catch (e) {
+      lastErr = e;
+      /* 물려받은 것이 죽어 실패했을 때만 다시 해 본다 — 새로 붙어서도 실패했으면 진짜다 */
+      if (!got.reused || attempt >= 1) throw e;
+      console.warn('withFolder 물려받은 연결이 죽어 다시 붙습니다:', String((e && e.message) || e));
+    } finally {
+      if (!warmDone(client, ok)) {
+        try { await client.logout(); } catch (_) { /* 이미 끊겼다 */ }
+      }
     }
-  } finally {
-    try { await client.logout(); } catch (_) { /* 이미 끊겼다 */ }
   }
+  throw lastErr || new Error('메일함을 열지 못했습니다');
 }
 
 /* 흐르는 것을 한 덩이로. 상한을 넘으면 멈춘다 — 메모리를 다 먹고 죽는 것보다 낫다. */
