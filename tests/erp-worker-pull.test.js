@@ -201,11 +201,18 @@ test('★★ 이미 명부에 있는 사람은 «못 고른다» — 두 번 들
 /* ══════ ⑤ 가진 서류 · 빠진 서류 ══════ */
 
 test('★★ 빠진 서류를 짚어 준다 — 서른 명 중 누가 안 냈는지는 사람이 세면 틀린다', () => {
+  /* ⚠ 「받아야 할 서류」 목록(WK_WANT)은 늘어난다(2026-09-02 에 근로계약서가 늘었다).
+     그래서 목록을 통째로 박지 «않는다» — 안 낸 것은 짚고, 낸 것은 안 짚는지만 본다. */
   const d = E.erpWkDocsOf(sample(), '박선희', '(주)승진텍라인');
-  assert.deepEqual(A(d.missing).sort(), ['consent', 'mandate'],
+  assert.ok(A(d.missing).indexOf('mandate') >= 0 && A(d.missing).indexOf('consent') >= 0,
     '★★ 위임장·동의서가 빠진 것을 안 짚어 줍니다 — 한 장이 빠지면 그 사람 건을 못 냅니다');
+  assert.ok(A(d.missing).indexOf('idcard') < 0,
+    '★★ 이미 낸 신분증을 「없음」이라고 합니다 — 그 표시를 아무도 안 믿게 됩니다');
   const full = E.erpWkDocsOf(sample(), '김수현', '(주)승진텍라인');
-  assert.deepEqual(A(full.missing), [], '★ 다 낸 사람에게 「없음」이 뜨면 그 표시를 아무도 안 믿습니다');
+  ['idcard', 'mandate', 'consent'].forEach(function (k) {
+    assert.ok(A(full.missing).indexOf(k) < 0,
+      '★ 낸 서류(' + k + ')를 「없음」이라고 합니다');
+  });
 });
 
 test('★ 서류가 하나도 없는 사람에게는 «없음»을 안 그린다 — 온통 경고가 된다', () => {
