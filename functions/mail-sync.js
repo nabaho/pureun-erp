@@ -699,7 +699,20 @@ async function warmConnect(deps, user, pass) {
     w.busy = true;
     return { client: w.client, reused: true };
   }
-  if (w && w.client && !w.busy) { try { await w.client.logout(); } catch (_) { /* 이미 끊겼다 */ } _warm = null; }
+  /* ⚠★ 낡은 것을 끊을 때 «기다리지 않는다» (2026-09-02 검토).
+       이 줄은 «연결이 낡았을 때»만 지나간다 — 곧 이 함수가 느려지는 바로 그 경우다.
+       그런데 예전에는 여기서 logout 을 await 했다. 반쯤 끊긴 소켓(4분을 놀리면
+       흔하다 — 방화벽이 조용히 버린다)에 LOGOUT 을 보내면 답이 안 오고, TCP 가
+       포기할 때까지 «몇 분» 기다릴 수 있다. 빠르게 하려고 만든 길에서 가장 오래
+       멈추는 셈이 된다.
+     ⚠ 버릴 연결이라 결과를 볼 까닭이 없다. 던져 두고 곧바로 새로 붙는다.
+     ⚠ .catch 를 «반드시» 붙인다 — 없으면 나중에 터질 때 붙잡을 사람이 없어
+       그릇이 통째로 죽는다(unhandled rejection). */
+  if (w && w.client && !w.busy) {
+    try { Promise.resolve(w.client.logout()).catch(function () { /* 버릴 것이다 */ }); }
+    catch (_) { /* 부르는 것조차 터졌다 — 그래도 버린다 */ }
+    _warm = null;
+  }
   const client = await connect(deps, user, pass);
   if (!w || !w.busy) _warm = { client: client, at: nowMs(), busy: true };
   return { client: client, reused: false, spare: !!(w && w.busy) };
