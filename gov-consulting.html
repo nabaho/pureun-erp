@@ -1170,7 +1170,10 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
         <div style="font-size:17px;font-weight:900;">📋 컨설팅 종류 관리</div>
         <div style="font-size:11px;color:var(--t2);margin-top:2px;">전체명·수행기관·최대회차·의무방문·중복 규칙 — 변경 즉시 저장</div>
       </div>
-      <button class="btn btn-p" id="setAddBtn">+ 종류 추가</button>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button class="btn btn-s" id="setSpreadColorBtn" title="사업 색이 서로 닮아 못 가를 때 — 서로 멀어지게 다시 고릅니다">🎨 색 다시 고르기</button>
+        <button class="btn btn-p" id="setAddBtn">+ 종류 추가</button>
+      </div>
     </div>
     <div id="typeList" style="overflow-x:auto;overflow-y:hidden;"></div>
   </div>
@@ -8473,6 +8476,86 @@ function bindConflictLegendDrag(){
   });
 }
 
+/* ══ 사업 색 다시 고르기 (대표 지시 2026-09-02 「사업별로 구분할 때 색이 비슷해서
+      구분을 못하겠다」 → 「색다시」) ═══════════════════════════════════════════
+   ★ 왜 필요했나 — 아홉 색 가운데 서로 못 가르는 짝이 여덟이었다.
+     주황이 셋(중기청·일터혁신·통상경영), 회색이 둘(구조혁신·인사노무).
+     가장 가까운 두 색의 거리가 36뿐이라 묶음 머리를 칠해도 헷갈렸다.
+   ★ 왜 구글 캘린더 색표인가 — 이 앱은 이미 구글 캘린더 모양을 따르고(gcalTint),
+     그 열한 색은 «서로 갈리라고» 만들어진 것이다. 새로 지어낼 까닭이 없다.
+   ⚠ 색은 대표 자료다. 이 함수는 «묻고 나서만» 쓴다(openTypeColorSpread).      */
+const GCAL11=[['#d50000','토마토'],['#e67c73','플라밍고'],['#f4511e','탠저린'],
+  ['#f6bf26','바나나'],['#33b679','세이지'],['#0b8043','바질'],['#039be5','피콕'],
+  ['#3f51b5','블루베리'],['#7986cb','라벤더'],['#8e24aa','그레이프'],['#616161','그라파이트']];
+function _colRgb(h){h=String(h||"#94a3b8");return [1,3,5].map(i=>parseInt(h.slice(i,i+2),16)||0);}
+function colorGap(a,b){const x=_colRgb(a),y=_colRgb(b);
+  return Math.round(Math.hypot(x[0]-y[0],x[1]-y[1],x[2]-y[2]));}
+/* 이름이 닮은 사업 짝 — 앞 여섯 글자가 같으면 사람 눈에 「같은 사업 둘」로 보인다.
+   그 짝이 닮은 색을 받으면 정작 제일 갈라야 할 것이 안 갈린다. */
+function _kinPairs(ts){const out=[];const nm=t=>t.fullName||t.name||"";
+  for(let i=0;i<ts.length;i++)for(let j=i+1;j<ts.length;j++)
+    if(nm(ts[i]).slice(0,6)===nm(ts[j]).slice(0,6))out.push([i,j]);
+  return out;}
+/* 서로 멀어지게 색을 다시 붙인다. 무엇을 재는지 — 차례가 곧 뜻이다:
+     ① 닮은 이름끼리 갈리는 정도 (150 에서 멈춘다)
+     ② 전체에서 가장 가까운 두 색   (85 에서 멈춘다)
+     ③ 지금 색에서 «덜 움직이는» 것
+   ⚠ ①②에 «멈추는 자리»를 두지 않으면 익숙한 색이 통째로 뒤집힌다 — 실제로
+     92 를 얻으려고 85 를 버리다가 기술보호(청록)가 회색이 됐고, 닮은 짝을 347까지
+     벌리려다 일터혁신(주황)이 연분홍이 됐다. 사람 눈에 85 와 92 는 같다. */
+function spreadTypeColors(ts){
+  const N=ts.length; if(!N)return [];
+  const pool=GCAL11.map(g=>g[0]), kin=_kinPairs(ts);
+  const score=p=>{
+    let k=999; kin.forEach(([i,j])=>k=Math.min(k,colorGap(p[i],p[j])));
+    let g=999; for(let i=0;i<N;i++)for(let j=i+1;j<N;j++)g=Math.min(g,colorGap(p[i],p[j]));
+    let mv=0; for(let i=0;i<N;i++)mv+=colorGap(ts[i].color,p[i]);
+    return [Math.min(k,150),Math.min(g,85),-mv];};
+  const better=(a,b)=>a[0]>b[0]||(a[0]===b[0]&&(a[1]>b[1]||(a[1]===b[1]&&a[2]>b[2])));
+  /* 시작 — 「대안이 없는 사업」부터 제 색에 가까운 것을 고른다.
+     그냥 차례대로 주면 앞엣것이 남의 «유일한» 색을 가져간다. */
+  let cur=new Array(N); const left=new Set(pool);
+  ts.map((t,i)=>({i,s:pool.map(c=>({c,g:colorGap(t.color,c)})).sort((a,b)=>a.g-b.g)}))
+    .sort((a,b)=>((b.s[1]?b.s[1].g:999)-b.s[0].g)-((a.s[1]?a.s[1].g:999)-a.s[0].g))
+    .forEach(r=>{const p=r.s.find(x=>left.has(x.c))||r.s[0];left.delete(p.c);cur[r.i]=p.c;});
+  /* 다듬기 — 둘을 서로 바꿔 보고, 안 쓰는 색으로 갈아 본다. 나아지면 받는다.
+     모든 경우를 다 보려면 2천만 가지라 느리다(실제로 5분 넘겨 멈췄다). */
+  let sc=score(cur),moved=true,round=0;
+  while(moved&&round++<200){ moved=false;
+    for(let i=0;i<N&&!moved;i++){
+      for(let j=i+1;j<N;j++){const t=cur.slice();const x=t[i];t[i]=t[j];t[j]=x;
+        const ns=score(t); if(better(ns,sc)){cur=t;sc=ns;moved=true;break;}}
+      if(moved)break;
+      for(const c of pool){ if(cur.indexOf(c)>=0)continue;
+        const t=cur.slice();t[i]=c; const ns=score(t);
+        if(better(ns,sc)){cur=t;sc=ns;moved=true;break;}}}}
+  return cur;}
+/* 묻고 나서 쓴다 — 색은 대표 자료다. 무엇이 어떻게 바뀌는지 먼저 보여 준다. */
+function openTypeColorSpread(){
+  const all=getTypes(), ts=all.filter(t=>t.active!==false);
+  if(ts.length<2){ toast("사업이 둘 이상이어야 합니다","err"); return; }
+  const next=spreadTypeColors(ts);
+  const nameOf=Object.fromEntries(GCAL11);
+  let now=999,aft=999;
+  for(let i=0;i<ts.length;i++)for(let j=i+1;j<ts.length;j++){
+    now=Math.min(now,colorGap(ts[i].color,ts[j].color));
+    aft=Math.min(aft,colorGap(next[i],next[j]));}
+  const rows=ts.map((t,i)=>`<tr><td style="padding:3px 6px;font-size:11.5px;">${escAttr(t.fullName||t.name)}</td>`
+    +`<td style="padding:3px 6px;"><span style="display:inline-block;width:15px;height:15px;border-radius:3px;background:${t.color};vertical-align:-3px;"></span></td>`
+    +`<td style="padding:3px 6px;color:var(--t2);">→</td>`
+    +`<td style="padding:3px 6px;"><span style="display:inline-block;width:15px;height:15px;border-radius:3px;background:${next[i]};vertical-align:-3px;"></span></td>`
+    +`<td style="padding:3px 6px;font-size:11px;color:var(--t2);">${nameOf[next[i]]||""}</td></tr>`).join("");
+  showConfirm(`<div style="font-size:12.5px;line-height:1.7;text-align:left;">`
+    +`<b>사업 색을 서로 멀어지게 다시 고릅니다.</b><br>`
+    +`가장 가까운 두 색의 거리 <b>${now}</b> → <b style="color:var(--ok)">${aft}</b>`
+    +` <span style="color:var(--t2)">(클수록 잘 갈립니다)</span>`
+    +`<table style="margin:9px 0;border-collapse:collapse;">${rows}</table>`
+    +`<span style="color:var(--t2)">한 가지씩 고치고 싶으시면 이 창을 닫고 표의 색 칸을 직접 누르십시오.</span></div>`,
+    ()=>{ const m={}; ts.forEach((t,i)=>m[t.id]=next[i]);
+      const v=all.map(t=>m[t.id]?{...t,color:m[t.id]}:t);
+      setTypes(v); renderSettings(); renderDash(); renderCal(); renderSummaryBar();
+      toast(`사업 색 ${ts.length}개를 다시 골랐습니다`); });
+}
 function renderSettings(){
   const types=getTypes();
   const active=types.filter(t=>t.active!==false);
@@ -10103,6 +10186,7 @@ function bind(){
   q('#tabTimeline').onclick=()=>showTab('timeline');
   q('#dashSettingsBtn').onclick=()=>showTab('settings');
   q('#tabEnded').onclick=()=>showTab('ended');
+  q('#setSpreadColorBtn').onclick=openTypeColorSpread;
   q('#setAddBtn').onclick=addType;
   q('#staffAddBtn').onclick=addStaff;
   // 설정 내부 탭
