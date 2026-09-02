@@ -6019,14 +6019,27 @@ function _dupRow(r){ var info=[r.id, formatDate(r.issueDate||r.date)||r.year||''
       : '<span style="color:var(--text-mute);font-size:11px">⛔ 원본 없음</span>')
     +'<button class="btn sm primary" onclick="mergeInto(\''+_jsAttr(r.id)+'\')">✅ 기준으로 합치기</button>'
     +'<button class="btn sm" onclick="dupDel(\''+_jsAttr(r.id)+'\')" style="color:#fff;background:var(--red);border-color:var(--red)">🗑 삭제</button></div>'; }
+/* 창 머리에 늘 보이는 줄 — 「무엇이 중복인지」 몰라도 누르면 찾아 준다 */
+function _dupAutoBar(){
+  var st = _dupAutoStashGet();
+  return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--soft);'
+    + 'border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:10px">'
+    + '<span style="font-size:12px;flex:1;min-width:150px">같은 서류가 두 줄이고 <b>한 줄에만 원본</b>이 붙은 것을 찾아 정리합니다</span>'
+    + '<button class="btn sm primary" onclick="dupAutoPreview(BULK_PAGES)">🧹 자동 정리 (다섯 화면)</button>'
+    + '<button class="btn sm" onclick="dupAutoPreview()">이 화면만</button>'
+    + (st && st.items && st.items.length
+        ? '<button class="btn sm" onclick="dupAutoUndo()" style="color:var(--red)">↩ 방금 정리 되돌리기 (' + st.items.length + ')</button>' : '')
+    + '</div>';
+}
+
 function renderDup(){ const page=_dupPage; const data=getDupData(page);
   var groups={}; data.forEach(function(r){ var k=dupKey(r); (groups[k]=groups[k]||[]).push(r); });
   var dups=Object.keys(groups).map(function(k){return groups[k];}).filter(function(g){return g.length>1 && !dupDismissed(page,dupKey(g[0]));});
   var loose={}; data.forEach(function(r){ var lk=_dupLooseKey(r); (loose[lk]=loose[lk]||[]).push(r); });
   var sims=Object.keys(loose).map(function(lk){return loose[lk];}).filter(function(g){ if(g.length<2) return false; var dk={}; g.forEach(function(r){dk[dupKey(r)]=1;}); return Object.keys(dk).length>1 && !dupDismissed(page,'sim:'+_dupLooseKey(g[0])); });
   var body=document.getElementById('dupBody');
-  if(!dups.length && !sims.length){ body.innerHTML='<div class="empty">🎉 중복·유사 항목이 없습니다</div>'+_dupDismissedSection(page,data); return; }
-  var html='<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px">🔴 <b>중복</b> = 기관·내용·<b>시기까지 완전 일치</b>(합쳐도 되는 것) &nbsp; 🟡 <b>유사</b> = 기관·내용은 같지만 <b>시기가 달라 별개 문서</b>일 수 있음(확인용).</div>';
+  if(!dups.length && !sims.length){ body.innerHTML=_dupAutoBar()+'<div class="empty">🎉 중복·유사 항목이 없습니다</div>'+_dupDismissedSection(page,data); return; }
+  var html=_dupAutoBar()+'<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px">🔴 <b>중복</b> = 기관·내용·<b>시기까지 완전 일치</b>(합쳐도 되는 것) &nbsp; 🟡 <b>유사</b> = 기관·내용은 같지만 <b>시기가 달라 별개 문서</b>일 수 있음(확인용).</div>';
   if(dups.length){ html+='<div style="font-size:13px;font-weight:700;color:var(--red);margin:6px 0 8px">🔴 중복 (완전 일치) '+dups.length+'묶음</div>'
     + dups.map(function(g){ var label=(g[0].org||g[0].bank||'-')+' · '+(g[0].titleVal||g[0].title||g[0].kind||g[0].number||'-');
       return '<div class="card" style="margin-bottom:12px;border-color:#fecaca"><div style="font-weight:600;color:var(--navy);margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span>'+escapeHtml(label)+' <span style="color:var(--red)">('+g.length+'건 완전일치)</span></span><button class="btn sm" style="margin-left:auto" onclick="dupDismiss(\''+_jsAttr(dupKey(g[0]))+'\')">✋ 중복 아님(제외)</button></div>'
@@ -6080,6 +6093,152 @@ async function mergeInto(primaryId){ const page=_dupPage, store=getDupStore(page
   others.forEach(function(r){deleteFile(r.id);});
   renderDup(); if(CAREER_CFG&&CAREER_CFG[page]) renderCareer(page); if(page==='personal_doc') renderPersonalDocs(); if(page==='account') renderAccounts();
   toast('합치기 완료 — '+primaryId+'에 병합됨'); }
+
+/* ===== 중복 자동 정리 (대표 지시 2026-09-02 「중복 자동 정리」) =====
+
+   ■ 왜 기존 중복관리로는 안 잡혔나
+     `dupKey` 는 기관 10자 + 이름 6자 + 날짜가 «완전히 같아야» 중복으로 본다.
+     그런데 실제로 겹친 줄들은 이름이 조금씩 다르다 —
+       「NCS 기업활용 컨설팅 교육 수료」 ↔ 「2024년 NCS 기업활용 컨설팅 교육 (2024-1기)(수료)」
+     이름 6자가 'ncs기업활' vs '2024년n' 이라 다른 것으로 보고 한 묶음도 못 잡았다.
+
+   ■ 무엇을 잣대로 삼나
+     ⑴ 한쪽에만 원본이 있다 — «원본 없는 쪽»만 지운다. 그래서 **파일을 잃을 수 없다**.
+     ⑵ 기관과 해가 같다. ⚠ 둘 중 하나라도 비면 건너뛴다 — 빈 값끼리 묶이면 남남이 한 묶음이 된다.
+     ⑶ 이름 낱말이 많이 겹친다(6할 이상). 「ADR(대안적 분쟁해결) 수료」처럼 이름이 아주 다르면
+        사람 눈으로 봐야 하므로 «건드리지 않고» 목록에만 남긴다.
+
+   ■ 지우기 전에
+     지운 줄을 통째로 담아 두고 ↩ 로 되살린다. 미리보기를 보여 주고 한 번 확인받는다. */
+
+function _dupTokens(x){ return String(x||'').match(/[가-힣]{2,}|[a-z0-9]{2,}/gi) || []; }
+function _dupFlat(x){ return String(x||'').replace(/[^가-힣a-z0-9]/gi,'').toLowerCase(); }
+function _dupName(r){ return r.titleVal || r.title || r.major || r.kind || ''; }
+
+function dupAutoFind(pages){
+  var out = [];
+  (pages||[]).forEach(function(pg){
+    var cfg = CAREER_CFG[pg]; if(!cfg) return;
+    var db = get(cfg.store); if(cfg.filter) db = db.filter(cfg.filter);
+    var haves = db.filter(hasOriginal);
+    if(!haves.length) return;
+    db.forEach(function(r){
+      if(hasOriginal(r)) return;
+      var org = r.org || r.school || '';
+      var y = r.year || String(r.issueDate || r.date || '').slice(0,4);
+      if(!/^\d{4}$/.test(y)) return;                      /* 해를 모르면 손대지 않는다 */
+      var t = _dupTokens(_dupName(r));
+      if(t.length < 2) return;                            /* 이름이 너무 짧으면 못 믿는다 */
+      var key = _bulkKeyOf(r);
+      var best = null, bestHit = 0, bestSameOrg = false;
+      haves.forEach(function(h){
+        var hy = h.year || String(h.issueDate || h.date || '').slice(0,4);
+        if(hy !== y) return;                              /* 해가 다르면 별개 문서다 */
+        var flat = _dupFlat(_dupName(h));
+        var hit = t.filter(function(w){ return flat.indexOf(_dupFlat(w)) >= 0; }).length;
+        if(hit > bestHit){ bestHit = hit; best = h; bestSameOrg = !!org && _bulkKeyOf(h) === key; }
+      });
+      if(!best) return;
+      var pct = bestHit / t.length;
+      /* ① 기관과 해가 같고 이름이 6할 이상 겹치면 같은 서류로 본다.
+         ② ★ 기관 이름은 같은 과정이어도 달라질 수 있다(주관 vs 위탁 — 실측:
+            「HRDCONTENTS」↔「한국산업인력공단」이 같은 NCS 교육이다).
+            그럴 때는 이름이 «하나도 빠짐없이» 같고 낱말이 셋 이상일 때만 본다.
+         ⚠ 이 문턱을 낮추지 말 것 — 낮추면 남남인 줄이 지워진다. */
+      var ok = (bestSameOrg && pct >= 0.6) || (pct === 1 && t.length >= 3);
+      if(!ok) return;
+      out.push({ page: pg, store: cfg.store, drop: r, keep: best, pct: Math.round(pct * 100),
+                 sameOrg: bestSameOrg });
+    });
+  });
+  return out;
+}
+
+var _dupAutoCtx = null;
+
+function dupAutoPreview(pages){
+  pages = pages || [_dupPage];
+  var list = dupAutoFind(pages);
+  _dupAutoCtx = { pages: pages, list: list };
+  var body = $('dupBody');
+  if(!list.length){
+    body.innerHTML = '<div class="empty">🎉 자동으로 정리할 중복이 없습니다</div>'
+      + '<div style="font-size:12px;color:var(--text-mute);margin-top:8px">'
+      + '기관·해가 같고 이름이 6할 이상 겹치면서 <b>한쪽에만 원본이 있는</b> 줄을 찾습니다. '
+      + '이름이 아주 다른 것은 사람이 봐야 하므로 건드리지 않습니다.</div>'
+      + '<div style="margin-top:12px"><button class="btn" onclick="renderDup()">← 중복관리로</button></div>';
+    return;
+  }
+  body.innerHTML = '<div style="font-size:13px;font-weight:700;margin-bottom:6px">🧹 자동 정리 미리보기 — ' + list.length + '건</div>'
+    + '<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px">'
+    + '<b>원본이 없는 줄</b>을 지우고, 그 줄에만 있던 값은 남는 줄의 <b>빈 칸에만</b> 옮깁니다. '
+    + '지우는 줄에는 원본이 없으므로 <b>파일은 하나도 잃지 않습니다.</b> 지운 뒤 되돌릴 수 있습니다.</div>'
+    + '<table class="dt" style="width:100%;font-size:12px"><thead><tr>'
+    + '<th style="text-align:left">화면</th><th style="text-align:left">지울 줄 (원본 없음)</th>'
+    + '<th style="text-align:left">남길 줄 (원본 있음)</th><th style="text-align:right">이름 겹침</th></tr></thead><tbody>'
+    + list.map(function(x){
+        return '<tr><td>' + escapeHtml(BULK_LABEL[x.page] || x.page) + '</td>'
+          + '<td><span class="id-chip">' + escapeHtml(x.drop.id) + '</span> '
+          + escapeHtml(String(_dupName(x.drop)).slice(0,28)) + '</td>'
+          + '<td><span class="id-chip">' + escapeHtml(x.keep.id) + '</span> '
+          + escapeHtml(String(_dupName(x.keep)).slice(0,28)) + '</td>'
+          + '<td style="text-align:right;color:var(--teal);font-weight:700">' + x.pct + '%'
+          + (x.sameOrg ? '' : '<div style="font-size:10px;font-weight:400;color:#d97706">기관 다름</div>')
+          + '</td></tr>';
+      }).join('')
+    + '</tbody></table>'
+    + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'
+    + '<button class="btn primary" onclick="dupAutoRun()">🧹 ' + list.length + '건 정리하기</button>'
+    + '<button class="btn" onclick="renderDup()">취소</button></div>';
+}
+
+/* 지운 줄은 통째로 담아 둔다 — 되살릴 수 있어야 한다 */
+function _dupAutoStash(items){ LS.set(NS + 'dup_auto_undo', JSON.stringify({ at: new Date().toISOString(), items: items })); }
+function _dupAutoStashGet(){ try{ return JSON.parse(LS.get(NS + 'dup_auto_undo') || 'null'); }catch(e){ return null; } }
+
+function dupAutoRun(){
+  if(!_dupAutoCtx || !_dupAutoCtx.list.length) return;
+  var list = _dupAutoCtx.list;
+  if(!confirm('원본이 없는 ' + list.length + '건을 지우고 남는 줄에 합칩니다.\n\n'
+    + '지우는 줄에는 원본이 없어 파일은 잃지 않습니다.\n되돌리기가 준비됩니다.\n\n계속할까요?')) return;
+  var bufs = {}, stash = [], n = 0;
+  /* ⚠ 남길 줄의 «빈 칸»만 채운다 — 차 있는 값을 덮으면 원본과 어긋난 값이 박힌다.
+     원본을 가리키는 칸(src·relPath 등)은 지울 줄에 없으므로 옮길 것도 없다. */
+  var SKIP = {id:1, savedAt:1, fname:1, src:1, relPath:1, fileSize:1, fileMtime:1, attachedScanId:1, scanId:1};
+  list.forEach(function(x){
+    if(!bufs[x.store]) bufs[x.store] = get(x.store);
+    var arr = bufs[x.store];
+    var keep = arr.find(function(r){ return r.id === x.keep.id; });
+    var drop = arr.find(function(r){ return r.id === x.drop.id; });
+    if(!keep || !drop) return;
+    Object.keys(drop).forEach(function(k){ if(SKIP[k]) return; if(!keep[k] && drop[k]) keep[k] = drop[k]; });
+    stash.push({ store: x.store, rec: drop });
+    bufs[x.store] = arr.filter(function(r){ return r.id !== drop.id; });
+    n++;
+  });
+  Object.keys(bufs).forEach(function(k){ set(k, bufs[k]); });
+  _dupAutoStash(stash);
+  _dupAutoCtx.pages.forEach(function(pg){ try{ if(CAREER_CFG[pg]) renderCareer(pg); }catch(e){} });
+  toast(n + '건 정리했습니다 — 되돌리려면 중복관리 › ↩ 방금 정리 되돌리기', 6000);
+  renderDup();
+}
+
+function dupAutoUndo(){
+  var st = _dupAutoStashGet();
+  if(!st || !st.items || !st.items.length){ toast('되돌릴 정리 기록이 없습니다'); return; }
+  if(!confirm('방금 정리한 ' + st.items.length + '건을 되살립니다.\n(' + String(st.at).slice(0,16).replace('T',' ') + ')\n\n계속할까요?')) return;
+  var bufs = {}, n = 0;
+  st.items.forEach(function(it){
+    if(!bufs[it.store]) bufs[it.store] = get(it.store);
+    if(bufs[it.store].some(function(r){ return r.id === it.rec.id; })) return;   /* 이미 있으면 건너뛴다 */
+    bufs[it.store].unshift(it.rec); n++;
+  });
+  Object.keys(bufs).forEach(function(k){ set(k, bufs[k]); });
+  LS.set(NS + 'dup_auto_undo', '');
+  BULK_PAGES.forEach(function(pg){ try{ if(CAREER_CFG[pg]) renderCareer(pg); }catch(e){} });
+  toast(n + '건 되살렸습니다');
+  renderDup();
+}
 
 /* ===== 전역 검색 ===== */
 function allRecords(){ var out=[];
@@ -6760,6 +6919,9 @@ function bulkLeftoverReport(pages){
     + '</div>'
     + '<textarea readonly style="width:100%;height:300px;font:12px/1.6 ui-monospace,Consolas,monospace;'
     + 'border:1px solid var(--border);border-radius:8px;padding:8px;resize:vertical">'+escapeHtml(txt)+'</textarea>'
+    + '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'
+    + (dup ? '<button class="btn primary" onclick="closeBulk(); openDupManager(\'wiccok\'); dupAutoPreview(BULK_PAGES)">🧹 중복으로 보이는 ' + dup + '건 정리하기</button>' : '')
+    + '</div>'
     + '<div style="font-size:11px;color:var(--text-mute);margin-top:6px">위 글을 그대로 복사해 알려 주시면 판정 기준을 맞춰 넓히겠습니다.</div>';
   $('bulkSave').style.display='none';
 }
