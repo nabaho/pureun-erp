@@ -34,10 +34,23 @@ function scheduleOf(src, exportName) {
 
 test('★★ 자동으로 도는 것은 «넷»이다', () => {
   /* ★ 지키는 것은 「숫자」가 아니라 «화면에 적힌 것과 코드가 같은가»다.
-     2026-08-31 홈페이지 뉴스·법령 브리핑(하루 한 번)이 늘어 셋에서 넷이 됐다 —
+     2026-08-31 홈페이지 뉴스·법령 브리핑(하루 한 번)이 늘어 셋에서 넷이 됐다.
+     2026-09-02 대표 지시로 브리핑이 «주 1회»가 되면서 다섯이 됐다 —
+       신문사 RSS 가 이틀치뿐이라(실측 50개 = 8/30~9/1), 주 1회만 읽으면
+       「주간」이라면서 이틀치만 실린다. 그래서 «날마다 모으기»가 따로 생겼다.
      화면 문구도 같이 고쳤다. 다음에 또 늘면 여기와 화면을 함께 고쳐야 한다. */
   const all = (FIDX + FSYNC).match(/\.pubsub\.schedule\(/g) || [];
-  assert.strictEqual(all.length, 4, '스케줄 함수 수가 바뀌었다 — 화면 문구도 같이 고쳐야 한다');
+  assert.strictEqual(all.length, 5, '스케줄 함수 수가 바뀌었다 — 화면 문구도 같이 고쳐야 한다');
+});
+
+test('★★ 주간 브리핑은 «하루 셈에 안 든다» — 월요일에만 돈다', () => {
+  /* 이것이 하루 한 번으로 되돌아가면 아래 289 라는 셈이 조용히 틀려진다 */
+  const i = FIDX.indexOf('exports.weeklyNewsBrief');
+  assert.ok(i >= 0, 'weeklyNewsBrief 를 못 찾음');
+  assert.ok(/\.pubsub\.schedule\(["'][^"']*monday/i.test(FIDX.slice(i, i + 900)),
+    '★ 주간 브리핑이 월요일에 도는 것이 아니다 — 화면의 하루 횟수가 틀려진다');
+  assert.ok(ENTER.indexOf('주간 브리핑 월요일 한 번') >= 0,
+    '화면이 「주간 브리핑 월요일 한 번」이라 안 말한다');
 });
 
 test('★★ 화면에 적힌 주기가 «코드와 같다»', () => {
@@ -48,11 +61,11 @@ test('★★ 화면에 적힌 주기가 «코드와 같다»', () => {
   assert.strictEqual(pay, 30, '급여자료 주기가 바뀌었다');
   assert.strictEqual(sync, 10, '메일 받기 주기가 바뀌었다');
 
-  assert.ok(ENTER.indexOf('메일 받기 10분 · 메일 보내기 15분 · 급여자료 30분마다 · 홈페이지 브리핑 하루 한 번') >= 0,
+  assert.ok(ENTER.indexOf('메일 받기 10분 · 메일 보내기 15분 · 급여자료 30분마다 · 홈페이지 뉴스 모으기 하루 한 번') >= 0,
     '뜻풀이의 주기가 코드와 다르다');
   assert.ok(ENTER.indexOf('메일 받기 10분마다 · 메일 보내기 15분마다 · 급여자료 30분마다') >= 0,
     '줄 설명의 주기가 코드와 다르다');
-  assert.ok(ENTER.indexOf('홈페이지 브리핑 하루 한 번') >= 0,
+  assert.ok(ENTER.indexOf('홈페이지 뉴스 모으기 하루 한 번') >= 0,
     '줄 설명의 주기가 코드와 다르다');
 });
 
@@ -61,10 +74,10 @@ test('★★ 하루 몇 번인지도 코드와 맞는다', () => {
   const pay = scheduleOf(FIDX, 'receivePaydataMail');
   const sync = scheduleOf(FSYNC, 'syncMailbox');
   const perDay = Math.round(1440 / send) + Math.round(1440 / pay) + Math.round(1440 / sync)
-    + 1;   // 홈페이지 브리핑 — 하루 한 번
+    + 1;   // 홈페이지 뉴스 모으기 — 하루 한 번 (주간 브리핑은 월요일뿐이라 안 센다)
   assert.strictEqual(perDay, 289, '셈이 바뀌었다');
   assert.ok(ENTER.indexOf('하루 <b>289번</b>') >= 0, '뜻풀이에 하루 횟수가 없거나 틀렸다');
-  assert.ok(ENTER.indexOf('넷이 하루 289번, 밤낮 같이 돕니다') >= 0, '줄 설명에 하루 횟수가 없거나 틀렸다');
+  assert.ok(ENTER.indexOf('하루 289번, 밤낮 같이 돕니다') >= 0, '줄 설명에 하루 횟수가 없거나 틀렸다');
 });
 
 test('★★ 옛 «틀린» 숫자가 어디에도 안 남아 있다', () => {
