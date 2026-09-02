@@ -37,7 +37,10 @@ const ok = (n, c, m) => test(n, () => assert.ok(c, m || n));
 test('★★★ 「하루 한 번」 잠금이 세는 일 «뒤»에 온다 — 알림 줄이 남아야 한다', () => {
   const fn = grab('checkErpNewOnLogin');
   const count = fn.indexOf('_erpAskRows=erpMyPending');
-  const guard = fn.indexOf('erpAskedToday()');
+  /* ⚠ 2026-09-02 — 「erpAskedToday()」를 «글자 그대로» 찾고 있었다. 잠금이 밀린 목록을
+     받도록(erpAskedToday(_erpAskRows)) 고치자 그 자리에서 깨졌다 — 고친 쪽이 맞는데도.
+     지켜야 할 것은 «어떻게 부르나»가 아니라 「잠금이 세는 일 뒤에 온다」는 차례다. */
+  const guard = fn.indexOf('erpAskedToday(');
   const badge = fn.indexOf('renderNotifBadge()');
   assert.ok(count > 0 && guard > 0 && badge > 0, 'checkErpNewOnLogin 모양이 달라졌다');
   assert.ok(guard > count,
@@ -47,9 +50,11 @@ test('★★★ 「하루 한 번」 잠금이 세는 일 «뒤»에 온다 — 
   assert.ok(guard > badge, '뱃지를 다시 그리기 전에 되돌아간다 — 숫자가 안 바뀐다');
 });
 
+/* 「하루 한 번」이 어떤 모양으로 불리는지는 tests/gov-erp-ask-again.test.js 가 본다.
+   여기서는 «그 얼개가 아직 있는가»만 본다 — 부름 모양을 글자로 박으면 고칠 때마다 깨진다. */
 ok('★★ 창은 여전히 하루 한 번만 띄운다 — 매번 띄우면 닫기만 하게 된다',
-  /markErpAsked\(\)/.test(grab('checkErpNewOnLogin'))
-  && /erpAskedToday\(\)/.test(grab('checkErpNewOnLogin')),
+  /markErpAsked\(/.test(grab('checkErpNewOnLogin'))
+  && /erpAskedToday\(/.test(grab('checkErpNewOnLogin')),
   '하루 한 번 얼개가 사라졌다');
 
 /* ═══ ② 사업별로 묶어 보기 ═══ */
