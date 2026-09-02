@@ -5072,6 +5072,58 @@ function pdfTextUsable(t) {
   return String(t || '').replace(/\s/g, '').length >= PDF_TEXT_MIN;
 }
 
+/* ══════ 아이폰 사진(HEIC) — 이 기기에서 JPG 로 바꿔 담는다 (대표 지시 2026-08-30) ══════
+   "개선 해라"
+
+   여태 화면은 이렇게 말했다:
+     「설정 → 카메라 → 포맷 → 「높은 호환성」으로 바꾼 뒤 다시 찍어 주세요」
+   ⚠ 이미 찍힌 사진에게 「다시 찍어라」는 안내가 아니다 — 회의는 이미 끝났다.
+     카톡으로 받은 «남의» 아이폰 사진이면 손쓸 길이 아예 없다.
+     TIF 때 적어 둔 그 말이 여기에도 그대로 맞는다 —
+     **엉뚱한 안내는 안내가 없는 것보다 나쁘다.**
+
+   재어 봤다(2026-08-30, 크로미움): HEIC 를 <img> 로는 «못 연다».
+   heic2any 로 바꾸니 640×480 한 장에 0.4초, 결과는 제대로 된 JPEG 였다.
+   → TIF 와 «같은 길»로 간다. 이 기기 안에서 풀어 JPG 로 바꿔 담는다. 요금 0원.
+
+   ⚠ 도구(1.3MB)는 **쓸 때만** 받는다 — 아이폰 사진을 안 올리는 날에는 안 받는다.
+   ⚠ 우리 사본 먼저(vendor/), 바깥은 물러설 곳. 사본이 있으므로 인터넷이 없어도 된다. */
+const HEIC_LIB_HERE = 'vendor/heic2any.min.js';
+const HEIC_LIB_CDN = 'https://unpkg.com/heic2any@0.0.4/dist/heic2any.min.js';
+
+function isHeic(f) {
+  const t = String((f && f.type) || '').toLowerCase();
+  const n = String((f && f.name) || '').toLowerCase();
+  /* ⚠ 이름만으로도 가른다 — 안드로이드는 HEIC 에 type 을 안 채워 보내는 일이 흔하다 */
+  return /hei[cf]/.test(t) || /\.hei[cf]$/.test(n);
+}
+
+async function loadHeicLib() {
+  if (window.heic2any) return window.heic2any;
+  try { await loadScriptOnce(HEIC_LIB_HERE); }
+  catch (_) {
+    try { await loadScriptOnce(HEIC_LIB_CDN); }
+    catch (_2) { throw new Error('아이폰 사진(HEIC)을 여는 도구를 불러오지 못했습니다'); }
+  }
+  if (!window.heic2any) throw new Error('아이폰 사진(HEIC)을 여는 도구를 불러오지 못했습니다');
+  return window.heic2any;
+}
+
+/* HEIC 면 JPG 로 바꿔 돌려주고, 아니면 «그대로» 돌려준다.
+   ⚠ 찍은 시각(lastModified)을 물려준다. 안 물려주면 오래된 사진이 «오늘 것»이 되어
+     목록 차례가 뒤엉킨다(HEIC 안의 EXIF 는 이 변환에서 딸려오지 않는다).
+   ⚠ 이름의 .heic 를 .jpg 로 바꾼다 — 담긴 것이 JPG 인데 이름이 heic 면
+     내려받은 사람이 또 못 연다. */
+async function heicToJpeg(f) {
+  if (!isHeic(f)) return f;
+  const conv = await loadHeicLib();
+  const out = await conv({ blob: f, toType: 'image/jpeg', quality: 0.92 });
+  const blob = Array.isArray(out) ? out[0] : out;
+  if (!blob || !blob.size) throw new Error('아이폰 사진(HEIC)을 JPG 로 바꾸지 못했습니다');
+  const name = String(f.name || '사진').replace(/\.hei[cf]$/i, '') + '.jpg';
+  return new File([blob], name, { type: 'image/jpeg', lastModified: f.lastModified || Date.now() });
+}
+
 /* ══════ 팩스·스캐너가 보내는 TIF (대표 지시 2026-08-29) ══════
    "노무계약서.tif 못읽는데 이런것도 개선안되나 해결할 수 없나?"
 
@@ -5561,9 +5613,14 @@ async function addFiles(fileList, isDoc, opts) {
        없으면 같은 시각끼리 번호순으로 흩어져 찍은 차례가 뒤집힌다. */
   const batchUpAt = Date.now();
   let overCollect = 0;   // 한 문서 상한(COLLECT_MAX)을 넘어 문서에 못 붙인 장수
+  /* ⚠ 장마다 alert 를 띄우지 않는다 — 열 장이 막히면 「확인」을 열 번 눌러야 했다
+     (대표 화면 2026-08-30). 모아 두었다가 끝에 한 번, 이름을 대고 말한다. */
+  const failed = [];
   for (let fi = 0; fi < files.length; fi++) {
-    const f = files[fi];
+    let f = files[fi];
     try {
+      /* 아이폰 사진이면 여기서 JPG 로 바꾼다 — 아래 길은 아무것도 안 바꿔도 된다 */
+      f = await heicToJpeg(f);
       /* 촬영 시각: EXIF → 파일 날짜 → 지금. 판단은 저장 층의 함수가 한다.
          EXIF를 못 읽는 상황(오래된 브라우저 등)이어도 올리기는 계속돼야 하므로
          읽기 실패는 null 로 넘긴다 — 그러면 파일 날짜로 정해진다. */
@@ -5648,8 +5705,19 @@ async function addFiles(fileList, isDoc, opts) {
       });
     } catch (e) {
       console.warn('[사진 준비]', e);
-      alert('사진 하나를 읽지 못했습니다: ' + (f.name || '') + '\n' + ((e && e.message) || e));
+      failed.push({ name: (f && f.name) || '', why: ((e && e.message) || String(e)) });
     }
+  }
+
+  /* 못 담은 것은 «한 번만», 그러나 이름과 까닭을 대고 말한다.
+     ⚠ 조용히 넘기지 않는다 — 사진이 소리 없이 빠지면 다음 달에야 안다. */
+  if (failed.length) {
+    const 줄 = failed.slice(0, 5).map(function (x) {
+      return '· ' + (x.name || '이름 없음') + ' — ' + String(x.why).split('\n')[0];
+    }).join('\n');
+    alert(failed.length + '장을 담지 못했습니다.\n\n' + 줄 +
+      (failed.length > 5 ? '\n· 그 밖 ' + (failed.length - 5) + '장' : '') +
+      '\n\n나머지는 그대로 올라갔습니다.');
   }
 
   if (over) {
@@ -5737,8 +5805,11 @@ function cantOpenWhy(file) {
   const n = String((file && file.name) || '').toLowerCase();
   const t = String((file && file.type) || '').toLowerCase();
   if (/\.hei[cf]$/.test(n) || /hei[cf]/.test(t)) {
-    return '아이폰이 만든 HEIC 사진은 이 브라우저가 못 엽니다.\n' +
-      '설정 → 카메라 → 포맷 → 「높은 호환성」으로 바꾼 뒤 다시 찍어 주세요.';
+    /* ⚠ 「다시 찍어 주세요」로 되돌리지 말 것 (대표 지시 2026-08-30) —
+       이미 찍힌 사진에게 할 말이 아니고, 남이 보낸 사진이면 더더욱 못 한다.
+       이제 이 자리는 «바꾸는 도구를 못 받았을 때»만 온다. */
+    return '아이폰 사진(HEIC)을 JPG 로 바꾸지 못했습니다.\n' +
+      '인터넷이 잠깐 끊겼을 수 있습니다 — 잠시 뒤 다시 올려 주세요.';
   }
   if (/\.tiff?$/.test(n) || /tiff?$/.test(t)) {
     return 'TIF를 여는 도구를 불러오지 못했습니다.\n잠시 뒤 다시 올려 주세요.';
