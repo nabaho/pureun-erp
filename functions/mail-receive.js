@@ -405,8 +405,18 @@ function companiesFor(fromHeader, index) {
    ⚠ 짧은 이름은 아무 데나 걸린다(「계미」·「두끼」·「서브텍」) — 세 글자 아래는 안 본다.
    ⚠ 두 업체가 **같은 길이**로 걸리면 아무도 안 고른다. 한쪽을 골라 보내면
    나머지 자료가 어디 갔는지 아무도 모른다 — 공용 칸에 남기는 것이 낫다. */
+/* ⚠ NFC 로 «모아 쓴다» (2026-09-02 검토에서 앱과 갈라진 것을 잡음).
+     맥·아이폰에서 온 글은 한글이 «풀어 쓴» 꼴(NFD)로 오는 일이 있다 — 실측
+     2026-09-02: 메일 7,539통 가운데 4통이 그랬고, 모두 파일 이름 꼴 제목이었다
+     (「26.4.14_김나연_아이본병원.pdf」처럼). 업체 이름은 373곳 모두 모아 쓴 꼴이라,
+     한쪽만 풀어 써 있으면 글자가 같아 보여도 «안 맞는다».
+   ⚠ 지금 자료로는 결과가 바뀌는 것이 «0통»이다(그 4통의 업체가 명단에 없다).
+     그러니 이것은 «지금 새는 것을 막는» 고침이 아니라, 앞으로를 위한 것이고
+     무엇보다 앱(js/pu-co-thread.js norm)과 «두 벌로 갈라진 것»을 없애는 것이다.
+     같은 판단을 두 곳에서 다르게 하면 언젠가 한쪽만 고치고 지나간다.
+   ⚠ 이름 쪽 열쇠는 하나도 안 바뀐다(실측: 373곳 중 0곳) — 되짚어 확인했다. */
 function coNameKey(v) {
-  return String(v == null ? '' : v)
+  return String(v == null ? '' : v).normalize('NFC')
     .replace(/[㈜]/g, '').replace(/\(주\)|\(유\)/g, '')
     .replace(/주식회사|유한회사|농업회사법인|사회복지법인|의료법인/g, '')
     .replace(/\s+/g, '').replace(/[.,·・\-–—_'"]/g, '').toLowerCase();
@@ -662,7 +672,9 @@ module.exports = {
   UPLOAD_MAX, BAD_EXT,
   normEmail, senderOf, collectEmails, sidToEmail,
   buildKnownList, isKnownSender,
-  buildCompanyIndex, coList, companyFor, companiesFor, coFromText, companyOf,
+  /* coNameKey 도 내놓는다 — 앱(js/pu-co-thread.js norm)과 «같은 답을 내는지»를
+     검사가 밖에서 견줄 수 있어야 두 벌로 갈라지는 것을 잡는다(2026-09-02 검토). */
+  buildCompanyIndex, coList, companyFor, companiesFor, coFromText, coNameKey, companyOf,
   seatFor, tagFor, routeFor,
   mailFromNote, regroupOne,
   mailConfOf, pickMailboxes, MAILBOX_HINT,

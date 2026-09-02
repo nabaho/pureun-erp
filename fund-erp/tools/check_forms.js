@@ -35,7 +35,7 @@ global.S = { fundId: 'X', year: 2026 };
 global.funds = {};
 (0, eval)([gV('OFFICER_ROLES'), gV('FORM_FILL'), gV('BIZ_BS_ROWS'), gV('BUDGET_KEYS'),
   gF('_officersOf'), gF('_boss'), gF('_isBlankCell'), gF('_isLabelCell'), gF('_bakeText'),
-  gF('stripBaked'), gF('budgetOf'), gF('_hasBudget'), gF('_reserveRate'), gF('_bizFinOf'),
+  gF('_isRateRow'), gF('stripBaked'), gF('budgetOf'), gF('_hasBudget'), gF('_reserveRate'), gF('_bizFinOf'),
   gF('bizplanRows'), gF('bizplanBS'), gF('fillBizplanDoc'), gF('fillCommittee'),
   gF('fillRoster'), gF('fillSubsidyDoc'), gF('hwpFormHTML')].join('\n'));
 
@@ -96,6 +96,34 @@ console.log('\n■ 설립인가신청서는 그대로인가');
   const t = draw('inka', f);
   ['홍길동','1975-03-11','대표이사','이근로','김사용','충남 아산시 온천대로 1'].forEach(v =>
     chk('값 ' + v, t.includes(v)));
+}
+
+console.log('\n■ 협의회 위원 격자 — 누가 들어가나 (코덱스 #13)');
+{
+  /* 위원은 «이사»다. 감사는 위원이 아니라 따로 두는 기관인데,
+     역할 글자에 「근로자측·사용자측」이 들어 있다는 이유로 위원 칸에 앉았다. */
+  const f = { officers: [
+    { role:'이사장',        name:'가대표', birth:'1970-01-01', title:'대표이사' },
+    { role:'사용자측 이사', name:'나사측', birth:'1975-02-02', title:'부장' },
+    { role:'근로자측 이사', name:'다노측', birth:'1980-03-03', title:'과장' },
+    { role:'사용자측 감사', name:'라사감', birth:'1985-04-04', title:'차장' },
+    { role:'근로자측 감사', name:'마노감', birth:'1990-05-05', title:'대리' },
+  ]};
+  const grid = '<table>' + ['근로자측','사용자측'].map(side =>
+      '<tr><td>' + side + '</td><td></td><td></td><td></td></tr>'
+      + '<tr><td></td><td></td><td></td><td></td></tr>'
+      + '<tr><td></td><td></td><td></td><td></td></tr>').join('') + '</table>';
+  const d = dom.window.document.createElement('div');
+  d.innerHTML = grid;
+  fillCommittee(d, f);
+  const t = T(d.textContent);
+  chk('근로자측 이사가 들어간다', t.includes('다노측'), t);
+  chk('사용자측 이사가 들어간다', t.includes('나사측'), t);
+  chk('근로자측 감사는 위원이 아니다', !t.includes('마노감'), t);
+  chk('사용자측 감사도 위원이 아니다', !t.includes('라사감'), t);
+  /* 이사장도 위원이 맞지만 명부에 «측»이 없어 어느 쪽인지를 모른다 —
+     한쪽에 밀어 넣으면 그럴듯하게 틀린 채 관청에 나간다. 빈칸으로 둔다. */
+  chk('측을 모르는 이사장을 지어내서 넣지 않는다', !t.includes('가대표'), t);
 }
 
 console.log(bad ? '\nFAILURES ' + bad : '\nALL PASS (서식 동작 확인)');
