@@ -20161,9 +20161,21 @@ function calcLegalSeverance(sid, hireDate, retireDate){
   if(!hireDate || !retireDate) return null;
   var hire = new Date(hireDate);
   var retire = new Date(retireDate);
-  var years = (retire - hire) / (365.25*24*3600*1000);
+  /* ⚠ 365.25(윤년 평균)가 아니라 365 로 나눈다 (2026-09-03 고침).
+       법정 퇴직금은 «재직일수 ÷ 365» 로 센다. 0.25 를 더 나누면 근속연수가
+       조금씩 짧아져 퇴직금이 늘 «적게» 나온다 — 적게 주는 쪽으로 기우는
+       반올림은 하지 않는다. */
+  var years = (retire - hire) / (365*24*3600*1000);
   if(years < 1) return { eligible:false, reason:'근속 1년 미만', years:years };
   var avg = calcAverageWage(sid, retireDate);
+  /* ★★ 급여 기록이 없으면 «0원»이 아니라 「셈할 수 없다」고 말한다 (2026-09-03 고침).
+       예전에는 대상이 맞다고 하면서 퇴직금 0원을 내놓았다 — 그 숫자를 그대로
+       믿으면 줘야 할 돈을 안 주게 된다. 0원과 «모른다»는 다른 말이다. */
+  if(!avg.months.length){
+    return { eligible:false, cannotCalc:true,
+      reason:'급여 기록이 없어 평균임금을 셈할 수 없습니다',
+      years: Math.round(years*100)/100 };
+  }
   var ordDaily = calcOrdinaryDailyWage(sid);
   // 평균일급 vs 통상일급 비교 (큰 쪽 적용)
   var dailyApplied = Math.max(avg.dailyAvg, ordDaily);
@@ -31022,6 +31034,22 @@ function LeavePolicySection(){
         h('option', { value:'joinDate' }, '입사일 기준'),
         h('option', { value:'fiscalYear' }, '회계연도 기준')
       )
+    }),
+    /* ⚠★ 「회계연도 기준」은 «아직 셈에 안 쓰인다» (2026-09-03 확인).
+         부여 일수를 셈하는 두 곳(연차 부여·잔여 연차)은 늘 12월 31일 기준이다.
+         고르기만 하고 숫자는 그대로면, 화면이 조용히 틀린 연차를 말한다 —
+         연차는 곧 돈이라 조용히 틀리는 것이 가장 나쁘다.
+       ★ 그래서 «고른 순간 그 사실을 크게 알린다». 셈을 진짜로 바꾸는 일은
+         부여·이월·퇴직정산이 함께 움직이는 큰 일이라 따로 해야 한다.
+       ⚠ 지금 정책은 입사일 기준이고 이월 한도도 0이라 실무 영향은 없다
+         (2026-09-02 조사). 이 알림은 «바꾸려 할 때» 멈춰 세우는 자리다. */
+    f.basis === 'fiscalYear' && h(PolicyRow, {
+      label:'⚠ 아직 적용 안 됨',
+      control: h('div', { style:{ fontSize:'11.5px', lineHeight:1.7, color:'#854d0e',
+          background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'6px', padding:'8px 11px' } },
+        h('b', null, '연차 일수는 여전히 «입사일 기준»으로 셈합니다.'), h('br'),
+        '이 설정을 바꿔도 부여 일수·잔여 연차 숫자는 달라지지 않습니다 — ',
+        '회계연도로 정말 바꾸시려면 부여·이월·퇴직정산을 함께 손봐야 하니 먼저 알려 주세요.')
     }),
     f.basis === 'fiscalYear' && h(PolicyRow, {
       label:'회계연도 시작월',
@@ -73906,7 +73934,12 @@ function RetirementSettlement(){
               !calc.eligible
                 ? h('div', { style:{ background:'#fef2f2', border:'1px solid #fecaca', borderRadius:'7px', padding:'14px', marginTop:'10px' } },
                     h('div', { style:{ fontSize:'12.5px', color:'#991b1b', fontWeight:700 } }, '⚠️ '+calc.reason),
-                    h('div', { style:{ fontSize:'11px', color:'#991b1b', marginTop:'4px' } }, '근속기간 1년 미만은 퇴직금 지급 대상이 아닙니다.')
+                    /* 「1년 미만」과 「셈할 자료가 없다」는 다른 말이다 —
+                       뒤엣것을 「대상 아님」으로 읽으면 줘야 할 돈을 안 주게 된다. */
+                    h('div', { style:{ fontSize:'11px', color:'#991b1b', marginTop:'4px' } },
+                      calc.cannotCalc
+                        ? '퇴직 대상이 «아니라는 뜻이 아닙니다». 급여관리에서 확정된 급여가 있어야 평균임금을 셈합니다 — 확정 후 다시 열어 주세요.'
+                        : '근속기간 1년 미만은 퇴직금 지급 대상이 아닙니다.')
                   )
                 : h('div', { style:{ marginTop:'10px' } },
                     h('div', { style:{ background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'7px', padding:'12px', marginBottom:'10px' } },
@@ -76378,6 +76411,15 @@ function getLeavePromoNotice(empName){
     var ledger = dbGet('leave_ledger', []) || [];
     var today = new Date(); today.setHours(0,0,0,0);
     var year = today.getFullYear();
+    /* ⚠★ 연차대장은 «이름+연도»로 담긴다 — 사번 칸이 아예 없다(leaveLedgerWithIds).
+         그래서 여기서도 이름으로 찾을 수밖에 없는데, 같은 이름이 둘이면
+         «남의 잔여 연차»가 그 사람 임금명세서에 실린다. 그건 남의 개인정보다.
+       ★ 사번으로 바꾸려면 대장 구조부터 바꿔야 한다(별건). 그때까지는
+         «헷갈릴 수 있으면 아예 안 적는다» — 틀린 것을 적느니 비우는 것이 낫다.
+         2026-09-03 확인: 지금 같은 이름은 없다. 생기는 날 조용히 틀리지 않게 막아 둔다. */
+    var _all = dbGet('user_accounts', USERS_SEED) || [];
+    var _same = _all.filter(function(u){ return u && u.name === empName && !u.retireDate; });
+    if(_same.length > 1) return null;
     var lr = null;
     for(var i=0;i<ledger.length;i++){ if(ledger[i].name===empName && Number(ledger[i].year)===year){ lr=ledger[i]; break; } }
     if(!lr) return null;
