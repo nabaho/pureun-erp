@@ -5556,13 +5556,22 @@ function openForm(page,editId,showPrev){ const def=FORM_DEFS[page]; if(!def) ret
   const fields='<div class="field-grid">'+def.fields.map(f=>{
     if(f.type==='period_row'){
       const ps=rec.periodStart||'', pe=rec.periodEnd||'';
+      /* ★ 위촉기간은 거의 늘 «위촉일부터 N년» 이다 (대표 지시 2026-09-03
+         「일반적으로 위촉기간은 위촉일로부터 1년 2년 3년 4년 등이 있다 이부분을
+          차라리 선택할 수 있게 해달라」). 날짜를 두 번 손으로 치지 않게 골라 넣는다. */
       return '<div class="field" style="grid-column:1/-1"><label>위촉기간</label>'
         +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
         +'<input id="ff-periodStart" value="'+ps+'" placeholder="YYYY.MM.DD" oninput="autoDate(this)" style="width:140px">'
         +'<span style="color:var(--text-mute);font-size:13px">~</span>'
         +'<input id="ff-periodEnd" value="'+pe+'" placeholder="YYYY.MM.DD" oninput="autoDate(this)" style="width:140px">'
         +'<label style="display:flex;align-items:center;gap:5px;font-size:12px;font-weight:400;cursor:pointer;white-space:nowrap">'
-        +'<input type="checkbox" id="ff-sameAsIssue" onchange="wiccokSameAsIssue(this)"> 발급일과 동일</label>'
+        +'<input type="checkbox" id="ff-sameAsIssue" onchange="wiccokSameAsIssue(this)"> 시작 = 발급일</label>'
+        +'</div>'
+        +'<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-top:6px">'
+        +'<span style="font-size:11.5px;color:var(--text-mute);font-weight:400">발급일부터</span>'
+        +[1,2,3,4,5].map(function(n){ return '<button type="button" class="btn sm wc-term" data-term="'+n+'" onclick="wiccokTerm('+n+')">'+n+'년</button>'; }).join('')
+        +'<button type="button" class="btn sm" onclick="wiccokTermClear()" style="color:var(--text-mute)">지우기</button>'
+        +'<span id="ff-termHint" style="font-size:11px;color:var(--text-mute);font-weight:400"></span>'
         +'</div></div>';
     }
     if(f.type==='account_ref'){
@@ -5682,6 +5691,45 @@ function printFile(id){ const go=function(f){ const ext=(f.ext||'').toLowerCase(
 function wiccokSameAsIssue(cb){
   const issueDate=v('ff-issueDate'); if(!issueDate) return;
   if(cb.checked){ const ps=document.getElementById('ff-periodStart'); if(ps){ ps.value=issueDate; } }
+}
+/* ═══ 위촉기간 = 위촉일부터 N년 (대표 지시 2026-09-03) ═══
+   ⚠ 끝날은 «하루 뺀다» — 2025.08.04 부터 2년이면 2027.08.03 까지다(만기일).
+     하루를 안 빼면 2027.08.04 가 되어 이틀치가 겹친다. 대표 화면의 셈법과 같다.
+   ⚠ new Date(연+N, 월, 일-1) 은 달·해 넘김과 윤년을 스스로 맞춘다 — 손으로 세지 말 것. */
+function _ymd(x){
+  var m=String(x||'').match(/(\d{4})[.\-\/\s]*(\d{1,2})[.\-\/\s]*(\d{1,2})/);
+  if(!m) return null;
+  var d=new Date(Number(m[1]), Number(m[2])-1, Number(m[3]));
+  return isNaN(d.getTime()) ? null : d;
+}
+function _ymdStr(d){
+  return d.getFullYear()+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+String(d.getDate()).padStart(2,'0');
+}
+/* 시작일과 햇수로 끝날을 셈한다 — 순수 함수(검사에서 이것만 본다) */
+function termEnd(startStr, years){
+  var d=_ymd(startStr); if(!d || !years) return '';
+  return _ymdStr(new Date(d.getFullYear()+Number(years), d.getMonth(), d.getDate()-1));
+}
+function wiccokTerm(n){
+  var issue=v('ff-issueDate');
+  var ps=document.getElementById('ff-periodStart'), pe=document.getElementById('ff-periodEnd');
+  if(!ps||!pe) return;
+  /* 시작이 비어 있으면 발급일을 쓴다. 시작을 손으로 넣어 두었으면 그것을 존중한다. */
+  var start=(ps.value||'').trim() || issue;
+  if(!_ymd(start)){ toast('발급일(또는 위촉기간 시작일)을 먼저 넣어 주세요'); return; }
+  ps.value=_ymdStr(_ymd(start));
+  pe.value=termEnd(start, n);
+  var hint=document.getElementById('ff-termHint');
+  if(hint) hint.textContent='← '+n+'년으로 넣었습니다 (끝날은 만기일)';
+  document.querySelectorAll('.wc-term').forEach(function(b){
+    b.classList.toggle('primary', String(b.getAttribute('data-term'))===String(n));
+  });
+}
+function wiccokTermClear(){
+  var ps=document.getElementById('ff-periodStart'), pe=document.getElementById('ff-periodEnd');
+  if(ps) ps.value=''; if(pe) pe.value='';
+  var hint=document.getElementById('ff-termHint'); if(hint) hint.textContent='';
+  document.querySelectorAll('.wc-term').forEach(function(b){ b.classList.remove('primary'); });
 }
 function saveForm(){ if(!_formCtx) return; const {page,editId}=_formCtx; const def=FORM_DEFS[page]; const data={};
   def.fields.forEach(f=>{ if(f.type==='period_row'){ data.periodStart=v('ff-periodStart'); data.periodEnd=v('ff-periodEnd'); }
@@ -6879,7 +6927,12 @@ const PAGE_OCR_PROMPT={
     +'"main":"수행한 담당자 이름(없으면 빈칸)","note":"특기사항"}\n'
     +'모르는 값은 빈 문자열로 두세요. 지어내지 마세요. 기관과 고객사를 혼동하지 마세요.',
   certdoc:`이 문서(실적증명서·경력증명서·참여확인서·수행확인서)를 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 문서에 적힌 그대로 정확히(YYYY.MM.DD), 추측하지 마세요.\n{"kind":"실적증명서/경력증명서/참여확인/용역수행확인 중 해당","issuer":"이 증명서를 발급해준 기관의 전체 명칭(직인·발급기관란)","date":"발급일 YYYY.MM.DD","coverage":"증명하는 기간(수행기간·경력기간). 예: 2019.01.01 ~ 2021.12.31 또는 2024","usage":"용도·제출처가 적혀 있으면"}\n※ 발급기관은 증명서를 떼어준 곳입니다(신청인이 아님). 없는 항목만 빈 문자열. 다른 말 없이 JSON만.`,
-  wiccok:`이 문서(위촉장·협약서·임명장)를 아주 꼼꼼히 읽고 JSON으로만 답하세요. 문서에 적힌 날짜를 그대로 정확히 옮기고, 추측하거나 지어내지 마세요. 날짜는 반드시 YYYY.MM.DD 형식으로.\n{"docType":"위촉장/협약서/임명장 중 해당","org":"발급·위촉 기관의 전체 명칭","issuer":"위촉하는 사람·기관장 직함(예: ○○원장·○○회장·○○지사장, 서명자)","titleVal":"직책 또는 위촉 내용(예: 컨설턴트, 위원, 전담노무사)","issueDate":"발급일(문서에 적힌 날짜) YYYY.MM.DD","period":"위촉기간이 있으면 시작일 ~ 종료일 (YYYY.MM.DD ~ YYYY.MM.DD)","year":"발급연도 YYYY","note":"문서번호(제○호 등)"}\n※ 발급일과 위촉기간(시작·종료)은 서로 다를 수 있으니 각각 정확히 구분해 읽으세요. 없는 항목만 빈 문자열. 다른 말 없이 JSON만.`,
+  /* ⚠ 위촉인(issuer)은 «맨 아래 서명 자리의 직명»이다 — 사람 이름이 아니다.
+       실측(대표 제보 2026-09-03): 천안시 위촉장은 아래에 「천 안 시 장」 + 직인만 있고
+       이름이 없다. 「예: ○○원장·○○회장」만 적어 두었더니 지자체장 꼴을 잘 못 집었다.
+     ⚠ 위촉기간은 날짜로 안 적히고 「임기 2년」처럼 «햇수»로만 적힌 것이 많다 →
+       termYears 로 따로 받아, 화면에서 발급일+N년으로 넣는다(지어내는 것이 아니라 옮기는 것). */
+  wiccok:`이 문서(위촉장·협약서·임명장)를 아주 꼼꼼히 읽고 JSON으로만 답하세요. 문서에 적힌 날짜를 그대로 정확히 옮기고, 추측하거나 지어내지 마세요. 날짜는 반드시 YYYY.MM.DD 형식으로.\n{"docType":"위촉장/협약서/임명장 중 해당","org":"발급·위촉 기관의 전체 명칭","issuer":"문서 맨 아래 서명·직인 자리에 적힌 «직명»(사람 이름이 아님). 예: 천안시장, 충청남도지사, 대산지방해양수산청장, 충청남도교육감, ○○군수, ○○구청장, ○○원장, ○○이사장, ○○회장, ○○위원장, ○○단장, ○○지사장. 직명 뒤에 사람 이름이 함께 적혀 있으면 «직명만» 남기세요.","titleVal":"직책 또는 위촉 내용(예: 컨설턴트, 위원, 전담노무사)","issueDate":"발급일(문서에 적힌 날짜) YYYY.MM.DD","period":"위촉기간이 «날짜로» 적혀 있을 때만 시작일 ~ 종료일 (YYYY.MM.DD ~ YYYY.MM.DD)","termYears":"위촉기간·임기가 «햇수로만» 적혀 있으면 그 숫자만(예: 「임기는 2년으로 한다」→ 2). 날짜가 적혀 있거나 아무 말도 없으면 빈칸","year":"발급연도 YYYY","note":"문서번호(제○호 등)"}\n※ 발급일과 위촉기간(시작·종료)은 서로 다를 수 있으니 각각 정확히 구분해 읽으세요. 문서에 없는 기간을 «만들어 내지 마세요» — 없으면 period 와 termYears 를 모두 빈칸으로. 없는 항목만 빈 문자열. 다른 말 없이 JSON만.`,
   /* ⚠ 표창장은 «주는 쪽»과 «받는 쪽»이 한 장에 같이 있다 — 이걸 안 가르면 뒤섞인다.
      실측(2026-08-30): 「충청남도노사민정협의회 위원장 김태흠」이 주고
      「충청남도 노사분쟁 조정·중재단」이 받은 표창이, 수여기관 「충청남도(노사분쟁조정중재단)」
@@ -6919,7 +6972,22 @@ async function saveOCRRecord(page,parsed,file,ext,b64){
       return t;
     };
     const type=_normType(parsed.docType, page==='award'?'표창':'위촉장'); recId=wiccokId(type,year);
-    rec={id:recId,type,org:parsed.org||'',titleVal:parsed.titleVal||'',issueDate:parsed.issueDate||'',period:parsed.period||'',year,note:parsed.note||'',fname:file.name,savedAt:new Date().toISOString()};
+    rec={id:recId,type,org:parsed.org||'',issuer:parsed.issuer||'',titleVal:parsed.titleVal||'',issueDate:parsed.issueDate||'',period:parsed.period||'',year,note:parsed.note||'',fname:file.name,savedAt:new Date().toISOString()};
+    /* ★ 기간을 두 칸으로 옮긴다 — 표와 편집창이 periodStart·periodEnd 를 읽는다.
+       ⑴ 날짜로 적혀 있으면 그대로 갈라 넣는다.
+       ⑵ 「임기 2년」처럼 햇수만 적혀 있으면 발급일+N년으로 넣는다(문서에 적힌 것을 옮기는 것).
+       ⚠ 아무 말도 없으면 «비워 둔다» — 없는 기간을 만들어 넣지 않는다. */
+    _safe(function(){
+      var sp=splitPeriod(parsed.period||'');
+      if(sp[0]) rec.periodStart=sp[0];
+      if(sp[1]) rec.periodEnd=sp[1];
+      var ty=parseInt(String(parsed.termYears||'').replace(/[^0-9]/g,''),10);
+      if(!rec.periodEnd && ty>0 && ty<=10 && rec.issueDate){
+        rec.periodStart=rec.periodStart||rec.issueDate;
+        rec.periodEnd=termEnd(rec.periodStart, ty);
+        rec.termYears=String(ty);
+      }
+    });
   } else if(page==='license'||page==='complete'){ store='cert'; recId=nextId('C','cert');
     rec={id:recId,title:parsed.title||'',org:parsed.org||'',date:parsed.date||'',num:parsed.num||'',note:parsed.note||'',fname:file.name,savedAt:new Date().toISOString()};
   } else if(page==='edu'){ store='edu'; recId=nextId('E','edu');
