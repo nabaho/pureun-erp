@@ -26,7 +26,7 @@
       projectFor:['Project','Organization'],
       assignedTo:['Contract|Case|Project|Task|ScheduleEvent','Person'],
       assists:['Contract|Case|Project|Task','Person'],
-      derivedFrom:['Contract|Case|Project|Task|Document|Submission','Contract|Case|Project|Document'],
+      derivedFrom:['Organization|Contract|Case|Project|Task|Document|Submission','Contract|Case|Project|Document'],
       paidFor:['FinancialTransaction','Contract|Case|Project|Organization'],
       invoicedTo:['Invoice','Organization'],
       scheduledFor:['ScheduleEvent','Organization|Contract|Case|Project|Person'],
@@ -243,7 +243,7 @@
     });
 
     // 원본 계약·사건 관계는 명시적 ID만 색인한다. 번호만 있거나 참조가 모순되면 진단만 남긴다.
-    ['contracts','cases'].forEach(function(store){
+    ['contracts','cases','companies','consultings','funds','other_projects'].forEach(function(store){
       arr(data[store]).forEach(function(r){
         if(!clean(r.id))return;
         var checked=validateWorkReferences(r,data,{store:store}),bad=checked.errors.filter(function(x){return x.field.indexOf('source')===0;});
@@ -488,6 +488,27 @@
     return rows.sort(function(a,b){return (a.label+a.id).localeCompare(b.label+b.id,'ko');}).slice(0,100);
   }
 
+  /* 6-3단계: 배치 전체를 먼저 검사한다. 원본/입력은 바꾸지 않고 한 행이라도
+     잘못되면 저장 호출 전 모두 보류한다. 같은 배치 안의 새 참조는 승인하지 않는다. */
+  function validateWorkBatch(store,records,data,options){
+    data=data||{};options=options||{};var errors=[],warnings=[],seen=Object.create(null);
+    if(!STORE_TYPES[store]||!Array.isArray(records))return {ok:false,errors:[{row:0,message:'저장 종류 또는 입력 목록을 확인하세요.'}],warnings:[],readOnly:true};
+    records.forEach(function(record,i){
+      if(!record||typeof record!=='object'||Array.isArray(record)){errors.push({row:i+1,message:'입력 행이 올바르지 않습니다.'});return;}
+      var id=clean(record.id),previous=entries(data[store]).map(function(p){return p[1];}).filter(function(x){return x&&clean(x.id)===id;});
+      function fail(message){errors.push({row:i+1,id:id,message:message});}
+      if(typeof record.id!=='string'||!id||id!==record.id||/[.#$\[\]\/\u0000-\u001f\u007f]/.test(id))fail('유효한 영구 ID가 필요합니다.');
+      if(seen[id])fail('입력 목록에 같은 ID가 중복되어 있습니다.');seen[id]=true;
+      if(previous.length>1||previous.some(function(x){return x._deleted;}))fail('기존 ID가 중복되었거나 삭제된 기록입니다.');
+      if(previous.length&&options.allowExisting!==true)fail('이미 존재하는 ID입니다. 새 자료로 덮어쓸 수 없습니다.');
+      var checked=validateWorkReferences(record,data,{store:store,requireMain:true,
+        previous:options.allowExisting&&previous.length===1?previous[0]:null,unassignableSids:options.unassignableSids||[]});
+      checked.errors.forEach(function(x){fail(x.message);});
+      checked.warnings.forEach(function(x){warnings.push({row:i+1,id:id,message:x.message});});
+    });
+    return {ok:errors.length===0,errors:errors,warnings:warnings,readOnly:true};
+  }
+
   /* 5단계 검증센터. 진단 결과를 사람이 한 건씩 검토할 작업목록으로 바꾼다.
      검토 상태는 화면 메모일 뿐이며 원본이나 서버에 기록하지 않는다. */
   var VALIDATION_CATEGORIES={
@@ -605,7 +626,7 @@
   return { VERSION:VERSION, TERMS:TERMS, PROGRAMS:PROGRAMS, STORE_TYPES:STORE_TYPES, READ_ADAPTERS:READ_ADAPTERS,
     audit:audit, auditIntegrated:auditIntegrated, getReadPlan:getReadPlan, searchEntities:searchEntities, entityConnections:entityConnections,
     organization360:organization360, validateCompanyLink:validateCompanyLink, companyLinkCandidates:companyLinkCandidates,
-    validateWorkReferences:validateWorkReferences, workReferenceCandidates:workReferenceCandidates,
+    validateWorkReferences:validateWorkReferences, workReferenceCandidates:workReferenceCandidates, validateWorkBatch:validateWorkBatch,
     VALIDATION_CATEGORIES:VALIDATION_CATEGORIES, buildValidationQueue:buildValidationQueue,
     filterValidationQueue:filterValidationQueue, buildSnapshot:buildSnapshot, validateSnapshot:validateSnapshot, auditPrograms:auditPrograms,
     canonicalId:canon, sourceCanonicalId:sourceCanon, normalizeCompanyName:normName, normalizeBusinessNumber:normBiz };
