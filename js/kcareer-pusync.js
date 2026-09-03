@@ -110,6 +110,10 @@
         size: c.companySize || '',
         insured: Number(c.employmentInsuredCount) || 0,
         year: start.slice(0, 4),
+        /* 화면에 보일 글자와 «셈에 쓸 날짜»를 함께 담는다 —
+           평균 자문기간을 세려면 period 문자열이 아니라 날짜가 필요하다 */
+        start: start,
+        end: (closed && endRaw) ? endRaw : '',
         period: start ? (start + ' ~ ' + ((closed && endRaw) ? endRaw : '현재')) : '',
         main: (userMap && userMap[sid]) || sid,
         status: closed ? '종료' : '진행',

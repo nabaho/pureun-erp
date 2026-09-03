@@ -931,7 +931,8 @@ input.kf-in.kf-done{background:#f8fafc;border-bottom:1.5px solid var(--teal);fon
 <script src="js/pu-version.js?v=3"></script>
 <script src="js/pu-backup.js?v=1"></script>
 <script src="js/kcareer-scan.js?v=2"></script>
-<script src="js/kcareer-pusync.js?v=2"></script>
+<script src="js/kcareer-pusync.js?v=3"></script>
+<script src="js/kcareer-adv-summary.js?v=1"></script>
 <script src="js/kcareer-hwpxfill.js?v=9"></script>
 <script src="js/kcareer-formmap.js?v=6"></script>
 <script src="js/kcareer-hanja.js?v=1"></script>
@@ -1618,6 +1619,7 @@ input.kf-in.kf-done{background:#f8fafc;border-bottom:1.5px solid var(--teal);fon
           <button class="btn" type="button" onclick="puUndoLastSync()">↩ 동기화 되돌리기</button>
           <button class="btn" data-act="csv">📤 CSV</button>
         </div>
+        <details id="advSumBox" style="margin-bottom:12px"><summary style="cursor:pointer;font-size:12px;color:var(--text-mute);padding:4px 0">📋 지원서에 쓸 문장 (고객사 이름 없이)</summary><div id="advSummary" style="margin-top:8px"></div></details>
         <div class="dt"></div>
       </div></section>
       <section class="page-view" id="page-puagency"><div class="page">
@@ -5795,6 +5797,8 @@ const CAREER_CFG={
      근로자 수(insured)는 «고객사 이름 없이» 실적을 세기 위한 값이다.
      ⚠ 유형 드롭다운을 두지 않는다 — renderCareer 는 연도만 채워 주므로 빈 드롭다운이 된다. */
   advisory:{store:'advisory',filter:r=>!r.excluded,qFields:['org','type','bizType','bizCategory','main'],
+    /* ⚠ 목록은 이름을 그대로 보여 준다 — 가리는 것은 «내보낼 때»뿐이다(회귀검사 있음) */
+    exportMask: rows => KcareerAdvSummary.maskRows(rows),
     cols:['ID','유형','고객사','업태·종목','규모','근로자','기간','담당','상태','관리'],
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td><span class="tag navy">${r.type||'-'}</span></td>
       <td><strong>${r.org||'-'}</strong></td><td style="font-size:11px">${[r.bizType,r.bizCategory].filter(Boolean).join(' · ')||'-'}</td>
@@ -5972,10 +5976,38 @@ function _tbExtra(sec, html){
   if(c) c.style.display = '';
 }
 
+/* 자문·고문 실적을 «고객사 이름 없이» 세어 지원서 문장으로 만든다 (대표 결정 2026-09-03).
+   ⚠ 목록 표는 이름을 그대로 보여 준다 — 가리는 것은 이 칸과 CSV 뿐이다.
+   ⚠ 없는 것을 지어내지 않는다 — 300인 이상 문장·업태 대응 문장은 실제로 그럴 때만 붙는다(모듈이 지킴). */
+function renderAdvSummary(){
+  var box=$('advSummary'); if(!box) return;
+  if(typeof KcareerAdvSummary==='undefined'){ box.innerHTML='<div style="font-size:12px;color:var(--text-mute)">요약 부품을 불러오지 못했습니다 — 새로고침해 주세요</div>'; return; }
+  var rows=get('advisory').filter(function(r){ return r && !r.excluded; });
+  if(!rows.length){ box.innerHTML='<div style="font-size:12px;color:var(--text-mute)">자문 실적이 없습니다 — 🔄 실적 동기화를 먼저 눌러 주세요</div>'; return; }
+  var s=KcareerAdvSummary.summarize(rows, new Date().toISOString().slice(0,10));
+  var txt=KcareerAdvSummary.sentence(s);
+  var cards=[['진행 중',s.liveCount+'곳'],['종료 포함',s.allCount+'곳'],
+             ['근로자(진행)',Number(s.sumLive).toLocaleString('ko-KR')+'명'],
+             ['평균 자문기간',s.avgYears+'년']];
+  box.innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+    +cards.map(function(c){ return '<div class="card" style="flex:1;min-width:90px;text-align:center"><div style="font-size:18px;font-weight:700;color:var(--navy)">'+escapeHtml(c[1])+'</div><div style="font-size:11px;color:var(--text-mute)">'+escapeHtml(c[0])+'</div></div>'; }).join('')
+    +'</div>'
+    +'<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:#f8fafc">'
+    +'<div style="font-size:11px;color:var(--text-mute);margin-bottom:6px">고객사 이름이 한 곳도 없습니다 — 그대로 지원서에 붙일 수 있습니다</div>'
+    +'<div id="advSumText" style="font-size:12.5px;line-height:1.9">'+escapeHtml(txt)+'</div>'
+    +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">'
+    +'<button class="btn sm" onclick="advSumCopy()">📋 복사</button>'
+    +'<button class="btn sm" onclick="advSumInsert()">⤵ 편집창에 넣기</button>'
+    +'</div></div>';
+}
+function _advSumText(){ var el=$('advSumText'); return el?el.textContent:''; }
+function advSumCopy(){ var t=_advSumText(); if(!t){ toast('문장이 없습니다'); return; } navigator.clipboard.writeText(t); toast('복사됨 — 지원서에 붙여 쓰세요'); }
+function advSumInsert(){ var t=_advSumText(); if(!t){ toast('문장이 없습니다'); return; } insertToEditor(t); }
 function renderCareer(name){ const cfg=CAREER_CFG[name]; if(!cfg) return;
   /* 기타비용은 합친 표(비용관리) 안에서 보인다 — 고쳤으면 그쪽도 다시 그린다.
      안 그리면 「저장했는데 화면은 그대로」가 된다. */
   if(name==='etcfee') setTimeout(function(){ renderCareer('meetfee'); },0);
+  if(name==='advisory') setTimeout(function(){ try{ renderAdvSummary(); }catch(e){ console.warn('advSummary',e); } },0);
   const sec=document.getElementById('page-'+name); if(!sec) return;
   /* 두 저장소를 한 표에 모은다(비용관리) — 기록은 «옮기지 않는다».
      옮기다 잃는 것이 합치는 이득보다 크다. 어느 저장소에서 왔는지는 _st 로 들고 다닌다. */
@@ -6573,9 +6605,18 @@ function memoRec(store,id,page){ const arr=get(store); const r=arr.find(x=>x.id=
 function delRec(store,id,page){ if(!confirm('삭제하시겠습니까?')) return;
   set(store, get(store).filter(x=>x.id!==id)); deleteFile(id); renderCareer(page); toast('삭제됨'); }
 function exportCsv(name){ const cfg=CAREER_CFG[name]; let data=get(cfg.store); if(cfg.filter) data=data.filter(cfg.filter);
-  if(!data.length) return toast('데이터 없음'); const keys=Object.keys(data[0]);
+  if(!data.length) return toast('데이터 없음');
+  /* ⚠ «내보내는 자리»에서만 가린다 (대표 결정 2026-09-03 「목록 보이고 내보낼떄 가림」).
+     자문 실적의 고객사 이름이 파일로 나가면 «그 회사가 노무 자문을 받는다»는 사실이 밖으로 나간다.
+     목록 화면은 그대로 둔다 — 안에서 일을 하려면 이름이 보여야 한다.
+     ⚠ 가림이 실패하면 «내보내지 않는다». 맨몸으로 나가는 쪽이 훨씬 위험하다. */
+  var _masked=false;
+  if(cfg.exportMask){ try{ data=cfg.exportMask(data); _masked=true; }
+    catch(e){ console.warn('exportMask',e); toast('이름 가림에 실패해 내보내지 않았습니다'); return; } }
+  const keys=Object.keys(data[0]);
   const csv=[keys.join(',')].concat(data.map(r=>keys.map(k=>`"${String(r[k]??'').replace(/"/g,'""')}"`).join(','))).join('\n');
-  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv'})); a.download=name+'.csv'; a.click(); }
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv'})); a.download=name+'.csv'; a.click();
+  if(_masked) toast('고객사 이름을 가려서 내보냈습니다 (○○제조사 …)'); }
 function parseCSV(text){ var rows=[],row=[],cur='',q=false; text=String(text).replace(/^\ufeff/,'').replace(/\r\n/g,'\n').replace(/\r/g,'\n');
   for(var i=0;i<text.length;i++){ var c=text[i];
     if(q){ if(c==='"'){ if(text[i+1]==='"'){cur+='"';i++;} else q=false; } else cur+=c; }
