@@ -116,8 +116,16 @@ test('끊겨도 이어서 한다 — 이미 옮긴 것은 목록에 없다', () 
        «남은 것만 본다»는 성질이다. */
   assert.ok(/_cardsPhotoIds\(\)/.test(m[0]),
     '남아 있는 것만 읽어야 이어서 하기가 됩니다.');
-  assert.ok(/옮길 사진이 없습니다|이미 (다 옮겨졌습니다|끝났습니다)/.test(m[0]),
-    '다 끝났을 때 아무 말이 없으면 고장으로 보입니다.');
+  /* ⚠ 2026-09-03 고침 — 예전에는 「옮길 사진이 없습니다」라는 «말»을 못 박았다.
+     REST 목록 받기를 버리면서(열쇠 통로가 틀려 한 번도 안 통했다) 그 말이
+     「확인할 명함이 없습니다」로 바뀌었다. 지켜야 할 성질은 말이 아니라
+     «끝났을 때 아무 말도 없지 않다»다 — 말이 없으면 대표님은 고장으로 보신다. */
+  /* ⚠ 두 자리를 «갈라» 본다 — 하나로 묶어 보면 한쪽을 없애도 통과한다
+     (2026-09-03 에 실제로 그랬다: 「끝났습니다」를 지웠는데 안 걸렸다). */
+  assert.match(m[0], /확인할 명함이 없습니다|옮길 사진이 없습니다/,
+    '할 것이 없을 때 아무 말이 없으면 단추가 죽은 것으로 보입니다.');
+  assert.match(m[0], /끝났습니다/,
+    '다 끝났을 때 아무 말이 없으면 언제까지 기다려야 하는지 알 수 없습니다.');
 });
 
 test('깨진 값은 지우지 않고 남겨 둔다', () => {
@@ -148,107 +156,116 @@ test('⛔ 화질 깎기 도구를 이 길에 섞지 않는다', () => {
     '창고로 옮기는 것은 화질을 그대로 두려고 하는 일입니다. 여기서 깎으면 되돌릴 수 없습니다.');
 });
 
-/* ══ 막혔을 때 «어디서» 막혔는지 말하는가 (2026-09-03) ══
-   대표님이 단추를 누르니 화면에 「목록을 읽지 못했습니다」 한 줄만 떴다.
-   그 문장이 겉(단추 쪽)과 속(REST 쪽)에 «똑같이» 적혀 있어, 로그인·주소·인터넷·권한
-   가운데 어디서 막힌 것인지 화면만 보고는 알 수 없었다 — 고칠 자리를 못 찾는다.
-   여기서 못 박는 것은 「무슨 말을 하는가」가 아니라 «가려낼 수 있는가»다. */
+/* ══ 왜 이 단추는 «한 번도» 통하지 않았나 (2026-09-03) ══
+   대표님이 누르니 401 「Unauthorized request.」 가 떴다.
+   그 말은 «권한이 없다»가 아니라 «열쇠를 못 알아본다»는 뜻이다 —
+   권한 문제라면 「Permission denied」 라고 한다(직접 두 가지를 다 확인했다).
+
+   까닭: 실시간DB REST 는 로그인 열쇠를 `Authorization: Bearer` 로 받지 않는다.
+        그 자리는 구글 OAuth 열쇠 자리다. 우리 열쇠는 주소(?auth=)로만 받는다.
+   그래서 shallow(번호만 받기) 길을 아예 버리고, 이 파일이 이미 쓰는 방식
+   (카드 목록으로 자리를 만들어 한 자리씩 SDK 로 읽기)으로 바꿨다.
+
+   여기서 못 박는 것은 두 가지다 — «통하는 길로 가는가», «까닭이 눈에 닿는가». */
 
 const { cutFn } = require('./cut-fn.js');
+const vm = require('node:vm');
+const escLine = html.match(/const esc = s => [^\r\n]+/)[0];
 
-test('★★ 막히는 자리마다 «번호»를 붙인다 — 어디서 막혔는지 화면만 보고 안다', () => {
-  const fn = cutFn(html, 'async function _cardsPhotoIds(');
-  assert.ok(fn, '_cardsPhotoIds 를 찾지 못했습니다.');
-  const said = (fn.match(/throw new Error\('([^']*)/g) || [])
-    .map((t) => t.replace(/^throw new Error\('/, ''));
-  assert.ok(said.length >= 3,
-    '막힐 자리가 여럿인데 말하는 자리가 ' + said.length + '개뿐입니다.');
-  const 번호 = /^[①②③④⑤⑥⑦⑧⑨]/;
-  const 맨말 = said.filter((t) => !번호.test(t));
-  assert.deepEqual(맨말, [],
-    '★ 번호 없는 말이 있습니다: ' + JSON.stringify(맨말) + ' — ' +
-    '번호가 없으면 대표님 화면을 보고도 어느 걸음에서 막혔는지 알 수 없습니다.');
-});
+/* ⚠ 「없어야 한다」를 볼 때는 주석을 먼저 걷는다 — 잘 쓴 주석이 검사를 걸리게 한다.
+     아래 두 검사가 실제로 내 주석 때문에 걸렸다(2026-09-03). */
+const { stripComments } = require('./strip-comments');
+const 알맹이 = stripComments(html);
 
-test('★★ 겉 문장과 속 문장이 «달라야» 한다 — 같으면 구별이 안 된다', () => {
-  const fn = cutFn(html, 'async function _cardsPhotoIds(');
-  const box = html.match(/_mvBox\(`<b style="color:#dc2626">([^<]+)</);
-  assert.ok(box, '단추 쪽 빨간 문장을 찾지 못했습니다.');
-  assert.ok(fn.indexOf(box[1]) < 0,
-    '★ 겉과 속이 같은 말(「' + box[1] + '」)을 합니다 — ' +
-    '화면에 두 줄이 겹쳐 떠서 무엇이 진짜 까닭인지 가려낼 수 없습니다(2026-09-03 에 실제로 그랬다).');
-});
-
-test('★ 거절당하면 «번호와 본문»을 함께 말한다 — 숫자만으로는 못 고친다', () => {
-  const fn = cutFn(html, 'async function _cardsPhotoIds(');
-  assert.match(fn, /res\.status/, '몇 번으로 거절당했는지 안 말합니다.');
-  assert.match(fn, /res\.text\(\)/,
-    '★ 파이어베이스가 보내 준 까닭(Permission denied / Unauthorized request)을 버립니다 — ' +
-    '숫자 401 만으로는 권한 문제인지 열쇠 문제인지 가릴 수 없습니다.');
-});
-
-test('★ 인터넷이 막힌 것도 «잡아서» 말한다 — 그냥 터지게 두지 않는다', () => {
-  const fn = cutFn(html, 'async function _cardsPhotoIds(');
-  const at = fn.indexOf('await fetch(');
-  assert.ok(at > 0, 'fetch 를 찾지 못했습니다.');
-  const okAt = fn.indexOf('if(!res.ok)');
-  assert.ok(okAt > at, 'res.ok 검사가 fetch 뒤에 없습니다.');
-  assert.ok(fn.slice(at, okAt).indexOf('catch') > 0,
-    '★ fetch 를 감싸지 않았습니다 — 인터넷·차단 프로그램에 막히면 ' +
-    '까닭 없는 빈 줄만 뜹니다.');
-});
-
-test('★★ 까닭이 «빈 칸»으로 나가지 않는다 — 대표님이 겪은 그 빈 줄', () => {
-  const fn = cutFn(html, 'function _errWord(');
-  assert.ok(fn, '_errWord 가 없습니다 — 까닭을 다듬는 자리가 사라졌습니다.');
-  const vm = require('node:vm');
-  const ctx = { out: null };
+/* 진짜 함수를 그대로 떼어 와 돌려 본다 — 글자만 보면 «돌아가는지»는 모른다 */
+function 떼어실행(고를것, 밑감) {
+  const fn = cutFn(html, 고를것);
+  assert.ok(fn, 고를것 + ' 을 찾지 못했습니다.');
+  const ctx = Object.assign({}, 밑감 || {});
   vm.createContext(ctx);
-  vm.runInContext(fn + '; out = _errWord;', ctx);
-  /* ⚠ 마지막 넷째가 «빈 칸 막이»를 실제로 지나가는 유일한 것이다 —
+  vm.runInContext(escLine + ';' + fn, ctx);
+  return ctx;
+}
+
+test('★★★ 목록을 REST 로 받지 않는다 — 열쇠 통로가 틀려 한 번도 통하지 않았다', () => {
+  assert.equal(알맹이.indexOf('photos.json'), -1,
+    '★ REST 로 사진 목록을 받는 길이 돌아왔습니다. 그 길은 401 ' +
+    '「Unauthorized request.」 로 «반드시» 막힙니다 — 열쇠를 머리글로 못 보냅니다.');
+  assert.equal(알맹이.indexOf('shallow=true'), -1,
+    'shallow 로 번호만 받는 길이 돌아왔습니다 — 브라우저에서는 안 통하는 길입니다.');
+});
+
+test('★★★ 로그인 열쇠를 «주소»에 넣지 않는다 — 주소는 기록에 남는다', () => {
+  /* ?auth= 를 쓰면 통한다. 그래도 안 쓴다 — 주소는 서버 기록에 남고,
+     그 열쇠 한 줄이면 이 사람 자격으로 무엇이든 읽을 수 있다.
+     통하는 길이 «있다»는 것이 이 검사를 무르게 하는 까닭이 되어선 안 된다. */
+  assert.doesNotMatch(알맹이, /[?&]auth=/,
+    '★ 로그인 열쇠를 주소에 넣습니다 — 주소는 기록에 남습니다. ' +
+    '목록이 필요하면 카드 목록으로 훑거나, 서버(관리자 권한)에게 시키세요.');
+});
+
+test('★★ 훑을 자리는 «앱이 아는 카드»로 만든다 — 앞면·뒷면 두 자리', () => {
+  const ctx = 떼어실행('function _cardsPhotoIds(',
+    { state: { items: { a1: {}, b2: {} } } });
+  const ids = ctx._cardsPhotoIds();
+  /* ⚠ vm 안 배열은 다른 세계의 Array 다 — Array.from 으로 옮겨 비교한다 */
+  assert.deepEqual(Array.from(ids).sort(), ['a1', 'a1_b', 'b2', 'b2_b'],
+    '앞면·뒷면 두 자리를 다 훑어야 합니다 — 한쪽만 훑으면 뒷면 원본이 영영 남습니다.');
+});
+
+test('★ 카드가 하나도 없어도 터지지 않는다', () => {
+  const ctx = 떼어실행('function _cardsPhotoIds(', { state: {} });
+  assert.deepEqual(Array.from(ctx._cardsPhotoIds()), [],
+    'state.items 가 아직 없을 때 터지면 단추가 아무 말도 못 합니다.');
+});
+
+test('★★★ 까닭을 «글자 그대로» 보여 준다 — 태그로 먹히면 빈 줄이 된다', () => {
+  const ctx = 떼어실행('function _whyBox(');
+  const out = ctx._whyBox('<b>망함</b> & <script>x</script>');
+  assert.match(out, /&lt;b&gt;망함/,
+    '★ 까닭을 esc 없이 넣습니다 — 태그가 섞이면 화면에 «빈 줄»만 보입니다ㆍ' +
+    '2026-09-03 에 대표님이 두 번 그 빈 줄을 보셨습니다.');
+  assert.equal(out.indexOf('<script>'), -1, '태그가 그대로 들어갑니다.');
+  assert.match(out, /white-space:\s*pre-wrap/,
+    '줄바꿈을 살리지 않습니다 — JSON 본문이 한 줄로 뭉쳐 읽을 수 없습니다.');
+});
+
+test('★★ 까닭이 «빈 칸»으로 나가지 않는다 — 대표님이 본 그 빈 줄', () => {
+  const ctx = 떼어실행('function _errWord(');
+  /* ⚠ 마지막 것이 «빈 칸 막이»를 실제로 지나가는 유일한 것이다 —
      앞의 것들은 String(e) 이 [object Object] 나 Error 를 내놓아 그 자리를 안 지난다.
      이것을 빼면 막이를 없애도 검사가 통과한다(2026-09-03 에 실제로 그랬다). */
   const 빈것 = [undefined, null, {}, new Error(''), { name: '', message: '' },
     { name: '', message: '', toString: () => '' }];
   빈것.forEach((v, i) => {
-    const r = ctx.out(v);
+    const r = ctx._errWord(v);
     assert.ok(typeof r === 'string' && r.trim().length > 0,
       '★ ' + i + '번째 빈 까닭이 «빈 줄»로 나갑니다 — 화면에 아무것도 안 보입니다.');
   });
-  assert.match(ctx.out(new Error('터졌다')), /터졌다/,
+  assert.match(ctx._errWord(new Error('터졌다')), /터졌다/,
     '까닭이 있는데 버립니다 — 그것이 고칠 단서입니다.');
 });
 
-/* ══ 까닭이 «보이는가» (2026-09-03 두 번째 헛걸음) ══
-   번호를 붙였는데도 대표님 화면에는 빨간 줄 아래가 «여전히 비어» 있었다.
-   까닭 글자를 HTML 로 그대로 넣었기 때문이다 — 파이어베이스가 보낸 본문에
-   태그가 섞여 있으면 글자가 아니라 «태그»로 먹혀 아무것도 안 보인다.
-   여기서 못 박는 것은 「무슨 말을 하는가」가 아니라 «그 말이 눈에 닿는가»다. */
-
-test('★★★ 까닭을 «글자 그대로» 넣는다 — 태그로 먹히면 빈 줄이 된다', () => {
+test('★★ 뜻밖에 멈추면 «창으로도» 알린다 — 화면 글자는 덮일 수 있다', () => {
   const fn = cutFn(html, 'window.pucardsMovePhotosToStorage = async function(');
   assert.ok(fn, '단추 함수를 찾지 못했습니다.');
-  const at = fn.indexOf('사진 목록을 못 받았습니다');
-  assert.ok(at > 0, '까닭을 알리는 자리를 찾지 못했습니다.');
-  /* ⚠ 문장 뒤만 보면 안 된다 — 알리는 일이 그 앞줄에도 있다.
-     catch 블록 처음부터 본다. */
-  const from = fn.lastIndexOf('catch(e){', at);
-  const 뒤 = fn.slice(from > 0 ? from : at, at + 700);
-  assert.match(뒤, /esc\(\s*why\s*\)/,
-    '★ 까닭을 esc() 없이 넣습니다 — 파이어베이스가 보낸 본문에 태그가 섞이면 ' +
-    '글자가 태그로 먹혀 화면에 «빈 줄»만 보입니다(2026-09-03 에 실제로 그랬다).');
+  assert.match(fn, /alert\(/,
+    '★ 뜻밖에 멈춘 까닭을 창으로 안 띄웁니다 — 다른 알림이 덮으면 ' +
+    '대표님은 아무 까닭도 못 보시고, 고칠 자리를 영영 못 찾습니다.');
+  assert.match(fn, /console\.error\(/, '되짚을 기록을 안 남깁니다.');
+  assert.match(fn, /_whyBox\(/, '까닭을 글자 그대로 보여 주는 칸을 안 씁니다.');
 });
 
-test('★★ 창으로도 띄운다 — 화면 글자는 덮일 수 있지만 창은 안 덮인다', () => {
+test('★★ 실패했으면 «처음 까닭»을 마무리에 적는다 — 숫자만으로는 못 고친다', () => {
   const fn = cutFn(html, 'window.pucardsMovePhotosToStorage = async function(');
-  const at = fn.indexOf('사진 목록을 못 받았습니다');
-  /* ⚠ 문장 뒤만 보면 안 된다 — 알리는 일이 그 앞줄에도 있다.
-     catch 블록 처음부터 본다. */
-  const from = fn.lastIndexOf('catch(e){', at);
-  const 뒤 = fn.slice(from > 0 ? from : at, at + 700);
-  assert.match(뒤, /alert\(/,
-    '★ 까닭을 창으로 안 띄웁니다 — 다른 알림이 덮거나 CSS 에 먹히면 ' +
-    '대표님은 아무 까닭도 못 보십니다. 그러면 고칠 자리를 영영 못 찾습니다.');
-  assert.match(뒤, /console\.error\(/,
-    '개발자 기록에도 남기지 않습니다 — 나중에 되짚을 단서가 사라집니다.');
+  assert.match(fn, /if\(!firstWhy\)\s*firstWhy\s*=/,
+    '처음 실패한 까닭을 담지 않습니다 — 실패 수만 보면 무엇이 잘못인지 모릅니다.');
+  assert.match(fn, /failed && firstWhy/,
+    '★ 담아 두고 «보여 주지» 않습니다 — 담기만 하면 아무도 못 봅니다.');
+});
+
+test('★ 원본이 없는 자리는 그냥 지나간다 — 실패로 세지 않는다', () => {
+  const fn = cutFn(html, 'window.pucardsMovePhotosToStorage = async function(');
+  assert.match(fn, /if\(!dataUrl[\s\S]{0,60}skipped\+\+/,
+    '원본이 없는 자리를 실패로 세면, 12,000곳이 «실패»로 보여 겁이 납니다.');
 });
