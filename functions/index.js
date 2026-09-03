@@ -2095,15 +2095,31 @@ const companyWebsiteMatch = require("./company-website-match");
    ■ 2026-09-03 구글 → 네이버 (대표 결정 「네이버로 하자」)
      구글 Custom Search JSON API 는 신규 고객에게 닫혀 있어(공식 문서) 키가 맞아도 403.
      네이버 검색 API 두 갈래를 차례로 쓴다:
-       ① 지역(업체) 검색 local.json — 업체명·주소·홈페이지가 «칸으로» 온다.
+       ① 지역(업체) 검색 local — 업체명·주소·홈페이지가 «칸으로» 온다.
           우리 주소의 시/군/구가 네이버 주소 칸에 있고 홈페이지 링크가 있으면 확정.
-       ② 웹문서 검색 webkr.json — ①이 못 찾을 때만. 제목+요약에 회사명·주소가 함께
-          나오면 확정, 아니면 후보로만 보여준다. (①이 맞으면 ②는 안 부른다 — 하루 25,000건
-          무료 한도를 아낀다.)
-   총괄관리자만 부를 수 있다. 네이버 열쇠 둘은 비밀값(secrets)으로만 읽는다 —
+       ② 웹문서 검색 webkr — ①이 못 찾을 때만. 제목+요약에 회사명·주소가 함께
+          나오면 확정, 아니면 후보로만 보여준다. (①이 맞으면 ②는 안 부른다 —
+          검색 API 합쳐 월 775,000건 한도를 아낀다. 업체 206곳을 다 돌려도 몇백 건이라
+          넉넉하지만, 안 불러도 되는 것을 부르지 않는 것이 맞다.)
+   ⚠★ 2026-08-31: 네이버가 검색 API 를 «옮겼다». developers.naver.com 에서는
+      2026-07-31 부로 신규 신청이 끝났고(그날 쇼핑·책·전문자료 검색은 아예 종료),
+      지금은 네이버 클라우드의 «NAVER API HUB» 에서 받는다.
+      대표가 개발자센터에서 등록하려다 「사용 API」 목록에 «검색»이 아예 없어 막혔다.
+        옛것: openapi.naver.com/v1/search/local.json  · X-Naver-Client-Id / -Secret
+        새것: naverapihub.apigw.ntruss.com/search/v1/local · X-NCP-APIGW-API-KEY-ID / -KEY
+      우리가 쓰는 지역·웹문서 둘은 그대로 살아 있고, 응답 칸 이름도 같다
+      (그래서 company-website-match.js 는 한 줄도 안 바뀌었다).
+      옛 방식은 기존 신청자에 한해 2027-06-30 까지만 돈다 — 우리는 열쇠가 없어 못 쓴다.
+      공식: guide.ncloud-docs.com/docs/apihub-migration
+
+   총괄관리자만 부를 수 있다. 열쇠 둘은 비밀값(secrets)으로만 읽는다 —
    설정: `firebase functions:secrets:set NAVER_SEARCH_CLIENT_ID` /
         `firebase functions:secrets:set NAVER_SEARCH_CLIENT_SECRET`
-   (네이버 개발자센터 → 애플리케이션 등록 → 사용 API 「검색」) */
+   (네이버 클라우드 콘솔 → All Services → Application Services → NAVER API HUB → 신청하기.
+    ⚠ 이름은 그대로 두었다 — 값이 바뀌었다고 이름까지 바꾸면 등록 절차가 늘어난다) */
+/* 네이버 검색이 사는 곳. 한 자리에만 적는다 — 두 곳에 적으면 한쪽만 고치는 날이 온다. */
+const NAVER_HUB = "https://naverapihub.apigw.ntruss.com";
+
 exports.findCompanyWebsite = functions
   .runWith({ timeoutSeconds: 30, memory: "256MB", secrets: ["NAVER_SEARCH_CLIENT_ID", "NAVER_SEARCH_CLIENT_SECRET"] })
   .https.onRequest(async (req, res) => {
@@ -2135,11 +2151,13 @@ exports.findCompanyWebsite = functions
         return;
       }
 
-      /* 네이버 검색 한 갈래를 부른다. 실패는 상태코드째로 던져 아래 catch 가 502 로 돌려준다. */
+      /* 네이버 검색 한 갈래를 부른다. 실패는 상태코드째로 던져 아래 catch 가 502 로 돌려준다.
+         ⚠ display 5 — 지역 검색의 최대값이 5 다(웹문서는 100 까지 되지만 맞춰 둔다).
+           넘겨 보내면 지역 쪽이 400 으로 떨어진다. */
       async function naverSearch(kind, query) {
         const qs = new URLSearchParams({ query: query, display: "5" });
-        const resp = await fetch("https://openapi.naver.com/v1/search/" + kind + ".json?" + qs.toString(), {
-          headers: { "X-Naver-Client-Id": clientId, "X-Naver-Client-Secret": clientSecret },
+        const resp = await fetch(NAVER_HUB + "/search/v1/" + kind + "?" + qs.toString(), {
+          headers: { "X-NCP-APIGW-API-KEY-ID": clientId, "X-NCP-APIGW-API-KEY": clientSecret },
         });
         if (!resp.ok) {
           const body = await resp.text();
