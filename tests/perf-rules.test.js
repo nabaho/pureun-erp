@@ -106,7 +106,13 @@ const allowTop = ['systemAlerts','systemBackups','systemBackupsIndex','systemRes
      읽기·쓰기 모두 총괄관리자만(homepage 와 같은 잣대). 화면은 pu-news.html.
      ⚠ 직원에게 열지 말 것 — 자동으로 담을 밑감이 homepage/newsBrief 에 있어,
        열려면 홈페이지 관리의 문까지 함께 열어야 한다. */
-  'newsletter'];
+  'newsletter',
+  /* 2026-09-03 경력관리 «받은 함» — 직원이 PDF 위촉장을 올리고 대표가 들인다
+     (대표 지시 「다른직원이 고치거나 지울수 없어도 pdf 위촉장을 업로드해서 등록할 수 있게」).
+     직원은 자기 자리에만 «더하기»만 하고, 지우는 것은 관리자만 한다.
+     ⚠ 이 줄을 안 적어 main 이 빨간불이었다(커밋 4a0172e3 이 PR 없이 올라가 CI 를 안 지났다).
+       최상위를 늘렸으면 «반드시» 여기에 적을 것 — 이 검사 하나가 모든 앱 배포를 막는다. */
+  'kcareer_inbox'];
 
 const keys = Object.keys(R);
 const removed = baseTop.filter(function (k) { return keys.indexOf(k) < 0; });
