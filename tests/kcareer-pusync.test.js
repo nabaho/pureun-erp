@@ -255,7 +255,8 @@ test('buildSyncPlan: puRef 처음인 것만 들어오고 이미 있는 건 건�
   const plan = PS.buildSyncPlan(collData, existing, UMAP);
 
   assert.equal(plan.adds.length, 3);                                                                  // k1 + k2 + c1
-  assert.deepEqual(plan.counts, { case: 2, consult: 1, fund: 0, etc: 0 });
+  // 자문·고문(advisory)이 2026-09-03 에 늘었다 — companies 를 안 넘겼으니 0 이어야 한다
+  assert.deepEqual(plan.counts, { case: 2, consult: 1, fund: 0, etc: 0, advisory: 0 });
   assert.equal(plan.closedCount, 2);                                                                  // k1 · c1
   assert.equal(plan.openCount, 1);                                                                    // k2
   assert.equal(plan.skippedKnown, 1);                                                                 // k3
