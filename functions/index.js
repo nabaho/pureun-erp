@@ -707,10 +707,16 @@ exports.sendScheduledMail = functions
       if (!claim.committed) continue;
 
       try {
+        /* 통이 «다른 주소로 나가고 싶다»고 적어 두었으면 그것을 쓴다 — 뉴스레터가
+           원본과 같은 주소(370-6@hanmail.net)에서 나가게 하려고 붙였다.
+           ⚠ 조이는 것은 여기서 한다 — 사서함 이름이 계정과 같고 도메인이
+             daum.net/hanmail.net 인 것만 통과한다. 아니면 조용히 계정 주소로 보낸다.
+             화면이 담은 값을 그대로 믿으면 남의 이름으로 보내는 길이 된다. */
+        const 이통from = MB.보내는주소고르기(row.fromWish, from);
         const r = await MD.deliver({
           db: db,
           body: Object.assign({}, row.payload || {}, { wasScheduled: true }),
-          from: from, pass: mailPass(),
+          from: 이통from, pass: mailPass(),
           envId: process.env.DAUM_MAIL_ID,
           byEmail: row.by || "",
         });

@@ -39,8 +39,8 @@
 (function(){ function go(){ if(window.PuWhoami){ PuWhoami.mount(false); return true; } return false; }
   if(!go()) document.addEventListener('DOMContentLoaded', go); })();
 </script>
-<script src="js/pu-news-core.js?v=3"></script>
-<script src="js/pu-news-tpl.js?v=3"></script>
+<script src="js/pu-news-core.js?v=4"></script>
+<script src="js/pu-news-tpl.js?v=4"></script>
 <style>
 :root{
   --navy:#1e40af; --ink:#1e293b; --sub:#64748b; --faint:#94a3b8;
@@ -129,6 +129,14 @@ textarea,input[type=text],input[type=url],select{width:100%;border:1px solid var
   border-radius:9px;padding:9px 11px;line-height:1.7}
 textarea{resize:vertical}
 label.f{display:block;font-size:12px;font-weight:800;color:var(--sub);margin:12px 0 5px}
+label.f:first-child{margin-top:0}
+/* 설정 — 짧은 칸은 두 줄로 나란히. 대표 지시 2026-09-03 「좀더 컴팩트하게 … 추가로 더
+   넣을 내용이 있을 수 있으니 그부분도 반영해서 공간 정리」. 칸을 더해도 자리가 남는다. */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+.grid2 .wide{grid-column:1 / -1}
+@media(max-width:700px){.grid2{grid-template-columns:1fr}}
+.sect{font-size:12px;font-weight:800;color:var(--brown);background:var(--brown-soft);
+  padding:6px 15px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 .hint{font-size:11.5px;color:var(--faint);margin-top:6px;line-height:1.65}
 
 .pv{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;position:sticky;top:12px}
@@ -254,7 +262,7 @@ const Core = window.PuNewsCore, Tpl = window.PuNewsTpl;
 var db = null;
 var App = {
   me: null, isAdmin: false, tab: 'now',
-  설정: {}, 회차들: {}, 명단: {}, 막은주소: {}, 브리핑: {},
+  설정: {}, 회차들: {}, 사업장들: {}, 막은주소: {}, 브리핑: {},
   지금열쇠: '', 길: 'auto', 보내는중: false
 };
 
@@ -308,16 +316,26 @@ function 불러오기(){
   Promise.all([
     db.ref('newsletter/config').once('value'),
     db.ref('newsletter/issues').once('value'),
-    db.ref('newsletter/recipients').once('value'),
+    /* ★ 받는 명단은 «기업정보함을 그때그때» 읽는다 — 사본을 두지 않는다.
+         대표 지시 2026-09-03: 「매주 실시간으로 확인하고 싶다. 사업장계약종료 또는
+         담당자 퇴사시에 더이상 보낼필요가 없을경우 어떻게 처리해야하는지」
+       ⚠ 사본(newsletter/recipients)은 붙여넣은 날에 멈춘다 — 계약이 끝나도 담당자가
+         퇴사해도 모른다. 그래서 기업정보함·푸른이알피가 쓰는 «같은 자리»를 읽는다.
+         그러면 기업정보함에서 status 를 바꾸거나 담당자에 left 를 켜면 저절로 빠진다 —
+         뉴스레터에서 따로 지울 일이 없다. 한 곳만 고치면 된다. */
+    db.ref('data/companies/v').once('value').catch(()=>({val:()=>({})})),
     db.ref('config/mailBlock').once('value').catch(()=>({val:()=>({})})),
+    /* 뉴스레터만의 수신거부 — 「뉴스레터는 그만」이라 한 곳도 자료 발송은 받아야 한다.
+       그래서 공용 수신거부(config/mailBlock)와 «따로» 둔다. 둘을 합쳐서 본다. */
+    db.ref('newsletter/blocked').once('value').catch(()=>({val:()=>({})})),
     /* 자동으로 담을 밑감 — 매일 07:00 이 모아 두는 자리 */
     db.ref('homepage/newsBrief/모음').once('value').catch(()=>({val:()=>({})}))
   ]).then(function(v){
     App.설정  = v[0].val() || {};
     App.회차들 = v[1].val() || {};
-    App.명단  = v[2].val() || {};
-    App.막은주소 = v[3].val() || {};
-    App.브리핑 = v[4].val() || {};
+    App.사업장들 = v[2].val() || {};
+    App.막은주소 = Object.assign({}, v[3].val() || {}, v[4].val() || {});
+    App.브리핑 = v[5].val() || {};   /* ⚠ 위 Promise.all 차례와 «번호가 맞아야» 한다 */
     if(!App.설정.회사이름) App.설정.회사이름 = '푸른노무법인';
     if(!App.설정.회신주소) App.설정.회신주소 = '370-6@daum.net';
     if(!App.설정.범위)    App.설정.범위 = '자문중';
@@ -380,7 +398,7 @@ function 회차저장(자료){
 function render(){
   document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on', b.dataset.t===App.tab));
   $('cPast').textContent = Object.keys(App.회차들).length || '';
-  $('cWho').textContent  = Object.keys(App.명단).length || '';
+  $('cWho').textContent  = (명단셈().셈.보낼곳) || '';
   const m = $('main');
   /* 5:5 껍데기는 «이번 회차»에만 — 다른 탭엔 .cols 가 없어 걸면 스크롤을 잃는다 */
   m.classList.toggle('now', App.tab==='now');
@@ -392,7 +410,14 @@ function render(){
 }
 
 function 명단셈(){
-  return Core.명단다듬기(Object.keys(App.명단).map(k=>App.명단[k]), App.막은주소);
+  /* 기업정보함에서 «그때그때» 만든다. 범위(설정)가 어디까지 볼지 정한다 —
+     자문중=살아 있는 곳만 · 자문끝=끝난 곳까지 · 명함전부=지점까지.
+     퇴사한 담당자(contacts[].left)는 Core 가 뺀다. */
+  const g = Core.사업장에서명단(App.사업장들, App.설정.범위);
+  const d = Core.명단다듬기(g.줄들, App.막은주소);
+  d.주소없는곳 = g.주소없는곳;
+  d.본곳 = g.본곳;
+  return d;
 }
 
 function 이번회차화면(){
@@ -607,14 +632,26 @@ function closeBig(){ $('big').classList.remove('on'); }
 /* ══════════════════════════════════════════════════════════════════════════
    보내기 — 이미 도는 sendBulkMail 에 건다
    ══════════════════════════════════════════════════════════════════════════ */
+/* 보내는 주소 — 원본 뉴스레터가 나갔던 그 주소다(보낸메일함 실측 2026-09-02).
+   대표 지시 2026-09-03: 「뉴스레터 발송시에는 370-6@hanmail.net 주소로 송부되어야 한다」
+   ⚠ 자료 발송이 쓰는 공용 주소(pucards/config/matMail/from = 370-6@daum.net)를
+     «건드리지 않는다». 거기를 바꾸면 평소 자료 발송까지 흔들린다.
+   ⚠ 조이는 것은 서버가 한다 — 사서함 이름이 계정과 같고 도메인이 daum.net/hanmail.net
+     인 것만 통과한다. 아니면 조용히 계정 주소로 나간다. */
+const 기본보내는주소 = '370-6@hanmail.net';
+function 보내는주소(){ return String((App.설정 && App.설정.보내는주소) || 기본보내는주소).trim(); }
+
 async function 걸기(payload){
   const u = firebase.auth().currentUser;
   if(!u) throw new Error('로그인이 풀렸습니다');
   const token = await u.getIdToken();
+  /* ★ 보내는 주소를 «여기 한 곳»에서 붙인다. 발송 길이 넷(시험·본발송·전달시험·전달)이라
+       각자 붙이면 한 곳을 빠뜨려 다른 주소로 나간다. */
+  const body = Object.assign({ from: 보내는주소() }, payload);
   const res = await fetch(BULK_FN_URL, {
     method:'POST',
     headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + token },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(body)
   });
   let j=null; try{ j = await res.json(); }catch(_){}
   if(!res.ok || !j || !j.ok) throw new Error((j&&j.error) || ('서버 응답 ' + res.status));
@@ -736,53 +773,57 @@ function 회차열기(k){ App.지금열쇠 = k; App.tab='now'; render(); }
    받는 명단
    ══════════════════════════════════════════════════════════════════════════ */
 function 명단화면(){
+  /* ★ 사본이 없다. 화면을 열 때마다 기업정보함(data/companies/v)에서 만든다.
+       대표 지시 2026-09-03: 「매주 실시간으로 확인하고 싶다」
+     ★ 계약종료·퇴사에 «여기서 할 일이 없다» — 기업정보함에서 상태를 바꾸거나
+       담당자에 퇴사를 켜면 저절로 빠진다. 두 곳을 맞추려 하면 반드시 어긋난다. */
   const r = 명단셈();
-  const 열쇠들 = Object.keys(App.명단);
-  const 줄 = 열쇠들.length ? 열쇠들.map(function(k){
-    const x = App.명단[k] || {};
-    const 막힘 = x.noMail || App.막은주소[주소열쇠(x.email)] || App.막은주소[String(x.email||'').toLowerCase()];
-    return `<tr>
-      <td><b>${esc(x.company||'')}</b></td>
-      <td>${esc(x.name||'')}${x.title?' <span style="color:var(--faint)">'+esc(x.title)+'</span>':''}</td>
-      <td style="color:${막힘?'var(--faint)':'inherit'}">${esc(x.email||'')}</td>
-      <td>${막힘?'<span class="badge b-draft">수신거부</span>':''}</td>
-      <td style="text-align:right"><button class="x mini" onclick="명단빼기('${esc(k)}')">빼기</button></td>
-    </tr>`;
-  }).join('') : '';
+  const 광고 = Core.광고표기필요한가(App.설정.범위);
+
+  const 줄 = r.ok.map(function(x){
+    const 직 = x.title ? ' <span style="color:var(--faint)">' + esc(x.title) + '</span>' : '';
+    return '<tr>'
+      + '<td><b>' + esc(x.company||'') + '</b></td>'
+      + '<td>' + esc(x.name||'') + 직 + '</td>'
+      + '<td>' + esc(x.email||'') + '</td>'
+      + '<td style="text-align:right"><button class="mini" onclick="수신거부넣기(\'' + esc(x.email) + '\')">수신거부</button></td>'
+      + '</tr>';
+  }).join('');
+
+  const 빈곳 = (r.주소없는곳||[]).map(function(c){
+    return '<tr><td><b>' + esc(c.name||'') + '</b></td>'
+      + '<td style="color:var(--faint)">' + esc(c.id||'') + '</td>'
+      + '<td style="text-align:right"><span class="badge b-draft">주소 없음</span></td></tr>';
+  }).join('');
 
   return `
   <div class="hdbar">
     <span class="no">받는 곳 ${r.셈.보낼곳.toLocaleString()}곳</span>
     <span style="font-size:12px;color:var(--sub)">
-      수신거부 ${r.셈.수신거부} · 주소없음 ${r.셈.주소없음} · 겹침 ${r.셈.겹침}</span>
+      기업정보함 ${(r.본곳||0).toLocaleString()}곳에서 · 수신거부 ${r.셈.수신거부} ·
+      겹침 ${r.셈.겹침} · 형식틀림 ${r.셈.주소없음}</span>
     <span class="sp"></span>
-    <span class="badge ${Core.광고표기필요한가(App.설정.범위)?'b-test':'b-sent'}">
-      ${esc(App.설정.범위||'자문중')}${Core.광고표기필요한가(App.설정.범위)?' · (광고) 표기 켜짐':''}</span>
+    <button class="mini" onclick="명단내보내기()">↧ CSV</button>
+    <button class="mini" onclick="다시읽기()">⟳ 다시 읽기</button>
+    <span class="badge ${광고?'b-test':'b-sent'}">
+      ${esc(App.설정.범위||'자문중')}${광고?' · (광고) 켜짐':''}</span>
   </div>
 
-  <div class="box" style="margin-top:12px">
-   <h3>담기</h3>
-   <div class="pad">
-    <label class="f">① 기업정보함에서 내보낸 CSV 를 붙여넣기 <span style="font-weight:400">(가장 빠릅니다)</span></label>
-    <textarea id="addBox" rows="4" placeholder="이름,이메일,회사,직책,휴대폰
-홍길동,hong@abc.co.kr,주식회사 에이비씨,과장,010-0000-0000
+  <div class="note"><b>이 명단은 «지금» 기업정보함을 읽은 것입니다</b> — 따로 담아 두지 않습니다.<br>
+   · <b>계약이 끝나면</b> 기업정보함에서 상태를 «종료»로 바꾸시면 저절로 빠집니다.<br>
+   · <b>담당자가 퇴사하면</b> 그 담당자에 «퇴사»를 켜시면 저절로 빠집니다.<br>
+   · <b>이 화면에서 지울 일이 없습니다.</b> 두 곳을 맞추려 하면 반드시 어긋납니다.</div>
 
-— 또는 이메일만 한 줄에 하나씩 붙여넣으셔도 됩니다."></textarea>
-    <div style="display:flex;gap:9px;margin-top:9px;flex-wrap:wrap">
-     <button class="btn pri" onclick="명단담기()">＋ 명단에 담기</button>
-     <button class="btn" onclick="명단내보내기()">↧ 지금 명단 CSV 로 받기</button>
-    </div>
-    <div class="hint">
-     기업정보함에서 <b>자문 중인 곳을 골라 → ⋯ → 엑셀(CSV) 내보내기</b> 한 다음
-     그 내용을 그대로 붙여넣으시면 됩니다. 새 연결을 만들지 않으려고 이렇게 두었습니다.<br>
-     담을 때 <b>수신거부·겹치는 주소·형식이 틀린 주소</b>는 저절로 빠지고, 몇이 왜 빠졌는지 알려 드립니다.
-    </div>
-   </div>
-  </div>
+  ${r.ok.length ? `<div class="box" style="margin-top:12px">
+    <h3>보낼 곳 <span class="cnt">${r.ok.length}</span></h3>
+    <table class="list"><tr><th>회사</th><th>담당자</th><th>이메일</th><th></th></tr>${줄}</table></div>`
+   : '<div class="note bad">보낼 곳이 없습니다 — 기업정보함에 담당자 이메일이 있어야 합니다.</div>'}
 
-  ${열쇠들.length ? `<div class="box"><h3>명단 <span class="cnt">${열쇠들.length}</span></h3>
-    <table class="list"><tr><th>회사</th><th>담당자</th><th>이메일</th><th></th><th></th></tr>
-    ${줄}</table></div>` : '<div class="note">아직 명단이 비어 있습니다 — 위에서 담아 주세요.</div>'}
+  ${빈곳 ? `<div class="box">
+    <h3>⚠ 주소가 없어 못 보내는 곳 <span class="cnt">${r.주소없는곳.length}</span></h3>
+    <div class="pad hint" style="padding-bottom:0">기업정보함에서 이 곳들의 <b>담당자 이메일</b>을
+     채우시면 다음부터 저절로 들어옵니다. 여기서 지울 일은 없습니다.</div>
+    <table class="list"><tr><th>회사</th><th>사업장 번호</th><th></th></tr>${빈곳}</table></div>` : ''}
 
   <div class="note bad"><b>명단 범위가 곧 법 판단입니다 (정보통신망법 50조).</b><br>
    <b>자문 계약이 살아 있는 곳</b>에만 보내면 거래관계 안이라 대체로 수월합니다.
@@ -793,64 +834,50 @@ function 명단화면(){
 }
 
 /* CSV 든 이메일 목록이든 한 길로 받는다 — 두 길로 두면 「어느 쪽이었지」가 된다 */
-function 명단담기(){
-  const box = $('addBox'); if(!box) return;
-  const 줄들 = String(box.value||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-  if(!줄들.length) return toast('붙여넣은 것이 없습니다');
-  const 후보 = [];
-  줄들.forEach(function(줄, i){
-    if(i===0 && /이메일|email/i.test(줄) && /,/.test(줄)) return;   /* CSV 머리줄 */
-    const 칸 = 줄.split(',').map(s=>s.replace(/^"|"$/g,'').trim());
-    /* 어느 칸이 이메일인지 «찾는다» — 칸 차례를 못 박으면 열이 하나 바뀔 때 통째로 어긋난다 */
-    let e = '', 나머지 = [];
-    칸.forEach(function(c){
-      if(!e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c)) e = c; else 나머지.push(c);
-    });
-    if(!e){ 후보.push({ email:줄 }); return; }        /* 형식이 틀린 것도 넘긴다 — 세어서 알려 준다 */
-    후보.push({ email:e, name:나머지[0]||'', company:나머지[1]||'', title:나머지[2]||'' });
-  });
-  const r = Core.명단다듬기(후보, App.막은주소);
-  if(!r.ok.length){
-    return toast(`담을 수 있는 주소가 없습니다 — 주소없음 ${r.셈.주소없음} · 수신거부 ${r.셈.수신거부} · 겹침 ${r.셈.겹침}`, 9000);
-  }
-  const upd = {};
-  let 새로 = 0;
-  r.ok.forEach(function(x){
-    const k = 주소열쇠(x.email);
-    if(App.명단[k]) return;                          /* 이미 있는 곳은 덮어쓰지 않는다 */
-    upd[k] = Object.assign({}, x, { 담은때: Date.now(), 담은이: (App.me&&App.me.email)||'' });
-    App.명단[k] = upd[k]; 새로++;
-  });
-  if(!새로){ box.value=''; render(); return toast('모두 이미 담겨 있습니다'); }
-  db.ref('newsletter/recipients').update(upd)
-    .then(function(){
-      box.value=''; render();
-      toast(`＋ ${새로}곳을 담았습니다`
-        + (r.셈.수신거부||r.셈.주소없음||r.셈.겹침
-           ? `\n뺀 것 — 수신거부 ${r.셈.수신거부} · 주소없음 ${r.셈.주소없음} · 겹침 ${r.셈.겹침}` : ''), 9000);
-    })
-    .catch(e=>toast('담지 못했습니다: ' + ((e&&e.message)||''), 8000));
-}
-function 명단빼기(k){
-  const x = App.명단[k] || {};
-  if(!confirm(`${x.company||''} ${x.name||''} (${x.email||''})\n명단에서 뺄까요?`)) return;
-  delete App.명단[k];
-  db.ref('newsletter/recipients/' + k).remove().then(render);
-}
+/* 명단을 CSV 로 — 지금 화면에 보이는 «그대로»(기업정보함에서 방금 만든 것) */
 function 명단내보내기(){
-  const 머리 = '이름,이메일,회사,직책';
-  const 몸 = Object.keys(App.명단).map(function(k){
-    const x = App.명단[k]||{};
-    return [x.name,x.email,x.company,x.title]
+  const r = 명단셈();
+  const 머리 = '회사,담당자,이메일,직책';
+  const 몸 = r.ok.map(function(x){
+    return [x.company,x.name,x.email,x.title]
       .map(v=>{ const s=String(v==null?'':v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; })
       .join(',');
   }).join('\r\n');
   /* 첫머리 BOM — 없으면 엑셀이 한글을 깨뜨린다 (기업정보함 toCsv 와 같은 규칙) */
-  const blob = new Blob(['﻿' + 머리 + '\r\n' + 몸 + '\r\n'], { type:'text/csv;charset=utf-8' });
+  const blob = new Blob(['\ufeff' + 머리 + '\r\n' + 몸 + '\r\n'], { type:'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = '뉴스레터-명단-' + 오늘() + '.csv';
   a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 3000);
+}
+
+/* 기업정보함을 «다시» 읽는다 — 방금 고친 것이 바로 보이게.
+   ⚠ 사본이 없으니 「담기」가 없다. 새로 고치면 그때의 기업정보함이 그대로 명단이다. */
+async function 다시읽기(){
+  try{
+    const v = await db.ref('data/companies/v').once('value');
+    App.사업장들 = v.val() || {};
+    render();
+    toast('기업정보함을 다시 읽었습니다 — 받는 곳 ' + 명단셈().셈.보낼곳.toLocaleString() + '곳');
+  }catch(e){ toast('다시 읽지 못했습니다: ' + ((e&&e.message)||''), 7000); }
+}
+
+/* 이 주소로는 뉴스레터를 안 보낸다.
+   ⚠ 기업정보함을 «건드리지 않는다» — 거래처가 「뉴스레터는 그만」이라 해도
+     자료 발송은 계속 받아야 한다. 그래서 뉴스레터만의 막은 명단에 담는다.
+   ⚠ 공용 수신거부(config/mailBlock)에 담으면 그 곳에 «아무 메일도» 못 간다. */
+async function 수신거부넣기(주소){
+  const e = String(주소||'').trim().toLowerCase();
+  if(!e) return;
+  if(!confirm(e + '\n\n이 주소로 뉴스레터를 보내지 않습니다.\n(자료 발송은 그대로 갑니다)\n\n넣을까요?')) return;
+  const 열 = e.replace(/[.#$/[\]]/g, '_');
+  try{
+    await db.ref('newsletter/blocked/' + 열).set({ email: e, at: Date.now(),
+      by: (App.me && App.me.email) || '' });
+    App.막은주소[e] = 1; App.막은주소[열] = 1;
+    render();
+    toast('수신거부에 넣었습니다 — ' + e);
+  }catch(err){ toast('넣지 못했습니다: ' + ((err&&err.message)||''), 7000); }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -862,39 +889,64 @@ function 설정화면(){
   return `
   <div class="box" style="margin-top:14px">
    <h3>뉴스레터 설정</h3>
-   <div class="pad">
-    <label class="f">받는 명단의 범위 — 이 값이 (광고) 표기를 켜고 끕니다</label>
-    <select id="cfgScope" onchange="설정저장()">${옵}</select>
-    <div class="hint">
-     <b>자문중</b> — 자문 계약이 살아 있는 곳만. 거래관계 안이라 (광고) 표기가 없습니다.<br>
-     <b>자문끝 · 명함전부</b> — 제목 앞에 <b>(광고)</b> 가 붙고 꼬리에 안내가 들어갑니다.
-     사전 수신동의는 <b>사람이 받아 두셔야 합니다.</b></div>
+   <div class="sect">① 보내기</div>
+   <div class="pad grid2">
+    <div class="wide">
+     <label class="f">받는 명단의 범위 — 이 값이 (광고) 표기를 켜고 끕니다</label>
+     <select id="cfgScope" onchange="설정저장()">${옵}</select>
+     <div class="hint"><b>자문중</b> 거래관계 안이라 (광고) 표기 없음 ·
+      <b>자문끝·명함전부</b> 제목에 <b>(광고)</b> 가 붙고 꼬리에 안내가 들어갑니다
+      (사전 동의는 사람이 받아 두셔야 합니다).</div>
+    </div>
+    <div>
+     <label class="f">보내는 주소 <span style="font-weight:400">(받는 쪽에 이 주소로 보입니다)</span></label>
+     <input type="text" id="cfgFrom" value="${esc(s.보내는주소||기본보내는주소)}" onchange="설정저장()">
+    </div>
+    <div>
+     <label class="f">회신·수신거부를 받을 주소</label>
+     <input type="text" id="cfgReply" value="${esc(s.회신주소||'')}" onchange="설정저장()">
+    </div>
+    <div class="wide hint">
+     ⚠ <b>같은 사서함의 별칭만</b> 됩니다 — <code>daum.net</code>·<code>hanmail.net</code> 둘이
+     한 사서함입니다. 다른 주소를 넣으면 서버가 조용히 계정 주소로 보냅니다
+     (남의 이름으로 나가는 것을 막는 규칙입니다).
+     자료 발송이 쓰는 공용 주소는 <b>건드리지 않습니다.</b></div>
+   </div>
 
-    <label class="f">회사 이름</label>
-    <input type="text" id="cfgName" value="${esc(s.회사이름||'')}" onchange="설정저장()">
+   <div class="sect">② 편지에 적히는 것</div>
+   <div class="pad grid2">
+    <div>
+     <label class="f">회사 이름</label>
+     <input type="text" id="cfgName" value="${esc(s.회사이름||'')}" onchange="설정저장()">
+    </div>
+    <div>
+     <label class="f">꼬리 한 줄</label>
+     <input type="text" id="cfgFoot" value="${esc(s.꼬리한줄||'대표노무사 권형하')}" onchange="설정저장()">
+    </div>
+    <div class="wide">
+     <label class="f">주소</label>
+     <input type="text" id="cfgAddr" value="${esc(s.주소||'충남 천안시 서북구 원두정8길 6, 두정빌딩 3층')}" onchange="설정저장()">
+    </div>
+    <div>
+     <label class="f">전화</label>
+     <input type="text" id="cfgTel" value="${esc(s.전화||'041-556-0035')}" onchange="설정저장()">
+    </div>
+   </div>
 
-    <label class="f">회신·수신거부를 받을 주소</label>
-    <input type="text" id="cfgReply" value="${esc(s.회신주소||'')}" onchange="설정저장()">
-
-    <label class="f">꼬리 한 줄</label>
-    <input type="text" id="cfgFoot" value="${esc(s.꼬리한줄||'대표노무사 권형하')}" onchange="설정저장()">
-
-    <label class="f">주소</label>
-    <input type="text" id="cfgAddr" value="${esc(s.주소||'충남 천안시 서북구 원두정8길 6, 두정빌딩 3층')}" onchange="설정저장()">
-
-    <label class="f">전화</label>
-    <input type="text" id="cfgTel" value="${esc(s.전화||'041-556-0035')}" onchange="설정저장()">
-
-    <label class="f">배너 그림 주소 <span style="font-weight:400">(비워 두면 색칠한 칸으로 그립니다)</span></label>
-    <input type="text" id="cfgBanner" value="${esc(s.배너그림||'')}"
-      placeholder="https://nabaho.github.io/pureunall/img/…" onchange="설정저장()">
-    <div class="hint">
+   <div class="sect">③ 그림</div>
+   <div class="pad grid2">
+    <div>
+     <label class="f">배너 그림 주소 <span style="font-weight:400">(비우면 색칸)</span></label>
+     <input type="text" id="cfgBanner" value="${esc(s.배너그림||'')}"
+       placeholder="https://nabaho.github.io/pureunall/img/…" onchange="설정저장()">
+    </div>
+    <div>
+     <label class="f">로고 그림 주소 <span style="font-weight:400">(비우면 「푸」 표시)</span></label>
+     <input type="text" id="cfgLogo" value="${esc(s.로고그림||'')}" onchange="설정저장()">
+    </div>
+    <div class="wide hint">
      ⚠ <b>우리 홈페이지에 올린 그림만</b> 나갑니다 (<code>nabaho.github.io/pureunall/</code>).
-     남의 서버 그림은 발송기가 버립니다 — 받는 쪽이 열 때 「언제 읽었나」가
-     남의 서버로 새 나가는 것을 막는 규칙입니다.</div>
-
-    <label class="f">로고 그림 주소 <span style="font-weight:400">(비워 두면 「푸」 표시로 그립니다)</span></label>
-    <input type="text" id="cfgLogo" value="${esc(s.로고그림||'')}" onchange="설정저장()">
+     남의 서버 그림은 발송기가 버립니다 — 받는 쪽이 열 때 「언제 읽었나」가 새 나가는 것을 막습니다.</div>
    </div>
   </div>
   <div class="note"><b>보내는 때</b>는 아직 손으로 누르십니다.
@@ -910,6 +962,7 @@ function 설정저장(){
     꼬리한줄: g('cfgFoot'),
     주소: g('cfgAddr'),
     전화: g('cfgTel'),
+    보내는주소: g('cfgFrom'),
     배너그림: g('cfgBanner'),
     로고그림: g('cfgLogo')
   });
