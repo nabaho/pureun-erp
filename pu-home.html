@@ -38,7 +38,7 @@
 <script src="js/pu-home-career.js?v=1"></script>
 <script src="js/pu-home-export.js?v=3"></script>
 <script src="js/pu-home-diff.js?v=8"></script>
-<script src="js/pu-home-fill.js?v=8"></script>
+<script src="js/pu-home-fill.js?v=9"></script>
 <!-- 새 홈페이지를 «자료로» 그리는 부품. 명령줄(scripts/build-people.js)도 같은 것을 쓴다 -->
 <script src="js/pu-site-people.js?v=1"></script>
 <script src="js/pu-site-page.js?v=1"></script>
@@ -299,6 +299,12 @@ main{flex:1;min-height:0;width:100%;padding:10px 12px;
 .rows .l.ch input.t{color:var(--ok);font-weight:700}
 .rows .l.lock .t{color:var(--faint)}
 .lockmk{font-size:11px;opacity:.7}
+/* 똑같은 글이 여럿일 때 «몇 번째»인지 (대표 지시 2026-09-03 「자물쇄 같이 실물」).
+   ★ 자물쇠를 대신하는 딱지다 — 막는 것이 아니라 «어느 자리인지» 알려 준다.
+   ★ 좁게 만든다: 줄마다 붙으므로 넓으면 글 칸을 그만큼 먹는다. */
+.nth{flex:0 0 auto;font:800 10.5px/1.5 inherit;color:var(--warn);background:var(--warn-bg);
+  border:1px solid var(--warn);border-radius:20px;padding:0 6px;white-space:nowrap;cursor:help}
+.rows .l.dup .nth{opacity:1}
 .pfixbar{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:6px}
 /* 자문사 로고 고르기 — 그림이 주인공이라 칸을 작게, 손잡이는 그림 위에 얹는다 */
 .logos{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
@@ -3428,7 +3434,10 @@ function 미리보기HTML() {
   if (!지금쪽) return { mid: mid, why: '이 쪽을 아직 안 읽었습니다.\n'
     + '편집칸의 「이 쪽 읽어오기」(또는 머리띠의 「홈페이지 다시 확인」)를 누르십시오.' };
   if (App.previewMode === 'now') return { mid: mid, 바탕: 쪽바탕(mid), html: 지금쪽, 지금: true };
-  const 고칠것 = PuSitePage.고칠줄(App.pageFix[mid]);
+  /* ★ pageFixList 를 쓴다 — 여기가 «몇 번째»(n)와 «모두 몇 군데»(of)를
+     실어 보내는 자리다. 지우개(PuSitePage.고칠줄)는 글자만 넘기므로
+     똘잔은 줄을 못 짚았다 — 그러면 때 자물쇠가 다시 생긴다. */
+  const 고칠것 = pageFixList(mid);
   if (!고칠것.length) return { mid: mid, 바탕: 쪽바탕(mid), html: 지금쪽, 안바꿈: true };
   try {
     const out = PuSitePage.쪽고치기(지금쪽, 고칠것, PuHomeFill.applyLineEdits);
@@ -4008,7 +4017,10 @@ window.publishPeople = publishPeople;
 async function publishPage(mid) {
   if (App.publishing) return;
   if (!App.isAdmin) { await say('총괄관리자만 올릴 수 있습니다', ''); return; }
-  const 고칠것 = PuSitePage.고칠줄(App.pageFix[mid]);
+  /* ★ pageFixList 를 쓴다 — 여기가 «몇 번째»(n)와 «모두 몇 군데»(of)를
+     실어 보내는 자리다. 지우개(PuSitePage.고칠줄)는 글자만 넘기므로
+     똘잔은 줄을 못 짚았다 — 그러면 때 자물쇠가 다시 생긴다. */
+  const 고칠것 = pageFixList(mid);
   if (!고칠것.length) {
     await say('고친 줄이 없습니다',
       '위 「홈페이지 화면」 칸에서 고칠 줄을 «그 자리에서» 고치신 뒤에 눌러 주십시오.');
@@ -4039,10 +4051,15 @@ async function publishPage(mid) {
     const 답 = await 올리기('site/' + mid + '/index.html', out.html,
       (PAGE_LABEL[mid] || mid) + ' ' + out.done.length + '줄');
 
-    /* 올린 줄은 «고칠 줄» 목록에서 지운다 — 남겨 두면 다음에 또 올리게 된다 */
+    /* 올린 줄은 «고칠 줄» 목록에서 지운다 — 남겨 두면 다음에 또 올리게 된다.
+       ★ «몇 번째»까지 맞춰 지운다 (2026-09-03). 글자만 보고 지우면,
+         같은 글의 1번째만 올라갔는데 2번째 고침까지 함께 지워져 조용히 안 올라간다. */
     const 남길것 = {};
     Object.keys(App.pageFix[mid] || {}).forEach(k => {
-      if (!out.done.some(d => d.before === k)) 남길것[k] = App.pageFix[mid][k];
+      const { n, text } = runOfKey(k);
+      const 올라갔나 = out.done.some(d =>
+        d.before === text && (d.n == null ? n === 1 : d.n === n));
+      if (!올라갔나) 남길것[k] = App.pageFix[mid][k];
     });
     App.pageFix[mid] = 남길것;
     toast('올렸습니다 — 1~2분 뒤 홈페이지에 뜹니다' + (답.commit ? ' (' + 답.commit + ')' : ''));
@@ -4486,13 +4503,19 @@ function keepPageHtml(mid, html) {
   (App.pageHtml || (App.pageHtml = {}))[mid] = html;
   App.pageLines[mid] = PuHomeParse.parsePageLines(html);
   App.pageRuns[mid] = PuHomeFill.fixableRuns(PuHomeParse.pageBodyHtml(html));
-  /* 이제 없는 줄에 걸린 고침은 버린다 — 없는 자리를 채울 수는 없다 */
+  /* 이제 없는 줄에 걸린 고침은 버린다 — 없는 자리를 채울 수는 없다.
+     ★ «몇 번째»까지 맞춰 본다 (2026-09-03) — 글자만 보면, 두 군데였던 줄이
+       한 군데로 줄었을 때 「2번째」에 걸린 고침이 살아남아 엉뚱한 자리를 채운다. */
   const fix = App.pageFix[mid];
   if (!fix) return 0;
-  const 있는글 = {};
-  App.pageRuns[mid].forEach(r => { 있는글[r.text] = 1; });
+  const 있는자리 = {};
+  App.pageRuns[mid].forEach(r => { 있는자리[runKey(r)] = 1; });
   let 버림 = 0;
-  Object.keys(fix).forEach(k => { if (!있는글[k]) { delete fix[k]; 버림++; } });
+  Object.keys(fix).forEach(k => {
+    /* 옛 열쇠(글자만)는 1번째로 봐서 맞춰 본다 */
+    const { n, text } = runOfKey(k);
+    if (!있는자리[String(n) + runSep() + text]) { delete fix[k]; 버림++; }
+  });
   return 버림;
 }
 
@@ -4506,15 +4529,41 @@ function readPageBtn(mid, label) {
    ★ 여기서 고친 글은 «우리 자료가 아니다». 홈페이지에 채울 쪽지가 될 뿐이다.
      그래서 저장하지 않고, 채운 뒤에는 「홈페이지 다시 확인」으로 되읽는다. */
 function pageFixOf(mid) { return (App.pageFix[mid] = App.pageFix[mid] || {}); }
+
+/* ── 고친 줄을 담는 열쇠 (대표 지시 2026-09-03 「자물쇄 같이 실물」) ──
+   ★ 예전에는 «글자»를 열쇠로 썼다. 그러면 똑같은 줄이 두 군데 있을 때
+     두 자리를 갈라 담을 수 없다 — 그래서 자물쇠로 막아 두었던 것이다.
+     이제 «몇 번째»를 열쇠에 함께 넣어 자리마다 따로 담는다.
+   ★ 가름쇠로  을 쓴다 — 사람이 칠 수 없는 글자라 글줄과 섞일 일이 없다.
+     (: 나 | 같은 것을 쓰면 그 글자가 든 줄에서 열쇠가 쪼개진다.) */
+/* ⚠ 가름쇠를 const 로 두지 말 것 — 화면 검사가 «함수 단위»로 꺼내 돌리므로
+     const 는 딸려오지 않아 「runKey is not defined」로 검사가 통째로 껴진다. */
+function runSep() { return ''; }
+function runKey(r) { return String(r.n || 1) + runSep() + r.text; }
+function runOfKey(k) {
+  const i = String(k).indexOf(runSep());
+  /* 가름쇠가 없으면 옛 열쇠(글자만) — 1번째로 본다 */
+  if (i < 0) return { n: 1, text: String(k) };
+  return { n: Number(String(k).slice(0, i)) || 1, text: String(k).slice(i + 1) };
+}
+
 function pageFixList(mid) {
   const fix = App.pageFix[mid] || {};
+  const runs = (App.pageRuns || {})[mid] || [];
   return Object.keys(fix)
-    .filter(k => String(fix[k]).trim() && String(fix[k]) !== k)
-    .map(k => ({ before: k, after: String(fix[k]) }));
+    .map(k => {
+      const { n, text } = runOfKey(k);
+      const 그줄 = runs.find(r => r.text === text && (r.n || 1) === n);
+      /* ★ of 를 함께 실어 보낸다 — 채울 때 «그 사이 홈페이지가 바뀌었나»를
+         이것으로 가린다. 없으면 채우개가 옛 규칙(여러 군데면 건너뛰기)으로 돈다. */
+      return { before: text, after: String(fix[k]), n: n, of: 그줄 ? 그줄.of : undefined };
+    })
+    .filter(x => x.after.trim() && x.after !== x.before);
 }
-function pageRunEdit(mid, text, val) {
+
+function pageRunEdit(mid, key, text, val) {
   const fix = pageFixOf(mid);
-  if (String(val) === text) delete fix[text]; else fix[text] = String(val);
+  if (String(val) === text) delete fix[key]; else fix[key] = String(val);
   /* ★ 다시 그리지 않는다 — 글을 치는 중에 다시 그리면 커서가 맨 앞으로 튄다.
      단추의 숫자만 손으로 갈아 끼운다. */
   const b = document.getElementById('pfixBtn');
@@ -4612,23 +4661,31 @@ function pageLinesHtml(mid) {
   }
   const fix = App.pageFix[mid] || {};
   const 고친수 = pageFixList(mid).length;
-  const 못고침 = runs.filter(r => !r.ok).length;
+  /* ★ 자물쇠가 사라졌다 (2026-09-03) — 똑같은 줄도 «몇 번째»를 골라 고친다.
+     대신 그런 줄이 몇 개인지는 알려 준다: 「1/2」 딱지가 붙은 줄이 그것이다. */
+  const 겹친줄 = runs.filter(r => r.of > 1).length;
   return '<div class="fld"><label>홈페이지 화면 — ' + runs.length + '줄'
     + '<span class="tip">여기서 고치면 홈페이지에 그대로 채웁니다</span>'
     + '<span style="flex:1"></span>' + readPageBtn(mid) + '</label>'
     + '<div class="rows">' + runs.map((r, i) => {
-        const now = fix[r.text] != null ? fix[r.text] : r.text;
+        const key = runKey(r);
+        const now = fix[key] != null ? fix[key] : r.text;
         const 바뀜 = String(now) !== r.text && String(now).trim();
-        return '<div class="l' + kindOf(r.text) + (바뀜 ? ' ch' : '') + (r.ok ? '' : ' lock')
-          + '"><span class="n">' + (i + 1) + '</span>'
-          + (r.ok
-            ? '<input class="t" value="' + esc(now) + '" spellcheck="false"'
-              /* ★ 원래 글자를 «그대로» 실어 보낸다 — 이것이 홈페이지에서 자리를 찾는 열쇠다.
-                 따옴표·꺾쇠가 든 줄이 있으므로 JSON 으로 싸고 HTML 로 한 번 더 감싼다. */
-              + ' oninput="pageRunEdit(\'' + esc(mid) + '\',' + esc(JSON.stringify(r.text))
-              + ',this.value)">'
-            : '<span class="t" title="' + esc(r.why) + '">' + esc(r.text)
-              + ' <b class="lockmk">🔒</b></span>')
+        /* ★ 똑같은 줄이 여럿이면 «몇 번째»인지 보여 준다 (대표 지시 2026-09-03).
+           예전에는 자물쇠를 걸어 아예 못 고치게 했는데, 오시는길에서는 그게 절반이었다.
+           이제 자리마다 따로 고치므로, 사람이 «어느 자리인지» 알아야 한다. */
+        const 차례 = (r.of > 1)
+          ? '<span class="nth" title="이 쪽에 똑같은 글이 ' + r.of + '군데 있습니다 —'
+            + ' 지금 고치는 것은 ' + r.n + '번째입니다">' + r.n + '/' + r.of + '</span>'
+          : '';
+        return '<div class="l' + kindOf(r.text) + (바뀜 ? ' ch' : '')
+          + (r.of > 1 ? ' dup' : '')
+          + '"><span class="n">' + (i + 1) + '</span>' + 차례
+          /* ★ 원래 글자와 «열쇠»를 그대로 실어 보낸다 — 이것이 홈페이지에서 자리를 찾는 실마리다.
+             따옴표·꺾쇠가 든 줄이 있으므로 JSON 으로 싸고 HTML 로 한 번 더 감싼다. */
+          + '<input class="t" value="' + esc(now) + '" spellcheck="false"'
+          + ' oninput="pageRunEdit(\'' + esc(mid) + '\',' + esc(JSON.stringify(key))
+          + ',' + esc(JSON.stringify(r.text)) + ',this.value)">'
           + '</div>';
       }).join('')
     + '</div>'
@@ -4648,7 +4705,8 @@ function pageLinesHtml(mid) {
     + '<div class="legend2"><span><b class="k-head">굵은 남색</b> 쪽 제목·소제목</span>'
     + '<span><b class="k-sec">주황 숫자</b> 구획(01·02)</span>'
     + '<span class="k-tel">회색 연락처</span>'
-    + (못고침 ? '<span>🔒 ' + 못고침 + '줄 — 똑같은 글이 여럿이라 자동으로 못 고칩니다</span>' : '')
+    + (겹친줄 ? '<span><b class="nth">1/2</b> ' + 겹친줄
+        + '줄 — 똑같은 글이 여럿입니다. 딱지의 숫자가 «몇 번째»인지입니다</span>' : '')
     + '</div></div>';
 }
 

@@ -179,21 +179,42 @@ test('★ 채운 뒤 다시 읽어도 «대조»가 맞는다 — 우리 기준 
 
 /* ══════ 고칠 수 있는 줄 목록 ══════ */
 
-test('★ 같은 글이 여럿인 줄은 «미리» 못 고친다고 알린다 — 헛되이 고치게 두지 않는다', () => {
+test('★★ 같은 글이 여럿인 줄은 «몇 번째»를 알려 준다 — 자물쇠로 막지 않는다', () => {
+  /* ★ 2026-09-03 에 규칙이 바뀌었다 (대표 지시 「자물쇄 같이 실물」).
+     예전에는 여럿이면 ok:false 로 잠갔다. 그런데 오시는길에서 실측하니
+     고칠 줄 20개 가운데 «10개»가 자물쇠였다 — 절반을 못 고치는 화면은 쓸 수 없다.
+     이제 몇 번째인지(n)와 모두 몇 군데인지(of)를 들고 있어, 사람이 자리를 고른다.
+     ⚠ 짐작을 없앤 것이지 위험을 감수한 것이 아니다 — 안 고르면 여전히 안 채운다
+       (아래 「안 고르면」 대목). */
   const html = '<p>같은 줄</p><p>혼자 있는 줄</p><p>같은 줄</p>';
   const runs = F.fixableRuns(html);
   const dup = runs.filter(r => r.text === '같은 줄');
   assert.equal(dup.length, 2, '같은 글이 둘 다 잡혀야 한다');
-  dup.forEach(r => assert.equal(r.ok, false, '★ 못 채울 줄을 고칠 수 있다고 했다'));
-  dup.forEach(r => assert.ok(r.why, '왜 못 고치는지 안 말한다'));
+  /* ⚠ deepEqual 로 견주면 안 된다 — 이 부품은 vm 으로 올려 «다른 realm» 이라,
+     값이 [1,2] 로 같아도 배열의 밑틀이 달라 deepStrictEqual 이 떨어진다.
+     (actual [1,2] · expected [1,2] 인데 실패해서 한참 찾았다.) 값으로 견준다. */
+  assert.equal(JSON.stringify(dup.map(r => r.n)), '[1,2]', '★★ 몇 번째인지를 안 알려 준다');
+  assert.equal(JSON.stringify(dup.map(r => r.of)), '[2,2]', '★★ 모두 몇 군데인지를 안 알려 준다');
+  assert.ok(dup.every(r => r.ok), '★★ 아직 자물쇠로 막고 있다');
   const solo = runs.find(r => r.text === '혼자 있는 줄');
-  assert.equal(solo.ok, true, '혼자 있는 줄은 고칠 수 있어야 한다');
-  /* ★ 「못 고친다」는 말이 실제 결과와 같아야 한다 — 값을 박지 않고 돌려서 견준다 */
+  assert.equal(JSON.stringify([solo.n, solo.of, solo.ok]), '[1,1,true]',
+    '★ 혼자 있는 줄이 이상하다');
+
+  /* ★ 「고칠 수 있다」는 말이 실제 결과와 같아야 한다 — 값을 박지 않고 돌려서 견준다.
+     자리를 «골라» 보내면 줄마다 하나씩 채워져야 한다. */
   runs.forEach(r => {
-    const out = F.applyLineEdits(html, [{ before: r.text, after: r.text + '!' }]);
-    assert.equal(out.done.length === 1, r.ok,
-      '★ 미리 알린 것과 실제로 채운 결과가 다르다: ' + r.text);
+    const out = F.applyLineEdits(html, [{ before: r.text, after: r.text + '!', n: r.n, of: r.of }]);
+    assert.equal(out.done.length, 1,
+      '★★ 자리를 골랐는데 안 채웠다: ' + r.text + ' (' + r.n + '/' + r.of + ')'
+      + ' — ' + JSON.stringify(out.skipped));
   });
+
+  /* ★★ 안 고르면 예전 그대로 — 여럿이면 «단정하지 않고» 건너뛴다.
+     즐겨찾기 단추(경력사항 채우기)가 이 길로 도므로 여기가 바뀌면 안 된다. */
+  assert.equal(F.applyLineEdits(html, [{ before: '같은 줄', after: '고침' }]).done.length, 0,
+    '★★ 안 골랐는데 기계가 짐작해서 채웠다');
+  assert.equal(F.applyLineEdits(html, [{ before: '혼자 있는 줄', after: '고침' }]).done.length, 1,
+    '★ 혼자 있는 줄은 안 골라도 채워져야 한다');
 });
 
 test('★ 고칠 줄은 «본문 자리»에서만 나온다 — 머리띠·메뉴 글자를 고치게 두지 않는다', () => {
