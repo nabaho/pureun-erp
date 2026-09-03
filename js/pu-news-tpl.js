@@ -131,13 +131,14 @@
   function 꼭지제목(g) {
     var 이름 = '<span style="font-size:19px;font-weight:bold;color:' + 색.짙은갈 + ';'
       + 'font-family:' + 폰트 + ';">' + esc(g.이름) + '</span>';
-    if (!g.best) {
+    if (!g.딱지) {
       return '<tr><td style="padding:22px 28px 0 28px;">' + 이름 + '</td></tr>';
     }
     return '<tr><td style="padding:26px 28px 0 28px;">'
       + '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
       + '<td style="background-color:' + 색.딱지 + ';padding:5px 13px;">'
-      + '<span style="font-size:12px;font-weight:bold;color:#ffffff;font-family:' + 폰트 + ';">Best</span>'
+      + '<span style="font-size:12px;font-weight:bold;color:#ffffff;font-family:' + 폰트 + ';">'
+      + esc(g.딱지) + '</span>'
       + '</td><td style="padding-left:11px;">' + 이름 + '</td>'
       + '</tr></table></td></tr>';
   }
@@ -231,6 +232,10 @@
       + '<span style="color:' + 색.글 + ';font-weight:bold;font-size:13px;">'
       + esc(s.회사이름 || '푸른노무법인') + '</span><br>'
       + esc(s.꼬리한줄 || '대표노무사 권형하') + (s.회신주소 ? ' &nbsp;·&nbsp; ' + esc(s.회신주소) : '')
+      /* ⚠ 주소·전화는 원본(2026-08-05주차 받은 것)의 꼬리에 있던 것이다.
+           받는 쪽이 어디로 연락할지 알 수 있어야 한다. 사무실이 옮기면 설정만 고친다. */
+      + '<br>' + esc(s.주소 || '충남 천안시 서북구 원두정8길 6, 두정빌딩 3층')
+      + ' &nbsp;·&nbsp; T.' + esc(s.전화 || '041-556-0035')
       + '<br><br><span style="color:#b3aca3;">' + 머리말 + ' ' + 거부 + '</span>'
       + '</td></tr></table></td></tr>'
       + '<tr><td style="height:34px;line-height:34px;font-size:1px;">&nbsp;</td></tr>';

@@ -161,3 +161,107 @@ test('★ 확인창에 걸리는 시간이 들어간다 — 보고 누르셔야 
   assert.ok(/다 나가는 데/.test(fn), '얼마나 걸리는지 안 보여주고 묻습니다');
   assert.ok(/Core\.보낼시간\(/.test(fn), '확인창 숫자를 Core 에 안 물어봅니다');
 });
+
+/* ══════ ⑧ 넓은 화면 배치 — 얼린 머리 + 좌우 5:5 ══════ */
+
+/* 대표 지시 2026-09-02: 「상단은 틀고정해주고 좌측에 채울것과 우측에 나갈 모습
+     크게 5:5로 화면 나눠서 정리할 수 있나」
+
+   ⚠ 이 배치는 «넓은 화면에서만» 돈다. 여기서 못 박는 것은 예쁨이 아니라 두 가지
+     «못 쓰게 되는 길»이다 —
+     ① 얼리기를 미디어쿼리 밖에 두면 휴대폰에서 쪽이 아예 안 구른다(아무것도 못 본다).
+     ② 껍데기를 「이번 회차」 밖에도 걸면 지난 회차·받는 명단·설정이 스크롤을 잃는다
+        (그 탭들에는 5:5 칸이 없어 flex:1 을 받을 자식이 없다). */
+
+/* @media(min-width:981px){ … } 한 덩이를 «중괄호를 세어» 뽑는다.
+   ⚠ 주석으로 표식을 달면 안 된다 — 위 stripComments 가 걷어 가서 검사가 영영 통과 못 한다. */
+function 껍데기CSS() {
+  const key = '@media(min-width:981px){';
+  const a = news.indexOf(key);
+  assert.ok(a >= 0, '넓은 화면 껍데기(@media(min-width:981px))를 찾지 못했습니다');
+  let i = a + key.length, 깊이 = 1;
+  while (i < news.length && 깊이 > 0) {
+    if (news[i] === '{') 깊이++;
+    else if (news[i] === '}') 깊이--;
+    i++;
+  }
+  assert.equal(깊이, 0, '껍데기 중괄호가 안 닫혔습니다');
+  return news.slice(a, i);
+}
+
+test('★ 얼리기는 넓은 화면에서만 — 휴대폰에서 쪽이 안 구르면 아무것도 못 본다', () => {
+  const 껍 = 껍데기CSS();
+  assert.ok(/@media\(min-width:981px\)/.test(껍), '넓은 화면 조건이 없습니다');
+  assert.ok(/html,body\{[^}]*overflow:hidden/.test(껍), '쪽을 안 구르게 하는 줄이 없습니다');
+
+  /* 껍데기 «밖»에 body 얼리기가 있으면 휴대폰이 죽는다 */
+  const 밖 = news.replace(껍, '');
+  assert.ok(!/html,body\{[^}]*overflow:hidden/.test(밖),
+    'html,body 얼리기가 껍데기 밖에 있습니다 — 휴대폰에서 쪽이 안 구릅니다');
+});
+
+test('★ 5:5 껍데기는 「이번 회차」 탭에만 — 다른 탭이 스크롤을 잃는다', () => {
+  const 껍 = 껍데기CSS();
+  /* 다른 탭도 «구를 자리»는 있어야 한다 — .wrap 자체가 구른다 */
+  assert.ok(/#shell>\.wrap\{[^}]*overflow-y:auto/.test(껍),
+    '탭 공통으로 구를 자리가 없습니다 — 받는 명단이 길면 잘립니다');
+  /* 5:5 쪽 규칙은 .now 로 좁혀져 있어야 한다 */
+  assert.ok(/\.wrap\.now/.test(껍), '5:5 규칙이 이번 회차로 좁혀져 있지 않습니다');
+  /* 그 표를 붙이는 곳이 실제로 있어야 한다 */
+  assert.ok(/classList\.toggle\('now'/.test(news) || /classList\.toggle\("now"/.test(news),
+    'render 가 #main 에 now 표를 안 붙입니다');
+});
+
+test('★ 좌우가 5:5 다 — 오른쪽이 420px 로 묶여 있지 않다', () => {
+  assert.ok(/\.cols\{[^}]*grid-template-columns:1fr 1fr/.test(news), '5:5 가 아닙니다');
+  assert.ok(!/grid-template-columns:1fr 420px/.test(news), '오른쪽이 아직 420px 로 묶여 있습니다');
+});
+
+test('★ 두 칸이 따로 구른다 — 왼쪽에서 담아 내려도 나갈 모습은 제자리', () => {
+  const 껍 = 껍데기CSS();
+  assert.ok(/\.colL\{[^}]*overflow-y:auto/.test(껍), '왼쪽 칸이 따로 구르지 않습니다');
+  assert.ok(/class="colL"/.test(news), '왼쪽 칸에 colL 이 안 붙어 있습니다');
+  assert.ok(/\.pv \.paper\{[^}]*max-height:none/.test(껍),
+    '나갈 모습이 70vh 로 잘려 화면 높이를 못 채웁니다');
+});
+
+test('좁은 화면은 위아래로 쌓인다 — 지금 하던 대로', () => {
+  assert.ok(/@media\(max-width:980px\)\{\.cols\{grid-template-columns:1fr\}\}/.test(news),
+    '좁은 화면에서 한 줄로 쌓는 규칙이 사라졌습니다');
+});
+
+test('★ 낮은 화면에는 안전판이 있다 — 얼린 머리가 화면을 다 먹으면 안 된다', () => {
+  /* 넓지만 «낮은» 창(노트북에 브라우저 도구를 열면 이렇게 된다)에서는 얼린 머리가
+     화면을 거의 다 먹고 두 칸이 0 으로 짜부라진다. 그때는 얼리기를 끄고 예전처럼 구른다. */
+  assert.ok(/@media\(min-width:981px\) and \(max-height:\d+px\)/.test(news),
+    '낮은 화면에서 얼리기를 끄는 안전판이 없습니다');
+});
+
+test('본문 폭을 넓혔다 — 5:5 로만 나누면 각 칸이 오히려 좁아진다', () => {
+  assert.ok(/\.wrap\{max-width:1600px/.test(news), '폭이 아직 좁습니다');
+});
+
+test('★ 얼린 자리에는 «높이가 변하는 것»을 두지 않는다', () => {
+  /* 얼리는 자리는 앱바·탭·회차 머리줄·못보냄 알림·길 고르기(석 장) 까지다 — 모두 높이가 일정하다.
+     ②붙여넣기·③전달을 고르면 textarea 와 긴 경고가 붙는데, 그것이 얼린 자리에 있으면
+     화면을 먹어 «두 칸이 0 으로 짜부라진다». 그래서 길 칸은 왼쪽(구르는 칸) 안에 둔다.
+     ⚠ 이것은 예쁨이 아니라 «못 쓰게 되는 길»이다. */
+  const L = news.indexOf('class="colL"');
+  const C = news.indexOf('<div class="cols">');
+  assert.ok(L > 0 && C > 0, 'colL 이나 cols 를 찾지 못했습니다');
+  assert.ok(L > C, 'colL 이 cols 안에 없습니다');
+
+  const 왼쪽 = news.slice(L, news.indexOf('class="pv"', L));
+  ['pasteBox', 'fwdBox', '자동담기()', 'class="ways"', '아직 못 보냅니다'].forEach(function (표) {
+    assert.ok(왼쪽.indexOf(표) >= 0,
+      표 + ' 가 왼쪽 구르는 칸 밖에 있습니다 — 얼린 자리에서 두 칸을 짜부라뜨립니다');
+  });
+
+  /* 얼린 자리에는 «회차 머리줄만» 남는다 — 거기 것은 높이가 늘 같다.
+     길 고르기 석 장·못보냄 알림·붙여넣기 칸은 골라 놓기에 따라 높이가 달라진다. */
+  const H = news.indexOf('class="hdbar"');
+  const 얼린자리 = news.slice(H, C);
+  assert.ok(!/class="ways"/.test(얼린자리), '길 고르기가 얼린 자리에 있습니다');
+  assert.ok(!/아직 못 보냅니다/.test(얼린자리), '못보냄 알림이 얼린 자리에 있습니다');
+  assert.ok(!/<textarea/.test(얼린자리), '글 적는 칸이 얼린 자리에 있습니다');
+});
