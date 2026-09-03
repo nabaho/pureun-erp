@@ -1509,6 +1509,19 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
 #readPanel .wagebox input{flex:1;min-width:120px}
 #readPanel .wagebox .ok{background:#16a34a;border:1px solid #16a34a;color:#fff;border-radius:7px;
   padding:6px 12px;font-size:12.5px;font-weight:700}
+/* ✏ 이름·회사 채우기 — 임금 칸과 같은 옷을 입힌다(같은 자리·같은 일이라
+   다르게 생기면 「이건 또 뭐지」가 된다). 다 갖춰지면 초록으로 가라앉는다. */
+#readPanel .fixbox{margin:10px 0 0;background:#fffbeb;border:1.5px solid #fbbf24;border-radius:10px;padding:11px 12px}
+#readPanel .fixbox.done{background:#f0fdf4;border-color:#4ade80}
+#readPanel .fixbox .t{font-size:13px;font-weight:800;color:#854d0e;margin-bottom:4px}
+#readPanel .fixbox.done .t{color:#166534}
+#readPanel .fixbox .d{font-size:11.5px;color:#854d0e;line-height:1.6;margin-bottom:8px}
+#readPanel .fixbox .row{display:flex;gap:5px;align-items:center;margin-top:5px}
+#readPanel .fixbox label{font-size:11.5px;font-weight:700;color:#64748b;width:34px;flex:0 0 auto}
+#readPanel .fixbox input{flex:1;min-width:100px;padding:6px 7px;border:1px solid #cbd5e1;
+  border-radius:7px;font-size:12.5px;font-family:inherit}
+#readPanel .fixbox .ok{background:#16a34a;border:1px solid #16a34a;color:#fff;border-radius:7px;
+  padding:6px 12px;font-size:12.5px;font-weight:700;margin-left:auto}
 #readPanel .wagebox .redo{background:#fff;border:1px solid #cbd5e1;color:#475569;border-radius:7px;
   padding:5px 11px;font-size:12px;font-weight:600}
 
@@ -6688,13 +6701,52 @@ const CARD_KINDS = { card: 1, bizreg: 1, form: 1 };
      뜨는데 값이 안 가거나, 값은 가는데 단추가 안 뜬다. */
 const WORKER_KINDS = { idcard: 1, resident: 1, mandate: 1, consent: 1, wcontract: 1 };
 
+/* ══════ ✏ 판독이 못 읽은 이름·회사를 «사람이» 채운다 (대표 지시 2026-09-02) ══════
+   「판독이 틀리면 그 서류가 죽는다」
+
+   ■ 무엇이 막혀 있었나
+   이름이나 회사를 못 읽으면 화면이 「위에서 채워 주세요」라고 말했는데,
+   **위에 채울 칸이 없었다.** 판독 결과 표는 읽기 전용이고 사람 손으로 고칠 수 있는
+   것은 「갈래」 하나뿐이었다. 그래서 그 서류는 근로자 정보함에 **영영 못 갔다** —
+   있지도 않은 길을 가리키는 안내였다.
+
+   ■ 왜 하필 이 넷에서 아픈가
+   신분증·등본은 인쇄물이라 잘 읽히지만 **위임장·동의서는 이름이 손글씨**다.
+   하필 그 이름이 사람을 가르는 열쇠라(이름 + 회사), 한 글자 틀리면 없는 사람이
+   하나 생긴다. 동의서는 소속 회사가 아예 안 적힌 양식도 흔하다.
+
+   ■ 판독값을 «덮지 않는다» — 임금 확인과 같은 결
+   read.fields  = 판독이 읽은 것 (그대로 둔다)
+   read.fix     = { name, company, at, by } — 사람이 채운 것
+   덮어쓰면 「이 이름 어디서 나왔지」에 영영 답할 수 없다. 둘 다 있어야
+   판독이 무엇을 틀렸는지도 나중에 볼 수 있다.
+
+   ⚠ 보내는 쪽·막는 쪽·화면이 **모두 readFields() 한 곳**을 봐야 한다. 한쪽만
+     고친 값을 보면 「단추는 떴는데 옛 이름으로 간다」가 된다.
+   ⚠ 이미 보낸 뒤(filedWk)에는 고치기 칸을 안 낸다 — 근로자 정보함에 이미 그 이름으로
+     붙었는데 여기서 이름만 바꾸면 두 곳이 어긋난다. 잘못 간 것을 옮기는 일은
+     근로자 정보함 쪽 일이다(아직 없다 — 남은 일). */
+const FIX_KEYS = [['name', '이름'], ['company', '회사']];
+
+/* 판독값 위에 «사람이 채운 것»을 덮어 본다. 빈 값은 안 덮는다 —
+   빈 칸을 저장했다고 판독이 읽어 둔 것까지 지우면 손해만 난다. */
+function readFields(read) {
+  const out = Object.assign({}, (read && read.fields) || {});
+  const fx = (read && read.fix) || {};
+  FIX_KEYS.forEach(function (p) {
+    const v = String(fx[p[0]] == null ? '' : fx[p[0]]).trim();
+    if (v) out[p[0]] = v;
+  });
+  return out;
+}
+
 /* 보낼 수 있는가 — 이름과 회사가 «둘 다» 있어야 한다.
    ⚠ 회사가 없으면 못 보낸다: 사람을 가리는 열쇠가 「이름 + 회사」라(대표 결정),
      회사 없는 것끼리 묶으면 남남인 「김수」 둘이 한 사람이 된다. */
 function canSendWorker(read) {
   if (!read || read.error || !WORKER_KINDS[read.kind]) return false;
   if (read.filedWk && read.filedWk.at) return false;
-  const f = read.fields || {};
+  const f = readFields(read);
   return !!(String(f.name || '').trim() && String(f.company || '').trim());
 }
 
@@ -6702,8 +6754,8 @@ function canSendWorker(read) {
    아무 말 없이 단추만 없으면 「왜 안 되지」로 시간을 버린다(서식에서 배운 것). */
 function workerWhyNot(read) {
   if (!read || read.error || !WORKER_KINDS[read.kind]) return '';
-  const f = read.fields || {};
-  if (!String(f.name || '').trim()) return '이름을 읽지 못해 누구 것인지 알 수 없습니다 — 위에서 채워 주세요';
+  const f = readFields(read);
+  if (!String(f.name || '').trim()) return '이름을 읽지 못해 누구 것인지 알 수 없습니다 — 아래 칸에 적어 주세요';
   if (!String(f.company || '').trim()) return '회사를 읽지 못했습니다 — 같은 이름 다른 사람과 섞이지 않으려면 회사가 있어야 합니다';
   return '';
 }
@@ -6713,14 +6765,18 @@ function sendWorker(id, year, job) {
   const read = (it && it.meta && it.meta.read) || (job && job._read);
   if (!canSendWorker(read)) return Promise.resolve();
   const yr = year || (it && it.meta && it.meta.__year) || gridYear;
+  /* ⚠ 판독값이 아니라 **사람이 고친 것까지 얹은 값**을 보낸다 — 막는 쪽(canSendWorker)이
+     이미 그것을 보고 단추를 냈다. 여기서 read.fields 를 그대로 쓰면 「단추는 떴는데
+     옛 이름으로 간다」가 된다. */
+  const ff = readFields(read);
   return PuDocFile.sendToWorkerMany([{
-    kind: read.kind, fields: read.fields || {},
+    kind: read.kind, fields: ff,
     photo: { year: yr, id: id, owner: photoOwner(id) || '' }
   }]).then(function (res) {
     read.filedWk = { at: Date.now(), by: PuPhotoStore.myName() || '',
                      n: (res && res.people) || 0 };
     /* 이 사진이 근로자 정보함의 근거가 됐다 — 증빙 표시 */
-    markFiledUsed(id, yr, '근로자 정보함 — ' + ((read.fields && read.fields.name) || '이름 미상'));
+    markFiledUsed(id, yr, '근로자 정보함 — ' + (ff.name || '이름 미상'));
     if (it) it.meta = Object.assign({}, it.meta, { read: read });
     if (job) job._read = read;
     if (viewerId === id) renderReadPanel(it);
@@ -12003,6 +12059,12 @@ const READ_ROWS = [
   ['retainer', '착수금'], ['success', '성공보수'], ['deposit', '계약금'],
   /* 근로계약서 (대표 지시 2026-09-02) — 임금은 아래 임금 확인 칸이 따로 그리지만,
      이름표가 없으면 나머지 칸들이 표에서 통째로 빠진다. */
+  /* 근로자 서류 넷 (대표 지시 2026-09-02) — 판독기는 이 셋을 **읽고 있었는데**
+     이름표가 없어 표에 아예 안 나왔다. 이 넷은 pairs 도 일부러 안 담게 해 두어서
+     (민감정보가 딸려 오는 것을 막으려고) 여기 이름표가 없으면 **읽고 버리는 셈**이다.
+     ⚠ 발급일이 특히 아깝다 — 등본은 「3개월 이내 발급본」을 요구하는 일이 많은데,
+       그 판단에 필요한 단 하나의 값이 화면에 없었다. */
+  ['issueDate', '발급일'], ['agent', '수임인'], ['purpose', '수집·이용 목적'],
   ['position', '직위'], ['hireDate', '근로 시작일'], ['termType', '기간의 정함'],
   ['dept', '부서'], ['title', '직책'], ['mobile', '휴대폰'], ['tel', '전화'],
   ['companyTel', '대표번호'], ['email', '이메일'], ['address', '소재지'], ['companyAddr', '회사주소']
@@ -12158,6 +12220,111 @@ function wageRedo() {
   renderGrid();
   PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id)).catch(function (e) {
     console.warn('[임금 다시 확인]', e);
+  });
+}
+
+/* ══════ 📅 오래된 등본 (대표 지시 2026-09-02) ══════
+   주민등록등본·초본은 관공서·거래처가 대개 **「3개월 이내 발급본」**을 요구한다.
+   판독은 발급일을 읽고 있었으므로 남은 일은 「오래됐다」고 말해 주는 것뿐이다.
+
+   ⚠ **막지 않는다 — 말만 한다.** 오래된 등본도 받아 둘 까닭이 있고(그때 어디
+     살았는지가 사건에서 다툼거리가 되는 일이 있다), 무엇보다 판독이 발급일을
+     잘못 읽었을 수 있다. 막았다가 틀리면 멀쩡한 서류가 못 들어간다.
+   ⚠ **못 읽었으면 아무 말도 안 한다.** 「모른다」를 「오래됐다」로 몰면,
+     사람이 딱지를 안 믿게 되고 그러면 진짜일 때도 안 본다.
+   ⚠ 발급일이 «앞날»이면 잘못 읽은 것이다 — 그때도 말하지 않는다. */
+const RESIDENT_FRESH_DAYS = 90;
+
+/* 며칠 지났나 — 못 읽었거나 말이 안 되면 null(모른다) */
+function issuedDaysAgo(read, now) {
+  const s = String(((read && read.fields) || {}).issueDate || '').trim();
+  const m = s.match(/^(\d{4})[-.\/](\d{1,2})[-.\/](\d{1,2})$/);
+  if (!m) return null;
+  const y = +m[1], mo = +m[2], d = +m[3];
+  const t = Date.UTC(y, mo - 1, d);
+  const dt = new Date(t);
+  /* 2월 31일·13월·0일 같은 날짜는 **굴러가 버린다** — 굴러갔으면 잘못 읽은 것이다.
+     ⚠ 여기 「1~12월·1~31일」 범위 검사를 따로 두었다가 걷어냈다(2026-09-02) —
+       이 줄이 그것을 이미 다 잡는다. 돌연변이로 범위 검사를 없애 봐도 아무 검사가
+       안 깨져서 드러났다. 하는 일이 없는 줄은 «지킨다는 착각»만 준다. */
+  if (dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  const days = Math.floor(((now == null ? Date.now() : now) - t) / 86400000);
+  return days < 0 ? null : days;                    /* 앞날이면 모른다 */
+}
+
+/* 오래됐나 — 등본·초본에만 묻는다. 신분증은 발급일이 오래됐어도 멀쩡하다. */
+function residentStale(read, now) {
+  if (!read || read.error || read.kind !== 'resident') return false;
+  const days = issuedDaysAgo(read, now);
+  return days !== null && days > RESIDENT_FRESH_DAYS;
+}
+
+function staleBox(it) {
+  const read = it && it.meta && it.meta.read;
+  if (!residentStale(read)) return '';
+  const days = issuedDaysAgo(read);
+  return '<p class="note">📅 발급한 지 ' + days + '일 지난 등본입니다' +
+    ' — 「3개월 이내 발급본」을 요구하는 곳이 많습니다</p>';
+}
+
+/* ══════ ✏ 이름·회사 채우기 칸 ══════
+   왜 여기 있나: 읽은 칸 바로 아래다(임금 칸과 같은 자리). 표 안에 섞어 두면
+   「고칠 수 있는 칸」인 줄 모르고 지나친다 — 임금에서 이미 배운 것이다.
+   ⚠ 이미 보낸 것에는 안 낸다(위 주석 참고). */
+function fixBoxOn(read) {
+  if (!read || read.error || !WORKER_KINDS[read.kind]) return false;
+  return !(read.filedWk && read.filedWk.at);
+}
+
+function fixBox(it) {
+  const read = it && it.meta && it.meta.read;
+  if (!fixBoxOn(read)) return '';
+  const f = readFields(read);
+  const why = workerWhyNot(read);
+  /* 남의 사진은 «보기만» — 손댈 수 없는데 칸을 내주면 적어도 안 담긴다 */
+  if (viewingOther()) {
+    return why ? '<div class="fixbox"><div class="t">✏ ' + esc(why) + '</div>' +
+      '<div class="d">올린 분만 채울 수 있습니다.</div></div>' : '';
+  }
+  const rows = FIX_KEYS.map(function (p) {
+    return '<div class="row"><label>' + esc(p[1]) + '</label>' +
+      '<input id="fx_' + p[0] + '" type="text" value="' + esc(String(f[p[0]] || '')) + '"' +
+      ' placeholder="' + (p[0] === 'name' ? '예: 김철수' : '예: (주)한빛') + '"></div>';
+  }).join('');
+  /* 다 갖춰졌으면 칸을 접어 둔다 — 할 일이 없는데 칸이 펼쳐져 있으면
+     매번 「무엇을 하라는 거지」를 읽어야 한다. 고칠 일이 생기면 펼치면 된다. */
+  const done = !why;
+  return '<div class="fixbox' + (done ? ' done' : '') + '">' +
+    '<div class="t">✏ ' + (done
+      ? esc((f.name || '') + ' · ' + (f.company || '')) +
+        ' <span style="font-weight:400;font-size:11.5px">— 다르면 고쳐 주세요</span>'
+      : esc(why)) + '</div>' +
+    (done ? '' :
+      '<div class="d">판독이 못 읽었습니다. <b>여기 적으면 보낼 수 있습니다.</b>' +
+      ' 위임장·동의서는 이름이 손글씨라 자주 안 읽힙니다.</div>') +
+    rows +
+    '<div class="row"><button class="ok" onclick="fixSave()">저장</button></div>' +
+    '</div>';
+}
+
+/* 저장 — 사람이 채운 값을 «따로» 담는다. 판독값(fields)은 손대지 않는다. */
+function fixSave() {
+  const id = viewerId;
+  if (!id || blockedIfOther(id)) return;
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it || !it.meta.read) return;
+  const fix = { at: Date.now(), by: PuPhotoStore.myName() || '' };
+  FIX_KEYS.forEach(function (p) {
+    fix[p[0]] = ((($('fx_' + p[0]) || {}).value) || '').trim();
+  });
+  const read = Object.assign({}, it.meta.read, { fix: fix });
+  it.meta = Object.assign({}, it.meta, { read: read });
+  renderReadPanel(it);
+  renderGridBar();
+  renderGrid();
+  PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id)).catch(function (e) {
+    console.warn('[이름·회사 채우기]', e);
+    alert('채운 값을 저장하지 못했습니다: ' + ((e && e.message) || e));
   });
 }
 
@@ -13192,6 +13359,9 @@ function renderReadPanel(it) {
     /* 💰 임금 확인 — 읽은 칸 바로 아래다(대표 지시 2026-09-02). 표에 섞어 두면
        「고칠 수 있는 칸」인 줄 모르고 그냥 지나친다. */
     wageBox(it) +
+    /* ✏ 이름·회사 — 임금 칸과 같은 자리(읽은 칸 바로 아래). 근로자 서류에만 나온다. */
+    fixBox(it) +
+    staleBox(it) +
     chatTodoBox(it) +
     timesheetBox(it) +
     formPairsBox(it) +
