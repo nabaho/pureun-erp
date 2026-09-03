@@ -16,8 +16,15 @@ const path = require('path');
 const test = require('node:test');
 const assert = require('node:assert');
 const P = require('./lib-palette.js');
+const { stripComments } = require('./strip-comments');
 
-const R = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+/* ⚠ 소스를 «글자로» 보는 검사라 주석을 먼저 걷는다 (2026-09-03).
+   안 걷으면 주석에 적은 색이 «쓰는 색»으로 잡힌다 — 실제로 걸렸다:
+   팔레트 밖 색을 팔레트 안 색으로 바꾸고 「무엇을 무엇으로 바꿨나」를 주석에 적었더니,
+   바꾼 뒤인데도 옛 색 셋이 그대로 세어져 검사가 계속 빨간불이었다.
+   그러면 «까닭을 적는 일»이 벌 받는 셈이 된다 — 이 저장소는 까닭을 적는 곳이다.
+   ⚠ 손으로 지우지 말 것(마크업의 accept="image/별표" 를 주석 시작으로 읽는다) — 공용 걷개를 쓴다. */
+const R = (f) => stripComments(fs.readFileSync(path.join(__dirname, '..', f), 'utf8'));
 
 /* 정리를 마친 앱들. ★ 새 앱을 정리했으면 여기에 더한다 —
    더하지 않으면 그 앱은 아무도 안 지킨다. */
