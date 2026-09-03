@@ -25139,7 +25139,7 @@ function CaseManagement(props){
       casePatch(caseId, { workers: nws });
 
       var perfShares = calcPerfShares(supply, c.managerMain, c.managerSubs, 'case', 100, { paidDate: payDate });
-      dbUpsert('finance_income', {
+      erpUpsertIncome({
         id: finId, date: payDate, amount: supply,
         category: 'inc-case-fee', sourceKind: 'case', sourceId: caseId, sourceSubKind: 'worker',
         workerId: w.id || ('w'+wIdx), workerName: w.name || ('근로자'+(wIdx+1)),
@@ -25200,7 +25200,7 @@ function CaseManagement(props){
     if(_cf && !(_cf.incomes||[]).some(function(i){return i.kind===kindLabel;})){
       casePatch(c.id, { incomes:(_cf.incomes||[]).concat([{date:paidDate,amount:amount,kind:kindLabel,confirmed:true}]) });
     }
-    dbUpsert('finance_income', newFi);
+    erpUpsertIncome(newFi);
     refreshCases();
     showToast('✅ '+kindLabel+' 입금 데이터 복원 완료 — 성과관리에서 확인하세요');
   }
@@ -40202,8 +40202,22 @@ function erpUnmarkBankRow(row){
 function erpUndoIncome(fi){
   if(!fi || !fi.id) return false;
   try{
-    dbPatch('finance_income', fi.id, { undoneDate:new Date().toISOString(),
-      undoneBy:((typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? (CURRENT_USER.sid || '') : '') });
+    /* 마감된 달의 성과급은 «이미 통장으로 나갔다». 그 달에서 빼면 지급이 끝난
+       명세서가 뒤늦게 줄어든다 — 그 달은 그대로 두고 같은 금액을 마이너스로
+       다음 열린 달에 넘긴다 (회계에서 늘 하는 방식). */
+    var _lk = erpPerfLockInfo(fi);
+    var _patch = { undoneDate:new Date().toISOString(),
+      undoneBy:((typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? (CURRENT_USER.sid || '') : '') };
+    if(_lk.locked){
+      var _r = erpRoutePerfDelta((fi.perfShares || []).map(function(p){
+        return { sid:(p && p.sid), name:((p && p.name) || ''), amount: -(parseInt(p && p.amount, 10) || 0) };
+      }), _lk.ym, '되돌림 조정 — ' + (fi.companyName || ''));
+      // 넘기지 못했으면 되돌리지 않는다 — 반만 처리하면 어느 쪽이 맞는지 아무도 모른다
+      if(_r.failed) return false;
+      _patch.perfSettled = true;               // 그 달 몫은 그대로 둔다
+      if(_r.count) _patch.perfRoutedTo = _r.to;
+    }
+    dbPatch('finance_income', fi.id, _patch);
     if(fi.sourceId && fi.sourceKind){
       var store = (fi.sourceKind === 'company') ? 'companies' : (fi.sourceKind + 's');
       var rollback = {}, k = fi.kind || '';
@@ -41386,7 +41400,7 @@ function FinanceLedger(props){
     /* 만든 기록의 열쇠를 «먼저» 지어 둔다 — 되돌리기(Ctrl+Z)가 방금 만든 이 한 건을
        찾아 물어야 하는데, 나중에 목록에서 뒤지면 같은 금액 다른 건을 물 수 있다. */
     var _fiId = 'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-    dbUpsert('finance_income', {id:_fiId,
+    erpUpsertIncome({id:_fiId,
       companyName:pItem.companyName, amount:row.amount, date:paidDate,
       kind: isAdv ? '자문료' : (pItem.label || ''),
       category: isAdv ? 'inc-advisory' : undefined,
@@ -41648,7 +41662,7 @@ function FinanceLedger(props){
          (창에서도 자문료를 고르면 성과급 칸이 사라진다 — 화면과 결과가 어긋나지 않게) */
     var _isAdv = (d.kind === '자문료');
     if(_isAdv){ shares = []; }
-    var _ok = dbUpsert('finance_income', {
+    var _ok = erpUpsertIncome({
       id:'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
       companyName:(d.name||'').trim() || (row.memo||'-'),
       amount:gross, date:paidDate,
@@ -45614,7 +45628,7 @@ function FinanceLedger(props){
       /* 되돌리기 — ★ 실제 일은 erpUndoIncome 한 곳에서 한다.
          Ctrl+Z(되돌리기 띠)와 이 창이 «똑같은 일» 을 해야 하기 때문이다.
          두 길이 다른 일을 하면 되돌린 뒤의 장부가 어느 쪽인지 알 수 없게 된다. */
-      function undoConfirm(fi){ erpUndoIncome(fi); }
+      function undoConfirm(fi){ return erpUndoIncome(fi); }
       var _undoneSum=0, _activeSum=0;
       allInc.forEach(function(fi){ if(fi.undoneDate) _undoneSum+=fi.amount||0; else _activeSum+=fi.amount||0; });
       return h('div',{onClick:function(){setConfHistOpen(false);},
@@ -45693,8 +45707,10 @@ function FinanceLedger(props){
                               title:'담당자와 성과급 배분만 고칩니다 (업체는 그대로)',
                               style:{padding:'2px 8px',background:'#fff',color:'#1e40af',border:'1px solid #bfdbfe',borderRadius:'4px',fontSize:'10px',fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}},'담당·성과'),
                             h('button',{onClick:async function(){
-                              if(!(await popConfirm(fi.companyName+' '+fi.kind+' '+(fi.amount||0).toLocaleString()+'원\n\n이 확정을 되돌리시겠습니까?\n입금 기록이 취소되고 미입금 상태로 돌아갑니다.'))) return;
-                              undoConfirm(fi);
+                              if(!(await popConfirm(fi.companyName+' '+fi.kind+' '+(fi.amount||0).toLocaleString()+'원\n\n이 확정을 되돌리시겠습니까?\n입금 기록이 취소되고 미입금 상태로 돌아갑니다.'
+                                    +erpLockNoticeFor(fi)))) return;
+                              // 되돌리지 못했는데 「되돌림」이라고 말하지 않는다
+                              if(!undoConfirm(fi)){ showToast('❌ 되돌리지 못했습니다'); return; }
                               showToast('↩️ 되돌림: '+fi.companyName+' '+(fi.amount||0).toLocaleString()+'원');
                             },
                             style:{padding:'2px 8px',background:'#fff',color:'#dc2626',border:'1px solid #fecaca',borderRadius:'4px',fontSize:'10px',fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}},'되돌리기')
@@ -45814,7 +45830,8 @@ function FinanceLedger(props){
                  + '· 지금: ' + (fi.companyName||'-') + ' ' + (fi.kind||'') + '\n'
                  + '· 옮길 곳: ' + p.companyName + ' ' + (p.label||'') + ' (담당 ' + _newStaff + ')\n\n'
                  + '앞 업체의 입금표시·성과급은 되돌리고, 새 업체 담당자로 성과급을 다시 나눕니다.\n'
-                 + '금액 ' + _amt.toLocaleString() + '원 · 날짜 ' + (fi.date||'-') + ' 는 그대로입니다.';
+                 + '금액 ' + _amt.toLocaleString() + '원 · 날짜 ' + (fi.date||'-') + ' 는 그대로입니다.'
+                 + erpLockNoticeFor(fi);
         if(!(await popConfirm(_msg))) return;
         if(!erpUndoIncome(fi)){ showToast('❌ 앞 확정을 되돌리지 못했습니다'); return; }
         /* 통장 줄 꼴로 되돌려 saveIncome 에 넘긴다.
@@ -45949,10 +45966,32 @@ function FinanceLedger(props){
       var newTotal=0; newShares.forEach(function(s){newTotal+=s.amount||0;});
       var diffAmt=newTotal-oldTotal;
       function doSave(){
+        var _lk=erpPerfLockInfo(fi);
         var hist={date:new Date().toISOString(),
           before:{shares:curShares.map(function(s){return{sid:s.sid,role:s.role,amount:s.amount};})},
           after:{shares:newShares.map(function(s){return{sid:s.sid,role:s.role,amount:s.amount};})},
           by:CURRENT_USER?CURRENT_USER.sid:''};
+        if(_lk.locked){
+          /* 마감된 달이다 — 이 달 몫은 이미 나갔다. 지난 명세서를 고치지 않고
+             사람별 «차액» 만 다음 열린 달 조정으로 넘긴다. */
+          var _by={};
+          function _bump(s,sign){
+            if(!s||!s.sid) return;
+            if(!_by[s.sid]) _by[s.sid]={sid:s.sid,name:s.name||'',amount:0};
+            _by[s.sid].amount += sign*(parseInt(s.amount,10)||0);
+          }
+          curShares.forEach(function(s){ _bump(s,-1); });
+          newShares.forEach(function(s){ _bump(s, 1); });
+          var _r=erpRoutePerfDelta(Object.keys(_by).map(function(k){return _by[k];}),
+                                   _lk.ym,'성과 수정 — '+(fi.companyName||''));
+          if(_r.failed){ showToast('❌ 조정을 넘기지 못했습니다 — 아무것도 바꾸지 않았습니다'); return; }
+          hist.lockedYM=_lk.ym; hist.routedTo=_r.to;
+          dbPatch('finance_income',fi.id,{editHistory:(fi.editHistory||[]).concat([hist])});
+          setEditPop(null);
+          showToast(_r.count?('🔒 '+_lk.ym+'은 마감 — 차액 '+_r.count+'건을 '+_r.to+' 조정으로 넘겼습니다')
+                            :('🔒 '+_lk.ym+'은 마감 — 바뀐 금액이 없어 넘길 것이 없습니다'));
+          return;
+        }
         var eh=(fi.editHistory||[]).concat([hist]);
         dbPatch('finance_income',fi.id,{perfShares:newShares,editHistory:eh});
         setEditPop(null);
@@ -46043,6 +46082,12 @@ function FinanceLedger(props){
               )
             )
           ),
+          /* 마감된 달이면 «저장을 누르기 전에» 어디로 가는지 알려 준다 */
+          erpPerfLockInfo(fi).locked && h('div',{style:{padding:'8px 14px',background:'#fffbeb',
+            borderTop:'1px solid #fde68a',fontSize:'11px',color:'#854d0e',lineHeight:1.5}},
+            h('b',null,'🔒 '+erpPerfLockInfo(fi).ym+' 급여는 이미 마감됐습니다.'),' ',
+            '그 달 명세서는 그대로 두고, 바뀐 금액만 ',
+            h('b',null,erpPerfLockInfo(fi).nextYM+' 성과 조정'),'으로 넘깁니다.'),
           h('div',{style:{padding:'10px 14px',background:'#f8fafc',borderTop:'1px solid #e2e8f0',
             display:'flex',justifyContent:'flex-end',gap:'8px'}},
             h('button',{onClick:closePop,
@@ -46247,9 +46292,15 @@ function IncomeUnmatchedTab(props){
     var perfBaseAmount = fi.perfBaseAmount || fi.amount || 0;
     var splitMainPct = fi.splitMainPct || 100;
     var newShares = calcPerfShares(perfBaseAmount, srcMain, srcSubs, fi.sourceKind, splitMainPct);
-    dbPatch('finance_income', fi.id, { perfExclude:false, isPersonalIncome:false, perfShares:newShares });
+    /* 없던 성과급을 뒤늦게 얹는 자리다 — 그 달 급여가 이미 마감됐으면
+       마감된 명세서에 돈이 붙는다. 그때는 다음 열린 달 급여에 붙인다. */
+    var _lk = erpPerfLockInfo(fi);
+    var _patch = { perfExclude:false, isPersonalIncome:false, perfShares:newShares };
+    if(_lk.locked) _patch.perfYM = _lk.nextYM;
+    dbPatch('finance_income', fi.id, _patch);
     setRefreshKey(refreshKey+1);
-    showToast('⭐ 성과 반영 완료 ('+newShares.length+'명 분배, 총 '+perfBaseAmount.toLocaleString()+'원 기준)');
+    showToast('⭐ 성과 반영 완료 ('+newShares.length+'명 분배, 총 '+perfBaseAmount.toLocaleString()+'원 기준)'
+      + (_lk.locked ? ' — 🔒 '+_lk.ym+'은 마감이라 '+_lk.nextYM+' 급여에 붙습니다' : ''));
   }
 
   var mode = monthFilter === '' ? 'all' : (monthFilter.length === 4 ? 'year' : 'month');
@@ -46845,7 +46896,7 @@ function IncomePendingTab(props){
       totalContractAmt: p.amount,
       createdAt: (new Date()).toISOString()
     };
-      dbUpsert('finance_income', newFi);
+      erpUpsertIncome(newFi);
 
       // ★ 감사 로그 (override 있을 때만)
       if(hasOverride && typeof AuditLog !== 'undefined' && AuditLog.write){
@@ -67897,6 +67948,8 @@ function PerfManagement(props){
             category:'inc-incentive', sourceKind:'incentive', sourceId:'',
             caseNo:'', companyName:compName, kind:kindName,
             perfShares:[{ sid:sid, name:recv, pct:Math.round(rate*1000)/10, amount:perf, role:'주담당', sharePct:100, baseAmount:supply||pay }],
+            // 급여가 이미 마감된 달로 가져오면 그 달 명세서가 뒤늦게 달라진다 — 다음 열린 달에 붙인다
+            perfYM: erpPerfYMFor(date) || undefined,
             managerSid:sid, managerName:recv, splitMainPct:100,
             deductions:ded, perfBaseAmount:(supply||pay), perfExclude:false,
             isPersonalIncome:false, note:'인센티브 가져오기', paid:true,
@@ -69632,9 +69685,8 @@ function erpPerfBreakdown(empSid, period){
   var n = String(period).length;                     // 7 = 그 달 · 4 = 그 해
   (dbGet('finance_income', []) || []).forEach(function(item){
     if(!item) return;
-    if(String(item.date || '').slice(0, n) !== String(period)) return;
-    if(item.sourceKind === 'company') return;        // 자문료 제외 (calcPerfBonus 와 같은 규칙)
-    if(item.isPersonalIncome) return;                // 개인소득 제외 (같은 규칙)
+    if(erpPerfMonthOf(item).slice(0, n) !== String(period)) return;
+    if(!erpPerfCounts(item)) return;                 // 거르개는 calcPerfBonus 와 «같은» 함수를 쓴다
     (item.perfShares || []).forEach(function(p){
       if(!p) return;
       // 옛 자료는 사번 자리에 이름이 들어 있다 — 급여 쪽과 같은 방식으로 찾는다
@@ -69652,6 +69704,107 @@ function erpPerfBreakdown(empSid, period){
   return out;
 }
 
+/* ══════════ 마감된 달의 급여를 뒤에서 바꾸지 않는다 (2026-09-03 대표 지시) ══════════
+   성과급은 급여를 만들 때 얼려 두는 값이 아니다 — 명세서를 열 때마다 그 달 finance_income 을
+   다시 훑어 셈한다(calcPay → calcPerfBonus). 그래서 «이미 마감·지급한 달» 의 입금을
+   새로 확정하거나 고치면 통장으로 나간 명세서가 뒤늦게 조용히 달라진다.
+
+   ★ 그냥 막지 않는다. 막기만 하면 잘못 들어온 돈을 영영 바로잡을 수 없다.
+     회계에서 늘 하는 대로 «지난 달은 그대로 두고 다음 열린 달에 조정» 한다.
+       · perfYM      — 성과급이 붙을 달. 없으면 date 의 달 (옛 자료는 그대로 굴러간다).
+       · perfSettled — 되돌렸지만 그 달 몫은 이미 지급됐다는 표시.
+     두 칸 모두 새 이름이다 (실자료 1,859건에 쓰는 곳 0건 확인).
+
+   ⚠ 급여 마감(locked_payroll_months)과 입금 마감(locked_income_months)은 다른 자물쇠다.
+     입금 마감은 손대는 것 자체를 막지만, 급여 마감은 여기서 «비켜 담는» 것으로 지킨다. */
+
+// 이 입금의 성과급이 «어느 달» 급여에 붙는가
+function erpPerfMonthOf(item){
+  if(!item) return '';
+  return String(item.perfYM || String(item.date || '').slice(0, 7));
+}
+
+/* 이 입금의 성과급을 급여에 세는가.
+   ★ 거르개를 한 곳에 모은다 — 급여(calcPerfBonus)와 대시보드(erpPerfBreakdown)가
+     서로 다른 거르개를 쓰면 같은 사람의 같은 달 성과급이 화면마다 달라진다. */
+function erpPerfCounts(item){
+  if(!item) return false;
+  if(item.sourceKind === 'company') return false;   // 자문료는 정책상 성과 대상이 아니다
+  if(item.isPersonalIncome) return false;           // 개인소득도 아니다
+  // 되돌린 건은 안 센다. 다만 마감된 달로 «이미 나간» 몫은 그 달에 그대로 둔다.
+  if(item.undoneDate && !item.perfSettled) return false;
+  return true;
+}
+
+/* ym 부터 세어 «급여가 안 잠긴» 첫 달. 지난 달로 되돌아가지 않게 이번 달부터 본다. */
+function erpNextOpenYM(ym){
+  var now = String((typeof todayYMD === 'function') ? todayYMD() : new Date().toISOString()).slice(0, 7);
+  var from = (String(ym || '') > now) ? String(ym) : now;
+  var y = parseInt(from.slice(0, 4), 10), m = parseInt(from.slice(5, 7), 10);
+  if(!y || !m) return now;
+  for(var i = 0; i < 36; i++){
+    var cand = y + '-' + ('0' + m).slice(-2);
+    if(typeof isPayrollLocked !== 'function' || !isPayrollLocked(cand)) return cand;
+    m++; if(m > 12){ m = 1; y++; }
+  }
+  return y + '-' + ('0' + m).slice(-2);
+}
+
+/* 이 날짜로 확정하면 성과급이 어느 달에 붙어야 하나 — 비킬 것 없으면 빈 글자 */
+function erpPerfYMFor(date){
+  var ym = String(date || '').slice(0, 7);
+  if(!ym) return '';
+  if(typeof isPayrollLocked !== 'function' || !isPayrollLocked(ym)) return '';
+  return erpNextOpenYM(ym);
+}
+
+// 이 입금을 손대면 «이미 마감된 달» 의 급여가 바뀌는가
+function erpPerfLockInfo(item){
+  var ym = erpPerfMonthOf(item);
+  var locked = !!(ym && typeof isPayrollLocked === 'function' && isPayrollLocked(ym));
+  return { ym: ym, locked: locked, nextYM: locked ? erpNextOpenYM(ym) : ym };
+}
+
+/* 마감된 달을 손대려 할 때 확인 글에 덧붙일 안내.
+   막지 않고 «어디로 가는지» 를 먼저 알린다 — 막기만 하면 잘못 들어온 돈을 못 고친다. */
+function erpLockNoticeFor(item){
+  var lk = erpPerfLockInfo(item);
+  if(!lk.locked) return '';
+  return '\n\n🔒 ' + lk.ym + ' 급여는 이미 마감됐습니다.\n'
+       + '그 달 명세서는 건드리지 않고, 성과급 차액을 ' + lk.nextYM + ' 조정으로 넘깁니다.';
+}
+
+/* 성과급이 붙은 입금은 이 문을 지난다 — 확정하는 자리가 여럿이라(수금·확정창·통장·복원…)
+   자리마다 따로 막으면 언젠가 한 자리가 빠진다. */
+function erpUpsertIncome(rec){
+  if(rec && !rec.perfYM && (rec.perfShares || []).length){
+    var to = erpPerfYMFor(rec.date);
+    if(to){
+      rec.perfYM = to;
+      try{ showToast('🔒 ' + String(rec.date).slice(0,7) + ' 급여는 마감 — 성과급은 ' + to + ' 급여에 붙습니다'); }catch(_e){}
+    }
+  }
+  return dbUpsert('finance_income', rec);
+}
+
+/* 사람별 성과급 «차액» 을 다음 열린 달 조정으로 옮긴다.
+   deltas: [{sid, name, amount}] — amount 는 더할 금액(음수 가능), 0 은 건너뛴다. */
+function erpRoutePerfDelta(deltas, ym, why){
+  var to = erpNextOpenYM(ym);
+  var recs = [];
+  (deltas || []).forEach(function(d){
+    if(!d || !d.sid) return;
+    var amt = parseInt(d.amount, 10) || 0;
+    if(!amt) return;
+    recs.push(_perfAdjustRec(d.sid, d.name || '', (why || '마감월 조정') + ' — ' + ym + ' 분', amt, to));
+  });
+  if(!recs.length) return { to: to, count: 0 };
+  var ok = (typeof dbUpsertMany === 'function')
+    ? dbUpsertMany('finance_income', recs)
+    : recs.every(function(r){ return dbUpsert('finance_income', r); });
+  return { to: to, count: ok ? recs.length : 0, failed: !ok };
+}
+
 // 성과금 자동 합산 (해당 직원의 해당 월 finance_income.perfShares 누적)
 // ※ 자문료(sourceKind='company')는 정책상 성과급 반영 대상 아님 → 자동 제외 (기존 데이터 안전망)
 function calcPerfBonus(empSid, ym){
@@ -69663,9 +69816,9 @@ function calcPerfBonus(empSid, ym){
   var empName = emp ? emp.name : '';
   var total = 0; var details = [];
   fi.forEach(function(item){
-    if((item.date||'').slice(0,7) !== ym) return;
-    if(item.sourceKind === 'company') return; // 자문료 제외 (성과관리 화면과 분리 — 의도적)
-    if(item.isPersonalIncome) return;          // ★ 개인소득 항목은 급여 성과 산입 제외
+    // 마감된 달에서 «비켜 담은» 건은 perfYM 이 가리키는 달에 붙는다
+    if(erpPerfMonthOf(item) !== ym) return;
+    if(!erpPerfCounts(item)) return;           // 자문료·개인소득·되돌린 건 (거르개는 한 곳에)
     (item.perfShares||[]).forEach(function(p){
       // sid 직접 일치 또는 (옛 데이터) 이름 일치
       var match = p.sid === empSid || (empName && p.sid === empName) || (p.name && p.name === empName);
@@ -69700,9 +69853,21 @@ function calcPerfBonus(empSid, ym){
 function _perfShareMatch(p, empSid, empName){
   return p.sid === empSid || (empName && p.sid === empName) || (p.name && p.name === empName);
 }
+/* 이 입금의 성과금액을 «지금» 손대도 되는가 — 마감된 달이면 안 된다.
+   손대면 이미 통장으로 나간 그 달 명세서가 뒤늦게 달라진다 (바로잡을 길은
+   다음 열린 달의 조정이다 — 성과급 팝업이 그 달을 알려 준다). */
+function _perfEditAllowed(fiArr, incomeId){
+  var target = (fiArr || []).find(function(x){ return x && x.id === incomeId; });
+  if(!target) return true;
+  var lk = erpPerfLockInfo(target);
+  if(!lk.locked) return true;
+  try{ showToast('🔒 ' + lk.ym + ' 급여는 마감 — ' + lk.nextYM + ' 에 조정으로 넣으세요'); }catch(_e){}
+  return false;
+}
 // 특정 입금건의 이 직원 성과금액을 수동값으로 대체 (자동값은 amountAuto에 보존)
 function applyPerfOverride(incomeId, empSid, empName, newAmount){
   var fi = dbGet('finance_income', []);
+  if(!_perfEditAllowed(fi, incomeId)) return false;
   var changed = false;
   var next = fi.map(function(item){
     if(item.id !== incomeId) return item;
@@ -69723,6 +69888,7 @@ function applyPerfOverride(incomeId, empSid, empName, newAmount){
 // 수동 대체 해제 → 보존된 자동값으로 복귀
 function revertPerfOverride(incomeId, empSid, empName){
   var fi = dbGet('finance_income', []);
+  if(!_perfEditAllowed(fi, incomeId)) return false;
   var changed = false;
   var next = fi.map(function(item){
     if(item.id !== incomeId) return item;
@@ -69739,12 +69905,13 @@ function revertPerfOverride(incomeId, empSid, empName){
   if(changed) dbSet('finance_income', next);
   return changed;
 }
-// 수기 조정 항목 추가 — 입금관리에 '성과 조정' 레코드 생성 (성과관리·급여 양쪽 표시, 음수 가능)
-function addPerfAdjust(empSid, empName, label, amount, ym){
+/* 조정 레코드 한 건의 꼴. 마감월 되돌리기는 «사람 수만큼» 한꺼번에 만들므로
+   열쇠에 Date.now() 만 쓰면 같은 밀리초에 만든 것끼리 열쇠가 겹쳐 한 건만 남는다. */
+function _perfAdjustRec(empSid, empName, label, amount, ym){
   var today = todayYMD();
   var date = (today.slice(0,7) === ym) ? today : (ym + '-28');
-  var rec = {
-    id: 'fi-adj-' + Date.now(),
+  return {
+    id: 'fi-adj-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
     date: date,
     companyName: '성과 조정',
     kind: label || '수기 조정',
@@ -69758,6 +69925,15 @@ function addPerfAdjust(empSid, empName, label, amount, ym){
     note: '급여 성과급 팝업에서 수기 추가 (' + (CURRENT_USER ? CURRENT_USER.name : '') + ')',
     createdAt: new Date().toISOString()
   };
+}
+// 수기 조정 항목 추가 — 입금관리에 '성과 조정' 레코드 생성 (성과관리·급여 양쪽 표시, 음수 가능)
+function addPerfAdjust(empSid, empName, label, amount, ym){
+  if(typeof isPayrollLocked === 'function' && isPayrollLocked(ym)){
+    // 마감된 달에 조정을 새로 얹으면 이미 나간 명세서가 달라진다
+    try{ showToast('🔒 ' + ym + ' 급여는 마감 — 조정을 넣을 수 없습니다'); }catch(_e){}
+    return '';
+  }
+  var rec = _perfAdjustRec(empSid, empName, label, amount, ym);
   var fi = dbGet('finance_income', []);
   dbSet('finance_income', fi.concat([rec]));
   return rec.id;
@@ -69767,6 +69943,7 @@ function removePerfAdjust(incomeId){
   var fi = dbGet('finance_income', []);
   var target = fi.find(function(x){ return x.id === incomeId; });
   if(!target || target.sourceKind !== 'perf-adjust') return false;
+  if(!_perfEditAllowed(fi, incomeId)) return false;
   dbSet('finance_income', fi.filter(function(x){ return x.id !== incomeId; }));
   return true;
 }
@@ -76216,6 +76393,11 @@ function PayrollLedger(props){
           h('button', { className:'x', onClick:function(){setPerfModal(null);} }, '×')
         ),
         h('div', { className:'modal-b' },
+          /* 마감된 달이면 여기서 고칠 수 없다 — 눌러 보고 알게 하지 말고 먼저 말한다 */
+          isPayrollLocked(_pm.ym) && h('div', { style:{background:'#fffbeb',border:'1px solid #fde68a',
+            borderRadius:'6px',padding:'8px 14px',marginBottom:'10px',fontSize:'11px',color:'#854d0e',lineHeight:1.5} },
+            h('b',null,'🔒 '+_pm.ym+' 급여는 마감됐습니다.'),' 이 달 금액은 이미 지급된 값이라 고치지 않습니다 — ',
+            '바로잡을 것이 있으면 ',h('b',null,erpNextOpenYM(_pm.ym)),' 에서 조정으로 넣으세요.'),
           h('div', { style:{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'6px',padding:'10px 14px',marginBottom:'12px',display:'flex',justifyContent:'space-between',alignItems:'center'} },
             h('div', { style:{fontSize:'12px',color:'#1e40af'} }, '총 '+_pm.details.length+'건',
               _hasManual && h('span',{style:{marginLeft:'8px',background:'#fffbeb',color:'#854d0e',padding:'2px 8px',borderRadius:'10px',fontSize:'10px',fontWeight:800}},'✏️ 수동조정 포함')),

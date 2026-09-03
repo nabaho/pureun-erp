@@ -136,8 +136,10 @@ t('기록을 못 찾으면 알린다 (조용히 삼키지 않는다)', /되돌�
 
 console.log('\n[⑪ 되돌리기는 한 곳에서만 — 두 길이 다른 일을 하면 안 된다]');
 /* Ctrl+Z 와 「확정 이력」의 되돌리기가 같은 함수를 써야, 되돌린 뒤의 장부가 하나다 */
+/* 못 박는 것은 «같은 함수를 쓴다» 이다 — 돌려주는지까지 글자로 박으면 멀쩡한 손질에도 깨진다
+   (2026-09-03: 되돌리기 실패를 삼키지 않도록 return 을 붙였더니 깨졌다) */
 t('확정 이력의 되돌리기도 같은 함수를 쓴다',
-  /function undoConfirm\(fi\)\{ erpUndoIncome\(fi\); \}/.test(src), true);
+  /function undoConfirm\(fi\)\{[^}]*erpUndoIncome\(fi\)/.test(src), true);
 t('되돌리기 본체는 하나뿐이다',
   (src.match(/rollback\.retainerPaid=false/g) || []).length, 1);
 t('무른 표시를 남긴다 (지우지 않는다)', /undoneDate:new Date\(\)\.toISOString\(\)/.test(src), true);
@@ -145,7 +147,9 @@ t('무른 표시를 남긴다 (지우지 않는다)', /undoneDate:new Date\(\)\.
 console.log('\n[⑫ 되돌릴 손잡이 — 방금 만든 그 한 건을 문다]');
 /* 목록에서 나중에 뒤지면 같은 금액 다른 건을 물 수 있다 */
 t('확정 기록의 열쇠를 먼저 지어 둔다', /var _fiId = 'fi-'\+Date\.now\(\)/.test(src), true);
-t('그 열쇠로 저장한다', /dbUpsert\('finance_income', \{id:_fiId,/.test(src), true);
+/* 저장하는 «함수 이름» 이 아니라 «미리 지은 열쇠를 그대로 쓴다» 를 본다 */
+t('그 열쇠로 저장한다',
+  /(dbUpsert\('finance_income',\s*|erpUpsertIncome\(\s*)\{id:_fiId,/.test(src), true);
 t('자문료도 열쇠를 돌려준다 (안 돌려주면 자문료는 되돌릴 수 없다)',
   /if\(isAdv\) return _fiId;/.test(src), true);
 t('마지막에도 열쇠를 돌려준다', /return _fiId;\s*\/\/ 되돌리기가 잡을 손잡이/.test(src), true);

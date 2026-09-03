@@ -47,9 +47,14 @@ function runSave(d) {
     dbUpsert: (t, o) => { if (t === 'finance_income') saved = o; return true; },
     showToast: () => {}, _sidName: (x) => x, fileType: 'bank',
     erpMarkBankRowProcessed: () => {}, removeRow: () => {},
+    /* 급여가 마감된 달은 잠겨 있지 않다고 둔다 — 여기서 보는 것은 자문료 규칙이다 */
+    isPayrollLocked: () => false,
     CURRENT_USER: { sid: 'P001' }, window: {},
   };
   vm.createContext(ctx);
+  /* 확정은 «성과급 마감 막이» 문을 지나 저장한다 — 흉내 내지 않고 진짜 문을 함께 싣는다 */
+  ['function erpNextOpenYM(', 'function erpPerfYMFor(', 'function erpUpsertIncome(']
+    .forEach((head) => vm.runInContext(sliceFn(erp, head), ctx));
   vm.runInContext(sliceFn(erp, 'function saveDirectIncome(d){'), ctx);
   ctx.saveDirectIncome(Object.assign({
     row: { amount: 165000, date: '2026-08-10', memo: '최건(아우어베이커리', _k: 'k1' },
