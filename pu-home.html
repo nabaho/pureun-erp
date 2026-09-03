@@ -3183,14 +3183,26 @@ function rowsHtml() {
    ★ 미리보기에서 «고치게 하지 않는다» — 어느 쪽이 진짜인지 흐려진다.
    ★ 미리보기를 열어도 «아무것도 올라가지 않는다». */
 
-function 사본주소(mid) {
+/* 미리보기 바탕(base) — «그 HTML 이 온 바로 그 주소»여야 한다.
+   ★ 왜 이게 중요한가 (2026-09-03 고침):
+     처음에 base 를 우리 사본으로 잡았다가 미리보기가 «민무늬»로 나왔다.
+     「이 쪽 읽어오기」는 옛 홈페이지를 읽는데, 그 쪽은 주소를 «뿌리부터»(/files/…) 쓴다.
+     뿌리부터 쓰는 주소는 base 를 어디로 잡든 «오리진»에 붙으므로
+     nabaho.github.io/files/… 를 찾다가 스타일·그림이 통째로 404 가 났다.
+     ⚠ base 의 «경로»는 상대 주소에만 듣는다 — 뿌리부터 쓰는 주소에는 안 듣는다.
+   ★ 쪽(주요업무·인사말·오시는길)은 옛 홈페이지에서 온다 → 그 쪽 주소를 바탕으로.
+   ★ 구성원 쪽은 새 홈페이지에서 온다(상대 주소를 쓴다) → 우리 사본을 바탕으로.
+     사본은 이 화면과 같은 곳이라 도메인이 어떻게 되든 안 깨진다. */
+function 쪽바탕(mid) {
+  try { return PuHomeExport.ORIGIN + '/' + mid; } catch (e) { return ''; }
+}
+function 사본바탕(mid) {
   try { return new URL('site/' + mid + '/', location.href).href; } catch (e) { return ''; }
 }
 
 /* srcdoc 은 «주소가 없다» — 상대 주소로 된 그림·스타일이 다 깨진다.
    그래서 머리에 base 를 끼운다 (2026-09-02 확인: 이러면 깨진 그림 0개). */
-function base끼우기(html, mid) {
-  const b = 사본주소(mid);
+function base끼우기(html, b) {
   if (!b) return html;
   const t = '<base href="' + b + '">';
   return /<head[^>]*>/i.test(html)
@@ -3210,12 +3222,13 @@ function 미리보기HTML() {
     if (!App.sitePeople) {
       return { why: '구성원 쪽을 아직 안 읽었습니다.', 읽기: true };
     }
-    if (App.previewMode === 'now') return { mid: 'people', html: App.sitePeople, 지금: true };
+    if (App.previewMode === 'now') return { mid: 'people', 바탕: 사본바탕('people'), html: App.sitePeople, 지금: true };
     try {
       const ours = Object.keys(App.members)
         .map(function (k) { return Object.assign({}, App.members[k], { key: k }); });
       const 고른것 = PuSitePeople.올릴사람(App.sitePeople, ours);
-      return { mid: 'people', html: PuSitePeople.쪽그리기(App.sitePeople, 고른것.갈것),
+      return { mid: 'people', 바탕: 사본바탕('people'),
+               html: PuSitePeople.쪽그리기(App.sitePeople, 고른것.갈것),
                몇: 고른것.갈것.length };
     } catch (e) { return { why: '구성원 쪽을 만들지 못했습니다 — ' + (e && e.message) }; }
   }
@@ -3225,12 +3238,12 @@ function 미리보기HTML() {
   const 지금쪽 = App.pageHtml[mid];
   if (!지금쪽) return { mid: mid, why: '이 쪽을 아직 안 읽었습니다.\n'
     + '편집칸의 「이 쪽 읽어오기」(또는 머리띠의 「홈페이지 다시 확인」)를 누르십시오.' };
-  if (App.previewMode === 'now') return { mid: mid, html: 지금쪽, 지금: true };
+  if (App.previewMode === 'now') return { mid: mid, 바탕: 쪽바탕(mid), html: 지금쪽, 지금: true };
   const 고칠것 = PuSitePage.고칠줄(App.pageFix[mid]);
-  if (!고칠것.length) return { mid: mid, html: 지금쪽, 안바꿈: true };
+  if (!고칠것.length) return { mid: mid, 바탕: 쪽바탕(mid), html: 지금쪽, 안바꿈: true };
   try {
     const out = PuSitePage.쪽고치기(지금쪽, 고칠것, PuHomeFill.applyLineEdits);
-    return { mid: mid, html: out.html,
+    return { mid: mid, 바탕: 쪽바탕(mid), html: out.html,
              바뀐줄: out.done.map(function (x) { return x.after; }),
              건너뜀: out.skipped.length };
   } catch (e) { return { mid: mid, why: '고친 것을 그리지 못했습니다 — ' + (e && e.message) }; }
@@ -3262,7 +3275,7 @@ function prevHtml() {
      (HTML 글자를 건드리면 올릴 것과 달라진다). */
   const 표시 = JSON.stringify(r.바뀐줄 || []).replace(/"/g, '&quot;');
   h += '<iframe id="prevFrame" title="미리보기" data-marks="' + 표시 + '"'
-    + ' onload="markPreview(this)" srcdoc="' + esc(base끼우기(r.html, r.mid)) + '"></iframe>';
+    + ' onload="markPreview(this)" srcdoc="' + esc(base끼우기(r.html, r.바탕)) + '"></iframe>';
   h += '</div>';
   return h;
 }
@@ -3308,7 +3321,7 @@ function openPreviewWindow() {
   const w = window.open('', 'puPreview');
   if (!w) { say('새 창이 막혔습니다', '브라우저가 새 창을 막았습니다 — 주소창 오른쪽의 막음 표시를 풀어 주십시오.'); return; }
   w.document.open();
-  w.document.write(base끼우기(r.html, r.mid));
+  w.document.write(base끼우기(r.html, r.바탕));
   w.document.close();
   w.focus();
 }
