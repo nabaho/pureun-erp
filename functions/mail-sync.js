@@ -1100,7 +1100,11 @@ module.exports = function build(deps) {
         const b = req.body || {};
         const slug = String(b.slug || '');
         const uids = (Array.isArray(b.uids) ? b.uids : []).map(String).filter((u) => /^\d+$/.test(u));
-        const FLAGS = { star: '\\Flagged', read: '\\Seen' };
+        /* ⚠ answer 를 더했다 (대표 지시 2026-09-03 「답변 준 것은 답변 보낸 것으로
+             모두 표시되어야 한다」). 다음메일은 «제 창에서» 답장했을 때만 \Answered 를
+             켠다 — 우리 앱이 SMTP 로 보낸 답장은 다음이 「그 메일의 답장」인 줄 모른다.
+             그래서 우리가 직접 켜 준다. 안 켜면 우리 앱에서 보낸 답장은 영영 표시가 없다. */
+        const FLAGS = { star: '\\Flagged', read: '\\Seen', answer: '\\Answered' };
         const flag = FLAGS[String(b.flag || '')];
         const on = !!b.on;
         if (!slug || !uids.length || !flag) { reply(res, 400, { ok: false, error: '무엇에 무슨 표시를 할지 알 수 없습니다.' }); return; }
@@ -1111,8 +1115,10 @@ module.exports = function build(deps) {
           else await client.messageFlagsRemove(uids.join(','), [flag], { uid: true });
         }, { write: true });
 
-        /* 우리 목록도 그 자리에서 맞춘다 — 다음 회차를 기다리면 별이 도로 꺼져 보인다 */
-        const key = (String(b.flag) === 'star') ? 'g' : 'r';
+        /* 우리 목록도 그 자리에서 맞춘다 — 다음 회차를 기다리면 별이 도로 꺼져 보인다.
+           ⚠ 칸 이름은 msgRow 와 «같아야» 한다(g·r·w). 한쪽만 고치면 표시가 조용히 어긋난다. */
+        const KEYS = { star: 'g', read: 'r', answer: 'w' };
+        const key = KEYS[String(b.flag)] || 'r';
         const up = {};
         uids.forEach((u) => { up[ROOT + '/msgs/' + slug + '/' + u + '/' + key] = on ? 1 : 0; });
         await deps.getDatabase().ref().update(up);
