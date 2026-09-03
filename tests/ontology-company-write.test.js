@@ -42,7 +42,7 @@ test('근로자 단독 의뢰는 무관한 업체를 강제 연결하지 않는�
 const panel=erp.slice(erp.indexOf('function ContractModal(props){'),erp.indexOf('function ContractHelpModal(props){'));
 const saveStart=panel.indexOf('  async function save(){');
 const modalSave=panel.slice(saveStart,panel.indexOf('// ====== 렌더 ======',saveStart));
-const wrapper=erp.slice(erp.indexOf('function erpValidateContractCompany(form){'),erp.indexOf('function ContractModal(props){'));
+const wrapper=erp.slice(erp.indexOf('function erpCheckWorkReferences(store,form){'),erp.indexOf('function ContractModal(props){'));
 
 async function runSave(options={}){
   const companies=JSON.parse(JSON.stringify(masters));
@@ -55,7 +55,7 @@ async function runSave(options={}){
     props:{cur:form,onSave:async()=>{calls.contract++;if(options.reject)throw new Error('저장 실패');if(options.afterSave)options.afterSave(companies);return options.accepted!==false;}},
     window:{PuOntology:O,PuPhotoStore:{markUsed(){calls.photos++;return Promise.resolve();}}},
     erpGuardEdit:async()=>true,showToast(){},setTab(){},
-    dbGet:(key,seed)=>key==='companies'?companies:seed,
+    dbGet:(key,seed)=>key==='companies'?companies:key==='user_dir'?[{sid:'P1',status:'active'}]:key==='contracts'?[form]:seed,
     dbSet:(key,value)=>{calls.writes.push({key,value:JSON.parse(JSON.stringify(value))});return true;},
     localStorage:{removeItem(){calls.draft++;}},savedRef:{value:false},DRAFT_KEY:'test-draft',
     mergeCompanyContacts:()=>({added:0,skipped:0,contacts:[]}),erpSharePhotoWithMgrs(){calls.shares++;},

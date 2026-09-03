@@ -26,7 +26,7 @@
       projectFor:['Project','Organization'],
       assignedTo:['Contract|Case|Project|Task|ScheduleEvent','Person'],
       assists:['Contract|Case|Project|Task','Person'],
-      derivedFrom:['Case|Project|Task|Document|Submission','Contract|Case|Project|Document'],
+      derivedFrom:['Contract|Case|Project|Task|Document|Submission','Contract|Case|Project|Document'],
       paidFor:['FinancialTransaction','Contract|Case|Project|Organization'],
       invoicedTo:['Invoice','Organization'],
       scheduledFor:['ScheduleEvent','Organization|Contract|Case|Project|Person'],
@@ -242,6 +242,21 @@
       });
     });
 
+    // 원본 계약·사건 관계는 명시적 ID만 색인한다. 번호만 있거나 참조가 모순되면 진단만 남긴다.
+    ['contracts','cases'].forEach(function(store){
+      arr(data[store]).forEach(function(r){
+        if(!clean(r.id))return;
+        var checked=validateWorkReferences(r,data,{store:store}),bad=checked.errors.filter(function(x){return x.field.indexOf('source')===0;});
+        if(bad.length){bad.forEach(function(x){issue(issues,'high','orphan_source',store,r.id,r.id,x.message);});return;}
+        var refs=[];
+        if(r.sourceContractId)refs.push(['contract',clean(r.sourceContractId)]);
+        if((r.sourceKind==='contract'||r.sourceKind==='case')&&r.sourceId)refs.push([r.sourceKind,clean(r.sourceId)]);
+        var seen=Object.create(null);
+        refs.forEach(function(pair){var key=pair.join(':');if(seen[key])return;seen[key]=true;
+          addEdge(edges,canon(STORE_TYPES[store],r.id),'derivedFrom',canon(STORE_TYPES[SOURCE_KIND_STORE[pair[0]]],pair[1]),store,r.id,1);
+        });
+      });
+    });
     var sev={high:0,medium:0,low:0}; issues.forEach(function(x){ sev[x.severity]=(sev[x.severity]||0)+1; });
     return { schemaVersion:VERSION, readOnly:true, entityCount:Object.keys(entities).length, edgeCount:edges.length,
       issueCount:issues.length, severity:sev, stats:stats, entities:entities, edges:edges, issues:issues };
@@ -415,6 +430,64 @@
       .slice(0,100).map(function(x){return {id:clean(x.id),name:clean(x.name||x.companyName),bizNo:clean(x.bizNo)};});
   }
 
+  /* 6-2단계: 현재 명부·업무 목록으로 신규 참조만 엄격히 검사한다.
+     과거의 변경하지 않은 참조는 경고로 남기되 다른 사람/업무로 자동 치환하지 않는다. */
+  function validateWorkReferences(record,data,options){
+    record=record||{};data=data||{};options=options||{};
+    var previous=options.previous||{},errors=[],warnings=[],people=Object.create(null),duplicates=Object.create(null);
+    function problem(code,field,message,unchanged){(unchanged?warnings:errors).push({code:code,field:field,message:message});}
+    ['user_dir','user_accounts'].forEach(function(store){
+      var seen=Object.create(null);
+      entries(data[store]).forEach(function(pair){var u=pair[1];if(!u)return;var sid=clean(u.sid);if(!sid)return;if(seen[sid])duplicates[sid]=true;seen[sid]=true;people[sid]=Object.assign({},people[sid]||{},u);});
+    });
+    var main=clean(record.managerMain),subs=record.managerSubs==null?[]:record.managerSubs,oldSubs=Array.isArray(previous.managerSubs)?previous.managerSubs:[];
+    if(options.requireMain&&!main)problem('missing_manager','managerMain','주담당 사번을 선택하세요.',false);
+    if(!Array.isArray(subs)){problem('invalid_manager_subs','managerSubs','부담당은 사번 목록이어야 합니다.',false);subs=[];}
+    var seenStaff=Object.create(null);
+    function staff(sid,field,unchanged){
+      if(!sid){problem('empty_manager_sid',field,'빈 부담당 사번을 제거하세요.',false);return;}
+      if(seenStaff[sid]){problem('duplicate_manager_sid',field,'주담당·부담당에 같은 사번이 중복되어 있습니다: '+sid,false);return;}seenStaff[sid]=true;
+      var u=people[sid];
+      if(!u||duplicates[sid]){problem('unresolved_manager',field,'명부에서 사번을 유일하게 확인할 수 없습니다: '+sid,unchanged);return;}
+      if(u._deleted||u.accessLocked||u.excludeFromAssign||(u.status&&u.status!=='active')||(options.unassignableSids||[]).indexOf(sid)>=0)
+        problem('manager_not_assignable',field,'새로 배정할 수 없는 담당자입니다: '+sid,unchanged);
+    }
+    if(main)staff(main,'managerMain',main===clean(previous.managerMain));
+    subs.forEach(function(sid){sid=clean(sid);staff(sid,'managerSubs',oldSubs.indexOf(sid)>=0);});
+    function reference(kind,id,field,unchanged){
+      var store=SOURCE_KIND_STORE[kind];
+      if(!store||!id){problem('invalid_source_pair',field,'원본 종류와 실제 ID를 함께 선택하세요.',unchanged);return null;}
+      if(store===options.store&&id===clean(record.id)){problem('self_reference',field,'자기 자신을 원본 업무로 연결할 수 없습니다.',false);return null;}
+      var hits=arr(data[store]).filter(function(x){return clean(x.id)===id;});
+      if(hits.length!==1){problem('unresolved_source',field,'원본 ID가 없거나 중복되어 있습니다: '+kind+' / '+id,unchanged);return null;}
+      return hits[0];
+    }
+    var kind=clean(record.sourceKind),id=clean(record.sourceId),oldPair=kind===clean(previous.sourceKind)&&id===clean(previous.sourceId);
+    var pairTarget=null;
+    if(id||(kind&&kind!=='manual'&&kind!=='unknown'))pairTarget=reference(kind,id,'sourceId',oldPair);
+    var contractId=clean(record.sourceContractId),no=clean(record.sourceContractNo),target=null;
+    if(contractId){
+      target=reference('contract',contractId,'sourceContractId',contractId===clean(previous.sourceContractId));
+      if(kind==='contract'&&id&&id!==contractId)problem('conflicting_contract_refs','sourceContractId','원본 계약 ID 두 곳이 서로 다릅니다.',false);
+      if(target&&no&&clean(target.contractNo)!==no)problem('contract_number_changed','sourceContractNo','원본 계약번호가 현재 번호와 다릅니다. ID는 유지하고 원본을 확인하세요.',contractId===clean(previous.sourceContractId)&&no===clean(previous.sourceContractNo));
+    }else if(kind==='contract'&&id){
+      if(pairTarget&&no&&clean(pairTarget.contractNo)!==no)problem('contract_number_changed','sourceContractNo','원본 계약번호가 현재 번호와 다릅니다. ID는 유지하고 원본을 확인하세요.',oldPair&&no===clean(previous.sourceContractNo));
+    }else if(no){
+      problem('legacy_contract_number','sourceContractNo','계약번호만으로 연결하지 않습니다. 원본 계약을 선택해 ID를 확정하세요.',no===clean(previous.sourceContractNo));
+    }
+    return {ok:errors.length===0,errors:errors,warnings:warnings,readOnly:true};
+  }
+  function workReferenceCandidates(data,query,options){
+    data=data||{};options=options||{};var q=clean(query).toLowerCase(),rows=[];
+    ['contract','case'].forEach(function(kind){arr(data[SOURCE_KIND_STORE[kind]]).forEach(function(r){
+      if(!clean(r.id)||(SOURCE_KIND_STORE[kind]===options.store&&clean(r.id)===clean(options.id)))return;
+      var label=clean(r.contractNo||r.caseNo||r.title||r.id),name=clean(r.companyName||(r.company&&r.company.name));
+      if(q&&[label,name,r.id].join(' ').toLowerCase().indexOf(q)<0)return;
+      rows.push({kind:kind,id:clean(r.id),label:label,name:name,contractNo:kind==='contract'?clean(r.contractNo):''});
+    });});
+    return rows.sort(function(a,b){return (a.label+a.id).localeCompare(b.label+b.id,'ko');}).slice(0,100);
+  }
+
   /* 5단계 검증센터. 진단 결과를 사람이 한 건씩 검토할 작업목록으로 바꾼다.
      검토 상태는 화면 메모일 뿐이며 원본이나 서버에 기록하지 않는다. */
   var VALIDATION_CATEGORIES={
@@ -532,6 +605,7 @@
   return { VERSION:VERSION, TERMS:TERMS, PROGRAMS:PROGRAMS, STORE_TYPES:STORE_TYPES, READ_ADAPTERS:READ_ADAPTERS,
     audit:audit, auditIntegrated:auditIntegrated, getReadPlan:getReadPlan, searchEntities:searchEntities, entityConnections:entityConnections,
     organization360:organization360, validateCompanyLink:validateCompanyLink, companyLinkCandidates:companyLinkCandidates,
+    validateWorkReferences:validateWorkReferences, workReferenceCandidates:workReferenceCandidates,
     VALIDATION_CATEGORIES:VALIDATION_CATEGORIES, buildValidationQueue:buildValidationQueue,
     filterValidationQueue:filterValidationQueue, buildSnapshot:buildSnapshot, validateSnapshot:validateSnapshot, auditPrograms:auditPrograms,
     canonicalId:canon, sourceCanonicalId:sourceCanon, normalizeCompanyName:normName, normalizeBusinessNumber:normBiz };
