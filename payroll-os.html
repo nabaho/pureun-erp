@@ -49,8 +49,37 @@ h1{font-size:20px;margin-bottom:4px}.sub{color:var(--sub);font-size:13px;margin-
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:14px}
 .c{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px}
 .c .t{font-weight:700;color:var(--navy)}.c .m{font-size:12px;color:var(--sub);margin:3px 0 8px}
-.c .kv{font-size:12.5px;margin:3px 0}.c .kv b{color:var(--sub);font-weight:600;display:inline-block;width:64px}
+.c .kv{font-size:12.5px;margin:3px 0}.c .kv b{color:var(--sub);font-weight:600;display:inline-block;width:64px;flex-shrink:0}
 .badge{font-size:11px;border-radius:99px;padding:2px 8px}.badge.warn{background:#fffbeb;color:var(--warn)}.badge.ok{background:#e2e8f0;color:var(--ok)}
+/* ── 설정 카드 채우기 (2026-09-03) ── */
+.c .kv{display:flex;align-items:center;gap:6px}
+/* 빈 칸은 «비었다고» 보인다 — 점선이 「여기 채워 주세요」다 */
+.fill{border:1px dashed #cbd5e1;border-radius:7px;padding:3px 9px;background:#fff;
+      color:var(--sub);cursor:pointer;font-family:inherit;font-size:12.5px}
+.fill:hover{border-color:var(--navy);color:var(--navy)}
+.val{padding:3px 0}.val.mine{color:var(--navy);font-weight:600}
+/* 파란 점 = 사람이 정한 값(기계가 뽑은 값과 눈으로 구별된다) */
+.dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--navy);
+     margin-right:3px;vertical-align:1px}
+.pen{font-size:11px;color:#cbd5e1;cursor:pointer;background:none;border:none;padding:0;font-family:inherit}
+.c:hover .pen{color:var(--sub)}
+/* 어둡게 덮는 색·그림자는 새 색을 만들지 않고 --ink(#1e293b)를 흐리게 쓴다 */
+.mask{position:fixed;inset:0;background:rgba(30,41,59,.42);display:flex;align-items:center;
+      justify-content:center;padding:20px;z-index:900}
+.modal{background:#fff;border-radius:14px;padding:20px;width:380px;max-width:100%;
+       box-shadow:0 20px 50px -12px rgba(30,41,59,.35)}
+.modal h3{margin:0 0 2px;font-size:16px;color:var(--navy)}
+.modal .who{font-size:12px;color:var(--sub);margin-bottom:16px}
+.modal label{display:block;font-size:12px;color:var(--sub);margin:12px 0 5px;font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:99px;padding:5px 12px;
+      font-size:12.5px;cursor:pointer;font-family:inherit;color:var(--ink)}
+.chip.on{background:var(--navy);color:#fff;border-color:var(--navy);font-weight:600}
+.modal input[type=text]{width:100%;border:1px solid var(--line);border-radius:8px;
+      padding:8px 10px;font-family:inherit;font-size:13px}
+.why{background:var(--paper);border-radius:8px;padding:9px 11px;font-size:11.5px;
+     color:var(--sub);line-height:1.6;margin-top:14px}
+.acts{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
 .empty{background:#fff;border:1px dashed var(--line);border-radius:14px;padding:36px;text-align:center;color:var(--sub)}
 #gate{position:fixed;inset:0;background:var(--paper);display:flex;align-items:center;justify-content:center;z-index:9}
 #gate .box{background:#fff;border:1px solid var(--line);border-radius:16px;padding:32px 36px;width:360px;text-align:center}
@@ -137,6 +166,8 @@ h1{font-size:20px;margin-bottom:4px}.sub{color:var(--sub);font-size:13px;margin-
   <div class="who"><span id="whoami"></span><span id="saveState" class="save-state saved" role="status" aria-live="polite">저장 완료</span><button class="out" onclick="doLogout()">로그아웃</button></div>
 </header>
 <div class="layout"><nav id="nav"></nav><main id="main"></main></div>
+<!-- 설정값 채우기 창. main 밖에 두어야 render() 가 다시 그려도 안 닫힌다. -->
+<div id="cardEditBox"></div>
 
 <script>
 var FB_CONFIG = {
@@ -206,11 +237,14 @@ function afterLogin(){
     /* 옛 모양(직원 표가 안에 든 것) — 아직 새 모양으로 안 올렸을 때를 위해 함께 본다.
        ⚠ 이것이 있으면 그대로 쓴다. 안 그러면 새 앱을 올린 순간부터 데이터를 다시
        올리기 전까지 화면이 통째로 빈다. */
-    fbDb.ref(ROOT+'/payroll/sites').once('value')
+    fbDb.ref(ROOT+'/payroll/sites').once('value'),
+    /* 사람이 채운 설정값 — 카드 위에 겹쳐 본다. 아주 얇다(사업장당 두 칸). */
+    fbDb.ref(ROOT+'/site_card_edit').once('value')
   ]).then(function(r){
     cache.site_cards=r[0].val()||[];
     cache.payroll_locked=r[1].val()||{};
     cache.payslip_notice=r[3].val()||'';
+    cache.site_card_edit=r[5].val()||{};
     payIdx=r[2].val()||null;
     payOld=r[4].val()||null;
     ready=true; navSeed(); render();
@@ -580,11 +614,41 @@ function realPayday(v){
   var s=String(v==null?'':v).trim();
   return (!s||s.indexOf('미확인')>=0)?'':s;
 }
+
+/* ══════ 사람이 채운 설정값 (2026-09-03) ══════
+   ⚠ 왜 site_cards 에 안 적나 — 그 자리는 기계가 다시 만들어 **통째로 덮어쓴다**
+     (설정 카드 화면의 「JSON 가져와 서버 저장」이 배열을 그대로 set 한다).
+     거기에 적으면 다음에 카드를 올릴 때 사람이 채운 값이 **조용히 사라진다.**
+     그래서 사람 값만 따로 담고, 읽을 때 겹쳐 본다.
+   담는 꼴: site_card_edit[사업장] = {급여일, 산정기간, by, at}
+   ⚠ 단수처리는 담지 않는다 — 계산(policyFor)에 닿는 값이라 대표 판단이 먼저다. */
+function cardEdits(){ return lmap('site_card_edit'); }
+
+/* 카드 한 장을 «화면이 볼 모양»으로 겹친다 — 사람 값이 이긴다.
+   빈 글자('')도 사람의 답이다(「모른다」를 뜻한다) — 있으면 그대로 쓴다. */
+function cardView(c){
+  var e=cardEdits()[String((c&&c.사업장)||'')]||{};
+  var pick=function(f){ return (e[f]!=null)?realPayday(e[f]):realPayday(c&&c[f]); };
+  return {
+    사업장: (c&&c.사업장)||'',
+    담당자: (c&&c.담당자)||'',
+    급여일: pick('급여일'),
+    산정기간: pick('산정기간'),
+    급여일_사람: e.급여일!=null,
+    산정기간_사람: e.산정기간!=null,
+    고친이: e.by||'', 고친때: e.at||0,
+    원본: c||{}
+  };
+}
+/* 겹쳐 본 카드들. 사람이 채웠지만 카드에는 없는 사업장은 만들지 않는다 —
+   카드가 진짜 목록이고, 편집은 그 위에 얹는 것뿐이다. */
+function cardsView(){ return (dbGet('site_cards',[])||[]).map(cardView); }
+
 function paydayOf(site){
-  var cards=dbGet('site_cards',[])||[],set={};
-  cards.forEach(function(c){ var nm=String(c.사업장||'');
+  var set={};
+  cardsView().forEach(function(v){ var nm=String(v.사업장||'');
     if(nm.indexOf(site)>=0||site.indexOf(nm)>=0){
-      var d=realPayday(c.급여일); if(d) set[d]=1; } });
+      if(v.급여일) set[v.급여일]=1; } });
   var ks=Object.keys(set);
   return ks.length===1?ks[0]:'';
 }
@@ -777,9 +841,11 @@ function dueDayOf(card){
   var m=g.match(/(\d{1,2})/); return m?parseInt(m[1],10):null;
 }
 function inboxRoster(pay){
-  var cards=dbGet('site_cards',[])||[], seen={}, out=[];
-  cards.forEach(function(c){ if(c.사업장&&!seen[c.사업장]){ seen[c.사업장]=1;
-    out.push({site:c.사업장,담당자:c.담당자||'',급여일:c.급여일||'',card:c}); } });
+  /* ⚠ 겹쳐 본 값을 쓴다 — 대표가 설정 카드에서 채운 급여일이 여기 독촉 마감에도
+     그대로 걸려야 한다. 카드 원본만 보면 채워도 수신함은 옛 값으로 남는다. */
+  var seen={}, out=[];
+  cardsView().forEach(function(v){ if(v.사업장&&!seen[v.사업장]){ seen[v.사업장]=1;
+    out.push({site:v.사업장,담당자:v.담당자,급여일:v.급여일,card:v}); } });
   paySites().forEach(function(s){ if(!seen[s]){ seen[s]=1;
     out.push({site:s,담당자:'',급여일:'',card:null}); } });
   return out;
@@ -1360,13 +1426,116 @@ function screenCards(){
     ? '<span class="badge ok">간이세액표 있음</span> '+(tt.연도||'')+'년 · 구간 '+tt.rows.length+'개 · 가족 칸 '+((tt.rows[0].tax||[]).length)+'개'
     : '<span class="badge warn">간이세액표 없음</span> 소득세는 대장 값만 씁니다 — <code>node engine/build_simpletax.js</code> 로 만든 JSON을 올리세요')+'</div>';
   if(!cards.length){ h+='<div class="empty" style="margin-top:14px">서버에 자료 없음. 위 버튼으로 site_cards.json 올리면 저장됩니다.</div>'; return h; }
-  h+='<div class="cards">'+cards.map(function(c){var n=(c.확인필요||[]).length;
-    return '<div class="c"><div style="display:flex;justify-content:space-between"><span class="t">'+c.사업장+'</span>'+
+  /* 아직 안 채운 곳이 몇 곳인지 먼저 말한다 — 46곳을 눈으로 훑게 두지 않는다. */
+  var vs=cardsView(), empty=vs.filter(function(v){return !v.급여일;}).length;
+  if(empty) h+='<div class="kv" style="margin-top:12px;color:var(--warn);font-size:13px">'
+    +'급여일이 아직 빈 곳 <b>'+empty+'곳</b> — 그 곳 임금명세서에는 지급일이 「-」로 나갑니다.</div>';
+  h+='<div class="cards">'+vs.map(function(v,i){var c=v.원본,n=(c.확인필요||[]).length;
+    return '<div class="c"><div style="display:flex;justify-content:space-between"><span class="t">'+v.사업장+'</span>'+
     (n?'<span class="badge warn">확인필요 '+n+'</span>':'<span class="badge ok">확인완료</span>')+'</div>'+
-    '<div class="m">'+(c.담당자||'')+' · 직원 '+((c.규모||{}).직원레코드||0)+'건</div>'+
-    '<div class="kv"><b>급여일</b>'+(c.급여일||'')+'</div><div class="kv"><b>산정기간</b>'+(c.산정기간||'')+'</div>'+
-    '<div class="kv"><b>고용보험</b>'+((c.고용보험||{}).단수처리||'')+'</div></div>';}).join('')+'</div>';
+    '<div class="m">'+v.담당자+' · 직원 '+((c.규모||{}).직원레코드||0)+'건</div>'+
+    cardField(v,i,'급여일')+cardField(v,i,'산정기간')+
+    /* 고용보험 단수처리는 «보여 주기만» 한다 — policyFor 가 지금 이 값을 안 쓴다.
+       고칠 수 있게 해 두면 채워도 아무 일이 안 일어나 거짓말이 된다. */
+    '<div class="kv"><b>고용보험</b><span class="val">'+((c.고용보험||{}).단수처리||'')+'</span></div>'+
+    '</div>';}).join('')+'</div>';
   return h;
+}
+/* 한 칸 — 비었으면 「채우기」 단추, 차 있으면 값과 연필.
+   ⚠ 손잡이에 사업장 «이름»을 심지 않는다. esc() 가 따옴표를 떼어 내므로
+     「오'브라이언」 같은 이름이면 떨어져 나간 이름으로 저장돼 엉뚱한 자리에 들어간다.
+     번호로 가리키면 이름에 무엇이 들었든 안 깨진다. */
+function cardField(v,i,f){
+  var val=v[f], mine=v[f+'_사람'];
+  var open='openCardEdit('+i+',\''+f+'\')';
+  return '<div class="kv"><b>'+f+'</b>'+(val
+    ? '<span class="val'+(mine?' mine':'')+'">'+(mine?'<span class="dot"></span>':'')+val+'</span>'
+      +'<button class="pen" title="고치기" onclick="'+open+'">✎</button>'
+    : '<button class="fill" onclick="'+open+'">＋ '+f+' 채우기</button>')+'</div>';
+}
+
+/* ══════ 설정값 채우기 창 ══════
+   ⚠ 「비우기」가 반드시 있어야 한다 — 잘못 넣었을 때 되돌릴 길이 없으면
+     틀린 급여일이 명세서에 계속 찍힌다. */
+/* 누가 정했는지 남기려고 쓴다 — 나중에 「이 급여일 누가 넣었지」를 물을 수 있게.
+   ⚠ 로그인 정보를 못 읽어도 저장은 막지 않는다(누가 넣었는지만 비고 값은 들어간다). */
+function meEmail(){
+  try{ var u=(window.firebase&&firebase.auth&&firebase.auth().currentUser)||null;
+       return (u&&u.email)||''; }catch(e){ return ''; }
+}
+var cardEditOn=null;                        // {site, field} 또는 null
+var PAYDAY_CHIPS=['5일','10일','15일','20일','25일','말일'];
+var PERIOD_CHIPS=['1일~말일','11일~말일','21일~20일','25일~24일'];
+
+/* 번호로 받아 이름을 여기서 찾는다 — 화면 손잡이에는 번호만 있다. */
+function openCardEdit(i,field){
+  var v=cardsView()[i]; if(!v) return;
+  cardEditOn={site:v.사업장,field:field}; drawCardEdit();
+}
+function closeCardEdit(){ cardEditOn=null; drawCardEdit(); }
+window.openCardEdit=openCardEdit; window.closeCardEdit=closeCardEdit;
+
+function cardEditPick(v){
+  var el=document.getElementById('cardEditInput'); if(!el) return;
+  el.value=v; drawCardEditChips();
+}
+window.cardEditPick=cardEditPick;
+window.drawCardEditChips=function(){ drawCardEditChips(); };
+
+function drawCardEditChips(){
+  var el=document.getElementById('cardEditInput'); if(!el||!cardEditOn) return;
+  var now=String(el.value||'').trim();
+  var chips=(cardEditOn.field==='급여일'?PAYDAY_CHIPS:PERIOD_CHIPS);
+  var box=document.getElementById('cardEditChips'); if(!box) return;
+  box.innerHTML=chips.map(function(t){
+    return '<button class="chip'+(now===t?' on':'')+'" onclick="cardEditPick(\''+t+'\')">'+t+'</button>';
+  }).join('');
+}
+
+function saveCardEdit(clear){
+  if(!cardEditOn) return;
+  var el=document.getElementById('cardEditInput');
+  var val=clear?'':String((el&&el.value)||'').trim();
+  /* ⚠ 「미확인…」을 손으로 다시 적는 것을 막는다 — 그러면 명세서에 그 글자가 찍힌다. */
+  if(val&&val.indexOf('미확인')>=0){
+    alert('「미확인」이라고 적으면 임금명세서 지급일 자리에 그 글자가 그대로 찍힙니다.\n모르시면 「비우기」를 누르세요 — 비면 「-」로 나갑니다.');
+    return;
+  }
+  var m=cardEdits(), row=m[cardEditOn.site]||{};
+  row[cardEditOn.field]=val;                       // 빈 글자도 사람의 답이다(「모른다」)
+  row.by=meEmail();
+  row.at=Date.now();
+  m[cardEditOn.site]=row;
+  cardEditOn=null;
+  dbSet('site_card_edit',m);                       // render() 안에서 창도 다시 그린다
+  drawCardEdit();
+}
+window.saveCardEdit=saveCardEdit;
+
+function drawCardEdit(){
+  var box=document.getElementById('cardEditBox'); if(!box) return;
+  if(!cardEditOn){ box.innerHTML=''; return; }
+  var f=cardEditOn.field;
+  var v=cardsView().filter(function(x){return x.사업장===cardEditOn.site;})[0]||{};
+  var was=v[f]||'';
+  var who=(v.고친이&&v[f+'_사람'])?('마지막으로 '+v.고친이+'님이 정함'):'';
+  box.innerHTML='<div class="mask" onclick="if(event.target===this)closeCardEdit()"><div class="modal">'
+    +'<h3>'+f+'</h3>'
+    +'<div class="who">'+esc(cardEditOn.site)+(v.담당자?(' · 담당 '+esc(v.담당자)):'')+(who?(' · '+who):'')+'</div>'
+    +'<label>자주 쓰는 것</label><div class="chips" id="cardEditChips"></div>'
+    +'<label>직접 적기</label>'
+    +'<input type="text" id="cardEditInput" value="'+esc(was)+'" oninput="drawCardEditChips()">'
+    +'<div class="why">'
+    +(f==='급여일'
+      ? '이 값은 <b>임금명세서 지급일</b>에 그대로 찍힙니다.<br>모르면 <b>비워 두십시오</b> — 빈칸은 「-」로 나가지만, 틀린 날짜가 찍히는 것보다 낫습니다.'
+      : '자료를 언제부터 언제까지로 묶는지입니다. 독촉 마감을 셀 때 씁니다.')
+    +'</div>'
+    +'<div class="acts">'
+    +'<button class="btn sec" onclick="saveCardEdit(true)">비우기</button>'
+    +'<button class="btn sec" onclick="closeCardEdit()">그만두기</button>'
+    +'<button class="btn" onclick="saveCardEdit(false)">저장</button>'
+    +'</div></div></div>';
+  drawCardEditChips();
 }
 /* ══════════════════════════════════════════════════════════════════════
    노동법 화면 3장 — 근태 · 연차·휴가 · 퇴직
@@ -2193,6 +2362,7 @@ function render(){
   else if(App.screen==='slip') m.innerHTML=screenSlip();
   else if(App.screen==='report') { m.innerHTML=screenReport(); addPayrollReportHwpxAction(m); }
   else m.innerHTML=screenInbox();
+  drawCardEdit();      /* 창은 main 밖에 있다 — 다시 그려도 안 지워진다 */
 }
 /* 간이세액표 올리기 — 모양을 먼저 본다. 잘못된 파일이 들어가면 세금이
    조용히 0 이 되거나 엉뚱해진다(가장 찾기 어려운 종류의 고장). */

@@ -22,11 +22,18 @@ function cut(name) {
   return m[0];
 }
 
-/* 카드 목록을 갈아 끼우며 부를 수 있게, dbGet 만 가짜로 준다. */
+/* 카드 목록을 갈아 끼우며 부를 수 있게, dbGet 만 가짜로 준다.
+   ⚠ paydayOf 는 사람이 채운 값을 겹쳐 보므로(cardsView) 그 길도 함께 싣는다 —
+     안 실으면 여기서만 터지고, 실제 화면과 다른 것을 재게 된다.
+     사람이 채운 값 자체는 tests/payroll-card-edit.test.js 가 본다. */
 function box(cards) {
-  const ctx = { cards: cards, dbGet: function (k, d) { return k === 'site_cards' ? cards : d; } };
+  const store = { site_cards: cards, site_card_edit: {} };
+  const ctx = { cards: cards, dbGet: function (k, d) { return store[k] != null ? store[k] : d; } };
   vm.createContext(ctx);
-  vm.runInContext(cut('realPayday') + '\n' + cut('paydayOf') + '\n' + cut('dueDayOf'), ctx);
+  vm.runInContext([
+    cut('realPayday'), cut('lmap'), cut('cardEdits'), cut('cardView'),
+    cut('cardsView'), cut('paydayOf'), cut('dueDayOf')
+  ].join('\n'), ctx);
   return ctx;
 }
 
