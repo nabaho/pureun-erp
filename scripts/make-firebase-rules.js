@@ -169,6 +169,17 @@ rules.data = {
        「컨설팅 종류 관리」에서 직접 고른다. 좁히면 색을 바꿔도 조용히 안 올라간다. */
   cons_type_colors: { '.read': LOGIN, '.write': LOGIN },
 
+  /* 업체 고유번호 번호통 (대표 지시 2026-09-03).
+     업체를 만드는 사람이 여기서 다음 번호를 «뽑아» 간다 — 그래서 쓰기는 직원 전원이다.
+     ⚠⚠ 번호는 «뒤로 갈 수 없다». 되돌려 쓰면 지난 서류가 가리키던 번호가
+       다른 업체에 붙는다 — 그것은 되돌릴 수 없는 사고다.
+       그래서 규칙이 「지금보다 큰 수」만 받는다. 코드에 구멍이 나도 서버가 막는다. */
+  co_no_seq: {
+    '.read': LOGIN, '.write': LOGIN,
+    '.validate': 'newData.isNumber() && newData.val() >= 10001 && newData.val() <= 99999'
+      + ' && (!data.exists() || newData.val() > data.val())'
+  },
+
   /* ⚠ 여기 이름이 없는 자리는 아래로 떨어져 «재직 직원 누구나» 읽고 쓴다.
      새 자리를 만들 때는 권한을 정해 위에 이름을 적을 것 —
      tests/rules-data-named.test.js 가 이름 없는 자리를 잡는다. */

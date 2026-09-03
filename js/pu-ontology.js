@@ -82,6 +82,92 @@
       entityTypes:['Organization','Person','Message','Document'] }
   };
 
+  /* ══ 업체 고유번호 — 「머리 + 몸통」 (대표 지시 2026-09-03) ══════════════
+     `자문-10001` 처럼 적는다.
+       · 머리(자문·급여·노조·기금·대행·미정) = «뜻». 업무가 바뀌면 머리도 바뀐다.
+       · 몸통(10001) = «열쇠». 한 번 주면 절대 안 바뀌고 재사용도 없다.
+     ★★ 연결·검색·색인은 «몸통만» 본다.
+       머리까지 붙여 이으면 자문이 급여로 바뀌는 날 조용히 끊긴다.
+       그것이 이 설계의 전부다 — 뜻을 담되 뜻으로 잇지 않는다.
+     ⚠ 지금 쓰는 내부 열쇠(`id`)는 «그대로» 둔다. 계약·사건·기금·입출금·
+       세금계산서·사진 서류·명함이 전부 그것으로 이어져 있다.
+       이 번호는 사람·엑셀·전화가 쓰는 칸을 «덧붙이는» 것이다. */
+  var COMPANY_NUMBER = { min:10001, max:99999, digits:5, seqPath:'data/co_no_seq' };
+  var COMPANY_NUMBER_HEADS = {
+    자문:'노무자문', 급여:'급여 대행', 노조:'노사관계', 기금:'근로복지기금',
+    대행:'사무대행 전용 등록', 미정:'업무 종류를 아직 안 정함'
+  };
+  /* 머리는 지금 상태에서 «다시 계산»한다 — 그래서 유형을 고치면 머리가 따라온다.
+     ⚠ 사무대행 «전용» 등록이 이긴다. 자문이면서 사무대행을 겸하는 곳은
+       머리가 `자문`이고 대행은 딱지로 따로 보인다
+       (사무대행은 유형이 아니라 겸하는 일이다 — 대표 지시 2026-08-31). */
+  function companyNumberHead(co){
+    co = co || {};
+    if(clean(co.status) === 'suboffice') return '대행';
+    var t = clean(co.typeCode);
+    return COMPANY_NUMBER_HEADS[t] ? t : '미정';
+  }
+  function companyNumberBody(co){
+    var n = Number(co && co.puNo);
+    if(!isFinite(n) || Math.floor(n) !== n) return 0;
+    return (n >= COMPANY_NUMBER.min && n <= COMPANY_NUMBER.max) ? n : 0;
+  }
+  function formatCompanyNumber(co){
+    var body = companyNumberBody(co);
+    return body ? companyNumberHead(co) + '-' + body : '';
+  }
+  /* 사람이 적은 글에서 «몸통만» 뽑는다. 머리는 버린다 — 옛 번호로도 찾히게.
+     ⚠⚠ 「끝에 붙은 다섯 자리」로 찾으면 안 된다 — 사업자번호 312-81-95374 의
+       끝 다섯 자리(95374)를 고유번호로 읽어 엉뚱한 업체를 연다(2026-09-03 실제로 그랬다).
+       숫자를 «다 모아» 정확히 다섯 자리일 때만 고유번호로 본다. */
+  function parseCompanyNumber(text){
+    var digits = clean(text).replace(/\D/g, '');
+    if(digits.length !== COMPANY_NUMBER.digits) return 0;
+    var n = Number(digits);
+    return (n >= COMPANY_NUMBER.min && n <= COMPANY_NUMBER.max) ? n : 0;
+  }
+  /* 부여 순서 — 오래된 것부터. 다시 돌려도 «같은 번호»가 나와야 한다. */
+  function companyNumberOrder(list){
+    return arr(list).slice().sort(function(a,b){
+      var ka = clean(a.createdAt) || clean(a.contractStartDate) || clean(a.firstContractDate) || '9999';
+      var kb = clean(b.createdAt) || clean(b.contractStartDate) || clean(b.firstContractDate) || '9999';
+      if(ka !== kb) return ka < kb ? -1 : 1;
+      var na = clean(a.name||a.companyName), nb = clean(b.name||b.companyName);
+      if(na !== nb) return na.localeCompare(nb, 'ko');
+      return clean(a.id).localeCompare(clean(b.id));
+    });
+  }
+  /* 이미 번호가 있는 곳은 «절대» 건드리지 않는다. 지운 업체도 세지 않는다. */
+  function companyNumberTargets(list){
+    return companyNumberOrder(arr(list).filter(function(c){ return c && !companyNumberBody(c); }));
+  }
+  function validateCompanyNumbers(list){
+    var errors=[], warnings=[], seen={};
+    arr(list).forEach(function(c){
+      var body=companyNumberBody(c);
+      if(!body){
+        if(c && c.puNo !== undefined && c.puNo !== null && clean(c.puNo) !== '')
+          errors.push({id:clean(c.id), message:'고유번호가 쓸 수 없는 값입니다: '+clean(c.puNo)});
+        return;
+      }
+      if(seen[body]) errors.push({id:clean(c.id), message:'고유번호 '+body+' 가 두 곳에 있습니다(먼저: '+seen[body]+').'});
+      else seen[body]=clean(c.id);
+      var head=companyNumberHead(c), kept=clean(c.puNoHead);
+      if(kept && kept!==head)
+        warnings.push({id:clean(c.id), message:'머리가 '+kept+' 로 적혀 있는데 지금 유형은 '+head+' 입니다 — 이력을 남기고 고치세요.'});
+    });
+    return {ok:errors.length===0, errors:errors, warnings:warnings, readOnly:true};
+  }
+  /* 머리가 바뀌면 «그 자리에» 기록을 쌓는다 — 옛 번호로 찾아도 지금 번호로 데려가려고. */
+  function companyNumberHistory(co, at, by){
+    co = co || {};
+    var head = companyNumberHead(co), kept = clean(co.puNoHead);
+    var log = Array.isArray(co.puNoHistory) ? co.puNoHistory.slice() : [];
+    if(kept === head) return {changed:false, head:head, puNoHistory:log};
+    log.unshift({head:head, from:kept||'', at:clean(at)||new Date().toISOString(), by:clean(by)});
+    return {changed:true, head:head, puNoHistory:log.slice(0,20)};
+  }
+
   /* ── 등록부 밖에 있던 화면들 (2026-09-03) ──
      예전 검사는 «포털 타일 목록»만 봤다. 그런데 타일 없이 주소로 들어가는 화면이
      다섯이나 있었다 — 근로자가 폰으로 여는 제출 쪽, 이음센터 근무표 보기,
@@ -770,6 +856,10 @@
   return { VERSION:VERSION, TERMS:TERMS, PROGRAMS:PROGRAMS, STORE_TYPES:STORE_TYPES, READ_ADAPTERS:READ_ADAPTERS,
     PORTAL_FILE:PORTAL_FILE, SATELLITES:SATELLITES, EXCLUDED_SCREENS:EXCLUDED_SCREENS, INFRA_ROOTS:INFRA_ROOTS,
     PREDICATES_PLANNED:PREDICATES_PLANNED, auditScreens:auditScreens, auditRoots:auditRoots, auditRegistry:auditRegistry,
+    COMPANY_NUMBER:COMPANY_NUMBER, COMPANY_NUMBER_HEADS:COMPANY_NUMBER_HEADS,
+    companyNumberHead:companyNumberHead, companyNumberBody:companyNumberBody, formatCompanyNumber:formatCompanyNumber,
+    parseCompanyNumber:parseCompanyNumber, companyNumberOrder:companyNumberOrder, companyNumberTargets:companyNumberTargets,
+    validateCompanyNumbers:validateCompanyNumbers, companyNumberHistory:companyNumberHistory,
     audit:audit, auditIntegrated:auditIntegrated, getReadPlan:getReadPlan, searchEntities:searchEntities, entityConnections:entityConnections,
     organization360:organization360, validateCompanyLink:validateCompanyLink, companyLinkCandidates:companyLinkCandidates,
     validateWorkReferences:validateWorkReferences, workReferenceCandidates:workReferenceCandidates, validateWorkBatch:validateWorkBatch,

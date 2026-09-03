@@ -146,7 +146,7 @@
 <script src="js/pu-billing.js?v=7"></script>
 <script src="js/pu-rrn-seal.js?v=1"></script>
 <!-- 푸른통합 온톨로지 공통 사전·읽기 전용 관계 진단 -->
-<script src="js/pu-ontology.js?v=11"></script>
+<script src="js/pu-ontology.js?v=12"></script>
 <!-- 급여담당자 엑셀 → 업체관리 (대표 결정 2026-08-24). 읽고 대조하는 일은 이 파일이,
      그리기는 아래 화면이 한다 — 검사가 이 파일을 그대로 돌린다. -->
 <script src="js/pu-co-xls.js?v=3"></script>
@@ -21233,9 +21233,20 @@ function CompanyManagement(){
       return (y.createdAt||'').localeCompare(x.createdAt||''); }); });
     setCompanies(fresh);
   }
-  function coUpsert(item){ if(!item || !item.id) return false; var ok = dbUpsert('companies', item); if(ok) refreshCompanies(); else showToast('❌ 저장 실패'); return ok; }
+  /* 유형·사무대행이 바뀌면 고유번호의 «머리»가 따라 바뀐다 — 그 바뀜을 그 자리에 남긴다
+     (대표 지시 2026-09-03: 「기본에서 변경한 값으로 기록되어 추적확인」).
+     ⚠ 몸통(puNo)은 손대지 않는다 — 몸통이 바뀌면 계약·재무·사진이 끊긴다.
+     ⚠ 업체관리의 모든 저장이 이 문을 지나므로 여기 한 곳에만 붙인다. */
+  function coStampNumberHead(item){
+    var O = window.PuOntology;
+    if(!O || !item || !O.companyNumberBody(item)) return item;
+    var log = O.companyNumberHistory(item, new Date().toISOString(), (window.CURRENT_USER && CURRENT_USER.sid) || '');
+    if(!log.changed) return item;
+    return Object.assign({}, item, { puNoHead: log.head, puNoHistory: log.puNoHistory });
+  }
+  function coUpsert(item){ if(!item || !item.id) return false; item = coStampNumberHead(item); var ok = dbUpsert('companies', item); if(ok) refreshCompanies(); else showToast('❌ 저장 실패'); return ok; }
   function coPatch(id, fields){ var ok = dbPatch('companies', id, fields); if(ok) refreshCompanies(); else showToast('❌ 저장 실패'); return ok; }
-  function coUpsertMany(list){ if(!list || !list.length) return true; var ok = dbUpsertMany('companies', list); if(ok) refreshCompanies(); else showToast('❌ 일괄 저장 실패'); return ok; }
+  function coUpsertMany(list){ if(!list || !list.length) return true; list = list.map(coStampNumberHead); var ok = dbUpsertMany('companies', list); if(ok) refreshCompanies(); else showToast('❌ 일괄 저장 실패'); return ok; }
 
   // 계약만료 30일 이내?
   function daysUntilEnd(co){
@@ -21571,6 +21582,11 @@ function CompanyManagement(){
       var qq = query.toLowerCase().trim();
       if(!qq) return true;
       var qqNum = query.replace(/[^0-9]/g,'');
+      /* 고유번호로 찾는다 — «몸통만» 본다(대표 지시 2026-09-03).
+         그래서 「자문-10001」로 찾아도, 유형이 급여로 바뀐 뒤에도 같은 곳이 나온다.
+         ⚠ 머리를 붙여 대조하면 안 된다 — 바뀌는 날 조용히 안 찾아진다. */
+      var qqNo = window.PuOntology ? PuOntology.parseCompanyNumber(query) : 0;
+      if(qqNo && window.PuOntology && PuOntology.companyNumberBody(co) === qqNo) return true;
       /* 예전 이름으로도 찾아진다 (대표 지시 ④) — 이름이 바뀐 곳을 옛 이름으로 찾는 일이 잦다. */
       return (co.name||'').toLowerCase().indexOf(qq) >= 0
           || erpPrevList(co).some(function(p){ return p.toLowerCase().indexOf(qq) >= 0; })
@@ -22095,6 +22111,7 @@ function CompanyManagement(){
             ? [
                 h('th', { key:'h0', style:{ width:'30px', textAlign:'center' } }, h('input',{type:'checkbox', title:'현재 페이지 전체 선택', checked:pg.paged.length>0&&pg.paged.every(function(c){return selIds.has(c.id);}), onChange:function(e){e.target.checked?selectAll():clearSel();}, style:{cursor:'pointer'}})),
                 h('th', { key:'h1', style:{ width:'30px' } }, '#'),
+                h('th', { key:'h1n', style:{ whiteSpace:'nowrap' } }, '번호'),
                 h('th', { key:'h2', onClick:function(){toggleSort('name');}, style:{ cursor:'pointer', userSelect:'none' } }, '업체명' + sortIcon('name')),
                 thF('담당자', 'managerMain', 'mgr', { key:'h3' }),
                 h('th', { key:'h4' }, '사업자번호'),
@@ -22114,6 +22131,7 @@ function CompanyManagement(){
             : [
                 h('th', { key:'a0', style:{ width:'30px', textAlign:'center' } }, h('input',{type:'checkbox', title:'현재 페이지 전체 선택', checked:pg.paged.length>0&&pg.paged.every(function(c){return selIds.has(c.id);}), onChange:function(e){e.target.checked?selectAll():clearSel();}, style:{cursor:'pointer'}})),
                 h('th', { key:'a1', style:{ width:'30px' } }, '#'),
+                h('th', { key:'a1n', style:{ whiteSpace:'nowrap' } }, '번호'),
                 h('th', { key:'a2', onClick:function(){toggleSort('name');}, style:{ cursor:'pointer', userSelect:'none' } }, '업체명' + sortIcon('name')),
                 thF('유형', 'typeCode', 'type', { key:'a3' }),
                 thF('주담당', 'managerMain', 'mgr', { key:'a4', className:'contract-only',
@@ -22143,7 +22161,7 @@ function CompanyManagement(){
         )),
         h('tbody', null,
           filtered.length === 0
-            ? h('tr', null, h('td', { colSpan: statusTab === 'suboffice' ? 17 : 24, className:'ac', style:{ color:'#94a3b8', padding:'40px' } }, '등록된 데이터가 없습니다'))
+            ? h('tr', null, h('td', { colSpan: statusTab === 'suboffice' ? 18 : 25, className:'ac', style:{ color:'#94a3b8', padding:'40px' } }, '등록된 데이터가 없습니다'))
             : pg.paged.map(function(co, idx){
                 var expiring = isExpiringSoon(co);
                 // ★ 폐업(회색)이 계약 중단(주황)보다 앞선다 — 사업장이 없어진 것이 더 큰 사실이다
@@ -22209,6 +22227,11 @@ function CompanyManagement(){
                       h('input',{type:'checkbox', checked:selIds.has(co.id), onChange:function(e){e.stopPropagation();toggleSel(co.id);}, style:{cursor:'pointer', width:'14px', height:'14px'}})
                     ),
 h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, idx + 1),
+                    /* 고유번호 — 한 칸 한 줄이다. 머리는 유형이 바뀌면 따라오고, 몸통은 안 바뀐다.
+                       ⚠ 검색·연결은 «몸통만» 본다 — 머리까지 붙여 대조하면 유형이 바뀌는 날 안 찾아진다. */
+                    h('td', { style:{ whiteSpace:'nowrap', fontSize:'10.5px', color:'#1e40af', fontWeight:700 },
+                      title:'고유번호 — 연결과 검색은 몸통(뒤 다섯 자리)만 봅니다' },
+                      (window.PuOntology && PuOntology.formatCompanyNumber(co)) || '—'),
                     h('td', null,
                       h('span', { onClick:function(){ setDetailModal(co); },
                         style:{ cursor:'pointer', color:'#1e40af', textDecoration:'underline', fontWeight:600 } }, co.name),
@@ -22248,6 +22271,11 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                       h('input',{type:'checkbox', checked:selIds.has(co.id), onChange:function(e){e.stopPropagation();toggleSel(co.id);}, style:{cursor:'pointer', width:'14px', height:'14px'}})
                     ),
 h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, idx + 1),
+                    /* 고유번호 — 한 칸 한 줄이다. 머리는 유형이 바뀌면 따라오고, 몸통은 안 바뀐다.
+                       ⚠ 검색·연결은 «몸통만» 본다 — 머리까지 붙여 대조하면 유형이 바뀌는 날 안 찾아진다. */
+                    h('td', { style:{ whiteSpace:'nowrap', fontSize:'10.5px', color:'#1e40af', fontWeight:700 },
+                      title:'고유번호 — 연결과 검색은 몸통(뒤 다섯 자리)만 봅니다' },
+                      (window.PuOntology && PuOntology.formatCompanyNumber(co)) || '—'),
                   // 업체명 (클릭 → 상세보기)
                   h('td', null,
                     h('span', { onClick:function(){ setDetailModal(co); },
@@ -37840,6 +37868,113 @@ function OntologyAuditPanel(){
   );
 }
 
+/* ══ 업체 고유번호 부여 (대표 지시 2026-09-03) ═══════════════════════════
+   「머리 + 몸통」 — `자문-10001`. 규칙은 js/pu-ontology.js 한 곳에 있다.
+   ★ 여기서 하는 일은 «번호 없는 곳에 몸통을 주는 것»뿐이다.
+     이미 번호가 있는 곳은 건드리지 않고, 지금 id·관리번호·사업자번호도 그대로 둔다.
+   ⚠ 번호통은 서버에서 «잠그고» 뽑는다(data/co_no_seq). 둘이 동시에 눌러도 안 겹친다.
+     규칙이 「지금보다 큰 수」만 받으므로 코드에 구멍이 나도 되돌아가지 않는다. */
+function coNoTakeBlock(need){
+  var O = window.PuOntology;
+  if(!O || !need) return Promise.reject(new Error('번호 규칙을 불러오지 못했습니다'));
+  var min = O.COMPANY_NUMBER.min, max = O.COMPANY_NUMBER.max;
+  /* 번호통이 «업체 목록보다 뒤처져» 있으면 안 된다 — 예전에 손으로 넣은 번호가 있을 수 있다. */
+  var used = dbGet('companies', []).reduce(function(m, c){
+    var b = O.companyNumberBody(c); return b > m ? b : m; }, min - 1);
+  return fbDb.ref(O.COMPANY_NUMBER.seqPath).transaction(function(cur){
+    var from = Math.max(Number(cur) || (min - 1), used);
+    var next = from + need;
+    if(next > max) return;                                    // 통이 넘치면 중단 — 조용히 겹치게 두지 않는다
+    return next;
+  }).then(function(res){
+    if(!res || !res.committed) throw new Error('번호통을 잠그지 못했습니다 — 잠시 뒤 다시 하세요');
+    var end = Number(res.snapshot.val());
+    return { first: end - need + 1, last: end };
+  });
+}
+function CoNumberPanel(){
+  var O = window.PuOntology;
+  var bs = useState(false); var busy = bs[0]; var setBusy = bs[1];
+  var ps = useState(null); var preview = ps[0]; var setPreview = ps[1];
+  var all = dbGet('companies', []).filter(function(c){ return c && !c._deleted; });
+  var targets = O ? O.companyNumberTargets(all) : [];
+  var numbered = all.filter(function(c){ return O && O.companyNumberBody(c); });
+  var checked = O ? O.validateCompanyNumbers(all) : { ok:true, errors:[], warnings:[] };
+  function headOf(c){ return O ? O.companyNumberHead(c) : ''; }
+  function assign(limit){
+    if(!O){ showToast('번호 규칙을 불러오지 못했습니다'); return; }
+    var todo = limit ? targets.slice(0, limit) : targets;
+    if(!todo.length){ showToast('번호 없는 업체가 없습니다'); return; }
+    if(!confirm(todo.length + '곳에 고유번호를 부여합니다.\n\n이미 번호가 있는 곳은 건드리지 않습니다.\n한 번 준 번호는 바꾸지 않습니다.')) return;
+    setBusy(true);
+    coNoTakeBlock(todo.length).then(function(block){
+      var at = new Date().toISOString(), by = (window.CURRENT_USER && CURRENT_USER.sid) || '';
+      var next = block.first;
+      var rows = todo.map(function(c){
+        var head = headOf(c);
+        return Object.assign({}, c, { puNo: next++, puNoHead: head,
+          puNoHistory: [{ head: head, from:'', at: at, by: by }] });
+      });
+      if(!dbUpsertMany('companies', rows)) throw new Error('저장이 거절되었습니다');
+      showToast(rows.length + '곳에 번호를 주었습니다 (' + block.first + '~' + block.last + ')');
+      setPreview(null); setBusy(false);
+    }).catch(function(e){
+      window._erpErrLog && window._erpErrLog(e);
+      showToast('부여 실패: ' + (e && e.message || e)); setBusy(false);
+    });
+  }
+  return h('div', { style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', padding:'18px 20px' } },
+    h('h3', { style:{ fontSize:'14px', fontWeight:800, marginBottom:'4px' } }, '🔢 업체 고유번호'),
+    h('div', { style:{ fontSize:'11.5px', color:'#64748b', marginBottom:'12px' } },
+      '머리(자문·급여·노조·기금·대행)는 업무가 바뀌면 따라 바뀌고, 몸통(다섯 자리)은 절대 안 바뀝니다. 연결과 검색은 몸통만 봅니다.'),
+    h('div', { style:{ display:'flex', gap:'7px', flexWrap:'wrap', marginBottom:'12px' } },
+      [['번호 있음', numbered.length, '#166534'], ['번호 없음', targets.length, '#d97706'],
+       ['겹친 번호', checked.errors.length, '#dc2626'], ['머리 어긋남', checked.warnings.length, '#d97706']
+      ].map(function(x){
+        return h('div', { key:x[0], style:{ padding:'9px 13px', background:'#f8fafc', borderRadius:'6px', fontSize:'12px' } },
+          h('strong', { style:{ color:x[2], marginRight:'5px' } }, Number(x[1]).toLocaleString()), x[0]);
+      })),
+    checked.errors.length > 0 && h('div', { style:{ background:'#fef2f2', border:'1px solid #fecaca', borderRadius:'7px',
+      padding:'10px 12px', fontSize:'11.5px', color:'#991b1b', marginBottom:'12px' } },
+      h('strong', null, '⚠ 같은 번호가 두 곳에 있습니다 — 부여를 멈추고 먼저 고치세요'),
+      checked.errors.slice(0, 5).map(function(e, i){
+        return h('div', { key:i, style:{ marginTop:'4px' } }, e.id + ' · ' + e.message); })),
+    h('div', { style:{ display:'flex', gap:'7px', flexWrap:'wrap', marginBottom:'12px' } },
+      h('button', { onClick:function(){ setPreview(targets.slice(0, 200)); }, disabled:busy || !targets.length,
+        style:{ padding:'8px 16px', background:'#fff', color:'#1e40af', border:'1px solid #bfdbfe',
+          borderRadius:'6px', fontWeight:700, cursor:targets.length?'pointer':'not-allowed' } }, '미리보기 (200곳)'),
+      h('button', { onClick:function(){ assign(0); }, disabled:busy || !targets.length || checked.errors.length > 0,
+        style:{ padding:'8px 16px', background:(busy||!targets.length||checked.errors.length)?'#e2e8f0':'#1e40af',
+          color:(busy||!targets.length||checked.errors.length)?'#94a3b8':'#fff', border:'none',
+          borderRadius:'6px', fontWeight:700, cursor:busy?'wait':'pointer' } },
+        busy ? '⏳ 부여 중...' : targets.length.toLocaleString() + '곳에 부여')),
+    !targets.length && h('div', { style:{ padding:'14px', background:'#f0fdf4', color:'#166534', borderRadius:'7px',
+      fontWeight:700, textAlign:'center', fontSize:'12.5px' } }, '✅ 모든 업체에 고유번호가 있습니다.'),
+    preview && h('div', { style:{ overflowX:'auto' } },
+      h('div', { style:{ fontSize:'11.5px', color:'#475569', marginBottom:'6px' } },
+        '오래된 것부터 줍니다 — 다시 돌려도 같은 순서입니다. 몸통은 부여할 때 서버에서 뽑으므로 아래 번호는 보기입니다.'),
+      h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:'11.5px' } },
+        h('tr', null, ['머리', '업체명', '유형', '겸함', '만든 날'].map(function(t){
+          return h('th', { key:t, style:{ textAlign:'left', padding:'6px 8px', background:'#f8fafc',
+            color:'#64748b', fontSize:'10.5px', whiteSpace:'nowrap' } }, t); })),
+        preview.map(function(c){
+          return h('tr', { key:c.id }, [
+            h('td', { key:'h', style:{ padding:'5px 8px', borderBottom:'1px solid #e2e8f0', whiteSpace:'nowrap',
+              fontWeight:700, color:'#1e40af' } }, headOf(c) + '-□□□□□'),
+            h('td', { key:'n', style:{ padding:'5px 8px', borderBottom:'1px solid #e2e8f0', whiteSpace:'nowrap',
+              maxWidth:'280px', overflow:'hidden', textOverflow:'ellipsis' }, title:c.name }, c.name || c.id),
+            h('td', { key:'t', style:{ padding:'5px 8px', borderBottom:'1px solid #e2e8f0', whiteSpace:'nowrap', color:'#64748b' } }, c.typeCode || '—'),
+            h('td', { key:'s', style:{ padding:'5px 8px', borderBottom:'1px solid #e2e8f0', whiteSpace:'nowrap', color:'#854d0e' } },
+              (c.status === 'suboffice' || c.isSuboffice) ? '대행' : ''),
+            h('td', { key:'d', style:{ padding:'5px 8px', borderBottom:'1px solid #e2e8f0', whiteSpace:'nowrap', color:'#64748b' } },
+              (c.createdAt || c.contractStartDate || '').slice(0, 10) || '—')
+          ]);
+        }))),
+    h('div', { style:{ fontSize:'11px', color:'#854d0e', background:'#fffbeb', padding:'8px 10px',
+      borderRadius:'6px', marginTop:'12px' } },
+      '번호는 폐업·계약중단에도 줍니다(지난 일도 연결의 일부입니다). 한 번 준 번호는 재사용하지 않습니다 — 합쳐서 없어진 번호도 비워 둡니다.'));
+}
+
 /* ── 사업자번호 칸 점검 (대표 지시 2026-09-03: 「먼저 실제 값을 뽑아 보고 정한다」) ──
    왜 필요한가: 사무대행 엑셀 가져오기가 «공단 사업장관리번호»를 사업자번호 칸(bizNo)에
    그대로 넣는다. 그래서 그 칸의 값이 사업자등록번호가 아닌 곳이 있고, 그 칸으로 업체를
@@ -37937,7 +38072,8 @@ function DataLogMasters(){
   var ts = useState(0); var activeTab = ts[0]; var setActiveTab = ts[1];
   var TABS = [
     { label:'🔍 데이터 진단',  comp: DataDiagnostics },
-    { label:'🔢 사업자번호 칸', comp: BizNoAuditPanel },
+    { label:'🔢 업체 고유번호', comp: CoNumberPanel },
+    { label:'🪪 사업자번호 칸', comp: BizNoAuditPanel },
     { label:'🕸️ 온톨로지',     comp: OntologyAuditPanel },
     { label:'⚠️ 에러 로그',    comp: ErrorLogViewer },
     { label:'✅ 대조 검사',    comp: ReconcileCheck },
