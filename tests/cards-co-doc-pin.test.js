@@ -210,13 +210,18 @@ test('★ 사업 줄이 «받는 자리»가 된다', () => {
 });
 
 test('안 붙은 서류를 끌 수 있다', () => {
-  const body = slice('function coDocsListHtml(docs, title, hint){', '/* 사진첩에서 그 서류를 연다.');
+  const body = slice('function coDocsListHtml(docs, title, hint, hintFull){', '/* 사진첩에서 그 서류를 연다.');
   assert.match(body, /draggable="\$\{d\._k\?'true':'false'\}"/, '열쇠 없는 옛 기록은 못 끈다');
   assert.match(body, /ondragstart="coDocDragStart\(event,'\$\{esc\(d\._k\|\|''\)\}'\)"/);
 });
 
 test('끌어다 놓으라고 «적어» 둔다 — 안 적으면 아무도 안 해 본다', () => {
-  assert.match(HTML, /위의 사업 위로 «끌어다 놓으면» 붙고, 같은 이름은 다음부터 저절로 붙습니다/);
+  /* ⚠ 2026-09-03 대표 지시로 «한 줄 + 말풍선»이 됐다(설명이 문단으로 깔려 값이 밀렸다).
+     짧은 한 마디는 화면에, 온전한 설명은 말풍선에 — 둘 다 있어야 한다.
+     짧은 쪽만 두면 무엇을 어디에 놓으라는 것인지 알 수 없다. */
+  assert.match(HTML, /'끌어다 놓으면 위의 사업에 붙습니다'/, '화면에 나갈 한 마디가 없다');
+  assert.match(HTML, /위의 사업 위로 끌어다 놓으면 붙고, 같은 이름은 다음부터 저절로 붙습니다/,
+    '말풍선에 담을 온전한 설명이 없다');
 });
 
 test('★ 어떤 근거로 붙은 것이든 뗄 수 있다 — 2026-08-26(4단계)에 넓혔다', () => {

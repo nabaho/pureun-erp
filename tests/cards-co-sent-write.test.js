@@ -174,7 +174,8 @@ function loadRead(extra) {
     esc: s => String(s == null ? '' : s),
     state: { sendLog: {} }
   }, extra || {});
-  const code = (function () {
+  /* ⚠ 2026-09-03: 칸이 «한 줄 설명»(hintLine)을 부른다 — 대역이 아니라 진짜를 싣는다 */
+  const code = fnBody('hintLine') + '\n' + (function () {
     const i = SRC.indexOf('\nfunction sendLogList(');
     const open = SRC.indexOf('{', i);
     let d = 0;

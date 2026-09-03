@@ -253,7 +253,11 @@ function drawDocs(docs){
     esc: s => String(s==null?'':s),
     fmtDate: () => '2026-08-28' };
   vm.createContext(ctx);
-  vm.runInContext(cardsFn('coDocPairsHtml') + '\n' + cardsFn('coDocsListHtml'), ctx);
+  /* ⚠ 2026-09-03: 목록이 «같은 이름 접기»(coDocsFold)와 «한 줄 설명»(hintLine)을 부른다.
+     대역을 넣으면 접기가 통째로 죽어도 이 검사가 모른다 — «진짜»를 함께 싣는다. */
+  ctx._norm = s => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, '');
+  vm.runInContext(cardsFn('coDocPairsHtml') + '\n' + cardsFn('hintLine') + '\n'
+    + cardsFn('coDocsFold') + '\n' + cardsFn('coDocsListHtml'), ctx);
   return ctx.coDocsListHtml(docs, '읽어 온 서류');
 }
 
