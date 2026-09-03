@@ -74,12 +74,51 @@ function mailOutPathOk(path, uid) {
   if (p.indexOf('..') >= 0) return false;
   return p.indexOf('pucards/mailout/' + uid + '/') === 0;
 }
-async function readMailOut(deps, path) {
+/* 크기만 먼저 묻는다 — 내려받기 «전»에 재려면 이 걸음이 따로 있어야 한다.
+   ⚠ 20MB 짜리 열 개를 다 끌어온 뒤에 「너무 큽니다」 하면 이미 늦다.
+     이 함수는 512MB 그릇에서 돈다. */
+async function statMailOut(deps, path) {
   const file = deps.getStorage().bucket(CARDS_BUCKET).file(String(path));
   const [meta] = await file.getMetadata();
-  if (Number(meta.size || 0) > MAILOUT_MAX) throw new Error('첨부가 너무 큽니다');
-  const [buf] = await file.download();
+  return { file: file, size: Number((meta && meta.size) || 0) };
+}
+async function readMailOut(deps, path) {
+  const got = await statMailOut(deps, path);
+  if (got.size > MAILOUT_MAX) throw new Error('첨부가 너무 큽니다');
+  const [buf] = await got.file.download();
   return buf;
+}
+
+/* ── 묵은 임시 파일 치우기 (2026-09-03) ──
+   ★ 왜 «실패하자마자»가 아니라 «묵은 것»인가 —
+     보내기가 실패하면 대표는 고쳐서 다시 누른다. 그때 화면은 «같은 자리»를 그대로
+     다시 보낸다(pu-cards.html addLocalFiles 는 붙일 때 한 번만 올리고 path 를 들고 있다).
+     그러니 실패한 자리에서 곧바로 치우면 **다시 보낼 때 첨부가 조용히 빠진다.**
+     하루가 지난 것만 치우면 다시 보내기는 안전하고 버려진 것은 사라진다.
+   ⚠ 한 번에 치우는 수를 못 박는다 — 많이 쌓인 사람에게서 배달이 늦어지면 안 된다. */
+const MAILOUT_STALE_MS = 24 * 60 * 60 * 1000;
+const MAILOUT_SWEEP_MAX = 20;
+async function sweepStaleMailOut(deps, uid, now) {
+  if (!deps || !uid) return 0;
+  const t0 = Number(now) || Date.now();
+  let n = 0;
+  try {
+    const [files] = await deps.getStorage().bucket(CARDS_BUCKET)
+      .getFiles({ prefix: 'pucards/mailout/' + uid + '/' });
+    for (const f of (files || [])) {
+      if (n >= MAILOUT_SWEEP_MAX) break;
+      const m = (f && f.metadata) || {};
+      const at = Date.parse(m.timeCreated || m.updated || '');
+      /* 언제 만든 것인지 모르면 «건드리지 않는다» — 지금 쓰고 있는 것일 수 있다 */
+      if (!Number.isFinite(at) || (t0 - at) < MAILOUT_STALE_MS) continue;
+      try { await f.delete(); n++; } catch (e) {
+        console.warn('mailout 묵은 것 못 치움:', f.name, String((e && e.message) || e));
+      }
+    }
+  } catch (e) {
+    console.warn('mailout 묵은 것 훑기 실패:', String((e && e.message) || e));
+  }
+  return n;
 }
 /* 보낸 뒤 치운다 — 안 치우면 창고에 임시 파일이 영영 쌓인다(요금이 붙는다).
    ⚠ 못 치워도 «보내기는 성공»이다 — 치우다 실패해서 보낸 메일이 실패로 보이면 안 된다. */
@@ -111,6 +150,12 @@ async function collectAttachments(db, body, deps, uid) {
   // ⚠ 자료함에 저장하지 않는다. 저장하면 매번 고친 사본이 자료함에 쌓인다.
   const extras = Array.isArray(body.files) ? body.files.slice(0, 10) : [];
   const used = [];          /* 창고에서 꺼내 쓴 자리 — 보낸 뒤 치운다 */
+  /* ★ 여기까지 붙은 바이트. 창고에서 꺼낼 때 «내려받기 전»에 이 값으로 미리 잰다.
+     ⚠ 2026-09-03 이전에는 창고 첨부에 bytes 를 안 달아, mail-send 의 합계 한도가
+       0 으로 보여 통째로 없는 것과 같았다(30MB 두 개가 그대로 통과했다). */
+  let total = 0;
+  attachments.forEach(function (a) { total += Number((a && a.bytes) || 0); });
+  let tooBig = 0;           /* 넘었으면 «넘긴 합계» — 부르는 쪽이 그대로 알린다 */
   for (const f of extras) {
     if (!f || typeof f !== 'object') continue;
     let att = null;
@@ -122,8 +167,16 @@ async function collectAttachments(db, body, deps, uid) {
         continue;
       }
       try {
-        const buf = await readMailOut(deps, f.path);
-        att = { filename: String(f.name || '첨부'), content: buf };
+        const info = await statMailOut(deps, f.path);
+        /* 한 개 한도 · 합계 한도 — 둘 다 «내려받기 전»에 본다.
+           ⚠ 여기서 조용히 건너뛰면 「첨부가 빠진 채로 메일이 나간다」가 된다.
+             그래서 넘으면 멈추고 «왜 못 보내는지» 알린다. */
+        if (info.size > MAILOUT_MAX || total + info.size > MS.MAX_TOTAL_BYTES) {
+          tooBig = total + info.size;
+          break;
+        }
+        const [buf] = await info.file.download();
+        att = { filename: String(f.name || '첨부'), content: buf, bytes: buf.length };
         used.push(String(f.path));
       } catch (e) {
         console.warn('mailout 읽기 실패:', String(f.path), String((e && e.message) || e));
@@ -133,11 +186,12 @@ async function collectAttachments(db, body, deps, uid) {
       att = MS.toAttachment({ fileName: f.name }, f.dataUrl);   /* 예전 길 */
     }
     if (!att) continue;
+    total += Number(att.bytes || 0);
     attachments.push(att);
     names.push(String(f.name || '첨부'));
   }
   return {
-    attachments, names, extras, used,
+    attachments, names, extras, used, bytes: total, tooBig,
     wanted: matIds.length,
     missing: matIds.length - found,
     noneFound: !!(matIds.length && !found),
@@ -145,8 +199,23 @@ async function collectAttachments(db, body, deps, uid) {
 }
 
 /* 실제 발송 + 기록.
-   돌려주는 것: { ok:true, ... } 또는 { ok:false, status, error } */
+   돌려주는 것: { ok:true, ... } 또는 { ok:false, status, error }
+
+   ⚠ 여기는 «껍데기»다. 실제 일은 deliverOnce 가 하고, 여기서는 어떤 길로 끝나든
+     묵은 임시 파일을 치운다. 나가는 길이 다섯인데(주소 없음·비밀번호 없음·자료 못 찾음·
+     첨부 너무 큼·메일 서버가 안 받음) 성공한 길에만 치우는 줄이 있어, 실패하면
+     창고에 영영 남았다(2026-09-03 실측). */
 async function deliver(opts) {
+  try {
+    return await deliverOnce(opts);
+  } finally {
+    /* ⚠ 배달 결과를 «절대» 바꾸지 않는다 — 안에서 다 삼킨다(sweepStaleMailOut) */
+    try { await sweepStaleMailOut(opts && opts.deps, opts && opts.uid, Date.now()); }
+    catch (_) { /* 치우기가 배달을 막지 않는다 */ }
+  }
+}
+
+async function deliverOnce(opts) {
   /* ⚠ deps·uid 는 «창고 첨부»에만 쓴다(2026-08-31). 안 넘어오면 창고 길은 조용히
      건너뛰고 예전 길(dataUrl)만 붙는다 — 부르는 곳을 하나 빠뜨려도 메일은 나간다. */
   const { db, body, from, pass, envId, byEmail, deps, uid } = opts;
@@ -163,6 +232,9 @@ async function deliver(opts) {
   if (got.noneFound) {
     return { ok: false, status: 400, error: '붙일 자료를 찾지 못했습니다. 자료함에서 파일을 다시 올려 주세요.' };
   }
+  /* 창고에서 꺼내다 한도를 넘었다 — 다 끌어오기 «전»에 멈춘 것이다.
+     ⚠ 조용히 빼고 보내지 않는다. 첨부가 빠진 채 나가면 받는 쪽은 그걸 모른다. */
+  if (got.tooBig) return { ok: false, status: 400, error: MS.sizeError(got.tooBig) };
 
   const v = MS.validateSend({
     to: body.to, cc: body.cc, bcc: body.bcc,
@@ -174,9 +246,15 @@ async function deliver(opts) {
   });
   if (!v.ok) return { ok: false, status: 400, error: v.error };
 
-  let nodemailer;
-  try { nodemailer = require('nodemailer'); }
-  catch (e) { return { ok: false, status: 500, error: '메일 도구를 불러오지 못했습니다: ' + String(e.message || e) }; }
+  /* ⚠ 검사가 «가짜 발송기»를 꽂을 자리. 없으면 진짜를 부른다.
+     이 자리가 없으면 「자격 오류가 나면 어떻게 되는가」를 돌려 볼 길이 아예 없다 —
+     실제로 그래서 되풀이 발송(2026-09-03)을 아무도 못 잡고 있었다.
+     ⚠ 검사 기기에는 nodemailer 가 없을 수도 있다. 꽂아 주면 부르지 않는다. */
+  let nodemailer = opts.nodemailer || null;
+  if (!nodemailer) {
+    try { nodemailer = require('nodemailer'); }
+    catch (e) { return { ok: false, status: 500, error: '메일 도구를 불러오지 못했습니다: ' + String(e.message || e) }; }
+  }
 
   // 「내게쓰기」 — 숨은참조에 보내는 주소 자신을 더한다. 받는 사람에게는 안 보인다.
   const bcc = v.bcc.slice();
@@ -241,7 +319,12 @@ async function deliver(opts) {
       }))
     : [Object.assign({}, baseMail, { to: v.to.join(', ') })];
 
-  let lastErr = null, usedId = '';
+  /* ★ done — «이미 나간» 통 수. 이것이 있어야 다시 할 때 앞의 것을 또 보내지 않는다.
+     ⚠ 2026-09-03 실측: 「한명씩 발송」 3명 중 두 번째에서 자격 오류가 나자,
+       다음 아이디로 batches 를 «처음부터» 다시 돌아 앞의 두 명이 편지를 두 번 받았다
+       (실제로 나간 통수 5, 그런데 앱은 「3통 보냈다」로 알렸다).
+       주석은 그 위험을 적어 두었는데 막는 것은 자격 오류가 «아닐» 때뿐이었다. */
+  let lastErr = null, usedId = '', done = 0;
   for (const id of loginIds(from, envId)) {
     try {
       const tx = nodemailer.createTransport({
@@ -250,7 +333,8 @@ async function deliver(opts) {
         connectionTimeout: 20000, greetingTimeout: 20000, socketTimeout: 90000,
         auth: { user: id, pass: pass },
       });
-      for (const m of batches) await tx.sendMail(m);
+      /* 이미 나간 것 다음부터 이어서 보낸다 — 처음부터 다시 돌지 않는다 */
+      for (let i = done; i < batches.length; i++) { await tx.sendMail(batches[i]); done++; }
       usedId = id; lastErr = null;
       break;
     } catch (e) {
@@ -262,7 +346,14 @@ async function deliver(opts) {
   }
   if (lastErr) {
     console.error('deliver', lastErr && lastErr.message);
-    return { ok: false, status: 502, error: errorHint(lastErr) };
+    let error = errorHint(lastErr);
+    /* ⚠ 몇 통은 이미 나갔다는 것을 «반드시» 알린다. 안 알리면 대표가 그대로 다시
+       누르고, 그분들은 같은 편지를 두 번 받는다. */
+    if (done > 0) {
+      error += '\n\n⚠ ' + batches.length + '통 가운데 ' + done + '통은 이미 나갔습니다.'
+             + '\n그대로 다시 보내면 그분들이 두 번 받습니다 — 남은 곳만 골라 보내 주세요.';
+    }
+    return { ok: false, status: 502, error: error, sent: done };
   }
 
   // ★ 기록은 **실제로 나간 뒤**. 화면이 남기면 '보냈다는데 안 왔다'를 가릴 수 없다.
@@ -364,4 +455,7 @@ module.exports = {
   deliver, collectAttachments, loginIds, errorHint, fromLine,
   mailOutPathOk, sweepMailOut, CARDS_BUCKET, MAILOUT_MAX,
   errorsBefore, slimPayload, CARDS_ROOT,
+  /* 검사가 밖에서 견줄 수 있게 내놓는다 — 안 내놓으면 「묵은 것만 치우는가」를
+     글자로밖에 못 보고, 글자로 보는 검사는 이빨이 없다. */
+  statMailOut, sweepStaleMailOut, MAILOUT_STALE_MS, MAILOUT_SWEEP_MAX,
 };
