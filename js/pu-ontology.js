@@ -378,6 +378,58 @@
     return {ok:true,key:key,organization:{id:org.id,label:clean(org.label||org.id),program:clean(org.program||'erp')},total:connections.length,groups:groups,connections:connections};
   }
 
+  /* 5단계 검증센터. 진단 결과를 사람이 한 건씩 검토할 작업목록으로 바꾼다.
+     검토 상태는 화면 메모일 뿐이며 원본이나 서버에 기록하지 않는다. */
+  var VALIDATION_CATEGORIES={
+    identity:{label:'식별자·중복',codes:['missing_id','duplicate_id','ambiguous_company_name','duplicate_business_number']},
+    organization:{label:'업체 연결',codes:['orphan_company','missing_company_id','unresolved_company','inferred_relation']},
+    person:{label:'담당자 연결',codes:['orphan_person']},
+    source:{label:'원본·권한',codes:['orphan_source','source_unreadable','dangling_relation']}
+  };
+  function validationCategory(code){
+    var found='source';Object.keys(VALIDATION_CATEGORIES).some(function(k){if(VALIDATION_CATEGORIES[k].codes.indexOf(code)>=0){found=k;return true;}return false;});return found;
+  }
+  function issueProgram(store){
+    var a=READ_ADAPTERS[store];return a&&a.program||'erp';
+  }
+  function validationAdvice(code,candidate){
+    if(code==='missing_company_id'&&candidate)return '후보 업체 ID를 원본에서 대조한 뒤 명시적으로 확정하세요.';
+    if(code==='inferred_relation')return '이름으로 추정된 관계입니다. 원본에서 영구 ID를 확인해 확정하세요.';
+    if(code==='source_unreadable')return '로그인 권한과 프로그램 연결 상태를 확인한 뒤 다시 진단하세요.';
+    if(code==='duplicate_id'||code==='duplicate_business_number'||code==='ambiguous_company_name')return '두 원본을 나란히 대조하고 정본을 결정하세요. 자동 병합하지 않습니다.';
+    if(code==='missing_id')return '원본 프로그램의 정상 저장 절차로 영구 ID를 부여하세요.';
+    return '원본 프로그램에서 연결 ID와 대상 존재 여부를 확인하세요.';
+  }
+  function buildValidationQueue(report){
+    report=report||{};var raw=(report.issues||[]).map(function(x){return Object.assign({},x);}),entities=report.entities||{};
+    (report.edges||[]).forEach(function(e){
+      if(!entities[e.subject]||!entities[e.object]) raw.push({severity:'high',code:'dangling_relation',store:e.sourceStore,id:e.sourceId,
+        label:e.predicate,detail:'관계의 시작 또는 도착 개체가 현재 관계망에 없습니다.',candidate:null});
+      else if(Number(e.confidence)<1) raw.push({severity:'medium',code:'inferred_relation',store:e.sourceStore,id:e.sourceId,
+        label:(entities[e.subject]&&entities[e.subject].label)||e.sourceId,detail:'명시적 ID가 아닌 이름으로 연결된 후보입니다.',candidate:entities[e.object]&&entities[e.object].id});
+    });
+    var rank={high:0,medium:1,low:2};
+    var items=raw.map(function(x,i){
+      var program=issueProgram(x.store),category=validationCategory(x.code),seed=[x.code,x.store,x.id,x.candidate,x.detail,i].join('|');
+      return {reviewId:'review:'+encodeURIComponent(seed).replace(/\./g,'%2E'),severity:x.severity||'medium',category:category,code:x.code,
+        store:clean(x.store),recordId:clean(x.id),label:clean(x.label||x.id||x.store),detail:clean(x.detail),candidate:x.candidate||null,
+        program:program,programName:PROGRAMS[program]&&PROGRAMS[program].name||program,sourceFile:PROGRAMS[program]&&PROGRAMS[program].file||'',
+        advice:validationAdvice(x.code,x.candidate),readOnly:true};
+    }).sort(function(a,b){var ar=Object.prototype.hasOwnProperty.call(rank,a.severity)?rank[a.severity]:9,br=Object.prototype.hasOwnProperty.call(rank,b.severity)?rank[b.severity]:9;return ar-br||(a.category+a.label).localeCompare(b.category+b.label,'ko');});
+    var counts={high:0,medium:0,low:0,open:items.length,categories:{}};
+    items.forEach(function(x){counts[x.severity]=(counts[x.severity]||0)+1;counts.categories[x.category]=(counts.categories[x.category]||0)+1;});
+    return {readOnly:true,sourceMutation:'never',total:items.length,counts:counts,categories:VALIDATION_CATEGORIES,items:items};
+  }
+  function filterValidationQueue(queue,options){
+    queue=queue||{items:[]};options=options||{};var q=clean(options.query).toLowerCase(),category=clean(options.category),severity=clean(options.severity),status=clean(options.status),decisions=options.decisions||{};
+    return (queue.items||[]).map(function(x){return Object.assign({},x,{reviewStatus:decisions[x.reviewId]||'open'});}).filter(function(x){
+      if(category&&category!=='all'&&x.category!==category)return false;
+      if(severity&&severity!=='all'&&x.severity!==severity)return false;
+      if(status&&status!=='all'&&x.reviewStatus!==status)return false;
+      return !q||[x.label,x.recordId,x.detail,x.candidate,x.programName].join(' ').toLowerCase().indexOf(q)>=0;
+    });
+  }
+
   /* 3단계 파생 색인 꾸러미. 확실한 관계(confidence=1)만 싣고, 원본 내용과
      사람·업체 이름(label)은 싣지 않는다. 서버 쓰기는 이 모듈의 책임이 아니다. */
   var VISIBILITY = {
@@ -442,6 +494,7 @@
 
   return { VERSION:VERSION, TERMS:TERMS, PROGRAMS:PROGRAMS, STORE_TYPES:STORE_TYPES, READ_ADAPTERS:READ_ADAPTERS,
     audit:audit, auditIntegrated:auditIntegrated, getReadPlan:getReadPlan, searchEntities:searchEntities, entityConnections:entityConnections,
-    organization360:organization360, buildSnapshot:buildSnapshot, validateSnapshot:validateSnapshot, auditPrograms:auditPrograms,
+    organization360:organization360, VALIDATION_CATEGORIES:VALIDATION_CATEGORIES, buildValidationQueue:buildValidationQueue,
+    filterValidationQueue:filterValidationQueue, buildSnapshot:buildSnapshot, validateSnapshot:validateSnapshot, auditPrograms:auditPrograms,
     canonicalId:canon, sourceCanonicalId:sourceCanon, normalizeCompanyName:normName, normalizeBusinessNumber:normBiz };
 });

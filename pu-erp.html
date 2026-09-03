@@ -146,7 +146,7 @@
 <script src="js/pu-billing.js?v=7"></script>
 <script src="js/pu-rrn-seal.js?v=1"></script>
 <!-- 푸른통합 온톨로지 공통 사전·읽기 전용 관계 진단 -->
-<script src="js/pu-ontology.js?v=6"></script>
+<script src="js/pu-ontology.js?v=7"></script>
 <!-- 급여담당자 엑셀 → 업체관리 (대표 결정 2026-08-24). 읽고 대조하는 일은 이 파일이,
      그리기는 아래 화면이 한다 — 검사가 이 파일을 그대로 돌린다. -->
 <script src="js/pu-co-xls.js?v=3"></script>
@@ -37516,10 +37516,15 @@ function OntologyAuditPanel(){
   var bs=useState(false); var busy=bs[0]; var setBusy=bs[1];
   var qs=useState(''); var query=qs[0]; var setQuery=qs[1];
   var ss=useState(''); var selected=ss[0]; var setSelected=ss[1];
+  var vqs=useState(''); var reviewQuery=vqs[0]; var setReviewQuery=vqs[1];
+  var vcs=useState('all'); var reviewCategory=vcs[0]; var setReviewCategory=vcs[1];
+  var vss=useState('all'); var reviewSeverity=vss[0]; var setReviewSeverity=vss[1];
+  var vts=useState('open'); var reviewStatus=vts[0]; var setReviewStatus=vts[1];
+  var vds=useState({}); var reviewDecisions=vds[0]; var setReviewDecisions=vds[1];
   var O=window.PuOntology;
   function run(){
     if(!O){ showToast('온톨로지 사전을 불러오지 못했습니다'); return; }
-    setBusy(true); setReport(null); setSelected('');
+    setBusy(true); setReport(null); setSelected(''); setReviewDecisions({});
     setTimeout(function(){
       try{
         var data={}; Object.keys(O.STORE_TYPES).forEach(function(k){ data[k]=dbGet(k,[]); });
@@ -37551,19 +37556,33 @@ function OntologyAuditPanel(){
       showToast('확정 관계 '+snap.meta.confirmedEdges+'건 저장 · 추정 후보 '+snap.meta.excludedCandidates+'건 제외');
     }catch(e){window._erpErrLog&&window._erpErrLog(e);showToast('관계망 만들기 실패: '+(e&&e.message||e));}
   }
-  var programs=O?Object.keys(O.PROGRAMS):[], byCode={};
+  function saveValidation(){
+    if(!validationQueue)return;
+    var safe={schema:'ontology-review/v1',readOnly:true,sourceMutation:'never',generatedAt:new Date().toISOString(),
+      total:validationQueue.total,items:validationQueue.items.map(function(x){return Object.assign({},x,{reviewStatus:reviewDecisions[x.reviewId]||'open'});})};
+    var blob=new Blob([JSON.stringify(safe,null,2)],{type:'application/json'}),a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);a.download='pureun-ontology-review-'+todayStr()+'.json';a.click();
+    setTimeout(function(){URL.revokeObjectURL(a.href);},1000);
+  }
+  var programs=O?Object.keys(O.PROGRAMS):[];
   var labels={missing_id:'ID 없음',duplicate_id:'중복 ID',ambiguous_company_name:'동일 업체명',duplicate_business_number:'중복 사업자번호',
-    orphan_company:'끊어진 업체 연결',missing_company_id:'업체 ID 미입력',unresolved_company:'업체 미확정',orphan_person:'끊어진 담당자 연결',orphan_source:'끊어진 원본 연결',source_unreadable:'프로그램 읽기 제한'};
-  if(report) report.issues.forEach(function(x){byCode[x.code]=(byCode[x.code]||0)+1;});
+    orphan_company:'끊어진 업체 연결',missing_company_id:'업체 ID 미입력',unresolved_company:'업체 미확정',orphan_person:'끊어진 담당자 연결',orphan_source:'끊어진 원본 연결',source_unreadable:'프로그램 읽기 제한',inferred_relation:'추정 관계',dangling_relation:'끊어진 관계'};
   var orgMatches=report&&O?O.searchEntities(report,query,{type:'Organization',limit:24}):[];
   var orgView=report&&selected&&O?O.organization360(report,selected):null;
+  var validationQueue=report&&O?O.buildValidationQueue(report):null;
+  var reviewRows=validationQueue&&O?O.filterValidationQueue(validationQueue,{query:reviewQuery,category:reviewCategory,severity:reviewSeverity,status:reviewStatus,decisions:reviewDecisions}):[];
+  var reviewDone=Object.keys(reviewDecisions).filter(function(k){return reviewDecisions[k]==='completed';}).length;
+  var reviewDeferred=Object.keys(reviewDecisions).filter(function(k){return reviewDecisions[k]==='deferred';}).length;
+  function markReview(id,status){var next=Object.assign({},reviewDecisions);if(status==='open')delete next[id];else next[id]=status;setReviewDecisions(next);}
+  function openReviewSource(item){if(!item||!item.sourceFile)return;try{window.open(item.sourceFile,'_blank');}catch(e){window._erpErrLog&&window._erpErrLog(e);}}
   var typeNames={Contract:'계약',Case:'사건',Project:'사업·컨설팅',Task:'업무',ScheduleEvent:'일정',FinancialTransaction:'입출금',Invoice:'세금계산서',Document:'문서',MediaAsset:'사진',PayrollRecord:'임금기록',Person:'사람',Policy:'규정',Submission:'제출'};
   return h('div',{className:'env-section',style:{maxWidth:'100%'}},
-    h('h3',null,'🕸️ 푸른통합 온톨로지 4단계'),
+    h('h3',null,'🕸️ 푸른통합 온톨로지 5단계'),
     h('div',{className:'desc'},'등록된 모든 프로그램의 공통 사전과 안전한 경량 색인을 기준으로 연결 상태를 검사합니다. 메일 본문·사진 원본·전자서명 제출·급여 직원표는 읽지 않으며 원본을 수정하거나 서버에 저장하지 않습니다.'),
     h('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',margin:'12px 0'}},
       h('button',{onClick:run,disabled:busy,style:{padding:'8px 16px',background:'#1e40af',color:'#fff',border:'none',borderRadius:'6px',fontWeight:700,cursor:busy?'wait':'pointer'}},busy?'⏳ 관계 검사 중...':'🔍 관계 전수진단'),
       report&&h('button',{onClick:saveReport,style:{padding:'8px 16px',background:'#fff',color:'#1e40af',border:'1px solid #bfdbfe',borderRadius:'6px',fontWeight:700,cursor:'pointer'}},'⬇ 진단 보고서'),
+      report&&h('button',{onClick:saveValidation,style:{padding:'8px 16px',background:'#fffbeb',color:'#854d0e',border:'1px solid #fde68a',borderRadius:'6px',fontWeight:700,cursor:'pointer'}},'🧭 검토목록 파일'),
       report&&h('button',{onClick:saveGraph,style:{padding:'8px 16px',background:'#f0fdf4',color:'#166534',border:'1px solid #bbf7d0',borderRadius:'6px',fontWeight:700,cursor:'pointer'}},'🕸️ 확정 관계망 파일')),
     h('div',{style:{background:'#eff6ff',padding:'10px 12px',borderRadius:'7px',fontSize:'11.5px',color:'#1e40af',marginBottom:'12px'}},
       '등록 프로그램 '+programs.length+'개 · 개체 용어 '+(O?Object.keys(O.TERMS.entityTypes).length:0)+'개 · 관계 용어 '+(O?Object.keys(O.TERMS.predicates).length:0)+'개',
@@ -37581,12 +37600,23 @@ function OntologyAuditPanel(){
           h('div',{style:{fontWeight:700,color:'#1e293b',marginBottom:'7px'}},orgView.organization.label+' · 연결 '+orgView.total+'건'),
           Object.keys(orgView.groups).length===0?h('div',{style:{color:'#94a3b8',fontSize:'11.5px'}},'현재 확인된 직접 관계가 없습니다.'):
           h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:'7px'}},Object.keys(orgView.groups).map(function(t){var rows=orgView.groups[t];return h('div',{key:t,style:{background:'#f8fafc',borderRadius:'6px',padding:'8px'}},h('div',{style:{fontWeight:700,fontSize:'11.5px',color:'#475569',marginBottom:'4px'}},(typeNames[t]||t)+' '+rows.length+'건'),rows.slice(0,20).map(function(x){return h('div',{key:x.edgeId,style:{fontSize:'11px',color:'#1e293b',padding:'2px 0',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},x.label+(x.confidence<1?' · 후보':' · 확정'));}));})))),
-      report.issueCount===0?h('div',{style:{padding:'14px',background:'#f0fdf4',color:'#166534',borderRadius:'7px',fontWeight:700,textAlign:'center'}},'✅ 끊어진 관계가 발견되지 않았습니다.'):
-        h('div',null,
-          h('div',{style:{fontSize:'12.5px',fontWeight:700,color:'#1e293b',marginBottom:'7px'}},'발견 항목 '+report.issueCount+'건 — 자동수정하지 않음'),
-          h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'10px'}},Object.keys(byCode).map(function(k){return h('span',{key:k,style:{padding:'4px 8px',background:'#fffbeb',color:'#854d0e',borderRadius:'10px',fontSize:'11px'}},(labels[k]||k)+' '+byCode[k]);})),
-          h('div',{style:{borderTop:'1px solid #e2e8f0'}},report.issues.slice(0,100).map(function(it,i){var color=it.severity==='high'?'#dc2626':'#d97706';return h('div',{key:i,style:{display:'flex',gap:'8px',padding:'8px 4px',borderBottom:'1px solid #f8fafc',fontSize:'11.5px',alignItems:'flex-start'}},h('span',{style:{color:color,fontWeight:700,minWidth:'82px'}},labels[it.code]||it.code),h('span',{style:{color:'#1e293b',fontWeight:600,minWidth:'100px'}},it.label||it.id||'-'),h('span',{style:{color:'#64748b',flex:1}},it.detail+(it.candidate?' · 후보 ID: '+it.candidate:'')));})),
-          report.issues.length>100&&h('div',{style:{padding:'8px',color:'#64748b',fontSize:'11px'}},'화면에는 100건까지만 표시합니다. 전체 내용은 진단 보고서에 들어 있습니다.')))
+      validationQueue.total===0?h('div',{style:{padding:'14px',background:'#f0fdf4',color:'#166534',borderRadius:'7px',fontWeight:700,textAlign:'center'}},'✅ 끊어진 관계와 확인할 후보가 발견되지 않았습니다.'):
+        h('div',{style:{border:'1px solid #e2e8f0',borderRadius:'8px',padding:'12px',background:'#fff'}},
+          h('div',{style:{display:'flex',justifyContent:'space-between',gap:'8px',flexWrap:'wrap',marginBottom:'8px'}},
+            h('div',null,h('div',{style:{fontSize:'13px',fontWeight:800,color:'#1e293b'}},'🧭 온톨로지 검증센터'),h('div',{style:{fontSize:'11px',color:'#64748b',marginTop:'3px'}},'총 '+validationQueue.total+'건 · 검토 완료 '+reviewDone+'건 · 보류 '+reviewDeferred+'건 · 자동수정 없음'))),
+          h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'9px'}},
+            h('input',{type:'search',value:reviewQuery,onInput:function(e){setReviewQuery(e.target.value);},placeholder:'항목·ID·후보·프로그램 검색',style:{minWidth:'230px',flex:'1',padding:'7px 9px',border:'1px solid #cbd5e1',borderRadius:'6px',fontSize:'11.5px'}}),
+            h('select',{value:reviewCategory,onChange:function(e){setReviewCategory(e.target.value);},style:{padding:'7px',border:'1px solid #cbd5e1',borderRadius:'6px',fontSize:'11.5px'}},h('option',{value:'all'},'모든 유형'),Object.keys(validationQueue.categories).map(function(k){return h('option',{key:k,value:k},validationQueue.categories[k].label+' '+(validationQueue.counts.categories[k]||0));})),
+            h('select',{value:reviewSeverity,onChange:function(e){setReviewSeverity(e.target.value);},style:{padding:'7px',border:'1px solid #cbd5e1',borderRadius:'6px',fontSize:'11.5px'}},h('option',{value:'all'},'모든 위험도'),h('option',{value:'high'},'위험'),h('option',{value:'medium'},'확인 필요'),h('option',{value:'low'},'낮음')),
+            h('select',{value:reviewStatus,onChange:function(e){setReviewStatus(e.target.value);},style:{padding:'7px',border:'1px solid #cbd5e1',borderRadius:'6px',fontSize:'11.5px'}},h('option',{value:'all'},'모든 상태'),h('option',{value:'open'},'미검토'),h('option',{value:'completed'},'검토 완료'),h('option',{value:'deferred'},'보류'))),
+          h('div',{style:{fontSize:'10.5px',color:'#854d0e',background:'#fffbeb',padding:'7px 9px',borderRadius:'6px',marginBottom:'7px'}},'검토 상태는 현재 화면에만 표시됩니다. 원본 변경은 반드시 해당 프로그램을 열어 권한·동시편집 보호 아래에서 처리하세요.'),
+          reviewRows.length===0?h('div',{style:{padding:'16px',textAlign:'center',color:'#94a3b8',fontSize:'11.5px'}},'선택한 조건에 해당하는 항목이 없습니다.'):
+          h('div',{style:{borderTop:'1px solid #e2e8f0'}},reviewRows.slice(0,100).map(function(it){var color=it.severity==='high'?'#dc2626':'#d97706',done=it.reviewStatus==='completed',deferred=it.reviewStatus==='deferred';return h('div',{key:it.reviewId,style:{padding:'9px 4px',borderBottom:'1px solid #f8fafc',background:done?'#f0fdf4':deferred?'#fffbeb':'#fff'}},
+            h('div',{style:{display:'flex',gap:'7px',alignItems:'center',flexWrap:'wrap'}},h('span',{style:{color:color,fontWeight:700,fontSize:'11px'}},labels[it.code]||it.code),h('strong',{style:{color:'#1e293b',fontSize:'11.5px'}},it.label||'-'),h('span',{style:{color:'#64748b',fontSize:'10.5px'}},it.programName+' · '+(validationQueue.categories[it.category]&&validationQueue.categories[it.category].label||it.category)),it.recordId&&h('code',{style:{fontSize:'10px',color:'#475569'}},it.recordId)),
+            h('div',{style:{fontSize:'11px',color:'#64748b',margin:'4px 0'}},it.detail+(it.candidate?' · 후보 ID: '+it.candidate:'')),
+            h('div',{style:{fontSize:'10.5px',color:'#475569',marginBottom:'6px'}},'권장: '+it.advice),
+            h('div',{style:{display:'flex',gap:'5px',flexWrap:'wrap'}},h('button',{onClick:function(){openReviewSource(it);},style:{padding:'4px 7px',border:'1px solid #bfdbfe',background:'#eff6ff',color:'#1e40af',borderRadius:'5px',fontSize:'10.5px',cursor:'pointer'}},'원본 프로그램 열기'),h('button',{onClick:function(){markReview(it.reviewId,done?'open':'completed');},style:{padding:'4px 7px',border:'1px solid #bbf7d0',background:done?'#16a34a':'#f0fdf4',color:done?'#fff':'#166534',borderRadius:'5px',fontSize:'10.5px',cursor:'pointer'}},done?'검토 완료 취소':'검토 완료'),h('button',{onClick:function(){markReview(it.reviewId,deferred?'open':'deferred');},style:{padding:'4px 7px',border:'1px solid #fde68a',background:deferred?'#d97706':'#fffbeb',color:deferred?'#fff':'#854d0e',borderRadius:'5px',fontSize:'10.5px',cursor:'pointer'}},deferred?'보류 취소':'보류')));})),
+          reviewRows.length>100&&h('div',{style:{padding:'8px',color:'#64748b',fontSize:'11px'}},'화면에는 검색 결과 100건까지만 표시합니다. 조건을 좁혀 검토하세요.')))
   );
 }
 

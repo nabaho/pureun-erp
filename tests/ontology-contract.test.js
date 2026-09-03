@@ -195,3 +195,34 @@ test('업체 360 조회는 서버 쓰기 없이 화면에 연결돼 있다', () 
   assert.match(erp, /O\.organization360\(report,selected\)/);
   assert.match(erp, /업체 360° 관계 조회/);
 });
+
+test('5단계 검증센터는 오류와 추정·끊어진 관계를 한 건씩 검토하도록 분류한다', () => {
+  const data = {
+    companies:[{id:'co1',name:'가나다산업'}],
+    contracts:[{id:'CT1',companyName:'가나다산업',managerMain:'P-404'}]
+  };
+  const before = JSON.stringify(data);
+  const report = O.auditIntegrated(data, {}, {});
+  const queue = O.buildValidationQueue(report);
+  assert.equal(queue.readOnly, true);
+  assert.equal(queue.sourceMutation, 'never');
+  assert.ok(queue.items.some(x => x.code === 'missing_company_id' && x.category === 'organization'));
+  assert.ok(queue.items.some(x => x.code === 'orphan_person' && x.category === 'person'));
+  assert.ok(queue.items.some(x => x.code === 'inferred_relation'));
+  assert.ok(queue.items.every(x => x.reviewId && x.program && x.advice));
+  assert.equal(queue.items[0].severity, 'high', '위험 항목을 검토목록 맨 앞에 둬야 합니다');
+  const target = queue.items.find(x => x.code === 'missing_company_id');
+  const filtered = O.filterValidationQueue(queue, {category:'organization',status:'completed',decisions:{[target.reviewId]:'completed'}});
+  assert.ok(filtered.some(x => x.reviewId === target.reviewId && x.reviewStatus === 'completed'));
+  assert.equal(JSON.stringify(data), before, '검증목록 생성이 원본을 바꿨습니다');
+});
+
+test('5단계 검증센터 화면은 원본 자동수정 없이 필터·상태·원본 이동을 제공한다', () => {
+  assert.match(erp, /푸른통합 온톨로지 5단계/);
+  assert.match(erp, /O\.buildValidationQueue\(report\)/);
+  assert.match(erp, /O\.filterValidationQueue\(validationQueue/);
+  assert.match(erp, /온톨로지 검증센터/);
+  assert.match(erp, /원본 프로그램 열기/);
+  assert.match(erp, /검토 완료/);
+  assert.match(erp, /자동수정 없음/);
+});
