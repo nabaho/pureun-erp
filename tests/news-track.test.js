@@ -8,6 +8,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const T = require('../functions/news-track.js');
+const fs = require('node:fs');
+const path = require('node:path');
+const fn = fs.readFileSync(path.join(__dirname, '..', 'functions', 'index.js'), 'utf8');
 
 test('★ 목록에 없는 번호는 «어디로도» 안 보낸다 — 피싱 구멍을 막는다', () => {
   const 링크들 = ['https://www.labortoday.co.kr/a', 'https://www.law.go.kr/b'];
@@ -76,4 +79,51 @@ test('밑주소 끝에 / 가 있어도 두 번 안 붙는다', () => {
 test('빈 그림이 진짜 GIF 다 — 메일 프로그램이 못 읽으면 열람이 안 찍힌다', () => {
   assert.equal(T.빈그림.slice(0, 3).toString('ascii'), 'GIF');
   assert.ok(T.빈그림.length < 100, '1×1 인데 너무 큽니다');
+});
+
+/* ══════ 추적 서버 함수 — 누구나 부를 수 있는 자리다 ══════ */
+
+/* ★ newsOpen·newsClick 은 로그인이 없다 — 받는 쪽 메일 프로그램이 부르는 자리다.
+     그래서 «할 수 있는 일이 아주 작아야» 한다. 아래가 그것을 못 박는다. */
+function 함수토막(이름) {
+  const i = fn.indexOf('exports.' + 이름 + ' = functions');
+  assert.ok(i >= 0, 이름 + ' 을 찾을 수 없습니다');
+  const j = fn.indexOf('\nexports.', i + 10);
+  return fn.slice(i, j > i ? j : i + 2600);
+}
+
+test('★ newsClick 이 목적지를 «주소로» 받지 않는다 — 열린 리다이렉트를 막는다', () => {
+  /* 목적지를 그대로 받으면 누구나 우리 도메인으로 남을 속이는 링크를 만들 수 있고,
+     우리 주소라 받는 쪽이 «더 잘 믿는다»는 점이 더 나쁘다. */
+  const s = 함수토막('newsClick');
+  assert.match(s, /NT\.링크찾기\(/, '회차에 적어 둔 목록에서 찾지 않습니다');
+  assert.ok(!/req\.query\.u\b/.test(s), '목적지를 주소로 받습니다 — 피싱 구멍입니다');
+  assert.ok(!/redirect\(\s*30\d\s*,\s*(req|String\(req)/.test(s),
+    '받은 값으로 곧바로 보냅니다 — 피싱 구멍입니다');
+  assert.match(s, /갈곳 \|\| .https:\/\/nabaho\.github\.io/,
+    '못 찾았을 때 갈 곳이 정해져 있지 않습니다');
+});
+
+test('★ 열람은 «무슨 일이 있어도» 그림을 준다 — 깨진 그림은 편지를 이상하게 보이게 한다', () => {
+  const s = 함수토막('newsOpen');
+  assert.match(s, /NT\.빈그림/, '그림을 안 줍니다');
+  /* 값이 이상해도 500 을 내지 않는다 — try 로 감싸고 그림은 늘 준다 */
+  assert.match(s, /catch/, '적다가 터지면 그림도 안 줍니다');
+  assert.match(s, /Cache-Control/, '캐시를 막지 않습니다 — 두 번째 열람이 안 옵니다');
+  assert.match(s, /no-store/, '캐시를 확실히 막지 않습니다');
+});
+
+test('★ 둘 다 서울 리전이다 — 메일 함수와 같은 자리', () => {
+  ['newsOpen', 'newsClick'].forEach(function (n) {
+    assert.match(함수토막(n), /\.region\(MAIL_REGION\)/, n + ' 이 다른 리전에 있습니다');
+  });
+});
+
+test('★ 추적 자리 이름을 news-track 이 «한 곳에서» 정한다', () => {
+  /* 서버가 자리 이름을 손으로 짜면 편지·화면과 어긋난다. */
+  ['newsOpen', 'newsClick'].forEach(function (n) {
+    const s = 함수토막(n);
+    assert.match(s, /NT\.읽기\(req\.query\)/, n + ' 이 물음표 뒤를 손으로 읽습니다');
+  });
+  assert.match(fn, /NT\.적을자리\(/, '적을 자리를 손으로 짭니다');
 });

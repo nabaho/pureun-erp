@@ -2054,6 +2054,79 @@ exports.photoSensitiveSweep = functions
 /* 홈페이지 읽어오기 — 통합시스템이 홈페이지와 대조할 수 있게 쪽 내용을 글자로 돌려준다.
    읽기만 한다. 쓰기 경로가 없으므로 이 함수로는 홈페이지를 바꿀 수 없다.
    총괄관리자만 부를 수 있다. */
+// ════════════════════════════════════════════════════════════════════════════
+// 뉴스레터 열람·클릭 추적 — newsOpen · newsClick
+// ════════════════════════════════════════════════════════════════════════════
+// 대표 지시 2026-09-03: 「상대방에게 발송이 된것 과 수신이된것 열람 미열람을 정확하게
+// 확인하고 3회이상 미열람일 경우 … 미열람 사업장 제외하는 시스템이 필요하다」
+// 대표 결정: 「최근5회중3회, 후보올리기」
+//
+// ★ 이 둘은 «누구나 부를 수 있다» — 로그인이 없다. 받는 쪽 메일 프로그램이 부르는
+//   자리이기 때문이다. 그래서 «할 수 있는 일을 아주 작게» 만든다:
+//     · newsOpen  — 열람 표를 하나 켜고 1×1 그림을 내준다. 그 밖에 아무것도 안 한다.
+//     · newsClick — 클릭 표를 켜고, «회차에 적어 둔 목록»의 번호로 찾은 곳으로 보낸다.
+//
+// ⚠ 열린 리다이렉트를 막는다. 목적지를 주소로 받지 않고 «번호»로 받는다.
+//   목록에 없는 번호면 어디로도 보내지 않는다(우리 홈페이지로 돌린다).
+//   목적지를 그대로 받으면 누구나 우리 도메인으로 남을 속이는 링크를 만들 수 있고,
+//   우리 주소라 받는 쪽이 «더 잘 믿는다»는 점이 더 나쁘다.
+//
+// ⚠ 아무 값이나 들어와도 «에러를 내지 않는다». 메일 프로그램이 주소를 조금씩 바꿔
+//   부르는 일이 있고, 그때 500 을 내면 편지가 깨진 것처럼 보인다. 조용히 그림만 준다.
+//
+// ⚠ 캐시를 막는다. 캐시되면 두 번째 열람이 우리 서버에 오지 않는다.
+//
+// ⚠ 열람은 «완벽하지 않다» — 아웃룩·회사 메일 서버가 그림을 기본으로 막는다.
+//   그래서 클릭도 함께 본다(js/pu-news-core.js 미열람판단).
+const NT = require("./news-track");
+
+/* 표를 하나 켠다. 이미 켜져 있으면 그대로 둔다(처음 열람 시각을 지킨다). */
+async function 추적표켜기(회차, 주소, 무엇) {
+  const db = getDatabase();
+  const 자리 = NT.적을자리(회차, 주소);
+  const upd = {};
+  upd[무엇] = true;
+  upd[무엇 + "첫때"] = Date.now();      // 늘 덮는다 — 마지막이 아니라 «몇 번째든» 있었다는 표
+  upd[무엇 + "수"] = admin.database.ServerValue.increment(1);
+  await db.ref(자리).update(upd);
+}
+
+exports.newsOpen = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 15, memory: "128MB" })
+  .https.onRequest(async (req, res) => {
+    // 캐시를 막지 않으면 두 번째 열람이 안 온다
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+    res.set("Pragma", "no-cache");
+    res.set("Content-Type", "image/gif");
+    const q = NT.읽기(req.query);
+    if (q.ok) {
+      try { await 추적표켜기(q.회차, q.주소, "열람"); }
+      catch (e) { console.warn("newsOpen", (e && e.message) || e); }
+    }
+    // 무슨 일이 있어도 그림은 준다 — 깨진 그림이 보이면 편지가 이상해 보인다
+    res.status(200).send(NT.빈그림);
+  });
+
+exports.newsClick = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 15, memory: "128MB" })
+  .https.onRequest(async (req, res) => {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+    const q = NT.읽기(req.query);
+    let 갈곳 = "";
+    if (q.ok) {
+      try {
+        await 추적표켜기(q.회차, q.주소, "클릭");
+        // ★ 목적지는 «회차에 적어 둔 목록»에서 번호로 찾는다 — 주소로 받지 않는다
+        const s = await getDatabase()
+          .ref("newsletter/issues/" + q.회차 + "/링크들").once("value");
+        갈곳 = NT.링크찾기(s.val(), q.번호);
+      } catch (e) { console.warn("newsClick", (e && e.message) || e); }
+    }
+    // 못 찾으면 우리 홈페이지로 — «아무 데도 안 보내는 것»이 안전한 쪽이다
+    res.redirect(302, 갈곳 || "https://nabaho.github.io/pureunall/");
+  });
 exports.readHomepage = functions
   .runWith({ timeoutSeconds: 60, memory: "256MB" })
   .https.onRequest(async (req, res) => {
