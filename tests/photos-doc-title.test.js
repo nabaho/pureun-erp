@@ -358,6 +358,8 @@ function runGridBar(over) {
     viewingOther: function () { return false; },
     /* 2026-08-28: 도구줄이 «막는 쪽과 같은 기준»(mayTouch)을 본다 — 안 주면 멎는다 */
     mayTouch: function () { return true; },
+    /* 2026-09-03: 공유 칸은 «넘길 수 있는 것»(shareableSel)으로 뜬다 — 안 주면 멎는다 */
+    shareableSel: function () { return []; },
     canSend: function () { return false; },
     worthRetry: function () { return true; },
     needsCheck: function () { return false; },

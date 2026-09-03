@@ -75,6 +75,8 @@ function pick(over) {
   ['function sidOf(', 'function bySid(', 'function shareOften(', 'function noteShareOften(',
    'function isMinePhoto(', 'function viewingOther(', 'function mayTouch(', 'function maskForced(',
    'function sharedToMe(', 'function mayShare(', 'function shareNoWhy(', 'function closeSharePick(',
+   /* 2026-09-03: 넘길 목록을 «넘길 수 있는 것»으로 좁히면서 늘었다 — 안 실으면 멎는다 */
+   'function shareableSel(',
    'function openShareMany(', 'function openSharePeople(', 'function sharePeopleHtml(',
    'function sharePickFilter(', 'function sharePickChanges(', 'function sharePickTouched(',
    'function renderShareCard('].forEach(function (n) {
@@ -90,7 +92,10 @@ function pick(over) {
 
 test('★★ 「공유하기」를 누르면 «왼쪽 칸 안»에서 고른다 — 가운데 창이 격자를 가리지 않게', () => {
   const fn = cutFn(APP, 'function openShareMany(');
-  assert.match(fn, /openSharePeople\(Array\.from\(selected\), 'sharePickBox'\)/,
+  /* ⚠ 2026-09-03 — 넘길 목록이 「고른 것 전부」에서 «넘길 수 있는 것»으로 좁아졌다
+     (받은 사진이 섞여도 나머지는 넘어가게). 여기서 지키는 것은 «어느 칸에 그리는가»이지
+     목록을 무엇으로 세는가가 아니다 — 그 자리는 photos-bulk-share-bounce 가 본다. */
+  assert.match(fn, /openSharePeople\(.+?, 'sharePickBox'\)/,
     '★★ 격자에서 누르면 아직 가운데 창이 뜹니다');
   assert.match(APP, /<div id="sharePickBox"/, '★★ 목록이 들어갈 칸이 없습니다');
   /* 크게 보기(한 장)는 창 그대로 — 거기에는 왼쪽 칸이 없다 */
@@ -130,7 +135,9 @@ test('★★ 실제로 열고 닫아 본다 — 단추 하나로 여닫는다', 
 test('★★ 고른 사진이 바뀌면 열려 있던 목록을 닫는다 — 화면이 거짓말하지 않게', () => {
   /* 「3장을 같이 볼 사람」이라 적힌 채로 다섯 장에 열어 주면 안 된다 */
   const fn = cutFn(APP, 'function renderShareCard(');
-  assert.match(fn, /_sharePick\.ids\.length !== n/,
+  /* ⚠ 2026-09-03 — 견주는 것이 «고른 수(n)»에서 «넘길 수 있는 수(k)»로 바뀌었다.
+     못 넘기는 것이 섞여 있을 때 n 으로 견주면 열자마자 닫힌다. */
+  assert.match(fn, /_sharePick\.ids\.length !== k/,
     '★★ 고른 장수가 바뀌어도 옛 목록이 그대로 열려 있습니다');
   assert.match(fn, /closeSharePick\(\)/);
 });

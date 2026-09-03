@@ -235,8 +235,16 @@ test('★ 업체 지정은 도구줄에, 공유는 «누구 사진 아래» 대�
 
 test('★★ 공유 칸은 도구줄과 «한 기준»으로 뜬다 — 따로 정하면 한쪽만 막힌다', () => {
   const bar = cutFn(photos, 'function renderGridBar(');
-  assert.match(bar, /renderShareCard\(n, touch\)/,
-    '★ 도구줄이 쓰는 그 판정을 그대로 넘겨야 합니다');
+  /* ⚠ 2026-09-03 — 기준이 touch(mayTouch)에서 «넘길 수 있는 것»(shareableSel)으로
+     바뀌었다. 받은 사진은 손댈 수는 없어도 **넘길 수는 있기** 때문이다(되전달 ㉮).
+     touch 로 물었더니 직원이 받은 사진을 고르면 공유 칸이 통째로 안 떴다.
+     여기서 지키는 것은 여전히 「도구줄과 칸이 한 셈을 쓴다」이다. */
+  assert.match(bar, /const shareIds = shareableSel\(\);/,
+    '★ 넘길 수 있는 것을 세는 자리가 없습니다');
+  assert.match(bar, /renderShareCard\(n, shareIds\.length\)/,
+    '★ 도구줄이 쓰는 그 셈을 그대로 넘겨야 합니다');
+  assert.ok(!/renderShareCard\(n, touch\)/.test(bar),
+    '★★ mayTouch 로 물으면 받은 사진을 넘기는 길이 화면에서 사라집니다');
   const fn = cutFn(photos, 'function renderShareCard(');
   /* 2026-08-30: 도구줄이 «왼쪽 칸에 고르기가 열려 있나»를 함께 본다 — 고른 장수가
      바뀌면 열려 있던 목록을 닫아야 화면이 거짓말을 안 한다. 그 상태를 여기서도 준다. */
@@ -247,18 +255,25 @@ test('★★ 공유 칸은 도구줄과 «한 기준»으로 뜬다 — 따로 �
   vm.createContext(ctx);
   vm.runInContext(fn, ctx);
 
-  ctx.renderShareCard(15, true);
+  /* ⚠ 둘째 값은 이제 «넘길 수 있는 장수»다(참/거짓이 아니다) — 2026-09-03 */
+  ctx.renderShareCard(15, 15);
   assert.equal(ctx._card.style.display, 'block');
   assert.match(ctx._btn.textContent, /15장/,
     '★ 장수가 없으면 몇 장에 걸리는지 모른 채 누르게 됩니다');
 
-  ctx.renderShareCard(0, true);
+  ctx.renderShareCard(0, 0);
   assert.equal(ctx._card.style.display, 'none',
     '★ 고른 것이 없는데 떠 있으면 눌러도 아무 일이 없습니다');
 
-  ctx.renderShareCard(15, false);
+  ctx.renderShareCard(15, 0);
   assert.equal(ctx._card.style.display, 'none',
-    '★ 손댈 수 없는 사진(남의 것)에 공유 칸이 뜨면 눌러도 막힙니다');
+    '★ 한 장도 못 넘기는데 공유 칸이 뜨면 눌러도 막힙니다');
+
+  /* 못 넘기는 것이 섞였을 때 — 단추가 «갈 장수»를 먼저 말한다 (2026-09-03) */
+  ctx.renderShareCard(28, 27);
+  assert.match(ctx._btn.textContent, /27장/,
+    '★★ 28장을 골랐는데 27장만 간다면 단추가 그것을 먼저 말해야 합니다 —\n' +
+    '  열고 나서 알면 「내가 고른 건 28장인데?」가 됩니다.');
 });
 
 /* ⚠ 2026-08-28 대표 보고 — "여기서 어떻게 공유자 선택하나". 「전체 근로자」로 보시는
