@@ -25,10 +25,13 @@ const B = require('../functions/mail-bulk.js');
 const fn = fs.readFileSync(path.join(__dirname, '..', 'functions', 'index.js'), 'utf8');
 
 /* sendScheduledMail 토막만 본다 — 다른 예약 함수의 일정에 걸리지 않게. */
+/* sendScheduledMail 함수 몸통. ⚠ 잘라 보는 길이를 넉넉히 둔다 — 주석이 늘면
+     보아야 할 줄이 창 밖으로 밀려 «없다»고 잘못 걸린다(2026-09-03에 실제로 그랬다). */
 function sender() {
   const i = fn.indexOf('exports.sendScheduledMail');
   assert.ok(i >= 0, 'sendScheduledMail 을 찾을 수 없습니다');
-  return fn.slice(i, i + 1400);
+  const j = fn.indexOf('console.log("sendScheduledMail"', i);
+  return fn.slice(i, j > i ? j : i + 3000);
 }
 
 test('★ 발송기 일정과 mail-bulk 의 DRAIN_EVERY_MIN 이 같다', () => {
@@ -68,4 +71,14 @@ test('발송기는 한 바퀴에 집은 것을 그 자리에서 다 보낸다', 
   const s = sender();
   assert.match(s, /for \(const id of ids\)/, '집은 것을 다 돌지 않습니다');
   assert.match(s, /MD\.deliver\(/, '그 자리에서 보내지 않습니다');
+});
+
+test('★ 예약 발송기가 통에 적힌 보내는 주소를 «조여서» 쓴다', () => {
+  /* 통에 적힌 값을 그대로 from 에 넣으면 남의 이름으로 보내는 길이 된다.
+     반드시 보내는주소고르기() 를 지나야 한다. */
+  const s = sender();
+  assert.match(s, /보내는주소고르기\(row\.fromWish,\s*from\)/,
+    '통에 적힌 주소를 조이지 않고 씁니다 — 남의 이름으로 보낼 수 있습니다');
+  assert.match(s, /from:\s*이통from/, '조인 결과를 실제로 쓰지 않습니다');
+  assert.ok(!/from:\s*from,\s*pass:/.test(s), '조이기 전 값이 아직 쓰이고 있습니다');
 });

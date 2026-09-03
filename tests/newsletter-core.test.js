@@ -314,3 +314,110 @@ test('간격이 발송기보다 느리면 그때는 간격이 셈을 정한다',
   assert.strictEqual(C.보낼시간(20, 600), 벌크.etaText(20, 600000));
   assert.strictEqual(C.보낼시간(20, 600), '약 3시간 20분');
 });
+
+/* ══════ ⑧ 받는 명단 — 기업정보함을 «그때그때» 읽는다 ══════ */
+
+/* 대표 지시 2026-09-03: 「뉴스레터에 보낼 사업장들은 기업정보함과 푸른이알피에 연결되어
+     있는 담당자들에게 보내려고 한다. … 명단을 매주 실시간으로 확인하고 싶다. 그리고
+     사업장계약종료 또는 담당자 퇴사시에 더이상 보낼필요가 없을경우 어떻게 처리해야하는지」
+
+   ★ 답은 «사본을 만들지 않는 것»이다. 예전에는 CSV 를 붙여넣어 newsletter/recipients 에
+     담아 두었다 — 그 사본은 붙여넣은 날 그대로 멈춘다. 계약이 끝나도, 담당자가 퇴사해도
+     뉴스레터는 모른다. 그래서 기업정보함이 쓰는 «같은 자리»(data/companies/v)를 읽는다.
+     새 연결을 만들지 않는다 — 푸른이알피도 그 자리를 쓴다.
+
+   ★ 그래서 계약종료·퇴사에 «따로 할 일이 없다».
+     기업정보함에서 status 를 closed 로 바꾸거나 담당자에 left 를 켜면 저절로 빠진다.
+     한 곳만 고치면 된다 — 두 곳을 맞추려 하면 반드시 어긋난다.
+
+   ⚠ 실측(2026-09-03, 사업장 373곳): active 206 · closed 101 · suboffice 66.
+     담당자 이메일은 primaryContactEmail(282곳)과 contacts[].email 에 있다.
+     퇴사 표시 left 는 5건 있었다. */
+
+const 사업장 = (더할것) => Object.assign({
+  id: 'co-1', name: '가나다주식회사', status: 'active', typeCode: '자문',
+  primaryContactName: '홍길동', primaryContactEmail: 'hong@abc.co.kr'
+}, 더할것 || {});
+
+test('★ 계약이 끝난 곳은 «저절로» 빠진다 — 뉴스레터에서 지울 일이 없다', () => {
+  const r = C.사업장에서명단([
+    사업장({ id: 'a', status: 'active' }),
+    사업장({ id: 'b', status: 'closed', primaryContactEmail: 'b@x.kr' })
+  ], '자문중');
+  assert.strictEqual(r.줄들.length, 1, '끝난 곳이 아직 들어 있습니다');
+  assert.strictEqual(r.줄들[0].email, 'hong@abc.co.kr');
+});
+
+test('★ 퇴사한 담당자는 빠진다 — contacts 의 left 를 본다', () => {
+  const r = C.사업장에서명단([사업장({
+    primaryContactEmail: '',
+    contacts: [
+      { name: '김', email: 'kim@x.kr' },
+      { name: '이', email: 'lee@x.kr', left: true }        /* 퇴사 */
+    ]
+  })], '자문중');
+  const 주소들 = r.줄들.map((x) => x.email);
+  assert.ok(주소들.indexOf('kim@x.kr') >= 0, '남아 있는 담당자가 빠졌습니다');
+  assert.strictEqual(주소들.indexOf('lee@x.kr'), -1, '퇴사한 담당자가 아직 들어 있습니다');
+});
+
+test('★ 주담당자와 추가 담당자를 모두 담는다', () => {
+  const r = C.사업장에서명단([사업장({
+    contacts: [{ name: '김', email: 'kim@x.kr', position: '과장' }]
+  })], '자문중');
+  assert.strictEqual(r.줄들.length, 2);
+  const 김 = r.줄들.find((x) => x.email === 'kim@x.kr');
+  assert.strictEqual(김.company, '가나다주식회사', '회사 이름이 안 붙었습니다');
+  assert.strictEqual(김.title, '과장', '직책이 안 붙었습니다');
+});
+
+test('★ 범위를 넓히면 끝난 곳도 들어온다 — 설정 한 곳이 스위치다', () => {
+  const 목록 = [
+    사업장({ id: 'a', status: 'active' }),
+    사업장({ id: 'b', status: 'closed', primaryContactEmail: 'b@x.kr' }),
+    사업장({ id: 'c', status: 'suboffice', primaryContactEmail: 'c@x.kr' })
+  ];
+  assert.strictEqual(C.사업장에서명단(목록, '자문중').줄들.length, 1, '자문중 = 살아 있는 곳만');
+  assert.strictEqual(C.사업장에서명단(목록, '자문끝').줄들.length, 2, '자문끝 = 끝난 곳까지');
+  assert.strictEqual(C.사업장에서명단(목록, '명함전부').줄들.length, 3, '명함전부 = 지점까지');
+});
+
+test('★ 주소가 없는 곳을 «따로 알려 준다» — 그래야 채울 수 있다', () => {
+  /* 주소가 없으면 그냥 빠지는데, 빠진 줄 모르면 영영 못 받는다.
+     실측으로 active 206곳 가운데 101곳이 주소가 아예 없었다. */
+  const r = C.사업장에서명단([
+    사업장({ id: 'a' }),
+    사업장({ id: 'b', name: '주소없는곳', primaryContactEmail: '', contacts: [] })
+  ], '자문중');
+  assert.strictEqual(r.줄들.length, 1);
+  assert.strictEqual(r.주소없는곳.length, 1, '주소 없는 곳을 안 알려 줍니다');
+  assert.strictEqual(r.주소없는곳[0].name, '주소없는곳');
+  assert.strictEqual(r.본곳, 2, '범위에 든 곳 수');
+});
+
+test('명단다듬기와 물려 돌아간다 — 겹침·수신거부는 그쪽이 맡는다', () => {
+  const r = C.사업장에서명단([
+    사업장({ id: 'a', primaryContactEmail: 'same@x.kr' }),
+    사업장({ id: 'b', primaryContactEmail: 'SAME@x.kr' })
+  ], '자문중');
+  const d = C.명단다듬기(r.줄들, {});
+  assert.strictEqual(d.ok.length, 1, '같은 주소가 두 번 들어갔습니다');
+  assert.strictEqual(d.셈.겹침, 1);
+});
+
+test('★ 한 사업장 안에서 같은 사람을 두 번 담지 않는다', () => {
+  /* 주담당자가 contacts 안에 isPrimary 로 «또» 들어 있는 경우가 많다.
+     실측 2026-09-03: 자문중 206곳에서 그렇게 생긴 겹침이 104건이었다.
+     명단다듬기가 걸러 주긴 하지만, 화면에 「겹침 104」로 뜨면 대표께서
+     명단이 엉킨 줄로 보신다. 그러니 «사업장 안에서» 먼저 하나로 묶는다. */
+  const r = C.사업장에서명단([사업장({
+    primaryContactEmail: 'hong@abc.co.kr',
+    contacts: [
+      { name: '홍길동', email: 'HONG@abc.co.kr', isPrimary: true },   /* 같은 사람 */
+      { name: '김', email: 'kim@x.kr' }
+    ]
+  })], '자문중');
+  assert.strictEqual(r.줄들.length, 2, '같은 사람을 두 번 담았습니다');
+  const d = C.명단다듬기(r.줄들, {});
+  assert.strictEqual(d.셈.겹침, 0, '사업장 안에서 미리 안 묶었습니다');
+});

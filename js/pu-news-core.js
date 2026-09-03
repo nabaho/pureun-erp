@@ -382,6 +382,85 @@
      · 명함전부 — 사전 동의 · (광고) 표기 · 수신거부 · 2년마다 확인이 필요하다 */
   var 범위들 = ['자문중', '자문끝', '명함전부'];
 
+  /* ══════════════════════════════════════════════════════════════════════
+     받는 명단을 «기업정보함에서 그때그때» 만든다
+     ══════════════════════════════════════════════════════════════════════
+     대표 지시 2026-09-03: 「기업정보함과 푸른이알피에 연결되어 있는 담당자들에게
+     보내려고 한다. … 명단을 매주 실시간으로 확인하고 싶다. 그리고 사업장계약종료
+     또는 담당자 퇴사시에 더이상 보낼필요가 없을경우 어떻게 처리해야하는지」
+
+     ★ 사본을 만들지 않는다. 예전에는 CSV 를 붙여넣어 newsletter/recipients 에 담아
+       두었는데, 그 사본은 붙여넣은 날에 멈춘다 — 계약이 끝나도 담당자가 퇴사해도
+       뉴스레터는 모른다. 그래서 기업정보함이 쓰는 «같은 자리»를 읽는다
+       (data/companies/v — 푸른이알피도 그 자리를 쓴다. 새 연결을 만들지 않는다).
+
+     ★ 그래서 계약종료·퇴사에 «뉴스레터에서 할 일이 없다».
+       기업정보함에서 status 를 바꾸거나 담당자에 left 를 켜면 저절로 빠진다.
+       한 곳만 고치면 된다 — 두 곳을 맞추려 하면 반드시 어긋난다.
+
+     ★ 범위가 그대로 스위치다 — 이미 (광고) 표기를 정하는 그 설정이다. 법과 결이 맞는다.
+         자문중   status 'active' 만        → 거래관계 안, (광고) 표기 없이 수월
+         자문끝   'active' + 'closed'       → 거래가 끝났으니 (광고) 표기가 켜진다
+         명함전부 지점(suboffice)까지        → 사전 동의가 필요해진다
+
+     ⚠ 지점(suboffice)은 «자문중»에서 뺀다. 본점과 담당자가 같은 경우가 많아
+       두 통이 가고, 「지점이라 계약 주체가 아니다」는 자리도 생긴다.
+
+     ⚠ 주소가 없는 곳은 «따로 돌려준다». 그냥 빠지면 빠진 줄을 모르고 영영 못 받는다.
+       실측 2026-09-03: active 206곳 가운데 101곳이 주소가 아예 없었다. */
+  function 사업장에서명단(사업장들, 범위) {
+    var 볼상태 = { active: 1 };
+    if (범위 === '자문끝') 볼상태.closed = 1;
+    if (범위 === '명함전부') { 볼상태.closed = 1; 볼상태.suboffice = 1; }
+
+    var 줄들 = [], 주소없는곳 = [], 본곳 = 0;
+    var 목록 = Array.isArray(사업장들) ? 사업장들
+      : (사업장들 && typeof 사업장들 === 'object') ? Object.keys(사업장들).map(function (k) { return 사업장들[k]; })
+      : [];
+
+    목록.forEach(function (co) {
+      if (!co || typeof co !== 'object') return;
+      if (!볼상태[String(co.status || '')]) return;
+      본곳++;
+
+      var 회사 = String(co.name == null ? '' : co.name);
+      var 담은수 = 0;
+      /* ⚠ 같은 사업장 안에서 먼저 하나로 묶는다. 주담당자가 contacts 안에 isPrimary 로
+           또 들어 있는 경우가 많아서다(실측: 자문중 206곳에서 104건).
+           명단다듬기가 걸러 주긴 하지만, 화면에 「겹침 104」로 뜨면
+           대표께서 명단이 엉킨 줄로 보신다. */
+      var 이집 = {};
+      function 담기(이름, 주소, 직책) {
+        var e = String(주소 == null ? '' : 주소).trim();
+        if (!e) return;
+        var 열 = e.toLowerCase();
+        if (이집[열]) return;
+        이집[열] = 1;
+        담은수++;
+        /* 걸러내기(형식·겹침·수신거부)는 명단다듬기가 «한 곳에서» 맡는다 —
+           여기서 또 걸러내면 두 곳이 서로 다른 잣대를 갖는다. */
+        줄들.push({ email: e, name: String(이름 == null ? '' : 이름), company: 회사,
+                    title: String(직책 == null ? '' : 직책), 사업장: String(co.id || '') });
+      }
+
+      담기(co.primaryContactName, co.primaryContactEmail, co.primaryContactTitle);
+
+      var cs = co.contacts;
+      if (cs) {
+        (Array.isArray(cs) ? cs : Object.keys(cs).map(function (k) { return cs[k]; }))
+          .forEach(function (c) {
+            if (!c || typeof c !== 'object') return;
+            if (c.left === true || c.left === 'true') return;   /* ★ 퇴사 — 안 보낸다 */
+            담기(c.name, c.email, c.position || c.dept);
+          });
+      }
+
+      if (!담은수) 주소없는곳.push({ id: String(co.id || ''), name: 회사, status: String(co.status || '') });
+    });
+
+    return { 줄들: 줄들, 주소없는곳: 주소없는곳, 본곳: 본곳 };
+  }
+
   function 광고표기필요한가(범위) {
     return String(범위) !== '자문중';
   }
@@ -441,7 +520,8 @@
     붙여넣기읽기: 붙여넣기읽기,
     명단다듬기: 명단다듬기,
     범위들: 범위들, 광고표기필요한가: 광고표기필요한가, 제목짓기: 제목짓기,
-    보낼수있나: 보낼수있나, 보낼시간: 보낼시간
+    보낼수있나: 보낼수있나, 보낼시간: 보낼시간,
+    사업장에서명단: 사업장에서명단
   };
 
   if (typeof module === 'object' && module.exports) module.exports = API;

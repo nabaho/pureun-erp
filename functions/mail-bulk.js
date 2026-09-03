@@ -112,6 +112,9 @@ function validateBulk(p) {
     html: String(body.html == null ? '' : body.html),
     matIds: matIds,
     gapMs: spacingMs(body.spacingSec),
+    /* 보내는 주소 «소망». 조이기는 보낼 때 서버가 한다(보내는주소고르기) —
+       화면이 담은 값을 그대로 믿으면 남의 이름으로 보내는 길이 된다. */
+    fromWish: String(body.from == null ? '' : body.from).trim(),
   };
 }
 
@@ -132,6 +135,8 @@ function buildQueue(v, now, by, batchId) {
       bulk: String(batchId || ''),
       bulkNo: i + 1,
       bulkOf: v.targets.length,
+      /* 15분 뒤 예약 발송기가 보낼 때 «이 통이 어느 주소에서 나갈지»를 알 길은 여기뿐이다 */
+      fromWish: v.fromWish || '',
       payload: {
         to: t.email,
         toName: t.name || t.company || '',
@@ -144,6 +149,31 @@ function buildQueue(v, now, by, batchId) {
       },
     };
   });
+}
+
+/* 보내는 주소를 고른다 — 뉴스레터가 «원본과 같은 주소»에서 나가게.
+   대표 지시 2026-09-03: 「뉴스레터 발송시에는 370-6@hanmail.net 주소로 송부되어야 한다」
+
+   ★ hanmail.net 과 daum.net 은 «같은 사서함»이다(다음 별칭). 원본 뉴스레터가 실제로
+     hanmail 쪽에서 나갔다 — 거래처가 눈에 익은 주소다.
+   ⚠ 보내는 주소는 자료 발송·예약 발송이 함께 쓰는 한 곳에 있다
+     (pucards/config/matMail/from). 그래서 «거기를 바꾸지 않고» 뉴스레터만 달리 보낸다.
+   ⚠ 화면이 아무 주소나 넣게 두면 남의 이름으로 보내는 길이 된다. 그래서 여기서 조인다 —
+     앞부분(사서함 이름)이 로그인 계정과 «같아야» 하고, 도메인은 그 둘만 허용한다.
+     어긋나면 «조용히 계정 주소로» 보낸다(막지 않는다 — 뉴스레터가 안 나가는 것이 더 나쁘다). */
+var 같은사서함도메인 = ['daum.net', 'hanmail.net'];
+
+function 보내는주소고르기(원하는것, 계정주소) {
+  var 계정 = String(계정주소 == null ? '' : 계정주소).trim();
+  var 원 = String(원하는것 == null ? '' : 원하는것).trim().toLowerCase();
+  if (!원 || !계정) return 계정;
+
+  var a = 원.split('@'), b = 계정.toLowerCase().split('@');
+  if (a.length !== 2 || b.length !== 2) return 계정;
+  if (a[0] !== b[0]) return 계정;                                  /* 사서함 이름이 다르다 */
+  if (같은사서함도메인.indexOf(a[1]) < 0) return 계정;              /* 같은 사서함이 아니다 */
+  if (같은사서함도메인.indexOf(b[1]) < 0) return 계정;              /* 계정이 다음 사서함이 아니다 */
+  return a[0] + '@' + a[1];
 }
 
 /* 언제 다 나가는지 사람 말로 — 이 숫자를 보고 «되돌릴 수 없는» 단추를 누른다.
@@ -166,6 +196,6 @@ function etaText(n, gapMs) {
 
 module.exports = {
   MAX_BULK, DEFAULT_SPACING_SEC, MIN_SPACING_SEC, MAX_SPACING_SEC,
-  DRAIN_EVERY_MIN, DRAIN_BATCH,
-  fill, cleanTargets, spacingMs, validateBulk, buildQueue, etaText,
+  DRAIN_EVERY_MIN, DRAIN_BATCH, 같은사서함도메인,
+  fill, cleanTargets, spacingMs, validateBulk, buildQueue, etaText, 보내는주소고르기,
 };

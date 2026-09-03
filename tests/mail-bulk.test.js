@@ -185,3 +185,60 @@ test('언제 다 나가는지 사람 말로 알려 준다', () => {
   assert.equal(B.etaText(21, 15000), '약 30분', '한 바퀴를 넘으면 두 바퀴를 기다린다');
   assert.match(B.etaText(300, 15000), /^약 \d+시간( \d+분)?$/, '한 시간이 넘으면 시간·분으로');
 });
+
+/* ── 보내는 주소 고르기 ─────────────────────────────────────────────── */
+
+/* 대표 지시 2026-09-03: 「뉴스레터 발송시에는 푸른노무법인 메일 370-6@hanmail.net
+     주소로 송부되어야 한다. 이부분 명확하게 해야한다」
+
+   ★ 원본 뉴스레터가 실제로 그 주소에서 나갔다(보낸메일함 실측 2026-09-02).
+     hanmail.net 과 daum.net 은 «같은 사서함»이다 — 다음 별칭.
+
+   ⚠ 그런데 보내는 주소는 자료 발송·예약 발송이 «함께 쓰는 한 곳»이다
+     (pucards/config/matMail/from). 거기를 바꾸면 평소 자료 발송까지 흔들린다.
+     그래서 뉴스레터만 따로 쓰게 한다.
+
+   ⚠ 화면이 «아무 주소나» 넣게 두면 안 된다 — 남의 이름으로 보내는 길이 된다.
+     그래서 서버가 조인다: 앞부분(사서함 이름)이 로그인 계정과 «같아야» 하고,
+     도메인은 daum.net / hanmail.net 둘만 — 그 둘이 같은 사서함이기 때문이다. */
+test('★ 같은 사서함의 별칭이면 허용한다 — hanmail 로 보낼 수 있다', () => {
+  assert.equal(B.보내는주소고르기('370-6@hanmail.net', '370-6@daum.net'), '370-6@hanmail.net');
+  assert.equal(B.보내는주소고르기('370-6@daum.net', '370-6@daum.net'), '370-6@daum.net');
+  assert.equal(B.보내는주소고르기('370-6@HANMAIL.NET', '370-6@daum.net'), '370-6@hanmail.net',
+    '대소문자를 맞춰 준다');
+});
+
+test('★ 사서함 이름이 다르면 «거절하고» 계정 주소로 보낸다 — 남의 이름을 못 쓴다', () => {
+  assert.equal(B.보내는주소고르기('someone@hanmail.net', '370-6@daum.net'), '370-6@daum.net');
+  assert.equal(B.보내는주소고르기('370-6@gmail.com', '370-6@daum.net'), '370-6@daum.net',
+    '같은 사서함이 아닌 도메인은 안 된다');
+  assert.equal(B.보내는주소고르기('엉망', '370-6@daum.net'), '370-6@daum.net');
+});
+
+test('비어 있으면 계정 주소를 그대로 쓴다 — 예전처럼 돈다', () => {
+  assert.equal(B.보내는주소고르기('', '370-6@daum.net'), '370-6@daum.net');
+  assert.equal(B.보내는주소고르기(null, '370-6@daum.net'), '370-6@daum.net');
+  assert.equal(B.보내는주소고르기(undefined, ''), '');
+});
+
+test('★ 원하는 보내는 주소를 «통마다» 지니고 간다', () => {
+  /* sendBulkMail 은 예약만 걸고, 실제 발송은 15분 뒤 sendScheduledMail 이 한다.
+     그때는 「이 통이 뉴스레터였다」는 것을 알 길이 통 안뿐이다.
+     ⚠ 조이기(보내는주소고르기)는 «보낼 때» 서버가 한다 — 여기서는 소망만 담는다.
+       화면이 담은 값을 그대로 믿고 보내면 남의 이름으로 보내는 길이 된다. */
+  const v = B.validateBulk({
+    to: [T('a@x.kr', '가', '가사')], subject: '제', body: '본',
+    from: '370-6@hanmail.net'
+  });
+  assert.equal(v.ok, true);
+  assert.equal(v.fromWish, '370-6@hanmail.net');
+  const q = B.buildQueue(v, 0, 'me@x.kr', 'b1');
+  assert.equal(q[0].fromWish, '370-6@hanmail.net', '통에 안 실렸습니다');
+});
+
+test('보내는 주소를 안 주면 통에 아무것도 안 싣는다 — 예전처럼 계정 주소로 나간다', () => {
+  const v = B.validateBulk({ to: [T('a@x.kr', '가', '가사')], subject: '제', body: '본' });
+  assert.equal(v.fromWish, '');
+  const q = B.buildQueue(v, 0, 'me@x.kr', 'b1');
+  assert.ok(!q[0].fromWish, '빈 값을 실었습니다');
+});

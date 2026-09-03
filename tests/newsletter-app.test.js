@@ -265,3 +265,95 @@ test('★ 얼린 자리에는 «높이가 변하는 것»을 두지 않는다', 
   assert.ok(!/아직 못 보냅니다/.test(얼린자리), '못보냄 알림이 얼린 자리에 있습니다');
   assert.ok(!/<textarea/.test(얼린자리), '글 적는 칸이 얼린 자리에 있습니다');
 });
+
+/* ══════ ⑨ 보내는 주소 — 원본과 같은 곳에서 나가야 한다 ══════ */
+
+/* 대표 지시 2026-09-03: 「뉴스레터 발송시에는 푸른노무법인 메일 370-6@hanmail.net
+     주소로 송부되어야 한다. 이부분 명확하게 해야한다」
+
+   ⚠ 보내는 주소는 자료 발송·예약 발송이 «함께 쓰는 한 곳»에 있다
+     (pucards/config/matMail/from = 370-6@daum.net, 2026-09-03 실측).
+     거기를 바꾸면 평소 자료 발송까지 흔들린다 — 그래서 뉴스레터만 달리 보낸다.
+   ⚠ 조이는 것은 서버가 한다(mail-bulk 보내는주소고르기) — 사서함 이름이 계정과 같고
+     도메인이 daum.net/hanmail.net 인 것만 통과한다. */
+
+test('★ 보내는 주소를 «걸기() 한 곳»에서 붙인다 — 시험·본발송·전달이 다 같게', () => {
+  /* 발송 길이 넷이다(시험발송·진짜보내기·전달시험·전달보내기).
+     각자 붙이면 한 곳을 빠뜨려 «다른 주소로» 나간다. */
+  const i = news.indexOf('async function 걸기(');
+  assert.ok(i >= 0, '걸기() 를 찾을 수 없습니다');
+  const fn = news.slice(i, i + 1200);
+  assert.match(fn, /from:/, '걸기() 가 보내는 주소를 안 붙입니다');
+  assert.match(fn, /보내는주소\(\)|설정\.보내는주소/, '설정의 보내는 주소를 안 읽습니다');
+});
+
+test('★ 기본 보내는 주소가 370-6@hanmail.net 이다 — 원본이 나갔던 그 주소', () => {
+  assert.match(news, /370-6@hanmail\.net/,
+    '기본 보내는 주소가 없습니다 — 설정이 비면 원본과 다른 주소로 나갑니다');
+});
+
+test('★ 설정에 보내는 주소 칸이 있다 — 화면에서 바꿀 수 있어야 한다', () => {
+  assert.match(news, /id="cfgFrom"/, '보내는 주소 칸이 없습니다');
+  assert.match(news, /보내는주소:\s*g\('cfgFrom'\)/, '저장할 때 안 읽습니다');
+});
+
+test('설정 화면이 컴팩트하게 묶여 있다 — 칸을 더 넣을 자리가 남게', () => {
+  /* 대표 지시: 「설정을 좀더 컴팩트하게 정리하고 추가로 더 넣을 내용이 있을 수 있으니
+     그부분도 반영해서 공간 정리 해라」 — 짧은 칸은 두 줄로 나란히 둔다. */
+  assert.match(news, /\.grid2\{/, '두 줄 배치 규칙이 없습니다');
+  assert.match(news, /class="[^"]*\bgrid2\b/, '설정이 두 줄 배치를 안 씁니다');
+  assert.match(news, /class="sect"/, '설정이 묶음으로 갈려 있지 않습니다');
+  assert.match(news, /@media\(max-width:\d+px\)\{[^}]*\.grid2/,
+    '좁은 화면에서 한 줄로 돌아가는 규칙이 없습니다');
+});
+
+test('★ 받는 명단은 기업정보함을 «그때그때» 읽는다 — 사본을 두지 않는다', () => {
+  /* 대표 지시 2026-09-03: 「매주 실시간으로 확인하고 싶다. 그리고 사업장계약종료 또는
+     담당자 퇴사시에 더이상 보낼필요가 없을경우 어떻게 처리해야하는지」
+     ★ 답은 사본을 안 만드는 것이다 — 붙여넣은 사본은 붙여넣은 날에 멈춘다. */
+  assert.match(news, /ref\('data\/companies\/v'\)/,
+    '기업정보함 자리를 안 읽습니다');
+  assert.match(news, /Core\.사업장에서명단\(/,
+    '명단을 사업장에서 만들지 않습니다');
+  /* 사본을 «읽어 명단으로 쓰는» 길이 남아 있으면 두 곳이 어긋난다 */
+  assert.ok(!/App\.명단\s*=\s*v\[\d\]\.val\(\)/.test(news),
+    'newsletter/recipients 사본을 아직 명단으로 씁니다');
+});
+
+test('★ 주소가 없는 곳을 화면에 보여 준다 — 빠진 줄 모르면 영영 못 받는다', () => {
+  assert.match(news, /주소없는곳/, '주소 없는 곳을 안 보여 줍니다');
+});
+
+test('★ 불러오는 차례와 v[] 번호가 맞는다 — 하나 끼우면 뒤가 다 밀린다', () => {
+  /* ⚠ 2026-09-03 실제로 겪었다. Promise.all 가운데에 자리 하나를 끼우니
+       App.브리핑 이 엉뚱한 자리(newsletter/blocked)를 읽어 «자동 담기가 죽는» 상태가
+       되었다. 화면은 멀쩡해 보이는데 기사가 0건으로만 담긴다 — 눈으로는 못 잡는다. */
+  const a = news.indexOf('Promise.all([');
+  const b = news.indexOf(']).then(function(v){', a);
+  assert.ok(a >= 0 && b > a, '불러오기를 찾을 수 없습니다');
+  const 목록 = [...news.slice(a, b).matchAll(/db\.ref\(.([^.)]+).\)/g)].map((m) => m[1]);
+  assert.ok(목록.length >= 5, '읽는 자리가 너무 적습니다');
+
+  const 바람 = {
+    '설정': 'newsletter/config',
+    '회차들': 'newsletter/issues',
+    '사업장들': 'data/companies/v',
+    '브리핑': 'homepage/newsBrief/모음'
+  };
+  const 몸 = news.slice(b, b + 1200);
+  /* ⚠ new RegExp 에 문자열로 짜지 말 것 — 이스케이프가 반으로 줄어 조용히 안 맞는다
+       (2026-09-03에 실제로 그랬다). 정규식 리터럴만 쓴다. */
+  function 몇번(이름) {
+    const i = 몸.indexOf('App.' + 이름);
+    if (i < 0) return null;
+    const m = /=[^;]*?v\[(\d)\]/.exec(몸.slice(i, i + 90));
+    return m ? Number(m[1]) : null;
+  }
+  Object.keys(바람).forEach(function (이름) {
+    const n = 몇번(이름);
+    assert.ok(n !== null, 'App.' + 이름 + ' 가 v[] 에서 안 옵니다');
+    assert.equal(목록[n], 바람[이름],
+      'App.' + 이름 + ' 가 v[' + n + '] = ' + 목록[n] + ' 를 읽습니다 — ' +
+      바람[이름] + ' 여야 합니다');
+  });
+});
