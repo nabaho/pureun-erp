@@ -35,10 +35,37 @@ function 함수(이름) {
   return H.slice(i, j < 0 ? H.length : j);
 }
 
-/* CSS 규칙 한 덩이를 꺼낸다 */
+/* CSS 규칙 한 덩이를 꺼낸다.
+   ⚠ 글자로 «찾기»만 하면 안 된다 — `.stick` 을 찾으면 `.esc > .stick` 이 먼저 걸려
+     엉뚱한 규칙을 돌려주고, 고쳐 놓았는데 빨간불이 났다(겪어 봤다).
+     그래서 규칙마다 «고르개를 갈라» 정확히 같은 것만 고른다. */
 function 꾸밈(고르개) {
-  const m = new RegExp(고르개.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\{([^}]*)\\}').exec(H);
-  return m ? m[1] : '';
+  const 찾는것 = 고르개.replace(/\s+/g, '');
+  const 모음 = [];
+  const re = /([^{}@]+)\{([^}]*)\}/g;
+  let m;
+  while ((m = re.exec(H))) {
+    const 고르개들 = m[1].split(',').map(s => s.trim().replace(/\s+/g, ''));
+    if (고르개들.includes(찾는것)) 모음.push(m[2]);
+  }
+  /* 여러 곳에 있으면 «다 이어» 돌려준다 — 미디어질의에서 덧쓴 것도 함께 본다 */
+  return 모음.join(';');
+}
+
+/* 기본(넓은 화면) 규칙 — «맨 처음» 나온 것을 집는다.
+   ⚠ 미디어질의를 정규식으로 «걷어내려다» 실패했다: 첫 @media 가 .esc 보다 앞에 있어
+     걷어내기가 .esc 까지 삼켰고, 「꾸밈을 못 찾았다」로 헛되게 빨간불이 났다.
+     이 파일은 기본 규칙을 먼저 적고 미디어질의로 «덧쓰는» 짜임이라,
+     첫 규칙이 곧 기본 규칙이다 — 걷어낼 필요가 없다. */
+function 기본꾸밈(고르개) {
+  const 찾는것 = 고르개.replace(/\s+/g, '');
+  const re = /([^{}@]+)\{([^}]*)\}/g;
+  let m;
+  while ((m = re.exec(H))) {
+    const 고르개들 = m[1].split(',').map(s => s.trim().replace(/\s+/g, ''));
+    if (고르개들.includes(찾는것)) return m[2];
+  }
+  return '';
 }
 
 /* ══════ ① 위 두 줄이 붙어 있다 ══════ */
@@ -49,7 +76,7 @@ test('★★ 편집칸 «위 두 줄»이 붙어 있다 — 경력을 고치다 
   assert.ok(붙임 >= 0,
     '★★ 붙여 두는 칸(.stick)이 없다 — 굴리면 이름·구분·올림이 위로 사라진다');
 
-  const css = 꾸밈('.stick');
+  const css = 기본꾸밈('.stick');
   assert.ok(css, '★ 붙이는 모양(CSS)이 없다 — 클래스만 붙고 아무 일도 안 한다');
   assert.match(css, /position: *sticky/,
     '★★ .stick 이 실제로 안 붙는다 — 클래스 이름만 「stick」이다');
@@ -57,6 +84,47 @@ test('★★ 편집칸 «위 두 줄»이 붙어 있다 — 경력을 고치다 
   assert.match(css, /background/,
     '★ 바탕색이 없다 — 아래 글이 붙은 칸을 «통과해» 겹쳐 보인다');
   assert.match(css, /z-index/, '★ 층(z-index)이 없다 — 아래 글이 위로 올라온다');
+});
+
+test('★★ 구르는 칸(.esc)이 «위 여백»을 갖지 않는다 — 붙은 칸이 그 틈을 못 덮는다', () => {
+  /* 대표 지적 2026-09-03 「틀고정위에 화면이 보인다」.
+     position:sticky 의 top:0 은 스크롤판의 «안쪽 여백 아래»에 붙는다.
+     그래서 .esc 가 위 여백을 갖고 있으면 그만큼 띠가 안 덮이고,
+     굴릴 때 경력 줄이 붙은 칸 «위»에 비쳐 보인다.
+     실측 2026-09-03: 여백 12px + 테두리 1px = 글이 13px 보였다 → 여백을 빼니 1px.
+     ⚠ 안쪽 여백을 늘리거나 붙은 칸에 여백을 더하는 것으로는 안 고쳐진다(재어 봤다). */
+  const 넓은화면 = 기본꾸밈('.esc');
+  assert.ok(넓은화면, '★ .esc 꾸밈을 못 찾았다');
+  const 위여백 = /padding: *([^;}]+)/.exec(넓은화면);
+  assert.ok(위여백, '★ .esc 의 여백을 못 찾았다');
+  const 첫값 = 위여백[1].trim().split(/\s+/)[0];
+  assert.match(첫값, /^0(px)?$/,
+    '★★ 구르는 칸이 위 여백(' + 첫값 + ')을 갖고 있다'
+    + ' — 그만큼 글이 붙은 칸 위에 비쳐 보인다. 여백은 첫 아이에게 줄 것');
+
+  /* 여백을 빼기만 하면 «위 숨»이 사라진다 — 첫 아이가 그것을 대신 갖는지 본다.
+     ⚠ 「어디든 있으면 통과」로 두면 안 된다 — 폰 구간(@media)에 있는 같은 규칙이
+       대신 걸려, 기본 규칙을 지워도 통과했다(되돌림으로 잡았다).
+       그래서 «기본 .esc 규칙 바로 옆»에 있는지 본다. */
+  const escFrom = H.search(/\.esc\{/);
+  assert.ok(escFrom >= 0, '★ 기본 .esc 규칙을 못 찾았다');
+  const 바로옆 = H.slice(escFrom, escFrom + 220);
+  assert.match(바로옆, /\.esc *> *:first-child\{[^}]*margin-top: *[1-9]/,
+    '★ 위 숨이 통째로 사라졌다 — 기본 .esc 바로 옆에서 첫 아이에게 여백을 줄 것');
+  /* 붙은 칸은 자기 «안»에 숨을 가져야 한다. 밖(margin)에 두면 붙은 뒤에 덮지 못한다. */
+  assert.match(기본꾸밈('.stick'), /padding-top: *[1-9]/,
+    '★★ 붙은 칸의 위 숨이 «안»에 없다 — 붙은 뒤 딱지가 위 테두리에 붙어 버린다');
+});
+
+test('★★ 구르지 «않는» 좁은 화면에서는 붙이지 않는다', () => {
+  /* 900px 아래에서는 .esc{overflow:visible} 이라 쪽 전체가 구른다.
+     그러면 sticky 가 «창» 맨 위에 붙어 앱 위 띠 아래로 파고든다. */
+  const 좁은구간 = /@media *\([^)]*max-width: *900px[^)]*\)\s*\{([\s\S]*?)\n\}/.exec(H);
+  assert.ok(좁은구간, '★ 900px 구간을 못 찾았다');
+  assert.match(좁은구간[1], /\.esc\s*\{[^}]*overflow: *visible/,
+    '★ 이 구간이 더는 .esc 를 안 구르게 하지 않는다 — 아래 규칙을 다시 볼 것');
+  assert.match(좁은구간[1], /\.stick\s*\{[^}]*position: *static/,
+    '★★ 좁은 화면에서 붙임을 안 껐다 — 창 맨 위에 얹혀 앱 띠와 겹친다');
 });
 
 test('★★ 붙는 것은 «구르는 칸 안»이다 — 경고 띠 자리로 옮기지 않는다', () => {
@@ -125,10 +193,10 @@ test('★★ 라벨을 placeholder 로 밀어넣지 «않는다» — 값을 채
       '★★ 「' + l + '」을 placeholder 로 넣었다 — 값을 채우면 이름표가 사라진다'));
 
   /* 라벨이 칸 «안»에 있는 모양(.inl)이 실제로 나란히 세우는지 */
-  const css = 꾸밈('.inl');
+  const css = 기본꾸밈('.inl');
   assert.ok(css, '★ 칸 안 라벨 모양(.inl CSS)이 없다');
   assert.match(css, /display: *flex/, '★ 이름표와 값이 나란히 서지 않는다');
-  const b = 꾸밈('.inl > b');
+  const b = 기본꾸밈('.inl > b');
   assert.ok(b, '★ 이름표 모양이 없다');
   assert.match(b, /white-space: *nowrap/,
     '★ 이름표가 줄바꿈된다 — 「글 번호」가 두 줄이 되면 칸이 높아진다');
