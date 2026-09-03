@@ -131,13 +131,14 @@
   function 꼭지제목(g) {
     var 이름 = '<span style="font-size:19px;font-weight:bold;color:' + 색.짙은갈 + ';'
       + 'font-family:' + 폰트 + ';">' + esc(g.이름) + '</span>';
-    if (!g.best) {
+    if (!g.딱지) {
       return '<tr><td style="padding:22px 28px 0 28px;">' + 이름 + '</td></tr>';
     }
     return '<tr><td style="padding:26px 28px 0 28px;">'
       + '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
       + '<td style="background-color:' + 색.딱지 + ';padding:5px 13px;">'
-      + '<span style="font-size:12px;font-weight:bold;color:#ffffff;font-family:' + 폰트 + ';">Best</span>'
+      + '<span style="font-size:12px;font-weight:bold;color:#ffffff;font-family:' + 폰트 + ';">'
+      + esc(g.딱지) + '</span>'
       + '</td><td style="padding-left:11px;">' + 이름 + '</td>'
       + '</tr></table></td></tr>';
   }
