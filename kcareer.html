@@ -1451,7 +1451,8 @@ input.kf-in.kf-done{background:#f8fafc;border-bottom:1.5px solid var(--teal);fon
               <button class="btn fs-ui" type="button" onclick="fsUndoLast()">↩ 이번 스캔 되돌리기</button>
               <div style="border-top:1px dashed var(--border);margin:4px 0"></div>
               <button class="btn" type="button" onclick="openInboxMgr()" title="직원이 올린 PDF를 확인해 내 기록으로 들입니다">📥 직원이 올린 것</button>
-              <button class="btn" type="button" onclick="kcRecoverOpen()" style="color:var(--red);font-weight:700">🔎 백업에서 되살리기</button>
+              <button class="btn primary" type="button" onclick="kcMissingOpen()">🔍 없어진 것만 골라 되살리기</button>
+              <button class="btn" type="button" onclick="kcRecoverOpen()" style="color:var(--red);font-weight:700">🔎 백업에서 되살리기 (통째로)</button>
             </div>
           </div>
           <button class="btn primary" data-act="new">+ 새 위촉장</button>
@@ -1907,6 +1908,20 @@ input.kf-in.kf-done{background:#f8fafc;border-bottom:1.5px solid var(--teal);fon
     <div class="modal-h">🔍 서류 폴더 스캔 결과 — 아직 저장되지 않았습니다</div>
     <div class="modal-b" id="scanBody"></div>
     <div class="modal-foot"><button class="btn" onclick="closeScan()">닫기 (저장 안 함)</button><button class="btn primary" onclick="fsCommitScan()">등록</button></div>
+  </div>
+</div>
+<div class="modal-ov" id="modalMissing">
+  <div class="modal" style="width:min(880px,96vw)">
+    <div class="modal-h">🔍 백업에서 «없어진 것만» 골라 되살리기</div>
+    <div class="modal-b">
+      <div class="desc" style="margin-bottom:10px">백업에는 있는데 <b>지금 목록에는 없는</b> 것만 찾아
+        보여 줍니다. 고른 것만 <b>더해</b> 넣습니다 — 지금 자료는 하나도 건드리지 않습니다.</div>
+      <div id="kcMissingBody"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="kcMissingClose()">닫기</button>
+      <button class="btn primary" id="kcMissingGo" onclick="kcMissingRun()" style="display:none">고른 것 되살리기</button>
+    </div>
   </div>
 </div>
 <div class="modal-ov" id="modalRecover">
@@ -3579,7 +3594,11 @@ function setNavState(s){ LS.set(NS+'nav_state', JSON.stringify(s)); navSyncPush(
 function favState(){ try{ return JSON.parse(LS.get(NS+'favs')||'[]'); }catch(e){ return []; } }
 function setFavState(a){ LS.set(NS+'favs', JSON.stringify(a)); navSyncPush(); }
 function navInfo(id){ for(const g of NAV) for(const [i,l] of g.items) if(i===id) return {label:l,grp:g.g}; return {label:id,grp:null}; }
-function toast(msg){ let t=document.getElementById('_toast'); if(!t){ t=document.createElement('div'); t.id='_toast'; document.body.appendChild(t); } t.textContent=msg; t.className='show'; clearTimeout(t._h); t._h=setTimeout(()=>t.className='',1800); }
+/* 알림. ms 를 주면 그만큼 보여 준다 (안 주면 1.8초)
+   ⚠ 전에는 둘째 값을 통째로 버렸다. 그런데 아홉 자리가 toast(글, 5000~6000) 으로
+     부르고 있었다 — 긴 안내를 천천히 읽게 하려는 것인데, 늘 1.8초에 사라져서
+     정작 긴 글일수록 못 읽었다(2026-09-03 찾음). */
+function toast(msg, ms){ let t=document.getElementById('_toast'); if(!t){ t=document.createElement('div'); t.id='_toast'; document.body.appendChild(t); } t.textContent=msg; t.className='show'; clearTimeout(t._h); t._h=setTimeout(()=>t.className='', Number(ms)>0?Number(ms):1800); }
 function toggleFav(id){ let f=favState(); const i=f.indexOf(id);
   if(i>=0) f.splice(i,1); else { if(f.length>=5){ toast('즐겨찾기는 최대 5개입니다'); return; } f.push(id); }
   setFavState(f); buildNav(); }
@@ -10790,6 +10809,137 @@ function fbStaleFix(){
    ①클라우드 되돌리기 ②이 기기로 내리기 까지 한 번에 처리한다.
    ⚠ 공용 js/pu-backup.js 는 다른 앱과 함께 쓰므로 건드리지 않는다 — 읽기만 한다. */
 var KC_BK_SYS='kcareer';
+
+/* ═══════════════════════════════════════════════════════════════════
+   백업에서 «없어진 것만» 골라 되살리기 (대표 지시 2026-09-03 「찾아서 되살려라」)
+
+   ■ 왜 따로 만드나
+   아래 kcRecoverOpen 은 «스냅숏 전체»를 덮어쓴다. 5건을 되살리려고 누르면
+   그 백업 뒤에 한 일이 통째로 사라진다 — 지운 뒤에 하신 작업까지.
+   여기는 «더하기만» 한다: 없어진 것을 찾아 보여 주고, 고른 것만 넣는다.
+
+   ⚠ 지금 있는 레코드는 한 건도 건드리지 않는다. 번호가 겹치면(있을 리 없지만)
+     kcFreeId 로 새 번호를 쓴다 — 되살리기가 «지우는 일»이 되면 안 된다.
+   ⚠ 백업 본문은 수 MB 다. 보관함마다 «그 칸만» 콕 집어 읽는다
+     (paths/0/value/ls/<보관함>). 전체를 받으면 요금과 시간이 함께 튄다.
+   ⚠ 훑는 백업 수를 KC_MISS_SCAN 으로 묶어 둔다. 백업이 수십 개 쌓여도
+     읽는 양이 늘지 않게.
+   ═══════════════════════════════════════════════════════════════════ */
+var KC_MISS_SCAN=8;
+/* 경력·실적·비용의 보관함 전부. CAREER_CFG 에서 뽑으므로 화면이 늘면 함께 늘어난다. */
+function kcMissStores(){
+  var out=[];
+  try{
+    Object.keys(CAREER_CFG).forEach(function(p){
+      var st=CAREER_CFG[p] && CAREER_CFG[p].store;
+      if(st && out.indexOf(st)<0) out.push(st);
+    });
+  }catch(e){}
+  return out;
+}
+var _kcMissFound=[];
+function kcMissingClose(){ var m=document.getElementById('modalMissing'); if(m) m.classList.remove('open'); }
+/* 백업 하나에서 보관함 하나만 꺼낸다 */
+function _kcMissRead(key, store){
+  return fbDb.ref(_kcBkBody(key)+'/paths/0/value/ls/'+store).once('value').then(function(sn){
+    try{ var a=JSON.parse(sn.val()||'[]'); return Array.isArray(a)?a:[]; }catch(e){ return []; }
+  }).catch(function(){ return []; });
+}
+async function kcMissingOpen(){
+  var m=document.getElementById('modalMissing'), box=document.getElementById('kcMissingBody');
+  var go=document.getElementById('kcMissingGo');
+  if(!m||!box) return;
+  m.classList.add('open'); if(go) go.style.display='none';
+  _kcMissFound=[];
+  if(!fbUid||!fbDb){ box.innerHTML='<div class="empty">먼저 로그인해 주세요.</div>'; return; }
+  box.innerHTML='<div class="rc-mute">백업 목록을 읽는 중…</div>';
+  var idx;
+  try{ idx=(await fbDb.ref('systemBackupsIndex/'+KC_BK_SYS).once('value')).val()||{}; }
+  catch(e){ box.innerHTML='<div class="empty">백업 목록을 읽지 못했습니다 — '+escapeHtml((e&&e.message)||'')+'</div>'; return; }
+  var 백업=Object.keys(idx).filter(function(k){ return k!=='_dailyClaim'; })
+    .map(function(k){ return { key:k, at:Number((idx[k]||{}).createdAt||0) }; })
+    .sort(function(a,b){ return b.at-a.at; }).slice(0, KC_MISS_SCAN);
+  if(!백업.length){ box.innerHTML='<div class="empty">저장된 백업이 없습니다.</div>'; return; }
+
+  var 보관함=kcMissStores();
+  /* 지금 있는 번호를 미리 모아 둔다 */
+  var 지금={};
+  보관함.forEach(function(st){ 지금[st]={}; get(st).forEach(function(r){ if(r&&r.id) 지금[st][r.id]=1; }); });
+  /* 휴지통에 든 것은 «없어진 것»이 아니다 — 거기서 되살리면 된다 */
+  var 통에={};
+  kcTrashList().forEach(function(e){ if(e && e.rec && e.rec.id) 통에[e.store+'|'+e.rec.id]=1; });
+
+  var 찾음={};      /* store|id → {rec, at} — 가장 «새» 백업의 것을 남긴다 */
+  for(var i=0;i<백업.length;i++){
+    box.innerHTML='<div class="rc-mute">백업 '+백업.length+'개를 훑는 중… ('+(i+1)+'/'+백업.length+')</div>';
+    for(var j=0;j<보관함.length;j++){
+      var st=보관함[j];
+      var arr=await _kcMissRead(백업[i].key, st);
+      arr.forEach(function(r){
+        if(!r||!r.id) return;
+        if(지금[st][r.id]) return;                 /* 지금 있다 */
+        if(통에[st+'|'+r.id]) return;              /* 휴지통에 있다 */
+        var k=st+'|'+r.id;
+        if(찾음[k]) return;                        /* 더 새 백업에서 이미 잡았다 */
+        찾음[k]={ store:st, rec:r, at:백업[i].at };
+      });
+    }
+  }
+  _kcMissFound=Object.keys(찾음).map(function(k){ return 찾음[k]; })
+    .sort(function(a,b){ return b.at-a.at; });
+
+  if(!_kcMissFound.length){
+    box.innerHTML='<div class="empty">백업에 있는 것은 <b>모두 지금 목록에도 있습니다</b> — 없어진 것이 없습니다.<br>'
+      +'<span style="font-size:11.5px;color:var(--text-mute)">가장 새 백업 '+백업.length+'개를 훑었습니다.</span></div>';
+    return;
+  }
+  var 줄=_kcMissFound.map(function(f,i){
+    return '<tr><td style="padding:6px 8px;border-top:1px solid var(--border)">'
+      +'<input type="checkbox" class="kcmiss-chk" data-i="'+i+'" checked></td>'
+      +'<td style="padding:6px 8px;border-top:1px solid var(--border);white-space:nowrap;font-size:11.5px;color:var(--text-mute)">'
+        +escapeHtml(f.store)+'</td>'
+      +'<td style="padding:6px 8px;border-top:1px solid var(--border);white-space:nowrap"><span class="id-chip">'
+        +escapeHtml(f.rec.id)+'</span></td>'
+      +'<td style="padding:6px 8px;border-top:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px" title="'
+        +escapeHtml(kcTrashLabel(f.rec))+'">'+escapeHtml(kcTrashLabel(f.rec))+'</td>'
+      +'<td style="padding:6px 8px;border-top:1px solid var(--border);white-space:nowrap;font-size:11.5px;color:var(--text-mute)">'
+        +new Date(f.at).toLocaleString('ko-KR')+'</td></tr>';
+  }).join('');
+  box.innerHTML='<div style="font-size:13px;margin-bottom:9px">백업에는 있는데 지금 없는 것 <b style="color:var(--red)">'
+      +_kcMissFound.length+'건</b>을 찾았습니다. 되살릴 것만 남기고 <b>고른 것 되살리기</b>를 누르세요.'
+      +' <button class="btn sm" onclick="kcMissAll(false)">전부 끄기</button>'
+      +' <button class="btn sm" onclick="kcMissAll(true)">전부 켜기</button></div>'
+    +'<div class="dt"><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr>'
+    +['','보관함','ID','내용','이 백업 시각'].map(function(h){
+      return '<th style="padding:6px 8px;background:var(--bg);color:var(--text-mute);font-size:11.5px;text-align:left;white-space:nowrap">'+h+'</th>'; }).join('')
+    +'</tr></thead><tbody>'+줄+'</tbody></table></div>';
+  if(go) go.style.display='';
+}
+function kcMissAll(on){
+  document.querySelectorAll('.kcmiss-chk').forEach(function(c){ c.checked=!!on; });
+}
+/* 고른 것만 «더해» 넣는다 — 지금 자료는 건드리지 않는다 */
+function kcMissingRun(){
+  var 고른=[...document.querySelectorAll('.kcmiss-chk')].filter(function(c){ return c.checked; })
+    .map(function(c){ return _kcMissFound[Number(c.dataset.i)]; }).filter(Boolean);
+  if(!고른.length){ toast('고른 것이 없습니다'); return; }
+  var 묶음={};
+  고른.forEach(function(f){ (묶음[f.store]=묶음[f.store]||[]).push(f.rec); });
+  var n=0, 새번호=0;
+  Object.keys(묶음).forEach(function(st){
+    var arr=get(st);
+    묶음[st].forEach(function(rec){
+      var 옛번호=rec.id;
+      var id=kcFreeId(st, 옛번호);
+      if(id!==옛번호){ rec=Object.assign({}, rec, { id:id, restoredFrom:옛번호 }); 새번호++; }
+      arr.unshift(rec); n++;
+    });
+    set(st, arr);
+  });
+  kcMissingClose();
+  try{ Object.keys(CAREER_CFG).forEach(function(p){ if(묶음[CAREER_CFG[p].store]) renderCareer(p); }); }catch(e){}
+  toast(n+'건을 되살렸습니다'+(새번호? ' (번호가 겹친 '+새번호+'건은 새 번호로)':''), 5000);
+}
 function kcRecoverClose(){ var m=document.getElementById('modalRecover'); if(m) m.classList.remove('open'); }
 function _kcBkBody(key){ return 'systemBackups/'+KC_BK_SYS+'/'+key; }
 /* 백업 하나에서 위촉장 배열만 꺼내 센다 — 본문 전체(수 MB)를 받지 않으려고
