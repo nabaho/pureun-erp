@@ -2464,7 +2464,10 @@ exports.weeklyNewsBrief = functions
 // ⚠ 창고(Storage)는 무료 한도가 없다. 첨부는 한 파일 20MB · 자료당 5개까지만 담는다.
 const 노무사회 = require("./ilabor-parse");
 
-/* 쿠키를 손으로 든다 — 세션(PHPSESSID)이 없으면 로그인 뒤에도 계속 「막힘」이 온다 */
+/* 쿠키를 손으로 든다 — 세션이 없으면 로그인 뒤에도 계속 「막힘」이 온다.
+   ⚠ 그릇을 «도메인마다» 따로 둔다. 한 그릇으로 두면 공인노무사회 세션이
+     ilabor 로, ilabor 세션이 공인노무사회로 함께 나간다 — 남의 사이트에
+     엉뚱한 쿠키를 보내는 일이고, 어느 세션이 살아 있는지도 알 수 없게 된다. */
 function 쿠키그릇() {
   const 통 = {};
   return {
@@ -2477,45 +2480,110 @@ function 쿠키그릇() {
       });
     },
     글자() { return Object.keys(통).map((k) => k + "=" + 통[k]).join("; "); },
-    있나() { return Object.keys(통).length > 0; }
+    있나() { return Object.keys(통).length > 0; },
+    이름들() { return Object.keys(통); }
   };
 }
 
-async function 노무사회부르기(주소, 그릇, 더할것) {
-  const res = await fetch(주소, Object.assign({
+/* 주소를 보고 그릇을 고른다 — 도메인이 섞이지 않게 */
+function 그릇고르기(주소, 그릇들) {
+  return /kcplaa\.or\.kr/i.test(String(주소)) ? 그릇들.회원 : 그릇들.자료;
+}
+
+async function 노무사회부르기(주소, 그릇들, 더할것) {
+  const 그릇 = 그릇고르기(주소, 그릇들);
+  const 옵 = Object.assign({
     redirect: "manual",
     headers: Object.assign({
       "User-Agent": 노무사회.브라우저표시,
       "Accept": "text/html,application/xhtml+xml,*/*",
-      "Accept-Language": "ko-KR,ko;q=0.9",
-      "Referer": 노무사회.사이트
-    }, (그릇 && 그릇.있나()) ? { Cookie: 그릇.글자() } : {})
-  }, 더할것 || {}));
-  if (그릇) 그릇.담기(res);
+      "Accept-Language": "ko-KR,ko;q=0.9"
+    }, 그릇.있나() ? { Cookie: 그릇.글자() } : {})
+  }, 더할것 || {});
+  const res = await fetch(주소, 옵);
+  그릇.담기(res);
   return res;
 }
 const 잠깐 = (ms) => new Promise((ok) => setTimeout(ok, ms));
 
-/* 로그인 — 되면 쿠키가 든 그릇을 돌려준다 */
+/* 넘겨주는 주소(302)를 따라간다 — 최대 다섯 번.
+   ⚠ 끝없이 따라가지 않는다. 서로 떠넘기는 고리에 걸리면 함수가 시간 초과로 죽는다. */
+async function 따라가며부르기(주소, 그릇들, 더할것, 남은) {
+  let u = 주소, 몇 = (남은 == null ? 5 : 남은), 마지막 = null;
+  for (let i = 0; i <= 몇; i++) {
+    마지막 = await 노무사회부르기(u, 그릇들, i === 0 ? 더할것 : undefined);
+    const 곳 = 마지막.headers.get("location");
+    if (마지막.status >= 300 && 마지막.status < 400 && 곳) {
+      u = /^https?:\/\//i.test(곳) ? 곳 : new URL(곳, u).toString();
+      continue;
+    }
+    break;
+  }
+  return { res: 마지막, 주소: u };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   로그인 — 세 걸음이다 (대표께서 화면으로 알려 주신 구조, 2026-09-03)
+   ══════════════════════════════════════════════════════════════════════════
+   ① 공인노무사회 로그인 쪽을 열어 세션을 받는다
+   ② login_id·login_pass 를 /login/chk 로 보낸다
+   ③ /sso/ilabor 가 주는 «주소»로 ilabor 에 들어간다 (쿠키는 도메인을 못 건넌다)
+
+   ⚠ 처음에는 ilabor 의 로그인 칸에 바로 보냈다 — 그것은 죽은 칸이고
+     「로그인 정보가 존재하지 않습니다」가 돌아왔다. 아이디가 틀린 게 아니었다.
+   ⚠ 걸음마다 «무엇을 받았는지» 적어 돌려준다. 실패했을 때 어느 걸음에서
+     막혔는지 모르면 고칠 수가 없다(실제로 그것 때문에 하루를 썼다). */
 async function 노무사회로그인(아이디, 암호) {
-  const 그릇 = 쿠키그릇();
-  /* 먼저 로그인 쪽을 한 번 열어 세션을 받는다(바로 POST 하면 세션이 없다) */
-  await 노무사회부르기(노무사회.사이트 + "login01.php", 그릇);
-  const 몸 = new URLSearchParams({ id: String(아이디 || ""), pw: String(암호 || "") });
-  const res = await 노무사회부르기(노무사회.사이트 + "include/login_proc.php", 그릇, {
+  const 그릇들 = { 회원: 쿠키그릇(), 자료: 쿠키그릇() };
+  const 걸음 = [];
+
+  /* ① 세션 받기 */
+  const a = await 노무사회부르기(노무사회.회원사이트 + "/login", 그릇들);
+  걸음.push({ 걸음: "① 로그인 쪽 열기", 상태: a.status, 쿠키: 그릇들.회원.이름들() });
+
+  /* ② 아이디·비밀번호 보내기 */
+  const 몸 = new URLSearchParams({
+    login_id: String(아이디 || ""), login_pass: String(암호 || ""), return_url: ""
+  });
+  const b = await 노무사회부르기(노무사회.로그인보내는곳, 그릇들, {
     method: "POST",
     body: 몸.toString(),
     headers: {
       "User-Agent": 노무사회.브라우저표시,
       "Content-Type": "application/x-www-form-urlencoded",
-      "Referer": 노무사회.사이트 + "login01.php",
-      Cookie: 그릇.글자()
+      "Referer": 노무사회.회원사이트 + "/login",
+      Cookie: 그릇들.회원.글자()
     }
   });
-  const 답 = await res.text();
-  const 판정 = 노무사회.로그인됐나(답);
-  if (!판정.ok) throw new Error("로그인 실패: " + (판정.까닭 || "까닭을 모른다"));
-  return 그릇;
+  const b답 = await b.text();
+  const 판정 = 노무사회.로그인됐나(b답);
+  걸음.push({ 걸음: "② 로그인", 상태: b.status, 됐나: 판정.ok, 까닭: 판정.까닭,
+              답조각: b답.slice(0, 300) });
+  if (!판정.ok) {
+    const e = new Error("로그인 실패: " + (판정.까닭 || "까닭을 모른다"));
+    e.걸음 = 걸음;
+    throw e;
+  }
+
+  /* ③ ilabor 로 넘겨받기 */
+  const c = await 노무사회부르기(노무사회.SSO주소, 그릇들);
+  const c답 = await c.text();
+  const 넘김 = 노무사회.sso주소뽑기(c답);
+  걸음.push({ 걸음: "③ SSO", 상태: c.status, ok: 넘김.ok, 까닭: 넘김.까닭 || "",
+              열쇠붙음: 넘김.열쇠붙음, 주소: 넘김.주소 || "", 답조각: c답.slice(0, 300) });
+  if (!넘김.ok) {
+    const e = new Error("ilabor 로 넘어가지 못했다: " + 넘김.까닭);
+    e.걸음 = 걸음;
+    throw e;
+  }
+
+  /* 그 주소를 열어 ilabor 세션을 받는다 */
+  const d = await 따라가며부르기(넘김.주소, 그릇들);
+  const d답 = await d.res.text();
+  걸음.push({ 걸음: "④ ilabor 들어가기", 상태: d.res.status, 마지막주소: d.주소,
+              쿠키: 그릇들.자료.이름들(), 막혔나: 노무사회.막혔나(d답), 크기: d답.length });
+
+  return { 그릇들: 그릇들, 걸음: 걸음 };
 }
 
 exports.ilaborPull = functions
@@ -2550,7 +2618,12 @@ exports.ilaborPull = functions
     }
 
     try {
-      const 그릇 = await 노무사회로그인(아이디, 암호);
+      const 든것 = await 노무사회로그인(아이디, 암호);
+      const 그릇 = 든것.그릇들;
+      const 로그인걸음 = 든것.걸음;
+      /* ⚠ 열쇠가 안 붙은 주소로 들어갔으면 «손님»이다 — 목록은 보이지만 상세가 막힌다.
+           그 사실을 조용히 넘기지 않고 답에 실어 사람에게 보여 준다. */
+      const 손님인가 = !(로그인걸음.find(x=>/③/.test(x.걸음)) || {}).열쇠붙음;
 
       /* ── 목록 ── */
       const 목록쪽 = await (await 노무사회부르기(노무사회.사이트 + "sub09_01.php?cate1=100&page=1", 그릇)).text();
@@ -2570,10 +2643,15 @@ exports.ilaborPull = functions
           sid: 하나.sid, 제목: 하나.제목, 주소: 하나.주소,
           크기: 원본.length, 막혔나: 노무사회.막혔나(원본),
           읽음: 읽음, 원본조각: 원본.slice(0, 12000),
+          로그인걸음: 로그인걸음, 손님인가: 손님인가,
           본때: Date.now(), 본이: sender.email || ""
         });
+        /* ⚠ 걸음을 함께 준다 — 로그인이 «어디까지» 갔는지 보여야 고칠 수 있다.
+             처음에는 이것이 없어 「로그인 실패」 한 줄만 보고 엉뚱한 문을
+             두드리고 있다는 것을 몰랐다(2026-09-03). */
         res.json({ ok: true, mode: "peek", sid: 하나.sid, 크기: 원본.length,
-          읽음: 읽음, 목록수: 목록.length, 쪽수: 노무사회.쪽수(목록쪽) });
+          읽음: 읽음, 목록수: 목록.length, 쪽수: 노무사회.쪽수(목록쪽),
+          로그인걸음: 로그인걸음, 손님인가: 손님인가 });
         return;
       }
 
@@ -2591,7 +2669,7 @@ exports.ilaborPull = functions
         await db.ref("ilabor/meta").update({ 마지막: Date.now(), 마지막이: sender.email || "",
           쪽수: 노무사회.쪽수(목록쪽), 목록수: 목록.length });
         res.json({ ok: true, mode: "list", 목록수: 목록.length, 새것: 새것.length,
-          쪽수: 노무사회.쪽수(목록쪽) });
+          쪽수: 노무사회.쪽수(목록쪽), 손님인가: 손님인가 });
         return;
       }
 
@@ -2636,7 +2714,7 @@ exports.ilaborPull = functions
 
       await db.ref("ilabor/meta").update({ 마지막: Date.now(), 마지막이: sender.email || "",
         쪽수: 노무사회.쪽수(목록쪽), 목록수: 목록.length });
-      res.json({ ok: true, mode: "full", 목록수: 목록.length, 가져온것: 결과 });
+      res.json({ ok: true, mode: "full", 목록수: 목록.length, 가져온것: 결과, 손님인가: 손님인가 });
     } catch (e) {
       /* ⚠ 조용히 넘기지 않는다 — 왜 아무것도 안 왔는지 말해 준다 */
       console.warn("[노무사회]", e && e.message);
