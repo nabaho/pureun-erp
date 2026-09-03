@@ -110,6 +110,72 @@ test('제대로 온 쪽은 «막힘이 아니다»', () => {
   assert.equal(P.막혔나(목록쪽), false, '멀쩡한 목록을 막힘으로 본다 — 아무것도 못 가져온다');
 });
 
+/* ══════ ②-1 로그인 문은 «공인노무사회» 다 ══════ */
+
+test('★★ 로그인은 ilabor 가 아니라 공인노무사회에서 한다', () => {
+  /* 2026-09-03 에 하루를 여기서 썼다. ilabor 의 로그인 칸에 보냈더니
+     「로그인 정보가 존재하지 않습니다」가 왔다 — 아이디가 틀린 게 아니라
+     «계정이 거기 없었다». 대표께서 화면으로 알려 주셨다:
+     공인노무사회에서 로그인 → /sso/ilabor 로 넘어간다.
+     ⚠ 이 검사가 없으면 다음 사람이 또 ilabor 쪽으로 되돌린다. */
+  assert.ok(/kcplaa\.or\.kr/.test(P.로그인보내는곳),
+    '로그인을 공인노무사회로 안 보낸다: ' + P.로그인보내는곳);
+  assert.ok(!/ilabor/.test(P.로그인보내는곳), '★ 로그인을 다시 ilabor 로 보내고 있다');
+  assert.ok(/\/login\/chk$/.test(P.로그인보내는곳), '보내는 자리가 /login/chk 가 아니다');
+  assert.ok(/\/sso\/ilabor$/.test(P.SSO주소), 'SSO 자리가 /sso/ilabor 가 아니다');
+});
+
+test('★★ 반드시 «www.» 를 쓴다 — 없으면 깨진 곳으로 보낸다', () => {
+  /* 실측: kcplaa.or.kr/login 은 host 와 path 를 슬래시 없이 붙여
+     `www.kcplaa.or.krlogin` 으로 보낸다. 이름 풀이가 안 되어 «조용히» 실패한다. */
+  assert.ok(/^https:\/\/www\.kcplaa\.or\.kr/.test(P.회원사이트),
+    '★ www. 가 없다 — 깨진 리다이렉트로 조용히 실패한다: ' + P.회원사이트);
+});
+
+test('★ 로그인 칸 이름이 밑감(실제 폼)과 같다', () => {
+  /* 흉내가 아니라 «실제로 받아 온 폼»과 대조한다. */
+  const 폼 = 밑감('kcplaa-login.html');
+  assert.ok(/name="login_id"/.test(폼), '밑감에 login_id 가 없다 — 밑감이 낡았다');
+  assert.ok(/name="login_pass"/.test(폼), '밑감에 login_pass 가 없다');
+  const m = /action="([^"]*)"/.exec(폼);
+  assert.ok(m && P.로그인보내는곳.endsWith(m[1]),
+    '보내는 자리가 폼의 action 과 다르다: ' + (m && m[1]) + ' vs ' + P.로그인보내는곳);
+});
+
+/* ══════ ②-2 SSO 넘겨받기 ══════ */
+
+test('★ SSO 답에서 ilabor 주소를 뽑는다', () => {
+  const r = P.sso주소뽑기("location.href='https://ilabor.co.kr/main/sso.php?k=abc';");
+  assert.equal(r.ok, true);
+  assert.equal(r.주소, 'https://ilabor.co.kr/main/sso.php?k=abc');
+  assert.equal(r.열쇠붙음, true);
+});
+
+test('★★ 열쇠가 «안 붙은» 맨 주소면 그 사실을 말한다 (실제 답으로)', () => {
+  /* 로그인 안 한 채로 부르면 맨 주소만 온다 — 실제로 받아 온 답이다.
+     그대로 열면 «손님»으로 들어가 상세가 다 막힌다. 그것을 조용히 넘기면
+     「자료가 안 온다」인데 까닭을 못 짚는다. */
+  const r = P.sso주소뽑기(밑감('kcplaa-sso-notlogged.txt'));
+  assert.equal(r.ok, true, '주소는 뽑아야 한다');
+  assert.equal(r.열쇠붙음, false, '★ 열쇠가 없는데 붙었다고 한다 — 손님인 줄 모른다');
+});
+
+test('★★ 남의 주소로는 «안 간다»', () => {
+  /* 답을 바꿔치기해도 우리 아이디로 엉뚱한 곳을 열지 않게. */
+  ['location.href="https://evil.example.com/x";',
+   "location.href='https://ilabor.co.kr.evil.com/x';",
+   "location.href='http://notilabor.co.kr/';"].forEach((답) => {
+    const r = P.sso주소뽑기(답);
+    assert.equal(r.ok, false, '★ 남의 주소를 받았다: ' + 답);
+  });
+});
+
+test('SSO 답이 비었으면 «못 찾았다»고 한다', () => {
+  ['', null, undefined, '<html>아무것도</html>'].forEach((v) => {
+    assert.equal(P.sso주소뽑기(v).ok, false);
+  });
+});
+
 /* ══════ ③ 로그인 판정 ══════ */
 
 test('★ 로그인 판정은 «모르면 실패»로 본다', () => {
@@ -119,6 +185,17 @@ test('★ 로그인 판정은 «모르면 실패»로 본다', () => {
   assert.equal(P.로그인됐나('알 수 없는 무슨 글').ok, false, '모르는 답을 성공으로 봤다');
   assert.equal(P.로그인됐나('<script>top.location.href="/main/index.php";</script>').ok, true);
   assert.equal(P.로그인됐나('').ok, true, '빈 답은 조용한 성공이다');
+});
+
+test('★★ alert 이 있으면 «보내 주더라도» 실패로 본다 — 닫히는 쪽으로', () => {
+  /* 사이트가 말을 띄우고 «동시에» 어디론가 보내는 답을 줄 수 있다.
+     그때 보내기만 보고 성공이라 하면, 「점검 중」이라 해 놓고 손님으로 들어가
+     그 뒤 모든 자료가 막힌다 — 까닭은 못 짚는다.
+     ⚠ 이 검사가 없으면 alert 캐내는 줄을 지워도 아무도 모른다
+       (2026-09-03 되돌림에서 실제로 안 걸렸다). */
+  const r = P.로그인됐나('alert("지금은 점검 중입니다"); location.href="/main/index.php";');
+  assert.equal(r.ok, false, '★ 말을 띄웠는데 성공으로 봤다');
+  assert.ok(/점검/.test(r.까닭), 'alert 속 말이 까닭으로 안 왔다: ' + r.까닭);
 });
 
 test('실패하면 «까닭»을 함께 준다 — 왜 안 됐는지 말해야 한다', () => {
@@ -223,9 +300,14 @@ test('★★ 아이디·비밀번호가 «저장소에 없다»', () => {
   /* ⚠ 여기서 «실제 아이디를 글자로 적어» 찾지 않는다 — 그러면 그 아이디가
        이 검사 파일에 남아, 막으려던 일을 우리가 하는 셈이 된다.
        대신 «값을 글자로 박아 두지 않았는지»를 본다: 보내는 몸통이 변수여야 한다. */
-  assert.ok(/id:\s*String\(아이디/.test(덩이[0]), '아이디를 변수로 안 보낸다 — 글자로 박혔을 수 있다');
-  assert.ok(/pw:\s*String\(암호/.test(덩이[0]), '비밀번호를 변수로 안 보낸다 — 글자로 박혔을 수 있다');
-  const 박힘 = /(id|pw|아이디|암호|password|passwd)\s*[:=]\s*["'][^"']{3,}["']/i.exec(덩이[0]);
+  /* ⚠ 칸 이름은 바뀐다 — ilabor 의 id·pw 에서 공인노무사회의 login_id·login_pass 로
+       바뀌었다(2026-09-03, 로그인 문이 딴 곳이었다). 그래서 «이름»을 못 박지 않고
+       「아이디·암호 «변수»를 보내는가」만 본다. */
+  assert.ok(/login_id:\s*String\(아이디|id:\s*String\(아이디/.test(덩이[0]),
+    '아이디를 변수로 안 보낸다 — 글자로 박혔을 수 있다');
+  assert.ok(/login_pass:\s*String\(암호|pw:\s*String\(암호/.test(덩이[0]),
+    '비밀번호를 변수로 안 보낸다 — 글자로 박혔을 수 있다');
+  const 박힘 = /(login_id|login_pass|아이디|암호|password|passwd)\s*[:=]\s*["'][^"']{3,}["']/i.exec(덩이[0]);
   assert.equal(박힘, null, '★ 아이디·비밀번호로 보이는 «글자»가 박혀 있다: ' + (박힘 && 박힘[0]));
   const parse = fs.readFileSync(path.join(__dirname, '..', 'functions', 'ilabor-parse.js'), 'utf8');
   const 박힘2 = /(id|pw|password|passwd)\s*[:=]\s*["'][^"']{3,}["']/i.exec(parse);
