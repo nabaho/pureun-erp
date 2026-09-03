@@ -507,3 +507,31 @@ test('★ 고른 것이 없으면 «묻지도 않고» 멈춘다 — 빈 선택�
   assert.match(fn, /length/, '고른 것이 몇인지 안 봅니다');
   assert.match(fn, /confirm\(/, '묻지 않고 처리합니다');
 });
+
+test('★ 연락처가 «옆 열»에 있고 머리와 몸통의 열 수가 맞는다', () => {
+  /* 대표 지시 2026-09-03: 「연락처를 아래에 두지말고 옆에두고 열을 일치시켜라」
+     ⚠ 열 수가 어긋나면 표가 «한 칸씩 밀려» 담당자 자리에 전화가 들어간다.
+       눈으로는 「왜 이상하지」 정도로만 보이고 무엇이 틀렸는지 모른다. */
+  const i = news.indexOf('function 명단화면');
+  assert.ok(i >= 0, '명단화면 을 찾을 수 없습니다');
+  const 몸 = news.slice(i, news.indexOf('function ', i + 20));
+
+  /* 머리의 <th> 수 */
+  const 머리 = /<tr>\s*<th class="ck">[\s\S]*?<\/tr>/.exec(몸);
+  assert.ok(머리, '표 머리를 찾을 수 없습니다');
+  const th = (머리[0].match(/<th/g) || []).length;
+
+  /* 줄의 <td> 수 — 문자열을 이어 붙여 만드니 '<td' 를 센다 */
+  const 줄시작 = 몸.indexOf("return '<tr>'");
+  assert.ok(줄시작 >= 0, '줄 만드는 곳을 찾을 수 없습니다');
+  const 줄 = 몸.slice(줄시작, 몸.indexOf("'</tr>'", 줄시작));
+  const td = (줄.match(/<td/g) || []).length;
+
+  assert.equal(td, th, '머리 ' + th + '칸 · 줄 ' + td + '칸 — 표가 한 칸씩 밀립니다');
+
+  /* 연락처가 «아래»가 아니라 «옆»인지 */
+  assert.ok(!/사람칸\(/.test(몸), '연락처를 이름 아래에 붙이는 옛 방식이 남아 있습니다');
+  assert.match(몸, /class="tel"/, '연락처 열이 없습니다');
+  assert.match(news, /td\.tel\{[^}]*tabular-nums|td\.tel\{[^}]*tnum/,
+    '전화 숫자 폭을 고정하지 않았습니다 — 열을 갈라도 세로로 어긋납니다');
+});
