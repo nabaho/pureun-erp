@@ -5583,6 +5583,59 @@ async function postAutoMail(payload){
 
    ⚠ 개인 폴더 명함은 남기지 않는다. 기록 자리(pucards/sendLog)는 직원 누구나
      읽으므로, 남기는 순간 그 명함 번호가 드러난다. */
+/* ══════ 보낸 서류의 «갈래» — 한 곳에만 둔다 (2걸음, 2026-09-03) ══════
+   화면·거르개·세기가 다 이것을 본다. 세 곳에 따로 적으면 어긋난다.
+   ⚠ 지금 «쓰는» 것은 「자료」 하나다 — 자료함에서 1:1 로 보낸 것.
+     나머지는 3걸음(전 사업장 배포)이 쓴다. 그래도 갈래를 «지금부터» 적어 둔다 —
+     나중에 붙이면 이미 쌓인 기록마다 사람이 다시 매겨야 한다(설계안 ②). */
+const SENT_KINDS = ['자료', '취업규칙', '근로계약서', '연차', '임금', '4대보험', '그 밖'];
+function sentKindOf(v){
+  const t = String(v == null ? '' : v).trim();
+  return SENT_KINDS.indexOf(t) >= 0 ? t : '그 밖';
+}
+/* 이 명함이 «어느 사업장»의 것인가 — 기업 상세가 쓰는 «그 열쇠» 그대로.
+   ⚠ 새 잣대를 만들지 않는다. coListBuild 가 이미 명함을 회사에 붙여 두었다
+     (사업자번호 › 상호 다리). 여기서 다시 맞추면 두 곳이 어긋나, 화면에서는 한 회사인데
+     기록은 다른 회사에 쌓인다. 회사를 «이름»으로 맞춘 2026-08-28 사고와 같은 결이다.
+   ⚠ coList 는 한 번 만들어 두고 쓴다(_coListMemo) — 보낼 때 한 번 훑는 값이다. */
+function coKeyOfCard(cardId){
+  if(!cardId || typeof coList !== 'function') return '';
+  const list = coList() || [];
+  for(let i = 0; i < list.length; i++){
+    const cs = (list[i] && list[i].cards) || [];
+    for(let j = 0; j < cs.length; j++){
+      if(cs[j] && cs[j].id === cardId) return String(list[i].key || '');
+    }
+  }
+  return '';
+}
+/* ── 보낸 기록을 «회사»에도 (대표 지시 2026-09-03, 2걸음) ──
+   1:1 로 보낸 것이 명함에만 남으면 담당자가 바뀌는 순간 그 회사에 무엇을 보냈는지
+   찾을 길이 없다. 한 회사에 두 사람이면 기록도 둘로 갈린다.
+   ⚠ 명함 기록(sendLog)은 «그대로 둔다» — 명함 상세가 그것을 그리고 옛 기록도 거기 있다.
+     옮기면 옮기다 잃는 것이 더 크다(설계안 ①). 읽을 때 두 곳을 합친다.
+   ⚠ 받는 «메일 주소»는 회사 쪽에 안 남긴다. 「누구에게 갔나」는 이름이면 되고,
+     주소는 그 명함에 이미 있다 — 전 직원이 보는 자리에 덜 남길수록 좋다.
+   ⚠ 개인 폴더 명함은 여기까지 오지 않는다 — 부르는 쪽에서 이미 막는다. */
+function sentDocRec(rec, cardId, who){
+  const p = rec || {};
+  return { at: Number(p.at) || 0, by: String(p.by || ''),
+           kind: sentKindOf('자료'),
+           names: (p.names || []).map(v => String(v || '')).filter(Boolean),
+           set: String(p.set || ''),
+           card: String(cardId || ''), who: String(who || '').trim() };
+}
+function logSentToCompany(cardId, rec){
+  try{
+    const key = coKeyOfCard(cardId);
+    /* 회사를 못 찾으면 조용히 «명함 기록만» 남는다 — 남의 회사에 붙이느니 없는 편이 낫다 */
+    if(!key) return;
+    const it = (state.items || {})[cardId] || {};
+    firebase.database().ref(`${DB_ROOT}/sentDocs/${key}`)
+      .push(sentDocRec(rec, cardId, it.name))
+      .catch(e=>console.warn('[보낸 서류]', e && e.message));
+  }catch(_){}
+}
 function logSentMaterials(cardId, ids, to){
   try{
     if(Store.mode!=='firebase' || !cardId) return;
@@ -5597,6 +5650,8 @@ function logSentMaterials(cardId, ids, to){
     firebase.database().ref(`${DB_ROOT}/sendLog/${cardId}`).push(rec)
       .then(()=>{ (state.sendLog[cardId] = state.sendLog[cardId] || {})['t'+rec.at] = rec; })
       .catch(e=>console.warn('[보낸 기록]', e&&e.message));
+    /* 2걸음 — 같은 것을 «사업장» 밑에도 한 줄 (대표 지시 2026-09-03) */
+    logSentToCompany(cardId, rec);
   }catch(_){}
 }
 /* 한 명함의 보낸 기록을 읽어 상세 화면에 채운다 — 명함을 열 때만 읽는다
@@ -25415,10 +25470,26 @@ function coSentDay(at){
 /* 여러 사람의 기록을 한 줄기로 — «누구에게» 갔는지는 줄 안에 남긴다.
    ⚠ 읽어 온 명함만 센다(coSentCards 와 «같은 잣대»). 화면에 안 읽었다고 적어 둔 몫을
      여기서 세면 개수와 줄 수가 어긋난다. */
-function coSentList(cards, logs){
+/* ⚠ 두 곳을 «합쳐» 읽는다 (2걸음, 2026-09-03) —
+     ① sentDocs/{회사열쇠} : 2걸음부터 쌓이는 «사업장» 기록. 담당자 명함이 없어져도 남는다.
+     ② sendLog/{명함번호}  : 그 앞의 기록. 옮기지 않고 그대로 읽는다(설계안 ①).
+   ⚠ 한 번 보낸 것이 «두 곳에 다» 있다 — 같은 명함·같은 시각이면 한 번만 센다.
+     안 그러면 한 번 보낸 것이 두 줄로 보여 「두 번 보냈나」로 읽힌다. */
+function coSentList(cards, logs, docs){
   const out = [];
+  const 본것 = {};
+  /* 회사에 붙은 것이 먼저다 — 사람이 바뀌어도 남아 있는 쪽이다 */
+  Object.keys(docs||{}).forEach(id=>{
+    const r = (docs||{})[id]; if(!r || !r.at) return;
+    본것[String(r.card||'') + '@' + r.at] = 1;
+    out.push({ at: Number(r.at)||0, day: coSentDay(r.at),
+               set: String(r.set||''), what: (r.names||[]).join(' · ') || '자료',
+               who: String(r.who||'').trim(),
+               by: String(r.by||'').split('@')[0] });
+  });
   coSentCards(cards, CO_SENT_MAX_CARDS).forEach(c=>{
     sendLogList((logs||{})[c.id]).forEach(r=>{
+      if(본것[c.id + '@' + (Number(r.at)||0)]) return;   /* 두 곳에 다 있다 */
       out.push({ at: Number(r.at)||0, day: coSentDay(r.at),
                  set: String(r.set||''), what: (r.names||[]).join(' · ') || '자료',
                  who: String(c.name||'').trim() || String(c.title||'').trim(),
@@ -25429,11 +25500,13 @@ function coSentList(cards, logs){
 }
 function coSentHtml(o){
   const cards = (o && o.cards) || [];
-  const rows = coSentList(cards, state.sendLog);
+  const rows = coSentList(cards, state.sendLog, _coSent[(o && o.key) || '']);
   const cut = cards.length > CO_SENT_MAX_CARDS;
   const note = '자료함에서 보낸 것만 잡힙니다 · 취업규칙 회차는 위 업무 이력에 있습니다'
     + ' · 단체 메일로 보낸 것은 아직 기록이 남지 않습니다'
-    + (cut ? ` · 이 회사 사람 ${cards.length}명 가운데 최근 ${CO_SENT_MAX_CARDS}명분만 읽었습니다` : '');
+    /* ⚠ 자른 것은 «2걸음 앞»의 기록뿐이다 — 그 뒤로는 회사에 바로 쌓여 사람 수와 상관없다.
+         그렇게 적어야 「30명 밖은 안 보인다」로 오해하지 않는다. */
+    + (cut ? ` · 2026-09-03 앞의 기록은 이 회사 사람 ${cards.length}명 가운데 최근 ${CO_SENT_MAX_CARDS}명분만 읽었습니다` : '');
   return `<div class="pcsec" style="margin:16px 4px 8px">📤 보낸 서류 ${rows.length}건</div>
     <div class="codochint">${esc(note)}</div>
     ${rows.length ? rows.map(r=>`<div class="cof">
@@ -25442,13 +25515,23 @@ function coSentHtml(o){
     </div>`).join('')
     : `<div class="cof" style="color:#94a3b8">아직 보낸 기록이 없습니다</div>`}`;
 }
-/* 패널을 열 때 «그 회사 사람들»의 기록을 모아 읽는다 — 이미 읽어 둔 것은 건너뛴다.
-   ⚠ 읽기만 한다(loadSendLog 는 once('value') 한 번이다). */
+/* 회사에 붙은 보낸 기록 — 열쇠 → {번호: 기록}. 패널을 열 때 그 회사 것만 읽는다. */
+let _coSent = {};
+function loadCoSentDocs(key, cb){
+  if(!key || Store.mode!=='firebase'){ if(cb) cb(); return; }
+  if(_coSent[key]){ if(cb) cb(); return; }          /* 한 번 읽어 두면 다시 안 묻는다 */
+  firebase.database().ref(`${DB_ROOT}/sentDocs/${key}`).once('value')
+    .then(s=>{ _coSent[key] = s.val() || {}; if(cb) cb(); })
+    .catch(()=>{ if(cb) cb(); });
+}
+/* 패널을 열 때 «그 회사»와 «그 회사 사람들»의 기록을 모아 읽는다 —
+   이미 읽어 둔 것은 건너뛴다.
+   ⚠ 읽기만 한다(둘 다 once('value') 한 번이다). */
 function loadCoSent(o, cb){
   const ids = coSentToRead((o && o.cards) || [], state.sendLog);
-  let left = ids.length;
-  if(!left){ if(cb) cb(); return; }
+  let left = ids.length + 1;                         /* 회사 기록 한 자리 */
   const done = () => { if(--left <= 0 && cb) cb(); };
+  loadCoSentDocs((o && o.key) || '', done);
   ids.forEach(id => loadSendLog(id, done));
 }
 function coDetailPanelHtml(o){

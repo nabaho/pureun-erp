@@ -208,12 +208,17 @@ test('★ 받은 것에 📥 · 보낸 것에 📤 — 두 축임을 이름으�
   assert.match(c.coSentHtml({ cards: [] }), /📤 보낸 서류/);
 });
 
-test('★ 1걸음은 서버에 아무것도 쓰지 않는다', () => {
+test('★ 보여 주는 자리는 서버에 «쓰지» 않는다 — 읽기만 한다', () => {
   const block = slice('const CO_SENT_MAX_CARDS = 30;', 'function coDetailPanelHtml(o){');
   /* ⚠ 「.push(」 하나로 재면 안 된다 — 배열에 담는 out.push 까지 걸린다.
-     쓰기는 반드시 «자리»(ref)를 거치므로 그것으로 잰다. */
-  assert.ok(!/firebase\.database|Store\.(put|del)|\.ref\(|\.update\(/.test(block),
-    '보여 주기만 하는 걸음에 쓰기가 들어 있다');
+     서버 쓰기는 반드시 «자리»(ref)를 거치므로 그것으로 잰다.
+     ⚠ 2걸음(2026-09-03)부터 이 토막이 회사 기록을 «읽는다» — 읽기는 괜찮다. */
+  assert.ok(!/\.set\(|\.update\(|\.remove\(|Store\.(put|del)/.test(block),
+    '보여 주기만 하는 자리에 쓰기가 들어 있다');
+  assert.ok(!/\.ref\([^)]*\)\s*\n?\s*\.push\(/.test(block), '서버에 새 줄을 밀어 넣는다');
+  assert.match(block, /once\('value'\)/, '읽기는 «한 번»만 한다');
+  assert.ok(!/\.ref\([^)]*\)\.on\(/.test(block),
+    '살아 있는 구독을 걸면 패널을 닫아도 계속 돈다 — 돈이 샌다');
   const body = slice('function coDetailPanelHtml(o){', 'function openCoDetailPanel(');
   assert.ok(!/Store\.(put|del|db)/.test(body), '패널을 그리면서 쓰기가 나가면 안 된다');
 });
