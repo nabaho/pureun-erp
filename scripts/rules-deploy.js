@@ -31,9 +31,30 @@ const OUT = path.join(ROOT, 'docs', 'rules-paste.json');
 const ALT = path.join(ROOT, 'docs', 'firebase-rules-전체-적용본.json');
 const DOCS = path.join(ROOT, 'docs');
 const PROJECT = 'pureun-erp';
+const INSTANCE = 'pureun-erp-default-rtdb';   /* asia-southeast1 — 앱의 databaseURL 과 같아야 한다 */
 const DEPLOY = process.argv.indexOf('--deploy') >= 0;
 
-/* ── 기준: 마지막으로 콘솔에서 확인한 규칙 ── */
+/* ── ★ 기준은 «살아 있는 콘솔» 이다 (2026-09-03) ──
+   `firebase database:get /.settings/rules` 로 콘솔의 지금 규칙을 그대로 읽는다.
+   ⚠ 이걸 읽을 수 있게 되면서 「콘솔에서 손으로 고쳤으면 알려 주세요」가 필요 없어졌다 —
+     스크립트가 스스로 알아낸다. 되도록 이 길을 쓴다.
+   ⚠ shell:true 로 부른다 — Windows 에서 firebase 는 .cmd 다. cmd.exe 를 거치므로
+     Git Bash 의 경로 변환(/.settings → C:/Program Files/...)에 걸리지 않는다. */
+function readLiveRules() {
+  try {
+    var out = execFileSync('firebase',
+      ['database:get', '/.settings/rules', '--instance', INSTANCE, '--project', PROJECT],
+      { cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
+        shell: process.platform === 'win32', stdio: ['ignore', 'pipe', 'ignore'] });
+    if (out.charCodeAt(0) === 0xFEFF) out = out.slice(1);      /* BOM */
+    var v = JSON.parse(out);
+    return v && v.rules ? v.rules : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/* ── 기준(대체): 마지막으로 콘솔에서 확인한 규칙 ── */
 function latestSnapshot() {
   const re = /^firebase-rules-콘솔원문-(\d{4}-\d{2}-\d{2})\.json$/;
   const hits = fs.readdirSync(DOCS)
@@ -63,18 +84,26 @@ function main() {
   fs.writeFileSync(OUT, fresh, 'utf8');
   fs.writeFileSync(ALT, fresh, 'utf8');
 
-  const snap = latestSnapshot();
-  if (!snap) {
-    console.log('⚠ 기준으로 삼을 콘솔 원문 파일이 없습니다.');
-    console.log('   콘솔의 지금 규칙을 docs/firebase-rules-콘솔원문-YYYY-MM-DD.json 로 먼저 저장하세요.');
-    process.exit(1);
+  /* ★ 콘솔을 직접 읽는다. 못 읽으면 저장해 둔 사본으로 물러난다(그때는 그렇다고 밝힌다). */
+  var base = readLiveRules(), where;
+  if (base) {
+    where = '살아 있는 콘솔 (지금 규칙을 직접 읽었습니다)';
+  } else {
+    const snap = latestSnapshot();
+    if (!snap) {
+      console.log('⚠ 콘솔을 읽지 못했고, 기준으로 삼을 사본도 없습니다.');
+      console.log('   firebase 로그인을 확인하거나, 콘솔의 지금 규칙을');
+      console.log('   docs/firebase-rules-콘솔원문-YYYY-MM-DD.json 로 저장하세요.');
+      process.exit(1);
+    }
+    base = JSON.parse(fs.readFileSync(snap.file, 'utf8')).rules;
+    where = 'docs/' + path.basename(snap.file) + ' (사본 — 콘솔을 읽지 못해 물러섰습니다. '
+          + '그 뒤 콘솔에서 손으로 고친 것이 있으면 이 견줌이 어긋납니다)';
   }
-
-  const base = JSON.parse(fs.readFileSync(snap.file, 'utf8')).rules;
   const out = { gone: [], added: [], changed: [] };
   walk(base, parsed.rules, '', out);
 
-  console.log('기준: docs/' + path.basename(snap.file) + '  (콘솔에서 확인한 날 ' + snap.date + ')');
+  console.log('기준: ' + where);
   console.log('');
   console.log('■ 새로 생기는 규칙 ' + out.added.length + '개');
   out.added.forEach((p) => console.log('   + ' + p));
@@ -91,9 +120,9 @@ function main() {
   /* 2) ⚠ 사라질 것이 하나라도 있으면 «올리지 않는다» */
   if (out.gone.length) {
     console.log('✋ 멈췄습니다 — 위 ' + out.gone.length + '개가 사라집니다.');
-    console.log('   콘솔에서 손으로 더한 규칙일 수 있습니다. 만들개(scripts/make-firebase-rules.js)에');
-    console.log('   그 규칙을 넣은 뒤 다시 돌리세요. 덮어써도 된다고 판단했다면 콘솔의 지금 규칙을');
-    console.log('   새 기준 파일로 저장한 뒤 다시 돌리세요.');
+    console.log('   콘솔에 있는데 만들개에는 없는 규칙입니다(누군가 콘솔에서 손으로 더했을 수 있습니다).');
+    console.log('   ⚠ --force 같은 우회로를 만들지 말 것. 만들개(scripts/make-firebase-rules.js)에');
+    console.log('   그 규칙을 넣은 뒤 다시 돌리세요 — 그러면 사라질 것이 0 이 됩니다.');
     process.exit(2);
   }
 
