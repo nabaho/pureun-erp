@@ -970,6 +970,12 @@ table.sbox tr.bad td{background:#f8fafc}
 .dm-row .env{flex:none;width:24px;display:flex;align-items:center;justify-content:center;
   color:#cbd5e1;cursor:pointer}
 .dm-row .env.on{color:#2563eb}          /* 안 읽음 — 눈에 띄어야 한다 */
+/* 답장한 메일 (대표 지시 2026-09-03) — 「답변 준 것은 답변 보낸 것으로 표시되어야 한다」.
+   ⚠ 안 읽음(파랑)보다 «연한» 색이다. 답장은 «끝난 일»이라 눈을 끌 까닭이 없다 —
+     눈이 가야 하는 것은 아직 손 안 댄 안 읽음이다. 그런데 회색(기본)보다는 진해야
+     「답장했다」가 보인다. 그래서 그 사이에 둔다. */
+.dm-row .env.ans{color:#64748b}
+.dm-row .env.on.ans{color:#2563eb}      /* 안 읽음이면 안 읽음이 먼저다 */
 .dm-row .env:hover{color:#1e40af}
 .dm-row .who{flex:none;width:160px;padding-right:12px;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis}
@@ -5466,6 +5472,13 @@ async function sendCompose(){
     });
     const cardId = c.cardId, wasMail = (state.view==='mail');
     const lost = (c.files||[]).length;
+    /* ⚠ 답장이었으면 «원래 메일»에 답장 표를 켠다 (대표 지시 2026-09-03).
+         다음메일은 우리가 SMTP 로 보낸 것을 「그 메일의 답장」인 줄 모르므로,
+         우리가 안 켜면 우리 앱에서 보낸 답장은 목록에 영영 표시가 없다.
+       ⚠ «보낸 뒤»에 켠다 — 먼저 켜면 보내기가 실패했을 때 답장한 것으로 남는다.
+       ⚠ 예약이면 안 켠다 — 아직 안 나갔다. 그때 sendScheduledMail 이 보내고,
+         다음 회차 동기화가 다음메일의 표를 그대로 가져온다. */
+    const rep = (!r.scheduled && c.replyTo) ? c.replyTo : null;
     _compose = null;
     clearDraft();          /* 나갔으니 쓰다 만 글은 지운다 — 안 지우면 다음에 또 뜬다 */
     if(r.scheduled){
@@ -5478,6 +5491,10 @@ async function sendCompose(){
     toast(`✉️ 보냈습니다 — ${esc(r.from||'회사 메일')} 에서 ${esc(c.to)} 로`
       + (r.files?` (첨부 ${r.files}개)`:'')
       + (r.missing?`\n⚠ 파일을 못 찾은 자료 ${r.missing}개는 빠졌습니다`:''), r.missing?12000:8000);
+    /* 답장이었으면 원래 메일에 답장 표를 켠다 (위 rep 머리글).
+       ⚠ 실패해도 «보내기는 성공»이다 — 표시 하나 때문에 보낸 것이 실패로 보이면 안 된다.
+         다음 회차 동기화가 다음메일 쪽 표를 다시 읽어 오므로 스스로 맞춰지기도 한다. */
+    if(rep && rep.slug && rep.uid) mbAnswered(rep.slug, rep.uid);
     /* 보낸 뒤에는 보낸 메일함을 보여 준다 — 방금 것이 실제로 남았는지 그 자리에서 확인된다 */
     if(wasMail) openSentBox(); else closeSendMat();
     /* 명함 없이 쓴 메일(cardId 없음)은 명함 기록이 없다 — 기록은 명함에 붙는다 */
@@ -6548,7 +6565,9 @@ function mailPageBuild(pre){
       subject: subject0, body: htmlToTextC(html0), html: html0,
       /* 처음 채워진 글을 기억해 둔다 — 손댔는지 견주는 잣대다(composeTouched) */
       base: { subject: subject0, body: htmlToTextC(html0) },
-      ids: p.ids||[], files: [], picking: true
+      ids: p.ids||[], files: [], picking: true,
+      /* 「어느 메일의 답장인가」 — 보낸 뒤 그 메일에 답장 표를 켠다(mbReply 머리글) */
+      replyTo: p.replyTo || null
     };
     /* 전달·다시보내기로 들어오면 제목·본문을 그것으로 갈아 준다 (2026-08-24 메일함) —
        틀에서 채운 글은 «새 편지»용이라, 갈지 않으면 전달할 글을 덮어써 버린다. */
@@ -16207,7 +16226,7 @@ function mailSideHtml(){
   const tome = mbFolderOf('tome');
   if(tome.length) tome.forEach(f=>{ h += row(f.slug,'↗','내게쓴메일함'); });
   else h += row('*tome','↗','내게쓴메일함');
-  mbFolderOf('sent').forEach(f=>{ h += row(f.slug,'✈','보낸메일함','<span class="pill">수신확인</span>'); });
+  mbFolderOf('sent').forEach(f=>{ h += row(f.slug,'✈','보낸메일함','<span class="pill" title="상대가 읽었는지(수신확인)는 다음메일에만 있습니다 — 메일 규약(IMAP)으로는 안 옵니다. 우리 화면이 보여 주는 것은 «우리가 답장했는가»입니다(봉투에 ↩ 표시).">수신확인</span>'); });
   mbFolderOf('drafts').forEach(f=>{ h += row(f.slug,'🗂','임시보관함'); });
   const sch = mbFolderOf('sched');
   if(sch.length) sch.forEach(f=>{ h += row(f.slug,'🕐','예약메일함'); });
@@ -17843,10 +17862,12 @@ function mbMobileHtml(){
         : `<span class="dmm-st ${Number(v.g||0)?'on':''}" title="중요 표시 — 다음메일에도 함께 켜집니다"
              onclick="event.stopPropagation();mbStar('${v._slug}','${v.u}')">${Number(v.g||0)?'★':'☆'}</span>
            ${/* 봉투 — 폰에서도 그 자리에서 읽음↔안읽음 (대표 지시 2026-08-29) */''}
-           <span class="dmm-env ${Number(v.r||0)?'':'on'}"
-             title="${Number(v.r||0)?'안 읽음으로 되돌립니다':'읽음으로 표시합니다'}"
+           ${/* ⚠ PC 목록과 «함께» 고친다 — 한쪽만 고치면 폰에서만 답장 표시가 없다 */''}
+           <span class="dmm-env ${Number(v.r||0)?'':'on'} ${Number(v.w||0)?'ans':''}"
+             title="${Number(v.w||0)?'✓ 답장을 보낸 메일입니다 · ':''}${
+               Number(v.r||0)?'안 읽음으로 되돌립니다':'읽음으로 표시합니다'}"
              onclick="event.stopPropagation();mbToggleRead('${v._slug}','${v.u}')"
-             >${mbEnvSvg(Number(v.r||0))}</span>`}
+             >${mbEnvSvg(Number(v.r||0), Number(v.w||0))}</span>`}
     </div>`;
   }).join('')
   : `<div class="dmm-none">${
@@ -17922,7 +17943,7 @@ function mbDrawerHtml(){
   const tome = mbFolderOf('tome');
   if(tome.length) tome.forEach(f=>{ h += row(f.slug,'📝','내게쓴메일함','<span class="pill">내게쓰기</span>'); });
   else h += row('*tome','📝','내게쓴메일함','<span class="pill">내게쓰기</span>');
-  mbFolderOf('sent').forEach(f=>{ h += row(f.slug,'➤','보낸메일함','<span class="pill">수신확인</span>'); });
+  mbFolderOf('sent').forEach(f=>{ h += row(f.slug,'➤','보낸메일함','<span class="pill" title="상대가 읽었는지(수신확인)는 다음메일에만 있습니다 — 메일 규약(IMAP)으로는 안 옵니다. 우리 화면이 보여 주는 것은 «우리가 답장했는가»입니다(봉투에 ↩ 표시).">수신확인</span>'); });
   mbFolderOf('drafts').forEach(f=>{ h += row(f.slug,'📁','임시보관함'); });
   const sch = mbFolderOf('sched');
   if(sch.length) sch.forEach(f=>{ h += row(f.slug,'🕐','예약메일함'); });
@@ -18228,10 +18249,11 @@ function mbListHtml(){
             다음메일과 같은 자리(별 바로 옆)에 같은 그림으로 둔다.
             ⚠ 줄을 누르면 메일이 열리므로 stopPropagation 이 반드시 있어야 한다 —
               없으면 안읽음으로 돌리는 순간 열려서 도로 읽음이 된다. */''}
-      <span class="env ${Number(v.r||0)?'':'on'}"
-        title="${Number(v.r||0)?'안 읽음으로 되돌립니다':'읽음으로 표시합니다'} — 다음메일에도 함께 바뀝니다"
+      <span class="env ${Number(v.r||0)?'':'on'} ${Number(v.w||0)?'ans':''}"
+        title="${Number(v.w||0)?'✓ 답장을 보낸 메일입니다 · ':''}${
+          Number(v.r||0)?'안 읽음으로 되돌립니다':'읽음으로 표시합니다'} — 다음메일에도 함께 바뀝니다"
         onclick="event.stopPropagation();mbToggleRead('${v._slug}','${v.u}')"
-        >${mbEnvSvg(Number(v.r||0))}</span>
+        >${mbEnvSvg(Number(v.r||0), Number(v.w||0))}</span>
       <span class="who" onclick="mbOpenMsg('${v._slug}','${v.u}')">${esc(mbWho(v))}</span>
       ${mbClipSvg(v.a)}
       <span class="sub" onclick="mbOpenMsg('${v._slug}','${v.u}')">${esc(v.s||'(제목 없음)')}</span>
@@ -19355,6 +19377,26 @@ function mbStar(slug, uid){
   const row = (_mbMsgs[slug]||{})[String(uid)];
   mbFlag(slug, uid, 'star', !(row && Number(row.g||0)));
 }
+/* ── 답장을 보냈다고 표시한다 (대표 지시 2026-09-03) ──
+   ⚠ 이미 켜져 있으면 «아무것도 안 한다» — 다음메일에서 답장한 것은 이미 켜져 있고,
+     그때마다 서버를 두드리면 헛일이다.
+   ⚠ mbFlag 와 달리 «되돌리지 않는다» — 실패해도 보낸 것은 나갔다. 표시 하나 때문에
+     사람에게 붉은 알림을 띄우면 「안 갔나?」 하고 다시 보내게 된다. 다음 회차 동기화가
+     다음메일 쪽 표를 다시 읽어 오므로 스스로 맞춰지기도 한다. */
+function mbAnswered(slug, uid){
+  const row = (_mbMsgs[slug]||{})[String(uid)];
+  if(row && Number(row.w||0)) return;
+  if(row) row.w = 1;
+  renderMailPage(); renderPCSide();
+  const u = firebase.auth().currentUser; if(!u) return;
+  u.getIdToken()
+    .then(tok=>fetch(MB_FN+'flagMailMessages', { method:'POST',
+      headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
+      body: JSON.stringify({ slug:slug, uids:[String(uid)], flag:'answer', on:true }) }))
+    .then(r=>r.json().catch(()=>({})))
+    .then(j=>{ if(!j.ok) console.warn('[메일함] 답장 표시 실패:', j.error||''); })
+    .catch(e=>console.warn('[메일함] 답장 표시 실패:', (e&&e.message)||e));
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
    봉투 — 읽음 ↔ 안 읽음 뒤집기 (대표 지시 2026-08-29 「다음메일처럼」)
@@ -19399,7 +19441,26 @@ function mbClipSvg(n){
     + '</svg></span>';
 }
 
-function mbEnvSvg(read){
+function mbEnvSvg(read, answered){
+  /* ── 답장한 메일 — 봉투에 «되돌아가는 화살표»를 붙인다 (대표 지시 2026-09-03) ──
+     「메일 답변을 준 것은 답변 보낸 것으로 모두 표시되어야 한다」
+
+     ★ 자료는 «진작부터 와 있었다» — 서버가 IMAP 의 \Answered 를 row.w 로 담아 두는데
+       (functions/mail-box.js msgRow), 화면이 그 칸을 한 번도 안 썼다. 그래서
+       답장을 보내도 목록에서는 안 보낸 것과 똑같아 보였다. 새로 받아 올 것이 없다.
+     ⚠ 답장은 «읽음»과 따로 논다 — 안 읽고 답장할 수는 없으니 대개 읽음이지만,
+       읽음으로 되돌려도 답장한 사실은 남아야 한다. 그래서 두 값을 따로 본다.
+     ⚠ 다음메일도 봉투에 화살표를 얹어 보여 준다 — 대표께서 보내 주신 그림 그대로다. */
+  /* ⚠ 봉투를 «왼쪽 위»로 조금 물리고 화살표를 오른쪽 아래 바깥에 둔다 — 안에 겹쳐
+       그리면 15px 짜리에서 선이 엉겨 무엇인지 안 보인다(작게 그려 보고 고쳤다). */
+  if(answered) return '<svg viewBox="0 0 22 18" width="16" height="13" aria-hidden="true">'
+    + '<path d="M1 5.6 8.5 1 16 5.6v7.4H1z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>'
+    + '<path d="M1 5.6 8.5 9.6 16 5.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>'
+    + '<path d="M17.4 10.4 14.2 13.2l3.2 2.8" fill="none" stroke="currentColor" stroke-width="1.7"'
+    + ' stroke-linecap="round" stroke-linejoin="round"/>'
+    + '<path d="M14.6 13.2h3.6a2.8 2.8 0 0 1 2.8 2.8" fill="none" stroke="currentColor"'
+    + ' stroke-width="1.7" stroke-linecap="round"/>'
+    + '</svg>';
   /* 열린 봉투(읽음) — 뚜껑이 젖혀져 있다 */
   if(read) return '<svg viewBox="0 0 20 16" width="15" height="12" aria-hidden="true">'
     + '<path d="M1 6.2 10 1l9 5.2V15H1z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>'
@@ -19477,7 +19538,11 @@ function mbReply(all){
       .filter(s=>s && s.toLowerCase()!==me && s.toLowerCase()!==to.toLowerCase()).join(', ')
     : '';
   const subj = /^re\s*:/i.test(String(v.s||'')) ? String(v.s) : 'RE: ' + String(v.s||'');
-  openMailPage({ to:to, cc:cc, subject:subj, body: mbReplyBody(v, o.text || htmlToTextC(o.html||'')) });
+  openMailPage({ to:to, cc:cc, subject:subj, body: mbReplyBody(v, o.text || htmlToTextC(o.html||'')),
+    /* ⚠ 「어느 메일의 답장인가」를 들고 간다 (대표 지시 2026-09-03) — 보낸 뒤 그 메일에
+         답장 표를 켜려면 이것이 있어야 한다. 다음메일은 우리가 SMTP 로 보낸 것을
+         「그 메일의 답장」인 줄 모르므로, 우리가 직접 켜 주지 않으면 표시가 영영 없다. */
+    replyTo: { slug: o.slug, uid: String(o.uid) } });
 }
 
 /* ══════ 전달 · 다시보내기 ══════
