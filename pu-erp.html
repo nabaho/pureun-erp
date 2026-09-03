@@ -146,7 +146,7 @@
 <script src="js/pu-billing.js?v=7"></script>
 <script src="js/pu-rrn-seal.js?v=1"></script>
 <!-- 푸른통합 온톨로지 공통 사전·읽기 전용 관계 진단 -->
-<script src="js/pu-ontology.js?v=9"></script>
+<script src="js/pu-ontology.js?v=10"></script>
 <!-- 급여담당자 엑셀 → 업체관리 (대표 결정 2026-08-24). 읽고 대조하는 일은 이 파일이,
      그리기는 아래 화면이 한다 — 검사가 이 파일을 그대로 돌린다. -->
 <script src="js/pu-co-xls.js?v=3"></script>
@@ -14223,6 +14223,43 @@ function erpValidateWorkReferences(store,form){
   if(!checked.ok){showToast('⚠ '+checked.errors.slice(0,2).map(function(x){return x.message;}).join(' / '));return false;}
   return true;
 }
+function erpValidateWorkBatch(store,items,allowExisting){
+  var O=window.PuOntology;
+  if(!O||typeof O.validateWorkBatch!=='function'){showToast('참조 검증 모듈을 불러오지 못했습니다. 입력은 유지됩니다.');return false;}
+  var data={},unassignable=[];['user_accounts','user_dir','companies','contracts','cases','consultings','funds','other_projects'].forEach(function(k){data[k]=dbGet(k,[]);});
+  (items||[]).forEach(function(r){if(!r)return;[r.managerMain].concat(Array.isArray(r.managerSubs)?r.managerSubs:[]).forEach(function(sid){
+    if(sid&&typeof getLoaStatus==='function'&&getLoaStatus(sid)&&unassignable.indexOf(sid)<0)unassignable.push(sid);
+  });});
+  var checked=O.validateWorkBatch(store,items,data,{allowExisting:!!allowExisting,unassignableSids:unassignable});
+  if(!checked.ok){showToast('⚠ 일괄 저장 보류 — '+checked.errors.slice(0,3).map(function(x){return x.row+'행: '+x.message;}).join(' / '));return false;}
+  return true;
+}
+function erpPrepareContractTransfer(contract){
+  var O=window.PuOntology;
+  if(!O||typeof O.validateWorkBatch!=='function'){showToast('참조 검증 모듈을 불러오지 못해 이관을 보류합니다.');return null;}
+  var originals=dbGet('contracts',[]).filter(function(x){return x&&!x._deleted&&contract&&contract.id&&x.id===contract.id;});
+  if(originals.length!==1){showToast('원본 계약 ID가 없거나 중복되어 이관을 보류합니다.');return null;}
+  var original=originals[0];
+  if(original.updatedAt!==contract.updatedAt){showToast('원본 계약이 변경됐습니다. 다시 열고 이관하세요.');return null;}
+  var checked=erpValidateContractCompany(original);if(!checked)return null;
+  var kinds=checked.kinds||[checked.kind];
+  if(kinds.indexOf('company')>=0&&!checked.companyId){
+    if(checked.companyLinkStatus!=='pending'||O.companyLinkCandidates(checked,dbGet('companies',[]),'').length){
+      showToast('업체 이관 전 기존 업체를 명시적으로 선택하세요. 신규 업체만 연결 보류 상태로 만들 수 있습니다.');return null;
+    }
+  }
+  // 이관은 새 레코드 생성이다. 과거 배정 경고 예외를 새 담당자 배정에 적용하지 않는다.
+  var reference={id:'transfer-check-'+checked.id,managerMain:checked.managerMain,managerSubs:checked.managerSubs,
+    sourceKind:'contract',sourceId:checked.id,sourceContractId:checked.id,sourceContractNo:checked.contractNo};
+  if(!erpValidateWorkBatch('cases',[reference],false))return null;
+  return checked;
+}
+function erpTransferReferenceMatch(record,contract){
+  var direct=String(record.sourceContractId||''),pair=record.sourceKind==='contract'?String(record.sourceId||''):'';
+  if(direct&&pair&&direct!==pair)return direct===contract.id||pair===contract.id?'conflict':'';
+  if(direct||pair)return (direct||pair)===contract.id?'id':'';
+  return contract.contractNo&&record.sourceContractNo===contract.contractNo?'legacy':'';
+}
 function OntologyWorkReferencePanel(props){
   var qs=useState(''),query=qs[0],setQuery=qs[1],form=props.value||{},O=window.PuOntology;
   var data={contracts:dbGet('contracts',[]),cases:dbGet('cases',[])};
@@ -17785,6 +17822,8 @@ function arvBadge(x, store, onDone){
 // contract.kinds 배열을 돌면서 각 종류별로 데이터 생성
 // 반환: [{type, no, id}, ...] 결과 배열
 function transferContract(contract){
+  contract=erpPrepareContractTransfer(contract);
+  if(!contract)return [];
   var kinds = (contract.kinds && contract.kinds.length) ? contract.kinds.slice() : (contract.kind ? [contract.kind] : []);
   // [버그방지] 임시저장 누수로 섞인 종류가 이중 생성되던 문제 — 알수없는/중복 종류 제거
   var _VALID_KINDS = CONTRACT_KINDS.map(function(x){ return x.v; });
@@ -17820,6 +17859,7 @@ function transferContract(contract){
       }
       var item = {
         id: 'co-' + Date.now().toString(36)+Math.random().toString(36).slice(2,5) + '-' + Math.random().toString(36).slice(2,5),
+        entityType:'Organization', updatedAt:(new Date()).toISOString(),
         name: contract.companyName || co.name || '',
         bizNo: contract.bizNo || co.bizNo || '',
         ceo: co.ceo || '',
@@ -17847,6 +17887,7 @@ function transferContract(contract){
         taxInvoiceIssueDay: '',                              // 세금계산서 발급일 (매월 N일)
         status: 'active',                                    // active | suboffice (사무대행) | closed
         sourceContractNo: contract.contractNo,
+        sourceContractId: contract.id, sourceKind:'contract', sourceId:contract.id,
         note: '계약(' + contract.contractNo + ')에서 이관',
         createdAt: (new Date()).toISOString()
       };
@@ -17858,8 +17899,8 @@ function transferContract(contract){
            새 계약 값으로 덮으면, 사람이 업체관리에서 고쳐 둔 것을 조용히 지운다.
            채운 것과 그냥 둔 것을 결과 문구로 알려 주어 사람이 판단하게 한다.
          ⚠ 담당자 목록은 합친다 — mergeCompanyContacts 가 같은 사람을 안 겹치게 한다. */
-      var exist = CompanyRef.findCompany({
-        companyId: contract.companyId, bizNo: item.bizNo, companyName: item.name });
+      // 검증한 명시적 ID만 선택한다. 이름·사업자번호 후보를 자동 쓰기 대상으로 삼지 않는다.
+      var exist = contract.companyId ? dbGet('companies',[]).find(function(x){return x&&!x._deleted&&x.id===contract.companyId;}) : null;
       if(exist){
         var coBlank = function(v){
           if(v === undefined || v === null || v === '') return true;
@@ -17911,6 +17952,7 @@ function transferContract(contract){
       var casePc = (caseCo.contacts || []).find(function(x){return x.isPrimary;}) || (caseCo.contacts || [])[0] || {};
       var newCase = {
         id: 'c-' + Date.now().toString(36)+Math.random().toString(36).slice(2,5) + '-' + Math.random().toString(36).slice(2,5),
+        entityType:'Case', createdAt:(new Date()).toISOString(), updatedAt:(new Date()).toISOString(),
         caseNo: caseNo, typeCode: typeCode, typeName: (t ? t.name : ''),
         // 회사 공유 정보 (계약관리 → 동기화)
         companyName: contract.companyName,
@@ -17950,6 +17992,8 @@ function transferContract(contract){
         brief: brief,                             // 업무 요약 — 계약에서 승계
         personalDeposit: !!contract.personalDeposit,   // 👤 개인입금 승계 — 안 넘기면 입금확정이 못 본다
         sourceContractNo: contract.contractNo,
+        sourceContractId: contract.id, sourceKind:'contract', sourceId:contract.id,
+        companyId: contract.companyId||'', companyLinkStatus:contract.companyLinkStatus,
         note: '계약(' + contract.contractNo + ')에서 이관' + (contract.successFeeType === 'percent' ? ' / 성공보수 ' + (contract.successFee||0) + '%' : '')
       };
       // 사건관리 목록 맨 위로 올려 어디로 갔는지 바로 보이게
@@ -17992,14 +18036,12 @@ function transferContract(contract){
     var pc2 = (co2.contacts || []).find(function(x){return x.isPrimary;}) || (co2.contacts || [])[0] || {};
     var item2 = {
       id: idPrefMap[kindV] + '-' + Date.now().toString(36)+Math.random().toString(36).slice(2,5) + '-' + Math.random().toString(36).slice(2,5),
+      entityType:'Project', createdAt:(new Date()).toISOString(), updatedAt:(new Date()).toISOString(),
       no:no2, typeCode:effTypeCode,
       // 회사 공유 정보
       companyName: contract.companyName, bizNo: contract.bizNo,
-      // #C companyId 자동 부착 (이름 변경에도 견고한 ID 연결)
-      companyId: (function(){
-        var ref = CompanyRef.findCompany({companyId:contract.companyId, bizNo:contract.bizNo, companyName:contract.companyName});
-        return ref ? ref.id : (contract.companyId || '');
-      })(),
+      // 계약에서 명시적으로 검증한 업체 ID만 승계한다.
+      companyId: contract.companyId||'', companyLinkStatus:contract.companyLinkStatus,
       ceo: co2.ceo || '',
       ceo2: co2.ceo2 || '',
       zipcode: co2.zipcode || '', address: co2.address || '',
@@ -18032,6 +18074,7 @@ function transferContract(contract){
       brief: brief,                               // 업무 요약 — 계약에서 승계
       personalDeposit: !!contract.personalDeposit, // 👤 개인입금 승계 — 안 넘기면 입금확정이 못 본다
       sourceContractNo: contract.contractNo,
+      sourceContractId: contract.id, sourceKind:'contract', sourceId:contract.id,
       note: '계약(' + contract.contractNo + ')에서 이관'
     };
     // 컨설팅·기금·기타 목록 맨 위로
@@ -18055,10 +18098,10 @@ function transferContract(contract){
       var _storeOf = { company:'companies', 'case':'cases', consulting:'consultings', fund:'funds', other:'other_projects' };
       (results || []).forEach(function(r){
         var st = _storeOf[r.type];
-        if(st && r.id) dbRemove(st, r.id);
+        if(st && r.id && !r.linked) dbRemove(st, r.id);
       });
     } catch(_){}
-    try { if(typeof showToast==='function') showToast('❌ 계약 이관 실패 — 생성분이 정리되었습니다'); } catch(_){}
+    try { if(typeof showToast==='function') showToast('❌ 계약 이관 실패 — 새로 생성한 기록만 정리했습니다. 기존 업체 반영분은 보존되므로 확인하세요.'); } catch(_){}
     console.error('[Transaction:transferContract]', e && e.message);
     return [];  // 빈 결과: 호출자가 contracts 상태 변경 안 함
   }
@@ -18602,15 +18645,19 @@ function ContractManagement(props){
     var _KIND_STORE = { company:['companies','업체'], case:['cases','사건'], consulting:['consultings','컨설팅'], fund:['funds','기금'], other:['other_projects','기타사업'] };
     var _targetStores = [];
     kindsList.forEach(function(kv){ var s = _KIND_STORE[kv]; if(s && _targetStores.indexOf(s) < 0) _targetStores.push(s); });
-    var _dupT = [];
+    var _dupT = [], _unverifiedT = [];
     _targetStores.forEach(function(p){
       var n = dbGet(p[0], []).filter(function(x){
-        return x.sourceContractNo === ct.contractNo &&
-               !x.permanentArchived && !x.closedDate && x.status !== 'closed';
+        if(!x||x._deleted||x.permanentArchived||x.closedDate||x.status==='closed')return false;
+        var match=erpTransferReferenceMatch(x,ct);
+        if(match==='legacy'||match==='conflict')_unverifiedT.push(p[1]);
+        return match==='id';
       }).length;
       if(n > 0) _dupT.push(p[1]+' '+n+'건');
     });
-    if(ct.contractNo && _dupT.length > 0){
+    if(_unverifiedT.length){showToast('⚠ '+_unverifiedT.join(', ')+'에 번호만 남거나 서로 다른 원본 ID가 있습니다. 원본 연결을 확인하기 전에는 재이관·완료 처리를 하지 않습니다.');return;}
+    if(_dupT.length&&_dupT.length<_targetStores.length){showToast('⚠ 일부 업무만 이관된 기록이 있습니다. 계약은 완료 처리하지 않았습니다. 각 업무의 원본 연결과 저장 상태를 확인하세요.');return;}
+    if(_dupT.length > 0){
       // 데드락 복구: 대상 레코드는 이미 있는데 계약이 '이관완료'로 안 바뀐 상태
       //  → 중복 생성하지 말고, 계약 상태만 정리해 계약관리에서 내보냄
       var _ok = await popConfirm('이미 이관된 데이터가 있습니다 (' + _dupT.join(', ') + ').\n이전 이관이 덜 끝난 상태로 보입니다.\n\n계약을 "이관완료"로 정리하시겠습니까?\n(이미 있는 데이터를 그대로 사용하며, 중복 생성하지 않습니다)');
@@ -18641,7 +18688,7 @@ function ContractManagement(props){
       _unlockTransfer(); return;
     }
     if(!results || results.length === 0){
-      showToast('❌ 이관 실패: 결과 없음 (계약유형 확인 필요)');
+      // transferContract가 알려 준 구체적인 검증/저장 오류를 일반 문구로 덮지 않는다.
       _unlockTransfer(); return;
     }
     // [P1] 부분 이관 방지: 선택 종류 수만큼 결과가 안 나오면 아카이브하지 않음(데이터 유실·오아카이브 차단)
@@ -24805,34 +24852,56 @@ function CaseManagement(props){
   }
   function caseUpsert(item){ if(!item || !item.id) return false; if(!erpValidateWorkReferences('cases',item))return false; var ok = dbUpsert('cases', item); if(ok) refreshCases(); else showToast('❌ 저장 실패'); return ok; }
   function casePatch(id, fields){ var ok = dbPatch('cases', id, fields); if(ok) refreshCases(); else showToast('❌ 저장 실패'); return ok; }
-  function caseUpsertMany(list){ if(!list || !list.length) return true; var ok = dbUpsertMany('cases', list); if(ok) refreshCases(); else showToast('❌ 일괄 저장 실패'); return ok; }
+  function caseUpsertMany(list,allowExisting){ if(!list || !list.length) return true; if(!erpValidateWorkBatch('cases',list,allowExisting!==false))return false; var ok = dbUpsertMany('cases', list); if(ok) refreshCases(); else showToast('❌ 일괄 저장 실패 — 입력을 유지합니다'); return ok; }
+  function setDropCell(row,col,value){setDropPreview(function(prev){return (prev||[]).map(function(r,i){if(i!==row)return r;var copy=r.slice();copy[col]=value;return copy;});});}
+  function dropStaffSelect(row,col,value,subIndex){
+    var available=users.filter(function(u){return u.sid&&getUserAssignStatus(u.sid).assignable;}),known=available.some(function(u){return u.sid===value;});
+    return h('select',{value:value||'','aria-label':(row+1)+'행 '+(col===3?'주담당':'부담당'),onChange:function(e){
+      if(col===3){setDropCell(row,col,e.target.value);return;}
+      var parts=String((dropPreview[row]||[])[4]||'').split(',').map(function(x){return x.trim();}).filter(Boolean);
+      if(e.target.value)parts[subIndex]=e.target.value;else parts.splice(subIndex,1);setDropCell(row,col,parts.join(','));
+    }},h('option',{value:''},col===3?'사번 선택':'부담당 없음'),
+      value&&!known&&h('option',{value:value},'원본: '+value+' (사번 확인 필요)'),
+      available.map(function(u){return h('option',{key:u.sid,value:u.sid},u.name+' · '+u.sid);}));
+  }
   function confirmDropAdd(){
     var rows = dropPreview || [];
     if(rows.length === 0){ setDropPreview(null); return; }
-    var statusByLabel = {}; CASE_STATUS.forEach(function(s){ statusByLabel[s.label] = s.v; });
+    var statusByLabel = Object.create(null); CASE_STATUS.forEach(function(s){ statusByLabel[s.label] = s.v; });
     var defStatus = (CASE_STATUS[0]||{}).v || 'open';
-    function name2sid(nm){ var u = users.find(function(x){ return x.name === (nm||'').replace(/^\s+|\s+$/g,''); }); return u ? u.sid : ''; }
-    var added = rows.map(function(r){
-      var tmatch = types.find(function(t){ return t.name === (r[1]||'').replace(/^\s+|\s+$/g,''); });
-      var tc = tmatch ? tmatch.code : '';
+    var rowErrors=[],usedNos=Object.create(null);
+    dbGet('cases',[]).forEach(function(x){if(x&&x.caseNo)usedNos[x.caseNo]=true;});
+    var added = rows.map(function(r,index){
+      var rawType=String(r[1]||'').trim(),matches=types.filter(function(t){return t.code===rawType||t.name===rawType;});
+      var tc=matches.length===1?matches[0].code:'';
+      if(!tc)rowErrors.push((index+1)+'행: 사건유형을 선택하세요.');
+      if(!String(r[2]||'').trim())rowErrors.push((index+1)+'행: 의뢰인 이름을 입력하세요.');
+      var rawNo=String(r[0]||'').trim(),caseNo=rawNo||genCaseNo(tc);
+      if(!rawNo){while(usedNos[caseNo]){caseNo=caseNo.replace(/(\d+)$/,function(n){return String(Number(n)+1).padStart(n.length,'0');});}}
+      else if(usedNos[caseNo])rowErrors.push((index+1)+'행: 사건번호가 이미 존재하거나 입력 목록에서 중복됩니다.');
+      usedNos[caseNo]=true;
+      var rawStatus=String(r[13]||'').trim(),status=rawStatus?(statusByLabel[rawStatus]||((CASE_STATUS.find(function(s){return s.v===rawStatus;})||{}).v)):defStatus;
+      if(!status)rowErrors.push((index+1)+'행: 사건상태를 확인하세요.');
       return {
         id: 'c-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
-        caseNo: (r[0]||'').replace(/^\s+|\s+$/g,'') || genCaseNo(tc),
+        caseNo: caseNo,
         typeCode: tc,
         companyName: (r[2]||'').replace(/^\s+|\s+$/g,''),
-        managerMain: name2sid(r[3]),
-        managerSubs: (r[4]||'').split(',').map(function(s){ return name2sid(s); }).filter(function(x){ return x; }),
+        managerMain: String(r[3]||'').trim(),
+        managerSubs: String(r[4]||'').split(',').map(function(s){return s.trim();}).filter(Boolean),
+        entityType:'Case', createdAt:(new Date()).toISOString(), updatedAt:(new Date()).toISOString(),
         jurisdiction: { org:(r[5]||'').replace(/^\s+|\s+$/g,''), officer:(r[6]||'').replace(/^\s+|\s+$/g,''), phone:(r[7]||'').replace(/^\s+|\s+$/g,''), email:(r[8]||'').replace(/^\s+|\s+$/g,'') },
         receiveDate: (r[9]||'').replace(/^\s+|\s+$/g,''),
         dueDate: (r[10]||'').replace(/^\s+|\s+$/g,''),
         retainerFee: parseInt((r[11]||'0').replace(/[^0-9]/g,''),10) || 0,
         // 성공보수는 %로 적을 때 소수점이 온다 (예: 16.3) — 점을 살려 읽는다
         successFee: parseFloat((r[12]||'0').replace(/[^0-9.]/g,'')) || 0,
-        status: statusByLabel[(r[13]||'').replace(/^\s+|\s+$/g,'')] || defStatus,
+        status: status,
         note: (r[14]||'').replace(/^\s+|\s+$/g,'')
       };
     });
-    caseUpsertMany(added);
+    if(rowErrors.length){showToast('⚠ 가져오기 보류 — '+rowErrors.slice(0,3).join(' / '));return;}
+    if(!caseUpsertMany(added,false))return;
     setDropPreview(null);
     showToast('✅ ' + added.length + '건 사건 추가됨');
   }
@@ -24933,7 +25002,7 @@ function CaseManagement(props){
     var changeMap = {}; changes.forEach(function(c){ changeMap[c.id] = c.newNo; });
     var changedCases = dbGet('cases', []).filter(function(x){ return changeMap[x.id]; })
       .map(function(x){ return Object.assign({}, x, { caseNo:changeMap[x.id] }); });
-    caseUpsertMany(changedCases);
+    if(!caseUpsertMany(changedCases))return;
     showToast('✓ '+series+' 시리즈 '+changes.length+'건 재정렬 완료');
   }
 
@@ -25929,17 +25998,24 @@ function CaseManagement(props){
       h('div', { className:'modal', onClick:function(e){ e.stopPropagation(); }, style:{ maxWidth:'720px', width:'92%' } },
         h('h3', { style:{ margin:'0 0 8px', fontSize:'15px' } }, '📥 외부 데이터 가져오기 — ' + dropPreview.length + '건'),
         h('div', { style:{ fontSize:'12px', color:'#475569', marginBottom:'10px', lineHeight:1.5 } },
-          '아래 데이터를 새 사건으로 추가합니다. 컬럼 순서: 사건번호·유형·의뢰인·주담당·부담당·관할기관·관할담당자·관할연락처·관할이메일·수임일·기한·착수금·성공보수·상태·비고. 담당자·유형·상태는 이름이 정확히 일치할 때만 자동 매칭되며, 추가 후 수정할 수 있습니다.'),
+          '컬럼 순서: 사건번호·유형·의뢰인·주담당·부담당·관할기관·관할담당자·관할연락처·관할이메일·수임일·기한·착수금·성공보수·상태·비고. 담당자는 사번으로만 연결합니다. 이름으로 들어온 값은 아래에서 직접 선택하세요. 한 행이라도 오류가 있거나 저장이 실패하면 전체 입력을 유지합니다.'),
         h('div', { style:{ overflow:'auto', maxHeight:'320px', border:'1px solid #e2e8f0', borderRadius:'6px', marginBottom:'12px' } },
           h('table', { className:'dt', style:{ fontSize:'11px' } },
             h('thead', null, h('tr', null,
-              ['사건번호','유형','의뢰인','주담당','수임일','기한','상태','비고'].map(function(hd){ return h('th', { key:hd }, hd); }))),
+              ['사건번호','유형','의뢰인','주담당 사번','부담당 사번','수임일','기한','상태','비고'].map(function(hd){ return h('th', { key:hd }, hd); }))),
             h('tbody', null,
               dropPreview.map(function(r, i){
                 return h('tr', { key:i },
-                  h('td', null, r[0]||'-'), h('td', null, r[1]||'-'), h('td', null, r[2]||'-'),
-                  h('td', null, r[3]||'-'), h('td', null, r[9]||'-'), h('td', null, r[10]||'-'),
-                  h('td', null, r[13]||'-'), h('td', null, r[14]||'-'));
+                  h('td', null, h('input',{value:r[0]||'','aria-label':(i+1)+'행 사건번호',onChange:function(e){setDropCell(i,0,e.target.value);},style:{width:'110px'}})),
+                  h('td', null,h('select',{value:r[1]||'','aria-label':(i+1)+'행 사건유형',onChange:function(e){setDropCell(i,1,e.target.value);}},
+                    h('option',{value:r[1]||''},r[1]||'유형 선택'),types.map(function(t){return h('option',{key:t.code,value:t.code},t.name+' · '+t.code);}))),
+                  h('td', null,h('input',{value:r[2]||'','aria-label':(i+1)+'행 의뢰인',onChange:function(e){setDropCell(i,2,e.target.value);},style:{width:'100px'}})),
+                  h('td', null,dropStaffSelect(i,3,String(r[3]||'').trim(),0)),
+                  h('td', null,(String(r[4]||'').trim()?String(r[4]).split(','):['']).map(function(s,j){return h('span',{key:j},dropStaffSelect(i,4,s.trim(),j));})),
+                  h('td', null, r[9]||'-'), h('td', null, r[10]||'-'),
+                  h('td', null,h('select',{value:r[13]||'','aria-label':(i+1)+'행 상태',onChange:function(e){setDropCell(i,13,e.target.value);}},
+                    h('option',{value:r[13]||''},r[13]||'기본 상태'),CASE_STATUS.map(function(s){return h('option',{key:s.v,value:s.v},s.label);}))),
+                  h('td', null, r[14]||'-'));
               })))),
         h('div', { style:{ display:'flex', justifyContent:'flex-end', gap:'8px' } },
           h('button', { onClick:function(){ setDropPreview(null); },

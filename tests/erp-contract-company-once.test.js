@@ -7,7 +7,8 @@
    ① **같은 업체가 두 벌 생겼다.** transferContract 의 업체 갈래는 사업자번호로
       찾아보지 않고 늘 새 co- 번호를 찍어냈다. 사건·컨설팅·기금 이관은 같은 파일
       안에서 CompanyRef.findCompany 로 찾아 companyId 를 붙이는데 업체만 안 했다.
-      → 찾았으면 **빈 칸만** 채우고 잇는다. 이미 있는 값(자문료·계약기간·유형)을
+      → 6-3단계부터 명시적으로 검증한 업체 ID에만 **빈 칸만** 채우고 잇는다.
+        이름·사업자번호 후보는 자동 쓰기 대상이 아니며 사전 검증에서 선택을 요청한다. 이미 있는 값(자문료·계약기간·유형)을
         새 계약 값으로 덮으면 사람이 업체관리에서 고쳐 둔 것을 조용히 지운다.
 
    ② **업체가 갈래 없이 태어났다.** 업체계약에서 갈래 칸을 손대지 않으면 화면에는
@@ -41,11 +42,10 @@ const COMPANY_ARM = (function () {
 
 /* ══════ ① 두 벌 만들지 않는다 ══════ */
 
-test('★ 사업자번호로 먼저 찾아본다 — 안 찾으면 같은 업체가 두 벌 쌓인다', () => {
-  assert.match(COMPANY_ARM, /CompanyRef\.findCompany\(\{[\s\S]{0,160}?bizNo: item\.bizNo/,
-    '★ 찾지 않고 늘 새로 만들면 업체계약이 두 번 올 때 두 벌이 됩니다');
-  assert.match(COMPANY_ARM, /companyId: contract\.companyId/,
-    '계약에 이미 붙은 업체 번호를 먼저 봐야 이름이 바뀐 업체도 찾습니다');
+test('★ 명시적으로 검증한 업체 ID로만 잇는다 — 이름·사업자번호는 후보일 뿐이다', () => {
+  assert.doesNotMatch(COMPANY_ARM, /CompanyRef\.findCompany/);
+  assert.match(COMPANY_ARM, /x\.id===contract\.companyId/,
+    '6-3단계: 이름으로 쓰기 대상을 고르지 않고 검증한 ID만 사용합니다');
 });
 
 test('★ 찾았으면 «빈 칸만» 채운다 — 사람이 고쳐 둔 값을 덮지 않는다', () => {
