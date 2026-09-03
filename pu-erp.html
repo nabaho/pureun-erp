@@ -40611,6 +40611,25 @@ function FinanceLedger(props){
   var detPopS=useState(null);    var detPop=detPopS[0];   var setDetPop=detPopS[1];   // 1-1 입금 상세 팝업 {row, pItem}
   var confHistS=useState(false); var confHistOpen=confHistS[0]; var setConfHistOpen=confHistS[1]; // 4-1 확정 이력 팝업
   var editPopS=useState(null);   var editPop=editPopS[0]; var setEditPop=editPopS[1]; // 4-3 비교 수정 팝업 {incomeRecord}
+  /* 🛠 바로잡기 — 흩어져 있던 세 길(업체 바꾸기·담당/성과·되돌리기)의 «들머리».
+     이상한 것을 발견한 자리에서 한 창을 열고, 거기서 갈래를 고른다.
+     ★ fixWhy 는 «왜 고치는가» 다. 고른 갈래로 함께 들고 가 이력에 남는다 —
+       무엇이 바뀌었는지는 자료가 말해 주지만, 왜 바꿨는지는 사람만 안다. */
+  var fixPopS=useState(null);    var fixPop=fixPopS[0];   var setFixPop=fixPopS[1];   // {fi, pick}
+  var fixWhyS=useState('');      var fixWhy=fixWhyS[0];   var setFixWhy=fixWhyS[1];
+  function openFix(fi){ if(!fi) return; setFixWhy(''); setFixPop({ fi:fi, pick:'' }); }
+  /* 성과관리에서 「🛠 원천 바로잡기」를 누르면 이 화면으로 건너온다.
+     화면이 다르면 창을 바로 열 수 없어 «건네준 번호»를 보고 연다.
+     ⚠ 오래된 쪽지는 안 본다 — 어제 눌러 둔 것이 오늘 화면을 열면 놀란다. */
+  useEffect(function(){
+    var msg = window.__erpFixIncome;
+    if(!msg || !msg.id) return;
+    window.__erpFixIncome = null;
+    if(Date.now() - (msg.at || 0) > 60 * 1000) return;
+    var hit = (dbGet('finance_income', []) || []).find(function(x){ return x && x.id === msg.id; });
+    if(!hit){ showToast('❌ 그 입금 기록을 찾지 못했습니다'); return; }
+    openFix(hit);
+  }, []);
   var incChkS=useState({});      var incChk=incChkS[0];   var setIncChk=incChkS[1];   // 입금 행 체크 {_k: true}
   var incMonS=useState('');      var incMon=incMonS[0];   var setIncMon=incMonS[1];   // 월 필터 (''=전체, 'YYYY-MM')
   /* 「📆 오늘」 스위치 — 오늘 들어온 것만 본다 (달 고르개와 «따로» 돈다) */
@@ -43696,6 +43715,16 @@ function FinanceLedger(props){
           h('span',{style:{fontSize:'11px',color:'#166534',fontWeight:700}},
             (lastAct.kind==='hold'?'🗄 방금 보류 — ':'✅ 방금 확정 — ')+lastAct.label),
           h('span',{style:{flex:1}}),
+          /* 방금 확정한 줄이 «틀린 것 같다» 를 알아채는 자리가 바로 여기다.
+             되돌리기 말고도 고칠 길(업체·담당)이 있는데 여기서는 안 보였다. */
+          lastAct.kind==='confirm' && lastAct.fid && h('button',{onClick:function(){
+              var fi=(dbGet('finance_income', []) || []).find(function(x){ return x && x.id===lastAct.fid; });
+              if(!fi){ showToast('❌ 그 확정 기록을 찾지 못했습니다'); return; }
+              openFix(fi);
+            },
+            title:'업체가 틀렸다 · 담당이 틀렸다 · 아예 무른다 — 한 창에서 고릅니다',
+            style:{padding:'2px 9px',background:'#fff',color:'#1e40af',border:'1px solid #bfdbfe',
+              borderRadius:'5px',fontSize:'10.5px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'🛠 바로잡기'),
           h('button',{onClick:undoLast,
             title:'이 한 건만 무릅니다 (Ctrl+Z)\n확정 기록·항목 입금표시를 되돌리고 줄을 목록에 도로 넣습니다',
             style:{padding:'2px 9px',background:'#fff',color:'#166534',border:'1px solid #bbf7d0',
@@ -45696,24 +45725,16 @@ function FinanceLedger(props){
                     h('td',{style:{padding:'6px 8px',textAlign:'center',verticalAlign:'middle'}},
                       undone
                         ? h('span',{style:{fontSize:'9px',color:'#94a3b8',whiteSpace:'nowrap'}},'되돌림 '+fi.undoneDate.slice(0,10))
+                        /* ★ 세 단추(업체 바꾸기·담당/성과·되돌리기)를 한 들머리로 모았다 (2026-09-03).
+                           갈래를 먼저 고르는 것보다 «무엇이 잘못됐나» 를 먼저 묻는 것이 맞다 —
+                           고치러 온 사람은 어느 단추가 자기 경우인지 모른다.
+                           마감 경고·사유·손댄 이력도 거기서 한 번에 본다. */
                         : h('div',{style:{display:'flex',gap:'4px',justifyContent:'center'}},
-                            /* ★ 업체를 잘못 붙였을 때의 길 (2026-08-10 대표 요청).
-                               되돌리기와 다르다 — 되돌리면 그 줄로 돌아가 처음부터 다시 해야 하지만,
-                               이것은 앞 업체를 물리고 새 업체로 «한 번에» 다시 붙인다. */
-                            h('button',{onClick:function(){ setMovePop({fi:fi, q:'' }); },
-                              title:'이 돈을 다른 업체·항목에 붙입니다\n앞 업체의 입금표시·성과급은 되돌립니다',
-                              style:{padding:'2px 8px',background:'#eff6ff',color:'#1e40af',border:'1px solid #bfdbfe',borderRadius:'4px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'업체 바꾸기'),
-                            fi.kind!=='자문료' && h('button',{onClick:function(){setEditPop(fi);},
-                              title:'담당자와 성과급 배분만 고칩니다 (업체는 그대로)',
-                              style:{padding:'2px 8px',background:'#fff',color:'#1e40af',border:'1px solid #bfdbfe',borderRadius:'4px',fontSize:'10px',fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}},'담당·성과'),
-                            h('button',{onClick:async function(){
-                              if(!(await popConfirm(fi.companyName+' '+fi.kind+' '+(fi.amount||0).toLocaleString()+'원\n\n이 확정을 되돌리시겠습니까?\n입금 기록이 취소되고 미입금 상태로 돌아갑니다.'
-                                    +erpLockNoticeFor(fi)))) return;
-                              // 되돌리지 못했는데 「되돌림」이라고 말하지 않는다
-                              if(!undoConfirm(fi)){ showToast('❌ 되돌리지 못했습니다'); return; }
-                              showToast('↩️ 되돌림: '+fi.companyName+' '+(fi.amount||0).toLocaleString()+'원');
-                            },
-                            style:{padding:'2px 8px',background:'#fff',color:'#dc2626',border:'1px solid #fecaca',borderRadius:'4px',fontSize:'10px',fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}},'되돌리기')
+                            h('button',{onClick:function(){ openFix(fi); },
+                              title:'업체 바꾸기 · 담당/성과 고치기 · 되돌리기를 한 창에서 고릅니다',
+                              style:{padding:'2px 10px',background:'#eff6ff',color:'#1e40af',border:'1px solid #bfdbfe',borderRadius:'4px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'🛠 바로잡기'),
+                            (fi.editHistory&&fi.editHistory.length) ? h('span',{title:'손댄 이력 '+fi.editHistory.length+'건 — 바로잡기 창에서 봅니다',
+                              style:{fontSize:'9px',color:'#854d0e',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'8px',padding:'0 5px',fontWeight:700,alignSelf:'center'}},'✏'+fi.editHistory.length) : null
                           )
                     )
                   );
@@ -45801,6 +45822,158 @@ function FinanceLedger(props){
             '쌓인 줄이 '+LEDGER_BATCH_MAX_ROWS.toLocaleString()+'줄을 넘으면 오래된 묶음부터 자동으로 버립니다.')));
     })(),
 
+    /* ── 4-1.5 🛠 바로잡기 ── (2026-09-03 대표 지시 ⓑ)
+       「잘못 입금되거나 담당자가 잘못 지정되거나 이런 문제들도 수정 변경 가능하게」
+
+       ★ 새 기능을 만드는 창이 아니라 «들머리» 다. 고치는 길은 이미 있었는데
+         세 단추로 흩어져 있었고, 고치러 온 사람은 자기 경우가 어느 단추인지 몰랐다.
+         그래서 단추 이름이 아니라 «무엇이 잘못됐습니까» 를 먼저 묻는다.
+       ★ 여기서만 하는 일 셋 — ① 마감된 달인지 먼저 알린다
+                              ② 「왜 고치는가」를 받아 이력에 남긴다
+                              ③ 이 건에 손댄 이력을 그 자리에서 보여 준다 */
+    fixPop && (function(){
+      var fi = fixPop.fi;
+      if(!fi) return null;
+      var lk = erpPerfLockInfo(fi);
+      var isAdv = (fi.kind === '자문료');
+      var hist = (fi.editHistory || []).slice().reverse();
+      function closeFix(){ setFixPop(null); }
+      function pick(v){ setFixPop(Object.assign({}, fixPop, { pick:v })); }
+
+      /* 「일부만 받은 것이었다」 — 돈은 들어왔으니 입금 기록은 그대로 두고,
+         원본 건(계약·사건)의 «완납» 표시만 푼다. 그러면 잔액이 다시 미입금으로 잡힌다. */
+      async function markPartial(){
+        var k = fi.kind || '';
+        var flag = (k.indexOf('착수') >= 0) ? ['retainerPaid','retainerPaidDate']
+                 : (k.indexOf('성공') >= 0) ? ['successPaid','successPaidDate']
+                 : (k.indexOf('계약금') >= 0) ? ['contractPaid','contractPaidDate']
+                 : (k.indexOf('잔금') >= 0) ? ['balancePaid','balancePaidDate']
+                 : ['paid','paidDate'];
+        if(!fi.sourceId || !fi.sourceKind || fi.sourceKind === 'company'){
+          showToast('❌ 이 건은 원본이 없어 「일부입금」으로 바꿀 수 없습니다'); return;
+        }
+        if(!(await popConfirm(
+          (fi.companyName||'-') + ' ' + k + ' ' + (fi.amount||0).toLocaleString() + '원\n\n'
+          + '들어온 돈은 그대로 두고, 원본 건의 «완납» 표시만 풉니다.\n'
+          + '남은 금액이 다시 미입금으로 잡힙니다.'))) return;
+        var store = (fi.sourceKind === 'company') ? 'companies' : (fi.sourceKind + 's');
+        var patch = {}; patch[flag[0]] = false; patch[flag[1]] = null;
+        try{ dbPatch(store, fi.sourceId, patch); }
+        catch(e){ if(window._erpErrLog) window._erpErrLog(e); showToast('❌ 바꾸지 못했습니다'); return; }
+        erpIncomeLog(fi, '완납 표시를 풀어 «일부입금» 으로 — 남은 금액이 다시 미입금', null, null, fixWhy);
+        closeFix();
+        showToast('✏ 일부입금으로 바꿨습니다 — 남은 금액이 미입금으로 돌아갑니다');
+      }
+
+      async function doUndo(){
+        if(!(await popConfirm((fi.companyName||'-')+' '+(fi.kind||'')+' '+(fi.amount||0).toLocaleString()+'원\n\n'
+          + '이 확정을 되돌리시겠습니까?\n입금 기록이 취소되고 미입금 상태로 돌아갑니다.'
+          + erpLockNoticeFor(fi)))) return;
+        if(!erpUndoIncome(fi)){ showToast('❌ 되돌리지 못했습니다'); return; }
+        erpIncomeLog(fi, '확정을 되돌림', null, null, fixWhy);
+        closeFix();
+        showToast('↩️ 되돌림: '+(fi.companyName||'-')+' '+(fi.amount||0).toLocaleString()+'원');
+      }
+
+      function go(){
+        if(fixPop.pick === 'move'){ setFixPop(null); setMovePop({ fi:fi, q:'' }); return; }
+        if(fixPop.pick === 'perf'){ setFixPop(null); setEditPop(fi); return; }
+        if(fixPop.pick === 'part'){ markPartial(); return; }
+        if(fixPop.pick === 'undo'){ doUndo(); return; }
+      }
+
+      var CARDS = [
+        { v:'move', t:'업체·건이 틀렸다',   s:'다른 업체·항목으로 옮깁니다' },
+        { v:'perf', t:'담당자가 틀렸다',    s:'성과 배분을 다시 나눕니다', hide:isAdv },
+        { v:'part', t:'금액이 틀렸다',      s:'일부만 받은 것으로 고칩니다' },
+        { v:'undo', t:'확정 자체가 틀렸다', s:'이 확정을 되돌립니다' }
+      ].filter(function(c){ return !c.hide; });
+
+      var lab = {fontSize:'11.5px',fontWeight:700,color:'#475569',marginBottom:'6px'};
+      return h('div',{onClick:closeFix,
+        style:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.45)',
+          zIndex:9994,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}},
+        h('div',{onClick:function(e){e.stopPropagation();},
+          style:{background:'#fff',borderRadius:'12px',width:'min(620px,96vw)',maxHeight:'88vh',
+            display:'flex',flexDirection:'column',overflow:'hidden'}},
+          h('div',{style:{background:'#475569',color:'#fff',padding:'11px 15px',display:'flex',
+            justifyContent:'space-between',fontSize:'13px',fontWeight:700}},
+            h('span',null,'🛠 바로잡기'),
+            h('span',{onClick:closeFix,style:{cursor:'pointer'}},'×')),
+
+          h('div',{style:{padding:'14px 16px',overflowY:'auto'}},
+            // 무엇을 고치는 건인지 — 한 줄로 (표 한 칸은 한 줄)
+            h('div',{style:{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'8px',
+              padding:'10px 12px',fontSize:'12px',lineHeight:1.8,marginBottom:'12px'}},
+              h('div',null,
+                h('b',{style:{fontSize:'13px'}},fi.companyName||'-'),
+                h('span',{style:{color:'#64748b',margin:'0 6px'}},'·'),
+                h('span',null,fi.kind||'-'),
+                h('b',{style:{fontSize:'13px',marginLeft:'6px',fontFamily:'monospace'}},(fi.amount||0).toLocaleString()+'원')),
+              h('div',{style:{color:'#64748b',fontSize:'11px'}},
+                '입금 '+(fi.date||'-')
+                +' · 확정 '+((fi.confirmedAt||'').slice(0,10)||'-')+' '+(_sidName(fi.confirmedBy)||'-')
+                +((fi.perfShares&&fi.perfShares.length)
+                    ? (' · 성과 '+fi.perfShares.map(function(s){return (s.name||_sidName(s.sid)||s.sid);}).join('·'))
+                    : ' · 성과 없음'))),
+
+            lk.locked && h('div',{style:{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'7px',
+              padding:'9px 12px',fontSize:'11.5px',color:'#991b1b',lineHeight:1.75,marginBottom:'12px'}},
+              h('b',null,'🔒 '+lk.ym+' 급여는 이미 마감됐습니다.'),h('br'),
+              '그 달 명세서는 건드리지 않습니다 — 바뀐 성과급은 ',
+              h('b',null,lk.nextYM+' 급여에 조정'),'으로 붙습니다.'),
+
+            h('div',{style:lab},'무엇이 잘못됐습니까?'),
+            h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'12px'}},
+              CARDS.map(function(c){
+                var on = fixPop.pick === c.v;
+                return h('div',{key:c.v,onClick:function(){ pick(c.v); },
+                  style:{border:'1px solid '+(on?'#2563eb':'#e2e8f0'),borderRadius:'8px',padding:'10px 11px',
+                    cursor:'pointer',fontSize:'12px',lineHeight:1.6,background:on?'#eff6ff':'#fff',
+                    boxShadow:on?'inset 0 0 0 1px #2563eb':'none'}},
+                  h('b',{style:{display:'block',fontSize:'12.5px',marginBottom:'2px'}},c.t),
+                  h('span',{style:{color:'#64748b',fontSize:'11px'}},c.s));
+              })),
+
+            h('div',{style:lab},'왜 고치십니까?',
+              h('span',{style:{fontWeight:400,color:'#94a3b8',marginLeft:'4px'}},'— 이력에 남습니다')),
+            h('input',{type:'text',value:fixWhy,maxLength:120,
+              placeholder:'예) 담당 인계 — 6월부터 김혜민 담당',
+              onInput:function(e){ setFixWhy(e.target.value); },
+              style:{width:'100%',boxSizing:'border-box',padding:'7px 9px',border:'1px solid #cbd5e1',
+                borderRadius:'5px',fontSize:'12px',marginBottom:'12px'}}),
+
+            /* ★ 손댄 이력 — 지금까지 «적히기만 하고 볼 화면이 없던» 것이다 */
+            h('div',{style:lab},'이 건에 손댄 이력',
+              h('span',{style:{fontWeight:400,color:'#94a3b8',marginLeft:'4px'}},
+                hist.length ? ('총 '+hist.length+'건') : '아직 없습니다')),
+            hist.length > 0 && h('div',{style:{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'hidden'}},
+              hist.slice(0,8).map(function(r,i){
+                return h('div',{key:i,style:{display:'flex',gap:'8px',alignItems:'baseline',
+                  padding:'6px 10px',fontSize:'11.5px',borderBottom:i<Math.min(hist.length,8)-1?'1px solid #f8fafc':'none'}},
+                  h('span',{style:{color:'#94a3b8',fontSize:'10.5px',whiteSpace:'nowrap'}},String(r.date||'').slice(0,10)),
+                  h('span',{style:{fontWeight:600,whiteSpace:'nowrap'}},_sidName(r.by)||'-'),
+                  h('span',{style:{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},
+                    title:erpIncomeLogText(r)+(r.why?(' / '+r.why):'')},
+                    erpIncomeLogText(r),
+                    r.why && h('span',{style:{color:'#854d0e',marginLeft:'6px'}},'— '+r.why)));
+              }))
+          ),
+
+          h('div',{style:{padding:'11px 16px',background:'#f8fafc',borderTop:'1px solid #e2e8f0',
+            display:'flex',gap:'8px'}},
+            h('button',{onClick:go,disabled:!fixPop.pick,
+              style:{flex:1,padding:'8px 14px',borderRadius:'7px',fontSize:'12.5px',fontWeight:700,
+                border:'1px solid '+(fixPop.pick?'#2563eb':'#cbd5e1'),
+                background:fixPop.pick?'#2563eb':'#f8fafc',color:fixPop.pick?'#fff':'#94a3b8',
+                cursor:fixPop.pick?'pointer':'default'}},
+              fixPop.pick ? '✅ 이대로 바로잡기' : '위에서 하나 고르세요'),
+            h('button',{onClick:closeFix,
+              style:{padding:'8px 14px',borderRadius:'7px',fontSize:'12.5px',fontWeight:700,
+                border:'1px solid #cbd5e1',background:'#fff',color:'#64748b',cursor:'pointer'}},'취소'))
+        ));
+    })(),
+
     /* ── 4-2 업체 바꾸기 ── (2026-08-10 대표 요청: "자동으로 확인된 것이 잘못된 경우 수정")
        ★ 되돌리기와 다르다. 되돌리면 그 통장 줄로 되돌아가 처음부터 다시 골라야 하는데,
          이것은 «앞 업체를 물리고 새 업체로 한 번에» 다시 붙인다.
@@ -45809,7 +45982,7 @@ function FinanceLedger(props){
       var fi = movePop.fi;
       if(!fi) return null;
       var mq = String(movePop.q || '').trim().toLowerCase();
-      function closeMove(){ setMovePop(null); }
+      function closeMove(){ setMovePop(null); setFixWhy(''); }
       // 금액이 가까운 순으로 — 옮길 곳은 대개 같은 금액이다
       var _amt = parseInt(fi.amount, 10) || 0;
       var _cands = pending.slice().filter(function(p){
@@ -45851,7 +46024,11 @@ function FinanceLedger(props){
             { movedFrom:fi.id, movedFromName:(fi.companyName||''), movedAt:new Date().toISOString(),
               movedBy:(CURRENT_USER?CURRENT_USER.sid:'') }); }
           catch(_me){ if(window._erpErrLog) window._erpErrLog(_me); }
+          // 양쪽에 적는다 — 어느 쪽을 열어도 「어디서 왔나·어디로 갔나」가 보여야 한다
+          erpIncomeLog(_fid2, (fi.companyName||'-')+' 에서 옮겨 옴', null, null, fixWhy);
         }
+        erpIncomeLog(fi, p.companyName+' 로 옮김', null, null, fixWhy);
+        setFixWhy('');
         closeMove();
         showToast('✏ 옮겼습니다 — ' + (fi.companyName||'-') + ' → ' + p.companyName);
       }
@@ -45968,9 +46145,11 @@ function FinanceLedger(props){
       function doSave(){
         var _lk=erpPerfLockInfo(fi);
         var hist={date:new Date().toISOString(),
+          what:'성과 배분 '+oldTotal.toLocaleString()+'원 → '+newTotal.toLocaleString()+'원',
           before:{shares:curShares.map(function(s){return{sid:s.sid,role:s.role,amount:s.amount};})},
           after:{shares:newShares.map(function(s){return{sid:s.sid,role:s.role,amount:s.amount};})},
           by:CURRENT_USER?CURRENT_USER.sid:''};
+        if(fixWhy) hist.why=String(fixWhy).slice(0,200);   // 「바로잡기」에서 받아 온 까닭
         if(_lk.locked){
           /* 마감된 달이다 — 이 달 몫은 이미 나갔다. 지난 명세서를 고치지 않고
              사람별 «차액» 만 다음 열린 달 조정으로 넘긴다. */
@@ -45987,17 +46166,17 @@ function FinanceLedger(props){
           if(_r.failed){ showToast('❌ 조정을 넘기지 못했습니다 — 아무것도 바꾸지 않았습니다'); return; }
           hist.lockedYM=_lk.ym; hist.routedTo=_r.to;
           dbPatch('finance_income',fi.id,{editHistory:(fi.editHistory||[]).concat([hist])});
-          setEditPop(null);
+          setEditPop(null); setFixWhy('');
           showToast(_r.count?('🔒 '+_lk.ym+'은 마감 — 차액 '+_r.count+'건을 '+_r.to+' 조정으로 넘겼습니다')
                             :('🔒 '+_lk.ym+'은 마감 — 바뀐 금액이 없어 넘길 것이 없습니다'));
           return;
         }
         var eh=(fi.editHistory||[]).concat([hist]);
         dbPatch('finance_income',fi.id,{perfShares:newShares,editHistory:eh});
-        setEditPop(null);
+        setEditPop(null); setFixWhy('');
         showToast('✏️ 성과 수정 저장: '+fi.companyName);
       }
-      function closePop(){setEditPop(null);}
+      function closePop(){setEditPop(null); setFixWhy('');}
       return h('div',{onClick:closePop,
         style:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.45)',
           zIndex:9991,display:'flex',alignItems:'center',justifyContent:'center'}},
@@ -69774,6 +69953,40 @@ function erpLockNoticeFor(item){
        + '그 달 명세서는 건드리지 않고, 성과급 차액을 ' + lk.nextYM + ' 조정으로 넘깁니다.';
 }
 
+/* ══════════ 손댄 기록은 «한 자리에» 쌓는다 (2026-09-03) ══════════
+   고치는 길이 둘이다 — 재무의 「담당·성과」와 급여 성과급 팝업의 「건별 수동값」.
+   그런데 앞엣것만 editHistory 를 적고 뒤엣것은 아무것도 안 남겼다.
+   같은 성과급을 두 길로 고칠 수 있는데 한쪽 기록만 남으면, 나중에
+   「이 금액이 왜 이렇게 됐나」에 아무도 답할 수 없다.
+
+   what : 무엇을 했나 (한 마디)   why : 왜 했나 (사람이 적는다)
+   before/after 는 있으면 넣는다 — 없다고 기록을 안 남기지는 않는다. */
+function erpIncomeLog(fiOrId, what, before, after, why){
+  var id = (fiOrId && fiOrId.id) || fiOrId;
+  if(!id) return false;
+  var cur = (fiOrId && fiOrId.editHistory)
+    || (((dbGet('finance_income', []) || []).find(function(x){ return x && x.id === id; }) || {}).editHistory)
+    || [];
+  var rec = { date:new Date().toISOString(), what:String(what || ''),
+              by:((typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? (CURRENT_USER.sid || '') : '') };
+  if(before !== undefined && before !== null) rec.before = before;
+  if(after  !== undefined && after  !== null) rec.after  = after;
+  if(why) rec.why = String(why).slice(0, 200);
+  var next = cur.concat([rec]);
+  if(next.length > 30) next = next.slice(next.length - 30);   // 한 건에 무한히 쌓이지 않게
+  return dbPatch('finance_income', id, { editHistory: next }) !== false;
+}
+
+/* 이력 한 줄을 사람이 읽는 글로 — 옛 자료(before/after 만 있고 what 이 없는 것)도 읽힌다 */
+function erpIncomeLogText(rec){
+  if(!rec) return '';
+  if(rec.what) return rec.what;
+  var b = ((rec.before && rec.before.shares) || []).reduce(function(t,s){ return t + (s.amount||0); }, 0);
+  var a = ((rec.after  && rec.after.shares)  || []).reduce(function(t,s){ return t + (s.amount||0); }, 0);
+  if(b || a) return '성과 배분 ' + b.toLocaleString() + '원 → ' + a.toLocaleString() + '원';
+  return '고침';
+}
+
 /* 성과급이 붙은 입금은 이 문을 지난다 — 확정하는 자리가 여럿이라(수금·확정창·통장·복원…)
    자리마다 따로 막으면 언젠가 한 자리가 빠진다. */
 function erpUpsertIncome(rec){
@@ -69853,6 +70066,16 @@ function calcPerfBonus(empSid, ym){
 function _perfShareMatch(p, empSid, empName){
   return p.sid === empSid || (empName && p.sid === empName) || (p.name && p.name === empName);
 }
+// 그 입금에서 이 사람 앞으로 잡힌 성과금액 — 이력에 「얼마에서 얼마로」를 적으려면 필요하다
+function _perfAmountOf(fiArr, incomeId, empSid, empName){
+  var it = (fiArr || []).find(function(x){ return x && x.id === incomeId; });
+  if(!it) return 0;
+  var got = 0;
+  (it.perfShares || []).forEach(function(p){
+    if(p && _perfShareMatch(p, empSid, empName)) got += parseInt(p.amount, 10) || 0;
+  });
+  return got;
+}
 /* 이 입금의 성과금액을 «지금» 손대도 되는가 — 마감된 달이면 안 된다.
    손대면 이미 통장으로 나간 그 달 명세서가 뒤늦게 달라진다 (바로잡을 길은
    다음 열린 달의 조정이다 — 성과급 팝업이 그 달을 알려 준다). */
@@ -69865,9 +70088,10 @@ function _perfEditAllowed(fiArr, incomeId){
   return false;
 }
 // 특정 입금건의 이 직원 성과금액을 수동값으로 대체 (자동값은 amountAuto에 보존)
-function applyPerfOverride(incomeId, empSid, empName, newAmount){
+function applyPerfOverride(incomeId, empSid, empName, newAmount, _why){
   var fi = dbGet('finance_income', []);
   if(!_perfEditAllowed(fi, incomeId)) return false;
+  var _wasAmt = _perfAmountOf(fi, incomeId, empSid, empName);   // 이력에 남길 «고치기 전» 값
   var changed = false;
   var next = fi.map(function(item){
     if(item.id !== incomeId) return item;
@@ -69882,13 +70106,19 @@ function applyPerfOverride(incomeId, empSid, empName, newAmount){
     });
     return Object.assign({}, item, { perfShares: shares });
   });
-  if(changed) dbSet('finance_income', next);
+  if(changed){
+    dbSet('finance_income', next);
+    // 재무의 「담당·성과」와 «같은» 이력에 남긴다 — 여기만 기록이 없어 금액의 내력이 끊겼다
+    erpIncomeLog(incomeId, (empName || empSid) + ' 성과급을 수기값 ' + (parseInt(newAmount,10)||0).toLocaleString() + '원으로',
+      _wasAmt, parseInt(newAmount, 10) || 0, _why);
+  }
   return changed;
 }
 // 수동 대체 해제 → 보존된 자동값으로 복귀
-function revertPerfOverride(incomeId, empSid, empName){
+function revertPerfOverride(incomeId, empSid, empName, _why){
   var fi = dbGet('finance_income', []);
   if(!_perfEditAllowed(fi, incomeId)) return false;
+  var _wasAmt = _perfAmountOf(fi, incomeId, empSid, empName);
   var changed = false;
   var next = fi.map(function(item){
     if(item.id !== incomeId) return item;
@@ -69902,7 +70132,11 @@ function revertPerfOverride(incomeId, empSid, empName){
     });
     return Object.assign({}, item, { perfShares: shares });
   });
-  if(changed) dbSet('finance_income', next);
+  if(changed){
+    dbSet('finance_income', next);
+    erpIncomeLog(incomeId, (empName || empSid) + ' 성과급을 자동값으로 되돌림',
+      _wasAmt, _perfAmountOf(dbGet('finance_income', []), incomeId, empSid, empName), _why);
+  }
   return changed;
 }
 /* 조정 레코드 한 건의 꼴. 마감월 되돌리기는 «사람 수만큼» 한꺼번에 만들므로
@@ -74637,7 +74871,8 @@ function PayrollManagement(props){
       })
     ),
     tab === 'ledger'
-      ? h(PayrollLedger,  { selYM:selYM, setSelYM:setSelYM, onSelect:function(sid){setSelSid(sid); setTab('payslip');} })
+      ? h(PayrollLedger,  { selYM:selYM, setSelYM:setSelYM, onNavigate:props.onNavigate,
+                            onSelect:function(sid){setSelSid(sid); setTab('payslip');} })
       : tab === 'payslip'
       ? h(ErrorBoundary, { label:'급여명세서' },
           h(PayrollPayslip, { selYM:selYM, setSelYM:setSelYM, selSid:selSid, setSelSid:setSelSid, onBack:function(){setTab('ledger');} }))
@@ -76423,6 +76658,19 @@ function PayrollLedger(props){
                         d.source||'-',
                         d.isAdjust && h('span',{style:{marginLeft:'5px',background:'#bbf7d0',color:'#166534',padding:'1px 6px',borderRadius:'8px',fontSize:'9px',fontWeight:800}},'추가'),
                         (!d.isAdjust && d.manual) && h('span',{style:{marginLeft:'5px',background:'#fffbeb',color:'#854d0e',padding:'1px 6px',borderRadius:'8px',fontSize:'9px',fontWeight:800}},'수동'),
+                        /* ★ 「내 성과급이 이상한데」는 «여기서» 발견되는데, 고치는 자리는
+                           재무관리 안쪽이었다. 잇는 번호(incomeId)는 이미 들고 있었으니 길만 낸다.
+                           조정 항목은 원천이 없다 — 그 자신이 원천이라 갈 곳이 없다. */
+                        (!d.isAdjust && d.incomeId) && h('button',{
+                          title:'재무관리의 원천 입금으로 가서 바로잡습니다\n(업체·담당·되돌리기를 거기서 고릅니다)',
+                          onClick:function(){
+                            window.__erpFixIncome = { id:d.incomeId, at:Date.now() };
+                            setPerfModal(null);
+                            if(props.onNavigate) props.onNavigate('fin/ledger');
+                            else showToast('재무관리 ▸ 거래내역 ▸ 확정 이력에서 바로잡으세요');
+                          },
+                          style:{marginLeft:'5px',padding:'0 5px',background:'#eff6ff',color:'#1e40af',
+                            border:'1px solid #bfdbfe',borderRadius:'8px',fontSize:'9px',fontWeight:800,cursor:'pointer'}},'🛠 바로잡기'),
                         (!d.isAdjust && d.manual && d.amountAuto != null) && h('div',{style:{fontSize:'9.5px',color:'#cbd5e1',textDecoration:'line-through',fontFamily:'monospace'}},'자동 '+d.amountAuto.toLocaleString())),
                       h('td', { style:{padding:'7px 8px',textAlign:'center'} },
                         h('span', { style:{background:d.role==='주담당'?'#eff6ff':(d.role==='조정'?'#bbf7d0':'#bfdbfe'),color:d.role==='주담당'?'#1e40af':(d.role==='조정'?'#166534':'#2563eb'),padding:'1px 7px',borderRadius:'8px',fontSize:'10px',fontWeight:700} }, d.role||'담당')),
