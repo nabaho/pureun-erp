@@ -146,7 +146,7 @@
 <script src="js/pu-billing.js?v=7"></script>
 <script src="js/pu-rrn-seal.js?v=1"></script>
 <!-- 푸른통합 온톨로지 공통 사전·읽기 전용 관계 진단 -->
-<script src="js/pu-ontology.js?v=8"></script>
+<script src="js/pu-ontology.js?v=9"></script>
 <!-- 급여담당자 엑셀 → 업체관리 (대표 결정 2026-08-24). 읽고 대조하는 일은 이 파일이,
      그리기는 아래 화면이 한다 — 검사가 이 파일을 그대로 돌린다. -->
 <script src="js/pu-co-xls.js?v=3"></script>
@@ -14209,6 +14209,44 @@ function PhotoContractPickerModal(props){
 // ============ 계약 모달 (3탭: 기업정보 / 계약정보 / 담당자정보) ============
 /* 6-1단계: 입력 화면과 실제 저장 직전이 같은 업체 ID 검증을 사용한다.
    정본을 읽어 판단만 한다. 자동 업체 생성·이름 매칭·일괄 백필은 하지 않는다. */
+function erpCheckWorkReferences(store,form){
+  var O=window.PuOntology;
+  if(!O||typeof O.validateWorkReferences!=='function')return {ok:false,errors:[{message:'참조 검증 모듈을 불러오지 못했습니다. 새로고침 후 저장하세요.'}],warnings:[]};
+  var data={};['user_accounts','user_dir','companies','contracts','cases','consultings','funds','other_projects'].forEach(function(k){data[k]=dbGet(k,[]);});
+  var previous=(data[store]||[]).find(function(x){return x&&form.id&&x.id===form.id;})||null;
+  var sids=[form.managerMain].concat(Array.isArray(form.managerSubs)?form.managerSubs:[]).filter(Boolean),unassignable=[];
+  if(typeof getLoaStatus==='function')sids.forEach(function(sid){if(getLoaStatus(sid))unassignable.push(sid);});
+  return O.validateWorkReferences(form,data,{store:store,previous:previous,requireMain:true,unassignableSids:unassignable});
+}
+function erpValidateWorkReferences(store,form){
+  var checked=erpCheckWorkReferences(store,form);
+  if(!checked.ok){showToast('⚠ '+checked.errors.slice(0,2).map(function(x){return x.message;}).join(' / '));return false;}
+  return true;
+}
+function OntologyWorkReferencePanel(props){
+  var qs=useState(''),query=qs[0],setQuery=qs[1],form=props.value||{},O=window.PuOntology;
+  var data={contracts:dbGet('contracts',[]),cases:dbGet('cases',[])};
+  var rows=O&&typeof O.workReferenceCandidates==='function'?O.workReferenceCandidates(data,query,{store:props.store,id:form.id}):[];
+  var current=form.sourceId?(form.sourceKind+':'+form.sourceId):(form.sourceContractId?'contract:'+form.sourceContractId:'');
+  var check=erpCheckWorkReferences(props.store,form),messages=check.errors.concat(check.warnings);
+  function choose(value){
+    if(!value){props.onChange({sourceKind:'',sourceId:'',sourceContractId:'',sourceContractNo:''});return;}
+    var row=rows.find(function(x){return x.kind+':'+x.id===value;});if(!row)return;
+    props.onChange({sourceKind:row.kind,sourceId:row.id,sourceContractId:row.kind==='contract'?row.id:'',sourceContractNo:row.contractNo});
+  }
+  return h('div',{style:{padding:'9px',marginBottom:'10px',border:'1px solid #bfdbfe',borderRadius:'6px',background:'#eff6ff'}},
+    h('strong',{style:{fontSize:'12px',color:'#1e40af'}},'담당자·원본 업무 연결 검증'),
+    h('div',{style:{display:'flex',gap:'5px',flexWrap:'wrap',marginTop:'6px'}},
+      h('input',{type:'search',value:query,onChange:function(e){setQuery(e.target.value);},placeholder:'원본 계약·사건 번호 또는 ID 검색',style:{flex:1,minWidth:'160px',padding:'6px',border:'1px solid #cbd5e1',borderRadius:'4px',fontSize:'11px'}}),
+      h('select',{value:current,onChange:function(e){choose(e.target.value);},style:{flex:1,minWidth:'180px',padding:'6px',border:'1px solid #cbd5e1',borderRadius:'4px',fontSize:'11px'}},
+        h('option',{value:''},'원본 업무 연결 없음 (선택사항)'),
+        current&&!rows.some(function(x){return x.kind+':'+x.id===current;})&&h('option',{value:current},'현재 연결: '+current),
+        rows.map(function(x){return h('option',{key:x.kind+':'+x.id,value:x.kind+':'+x.id},(x.kind==='contract'?'계약 ':'사건 ')+x.label+' · '+x.name+' · '+x.id);}))),
+    h('div',{style:{fontSize:'10.5px',color:'#64748b',marginTop:'5px'}},'검색은 최대 100건 · 선택할 때만 원본 ID가 바뀝니다. 과거 담당자·계약번호는 자동 치환하지 않습니다.'),
+    (current||form.sourceContractNo||form.sourceKind)&&h('button',{type:'button',className:'btn btn-sm',onClick:function(){choose('');}},'원본 연결 해제 (저장 시 반영)'),
+    form.sourceContractNo&&!form.sourceContractId&&h('div',{style:{fontSize:'11px',color:'#d97706'}},'과거 계약번호: '+form.sourceContractNo+' · 원본 계약을 선택해 ID 확인'),
+    messages.slice(0,4).map(function(x,i){return h('div',{key:i,style:{fontSize:'11px',color:check.ok?'#d97706':'#dc2626',marginTop:'3px'}},x.message);}));
+}
 function erpValidateContractCompany(form){
   var O=window.PuOntology;
   if(!O||typeof O.validateCompanyLink!=='function'){showToast('업체 연결 검증을 불러오지 못했습니다. 새로고침 후 저장하세요.');return null;}
@@ -14222,7 +14260,7 @@ function ContractModal(props){
   useEnterSave(function(){ var saveBtn=document.querySelector('.modal-bg .modal .btn-primary'); if(saveBtn) saveBtn.click(); });
   var users = getActiveUsers();
   var lawyers = users;  // 전체 활성 사용자 (관리자/노무사/직원 모두 선택 가능)
-  var assignable = getAssignableUsers();   // 휴직·배제 제외 (담당자 선택용)
+  var assignable = getAssignableUsers().filter(function(u){return u.sid&&getUserAssignStatus(u.sid).assignable;});   // 잠금·휴직·배제 제외
   var firstMgr = '';  // 신규 계약은 주담당 미선택 - 사용자가 직접 선택해야 함
 
   // draft LS 키 (신규=user별 1개, 수정=계약id별)
@@ -15555,6 +15593,7 @@ function ContractModal(props){
     // 명시적으로 고른 ID만 확정한다. 이름으로 추정한 ID는 저장하지 않는다.
     saveData = erpValidateContractCompany(saveData);
     if(!saveData){setTab('company');return;}
+    if(!erpValidateWorkReferences('contracts',saveData)){setTab('manager');return;}
     delete saveData.__newJournal;  // 임시 입력값 제거
     delete saveData._restoredFromDraft;  // 배너 표시용 임시 키 제거
 
@@ -17070,34 +17109,29 @@ function ContractModal(props){
     );
   } else if(tab === 'manager'){
     tabBody = h('div', null,
+      h(OntologyWorkReferencePanel,{store:'contracts',value:f,onChange:function(patch){setF(function(prev){return Object.assign({},prev,patch);});}}),
       h('div', { style:{ background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:'4px', padding:'8px 12px', fontSize:'11.5px', color:'#1e40af', marginBottom:'12px' } },
         '💡 환경설정 → 인사관리기준 → 사용자 관리에 등록된 ',
         h('strong', null, '노무사·관리자 ' + lawyers.length + '명'),
         '이 표시됩니다.'
       ),
-      // 주담당 — 저장값이 SID 또는 이름 어느 쪽이어도 이름으로 해석해 표시
+      // 새 선택값은 사번이다. 과거 이름은 별도 옵션으로 보존하며 자동 치환하지 않는다.
       (function(){
-        var _mmName = (function(){
-          var v = f.managerMain || ''; if(!v) return '';
-          var bySid = lawyers.find(function(u){ return u.sid === v; });
-          return bySid ? bySid.name : v; // sid면 이름으로 변환, 이미 이름이면 그대로
-        })();
+        var currentSid = f.managerMain || '';
         return h('div', { className:'fld' }, h('label', null, '주담당 *'),
-        h('select', { value:_mmName, onChange:function(e){ changeMgrMain(e.target.value); } },
+        h('select', { value:currentSid, onChange:function(e){ changeMgrMain(e.target.value); } },
           [h('option', { key:'__empty', value:'' }, '— 주담당 선택 —')].concat(
             (function(){
               // 담당 가능한 직원 + 기존 주담당(휴직중이면 라벨)
               var optList = assignable.slice();
-              if(_mmName && !optList.find(function(u){return u.name===_mmName;})){
-                var orig = lawyers.find(function(u){return u.name===_mmName;});
-                if(orig){
-                  var st = getUserAssignStatus(orig.sid);
-                  optList = optList.concat([Object.assign({}, orig, { _statusLabel: st.label })]);
-                }
+              if(currentSid && !optList.find(function(u){return u.sid===currentSid;})){
+                var orig = lawyers.find(function(u){return u.sid===currentSid;});
+                var st = orig ? getUserAssignStatus(orig.sid) : {label:'명부 확인 필요'};
+                optList = optList.concat([Object.assign({}, orig||{sid:currentSid,name:currentSid}, { _statusLabel: st.label })]);
               }
               return optList.map(function(u){
                 var label = u.name + (u._statusLabel ? ' 🚫('+u._statusLabel+REASSIGN_SUFFIX : '');
-                return h('option', { key:u.sid, value:u.name, style: u._statusLabel ? { color:'#dc2626' } : {} }, label);
+                return h('option', { key:u.sid, value:u.sid, style: u._statusLabel ? { color:'#dc2626' } : {} }, label+' · '+u.sid);
               });
             })()
           )));
@@ -17111,15 +17145,15 @@ function ContractModal(props){
             h('option', { value:'' }, SUBMGR_ADD_OPT),
             // 담당 가능한 직원만 표시 (주담당·이미 부담당 제외)
             assignable.filter(function(u){
-              return u.name !== f.managerMain && (f.managerSubs||[]).indexOf(u.name) < 0;
+              return u.sid !== f.managerMain && (f.managerSubs||[]).indexOf(u.sid) < 0;
             }).map(function(u){
-              return h('option', { key:u.sid, value:u.name }, u.name);
+              return h('option', { key:u.sid, value:u.sid }, u.name+' · '+u.sid);
             })
           ),
           (f.managerSubs||[]).length > 0 && h('div', { style:{ display:'flex', flexWrap:'wrap', gap:'4px', marginTop:'8px' } },
             (f.managerSubs||[]).map(function(name){
               // 기존 부담당 휴직중 라벨
-              var u0 = lawyers.find(function(u){return u.name===name;});
+              var u0 = lawyers.find(function(u){return u.sid===name;});
               var st = u0 ? getUserAssignStatus(u0.sid) : { assignable:true, label:'' };
               var needReassign = !st.assignable && st.reason !== 'inactive';
               return h('span', { key:name,
@@ -17129,7 +17163,7 @@ function ContractModal(props){
                   color: needReassign ? '#991b1b' : '#1e40af',
                   fontWeight:600, border:'1px solid '+(needReassign?'#fecaca':'#bfdbfe') } },
                 needReassign && h('span', { style:{ fontSize:'10px' } }, '🚫'),
-                h('span', null, name),
+                h('span', null, u0?u0.name+' · '+name:name),
                 needReassign && h('span', { style:{ fontSize:'10px', fontWeight:600 } }, '('+st.label+')'),
                 h('button', { type:'button', onClick:function(){ toggleSub(name); },
                   style:{ width:'18px', height:'18px', borderRadius:'50%', border:0, background: needReassign?'#dc2626':'#60a5fa', color:'#fff', fontSize:'11px', cursor:'pointer', fontWeight:700, display:'inline-flex', alignItems:'center', justifyContent:'center' } }, '×')
@@ -18402,6 +18436,7 @@ function ContractManagement(props){
     // 확인창을 여는 동안 업체가 바뀌었을 수 있어 저장 직전 다시 검사한다.
     item=erpValidateContractCompany(item);
     if(!item)return false;
+    if(!erpValidateWorkReferences('contracts',item))return false;
     var ok = dbUpsert('contracts', item);
     if(ok) refreshContracts();
     else showToast('❌ 계약 저장 실패');
@@ -18423,6 +18458,7 @@ function ContractManagement(props){
   async function save(form){
     form=erpValidateContractCompany(form);
     if(!form)return false;
+    if(!erpValidateWorkReferences('contracts',form))return false;
     if(modal.mode === 'add'){
       var dups = detectDuplicates(form, contracts);
       if(dups.length > 0){
@@ -24259,6 +24295,7 @@ function CaseEditModal(props){
     if(!f.typeCode){ showToast('사건유형 선택'); return; }
     if(!f.managerMain){ showToast('주담당 선택'); return; }
     // jurisdiction 호환성 유지
+    if(!erpValidateWorkReferences('cases',f))return;
     props.onSave(Object.assign({}, f, { jurisdiction: f.judgment }));
   }
   return h('div', { style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', zIndex:200, display:'flex', alignItems:'center', justifyContent:'center' }, onClick:function(e){ if(e.target === e.currentTarget) caseSafeClose(); } },
@@ -24547,6 +24584,7 @@ function CaseEditModal(props){
                 h('option', { value:'both' }, '🔄 회사 + 근로자')))
           ),
           // 담당
+          h(OntologyWorkReferencePanel,{store:'cases',value:f,onChange:function(patch){setF(function(prev){return Object.assign({},prev,patch);});}}),
           h('div', { className:'fld' }, h('label', null, '주담당 *'),
             h('select', { value:f.managerMain||'', onChange:setV('managerMain'), style:inputS },
               h('option', { value:'' }, '-- 선택 --'),
@@ -24554,14 +24592,12 @@ function CaseEditModal(props){
                 var optList = assignable.slice();
                 if(f.managerMain && !optList.find(function(u){return u.sid===f.managerMain;})){
                   var orig = lawyers.find(function(u){return u.sid===f.managerMain;});
-                  if(orig){
-                    var st = getUserAssignStatus(orig.sid);
-                    optList = optList.concat([Object.assign({}, orig, { _statusLabel: st.label })]);
-                  }
+                  var st = orig ? getUserAssignStatus(orig.sid) : {label:'명부 확인 필요'};
+                  optList = optList.concat([Object.assign({}, orig||{sid:f.managerMain,name:f.managerMain}, { _statusLabel: st.label })]);
                 }
                 return optList.map(function(u){
                   var label = u.name + (u._statusLabel ? ' 🚫('+u._statusLabel+REASSIGN_SUFFIX : '');
-                  return h('option', { key:u.sid, value:u.sid, style: u._statusLabel ? { color:'#dc2626' } : {} }, label);
+                  return h('option', { key:u.sid, value:u.sid, style: u._statusLabel ? { color:'#dc2626' } : {} }, label+' · '+u.sid);
                 });
               })()
             )),
@@ -24570,7 +24606,7 @@ function CaseEditModal(props){
               h('select', { value:'', onChange:function(e){ if(e.target.value){ toggleSub(e.target.value); e.target.value=''; } }, style:inputS },
                 h('option', { value:'' }, SUBMGR_ADD_OPT),
                 assignable.filter(function(u){ return u.sid !== f.managerMain && (f.managerSubs||[]).indexOf(u.sid)<0 && u.name !== f.managerMain && (f.managerSubs||[]).indexOf(u.name)<0; })
-                       .map(function(u){ return h('option', { key:u.sid, value:u.sid||u.name }, u.name); })),
+                       .map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name+' · '+u.sid); })),
               (f.managerSubs||[]).length > 0 && h('div', { style:{ display:'flex', flexWrap:'wrap', gap:'4px', marginTop:'6px' } },
                 (f.managerSubs||[]).map(function(sid){
                   var u = lawyers.find(function(x){ return x.sid===sid||x.name===sid; });
@@ -24767,7 +24803,7 @@ function CaseManagement(props){
       return (y.receiveDate||'').localeCompare(x.receiveDate||''); }); });
     setCases(fresh);
   }
-  function caseUpsert(item){ if(!item || !item.id) return false; var ok = dbUpsert('cases', item); if(ok) refreshCases(); else showToast('❌ 저장 실패'); return ok; }
+  function caseUpsert(item){ if(!item || !item.id) return false; if(!erpValidateWorkReferences('cases',item))return false; var ok = dbUpsert('cases', item); if(ok) refreshCases(); else showToast('❌ 저장 실패'); return ok; }
   function casePatch(id, fields){ var ok = dbPatch('cases', id, fields); if(ok) refreshCases(); else showToast('❌ 저장 실패'); return ok; }
   function caseUpsertMany(list){ if(!list || !list.length) return true; var ok = dbUpsertMany('cases', list); if(ok) refreshCases(); else showToast('❌ 일괄 저장 실패'); return ok; }
   function confirmDropAdd(){
@@ -24805,6 +24841,7 @@ function CaseManagement(props){
   function close(){ setModal(null); }
   async function save(form){
     if(modal.mode === 'add'){
+      if(!erpValidateWorkReferences('cases',form))return;
       var dups = detectDuplicates(form, cases);
       if(dups.length > 0){
         var msg = '⚠️ 중복 의심 사건 ' + dups.length + '건 발견:\n\n';
