@@ -37840,10 +37840,104 @@ function OntologyAuditPanel(){
   );
 }
 
+/* ── 사업자번호 칸 점검 (대표 지시 2026-09-03: 「먼저 실제 값을 뽑아 보고 정한다」) ──
+   왜 필요한가: 사무대행 엑셀 가져오기가 «공단 사업장관리번호»를 사업자번호 칸(bizNo)에
+   그대로 넣는다. 그래서 그 칸의 값이 사업자등록번호가 아닌 곳이 있고, 그 칸으로 업체를
+   이으면 엉뚱한 곳에 붙는다.
+   ⚠ 이 화면은 «읽기 전용»이다 — 세거나 보여 주기만 하고 값을 옮기지도 고치지도 않는다.
+     옮기는 일은 대표가 목록을 보고 정한 뒤에 한다. */
+function bizFieldKind(v){
+  var d = String(v == null ? '' : v).replace(/\D/g, '');
+  if(!d) return 'empty';
+  if(d.length > 10) return 'mgmt';                                  // 열한 자리 이상 — 사업자번호일 수 없다
+  if(d.length < 10) return 'short';                                 // 열 자리가 안 된다
+  return (window.bizNoChecksum && window.bizNoChecksum(d)) ? 'ok' : 'bad';
+}
+var BIZ_KINDS = [
+  { k:'ok',    label:'사업자번호 맞음',        how:'열 자리이고 검증숫자가 맞는다',              color:'#166534', bg:'#f0fdf4' },
+  { k:'mgmt',  label:'공단 관리번호로 보임',   how:'열한 자리 이상이다 — 사업자번호일 수 없다',  color:'#991b1b', bg:'#fef2f2' },
+  { k:'bad',   label:'열 자리인데 검증숫자 틀림', how:'오타로 보인다 — 이으면 엉뚱한 곳에 붙는다', color:'#991b1b', bg:'#fef2f2' },
+  { k:'short', label:'자릿수가 모자람',        how:'열 자리가 안 된다 — 덜 적혔다',              color:'#854d0e', bg:'#fffbeb' },
+  { k:'empty', label:'빈 칸',                  how:'아직 안 받았다',                             color:'#64748b', bg:'#f8fafc' }
+];
+function BizNoAuditPanel(){
+  var rs = useState(null); var rows = rs[0]; var setRows = rs[1];
+  var ks = useState('mgmt'); var pick = ks[0]; var setPick = ks[1];
+  function run(){
+    var out = dbGet('companies', []).filter(function(c){ return c && !c._deleted; }).map(function(c){
+      var raw = String(c.bizNo == null ? (c.bizno == null ? '' : c.bizno) : c.bizNo).trim();
+      return { id:c.id, name:String(c.name || c.companyName || c.id || ''), raw:raw,
+        digits:raw.replace(/\D/g, '').length, kind:bizFieldKind(raw),
+        type:String(c.typeCode || ''), sub:!!(c.status === 'suboffice' || c.isSuboffice) };
+    });
+    setRows(out);
+  }
+  function saveXls(){
+    if(!rows || !window.XLSX){ showToast('엑셀 모듈을 불러오지 못했습니다'); return; }
+    var head = ['업체ID','업체명','유형','사무대행','사업자번호 칸에 든 값','자릿수','판단','권장'];
+    var body = rows.filter(function(r){ return r.kind !== 'ok' && r.kind !== 'empty'; }).map(function(r){
+      var kind = BIZ_KINDS.filter(function(x){ return x.k === r.kind; })[0] || {};
+      return [r.id, r.name, r.type, r.sub ? '예' : '', r.raw, r.digits, kind.label || r.kind,
+        r.kind === 'mgmt' ? '관리번호 칸으로 옮김' : '원본을 확인해 고침'];
+    });
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head].concat(body)), '사업자번호칸');
+    XLSX.writeFile(wb, '사업자번호칸-점검-' + todayStr() + '.xlsx');
+  }
+  var counts = {}; BIZ_KINDS.forEach(function(x){ counts[x.k] = 0; });
+  (rows || []).forEach(function(r){ counts[r.kind] = (counts[r.kind] || 0) + 1; });
+  var picked = (rows || []).filter(function(r){ return r.kind === pick; });
+  return h('div', { style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', padding:'18px 20px' } },
+    h('h3', { style:{ fontSize:'14px', fontWeight:800, marginBottom:'4px' } }, '🔍 사업자번호 칸 점검'),
+    h('div', { style:{ fontSize:'11.5px', color:'#64748b', marginBottom:'12px' } },
+      '업체의 사업자번호 칸에 «무엇이 들어 있는지»만 갈라 봅니다. 값을 옮기거나 고치지 않습니다.'),
+    h('div', { style:{ display:'flex', gap:'7px', flexWrap:'wrap', marginBottom:'12px' } },
+      h('button', { onClick:run, style:{ padding:'8px 16px', background:'#1e40af', color:'#fff', border:'none',
+        borderRadius:'6px', fontWeight:700, cursor:'pointer' } }, '🔍 점검하기'),
+      rows && h('button', { onClick:saveXls, style:{ padding:'8px 16px', background:'#f0fdf4', color:'#166534',
+        border:'1px solid #bbf7d0', borderRadius:'6px', fontWeight:700, cursor:'pointer' } }, '⬇ 엑셀로 내려받기')),
+    !rows && h('div', { style:{ padding:'22px', textAlign:'center', color:'#94a3b8', background:'#f8fafc',
+      borderRadius:'7px', fontSize:'12.5px' } }, '점검하면 업체 '+dbGet('companies',[]).length+'곳의 사업자번호 칸을 갈라 봅니다.'),
+    rows && h('div', null,
+      h('div', { style:{ display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'12px' } },
+        BIZ_KINDS.map(function(x){
+          return h('button', { key:x.k, onClick:function(){ setPick(x.k); },
+            title:x.how,
+            style:{ padding:'8px 12px', background:x.bg, color:x.color, borderRadius:'6px', fontSize:'12px',
+              border:'1px solid '+(pick===x.k ? x.color : 'transparent'), cursor:'pointer', textAlign:'left' } },
+            h('strong', { style:{ marginRight:'5px' } }, Number(counts[x.k]||0).toLocaleString()), x.label);
+        })),
+      h('div', { style:{ fontSize:'11px', color:'#475569', background:'#f8fafc', padding:'7px 9px',
+        borderRadius:'6px', marginBottom:'9px' } },
+        (BIZ_KINDS.filter(function(x){ return x.k===pick; })[0]||{}).how || ''),
+      picked.length === 0
+        ? h('div', { style:{ padding:'16px', textAlign:'center', color:'#94a3b8', fontSize:'11.5px' } }, '이 갈래에 해당하는 곳이 없습니다.')
+        : h('div', { style:{ overflowX:'auto' } }, h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:'11.5px' } },
+            h('tr', null, ['업체명','유형','사무대행','칸에 든 값','자릿수'].map(function(t){
+              return h('th', { key:t, style:{ textAlign:'left', padding:'6px 8px', background:'#f8fafc',
+                color:'#64748b', fontSize:'10.5px', whiteSpace:'nowrap' } }, t); })),
+            picked.slice(0, 200).map(function(r){
+              return h('tr', { key:r.id }, [
+                h('td', { key:'n', style:{ padding:'5px 8px', borderBottom:'1px solid #e2e8f0', whiteSpace:'nowrap',
+                  maxWidth:'260px', overflow:'hidden', textOverflow:'ellipsis' }, title:r.name }, r.name),
+                h('td', { key:'t', style:{ padding:'5px 8px', borderBottom:'1px solid #e2e8f0', whiteSpace:'nowrap', color:'#64748b' } }, r.type || '—'),
+                h('td', { key:'s', style:{ padding:'5px 8px', borderBottom:'1px solid #e2e8f0', whiteSpace:'nowrap', color:'#854d0e' } }, r.sub ? '대행' : ''),
+                h('td', { key:'v', style:{ padding:'5px 8px', borderBottom:'1px solid #e2e8f0', whiteSpace:'nowrap', fontFamily:'ui-monospace,monospace' } }, r.raw || '—'),
+                h('td', { key:'d', style:{ padding:'5px 8px', borderBottom:'1px solid #e2e8f0', whiteSpace:'nowrap', color:'#64748b' } }, r.digits)
+              ]);
+            }))),
+      picked.length > 200 && h('div', { style:{ padding:'8px', color:'#64748b', fontSize:'11px' } },
+        '화면에는 200곳까지만 그립니다 — 전부는 엑셀로 받으세요.'),
+      h('div', { style:{ fontSize:'11px', color:'#854d0e', background:'#fffbeb', padding:'8px 10px',
+        borderRadius:'6px', marginTop:'10px' } },
+        '이 화면은 아무것도 옮기지 않습니다. 엑셀로 받아 보시고 정하시면 그때 관리번호를 제 칸으로 옮깁니다.')));
+}
+
 function DataLogMasters(){
   var ts = useState(0); var activeTab = ts[0]; var setActiveTab = ts[1];
   var TABS = [
     { label:'🔍 데이터 진단',  comp: DataDiagnostics },
+    { label:'🔢 사업자번호 칸', comp: BizNoAuditPanel },
     { label:'🕸️ 온톨로지',     comp: OntologyAuditPanel },
     { label:'⚠️ 에러 로그',    comp: ErrorLogViewer },
     { label:'✅ 대조 검사',    comp: ReconcileCheck },
