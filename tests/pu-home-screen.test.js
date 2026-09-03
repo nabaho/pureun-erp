@@ -2112,7 +2112,14 @@ test('★ 자문사 목록은 업체관리가 기준이다 — 지운 업체는 
   const ctx = partnerBox();
   const names = ctx.visibleRows('partner').map(r => r.name);
   assert.ok(names.indexOf('지운 업체') < 0, '업체관리에서 지운 업체가 목록에 남았습니다');
-  assert.equal(names.length, 5, '업체관리 업체 수와 목록이 다릅니다: ' + names.length);
+  /* ★ 2026-09-03 「업체 종료된 곳은 모두 자동으로 명단 빼라」로 기대값이 5 → 4 가 됐다.
+     ⚠ 숫자를 박지 않는다 — «살아 있는 업체는 다 있고, 끝난 곳은 없다»를 본다.
+       그래야 나중에 업체를 더 넣어도 이 검사가 헛되게 깨지지 않는다. */
+  const 살아있는 = ctx.App.companies.filter(c => !c._deleted && c.status !== 'closed');
+  살아있는.forEach(c => assert.ok(names.indexOf(c.name) >= 0,
+    '거래 중인 업체가 목록에서 빠졌습니다: ' + c.name));
+  assert.equal(names.length, 살아있는.length,
+    '목록에 거래 중이 아닌 업체가 섞였습니다: ' + names.join(', '));
   /* 여기서 회사를 만들 수 있으면 어느 쪽이 진짜인지 알 수 없게 된다 */
   assert.ok(!/자문사.*추가|＋ *새 회사|＋ *자문사/.test(ctx.listHtml()),
     '자문사 목록에 «회사 만들기»가 있습니다 — 업체관리에서 만들어야 합니다');
@@ -2122,7 +2129,15 @@ test('★ 표시 안 한 회사는 할 일이 아니다 — 「자문 종료」�
   const ctx = partnerBox();
   const rows = ctx.visibleRows('partner');
   const 대성 = rows.find(r => r.name === '대성물류(주)');
-  const 삼정 = rows.find(r => r.name === '삼정테크');
+  /* ★ 삼정테크는 «거래가 끝나» 기본 목록에서 빠졌다 (2026-09-03 대표 지시).
+     그래도 할 일에는 남아야 한다 — 지금 홈페이지에는 로고가 그대로 걸려 있다.
+     그래서 「거래 종료」 딱지로 꺼내 본다. */
+  ctx.App.filter = 'closed';
+  const 삼정 = ctx.visibleRows('partner').find(r => r.name === '삼정테크');
+  ctx.App.filter = '';
+  assert.ok(삼정, '「거래 종료」 딱지로도 볼 수 없습니다 — 자동으로 빼되 «숨기지는» 않는다');
+  assert.ok(rows.every(r => r.name !== '삼정테크'),
+    '거래가 끝난 곳이 기본 목록에 남았습니다 — 자동으로 빠져야 합니다');
   assert.equal(대성.posted, '', '표시 안 한 회사를 다른 값으로 읽습니다');
   assert.equal(ctx.needsAttentionRow(대성), false, '표시 안 한 회사가 할 일로 새어 나옵니다');
   assert.ok(삼정.roster && 삼정.roster.kind === 'ended',
@@ -2136,8 +2151,13 @@ test('★ 안 올린 회사는 붙여넣을 회사명 목록에 안 든다', () 
   const names = ctx.postedNames();
   assert.ok(names.indexOf('세종정밀') < 0, '「안 올림」으로 표시한 회사가 목록에 들어갔습니다');
   assert.ok(names.indexOf('대성물류(주)') < 0, '표시 안 한 회사가 목록에 들어갔습니다');
-  assert.deepEqual(names.slice().sort(), ['(주)가온전자', '삼정테크'].sort(),
-    '올림으로 표시한 회사만 나와야 합니다');
+  /* ★ 2026-09-03 「업체 종료된 곳은 모두 자동으로 명단 빼라」 —
+     삼정테크는 「올림」으로 표시돼 있지만 거래가 끝나 «자동으로» 빠진다.
+     이 한 줄이 지시의 핵심이다: 사람이 표시를 안 고쳐도 명단에서 나간다. */
+  assert.ok(names.indexOf('삼정테크') < 0,
+    '거래가 끝난 회사가 붙여넣을 명단에 남았습니다 — 자동으로 빠져야 합니다');
+  assert.deepEqual(names.slice().sort(), ['(주)가온전자'],
+    '올림으로 표시했고 «거래 중인» 회사만 나와야 합니다');
 });
 
 test('★ 이름으로 찾을 수 있다 — 업체가 수백 개라 찾을 길이 없으면 고를 수 없다', () => {
@@ -2148,7 +2168,45 @@ test('★ 이름으로 찾을 수 있다 — 업체가 수백 개라 찾을 길�
   assert.equal(found.length, 1, '이름으로 찾기가 안 됩니다');
   assert.equal(found[0].name, '세종정밀');
   ctx.App.q = '';
-  assert.equal(ctx.visibleRows('partner').length, 5, '찾기를 지우면 다시 다 보여야 합니다');
+  /* 숫자를 박지 않는다 — 「찾기를 지우면 걸러 보기 전과 같아진다」가 규칙이다 */
+  const 살아있는 = ctx.App.companies.filter(c => !c._deleted && c.status !== 'closed').length;
+  assert.equal(ctx.visibleRows('partner').length, 살아있는,
+    '찾기를 지우면 거래 중인 업체가 다시 다 보여야 합니다');
+});
+
+test('★ 거래가 끝난 업체는 명단에서 «자동으로» 빠진다 — 셈과 목록이 같은 규칙을 쓴다', () => {
+  /* 대표 지시 2026-09-03 「업체 종료된 곳은 모두 자동으로 명단 빼라」.
+     ★ 왜 «셈»까지 보는가 — 「전체 373」이라 적혀 있는데 눌러 보니 340줄이면,
+       사람은 목록이 고장 났다고 여긴다. 세는 곳과 보이는 곳이 어긋나면 안 된다. */
+  const ctx = partnerBox();
+  ctx.App.filter = '';
+  const 보이는수 = ctx.visibleRows('partner').length;
+
+  /* ① 딱지의 「전체」 수 = 실제로 보이는 줄 수 */
+  const chips = ctx.chipsHtml();
+  const 전체 = /전체<span class="c">(\d+)<\/span>/.exec(chips);
+  assert.ok(전체, '「전체」 딱지가 없습니다');
+  assert.equal(Number(전체[1]), 보이는수,
+    '「전체」에 적힌 수와 실제로 보이는 줄 수가 다릅니다');
+
+  /* ② 「거래 종료」 딱지로 꺼내 볼 수 있다 — 자동으로 빼되 «숨기지는» 않는다 */
+  assert.match(chips, /거래 종료<span class="c">[1-9]/,
+    '거래 종료 딱지가 없습니다 — 뺀 것을 볼 길이 없으면 목록이 잘못된 줄 압니다');
+
+  /* ③ 목록 머리도 뺀 수를 말한다 */
+  assert.match(ctx.listCountHtml(), /거래 종료 [1-9]\d*곳은 뺐음/,
+    '뺐다는 말을 목록 머리가 안 합니다');
+
+  /* ④ 할 일에는 남는다 — 지금 홈페이지에는 로고가 그대로 걸려 있다 */
+  assert.equal(ctx.statOf('partner').own.ended, 1,
+    '거래가 끝났는데 올림으로 표시된 곳이 할 일에서 사라졌습니다');
+
+  /* ⑤ 끝난 곳이 없으면 「거래 종료」 딱지도, 뺐다는 말도 안 그린다 (0은 안 그린다) */
+  ctx.App.companies = ctx.App.companies.filter(c => c.status !== 'closed');
+  assert.ok(ctx.chipsHtml().indexOf('거래 종료') < 0,
+    '끝난 곳이 없는데 「거래 종료」 딱지를 그립니다');
+  assert.ok(ctx.listCountHtml().indexOf('뺐음') < 0,
+    '뺀 것이 없는데 「뺐음」이라고 적습니다');
 });
 
 test('★ 자문사 표시는 «한 업체 자리»만 건드린다 — 통째로 덮지 않는다', () => {
