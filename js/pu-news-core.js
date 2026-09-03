@@ -480,7 +480,13 @@
         title: String(r.title == null ? '' : r.title).slice(0, 60),
         /* ⚠ 유형을 여기서 «흘리면» 안 된다 — 다듬은 뒤에 화면이 유형으로 가른다.
              빠뜨렸더니 걸러도 아무것도 안 남았다(2026-09-03). */
-        유형: 유형고르기(r.유형)
+        유형: 유형고르기(r.유형),
+        /* ⚠ 이 넷도 흘리지 말 것 — 화면이 대표자·연락처를 보여 줘야 한다.
+             유형을 흘려 겪은 일과 «똑같은 함정»이다. */
+        전화: String(r.전화 == null ? '' : r.전화).slice(0, 40),
+        누구: (String(r.누구) === '대표자') ? '대표자' : '담당자',
+        대표자: String(r.대표자 == null ? '' : r.대표자).slice(0, 60),
+        대표전화: String(r.대표전화 == null ? '' : r.대표전화).slice(0, 40)
       });
     });
     return { ok: ok, 셈: { 보낼곳: ok.length, 주소없음: 주소없음, 수신거부: 수신거부, 겹침: 겹침 } };
@@ -545,8 +551,14 @@
            또 들어 있는 경우가 많아서다(실측: 자문중 206곳에서 104건).
            명단다듬기가 걸러 주긴 하지만, 화면에 「겹침 104」로 뜨면
            대표께서 명단이 엉킨 줄로 보신다. */
+      /* 대표자 — 이름·연락처는 «늘» 실어 보낸다 (대표 지시 2026-09-03
+         「명단에는 대표자도 있고 담당자도 있어야 한다」).
+         ⚠ 대표자에게 «보내는» 것은 담당자가 없을 때뿐이다 — 아래 참고. */
+      var 대표자 = String(co.ceoName == null ? '' : co.ceoName);
+      var 대표전화 = String(co.ceoPhone == null ? '' : co.ceoPhone);
+
       var 이집 = {};
-      function 담기(이름, 주소, 직책) {
+      function 담기(이름, 주소, 직책, 전화, 누구) {
         var e = String(주소 == null ? '' : 주소).trim();
         if (!e) return;
         var 열 = e.toLowerCase();
@@ -556,13 +568,20 @@
         /* 걸러내기(형식·겹침·수신거부)는 명단다듬기가 «한 곳에서» 맡는다 —
            여기서 또 걸러내면 두 곳이 서로 다른 잣대를 갖는다. */
         줄들.push({ email: e, name: String(이름 == null ? '' : 이름), company: 회사,
-                    title: String(직책 == null ? '' : 직책), 사업장: String(co.id || ''),
+                    title: String(직책 == null ? '' : 직책),
+                    /* 담당자 연락처 (대표 지시 「담당자 직급 연락처도 같이 보여야 한다」).
+                       ⚠ 예전에는 이 칸을 버리고 있었다 — 자료는 있는데 화면까지 안 왔다. */
+                    전화: String(전화 == null ? '' : 전화),
+                    누구: 누구 || '담당자',
+                    대표자: 대표자, 대표전화: 대표전화,
+                    사업장: String(co.id || ''),
                     /* 유형(자문·급여·노조·기금) — 업체관리와 «같은 칸»(typeCode)을 그대로 나른다.
                        ⚠ 여기서 새로 판단하지 않는다. 업체관리에서 유형을 바꾸면 그대로 따라온다. */
                     유형: 유형고르기(co.typeCode) });
       }
 
-      담기(co.primaryContactName, co.primaryContactEmail, co.primaryContactTitle);
+      담기(co.primaryContactName, co.primaryContactEmail, co.primaryContactTitle,
+           co.primaryContactPhone, '담당자');
 
       var cs = co.contacts;
       if (cs) {
@@ -570,14 +589,129 @@
           .forEach(function (c) {
             if (!c || typeof c !== 'object') return;
             if (c.left === true || c.left === 'true') return;   /* ★ 퇴사 — 안 보낸다 */
-            담기(c.name, c.email, c.position || c.dept);
+            담기(c.name, c.email, c.position || c.dept, c.phone || c.tel || c.mobile, '담당자');
           });
       }
 
-      if (!담은수) 주소없는곳.push({ id: String(co.id || ''), name: 회사, status: String(co.status || '') });
+      /* ★ 담당자 주소가 «하나도 없을 때만» 대표자에게 보낸다
+           (대표 결정 2026-09-03 — 셋 가운데 「담당자 없으면 대표자」).
+         ⚠ 늘 둘 다 보내지 않는다. 그러면 한 회사가 같은 편지를 두 통 받는다 —
+           주소가 다르니 겹침으로도 안 걸린다.
+         ⚠ 담당자가 «있는데 주소만 없는» 곳도 여기로 온다. 그것이 맞다 —
+           빈 곳을 메꾸는 것이 이 규칙의 구실이다. */
+      if (!담은수) {
+        담기(대표자 || '대표자', co.ceoEmail, '대표', 대표전화, '대표자');
+      }
+
+      if (!담은수) 주소없는곳.push({ id: String(co.id || ''), name: 회사, status: String(co.status || ''),
+                                     대표자: 대표자, 대표전화: 대표전화 });
     });
 
     return { 줄들: 줄들, 주소없는곳: 주소없는곳, 본곳: 본곳 };
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     ⑤-2 보낸 뒤 — 푸른메일함에서 «반송·자동회신»을 찾아 붙인다
+     ══════════════════════════════════════════════════════════════════════
+     대표 지시 2026-09-03: 「수신확인과 안읽음등을 모두 확인해야한다.
+     푸른메일함에 연결해서 모두 찾아서 확인할 수 있어야 한다.」
+
+     ⚠⚠ 먼저 솔직히 — 「상대가 읽었나」는 «알 수 없다».
+       우리가 메일함을 읽는 길(IMAP)에 그 자료가 아예 없다. 메일에 붙는
+       읽음 표시(\Seen)는 «우리가» 열었나이고, 보낸메일함의 그 표시는
+       대표가 그 편지를 열어 봤나를 뜻한다 — 받는 사람과 무관하다.
+       다음메일 홈페이지의 「수신확인」은 웹에서만 되는 기능이라 안 넘어온다.
+       ★ 그래서 이 함수는 «읽었나»를 만들지 않는다. 만들 수 없는 것을
+         만든 척하면 그 숫자를 믿고 판단하게 된다 — 그게 더 나쁘다.
+
+     ★ 대신 «확실한» 둘을 찾는다. 실무에서 필요한 것은 대개 이쪽이다.
+       · 반송   — 그 주소가 죽었다 → 명함을 고쳐야 한다
+       · 자동회신 — 그 주소에 사람이 있다(살아 있다는 증거)
+
+     ⚠ 붙이는 잣대는 «주소»다. 제목으로만 맞추면 엉뚱한 곳에 붙는다.
+       반송 메일은 본문에 죽은 주소를 적어 오므로, 본문을 못 읽는 목록에서는
+       제목·보낸이에 그 주소가 «들어 있는 것»만 확실히 붙인다.
+       못 붙인 것은 «못 붙였다»고 따로 센다 — 조용히 버리지 않는다. */
+  var 반송말 = ['undeliver', 'delivery status', 'delivery failure', 'mail delivery',
+    'returned to sender', 'failure notice', 'delivery has failed',
+    '반송', '전송 실패', '발송 실패', '메일 반송'];
+  var 자동회신말 = ['auto', 'automatic reply', 'autoreply', 'out of office',
+    '부재', '자동응답', '자동 회신', '휴가'];
+
+  function 무슨메일인가(제목, 보낸이) {
+    var t = (String(제목 || '') + ' ' + String(보낸이 || '')).toLowerCase();
+    for (var i = 0; i < 반송말.length; i++) { if (t.indexOf(반송말[i].toLowerCase()) >= 0) return '반송'; }
+    for (var j = 0; j < 자동회신말.length; j++) { if (t.indexOf(자동회신말[j].toLowerCase()) >= 0) return '자동회신'; }
+    return '';
+  }
+
+  /* 줄 하나에서 메일 주소를 다 뽑는다 — 반송은 제목에 죽은 주소를 적어 올 때가 많다 */
+  function 주소들뽑기(글) {
+    return (String(글 || '').match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || [])
+      .map(function (x) { return x.toLowerCase(); });
+  }
+
+  /* 메일함 줄들(목록)에서 우리 명단 주소에 붙일 것을 찾는다.
+     메일줄: { e: 보낸이주소, f: 보낸이이름, s: 제목, d: 때(ms) }
+     돌려주는 것: { 붙임: {주소: {갈래, 제목, 때}}, 못붙임: [...] } */
+  function 메일함에서찾기(명단, 메일줄들, 보낸때) {
+    var 아는주소 = {};
+    (명단 || []).forEach(function (x) {
+      if (x && x.email) 아는주소[String(x.email).toLowerCase()] = 1;
+    });
+    var 붙임 = {}, 못붙임 = [];
+    var 시작 = Number(보낸때) || 0;
+
+    (메일줄들 || []).forEach(function (m) {
+      if (!m) return;
+      var 갈래 = 무슨메일인가(m.s, m.e || m.f);
+      if (!갈래) return;
+      /* 보낸 뒤에 온 것만 본다 — 안 그러면 지난달 반송이 이번 회차에 붙는다 */
+      if (시작 && Number(m.d || 0) < 시작) return;
+
+      /* 보낸이 주소가 우리 명단에 있으면 그것이 답이다 (자동회신은 대개 이렇다) */
+      var 보낸이 = String(m.e || '').toLowerCase();
+      if (보낸이 && 아는주소[보낸이]) {
+        if (!붙임[보낸이]) 붙임[보낸이] = { 갈래: 갈래, 제목: String(m.s || ''), 때: Number(m.d || 0) };
+        return;
+      }
+      /* 아니면 제목에 적힌 주소로 맞춘다 (반송은 대개 이렇다) */
+      var 찾음 = 주소들뽑기(m.s).filter(function (a) { return 아는주소[a]; });
+      if (찾음.length) {
+        찾음.forEach(function (a) {
+          if (!붙임[a]) 붙임[a] = { 갈래: 갈래, 제목: String(m.s || ''), 때: Number(m.d || 0) };
+        });
+        return;
+      }
+      /* ⚠ 못 붙인 것은 «세어서 알려 준다». 조용히 버리면 「반송이 왔는데
+           아무 표시도 없다」가 되고, 그러면 이 기능을 아무도 안 믿는다. */
+      못붙임.push({ 갈래: 갈래, 제목: String(m.s || '').slice(0, 160), 때: Number(m.d || 0),
+                    보낸이: String(m.e || '') });
+    });
+    return { 붙임: 붙임, 못붙임: 못붙임 };
+  }
+
+  /* 보낸 결과 한 줄로 합치기 — 서버가 아는 것(나갔나) + 메일함에서 찾은 것 */
+  function 보낸결과(명단, 예약줄들, 찾음) {
+    var 상태 = {};
+    Object.keys(예약줄들 || {}).forEach(function (k) {
+      var r = (예약줄들 || {})[k];
+      if (!r || !r.payload || !r.payload.to) return;
+      var e = String(r.payload.to).toLowerCase();
+      /* 같은 주소가 여럿이면 «마지막 것»을 본다 */
+      상태[e] = { 상태: String(r.state || 'waiting'), 때: Number(r.at || 0),
+                  오류: String(r.error || '') };
+    });
+    var 붙임 = (찾음 && 찾음.붙임) || {};
+    return (명단 || []).map(function (x) {
+      var e = String(x.email || '').toLowerCase();
+      return Object.assign({}, x, {
+        나갔나: (상태[e] && 상태[e].상태) || '모름',
+        나간때: (상태[e] && 상태[e].때) || 0,
+        오류: (상태[e] && 상태[e].오류) || '',
+        메일함: 붙임[e] || null
+      });
+    });
   }
 
   function 광고표기필요한가(범위) {
@@ -728,6 +862,8 @@
     붙여넣기읽기: 붙여넣기읽기,
     명단다듬기: 명단다듬기,
     유형들: 유형들, 유형고르기: 유형고르기, 유형별셈: 유형별셈, 유형으로거르기: 유형으로거르기,
+    무슨메일인가: 무슨메일인가, 주소들뽑기: 주소들뽑기,
+    메일함에서찾기: 메일함에서찾기, 보낸결과: 보낸결과,
     범위들: 범위들, 광고표기필요한가: 광고표기필요한가, 제목짓기: 제목짓기,
     보낼수있나: 보낼수있나, 보낼시간: 보낼시간,
     사업장에서명단: 사업장에서명단, 노무사회양식: 노무사회양식,
