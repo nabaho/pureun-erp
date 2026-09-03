@@ -46,7 +46,8 @@ function load(extra) {
     state: { sendLog: {} },
     console
   }, extra || {});
-  const code = fnBody('sendLogList') + '\n'
+  /* ⚠ 2026-09-03: 칸이 «한 줄 설명»(hintLine)을 부른다 — 진짜를 함께 싣는다 */
+  const code = fnBody('hintLine') + '\n' + fnBody('sendLogList') + '\n'
     + slice('const CO_SENT_MAX_CARDS = 30;', 'function coDetailPanelHtml(o){');
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
@@ -143,8 +144,14 @@ test('★ 기록이 없으면 그렇게 말한다 — 그리고 «무엇이 안 
   const html = c.coSentHtml({ cards: [card('c1', '김대리')] });
   assert.match(html, /보낸 서류 0건/);
   assert.match(html, /아직 보낸 기록이 없습니다/);
-  assert.match(html, /단체 메일/, '단체 메일은 기록이 안 남는다 — 이 말이 없으면 「안 보냈다」로 읽힌다');
-  assert.match(html, /취업규칙 회차는 위 업무 이력/, '취업규칙을 어디서 보는지 길을 알려 준다');
+  /* ⚠ 2026-09-03 대표 지시로 설명이 «한 줄 + 말풍선»이 됐다.
+     화면에는 한 마디만 나오고, 나머지는 말풍선(title)에 담긴다 — 둘 다 있어야 한다.
+     말풍선에서 빠지면 「기록 없음」이 「안 보냈다」로 읽힌다. */
+  const 말풍선 = (html.match(/title="([^"]*)"/) || [])[1] || '';
+  assert.match(html, /자료함에서 보낸 것만 잡힙니다/, '화면에 나갈 한 마디가 없다');
+  assert.match(말풍선, /단체 메일/, '단체 메일은 기록이 안 남는다 — 이 말이 없으면 「안 보냈다」로 읽힌다');
+  assert.match(말풍선, /취업규칙 회차는 위/, '취업규칙을 어디서 보는지 길을 알려 준다');
+  assert.ok(html.indexOf('<i class="hq">?</i>') > 0, '말풍선이 있다는 표시가 없으면 아무도 안 올려 본다');
 });
 
 test('★ 취업규칙을 여기서 다시 그리지 않는다 — 이미 업무 이력 표에 갈래로 있다', () => {

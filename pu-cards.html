@@ -2455,6 +2455,18 @@ body.pc #pcDetail{display:flex}
 /* 안 붙은 서류도 끌 수 있다 — 손 모양으로 알린다 */
 .codoc[draggable="true"]{cursor:grab}
 .codochint{font-size:11.5px;color:#94a3b8;line-height:1.5;margin:-4px 4px 7px}
+/* ── 설명은 «한 줄», 자세한 것은 마우스로 (대표 지시 2026-09-03) ──
+   「너무 불필요한 설명 많다. 간단하게 한줄로 하고 마우스표시에 따라 설명이 나오면」
+   설명을 문단으로 깔면 정작 봐야 할 «값»이 아래로 밀린다. */
+.codochint .hq{font-style:normal;font-size:10px;color:#64748b;background:#e2e8f0;
+  border-radius:50%;padding:0 4px;margin-left:4px;cursor:help}
+/* 같은 이름 서류를 접어 둔 자리 — 눌러서 펼친다(자료는 안 지운다) */
+.codocdup{margin:-2px 0 4px 10px}
+.codocdup>summary{font-size:11.5px;color:#64748b;cursor:pointer;list-style:none;
+  padding:2px 0}
+.codocdup>summary::-webkit-details-marker{display:none}
+.codocdup>summary::before{content:"▸ ";color:#94a3b8}
+.codocdup[open]>summary::before{content:"▾ "}
 /* 서류에 「적힌 것 전부」 — 접어 둔다 (2026-08-28). 서류 한 장에 항목이 수십 개다 */
 .codocp{margin:-3px 2px 6px}
 .codocp>summary{font-size:11.5px;color:#64748b;cursor:pointer;padding:3px 4px;list-style:none}
@@ -23213,7 +23225,10 @@ function coHistPaint(){
   } else {
     let curY = null;
     rows.forEach(r=>{
-      if(grouped && r.year !== curY){
+      /* ⚠ 줄이 «하나»뿐이면 해 묶음 머리를 안 그린다 (대표 화면 2026-09-03).
+         「해 모름 · 1건 · 300,000원」 바로 밑에 그 한 줄이 또 「300,000원」을 말하고,
+         위의 합계 줄도 같은 말을 한다 — 한 건짜리 회사에서 같은 값이 «세 번» 나왔다. */
+      if(grouped && rows.length > 1 && r.year !== curY){
         curY = r.year;
         const mine = rows.filter(x=>x.year===curY);
         const s = erpHistSum(mine);
@@ -23234,13 +23249,19 @@ function coHistPaint(){
     });
   }
 
+  /* ⚠ 한 건뿐이고 아무것도 안 걸렀으면 «합계 줄을 따로 안 그린다» (대표 화면 2026-09-03).
+     한 건짜리 회사에서 「한 일 1건」·「모두 300,000원 · 1건」·「해 모름 1건 · 300,000원」이
+     차례로 서서, 같은 값이 «네 번» 나왔다(줄 자체까지).
+     ⚠ 제목에도 금액을 올리지 않는다 — 한 건이면 그 «줄 자체»가 금액을 말한다.
+       올려 보았더니 브라우저에서 여전히 두 번 나왔다(실측 2026-09-03). */
+  const 합계따로 = filtered || all.length > 1;
   box.innerHTML = `<div class="pdsec" style="margin-top:16px">이 회사에서 한 일`
     + ` <span style="font-weight:400;color:#94a3b8">${sumAll.n}건`
     + `${sumAll.years?' · '+sumAll.years+'개 해':''}</span></div>`
-    + `<div class="cohist-sum">${filtered?'<span>보이는 것</span>':'<span>모두</span>'}`
+    + (합계따로 ? `<div class="cohist-sum">${filtered?'<span>보이는 것</span>':'<span>모두</span>'}`
     + `<b>${sumNow.fee.toLocaleString()}원</b>`
     + `<span>· ${sumNow.n}건${sumNow.years?' · '+sumNow.years+'개 해':''}</span>`
-    + `${filtered?`<span class="of">모두 ${sumAll.n}건 ${esc(erpHistShortWon(sumAll.fee))}</span>`:''}</div>`
+    + `${filtered?`<span class="of">모두 ${sumAll.n}건 ${esc(erpHistShortWon(sumAll.fee))}</span>`:''}</div>` : '')
     /* 건이 셋보다 적으면 깔때기를 아예 안 보인다 — 두 건 앞에 조작줄 두 줄은 자리만 먹는다 */
     + (all.length < 3 ? '' : `<div class="cohist-funnel">
         <div class="cohist-chips">${chips}</div>
@@ -24521,13 +24542,41 @@ function coLeftDocsPaint(left, total){
   const box = $('coDocsBox'); if(!box) return;
   if(!(total||0)){ box.innerHTML = ''; return; }
   box.innerHTML = coDocsListHtml(left, '아직 안 붙은 서류',
-    '어느 사업·사건 것인지 이름으로는 알 수 없었습니다. 위의 사업 위로 «끌어다 놓으면» 붙고, 같은 이름은 다음부터 저절로 붙습니다');
+    '끌어다 놓으면 위의 사업에 붙습니다',
+    '어느 사업·사건 것인지 이름으로는 알 수 없었습니다. 위의 사업 위로 끌어다 놓으면 붙고, 같은 이름은 다음부터 저절로 붙습니다');
 }
-function coDocsListHtml(docs, title, hint){
+/* 짧은 한 마디만 보이고, 온전한 설명은 말풍선에 담는다.
+   ⚠ 말풍선이 없으면 물음표를 «안» 붙인다 — 눌러도 아무것도 안 나오는 표시는
+     고장으로 읽힌다(켤 길 없는 기능을 만들지 않는 것과 같은 결). */
+function hintLine(short, full){
+  const t = String(full == null ? '' : full).trim();
+  const sh = String(short == null ? '' : short).trim();
+  if(!sh) return '';
+  return `<div class="codochint" ${t?`title="${esc(t)}"`:''}>${esc(sh)}${t?' <i class="hq">?</i>':''}</div>`;
+}
+/* ── 같은 이름 서류를 «한 줄로 접는다» (대표 지시 2026-09-03) ──
+   「중복과 계약 당시 같은 부분 오류가 생겨서 같은 내용도 있다 … 중복이면 제거하는 게 좋다」
+   판독을 두 번 돌리거나 계약 때 같은 서류가 다시 들어오면 같은 이름이 줄줄이 선다.
+   ⚠ 자료를 «지우지 않는다» — 접기만 한다. 지우는 것은 되돌릴 수 없고, 이름이 같다고
+     같은 서류라는 보장이 없다(해가 다른 신청서일 수 있다). 몇 장인지 세어 보이고
+     눌러서 펼칠 수 있게 둔다. 진짜로 지우는 것은 사람이 정할 일이다.
+   ⚠ 접는 잣대는 «이름 하나»다. 날짜·사람까지 같아야 접으면, 같은 서류를 다른 날
+     다시 읽은 바로 그 경우가 안 접힌다 — 그것이 대표 화면에 두 줄로 서 있던 것이다. */
+function coDocsFold(docs){
+  const by = {}, out = [];
+  (docs||[]).forEach(d=>{
+    const k = _norm(String((d && d.name) || '서식'));
+    if(by[k]){ by[k].dup.push(d); return; }
+    by[k] = Object.assign({}, d, { dup: [] });
+    out.push(by[k]);
+  });
+  return out;
+}
+function coDocsListHtml(docs, title, hint, hintFull){
   if(!docs || !docs.length) return '';
-  return `<div class="pcsec" style="margin:16px 4px 8px">${esc(title)} ${docs.length}건</div>
-    ${hint?`<div class="codochint">${esc(hint)}</div>`:''}
-    ${docs.map(d=>`<div class="cof codoc" draggable="${d._k?'true':'false'}"
+  /* ⚠ 접기는 «그릴 때»만 한다 — 자료는 그대로 두고 화면만 줄인다 */
+  const folded = coDocsFold(docs);
+  const row = d => `<div class="cof codoc" draggable="${d._k?'true':'false'}"
         ondragstart="coDocDragStart(event,'${esc(d._k||'')}')"
         onclick="openCoDoc('${esc(d.year||'')}','${esc(d.id||'')}','${esc(d.owner||'')}')"
         title="사진첩에서 이 서류를 엽니다">
@@ -24535,7 +24584,14 @@ function coDocsListHtml(docs, title, hint){
       <b>${d.at?fmtDate(d.at):''}${d.by?` · ${esc(d.by)}`:''}
         <i style="font-style:normal;color:#94a3b8;font-size:11.5px"> · 사진첩 ${esc(d.year||'')}</i>
         <em style="font-style:normal;color:#1e40af;font-size:11.5px;margin-left:6px">📷 원본 보기</em></b>
-    </div>${coDocPairsHtml(d)}`).join('')}`;
+    </div>${coDocPairsHtml(d)}`;
+  /* ⚠ 세는 것은 «접기 전» 장수다 — 접었다고 서류가 줄어든 것이 아니다 */
+  return `<div class="pcsec" style="margin:16px 4px 8px">${esc(title)} ${docs.length}건</div>
+    ${hintLine(hint, hintFull)}
+    ${folded.map(d=>row(d) + (d.dup.length
+      ? `<details class="codocdup"><summary title="같은 이름으로 들어온 서류입니다 — 자료는 지우지 않고 접어만 두었습니다">
+          같은 이름 ${d.dup.length + 1}장</summary>${d.dup.map(row).join('')}</details>`
+      : '')).join('')}`;
 }
 /* ── 그 서류에 «적힌 것 전부» (대표 결정 2026-08-28) ──
    「기업정보함에는 사진첩에서 들어온 그 기업과 관련된 정보는 모두 보관하고 싶다」
@@ -25567,13 +25623,15 @@ function coSentHtml(o){
   const cards = (o && o.cards) || [];
   const rows = coSentList(cards, state.sendLog, _coSent[(o && o.key) || '']);
   const cut = cards.length > CO_SENT_MAX_CARDS;
-  const note = '자료함에서 보낸 것만 잡힙니다 · 취업규칙 회차는 위 업무 이력에 있습니다'
-    + ' · 단체 메일로 보낸 것은 아직 기록이 남지 않습니다'
-    /* ⚠ 자른 것은 «2걸음 앞»의 기록뿐이다 — 그 뒤로는 회사에 바로 쌓여 사람 수와 상관없다.
-         그렇게 적어야 「30명 밖은 안 보인다」로 오해하지 않는다. */
-    + (cut ? ` · 2026-09-03 앞의 기록은 이 회사 사람 ${cards.length}명 가운데 최근 ${CO_SENT_MAX_CARDS}명분만 읽었습니다` : '');
+  /* ⚠ 설명은 «한 줄», 자세한 것은 마우스로 (대표 지시 2026-09-03).
+       세 마디를 한 줄에 늘어놓으니 정작 봐야 할 기록이 아래로 밀렸다.
+     ⚠ 자른 것은 «2걸음 앞»의 기록뿐이다 — 그 뒤로는 회사에 바로 쌓여 사람 수와
+       상관없다. 그렇게 적어야 「30명 밖은 안 보인다」로 오해하지 않는다. */
+  const note = '자료함에서 보낸 것만 잡힙니다';
+  const noteFull = '취업규칙 회차는 위 「이 회사에서 한 일」에 있습니다. 단체 메일로 보낸 것은 아직 기록이 남지 않습니다.'
+    + (cut ? ` 2026-09-03 앞의 기록은 이 회사 사람 ${cards.length}명 가운데 최근 ${CO_SENT_MAX_CARDS}명분만 읽었습니다.` : '');
   return `<div class="pcsec" style="margin:16px 4px 8px">📤 보낸 서류 ${rows.length}건</div>
-    <div class="codochint">${esc(note)}</div>
+    ${hintLine(note, noteFull)}
     ${rows.length ? rows.map(r=>`<div class="cof">
       <span>${r.set?`<b>📦 ${esc(r.set)}</b> — `:''}${esc(r.what)}</span>
       <b>${esc(r.day)}${r.who?` · → ${esc(r.who)}`:''}${r.by?` · ${esc(r.by)}`:''}</b>
