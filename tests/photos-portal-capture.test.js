@@ -119,9 +119,10 @@ function load() {
   /* ⚠ 2026-08-24: 서식·대화캡처가 「사람이 해서 달라지는 것이 있을 때만」 할 일이 되어
      formTodo·chatTodo(그리고 그것이 쓰는 canSendCoInfo)를 함께 떠야 한다 — 안 실으면
      needsCheck 가 그 줄에서 멎어 이 파일이 통째로 운다. */
-  const src = consts + '\n' +
+  const src = consts + '\n' + app.match(/^const FIX_KEYS = \[[^\r\n]*\];/m)[0].replace('const ', 'var ') + '\n' +
     ['tooSmall', 'smallCheckedOk', 'readAnyField', 'coFilledOk', 'coTodo',
-     'canSendCoInfo', 'formTodo', 'chatTodo', 'readFailKind', 'readFailAdvice',
+     /* ⚠ 2026-09-03 — canSendCoInfo 가 «사람이 채운 값»(readFields)을 본다 */
+     'readFields', 'canSendCoInfo', 'formTodo', 'chatTodo', 'readFailKind', 'readFailAdvice',
      /* ⚠ 2026-09-02 💰 임금 확인 */
      'wageRead', 'wageOkOf', 'wageBoxOn', 'wageNeedsOk', 
      'needsCheck', 'checkWhy']

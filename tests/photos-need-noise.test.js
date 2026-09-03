@@ -53,6 +53,9 @@ const J = (function () {
     cutFn(app, 'function coTodo('),
     cutFn(app, 'function readFailKind('),
     cutFn(app, 'function readFailAdvice('),
+    /* ⚠ 2026-09-03 — canSendCoInfo 가 «사람이 채운 값»(readFields)을 본다 */
+    app.match(/^const FIX_KEYS = \[[^\r\n]*\];/m)[0].replace('const ', 'var '),
+    cutFn(app, 'function readFields('),
     cutFn(app, 'function canSendCoInfo('),
     cutFn(app, 'function formTodo('),
     cutFn(app, 'function chatTodo('),

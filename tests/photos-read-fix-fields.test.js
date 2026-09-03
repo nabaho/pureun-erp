@@ -29,7 +29,9 @@ const app = stripComments(raw);
 function load() {
   const ctx = { WORKER_KINDS: null };
   vm.createContext(ctx);
-  const want = ['const WORKER_KINDS =', 'const FIX_KEYS =', 'function readFields(',
+  /* ⚠ 2026-09-03 — canSendCoInfo 가 «사람이 채운 값»(readFields)을 본다 */
+  const want = ['const WORKER_KINDS =', 'const FIX_KEYS =', 'const CO_FIX_KINDS =',
+    'function readFields(', 'function fixKeysOf(',
     'function canSendWorker(', 'function workerWhyNot(', 'function fixBoxOn(',
     'const RESIDENT_FRESH_DAYS =', 'function issuedDaysAgo(', 'function residentStale('];
   const src = want.map(function (head) {

@@ -133,7 +133,10 @@ function photoCtx(hit) {
     setContractCms: function (o) { calls.push(o); return Promise.resolve({ ok: true, message: '켰습니다' }); }
   };
   vm.createContext(ctx);
-  vm.runInContext(cutFn(photos, 'function canSendCoInfo(') + '\n' +
+  /* ⚠ 2026-09-03 — canSendCoInfo 가 «사람이 채운 값»(readFields)을 본다 */
+  vm.runInContext(photos.match(/^const FIX_KEYS = \[[^\r\n]*\];/m)[0].replace('const ', 'var ') + '\n' +
+    cutFn(photos, 'function readFields(') + '\n' +
+    cutFn(photos, 'function canSendCoInfo(') + '\n' +
     cutFn(photos, 'function coInfoFields(') + '\n' +
     cutFn(photos, 'function autoCmsOn(') + '\n' +
     cutFn(photos, 'function formTodo('), ctx);

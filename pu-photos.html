@@ -34,7 +34,7 @@
      이 파일이 캐시에 묵으면 옛 지시로 읽어 제목이 안 생기는데, 화면(pu-photos.html)은
      새것이라 제목 자리만 비어 보인다 — 고친 것이 통째로 묻힌 것처럼 된다.
      tests/photos-doc-title.test.js 가 둘이 어긋나지 않는지 지킨다. -->
-<script src="js/pu-doc-read.js?v=31"></script>
+<script src="js/pu-doc-read.js?v=32"></script>
 <script src="js/pu-lockkey.js?v=2"></script>
 <!-- ?v= 는 등록 층을 고칠 때 올린다 — 캐시에 묵으면 고친 안내가 안 보인다. -->
 <script src="js/pu-doc-file.js?v=24"></script>
@@ -7226,7 +7226,12 @@ const CO_KINDS = { bizreg: 1, sme: 1 };
 function canSendCoInfo(read) {
   if (!read || read.error) return false;
   if (read.filedInfo && read.filedInfo.at) return false;
-  const f = read.fields || {};
+  /* ⚠ **사람이 채운 것까지 얹은 값**을 본다(2026-09-03). 종전에는 판독값만 보아,
+     통장의 상호를 손으로 적어도 「보낼 수 있다」가 안 되어 단추가 영영 안 떴다 —
+     적는 칸을 내주고 그 값을 안 보는 것은 적으라고 해 놓고 안 받는 것이다.
+     ⚠ 보내는 자리(coInfoFields)도 «같은 값»을 봐야 한다. 한쪽만 고치면
+       「단추는 떴는데 옛 이름으로 간다」가 된다. */
+  const f = readFields(read);
   if (String(f.bizno || '').replace(/\D/g, '').length >= 10) return true;
   /* ── CMS 자동이체 신청서만은 «업체명»으로도 보낸다 (대표 지시 2026-08-28) ──
      ⚠ 그 서식에는 **사업자번호 칸이 아예 없다.** 신청인 칸은 성명·전화·은행·계좌뿐이다.
@@ -7321,7 +7326,8 @@ function autoCmsOn(read, fields) {
    ⚠ 못 찾으면 null 을 준다. 아무 회사에나 넣느니 안 넣는 것이 맞다 — 계좌가 남의
      회사에 붙으면 되돌릴 방법이 없다(같은 이름이 둘이면 findCompanyByName 이 빈손이다). */
 function coInfoFields(read) {
-  const f = Object.assign({}, (read && read.fields) || {});
+  /* ⚠ 막는 쪽(canSendCoInfo)과 «같은 값»이다 — readFields 한 곳을 본다 */
+  const f = Object.assign({}, readFields(read));
   if (String(f.bizno || '').replace(/\D/g, '').length >= 10) return Promise.resolve(f);
   const name = String(f.company || '').trim();
   if (!name || !window.PuDocFile || !PuDocFile.findCompanyByName) return Promise.resolve(null);
@@ -9283,7 +9289,16 @@ function checkWhy(it) {
   if (r.kind === 'timesheet') return '근태표 — 표를 원본과 대조';
   /* 서식은 기업 상세로 보낼 것이 남았을 때만 — 보냈거나 보낼 수 없으면 보관만 한다. */
   if (r.kind === 'form' || r.kind === 'cms' || r.kind === 'bankbook') {
-    return formTodo(r) ? '🏢 기업 상세로 아직 안 보냄 — 보내기' : '';
+    if (formTodo(r)) return '🏢 기업 상세로 아직 안 보냄 — 보내기';
+    /* ⚠ 통장은 «못 보내면 조용히 멈춰» 있었다(2026-09-03 대표 물음). 사업자등록번호
+       칸이 없어 열쇠가 상호뿐인데 그 이름으로 업체를 못 찾으면, 읽어 놓고 아무 데도
+       안 가고 할 일에도 안 떴다 — 사람은 왜 안 들어갔는지 알 길이 없다.
+       ⚠ 치울 길을 함께 둔다(「그냥 보관」 = coSkip) — 아니면 업체가 없는 통장이
+         영영 지워지지 않는 ⚠ 로 남는다. */
+    if (r.kind === 'bankbook' && !(r.filedInfo && r.filedInfo.at) && !(r.coSkip && r.coSkip.at)) {
+      return '📗 어느 업체 것인지 몰라 못 보냈습니다 — 상호를 적거나 그냥 보관';
+    }
+    return '';
   }
   /* ── 근로자 서류 넷 (대표 결정 2026-09-01) ──
      ⚠ 「스스로 통과 못 함」 줄보다 **먼저** 판정한다. 판독기가 이 넷을 일부러
@@ -12368,6 +12383,11 @@ const READ_ROWS = [
        그 판단에 필요한 단 하나의 값이 화면에 없었다. */
   ['issueDate', '발급일'], ['agent', '수임인'], ['purpose', '수집·이용 목적'],
   ['position', '직위'], ['hireDate', '근로 시작일'], ['termType', '기간의 정함'],
+  /* 통장·계좌 — 이름표가 없으면 판독은 됐는데 표에 한 줄도 안 나와 「안 읽혔다」로 보인다.
+     ⚠ 평생계좌를 계좌번호와 «갈라» 적는다(대표 지시 2026-09-03) — 한 칸에 뭉치면
+       어느 쪽이 담긴 것인지 몰라 그 값으로 자동이체를 걸 수가 없다. */
+  ['bankName', '은행'], ['bankAcct', '계좌번호'], ['bankAcctAlt', '평생계좌'],
+  ['bankHolder', '예금주'], ['acctType', '예금종류'],
   ['dept', '부서'], ['title', '직책'], ['mobile', '휴대폰'], ['tel', '전화'],
   ['companyTel', '대표번호'], ['email', '이메일'], ['address', '소재지'], ['companyAddr', '회사주소']
 ];
@@ -12573,22 +12593,39 @@ function staleBox(it) {
    왜 여기 있나: 읽은 칸 바로 아래다(임금 칸과 같은 자리). 표 안에 섞어 두면
    「고칠 수 있는 칸」인 줄 모르고 지나친다 — 임금에서 이미 배운 것이다.
    ⚠ 이미 보낸 것에는 안 낸다(위 주석 참고). */
+/* ⚠ 통장·CMS·서식도 **회사를 못 찾으면 갈 곳이 없다**(2026-09-03). 통장에는
+   사업자등록번호 칸이 아예 없어 열쇠가 상호 하나뿐인데, 「동탄반송점 …」처럼
+   지점 이름이면 업체관리의 이름과 안 맞는다 — 그때 사람이 상호를 적을 수 있어야 한다.
+   그 셋에는 «회사»만 묻는다(CO_FIX_KINDS) — 이름은 그 서류에서 쓸 데가 없다. */
+const CO_FIX_KINDS = { bankbook: 1, cms: 1, form: 1 };
+function fixKeysOf(read) {
+  return (read && CO_FIX_KINDS[read.kind])
+    ? FIX_KEYS.filter(function (p) { return p[0] === 'company'; }) : FIX_KEYS;
+}
 function fixBoxOn(read) {
-  if (!read || read.error || !WORKER_KINDS[read.kind]) return false;
+  if (!read || read.error) return false;
+  if (CO_FIX_KINDS[read.kind]) return !(read.filedInfo && read.filedInfo.at);
+  if (!WORKER_KINDS[read.kind]) return false;
   return !(read.filedWk && read.filedWk.at);
 }
 
+/* 왜 기업 상세로 못 가는지 — 아무 말 없이 단추만 없으면 「왜 안 되지」로 시간을 버린다 */
+function coWhyNot(read) {
+  if (!read || read.error || !CO_FIX_KINDS[read.kind]) return '';
+  if (canSendCoInfo(read)) return '';
+  return '어느 업체 것인지 몰라 기업 상세로 못 보냈습니다 — 상호를 적어 주세요';
+}
 function fixBox(it) {
   const read = it && it.meta && it.meta.read;
   if (!fixBoxOn(read)) return '';
   const f = readFields(read);
-  const why = workerWhyNot(read);
+  const why = CO_FIX_KINDS[read.kind] ? coWhyNot(read) : workerWhyNot(read);
   /* 남의 사진은 «보기만» — 손댈 수 없는데 칸을 내주면 적어도 안 담긴다 */
   if (viewingOther()) {
     return why ? '<div class="fixbox"><div class="t">✏ ' + esc(why) + '</div>' +
       '<div class="d">올린 분만 채울 수 있습니다.</div></div>' : '';
   }
-  const rows = FIX_KEYS.map(function (p) {
+  const rows = fixKeysOf(read).map(function (p) {
     return '<div class="row"><label>' + esc(p[1]) + '</label>' +
       '<input id="fx_' + p[0] + '" type="text" value="' + esc(String(f[p[0]] || '')) + '"' +
       ' placeholder="' + (p[0] === 'name' ? '예: 김철수' : '예: (주)한빛') + '"></div>';
@@ -12615,8 +12652,11 @@ function fixSave() {
   if (!id || blockedIfOther(id)) return;
   const it = gridItems.find(function (x) { return x.id === id; });
   if (!it || !it.meta.read) return;
-  const fix = { at: Date.now(), by: PuPhotoStore.myName() || '' };
-  FIX_KEYS.forEach(function (p) {
+  /* ⚠ 이미 채워 둔 것을 **이어받는다**(2026-09-03). 통장에는 이름 칸을 안 그리는데
+     빈 판에서 새로 만들면, 저장 한 번에 그 이름이 조용히 지워진다. */
+  const fix = Object.assign({}, (it.meta.read.fix || {}),
+    { at: Date.now(), by: PuPhotoStore.myName() || '' });
+  fixKeysOf(it.meta.read).forEach(function (p) {
     fix[p[0]] = ((($('fx_' + p[0]) || {}).value) || '').trim();
   });
   const read = Object.assign({}, it.meta.read, { fix: fix });
@@ -12627,6 +12667,26 @@ function fixSave() {
   PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id)).catch(function (e) {
     console.warn('[이름·회사 채우기]', e);
     alert('채운 값을 저장하지 못했습니다: ' + ((e && e.message) || e));
+  });
+}
+
+/* 「업체 없음 · 그냥 보관」 — 개인 통장처럼 붙일 업체가 애초에 없는 것.
+   ⚠ 사진도 판독값도 그대로 둔다. 치우는 것은 «할 일 표시» 하나뿐이다 —
+     답했다고 값까지 없애면 잘못 눌렀을 때 잃는 것이 너무 크다(겹침 물음과 같은 태도).
+   ⚠ 마음이 바뀌면 상호를 적어 저장하면 된다. 그때 「보내기」 단추가 다시 뜬다. */
+function coSkipSave() {
+  const id = viewerId;
+  if (!id || blockedIfOther(id)) return;
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it || !it.meta.read) return;
+  const read = Object.assign({}, it.meta.read,
+    { coSkip: { at: Date.now(), by: PuPhotoStore.myName() || '' } });
+  it.meta = Object.assign({}, it.meta, { read: read });
+  renderReadPanel(it);
+  renderGridBar();
+  renderGrid();
+  PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id)).catch(function (e) {
+    console.warn('[그냥 보관]', e);
   });
 }
 
@@ -13618,6 +13678,18 @@ function renderReadPanel(it) {
     /* 서식인데 사업자번호를 못 읽었다 — 왜 단추가 없는지 말해 준다.
        아무 말 없이 단추만 없으면 「왜 안 되지」로 시간을 버린다. */
     box += '<p class="note">🏢 사업자번호를 읽지 못해 기업 상세로 보낼 수 없습니다 — 위에서 채워 주세요</p>';
+  } else if (!read.error && read.kind === 'bankbook') {
+    /* ── 통장은 «못 보내면 조용히 멈춰» 있었다 (대표 물음 2026-09-03) ──
+       통장에는 사업자등록번호 칸이 아예 없어 열쇠가 상호 하나뿐인데, 「동탄반송점 …」처럼
+       지점 이름이면 업체관리의 이름과 안 맞는다. 그때 아무 말도 없이 끝나서,
+       사람은 읽힌 계좌가 «어디로도 안 갔다»는 것조차 몰랐다.
+       ⚠ 치울 길을 함께 준다 — 업체가 없는 통장(개인 통장 등)이 영영 안 없어지는
+         ⚠ 로 남으면, 그 표시를 아무도 안 믿게 된다. */
+    box += (read.coSkip && read.coSkip.at)
+      ? '<p class="note">📗 업체 없이 그냥 보관합니다 — ' +
+        esc(whenText(read.coSkip.at)) + ' · ' + esc(read.coSkip.by || '') + '</p>'
+      : '<p class="note">📗 어느 업체 것인지 몰라 기업 상세로 못 보냈습니다 — 위에 상호를 적어 주세요</p>' +
+        '<button class="again" onclick="coSkipSave()">업체 없음 · 그냥 보관</button>';
   }
 
   /* 👷 근로자 정보함 — 신분증·등본·위임장·동의서는 회사가 아니라 «사람»에게 간다.
