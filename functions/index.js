@@ -2441,6 +2441,209 @@ exports.weeklyNewsBrief = functions
     return null;
   });
 
+
+// ════════════════════════════════════════════════════════════════════════════
+// 한국공인노무사회 자료 가져오기 (대표 지시 2026-09-03)
+// ════════════════════════════════════════════════════════════════════════════
+// 「여기에서 자료와 데이터를 찾아서 가지고 와라. 정보도 첨부하고 첨부자료도 넣어야 한다.
+//   비번아이디를 연결해서 자동으로 되게 처리해달라.」 → 방식 「나」(로그인해서 첨부까지) 승인.
+//
+// ★ 아이디·비밀번호는 «서버 비밀값»으로만 온다 — 저장소에 적지 않는다.
+//   대표께서 직접 넣으시고, 코드는 값을 못 본다(다음메일 암호와 같은 방식).
+//     firebase functions:secrets:set ILABOR_ID
+//     firebase functions:secrets:set ILABOR_PW
+//
+// ★ 글자 다루는 일은 전부 functions/ilabor-parse.js 가 한다. 여기는 «바깥을 두드리는» 일만.
+//   그래야 읽개를 인터넷 없이 검사할 수 있다(news-brief 와 같은 짜임).
+//
+// ⚠ 남의 서버다 — 예의를 지킨다.
+//   · 이미 가진 것은 다시 안 부른다 · 한 번에 가져오는 수에 상한을 둔다
+//   · 부를 때마다 잠깐 쉰다 · 실패하면 그 자리에서 멈추고 말한다
+// ⚠ 사이트가 «프로그램 접속을 막는다» — 브라우저 표시가 없으면 보안장비로 튕겨 낸다.
+//   대표께 이 사실을 알리고 진행 결정을 받았다.
+// ⚠ 창고(Storage)는 무료 한도가 없다. 첨부는 한 파일 20MB · 자료당 5개까지만 담는다.
+const 노무사회 = require("./ilabor-parse");
+
+/* 쿠키를 손으로 든다 — 세션(PHPSESSID)이 없으면 로그인 뒤에도 계속 「막힘」이 온다 */
+function 쿠키그릇() {
+  const 통 = {};
+  return {
+    담기(res) {
+      const 것 = (res.headers.getSetCookie ? res.headers.getSetCookie() : [])
+        .concat(res.headers.get("set-cookie") ? [res.headers.get("set-cookie")] : []);
+      것.forEach((줄) => {
+        const m = /^\s*([^=;]+)=([^;]*)/.exec(String(줄 || ""));
+        if (m) 통[m[1].trim()] = m[2];
+      });
+    },
+    글자() { return Object.keys(통).map((k) => k + "=" + 통[k]).join("; "); },
+    있나() { return Object.keys(통).length > 0; }
+  };
+}
+
+async function 노무사회부르기(주소, 그릇, 더할것) {
+  const res = await fetch(주소, Object.assign({
+    redirect: "manual",
+    headers: Object.assign({
+      "User-Agent": 노무사회.브라우저표시,
+      "Accept": "text/html,application/xhtml+xml,*/*",
+      "Accept-Language": "ko-KR,ko;q=0.9",
+      "Referer": 노무사회.사이트
+    }, (그릇 && 그릇.있나()) ? { Cookie: 그릇.글자() } : {})
+  }, 더할것 || {}));
+  if (그릇) 그릇.담기(res);
+  return res;
+}
+const 잠깐 = (ms) => new Promise((ok) => setTimeout(ok, ms));
+
+/* 로그인 — 되면 쿠키가 든 그릇을 돌려준다 */
+async function 노무사회로그인(아이디, 암호) {
+  const 그릇 = 쿠키그릇();
+  /* 먼저 로그인 쪽을 한 번 열어 세션을 받는다(바로 POST 하면 세션이 없다) */
+  await 노무사회부르기(노무사회.사이트 + "login01.php", 그릇);
+  const 몸 = new URLSearchParams({ id: String(아이디 || ""), pw: String(암호 || "") });
+  const res = await 노무사회부르기(노무사회.사이트 + "include/login_proc.php", 그릇, {
+    method: "POST",
+    body: 몸.toString(),
+    headers: {
+      "User-Agent": 노무사회.브라우저표시,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Referer": 노무사회.사이트 + "login01.php",
+      Cookie: 그릇.글자()
+    }
+  });
+  const 답 = await res.text();
+  const 판정 = 노무사회.로그인됐나(답);
+  if (!판정.ok) throw new Error("로그인 실패: " + (판정.까닭 || "까닭을 모른다"));
+  return 그릇;
+}
+
+exports.ilaborPull = functions
+  .region(MAIL_REGION)
+  .runWith({ secrets: ["ILABOR_ID", "ILABOR_PW"], timeoutSeconds: 540, memory: "512MB" })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+
+    let sender;
+    try { sender = await requireStaff(req); }
+    catch (e) { res.status(e.status || 401).json({ ok: false, error: String(e.message || e) }); return; }
+
+    const db = getDatabase();
+    /* ⚠ 총괄관리자만 — 회원 계정으로 남의 사이트에 들어가는 일이다 */
+    const 권 = (await db.ref("uid_roles/" + sender.uid).once("value")).val() || {};
+    if (권.isAdmin !== true) { res.status(403).json({ ok: false, error: "총괄관리자만 쓸 수 있습니다." }); return; }
+
+    const 몸 = (req.body && typeof req.body === "object") ? req.body : {};
+    /* peek = 첫 자료 하나만 열어 «원본을 남긴다»(상세 모양 맞추기용)
+       list = 목록만 담는다 (첨부 안 내려받음)
+       full = 새 자료의 상세와 첨부까지 */
+    const 방식 = ["peek", "list", "full"].indexOf(String(몸.mode || "list")) >= 0 ? String(몸.mode || "list") : "list";
+    const 상한 = Math.max(1, Math.min(30, Number(몸.limit) || 10));
+    const 아이디 = process.env.ILABOR_ID, 암호 = process.env.ILABOR_PW;
+    if (!아이디 || !암호) {
+      res.status(400).json({ ok: false, error:
+        "아이디·비밀번호가 서버에 없습니다. 대표님이 한 번만 넣어 주세요:\n" +
+        "firebase functions:secrets:set ILABOR_ID\nfirebase functions:secrets:set ILABOR_PW" });
+      return;
+    }
+
+    try {
+      const 그릇 = await 노무사회로그인(아이디, 암호);
+
+      /* ── 목록 ── */
+      const 목록쪽 = await (await 노무사회부르기(노무사회.사이트 + "sub09_01.php?cate1=100&page=1", 그릇)).text();
+      if (노무사회.막혔나(목록쪽)) throw new Error("목록이 막혔다 — 로그인이 풀렸다");
+      const 목록 = 노무사회.목록읽기(목록쪽);
+      if (!목록.length) throw new Error("목록에서 한 줄도 못 읽었다 — 쪽 모양이 바뀐 듯하다");
+
+      const 가진것 = (await db.ref("ilabor/items").once("value")).val() || {};
+      const 새것 = 노무사회.새것고르기(목록, 가진것, 상한);
+
+      /* ── 엿보기: 상세 원본을 남겨 사람이 눈으로 맞춘다 ── */
+      if (방식 === "peek") {
+        const 하나 = 새것[0] || 목록[0];
+        const 원본 = await (await 노무사회부르기(하나.주소, 그릇)).text();
+        const 읽음 = 노무사회.상세읽기(원본);
+        await db.ref("ilabor/peek").set({
+          sid: 하나.sid, 제목: 하나.제목, 주소: 하나.주소,
+          크기: 원본.length, 막혔나: 노무사회.막혔나(원본),
+          읽음: 읽음, 원본조각: 원본.slice(0, 12000),
+          본때: Date.now(), 본이: sender.email || ""
+        });
+        res.json({ ok: true, mode: "peek", sid: 하나.sid, 크기: 원본.length,
+          읽음: 읽음, 목록수: 목록.length, 쪽수: 노무사회.쪽수(목록쪽) });
+        return;
+      }
+
+      /* ── 목록만 ── */
+      const 담기 = {};
+      목록.forEach((x) => {
+        담기[x.sid] = Object.assign({}, 가진것[x.sid] || {}, {
+          고유번호: x.고유번호, sid: x.sid, 제목: x.제목, 기관: x.기관, 날짜: x.날짜,
+          주소: x.주소, 본때: Date.now()
+        });
+      });
+      await db.ref("ilabor/items").update(담기);
+
+      if (방식 === "list") {
+        await db.ref("ilabor/meta").update({ 마지막: Date.now(), 마지막이: sender.email || "",
+          쪽수: 노무사회.쪽수(목록쪽), 목록수: 목록.length });
+        res.json({ ok: true, mode: "list", 목록수: 목록.length, 새것: 새것.length,
+          쪽수: 노무사회.쪽수(목록쪽) });
+        return;
+      }
+
+      /* ── 상세 + 첨부 ── */
+      const bucket = getStorage().bucket();
+      const 결과 = [];
+      for (const 하나 of 새것) {
+        await 잠깐(700);                       /* 남의 서버를 몰아치지 않는다 */
+        const 원본 = await (await 노무사회부르기(하나.주소, 그릇)).text();
+        const 읽음 = 노무사회.상세읽기(원본);
+        if (!읽음.ok) { 결과.push({ sid: 하나.sid, ok: false, 까닭: 읽음.까닭 }); continue; }
+
+        const 담은첨부 = [];
+        for (const 첨 of 노무사회.첨부거르기(읽음.첨부)) {
+          try {
+            await 잠깐(400);
+            const r = await 노무사회부르기(첨.주소, 그릇);
+            const 길이 = Number(r.headers.get("content-length") || 0);
+            if (노무사회.너무크나(길이)) { 담은첨부.push({ 이름: 첨.이름, 건너뜀: "너무 크다(" + 길이 + "B)" }); continue; }
+            const buf = Buffer.from(await r.arrayBuffer());
+            if (노무사회.너무크나(buf.length)) { 담은첨부.push({ 이름: 첨.이름, 건너뜀: "너무 크다" }); continue; }
+            const 자리 = 노무사회.창고자리(하나.sid, 첨.이름 || 노무사회.파일이름(첨.주소));
+            const 파일 = bucket.file(자리);
+            const 토큰 = crypto.randomUUID();
+            await 파일.save(buf, { metadata: {
+              contentType: r.headers.get("content-type") || "application/octet-stream",
+              metadata: { firebaseStorageDownloadTokens: 토큰 }
+            } });
+            담은첨부.push({ 이름: 첨.이름, 크기: buf.length, 자리: 자리,
+              주소: "https://firebasestorage.googleapis.com/v0/b/" + bucket.name
+                + "/o/" + encodeURIComponent(자리) + "?alt=media&token=" + 토큰 });
+          } catch (e) {
+            담은첨부.push({ 이름: 첨.이름, 건너뜀: String((e && e.message) || e).slice(0, 120) });
+          }
+        }
+
+        await db.ref("ilabor/items/" + 하나.sid).update({
+          본문: 읽음.본문 || "", 첨부: 담은첨부, 가져온때: Date.now()
+        });
+        결과.push({ sid: 하나.sid, ok: true, 제목: 하나.제목, 첨부: 담은첨부.length });
+      }
+
+      await db.ref("ilabor/meta").update({ 마지막: Date.now(), 마지막이: sender.email || "",
+        쪽수: 노무사회.쪽수(목록쪽), 목록수: 목록.length });
+      res.json({ ok: true, mode: "full", 목록수: 목록.length, 가져온것: 결과 });
+    } catch (e) {
+      /* ⚠ 조용히 넘기지 않는다 — 왜 아무것도 안 왔는지 말해 준다 */
+      console.warn("[노무사회]", e && e.message);
+      res.status(500).json({ ok: false, error: String((e && e.message) || e) });
+    }
+  });
+
 exports.publishSite = functions
   .runWith({ timeoutSeconds: 120, memory: "256MB", secrets: ["GITHUB_AUTOMATION_TOKEN"] })
   .https.onRequest(async (req, res) => {
