@@ -7512,6 +7512,9 @@ async function erpLoadAll(){
       /* 부담당도 함께 맞춘다 — 직원 맞춤 **뒤에** 와야 한다.
          사번·재직 여부가 정해진 뒤라야 누구를 올릴 수 있는지 판단할 수 있다. */
       try{ erpSyncSubsDown(); }catch(err){ console.warn('[부담당 맞춤]',err); }
+      /* 이알피에서 끝낸 컨설팅을 여기서도 끝낸다 — 부담당 맞춤과 같은 자리라
+         「옛 사본이면 건너뛴다」는 막이 그대로 걸린다. */
+      try{ erpSyncClosedDown(); }catch(err){ console.warn('[종료 맞춤]',err); }
     }else{
       console.warn('[푸른ERP] 이 브라우저 사본이 클라우드보다 옛것입니다 — 맞추기를 건너뜁니다');
     }
@@ -8019,6 +8022,48 @@ async function coAddSubsFromSched(coId,added){
 
 /* ── 내려받기: 푸른이알피 → 정부컨설팅 ──
    이알피를 읽을 때마다 한 번. 바뀐 것이 없으면 아무것도 저장하지 않는다. */
+/* ══ 푸른이알피에서 끝낸 컨설팅을 일정관리에서도 끝낸다 (대표 지시 2026-09-03) ══
+   푸른이알피 사무관리 → 컨설팅관리에서 「종료」를 누르면 그 건은 끝난 것인데,
+   일정관리에는 그대로 남아 다음 회차가 계속 밀려 나왔다.
+
+   ★ «더하기만» 한다 — 이알피에서 다시 열어도 일정관리 종료를 되살리지 않는다.
+     부담당 거울과 같은 원칙(2026-08-31). 되살리면 사람이 일정관리에서 직접 끝낸 것이
+     이알피 재개 한 번에 조용히 되돌아온다 — 끝낸 일이 살아나는 쪽이 훨씬 나쁘다.
+   ⚠ 옛 사본으로 읽은 판에서는 하지 않는다(부르는 자리에서 막는다) —
+     몇 달 전 사본으로 지금 도는 컨설팅을 끝내 버리면 회차가 통째로 멈춘다.        */
+/* 언제 끝났나. 안 끝났으면 빈 글자.
+   ⚠ 이알피 「종료」는 status:closed + closedAt 을 적고 closedDate 는 «안 적는다» —
+     셋 다 봐야 한다(erpBuildPlan 이 빼는 잣대와 같게 맞췄다). */
+function erpClosedOn(c){
+  if(!c)return '';
+  if(!(c.status==='closed'||c.closedDate||c.closedAt))return '';
+  const s=String(c.endDate||c.closedDate||c.closedAt||'').slice(0,10);
+  /* 날짜가 없거나 알아볼 수 없으면 오늘로 적는다 — 끝난 것은 분명하니 안 끝낼 수는 없다 */
+  return /^\d{4}-\d{2}-\d{2}$/.test(s)?s:todayStr();
+}
+function erpSyncClosedDown(){
+  if(!ERP.loaded)return 0;
+  const map=getErpTypeMap(), cos=getCos(), touched=[];
+  ERP.consultings.forEach(c=>{
+    const when=erpClosedOn(c);
+    if(!when)return;                                   // 아직 도는 건
+    const code=erpConsCode(c);
+    const tid=code?map[code]:'';
+    if(!tid)return;                                    // 어느 종류인지 모르면 손대지 않는다
+    const co=findCoForErp(cos,c.id,String(c.companyName||'').trim()).co;
+    if(!co)return;                                     // 일정관리에 아직 안 들어온 건
+    if(!(co.types||[]).includes(tid))return;
+    if(co.endedTypes&&co.endedTypes[tid])return;       // 이미 끝나 있다 — 날짜를 덮지 않는다
+    if(!co.endedTypes)co.endedTypes={};
+    co.endedTypes[tid]=when;
+    touched.push(co.name);
+  });
+  if(!touched.length)return 0;
+  setCos(cos);
+  toast(`🔒 푸른이알피에서 끝난 컨설팅 ${touched.length}건을 종료했습니다 — ${touched.slice(0,3).join(', ')}${touched.length>3?` 외 ${touched.length-3}곳`:''}`);
+  try{ renderDash();renderCal(); }catch(e){}
+  return touched.length;
+}
 function erpSyncSubsDown(){
   if(!ERP.loaded||!myId())return 0;
   if(!ERP.consultings.length)return 0;        // 덜 읽힌 판으로 지우지 않는다
