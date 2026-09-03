@@ -3886,12 +3886,66 @@ function rhSetDomain(domain){
    「저장했는데 보관함에 안 보인다」가 됐다. 화면을 합쳤으니 그릴 곳도 하나다. */
 
 /* ===== PDF 편집 (pdf-lib) ===== */
-var _pdfEditDoc=null, _pdfEditPage=0, _pdfEditScale=1.4, _pdfEditTexts=[], _pdfEditName='';
+var _pdfEditDoc=null /* PDF 가 열려 있나 (참·거짓) */, _pdfEditPage=0, _pdfEditScale=1.4, _pdfEditTexts=[], _pdfEditName='';
+/* ★ 올린 PDF 의 «원본 바이트» 를 그대로 들고 있는다 (2026-09-03)
+   전에는 편집 중인 문서(_pdfEditDoc) 에 곧바로 글자를 그려 넣고 그것을 저장했다.
+   문서를 덮어쓰니 결함이 셋 생겼다 —
+     ① 저장을 두 번 누르면 글자가 «두 번» 그려지고 폰트도 두 번 실린다(+2MB)
+     ② 저장한 뒤에는 되돌리기가 안 먹는다 (이미 문서에 박혀서)
+     ③ 되돌리기로 다시 그리면 «남은 글자들» 의 미리보기까지 사라진다
+   원본을 지키고 저장할 때마다 «새 문서» 를 지으면 셋이 함께 사라진다. */
+var _pdfEditSrc=null;
 async function _loadPdfLib(){
   if(window.PDFLib) return;
   await new Promise((res,rej)=>{ const s=document.createElement('script');
     s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';
     s.onload=res; s.onerror=rej; document.head.appendChild(s); });
+}
+
+/* ═══ PDF 에 «한글» 넣기 (대표 지시 2026-09-02 「가로」) ═══
+   기관이 PDF 로 보낸 빈 서식에 한글이 «한 자도» 안 들어갔다. pdf-lib 이 딸려 주는
+   Helvetica 는 서유럽 글자만 담는 폰트라, 실측하면 조용히 비는 것도 아니고
+   그 자리에서 터진다: WinAnsi cannot encode "권" (0xad8c).
+   그래서 인쇄해 손으로 쓰거나 한글 프로그램으로 다시 만들어야 했다.
+
+   ★ 고치는 길은 «폰트를 함께 넣는 것»뿐이다(pdf-lib + fontkit).
+     나눔고딕(SIL OFL, 자유롭게 배포 가능)을 저장소에 담아 두고 실어 쓴다.
+   ⛔ subset:true 를 켜면 «안 된다» — 한글이 글자째로 사라진다.
+     솔깃한 손잡이다(켜면 PDF 9KB, 끄면 730KB). 그래서 처음에 켰고, 그 결과가 이렇다:
+       「권형하 · 공인노무사 등록번호」 → 「권형하 ·   노     호」
+     (진짜 자격번호는 여기 안 적는다 — tests/kcareer-html.test.js 가 막는다)
+     터지지도, 물음표도 아니고 «그냥 빈자리» 다 — 눈으로 안 보면 못 잡는다.
+     까닭(실측): @pdf-lib/fontkit 의 subset 이 한글의 «합성글립» 부품을 같이 안 담는다.
+       박힌 폰트를 다시 뜯어 재 보면 — subset 켬: 그린 글립 16개 중 6개가 «획 0개»
+                                     subset 끔: 16개 중 1개(빈칸 — 원래 획이 없다)
+     ⇒ 크기를 줄이려고 다시 켜지 말 것. 이력서 한 장 730KB 는 붙임서류로 아무 문제 없다.
+     tests/kcareer-pdf-korean.test.js 가 이 자리를 지킨다.
+   ⚠ 폰트 파일은 1.96MB 다. 한 번 받아 두면 브라우저가 담아 두므로, 여기서도
+     한 번 읽은 것을 들고 있는다(같은 화면에서 여러 장 만들 때 다시 받지 않게).
+   ⚠ 맑은고딕·굴림을 쓰면 안 된다 — 남의 폰트를 우리 PDF 에 실어 내보내는 것이 된다. */
+var KO_FONT_URL='fonts/NanumGothic-Regular.ttf';
+var _koFontBytes=null;
+async function _loadKoFont(){
+  if(_koFontBytes) return _koFontBytes;
+  var r=await fetch(KO_FONT_URL+'?v=1');
+  if(!r.ok) throw new Error('한글 폰트를 못 받았습니다 (' + r.status + ')');
+  _koFontBytes=new Uint8Array(await r.arrayBuffer());
+  return _koFontBytes;
+}
+async function _loadFontkit(){
+  if(window.fontkit) return;
+  await new Promise((res,rej)=>{ const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js';
+    s.onload=res; s.onerror=rej; document.head.appendChild(s); });
+}
+/* 이 문서에 한글 폰트를 심고 돌려준다. 못 심으면 «까닭을 들고» 던진다 —
+   조용히 Helvetica 로 돌아가면 다시 「WinAnsi cannot encode」로 터진다. */
+async function _koFontFor(doc){
+  await _loadFontkit();
+  if(!window.fontkit) throw new Error('한글 폰트 도구를 못 불러왔습니다 — 인터넷 연결을 확인해 주세요');
+  doc.registerFontkit(window.fontkit);
+  /* subset:false — 위 ⛔ 를 읽을 것. 켜면 한글이 빈자리가 된다. */
+  return await doc.embedFont(await _loadKoFont(), { subset:false });
 }
 function initPdfEditor(){
   const drop=document.getElementById('pdfEditDrop'); const file=document.getElementById('pdfEditFile');
@@ -3922,17 +3976,40 @@ async function loadPdfForEdit(file){
   toast('⏳ PDF 로딩 중...');
   try{
     await _loadPdfLib();
-    _pdfEditDoc=await PDFLib.PDFDocument.load(buf);
+    /* 원본을 «사본으로» 붙잡아 둔다 — PDFDocument.load 가 이 버퍼를 건드릴 수 있다 */
+    _pdfEditSrc=new Uint8Array(buf).slice();
+    /* 여기서 한 번 열어 «읽을 수 있는 PDF 인지» 만 본다. 깨진 파일이면 아래 catch 가
+       까닭을 알려 준다 — 저장할 때 처음 터지면 넣던 글자를 다 잃는다.
+       그린 글자는 저장할 때 원본에서 새로 지으므로, 이 문서는 들고 있지 않는다. */
+    await PDFLib.PDFDocument.load(buf);
+    _pdfEditDoc=true;
     await _renderPdfEditPage(0);
     document.getElementById('pdfEditArea').style.display='';
     document.getElementById('pdfEditDrop').style.display='none';
     toast('PDF 열림 — 원하는 위치 클릭 후 텍스트 입력');
   }catch(e){ toast('PDF 로드 오류: '+e.message); }
 }
+/* 넣어 둔 글자를 «화면 자리» 로 옮긴다 — 넣을 때 쓴 셈(_confirmPdfText)의 거꾸로다.
+   두 자리가 어긋나면 미리보기와 실제 PDF 의 글자 자리가 달라지므로 한 군데 모아 둔다. */
+function _pdfEditXY(t, canvas){
+  return { x: t.pdfX*_pdfEditScale, y: canvas.height - t.pdfY*_pdfEditScale };
+}
+/* 이 쪽에 든 글자를 캔버스에 다시 얹는다 */
+function _pdfEditRepaint(){
+  const canvas=document.getElementById('pdfEditCanvas'); if(!canvas) return;
+  const ctx=canvas.getContext('2d'); ctx.fillStyle='#000';
+  _pdfEditTexts.forEach(function(t){
+    if((t.pageIdx||0)!==_pdfEditPage) return;
+    const p=_pdfEditXY(t, canvas);
+    ctx.font=(t.fontSize||11)*_pdfEditScale+'px Noto Serif KR, serif';
+    ctx.fillText(t.text, p.x, p.y);
+  });
+}
 async function _renderPdfEditPage(pageIdx){
-  if(!window._pdfjs||!_pdfEditDoc) return;
-  const pdfBytes=await _pdfEditDoc.save();
-  const pdf=await window._pdfjs.getDocument({ isEvalSupported: false, data:pdfBytes}).promise;
+  if(!window._pdfjs||!_pdfEditSrc) return;
+  /* 원본을 그린다 — 편집 중인 문서를 저장해 그리면, 저장을 누른 뒤부터
+     이미 박힌 글자가 겹쳐 보이고 되돌리기가 안 먹는다 */
+  const pdf=await window._pdfjs.getDocument({ isEvalSupported: false, data:_pdfEditSrc.slice()}).promise;
   _pdfEditPage=Math.min(pageIdx,pdf.numPages-1);
   const page=await pdf.getPage(_pdfEditPage+1);
   const vp=page.getViewport({scale:_pdfEditScale});
@@ -3940,6 +4017,9 @@ async function _renderPdfEditPage(pageIdx){
   canvas.width=vp.width; canvas.height=vp.height;
   canvas.style.maxWidth='100%';
   await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+  /* 이 쪽에 넣어 둔 글자를 «다시» 얹는다 — 안 얹으면 되돌리기 한 번에
+     남은 글자들의 미리보기까지 통째로 사라진다 */
+  _pdfEditRepaint();
   const info=document.getElementById('pdfEditPageInfo');
   if(info) info.textContent=pdf.numPages+'페이지 중 '+(pageIdx+1)+'페이지 · 추가된 텍스트: '+_pdfEditTexts.length+'개';
   // PDF.js 로드 확인
@@ -3969,15 +4049,20 @@ function pdfEditUndo(){
   toast('마지막 텍스트 취소됨');
 }
 async function savePdfEdited(){
-  if(!_pdfEditDoc||!_pdfEditTexts.length){ toast('추가된 텍스트가 없습니다'); return; }
+  if(!_pdfEditSrc||!_pdfEditTexts.length){ toast('추가된 텍스트가 없습니다'); return; }
   toast('⏳ PDF 생성 중...');
   try{
-    const font=await _pdfEditDoc.embedFont(PDFLib.StandardFonts.Helvetica);
+    /* ★ 원본에서 «새 문서» 를 짓는다 — 편집 중인 것에 그려 넣으면 저장을 두 번 누를 때
+       글자가 겹치고 2MB 폰트도 두 번 실린다 */
+    const out=await PDFLib.PDFDocument.load(_pdfEditSrc.slice());
+    /* ★ 한글 폰트를 심는다 — Helvetica 로는 「권」 한 자에 그 자리에서 터진다 */
+    const font=await _koFontFor(out);
+    const pages=out.getPages();
     _pdfEditTexts.forEach(function(t){
-      const pages=_pdfEditDoc.getPages(); const page=pages[t.pageIdx||0];
+      const page=pages[t.pageIdx||0]; if(!page) return;
       page.drawText(t.text,{x:t.pdfX,y:t.pdfY,size:t.fontSize||11,font:font,color:PDFLib.rgb(0,0,0)});
     });
-    const bytes=await _pdfEditDoc.save();
+    const bytes=await out.save();
     const blob=new Blob([bytes],{type:'application/pdf'});
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
     a.download=(_pdfEditName||'document').replace('.pdf','')+'_수정.pdf'; a.click();
