@@ -99,6 +99,12 @@ function rowDeps() {
     /* 구성원 갈래(노무사·직원) — 2026-09-02 에 줄과 딱지가 «둘 다» 이것을 지나게 됐다.
        안 실으면 목록을 그리다 그 자리에서 죽는다(memberKind is not defined). */
     constLine('MEMBER_KINDS'), fnSource('memberKind'),
+    /* 「홈페이지에 안 올림」 — 줄과 할 일 판정이 둘 다 이것을 지난다 (2026-09-03).
+       ⚠★ 이 상자에 «새 함수를 안 실어» 화면 검사가 통째로 죽은 것이 이번이 세 번째다
+         (memberKind · pillShort · offSiteOf). 목록·딱지·할 일이 부르는 함수를 새로 만들면
+         여기에도 반드시 한 줄 더할 것 — 안 하면 스무 개가 한꺼번에 붉어져서
+         무엇이 고장인지 못 찾는다. */
+    fnSource('offSiteOf'),
     fnSource('memberRows'), fnSource('pageIdsOf'), fnSource('pageRows'), fnSource('rowsOf'),
     fnSource('needsAttentionRow'), fnSource('statOf'),
     fnSource('statusChip'), fnSource('cardCount'), fnSource('dashHtml'),
@@ -1532,7 +1538,9 @@ function keepBox(member) {
   run(ctx, fnSource('todayString') + '\n' + fnSource('currentUserName') + '\n'
     + fnSource('histStamp') + '\n' + fnSource('saveRecord') + '\n'
     + fnSource('writeKeepOnSite') + '\n' + fnSource('keepOnSiteAsk') + '\n'
-    + fnSource('keepOnSiteClear') + '\n' + noConst(constLine('MEMBER_KINDS')) + '\n' + fnSource('memberKind') + '\n' + fnSource('loadDraft') + '\n'
+    + fnSource('keepOnSiteClear') + '\n' + noConst(constLine('MEMBER_KINDS')) + '\n' + fnSource('memberKind') + '\n'
+    /* 「홈페이지에 안 올림」 — loadDraft·saveDraft 가 둘 다 이것을 지난다 (2026-09-03) */
+    + fnSource('offSiteOf') + '\n' + fnSource('loadDraft') + '\n'
     + fnSource('markChanged') + '\n' + noConst(constLine('MEMBER_KINDS')) + '\n' + fnSource('memberKind') + '\n' + fnSource('saveDraft'));
   ctx.loadDraft();
   return ctx;
