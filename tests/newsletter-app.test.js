@@ -488,3 +488,22 @@ test('★ 「이 명단은 지금 기업정보함을…」 안내를 지웠다 (
   assert.ok(!/이 명단은 «지금» 기업정보함을 읽은 것입니다/.test(news),
     '지우라고 하신 안내가 남아 있습니다');
 });
+
+test('★ 넘버링 왼쪽에 체크칸 · 전체 선택 · 고른 것만 처리 (대표 지시)', () => {
+  /* 대표 지시 2026-09-03: 「넘버링 왼쪽 표시 체크가능하게 일괄 선택등 가능하게」
+     ⚠ 110줄에서 몇 곳만 골라 처리하려면 체크칸이 있어야 한다. 지금은 한 줄씩
+       「수신거부」를 눌러야 했다. */
+  assert.match(news, /id="chkAll"/, '전체 선택 칸이 없습니다');
+  assert.match(news, /class="chk"/, '줄마다 체크칸이 없습니다');
+  assert.match(news, /function 전체선택/, '전체 선택을 다루는 곳이 없습니다');
+  assert.match(news, /function 고른것/, '고른 것을 모으는 곳이 없습니다');
+});
+
+test('★ 고른 것이 없으면 «묻지도 않고» 멈춘다 — 빈 선택으로 110곳을 건드리면 사고다', () => {
+  const i = news.indexOf('function 고른것수신거부');
+  assert.ok(i >= 0, '고른것수신거부 가 없습니다');
+  const fn = news.slice(i, i + 900);
+  assert.match(fn, /고른것\(\)/, '고른 것을 안 읽습니다');
+  assert.match(fn, /length/, '고른 것이 몇인지 안 봅니다');
+  assert.match(fn, /confirm\(/, '묻지 않고 처리합니다');
+});
