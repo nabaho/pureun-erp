@@ -2081,15 +2081,25 @@ exports.readHomepage = functions
 const companyWebsiteMatch = require("./company-website-match");
 
 /* 업체 홈페이지 자동 찾기 (대표 지시 2026-09-02) — 업체관리에 홈페이지 URL이 없을 때
-   회사명으로 검색해 찾아 준다. 회사명·주소가 검색결과 «본문(제목+요약)»에 함께 나오는
-   것이 있으면 자동으로 확정해 저장하고, 없으면 후보만 돌려줘 사람이 고르게 한다.
+   회사명으로 검색해 찾아 준다. 회사명·주소가 함께 맞는 것이 있으면 자동으로 확정해
+   채우고, 없으면 후보만 돌려줘 사람이 고르게 한다.
    ⚠ 검색 1등 결과를 그냥 등록하면 동명 회사·블로그·뉴스기사가 걸릴 수 있다 —
      주소까지 맞아야만 자동 확정한다(안전 쪽으로 기운 판정).
-   총괄관리자만 부를 수 있다. API 키·검색엔진 ID는 비밀값(secrets)으로만 읽는다 —
-   설정: `firebase functions:secrets:set GOOGLE_SEARCH_API_KEY` /
-        `firebase functions:secrets:set GOOGLE_SEARCH_CX` */
+
+   ■ 2026-09-03 구글 → 네이버 (대표 결정 「네이버로 하자」)
+     구글 Custom Search JSON API 는 신규 고객에게 닫혀 있어(공식 문서) 키가 맞아도 403.
+     네이버 검색 API 두 갈래를 차례로 쓴다:
+       ① 지역(업체) 검색 local.json — 업체명·주소·홈페이지가 «칸으로» 온다.
+          우리 주소의 시/군/구가 네이버 주소 칸에 있고 홈페이지 링크가 있으면 확정.
+       ② 웹문서 검색 webkr.json — ①이 못 찾을 때만. 제목+요약에 회사명·주소가 함께
+          나오면 확정, 아니면 후보로만 보여준다. (①이 맞으면 ②는 안 부른다 — 하루 25,000건
+          무료 한도를 아낀다.)
+   총괄관리자만 부를 수 있다. 네이버 열쇠 둘은 비밀값(secrets)으로만 읽는다 —
+   설정: `firebase functions:secrets:set NAVER_SEARCH_CLIENT_ID` /
+        `firebase functions:secrets:set NAVER_SEARCH_CLIENT_SECRET`
+   (네이버 개발자센터 → 애플리케이션 등록 → 사용 API 「검색」) */
 exports.findCompanyWebsite = functions
-  .runWith({ timeoutSeconds: 30, memory: "256MB", secrets: ["GOOGLE_SEARCH_API_KEY", "GOOGLE_SEARCH_CX"] })
+  .runWith({ timeoutSeconds: 30, memory: "256MB", secrets: ["NAVER_SEARCH_CLIENT_ID", "NAVER_SEARCH_CLIENT_SECRET"] })
   .https.onRequest(async (req, res) => {
     setAutomationCors(req, res);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -2110,30 +2120,46 @@ exports.findCompanyWebsite = functions
       if (!name) { res.status(400).json({ error: "업체명이 없습니다." }); return; }
       const address = String((req.body && req.body.address) || "").trim();
 
-      const apiKey = process.env.GOOGLE_SEARCH_API_KEY;
-      const cx = process.env.GOOGLE_SEARCH_CX;
-      if (!apiKey || !cx) {
+      const clientId = process.env.NAVER_SEARCH_CLIENT_ID;
+      const clientSecret = process.env.NAVER_SEARCH_CLIENT_SECRET;
+      if (!clientId || !clientSecret) {
         res.status(500).json({
-          error: "검색 도구가 아직 설정되지 않았습니다 — GOOGLE_SEARCH_API_KEY / GOOGLE_SEARCH_CX 를 먼저 등록해 주세요.",
+          error: "검색 도구가 아직 설정되지 않았습니다 — NAVER_SEARCH_CLIENT_ID / NAVER_SEARCH_CLIENT_SECRET 를 먼저 등록해 주세요.",
         });
         return;
       }
 
-      const qs = new URLSearchParams({ key: apiKey, cx: cx, q: name, num: "5", hl: "ko" });
-      const resp = await fetch("https://www.googleapis.com/customsearch/v1?" + qs.toString());
-      if (!resp.ok) {
-        const body = await resp.text();
-        console.error("[findCompanyWebsite] google error", resp.status, body.slice(0, 300));
-        res.status(502).json({ error: "검색 서비스에서 응답을 받지 못했습니다 (" + resp.status + ")" });
-        return;
+      /* 네이버 검색 한 갈래를 부른다. 실패는 상태코드째로 던져 아래 catch 가 502 로 돌려준다. */
+      async function naverSearch(kind, query) {
+        const qs = new URLSearchParams({ query: query, display: "5" });
+        const resp = await fetch("https://openapi.naver.com/v1/search/" + kind + ".json?" + qs.toString(), {
+          headers: { "X-Naver-Client-Id": clientId, "X-Naver-Client-Secret": clientSecret },
+        });
+        if (!resp.ok) {
+          const body = await resp.text();
+          console.error("[findCompanyWebsite] naver " + kind + " error", resp.status, body.slice(0, 300));
+          const e = new Error("검색 서비스에서 응답을 받지 못했습니다 (" + resp.status + ")");
+          e.status = 502;
+          throw e;
+        }
+        const data = await resp.json();
+        return Array.isArray(data.items) ? data.items : [];
       }
-      const data = await resp.json();
-      const items = Array.isArray(data.items) ? data.items : [];
-      const candidates = items
-        .map((it) => ({ title: it.title || "", link: it.link || "", snippet: it.snippet || "" }))
-        .filter((c) => c.link);
 
-      const matched = companyWebsiteMatch.findMatch(candidates, name, address);
+      /* ① 지역(업체) 검색 — 주소·홈페이지가 칸으로 온다 */
+      const localCands = companyWebsiteMatch.naverLocalToCandidates(await naverSearch("local", name));
+      let matched = companyWebsiteMatch.findLocalMatch(localCands, name, address);
+
+      /* ② 못 찾았을 때만 웹문서 검색 */
+      let webCands = [];
+      if (!matched) {
+        webCands = companyWebsiteMatch.naverWebToCandidates(await naverSearch("webkr", name));
+        matched = companyWebsiteMatch.findMatch(webCands, name, address);
+      }
+
+      const candidates = companyWebsiteMatch.uniqueByLink(
+        localCands.filter((c) => c.link).concat(webCands)
+      ).map((c) => ({ title: c.title, link: c.link, snippet: c.snippet }));
 
       res.json({ matched: !!matched, url: matched ? matched.link : null, candidates: candidates });
     } catch (err) {
