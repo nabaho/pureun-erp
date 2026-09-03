@@ -11,6 +11,7 @@
 
   var VERSION = 3;
   var TERMS = {
+    companyLinkStates:{linked:'업체 ID 확인',pending:'업체 연결 보류',not_required:'근로자 의뢰 — 업체 연결 없음'},
     entityTypes: {
       Organization:'업체·기관', Person:'사람', Employment:'재직관계', Contract:'계약',
       Case:'사건', Project:'사업·컨설팅', Task:'업무', ScheduleEvent:'일정',
@@ -378,6 +379,42 @@
     return {ok:true,key:key,organization:{id:org.id,label:clean(org.label||org.id),program:clean(org.program||'erp')},total:connections.length,groups:groups,connections:connections};
   }
 
+  /* 6-1단계 계약 입력 검증. 후보 검색과 확정 ID 검증을 분리한다.
+     이 함수는 저장하지 않는다. 이름 일치만으로 companyId를 만들지 않는다. */
+  function linkName(v){return clean(v).toLowerCase().replace(/주식회사|유한회사|㈜|[\s()（）·.,_\-]/g,'');}
+  function validateCompanyLink(record,companies){
+    record=record||{};
+    var co=record.company&&typeof record.company==='object'?record.company:{};
+    var top=clean(record.companyId),nested=clean(co.companyId),id=top||nested;
+    function result(ok,code,message,status){return {ok:ok,code:code,message:message,status:status||'blocked',companyId:ok?id:''};}
+    if(top&&nested&&top!==nested)return result(false,'conflicting_company_ids','계약과 회사정보의 업체 ID가 다릅니다. 업체 연결에서 다시 선택하세요.');
+    if(id&&record.companyLinkStatus==='pending')return result(false,'pending_company_id','연결 보류 상태에 업체 ID가 남아 있습니다. 업체를 다시 선택하거나 연결 보류를 다시 지정하세요.');
+    if(!id){
+      if(record.clientType==='worker')return result(true,'company_not_required','근로자 의뢰 — 업체 연결 없음','not_required');
+      if(record.companyLinkStatus==='pending')return result(true,'company_link_pending','연결 보류 — 업체정보 동기화 안 함','pending');
+      return result(false,'company_selection_required','업체를 선택하거나 신규·미확정 업체는 연결 보류를 선택하세요.');
+    }
+    if(!Array.isArray(companies))return result(false,'companies_unavailable','업체 목록을 확인할 수 없습니다. 목록을 불러온 뒤 다시 저장하세요.');
+    var hits=companies.filter(function(x){return x&&!x._deleted&&clean(x.id)===id;});
+    if(hits.length!==1)return result(false,hits.length?'duplicate_company_id':'orphan_company','업체 ID가 없거나 중복되어 연결할 수 없습니다. 업체관리에서 확인하세요.');
+    var target=hits[0],biz=normBiz(co.bizNo!==undefined?co.bizNo:record.bizNo),targetBiz=normBiz(target.bizNo||target.bizno);
+    if(biz&&targetBiz&&biz!==targetBiz)return result(false,'company_business_mismatch','선택한 업체와 입력한 사업자번호가 다릅니다. 업체 연결을 다시 확인하세요.');
+    var name=linkName(co.name!==undefined?co.name:record.companyName),targetName=linkName(target.name||target.companyName);
+    if(name&&targetName&&name!==targetName&&!(biz&&targetBiz&&biz===targetBiz))return result(false,'company_name_mismatch','입력한 회사명과 선택한 업체가 다릅니다. 업체를 다시 선택하세요.');
+    return result(true,'company_link_valid','업체 ID 확인 완료','linked');
+  }
+  function companyLinkCandidates(record,companies,query){
+    record=record||{};var co=record.company&&typeof record.company==='object'?record.company:{},q=clean(query).toLowerCase();
+    var id=clean(record.companyId||co.companyId),name=linkName(co.name||record.companyName),biz=normBiz(co.bizNo||record.bizNo);
+    return arr(companies).filter(function(x){
+      if(!clean(x.id))return false;
+      if(clean(x.id)===id)return true;
+      if(q)return [x.name,x.companyName,x.id,x.bizNo,normBiz(x.bizNo)].join(' ').toLowerCase().indexOf(q)>=0;
+      return (biz&&normBiz(x.bizNo)===biz)||(name&&linkName(x.name||x.companyName)===name);
+    }).sort(function(a,b){return clean(a.id)===id?-1:clean(b.id)===id?1:clean(a.name).localeCompare(clean(b.name),'ko');})
+      .slice(0,100).map(function(x){return {id:clean(x.id),name:clean(x.name||x.companyName),bizNo:clean(x.bizNo)};});
+  }
+
   /* 5단계 검증센터. 진단 결과를 사람이 한 건씩 검토할 작업목록으로 바꾼다.
      검토 상태는 화면 메모일 뿐이며 원본이나 서버에 기록하지 않는다. */
   var VALIDATION_CATEGORIES={
@@ -494,7 +531,8 @@
 
   return { VERSION:VERSION, TERMS:TERMS, PROGRAMS:PROGRAMS, STORE_TYPES:STORE_TYPES, READ_ADAPTERS:READ_ADAPTERS,
     audit:audit, auditIntegrated:auditIntegrated, getReadPlan:getReadPlan, searchEntities:searchEntities, entityConnections:entityConnections,
-    organization360:organization360, VALIDATION_CATEGORIES:VALIDATION_CATEGORIES, buildValidationQueue:buildValidationQueue,
+    organization360:organization360, validateCompanyLink:validateCompanyLink, companyLinkCandidates:companyLinkCandidates,
+    VALIDATION_CATEGORIES:VALIDATION_CATEGORIES, buildValidationQueue:buildValidationQueue,
     filterValidationQueue:filterValidationQueue, buildSnapshot:buildSnapshot, validateSnapshot:validateSnapshot, auditPrograms:auditPrograms,
     canonicalId:canon, sourceCanonicalId:sourceCanon, normalizeCompanyName:normName, normalizeBusinessNumber:normBiz };
 });
