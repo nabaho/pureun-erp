@@ -1532,16 +1532,31 @@
     return String(s || '').replace(/\(.*?\)|㈜|주식회사|유한회사|\s/g, '');
   }
 
+  /* ⚠ 이름이 «그대로» 같은 곳이 있으면 그것이 먼저다 (2026-09-03).
+       예전에는 긴 이름부터 훑으며 「담고 있나」만 봤다. 그래서 파일 이름이 「천성」일 때
+       목록에 «천성»이 버젓이 있는데도 «천성가축약품»을 골랐다 — 긴 쪽을 먼저 보고
+       「천성가축약품」이 「천성」을 담고 있다고 판정한 것이다.
+       PR #837 이 「「천성」은 「천성가축약품」과 다른 곳」이라고 못 박은 그 쌍이다.
+       그대로 같은 것을 «한 바퀴 먼저» 찾으면 이 자리가 사라진다.
+     ⚠ 「천성전자」가 「천성」으로 걸리는 것은 이 함수로 못 막는다 —
+       「화담원 아산점」이 「화담원」의 지점이라 «이름 뒤에 글자가 붙으면 다른 곳»으로
+       볼 수가 없다(그 검사가 이 파일에 있다). 말로 가릴 수 없는 자리이므로
+       사람이 고른 이름표가 이기게 두었다(guessTag 는 짐작일 뿐이다). */
   function matchCompanyName(text, list) {
     var want = coreName(text);
     if (!want) return null;
     var sorted = (list || []).slice().sort(function (a, b) {
       return coreName(b.name).length - coreName(a.name).length;
     });
-    for (var i = 0; i < sorted.length; i++) {
-      var c = coreName(sorted[i].name);
+    var i, c;
+    for (i = 0; i < sorted.length; i++) {
+      c = coreName(sorted[i].name);
+      if (c && c === want) return sorted[i];
+    }
+    for (i = 0; i < sorted.length; i++) {
+      c = coreName(sorted[i].name);
       if (!c) continue;
-      if (c === want || want.indexOf(c) >= 0 || c.indexOf(want) >= 0) return sorted[i];
+      if (want.indexOf(c) >= 0 || c.indexOf(want) >= 0) return sorted[i];
     }
     return null;
   }
