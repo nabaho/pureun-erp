@@ -106,7 +106,13 @@ const allowTop = ['systemAlerts','systemBackups','systemBackupsIndex','systemRes
      읽기·쓰기 모두 총괄관리자만(homepage 와 같은 잣대). 화면은 pu-news.html.
      ⚠ 직원에게 열지 말 것 — 자동으로 담을 밑감이 homepage/newsBrief 에 있어,
        열려면 홈페이지 관리의 문까지 함께 열어야 한다. */
-  'newsletter'];
+  'newsletter',
+  /* 2026-09-03 경력관리 «등록 신청함» — 직원이 PDF 를 올려 등록을 신청하는 자리.
+     대표 칸(kcareer/{uid})에 직접 쓰게 하지 않고 신청을 따로 받는 까닭은 kcareer_pub 과
+     같다: 그 칸에는 실적·비용·개인정보·신분증이 함께 들어 있다.
+     ⚠ 이 줄을 안 적어 CI 가 멈추고 **모든 앱 배포가 막혀 있었다**(2026-09-03 검토에서 찾음).
+       최상위를 늘렸으면 반드시 여기에 적을 것 — 2026-08-07 건의함 때와 같은 자리다. */
+  'kcareer_inbox'];
 
 const keys = Object.keys(R);
 const removed = baseTop.filter(function (k) { return keys.indexOf(k) < 0; });
