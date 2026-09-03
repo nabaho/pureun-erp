@@ -1293,8 +1293,103 @@
     });
   }
 
+  /* ══════════════ ✉️ 메일로 보내기 — «사진첩과 메일 사이» (대표 지시 2026-09-03) ══════════════
+     「기록 남기고 민감서류 메일」 · 승인 목업 docs/mockups/photos-mail-and-bankbook.html
+
+     ■ 왜 이 층에 있나
+     처음에는 사진첩(pu-photos.html)에 그대로 넣었다가 «다른 앱의 클라우드 루트를
+     건드리지 않는다» 검사에 걸렸다. 그 검사가 맞다 — 화면이 기업정보함의 속(자리 이름·
+     창고 이름)을 알기 시작하면, 그쪽이 바뀔 때 화면이 조용히 깨진다.
+     이 층은 원래 «사진첩 ↔ 기업정보함» 사이를 잇는 자리이고, 창고 이름도 여기 있다.
+
+     ■ ⚠⚠ 창고가 «둘»이다
+     사진첩 창고는 pureun-erp-hrphotos, 메일 첨부 창고는 pureun-erp-photos 다.
+     firebase.storage() 를 그냥 쓰면 사진첩 창고에 올라가고 **서버는 못 찾아 첨부가
+     조용히 빠진 채** 메일이 나간다 — 가장 나쁜 실패다. cardsStorage() 가 콕 집는다.
+
+     ■ ⚠⚠ 원본 «자리»를 넘기면 사진이 지워진다
+     서버는 보낸 뒤 첨부로 쓴 자리를 치운다(임시 첨부가 쌓이지 않게).
+     그래서 원본을 가리키지 않고 **사본을 임시 자리에 올려** 그 자리를 넘긴다. */
+
+  var MAIL_FN_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/sendMaterialMail';
+  var MAIL_MAX_BYTES = 18 * 1024 * 1024;      /* 다음메일이 주는 만큼 */
+  var _mailIdx = null;                        /* 경량 검색목록 — 한 번만 읽는다 */
+
+  /* 받는 사람 고르개의 알맹이 — 순수 함수다(검사 대상).
+     ⚠ 이메일이 «없는» 명함은 안 내놓는다. 골라도 보낼 수가 없다.
+     ⚠ 두 글자 미만으로는 안 찾는다 — 전부가 쏟아지면 고를 수가 없다. */
+  function pickMailPeople(idx, query) {
+    var q = String(query == null ? '' : query).trim().toLowerCase()
+      .replace(/[\s\-㈜()]|주식회사/g, '');
+    if (q.length < 2) return [];
+    var out = [];
+    Object.keys(idx || {}).forEach(function (id) {
+      if (out.length >= 40) return;
+      var r = idx[id];
+      if (!r || r.k === 'biz') return;          /* 사람(명함)만 */
+      if (!r.e) return;
+      var hay = (String(r.n || '') + String(r.c || '') + String(r.ti || '') + String(r.e || ''))
+        .toLowerCase().replace(/[\s\-㈜()]|주식회사/g, '');
+      if (hay.indexOf(q) >= 0) {
+        out.push({ id: id, name: r.n || '', company: r.c || '', email: r.e });
+      }
+    });
+    return out;
+  }
+  /* 목록을 한 번 읽어 두고 찾는다 — 글자를 칠 때마다 내려받지 않는다 */
+  function findMailPeople(query) {
+    if (_mailIdx) return Promise.resolve(pickMailPeople(_mailIdx, query));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(CARDS_ROOT + '/idx').once('value').then(function (s) {
+      _mailIdx = s.val() || {};
+      return pickMailPeople(_mailIdx, query);
+    });
+  }
+
+  /* 첨부 한 개를 «임시 자리»에 올린다. 돌려주는 것: { name, size, path } */
+  function putMailFile(blob, name) {
+    if (!blob) return Promise.reject(new Error('붙일 것이 없습니다'));
+    if (blob.size > MAIL_MAX_BYTES) {
+      return Promise.reject(new Error('파일이 너무 큽니다 (' + Math.round(blob.size / 1048576) + 'MB)'));
+    }
+    var st = cardsStorage();
+    if (!st) return Promise.reject(new Error('창고에 연결하지 못했습니다'));
+    var u = global.firebase && global.firebase.auth && global.firebase.auth().currentUser;
+    if (!u) return Promise.reject(new Error('로그인이 필요합니다'));
+    /* ⚠ 파일 이름을 «자리»에 안 쓴다 — 한글·빈칸·슬래시가 든 이름이 그대로 주소가 되면
+         올라가지 않는 것이 생긴다. 이름은 보낼 때 따로 실어 보낸다. */
+    var key = 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    var path = CARDS_ROOT + '/mailout/' + u.uid + '/' + key;
+    return st.ref(path).put(blob).then(function () {
+      return { name: String(name || '첨부'), size: blob.size, path: path };
+    });
+  }
+
+  /* 서버에 보내 달라고 부른다 — 기업정보함이 쓰는 «그 서버»다(길이 둘이면 한쪽만 고쳐진다). */
+  function sendMail(payload) {
+    var u = global.firebase && global.firebase.auth && global.firebase.auth().currentUser;
+    if (!u) return Promise.reject(new Error('로그인이 풀렸습니다'));
+    return u.getIdToken().then(function (token) {
+      return global.fetch(MAIL_FN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify(payload || {})
+      });
+    }).then(function (res) {
+      return res.json().catch(function () { return null; }).then(function (j) {
+        if (!res.ok || !j || !j.ok) throw new Error((j && j.error) || ('서버 응답 ' + res.status));
+        return j;
+      });
+    });
+  }
+
   global.PuDocFile = {
     init: init,
+    MAIL_MAX_BYTES: MAIL_MAX_BYTES,
+    pickMailPeople: pickMailPeople,
+    findMailPeople: findMailPeople,
+    putMailFile: putMailFile,
+    sendMail: sendMail,
     inPrivateVault: inPrivateVault,
     byKeyName: byKeyName,
     findExisting: findExisting,
