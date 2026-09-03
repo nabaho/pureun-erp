@@ -218,3 +218,37 @@ test('★★ 까닭이 «빈 칸»으로 나가지 않는다 — 대표님이 �
   assert.match(ctx.out(new Error('터졌다')), /터졌다/,
     '까닭이 있는데 버립니다 — 그것이 고칠 단서입니다.');
 });
+
+/* ══ 까닭이 «보이는가» (2026-09-03 두 번째 헛걸음) ══
+   번호를 붙였는데도 대표님 화면에는 빨간 줄 아래가 «여전히 비어» 있었다.
+   까닭 글자를 HTML 로 그대로 넣었기 때문이다 — 파이어베이스가 보낸 본문에
+   태그가 섞여 있으면 글자가 아니라 «태그»로 먹혀 아무것도 안 보인다.
+   여기서 못 박는 것은 「무슨 말을 하는가」가 아니라 «그 말이 눈에 닿는가»다. */
+
+test('★★★ 까닭을 «글자 그대로» 넣는다 — 태그로 먹히면 빈 줄이 된다', () => {
+  const fn = cutFn(html, 'window.pucardsMovePhotosToStorage = async function(');
+  assert.ok(fn, '단추 함수를 찾지 못했습니다.');
+  const at = fn.indexOf('사진 목록을 못 받았습니다');
+  assert.ok(at > 0, '까닭을 알리는 자리를 찾지 못했습니다.');
+  /* ⚠ 문장 뒤만 보면 안 된다 — 알리는 일이 그 앞줄에도 있다.
+     catch 블록 처음부터 본다. */
+  const from = fn.lastIndexOf('catch(e){', at);
+  const 뒤 = fn.slice(from > 0 ? from : at, at + 700);
+  assert.match(뒤, /esc\(\s*why\s*\)/,
+    '★ 까닭을 esc() 없이 넣습니다 — 파이어베이스가 보낸 본문에 태그가 섞이면 ' +
+    '글자가 태그로 먹혀 화면에 «빈 줄»만 보입니다(2026-09-03 에 실제로 그랬다).');
+});
+
+test('★★ 창으로도 띄운다 — 화면 글자는 덮일 수 있지만 창은 안 덮인다', () => {
+  const fn = cutFn(html, 'window.pucardsMovePhotosToStorage = async function(');
+  const at = fn.indexOf('사진 목록을 못 받았습니다');
+  /* ⚠ 문장 뒤만 보면 안 된다 — 알리는 일이 그 앞줄에도 있다.
+     catch 블록 처음부터 본다. */
+  const from = fn.lastIndexOf('catch(e){', at);
+  const 뒤 = fn.slice(from > 0 ? from : at, at + 700);
+  assert.match(뒤, /alert\(/,
+    '★ 까닭을 창으로 안 띄웁니다 — 다른 알림이 덮거나 CSS 에 먹히면 ' +
+    '대표님은 아무 까닭도 못 보십니다. 그러면 고칠 자리를 영영 못 찾습니다.');
+  assert.match(뒤, /console\.error\(/,
+    '개발자 기록에도 남기지 않습니다 — 나중에 되짚을 단서가 사라집니다.');
+});
