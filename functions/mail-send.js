@@ -241,8 +241,20 @@ function htmlToText(v) {
   return s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+/* 첨부가 너무 클 때 하는 말 — «한 곳»에만 적는다.
+   ⚠ 재는 자리가 둘이다: 여기(붙인 뒤 합계)와 mail-deliver(내려받기 «전»에 미리).
+     문구를 두 벌로 두면 같은 일에 다른 말이 나와 무엇이 문제인지 흐려진다. */
+function sizeError(total) {
+  return '첨부가 너무 큽니다 (' + (Number(total || 0) / 1024 / 1024).toFixed(1) + 'MB). '
+       + (MAX_TOTAL_BYTES / 1024 / 1024) + 'MB 아래로 줄여 주세요.';
+}
+
 /* 보내도 되는 요청인가. 되면 {ok:true, ...정리된 값}, 아니면 {ok:false, error}.
-   ⚠ 첨부 크기는 **합계**로 본다. 한 개씩만 보면 8MB 세 개가 통과한다. */
+   ⚠ 첨부 크기는 **합계**로 본다. 한 개씩만 보면 8MB 세 개가 통과한다.
+   ⚠★ 여기는 «붙어 있는 첨부의 bytes»만 셀 수 있다. bytes 를 안 달고 넘기면
+      합계가 0 으로 보여 **한도가 통째로 없는 것과 같다**(2026-09-03 실측: 창고를
+      거쳐 온 30MB 두 개가 그대로 통과했다). 첨부를 만드는 쪽이 bytes 를 «반드시»
+      단다 — tests/mail-send-size.test.js 가 그것까지 지킨다. */
 function validateSend(o) {
   const p = o || {};
   const to = parseRecipients(p.to);
@@ -273,13 +285,7 @@ function validateSend(o) {
   const files = (p.attachments || []).filter(Boolean);
   let total = 0;
   files.forEach(function (f) { total += (f.bytes || 0); });
-  if (total > MAX_TOTAL_BYTES) {
-    return {
-      ok: false,
-      error: '첨부가 너무 큽니다 (' + (total / 1024 / 1024).toFixed(1) + 'MB). '
-           + (MAX_TOTAL_BYTES / 1024 / 1024) + 'MB 아래로 줄여 주세요.'
-    };
-  }
+  if (total > MAX_TOTAL_BYTES) return { ok: false, error: sizeError(total) };
   return { ok: true, to: to, cc: cc, bcc: bcc, subject: subject,
     body: body, html: html, attachments: files, bytes: total };
 }
@@ -301,7 +307,7 @@ function sentLogRec(o) {
 module.exports = {
   MAX_TOTAL_BYTES, MAX_TO, MAX_SUBJECT,
   isEmail, parseRecipients, cleanSubject, dataUrlBytes,
-  toAttachment, validateSend, sentLogRec,
+  toAttachment, validateSend, sentLogRec, sizeError,
   sanitizeHtml, htmlToText, cleanStyle, cleanHref,
   HTML_OK, STYLE_OK, SIGN_IMG_OK
 };
