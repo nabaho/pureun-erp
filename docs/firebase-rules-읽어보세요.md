@@ -2,21 +2,28 @@
 
 > ## ★ 지금은 이렇게 합니다 (2026-09-03 부터 — 대표 지시)
 >
+> **사람은 콘솔에 들어가지 않습니다.** 규칙이 필요하면 AI 가 바로 올리고
+> 무엇이 바뀌었는지 보고합니다.
+>
 > ```
-> ① scripts/make-firebase-rules.js       ← 규칙은 여기만 고친다
-> ② node scripts/rules-deploy.js         ← 무엇이 바뀌는지 보여만 줌(안 바뀜)
-> ③ node scripts/rules-deploy.js --deploy  ← 대표가 「올려라」 하시면
+> ① scripts/make-firebase-rules.js         ← 규칙은 여기만 고친다
+> ② node scripts/rules-deploy.js --deploy  ← 바로 올린다(묻지 않는다)
+> ③ 바뀐 것을 보고한다
 > ```
 >
 > ⚠ **사라지는 규칙이 하나라도 있으면 스스로 멈춘다**(종료코드 2).
+>   이 장치가 있어서 묻지 않아도 됩니다 — 벾지 마십시오.
 >   기준 = `docs/firebase-rules-콘솔원문-YYYY-MM-DD.json` 중 가장 최신 것.
+> ⚠ **읽기 권한을 넓힐 때만** 사람에게 한 번 물어봅니다(자료가 더 많은 사람에게 보이는 변경).
 > ⚠ 콘솔에서 손으로 고쳤다면 그 전문을 새 기준 파일로 살려 둘 것.
 > ⚠ 로트 `firebase.json` 에 `database` 를 넣지 말 것 — 다른 세션의 `firebase deploy` 에
 >   규칙이 얽혀 나간다. 규칙 전용 설정은 `firebase.database.json`.
 >
-> 붙여넣기는 **자동 배포가 막힐 때만** 쓴다 — 그럴 땐 `docs/rules-paste.json`.
+> 붙여넣기는 **자동 배포가 막힐 때만**(CLI 가 없거나 로그인이 헀을 때) 쓴니다
+> — 그럴 땐 `docs/rules-paste.json`.
 >
 > 더 자세한 길은 상위 `CLAUDE.md` › 「파이어베이스 보안규칙」 절.
+
 > ## ⚠ 지금은 이렇게 합니다 (2026-08-29 부터)
 >
 > **규칙의 진짜는 만들개 하나입니다.**
