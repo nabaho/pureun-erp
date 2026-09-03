@@ -32,7 +32,8 @@ function load() {
 /* 상호 칸을 그리는 «그 자리»를 떼어 돌린다 (cards-co-name-cell 과 같은 방식) */
 function tagCell(tags) {
   const at = SRC.indexOf('const tags = coTagsOf(o);');
-  const end = SRC.indexOf('})()}</td>', at);
+  /* ⚠ 끝을 「</td>」로 찾지 말 것 — 칸 안에 상자(<div>)가 들어가면 그 글자가 밀린다 */
+  const end = SRC.indexOf('})()}', at);
   assert.ok(at > 0 && end > at, '딱지를 그리는 대목을 못 찾았다');
   const ctx = {
     console,
@@ -141,11 +142,85 @@ test('★ 「+N」과 짚음표는 «절대 안 줄인다» — 줄면 「+」�
 });
 
 test('★ 한 줄로 늘어놓되 빈칸을 되돌린다 — flex 는 공백 글자를 자리로 안 친다', () => {
+  const box = decls('.cotbl .conm .nmbox,.cotbl .cotg .tgbox');
+  assert.equal(box['display'], 'flex');
+  assert.equal(box['align-items'], 'center', '딱지와 이름의 세로 가운데가 맞아야 한다');
+  assert.ok(box['gap'], '빈칸이 없으면 이름과 짚음표가 맞붙는다');
+  assert.equal(box['min-width'], '0', '상자가 안 줄면 안이 아무리 줄어도 소용없다');
   const cell = decls('.cotbl .conm');
-  assert.equal(cell['display'], 'flex');
-  assert.equal(cell['align-items'], 'center', '딱지와 이름의 세로 가운데가 맞아야 한다');
-  assert.ok(cell['gap'], '빈칸이 없으면 이름과 딱지가 맞붙는다');
   assert.equal(cell['white-space'], 'nowrap', '상호 칸은 «한 줄»이다 — 접히면 그 줄만 키가 커진다');
+});
+
+test('★★ flex 를 «<td> 에 직접» 주지 않는다 — 그 칸이 표에서 빠져나가 열이 밀린다', () => {
+  /* 2026-09-03 실측: td 에 display:flex 를 주니 상호와 서식이 «같은 자리»(x=93·251px)에
+     겹치고, 폴더가 서식의 90px 을, 유형이 폴더의 164px 을 가져갔다. 표가 통째로 밀린다.
+     ⚠ 이것은 «내가 그날 아침에 낸 고장»이다(#903). 되돌리지 말 것. */
+  ['.cotbl .conm', '.cotbl .cotg'].forEach(sel => {
+    const d = decls(sel);
+    assert.notEqual(d['display'], 'flex', '★ ' + sel + ' 이 <td> 인데 flex 다 — 열이 밀린다');
+  });
+  /* 상자는 칸 «안»에 있어야 한다 */
+  const at = SRC.indexOf('<td class="conm">');
+  assert.match(SRC.slice(at, at + 60), /<td class="conm"><div class="nmbox">/);
+  const bt = SRC.indexOf('<td class="cotg">');
+  assert.match(SRC.slice(bt, bt + 60), /<td class="cotg"><div class="tgbox">/);
+});
+
+/* ── 서식은 «제 열»에 (대표 지시 2026-09-03) ────────────────────────
+   「기업이름 옆에 통하 고유번호 등 이부분을 별도로 분리좀 해라 그래야 판단한다」
+   상호 칸 «안»에 있으면 이름 길이마다 딱지 자리가 달라 세로로 훑을 수가 없다.
+   폴더를 제 열로 뺐을 때(2026-08-30)와 같은 결이다. */
+
+test('★ 딱지가 상호 칸 «밖»에 있다 — 안에 있으면 줄마다 자리가 달라 못 훑는다', () => {
+  const at = SRC.indexOf('<td class="conm">');
+  const cell = SRC.slice(at, SRC.indexOf('</td>', at));
+  assert.ok(!/class="tg"/.test(cell), '★ 딱지가 아직 상호 칸 안에 있다');
+  assert.ok(!/coTagShort/.test(cell), '★ 상호 칸이 아직 딱지를 그린다');
+});
+
+test('★ 딱지에 «제 칸»이 있다 — 딱지가 없어도 칸은 둔다(줄이 밀리지 않게)', () => {
+  const at = SRC.indexOf('<td class="cotg">');
+  assert.ok(at > 0, '★ 서식 칸이 없다');
+  assert.equal(SRC.split('<td class="cotg">').length - 1, 1, '칸이 둘이면 하나는 늘 빈다');
+  /* 딱지가 없을 때도 «빈 칸»이 나온다 — 안이 비었을 뿐 칸은 그대로다 */
+  assert.equal(tagCell([]), '', '빈 칸의 «안»은 비어 있다');
+  const cell = SRC.slice(at, SRC.indexOf('</td>', at));
+  assert.ok(!/if\(!tags\.length\) return;/.test(cell), '칸 자체를 빼면 줄마다 칸 수가 달라진다');
+});
+
+/* ⚠ 「<thead><tr>」로 찾으면 «예약함 표»가 먼저 걸린다 — 회사 표에서 시작해야 한다 */
+function coTableHead() {
+  const at = SRC.indexOf('<table class="cotbl">', SRC.indexOf('function coListHtml('));
+  assert.ok(at > 0, '회사 표를 못 찾았다');
+  return SRC.slice(at, SRC.indexOf('</thead>', at));
+}
+
+test('★ 열 이름표와 폭의 개수가 같다 — 하나만 어긋나도 표가 통째로 밀린다', () => {
+  const co = coTableHead();
+  /* ⚠ 주석에도 「마지막 <col> 이…」처럼 글자가 들어 있다 — «묶음 안»만 센다.
+     ⚠ <colgroup>·<thead> 가 <col>·<th> 로 걸리지 않게 뒤 글자까지 본다. */
+  const cg = co.slice(co.indexOf('<colgroup>'), co.indexOf('</colgroup>'));
+  const th = co.slice(co.indexOf('<thead>'), co.length);
+  const cols = (cg.match(/<col(?![a-z])/g) || []).length;
+  const ths = (th.match(/<th(?![a-z])/g) || []).length;
+  assert.equal(cols, ths, '★ 폭(' + cols + ')과 이름표(' + ths + ')의 개수가 다르다');
+  assert.ok(cols >= 10, '칸이 열은 되어야 한다 — 세는 자리가 틀렸다: ' + cols);
+  assert.ok(/>서식\$\{coArrow\('tag'\)\}<\/th>/.test(co), '서식 이름표가 없다');
+});
+
+test('★ 서식으로 정렬하면 같은 서식끼리 모인다 — «보이는 이름»으로 선다', () => {
+  const i = SRC.indexOf('const CO_SORT = {');
+  const seg = SRC.slice(i, SRC.indexOf('\n};', i));
+  assert.match(seg, /tag:\s+o => coTagShort\(/,
+    '★ 화면에는 「등록증」인데 차례는 「사업자등록증」으로 서면 같은 딱지가 떨어져 앉는다');
+  assert.match(coTableHead(), /coSortBy\('tag'\)/, '눌러서 정렬할 길이 없다');
+});
+
+test('★ 서식 칸도 «한 줄»이고 「+N」은 안 줄인다', () => {
+  const cell = decls('.cotbl .cotg');
+  assert.equal(cell['white-space'], 'nowrap', '접히면 그 줄만 키가 커진다');
+  assert.equal(decls('.cotbl .cotg .tg')['min-width'], '0', '딱지가 줄어야 칸 밖으로 안 나간다');
+  assert.equal(decls('.cotbl .cotg .tgx')['flex'], 'none', '「+」 한 글자는 아무 말도 못 한다');
 });
 
 /* ── 두 화면이 같은 것을 쓴다 ── */

@@ -112,8 +112,8 @@ test('★ 폴더 열이 폴더 이름을 담을 만큼 넓다 — 「2. …」�
   const at = SRC.indexOf('<colgroup>', SRC.indexOf('function coListHtml('));
   const seg = SRC.slice(at, SRC.indexOf('</colgroup>', at));
   const w = (seg.match(/width:(\d+)px/g) || []).map(x => Number(x.match(/\d+/)[0]));
-  /* [체크, #, 상호, 폴더, …] — 폴더는 넷째다 */
-  const folderW = w[3];
+  /* [체크, #, 상호, 서식, 폴더, …] — 2026-09-03 에 서식이 «제 열»로 나가 폴더는 다섯째가 됐다 */
+  const folderW = w[4];
   /* 검사고정-허용 161: 쓰이는 폴더 이름 중 가장 긴 「통합기술보호지원단」이 딱지째
      134px 이고(브라우저 실측), 칸의 여백·테두리가 27px 을 먹는다. 134 + 27 = 161 이
      «잘리지 않는 최소»다 — 이 값이 규칙이다(지금 폭이 얼마인가가 아니다).
