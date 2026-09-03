@@ -1186,7 +1186,29 @@
   /* 이 서류가 그 사람에게 «이미 같은 갈래로» 있는가 — 보내기 «전»에 묻는다.
      돌려주는 것: [{ key, name, company, dk, kind, older:[{dk,at,docName,photo}] }]
      ⚠ 겹치는 것이 없는 항목은 아예 안 담는다 — 부르는 쪽이 length 만 보면 되게. */
-  function findWorkerDupes(list) {
+  /* 사람 칸을 읽는 «한 곳» — 겹침 찾기와 보내기가 같은 길로 읽는다.
+     돌려주는 것: { 사람열쇠: 그 사람 칸 } */
+  function readWorkerRows(keys) {
+    if (!keys.length) return Promise.resolve({});
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return Promise.all(keys.map(function (k) {
+      return deps.db.ref(WORKER_ROOT + '/' + k).once('value');
+    })).then(function (snaps) {
+      var cur = {};
+      snaps.forEach(function (s2, i) { cur[keys[i]] = s2.val() || {}; });
+      return cur;
+    });
+  }
+
+  /* ⚠ **읽은 것을 부르는 쪽에 넘겨준다** (2026-09-03 검토에서 찾음).
+       종전에는 겹침을 찾을 때 사람 칸을 읽고, 곧바로 sendToWorkerMany 가 **같은 칸을
+       또 읽었다** — 겹치지 않는 «흔한 길»에서 왕복이 두 배였다.
+       `into` 를 주면 읽은 것을 into.rows 에 담아 준다(돌려주는 모양은 그대로다 —
+       부르는 쪽이 length 만 보므로 여기 손대면 그 자리가 다 흔들린다).
+     ⚠ 넘겨받은 것은 **곧바로** 쓸 때만 뜻이 있다. 사람이 답할 때까지 기다렸다 쓰면
+       그 사이 남이 고친 이름·회사를 옛 값으로 덮을 수 있다 —
+       그래서 사람이 고르는 길(바꾸기·둘 다 두기)에서는 넘기지 «않는다». */
+  function findWorkerDupes(list, into) {
     var items = Array.isArray(list) ? list : [];
     var want = [];
     items.forEach(function (it) {
@@ -1195,14 +1217,10 @@
       });
     });
     if (!want.length) return Promise.resolve([]);
-    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var keys = want.map(function (w) { return w.key; })
       .filter(function (k, i, a) { return a.indexOf(k) === i; });
-    return Promise.all(keys.map(function (k) {
-      return deps.db.ref(WORKER_ROOT + '/' + k).once('value');
-    })).then(function (snaps) {
-      var cur = {};
-      snaps.forEach(function (s2, i) { cur[keys[i]] = s2.val() || {}; });
+    return readWorkerRows(keys).then(function (cur) {
+      if (into) into.rows = cur;
       return want.map(function (w) {
         return Object.assign({}, w, { older: wkSameKind(cur[w.key], w.kind, w.dk) });
       }).filter(function (w) { return w.older.length; });
@@ -1226,8 +1244,16 @@
      ⚠ 사람마다 «한 번» 읽고, 전체를 «한 번» 쓴다. 서류 한 장마다 오가면
        근태표 서른 줄이 예순 번 왕복이 된다(2026-08-16 에 겪은 그 규모다).
      ⚠ 이미 붙어 있는 서류는 다시 안 쓴다 — 같은 값을 덮어써도 요금은 든다.
-     돌려주는 것: { sent, already, skipped:[{name,why}], people } */
-  function sendToWorkerMany(list) {
+     돌려주는 것: { sent, already, skipped:[{name,why}], people }
+
+     ⚠ `rows` 는 «방금» 읽어 둔 사람 칸이다(findWorkerDupes 가 주는 것). 주면 다시 안
+       읽는다 — 겹침을 묻고 곧바로 보내는 길에서 같은 칸을 두 번 읽던 것을 없앤다.
+     ⚠ **오래된 것을 주면 안 된다.** 이름·회사를 「빈 칸일 때만」 채우는 판단이 이 값을
+       보므로, 그 사이 남이 채워 둔 이름을 옛 값으로 덮을 수 있다.
+       사람이 답할 때까지 기다린 길(바꾸기·둘 다 두기)에서는 주지 «않는다».
+     ⚠ 아는 사람이 한 명이라도 빠져 있으면 통째로 다시 읽는다 — 반만 새 값으로
+       판단하면 어느 쪽이 옳은지 아무도 못 짚는다. */
+  function sendToWorkerMany(list, rows) {
     var items = Array.isArray(list) ? list : [];
     var out = { sent: 0, already: 0, skipped: [], people: 0 };
     var byKey = {};
@@ -1244,12 +1270,13 @@
     if (!keys.length) return Promise.resolve(out);
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
 
-    return Promise.all(keys.map(function (k) {
-      return deps.db.ref(WORKER_ROOT + '/' + k).once('value');
-    })).then(function (snaps) {
+    /* 방금 읽어 둔 것이 «사람 전부»를 덮으면 그것을 쓰고, 아니면 통째로 다시 읽는다 */
+    var have = rows && keys.every(function (k) { return rows[k] !== undefined; })
+      ? Promise.resolve(rows) : readWorkerRows(keys);
+    return have.then(function (got) {
       var u = {};
-      snaps.forEach(function (s2, i) {
-        var key = keys[i], e = byKey[key], cur = s2.val() || {};
+      keys.forEach(function (key) {
+        var e = byKey[key], cur = got[key] || {};
         var base = WORKER_ROOT + '/' + key;
         /* 이름·회사는 «빈 칸만» 채운다 — 사람이 고쳐 둔 표기를 덮지 않는다 */
         if (blank(cur.name) && !blank(e.name)) u[base + '/name'] = e.name;
