@@ -41,7 +41,10 @@ function fnOf(name) {
 const J = (function () {
   const c = { String, Boolean, Object };
   vm.createContext(c);
-  vm.runInContext(fnOf('canSendCoInfo') + '\n' + fnOf('autoSendCoInfo'), c);
+  /* ⚠ 2026-09-03 — canSendCoInfo 가 «사람이 채운 값»(readFields)을 본다 */
+  vm.runInContext(app.match(/^const FIX_KEYS = \[[^\r\n]*\];/m)[0].replace('const ', 'var ') +
+    '\n' + fnOf('readFields') + '\n' +
+    fnOf('canSendCoInfo') + '\n' + fnOf('autoSendCoInfo'), c);
   return c;
 })();
 const rd = function (o) {
@@ -101,7 +104,10 @@ function runSend(o) {
   };
   vm.createContext(ctx);
   /* 2026-08-28: 보낸 뒤 「증빙으로 씀」을 남긴다(markFiledUsed) — 안 주면 그 자리에서 멎는다 */
-  vm.runInContext(fnOf('canSendCoInfo') + '\n' + fnOf('coInfoFields') + '\n' +
+  /* ⚠ 2026-09-03 — canSendCoInfo 가 «사람이 채운 값»(readFields)을 본다 */
+  vm.runInContext(app.match(/^const FIX_KEYS = \[[^\r\n]*\];/m)[0].replace('const ', 'var ') +
+    '\n' + fnOf('readFields') + '\n' +
+    fnOf('canSendCoInfo') + '\n' + fnOf('coInfoFields') + '\n' +
     fnOf('autoCmsOn') + '\n' + fnOf('markFiledUsed') + '\n' +
     fnOf('sendCoInfoWith') + '\n' + fnOf('sendCoInfo'), ctx);
   return { ctx, calls, job };

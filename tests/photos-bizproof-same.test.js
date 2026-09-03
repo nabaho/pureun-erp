@@ -44,7 +44,10 @@ function loadGates() {
     const m = app.match(new RegExp('const ' + n + ' = \\{[^}]*\\};'));
     vm.runInContext(m[0].replace('const ', 'var '), ctx);
   });
-  ['canSend', 'canSendCo', 'canSendCoInfo'].forEach(function (n) {
+  /* ⚠ 2026-09-03 — canSendCoInfo 가 «사람이 채운 값»(readFields)을 본다.
+     안 실으면 그 줄에서 ReferenceError 로 멎는다. 가짜로 두지 않고 진짜를 넣는다. */
+  vm.runInContext(app.match(/^const FIX_KEYS = \[[^\r\n]*\];/m)[0].replace('const ', 'var '), ctx);
+  ['readFields', 'canSend', 'canSendCo', 'canSendCoInfo'].forEach(function (n) {
     const m = app.match(new RegExp('function ' + n + '\\([\\s\\S]*?\\n\\}'));
     assert.ok(m, n + ' 를 찾지 못했습니다');
     vm.runInContext(m[0], ctx);
