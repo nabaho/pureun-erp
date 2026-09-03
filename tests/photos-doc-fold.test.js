@@ -128,6 +128,8 @@ test('★ 도구줄이 장수를 쓴다 — 실제로 돌려 본다', () => {
     viewingOther: function () { return false; },
     /* 2026-08-28: 도구줄이 «막는 쪽과 같은 기준»(mayTouch)을 본다 — 안 주면 멎는다 */
     mayTouch: function () { return true; },
+    /* 2026-09-03: 공유 칸은 «넘길 수 있는 것»(shareableSel)으로 뜬다 — 안 주면 멎는다 */
+    shareableSel: function () { return Array.from(ctx.selected); },
     canSend: function () { return false; },
     /* ⚠ 2026-08-24 — 「N장 판독」은 다시 걸어 볼 값이 있는 것만 세고(readableSel),
        「N장 확인했음」은 확인이 필요한 것만 센다(needsCheck). 둘을 안 주면 도구줄이

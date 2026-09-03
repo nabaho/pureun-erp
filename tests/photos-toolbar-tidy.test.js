@@ -82,6 +82,9 @@ function bar(over) {
        ⚠ 시늉으로 true 를 주면 «폰만» 이라는 규칙이 검사에서 사라진다. 아래
          phone 옵션으로 두 쪽을 다 밟는다(기본은 넓은 화면). */
     isPhone: function () { return !!o.phone; },
+    /* 2026-09-03: 공유 칸은 이제 «넘길 수 있는 것»으로 뜬다(mayTouch 가 아니다).
+       ⚠ 진짜를 띄운다 — 시늉으로 두면 도구줄이 그것을 안 불러도 통과한다. */
+    mayShare: function () { return o.mayShare !== false; },
     /* 2026-08-29: 내 사진에 공유받은 것이 섞인다 — 칩·거르기가 이 셋을 쓴다 */
     isSharedItem() { return false; }, sharedByName() { return ''; }, sharedOnly: false,
     ALL_OWNERS: '__all__', gridOwner: null, renderPayNote() {},
@@ -94,6 +97,7 @@ function bar(over) {
     cutFn(app, 'function readableSel(') + '\n' +
     /* 👥 공유 칸은 도구줄이 부른다(2026-08-29 에 왼쪽 대시보드로 옮겼다).
        시늉이 아니라 **진짜를 함께 띄운다** — 시늉으로 두면 도구줄이 그것을 안 불러도 통과한다. */
+    cutFn(app, 'function shareableSel(') + '\n' +
     cutFn(app, 'function renderShareCard(') + '\n' +
     cutFn(app, 'function renderGridBar('), ctx);
   ctx.renderGridBar();
@@ -111,11 +115,22 @@ test('★★ 도구줄이 왼쪽 공유 칸을 «실제로» 그린다 — 안 �
   assert.match(el.shareSideBtn.textContent, /3장/, '몇 장에 걸리는지 적어야 합니다');
 });
 
-test('★ 고른 것이 없거나 남의 사진이면 공유 칸이 안 뜬다 — 도구줄과 같은 기준', () => {
+test('★ 한 장도 «못 넘기면» 공유 칸이 안 뜬다 — 뜨면 눌러도 막힌다', () => {
   assert.equal(bar({ sel: [] }).shareCard.style.display, 'none',
     '★ 고른 것이 없는데 떠 있으면 눌러도 아무 일이 없습니다');
-  assert.equal(bar({ ctx: { mayTouch: function () { return false; } } }).shareCard.style.display, 'none',
-    '★ 손댈 수 없는 사진에 뜨면 눌러도 막힙니다');
+  assert.equal(bar({ mayShare: false }).shareCard.style.display, 'none',
+    '★ 한 장도 못 넘기는데 떠 있으면 눌러도 막힙니다');
+});
+
+/* ⚠ 2026-09-03 대표 보고 「직원이 공유하는 것이 여전히 쉽지 않다」 —
+   여기 기준이 mayTouch(«내 사진이거나 총괄관리자»)였다. 그런데 넘길 수 있는가는
+   mayShare(«나에게 열려 있으면 넘길 수 있다»)다. 그래서 직원이 «받은 사진»을 고르면
+   공유 칸이 통째로 안 떴다 — 대표가 승인하신 되전달(㉮)이 화면에서만 잠겨 있었다. */
+test('★★ 손댈 수 «없어도» 넘길 수 있으면 공유 칸이 뜬다 — 되전달이 그것이다', () => {
+  const el = bar({ ctx: { mayTouch: function () { return false; } } });
+  assert.equal(el.shareCard.style.display, 'block',
+    '★★ 받은 사진을 고르면 공유 칸이 사라집니다 — 넘길 길이 화면에 없습니다.\n' +
+    '  규칙과 openSharePeople 은 되전달을 허용하는데 단추만 잠겨 있는 셈입니다.');
 });
 
 test('★ 세 장을 골랐으면 내려받기·삭제·묶기에 숫자가 «없다»', () => {

@@ -89,6 +89,53 @@ test('★ 담당자가 «없는 것»과 «로그인 안 한 것»을 갈라 말
     '  사람이 엉뚱한 데를 뒤집니다.');
 });
 
+/* ══════ ⑤ 직원이 넘기는 길 (대표 보고 2026-09-03 「여전히 쉽지 않다」) ══════ */
+
+test('★★ 손댈 수 «없어도» 넘길 수 있으면 센다 — 되전달이 그것이다', () => {
+  const fn = stripComments(cutFn(raw, 'function shareableSel('));
+  assert.match(fn, /filter\(mayShare\)/,
+    '★★ mayTouch 로 세면 직원이 «받은 사진»을 고를 때 공유 칸이 통째로 안 뜹니다.\n' +
+    '  규칙과 openSharePeople 은 되전달(㉮ 2026-08-30)을 허용하는데\n' +
+    '  단추만 잠겨 있는 셈입니다 — 2026-08-28 과 같은 모양, 반대 방향입니다.');
+});
+
+test('★★ 한 장이라도 못 넘긴다고 «통째로» 거절하지 않는다', () => {
+  const fn = stripComments(cutFn(raw, 'function openSharePeople('));
+  const head = fn.slice(0, fn.indexOf('const shared'));
+  assert.match(head, /if \(!can\.length\)/,
+    '★★ 「☑ 전부」로 스물여덟 장을 고르면 받은 사진이나 민감 서류가 한 장쯤 섞입니다.\n' +
+    '  그 한 장 때문에 나머지 스물일곱 장도 못 넘기면, 사람은 「공유가 안 된다」고만\n' +
+    '  느낍니다 — 하나도 못 넘길 때만 거절해야 합니다.');
+  assert.ok(!/can\.length !== list\.length/.test(head),
+    '★★ 섞이면 거절하는 줄이 남아 있습니다.');
+});
+
+test('★★ 고르개가 «넘길 수 있는 것»을 든다 — 못 넘길 것까지 들면 그 장에서 실패한다', () => {
+  const fn = stripComments(cutFn(raw, 'function openSharePeople('));
+  assert.match(fn, /_sharePick = \{ ids: can,/,
+    '★★ 고른 것 전부를 들면, 못 넘기는 장에서 서버가 막아 「몇 장은 열지 못했습니다」가 뜹니다.');
+  assert.match(fn, /skipped: skipped/, '★ 몇 장이 빠졌는지 들고 있어야 말해 줄 수 있습니다');
+});
+
+test('★★ 빠진 장이 있으면 «왜» 빠졌는지 고르개에 적는다', () => {
+  const fn = stripComments(cutFn(raw, 'function sharePeopleHtml('));
+  /* ⚠ 「p.skipped 가 어딘가 적혀 있나」만 보면 if (false) 로 꺼도 안 걸린다
+     (돌연변이가 살아남아 드러났다) — «그 값이 조건»인지를 본다. */
+  assert.match(fn, /if \(p\.skipped\)/,
+    '★★ 조용히 빼면 사람은 스물여덟 장이 다 간 줄 압니다 — 그것이 이번 제보의 핵심입니다.');
+  assert.match(fn, /되전달/, '★ 왜 빠졌는지(열려 있지 않음·민감)를 말해야 합니다');
+});
+
+test('★ 고를 사람이 없을 때 «무엇을 하면 되는지» 말한다', () => {
+  const fn = stripComments(cutFn(raw, 'function openSharePeople('));
+  const i = fn.indexOf('if (!others.length)');
+  assert.ok(i > 0, '★ 고를 사람이 없을 때를 안 봅니다');
+  assert.match(fn.slice(i, i + 400), /한 번이라도 들어온/,
+    '★ 「고를 사람이 없습니다」로 끝내면 사람은 고장으로 읽습니다.\n' +
+    '  이 명단은 사진첩에 한 번이라도 들어온 사람입니다 — 그 말을 해 줘야\n' +
+    '  「그분더러 한 번 열어 보시라」로 이어집니다.');
+});
+
 /* ══════ ④ 일괄 공유로 가는 길 ══════ */
 
 test('★★ 폰 도구줄에 «공유로 가는 길»이 있다 — 없으면 한 장씩 여는 수밖에 없다', () => {
@@ -125,8 +172,12 @@ test('★★ 길잡이 단추는 도구줄과 «같은 셈»으로 나온다 —
   const fn = stripComments(cutFn(raw, 'function renderGridBar('));
   const m = fn.match(/\$\('shareJumpBtn'\)\.style\.display = ([^;]+);/);
   assert.ok(m, '★ 도구줄이 길잡이 단추를 안 정합니다');
-  assert.match(m[1], /\btouch\b/, '★★ 손댈 수 없는 사진인데 단추가 뜹니다');
-  assert.match(m[1], /\bn\b/, '★ 고른 것이 없는데 단추가 뜹니다');
+  /* ⚠ 2026-09-03(둘째) — 기준이 touch 에서 «넘길 수 있는 것»(shareIds)으로 바뀌었다.
+     touch 로 물으면 받은 사진을 넘기는 길이 화면에서 사라진다(되전달 ㉮). */
+  assert.match(m[1], /shareIds\.length/,
+    '★★ 위 shareCard 와 다른 셈을 씁니다 — 도구줄엔 단추가 있는데 시트엔 칸이 없게 됩니다');
+  assert.ok(!/\btouch\b/.test(m[1]),
+    '★★ mayTouch 로 물으면 받은 사진을 넘기는 길이 화면에서 사라집니다');
   assert.match(m[1], /isPhone\(\)/,
     '★ 넓은 화면에서는 대시보드가 바로 옆에 보입니다 — 거기서 단추가 둘이 되면\n' +
     '  그때야말로 「두 자리」가 됩니다.');
