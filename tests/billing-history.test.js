@@ -372,29 +372,83 @@ test('폰에서 사용액 창이 한 화면에 들어간다', () => {
 });
 
 test('긴 설명은 ⓘ 로 접어 두되 지우지는 않는다', () => {
-  /* 설명 셋(memo·foot·blegend)이 표를 화면 밖으로 밀어내고 있었다.
-     그렇다고 지우면 안 된다 — 「0 과 —는 다르다」는 한 번은 읽어야 한다. */
+  /* 설명이 표보다 길어 화면을 밀어내고 있었다(대표 지시 2026-08-21
+     「불필요한 한글 내용 모두 안 보이게 하고, 마우스 올렸을 때 팝업처럼」).
+     ⚠ 지우면 안 된다 — 「0 과 —는 다르다」는 한 번은 읽어야 한다.
+     ⚠ 이제 «폰에서만» 이 아니라 넓은 화면에서도 접는다. */
+  assert.match(enterHtml, /#billModal \.bd>\.foot,\s*[\r\n]+#billModal \.blegend\{display:none;\}/,
+    '★ 설명 둘은 폰 블록이 아니라 «기본 규칙»에서 접혀 있어야 한다');
+
+  /* ★ 접었으면 «펼 길»이 반드시 있어야 한다 — 없으면 그냥 지운 것과 같다.
+     PC 는 올려서(hover), 폰·키보드는 눌러서(bhelp-on) 편다. */
+  assert.match(enterHtml, /#billModal \.bhelp:hover \+ \.btip/,
+    '★ 마우스를 올려도 안 뜨면 접은 게 아니라 지운 것이다');
+  assert.match(enterHtml, /#billModal \.box\.bhelp-on \.btip\{display:block;\}/,
+    '★ 폰에는 마우스가 없다 — 눌러서도 펴져야 한다');
+  assert.match(enterHtml, /\.bhelp:focus-visible \+ \.btip/, '키보드로도 닿아야 한다');
+
+  /* ★ 글이 실제로 남아 있는가 — 「0 이 아니라 모른다」가 이 설명의 핵심이다 */
+  const at = enterHtml.indexOf('id="billTip"');
+  assert.ok(at > 0, '말풍선을 찾지 못했습니다');
+  const tip = enterHtml.slice(at, at + 1200);
+  assert.match(tip, /모른다/, '★ 「0 원이 아니라 모른다」는 지우면 안 된다');
+  assert.match(tip, /금액이 움직일 때만/, '밤에 조용한 것이 정상이라는 안내도 남긴다');
+  assert.match(enterHtml, /id="billHelpBtn"/);
+  assert.match(enterHtml, /box\.classList\.toggle\('bhelp-on'\)/);
+
+  /* ⚠ .memo 는 «조건부 경고»라 넓은 화면에서는 감추지 않는다 — 지금 숫자가 어긋나
+     있다는 말이다. 다만 폰에서는 자리가 없어 ⓘ 로 접는다(!important 가 있어야 이긴다). */
   const css = billPhoneCss();
-  /* ⚠ .memo 만 !important 다 — 코드가 `memo.style.display='block'` 으로 «칸에 직접»
-     적어 두어, 그냥 적으면 진다(실제로 폰에 노란 알림이 계속 떠 있었다). */
   assert.match(css, /#billModal \.memo\{display:none!important;\}/,
     '★ !important 가 없으면 칸에 직접 적힌 display:block 에 집니다');
-  assert.match(css, /#billModal \.bd>\.foot,#billModal \.blegend\{display:none;\}/);
   assert.match(css, /\.box\.bhelp-on \.memo\{display:block!important;\}/);
-  assert.match(css, /\.box\.bhelp-on \.blegend\{display:block;\}/);
   // 금액과 「몇 분 전」은 한 줄에 — 두 줄 쓸 값이 아니다
   assert.match(css, /#billModal \.big\{display:inline;/);
   assert.match(css, /#billModal \.when\{display:inline;/);
-  assert.match(enterHtml, /id="billHelpBtn"/);
-  assert.match(enterHtml, /box\.classList\.toggle\('bhelp-on'\)/);
 });
 
-test('ⓘ 는 폰에서만 — 규칙이 폰 블록보다 앞에 있어야 한다', () => {
-  /* 뒤에 두면 기본 display:none 이 폰 규칙을 이겨 폰에서도 안 보인다
-     (실제로 그렇게 났고, 실제 브라우저로 그려 보고 잡았다). */
-  assert.ok(enterHtml.indexOf('#billModal .bhelp{display:none;}')
-          < enterHtml.indexOf(BILL_PHONE_MARK),
-    '★ ⓘ 기본 규칙이 폰 블록보다 뒤에 있으면 폰에서도 숨습니다');
+test('ⓘ 는 이제 «어느 화면에서나» 보인다', () => {
+  /* 전에는 폰에서만 보였다 — 넓은 화면은 설명이 늘 펼쳐져 있어 접을 것이 없었으니까.
+     이제 넓은 화면에서도 접으므로 펼 단추가 늘 있어야 한다. 숨기면 닿을 길이 사라진다. */
+  assert.doesNotMatch(enterHtml, /#billModal \.bhelp\{display:none;\}/,
+    '★ ⓘ 를 숨기면 접어 둔 설명에 닿을 길이 없어진다');
+  assert.match(enterHtml, /#billModal \.bhelp\{display:inline-flex;/);
+});
+
+/* ── 날짜를 눌러 그 날 시간별로 (대표 지시 2026-08-21) ──
+   일별은 「어느 날 많이 썼나」까지만 말해 준다. 「그날 몇 시에 튀었나」는 파고들어야 보인다. */
+test('★ 일별 줄을 누르면 그 날 시간별로 파고든다', () => {
+  assert.match(enterHtml, /class="dayclick" data-day="' \+ r\.day \+ '"/,
+    '★ 일별 줄에 날짜를 실어야 어느 날로 파고들지 알 수 있다');
+  assert.match(enterHtml, /closest\('tr\.dayclick'\)/, '줄은 다시 그려지므로 위임으로 받는다');
+  assert.match(enterHtml, /#billModal tr\.dayclick\{cursor:pointer;\}/, '누를 수 있다는 것이 보여야 한다');
+  assert.match(enterHtml, /tr\.dayclick td:first-child::after\{content:' ›'/);
+});
+
+test('★ 파고든 뒤 돌아올 길이 있다', () => {
+  assert.match(enterHtml, /id="billBackBtn"/);
+  assert.match(enterHtml, /\$\('billBackBtn'\)\.addEventListener\('click', function\(\)\{ _billDay = ''; billPaintHist\(\); \}\)/,
+    '★ 돌아가면 파고든 날을 비워야 일별 표가 다시 나온다');
+  assert.match(enterHtml, /back\.style\.display = _billDay \? 'inline-block' : 'none'/,
+    '파고들지 않았으면 「← 일별로」는 안 보인다');
+});
+
+test('★ 파고든 날은 시간별 거르기에도 걸린다 — 안 걸면 온 달이 다 나온다', () => {
+  assert.match(enterHtml, /if\(_billDay\) return hour\.slice\(0,10\) === _billDay;/);
+  /* 기간(오늘·어제·이번 달·일별)을 다시 고르면 파고든 날에서 나와야 한다 —
+     안 나오면 「오늘」을 눌러도 지난 날이 그대로 보인다. */
+  assert.match(enterHtml, /_billDay = '';\s*\/\/ 기간을 바꾸면/);
+});
+
+test('어느 날을 보고 있는지 제목과 합계에 적는다', () => {
+  /* 안 적으면 「오늘」과 구별이 안 돼 엉뚱한 날을 보고 판단한다. */
+  assert.match(enterHtml, /ttl\.textContent = '🕘 ' \+ _billDay\.slice\(5\)/);
+  assert.match(enterHtml, /_billDay\.slice\(5\)\.replace\('-', '\/'\) \+ ' 합계'/);
+});
+
+test('키보드로도 파고들 수 있다', () => {
+  assert.match(enterHtml, /tabindex="0" role="button"/);
+  assert.match(enterHtml, /if\(e\.key !== 'Enter' && e\.key !== ' '\) return;/);
 });
 
 /* ── 일별 정산금액 (대표 지시 2026-08-20 「일별 정산금액도 표시해줘」) ──
