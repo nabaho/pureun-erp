@@ -154,6 +154,89 @@ test('★ 물음이 떠 있는 동안에는 «보내기 단추»를 안 낸다 �
     '  그 단추를 누르면 같은 물음이 또 뜹니다.');
 });
 
+/* ══════ ④-2 답한 «뒤»에는 할 일이 아니다 (2026-09-03 검토에서 찾은 구멍) ══════
+
+   ★ 위 ④는 「답하기 «전»에 할 일로 남는가」만 보았다. 그래서 **답한 뒤**가 비어 있었고,
+     실제로 「보내지 않기」를 고르면 ⚠ 가 「👷 아직 안 보냄」으로 도로 살아났다.
+     그런데 사진 판에는 「겹치는 서류라 안 보냈습니다」만 있고 **보내기 단추가 없다** —
+     판은 「끝났다」는데 목록은 「아직 할 일」이라, 가리키는 단추가 없는 ⚠ 가 됐다.
+
+   ⚠ 글자로 보지 «않는다» — 판정을 **실제로 돌린다.** 이 구멍이 글자 검사(위 ④)를
+     그대로 통과했던 것이 그 까닭이다. */
+
+function loadWhy() {
+  /* 이 물음에 닿는 길에 있는 것만 진짜로 싣는다 — 앞줄들은 이 표본에서 안 걸린다 */
+  const grab = re => {
+    const m = raw.match(re);
+    assert.ok(m, '못 찾음: ' + re);
+    return m[0].replace('const ', 'var ');
+  };
+  const ctx = { Number, Math, String, RegExp, Object, Array, Boolean, Date };
+  vm.createContext(ctx);
+  vm.runInContext([
+    'var CARD_KINDS = {}, CO_KINDS = {}, KEEP_ONLY = {};',
+    'function readAnyField() { return true; }',
+    'function tooSmall() { return 0; }',
+    'function smallCheckedOk() { return true; }',
+    'function coFilledOk() { return true; }',
+    'function coTodo() { return false; }',
+    'function readFailAdvice() { return "판독 실패"; }',
+    'function chatTodo() { return false; }',
+    'function formTodo() { return false; }',
+    'function canSendCoInfo() { return false; }',
+    'function wageNeedsOk() { return false; }',
+    grab(/^const WORKER_KINDS = \{[^}]*\};/m),
+    /* ⚠ 한 줄짜리다 — 여러 줄 꼴로 찾으면 수백 줄을 통째로 삼킨다 */
+    grab(/^const FIX_KEYS = \[[^\r\n]*\];/m),
+    cutFn(raw, 'function readFields('),
+    cutFn(raw, 'function canSendWorker('),
+    cutFn(raw, 'function workerWhyNot('),
+    cutFn(raw, 'function checkWhy('),
+    cutFn(raw, 'function needsCheck(')
+  ].join('\n'), ctx);
+  return ctx;
+}
+const W = loadWhy();
+const wkPhoto = extra => ({ meta: { w: 2600, h: 1800, read: Object.assign(
+  { kind: 'idcard', auto: false, fields: { name: '김철수', company: '해찬솔에프쓰리' } }, extra) } });
+
+test('★★★ 「보내지 않기」를 고른 뒤에는 «할 일이 아니다» — 가리키는 단추가 없는 ⚠ 가 된다', () => {
+  const it = wkPhoto({ dupSkip: { at: 1, by: '권형하' } });
+  assert.equal(W.checkWhy(it), '',
+    '★★★ 답했는데 ⚠ 가 「👷 아직 안 보냄 — 보내기」로 되살아납니다.\n' +
+    '  그런데 사진 판에는 그 단추가 없습니다(renderReadPanel 의 read.dupSkip 줄) —\n' +
+    '  누를 것이 없는 할 일이라 「확인했음」 말고는 치울 길이 없어집니다.\n' +
+    '  ⚠ 판정이 두 곳으로 갈린 것이 까닭입니다: 판은 아는데 이 줄이 몰랐습니다.');
+  assert.equal(W.needsCheck(it), false);
+});
+
+test('★★ 답하기 «전»에는 그대로 할 일이다 — 위 고침이 물음까지 삼키면 안 된다', () => {
+  const asking = wkPhoto({ dupWk: { at: 1, key: 'k', older: [{ dk: 'x' }] } });
+  assert.match(W.checkWhy(asking), /겹치는 서류/,
+    '★★ 물어보는 중인 것까지 치우면 그 사진은 영영 안 갑니다');
+  assert.equal(W.checkWhy(wkPhoto({})), '👷 근로자 정보함에 아직 안 보냄 — 보내기',
+    '★★ 겹치지도 않은 새 서류까지 조용해지면 아무도 안 보냅니다');
+});
+
+test('★ 「둘 다 두기」로 보내진 것은 깨끗하다 — 셋 다 치울 길이 열려 있어야 한다', () => {
+  assert.equal(W.checkWhy(wkPhoto({ dupKept: { at: 1 }, filedWk: { at: 2, n: 1 } })), '');
+});
+
+test('★★★ 목록과 사진 판이 «같은 말»을 한다 — 갈리면 가리키는 단추가 없는 ⚠ 가 된다', () => {
+  /* ⚠ 이 버그의 뿌리가 바로 이것이다 — 판은 「안 보냈습니다」로 끝내는데
+     목록만 「아직 안 보냄 — 보내기」라고 했다. 둘을 함께 못박는다. */
+  const i = app.indexOf("box += '<p class=\"sent\">✓ 근로자 정보함에 넣었습니다");
+  assert.ok(i > 0, '근로자 정보함 사슬을 못 찾았습니다');
+  const chain = app.slice(i, i + 1200);
+  const s = chain.indexOf('} else if (read.dupSkip) {');
+  const b = chain.indexOf('canSendWorker(read)');
+  assert.ok(s > 0,
+    '★★★ 판에 「보내지 않기」 갈래가 없으면 보내기 단추가 다시 나오고,\n' +
+    '  누르면 같은 물음이 또 뜹니다 — 목록은 조용한데 판만 시끄러워집니다.');
+  assert.ok(b > 0 && s < b,
+    '★★★ 보내기 단추가 먼저면 「보내지 않기」로 답한 사진에 그 단추가 도로 나옵니다.');
+});
+
 /* ══════ ⑤ 「장」과 「건」을 가른다 ══════ */
 
 test('★★ 근로자 정보함이 「신분증 2장」이라 적는다 — 「2」로는 두 건인지 모른다', () => {
