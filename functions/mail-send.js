@@ -99,7 +99,14 @@ const HTML_OK = ['b','strong','i','em','u','s','strike','br','p','div','span',
       우리 주소는 우리 서버라, 우리가 이미 아는 것 말고는 새 나갈 데가 없다.
    ⚠ 여기에 «남의 도메인»을 더하지 말 것. 한 줄 더하는 순간 열람 추적이 뚫린다. */
 const SIGN_IMG_OK = 'cid:pusign';
-const IMG_HOST_OK = ['https://nabaho.github.io/pureunall/'];
+/* ③ 우리 서버 함수 — 뉴스레터 열람 추적 그림(1×1)이다.
+      대표 지시 2026-09-03 「열람 미열람을 정확하게 확인하고 …」
+   ★ 위 ②와 같은 잣대다 — «우리 서버»라 우리가 이미 아는 것 말고는 새 나갈 데가 없다.
+     남의 서버 그림을 계속 막는 까닭(열람 시각이 남에게 새는 것)은 그대로 지킨다.
+   ⚠ 이 한 줄이 없으면 «우리 추적 그림도 함께 버려져» 열람이 영영 안 찍힌다.
+     tests/mail-bulk.test.js 가 그것을 본다 — 그리고 남의 도메인이 여전히 막히는지도. */
+const IMG_HOST_OK = ['https://nabaho.github.io/pureunall/',
+                     'https://asia-northeast3-pureun-erp.cloudfunctions.net/'];
 function imgSrcOk(v) {
   const s = String(v == null ? '' : v).trim();
   if (s.toLowerCase() === SIGN_IMG_OK) return SIGN_IMG_OK;

@@ -126,7 +126,14 @@ function buildQueue(v, now, by, batchId) {
   const t0 = Number(now) || 0;
   return v.targets.map(function (t, i) {
     const vals = { 이름: t.name, 회사: t.company, 직책: t.title,
-                   name: t.name, company: t.company, title: t.title };
+                   name: t.name, company: t.company, title: t.title,
+                   /* ★ 열람·클릭 추적 열쇠 — 편지 몸통의 {추적열쇠} 가 통마다 이 값으로 바뀐다.
+                        안 채우면 «모두가 같은 사람»으로 찍혀 누가 열었는지 알 수 없다.
+                      ⚠ 파이어베이스 열쇠에 못 쓰는 글자(.#$/[])를 씻는다 —
+                        functions/news-track.js 주소열쇠() 와 «같은 잣대»여야 한다.
+                        두 곳이 다르면 적는 자리와 세는 자리가 어긋난다. */
+                   추적열쇠: String(t.email || '').trim().toLowerCase()
+                     .replace(/[.#$/[\]]/g, '_') };
     return {
       at: t0 + (i + 1) * v.gapMs,
       by: String(by || ''),

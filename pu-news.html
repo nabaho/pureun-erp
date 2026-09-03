@@ -40,8 +40,8 @@
   if(!go()) document.addEventListener('DOMContentLoaded', go); })();
 </script>
 <script src="xlsx_gen.js?v=15"></script>
-<script src="js/pu-news-core.js?v=11"></script>
-<script src="js/pu-news-tpl.js?v=4"></script>
+<script src="js/pu-news-core.js?v=12"></script>
+<script src="js/pu-news-tpl.js?v=5"></script>
 <style>
 :root{
   --navy:#1e40af; --ink:#1e293b; --sub:#64748b; --faint:#94a3b8;
@@ -826,6 +826,12 @@ async function 진짜보내기(){
        예전에는 `곳수 × 15초` 로 셈해 300곳이면 「약 75분」이라 해 놓고 3시간 45분이
        걸렸다. 대표께서 이 숫자를 보고 되돌릴 수 없는 단추를 누르신다. */
   const 걸림 = Core.보낼시간(r.ok.length, BULK_GAP_SEC);
+  /* 추적 밑주소를 설정에 넣지 않으면 편지에 추적이 «안 들어간다» — 예전처럼 나간다.
+     그러면 열람·미열람이 영영 빈칸이니, 보내기 전에 한 번 알려 드린다. */
+  if(!(App.설정.추적밑주소||'').trim()
+     && !confirm('⚠ 열람 추적이 꺼져 있습니다 (설정 → 추적 밑주소가 비어 있습니다).\n\n'
+       + '이대로 보내면 누가 열었는지 «알 수 없습니다» —\n'
+       + '미열람 셈도 쌓이지 않습니다.\n\n그래도 보낼까요?')) return;
   if(!confirm(
     `「${편.제목}」\n\n`
     /* ⚠ 「어느 유형에 나가나」를 «맨 앞»에 말한다. 되돌릴 수 없는 단추 앞이다.
@@ -849,9 +855,25 @@ async function 진짜보내기(){
                            spacingSec: BULK_GAP_SEC });
     d.상태 = '발송'; d.보낸때 = Date.now(); d.받는수 = r.ok.length; d.batchId = j.batchId || '';
     d.보낸이 = (App.me && App.me.email) || '';
-    await db.ref('newsletter/issues/' + d.열쇠).update({
-      상태:'발송', 보낸때:d.보낸때, 받는수:d.받는수, batchId:d.batchId, 보낸이:d.보낸이
+    /* ★ 링크 목록을 회차에 «함께» 적는다 — 서버(newsClick)가 번호로 이것을 찾는다.
+         ⚠ 안 적으면 클릭이 우리 홈페이지로 튕긴다(목록에 없는 번호는 안 보내는 규칙).
+       ★ 「보냄」 표를 통마다 적는다 — 미열람 셈이 «보낸 회차»만 세기 때문이다.
+         ⚠ 안 적으면 이 회차가 셈에서 아예 빠져 미열람이 영영 안 쌓인다.
+         한 번의 update 로 담는다 — 110번 나눠 쓰면 중간에 끊겨 절반만 남는다. */
+    const 보냄표 = {};
+    r.ok.forEach(function(x){
+      const 열 = String(x.email||'').trim().toLowerCase().replace(/[.#$/[\]]/g,'_');
+      if(열) 보냄표[열 + '/보냄'] = true;
     });
+    await db.ref('newsletter/issues/' + d.열쇠).update({
+      상태:'발송', 보낸때:d.보낸때, 받는수:d.받는수, batchId:d.batchId, 보낸이:d.보낸이,
+      링크들: 편.링크들 || []
+    });
+    if(Object.keys(보냄표).length){
+      try{ await db.ref('newsletter/opens/' + d.열쇠).update(보냄표); }
+      catch(e){ toast('보냄 표를 못 적었습니다 — 열람 셈이 이 회차를 빠뜨립니다: '
+                      + ((e&&e.message)||''), 12000); }
+    }
     App.회차들[d.열쇠] = d;
     /* 보냈으니 «다음 회차»로 넘어간다 — 같은 회차를 두 번 보내지 않는다 */
     const 보냄 = {}; Object.keys(App.회차들).forEach(k=>{ if((App.회차들[k]||{}).상태==='발송') 보냄[k]=1; });
@@ -1331,6 +1353,15 @@ function 설정화면(){
      <label class="f">꼬리 한 줄</label>
      <input type="text" id="cfgFoot" value="${esc(s.꼬리한줄||'대표노무사 권형하')}" onchange="설정저장()">
     </div>
+    <div class="wide">
+     <label class="f">열람 추적 밑주소
+      <span style="font-weight:400">(비우면 열람·미열람을 알 수 없습니다)</span></label>
+     <input type="text" id="cfgTrack" value="${esc(s.추적밑주소||'')}"
+       placeholder="https://asia-northeast3-pureun-erp.cloudfunctions.net" onchange="설정저장()">
+     <div class="hint">편지에 «보이지 않는 그림 한 점»과 «감싼 링크»가 들어가, 열면·누르면
+      우리 서버에 찍힙니다. ⚠ 아웃룩·회사 메일 서버는 그림을 기본으로 막아서
+      <b>클릭도 함께</b> 봅니다 — 그림이 막혀도 링크를 누르면 읽은 것으로 셉니다.</div>
+    </div>
     <div>
      <label class="f">대표자에게도 보내기</label>
      <select id="cfgCeo" onchange="설정저장()">
@@ -1432,6 +1463,7 @@ function 설정저장(){
     전화: g('cfgTel'),
     보내는주소: g('cfgFrom'),
     대표자도: g('cfgCeo') !== 'n',
+    추적밑주소: g('cfgTrack'),
     배너그림: g('cfgBanner'),
     로고그림: g('cfgLogo')
   });

@@ -43,10 +43,33 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
   }
+  /* ══════ 열람·클릭 추적 ══════
+     대표 지시 2026-09-03: 「열람 미열람을 정확하게 확인하고 …」
+     ★ 편지짓기 가 세우고, 끝나면 지운다. 여기 두는 까닭은 href() 가 «모든 링크의
+       목구멍»이라 한 곳만 고치면 전부 감싸지기 때문이다.
+     ⚠ 링크는 «번호»로 감싼다. 목적지를 주소로 실으면 누구나 우리 도메인으로 남을
+       속이는 링크를 만들 수 있다(열린 리다이렉트). functions/news-track.js 참고. */
+  var _추적 = null;
+
+  /* 그림 주소 — «감싸지 않는다». 배너·로고를 newsClick 로 감싸면 그림이 안 나온다.
+     ⚠ href() 와 갈라 둔 까닭이 이것이다. 하나로 두면 그림이 조용히 깨진다. */
+  function img주소(s) {
+    var u = String(s == null ? '' : s).trim();
+    return /^https?:\/\//i.test(u) ? esc(u) : '';
+  }
+
   /* 누를 수 있는 주소만. 발송기도 같은 잣대로 한 번 더 씻는다(문이 둘이다). */
   function href(s) {
     var u = String(s == null ? '' : s).trim();
-    return /^(https?:\/\/|mailto:)/i.test(u) ? esc(u) : '';
+    if (!/^(https?:\/\/|mailto:)/i.test(u)) return '';
+    /* mailto: 는 감싸지 않는다 — 메일 앱을 여는 것이라 우리 서버를 지날 수 없다. */
+    if (_추적 && /^https?:\/\//i.test(u)) {
+      var n = _추적.링크들.indexOf(u);
+      if (n < 0) { _추적.링크들.push(u); n = _추적.링크들.length - 1; }
+      return esc(_추적.밑주소 + '/newsClick?i=' + encodeURIComponent(_추적.회차)
+        + '&e={추적열쇠}&n=' + n);
+    }
+    return esc(u);
   }
   function 날짜꼴(s) {
     var t = String(s == null ? '' : s).replace(/\D/g, '');
@@ -66,8 +89,8 @@
      ⚠ 그림이 안 뜨는 메일 프로그램이 많다 — 그래서 그림 옆에 이름 글자를 늘 둔다. */
   function 머리(설정) {
     var s = 설정 || {};
-    var 표시 = href(s.로고그림)
-      ? '<img src="' + href(s.로고그림) + '" width="34" height="34" alt="">'
+    var 표시 = img주소(s.로고그림)
+      ? '<img src="' + img주소(s.로고그림) + '" width="34" height="34" alt="">'
       : '<div style="width:34px;height:34px;background-color:' + 색.남색 + ';border-radius:17px;'
         + 'color:#ffffff;font-size:17px;font-weight:bold;text-align:center;line-height:34px;'
         + 'font-family:' + 폰트 + ';">푸</div>';
@@ -98,9 +121,9 @@
     /* 사진을 넣으신 경우 — 글자를 사진 «위»에 얹지 않는다.
        메일에서 겹쳐 놓기(background-image·position)는 절반의 프로그램에서 깨진다.
        사진을 위에, 회차 띠를 아래에 «쌓는다» — 어디서든 같게 보인다. */
-    var 사진 = href(s.배너그림)
+    var 사진 = img주소(s.배너그림)
       ? '<tr><td style="padding:0;font-size:0;line-height:0;">'
-        + '<img src="' + href(s.배너그림) + '" width="' + (넓이 - 56) + '" alt=""'
+        + '<img src="' + img주소(s.배너그림) + '" width="' + (넓이 - 56) + '" alt=""'
         + ' style="display:block;width:100%;"></td></tr>'
       : '';
 
@@ -251,6 +274,12 @@
     var 설 = 설정 || {};
     var 범위 = d.범위 || 설.범위 || '자문중';
 
+    /* ★ 추적을 «여기서» 세운다. 밑주소가 없으면 아무것도 안 넣는다 —
+         예전처럼 나간다(설정에 밑주소를 넣기 전까지). */
+    var 밑 = String(설.추적밑주소 == null ? '' : 설.추적밑주소).trim().replace(/\/+$/, '');
+    var 회열 = String(회 && 회.열쇠 ? 회.열쇠 : '').replace(/[.#$/[\]]/g, '_');
+    _추적 = (밑 && 회열) ? { 밑주소: 밑, 회차: 회열, 링크들: [] } : null;
+
     var 속 = '';
     var 그린것 = 0;
     Core.꼭지들.forEach(function (g) {
@@ -280,12 +309,30 @@
       + 머리(설) + 배너(회, 설) + 차림표() + 속 + 꼬리(설, 범위)
       + '</table></td></tr></table>';
 
+    /* ★ 열람 그림 — 보이지 않는 1×1. 받는 쪽이 편지를 열면 우리 서버가 그것을 내주고
+         그때 「누가·언제 열었다」가 찍힌다.
+       ⚠ {추적열쇠} 는 보낼 때 통마다 그 사람 주소로 바뀐다(mail-bulk fill).
+         여기서 실제 주소를 박으면 «모두가 같은 사람»으로 찍힌다.
+       ⚠ 아웃룩·회사 메일 서버는 그림을 기본으로 막는다 — 그래서 클릭도 함께 본다.
+         이 그림만으로 「안 읽었다」고 정하면 잘 읽는 담당자가 빠진다.
+       ⚠ 발송기가 그림을 씻는다 — mail-send.js 의 IMG_HOST_OK 에 이 주소를 넣어야 나간다. */
+    var 추적그림 = _추적
+      ? '<img src="' + esc(_추적.밑주소 + '/newsOpen?i='
+          + encodeURIComponent(_추적.회차) + '&e={추적열쇠}')
+        + '" width="1" height="1" alt=""'
+        + ' style="display:block;width:1px;height:1px;border:0">'
+      : '';
+    var 링크들 = _추적 ? _추적.링크들.slice() : [];
+    _추적 = null;                      /* ★ 끝나면 지운다 — 다음 편지에 새 나가지 않게 */
+
     return {
       제목: Core.제목짓기(회, 범위),
-      서식: html,
+      서식: html + 추적그림,
       본문: 평문짓기(회차자료, 설정),
       회차: 회,
-      꼭지수: 그린것
+      꼭지수: 그린것,
+      /* 서버가 «번호»로 찾을 목록. 보낼 때 회차에 함께 담아 두어야 클릭이 통한다. */
+      링크들: 링크들
     };
   }
 

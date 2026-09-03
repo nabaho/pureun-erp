@@ -242,3 +242,60 @@ test('보내는 주소를 안 주면 통에 아무것도 안 싣는다 — 예�
   const q = B.buildQueue(v, 0, 'me@x.kr', 'b1');
   assert.ok(!q[0].fromWish, '빈 값을 실었습니다');
 });
+
+test('★ 통마다 «추적열쇠»를 채운다 — 안 채우면 모두가 같은 사람으로 찍힌다', () => {
+  /* 편지 몸통은 한 번만 만들어지고 {추적열쇠} 가 그대로 들어 있다.
+     보낼 때 통마다 그 사람 주소로 바뀌어야 «누가» 열었는지 알 수 있다. */
+  const v = B.validateBulk({
+    to: [T('a.b@x.kr', '가', '가사'), T('c@y.kr', '나', '나사')],
+    subject: '제', body: '본',
+    html: '<img src="https://fn/newsOpen?i=w1&e={추적열쇠}">'
+  });
+  const q = B.buildQueue(v, 0, 'me@x.kr', 'b1');
+  assert.match(q[0].payload.html, /e=a_b@x_kr/, '첫 통에 그 사람 주소가 안 들어갔습니다');
+  assert.match(q[1].payload.html, /e=c@y_kr/, '둘째 통이 다른 주소여야 합니다');
+  assert.ok(!/\{추적열쇠\}/.test(q[0].payload.html), '바꿀 자리가 남았습니다');
+});
+
+test('★ 추적열쇠는 파이어베이스 열쇠에 쓸 수 있는 모양이다', () => {
+  /* .#$/[] 가 들어가면 그 자리에 쓰다가 터진다. news-track 주소열쇠와 «같은 잣대»여야 한다. */
+  const v = B.validateBulk({
+    to: [T('A.B#C@x.kr', '가', '가사')], subject: '제', body: '본',
+    html: '{추적열쇠}'
+  });
+  const q = B.buildQueue(v, 0, 'me@x.kr', 'b1');
+  assert.equal(q[0].payload.html, 'a_b_c@x_kr');
+});
+
+test('★ 통에 채우는 추적열쇠와 서버가 세는 주소열쇠가 «같은 잣대»다', () => {
+  /* 두 곳이 다르면 적는 자리와 세는 자리가 어긋나 «열람이 영영 0» 이 된다.
+     화면은 멀쩡해 보이는데 미열람만 쌓인다 — 눈으로는 못 잡는다. */
+  const NT = require('../functions/news-track.js');
+  ['A.B#C@x.kr', 'a@x.co.kr', '  X$Y@z.kr  ', 'hong@abc.co.kr'].forEach(function (e) {
+    const v = B.validateBulk({ to: [{ email: e, name: '가' }], subject: '제', body: '본',
+                               html: '{추적열쇠}' });
+    assert.equal(v.ok, true, e + ' 가 안 담겼습니다');
+    const q = B.buildQueue(v, 0, 'me@x.kr', 'b1');
+    assert.equal(q[0].payload.html, NT.주소열쇠(e),
+      e + ' — 통과 서버가 다른 열쇠를 씁니다');
+  });
+});
+
+test('★ 추적 그림 주소가 발송기를 «통과»한다 — 안 그러면 열람이 안 찍힌다', () => {
+  /* 발송기는 남의 도메인 그림을 버린다(열람 추적이 새 나가는 것을 막는 규칙).
+     우리 함수 주소를 허용 목록에 넣지 않으면 «우리 추적 그림도 함께 버려진다». */
+  const MS = require('../functions/mail-send.js');
+  const 밑 = 'https://asia-northeast3-pureun-erp.cloudfunctions.net';
+  const html = '<img src="' + 밑 + '/newsOpen?i=w1&e=a@x_kr" width="1" height="1">';
+  const 씻긴 = MS.sanitizeHtml(html);
+  assert.match(씻긴, /newsOpen/, '발송기가 추적 그림을 버렸습니다 — 열람이 영영 안 찍힙니다');
+});
+
+test('★ 그래도 «남의» 도메인 그림은 계속 버린다 — 규칙을 열어 준 것이 아니다', () => {
+  const MS = require('../functions/mail-send.js');
+  ['https://evil.example.com/p.gif', 'https://tracker.kr/1x1.png']
+    .forEach(function (u) {
+      const 씻긴 = MS.sanitizeHtml('<img src="' + u + '">');
+      assert.ok(씻긴.indexOf(u) < 0, '남의 그림이 통과했습니다: ' + u);
+    });
+});
