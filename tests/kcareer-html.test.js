@@ -942,7 +942,12 @@ test('브라우저 자료가 지워져 기본 데이터로 돌아가면 크게 �
   const src = funcSource('fbCheckLoss');
   assert.match(src, /_fbCloudTotal\(/);
   assert.match(src, /_fbCounts\(null\)/);
-  assert.match(src, /cloud\.total <= here\.total \+ 5/, '몇 건 차이로 겁주지 않아야 합니다');
+  /* ⚠ 잫대가 바뀌었다(2026-09-03) — «내가 지운 것»을 림서 견다.
+     예전 잫대(cloud.total <= here.total + 5)는 사람이 중복을 지울 때마다 이 띄를 띄워
+     「되살리기」를 누르게 하고, 되살리면 지운 중복이 그대로 돌아왔다(실제 고리). */
+  assert.match(src, /cloud\.total - del <= here\.total \+ 5/,
+    '몇 건 차이로도, «내가 지운 만큼»으로도 겁주지 않아야 합니다');
+  assert.match(src, /var del=tombCount\(\)/, '지운 자리표 수를 반드시 밑에 놓고 견다');
   assert.match(src, /fbLossNotice/);
   // 로그인할 때 검사해야 의미가 있다
   assert.match(source, /if\(typeof fbCheckLoss==='function'\)\{ try\{ fbCheckLoss\(\); \}catch\(e\)\{\} \}/);
