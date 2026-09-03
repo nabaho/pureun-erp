@@ -51,19 +51,56 @@ test('★★ 다른 통에 살아 있으면 지운 것이 아니다 — 옮긴 �
   assert.match(fn, /bare\.indexOf\('pf_'\) === 0/, '첨부 조각까지 훑으면 느려집니다');
 });
 
+/* ⚠ 셈법이 fbPull 안에서 kcApplyRestore 로 «옮겨졌다»(2026-09-03 검토).
+   까닭: 되살리는 문이 셋인데 각자 localStorage 에 써서 갈라졌다 —
+   fbPull 만 자리표를 지키고 kcRecoverRun 은 자리표를 덮어 지운 중복을 되살려 놓았다.
+   규칙은 그대로다. 겨누는 자리만 옮기고, 대신 «세 문 모두»를 고정한다. */
+
 test('★★ 되살리기는 자리표에 있는 id 를 «버린다»', () => {
-  const fn = cutFn(bare, 'function fbPull()');
-  assert.match(fn, /_tb\[String\(r\.id\)\]/, '자리표에 있는 기록은 데려오지 않아야 합니다');
-  assert.match(fn, /_dropped/, '몇 건을 버렸는지 사람에게 말해야 합니다');
+  const fn = cutFn(bare, 'function kcApplyRestore(');
+  assert.match(fn, /tb\[String\(r\.id\)\]/, '자리표에 있는 기록은 데려오지 않아야 합니다');
+  assert.match(fn, /dropped\+=\(a\.length-keep\.length\)/, '몇 건을 버렸는지 세어야 합니다');
+  assert.match(cutFn(bare, 'function fbPull()'), /_r\.dropped/,
+    '몇 건을 버렸는지 사람에게 말해야 합니다');
 });
 
 test('★★ 되살리기는 자리표를 «덮지 않고 합친다» — 덮으면 다음 번에 또 부활한다', () => {
-  const fn = cutFn(bare, 'function fbPull()');
+  const fn = cutFn(bare, 'function kcApplyRestore(');
   assert.match(fn, /if\(bare===TOMB_KEY\) return;/,
     '★ 자리표를 클라우드 것으로 덮으면 기억이 날아가 고리가 그대로 돌아옵니다');
-  assert.match(fn, /Object\.keys\(_ct\)\.forEach\(function\(id\)\{ if\(!_tb\[id\]\) _tb\[id\]=_ct\[id\]; \}\)/,
+  assert.match(fn, /Object\.keys\(ct\)\.forEach\(function\(id\)\{ if\(!tb\[id\]\) tb\[id\]=ct\[id\]; \}\)/,
     '이 기기 것과 클라우드 것을 합쳐야 합니다');
-  assert.match(fn, /tombSave\(tombPrune\(_tb\)\)/);
+  assert.match(fn, /tombSave\(tombPrune\(tb\)\)/);
+});
+
+test('★★ 되살리는 문 «셋 모두» 한 곳(kcApplyRestore)을 지난다', () => {
+  /* ⚠ 새 되살리기 길을 만들면서 localStorage 에 직접 쓰면 자리표를 우회한다 —
+     실제로 그렇게 갈라져 지운 중복이 되살아났다(2026-09-03). */
+  assert.match(cutFn(bare, 'function fbPull()'), /kcApplyRestore\(v\.ls, 'pull'\)/);
+  assert.match(cutFn(bare, 'async function kcRecoverRun('), /kcApplyRestore\(v\.ls, 'rollback'\)/);
+  /* 자리표를 아는 곳 밖에서 ls 를 통째로 쓰는 코드가 남아 있으면 안 된다 */
+  const strays = bare.split('localStorage.setItem(NS+bare').length - 1;
+  assert.equal(strays, 1,
+    '★ ls 를 이 기기에 쓰는 곳은 kcApplyRestore 하나여야 합니다 (지금 ' + strays + '곳)');
+});
+
+test('★★ 「그 시점으로 되돌리기」는 그때 살아 있던 것의 자리표를 «뗀다»', () => {
+  /* 되살려 놓고 「지웠다」고 기억하면 다음 불러오기가 또 버린다 — 앞뒤가 어긋난다. */
+  const fn = cutFn(bare, 'function kcApplyRestore(');
+  assert.match(fn, /if\(mode==='rollback'\)/);
+  assert.match(fn, /delete tb\[k\]; freed\+\+;/);
+});
+
+test('★★ 「없어진 것만 되살리기」는 «내가 지운 것»을 켜 두지 않는다', () => {
+  /* ⚠ 다른 방에서 같은 날 만든 기능이라 자리표를 몰랐다. 전부 켜진 채로 나와서
+     한 번 누르면 지운 중복이 통째로 돌아왔다(2026-09-03 검토에서 찾음). */
+  const fn = cutFn(bare, 'async function kcMissingOpen(');
+  assert.match(fn, /deleted:tombHas\(r\.id\)/, '자리표를 함께 봐야 가릴 수 있습니다');
+  assert.match(fn, /\(f\.deleted\?'':' checked'\)/,
+    '★ 자리표에 있는 것은 켜 두면 안 됩니다');
+  assert.match(fn, /내가 지운 것/, '무엇인지 화면에 밝혀야 합니다');
+  const run = cutFn(bare, 'function kcMissingRun(');
+  assert.match(run, /지운것\.length && !confirm\(/, '되살리기 전에 한 번 묻습니다');
 });
 
 test('★★ 손실 판정에서 «내가 지운 것»을 뺀다 — 거짓 경보가 고리를 돌렸다', () => {

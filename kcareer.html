@@ -10881,7 +10881,10 @@ async function kcMissingOpen(){
         if(통에[st+'|'+r.id]) return;              /* 휴지통에 있다 */
         var k=st+'|'+r.id;
         if(찾음[k]) return;                        /* 더 새 백업에서 이미 잡았다 */
-        찾음[k]={ store:st, rec:r, at:백업[i].at };
+        /* ★ «내가 지운 것»과 «없어진 것»은 다르다 (2026-09-03 검토).
+           자리표에 있으면 사람이 일부러 지운 것이다 — 되살리면 지웠던 중복이 돌아온다.
+           숨기지는 않는다(잘못 지운 것을 되살릴 길은 있어야 한다) — 대신 밝히고 꺼 둔다. */
+        찾음[k]={ store:st, rec:r, at:백업[i].at, deleted:tombHas(r.id) };
       });
     }
   }
@@ -10893,9 +10896,12 @@ async function kcMissingOpen(){
       +'<span style="font-size:11.5px;color:var(--text-mute)">가장 새 백업 '+백업.length+'개를 훑었습니다.</span></div>';
     return;
   }
+  var 지운수=_kcMissFound.filter(function(f){ return f.deleted; }).length;
   var 줄=_kcMissFound.map(function(f,i){
-    return '<tr><td style="padding:6px 8px;border-top:1px solid var(--border)">'
-      +'<input type="checkbox" class="kcmiss-chk" data-i="'+i+'" checked></td>'
+    return '<tr'+(f.deleted?' style="background:var(--soft)"':'')+'><td style="padding:6px 8px;border-top:1px solid var(--border)">'
+      /* ⚠ 자리표에 있는 것은 «켜 두지 않는다» — 전부 켜진 채로 나오면 한 번 눌러
+         지운 중복이 통째로 돌아온다(실제로 그 고리였다). */
+      +'<input type="checkbox" class="kcmiss-chk'+(f.deleted?' kcmiss-del':'')+'" data-i="'+i+'"'+(f.deleted?'':' checked')+'></td>'
       +'<td style="padding:6px 8px;border-top:1px solid var(--border);white-space:nowrap;font-size:11.5px;color:var(--text-mute)">'
         +escapeHtml(f.store)+'</td>'
       +'<td style="padding:6px 8px;border-top:1px solid var(--border);white-space:nowrap"><span class="id-chip">'
@@ -10903,14 +10909,17 @@ async function kcMissingOpen(){
       +'<td style="padding:6px 8px;border-top:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px" title="'
         +escapeHtml(kcTrashLabel(f.rec))+'">'+escapeHtml(kcTrashLabel(f.rec))+'</td>'
       +'<td style="padding:6px 8px;border-top:1px solid var(--border);white-space:nowrap;font-size:11.5px;color:var(--text-mute)">'
-        +new Date(f.at).toLocaleString('ko-KR')+'</td></tr>';
+        +new Date(f.at).toLocaleString('ko-KR')+'</td>'
+      +'<td style="padding:6px 8px;border-top:1px solid var(--border);white-space:nowrap;font-size:11px">'
+        +(f.deleted?'<span style="color:var(--red);font-weight:700">내가 지운 것</span>':'')+'</td></tr>';
   }).join('');
   box.innerHTML='<div style="font-size:13px;margin-bottom:9px">백업에는 있는데 지금 없는 것 <b style="color:var(--red)">'
       +_kcMissFound.length+'건</b>을 찾았습니다. 되살릴 것만 남기고 <b>고른 것 되살리기</b>를 누르세요.'
+      +(지운수?'<div style="font-size:12px;color:var(--red);margin-top:5px">⚠ 그중 <b>'+지운수+'건</b>은 «내가 지운 것»입니다 — 되살리면 지웠던 중복이 돌아옵니다. 기본으로 꺼 두었습니다.</div>':'')
       +' <button class="btn sm" onclick="kcMissAll(false)">전부 끄기</button>'
       +' <button class="btn sm" onclick="kcMissAll(true)">전부 켜기</button></div>'
     +'<div class="dt"><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr>'
-    +['','보관함','ID','내용','이 백업 시각'].map(function(h){
+    +['','보관함','ID','내용','이 백업 시각','비고'].map(function(h){
       return '<th style="padding:6px 8px;background:var(--bg);color:var(--text-mute);font-size:11.5px;text-align:left;white-space:nowrap">'+h+'</th>'; }).join('')
     +'</tr></thead><tbody>'+줄+'</tbody></table></div>';
   if(go) go.style.display='';
@@ -10923,6 +10932,11 @@ function kcMissingRun(){
   var 고른=[...document.querySelectorAll('.kcmiss-chk')].filter(function(c){ return c.checked; })
     .map(function(c){ return _kcMissFound[Number(c.dataset.i)]; }).filter(Boolean);
   if(!고른.length){ toast('고른 것이 없습니다'); return; }
+  /* ⚠ 자리표에 있는 것을 고르면 «지웠던 것을 되살리는» 일이다 — 한 번 밝히고 묻는다.
+     막지는 않는다(잘못 지운 것을 되살릴 길은 있어야 한다). */
+  var 지운것=고른.filter(function(f){ return f && f.deleted; });
+  if(지운것.length && !confirm('고른 '+고른.length+'건 가운데 '+지운것.length+'건은 «내가 지운 것»입니다.\n'
+    +'되살리면 지웠던 중복이 다시 나타날 수 있습니다.\n\n그래도 되살릴까요?')) return;
   var 묶음={};
   고른.forEach(function(f){ (묶음[f.store]=묶음[f.store]||[]).push(f.rec); });
   var n=0, 새번호=0;
@@ -11010,8 +11024,11 @@ async function kcRecoverRun(key, n){
     if(box) box.innerHTML='<div class="rc-mute">③ 이 기기로 내려받는 중…</div>';
     var v=(await fbDb.ref('kcareer/'+fbUid).once('value')).val();
     if(!v||!v.ls) throw new Error('되돌린 자료를 읽지 못했습니다');
-    Object.keys(v.ls).forEach(function(bare){ if(FB_SKIP.indexOf(bare)>=0) return;
-      try{ localStorage.setItem(NS+bare, v.ls[bare]); }catch(e){ console.error('recover set',bare,e); } });
+    /* ★★ 여기가 자리표를 «덮어» 지운 중복을 되살려 놓던 자리다(2026-09-03 검토에서 찾음).
+       「그 시점으로 되돌린다」가 뜻이므로 그때 있던 것은 되살리되,
+       그 id 의 자리표는 떼어 앞뒤를 맞춘다. 셈법은 kcApplyRestore 한 곳에 있다. */
+    var _rb=kcApplyRestore(v.ls, 'rollback');
+    if(_rb.freed) console.log('되돌리기: 자리표 '+_rb.freed+'건을 뗐습니다(그 시점에 살아 있던 것)');
     if(v.at) fbSetBase(v.at);
     alert('되살렸습니다 — 화면을 새로고침합니다.');
     location.reload();
@@ -11045,6 +11062,49 @@ function fbPush(){ if(!fbUid){ toast('먼저 로그인하세요'); return; } if(
     save();
   });
 }
+/* ═══ 되살린 자료를 이 기기에 «쓰는 한 곳» (2026-09-03) ═══
+   ⚠ 되살리는 문이 셋이다 — ☁ 클라우드에서(fbPull) · 🔎 백업에서 통째로(kcRecoverRun) ·
+     🔍 없어진 것만(kcMissingRun). 셋이 각자 localStorage 에 쓰다가 갈라졌다:
+     fbPull 만 자리표를 지키고, kcRecoverRun 은 자리표를 «덮어» 지운 중복을 되살려
+     놓았다(다른 방에서 같은 날 만든 기능이라 서로를 몰랐다). 그래서 여기로 모은다.
+
+   mode 'pull'     — 클라우드가 낡을 수 있다 → 자리표에 있는 id 는 «데려오지 않는다».
+   mode 'rollback' — 「그 시점으로 되돌린다」가 뜻이다 → 그때 있던 것은 되살리고,
+                     그 id 의 자리표는 «뗀다»(살아 있는데 지웠다고 남겨 두면 앞뒤가 어긋난다).
+   ⚠ 어느 쪽이든 자리표는 «덮지 않고 합친다» — 덮으면 기억이 날아가 고리가 돌아온다. */
+function kcApplyRestore(ls, mode){
+  if(!ls) return { dropped:0, freed:0 };
+  var tb=tombLoad(), dropped=0, freed=0;
+  try{
+    var ct=JSON.parse(ls[TOMB_KEY]||'{}');
+    if(ct && typeof ct==='object' && !Array.isArray(ct))
+      Object.keys(ct).forEach(function(id){ if(!tb[id]) tb[id]=ct[id]; });
+  }catch(e){}
+  Object.keys(ls).forEach(function(bare){
+    if(FB_SKIP.indexOf(bare)>=0) return;
+    if(bare===TOMB_KEY) return;                       /* 위에서 합쳤다 */
+    var raw=ls[bare];
+    try{
+      var a=JSON.parse(raw);
+      if(Array.isArray(a) && a.length && a[0] && a[0].id!=null){
+        if(mode==='rollback'){
+          a.forEach(function(r){
+            var k=r&&r.id!=null?String(r.id):null;
+            if(k && tb[k]){ delete tb[k]; freed++; }
+          });
+        }else{
+          var keep=a.filter(function(r){ return !(r&&r.id!=null&&tb[String(r.id)]); });
+          dropped+=(a.length-keep.length);
+          raw=JSON.stringify(keep);
+        }
+      }
+    }catch(e){}
+    try{ localStorage.setItem(NS+bare, raw); }catch(e){ console.error('restore set',bare,e); }
+  });
+  tombSave(tombPrune(tb));
+  return { dropped:dropped, freed:freed };
+}
+
 function fbPull(){ if(!fbUid){ toast('먼저 로그인하세요'); return; } if(!fbDb) return;
   fbDb.ref('kcareer/'+fbUid).once('value').then(function(snap){ var v=snap.val();
     if(!v||!v.ls){ toast('클라우드에 저장된 데이터가 없습니다 — 먼저 한 기기에서 저장하세요'); return; }
@@ -11057,33 +11117,9 @@ function fbPull(){ if(!fbUid){ toast('먼저 로그인하세요'); return; } if(
       : '';
     if(!confirm('클라우드 기록 '+cloud.total+'건 ('+when+' · '+(v.device||'')+' 저장)을\n'
       +'이 기기(현재 '+here.total+'건)에 덮어씁니다.'+warn+'\n\n계속할까요?')) return;
-    /* ★★ 지운 것은 데려오지 않는다 (대표 지시 2026-09-03).
-       ⚠ 자리표는 «덮지 말고 합친다» — 덮으면 한 번 불러오는 것으로 기억이 날아가
-         다음 불러오기에서 지운 것이 또 돌아온다(실제로 그 고리였다). */
-    var _tb=tombLoad(), _dropped=0;
-    try{
-      var _ct=JSON.parse(v.ls[TOMB_KEY]||'{}');
-      if(_ct && typeof _ct==='object' && !Array.isArray(_ct)){
-        Object.keys(_ct).forEach(function(id){ if(!_tb[id]) _tb[id]=_ct[id]; });
-      }
-    }catch(e){}
-    Object.keys(v.ls).forEach(function(bare){
-      if(FB_SKIP.indexOf(bare)>=0) return;
-      if(bare===TOMB_KEY) return;                       /* 합친 것을 아래에서 따로 쓴다 */
-      var raw=v.ls[bare];
-      /* 기록 배열이면 자리표에 있는 id 를 걸러 낸다 */
-      try{
-        var a=JSON.parse(raw);
-        if(Array.isArray(a) && a.length && a[0] && a[0].id!=null){
-          var keep=a.filter(function(r){ return !(r&&r.id!=null&&_tb[String(r.id)]); });
-          _dropped += (a.length-keep.length);
-          raw=JSON.stringify(keep);
-        }
-      }catch(e){}
-      try{ localStorage.setItem(NS+bare, raw); }catch(e){ console.error('pull set',bare,e); }
-    });
-    tombSave(tombPrune(_tb));
-    if(_dropped) toast('지웠던 '+_dropped+'건은 «다시 데려오지 않았습니다» — 중복이 되살아나지 않습니다', 6000);
+    /* ★ 지운 것은 데려오지 않는다 — 셈법은 kcApplyRestore 한 곳에 있다 */
+    var _r=kcApplyRestore(v.ls, 'pull');
+    if(_r.dropped) toast('지웠던 '+_r.dropped+'건은 «다시 데려오지 않았습니다» — 중복이 되살아나지 않습니다', 6000);
     if(v.at) fbSetBase(v.at); fbHideNotice();
     toast('불러오기 완료 — 새로고침합니다'); setTimeout(function(){ location.reload(); }, 900); }).catch(function(ex){ toast('불러오기 실패: '+((ex&&ex.message)||ex)); }); }
 function fbShowInfo(p){ var el=document.getElementById('fbInfo'); if(el&&p&&p.at) el.textContent='마지막 저장: '+new Date(p.at).toLocaleString('ko-KR')+' · '+(p.keys||0)+'개 · '+(p.device||''); }

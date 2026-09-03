@@ -1159,7 +1159,11 @@ test('백업에서 되살리기 — 날짜마다 건수를 세어 고를 수 있
   const run = funcSource('kcRecoverRun');
   assert.match(run, /PUBackup\.snapshot\(\)/, '되돌리기 전에 지금 상태를 백업해야 합니다');
   assert.match(run, /fbDb\.ref\(\)\.update\(updates\)/, '클라우드를 되돌려야 합니다');
-  assert.match(run, /localStorage\.setItem\(NS\+bare/, '이 기기까지 내려야 화면이 바뀝니다');
+  /* ⚠ 예전엔 여기서 localStorage 에 «직접» 썼다 — 그게 바로 결함이었다.
+     자리표(지운 것 기억)를 우회해 지운 중복을 되살려 놓았다(2026-09-03 검토).
+     뜻은 그대로다 — «이 기기까지 내린다». 쓰는 곳을 kcApplyRestore 한 곳으로 모았다. */
+  assert.match(run, /kcApplyRestore\(v\.ls, 'rollback'\)/,
+    '이 기기까지 내려야 화면이 바뀝니다 — 단, 자리표를 지나서');
   assert.match(run, /confirm\(/, '덮어쓰기 전에 물어봐야 합니다');
   // 진입점 두 곳
   assert.match(source, /onclick="kcRecoverOpen\(\)"/);
