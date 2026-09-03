@@ -40,7 +40,7 @@
   if(!go()) document.addEventListener('DOMContentLoaded', go); })();
 </script>
 <script src="xlsx_gen.js?v=15"></script>
-<script src="js/pu-news-core.js?v=7"></script>
+<script src="js/pu-news-core.js?v=8"></script>
 <script src="js/pu-news-tpl.js?v=4"></script>
 <style>
 :root{
@@ -149,6 +149,17 @@ label.f:first-child{margin-top:0}
 
 table.list{width:100%;border-collapse:collapse;font-size:13px}
 table.list th,table.list td{padding:8px 14px;text-align:left;border-bottom:1px solid #f1f5f9}
+/* 번호 칸 — 숫자를 오른쪽에 맞춰 자릿수가 흔들려도 줄이 안 어긋나게 */
+table.list th.n,table.list td.n{width:44px;text-align:right;padding-right:6px;
+  color:var(--faint);font-variant-numeric:tabular-nums}
+/* 유형 딱지 — 빛깔은 업체관리와 같다(Core.유형들). 자문·노조가 같은 파랑이라
+   빛깔만으로 가르지 않고 표시(아이콘)와 이름을 늘 함께 둔다. */
+.ty{display:inline-block;font-size:11px;font-weight:800;padding:2px 8px;border-radius:99px;white-space:nowrap}
+/* 유형 칩 줄 — 업체관리 도구줄과 같은 결 */
+.chips{display:flex;gap:5px;flex-wrap:wrap;margin:12px 0 10px}
+.chips .chip{padding:5px 11px;border-radius:20px;font-size:11.5px;font-weight:700;
+  background:#fff;border:1px solid var(--line);color:var(--sub);white-space:nowrap}
+.chips .chip.on{background:var(--brown);border-color:var(--brown);color:#fff}
 table.list th{background:var(--paper);font-size:11.5px;font-weight:800;color:var(--sub);white-space:nowrap}
 table.list tr:hover td{background:#fcfcfd}
 
@@ -264,7 +275,10 @@ var db = null;
 var App = {
   me: null, isAdmin: false, tab: 'now',
   설정: {}, 회차들: {}, 사업장들: {}, 막은주소: {}, 브리핑: {},
-  지금열쇠: '', 길: 'auto', 보내는중: false
+  지금열쇠: '', 길: 'auto', 보내는중: false,
+  /* 고른 유형(자문·급여·노조·기금). 빈 값이면 전체 (대표 지시 2026-09-03).
+     ⚠ 이 값이 «보내는 곳»까지 바꾼다 — 명단셈 하나가 화면·보내기·CSV·엑셀을 다 먹인다. */
+  유형: ''
 };
 
 function $(id){ return document.getElementById(id); }
@@ -413,9 +427,21 @@ function render(){
 function 명단셈(){
   /* 기업정보함에서 «그때그때» 만든다. 범위(설정)가 어디까지 볼지 정한다 —
      자문중=살아 있는 곳만 · 자문끝=끝난 곳까지 · 명함전부=지점까지.
-     퇴사한 담당자(contacts[].left)는 Core 가 뺀다. */
+     퇴사한 담당자(contacts[].left)는 Core 가 뺀다.
+
+     ★ 유형(자문·급여·노조·기금) 거르기가 «여기» 있다 (대표 지시 2026-09-03).
+       화면도 보내기도 CSV도 엑셀도 «이 함수 하나»를 쓴다 —
+       거르는 자리를 두 곳에 두면 화면엔 38곳인데 110곳에 나간다. */
   const g = Core.사업장에서명단(App.사업장들, App.설정.범위);
   const d = Core.명단다듬기(g.줄들, App.막은주소);
+  /* 거른 «뒤»가 아니라 다듬은 «뒤»에 센다 — 수신거부·겹침을 뺀 실제 보낼 곳으로 세어야
+     칩의 숫자와 표의 줄 수가 맞는다. */
+  d.유형셈 = Core.유형별셈(d.ok);
+  d.전체 = d.ok;
+  if(App.유형){
+    d.ok = Core.유형으로거르기(d.ok, App.유형);
+    d.셈 = Object.assign({}, d.셈, { 보낼곳: d.ok.length });
+  }
   d.주소없는곳 = g.주소없는곳;
   d.본곳 = g.본곳;
   return d;
@@ -439,7 +465,7 @@ function 이번회차화면(){
     <button class="btn" onclick="크게보기()">👁 크게 보기</button>
     <button class="btn warn" onclick="시험발송()" ${갈수있나.ok?'':'disabled'}>✉ 나에게 시험 발송</button>
     <button class="btn pri" onclick="진짜보내기()" ${갈수있나.ok && App.isAdmin?'':'disabled'}>
-      📨 ${r.셈.보낼곳.toLocaleString()}곳에 보내기</button>
+      📨 ${App.유형 ? esc(App.유형)+' ' : ''}${r.셈.보낼곳.toLocaleString()}곳에 보내기</button>
   </div>
   <div class="cols">
    <div class="colL">
@@ -717,6 +743,11 @@ async function 진짜보내기(){
   const 걸림 = Core.보낼시간(r.ok.length, BULK_GAP_SEC);
   if(!confirm(
     `「${편.제목}」\n\n`
+    /* ⚠ 「무엇을 골라 두었나」를 «맨 앞»에 말한다 — 유형을 골라 놓고 잊으면
+         전부에 보낸 줄 아신다. 되돌릴 수 없는 단추 앞이라 더 그렇다. */
+    + (App.유형
+        ? `· ⚠ 지금 「${App.유형}」만 골라 두셨습니다 — 다른 유형에는 안 나갑니다\n`
+        : `· 유형 — 전체 (자문·급여·노조·기금 모두)\n`)
     + `· 받는 곳 — ${r.ok.length.toLocaleString()}곳 (한 곳에 한 통씩, 서로 주소가 안 보입니다)\n`
     + `· 뺀 곳 — 수신거부 ${r.셈.수신거부} · 주소없음 ${r.셈.주소없음} · 겹침 ${r.셈.겹침}\n`
     + `· 다 나가는 데 ${걸림}\n\n`
@@ -811,15 +842,43 @@ function 명단화면(){
   const r = 명단셈();
   const 광고 = Core.광고표기필요한가(App.설정.범위);
 
-  const 줄 = r.ok.map(function(x){
+  /* ★ 번호는 «보이는 차례»로 1번부터 붙인다 (대표 지시 2026-09-03 「넘버링해달라」).
+       유형 → 회사 이름 차례로 늘어놓아, 같은 유형이 붙어 보인다.
+     ⚠ 번호는 «이름표가 아니라 세는 수»다 — 거르면 다시 1번부터다.
+       업체 번호처럼 고정된 것으로 여기면 「3번이 어제와 다르다」가 된다. */
+  const 차례 = Core.유형들.reduce(function(m,t,i){ m[t.키]=i; return m; }, {});
+  const 정렬 = r.ok.slice().sort(function(a,b){
+    const d = (차례[a.유형]||0) - (차례[b.유형]||0);
+    return d !== 0 ? d : String(a.company||'').localeCompare(String(b.company||''), 'ko');
+  });
+  const 줄 = 정렬.map(function(x,i){
     const 직 = x.title ? ' <span style="color:var(--faint)">' + esc(x.title) + '</span>' : '';
+    const t = Core.유형들.find(function(v){ return v.키 === x.유형; }) || Core.유형들[0];
     return '<tr>'
+      + '<td class="n">' + (i+1) + '</td>'
+      + '<td><span class="ty" style="background:' + t.연한빛 + ';color:' + t.진한빛 + '">'
+        + t.표시 + ' ' + esc(t.키) + '</span></td>'
       + '<td><b>' + esc(x.company||'') + '</b></td>'
       + '<td>' + esc(x.name||'') + 직 + '</td>'
       + '<td>' + esc(x.email||'') + '</td>'
       + '<td style="text-align:right"><button class="mini" onclick="수신거부넣기(\'' + esc(x.email) + '\')">수신거부</button></td>'
       + '</tr>';
   }).join('');
+
+  /* 유형 칩 — 업체관리 도구줄과 «같은 결»이다. 눌린 것을 다시 누르면 전체로 돌아온다. */
+  const 칩 = '<div class="chips">'
+    + '<button class="chip' + (App.유형 ? '' : ' on') + '" onclick="유형칩누르기(\'\')">📊 전체 '
+      + (r.전체||[]).length.toLocaleString() + '</button>'
+    + Core.유형들.map(function(t){
+        const n = (r.유형셈||{})[t.키] || 0;
+        const 켜짐 = App.유형 === t.키;
+        return '<button class="chip' + (켜짐 ? ' on' : '') + '"'
+          + (켜짐 ? ' style="background:' + t.빛 + ';border-color:' + t.빛 + '"'
+                  : (n ? ' style="color:' + t.빛 + '"' : ''))
+          + ' onclick="유형칩누르기(\'' + t.키 + '\')" title="' + esc(t.키) + ' 업체만 봅니다">'
+          + t.표시 + ' ' + esc(t.키) + ' ' + n + '</button>';
+      }).join('')
+    + '</div>';
 
   const 빈곳 = (r.주소없는곳||[]).map(function(c){
     return '<tr><td><b>' + esc(c.name||'') + '</b></td>'
@@ -829,10 +888,10 @@ function 명단화면(){
 
   return `
   <div class="hdbar">
-    <span class="no">받는 곳 ${r.셈.보낼곳.toLocaleString()}곳</span>
+    <span class="no">받는 곳 ${r.셈.보낼곳.toLocaleString()}곳${App.유형 ? ' <span style="font-size:13px;color:var(--brown)">('+esc(App.유형)+')</span>' : ''}</span>
     <span style="font-size:12px;color:var(--sub)">
-      기업정보함 ${(r.본곳||0).toLocaleString()}곳에서 · 수신거부 ${r.셈.수신거부} ·
-      겹침 ${r.셈.겹침} · 형식틀림 ${r.셈.주소없음}</span>
+      ${App.유형 ? '전체 '+(r.전체||[]).length.toLocaleString()+'곳 중 · ' : ''}기업정보함 ${(r.본곳||0).toLocaleString()}곳에서 ·
+      수신거부 ${r.셈.수신거부} · 겹침 ${r.셈.겹침} · 형식틀림 ${r.셈.주소없음}</span>
     <span class="sp"></span>
     <button class="btn pri" onclick="노무사회엑셀()">↧ 공인노무사회 엑셀</button>
     <button class="mini" onclick="명단내보내기()">↧ CSV</button>
@@ -846,10 +905,18 @@ function 명단화면(){
    · <b>담당자가 퇴사하면</b> 그 담당자에 «퇴사»를 켜시면 저절로 빠집니다.<br>
    · <b>이 화면에서 지울 일이 없습니다.</b> 두 곳을 맞추려 하면 반드시 어긋납니다.</div>
 
-  ${r.ok.length ? `<div class="box" style="margin-top:12px">
-    <h3>보낼 곳 <span class="cnt">${r.ok.length}</span></h3>
-    <table class="list"><tr><th>회사</th><th>담당자</th><th>이메일</th><th></th></tr>${줄}</table></div>`
-   : '<div class="note bad">보낼 곳이 없습니다 — 기업정보함에 담당자 이메일이 있어야 합니다.</div>'}
+  ${칩}
+
+  ${r.ok.length ? `<div class="box">
+    <h3>보낼 곳 <span class="cnt">${r.ok.length}</span>
+      ${App.유형 ? `<span style="font-size:11.5px;color:var(--sub)">${esc(App.유형)}만 봅니다 —
+        「전체」를 누르면 다 보입니다</span>` : ''}</h3>
+    <table class="list"><tr><th class="n">#</th><th>유형</th><th>회사</th><th>담당자</th>
+      <th>이메일</th><th></th></tr>${줄}</table></div>`
+   : (App.유형
+      ? `<div class="note"><b>${esc(App.유형)} 업체 가운데 보낼 곳이 없습니다.</b>
+         「전체」를 누르면 다시 다 보입니다.</div>`
+      : '<div class="note bad">보낼 곳이 없습니다 — 기업정보함에 담당자 이메일이 있어야 합니다.</div>')}
 
   ${빈곳 ? `<div class="box">
     <h3>⚠ 주소가 없어 못 보내는 곳 <span class="cnt">${r.주소없는곳.length}</span></h3>
@@ -906,6 +973,14 @@ function 노무사회엑셀(){
     }, 이름);
     toast('📗 ' + f.줄들.length + '곳을 엑셀로 받았습니다 — 공인노무사회 「엑셀일괄 등록」에 올리세요', 12000);
   }catch(e){ toast('엑셀을 만들지 못했습니다: ' + ((e&&e.message)||''), 8000); }
+}
+
+/* 유형 칩 — 눌린 것을 다시 누르면 전체로 돌아온다(업체관리 칩과 같은 결).
+   ⚠ 이 값은 «보내는 곳»까지 바꾼다. 그래서 고른 채로 다른 칸에 갔다 와도
+     칩이 그대로 켜져 있어야 한다 — 조용히 풀리면 골라 둔 줄 알고 전부에 보낸다. */
+function 유형칩누르기(v){
+  App.유형 = (App.유형 === v) ? '' : String(v || '');
+  render();
 }
 
 /* 기업정보함을 «다시» 읽는다 — 방금 고친 것이 바로 보이게.
