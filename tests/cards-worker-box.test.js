@@ -384,3 +384,87 @@ test('★ 여러 장을 한 번에 보내도 «쓰기는 한 번»이다', async
   assert.equal(res.people, 12);
   assert.equal(updates.length, 1, '★ 쓰기가 ' + updates.length + '번입니다 — 한 번이어야 합니다');
 });
+
+/* ══════════════ ⑤ 같은 칸을 «두 번» 읽지 않는다 (2026-09-03 검토에서 찾음) ══════════════
+
+   겹침을 물어보는 길이 생기면서(2026-09-03), 사람 칸을 findWorkerDupes 가 한 번 읽고
+   곧바로 sendToWorkerMany 가 **또 읽었다.** 겹치지 않는 «흔한 길»에서 왕복이 두 배였다.
+   ⚠ 그렇다고 아무 때나 물려주면 안 된다 — 사람이 답할 때까지 기다린 뒤에 쓰면
+     그 사이 남이 채워 둔 이름을 옛 값으로 덮는다. 그 경계를 함께 못박는다. */
+
+const ONE = [{ kind: 'idcard', photo: PH,
+  fields: { company: '해찬솔에프쓰리', name: '강석', docName: '주민등록증' } }];
+
+test('★★ 겹침을 찾고 곧바로 보내면 사람 칸을 «한 번만» 읽는다', async () => {
+  const { F, reads } = rig({});
+  const got = {};
+  const dupes = await F.findWorkerDupes(ONE, got);
+  assert.equal(dupes.length, 0, '겹치는 것이 없어야 하는 표본입니다');
+  const afterFind = reads.length;
+  assert.equal(afterFind, 1, '찾을 때 한 번 읽습니다');
+  await F.sendToWorkerMany(ONE, got.rows);
+  assert.equal(reads.length, afterFind,
+    '★★ 방금 읽은 것을 넘겼는데 또 읽었습니다(' + (reads.length - afterFind) + '번) —\n' +
+    '  겹치지 않는 흔한 길에서 왕복이 두 배가 됩니다.');
+});
+
+test('★★ 안 넘기면 «제대로» 읽는다 — 물려주기가 읽기를 없애 버리면 안 된다', async () => {
+  const { F, reads, updates } = rig({});
+  await F.sendToWorkerMany(ONE);
+  assert.equal(reads.length, 1, '★★ 안 읽고 쓰면 이름·회사를 덮어씁니다');
+  assert.equal(updates.length, 1);
+});
+
+test('★★★ 아는 사람이 빠진 것을 넘기면 «통째로 다시» 읽는다 — 반만 새 값이면 못 짚는다', async () => {
+  const { F, reads } = rig({});
+  const two = ONE.concat([{ kind: 'idcard', photo: { year: '2026', id: 'p2', owner: 'u1' },
+    fields: { company: '해찬솔에프쓰리', name: '박선희', docName: '주민등록증' } }]);
+  await F.sendToWorkerMany(two, { '해찬솔에프쓰리__강석': {} });   // 한 사람만 아는 값
+  assert.equal(reads.length, 2,
+    '★★★ 반쪽짜리를 그대로 믿었습니다 — 모르는 사람의 이름·회사를 빈 칸으로 보고 덮습니다');
+});
+
+test('★★★ 물려받은 값으로도 «사람이 고쳐 둔 이름»을 안 덮는다', async () => {
+  const { F, updates } = rig({
+    'pucards/workerInfo/해찬솔에프쓰리__강석': { name: '강○석', company: '해찬솔' }
+  });
+  const got = {};
+  await F.findWorkerDupes(ONE, got);
+  await F.sendToWorkerMany(ONE, got.rows);
+  const paths = Object.keys(updates[0] || {});
+  assert.ok(!paths.some(p => /\/name$/.test(p)),
+    '★★★ 사람이 고쳐 둔 이름을 판독값으로 덮었습니다: ' + paths.join(' '));
+  assert.ok(!paths.some(p => /\/company$/.test(p)), '★★★ 회사도 덮었습니다');
+});
+
+test('★★ 이미 붙어 있는 서류는 물려받은 값으로도 «다시 안 쓴다»', async () => {
+  /* 이름·회사까지 이미 차 있는 자리다 — 그래야 「쓸 것이 하나도 없다」를 볼 수 있다
+     (이름이 비어 있으면 그 칸을 채우느라 쓰기가 한 번 일어난다). */
+  const { F, updates } = rig({
+    'pucards/workerInfo/해찬솔에프쓰리__강석': {
+      name: '강석', company: '해찬솔에프쓰리',
+      docs: { '2026_-Oabc123': { kind: 'idcard' } }
+    }
+  });
+  const got = {};
+  await F.findWorkerDupes(ONE, got);
+  const res = await F.sendToWorkerMany(ONE, got.rows);
+  assert.equal(res.already, 1, '★★ 이미 있는 것을 「새로 보냄」으로 셌습니다');
+  assert.equal(res.sent, 0);
+  assert.equal(updates.length, 0, '★★ 같은 값을 덮어써도 요금은 듭니다');
+});
+
+test('★★ 사람이 «답한 뒤» 가는 길에는 물려주지 않는다 — 그 사이 값이 바뀐다', () => {
+  /* 바꾸기·둘 다 두기는 사람이 창을 보고 고른 뒤에 간다. 그 길에 rows 를 실어 보내면
+     기다린 동안 남이 채워 둔 이름·회사를 옛 값으로 덮는다. */
+  ['dupReplace', 'dupKeepBoth'].forEach(function (name) {
+    const fn = cutFn(APP, 'function ' + name + '(');
+    assert.ok(fn.indexOf('rows') < 0,
+      '★★ ' + name + ' 이 옛 값을 실어 보냅니다 — 기다린 동안 바뀐 값을 덮습니다');
+    assert.match(fn, /force: true/, '★ 그 길은 다시 묻지 않고 보냅니다');
+  });
+  /* 곧바로 가는 길에서만 실어 보낸다 */
+  const send = cutFn(APP, 'function sendWorker(');
+  assert.match(send, /\{ force: true, rows: got\.rows \}/,
+    '★★ 겹치지 않을 때 방금 읽은 것을 안 넘기면 같은 칸을 또 읽습니다');
+});
