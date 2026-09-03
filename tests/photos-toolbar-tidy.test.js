@@ -78,6 +78,10 @@ function bar(over) {
     renderPhMenuBtn() {}, renderPhNeedBtn() {}, renderGotCard() {}, renderOwnerSelLabel() {},
     /* 2026-08-30: 도구줄이 «왼쪽 칸 고르기»가 열려 있는지 본다 */
     _sharePick: null, closeSharePick() {},
+    /* 2026-09-03: 폰에서만 나오는 「👥 공유」 길잡이 단추 — 도구줄이 화면 너비를 묻는다.
+       ⚠ 시늉으로 true 를 주면 «폰만» 이라는 규칙이 검사에서 사라진다. 아래
+         phone 옵션으로 두 쪽을 다 밟는다(기본은 넓은 화면). */
+    isPhone: function () { return !!o.phone; },
     /* 2026-08-29: 내 사진에 공유받은 것이 섞인다 — 칩·거르기가 이 셋을 쓴다 */
     isSharedItem() { return false; }, sharedByName() { return ''; }, sharedOnly: false,
     ALL_OWNERS: '__all__', gridOwner: null, renderPayNote() {},
