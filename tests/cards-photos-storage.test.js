@@ -147,3 +147,74 @@ test('⛔ 화질 깎기 도구를 이 길에 섞지 않는다', () => {
   assert.ok(!/shrink|Shrink/.test(m[0]),
     '창고로 옮기는 것은 화질을 그대로 두려고 하는 일입니다. 여기서 깎으면 되돌릴 수 없습니다.');
 });
+
+/* ══ 막혔을 때 «어디서» 막혔는지 말하는가 (2026-09-03) ══
+   대표님이 단추를 누르니 화면에 「목록을 읽지 못했습니다」 한 줄만 떴다.
+   그 문장이 겉(단추 쪽)과 속(REST 쪽)에 «똑같이» 적혀 있어, 로그인·주소·인터넷·권한
+   가운데 어디서 막힌 것인지 화면만 보고는 알 수 없었다 — 고칠 자리를 못 찾는다.
+   여기서 못 박는 것은 「무슨 말을 하는가」가 아니라 «가려낼 수 있는가»다. */
+
+const { cutFn } = require('./cut-fn.js');
+
+test('★★ 막히는 자리마다 «번호»를 붙인다 — 어디서 막혔는지 화면만 보고 안다', () => {
+  const fn = cutFn(html, 'async function _cardsPhotoIds(');
+  assert.ok(fn, '_cardsPhotoIds 를 찾지 못했습니다.');
+  const said = (fn.match(/throw new Error\('([^']*)/g) || [])
+    .map((t) => t.replace(/^throw new Error\('/, ''));
+  assert.ok(said.length >= 3,
+    '막힐 자리가 여럿인데 말하는 자리가 ' + said.length + '개뿐입니다.');
+  const 번호 = /^[①②③④⑤⑥⑦⑧⑨]/;
+  const 맨말 = said.filter((t) => !번호.test(t));
+  assert.deepEqual(맨말, [],
+    '★ 번호 없는 말이 있습니다: ' + JSON.stringify(맨말) + ' — ' +
+    '번호가 없으면 대표님 화면을 보고도 어느 걸음에서 막혔는지 알 수 없습니다.');
+});
+
+test('★★ 겉 문장과 속 문장이 «달라야» 한다 — 같으면 구별이 안 된다', () => {
+  const fn = cutFn(html, 'async function _cardsPhotoIds(');
+  const box = html.match(/_mvBox\(`<b style="color:#dc2626">([^<]+)</);
+  assert.ok(box, '단추 쪽 빨간 문장을 찾지 못했습니다.');
+  assert.ok(fn.indexOf(box[1]) < 0,
+    '★ 겉과 속이 같은 말(「' + box[1] + '」)을 합니다 — ' +
+    '화면에 두 줄이 겹쳐 떠서 무엇이 진짜 까닭인지 가려낼 수 없습니다(2026-09-03 에 실제로 그랬다).');
+});
+
+test('★ 거절당하면 «번호와 본문»을 함께 말한다 — 숫자만으로는 못 고친다', () => {
+  const fn = cutFn(html, 'async function _cardsPhotoIds(');
+  assert.match(fn, /res\.status/, '몇 번으로 거절당했는지 안 말합니다.');
+  assert.match(fn, /res\.text\(\)/,
+    '★ 파이어베이스가 보내 준 까닭(Permission denied / Unauthorized request)을 버립니다 — ' +
+    '숫자 401 만으로는 권한 문제인지 열쇠 문제인지 가릴 수 없습니다.');
+});
+
+test('★ 인터넷이 막힌 것도 «잡아서» 말한다 — 그냥 터지게 두지 않는다', () => {
+  const fn = cutFn(html, 'async function _cardsPhotoIds(');
+  const at = fn.indexOf('await fetch(');
+  assert.ok(at > 0, 'fetch 를 찾지 못했습니다.');
+  const okAt = fn.indexOf('if(!res.ok)');
+  assert.ok(okAt > at, 'res.ok 검사가 fetch 뒤에 없습니다.');
+  assert.ok(fn.slice(at, okAt).indexOf('catch') > 0,
+    '★ fetch 를 감싸지 않았습니다 — 인터넷·차단 프로그램에 막히면 ' +
+    '까닭 없는 빈 줄만 뜹니다.');
+});
+
+test('★★ 까닭이 «빈 칸»으로 나가지 않는다 — 대표님이 겪은 그 빈 줄', () => {
+  const fn = cutFn(html, 'function _errWord(');
+  assert.ok(fn, '_errWord 가 없습니다 — 까닭을 다듬는 자리가 사라졌습니다.');
+  const vm = require('node:vm');
+  const ctx = { out: null };
+  vm.createContext(ctx);
+  vm.runInContext(fn + '; out = _errWord;', ctx);
+  /* ⚠ 마지막 넷째가 «빈 칸 막이»를 실제로 지나가는 유일한 것이다 —
+     앞의 것들은 String(e) 이 [object Object] 나 Error 를 내놓아 그 자리를 안 지난다.
+     이것을 빼면 막이를 없애도 검사가 통과한다(2026-09-03 에 실제로 그랬다). */
+  const 빈것 = [undefined, null, {}, new Error(''), { name: '', message: '' },
+    { name: '', message: '', toString: () => '' }];
+  빈것.forEach((v, i) => {
+    const r = ctx.out(v);
+    assert.ok(typeof r === 'string' && r.trim().length > 0,
+      '★ ' + i + '번째 빈 까닭이 «빈 줄»로 나갑니다 — 화면에 아무것도 안 보입니다.');
+  });
+  assert.match(ctx.out(new Error('터졌다')), /터졌다/,
+    '까닭이 있는데 버립니다 — 그것이 고칠 단서입니다.');
+});
