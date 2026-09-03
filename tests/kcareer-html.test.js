@@ -994,9 +994,20 @@ test('넘버 옆 □ 로 여러 건을 골라 한 번에 지운다', () => {
   assert.match(src, /careerSelSync\(name\)/);
   assert.match(src, /id="selbar-'\+name/, '선택했을 때만 뜨는 일괄 작업 줄');
   const del = funcSource('careerDelSelected');
-  assert.match(del, /confirm\(/, '되돌릴 수 없으니 반드시 물어봐야 합니다');
-  assert.match(del, /deleteFile\(r\.id\)/, '첨부 원본도 함께 지웁니다');
-  assert.match(del, /set\(cfg\.store, arr\.filter/);
+  /* ★ 2026-09-03 규칙이 바뀌었다 — 여기 못 박혀 있던 두 줄은 «옛 세상»의 것이다.
+       전에는 confirm( 과 deleteFile(r.id) 를 요구했다. 까닭은 「되돌릴 수 없으니
+       반드시 물어봐야 한다」였다. 이제 휴지통이 30일 들고 있으므로 되돌릴 수 있다.
+     ⚠ 오히려 지금은 그 둘이 «있으면 안 된다» —
+        confirm 은 화면 맨 위에 떠서 단추와 멀고(대표 지시로 쪽지로 바꿨다),
+        여기서 원본을 지우면 휴지통이 껍데기가 되어 되살려도 원본이 없다.
+     자세한 규칙은 tests/kcareer-trash.test.js 가 지킨다. */
+  assert.ok(!/confirm\(/.test(del),
+    '확인은 «단추 옆 쪽지»로 한다 — confirm 은 화면 맨 위에 뜬다');
+  assert.match(del, /kcAskDelete\(/, '지우기 전에 물어봐야 합니다');
+  assert.match(del, /kcTrashPut\(/, '휴지통에 담아야 되살릴 수 있습니다');
+  assert.ok(!/deleteFile\(/.test(del),
+    '첨부 원본은 휴지통이 들고 있다 — 여기서 지우면 되살려도 원본이 없습니다');
+  assert.match(del, /set\(cfg\.store, get\(cfg\.store\)\.filter/);
 });
 
 test('선택 기능은 목록 화면 전부가 공유한다 — 화면별 따로 만들지 않는다', () => {
