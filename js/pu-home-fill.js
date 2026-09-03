@@ -167,7 +167,8 @@
       if (tidy(after) === before) { skipped.push({ before: before, why: '바뀐 것이 없습니다' }); return; }
 
       /* 같은 글자가 여러 군데면 «어느 줄인지 단정할 수 없다» — 손대지 않는다.
-         (홈페이지에는 「T. 041-…」처럼 똑같은 줄이 여러 지사에 있다) */
+         (홈페이지에는 「T. 041-…」처럼 똑같은 줄이 여러 지사에 있다)
+         ★ 다만 사람이 «몇 번째»인지 골라 주었으면(e.n) 짐작할 일이 없다 — 아래 참조. */
       var hits = [];
       for (var k = 0; k < runs.length; k++) {
         if (used[runs[k].at]) continue;
@@ -177,6 +178,45 @@
         skipped.push({ before: before, why: '홈페이지에서 그 줄을 찾지 못했습니다 — 그 사이 누가 고쳤을 수 있습니다' });
         return;
       }
+
+      /* ── 사람이 「몇 번째」를 골라 준 경우 ─────────────────────────────
+         ★ 반드시 «군데 수»부터 맞춰 본다. 읽어올 때 of 군데였는데 지금 다르면
+           그 사이 홈페이지가 바뀐 것이다 — 그때 n 번째는 «다른 줄»을 가리킨다.
+           잘못 짚느니 안 채우는 것이 낫다(이 파일의 다른 자리와 같은 결). */
+      var 몇번째 = Math.floor(Number(e && e.n));
+      if (몇번째 >= 1) {
+        var 모두 = 0;
+        for (var m = 0; m < runs.length; m++) if (runs[m].text === before) 모두++;
+        var 읽을때 = Math.floor(Number(e && e.of));
+        if (읽을때 >= 1 && 모두 !== 읽을때) {
+          skipped.push({ before: before,
+            why: '그 사이 홈페이지가 바뀌었습니다 — 읽을 때 ' + 읽을때
+              + '군데였는데 지금 ' + 모두 + '군데입니다. 다시 읽어오십시오' });
+          return;
+        }
+        if (몇번째 > 모두) {
+          skipped.push({ before: before,
+            why: '그 줄은 ' + 모두 + '군데뿐인데 ' + 몇번째 + '번째를 고르셨습니다. 다시 읽어오십시오' });
+          return;
+        }
+        /* n 번째 자리를 «본디 차례»로 짚는다 — 이미 채운 줄도 세어야 차례가 안 밀린다 */
+        var 짚음 = -1, 셈 = 0;
+        for (var q = 0; q < runs.length; q++) {
+          if (runs[q].text !== before) continue;
+          셈++;
+          if (셈 === 몇번째) { 짚음 = q; break; }
+        }
+        if (짚음 < 0 || used[runs[짚음].at]) {
+          skipped.push({ before: before, why: '그 자리는 이미 채웠습니다' });
+          return;
+        }
+        var 그줄 = runs[짚음], 날것 = toks[그줄.at];
+        toks[그줄.at] = 날것.match(/^\s*/)[0] + escText(after) + 날것.match(/\s*$/)[0];
+        used[그줄.at] = true;
+        done.push({ before: before, after: after, n: 몇번째 });
+        return;
+      }
+
       if (hits.length > 1) {
         /* 순서를 실마리로 삼는다 — 앞에서부터 채워 왔으니 그 뒤에 하나만 남았다면 그것이다.
            그래도 둘 이상이면 «단정하지 않고» 건너뛴다. 잘못 짚느니 안 채우는 것이 낫다. */
@@ -206,14 +246,23 @@
      ★ 채울 수 있는지 없는지를 화면이 저 나름대로 재지 않는다 — 여기서 한 번만 정한다.
        (같은 글이 여럿이면 applyLineEdits 가 어차피 건너뛴다. 그 사실을 미리 알려
         헛되이 고치게 두지 않는다.) */
+  /* 고칠 수 있는 줄. 줄마다 «몇 번째인지»(n)와 «모두 몇 군데인지»(of)를 함께 준다.
+     ★ 예전에는 똑같은 글이 두 번 있으면 «자물쇠»를 걸어 아예 못 고치게 했다.
+       그런데 오시는길에서는 그게 절반이었다 — 「천안본사」·「서산지사」·같은 메일 주소가
+       지사마다 되풀이된다. 절반을 못 고치는 화면은 쓸 수 없다.
+       (대표 지시 2026-09-03 「자물쇄 같이 실물」)
+     ★ 그래서 «단정하지 않고 사람이 고르게» 한다 — 몇 번째 자리인지를 우리가 들고 있으면
+       기계가 짐작할 필요가 없다. 짐작을 없앤 것이지 위험을 감수한 것이 아니다.
+     ★ of 를 함께 들고 있는 까닭: 채울 때 «그 사이 홈페이지가 바뀌었는지»를 이것으로 안다.
+       군데 수가 달라졌으면 자리를 못 믿으므로 채우지 않는다(applyLineEdits 참조). */
   function fixableRuns(bodyHtml) {
     var runs = textRuns(bodyHtml);
     var cnt = {};
     runs.forEach(function (r) { cnt[r.text] = (cnt[r.text] || 0) + 1; });
+    var seen = {};
     return runs.map(function (r) {
-      return { text: r.text, ok: cnt[r.text] === 1,
-               why: cnt[r.text] === 1 ? ''
-                 : '이 쪽에 똑같은 글이 ' + cnt[r.text] + '군데 있어 어느 자리인지 단정할 수 없습니다' };
+      seen[r.text] = (seen[r.text] || 0) + 1;
+      return { text: r.text, n: seen[r.text], of: cnt[r.text], ok: true, why: '' };
     });
   }
 
