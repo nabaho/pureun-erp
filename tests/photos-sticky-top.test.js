@@ -78,9 +78,22 @@ test('★ 붙는 자리를 CSS 에 숫자로 박지 않는다', () => {
 test('폰에서 도구줄이 «윗줄» 노릇을 한다 — 경계와 배경이 있다', () => {
   /* 분류 탭이 감춰지므로 탭이 하던 테두리·아래 여백을 이 줄이 물려받아야 한다.
      배경만 있고 경계가 없으면 사진이 단추 사이로 비치는 것처럼 보인다. */
-  const 폰구간 = src.slice(src.indexOf('@media (max-width:820px){', src.indexOf('#kinds,#chipRow')- 3000));
-  const 끝 = 폰구간.indexOf('\n}\n');
-  const 안 = 폰구간.slice(0, 끝);
+  /* ⚠ 2026-09-03 다시 겨눔 — 「#kinds,#chipRow 자리에서 3000자 앞」으로 구간을
+     찾고 있었다. 그 사이에 규칙을 몇 줄만 더해도 창이 어긋나 «엉뚱한 데»를 본다
+     (실제로 그렇게 깨졌다). 중괄호 짝을 세어 구간을 정확히 떼어 온다. */
+  /* ⚠ 820px 구간은 «셋»이다 — 첫 번째를 잡으면 74자짜리 엉뚱한 덩이를 본다.
+     감추는 규칙이 든 «그» 구간을 뒤로 되짚어 찾는다. */
+  const 표시 = src.indexOf('#kinds,#chipRow');
+  assert.ok(표시 > 0, '폰에서 분류 탭을 감추는 규칙이 사라졌습니다');
+  const at = src.lastIndexOf('@media (max-width:820px){', 표시);
+  assert.ok(at > 0, '폰 구간이 없습니다');
+  let 깊이 = 0, i = src.indexOf('{', at);
+  const 시작 = i;
+  for (; i < src.length; i++) {
+    if (src[i] === '{') 깊이++;
+    else if (src[i] === '}') { 깊이--; if (!깊이) break; }
+  }
+  const 안 = src.slice(시작 + 1, i);
   assert.match(안, /#kinds[^\n]*display:none!important/,
     '폰에서 분류 탭을 감추는 규칙이 사라졌습니다 — 그러면 이 검사의 전제가 다릅니다');
   assert.match(안, /#gridBar\{[^}]*border-bottom/,

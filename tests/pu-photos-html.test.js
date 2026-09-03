@@ -683,9 +683,17 @@ test('남의 사진은 지우거나 고칠 수 없다 (판독은 2026-08-10 부�
         거기서도 잠그면 앱을 열 때마다 화면을 바꿔야 올릴 수 있다.
         올리는 것은 보는 화면과 무관하게 **늘 내 자리로** 간다(savePhoto)。
         지우기·판독은 위에서 보듯 viewingOther() 그대로 — 남의 사진이 섞여 있다. */
-  /* ⚠ camBtn 은 없앴다(2026-08-10) — 목록에 남겨 두면 없는 단추를 부르다 멎는다 */
-  assert.match(app, /\['docBtn', 'collectBtn', 'phUpBtn', 'phCollectBtn'\][\s\S]{0,180}viewingOnlyOther\(\)/,
-    'PC·모바일 올리기와 문서 모으기를 같은 기준으로 잠가야 합니다');
+  /* ⚠ 2026-09-03 다시 겨눔 — 목록을 «글자 그대로» 박아 두었더니, 시트의
+     phUpBtn 을 걷어내고 윗줄 phUpTopBtn 을 넣는 «옳은 고침»에 검사가 걸렸다.
+     지킬 것은 이름표가 아니라 「폰·PC 의 올리는 단추가 같은 기준으로 잠기는가」다. */
+  const 잠금 = app.match(/\[('[\w]+',?\s*)+\]\.forEach\(function \(id\)[\s\S]{0,200}?viewingOnlyOther\(\)/);
+  assert.ok(잠금, 'PC·모바일 올리기 단추를 한 기준으로 잠그는 자리가 없습니다');
+  for (const id of ['docBtn', 'collectBtn', 'phCollectBtn'])
+    assert.ok(잠금[0].indexOf("'" + id + "'") > 0, id + ' 이 잠금 목록에서 빠졌습니다');
+  assert.match(잠금[0], /'ph[\w]*Up[\w]*'/,
+    '★ 폰에서 올리는 단추가 잠금 목록에 없습니다 — 남의 사진을 보는 중에도 눌립니다');
+  assert.ok(!/'camBtn'/.test(잠금[0]),
+    '없앤 단추(camBtn)를 부르면 그 줄에서 멎습니다');
   assert.match(app, /function viewingOnlyOther\(\) \{ return viewingOther\(\) && gridOwner !== ALL_OWNERS; \}/,
     '「전체 근로자」만 예외여야 합니다 — 한 사람을 골라 볼 때는 여전히 잠깁니다.');
 });
@@ -2274,8 +2282,17 @@ test('올리기·지우기는 특정 다른 직원의 사진 화면에서 막는
   assert.match(fnBody('startCollect'), /viewingOnlyOther\(\)/, '특정 직원 화면에서 문서 모으기가 열립니다');
   assert.match(app, /async function addFiles\([\s\S]{0,900}?viewingOnlyOther\(\)/,
     '파일 저장 입구에서 특정 직원 화면 업로드를 막지 않습니다');
-  assert.match(app, /\['docBtn', 'collectBtn', 'phUpBtn', 'phCollectBtn'\][\s\S]{0,180}?viewingOnlyOther\(\)/,
-    'PC·모바일 올리기 단추가 함께 잠기지 않습니다');
+  /* ⚠ 2026-09-03 다시 겨눔 — 목록을 «글자 그대로» 박아 두었더니, 시트의
+     phUpBtn 을 걷어내고 윗줄 phUpTopBtn 을 넣는 «옳은 고침»에 검사가 걸렸다.
+     지킬 것은 이름표가 아니라 「폰·PC 의 올리는 단추가 같은 기준으로 잠기는가」다. */
+  const 잠금 = app.match(/\[('[\w]+',?\s*)+\]\.forEach\(function \(id\)[\s\S]{0,200}?viewingOnlyOther\(\)/);
+  assert.ok(잠금, 'PC·모바일 올리기 단추를 한 기준으로 잠그는 자리가 없습니다');
+  for (const id of ['docBtn', 'collectBtn', 'phCollectBtn'])
+    assert.ok(잠금[0].indexOf("'" + id + "'") > 0, id + ' 이 잠금 목록에서 빠졌습니다');
+  assert.match(잠금[0], /'ph[\w]*Up[\w]*'/,
+    '★ 폰에서 올리는 단추가 잠금 목록에 없습니다 — 남의 사진을 보는 중에도 눌립니다');
+  assert.ok(!/'camBtn'/.test(잠금[0]),
+    '없앤 단추(camBtn)를 부르면 그 줄에서 멎습니다');
 });
 
 test('판독은 사진 주인 자리에서 본문을 받고 그 자리에 결과를 쓴다', () => {

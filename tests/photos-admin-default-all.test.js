@@ -38,9 +38,17 @@ test('볼 사람이 없으면 굳이 바꾸지 않는다', () => {
 test('★ 전체 근로자에서도 올릴 수 있다', () => {
   assert.ok(/function viewingOnlyOther\(\) \{ return viewingOther\(\) && gridOwner !== ALL_OWNERS; \}/.test(app),
     '올리기를 잠그면 관리자가 앱을 열 때마다 화면을 바꿔야 올릴 수 있습니다.');
-  /* ⚠ camBtn 은 없앴다(대표 지시 2026-08-10) — 목록에서도 빠져야 한다 */
-  assert.ok(/\['docBtn', 'collectBtn', 'phUpBtn', 'phCollectBtn'\][\s\S]{0,240}viewingOnlyOther\(\)/.test(app),
-    'PC·모바일 올리기 단추가 아직 옛 판단을 씁니다.');
+  /* ⚠ 2026-09-03 다시 겨눔 — 목록을 «글자 그대로» 박아 두었더니, 시트의
+     phUpBtn 을 걷어내고 윗줄 phUpTopBtn 을 넣는 «옳은 고침»에 검사가 걸렸다.
+     지킬 것은 이름표가 아니라 「폰·PC 의 올리는 단추가 같은 기준으로 잠기는가」다. */
+  const 잠금 = app.match(/\[('[\w]+',?\s*)+\]\.forEach\(function \(id\)[\s\S]{0,200}?viewingOnlyOther\(\)/);
+  assert.ok(잠금, 'PC·모바일 올리기 단추를 한 기준으로 잠그는 자리가 없습니다');
+  for (const id of ['docBtn', 'collectBtn', 'phCollectBtn'])
+    assert.ok(잠금[0].indexOf("'" + id + "'") > 0, id + ' 이 잠금 목록에서 빠졌습니다');
+  assert.match(잠금[0], /'ph[\w]*Up[\w]*'/,
+    '★ 폰에서 올리는 단추가 잠금 목록에 없습니다 — 남의 사진을 보는 중에도 눌립니다');
+  assert.ok(!/'camBtn'/.test(잠금[0]),
+    '없앤 단추(camBtn)를 부르면 그 줄에서 멎습니다');
   /* 단추뿐 아니라 실제 저장 입구도 같은 기준이어야 한다. viewingOnlyOther 는
      ALL_OWNERS 를 제외하므로 전체 근로자 화면의 내 자리 업로드는 그대로 열린다. */
   assert.ok(/async function addFiles\([\s\S]{0,900}viewingOnlyOther\(\)/.test(app),

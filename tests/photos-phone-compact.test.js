@@ -18,8 +18,11 @@ test('폰 첫 화면은 작업 상태를 한 줄로 요약한다', () => {
 
 test('요약을 누르면 사진 작업 시트에서 기존 기능과 상세 진행을 본다', () => {
   assert.match(html, /id="phSheetTitle">사진 작업</);
-  assert.match(html, /id="phUpBtn" onclick="phUpload\(\)"/);
+  /* ⚠ 2026-09-03 다시 겨눔 — 시트의 「＋ 사진 올리기」를 걷어냈다(대표 지시:
+     윗줄과 «중복»이다). 올리는 길은 윗줄에 있고, 그것은 위 검사가 지킨다.
+     여기서 지킬 것은 「시트에 윗줄에 없는 일이 있는가」다. */
   assert.match(html, /id="phCollectBtn" onclick="startCollect\(\)"/);
+  assert.match(html, /id="phDocBtn" onclick="phUploadDoc\(\)"/);
   assert.match(html, /id="phNeedBtn" onclick="phGoNeed\(\)"/);
   assert.match(html, /id="phOwner"/);
   assert.match(html, /id="phCollectDock"/);
@@ -121,11 +124,18 @@ test('★★ 👥 공유 칸은 「누구 사진」을 따라간다 — 폰에�
 });
 
 test('요약 상태는 네 핵심 렌더 경로에서 함께 갱신된다', () => {
-  for (const name of ['renderUp', 'renderCollectBar', 'renderPhNeedBtn', 'renderOwnerPick', 'pickOwner']) {
+  for (const name of ['renderUp', 'renderCollectBar', 'renderOwnerPick', 'pickOwner']) {
     const block = html.match(new RegExp('function ' + name + '\\([^)]*\\) \\{[\\s\\S]*?\\n\\}'));
     assert.ok(block, name + ' 함수를 찾지 못했습니다.');
     assert.match(block[0], /renderPhSummary\(\)/, name + '에서 요약 상태를 갱신해야 합니다.');
   }
+  /* ★ 2026-09-03 부터 부르는 방향이 «한쪽»이다 — renderPhSummary → renderPhNeedBtn.
+     서로 부르면 맴돌기 때문이다. 그래서 위 네 곳이 ⚠ 딱지까지 함께 갱신하려면
+     이 한 줄이 이어져 있어야 한다 — 끊기면 손볼 사진이 생겨도 딱지가 안 바뀐다. */
+  const sum = html.match(/function renderPhSummary\(\) \{[\s\S]*?\n\}/);
+  assert.ok(sum, 'renderPhSummary 를 찾지 못했습니다.');
+  assert.match(sum[0], /renderPhNeedBtn\(\)/,
+    '★ 요약을 새로 그려도 ⚠ 딱지가 안 따라옵니다 — 이어 주는 줄이 끊겼습니다.');
   assert.match(html, /addEventListener\('resize', placeForWidth\)/);
 });
 
