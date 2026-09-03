@@ -167,6 +167,10 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 .dcard-meta{display:flex;align-items:center;gap:8px;}
 /* 사업장명 옆 단계 배지 (사전진단 / 본컨설팅 완료) */
 .ph-badge{display:inline-block;vertical-align:middle;margin-left:6px;padding:1px 7px;border-radius:9px;font-size:10.5px;font-weight:800;white-space:nowrap;letter-spacing:-.2px;}
+/* 최근 등록 딱지 — 왼쪽 색띠는 「내 담당」·「기한 위험」이 이미 쓰고 있어 이름 옆에 붙인다 */
+.new-badge{display:inline-block;vertical-align:middle;flex-shrink:0;margin-left:5px;
+  background:#dc2626;color:#fff;font-size:9.5px;font-weight:900;padding:1.5px 6px;
+  border-radius:9px;letter-spacing:.3px;line-height:1.5;white-space:nowrap;}
 .ph-badge.pre{background:#fffbeb;color:#854d0e;border:1px solid #fbbf24;}
 .ph-badge.done{background:#f8fafc;color:#166534;border:1px solid #4ade80;}
 #viewMain.dash-wide .dcard-hd{flex-direction:row;align-items:center;gap:8px;}
@@ -5913,6 +5917,36 @@ function updateDashFilterDot(){
   btn.classList.toggle('has-filter', !!att || !!ty || st!=='active' || S.dashGroupBy==='type');
 }
 // 사업장 이름 옆 단계 배지 — 사전진단 중인지 한눈에 보여 종료 판단을 돕는다
+/* ══ 최근 등록 표시 (대표 지시 2026-09-03) ═══════════════════════════════
+   ⚠ 등록한 날은 여태 «아무 데도 안 담겨 있었다». 그래서 이미 있는 곳은 NEW 로
+     안 뜬다 — 옛것을 새것처럼 보이게 하는 것보다 낫다. 앞으로 넣는 것부터 담긴다.
+   ⚠ 사람마다 다르게 하지 않는다(날짜로만 사라진다) — 「저 사람 화면엔 있는데
+     내 화면엔 없다」가 안 생기게. 대표 선택 2026-09-03.                        */
+const NEW_DAYS=3;
+/* 며칠 지났나. 담긴 게 없으면 «아주 옛것»으로 본다 —
+   여기서 0 을 주면 날짜 없는 곳이 전부 붉어진다. */
+function daysSince(ds){
+  if(!ds)return 1e9;
+  const a=new Date(String(ds).slice(0,10)+'T00:00:00');
+  if(isNaN(a))return 1e9;
+  return Math.round((new Date(todayStr()+'T00:00:00')-a)/86400000);
+}
+/* 이 사업장이 「최근」인가 — 사업장이 새로 들어왔거나, «사업이 새로 붙었거나».
+   ⚠ 사업장 날짜만 보면 안 된다: 오래된 곳에 컨설팅이 하나 더 붙는 것도
+     대표가 말한 「최근 등록된 사업」이다. 끝난 사업은 세지 않는다. */
+function coIsNew(co){
+  if(!co)return false;
+  if(daysSince(co.createdAt)<NEW_DAYS)return true;
+  const m=co.typeAddedAt||{};
+  return (co.types||[]).some(tid=>!co.endedTypes?.[tid]&&daysSince(m[tid])<NEW_DAYS);
+}
+/* 넣는 자리마다 도장을 찍는다 — 한 군데라도 빠지면 그 길로 들어온 것은 조용히 안 뜬다 */
+function stampNewCo(co){ co.createdAt=todayStr(); return co; }
+function stampNewType(co,tid){
+  if(!co||!tid)return;
+  if(!co.typeAddedAt)co.typeAddedAt={};
+  co.typeAddedAt[tid]=todayStr();
+}
 function dashPhaseBadges(co,types){
   const out=[];
   (co.types||[]).forEach(tid=>{
@@ -6128,7 +6162,7 @@ function renderDash(){
     return `<div class="dcard ${shouldOpen?'open':''} ${item.mine?'is-mine':''} ${item.risk.isRisk?'is-risk':''}" data-coid="${co.id}">
       <div class="dcard-hd">
         <div class="dcard-title">
-          <div class="dcard-name" title="${co.name}"><span class="dcard-nm">${co.name}</span>${dashPhaseBadges(co,types)}</div>
+          <div class="dcard-name" title="${co.name}"><span class="dcard-nm">${co.name}</span>${coIsNew(co)?`<span class="new-badge" title="최근 ${NEW_DAYS}일 안에 등록됨">NEW</span>`:''}${dashPhaseBadges(co,types)}</div>
           <div class="dcard-sub">${dashCardSummary(co,types,item.risk)}</div>
         </div>
         <div class="dcard-meta">
@@ -7362,6 +7396,10 @@ async function saveCo(){
     if(idx!==-1){
       const next={...cos[idx],name,defAtt,defCoAtts,types:[...co_selTypes],
         deadlines:{...co_deadlines},customRounds:{...co_rounds},customMandatory:{...co_mandatory}};
+      /* 수정 창에서도 사업이 붙을 수 있다 — 늘어난 것에만 도장을 찍는다.
+         원래 있던 것까지 찍으면 이름만 고쳐도 온 목록이 붉어진다. */
+      const _was=cos[idx].types||[];
+      (next.types||[]).forEach(tid=>{ if(!_was.includes(tid))stampNewType(next,tid); });
       /* ★ 옛 「부담당 한 명」 칸을 없애는 자리다. 전에는 defCoAtt:undefined 를 «넣었다» —
          펼치기(...)로는 키가 지워지지 않고 «값이 undefined 인 키» 가 남는데,
          실시간DB는 그런 저장을 «통째로 거부» 한다
@@ -7370,7 +7408,7 @@ async function saveCo(){
       cos[idx]=next;
     }
   }
-  else cos.push({id:uid(),name,defAtt,defCoAtts,types:[...co_selTypes],deadlines:{...co_deadlines},customRounds:{...co_rounds},customMandatory:{...co_mandatory},active:true});
+  else cos.push(stampNewCo({id:uid(),name,defAtt,defCoAtts,types:[...co_selTypes],deadlines:{...co_deadlines},customRounds:{...co_rounds},customMandatory:{...co_mandatory},active:true}));
   const savedId=co_editId||cos[cos.length-1].id;
   setCos(cos);closeModal('mbCo');renderDash();renderCal();toast(co_editId?'수정됨':'추가됨');
   /* 여기가 거울이다 — 부담당을 더했든 뺐든 이알피에 그대로 옮긴다.
@@ -8345,13 +8383,14 @@ function erpAskApply(){
       if(list.includes(r.govType)){ already++; return; }   // 남이 먼저 가져갔다
       list.push(r.govType);
       exist.types=list;
+      stampNewType(exist,r.govType);   // 오래된 곳에 사업이 붙는 것도 「최근 등록」이다
       if(!exist.erpId)exist.erpId=r.erpId;
       if(!exist.defAtt)exist.defAtt=r.mainId;
       typed++;
       return;
     }
-    cos.push({id:uid(),name:r.name,defAtt:r.mainId,defCoAtts:r.subIds,types:[r.govType],
-      deadlines:{},customRounds:{},customMandatory:{},active:true,erpId:r.erpId});
+    cos.push(stampNewCo({id:uid(),name:r.name,defAtt:r.mainId,defCoAtts:r.subIds,types:[r.govType],
+      deadlines:{},customRounds:{},customMandatory:{},active:true,erpId:r.erpId}));
     added++;
   });
   setCos(cos);
@@ -8466,8 +8505,8 @@ function erpApplyImport(){
     const cos=getCos(); let added=0,typed=0;
     picks.forEach(r=>{
       if(r.status==='new'){
-        cos.push({id:uid(),name:r.name,defAtt:r.mainId,defCoAtts:r.subIds,types:[r.govType],
-          deadlines:{},customRounds:{},customMandatory:{},active:true,erpId:r.erpId});
+        cos.push(stampNewCo({id:uid(),name:r.name,defAtt:r.mainId,defCoAtts:r.subIds,types:[r.govType],
+          deadlines:{},customRounds:{},customMandatory:{},active:true,erpId:r.erpId}));
         added++;
       }else if(r.status==='addtype'){
         const idx=cos.findIndex(c=>c.id===r.coId);
@@ -8475,6 +8514,7 @@ function erpApplyImport(){
           const t=cos[idx].types||[];
           if(!t.includes(r.govType))t.push(r.govType);
           cos[idx].types=t;
+          stampNewType(cos[idx],r.govType);
           if(!cos[idx].defAtt)cos[idx].defAtt=r.mainId;
           typed++;
         }
