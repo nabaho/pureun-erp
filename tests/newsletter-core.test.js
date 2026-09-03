@@ -622,3 +622,96 @@ test('연습용 샘플은 «연습이라고 적혀» 있다 — 진짜와 헷갈
     assert.match(x.제목, /^\[연습\]/, '연습 표시가 없습니다: ' + x.제목);
   });
 });
+
+/* ══════ ⑫ 대표자에게도 보내기 ══════ */
+
+/* 대표 지시 2026-09-03: 「각 사업장마다 대표자가 있고 대표자에게도 뉴스레터 보내야된다.
+     기업에 대표자 메일하고 같이 보낼수 있도록 검토하고 대표자메일이 없는경우 생략하면된다」
+
+   ⚠ 실측 2026-09-03 — «대표자 메일 칸이 사실상 없다».
+       ceo              202곳에 값 있음 · 메일 모양 0개  ← 대표자 «이름»이다
+       email             10곳 (메일 모양 10)
+       taxEmail          57곳 · taxInvoiceEmail 14곳     ← 세금계산서용
+       contacts[].position 「대표」 11명 · 「이사」 3 · 「상무」 3
+   ★ 그래서 담을 수 있는 것은 둘뿐이다 —
+       ① contacts 에서 직책이 대표·사장·회장·이사장인 사람
+       ② 회사 메일(email) — 대표에게 닿는 자리로 쓰이는 곳
+   ⚠ taxEmail·taxInvoiceEmail 은 «쓰지 않는다». 세금계산서 받는 경리·세무 주소이고
+     뉴스레터를 거기로 보내면 「왜 이걸 여기로?」가 된다. 용도가 다르다.
+   ★ 없으면 «그냥 건너뛴다»(대표 지시). 억지로 만들지 않는다. */
+test('★ contacts 의 직책이 대표면 «대표자»로 담는다', () => {
+  const r = C.사업장에서명단([사업장({
+    primaryContactEmail: 'staff@x.kr', primaryContactName: '김담당',
+    contacts: [{ name: '박대표', email: 'ceo@x.kr', position: '대표' }]
+  })], '자문중', { 대표자도: true });
+  const 대 = r.줄들.find((x) => x.email === 'ceo@x.kr');
+  assert.ok(대, '대표자를 안 담았습니다');
+  assert.equal(대.누구, '대표자', '대표자로 표시하지 않았습니다');
+  const 담 = r.줄들.find((x) => x.email === 'staff@x.kr');
+  assert.equal(담.누구, '담당자', '담당자 표시가 틀렸습니다');
+});
+
+test('★ 대표 계열 직책을 모두 알아본다 — 사장·회장·이사장·대표이사', () => {
+  ['대표', '대표이사', '사장', '회장', '이사장'].forEach(function (직) {
+    const r = C.사업장에서명단([사업장({
+      primaryContactEmail: '', contacts: [{ name: '홍', email: 'a@x.kr', position: 직 }]
+    })], '자문중', { 대표자도: true });
+    assert.equal(r.줄들.length, 1, 직 + ' 를 못 담았습니다');
+    assert.equal(r.줄들[0].누구, '대표자', 직 + ' 를 대표자로 안 봤습니다');
+  });
+});
+
+test('★ 세금계산서 주소는 «쓰지 않는다» — 용도가 다르다', () => {
+  /* 경리·세무가 받는 자리다. 뉴스레터를 거기로 보내면 「왜 이걸 여기로?」가 된다. */
+  const r = C.사업장에서명단([사업장({
+    primaryContactEmail: '', contacts: [],
+    taxEmail: 'tax@x.kr', taxInvoiceEmail: 'inv@x.kr'
+  })], '자문중', { 대표자도: true });
+  assert.equal(r.줄들.length, 0, '세금계산서 주소로 보내려 합니다');
+});
+
+test('회사 메일(email)은 대표자 자리로 담는다 — 대표에게 닿는 곳으로 쓰인다', () => {
+  const r = C.사업장에서명단([사업장({
+    primaryContactEmail: '', contacts: [], email: 'info@x.kr'
+  })], '자문중', { 대표자도: true });
+  assert.equal(r.줄들.length, 1);
+  assert.equal(r.줄들[0].email, 'info@x.kr');
+  assert.equal(r.줄들[0].누구, '대표자');
+});
+
+test('★ 대표자 메일이 없으면 «그냥 건너뛴다» (대표 지시)', () => {
+  const r = C.사업장에서명단([사업장({
+    primaryContactEmail: 'staff@x.kr', ceo: '박사장',      /* 이름만 있고 메일 없음 */
+    contacts: [{ name: '김', email: 'kim@x.kr', position: '과장' }]
+  })], '자문중', { 대표자도: true });
+  assert.equal(r.줄들.length, 2, '없는 대표자 자리를 억지로 만들었습니다');
+  assert.ok(r.줄들.every((x) => x.누구 === '담당자'), '대표자 표시가 잘못 붙었습니다');
+});
+
+test('★ 스위치는 «회사 메일을 더할지»를 정한다 — 직책 표시와는 별개다', () => {
+  /* 직책이 「대표」인 사람은 켜든 끄든 «대표자»로 표시하는 것이 맞다 — 그 사람이
+     대표자라는 사실은 스위치와 상관없다. 스위치가 정하는 것은
+     «회사 메일(email) 한 자리를 더 담을지»다.
+     ⚠ 코드가 몰래 받는 곳을 늘리지 않게, 더하는 쪽만 스위치로 둔다. */
+  const 곳 = 사업장({
+    primaryContactEmail: 'staff@x.kr', email: 'info@x.kr',
+    contacts: [{ name: '박대표', email: 'ceo@x.kr', position: '대표' }]
+  });
+  const 끔 = C.사업장에서명단([곳], '자문중');
+  assert.equal(끔.줄들.length, 2, '꺼져 있는데 회사 메일을 더했습니다');
+  assert.ok(!끔.줄들.some((x) => x.email === 'info@x.kr'), '꺼져 있는데 회사 메일이 들었습니다');
+  assert.equal(끔.줄들.find((x) => x.email === 'ceo@x.kr').누구, '대표자',
+    '직책이 대표인데 표시가 없습니다 — 표시는 스위치와 상관없다');
+
+  const 켬 = C.사업장에서명단([곳], '자문중', { 대표자도: true });
+  assert.equal(켬.줄들.length, 3, '켰는데 회사 메일을 안 더했습니다');
+  assert.equal(켬.줄들.find((x) => x.email === 'info@x.kr').누구, '대표자');
+});
+
+test('대표자와 담당자가 «같은 주소»면 한 번만 — 두 통 가지 않게', () => {
+  const r = C.사업장에서명단([사업장({
+    primaryContactEmail: 'boss@x.kr',
+    contacts: [{ name: '박대표', email: 'BOSS@x.kr', position: '대표' }]
+  })], '자문중', { 대표자도: true });
+  assert.equal(r.줄들.length, 1, '같은 사람에게 두 통 보냅니다');
+});

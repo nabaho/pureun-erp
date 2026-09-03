@@ -40,7 +40,7 @@
   if(!go()) document.addEventListener('DOMContentLoaded', go); })();
 </script>
 <script src="xlsx_gen.js?v=15"></script>
-<script src="js/pu-news-core.js?v=10"></script>
+<script src="js/pu-news-core.js?v=11"></script>
 <script src="js/pu-news-tpl.js?v=4"></script>
 <style>
 :root{
@@ -151,6 +151,14 @@ label.f{display:block;font-size:12px;font-weight:800;color:var(--sub);margin:12p
 label.f:first-child{margin-top:0}
 /* 설정 — 짧은 칸은 두 줄로 나란히. 대표 지시 2026-09-03 「좀더 컴팩트하게 … 추가로 더
    넣을 내용이 있을 수 있으니 그부분도 반영해서 공간 정리」. 칸을 더해도 자리가 남는다. */
+/* 체크칸 — 넘버링 왼쪽. 대표 지시 2026-09-03 「넘버링 왼쪽 표시 체크가능하게」 */
+table.list th.ck,table.list td.ck{width:34px;text-align:center;padding-left:10px;padding-right:0}
+table.list .chk,table.list #chkAll{width:15px;height:15px;cursor:pointer;accent-color:var(--brown)}
+/* 고른 것이 있을 때만 뜨는 띠 — 얼린 머리 바로 밑에 붙어 «몇 곳 골랐는지»를 늘 보여 준다 */
+.picked{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;
+  background:var(--brown-soft);border:1px solid var(--brown);border-radius:10px;
+  padding:8px 13px;font-size:13px;color:var(--ink)}
+.picked .sp{flex:1}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
 .grid2 .wide{grid-column:1 / -1}
 @media(max-width:700px){.grid2{grid-template-columns:1fr}}
@@ -259,7 +267,7 @@ table.list tr:hover td{background:#fcfcfd}
      지금 무슨 유형을 보고 있는지 · 몇 곳인지를 잃는다.
      ⚠ .whorest 가 없으면 표가 잘린다 — render() 가 who 표를 붙일 때 함께 봐야 한다. */
   #shell>.wrap.who{overflow:hidden;display:flex;flex-direction:column}
-  .wrap.who>.hdbar,.wrap.who>.chips{flex:0 0 auto}
+  .wrap.who>.hdbar,.wrap.who>.chips,.wrap.who>.picked{flex:0 0 auto}
   .wrap.who>.whorest{flex:1;min-height:0;overflow-y:auto;padding-right:4px}
 }
 
@@ -329,6 +337,9 @@ var db = null;
 var App = {
   me: null, isAdmin: false, tab: 'now',
   설정: {}, 회차들: {}, 사업장들: {}, 막은주소: {}, 브리핑: {},
+  /* 고른 것 — «주소»를 열쇠로 지닌다. 번호나 줄 위치로 지니면 유형 칩을 누르는 순간
+     엉뚱한 곳이 골라진다(표가 다시 그려지기 때문이다). */
+  고른것: {},
   지금열쇠: '', 길: 'auto', 보내는중: false,
   /* 고른 유형(자문·급여·노조·기금). 빈 값이면 전체.
      ★ 첫 값은 «자문»이다 (대표 지시 2026-09-03 「자문 기본값으로」).
@@ -499,7 +510,12 @@ function 명단셈(){
      ★ 유형(자문·급여·노조·기금) 거르기가 «여기» 있다 (대표 지시 2026-09-03).
        화면도 보내기도 CSV도 엑셀도 «이 함수 하나»를 쓴다 —
        거르는 자리를 두 곳에 두면 화면엔 38곳인데 110곳에 나간다. */
-  const g = Core.사업장에서명단(App.사업장들, App.설정.범위);
+  /* 대표 결정 2026-09-03: 「담당자와 같이」 — 대표자에게도 함께 보낸다.
+     ⚠ 실측으로는 4명만 늘어난다(110→114). 기업정보함에 «대표자 이메일» 칸이
+       없어서다 — ceo 는 이름이고, 쓸 수 있는 것은 회사 메일 10곳뿐이다.
+       칸을 만들어 채우면 그때 크게 늘어난다. */
+  const g = Core.사업장에서명단(App.사업장들, App.설정.범위,
+    { 대표자도: App.설정.대표자도 !== false });
   const d = Core.명단다듬기(g.줄들, App.막은주소);
   /* 거른 «뒤»가 아니라 다듬은 «뒤»에 센다 — 수신거부·겹침을 뺀 실제 보낼 곳으로 세어야
      칩의 숫자와 표의 줄 수가 맞는다. */
@@ -978,6 +994,7 @@ function 명단화면(){
        담당자에 퇴사를 켜면 저절로 빠진다. 두 곳을 맞추려 하면 반드시 어긋난다. */
   const r = 명단셈();
   const 광고 = Core.광고표기필요한가(App.설정.범위);
+  const 골랐수 = Object.keys(App.고른것 || {}).length;
 
   /* ★ 번호는 «보이는 차례»로 1번부터 붙인다 (대표 지시 2026-09-03 「넘버링해달라」).
        유형 → 회사 이름 차례로 늘어놓아, 같은 유형이 붙어 보인다.
@@ -1002,6 +1019,11 @@ function 명단화면(){
       ? ' <span class="pill" style="background:#eff6ff;color:#1e40af">대표자</span>'
       : ' <span class="pill" style="background:#f1f5f9;color:var(--sub)">담당자</span>';
     return '<tr>'
+      /* ★ 체크칸 — 넘버링 «왼쪽»에 (대표 지시 2026-09-03 「넘버링 왼쪽 표시 체크가능하게」).
+           주소를 값으로 지닌다 — 골라 놓고 표를 다시 그려도 무엇을 골랐는지 잃지 않는다. */
+      + '<td class="ck"><input type="checkbox" class="chk" value="' + esc(x.email) + '"'
+        + (App.고른것[String(x.email).toLowerCase()] ? ' checked' : '')
+        + ' onchange="고름바뀜(this)"></td>'
       + '<td class="n">' + (i+1) + '</td>'
       + '<td><span class="ty" style="background:' + t.연한빛 + ';color:' + t.진한빛 + '">'
         + t.표시 + ' ' + esc(t.키) + '</span></td>'
@@ -1051,12 +1073,23 @@ function 명단화면(){
 
   ${칩}
 
+  ${골랐수 ? `<div class="picked">
+    <b>${골랐수}곳</b> 골랐습니다
+    <span class="sp"></span>
+    <button class="mini" onclick="고른것엑셀()">↧ 고른 것만 엑셀</button>
+    <button class="mini" onclick="고른것수신거부()">🚫 고른 것만 수신거부</button>
+    <button class="mini" onclick="고름지우기()">✕ 선택 풀기</button>
+   </div>` : ''}
+
   <div class="whorest">
   ${r.ok.length ? `<div class="box">
     <h3>보낼 곳 <span class="cnt">${r.ok.length}</span>
       ${App.유형 ? `<span style="font-size:11.5px;color:var(--sub)">${esc(App.유형)}만 봅니다 —
         「전체」를 누르면 다 보입니다</span>` : ''}</h3>
-    <table class="list"><tr><th class="n">#</th><th>유형</th><th>회사</th><th>대표자</th><th>담당자</th>
+    <table class="list"><tr>
+      <th class="ck"><input type="checkbox" id="chkAll" onchange="전체선택(this)"
+        title="이 표에 보이는 것 모두"></th>
+      <th class="n">#</th><th>유형</th><th>회사</th><th>대표자</th><th>담당자</th>
       <th>보낼 주소</th><th></th></tr>${줄}</table></div>`
    : (App.유형
       ? `<div class="note"><b>${esc(App.유형)} 업체 가운데 보낼 곳이 없습니다.</b>
@@ -1133,6 +1166,90 @@ function 노무사회엑셀(){
 function 유형칩누르기(v){
   App.유형 = (App.유형 === v) ? '' : String(v || '');
   render();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   고르기 — 체크칸 · 전체 선택 · 고른 것만 처리
+   ══════════════════════════════════════════════════════════════════════════
+   대표 지시 2026-09-03: 「넘버링 왼쪽 표시 체크가능하게 일괄 선택등 가능하게」
+
+   ★ 고른 것을 «주소»로 지닌다(App.고른것). 표를 다시 그려도 무엇을 골랐는지 잃지 않는다 —
+     번호나 줄 위치로 지니면 유형 칩을 누르는 순간 엉뚱한 곳이 골라진다.
+   ⚠ 고른 것이 없으면 «묻지도 않고» 멈춘다. 빈 선택으로 110곳을 건드리면 사고다. */
+function 고름바뀜(el){
+  const e = String(el && el.value || '').trim().toLowerCase();
+  if(!e) return;
+  if(el.checked) App.고른것[e] = 1; else delete App.고른것[e];
+  고름띠고치기();
+}
+
+/* 이 표에 «보이는 것» 모두 — 유형 칩으로 걸러진 것만이다. 안 보이는 것을 몰래 고르지 않는다. */
+function 전체선택(el){
+  document.querySelectorAll('.chk').forEach(function(c){
+    c.checked = !!el.checked;
+    const e = String(c.value||'').trim().toLowerCase();
+    if(!e) return;
+    if(el.checked) App.고른것[e] = 1; else delete App.고른것[e];
+  });
+  고름띠고치기();
+}
+
+/* 지금 화면에 보이는 것 가운데 골라진 줄들 */
+function 고른것(){
+  const r = 명단셈();
+  return r.ok.filter(x => App.고른것[String(x.email||'').toLowerCase()]);
+}
+
+function 고름지우기(){ App.고른것 = {}; render(); }
+
+/* 띠만 고쳐 그린다 — render() 를 부르면 체크칸이 다시 만들어져 깜빡인다 */
+function 고름띠고치기(){
+  const n = Object.keys(App.고른것).length;
+  const 띠 = document.querySelector('.picked');
+  if(!띠 && n) { render(); return; }          /* 없던 띠를 띄울 때만 다시 그린다 */
+  if(띠 && !n) { render(); return; }
+  if(띠) { const b = 띠.querySelector('b'); if(b) b.textContent = n + '곳'; }
+}
+
+/* 고른 것만 엑셀 — 공인노무사회 양식 그대로(번호·대상자·메일주소·비고) */
+function 고른것엑셀(){
+  const 골 = 고른것();
+  if(!골.length) return toast('고른 곳이 없습니다');
+  if(!window.XLSXGEN) return toast('엑셀 도구를 못 읽었습니다 — 새로 고쳐 보세요', 8000);
+  const f = Core.노무사회양식(골);
+  try{
+    XLSXGEN.download({
+      sheet:'발송대상자', title:'푸른노무법인 뉴스레터 발송대상자 (고른 것)',
+      sub:'고른 ' + f.줄들.length + '곳 · ' + 오늘(),
+      headers:f.머리, rows:f.줄들, colRatios:[1,6,6,4], landscape:false
+    }, '뉴스레터-발송대상자-고른것-' + 오늘() + '.xlsx');
+    toast('📗 고른 ' + f.줄들.length + '곳을 엑셀로 받았습니다', 9000);
+  }catch(e){ toast('엑셀을 만들지 못했습니다: ' + ((e&&e.message)||''), 8000); }
+}
+
+/* 고른 것만 수신거부 — 뉴스레터만 막는다(자료 발송은 그대로 간다) */
+async function 고른것수신거부(){
+  const 골 = 고른것();
+  if(!골.length) return toast('고른 곳이 없습니다');
+  if(!confirm('고른 ' + 골.length + '곳에 뉴스레터를 보내지 않습니다.\n'
+    + '(자료 발송은 그대로 갑니다)\n\n'
+    + 골.slice(0,5).map(x=>' · ' + (x.company||'') + ' — ' + x.email).join('\n')
+    + (골.length>5 ? '\n … 그 밖 ' + (골.length-5) + '곳' : '')
+    + '\n\n넣을까요?')) return;
+  const upd = {};
+  골.forEach(function(x){
+    const e = String(x.email||'').trim().toLowerCase();
+    if(!e) return;
+    upd[e.replace(/[.#$/[\]]/g,'_')] = { email:e, at:Date.now(), by:(App.me&&App.me.email)||'' };
+  });
+  try{
+    await db.ref('newsletter/blocked').update(upd);
+    Object.keys(upd).forEach(function(k){ App.막은주소[k] = 1; });
+    골.forEach(function(x){ App.막은주소[String(x.email||'').toLowerCase()] = 1; });
+    App.고른것 = {};
+    render();
+    toast('🚫 ' + 골.length + '곳을 수신거부에 넣었습니다', 9000);
+  }catch(e){ toast('넣지 못했습니다: ' + ((e&&e.message)||''), 8000); }
 }
 
 /* 기업정보함을 «다시» 읽는다 — 방금 고친 것이 바로 보이게.
@@ -1213,6 +1330,13 @@ function 설정화면(){
     <div>
      <label class="f">꼬리 한 줄</label>
      <input type="text" id="cfgFoot" value="${esc(s.꼬리한줄||'대표노무사 권형하')}" onchange="설정저장()">
+    </div>
+    <div>
+     <label class="f">대표자에게도 보내기</label>
+     <select id="cfgCeo" onchange="설정저장()">
+      <option value="y" ${App.설정.대표자도 !== false ? 'selected' : ''}>담당자와 «같이» 보냅니다</option>
+      <option value="n" ${App.설정.대표자도 === false ? 'selected' : ''}>담당자가 없을 때만</option>
+     </select>
     </div>
     <div>
      <label class="f">전화</label>
@@ -1307,6 +1431,7 @@ function 설정저장(){
     주소: g('cfgAddr'),
     전화: g('cfgTel'),
     보내는주소: g('cfgFrom'),
+    대표자도: g('cfgCeo') !== 'n',
     배너그림: g('cfgBanner'),
     로고그림: g('cfgLogo')
   });
