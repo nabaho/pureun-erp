@@ -24333,7 +24333,7 @@ function coConflictHtml(o){
 function coDocsHtml(o){
   return `<div id="coDocsBox">` + coDocsListHtml(
     Object.values((o.extra && o.extra.docs) || {}).sort((a,b)=>(b.at||0)-(a.at||0)),
-    '읽어 온 서류') + `</div>`;
+    '📥 읽어 온 서류') + `</div>`;
 }
 /* 사업 기록이 온 뒤 — 붙지 않은 것만 남겨 다시 그린다.
    ⚠ 붙은 것까지 여기 남기면 같은 서류가 두 곳에 보여 몇 건인지 세다 틀린다.
@@ -25311,6 +25311,87 @@ function coInfoToggle(key){
   const box = $('coInfoBox');
   if(box) box.innerHTML = coInfoBoxHtml(o);
 }
+/* ══════ 📤 이 회사에 보낸 서류 — 1걸음 (대표 지시 2026-09-03) ══════
+   「취업규칙 이후에 근로계약서와 연차 관련 기타 서류 등 모든 사업장에 송부되었던 서류를
+    한번에 데이터함에 보관하려고 한다」
+   설계안: docs/mockups/2026-09-03-sent-docs-design.html (목업 ①의 「보낸 것」 축)
+
+   ★ 1걸음의 약속 — «서버에 새로 쓰는 것이 하나도 없다».
+     이미 쌓여 있는 보낸 기록(pucards/sendLog)을 «회사 눈»으로 모아 보여 줄 뿐이다.
+
+   왜 있어야 했나: 보낸 기록은 «명함 번호»에 붙어 있어 명함 상세에서만 보였다.
+   담당자가 바뀌면 그 회사에 무엇을 보냈는지 찾을 길이 없고, 한 회사에 두 사람이면
+   기록도 둘로 갈렸다. 「이 업체에 제안서 보냈던가」는 사람이 아니라 «사업장»에 묻는 물음이다.
+
+   ⚠ 취업규칙 회차는 여기 «안» 넣는다 — 이미 위 업무 이력 표에 갈래로 들어가 있다
+     (coRulesRecs · rules-into-cohistory 검사). 두 곳에 그리면 한 화면에 같은 회차가 두 번 나온다.
+   ⚠ 단체 메일은 기록을 아예 안 남긴다(2걸음에서 남긴다). 없는 것을 있는 척하지 않으려고
+     칸 아래에 그 사실을 적는다 — 안 적으면 「기록 없음」이 「안 보냈다」로 읽힌다. */
+
+/* 패널을 열 때 기록을 읽어 올 명함 — 최근 것부터 이만큼만.
+   ⚠ 명함 한 장이 서버 조회 한 번이다. 사람이 아주 많은 회사에서 패널을 열 때마다
+     수십 번씩 물어보지 않도록 자른다. 자른 사실은 «화면에 적는다» — 안 적으면
+     안 읽은 사람 몫이 「안 보냈다」로 보인다. */
+const CO_SENT_MAX_CARDS = 30;
+function coSentCards(cards, limit){
+  const arr = (cards||[]).filter(c=>c && c.id)
+    .map((c,i)=>({ c:c, i:i, t:Number((c.updatedAt||c.createdAt)||0)||0 }));
+  /* ⚠ 시각이 같거나 없으면(옛 명함에는 createdAt 이 없다) 원래 차례를 지킨다 —
+     안 그러면 같은 회사를 두 번 열 때 읽는 명함이 달라진다. */
+  arr.sort((a,b)=>(b.t-a.t)||(a.i-b.i));
+  return (limit>0 ? arr.slice(0,limit) : arr).map(x=>x.c);
+}
+/* 그 가운데 «아직 안 읽은» 것만 — 두 번째로 열 때는 아무것도 안 물어본다 */
+function coSentToRead(cards, cache){
+  const have = cache || {};
+  return coSentCards(cards, CO_SENT_MAX_CARDS).filter(c=>!have[c.id]).map(c=>c.id);
+}
+/* 보낸 날 — YYYY-MM-DD «글자»로 짓는다(나라 설정에 안 흔들리게 손으로) */
+function coSentDay(at){
+  const t = Number(at||0); if(!t) return '';
+  const d = new Date(t);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')
+       +'-'+String(d.getDate()).padStart(2,'0');
+}
+/* 여러 사람의 기록을 한 줄기로 — «누구에게» 갔는지는 줄 안에 남긴다.
+   ⚠ 읽어 온 명함만 센다(coSentCards 와 «같은 잣대»). 화면에 안 읽었다고 적어 둔 몫을
+     여기서 세면 개수와 줄 수가 어긋난다. */
+function coSentList(cards, logs){
+  const out = [];
+  coSentCards(cards, CO_SENT_MAX_CARDS).forEach(c=>{
+    sendLogList((logs||{})[c.id]).forEach(r=>{
+      out.push({ at: Number(r.at)||0, day: coSentDay(r.at),
+                 set: String(r.set||''), what: (r.names||[]).join(' · ') || '자료',
+                 who: String(c.name||'').trim() || String(c.title||'').trim(),
+                 by: String(r.by||'').split('@')[0] });
+    });
+  });
+  return out.sort((a,b)=>(b.at-a.at));
+}
+function coSentHtml(o){
+  const cards = (o && o.cards) || [];
+  const rows = coSentList(cards, state.sendLog);
+  const cut = cards.length > CO_SENT_MAX_CARDS;
+  const note = '자료함에서 보낸 것만 잡힙니다 · 취업규칙 회차는 위 업무 이력에 있습니다'
+    + ' · 단체 메일로 보낸 것은 아직 기록이 남지 않습니다'
+    + (cut ? ` · 이 회사 사람 ${cards.length}명 가운데 최근 ${CO_SENT_MAX_CARDS}명분만 읽었습니다` : '');
+  return `<div class="pcsec" style="margin:16px 4px 8px">📤 보낸 서류 ${rows.length}건</div>
+    <div class="codochint">${esc(note)}</div>
+    ${rows.length ? rows.map(r=>`<div class="cof">
+      <span>${r.set?`<b>📦 ${esc(r.set)}</b> — `:''}${esc(r.what)}</span>
+      <b>${esc(r.day)}${r.who?` · → ${esc(r.who)}`:''}${r.by?` · ${esc(r.by)}`:''}</b>
+    </div>`).join('')
+    : `<div class="cof" style="color:#94a3b8">아직 보낸 기록이 없습니다</div>`}`;
+}
+/* 패널을 열 때 «그 회사 사람들»의 기록을 모아 읽는다 — 이미 읽어 둔 것은 건너뛴다.
+   ⚠ 읽기만 한다(loadSendLog 는 once('value') 한 번이다). */
+function loadCoSent(o, cb){
+  const ids = coSentToRead((o && o.cards) || [], state.sendLog);
+  let left = ids.length;
+  if(!left){ if(cb) cb(); return; }
+  const done = () => { if(--left <= 0 && cb) cb(); };
+  ids.forEach(id => loadSendLog(id, done));
+}
 function coDetailPanelHtml(o){
   const folder = o.folder ? _coFolders[o.folder] : null;
   return `
@@ -25345,6 +25426,9 @@ function coDetailPanelHtml(o){
     ${/* 어긋난 칸을 «서류 목록보다 위»에 둔다 — 사람이 판단해야 하는 것이 먼저다 */''}
     ${coConflictHtml(o)}
     ${coDocsHtml(o)}
+    ${/* 📤 보낸 서류 — 빈 칸으로 두고 loadCoSent 가 채운다(#coErpHistBox 와 «같은 결»).
+         여기서 그리면 패널이 뜨기 전에 서버를 기다려야 한다. */''}
+    <div id="coSentBox"></div>
     ${o.cards.length?`<div class="pcsec" style="margin:16px 4px 8px">이 회사 사람 ${o.cards.length}명</div>
       ${o.cards.map(c=>`<div class="cof" onclick="openDetail('${c.id}')" style="cursor:pointer">
         <span>${esc(c.title||'')}</span><b>${esc(c.name||'')}</b></div>`).join('')}`:''}`;
@@ -25365,6 +25449,10 @@ function openCoDetailPanel(key){
      DOM 자리 하나라 회사가 바뀌어도 같은 id 를 그대로 쓴다. 지금도 이 회사를 보고
      있을 때만(state.coPick===key) 그린다(_coFolderDialogTab 검사와 같은 결). */
   loadErpCaseCons(data=>{ if(state.coPick===key) renderCoErpHistory(o, data); });
+  /* 📤 보낸 서류 — 이 회사 사람들의 보낸 기록을 모아 읽는다(1걸음: 새 쓰기 없음).
+     ⚠ 늦게 온 답을 «다른 회사» 칸에 쓰지 않는다 — 이력 칸과 같은 안전장치다.
+       #coSentBox 도 DOM 자리 하나라 회사가 바뀌어도 같은 id 를 그대로 쓴다. */
+  loadCoSent(o, ()=>{ if(state.coPick===key){ const b=$('coSentBox'); if(b) b.innerHTML = coSentHtml(o); } });
 }
 
 /* ══════════════ 👷 근로자 정보함 (대표 지시 2026-09-01 · 2026-09-02 다시 정리) ══════════════

@@ -69,6 +69,9 @@ function loadPanelBlock(items){
     coVal: (o, f) => String((o && ((o.extra && o.extra[f]) || o[f])) || '').trim(),
     CO_FIELDS: [['bizno','사업자번호'],['ceo','대표자']],
     closeDetail: () => { calls.detailClosed++; },
+    /* 2026-09-03: 패널을 열면 「📤 보낸 서류」도 읽는다(1걸음 — 읽기만 한다).
+       이 검사는 그 칸을 안 보므로 대역으로 둔다 — 안 넣으면 패널 열기가 던진다. */
+    loadCoSent: (o, cb) => cb && cb(),
     loadErpCaseCons: cb => cb && cb(null),
     renderCoErpHistory: () => {},
     $: id => {
@@ -155,6 +158,9 @@ function loadPanelBlockAsync(items){
     coVal: (o, f) => String((o && ((o.extra && o.extra[f]) || o[f])) || '').trim(),
     CO_FIELDS: [],
     closeDetail: () => { calls.detailClosed++; },
+    /* 2026-09-03: 패널을 열면 「📤 보낸 서류」도 읽는다(1걸음 — 읽기만 한다).
+       이 검사는 그 칸을 안 보므로 대역으로 둔다 — 안 넣으면 패널 열기가 던진다. */
+    loadCoSent: (o, cb) => cb && cb(),
     loadErpCaseCons: cb => { pendingCbs.push(cb); },
     renderCoErpHistory: (o, data) => { calls.histCalls.push({ name:o.name, data }); },
     $: id => {
