@@ -133,17 +133,19 @@ t('금액이 가까운 순으로 세운다 (옮길 곳은 대개 같은 금액�
 t('금액 차이를 함께 보여준다', /d===0\?'금액 일치':\(d>0\?'\+':''\)\+d\.toLocaleString\(\)/.test(MOVE), true);
 
 console.log('\n[⑧ 확정 이력 — 잘못될 여지가 어디인지 보인다]');
-/* 조건 없이 «늘» 그린다 — false 로 막아 놓아도 글자만 보고 통과하면 검사가 아무것도 못 지킨다 */
-t('업체 바꾸기 단추가 조건 없이 늘 있다',
-  /\}\},\r?\n?\s*h\('button',\{onClick:function\(\)\{ setMovePop\(\{fi:fi, q:'' \}\); \},/.test(src)
-  || /\n\s{28}h\('button',\{onClick:function\(\)\{ setMovePop\(\{fi:fi, q:'' \}\); \},/.test(src), true);
-/* 되돌린 건에는 단추가 아예 안 그려진다 — 이미 물린 것을 또 옮길 수는 없다.
+/* 2026-09-03: 세 단추(업체 바꾸기·담당/성과·되돌리기)를 「🛠 바로잡기」 한 들머리로 모았다.
+   그래서 «단추의 글자» 가 아니라 «길이 살아 있는가» 를 본다 —
+   단추 이름을 박아 두면 창을 손질할 때마다 멀쩡한 상태로 깨진다. */
+t('고치는 길이 조건 없이 늘 있다',
+  /h\('button',\{onClick:function\(\)\{ openFix\(fi\); \},/.test(src), true);
+t('그 길이 업체 바꾸기로 이어진다', /setMovePop\(\{ fi:fi, q:'' \}\)/.test(src), true);
+/* 되돌린 건에는 들머리가 아예 안 그려진다 — 이미 물린 것을 또 옮길 수는 없다.
    되돌림 표시와 단추 묶음이 «같은 삼항의 양쪽» 이라야 그렇게 된다. */
 t('되돌린 건에는 안 보인다 (이미 물린 것을 또 옮길 수는 없다)',
-  /'되돌림 '\+fi\.undoneDate\.slice\(0,10\)\)[\s\S]{0,600}?setMovePop/.test(src), true);
-t('되돌리기와 다르다는 것을 적어 둔다', /앞 업체의 입금표시·성과급은 되돌립니다/.test(src), true);
-t('옛 「수정」은 이름을 「담당·성과」로 바꿨다 (무엇을 고치는지 헷갈렸다)',
-  /whiteSpace:'nowrap'\}\},'담당·성과'\)/.test(src), true);
+  /'되돌림 '\+fi\.undoneDate\.slice\(0,10\)\)[\s\S]{0,600}?openFix/.test(src), true);
+t('되돌리기와 다르다는 것을 적어 둔다', /앞 업체의 입금표시·성과급은 되돌리고/.test(src), true);
+t('담당 갈래는 «무엇을 고치는지» 를 이름에 적는다 (옛 「수정」은 헷갈렸다)',
+  /t:'담당자가 틀렸다'[\s\S]{0,80}?s:'성과 배분을 다시 나눕니다'/.test(src), true);
 t('자동으로 붙은 건에 표시가 붙는다', /fi\.autoConfirmed && h\('span',\{title:'사람이 고르지 않고 자동으로 붙은 건입니다'/.test(src), true);
 t('옮긴 건에도 표시가 붙는다', /fi\.movedFrom && h\('span',\{title:'업체를 바꾼 건입니다/.test(src), true);
 t('자동 확정만 모아 볼 수 있다', /if\(autoOnly\) allInc = allInc\.filter\(function\(fi\)\{ return fi && fi\.autoConfirmed; \}\);/.test(src), true);
