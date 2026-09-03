@@ -94,11 +94,57 @@ test('★★ 직원 칸으로 «올리지 않는다» — 올리면 대표가 �
   assert.doesNotMatch(pull, /fbScheduleAuto|_fbDoPush/, '★ 읽어 온 것을 되올리면 안 됩니다');
 });
 
-test('★ 직원은 보기만 한다 — 고치는 손잡이를 감춘다', () => {
-  ['[data-act="new"]', '[data-act="csv"]', '.ocr-zone', '.row-chk']
+test('★ 직원은 고치거나 지우지 못한다 — 그 손잡이만 감춘다', () => {
+  ['[data-act="new"]', '[data-act="csv"]', '.row-chk']
     .forEach((sel) => assert.ok(source.indexOf('body.kc-staff ' + sel) > 0,
       sel + ' 를 감추지 않았습니다'));
-  assert.match(source, /body\.kc-staff \.dt th:last-child/, '관리 칸도 감춰야 합니다');
+});
+
+test('★★ 직원도 PDF 를 «올려 등록 신쓰»할 수 있다 (대표 지시 2026-09-03)', () => {
+  /* 「고치거나 지울수 없어도 pdf 위촉장을 업로드해서 등록할 수 있게」
+     ⚠ .ocr-zone 을 다시 감추지 말 것 — 그러면 올릴 길이 사라진다. */
+  assert.equal(source.indexOf('body.kc-staff .ocr-zone{display:none'), -1,
+    '올리기를 감추면 대표 지시와 어긋납니다');
+  const fn = cutFn(bare, 'async function saveOCRRecord(');
+  assert.match(fn, /if\(kcIsStaff\(\)\)\{/,
+    '직원이 올린 것이 대표 기록에 바로 들어가면 안 됩니다');
+  assert.match(fn, /kcInboxSubmit\(page, parsed, file, ext, b64\)/);
+  assert.ok(fn.indexOf('kcIsStaff()') < fn.indexOf('const db=get(store)'),
+    '★ 분기는 내 기록을 읽기 «전»에 와야 합니다');
+  assert.match(cutFn(bare, 'async function kcInboxSubmit('), /kcareer_inbox/,
+    '직원은 받은 함에만 쓴다');
+  assert.match(cutFn(bare, 'async function kcInboxSubmit('), /\+ uid \+/,
+    '자기 uid 자리에만 쓴다');
+});
+
+test('★★ 관리 칸은 «원본 보기» 하나만 — 칸을 통째 감추면 열 길이 없다', () => {
+  assert.equal(source.indexOf('body.kc-staff .dt th:last-child'), -1,
+    '관리 칸을 통째 감추면 원본을 보여 준다는 대표 지시와 어긋납니다');
+  const fn = cutFn(bare, 'function rowActions(');
+  const at = fn.indexOf('if(kcIsStaff()){');
+  assert.ok(at > 0, '직원용으로 갈라 그려야 합니다');
+  const staff = fn.slice(at, fn.indexOf('display:inline-flex', at));   /* 직원 갈래만 잘라 본다 */
+  assert.match(staff, /원본 보기/);
+  [/openEditDrawer/, /delRec/, /deleteAttach/, /attachRec/, /downloadToFolder/].forEach((re) =>
+    assert.doesNotMatch(staff, re, '직원 칸에 고치거나 지우는 손잡이가 있습니다'));
+  assert.match(staff, /대표 PC/,
+    '⚠ 여기 원본이 없는 까닭을 적지 않으면 번 칸이 고장으로 읽힙니다');
+});
+
+test('★ 대표는 받은 함을 보고 «들이기»로 한다 — 중복 방지는 이미 있는 길을 쓴다', () => {
+  assert.match(source, /onclick="openInboxMgr\(\)"/, '들어갈 길이 있어야 합니다');
+  const fn = cutFn(bare, 'async function inboxTake(');
+  assert.match(fn, /saveOCRRecord\(x\.page/,
+    '새로 짜지 않고 saveOCRRecord 를 쓴다 — 중복 방지·원본 붙이기가 그 안에 있다');
+  assert.match(fn, /x\._uid/, '들인 뒤에는 받은 함에서 뻐니다');
+});
+
+test('★ 받은 함은 파일 크기를 말한다 — RTDB 에 담는 것이다', () => {
+  assert.match(source, /var KC_INBOX_MAX = 4 \* 1024 \* 1024/);
+  const fn = cutFn(bare, 'async function kcInboxSubmit(');
+  assert.match(fn, /> KC_INBOX_MAX/, '크기를 재지 않으면 큼 파일 하나가 다 말아맕니다');
+  assert.match(fn, /permission\|PERMISSION/,
+    '⚠ 권한 문제를 「실패」로만 알리면 어떻게 고칠지 알 수 없습니다');
 });
 
 test('★ 「왜 못 고치나」를 화면에 적는다 — 단추만 없으면 고장으로 읽힌다', () => {
@@ -128,4 +174,27 @@ test('★ 사본을 읽은 «뒤»에 옆줄을 다시 그린다 — 먼저 그�
   const iPull = fn.indexOf('await kcPubPull()');
   const iNav = fn.indexOf('_safe(buildNav)', iPull);
   assert.ok(iPull > 0 && iNav > iPull, '★ 건수가 0 으로 남습니다(실측 2026-09-02)');
+});
+
+/* ── ★ 받은 함 규칙 (대표 지시 2026-09-03) ── */
+
+test('★★ 받은 함 — 직원은 «자기 자리»에만 쓰고, 지우는 것은 관리자만', () => {
+  const r = rules.kcareer_inbox;
+  assert.ok(r, '★ kcareer_inbox 규칙이 없습니다 — 직원이 올릴 수 없습니다');
+  assert.match(r['.read'], /isAdmin/, '대표는 모든 직원이 올린 것을 봐야 들일 수 있습니다');
+  const u = r.$uid;
+  assert.match(u['.write'], /auth\.uid === \$uid/,
+    '★ 남의 자리에 쓸 수 있으면 다른 직원 이름으로 올릴 수 있습니다');
+  assert.match(u['.write'], /newData\.exists\(\) \|\|/,
+    '★ 지울 수 있으면 올렸던 것을 없애 「난 올렸다」를 다툴 수 없습니다');
+  assert.match(u['.write'], /status.*active/s, '재직자만 올립니다');
+});
+
+test('★ 규칙은 «만들개»에서 고친다 — 받은 함도 마찬가지', () => {
+  assert.match(rulesSrc, /rules\.kcareer_inbox\s*=/);
+});
+
+test('★★ 사본(kcareer_pub)은 여전히 직원이 못 쓴다 — 받은 함을 만든 까닭이다', () => {
+  assert.doesNotMatch(rules.kcareer_pub['.write'], /sid.*exists/s,
+    '★ 여기가 열리면 직원이 대표 기록을 바로 고칠 수 있습니다');
 });
