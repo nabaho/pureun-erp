@@ -186,14 +186,16 @@ FUND_PATHS.forEach(function (p) {
 /* ── ③ 푸른이알피 — 저장이 «된 뒤에» ── */
 
 test('★ 푸른이알피는 계약이 저장된 뒤에 표시를 남긴다', () => {
-  const done = ERP.indexOf('savedRef.value = true;');
+  const hand = ERP.indexOf('await props.onSave(saveData)');
+  const done = ERP.indexOf('savedRef.value = true;', hand);
   const mark = ERP.indexOf('PuPhotoStore.markUsed(', done);
-  const hand = ERP.indexOf('props.onSave(saveData);', done);
   assert.ok(done > 0, '저장 성공 표식을 못 찾았습니다');
   assert.ok(mark > done,
     '★ 저장 전에 표시하면, 「적용」만 누르고 그만둔 계약서까지 증빙으로 셉니다');
-  assert.ok(hand > 0 && mark < hand,
-    '표시를 넘기기 뒤로 미루면 넘기기가 넘어졌을 때 표시가 통째로 안 남습니다');
+  assert.ok(hand > 0 && hand < done && done < mark,
+    '계약 저장의 성공 반환을 기다린 뒤에만 증빙으로 표시해야 합니다');
+  assert.match(ERP.slice(hand, done), /if\(accepted !== true\) return;/,
+    '취소·실패한 계약은 사진 표시와 draft 삭제를 건너뛰어야 합니다');
 });
 
 /* ⚠ 2026-08-28 다시 겨눔 — 종전에는 `slice(i - 400, i)` 처럼 **글자 수로 창을 떠서**
