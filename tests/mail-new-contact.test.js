@@ -299,9 +299,16 @@ test('★ 같은 주소를 «두 번» 등록하지 않는다', async () => {
 });
 
 test('★★ 등록한 뒤 «표를 다시 만든다» — 안 그러면 방금 넣은 담당자가 화면에 안 잡힌다', () => {
-  const fn = cut('async function mbNewSave(){', '\n/* ══════════');
+  /* ⚠ 보는 자리를 옮겼다(2026-09-03) — 쓰는 일이 erpFillContact 로 떼어졌다.
+       「자문사 이메일 잇기」 화면도 같은 자리를 쓰게 하려고 하나로 모은 것이다.
+       ★ 지키는 규칙은 «그대로»다: 적은 뒤 표를 다시 만든다. 자리만 옮겼다.
+         mbNewSave 만 보면 이 규칙이 «사라진 것처럼» 보여 검사가 헛되이 깨진다. */
+  const fn = cut('async function erpFillContact(', '\nasync function mbNewSave(');
   assert.ok(/mbWhoBust\(\)/.test(fn), '주소↔담당자 표를 안 버립니다');
   assert.ok(/ErpMatch\.load\(\)/.test(fn), '업체 자료를 다시 안 읽습니다');
+  /* 그리고 등록 화면이 그 자리를 «실제로» 지나는가 — 안 지나면 위 검사는 헛것이다 */
+  const save = cut('async function mbNewSave(', '\nfunction taxHintFor(');
+  assert.ok(/erpFillContact\(/.test(save), '등록 화면이 그 자리를 안 지납니다');
 });
 
 /* ══════ 그다음이 «저절로» 이어지는 근거 ══════ */
