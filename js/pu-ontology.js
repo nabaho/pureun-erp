@@ -43,13 +43,16 @@
   /* 포털 APPS의 key와 1:1로 맞춘다. 한 프로그램이 여러 뿌리를 읽어도
      자신이 정본으로 소유하는 뿌리는 primaryRoots에만 적는다. */
   var PROGRAMS = {
-    erp:{ name:'푸른이알피', file:'pu-erp.html', primaryRoots:['data'],
+    /* ⚠ 소유 저장뿌리는 «코드가 쓰는 자리»를 다 적는다 — 하나라도 빠지면
+       그 자료는 온톨로지가 영영 못 본다. tests/ontology-registry.test.js 가
+       앱·서버가 실제로 쓰는 뿌리를 훑어 여기와 맞춘다. */
+    erp:{ name:'푸른이알피', file:'pu-erp.html', primaryRoots:['data','improve_requests','hanaSmsBridge','ieum_public'],
       entityTypes:['Organization','Person','Employment','Contract','Case','Project','ScheduleEvent','FinancialTransaction','Invoice','PayrollRecord','Policy'] },
     consult:{ name:'정부사업일정', file:'gov-consulting.html', primaryRoots:['scal_roundlog','activeWriter/gov_consulting'],
       sharedRoots:['data/consultings','puphotos'], entityTypes:['Organization','Person','Project','ScheduleEvent','MediaAsset'] },
     work:{ name:'업무관리', file:'work.html', primaryRoots:['work_erp'], sharedRoots:['data','pucards/idx'],
       entityTypes:['Person','Organization','Task','ScheduleEvent'] },
-    career:{ name:'경력관리', file:'kcareer.html', primaryRoots:['kcareer/{uid}'], sharedRoots:['data'],
+    career:{ name:'경력관리', file:'kcareer.html', primaryRoots:['kcareer/{uid}','kcareer_inbox','kcareer_pub'], sharedRoots:['data'],
       entityTypes:['Person','Employment','Project','Document'] },
     mail:{ name:'푸른 메일', file:'pu-cards.html?view=mail', primaryRoots:['pucards/mailbox','pucards/sentBox','pucards/scheduled'],
       entityTypes:['Person','Organization','Message','Document'] },
@@ -59,7 +62,7 @@
       entityTypes:['Person','Organization','Document','MediaAsset'] },
     fund:{ name:'기금관리', file:'fund.html', primaryRoots:['data/funds'], sharedRoots:['data/finance_income','pucards/idx','pucards/coInfo'],
       entityTypes:['Organization','Person','Project','FinancialTransaction','Document'] },
-    rules:{ name:'취업규칙 관리', file:'rules.html', primaryRoots:['chwieop'], sharedRoots:['data/user_dir'],
+    rules:{ name:'취업규칙 관리', file:'rules.html', primaryRoots:['chwieop','rules_mgmt'], sharedRoots:['data/user_dir'],
       entityTypes:['Organization','Person','Policy','Document'] },
     docs:{ name:'문서관리', file:'docs-esign.html', primaryRoots:['esign'],
       entityTypes:['Organization','Person','Case','Document','Submission'] },
@@ -74,9 +77,54 @@
        빌려 읽는 곳: homepage/newsBrief(자동으로 담을 기사) · pucards/scheduled(보낸 결과).
        ⚠ 명단은 «여기가 정본»이다 — 기업정보함 명함을 실시간으로 끌어오지 않는다.
          끌어오면 명함 한 장이 바뀔 때 누구에게 갈지가 조용히 달라진다. */
-    news:{ name:'뉴스레터 관리', file:'pu-news.html', primaryRoots:['newsletter'],
+    news:{ name:'뉴스레터 관리', file:'pu-news.html', primaryRoots:['newsletter','ilabor'],
       sharedRoots:['homepage/newsBrief','pucards/scheduled'],
       entityTypes:['Organization','Person','Message','Document'] }
+  };
+
+  /* ── 등록부 밖에 있던 화면들 (2026-09-03) ──
+     예전 검사는 «포털 타일 목록»만 봤다. 그런데 타일 없이 주소로 들어가는 화면이
+     다섯이나 있었다 — 근로자가 폰으로 여는 제출 쪽, 이음센터 근무표 보기,
+     취업규칙 작성기, 카메라, 설치 안내. 그 다섯이 검사를 통째로 안 지났다.
+     ⚠ 딸린 화면은 «자기 저장뿌리를 갖지 않는다» — 주인 프로그램의 자리에 쓴다.
+       자기 자리를 갖는다면 딸린 화면이 아니라 프로그램이므로 PROGRAMS 에 넣는다. */
+  var PORTAL_FILE = 'enter.html';
+  var SATELLITES = {
+    ieum_view:{ name:'이음센터 근무일정 보기', file:'ieum-view.html', program:'erp',
+      note:'이알피가 낸 근무표를 익명으로 보는 창 — 여기서 쓰지 않는다' },
+    rules_writer:{ name:'취업규칙 작성기', file:'chwieop.html', program:'rules',
+      note:'취업규칙 관리 안에 끼워 넣어 쓴다' },
+    camera:{ name:'푸른카메라', file:'pu-camera.html', program:'photos',
+      note:'사진을 찍어 사진첩에 넣는 입구' },
+    esign_submit:{ name:'전자위임장 제출', file:'sign.html', program:'docs',
+      note:'근로자가 폰으로 제출하는 쪽 — 문서관리가 받는다' }
+  };
+  var EXCLUDED_SCREENS = {
+    'install.html':'포털 설치 안내 — 업무 자료를 담지 않는다',
+    'fund-poc.html':'기금관리 실험 화면 — 운영에 쓰지 않는다'
+  };
+
+  /* ── 밑바탕 자리 — 업무 개체가 아니다 ──
+     권한·접속·백업·요금 같은 것은 «누구의 업무 자료»가 아니라 시스템의 살림이다.
+     온톨로지 개체로 만들지 않지만, 여기 안 적어 두면 「주인 없는 자리」로 걸린다. */
+  var INFRA_ROOTS = {
+    uid_roles:'권한', presence:'접속 표시', appBuild:'배포 판 번호', config:'공용 설정',
+    billing:'요금 급증 감시', backup_key:'백업 열쇠', serverBackups:'서버 백업',
+    serverBackupsIndex:'서버 백업 색인', serverBackupsRecentIndex:'서버 백업 최근 색인',
+    systemBackups:'백업', systemBackupsIndex:'백업 색인', systemRestoreLog:'되살리기 기록',
+    systemAlerts:'경보', exportLog:'내보내기 기록', exportLogTidy:'내보내기 기록 청소',
+    exportSeen:'내보내기 확인', pureun_v6:'2026-05 에 멈춘 옛 사본 — 살아 있는 자리가 아니다'
+  };
+
+  /* ── 사전에만 있고 아직 만들지 않는 관계어 ──
+     ⚠ 여기 적지 않은 관계어는 «코드가 실제로 만들어야» 한다
+       (tests/ontology-registry.test.js). 사전에 말만 늘어나는 것을 막는다. */
+  var PREDICATES_PLANNED = {
+    belongsToOrganization:'사람→사업장 재직 — 사업장 근로자에게 영구 번호가 없어 미룸(2026-09-03 대표 ①: 일·기록을 사업장에만 붙인다)',
+    evidencedBy:'업무→증빙 — 사진첩 서류를 업무에 붙이는 일은 다음 단계',
+    transferredTo:'업무 인계 — 인계 기록에 영구 ID가 아직 없다',
+    fulfills:'계약 이행 — 어떤 일이 계약을 채웠는지 기준이 없다',
+    supersedes:'개정 관계 — 취업규칙 대조표를 통합 화면에서 읽지 않는다'
   };
 
   var STORE_TYPES = {
@@ -515,7 +563,8 @@
     identity:{label:'식별자·중복',codes:['missing_id','duplicate_id','ambiguous_company_name','duplicate_business_number']},
     organization:{label:'업체 연결',codes:['orphan_company','missing_company_id','unresolved_company','inferred_relation']},
     person:{label:'담당자 연결',codes:['orphan_person']},
-    source:{label:'원본·권한',codes:['orphan_source','source_unreadable','dangling_relation']}
+    source:{label:'원본·권한',codes:['orphan_source','source_unreadable','dangling_relation']},
+    registry:{label:'등록·계약',codes:['program_no_root','root_double_owned','satellite_orphan','root_not_read','predicate_planned']}
   };
   function validationCategory(code){
     var found='source';Object.keys(VALIDATION_CATEGORIES).some(function(k){if(VALIDATION_CATEGORIES[k].codes.indexOf(code)>=0){found=k;return true;}return false;});return found;
@@ -524,6 +573,11 @@
     var a=READ_ADAPTERS[store];return a&&a.program||'erp';
   }
   function validationAdvice(code,candidate){
+    if(code==='program_no_root')return '공통 사전의 등록부에 그 프로그램이 소유한 저장 자리를 적으세요.';
+    if(code==='root_double_owned')return '저장 자리의 주인을 하나로 정하고, 나머지는 빌려 읽는 자리로 옮기세요.';
+    if(code==='satellite_orphan')return '딸린 화면이 가리키는 프로그램을 등록부에 넣거나 주인을 고치세요.';
+    if(code==='root_not_read')return '읽기 계획에 어댑터를 넣거나, 통합 화면에서 읽지 않을 자료라면 앱 내부로 선언하세요.';
+    if(code==='predicate_planned')return '이 관계어는 아직 만들지 않기로 한 것입니다. 사유가 끝나면 만들고, 안 쓸 것은 사전에서 빼세요.';
     if(code==='missing_company_id'&&candidate)return '후보 업체 ID를 원본에서 대조한 뒤 명시적으로 확정하세요.';
     if(code==='inferred_relation')return '이름으로 추정된 관계입니다. 원본에서 영구 ID를 확인해 확정하세요.';
     if(code==='source_unreadable')return '로그인 권한과 프로그램 연결 상태를 확인한 뒤 다시 진단하세요.';
@@ -541,7 +595,10 @@
     });
     var rank={high:0,medium:1,low:2};
     var items=raw.map(function(x,i){
-      var program=issueProgram(x.store),category=validationCategory(x.code),seed=[x.code,x.store,x.id,x.candidate,x.detail,i].join('|');
+      /* 등록부 진단처럼 프로그램을 스스로 아는 줄은 그것을 그대로 쓴다 —
+         store 이름으로 되짚으면 전부 이알피 것으로 몰린다. */
+      var program=(x.program&&PROGRAMS[x.program])?x.program:issueProgram(x.store),
+          category=validationCategory(x.code),seed=[x.code,x.store,x.id,x.candidate,x.detail,i].join('|');
       return {reviewId:'review:'+encodeURIComponent(seed).replace(/\./g,'%2E'),severity:x.severity||'medium',category:category,code:x.code,
         store:clean(x.store),recordId:clean(x.id),label:clean(x.label||x.id||x.store),detail:clean(x.detail),candidate:x.candidate||null,
         program:program,programName:PROGRAMS[program]&&PROGRAMS[program].name||program,sourceFile:PROGRAMS[program]&&PROGRAMS[program].file||'',
@@ -616,14 +673,103 @@
     return {ok:errors.length===0,errors:errors};
   }
 
+  /* 포털 타일과 등록부를 맞춘다.
+     ⚠ 예전에는 «개수가 같은가»를 봤다. 그러면 타일 없는 프로그램(근로자 전용·공개 화면)을
+       하나 넣는 순간 검사가 깨져, 등록을 «안 하는» 쪽이 쉬워진다.
+       그래서 규칙을 바꿨다 — 타일은 모두 등록돼 있어야 하고,
+       타일 없는 등록 프로그램은 portal:false 로 «타일이 없음을 밝혀야» 한다. */
   function auditPrograms(appKeys){
     appKeys = appKeys || [];
     var missing=appKeys.filter(function(k){ return !PROGRAMS[k]; });
-    var extra=Object.keys(PROGRAMS).filter(function(k){ return appKeys.indexOf(k)<0; });
-    return { registered:Object.keys(PROGRAMS).length, missing:missing, extra:extra, ok:missing.length===0 };
+    var undeclared=Object.keys(PROGRAMS).filter(function(k){ return appKeys.indexOf(k)<0 && PROGRAMS[k].portal!==false; });
+    return { registered:Object.keys(PROGRAMS).length, missing:missing, extra:undeclared, undeclared:undeclared,
+      ok:missing.length===0 && undeclared.length===0 };
+  }
+
+  /* 소유는 «경로»로 본다.
+     ⚠ 맨 앞 토막만 보면 안 된다 — 기금관리는 data/funds 를, 푸른 메일은
+       pucards/mailbox 를 소유한다. 그것은 이알피·기업정보함 나무의 «곁방»이고
+       주인이 둘인 것이 아니다. 주인이 둘이라고 볼 것은 «똑같은 경로»뿐이다. */
+  function ownedRoots(){
+    var byPath={}, byTop={};
+    Object.keys(PROGRAMS).forEach(function(k){
+      (PROGRAMS[k].primaryRoots||[]).forEach(function(r){
+        var p=clean(r); if(!p) return;
+        if(!byPath[p]) byPath[p]=[]; if(byPath[p].indexOf(k)<0) byPath[p].push(k);
+        var top=p.split('/')[0];
+        if(!byTop[top]) byTop[top]=[]; if(byTop[top].indexOf(k)<0) byTop[top].push(k);
+      });
+    });
+    return {byPath:byPath, byTop:byTop};
+  }
+
+  /* 화면 파일 목록을 등록부와 맞춘다. 등록 프로그램·딸린 화면·포털·제외 넷 중 하나여야 한다. */
+  function auditScreens(files){
+    var known={};
+    known[PORTAL_FILE]='포털';
+    Object.keys(PROGRAMS).forEach(function(k){ known[clean(PROGRAMS[k].file).split('?')[0]]='프로그램'; });
+    Object.keys(SATELLITES).forEach(function(k){ known[clean(SATELLITES[k].file)]='딸린 화면'; });
+    Object.keys(EXCLUDED_SCREENS).forEach(function(f){ known[f]='등록 제외'; });
+    var unknown=(files||[]).map(clean).filter(function(f){ return f && !known[f]; });
+    var ghosts=Object.keys(known).filter(function(f){ return (files||[]).indexOf(f)<0; });
+    return { ok:unknown.length===0 && ghosts.length===0, unknown:unknown, ghosts:ghosts, known:known };
+  }
+
+  /* 저장뿌리 목록을 등록부와 맞춘다. 소유가 밝혀졌거나 밑바탕으로 적혀 있어야 한다. */
+  function auditRoots(roots){
+    var owned=ownedRoots();
+    var unowned=(roots||[]).map(clean).filter(function(r){ return r && !owned.byTop[r] && !INFRA_ROOTS[r]; });
+    var doubled=Object.keys(owned.byPath).filter(function(p){ return owned.byPath[p].length>1; })
+      .map(function(p){ return {root:p, programs:owned.byPath[p]}; });
+    var nested=Object.keys(owned.byPath).filter(function(p){
+      return p.indexOf('/')>0 && owned.byTop[p.split('/')[0]].length>1;
+    }).map(function(p){ return {root:p, programs:owned.byPath[p], under:p.split('/')[0]}; });
+    return { ok:unowned.length===0 && doubled.length===0, unowned:unowned, doubleOwned:doubled, nested:nested };
+  }
+
+  /* 등록부 자체의 구멍을 화면에서 볼 수 있게 진단한다. 원본은 읽지도 쓰지도 않는다. */
+  function auditRegistry(){
+    var out=[], owned=ownedRoots();
+    Object.keys(PROGRAMS).forEach(function(k){
+      if(!(PROGRAMS[k].primaryRoots||[]).length)
+        out.push({severity:'high',code:'program_no_root',program:k,store:'',id:k,label:PROGRAMS[k].name,
+          detail:'소유한 저장 자리를 밝히지 않았습니다.',candidate:null});
+    });
+    Object.keys(owned.byPath).forEach(function(r){
+      if(owned.byPath[r].length>1) out.push({severity:'high',code:'root_double_owned',program:owned.byPath[r][0],store:'',id:r,label:r,
+        detail:'같은 저장 자리를 '+owned.byPath[r].length+'개 프로그램이 소유합니다: '+owned.byPath[r].join(', '),candidate:null});
+    });
+    Object.keys(SATELLITES).forEach(function(k){
+      var s=SATELLITES[k];
+      if(!PROGRAMS[s.program]) out.push({severity:'high',code:'satellite_orphan',program:'erp',store:'',id:s.file,label:s.name,
+        detail:'딸린 화면이 등록부에 없는 프로그램을 가리킵니다: '+s.program,candidate:null});
+    });
+    /* 소유는 밝혔지만 읽기 계획이 아직 안 다루는 자리 — 관계망이 그 자료를 못 본다. */
+    var read={};
+    Object.keys(READ_ADAPTERS).forEach(function(k){
+      var a=READ_ADAPTERS[k];
+      if(a.strategy==='in_app'){ read['@'+a.program]=true; return; }
+      var top=clean(a.path).split('/')[0]; if(top) read[top]=true;
+    });
+    Object.keys(owned.byPath).forEach(function(r){
+      if(read[r.split('/')[0]]) return;
+      var program=owned.byPath[r][0]; if(read['@'+program]) return;
+      out.push({severity:'medium',code:'root_not_read',program:program,store:'',id:r,label:r,
+        detail:'소유는 밝혔지만 통합 진단이 아직 이 자리를 읽지 않습니다.',candidate:null});
+    });
+    Object.keys(PREDICATES_PLANNED).forEach(function(p){
+      out.push({severity:'low',code:'predicate_planned',program:'erp',store:'',id:p,label:p,
+        detail:PREDICATES_PLANNED[p],candidate:null});
+    });
+    return { readOnly:true, sourceMutation:'never', issues:out,
+      counts:{ programs:Object.keys(PROGRAMS).length, satellites:Object.keys(SATELLITES).length,
+        excluded:Object.keys(EXCLUDED_SCREENS).length, infraRoots:Object.keys(INFRA_ROOTS).length,
+        plannedPredicates:Object.keys(PREDICATES_PLANNED).length, gaps:out.length } };
   }
 
   return { VERSION:VERSION, TERMS:TERMS, PROGRAMS:PROGRAMS, STORE_TYPES:STORE_TYPES, READ_ADAPTERS:READ_ADAPTERS,
+    PORTAL_FILE:PORTAL_FILE, SATELLITES:SATELLITES, EXCLUDED_SCREENS:EXCLUDED_SCREENS, INFRA_ROOTS:INFRA_ROOTS,
+    PREDICATES_PLANNED:PREDICATES_PLANNED, auditScreens:auditScreens, auditRoots:auditRoots, auditRegistry:auditRegistry,
     audit:audit, auditIntegrated:auditIntegrated, getReadPlan:getReadPlan, searchEntities:searchEntities, entityConnections:entityConnections,
     organization360:organization360, validateCompanyLink:validateCompanyLink, companyLinkCandidates:companyLinkCandidates,
     validateWorkReferences:validateWorkReferences, workReferenceCandidates:workReferenceCandidates, validateWorkBatch:validateWorkBatch,
