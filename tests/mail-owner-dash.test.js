@@ -1277,7 +1277,15 @@ test('★ 이으면 «저장»된다 — 화면만 바뀌면 새로고침에 사
   const c = loadCo();
   c.mbCoSet('zzz@nowhere.kr', '한빛물산', false);
   const w = c._held.wrote['pucards/config/mailCo/zzz@nowhere,kr'];
-  assert.equal(w, '한빛물산', '이은 것이 저장되지 않았다: ' + JSON.stringify(c._held.wrote));
+  /* ⚠ 담기는 꼴이 바뀌었다(2026-09-03) — 예전에는 자문사 «이름 글자»만 담았는데,
+       이제 업체 «열쇠(id)»를 함께 담는다. 온톨로지 규칙이 「업체명을 관계 열쇠로
+       쓰지 않는다」이기 때문이다.
+     ★ 지키는 규칙은 그대로다: «이으면 저장된다». 이름은 여전히 들어 있어야 한다. */
+  assert.ok(w, '이은 것이 저장되지 않았다: ' + JSON.stringify(c._held.wrote));
+  const nm = (w && typeof w === 'object') ? w.n : w;
+  assert.equal(nm, '한빛물산', '이은 자문사 이름이 안 담겼다: ' + JSON.stringify(w));
+  assert.ok(typeof w === 'object' && 'id' in w,
+    '업체 열쇠(id)를 안 담았다 — 이름이 바뀌면 이은 것이 끊긴다: ' + JSON.stringify(w));
 });
 
 test('★ 개인 메일은 «도메인으로» 못 잇는다 — 네이버 하나로 온 세상이 한 회사가 된다', () => {

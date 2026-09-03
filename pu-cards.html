@@ -15231,12 +15231,34 @@ function mbWhoDrop(ev, toName, el){
    주소 ↔ 자문사 표를 읽고 쓰는 자리 (대표 승인 2026-08-29)
    ══════════════════════════════════════════════════════════════════════════ */
 /* 이 주소(또는 도메인)에 이어 둔 자문사 이름 */
-function mbCoOf(em){
+/* ── 이은 것 한 칸을 읽는다 ──
+   ⚠ 값이 «두 꼴»이다. 옛 것은 자문사 «이름 글자», 2026-09-03 부터는 {n,id} 다.
+     업체를 이름으로 잇는 것은 온톨로지 규칙에 어긋난다(「업체명을 관계 열쇠로 쓰지
+     않는다」) — 그래서 열쇠(id)를 함께 담기 시작했다. 옛 칸을 손으로 고칠 일은 없다.
+   ⚠ 값을 읽는 자리는 «이 둘»뿐이다(mbCoOf·mbCoAddrsOf). 새로 읽는 곳을 만들면
+     여기를 지나게 할 것 — 안 지나면 옛 꼴에서 조용히 undefined 가 된다.
+   ⚠★ 이름을 mbCoNameOf 로 지었다가 «이미 있는 함수»와 겹쳤다(2026-09-03).
+     그것은 「이 주소의 회사 이름」이고 제 안에서 mbCoOf 를 부른다 — 뒤엣것이 이겨
+     서로를 부르며 스택이 넘쳤고, 검사 196개가 한꺼번에 깨졌다. 구문오류도 없다.
+     ★ 이 파일은 한 덩이다. 이름을 짓기 «전에» grep 할 것. */
+function mbCoValName(v){
+  if(!v) return '';
+  return String((typeof v === 'object') ? (v.n || '') : v);
+}
+function mbCoIdOf(em){
   const set = _mbCo || {};
-  const a = String(set[mbWhoKey(em)] || '');
+  const pick = (k)=>{ const v = set[k]; return (v && typeof v === 'object') ? String(v.id||'') : ''; };
+  const a = pick(mbWhoKey(em));
   if(a) return a;
   const d = mbDomOf(em);
-  return d ? String(set[mbWhoKey('@' + d)] || '') : '';
+  return d ? pick(mbWhoKey('@' + d)) : '';
+}
+function mbCoOf(em){
+  const set = _mbCo || {};
+  const a = mbCoValName(set[mbWhoKey(em)]);
+  if(a) return a;
+  const d = mbDomOf(em);
+  return d ? mbCoValName(set[mbWhoKey('@' + d)]) : '';
 }
 /* 자문사 이름 → 푸른이알피 기록(담당자·종료여부).
    ⚠ ErpMatch 가 이미 해 둔 판정을 그대로 쓴다 — 여기서 다시 셈하면 두 곳이 어긋난다. */
@@ -16893,7 +16915,9 @@ function whoAddrOfName(name){
   });
   const n = ErpMatch._norm(name);
   Object.keys(_mbCo||{}).forEach(k=>{
-    if(ErpMatch._norm(_mbCo[k]) !== n) return;
+    /* ⚠ 값이 두 꼴(옛 이름 글자 · 새 {n,id})이라 반드시 mbCoValName 을 지난다 —
+         안 지나면 새로 이은 것이 여기서 통째로 안 잡힌다. */
+    if(ErpMatch._norm(mbCoValName(_mbCo[k])) !== n) return;
     /* 열쇠는 주소열쇠(점이 쉼표로 바뀐 것)다 — 보여 줄 때만 점으로 되돌린다.
        ⚠ 도메인으로 이은 것(@회사.kr)은 그대로 「@…」로 보여 준다. */
     const shown = String(k).replace(/,/g, '.');
@@ -16951,6 +16975,17 @@ function whoPageHtml(){
           <b>자문사를 고르면 담당자는 저절로 따라옵니다</b> — 담당이 바뀌어도 다시 고칠 일이 없습니다.
           자문사가 아니면 <b>「자문사 아님」</b>으로 치워 두시면 목록이 깨끗해집니다.
           ${list.length>200?`<br><span style="color:#dc2626">아래 200곳만 보입니다 — 이어 주시면 다음 것이 올라옵니다</span>`:''}
+          ${/* ── 푸른이알피에도 적기 (대표 승인 목업 ㉮, 2026-09-03) ──
+               ⚠ 줄마다 체크칸을 두지 «않았다» — 200줄에 200개면 눈이 어지럽고, 이 저장소는
+                 「한 칸은 한 줄」로 줄을 넓히지 않기로 해 두었다. 화면에 하나만 둔다.
+               ⚠ 기본이 켜짐이다. 끄는 것이 예외여야 실제로 채워진다. */''}
+          <label class="mschk" style="display:inline-flex;align-items:center;gap:6px;margin-top:8px;
+            cursor:pointer;font-size:12px;color:#1e293b">
+            <input type="checkbox" ${mbErpFillOn()?'checked':''}
+              onchange="mbErpFillSet(this.checked)">
+            <b>푸른이알피 담당자 칸에도 함께 적기</b>
+            <span style="color:#94a3b8">— 이름은 메일에서 가져오고, <b>빈 칸만</b> 채웁니다</span>
+          </label>
         </div>
         <div class="dm-list">`;
     if(!hide) body += dl;   /* 자문사 목록은 «한 벌만» — 줄마다 넣으면 화면이 2MB 가 된다 */
@@ -16973,10 +17008,10 @@ function whoPageHtml(){
             title="잇기 목록으로 되돌립니다">↩ 되돌리기</span>`
         : `
           ${o.guess?`<span class="dm-who na" style="background:#fffbeb;border-color:#fde68a;color:#854d0e"
-            onclick="mbCoSet('${esc(o.e)}','${esc(o.guess.name)}',false)"
+            onclick="mbCoSet('${esc(o.e)}','${esc(o.guess.name)}',false,'${esc(o.name||'')}')"
             title="명함의 「${esc(o.guess.from)}」 — 이 자문사로 잇습니다">💡 ${esc(o.guess.name)} 로</span>`:''}
           <input list="mbCoDL" value="${esc(o.co||'')}" placeholder="자문사 이름을 치세요"
-            onchange="mbCoSet('${esc(o.e)}',this.value,false)"
+            onchange="mbCoSet('${esc(o.e)}',this.value,false,'${esc(o.name||'')}')"
             title="이름 한두 글자만 쳐도 목록이 좁혀집니다 — 목록에 있는 자문사만 이어집니다"
             style="flex:none;width:180px;font-family:inherit;font-size:12px;padding:4px 6px;
                    border:1px solid #cbd5e1;border-radius:6px">
@@ -17288,7 +17323,7 @@ function mbCfgSet(path, cache, key, val, okMsg){
 }
 
 /* 주소(또는 도메인)를 자문사에 잇는다. 담당자는 그 회사에서 따라온다. */
-function mbCoSet(email, coName, byDomain){
+function mbCoSet(email, coName, byDomain, fromName){
   const em = String(email||'').trim().toLowerCase();
   const d  = mbDomOf(em);
   /* ⚠ 무료 메일은 «도메인으로» 못 잇는다 — 네이버 하나를 이으면 온 세상이 한 회사가 된다 */
@@ -17308,11 +17343,56 @@ function mbCoSet(email, coName, byDomain){
     + '이름 한두 글자를 치면 목록이 좁혀집니다', 8000);
   const who = rec && rec.main ? rec.main : '';
   const what = byDomain ? ('🏢 ' + d + ' 전체') : em;
-  /* ⚠ 담당자가 «없는» 자문사에 이어도 막지 않는다 — 이어 두면 담당자를 나중에 적는
-       순간 저절로 간다. 다만 지금은 안 간다는 것을 말해 준다. */
-  mbCfgSet('mailCo', _mbCo, key, nm,
+  /* ⚠ 업체 «열쇠»를 함께 담는다 (대표 지시 2026-09-03) — 이름만 담으면 온톨로지 규칙
+       「업체명을 관계 열쇠로 쓰지 않는다」를 어기고, 이름이 바뀌면 이은 것이 끊긴다.
+       읽는 쪽은 mbCoNameOf 를 지나므로 옛 칸(이름 글자)도 그대로 산다. */
+  const val = { n: nm, id: String((rec && rec.id) || ''), at: Date.now() };
+  mbCfgSet('mailCo', _mbCo, key, val,
     who ? `${what} → 「${nm}」(담당 ${who}) 으로 이었습니다 — 담당이 바뀌면 메일도 따라갑니다`
         : `${what} → 「${nm}」 으로 이었습니다 ⚠ 이 회사에 담당자가 아직 없어 「담당 모름」에 그대로 있습니다`);
+  /* ── 푸른이알피 담당자 칸에도 적는다 (대표 승인 목업 ㉮, 2026-09-03) ──
+     ⚠ 도메인으로 이은 것은 «안 적는다» — 「@회사.kr 전체」는 사람 한 명이 아니다.
+       담당자 칸에 도메인을 적을 수는 없다. 주소 하나를 이었을 때만 적는다. */
+  if(!byDomain && mbErpFillOn()) mbErpFillFrom(em, nm, rec, fromName);
+}
+
+/* ── 「푸른이알피에도 적기」 켜고 끄기 ──
+   ⚠ 기본이 «켜짐»이다 — 끄는 것이 예외여야 실제로 채워진다. 꺼 두면 지금까지처럼
+     기업정보함 안에만 남고, 푸른이알피는 영영 비어 있다(그것이 이 일의 까닭이었다).
+   ⚠ 이 기계에만 담는다 — 사람마다 하는 일이 다르고, 서버에 두면 남의 취향이 넘어온다. */
+const MB_ERPFILL_LS = 'pucards_mb_erpfill';
+function mbErpFillOn(){
+  try{ return localStorage.getItem(MB_ERPFILL_LS) !== '0'; }catch(_){ return true; }
+}
+function mbErpFillSet(on){
+  try{ localStorage.setItem(MB_ERPFILL_LS, on ? '1' : '0'); }catch(_){ }
+  renderMailPage();
+  toast(on ? '✅ 이제 이을 때 푸른이알피 담당자 칸에도 함께 적습니다'
+           : '이을 때 푸른이알피에는 안 적습니다 — 기업정보함 안에만 남습니다', 7000);
+}
+
+/* 이은 주소를 푸른이알피 업체의 담당자로 적는다.
+   ⚠ 이름이 «겹치는» 업체가 있으면 안 적는다 — ErpMatch.byName 은 같은 이름에서 먼저
+     만난 하나만 들고 있어, 그대로 적으면 «엉뚱한 회사»에 붙을 수 있다. 그렇게 붙으면
+     그 회사 메일이 통째로 다른 담당자에게 간다. 사람이 고르게 두는 것이 맞다. */
+function mbErpFillFrom(em, nm, rec, fromName){
+  if(!rec || !rec.id) return;
+  const n = (typeof ErpMatch!=='undefined' && ErpMatch._norm) ? ErpMatch._norm(nm) : '';
+  const same = ((typeof ErpMatch!=='undefined' && ErpMatch.companies) || [])
+    .filter(c => c && ErpMatch._norm(c.name) === n).length;
+  if(same > 1) return toast('「' + nm + '」 이름의 업체가 ' + same + '곳이라 푸른이알피에는 안 적었습니다 — '
+    + '메일을 열어 「🏢 새 담당자 등록」에서 어느 곳인지 골라 주세요', 11000);
+  /* ⚠ 보낸이 이름은 «줄에서 넘겨받는다». 여기서 표를 뒤져 찾으려 했다가 그런 표가
+       없다는 것을 알았다 — 있는 줄 알고 쓰면 이름이 늘 빈 채로 들어가면서 주석만
+       「메일에서 가져온다」고 거짓말을 한다. 없으면 빈 채로 둔다(지어내지 않는다). */
+  erpFillContact({ coId: rec.id, email: em, name: String(fromName||'').trim(), from:'mail-link' })
+    .then(r=>{
+      if(!r.ok) return toast('푸른이알피에는 못 적었습니다 — ' + r.why, 9000);
+      if(!r.added) return;      /* 이미 있었다 — 조용히 지난다 */
+      renderPCSide(); renderMailPage();
+      toast('🏢 푸른이알피 「' + nm + '」 담당자 칸에도 적었습니다', 7000);
+    })
+    .catch(e=>toast('푸른이알피에는 못 적었습니다 — ' + ((e&&e.message)||e), 9000));
 }
 
 /* 「자문사 아님」 — 잇기 목록에서만 치운다. 메일은 그대로 있다. */
@@ -18621,60 +18701,89 @@ function mbNewHtml(){
 /* 푸른이알피 업체 기록에 적는다 — 세무사무실 저장(taxSaveDo)과 «같은 길»이다.
    ⚠ 빈 칸만 채운다. 사람이 업체관리에서 고쳐 둔 것을 메일 한 통이 조용히 지우면 안 된다.
    ⚠ 전임자를 «지우지 않는다» — left 표만 붙인다. 지우면 지난 메일이 담당 모름으로 쏟아진다. */
+/* ══════════════════════════════════════════════════════════════════════════
+   푸른이알피 업체에 «담당자 메일»을 적는다 — 쓰는 자리는 여기 «하나»다
+   ══════════════════════════════════════════════════════════════════════════
+   대표 물음 2026-09-03 「메일함에서 찾아서 푸른이알피의 담당자 메일을 입력할 수
+   있을까. 메일 주고받는 것은 많은데 제대로 정리가 안 되어 있다」
+
+   ★ 왜 떼어냈나 — 이 쓰기는 «읽는 화면의 새 담당자 등록»에만 있었다. 그런데 할 일이
+     어디 있는지 보여 주는 화면은 「자문사 이메일 잇기」다(담당 모름 1,582곳이 통수 순).
+     그 화면에서는 기업정보함 안(config/mailCo)에만 적히고 푸른이알피에는 한 글자도 안 갔다.
+     그래서 「자문사로 이은 주소 0개」였다 — 할 일 목록과 쓰는 기능이 딴 데 있었다.
+     이제 두 화면이 «같은 한 자리»를 쓴다. 두 벌이면 한쪽만 고쳐진다.
+
+   돌려주는 것: { ok:true, added:true|false, why:'...' } 또는 { ok:false, why:'...' }
+   ⚠ 말(toast)은 «부르는 쪽»이 한다 — 이 함수는 한 일만 돌려준다. 안 그러면
+     한꺼번에 여러 곳을 적을 때 알림이 스무 개 뜬다. */
+async function erpFillContact(o){
+  const t = o || {};
+  const em = String(t.email||'').trim().toLowerCase();
+  if(em.indexOf('@') < 1) return { ok:false, why:'이메일이 이상합니다' };
+  if(!String(t.coId||'').trim()) return { ok:false, why:'업체 열쇠가 없습니다' };
+  const u = firebase.auth().currentUser;
+  if(!u) return { ok:false, why:'로그인이 필요합니다' };
+  const db = firebase.database();
+  const snap = await db.ref('data/companies').once('value');
+  const wrap = snap.val();
+  const rawv = (wrap && wrap.v !== undefined) ? wrap.v : wrap;
+  const isObj = rawv && !Array.isArray(rawv) && typeof rawv === 'object';
+  const list = Array.isArray(rawv) ? rawv.filter(Boolean)
+             : (isObj ? Object.keys(rawv).map(k=>rawv[k]).filter(Boolean) : []);
+  const cur = list.filter(c=>c && String(c.id)===String(t.coId))[0];
+  if(!cur) return { ok:false, why:'그 업체를 찾지 못했습니다 — 새로고침 후 다시' };
+
+  const arr = (cur.contacts||[]).map(c=>Object.assign({}, c));
+  const has = arr.filter(c=>String(c.email||'').trim().toLowerCase()===em)[0];
+  /* ⚠ 이미 적혀 있으면 «아무것도 안 한다» — 덮으면 남이 고쳐 둔 것이 조용히 사라진다.
+       그런데 «실패»는 아니다. 한꺼번에 적을 때 이것을 실패로 세면 다 틀린 것처럼 보인다. */
+  if(has) return { ok:true, added:false, why:'이미 그 업체 담당자로 적혀 있습니다' };
+  /* 바뀐 것이면 전임자에게 «떠났다» 표를 붙인다 */
+  let leftN = 0;
+  if(t.mode === 'replace'){
+    arr.forEach(c=>{ if(String(c.email||'').trim() && !c.left){ c.left = true;
+      c.leftAt = Date.now(); leftN++; } });
+  }
+  /* ⚠ 「누가·언제」를 남긴다 (대표 지시 2026-09-03 「되돌릴 수 있어야 한다」) —
+       메일함에서 적은 것을 나중에 가려내려면 이 표가 있어야 한다. */
+  arr.push({ id:'mc-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+    name:String(t.name||'').trim(), role:String(t.role||'').trim(),
+    phone:String(t.phone||'').trim(), bizPhone:'', fax:'', email:em,
+    addedFrom: String(t.from||'mail'), addedBy: String(u.email||''), addedAt: Date.now(),
+    isPrimary: (t.mode === 'replace' || !arr.filter(c=>c.isPrimary && !c.left).length) });
+  /* 대표 담당자 거울 칸 — «빈 칸만» 채운다 */
+  const blank = x => x===undefined || x===null || String(x).trim()==='';
+  const patch = { contacts:arr, updatedAt:Date.now() };
+  if(t.mode === 'replace' || blank(cur.primaryContactEmail)){
+    patch.primaryContactEmail = em;
+    if(String(t.name||'').trim() && blank(cur.primaryContactName))
+      patch.primaryContactName = String(t.name).trim();
+    if(String(t.phone||'').trim() && blank(cur.primaryContactPhone))
+      patch.primaryContactPhone = String(t.phone).trim();
+  }
+  const merged = Object.assign({}, cur, patch);
+  const up = {};
+  if(isObj) up['data/companies/v/' + cur.id] = merged;
+  else up['data/companies/v/' + list.indexOf(cur)] = merged;
+  await db.ref().update(up);
+  /* 표를 다시 만들게 한다 — 안 그러면 방금 적은 담당자가 화면에 안 잡힌다 */
+  mbWhoBust(); mbCardsRevBump();
+  if(typeof ErpMatch!=='undefined' && ErpMatch.load) ErpMatch.load();
+  return { ok:true, added:true, leftN:leftN, coName:String(cur.name||'') };
+}
+
 async function mbNewSave(){
   const t = state.mbNew; if(!t) return;
-  const u = firebase.auth().currentUser;
-  if(!u) return toast('로그인이 필요합니다');
   const em = String(t.email||'').toLowerCase();
-  if(em.indexOf('@') < 1) return toast('이메일이 이상합니다');
   try{
-    const db = firebase.database();
-    const snap = await db.ref('data/companies').once('value');
-    const wrap = snap.val();
-    const rawv = (wrap && wrap.v !== undefined) ? wrap.v : wrap;
-    const isObj = rawv && !Array.isArray(rawv) && typeof rawv === 'object';
-    const list = Array.isArray(rawv) ? rawv.filter(Boolean)
-               : (isObj ? Object.keys(rawv).map(k=>rawv[k]).filter(Boolean) : []);
-    const cur = list.filter(c=>c && String(c.id)===String(t.coId))[0];
-    if(!cur) return toast('그 업체를 찾지 못했습니다 — 새로고침 후 다시');
-
-    const arr = (cur.contacts||[]).map(c=>Object.assign({}, c));
-    const has = arr.filter(c=>String(c.email||'').trim().toLowerCase()===em)[0];
-    if(has) return toast('이미 그 업체 담당자로 적혀 있습니다', 7000);
-    /* 바뀐 것이면 전임자에게 «떠났다» 표를 붙인다 */
-    let leftN = 0;
-    if(t.mode === 'replace'){
-      arr.forEach(c=>{ if(String(c.email||'').trim() && !c.left){ c.left = true;
-        c.leftAt = Date.now(); leftN++; } });
-    }
-    arr.push({ id:'mc-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
-      name:String(t.name||'').trim(), role:String(t.role||'').trim(),
-      phone:String(t.phone||'').trim(), bizPhone:'', fax:'', email:em,
-      isPrimary: (t.mode === 'replace' || !arr.filter(c=>c.isPrimary && !c.left).length) });
-    /* 대표 담당자 거울 칸 — «빈 칸만» 채운다 */
-    const blank = x => x===undefined || x===null || String(x).trim()==='';
-    const patch = { contacts:arr, updatedAt:Date.now() };
-    if(t.mode === 'replace' || blank(cur.primaryContactEmail)){
-      patch.primaryContactEmail = em;
-      if(String(t.name||'').trim()) patch.primaryContactName = String(t.name).trim();
-      if(String(t.phone||'').trim() && blank(cur.primaryContactPhone))
-        patch.primaryContactPhone = String(t.phone).trim();
-    }
-    const merged = Object.assign({}, cur, patch);
-    const up = {};
-    if(isObj) up['data/companies/v/' + cur.id] = merged;
-    else {
-      const i = list.indexOf(cur);
-      up['data/companies/v/' + i] = merged;
-    }
-    await db.ref().update(up);
+    const r = await erpFillContact({ coId:t.coId, email:em, name:t.name, role:t.role,
+      phone:t.phone, mode:t.mode, from:'mail-read' });
+    if(!r.ok) return toast(r.why, 9000);
+    if(!r.added) return toast(r.why, 7000);
     state.mbNew = null;
-    /* 표를 다시 만들게 한다 — 안 그러면 방금 등록한 담당자가 화면에 안 잡힌다 */
-    mbWhoBust(); mbCardsRevBump();
-    if(typeof ErpMatch!=='undefined' && ErpMatch.load) ErpMatch.load();
     renderPCSide(); renderMailPage();
     toast('🏢 「' + t.coName + '」 담당자로 등록했습니다'
-      + (leftN ? ' · 전임 ' + leftN + '분은 「자리를 떠남」으로 표시' : '')
+      + (r.leftN ? ' · 전임 ' + r.leftN + '분은 「자리를 떠남」으로 표시' : '')
       + ' — 이 주소 메일이 이제 그 업체 담당자에게 갑니다', 10000);
   }catch(e){
     toast('등록하지 못했습니다 — ' + ((e&&e.message)||e), 9000);
