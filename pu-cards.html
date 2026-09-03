@@ -2626,6 +2626,11 @@ body.pc #pcDetail{display:flex}
 .pdbody .wkhd{font-size:12px;font-weight:700;color:#1e293b;margin:16px 0 6px;
   border-top:1px solid #e2e8f0;padding-top:10px}
 .pdbody .wkhd i{font-style:normal;font-weight:400;color:#94a3b8;margin-left:6px}
+/* 📄 겹칠 수 있는 서류 — 알리는 줄이지 «고치라는 꾸짖음»이 아니다.
+   재발급본일 수도 있어 빨강이 아니라 노랑으로 둔다. */
+.pdbody .wkdupe{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;
+  padding:8px 10px;font-size:12px;color:#854d0e;line-height:1.6;margin-bottom:6px}
+.pdbody .wkdupe .dim{display:block;color:#854d0e;font-size:11px;margin-top:3px}
 .pdbody .wkrow{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;
   font-size:13px;padding:5px 0;line-height:1.6}
 .pdbody .wkrow>div:first-child{min-width:0}
@@ -25578,14 +25583,42 @@ function wkSiteOf(p){
   return co;
 }
 
-/* 「가진 것」 — 근로자 서류를 갈래별로. ⚠ 0 은 안 그린다 */
+/* 「가진 것」 — 근로자 서류를 갈래별로. ⚠ 0 은 안 그린다
+   ── 「장」과 「건」을 가른다 (대표 결정 2026-09-03) ──
+   종전에는 「🪪 신분증 2」였다. 그 「2」가 «두 장 있다»인지 «두 건»인지 알 수가 없었다.
+   ⚠ 청구는 **갈래당 한 건**이다(업체 × 근로자 × 서류종류 = 1건). 같은 신분증을
+     두 번 찍었다고 두 건이 되면, 청구 근거가 「종이를 몇 장 찍었나」가 된다.
+   ⚠ 그래서 숫자 뒤에 «장»을 붙인다 — 한 글자가 두 뜻을 가르는 자리다. */
 function wkDocsSummary(p){
   const n = {};
   (p.docs||[]).forEach(d => { n[d.kind] = (n[d.kind]||0) + 1; });
   const parts = Object.keys(WK_DOC_LABEL).filter(k=>n[k])
-    .map(k => (WK_DOC_ICON[k]||'') + (n[k] > 1 ? ' ' + WK_DOC_LABEL[k] + ' ' + n[k]
+    .map(k => (WK_DOC_ICON[k]||'') + (n[k] > 1 ? ' ' + WK_DOC_LABEL[k] + ' ' + n[k] + '장'
                                                : ' ' + WK_DOC_LABEL[k]));
   return parts.length ? parts.join(' · ') : '';
+}
+
+/* 겹치는 서류가 있는 사람 — 갈래마다 두 장 이상인 것.
+   ⚠ 이미 쌓인 것은 «붙일 때 물어보는» 화면으로는 못 걷는다 — 그 화면은 앞으로
+     들어올 것만 막는다. 쌓인 것은 한자리에 모여야 한 번에 정리할 수 있다. */
+function wkDupeKinds(p){
+  const n = {};
+  (p.docs||[]).forEach(d => { n[d.kind] = (n[d.kind]||0) + 1; });
+  return Object.keys(WK_DOC_LABEL).filter(k => n[k] > 1)
+    .map(k => ({ kind: k, n: n[k], label: WK_DOC_LABEL[k] }));
+}
+
+/* 겹치는 것이 있으면 서류 목록 «맨 위»에 한 줄. ⚠ 없으면 아예 안 그린다.
+   ⚠ 여기서 지우지는 않는다 — 어느 것이 맞는 것인지는 원본을 봐야 알고,
+     그 판단은 사진첩에서 한다. 여기는 «있다»고 알려 주는 자리다.
+   ⚠ 재발급본일 수도 있으므로 「잘못됐다」고 하지 않는다 — 확인하시라고만 한다. */
+function wkDupeNote(p){
+  const d = wkDupeKinds(p);
+  if(!d.length) return '';
+  return `<div class="wkdupe">📄 겹칠 수 있는 서류 —
+    ${d.map(x=>`<b>${esc(x.label)} ${x.n}장</b>`).join(' · ')}
+    <span class="dim">재발급본이면 그대로 두시고, 같은 것을 두 번 찍은 것이면
+    사진첩에서 한 장만 남겨 주세요. 청구는 갈래당 <b>한 건</b>입니다.</span></div>`;
 }
 /* 「걸린 사건」 — 첫 사건 이름 + 나머지 개수. 숫자와 이름을 갈라 적는다 */
 function wkCasesSummary(p){
@@ -25699,7 +25732,7 @@ function wkDetailHtml(p){
   return `
     <div class="wksec">${esc(wkSiteOf(p)) || '사업장 미상'}${p.bizno?' · '+esc(fmtBizno(p.bizno)):''}</div>
     <div class="wkhd">걸린 사건 <i>${(p.cases||[]).length}건</i></div>${cases}
-    <div class="wkhd">사진첩에서 온 근로자 서류 <i>${(p.docs||[]).length}건</i></div>${docs}
+    <div class="wkhd">사진첩에서 온 근로자 서류 <i>${(p.docs||[]).length}장</i></div>${wkDupeNote(p)}${docs}
     <div class="wkhd">사람 정보 <i>이알피 사건에서 옴</i></div>
     ${info.map(x=>`<div class="wkrow"><div class="dim">${esc(x[0])}</div><div>${esc(x[1])}</div></div>`).join('')}
     <div class="wkrow"><div class="dim">주민번호</div><div id="wkRrn">${wkRrnCellHtml(p)}</div></div>

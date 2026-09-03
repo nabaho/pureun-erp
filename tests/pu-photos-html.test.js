@@ -1318,9 +1318,14 @@ test('지운 기록을 보여 준다 — 완전히 지운 뒤에도', () => {
    스스로 지우는 기능은 잘못 만들면 사람 자료를 없앤다. 세 가지를 못 박는다. */
 
 test('더한 것이 없을 때만 치운다 — 빈 칸을 채웠으면 두어야 한다', () => {
-  const fn = app.match(/\.then\(function \(res\) \{[\s\S]*?dropRedundant[\s\S]*?\n  \}\)/);
-  assert.ok(fn, '중복 치우기를 부르는 곳을 찾을 수 없습니다');
-  assert.match(fn[0], /res\.redundant/, 'redundant 아닌 것도 치울 수 있습니다');
+  /* ⚠ 2026-09-03 — 종전에는 «파일에서 첫 .then(function (res)» 부터 훑었다.
+     그 앞에 다른 .then(function (res) 가 하나 생기자(겹치는 서류 보내기) 그쪽을
+     잡아 헛짚었다 — 기능은 멀쩡한데 검사만 울었다.
+     **부르는 자리에서 거꾸로 짚는다** — 그 줄이 곧 이 규칙이 사는 곳이다. */
+  const j = app.indexOf('dropRedundant(id, year, res)');
+  assert.ok(j > 0, '중복 치우기를 부르는 곳을 찾을 수 없습니다');
+  const near = app.slice(Math.max(0, j - 600), j);
+  assert.match(near, /res\.redundant/, 'redundant 아닌 것도 치울 수 있습니다');
 });
 
 test('치우기 전에 판독 결과를 먼저 남긴다 — 순서가 바뀌면 고리가 끊긴다', () => {

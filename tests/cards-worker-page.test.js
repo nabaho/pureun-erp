@@ -70,6 +70,9 @@ function load(over) {
     cut('wkFolderPick'), cut('wkCount'), cut('wkMatch'), cut('wkVisible'),
     cut('wkMaskRrn'), cut('wkRrnShown'), cut('wkRrnCellHtml'),
     cut('wkDocsSummary'), cut('wkCasesSummary'), cut('wkStatChip'),
+    /* 2026-09-03: 겹치는 서류를 서류 목록 «맨 위»에 한 줄로 알린다 — 안 실으면
+       wkDetailHtml 이 그 자리에서 멎어 이 검사가 통째로 운다 */
+    cut('wkDupeKinds'), cut('wkDupeNote'),
     cut('wkRowHtml'), cut('wkListHtml'), cut('wkDetailHtml')
   ].join('\n'), ctx);
   return ctx;
