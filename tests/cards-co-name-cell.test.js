@@ -43,6 +43,13 @@ function tagHtml(tags){
     esc: s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') };
   vm.createContext(ctx);
+  /* 2026-09-03: 딱지가 «짧은 이름»으로 그려진다(대표 화면 「열정리좀 해라」).
+     ⚠ 대역을 넣으면 짧게 만드는 자리가 통째로 죽어도 이 검사가 모른다 — «진짜»를 싣는다.
+     ⚠ 최상위 const 는 컨텍스트 값이 되지 않는다 — var 로 바꿔야 함수가 찾는다. */
+  const sh = SRC.indexOf('const CO_TAG_SHORT = [');
+  assert.ok(sh > 0, 'CO_TAG_SHORT 를 찾지 못했다');
+  const shEnd = SRC.indexOf('\n}', SRC.indexOf('function coTagShort(t){', sh)) + 2;
+  vm.runInContext(SRC.slice(sh, shEnd).replace(/^const /, 'var '), ctx);
   vm.runInContext('function draw(o){ ' + SRC.slice(at, end) + ' }', ctx);
   return vm.runInContext('draw({})', ctx);
 }
@@ -117,6 +124,13 @@ test('★ 딱지가 여럿이면 «하나만» 보이고 나머지는 수로 접
   assert.ok(h.indexOf('+2') > 0, '★ 나머지를 「+2」로 접지 않았다 — 칸이 다시 접힌다');
   assert.ok(h.indexOf('컨설턴트') > h.indexOf('title='),
     '★ 나머지 이름이 딱지로 그대로 나왔다 — 말풍선에만 있어야 한다');
+});
+
+test('★ 보이는 딱지는 «짧은 이름»이다 — 긴 서식 이름이 상호를 밀어냈다 (2026-09-03)', () => {
+  const h = tagHtml(['사업자등록증']);
+  const 보이는것 = h.replace(/<[^>]*>/g, '');
+  assert.equal(보이는것, '등록증', '화면에 나가는 글자: ' + 보이는것);
+  assert.ok(h.indexOf('title="사업자등록증"') > 0, '온전한 이름은 말풍선에 남아야 한다');
 });
 
 test('★ 접은 것이 말풍선에 «온전히» 남는다 — 자른 채 아무 말이 없으면 알 길이 없다', () => {
