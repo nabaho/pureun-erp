@@ -443,3 +443,48 @@ test('★ 화면이 «이 회차에 드는» 건수를 말한다 — 전체 건�
   assert.ok(!/지금 모아 둔 기사 <b>\$\{Object\.keys\(App\.브리핑\)\.length\}건<\/b>/.test(news),
     '오해를 부르던 옛 문구가 남아 있습니다');
 });
+
+test('★ 꼭지 제목을 «자르지 않는다» — 읽어야 빼고 말고를 정한다', () => {
+  /* 대표 지시 2026-09-03: 「화면 잘린다 이부분 어떻게 해야하나」
+
+     ⚠ 까닭 — .item .t 에 white-space:nowrap 이 걸려 제목을 한 줄로 강제하고 잘랐다.
+       거기에 꼭지를 2×2 로 놓아 칸이 또 반이 되었다. 실제로 재 보면 1400px 창에서
+       제목에 남는 폭이 165px — 한글 열 자쯤이다.
+     ★ 제목은 «빼고 말고를 정하려고» 읽는 것이다. 자르면 그 일을 못 한다.
+       줄을 넘겨야 한다. 줄이 늘어 길어지는 것은 왼쪽 칸이 구르니 괜찮다. */
+  const i = news.indexOf('.item .t{');
+  assert.ok(i >= 0, '.item .t 규칙을 찾을 수 없습니다');
+  const 규칙 = news.slice(i, news.indexOf('}', i));
+  assert.ok(!/white-space:\s*nowrap/.test(규칙),
+    '제목이 아직 한 줄로 강제됩니다 — 긴 제목이 잘립니다');
+  assert.ok(!/text-overflow:\s*ellipsis/.test(규칙),
+    '제목을 아직 …으로 자릅니다');
+  assert.match(규칙, /word-break:\s*keep-all/,
+    '한글은 낱말째로 줄을 넘겨야 합니다 — 글자 가운데서 끊기면 읽기 어렵습니다');
+});
+
+test('★ 제목이 두 줄이 되어도 단추가 위에 붙어 있다', () => {
+  /* 가운데 정렬이면 두 줄짜리 제목 옆에서 ▲▼✕ 가 가운데로 내려가 줄이 안 맞는다. */
+  const i = news.indexOf('.item{');
+  assert.ok(i >= 0, '.item 규칙을 찾을 수 없습니다');
+  const 규칙 = news.slice(i, news.indexOf('}', i));
+  assert.match(규칙, /align-items:\s*flex-start/,
+    '단추가 가운데에 붙어 두 줄 제목과 줄이 안 맞습니다');
+});
+
+test('★ 받는 명단도 위를 얼린다 — 아래에 «구르는 칸»이 함께 있어야 한다', () => {
+  /* 대표 지시 2026-09-03 「캡쳐1 틀고정」 — 110줄을 훑을 때 위가 사라지면
+     지금 무슨 유형을 보고 있는지 · 몇 곳인지를 잃는다.
+     ⚠ 얼리기만 걸고 «구르는 칸»을 안 두면 표가 통째로 잘린다. 둘은 짝이다. */
+  const 껍 = 껍데기CSS();
+  assert.match(껍, /\.wrap\.who/, '받는 명단 얼리기 규칙이 없습니다');
+  assert.match(껍, /\.wrap\.who>\.whorest\{[^}]*overflow-y:auto/,
+    '얼렸는데 구르는 칸이 없습니다 — 표가 잘립니다');
+  assert.match(news, /class="whorest"/, '화면에 구르는 칸이 없습니다');
+  assert.match(news, /classList\.toggle\('who'/, "render 가 who 표를 안 붙입니다");
+});
+
+test('★ 「이 명단은 지금 기업정보함을…」 안내를 지웠다 (대표 지시 「2 삭제」)', () => {
+  assert.ok(!/이 명단은 «지금» 기업정보함을 읽은 것입니다/.test(news),
+    '지우라고 하신 안내가 남아 있습니다');
+});
