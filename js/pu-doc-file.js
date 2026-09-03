@@ -1160,6 +1160,67 @@
     return out;
   }
 
+  /* ══════ 겹치는 근로자 서류 (대표 결정 2026-09-03, 안 ㉯ 「붙일 때 물어본다」) ══════
+
+     ■ 무엇이 잘못돼 있었나
+     서류를 가리는 열쇠가 «서류»가 아니라 **사진 한 장**(wkDocKey = 해_사진번호)이다.
+     그래서 아래 「이미 붙어 있으면 다시 안 쓴다」는 막이가 **같은 사진을 두 번 보낼
+     때만** 걸리고, **같은 신분증을 다시 찍은 것은 그냥 지나가** 「신분증 2」로 쌓였다.
+
+     ■ 왜 자동으로 안 지우나 (㉰를 안 고른 까닭)
+     사람을 가리는 열쇠가 「이름 + 회사」다. 판독이 이름을 한 글자 잘못 읽거나
+     동명이인이면 **남의 신분증을 덮어쓴다.** 명함은 다시 찍으면 그만이지만
+     신분증은 근로자에게 다시 달라고 해야 한다 — 되돌리는 값이 전혀 다르다.
+
+     ⚠ 이 함수는 «찾기만» 한다. 무엇을 할지는 사람이 정한다. */
+  function wkSameKind(cur, kind, dk) {
+    var had = (cur && cur.docs) || {};
+    return Object.keys(had).filter(function (k) {
+      return k !== dk && had[k] && String(had[k].kind || '') === String(kind || '');
+    }).map(function (k) {
+      return { dk: k, kind: had[k].kind, docName: had[k].docName || '',
+               at: Number(had[k].at || 0) || 0, photo: had[k].photo || {} };
+    }).sort(function (a, b) { return b.at - a.at; });     // 가장 최근 것이 앞
+  }
+
+  /* 이 서류가 그 사람에게 «이미 같은 갈래로» 있는가 — 보내기 «전»에 묻는다.
+     돌려주는 것: [{ key, name, company, dk, kind, older:[{dk,at,docName,photo}] }]
+     ⚠ 겹치는 것이 없는 항목은 아예 안 담는다 — 부르는 쪽이 length 만 보면 되게. */
+  function findWorkerDupes(list) {
+    var items = Array.isArray(list) ? list : [];
+    var want = [];
+    items.forEach(function (it) {
+      workerDocTargets(it).targets.forEach(function (g) {
+        want.push({ key: g.key, name: g.name, company: g.company, dk: g.dk, kind: g.doc.kind });
+      });
+    });
+    if (!want.length) return Promise.resolve([]);
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var keys = want.map(function (w) { return w.key; })
+      .filter(function (k, i, a) { return a.indexOf(k) === i; });
+    return Promise.all(keys.map(function (k) {
+      return deps.db.ref(WORKER_ROOT + '/' + k).once('value');
+    })).then(function (snaps) {
+      var cur = {};
+      snaps.forEach(function (s2, i) { cur[keys[i]] = s2.val() || {}; });
+      return want.map(function (w) {
+        return Object.assign({}, w, { older: wkSameKind(cur[w.key], w.kind, w.dk) });
+      }).filter(function (w) { return w.older.length; });
+    });
+  }
+
+  /* 옛 서류를 «치우고» 새것을 넣는다 — 사람이 「새것으로 바꾸기」를 골랐을 때만.
+     ⚠ 사진은 여기서 안 지운다. 화면 쪽이 휴지통으로 보낸다(30일 안에 되살린다) —
+       저장 층이 남의 사진첩에 손대기 시작하면 어디서 지워졌는지 아무도 못 짚는다. */
+  function dropWorkerDocs(key, dks) {
+    var list = (dks || []).filter(Boolean);
+    if (!key || !list.length) return Promise.resolve(0);
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    list.forEach(function (dk) { u[WORKER_ROOT + '/' + key + '/docs/' + dk] = null; });
+    return deps.db.ref().update(u).then(function () { return list.length; });
+  }
+
   /* ── 여러 장을 한 번에 보낸다 ──
      list: [{ kind, fields, photo, at }]
      ⚠ 사람마다 «한 번» 읽고, 전체를 «한 번» 쓴다. 서류 한 장마다 오가면
@@ -1228,6 +1289,9 @@
     WORKER_DOC_KINDS: WORKER_DOC_KINDS,
     workerKey: workerKey,
     workerDocTargets: workerDocTargets,
+    wkSameKind: wkSameKind,
+    findWorkerDupes: findWorkerDupes,
+    dropWorkerDocs: dropWorkerDocs,
     sendToWorkerMany: sendToWorkerMany
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -37,7 +37,7 @@
 <script src="js/pu-doc-read.js?v=31"></script>
 <script src="js/pu-lockkey.js?v=2"></script>
 <!-- ?v= 는 등록 층을 고칠 때 올린다 — 캐시에 묵으면 고친 안내가 안 보인다. -->
-<script src="js/pu-doc-file.js?v=22"></script>
+<script src="js/pu-doc-file.js?v=23"></script>
 <script src="js/pu-drag.js?v=2"></script>
 <script src="js/pu-billing.js?v=7"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -1509,6 +1509,22 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
 #readPanel .wagebox input{flex:1;min-width:120px}
 #readPanel .wagebox .ok{background:#16a34a;border:1px solid #16a34a;color:#fff;border-radius:7px;
   padding:6px 12px;font-size:12.5px;font-weight:700}
+/* 📄 겹치는 서류 물음 — 임금·이름 칸과 같은 옷. 고를 것이 셋이라 단추 줄만 넓다. */
+#readPanel .dupbox{margin:10px 0 0;background:#fffbeb;border:1.5px solid #fbbf24;border-radius:10px;padding:11px 12px}
+#readPanel .dupbox .t{font-size:13px;font-weight:800;color:#854d0e;margin-bottom:4px}
+#readPanel .dupbox .d{font-size:11.5px;color:#854d0e;line-height:1.6;margin-bottom:8px}
+#readPanel .dupbox .cmp{display:flex;gap:7px;margin-bottom:9px}
+#readPanel .dupbox .dcard{flex:1;min-width:0;border:1px solid #e2e8f0;border-radius:8px;
+  background:#fff;padding:8px 9px}
+#readPanel .dupbox .dcard.hi{border-color:#d97706}
+#readPanel .dupbox .dcard .l{font-size:10.5px;font-weight:700;color:#94a3b8;margin-bottom:3px}
+#readPanel .dupbox .dcard.hi .l{color:#d97706}
+#readPanel .dupbox .dcard .v{font-size:12.5px;font-weight:700;color:#1e293b;line-height:1.35}
+#readPanel .dupbox .dcard .v small{display:block;font-weight:500;color:#64748b;font-size:11px;margin-top:2px}
+#readPanel .dupbox .row{display:flex;gap:5px;flex-wrap:wrap}
+#readPanel .dupbox .dupgo{flex:1;min-width:88px;background:#fff;border:1px solid #cbd5e1;
+  color:#475569;border-radius:7px;padding:7px 6px;font-size:12px;font-weight:700}
+#readPanel .dupbox .dupgo.p{background:#d97706;border-color:#d97706;color:#fff}
 /* ✏ 이름·회사 채우기 — 임금 칸과 같은 옷을 입힌다(같은 자리·같은 일이라
    다르게 생기면 「이건 또 뭐지」가 된다). 다 갖춰지면 초록으로 가라앉는다. */
 #readPanel .fixbox{margin:10px 0 0;background:#fffbeb;border:1.5px solid #fbbf24;border-radius:10px;padding:11px 12px}
@@ -6698,7 +6714,9 @@ function startRead(job) {
     }).then(function () {
       /* 근로자 서류 넷은 근로자 정보함으로 스스로 간다 — 이름·회사가 다 읽혔을 때만.
          ⚠ 여러 쪽이어도 대표 쪽 하나만 (같은 사람에게 쪽수만큼 붙지 않게). */
-      if (canSendWorker(read)) return sendWorker(sibs[0].id, year, sibs[0]);
+      /* ⚠ auto:true — 겹치면 «묻지 않고» 표시만 남긴다. 뒤에서 도는 판독이
+         창을 띄우면 스물여덟 장이 스물여덟 번 묻고, 아무도 못 본다. */
+      if (canSendWorker(read)) return sendWorker(sibs[0].id, year, sibs[0], { auto: true });
     });
   }).catch(function (e) {
     console.warn('[판독]', e);
@@ -6789,11 +6807,52 @@ function workerWhyNot(read) {
   return '';
 }
 
-function sendWorker(id, year, job) {
+/* ══════ 겹치는 서류 — «물어보고» 보낸다 (대표 결정 2026-09-03, 안 ㉯) ══════
+
+   ■ 왜 자동으로 안 지우나
+   사람을 가리는 열쇠가 「이름 + 회사」다. 판독이 이름을 한 글자 잘못 읽거나
+   동명이인이면 **남의 신분증을 덮어쓴다.** 명함은 다시 찍으면 그만이지만
+   신분증은 근로자에게 다시 달라고 해야 한다 — 되돌리는 값이 전혀 다르다.
+
+   ■ 왜 «자동 보내기»에서는 안 묻나
+   판독은 사람이 화면 앞에 없을 때도 뒤에서 돈다(올리자마자 스스로 읽는다).
+   그때 창을 띄우면 스물여덟 장이 스물여덟 번 묻는다 — 그리고 아무도 못 본다.
+   그래서 **자동일 때는 안 보내고 표시만 남긴다.** 사람이 그 사진을 열면 그때 묻는다.
+   ⚠ 표시를 안 남기면 「분명 보냈는데 근로자 정보함에 없다」가 된다 — 조용한 실패다.
+   ⚠ 재발급받은 새 등본과 같은 것을 두 번 찍은 것은 **사람만 가른다.** 그래서 셋을 준다:
+     새것으로 바꾸기 · 둘 다 두기 · 보내지 않기. 「둘 다」를 빼면 안 된다 —
+     주소가 바뀐 등본은 옛것도 근거가 되는 일이 있다. */
+function sendWorker(id, year, job, opt) {
   const it = gridItems.find(function (x) { return x.id === id; });
   const read = (it && it.meta && it.meta.read) || (job && job._read);
   if (!canSendWorker(read)) return Promise.resolve();
+  const force = !!(opt && opt.force);
+  const auto = !!(opt && opt.auto);
   const yr = year || (it && it.meta && it.meta.__year) || gridYear;
+  /* 겹치는지 먼저 본다. 「둘 다 두기」로 밀고 갈 때(force)는 묻지 않는다. */
+  if (!force && PuDocFile.findWorkerDupes) {
+    const ff0 = readFields(read);
+    return PuDocFile.findWorkerDupes([{
+      kind: read.kind, fields: ff0,
+      photo: { year: yr, id: id, owner: photoOwner(id) || '' }
+    }]).then(function (dupes) {
+      if (!dupes.length) return sendWorker(id, yr, job, { force: true });
+      /* 겹친다 — 보내지 않고 «묻을 거리»를 남긴다. 자동이든 손이든 같다:
+         화면이 열려 있으면 그 자리에서 칸이 뜨고, 아니면 다음에 열 때 뜬다. */
+      read.dupWk = { at: Date.now(), key: dupes[0].key, older: dupes[0].older };
+      if (it) it.meta = Object.assign({}, it.meta, { read: read });
+      if (job) job._read = read;
+      if (viewerId === id) renderReadPanel(it);
+      renderGridBar(); renderGrid();
+      if (!auto) toast('같은 갈래 서류가 이미 있습니다 — 어떻게 할지 골라 주세요');
+      return PuPhotoStore.saveRead(yr, id, read, photoOwner(id));
+    }).catch(function (e) {
+      /* 겹침을 못 물어봤다고 보내는 일 자체를 막지는 않는다 — 못 보내는 것이
+         겹치는 것보다 나쁘다. 대신 서버 기록에는 남긴다. */
+      console.warn('[겹침 확인]', e);
+      return sendWorker(id, yr, job, { force: true });
+    });
+  }
   /* ⚠ 판독값이 아니라 **사람이 고친 것까지 얹은 값**을 보낸다 — 막는 쪽(canSendWorker)이
      이미 그것을 보고 단추를 냈다. 여기서 read.fields 를 그대로 쓰면 「단추는 떴는데
      옛 이름으로 간다」가 된다. */
@@ -6827,6 +6886,122 @@ function sendWorkerNow() {
   if (!canSendWorker(it && it.meta && it.meta.read)) return;
   lockSendBtn('.sendwk');
   sendWorker(id);
+}
+
+/* ── 겹칠 때 사람이 고르는 셋 ── */
+
+/* ㉠ 새것으로 바꾸기 — 옛 서류를 근로자 정보함에서 걷고, 그 사진은 «휴지통»으로.
+   ⚠ 지우지 않고 휴지통이다(30일 안에 되살린다). 스스로 하는 일은 사람이
+     되돌릴 수 있어야 한다 — 겹치는 명함을 치울 때 이미 정해 둔 규칙이다.
+   ⚠ 옛 사진이 «남의 것»이면 안 치운다. 내 화면에서 남의 사진이 말없이 사라지면
+     그 사람은 왜 없어졌는지 알 길이 없다(dropRedundant 와 같은 원칙). */
+function dupReplace() {
+  const id = viewerId;
+  if (!id) return;
+  const it = gridItems.find(function (x) { return x.id === id; });
+  const read = it && it.meta && it.meta.read;
+  const d = read && read.dupWk;
+  if (!d) return;
+  /* ⚠ 딱지 문구는 readLabel() «한 곳»에서만 만든다 — 두 곳에서 만들면 한쪽만 고쳐진다
+     (판독 실패를 「서류로 보이지 않음」이라 부르던 그 사고가 그렇게 났다). */
+  const lb = readLabel(read) || '서류';
+  if (!confirm('이미 있던 ' + lb + ' ' + d.older.length +
+      '장을 치우고 이 사진으로 바꿉니다.\n\n치운 사진은 휴지통에서 30일 안에 되살릴 수 있습니다.\n계속할까요?')) return;
+  lockSendBtn('.dupgo');
+  PuDocFile.dropWorkerDocs(d.key, d.older.map(function (o) { return o.dk; }))
+    .then(function () {
+      /* 옛 사진도 함께 치운다 — 근로자 정보함에서만 걷으면 사진첩에는 그대로 남아
+         다음 판독 때 또 겹친다(같은 물음이 되풀이된다).
+         ⚠ **주인을 함께 넘긴다.** 안 넘기면 저장 층이 «내 자리»에 대고 지우므로
+           지우는 시늉만 하고 조용히 끝난다 — 막는 것보다 나쁘다. */
+      return Promise.all(d.older.map(function (o) {
+        const ph = o.photo || {};
+        if (!ph.id || !isMinePhoto(ph.id)) return null;
+        const why = '겹침 — 새 ' + lb + '으로 바꿈';
+        return PuPhotoStore.deletePhoto(ph.year || gridYear, ph.id, why, photoOwner(ph.id))
+          .catch(function (e) { console.warn('[겹친 사진 치우기]', ph.id, e); return null; });
+      }));
+    })
+    .then(function () {
+      delete read.dupWk;
+      if (it) it.meta = Object.assign({}, it.meta, { read: read });
+      gridItems = gridItems.filter(function (x) {
+        return !d.older.some(function (o) { return (o.photo || {}).id === x.id; });
+      });
+      refreshTrashCount();
+      return sendWorker(id, null, null, { force: true });
+    })
+    .catch(function (e) {
+      console.warn('[겹침 바꾸기]', e);
+      alert('바꾸지 못했습니다: ' + ((e && e.message) || e));
+      renderReadPanel(it);
+    });
+}
+
+/* ㉡ 둘 다 두기 — 주소가 바뀐 등본처럼 «옛것도 근거»가 되는 일이 있다.
+   기계가 「옛것은 필요없다」고 정할 자리가 아니다. */
+function dupKeepBoth() {
+  const id = viewerId;
+  if (!id) return;
+  const it = gridItems.find(function (x) { return x.id === id; });
+  const read = it && it.meta && it.meta.read;
+  if (!read || !read.dupWk) return;
+  delete read.dupWk;
+  read.dupKept = { at: Date.now(), by: PuPhotoStore.myName() || '' };
+  if (it) it.meta = Object.assign({}, it.meta, { read: read });
+  lockSendBtn('.dupgo');
+  sendWorker(id, null, null, { force: true });
+}
+
+/* ㉢ 보내지 않기 — 같은 것을 두 번 찍은 것이다. 물음만 치운다.
+   ⚠ 사진은 «안 지운다» — 지울지는 사람이 따로 정한다. 물음에 답했다고
+     사진까지 없애면, 잘못 눌렀을 때 잃는 것이 너무 크다. */
+function dupSkip() {
+  const id = viewerId;
+  if (!id) return;
+  const it = gridItems.find(function (x) { return x.id === id; });
+  const read = it && it.meta && it.meta.read;
+  if (!read || !read.dupWk) return;
+  delete read.dupWk;
+  read.dupSkip = { at: Date.now(), by: PuPhotoStore.myName() || '' };
+  if (it) it.meta = Object.assign({}, it.meta, { read: read });
+  renderReadPanel(it); renderGridBar(); renderGrid();
+  PuPhotoStore.saveRead(photoYearOf(id), id, read, photoOwner(id))
+    .catch(function (e) { console.warn('[겹침 넘기기]', e); });
+}
+
+/* 물어보는 칸 — 둘을 «나란히» 보여 준다. 언제 것인지가 가르는 실마리다. */
+function dupBox(it) {
+  const read = it && it.meta && it.meta.read;
+  const d = read && read.dupWk;
+  if (!d || !d.older || !d.older.length) return '';
+  const label = readLabel(read) || '서류';
+  const who = readFields(read).name || '';
+  const old = d.older[0];
+  const card = function (lbl, when, hi) {
+    return '<div class="dcard' + (hi ? ' hi' : '') + '"><div class="l">' + esc(lbl) + '</div>' +
+      '<div class="v">' + esc(label) +
+      '<small>' + esc(when || '언제 것인지 모름') + '</small></div></div>';
+  };
+  /* 남의 사진은 «보기만» — 손댈 수 없는데 단추를 내주면 눌러도 아무 일이 없다 */
+  const readonly = viewingOther();
+  return '<div class="dupbox">' +
+    '<div class="t">📄 ' + esc(who ? who + ' 님의 ' : '') + esc(label) + '이 이미 있습니다' +
+    (d.older.length > 1 ? ' (' + d.older.length + '장)' : '') + '</div>' +
+    '<div class="d">재발급받은 새 것인가요, 같은 것을 다시 찍은 것인가요?</div>' +
+    '<div class="cmp">' +
+      card('이미 있는 것', old.at ? whenText(old.at) : '', false) +
+      card('지금 보내려는 것', '방금 판독', true) +
+    '</div>' +
+    (readonly
+      ? '<div class="d">올린 분만 고를 수 있습니다.</div>'
+      : '<div class="row">' +
+        '<button class="dupgo p" onclick="dupReplace()">새것으로 바꾸기</button>' +
+        '<button class="dupgo" onclick="dupKeepBoth()">둘 다 두기</button>' +
+        '<button class="dupgo" onclick="dupSkip()">보내지 않기</button></div>' +
+      '<div class="d" style="margin:8px 0 0">「바꾸기」를 골라도 <b>옛 사진은 휴지통</b>으로 갑니다 —' +
+      ' 30일 안에 되살릴 수 있습니다.</div>') +
+    '</div>';
 }
 
 /* blocked = 이미 등록돼 있어 기업정보함이 받지 않은 것. 명함 번호가 없으니 id 만
@@ -9071,6 +9246,12 @@ function checkWhy(it) {
        그러면 「확인된 임금만 쓴다」는 규칙이 조용히 비어 버린다.
      ⚠ 치울 길은 있다 — 임금이 안 적힌 계약서면 **빈 칸으로 확인**하면 된다. */
   if (wageNeedsOk(r)) return '💰 임금 확인 — 원본과 대조';
+  /* ── 📄 겹치는 서류도 「확인했음」으로 못 치운다 (대표 결정 2026-09-03) ──
+     ⚠ 임금과 같은 까닭이다 — ack 는 「봤다」는 표시일 뿐 **아무것도 정하지 않는다.**
+       ack 로 치우면 그 사진은 근로자 정보함에 영영 안 가는데 ⚠ 만 사라진다
+       (조용한 실패가 된다). 치울 길은 셋 다 열려 있다 —
+       바꾸기·둘 다 두기·보내지 않기 가운데 하나만 고르면 된다. */
+  if (r.dupWk) return '📄 겹치는 서류 — 어떻게 할지 고르기';
   if (r.ack) return '';
   /* 실패 까닭을 갈라 「무엇을 해야 하나」로 적는다(대표 승인 목업 2026-08-24).
      ⚠ 한도 초과 때 본문이 안 써진 사진이 있다(2026-08-09). 다시 판독해도 소용없다 —
@@ -13429,6 +13610,12 @@ function renderReadPanel(it) {
      ⚠ 위 기업 상세 사슬과 **따로** 둔다: 한쪽이 없어도 다른 쪽 단추는 나와야 한다. */
   if (read.filedWk && read.filedWk.at) {
     box += '<p class="sent">✓ 근로자 정보함에 넣었습니다</p>';
+  } else if (read.dupWk) {
+    /* 겹침을 묻는 중 — 위 dupBox 가 이미 물었다. 여기에 「보내기」까지 내면
+       고를 것이 넷이 되고, 그 단추를 누르면 같은 물음이 또 뜬다. */
+  } else if (read.dupSkip) {
+    box += '<p class="note">📄 겹치는 서류라 안 보냈습니다 — ' +
+      esc(whenText(read.dupSkip.at)) + ' · ' + esc(read.dupSkip.by || '') + '</p>';
   } else if (canSendWorker(read)) {
     box += '<button class="again sendwk" onclick="sendWorkerNow()">👷 근로자 정보함으로 보내기</button>';
   } else if (read.filedWkError) {
@@ -13468,6 +13655,9 @@ function renderReadPanel(it) {
     wageBox(it) +
     /* ✏ 이름·회사 — 임금 칸과 같은 자리(읽은 칸 바로 아래). 근로자 서류에만 나온다. */
     fixBox(it) +
+    /* 📄 겹치는 서류 — 이름·회사 칸 바로 아래. 「누구 것인가」가 정해져야
+       「그 사람에게 이미 있나」를 물을 수 있으니 차례가 이렇다. */
+    dupBox(it) +
     staleBox(it) +
     chatTodoBox(it) +
     timesheetBox(it) +
