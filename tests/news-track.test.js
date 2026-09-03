@@ -10,6 +10,8 @@ const assert = require('node:assert/strict');
 const T = require('../functions/news-track.js');
 const fs = require('node:fs');
 const path = require('node:path');
+/* ⚠ 주석까지 «그대로» 본다 — admin 을 거치는 길은 주석에도 적지 않는다.
+     한 번 적어 두면 다음 사람이 그것을 보고 다시 쓴다. */
 const fn = fs.readFileSync(path.join(__dirname, '..', 'functions', 'index.js'), 'utf8');
 
 test('★ 목록에 없는 번호는 «어디로도» 안 보낸다 — 피싱 구멍을 막는다', () => {
@@ -126,4 +128,28 @@ test('★ 추적 자리 이름을 news-track 이 «한 곳에서» 정한다', (
     assert.match(s, /NT\.읽기\(req\.query\)/, n + ' 이 물음표 뒤를 손으로 읽습니다');
   });
   assert.match(fn, /NT\.적을자리\(/, '적을 자리를 손으로 짭니다');
+});
+
+test('★ 추적표켜기 가 «이 파일에 없는» admin 을 쓰지 않는다', () => {
+  /* ⚠ 2026-09-03 실제로 겪었다. admin.database.ServerValue.increment(1) 을 썼는데
+       이 파일은 firebase-admin 을 낱개로 불러 쓴다(getDatabase 등) — admin 이라는
+       변수가 «없다». 그래서 매번 터졌고, 내가 감싼 catch 가 그것을 «조용히 삼켰다».
+     ★ 그림은 200 으로 잘 나가고 기록만 안 남았다 — 화면으로는 알 수 없었다.
+       서버에 실제로 찍혔는지 물어봐서야 알았다. */
+  assert.ok(!/\badmin\.database\b/.test(fn),
+    'admin.database 를 씁니다 — 이 파일에 admin 변수가 없어 매번 터집니다');
+  assert.ok(!/\badmin\.firestore\b/.test(fn), 'admin.firestore 를 씁니다');
+});
+
+test('★ 추적 적기가 «조용히 삼켜지지» 않는다 — 터지면 로그에 남아야 한다', () => {
+  /* catch 로 감싸는 것은 맞다(그림은 늘 줘야 한다). 그러나 «무엇이 터졌는지»를
+     남기지 않으면 오늘처럼 「그림은 오는데 기록이 없다」를 못 잡는다. */
+  const i = fn.indexOf('async function 추적표켜기');
+  assert.ok(i >= 0, '추적표켜기 를 찾을 수 없습니다');
+  ['newsOpen', 'newsClick'].forEach(function (n) {
+    const j = fn.indexOf('exports.' + n + ' = functions');
+    const k = fn.indexOf('\nexports.', j + 10);
+    const s = fn.slice(j, k > j ? k : j + 2600);
+    assert.match(s, /console\.(warn|error)\(/, n + ' 이 터진 것을 로그에 안 남깁니다');
+  });
 });

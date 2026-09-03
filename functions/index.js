@@ -2080,15 +2080,26 @@ exports.photoSensitiveSweep = functions
 //   그래서 클릭도 함께 본다(js/pu-news-core.js 미열람판단).
 const NT = require("./news-track");
 
-/* 표를 하나 켠다. 이미 켜져 있으면 그대로 둔다(처음 열람 시각을 지킨다). */
+/* 표를 하나 켠다.
+   ⚠ 2026-09-03 여기서 크게 헤맸다. 처음에 «admin 을 거치는» ServerValue.increment 를
+     썼는데 «이 파일에 admin 변수가 없다» — 이 저장소는 firebase-admin 을 낱개로
+     불러 쓴다(getDatabase 등). 그래서 매번 터졌고, 아래 catch 가 조용히 삼켰다.
+     그림은 200 으로 잘 나가고 «기록만 안 남았다» — 화면으로는 알 수 없었다.
+     서버에 실제로 찍혔는지 물어봐서야 알았다.
+   ★ 그래서 셈은 «거래»로 올린다 — 불러올 것이 없고, 두 사람이 같은 때 열어도 안 어긋난다.
+   ★ 첫 때는 «처음 것만» 지킨다 — 언제 처음 열었는지가 알고 싶은 것이다.
+     마지막 때는 따로 적는다. */
 async function 추적표켜기(회차, 주소, 무엇) {
   const db = getDatabase();
   const 자리 = NT.적을자리(회차, 주소);
+  const 이제 = Date.now();
+  await db.ref(자리).child(무엇 + "수").transaction((cur) => (Number(cur) || 0) + 1);
   const upd = {};
   upd[무엇] = true;
-  upd[무엇 + "첫때"] = Date.now();      // 늘 덮는다 — 마지막이 아니라 «몇 번째든» 있었다는 표
-  upd[무엇 + "수"] = admin.database.ServerValue.increment(1);
+  upd[무엇 + "끝때"] = 이제;
   await db.ref(자리).update(upd);
+  // 첫 때는 «없을 때만» 적는다 — 처음 열었을 때를 지킨다
+  await db.ref(자리).child(무엇 + "첫때").transaction((cur) => (cur == null ? 이제 : undefined));
 }
 
 exports.newsOpen = functions
