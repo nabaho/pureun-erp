@@ -715,3 +715,19 @@ test('대표자와 담당자가 «같은 주소»면 한 번만 — 두 통 가�
   })], '자문중', { 대표자도: true });
   assert.equal(r.줄들.length, 1, '같은 사람에게 두 통 보냅니다');
 });
+
+test('★ «기업정보함» 같은 자리 이름은 직책이 아니다 — 화면에 찍히면 안 된다', () => {
+  /* 대표께서 보내 주신 캡쳐에 「하승삼 기업정보함」이라 찍혀 있었다.
+     기업정보함은 «어디서 왔는지»를 적어 둔 값이고 직책이 아니다. 잡음이다. */
+  const r = C.사업장에서명단([사업장({
+    primaryContactEmail: '',
+    contacts: [
+      { name: '하승삼', email: 'a@x.kr', dept: '기업정보함' },
+      { name: '박경은', email: 'b@x.kr', position: '과장' }
+    ]
+  })], '자문중');
+  const 하 = r.줄들.find((x) => x.email === 'a@x.kr');
+  const 박 = r.줄들.find((x) => x.email === 'b@x.kr');
+  assert.equal(하.title, '', '자리 이름을 직책으로 넣었습니다: ' + 하.title);
+  assert.equal(박.title, '과장', '진짜 직책이 사라졌습니다');
+});
