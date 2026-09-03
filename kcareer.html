@@ -5622,7 +5622,11 @@ async function reOcrForm(){
   if(!parsed){ toast('읽기 실패'+(err?' ('+err+')':'')+' — 키·크레딧 확인'); return; }
   var setF=function(key,val){ if(val==null||val==='') return; var el=document.getElementById('ff-'+key); if(el) el.value=val; };
   setF('org',parsed.org); setF('issuer',parsed.issuer); setF('recipient',parsed.recipient); setF('titleVal',parsed.titleVal||parsed.title); setF('issueDate',parsed.issueDate||parsed.date);
-  setF('note',parsed.note); setF('num',parsed.num); setF('school',parsed.school); setF('degree',parsed.degree); setF('graduated',parsed.graduated); setF('date',parsed.date);
+  /* ⚠ 수료증의 hours 는 화면에 자기 칸이 없다 — 등록 때와 같은 셈으로 note 밑에 붙인다.
+     이걸 안 하면 「다시 읽기」만 교육시간을 버려 뒤족박이 된다. */
+  var _rn=parsed.note||'', _rh=String(parsed.hours||'').replace(/[^0-9]/g,'');
+  if(_rh) _rn=(_rn?_rn+' · ':'')+_rh+'시간';
+  setF('note',_rn); setF('num',parsed.num); setF('school',parsed.school); setF('degree',parsed.degree); setF('graduated',parsed.graduated); setF('date',parsed.date);
   /* 실적·강의·비용 칸도 채운다 — 프롬프트만 있고 여기 없으면 읽어 놓고 «버린다» */
   setF('project',parsed.project); setF('agency',parsed.agency); setF('main',parsed.main);
   setF('type',parsed.type); setF('status',parsed.status); setF('amt',parsed.amt);
@@ -6938,9 +6942,17 @@ const PAGE_OCR_PROMPT={
      「충청남도 노사분쟁 조정·중재단」이 받은 표창이, 수여기관 「충청남도(노사분쟁조정중재단)」
      한 칸에 뭉개져 들어가 있었고 수여자는 비어 있었다. 셋을 또렷이 갈라 묻는다. */
   award:`이 표창장/포상장/감사장을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 문서 그대로 정확히(YYYY.MM.DD).\n{"docType":"표창/포상/감사장 중 해당","org":"상을 «준» 기관의 전체 명칭 — 보통 맨 아래 서명 줄에 있다(예: 충청남도노사민정협의회)","issuer":"상을 준 사람의 직위와 이름(예: 위원장 김태흠). 없으면 빈칸","recipient":"상을 «받은» 대상 — 문서 위쪽에 적힌 개인·단체 이름","titleVal":"표창 사유·공적 내용을 한 줄로(예: 2025년 지역 노사민정협력활성화 추진 실적 평가 우수)","issueDate":"수여일 YYYY.MM.DD","year":"YYYY","note":"문서번호(제○호)"}\n⚠ org 는 «주는 쪽»입니다. 받는 쪽(recipient)을 org 에 넣지 마세요. 둘을 바꾸면 기록이 뒤집힙니다.\n⚠ titleVal 에 「표창장」 같은 문서 이름만 적지 말고 «무엇으로 받았는지»를 적으세요.\n없는 항목만 빈 문자열. 지어내지 마세요. JSON만.`,
-  license:`이 자격증/면허증을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜·번호는 그대로 정확히.\n{"title":"자격·면허 명칭","org":"발급기관 전체 명칭","date":"취득/발급일 YYYY.MM.DD","num":"자격증/등록 번호","note":"등급·비고"}\n없는 항목만 빈 문자열. JSON만.`,
-  complete:`이 수료증/이수증을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 그대로 정확히.\n{"title":"과정명(수료/이수)","org":"발급기관 전체 명칭","date":"수료일 YYYY.MM.DD","num":"증명번호","note":"교육시간·비고"}\n없는 항목만 빈 문자열. JSON만.`,
-  edu:`이 졸업증명서/학위증을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 그대로 정확히.\n{"school":"학교명 전체","degree":"학위/전공/과정","period":"재학기간 YYYY ~ YYYY (있으면)","graduated":"졸업/수료/재학 중","year":"졸업연도 YYYY","date":"졸업일 YYYY.MM.DD"}\n없는 항목만 빈 문자열. JSON만.`,
+  /* ⚠ 자격증 아래에는 「고용노동부장관」처럼 «직명»이 찍혀 있다 — 그걸 기관명으로
+       담으면 목록이 「고용노동부장관」으로 남는다. 기관명(고용노동부)으로 되돌려 적게 한다. */
+  license:`이 자격증/면허증을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜·번호는 그대로 정확히.\n{"title":"자격·면허 명칭만(예: 공인노무사, 정보처리기사, 경영지도사). 「자격증」·「합격증서」 같은 문서 이름은 빼세요","org":"발급한 «기관 이름»(예: 고용노동부, 한국산업인력공단, 한국공인노무사회). 아래에 「고용노동부장관」처럼 직명으로 찍혀 있으면 기관 이름(고용노동부)으로 적으세요 — 직명을 그대로 담지 마세요","date":"취득·발급일 YYYY.MM.DD","num":"자격증·등록 번호(제○호의 숫자까지 그대로)","note":"등급·종별·비고"}\n없는 항목만 빈 문자열. 지어내지 마세요. JSON만.`,
+  /* ⚠ 수료증에는 주관기관과 위탁·운영기관이 «둘 다» 적혀 있는 것이 많다
+       (실측: 「한국산업인력공단」이 주관하고 「HRDCONTENTS」가 운영한 NCS 교육).
+       org 에 어느 쪽을 담느냐로 같은 서류가 남남처럼 갈라져 중복이 됐다 →
+       «증서를 발급한 쪽»(직인이 찍힌 쪽)을 org 로, 나머지는 note 에 남긴다. */
+  complete:`이 수료증/이수증/참가확인서를 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 그대로 정확히.\n{"title":"과정명. 문서에 적힌 대로 옮기되 「수료증」·「이수증」 같은 문서 이름은 빼세요. 연도·기수가 함께 적혀 있으면 함께 남기세요(예: 2024년 NCS 기업활용 컨설팅 교육 (2024-1기))","org":"이 증서를 «발급한» 기관 이름 — 맨 아래 직인이 찍힌 쪽입니다","date":"수료·이수일 YYYY.MM.DD","num":"증명·발급 번호","hours":"교육시간이 적혀 있으면 숫자만(예: 16)","note":"주관·위탁기관이 발급기관과 다르면 그 이름, 그 밖의 비고"}\n※ 「수료」와 「이수」는 문서에 적힌 말을 그대로 두세요. 없는 항목만 빈 문자열. 지어내지 마세요. JSON만.`,
+  /* ⚠ 졸업증서에는 「○○대학교 총장」처럼 직명이 찍혀 있다 — 학교명만 담는다.
+     ⚠ 학위와 전공은 한 줄에 붙어 있다(「경영학사」·「법학과 졸업」) — 있는 대로 옮긴다. */
+  edu:`이 졸업증명서/학위증/졸업증서를 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 그대로 정확히.\n{"school":"학교 이름만(예: 영남대학교). 「총장」 같은 직명은 빼세요","degree":"학위·전공·과정을 적힌 대로(예: 경영학사, 법학과, 경영대학원 인사조직전공)","period":"재학기간이 적혀 있으면 YYYY.MM.DD ~ YYYY.MM.DD (연도만 있으면 YYYY ~ YYYY)","graduated":"졸업|수료|재학|중퇴 중 문서에 적힌 것","year":"졸업연도 YYYY","date":"졸업일 YYYY.MM.DD"}\n없는 항목만 빈 문자열. 지어내지 마세요. JSON만.`,
   personal_doc:`이 신분증/운전면허증/주민등록증/통장사본/사진 등을 꼼꼼히 읽고 JSON으로만 답하세요. 번호는 그대로 정확히.\n{"kind":"종류(신분증/운전면허증/주민등록증/통장사본/사진/기타 중 하나)","name":"이름 또는 문서 제목","number":"번호(주민번호앞7자리/면허번호/계좌번호 등, 없으면 빈문자)","memo":""}\n없는 항목만 빈 문자열. JSON만.`,
   account:`이 통장사본/계좌 이미지를 꼼꼼히 읽고 JSON으로만 답하세요. 계좌번호는 숫자 하나도 틀리지 않게 정확히.\n{"bank":"은행명","number":"계좌번호(전체)","holder":"예금주","memo":""}\n없는 항목만 빈 문자열. JSON만.`,
   id_doc:`이 신분증/운전면허증/주민등록증/여권/통장사본을 꼼꼼히 읽고 JSON으로만 답하세요. 번호·만료일은 그대로 정확히.\n{"kind":"종류(신분증/운전면허증/주민등록증/여권/통장사본/기타 중 하나)","name":"이름/성명","number":"주민번호앞7자리 또는 면허번호 또는 계좌번호","expiry":"만료일(YYYY.MM.DD, 없으면 빈문자)","memo":""}\n없는 항목만 빈 문자열. JSON만.`
@@ -6972,7 +6984,14 @@ async function saveOCRRecord(page,parsed,file,ext,b64){
       return t;
     };
     const type=_normType(parsed.docType, page==='award'?'표창':'위촉장'); recId=wiccokId(type,year);
-    rec={id:recId,type,org:parsed.org||'',issuer:parsed.issuer||'',titleVal:parsed.titleVal||'',issueDate:parsed.issueDate||'',period:parsed.period||'',year,note:parsed.note||'',fname:file.name,savedAt:new Date().toISOString()};
+    /* ⚠ OCR 이 읽어 온 칸을 여기서 빠뜨리면 «화면에는 빈칸»으로 보인다 — 사람은
+       「OCR 이 못 읽었다」고 생각한다. 실측(2026-09-03): issuer(위촉인)와
+       recipient(수상 대상)가 프롬프트에도 편집창에도 있는데 여기서만 빠져 있었다.
+       ⚠ 새 칸을 프롬프트에 더하면 «반드시 여기에도» 더할 것.
+         tests/kcareer-ocr-fields.test.js 가 이 어긋남을 기계로 잡는다. */
+    rec={id:recId,type,org:parsed.org||'',issuer:parsed.issuer||'',recipient:parsed.recipient||'',
+         titleVal:parsed.titleVal||'',issueDate:parsed.issueDate||'',period:parsed.period||'',
+         year,note:parsed.note||'',fname:file.name,savedAt:new Date().toISOString()};
     /* ★ 기간을 두 칸으로 옮긴다 — 표와 편집창이 periodStart·periodEnd 를 읽는다.
        ⑴ 날짜로 적혀 있으면 그대로 갈라 넣는다.
        ⑵ 「임기 2년」처럼 햇수만 적혀 있으면 발급일+N년으로 넣는다(문서에 적힌 것을 옮기는 것).
@@ -6989,7 +7008,12 @@ async function saveOCRRecord(page,parsed,file,ext,b64){
       }
     });
   } else if(page==='license'||page==='complete'){ store='cert'; recId=nextId('C','cert');
-    rec={id:recId,title:parsed.title||'',org:parsed.org||'',date:parsed.date||'',num:parsed.num||'',note:parsed.note||'',fname:file.name,savedAt:new Date().toISOString()};
+    /* ⚠ 프롬프트에 hours 를 더했으니 여기서도 담는다 — 안 담으면 또 「못 읽었다」가 된다.
+       화면에 hours 칸은 없으므로 note 뒤에 붙여 사람이 볼 수 있게 한다. */
+    var _nt=parsed.note||'', _hr=String(parsed.hours||'').replace(/[^0-9]/g,'');
+    if(_hr) _nt=(_nt?_nt+' · ':'')+_hr+'시간';
+    rec={id:recId,title:parsed.title||'',org:parsed.org||'',date:parsed.date||'',num:parsed.num||'',
+         hours:_hr,note:_nt,fname:file.name,savedAt:new Date().toISOString()};
   } else if(page==='edu'){ store='edu'; recId=nextId('E','edu');
     rec={id:recId,school:parsed.school||'',degree:parsed.degree||'',period:parsed.period||'',graduated:parsed.graduated||'',date:parsed.date||'',year,fname:file.name,savedAt:new Date().toISOString()};
   } else if(page==='personal_doc'){ store='personal'; recId=nextId('PI','personal');
