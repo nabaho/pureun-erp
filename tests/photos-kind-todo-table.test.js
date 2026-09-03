@@ -51,6 +51,11 @@ function load() {
        화면이 늘어날 때 검사만 옛 목록을 본다. 안 실으면 checkWhy 가 그 줄에서 멎어
        이 표 검사가 통째로 운다(2026-08-24 formTodo 와 같은 자리). */
     (function(){ const m = app.match(/^const WORKER_KINDS = {[^}]*};$/m); assert.ok(m, 'WORKER_KINDS 를 찾지 못했습니다'); return m[0]; })(),
+    /* ⚠ 2026-09-02 ✏ 이름·회사 채우기 — canSendWorker·workerWhyNot 이 이제
+       readFields() 를 지난다. 안 실으면 그 자리에서 멎어 이 표 검사가 통째로 운다
+       (위 WORKER_KINDS 와 같은 자리다 — 함수가 새로 무엇을 부르면 여기도 함께 는다). */
+    (function(){ const i = app.indexOf('const FIX_KEYS ='); assert.ok(i > 0, 'FIX_KEYS 를 찾지 못했습니다'); return app.slice(i, app.indexOf(';', i) + 1); })(),
+    fnOf(app, 'readFields'),
     fnOf(app, 'canSendWorker'),
     fnOf(app, 'workerWhyNot'),
     rules,

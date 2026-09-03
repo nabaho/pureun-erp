@@ -245,8 +245,10 @@ test('★★ 민감으로 정한 근로자 서류 넷이 모두 이 길을 탄�
 /* ══════════════ ⑥ 사진첩 — 할 일과 단추 ══════════════ */
 
 function photoCtx() {
+  /* ⚠ 2026-09-02 ✏ 이름·회사 채우기 — canSendWorker·workerWhyNot 이 이제 FIX_KEYS·
+     readFields() 를 지난다. 안 실으면 그 자리에서 멎어 이 아래가 통째로 운다. */
   const consts = ['MIN_READ_EDGE', 'KEEP_ONLY', 'CARD_KINDS', 'CO_KINDS', 'WORKER_KINDS',
-    'TEL_SHAPE', 'MAIL_SHAPE'].map(function (n) {
+    'FIX_KEYS', 'TEL_SHAPE', 'MAIL_SHAPE'].map(function (n) {
     const i = APP.indexOf('const ' + n + ' =');
     assert.ok(i > 0, n + ' 를 찾지 못했습니다');
     return APP.slice(i, APP.indexOf(';', i) + 1);
@@ -258,7 +260,7 @@ function photoCtx() {
   }).join('\n');
   const fns = ['readAnyField', 'tooSmall', 'smallCheckedOk', 'coFilledOk', 'coTodo',
     'readFailKind', 'readFailAdvice', 'canSendCoInfo', 'formTodo', 'chatTodo',
-    'canSendWorker', 'workerWhyNot',
+    'readFields', 'canSendWorker', 'workerWhyNot',
      /* ⚠ 2026-09-02 💰 임금 확인 */
     'wageRead', 'wageOkOf', 'wageBoxOn', 'wageNeedsOk', 
     'checkWhy', 'needsCheck']
