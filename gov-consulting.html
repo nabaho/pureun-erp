@@ -422,6 +422,28 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 .co-setting-note{margin-top:7px;font-size:10px;font-weight:800;color:var(--t2);}
 .co-setting-note strong{color:var(--accent);}
 @media(max-width:620px){.co-setting-grid{grid-template-columns:1fr;}}
+/* 회차 손으로 정하기 (건의함 김동현 2026-09-03) */
+.rnd-row{display:flex;align-items:center;gap:6px;}
+.rnd-in{width:72px;text-align:center;font-family:'JetBrains Mono',monospace;font-weight:800;}
+.rnd-in.fixed{background:#fffbeb;border-color:#fbbf24;color:#854d0e;}
+.rnd-unit{font-size:12px;font-weight:800;color:var(--t2);}
+.rnd-pre{font-size:11px;font-weight:800;color:var(--t2);white-space:nowrap;}
+.rnd-tag{display:none;font-size:10px;font-weight:800;color:#854d0e;background:#fffbeb;
+  border:1px solid #fbbf24;padding:1px 6px;border-radius:8px;margin-left:4px;}
+.rnd-tag.on{display:inline-block;}
+.rnd-undo{display:none;margin-left:auto;padding:4px 9px;border:1.5px solid var(--border);
+  border-radius:8px;background:var(--surface);color:var(--t2);font-family:inherit;
+  font-size:10.5px;font-weight:800;cursor:pointer;white-space:nowrap;}
+.rnd-undo.on{display:inline-block;}
+.rnd-hint{margin-top:5px;font-size:10.5px;font-weight:600;line-height:1.6;color:var(--t2);}
+.rnd-hint.fixed{color:#854d0e;}
+/* 겹침·빈 번호 알림 — 막지 않고 «보이게» 한다(대표 지시 2026-09-03) */
+.rnd-warn{display:none;margin-top:6px;padding:7px 9px;border-radius:8px;
+  border:1px solid #fbbf24;background:#fffbeb;color:#854d0e;font-size:10.5px;
+  font-weight:800;line-height:1.6;}
+.rnd-warn.on{display:block;}
+.rnd-warn button{margin-top:5px;padding:3px 9px;border:1.5px solid #d97706;border-radius:7px;
+  background:#fff;color:#854d0e;font-family:inherit;font-size:10.5px;font-weight:800;cursor:pointer;}
 .last-round-alert{display:none;margin-top:6px;padding:7px 9px;border-radius:8px;border:1px solid rgba(233,69,96,.35);background:rgba(233,69,96,.10);color:var(--danger);font-size:11px;font-weight:900;line-height:1.45;}
 .last-round-alert.on{display:block;}
 .last-round-alert .req{display:inline-flex;align-items:center;margin-left:6px;padding:2px 7px;border-radius:10px;background:var(--danger);color:#fff;font-size:10px;font-weight:900;}
@@ -1766,7 +1788,16 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
           <div class="fld"><label class="flbl">부담당(협업) 노무사 <span style="font-size:10px;color:var(--t2);font-weight:600;">(복수 선택)</span></label><div id="mEditCoAttChips" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;"></div><div id="mEditSubSyncNote" style="font-size:10.5px;color:var(--t2);margin-top:7px;line-height:1.55;"></div></div>
           <div class="f2">
             <div class="fld"><label class="flbl">컨설팅</label><div id="mEditType" style="font-size:13px;font-weight:700;"></div></div>
-            <div class="fld"><label class="flbl">회차 <span style="font-size:10px;color:var(--t2);font-weight:600;">(날짜순 자동)</span></label><input class="fi" id="mEditRound" type="text" readonly style="background:var(--sf2);color:var(--t2);cursor:not-allowed;"><div id="mEditRoundAlert" class="last-round-alert"></div></div>
+            <div class="fld"><label class="flbl">회차 <span id="mEditRoundLbl" style="font-size:10px;color:var(--t2);font-weight:600;">(날짜순 자동)</span><span id="mEditRoundTag" class="rnd-tag">🔒 손으로 정함</span></label>
+              <div class="rnd-row">
+                <span id="mEditRoundPre" class="rnd-pre" style="display:none;">사전진단</span>
+                <input class="fi rnd-in" id="mEditRound" type="number" min="1" step="1">
+                <span class="rnd-unit">회</span>
+                <button type="button" id="mEditRoundUndo" class="rnd-undo" onclick="unfixRound()">↺ 자동으로</button>
+              </div>
+              <div id="mEditRoundHint" class="rnd-hint"></div>
+              <div id="mEditRoundWarn" class="rnd-warn"></div>
+              <div id="mEditRoundAlert" class="last-round-alert"></div></div>
           </div>
           <div class="fld"><label class="flbl">방문 구분</label>
             <div class="tog-row" id="mEditTog">
@@ -5976,6 +6007,18 @@ function dashCardSummary(co,types,risk){
   return [base,more,due].filter(Boolean).join(' · ');
 }
 
+/* 회차가 어긋나면 목록에서도 보이게 — 수정 창을 열어야만 알면 늦는다(대표 지시 2026-09-03) */
+function roundIssueBadge(coId,typeId){
+  const phs=isPrePhaseType(typeId)?['pre','main']:[null];
+  const out=[];
+  phs.forEach(ph=>{
+    const is=roundIssues(coId,typeId,ph);
+    if(is.dups.length)out.push(`${is.dups.join('·')}회 겹침`);
+    if(is.gaps.length)out.push(`${is.gaps.join('·')}회 빔`);
+  });
+  if(!out.length)return '';
+  return `<div class="round-badge" style="color:#854d0e;font-weight:800;" title="일정을 열어 회차를 고치거나 자동으로 되돌릴 수 있습니다">⚠ 회차 ${out.join(' · ')}</div>`;
+}
 function renderDashTypeRows(co,types,showEnded,onlyTid){
   /* onlyTid — 사업별로 묶어 볼 때는 «그 사업 줄»만 보여야 한다.
      안 넘기면 지금까지처럼 그 사업장의 종류를 다 그린다. */
@@ -6024,6 +6067,7 @@ function renderDashTypeRows(co,types,showEnded,onlyTid){
           ${t.agency?`<div style="font-size:10px;color:var(--dash-t2);font-weight:700;">${t.agency}</div>`:''}
           <div class="round-badge" style="color:var(--t2)">${line1}</div>
           <div class="round-badge" style="color:${l2col}">${line2}</div>
+          ${roundIssueBadge(co.id,tid)}
           ${deadlineBadge(co.deadlines?.[tid])}
         </div>
         <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;">
@@ -6062,6 +6106,7 @@ function renderDashTypeRows(co,types,showEnded,onlyTid){
         <div class="type-name">${t.fullName||t.name}</div>
         ${t.agency?`<div style="font-size:10px;color:var(--dash-t2);font-weight:700;">${t.agency}</div>`:''}
         <div class="round-badge" style="color:${progColor}">${nr>1?prog+fprog+' →':''} 다음 ${nr}회차</div>
+        ${roundIssueBadge(co.id,tid)}
         ${deadlineBadge(co.deadlines?.[tid])}
       </div>
       <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;">
@@ -7001,18 +7046,63 @@ function checkExclusiveDay(coId,typeId,date,excludeId=null){
   return null;
 }
 
+/* ══ 회차 손으로 정하기 (건의함 김동현 2026-09-03) ═════════════════════════
+   ★ 왜 칸만 열어 주면 안 되나 — 회차는 저장된 값이지만 날짜를 옮길 때마다
+     그 사업의 일정을 통째로 날짜순 1·2·3… 으로 «다시» 매긴다. 그래서 손으로 고친
+     숫자가 다음 재정렬에 조용히 지워진다. 「이건 손으로 정했다」는 표시가 함께 있어야 한다.
+   ⚠ 겹침·빈 번호는 «막지 않고 보이게» 한다 — 대표 지시 2026-09-03.
+     막아 버리면 달리 풀 길이 없어 사람이 우회한다.                              */
+function roundIsFixed(s){ return !!(s&&s.roundFixed); }
+/* 그 사업(단계별) 일정 목록 — 회차 셈의 단위다 */
+function roundPeers(coId,typeId,phase){
+  return getScheds().filter(s=>s.coId===coId&&s.typeId===typeId
+    &&(!isPrePhaseType(typeId)||schedPhase(s)===phase));
+}
+/* 겹친 번호와 빈 번호를 찾는다. 손으로 정하다 보면 둘 다 생길 수 있다. */
+function roundIssues(coId,typeId,phase){
+  const ns=roundPeers(coId,typeId,phase).map(s=>Number(s.round)||0).filter(n=>n>0);
+  const seen={},dups=[];
+  ns.forEach(n=>{ seen[n]=(seen[n]||0)+1; if(seen[n]===2)dups.push(n); });
+  const gaps=[];
+  if(ns.length){ const mx=Math.max.apply(null,ns);
+    for(let i=1;i<mx;i++)if(!seen[i])gaps.push(i); }
+  return {dups:dups.sort((a,b)=>a-b),gaps:gaps.sort((a,b)=>a-b)};
+}
 function reorderRounds(coId,typeId){
   const scheds=getScheds();
   const targets=scheds.filter(s=>s.coId===coId&&s.typeId===typeId);
+  /* 손으로 정한 것은 «그 번호를 지킨다». 나머지는 날짜순으로 «남은 번호»를 채운다.
+     ⚠ 고정된 번호를 그냥 덮어쓰면 손으로 정한 뜻이 사라진다. */
+  const run=(list)=>{
+    const taken=new Set(list.filter(roundIsFixed).map(s=>Number(s.round)||0).filter(n=>n>0));
+    let n=0;
+    list.filter(s=>!roundIsFixed(s)).sort((a,b)=>a.date>b.date?1:-1).forEach(s=>{
+      do{ n++; }while(taken.has(n));
+      s.round=n;
+    });
+  };
   if(isPrePhaseType(typeId)){
     // 사전진단·본컨설팅을 각각 날짜순으로 1부터 독립 번호
-    ['pre','main'].forEach(ph=>{
-      targets.filter(s=>schedPhase(s)===ph).sort((a,b)=>a.date>b.date?1:-1).forEach((s,i)=>s.round=i+1);
-    });
+    ['pre','main'].forEach(ph=>run(targets.filter(s=>schedPhase(s)===ph)));
   }else{
-    targets.sort((a,b)=>a.date>b.date?1:-1).forEach((s,i)=>s.round=i+1);
+    run(targets);
   }
   setScheds(scheds);
+}
+/* 그 사업의 회차를 통째로 자동으로 되돌린다 — 어긋난 것을 한 번에 푸는 길 */
+function unfixAllRounds(coId,typeId,phase){
+  const scheds=getScheds();
+  let n=0;
+  scheds.forEach(s=>{
+    if(s.coId!==coId||s.typeId!==typeId)return;
+    if(isPrePhaseType(typeId)&&phase&&schedPhase(s)!==phase)return;
+    if(!roundIsFixed(s))return;
+    delete s.roundFixed; n++;
+  });
+  if(!n)return 0;
+  setScheds(scheds);
+  reorderRounds(coId,typeId);
+  return n;
 }
 
 // ===== 회차 변경 이력 (Firebase scal_roundlog, push 적재 / file:// 등 미연결 시 로컬 폴백) =====
@@ -7025,6 +7115,27 @@ function subscribeRoundLog(){
     _roundLog=Object.entries(val).map(([k,e])=>({...e,_key:k})).sort((a,b)=>a.ts<b.ts?1:-1);
     if(_chgTab==='round'&&q('#mbPhotoLog')?.classList.contains('open'))renderRoundLog();
   });
+}
+/* 손으로 정한 회차를 같은 이력에 남긴다.
+   ⚠ kind:'fix' 를 반드시 붙인다 — 날짜 이동 기록과 «되돌리기»가 아주 다르다.
+     날짜 기록은 날짜를 옮겨 되돌리고, 이건 고정을 «푸는» 것이다.
+     안 나누면 되돌리기가 엉뚱하게 날짜를 옮기고 고정은 그대로 남는다. */
+function logRoundFix(sc,fromRound,toRound,swapWith){
+  const entry={
+    kind:'fix',
+    id:uid(), ts:new Date().toISOString(), user:getSession()?.name||'?',
+    coId:sc.coId, coName:getCos().find(c=>c.id===sc.coId)?.name||'',
+    typeId:sc.typeId, typeName:getTypes().find(t=>t.id===sc.typeId)?.name||'',
+    schedId:sc.id, schedDate:sc.date,
+    fromRound:Number(fromRound)||0, toRound:Number(toRound)||0,
+    swapDate:swapWith?swapWith.date:'', reverted:false
+  };
+  if(FB_READY){
+    try{_fbDB.ref('scal_roundlog').push(entry);return;}catch(e){console.warn('회차 고정 기록 실패',e);}
+  }
+  const log=getRoundLog();log.unshift(entry);if(log.length>100)log.length=100;setRoundLog(log);
+  _roundLog=log.map(x=>({...x}));
+  if(_chgTab==='round'&&q('#mbPhotoLog')?.classList.contains('open'))renderRoundLog();
 }
 function logRoundChange(sc,fromDate,toDate,affected){
   const entry={
@@ -7059,6 +7170,19 @@ function renderRoundLog(){
   box.innerHTML=log.map(e=>{
     const others=(e.affected||[]).filter(a=>a.id!==e.schedId);
     const d=new Date(e.ts);
+    /* 손으로 정한 회차 — 되돌리기가 «고정 풀기»라 따로 그린다 */
+    if(e.kind==='fix'){
+      const t2=`${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+      const act=e.reverted
+        ?`<span style="font-size:11px;color:var(--ok);font-weight:800;white-space:nowrap;">↩ 되돌림</span>`
+        :`<button class="btn btn-s" style="font-size:11px;padding:5px 10px;white-space:nowrap;" onclick="revertRoundChange('${e.id}')">↩ 자동으로</button>`;
+      return `<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--sf2);${e.reverted?'opacity:.6;':''}">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:800;">${e.coName} · ${e.typeName}</div>
+          <div style="font-size:11px;color:#854d0e;margin-top:2px;">🔒 손으로 정함 ${e.fromRound}회 → <b>${e.toRound}회</b>${e.swapDate?` · ${e.swapDate} 일정과 맞바꿈`:''} (${e.schedDate})</div>
+          <div style="font-size:10px;color:var(--t2);margin-top:1px;">🕘 ${t2} · ${e.user}</div>
+        </div>${act}</div>`;
+    }
     const ts=`${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
     const detail=others.slice(0,5).map(a=>`${a.from}→${a.to}`).join(', ');
     let rev='';
@@ -7085,6 +7209,23 @@ function revertRoundChange(id){
   const log=(_roundLog&&_roundLog.length)?_roundLog:getRoundLog();
   const e=log.find(x=>x.id===id);if(!e)return;
   if(e.reverted){toast('이미 되돌린 기록입니다','err');return;}
+  /* 손으로 정한 회차는 «고정을 푸는» 것이 되돌리기다 — 날짜는 건드리지 않는다 */
+  if(e.kind==='fix'){
+    showConfirm(`${e.coName}·${e.typeName} — 손으로 정한 ${e.toRound}회를 풀고 날짜순으로 되돌릴까요?`,async()=>{
+      const scheds=getScheds();
+      const i=scheds.findIndex(x=>x.id===e.schedId);
+      if(i<0){toast('해당 일정을 찾을 수 없습니다 (삭제됨)','err');markReverted(e,'대상없음');return;}
+      if(!await acquireCompanyEditLock(e.coId))return;
+      delete scheds[i].roundFixed;
+      setScheds(scheds);
+      reorderRounds(e.coId,e.typeId);
+      markReverted(e,'');
+      renderCal();renderDash();
+      toast('회차를 자동으로 되돌렸습니다');
+      releaseCompanyEditLock();
+    });
+    return;
+  }
   showConfirm(`${e.coName}·${e.typeName} 일정을 ${e.toDate} → ${e.fromDate}로 되돌립니다.`,async()=>{
     const scheds=getScheds();
     const sidx=scheds.findIndex(s=>s.id===e.schedId);
@@ -7184,7 +7325,11 @@ async function openEditModal(sid){
   const atCap=cap>0&&Number(sc.round)===Number(cap);
   // 종료처리요청은 '본컨설팅' 마지막회에서만. 사전진단 마지막회는 본컨설팅 전환 안내.
   const isLastRound=atCap&&!isPre;
-  q('#mEditRound').value=atCap?`${roundText(sc,'회')}(${isPre?'사전진단 마지막':'마지막회'})`:`${roundText(sc,'회')}`;
+  /* 회차 — 숫자만 넣는다. 「사전진단」 접두어는 칸 «앞»에 따로 붙인다
+     (숫자 칸에 글자를 섞으면 고칠 수가 없다). */
+  q('#mEditRound').value=Number(sc.round)||1;
+  q('#mEditRoundPre').style.display=isPre?'inline':'none';
+  renderRoundState(sc);
   const roundAlert=q('#mEditRoundAlert');
   if(roundAlert){
     roundAlert.classList.toggle('on',atCap);
@@ -7216,6 +7361,56 @@ function copyEdit(){
   q('#mbSingle').classList.add('open');
 }
 
+/* 회차 칸의 «지금 모습»을 그린다 — 자동인지 손으로 정했는지, 어긋난 데는 없는지 */
+function renderRoundState(sc){
+  const fixed=roundIsFixed(sc), isPre=schedPhase(sc)==='pre';
+  const inp=q('#mEditRound'); if(!inp)return;
+  inp.classList.toggle('fixed',fixed);
+  q('#mEditRoundTag').classList.toggle('on',fixed);
+  q('#mEditRoundUndo').classList.toggle('on',fixed);
+  q('#mEditRoundLbl').style.display=fixed?'none':'inline';
+  const hint=q('#mEditRoundHint');
+  hint.classList.toggle('fixed',fixed);
+  hint.innerHTML=fixed
+    ?`날짜를 옮겨도 <b>${Number(sc.round)||1}회</b> 그대로입니다. 다른 일정이 이 번호를 비켜 갑니다.`
+    :'날짜순으로 저절로 매겨집니다. 숫자를 고치면 <b>그 회차로 고정</b>됩니다.';
+  /* ⚠ 겹침·빈 번호는 막지 않고 «보이게» 한다 — 그래야 달리 풀 수 있다 */
+  const w=q('#mEditRoundWarn');
+  const is=roundIssues(sc.coId,sc.typeId,schedPhase(sc));
+  const msg=[];
+  if(is.dups.length)msg.push(`<b>${is.dups.join('·')}회</b>가 겹칩니다`);
+  if(is.gaps.length)msg.push(`<b>${is.gaps.join('·')}회</b>가 비었습니다`);
+  if(msg.length){
+    w.innerHTML=`⚠ 이 사업의 회차가 어긋나 있습니다 — ${msg.join(' · ')}.`
+      +`<br><button type="button" onclick="unfixRoundAll()">↺ 이 사업 회차를 전부 자동으로</button>`;
+    w.classList.add('on');
+  }else{ w.innerHTML=''; w.classList.remove('on'); }
+}
+/* 이 일정만 자동으로 되돌린다 */
+function unfixRound(){
+  const scheds=getScheds(), i=scheds.findIndex(s=>s.id===edit_id);
+  if(i<0)return;
+  const sc=scheds[i];
+  delete sc.roundFixed;
+  setScheds(scheds);
+  reorderRounds(sc.coId,sc.typeId);
+  const now=getScheds().find(s=>s.id===edit_id);
+  q('#mEditRound').value=Number(now.round)||1;
+  renderRoundState(now);
+  renderCal();renderDash();
+  toast('회차를 자동으로 되돌렸습니다');
+}
+/* 이 사업의 회차를 전부 자동으로 — 어긋난 것을 한 번에 푸는 길 */
+function unfixRoundAll(){
+  const sc=getScheds().find(s=>s.id===edit_id); if(!sc)return;
+  showConfirm('이 사업의 «손으로 정한» 회차를 모두 풀고 날짜순으로 되돌릴까요?',()=>{
+    const n=unfixAllRounds(sc.coId,sc.typeId,schedPhase(sc));
+    const now=getScheds().find(s=>s.id===edit_id);
+    if(now){ q('#mEditRound').value=Number(now.round)||1; renderRoundState(now); }
+    renderCal();renderDash();
+    toast(n?`${n}건을 자동으로 되돌렸습니다`:'되돌릴 것이 없습니다');
+  });
+}
 async function saveEdit(){
   const lockedSc=getScheds().find(s=>s.id===edit_id);
   if(!lockedSc||!await verifyCompanyEditLock(lockedSc.coId))return;
@@ -7234,11 +7429,50 @@ async function saveEdit(){
   delete scheds[idx].coAttId;
   scheds[idx].isField=edit_isField;
   scheds[idx].memo=q('#mEditMemo').value.trim();
-  setScheds(scheds);closeModal('mbEdit');renderCal();renderDash();toast('수정됨');
-  /* 일정은 거울이 아니라 **더하기만** 하는 입구다.
-     여기서 뺀 사람은 이 날짜 방문에서만 빠진다 — 사업장·이알피는 그대로. */
-  const addedCoAtts=coAttIds.filter(id=>beforeCoAtts.indexOf(id)<0);
-  if(addedCoAtts.length)coAddSubsFromSched(scheds[idx].coId,addedCoAtts).catch(e=>console.warn('[부담당 올리기]',e));
+
+  /* ── 회차 — 손으로 고쳤으면 «고정»한다 (건의함 김동현 2026-09-03) ──────────
+     ⚠ 고정 표시 없이 숫자만 바꾸면 다음 재정렬에 조용히 지워진다.            */
+  const rnRaw=String(q('#mEditRound').value||'').trim();
+  const rn=Math.floor(Number(rnRaw));
+  const curRn=Number(scheds[idx].round)||0;
+  if(!rnRaw||!(rn>=1)){ toast('회차는 1 이상의 숫자여야 합니다','err'); return; }
+  const ph=schedPhase(scheds[idx]);
+  const cap=ph==='pre'?PRE_ROUND_CAP:getCoMaxRounds(scheds[idx].coId,scheds[idx].typeId);
+  /* ⚠ 최대 회차는 넘기지 않는다 (대표 결정 2026-09-03) — 넘기면 마지막회·
+     종료처리 알림이 영영 안 뜬다. */
+  if(cap>0&&rn>cap){ toast(`최대 ${cap}회를 넘을 수 없습니다`,'err'); return; }
+  const rnChanged=rn!==curRn;
+  /* 겹치는 것은 «손으로 정해 둔» 것뿐이다 — 자동인 것은 재정렬이 알아서 비켜 준다.
+     ⚠ 막지 않는다(대표 지시). 대신 「자리 바꾸기」라는 다른 길을 준다. */
+  const swapWith=rnChanged?scheds.find(x=>x.id!==edit_id&&x.coId===scheds[idx].coId
+    &&x.typeId===scheds[idx].typeId&&(!isPrePhaseType(x.typeId)||schedPhase(x)===ph)
+    &&roundIsFixed(x)&&Number(x.round)===rn):null;
+
+  const commit=()=>{
+    if(rnChanged){
+      if(swapWith){
+        const j=scheds.findIndex(x=>x.id===swapWith.id);
+        scheds[j].round=curRn; scheds[j].roundFixed=true;
+      }
+      scheds[idx].round=rn; scheds[idx].roundFixed=true;
+    }
+    setScheds(scheds);
+    if(rnChanged){
+      reorderRounds(scheds[idx].coId,scheds[idx].typeId);
+      logRoundFix(scheds[idx],curRn,rn,swapWith);
+    }
+    closeModal('mbEdit');renderCal();renderDash();
+    toast(rnChanged?`회차를 ${rn}회로 고정했습니다`:'수정됨');
+    /* 일정은 거울이 아니라 **더하기만** 하는 입구다.
+       여기서 뺀 사람은 이 날짜 방문에서만 빠진다 — 사업장·이알피는 그대로. */
+    const addedCoAtts=coAttIds.filter(id=>beforeCoAtts.indexOf(id)<0);
+    if(addedCoAtts.length)coAddSubsFromSched(scheds[idx].coId,addedCoAtts).catch(e=>console.warn('[부담당 올리기]',e));
+  };
+  if(swapWith){
+    showConfirm(`${rn}회는 ${korDate(swapWith.date)} 일정이 손으로 정해 두었습니다. 두 일정의 회차를 맞바꿀까요?`,commit);
+    return;
+  }
+  commit();
 }
 
 async function deleteEdit(){
