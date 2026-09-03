@@ -197,3 +197,43 @@ test('★ 「＋ 새 구성원」이 명부 창을 연다 — 손으로 치는 �
   assert.match(함수('openRosterAdd'), /addMemberByHand\(\)/,
     '★★ 명부에 없는 분을 넣는 길이 사라졌다 — 지사장처럼 명부에 없는 분이 있다');
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+   여기까지는 소스를 «글자로» 보는 검사다 — 부르는 자리가 있나, 단추가 있나.
+   아래는 판정을 «돌려 본다».
+   ★ 왜 필요한가: offSiteOf 를 「늘 false」로 바꿔 보면 위 검사가 «다» 통과한다.
+     부르는 자리는 그대로 있으니까. 그러면 안 올리길 바란 사람이 조용히 올라간다.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* 화면에서 함수 한 개를 꺼내 «실제로» 돌린다 */
+function 꺼내돌리기(이름) {
+  const src = 함수(이름);
+  // eslint-disable-next-line no-new-func
+  return new Function(src + LF + 'return ' + 이름 + ';')();
+}
+const LF = String.fromCharCode(10);
+
+test('★★ 「안 올림」 판정이 «실제로» 갈라낸다 — 부르는 자리만 있어선 안 된다', () => {
+  const offSiteOf = 꺼내돌리기('offSiteOf');
+  assert.strictEqual(offSiteOf({ offSite: true }), true, '★★ 안 올림을 못 알아본다');
+  assert.strictEqual(offSiteOf({ offSite: false }), false, '★ 올림을 안 올림으로 본다');
+  assert.strictEqual(offSiteOf({}), false, '★ 정해 두지 않은 사람은 «올림»이어야 한다');
+  /* ⚠ 자료가 없을 때 터지면 화면이 통째로 멎는다 */
+  assert.strictEqual(offSiteOf(null), false, '★ 빈 자료에 터진다');
+  assert.strictEqual(offSiteOf(undefined), false, '★ 빈 자료에 터진다');
+});
+
+test('★★ 「안 올림」인 사람은 올릴 목록에서 «빠진다» (걸러내기를 그대로 돌려서)', () => {
+  const offSiteOf = 꺼내돌리기('offSiteOf');
+  const 사람들 = {
+    a: { name: '가노무사', offSite: false },
+    b: { name: '나직원', offSite: true },
+    c: { name: '다직원' }
+  };
+  /* 올리기·미리보기가 쓰는 «그 걸러내기»와 같은 모양 */
+  const 올릴것 = Object.keys(사람들)
+    .filter(function (k) { return !offSiteOf(사람들[k]); })
+    .map(function (k) { return 사람들[k].name; });
+  assert.deepStrictEqual(올릴것, ['가노무사', '다직원'],
+    '★★ 안 올림인 사람이 올라가거나, 멀쩡한 사람이 빠졌다');
+});
