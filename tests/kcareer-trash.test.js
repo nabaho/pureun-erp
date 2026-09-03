@@ -78,8 +78,14 @@ test('쪽지는 «눌린 단추»를 넘겨받는다 — window.event 로 알아
   assert.ok(!/window\.event/.test(bare),
     'window.event 로 단추를 알아내면 브라우저마다 다르고 조용히 엉뚱한 자리에 뜬다 —\n' +
     '    부르는 자리에서 this 를 넘길 것');
-  assert.ok(/getBoundingClientRect/.test(fn),
-    '단추 자리를 재지 않으면 «바로 옆»에 띄울 수 없다');
+  assert.ok(/getBoundingClientRect\s*\(\s*\)/.test(fn),
+    '단추 자리를 «실제로 재지» 않으면 «바로 옆»에 띄울 수 없다\n' +
+    '    (이름만 있는 것으로는 안 된다 — 안 부르고 0 을 쓰던 판이 검사를 통과했다)');
+  /* 잰 자리를 실제로 «쪽지 좌표에» 써야 한다 */
+  assert.ok(/style\.top\s*=/.test(fn) && /style\.left\s*=/.test(fn),
+    '쪽지의 자리(left·top)를 정하지 않는다');
+  assert.ok(/r\.(bottom|top)/.test(fn) && /r\.(right|left)/.test(fn),
+    '잰 값을 쪽지 자리에 안 쓴다 — 쪽지가 늘 같은 곳에 뜬다');
   assert.ok(/innerHeight/.test(fn),
     '화면 아래에 걸릴 때 위로 뒤집지 않으면, 표 아래쪽 줄에서 쪽지가 잘린다');
 });
@@ -148,12 +154,25 @@ test('번호가 바뀌면 첨부 원본도 새 번호로 옮긴다', () => {
 });
 
 test('30일 비우기는 «지운 때가 있는 것»만 지운다', () => {
+  /* 「기한이 지났나」는 한 군데(kcTrashDue)에서만 판단해야 한다.
+     ⚠ 두 곳에 적어 두면 한 곳만 고쳐져 «담긴 것은 남고 원본만 지워지는»
+       반쪽 상태가 조용히 생긴다 — 실제로 처음 판이 그랬다. */
+  const due = cutFn(bare, 'function kcTrashDue(');
+  assert.ok(due, 'kcTrashDue 가 없다 — 기한 판단이 흩어져 있다');
+  assert.ok(/TRASH_DAYS\s*\*\s*86400000/.test(due), '기한 판단이 30일 기준을 안 쓴다');
+  assert.ok(/e\.delAt/.test(due),
+    '지운 때가 없는 것까지 «지났다»고 하면, 언제 지웠는지 모르는 것을 없애는 셈이다');
+  assert.ok(/!e\.delAt|e\.delAt\s*&&|!e\s*\|\|\s*!e\.delAt/.test(due),
+    '지운 때가 없는 것을 «지나지 않은 것»으로 걸러야 한다');
+
   const sw = cutFn(bare, 'function kcTrashSweep(');
   assert.ok(sw, 'kcTrashSweep 가 없다');
-  assert.ok(/TRASH_DAYS\s*\*\s*86400000/.test(sw), '30일 기준을 안 쓴다');
-  assert.ok(/e\.delAt/.test(sw),
-    '지운 때가 없는 것까지 지우면, 언제 지웠는지 모르는 것을 없애는 셈이다');
   assert.ok(/deleteFile\s*\(/.test(sw), '비울 때는 첨부 원본까지 지워야 한다');
+  assert.ok(!/86400000/.test(sw),
+    '비우기 안에 기한 셈을 또 적어 두었다 — kcTrashDue 하나만 쓸 것');
+  const 판단횟수 = (sw.match(/kcTrashDue/g) || []).length;
+  assert.ok(판단횟수 >= 2,
+    '지울 것을 고를 때와 남길 것을 고를 때 «같은» 판단을 써야 한다 (지금 ' + 판단횟수 + '번)');
 });
 
 test('완전삭제만이 첨부 원본을 지운다', () => {
