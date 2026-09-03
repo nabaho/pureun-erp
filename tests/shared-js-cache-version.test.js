@@ -33,7 +33,12 @@ function ok(name, cond, hint){
    훑는 바람에 「pu-appbar.js → ?v=4, ?v=6」 같은 헛실패가 났다.
    여기서 볼 것은 «이 저장소가 배포하는 화면» 뿐이다 — 남의 사본은 건너뛴다. */
 var SKIP_DIRS = ['node_modules', '.git', '.codex-worktrees', 'dist', 'build',
-                 '.superpowers', '.claude'];
+                 '.superpowers', '.claude',
+                 /* ⚠ fixtures 는 «남의 사이트에서 받아 온 HTML»이다 (검사 밑감).
+                    우리 화면이 아니므로 캐시 번호 규칙을 들이대지 않는다 —
+                    들이대면 남이 어떻게 짰는지를 우리가 못 고치는데 검사가 빨개진다.
+                    (2026-09-03 공인노무사회 밑감을 넣으며 실제로 걸렸다) */
+                 'fixtures'];
 
 function htmlFiles(dir, out){
   out = out || [];
