@@ -36,7 +36,14 @@
       transferredTo:['Task|Case|Project','Person'],
       forOrganization:['Task|Document|MediaAsset|Message|PayrollRecord|Policy|Submission','Organization'],
       fulfills:['Submission','Contract|Case|Project'],
-      supersedes:['Policy|Document','Policy|Document']
+      supersedes:['Policy|Document','Policy|Document'],
+      /* 인사·급여 기록 → 그 기록의 «주인»(사번). 2026-09-04.
+         ⚠ 이 넷(근로계약·근태·휴가·급여)은 «푸른노무법인 직원» 자료다 —
+           고객 사업장 자료가 아니다(companyId 칸이 아예 없다).
+           고객사 근로자는 사건(cases)의 workers 안에 있고, 사건은 이미 업체에 붙는다.
+         ⚠ 관계어를 하나만 만든다 — Employment 와 PayrollRecord 를 갈라 두 개를
+           만들면 사전에 말만 늘고 쓰는 자리는 같다. */
+      recordedFor:['Employment|PayrollRecord','Person']
     }
   };
 
@@ -222,6 +229,12 @@
   };
   var COMPANY_STORES = ['contracts','cases','consultings','funds','other_projects','finance_income','finance_expense','finance_invoice','my_schedules'];
   var STAFF_STORES = ['contracts','cases','consultings','funds','other_projects','my_work_items','my_schedules'];
+  /* 인사·급여 기록은 «사번»으로 사람에게 붙는다 (대표 판단 2026-09-04 「1」).
+     ⚠ 사번 칸 이름이 갈래마다 다르다 — 급여는 empSid, 나머지는 sid.
+       한쪽만 보면 급여가 통째로 안 붙는다(실제로 화면 두 곳이 그 흠으로 늘 비어 있었다).
+     ⚠ 이름으로는 절대 안 맞춘다. 사번이 없으면 «안 잇고 알린다». */
+  var PERSON_RECORD_STORES = ['employment_contracts','attendance_records','leave_of_absence','payroll_monthly'];
+  function personSidOf(r){ return clean(r && (r.sid || r.empSid || r.ownerSid)); }
   var SOURCE_KIND_STORE = { company:'companies', contract:'contracts', case:'cases', consulting:'consultings', fund:'funds', other:'other_projects' };
 
   /* 2단계 읽기 어댑터. payload(사진 원본·문서 본문·제출 암호문·급여 직원표)는
@@ -372,6 +385,20 @@
           if(!people[sid]) issue(issues,'high','orphan_person',store,rid,sid,'등록되지 않은 부담당 사번입니다.');
           else addEdge(edges,canon(st,rid),'assists',canon('Person',sid),store,rid,1);
         });
+      });
+    });
+
+    /* 인사·급여 기록 → 사람. 개체는 진작 만들어지고 있었는데 «어디에도 안 이어져»
+       업체 360°에도, 사람 화면에도 안 나왔다(2026-09-03 점검에서 찾음). */
+    PERSON_RECORD_STORES.forEach(function(store){
+      arr(data[store]).forEach(function(r){
+        var rid=clean(r.id), st=STORE_TYPES[store], sid=personSidOf(r);
+        if(!rid) return;
+        if(!sid){ issue(issues,'medium','missing_person_sid',store,rid,recordLabel(r,st,rid),
+          '사번이 비어 있어 누구의 기록인지 확정할 수 없습니다.'); return; }
+        if(!people[sid]){ issue(issues,'high','orphan_person',store,rid,sid,
+          '등록되지 않은 사번입니다.'); return; }
+        addEdge(edges,canon(st,rid),'recordedFor',canon('Person',sid),store,rid,1);
       });
     });
 
