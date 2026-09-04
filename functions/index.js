@@ -2584,7 +2584,24 @@ async function 노무사회부르기(주소, 그릇들, 더할것) {
       "Accept-Language": "ko-KR,ko;q=0.9"
     }, 그릇.있나() ? { Cookie: 그릇.글자() } : {})
   }, 더할것 || {});
-  const res = await fetch(주소, 옵);
+  /* ⚠ fetch 가 «바깥으로 못 나갈» 때 undici 는 「fetch failed」 한 줄만 던진다.
+       어느 주소인지도, 왜인지도 안 알려 준다 — 2026-09-04 에 그 한 줄만 보고
+       하루를 헤맬 뻔했다. 그래서 여기서 «주소와 속뜻»을 붙여 다시 던진다.
+     ★ e.cause.code 가 진짜 까닭이다 (ECONNREFUSED·ETIMEDOUT·ENOTFOUND·
+       CERT_HAS_EXPIRED·UNABLE_TO_VERIFY_LEAF_SIGNATURE …). 이것이 있으면
+       「우리 잘못이 아니라 상대가 막았다」를 그 자리에서 알 수 있다. */
+  let res;
+  try {
+    res = await fetch(주소, 옵);
+  } catch (e) {
+    const 속 = e && e.cause;
+    const 코드 = (속 && (속.code || 속.errno)) || '';
+    const 말 = (속 && 속.message) || '';
+    const err = new Error('부르지 못했다 — ' + 주소
+      + (코드 ? ' (' + 코드 + ')' : '') + (말 ? ' ' + 말 : ''));
+    err.주소 = 주소; err.코드 = String(코드 || ''); err.속말 = String(말 || '');
+    throw err;
+  }
   그릇.담기(res);
   return res;
 }
@@ -2801,8 +2818,17 @@ exports.ilaborPull = functions
       res.json({ ok: true, mode: "full", 목록수: 목록.length, 가져온것: 결과, 손님인가: 손님인가 });
     } catch (e) {
       /* ⚠ 조용히 넘기지 않는다 — 왜 아무것도 안 왔는지 말해 준다 */
-      console.warn("[노무사회]", e && e.message);
-      res.status(500).json({ ok: false, error: String((e && e.message) || e) });
+      /* ⚠ 「fetch failed」 한 줄만 돌려주면 사람이 고칠 수가 없다.
+           어느 걸음까지 갔는지 · 어느 주소에서 · 무슨 까닭으로 막혔는지를 함께 준다.
+           ★ 2026-09-04 에 실제로 이것이 없어 헤맸다. */
+      console.warn("[노무사회]", e && e.message, (e && e.코드) || "");
+      res.status(500).json({
+        ok: false,
+        error: String((e && e.message) || e),
+        막힌주소: (e && e.주소) || "",
+        까닭코드: (e && e.코드) || "",
+        로그인걸음: (e && e.걸음) || null
+      });
     }
   });
 
