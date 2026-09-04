@@ -236,6 +236,8 @@ plugin update superpowers
 - 계약 입력의 업체 연결은 `PuOntology.validateCompanyLink`로 검증한다. 이름 일치만으로 ID를 채우지 않으며, `companyLinkStatus`는 `TERMS.companyLinkStates`를 따른다. 연결 보류 계약은 업체 마스터에 동기화하지 않는다. 입력·저장 경로별 적용 범위는 6단계 문서에 기록한다.
 - 계약·사건의 신규 담당자와 원본 업무 참조는 `PuOntology.validateWorkReferences`로 실제 SID·ID를 검증한다. 변경하지 않은 과거 참조는 경고로 보존하며 이름·번호로 자동 치환하지 않는다. 번호 단독 참조를 확정 관계 색인에 넣지 않는다.
 - 일괄 입력은 `PuOntology.validateWorkBatch`로 전 행을 먼저 검사하고, 실패 시 미리보기와 원본 파일을 유지한다. 새 입력으로 기존·삭제 ID를 덮지 않는다. 계약 이관은 실제 원본 ID를 승계하고, 실패 정리에서 기존 업체(`linked`)를 삭제하지 않는다. 부분 이관이나 번호 단독 연결을 계약 전체의 완료 근거로 삼지 않는다.
+- 은행·카드 문자 자동 수집은 `originSystem`·`originId`를 보존하고 `PuOntology.validateHanaSourceBatch`로 배치 전부를 검사한다. 한 행이라도 잘못되면 전부 보류하며, 인증된 REST 조회로 실제 서버 저장본을 확인하기 전에는 원본 문자에 수신 완료(`ack`)를 보내지 않는다.
+- 거래 금액은 연결 후보의 근거일 뿐 업무 영구 ID가 아니다. 은행 문자·거래 파일·다른 재무 가져오기에서 금액 하나만 같다는 이유로 사건·계약 ID를 자동 대입하지 않는다. 카드 취소 여부와 수집 출처도 중복 판별·저장 과정에서 버리지 않는다.
 
 상세 설계와 단계별 범위는 `docs/푸른통합온톨로지-1단계.md`를 따른다.
 

@@ -11,6 +11,7 @@
 
   var VERSION = 3;
   var TERMS = {
+    provenanceFields:{originSystem:'수집 원본 시스템',originId:'수집 원본 영구 ID'},
     companyLinkStates:{linked:'업체 ID 확인',pending:'업체 연결 보류',not_required:'근로자 의뢰 — 업체 연결 없음'},
     entityTypes: {
       Organization:'업체·기관', Person:'사람', Employment:'재직관계', Contract:'계약',
@@ -679,6 +680,26 @@
     return {ok:errors.length===0,errors:errors,warnings:warnings,readOnly:true};
   }
 
+  /* 문자 원본은 업무 관계가 아니다. 유효한 원본만 한 묶음으로 수용하며,
+     불량 행을 버린 뒤 전체 수신을 완료 처리하지 않는다. */
+  function validateHanaSourceBatch(items){
+    var errors=[],seen=Object.create(null);
+    if(!Array.isArray(items))return {ok:false,errors:[{row:0,message:'문자 목록을 확인할 수 없습니다.'}],readOnly:true};
+    items.forEach(function(x,i){
+      function fail(message){errors.push({row:i+1,message:message});}
+      if(!x||typeof x!=='object'){fail('문자 행이 올바르지 않습니다.');return;}
+      if(!/^[a-f0-9]{64}$/.test(String(x.id||'')))fail('원본 문자 ID가 올바르지 않습니다.');
+      if(seen[x.id])fail('수신 목록에 원본 문자 ID가 중복되어 있습니다.');seen[x.id]=true;
+      var m=String(x.date||'').match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/);
+      if(!m||Number(m[4])>23||Number(m[5])>59||new Date(Date.UTC(+m[1],+m[2]-1,+m[3])).toISOString().slice(0,10)!==String(x.date).slice(0,10))fail('거래 일시가 올바르지 않습니다.');
+      if(typeof x.amount!=='number'||!Number.isSafeInteger(x.amount)||x.amount<=0)fail('거래 금액이 올바르지 않습니다.');
+      if(x.type!=='income'&&x.type!=='expense')fail('입출금 종류를 확인하세요.');
+      if(x.src!=='bank'&&x.src!=='card')fail('은행·카드 출처를 확인하세요.');
+      if(x.cancel!=null&&typeof x.cancel!=='boolean')fail('취소 표시를 확인하세요.');
+    });
+    return {ok:errors.length===0,errors:errors,readOnly:true};
+  }
+
   /* 5단계 검증센터. 진단 결과를 사람이 한 건씩 검토할 작업목록으로 바꾼다.
      검토 상태는 화면 메모일 뿐이며 원본이나 서버에 기록하지 않는다. */
   var VALIDATION_CATEGORIES={
@@ -899,6 +920,7 @@
     audit:audit, auditIntegrated:auditIntegrated, getReadPlan:getReadPlan, searchEntities:searchEntities, entityConnections:entityConnections,
     organization360:organization360, validateCompanyLink:validateCompanyLink, companyLinkCandidates:companyLinkCandidates,
     validateWorkReferences:validateWorkReferences, workReferenceCandidates:workReferenceCandidates, validateWorkBatch:validateWorkBatch,
+    validateHanaSourceBatch:validateHanaSourceBatch,
     VALIDATION_CATEGORIES:VALIDATION_CATEGORIES, buildValidationQueue:buildValidationQueue,
     filterValidationQueue:filterValidationQueue, buildSnapshot:buildSnapshot, validateSnapshot:validateSnapshot, auditPrograms:auditPrograms,
     canonicalId:canon, sourceCanonicalId:sourceCanon, normalizeCompanyName:normName, normalizeBusinessNumber:normBiz };

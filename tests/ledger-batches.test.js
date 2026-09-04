@@ -90,7 +90,7 @@ t('★ 건별 저장 목록(DIFF_KEYS)에 들어 있다', /'employment_contracts
 t('★ 실시간 수신도 묶음별이다 (통째 17→1 급감 모달 경로로 가지 않는다)',
   /'leave_grants', 'leave_of_absence', 'closed_archive', 'ledger_batches'/.test(src), true);
 t('★ 올릴 때 묶음 하나만 고쳐 쓴다 (통째로 덮어쓰지 않는다)',
-  /dbUpsert\(LEDGER_BATCH_KEY, _bat\);/.test(src), true);
+  /if\(!dbUpsert\(LEDGER_BATCH_KEY, _bat\)\)throw new Error/.test(src), true);
 t('지울 때도 그 묶음만', /dbRemoveMany\(LEDGER_BATCH_KEY, \[b\.id\]\)/.test(src), true);
 t('★ 용량 초과를 이유로 기존 묶음을 자동삭제하지 않는다',
   /dbRemoveMany\(LEDGER_BATCH_KEY, _tr\.dropped/.test(src), false);
