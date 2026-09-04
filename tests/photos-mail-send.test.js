@@ -194,3 +194,71 @@ test('★★ 실패하면 «되돌린다» — 눌러도 안 되는 단추로 �
     '★★ 실패한 뒤 단추가 잠긴 채 남으면 다시 보낼 길이 없습니다');
   assert.match(fn, /alert\('보내지 못했습니다/, '★★ 조용히 실패하면 보낸 줄 압니다');
 });
+
+/* ══════ ⑤ 되돌릴 수 없는 발송은 «묻는다» (검토 2026-09-03) ══════
+   ⚠ 확인이 «없었다» — 받는 사람을 고르고 제목만 있으면 한 번 눌러 나갔다.
+     나간 메일은 회수하지 못한다. 통장 사본이 잘못된 사람에게 가면 되돌릴 길이 없다.
+   ⚠ 「민감」 딱지는 화면에만 떴다 — 세어 놓고 보내기 앞에 다시 안 보여 주면
+     그 딱지는 장식일 뿐이다.
+   ★ 그래서 doMailSend 를 «돌려서» 본다: 묻는가 · 무엇을 묻는가 ·
+     아니라고 하면 «정말로» 안 보내는가. */
+
+function 발송상자(옵션) {
+  const o = 옵션 || {};
+  const 물음 = [], 보낸것 = [];
+  const c = {
+    String, Object, Array, Number, Boolean, JSON, Date, Math, Promise,
+    console: { warn() {}, log() {} },
+    /* 화면 부품은 «가짜»로 받쳐 준다 — 우리가 보는 것은 묻는지·보내는지다 */
+    $: (id) => ({ mailSubj: { value: o.subject == null ? '서류 보냅니다' : o.subject },
+                  mailBody: { value: '본문' },
+                  mailGo: { disabled: false }, mailStat: { textContent: '' } }[id] || null),
+    lockSendBtn() {}, closeMailSend() {}, toast() {}, alert() {},
+    markMailed() {}, renderMailSend() {},
+    mailPutOne: async (a) => ({ path: 'x/' + a.id }),
+    PuDocFile: { sendMail: async (payload) => { 보낸것.push(payload); } },
+    confirm: (msg) => { 물음.push(msg); return o.승낙 !== false; },
+    _mailSend: { ids: ['a', 'b', 'c'], skipped: o.skipped || 0, sending: false,
+                 to: 'hong@example.kr', name: '홍길동', cardId: 'c1' },
+    /* 첨부 목록도 가짜 — 민감 두 장을 섞는다 */
+    mailAttachList: () => [
+      { id: 'a', title: '통장 사본', sensitive: true },
+      { id: 'b', title: '신분증', sensitive: true },
+      { id: 'c', title: '근로계약서', sensitive: false }
+    ]
+  };
+  vm.createContext(c);
+  vm.runInContext(cutFn(app, 'function mailSensitiveCount(') + '\n'
+    + cutFn(app, 'async function doMailSend('), c);
+  return { c, 물음, 보낸것 };
+}
+
+test('★★★ 보내기 전에 «묻는다» — 되돌릴 수 없는 발송이다', async () => {
+  const { c, 물음, 보낸것 } = 발송상자({ skipped: 2 });
+  await c.doMailSend();
+  assert.equal(물음.length, 1, '★★★ 묻지 않고 보냈다 — 한 번 눌러 메일이 나간다');
+  const q = 물음[0];
+  assert.ok(q.indexOf('hong@example.kr') >= 0, '★★ 받는 사람을 안 보여 준다');
+  assert.ok(q.indexOf('홍길동') >= 0, '★ 받는 사람 이름을 안 보여 준다');
+  assert.ok(/3장/.test(q), '★★ 몇 장을 보내는지 안 보여 준다: ' + q);
+  assert.ok(/민감/.test(q) && /2장/.test(q),
+    '★★★ 민감 서류가 몇 장인지 안 보여 준다 — 딱지를 세어 놓고 안 쓰면 장식이다: ' + q);
+  assert.ok(/되돌릴 수 없/.test(q), '★ 되돌릴 수 없다는 것을 안 말한다');
+  assert.ok(/2장은 빠집니다|빠집니다/.test(q), '★ 빠지는 장수를 안 알린다');
+  assert.equal(보낸것.length, 1, '★ 승낙했는데 안 보냈다');
+});
+
+test('★★★ 「아니오」면 «정말로» 안 보낸다', async () => {
+  const { c, 물음, 보낸것 } = 발송상자({ 승낙: false });
+  await c.doMailSend();
+  assert.equal(물음.length, 1, '★ 묻지 않았다');
+  assert.equal(보낸것.length, 0,
+    '★★★ 「아니오」를 눌렀는데 메일이 나갔다 — 확인이 장식이다');
+});
+
+test('★ 제목이 비면 «묻기 전에» 막는다 — 헛되게 물어보지 않는다', async () => {
+  const { c, 물음, 보낸것 } = 발송상자({ subject: '   ' });
+  await c.doMailSend();
+  assert.equal(물음.length, 0, '★ 제목도 없는데 사람에게 물었다');
+  assert.equal(보낸것.length, 0, '★★ 제목 없이 보냈다');
+});
