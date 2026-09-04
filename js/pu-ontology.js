@@ -266,7 +266,15 @@
     if(type==='Person')return clean(r.name||r.userName||r.sid||id);
     return clean(r.title||r.name||r.companyName||r.company||r.no||r.filename||r.월||id);
   }
-  function normName(v){ return clean(v).toLowerCase().replace(/[\s()（）·.,_\-주식회사㈜]/g,''); }
+  /* ★ 회사 이름 다듬개는 «하나»다 (2026-09-04).
+     예전에는 여기가 /[\s()（）·.,_\-주식회사㈜]/ 였다 — 대괄호는 낱말이 아니라
+     «글자 하나씩»을 지운다. 그래서 「한식당」→「한당」, 「대주건설」→「대건설」,
+     「사조산업」→「조산업」이 되어, 서로 다른 회사가 «같은 열쇠»를 갖게 됐다.
+     이 함수가 만드는 것이 companies.byName 이라, 이름으로 업체를 찾는 자리
+     (resolve 414줄)가 조용히 남의 회사를 가리킬 수 있었다.
+     ⚠ 아래 linkName(6-1단계 계약 검증)은 처음부터 갈래(|)로 옳게 적혀 있었다 —
+       즉 «같은 일을 하는 다듬개 둘이 서로 다른 답»을 내고 있었다. 이제 하나다. */
+  function normName(v){ return clean(v).toLowerCase().replace(/주식회사|유한회사|㈜|[\s()（）·.,_\-]/g,''); }
   function normBiz(v){ return clean(v).replace(/\D/g,''); }
   /* encodeURIComponent가 점(.)은 남기므로 Firebase 열쇠 금지문자까지 한 번 더 막는다. */
   function canon(type, id){ return type + ':' + encodeURIComponent(clean(id)).replace(/\./g,'%2E'); }
@@ -530,7 +538,8 @@
 
   /* 6-1단계 계약 입력 검증. 후보 검색과 확정 ID 검증을 분리한다.
      이 함수는 저장하지 않는다. 이름 일치만으로 companyId를 만들지 않는다. */
-  function linkName(v){return clean(v).toLowerCase().replace(/주식회사|유한회사|㈜|[\s()（）·.,_\-]/g,'');}
+  /* 위 normName 과 «같은 일»이다 — 두 벌로 두면 한쪽만 고쳐져 답이 갈린다(실제로 그랬다) */
+  function linkName(v){return normName(v);}
   function validateCompanyLink(record,companies){
     record=record||{};
     var co=record.company&&typeof record.company==='object'?record.company:{};
