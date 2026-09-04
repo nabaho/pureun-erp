@@ -180,9 +180,9 @@ test('골라 둔 짝·카테고리를 새 열쇠로 살린다', () => {
   assert.ok(FL.indexOf('setExpCat({});                            // 이전 파일의 카테고리 선택 초기화') < 0);
 });
 
-test('자동 짝짓기는 이번에 새로 들어온 행에만 한다', () => {
-  // 쌓인 옛 행까지 매번 다시 자동으로 짝지으면, 사람이 고쳐 둔 것을 덮어쓴다
-  assert.match(FL, /if\(!_newKeys\[row\._k\]\) return;/);
+test('파일을 올릴 때 금액만으로 업무 ID를 자동 선택하지 않는다', () => {
+  // 금액이 같은 다른 업체가 실제로 있으므로 기존에 사람이 고른 연결만 보존한다.
+  assert.doesNotMatch(FL, /pending\.filter\(function\(p\)\{ return p\.amount === row\.amount; \}\)/);
 });
 
 test('무시한 중복 건수를 사람에게 말해 준다', () => {

@@ -31,7 +31,8 @@ test('총괄관리자만 미처리 입금 알림을 읽고 완료한다', () => 
 
 test('ERP는 입금 사업장과 사무관리 확인 상태를 연결한다', () => {
   assert.match(erp, /hanaSmsCall\('review',\{items:reviewItems\}\)/);
-  assert.match(erp, /officeStatus:ms\.length===1\?'matched':\(ms\.length\?'ambiguous':'missing'\)/);
+  assert.match(erp, /officeStatus:ms\.length\?'ambiguous':'missing'/,
+    '6-3B: 금액 일치만으로 업무 ID를 확정하지 않는다');
   assert.match(erp, /입금 사업장 확인/);
   assert.match(erp, /사무관리에서 내용을 입력 또는 확인해야 합니다/);
   assert.match(erp, /navigateTo\('biz\/contract'\)/);
