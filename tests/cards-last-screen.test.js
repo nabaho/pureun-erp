@@ -50,6 +50,9 @@ function boot(who) {
     openMailBox(id) { opened.push('box:' + (id || '')); },
     openSentBox() { opened.push('sent'); },
     openSchedBox() { opened.push('sched'); },
+    /* 2026-09-05 — 업무관리에서 「이 사업장과 오간 것」으로 건너오는 길
+       (?view=mail&mail=co&co=…). 저장된 마지막 화면(s.mail==='co')도 여기로 온다. */
+    openCoThread(id) { opened.push('co:' + (id || '')); },
     switchTab(t) { opened.push('tab:' + t); }
   };
   vm.createContext(ctx);
@@ -59,7 +62,7 @@ function boot(who) {
      그것을 가르는 mailToFromUrl 이 restoreLastScreen 안에서 돌므로 함께 실어 준다. */
   ctx.URLSearchParams = URLSearchParams;
   ctx.String = String;
-  ['lastScreenKey', 'mailToFromUrl', 'urlWantsMail', 'composeTouched', 'saveLastScreen', 'restoreLastScreen']
+  ['lastScreenKey', 'mailToFromUrl', 'mailCoFromUrl', 'urlWantsMail', 'composeTouched', 'saveLastScreen', 'restoreLastScreen']
     .forEach(n => vm.runInContext(fn(n), ctx));
   return ctx;
 }
