@@ -110,7 +110,11 @@ test('★ 정하는 곳은 푸른이알피 «한 곳» — 컨설팅일정은 �
   const touch = code.match(/.*(ERP_COLOR_NODE|staff_colors).*/g) || [];
   const writes = touch.filter(function (l) { return /\.(set|update|push|remove)\s*\(/.test(l); });
   assert.deepEqual(writes, [], '★ 컨설팅일정이 색표에 씁니다: ' + writes.join(' | '));
-  assert.match(code, /ERP_COLOR_NODE\s*\+\s*'\/v'\)\.on\(/, '★ 색표를 안 읽습니다');
+  /* ⚠ «어떻게» 읽는지를 박지 않는다 — .on( 을 박아 뒀더니, 구독을 걷을 수 있게
+     _fbOn() 으로 감싸는 것만으로 이 검사가 깨졌다(2026-08-30). 지켜야 할 것은
+     「색표를 읽는가」지 「무슨 함수로 읽는가」가 아니다. */
+  assert.match(code, /ERP_COLOR_NODE\s*\+\s*'\/v'/, '★ 색표를 안 읽습니다');
+  assert.match(code, /_erpColors\s*=/, '★ 읽어서 어디에도 안 담습니다');
 });
 
 test('★ 색 고르개는 «보기만» — 두 곳에서 정할 수 있으면 언젠가 어긋난다', () => {

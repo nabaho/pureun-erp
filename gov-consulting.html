@@ -2015,6 +2015,41 @@ const FB_CONFIG={
 // localStorage 키 → Firebase 노드 매핑 (scal_ 접두어)
 const FB_NODES={p_staff:'scal_staff',p_types:'scal_types',p_cos:'scal_cos',p_scheds:'scal_scheds',p_env:'scal_env',p_fieldState:'scal_fieldState',p_conflictMatrix:'scal_conflictMatrix',p_erpTypeMap:'scal_erpTypeMap',p_erpConsHold:'scal_erpConsHold'};
 let FB_READY=false, _fbDB=null, _fbSuppress=false;
+/* ⚠ 지금 «누구로» 붙어 있나. 익명 → 진짜 로그인처럼 사람이 바뀌면 구독을 다시 건다.
+   uid 를 안 들고 있으면 「이미 붙었다」만 보고 지나쳐, 로그인해도 자료가 안 온다. */
+let _fbAuthUid='';
+/* 걸어 둔 구독 — 다시 걸기 전에 반드시 걷는다(안 걷으면 같은 자료를 두 번 받는다) */
+let _fbSubs=[];
+/* ★ 구독은 «끊길 수 있다». 권한에 막히면 파이어베이스가 조용히 끊어 버리는데,
+   on(ref, cb) 처럼 끊김 콜백을 안 주면 아무도 그것을 모른다 — 화면은 「연결됨」인데
+   자료만 안 오는 상태가 된다(2026-08-30 대표가 겪은 고장의 절반이 이것이다). */
+function _fbOn(query, ko, cb){
+  if(!query||!query.on)return;
+  try{
+    query.on('value', cb, err=>{
+      console.warn('[구독 끊김]', ko, err);
+      _fbSubs = _fbSubs.filter(s=>s.q!==query);
+      if(_isDeniedErr(err)){
+        updateFbStatus('🔒');
+        setSaveState('locked', ko+' 읽기 권한 없음',
+          '🔒 '+ko+'을(를) 읽을 권한이 없습니다 — 로그아웃했다 다시 로그인해 보시고, 그래도 같으면 총괄관리자에게 알려 주세요.');
+      }else{
+        updateFbStatus('🔴');
+        setSaveState('failed', ko+' 연결 끊김', '⚠ '+ko+' 실시간 연결이 끊겼습니다 — 새로고침해 주세요.');
+      }
+    });
+    _fbSubs.push({q:query, ko:ko});
+  }catch(e){ console.warn('구독 실패', ko, e); }
+}
+/* 걸어 둔 것을 «다» 걷는다 — 사람이 바뀌거나 로그아웃할 때 */
+function fbUnsubscribeAll(){
+  _fbSubs.forEach(s=>{ try{ s.q.off('value'); }catch(e){} });
+  _fbSubs=[];
+}
+/* 규칙이 들여보내 주는 사람인가 —
+     auth != null && (sign_in_provider === 'password' || passkey === true)
+   익명은 scal_* 를 «하나도» 못 읽는다. 익명을 연결로 치면 화면만 🟢 이고 자료는 안 온다. */
+function fbUsable(u){ return !!(u && u.isAnonymous!==true); }
 const _heldSnap={};   // 쓰는 중에 구독이 받아 둔 값 — 다시 안 받으려고 붙든다
 let _savePending=0, _saveFailed=false, _releaseLockAfterSave=false;
 const _recordWriteQueue={},_recordWritePending={};
@@ -2186,11 +2221,28 @@ function fbInit(){
     //  → signInAnonymously 무조건 실행 시 포털 이메일 세션이 익명으로 덮어써지는 문제 방지
     firebase.auth().onAuthStateChanged(u=>{
       if(!u){
+        /* 아무도 없다 — 걸어 둔 것을 걷고 «연결됨»을 거둔다.
+           안 거두면 로그아웃한 뒤에도 저장이 되는 줄 알고 계속 누른다. */
+        fbUnsubscribeAll(); FB_READY=false; _fbAuthUid='';
         firebase.auth().signInAnonymously().catch(e=>{console.warn('FB 인증 실패',e);updateFbStatus('🔴');});
         return;
       }
-      if(!FB_READY){
-        FB_READY=true;
+      /* ★ 익명은 «연결됨»이 아니다 (대표 보고 2026-08-30).
+         예전에는 익명도 FB_READY 로 쳐서 🟢 「연결이 정상입니다」를 띄우고 구독을
+         걸었다 — 규칙에 막혀 조용히 끊겼고, 뒤이어 진짜 로그인해도 FB_READY 가
+         이미 true 라 «다시 걸지 않아» 새로고침 전까지 자료가 영영 안 왔다.
+         ⚠ 「가끔」이던 까닭: 자동로그인이나 포털을 거쳐 오면 처음부터 진짜
+           사용자라 익명 단계가 없다. 새 PC 에서 «처음 로그인»할 때만 걸렸다. */
+      if(!fbUsable(u)){
+        fbUnsubscribeAll(); FB_READY=false; _fbAuthUid='';
+        updateFbStatus('🔑');
+        setSaveState('local','로그인이 필요합니다','로그인해야 클라우드 자료를 읽고 쓸 수 있습니다.');
+        return;
+      }
+      /* 사람이 «바뀌었으면» 다시 건다 — 익명 → 진짜 로그인이 바로 그 경우다 */
+      if(!FB_READY || _fbAuthUid!==u.uid){
+        fbUnsubscribeAll();
+        FB_READY=true; _fbAuthUid=u.uid;
         fbSyncDown();   // 최초 1회 전체 수신
         fbSubscribe();  // 실시간 구독
         subscribeRoundLog(); // 회차 변경 이력 구독
@@ -2238,6 +2290,7 @@ function _fetchRoster(){
 
 // 시작 시 Firebase → localStorage (서버 우선)
 async function fbSyncDown(){
+  const failed=[];
   for(const[lsKey,node]of Object.entries(FB_NODES)){
     try{
       const snap=await _fbDB.ref(node).get();
@@ -2252,7 +2305,23 @@ async function fbSyncDown(){
         try{ lsSet(lsKey,JSON.stringify(inc)); }
         finally{ _fbSuppress=false; }
       }
-    }catch(e){}
+    }catch(e){
+      /* ★ 예전에는 여기가 «빈 catch» 였다. 권한에 막힌 것과 자료가 없는 것이
+         화면에서 똑같아 보여, 로그인이 안 먹었다는 사실을 아무도 몰랐다. */
+      failed.push({node:node, e:e});
+      console.warn('[내려받기 실패]', node, e);
+    }
+  }
+  if(failed.length){
+    const ko = failed.map(f=>_NODE_KO[f.node]||f.node).join('·');
+    if(failed.some(f=>_isDeniedErr(f.e))){
+      updateFbStatus('🔒');
+      setSaveState('locked', ko+' 읽기 권한 없음',
+        '🔒 '+ko+'을(를) 읽을 권한이 없습니다 — 로그아웃했다 다시 로그인해 보시고, 그래도 같으면 총괄관리자에게 알려 주세요.');
+    }else{
+      updateFbStatus('🔴');
+      setSaveState('failed', ko+' 내려받기 실패', '⚠ '+ko+'을(를) 못 읽었습니다 — 인터넷 연결을 확인하고 새로고침해 주세요.');
+    }
   }
   if(typeof renderDash==='function'){renderSummaryBar();renderDash();renderCal();renderNotifBadge();}
 }
@@ -2260,7 +2329,7 @@ async function fbSyncDown(){
 // 실시간 구독: 다른 기기 변경 즉시 반영
 function fbSubscribe(){
   for(const[lsKey,node]of Object.entries(FB_NODES)){
-    _fbDB.ref(node).on('value',snap=>{
+    _fbOn(_fbDB.ref(node), _NODE_KO[node]||node, snap=>{
       if(!snap.exists())return;
       /* ⚠ 내가 쓰는 중이면 «지금은» 반영하지 않는다. 다만 받은 값은 버리지 않고
          적어 둔다 — 자료는 이미 내려받았다. 예전에는 버리고 나서 쓰기가 끝난 뒤
@@ -2640,7 +2709,7 @@ function photoLogAll(max){
 function subscribePhotoLog(){
   if(!FB_READY||!_fbDB)return;
   try{
-    _fbDB.ref(PHOTO_LOG_NODE).limitToLast(PHOTO_LOG_KEEP).on('value',snap=>{
+    _fbOn(_fbDB.ref(PHOTO_LOG_NODE).limitToLast(PHOTO_LOG_KEEP), '사진 변경 이력', snap=>{
       const v=snap.val()||{};
       _photoLog=Object.values(v).filter(Boolean);
       if(q('#mbPhotoLog')?.classList.contains('open'))renderPhotoLog();
@@ -5690,7 +5759,7 @@ let _erpColors={};
 function subscribeErpColors(){
   if(!FB_READY||!_fbDB)return;
   try{
-    _fbDB.ref(ERP_COLOR_NODE+'/v').on('value',snap=>{
+    _fbOn(_fbDB.ref(ERP_COLOR_NODE+'/v'), '직원 색표', snap=>{
       const v=snap.val();
       _erpColors=(v&&typeof v==='object'&&!Array.isArray(v))?v:{};
       try{ renderSummaryBar();renderDash();renderCal(); }catch(e){}
@@ -7110,7 +7179,7 @@ let _roundLog=[];
 function getRoundLog(){try{return JSON.parse(localStorage.getItem('p_roundlog')||'[]');}catch{return[];}}
 function setRoundLog(v){lsSet('p_roundlog',JSON.stringify(v));}
 function subscribeRoundLog(){
-  _fbDB.ref('scal_roundlog').on('value',snap=>{
+  _fbOn(_fbDB.ref('scal_roundlog'), '회차 변경 이력', snap=>{
     const val=snap.val()||{};
     _roundLog=Object.entries(val).map(([k,e])=>({...e,_key:k})).sort((a,b)=>a.ts<b.ts?1:-1);
     if(_chgTab==='round'&&q('#mbPhotoLog')?.classList.contains('open'))renderRoundLog();
