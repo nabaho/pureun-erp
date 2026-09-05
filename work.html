@@ -1396,14 +1396,37 @@ function _normAll(v){
     return {sid:String(u.sid||''),name:String(u.name),title:String(u.title||''),
             status:String(u.status||''),ord:(typeof u.sortOrder==='number')?u.sortOrder:9999};});
 }
+/* 명부를 «정말로» 읽어냈는가.
+   ⚠ 이것이 거짓이면 아무도 「퇴직」이라고 부르지 않는다 — 모르는 것을 단정하면 안 된다.
+     2026-09-05 대표 보고: 사무장으로 들어가니 재직자 여섯이 «전원 (퇴직)» 으로 떴다.
+     까닭은 data/user_accounts 가 «재무 권한자만» 읽는 자리라서다(규칙 finOnly).
+     재무 권한이 없는 사람은 명부가 통째로 비었고, 목록에 남은 이름은 전부
+     「명부에 없는 사람 = 퇴직」으로 찍혔다. */
+var _staffKnown=false;
 function loadStaff(){
   if(_staffCache) return Promise.resolve(_staffCache);
   try{ var raw=localStorage.getItem('pureun_v6_user_accounts');
     if(raw){ var pv=JSON.parse(raw); var a=_normStaff(pv);
-      if(a.length){ _staffCache=a; _allStaffCache=_normAll(pv); return Promise.resolve(a); } } }catch(e){}
-  return fbDb.ref('data/user_accounts/v').once('value').then(function(s){
-      _staffCache=_normStaff(s.val()); _allStaffCache=_normAll(s.val()); return _staffCache; })
-    .catch(function(){ _staffCache=[]; _allStaffCache=[]; return _staffCache; });
+      if(a.length){ _staffCache=a; _allStaffCache=_normAll(pv); _staffKnown=true; return Promise.resolve(a); } } }catch(e){}
+  function _take(v){
+    var a=_normStaff(v);
+    if(!a.length) return false;
+    _staffCache=a; _allStaffCache=_normAll(v); _staffKnown=true; return true;
+  }
+  /* 재무 권한이 없으면 user_accounts 에서 막힌다 → «공개 명부»(user_dir)로 되짚는다.
+     user_dir 은 로그인·권한용 칸만 담은 슬림 명부라 전 직원이 읽을 수 있다
+     (푸른이알피도 로그인할 때 이 길을 쓴다). */
+  return fbDb.ref('data/user_accounts/v').once('value')
+    .then(function(s){ return _take(s.val()); }, function(){ return false; })
+    .then(function(ok){
+      if(ok) return _staffCache;
+      return fbDb.ref('data/user_dir/v').once('value')
+        .then(function(s){ _take(s.val()); }, function(){})
+        .then(function(){
+          if(!_staffCache){ _staffCache=[]; _allStaffCache=[]; }   // 못 읽었다 — _staffKnown 은 거짓 그대로
+          return _staffCache;
+        });
+    });
 }
 function allStaff(){ return _allStaffCache||[]; }
 function staffByName(n){
@@ -1545,9 +1568,12 @@ function viewingSelf(){ return (S.vsid||'')===(S.me&&S.me.sid||'')&&(S.vname||''
 function ownerOptions(){
   var seen={}, out=[];
   (_staffCache||[]).forEach(function(u){ if(!seen[u.name]){ seen[u.name]=1; out.push({sid:u.sid,name:u.name,active:1}); } });
+  /* ⚠ 명부에 없다고 곧바로 「퇴직」이라 부르지 않는다.
+     명부를 못 읽었을 수도 있다(재무 권한이 없으면 그렇다) — 그때는 아무 말도 안 한다.
+     active: 1=재직 · 0=퇴직 · null=모름 */
   openItems().forEach(function(it){
     var m=it.mgr_main||{}; if(!m.name||seen[m.name]) return;
-    seen[m.name]=1; out.push({sid:m.sid||'',name:m.name,active:0});
+    seen[m.name]=1; out.push({sid:m.sid||'',name:m.name,active:_staffKnown?0:null});
   });
   return out;
 }
@@ -3742,7 +3768,8 @@ function renderMy(){
     +'title="담당자를 골라 그 사람의 업무를 봅니다" style="padding:4px 8px;border:1px solid var(--line);border-radius:7px;font-size:12px;color:var(--sub)">'
     +opts.map(function(u){
         return '<option value="'+esc(u.sid)+'" data-n="'+esc(u.name)+'"'+(u.name===S.vname?' selected':'')+'>'
-          +esc(u.name)+(u.active?'':' (퇴직)')+'</option>';
+          /* ⚠ «퇴직인 줄 아는» 때에만 적는다. 모르면(active===null) 아무 말도 안 한다 */
+          +esc(u.name)+(u.active===0?' (퇴직)':'')+'</option>';
       }).join('')
     +'</select>'
     +(self?'':'<span class="chipbtn" onclick="setView(S.me.sid,S.me.name)" title="내 업무로 돌아가기">↩ 내 업무</span>'
@@ -6234,7 +6261,17 @@ function renderHo(){
       }
       h+='</div>';
     });
-    // ⚠ 퇴직자·명단 외 담당자의 잔여 업무 — 부재 등록 없이도 여기서 인계 처리
+    /* ⚠ 퇴직자·명단 외 담당자의 잔여 업무 — 부재 등록 없이도 여기서 인계 처리
+       ⚠⚠ 명부를 «못 읽었으면» 이 자리를 아예 그리지 않는다.
+         명부가 비면 모든 담당자가 「명단에 없는 사람」이 되어, 재직자 전원을
+         빨간 상자에 넣고 후임을 지정하라고 부추긴다(2026-09-05 사무장 화면에서
+         재직자 여섯이 전원 퇴직으로 뜬 것과 같은 뿌리다).
+         모르는 것을 단정하는 대신, 왜 못 보는지 한 줄로 말한다. */
+    if(!_staffKnown){
+      h+='<div class="hocard"><div class="hct"><b>재직자 명단을 읽지 못했습니다</b>'
+        +'<span class="muted" style="font-size:11.5px">그래서 «명단에 없는 담당자» 를 가려낼 수 없어 이 자리를 비워 둡니다 — '
+        +'고장이 아닙니다. 명부는 재무 권한자만 볼 수 있는 자리라서, 권한이 없으면 이렇게 됩니다.</span></div></div>';
+    } else {
     var actNames={}; st.forEach(function(u){ actNames[u.name]=1; });
     var orphan={};
     openItems().forEach(function(it){
@@ -6315,7 +6352,9 @@ function renderHo(){
        위 목록은 주담당만 보므로 이것을 못 잡는다. 인수인계 화면에는 안 뜨는데
        팀 전체의 담당 목록에는 이름이 계속 남아 있어, 다 정리한 줄 알았는데
        퇴사자 이름이 사라지지 않는다. */
-    var osub=orphanSubs(st);
+    }
+    // ⚠ 여기도 명부를 읽어냈을 때만 — 못 읽었으면 전원이 「명단에 없는 사람」이 된다
+    var osub=_staffKnown?orphanSubs(st):[];
     if(osub.length){
       h+='<div class="hocard" style="border-color:#fbbf24"><div class="hct"><b style="color:var(--warn)">⚠ 명단에 없는 사람이 부담당으로 남은 건</b>'
         +'<span class="muted" style="font-size:11.5px">주담당은 다른 사람입니다. 넘길 것은 없고 이름만 떼면 됩니다.</span></div>';
