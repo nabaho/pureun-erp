@@ -73037,6 +73037,72 @@ function postMail(url, payload){
   });
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   임금명세서 «교부 기록» — 보냈다는 것을 증명할 수 있어야 한다 (대표 지시 2026-09-05)
+   ══════════════════════════════════════════════════════════════════════════
+   ★★ 왜 만들었나 — 지금까지 발송 기록이 «한 줄도» 안 남았다.
+     화면에 초록 토스트가 잠깐 떴다 사라지면 그것으로 끝이었다.
+     임금명세서 교부는 근로기준법 §48② «의무»다. 나중에 근로자가
+     「나는 못 받았다」고 하면 우리가 내놓을 것이 아무것도 없었다.
+
+   ★ 서버는 이미 Resend 발송번호(id)와 보낸 사람을 돌려주고 있었다 —
+     화면이 그것을 «버리고» 있었을 뿐이다. 이제 받아서 적는다.
+
+   ⚠ 금액은 «안 적는다». 여기 있어야 하는 것은 「언제·누구에게·어느 주소로
+     보냈나」이지 얼마를 받았나가 아니다. 금액은 급여 자료에 이미 있고,
+     이 기록은 직원들이 보는 자리라 좁게 담는 것이 맞다.
+   ⚠ 실패도 적는다. 성공만 적으면 「기록이 없다」가 «안 보냈다»인지
+     «보냈는데 안 적혔다»인지 알 수 없다 — 그러면 기록이 아니다. */
+var PAYSLIP_LOG_KEY = 'payslip_sent_log';
+
+function 명세서보냄기록(o){
+  try{
+    var 때 = new Date();
+    var rec = {
+      id: 'ps-' + (o.ym||'') + '-' + (o.sid||'') + '-' + 때.getTime(),
+      entityType: 'payslipDelivery',
+      sid: String(o.sid||''), name: String(o.name||''),
+      ym: String(o.ym||''), to: String(o.to||''),
+      ok: o.ok === true,
+      mailId: String(o.mailId||''),      /* Resend 발송번호 — 이것이 증거다 */
+      from: String(o.from||''), replyTo: String(o.replyTo||''),
+      attached: o.attached === true,     /* PDF 를 붙였나 */
+      by: String(o.by||''),              /* 누가 눌렀나 */
+      bySid: (window.CURRENT_USER && CURRENT_USER.sid) || '',
+      error: o.ok === true ? '' : String(o.error||'').slice(0,300),
+      createdAt: 때.toISOString(), updatedAt: 때.toISOString()
+    };
+    dbUpsert(PAYSLIP_LOG_KEY, rec);
+    return rec;
+  }catch(e){ try{ window._erpErrLog && window._erpErrLog(e); }catch(_){} return null; }
+}
+
+/* 그 사람·그 달이 이미 나갔나 — 두 번 보내기 전에 물어보려고 쓴다 */
+function 명세서보냄찾기(sid, ym){
+  var arr = dbGet(PAYSLIP_LOG_KEY, []);
+  if(!Array.isArray(arr)) return null;
+  for(var i=arr.length-1; i>=0; i--){
+    var r = arr[i];
+    if(r && r.sid === sid && r.ym === ym && r.ok === true) return r;
+  }
+  return null;
+}
+
+/* 로그인한 «나»의 메일 주소 — 시험 발송이 갈 곳이다.
+   ⚠ 예전에는 코드에 지메일 하나가 박혀 있어, 누가 눌러도 그리로 갔다. */
+function 내메일주소(){
+  try{
+    var u = (window.firebase && firebase.auth && firebase.auth().currentUser) || null;
+    if(u && u.email) return String(u.email).trim();
+  }catch(e){}
+  try{
+    var sid = (window.CURRENT_USER && CURRENT_USER.sid) || '';
+    var me = (dbGet('user_accounts', []) || []).find(function(x){ return x && x.sid === sid; });
+    if(me && me.email) return String(me.email).trim();
+  }catch(e){}
+  return '';
+}
+
 function LeaveManagement(){
   var tbs = useState('annual'); var tab = tbs[0]; var setTab = tbs[1];
   /* 재직 / 퇴사자를 탭으로 가른다 (환경설정 사용자 관리와 같은 방식).
@@ -75865,6 +75931,8 @@ function PayrollLedger(props){
   }, [exportMenu, importMenu]);
   var emS = useState(false); var emailModal = emS[0]; var setEmailModal = emS[1];
   var eilS = useState(false); var emailIncludeLeave = eilS[0]; var setEmailIncludeLeave = eilS[1];  // 휴직자 포함(예외 발송) 토글
+  /* 「모두 보내기」가 도는 동안 상태 — 두 번 눌러 두 번 나가는 일을 막는다 */
+  var sarS = useState(null); var sendAllRun = sarS[0]; var setSendAllRun = sarS[1];
   // 급여명세서 이메일: 휴직자(status==='leave' 또는 해당 근무월 휴직 활성) 기본 제외, 토글 시 포함
   var _emailLoaRef = (props.selYM || (typeof todayYMD==='function' ? todayYMD().slice(0,7) : '')) + '-01';
   function _emailOnLeave(u){ return !!(u && (u.status === 'leave' || (typeof getLoaStatus === 'function' && getLoaStatus(u.sid, _emailLoaRef)))); }
@@ -75872,30 +75940,39 @@ function PayrollLedger(props){
   var emailUsers = (users||[]).filter(function(u){ return emailIncludeLeave || !_emailOnLeave(u); });
   // [자동발송 테스트 — A안] 배포한 Firebase 함수로 본인 메일에 명세서 발송 (도메인 인증 전이라 본인 메일로만 발송됨)
   var PAYSLIP_FN_URL = 'https://us-central1-pureun-erp.cloudfunctions.net/sendPayslip';
-  var PAYSLIP_TEST_TO = 'babylawyer11111@gmail.com';
-  function payslipTestHtml(u){
-    var rec = getRec(u.sid); var calc = calcPayroll(rec);
+  /* ★★ 시험 발송을 고쳤다 (2026-09-05)
+     ═════════════════════════════
+     ① 받는 곳이 «내 메일»이 아니었다 — 코드에 지메일 하나가 박혀 있어
+        누가 눌러도 그 한 곳으로 갔다. 단추 설명은 「본인 메일」이라 적혀
+        있었으니 말과 사실이 달랐다. 이제 «로그인한 나»에게 간다.
+     ② 내용이 견본이 아니었다 — 직원 명단 «첫 사람»의 진짜 지급액·
+        공제액·실지급액이 그대로 담겼다. 직원이 시험 삼아 눌러 보면
+        남의 급여가 나가는 길이었다. 이제 지어낸 숫자로 보낸다.
+     ⚠ 시험은 「길이 뚫렸나」를 보는 것이다. 남의 진짜 돈이 필요하지 않다. */
+  function payslipTestHtml(){
+    var 견본 = { 지급: 3200000, 공제: 318540, 실지급: 2881460 };
+    var 원 = function(n){ return n.toLocaleString() + '원'; };
     return '<div style="font-family:sans-serif;font-size:14px;line-height:1.8;color:#1e293b">'
-      + '<p>' + u.name + ' 님 안녕하세요. 푸른노무법인입니다.</p>'
-      + '<p><b>\u25b6 ' + props.selYM + ' \uae09\uc5ec\uba85\uc138\uc11c</b></p>'
+      + '<p><b>[견본] 급여명세서 발송 시험</b></p>'
+      + '<p>이 메일이 보이면 발송 길이 열려 있는 것입니다. ✅</p>'
+      + '<p><b>▶ ' + props.selYM + ' 급여명세서 (견본)</b></p>'
       + '<table style="border-collapse:collapse;font-size:13px">'
-      + '<tr><td style="padding:3px 16px 3px 0">\uc9c0\uae09\uc561 \ud569\uacc4</td><td style="text-align:right;font-weight:700">' + calc.grossPay.toLocaleString() + '\uc6d0</td></tr>'
-      + '<tr><td style="padding:3px 16px 3px 0">\uacf5\uc81c \ud569\uacc4</td><td style="text-align:right">' + calc.totalDeduct.toLocaleString() + '\uc6d0</td></tr>'
-      + '<tr><td style="padding:6px 16px 3px 0;border-top:1px solid #e2e8f0;font-weight:700">\uc2e4\uc9c0\uae09\uc561</td><td style="text-align:right;border-top:1px solid #e2e8f0;font-weight:700;color:#16a34a">' + calc.netPay.toLocaleString() + '\uc6d0</td></tr>'
+      + '<tr><td style="padding:3px 16px 3px 0">지급액 합계</td><td style="text-align:right;font-weight:700">' + 원(견본.지급) + '</td></tr>'
+      + '<tr><td style="padding:3px 16px 3px 0">공제 합계</td><td style="text-align:right">' + 원(견본.공제) + '</td></tr>'
+      + '<tr><td style="padding:6px 16px 3px 0;border-top:1px solid #e2e8f0;font-weight:700">실지급액</td><td style="text-align:right;border-top:1px solid #e2e8f0;font-weight:700;color:#16a34a">' + 원(견본.실지급) + '</td></tr>'
       + '</table>'
-      + '<p style="color:#94a3b8;font-size:12px;margin-top:18px">\u203b \uc790\ub3d9\ubc1c\uc1a1 \ud14c\uc2a4\ud2b8 \uba54\uc77c\uc785\ub2c8\ub2e4.</p></div>';
+      + '<p style="color:#94a3b8;font-size:12px;margin-top:18px">※ 지어낸 숫자입니다. 실제 직원의 급여가 아닙니다.</p></div>';
   }
   function sendPayslipTest(){
-    var list = emailUsers || [];
-    if(list.length === 0){ showToast('\ub300\uc0c1 \uc9c1\uc6d0\uc774 \uc5c6\uc2b5\ub2c8\ub2e4'); return; }
-    var u = list[0];
-    showToast('\ud568\uc218\ub85c \ubc1c\uc1a1 \uc911...');
-    postMail(PAYSLIP_FN_URL, { to: PAYSLIP_TEST_TO, name: u.name, ym: props.selYM,
-        subject: '[\ud478\ub978\ub178\ubb34\ubc95\uc778] ' + props.selYM + ' \uae09\uc5ec\uba85\uc138\uc11c(\ud14c\uc2a4\ud2b8) \u2014 ' + u.name, html: payslipTestHtml(u) })
+    var 나 = 내메일주소();
+    if(!나){ showToast('⚠ 내 메일 주소를 모르겠습니다 — 환경설정 → 직원 상세에서 등록해 주세요'); return; }
+    showToast('함수로 발송 중... → ' + 나);
+    postMail(PAYSLIP_FN_URL, { to: 나, name: (CURRENT_USER && CURRENT_USER.name) || '시험', ym: props.selYM,
+        subject: '[견본] ' + props.selYM + ' 급여명세서 발송 시험 — 푸른노무법인', html: payslipTestHtml() })
     .then(function(r){ return r.json(); }).then(function(d){
-      if(d && d.ok){ showToast('\u2705 \uc790\ub3d9\ubc1c\uc1a1 \uc131\uacf5 \u2014 ' + PAYSLIP_TEST_TO + ' \uba54\uc77c\ud568 \ud655\uc778'); }
-      else { showToast('\u26a0 \ubc1c\uc1a1 \uc2e4\ud328: ' + JSON.stringify((d && d.error) || d)); }
-    }).catch(function(e){ showToast('\u26a0 \ud638\ucd9c \uc2e4\ud328: ' + ((e && e.message) || e)); });
+      if(d && d.ok){ showToast('✅ 시험 메일을 걸었습니다 — ' + 나 + ' 메일함을 확인하세요' + (d.from ? ' (보낸 곳: ' + d.from + ')' : '')); }
+      else { showToast('⚠ 발송 실패: ' + JSON.stringify((d && d.error) || d)); }
+    }).catch(function(e){ showToast('⚠ 호출 실패: ' + ((e && e.message) || e)); });
   }
   // [PDF 생성] 명세서를 화면 렌더 → 이미지 → PDF(base64). 한글 깨짐 없음(html2canvas).
   function buildPayslipPdfBase64(u){
@@ -75996,23 +76073,129 @@ function PayrollLedger(props){
     });
   }
   // [행별 실제 발송] 각 직원 📧 버튼: PDF 첨부 + 본문, 함수로 그 직원 이메일에 발송 (확인창 포함)
-  function sendPayslipRow(u, email, subjectText, bodyText){
-    popConfirm(u.name + ' 님에게\n' + email + ' (으)로\n' + props.selYM + ' 급여명세서를 PDF로 발송할까요?').then(function(ok){
+  /* 제목·본문을 «한 곳»에서 짓는다 — 줄 단추와 모두 보내기가 같은 글을 보내야 한다 */
+  function 명세서메일글(u){
+    var rec = getRec(u.sid);
+    var calc = calcPayroll(rec);
+    var subjectText = '[푸른노무법인] ' + props.selYM + ' 급여명세서 — ' + u.name;
+    var reimbB = (rec.reimbursements||[]).reduce(function(s,x){return s+(parseInt(x.amount)||0);},0);
+    var bodyText =
+      u.name + ' 님 안녕하세요.\n푸른노무법인입니다.\n\n' +
+      '▶ ' + props.selYM + ' 급여명세서\n\n' +
+      '─────────────────\n' +
+      '[지급]\n' +
+      '  기본급:      ' + (rec.baseSalary||0).toLocaleString() + '원\n' +
+      '  수당 합계:   ' + calc.allowSum.toLocaleString() + '원\n' +
+      '  법정수당:    ' + calc.legal.total.toLocaleString() + '원\n' +
+      '  성과금:      ' + calc.perfBonus.total.toLocaleString() + '원\n' +
+      '  지급액 합계: ' + calc.grossPay.toLocaleString() + '원\n\n' +
+      '[공제]\n' +
+      '  국민연금:    ' + calc.pension.toLocaleString() + '원\n' +
+      '  건강보험:    ' + calc.healthIns.toLocaleString() + '원\n' +
+      '  장기요양:    ' + calc.longCare.toLocaleString() + '원\n' +
+      '  고용보험:    ' + calc.empIns.toLocaleString() + '원\n' +
+      '  소득세:      ' + calc.incomeTax.toLocaleString() + '원\n' +
+      '  지방세:      ' + calc.localTax.toLocaleString() + '원\n' +
+      '  공제 합계:   ' + calc.totalDeduct.toLocaleString() + '원\n\n' +
+      '─────────────────\n' +
+      '★ 실지급액:   ' + calc.netPay.toLocaleString() + '원\n' +
+      (reimbB>0 ? '💵 실비변상(비과세·별도 송금): ' + reimbB.toLocaleString() + '원\n\n' : '\n') +
+      '문의사항은 사무실로 연락 주세요.\n감사합니다.\n\n푸른노무법인';
+    return { subject: subjectText, body: bodyText };
+  }
+  /* ★★ 한 사람에게 보내는 «한 자리» (2026-09-05)
+     줄 단추와 「모두 보내기」가 같은 길을 쓴다 — 둘이 따로 있으면
+     한 쪽만 고쳐져 «같은 단추인데 다른 것이 나가는» 일이 생긴다.
+     실제로 그랬다 — 줄 단추는 PDF를 붙여 보냈고,
+     「전체 발송」은 실지급액 한 줄짜리 초안만 열었다. */
+  function 명세서한사람보내기(u, email){
+    var 글 = 명세서메일글(u);
+    return buildPayslipPdfBase64(u).then(function(pdfB64){
+      var html = '<pre style="font-family:monospace;font-size:13px;line-height:1.6;color:#1e293b;white-space:pre-wrap;margin:0">'
+        + 글.body.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>'
+        + '<p style="font-size:12px;color:#64748b">※ 첨부된 PDF 파일에서도 동일한 명세서를 확인하실 수 있습니다.</p>';
+      var fname = '급여명세서_' + props.selYM + '_' + u.name + '.pdf';
+      return postMail(PAYSLIP_FN_URL, { to: email, name: u.name, ym: props.selYM, subject: 글.subject, html: html,
+          attachments: [{ filename: fname, content: pdfB64 }] })
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          var ok = !!(d && d.ok);
+          /* ★ 보낸 것을 적는다 — 실패도 적는다.
+             성공만 적으면 「기록이 없다」가 «안 보냈다»인지
+             «보냈는데 안 적혔다»인지 알 수 없다. */
+          명세서보냄기록({ sid:u.sid, name:u.name, ym:props.selYM, to:email, ok:ok,
+            mailId:(d && d.id) || '', from:(d && d.from) || '', replyTo:(d && d.replyTo) || '',
+            attached:true, by:(d && d.by) || 내메일주소(),
+            error: ok ? '' : JSON.stringify((d && d.error) || d) });
+          if(!ok) throw new Error(JSON.stringify((d && d.error) || d));
+          return d;
+        });
+    });
+  }
+
+  function sendPayslipRow(u, email){
+    var 먼저 = 명세서보냄찾기(u.sid, props.selYM);
+    var 물음 = u.name + ' 님에게\n' + email + ' (으)로\n' + props.selYM + ' 급여명세서를 PDF로 발송할까요?'
+      + (먼저 ? '\n\n⚠ 이미 ' + String(먼저.createdAt||'').slice(0,10) + ' 에 한 번 나갔습니다. 또 보내면 두 통이 됩니다.' : '');
+    popConfirm(물음).then(function(ok){
       if(!ok) return;
       showToast('📄 ' + u.name + '님 명세서 PDF 만드는 중...');
-      buildPayslipPdfBase64(u).then(function(pdfB64){
-        var html = '<pre style="font-family:monospace;font-size:13px;line-height:1.6;color:#1e293b;white-space:pre-wrap;margin:0">'
-          + bodyText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>'
-          + '<p style="font-size:12px;color:#64748b">\u203b \ucca8\ubd80\ub41c PDF \ud30c\uc77c\uc5d0\uc11c\ub3c4 \ub3d9\uc77c\ud55c \uba85\uc138\uc11c\ub97c \ud655\uc778\ud558\uc2e4 \uc218 \uc788\uc2b5\ub2c8\ub2e4.</p>';
-        var fname = '\uae09\uc5ec\uba85\uc138\uc11c_' + props.selYM + '_' + u.name + '.pdf';
-        showToast('📤 ' + u.name + '님에게 발송 중...');
-        postMail(PAYSLIP_FN_URL, { to: email, name: u.name, ym: props.selYM, subject: subjectText, html: html,
-            attachments: [{ filename: fname, content: pdfB64 }] })
-        .then(function(r){ return r.json(); }).then(function(d){
-          if(d && d.ok){ showToast('✅ ' + u.name + '님 PDF 발송 완료 → ' + email); }
-          else { showToast('⚠ ' + u.name + ' 발송 실패: ' + JSON.stringify((d && d.error) || d)); }
-        }).catch(function(e){ showToast('⚠ 호출 실패: ' + ((e && e.message) || e)); });
-      }).catch(function(e){ showToast('⚠ PDF 생성 실패: ' + ((e && e.message) || e)); });
+      명세서한사람보내기(u, email).then(function(){
+        showToast('✅ ' + u.name + '님 PDF 발송 완료 → ' + email);
+      }).catch(function(e){ showToast('⚠ ' + u.name + ' 발송 실패: ' + ((e && e.message) || e), 9000); });
+    });
+  }
+
+  /* ★★ 「모두 보내기」 — 예전에는 보내지 않았다 (2026-09-05 대표 지시로 고침)
+     ═════════════════════════════
+     예전 단추는 mailto: 창을 사람 수만큼 «열기만» 했다. 그런데
+     ① 브라우저는 두 번째 창부터 대개 막는다 — 10명이면 1명치만 뜨고
+       9명은 조용히 사라졌다. 그런데도 「10명 초안 생성됨」이 뗴다.
+     ② 초안 본문엔 실지급액 한 줄뿐이라 «임금명세서가 아니다»
+       (근기법 §48② — 지급·공제 항목별 금액이 필수 기재사항이다).
+     → 이제 줄 단추와 «또같은 것»을 PDF 붙여 진짜로 보낸다.
+     ⚠ 한 명씩 차례로 보낸다. 한꺼번에 던지면 메일서버가 막고,
+       중간에 멈춰도 «어디까지 나갔는지»를 알 수 있어야 한다. */
+  function 명세서모두보내기(){
+    if(sendAllRun){ showToast('이미 보내는 중입니다 — 끝날 때까지 기다려 주세요'); return; }
+    var allUsers2 = dbGet('user_accounts', USERS_SEED) || [];
+    var 갈사람 = [];
+    var 주소없음 = 0;
+    (emailUsers||[]).forEach(function(u){
+      var fu = allUsers2.find(function(x){ return x && x.sid === u.sid; }) || {};
+      if(!fu.email){ 주소없음++; return; }
+      갈사람.push({ u:u, email:String(fu.email).trim() });
+    });
+    if(!갈사람.length){ showToast('보낼 사람이 없습니다 — 메일 주소가 등록된 직원이 없습니다'); return; }
+    var 이미 = 갈사람.filter(function(x){ return !!명세서보냄찾기(x.u.sid, props.selYM); });
+    var 물음 = '📤 ' + props.selYM + ' 급여명세서를\n«' + 갈사람.length + '명» 에게 PDF로 진짜 발송합니다.\n\n'
+      + 갈사람.slice(0,8).map(function(x){ return '· ' + x.u.name + ' (' + x.email + ')'; }).join('\n')
+      + (갈사람.length > 8 ? '\n· 외 ' + (갈사람.length-8) + '명' : '')
+      + (주소없음 ? '\n\n⚠ 메일 주소가 없어 빠진 사람 ' + 주소없음 + '명' : '')
+      + (이미.length ? '\n⚠ 이번 달에 이미 나간 사람 ' + 이미.length + '명 — 또 보내면 두 통이 됩니다.' : '')
+      + '\n\n진짜로 보낼까요?';
+    popConfirm(물음).then(function(ok){
+      if(!ok) return;
+      var 성공 = 0, 실패 = [];
+      setSendAllRun({ 몇:0, 전부:갈사람.length });
+      var 차례 = Promise.resolve();
+      갈사람.forEach(function(x, i){
+        차례 = 차례.then(function(){
+          setSendAllRun({ 몇:i+1, 전부:갈사람.length });
+          showToast('📤 (' + (i+1) + '/' + 갈사람.length + ') ' + x.u.name + '님 보내는 중...');
+          return 명세서한사람보내기(x.u, x.email)
+            .then(function(){ 성공++; })
+            .catch(function(e){ 실패.push(x.u.name + ': ' + ((e && e.message) || e)); });
+        });
+      });
+      차례.then(function(){
+        setSendAllRun(null);
+        if(실패.length){
+          showToast('⚠ ' + 성공 + '명 보냈고 ' + 실패.length + '명 실패 — ' + 실패.slice(0,3).join(' / '), 15000);
+        } else {
+          showToast('✅ ' + 성공 + '명 모두 보냈습니다 — 교부 기록이 남았습니다', 12000);
+        }
+      });
     });
   }
   var toS = useState(false); var toolsOpen = toS[0]; var setToolsOpen = toS[1];
@@ -77090,7 +77273,8 @@ function PayrollLedger(props){
         ),
         h('div', { className:'modal-b', style:{ maxHeight:'70vh', overflowY:'auto' } },
           h('div', { style:{ background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:'6px', padding:'10px 14px', marginBottom:'14px', fontSize:'11.5px', color:'#1e40af', lineHeight:'1.7' } },
-            '📌 직원별 📧 버튼을 누르면 확인 후 그 직원 이메일로 명세서가 PDF 첨부로 자동 발송됩니다 (발신: 푸른노무법인).',h('br'),
+            '📌 줄마다의 📧 또는 아래 「모두에게 보내기」를 누르면 PDF 명세서가 진짜로 나갑니다 — 둘은 «같은 글»을 보냅니다.',h('br'),
+            '보낸 것은 «보낸 때» 칸에 남습니다 — 임금명세서 교부는 근로기준법 §48② 의무라 기록이 증거가 됩니다.',h('br'),
             '이메일 주소가 없는 직원은 먼저 환경설정 → 인사관리기준 → 직원 정보에서 이메일을 등록해 주세요.'
           ),
           h('label', { style:{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'12px', fontSize:'12px', color:'#475569', cursor:'pointer' } },
@@ -77104,6 +77288,7 @@ function PayrollLedger(props){
                 h('th', { style:{ padding:'8px 10px', textAlign:'left' } }, '직원'),
                 h('th', { style:{ padding:'8px 10px', textAlign:'left' } }, '이메일'),
                 h('th', { style:{ padding:'8px 10px', textAlign:'right' } }, '실지급액'),
+                h('th', { style:{ padding:'8px 10px', textAlign:'center', width:'96px' } }, '보낸 때'),
                 h('th', { style:{ padding:'8px 10px', textAlign:'center', width:'80px' } }, '발송')
               )
             ),
@@ -77114,39 +77299,28 @@ function PayrollLedger(props){
                 var allUsers = dbGet('user_accounts', USERS_SEED) || [];
                 var fullUser = allUsers.find(function(x){ return x.sid === u.sid; }) || {};
                 var email = fullUser.email || '';
-                var subjectText = '[푸른노무법인] ' + props.selYM + ' 급여명세서 — ' + u.name;
-                var reimbB = (rec.reimbursements||[]).reduce(function(s,x){return s+(parseInt(x.amount)||0);},0);
-                var bodyText =
-                  u.name + ' 님 안녕하세요.\n푸른노무법인입니다.\n\n' +
-                  '▶ ' + props.selYM + ' 급여명세서\n\n' +
-                  '─────────────────\n' +
-                  '[지급]\n' +
-                  '  기본급:      ' + (rec.baseSalary||0).toLocaleString() + '원\n' +
-                  '  수당 합계:   ' + calc.allowSum.toLocaleString() + '원\n' +
-                  '  법정수당:    ' + calc.legal.total.toLocaleString() + '원\n' +
-                  '  성과금:      ' + calc.perfBonus.total.toLocaleString() + '원\n' +
-                  '  지급액 합계: ' + calc.grossPay.toLocaleString() + '원\n\n' +
-                  '[공제]\n' +
-                  '  국민연금:    ' + calc.pension.toLocaleString() + '원\n' +
-                  '  건강보험:    ' + calc.healthIns.toLocaleString() + '원\n' +
-                  '  장기요양:    ' + calc.longCare.toLocaleString() + '원\n' +
-                  '  고용보험:    ' + calc.empIns.toLocaleString() + '원\n' +
-                  '  소득세:      ' + calc.incomeTax.toLocaleString() + '원\n' +
-                  '  지방세:      ' + calc.localTax.toLocaleString() + '원\n' +
-                  '  공제 합계:   ' + calc.totalDeduct.toLocaleString() + '원\n\n' +
-                  '─────────────────\n' +
-                  '★ 실지급액:   ' + calc.netPay.toLocaleString() + '원\n' +
-                  (reimbB>0 ? '💵 실비변상(비과세·별도 송금): ' + reimbB.toLocaleString() + '원\n\n' : '\n') +
-                  '문의사항은 사무실로 연락 주세요.\n감사합니다.\n\n푸른노무법인';
                 return h('tr', { key:u.sid, style:{ borderBottom:'1px solid #f8fafc' } },
                   h('td', { style:{ padding:'8px 10px', fontWeight:600 } }, u.name, _emailOnLeave(u) ? h('span', { style:{ marginLeft:'6px', fontSize:'9.5px', background:'#fffbeb', color:'#854d0e', padding:'1px 5px', borderRadius:'8px', fontWeight:700 } }, '휴직') : null),
                   h('td', { style:{ padding:'8px 10px', color: email?'#1e293b':'#dc2626', fontSize:'11.5px' } },
                     email || '⚠️ 미등록'),
                   h('td', { style:{ padding:'8px 10px', textAlign:'right', fontFamily:'monospace', fontWeight:700 } },
                     calc.netPay.toLocaleString() + '원'),
+                  /* 교부 기록을 «보이는 자리»에 둔다 — 적기만 하고 안 보여 주면
+                     누가 받았는지 알려고 또 눈으로 세게 된다.
+                     한 칸은 한 줄이다 — 날짜만 적고 자세한 것은 title 에 담는다. */
+                  (function(){
+                    var 나간 = 명세서보냄찾기(u.sid, props.selYM);
+                    return h('td', { style:{ padding:'8px 10px', textAlign:'center', fontSize:'11px',
+                        color: 나간 ? '#166534' : '#94a3b8', whiteSpace:'nowrap' },
+                      title: 나간 ? ('보낸 때 ' + String(나간.createdAt||'').replace('T',' ').slice(0,16)
+                              + '\n받는 곳 ' + (나간.to||'')
+                              + '\n누른 이 ' + (나간.by||'-')
+                              + '\n발송번호 ' + (나간.mailId||'-')) : '아직 안 나갔습니다' },
+                      나간 ? ('\u2713 ' + String(나간.createdAt||'').slice(5,10)) : '\u2014');
+                  })(),
                   h('td', { style:{ padding:'8px 10px', textAlign:'center' } },
                     email
-                      ? h('button', { onClick: function(){ sendPayslipRow(u, email, subjectText, bodyText); },
+                      ? h('button', { onClick: function(){ sendPayslipRow(u, email); },
                           style:{ display:'inline-block', padding:'4px 12px', background:'#16a34a', color:'#fff', border:'none', borderRadius:'5px', fontSize:'11.5px', fontWeight:700, cursor:'pointer' } },
                           '📧 발송')
                       : h('span', { style:{ fontSize:'11px', color:'#94a3b8' } }, '—')
@@ -77159,24 +77333,14 @@ function PayrollLedger(props){
         h('div', { className:'modal-f' },
           h('div', { style:{ flex:1, fontSize:'11.5px', color:'#64748b' } },
             '💡 이메일 주소 등록: 환경설정 → 인사관리기준 → 직원 상세'),
-          h('button', { className:'btn-secondary', style:{ background:'#fffbeb', color:'#854d0e', borderColor:'#fde68a' }, title:'배포한 함수로 본인 메일(' + PAYSLIP_TEST_TO + ')에 첫 직원 명세서를 발송해 동작을 확인합니다', onClick: sendPayslipTest }, '🧪 자동발송 테스트(내 메일)'),
+          h('button', { className:'btn-secondary', style:{ background:'#fffbeb', color:'#854d0e', borderColor:'#fde68a' }, title:'로그인한 내 메일로 «견본 숫자» 명세서를 보내 발송 길이 열려 있는지 확인합니다 (직원 급여가 나가지 않습니다)', onClick: sendPayslipTest }, '🧪 자동발송 테스트(내 메일)'),
           h('button', { className:'btn-secondary', onClick:function(){ setEmailModal(false); } }, '닫기'),
           h('button', { className:'btn-primary',
-            onClick:function(){
-              var allUsers2 = dbGet('user_accounts', USERS_SEED) || [];
-              var sent = 0;
-              emailUsers.forEach(function(u){
-                var fu = allUsers2.find(function(x){return x.sid===u.sid;})||{};
-                if(!fu.email) return;
-                var rec2 = getRec(u.sid); var calc2 = calcPayroll(rec2);
-                var subj = encodeURIComponent('[푸른노무법인] ' + props.selYM + ' 급여명세서 — ' + u.name);
-                var bdy = encodeURIComponent(u.name+' 님 안녕하세요.\n\n★ 실지급액: '+calc2.netPay.toLocaleString()+'원\n\n자세한 내역은 개별 이메일을 확인해 주세요.\n\n푸른노무법인');
-                window.open('mailto:'+fu.email+'?subject='+subj+'&body='+bdy, '_blank');
-                sent++;
-              });
-              showToast('📧 ' + sent + '명 이메일 초안 생성됨');
-            } },
-            '📧 전체 발송')
+            disabled: !!sendAllRun,
+            title:'모두에게 PDF 명세서를 진짜로 보냅니다 — 한 명씩 차례로 보내고 교부 기록을 남깁니다',
+            onClick: 명세서모두보내기 },
+            sendAllRun ? ('📤 보내는 중 ' + sendAllRun.벏 + '/' + sendAllRun.전부)
+                      : '📤 모두에게 보내기')
         )
       )
     ),
