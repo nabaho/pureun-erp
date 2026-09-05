@@ -4148,12 +4148,32 @@ function closeCam() {
   if (camShots.length && !confirm('찍어 둔 ' + camShots.length + '장을 올리지 않고 버립니다.\n계속할까요?')) return false;
   camDiscard();      // 여기서 영상이 먼저 꺼진다 — 화면을 넘기기 전에 꺼야 깨진 화면이 안 스친다
   camReturnTo = '';  // ★ 이 카메라 한 번으로 끝난다 — 다음에 찍을 때 튕기지 않게
-  /* ✕ 로 닫을 때는 열면서 쌓아 둔 역사 칸을 우리가 빼 준다.
-     안 빼면 다음 뒤로 가기가 헛칸을 밟아 아무 일도 안 일어난다.
-     (popstate 로 닫힐 때는 이미 빠졌으므로 camPushed 가 false 다) */
-  if (camPushed) { camPushed = false; try { history.back(); } catch (_) {} return true; }
+  /* ⚠ 칸은 위 camDiscard 가 이미 놓았다. 여기서 또 놓으면 **한 번에 두 칸이 빠져**
+     사진첩 밖으로 나간다 — 그것이 곧 「튕김」이다. 놓는 곳은 한 곳이어야 한다. */
   return true;
 }
+/* ══════ 「계속 튕겨서 초기화면으로 간다」 — 뒤로가기 칸 (대표 보고 2026-09-05) ══════
+
+   ■ 무엇이었나 — 쌓아 두고 «안 놓은» 칸이 남았다
+   카메라를 열 때 뒤로가기 칸을 하나 쌓는다(폰 뒤로가기로 닫히게). 그런데
+     · 「찍은 것 고르기」로 넘어가면 camOv 를 감춘다 — 그때 뒤로가기를 누르면
+       popstate 가 «화면이 안 보인다»는 이유로 **그냥 되돌아갔다.**
+       칸은 이미 빠졌는데 camPushed 는 true 로 남는다.
+     · 「올리기」로 끝나는 길은 camDiscard 만 부르고 **칸을 안 놓았다.**
+   그래서 헛칸이 남고, 다음 뒤로가기가 그 헛칸을 먹고(아무 일 없음),
+   그다음 뒤로가기가 **사진첩을 통째로 나간다.** 포털에서 들어왔으니 바로 초기화면이다.
+   사람 눈에는 「뒤로가기를 눌렀는데 갑자기 튕겼다」로 보인다.
+
+   ■ 고친 규칙 — «쌓았는가»로만 판단한다
+   화면이 지금 어떻게 보이는지로 판단하지 않는다(감춘 사이에 눌리면 놓친다).
+   칸을 놓는 곳은 **여기 하나**다 — 두 곳에서 놓으면 한 번에 두 칸이 빠져 그것이 곧 튕김이다. */
+function camHistDrop() {
+  if (!camPushed) return false;
+  camPushed = false;
+  try { history.back(); } catch (_) { }
+  return true;
+}
+
 function camDiscard() {
   stopAutoWatch();
   camShots.forEach(function (s) { URL.revokeObjectURL(s.url); });
@@ -4161,6 +4181,9 @@ function camDiscard() {
   camStop();
   $('camOv').style.display = 'none';
   $('camRev').style.display = 'none';
+  /* ★ 카메라 층이 접히면 칸도 함께 놓는다 — 「올리기」로 끝나는 길이 여기로 온다.
+     popstate 로 닫힐 때는 camPushed 가 이미 false 라 두 번 빠지지 않는다. */
+  camHistDrop();
 }
 
 /* 주소·data URL 을 그림으로 — 카메라·그림 얹기·밝기·AI 편집이 다 이걸 쓴다.
@@ -7556,7 +7579,7 @@ function sendCompanyNow() {
   const it = gridItems.find(function (x) { return x.id === id; });
   if (!canSendCo(it && it.meta && it.meta.read)) return;
   lockSendBtn('.sendco');
-  sendCompany(id, gridYear, null);
+  sendCompany(id, photoYearOf(id), null);
 }
 
 /* 크게 보기의 「기업정보함으로 보내기」 단추가 부른다. */
@@ -7568,7 +7591,7 @@ function sendCardsNow() {
   /* ⚠ 뒷면이면 여기서 멈춘다 — 잠그고 나서 멈추면 「보내는 중…」으로 굳는다. */
   if (!canSendCards(it, it.meta && it.meta.read)) return;
   lockSendBtn('.send');
-  sendCards(id, gridYear, null);
+  sendCards(id, photoYearOf(id), null);
 }
 
 /* ══════ 업체가 생겼는지 스스로 맞춰 본다 (대표 결정 2026-08-23) ══════
@@ -7618,7 +7641,7 @@ function coSweep() {
       });
       it.meta = Object.assign({}, it.meta, { read: read });
       n++;
-      saves.push(PuPhotoStore.saveRead(gridYear, it.id, read, photoOwner(it.id)));
+      saves.push(PuPhotoStore.saveRead(photoYearOf(it.id), it.id, read, photoOwner(it.id)));
     });
     if (!n) return 0;
     return Promise.all(saves).then(function () {
@@ -7694,7 +7717,7 @@ function coCompanySweep() {
       const read = Object.assign({}, it.meta.read, { coCheck: { at: Date.now(), patched: ok } });
       it.meta = Object.assign({}, it.meta, { read: read });
       if (ok) n++;
-      saves.push(PuPhotoStore.saveRead(gridYear, it.id, read, photoOwner(it.id)));
+      saves.push(PuPhotoStore.saveRead(photoYearOf(it.id), it.id, read, photoOwner(it.id)));
     });
     return Promise.all(saves).then(function () {
       renderGrid(); renderGridBar();
@@ -8624,13 +8647,16 @@ function paintThumb(it) {
     img.onerror = function () {
       img.onerror = null;                       // 새로 받은 것도 실패하면 그만둔다
       const owner = thumbOwnerOf(it);
-      PuPhotoStore.forgetThumbUrl(gridYear, it.id, owner);
-      PuPhotoStore.thumbUrl(gridYear, it.id, owner).then(function (fresh) {
+      /* ⚠ 해도 «사진의 성질»이다 — 공유받은 사진은 주인의 다른 해에 있어
+         gridYear 로 두드리면 새 주소도 못 받고 빈 칸이 그대로 남는다. */
+      const yr = photoYearOf(it.id);
+      PuPhotoStore.forgetThumbUrl(yr, it.id, owner);
+      PuPhotoStore.thumbUrl(yr, it.id, owner).then(function (fresh) {
         const u = safeSrc(fresh);
         if (!u) return;
         it.thumb = u;
         img.src = u;
-        PuPhotoStore.rememberThumbUrl(gridYear, it.id, u, owner);
+        PuPhotoStore.rememberThumbUrl(yr, it.id, u, owner);
       }).catch(function () { });
     };
   }
@@ -8795,7 +8821,7 @@ function dragRefOf(id) {
     app: 'pu-photos',
     kind: 'photo',
     year: gridYear,
-    owner: it.meta.__ownerUid || gridOwner || PuPhotoStore.myUid(),
+    owner: photoOwner(id) || PuPhotoStore.myUid(),
     id: id,
     /* 날짜는 **올린 때**로 적는다 — 받는 앱의 목록에서도 사진첩과 같은 날에
        놓여야 "그때 넘긴 그 사진"을 찾을 수 있다(2026-08-13). */
@@ -10156,7 +10182,7 @@ function moveToFolder(ids, fid) {
     chain = chain.then(function () {
       const it = gridItems.find(function (x) { return x.id === id; });
       if (!it) return;
-      return PuPhotoStore.setFolder(gridYear, id, fid).then(function () {
+      return PuPhotoStore.setFolder(photoYearOf(id), id, fid).then(function () {
         it.meta = Object.assign({}, it.meta, { folder: fid || null });
         done++;
       }).catch(function (e) { failed++; console.warn('[폴더 넣기]', id, e); });
@@ -10215,7 +10241,7 @@ function retagPhotos(ids, tabKey) {
       if (!it) return;
       /* 직접 만든 분류는 OCR 글자는 보존하면서 대표 분류만 바꾼다. */
       if (custom) {
-        return PuPhotoStore.setCustomKind(gridYear, id, custom, it.meta.__ownerUid || gridOwner)
+        return PuPhotoStore.setCustomKind(photoYearOf(id), id, custom, photoOwner(id))
           .then(function () {
             it.meta = Object.assign({}, it.meta, { customKind: custom });
             done++;
@@ -10228,7 +10254,7 @@ function retagPhotos(ids, tabKey) {
         by: PuPhotoStore.myName() || '', at: Date.now(),
         rv: PuDocRead.READ_VERSION, pv: PuDocRead.PROMPT_VERSION
       });
-      return PuPhotoStore.setPrimaryKind(gridYear, id, read, null, photoOwner(id))
+      return PuPhotoStore.setPrimaryKind(photoYearOf(id), id, read, null, photoOwner(id))
         .then(function () {
           it.meta = Object.assign({}, it.meta, { read: read, customKind: null });
           done++;
@@ -11971,7 +11997,7 @@ function deleteAllPayslips() {
   let done = 0, failed = 0;
   list.reduce(function (p, it) {
     return p.then(function () {
-      return PuPhotoStore.deletePhoto(gridYear, it.id, '급여서류 — 보관하지 않는 서류', photoOwner(it.id))
+      return PuPhotoStore.deletePhoto(photoYearOf(it.id), it.id, '급여서류 — 보관하지 않는 서류', photoOwner(it.id))
         .then(function () {
           done += 1;
           gridItems = gridItems.filter(function (x) { return x.id !== it.id; });
@@ -11998,7 +12024,7 @@ function deleteOnePayslip(id) {
   if (blockedIfOther(id)) return;
   if (!confirm('이 급여서류를 휴지통으로 보냅니다.\n'
     + PuPhotoStore.TRASH_DAYS + '일 안에는 되살릴 수 있습니다.')) return;
-  PuPhotoStore.deletePhoto(gridYear, id, '급여서류 — 보관하지 않는 서류', photoOwner(id)).then(function () {
+  PuPhotoStore.deletePhoto(photoYearOf(id), id, '급여서류 — 보관하지 않는 서류', photoOwner(id)).then(function () {
     gridItems = gridItems.filter(function (x) { return x.id !== id; });
     closeViewer();
     selected.delete(id);
@@ -12058,7 +12084,7 @@ function removeMany(ids) {
          보유기준에 걸려 지운 것과 사람이 그냥 지운 것은 다른 일이다. */
       /* ⚠ 주인을 함께 넘긴다 — 안 넘기면 남의 사진을 지울 때 내 자리에 대고
          지우는 시늉만 하고 조용히 끝난다(화면에서만 사라진다). */
-      return PuPhotoStore.deletePhoto(gridYear, id, delReason(id), photoOwner(id)).then(function () {
+      return PuPhotoStore.deletePhoto(photoYearOf(id), id, delReason(id), photoOwner(id)).then(function () {
         gridItems = gridItems.filter(function (x) { return x.id !== id; });
       }).catch(function (e) {
         console.warn('[지우기]', id, e);
@@ -12094,7 +12120,7 @@ function deleteOne() {
      «모르고 지우는 일»을 막는 것이다. */
   msg += usedWarnText([id]);
   if (!confirm(msg)) return;
-  PuPhotoStore.deletePhoto(gridYear, id, delReason(id), photoOwner(id)).then(function () {
+  PuPhotoStore.deletePhoto(photoYearOf(id), id, delReason(id), photoOwner(id)).then(function () {
     gridItems = gridItems.filter(function (x) { return x.id !== id; });
     closeViewer();
     renderGridBar();
@@ -12120,7 +12146,9 @@ function viewerHistPush() {
   catch (_) { viewerPushed = false; }
 }
 window.addEventListener('popstate', function () {
-  if (!viewerId) return;            // 크게 보기가 안 열려 있으면 우리 일이 아니다
+  /* ⚠ 「크게 보기가 열려 있나」가 아니라 «우리가 쌓았나»로 묻는다 — 카메라와 같은 규칙이다.
+     viewerId 가 먼저 비워지는 길이 있으면 칸만 남아 다음 뒤로가기가 사진첩을 나간다. */
+  if (!viewerPushed) return;
   viewerPushed = false;             // 역사 칸은 이미 빠졌다 — closeViewer 가 또 빼면 안 된다
   try{ window.__puBackNav = true; }catch(e){}  /* 이 걸음은 우리가 썼다 — 공통 뒤로가기는 비켜선다 */
   closeViewer();
@@ -12139,7 +12167,11 @@ function camHistPush() {
   catch (_) { camPushed = false; }
 }
 window.addEventListener('popstate', function () {
-  if (!$('camOv') || $('camOv').style.display !== 'flex') return;   // 카메라가 안 열렸으면 우리 일이 아니다
+  /* ⚠⚠ 「카메라 화면이 보이나」로 묻지 «않는다». 「찍은 것 고르기」로 넘어가면
+     camOv 를 감추는데, 그때 뒤로가기를 누르면 우리 칸은 빠지고 이 줄은 그냥 되돌아가
+     camPushed 만 true 로 남았다 — 그 헛칸 때문에 다음 뒤로가기가 사진첩을 나갔다.
+     **우리가 쌓았는가**로만 판단한다. */
+  if (!camPushed) return;
   camPushed = false;                       // 칸은 이미 빠졌다
   try{ window.__puBackNav = true; }catch(e){}  /* 이 걸음은 우리가 썼다 — 공통 뒤로가기는 비켜선다 */
   if (closeCam() === false) camHistPush();  // 사용자가 [취소] → 칸을 다시 쌓아 둔다
@@ -12362,8 +12394,7 @@ function splitDocPages() {
   if (!confirm(pages.length + '쪽을 각각 따로 읽습니다.\n' +
       '지금 문서로 읽어 둔 결과는 쪽마다 새로 읽혀 바뀝니다.\n\n계속할까요?')) return;
   const ids = pages.map(function (p) { return p.id; });
-  PuPhotoStore.setDocs(gridYear, ids.map(function (id) { return { id: id, doc: null }; }),
-    it.meta.__ownerUid || gridOwner)
+  setDocsByPhoto(ids.map(function (id) { return { id: id, doc: null }; }))
     .then(function () {
       /* 화면의 값도 함께 푼다 — 서버만 고치면 새로고침 전까지 접힌 채로 보인다 */
       ids.forEach(function (id) {
@@ -12394,7 +12425,7 @@ function detachOnePage() {
   const rest = pages.filter(function (p) { return p.id !== it.id; });
   const ups = [{ id: it.id, doc: null }];
   if (rest.length === 1) ups.push({ id: rest[0].id, doc: null });
-  PuPhotoStore.setDocs(gridYear, ups, it.meta.__ownerUid || gridOwner)
+  setDocsByPhoto(ups)
     .then(function () {
       ups.forEach(function (u) {
         const p = gridItems.find(function (x) { return x.id === u.id; });
@@ -12411,6 +12442,32 @@ function detachOnePage() {
       console.warn('[쪽 떼어내기]', e);
       alert('떼어내지 못했습니다 — ' + ((e && e.message) || e));
     });
+}
+
+/* ══════ 「자꾸 안 합쳐진다」 (대표 보고 2026-09-05) ══════
+   ★★ 묶기·풀기·떼어내기가 **화면의 해(gridYear)와 화면의 주인**으로 한 번에 쓰고 있었다.
+     그런데 해도 주인도 «사진의 성질»이지 화면의 성질이 아니다
+     (photoOwner·photoYearOf 주석이 이미 못 박아 둔 그것이다).
+       · 「전체 근로자」로 보는 중이면 gridOwner 가 '__all__' 이라
+         puphotos/u/__all__ 이라는 **없는 자리**를 두드린다 — 조용히 아무 일도 안 난다.
+         화면에서는 묶인 것처럼 보이다가 새로고침하면 도로 풀려 있다.
+       · 고른 것이 여러 사람·여러 해에 걸치면 **첫 장의 주인·화면의 해**로 다 써서,
+         나머지 장은 엉뚱한 자리에 적히고 영영 안 묶인다.
+   ⚠ 그래서 «해와 주인이 같은 것끼리» 나눠 쓴다 — setDocs 는 한 번에 한 자리다.
+   ⚠ 묶기·풀기·떼어내기 셋이 **이 함수 하나**를 쓴다. 세 벌로 두면 한 곳이 꼭 빠진다. */
+function setDocsByPhoto(ups) {
+  const packs = {};
+  (ups || []).forEach(function (u) {
+    if (!u || !u.id) return;
+    const k = photoYearOf(u.id) + '\u0000' + (photoOwner(u.id) || '');
+    (packs[k] = packs[k] || []).push(u);
+  });
+  const keys = Object.keys(packs);
+  if (!keys.length) return Promise.resolve();
+  return Promise.all(keys.map(function (k) {
+    const p = k.split('\u0000');
+    return PuPhotoStore.setDocs(p[0], packs[k], p[1] || undefined);
+  }));
 }
 
 /* 고른 사진들을 한 문서로 묶는다 — 카톡으로 한 장씩 온 계약서를 나중에 합칠 때.
@@ -12430,7 +12487,7 @@ function mergeSelectedDoc() {
   const ups = items.map(function (p, i) {
     return { id: p.id, doc: { name: name, page: i + 1, total: total, taken: total, group: group } };
   });
-  PuPhotoStore.setDocs(gridYear, ups, items[0].meta.__ownerUid || gridOwner)
+  setDocsByPhoto(ups)
     .then(function () {
       ups.forEach(function (u) {
         const p = gridItems.find(function (x) { return x.id === u.id; });
@@ -12576,7 +12633,7 @@ function viewerDragOut(e) {
     if (window.PuDrag && viewerId && it) {
       PuDrag.set(dt, {
         app: 'pu-photos', kind: 'photo', year: gridYear,
-        owner: it.meta.__ownerUid || gridOwner || PuPhotoStore.myUid(),
+        owner: photoOwner(id) || PuPhotoStore.myUid(),
         id: viewerId,
         name: it.meta.company || dayLabel(photoTime(it)) + ' 사진'
       });
@@ -12871,7 +12928,7 @@ function wageConfirm() {
   renderReadPanel(it);
   renderGridBar();
   renderGrid();
-  PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id)).catch(function (e) {
+  PuPhotoStore.saveRead(photoYearOf(id), id, read, photoOwner(id)).catch(function (e) {
     console.warn('[임금 확인]', e);
     alert('임금 확인을 저장하지 못했습니다: ' + ((e && e.message) || e));
   });
@@ -12888,7 +12945,7 @@ function wageRedo() {
   renderReadPanel(it);
   renderGridBar();
   renderGrid();
-  PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id)).catch(function (e) {
+  PuPhotoStore.saveRead(photoYearOf(id), id, read, photoOwner(id)).catch(function (e) {
     console.warn('[임금 다시 확인]', e);
   });
 }
@@ -13012,7 +13069,7 @@ function fixSave() {
   renderReadPanel(it);
   renderGridBar();
   renderGrid();
-  PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id)).catch(function (e) {
+  PuPhotoStore.saveRead(photoYearOf(id), id, read, photoOwner(id)).catch(function (e) {
     console.warn('[이름·회사 채우기]', e);
     alert('채운 값을 저장하지 못했습니다: ' + ((e && e.message) || e));
   });
@@ -13033,7 +13090,7 @@ function coSkipSave() {
   renderReadPanel(it);
   renderGridBar();
   renderGrid();
-  PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id)).catch(function (e) {
+  PuPhotoStore.saveRead(photoYearOf(id), id, read, photoOwner(id)).catch(function (e) {
     console.warn('[그냥 보관]', e);
   });
 }
@@ -13270,7 +13327,7 @@ function ackRead() {
   renderReadPanel(it);
   renderGridBar();
   renderGrid();
-  PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id)).catch(function (e) {
+  PuPhotoStore.saveRead(photoYearOf(id), id, read, photoOwner(id)).catch(function (e) {
     console.warn('[확인했음]', e);
     alert('확인 표시를 저장하지 못했습니다: ' + ((e && e.message) || e));
   });
@@ -13289,7 +13346,7 @@ async function saveMyNote() {
   const noteV = ($('mnNote') || {}).value || '';
   if (btn) { btn.disabled = true; btn.textContent = '저장 중…'; }
   try {
-    await PuPhotoStore.saveNote(gridYear, id, { company: coV, note: noteV });
+    await PuPhotoStore.saveNote(photoYearOf(id), id, { company: coV, note: noteV });
     it.meta.company = coV.trim() || undefined;
     it.meta.note = noteV.trim() || undefined;
     it.meta = Object.assign({}, it.meta);   // 검색 캐시를 새로 만들게 한다(hayOf)
@@ -13305,7 +13362,7 @@ async function saveMyNote() {
       const old = new Date(Number(it.meta.takenAt) || Date.now());
       const ts = new Date(parts[0], parts[1] - 1, parts[2],
         old.getHours(), old.getMinutes(), old.getSeconds()).getTime();
-      await PuPhotoStore.setTakenAt(gridYear, id, ts);
+      await PuPhotoStore.setTakenAt(photoYearOf(id), id, ts);
       it.meta.takenAt = ts;
       it.meta = Object.assign({}, it.meta);
       gridItems.sort(comparePhotosNewest);
@@ -13354,12 +13411,12 @@ async function rotateOne(deg) {
   const bar = $('rotBar'); if (bar) bar.style.opacity = '.4';
   try {
     /* 까닭까지 받는다(2026-08-27) — 「사진을 찾지 못했습니다」만으로는 왜인지 모른다 */
-    const got = await PuPhotoStore.loadFullDetail(gridYear, id);
+    const got = await PuPhotoStore.loadFullDetail(photoYearOf(id), id);
     if (!got.src) throw new Error(got.why || '사진을 찾지 못했습니다');
     const turned = await rotateDataUrl(got.src, deg);
     /* 미리보기는 돌린 사진에서 다시 만든다 — 옛 미리보기를 돌리면 화질이 두 번 깎인다 */
     const thumb = await shrinkDataUrl(turned, 240, 0.8);
-    await PuPhotoStore.replaceImage(gridYear, id, turned, thumb);
+    await PuPhotoStore.replaceImage(photoYearOf(id), id, turned, thumb);
     it.thumb = thumb;
     const vi = $('viewerImg'); if (vi) vi.src = turned;
     renderGrid();
@@ -13577,7 +13634,7 @@ function removeCustomKindOne() {
   const id = viewerId;
   const it = gridItems.find(function (x) { return x.id === id; });
   if (!it) return;
-  PuPhotoStore.setCustomKind(gridYear, id, null, it.meta.__ownerUid || gridOwner).then(function () {
+  PuPhotoStore.setCustomKind(photoYearOf(id), id, null, photoOwner(id)).then(function () {
     it.meta = Object.assign({}, it.meta, { customKind: null });
     renderReadPanel(it);
     renderGrid();
@@ -13644,7 +13701,7 @@ function toggleChatTodo(i) {
   });
   it.meta = Object.assign({}, it.meta, { read: read });
   renderReadPanel(it);
-  PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id)).catch(function (e) {
+  PuPhotoStore.saveRead(photoYearOf(id), id, read, photoOwner(id)).catch(function (e) {
     console.warn('[할 일 표시]', e);
     alert('표시를 저장하지 못했습니다: ' + ((e && e.message) || e));
   });
@@ -13717,7 +13774,7 @@ function tsSave(it, rows) {
   });
   it.meta = Object.assign({}, it.meta, { read: read });
   renderReadPanel(it);
-  PuPhotoStore.saveRead(gridYear, it.id, read, photoOwner(it.id)).catch(function (e) {
+  PuPhotoStore.saveRead(photoYearOf(it.id), it.id, read, photoOwner(it.id)).catch(function (e) {
     console.warn('[근태표]', e);
     alert('고친 표를 저장하지 못했습니다: ' + ((e && e.message) || e));
   });
@@ -14226,18 +14283,18 @@ function readPhoto(id, masked) {
       return chain.then(function () {
         p.meta = Object.assign({}, p.meta, { read: read });
         if (viewerId === p.id) renderReadPanel(p);
-        return PuPhotoStore.saveRead(gridYear, p.id, read, photoOwner(p.id));
+        return PuPhotoStore.saveRead(photoYearOf(p.id), p.id, read, photoOwner(p.id));
       });
     }, Promise.resolve()).then(function () {
       /* ⚠ 기업정보함·업체관리로는 **대표 쪽 하나만** 보낸다 —
          쪽마다 보내면 같은 업체가 쪽수만큼 쌓인다. */
-      if (read.auto && canSend(read)) return sendCards(pages[0].id, gridYear, null);
+      if (read.auto && canSend(read)) return sendCards(pages[0].id, photoYearOf(pages[0].id), null);
     }).then(function () {
-      if (read.auto && canSendCo(read)) return sendCompany(pages[0].id, gridYear, null);
+      if (read.auto && canSendCo(read)) return sendCompany(pages[0].id, photoYearOf(pages[0].id), null);
     }).then(function () {
       /* 기업 상세로도 스스로 — 다시 판독한 길에서도 같아야 한다. 한쪽에만 넣으면
          「올릴 때는 되는데 다시 판독하면 안 된다」가 된다. */
-      if (autoSendCoInfo(read)) return sendCoInfo(pages[0].id, gridYear, null);
+      if (autoSendCoInfo(read)) return sendCoInfo(pages[0].id, photoYearOf(pages[0].id), null);
     }).then(function () {
       if (canSendWorker(read)) return sendWorker(pages[0].id, gridYear, null);
     });
@@ -15712,11 +15769,24 @@ function readUidMisread() {
      먼저 세어서 물어본다. */
 let sending = false;
 
+/* ══════ 「0장 보냈습니다 / 1장은 못 보냈습니다」 (대표 보고 2026-09-05) ══════
+
+   ★★ 고르는 쪽은 canSend 로 걸렀는데 **보내는 쪽은 canSendCards 로 막았다.**
+     둘의 차이는 «명함 뒷면»이다 — 뒷면은 앞면에 얹혀 가므로 혼자 안 간다.
+     그래서 뒷면이 섞여 있으면 여기서는 「보낼 것」으로 세어 놓고, 보내는 함수가
+     **아무 말 없이 되돌아간다.** 그 장은 filed 도 filedError 도 안 남아
+     「사진을 열어 까닭을 봐 주세요」라고 해 놓고 **열어 봐도 까닭이 없다.**
+
+   ⚠ 이것이 이 저장소에서 «세 번째» 같은 모양이다(2026-08-05 지우기, 2026-08-25 뒷면
+     단추, 2026-08-28 공유 단추). **기준은 반드시 한 곳이어야 한다** — 여기서도
+     보내는 함수가 쓰는 그 함수를 그대로 쓴다.
+   ⚠ 그리고 못 보낸 까닭을 **여기서 말한다.** 알고 있으면서 「열어 보라」고만 하는 것은
+     안 알려 주는 것과 같다 — 스무 장이면 스무 번 열어야 한다. */
 function sendSelected() {
   const ids = Array.from(selected).filter(function (id) {
     const it = gridItems.find(function (x) { return x.id === id; });
     const r = it && it.meta && it.meta.read;
-    return !!(r && canSend(r));
+    return !!(r && canSendCards(it, r));
   });
   if (!ids.length) {
     alert('고른 사진 중 기업정보함으로 보낼 것이 없습니다.\n\n' +
@@ -15729,18 +15799,25 @@ function sendSelected() {
       '읽어낸 값이 그대로 들어갑니다 — 이미 있는 명함이면 빈 칸만 채웁니다.')) return;
   sending = true;
   const bar = $('sendSelBtn');
-  let done = 0, failed = 0;
+  let done = 0;
+  const why = [];        /* 못 보낸 장마다 «까닭» — 알고 있으면서 안 말하지 않는다 */
 
   function step(i) {
     if (i >= ids.length) return Promise.resolve();
     if (bar) bar.textContent = '보내는 중… ' + (i + 1) + '/' + ids.length;
-    return sendCards(ids[i], gridYear, null).then(function () {
+    /* ⚠ 해도 **사진의 성질**이다 — gridYear 를 넘기면 지난해 사진이나 「전체 근로자」로
+       보는 남의 사진에서 엉뚱한 자리를 두드린다(photoYearOf 주석의 그 사고다). */
+    return sendCards(ids[i], photoYearOf(ids[i]), null).then(function () {
       const it = gridItems.find(function (x) { return x.id === ids[i]; });
-      const f = it && it.meta && it.meta.read && it.meta.read.filed;
-      if (f && (f.id || f.blocked)) done++; else failed++;
+      const r = it && it.meta && it.meta.read;
+      const f = r && r.filed;
+      if (f && (f.id || f.blocked)) { done++; return; }
+      /* 까닭이 없으면 «없다»고 말한다 — 「열어 보라」고 해 놓고 열어도 아무것도
+         없는 것이 가장 나쁘다. 그런 자리는 고장이므로 그렇게 적는다. */
+      why.push(((r && r.filedError) || '까닭이 남지 않았습니다 — 알려 주세요'));
     }, function (e) {
       console.warn('[모아 보내기]', ids[i], e);
-      failed++;
+      why.push((e && e.message) || String(e));
     }).then(function () { return step(i + 1); });
   }
 
@@ -15750,7 +15827,12 @@ function sendSelected() {
     renderGridBar();
     renderGrid();
     let msg = done + '장을 기업정보함으로 보냈습니다.';
-    if (failed) msg += '\n' + failed + '장은 보내지 못했습니다 — 사진을 열어 까닭을 봐 주세요.';
+    if (why.length) {
+      /* 같은 까닭은 한 번만 — 스무 장이 같은 이유면 스무 줄이 아니라 한 줄이다 */
+      const uniq = why.filter(function (w, i) { return why.indexOf(w) === i; });
+      msg += '\n\n' + why.length + '장은 보내지 못했습니다:\n· ' +
+        uniq.slice(0, 3).join('\n· ') + (uniq.length > 3 ? '\n· 그 밖 ' + (uniq.length - 3) + '가지' : '');
+    }
     alert(msg);
   });
 }

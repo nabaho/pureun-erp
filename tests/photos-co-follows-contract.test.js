@@ -233,7 +233,9 @@ test('★ 사진첩은 한 번 열 때 한 번만 맞춰 본다 — 격자를 �
   /* ⚠ photoOwner 는 이 함수에 두 번 나온다(보낼 값에 한 번, 저장할 때 한 번).
      「어딘가에 있나」로 보면 저장 쪽을 지워도 통과한다(되돌림 시험에서 살아남았다).
      그래서 «저장하는 줄»을 그대로 못박는다. */
-  assert.match(fn, /saveRead\(gridYear, it\.id, read, photoOwner\(it\.id\)\)/,
+  /* ⚠ 2026-09-05 — 해도 «사진의 성질»이라 photoYearOf 로 바뀌었다. 지킬 것은
+     「주인 자리에 적는다」이지 해를 무엇으로 적는가가 아니다. */
+  assert.match(fn, /saveRead\([\s\S]{0,80}?photoOwner\(it\.id\)\)/,
     '★ 주인 자리에 안 적으면 주인 화면에는 계속 「업체 없음」으로 보입니다');
   assert.match(fn, /_coSweptOnce = false/, '실패했으면 다음에 다시 해 볼 수 있어야 합니다');
 });
