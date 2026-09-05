@@ -54,3 +54,17 @@ test('감춘 열은 colgroup 폭도 함께 감춰 빈 간격을 남기지 않는
 test('스타일 캐시를 올려 운영 화면에 즉시 반영한다',()=>{
   assert.match(erp,/css\/pu-erp\.css\?v=\d+/);
 });
+
+test('고정 업체명의 left 좌표는 실제 앞 세 열의 합계이며 옛 260px 좌표가 없다',()=>{
+  const css=fs.readFileSync(path.join(root,'css','pu-erp.css'),'utf8');
+  assert.doesNotMatch(css,/\.dt\.co-full th:nth-child\(4\)[^\n]*left:260px/);
+  assert.match(css,/\.dt\.co-table th:nth-child\(4\)[^\n]*left:140px/); // 검사고정-허용: 32+32+76 실제 앞열 합계
+  assert.match(css,/\.dt\.co-table\.co-no-hidden th:nth-child\(4\)[^\n]*left:64px/); // 검사고정-허용: 번호 숨김 시 32+32
+  assert.match(erp,/coHideIdx\.indexOf\(CO_NO_COL_IDX\)>=0 \? ' co-no-hidden'/);
+});
+
+test('업체관리 고정 열 규칙이 다른 데이터 표에 잘못 적용되지 않는다',()=>{
+  const css=fs.readFileSync(path.join(root,'css','pu-erp.css'),'utf8');
+  assert.doesNotMatch(css,/\.dt th:nth-child\([1-4]\), \.dt td:nth-child/);
+  assert.match(css,/\.dt\.co-table th:nth-child\(1\), \.dt\.co-table td:nth-child\(1\)/);
+});
