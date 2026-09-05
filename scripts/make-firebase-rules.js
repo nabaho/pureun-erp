@@ -203,6 +203,38 @@ rules.improve_requests = workspace({ '.indexOn': ['authorSid', 'done'] });
 
 rules.ieum_public = { '.read': 'auth != null', '.write': LOGIN };
 
+/* ── 파생 관계망(온톨로지) ── 2026-09-04, 6단계 ㉡
+   ★ 이것은 «사본»이다. 원본을 대신하지 않고, 언제든 원본에서 다시 만든다.
+     그래서 지워져도 자료를 잃지 않는다 — 다시 올리면 된다.
+
+   ⚠⚠ 칸을 «권한으로» 가른다. 관계망에는 이름·금액·연락처가 안 담기지만,
+     「누가 무엇과 이어져 있는가」 자체가 알려 주는 것이 있다 —
+       personal   사람·근로계약·근태·휴가  → 관리자만
+       financial  급여·수입·지출·청구서    → 관리자만
+       internal   업체·계약·사건·사업·일정 → 재직 직원
+       source     서류·사진·메일·규정·제출 → 재직 직원
+     CLAUDE.md 「원본보다 넓은 권한으로 공개하지 않는다」를 자리 모양으로 못 박은 것이다.
+
+   ⚠ 쓰기는 관리자만이다. 진단을 돌려 올리는 것은 관리자 화면(검증센터)뿐이다.
+   ⚠ current 는 「지금 볼 판」 한 줄이다. 이것을 마지막에 바꿔야 반쯤 올라간 판을
+     아무도 안 본다 — 규칙이 아니라 올리는 차례가 지키는 일이라 주석으로 남긴다. */
+rules.ontology = {
+  v1: {
+    current: { '.read': LOGIN, '.write': ADMIN,
+      '.validate': 'newData.isString() && newData.val().length <= 64' },
+    gen: {
+      $gen: {
+        meta:      { '.read': LOGIN, '.write': ADMIN },
+        internal:  { '.read': LOGIN, '.write': ADMIN },
+        source:    { '.read': LOGIN, '.write': ADMIN },
+        /* ★ 여기 둘은 «재직 직원»에게도 안 보인다 */
+        personal:  { '.read': ADMIN, '.write': ADMIN },
+        financial: { '.read': ADMIN, '.write': ADMIN }
+      }
+    }
+  }
+};
+
 /* 일정관리(scal_*) — 지우기는 관리자만인 것이 업무 칸과 같다.
    ⚠ 다만 맨 위 .write 가 workspace() 와 다르다(직원도 «만들» 수 있어야 한다). */
 function scal() {

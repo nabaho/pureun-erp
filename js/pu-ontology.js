@@ -835,6 +835,62 @@
     return {ok:errors.length===0,errors:errors};
   }
 
+  /* ══════ 관계망 올리기 (6단계 ㉡, 2026-09-04) ══════
+     지금까지 확정 관계망은 «파일 내려받기»뿐이었다. 그래서 볼 때마다 처음부터 다시
+     훑어야 했고, 다른 프로그램은 관계망을 아예 몰랐다.
+
+     ★ 이 함수는 «쓰지 않는다» — 무엇을 어디에 쓸지 «적어서 돌려줄» 뿐이다.
+       서버에 닿는 일은 화면이 한다. 그래야 검사가 파이어베이스 없이 전부 재어 본다.
+
+     자리 모양
+       ontology/v1/gen/{판번호}/meta                    판 하나의 머리
+       ontology/v1/gen/{판번호}/internal/entities|edges  직원 전원
+       ontology/v1/gen/{판번호}/source/…                 직원 전원
+       ontology/v1/gen/{판번호}/personal/…               관리자만
+       ontology/v1/gen/{판번호}/financial/…              관리자만
+       ontology/v1/current                              지금 볼 판 번호
+
+     ⚠★ current 는 «맨 마지막»에 쓴다. 먼저 쓰면 반쯤 올라간 판을 남들이 읽는다.
+     ⚠★ 옛 판을 «지우지 않는다» — 그것이 직전 판 보관이다. 새 판을 다 올린 뒤
+        가리키는 곳만 바꾸므로, 올리다 끊겨도 보던 판이 그대로 산다.
+     ⚠ 한 번에 다 쓰지 않는다. 실시간DB 는 한 번의 쓰기를 16MB 까지만 받는다 —
+       이 저장소는 기금 스냅샷에서 write_too_big 을 실제로 맞은 적이 있다.
+     ⚠ 원본을 향해서는 한 글자도 안 쓴다. 모든 경로가 ontology/ 로 시작한다. */
+  var ONT_ROOT='ontology/v1';
+  var ONT_CHUNK=400;          /* 한 번의 쓰기에 담는 칸 수 */
+  function uploadPlan(snap,options){
+    options=options||{};
+    var checked=validateSnapshot(snap);
+    if(!checked.ok) throw new Error('올릴 수 없는 관계망입니다: '+checked.errors.slice(0,3).join(', '));
+    var gen=clean(snap.meta.generationId);
+    if(!gen||/[.#$\[\]\/]/.test(gen)) throw new Error('판 번호가 자리 이름으로 쓸 수 없습니다.');
+    var base=ONT_ROOT+'/gen/'+gen, writes=[], counts={entities:0,edges:0};
+    writes.push({path:base+'/meta',value:{
+      schema:'ontology/v1',schemaVersion:snap.meta.schemaVersion,generationId:gen,
+      generatedAt:clean(snap.meta.generatedAt),fingerprint:clean(snap.meta.fingerprint),
+      readOnlyDerived:true,sourceMutation:'never',
+      confirmedEdges:Number(snap.meta.confirmedEdges)||0,
+      excludedCandidates:Number(snap.meta.excludedCandidates)||0,
+      previousGenerationId:clean(options.previousGenerationId)||null}});
+    ['internal','source','personal','financial'].forEach(function(vis){
+      ['entities','edges'].forEach(function(kind){
+        var box=(snap.partitions[vis]||{})[kind]||{}, keys=Object.keys(box).sort();
+        counts[kind]+=keys.length;
+        for(var i=0;i<keys.length;i+=ONT_CHUNK){
+          var part={};
+          keys.slice(i,i+ONT_CHUNK).forEach(function(k){ part[k]=box[k]; });
+          writes.push({path:base+'/'+vis+'/'+kind,value:part,merge:true});
+        }
+      });
+    });
+    /* ★ 맨 마지막 — 이 한 줄이 「이제 새 판을 보라」다 */
+    writes.push({path:ONT_ROOT+'/current',value:gen,last:true});
+    return {root:ONT_ROOT,generationId:gen,writes:writes,counts:counts,
+      confirmed:Number(snap.meta.confirmedEdges)||0,
+      excluded:Number(snap.meta.excludedCandidates)||0,
+      sourceMutation:'never',readOnlyDerived:true};
+  }
+
   /* 포털 타일과 등록부를 맞춘다.
      ⚠ 예전에는 «개수가 같은가»를 봤다. 그러면 타일 없는 프로그램(근로자 전용·공개 화면)을
        하나 넣는 순간 검사가 깨져, 등록을 «안 하는» 쪽이 쉬워진다.
@@ -936,7 +992,7 @@
     companyNumberHead:companyNumberHead, companyNumberBody:companyNumberBody, formatCompanyNumber:formatCompanyNumber,
     parseCompanyNumber:parseCompanyNumber, companyNumberOrder:companyNumberOrder, companyNumberTargets:companyNumberTargets,
     validateCompanyNumbers:validateCompanyNumbers, companyNumberHistory:companyNumberHistory,
-    audit:audit, auditIntegrated:auditIntegrated, getReadPlan:getReadPlan, searchEntities:searchEntities, entityConnections:entityConnections,
+    audit:audit, auditIntegrated:auditIntegrated, uploadPlan:uploadPlan, ONT_ROOT:ONT_ROOT, getReadPlan:getReadPlan, searchEntities:searchEntities, entityConnections:entityConnections,
     organization360:organization360, validateCompanyLink:validateCompanyLink, companyLinkCandidates:companyLinkCandidates,
     validateWorkReferences:validateWorkReferences, workReferenceCandidates:workReferenceCandidates, validateWorkBatch:validateWorkBatch,
     validateHanaSourceBatch:validateHanaSourceBatch,

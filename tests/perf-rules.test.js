@@ -82,6 +82,11 @@ const allowTop = ['systemAlerts','systemBackups','systemBackupsIndex','systemRes
      자리로 옮긴다. 부모(pucards_private)에는 읽기를 주지 않는다 — 주면 누가 개인
      폴더를 갖고 있는지 목록이 드러난다. 사람별 분리는 puphotos 와 같은 방식. */
   'pucards_private',
+  /* 2026-09-04 파생 관계망(온톨로지 6단계 ㉡). 확정 관계만 담는 «사본»이라
+     지워져도 자료를 잃지 않는다 — 원본에서 다시 만든다.
+     ⚠ 최상위인 까닭: 칸(personal·financial)을 권한으로 갈라야 하는데,
+       data 아래에 두면 그 자리의 넓은 규칙에 먼저 걸린다. */
+  'ontology',
   /* 2026-08-15 급여데이터함. 사람별 자리(paydata/u/$owner)에 담고, 휴가 대리인은
      기간(deputy/…/to >= now)이 살아 있는 동안만 주인 자료를 만진다. */
   'paydata',
