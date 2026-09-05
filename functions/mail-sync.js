@@ -70,6 +70,14 @@ const PREVIEW_HTML_BYTES = 3000; /* html 은 앞머리가 <head><style> 로 가�
    글이 한 자도 안 나온다(2026-08-24 대표 화면: 「.color_fix span {color:#888 !i」). */
 const PRUNE_GAP_MS = 24 * 60 * 60 * 1000;  // 통수가 그대로일 때의 그물 — 하루에 한 번
 const BODY_FULL_MAX = 2 * 1024 * 1024;     // 이보다 작으면 통째로 받아 파싱한다
+/* ⚠★ 크기«만» 보고 정하면 안 된다 (대표 지시 2026-09-05 「내용 가지고 오기 시간 너무
+     많이 걸린다」). 1.2MB PDF 가 붙은 메일은 통째로 1.7MB 를 받아 놓고 글 세 줄을
+     보여 준다 — 첨부는 누르기 «전»에는 아무도 안 본다.
+   ★ 그래서 첨부가 이만큼 넘으면 «본문 조각만» 받는다. 조각만 받는 길은 원래부터
+     있었다(2MB 넘는 메일이 쓰던 길) — 문턱을 바꾸는 것뿐이다.
+   ⚠ 작은 메일까지 조각으로 돌리지는 않는다. 통째로 파싱하는 길이 이상한 구조·글자표에
+     더 튼튼해서, 더 얻을 것이 없는 곳에서 굳이 갈아탈 까닭이 없다. */
+const BODY_PART_ATT = 128 * 1024;          // 첨부가 이보다 크면 본문 조각만 받는다
 const ATT_MAX = 20 * 1024 * 1024;          // 첨부 하나를 돌려줄 상한
 
 function nowMs() { return Date.now(); }
@@ -832,6 +840,31 @@ function pickParts(node, out, depth) {
   return out;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   본문을 «통째로» 받을까, «조각만» 받을까 (대표 지시 2026-09-05)
+   ══════════════════════════════════════════════════════════════════════════
+   「내용 가지고 오기 시간 너무 많이 걸린다」
+
+   ★ 뿌리 — 지금까지는 «메일 크기»만 봤다(2MB 아래면 통째로). 그런데 1.2MB PDF 가
+     붙은 메일은 통째로 1.7MB 를 받아 놓고 글 세 줄을 보여 준다. 첨부는 누르기
+     «전»에는 아무도 안 본다 — 그 1.7MB 가 그대로 기다림이 된다.
+   ★ 그래서 첨부 무게를 함께 본다. 조각만 받는 길은 원래부터 있었다(2MB 넘는 메일이
+     쓰던 길) — 새로 짓는 것이 아니라 언제 그 길로 갈지를 고쳤을 뿐이다.
+
+   ⚠ 첨부가 «없으면» 통째로 받아도 더 받는 것이 없다 — 옛길 그대로 둔다.
+     통째로 파싱하는 길이 이상한 구조·글자표에 더 튼튼하다.
+   ⚠ 미리 받기(peek)는 첨부가 «조금이라도» 있으면 조각만 받는다. 열어 보시지도 않은
+     이웃 두 통 때문에 몇 MB 를 받아 두는 것은 기다림도 요금도 헛되다.
+   ⚠ 본문 조각이 «어디 있는지 모르면» 통째로 간다 — 그때는 그것이 유일하게 믿을 수
+     있는 길이다. 조각을 모르는데 조각만 받으면 본문이 통째로 빈다. */
+function bodyPlan(parts, size, peek) {
+  const p = parts || {};
+  const attBytes = (p.atts || []).reduce((s, a) => s + Number((a && a.size) || 0), 0);
+  if (!p.html && !p.text) return 'full';
+  if (attBytes > (peek ? 0 : BODY_PART_ATT)) return 'part';
+  return (Number(size || 0) && Number(size) <= BODY_FULL_MAX) ? 'full' : 'part';
+}
+
 module.exports = function build(deps) {
   const F = deps.functions;
   const REGION = deps.MAIL_REGION;
@@ -961,7 +994,8 @@ module.exports = function build(deps) {
           const atts = parts.atts.map((a, i) => Object.assign({ i: i }, a));
 
           const size = Number(head.size || 0);
-          if (size && size <= BODY_FULL_MAX) {
+          /* 통째로 받을까, 본문 조각만 받을까 — 잣대는 bodyPlan 한 자리다(위 주석 참고) */
+          if (bodyPlan(parts, size, peek) === 'full') {
             const { simpleParser } = require('mailparser');
             const one = await client.fetchOne(uid, { uid: true, source: true }, { uid: true });
             const p = await simpleParser(one.source);
@@ -1302,6 +1336,9 @@ module.exports = function build(deps) {
 /* 검사에서 부를 수 있게 열어 둔다 — 값 판단(pickParts)과 «한 회차 돌리기»(runSync).
    runSync 는 opts.client 로 가짜 메일함을 끼울 수 있다. */
 module.exports.pickParts = pickParts;
+module.exports.bodyPlan = bodyPlan;
+module.exports.BODY_PART_ATT = BODY_PART_ATT;
+module.exports.BODY_FULL_MAX = BODY_FULL_MAX;
 module.exports.runSync = runSync;
 /* 「붙어 둔 것 다시 쓰기」를 돌려 보려고 함께 내보낸다 — 이 결은 글자로는 못 지킨다.
    ⚠ 붙어 둔 것은 모듈 자리(_warm)에 산다. 검사는 회마다 require 를 새로 해서
