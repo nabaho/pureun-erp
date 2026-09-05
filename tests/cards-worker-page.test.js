@@ -396,7 +396,11 @@ test('★ 그 화면에서 명함 목록 UI 를 숨긴다 — 두 화면이 겹�
   const fn = cut('renderPC');
   assert.match(fn, /isWk/, '★ 근로자 정보함 화면을 renderPC 가 모릅니다');
   assert.match(fn, /isSet\|\|isMat\|\|isMail\|\|isCo\|\|isWk/, '★ 명함 목록이 함께 보입니다');
-  assert.match(fn, /if\(isWk\)\{ renderWkPage\(\)/, '★ 그 화면을 그리지 않습니다');
+  /* ⚠ 2026-09-05: 근로자 화면도 «탭 줄»을 다시 그린다. 그 전에는 renderErpTabs 를
+       안 불러, 명함 화면에서 그리고 온 띠(전체 6,309·자문 228…)가 지워지지 않은 채
+       남아 근로자 14명을 보는데 명함 숫자가 떠 있었다(대표 화면). */
+  assert.match(fn, /if\(isWk\)\{ renderErpTabs\(\); renderWkPage\(\); return; \}/,
+    '★ 그 화면을 그리지 않거나, 탭 줄을 근로자 것으로 갈아 그리지 않습니다');
 });
 
 /* ══════════ ⑦ 새 저장소를 만들지 않았다 ══════════ */

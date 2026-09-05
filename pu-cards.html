@@ -3287,6 +3287,9 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
   /* 👷 근로자 정보함 (대표 지시 2026-09-01) — 기업 상세와 같은 «화면» 방식이다.
      wkFolder 는 옆줄 갈래(''·group·case·doc), wkQ 는 이 화면의 찾기말. */
   wkQ:'', wkPick:'', wkFolder:'', wkPage:0,
+  /* wkCase 는 지금 고른 «사건 탭»의 사건 열쇠(빈 값이면 전체), wkTabDone 은
+     🚪 끝난 사건 탭을 펼쳐 뒀는지. 둘 다 화면에만 쓰고 저장하지 않는다. */
+  wkCase:'', wkTabDone:false,
   /* 푸른이알피 종료 업체 보기 (대표 지시 2026-08-24). 새 폴더가 아니라 «토글»이다 —
      회사 폴더에 자동으로 쓰면 회사 전체가 보는 자리에 매번 대량 쓰기가 나간다
      (2026-08-16 사고와 같은 패턴). 이미 불러온 ErpMatch 값만 읽는다. */
@@ -21662,7 +21665,9 @@ function renderMyTabsHtml(){
      같이 나와야 되는데"). 화면마다 무엇을 그리는지만 여기서 갈린다. */
 function renderErpTabs(){
   const el=$('pcErpTabs'); if(!el) return;
-  el.innerHTML = state.view==='co' ? renderCoFTabsHtml() : renderMyTabsHtml();
+  el.innerHTML = state.view==='co' ? renderCoFTabsHtml()
+               : state.view==='wk' ? renderWkTabsHtml()
+               : renderMyTabsHtml();
 }
 
 /* ══════ 패널 표시 — 환경설정 안에서는 팝업 없이 그 자리에 펼친다 ══════
@@ -22599,7 +22604,10 @@ function renderPC(){
   if(isMat){ renderMatPage(); return; }
   if(isMail){ renderMailPage(); return; }
   if(isCo){ renderErpTabs(); renderCoPage(); return; }
-  if(isWk){ renderWkPage(); return; }
+  /* ⚠ 2026-09-05 고침 — 여기서 renderErpTabs 를 «안 불렀다». 그래서 명함 화면에서
+       그리고 온 띠(전체 6,309·자문 228…)가 지워지지 않은 채 남아, 근로자 14명을
+       보는데 명함 숫자가 떠 있었다(대표 화면). 이제 근로자 것으로 갈아 그린다. */
+  if(isWk){ renderErpTabs(); renderWkPage(); return; }
   renderErpTabs(); renderPCTable();
 }
 
@@ -27115,8 +27123,16 @@ function wkMatch(p, q){
     .join(' ').toLowerCase();
   return hay.indexOf(s) >= 0;
 }
+/* 사건 탭 거르개 — 열쇠 하나면 명단이 정해진다. 조건을 짜 넣지 않는다. */
+function wkCasePick(caseKey){
+  const k = String(caseKey||'');
+  if(!k) return () => true;
+  return p => (p.cases||[]).some(c => c && c.caseKey === k);
+}
 function wkVisible(){
-  return wkList().filter(wkFolderPick(state.wkFolder||'')).filter(p => wkMatch(p, state.wkQ));
+  return wkList().filter(wkFolderPick(state.wkFolder||''))
+                 .filter(wkCasePick(state.wkCase||''))
+                 .filter(p => wkMatch(p, state.wkQ));
 }
 
 /* ── 주민번호는 가려서 보이고 눌러야 나온다 (대표 결정 2026-09-01) ──
@@ -27562,8 +27578,223 @@ function renderWkMobile(){
 
 function pickWkFolder(id){
   state.wkFolder = String(id||''); state.wkPage = 0; closeWkDetail();
+  wkRepaint();
+}
+
+/* ══════ 👷 근로자 — 사건별 명단 탭 (대표 지시 2026-09-05) ══════
+   「근로자에게는 [명함·사업자 유형 탭 줄]이 필요가 없다. 탭추가 기능만 넣고
+    근로자들이 사건이 있을 경우 사건별로 명단을 정리할 수 있다. 종료시에는 해당
+    근로자들 종료로 푸른이알피에서 클릭 되면 종료로 분류되었으면 좋겠다.」
+
+   ■ 그 띠는 «근로자 화면 것이 아니었다»
+   renderPC 가 근로자 화면에서 renderErpTabs 를 아예 안 불러, 명함 화면에서 그리고 온
+   띠가 지워지지 않은 채 남아 있었다 — 근로자 14명을 보는데 「전체 6,309 · 자문 228」이
+   떠 있었다. 눌러도 명함 화면으로 튄다. 그래서 「필요 없다」가 맞다.
+
+   ★ 탭 하나가 «사건 하나»다. 조건을 짜 넣지 않는다 — 사건 열쇠 하나면 명단이
+     정해지고, 사람이 사건에 드나들면 탭도 저절로 따라온다(쓰기 0).
+   ★ 자리는 «이미 있는» pucards/views 를 그대로 쓴다(kind:'wk'). 새 자리를 만들면
+     전 직원 공유·이름 변경·삭제를 다 다시 만들어야 한다.
+   ★ 끝난 사건은 🚪 로 접는다 — 기업정보함의 「🚪 해지」와 «같은 규칙»이다(끝난 곳은
+     지우지 않고 옮긴다). 잣대는 푸른이알피의 상태 한 곳뿐이다.
+   ⚠ 명함 탭 얼개(applyView·countMatching·viewSig)는 **쓰지 않는다** — 그것들은
+     state.tab 과 명함 거르개를 건드려, 근로자 화면에서 부르면 목록 화면이 바뀐다.
+   ⚠ kind 를 'wk' 로 두면 명함 탭 줄에는 «절대» 안 섞인다
+     (renderMyTabsHtml 이 (v.kind||'card')===state.tab 로 거른다). */
+
+function wkRepaint(){
   if(document.body.classList.contains('pc')) renderWkPage(); else renderWkMobile();
-  renderPCSide();
+  renderErpTabs(); renderPCSide();
+}
+
+/* 지금 사람 목록에 «걸려 있는» 사건들 — 사람 수까지 함께 센다.
+   ⚠ 사건 원장을 따로 읽지 않는다. 근로자가 한 명도 없는 사건은 명단이 빈 탭이 되므로
+     애초에 고를 수 없어야 한다. */
+function wkCases(){
+  const by = {};
+  wkList().forEach(p => (p.cases||[]).forEach(c => {
+    if(!c || !c.caseKey) return;
+    const o = by[c.caseKey] = by[c.caseKey] || {
+      caseKey: c.caseKey, caseNo: c.caseNo||'', title: c.title||'',
+      company: c.company||'', stat: c.stat||'', year: Number(c.year)||0, n: 0, who: [] };
+    o.n++;
+    /* ⚠ 사건 이름은 «갈래 이름»이라 겹친다 — 대표 화면에 「산업재해등사건대리」가 둘,
+         「임금퇴직금기타체불노동부대리」가 넷이다. 사업장이 비어 있는 사건도 많아,
+         이름만 늘어놓으면 어느 것을 고르는지 알 수 없다. 걸린 사람 이름을 함께 든다. */
+    if(o.who.length < 3 && p.name && o.who.indexOf(p.name) < 0) o.who.push(p.name);
+  }));
+  return Object.values(by).sort((a,b)=>(b.year-a.year)
+    || String(a.title).localeCompare(String(b.title),'ko'));
+}
+/* 같은 이름 사건을 «가려 주는» 곁줄. 사업장이 먼저고, 없으면 사람 이름이다.
+   ⚠ 사건번호는 맨 뒤다 — 있으면 확실하지만 화면에서 사람이 알아보는 것은 이름 쪽이다. */
+function wkCaseWhich(c){
+  if(!c) return '';
+  const out = [];
+  if(c.company) out.push(c.company);
+  else if((c.who||[]).length) out.push((c.who||[]).join(' · ') + (c.n > c.who.length ? ' 외' : ''));
+  out.push(c.n + '명');
+  if(c.caseNo && c.caseNo !== c.title) out.push(c.caseNo);
+  return out.join(' · ');
+}
+function wkCaseOf(caseKey){
+  const k = String(caseKey||''); if(!k) return null;
+  return wkCases().filter(c=>c.caseKey===k)[0] || null;
+}
+
+/* 저장해 둔 근로자 탭 — 만든 차례대로 */
+function wkTabs(){
+  return Object.values(state.views||{})
+    .filter(v => v && v.id && v.kind === 'wk' && v.f && v.f.wkCase)
+    .sort((a,b)=>(Number(a.order)||0)-(Number(b.order)||0));
+}
+function wkTabKey(v){ return String((v && v.f && v.f.wkCase) || ''); }
+/* 이 탭의 사건이 «끝났나» — 잣대는 푸른이알피의 상태 한 곳이다.
+   ⚠ 목록에서 사라진 사건(사람이 다 빠졌다)은 «끝난 것으로 보지 않는다» —
+     「없어진 것」과 「끝난 것」은 다르다. 없어진 것은 0명으로 그대로 서 있어야
+     대표가 「이 탭 왜 비었지」를 보고 지울 수 있다. */
+function wkTabDone(v){
+  const c = wkCaseOf(wkTabKey(v));
+  return !!(c && c.stat === 'done');
+}
+function wkTabCount(v){
+  const k = wkTabKey(v); if(!k) return 0;
+  return wkList().filter(p => (p.cases||[]).some(c => c && c.caseKey === k)).length;
+}
+/* 진행 중인 것과 끝난 것으로 가른다 — 끝난 것은 접어 둔다.
+   ⚠ «지금 보고 있는» 탭은 끝난 것이어도 접지 않는다 — 보고 있는 탭이 화면에서
+     사라지면 어디에 있는지 모른다. */
+function wkTabRows(cur){
+  const k = String(cur||'');
+  const run = [], done = [];
+  wkTabs().forEach(v => (wkTabDone(v) && wkTabKey(v) !== k ? done : run).push(v));
+  return { run: run, done: done };
+}
+
+/* ── 탭 줄 ── */
+function wkTabTip(v){
+  const c = wkCaseOf(wkTabKey(v));
+  if(!c) return '이 사건에 걸린 근로자가 지금은 없습니다';
+  return `${c.title||'이름 없는 사건'} · ${wkCaseWhich(c)}`
+    + (c.stat==='done' ? ' · 🚪 푸른이알피에서 종료로 바뀌었습니다' : '');
+}
+function wkTabChipHtml(v, on){
+  const done = wkTabDone(v);
+  return `<span style="display:inline-flex;align-items:center;
+      border:1.5px solid ${on?'#1e40af':'#bfdbfe'};background:${on?'#1e40af':'#f8fafc'};
+      color:${on?'#fff':'#1e40af'};border-radius:18px;font-weight:700;font-size:12.5px;overflow:hidden">
+    <span style="cursor:pointer;padding:6px 4px 6px 13px"
+      onclick="wkTabPick('${v.id}')" title="${esc(wkTabTip(v))}">${done?'🚪':'⚖'} ${esc(v.name)}
+      <b style="margin-left:5px;font-weight:800;${on?'':'color:#64748b'}">${wkTabCount(v).toLocaleString()}</b></span>
+    <span style="cursor:pointer;padding:6px 9px 6px 4px;opacity:.75;font-size:13px"
+      onclick="wkTabMenu('${v.id}')" title="이름변경 · 삭제">⋮</span></span>`;
+}
+function renderWkTabsHtml(){
+  const cur = String(state.wkCase||'');
+  const t = wkTabRows(cur);
+  const allOn = !cur;
+  let h = `<span style="display:inline-flex;align-items:center;cursor:pointer;
+      border:1.5px solid ${allOn?'#1e293b':'#e2e8f0'};background:${allOn?'#1e293b':'#fff'};
+      color:${allOn?'#fff':'#1e293b'};border-radius:18px;font-weight:700;font-size:12.5px;
+      padding:6px 13px;margin-right:2px"
+      onclick="wkAllTab()" title="사건을 가리지 않고 근로자 전체를 봅니다">📋 전체
+      <b style="margin-left:5px;font-weight:800;${allOn?'':'color:#64748b'}">${wkList().length.toLocaleString()}</b></span>`;
+  h += t.run.map(v=>wkTabChipHtml(v, cur === wkTabKey(v))).join('');
+  /* 🚪 끝난 사건 — 접어 둔다. 다 펼쳐 두면 「지금 하는 일」이 안 보인다
+     (기업정보함의 「🚪 해지」와 같은 규칙). */
+  if(t.done.length){
+    const open = !!state.wkTabDone;
+    h += `<button onclick="wkTabToggleDone()"
+      title="푸른이알피에서 종료된 사건입니다 — 명단은 그대로 남아 있습니다"
+      style="border:1.5px solid #e2e8f0;background:${open?'#f8fafc':'#fff'};color:#64748b;
+      border-radius:18px;padding:6px 13px;font-weight:700;font-size:12.5px;cursor:pointer;font-family:inherit">
+      🚪 끝난 사건 <b style="margin-left:3px">${t.done.length}</b> ${open?'▾':'▸'}</button>`;
+    if(open) h += t.done.map(v=>wkTabChipHtml(v, cur === wkTabKey(v))).join('');
+  }
+  h += `<button onclick="wkTabAdd()"
+    title="사건 하나를 골라 그 사건에 걸린 근로자 명단 탭을 만듭니다"
+    style="border:1.5px dashed #bfdbfe;background:#fff;color:#64748b;border-radius:18px;
+    padding:6px 13px;font-weight:700;font-size:12.5px;cursor:pointer;font-family:inherit">＋ 탭 추가</button>`;
+  return h;
+}
+
+/* ── 누르기 ── */
+function wkAllTab(){ state.wkCase=''; state.wkPage=0; closeWkDetail(); wkRepaint(); }
+function wkTabToggleDone(){ state.wkTabDone = !state.wkTabDone; wkRepaint(); }
+function wkTabPick(id){
+  const v = (state.views||{})[id]; if(!v) return;
+  const k = wkTabKey(v);
+  /* 같은 탭을 다시 누르면 풀린다 — 「전체」를 찾아 누르는 걸음을 아낀다 */
+  state.wkCase = (state.wkCase === k) ? '' : k;
+  state.wkPage = 0; closeWkDetail(); wkRepaint();
+}
+
+/* ── 만들기 ── */
+function wkTabAdd(){
+  const all = wkCases();
+  if(!all.length) return toast('푸른이알피 사건에 걸린 근로자가 아직 없습니다', 6000);
+  const has = {};
+  wkTabs().forEach(v => { has[wkTabKey(v)] = true; });
+  const rows = all.filter(c => !has[c.caseKey]);
+  if(!rows.length) return toast('걸린 사건이 모두 탭으로 나와 있습니다', 6000);
+  showPanel(`
+    <div class="mhead"><b>＋ 사건 탭 추가</b>${_closeBtn()}</div>
+    <p class="setnote">사건을 고르면 <b>그 사건에 걸린 근로자 명단</b>이 탭 하나가 됩니다.
+      푸른이알피에서 그 사건이 «종료»로 바뀌면 탭도 🚪 끝난 사건으로 옮겨 갑니다.</p>
+    <div class="setpanel">${rows.map(c=>`
+      <button class="setbtn" onclick="wkTabMake('${esc(c.caseKey)}')"
+        title="${esc(wkCaseWhich(c))}">${c.stat==='done'?'🚪':'⚖'} ${esc(c.title||'이름 없는 사건')}
+        <span class="sdesc">${esc(wkCaseWhich(c))}</span></button>`).join('')}</div>`);
+}
+function wkTabMake(caseKey){
+  const c = wkCaseOf(caseKey); if(!c) return;
+  /* ⚠ 사건 이름만 넣어 두면 「산업재해등사건대리」 탭이 둘 생겨 못 가른다 —
+       사업장(없으면 사람 이름)을 붙여 «다르게» 내놓는다. 대표가 고쳐 쓸 수 있다. */
+  const who = c.company || (c.who||[])[0] || '';
+  const dflt = ((who ? who + ' ' : '') + (c.title || ('사건 ' + (c.caseNo||'')))).trim();
+  const nm = (prompt('탭 이름을 적어 주세요', dflt) || '').trim();
+  if(!nm) return;
+  const id = uid();
+  const v = { id: id, name: nm, kind:'wk', scope:'all', order: Date.now(),
+              f: { wkCase: String(caseKey) } };
+  /* ⚠ 서버가 되돌려 줄 때까지 기다리지 않는다 — 그 사이 화면이 안 바뀌면
+       「안 만들어졌나」 하고 한 번 더 누른다(탭이 둘 생긴다). */
+  Store.putView(v); state.views[id] = v;
+  state.wkCase = String(caseKey);
+  const bg=$('dedupBg'); if(bg) bg.classList.remove('open');
+  toast(`⚖ ‘${nm}’ 탭을 만들었습니다 — ${c.n}명`);
+  wkRepaint();
+}
+
+/* ── 고치기·지우기 ── */
+function wkTabMenu(id){
+  const v = (state.views||{})[id]; if(!v) return;
+  const c = wkCaseOf(wkTabKey(v));
+  $('menuM').innerHTML = `
+    <div class="mhead"><b>⚖ ${esc(v.name)}</b>
+      <button class="iconbtn" onclick="menuBg.classList.remove('open')">✕</button></div>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');wkTabPick('${id}')">👁 이 사건 명단 보기
+      <span class="msub">${c ? esc(c.title||'이름 없는 사건') + ' · ' + c.n + '명 · '
+        + (c.stat==='done' ? '🚪 종료' : '▶ 진행중')
+        : '이 사건에 걸린 근로자가 지금은 없습니다'}</span></button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');wkTabRename('${id}')">✏️ 이름 변경</button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');wkTabDel('${id}')" style="color:#dc2626">🗑 이 탭 삭제
+      <span class="msub">푸른이알피 사건도 근로자도 그대로입니다</span></button>`;
+  $('menuBg').classList.add('open');
+}
+function wkTabRename(id){
+  const v = (state.views||{})[id]; if(!v) return;
+  const nm = (prompt('새 탭 이름', v.name) || '').trim(); if(!nm) return;
+  const neo = Object.assign({}, v, { name: nm });
+  Store.putView(neo); state.views[id] = neo;
+  toast('탭 이름을 바꿨습니다'); wkRepaint();
+}
+function wkTabDel(id){
+  const v = (state.views||{})[id]; if(!v) return;
+  if(!confirm(`‘${v.name}’ 탭을 지울까요?\n\n· 탭만 없어집니다 — 푸른이알피 사건도 근로자도 그대로입니다.`)) return;
+  if(wkTabKey(v) === String(state.wkCase||'')) state.wkCase = '';
+  Store.delView(id); delete state.views[id];
+  toast(`‘${v.name}’ 탭을 지웠습니다`); wkRepaint();
 }
 
 /* ══════ 🔗 회사 열쇠 — 이알피 업체를 «한 번 확정»해 두면 안 끊긴다 (대표 지시 2026-09-02) ══════
