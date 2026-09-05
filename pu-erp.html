@@ -21338,6 +21338,10 @@ function CompanyManagement(){
        주석으로 「같이 고칠 것」이라 적어 두었지만 주석은 아무것도 막지 못했다 —
        tests/co-col-index.test.js 가 머리글 순서와 이 표를 맞대어 본다. */
   var CO_COLS_FULL = [
+    /* ★ 번호(고유번호)도 끄고 켤 수 있다 (대표 지시 2026-09-05: 「너무 길다, 짧게 하거나 숨겨라」).
+       예전에는 이 칸만 등록부에서 빠져 있어 «끌 방법이 아예 없었다».
+       d:true 라 「간단히」에서 접힌다 — 늘 훑는 칸이 아니라 «찾아 쓰는» 칸이다. */
+    {k:'f_puNo',label:'번호',idx:3,d:true},
     {k:'f_type',label:'유형',idx:5},{k:'f_mgrMain',label:'주담당',idx:6},{k:'f_mgrSub',label:'부담당',idx:7},
     {k:'f_bizNo',label:'사업자번호',idx:8},{k:'f_bizType',label:'업태',idx:9},{k:'f_bizCat',label:'종목',idx:10},
     {k:'f_ceo',label:'대표자',idx:11},{k:'f_size',label:'규모',idx:12,d:true},{k:'f_empCnt',label:'근로자수',idx:13,d:true},
@@ -21348,6 +21352,7 @@ function CompanyManagement(){
     {k:'f_fee',label:'월자문료',idx:24},{k:'f_note',label:'특이사항',idx:25},{k:'f_diff',label:'난이도',idx:26}
   ];
   var CO_COLS_SUB = [
+    {k:'s_puNo',label:'번호',idx:3,d:true},
     {k:'s_mgr',label:'담당자',idx:5},{k:'s_bizNo',label:'사업자번호',idx:6},{k:'s_bizType',label:'업태',idx:7},
     {k:'s_bizCat',label:'종목',idx:8},{k:'s_ceo',label:'대표자',idx:9},{k:'s_branch',label:'지점',idx:10},
     {k:'s_filed',label:'신고서전달',idx:11,d:true},{k:'s_taxReq',label:'세무사요청',idx:12,d:true},{k:'s_taxReply',label:'세무사회신',idx:13,d:true},
@@ -21366,7 +21371,17 @@ function CompanyManagement(){
   function toggleCol(k){ var n = Object.assign({}, hiddenCols); if(n[k]) delete n[k]; else n[k] = true; saveHiddenCols(n); }
   function coShowAll(){ var n = Object.assign({}, hiddenCols); coColReg.forEach(function(c){ delete n[c.k]; }); saveHiddenCols(n); }
   function coSimple(){ var n = Object.assign({}, hiddenCols); coColReg.forEach(function(c){ if(c.d) n[c.k] = true; else delete n[c.k]; }); saveHiddenCols(n); }
-  var coHideCss = coColReg.filter(function(c){ return hiddenCols[c.k]; }).map(function(c){ return '.co-table td:nth-child('+c.idx+'),.co-table th:nth-child('+c.idx+'){display:none}'; }).join('');
+  /* ★★ 번호를 «한 곳도» 안 준 동안에는 번호 칸을 저절로 감춘다 (대표 지시 2026-09-05).
+       373곳 전부 「—」만 나오던 자리다 — 알려 주는 것 없이 폭만 먹었다.
+       번호를 주는 날 저절로 다시 나타나므로, 대표가 켜고 끌 일이 없다.
+     ⚠ th/td 를 «빼지» 않고 CSS 로만 감춘다. 칸을 빼면 뒤 칸들의 nth-child 자리가
+       한 칸씩 밀려 감추기가 엉뚱한 칸을 감춘다 — 바로 그 버그를 2026-09-05 에 고쳤다
+       (tests/co-col-index.test.js 가 지킨다). */
+  var coAnyNo = !!(window.PuOntology && (companies||[]).some(function(c){ return PuOntology.companyNumberBody(c); }));
+  var CO_NO_COL_IDX = 3;
+  var coHideIdx = coColReg.filter(function(c){ return hiddenCols[c.k]; }).map(function(c){ return c.idx; });
+  if(!coAnyNo && coHideIdx.indexOf(CO_NO_COL_IDX) < 0) coHideIdx.push(CO_NO_COL_IDX);
+  var coHideCss = coHideIdx.map(function(idx){ return '.co-table td:nth-child('+idx+'),.co-table th:nth-child('+idx+'){display:none}'; }).join('');
   var coHiddenCount = coColReg.filter(function(c){ return hiddenCols[c.k]; }).length;
   // 유형은 도구줄에 그대로 보이므로 '필터 (n)' 배지에서 뺀다 — 두 군데서 세면 헷갈린다
   var activeFilterCount = cOnCount();
@@ -22432,10 +22447,17 @@ function CompanyManagement(){
                     ),
 h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, idx + 1),
                     /* 고유번호 — 한 칸 한 줄이다. 머리는 유형이 바뀌면 따라오고, 몸통은 안 바뀐다.
-                       ⚠ 검색·연결은 «몸통만» 본다 — 머리까지 붙여 대조하면 유형이 바뀌는 날 안 찾아진다. */
+                       ⚠ 검색·연결은 «몸통만» 본다 — 머리까지 붙여 대조하면 유형이 바뀌는 날 안 찾아진다.
+                       ★ 표에서는 «몸통만» 그린다 (대표 지시 2026-09-05: 「너무 길다」).
+                         바로 오른쪽 유형 칸이 같은 줄에서 이미 머리(자문·급여)를 보여 준다 —
+                         머리까지 쓰면 한 줄에 같은 말이 두 번 나오고 칸만 넓어진다.
+                       ⚠ 번호 «설계»를 바꾼 것이 아니다. 자료·상세·서류에는 「자문-10001」 그대로이고
+                         머리는 이 칸 말풍선에 남는다 — 뜻이 사라지는 것이 아니다. */
                     h('td', { style:{ whiteSpace:'nowrap', fontSize:'10.5px', color:'#1e40af', fontWeight:700 },
-                      title:'고유번호 — 연결과 검색은 몸통(뒤 다섯 자리)만 봅니다' },
-                      (window.PuOntology && PuOntology.formatCompanyNumber(co)) || '—'),
+                      title:(window.PuOntology && PuOntology.formatCompanyNumber(co))
+                        ? PuOntology.formatCompanyNumber(co) + ' — 연결과 검색은 몸통(다섯 자리)만 봅니다'
+                        : '고유번호가 아직 없습니다' },
+                      (window.PuOntology && PuOntology.companyNumberBody(co)) || '—'),
                     h('td', null,
                       h('span', { onClick:function(){ setDetailModal(co); },
                         style:{ cursor:'pointer', color:'#1e40af', textDecoration:'underline', fontWeight:600 } }, co.name),
@@ -22476,10 +22498,17 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                     ),
 h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, idx + 1),
                     /* 고유번호 — 한 칸 한 줄이다. 머리는 유형이 바뀌면 따라오고, 몸통은 안 바뀐다.
-                       ⚠ 검색·연결은 «몸통만» 본다 — 머리까지 붙여 대조하면 유형이 바뀌는 날 안 찾아진다. */
+                       ⚠ 검색·연결은 «몸통만» 본다 — 머리까지 붙여 대조하면 유형이 바뀌는 날 안 찾아진다.
+                       ★ 표에서는 «몸통만» 그린다 (대표 지시 2026-09-05: 「너무 길다」).
+                         바로 오른쪽 유형 칸이 같은 줄에서 이미 머리(자문·급여)를 보여 준다 —
+                         머리까지 쓰면 한 줄에 같은 말이 두 번 나오고 칸만 넓어진다.
+                       ⚠ 번호 «설계»를 바꾼 것이 아니다. 자료·상세·서류에는 「자문-10001」 그대로이고
+                         머리는 이 칸 말풍선에 남는다 — 뜻이 사라지는 것이 아니다. */
                     h('td', { style:{ whiteSpace:'nowrap', fontSize:'10.5px', color:'#1e40af', fontWeight:700 },
-                      title:'고유번호 — 연결과 검색은 몸통(뒤 다섯 자리)만 봅니다' },
-                      (window.PuOntology && PuOntology.formatCompanyNumber(co)) || '—'),
+                      title:(window.PuOntology && PuOntology.formatCompanyNumber(co))
+                        ? PuOntology.formatCompanyNumber(co) + ' — 연결과 검색은 몸통(다섯 자리)만 봅니다'
+                        : '고유번호가 아직 없습니다' },
+                      (window.PuOntology && PuOntology.companyNumberBody(co)) || '—'),
                   // 업체명 (클릭 → 상세보기)
                   h('td', null,
                     h('span', { onClick:function(){ setDetailModal(co); },
