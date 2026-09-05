@@ -252,9 +252,14 @@ ok('아무도 안 부르는 옛 saveContact 는 남기지 않았다 (빈 화면�
    wkCount('function saveContact(id){') === 0 && wkCount("saveContact('") === 0);
 ok('★ 줄이 화면에 없으면 저장하지 않는다 (빈 화면으로 담당자를 지우지 않는다)',
    ctSave.indexOf("if(!$('ct-nm-0')) return Promise.resolve(false);") > 0);
-ok('빈 목록이어도 늘 한 줄은 적을 수 있다',
+/* 2026-09-05 대표 지시 「화면이 너무 정신없다」 — 예전에는 «늘» 빈 줄 하나를 깔았다.
+   사업장 담당자가 이미 있는데도 그 밑에 빈 칸 셋이 붙어 서랍이 어수선했다.
+   ⚠ 적을 길은 그대로다 — [＋ 담당자 추가]가 한 줄을 만든다(바로 아래 검사).
+   ⚠ 빈 화면으로 담당자를 지우는 사고는 위 ct-nm-0 검사가 막는다. */
+ok('비어 있으면 빈 줄을 안 깐다 (적을 때는 [＋ 담당자 추가])',
    wkCount('function _ctRowCount(id){') === 1
-   && wkCount('Math.max(1, itemContacts(items[id]||{}).length+((S._ctAdd&&S._ctAdd[id])||0))') === 1);
+   && wkCount('return itemContacts(items[id]||{}).length+((S._ctAdd&&S._ctAdd[id])||0);') === 1
+   && wkCount('Math.max(1, itemContacts(items[id]||{}).length') === 0);
 ok('★ 그리는 쪽과 [＋ 담당자 추가]가 같은 줄 셈을 본다 (어긋나면 눌러도 안 늘어난다)',
    dPeople.indexOf('_ctRowCount(id)') > 0 && wkCount('var shown=_ctRowCount(id);') === 1
    && wkCount('S._ctAdd[id]=(shown+1)-itemContacts(items[id]||{}).length;') === 1);
