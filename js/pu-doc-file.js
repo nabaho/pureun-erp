@@ -1234,8 +1234,38 @@
     var list = (dks || []).filter(Boolean);
     if (!key || !list.length) return Promise.resolve(0);
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    /* ★★ **청구한 서류는 못 걷는다** (대표 결정 2026-09-03, 청구 ㉮).
+       ㉮(서류에 도장만)를 고른 대가가 이것이다 — 근거가 사라질 수 있는 장부는
+       장부가 아니다. 이 한 줄이 빠지면 ㉮ 는 청구 근거로 쓸 수 없다. */
+    return deps.db.ref(WORKER_ROOT + '/' + key + '/docs').once('value').then(function (s) {
+      var had = s.val() || {};
+      var locked = list.filter(function (dk) { return had[dk] && had[dk].billed; });
+      if (locked.length) {
+        return Promise.reject(new Error(
+          '이미 청구한 서류 ' + locked.length + '장은 걷을 수 없습니다 — 청구 근거입니다'));
+      }
+      var u = {};
+      list.forEach(function (dk) { u[WORKER_ROOT + '/' + key + '/docs/' + dk] = null; });
+      return deps.db.ref().update(u).then(function () { return list.length; });
+    });
+  }
+
+  /* ══════ 🧾 청구 도장 (대표 결정 2026-09-03, 안 ㉮ 「서류에 도장만」) ══════
+     세는 단위는 **업체 × 근로자 × 서류종류 = 1건**이다. 건수는 그때그때 세고,
+     담는 것은 「청구했나」 하나뿐이라 **새 자리도 새 규칙도 없다.**
+
+     ⚠ **금액은 여기 안 담는다.** 붙는 순간 이 칸이 재무 자료가 되어 재무 권한 없는
+       직원에게 막아야 하는 자리가 된다 — 그러면 정작 일을 한 담당자가 제 실적을 못 본다.
+       두 곳을 잇는 데는 업체 이름과 건수면 충분하다.
+     ⚠ 도장은 **되돌릴 수 있다**(on=false → null). 잘못 찍었을 때 되돌릴 길이 없으면
+       사람이 도장 찍기를 무서워해서 아예 안 찍는다 — 그러면 이 칸이 죽는다. */
+  function markWorkerBilled(key, dks, by, on) {
+    var list = (dks || []).filter(Boolean);
+    if (!key || !list.length) return Promise.resolve(0);
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var v = (on === false) ? null : { at: Date.now(), by: String(by || '').slice(0, 40) };
     var u = {};
-    list.forEach(function (dk) { u[WORKER_ROOT + '/' + key + '/docs/' + dk] = null; });
+    list.forEach(function (dk) { u[WORKER_ROOT + '/' + key + '/docs/' + dk + '/billed'] = v; });
     return deps.db.ref().update(u).then(function () { return list.length; });
   }
 
@@ -1414,6 +1444,7 @@
     wkSameKind: wkSameKind,
     findWorkerDupes: findWorkerDupes,
     dropWorkerDocs: dropWorkerDocs,
+    markWorkerBilled: markWorkerBilled,
     sendToWorkerMany: sendToWorkerMany
   };
 })(typeof window !== 'undefined' ? window : globalThis);
