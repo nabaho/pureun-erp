@@ -17,13 +17,81 @@ const DAUM_HOST = 'smtp.daum.net';
 const DAUM_PORT = 465;
 const CARDS_ROOT = 'pucards';
 
+/* ══════════════════════════════════════════════════════════════════════════
+   보내는 주소를 보고 «어느 우체국»으로 갈지 고른다 (대표 지시 2026-09-05)
+   ══════════════════════════════════════════════════════════════════════════
+   대표 지시: 「fairrunlabor.com 이것으로 모두 진행하자 … 뉴스레터」
+
+   지금까지는 다음메일 한 곳뿐이었다. 그런데 뉴스레터를 푸른 도메인
+   (`@fairrunlabor.com`)으로 보내려면 다음메일로는 «안 된다» —
+   다음은 자기 손님 주소로만 보내 준다. 남의 도메인을 달면 거절하거나 고쳐 버린다.
+
+   ★ 왜 Resend 가 아니라 구글인가 (2026-09-05 재 봄)
+     Resend 무료는 하루 100통인데 뉴스레터 받는 곳이 114 곳이다 — 한 회차가
+     다 안 나간다. 유료는 월 $20.
+     그런데 대표님은 `fairrun01@fairrunlabor.com` 구글 워크스페이스를 이미
+     쓰고 계시고, 그쪽은 하루 2,000통이며 «돈이 더 안 든다».
+
+   ⚠ 구글은 아이디가 «주소 전체»여야 한다. 다음은 앞부분(370-6)으로도 되지만
+     구글에 로컬파트만 주면 그 자리에서 535 가 난다 — 그래서 우체국마다
+     아이디 만드는 법을 따로 들고 있다.
+   ⚠ 여기 없는 도메인은 «다음»으로 간다. 지금 돌고 있는 자료 발송
+     (370-6@daum.net)이 조용히 길을 잃으면 안 된다. */
+const 우체국들 = [
+  {
+    이름: '구글',
+    도메인: ['fairrunlabor.com'],   /* 우리 구글 워크스페이스 도메인 */
+    host: 'smtp.gmail.com', port: 465,
+    아이디는주소전체: true,
+    열쇠이름: 'GOOGLE_MAIL_PASSWORD',
+    /* 구글 앱 비밀번호는 «띄어쓰기 넣어» 보여 준다(abcd efgh ijkl mnop).
+       그대로 붙여넣으면 535 가 난다 — 여기서 걷어 준다. */
+    열쇠다듬기: (p) => String(p || '').replace(/\s+/g, ''),
+    안내: '구글 앱 비밀번호(GOOGLE_MAIL_PASSWORD)가 아직 없습니다.\n'
+        + 'myaccount.google.com → 보안 → 앱 비밀번호 에서 만든 뒤\n'
+        + 'firebase functions:secrets:set GOOGLE_MAIL_PASSWORD 로 넣어 주세요.'
+  },
+  {
+    이름: '다음',
+    도메인: ['daum.net', 'hanmail.net', 'kakao.com'],
+    host: DAUM_HOST, port: DAUM_PORT,
+    아이디는주소전체: false,
+    열쇠이름: 'DAUM_MAIL_PASSWORD',
+    열쇠다듬기: (p) => String(p || ''),
+    안내: '메일 비밀번호가 아직 없습니다.\nDAUM_MAIL_PASSWORD(앱 비밀번호)를 넣고 다시 배포하세요.'
+  }
+];
+
+function 도메인만(주소) {
+  const m = /@([^@>\s]+)\s*>?\s*$/.exec(String(주소 || '').trim());
+  return m ? m[1].toLowerCase() : '';
+}
+
+/* 어느 우체국인가 — 못 알아보면 «다음»(지금 돌고 있는 길)으로 둔다 */
+function 우체국고르기(from) {
+  const d = 도메인만(from);
+  for (const p of 우체국들) {
+    if (d && p.도메인.indexOf(d) >= 0) return p;
+  }
+  return 우체국들[우체국들.length - 1];
+}
+
 /* 보내는 사람 표시 이름. 주소만 나가면 스팸으로 걸리기 쉽다. */
 function fromLine(u) { return u ? '푸른노무법인 <' + u + '>' : ''; }
 
 /* 접속 아이디 후보 — @ 앞부분 먼저, 그다음 주소 전체.
    다음메일 설정 화면이 「아이디: 370-6」이라고 알려 주지만, 주소 전체로도 되는
    계정이 있어 둘 다 해 본다(자격 문제일 때만 다음 것으로 넘어간다). */
-function loginIds(from, envId) {
+function loginIds(from, envId, 우체국) {
+  /* ⚠ 구글은 «주소 전체»만 받는다. 앞부분(fairrun01)만 주면 그 자리에서 535 다.
+       여러 아이디를 돌려 보는 짓도 하지 않는다 — 구글은 틀린 아이디로 몇 번
+       두드리면 계정을 잠근다. 한 번만, 맞는 것으로 두드린다. */
+  const p = 우체국 || 우체국고르기(from);
+  if (p && p.아이디는주소전체) {
+    const full = String(from || '').trim();
+    const m = /<([^>]+)>/.exec(full);          /* 「푸른노무법인 <a@b>」 꼴도 받는다 */
+    return [(m ? m[1] : full).trim()].filter(Boolean);
+  }
   const out = [];
   const e = String(envId || '').trim();
   if (e) out.push(e);
@@ -224,8 +292,10 @@ async function deliverOnce(opts) {
       error: '보내는 주소가 비어 있습니다.\n기업정보함 → 자료함 → ✉️ 메일 본문에서 「보내는 주소」를 넣어 주세요.' };
   }
   if (!pass) {
-    return { ok: false, status: 500,
-      error: '메일 비밀번호가 아직 없습니다.\nDAUM_MAIL_PASSWORD(앱 비밀번호)를 넣고 다시 배포하세요.' };
+    /* ⚠ 우체국이 둘이므로 «어느 열쇠»가 없는지 말해 준다.
+         「메일 비밀번호가 없습니다」 한 줄만 주면 다음메일 열쇠를 다시 넣어 보다가
+         시간을 버린다 — 정작 없는 것은 구글 것인데. */
+    return { ok: false, status: 500, error: 우체국고르기(from).안내 };
   }
 
   const got = await collectAttachments(db, body, deps, uid);
@@ -325,13 +395,15 @@ async function deliverOnce(opts) {
        (실제로 나간 통수 5, 그런데 앱은 「3통 보냈다」로 알렸다).
        주석은 그 위험을 적어 두었는데 막는 것은 자격 오류가 «아닐» 때뿐이었다. */
   let lastErr = null, usedId = '', done = 0;
-  for (const id of loginIds(from, envId)) {
+  const 우체국 = 우체국고르기(from);
+  const 열쇠 = 우체국.열쇠다듬기(pass);
+  for (const id of loginIds(from, envId, 우체국)) {
     try {
       const tx = nodemailer.createTransport({
-        host: DAUM_HOST, port: DAUM_PORT, secure: true,
+        host: 우체국.host, port: 우체국.port, secure: true,
         // 기다리는 시간을 못 박는다. 안 박으면 대답 없는 서버에 하염없이 매달린다.
         connectionTimeout: 20000, greetingTimeout: 20000, socketTimeout: 90000,
-        auth: { user: id, pass: pass },
+        auth: { user: id, pass: 열쇠 },
       });
       /* 이미 나간 것 다음부터 이어서 보낸다 — 처음부터 다시 돌지 않는다 */
       for (let i = done; i < batches.length; i++) { await tx.sendMail(batches[i]); done++; }
@@ -458,4 +530,7 @@ module.exports = {
   /* 검사가 밖에서 견줄 수 있게 내놓는다 — 안 내놓으면 「묵은 것만 치우는가」를
      글자로밖에 못 보고, 글자로 보는 검사는 이빨이 없다. */
   statMailOut, sweepStaleMailOut, MAILOUT_STALE_MS, MAILOUT_SWEEP_MAX,
+  /* 우체국 고르기도 내놓는다 — 부르는 쪽(index.js)이 «어느 열쇠»를 줘야 하는지
+     알아야 하고, 검사도 실제로 골라 보게 해야 이빨이 생긴다. */
+  우체국들, 우체국고르기, 도메인만,
 };
