@@ -2304,19 +2304,25 @@ async function previewKcareerHwp(containerSel,buffer,name){
   box.classList.add('kc-hwp-preview');
   return PureunHwp.renderPreview(box,buffer,name);
 }
+/* ★★ 제3자 편집기 길을 막았다 (대표 지시 2026-09-05 「길막아」)
+   ■ 무엇이었나
+     PureunHwp.createEditor 는 esm.sh 에서 @rhwp/editor 를 받아 «남의 주소»
+     (edwardkim.github.io)로 iframe 을 띄웠다. 대표 서류에는 주민등록번호·도장·계좌가
+     들어 있을 수 있는데, 그 파일이 통째로 그 iframe 으로 넘어갔다.
+   ■ 게다가 얻는 것도 없었다 (실측 2026-09-05)
+     그 편집기는 getSelectionContext 가 «editable:false» 를 준다 — 읽기 «전용»이다.
+     눌러 쳐 봐도 changeSeq 가 0 이고 내용이 안 바뀐다. 첫 로드에 12.4초가 걸린다.
+     즉 «위험만 있고 편집은 안 되는» 길이었다.
+   ■ 무엇으로 바꿨나
+     앱 안에 넣어 둔 한글 엔진(vendor/rhwp-core, WASM)으로 그린다 — A4 모양 그대로이고
+     한 바이트도 밖으로 안 나간다. 고치는 일은 입력판(겹치기 입력칸)이 맡는다.
+   ⚠ 이 함수를 되살려 PureunHwp.createEditor 를 다시 부르지 말 것. 회귀검사가 막는다.
+   ⚠ js/pu-hwp-engine.js 는 «다른 앱과 공용»이라 건드리지 않았다 — 부르지 않을 뿐이다. */
 async function openHwpEditor(containerSel, buffer, name){
   const fileName=name||'document.hwpx';
   PureunHwp.validate(buffer,fileName);
-  try{
-    const common=await PureunHwp.createEditor(containerSel,buffer,fileName);
-    _rhwp=common.editor;
-    return;
-  }catch(e){
-    /* 공통 한글 편집기 폴백: 외부 모듈 장애 시 기존 편집기로 자동 복귀한다. */
-    console.warn('[HWP] 공통 편집기 대신 기존 편집기를 사용합니다.',e&&e.message);
-  }
-  _rhwp = await createEditor(containerSel, { studioUrl: rhwpStudioUrl() });
-  if(buffer) await _rhwp.loadFile(buffer, fileName);
+  _rhwp=null;
+  await previewKcareerHwp(containerSel, buffer, fileName);
 }
 function get(key){
   if(key==='id_docs' && hasIDPin()){ return (_idUnlocked && _idDocs) ? _idDocs.slice() : []; }
@@ -3897,7 +3903,13 @@ async function getStorageFilesAsync(){
 
 /* ===== rhwp 연동 (HWP/HWPX 보기+편집, 자체호스팅 iframe) ===== */
 let _rhwp=null;
-async function exportEditedHwpx(){ return _rhwp ? await _rhwp.exportHwpx() : null; }
+/* ⚠ 편집기가 없어도 null 을 주면 안 된다 — 「완성본 생성」이 「편집 중인 문서가 없습니다」로 막힌다.
+   지금 상태는 «원본 + 입력판에 친 값»이다. 그것을 내놓는다(읽기 전용 편집기가 주던 것보다 낫다). */
+async function exportEditedHwpx(){
+  if(_rhwp) return await _rhwp.exportHwpx();
+  try{ var b=await rhComposeBytes(); if(b && b.length) return b; }catch(e){}
+  return (_rhDoc && _rhDoc.bytes) ? _rhDoc.bytes : null;
+}
 
 /* ===== 내비게이션 ===== */
 let NAV=[
@@ -4748,7 +4760,8 @@ async function mountEditor(buffer,name,cfg){
     const wrap=document.getElementById('docxEditorWrap'); if(wrap) wrap.style.display='none';
     _activeEditorType='hwp';
     const msg=document.getElementById(cfg.msg||'rcEditorMsg');
-    try{ if(msg) msg.textContent='편집기 로딩 중…'; await openHwpEditor(cfg.editor||'#rhwpEditor',buffer,name); if(msg) msg.style.display='none'; }
+    /* ⚠ 이제 «앱 안의 엔진»으로만 그린다 — 밖으로 나가는 길은 막혔다(openHwpEditor 주석 참고) */
+    try{ if(msg) msg.textContent='한글 문서를 그리는 중…'; await openHwpEditor(cfg.editor||'#rhwpEditor',buffer,name); if(msg) msg.style.display='none'; }
     catch(e){
       _activeEditorType='hwp-preview';
       try{
