@@ -36,7 +36,7 @@ assert.ok(KEEP_DECL, '★ 사진 이력을 몇 줄까지 붙들지 정한 곳이
 
 const FNS = ['visYm', 'visShift', 'visToday', 'visSetMode', 'visSetScope', 'visSetPick',
   'visAdmin', 'visGo', 'visLoad', 'visRows', 'visName', 'visMine', 'visGovStaffId',
-  'visForGid', 'visEnded', 'visPhotoMap', 'visSince', 'visDaysAgo', 'visLateRows',
+  'visForGid', 'visEnded', 'visCoOf', 'visAttIds', 'visWithNames', 'visWhere', 'visWhereCell', 'visPhotoMap', 'visSince', 'visDaysAgo', 'visLateRows',
   'visStaffSummary', 'renderVisits', 'visBadge', 'visLateTable', 'visSeg', 'visPill', 'visDay', 'visWhen'];
 
 /* 가짜 세상 하나 — 화면과 DB 를 흉내 낸다 */

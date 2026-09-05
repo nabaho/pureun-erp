@@ -262,6 +262,8 @@
      칸 안에 「없음」 딱지를 함께 둔다(색을 못 가리는 분도 있다). */
   /* 폰에서 표만 옆으로 굴린다 — 쪽 전체가 옆으로 밀리면 읽을 수가 없다 */
   .vis-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  /* 「어디에 · 누구와」 — 사업장 아래에 주소와 동행자를 작게 붙인다 */
+  .vis-sub{font-size:11px;color:var(--sub);margin-top:2px;line-height:1.45}
   tr.vis-no > td{background:#f8fafc}
   tr.vis-no:hover > td{background:#f8fafc}
   /* 도구줄 드롭다운 — 브라우저 기본 네모가 둥근 칩들 사이에 섞여 어수선했다.
@@ -5946,6 +5948,55 @@ function visGovStaffId(me) {
   return hit ? hit.id : '';
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   「어디에 · 누구와 같이」 (대표 지시 2026-09-05)
+   ══════════════════════════════════════════════════════════════════
+   현장 방문 표에는 날짜·사업장·회차·사진만 있었다. 정작 «어디로 가는지»(주소)와
+   «누구와 같이 가는지»는 안 보였다 — 그런데 그 둘 다 정부사업일정 자료에 이미 있다.
+     s.attId            … 그 일정의 주담당
+     s.coAttIds/defCoAtts … 그 일정에 함께 가는 사람
+     co.coAttIds/defCoAtts … 그 사업장의 기본 동행
+     co.addr/주소 칸      … 사업장 주소 (있을 때만)
+   visForGid() 가 이미 그 셋을 보고 「내 일정인가」를 가린다 — 같은 자료로 이름을 뽑는다. */
+function visCoOf(s) {
+  if (!s) return null;
+  return visRows(VIS.cos).filter(function (c) { return c && c.id === s.coId; })[0] || null;
+}
+/* 그 방문에 함께 가는 사람들의 «정부사업일정 직원번호» — 주담당을 맨 앞에 둔다 */
+function visAttIds(s) {
+  if (!s) return [];
+  var co = visCoOf(s);
+  var raw = [].concat(s.attId ? [s.attId] : [],
+    s.coAttIds || s.defCoAtts || [],
+    (co && (co.coAttIds || co.defCoAtts)) || []);
+  /* ⚠ 배열에 덧붙이는 함수를 쓰지 않는다 — 이 화면이 «자료를 쓰지 않는지» 보는 검사가
+     그 이름을 파이어베이스 쓰기로 읽는다. 거르기로 같은 일을 한다. */
+  var seen = {};
+  return raw.map(function (g) { return String(g || ''); })
+    .filter(function (g) { if (!g || seen[g]) return false; seen[g] = 1; return true; });
+}
+/* 같이 가는 사람 이름 — «나는 뺀다». 내 이름을 나에게 알려 줄 까닭이 없다.
+   ⚠ 이름을 못 찾은 번호는 버린다. 번호를 그대로 보여 주면 아무도 못 읽는다. */
+function visWithNames(s, gid) {
+  return visAttIds(s).filter(function (g) { return g !== gid; })
+    .map(function (g) { return visName(VIS.gstaff, g); })
+    .filter(Boolean);
+}
+/* 어디로 가는지 — 사업장 이름 옆에 붙일 주소. 없으면 빈 문자열(지어내지 않는다). */
+function visWhere(s) {
+  var co = visCoOf(s); if (!co) return '';
+  var a = co.addr || co.address || co.주소 || co.loc || co.place || '';
+  return String(a || '').trim();
+}
+/* 표 한 칸 — 사업장 · (주소) · 같이 가는 사람 */
+function visWhereCell(s, gid) {
+  var co = esc(visName(VIS.cos, s.coId) || '-');
+  var addr = visWhere(s);
+  var withs = visWithNames(s, gid);
+  return '<b>' + co + '</b>'
+    + (addr ? '<div class="vis-sub">📍 ' + esc(addr) + '</div>' : '')
+    + (withs.length ? '<div class="vis-sub">👥 ' + esc(withs.join(' · ')) + ' 와 함께</div>' : '');
+}
 /* 이 일정이 «이 사람» 담당인가 — 주담당이거나 협업이거나 */
 function visForGid(s, gid) {
   if (!s || !gid) return false;
@@ -6151,10 +6202,10 @@ function renderVisits() {
         h += '<p class="muted">증빙이 빠진 지난 방문이 없습니다. 👍</p></div>';
         app.innerHTML = h; return;
       }
-      if (late.length) h += visLateTable(late, false);
+      if (late.length) h += visLateTable(late, false, gid);
       if (unk.length) {
         h += '<div class="muted" style="margin:16px 0 6px;font-size:12px;font-weight:800">🕘 기록 없음 — 넣었는지 알 수 없는 것</div>'
-          + visLateTable(unk, true);
+          + visLateTable(unk, true, gid);
       }
       h += '<p class="note muted" style="margin-top:9px;font-size:11.5px;line-height:1.7">'
         + '증빙이 빠진 <b>지난</b> 현장 방문만 오래된 순으로 모았습니다. 끝난 컨설팅은 담지 않습니다.<br>'
@@ -6192,11 +6243,10 @@ function renderVisits() {
       app.innerHTML = h; return;
     }
 
-    h += '<div class="vis-wrap"><table><tr><th>방문일</th><th>사업장</th><th>컨설팅 · 회차</th>'
+    h += '<div class="vis-wrap"><table><tr><th>방문일</th><th>어디에 · 누구와</th><th>컨설팅 · 회차</th>'
       + '<th>구분</th><th>사진</th><th>사진 넣은 때</th></tr>';
     rows.forEach(function (r) {
       var s = r.s;
-      var co = visName(VIS.cos, s.coId) || '-';
       var ty = visName(VIS.types, s.typeId) || '-';
       var late = '';
       var when = '<span class="muted">—</span>';
@@ -6211,7 +6261,7 @@ function renderVisits() {
       h += '<tr style="cursor:pointer"' + (noPhoto ? ' class="vis-no"' : '')
         + ' onclick="visGo(\'' + esc(s.id) + '\')">'
         + '<td>' + esc(visDay(s.date)) + '</td>'
-        + '<td>' + esc(co) + '</td>'
+        + '<td>' + visWhereCell(s, gid) + '</td>'
         + '<td>' + esc(ty) + ' ' + (s.round || 0) + '회</td>'
         + '<td>' + (r.isField ? visPill('현장', '#eff6ff', '#1e40af') : visPill('사무실', '#fffbeb', '#854d0e')) + '</td>'
         + '<td>' + (!r.isField ? '<span class="muted">필요 없음</span>'
@@ -6259,15 +6309,15 @@ function visBadge(){
 }
 
 /* 밀린 목록 한 벌 — 「사진 없음」과 「기록 없음」이 같은 모양을 쓴다 */
-function visLateTable(list, unknown) {
-  var h = '<div class="vis-wrap"><table><tr><th>방문일</th><th>사업장</th><th>컨설팅 · 회차</th>'
+function visLateTable(list, unknown, gid) {
+  var h = '<div class="vis-wrap"><table><tr><th>방문일</th><th>어디에 · 누구와</th><th>컨설팅 · 회차</th>'
     + '<th>얼마나</th><th>사진</th></tr>';
   list.forEach(function (s) {
     var d = visDaysAgo(s.date);
     h += '<tr style="cursor:pointer"' + (unknown ? '' : ' class="vis-no"')
       + ' onclick="visGo(\'' + esc(s.id) + '\')">'
       + '<td>' + esc(visDay(s.date)) + '</td>'
-      + '<td>' + esc(visName(VIS.cos, s.coId) || '-') + '</td>'
+      + '<td>' + visWhereCell(s, gid) + '</td>'
       + '<td>' + esc(visName(VIS.types, s.typeId) || '-') + ' ' + (s.round || 0) + '회</td>'
       + '<td>' + (unknown ? '<span class="muted">' + d + '일 지남</span>'
         : '<b style="color:' + (d >= 30 ? '#991b1b' : '#854d0e') + '">' + d + '일 지남</b>') + '</td>'
@@ -7164,7 +7214,10 @@ var CAL_LAYERS=[
   ['att', '휴가·근태',  '#2563eb', 1, '근태',      'erp'],
   ['loa', '휴직',       '#94a3b8', 0, '휴직',      'erp'],
   ['dl',  '사건 마감',  '#854d0e', 1, '마감',      'erp'],
-  ['sdue','단계 기한',  '#991b1b', 1, '단계 기한', 'erp']
+  ['sdue','단계 기한',  '#991b1b', 1, '단계 기한', 'erp'],
+  /* 현장 방문 — 정부사업일정에서 온다. 「언제 어디에 누구와」를 달력에서 본다.
+     ⚠ 기본은 꺼 둔다. 컨설팅이 많은 사람은 달력이 방문으로 뒤덮인다 — 켜는 것은 본인이 정한다. */
+  ['vis', '현장 방문',  '#166534', 0, '현장',      'erp']
 ];
 /* 묶음 이름은 누르면 그 묶음을 통째로 켜고 끈다 — 「내 것만 보기」가 한 번에 된다.
    읽기 전용이라는 설명은 화면에 깔지 않고 ⓘ 로 넣는다 (전에는 아래 한 줄을 더 썼다). */
@@ -7857,6 +7910,8 @@ function calWeekKeys(R){
   ks[weekKeyOf(mondayOf(end))]=1;
   return Object.keys(ks);
 }
+// 현장 방문 레이어를 켠 뒤 자료를 «한 번만» 읽으려는 표시
+var _visCalT = 0;
 // 날짜 → 이벤트 목록
 function calBuild(R){
   var L=S.calLay||{}, map={}, teamWide=(S.view==='team'), who=viewer();
@@ -7878,6 +7933,28 @@ function calBuild(R){
     add(pd.date,{k:'sdue',t:'⚖ '+(pd.label||'단계 기한')+(pd.verified?'':'(확인)'),
       s:(it.company||it.client||it.title||''),c:pd.verified?'#991b1b':'#854d0e',it:it._id});
   });
+  /* 현장 방문 — 「언제 · 어디에 · 누구와」를 달력에 얹는다 (대표 지시 2026-09-05).
+     ⚠ 읽어 온 것이 있을 때만 그린다. 달력을 그리려고 컨설팅일정을 새로 내려받지 않는다
+       (옆줄 숫자에서 이미 정한 규칙이다 — 숫자 하나 때문에 통째로 받지 않는다).
+     ⚠ 현장(isField)만. 사무실 일정은 「현장 방문」이 아니다.
+     ⚠ 끌어 옮길 수 없다(drag 없음) — 원본은 정부사업일정이고 여기는 보기만 한다. */
+  if(L.vis && !VIS.scheds && !_visCalT){
+    /* 켰는데 아직 안 읽었으면 «그때» 한 번 읽는다 — 켜는 것으로 본인이 뜻을 밝힌 것이다.
+       ⚠ 한 번만. 못 읽어도 다시 안 부른다(빈 달력이 되더라도 계속 두드리지 않는다). */
+    _visCalT = 1;
+    try{ visLoad().then(function(){ route(); }, function(){}); }catch(e){}
+  }
+  if(L.vis && VIS.scheds) {
+    var _vg = visGovStaffId(who);
+    if(_vg) visRows(VIS.scheds).forEach(function(s){
+      if(!s || !s.date || s.isField === false || !map[s.date]) return;
+      if(!teamWide && !visForGid(s, _vg)) return;
+      var _with = visWithNames(s, _vg);
+      add(s.date, { k:'vis', t:'🚩 '+(visName(VIS.cos, s.coId)||'현장'),
+        s:(_with.length ? _with.join(' · ')+' 와 함께' : (visWhere(s)||visName(VIS.types, s.typeId)||'')),
+        c:'#166534', go:s.id });
+    });
+  }
   // 진행 단계 — 기한을 넣은 미완료 단계만 (완료된 것까지 깔리면 달력이 지저분해진다)
   if(L.step) openItems().forEach(function(it){
     if(!teamWide&&!isOf(it,who)) return;
@@ -7948,8 +8025,11 @@ function calEvHTML(e){
     +' title="'+esc(CAL_NAME[e.k]+' · '+e.t+(e.s?' — '+e.s:'')
         +(mine?'  (누르면 그 업무 줄로)':'')+(e.drag?'  (끌어서 날짜 변경)':''))+'">'
     +'<span class="cd" style="background:'+e.c+'"></span>'
+    /* ⚠ 현장 방문은 푸른이알피 캘린더가 아니라 «정부사업일정»의 그 일정으로 간다.
+       사진도 거기서 넣는다 — 목록에서 줄을 누르는 것과 같은 길(visGo). */
     +'<span class="cx"'+(mine?' onclick="event.stopPropagation();calGo(\''+j+'\')"'
-                             :' onclick="event.stopPropagation();openPuerpCal()"')+'>'+esc(e.t)+'</span>'
+                             :(e.go?' onclick="event.stopPropagation();visGo(\''+escJ(e.go)+'\')"'
+                                   :' onclick="event.stopPropagation();openPuerpCal()"'))+'>'+esc(e.t)+'</span>'
     +(mine?'<span class="cvb" onclick="event.stopPropagation();calQuick(\''+j+'\',this)" title="여기서 바로 한 줄 적기">✏️</span>'
           +'<span class="cvb" onclick="event.stopPropagation();openDrawer(\''+j+'\')" title="이 업무 자세히 보기">⤢</span>':'')
     +'</span>';
