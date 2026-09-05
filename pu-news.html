@@ -40,8 +40,8 @@
   if(!go()) document.addEventListener('DOMContentLoaded', go); })();
 </script>
 <script src="xlsx_gen.js?v=15"></script>
-<script src="js/pu-news-core.js?v=16"></script>
-<script src="js/pu-news-tpl.js?v=6"></script>
+<script src="js/pu-news-core.js?v=17"></script>
+<script src="js/pu-news-tpl.js?v=7"></script>
 <style>
 :root{
   --navy:#1e40af; --ink:#1e293b; --sub:#64748b; --faint:#94a3b8;
@@ -166,6 +166,14 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .item .t{flex:1;min-width:0;font-size:13.5px;line-height:1.5;word-break:keep-all;
   overflow-wrap:anywhere}
 .item .src{font-size:11px;color:var(--faint);flex:0 0 auto;padding-top:2px}
+/* 자료·판례의 «곁줄» — 목차·내려받을 파일·인용.
+   ★ 제목 한 줄로는 「이대로 나가도 되나」를 정할 수 없다. 대표 지시 2026-09-05
+     「데이터를 다운받아서 확인할 수 있게」가 이 줄이다. */
+.item .곁{margin-top:4px;font-size:11.5px;line-height:1.65;color:var(--faint);
+  word-break:keep-all;overflow-wrap:anywhere}
+.item .곁 a{color:var(--navy);text-decoration:none}
+.item .곁 a:hover{text-decoration:underline}
+.item .곁 .mini{font-size:11px;padding:1px 6px}
 .item .x,.item .mv{border:0;background:none;color:var(--faint);font-size:13px;padding:2px 5px}
 .item .x:hover{color:var(--bad)}
 .empty{padding:16px 15px;font-size:13px;color:var(--faint)}
@@ -801,6 +809,58 @@ function 노무사회서랍(d){
     </div></div>`;
 }
 
+/* 오른쪽 끝에 붙는 작은 글자 — 무엇으로 담긴 칸인지 한눈에 */
+function 꼬리표(x){
+  if(!x) return '';
+  if(x.갈래==='자료') return x.발행처 || '자료';
+  if(x.갈래==='판례') return x.법원 || '판례';
+  if(x.갈래==='법령') return x.부처 || '법령';
+  return x.언론사 || '';
+}
+
+/* 자료·판례는 «제목 한 줄»로는 판단이 안 된다.
+   ★ 자료  — 목차와 «내려받을 파일»이 보여야 「이대로 나가도 되나」를 정하실 수 있다.
+     대표 지시 2026-09-05 「데이터를 다운받아서 확인할 수 있게 만들어라」가 이 줄이다.
+   ★ 판례  — 인용(대법원 …)이 보여야 어느 판결인지 안다.
+   ⚠ 목차가 비면 «비었다고 말한다». 조용히 빈 채로 두면 편지에서야 알게 된다. */
+function 곁줄(칸, x, i){
+  if(!x) return '';
+  if(x.갈래==='자료'){
+    const 목 = (x.목차||[]).filter(Boolean);
+    const 목글 = 목.length
+      ? 목.map((t,n)=>`${n+1}. ${esc(t)}`).join(' · ')
+      : '<span style="color:var(--bad)">목차 없음</span>';
+    const 파일 = x.파일 || x.사본주소 || '';
+    const 크기 = x.파일크기 ? ` (${Core.크기글 ? Core.크기글(x.파일크기) : Math.round(x.파일크기/1024)+'KB'})` : '';
+    const 받기 = 파일
+      ? `<a href="${esc(파일)}" target="_blank" rel="noopener">⬇ 파일 열어 보기${esc(크기)}</a>`
+      : '<span style="color:var(--bad)">첨부 없음</span>';
+    const 사본 = x.사본주소 && x.사본주소 !== 파일
+      ? ` · <a href="${esc(x.사본주소)}" target="_blank" rel="noopener">우리 사본</a>` : '';
+    return `<div class="곁">${목글}<br>${받기}${사본}
+      · <button class="mini" onclick="목차고치기('${칸}',${i})">✎ 목차 고치기</button></div>`;
+  }
+  if(x.갈래==='판례'){
+    return `<div class="곁">${esc(x.인용||'')}${x.참조조문?' · '+esc(x.참조조문):''}</div>`;
+  }
+  return '';
+}
+
+/* 목차는 «사람이» 채운다 — 기계가 지어내면 책에 없는 차례가 나간다.
+   ⚠ 파일을 열어 보시고 그 차례를 그대로 옮기시는 자리다. */
+function 목차고치기(칸, i){
+  const d = 지금회차(); const x = (d.안[칸]||[])[i]; if(!x) return;
+  const 이제 = (x.목차||[]).join('\n');
+  const 새것 = prompt('목차를 «한 줄에 하나씩» 적어 주세요 (최대 4줄).\n'
+    + '번호는 편지에서 저절로 붙습니다.\n\n'
+    + '⚠ 파일을 열어 보시고 «그 책에 있는 차례»만 옮겨 주세요.\n\n'
+    + (x.제목||''), 이제);
+  if(새것 === null) return;
+  x.목차 = String(새것).split(/\r?\n/).map(s=>s.trim()).filter(Boolean).slice(0,4);
+  회차저장(d).then(()=>{ render(); toast('목차를 고쳤습니다', 4000); })
+    .catch(e=>toast('못 고쳤습니다: ' + ((e&&e.message)||''), 7000));
+}
+
 function 꼭지칸들(d){
   return Core.꼭지들.map(function(g){
     if(g.갈래==='우리글'){
@@ -817,8 +877,8 @@ function 꼭지칸들(d){
       return `<div class="item">
         <button class="mv" title="위로" onclick="옮기기('${g.키}',${i},-1)">▲</button>
         <button class="mv" title="아래로" onclick="옮기기('${g.키}',${i},1)">▼</button>
-        <span class="t" title="${esc(x.제목||'')}">${esc(x.제목||'')}</span>
-        <span class="src">${esc(x.갈래==='법령' ? (x.부처||'법령') : (x.언론사||''))}</span>
+        <span class="t" title="${esc(x.제목||'')}">${esc(x.제목||'')}${곁줄(g.키,x,i)}</span>
+        <span class="src">${esc(꼬리표(x))}</span>
         <button class="x" title="빼기" onclick="빼기('${g.키}',${i})">✕</button>
       </div>`;
     }).join('') : 빈꼭지알림(g.키);
@@ -882,14 +942,35 @@ function 연습채우기(){
   }).catch(e=>toast('담지 못했습니다: ' + ((e&&e.message)||''), 8000));
 }
 
+/* 모아 둔 것(열쇠→칸)에서 «최근 모은 것»부터 몇 개.
+   ⚠ Object.keys 차례를 믿지 않는다 — 파이어베이스가 주는 차례는 열쇠 순이지 날짜 순이 아니다. */
+function 최근것(모아둔것, 몇개){
+  return Object.keys(모아둔것 || {})
+    .map(k => (모아둔것||{})[k])
+    .filter(Boolean)
+    .sort((a,b) => String(b.모은날||'').localeCompare(String(a.모은날||'')))
+    .slice(0, 몇개 || 8);
+}
+
 function 자동담기(){
   const d = 지금회차();
-  /* 법령은 서버가 모아 둔 자리가 따로 없다 — 지금은 뉴스만 자동이고,
-     법령은 주간 브리핑이 만들어 둔 것이 있으면 그것을 쓴다. */
-  db.ref('homepage/newsBrief/법령').once('value').catch(()=>({val:()=>null}))
-    .then(function(s){
-      const 법령 = s.val() || [];
-      d.안 = Core.자동으로담기(App.브리핑, Array.isArray(법령)?법령:[], d.회차);
+  /* 세 곳에서 «저마다» 온다 (대표 지시 2026-09-05):
+       · 자료 — 고용노동부 정책자료실   (homepage/newsDocs/모음, 아침 7:10 이 담는다)
+       · 판례 — 법제처 판례            (homepage/newsPrec/모음)
+       · 법령 — 주간 브리핑이 만들어 둔 것. ⚠ «자료가 없을 때만» 쓴다.
+                「법제처에서 보기」는 손님이 눌러도 법전으로 갈 뿐이라 자료 구실을 못 한다. */
+  Promise.all([
+    db.ref('homepage/newsBrief/법령').once('value').catch(()=>({val:()=>null})),
+    db.ref('homepage/newsDocs/모음').once('value').catch(()=>({val:()=>({})})),
+    db.ref('homepage/newsPrec/모음').once('value').catch(()=>({val:()=>({})}))
+  ])
+    .then(function(v){
+      const 법령 = v[0].val() || [];
+      const 자료 = 최근것(v[1].val(), 8);
+      const 판례 = 최근것(v[2].val(), 6);
+      d.안 = Core.자동으로담기(App.브리핑, {
+        법령: Array.isArray(법령) ? 법령 : [], 자료: 자료, 판례: 판례
+      }, d.회차);
       d.안.hr = [];
       return 회차저장(d);
     })
@@ -1814,6 +1895,35 @@ function 설정화면(){
      <input type="text" id="cfgBanner" value="${esc(s.배너그림||'')}"
        placeholder="https://nabaho.github.io/pureunall/img/…" onchange="설정저장()">
     </div>
+
+    <div class="w3">
+     <label class="f">주간노동뉴스 옆 사진 <span style="font-weight:400">(비우면 글만)</span> ${도움(
+       '받으신 원본은 「주간노동뉴스」 왼쪽에 사진이 있고 오른쪽에 기사 줄이 있습니다.<br>'
+       + '주소를 넣으면 그 모양이 됩니다 — 비우면 예전처럼 줄만 나갑니다.<br>'
+       + '⚠ 배너와 같은 규칙: <b>우리 홈페이지에 올린 그림만</b> 나갑니다.')}</label>
+     <input type="text" id="cfgNews" value="${esc(s.뉴스그림||'')}"
+       placeholder="https://nabaho.github.io/pureunall/img/…" onchange="설정저장()">
+    </div>
+   </div>
+  </div>
+
+  <div class="box">
+   <h3>📥 발간자료·판례 지금 가져오기</h3>
+   <div class="pad">
+    <div class="note" style="margin-bottom:10px">
+     <b>고용노동부 정책자료실</b>에서 발간자료를, <b>법제처</b>에서 노무 판례를 가져옵니다.
+     서버가 <b>아침 7:10 에 저절로</b> 하니 보통은 누르실 일이 없습니다 —
+     이 단추는 <b>지금 당장</b> 새로 받고 싶을 때만.<br>
+     첨부는 <b>실제로 내려받아</b> 크기를 재고 우리 창고에 사본을 둡니다.
+     그래서 편지에 「내려받기 (PDF · 756KB)」라고 적히고, 죽은 링크가 안 나갑니다.
+    </div>
+    <div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center">
+     <button class="btn pri" onclick="자료가져오기(true)">📥 자료·판례 받기 (첨부까지)</button>
+     <button class="btn" onclick="자료가져오기(false)">📋 목록만 (빠름)</button>
+     <span id="docsBusy" style="font-size:12px;color:var(--sub)"></span>
+     <span class="hint" style="margin-left:auto">자료 6건 · 판례 4건 · 첨부 25MB까지</span>
+    </div>
+    <div id="docsOut" class="hint" style="white-space:pre-wrap;margin-top:9px"></div>
    </div>
   </div>
   <div class="note"><b>보내는 때</b>는 아직 손으로 누르십니다.
@@ -1844,6 +1954,49 @@ function 설정화면(){
 /* 서버에 「가져와라」고 시킨다.
    ⚠ 결과를 «화면에 그대로» 보여 준다 — 실패하면 까닭까지. 조용히 넘기면
      아무것도 안 왔는데 왜인지 아무도 모른다. */
+/* 발간자료·판례를 «지금» 받아 오라고 서버에 시킨다 (대표 지시 2026-09-05).
+   ⚠ 남의 서버를 여러 번 두드리는 일이라 오래 걸린다 — 첨부까지면 1~2분.
+     기다리는 동안 무슨 일이 되고 있는지 화면이 말해야 한다. */
+const DOCS_FN_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/newsDocsPull';
+var _자료중 = false;
+async function 자료가져오기(첨부까지){
+  if(_자료중) return toast('가져오는 중입니다 — 잠시만');
+  const 바쁨 = $('docsBusy'), 칸 = $('docsOut');
+  _자료중 = true;
+  if(바쁨) 바쁨.textContent = 첨부까지
+    ? '⏳ 받는 중… 첨부까지 받으니 1~2분 걸립니다'
+    : '⏳ 목록을 훑는 중…';
+  if(칸) 칸.textContent = '';
+  try{
+    const u = firebase.auth().currentUser;
+    if(!u) throw new Error('로그인이 풀렸습니다');
+    const token = await u.getIdToken();
+    const res = await fetch(DOCS_FN_URL, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + token },
+      body: JSON.stringify({ 내려받기: !!첨부까지, 자료몇: 6, 판례몇: 4 })
+    });
+    let j=null; try{ j = await res.json(); }catch(_){}
+    if(!res.ok || !j || !j.ok){
+      const err = new Error((j&&j.error) || ('서버 응답 ' + res.status));
+      err.답 = j || null; throw err;
+    }
+    if(칸) 칸.textContent = JSON.stringify(j, null, 2).slice(0, 3000);
+    toast(`📥 자료 ${j.자료새로||0}건(첨부 받은 것 ${j.받은것||0}) · 판례 ${j.판례새로||0}건 새로 담았습니다`
+      + ' — 「이 주차로 채우기」를 누르시면 회차에 들어갑니다', 12000);
+  }catch(e){
+    const 말 = (e&&e.message) || String(e);
+    if(칸){
+      const 속 = (e && e.답) || null;
+      칸.textContent = '✗ ' + 말 + (속 ? '\n\n' + JSON.stringify(속, null, 2).slice(0, 3000) : '');
+    }
+    toast('가져오지 못했습니다: ' + 말, 12000);
+  }finally{
+    _자료중 = false;
+    if(바쁨) 바쁨.textContent = '';
+  }
+}
+
 const ILABOR_FN_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/ilaborPull';
 var _노무사회중 = false;
 async function 노무사회가져오기(방식){
@@ -1898,6 +2051,7 @@ function 설정저장(){
     보내는주소: g('cfgFrom'),
     대표자도: g('cfgCeo') !== 'n',
     추적밑주소: g('cfgTrack'),
+    뉴스그림: g('cfgNews'),
     배너그림: g('cfgBanner'),
     로고그림: g('cfgLogo')
   });

@@ -33,10 +33,15 @@
   var 색 = {
     갈: '#6f5a48', 짙은갈: '#241a13', 딱지: '#8a6f57',
     남색: '#1b3a6b', 글: '#33302c', 흐린글: '#9a938a',
-    줄: '#e0dcd6', 가는줄: '#eceae6', 바탕: '#e9e7e3', 상자: '#f7f5f2'
+    줄: '#e0dcd6', 가는줄: '#eceae6', 바탕: '#e9e7e3', 상자: '#f7f5f2',
+    /* 자료 꼭지 바탕 — 원본의 「고용·노동정책」 칸이 옅은 살구빛이다 */
+    살구: '#fbf4ea', 표지테: '#d9d2c8', 표지바탕: '#ffffff'
   };
   var 폰트 = "'Malgun Gothic',sans-serif";
-  var 넓이 = 600;
+  /* ⚠ 600 → 700 (2026-09-05). 자료 칸이 «두 줄 나란히»라 600 에서는
+       표지 옆 글자가 152px 밖에 안 남아 제목이 예닐곱 줄로 쏟아졌다.
+       받으신 원본도 600 보다 넓다. 700 은 메일 프로그램이 다 견디는 폭이다. */
+  var 넓이 = 700;
 
   function esc(s) {
     return String(s == null ? '' : s)
@@ -115,7 +120,9 @@
       + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center"><tr>'
       + '<td style="background-color:' + 색.짙은갈 + ';padding:9px 22px;">'
       + '<span style="font-size:15px;color:#ffffff;font-weight:bold;font-family:' + 폰트 + ';">'
-      + esc(회.짧은이름 ? (회.연 + '년 ' + 회.짧은이름) : '주간뉴스레터') + '</span>'
+      /* ⚠ 짧은이름(「8월 5주차」)이 아니라 이름을 쓴다 — 원본 띠가 「2026년 08월 5주차」로
+           달을 «두 자리»로 적는다. 이것 하나로 나란히 놓으면 티가 난다. */
+      + esc(회.이름 || '주간뉴스레터') + '</span>'
       + '</td></tr></table>';
 
     /* 사진을 넣으신 경우 — 글자를 사진 «위»에 얹지 않는다.
@@ -168,7 +175,7 @@
 
   /* ── 기사 목록 — 제목·언론사·원문 링크«까지»
      ⚠ 본문은 옮기지 않는다. 남의 글이다. (functions/news-brief.js 와 같은 규칙) */
-  function 기사줄(항목들) {
+  function 기사줄(항목들, 그림) {
     var 줄 = (항목들 || []).map(function (x) {
       var u = href(x.링크);
       var 제 = esc(x.제목 || '');
@@ -179,8 +186,22 @@
         + (x.언론사 ? ' <span style="color:' + 색.흐린글 + ';font-size:12px;">· '
             + esc(x.언론사) + '</span>' : '') + '</div>';
     }).join('');
-    return '<tr><td style="padding:16px 28px 0 28px;font-size:14px;line-height:1.95;'
-      + 'color:' + 색.글 + ';font-family:' + 폰트 + ';">' + 줄 + '</td></tr>';
+    var 글칸 = 'font-size:14px;line-height:1.95;color:' + 색.글 + ';font-family:' + 폰트 + ';';
+
+    /* 사진을 «옆»에 두는 꼴 — 원본의 「주간노동뉴스」가 그렇다(사진 왼쪽, 줄 오른쪽).
+       ⚠ 설정에 그림 주소가 있을 때만이다. 없으면 예전처럼 줄만 그린다 —
+         자리만 잡아 두고 빈 네모를 그리면 「그림이 깨졌나」로 보인다.
+       ⚠ 우리 홈페이지에 올린 그림만 나간다(mail-send.js 의 IMG_HOST_OK). */
+    var g = img주소(그림);
+    if (!g) {
+      return '<tr><td style="padding:16px 28px 0 28px;' + 글칸 + '">' + 줄 + '</td></tr>';
+    }
+    return '<tr><td style="padding:16px 28px 0 28px;">'
+      + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+      + '<td width="190" valign="top" style="width:190px;">'
+      + '<img src="' + g + '" width="190" alt="" style="display:block;width:190px;"></td>'
+      + '<td valign="top" style="padding-left:16px;' + 글칸 + '">' + 줄 + '</td>'
+      + '</tr></table></td></tr>';
   }
 
   /* ── 법령 — 공포일·시행일·부처까지 싣는다(저작권 대상이 아니다) ─────── */
@@ -204,16 +225,204 @@
     return 줄;
   }
 
-  /* 정책 꼭지는 법령과 기사가 섞인다 — 법령을 위에 둔다(원문까지 실을 수 있는 쪽이 값어치다) */
-  function 섞인줄(항목들) {
-    var 법 = 법령줄(항목들);
-    var 기사 = (항목들 || []).filter(function (x) { return x.갈래 !== '법령'; });
+
+  /* ══════════════════════════════════════════════════════════════════════
+     자료 칸 — 「법제처에서 보기」가 아니라 «자료 그 자체»
+     ══════════════════════════════════════════════════════════════════════
+     대표 지시 2026-09-05: 「자료가 법제처에서 나오면 안된다. 정리해서 첨부자료에
+     있어야된다.」
+
+     받으신 원본의 「고용·노동정책」 칸 생김새를 그대로 옮긴다 —
+       옅은 살구빛 바탕 · 두 칸 나란히 · 왼쪽에 표지 · 오른쪽에 제목과 목차.
+     거기에 우리 것 하나를 더 붙인다: «내려받기»(파일 종류와 크기까지).
+     거리는 functions/news-docs.js 가 고용노동부 정책자료실에서 가져온다. */
+
+  /* 표지 — 그림이 있으면 그림, 없으면 «글자 표지».
+     ⚠ 그림에 기대면 안 된다. 아웃룩·회사 메일은 바깥 그림을 기본으로 막고,
+       우리 발송기도 허락한 곳 밖의 그림은 지운다(mail-send.js 의 IMG_HOST_OK).
+       그래서 그림이 없어도 «책 표지처럼 보이는 칸»이 늘 그려지게 둔다. */
+  function 표지칸(x, 너비) {
+    var w = Number(너비) || 96;
+    var 그림 = img주소(x && x.표지);
+    if (그림) {
+      return '<img src="' + 그림 + '" width="' + w + '" alt=""'
+        + ' style="display:block;width:' + w + 'px;border:1px solid ' + 색.표지테 + ';">';
+    }
+    var 제 = String((x && x.제목) || '').replace(/\s+/g, ' ').trim();
+    /* ⚠ 28자에서 자른다. 안 자르면 표지가 글자 수만큼 «길어져» 두 칸 높이가 어긋난다
+         (미리보기에서 왼쪽 표지만 20px 더 길었다). 표지는 책등이지 본문이 아니다. */
+    var 짧 = 제.length > 28 ? 제.slice(0, 28) + '…' : 제;
+    return '<table role="presentation" width="' + w + '" cellpadding="0" cellspacing="0" border="0"'
+      + ' style="width:' + w + 'px;background-color:' + 색.표지바탕 + ';border:1px solid ' + 색.표지테 + ';">'
+      + '<tr><td height="132" align="center" valign="middle"'
+      + ' style="height:132px;padding:10px 9px;">'
+      + '<div style="font-size:11px;line-height:1.5;font-weight:bold;color:' + 색.갈 + ';'
+      + 'font-family:' + 폰트 + ';word-break:keep-all;">' + esc(짧) + '</div>'
+      + '<div style="height:9px;line-height:9px;font-size:1px;">&nbsp;</div>'
+      + '<div style="font-size:9.5px;color:' + 색.흐린글 + ';font-family:' + 폰트 + ';">'
+      + esc((x && x.발행처) || '') + '</div>'
+      + '</td></tr></table>';
+  }
+
+  /* 「pdf · 756KB」 — 누르기 «전에» 무엇을 얼마나 받는지 알려 준다 */
+  function 파일글(x) {
+    var 것 = [];
+    if (x && x.확장자) 것.push(String(x.확장자).toUpperCase());
+    /* ⚠ 크기 셈은 Core 것을 쓴다 — 화면과 편지가 «같은 자»를 써야 한다.
+         두 벌로 두면 화면은 756KB, 편지는 0.7MB 라고 적는 날이 온다. */
+    var 크 = Core.크기글(x && x.파일크기);
+    if (크) 것.push(크);
+    return 것.join(' · ');
+  }
+
+  function 자료카드(x) {
+    var 제 = esc(String((x && x.제목) || '').replace(/\s+/g, ' ').trim());
+    var 상세 = href(x && x.링크);
+    var 제목칸 = 상세
+      ? '<a href="' + 상세 + '" style="color:' + 색.짙은갈 + ';text-decoration:none;">' + 제 + '</a>'
+      : 제;
+
+    /* 목차 — 있으면 번호를 매겨 두세 줄. 없으면 «지어내지 않는다».
+       ⚠ 자료 목차를 기계가 지어내면 «책에 없는 차례»가 법인 이름으로 나간다. */
+    var 목 = (x && x.목차 || []).filter(Boolean).slice(0, 4);
+    var 목차칸 = 목.length
+      ? '<div style="padding-top:7px;font-size:12px;line-height:1.7;color:' + 색.갈 + ';'
+        + 'font-family:' + 폰트 + ';">'
+        + 목.map(function (t, i) { return (i + 1) + '. ' + esc(String(t).trim()); }).join('<br>')
+        + '</div>'
+      : '';
+
+    var 밑줄 = [];
+    if (x && x.발행처) 밑줄.push(esc(x.발행처));
+    if (x && x.발행일) 밑줄.push(esc(날짜꼴(x.발행일)));
+    var 밑칸 = 밑줄.length
+      ? '<div style="padding-top:8px;font-size:11.5px;color:' + 색.흐린글 + ';'
+        + 'font-family:' + 폰트 + ';">' + 밑줄.join(' · ') + '</div>'
+      : '';
+
+    var 파일 = href(x && x.파일);
+    var 받기 = 파일
+      ? '<div style="padding-top:9px;">'
+        + '<a href="' + 파일 + '" style="display:inline-block;background-color:' + 색.갈 + ';'
+        + 'color:#ffffff;font-size:11.5px;font-weight:bold;text-decoration:none;padding:6px 14px;'
+        + 'font-family:' + 폰트 + ';">내려받기'
+        + (파일글(x) ? ' <span style="font-weight:normal;">(' + esc(파일글(x)) + ')</span>' : '')
+        + '</a></div>'
+      : '';
+
+    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+      + '<td width="96" valign="top" style="width:96px;">' + 표지칸(x, 96) + '</td>'
+      + '<td valign="top" style="padding-left:13px;">'
+      + '<div style="font-size:13.5px;font-weight:bold;line-height:1.5;color:' + 색.짙은갈 + ';'
+      + 'font-family:' + 폰트 + ';word-break:keep-all;">' + 제목칸 + '</div>'
+      + 목차칸 + 밑칸 + 받기
+      + '</td></tr></table>';
+  }
+
+  /* 두 칸 나란히. 홀수면 마지막 오른쪽은 빈 칸으로 둔다 — 폭이 흔들리지 않게. */
+  function 자료칸(항목들, 바탕) {
+    var 것 = (항목들 || []).filter(function (x) { return x && x.갈래 === '자료'; });
+    if (!것.length) return '';
+    var 줄 = '';
+    for (var i = 0; i < 것.length; i += 2) {
+      var 첫줄 = i === 0;
+      var 테 = 첫줄 ? '' : 'border-top:1px solid #efe7dc;';
+      줄 += '<tr>'
+        + '<td width="50%" valign="top" style="width:50%;padding:16px 15px;' + 테
+        + 'border-right:1px solid #efe7dc;">' + 자료카드(것[i]) + '</td>'
+        + '<td width="50%" valign="top" style="width:50%;padding:16px 15px;' + 테 + '">'
+        + (것[i + 1] ? 자료카드(것[i + 1]) : '&nbsp;') + '</td>'
+        + '</tr>';
+    }
+    return '<tr><td style="padding:15px 28px 0 28px;">'
+      + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"'
+      + ' style="background-color:' + (바탕 || 색.살구) + ';">' + 줄 + '</table>'
+      + '</td></tr>';
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     판례 칸 — 갈색 상자 + 「* 사건 / * 법원 / * 선고」
+     ══════════════════════════════════════════════════════════════════════
+     ★ 판결문은 저작권 대상이 아니다(저작권법 제7조 제4호). 기사와 달리
+       판시사항·판결요지를 «그대로» 실을 수 있다. 그래서 링크 한 줄이 아니라
+       내용을 싣는다 — 받으신 원본이 그렇게 되어 있다.
+     거리는 functions/news-prec.js 가 법제처 판례 API 에서 가져온다. */
+  function 판례한칸(x) {
+    var 제 = esc(String(x.제목 || '').replace(/\s+/g, ' ').trim());
+    var 인 = esc(String(x.인용 || '').trim());
+    var u = href(x.링크);
+    var 인용칸 = 인
+      ? '<div style="height:12px;line-height:12px;font-size:1px;">&nbsp;</div>'
+        + '<div align="right" style="text-align:right;">'
+        + (u ? '<a href="' + u + '" style="color:#ffffff;text-decoration:underline;'
+              + 'font-size:12.5px;font-weight:bold;font-family:' + 폰트 + ';">' + 인 + '</a>'
+            : '<span style="color:#ffffff;font-size:12.5px;font-weight:bold;'
+              + 'font-family:' + 폰트 + ';">' + 인 + '</span>')
+        + '</div>'
+      : '';
+
+    var 상자 = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"'
+      + ' style="background-color:' + 색.갈 + ';"><tr><td style="padding:17px 19px;">'
+      + '<div style="font-size:12.5px;font-weight:bold;color:#e8ddd2;font-family:' + 폰트 + ';">'
+      + esc(x.딱지 || '[판례]') + '</div>'
+      + '<div style="height:7px;line-height:7px;font-size:1px;">&nbsp;</div>'
+      + '<div style="font-size:14.5px;font-weight:bold;line-height:1.65;color:#ffffff;'
+      + 'font-family:' + 폰트 + ';word-break:keep-all;">' + 제 + '</div>'
+      + 인용칸
+      + '</td></tr></table>';
+
+    /* ⚠ 「* 이름 : 값」 — 원본의 차례 그대로다. 값이 없는 줄은 «아예 안 그린다».
+         「* 원심판결 :」만 덩그러니 남으면 못 채운 티가 난다. */
+    var 줄들 = [];
+    function 넣기(이름, 값) {
+      var v = String(값 == null ? '' : 값).replace(/\s+/g, ' ').trim();
+      if (v) 줄들.push('* ' + esc(이름) + ' : ' + esc(v));
+    }
+    넣기('사건', [x.법원, x.사건번호].filter(Boolean).join(' ')
+      + (x.사건명 ? ' ' + x.사건명 : ''));
+    넣기('사건종류', [x.사건종류, x.판결유형].filter(Boolean).join(' · '));
+    넣기('판결선고', x.선고글 || 날짜꼴(x.선고일));
+    넣기('참조조문', x.참조조문);
+    var 곁 = 줄들.length
+      ? '<div style="padding-top:13px;font-size:12.5px;line-height:1.9;color:' + 색.글 + ';'
+        + 'font-family:' + 폰트 + ';word-break:keep-all;">' + 줄들.join('<br>') + '</div>'
+      : '';
+
+    var 요 = String(x.요지 || '').replace(/\s+/g, ' ').trim();
+    var 요지칸 = 요
+      ? '<div style="padding-top:11px;font-size:12.5px;line-height:1.85;color:' + 색.갈 + ';'
+        + 'font-family:' + 폰트 + ';word-break:keep-all;">' + esc(요) + '</div>'
+      : '';
+
+    return '<tr><td style="padding:16px 28px 0 28px;">' + 상자 + 곁 + 요지칸 + '</td></tr>';
+  }
+
+  function 판례칸(항목들) {
+    return (항목들 || [])
+      .filter(function (x) { return x && x.갈래 === '판례'; })
+      .map(판례한칸).join('');
+  }
+
+  /* ── 한 꼭지 그리기 — 칸마다 «제 갈래»로 ───────────────────────────────
+     ⚠ 꼭지가 아니라 «칸»의 갈래를 본다. 지난 회차에는 옛 갈래(법령·기사)로
+       담긴 것이 남아 있고, 새 회차에는 자료·판례가 담긴다. 한 꼭지 안에
+       둘이 섞여도 각자 제 모양으로 그려져야 «지난 회차 다시 보기»가 안 깨진다. */
+  function 꼭지그리기(항목들, 꼭지, 설정) {
+    var 것 = 항목들 || [];
+    var g = 꼭지 || {};
+    var s = 설정 || {};
     var out = '';
+    out += 자료칸(것.filter(function (x) { return x && x.갈래 === '자료'; }));
+    out += 판례칸(것.filter(function (x) { return x && x.갈래 === '판례'; }));
+    var 법 = 법령줄(것);
     if (법) {
       out += '<tr><td style="padding:14px 28px 0 28px;font-size:14px;line-height:1.85;'
         + 'color:' + 색.글 + ';font-family:' + 폰트 + ';">' + 법 + '</td></tr>';
     }
-    if (기사.length) out += 기사줄(기사);
+    var 기사 = 것.filter(function (x) {
+      return x && x.갈래 !== '자료' && x.갈래 !== '판례' && x.갈래 !== '법령';
+    });
+    if (기사.length) out += 기사줄(기사, g.키 === 'news' ? s.뉴스그림 : '');
     return out;
   }
 
@@ -302,7 +511,7 @@
       var 것 = 안[g.키] || [];
       if (!것.length) return;                    /* 빈 꼭지는 «아예 안 그린다» */
       if (그린것) 속 += 줄긋기(22);
-      속 += 꼭지제목(g) + (g.갈래 === '법령' ? 섞인줄(것) : 기사줄(것));
+      속 += 꼭지제목(g) + 꼭지그리기(것, g, 설);
       그린것++;
     });
 
@@ -371,7 +580,22 @@
       if (!것.length) return;
       줄.push('[' + g.이름 + ']');
       것.forEach(function (x) {
-        if (x.갈래 === '법령') {
+        if (x.갈래 === '자료') {
+          /* ★ 평문에서도 «내려받을 곳»이 보여야 한다. 서식을 못 읽는 프로그램에서
+               자료 칸이 제목만 남으면 자료가 아니라 목록이 된다. */
+          줄.push('· ' + (x.제목 || '')
+            + (x.발행처 ? ' (' + x.발행처 + (x.발행일 ? ' ' + 날짜꼴(x.발행일) : '') + ')' : ''));
+          (x.목차 || []).slice(0, 4).forEach(function (t, i) {
+            줄.push('    ' + (i + 1) + '. ' + String(t).trim());
+          });
+          if (x.파일) 줄.push('  내려받기: ' + x.파일);
+          else if (x.링크) 줄.push('  ' + x.링크);
+        } else if (x.갈래 === '판례') {
+          줄.push('· ' + (x.딱지 || '[판례]') + ' ' + (x.제목 || ''));
+          if (x.인용) 줄.push('    ' + x.인용);
+          if (x.요지) 줄.push('    ' + x.요지);
+          if (x.링크) 줄.push('  ' + x.링크);
+        } else if (x.갈래 === '법령') {
           줄.push('· ' + (x.제목 || '')
             + (x.시행일 ? ' (시행 ' + 날짜꼴(x.시행일) + ')' : ''));
           if (x.링크) 줄.push('  ' + x.링크);

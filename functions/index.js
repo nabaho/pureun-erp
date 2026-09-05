@@ -2464,6 +2464,247 @@ exports.dailyNewsCollect = functions
   });
 
 /* ══════════════════════════════════════════════════════════════════════════
+   ①-2 발간자료·판례 모으기 — 「법제처 링크」가 아니라 «자료 그 자체»
+   ══════════════════════════════════════════════════════════════════════════
+   대표 지시 2026-09-05:
+     「자료가 법제처에서 나오면 안된다. 정리해서 첨부자료에 있어야된다.
+      … 시스템을 자동으로 찾아오고 데이터를 다운받아서 확인할 수 있게 만들어라.」
+
+   ★ 어디서 오는가
+     · 자료 — 고용노동부 «정책자료실». 받으신 원본(8월 5주차)에 실린 두 건이
+              그대로 여기 있었다(2026-09-05 실측). 짐작이 아니라 맞춰 본 것이다.
+     · 판례 — 법제처 판례 API. 판결문은 저작권 대상이 아니라 «내용까지» 싣는다.
+
+   ★ 「다운받아서 확인할 수 있게」 — 파일을 실제로 «내려받아» 본다.
+     ① 크기를 재서 편지에 적는다(누르기 전에 얼마짜리인지 알게)
+     ② 링크가 «살아 있는지» 확인한다. 죽은 링크가 114곳으로 나가면 되돌릴 수 없다.
+     ③ 우리 저장소에 사본을 둔다. 기관이 내리면 우리 것으로 드린다.
+
+   ⚠ 남의 집 화면을 읽는 일이라 «언젠가 반드시» 모양이 바뀐다.
+     못 읽으면 «그냥 넘어간다» — 모아 둔 것은 그대로 남는다. */
+const 자료부품 = require("./news-docs.js");
+const 판례부품 = require("./news-prec.js");
+
+/* 판례를 어떤 말로 찾나 — 사업장이 챙길 일이 되는 낱말들 */
+const 판례찾을말 = ["부당해고", "통상임금", "산업재해", "퇴직금", "직장 내 괴롭힘", "노동조합"];
+/* ⚠ 25MB 를 넘으면 «받아 보지 않는다». 함수 메모리가 터지면 그 회차 모으기가 통째로 실패한다.
+     크기를 모르는 채로 두는 편이 낫다 — 링크는 그대로 나간다. */
+const 자료최대바이트 = 25 * 1024 * 1024;
+const 자료보관자리 = "newsdocs/";
+
+/* 쪽 하나를 «글자»로. 한글 인코딩을 헤더와 <meta> 에서 알아본다.
+   ⚠ 고용노동부는 쪽마다 인코딩이 다르다 — 정책자료실은 UTF-8 인데
+     주요발간물은 EUC-KR 이다. 하나로 못 박으면 한쪽이 통째로 깨져 온다. */
+async function 쪽받기(url) {
+  const r = await fetch(url, { headers: { "User-Agent": "pureun-erp-news-docs" } });
+  if (!r.ok) throw new Error(url + " 응답 " + r.status);
+  const buf = Buffer.from(await r.arrayBuffer());
+  const 헤더 = String(r.headers.get("content-type") || "");
+  let 이름 = (/charset=([\w-]+)/i.exec(헤더) || [, ""])[1].toLowerCase();
+  if (!이름) {
+    /* 앞 2KB 만 라틴으로 훑어 <meta charset> 을 본다 — 여기까지는 어느 인코딩이든 ASCII 다 */
+    const 머리 = buf.slice(0, 2048).toString("latin1");
+    이름 = (/charset\s*=\s*["']?([\w-]+)/i.exec(머리) || [, "utf-8"])[1].toLowerCase();
+  }
+  if (이름 === "utf8") 이름 = "utf-8";
+  try { return new TextDecoder(이름).decode(buf); }
+  catch (e) { return buf.toString("utf8"); }
+}
+
+/* 고용노동부 정책자료실에서 «쓸 만한 것»을 골라 상세까지 읽는다 */
+async function 자료거리모으기(몇개) {
+  const 몇 = Math.max(1, Math.min(12, Number(몇개) || 6));
+  const 목록 = 자료부품.자료추리기(
+    자료부품.목록읽기(await 쪽받기(자료부품.목록주소(1))), 몇);
+  const out = [];
+  for (const m of 목록) {
+    try {
+      const 상세 = 자료부품.상세읽기(await 쪽받기(자료부품.상세주소(m.일련번호)), m.일련번호);
+      const it = 자료부품.자료로만들기(상세);
+      /* ⚠ 첨부가 없으면 «자료가 아니다» — 내려받을 것이 없는 칸은 목록일 뿐이다 */
+      if (it && it.파일) out.push(it);
+    } catch (e) {
+      console.warn("[자료] " + m.일련번호 + " 를 못 읽었습니다: " + e.message);
+    }
+  }
+  return out;
+}
+
+/* 법제처에서 노무 판례를 모은다 — 판시사항이 있는 것만 */
+async function 판례거리모으기(몇개) {
+  const 몇 = Math.max(1, Math.min(8, Number(몇개) || 4));
+  let 다 = [];
+  for (const w of 판례찾을말) {
+    try { 다 = 다.concat(판례부품.목록읽기(await 쪽받기(판례부품.목록주소(w, 5)))); }
+    catch (e) { console.warn("[판례] " + w + " 를 못 읽었습니다: " + e.message); }
+  }
+  const out = [];
+  for (const c of 판례부품.판례추리기(다, 몇 * 3)) {
+    if (out.length >= 몇) break;
+    try {
+      const one = 판례부품.한건읽기(await 쪽받기(판례부품.한건주소(c.일련번호)));
+      if (!one || !판례부품.노무판례인가(one)) continue;
+      const it = 판례부품.판례로만들기(one);
+      if (it) out.push(it);
+    } catch (e) {
+      console.warn("[판례] " + c.일련번호 + " 를 못 읽었습니다: " + e.message);
+    }
+  }
+  return out;
+}
+
+/* 첨부를 «실제로 내려받아» 크기를 재고 사본을 둔다.
+   ★ 여기가 대표 지시의 「다운받아서 확인할 수 있게」다.
+   ⚠ 실패해도 자료를 버리지 않는다 — 크기만 모른 채 링크는 그대로 나간다.
+     기관 서버가 잠깐 느린 것으로 그 주 자료를 통째로 잃으면 안 된다. */
+async function 파일받아보기(자료) {
+  const 것 = Object.assign({}, 자료 || {});
+  if (!것.파일) return 것;
+  try {
+    const r = await fetch(것.파일, { headers: { "User-Agent": "pureun-erp-news-docs" } });
+    if (!r.ok) throw new Error("응답 " + r.status);
+    const 미리크기 = Number(r.headers.get("content-length") || 0);
+    if (미리크기 > 자료최대바이트) {
+      것.파일크기 = 미리크기;
+      것.확인 = "큼";                       /* 받아 보진 않았지만 크기는 안다 */
+      return 것;
+    }
+    const buf = Buffer.from(await r.arrayBuffer());
+    것.파일크기 = buf.length;
+    것.확인 = "받음";
+    것.확인때 = Date.now();
+
+    /* 우리 사본 — 기관이 내려도 우리 것으로 드릴 수 있게.
+       ⚠ 파일 이름에 / 나 .. 가 들어오면 저장 자리를 벗어난다. 이름을 «우리가» 짓는다.
+       ⚠ 주소는 «토큰 방식»이다 — 서명 주소는 만료된다. 사진에서 그것 때문에 옛것이
+         일제히 안 보인 적이 있고, 그 규칙을 tests/photos-url-retry.test.js 가 지킨다.
+         자료 사본도 회차에 적어 두고 몇 달 뒤에 다시 열 수 있어야 하니 같은 잣대로 둔다.
+       ⚠ 이 글에 그 함수 «이름»을 적지 말 것 — 글자로 보는 검사가 주석에 걸려 운다
+         (functions/index.js 는 .js 라 걷개가 주석을 못 걷는다). */
+    const 확장 = (것.확장자 || "bin").replace(/[^a-z0-9]/gi, "").slice(0, 8) || "bin";
+    const 자리 = 자료보관자리 + String(것.일련번호 || Date.now()).replace(/[^0-9A-Za-z_-]/g, "")
+      + "." + 확장;
+    const 통 = getStorage().bucket();
+    const 표 = crypto.randomUUID();
+    await 통.file(자리).save(buf, {
+      metadata: {
+        contentType: r.headers.get("content-type") || "application/octet-stream",
+        metadata: {
+          firebaseStorageDownloadTokens: 표,
+          제목: String(것.제목 || "").slice(0, 200), 발행처: String(것.발행처 || "")
+        }
+      }
+    });
+    것.사본 = 자리;
+    것.사본주소 = "https://firebasestorage.googleapis.com/v0/b/" + 통.name
+      + "/o/" + encodeURIComponent(자리) + "?alt=media&token=" + 표;
+  } catch (e) {
+    것.확인 = "못받음";
+    것.확인말 = String(e.message || e).slice(0, 120);
+    console.warn("[자료] 첨부를 못 받았습니다 — " + 것.제목 + " : " + 것.확인말);
+  }
+  return 것;
+}
+
+/* 모아서 자리에 담는다. 스케줄과 「지금 가져오기」가 «함께» 쓴다 —
+   두 벌로 두면 한쪽만 낡는다(브리핑에서 이미 겪었다). */
+async function 자료판례모아담기(옵션) {
+  const O = 옵션 || {};
+  const 오늘 = 서울오늘();
+  const db = getDatabase();
+  const 셈 = { 오늘: 오늘, 자료새로: 0, 판례새로: 0, 자료쌓임: 0, 판례쌓임: 0, 받은것: 0 };
+
+  /* ── 자료 ── */
+  try {
+    let 것들 = await 자료거리모으기(O.자료몇 || 6);
+    if (O.내려받기 !== false) {
+      const 받은것 = [];
+      for (const x of 것들) 받은것.push(await 파일받아보기(x));
+      것들 = 받은것;
+      셈.받은것 = 것들.filter(function (x) { return x.확인 === "받음"; }).length;
+    }
+    const 자리 = db.ref("homepage/newsDocs");
+    const 모아둔것 = (await 자리.child("모음").once("value")).val() || {};
+    const 결과 = 자료부품.모으기(모아둔것, 것들, 오늘);
+    const 남길것 = 자료부품.오래된것털기(결과.모음, 오늘, 60);
+    await 자리.child("모음").set(남길것);
+    await 자리.update({ 모은날: 오늘, 모은수: 결과.새로, 쌓인수: Object.keys(남길것).length });
+    셈.자료새로 = 결과.새로;
+    셈.자료쌓임 = Object.keys(남길것).length;
+  } catch (e) {
+    console.warn("[자료] 오늘은 못 모았습니다: " + e.message);
+    셈.자료탈 = String(e.message || e).slice(0, 160);
+  }
+
+  /* ── 판례 ── */
+  try {
+    const 것들 = await 판례거리모으기(O.판례몇 || 4);
+    const 자리 = db.ref("homepage/newsPrec");
+    const 모아둔것 = (await 자리.child("모음").once("value")).val() || {};
+    const 결과 = 판례부품.모으기(모아둔것, 것들, 오늘);
+    const 남길것 = 판례부품.오래된것털기(결과.모음, 오늘, 90);
+    await 자리.child("모음").set(남길것);
+    await 자리.update({ 모은날: 오늘, 모은수: 결과.새로, 쌓인수: Object.keys(남길것).length });
+    셈.판례새로 = 결과.새로;
+    셈.판례쌓임 = Object.keys(남길것).length;
+  } catch (e) {
+    console.warn("[판례] 오늘은 못 모았습니다: " + e.message);
+    셈.판례탈 = String(e.message || e).slice(0, 160);
+  }
+
+  return 셈;
+}
+
+/* 날마다 아침 7:10 — 뉴스 모으기(07:00) 바로 뒤.
+   ⚠ 같은 시각에 두 개를 돌리면 둘 다 느려진다. 십 분 띄운다. */
+exports.dailyDocsCollect = functions
+  .runWith({ timeoutSeconds: 540, memory: "512MB" })
+  .pubsub.schedule("every day 07:10")
+  .timeZone("Asia/Seoul")
+  .onRun(async () => {
+    const 설정 = (await getDatabase().ref("homepage/newsDocs").once("value")).val() || {};
+    if (설정.off === true) { console.log("[자료모으기] 꺼져 있습니다"); return null; }
+    const 셈 = await 자료판례모아담기({});
+    console.log("[자료모으기] 자료 새로 " + 셈.자료새로 + "(받음 " + 셈.받은것 + ")"
+      + " · 판례 새로 " + 셈.판례새로);
+    return null;
+  });
+
+/* 「지금 가져오기」 — 대표가 화면에서 누르는 것.
+   ⚠ 총괄관리자만. 남의 서버를 여러 번 두드리는 일이라 아무나 못 누르게 한다. */
+exports.newsDocsPull = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 540, memory: "512MB" })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+
+    let sender;
+    try { sender = await requireStaff(req); }
+    catch (e) { res.status(e.status || 401).json({ ok: false, error: String(e.message || e) }); return; }
+
+    const db = getDatabase();
+    const 권 = (await db.ref("uid_roles/" + sender.uid).once("value")).val() || {};
+    if (권.isAdmin !== true) { res.status(403).json({ ok: false, error: "총괄관리자만 쓸 수 있습니다." }); return; }
+
+    const 몸 = (req.body && typeof req.body === "object") ? req.body : {};
+
+    /* ★ 사본 주소는 «담을 때» 함께 적어 둔다(homepage/newsDocs/모음/…/사본주소).
+         따로 받아 가는 문을 두지 않는다 — 문이 하나면 새는 곳도 하나다. */
+    try {
+      const 셈 = await 자료판례모아담기({
+        자료몇: Math.max(1, Math.min(12, Number(몸.자료몇) || 6)),
+        판례몇: Math.max(1, Math.min(8, Number(몸.판례몇) || 4)),
+        내려받기: 몸.내려받기 !== false
+      });
+      res.json(Object.assign({ ok: true }, 셈));
+    } catch (e) {
+      res.status(500).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+/* ══════════════════════════════════════════════════════════════════════════
    ② 월요일 아침 «뉴스레터 한 장» (대표 지시 2026-09-02 「1주일에 1개씩」)
    ══════════════════════════════════════════════════════════════════════════ */
 /* ══════════════════════════════════════════════════════════════════════════
