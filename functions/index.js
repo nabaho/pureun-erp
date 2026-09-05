@@ -2089,6 +2089,22 @@ const NT = require("./news-track");
    ★ 그래서 셈은 «거래»로 올린다 — 불러올 것이 없고, 두 사람이 같은 때 열어도 안 어긋난다.
    ★ 첫 때는 «처음 것만» 지킨다 — 언제 처음 열었는지가 알고 싶은 것이다.
      마지막 때는 따로 적는다. */
+/* 편지에 실린 «번호»로 누구인지 찾는다.
+   ★ 2026-09-03 부터 편지에는 메일 주소가 아니라 뜻 없는 번호가 실린다.
+     회차마다 「번호 → 주소」 대장이 있고, 여기서 그것을 본다.
+   ★ 대장에 없으면 «옛 편지»일 수 있다(번호를 쓰기 전에 나간 것).
+     그때는 받은 값을 주소로 보되, «그 회차에 실제로 보낸 주소»일 때만 받는다.
+     ⚠ 이 조건이 곧 위조 막이다 — 예전에는 주소만 알면 남의 표를 켤 수 있었고,
+       아무 값이나 넣어 빈 줄을 끝없이 만들 수도 있었다. */
+async function 누구인가(db, 회차, 받은값) {
+  const 대장 = await db.ref(NT.받는이자리(회차, 받은값)).once("value");
+  const 주소 = 대장.val();
+  if (주소 && typeof 주소 === "string") return NT.주소열쇠(주소);
+  /* 옛 편지 — 보낸 적 있는 주소만 받는다 */
+  const 보냄 = await db.ref(NT.보냄표(회차, 받은값)).once("value");
+  return 보냄.val() === true ? NT.주소열쇠(받은값) : "";
+}
+
 async function 추적표켜기(회차, 주소, 무엇) {
   const db = getDatabase();
   const 자리 = NT.적을자리(회차, 주소);
@@ -2112,8 +2128,11 @@ exports.newsOpen = functions
     res.set("Content-Type", "image/gif");
     const q = NT.읽기(req.query);
     if (q.ok) {
-      try { await 추적표켜기(q.회차, q.주소, "열람"); }
-      catch (e) { console.warn("newsOpen", (e && e.message) || e); }
+      try {
+        const 주소 = await 누구인가(getDatabase(), q.회차, q.주소);
+        /* 우리가 낸 번호도 아니고 보낸 적도 없으면 «아무 일도 안 한다» */
+        if (주소) await 추적표켜기(q.회차, 주소, "열람");
+      } catch (e) { console.warn("newsOpen", (e && e.message) || e); }
     }
     // 무슨 일이 있어도 그림은 준다 — 깨진 그림이 보이면 편지가 이상해 보인다
     res.status(200).send(NT.빈그림);
@@ -2128,10 +2147,13 @@ exports.newsClick = functions
     let 갈곳 = "";
     if (q.ok) {
       try {
-        await 추적표켜기(q.회차, q.주소, "클릭");
+        const db = getDatabase();
+        const 주소 = await 누구인가(db, q.회차, q.주소);
+        /* ★ 누구인지 몰라도 «가던 길»은 보내 준다 — 표만 안 켠다.
+             링크가 죽으면 받는 쪽에는 우리 잘못이 아니라 편지가 깨진 것으로 보인다. */
+        if (주소) await 추적표켜기(q.회차, 주소, "클릭");
         // ★ 목적지는 «회차에 적어 둔 목록»에서 번호로 찾는다 — 주소로 받지 않는다
-        const s = await getDatabase()
-          .ref("newsletter/issues/" + q.회차 + "/링크들").once("value");
+        const s = await db.ref("newsletter/issues/" + q.회차 + "/링크들").once("value");
         갈곳 = NT.링크찾기(s.val(), q.번호);
       } catch (e) { console.warn("newsClick", (e && e.message) || e); }
     }
