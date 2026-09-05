@@ -785,8 +785,13 @@ ok('법령 개정일은 남긴다', src.includes("return /개정|시행|신설|�
 /* 구간(미만·이상)은 «윗줄», 금액은 «아랫줄»에 따로 있는 요율표가 있다 —
    제도도입 비용 청구내역서의 수당 200·300·400·470만원이 통째로 지워지던 것. */
 ok('윗줄이 구간이면 아랫줄 요율도 남긴다', src.includes('function _isRateRow(tr){')
-  && src.includes("if(/미만|이상/.test(up.textContent||'')){ near=true; break; }")
+  && src.includes("if(SPAN.test(up.textContent||'')){ near=true; break; }")
   && src.includes("if(_isRateRow(tr)) tr.setAttribute('data-rate','1');"));
+/* 「미만·이상」이라는 «낱말»만 보면 안 된다 — 지원신청서의 「둘 이상의 기업이 …출연」 때문에
+   그 아래 금액 줄이 요율표로 보여, 남의 금액 10,000,000원이 걷어내기를 통째로 비껴갔다.
+   구간은 «금액 뒤에» 붙는다 — 앞에 숫자가 있어야 구간으로 본다. */
+ok('구간은 «금액 뒤»의 미만·이상만 본다',
+  src.includes('var SPAN=/[0-9][0-9,\\s]*(?:만원|천원|원)?\\s*(?:미만|이상)/;'));
 /* 다만 스스로 적는 줄(청구액)과, 저 아래 남의 실적은 그대로 비워야 한다 */
 ok('요율표 안에서도 청구·신청 줄은 비운다', src.includes("!/청구|신청|지급|수령|합계|^계$/.test(lbl)"));
 ok('요율 남기기는 «바로 위 두 줄»만 본다', src.includes('for(var k=0;k<2&&up;k++,up=up.previousElementSibling)'));

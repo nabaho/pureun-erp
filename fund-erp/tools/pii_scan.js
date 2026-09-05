@@ -40,6 +40,29 @@ const CELL_PATTERNS = [
   ['계좌번호(띄어쓰기·특수 붙임표)', /^\s*\d{2,6}(?:[\s‐-―-]+\d{2,7}){2,}\s*$/],
 ];
 
+/* ⚠ 이름·주소·계좌만 보던 동안, 남이 실제로 낸 «사업 수치»가 69가지 남아 있었다.
+     하나하나는 개인정보가 아니지만, 인가일 2020.04.22 + 근로자 65명 + 업종 +
+     출연금 1,000만원이 한 서식에 모이면 어느 기금인지 좁혀진다.
+     걷어내기(stripBaked)는 «화면»에서만 도는데, 이 저장소는 파일째 공개된다 —
+     소스를 열면 그대로 읽혔다. 서식 24종 151곳을 빈칸으로 바꾸고, 여기서 다시 막는다.
+
+   서식의 «틀»은 남겨야 하므로 둘레 글을 보고 거른다 — 법령 날짜(개정·시행·신설·제정)와
+   요율 구간(미만·이상), 안내문(「위원이 4명 이상일 경우」)은 서식의 일부다.
+   느슨하게 잡으면 늘 울어 대고, 그러면 아무도 안 읽는다. */
+const BIZ_PATTERNS = [
+  ['남의 날짜', /(?:19|20)\d{2}\s*[.년]\s*\d{1,2}\s*[.월]\s*\d{1,2}|(?<![\d.])\d{2}\.\d{2}\.\d{2}(?![\d.])/g],
+  ['남의 해', /(?:19|20)\d{2}\s*년도?/g],
+  ['남의 한글 금액', /[일이삼사오육칠팔구십][가-힣]{0,4}[백천만억]원(?:정)?/g],
+  ['남의 사람 수', /[1-9][0-9]*\s*명/g],
+  ['남의 금액', /\d{1,3}(?:,\d{3})+/g],
+];
+const FORM_TEXT = /개정|시행|신설|제정|법률|대통령령|고용노동부령|미만|이상|이내|이하/;
+/* 규정이 정한 요율표는 남의 값이 아니라 «서식의 일부»다.
+   제도도입 비용 청구내역서의 수당 200·300·400·470만원과 추가(심화컨설팅) 1,000이 그렇다.
+   구간(미만·이상)이 «윗줄»에 있어 둘레 글로는 못 가른다 — 여기 적어 둔다.
+   ⚠ 서식 이름과 값을 «함께» 못 박는다. 넓게 열어 두면 다른 값이 슬며시 들어온다. */
+const RATE_OK = { incent_cost: new Set(['1,000']) };
+
 /* 사람 이름은 낱말만 보고는 못 가른다 — 서식에는 「서명·성명·확인」처럼
    이름처럼 생긴 말이 잔뜩이다. 그래서 둘을 «함께» 본다:
      ① 이름이 들어갈 자리인가 (위원명·컨설턴트명·대표이사 칸)
@@ -72,6 +95,20 @@ for (const k of Object.keys(F)) {
       .map(m => m[1].replace(/<[^>]*>/g, '').replace(/&[a-z]+;/g, ' '));
     const hits = cells.filter(c => re.test(c)).map(c => c.replace(/\s+/g, ' ').trim());
     if (hits.length) found.push(name + ': ' + [...new Set(hits)].slice(0, 3).join(' / '));
+  }
+  /* 남의 사업 수치 — 둘레 글이 서식의 틀이면 넘어간다 */
+  const flat = txt.replace(/\s+/g, ' ');
+  for (const [name, re] of BIZ_PATTERNS) {
+    re.lastIndex = 0;
+    const hits = new Set();
+    let m;
+    while ((m = re.exec(flat))) {
+      const around = flat.slice(Math.max(0, m.index - 26), m.index + m[0].length + 18);
+      if (FORM_TEXT.test(around)) continue;
+      if (RATE_OK[k] && RATE_OK[k].has(m[0].trim())) continue;   // 규정이 정한 요율
+      hits.add(m[0].trim());
+    }
+    if (hits.size) found.push(name + ': ' + [...hits].slice(0, 4).join(' / '));
   }
   for (const [name, re] of NAME_SLOTS) {
     const hits = [...raw.matchAll(re)].map(m => m[1]).filter(looksName);
