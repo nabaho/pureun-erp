@@ -1286,24 +1286,13 @@ function screenReport(){
      '근로일자=대장 출역표에서 자동 추출(신고서 달력 o표시용) — "달력≠일수"는 대장 표기와 표시 수가 달라 원본 확인 필요.</div>';
   return h;
 }
-/* ── 자동 태깅: 도착 자료(파일명/제목/보낸이) → 사업장·월·종류 추론 ──
-   메일 웹훅이 payroll_os/inbox/{id}에 {ts,filename,subject,from}만 써주면, 이 로직이 태깅. */
+/* ── 수신함 자료 원천: 급여데이터함(pu-paydata) ──
+   급여관리는 자료를 직접 모으지 않는다. 급여데이터함이 메일·카톡·업로드로 모아
+   사람이 사업장·귀속월을 확정한 뒤 「📤 급여관리에 알리기」로 payroll_os/inbox 에
+   {ts,filename,사업장,월,종류,상태,출처} 를 써 준다. 여기서는 그것을 **읽기만** 한다.
+   ⚠ 파일명 추측 태깅은 제거했다(2026-09) — 급여데이터함이 확정값을 주므로 추측은
+     오히려 틀린 사업장·월을 만든다. 잘못 온 알림은 급여데이터함에서 고쳐 다시 넘긴다. */
 function inboxLog(){ var v=dbGet('inbox',{}); return (v&&typeof v==='object'&&!Array.isArray(v))?v:{}; }
-function siteNamesFor(pay){
-  var names=[], cards=dbGet('site_cards',[])||[];
-  cards.forEach(function(c){ if(c.사업장&&names.indexOf(c.사업장)<0) names.push(c.사업장); });
-  paySites().forEach(function(s){ if(names.indexOf(s)<0) names.push(s); });
-  return names;
-}
-function guessSite(text, names){
-  text=String(text||''); var hit=null;
-  names.slice().sort(function(a,b){return b.length-a.length;}).forEach(function(n){
-    if(hit||!n) return;
-    var core=String(n).replace(/\(.*?\)|㈜|주식회사|\s/g,'');
-    if(text.indexOf(n)>=0||(core&&text.indexOf(core)>=0)) hit=n;
-  });
-  return hit;
-}
 function guessMonth(text){
   text=String(text||'');
   var m=text.match(/(\d{1,2})\s*월/); if(m) return parseInt(m[1],10)+'월';        // 'N월' 우선
@@ -1311,57 +1300,31 @@ function guessMonth(text){
   if(m){ var mm=parseInt(m[2],10); if(mm>=1&&mm<=12) return mm+'월'; }
   return null;
 }
-function guessKind(text){
-  text=String(text||'');
-  if(/명세서/.test(text)) return '급여명세서';
-  if(/급여|노임|임금|노무대장|급상여|대장/.test(text)) return '급여대장';
-  if(/근태|출근|근무|출역|시간/.test(text)) return '근태';
-  if(/신고|공단|취득|상실|확인신고/.test(text)) return '신고서류';
-  return '기타';
-}
-function tagIncoming(item){
-  var text=[item&&item.filename,item&&item.subject,item&&item.from].filter(Boolean).join(' ');
-  return {사업장:guessSite(text,siteNamesFor(null)), 월:guessMonth(text), 종류:guessKind(text)};
-}
-/* 사업장 이름 맞대보기용 알맹이 — ㈜·주식회사·괄호·빈칸을 떼어낸다.
-   업체관리 이름(급여데이터함이 적는 것)과 급여대장 시트 이름이 「㈜ 화담원」
-   / 「화담원(아산)」처럼 조금씩 달라 도착을 못 알아봤다.
-   ⚠ 알맹이가 **똑같을 때만** 같은 곳으로 본다. 앞글자만 같다고 붙이면
-   「화담원」과 「화담원물류」가 한 곳이 되어, 안 온 자료를 왔다고 읽는다 —
-   그러면 재촉을 안 해 마감을 놓친다. */
 function siteKey(s){ return String(s||'').replace(/\(.*?\)|㈜|주식회사|\s/g,''); }
 
 function arrivalFor(site, mLabel){
   var map=inboxLog(), mn=monthNum(mLabel), key=siteKey(site);
   return Object.keys(map).some(function(id){ var a=map[id];
-    var s=a.사업장||tagIncoming(a).사업장, mo=a.월||tagIncoming(a).월;
+    var s=a.사업장, mo=a.월;   /* 급여데이터함이 확정해 넘긴 값 */
     if(!s) return false;
     var same=(s===site)||(!!key&&siteKey(s)===key);
     return same && (mn==null||monthNum(mo)===mn); });
 }
-function logArrival(){
-  var fn=prompt('도착한 파일명 또는 메일 제목을 붙여넣으세요.\n예) 화담원 아산점_25년 07월_급여대장.xlsx');
-  if(!fn) return;
-  var tag=tagIncoming({filename:fn}), map=inboxLog(), id='m'+Date.now();
-  map[id]={ts:Date.now(), filename:fn, 사업장:tag.사업장||'', 월:tag.월||'', 종류:tag.종류, 상태:'도착', 출처:'수동'};
-  dbSet('inbox', map);
-  alert('자동 태깅 결과\n사업장: '+(tag.사업장||'(미인식 — 목록에서 수정)')+'\n월: '+(tag.월||'(미인식)')+'\n종류: '+tag.종류);
-}
-function editArrival(id){
-  var map=inboxLog(), a=map[id]; if(!a) return;
-  var v=prompt('사업장|월 형식으로 수정 (예: 화담원|7월)', (a.사업장||'')+'|'+(a.월||''));
-  if(v==null) return; var p=v.split('|');
-  a.사업장=(p[0]||'').trim(); a.월=(p[1]||'').trim(); map[id]=a; dbSet('inbox', map);
-}
 function delArrival(id){ var map=inboxLog(); if(map[id]&&confirm('이 수신 기록을 삭제할까요?')){ delete map[id]; dbSet('inbox', map); } }
-window.logArrival=logArrival; window.editArrival=editArrival; window.delArrival=delArrival;
+window.delArrival=delArrival;   /* 등록·수정은 급여데이터함에서 — 여기선 잘못 온 알림 치우기만 */
 function screenInbox(){
   var now=new Date();
   if(!App.inboxMonth) App.inboxMonth=(now.getMonth()+1)+'월';
   var mnum=monthNum(App.inboxMonth);
-  var h='<h1>수신함</h1><div class="sub">사업장 자료 수신 현황 · 자동 태깅 + D-7 독촉 (메일 도메인 연결 시 도착 자동 기록)</div>';
-  h+='<div class="noprint" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">기준 월 <input value="'+App.inboxMonth.replace(/"/g,'')+'" style="width:80px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-family:inherit" onchange="App.inboxMonth=this.value;render()"><span style="font-size:12px;color:var(--sub)">예: 7월</span><button class="btn sec" style="padding:6px 12px;font-size:12px" onclick="logArrival()">＋ 자료 도착 기록</button></div>';
-  if(!payHas()){ h+='<div class="empty">급여 데이터가 없어 수신 현황을 만들 수 없습니다. 급여 처리에서 먼저 데이터를 올리세요.</div>'; return h; }
+  var h='<h1>수신함</h1><div class="sub">사업장 자료 준비 현황 · D-7 독촉 — 자료 수집·정리는 💼 급여데이터함에서 하고, 여기로 넘어옵니다</div>';
+  h+='<div class="noprint" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">기준 월 <input value="'+App.inboxMonth.replace(/"/g,'')+'" style="width:80px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-family:inherit" onchange="App.inboxMonth=this.value;render()"><span style="font-size:12px;color:var(--sub)">예: 7월</span></div>';
+  /* ⚠ 급여 데이터가 없어도 수신함은 열려야 한다 — 자료가 막 도착한 때는 아직 급여를
+     처리하기 **전**이고, 바로 그때 「무엇이 왔나」를 보는 곳이 여기다. 예전엔 급여
+     데이터를 요구해 급여데이터함이 알려도 화면이 비었다(2026-09에 고침).
+     볼 명단조차 없을 때(카드도 급여도 없음)만 안내한다. */
+  if(!inboxRoster(null).length && !Object.keys(inboxLog()).length){
+    h+='<div class="empty">아직 볼 것이 없습니다. 설정 카드를 올리면 사업장별 현황이, '
+      +'💼 급여데이터함에서 「📤 급여관리에 알리기」를 누르면 도착 알림이 여기 나타납니다.</div>'; return h; }
   var C={정상:SIG.green,도착:'#1e40af',미도착:SIG.orange,지연:SIG.red,오류:SIG.red};
   var roster=inboxRoster(null), cnt={정상:0,도착:0,미도착:0,지연:0,오류:0}, rows='';
   roster.forEach(function(o){
@@ -1393,17 +1356,16 @@ function screenInbox(){
   if(ids.length){
     h+='<h1 style="font-size:16px;margin-top:22px">최근 수신 기록 <span style="font-size:12px;color:var(--sub);font-weight:400">자동 태깅 · '+ids.length+'건</span></h1>';
     h+='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden">';
-    ids.slice(0,30).forEach(function(id){ var a=map[id], t=(a.사업장&&a.월)?a:Object.assign({},a,tagIncoming(a));
+    ids.slice(0,30).forEach(function(id){ var a=map[id], t=a;   /* 급여데이터함이 사업장·월을 확정해 넘긴다 */
       h+='<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line);font-size:12.5px">'+
         '<span style="flex:1"><b>'+(t.사업장||'<span style=color:'+SIG.red+'>사업장?</span>')+'</b> · '+(t.월||'<span style=color:'+SIG.red+'>월?</span>')+' · '+(a.종류||'기타')+' <span style="color:var(--sub)">'+(a.filename||'')+'</span></span>'+
-        '<button class="btn sec" style="padding:4px 9px;font-size:11.5px" onclick="editArrival(\''+id+'\')">수정</button>'+
         '<button class="btn sec" style="padding:4px 9px;font-size:11.5px" onclick="delArrival(\''+id+'\')">삭제</button>'+
         '</div>';
     });
     h+='</div>';
   }
   h+='<div class="note">판정: 급여데이터 있으면 정상(문제 시 오류), 자료만 도착=도착(처리대기), 없으면 미도착·급여일 지나면 지연. '+
-     '<b>메일 웹훅 연결법</b>: 메일 서비스가 <code>payroll_os/inbox/{id}</code>에 {ts,filename,subject,from}을 쓰면 이 목록에 자동 태깅되어 나타납니다.</div>';
+     '<b>자료는 어디서 오나</b>: 💼 급여데이터함에서 메일·카톡·업로드로 모아 사업장·귀속월을 확정한 뒤 「📤 급여관리에 알리기」를 누르면 이 목록에 나타납니다. 급여관리는 자료를 직접 모으지 않습니다 — 잘못 온 알림은 급여데이터함에서 고쳐 다시 넘기세요.</div>';
   return h;
 }
 function copyDunning(site){
