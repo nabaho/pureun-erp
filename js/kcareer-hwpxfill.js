@@ -112,6 +112,26 @@
     return null;
   }
 
+  /* ── 칸의 글자를 «통째로 바꾼다» (대표 지시 2026-09-05 「화면에서 바로 수정」) ──
+     ⚠ fillCell 과 다른 일이다. fillCell 은 «빈 칸»에 넣는 것이고, 글자가 있는 칸에 부르면
+       run 앞에 새 <hp:t> 를 끼워 「권형하충남 천안시…」처럼 앞에 덧붙는다.
+     ⚠ 이것은 «사람이 그 칸을 직접 고쳐 쳤을 때만» 부른다.
+       자동 채우기(autoFill)는 여전히 글자가 있는 칸을 절대 건드리지 않는다 — 그 규칙은 그대로다.
+     첫 <hp:t> 에 새 글자를 넣고 나머지는 비운다. 빈 글자('')를 주면 그 칸을 지운다. */
+  function setCellText(tc, value) {
+    var v = esc(value == null ? '' : value), n = 0, hit = false;
+    /* ⚠★ 여는 태그를 «<hp:t[^>]*>» 로 쓰지 말 것 — 그 꼴은 칸 태그 «<hp:tc …>» 까지 잡아먹는다.
+       실측 2026-09-05: 795자짜리 칸이 500자로 줄고 <hp:tc> 여는 태그가 통째로 사라져
+       문서가 못 그려졌다(글자 조각 12개 → 0개). 태그 이름이 «거기서 끝나야» 한다. */
+    var out = String(tc).replace(/(<hp:t(?:\s[^>]*)?>)([\s\S]*?)(<\/hp:t>)/g, function (m, a, inner, b) {
+      hit = true; n++;
+      return a + (n === 1 ? v : '') + b;
+    });
+    /* 글자 조각이 하나도 없으면(빈 칸 모양) 넣는 일꾼에게 맡긴다 */
+    if (!hit) return fillCell(tc, value);
+    return out;
+  }
+
   /* 표를 통째로 하나씩 — ⚠ 셀 안에 표가 또 있으면(중첩) 정규식이 경계를 잘못 짚으므로 건너뛴다 */
   function eachTable(xml, fn) {
     var out = '', pos = 0;
@@ -344,7 +364,7 @@
   var api = {
     autoFill: autoFill, summarize: summarize,
     fieldKeyOf: fieldKeyOf, colKeyOf: colKeyOf,
-    cellText: cellText, isEmptyCell: isEmptyCell, fillCell: fillCell,
+    cellText: cellText, isEmptyCell: isEmptyCell, fillCell: fillCell, setCellText: setCellText,
     /* 칸 지도(kcareer-formmap.js)가 «같은 자»를 쓰도록 내보낸다 —
        따로 만들면 두 곳의 셈이 어긋나 「지도에는 있는데 안 채워지는 칸」이 생긴다 */
     splitRows: splitRows, splitCells: splitCells, eachTable: eachTable, normLabel: normLabel,

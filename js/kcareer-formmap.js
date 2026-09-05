@@ -21,7 +21,10 @@
      빈칸     : 글자가 하나도 없다 → 그 칸에 넣는다
      안내글뒤 : 괄호만 있는 짧은 안내 「(한글)」「(한자)」「(인)」 → 글자 «뒤에 이어» 쓴다
      칸안라벨 : 「자택:____」「기관명 : 부서명 :」 → 라벨 뒤 빈자리에 넣는다
-     ''       : 그냥 본문 → 자리가 아니다. 절대 덮지 않는다. */
+     ''       : 그냥 본문 → 자리가 아니다. 절대 덮지 않는다.
+     ⚠ 여기서 «글자칸»을 돌려주지 말 것 — 라벨 칸(「성 명」)까지 채울 자리가 되어
+       입력판(kcareer-formhtml.js)이 라벨 위에 입력칸을 얹는다(실측: 검사 6개가 깨졌다).
+       글자칸 판정은 «왼쪽 칸까지 볼 수 있는» scan 에서 한다. */
   function classify(text) {
     var s = String(text == null ? '' : text).trim();
     if (s === '') return '빈칸';
@@ -87,6 +90,18 @@
       grid.forEach(function (cells, ri) {
         cells.forEach(function (txt, ci) {
           var kind = classify(txt);
+          /* ★★ 이미 글자가 든 «값 칸»도 자리로 잡는다 (대표 지시 2026-09-05
+             「왜 화면에서 바로 수정이 안 되나」).
+             ■ 예전에는 글자가 있으면 아예 자리로 세지 않았다. 그래서 「내 정보로 채우기」가
+               한 번 값을 넣고 나면 그 칸은 화면에서 고칠 길이 없었다
+               (실측: 대표 화면에 노란 칸이 「(한자)」·「자택:」 두 곳만 남았다).
+             ⚠ «왼쪽이 라벨인 칸»만 잡는다 — 라벨 칸이나 안내문까지 잡으면
+               입력판이 서식 문구 위에 입력칸을 얹는다.
+             ⚠ 자동 채우기는 글자칸을 건드리지 않는다(guess 가 늘 빈 열쇠를 준다).
+               사람이 눌러 고쳐 쳤을 때만 바뀐다. */
+          if (!kind && String(txt || '').trim() && ci > 0 && X.fieldKeyOf(cells[ci - 1])) {
+            kind = '글자칸';
+          }
           if (!kind) return;
           slots.push({ id: 't' + ti + 'r' + ri + 'c' + ci, tbl: ti, row: ri, col: ci,
                        kind: kind, text: String(txt || '').trim(),
@@ -119,6 +134,9 @@
      rrn(주민등록번호)은 알아보되 채우지 않는다. hint 로만 알린다. */
   function guess(map, data) {
     map.slots.forEach(function (s) {
+      /* ★ 글자칸은 «자동으로는 절대» 안 채운다 — 사람이 눌러 고칠 때만 바뀐다.
+         여기서 열쇠를 주면 기관이 적어 둔 안내문까지 덮어쓴다. */
+      if (s.kind === '글자칸') { s.guess = ''; return; }
       var k = s.kind === '안내글뒤' ? hintKey(s)
             : s.kind === '칸안라벨' ? '__incell'
             : X.fieldKeyOf(s.left);
@@ -216,8 +234,11 @@
       return { ok: r.ok, xml: r.xml, shown: Object.keys(typed.parts).join('·') };
     }
     var v = typed.one;
-    if (v === '') return { ok: false, empty: true };
+    /* ⚠ 글자칸은 «빈 글자»도 뜻이 있다 — 사람이 지운 것이다. 그대로 지워 준다.
+       다른 자리에서 빈 글자는 「비워 두기」라 손대지 않는다. */
+    if (v === '' && s.kind !== '글자칸') return { ok: false, empty: true };
     var r2 = eachCellAt(xml, s.tbl, s.row, s.col, function (tc) {
+      if (s.kind === '글자칸') return X.setCellText(tc, v);   /* 있던 글자를 바꾼다 */
       return s.kind === '안내글뒤' ? appendAfter(tc, v) : X.fillCell(tc, v);
     });
     return { ok: r2.ok, xml: r2.xml, shown: v };
