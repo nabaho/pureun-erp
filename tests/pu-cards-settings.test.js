@@ -46,7 +46,8 @@ function makeCtx(counts, panelTarget){
   // ★ classifyPlan (규칙 분류, Task 3) 은 이 슬라이스 범위 안에 함께 딸려 오는데,
   //   _canon 은 그 범위 밖(파일 앞쪽)에 있어 여기서 별도로 심어 준다.
   vm.runInContext("const _canon = s => String(s||'').replace(/^\\s*\\d+\\s*[.)\\-]?\\s*/,'').replace(/\\s/g,'');", c);
-  vm.runInContext(slice("let _panelTarget='modal';", "const SET_TABS="), c);
+  vm.runInContext(/* ⚠ 2026-09-05: 「const SET_TABS=」가 사라졌다(탭을 없앴다) — 새 표식으로 자른다 */
+    slice("let _panelTarget='modal';", "/* ══════ ⚙️ 환경설정 — 탭을 없애고"), c);
   vm.runInContext(slice('function openCleanupCenter(){', 'async function mergeSimilar'), c);
   // ★ _panelTarget 은 let 으로 선언돼 컨텍스트 객체의 속성으로 안 보인다 —
   //   밖에서 c._panelTarget = ... 로 대입해도 실제 스크립트가 보는 값은 안 바뀐다.

@@ -503,10 +503,11 @@ test('보내는 길은 한 곳뿐이고, 한 장씩 보내는 옛 길을 안 쓴
 });
 
 test('환경설정에 대표 전용 단추가 걸려 있다', () => {
-  const i = src.indexOf("btn('migrateInlineThumbs()'");
+  /* ⚠ 2026-09-05: 관리자 것들은 칸 «통째로» 관리자에게만 뜬다(rows: A ? [...] : []) */
+  const i = src.indexOf("setbtn('migrateInlineThumbs()'");
   assert.ok(i > 0, '환경설정에 단추가 없다');
-  const around = src.slice(src.lastIndexOf('state.isAdmin ?', i), i);
-  assert.ok(around.length < 400 && around.indexOf('state.isAdmin ?') === 0, '대표 전용 자리 밖에 있다');
+  const around = src.slice(src.lastIndexOf('rows: A ?', i), i);
+  assert.ok(around.length < 500 && around.indexOf('rows: A ?') === 0, '대표 전용 자리 밖에 있다');
 });
 
 /* 2026-08-23 대표: 「썸내일 어딘지 모르겠다 찾아달라」 — 두 번 찾다가 못 찾으셨다.
@@ -514,17 +515,20 @@ test('환경설정에 대표 전용 단추가 걸려 있다', () => {
      ① 대표 전용 칸의 «맨 끝»에 있어, 320px 로 접히는 칸에서 둘째 줄로 밀려 있었다
      ② 이름·설명이 이 화면에서 가장 길어 글자가 칸 밖으로 새 나갔다 */
 test('썸네일 단추가 대표 전용 칸의 맨 앞에 있다', () => {
-  const p = cut("} else if(cur==='acct'){", '} else {');
+  /* ⚠ 2026-09-05: 탭을 없애고 한 화면이 되면서 「관리자 · 한 번만 하는 일」 칸이 됐다.
+       (개인 폴더는 「탭 · 계정」 칸으로 옮겼다 — 날마다 여닫는 것이라 관리자 일과 다르다.)
+       규칙은 그대로다: 썸네일이 그 칸의 «맨 앞»이어야 좁은 창에서 안 밀린다. */
+  const p = cut("{ t:'관리자 · 한 번만 하는 일'", "] : [] }");
   const thumb  = p.indexOf('migrateInlineThumbs()');
-  const priv   = p.indexOf('openPrivateVault()');
+  const log    = p.indexOf('openExportLog()');
   const locked = p.indexOf('migrateLockedFolders()');
-  assert.ok(thumb > 0 && priv > 0 && locked > 0, '세 단추가 다 있어야 한다');
-  assert.ok(thumb < priv,   '개인 폴더보다 뒤에 있으면 둘째 줄로 밀린다');
+  assert.ok(thumb > 0 && log > 0 && locked > 0, '세 단추가 다 있어야 한다');
+  assert.ok(thumb < log,    '반출 기록보다 뒤에 있으면 둘째 줄로 밀린다');
   assert.ok(thumb < locked, '옛 잠금 폴더보다 뒤에 있으면 둘째 줄로 밀린다');
 });
 
 test('썸네일 단추 글자가 한 칸(320px)에 들어갈 만큼 짧다', () => {
-  const i = src.indexOf("btn('migrateInlineThumbs()'");
+  const i = src.indexOf("setbtn('migrateInlineThumbs()'");
   const line = src.slice(i, src.indexOf('\n', i));
   const arg = line.match(/'([^']*)'/g).map(s => s.slice(1, -1));
   const label = arg[2], desc = arg[3];

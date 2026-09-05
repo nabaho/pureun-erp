@@ -264,10 +264,15 @@ test('★ 반출 기록은 관리자만 본다 — 못 읽었을 때도 열지 �
 });
 
 test('환경설정에 반출 기록으로 가는 길이 있다 (관리자만)', () => {
-  const at = src.indexOf("if(cur==='acct')");
-  const seg = src.slice(at, at + 1400);
-  assert.match(seg, /state\.isAdmin \? btn\('openExportLog\(\)'/,
-    '환경설정에서 반출 기록을 열 수 없거나, 직원에게도 보인다');
+  /* ⚠ 2026-09-05: 탭을 없애고 한 화면이 되면서, 관리자 것들은 「관리자 · 한 번만
+     하는 일」 칸 «통째로» 관리자에게만 뜬다(rows: A ? [...] : []).
+     길이 있는지와 «관리자만인지»를 둘 다 본다. */
+  const at = src.indexOf("{ t:'관리자 · 한 번만 하는 일'");
+  assert.ok(at > 0, '관리자 칸을 못 찾았다');
+  const seg = src.slice(at, src.indexOf('] : [] }', at));
+  assert.match(seg, /rows: A \? \[/, '★ 관리자 칸이 직원에게도 보인다');
+  assert.match(seg, /openExportLog\(\)/,
+    '환경설정에서 반출 기록을 열 수 없다');
 });
 
 /* ══════ 포털 배지 ══════ */

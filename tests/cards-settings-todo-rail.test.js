@@ -54,7 +54,10 @@ function load(counts, extra) {
     console,
     esc: s => String(s == null ? '' : s).replace(/[&<>"']/g,
       c2 => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c2])),
-    state: { tab: 'card', trash: trash, setTab: 'data', setSub: '' },
+    state: { tab: 'card', trash: trash, setSub: '' },
+    /* ⚠ setSub 는 이 토막 «밖»에 있다(21592줄). 흉내만 내되 «무엇을 달라고 했는지»를
+         받아 적는다 — 검사가 보는 것은 todoGo 가 고른 이름이다. */
+    setSub: v => { ctx._sub = v; ctx.state.setSub = v || ''; ctx.renderSettingsPage(); },
     renderSettingsPage: () => { ctx._drew = (ctx._drew || 0) + 1; },
     findDupGroups: () => { ctx._ran = (ctx._ran || 0) + 1; return N(c.dup); },
     findSimilarGroups: () => N(c.sim),
@@ -66,7 +69,8 @@ function load(counts, extra) {
   }, extra || {});
   vm.createContext(ctx);
   const a = SRC.indexOf('let _todoMemo = null;');
-  const b = SRC.indexOf('const SET_TABS=[');
+  /* ⚠ 2026-09-05: 탭을 없애며 「const SET_TABS=[」 가 사라졌다 — 다음 덩이의 머리로 자른다 */
+  const b = SRC.indexOf('/* ══════ ⚙️ 환경설정 — 탭을 없애고');
   assert.ok(a > 0 && b > a, '알맹이를 못 찾았다');
   /* ⚠ 최상위 let/const 는 컨텍스트 값이 되지 않는다 — var 로 바꿔 실어야 꺼내 본다 */
   vm.runInContext(SRC.slice(a, b).replace(/\nlet /g, '\nvar ').replace(/\nconst /g, '\nvar '), ctx);
@@ -94,7 +98,7 @@ test('★ 대표님 화면 그대로 그린다 — 숫자와 낱말이 붙는다
 });
 
 test('★ 사업자 탭에서는 명함에만 있는 갈래를 «안 센다»', () => {
-  const c = load({ sim: 105, moji: 7 }, { state: { tab: 'biz', trash: {}, setTab: 'data', setSub: '' } });
+  const c = load({ sim: 105, moji: 7 }, { state: { tab: 'biz', trash: {}, setSub: '' } });
   assert.equal(c.todoList().length, 0, '★ 사업자 탭에 명함용 셈이 올라왔다');
 });
 
@@ -146,52 +150,72 @@ test('★★ 띠는 «데려가기만» 한다 — 지우는 일을 띠에서 �
   assert.match(rail, /todoGo\('/, '누르면 갈 곳이 없다');
 });
 
-test('★ 누르면 «정리 탭»으로 가서 그 화면을 편다 — 눌러 들어간 것과 같은 자리다', () => {
+test('★ 누르면 «그 화면»을 편다 — 눌러 들어간 것과 같은 자리다', () => {
   const c = load({ sim: 3, trash: 2 });
   c.todoGo('similar');
-  assert.equal(c.state.setTab, 'clean');
+  assert.equal(c._sub, 'similar', '★ 유사 후보를 눌렀는데 딴 화면을 열었다');
   assert.equal(c.state.setSub, 'similar');
   assert.equal(c._drew, 1, '다시 그리지 않으면 아무 일도 안 일어난 것처럼 보인다');
 });
 
-test('★ 지우는 일(빈 명함·깨진 글자)은 «정리 탭까지만» 데려간다', () => {
+test('★★ 지우는 일(빈 명함·깨진 글자)은 «정리 센터까지만» 데려간다', () => {
   const c = load({ empty: 5, moji: 3 });
   const rows = c.todoList();
-  rows.forEach(r => assert.equal(r.sub, '', r.label + ' 이 바로 실행되는 자리로 간다'));
+  assert.equal(rows.map(r => r.label).join(','), '빈 명함,깨진 글자');
+  rows.forEach(r => assert.equal(r.sub, '', r.label + ' 에 제 화면이 생겼다'));
+  /* ⚠ 여기가 2026-09-05 에 «구멍»이었다 — 탭이 있던 때는 setTab('clean') 이 받아 줬는데,
+       탭을 없애며 setSub(sub||'') 로 두었더니 빈 이름이 목록으로 돌아와 아무 일도
+       안 일어난 것처럼 보였다. 제 화면이 없으면 정리 센터로 데려간다. */
+  rows.forEach(r => { c._sub = null; c.todoGo(r.sub);
+    assert.equal(c._sub, 'clean', '★ ' + r.label + ' 을 눌렀더니 제자리에 머문다'); });
 });
 
 /* ── 화면에 붙은 자리 ── */
 
 test('★★ 띠가 «맨 위»에 있다 — 통계 칩보다도 위다', () => {
+  /* ⚠ 탭이 없어졌으니 «글자 차례»가 아니라 «붙이는 식»을 본다 — 화면을 짜는 한 줄이다.
+       body 는 위에서 미리 만들어 두므로 글자로만 재면 늘 띠보다 앞선다. */
   const page = fnBody('renderSettingsPage');
-  const rail = page.indexOf('${todoRailHtml()}');
-  const stat = page.indexOf('<div class="setstat">');
-  const tabs = page.indexOf('<div class="settabs">');
+  /* ⚠ 「el.innerHTML = head」 는 «두 곳»이다 — 앞은 하위 화면(그것만 그린다),
+       뒤가 한 화면이다. 앞을 잡으면 늘 어긋난다. */
+  const at = page.lastIndexOf('el.innerHTML = head');
+  assert.ok(at > 0, '★ 화면을 짜는 자리를 못 찾았다');
+  const 짜기 = page.slice(at);
+  const rail = 짜기.indexOf('todoRailHtml()');
+  const stat = 짜기.indexOf('<div class="setstat">');
+  const body = 짜기.indexOf('+ body');
   assert.ok(rail > 0, '★ 띠를 화면에 안 붙였다');
-  assert.ok(rail < stat && stat < tabs, '★ 띠가 통계 칩·탭보다 아래에 있다');
+  assert.ok(rail < stat && stat < body, '★ 띠가 통계 칩·본문보다 아래에 있다');
 });
 
 test('★★ 「휴지통」은 «한 곳»에만 — 총계 칩에서 뺐다', () => {
   const page = fnBody('renderSettingsPage');
-  const stat = page.slice(page.indexOf('<div class="setstat">'), page.indexOf('<div class="settabs">'));
+  const s0 = page.lastIndexOf('<div class="setstat">');
+  const stat = page.slice(s0, page.indexOf('</div>', s0));
   assert.ok(stat.indexOf("'휴지통'") < 0,
     '★ 같은 숫자가 두 곳에 있으면 어느 쪽이 참인지 헷갈린다');
-  assert.match(fnBody('todoList'), /state\.trash/, '휴지통이 띠에도 없다');
+  assert.match(fnBody('todoAll'), /state\.trash/, '휴지통이 띠에도 없다');
+  assert.equal(load({ trash: 41 }).todoList().map(r => r.label).join(','), '휴지통',
+    '★ 휴지통 41건이 띠에 안 오른다');
 });
 
-test('★★ 정리 탭에 «숫자 배지»가 붙는다 — 안 눌러도 할 일이 있는지 보인다', () => {
+test('★★ 띠가 «늘» 맨 위에 있다 — 배지 대신이다 (2026-09-05 탭을 없앴다)', () => {
+  /* 탭이 있던 때는 「정리」 탭 이름 옆 숫자 배지가 그 몫을 했다. 탭을 없앴으니
+     띠 스스로가 «안 눌러도 보이는 자리»다 — 그러려면 조건 없이 붙어야 한다.
+     ⚠ 배지 규칙(.settab .tbdg)도 함께 걷어냈다 — 죽은 규칙을 남기면 다음 사람이 찾는다. */
   const page = fnBody('renderSettingsPage');
-  assert.match(page, /t\.k==='clean' && todoList\(\)\.length/, '★ 배지가 없다');
-  assert.match(page, /class="tbdg"/);
-  /* 할 일이 없으면 배지도 없다 — 0 이 붙어 있으면 눈이 그것을 배경으로 배운다 */
-  assert.match(page, /todoList\(\)\.length \? ` <span class="tbdg">\$\{todoList\(\)\.length\}<\/span>` : ''/);
+  assert.ok(!/settabs|settab |class="settab/.test(page), '★ 탭이 되살아났다');
+  assert.ok(SRC.indexOf('.settab .tbdg') < 0 && SRC.indexOf('.settabs{') < 0,
+    '★ 쓰는 곳이 없는 탭 규칙이 CSS 에 남아 있다');
+  const 짜기 = page.slice(page.indexOf('el.innerHTML = head'));
+  assert.match(짜기, /\+ todoRailHtml\(\)/, '★ 띠를 조건 없이 붙이지 않는다');
+  assert.ok(짜기.indexOf('? todoRailHtml()') < 0, '★ 띠가 조건에 걸려 있다');
 });
 
 test('★ 띠와 배지는 «할 일이 있을 때만» 눈에 띈다 — 빛깔로 말한다', () => {
   const rail = decls('.todorail');
   assert.equal(rail['background'], '#fffbeb', '띠 바탕이 팔레트의 노란 계열이 아니다');
   assert.equal(decls('.setbtn .sdesc.todo')['color'], '#d97706');
-  assert.equal(decls('.settab .tbdg')['background'], '#dc2626');
   assert.equal(decls('.todorail .setbtn')['background'], '#ffffff',
     '띠 안의 단추가 띠와 같은 색이면 단추로 안 보인다');
 });
