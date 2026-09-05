@@ -1,6 +1,6 @@
 'use strict';
-/* 푸른노무법인 경력관리 — 나라장터(조달청) 용역 입찰공고 받아오기
-   (브라우저 window.KcareerG2b / Node module.exports 겸용, DOM·통신 없음 — 주소와 글자만 다룬다)
+/* 푸른노무법인 정부사업신청 — 나라장터(조달청) 용역 입찰공고 받아오기
+   (브라우저 window.GovG2b / Node module.exports 겸용, DOM·통신 없음 — 주소와 글자만 다룬다)
 
    대표 지시 2026-09-05 「나라장터에 나오는 사업등도 연결해서 한번에 정리」.
 
@@ -167,5 +167,5 @@
               buildUrl: buildUrl, parse: parse, matched: matched, dday: dday, merge: merge,
               toggleKw: toggleKw };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  else root.KcareerG2b = api;
+  else root.GovG2b = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

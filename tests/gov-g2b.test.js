@@ -1,11 +1,12 @@
 'use strict';
-/* 나라장터 용역 공고 받아오기 — 대표 지시 2026-09-05, 낱말 8개로 시작 */
+/* 나라장터 용역 공고 받아오기 — 정부사업신청 앱의 순수 모듈
+   대표 지시 2026-09-05 「별도 프로그램 … 정부사업신청 으로 그리고 여기 화면에서는 없애라」. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const G = require('../js/kcareer-g2b.js');
+const G = require('../js/gov-g2b.js');
 const source = fs.readFileSync(path.join(__dirname, '..', 'kcareer.html'), 'utf8');
 
 /* ───────── 주소 ───────── */
@@ -164,33 +165,22 @@ test('한 번에 받은 것 안에서도 겹치면 하나만 담는다', () => {
   assert.equal(G.merge([], rows, null, '2026-09-03').adds.length, 1);
 });
 
-/* ───────── kcareer.html 배선 ───────── */
+/* ───────── ★ 경력관리에는 없어야 한다 ───────── */
 
-test('나라장터 모듈을 외부 파일로 로드한다', () => {
-  assert.match(source, /<script src="js\/kcareer-g2b\.js(\?v=\d+)?"><\/script>/);
+test('★★ 경력관리(kcareer.html)에 나라장터가 남아 있지 않다', () => {
+  // 대표 지시 2026-09-05 「별도 프로그램 … 여기 화면에서는 없애라」.
+  // 나라장터는 «앞으로 할 일»(기회)이고 경력관리는 «이미 한 일»(실적)이다.
+  // 편하다고 여기로 되돌리면 지원서에 안 한 일이 실적으로 섞인다.
+  ['g2b', 'G2B', '나라장터'].forEach((t) => {
+    assert.ok(source.indexOf(t) < 0, '경력관리에 「' + t + '」 가 남아 있습니다');
+  });
 });
 
-test('나라장터 화면과 메뉴가 있다', () => {
-  assert.match(source, /<section class="page-view" id="page-g2b"/);
-  assert.match(source, /\['page-g2b','나라장터 공고'\]/);
-  assert.match(source, /g2b:\{store:'g2b'/);
-});
-
-test('★ 유실 감지가 나라장터 공고를 센다', () => {
+test('★ 경력관리의 유실 감지 목록에도 g2b 가 없다', () => {
   const m = source.match(/var FB_COUNT_KEYS=\[[^\]]*\]/);
-  assert.ok(m);
-  assert.match(m[0], /'g2b'/);
-});
-
-test('★ 하루 1,000회 제한을 지킨다 — 화면 열 때마다 부르지 않는다', () => {
-  const m = source.match(/function g2bAuto\([\s\S]*?\n\}/);
-  assert.ok(m, 'g2bAuto 가 있어야 합니다');
-  assert.match(m[0], /g2b_last/, '마지막으로 받은 날을 기억해야 합니다');
-});
-
-test('인증키 넣는 칸이 있다', () => {
-  assert.match(source, /id="apiG2B"/);
-  assert.match(source, /g2b_key/);
+  assert.ok(m, 'FB_COUNT_KEYS 가 있어야 합니다');
+  assert.ok(m[0].indexOf('g2b') < 0);
+  assert.match(m[0], /'advisory'/, '자문·고문은 그대로 남아 있어야 합니다');
 });
 
 /* ───────── 낱말 켜고 끄기 ───────── */
@@ -217,30 +207,10 @@ test('빈 낱말은 받지 않는다', () => {
 
 /* ───────── 열쇠가 오기 전 준비 ───────── */
 
-test('★ 인증키가 없으면 어디서 받는지 알려 준다', () => {
-  const m = source.match(/function g2bReadyNote\([\s\S]*?\n\}/);
-  assert.ok(m, 'g2bReadyNote 가 있어야 합니다');
-  assert.match(m[0], /data\.go\.kr\/data\/15129394/, '발급 주소를 적어야 합니다');
-  assert.match(m[0], /Decoding/, '어느 열쇠를 넣어야 하는지 밝혀야 합니다');
-});
 
-test('찾는 말을 화면에서 고칠 수 있다', () => {
-  assert.match(source, /id="g2bKw"/);
-  assert.match(source, /function renderG2bKw/);
-  assert.match(source, /function g2bKwToggle/);
-  assert.match(source, /function g2bKwAdd/);
-});
 
-test('★ 열쇠를 새로 넣으면 「오늘 받았다」 표시를 지운다', () => {
-  // 안 지우면 열쇠를 넣어도 내일까지 저절로 받지 않는다
-  const m = source.match(/function initApiTab\([\s\S]*?\n\}/);
-  assert.ok(m);
-  assert.match(m[0], /g2b_last/, '표시를 지워야 바로 받습니다');
-});
 
-test('연결 테스트가 나라장터도 확인한다', () => {
-  const m = source.match(/async function testApiConnection\([\s\S]*?\n\}/);
-  assert.ok(m);
-  assert.match(m[0], /나라장터/);
-  assert.match(m[0], /rows:\s*1/, '확인은 한 건만 불러 1,000회를 아낀다');
-});
+
+
+
+
