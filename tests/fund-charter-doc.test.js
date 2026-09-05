@@ -76,7 +76,10 @@ test('올릴 때마다 «새 판»으로 쌓는다 — 덮어쓰지 않는다', 
     'push 가 아니면 덮어쓴다 — 옛 판이 사라져 대조를 못 한다');
   assert.ok(!/\.update\(|\/latest|\/current/.test(sv), '한 자리를 고쳐 쓰고 있다');
   assert.match(sv, /at:ymd\(\),by:\(S\.user\|\|''\)/, '언제 누가 올렸는지 안 남는다');
-  assert.match(sv, /chars:r\.chars/, '몇 자인지 안 남는다');
+  assert.match(sv, /var text=el\?String\(el\.value\|\|''\)\.trim\(\):r\.text/,
+    '창에서 고친 글자가 아니라 판독 원값을 쌓는다 — 오독을 잡은 보람이 없다');
+  assert.match(sv, /chars:chars/, '고친 뒤 글자 수를 다시 세지 않는다');
+  assert.match(sv, /if\(chars<200\)/, '고치다 다 지워도 그대로 저장된다');
   assert.match(sv, /_audit\(fid,'정관 저장'/, '변경 기록에 안 남는다');
 });
 
@@ -142,6 +145,15 @@ test('정관도 끌어놓기·사진첩·자동 찾기가 다 걸려 있다', ()
 });
 
 /* ══════ 뒤에 올 것 — 판끼리 대조 ══════ */
+test('정관 확인 창도 왼쪽 원본 · 오른쪽 값이다', () => {
+  const c = grabFn('openCharterConfirm');
+  assert.match(c, /class="dcsplit"/, '좌우 2단이 아니다 — 원본을 보며 고칠 수가 없다');
+  assert.match(c, /_docPrevHTML\(\)/, '왼쪽에 원본이 없다');
+  /* 저장 전에 오독을 잡는 «유일한» 자리다 — 읽기 전용으로 두면 틀린 채로 쌓인다 */
+  assert.match(c, /<textarea id="chText"/, '전문을 고칠 수 없다');
+  assert.match(c, /docReOcr\(\)/, '다시 읽을 길이 없다');
+});
+
 test('판끼리 대조할 재료가 갖춰져 있다', () => {
   /* 지금은 대조 화면이 없지만, 그것을 만들 «자료»는 이미 쌓여야 한다.
      판마다 at·by·chars·text 가 남으면 나중에 무엇이 언제 바뀌었는지 뽑을 수 있다. */
@@ -150,4 +162,55 @@ test('판끼리 대조할 재료가 갖춰져 있다', () => {
     assert.ok(sv.includes(k), '나중에 대조하려면 이것이 있어야 한다: ' + k));
   assert.ok(grabFn('openCharterText').includes('<select onchange="openCharterText'),
     '판이 여럿일 때 골라 볼 수 없으면 대조의 첫 걸음도 못 뗀다');
+});
+
+/* ══════ 서류 확인 창 — 경력관리 편집 창과 같은 결 (대표 지시 2026-09-05) ══════
+   「경력관리의 지금 이 화면을 참고해서 만들어라」
+   값만 보여 주면 잘못 읽힌 것을 알아챌 수가 없다. 원본을 나란히 놓아야 보인다. */
+test('서류 확인 창은 왼쪽 원본 · 오른쪽 값이다', () => {
+  const o = grabFn('openDocConfirm');
+  assert.match(o, /class="dcsplit"/, '좌우 2단이 아니다');
+  assert.match(o, /_docPrevHTML\(\)/, '왼쪽에 원본이 없다');
+  assert.match(o, /docReOcr\(\)/, '다시 읽기(OCR)가 없다');
+  assert.match(o, /docRawText\(\)/, '원문 텍스트 보기가 없다');
+  /* 값은 고칠 수 있어야 한다 — 못 고치게 두면 오독을 찾아 놓고도 손쓸 데가 없다 */
+  assert.ok(o.includes('<input id="dcv-'), '읽은 값을 고칠 수 없다');
+  assert.match(o, /고칠 수 있습니다/, '');
+  assert.ok(SRC.includes("'doc.confirm':{t:"), 'ⓘ 설명이 등록되지 않았다');
+});
+
+test('창에서 고친 값이 «그대로» 아래 칸에 들어간다', () => {
+  const a = grabFn('applyDocConfirm');
+  assert.ok(a.includes("$('dcv-'+k)"), '고친 값을 안 읽는다');
+  assert.match(a, /_docFound\[k\]=String\(el\.value/, '판독 원값을 그대로 넣는다');
+  assert.match(a, /applyDocFound\(\)/, '기존 반영 경로를 안 탄다');
+  const i = a.indexOf('_docFound[k]='), j = a.indexOf('applyDocFound()');
+  assert.ok(i > 0 && i < j, '반영한 뒤에 값을 고치면 소용이 없다');
+});
+
+test('원본 주소를 놓아 준다 — 여닫을수록 메모리가 쌓이면 안 된다', () => {
+  const r = grabFn('readDocInto');
+  assert.match(r, /URL\.revokeObjectURL\(_docSrc\.url\)/, '앞서 만든 주소를 안 놓는다');
+  assert.match(r, /URL\.createObjectURL\(file\)/, '원본을 띄울 주소를 안 만든다');
+  assert.match(r, /_docSrc=\{kind:kind,zid:zid/, '어느 서류·어느 칸인지 안 붙잡는다');
+  assert.match(r, /fid:S\.fundId/, '어느 기금에서 읽었는지 안 붙잡는다');
+});
+
+test('다른 기금에서 읽은 서류로 확인 창을 열지 않는다', () => {
+  assert.match(grabFn('openDocConfirm'), /if\(d\.fid!==S\.fundId\)/,
+    '기금을 옮긴 사이 남의 서류 값이 들어간다');
+});
+
+test('PDF 와 사진을 가려서 띄운다', () => {
+  const p = grabFn('_docPrevHTML');
+  assert.match(p, /d\.isPdf/, 'PDF 를 img 로 띄우면 아무것도 안 보인다');
+  assert.ok(p.includes('<embed src='), '');
+  assert.ok(p.includes('<img src='), '');
+  assert.match(p, /원본을 띄울 수 없습니다/, '주소가 없을 때 빈 자리만 남는다');
+});
+
+test('원문 텍스트는 한 번 더 누르면 접힌다', () => {
+  const t = grabFn('docRawText');
+  assert.match(t, /if\(b\.innerHTML\)\{ b\.innerHTML=''; return; \}/, '접을 수가 없다');
+  assert.match(t, /읽은 글자가 없습니다/, '빈 채로 두면 눌렸는지도 모른다');
 });

@@ -236,6 +236,14 @@
     #main{margin-left:0}#app{padding:0}
     .panel{border:none;margin:0 0 10px}
   }
+/* ══ 서류 확인 창의 좌우 2단 — 왼쪽 원본, 오른쪽 값 ══
+   경력관리(kcareer.html)의 편집 창과 «같은 결»로 맞췄다(대표 지시 2026-09-05).
+   원본을 보면서 값을 고치는 것이 핵심이다 — 값만 보여 주면 오독을 알아챌 수가 없다. */
+.dcsplit{display:flex;gap:16px;align-items:flex-start}
+.dcprev{flex:1.15;min-width:0;max-height:66vh;overflow:auto;position:sticky;top:0}
+.dcform{flex:1;min-width:250px;max-height:66vh;overflow:auto}
+@media(max-width:820px){ .dcsplit{flex-direction:column} .dcprev,.dcform{max-height:none;position:static} }
+
 </style>
   <!-- 프로그램 사이 이동 (공용 앱바) -->
   <script src="js/pu-appbar.js?v=8"></script>
@@ -6070,12 +6078,18 @@ function charterZone(){
 function readDocInto(zid,kind,file){
   if(!file) return;
   var def=DOC_PARSE[kind], nm=file.name||'', isPdf=/\.pdf$/i.test(nm);
+  /* 원본을 붙잡아 둔다 — 값만 보여 주면 오독을 알아챌 수가 없다(경력관리 편집 창과 같은 결).
+     ⚠ 앞서 만든 주소는 반드시 놓아 준다. 안 놓으면 창을 여닫을수록 메모리가 쌓인다. */
+  try{ if(_docSrc&&_docSrc.url&&_docSrc.blob) URL.revokeObjectURL(_docSrc.url); }catch(e){}
+  var _u=''; try{ _u=URL.createObjectURL(file); }catch(e){}
+  _docSrc={kind:kind,zid:zid,name:nm,isPdf:isPdf,url:_u,blob:true,file:file,text:'',ocr:false,fid:S.fundId};
   var myFid=S.fundId;
   if(_docFid&&_docFid!==myFid){ _docFound={}; _docOcr=false; }   // 기금이 바뀌었으면 이전 결과 폐기
   _docFid=myFid;
   var stat=function(h){ if(S.fundId===myFid) dzStat(zid,h); };
   var done=function(txt,viaOcr){
     if(S.fundId!==myFid) return;    // 판독 도중 다른 기금으로 이동 → 결과 버림
+    if(_docSrc&&_docSrc.kind===kind){ _docSrc.text=String(txt||''); _docSrc.ocr=!!viaOcr; }
     /* 정관은 칸에 나눠 넣지 않는다 — 읽은 글자를 그대로 들고 확인 창으로 간다 */
     if(def.full){ charterRead(txt,viaOcr,zid); return; }
     var got=def.fn(txt), keys=Object.keys(got).filter(function(k){return got[k];});
@@ -6084,6 +6098,7 @@ function readDocInto(zid,kind,file){
     stat('<span style="color:#16a34a">✓ '+keys.length+'개 항목 판독'+(viaOcr?' <span class="chip warn" style="font-size:10px">OCR</span>':'')+'</span>');
     if(viaOcr) _docOcr=true;
     Object.assign(_docFound,got); renderDocIntake();
+    openDocConfirm(kind);                     // 원본을 보며 값을 확인·수정하고 반영한다
   };
   var fail=function(e){ stat('<span style="color:var(--danger)">읽기 실패: '+esc((e&&e.message)||e)+'</span>'); };
   var ocrPath=function(bufOrFile){    // 스캔 → 그림을 글자로
@@ -6129,21 +6144,36 @@ function charterRead(txt,viaOcr,zid){
 function openCharterConfirm(){
   var r=_chRead; if(!r) return;
   var f=funds[r.fid]||{};
-  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">📜 정관 판독</h2>'
+  showModal('<div class="row" style="margin:0 0 10px"><h2 style="margin:0">📜 정관 확인</h2>'
+    +(r.ocr?'<span class="chip warn" style="font-size:10px">OCR — 오독 가능</span>'
+           :'<span class="chip ok" style="font-size:10px">글자 그대로 읽음</span>')
     +'<span class="muted" style="font-size:11.5px">'+esc(f.short_name||f.name||'')+' · '+r.chars.toLocaleString()+'자</span>'
-    +(r.ocr?'<span class="chip warn" style="font-size:10px">OCR — 오독 가능</span>':'<span class="chip ok" style="font-size:10px">글자 PDF</span>')
     +hlp('doc.charter')+'</div>'
-    +'<div style="max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:10px 12px;'
-    +'background:var(--bg);font-size:12px;line-height:1.7;white-space:pre-wrap">'+esc(r.text.slice(0,20000))
-    +(r.text.length>20000?'\n\n… (뒤가 더 있습니다 — 저장하면 전부 들어갑니다)':'')+'</div>'
+    +'<div class="dcsplit">'
+      +'<div class="dcprev">'
+        +'<div class="row" style="margin:0 0 6px"><b style="font-size:12px">첨부 원본</b><span style="flex:1"></span>'
+        +'<button onclick="docReOcr()" style="padding:2px 8px;font-size:11px">🔍 다시 읽기(OCR)</button></div>'
+        +'<div id="dcPrev">'+_docPrevHTML()+'</div></div>'
+      +'<div class="dcform"><div class="row" style="margin:0 0 6px"><b style="font-size:12px">읽은 정관</b>'
+        +'<span class="muted" style="font-size:11px">고칠 수 있습니다</span></div>'
+        /* 저장 전에 오독을 잡는 «유일한» 자리다 — 읽기 전용으로 두면 틀린 채로 쌓인다 */
+        +'<textarea id="chText" style="width:100%;height:58vh;border:1px solid var(--line);border-radius:8px;'
+        +'padding:10px 12px;background:var(--bg);font-size:12px;line-height:1.7;resize:vertical">'
+        +esc(r.text)+'</textarea></div>'
+    +'</div>'
     +'<div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="closeM()">취소</button>'
-    +'<button class="primary" onclick="saveCharter()">이 내용으로 새 판 저장</button></div>',{width:900});
+    +'<button class="primary" onclick="saveCharter()">이 내용으로 새 판 저장</button></div>',{width:1060});
 }
 function saveCharter(){
   var r=_chRead; if(!r){ closeM(); return; }
   var fid=r.fid;
   if(S.fundId!==fid){ toast('다른 기금에서 읽은 정관입니다 — 다시 올려 주세요','warn'); closeM(); return; }
-  var rec={at:ymd(),by:(S.user||''),chars:r.chars,ocr:r.ocr?true:null,text:r.text};
+  /* 창에서 고친 글자를 쓴다 — 판독 원값을 그대로 쌓으면 오독을 잡은 보람이 없다 */
+  var el=$('chText');
+  var text=el?String(el.value||'').trim():r.text;
+  var chars=text.replace(/\s/g,'').length;
+  if(chars<200){ toast('글자가 너무 적습니다('+chars+'자) — 정관이 맞는지 확인하세요','warn'); return; }
+  var rec={at:ymd(),by:(S.user||''),chars:chars,ocr:r.ocr?true:null,text:text};
   fbDb.ref(NS+'/charters/'+fid).push().set(rec).then(function(){
     _chRead=null; S.chFor=null; closeM();
     _audit(fid,'정관 저장',r.chars.toLocaleString()+'자'+(r.ocr?' (OCR)':''));
@@ -6188,6 +6218,77 @@ function openCharterText(id){
       :'<div class="muted" style="padding:16px 4px">본문이 비어 있습니다.</div>';
   }).catch(function(e){ var b=$('chBody');
     if(b) b.innerHTML='<div class="msg err">읽지 못했습니다: '+esc((e&&e.message)||e)+'</div>'; });
+}
+/* ══════════ 서류 확인 창 — 왼쪽 원본 · 오른쪽 값 ══════════
+   경력관리(kcareer.html)의 편집 창과 «같은 결»이다(대표 지시 2026-09-05
+   「경력관리의 지금 이 화면을 참고해서 만들어라」).
+
+   ⚠ 값만 보여 주면 오독을 알아챌 수가 없다. 원본을 나란히 놓아야 「이 글자가 저 글자로
+     잘못 읽혔구나」가 보인다. OCR 은 반드시 틀린다 — 틀린 것을 «찾을 수 있게» 하는 것이
+     이 창의 일이다.
+   ⚠ 값은 «고칠 수 있다». 못 고치게 두면 오독을 발견해도 손쓸 방법이 없어 결국
+     반영한 뒤 아래 칸에서 다시 고치게 된다. */
+var _docSrc=null;
+function _docPrevHTML(){
+  var d=_docSrc;
+  if(!d||!d.url) return '<div class="muted" style="padding:24px 4px;text-align:center">원본을 띄울 수 없습니다</div>';
+  if(d.isPdf) return '<embed src="'+esc(d.url)+'" type="application/pdf" style="width:100%;height:60vh;border:1px solid var(--line);border-radius:8px">';
+  return '<img src="'+esc(d.url)+'" style="width:100%;border:1px solid var(--line);border-radius:8px">';
+}
+function openDocConfirm(kind){
+  var d=_docSrc; if(!d) return;
+  if(d.fid!==S.fundId){ toast('다른 기금에서 읽은 서류입니다 — 다시 올려 주세요','warn'); return; }
+  var LBL={}; FIELDS.forEach(function(c){ LBL[c[0]]=c[1]; });
+  var ks=Object.keys(_docFound).filter(function(k){ return _docFound[k]; });
+  var rows=ks.length? ks.map(function(k){
+      return '<div class="fld"><label>'+esc(LBL[k]||k)+'</label>'
+        +'<input id="dcv-'+k+'" value="'+esc(_docFound[k])+'"></div>';
+    }).join('')
+    : '<div class="msg warn" style="font-size:12px">글자는 읽었지만 <b>채울 항목을 못 찾았습니다</b>.'
+      +'<br>[📄 원문 텍스트]로 무엇이 읽혔는지 보고, 아래 칸에 직접 넣어 주세요.</div>';
+  showModal('<div class="row" style="margin:0 0 10px"><h2 style="margin:0">'+esc(docZoneLabel(kind))+' 확인</h2>'
+    +(d.ocr?'<span class="chip warn" style="font-size:10px">OCR — 오독 가능</span>'
+           :'<span class="chip ok" style="font-size:10px">글자 그대로 읽음</span>')
+    +'<span class="muted" style="font-size:11.5px">'+esc(d.name||'')+'</span>'+hlp('doc.confirm')+'</div>'
+    +'<div class="dcsplit">'
+      +'<div class="dcprev">'
+        +'<div class="row" style="margin:0 0 6px"><b style="font-size:12px">첨부 원본</b><span style="flex:1"></span>'
+        +'<button onclick="docReOcr()" style="padding:2px 8px;font-size:11px">🔍 다시 읽기(OCR)</button>'
+        +'<button onclick="docRawText()" style="padding:2px 8px;font-size:11px">📄 원문 텍스트</button></div>'
+        +'<div id="dcPrev">'+_docPrevHTML()+'</div>'
+        +'<div id="dcRaw" style="margin-top:8px"></div></div>'
+      +'<div class="dcform"><div class="row" style="margin:0 0 6px"><b style="font-size:12px">판독한 값</b>'
+        +'<span class="muted" style="font-size:11px">고칠 수 있습니다</span></div>'
+        +'<div class="grid" style="grid-template-columns:1fr">'+rows+'</div></div>'
+    +'</div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">취소</button>'
+    +(ks.length?'<button class="primary" onclick="applyDocConfirm()">↓ 아래 칸에 반영</button>':'')
+    +'</div>',{width:1060});
+}
+/* 창에서 고친 값을 «그대로» 아래 칸에 넣는다 — 판독 원값이 아니라 사람이 본 값이다 */
+function applyDocConfirm(){
+  Object.keys(_docFound).forEach(function(k){
+    var el=$('dcv-'+k); if(el) _docFound[k]=String(el.value||'').trim();
+  });
+  closeM();
+  renderDocIntake();
+  applyDocFound();
+}
+function docRawText(){
+  var b=$('dcRaw'), d=_docSrc; if(!b||!d) return;
+  if(b.innerHTML){ b.innerHTML=''; return; }                 // 한 번 더 누르면 접는다
+  var t=String(d.text||'').trim();
+  b.innerHTML=t?'<div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--bg);'
+      +'font-size:11.5px;line-height:1.65;white-space:pre-wrap;max-height:34vh;overflow:auto">'+esc(t.slice(0,20000))+'</div>'
+    :'<div class="muted" style="font-size:11.5px;padding:6px 2px">읽은 글자가 없습니다.</div>';
+}
+/* 다시 읽기 — 글자 PDF 로 읽혀 항목을 못 찾았을 때, OCR 로 한 번 더 시도한다 */
+function docReOcr(){
+  var d=_docSrc; if(!d||!d.file){ toast('다시 읽을 원본이 없습니다','warn'); return; }
+  closeM();
+  _docFound={}; _docOcr=false;
+  dzStat(d.zid,'<span class="muted">다시 읽는 중…</span>');
+  readDocInto(d.zid,d.kind,d.file);
 }
 function renderDocIntake(){
   var box=$('docIntakeOut'); if(!box) return;
@@ -11158,6 +11259,12 @@ var HELP={
    +'<p><b>빈 칸만 채웁니다.</b> 이미 적혀 있는 값은 건드리지 않습니다. 채운 뒤 <b>[💾 저장]</b>을 눌러야 기록됩니다.</p>'
    +'<p>기금법인은 사업자등록번호가 아니라 <b>고유번호</b>를 받으므로, 카드의 번호는 고유번호 칸으로 들어갑니다 — 사업자등록증 카드라면 확인하세요.</p>'
    +'<p>목록은 <b>사업자등록증 카드만</b> 보여 주고, 지금 기금 이름과 닮은 것을 위로 올립니다. 사진은 읽지 않습니다(원본이 수 MB라 목록만 씁니다).</p>'},
+ 'doc.confirm':{t:'서류 확인',h:'<p><b>왼쪽에 원본, 오른쪽에 읽은 값</b>을 나란히 놓습니다. 값만 보면 잘못 읽힌 것을 알아챌 수가 없습니다.</p>'
+   +'<p><b>값은 고칠 수 있습니다.</b> 고친 그대로 아래 칸에 들어갑니다 — 못 고치게 두면 오독을 찾아 놓고도 손쓸 데가 없습니다.</p>'
+   +'<p><b>[🔍 다시 읽기(OCR)]</b> — 글자로 읽었는데 항목을 못 찾았을 때 씁니다. 그림으로 보고 다시 읽습니다.<br>'
+   +'<b>[📄 원문 텍스트]</b> — 무엇이 읽혔는지 그대로 봅니다. 한 번 더 누르면 접힙니다.</p>'
+   +'<p><b>OCR</b> 딱지가 붙으면 스캔 사진을 그림에서 글자로 바꾼 것이라 <b>반드시 확인</b>해야 합니다. <b>글자 그대로 읽음</b> 이면 PDF 안의 글자를 그대로 가져온 것이라 정확합니다.</p>'
+   +'<p>[↓ 아래 칸에 반영]을 눌러도 <b>저장은 따로</b>입니다 — 아래 <b>[💾 저장]</b>까지 눌러야 기록됩니다.</p>'},
  'doc.charter':{t:'정관',h:'<p>정관 원본을 올리면 <b>조문 전체를 글자로 읽어</b> 보관합니다. 다른 서류처럼 칸을 채우는 것이 아니라 <b>내용 자체</b>가 자료입니다.</p>'
    +'<p><b>올릴 때마다 «새 판»으로 쌓습니다.</b> 덮어쓰지 않습니다 — 정관 변경은 인가 사항이라 「언제 무엇이 어떻게 바뀌었나」를 댈 수 있어야 합니다. 나중에 판끼리 대조하고 변경 회의록을 만들려면 옛 판이 남아 있어야 합니다.</p>'
    +'<p><b>📎 원본</b> 은 사진첩의 스캔 원본을, <b>📄 전문</b> 은 읽어 둔 글자를 보여 줍니다. 판이 여럿이면 전문 창에서 골라 볼 수 있습니다.</p>'
