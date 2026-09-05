@@ -30,6 +30,14 @@ function loadEngine(over) {
   const b = S.indexOf('let _erpPlan');
   assert.ok(a > 0 && b > a, '맞추기 엔진을 찾지 못했다 — 자리가 바뀌었으면 이 검사도 함께 고칠 것');
 
+  /* 사업장별 짝짓기가 erpConsCode 를 쓴다(2026-09-03) — 엔진 토막 «밖»에 있어
+     따로 떠서 함께 싣는다. 가짜로 대신하면 실제와 어긋나도 검사가 모른다. */
+  const enLine = S.split(/\r?\n/).find((x) => x.trim().startsWith('const _en=')) || '';
+  assert.ok(enLine, '_en 을 찾지 못했다');
+  const cc = S.indexOf('function erpConsCode(');
+  const ccEnd = S.indexOf('\nfunction ', cc + 10);
+  assert.ok(cc > 0 && ccEnd > cc, 'erpConsCode 를 찾지 못했다');
+
   const g = S.indexOf('function getCoAtts');
   const gEnd = S.indexOf('\nfunction coAttStaffList', g);
   assert.ok(g > 0 && gEnd > g, 'getCoAtts 를 찾지 못했다');
@@ -59,6 +67,9 @@ function loadEngine(over) {
     getScheds: () => JSON.parse(JSON.stringify(st.scheds)),
     setScheds: (v) => { st.scheds = JSON.parse(JSON.stringify(v)); },
     getStaff: () => JSON.parse(JSON.stringify(st.staff)),
+    /* 사업장별 짝짓기가 이음표를 읽는다 — 이 검사에선 이을 것이 없어 빈 표로 둔다
+       (빈 표면 findCoForErp 가 종류를 못 받아 예전처럼 첫 것을 집는다). */
+    getErpTypeMap: () => ({}),
     todayStr: () => st.today,
     myId: () => st.me,
     toast: (m) => { st.toasts.push(String(m)); },
@@ -74,7 +85,7 @@ function loadEngine(over) {
   };
   Object.assign(ctx, over || {});
   vm.createContext(ctx);
-  vm.runInContext(S.slice(g, gEnd) + '\n' + S.slice(a, b), ctx);
+  vm.runInContext(enLine + '\n' + S.slice(cc, ccEnd) + '\n' + S.slice(g, gEnd) + '\n' + S.slice(a, b), ctx);
   ctx._st = st;
   return ctx;
 }
