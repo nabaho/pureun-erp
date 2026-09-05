@@ -91,9 +91,17 @@ test('★★ 돌려주는 모양이 PDF 와 «같다» — 다르면 아래 길�
 
 test('★ 이름에서 확장자를 뗀다 — 안 떼면 「노무계약서.tif (1/2쪽)」이 된다', () => {
   const fn = cutFn(APP, 'async function addFiles(');
-  const hits = fn.match(/replace\(\/\\\.\(pdf\|tiff\?\)\$\/i, ''\)/g) || [];
+  /* ⚠ 떼는 «목록»을 글자 그대로 박지 않는다 — 2026-09-05 에 한글(.hwp/.hwpx)이
+     늘어나며 이 검사가 통째로 깨졌다. 지킬 것은 ① 두 자리에서 떼고
+     ② 그 자리가 tif 를 빠뜨리지 않는다(이 검사가 생긴 까닭)이다.
+     받는 종류가 더 늘어도 안 깨진다. */
+  const hits = fn.match(/replace\(\/\\\.\([^)]*\)\$\/i, ''\)/g) || [];
   assert.ok(hits.length >= 2,
     '★ 확장자를 떼는 자리가 ' + hits.length + '군데뿐입니다 — 묻는 창과 담는 자리 둘 다여야 합니다');
+  hits.forEach(function (h) {
+    assert.match(h, /tiff\?/, '★ tif 를 안 떼면 「노무계약서.tif (1/2쪽)」이 됩니다: ' + h);
+    assert.match(h, /pdf/, '★ pdf 를 안 뗍니다: ' + h);
+  });
 });
 
 /* ── ② 도구를 어떻게 들이는가 ── */

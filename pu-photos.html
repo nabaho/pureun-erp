@@ -1676,7 +1676,10 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
          ⚠⚠ 이 줄에 「image」와 별표를 붙여 쓰지 말 것 — 그 두 글자가 자바스크립트의
            «주석 여는 표»와 같아서, 소스를 글자로 훑는 검사들이 여기서부터 230KB 를
            통째로 삼킨다(2026-08-30 에 실제로 그랬다. tests/photos-comment-strip 참고). -->
-  <input type="file" id="docInput" accept="image/*,.tif,.tiff,application/pdf" multiple hidden>
+  <!-- ⚠ 한글(.hwp/.hwpx)이 여기 없어서 **고르는 창에서 흐리게 나와 안 잡혔다**
+       (대표 지시 2026-09-05 「한글hwp 또는 hwpx 자료도 올라오면 읽을 수 있게 해라」).
+       취업규칙·급여데이터함은 이미 읽고 있었다 — 사진첩에만 길이 안 붙어 있었다. -->
+  <input type="file" id="docInput" accept="image/*,.tif,.tiff,application/pdf,.hwp,.hwpx" multiple hidden>
     <!-- ── 그림만 받는 칸 (대표 지적 2026-08-20) ──
          accept 에 pdf 가 섞여 있으면 안드로이드가 «갤러리»를 아예 안 띄우고
          「카메라 / 파일」만 준다 — 사진을 고르러 파일 관리자를 뒤져야 했다.
@@ -2362,7 +2365,11 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
              ⚠ 이름을 「지우기」에서 「폴더삭제」로 바꿨다(대표 지시 2026-08-15) —
                「지우기」만으로는 사진까지 지워지는 것 같아 헷갈린다. -->
         <button class="del" id="kindPopupDel" style="display:none">폴더삭제</button>
-        <button onclick="closeKindPopup()">취소</button>
+        <!-- ⚠ 이름을 바꿔 달 수 있게 id 를 달았다(2026-09-05). 「따로냐 합치냐」를 묻는
+             창에서는 이 단추가 «올리기 전체»를 없던 일로 만든다 — 그런데 이름이
+             「취소」여서 «이 물음만 접는» 것으로 읽혔다. 그 창에서만 이름을 바꾸고,
+             닫을 때 되돌린다(closeKindPopup). -->
+        <button id="kindPopupCancel" onclick="closeKindPopup()">취소</button>
         <button class="pri" id="kindPopupOk"></button>
       </div>
     </div>
@@ -5307,6 +5314,125 @@ function pdfTextUsable(t) {
   return String(t || '').replace(/\s/g, '').length >= PDF_TEXT_MIN;
 }
 
+/* ══════ 한글(.hwp / .hwpx) — 이 기기에서 글자를 뽑아 담는다 (대표 지시 2026-09-05) ══════
+   "한글hwp 또는 hwpx 자료도 올라오면 읽을 수 있게 해라"
+
+   여태 사진첩은 한글 파일을 **고를 수조차 없었다** — 파일 고르기가 그림·PDF 만
+   받아서, 고르는 창에서 흐리게 나왔다. 그런데 취업규칙(rules.html)과
+   급여데이터함(pu-paydata.html)은 이미 한글을 읽고 있었다. 읽개(hwp_extract.js)도
+   저장소에 있다. **사진첩에만 그 길이 안 붙어 있었다.**
+
+   ⚠ 읽개는 **안 고친다** — 두 앱이 쓰고 있는 것을 그대로 부른다. 여기서 손대면
+     저쪽 둘이 조용히 달라진다.
+   ⚠ 글자는 **이 기기 안에서** 뽑는다. 파일이 밖으로 안 나가고 요금도 0원이다.
+   ⚠ 담기는 것은 «글자를 옮겨 그린 쪽»이다 — 원본 서식(표 줄·도장·그림)은 안 담긴다.
+     그래서 올릴 때 그렇게 말해 준다(서식이 필요하면 한글에서 PDF로 저장하는 편이 낫다).
+     그 대신 판독은 **글자로** 간다 — 그림 왕복이 없어 더 싸고, 1↔7 오독이 없다. */
+function isHwp(f) {
+  return /\.hwpx?$/i.test((f && f.name) || '');
+}
+
+/* 읽개가 쓰는 도구 셋 — 한글을 올릴 **때만** 내려받는다(합쳐 1MB 가 넘는다).
+   SheetJS 는 HWP 5.0 의 껍데기(CFB)를 푸는 데, pako 는 압축을 푸는 데 쓴다.
+   ⚠ 급여데이터함(needDocLib)과 **같은 차례·같은 파일**이다. 어긋나면 한쪽만 고쳐진다. */
+let hwpLibP = null;
+function loadHwpLib() {
+  if (window.extractDocText && window.XLSX && window.XLSX.CFB && window.pako) return Promise.resolve();
+  if (hwpLibP) return hwpLibP;
+  const one = function (src, has) {
+    if (has()) return Promise.resolve();
+    return loadScriptOnce(src);
+  };
+  hwpLibP = Promise.resolve()
+    .then(function () { return one('vendor/xlsx.full.min.js', function () { return window.XLSX && window.XLSX.CFB; }); })
+    .then(function () { return one('vendor/pako.min.js', function () { return window.pako; }); })
+    .then(function () { return one('hwp_extract.js', function () { return window.extractDocText; }); })
+    .catch(function (e) {
+      hwpLibP = null;
+      throw new Error('한글 파일을 읽는 도구를 불러오지 못했습니다' + (e && e.message ? ' (' + e.message + ')' : ''));
+    });
+  return hwpLibP;
+}
+
+/* ── 글자를 그려 넣을 쪽의 크기 ──
+   담을 때 서류는 긴 변 uploadSpec.maxEdge 로 줄어든다. **그보다 크게 그려야** 줄이며
+   또렷해진다(PDF 를 배율 3.2 로 그리는 것과 같은 까닭). A4 비율 1:1.414 를 지킨다. */
+const HWP_PAGE_W = 2060;
+const HWP_PAGE_H = 2913;
+const HWP_MARGIN = 120;
+const HWP_FONT = 34;
+const HWP_LINE = 50;
+
+/* 긴 글을 쪽 크기에 맞춰 줄로 자른다. 글자 폭은 «재어» 자른다 —
+   글자 수로 자르면 숫자·영문이 섞인 줄이 오른쪽으로 삐져나간다. */
+function hwpWrapLines(ctx, text, maxW) {
+  const out = [];
+  String(text || '').split(/\r?\n/).forEach(function (raw) {
+    const line = raw.replace(/\t/g, '    ');
+    if (!line) { out.push(''); return; }
+    let cur = '';
+    for (let i = 0; i < line.length; i++) {
+      const next = cur + line[i];
+      if (ctx.measureText(next).width > maxW && cur) { out.push(cur); cur = line[i]; }
+      else cur = next;
+    }
+    out.push(cur);
+  });
+  return out;
+}
+
+/* 한글 파일 → 쪽마다 { blob, page, total, text } 목록. PDF 와 «같은 모양»으로 돌려준다 —
+   그래야 올리기 길이 하나로 유지된다(묶음 번호·쪽 번호·글자 판독이 그대로 따라온다). */
+async function hwpToPages(file) {
+  await loadHwpLib();
+  const buf = await readFileBytes(file);
+  /* pdfjsLib 은 안 넘긴다 — 한글 파일은 PDF 길로 갈 일이 없고, 넘기려고 도구를
+     미리 부르면 한글만 올리는 사람에게 헛 내려받기가 생긴다. */
+  const text = String(await window.extractDocText(buf.buffer || buf, window.XLSX, window.pako, null) || '')
+    /* 한글이 넣는 «안 깨지는 빈칸»을 보통 빈칸으로 — 안 바꾸면 글자 세기와 찾기가 어긋난다 */
+    .replace(new RegExp(String.fromCharCode(160), 'g'), ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!pdfTextUsable(text)) {
+    /* 글자가 없는 한글 = 그림만 붙여 둔 파일이다. 조용히 빈 쪽을 담지 않는다 —
+       담아 두면 판독도 못 하고 «있는 줄» 알게 되어 더 나쁘다. */
+    throw new Error('이 한글 파일에는 읽을 글자가 없습니다(그림만 붙어 있는 것으로 보입니다).\n' +
+      '한글에서 「PDF로 저장」한 뒤 올리시면 그림으로 읽습니다.');
+  }
+
+  const c = document.createElement('canvas');
+  c.width = HWP_PAGE_W; c.height = HWP_PAGE_H;
+  const ctx = c.getContext('2d');
+  ctx.font = HWP_FONT + 'px "Malgun Gothic","맑은 고딕",sans-serif';
+  const lines = hwpWrapLines(ctx, text, HWP_PAGE_W - HWP_MARGIN * 2);
+  const perPage = Math.max(1, Math.floor((HWP_PAGE_H - HWP_MARGIN * 2) / HWP_LINE));
+  const total = Math.max(1, Math.ceil(lines.length / perPage));
+  const take = Math.min(total, PDF_MAX_PAGES);
+
+  const out = [];
+  for (let n = 1; n <= take; n++) {
+    const slice = lines.slice((n - 1) * perPage, n * perPage);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, HWP_PAGE_W, HWP_PAGE_H);
+    ctx.fillStyle = '#1e293b';   /* 팔레트 회색계열의 가장 진한 글자색 */
+    ctx.font = HWP_FONT + 'px "Malgun Gothic","맑은 고딕",sans-serif';
+    ctx.textBaseline = 'top';
+    slice.forEach(function (ln, i) {
+      ctx.fillText(ln, HWP_MARGIN, HWP_MARGIN + i * HWP_LINE);
+    });
+    /* 쪽 아래에 «어디서 온 글자인가»를 적어 둔다 — 나중에 이 그림만 보는 사람이
+       원본 서식이 아니라는 것을 알아야 한다. */
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '26px "Malgun Gothic","맑은 고딕",sans-serif';
+    ctx.fillText('한글 문서에서 글자만 옮김 · ' + n + '/' + take + '쪽',
+      HWP_MARGIN, HWP_PAGE_H - HWP_MARGIN + 14);
+    const blob = await new Promise(function (res) { c.toBlob(res, 'image/jpeg', CAM_MID_Q); });
+    out.push({ blob: blob, page: n, total: total, text: slice.join('\n') });
+  }
+  return { pages: out, total: total, taken: take };
+}
+
 /* ══════ 아이폰 사진(HEIC) — 이 기기에서 JPG 로 바꿔 담는다 (대표 지시 2026-08-30) ══════
    "개선 해라"
 
@@ -5461,8 +5587,16 @@ function pdfSplitHint(pages) {
   if (list.length < 2) return null;
   const noText = list.filter(function (p) { return !pdfTextUsable(p.text); }).length;
   if (noText) {
-    /* 글자가 없으면 무엇인지 가릴 수 없다 — 지금까지 하던 대로(한 문서로) 둔다. */
-    return { split: false, why: '글자가 없는 스캔입니다 — 무엇인지 가릴 수 없습니다', kinds: 0 };
+    /* 글자층이 없으면 «쪽을 나눌 근거»가 없다 — 지금까지 하던 대로(한 문서로) 둔다.
+       ⚠ 이 줄은 «쪽 나누기»에 대한 조언이지 판독 이야기가 «아니다».
+         2026-09-05 까지는 「무엇인지 가릴 수 없습니다」라고만 적혀 있었는데, 대표님은
+         그것을 **판독 실패 선언**으로 읽고 취소를 누르셨다 — 그러면 한 장도 안 올라가고,
+         안 올라갔으니 읽을 것도 없다. 「계속 읽기가 안 된다」의 정체가 이것이었다
+         (그 시각 서버에 판독 요청이 한 건도 안 왔다. 담긴 459장 중 445장은 멀쩡히 읽혔다).
+       ⚠ 그러니 **판독은 그대로 된다고 먼저 말한다.** 글자층이 없어도 그림으로 읽는다. */
+    return { split: false, kinds: 0,
+      why: '글자층이 없는 스캔입니다 — 쪽을 나눌 근거가 없어 「한 문서로」를 권합니다.\n' +
+           '판독은 그대로 합니다(그림을 보고 읽습니다).' };
   }
   const seen = {};
   list.forEach(function (p) { bizNosInText(p.text).forEach(function (d) { seen[d] = 1; }); });
@@ -5489,7 +5623,8 @@ function askPdfSplit(rows) {
     $('kindPopupBody').innerHTML = rows.map(function (r, i) {
       return '<div class="pdfask" data-i="' + i + '">' +
         '<div class="nm">' + esc(r.name) + ' · ' + r.pages + '쪽</div>' +
-        '<div class="hint">🔍 ' + esc((r.hint && r.hint.why) || '') + '</div>' +
+        /* 까닭이 두 줄일 수 있다 — 줄바꿈을 살린다(esc 뒤에 바꿔야 글자가 안 샌다) */
+        '<div class="hint">🔍 ' + esc((r.hint && r.hint.why) || '').replace(/\n/g, '<br>') + '</div>' +
         '<div class="pick">' +
           '<span data-v="0" onclick="pdfAskSet(' + i + ',0)">한 문서로</span>' +
           '<span data-v="1" onclick="pdfAskSet(' + i + ',1)">쪽마다 따로</span>' +
@@ -5504,6 +5639,8 @@ function askPdfSplit(rows) {
     const ok = $('kindPopupOk');
     ok.textContent = '이대로 올리기';
     ok.disabled = false;
+    /* 누르면 무슨 일이 나는지 이름에 적는다 — 여기서는 «올리기 전체»가 없던 일이 된다 */
+    $('kindPopupCancel').textContent = '올리지 않기';
     ok.onclick = function () { const p = _pdfAskPick; _pdfAskPick = null; closeKindPopup(); done(p); };
     /* 취소·바깥 클릭·ESC 로 닫으면 **올리지 않는다** — 반쯤 올라가면 치우기가 더 일이다. */
     _pdfAskCancel = function () { _pdfAskPick = null; done(null); };
@@ -5727,6 +5864,18 @@ async function addFiles(fileList, isDoc, opts) {
       }
       continue;
     }
+    /* 한글(.hwp/.hwpx)도 «쪽»으로 펼친다 — PDF·TIF 와 같은 모양이라 아래 길을 그대로 탄다.
+       글자를 뽑아 그린 쪽이라 __pdfText 가 늘 붙는다 → 판독이 **글자로** 간다(더 싸고 더 정확). */
+    if (isHwp(f)) {
+      try {
+        spread.push({ raw: f, pdf: await hwpToPages(f), hwp: true });
+      } catch (e) {
+        console.warn('[한글 읽기]', e);
+        alert('한글 파일을 열지 못했습니다: ' + (f.name || '') + '\n' + ((e && e.message) || e) +
+          '\n\n이 파일은 아직 담기지 않았습니다.');
+      }
+      continue;
+    }
     if (!isPdf(f)) { spread.push({ raw: f }); continue; }
     try {
       spread.push({ raw: f, pdf: await pdfToPages(f) });
@@ -5735,9 +5884,17 @@ async function addFiles(fileList, isDoc, opts) {
       alert('스캔 파일을 읽지 못했습니다: ' + (f.name || '') + '\n' + ((e && e.message) || e));
     }
   }
-  const asks = spread.filter(function (x) { return x.pdf && x.pdf.pages.length > 1; })
+  /* ── 한글은 **묻지 않는다** ──
+     한글의 «쪽»은 원본에 있던 쪽이 아니라 우리가 글자를 흘려 넣어 만든 쪽이다.
+     한 문서를 우리가 잘라 놓고 「따로 담을까요」 묻는 것은 뜻이 없다 — 늘 한 문서다.
+     ⚠ 서식이 안 담긴다는 것은 아래에서 한 번 말해 준다. */
+  const hwpN = spread.filter(function (x) { return x.hwp; }).length;
+  if (hwpN) {
+    toast('한글 ' + hwpN + '개 — 글자만 옮겨 담습니다(표 줄·도장 같은 서식은 안 담깁니다)');
+  }
+  const asks = spread.filter(function (x) { return x.pdf && !x.hwp && x.pdf.pages.length > 1; })
     .map(function (x) {
-      const nm = (x.raw.name || '스캔').replace(/\.(pdf|tiff?)$/i, '');
+      const nm = (x.raw.name || '스캔').replace(/\.(pdf|tiff?|hwpx?)$/i, '');
       return { name: nm, pages: x.pdf.pages.length, hint: pdfSplitHint(x.pdf.pages) };
     });
   let splitBy = {};
@@ -5762,7 +5919,7 @@ async function addFiles(fileList, isDoc, opts) {
     {
       const r = x.pdf;
       /* ⚠ tif 도 여기를 탄다 — 확장자를 안 떼면 「노무계약서.tif (1/2쪽)」이 된다 */
-      const base = (f.name || '스캔').replace(/\.(pdf|tiff?)$/i, '');
+      const base = (f.name || '스캔').replace(/\.(pdf|tiff?|hwpx?)$/i, '');
       if (pageUsed && pageUsed + r.pages.length > PDF_PAGE_BUDGET) {
         dropDocs.push(base + ' (' + r.pages.length + '쪽)');
         continue;
@@ -5779,7 +5936,9 @@ async function addFiles(fileList, isDoc, opts) {
            쪽마다 새 번호를 붙이는 것으로는 안 된다 — 묶음 번호가 있으면 화면이
            「한 문서의 여러 쪽」으로 다루어 쪽 표시(2/10쪽)가 붙고 함께 지워진다.
            따로 담기로 한 것은 서로 남남인 서류다. */
-      const apart = !!splitBy[base];
+      /* 한글은 늘 «한 문서»다 — 위에서 안 물었으므로 splitBy 에 답이 없다.
+         물음이 없었는데 갈라지면 한 계약서가 낱장으로 흩어진다. */
+      const apart = !x.hwp && !!splitBy[base];
       const gid = apart ? '' : PuPhotoStore.newId();
       r.pages.forEach(function (p) {
         /* 따로 담을 때도 «어느 파일 몇 쪽»이었는지는 이름에 남긴다 — 원본을 다시
@@ -10388,6 +10547,9 @@ function closeKindPopup() {
   /* 「따로냐 합치냐」를 묻는 중에 닫혔으면 **올리지 않는다**(대표 지시 2026-08-24) —
      기다리던 약속을 안 풀면 올리기가 영원히 멈춘 채 아무 말도 안 한다. */
   if (_pdfAskCancel) { const f = _pdfAskCancel; _pdfAskCancel = null; f(); }
+  /* ⚠ 단추 이름도 반드시 여기서 되돌린다 — 한 창을 여러 일에 돌려 쓰므로, 안 되돌리면
+     분류를 고치는 창에도 「올리지 않기」가 남는다(위 「지우기」와 같은 까닭). */
+  $('kindPopupCancel').textContent = '취소';
   /* ⚠ 「지우기」를 반드시 여기서 끈다. 한 창을 여러 일에 돌려 쓰므로, 안 끄면
      분류를 고치다 닫은 뒤 「새 분류 만들기」 창에도 지우기가 남아 있게 된다. */
   showKindDelBtn(null);
