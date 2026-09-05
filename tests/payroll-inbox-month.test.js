@@ -5,7 +5,13 @@
    2026-08-17에 찾은 구멍: 급여데이터함은 귀속월을 `2026-08` 로 적는데
    급여관리의 monthNum 은 「N월」만 읽었다. 그래서 값을 넘겨도 수신함이
    영영 「미도착」이었다 — 넘기기 단추가 반쪽이었다.
-   사업장 이름도 ㈜·괄호·빈칸 차이로 어긋났다. */
+   사업장 이름도 ㈜·괄호·빈칸 차이로 어긋났다.
+
+   2026-09 변경: 급여관리는 자료를 직접 모으지 않는다(수집은 급여데이터함).
+   파일명 추측 태깅(tagIncoming·guessSite·guessKind)을 걷어냈고 arrivalFor 는
+   급여데이터함이 확정해 넘긴 사업장·월만 본다 — 그래서 여기서도 그것들을
+   더 이상 잘라 오지 않는다. 지켜야 할 것은 그대로다: 2026-08 을 8월로 읽고,
+   ㈜·괄호·빈칸이 달라도 같은 사업장으로 알아본다. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -32,8 +38,7 @@ function load(inbox, siteNames) {
     'function inboxLog(){ return INBOX; }',
     'function dbGet(){ return null; }',
     'function siteNamesFor(){ return NAMES; }',
-    cut('monthNum'), cut('guessSite'), cut('guessMonth'), cut('guessKind'),
-    cut('tagIncoming'), cut('siteKey'), cut('arrivalFor'),
+    cut('monthNum'), cut('siteKey'), cut('arrivalFor'),
     'globalThis.monthNum = monthNum; globalThis.arrivalFor = arrivalFor;'
   ].join('\n')).runInContext(sandbox);
   return sandbox;
