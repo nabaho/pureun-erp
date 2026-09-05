@@ -101,6 +101,21 @@ test('★ 우체국마다 «다른 열쇠»를 본다', () => {
   assert.equal(MD.우체국고르기('a@daum.net').열쇠이름, 'DAUM_MAIL_PASSWORD');
 });
 
+test('★ «자리만 잡아 둔 표»를 진짜 열쇠로 여기지 않는다', () => {
+  /* 파이어베이스는 값이 없는 비밀값을 달고 함수를 못 올린다 — 선언만 해 두면
+     그날부터 메일 함수 배포가 통째로 막힌다. 그래서 자리표를 넣어 두었다.
+     ⚠ 그것을 진짜 열쇠로 여기면, 그 표로 로그인하려다 535 를 받고
+       사람은 「비밀번호가 틀렸나」를 의심하며 엉뚱한 곳을 헤맨다. */
+  assert.equal(typeof MD.아직안넣음, 'function', '★ 자리표를 알아보는 부품이 없다');
+  assert.equal(MD.아직안넣음(MD.아직안넣은표), true);
+  assert.equal(MD.아직안넣음(' ' + MD.아직안넣은표 + ' '), true, '앞뒤 공백에 속지 않는다');
+  assert.equal(MD.아직안넣음('abcdefghijklmnop'), false, '★ 진짜 열쇠를 자리표로 여긴다');
+  assert.equal(MD.아직안넣음(''), false);
+  /* 그리고 실제로 «보내기 전에» 그것을 물어봐야 한다 */
+  assert.ok(/if \(!pass \|\| 아직안넣음\(pass\)\)/.test(배달),
+    '★ 자리표를 그대로 들고 로그인하러 간다');
+});
+
 test('★ 열쇠가 없을 때 «어느 열쇠»가 없는지 말한다', () => {
   /* 「메일 비밀번호가 없습니다」 한 줄만 주면 다음 열쇠를 다시 넣어 보다 시간을 버린다 */
   const 구글안내 = MD.우체국고르기('a@fairrunlabor.com').안내;
@@ -112,24 +127,10 @@ test('★ 열쇠가 없을 때 «어느 열쇠»가 없는지 말한다', () => 
 
 /* ═══ ⑥ 서버가 실제로 이 길을 쓰는가 ═══════════════════════════════ */
 
-/* 주석을 걷고 본다 — 이 저장소 주석에 사연이 그대로 적혀 있다 */
-function 주석걷기(원본) {
-  const s = String(원본);
-  let 나옴 = '', i = 0;
-  while (i < s.length) {
-    const c = s[i], 다음 = s[i + 1];
-    if (c === '\\') { 나옴 += s.slice(i, i + 2); i += 2; continue; }
-    if (c === '/' && 다음 === '*') { const e = s.indexOf('*/', i + 2); i = e < 0 ? s.length : e + 2; 나옴 += ' '; continue; }
-    if (c === '/' && 다음 === '/') { const e = s.indexOf('\n', i); i = e < 0 ? s.length : e; 나옴 += ' '; continue; }
-    if (c === '"' || c === "'" || c === '`') {
-      let j = i + 1;
-      while (j < s.length) { if (s[j] === '\\') { j += 2; continue; } if (s[j] === c) { j++; break; } j++; }
-      나옴 += s.slice(i, j); i = j; continue;
-    }
-    나옴 += c; i++;
-  }
-  return 나옴;
-}
+/* 주석을 걷고 본다 — 이 저장소 주석에 사연이 그대로 적혀 있다.
+   ⚠ 걷는 부품은 tests/helpers 한 자리에 있다(베껴 두었다가 정규식 리터럴을
+     몰라 검사 넷이 한꺼번에 이빨을 잃은 적이 있다, 2026-09-05). */
+const { 주석걷기 } = require('./helpers/strip-comments.js');
 
 const 서버 = 주석걷기(fs.readFileSync(path.join(뿌리, 'functions', 'index.js'), 'utf8'));
 const 배달 = 주석걷기(fs.readFileSync(path.join(뿌리, 'functions', 'mail-deliver.js'), 'utf8'));

@@ -24,54 +24,11 @@ const path = require('node:path');
 
 const 뿌리 = path.join(__dirname, '..');
 
-/* 주석을 걷는다 — «글자열 속»은 건드리지 않고 한 글자씩 걸어간다.
-   ⚠ 정규식 한 줄로 지우면 안 된다. 실제로 그렇게 했다가
-
-       "Accept": "text/html,application/xhtml+xml,* /*"
-
-   의 «별-빗금»을 주석 끝으로 읽고 진짜 코드를 통째로 지웠다 —
-   그러고는 「함수가 없다」고 틀린 말을 했다(2026-09-05). */
-function 주석걷기(원본) {
-  const s = String(원본);
-  let 나옴 = '', i = 0;
-  while (i < s.length) {
-    const c = s[i], 다음 = s[i + 1];
-    if (c === '\\') { 나옴 += s.slice(i, i + 2); i += 2; continue; }   /* 벗어남표는 통째로 */
-    if (c === '/' && 다음 === '*') {                                    /* 여러 줄 주석 */
-      const 끝 = s.indexOf('*/', i + 2);
-      i = 끝 < 0 ? s.length : 끝 + 2; 나옴 += ' '; continue;
-    }
-    if (c === '/' && 다음 === '/') {                                    /* 한 줄 주석 */
-      const 끝 = s.indexOf('\n', i);
-      i = 끝 < 0 ? s.length : 끝; 나옴 += ' '; continue;
-    }
-    if (c === '"' || c === "'" || c === '`') {                          /* 글자열은 그대로 */
-      let j = i + 1;
-      while (j < s.length) {
-        if (s[j] === '\\') { j += 2; continue; }
-        if (s[j] === c) { j++; break; }
-        j++;
-      }
-      나옴 += s.slice(i, j); i = j; continue;
-    }
-    나옴 += c; i++;
-  }
-  return 나옴;
-}
-
-/* 이름이 붙은 함수 하나의 «몸»만 떼어 온다 (중괄호를 센다) */
-function 함수몸(소스, 이름) {
-  const 시작 = 소스.indexOf('function ' + 이름);
-  if (시작 < 0) return null;
-  const 열림 = 소스.indexOf('{', 시작);
-  if (열림 < 0) return null;
-  let 깊이 = 0;
-  for (let i = 열림; i < 소스.length; i++) {
-    if (소스[i] === '{') 깊이++;
-    else if (소스[i] === '}') { 깊이--; if (깊이 === 0) return 소스.slice(시작, i + 1); }
-  }
-  return null;
-}
+/* ⚠ 주석 걷기·함수 몸 떼기는 tests/helpers 한 자리에 있다.
+     예전에는 검사마다 베껴 두었는데, 그것이 «정규식 리터럴»을 몰라
+     (`replace(/'/g, …)` 같은 줄에서) 그 뒤 주석을 하나도 못 걷었다 —
+     걷은 줄 알았던 검사 넷이 실은 주석을 보고 통과하고 있었다(2026-09-05). */
+const { 주석걷기, 함수몸 } = require('./helpers/strip-comments.js');
 
 const 소스 = 주석걷기(fs.readFileSync(path.join(뿌리, 'functions', 'index.js'), 'utf8'));
 const 부르기 = 함수몸(소스, '노무사회부르기');

@@ -40,7 +40,7 @@
   if(!go()) document.addEventListener('DOMContentLoaded', go); })();
 </script>
 <script src="xlsx_gen.js?v=15"></script>
-<script src="js/pu-news-core.js?v=14"></script>
+<script src="js/pu-news-core.js?v=15"></script>
 <script src="js/pu-news-tpl.js?v=5"></script>
 <style>
 :root{
@@ -307,6 +307,7 @@ table.list tr:hover td{background:#fcfcfd}
     <button data-t="now" class="on">이번 회차</button>
     <button data-t="past">지난 회차 <span id="cPast" style="color:var(--faint)"></span></button>
     <button data-t="who">받는 명단 <span id="cWho" style="color:var(--faint)"></span></button>
+    <button data-t="res">보낸 결과 <span id="cRes" style="color:var(--faint)"></span></button>
     <button data-t="cfg">설정</button>
   </div>
 </div><!-- /top -->
@@ -509,6 +510,9 @@ function render(){
        바뀌어 «전체가 27 인 줄로» 보인다(실제로는 114). 탭은 늘 같은 것을 말해야 한다.
        대표 지시 2026-09-03 「버튼을 누르면 받는명단의 숫자도 바뀐다 이부분 수정해라」 */
   $('cWho').textContent  = ((명단셈().전체 || []).length) || '';
+  /* 보낸 회차가 없으면 숫자를 안 붙인다 — 0 을 띄우면 「뭔가 잘못됐나」로 읽힌다 */
+  { const n = Object.keys(App.회차들).filter(k=>(App.회차들[k]||{}).상태==='발송').length;
+    const el = $('cRes'); if(el) el.textContent = n || ''; }
   const m = $('main');
   /* 5:5 껍데기는 «이번 회차»에만 — 다른 탭엔 .cols 가 없어 걸면 스크롤을 잃는다 */
   m.classList.toggle('now', App.tab==='now');
@@ -518,6 +522,7 @@ function render(){
   if(App.tab==='now')  m.innerHTML = 이번회차화면();
   if(App.tab==='past') m.innerHTML = 지난회차화면();
   if(App.tab==='who')  m.innerHTML = 명단화면();
+  if(App.tab==='res')  m.innerHTML = 결과화면();
   if(App.tab==='cfg')  m.innerHTML = 설정화면();
   if(App.tab==='now') 미리보기그리기();
   if(App.tab==='past') 지난미리보기그리기();
@@ -951,6 +956,222 @@ async function 전달보내기(){
                            html:html, spacingSec:BULK_GAP_SEC });
     toast(`📨 ${(j.n||r.ok.length).toLocaleString()}곳에 걸었습니다`, 12000);
   }catch(e){ toast('걸지 못했습니다: ' + ((e&&e.message)||''), 12000); }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   보낸 결과 — 나갔나 · 열람 · 반송/자동회신
+   ══════════════════════════════════════════════════════════════════════════
+   대표 지시 2026-09-03: 「수신확인과 안읽음등을 모두 확인해야한다.
+                          푸른메일함에 연결해서 모두 찾아서 확인할 수 있어야한다」
+
+   ★★ 왜 이제야 만드나 — 셋 다 «이미 쌓이고 있었는데 아무 데도 안 보였다».
+     ㉠ 열람  — 편지 속 숨은 그림이 서버(newsOpen)에 찍히고 newsletter/opens 에
+                열람·열람수·열람첫때가 꼬박꼬박 적히고 있었다.
+     ㉡ 나갔나 — 예약 대기열(pucards/scheduled)이 어디까지 갔는지 들고 있었다.
+     ㉢ 반송·자동회신 — 푸른메일함(mailbox/msgs/inbox)에 그대로 들어와 있었다.
+     읽는 화면이 한 곳도 없어서 모으기만 하고 아무도 못 봤다(2026-09-05 전수 확인).
+
+   ⚠ «수신확인»은 못 한다 — 진짜로 읽었는지는 아무도 알 수 없다.
+     그림을 막아 둔 메일 프로그램이 많아서, 읽고도 열람이 안 찍힌다.
+     그래서 「안 읽음」이라 적지 않고 「열람 표시 없음」이라 적는다.
+     없는 것을 아는 척하면 그 숫자로 명단을 자르게 된다.
+
+   ⚠ 자료는 «이 칸에 들어올 때만» 읽는다. 늘 붙어 있으면 요금이 는다.
+     (RTDB 는 켜 둔 만큼 돈이 나간다 — once 로 한 번씩만 읽는다.) */
+
+/* 때를 사람 말로 — 「2026-09-05 16:40」. 0 이면 빈 글자(모르는 것을 지어내지 않는다) */
+function 때글(ms){
+  const n = Number(ms||0); if(!n) return '';
+  const d = new Date(n), p = x => String(x).padStart(2,'0');
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())
+       + ' ' + p(d.getHours())+':'+p(d.getMinutes());
+}
+
+/* 이 회차의 결과 자료를 모아 온다 — 한 번만 읽고 App.결과 에 담아 둔다 */
+async function 결과읽기(열쇠){
+  const d = App.회차들[열쇠]; if(!d) return null;
+  const 보낸때 = Number(d.보낸때||0);
+  const 나온것 = { 열람표:{}, 예약줄:{}, 메일:[], 읽은때:Date.now(), 탈:'' };
+  try{
+    /* ㉠ 열람 표 — 이 회차 것만이라 작다 */
+    나온것.열람표 = (await db.ref('newsletter/opens/' + 열쇠).once('value')).val() || {};
+    /* ㉡ 아직 대기열에 남은 것 — 나간 것은 서버가 지운다.
+       ⚠ 대기열에는 자료 발송도 섞여 있다. 이 회차 것(bulk=batchId)만 고른다. */
+    if(d.batchId){
+      const v = (await db.ref('pucards/scheduled').once('value')).val() || {};
+      const 내것 = {};
+      Object.keys(v).forEach(function(k){
+        const r = v[k]||{}; if(String(r.bulk||'') === String(d.batchId)) 내것[k] = r;
+      });
+      나온것.예약줄 = 내것;
+    }
+    /* ㉢ 푸른메일함 — 보낸 뒤에 들어온 것만 본다.
+       ⚠ 통째로 읽지 않는다. 뒤에서 400통만 가져와 보낸 때로 다시 거른다. */
+    if(보낸때){
+      const v = (await db.ref('mailbox/msgs/inbox').limitToLast(400).once('value')).val() || {};
+      나온것.메일 = Object.keys(v).map(function(k){ return v[k]||{}; });
+    }
+  }catch(e){ 나온것.탈 = (e&&e.message)||String(e); }
+  App.결과 = App.결과 || {}; App.결과[열쇠] = 나온것;
+  return 나온것;
+}
+
+/* 「다시 읽기」 단추 — 방금 보낸 회차는 계속 달라진다 */
+async function 결과다시읽기(){
+  const 열쇠 = App.본결과; if(!열쇠) return;
+  toast('결과를 다시 읽는 중…');
+  await 결과읽기(열쇠); render();
+}
+
+function 결과회차고르기(k){ App.본결과 = k; render(); 결과채우기(); }
+
+/* 화면을 먼저 그리고, 자료가 없으면 뒤이어 읽는다 — 빈 화면을 오래 두지 않는다 */
+async function 결과채우기(){
+  const 열쇠 = App.본결과; if(!열쇠) return;
+  if(App.결과 && App.결과[열쇠]) return;
+  await 결과읽기(열쇠); render();
+}
+
+function 결과줄들(열쇠){
+  const 자 = (App.결과||{})[열쇠];
+  const d = App.회차들[열쇠] || {};
+  const 명단 = 명단셈().전체 || [];
+  if(!자) return { 줄들:[], 셈:null, 자료:null };
+  const 찾음 = Core.메일함에서찾기(명단, 자.메일, Number(d.보낸때||0));
+  const 합침 = Core.보낸결과(명단, 자.예약줄, 찾음);
+  const 줄들 = Core.열람붙이기(합침, 자.열람표);
+  return { 줄들:줄들, 셈:Core.결과셈(줄들), 자료:자, 못붙임:찾음.못붙임||[] };
+}
+
+function 결과화면(){
+  const 보낸것 = Object.keys(App.회차들)
+    .filter(k => (App.회차들[k]||{}).상태 === '발송').sort().reverse();
+  if(!보낸것.length){
+    return '<div class="note">아직 보낸 회차가 없습니다 — 한 번 보내고 나면 여기에 '
+      + '나갔는지 · 열어 봤는지 · 반송이 왔는지가 쌓입니다.</div>';
+  }
+  const 고른것 = (App.본결과 && App.회차들[App.본결과] && 보낸것.indexOf(App.본결과)>=0)
+    ? App.본결과 : 보낸것[0];
+  if(App.본결과 !== 고른것){ App.본결과 = 고른것; setTimeout(결과채우기, 0); }
+  else setTimeout(결과채우기, 0);
+
+  const d = App.회차들[고른것] || {};
+  const r = 결과줄들(고른것);
+
+  const 고르개 = '<select onchange="결과회차고르기(this.value)" style="padding:7px 10px;'
+    + 'border:1px solid var(--line);border-radius:8px;font-size:13px;font-weight:700">'
+    + 보낸것.map(function(k,i){
+        const x = App.회차들[k]||{};
+        return '<option value="'+esc(k)+'"'+(k===고른것?' selected':'')+'>'
+          + (i+1) + '. ' + esc(x.이름||k) + ' · ' + (x.받는수||0) + '곳</option>';
+      }).join('')
+    + '</select>';
+
+  if(!r.셈){
+    return '<div class="pad">' + 고르개
+      + '<div class="note" style="margin-top:12px">결과를 읽는 중입니다…</div></div>';
+  }
+  if(r.자료 && r.자료.탈){
+    return '<div class="pad">' + 고르개
+      + '<div class="note" style="margin-top:12px;color:#b91c1c">결과를 읽지 못했습니다 — '
+      + esc(r.자료.탈) + '</div></div>';
+  }
+
+  const c = r.셈;
+  const 칸 = function(이름, 수, 빛){
+    return '<div style="flex:1;min-width:88px;background:#fff;border:1px solid var(--line);'
+      + 'border-radius:10px;padding:9px 12px">'
+      + '<div style="font-size:11px;color:var(--sub);font-weight:700">'+이름+'</div>'
+      + '<div style="font-size:19px;font-weight:800;color:'+빛+'">'+수.toLocaleString()+'</div></div>';
+  };
+  const 띠 = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 6px">'
+    + 칸('보낸 곳', c.전체, '#1e293b')
+    + 칸('나감', c.나감, '#166534')
+    + (c.대기 ? 칸('대기', c.대기, '#854d0e') : '')
+    + (c.실패 ? 칸('실패', c.실패, '#b91c1c') : '')
+    + (c.안걺 ? 칸('안 걸림', c.안걺, '#b91c1c') : '')
+    + 칸('열람', c.열람, '#2563eb')
+    + (c.클릭 ? 칸('링크 누름', c.클릭, '#2563eb') : '')
+    + 칸('반송', c.반송, '#b91c1c')
+    + 칸('자동회신', c.자동회신, '#854d0e')
+    + '</div>';
+
+  /* ⚠ 「열람 없음」을 「안 읽음」이라 적지 않는다 — 그림을 막아 둔 사람은
+       읽고도 안 찍힌다. 아는 것만 말한다. */
+  const 안내 = '<div class="note" style="margin:2px 0 10px">'
+    + '📌 <b>열람</b>은 편지 속 그림이 열린 것을 센 수입니다 — '
+    + '그림을 막아 둔 메일 프로그램이 많아 <b>읽고도 안 찍힐 수 있습니다</b>. '
+    + '그래서 「안 읽음」이 아니라 「표시 없음」이라 적습니다.<br>'
+    + '📌 <b>반송·자동회신</b>은 푸른메일함(받은편지함)에서 찾은 것입니다 — '
+    + '보낸 때(' + esc(때글(Number(d.보낸때||0))) + ') 뒤에 온 것만 봅니다.'
+    + (r.못붙임 && r.못붙임.length
+        ? '<br>⚠ 반송·자동회신처럼 보이는데 <b>어느 곳인지 못 맞춘 것 '
+          + r.못붙임.length + '통</b>이 있습니다 (아래 맨 끝에 적었습니다).'
+        : '')
+    + '</div>';
+
+  const 딱 = function(글, 바탕, 글빛){
+    return '<span class="pill" style="background:'+바탕+';color:'+글빛+'">'+글+'</span>';
+  };
+  const 상태딱 = function(x){
+    const s = Core.보낸상태(x);
+    if(s==='나감')   return 딱('✓ 나감', '#f0fdf4', '#166534');
+    if(s==='대기')   return 딱('⏳ 대기', '#fffbeb', '#854d0e');
+    if(s==='실패')   return 딱('⚠ 실패', '#fef2f2', '#b91c1c');
+    return 딱('· 안 걸림', '#fef2f2', '#b91c1c');
+  };
+
+  const 몸 = r.줄들.map(function(x,i){
+    const 상 = Core.보낸상태(x);
+    const 열람칸 = x.열람
+      ? 딱('👁 ' + (x.열람수>1 ? x.열람수+'번' : '봄'), '#eff6ff', '#1e40af')
+      : (상==='나감' ? '<span style="color:var(--faint);font-size:11px">표시 없음</span>' : '—');
+    const 함 = x.메일함;
+    const 함칸 = !함 ? '—'
+      : (함.갈래==='반송' ? 딱('↩ 반송', '#fef2f2', '#b91c1c')
+                        : 딱('🤖 자동회신', '#fffbeb', '#854d0e'));
+    /* ⚠ 한 칸은 한 줄이다 — 자세한 것은 title 로 미룬다 */
+    const 도움 = [
+      x.오류 ? '탈: ' + x.오류 : '',
+      x.열람첫때 ? '처음 본 때 ' + 때글(x.열람첫때) : '',
+      함 ? '메일함: ' + (함.제목||'') : ''
+    ].filter(Boolean).join('\n');
+    return '<tr'+(도움?' title="'+esc(도움)+'"':'')+'>'
+      + '<td style="color:var(--faint);text-align:right">'+(i+1)+'</td>'
+      + '<td style="font-weight:700">'+esc(x.company||x.name||'')+'</td>'
+      + '<td>'+esc(x.name||'')+(x.직급?' <span style="color:var(--faint)">'+esc(x.직급)+'</span>':'')+'</td>'
+      + '<td style="font-size:11.5px;color:var(--sub)">'+esc(x.email||'')+'</td>'
+      + '<td>'+상태딱(x)+'</td>'
+      + '<td>'+열람칸+'</td>'
+      + '<td>'+함칸+'</td>'
+      + '</tr>';
+  }).join('');
+
+  const 못붙인칸 = (r.못붙임 && r.못붙임.length)
+    ? '<div class="note" style="margin-top:14px"><b>어느 곳인지 못 맞춘 '
+      + r.못붙임.length + '통</b> — 사람이 눈으로 봐야 합니다<br>'
+      + r.못붙임.slice(0,10).map(function(m){
+          return '· ' + esc(m.갈래) + ' · ' + esc(m.보낸이||'') + ' · ' + esc(m.제목||'');
+        }).join('<br>')
+      + (r.못붙임.length>10 ? '<br>· 외 ' + (r.못붙임.length-10) + '통' : '')
+      + '</div>'
+    : '';
+
+  return '<div class="pad">'
+    + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+    + 고르개
+    + '<button class="btn" onclick="결과다시읽기()">⟳ 다시 읽기</button>'
+    + '<span style="color:var(--faint);font-size:11.5px">'
+    + (r.자료 && r.자료.읽은때 ? esc(때글(r.자료.읽은때)) + ' 기준' : '') + '</span>'
+    + '</div>'
+    + 띠 + 안내
+    + '<table class="list" style="width:100%"><thead><tr>'
+    + '<th style="width:44px;text-align:right">#</th><th>업체</th><th>담당자</th>'
+    + '<th>주소</th><th style="width:92px">나갔나</th>'
+    + '<th style="width:96px">열람</th><th style="width:104px">메일함</th>'
+    + '</tr></thead><tbody>' + 몸 + '</tbody></table>'
+    + 못붙인칸
+    + '</div>';
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
