@@ -216,7 +216,10 @@ test('★ 받은 것에 📥 · 보낸 것에 📤 — 두 축임을 이름으�
 });
 
 test('★ 보여 주는 자리는 서버에 «쓰지» 않는다 — 읽기만 한다', () => {
-  const block = slice('const CO_SENT_MAX_CARDS = 30;', 'function coDetailPanelHtml(o){');
+  /* ⚠ 토막 «범위»로 재지 않는다 — 2026-09-03(3걸음)에 그 사이로 «쓰는» 코드가
+       들어오면서 이 검사가 통째로 붉어졌다. 보여 주는 «함수들»만 골라 본다. */
+  const block = ['coSentCards', 'coSentToRead', 'coSentDay', 'coSentList',
+    'coSentHtml', 'loadCoSentDocs', 'loadCoSent'].map(fnBody).join('\n');
   /* ⚠ 「.push(」 하나로 재면 안 된다 — 배열에 담는 out.push 까지 걸린다.
      서버 쓰기는 반드시 «자리»(ref)를 거치므로 그것으로 잰다.
      ⚠ 2걸음(2026-09-03)부터 이 토막이 회사 기록을 «읽는다» — 읽기는 괜찮다. */
