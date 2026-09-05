@@ -36,6 +36,12 @@
      ⚠ 목록 표를 낱개 칸으로 두면 학력·경력 표 하나가 칸 지도 아홉 줄이 되어 못 쓴다. */
   function detectList(grid, ti) {
     for (var r = 0; r < grid.length; r++) {
+      /* ⚠★ 머리행에는 «빈 칸이 없다» — 열 이름이 죽 적혀 있는 줄이기 때문이다.
+         이 빗장이 없으면 「소속기관 | (빈칸) | 직위 | (빈칸)」 같은 «보통 라벨 표»가
+         경력 목록으로 오인되어 그 표의 빈 칸을 통째로 놓친다
+         (실측 2026-09-05: 사전에 「소속기관」을 더했더니 채울 자리 4개가 0개가 됐다).
+         ⚠ 같은 빗장이 kcareer-hwpxfill.js 의 detectHeader 에도 있다 — 한쪽만 풀면 둘이 어긋난다. */
+      if (grid[r].some(function (t) { return !String(t || '').trim(); })) continue;
       var keys = grid[r].map(function (t) { return X.colKeyOf(t); });
       var hit = keys.filter(Boolean).length;
       if (hit < 2) continue;

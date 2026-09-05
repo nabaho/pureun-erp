@@ -171,3 +171,84 @@ test('통합: 채운 XML이 실제 HWPX로 조립돼 검증을 통과한다', ()
   // (zip은 압축되지만 hwpx_gen.build는 STORE 방식이라 본문이 그대로 보인다 — 아니면 이 검사는 조정)
   assert.ok(bytes.length > 1000);
 });
+
+/* ═══ ★ 라벨 사전 넓히기 (2026-09-05, 대표 지시 「1, 2 해라」) ═══
+   ■ 왜
+     칸 이름을 못 알아보면 그 칸은 «비어서» 나간다. 사전을 넓히는 것이 가장 싸게
+     효과가 큰 일이다 — 코드를 바꾸지 않고 알아보는 양식이 늘어난다.
+   ⚠ 그런데 넓힐수록 «남의 표»를 건드릴 위험도 같이 는다. 아래 두 검사가 그 빗장이다. */
+
+test('★ 사람 이름 칸은 부르는 말이 여럿이다 — 위원·강사·심사위원·응시자', () => {
+  ['위원명', '강사명', '자문위원', '심사위원', '평가위원', '응시자', '지원자',
+   '피추천인', '작성자', '대표자', '본인성명']
+    .forEach((w) => assert.equal(F.fieldKeyOf(w), 'name', w + ' 를 이름 칸으로 봐야 합니다'));
+});
+
+test('★ 연락처·주소·소속·직위도 양식마다 다르게 부른다', () => {
+  const cases = {
+    휴대전화번호: 'phone', 개인연락처: 'phone', 본인연락처: 'phone',
+    사무실번호: 'phoneWork', 직장연락처: 'phoneWork',
+    이메일주소: 'email', 전자메일: 'email',
+    주소지: 'addr', 현거주지: 'addr', 우편물수령주소: 'addr',
+    사무소주소: 'addrWork', 사업장주소: 'addrWork',
+    소속기관명: 'org', 사업장명: 'org', 현소속: 'org', 사무소명: 'org',
+    담당부서: 'dept', 소속팀: 'dept',
+    직급: 'title', 현직: 'title', '직위/직급': 'title',
+    보유자격증: 'license', 전문자격: 'license', '자격/면허': 'license',
+    출생일: 'birth', 성별구분: 'gender', 한문성명: 'nameHanja'
+  };
+  Object.keys(cases).forEach((w) => assert.equal(F.fieldKeyOf(w), cases[w], w));
+});
+
+test('★ 괄호·공백은 떼고 본다 — 「성 명 (한글)」도 이름이다', () => {
+  assert.equal(F.fieldKeyOf('성 명 (한글)'), 'name');
+  assert.equal(F.fieldKeyOf('성명(한자)'), 'nameHanja');
+});
+
+test('★★ 「자격증명」은 인적 라벨이 아니다 — 자격증 «목록 표»의 머리칸이다', () => {
+  /* 인적 라벨로 넣으면 그 머리칸 옆(첫 줄 첫 칸)에 자격 한 줄이 박혀 남의 표를 어지럽힌다. */
+  assert.equal(F.fieldKeyOf('자격증명'), '');
+  assert.equal(F.colKeyOf('자격증명'), 'certName');
+});
+
+test('★ 목록 표 머리칸도 넓혔다 — 수행기간·발주처·담당역할', () => {
+  const cases = {
+    수행기간: 'period', 위촉기간: 'period', 참여기간: 'period',
+    출신교: 'school', 졸업학교: 'school',
+    전공분야: 'major', 학위명: 'major',
+    단체명: 'org', 발주처: 'org', 주관기관: 'org', 소속기관: 'org',
+    담당역할: 'role', 수행업무: 'role', 담당분야: 'role',
+    자격증: 'certName', 종목: 'certName', 수여일: 'gotAt', 비고사항: 'note'
+  };
+  Object.keys(cases).forEach((w) => assert.equal(F.colKeyOf(w), cases[w], w));
+});
+
+test('★★ 머리행에 빈 칸이 있으면 머리행이 아니다 — 사전을 넓히면 오인이 는다', () => {
+  /* ■ 실제로 난 사고 (2026-09-05)
+       사전에 「소속기관」을 더했더니 「소속기관 | (빈칸) | 직위 | (빈칸)」 라는
+       «보통 라벨 표»가 경력 목록으로 오인되어, 그 표에 채울 자리 4개가 0개가 됐다.
+     머리행은 열 이름이 죽 적혀 있는 줄이라 빈 칸이 없다 — 그것으로 가른다.
+     ⚠ 이 빗장을 풀지 말 것. 낱말을 더할 때마다 이 위험이 함께 는다.
+     ⚠ 같은 빗장이 js/kcareer-formmap.js 의 detectList 에도 있다(둘이 같아야 한다). */
+  const data = { fields: {}, career: [{ period: '2020', org: '푸른', role: '대표' }] };
+
+  const r1 = F.autoFill(tbl([['소속기관', '', '직위', '']]), data);
+  assert.equal(r1.report.lists.length, 0, '★ 보통 라벨 표를 목록 표로 보면 안 됩니다');
+
+  const r2 = F.autoFill(tbl([['기간', '소속기관', '직위', '비고'], ['', '', '', '']]), data);
+  assert.equal(r2.report.lists.length, 1, '진짜 머리행은 그대로 알아봐야 합니다');
+  assert.equal(r2.report.lists[0].put, 1);
+});
+
+test('★ 칸 안 라벨도 넓혔다 — 「소속 : ___  직급 : ___」', () => {
+  /* 실제 양식은 라벨과 빈자리가 «한 칸에» 들어 있는 경우가 많다.
+     ⚠ 짧은 말(부서)은 긴 말(부서명) «뒤»에 두어야 한다 — 같은 열쇠는 먼저 걸린 것만
+       쓰므로, 짧은 것이 먼저 걸리면 「부서명 :」에서 라벨 뒤를 못 찾아 통째로 빠진다. */
+  const data = { fields: { org: '푸른노무법인', title: '대표노무사', dept: '노무1팀' } };
+  const out = F.autoFill(tbl([['근무처', '소속 : ____  직급 : ____']]), data);
+  assert.match(out.xml, /푸른노무법인/);
+  assert.match(out.xml, /대표노무사/);
+
+  const out2 = F.autoFill(tbl([['근무처', '부서명 : ____']]), data);
+  assert.match(out2.xml, /노무1팀/, '★ 긴 말이 먼저 걸려야 합니다');
+});
