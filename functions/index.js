@@ -2590,16 +2590,32 @@ async function 노무사회부르기(주소, 그릇들, 더할것) {
      ★ e.cause.code 가 진짜 까닭이다 (ECONNREFUSED·ETIMEDOUT·ENOTFOUND·
        CERT_HAS_EXPIRED·UNABLE_TO_VERIFY_LEAF_SIGNATURE …). 이것이 있으면
        「우리 잘못이 아니라 상대가 막았다」를 그 자리에서 알 수 있다. */
-  let res;
-  try {
-    res = await fetch(주소, 옵);
-  } catch (e) {
-    const 속 = e && e.cause;
-    const 코드 = (속 && (속.code || 속.errno)) || '';
-    const 말 = (속 && 속.message) || '';
+  /* ★ 줄이 끊긴 것뿐이면 다시 건다 — 왜 그러는지는 ilabor-parse.js「다시걸까」 참고.
+       (더운 서버가 이미 끊긴 줄을 물려받아 「other side closed」가 난다.
+        2026-09-05 대표께서 「상세+첨부」를 누르셨을 때 실제로 이것에 막혔다.) */
+  let res, 마지막탈 = null;
+  for (let 번째 = 1; 번째 <= 노무사회.다시걸기; 번째++) {
+    try {
+      res = await fetch(주소, 옵);
+      마지막탈 = null;
+      break;
+    } catch (e) {
+      const 속 = e && e.cause;
+      const 코드 = (속 && (속.code || 속.errno)) || '';
+      const 말 = (속 && 속.message) || (e && e.message) || '';
+      마지막탈 = { 코드: String(코드 || ''), 말: String(말 || '') };
+      if (번째 >= 노무사회.다시걸기 || !노무사회.다시걸까(코드, 말)) break;
+      await 잠깐(노무사회.다시걸기쉼(번째));
+    }
+  }
+  if (마지막탈) {
+    const 코드 = 마지막탈.코드, 말 = 마지막탈.말;
+    const 다시했나 = 노무사회.다시걸까(코드, 말);
     const err = new Error('부르지 못했다 — ' + 주소
-      + (코드 ? ' (' + 코드 + ')' : '') + (말 ? ' ' + 말 : ''));
+      + (코드 ? ' (' + 코드 + ')' : '') + (말 ? ' ' + 말 : '')
+      + (다시했나 ? ' · ' + 노무사회.다시걸기 + '번 다시 걸어도 안 됐다' : ''));
     err.주소 = 주소; err.코드 = String(코드 || ''); err.속말 = String(말 || '');
+    err.다시걸었나 = 다시했나;
     throw err;
   }
   그릇.담기(res);
@@ -2827,6 +2843,7 @@ exports.ilaborPull = functions
         error: String((e && e.message) || e),
         막힌주소: (e && e.주소) || "",
         까닭코드: (e && e.코드) || "",
+        다시걸었나: (e && e.다시걸었나) === true,
         로그인걸음: (e && e.걸음) || null
       });
     }
