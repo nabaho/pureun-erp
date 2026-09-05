@@ -13487,6 +13487,115 @@ function erpLoadWorkerInfo(cb){
   });
 }
 
+/* ══════════════ 📗 통장에서 계좌 채우기 (대표 결정 2026-09-03 ㉡) ══════════════
+   「근로자 개인 통장은 **이알피 사건 명부에만** 둔다」
+
+   ■ 왜 여기인가 — 근로자 정보함에는 «안» 담는다
+   근로자 정보함(기업정보함 아래)은 **재직 직원 누구나** 본다. 거기에 계좌를 담으면
+   「주민번호·주소는 안 담는다」고 정해 둔 원칙과 어긋난다. 사건 명부는 그 사건을
+   보는 사람만 보고, 은행·계좌·예금주 칸이 이미 있다 — 그래서 여기로 정했다.
+
+   ■ 무엇을 하나
+   사진첩에서 읽어 둔 «통장»(kind=bankbook)을 예금주 이름으로 찾아, 사람이 고르면
+   그 줄의 은행·계좌·예금주를 채운다. 손으로 옮겨 적던 일이 없어진다.
+
+   ⚠ **말없이 안 채운다.** 통장은 이름이 같은 사람이 여럿일 수 있고, 회사 통장이
+     섞이기도 한다. 고르는 창을 띄우고 «사람이 고른 것»만 들어간다 —
+     계좌를 잘못 채우면 남의 계좌로 돈이 나간다(되돌릴 수 없는 자리다).
+   ⚠ 계좌번호는 **가리지 않는다**(대표 결정 2026-08-28) — 가리면 쓸 수가 없다.
+   ⚠ 원본은 «고른 뒤 눌러야» 연다. 목록을 여는 것만으로 원본을 받지 않는다(요금·기록). */
+
+var _erpBankPhotos = null;
+var _erpBankLoading = false;
+var _erpBankWaiters = [];
+function erpLoadBankPhotos(cb){
+  if(_erpBankPhotos){ cb && cb(_erpBankPhotos); return; }
+  if(_erpBankLoading){ if(cb) _erpBankWaiters.push(cb); return; }
+  if(typeof PuPhotoStore === 'undefined' || !fbAuthUid){ cb && cb([]); return; }
+  _erpBankLoading = true;
+  /* 계약서 찾기(erpLoadMyContractPhotos)와 «같은 길»이다 — 관리자면 전 직원,
+     아니면 내 것. 전 직원 읽기가 막히면 내 것으로 물러난다. */
+  var all = erpPhotoAdmin() && PuPhotoStore.listYearsAll && PuPhotoStore.listYearAll;
+  var load = all
+    ? PuPhotoStore.listYearsAll().then(function(years){
+        return Promise.all(years.map(function(y){ return PuPhotoStore.listYearAll(y); }));
+      }).catch(function(){ return null; })
+    : Promise.resolve(null);
+  load.then(function(maps){
+    if(maps) return maps;
+    return PuPhotoStore.listYears().then(function(years){
+      return Promise.all(years.map(function(y){ return PuPhotoStore.listYear(y); }));
+    });
+  }).then(function(yearMaps){
+    var out = [];
+    (yearMaps || []).forEach(function(map){
+      Object.keys(map || {}).forEach(function(id){
+        var meta = map[id];
+        var r = meta && meta.read;
+        if(!r || r.kind !== 'bankbook' || r.error) return;
+        var f = r.fields || {};
+        /* ⚠ 사람이 고쳐 적은 값이 있으면 그것이 이긴다 — 사진첩과 같은 규칙이다 */
+        var fx = r.fix || {};
+        out.push({
+          id: id, year: meta.__year, owner: meta.__ownerUid || '',
+          bankName: f.bankName || '', bankAcct: f.bankAcct || '',
+          bankAcctAlt: f.bankAcctAlt || '', bankHolder: f.bankHolder || '',
+          acctType: f.acctType || '', company: fx.company || f.company || '',
+          at: meta.upAt || meta.takenAt || 0
+        });
+      });
+    });
+    out.sort(function(a,b){ return (b.at||0) - (a.at||0); });   // 최근 것이 앞
+    _erpBankPhotos = out;
+    _erpBankLoading = false;
+    var waiters = _erpBankWaiters; _erpBankWaiters = [];
+    cb && cb(out);
+    waiters.forEach(function(w){ w(out); });
+  }).catch(function(e){
+    window._erpErrLog && window._erpErrLog(e);
+    _erpBankLoading = false;
+    var waiters = _erpBankWaiters; _erpBankWaiters = [];
+    cb && cb([]);
+    waiters.forEach(function(w){ w([]); });
+  });
+}
+
+/* 이름 다듬기 — 「김 수현」·「김수현」을 같게 본다. 사람 열쇠(erpWkSafe)와 같은 결이다. */
+function erpBankNameKey(v){ return String(v==null?'':v).replace(/\s+/g,''); }
+
+/* ── 이 사람 통장 고르기 (순수 로직 · 검사 대상) ──
+   list: erpLoadBankPhotos 가 준 것 · name: 근로자 이름 · company: 사건의 사업장
+   돌려주는 것: [{…통장, why}] — why 는 「왜 이것이 후보인가」
+
+   ⚠ **이름이 맞는 것만** 내놓는다. 회사만 맞는 것을 섞으면 «사업장 통장»이 근로자
+     계좌 자리에 들어간다 — 그 돈은 사람에게 안 간다.
+   ⚠ 이름을 아직 안 적었으면 **아무것도 안 내놓는다**(빈손). 전부를 펼쳐 보이면
+     아무나 골라 채우게 된다. */
+function erpBankPickFor(list, name, company){
+  var nk = erpBankNameKey(name);
+  if(!nk) return [];
+  var ck = erpWkSafe(erpWkNorm(company || ''));
+  return (list || []).filter(function(b){
+    return erpBankNameKey(b.bankHolder) === nk;
+  }).map(function(b){
+    /* 회사까지 맞으면 그 사건의 통장일 가능성이 높다 — 먼저 보여 준다 */
+    var same = !!(ck && erpWkSafe(erpWkNorm(b.company)) === ck);
+    return Object.assign({}, b, { sameCo: same });
+  }).sort(function(a,b){
+    if(a.sameCo !== b.sameCo) return a.sameCo ? -1 : 1;
+    return (b.at||0) - (a.at||0);
+  });
+}
+
+/* 고른 통장이 명부 줄에 넣을 값 (순수 로직 · 검사 대상).
+   ⚠ **계좌번호는 하나만** 넣는다. 평생계좌는 따로 보여 주고 사람이 고른 것만 들어간다 —
+     둘을 합쳐 적으면 그 값으로는 이체가 안 된다. */
+function erpBankFill(b, useAlt){
+  if(!b) return null;
+  var acct = useAlt ? (b.bankAcctAlt || '') : (b.bankAcct || '');
+  return { bank: b.bankName || '', account: acct, holder: b.bankHolder || '' };
+}
+
 /* 서류 딱지 한 개 — 가진 것은 초록, 빠진 것은 주황. 누르면 원본이 뜬다.
    ⚠ 「없음」에는 누를 것이 없다 — 커서도 안 바뀌게 둔다(눌러 보고 아무 일도
      안 일어나면 고장으로 읽힌다). */
@@ -13699,6 +13808,91 @@ function WorkerDocPickerModal(props){
     ),
     viewDoc && h(WorkerDocViewModal, { doc: viewDoc.doc, who: viewDoc.who,
       onClose:function(){ setViewDoc(null); } })
+  );
+}
+
+/* ── 📗 통장 고르기 (대표 결정 2026-09-03 ㉡) ──
+   props: { name, company, onPick({bank,account,holder}), onClose }
+
+   ⚠ **말없이 안 채운다.** 이름이 같은 사람이 여럿일 수 있고 회사 통장이 섞이기도 한다.
+     사람이 고른 것만 들어간다 — 계좌를 잘못 채우면 남의 계좌로 돈이 나간다.
+   ⚠ 계좌가 둘 적힌 통장은 **둘 다 보여 주고 고르게** 한다(정식 계좌 / 평생계좌).
+     합쳐 적으면 그 값으로는 이체가 안 된다. */
+function BankPickModal(props){
+  useEscClose(props.onClose);
+  var ls = useState(null); var list = ls[0]; var setList = ls[1];
+  var vs = useState(null); var viewIt = vs[0]; var setViewIt = vs[1];
+
+  useEffect(function(){
+    var gone = false;
+    erpLoadBankPhotos(function(all){ if(!gone) setList(all || []); });
+    return function(){ gone = true; };
+  }, []);
+
+  var rows = list ? erpBankPickFor(list, props.name, props.company) : [];
+
+  function line(b, useAlt){
+    var acct = useAlt ? b.bankAcctAlt : b.bankAcct;
+    if(!acct) return null;
+    return h('button', { type:'button', key:(useAlt?'alt':'main'),
+      onClick:function(){ props.onPick(erpBankFill(b, useAlt)); },
+      style:{ display:'block', width:'100%', textAlign:'left', marginTop:'4px',
+        padding:'7px 9px', background:'#fff', border:'1px solid #cbd5e1', borderRadius:'6px',
+        fontSize:'12px', cursor:'pointer' } },
+      h('b', { style:{ color:'#1e293b' } }, acct),
+      h('span', { style:{ color:'#64748b', marginLeft:'6px', fontSize:'11px' } },
+        useAlt ? '평생계좌' : (b.acctType || '계좌번호')));
+  }
+
+  return h('div', {
+    style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:213,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:'16px' },
+    onClick:function(e){ if(e.target === e.currentTarget) props.onClose(); }
+  },
+    h('div', { style:{ background:'#fff', borderRadius:'9px', width:'440px', maxWidth:'96vw',
+      maxHeight:'84vh', display:'flex', flexDirection:'column', overflow:'hidden' } },
+      h('div', { style:{ padding:'12px 16px', borderBottom:'1px solid #e2e8f0', display:'flex',
+        alignItems:'center', gap:'8px' } },
+        h('span', { style:{ fontSize:'13.5px', fontWeight:700 } }, '📗 통장에서 계좌 채우기'),
+        h('span', { style:{ fontSize:'11.5px', color:'#64748b' } }, props.name || ''),
+        h('button', { onClick:props.onClose, 'aria-label':'닫기',
+          style:{ marginLeft:'auto', background:'none', border:'none', fontSize:'17px',
+            cursor:'pointer', color:'#64748b' } }, '×')
+      ),
+      h('div', { style:{ flex:1, overflowY:'auto', padding:'10px 16px 14px' } },
+        !list
+          ? h('div', { style:{ padding:'26px 0', textAlign:'center', fontSize:'12px', color:'#94a3b8' } }, '사진첩을 읽는 중…')
+          : (!rows.length
+              ? h('div', { style:{ padding:'22px 0', textAlign:'center', fontSize:'12px', color:'#94a3b8', lineHeight:1.8 } },
+                  '「' + (props.name || '') + '」 이름으로 읽어 둔 통장이 없습니다.',
+                  h('div', { style:{ fontSize:'11px', marginTop:'4px' } },
+                    '사진첩에서 통장을 찍어 판독하면 여기에 나타납니다.'))
+              : rows.map(function(b, i){
+                  return h('div', { key:b.id || i,
+                    style:{ borderTop: i ? '1px solid #e2e8f0' : 'none', padding:'10px 0' } },
+                    h('div', { style:{ display:'flex', alignItems:'center', gap:'6px' } },
+                      h('b', { style:{ fontSize:'12.5px', color:'#1e293b' } }, b.bankName || '은행 미상'),
+                      h('span', { style:{ fontSize:'11.5px', color:'#64748b' } }, b.bankHolder || ''),
+                      b.company && h('span', { style:{ fontSize:'11px', color:'#94a3b8' } }, b.company),
+                      b.sameCo && h('span', { style:{ fontSize:'10px', fontWeight:700, color:'#166534',
+                        background:'#f0fdf4', borderRadius:'999px', padding:'1px 7px' } }, '이 사업장'),
+                      h('button', { type:'button', onClick:function(){ setViewIt(b); },
+                        style:{ marginLeft:'auto', background:'#f8fafc', border:'1px solid #e2e8f0',
+                          color:'#475569', borderRadius:'5px', padding:'3px 8px',
+                          fontSize:'11px', fontWeight:600, cursor:'pointer' } }, '📷 원본')),
+                    line(b, false), line(b, true));
+                }))
+      ),
+      h('div', { style:{ padding:'9px 16px', borderTop:'1px solid #e2e8f0', fontSize:'11px', color:'#94a3b8' } },
+        '누르면 그 줄의 은행·계좌·예금주가 채워집니다 — 값은 언제든 고칠 수 있습니다.')
+    ),
+    /* 원본은 «눌러야» 연다 — 민감 서류라 서버를 거치고 열람 기록이 남는다 */
+    viewIt && h(WorkerDocViewModal, {
+      doc: { kind:'bankbook', docName:'통장 사본',
+        photo:{ year: viewIt.year, id: viewIt.id, owner: viewIt.owner } },
+      who: viewIt.bankHolder || '',
+      onClose:function(){ setViewIt(null); }
+    })
   );
 }
 
@@ -24273,6 +24467,28 @@ function CaseEditModal(props){
   var wpk = useState(false); var wkPickOpen = wpk[0]; var setWkPickOpen = wpk[1];
   var wpi = useState(null); var wkInfo = wpi[0]; var setWkInfo = wpi[1];
   var wpv = useState(null); var wkViewDoc = wpv[0]; var setWkViewDoc = wpv[1];
+  /* 📗 통장에서 계좌 채우기 (대표 결정 2026-09-03 ㉡) — 어느 줄에서 열었는지 함께 든다 */
+  var bpk = useState(null); var bankPick = bpk[0]; var setBankPick = bpk[1];
+  function bankFillRow(v){
+    if(!bankPick || !v) return;
+    var wi = bankPick.wi;
+    setF(function(prev){
+      var ws = (prev.workers || []).slice();
+      ws[wi] = Object.assign({}, ws[wi], { bank: v.bank, account: v.account, holder: v.holder });
+      return Object.assign({}, prev, { workers: ws });
+    });
+    setBankPick(null);
+    try { showToast('📗 ' + (v.bank || '') + ' ' + v.account + ' — 값은 언제든 고칠 수 있습니다'); } catch(_){ }
+  }
+  /* 근로자 줄의 「📗 통장」 단추 — 이름을 아직 안 적었으면 안 낸다(찾을 열쇠가 없다) */
+  function bankBtn(w, wi){
+    if(!String(w.name || '').trim()) return null;
+    return h('button', { type:'button', onClick:function(){ setBankPick({ wi:wi, name:w.name }); },
+      title:'사진첩에 읽어 둔 통장에서 은행·계좌·예금주를 채웁니다',
+      style:{ padding:'2px 7px', background:'#f0fdf4', color:'#166534', border:'1px solid #bbf7d0',
+        borderRadius:'4px', fontSize:'10px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
+      '📗 통장');
+  }
   /* 사건의 «사업장» — 근로자가 의뢰인이면 상대방이 사업장이고, 회사형이면 의뢰인이 사업장이다.
      둘 다 f.companyName 한 칸에 들어 있다(화면 이름표만 다르다). */
   var wkCompany = String(f.companyName || '').trim();
@@ -24466,7 +24682,10 @@ function CaseEditModal(props){
                       h('input', { type:'text', value:w.account||'', onChange:updWL('account'), placeholder:'계좌번호', style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px' } }),
                       h('input', { type:'text', value:w.holder||'', onChange:updWL('holder'), placeholder:'예금주', style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px' } }),
                       h('input', { type:'text', value:w.pos||'', onChange:updWL('pos'), placeholder:'직위', style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px' } })),
-                    /* 이 사람이 낸 서류 · 아직 안 낸 서류 — 담지 않고 «볼 때» 읽는다 */
+                    /* 이 사람이 낸 서류 · 아직 안 낸 서류 — 담지 않고 «볼 때» 읽는다
+                       + 📗 통장에서 계좌 채우기 (대표 결정 2026-09-03 ㉡) */
+                    h('div', { style:{ display:'flex', alignItems:'center', gap:'5px', flexWrap:'wrap', marginTop:'4px' } },
+                      bankBtn(w, wi)),
                     erpWkRowChips(wkInfo, w.name, wkCompany, function(doc){ setWkViewDoc({ doc:doc, who:w.name }); }),
                     wSettleBlock(w, wi, setF));
                 }))),
@@ -24520,6 +24739,13 @@ function CaseEditModal(props){
           wkViewDoc && h(WorkerDocViewModal, {
             doc: wkViewDoc.doc, who: wkViewDoc.who,
             onClose:function(){ setWkViewDoc(null); }
+          }),
+          /* 📗 통장에서 계좌 채우기 (대표 결정 2026-09-03 ㉡) — 근로자 개인 통장은
+             근로자 정보함(직원 전원이 본다)에 안 담고 이 명부에서만 쓴다 */
+          bankPick && h(BankPickModal, {
+            name: bankPick.name, company: wkCompany,
+            onPick: bankFillRow,
+            onClose:function(){ setBankPick(null); }
           }),
           // 담당자 (접기/펼치기)
           h('div', { onClick:function(){ setContactsOpen(function(v){return !v;}); },
@@ -24583,7 +24809,10 @@ function CaseEditModal(props){
                       h('input', { type:'text', value:w.account||'', onChange:updWR('account'), placeholder:'계좌번호', style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px' } }),
                       h('input', { type:'text', value:w.holder||'', onChange:updWR('holder'), placeholder:'예금주', style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px' } }),
                       h('input', { type:'text', value:w.pos||'', onChange:updWR('pos'), placeholder:'직위', style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px' } })),
-                    /* 이 사람이 낸 서류 · 아직 안 낸 서류 — 담지 않고 «볼 때» 읽는다 */
+                    /* 이 사람이 낸 서류 · 아직 안 낸 서류 — 담지 않고 «볼 때» 읽는다
+                       + 📗 통장에서 계좌 채우기 (대표 결정 2026-09-03 ㉡) */
+                    h('div', { style:{ display:'flex', alignItems:'center', gap:'5px', flexWrap:'wrap', marginTop:'4px' } },
+                      bankBtn(w, wi)),
                     erpWkRowChips(wkInfo, w.name, wkCompany, function(doc){ setWkViewDoc({ doc:doc, who:w.name }); }),
                     wSettleBlock(w, wi, setF));
                 })))
