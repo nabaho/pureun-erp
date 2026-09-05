@@ -1420,7 +1420,28 @@ test('★ 보관함은 한 화면 세 탭이다 — 종류가 늘어도 화면�
   });
 });
 
-test('★ 빠른 이력서는 「서류 만들기」의 첫 탭이다 — 화면이 사라진 게 아니다', () => {
+test('★★ 처음 열리는 탭은 «기관 양식 채우기» (대표 지시 2026-09-05)', () => {
+  /* ■ 왜
+       기관이 준 양식을 그대로 채워 내는 일이 훨씬 잦다 — 자주 쓰는 문이 앞에 와야 한다.
+     ⚠ 순서만 바꾸면 안 된다. 세 가지가 «함께» 움직여야 한다:
+       ⑴ 탭 단추의 active ⑵ 패널의 active ⑶ 탭마다 여닫는 두 툴바의 기본값.
+       실측: ⑶을 빠뜨렸더니 「빠른 이력서」 툴바가 켜진 채로 첫 화면이 떴다. */
+  const hub = source.slice(source.indexOf('id="page-resume-hub"'), source.indexOf('id="page-docbox"'));
+  const tabrow = hub.slice(hub.indexOf('id="rh-tabrow"'), hub.indexOf('id="rhUploadBar"'));
+  const order = (tabrow.match(/data-tab="([a-z-]+)"/g) || []).map((m) => m.slice(10, -1));
+  assert.deepEqual(order, ['rh-edit', 'dm-quick', 'rh-pdf'], '기관 양식 채우기가 먼저입니다');
+  assert.match(tabrow, /class="tab active" data-tab="rh-edit"/, '처음 켜진 단추도 그것이어야 합니다');
+  assert.ok(hub.indexOf('class="tabpanel active" id="rh-edit"') > 0, '패널도 함께 켜져야 합니다');
+  assert.equal((hub.match(/class="tabpanel active"/g) || []).length, 1, '켜진 패널은 하나뿐입니다');
+  /* ⑶ 마크업의 기본값이 첫 탭과 어긋나면 안 된다 */
+  assert.match(hub, /id="rhUploadBar" style="margin-bottom:0">/, '올리기 줄은 처음부터 보여야 합니다');
+  assert.match(hub, /id="cvToolbar" style="display:none;/, '빠른 이력서 툴바는 처음엔 숨어야 합니다');
+  /* 화면을 열 때 rhTab 으로 한 번 더 맞춘다 — 기본 탭을 또 바꿔도 어긋나지 않게 */
+  assert.match(funcSource('nav_to'), /rh-tabrow \.tab\.active[\s\S]{0,60}rhTab/,
+    '★ 허브를 열 때 켜진 탭에 맞춰 툴바를 다시 맞춰야 합니다');
+});
+
+test('★ 빠른 이력서도 「서류 만들기」 안에 그대로 있다 — 화면이 사라진 게 아니다', () => {
   const hub = source.slice(source.indexOf('id="page-resume-hub"'), source.indexOf('id="page-docbox"'));
   assert.ok(hub.indexOf('id="dm-quick"') > 0, '빠른 이력서 탭이 허브 안에 있어야 합니다');
   assert.ok(hub.indexOf('id="cvSheet"') > 0, '이력서 시트가 함께 옮겨져야 합니다');
@@ -1753,14 +1774,14 @@ test('★ 표 아래 안내는 한 줄 — 표보다 눈에 띄면 표를 못 �
 /* ===== ★ 빠른 이력서 툴바 한 줄 + 기본정보 전부 채움 (2026-08-30) ===== */
 
 test('★ 「한글로 보기」가 두 번 있지 않다 — 배지가 같은 함수를 부른다', () => {
-  const bar = source.slice(source.indexOf('class="cv-toolbar"'), source.indexOf('id="cvSheet"'));
+  const bar = source.slice(source.indexOf('id="cvToolbar"'), source.indexOf('id="cvSheet"'));
   assert.equal((bar.match(/cvHwpView\(\)/g) || []).length, 2,
     '배지 + 더보기 안 한 개 = 두 곳이어야 합니다 (툴바에 또 두면 세 곳)');
   assert.match(bar, /id="cvPageCnt"[^>]*onclick="cvHwpView\(\)"/, '배지는 눌러서 한글로 봅니다');
 });
 
 test('★ 툴바는 한 줄이다 — 두 줄이 되면 미리보기가 그만큼 밀린다', () => {
-  const bar = source.slice(source.indexOf('class="cv-toolbar"'), source.indexOf('id="cvSheet"'));
+  const bar = source.slice(source.indexOf('id="cvToolbar"'), source.indexOf('id="cvSheet"'));
   assert.match(bar, /flex-wrap:nowrap/, '⚠ wrap 으로 되돌리면 다시 두 줄이 됩니다');
   // 자주 안 쓰는 것은 ⋯ 더보기로 접는다 (지우지 않는다)
   assert.match(bar, /more-wrap/, '더보기 묶음이 있어야 합니다');
@@ -1812,6 +1833,18 @@ test('★ 빠른 이력서 툴바는 탭줄과 «한 줄» — 패널 안에 두
   assert.ok(cvbar < panel, '⚠ 패널 안으로 되돌리면 다시 세 줄이 됩니다');
   // 올리기 줄과 같은 방식으로 탭마다 여닫는다
   assert.match(funcSource('rhTab'), /cvToolbar[\s\S]{0,80}dm-quick/, '그 탭에서만 보여야 합니다');
+});
+
+test('★★ 좁은 화면에서도 그 탭에서만 보인다 — inline 만으로는 못 끈다', () => {
+  /* ■ 무엇이 있었나
+       폭 780px 이하 규칙이 .cv-toolbar{display:grid!important} 라, rhTab 이 넣는
+       inline display:none 을 «이겼다». 그래서 폰에서는 「기관 양식 채우기」 탭인데도
+       빠른 이력서 툴바가 함께 떠 있었다(실측 375px: grid/185px).
+     ⚠ 표식(.is-off)은 낱말이 둘이라 폭 규칙(낱말 하나)을 이긴다 — 이 규칙을 지우거나
+       inline 만 남기면 폰에서 도로 떠오른다. */
+  assert.match(source, /\.cv-toolbar\.is-off\{display:none!important\}/);
+  assert.match(funcSource('rhTab'), /classList\.toggle\('is-off'/, 'rhTab 이 표식을 여닫아야 합니다');
+  assert.match(source, /class="cv-toolbar is-off" id="cvToolbar"/, '처음엔 꺼진 채로 시작합니다');
 });
 
 /* ===== ★ 환경설정 정리 (2026-08-30) ===== */
