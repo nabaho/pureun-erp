@@ -33,24 +33,39 @@ function numberCells() {
   return out;
 }
 
-test('★★ 표에는 몸통만 그린다 — 머리까지 쓰면 유형 칸과 같은 말이 두 번 나온다', () => {
+/* ⚠★ 2026-09-05 에 이 검사가 뒤집혔다. 처음에는 「몸통만 그린다」를 못 박았는데,
+   대표가 「자문·급여·노조·기금 등의 고유이름도 들어가는 게 좋겠다」로 되돌렸다.
+   옆 유형 칸과 겹친다는 것이 내 근거였지만, 유형은 «감출 수 있는» 칸이고
+   번호는 전화·메일로 들고 나가 부르는 이름이다 — 번호만으로는 뜻이 없다.
+   ★ 뜻을 지우자고 다시 권하지 말 것. 같은 지적을 두 번 받은 자리다. */
+test('★★ 표에 머리까지 그린다 — 「자문-10193」 꼴 (번호만 적으면 뜻이 없다)', () => {
   const cells = numberCells();
   assert.ok(cells.length >= 2, '번호 칸을 두 표에서 찾지 못했습니다 (' + cells.length + '개)');
   cells.forEach((cell, i) => {
-    assert.ok(/companyNumberBody\(co\)/.test(cell),
-      (i + 1) + '번째 번호 칸이 몸통(companyNumberBody)을 안 그립니다');
-    /* 그리는 «내용»에 머리가 붙으면 안 된다. formatCompanyNumber 는 말풍선(title)에만 허용. */
+    /* 그리는 «내용»(마지막 } , 뒤)이 머리까지 붙은 꼴이어야 한다 */
     const shown = cell.slice(cell.lastIndexOf('},') + 2);
-    assert.ok(!/formatCompanyNumber/.test(shown),
-      (i + 1) + '번째 번호 칸이 화면에 머리까지 그립니다 — 오른쪽 유형 칸과 겹칩니다');
+    assert.ok(/formatCompanyNumber\(co\)/.test(shown),
+      (i + 1) + '번째 번호 칸이 머리 없이 몸통만 그립니다 — 번호만 보면 무슨 업무인지 알 수 없습니다');
   });
 });
 
-test('머리는 사라지지 않는다 — 말풍선에는 「자문-10001」 꼴이 그대로 남는다', () => {
+test('말풍선에도 온번호가 남는다', () => {
   const cells = numberCells();
   cells.forEach((cell, i) => {
     assert.ok(/title:\(window\.PuOntology && PuOntology\.formatCompanyNumber\(co\)\)/.test(cell),
-      (i + 1) + '번째 번호 칸 말풍선에 머리가 없습니다 — 뜻을 볼 길이 사라집니다');
+      (i + 1) + '번째 번호 칸 말풍선에 온번호가 없습니다');
+  });
+});
+
+/* 대표 2026-09-05: 「번호와 업체명 사이 너무 불필요하게 넓다」 —
+   폭을 안 잡으면 표가 남는 자리를 이 칸에 몰아준다. */
+test('★ 번호 칸은 내용만큼만 차지한다 (폭을 잡아 둔다)', () => {
+  ["key:'a1n'", "key:'h1n'"].forEach((k) => {
+    const at = bare.indexOf(k);
+    assert.ok(at > 0, k + '(번호 머리글)을 찾지 못했습니다');
+    const seg = bare.slice(at, at + 200);
+    assert.match(seg, /width\s*:\s*'\d+px'/,
+      k + ' 에 폭이 없습니다 — 번호와 업체명 사이가 허옇게 벌어집니다');
   });
 });
 

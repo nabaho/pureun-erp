@@ -347,7 +347,11 @@
         var id = clean((store==='user_accounts'||store==='user_dir') ? (r.sid||r.id) : r.id);
         if(!id){ issue(issues,'high','missing_id',store,'',store+' '+(pos+1)+'번째', '관계를 고정할 ID가 없습니다.'); return; }
         if(seen[id]) issue(issues,'high','duplicate_id',store,id,id,'같은 ID가 두 번 이상 존재합니다.');
-        seen[id] = 1; indexes[store][id] = r; entities[canon(type,id)] = { type:type, store:store, program:'erp', id:id, label:recordLabel(r,type,id) };
+        /* ★ 고유번호 «몸통»을 개체에 달아 둔다 (대표 지시 2026-09-05: 「온톨로지에 연결」).
+           머리(자문·급여…)는 업무가 바뀌면 따라 바뀌므로 색인에 넣지 않는다 —
+           연결·검색은 몸통만 본다는 규칙 그대로다. 몸통은 이름이 아니라 «영구 번호»라,
+           이름을 안 싣는 관계망에도 실을 수 있고, 실어야 다른 프로그램이 번호로 잇는다. */
+        seen[id] = 1; indexes[store][id] = r; entities[canon(type,id)] = { type:type, store:store, program:'erp', id:id, label:recordLabel(r,type,id), no:companyNumberBody(r) };
       });
     });
 
@@ -809,7 +813,14 @@
     var parts={internal:{entities:{},edges:{}},source:{entities:{},edges:{}},personal:{entities:{},edges:{}},financial:{entities:{},edges:{}}};
     Object.keys(report.entities).sort().forEach(function(key){
       var e=report.entities[key]||{}, vis=visibilityOf(e.type);
-      parts[vis].entities[key]={id:clean(e.id),type:e.type,program:clean(e.program||'erp'),source:clean(e.source||e.store),schemaVersion:VERSION};
+      /* ⚠ 이름표(label)는 «싣지 않는다» — 관계망은 원본 payload 를 복제하지 않는다.
+         ★ 다만 고유번호 몸통(no)은 싣는다: 이름이 아니라 사람·엑셀·전화가 쓰라고 만든
+           영구 번호이고, 이것이 있어야 다른 프로그램이 «업체 목록을 안 받고도» 번호로
+           같은 업체를 가리킬 수 있다 (대표 지시 2026-09-05). 없으면 칸 자체를 안 만든다. */
+      var row={id:clean(e.id),type:e.type,program:clean(e.program||'erp'),source:clean(e.source||e.store),schemaVersion:VERSION};
+      var body=companyNumberBody({puNo:e.no});   /* audit 이 넣어 둔 몸통 — 범위 밖 값은 여기서 걸러진다 */
+      if(body) row.no=body;
+      parts[vis].entities[key]=row;
     });
     var excluded=0,dangling=0,confirmed=0;
     report.edges.slice().sort(function(a,b){return clean(a.id).localeCompare(clean(b.id));}).forEach(function(e){
