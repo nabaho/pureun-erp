@@ -91,5 +91,9 @@ test('이름표에 든 글자를 그대로 내보내지 않는다', () => {
 /* ── ③ 두 화면이 여전히 제 이름표를 쓴다 ───────────────────────── */
 test('명함 쪽과 기업 상세 쪽이 «다른 이름표»를 넘긴다', () => {
   assert.ok(/COND_LABEL/.test(bare(fn('condChipsHtml'))), '명함 쪽 이름표가 안 쓰인다');
-  assert.ok(/CO_TODO_LABEL/.test(bare(fn('coTodoChipsHtml'))), '기업 상세 쪽 이름표가 안 쓰인다');
+  /* ⚠ 2026-09-03(4걸음): 기업 상세 쪽 이름표는 «그때그때» 만든다 —
+       「📤 근로계약서 못 받은 곳」처럼 갈래 이름이 들어가야 하기 때문이다.
+       그래도 바탕은 CO_TODO_LABEL 하나이고, 띠를 «그리는» 곳은 여전히 한 벌이다. */
+  assert.ok(/coTodoLabels\(\)/.test(bare(fn('coTodoChipsHtml'))), '기업 상세 쪽 이름표가 안 쓰인다');
+  assert.ok(/CO_TODO_LABEL/.test(bare(fn('coTodoLabels'))), '바탕 이름표가 CO_TODO_LABEL 이 아니다');
 });

@@ -83,6 +83,12 @@ function drawFilterMenu(state, counts){
   vm.createContext(ctx);
   vm.runInContext(fnBody("coFilters"), ctx);
   vm.runInContext(fnBody("coFilterDefs"), ctx);
+  /* 2026-09-03(4걸음): 메뉴가 배포 묶음을 «먼저 읽고» 그린다. 이 검사는 배포 기록을
+     안 보므로 빈 묶음을 바로 돌려주는 대역을 둔다 — 그리는 몫은 coFilterMenuPaint 다. */
+  ctx.loadCoBatches = cb => cb({});
+  ctx._coBatches = {};
+  vm.runInContext(fnBody("coSentKindRows"), ctx);
+  vm.runInContext(fnBody("coFilterMenuPaint"), ctx);
   vm.runInContext(fnBody("openCoFilterMenu"), ctx);
   ctx.openCoFilterMenu({ preventDefault(){}, stopPropagation(){},
     currentTarget: { getBoundingClientRect: () => ({ left:100, bottom:200 }) } });
