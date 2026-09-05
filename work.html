@@ -1227,6 +1227,10 @@ function start(){
     /* 진행 메모는 업무 항목 안에 이미 들어 있다(엔진이 내려보낸 pe_notes).
        사람 이름만 있으면 누가 쓴 것인지 적을 수 있다. */
     peUsers().then(function(){ if(S.drawerId) renderDrawer(); }).catch(function(){});
+    /* 급여 처리 → 월 한 줄. 업무 목록이 온 «뒤에» 돌아야 붙일 자리를 찾는다.
+       ⚠ 재무·관리자가 아니면 payroll_os 를 못 읽어 그냥 안 돈다(고장이 아니다).
+         만들어진 기록은 work_erp 에 있으므로 전 직원이 그대로 본다. */
+    setTimeout(function(){ try{ paySync(); }catch(e){} }, 3000);
     calLoadPrefs().then(function(){ route(); }); // 캘린더 개인 설정(보임·보기·레이어)
   });
   document.addEventListener('focusout',function(){ setTimeout(function(){
@@ -3388,7 +3392,9 @@ function sdueHTML(it){
 
 /* ── 기록 쓰기 (일 단위 저장 + 주 묶음 + 건별 사본 + last 캐시) ── */
 var _lastLogId='';   // 방금 만든 기록 ID — 체크가 만든 기록을 나중에 되찾기 위함
-function addLog(itemId,text,dateStr,kind){
+/* extra — 그 기록에만 붙는 여분 칸(급여 월 표시 pm 등).
+   ⚠ 있을 때만 얹는다. 없는 칸을 undefined 로 넣으면 파이어베이스가 통째로 물린다. */
+function addLog(itemId,text,dateStr,kind,extra){
   text=(text||'').trim(); if(!text){ toast('내용을 입력하세요','warn'); return Promise.resolve(false); }
   dateStr=dateStr||todayStr();
   var wk=weekKeyOf(mondayOf(new Date(dateStr+'T00:00:00')));
@@ -3396,6 +3402,7 @@ function addLog(itemId,text,dateStr,kind){
   _lastLogId=lid;
   var log={d:dateStr,t:text,by:(S.me&&S.me.sid)||'',byName:(S.me&&S.me.name)||'',at:new Date().toISOString()};
   if(kind) log.k=kind;
+  if(extra) for(var _e in extra){ if(Object.prototype.hasOwnProperty.call(extra,_e)&&extra[_e]!=null) log[_e]=extra[_e]; }
   var up={};
   up[NS+'/logs/'+y+'/'+wk+'/'+itemId+'/'+lid]=log;
   up[NS+'/itemlogs/'+itemId+'/'+lid]=Object.assign({w:wk},log);
@@ -3408,6 +3415,150 @@ function addLog(itemId,text,dateStr,kind){
     if(it&&(!it.last||String(it.last.d||'')<=dateStr)) it.last={d:dateStr,t:text};
     toast('기록 저장됨'); return true;
   }).catch(function(e){ toast('저장 실패: '+e.message,'err'); return false; });
+}
+/* ══════════════════════════════════════════════════════════════════════
+   급여 처리를 «월 한 줄»로 (대표 지시 2026-09-05)
+   ══════════════════════════════════════════════════════════════════════
+   노무사 아닌 직원(사무장 등)이 급여관리에서 하는 일 — 자료 받고, 명세서 보내고 —
+   이 업무관리에 한 줄도 안 남았다. 그래서 그 사업장을 열어도 이 달에 무엇을 했는지
+   알 수가 없었다.
+
+   ⚠ 급여 앱은 «한 글자도» 안 건드린다. 이미 남기고 있다:
+       payroll_os/inbox      … 자료 수신 (사업장·월·종류·ts)
+       payroll_os/slip_sent  … 명세서 발송 (열쇠 「사업장|월|성명」, at)
+     여기서는 그것을 읽어 한 줄로 «비끄러맬» 뿐이다.
+
+   ⚠ 왜 «월 한 줄»인가 (대표 결정)
+     사업장 마흔 곳이면 일마다 적을 때 달마다 백 줄이 넘는다. 그러면 이제 겨우
+     차기 시작한 사건·컨설팅 기록이 그 아래 묻힌다. 그래서 사업장×월로 묶어 한 줄만
+     두고, 달이 가는 동안 그 줄을 «고쳐 쓴다».
+
+   ⚠ payroll_os 는 재무·관리자만 읽는다. 권한이 없는 사람 화면에서는 이 일이
+     그냥 안 돈다(고장이 아니다). 대신 만들어진 «기록»은 work_erp 에 있으므로
+     전 직원이 그대로 본다 — 한 사람이 열면 모두가 본다. */
+var PAY_ROOT='payroll_os';
+var paySrc=null, _payT=null;
+function payLoad(){
+  if(paySrc) return Promise.resolve(paySrc);
+  if(_payT) return _payT;
+  if(typeof fbDb==='undefined'||!fbDb){ paySrc={inbox:{},sent:{}}; return Promise.resolve(paySrc); }
+  var one=function(k){ return fbDb.ref(PAY_ROOT+'/'+k).once('value')
+    .then(function(s){ var v=s.val(); return (v&&typeof v==='object'&&!Array.isArray(v))?v:{}; },
+          function(){ return null; }); };
+  _payT=Promise.all([one('inbox'),one('slip_sent')]).then(function(r){
+    // 둘 다 못 읽었으면 «권한이 없다» — 빈손으로 두고 아무것도 안 한다
+    paySrc=(r[0]===null&&r[1]===null)?null:{inbox:r[0]||{},sent:r[1]||{}};
+    _payT=null; return paySrc;
+  }, function(){ paySrc=null; _payT=null; return null; });
+  return _payT;
+}
+// 급여관리가 쓰는 사업장 이름 다듬기와 «같은 규칙»으로 맞춘다 (payroll-os siteKey)
+function _payKey(s){ return String(s||'').replace(/\(.*?\)|㈜|주식회사|\s/g,''); }
+function _payMon(v){ var m=String(v||'').match(/(\d{1,2})\s*월/); if(m) return +m[1];
+  var n=String(v||'').match(/^\d{4}-(\d{2})/); return n?+n[1]:null; }
+function _payYm(ts,mon){
+  var d=new Date(Number(ts)||Date.now());
+  var y=d.getFullYear();
+  /* 12월 자료를 1월에 만지면 해가 어긋난다 — 달이 훌쩍 앞서면 지난해로 본다 */
+  if(mon && (d.getMonth()+1)-mon <= -6) y--;
+  else if(mon && (d.getMonth()+1)-mon >= 6) y++;
+  return y+'-'+(mon<10?'0':'')+mon;
+}
+/* 사업장×월로 묶는다 → { '사업장키|2026-09': {site, ym, got, sent, last} } */
+function payRoll(){
+  if(!paySrc) return {};
+  var out={};
+  function slot(site,ym){
+    var k=_payKey(site)+'|'+ym;
+    return out[k]||(out[k]={key:k,site:String(site||''),ym:ym,got:0,sent:0,last:0});
+  }
+  Object.keys(paySrc.inbox||{}).forEach(function(id){
+    var a=paySrc.inbox[id]||{}; var site=a.사업장||''; var mon=_payMon(a.월);
+    if(!site||!mon) return;                       // 사업장·월을 못 읽은 줄은 셈에 안 넣는다
+    var s=slot(site,_payYm(a.ts,mon)); s.got++; if(Number(a.ts)>s.last) s.last=Number(a.ts);
+  });
+  Object.keys(paySrc.sent||{}).forEach(function(k){
+    var p=String(k).split('|'); if(p.length<3) return;
+    var site=p[0], mon=_payMon(p[1]); if(!site||!mon) return;
+    var v=paySrc.sent[k]||{};
+    var s=slot(site,_payYm(v.at,mon)); s.sent++; if(Number(v.at)>s.last) s.last=Number(v.at);
+  });
+  return out;
+}
+function payLine(r){
+  var mon=+String(r.ym).slice(5);
+  var bits=[];
+  if(r.got) bits.push('자료 '+r.got+'건 받음');
+  if(r.sent) bits.push('명세서 '+r.sent+'명 보냄');
+  return '💰 '+mon+'월 급여 · '+(bits.length?bits.join(' · '):'처리 시작');
+}
+/* 그 사업장의 업무를 찾는다 — 이름을 다듬어 견준다(메일 붙이기와 같은 잣대) */
+function payItemOf(site){
+  var k=_normCo(site); if(!k) return null;
+  var open=openItems().filter(function(it){ return _normCo(it.company||it.client)===k; });
+  if(!open.length) return null;
+  // 급여로 만든 것이 있으면 그것, 없으면 아무 진행 건에 붙인다
+  return open.filter(function(it){ return it.pay_site; })[0]||open[0];
+}
+/* 짝이 없으면 «그때만» 만든다 (대표 결정 2026-09-05).
+   ⚠ 미리 만들어 두지 않는다 — 급여만 받는 곳이 마흔이면 빈 업무 마흔이 깔린다. */
+function payMakeItem(site){
+  var id='PAY-'+safeKey(_payKey(site));
+  if(items[id]) return Promise.resolve(id);
+  var rec={ no:S.year+'-급여-'+safeKey(_payKey(site)).slice(0,12), cat:'급여',
+    company:String(site||''), title:'급여 처리', status:'진행중',
+    mgr_main:{sid:'',name:''}, pe_nomgr:true, pay_site:_payKey(site),
+    src:'pay', created_at:new Date().toISOString() };
+  return fbDb.ref(NS+'/items/'+id).set(rec).then(function(){ items[id]=rec; return id; })
+    .catch(function(){ return null; });
+}
+/* 그 달 한 줄을 «고쳐 쓴다».
+   ⚠ 달마다 한 줄이다. 새로 만들지 않고 있던 줄의 글만 바꾼다 —
+     안 그러면 자료가 올 때마다 줄이 쌓여 「월 한 줄」이 무너진다. */
+function payPutLine(itemId,r){
+  return loadItemLogs(itemId).then(function(){
+    var box=itemLogsCache[itemId]||{}, hit=null;
+    Object.keys(box).forEach(function(lid){
+      var l=box[lid]; if(l&&l.k==='pay'&&l.pm===r.ym) hit=Object.assign({_id:lid},l);
+    });
+    var txt=payLine(r);
+    if(hit&&String(hit.t||'')===txt) return false;            // 달라진 것이 없다 — 쓰지 않는다
+    var d=r.last?new Date(Number(r.last)):new Date();
+    var ds=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+    if(!hit) return addLog(itemId,txt,ds,'pay',{pm:r.ym}).then(function(ok){ return !!ok; });
+    var wk=hit.w||weekKeyOf(mondayOf(new Date(ds+'T00:00:00'))), y=weekYear(wk), up={};
+    up[NS+'/logs/'+y+'/'+wk+'/'+itemId+'/'+hit._id+'/t']=txt;
+    up[NS+'/itemlogs/'+itemId+'/'+hit._id+'/t']=txt;
+    return fbDb.ref().update(up).then(function(){
+      box[hit._id].t=txt;
+      if(wkCache[wk]&&wkCache[wk][itemId]&&wkCache[wk][itemId][hit._id]) wkCache[wk][itemId][hit._id].t=txt;
+      return true;
+    }).catch(function(){ return false; });
+  });
+}
+/* 한 바퀴 — 읽고, 묶고, 붙인다. 조용히 돈다(토스트를 띄우지 않는다). */
+var _payBusy=false;
+function paySync(){
+  if(_payBusy) return Promise.resolve(0);
+  _payBusy=true;
+  return payLoad().then(function(src){
+    if(!src) return 0;                                        // 권한이 없다 — 아무것도 안 한다
+    var roll=payRoll(), keys=Object.keys(roll), n=0;
+    return keys.reduce(function(p,k){
+      return p.then(function(){
+        var r=roll[k];
+        if(!r.got&&!r.sent) return;
+        var it=payItemOf(r.site);
+        var go=it?Promise.resolve(it._id):payMakeItem(r.site);
+        return go.then(function(id){ if(!id) return;
+          return payPutLine(id,r).then(function(ch){ if(ch) n++; }); });
+      });
+    },Promise.resolve()).then(function(){ return n; });
+  }).then(function(n){
+    _payBusy=false;
+    if(n) route();
+    return n;
+  }, function(){ _payBusy=false; return 0; });
 }
 // 기록을 고치거나 지울 수 있는 사람 — 쓴 본인과 대표
 function canLog(l){
