@@ -192,3 +192,55 @@ test('인증키 넣는 칸이 있다', () => {
   assert.match(source, /id="apiG2B"/);
   assert.match(source, /g2b_key/);
 });
+
+/* ───────── 낱말 켜고 끄기 ───────── */
+
+test('낱말을 더하고 뺀다', () => {
+  const a = G.toggleKw(['노무', '인사'], '조직진단');
+  assert.equal(a.ok, true);
+  assert.deepEqual(a.list, ['노무', '인사', '조직진단']);
+  const b = G.toggleKw(['노무', '인사'], '인사');
+  assert.deepEqual(b.list, ['노무']);
+});
+
+test('★ 낱말을 모두 끌 수는 없다', () => {
+  // 다 끄면 아무것도 안 걸려 「받았는데 0건」이 되고, 사람은 API 가 고장 난 줄 안다
+  const r = G.toggleKw(['노무'], '노무');
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.list, ['노무'], '마지막 하나는 남는다');
+  assert.match(r.err, /하나는 남겨/);
+});
+
+test('빈 낱말은 받지 않는다', () => {
+  assert.equal(G.toggleKw(['노무'], '   ').ok, false);
+});
+
+/* ───────── 열쇠가 오기 전 준비 ───────── */
+
+test('★ 인증키가 없으면 어디서 받는지 알려 준다', () => {
+  const m = source.match(/function g2bReadyNote\([\s\S]*?\n\}/);
+  assert.ok(m, 'g2bReadyNote 가 있어야 합니다');
+  assert.match(m[0], /data\.go\.kr\/data\/15129394/, '발급 주소를 적어야 합니다');
+  assert.match(m[0], /Decoding/, '어느 열쇠를 넣어야 하는지 밝혀야 합니다');
+});
+
+test('찾는 말을 화면에서 고칠 수 있다', () => {
+  assert.match(source, /id="g2bKw"/);
+  assert.match(source, /function renderG2bKw/);
+  assert.match(source, /function g2bKwToggle/);
+  assert.match(source, /function g2bKwAdd/);
+});
+
+test('★ 열쇠를 새로 넣으면 「오늘 받았다」 표시를 지운다', () => {
+  // 안 지우면 열쇠를 넣어도 내일까지 저절로 받지 않는다
+  const m = source.match(/function initApiTab\([\s\S]*?\n\}/);
+  assert.ok(m);
+  assert.match(m[0], /g2b_last/, '표시를 지워야 바로 받습니다');
+});
+
+test('연결 테스트가 나라장터도 확인한다', () => {
+  const m = source.match(/async function testApiConnection\([\s\S]*?\n\}/);
+  assert.ok(m);
+  assert.match(m[0], /나라장터/);
+  assert.match(m[0], /rows:\s*1/, '확인은 한 건만 불러 1,000회를 아낀다');
+});

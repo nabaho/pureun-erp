@@ -976,7 +976,7 @@ input.kf-in.kf-done{background:#f8fafc;border-bottom:1.5px solid var(--teal);fon
 <script src="js/kcareer-scan.js?v=2"></script>
 <script src="js/kcareer-pusync.js?v=3"></script>
 <script src="js/kcareer-adv-summary.js?v=1"></script>
-<script src="js/kcareer-g2b.js?v=1"></script>
+<script src="js/kcareer-g2b.js?v=2"></script>
 <script src="js/kcareer-hwpxfill.js?v=10"></script>
 <script src="js/kcareer-svgtext.js?v=1"></script>
 <script src="js/kcareer-formmap.js?v=7"></script>
@@ -1696,6 +1696,7 @@ input.kf-in.kf-done{background:#f8fafc;border-bottom:1.5px solid var(--teal);fon
           <button class="btn" type="button" onclick="g2bFetchNow()">🔄 새로 받기</button>
           <button class="btn" data-act="csv">📤 CSV</button>
         </div>
+        <div id="g2bKw" style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-bottom:8px"></div>
         <div id="g2bNote" style="font-size:12px;margin-bottom:8px"></div>
         <div class="dt"></div>
       </div></section>
@@ -6457,6 +6458,46 @@ function renderAdvSummary(){
 function _advSumText(){ var el=$('advSumText'); return el?el.textContent:''; }
 function advSumCopy(){ var t=_advSumText(); if(!t){ toast('문장이 없습니다'); return; } navigator.clipboard.writeText(t); toast('복사됨 — 지원서에 붙여 쓰세요'); }
 function advSumInsert(){ var t=_advSumText(); if(!t){ toast('문장이 없습니다'); return; } insertToEditor(t); }
+/* 찾는 말 칩 — 켜고 끄고 더한다. ⚠ 모두 끄지 못한다(모듈이 막는다). */
+function setG2bKeywords(a){ LS.set(NS+'g2b_kw', JSON.stringify(a)); }
+function renderG2bKw(){
+  var box=$('g2bKw'); if(!box||typeof KcareerG2b==='undefined') return;
+  var cur=g2bKeywords(), all=[];
+  KcareerG2b.KEYWORDS_DEFAULT.forEach(function(k){ if(all.indexOf(k)<0) all.push(k); });
+  cur.forEach(function(k){ if(all.indexOf(k)<0) all.push(k); });
+  box.innerHTML='<span style="font-size:11px;color:var(--text-mute);margin-right:2px">찾는 말</span>'
+    + all.map(function(k){
+        var on=cur.indexOf(k)>=0;
+        return '<button class="btn sm" onclick="g2bKwToggle(\''+_jsAttr(k)+'\')" style="border-radius:12px;'
+          + (on?'background:var(--navy);color:#fff;border-color:var(--navy)':'opacity:.55')+'">'
+          + (on?'':'+ ')+escapeHtml(k)+'</button>';
+      }).join('')
+    + '<button class="btn sm" onclick="g2bKwAdd()" style="border-radius:12px">＋ 낱말</button>';
+}
+function g2bKwToggle(k){
+  var r=KcareerG2b.toggleKw(g2bKeywords(), k);
+  if(!r.ok){ toast(r.err); return; }
+  setG2bKeywords(r.list); renderG2bKw();
+  toast('찾는 말이 바뀌었습니다 — 🔄 새로 받기를 누르면 새 기준으로 걸립니다');
+}
+function g2bKwAdd(){
+  var k=prompt('더할 낱말을 적어 주세요 (예: 조직진단)'); if(!k) return;
+  var r=KcareerG2b.toggleKw(g2bKeywords(), k.trim());
+  if(!r.ok){ toast(r.err); return; }
+  setG2bKeywords(r.list); renderG2bKw();
+}
+/* 인증키가 아직 없을 때 «무엇을 해야 하는지» 알려 준다.
+   ⚠ 「실패」로만 알리지 않는다 — 어디서 무엇을 받아야 하는지 적는다. */
+function g2bReadyNote(){
+  if(g2bKey()){
+    if(!get('g2b').length) _g2bNote('아직 받은 공고가 없습니다 — <b>🔄 새로 받기</b>를 눌러 주세요 (최근 7일치를 가져옵니다)');
+    return;
+  }
+  _g2bNote('🔑 <b>나라장터 인증키가 아직 없습니다.</b> 준비는 다 돼 있고 열쇠만 꽂으면 됩니다.<br>'
+    +'① <a href="https://www.data.go.kr/data/15129394/openapi.do" target="_blank" rel="noopener" style="color:var(--navy)">공공데이터포털</a>에서 로그인 → <b>활용신청</b> (무료·자동승인)<br>'
+    +'② 받은 <b>일반 인증키(Decoding)</b>를 복사<br>'
+    +'③ 환경설정 › API 의 <b>나라장터 인증키</b> 칸에 넣고 저장 → 여기서 <b>🔄 새로 받기</b>');
+}
 /* ===== 나라장터(조달청) 용역 공고 받아오기 (대표 지시 2026-09-05) =====
    ⚠ 하루 1,000회 제한이 있다. 화면을 열 때마다 부르지 않는다 —
      하루 한 번 저절로 + 손으로 「새로 받기」를 누를 때만.
@@ -6544,6 +6585,7 @@ function renderCareer(name){ const cfg=CAREER_CFG[name]; if(!cfg) return;
      안 그리면 「저장했는데 화면은 그대로」가 된다. */
   if(name==='etcfee') setTimeout(function(){ renderCareer('meetfee'); },0);
   if(name==='advisory') setTimeout(function(){ try{ renderAdvSummary(); }catch(e){ console.warn('advSummary',e); } },0);
+  if(name==='g2b') setTimeout(function(){ try{ renderG2bKw(); g2bReadyNote(); }catch(e){ console.warn('g2bKw',e); } },0);
   const sec=document.getElementById('page-'+name); if(!sec) return;
   /* 두 저장소를 한 표에 모은다(비용관리) — 기록은 «옮기지 않는다».
      옮기다 잃는 것이 합치는 이득보다 크다. 어느 저장소에서 왔는지는 _st 로 들고 다닌다. */
@@ -8277,6 +8319,16 @@ async function testApiConnection(){
     else if(s===503) results.push('❌ Gemini: 서버에 AI 열쇠가 없습니다 — 관리자에게 알려 주세요');
     else results.push('❌ Gemini: '+((e&&e.message)||e));
   } } else results.push('⚪ Gemini: 로그인하면 켜집니다');
+  /* 나라장터 — 열쇠가 맞는지 «한 건만» 불러 확인한다(하루 1,000회 중 1회) */
+  var g2k=LS.get(NS+'g2b_key')||'';
+  if(g2k && typeof KcareerG2b!=='undefined'){ try{
+    var d=new Date();
+    var u=KcareerG2b.buildUrl({key:g2k, from:d, to:d, page:1, rows:1});
+    var rr=await kcFetch(u,{},20000); var jj=await rr.json(); var pp=KcareerG2b.parse(jj);
+    if(pp.ok) results.push('✅ 나라장터 연결 성공 — 오늘 용역공고 '+pp.total+'건');
+    else results.push('❌ 나라장터: '+pp.err+(/서비스키/.test(pp.err)?' (일반 인증키 Decoding 을 넣었는지 확인하세요)':''));
+  }catch(e){ results.push('❌ 나라장터: '+((e&&e.message)||e)); } }
+  else results.push('⚪ 나라장터: 인증키를 넣으면 켜집니다');
   box.innerHTML=results.map(r=>`<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)">${r}</div>`).join('');
 }
 /* ⚠ 2026-08-17 — Gemini 열쇠(apiGM)를 다루던 줄을 모두 걷어냈다.
@@ -8290,7 +8342,10 @@ function initApiTab(){ const gv=document.getElementById('apiGV'),an=document.get
   gv.type='password'; an.type='password';
   const badge=()=>st.textContent=(aiReady()?'🟢 Gemini(회사 서버) 연동':an.value?'🟢 Claude 연동':gv.value?'🟡 Vision만':'🔴 미설정');
   badge();
-  document.getElementById('apiSave').onclick=()=>{ LS.set(NS+'gvision_key',gv.value.trim()); LS.set(NS+'api_key',an.value.trim()); LS.set(NS+'rhwp_url',rh.value.trim()); if(g2) LS.set(NS+'g2b_key',g2.value.trim()); badge(); if(typeof fbSaveApiKeys==='function') fbSaveApiKeys(); toast('API 키 저장됨 (클라우드에도 보관 — 업데이트해도 유지)'); };
+  document.getElementById('apiSave').onclick=()=>{ LS.set(NS+'gvision_key',gv.value.trim()); LS.set(NS+'api_key',an.value.trim()); LS.set(NS+'rhwp_url',rh.value.trim()); if(g2){ var _gk=g2.value.trim(); var _was=LS.get(NS+'g2b_key')||'';
+      LS.set(NS+'g2b_key',_gk);
+      /* 열쇠가 새로 들어왔으면 「오늘 이미 받았다」 표시를 지운다 — 안 지우면 내일까지 안 받는다 */
+      if(_gk && _gk!==_was){ LS.set(NS+'g2b_last',''); } } badge(); if(typeof fbSaveApiKeys==='function') fbSaveApiKeys(); toast('API 키 저장됨 (클라우드에도 보관 — 업데이트해도 유지)'); };
 }
 
 /* ===== 환경설정: 개인정보·계좌·데이터·백업 ===== */

@@ -124,6 +124,20 @@
     return Math.ceil((a - b) / 86400000);
   }
 
+  /* ── 낱말 켜고 끄기 ──
+     ⚠ 마지막 하나까지 끄지 못하게 막는다. 다 끄면 아무것도 안 걸려
+       「받았는데 0건」이 되고, 사람은 API 가 고장 난 줄 안다. */
+  function toggleKw(list, kw) {
+    var cur = (list && list.length) ? list.slice() : KEYWORDS_DEFAULT.slice();
+    var t = s(kw);
+    if (!t) return { list: cur, ok: false, err: '낱말이 비어 있습니다' };
+    var i = cur.indexOf(t);
+    if (i < 0) { cur.push(t); return { list: cur, ok: true, err: '' }; }
+    if (cur.length <= 1) return { list: cur, ok: false, err: '낱말을 모두 끌 수는 없습니다 — 하나는 남겨 주세요' };
+    cur.splice(i, 1);
+    return { list: cur, ok: true, err: '' };
+  }
+
   /* ── 이미 받은 것과 합치기 ──
      ⚠ 새로 «만들기»만 한다. 이미 있는 줄은 손대지 않는다 —
        대표가 ⭐관심을 켜 두거나 메모를 적어 뒀을 수 있다. */
@@ -150,7 +164,8 @@
   }
 
   var api = { BASE: BASE, KEYWORDS_DEFAULT: KEYWORDS_DEFAULT, encKey: encKey,
-              buildUrl: buildUrl, parse: parse, matched: matched, dday: dday, merge: merge };
+              buildUrl: buildUrl, parse: parse, matched: matched, dday: dday, merge: merge,
+              toggleKw: toggleKw };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KcareerG2b = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window);
