@@ -2268,9 +2268,16 @@ test('★★ 중복은 «만든 것»으로 세지 않는다 — 숫자가 거�
 
 /* ===== ★★ 표시 개수 기억 + 끌어서 선택 (2026-08-31) ===== */
 
-test('★★ 표시 개수는 «전체»가 기본이고, 고르면 기억한다', () => {
-  assert.match(funcSource('pageLimitOf'), /return \(typeof saved==='number'\) \? saved : -1;/,
-    '⚠ 기본은 전체(-1)입니다');
+test('★★ 표시 개수는 «50건»이 기본이고, 고르면 기억한다', () => {
+  /* ⚠ 2026-08-29 에는 「전체가 기본」이었다(대표 지시). 2026-09-05 에 뒤집혔다 —
+     자료가 늘면서 그것이 «화면 멈춤»의 뿌리가 됐기 때문이다.
+     실측: 자문·고문 373행 한 번 그리는 데 300~500ms, 화면을 여닫을 때마다 되풀이.
+     대표 지시 「현재화면 원본 모두 보는것보다 개수정해서 볼수 있게 해달라」.
+     ⚠ 기본을 -1(전체)로 되돌리지 말 것 — 멈춤이 그대로 돌아온다.
+       사람이 「전체」를 고르면 그 값은 그대로 기억되므로 고를 자유는 남아 있다. */
+  assert.match(funcSource('pageLimitOf'), /return \(typeof saved==='number'\) \? saved : PAGE_LIMIT_DEFAULT;/,
+    '⚠ 기본은 PAGE_LIMIT_DEFAULT 입니다');
+  assert.match(source, /var PAGE_LIMIT_DEFAULT = 50;/, '기본 50건');
   const sp = funcSource('setPageLimit');
   assert.match(sp, /LS\.set\(NS\+_PGLIMIT_KEY, JSON\.stringify\(o\)\)/, '고른 값을 담아야 합니다');
   assert.match(funcSource('_pgLimitLoad'), /!Array\.isArray\(o\)/, '배열이 오면 빈 것으로 봐야 합니다');
@@ -2319,4 +2326,16 @@ test('★★ 「137/137」처럼 왼쪽 건수와 겹치는 말은 적지 않는
     '⚠ 다 보여 줄 때는 왼쪽 「N건」과 같은 말이라 적지 않습니다');
   // ⚠ 전체 건수(.cnt)는 숨기면 안 된다 — 원본없음 필터가 걸리면 그것만 남아 자료가 준 것처럼 보인다
   assert.match(source, /class="cnt"/, '전체 건수는 늘 보여야 합니다');
+});
+
+/* ===== 화면 멈춤 — 표시 개수와 자문 요약 (대표 제보 2026-09-05) ===== */
+
+test('★★ 자문·고문 요약은 «한 줄 띠» — 큰 카드 넷이 목록을 밀어냈다', () => {
+  /* 실측(1600px): 카드 넷 ≈120px → 띠 37px. 같은 숫자를 한 줄에 담는다. */
+  assert.match(source, /#page-advisory \.adv-stat\{display:flex/);
+  const fn = funcSource('renderAdvSummary');
+  assert.match(fn, /<div class="adv-stat">/, '한 줄 띠로 그려야 합니다');
+  assert.doesNotMatch(fn, /class="card" style="flex:1;min-width:90px;text-align:center"/,
+    '★ 큰 카드로 되돌리면 373건 목록이 다시 화면 밖으로 밀립니다');
+  assert.match(fn, /<\/b> '\+escapeHtml\(c\[0\]\)/, '숫자와 이름표가 붙어 「249곳진행 중」이 됩니다');
 });
