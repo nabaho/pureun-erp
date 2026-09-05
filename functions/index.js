@@ -31,10 +31,23 @@ if (!getApps().length) initializeApp();
 
 const RESEND_KEY = process.env.RESEND_API_KEY || "";
 
-// PoC 설정 — 도메인 인증 전까지는 Resend 테스트 발신주소를 쓰고,
-// 테스트 발신은 Resend 계정 주소(본인 메일)로만 발송됩니다.
-const FROM = "푸른노무법인 <payroll@fairrunlabor.com>";
-const TEST_TO = "babylawyer11111@gmail.com";
+/* ══════════════════════════════════════════════════════════════════════════
+   급여명세서가 «어디서» 나가고 «어디로» 답장이 오나 — 2026-09-05 대표 지시로 손봄
+   ══════════════════════════════════════════════════════════════════════════
+   ⚠ 여기는 원래 「PoC 설정 — 도메인 인증 전까지는」이라 적힌 임시 자리였다.
+     그 임시가 굳어서, 근로자 메일함에는 푸른이 아닌 fairrunlabor.com 이 뜬다.
+
+   ★ 보내는 주소를 푸른 것으로 바꾸려면 «먼저» Resend 에서 그 도메인 인증을
+     마쳐야 한다(DNS 에 몇 줄 넣는 일). 인증 안 된 도메인을 넣으면 Resend 가
+     메일을 통째로 거절한다 — 그래서 여기서 혼자 바꿀 수가 없다.
+     인증이 끝나면 아래 한 줄만 고치고 sendPayslip 을 다시 올리면 된다.
+
+   ★ 회신 주소(Reply-To)가 아예 없었다. 본문에는 「문의사항은 사무실로 연락
+     주세요」라 써 놓고, 근로자가 회신 단추를 누르면 아무도 안 보는 곳으로 갔다.
+     이것은 도메인 인증과 상관없이 지금 고칠 수 있다 — 자료 발송이 쓰는
+     공용함(370-6@daum.net)으로 오게 한다. */
+const FROM = process.env.PAYSLIP_FROM || "푸른노무법인 <payroll@fairrunlabor.com>";
+const REPLY_TO = process.env.PAYSLIP_REPLY_TO || "370-6@daum.net";
 
 // 발송 창구는 우리 포털에서만 연다. 예전에는 "*" 라서 주소만 알면
 // 전 세계 누구나 푸른노무법인 이름으로 메일을 보낼 수 있었다.
@@ -70,7 +83,15 @@ async function requireStaff(req) {
   return decoded;
 }
 
-exports.sendPayslip = functions.https.onRequest(async (req, res) => {
+/* ⚠⚠ 열쇠가 «이 PC 의 파일»에만 있었다 — 저장소 어디에도 functions/.env 가 없다.
+     그 상태로 sendPayslip 을 다시 올리면 RESEND_API_KEY 가 지워져
+     급여명세서 발송이 «통째로» 멎는다. 지뢰다.
+     그래서 파이어베이스 비밀값으로 옮긴다 — 계정·PC 가 바뀌어도 살아 있다.
+     대표님이 한 번만: firebase functions:secrets:set RESEND_API_KEY --project pureun-erp
+     (이알피 아이디·비밀번호를 넣으신 것과 같은 방법이다.) */
+exports.sendPayslip = functions
+  .runWith({ secrets: ["RESEND_API_KEY"] })
+  .https.onRequest(async (req, res) => {
   setCors(req, res);
   if (req.method === "OPTIONS") { res.status(204).send(""); return; }
 
@@ -83,20 +104,29 @@ exports.sendPayslip = functions.https.onRequest(async (req, res) => {
     return;
   }
 
-  // 키 미설정 시 친절한 안내 (Resend의 난해한 에러 대신)
-  if (!RESEND_KEY) {
-    res.status(500).send(
-      "Resend API 키가 설정되지 않았습니다.\n" +
-      "functions/.env 파일을 열어 RESEND_API_KEY= 뒤에 본인 키(re_로 시작)를 붙여넣고 다시 배포하세요."
-    );
+  /* ★ 열쇠는 «부를 때» 읽는다. 파일 맨 위에서 한 번만 읽으면, 비밀값이 나중에
+       붙은 판에서는 영영 빈 채로 남는다. */
+  const 열쇠 = process.env.RESEND_API_KEY || RESEND_KEY;
+  if (!열쇠) {
+    res.status(500).json({ ok: false, error:
+      "메일 열쇠가 서버에 없습니다. 대표님이 한 번만 넣어 주세요:\n" +
+      "firebase functions:secrets:set RESEND_API_KEY --project pureun-erp\n" +
+      "그다음: firebase deploy --only functions:sendPayslip --project pureun-erp" });
     return;
   }
 
-  const resend = new Resend(RESEND_KEY);
+  const resend = new Resend(열쇠);
 
   // 입력: POST 본문이 있으면 사용, 없으면(브라우저로 URL 접속 = 테스트) 샘플 발송
   const b = (req.body && typeof req.body === "object") ? req.body : {};
-  const to = b.to || TEST_TO;
+  /* ★ 받는 주소가 비면 «박아 둔 지메일»로 갔다 — 근로자 급여명세서가 남의 메일함으로
+       갈 수 있는 길이었다. 화면에는 울타리가 있었지만 서버에는 없었다.
+       울타리는 «둘 다»에 있어야 한다. 이제 없으면 안 보낸다. */
+  const to = String(b.to || "").trim();
+  if (!to || !/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(to)) {
+    res.status(400).json({ ok: false, error: "받는 사람 메일 주소가 없거나 올바르지 않습니다: " + (to || "(비어 있음)") });
+    return;
+  }
   const name = b.name || "테스트";
   const ym = b.ym || "테스트";
   const subject = b.subject || ("[푸른노무법인] " + ym + " 급여명세서 — " + name);
@@ -116,15 +146,21 @@ exports.sendPayslip = functions.https.onRequest(async (req, res) => {
       ? b.attachments.map(function (a) { return { filename: a.filename, content: Buffer.from(a.content, "base64") }; })
       : undefined;
     const payload = { from: FROM, to: to, subject: subject, html: html };
+    /* 근로자가 «회신»을 누르면 우리 공용함으로 오게 한다 — 본문에 「연락 주세요」라고
+       써 놓고 답장 갈 곳이 없으면 그 말이 거짓말이 된다. */
+    if (REPLY_TO) payload.reply_to = REPLY_TO;
     if (atts && atts.length) payload.attachments = atts;
     const r = await resend.emails.send(payload);
     if (r && r.error) {
       res.status(500).json({ ok: false, error: r.error });
       return;
     }
-    // 보낸 사람을 함께 돌려준다 — 화면에서 발송 기록을 남길 때 쓴다.
+    /* 보낸 사람·나간 주소·회신 주소를 함께 돌려준다 — 화면이 «교부 기록»을
+       남길 때 쓴다. 임금명세서 교부는 근기법 §48② 의무인데, 기록이 없으면
+       나중에 「안 받았다」는 말에 내놓을 것이 없다. */
     res.status(200).json({ ok: true, id: (r && r.data && r.data.id) || null, to: to,
-                           by: (sender && sender.email) || "" });
+                           by: (sender && sender.email) || "",
+                           from: FROM, replyTo: REPLY_TO });
   } catch (e) {
     res.status(500).json({ ok: false, error: String((e && e.message) || e) });
   }
