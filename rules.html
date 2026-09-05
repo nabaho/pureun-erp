@@ -239,6 +239,15 @@ table.daejo thead th{position:sticky;top:-18px;z-index:3;
 /* ── 단계 이동 ──
    종전에는 '① 신구대조 ▸ ② 변경 결과 …' 가 눌리지 않는 글자였다. ②에서 놓친 걸 고치려면
    ③을 닫고 ②를 다시 열어야 해서 스크롤·펼침이 처음으로 돌아갔다. 이제 눌러서 바로 간다. */
+/* 상태 한 줄 — 조용히 있다가 필요할 때만 눈에 띈다. 띠가 아니라 «줄»이다. */
+#statusbar{display:none;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:6px 16px;font-size:11.5px;color:var(--sub);border-bottom:1px solid var(--line)}
+#statusbar.on{display:flex}
+#statusbar .sb-p{color:var(--ink)}
+#statusbar .sb-sep{color:var(--mute)}
+#statusbar .sb-erp{border-radius:20px;padding:1px 8px;font-size:11px;white-space:nowrap}
+#statusbar .sb-erp.ok{background:#f0fdf4;color:#166534;border:1px solid #bbf7d0}
+#statusbar .sb-erp.warn{background:#fffbeb;color:var(--warn);border:1px solid #fde68a}
 .stepnav{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}
 .stepnav button{font:inherit;font-size:10.5px;line-height:1.3;padding:3px 8px;border-radius:6px;
   border:1px solid var(--line);background:#fff;color:var(--sub);cursor:pointer;white-space:nowrap}
@@ -642,6 +651,9 @@ table.daejo td.dj2{padding:0}
     <iframe id="write-frame" title="취업규칙 작성기" style="width:100%;height:calc(100vh - 190px);min-height:520px;border:1px solid var(--card-bd);border-radius:14px;background:#fff"></iframe>
   </div>
 
+  <!-- 상태 한 줄 — 사업장·규모·기준일·조문수·저장시각·ERP 를 한 자리에서 말한다.
+       예전에는 이 셋이 색 다른 띠 셋으로 원본 미리보기 위를 먹었다(설계서 §5). -->
+  <div id="statusbar"></div>
   <div class="grid" id="grid">
     <div class="pane">
       <h3>원본 미리보기 <span id="pv-site" style="font-size:13px;font-weight:700;color:var(--accent);margin-left:4px"></span> <span class="tag" id="pv-tag">— 조 0개</span>
@@ -4326,8 +4338,12 @@ function matchErpSite(){
   showErpBadge();
   return SITE_INFO;
 }
+/* ERP 상태는 이제 «상태 줄»이 말한다(설계서 §5). 이 배지는 자리만 남기고 접는다 —
+   지우지 않는 까닭은 다른 곳에서 el.style.display 를 만지기 때문이다. */
 function showErpBadge(){
+  renderStatusBar();
   const el=$("erp-badge"); if(!el)return;
+  el.style.display="none"; return;
   if(SITE_INFO){
     el.style.display="";
     el.innerHTML=`🏢 ERP 연동됨 — <b>${escapeH(SITE_INFO.name)}</b>`
@@ -4416,8 +4432,46 @@ async function restoreOrig(id,site){
 }
 /* ── 작업 세션 자동 보관: 업로드 파일·편집 상태를 이 브라우저에 저장 → F5·재접속에도 유지 ── */
 const WORK_KEY="pureun_rules_work_v1";
-/* 임시저장 배지 — 저장 전이라도 화면에 항상 상태 표시, 지울 때만 '임시저장 지우기' 버튼 사용 */
+/* ── 상태 한 줄 ──
+   값 만들기와 그리기를 갈라 둔다 — 붙여 두면 화면 없이는 못 견준다.
+   ⚠ 빈 칸을 만들지 않는다. 없는 것은 아예 안 적는다 — 「0조」·빈 저장시각은
+     아무 말도 아니면서 줄만 길게 한다. */
+function statusLineOf(s){
+  s=s||{};
+  const parts=[];
+  if(s.site)parts.push(String(s.site));
+  if(s.size)parts.push(String(s.size));
+  if(s.asof)parts.push(String(s.asof));
+  if(Number(s.arts)>0)parts.push(Number(s.arts)+"조");
+  if(s.savedAt){ const t=new Date(s.savedAt);
+    if(!isNaN(t.getTime()))parts.push(String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0")+" 저장"); }
+  let erp={kind:"none",text:"",title:""};
+  if(s.erp==="ok")erp={kind:"ok",text:"ERP 연동됨",
+    title:"푸른이알피 업체관리와 이어졌습니다 — "+(s.erpName||"")+" · 신고서·의견청취서에 소재지·대표자가 자동으로 들어갑니다"};
+  else if(s.erp==="miss")erp={kind:"warn",text:"ERP 미연결",
+    title:"푸른이알피 업체관리에서 '"+(s.erpName||"")+"'을(를) 찾지 못했습니다 — 신고서의 소재지·대표자는 공란으로 출력됩니다"};
+  return {parts:parts,erp:erp};
+}
+function renderStatusBar(){
+  const box=$("statusbar"); if(!box)return;
+  let w=null; try{const raw=localStorage.getItem(WORK_KEY); if(raw)w=JSON.parse(raw);}catch(e){}
+  const st=statusLineOf({
+    site:(LAST&&String(LAST.site||"").replace(/^[📄🏢]\s*/u,""))||"",
+    size:$("size")?$("size").value:"", asof:$("asof")?$("asof").value:"",
+    arts:(LAST&&LAST.arts)?LAST.arts.length:0,
+    savedAt:(w&&w.savedAt)||"",
+    erp:SITE_INFO?"ok":((typeof ERP_COS!=="undefined"&&ERP_COS.length&&LAST)?"miss":""),
+    erpName:SITE_INFO?SITE_INFO.name:((LAST&&String(LAST.site||"").replace(/^[📄🏢]\s*/u,""))||"")
+  });
+  const bits=st.parts.map(p=>`<span class="sb-p">${escapeH(p)}</span>`).join('<span class="sb-sep">·</span>');
+  const erp=st.erp.kind==="none"?"":`<span class="sb-erp ${st.erp.kind}" title="${escapeH(st.erp.title)}">${escapeH(st.erp.text)}</span>`;
+  box.innerHTML=bits+(erp?'<span style="flex:1"></span>'+erp:"");
+  box.classList.toggle("on",!!(bits||erp));
+}
+/* 임시저장 배지 — 이제 상태 줄이 말한다. 여기는 [＋ 다른 취업규칙 시작]·[임시저장 지우기]
+   두 단추만 남기고 띠를 걷었다(설계서 §0 — 없애지 않고 자리를 옮긴다). */
 function updateWorkBadge(){
+  renderStatusBar();
   const box=$("work-badge"); if(!box)return;
   let w=null; try{const raw=localStorage.getItem(WORK_KEY); if(raw)w=JSON.parse(raw);}catch(e){}
   if(!w||!w.orig){ box.style.display="none"; return; }
@@ -4426,7 +4480,9 @@ function updateWorkBadge(){
   const editCnt=(w.state&&Array.isArray(w.state.items))?w.state.items.filter(it=>itemKind(it)!=="유지").length:0;
   const where=(FBDB&&FBUSER)?"계정에 연결 보관 — 자동로그아웃·다른 PC에서도 이어서 작업 가능":"이 브라우저에만 보관 — 로그인하면 계정에 연결됩니다";
   const who=(w.orig.site?w.orig.site+" ":"")+"("+(w.orig.name||"작업 문서")+")";
-  $("work-badge-txt").textContent="💾 자동 저장됨 — "+who+(editCnt?" · 편집 "+editCnt+"건":"")+hhmm+" · 보관함에도 자동 반영 ("+where+")";
+  /* 긴 글은 상태 줄과 귀띔으로 옮겼다 — 이 자리에는 «할 수 있는 일»만 남긴다 */
+  $("work-badge-txt").textContent=(editCnt?"편집 "+editCnt+"건":"작업 중");
+  box.title=who+hhmm+" · 보관함에도 자동 반영 ("+where+")";
   box.style.display="flex";
 }
 /* 다른 취업규칙 시작 — 지금 작업을 보관함에 확정 저장하고 임시저장 슬롯을 비운 뒤 새 파일 선택 */
@@ -4507,6 +4563,8 @@ async function applyWorkObject(w,opts){
   const src=opts.source==="cloud"?"☁ 다른 기기(계정)에서 ":"↺ ";
   note.textContent=src+"이전 작업이 복원되었습니다 — "+(o.name||"")+((w.state&&w.state.items&&w.state.items.length)?" · 편집 내용 포함":"")+(o.truncated?" (파일이 커서 텍스트만 보관됨)":"");
   pv.insertBefore(note,pv.firstChild);
+  /* 복원은 «그때 한 번» 알릴 일이다. 계속 붙어 있으면 첫 화면 한 줄을 영영 먹는다. */
+  setTimeout(()=>{ try{ note.remove(); }catch(_){} }, 6000);
   updateWorkBadge();
 }
 async function restoreWork(){
