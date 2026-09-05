@@ -166,10 +166,15 @@ test('올린 날짜를 크게', async (t) => {
     /* ⚠ 「class="d" 라는 낱말이 있나」로는 부족하다. **실제로 그려** 두 줄이
        나오는지, 그리고 이름에 든 꺾쇠가 화면을 깨지 않는지 본다 —
        한쪽만 감싸도 다른 쪽 낱말이 남아 낱말 찾기는 통과한다(뮤테이션에서 걸렸다). */
-    const el = { innerHTML: '' };
+    /* ⚠ style 도 함께 준다 — 제목줄이 「📄 한글 원본」 단추를 켜고 끈다(2026-09-05).
+       없으면 그리는 도중에 넘어져 «두 줄인가»를 보기도 전에 깨진다. */
+    const el = { innerHTML: '', style: {} };
     /* 📌 증빙 알약이 늘었다(2026-08-26) — 그 둘도 함께 넣어야 제목줄이 그려진다 */
     const f = new Function('$', 'photoTime', 'docLabel', 'photoWhere', 'esc', 'isUsed', 'usedWhereShort',
       cut(app, 'function viewerDateText(') + '\n' +
+      /* 원본 단추 판정도 «진짜 것»을 넣는다 — 가짜를 넣으면 이 검사가
+         「그려지더라」만 보고 실제 판정이 깨진 것을 못 잡는다 */
+      cut(app, 'function origOf(') + '\n' +
       cut(app, 'function renderViewerTitle(') + '\nreturn renderViewerTitle;')(
       function () { return el; },
       function (it) { return it.ts; },

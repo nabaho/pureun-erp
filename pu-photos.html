@@ -19,7 +19,7 @@
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <!-- ?v= 저장 층을 고치면 반드시 올린다 — 캐시에 묵으면 고친 것이 통째로 묻힌다. -->
-<script src="js/pu-photo-store.js?v=23"></script>
+<script src="js/pu-photo-store.js?v=24"></script>
 <!-- 주민번호 가림 — 계산 층과, 급여데이터함과 나눠 쓰는 긋기 층 -->
 <script src="js/pu-rrn-mask.js?v=4"></script>
 <script src="js/pu-rrn-mask-ui.js?v=3"></script>
@@ -2304,7 +2304,7 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
     <!-- 📋 복사 — 끌어다 놓기를 한글이 안 받아 주는 일이 있다(대표 보고 2026-08-25).
          그때 확실한 길이 이것이다: 눌러서 복사한 뒤 한글에서 Ctrl+V.
          ⚠ 격자 도구줄의 「📋 복사」와 **같은 함수**를 부른다 — 두 벌이 되면 한쪽만 고쳐진다. -->
-    <div class="bar"><button class="vback" onclick="closeViewer()">← 돌아가기</button><span id="viewerInfo"></span><button id="viewerCopy" onclick="copyViewerImage()" title="복사한 뒤 한글·워드·메일에서 Ctrl+V (Ctrl+C 로도 됩니다)">📋 복사</button><button onclick="closeViewer()">닫기 ✕</button></div>
+    <div class="bar"><button class="vback" onclick="closeViewer()">← 돌아가기</button><span id="viewerInfo"></span><button id="viewerOrig" onclick="downloadViewerOriginal()" style="display:none" title="한글에서 열 수 있는 원본 파일을 받습니다 — 보이는 쪽은 글자만 옮겨 그린 것입니다">📄 한글 원본</button><button id="viewerCopy" onclick="copyViewerImage()" title="복사한 뒤 한글·워드·메일에서 Ctrl+V (Ctrl+C 로도 됩니다)">📋 복사</button><button onclick="closeViewer()">닫기 ✕</button></div>
     <div id="viewerBody">
       <!-- 사진을 누르면 원본 크기, 사진 바깥(어두운 곳)을 누르면 닫힌다 -->
       <!-- draggable="false": 이 그림을 끌면 창이 남의 파일로 오해해 같은 사진을
@@ -5852,6 +5852,8 @@ async function addFiles(fileList, isDoc, opts) {
      ⚠ 묻기 전에 펼쳐야 한다 — 쪽수와 글자를 알아야 「사업자번호가 몇 가지」를 셀 수
        있고, 그것이 있어야 권할 수 있다. 펼치는 것은 이 기기에서 하는 일이라 공짜다. */
   const spread = [];
+  /* 원본을 못 담은 한글 — 모아 두었다가 끝에 «이름을 대고» 한 번에 말한다 */
+  const hwpNoOrig = [];
   for (const f of picked) {
     /* 팩스 tif 도 «쪽으로» 펼친다 — PDF 와 같은 모양이라 아래 길을 그대로 탄다 */
     if (isTif(f)) {
@@ -5868,7 +5870,21 @@ async function addFiles(fileList, isDoc, opts) {
        글자를 뽑아 그린 쪽이라 __pdfText 가 늘 붙는다 → 판독이 **글자로** 간다(더 싸고 더 정확). */
     if (isHwp(f)) {
       try {
-        spread.push({ raw: f, pdf: await hwpToPages(f), hwp: true });
+        const pages = await hwpToPages(f);
+        /* ── 원본 파일도 «함께» 담는다 (대표 지시 2026-09-05 「보관」) ──
+           쪽 그림에는 표 줄·도장이 없다. 나중에 한글로 다시 열려면 원본이 있어야 한다.
+           ⚠ 원본 담기가 실패해도 **쪽은 그대로 올린다** — 판독은 글자로 이미 된다.
+             대신 조용히 넘어가지 않고 아래에서 이름을 대고 말해 준다(hwpNoOrig).
+             「담겼겠지」 하고 원본을 지우는 것이 제일 나쁜 일이다. */
+        let orig = null;
+        try {
+          orig = await PuPhotoStore.putOriginal(
+            PuPhotoStore.newId(), PuPhotoStore.yearOf(Date.now()), f, f.name || '한글문서');
+        } catch (e2) {
+          console.warn('[한글 원본]', e2);
+          hwpNoOrig.push((f.name || '한글문서') + ' — ' + ((e2 && e2.message) || e2));
+        }
+        spread.push({ raw: f, pdf: pages, hwp: true, orig: orig });
       } catch (e) {
         console.warn('[한글 읽기]', e);
         alert('한글 파일을 열지 못했습니다: ' + (f.name || '') + '\n' + ((e && e.message) || e) +
@@ -5890,7 +5906,14 @@ async function addFiles(fileList, isDoc, opts) {
      ⚠ 서식이 안 담긴다는 것은 아래에서 한 번 말해 준다. */
   const hwpN = spread.filter(function (x) { return x.hwp; }).length;
   if (hwpN) {
-    toast('한글 ' + hwpN + '개 — 글자만 옮겨 담습니다(표 줄·도장 같은 서식은 안 담깁니다)');
+    toast('한글 ' + hwpN + '개 — 글자를 옮겨 담고 «원본 파일도 함께» 보관합니다');
+  }
+  /* ⚠ 원본을 못 담았으면 **반드시 말한다.** 조용히 넘어가면 「담겼겠지」 하고
+     원본을 지우게 된다 — 그러면 표 줄·도장이 있는 서류가 영영 사라진다. */
+  if (hwpNoOrig.length) {
+    alert('한글 «원본 파일»을 창고에 못 담았습니다:\n· ' + hwpNoOrig.join('\n· ') +
+      '\n\n글자는 그대로 담고 판독도 됩니다 — 없는 것은 원본 파일뿐입니다.\n' +
+      '표 줄·도장이 필요한 서류라면 원본을 지우지 마시고 다시 시도해 주세요.');
   }
   const asks = spread.filter(function (x) { return x.pdf && !x.hwp && x.pdf.pages.length > 1; })
     .map(function (x) {
@@ -5949,6 +5972,11 @@ async function addFiles(fileList, isDoc, opts) {
            둘을 함께 남겨야 "나머지는 어디 갔나"에 답할 수 있다. */
         if (!apart) {
           file.__pdfDoc = { name: base, page: p.page, total: r.total, taken: r.taken, group: gid };
+          /* 한글 원본은 **쪽마다** 적어 둔다(2026-09-05). 파일은 창고에 «한 벌»뿐이고
+             여기 적히는 것은 주소 한 줄이다 — 그 대신 몇 쪽을 보고 있든 그 자리에서
+             바로 원본을 받을 수 있다. 첫 쪽에만 적으면 3쪽을 보다가 원본을 받으려고
+             1쪽을 찾아 돌아가야 한다. */
+          if (x.orig) file.__pdfDoc.orig = x.orig;
         }
         /* 문서에서 펼친 쪽이라는 표시. 아래 장수 상한이 이것을 보고 **세지 않는다** —
            「따로 담기」를 고르면 __pdfDoc 가 없으므로 그것으로는 가릴 수 없다. */
@@ -12445,6 +12473,35 @@ function renderViewerTitle(it) {
     : '';
   el.innerHTML = (date ? '<span class="d">' + esc(date) + '</span>' : '') +
     (sub ? '<span class="s">' + esc(sub) + '</span>' : '') + used;
+  /* 📄 한글 원본 — 있을 때만 보인다(2026-09-05). 보이는 쪽은 글자를 옮겨 그린
+     것이라 표 줄·도장이 없다. 원본은 창고에 따로 담겨 있고 여기가 그 입구다. */
+  const ob = $('viewerOrig');
+  const o = origOf(it);
+  ob.style.display = o ? '' : 'none';
+  if (o) ob.title = (o.name || '한글 원본') + ' — 한글에서 열 수 있는 원본 파일을 받습니다';
+}
+
+/* 이 사진에 딸린 «원본 파일» — 한 문서의 어느 쪽에서든 같은 것이 나온다. */
+function origOf(it) {
+  const o = it && it.meta && it.meta.doc && it.meta.doc.orig;
+  return (o && o.url) ? o : null;
+}
+
+/* 원본 파일 받기. 주소에 토큰이 붙어 있어 창고 규칙과 무관하게 열린다 —
+   관리자·공유받은 사람도 같은 길로 받는다(사진 본문과 같은 방식).
+   ⚠ 창고에 올릴 때 «원래 이름으로 받아지게» 적어 두었다(contentDisposition).
+     그래서 여기서는 주소만 열면 된다 — download 표는 남의 서버 파일에 안 먹는다. */
+function downloadViewerOriginal() {
+  const it = gridItems.find(x => x.id === viewerId);
+  const o = origOf(it);
+  if (!o) { toast('이 서류에는 담아 둔 원본 파일이 없습니다'); return; }
+  const a = document.createElement('a');
+  a.href = o.url;
+  a.rel = 'noopener';
+  a.target = '_blank';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 /* ══════ 앞뒤 사진 넘기기 (대표 지시 2026-08-17) ══════
