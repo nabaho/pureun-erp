@@ -2299,7 +2299,13 @@ function _cleanAddr(s){
 }
 var DOC_PARSE={ inka:{label:'고용노동부 설립인가증',fn:parseInka},
                 corpreg:{label:'법인 등기사항전부증명서',fn:parseCorpReg},
-                taxid:{label:'고유번호증',fn:parseTaxId} };
+                taxid:{label:'고유번호증',fn:parseTaxId},
+                /* 정관은 «칸을 채우는» 서류가 아니다 — 조문 전체가 내용이라 통째로 보관한다.
+                   full:true 면 판독 결과를 칸에 나눠 넣지 않고 전문을 그대로 들고 간다.
+                   ⚠ 전문은 funds 에 두지 않는다. funds 는 42개가 «늘» 켜져 있는 자리라
+                     정관 한 벌(1만 자)만 붙어도 첫 화면이 그만큼 무거워진다.
+                     charters/{기금}/{판} 에 따로 쌓는다 — 나중에 판끼리 대조하려면 어차피 여러 벌이 든다. */
+                charter:{label:'정관',full:true} };
 
 /* ═══════════ 스캔 문서 OCR (tesseract.js) ═══════════
    스캔본은 글자가 없어 그림을 글자로 바꿔야 한다. 첫 사용 때만 엔진·한국어 데이터를 내려받는다(약 15MB).
@@ -5090,6 +5096,7 @@ function infoForm(f){
       ['dz-taxid','taxid','고유번호증','고유번호·법인등록번호·대표자']].map(function(z){
       return docZoneOne(z[0],z[1],z[2],z[3]);
     }).join('')
+    +charterZone()
     +'</div><div id="docIntakeOut" style="margin-top:8px"></div></div>'
     /* 제목 「기금 정보」는 바로 위 탭에 이미 있다 — 두 번 쓰지 않는다.
        ⓘ·당겨오기 단추는 첫 묶음 머리(기본) 줄 오른쪽에 얹어 한 줄을 더 아낀다. */
@@ -5150,7 +5157,7 @@ function _readOfficers(){
 }
 /* 서류 끌어놓기 → 판독 → 값 확인 후 폼에 반영 (저장은 [💾 저장] 눌러야 확정) */
 function bindDocIntake(){
-  [['dz-inka','inka'],['dz-corpreg','corpreg'],['dz-taxid','taxid']].forEach(function(p){
+  [['dz-inka','inka'],['dz-corpreg','corpreg'],['dz-taxid','taxid'],['dz-charter','charter']].forEach(function(p){
     _dzHandler[p[0]]=function(files){ readDocInto(p[0],p[1],files[0]); };
   });
 }
@@ -5182,7 +5189,8 @@ function openSubDocPick(){
 var DOC_FIND={
   inka:{label:'설립인가증', kw:['인가증','설립인가','인가서']},
   corpreg:{label:'법인 등기부등본', kw:['등기사항','등기부','등기사항전부증명']},
-  taxid:{label:'고유번호증', kw:['고유번호']}
+  taxid:{label:'고유번호증', kw:['고유번호']},
+  charter:{label:'정관', kw:['정관']}
 };
 /* 사진 한 장에서 «글자로 된 것»을 모은다 — 제목·직접분류·회사·메모·판독 칸 */
 function docFindText(it){
@@ -5276,7 +5284,7 @@ function renderDocFind(){
 }
 /* 고르면 «지금까지 쓰던 길»을 그대로 탄다 — 판독 → 확인 → 반영 */
 function docFindPick(kind,id,year){
-  var zid=({inka:'dz-inka',corpreg:'dz-corpreg',taxid:'dz-taxid'})[kind];
+  var zid=({inka:'dz-inka',corpreg:'dz-corpreg',taxid:'dz-taxid',charter:'dz-charter'})[kind];
   var x=(_dfFound[kind]||[]).filter(function(y){ return y.it.id===id; })[0];
   _pick={kind:kind,zid:zid,year:+year,fid:S.fundId,sid:'',yr:S.year,shelf:'',txn:'',
          items:[{id:id,meta:(x&&x.it.meta)||{}}]};
@@ -5586,7 +5594,7 @@ function unlinkScan(kind){
     });
   });
 }
-function docZoneLabel(kind){ return ({inka:'설립인가증',corpreg:'법인 등기부등본',taxid:'고유번호증',
+function docZoneLabel(kind){ return ({inka:'설립인가증',corpreg:'법인 등기부등본',taxid:'고유번호증',charter:'정관',
   sme:'중소기업확인서',reg:'등기부등본',bizno:'사업자등록증'})[kind]||kind; }   // 뒤 셋은 참여사업장 몫
 /* 드롭존 아래 한 줄 — 사진첩에서 고르기 / 이미 연결된 원본 보기 */
 /* ══ 푸른 기업정보함(기업정보함) 연동 ══
@@ -6034,7 +6042,29 @@ function docZoneOne(zid,kind,label,hint){
     +'<b style="font-size:12px;white-space:nowrap">⬇ '+esc(label)+'</b>'
     +'<span id="'+zid+'-stat" style="font-size:11px"></span></span>'
     +'<button onclick="openAlbumPick(\''+zid+'\',\''+kind+'\')" title="푸른사진첩에서 고르기" style="padding:1px 6px;font-size:11px">🖼</button>'
-    +(r?'<button onclick="openScan(\''+kind+'\')" title="'+esc('연결된 원본 보기 — '+r.year+'년 · '+(r.at||''))+'" style="padding:1px 6px;font-size:11px">📎</button>':'')
+    +(r?'<button onclick="openScan(\''+kind+'\')" class="primary" '
+       +'title="'+esc('연결된 원본 보기 — '+r.year+'년 · '+(r.at||''))+'" '
+       +'style="padding:1px 8px;font-size:11px;white-space:nowrap">📎 원본</button>':'')
+    +'</span>';
+}
+/* ══ 정관 칸 — 다른 셋과 달리 «전문»을 보관하므로 단추가 하나 더 있다(📄 전문) ══ */
+function charterZone(){
+  if(!charterLoad()) return '<span class="muted" style="font-size:11.5px">정관 확인 중…</span>';
+  var f=funds[S.fundId]||{}, r=(f.scans||{}).charter, list=S.ch||[];
+  var top=list[0];
+  return '<span style="display:inline-flex;align-items:center;gap:6px;border:1px dashed var(--line);border-radius:8px;'
+    +'padding:5px 9px;background:var(--bg);max-width:100%">'
+    +'<span id="dz-charter" class="dropz" ondragover="dzOver(event,1)" ondragleave="dzOver(event,0)" ondrop="dzDrop(event,\'dz-charter\')" '
+    +'onclick="dzPick(\'dz-charter\',\'.pdf,image/*\')" title="정관 — 조문 전체를 읽어 보관합니다 · 끌어다 놓기 또는 클릭해 선택" '
+    +'style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;border-radius:6px;padding:1px 3px">'
+    +'<b style="font-size:12px;white-space:nowrap">📜 정관</b>'
+    +'<span id="dz-charter-stat" style="font-size:11px">'
+      +(top?'<span class="chip ok" style="font-size:9.5px">'+esc(top.at)+'</span>':'')+'</span></span>'
+    +'<button onclick="openAlbumPick(\'dz-charter\',\'charter\')" title="푸른사진첩에서 고르기" style="padding:1px 6px;font-size:11px">🖼</button>'
+    +(r?'<button onclick="openScan(\'charter\')" class="primary" title="'+'연결된 원본 보기'+'" style="padding:1px 8px;font-size:11px;white-space:nowrap">📎 원본</button>':'')
+    +(top?'<button onclick="openCharterText(\''+top.id+'\')" title="읽어 둔 정관 전문 보기'
+        +(list.length>1?(' · '+list.length+'판'):'')+'" style="padding:1px 8px;font-size:11px;white-space:nowrap">📄 전문'
+        +(list.length>1?' <span class="muted">'+list.length+'판</span>':'')+'</button>':'')
     +'</span>';
 }
 function readDocInto(zid,kind,file){
@@ -6046,6 +6076,8 @@ function readDocInto(zid,kind,file){
   var stat=function(h){ if(S.fundId===myFid) dzStat(zid,h); };
   var done=function(txt,viaOcr){
     if(S.fundId!==myFid) return;    // 판독 도중 다른 기금으로 이동 → 결과 버림
+    /* 정관은 칸에 나눠 넣지 않는다 — 읽은 글자를 그대로 들고 확인 창으로 간다 */
+    if(def.full){ charterRead(txt,viaOcr,zid); return; }
     var got=def.fn(txt), keys=Object.keys(got).filter(function(k){return got[k];});
     if(!keys.length){ stat('<span style="color:var(--warn)">글자는 읽었지만 항목을 못 찾았습니다</span>'
       +(viaOcr?'<br><span class="muted" style="font-size:11px">스캔 상태가 나쁘면 인식이 어렵습니다 — 직접 입력하세요.</span>':'')); return; }
@@ -6072,6 +6104,90 @@ function readDocInto(zid,kind,file){
   };
   rd.onerror=function(){ stat('<span style="color:var(--danger)">파일을 열 수 없습니다</span>'); };
   rd.readAsArrayBuffer(file);
+}
+/* ══════════ 정관 (charters/{기금}/{판}) ══════════
+   대표 지시 2026-09-05 — 「기금정보에 정관도 있어야 한다. 정관 원본 스켄된것 있어야 하고
+   추후에 수정변경할 경우 비교대조와 변경사항 관련 회의록 까지 만들 수 있어야 한다.
+   우선은 기금정보에 정관을 넣고 ocr로 정리되고 클릭시 팝업 원본 볼 수 있게 해달라.」
+
+   ⚠ 판을 «덮어쓰지» 않는다. 올릴 때마다 새 판으로 쌓는다 — 나중에 판끼리 대조하고
+     무엇이 바뀌었는지 뽑으려면 옛 판이 남아 있어야 한다. 정관 변경은 인가 사항이라
+     「언제 무엇이 어떻게 바뀌었나」를 못 대면 곤란해진다.
+   ⚠ 전문은 funds 에 안 넣는다(42개가 늘 켜져 있는 자리다). 볼 때만 읽는다. */
+var _chRead=null;                      // 방금 읽은 정관 — 사람이 [저장]을 눌러야 들어간다
+function charterRead(txt,viaOcr,zid){
+  var t=String(txt||'').replace(/\r/g,'').replace(/[ \t]+\n/g,'\n').trim();
+  var body=t.replace(/\s/g,'');
+  if(body.length<200){
+    dzStat(zid,'<span style="color:var(--warn)">글자가 너무 적습니다('+body.length+'자) — 정관이 맞는지 확인하세요</span>');
+    return;
+  }
+  _chRead={fid:S.fundId,text:t,chars:body.length,ocr:!!viaOcr};
+  dzStat(zid,'<span style="color:#16a34a">✓ '+body.length.toLocaleString()+'자 읽음</span>');
+  openCharterConfirm();
+}
+function openCharterConfirm(){
+  var r=_chRead; if(!r) return;
+  var f=funds[r.fid]||{};
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">📜 정관 판독</h2>'
+    +'<span class="muted" style="font-size:11.5px">'+esc(f.short_name||f.name||'')+' · '+r.chars.toLocaleString()+'자</span>'
+    +(r.ocr?'<span class="chip warn" style="font-size:10px">OCR — 오독 가능</span>':'<span class="chip ok" style="font-size:10px">글자 PDF</span>')
+    +hlp('doc.charter')+'</div>'
+    +'<div style="max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:10px 12px;'
+    +'background:var(--bg);font-size:12px;line-height:1.7;white-space:pre-wrap">'+esc(r.text.slice(0,20000))
+    +(r.text.length>20000?'\n\n… (뒤가 더 있습니다 — 저장하면 전부 들어갑니다)':'')+'</div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="closeM()">취소</button>'
+    +'<button class="primary" onclick="saveCharter()">이 내용으로 새 판 저장</button></div>',{width:900});
+}
+function saveCharter(){
+  var r=_chRead; if(!r){ closeM(); return; }
+  var fid=r.fid;
+  if(S.fundId!==fid){ toast('다른 기금에서 읽은 정관입니다 — 다시 올려 주세요','warn'); closeM(); return; }
+  var rec={at:ymd(),by:(S.user||''),chars:r.chars,ocr:r.ocr?true:null,text:r.text};
+  fbDb.ref(NS+'/charters/'+fid).push().set(rec).then(function(){
+    _chRead=null; S.chFor=null; closeM();
+    _audit(fid,'정관 저장',r.chars.toLocaleString()+'자'+(r.ocr?' (OCR)':''));
+    if(S.fundId===fid) renderFund();
+    toast('정관을 새 판으로 저장했습니다');
+  }).catch(function(e){ toast('저장 실패: '+((e&&e.message)||e),'err'); });
+}
+/* 판 목록 — 화면에 「몇 판」인지 보이려면 있어야 한다. 본문(text)은 뺀다(무겁다). */
+function charterLoad(){
+  var fid=S.fundId;
+  if(S.chFor===fid) return true;
+  var _k=fid; S.chFor=_k; S.ch=null;
+  fbDb.ref(NS+'/charters/'+fid).once('value').then(function(sn){
+    if(S.chFor!==_k) return;
+    var v=sn.val()||{};
+    S.ch=Object.keys(v).map(function(k){ var o=v[k]||{};
+      return {id:k,at:o.at||'',by:o.by||'',chars:o.chars||0,ocr:!!o.ocr}; })
+      .sort(function(a,b){ return String(b.at).localeCompare(String(a.at)); });
+    if(S.tab==='info'&&S.view==='fund') renderFund();
+  }).catch(function(){ if(S.chFor===_k){ S.ch=[]; if(S.tab==='info'&&S.view==='fund') renderFund(); } });
+  return false;
+}
+/* 전문 보기 — 그때 한 벌만 읽는다 */
+function openCharterText(id){
+  var fid=S.fundId, list=S.ch||[];
+  var meta=list.filter(function(x){ return x.id===id; })[0]||list[0]||null;
+  if(!meta){ toast('저장된 정관이 없습니다','warn'); return; }
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">📜 정관 전문</h2>'
+    +'<span class="muted" style="font-size:11.5px">'+esc(meta.at)+' · '+Number(meta.chars).toLocaleString()+'자'
+    +(meta.by?' · '+esc(meta.by):'')+'</span>'
+    +(meta.ocr?'<span class="chip warn" style="font-size:10px">OCR</span>':'')+hlp('doc.charter')
+    +'<span style="flex:1"></span>'
+    +(list.length>1?'<select onchange="openCharterText(this.value)" style="padding:3px 7px;border:1px solid var(--line);border-radius:7px;font-size:11.5px">'
+      +list.map(function(x,i){ return '<option value="'+x.id+'"'+(x.id===meta.id?' selected':'')+'>'
+        +esc(x.at)+(i===0?' (최신)':'')+'</option>'; }).join('')+'</select>':'')
+    +'</div><div id="chBody" style="max-height:62vh;overflow:auto">'+loadingHTML()+'</div>',{width:900});
+  fbDb.ref(NS+'/charters/'+fid+'/'+meta.id+'/text').once('value').then(function(sn){
+    var b=$('chBody'); if(!b) return;
+    var t=sn.val()||'';
+    b.innerHTML=t?'<div style="border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--bg);'
+      +'font-size:12px;line-height:1.7;white-space:pre-wrap">'+esc(t)+'</div>'
+      :'<div class="muted" style="padding:16px 4px">본문이 비어 있습니다.</div>';
+  }).catch(function(e){ var b=$('chBody');
+    if(b) b.innerHTML='<div class="msg err">읽지 못했습니다: '+esc((e&&e.message)||e)+'</div>'; });
 }
 function renderDocIntake(){
   var box=$('docIntakeOut'); if(!box) return;
@@ -11042,6 +11158,11 @@ var HELP={
    +'<p><b>빈 칸만 채웁니다.</b> 이미 적혀 있는 값은 건드리지 않습니다. 채운 뒤 <b>[💾 저장]</b>을 눌러야 기록됩니다.</p>'
    +'<p>기금법인은 사업자등록번호가 아니라 <b>고유번호</b>를 받으므로, 카드의 번호는 고유번호 칸으로 들어갑니다 — 사업자등록증 카드라면 확인하세요.</p>'
    +'<p>목록은 <b>사업자등록증 카드만</b> 보여 주고, 지금 기금 이름과 닮은 것을 위로 올립니다. 사진은 읽지 않습니다(원본이 수 MB라 목록만 씁니다).</p>'},
+ 'doc.charter':{t:'정관',h:'<p>정관 원본을 올리면 <b>조문 전체를 글자로 읽어</b> 보관합니다. 다른 서류처럼 칸을 채우는 것이 아니라 <b>내용 자체</b>가 자료입니다.</p>'
+   +'<p><b>올릴 때마다 «새 판»으로 쌓습니다.</b> 덮어쓰지 않습니다 — 정관 변경은 인가 사항이라 「언제 무엇이 어떻게 바뀌었나」를 댈 수 있어야 합니다. 나중에 판끼리 대조하고 변경 회의록을 만들려면 옛 판이 남아 있어야 합니다.</p>'
+   +'<p><b>📎 원본</b> 은 사진첩의 스캔 원본을, <b>📄 전문</b> 은 읽어 둔 글자를 보여 줍니다. 판이 여럿이면 전문 창에서 골라 볼 수 있습니다.</p>'
+   +'<p><b>글자 PDF</b> 는 그대로 읽히고, <b>스캔 사진</b> 은 OCR 로 읽습니다 — OCR 은 오독이 있을 수 있어 딱지를 답니다. 200자보다 적게 읽히면 정관이 맞는지 되묻습니다.</p>'
+   +'<p>전문은 기금 목록에 얹지 않고 <b>볼 때만</b> 읽습니다 — 42개가 늘 켜져 있는 자리에 정관을 붙이면 첫 화면이 그만큼 무거워집니다.</p>'},
  'doc.auto':{t:'사진첩에서 서류 찾기',h:'<p>푸른사진첩을 훑어 이 기금의 <b>설립인가증 · 법인 등기부등본 · 고유번호증</b>을 <b>스스로 찾아</b> 줍니다. 해마다 사진을 눈으로 뒤질 필요가 없습니다.</p>'
    +'<p><b>어떻게 찾나</b> — 사진첩이 이미 읽어 둔 <b>서류 제목</b>으로 고릅니다. 제목에 「인가증」·「등기사항」·「고유번호」가 든 사진이 후보입니다. 기금 이름까지 맞으면 <b>이름 맞음</b> 딱지를 달고 맨 위에 둡니다.</p>'
    +'<p><b>이름이 안 맞아도 버리지 않습니다</b> — 사진첩에 기금 이름이 안 적힌 경우가 흔합니다. 종류만 맞으면 후보로 올립니다.</p>'

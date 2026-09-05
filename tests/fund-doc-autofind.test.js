@@ -101,7 +101,7 @@ test('기금 이름이 너무 짧으면 이름으로 올리지 않는다', () =>
 test('찾아만 주고, 넣는 것은 지금까지 쓰던 길을 그대로 탄다', () => {
   const p = grabFn('docFindPick');
   assert.match(p, /pickAlbumPhoto\(id\)/, '기존 판독 경로를 안 탄다 — 길이 둘이 되면 한쪽만 고쳐진다');
-  assert.match(p, /zid=\(\{inka:'dz-inka',corpreg:'dz-corpreg',taxid:'dz-taxid'\}\)\[kind\]/,
+  assert.match(p, /zid=\(\{inka:'dz-inka',corpreg:'dz-corpreg',taxid:'dz-taxid',charter:'dz-charter'\}\)\[kind\]/,
     '어느 칸에 넣을지 안 정하면 판독 결과가 갈 곳을 잃는다');
   /* 칸에 바로 쓰면 사람 눈을 건너뛴다 — 확인은 renderDocIntake → applyDocFound 가 한다 */
   assert.ok(!/fd-inka|el\.value=/.test(p), '판독 없이 칸에 바로 쓰고 있다');
@@ -158,8 +158,9 @@ test('찾는 종류가 실제 끌어놓기 칸과 짝이 맞는다', () => {
     assert.ok(box.D[k].kw.length, '찾을 낱말이 없다: ' + k);
     assert.ok(box.D[k].label, '이름이 없다: ' + k);
   });
-  assert.deepEqual(Object.keys(box.D).sort(), ['corpreg', 'inka', 'taxid'],
-    '완비 5항목을 채우는 서류 셋이어야 한다');
+  /* 완비 5항목을 채우는 셋 + 정관(전문을 보관하는 넷째) */
+  assert.deepEqual(Object.keys(box.D).sort(), ['charter', 'corpreg', 'inka', 'taxid'],
+    '찾아 주는 서류가 바뀌었다 — 끌어놓기 칸과 짝이 맞는지 함께 볼 것');
 });
 
 /* 브라우저에서 실제로 그려 보고 잡았다(2026-09-05): 로그인이 아직 안 붙은 사이
