@@ -42,7 +42,12 @@ test('받으신 뉴스레터의 뼈대가 그대로 있다', () => {
   const 편 = T.편지짓기(회차자료(), 설정);
   const h = 편.서식;
   assert.ok(h.indexOf('WEEKLY NEWS LETTER') >= 0, '배너 글자가 없다');
-  assert.ok(h.indexOf('2026년 8월 5주차') >= 0, '회차가 배너에 없다');
+  /* ⚠ 「08월」이다 — 달을 «두 자리»로. 받으신 원본 띠가 그렇다.
+     2026-09-05 까지 이 검사가 「8월」을 못 박고 있었고, 그래서 배너만
+     원본과 다르게 나가는 것을 «검사가 지켜 주고» 있었다. 값이 아니라
+     규칙(원본과 같은 꼴)을 못 박는다. */
+  assert.ok(h.indexOf('2026년 08월 5주차') >= 0, '회차가 배너에 없다');
+  assert.ok(h.indexOf('2026년 8월 5주차') < 0, '달이 한 자리로 나갔다 — 원본은 08월이다');
   assert.ok(h.indexOf('>Best<') >= 0, 'Best 딱지가 없다');
   C.꼭지들.forEach((g) => {
     assert.ok(h.indexOf(g.이름) >= 0, '차림표에 «' + g.이름 + '» 이 없다');
@@ -139,7 +144,7 @@ test('★ 지은 편지가 발송기를 지나도 뼈대가 남는다', () => {
   assert.ok(씻긴것.indexOf('<table') >= 0, '표가 버려졌다 — 편지가 줄글 뭉치로 도착한다');
   assert.ok(씻긴것.indexOf('<td') >= 0, '칸이 버려졌다');
   assert.ok(씻긴것.indexOf('WEEKLY NEWS LETTER') >= 0);
-  assert.ok(씻긴것.indexOf('2026년 8월 5주차') >= 0);
+  assert.ok(씻긴것.indexOf('2026년 08월 5주차') >= 0);
   assert.ok(씻긴것.indexOf('>Best<') >= 0);
   assert.ok(씻긴것.indexOf('background-color:#6f5a48') >= 0, '배너 빛깔이 버려졌다');
   assert.ok(/padding:\s*\d/.test(씻긴것), '여백이 버려졌다 — 글자가 서로 붙는다');
