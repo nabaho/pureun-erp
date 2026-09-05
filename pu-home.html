@@ -2585,9 +2585,9 @@ function openPull() {
          경력관리가 밀어 넣은 클라우드 사본(kcareer/{uid}/ls)을 한 번 더 보고 나서 말한다.
          (규칙상 kcareer/$uid 는 본인만 읽을 수 있으니 내 것은 이 길로 읽힌다.) */
       const local = kcareerFromLocal();
-      if (careerCount(local) > 0) { Pull.items = local; renderPull(); return null; }
+      if (careerCount(local) > 0) { Pull.items = 경력차례(local); renderPull(); return null; }
       return kcareerFromDb(uid).then(items => {
-        Pull.items = items;
+        Pull.items = 경력차례(items);
         if (careerCount(items) === 0) {
           Pull.err = '이 브라우저에도, 경력관리 클라우드 사본에도 자료가 없습니다 — '
             + '경력관리(kcareer.html)를 열어 «클라우드 저장»을 한 번 눌러 주십시오.';
@@ -2595,7 +2595,7 @@ function openPull() {
         renderPull();
       }).catch(e => {
         console.warn('[경력관리 클라우드]', e && e.code);
-        Pull.items = local;
+        Pull.items = 경력차례(local);
         Pull.err = '이 브라우저에 경력관리 자료가 없고, 클라우드 사본도 «읽지 못했습니다»'
           + (e && e.code ? '(' + e.code + ')' : '') + ' — 자료가 없다는 뜻이 아닙니다.';
         renderPull();
@@ -2607,7 +2607,7 @@ function openPull() {
       renderPull();
       return null;
     }
-    return kcareerFromDb(uid).then(items => { Pull.items = items; renderPull(); }).catch(e => {
+    return kcareerFromDb(uid).then(items => { Pull.items = 경력차례(items); renderPull(); }).catch(e => {
       Pull.err = '「' + d.name + '」 님의 경력관리 자료를 읽지 못했습니다. '
         + '경력관리 자료는 본인 계정에만 열려 있어, 본인이 직접 뽑아 주셔야 합니다.';
       Pull.items = {};
@@ -2638,6 +2638,51 @@ function itemWhen(it, kind) {
   const k = careerKindOf(kind);
   const p = (k && k.pick) ? (k.pick(it || {}) || {}) : {};
   return String(p.when == null ? '' : p.when).trim();
+}
+
+/* ══════ 경력을 «최근 것부터» 놓는다 (대표 지시 2026-09-03) ══════
+   「경력관리는 최근기간 순서로 정리해달라」
+   ★ 자료가 오는 차례는 «담은 차례»다 — 2026.04 · 2026.07 · 2026.04 · 2026.08 …
+     이렇게 뒤섞여 나와서, 103건 가운데 무엇이 요즘 것인지 눈으로 못 고른다.
+   ★ 날짜를 «표시 글(when)» 하나에서만 읽는다. 갈래마다 칸 이름이 다른데
+     (위촉장은 periodStart, 자격증은 date, 학력은 period …), 여기서 갈래별로
+     또 갈라 읽으면 두 곳이 어긋나 «화면에 보이는 날짜»와 «줄 세운 날짜»가 달라진다.
+   ⚠ 차례를 «자료를 받을 때» 정한다. 그릴 때 정하면 체크한 번호(kind:i)가 어긋나
+     엉뚱한 것이 골라진다 — 고른 것과 넣는 것이 달라지는 조용한 사고다. */
+
+/* 「2026.04.29」·「2026-4-9」·「2026.04」·「2026」 → 20260429 / 20260409 / 20260400 / 20260000 */
+function 날짜숫자(s) {
+  const m = /(\d{4})\s*[.\-/년]?\s*(\d{1,2})?\s*[.\-/월]?\s*(\d{1,2})?/.exec(String(s == null ? '' : s));
+  if (!m) return 0;
+  return Number(m[1]) * 10000 + Number(m[2] || 0) * 100 + Number(m[3] || 0);
+}
+
+/* 한 건의 «시작」과 「끝」. 없으면 0 — 0 은 맨 뒤로 간다. */
+function 기간숫자(it, kind) {
+  const 조각 = itemWhen(it, kind).split('~');
+  return { 시작: 날짜숫자(조각[0]), 끝: 조각.length > 1 ? 날짜숫자(조각[1]) : 0 };
+}
+
+/* 갈래마다 «최근 시작한 것»부터.
+   ★ 날짜 없는 것(0)은 «저절로» 맨 뒤로 간다 — 내림차순이라 0 이 가장 작다.
+     따로 막는 줄을 두었다가 걷어냈다: 되돌림으로 걸어 보니 «있으나 없으나 같았다».
+     하는 일 없는 줄을 남겨 두면 다음 사람이 그것을 «규칙»으로 읽는다.
+   ★ 날짜 없는 것끼리는 «담은 차례 그대로»다 — 자바스크립트 정렬이 차례를 지킨다.
+     강의·수료증에는 날짜가 빈 것이 흔한데, 그것이 뒤죽박죽이면 찾기가 더 어렵다.
+   ⚠ 원본 목록을 «제자리에서» 뒤집지 않는다(slice) — 같은 자료를 보는 다른 화면이
+     함께 흔들린다. */
+function 경력차례(items) {
+  const out = {};
+  Object.keys(items || {}).forEach(kind => {
+    const 목록 = items[kind];
+    if (!Array.isArray(목록)) { out[kind] = 목록; return; }
+    out[kind] = 목록.slice().sort((a, b) => {
+      const A = 기간숫자(a, kind), B = 기간숫자(b, kind);
+      if (A.시작 !== B.시작) return B.시작 - A.시작;   /* 최근 시작이 위로 (없으면 0 → 뒤로) */
+      return B.끝 - A.끝;                              /* 같은 날 시작이면 늦게 끝나는 것이 위로 */
+    });
+  });
+  return out;
 }
 
 function pullTab(kind) { Pull.kind = kind; renderPull(); }

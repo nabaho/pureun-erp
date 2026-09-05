@@ -377,7 +377,7 @@ test('★ 이 브라우저에 내 경력이 없으면 클라우드 사본을 한
   ctx.kcareerFromLocal = () => ({ wiccok: [], license: [], edu: [], complete: [], lecture: [] });
   ctx.kcareerFromDb = () => { asked++; return Promise.resolve({ wiccok: [{ org: '가' }], license: [], edu: [], complete: [], lecture: [] }); };
   run(ctx, constSource('CAREER_KINDS') + '\n' + fnSource('careerCount') + '\n'
-    + fnSource('uidFailText') + '\n' + fnSource('openPull'));
+    + fnSource('uidFailText') + '\n' + fnSource('itemWhen') + '\n' + fnSource('날짜숫자') + '\n' + fnSource('기간숫자') + '\n' + fnSource('경력차례') + '\n' + fnSource('openPull'));
   ctx.openPull();
   await tick(); await tick();
   assert.equal(asked, 1, '로컬이 비었는데 클라우드를 안 봤습니다 — 「없다」고 거짓말하게 됩니다');
@@ -396,7 +396,7 @@ test('이 브라우저에 내 경력이 있으면 클라우드를 괜히 부르�
   ctx.kcareerFromLocal = () => ({ wiccok: [{ org: '로컬' }], license: [], edu: [], complete: [], lecture: [] });
   ctx.kcareerFromDb = () => { asked++; return Promise.resolve({}); };
   run(ctx, constSource('CAREER_KINDS') + '\n' + fnSource('careerCount') + '\n'
-    + fnSource('uidFailText') + '\n' + fnSource('openPull'));
+    + fnSource('uidFailText') + '\n' + fnSource('itemWhen') + '\n' + fnSource('날짜숫자') + '\n' + fnSource('기간숫자') + '\n' + fnSource('경력차례') + '\n' + fnSource('openPull'));
   ctx.openPull();
   await tick(); await tick();
   assert.equal(asked, 0);
@@ -413,7 +413,7 @@ test('★ 로컬도 클라우드도 «못 읽었으면» 「없다」고 하지 
   ctx.kcareerFromLocal = () => ({ wiccok: [], license: [], edu: [], complete: [], lecture: [] });
   ctx.kcareerFromDb = () => Promise.reject({ code: 'PERMISSION_DENIED' });
   run(ctx, constSource('CAREER_KINDS') + '\n' + fnSource('careerCount') + '\n'
-    + fnSource('uidFailText') + '\n' + fnSource('openPull'));
+    + fnSource('uidFailText') + '\n' + fnSource('itemWhen') + '\n' + fnSource('날짜숫자') + '\n' + fnSource('기간숫자') + '\n' + fnSource('경력차례') + '\n' + fnSource('openPull'));
   ctx.openPull();
   await tick(); await tick();
   assert.match(ctx.Pull.err, /읽지 못했습니다/);
@@ -430,7 +430,7 @@ test('남의 것을 못 읽는 것은 정직하게 그대로 알린다', async (
   ctx.kcareerFromLocal = () => ({});
   ctx.kcareerFromDb = () => Promise.reject({ code: 'PERMISSION_DENIED' });
   run(ctx, constSource('CAREER_KINDS') + '\n' + fnSource('careerCount') + '\n'
-    + fnSource('uidFailText') + '\n' + fnSource('openPull'));
+    + fnSource('uidFailText') + '\n' + fnSource('itemWhen') + '\n' + fnSource('날짜숫자') + '\n' + fnSource('기간숫자') + '\n' + fnSource('경력차례') + '\n' + fnSource('openPull'));
   ctx.openPull();
   await tick(); await tick();
   assert.match(ctx.Pull.err, /본인/, '본인이 직접 뽑아야 한다는 안내가 사라졌습니다');
