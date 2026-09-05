@@ -146,7 +146,11 @@ test('업체관리 검색이 고유번호를 몸통으로 찾는다', () => {
 test('업체관리 표에 번호 칸이 있고, 다른 표는 건드리지 않았다', () => {
   const heads = (erp.match(/key:'(h1n|a1n)'/g) || []).length;
   assert.equal(heads, 2, '★ 업체관리의 두 표(사무대행·일반)에만 머리줄이 있어야 합니다');
-  const cells = (erp.match(/PuOntology\.formatCompanyNumber\(co\)\) \|\| '—'/g) || []).length;
+  /* ⚠ 여기서 보는 것은 «칸이 몇 곳인가»이지 «무엇을 그리는가»가 아니다.
+     처음에는 formatCompanyNumber 글자를 그대로 박아 두었는데, 2026-09-05 에
+     대표 지시로 표에는 몸통만 그리도록 바꾸자 «멀쩡한 개선» 때문에 이 검사가 깨졌다.
+     그리는 내용은 tests/co-no-column.test.js 가 따로 지킨다 — 여기서는 자리만 센다. */
+  const cells = (erp.match(/PuOntology\.(companyNumberBody|formatCompanyNumber)\(co\)\) \|\| '—'/g) || []).length;
   assert.equal(cells, 2, '★ 번호 칸이 두 곳이어야 합니다 — 같은 「#」 칸 꼴이 다른 표에도 있어 엉뚱한 표에 들어간 적이 있습니다');
 });
 
