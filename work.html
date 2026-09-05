@@ -3276,39 +3276,189 @@ function mailUnsee(k){
 function mailNew(it){ return mailFor(it).filter(function(m){ return !mailChk(m); }); }
 /* ⚠ 업무 번호를 «받아서» 쓴다. it._id 는 allItems() 가 지나가며 붙여 주는 칸이라
    드로어가 items[id] 를 곧바로 집어 왔을 때는 비어 있을 수 있다. */
-function dMailHTML(it,itemId){
-  if(!mailSrc) return '';                    // 아직 안 읽었거나 못 읽었다 — 조용히 없다
-  var arr=mailFor(it);
-  if(!arr.length) return '';
-  /* 안 본 것이 위로. 「무엇을 아직 안 봤나」가 이 상자를 여는 까닭이다. */
-  arr=arr.slice().sort(function(a,b){
-    var ca=mailChk(a)?1:0, cb=mailChk(b)?1:0;
-    if(ca!==cb) return ca-cb;
-    return Number(b.at||0)-Number(a.at||0);
+/* ══════════════════════════════════════════════════════════════════════
+   이 업체에 «보낸 것»도 함께 (대표 지시 2026-09-05)
+   ══════════════════════════════════════════════════════════════════════
+   「각 사업장에 이메일이 있었던 기록도 모두 연결시고 뭐 했는지도 간략하게」
+
+   받은 것은 이미 위에서 붙였다(paydata/maillog). 나머지 반쪽 — «우리가 보낸 것»은
+   기업정보함이 벌써 쌓고 있다:
+       pucards/sentDocs/{회사열쇠}/{번호}
+       · 1:1 로 보낸 것   {at,by,kind,names[],set,card,who}
+       · 묶음으로 보낸 것 {at,day,by,kind,name,batch}
+
+   ⚠ 읽기만 한다. 여기서 메일을 보내지 않는다 — 보내는 곳은 기업정보함 그대로다.
+   ⚠ 규칙은 안 고친다 — pucards 는 읽기가 MAIL(메일 있는 로그인 직원)이다.
+     대표가 콘솔에 붙여넣을 것이 없다.
+   ⚠ 업무를 열 때 «그 회사 것만» 읽는다. 회사가 사천 곳이라 통째로는 못 읽는다
+     (기업정보함도 같은 까닭으로 회사를 열 때만 읽는다).
+   ⚠⚠ 회사 열쇠 셈법은 기업정보함 것을 «글자 그대로» 옮겨 왔다(pu-cards.html coKeyOf).
+     이 파일의 _normCo 와 «다르다» — 「(유)·하이픈·가운뎃점」을 떼는지가 갈린다.
+     섞어 쓰면 화면에는 같은 회사인데 기록은 딴 회사에서 찾게 되어, 있는 것이
+     조용히 안 나온다. 고칠 일이 있으면 기업정보함 쪽과 «함께» 고쳐야 한다. */
+var SENT_ROOT='pucards/sentDocs', SENT_MAX=40;
+function _coDigits(s){ return String(s||'').replace(/\D/g,''); }
+function _coNorm(s){ return String(s||'').replace(/\s|\(주\)|주식회사|㈜/g,'').replace(/[.#$/[\]]/g,'').toLowerCase(); }
+/* 열쇠가 둘일 수 있다 — 사업자등록증이 «나중에» 들어온 회사는 옛 기록이
+   이름 열쇠(n…)에 남아 있다. 기업정보함도 읽을 때 두 열쇠를 합쳐 본다(coEffectiveExtra).
+   ⚠ 사업자번호는 업체 목록에서 온다 — 아직 안 받았으면 이름 열쇠만 나오고,
+     목록이 온 뒤 드로어가 다시 그려질 때 번호 열쇠도 읽는다. */
+function coKeysOf(it){
+  var co=null; try{ co=coFind(it); }catch(e){}
+  var nm=String((it&&it.company)||(co&&(co.name||co.companyName))||'');
+  var out=[];
+  var d=_coDigits((co&&(co.bizNo||co.bizno))||'');
+  if(d.length>=10) out.push(d);
+  var nk='n'+_coNorm(nm);
+  if(nk!=='n'&&out.indexOf(nk)<0) out.push(nk);
+  return out;
+}
+var sentSrc={}, _sentT={};
+/* 아직 안 읽었고 읽는 중도 아닌 열쇠 — 이것이 비면 다시 부르지 않는다.
+   ⚠ 「읽는 중」을 안 빼면 드로어가 스스로를 끝없이 다시 그린다. */
+function sentNeed(keys){
+  return (keys||[]).filter(function(k){ return k && !sentSrc[k] && !_sentT[k]; });
+}
+function sentLoad(keys){
+  if(typeof fbDb==='undefined'||!fbDb){
+    (keys||[]).forEach(function(k){ if(k) sentSrc[k]=[]; });
+    return Promise.resolve();
+  }
+  var need=sentNeed(keys);
+  if(!need.length) return Promise.resolve();
+  return Promise.all(need.map(function(k){
+    _sentT[k]=1;
+    return fbDb.ref(SENT_ROOT+'/'+k).limitToLast(SENT_MAX).once('value')
+      .then(function(s){
+        var v=s.val()||{};
+        sentSrc[k]=Object.keys(v).map(function(id){
+          var o=v[id]||{}; o._k=k; o._n=id; return o;
+        }).filter(function(o){ return Number(o.at||0); });
+        _sentT[k]=0;
+      })
+      /* 못 읽어도 조용히 없는 것으로 둔다 — 고장이 아니다(권한·빈 자리) */
+      .catch(function(){ sentSrc[k]=[]; _sentT[k]=0; });
+  }));
+}
+/* 두 열쇠에 같은 것이 있을 수 있다 — 같은 명함·같은 시각이면 한 번만 센다
+   (기업정보함 coSentList 가 쓰는 그 잣대와 같다). */
+function sentFor(it){
+  var seen={}, out=[];
+  coKeysOf(it).forEach(function(k){
+    (sentSrc[k]||[]).forEach(function(r){
+      var d=String(r.batch||r.card||'')+'@'+Number(r.at||0);
+      if(seen[d]) return;
+      seen[d]=1; out.push(r);
+    });
   });
-  var nNew=arr.filter(function(m){ return !mailChk(m); }).length;
+  return out.sort(function(a,b){ return Number(b.at||0)-Number(a.at||0); });
+}
+/* 한 줄로 — 「무엇을 보냈나」. 자료 이름이 곧 한 일이다.
+   ⚠ 지어내지 않는다. 여기 적히는 것은 실제로 보낸 자료·묶음의 이름뿐이다. */
+function sentBrief(r){
+  var names=(r&&r.names)||[];
+  var t=String((r&&r.name)||'').trim();
+  if(!t&&names.length) t=names.slice(0,2).join(', ')+(names.length>2?' 외 '+(names.length-2)+'건':'');
+  if(!t) t=String((r&&r.set)||'').trim();
+  if(!t) t=String((r&&r.kind)||'자료');
+  return t.length>46?t.slice(0,46)+'…':t;
+}
+function sentLogLine(r){ return '📤 '+_mailWhen(r.at).split(' ')[0]+' 보냄 — '+sentBrief(r); }
+/* 담은 표시는 받은 메일과 «같은 자리»(mailchk)에 둔다 — 같은 일이라 두 곳으로 가르면
+   되돌리기·표시가 두 벌이 된다. 메일 열쇠는 '-' 로 시작하는 푸시 번호라 겹치지 않는다. */
+function sentKey(r){ return safeKey('s|'+String((r&&r._k)||'')+'|'+String((r&&r._n)||'')); }
+function sentChk(r){ var k=sentKey(r); return (k&&mailchk&&mailchk[k])||null; }
+function sentFind(ck){
+  var hit=null;
+  Object.keys(sentSrc||{}).forEach(function(k){
+    (sentSrc[k]||[]).forEach(function(r){ if(sentKey(r)===ck) hit=r; });
+  });
+  return hit;
+}
+function sentTake(itemId,ck){
+  var r=sentFind(ck);
+  if(!r){ toast('보낸 기록을 찾지 못했습니다','warn'); return; }
+  /* ⚠ 기록이 먼저다. 기록이 안 됐는데 「담김」으로 표시하면 담긴 줄 알고 넘어간다. */
+  addLog(itemId,sentLogLine(r),todayStr(),'mail').then(function(ok){
+    if(!ok) return;
+    var rec={ by:(S.me&&S.me.sid)||'', byName:(S.me&&S.me.name)||'',
+      at:new Date().toISOString(), item:String(itemId||''), log:1 };
+    fbDb.ref(NS+'/mailchk/'+ck).set(rec).then(function(){
+      if(!mailchk) mailchk={};
+      mailchk[ck]=rec;
+      if(S.drawerId) renderDrawer();
+      route();
+    }).catch(function(){ if(S.drawerId) renderDrawer(); });
+  });
+}
+function dMailHTML(it,itemId){
+  var arr=mailSrc?mailFor(it):[];   // 아직 안 읽었거나 못 읽었다 — 조용히 없다
+  var snt=sentFor(it);
+  if(!arr.length&&!snt.length) return '';
+  /* 받은 것과 보낸 것을 «한 줄로» 섞어 시간순으로 놓는다 —
+     「이 업체와 무슨 일이 오갔나」는 받은 것만으로는 반쪽이다.
+     ⚠ 그래도 «안 본 메일»은 맨 위다. 이 상자를 여는 까닭이 그것이라,
+       석 달 전 안 본 메일이 어제 보낸 자료 밑으로 가라앉으면 안 된다.
+     ⚠ 보낸 것은 «이미 한 일»이라 안 본 것으로 세지 않는다. 세면 숫자가 안 줄어
+       무엇이 밀렸는지 못 찾는다(mailFlag 와 같은 까닭). */
+  var rows=arr.map(function(m){ return { out:0, at:Number(m.at||0), m:m, seen:!!mailChk(m) }; })
+    .concat(snt.map(function(r){ return { out:1, at:Number(r.at||0), r:r, seen:true }; }))
+    .sort(function(a,b){
+      var ca=a.seen?1:0, cb=b.seen?1:0;
+      if(ca!==cb) return ca-cb;
+      return b.at-a.at;
+    });
+  var nNew=rows.filter(function(x){ return !x.seen; }).length;
   var id=itemId||it._id;
-  return '<div class="dbox"><div class="bh">✉️ 이 업체에서 온 메일'+hlp('mail')
-    +'<span class="r">'+(nNew?'<b style="color:var(--danger)">안 본 '+nNew+'</b> / ':'')+arr.length+'건</span></div><div class="bb">'
-    +arr.slice(0,10).map(function(m){
-      var k=mailKey(m), c=mailChk(m);
-      return '<div class="mlrow'+(c?' seen':'')+'">'
-        +'<div class="t">'+esc(mailBrief(m))+'</div>'
-        +'<div class="s">'+esc(_mailWhen(m.at))+' · '+esc(m.from||'(보낸이 모름)')
-        +(Number(m.took||0)?' · <b>자료 '+Number(m.took)+'건 담김</b>':'')+'</div>'
-        +(m.preview?'<div class="p">'+esc(String(m.preview).slice(0,160))+'</div>':'')
-        +'<div class="mlb">'
-        +(c
-          ? '<span class="ok">'+(c.log?'✎ 기록에 담김':'✓ 확인함')
-              +' · '+esc(c.byName||'')+' '+esc(String(c.at||'').slice(5,10))+'</span>'
-            +'<span class="undo" onclick="mailUnsee(\''+escJ(k)+'\')" title="확인 표시를 지웁니다 (기록은 그대로 남습니다)">되돌리기</span>'
-          : '<button onclick="mailSee(\''+escJ(id)+'\',\''+escJ(k)+'\',1)" '
-              +'title="'+esc('주간 기록에 한 줄로 남깁니다: '+mailLogLine(m))+'">✎ 기록에 담기</button>'
-            +'<button onclick="mailSee(\''+escJ(id)+'\',\''+escJ(k)+'\',0)" '
-              +'title="기록할 것은 없지만 봤다고 표시합니다">✓ 확인만</button>')
-        +'</div></div>';
+  var cnt=(nNew?'<b style="color:var(--danger)">안 본 '+nNew+'</b> · ':'')
+    +'받음 '+arr.length+' · 보냄 '+snt.length;
+  return '<div class="dbox"><div class="bh">✉️ 이 업체와 오간 것'+hlp('mail')
+    +'<span class="r">'+cnt+'</span></div><div class="bb">'
+    +rows.slice(0,12).map(function(x){
+      if(x.out) return dSentRowHTML(x.r,id);
+      return dMailRowHTML(x.m,id);
     }).join('')
-    +(arr.length>10?'<div class="kbempty">외 '+(arr.length-10)+'건</div>':'')
+    +(rows.length>12?'<div class="kbempty">외 '+(rows.length-12)+'건</div>':'')
+    +'</div></div>';
+}
+// 받은 메일 한 줄
+function dMailRowHTML(m,id){
+  var k=mailKey(m), c=mailChk(m);
+  return '<div class="mlrow'+(c?' seen':'')+'">'
+    +'<div class="t">'+esc(mailBrief(m))+'</div>'
+    +'<div class="s">'+esc(_mailWhen(m.at))+' 받음 · '+esc(m.from||'(보낸이 모름)')
+    +(Number(m.took||0)?' · <b>자료 '+Number(m.took)+'건 담김</b>':'')+'</div>'
+    +(m.preview?'<div class="p">'+esc(String(m.preview).slice(0,160))+'</div>':'')
+    +'<div class="mlb">'
+    +(c
+      ? '<span class="ok">'+(c.log?'✎ 기록에 담김':'✓ 확인함')
+          +' · '+esc(c.byName||'')+' '+esc(String(c.at||'').slice(5,10))+'</span>'
+        +'<span class="undo" onclick="mailUnsee(\''+escJ(k)+'\')" title="확인 표시를 지웁니다 (기록은 그대로 남습니다)">되돌리기</span>'
+      : '<button onclick="mailSee(\''+escJ(id)+'\',\''+escJ(k)+'\',1)" '
+          +'title="'+esc('주간 기록에 한 줄로 남깁니다: '+mailLogLine(m))+'">✎ 기록에 담기</button>'
+        +'<button onclick="mailSee(\''+escJ(id)+'\',\''+escJ(k)+'\',0)" '
+          +'title="기록할 것은 없지만 봤다고 표시합니다">✓ 확인만</button>')
+    +'</div></div>';
+}
+/* 보낸 것 한 줄.
+   ⚠ 「✓ 확인만」을 안 붙인다 — 보낸 것은 이미 한 일이라 치울 것이 없다.
+   ⚠ 받는 사람의 «메일 주소»는 안 보여 준다. 기업정보함이 회사 쪽에 주소를 안 남긴
+     까닭과 같다 — 이름이면 「누구에게 갔나」는 알 수 있다. */
+function dSentRowHTML(r,id){
+  var ck=sentKey(r), c=sentChk(r);
+  var by=String(r.by||'').split('@')[0];
+  return '<div class="mlrow seen">'
+    +'<div class="t">📤 '+esc(sentBrief(r))+'</div>'
+    +'<div class="s">'+esc(_mailWhen(r.at))+' 보냄'
+    +(r.who?' · '+esc(String(r.who))+' 앞':'')
+    +(by?' · '+esc(by):'')
+    +(r.batch?' · 묶음':'')+'</div>'
+    +'<div class="mlb">'
+    +(c
+      ? '<span class="ok">✎ 기록에 담김 · '+esc(c.byName||'')+' '+esc(String(c.at||'').slice(5,10))+'</span>'
+        +'<span class="undo" onclick="mailUnsee(\''+escJ(ck)+'\')" title="담은 표시를 지웁니다 (기록은 그대로 남습니다)">되돌리기</span>'
+      : '<button onclick="sentTake(\''+escJ(id)+'\',\''+escJ(ck)+'\')" '
+          +'title="'+esc('주간 기록에 한 줄로 남깁니다: '+sentLogLine(r))+'">✎ 기록에 담기</button>')
     +'</div></div>';
 }
 /* 목록에 붙는 작은 표식 — «아직 안 본» 것만 센다.
@@ -4824,6 +4974,10 @@ function renderDrawer(){
   /* 업체 목록이 아직이면 받아 온 뒤 한 번 더 그린다 — 사업자번호로 이어야
      상호가 조금 달라도 같은 회사의 취업규칙 이력이 붙는다 */
   if(!coSrc && typeof coLoad==='function'){ coLoad().then(function(){ if(S.drawerId) renderDrawer(); }); }
+  /* 이 업체에 «보낸 것» — 업무를 열 때 «그 회사 것만» 읽는다 (회사가 사천 곳이다).
+     ⚠ 읽을 것이 있을 때만 부른다 — 아니면 다시 그리기가 스스로를 끝없이 부른다. */
+  var _sk=sentNeed(coKeysOf(items[S.drawerId]||{}));
+  if(_sk.length) sentLoad(_sk).then(function(){ if(S.drawerId) renderDrawer(); });
   var it=items[S.drawerId]; if(!it){ closeDrawer(); return; }
   var id=S.drawerId;
   var logs=itemLogsCache[id];
@@ -7116,6 +7270,9 @@ var HELP={
       +'그때부터 주간표·팀 전체·전체 검색(Ctrl+K)에서 다른 기록과 똑같이 찾힙니다.<br>'
       +'<b>✓ 확인만</b>은 기록할 것이 없는 메일을 치울 때 씁니다. '
       +'목록의 <b>✉</b> 숫자는 <b>아직 안 본 것</b>만 셉니다.'
+      +'<hr><b>📤 보낸 것</b>은 <b>기업정보함</b>에서 이 사업장으로 나간 자료·묶음입니다 (1:1 발송과 묶음 발송 모두). 여기서는 <b>보여주기만</b> 하고, 보내는 곳은 기업정보함입니다.<br>'
+      +'사업장은 <b>사업자번호</b>로 잇습니다 — 번호가 없으면 상호로 잇기 때문에 상호를 달리 적은 기록은 안 붙을 수 있습니다.<br>'
+      +'보낸 것은 <b>이미 한 일</b>이라 <b>안 본 것</b>으로 세지 않습니다.'
 };
 function hlp(k){
   return '<span class="hlp" onclick="event.stopPropagation();hlpPop(this,\''+k+'\')" title="설명 보기">ⓘ</span>';
