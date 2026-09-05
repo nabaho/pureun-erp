@@ -578,7 +578,16 @@ async function mailUserAsync() {
     return String(s.val() || "").trim();
   } catch (e) { return ""; }
 }
-function mailPass() { return String(process.env.DAUM_MAIL_PASSWORD || ""); }
+/* 보내는 주소에 맞는 열쇠를 준다 (2026-09-05).
+   ⚠ 주소를 «안 주면» 다음메일 것이다 — 메일을 «받는» 길(IMAP)은 다음메일뿐이라
+     그쪽은 예전 그대로 부른다. 보내는 쪽만 주소를 보고 고른다. */
+function mailPass(from) {
+  if (from) {
+    const 이름 = MD.우체국고르기(from).열쇠이름;
+    return String(process.env[이름] || "");
+  }
+  return String(process.env.DAUM_MAIL_PASSWORD || "");
+}
 
 // ★ 서울(asia-northeast3)에서 돈다. 다른 함수는 미국(us-central1)에 있지만 메일만 옮겼다.
 //   다음메일이 **해외에서 오는 로그인을 막는** 경우가 있어서다. 비밀번호가 맞아도
@@ -588,7 +597,7 @@ function mailPass() { return String(process.env.DAUM_MAIL_PASSWORD || ""); }
 const MAIL_REGION = "asia-northeast3";
 exports.sendMaterialMail = functions
   .region(MAIL_REGION)
-  .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 120, memory: "512MB" })
+  .runWith({ secrets: ["DAUM_MAIL_PASSWORD", "GOOGLE_MAIL_PASSWORD"], timeoutSeconds: 120, memory: "512MB" })
   .https.onRequest(async (req, res) => {
     setCors(req, res);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -640,7 +649,7 @@ exports.sendMaterialMail = functions
     }
 
     const r = await MD.deliver({
-      db: db, body: body, from: from, pass: mailPass(),
+      db: db, body: body, from: from, pass: mailPass(from),
       envId: process.env.DAUM_MAIL_ID, byEmail: sender.email || "",
       /* 💻 내 PC 파일이 창고를 거쳐 온다 (2026-08-31) — 창고를 열 길(deps)과
          「누구 자리인가」(uid)가 있어야 꺼낸다. 빠뜨리면 큰 첨부가 조용히 빠진다. */
@@ -715,7 +724,7 @@ exports.sendBulkMail = functions
 
 exports.sendScheduledMail = functions
   .region(MAIL_REGION)
-  .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 540, memory: "512MB" })
+  .runWith({ secrets: ["DAUM_MAIL_PASSWORD", "GOOGLE_MAIL_PASSWORD"], timeoutSeconds: 540, memory: "512MB" })
   // 빈 대기열을 하루 288번 확인할 필요가 없다. 15분 간격이어도 예약 메일은
   // 예약시각 뒤 최대 15분 안에 발송되며, 유휴 호출은 3분의 1로 줄어든다.
   .pubsub.schedule("every 15 minutes")
@@ -752,7 +761,7 @@ exports.sendScheduledMail = functions
         const r = await MD.deliver({
           db: db,
           body: Object.assign({}, row.payload || {}, { wasScheduled: true }),
-          from: 이통from, pass: mailPass(),
+          from: 이통from, pass: mailPass(이통from),
           envId: process.env.DAUM_MAIL_ID,
           byEmail: row.by || "",
         });
