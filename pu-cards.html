@@ -5317,15 +5317,88 @@ async function postBulkMail(payload){
   return j;
 }
 
+/* ══════ 단체 메일이 «회사에도» 기록을 남긴다 (대표 지시 2026-09-03) ══════
+   「단체메일로 기록 남게」
+
+   여태 단체 메일은 «기록을 하나도 안 남겼다». 그래서 기업 상세의 「📤 보낸 서류」에
+   「단체 메일로 보낸 것은 아직 기록이 남지 않습니다」라고 적어 두어야 했다.
+
+   ★ 3걸음의 길(sentBatch + sentDocs)을 «그대로» 쓴다 — 새 자리를 만들면 기업 상세도
+     「못 받은 곳」 거르개도 그 자리를 모른다.
+   ⚠ «걸린 뒤에만» 적는다 — 바로 옆 coBizAskStamp 와 같은 규칙. 누르기만 하고
+     실패했으면 안 적어야 다시 보낼 수 있고, «없는 발송 사실»이 안 남는다.
+   ⚠ mailTargets 가 돌려주는 줄에는 «명함 번호가 없다» — 그 값이 그대로 서버로 나가
+     일부러 적게 담았기 때문이다. 그래서 묶음을 «만들 때» 회사 열쇠를 적어 둔다. */
+
+/* 명함 번호 → 회사 열쇠. «한 번에» 만든다.
+   ⚠ coKeyOfCard 를 명함마다 부르면 회사 4,159곳을 명함 수만큼 훑는다 —
+     312장이면 백만 번이 넘는다. */
+function coCardKeyMap(){
+  const m = {};
+  const list = (typeof coList === 'function' && coList()) || [];
+  list.forEach(o=>{ (o && o.cards || []).forEach(c=>{ if(c && c.id) m[c.id] = o.key; }); });
+  return m;
+}
+/* 실제로 «메일이 나갈» 명함들의 회사 열쇠 — 주소가 없거나 빠진 명함은 안 센다.
+   ⚠ mailTargets 가 이미 거른 뒤(ok)와 «맞춰» 본다. 고른 것 전부로 세면 메일이
+     안 간 회사까지 「받았다」가 된다.
+   ⚠ 계약해지된 곳도 «실제로 받았으면» 남긴다 — 3걸음(배포)은 안 보내지만 여기서는
+     이미 나간 메일이다. 사실대로 적는다(「못 받은 곳」 셈에서는 어차피 빠진다). */
+function bulkCoKeys(items, ok, byCard){
+  const want = {};
+  (ok||[]).forEach(t=>{ const e = t && emailKey(normEmail(t.email)); if(e) want[e] = 1; });
+  const seen = {}, out = [];
+  (items||[]).forEach(it=>{
+    if(!it) return;
+    const e = emailKey(normEmail(it.email));
+    if(!e || !want[e]) return;
+    const k = (byCard||{})[it.id];
+    if(!k || seen[k]) return;
+    seen[k] = 1; out.push(k);
+  });
+  return out;
+}
+/* 기록에 남길 이름 — 제목의 {회사}·{이름} 자리는 곳마다 달라지므로 뺀다.
+   ⚠ 다 빼서 남는 것이 없으면 「단체 메일」로 둔다 — 이름 없는 줄은 나중에 못 읽는다.
+   ⚠⚠ 정규식 안의 중괄호는 «짝이 맞아야» 한다. 검사들이 함수를 떠 올 때 여는 괄호와
+     닫는 괄호를 세는데, [^}] 나 {0,20} 같은 것이 그 셈을 속여 함수가 «중간에 잘린다»
+     (2026-09-03 에 겪었다 — 검사 여덟이 「정규식이 안 닫혔다」로 죽었다).
+     \{ … \} 처럼 하나씩 짝지어 쓴다. */
+function bulkSentName(subject){
+  const v = String(subject == null ? '' : subject)
+    .replace(/\{[\s\S]*?\}/g, ' ').replace(/\s+/g, ' ').trim();
+  return v || '단체 메일';
+}
+/* 걸린 뒤에 남긴다 — 실패해도 «메일 보내기»를 막지 않는다(이미 나갔다) */
+async function logBulkMailSent(c){
+  const keys = (c && c.bulkCoKeys) || [];
+  if(!keys.length) return;
+  if(Store.mode !== 'firebase') return;
+  try{
+    const id = Store.db.ref(`${DB_ROOT}/sentBatch`).push().key;
+    const rec = coSentBatchRec({ at: Date.now(), day: todayYmd(), by: myEmail || '',
+                                 kind: '자료', name: bulkSentName(c.subject), keys: keys });
+    for(const upd of coSentBatchWrites(id, rec, BULK_PATCH_CHUNK)) await Store.db.ref().update(upd);
+    keys.forEach(k=>{ delete _coSent[k]; });
+    coBatchesBust();
+  }catch(e){
+    /* ⚠ 조용히 넘기지 않는다 — 메일은 나갔는데 기록이 없으면, 나중에 「안 보냈다」로 읽힌다 */
+    toast('메일은 나갔지만 기록을 남기지 못했습니다: ' + ((e && e.message) || ''), 12000);
+  }
+}
 /* ⋯ 메뉴에서 — 고른 명함들을 받는 곳으로 삼아 메일 쓰기로 간다 */
 function bulkMailStart(){
   const r = selMailPick(); if(!r) return;
   const tpl = matMailCfg();
+  /* ⚠ 회사 열쇠를 «지금» 적어 둔다 — 보낼 때는 mailTargets 가 돌려준 줄만 남고
+       거기에는 명함 번호가 없다(서버로 나가는 값이라 일부러 적다). */
+  const 고른것 = Object.keys(state.sel||{}).map(id=>state.items[id]).filter(Boolean);
   _compose = {
     cardId:'', to:'', cc:'', bcc:'',
     subject: tpl.subject || '', body: tpl.body || '',
     ids: [], files: [], picking: true,
-    bulk: r.ok, bulkStat: r.stat
+    bulk: r.ok, bulkStat: r.stat,
+    bulkCoKeys: bulkCoKeys(고른것, r.ok, coCardKeyMap())
   };
   state.view='mail'; state.mailSent=false; render();
   toast(`📧 ${r.ok.length.toLocaleString()}곳을 받는 곳으로 잡았습니다 — 제목·본문에 {회사} {이름} 을 넣으면 곳마다 바뀝니다`, 9000);
@@ -5417,7 +5490,10 @@ async function bulkSendAll(){
   const lines = bulkSummary(c.bulkStat, BULK_GAP_SEC, names).map(x=>`· ${x.k} — ${x.v}`).join('\n');
   if(!confirm(`${c.bulk.length.toLocaleString()}곳에 한 통씩 보냅니다.\n\n${lines}\n\n`+
     `천천히 나가는 이유 — 한꺼번에 보내면 다음메일이 막습니다.\n`+
-    `창을 닫아도 서버가 계속 보냅니다. 진행은 「⏰ 예약한 메일」에서 보입니다.\n\n진행할까요?`)) return;
+    `창을 닫아도 서버가 계속 보냅니다. 진행은 「⏰ 예약한 메일」에서 보입니다.\n` +
+    (c.bulkCoKeys && c.bulkCoKeys.length
+      ? `보낸 뒤 사업장 ${c.bulkCoKeys.length.toLocaleString()}곳의 「📤 보낸 서류」에 기록이 남습니다.\n` : '') +
+    `\n진행할까요?`)) return;
   _sending = true; lockSendButtons(true);
   try{
     const r = await postBulkMail({ to:c.bulk, subject:c.subject, body:c.body,
@@ -5426,6 +5502,10 @@ async function bulkSendAll(){
     /* 등록증 요청이었으면 「청했다」를 적는다 — 같은 요청이 두 번 가면 그 뒤로 아무도 안 연다.
        ⚠ «걸린 뒤»에만 적는다. 누르기만 하고 실패했으면 안 적어야 다시 청할 수 있다. */
     if(c.bizAskKeys) coBizAskStamp(c.bizAskKeys);
+    /* 단체 메일이 «회사에도» 한 줄 남긴다 (대표 지시 2026-09-03) —
+       같은 규칙: «걸린 뒤에만». 기다리지 않는다 — 메일은 이미 걸렸고,
+       기록이 늦어도 화면은 바로 답해야 한다(실패하면 그 자리에서 말한다). */
+    logBulkMailSent(c);
     _compose = null; clearDraft();
     state.mailSent='sched'; render();
     toast(`📨 ${r.n.toLocaleString()}곳에 걸었습니다 (${r.eta}) — 여기서 진행을 볼 수 있습니다`, 12000);
@@ -25897,7 +25977,7 @@ function coSentHtml(o){
      ⚠ 자른 것은 «2걸음 앞»의 기록뿐이다 — 그 뒤로는 회사에 바로 쌓여 사람 수와
        상관없다. 그렇게 적어야 「30명 밖은 안 보인다」로 오해하지 않는다. */
   const note = '자료함에서 보낸 것만 잡힙니다';
-  const noteFull = '취업규칙 회차는 위 「이 회사에서 한 일」에 있습니다. 단체 메일로 보낸 것은 아직 기록이 남지 않습니다.'
+  const noteFull = '취업규칙 회차는 위 「이 회사에서 한 일」에 있습니다. 단체 메일과 전 사업장 배포도 여기 함께 나옵니다.'
     + (cut ? ` 2026-09-03 앞의 기록은 이 회사 사람 ${cards.length}명 가운데 최근 ${CO_SENT_MAX_CARDS}명분만 읽었습니다.` : '');
   return `<div class="pcsec" style="margin:16px 4px 8px">📤 보낸 서류 ${rows.length}건</div>
     ${hintLine(note, noteFull)}
