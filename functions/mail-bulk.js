@@ -76,6 +76,14 @@ function cleanTargets(list) {
       name: String(o.name == null ? '' : o.name).slice(0, 60),
       company: String(o.company == null ? '' : o.company).slice(0, 120),
       title: String(o.title == null ? '' : o.title).slice(0, 60),
+      /* ★ 추적 번호를 «실어 나른다» (대표 지시 2026-09-03 「고쳐라」).
+           보내는 쪽이 뜻 없는 번호를 주면 편지에 그것이 실린다 — 메일 주소가 아니라.
+         ⚠ 여기서 버리면 buildQueue 가 «조용히» 옛 길(메일 주소)로 되돌아간다.
+           오류도 안 나고 편지는 잘 나가는데 주소가 실린다 — 아무도 모른다.
+         ⚠ 자리 이름이 되므로 파이어베이스가 쓸 수 있는 글자만 남긴다 —
+           functions/news-track.js 번호열쇠() 와 «같은 잣대»여야 한다. */
+      track: String(o.track == null ? '' : o.track)
+        .trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40),
     });
   });
   return { ok: out, bad: bad, dup: dup };
@@ -129,11 +137,16 @@ function buildQueue(v, now, by, batchId) {
                    name: t.name, company: t.company, title: t.title,
                    /* ★ 열람·클릭 추적 열쇠 — 편지 몸통의 {추적열쇠} 가 통마다 이 값으로 바뀐다.
                         안 채우면 «모두가 같은 사람»으로 찍혀 누가 열었는지 알 수 없다.
-                      ⚠ 파이어베이스 열쇠에 못 쓰는 글자(.#$/[])를 씻는다 —
-                        functions/news-track.js 주소열쇠() 와 «같은 잣대»여야 한다.
-                        두 곳이 다르면 적는 자리와 세는 자리가 어긋난다. */
-                   추적열쇠: String(t.email || '').trim().toLowerCase()
-                     .replace(/[.#$/[\]]/g, '_') };
+                      ★ 2026-09-03: 보내는 쪽이 «뜻 없는 번호»(t.track)를 함께 주면 그것을 쓴다.
+                        메일 주소를 추적 주소에 실어 나르지 않기 위해서다 — 받는 쪽 메일
+                        프로그램·중계 서버·우리 서버 기록에 «누구인지»가 남지 않는다.
+                      ⚠ 번호를 안 준 부름(다른 대량 발송)은 예전 그대로 둔다 —
+                        여기를 통째로 바꾸면 뉴스레터 아닌 발송까지 추적이 끊긴다.
+                        그때는 파이어베이스 열쇠에 못 쓰는 글자(.#$/[])를 씻는다:
+                        functions/news-track.js 주소열쇠() 와 «같은 잣대»여야 한다. */
+                   추적열쇠: String(t.track || '').trim()
+                     || String(t.email || '').trim().toLowerCase()
+                          .replace(/[.#$/[\]]/g, '_') };
     return {
       at: t0 + (i + 1) * v.gapMs,
       by: String(by || ''),
