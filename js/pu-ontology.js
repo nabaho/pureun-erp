@@ -62,7 +62,10 @@
       entityTypes:['Person','Organization','Task','ScheduleEvent'] },
     career:{ name:'경력관리', file:'kcareer.html', primaryRoots:['kcareer/{uid}','kcareer_inbox','kcareer_pub'], sharedRoots:['data'],
       entityTypes:['Person','Employment','Project','Document'] },
-    mail:{ name:'푸른 메일', file:'pu-cards.html?view=mail', primaryRoots:['pucards/mailbox','pucards/sentBox','pucards/scheduled'],
+    /* ⚠ 저장 자리가 둘이다 — 옛 자리(pucards/mailbox)와 지금 쓰는 자리(mailbox).
+       다음메일함 통째 동기화(functions/mail-sync.js)는 «최상위 mailbox» 에 담는다.
+       등록부에 없던 탓에 2026-09-05 까지 온톨로지가 그 자료를 못 보고 있었다. */
+    mail:{ name:'푸른 메일', file:'pu-cards.html?view=mail', primaryRoots:['pucards/mailbox','pucards/sentBox','pucards/scheduled','mailbox'],
       entityTypes:['Person','Organization','Message','Document'] },
     cards:{ name:'기업정보함', file:'pu-cards.html', primaryRoots:['pucards'], sharedRoots:['data/companies'],
       entityTypes:['Organization','Person','Document','MediaAsset','Message'] },
@@ -82,11 +85,12 @@
       entityTypes:['Person','Organization','Document'] },
     /* 뉴스레터 관리 — 주간뉴스레터를 짓고 보낸다.
        소유: newsletter (설정·회차 초안·받는 명단).
-       빌려 읽는 곳: homepage/newsBrief(자동으로 담을 기사) · pucards/scheduled(보낸 결과).
+       빌려 읽는 곳: homepage/newsBrief(자동으로 담을 기사) · pucards/scheduled(보낸 결과)
+                   · mailbox(반송·자동회신을 찾는다 — 읽기만 한다).
        ⚠ 명단은 «여기가 정본»이다 — 기업정보함 명함을 실시간으로 끌어오지 않는다.
          끌어오면 명함 한 장이 바뀔 때 누구에게 갈지가 조용히 달라진다. */
     news:{ name:'뉴스레터 관리', file:'pu-news.html', primaryRoots:['newsletter','ilabor'],
-      sharedRoots:['homepage/newsBrief','pucards/scheduled'],
+      sharedRoots:['homepage/newsBrief','pucards/scheduled','mailbox'],
       entityTypes:['Organization','Person','Message','Document'] }
   };
 
