@@ -84,7 +84,11 @@ test('★ 문서에서 펼친 쪽은 장수 상한에 안 센다 — 쪽은 「�
 
 test('★ 「따로 담기」를 고른 쪽에도 표시가 붙는다 — __pdfDoc 으로는 가릴 수 없다', () => {
   const fn = cutFn(app, 'async function addFiles(');
-  const i = fn.indexOf('const apart = !!splitBy[base];');
+  /* ⚠ 자리를 «글자 그대로» 찾지 않는다 — 2026-09-05 에 한글을 늘 한 문서로 두는
+     조건(!x.hwp)이 붙으며 못 찾게 됐다. 게다가 못 찾아도 «조용했다» — -1 부터
+     잘라 엉뚱한 데를 보았다. 그래서 찾았는지도 함께 못 박는다. */
+  const i = fn.indexOf('const apart =');
+  assert.ok(i > 0, '갈라 담는 자리를 찾지 못했습니다 — 이름이 바뀌었나요?');
   const seg = fn.slice(i, i + 1200);
   assert.match(seg, /file\.__pdfPage = true;/,
     '★ 「쪽마다 따로」는 __pdfDoc 를 안 붙이므로, 그것으로 가리면 그 쪽들이 ' +

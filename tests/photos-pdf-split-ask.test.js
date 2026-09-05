@@ -97,15 +97,26 @@ test('번호가 안 보이면 한 문서로 — 계약서 본문에는 번호가
   assert.equal(h.kinds, 0);
 });
 
-test('★ 글자가 없는 스캔은 가릴 수 없다고 말하고, 지금까지 하던 대로 둔다', () => {
-  const h = J.pdfSplitHint([page(''), page('')]);
-  assert.equal(h.split, false, '★ 모르면서 「따로」를 권하면 계약서가 쪽마다 갈립니다');
-  assert.match(h.why, /글자가 없는 스캔/);
+/* ⚠ 여기 두 검사는 2026-09-05 까지 문구를 «글자 그대로» 박아 두었다
+   (「글자가 없는 스캔」). 그런데 **그 문구 자체가 버그였다** — 대표님이 그것을
+   판독 실패 선언으로 읽고 취소를 누르셨고, 취소하면 한 장도 안 올라간다
+   (「데이터 입력할 때 계속 읽기가 안 된다」의 정체가 이것이었다).
+   그래서 문구가 아니라 «규칙»을 본다: ①「따로」를 권하지 않는다
+   ② 이 줄이 «쪽 나누기» 이야기임을 밝힌다 ③ 판독은 된다고 말한다. */
+function assertNoTextHint(h, ko) {
+  assert.equal(h.split, false, '★ 모르면서 「따로」를 권하면 계약서가 쪽마다 갈립니다 — ' + ko);
+  assert.match(h.why, /글자/, '무엇을 못 봤는지 안 말합니다 — ' + ko);
+  assert.match(h.why, /쪽/, '이 줄이 «쪽 나누기» 이야기임을 안 밝힙니다 — ' + ko);
+  assert.match(h.why, /판독/,
+    '판독이 어떻게 되는지 안 말합니다 — 못 읽는 줄 알고 취소합니다(대표 보고 2026-09-05) — ' + ko);
+}
+
+test('★ 글자가 없는 스캔은 「한 문서로」를 권하되, 판독은 된다고 말한다', () => {
+  assertNoTextHint(J.pdfSplitHint([page(''), page('')]), '두 쪽 다 글자 없음');
 });
 
 test('한 쪽이라도 글자가 없으면 가릴 수 없다 — 그 쪽에 다른 업체가 있을 수 있다', () => {
-  const h = J.pdfSplitHint([page(PAD + B1), page('')]);
-  assert.match(h.why, /글자가 없는 스캔/);
+  assertNoTextHint(J.pdfSplitHint([page(PAD + B1), page('')]), '한 쪽만 글자 없음');
 });
 
 test('★ 한 쪽짜리는 아예 묻지 않는다 — 물을 것이 없다', () => {
@@ -120,7 +131,10 @@ test('★ 여러 쪽짜리가 있을 때만, 그리고 «한 번만» 묻는다'
   const i = app.indexOf('const asks = spread.filter');
   assert.ok(i > 0, '묻는 자리를 찾지 못했습니다');
   const seg = app.slice(i, i + 700);
-  assert.match(seg, /x\.pdf && x\.pdf\.pages\.length > 1/, '한 쪽짜리까지 묻고 있습니다');
+  /* ⚠ 조건을 «글자 그대로» 박지 않는다 — 2026-09-05 에 한글을 걸러 내는 조건이
+     사이에 끼면서 통째로 깨졌다. 지킬 것은 «쪽수가 둘 이상일 때만 묻는다»이다. */
+  assert.match(seg, /x\.pdf\.pages\.length > 1/, '한 쪽짜리까지 묻고 있습니다');
+  assert.match(seg, /x\.pdf &&/, 'PDF·스캔이 아닌 것까지 묻고 있습니다');
   assert.match(seg, /if \(asks\.length\) \{/, '★ 물을 것이 없는데 창을 띄웁니다');
   assert.match(seg, /await askPdfSplit\(asks\)/, '★ 파일마다 물으면 다섯 개에 다섯 번입니다');
 });
@@ -139,7 +153,9 @@ test('★ 창이 닫히면 기다리던 것을 풀어 준다 — 안 풀면 올�
 });
 
 test('★ 「따로」를 고르면 묶음 번호를 아예 안 붙인다 — 새 번호로는 안 된다', () => {
-  const i = app.indexOf('const apart = !!splitBy[base];');
+  /* ⚠ 자리를 «글자 그대로» 찾지 않는다 — 2026-09-05 에 한글을 늘 한 문서로 두는
+     조건(!x.hwp)이 붙으면서 이 검사가 자리를 통째로 못 찾게 됐다. */
+  const i = app.indexOf('const apart =');
   assert.ok(i > 0, '갈라 담는 자리를 찾지 못했습니다');
   const seg = app.slice(i, i + 900);
   assert.match(seg, /const gid = apart \? '' : PuPhotoStore\.newId\(\);/);
@@ -148,7 +164,9 @@ test('★ 「따로」를 고르면 묶음 번호를 아예 안 붙인다 — �
 });
 
 test('따로 담아도 어느 파일 몇 쪽인지는 이름에 남는다 — 원본을 다시 찾을 실마리', () => {
-  const i = app.indexOf('const apart = !!splitBy[base];');
+  /* ⚠ 자리를 «글자 그대로» 찾지 않는다 — 2026-09-05 에 한글을 늘 한 문서로 두는
+     조건(!x.hwp)이 붙으면서 이 검사가 자리를 통째로 못 찾게 됐다. */
+  const i = app.indexOf('const apart =');
   const seg = app.slice(i, i + 900);
   assert.match(seg, /base \+ ' \(' \+ p\.page \+ '\/' \+ r\.total \+ '쪽\)'/);
 });
