@@ -109,7 +109,10 @@ test('주소에 넣는 값은 인코딩한다', () => {
      ⚠ 예전에는 「encodeURIComponent 가 세 번 나온다」고 **개수**를 셌다. 값을
        하나 더 붙이면 — 제대로 감싸서 붙여도 — 검사가 막고, 거꾸로 하나를 안 감싸도
        다른 곳이 세 번이면 통과했다. 그래서 **실제로 돌려** 험한 값을 넣어 본다. */
-  const at = cards.indexOf('function openCoDoc');
+  /* ⚠ 2026-09-03: 이름이 openCoDoc 으로 «시작하는» 다른 함수가 생기면 그쪽이 먼저
+     걸린다(openCoDupDocs — async 라 await 가 들어 있어 통째로 터졌다).
+     여는 괄호까지 붙여 «그 함수»를 찍는다. */
+  const at = cards.indexOf('function openCoDoc(');
   assert.ok(at > 0, 'openCoDoc 를 찾지 못했습니다');
   let i = cards.indexOf('{', at), d = 0;
   for (; i < cards.length; i++) {
