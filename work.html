@@ -9455,7 +9455,8 @@ function peAutoSync(){
       });
     }
 
-    // ② 기존 연동건: 원본 존재 여부 + 소유 필드 미러
+    // ② 기존 연동건: 원본 존재 여부 + 소유 필드 미러 + 저쪽에서 끝난 건 닫기
+    var closed=0;
     var byRef={}, candByRef={};
     allItems().forEach(function(it){ if(peLinked(it)) byRef[it.ref.type+'|'+safeKey(it.ref.id)]=it; });
     cand.forEach(function(c){ candByRef[c.ref.type+'|'+safeKey(c.ref.id)]=c; });
@@ -9466,6 +9467,36 @@ function peAutoSync(){
         var gone=!live[it.ref.type][safeKey(it.ref.id)];
         if(gone&&!it.pe_gone) up[P+'pe_gone']=true;
         if(!gone&&it.pe_gone) up[P+'pe_gone']=null;
+      }
+      /* ── 푸른이알피에서 끝난 건은 여기서도 닫는다 (대표 지시 2026-09-05) ──
+         「계약관리에서 종료했는데 업무관리에 그대로 남아 있다」.
+         까닭: 종료를 반영하는 엔진(pesync)은 «푸른이알피를 열어야만» 돈다.
+           계약을 종료하고 푸른이알피를 안 열면 업무관리는 영영 모른다.
+           그래서 담당 미지정 84건처럼 끝난 계약이 진행중으로 쌓였다.
+
+         ⚠ «한 방향»으로만 닫는다 — 저기가 닫혔고 여기가 열렸을 때만.
+           그 반대(여기서 닫고 저기가 열림)는 손대지 않는다. 그것은 pesync 가 할 일이고,
+           여기서 건드리면 두 곳이 서로를 되돌리며 싸운다.
+         ⚠ 사람이 «여기서 나중에» 손댄 흔적이 있으면 그대로 둔다.
+           업무관리에서 재개했는데 푸른이알피가 아직 모를 수 있다 — 그때 닫으면
+           방금 되살린 것을 도로 덮는다. pesync 의 충돌 규칙과 같은 잣대를 쓴다. */
+      if(it.state!=='done'){
+        var _rc=peRec(it);
+        if(_rc&&_peClosed(_rc)){
+          var _peAt=String(_rc.closedAt||_rc.closedDate||_rc.updatedAt||'');
+          var _wsAt=String(it.state_at||'');
+          if(!(_wsAt&&_peAt&&_wsAt>_peAt)){
+            var _w=peEndWay(_rc)||'done';
+            up[P+'state']='done';
+            up[P+'done_date']=String(_rc.closedDate||_rc.closedAt||todayStr()).slice(0,10);
+            up[P+'end_way']=_w;
+            up[P+'status']=(END_BY_KEY[_w]||END_WAYS[0])[1];
+            if(_w==='transfer'&&_rc.transferredTo) up[P+'end_to']=String(_rc.transferredTo);
+            var _rr=peResult(_rc); if(_rr) up[P+'end_result']=_rr;
+            up[P+'state_at']=new Date().toISOString();
+            closed++;
+          }
+        }
       }
       // 이미 종료된 건의 "끝낸 방식"을 푸른이알피에서 한 번 당겨온다.
       // 종료 상태 자체는 pesync가 담당하고, 여기서는 방식(종료·취소·이관)만 채운다.
@@ -9529,6 +9560,9 @@ function peAutoSync(){
     return fbDb.ref().update(up).then(function(){
       peState.at=new Date().toISOString(); peState.n=made;
       if(made) toast('🔗 푸른이알피에서 '+made+'건 자동 연동');
+      /* ⚠ 조용히 지우지 않는다. 목록에서 갑자기 여든 건이 사라지면
+         「내 업무가 왜 줄었지」가 된다 — 무엇이 왜 빠졌는지 말해 준다. */
+      if(closed) toast('✅ 푸른이알피에서 끝난 '+closed+'건을 종료로 옮겼습니다 — 종료 화면에서 볼 수 있습니다');
     });
   }).catch(function(e){ peState.err=e&&e.message||'동기화 실패'; console.warn('[peAutoSync]',e); })
     .then(function(){ _peBusy=false; });
