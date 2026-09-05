@@ -257,6 +257,42 @@
       '/' + year + '/' + id + '.jpg';
   }
 
+  /* ── 원본 파일 자리 (대표 지시 2026-09-05 「보관」) ──
+     한글(.hwp/.hwpx)은 글자를 뽑아 «쪽 그림»으로 담는다. 그러면 표 줄·도장 같은
+     서식이 사라지므로 **원본 파일도 함께** 창고에 둔다 — 나중에 한글로 연다.
+     ⚠ 열쇠는 사진 id 가 아니라 «문서 묶음» 하나다. 쪽마다 올리면 같은 파일이
+       쪽수만큼 쌓인다(6쪽짜리면 여섯 벌).
+     ⚠ 확장자를 안 붙인다 — 지울 때 이름을 다시 알아낼 필요가 없어야 한다.
+       진짜 파일 이름은 사진 정보(meta.doc.orig.name)에 적는다. */
+  function origPath(year, key, owner) {
+    var who = owner || deps.uid;
+    if (!who) throw new Error('원본을 담을 계정을 알 수 없습니다 — 로그인을 확인해 주세요');
+    if (!key) throw new Error('원본 열쇠가 없습니다');
+    return BUCKET_ROOT + '/u/' + who + '/origs/' + year + '/' + key;
+  }
+
+  /* 원본 파일 하나를 창고에 올리고 «토큰 주소»를 돌려준다.
+     ⚠ 주소를 정보에 적어 두는 까닭은 사진 본문(fullUrl)과 같다 — 창고 규칙은
+       「자기 것만」이라 관리자·공유받은 사람은 창고에 직접 못 묻는다.
+     ⚠ 실패하면 **던진다.** 부르는 쪽이 「원본은 못 담았다」고 말할 수 있어야 한다 —
+       조용히 넘어가면 서식이 사라진 줄 모르고 원본을 지우게 된다.
+     ⚠ 담긴 «해»를 함께 돌려준다 — 지울 때 이 해로 자리를 찾는다. 사진의 해로
+       찾으면 자정을 넘겨 올린 것이 영영 안 지워진다. */
+  function putOriginal(key, year, blob, name) {
+    if (!deps.storage) return Promise.reject(new Error('파일 창고가 연결되지 않았습니다'));
+    var path = origPath(year, key);
+    var ref = deps.storage.ref(path);
+    return ref.put(blob, {
+      contentType: (blob && blob.type) || 'application/octet-stream',
+      /* 받을 때 «원래 이름»으로 저장되게 한다 — 안 적으면 뜻 없는 열쇠로 받아진다 */
+      contentDisposition: "attachment; filename*=UTF-8''" + encodeURIComponent(name || 'original')
+    }).then(function () { return ref.getDownloadURL(); })
+      .then(function (url) {
+        return { key: key, year: year, url: url,
+          name: name || '', size: (blob && blob.size) || 0 };
+      });
+  }
+
   /* ── 파일 창고에 실제로 올리고 받는다 (2026-08-13, 비용 조사 뒤 실행) ──
      같은 방식을 기업정보함이 먼저 검증했다(pu-cards.html 의 `_photoRef`·
      `_fetchFromBucket`·`_putToBucket`). data:URL ↔ 창고 파일을 그대로 오간다 —
@@ -647,12 +683,29 @@
      지울 때는 안 지우고, 완전히 지울 때 지운다.
      ⚠ 창고 지우기가 실패해도(권한·이미 없음 등) 넘어간다 — 실시간DB의 트래시
        기록은 지워야 한다. 창고에 파일이 하나 남는 것이 트래시가 안 지워지는 것보다 낫다. */
-  function purgeStorageBody(year, id, owner) {
+  function purgeStorageBody(year, id, owner, meta) {
     if (!deps.storage) return Promise.resolve();
-    return Promise.all([
+    var jobs = [
       deleteFromBucket(filePath(year, id, 'full', owner)).catch(function () {}),
       deleteFromBucket(filePath(year, id, 'thumb', owner)).catch(function () {})
-    ]);
+    ];
+    /* ── 한글 원본도 «함께» 지운다 (2026-09-05) ──
+       안 지우면 사진은 없는데 원본만 창고에 남는다 — 요금을 계속 먹고, 그 안에는
+       사업장·근로자 정보가 그대로 들어 있다. 「지웠다」고 말해 놓고 남기면 안 된다.
+       ⚠ 한 문서의 여러 쪽이 «같은» 원본을 가리킨다. 쪽은 함께 지워지므로 먼저
+         지워지는 쪽에서 없앤다 — 두 번째부터는 조용히 실패한다(catch).
+       ⚠ 해는 «원본이 담긴 해»를 쓴다. 사진의 해로 찾으면 자정을 넘겨 올린 것이
+         영영 안 지워진다(orig.year 를 남겨 두는 까닭). */
+    var o = meta && meta.doc && meta.doc.orig;
+    if (o && o.key) {
+      try {
+        jobs.push(deleteFromBucket(origPath(o.year || year, o.key, owner)).catch(function () {}));
+      } catch (e) {
+        /* 열쇠가 이상해도 사진 본문 지우기는 계속한다 — 남는 쪽이 더 나쁘다 */
+        console.warn('[사진첩] 한글 원본 자리를 못 찾았습니다', e && e.message);
+      }
+    }
+    return Promise.all(jobs);
   }
 
   /* 30일 지난 것만 완전히 지운다. 지운 때가 없는 것은 건드리지 않는다
@@ -669,7 +722,8 @@
       if (!due.length) return 0;
       /* 창고 본문부터 지운다 — 한 장이 실패해도 나머지는 계속 지운다. */
       return Promise.all(due.map(function (id) {
-        return (raw[id].loc === 'storage') ? purgeStorageBody(year, id, owner) : Promise.resolve();
+        return (raw[id].loc === 'storage')
+          ? purgeStorageBody(year, id, owner, raw[id].meta) : Promise.resolve();
       })).then(function () {
         var u = {};
         due.forEach(function (id) { u[trashPath(year, id, owner)] = null; });
@@ -689,7 +743,7 @@
         u[logPath(id) + '/purgedAt'] = Date.now();
         return deps.db.ref().update(u);
       };
-      if (t && t.loc === 'storage') return purgeStorageBody(year, id).then(finish);
+      if (t && t.loc === 'storage') return purgeStorageBody(year, id, null, t.meta).then(finish);
       return finish();
     });
   }
@@ -2127,6 +2181,9 @@
     DB_ROOT: DB_ROOT,
     BUCKET_ROOT: BUCKET_ROOT,
     yearOf: yearOf,
+    /* 한글 원본 보관 (대표 지시 2026-09-05) — 사진첩이 올릴 때 쓴다 */
+    putOriginal: putOriginal,
+    origPath: origPath,
     photoYear: photoYear,
     metaPath: metaPath,
     blobPath: blobPath,
