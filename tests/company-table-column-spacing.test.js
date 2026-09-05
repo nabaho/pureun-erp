@@ -21,12 +21,18 @@ test('업체관리 두 표는 모든 열의 폭을 자료 의미에 맞춰 지�
   assert.match(erp,/tableLayout:'fixed'/);
 });
 
-test('번호는 짧게, 바로 뒤 업체명은 읽을 수 있는 폭으로 둔다',()=>{
+test('번호는 글자에 꼭 맞게, 바로 뒤 업체명은 읽을 수 있는 폭으로 둔다',()=>{
   const w=widths();
   [w.suboffice,w.full].forEach((cols)=>{
-    assert.equal(cols[2],88,'번호 열은 자문-10193 한 줄에 맞춘다');
+    assert.equal(cols[2],76,'번호 열은 자문-10193 글자와 좌우 여백에 꼭 맞춘다'); // 검사고정-허용: 사용자 지정 열 폭
     assert.ok(cols[3]>=200,'업체명 열은 한 줄을 읽을 폭을 둔다');
   });
+});
+
+test('번호 셀의 최소·최대 폭도 잠가 브라우저가 빈 공간을 다시 만들지 못한다',()=>{
+  const css=fs.readFileSync(path.join(root,'css','pu-erp.css'),'utf8');
+  assert.equal((erp.match(/className:'co-number-col'/g)||[]).length,4);
+  assert.match(css,/th\.co-number-col,[\s\S]*td\.co-number-col[\s\S]*width: 76px !important;[\s\S]*min-width: 76px !important;[\s\S]*max-width: 76px !important;/); // 검사고정-허용: 사용자 지정 열 폭
 });
 
 test('나머지 주요 정보 열도 자동 확장하지 않고 용도별 폭을 쓴다',()=>{
