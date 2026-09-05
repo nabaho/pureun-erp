@@ -338,18 +338,18 @@ function pickList(idx, key) {
 }
 
 const NOISE = [
-  { _id: 'b1', k: 'biz', c: '주식회사 나래산업', bz: '125-86-09231', ceo: '전영범', ad: '경기도 평택시 청북읍' },
-  { _id: 'n1', k: 'card', c: '', n: '한성욱', ti: '관장', ad: '충남 공주시' },
-  { _id: 'n2', k: 'card', c: '', n: '하윤수', ti: '대표 / 공인노무사', ad: '인천시 부평구' },
-  { _id: 'n3', k: 'card', c: '', n: '김미숙', ti: '아나운서' },
-  { _id: 'n4', k: 'card', c: '', n: '이인재' },
-  { _id: 'n5', k: 'card', c: '', n: '김경호', ti: '변호사', ad: '충남 서산시' }
+  { _id: 'b1', k: 'biz', c: '주식회사 ○○산업', bz: '000-00-00000', ceo: '홍길동', ad: '경기도 ○○시' },
+  { _id: 'n1', k: 'card', c: '', n: '가나다', ti: '관장', ad: '충남 ○○시' },
+  { _id: 'n2', k: 'card', c: '', n: '라마바', ti: '대표 / 공인노무사', ad: '인천시 ○○구' },
+  { _id: 'n3', k: 'card', c: '', n: '사아자', ti: '아나운서' },
+  { _id: 'n4', k: 'card', c: '', n: '차카타' },
+  { _id: 'n5', k: 'card', c: '', n: '파하가', ti: '변호사', ad: '충남 ○○시' }
 ];
 
 test('참여사업장 목록에는 회사 없는 개인 명함이 올라오지 않는다', () => {
   const html = pickList(NOISE, 'site');
-  assert.ok(html.includes('주식회사 나래산업'), '쓸 수 있는 사업자등록증이 빠졌다');
-  ['한성욱', '하윤수', '김미숙', '이인재', '김경호'].forEach(n => {
+  assert.ok(html.includes('주식회사 ○○산업'), '쓸 수 있는 사업자등록증이 빠졌다');
+  ['가나다', '라마바', '사아자', '차카타', '파하가'].forEach(n => {
     assert.ok(!html.includes(n), '회사 없는 개인 명함이 올라왔다: ' + n);
   });
 });
@@ -372,7 +372,7 @@ test('회사가 있는 명함은 남고, 같은 회사 명함이 여러 장이�
 
 test('기금 정보 목록은 사업자등록증만 — 명함은 아예 안 나온다', () => {
   const html = pickList(NOISE.concat([{ _id: 'c9', k: 'card', c: '어떤회사', n: '아무개' }]), 'info');
-  assert.ok(html.includes('주식회사 나래산업'));
+  assert.ok(html.includes('주식회사 ○○산업'));
   assert.ok(!html.includes('아무개'), '기금 정보에는 명함이 필요 없다');
 });
 
