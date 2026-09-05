@@ -553,6 +553,16 @@ rules.homepage = { '.read': `auth != null && ${ADMIN}`, '.write': `auth != null 
    ★ 서버(sendBulkMail)는 관리자 SDK 로 돌아 이 규칙을 지나지 않는다 —
      보내기가 막히지 않는다. */
 rules.newsletter = { '.read': `auth != null && ${ADMIN}`, '.write': `auth != null && ${ADMIN}` };
+
+/* ══ 공인노무사회에서 받아 둔 자료 (ilabor) ════════════════════════════
+   ★ 서버(ilaborPull)가 관리자 SDK 로 «담기만» 하던 자리다. 규칙이 아예 없어서
+     기본 거절에 걸렸고, 뉴스레터 화면이 읽으려 하자
+     「permission_denied at /ilabor/items」 로 막혔다(2026-09-05 대표 화면).
+     받아 놓고도 아무도 못 보는 상태였다.
+   ⚠ 읽기만 연다. 담는 것은 서버가 한다 — 화면이 쓰게 열어 두면
+     받아 온 자료를 사람이 실수로 지울 수 있고, 그러면 원본이 없다.
+   ⚠ 총괄관리자만 — 남의 회원 계정으로 받아 온 자료다. */
+rules.ilabor = { '.read': `auth != null && ${ADMIN}`, '.write': false };
 rules.kcareer  = { $uid: { '.read': 'auth != null && auth.uid === $uid', '.write': 'auth != null && auth.uid === $uid' } };
 
 /* ══ 경력관리 «직원 공개용 사본» ═══════════════════════════════════════

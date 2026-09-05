@@ -2208,7 +2208,11 @@ exports.newsClick = functions
       } catch (e) { console.warn("newsClick", (e && e.message) || e); }
     }
     // 못 찾으면 우리 홈페이지로 — «아무 데도 안 보내는 것»이 안전한 쪽이다
-    res.redirect(302, 갈곳 || "https://nabaho.github.io/pureunall/");
+    /* ⚠ 모르는 번호일 때 튕겨 보내는 자리다. 예전에는 «/pureunall/» 로 보냈는데
+         그 자리에는 index 파일이 없어서 깃허브의 영어 404 가 떴다 —
+         2026-09-05 에 대표께서 미리보기에서 링크를 눌러 실제로 그 화면을 보셨다.
+         받는 분이 눌러도 같은 일이 난다. 문(enter.html)으로 보낸다. */
+    res.redirect(302, 갈곳 || "https://nabaho.github.io/pureunall/enter.html");
   });
 exports.readHomepage = functions
   .runWith({ timeoutSeconds: 60, memory: "256MB" })

@@ -71,6 +71,11 @@ const baseTop = ['uid_roles','sid_roles','data','payroll_os','fund_erp','work_er
      (실수로 늘어난 것을 잡는 덫이라 자동으로 넘기지 않는다) */
 const allowTop = ['systemAlerts','systemBackups','systemBackupsIndex','systemRestoreLog',
   'puphotos',    /* 2026-08-02 사진첩 B단계 */
+  /* 2026-09-05 공인노무사회에서 받아 둔 자료. 서버(ilaborPull)가 관리자 SDK 로
+     담기만 하던 자리라 규칙이 아예 없었고, 뉴스레터 화면이 읽으려 하자
+     「permission_denied at /ilabor/items」 로 막혔다 — 받아 놓고 아무도 못 봤다.
+     읽기만 열고 쓰기는 서버만 한다(.write:false). */
+  'ilabor',
   /* 2026-08-07 건의함을 「전 직원 공개(data/suggestions)」에서 대표만 보는 비공개 자리로
      옮겼다. 옮기고 이 줄을 안 적어서 배포가 두 번 실패했다(06:24·06:52) —
      최상위를 늘렸으면 반드시 여기에 적을 것. */
