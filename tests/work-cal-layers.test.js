@@ -43,18 +43,18 @@ test('두 묶음으로 나뉜다 — 내 것과 푸른이알피 것', () => {
   assert.equal((html.match(/class="lay"/g) || []).length, 2, '묶음마다 한 줄');
 });
 
-test('아홉 개가 하나도 빠지지 않고 어느 묶음엔가 들어간다', () => {
+test('열 개가 하나도 빠지지 않고 어느 묶음엔가 들어간다', () => {
   const groups = Array.from(box.G).map(g => g[0]);
   const layers = Array.from(box.L);
-  assert.equal(layers.length, 9);
+  assert.equal(layers.length, 10);
   layers.forEach(l => assert.ok(groups.indexOf(l[5]) >= 0, l[1] + ' 이 묶음에 안 들어갔다'));
-  assert.equal((html.match(/class="lchk/g) || []).length, 9, '칩도 아홉 개 다 나온다');
+  assert.equal((html.match(/class="lchk/g) || []).length, 10, '칩도 열 개 다 나온다');
 });
 
 test('푸른이알피에서 오는 것이 정확히 그 묶음에 있다', () => {
   const erp = Array.from(box.L).filter(l => l[5] === 'erp').map(l => l[0]).sort();
   // 읽기 전용 원본(CAL_SRC: 일정·근태·휴직) + 푸른이알피가 계산해 내려보내는 것(마감·단계 기한)
-  assert.deepEqual(erp, ['att', 'dl', 'loa', 'sch', 'sdue']);
+  assert.deepEqual(erp, ['att', 'dl', 'loa', 'sch', 'sdue', 'vis']);
   const mine = Array.from(box.L).filter(l => l[5] === 'mine').map(l => l[0]).sort();
   assert.deepEqual(mine, ['due', 'log', 'next', 'step']);
 });
