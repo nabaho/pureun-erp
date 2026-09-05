@@ -9397,12 +9397,33 @@ function _peArr(v){
   return Array.isArray(v)?v.filter(Boolean):null;
 }
 // 이름 해석용 sid→이름 (퇴직자 포함 — loadStaff는 재직자만 주므로 따로 읽는다)
+/* 사번 → 이름 표를 «정말로» 만들어 냈는가.
+   ★ 2026-09-05 대표 보고: 사무장(A-001) 「내 업무」에 부담당 업무가 한 건도 안 나왔다.
+     까닭 — data/user_accounts 는 «재무 권한자만» 읽는 자리다(규칙 finOnly).
+     권한이 없으면 이 표가 통째로 비고, 부담당은 «이름으로만» 옮겨지므로
+       subs = managerSubs.map(sid → 이름).filter(있는 것만)
+     이 줄에서 전부 걸러져 «부담당이 통째로 사라진다».
+     ⚠ 더 나쁜 것 — 그 빈 값이 그대로 저장되어, 권한 없는 사람이 앱을 한 번 열면
+       모두의 부담당이 지워졌다. 그래서 아래 미러는 이 표를 못 읽었으면 «건드리지 않는다». */
+var _peU2NKnown=false;
 function peUsers(){
   if(_peU2N) return Promise.resolve(_peU2N);
-  function fin(arr){ var m={}; (arr||[]).forEach(function(u){ if(u&&u.sid) m[u.sid]=u.name||u.sid; }); _peU2N=m; return m; }
-  var l=_ls('user_accounts'); if(l) return Promise.resolve(fin(l));
+  function fin(arr,known){
+    var m={}, n=0;
+    (arr||[]).forEach(function(u){ if(u&&u.sid){ m[u.sid]=u.name||u.sid; n++; } });
+    if(known&&n) _peU2NKnown=true;
+    _peU2N=m; return m;
+  }
+  var l=_ls('user_accounts'); if(l&&l.length) return Promise.resolve(fin(l,1));
+  /* 재무 권한이 없으면 user_accounts 에서 막힌다 → 전 직원이 읽는 «공개 명부»로 되짚는다
+     (loadStaff 가 쓰는 그 길과 같다 — 푸른이알피도 로그인할 때 이 자리를 본다). */
   return fbDb.ref('data/user_accounts/v').once('value')
-    .then(function(s){ return fin(_peArr(s.val())); }).catch(function(){ return fin([]); });
+    .then(function(s){ var a=_peArr(s.val()); return (a&&a.length)?a:null; }, function(){ return null; })
+    .then(function(a){
+      if(a) return fin(a,1);
+      return fbDb.ref('data/user_dir/v').once('value')
+        .then(function(s){ return fin(_peArr(s.val()),1); }, function(){ return fin([],0); });
+    });
 }
 function peLoadAll(){
   // 유형 마스터를 먼저 읽는다 — 이것이 없으면 ptype이 코드로 남아 업무명이 비어 보인다
@@ -9607,8 +9628,15 @@ function peAutoSync(){
         up[P+'mgr_main']=has?{sid:mSid,name:c.mgr||''}:(ceo?{sid:ceo.sid,name:ceo.name}:{sid:'',name:''});
         up[P+'pe_nomgr']=has?null:true;             // 담당 미지정 → 대표에게 배치하고 표시
       }
-      if(String(m.subs||'')!==nm.subs)
+      /* ⚠⚠ 사번→이름 표를 «못 읽었으면» 부담당을 건드리지 않는다.
+         부담당은 이름으로만 옮겨진다(managerSubs → 이름). 표가 비면 그 이름이 다 걸러져
+         빈 값이 되고, 그것을 그대로 저장하면 «모두의 부담당이 지워진다» —
+         권한 없는 사람이 앱을 한 번 여는 것만으로. (2026-09-05 사무장 화면에서 「부 0」)
+         모르면 아무것도 안 하는 것이 맞다. */
+      if(_peU2NKnown && String(m.subs||'')!==nm.subs)
         up[P+'mgr_subs']=(c.subs||[]).map(function(n){return {sid:name2sid[n]||'',name:n};});
+      // 부담당을 안 건드렸으면 그 칸의 스냅샷도 옛것 그대로 둔다 — 다음 판에 또 견줄 수 있게
+      if(!_peU2NKnown) nm.subs=String(m.subs||'');
       if(JSON.stringify(m)!==JSON.stringify(nm)) up[P+'pe_m']=nm;
     });
 
