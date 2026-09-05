@@ -248,14 +248,21 @@
     career_counts:{program:'career',strategy:'remote',path:'kcareer/{uid}/counts',parser:'coverage'},
     cards_index:{program:'cards',strategy:'remote',path:'pucards/idx',parser:'cardIndex'},
     /* ── 기업 상세·근로자 정보함 (대표 지시 2026-09-02) ──
-       예전에는 기업정보함에서 pucards/idx 하나만 읽었다. 그런데 값이 모여 있는 곳은
-       coInfo 다(업태·상시근로자수·매출액·은행계좌·세금계산서 발급처, 4,158곳) —
-       통합 화면이 그것을 못 보고 있었다.
-       ⚠⚠ 두 자리 모두 «가벼운 자료»다. 사진 원본·판독 글자·급여 금액은 여기 없다
-         (2단계 문서의 「읽지 않는 자료」 규칙 그대로).
-       ⚠ workerInfo 에는 주민번호·주소·연락처가 «애초에 담기지 않는다»
-         (js/pu-doc-file.js 의 workerDocTargets — 담는 칸은 다섯뿐이다). */
-    cards_coinfo:{program:'cards',strategy:'remote',path:'pucards/coInfo',parser:'coInfo'},
+       예전에는 기업정보함에서 pucards/idx 하나만 읽었다. 값이 모여 있는 곳은 coInfo 다.
+
+       ⚠⚠ 여기 적혀 있던 「두 자리 모두 «가벼운 자료»다」는 **틀린 말이었다**(2026-09-04).
+         coInfo 한 칸에는 pu-cards.html 의 CO_FIELDS 서른 칸이 들어 있고, 그 안에
+         **계좌번호(온전히)·예금주·직전년도 매출액·생년월일**이 있다.
+         진단을 한 번 돌릴 때마다 그것이 4,158곳어치 브라우저 메모리로 내려온다.
+         CLAUDE.md 「관계 진단은 경량 메타데이터만 읽는다」와 어긋난다.
+       ★ 그래서 «무거운 자리»로 밝히고, 켤 때만 읽는다(heavy). 숨기지 않는다 —
+         안 읽었으면 무엇이 빠졌는지 화면이 말한다.
+       ⚠ 저장되는 것에는 그 칸들이 «안 들어간다» — putEntity 는 label 만 담는다.
+         문제는 저장이 아니라 «내려받는 것»이다(요금 + 화면 메모리).
+       ⚠ 언젠가 얇은 거울(erpCoId·company·docs 만)을 만들면 heavy 를 뗄 수 있다. */
+    cards_coinfo:{program:'cards',strategy:'remote',path:'pucards/coInfo',parser:'coInfo',
+      heavy:'기업 상세 4,158곳 전문 — 계좌번호·예금주·매출액·생년월일이 함께 내려온다',
+      uses:['erpCoId','company','docs'], gives:'회사의 서류 관계(Document → Organization)'},
     cards_workers:{program:'cards',strategy:'remote',path:'pucards/workerInfo',parser:'workerInfo'},
     photos_items:{program:'photos',strategy:'remote',path:'puphotos/u/{uid}/items',parser:'photoItems'},
     payroll_index:{program:'payroll',strategy:'remote',path:'payroll_os/payroll/index',parser:'payrollIndex'},
@@ -436,13 +443,17 @@
     context=context||{};
     return clean(path).replace(/\{uid\}/g,clean(context.uid));
   }
+  /* ⚠ 무거운 자리는 «켤 때만» 읽는다(context.heavy). 목록에서 빼지는 않는다 —
+     빼 버리면 무엇을 안 읽었는지 화면이 말할 수 없다. skip 을 달아 돌려준다. */
   function getReadPlan(context){
     context=context||{};
+    var wantHeavy=context.heavy===true;
     return Object.keys(READ_ADAPTERS).map(function(key){
       var a=READ_ADAPTERS[key], path=resolvePath(a.path,context);
       if(/\{uid\}/.test(a.path||'')&&!clean(context.uid)) return null;
       if(a.strategy!=='remote' || !path || /\{[^}]+\}/.test(path)) return null;
-      return {key:key,program:a.program,path:path,parser:a.parser,strategy:a.strategy};
+      return {key:key,program:a.program,path:path,parser:a.parser,strategy:a.strategy,
+        heavy:a.heavy||'', skip:!!a.heavy&&!wantHeavy};
     }).filter(Boolean);
   }
   function addForOrganization(edges, subject, rec, source, id, companies){
@@ -523,17 +534,25 @@
     sourceResults=sourceResults||{}; context=context||{};
     var companies={byId:{},byName:{}};
     arr(data&&data.companies).forEach(function(c){if(!c||!c.id)return;companies.byId[c.id]=c;var n=normName(c.name||c.companyName);if(n){if(!companies.byName[n])companies.byName[n]=[];companies.byName[n].push(c);}});
-    var coverage={}; Object.keys(PROGRAMS).forEach(function(k){coverage[k]={program:k,name:PROGRAMS[k].name,state:'not_loaded',records:0,adapters:0,loaded:0,denied:0,inApp:0};});
+    var coverage={}; Object.keys(PROGRAMS).forEach(function(k){coverage[k]={program:k,name:PROGRAMS[k].name,state:'not_loaded',records:0,adapters:0,loaded:0,denied:0,inApp:0,skipped:0};});
     Object.keys(READ_ADAPTERS).forEach(function(key){
       var a=READ_ADAPTERS[key], c=coverage[a.program]; c.adapters++;
       if(a.strategy==='local'){c.loaded++;c.records+=(a.program==='consult'?arr(data.consultings).length:a.program==='fund'?arr(data.funds).length:Object.keys(base.stats).reduce(function(n,k){return n+(base.stats[k]||0);},0));return;}
       if(a.strategy==='in_app'){c.inApp++;return;}
       var r=sourceResults[key];
       if(!r)return;
+      /* ★ 「안 읽었다」와 「못 읽었다」는 다르다. 무거워서 건너뛴 것은 권한 문제가
+         아니므로 denied 로 세지 않는다 — 대신 무엇이 빠졌는지 낮은 등급으로 남긴다.
+         조용히 넘기면 사람은 서류 관계가 «원래 없는» 줄 안다. */
+      if(r.skipped){c.skipped=(c.skipped||0)+1;
+        issue(issues,'low','source_skipped_heavy',key,'',PROGRAMS[a.program].name,
+          '무거운 자리라 이번 진단에서 건너뛰었습니다('+clean(a.heavy)+'). 빠진 것: '+clean(a.gives||'')+'.');
+        return;}
       if(!r.ok){c.denied++;issue(issues,'medium','source_unreadable',key,'',PROGRAMS[a.program].name,'읽기 권한 또는 연결 문제: '+clean(r.error||'unknown'));return;}
       c.loaded++;var parsed=parseExternal(Object.assign({key:key},a),r.value,graph,companies); c.records+=parsed.records||0;
     });
-    Object.keys(coverage).forEach(function(k){var c=coverage[k];c.state=c.denied?(c.loaded?'partial':'denied'):(c.loaded?(c.records?'ready':'empty'):(c.inApp?'in_app':'not_loaded'));});
+    Object.keys(coverage).forEach(function(k){var c=coverage[k];
+      c.state=c.denied?(c.loaded?'partial':'denied'):(c.loaded?(c.skipped?'partial':(c.records?'ready':'empty')):(c.inApp?'in_app':(c.skipped?'partial':'not_loaded')));});
     var edgeSeen={},dedup=[];graph.edges.forEach(function(e){if(!edgeSeen[e.id]){edgeSeen[e.id]=1;dedup.push(e);}});
     var sev={high:0,medium:0,low:0};issues.forEach(function(x){sev[x.severity]=(sev[x.severity]||0)+1;});
     var ready=Object.keys(coverage).filter(function(k){return ['ready','empty','partial'].indexOf(coverage[k].state)>=0;}).length;
