@@ -427,6 +427,9 @@ var EVENT_KINDS={
 var SITE_FIELDS=[['seq_label','연번','text'],['name','상호','text'],['ceo','대표자','text'],
   ['biz_no','사업자등록번호','text'],['corp_no','법인등록번호','text'],['biz_type','업종','text'],
   ['company_size','상시근로자수','text'],['contrib','기본 출연금(원)','text'],
+  /* 직전년도 매출액 — 지원금 심사에 쓴다(중소기업 여부·규모). 기업정보함에도 있어 당겨온다.
+     해마다 달라지는 값은 [연도별 기록]에 따로 쌓는다(출연금과 같은 구조). */
+  ['sales','직전년도 매출액(원)','text'],
   ['address','소재지','text'],['note','비고','text']];
 /* 협력업체 표시(partner)는 명부 표의 체크상자로 바로 켠다(setSitePartner) —
    여기에 칸 정의를 또 두면 «편집 폼에도 있는 것처럼» 읽혀 헷갈린다. 그래서 지웠다.
@@ -5559,8 +5562,127 @@ function cardFull(r){
 /* 참여사업장 한 벌을 채우는 짝 — 「추가」와 「편집」이 같은 짝을 쓴다.
    한쪽만 늘리면 추가할 때는 들어오는 값이 편집할 때는 안 들어온다. */
 var SITE_CARD_MAP=[['c','name'],['ceo','ceo'],['bz','biz_no'],['cno','corp_no'],
-  ['bt','biz_type'],['wk','company_size'],['ad','address'],
+  ['bt','biz_type'],['wk','company_size'],['sl','sales'],['ad','address'],
   ['n','_c_name'],['ti','_c_position'],['m','_c_mobile'],['e','_c_email']];
+/* ══════════ 참여사업장 일괄 채우기 (대표 지시 2026-09-05) ══════════
+   「기업정보함의 정보를 여기서 찾아서 넣을 수 있게 하고 한꺼번에 넣을 수 있게 해라」
+   16개사를 하나씩 열어 고치는 대신, 기업정보함과 한 번에 맞춰 «빈 칸만» 채운다.
+
+   ⚠ 짝짓기는 기금 일괄(_cardMatch)과 «같은 규칙»이다 — ① 사업자등록번호가 맞으면 그것으로
+     ② 없으면 이름이 «완전히» 같을 때만. 부분일치를 쓰면 「대산이노텍」과 「대산이노텍산업」이
+     섞인다. 후보가 둘 이상이면 그 사업장은 건너뛴다.
+   ⚠ 사업자번호는 «숫자만» 비교한다 — 명부는 412-81-12595, 카드는 4128112595 처럼 적힌다. */
+var SITE_BULK=[['ceo','대표자'],['biz_no','사업자등록번호'],['corp_no','법인등록번호'],
+  ['biz_type','업종'],['company_size','상시근로자수'],['sales','직전년도 매출액'],['address','소재지']];
+var SITE_BULK_C=[['name','담당자'],['position','직위'],['mobile','휴대폰'],['email','이메일']];
+/* 사업장 하나에 맞는 기업정보함 카드 — 못 고르면 null(짐작으로 넣지 않는다).
+   숫자만 남기는 일은 아래 _digits 를 그대로 쓴다(같은 것을 또 만들지 않는다). */
+/* 사업장 전체를 기업정보함과 맞춰 «빈 칸만» 채운다 — 넣기 전에 표로 보여 준다 */
+function bulkSiteCards(){
+  if(!_cardIdx){
+    toast('기업정보함을 읽는 중…');
+    loadCardIdx().then(bulkSiteCards).catch(function(e){ toast('기업정보함을 읽지 못했습니다: '+((e&&e.message)||e),'err'); });
+    return;
+  }
+  var fid=S.fundId, m=S.sites||{};
+  var arr=Object.keys(m).map(function(k){ return Object.assign({_id:k},m[k]); })
+    .filter(function(x){ return x.status!=='closed'; });
+  if(!arr.length){ toast('참여사업장이 없습니다','warn'); return; }
+  var plan=[], rows=[], cnt=0, noCard=[];
+  arr.forEach(function(site){
+    var card=_siteCardMatch(site,_cardIdx);
+    if(!card){ noCard.push(site.name||'(이름 없음)'); return; }
+    var e=cardEffective(card);                       // 명함이면 같은 회사 등록증으로 보강
+    var cell={}, any=false;
+    SITE_BULK.forEach(function(c){
+      if(String(site[c[0]]||'').trim()) return;      // 이미 적힌 값은 건드리지 않는다
+      var k=(SITE_CARD_MAP.filter(function(p){ return p[1]===c[0]; })[0]||[])[0];
+      var v=k?String(e[k]||'').trim():'';
+      if(!v) return;
+      cell[c[0]]=v; cnt++; any=true;
+      plan.push({sid:site._id,name:site.name,key:c[0],val:v});
+    });
+    /* 담당자는 «대표 연락처가 비어 있을 때»만 — 사람을 바꿔치기하면 안 된다 */
+    var pc=_primaryContact(site).c;
+    if(!String(pc.name||'').trim()&&!String(pc.mobile||'').trim()){
+      var con={}, got=false;
+      SITE_BULK_C.forEach(function(c){
+        var k=(SITE_CARD_MAP.filter(function(p){ return p[1]==='_c_'+c[0]; })[0]||[])[0];
+        var v=k?String(e[k]||'').trim():'';
+        if(v){ con[c[0]]=v; got=true; }
+      });
+      if(got){ cnt+=Object.keys(con).length; any=true;
+        cell._c=con.name||'';
+        plan.push({sid:site._id,name:site.name,key:'_contact',val:con}); }
+    }
+    if(any) rows.push({name:site.name,card:card.c,cell:cell});
+  });
+  if(!plan.length){
+    toast(noCard.length? '채울 빈 칸이 없습니다 (짝지을 카드 없음 '+noCard.length+'곳)'
+                       : '기업정보함에서 채울 빈 칸이 없습니다','warn');
+    return;
+  }
+  showModal('<div class="row" style="margin:0 0 6px"><h2 style="margin:0">🏢 기업정보함에서 일괄 채우기</h2>'
+    +'<span class="muted" style="font-size:11.5px">참여사업장 '+rows.length+'곳 · '+cnt+'칸</span>'+hlp('bulk.site')+'</div>'
+    +(noCard.length?'<p class="muted" style="font-size:11.5px;margin:0 0 8px">짝지을 카드가 없어 제외 '+noCard.length+'곳: '
+      +esc(noCard.slice(0,8).join(', '))+(noCard.length>8?' 외':'')+'</p>':'')
+    +'<div style="max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:8px"><table style="font-size:11.5px"><thead><tr>'
+    +'<th>사업장</th><th>기업정보함 카드</th>'+SITE_BULK.map(function(c){return '<th>'+c[1]+'</th>';}).join('')
+    +'<th>담당자</th></tr></thead><tbody>'
+    +rows.map(function(r){
+      return '<tr><td style="font-weight:600;white-space:nowrap">'+esc(r.name||'')+'</td>'
+        +'<td class="muted" style="white-space:nowrap">'+esc(r.card||'')+'</td>'
+        +SITE_BULK.map(function(c){ var v=r.cell[c[0]];
+          return '<td'+(v?'':' class="muted"')+' style="white-space:nowrap">'+(v?esc(v):'—')+'</td>'; }).join('')
+        +'<td'+(r.cell._c?'':' class="muted"')+' style="white-space:nowrap">'+(r.cell._c?esc(r.cell._c):'—')+'</td></tr>';
+    }).join('')+'</tbody></table></div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">취소</button>'
+    +'<button class="primary" onclick="applyBulkSites()">'+cnt+'칸 채우기</button></div>',{width:1040});
+  window._sitePlan={fid:fid,plan:plan};
+}
+/* 넣는 «순간» 서버 값을 다시 본다 — 미리보기와 적용 사이에 누가 채웠을 수 있다 */
+function applyBulkSites(){
+  var P=window._sitePlan; window._sitePlan=null;
+  if(!P||!P.plan.length){ closeM(); return; }
+  var fid=P.fid;
+  fbDb.ref(NS+'/sites/'+fid).once('value').then(function(sn){
+    var cur=sn.val()||{}, up={}, n=0, skip=0;
+    P.plan.forEach(function(p){
+      var site=cur[p.sid]; if(!site) return;
+      if(p.key==='_contact'){
+        var pc=_primaryContact(site);
+        if(String((pc.c||{}).name||'').trim()||String((pc.c||{}).mobile||'').trim()){ skip++; return; }
+        var list=pc.list.slice();
+        var item=Object.assign({isPrimary:true,phone:''},p.val);
+        if(pc.idx>=0) list[pc.idx]=Object.assign({},list[pc.idx],item); else list.unshift(item);
+        up[p.sid+'/contacts']=list; n++;
+        return;
+      }
+      if(String(site[p.key]||'').trim()){ skip++; return; }     // 그 사이 누가 채웠다
+      up[p.sid+'/'+p.key]=p.val; n++;
+    });
+    if(!n){ closeM(); toast('그 사이 모두 채워져 넣을 것이 없습니다','warn'); return; }
+    return fbDb.ref(NS+'/sites/'+fid).update(up).then(function(){
+      S.sitesFor=null; closeM();
+      _audit(fid,'참여사업장 일괄 채움','기업정보함 '+n+'칸'+(skip?' (건너뜀 '+skip+')':''));
+      if(S.fundId===fid) renderFund();
+      toast(n+'칸을 채웠습니다'+(skip?' · '+skip+'칸은 이미 있어 그대로':''));
+    });
+  }).catch(function(e){ toast('실패: '+((e&&e.message)||e),'err'); });
+}
+function _siteCardMatch(site,idx){
+  var biz=(idx||[]).filter(function(r){ return r.k==='biz'&&String(r.c||'').trim(); });
+  var d=_digits(site.biz_no);
+  if(d.length>=10){
+    var byNo=biz.filter(function(r){ return _digits(r.bz)===d; });
+    if(byNo.length===1) return byNo[0];
+    if(byNo.length>1) return null;                       // 같은 번호가 둘이면 사람이 볼 일이다
+  }
+  var key=_cardFundKey(site.name);
+  if(key.length<3) return null;                          // 너무 짧은 이름은 아무거나 걸린다
+  var byName=biz.filter(function(r){ return _cardFundKey(r.c)===key; });
+  return byName.length===1 ? byName[0] : null;
+}
 var CARD_TARGETS={
   info:{ t:'기금 정보', mode:'fill', kinds:['biz'], help:'info.card',
     map:[['c','fd-name','기금법인명'],['bz','fd-tax_id_no','고유번호'],['cno','fd-corp_reg_no','법인등록번호'],
@@ -6071,7 +6193,8 @@ function sitesTab(){
     +sub+sortBar
     +(isYr?'':dropZoneSlim('dz-sites','엑셀 한번에','상호·대표자·사업자번호·상시근로자·소재지 열을 자동으로 찾습니다','.xlsx,.xls,.csv'))
     +'<span style="flex:1"></span>'
-    +'<button onclick="openCardPick(\'site\')" title="푸른 기업정보함의 사업자등록증·명함에서 상호·대표자·사업자번호·업태·소재지·담당자를 가져와 채웁니다">🏢 기업정보함에서</button>'
+    +'<button onclick="openCardPick(\'site\')" title="푸른 기업정보함에서 사업장 하나를 골라 추가합니다">🏢 기업정보함에서</button>'
+    +'<button onclick="bulkSiteCards()" title="참여사업장 전체를 기업정보함과 맞춰 빈 칸만 한꺼번에 채웁니다">🏢 일괄 채우기</button>'
     +'<button class="primary" onclick="editSite(\'\')">+ 사업장 추가</button>'
     +' <button onclick="importSites()" title="전체 기금 사업장 일괄 가져오기(담당자 포함)">📥 백업(JSON)</button></div>'
     +(isYr ? sitesYearBody(arr) : '<div id="siteXlsxOut"></div>'+tbl)
@@ -6145,7 +6268,8 @@ function saveSite(sid){
    companyToSite·pickCompany·renderCoList·chooseCompany 일곱 개가 한 덩이다). */
 /* ══ 사업장 연도별 기록 ══ site_years/{기금}/{연도}/{사업장} = {contrib 출연금, workers 근로자수, benef 수혜자수}
    사업장 명부(sites)는 현재 상태 1벌만 두고, 해마다 달라지는 값은 여기에 따로 쌓는다. */
-var SY_COLS=[['contrib','출연금(원)'],['workers','상시근로자(명)'],['benef','수혜자(명)']];
+var SY_COLS=[['contrib','출연금(원)'],['workers','상시근로자(명)'],['benef','수혜자(명)'],
+  ['sales','매출액(원)']];
 function syLoad(){
   var fid=S.fundId, yr=S.year, key=fid+'/'+yr;
   if(S.syFor===key) return true;
@@ -10671,6 +10795,11 @@ var HELP={
  'home.fill':{t:'정보 채우기',h:'<p>칸에 바로 입력하면 <b>자동 저장</b>됩니다. <b>빨간 테두리</b>는 빈 칸입니다.</p>'
    +'<p><b>완비 기준 5항목</b></p><ul><li>인가번호</li><li>인가일</li><li>법인등록번호</li><li>설립등기일</li><li>고유번호</li></ul>'
    +'<p>[🏛 관할등기소 일괄]은 소재지로 전 기금의 등기소를 <b>추정</b>합니다 — 확인이 필요합니다.</p>'},
+ 'bulk.site':{t:'참여사업장 일괄 채우기',h:'<p>참여사업장 전체를 <b>기업정보함</b>과 맞춰 <b>빈 칸만</b> 한꺼번에 채웁니다. 하나씩 열어 고치지 않아도 됩니다.</p>'
+   +'<p><b>채우는 칸</b> — 대표자 · 사업자등록번호 · 법인등록번호 · 업종 · 상시근로자수 · 직전년도 매출액 · 소재지, 그리고 <b>담당자</b>(이름·직위·휴대폰·이메일)</p>'
+   +'<p><b>담당자는 대표 연락처가 «비어 있을 때»만</b> 넣습니다 — 이미 적힌 사람을 다른 사람으로 바꿔치기하면 안 됩니다.</p>'
+   +'<p><b>짝짓는 방법</b> — ① 사업자등록번호가 맞으면 그것으로 ② 없으면 <b>이름이 완전히 같을 때만</b>. 부분일치는 쓰지 않습니다(「대산이노텍」과 「대산이노텍산업」이 섞입니다). 후보가 둘 이상이면 그 사업장은 <b>건너뜁니다</b>.</p>'
+   +'<p>넣기 전에 표로 보여 주고, 넣는 순간 서버 값을 다시 확인해 그 사이 채워진 칸은 건드리지 않습니다.</p>'},
  'bulk.card':{t:'기업정보함에서 일괄 채우기',h:'<p>기업정보함(사업자등록증)에 이미 있는 값을 미완비 기금의 <b>빈 칸에만</b> 넣습니다.</p>'
    +'<p><b>채울 수 있는 것</b> — 법인등록번호 · 고유번호 · 소재지</p>'
    +'<p><b>못 채우는 것</b> — 인가번호 · 인가일 · 설립등기일. 이 셋은 인가증·등기부에만 있으니 <b>서류 자동 입력</b>으로 넣으세요.</p>'
