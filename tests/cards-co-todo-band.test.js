@@ -127,6 +127,9 @@ test('아무 할 일도 안 켜면 띠가 없다', () => {
   const b = ctx({});
   vm.runInContext(topConst('CO_TODO_LABEL'), b);
   vm.runInContext(fn('condChipHtml'), b);
+  /* 2026-09-03(4걸음): 이름표를 «그때그때» 만든다 — 갈래 이름이 들어가야 한다.
+     대역을 두면 갈래가 안 보이게 되어도 이 검사가 모른다 — 진짜를 싣는다. */
+  vm.runInContext(fn('coTodoLabels'), b);
   vm.runInContext(fn('coTodoChipsHtml'), b);
   assert.equal(vm.runInContext('coTodoChipsHtml()', b), '',
     '조건이 없는데 띠가 뜨면 눈이 그것을 배경으로 배운다');
@@ -136,6 +139,9 @@ test('★ 켠 할 일만 띠에 뜨고 ✕ 로 풀 길이 있다', () => {
   const b = ctx({ coOnlyNoBiz: true });
   vm.runInContext(topConst('CO_TODO_LABEL'), b);
   vm.runInContext(fn('condChipHtml'), b);
+  /* 2026-09-03(4걸음): 이름표를 «그때그때» 만든다 — 갈래 이름이 들어가야 한다.
+     대역을 두면 갈래가 안 보이게 되어도 이 검사가 모른다 — 진짜를 싣는다. */
+  vm.runInContext(fn('coTodoLabels'), b);
   vm.runInContext(fn('coTodoChipsHtml'), b);
   const h = vm.runInContext('coTodoChipsHtml()', b);
   assert.ok(h.includes('번호 없음'), '켠 조건이 띠에 없다 — 왜 몇 곳만 나오는지 알 길이 없다');
@@ -147,6 +153,9 @@ test('둘을 켜면 둘 다 뜬다', () => {
   const b = ctx({ coOnlyNoBiz: true, coOnlyClosed: true });
   vm.runInContext(topConst('CO_TODO_LABEL'), b);
   vm.runInContext(fn('condChipHtml'), b);
+  /* 2026-09-03(4걸음): 이름표를 «그때그때» 만든다 — 갈래 이름이 들어가야 한다.
+     대역을 두면 갈래가 안 보이게 되어도 이 검사가 모른다 — 진짜를 싣는다. */
+  vm.runInContext(fn('coTodoLabels'), b);
   vm.runInContext(fn('coTodoChipsHtml'), b);
   const h = vm.runInContext('coTodoChipsHtml()', b);
   assert.ok(h.includes('번호 없음') && h.includes('종료'), '둘을 켰는데 하나만 보인다');
