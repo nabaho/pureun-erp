@@ -615,7 +615,7 @@ test('★ 쪽 화면이 «왜 통째로는 안 되는지»와 «그럼 어떻게
   const ctx = pageBox();
   ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '가나다' }, pages: {}, dirty: false };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
-    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('runSep') + '\n' + fnSource('runKey') + '\n' + fnSource('runOfKey') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageFrameDoc') + '\n' + fnSource('runSep') + '\n' + fnSource('runKey') + '\n' + fnSource('runOfKey') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.match(h, /지도|표|구획/, '통째로 넣으면 무엇이 사라지는지 안 적혀 있습니다');
   assert.match(h, /줄/, '그럼 어떻게 고치라는 건지 안 적혀 있습니다');
@@ -628,7 +628,7 @@ test('★ 쪽 화면에서 홈페이지 관리자 화면으로 갈 길을 준다
   const ctx = pageBox();
   ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '가나다' }, pages: {}, dirty: false };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
-    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('runSep') + '\n' + fnSource('runKey') + '\n' + fnSource('runOfKey') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageFrameDoc') + '\n' + fnSource('runSep') + '\n' + fnSource('runKey') + '\n' + fnSource('runOfKey') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.ok(h.indexOf(ctx.PuHomeExport.editUrl('page', 'inquiry')) >= 0,
     '홈페이지에서 이 쪽을 열 길이 없습니다');
@@ -986,7 +986,7 @@ test('★ 쪽 안내에 「대조 기준 저장」만으로는 안 바뀌고 「
   const ctx = pageBox();
   ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '가나다' }, pages: {}, dirty: false };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
-    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('runSep') + '\n' + fnSource('runKey') + '\n' + fnSource('runOfKey') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageFrameDoc') + '\n' + fnSource('runSep') + '\n' + fnSource('runKey') + '\n' + fnSource('runOfKey') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.match(h, /대조 기준 저장만으로는/, '저장만으로는 딱지가 안 바뀐다는 말이 없습니다');
   assert.match(h, /한 번 더 눌러야/, '홈페이지 다시 확인을 «한 번 더» 눌러야 한다는 말이 없습니다');
@@ -1151,7 +1151,7 @@ test('★ 홈페이지를 읽었으면 쪽 글이 «줄마다 번호와 함께»
     pageLines: { inquiry: ['천안본사', '충남 천안시 서북구 원두정8길 6, 301호(두정빌딩)', 'T. 041-556-0035'] }
   };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
-    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('runSep') + '\n' + fnSource('runKey') + '\n' + fnSource('runOfKey') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageFrameDoc') + '\n' + fnSource('runSep') + '\n' + fnSource('runKey') + '\n' + fnSource('runOfKey') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.deepEqual(numbersIn(h).slice(0, 3), [1, 2, 3], '줄마다 번호가 붙지 않았습니다');
   assert.ok(h.indexOf('천안본사') >= 0);
@@ -1163,7 +1163,7 @@ test('★ 홈페이지를 아직 안 읽었으면 «빈 줄»이 아니라 그 �
   ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '뭉쳐 있는 대조 기준 글자' },
               pages: {}, dirty: false, pageLines: {}, pageConfig: {} };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
-    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('runSep') + '\n' + fnSource('runKey') + '\n' + fnSource('runOfKey') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageFrameDoc') + '\n' + fnSource('runSep') + '\n' + fnSource('runKey') + '\n' + fnSource('runOfKey') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.match(h, /홈페이지 다시 확인/, '어떻게 하면 줄 모양으로 보이는지 안 적혀 있습니다');
   assert.equal(numbersIn(h).length, 0, '못 읽은 것을 빈 줄로 지어내 보여 줬습니다');
@@ -1177,7 +1177,7 @@ test('★ 줄 꾸밈(소제목·구획번호)이 «자료»에 섞이지 않는�
     pageLines: { work1: ['자문서비스', '01', '법률자문', '최신 노동관계법령에 대한 자문과 상담을 수행합니다.'] }
   };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
-    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('runSep') + '\n' + fnSource('runKey') + '\n' + fnSource('runOfKey') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageFrameDoc') + '\n' + fnSource('runSep') + '\n' + fnSource('runKey') + '\n' + fnSource('runOfKey') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.equal(ctx.App.draft.text, 기준, '보여 주기만 해야 하는데 초안(자료)이 바뀌었습니다');
   assert.ok(h.indexOf(ctx.esc(기준)) >= 0, '대조 기준 글자 칸이 원문 그대로가 아닙니다');
@@ -1383,7 +1383,7 @@ test('★ 「분리」가 홈페이지 쪽을 지우는 것이 아니라고 화�
               pageLines: {}, pageConfig: {} };
   ctx.PAGE_LABEL = { work1: '자문서비스' };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
-    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('runSep') + '\n' + fnSource('runKey') + '\n' + fnSource('runOfKey') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+    + fnSource('noteOneLine') + '\n' + fnSource('readPageBtn') + '\n' + fnSource('pageFrameDoc') + '\n' + fnSource('runSep') + '\n' + fnSource('runKey') + '\n' + fnSource('runOfKey') + '\n' + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.match(h, /분리/, '분리하는 길이 화면에 없습니다');
   assert.match(h, /지우지 않습니다|지우는 것이 아닙니다/,
@@ -1983,7 +1983,7 @@ test('★ 늘 뜨는 설명은 «접어» 둔다 — 쪽마다 네 줄을 다시
   ctx.App = { draft: { kind: 'page', key: 'work1', text: '한 줄로 이어진 글자' },
               pages: {}, dirty: false, pageLines: {}, pageConfig: {}, reading: '' };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('noteOneLine') + '\n'
-    + fnSource('readPageBtn') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
+    + fnSource('readPageBtn') + '\n' + fnSource('pageFrameDoc') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
     + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   /* 이유를 «없애지» 않았다 — 접어 두었을 뿐이다. 펼치면 그대로 나온다. */
@@ -2000,7 +2000,7 @@ test('★ 홈페이지 줄을 «저장 없이» 다시 읽을 수 있다 — 새
   ctx.App = { draft: { kind: 'page', key: 'work1', text: '뭉친 글자' },
               pages: {}, dirty: false, pageLines: {}, pageConfig: {}, reading: '' };
   run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('noteOneLine') + '\n'
-    + fnSource('readPageBtn') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
+    + fnSource('readPageBtn') + '\n' + fnSource('pageFrameDoc') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
     + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.match(h, /readOnePage\('work1'\)/, '이 쪽만 읽어오는 단추가 없습니다');
@@ -2439,6 +2439,7 @@ function 쪽화면(runs, fix) {
   });
   ctx.esc = escStub();
   run(ctx, fnSource('readPageBtn'));
+  run(ctx, fnSource('pageFrameDoc'));
   run(ctx, fnSource('pageFixOf'));
   run(ctx, fnSource('runSep'));
   run(ctx, fnSource('runKey'));

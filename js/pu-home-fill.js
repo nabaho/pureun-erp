@@ -255,6 +255,26 @@
        기계가 짐작할 필요가 없다. 짐작을 없앤 것이지 위험을 감수한 것이 아니다.
      ★ of 를 함께 들고 있는 까닭: 채울 때 «그 사이 홈페이지가 바뀌었는지»를 이것으로 안다.
        군데 수가 달라졌으면 자리를 못 믿으므로 채우지 않는다(applyLineEdits 참조). */
+  /* 고칠 줄마다 «표»를 달아 돌려준다 — 왼쪽 화면과 오른쪽 칸을 짝짓는 데 쓴다.
+     (대표 지시 2026-09-03 「듀얼화면 붙여라」 · 승인 목업 docs/mockups/home-page-dual.html)
+     ★ 자리를 «글자로 찾지» 않는다. fixableRuns 와 «같은 훑기»를 써서 차례를 맞춘다 —
+       글자로 찾으면 똑같은 줄이 여럿일 때 엉뚱한 자리에 표가 붙고,
+       왼쪽을 눌렀는데 오른쪽의 «다른 줄»이 켜진다.
+     ★ 글은 한 글자도 안 바꾼다. 감싸기만 한다.
+     ⚠ 돌려주는 것은 «보여 주기용»이다. 이것으로 홈페이지를 채우지 말 것 —
+       표가 그대로 홈페이지에 박힌다. 채우는 것은 applyLineEdits 하나뿐이다. */
+  function markRuns(bodyHtml) {
+    var toks = splitHtml(bodyHtml);
+    var runs = textRuns(bodyHtml);
+    runs.forEach(function (r, i) {
+      var raw = toks[r.at];
+      var lead = raw.match(/^\s*/)[0], tail = raw.match(/\s*$/)[0];
+      toks[r.at] = lead + '<span class="pu-run" data-i="' + i + '">'
+        + raw.slice(lead.length, raw.length - tail.length) + '</span>' + tail;
+    });
+    return toks.join('');
+  }
+
   function fixableRuns(bodyHtml) {
     var runs = textRuns(bodyHtml);
     var cnt = {};
@@ -682,6 +702,7 @@
     /* 쪽 본문 */
     textRuns: textRuns,
     fixableRuns: fixableRuns,
+    markRuns: markRuns,
     applyLineEdits: applyLineEdits,
     packPageEdits: packPageEdits,
     unpackPageEdits: unpackPageEdits,
