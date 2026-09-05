@@ -4712,6 +4712,9 @@ async function mountEditor(buffer,name,cfg){
       /* 보관함에서 연 서식은 _rhDoc 이 비어 있었다 → 채우기도 도장도 「먼저 올려주세요」만 떴다 */
       if(!_rhDoc || _rhDoc.name!==name || !_rhDoc.bytes || _rhDoc.bytes.length!==_u8.length){
         _rhDoc={ name:name, ext:ext, bytes:_u8 };
+        /* ⚠ 채운 결과를 다시 올리는 길(_rhKeepBase)에서는 바탕을 바꾸지 않는다 —
+           바꾸면 「이미 채워진 것」이 바탕이 되어 되돌려 넣을 때 값이 두 번 들어간다. */
+        if(!_rhKeepBase){ _rhBase={ name:name, ext:ext, bytes:_u8 }; _rhListPlan=null; _rhVals={}; }
       }
     }catch(e){ console.warn('rhDoc',e); }
   }
@@ -9128,6 +9131,9 @@ async function rhAutoFillDoc_사전(){
   const filled=new Uint8Array(await zip.generateAsync({type:'arraybuffer'}));
   /* 채운 결과를 편집 중인 문서로 바꿔 둔다 — 이어서 손볼 수 있다 */
   _rhDoc={ name:String(_rhDoc.name||'양식').replace(/\.(hwp|hwpx)$/i,'')+'_채움.hwpx', ext:'hwpx', bytes:filled };
+  /* ⚠ 이 예비 길은 값을 _rhVals 에 담지 않는다(칸 지도가 없어서다) —
+     그러니 «채운 것»이 곧 바탕이다. 원본을 바탕으로 두면 채운 내용이 저장에서 사라진다. */
+  _rhBase={ name:_rhDoc.name, ext:'hwpx', bytes:filled }; _rhListPlan=null;
   rhDraftSave();
   /* ⚠ 팝업으로 띄우지 않는다 — 채운 결과는 «지금 보고 있던 화면»에 그대로 나와야 한다 */
   await mountEditor(filled.buffer.slice(0), _rhDoc.name);
@@ -9173,6 +9179,7 @@ async function rhCloseDoc(){
   var card=document.getElementById('rcEditCard'); if(card){ card.style.display='none'; card.classList.remove('rh-doc','rh-wide'); }
   document.body.classList.remove('rh-doc-on'); document.body.style.overflow='';
   var ed=document.getElementById('rhwpEditor'); if(ed) ed.innerHTML='';
+  _rhBase=null; _rhListPlan=null; _rhVals={};
   var msg=document.getElementById('rcEditorMsg'); if(msg){ msg.style.display=''; msg.textContent='양식을 업로드하면 미리보기가 나타납니다'; }
   rhUndoBtn(); rhDraftCheck();
   toast('치웠습니다 — 담아 둔 것은 그대로입니다');
@@ -9418,6 +9425,21 @@ window.addEventListener('resize', function(){ _safe(rhWorkTop); _safe(rhApplyFit
      원본 XML 의 그 칸에 넣는다. HTML 을 그대로 내면 글꼴·여백·표 너비가 달라진다.
    ⚠ 자리 이름표는 칸 지도와 «같은 규칙»이다. 다르면 엉뚱한 칸에 들어간다(검사가 지킨다). */
 var _rhVals = {};      /* {자리이름표(:라벨): 친 글자} */
+/* ★★ 입력판의 «바탕»은 언제나 처음 올린 원본이다 (대표 지시 2026-09-05 「직접 수정」).
+   ■ 무엇이 문제였나
+     「✨ 내 정보로 채우기」가 값을 «문서에 구워 넣고» 그 결과를 _rhDoc 으로 바꿨다.
+     그러면 채워진 칸은 더는 «빈 칸»이 아니라 입력판이 그 자리에 입력칸을 안 만든다
+     — 그래서 자동으로 들어간 값을 화면에서 «고칠 수가 없었다»(실측: 노란 칸 2곳만 남음).
+   ■ 어떻게 고쳤나
+     _rhBase(원본)와 _rhDoc(보여 주는 문서)를 갈랐다. 입력판과 되돌려 넣기는 «원본»을 쓰고,
+     화면·PDF·저장은 채워진 _rhDoc 을 그대로 쓴다. 값은 _rhVals 에만 쌓인다.
+   ⚠ 두 번 채우지 않게 하려면 되돌려 넣기가 반드시 «원본» 위에서 일어나야 한다.
+     _rhDoc(이미 채워진 것) 위에 또 넣으면 「권형하권형하」가 된다.
+   ⚠ 목록 표(학력·경력 여러 줄)는 입력칸으로 못 담는다 — 그 계획을 _rhListPlan 에 남겨
+     되돌려 넣을 때 같이 적용한다. 안 남기면 「원본 한글에 넣기」에서 학력·경력이 사라진다. */
+var _rhBase = null;    /* 처음 올린 원본 {name,ext,bytes} */
+var _rhListPlan = null;/* {섹션이름: {목록이름표: 갈래}} */
+var _rhKeepBase = false;/* 채운 결과를 올릴 때는 바탕을 바꾸지 않는다 */
 var _rhSlots = [];     /* 채울 자리(칸 지도) — 겹치기 입력칸이 이것을 쓴다 */
 var _rhMode = 'in';
 
@@ -9448,8 +9470,11 @@ async function rhBuildInput(){
   var hide=function(){ if(modes) modes.style.display="none"; if(hint) hint.style.display="none"; if(wrap) wrap.style.display="none"; };
   if(!wrap||!sheet||!window.KcareerOverlay||!window.PureunHwp){ hide(); return; }
   if(!_rhDoc||!_rhDoc.bytes){ hide(); return; }
+  /* ★ 바탕(원본)을 그린다 — 채워진 문서를 그리면 그 칸이 «빈 칸»이 아니라
+     입력칸이 안 생기고, 자동으로 들어간 값을 화면에서 못 고친다. */
+  var _b=_rhBase||_rhDoc;
   var src=null;
-  try{ await _ensureJSZip(); src=await _rhToHwpx(_rhDoc.bytes,_rhDoc.name); }catch(e){ src=null; }
+  try{ await _ensureJSZip(); src=await _rhToHwpx(_b.bytes,_b.name); }catch(e){ src=null; }
   if(!src){ hide(); return; }
 
   sheet.innerHTML='<div class="rc-mute" style="padding:22px">서식을 그리는 중…</div>';
@@ -9616,10 +9641,12 @@ async function rhPreviewHwp(){
 
 /* 친 값을 원본 한글에 되돌려 넣어 바이트로 만든다 — 저장·미리보기가 같은 길을 쓴다 */
 async function rhComposeBytes(){
-  if(!_rhDoc||!_rhDoc.bytes) return null;
+  /* ⚠ «바탕(원본)» 위에 넣는다 — 이미 채워진 _rhDoc 위에 또 넣으면 값이 두 번 들어간다 */
+  var base=_rhBase||_rhDoc;
+  if(!base||!base.bytes) return null;
   try{ await _ensureJSZip(); }catch(e){ return null; }
   var src=null;
-  try{ src=await _rhToHwpx(_rhDoc.bytes,_rhDoc.name); }catch(e){ src=null; }
+  try{ src=await _rhToHwpx(base.bytes,base.name); }catch(e){ src=null; }
   if(!src) return null;
   var zip=await JSZip.loadAsync(src), data=_cvFillData();
   var names=Object.keys(zip.files).filter(function(n){ return /Contents\/section\d+\.xml$/i.test(n); }).sort();
@@ -9627,7 +9654,10 @@ async function rhComposeBytes(){
     var vals={};
     Object.keys(_rhVals).forEach(function(k){ vals[k]=_rhVals[k]; });
     var xml=await zip.file(n).async('string');
-    var r=KcareerFormMap.apply(xml,{ values:vals, data:data });
+    /* ⚠ 목록 표(학력·경력)는 입력칸으로 못 담는다 — 채울 때 세워 둔 계획을 여기서 같이 적용한다.
+       안 하면 「원본 한글에 넣기」를 누르는 순간 학력·경력 줄이 통째로 사라진다. */
+    var lists=(_rhListPlan&&_rhListPlan[n])||null;
+    var r=KcareerFormMap.apply(xml,{ values:vals, data:data, lists:lists||undefined });
     if(r.changed) zip.file(n,r.xml);
   }
   return new Uint8Array(await zip.generateAsync({type:'arraybuffer'}));
@@ -9669,6 +9699,9 @@ async function rhFillByMap(){
       if(p) picks[s.id]=p;
     });
     var wantLists={}; _rhMap.lists.forEach(function(l){ if(l.sec===n) wantLists[l.id]=l.guess; });
+    /* 되돌려 넣을 때 다시 쓰도록 남긴다 — 목록은 입력칸으로 담을 수 없다 */
+    if(!_rhListPlan) _rhListPlan={};
+    _rhListPlan[n]=wantLists;
     var xml=await zip.file(n).async('string');
     var r=KcareerFormMap.apply(xml,{picks:picks,lists:wantLists,data:data,colMap:colMap,
       /* 가려 둔 값 — 사람이 그 자리에 직접 고른 경우에만 쓰인다(자동으로는 안 나간다) */
@@ -9681,7 +9714,11 @@ async function rhFillByMap(){
   _rhDoc={ name:String(_rhDoc.name).replace(/\.(hwp|hwpx)$/i,'')+'_채움.hwpx', ext:'hwpx', bytes:bytes };
   rhMemorySave(_rhMap.fp, _rhPicks, _rhDoc.name);
   rhDraftSave();
-  await mountEditor(bytes.buffer.slice(0), _rhDoc.name);
+  /* ⚠ 바탕을 바꾸지 않고 올린다 — 화면·PDF 는 채워진 것을 보여 주되,
+     입력판은 원본 위에 그려야 모든 칸을 계속 고칠 수 있다. */
+  _rhKeepBase=true;
+  try{ await mountEditor(bytes.buffer.slice(0), _rhDoc.name); }
+  finally{ _rhKeepBase=false; }
   try{ await rhBuildInput(); rhPrefillInput(); }catch(e){}
   rhUndoBtn();
   toast('✅ '+filled.length+'칸 채웠습니다'+(failed.length?' · '+failed.length+'칸은 못 넣었습니다':''));
