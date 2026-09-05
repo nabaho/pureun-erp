@@ -24,6 +24,23 @@ function cut(re, what) {
   return m[0];
 }
 
+
+/* 함수를 «중괄호를 세어» 통째로 꺼낸다.
+   예전에는 한 줄만 잘라 왔다. 그 함수가 여러 줄이 되는 순간 반 토막이 실려
+   조용히 깨진다 — updateArchCnt 가 보관함 개수를 두 곳에 적게 되면서 그렇게 됐다. */
+function fnOf(name){
+  const marker = 'function ' + name + '(';
+  const start = html.indexOf(marker);
+  assert.ok(start >= 0, name + ' 를 찾지 못했습니다.');
+  const bodyStart = html.indexOf('{', html.indexOf(')', start));
+  let d = 0;
+  for (let k = bodyStart; k < html.length; k++) {
+    if (html[k] === '{') d++;
+    else if (html[k] === '}') { d--; if (d === 0) return html.slice(start, k + 1); }
+  }
+  throw new Error(name + ' 의 끝을 찾지 못했습니다.');
+}
+
 /* 보관함 데이터층(loadArch ~ visibleArch)을 통째로 떼어 진짜로 돌린다 */
 function boot(user) {
   const store = {};
@@ -49,7 +66,7 @@ function boot(user) {
     '보관함 데이터층(loadArch~visibleArch)'
   );
   vm.runInContext(layer.replace(/^const /gm, 'var ').replace(/^let /gm, 'var '), ctx);
-  vm.runInContext(cut(/function updateArchCnt\(\)\{[^\n]*\n/, 'updateArchCnt'), ctx);
+  vm.runInContext(fnOf('updateArchCnt'), ctx);
 
   /* 고침 뒤에 생기는 함수 — 없으면 여기서 걸린다(그게 이 검사의 핵심이다) */
   const rd = html.match(/function refreshDash\(\)\{[^\n]*\}/);
