@@ -884,15 +884,30 @@ module.exports = function build(deps) {
      ⚠ status 는 그 사람이 «본인이 로그인할 때» 적힌다. 퇴사자가 다시 로그인하지
        않으면 active 로 남는다 — 퇴사 계정은 로그인 자체를 막아야 진짜로 닫힌다.
        (이 저장소의 다른 규칙들도 모두 같은 처지다. 여기서만 생기는 구멍이 아니다) */
+  /* ★ 「재직자인가」를 «그릇 안에» 잠깐 담아 둔다 (대표 지시 2026-09-05 「여전히 너무 늦다」).
+     실측 2026-09-05: 메일 한 통을 여는 데 1,013~1,105ms 인데, 다음메일에서 실제로 글을
+     가져오는 일은 393~575ms 뿐이었다. 나머지 «500ms 남짓»이 신분 확인이다 —
+     열쇠 풀기 + 실시간DB 한 번 읽기. 메일을 넘길 때마다 그 왕복을 되풀이했다.
+   ⚠ 오래 담지 않는다. 퇴사 처리가 «몇 분 안에» 먹혀야 한다.
+   ⚠ 그릇 안(메모리)에만 담는다 — 그릇이 바뀌면 저절로 사라진다.
+   ⚠ 담는 것은 «된다/안 된다»뿐이다. 사번·이름을 담아 두면 그것이 낡은 채로 쓰인다. */
+  const ROLE_TTL_MS = 3 * 60 * 1000;
+  const _roleOk = new Map();
   async function requireMailUser(req) {
     const decoded = await deps.requireStaff(req);
+    const hit = _roleOk.get(decoded.uid);
+    if (hit && (nowMs() - hit) < ROLE_TTL_MS) return decoded;
     const snap = await deps.getDatabase().ref('uid_roles/' + decoded.uid).once('value');
     const v = snap.val() || {};
     if (!v.sid || v.status !== 'active') {
+      _roleOk.delete(decoded.uid);
       const e = new Error('회사 메일함은 재직 중인 직원만 볼 수 있습니다.');
       e.status = 403;
       throw e;
     }
+    /* 그릇 하나가 온 세상 사람을 담지는 않는다 — 그래도 한도는 둔다(새는 것을 막는 그물) */
+    if (_roleOk.size > 200) _roleOk.clear();
+    _roleOk.set(decoded.uid, nowMs());
     return decoded;
   }
 
