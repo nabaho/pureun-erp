@@ -116,6 +116,8 @@ function rigPhotos(o) {
       return it && it._pageCount ? new Array(it._pageCount).fill(it) : [it];
     },
     photoOwner: function () { return 'me'; },
+    /* 2026-09-05: 저장 층에 «사진의 해»를 넘기게 되었다 — 안 주면 그 자리에서 멎는다 */
+    photoYearOf: function () { return '2026'; },
     renderGrid: function () {}, renderGridBar: function () {}, renderReadPanel: function () {},
     toast: function () {},
     PuPhotoStore: {

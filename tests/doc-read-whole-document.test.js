@@ -118,7 +118,8 @@ test('★ 읽은 답을 모든 쪽에 남긴다', () => {
      또 읽으러 간다 — 한도를 쪽수만큼 더 쓴다. */
   const read = readPhotoFn();
   assert.ok(/pages\.reduce\(/.test(read), '쪽마다 저장하지 않습니다.');
-  assert.ok(/saveRead\(gridYear, p\.id, read, photoOwner\(p\.id\)\)/.test(read),
+  /* ⚠ 2026-09-05 — 해가 photoYearOf 로 바뀌었다. 지킬 것은 「쪽마다 주인을 본다」이다. */
+  assert.ok(/saveRead\([\s\S]{0,80}?photoOwner\(p\.id\)\)/.test(read),
     '쪽마다 주인을 안 보고 저장합니다.');
   const start = app.match(/function startRead\(job\)[\s\S]*?\n\}/)[0];
   assert.ok(/sibs\.forEach\(/.test(start) && /sibs\.reduce\(/.test(start),

@@ -1989,9 +1989,14 @@ test('분류 지정은 항목별 실제 소유자 자리에 쓴다', () => {
      아니다. 남의 자리에 쓰면 조용히 실패하거나 남의 사진을 건드린다. */
   const fn = app.match(/function retagPhotos\([\s\S]*?\n\}/);
   assert.ok(fn, 'retagPhotos 본문을 찾을 수 없습니다');
-  assert.match(fn[0], /setCustomKind\(gridYear, id, custom, it\.meta\.__ownerUid \|\| gridOwner\)/,
+  /* ⚠ 2026-09-05 — 해도 주인도 «사진의 성질»이라 photoYearOf·photoOwner 로 바뀌었다.
+     여기서 지키는 것은 「올린 사람 자리에 쓴다」이지 그 글자가 무엇인가가 아니다.
+     gridOwner 는 '__all__' 같은 표일 수 있어 그대로 넘기면 없는 자리를 두드린다. */
+  assert.match(fn[0], /setCustomKind\(photoYearOf\(id\), id, custom, photoOwner\(id\)\)/,
     '직접분류를 올린 사람 자리가 아닌 곳에 씁니다');
-  assert.match(fn[0], /setPrimaryKind\(gridYear, id, read, null, photoOwner\(id\)\)/,
+  assert.ok(!/gridOwner/.test(fn[0]),
+    '★ gridOwner 는 사람 아이디가 아닐 수 있습니다 — 없는 자리에 씁니다');
+  assert.match(fn[0], /setPrimaryKind\(photoYearOf\(id\), id, read, null, photoOwner\(id\)\)/,
     '판독 결과와 이전 직접분류 해제를 올린 사람 자리에 함께 쓰지 않습니다');
 });
 
@@ -2011,7 +2016,7 @@ test('크게 보기에서 분류를 뗄 수 있다 — 지정은 되돌릴 수 �
   assert.match(app, /function removeCustomKindOne\(/);
   const fn = app.match(/function removeCustomKindOne\([\s\S]*?\n\}/)[0];
   assert.match(fn, /if \(blockedIfOther\(.*\)\) return;/);
-  assert.match(fn, /PuPhotoStore\.setCustomKind\(gridYear, id, null/);
+  assert.match(fn, /PuPhotoStore\.setCustomKind\(photoYearOf\(id\), id, null/);
 });
 
 test('찾기(검색)에 직접분류 이름도 걸린다', () => {
@@ -2302,7 +2307,10 @@ test('판독은 사진 주인 자리에서 본문을 받고 그 자리에 결과
   /* 인자 안에 괄호가 들어갈 수 있다 — loadFull(photoYearOf(id), id, photoOwner(id)).
      [^)]* 로는 첫 닫는 괄호에서 끊겨 멀쩡한 코드도 못 알아본다 (2026-08-13). */
   assert.match(fn, /loadFull\([\s\S]{0,120}?photoOwner\(/, '남의 사진 본문을 못 찾습니다 (주인을 안 넘깁니다)');
-  assert.match(fn, /saveRead\([^)]*photoOwner\(/, '판독 결과가 내 자리에 저장됩니다');
+  /* ⚠ 여기도 인자 안에 괄호가 들어왔다 — saveRead(photoYearOf(id), id, read, photoOwner(id)).
+     [^)]* 는 photoYearOf 의 닫는 괄호에서 끊겨 멀쩡한 코드를 못 알아본다
+     (바로 위 loadFull 에서 2026-08-13 에 이미 겪은 그것이다). */
+  assert.match(fn, /saveRead\([\s\S]{0,120}?photoOwner\(/, '판독 결과가 내 자리에 저장됩니다');
   assert.match(app, /function photoOwner\(/, '사진 주인을 찾는 함수가 없습니다');
   /* 「전체 근로자」·「받은 사진」 표를 사람 아이디로 넘기면 없는 자리를 두드린다 */
   assert.match(fnBody('photoOwner'), /ALL_OWNERS/, 'photoOwner 가 화면 표를 걸러내지 않습니다');

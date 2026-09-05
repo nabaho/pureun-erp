@@ -169,10 +169,10 @@ test('★ 올린 뒤 판독한 길에서 스스로 보낸다', () => {
 });
 
 test('★ 「다시 판독」 길에서도 스스로 보낸다 — 한쪽만 넣으면 「올릴 때는 되는데」가 된다', () => {
-  const i = app.indexOf('if (read.auto && canSendCo(read)) return sendCompany(pages[0].id, gridYear, null);');
+  const i = app.indexOf('if (read.auto && canSendCo(read)) return sendCompany(pages[0].id, photoYearOf(pages[0].id), null);');
   assert.ok(i > 0, '다시 판독 쪽 자리를 찾지 못했습니다');
   const seg = app.slice(i, i + 700);
-  assert.match(seg, /autoSendCoInfo\(read\)\) return sendCoInfo\(pages\[0\]\.id, gridYear, null\)/);
+  assert.match(seg, /autoSendCoInfo\(read\)\) return sendCoInfo\(pages\[0\]\.id, photoYearOf\(pages\[0\]\.id\), null\)/);
 });
 
 test('★ 업체관리 보내기와 따로 둔다 — 한쪽이 실패해도 다른 쪽은 되어야 한다', () => {
@@ -184,7 +184,7 @@ test('★ 업체관리 보내기와 따로 둔다 — 한쪽이 실패해도 다
 
 test('★ 여러 쪽이어도 대표 쪽 하나만 — 쪽마다 보내면 같은 업체가 쪽수만큼 쌓인다', () => {
   assert.ok(app.indexOf('sendCoInfo(sibs[0].id, year, sibs[0])') > 0);
-  assert.ok(app.indexOf('sendCoInfo(pages[0].id, gridYear, null)') > 0);
+  assert.ok(app.indexOf('sendCoInfo(pages[0].id, photoYearOf(pages[0].id), null)') > 0);
 });
 
 test('이미 있는 값은 안 덮는다 — 자동이라 더욱 그래야 한다', async () => {

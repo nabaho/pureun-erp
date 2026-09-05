@@ -176,6 +176,8 @@ function cellCtx(blocked) {
     viewerId: 'p1', gridItems: [it], gridYear: '2026',
     blockedIfOther: function () { return !!blocked; },
     photoOwner: function (id) { return 'owner-of-' + id; },
+    /* 2026-09-05: 저장 층에 «사진의 해»를 넘기게 되었다 — 안 주면 그 자리에서 멎는다 */
+    photoYearOf: function () { return '2026'; },
     renderReadPanel: function () {},
     confirm: function () { return true; },
     alert: function () {},

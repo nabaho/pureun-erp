@@ -176,6 +176,8 @@ function bootToggle(blocked) {
     gridYear: '2026',
     blockedIfOther: function () { return !!blocked; },
     photoOwner: function (id) { return 'owner-of-' + id; },
+    /* 2026-09-05: 저장 층에 «사진의 해»를 넘기게 되었다 — 안 주면 그 자리에서 멎는다 */
+    photoYearOf: function () { return '2026'; },
     renderReadPanel: function (x) { rendered.push(x); },
     PuPhotoStore: { saveRead: function (y, id, read, owner) {
       saved.push({ y: y, id: id, read: read, owner: owner });
