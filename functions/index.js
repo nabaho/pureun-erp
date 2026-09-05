@@ -62,6 +62,11 @@ function setCors(req, res) {
   res.set("Access-Control-Allow-Methods", "POST,OPTIONS");
   // Authorization 을 허용해야 브라우저가 토큰을 붙인 요청을 보낼 수 있다.
   res.set("Access-Control-Allow-Headers", "Authorization,Content-Type");
+  // 미리 묻기(OPTIONS)를 한 시간 담아 둔다 — 메일 한 통 열 때마다 서울까지 왕복이
+  // «두 번»이었다(실측 2026-09-05: 미리 묻기 86ms + 본 요청). 브라우저 기본은 5초라
+  // 조금만 쉬었다 열어도 매번 다시 묻는다. 담는 것은 「무엇을 허용하는가」뿐이고
+  // 본문·토큰은 담기지 않는다(아래 Cache-Control:no-store 는 그대로 둔다).
+  res.set("Access-Control-Max-Age", "3600");
   res.set("Cache-Control", "no-store");
 }
 
