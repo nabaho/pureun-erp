@@ -64,3 +64,40 @@ test('★ 개인정보를 적지 않는다 — 이름표와 숫자뿐', () => {
   assert.match(fn, /w:String\(what\)\.slice\(0,40\)/);
   assert.doesNotMatch(fn, /\.org|\.name|titleVal/, '★ 기관명·사람 이름을 기록에 넣지 마세요');
 });
+
+/* ── 오류도 같은 곳에 적는다 (대표 제보 2026-09-05 「아무런 클릭이 안먹는다」) ── */
+
+test('★★ 오류를 적는다 — 부팅 도중 오류 하나면 단추가 «안 붙는다»', () => {
+  /* 화면은 이미 그려져 멀쩡해 보이는데 아무것도 안 눌리는 상태가 된다.
+     느려서 멈춘 것과 겉모습이 같아 이 기록으로만 갈린다.
+     실측: 앱 안에서 던진 오류가 「[오류] Uncaught Error: 시험용 폭탄 @:1」로 남았다. */
+  assert.match(source, /KC_ERR_KEY='_errlog', KC_ERR_MAX=30/);
+  assert.match(bare, /window\.addEventListener\('error'/);
+  assert.match(bare, /window\.addEventListener\('unhandledrejection'/,
+    '약속 깨짐은 error 로 안 잡힙니다');
+});
+
+test('★★ 같은 오류가 쏟아져도 읽을 수 있다 — 횟수로 묶는다', () => {
+  const fn = cutFn(bare, 'function kcErrLog(');
+  assert.match(fn, /last\.n=\(last\.n\|\|1\)\+1/, '★ 같은 것이 수백 줄 쌓이면 못 읽습니다');
+  assert.match(fn, /while\(a\.length>KC_ERR_MAX\) a\.shift\(\)/);
+});
+
+test('★★ 오류를 «맨 위»에 보여 준다 — 클릭이 안 먹는 까닭은 대개 여기다', () => {
+  const fn = cutFn(bare, 'function kcPerfOpen(');
+  const at = fn.indexOf('오류 (');
+  const at2 = fn.indexOf('멈춤 기록 (');
+  assert.ok(at > 0 && at2 > at, '오류가 멈춤 기록보다 먼저 나와야 합니다');
+});
+
+test('★★ 누르지 않고도 연다 — ?diag=1', () => {
+  /* 클릭이 안 먹는 화면에서는 단추로 여는 길이 소용없다. 주소로 여는 문이 있어야 한다. */
+  assert.match(bare, /diag=1/);
+  assert.match(bare, /_safe\(kcPerfOpen\)/);
+});
+
+test('★ 기록을 비울 때 둘 다 비운다', () => {
+  const fn = cutFn(bare, 'function kcPerfClear(');
+  assert.match(fn, /removeItem\(NS\+KC_PERF_KEY\)/);
+  assert.match(fn, /removeItem\(NS\+KC_ERR_KEY\)/);
+});
