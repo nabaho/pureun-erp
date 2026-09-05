@@ -94,3 +94,25 @@ test('업체명 칸은 세로로 쪼개지지 않는다 (가장 좁아져도 최
       '업체명 칸에 최소 너비가 없습니다 — 칸이 좁아지면 한 글자씩 세로로 흐릅니다 (' + k + ')');
   });
 });
+
+/* ★★ 머리글의 최소 너비만으로는 못 막았다 (대표 2026-09-05: 「업체명 너무 짤린다」).
+   칸이 눌리면 브라우저가 한글을 «글자마다» 끊어 「(주)크레/컴, 스마/이오)」 처럼
+   석 줄로 흘렸다 — 표 높이는 배로 늘고 정작 이름은 못 읽는다.
+   몸통 칸이 스스로 «한 줄»을 지켜야 한다. 자르되 감추지는 않는다(온이름은 말풍선에). */
+test('★★ 업체명 몸통 칸은 한 줄로 자르고 온이름을 말풍선에 남긴다', () => {
+  const cells = [];
+  const re = /h\('td',\s*\{[^]{0,300}?title:co\.name[^]{0,80}?\}\s*,/g;
+  let m;
+  while ((m = re.exec(bare))) cells.push(m[0]);
+  assert.strictEqual(cells.length, 2,
+    '업체명 몸통 칸이 두 표(전체·사무대행)에 있어야 합니다 — 찾은 것 ' + cells.length + '개');
+  cells.forEach((cell, i) => {
+    assert.match(cell, /whiteSpace\s*:\s*'nowrap'/,
+      (i + 1) + '번째 업체명 칸이 줄바꿈을 막지 않습니다 — 좁아지면 세로로 쪼개집니다');
+    assert.match(cell, /textOverflow\s*:\s*'ellipsis'/,
+      (i + 1) + '번째 업체명 칸에 … 처리가 없습니다 — 잘린 줄도 모르게 됩니다');
+    assert.match(cell, /overflow\s*:\s*'hidden'/, (i + 1) + '번째 업체명 칸에 overflow 가 없습니다');
+    assert.match(cell, /maxWidth\s*:\s*'\d+px'/,
+      (i + 1) + '번째 업체명 칸에 최대 너비가 없습니다 — 없으면 … 가 안 걸립니다');
+  });
+});
