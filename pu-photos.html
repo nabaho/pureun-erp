@@ -3468,14 +3468,66 @@ function clearCameraIntent() {
   try { sessionStorage.removeItem('pu_open_camera'); } catch (_) { }
 }
 
+/* ══════ 「사진첩이 계속 튕겨서 포털 화면이 나온다」 — 뿌리 (대표 보고 2026-09-05) ══════
+
+   ■ 앞서 두 번 고친 것은 «가지»였다
+   2026-09-03 에 두 자리를 고쳤다 — 돌아갈 곳(camReturnTo)을 카메라 한 번으로 끝냈고,
+   되살아난 옛 포털 촬영이 돌아가지 못하게 표(RUN)를 달았다. 그런데도 계속 튕겼다.
+   **뿌리는 그 위에 있었다: «촬영 요청 쪽지»가 안 없어진다.**
+
+   ■ 쪽지가 무엇인가
+   포털의 📷 를 누르면 포털이 sessionStorage 에 「카메라 열어 달라」는 쪽지를 적고
+   사진첩으로 보낸다(enter.html 의 wireCamFab). 주소의 ?cam=1 이 로그인·업데이트를
+   지나며 사라져도 촬영이 열리게 하려고 둔, 옳은 장치다.
+
+   ■ 그런데 그 쪽지를 «읽고도 안 버렸다»
+   지우는 곳은 카메라가 실제로 열린 뒤(openCam 이 끝난 뒤)뿐이었다. 그래서
+     · PC 처럼 카메라가 없거나 권한을 안 주면 — 그 뒤로도 쪽지가 남는다
+     · sessionStorage 는 **그 탭이 살아 있는 내내** 남는다. 새로고침해도, 사진첩을
+       다시 열어도 그대로다.
+   남은 쪽지는 사진첩을 열 때마다
+     ① 카메라를 «또» 켜고(사진첩을 열었는데 촬영 화면이 뜬다)
+     ② **camReturnTo 를 'enter.html' 로 다시 무장한다.**
+   ②가 튕김의 정체다 — 그 뒤로는 사진첩 안에서 그냥 사진을 찍어 올리기만 해도
+   「다 했으니 온 곳으로 돌려보낸다」가 걸려 포털로 나간다. 사람은 자기가 무엇을
+   눌러서 나갔는지 알 수가 없다.
+
+   ■ 고친 규칙 둘
+   ① **쪽지는 한 번 쓰고 버린다.** 읽는 그 자리에서 지운다 —
+      주소의 ?portalcam= 을 「읽자마자 지운다」고 한 것과 **같은 규칙**이다.
+      (지우는 자리가 「카메라가 열린 뒤」면, 안 열리는 기기에서는 영영 안 지워진다.)
+   ② **묵은 쪽지는 아예 안 본다.** 포털이 적어 둔 때(at)가 5분보다 오래됐으면 버린다 —
+      눌러 놓고 딴 데 갔다가 한참 뒤에 사진첩을 연 것이지, 지금 찍겠다는 뜻이 아니다.
+   ⚠ 주소에 ?cam=1 이 있으면 그것은 «지금 이 걸음»이라 그대로 연다 — 쪽지와 무관하다. */
+const CAM_TICKET_MAX_AGE = 5 * 60 * 1000;
+
+/* 쪽지를 «집어 든다» — 읽고 그 자리에서 버린다. 순수하게 만들 수 없는 자리라
+   (sessionStorage) 검사는 아래 camTicketUsable 로 규칙만 본다. */
+function takeCameraIntent() {
+  let raw = '';
+  try { raw = sessionStorage.getItem('pu_open_camera') || ''; } catch (_) { return null; }
+  clearCameraIntent();                       // ① 읽었으면 버린다 — 무슨 일이 나든
+  if (!raw) return null;
+  let t = null;
+  try { t = raw === 'quick' ? { mode: 'photo', quick: true, from: 'portal' } : JSON.parse(raw); }
+  catch (_) { return null; }
+  return camTicketUsable(t, Date.now()) ? t : null;
+}
+
+/* 이 쪽지를 지금 써도 되는가 (순수 로직 · 검사 대상).
+   ⚠ 때(at)가 없는 옛 쪽지는 받아 준다 — 옛 포털이 적은 것이라 막으면 촬영이 통째로 죽는다. */
+function camTicketUsable(t, now) {
+  if (!t || typeof t !== 'object') return false;
+  const at = Number(t.at || 0);
+  if (!at) return true;
+  return (now - at) <= CAM_TICKET_MAX_AGE;
+}
+
 function openCamIfAsked() {
   let want = false, mode = '', from = '', quick = false, remembered = null;
   try {
     const q = new URLSearchParams(location.search);
-    try {
-      const raw = sessionStorage.getItem('pu_open_camera') || '';
-      remembered = raw === 'quick' ? { mode:'photo', quick:true, from:'portal' } : JSON.parse(raw || 'null');
-    } catch (_) { remembered = null; }
+    remembered = takeCameraIntent();
     want = q.get('cam') === '1' || !!remembered;
     mode = q.get('mode') || (remembered && remembered.mode) || '';
     from = q.get('from') || (remembered && remembered.from) || '';
