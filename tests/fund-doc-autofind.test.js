@@ -161,3 +161,18 @@ test('찾는 종류가 실제 끌어놓기 칸과 짝이 맞는다', () => {
   assert.deepEqual(Object.keys(box.D).sort(), ['corpreg', 'inka', 'taxid'],
     '완비 5항목을 채우는 서류 셋이어야 한다');
 });
+
+/* 브라우저에서 실제로 그려 보고 잡았다(2026-09-05): 로그인이 아직 안 붙은 사이
+   loadThumb 이 «그 자리에서» 던져(「사진을 담을 계정을 알 수 없습니다」) 예외가
+   renderDocFind 밖으로 튀었고, 찾은 목록이 통째로 사라졌다.
+   미리보기는 곁다리다 — 한 장이 안 떠도 목록은 남아야 한다. */
+test('미리보기 한 장이 실패해도 목록은 남는다', () => {
+  const r = grabFn('renderDocFind');
+  const i = r.indexOf('loadThumb');
+  assert.ok(i > 0, '미리보기를 안 띄운다');
+  const before = r.slice(0, i);
+  assert.ok(/try\{\s*$|try\{[^}]*$/m.test(before.split('\n').slice(-3).join('\n')),
+    'loadThumb 을 try 로 감싸지 않았다 — 그 자리에서 던지면 목록이 통째로 사라진다');
+  assert.match(r, /\}catch\(e\)\{ var el=\$\('dft-'\+x\.it\.id\); if\(el\) el\.textContent='\(미리보기 없음\)'; \}/,
+    '실패한 자리를 비워 두면 사람이 계속 기다린다');
+});
