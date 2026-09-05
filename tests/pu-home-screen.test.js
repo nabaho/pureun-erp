@@ -1136,7 +1136,12 @@ test('★ 당겨오기 목록에도 번호가 붙고, 넣은 줄에는 번호가
   ctx.openModal = h => { ctx.shown.push(h); };
   ctx.closeModal = () => {};
   ctx.toast = () => {};
+  /* ★ 2026-09-05: 목록 그리는 일이 pullListHtml 로 갈라졌고 찾기·깔때기가 붙었다.
+     그 부품들을 안 올리면 renderPull 이 「is not defined」로 터진다. */
+  ctx.document = { getElementById: () => null };
   run(ctx, fnSource('todayString') + '\n' + fnSource('kindHasPeriod') + '\n'
+    + fnSource('찾기꼴') + '\n' + fnSource('pullPass') + '\n' + fnSource('pullVisible') + '\n'
+    + fnSource('pullListHtml') + '\n' + fnSource('pullCountPaint') + '\n'
     + fnSource('renderPull') + '\n' + fnSource('pullApply'));
   ctx.renderPull();
   const nums = numbersIn(ctx.shown[ctx.shown.length - 1]);
