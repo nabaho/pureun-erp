@@ -5083,6 +5083,8 @@ function infoForm(f){
      끌어다 놓기·클릭 선택은 그대로 되고, 자세한 설명은 ⓘ 와 마우스 올림말로 옮겼다. */
   return '<div class="panel" style="padding:10px 14px"><div class="row" style="flex-wrap:wrap;gap:8px">'
     +'<span style="font-size:13px;font-weight:800;white-space:nowrap">📥 서류 자동 입력</span>'+hlp('doc.read')
+    +'<button onclick="docAutoFind()" class="primary" style="padding:3px 10px;font-size:11.5px;white-space:nowrap" '
+    +'title="푸른사진첩을 훑어 이 기금의 인가증·등기부·고유번호증을 찾아 줍니다 — 고르면 판독 후 확인을 거칩니다">🔎 사진첩에서 찾기</button>'
     +[['dz-inka','inka','설립인가증','인가번호·인가일·대표자·소재지'],
       ['dz-corpreg','corpreg','법인 등기부등본','법인등록번호·설립등기일'],
       ['dz-taxid','taxid','고유번호증','고유번호·법인등록번호·대표자']].map(function(z){
@@ -5166,6 +5168,118 @@ function openSubDocPick(){
   openAlbumPick('','',null,k);
 }
 /* txn 을 주면 «그 거래의 증빙»을 고르는 창이 된다(판독 없이 잇기만 한다) */
+/* ══════════ 서류를 사진첩에서 «스스로 찾아» 온다 (대표 지시 2026-09-05) ══════════
+   「서류 입력은 푸른 사진첩에서 자동으로 가지고 오게 해서 확인후 입력하게 하자」
+
+   여태는 🖼 를 눌러 해마다 사진을 눈으로 뒤져야 했다. 사진첩은 이미 서류 «제목»을
+   읽어 두고 있다(meta.read.fields.docName) — 그것으로 골라 준다.
+
+   ⚠ 「자동으로 넣지」 않는다. 후보를 찾아 보여 주고 사람이 고르면, 그때부터는 지금까지
+     쓰던 길(pickAlbumPhoto → 판독 → [↓ 아래 칸에 반영])을 그대로 탄다. 서류 한 장이
+     기금의 인가번호를 바꾼다 — 사람 눈을 건너뛰면 안 된다.
+   ⚠ 종류가 맞아야 후보다. 기금 이름까지 맞으면 «확실»로 올려 맨 위에 둔다.
+     이름이 안 맞는다고 버리지는 않는다 — 사진첩에 기금 이름이 안 적힌 것이 흔하다. */
+var DOC_FIND={
+  inka:{label:'설립인가증', kw:['인가증','설립인가','인가서']},
+  corpreg:{label:'법인 등기부등본', kw:['등기사항','등기부','등기사항전부증명']},
+  taxid:{label:'고유번호증', kw:['고유번호']}
+};
+/* 사진 한 장에서 «글자로 된 것»을 모은다 — 제목·직접분류·회사·메모·판독 칸 */
+function docFindText(it){
+  var m=(it&&it.meta)||{}, r=m.read||{}, f=r.fields||{};
+  return [f.docName,m.company,m.note,f.company,f.name,f.corpName,(m.doc||{}).name]
+    .filter(Boolean).join(' ');
+}
+/* 0=후보 아님 · 1=종류만 맞음 · 3=기금 이름까지 맞음 */
+function docFindScore(it,kind,fkey){
+  var def=DOC_FIND[kind]; if(!def) return 0;
+  var t=docFindText(it);
+  if(!def.kw.some(function(k){ return t.indexOf(k)>=0; })) return 0;
+  if(fkey&&fkey.length>=3&&_cardFundKey(t).indexOf(fkey)>=0) return 3;
+  return 1;
+}
+/* 사진첩을 훑어 세 서류의 후보를 한 번에 추린다 */
+function docAutoFind(){
+  if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다 — 새로고침 후 다시','err'); return; }
+  var fid=S.fundId, f=funds[fid]||{}, fkey=_cardFundKey(f.name||f.short_name||'');
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">🔎 사진첩에서 서류 찾기</h2>'
+    +'<span class="muted" style="font-size:11.5px">'+esc(f.short_name||f.name||'')+'</span>'+hlp('doc.auto')+'</div>'
+    +'<div id="dfBody" style="max-height:62vh;overflow:auto">'+loadingHTML('사진첩을 훑는 중…')+'</div>',{width:900});
+  var boss=_isBoss();
+  var ysP=PuPhotoStore.listYears?PuPhotoStore.listYears():Promise.resolve([String(new Date().getFullYear())]);
+  ysP.then(function(ys){
+    var years=(ys||[]).slice().sort().reverse().slice(0,8);
+    if(!years.length) years=[String(new Date().getFullYear())];
+    return Promise.all(years.map(function(y){
+      var p=(boss&&PuPhotoStore.listYearAll)
+        ? PuPhotoStore.listYearAll(y).catch(function(){ return PuPhotoStore.listYear(y); })
+        : PuPhotoStore.listYear(y);
+      return p.then(function(items){
+        return Object.keys(items||{}).map(function(id){ return {id:id,year:y,meta:items[id]||{}}; });
+      }).catch(function(){ return []; });
+    }));
+  }).then(function(lists){
+    if(S.fundId!==fid||!$('dfBody')) return;                 // 그 사이 다른 기금으로 옮겼다
+    var all=[].concat.apply([],lists);
+    _dfFound={};
+    Object.keys(DOC_FIND).forEach(function(k){
+      _dfFound[k]=all.map(function(it){ return {it:it,sc:docFindScore(it,k,fkey)}; })
+        .filter(function(x){ return x.sc>0; })
+        .sort(function(a,b){ return b.sc-a.sc || (b.it.meta.takenAt||0)-(a.it.meta.takenAt||0); })
+        .slice(0,6);
+    });
+    _dfScanned=all.length;
+    renderDocFind();
+  }).catch(function(e){
+    var b=$('dfBody'); if(b) b.innerHTML='<div class="msg err">사진첩을 읽지 못했습니다: '+esc((e&&e.message)||e)+'</div>';
+  });
+}
+var _dfFound={}, _dfScanned=0;
+function renderDocFind(){
+  var b=$('dfBody'); if(!b) return;
+  var f=funds[S.fundId]||{}, scans=f.scans||{};
+  var any=Object.keys(DOC_FIND).some(function(k){ return (_dfFound[k]||[]).length; });
+  b.innerHTML='<p class="muted" style="font-size:11.5px;margin:0 0 10px">사진 '+_dfScanned+'장을 훑었습니다.'
+      +(any?' 고르면 판독한 뒤 <b>확인</b>을 거쳐 칸에 들어갑니다.':'')+'</p>'
+    +Object.keys(DOC_FIND).map(function(k){
+      var def=DOC_FIND[k], list=_dfFound[k]||[];
+      var head='<div class="row" style="margin:12px 0 6px"><b style="font-size:13px">'+esc(def.label)+'</b>'
+        +(scans[k]?'<span class="chip ok" style="font-size:10px">이미 연결됨</span>':'')
+        +'<span class="muted" style="font-size:11.5px">'+(list.length?list.length+'장 찾음':'못 찾음')+'</span></div>';
+      if(!list.length) return head+'<div class="muted" style="font-size:11.5px;padding:4px 2px">'
+        +'제목에 «'+esc(def.kw.join(' · '))+'» 이 든 사진이 없습니다 — 사진첩에 올린 뒤 판독해 두면 여기 나옵니다.</div>';
+      return head+'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">'
+        +list.map(function(x){
+          var m=x.it.meta||{}, ttl=((m.read||{}).fields||{}).docName||m.company||'(제목 없음)';
+          var d=new Date(m.takenAt||0);
+          return '<div onclick="docFindPick(\''+k+'\',\''+x.it.id+'\','+x.it.year+')" '
+            +'style="cursor:pointer;border:1px solid '+(x.sc>1?'var(--acc)':'var(--line)')+';border-radius:8px;overflow:hidden;background:var(--bg)">'
+            +'<div id="dft-'+x.it.id+'" style="height:88px;display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:11px">…</div>'
+            +'<div style="padding:5px 7px"><div style="font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(ttl)+'</div>'
+            +'<div class="muted" style="font-size:10px">'+x.it.year+'.'+(d.getMonth()+1)+'.'+d.getDate()
+            +(x.sc>1?' <span class="chip ok" style="font-size:9px">이름 맞음</span>':'')
+            +(m.__ownerName?' · '+esc(m.__ownerName):'')+'</div></div></div>';
+        }).join('')+'</div>';
+    }).join('')
+    +'<p class="muted" style="font-size:11px;margin:12px 0 0">사진첩 원본은 그대로 남습니다 · 기금에는 참조만 남깁니다</p>';
+  /* 미리보기는 그린 뒤에 띄운다 — 목록이 먼저 떠야 기다리는 느낌이 없다 */
+  Object.keys(DOC_FIND).forEach(function(k){
+    (_dfFound[k]||[]).forEach(function(x){
+      PuPhotoStore.loadThumb(String(x.it.year),x.it.id,(x.it.meta||{}).__ownerUid||undefined)
+        .then(function(src){ var el=$('dft-'+x.it.id);
+          if(el&&src) el.innerHTML='<img src="'+src+'" style="width:100%;height:88px;object-fit:cover">'; })
+        .catch(function(){});
+    });
+  });
+}
+/* 고르면 «지금까지 쓰던 길»을 그대로 탄다 — 판독 → 확인 → 반영 */
+function docFindPick(kind,id,year){
+  var zid=({inka:'dz-inka',corpreg:'dz-corpreg',taxid:'dz-taxid'})[kind];
+  var x=(_dfFound[kind]||[]).filter(function(y){ return y.it.id===id; })[0];
+  _pick={kind:kind,zid:zid,year:+year,fid:S.fundId,sid:'',yr:S.year,shelf:'',txn:'',
+         items:[{id:id,meta:(x&&x.it.meta)||{}}]};
+  pickAlbumPhoto(id);
+}
 function openAlbumPick(zid,kind,sid,shelf,txn){
   if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다 — 새로고침 후 다시','err'); return; }
   _pick={kind:kind,zid:zid,items:[],year:new Date().getFullYear(),fid:S.fundId,sid:sid||'',yr:S.year,
@@ -10926,6 +11040,12 @@ var HELP={
    +'<p><b>빈 칸만 채웁니다.</b> 이미 적혀 있는 값은 건드리지 않습니다. 채운 뒤 <b>[💾 저장]</b>을 눌러야 기록됩니다.</p>'
    +'<p>기금법인은 사업자등록번호가 아니라 <b>고유번호</b>를 받으므로, 카드의 번호는 고유번호 칸으로 들어갑니다 — 사업자등록증 카드라면 확인하세요.</p>'
    +'<p>목록은 <b>사업자등록증 카드만</b> 보여 주고, 지금 기금 이름과 닮은 것을 위로 올립니다. 사진은 읽지 않습니다(원본이 수 MB라 목록만 씁니다).</p>'},
+ 'doc.auto':{t:'사진첩에서 서류 찾기',h:'<p>푸른사진첩을 훑어 이 기금의 <b>설립인가증 · 법인 등기부등본 · 고유번호증</b>을 <b>스스로 찾아</b> 줍니다. 해마다 사진을 눈으로 뒤질 필요가 없습니다.</p>'
+   +'<p><b>어떻게 찾나</b> — 사진첩이 이미 읽어 둔 <b>서류 제목</b>으로 고릅니다. 제목에 「인가증」·「등기사항」·「고유번호」가 든 사진이 후보입니다. 기금 이름까지 맞으면 <b>이름 맞음</b> 딱지를 달고 맨 위에 둡니다.</p>'
+   +'<p><b>이름이 안 맞아도 버리지 않습니다</b> — 사진첩에 기금 이름이 안 적힌 경우가 흔합니다. 종류만 맞으면 후보로 올립니다.</p>'
+   +'<p><b>자동으로 넣지 않습니다.</b> 고르면 판독한 뒤 <b>판독 결과</b>를 보여 주고, [↓ 아래 칸에 반영]을 눌러야 칸에 들어갑니다. 저장은 그 뒤 [💾 저장]입니다. 서류 한 장이 기금의 인가번호를 바꾸므로 사람 눈을 건너뛰지 않습니다.</p>'
+   +'<p><b>못 찾으면</b> 그 서류는 사진첩에 없거나 아직 판독이 안 된 것입니다 — 사진첩에서 판독해 두면 다음부터 여기 나옵니다. 그때까지는 ⬇ 로 파일을 직접 올리면 됩니다.</p>'
+   +'<p>사진첩 원본은 그대로 남고 기금에는 <b>참조만</b> 남습니다.</p>'},
  'album.pick':{t:'사진첩에서 서류 고르기',h:'<p>폰으로 찍어 <b>푸른사진첩</b>에 올린 서류를 그대로 가져옵니다. PC로 파일을 옮길 필요가 없습니다.</p>'
    +'<p><b>원본은 사진첩에 남고</b>, 기금에는 읽어낸 값과 <b>연결 정보만</b> 저장됩니다 — 기금 자료가 무거워지지 않습니다.</p>'
    +'<p>서류로 표시된 사진이 위에 옵니다. 연도를 바꿔 지난 사진도 찾을 수 있습니다.</p>'
