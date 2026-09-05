@@ -104,12 +104,25 @@ test('아이폰 기본 카메라 사진은 페이지 이동 전에 고화질 JPE
   assert.match(enter, /blob:photo\.blob/);
 });
 
-test('로그인 이동 뒤에도 요청을 기억하고 실제로 열린 뒤 한 번만 지운다', () => {
+/* ⚠⚠ 2026-09-05 다시 겨눔 — 이 검사가 «틀린 규칙»을 못박고 있었다.
+   종전 제목: 「… 실제로 열린 뒤 한 번만 지운다」. 그런데 **그것이 바로 버그였다.**
+   지우는 자리가 「카메라가 열린 뒤」뿐이면, PC 처럼 카메라가 없거나 권한을 안 준
+   기기에서는 쪽지가 **영영 안 지워진다.** sessionStorage 는 그 탭이 사는 내내
+   남으므로, 사진첩을 열 때마다 카메라를 또 켜고 camReturnTo 를 포털로 다시 무장한다 —
+   그 뒤로는 사진첩에서 한 장 찍어 올리기만 해도 포털로 튕겼다(대표 보고 2026-09-05).
+
+   지킬 것은 그대로다: **로그인 이동 뒤에도 요청을 기억한다.**
+   바뀐 것은 버리는 때다: **읽는 그 자리에서** 버린다(tests/photos-camera-ticket). */
+test('로그인 이동 뒤에도 요청을 기억한다 — 다만 «읽는 자리에서» 버린다', () => {
   const fn = photos.match(/function openCamIfAsked\(\) \{[\s\S]*?\n\}/)[0];
-  assert.match(fn, /sessionStorage\.getItem\('pu_open_camera'\)/);
+  assert.match(fn, /takeCameraIntent\(\)/,
+    '★ 쪽지를 집어 드는 길이 없으면 로그인 이동 뒤에 촬영 요청이 사라집니다');
   assert.match(fn, /openCam\(\)\.then/);
-  assert.ok((fn.match(/clearCameraIntent\(\)/g) || []).length >= 2,
-    '성공과 최종 실패에서 모두 촬영 요청을 지워야 다음 실행 때 권한창이 되살아나지 않습니다.');
+  const take = photos.match(/function takeCameraIntent\(\) \{[\s\S]*?\n\}/)[0];
+  assert.match(take, /clearCameraIntent\(\);/,
+    '★★★ 읽고도 안 버리면 그 탭이 사는 내내 남아 사진첩이 계속 튕깁니다');
+  assert.ok(take.indexOf('clearCameraIntent') < take.indexOf('JSON.parse'),
+    '★★★ 뜯어보기 «전»에 버려야 합니다 — 깨진 쪽지에서 멈추면 그것이 영영 남습니다');
 });
 
 test('저장이 끝난 뒤 포털로 돌아간다', () => {
