@@ -158,6 +158,23 @@ test('③ 안 잠긴 달은 옛날 그대로 — 조정 없이 그냥 되돌린�
   assert.ok(after.undoneDate && !after.perfSettled);
 });
 
+test('② 「지난 실적」으로 올린 옛 자료는 실적에는 세고 급여에는 안 붙인다', () => {
+  /* 2023~2024 인센티브처럼 날짜가 깨진 채 올라온 자료를 바로잡을 때 —
+     날짜를 고쳐도 그 달 급여는 이미 끝났으니 명세서가 뒤늦게 달라지면 안 된다.
+     그렇다고 실적에서까지 지우면 고친 뜻이 없다. 두 답이 갈리는 «유일한» 자리다. */
+  const rows = [
+    { id: 'h1', date: '2023-05-10', amount: 1000, perfHistorical: true,
+      perfShares: [{ sid: 'P-1', amount: 500000 }] },
+    { id: 'n1', date: '2023-05-11', amount: 1000,
+      perfShares: [{ sid: 'P-1', amount: 7000 }] },
+  ];
+  const c = realm({ income: rows, users: [{ sid: 'P-1', name: '아무개' }] });
+  assert.strictEqual(c.calcPerfBonus('P-1', '2023-05').total, 7000,
+    '급여에는 옛 실적이 붙으면 안 된다 — 그 달 명세서는 이미 나갔다');
+  assert.strictEqual(c.erpPerfBreakdown('P-1', '2023-05').total, 507000,
+    '실적에는 세야 한다 — 날짜를 바로잡은 뜻이 거기 있다');
+});
+
 test('④ 마감된 달을 손대기 전에 «어디로 가는지» 를 먼저 말한다', () => {
   const c = realm({ locked: ['2026-09'], today: '2026-09-03' });
   const notice = c.erpLockNoticeFor({ date: '2026-09-10' });
