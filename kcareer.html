@@ -977,6 +977,7 @@ input.kf-in.kf-done{background:#f8fafc;border-bottom:1.5px solid var(--teal);fon
 <script src="js/kcareer-pusync.js?v=3"></script>
 <script src="js/kcareer-adv-summary.js?v=1"></script>
 <script src="js/kcareer-hwpxfill.js?v=9"></script>
+<script src="js/kcareer-svgtext.js?v=1"></script>
 <script src="js/kcareer-formmap.js?v=6"></script>
 <script src="js/kcareer-hanja.js?v=1"></script>
 <script src="js/kcareer-hwpstamp.js?v=2"></script>
@@ -1969,7 +1970,7 @@ input.kf-in.kf-done{background:#f8fafc;border-bottom:1.5px solid var(--teal);fon
       <div id="hwpViewInfo" style="font-size:12px;color:var(--text-mute);margin-bottom:8px"></div>
       <div id="hwpViewBody"></div>
     </div>
-    <div class="modal-foot"><button class="btn" onclick="closeHwpView()">닫기</button><button class="btn primary" onclick="rhAutoFillDoc()" title="프로필·경력에서 성명·연락처·학력·경력을 끌어와 이 서식의 빈 칸에 넣습니다">✨ 내 정보로 채우기</button><button class="btn primary" onclick="hwpViewPdfFile()" title="인쇄창 없이 곧바로 .pdf 파일로 내려받습니다">⬇ PDF 받기</button><button class="btn" onclick="hwpViewPdf()" title="인쇄창을 열어 종이로 뽑거나 미리 봅니다">🖨 인쇄</button><button class="btn" onclick="hwpViewDownload()">⬇ 파일로 저장</button></div>
+    <div class="modal-foot"><button class="btn" onclick="closeHwpView()">닫기</button><button class="btn primary" onclick="rhAutoFillDoc()" title="프로필·경력에서 성명·연락처·학력·경력을 끌어와 이 서식의 빈 칸에 넣습니다">✨ 내 정보로 채우기</button><button class="btn" onclick="hwpViewPdfFile()" title="곧바로 .pdf 파일로 내려받습니다 — 다만 그림이라 글자 복사·검색은 안 됩니다">⬇ PDF 바로받기(그림)</button><button class="btn primary" onclick="hwpViewPdf()" title="인쇄창에서 「PDF로 저장」을 고르면 글자가 살아 있는 PDF가 됩니다 — 복사·검색이 됩니다">🖨 인쇄 · PDF(글자 살아 있음)</button><button class="btn" onclick="hwpViewDownload()">⬇ 파일로 저장</button></div>
   </div>
 </div>
 <div class="modal-ov" id="modalSub">
@@ -3241,20 +3242,56 @@ async function hwpViewPdfFile(){
   pdf.save(nm);
   toast('✅ '+nm+' 로 저장했습니다 ('+cvs.length+'쪽)');
 }
-function hwpViewPdf(){
-  var cvs=document.querySelectorAll('#hwpViewBody canvas');
-  if(!cvs.length){ toast('먼저 문서가 화면에 그려져야 합니다'); return; }
-  var w=window.open('','_blank');
-  if(!w){ toast('팝업이 막혔습니다 — 주소창의 팝업 허용을 눌러주세요'); return; }
+/* ★★ 「글자가 살아 있는 PDF」 (2026-09-05)
+   ■ 무엇이 달라졌나
+     지금까지 인쇄에 넣던 것은 캔버스 «그림»이었다 — 글자를 못 고르고 못 찾고 용량이 컸다.
+     한글 엔진은 renderPageSvg 로 «진짜 글자»를 준다(실측: text 100개 · path 0개 · image 0개).
+     그것을 인쇄창에 넣으면 브라우저가 글자를 그대로 담은 PDF를 만든다.
+   ⚠ 엔진은 «한 글자에 <text> 하나»를 주고 띄어쓰기는 자리 간격으로만 남긴다 —
+     KcareerSvgText.mergeGlyphs 가 줄 단위로 되붙이고 공백을 되살린다. 안 거치면
+     PDF 에서 「권형하」 검색이 빗나간다.
+   ⚠ 실패하면 «조용히 옛 그림 길»로 간다 — 인쇄 자체가 막히면 안 된다. */
+async function _hwpSvgPages(){
+  if(!_hwpView || !_hwpView.bytes) return null;
+  if(!window.PureunHwp || !window.KcareerSvgText) return null;
+  var doc = await PureunHwp.openDoc(_hwpView.bytes, _hwpView.name);
+  try{
+    if(typeof doc.renderPageSvg!=='function') return null;
+    var n=doc.pageCount(), out=[];
+    for(var i=0;i<n;i++){
+      /* ★ 띄어쓰기는 SVG 에 없다 — 짐작하지 말고 «엔진이 들고 있는 정답»을 받아 온다.
+         (짐작하면 「1970- 01- 01」처럼 붙임표 뒤에 없는 공백이 생긴다 — 실측)
+         옛 엔진이라 배치표가 없으면 mergeGlyphs 가 간격으로 짐작한다 — 그래도 글자는 살아 있다. */
+      var stops=null;
+      try{ if(typeof doc.getPageTextLayout==='function') stops=KcareerSvgText.spaceStops(doc.getPageTextLayout(i)); }catch(e){}
+      out.push(KcareerSvgText.mergeGlyphs(doc.renderPageSvg(i), (stops&&stops.length)?{spaceBefore:stops}:null));
+    }
+    return out.length?out:null;
+  } finally { try{ if(doc&&doc.free) doc.free(); }catch(e){} }
+}
+function _hwpImgPrintHtml(cvs){
   var html='<!doctype html><html><head><meta charset="utf-8"><title>'
     +escapeHtml((_hwpView&&_hwpView.name)||'문서')+'</title>'
     +'<style>@page{size:A4;margin:0}html,body{margin:0;padding:0}'
     +'img{display:block;width:100%;page-break-after:always}img:last-child{page-break-after:auto}</style>'
     +'</head><body>';
   for(var i=0;i<cvs.length;i++) html+='<img src="'+cvs[i].toDataURL('image/png')+'">';
-  html+='</body></html>';
+  return html+'</body></html>';
+}
+async function hwpViewPdf(){
+  var cvs=document.querySelectorAll('#hwpViewBody canvas');
+  if(!cvs.length){ toast('먼저 문서가 화면에 그려져야 합니다'); return; }
+  /* ⚠ 창을 «먼저» 연다 — 기다린 뒤에 열면 브라우저가 팝업으로 보고 막는다 */
+  var w=window.open('','_blank');
+  if(!w){ toast('팝업이 막혔습니다 — 주소창의 팝업 허용을 눌러주세요'); return; }
+  try{ w.document.write('<!doctype html><meta charset="utf-8"><body style="font:14px sans-serif;padding:24px">\u23f3 \uc778\uc1c4\ubcf8\uc744 \ub9cc\ub4dc\ub294 \uc911\u2026</body>'); }catch(e){}
+  var svgs=null;
+  try{ svgs=await _hwpSvgPages(); }catch(e){ svgs=null; }
+  var html = svgs ? KcareerSvgText.printHtml(svgs, (_hwpView&&_hwpView.name)||'문서')
+                  : _hwpImgPrintHtml(cvs);
   w.document.open(); w.document.write(html); w.document.close();
-  /* 그림이 다 실린 뒤 인쇄창 — 바로 부르면 빈 쪽이 나올 수 있다 */
+  if(!svgs) toast('글자를 못 읽어 그림으로 인쇄합니다');
+  /* 다 실린 뒤 인쇄창 — 바로 부르면 빈 쪽이 나올 수 있다 */
   w.onload=function(){ setTimeout(function(){ try{ w.focus(); w.print(); }catch(e){} }, 250); };
 }
 

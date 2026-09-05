@@ -1135,14 +1135,17 @@ test('자동 채움 데이터는 빠른 이력서와 같은 출처를 쓴다', (
   assert.match(src, /period:/); assert.match(src, /school:/); assert.match(src, /role:/);
 });
 
-test('한글 뷰어에 🖨 PDF — 캔버스를 A4 그대로 인쇄한다', () => {
+test('한글 뷰어에 🖨 PDF — 못 읽었을 때의 «그림 길»도 A4 그대로여야 한다', () => {
+  /* 2026-09-05 부터 인쇄 본줄기는 SVG(진짜 글자)다 — 그림 길은 엔진이 글자를 못 줄 때의
+     뒷길로 _hwpImgPrintHtml 에 남아 있다. ⚠ 이 뒷길을 없애면 인쇄가 통째로 막힐 수 있다. */
   assert.match(source, /onclick="hwpViewPdf\(\)"/);
   const src = funcSource('hwpViewPdf');
-  assert.match(src, /#hwpViewBody canvas/, '이미 그려진 쪽을 그대로 쓴다');
-  assert.match(src, /@page\{size:A4;margin:0\}/, 'A4 꽉 채워야 한글 모양 그대로다');
-  assert.match(src, /page-break-after:always/, '쪽마다 끊어야 합니다');
-  assert.match(src, /toDataURL/, '캔버스를 그림으로 옮겨 인쇄합니다');
-  assert.match(src, /w\.onload/, '그림이 실리기 전에 인쇄하면 빈 쪽이 나옵니다');
+  assert.match(src, /#hwpViewBody canvas/, '이미 그려진 쪽이 있어야 인쇄합니다');
+  assert.match(src, /w\.onload/, '다 실리기 전에 인쇄하면 빈 쪽이 나옵니다');
+  const img = funcSource('_hwpImgPrintHtml');
+  assert.match(img, /@page\{size:A4;margin:0\}/, 'A4 꽉 채워야 한글 모양 그대로다');
+  assert.match(img, /page-break-after:always/, '쪽마다 끊어야 합니다');
+  assert.match(img, /toDataURL/, '캔버스를 그림으로 옮겨 인쇄합니다');
 });
 
 test('백업에서 되살리기 — 날짜마다 건수를 세어 고를 수 있게 한다', () => {
@@ -2371,4 +2374,45 @@ test('★★ 자문·고문 요약은 «한 줄 띠» — 큰 카드 넷이 목�
   assert.doesNotMatch(fn, /class="card" style="flex:1;min-width:90px;text-align:center"/,
     '★ 큰 카드로 되돌리면 373건 목록이 다시 화면 밖으로 밀립니다');
   assert.match(fn, /<\/b> '\+escapeHtml\(c\[0\]\)/, '숫자와 이름표가 붙어 「249곳진행 중」이 됩니다');
+});
+
+/* ═══ ★★ 글자가 살아 있는 PDF (2026-09-05) ═══ */
+
+test('★★ 인쇄에 넣는 것은 «그림»이 아니라 글자다', () => {
+  /* ■ 무엇이었나
+       지금까지 인쇄본은 캔버스 그림이었다 — 복사도 검색도 안 되고 용량이 컸다.
+       한글 엔진의 renderPageSvg 는 진짜 <text> 를 준다
+       (실측 2026-09-05: text 100개 · path 0개 · image 0개, 그것을 되붙여 11덩어리 8.8KB).
+     ⚠ 그림 길을 아주 없애지는 않는다 — 엔진이 못 읽으면 인쇄 자체가 막히면 안 된다. */
+  const fn = funcSource('_hwpSvgPages');
+  assert.match(fn, /renderPageSvg/);
+  assert.match(fn, /KcareerSvgText\.mergeGlyphs/, '★ 낱글자를 되붙이지 않으면 PDF 검색이 빗나갑니다');
+  assert.match(fn, /doc\.free\(\)/, 'WASM 기억은 스스로 안 비워집니다');
+  const p = funcSource('hwpViewPdf');
+  assert.match(p, /KcareerSvgText\.printHtml/);
+  assert.match(p, /_hwpImgPrintHtml\(cvs\)/, '★ 못 읽었을 때의 뒷길은 남겨 둡니다');
+});
+
+test('★★ 띄어쓰기는 짐작하지 않고 엔진의 정답을 받아 온다', () => {
+  /* 간격으로 짐작하면 「1970- 01- 01」·「041- 000- 0000」이 된다(실측).
+     붙임표와 마침표의 벌어짐이 거의 같아 «간격으로는 못 가른다». */
+  assert.match(funcSource('_hwpSvgPages'), /getPageTextLayout[\s\S]{0,80}spaceStops/);
+  assert.match(funcSource('_hwpSvgPages'), /spaceBefore/);
+});
+
+test('★★ 창을 «먼저» 연다 — 기다린 뒤에 열면 팝업으로 막힌다', () => {
+  const p = funcSource('hwpViewPdf');
+  const iOpen = p.indexOf('window.open');
+  const iAwait = p.indexOf('await _hwpSvgPages');
+  assert.ok(iOpen > 0 && iAwait > iOpen, '★ 순서를 바꾸면 인쇄창이 안 뜹니다');
+});
+
+test('★ 두 길의 차이를 사람에게 밝힌다 — 하나는 그림, 하나는 글자', () => {
+  assert.match(source, /⬇ PDF 바로받기\(그림\)/);
+  assert.match(source, /🖨 인쇄 · PDF\(글자 살아 있음\)/);
+  assert.match(source, /글자 복사·검색은 안 됩니다/, '그림 쪽의 한계를 적어 둡니다');
+});
+
+test('★ 모듈을 싣는다 — 안 실으면 조용히 그림으로 떨어진다', () => {
+  assert.match(source, /<script src="js\/kcareer-svgtext\.js\?v=\d+"><\/script>/);
 });
