@@ -189,7 +189,10 @@ test('★ 한 꼭지가 길어도 «다음 줄을 밀어내지 않는다»', () 
        처음에는 키 한도를 px 로 줬는데 화면이 조금만 작아도 아랫줄이 또 밀렸다. */
   assert.ok(/\.colL>\.jars\{[^}]*flex:\s*1/.test(붙임),
     '★ 꼭지 칸이 남은 자리를 안 채운다');
-  assert.ok(/\.colL>\.jars\{[^}]*grid-template-rows:\s*1fr 1fr/.test(붙임),
+  /* ⚠ 글자 꼴을 박지 않는다 — minmax(0,1fr) 도 «반씩»이다. 1fr 은 minmax(auto,1fr) 이라
+     내용보다 작아지지 않아, 오히려 아랫줄을 창 밖으로 밀어낸다(2026-09-06 대표 화면). */
+  const 반 = '(?:minmax\\(0,\\s*1fr\\)|1fr)';
+  assert.ok(new RegExp('\\.colL>\\.jars\\{[^}]*grid-template-rows:\\s*' + 반 + '\\s+' + 반).test(붙임),
     '★ 두 줄이 자리를 반씩 나눠 갖지 않는다 — 첫 줄이 길면 아랫줄이 밀린다');
   /* ㉡ flex 자식은 min-height:0 이 없으면 «안 줄어든다» — 빠지면 도로 밀려난다 */
   assert.ok(/\.jars>\.box\{[^}]*min-height:\s*0/.test(붙임),
