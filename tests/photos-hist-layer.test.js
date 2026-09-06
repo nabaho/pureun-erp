@@ -64,14 +64,21 @@ test('★★ popstate 는 «우리가 쌓았는가»로 판단한다', () => {
 /* ══════ 놓는 곳은 «한 곳» ══════ */
 
 test('★★ 카메라 칸을 놓는 곳은 하나다 — 두 곳이면 한 번에 두 칸이 빠진다', () => {
+  /* ⚠ 2026-09-06: 걸음을 «빼는 일»이 puHistDrop 한 곳으로 모였다. 그래서 세는 것도
+     바뀐다 — 맨손 history.back() 은 그 한 곳뿐이고, 층은 그것을 거쳐 뺀다.
+     지키려는 규칙은 그대로다: **한 층을 두 곳에서 놓지 않는다.** */
   const backs = (app.match(/history\.back\(\)/g) || []).length;
-  assert.equal(backs, 2,
-    '★★ history.back() 이 ' + backs + '곳입니다. 카메라 한 곳·크게 보기 한 곳이라야 합니다 —\n' +
-    '  한 층을 두 곳에서 놓으면 **한 번에 두 칸이 빠져 사진첩 밖으로 나갑니다.**');
+  assert.equal(backs, 1,
+    '★★ 맨손 history.back() 이 ' + backs + '곳입니다. puHistDrop 한 곳이라야 합니다 —\n' +
+    '  맨손으로 빼면 「이 걸음은 우리가 썼다」는 표가 안 서고, 공통 뒤로가기가 그것을\n' +
+    '  사람이 누른 것으로 읽어 **앱을 통째로 나갑니다**(2026-09-06 대표 보고).');
+  const 쓰는층 = (app.match(/puHistDrop\(\)/g) || []).length;
+  assert.ok(쓰는층 >= 2,
+    '★ puHistDrop 을 쓰는 자리가 ' + 쓰는층 + '곳입니다 — 카메라와 크게 보기 둘이라야 합니다');
   const drop = stripComments(cutFn(raw, 'function camHistDrop('));
-  assert.match(drop, /history\.back\(\)/, '★ 놓는 함수가 실제로 안 놓습니다');
+  assert.match(drop, /puHistDrop\(\)/, '★ 놓는 함수가 실제로 안 놓습니다');
   const close = stripComments(cutFn(raw, 'function closeCam('));
-  assert.ok(!/history\.back\(\)/.test(close),
+  assert.ok(!/history\.back\(\)|puHistDrop\(\)/.test(close),
     '★★ 닫기가 제 손으로도 놓고 있습니다 — camDiscard 가 이미 놓았습니다.');
 });
 

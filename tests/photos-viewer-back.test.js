@@ -69,6 +69,11 @@ function boot() {
   vm.createContext(ctx);
   vm.runInContext('var viewerId = null; var viewerPushed = false;', ctx);
   vm.runInContext(fnOf('viewerHistPush'), ctx);
+  /* 2026-09-06: 걸음을 빼는 일은 puHistDrop 한 곳으로 모았다 — 빼기 «전에»
+     「이 걸음은 우리가 썼다」는 표를 세워야 공통 뒤로가기(js/pu-back.js)가
+     그 걸음을 사람이 누른 것으로 읽고 앱을 나가는 일이 없다.
+     ⚠ 가짜를 넣으면 안 된다 — 진짜를 넣어야 그 표까지 함께 지켜진다. */
+  vm.runInContext(fnOf('puHistDrop'), ctx);
   vm.runInContext(app.match(/window\.addEventListener\('popstate', function \(\) \{[\s\S]*?\n\}\);/)[0], ctx);
   vm.runInContext(fnOf('closeViewer'), ctx);
   return ctx;
