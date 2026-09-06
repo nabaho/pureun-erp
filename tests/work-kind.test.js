@@ -125,7 +125,7 @@ ok('업체·계약이 같은 색', CATS['업체'][0] === CATS['계약'][0]);
 items = { A: { cat: '업체' }, B: { cat: '계약' }, C: { cat: '기술보호' } };
 ok('구분 목록에 업체가 두 번 서지 않는다',
   catList().filter(x => x === '계약').length === 1 && catList().indexOf('업체') < 0);
-ok('사무관리 갈래가 맨 앞', catList().slice(0, 6).join() === Object.keys(KIND_SET).join());
+ok('사무관리 갈래가 맨 앞', catList().slice(0, 7).join() === Object.keys(KIND_SET).join());
 ok('실제로 쓰인 값도 뒤에 붙는다', catList().indexOf('기술보호') > 0);
 ok('목록에 없는 이름도 색이 나오고 늘 같은 색',
   catColor('기술보호')[0] === catColor('기술보호')[0] && catColor('')[0]);
