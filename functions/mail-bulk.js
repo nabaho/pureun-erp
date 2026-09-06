@@ -111,6 +111,14 @@ function validateBulk(p) {
   if (!text) return { ok: false, error: '본문이 비어 있습니다.' };
   const matIds = (Array.isArray(body.matIds) ? body.matIds : [])
     .filter(function (x) { return typeof x === 'string' && x; }).slice(0, 10);
+  /* ★ 창고에 있는 파일을 «진짜 첨부»로 붙인다 (대표 결정 2026-09-06 「첨부도 붙인다」).
+       자리(path)만 실어 보낸다 — 파일을 글자로 바꿔 실으면 요청 한도(10MB)에 걸린다.
+     ⚠ 자리를 여기서 «믿지 않는다». 꺼내도 되는 자리인지는 보낼 때
+       mail-deliver 의 첨부자리허용() 이 다시 본다 — 문이 둘이다. */
+  const files = (Array.isArray(body.files) ? body.files : [])
+    .filter(function (f) { return f && typeof f.path === 'string' && f.path; })
+    .slice(0, 10)
+    .map(function (f) { return { path: String(f.path), name: String(f.name || '첨부') }; });
   return {
     ok: true,
     targets: t.ok, skipped: { bad: t.bad, dup: t.dup },
@@ -119,6 +127,7 @@ function validateBulk(p) {
        여기서 또 씻으면 두 곳이 서로 다른 규칙을 갖게 된다. */
     html: String(body.html == null ? '' : body.html),
     matIds: matIds,
+    files: files,
     gapMs: spacingMs(body.spacingSec),
     /* 보내는 주소 «소망». 조이기는 보낼 때 서버가 한다(보내는주소고르기) —
        화면이 담은 값을 그대로 믿으면 남의 이름으로 보내는 길이 된다. */
@@ -166,6 +175,9 @@ function buildQueue(v, now, by, batchId) {
         /* 서식에도 이름·회사를 채운다 — 평문만 채우면 두 몫이 다른 이름을 부른다 */
         html: v.html ? fill(v.html, vals) : '',
         matIds: v.matIds,
+        /* ⚠ 통마다 실어야 한다 — 예약 발송기는 한 통씩 꺼내 보내므로
+             여기 없으면 첨부가 조용히 빠진 채로 나간다. */
+        files: v.files || [],
       },
     };
   });
