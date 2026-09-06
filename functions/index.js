@@ -1277,8 +1277,11 @@ async function runPaydataMailOnce() {
       // 폴더마다 열고 닫으며 모은다. 한 회차 몫(PAYMAIL_MAX_PER_RUN)은 폴더를
       // 합쳐서 센다 — 폴더가 늘어난다고 한 번에 더 오래 붙어 있으면 안 된다.
       const inbox = [];
+      /* 폴더마다 제 몫 — 앞 폴더가 다 먹으면 뒤 폴더는 열리지도 않는다 */
+      const share = MR.boxShare(PAYMAIL_MAX_PER_RUN, boxes.length);
       for (const box of boxes) {
-        if (inbox.length >= PAYMAIL_MAX_PER_RUN) break;
+        const room = Math.min(share, PAYMAIL_MAX_PER_RUN - inbox.length);
+        if (room <= 0) break;
         let lock;
         try {
           lock = await client.getMailboxLock(box);
@@ -1292,11 +1295,25 @@ async function runPaydataMailOnce() {
              가져와야 한다. 대신 최근 것부터 훑고, 이미 처리한 것은 아래에서 건너뛴다.
              ⚠ 폴더 전부를 매번 받으면 안 된다 — 최근 며칠 것만 본다. */
           const since = new Date(Date.now() - PAYMAIL_LOOK_DAYS * 24 * 60 * 60 * 1000);
-          for await (const msg of client.fetch({ since: since },
-            { uid: true, source: true, envelope: true })) {
-            inbox.push({ uid: msg.uid, source: msg.source, box: box,
-              messageId: (msg.envelope && msg.envelope.messageId) || "" });
-            if (inbox.length >= PAYMAIL_MAX_PER_RUN) break;
+          /* ★ 번호만 먼저 받아 «뒤에서» 몫만큼 고른다 (2026-09-06).
+             바로 fetch 하면 오래된 것부터 와서, 이미 처리한 옛 메일이 몫을
+             다 먹고 새 메일에 영영 닿지 못한다 — 8/26 뒤로 한 통도 안 들어온
+             까닭이 이것이었다. 번호만 받는 것은 본문을 안 끌어서 가볍다. */
+          let uids = [];
+          try {
+            uids = await client.search({ since: since }, { uid: true });
+          } catch (e) {
+            console.warn("receivePaydataMail: 「" + box + "」 목록을 못 받았습니다",
+              String((e && e.message) || e));
+          }
+          const want = MR.newestUids(uids, room);
+          if (want.length) {
+            for await (const msg of client.fetch(want,
+              { uid: true, source: true, envelope: true }, { uid: true })) {
+              inbox.push({ uid: msg.uid, source: msg.source, box: box,
+                messageId: (msg.envelope && msg.envelope.messageId) || "" });
+              if (inbox.length >= PAYMAIL_MAX_PER_RUN) break;
+            }
           }
         } finally {
           lock.release();
