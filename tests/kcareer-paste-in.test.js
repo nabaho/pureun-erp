@@ -76,10 +76,11 @@ function 세상(store) {
   vm.runInContext('var ' + cutFn(CODE, 'var PASTE_COLS =').replace(/^var /, ''), ctx);
   vm.runInContext('var CAREER_CFG=' + JSON.stringify({
     license: { store: 'cert' }, complete: { store: 'cert' }, edu: { store: 'edu' },
-    wiccok: { store: 'wiccok' }, award: { store: 'wiccok' }, work: { store: 'work' }
+    wiccok: { store: 'wiccok' }, award: { store: 'wiccok' }, work: { store: 'work' },
+    meetfee: { store: 'meetfee' }, etcfee: { store: 'etcfee' }
   }) + ';', ctx);
   ['var _pasteCtx=null;', 'var _pasteUndo=null;'].forEach((l) => vm.runInContext(l, ctx));
-  ['function pasteCols(', 'function _pasteNorm(', 'function pasteSplit(', 'function pasteRec(',
+  ['function pasteCols(', 'function _pasteNorm(', 'function pasteSplit(', 'function pasteNormCell(', 'function pasteRec(',
    'function pasteExisting(', 'function openPasteIn(', 'function closePasteIn(', 'function pasteClear(',
    'function pasteParse(', 'function pasteDraw(', 'function pasteTally(', 'function pasteToggle(',
    'function pasteEdit(', 'function pasteSave(', 'function pasteUndoRun(']
@@ -217,9 +218,97 @@ test('★ 되돌리면 «방금 넣은 것만» 빠진다 — 그 사이에 넣�
 });
 
 /* ══════ ⑦ 화면에 달려 있고, 직원에게는 감춘다 ══════ */
+/* ══════ ⑧ 회의·비용관리도 «똑같이» (대표 지시 2026-09-06) ══════ */
+test('★ 비용도 여러 건이 번호를 따로 받는다', () => {
+  const ctx = 세상({ meetfee: [] });
+  붙여(ctx, 'meetfee', ['2026-09-01\t식대\t팀 점심\t45,000원\t가나식당',
+                        '2026-09-01\t식대\t야근 저녁\t62,000원\t가나식당'].join('\n'));
+  vm.runInContext('pasteSave()', ctx);
+  const db = ctx._store.meetfee;
+  assert.equal(db.length, 2, '두 건이 다 들어가야 합니다: ' + JSON.stringify(db.map((r) => r.content)));
+  assert.equal(new Set(db.map((r) => r.id)).size, 2, '번호가 겹쳤습니다');
+});
+
+test('★ 「45,000원」처럼 붙여넣은 금액에서 숫자만 남긴다 — 그대로 두면 합계가 안 더해진다', () => {
+  const ctx = 세상({ meetfee: [] });
+  붙여(ctx, 'meetfee', '2026-09-01\t식대\t팀 점심\t45,000원\t가나식당');
+  vm.runInContext('pasteSave()', ctx);
+  assert.equal(ctx._store.meetfee[0].amt, '45000');
+});
+
+test('★ 고르개에 없는 「구분」은 기본값으로 맞추고, 그 값을 미리보기에 «그대로» 보여 준다', () => {
+  const ctx = 세상({ meetfee: [] });
+  const rows = 붙여(ctx, 'meetfee', '2026-09-01\t점심값\t팀 점심\t45000\t가나식당');
+  const 보이는것 = rows[0].v[1];
+  const 고르개 = vm.runInContext('FORM_DEFS.meetfee.fields.filter(function(f){return f.key==="type";})[0]', ctx);
+  assert.ok(Array.prototype.indexOf.call(고르개.options, 보이는것) >= 0,
+    '고르개에 없는 말이 그대로 남았습니다: ' + 보이는것);
+  /* ⚠ 넣기 뒤에는 창이 닫혀 _pasteCtx 가 없다 — 세어 둔 개수는 «넣기 전»에 본다 */
+  assert.ok(vm.runInContext('_pasteCtx.snapped', ctx) >= 1, '바꾼 개수를 안 셌습니다');
+  vm.runInContext('pasteSave()', ctx);
+  assert.equal(ctx._store.meetfee[0].type, 보이는것, '표에 보인 값과 다른 것이 들어갔습니다');
+});
+
+test('★ 「비어서 뺀다」는 «필수 칸» 기준이다 — 화면마다 첫 칸이 다르다(비용은 일자)', () => {
+  const ctx = 세상({ meetfee: [] });
+  붙여(ctx, 'meetfee', ['\t식대\t날짜 없는 것\t1000\t가나식당',
+                        '2026-09-01\t식대\t팀 점심\t45000\t가나식당'].join('\n'));
+  vm.runInContext('pasteSave()', ctx);
+  assert.equal(ctx._store.meetfee.length, 1, '일자 없는 줄이 들어갔습니다');
+  assert.equal(ctx._store.meetfee[0].content, '팀 점심');
+  const 필수 = vm.runInContext('pasteCols("meetfee").filter(function(c){return c.req;}).map(function(c){return c.key;})', ctx);
+  assert.ok(Array.prototype.indexOf.call(필수, 'date') >= 0, '일자가 필수로 잡혀야 합니다');
+});
+
+test('★ 필수 칸이 «첫 칸이 아닐 때»도 그 칸을 본다 — 첫 칸으로 굳히면 조용히 어긋난다', () => {
+  /* ⚠ 오늘은 여섯 화면 모두 «첫 칸이 곧 필수 칸»이라, 첫 칸으로 굳혀도 결과가 같다.
+     그래서 규칙을 못 박으려면 «다른 화면»을 하나 만들어 봐야 한다 —
+     안 그러면 다음 사람이 필수 칸이 둘째인 화면을 더했을 때 아무도 못 잡는다. */
+  /* ⚠ 앞칸은 org 로 둔다 — dupKey 의 사슬에 든 칸이라야 두 줄이 «다른 건»으로 잡힌다.
+     사슬에 없는 이름(a·b)만 쓰면 두 줄의 열쇠가 똑같아 둘째가 「이 안에서 겹침」으로
+     꺼지고, 그러면 이 검사는 필수 칸과 상관없이 늘 0건이 된다(실측에서 걸렸다). */
+  const ctx = 세상({ _시험: [] });
+  vm.runInContext('FORM_DEFS._시험={title:"시험",store:"_시험",prefix:"TS",fields:['
+    + '{key:"org",label:"앞칸"},{key:"b",label:"뒷칸",required:true}]};'
+    + 'PASTE_COLS._시험=["org","b"]; CAREER_CFG._시험={store:"_시험"};', ctx);
+  붙여(ctx, '_시험', ['앞값만\t', '다른앞값\t뒷값'].join('\n'));
+  vm.runInContext('pasteSave()', ctx);
+  assert.equal(ctx._store._시험.length, 1,
+    '뒷칸(필수)이 빈 줄이 들어갔습니다: ' + JSON.stringify(ctx._store._시험));
+  assert.equal(ctx._store._시험[0].b, '뒷값');
+  assert.equal(ctx._store._시험[0].org, '다른앞값');
+});
+
+test('★ 같은 날 같은 지출처의 «다른» 비용은 중복이 아니다 — 영수증 둘이 한 건으로 묻혔다', () => {
+  /* 실측 2026-09-06: dupKey 사슬에 비용의 라벨(content)이 없어
+     「가나식당 점심」과 「가나식당 야근저녁」이 열쇠 «가나식당||20260901» 로 같았다.
+     OCR 로 영수증 둘을 떨어뜨리면 둘째는 기록조차 안 만들어졌다. */
+  const ctx = 세상({});
+  const 열쇠 = (r) => vm.runInContext('dupKey(' + JSON.stringify(r) + ')', ctx);
+  const 점심 = { date: '2026.09.01', type: '식대', content: '팀 점심', amt: '45000', org: '가나식당' };
+  const 저녁 = { date: '2026.09.01', type: '식대', content: '야근 저녁', amt: '62000', org: '가나식당' };
+  assert.notEqual(열쇠(점심), 열쇠(저녁), '내용이 달라도 한 건으로 봅니다: ' + 열쇠(점심));
+  assert.equal(열쇠(점심), 열쇠(Object.assign({}, 점심, { amt: '99999' })),
+    '금액만 다른 같은 건을 둘로 봅니다 — 그러면 중복이 걸러지지 않습니다');
+});
+
+test('★ 같음 판정의 «앞 사슬»은 그대로다 — 위촉장·자격증 판정이 달라지면 안 된다', () => {
+  const ctx = 세상({});
+  const 열쇠 = (r) => vm.runInContext('dupKey(' + JSON.stringify(r) + ')', ctx);
+  /* 라벨이 앞 사슬에 있으면 content 가 섞여 있어도 «앞 것»으로 잡아야 한다 */
+  const 가 = { title: '공인노무사', content: '딴것', org: '가기관', date: '2020.01.02' };
+  const 나 = { title: '공인노무사', content: '또 딴것', org: '가기관', date: '2020.01.02' };
+  assert.equal(열쇠(가), 열쇠(나), 'content 가 앞 사슬을 밀어냈습니다');
+  const 위촉 = { titleVal: '노동권익보호관', org: '충청남도', issueDate: '2025.01.01' };
+  assert.notEqual(열쇠(위촉), 열쇠(Object.assign({}, 위촉, { titleVal: '인사위원' })),
+    '위촉내용이 달라도 한 건으로 봅니다');
+});
+
 test('★ 붙여넣기를 받는 화면마다 단추가 달려 있다 — 사전에만 있고 화면에 없으면 못 쓴다', () => {
   const keys = Object.keys(vm.runInContext('PASTE_COLS', 세상({})));
-  assert.ok(keys.length >= 6, '받는 화면이 줄었습니다: ' + keys.join(','));
+  assert.ok(keys.length >= 8, '받는 화면이 줄었습니다: ' + keys.join(','));
+  ['meetfee', 'etcfee'].forEach((k) => assert.ok(keys.indexOf(k) >= 0,
+    '회의·비용관리가 빠졌습니다 — 대표 지시로 «항상 함께» 고친다: ' + keys.join(',')));
   keys.forEach((page) => {
     const at = SRC.indexOf('id="page-' + page + '"');
     assert.notEqual(at, -1, page + ' 화면을 찾지 못했습니다');
