@@ -853,7 +853,12 @@ ok('서식이 사는 단계를 목록에서 찾는다', src.includes('var DOC_PH
   && /S\.formPhase=phaseOfDoc\(kind,prefer\)/.test(src));
 // 한 서식을 여러 단계에 «일부러» 두기도 한다 — 그때는 있던 자리에서 열려야 한다
 ok('있던 자리를 먼저 본다', src.includes('if(prefer&&hit.indexOf(prefer)>=0) return prefer;'));
-ok('제출서류가 있던 자리를 넘겨준다', /openFundDoc[^)]*d\.form\+[^)]*subsidy/.test(src));
+/* 2026-09-06: 제출서류는 이제 «화면을 안 떠난다» — 오른쪽 판에서 바로 채운다.
+   전에는 서식 자료실로 옮기면서 «있던 자리(subsidy)»를 넘겨 줘야 했다.
+   옮기지 않으니 넘겨 줄 자리도 없다 — 지킬 뜻은 «딴 화면으로 안 나간다»가 됐다.
+   오른쪽 판이 정말 뜨는지는 check_subside.js 가 본다. */
+ok('제출서류에서 딴 화면으로 안 나간다',
+  src.includes('onclick="subDocForm(') && /function subDocForm\(kind\)\{/.test(src));
 {
   /* 지원금 제출서류의 서식은 모두 ⑤지원금 목록에 있어야 한다 —
      없으면 눌렀을 때 딴 단계가 열려 «다시 찾는» 그 일이 되풀이된다. */
