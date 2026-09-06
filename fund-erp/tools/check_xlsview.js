@@ -54,7 +54,13 @@ function Sheet(name) {
     eachRow(o, fn) { const rows = {};
       Object.keys(cells).forEach((a) => { const r = +a.replace(/^[A-Z]+/, ''); (rows[r] = rows[r] || []).push(cells[a]); });
       Object.keys(rows).sort((x, y) => x - y).forEach((r) => fn({ eachCell: (oo, f2) => rows[r].forEach(f2) }, +r)); },
-    rowCount: 60,
+    /* fillSubsidy 는 «열»로도 훑는다 — 신청서 시트의 열쇠 칸을 찾을 때 쓴다 */
+    getColumn(n) { const letter = colA(n);
+      return { eachCell(oo, f2) { Object.keys(cells)
+        .filter((a) => a.replace(/\d+$/, '') === letter)
+        .sort((x, y) => (+x.replace(/^[A-Z]+/, '')) - (+y.replace(/^[A-Z]+/, '')))
+        .forEach((a) => f2(cells[a], +a.replace(/^[A-Z]+/, ''))); } }; },
+    rowCount: 60, columnCount: 40,
   };
   return self;
 }
@@ -163,6 +169,53 @@ ok('그 위에 또 얹힌 값도 따라온다 (→정관 MID)',
 ok('되풀이 횟수가 넉넉하다', /pass<[3-9]|pass<\d\d/.test(gF('_xlsRecalc')), '한 번만 훑으면 앞 기금 값이 퍼진다');
 ok('못 셈한 식은 «비운다» (남의 값을 그냥 두지 않는다)', /val==null\) val=''/.test(gF('_xlsRecalc')));
 ok('찾지 못한 VLOOKUP 은 null 을 준다', /return null;\s*\/\* 못 찾으면 비운다 \*\/|return null;\s+\}/.test(gF('_xlsVlookup')));
+
+console.log('\n■ 지원신청서 — 앞 기금의 «참여사업장 명부»가 안 남는가');
+/* 이 양식에는 어느 기금의 참여사업장 명부가 통째로 들어 있다 —
+   상호·대표자·사업자등록번호·주소, 그리고 «옆 칸»의 메모까지.
+   ⚠ 예전에는 「우리가 채운 줄 다음」부터만 지웠다. 우리가 덮어쓰는 칸은 바뀌어도
+     우리가 «안 건드리는 옆 칸»은 그대로 남아 다른 기금 신청서에 딸려 나갔다. */
+(0, eval)(gF('fillSubsidy'));
+global._siteContacts = () => ({ name: '', phone: '', mobile: '', email: '' });
+function buildSub() {
+  const wb = Book(['신청서', '기금법인정보', '참여사업장정보']);
+  const info = wb.getWorksheet('기금법인정보');
+  info.getCell('A2').value = 1; info.getCell('B2').value = '앞기금공동근로복지기금';
+  info.getCell('B3').value = '앞기금 샘플줄';           /* 다음 줄들도 지워져야 한다 */
+  const parts = wb.getWorksheet('참여사업장정보');
+  parts.getCell('A3').value = '1-1';
+  parts.getCell('C3').value = '앞참여사(주)';
+  parts.getCell('I3').value = '111-11-11111';
+  parts.getCell('N3').value = '010-1111-1111';
+  parts.getCell('AE3').value = '앞기금 메모(탈퇴)';      /* ⚠ 우리가 «안 쓰는» 옆 칸 */
+  parts.getCell('C9').value = '앞참여사2(주)';           /* 우리 사업장 수보다 뒤의 줄 */
+  const doc = wb.getWorksheet('신청서');
+  doc.getCell('I10').value = '1-1'; doc.getCell('I11').value = '1-2';
+  return wb;
+}
+const SF = { name: '가나공동근로복지기금', chairman: '홍길동', address: '어느시 1', fund_type: '공동',
+  phone: '041-000-0000', inka_no: '0000-0000-0', corp_reg_no: '000000-0000000', tax_id_no: '000-00-00000',
+  contribution_total: 10000000, years: { 2026: { subsidy: { request_amount: 9000000 } } } };
+const SSITES = [{ name: '가나기계', ceo: '김가나', address: '어느시 1', company_size: 65, biz_no: '000-00-00001' }];
+const subWb = buildSub();
+fillSubsidy(subWb, SF, SSITES);
+_xlsRecalc(subWb);
+const SUB_OLD = /앞기금|앞참여사|111-11|010-1111/;
+const subLeft = [];
+subWb.eachSheet((ws) => ws.eachRow({}, (row) => row.eachCell({}, (c) => {
+  const v = (c.type === VT.Formula) ? c.result : c.value;
+  if (typeof v === 'string' && SUB_OLD.test(v)) subLeft.push(ws.name + '!' + c.address + '=' + v);
+})));
+ok('앞 기금의 명부가 한 칸도 안 남는다', subLeft.length === 0, subLeft.join(' | '));
+ok('우리 사업장이 들어간다', subWb.getWorksheet('참여사업장정보').getCell('C3').value === '가나기계',
+   subWb.getWorksheet('참여사업장정보').getCell('C3').value);
+ok('먼저 비우고 쓴다 (덮어쓰는 칸만 고치지 않는다)',
+   /clearRange\(parts,3,/.test(gF('fillSubsidy')), gF('fillSubsidy').slice(0, 400));
+/* ⚠ 위의 확인들은 함수를 «직접» 부른다. 그런데 앱은 _fillWbBuffer 를 지나간다 —
+   거기서 다시 셈하는 한 줄이 빠지면, 검사는 다 통과하는데 실제로는
+   앞 기금 값이 그대로 파일에 들어간다. 배선도 함께 본다. */
+ok('채운 뒤 «반드시» 다시 셈한다 (내려받기·미리보기가 함께 쓰는 길)',
+   /_xlsRecalc\(wb\);/.test(gF('_fillWbBuffer')), gF('_fillWbBuffer'));
 
 console.log('\n■ 화면 보기 — 병합·열폭·넘침');
 ok('cellStyles 로 읽는다 (안 켜면 열폭이 다 같아진다)', /XLSX\.read\([\s\S]{0,90}cellStyles:true/.test(src));
