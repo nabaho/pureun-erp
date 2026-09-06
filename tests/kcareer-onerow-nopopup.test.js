@@ -103,7 +103,13 @@ test('이름이 길어도 줄을 밀지 않는다 — …으로 줄이고 전체
   assert.match(name, /text-overflow:\s*ellipsis/);
   const chip = source.slice(source.indexOf('.rh-chip{'), source.indexOf('.rh-chip{') + 250);
   assert.match(chip, /max-width/);
-  assert.match(bare, /msg\.title=/, '전체 이름을 볼 방법이 있어야 합니다');
+  /* ⚠ 전에는 `msg.title=` 를 글자로 못 박았다 — 딱지가 이름을 적던 때의 «자리»다.
+     자리가 여럿이 되면서 이름은 목록 줄로 내려갔다(딱지는 개수만 말한다).
+     규칙은 그대로다: 이름이 길면 …으로 줄이고 «전체를 볼 길»이 있어야 한다.
+     그래서 그 길이 지금 있는 자리(목록 줄)에서 지켜지는지 본다. */
+  const draw = cutFn(bare, 'function rhDraftDraw(');
+  assert.match(draw, /text-overflow:ellipsis/, '목록에서 긴 이름을 줄이지 않습니다');
+  assert.match(draw, /title="/, '전체 이름을 볼 방법이 있어야 합니다');
 });
 
 test('★ 딱지가 떠 있을 때만 설명글을 접는다 — 창 너비로 재면 안 걸린다', () => {
