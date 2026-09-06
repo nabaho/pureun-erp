@@ -34,6 +34,11 @@ function draw(tab) {
     MB_KEYS: [['C', '메일 쓰기'], ['Esc', '목록으로 돌아가기']],
     _mbCo: { 'a@b.c': 1 }, _mbNotCo: {}, _mbSeen: {},
     _mbProbe: null, _mbProbing: false,
+    /* 📦 지난 메일 덩이(2026-09-06) — 이 갈래가 그것도 그린다.
+       ⚠ 진짜 함수를 태운다(아래 목록). 여기서 빈 값을 돌려주는 가짜를 두면
+         그 덩이가 안 그려져도 검사가 통과한다. */
+    _mbMsgs: { INBOX: { 1: { d: Date.now() - 30 * 86400000 }, 2: { d: Date.now() } } },
+    _mbFolders: { INBOX: { name: '받은메일함' } },
     state: { isAdmin: true, mbSize: 100, mbSetTab: tab || '' },
     localStorage: { getItem: k => (k in store ? store[k] : null),
                     setItem: (k, v) => { store[k] = String(v); } },
@@ -48,7 +53,8 @@ function draw(tab) {
   vm.createContext(ctx);
   vm.runInContext(app.match(/const MB_SET_TABS = [\s\S]*?\];/)[0], ctx);
   vm.runInContext(app.match(/const MB_SET_LS = [^\n]*/)[0], ctx);
-  ['mbSetTab', 'mbSetTabGo', 'mailSetHtml'].forEach(n =>
+  vm.runInContext(app.match(/const MB_OLD_DAY = [^\n]*/)[0], ctx);
+  ['mbSetTab', 'mbSetTabGo', 'mbOldSpans', 'mbOldHtml', 'mailSetHtml'].forEach(n =>
     vm.runInContext(sliceFn(app, 'function ' + n + '('), ctx));
   return ctx;
 }

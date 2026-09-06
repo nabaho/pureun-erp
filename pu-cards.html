@@ -835,6 +835,21 @@ table.sbox tr.bad td{background:#f8fafc}
   gap:0 20px;align-items:start}
 .msec h4{font-size:13.5px;margin:0 0 4px;color:#1e293b;padding-bottom:5px;
   border-bottom:1px solid #e2e8f0}
+/* ── 📦 지난 메일 (대표 지시 2026-09-06) ──
+   ⚠ 두 칸으로 갈리는 .msin 안이지만 이 덩이는 «한 칸을 다 쓴다» — 표가 들어가서
+     반 칸에 넣으면 줄이 접힌다(grid-column:1/-1). */
+.msin .mscard{grid-column:1/-1;border:1px solid #e2e8f0;border-radius:10px;
+  padding:13px 15px;background:#f8fafc}
+.msin .mscard>b{font-size:13.5px;color:#1e293b}
+.msbtn{border:1px solid #bfdbfe;background:#fff;color:#1e40af;border-radius:8px;
+  padding:8px 14px;font:700 12.5px/1 inherit;font-family:inherit;cursor:pointer}
+.msbtn:hover:not([disabled]){background:#eff6ff}
+.msbtn[disabled]{color:#64748b;border-color:#e2e8f0;cursor:default}
+table.mstab2{width:100%;border-collapse:collapse;font-size:12px;margin:2px 0 4px}
+table.mstab2 th{text-align:left;color:#64748b;font-weight:600;padding:4px 8px 6px;
+  border-bottom:1px solid #e2e8f0;white-space:nowrap}
+table.mstab2 td{padding:5px 8px;border-bottom:1px solid #e2e8f0;color:#1e293b;white-space:nowrap}
+table.mstab2 tr:last-child td{border-bottom:none}
 .msrow{display:flex;gap:14px;padding:9px 2px;border-bottom:1px solid #f8fafc;
   align-items:flex-start}
 .msrow .mslab{flex:none;width:150px;font-size:12.5px;color:#64748b;padding-top:2px}
@@ -14166,6 +14181,102 @@ const MB_KEYS = [
      아무 갈래도 안 켜져 화면이 통째로 빈다. */
 const MB_SET_TABS = [['1','① 보기'],['2','② 보내기'],['3','③ 푸른 분류'],
                      ['4','④ 단축키'],['5','⑤ 다음메일에서']];
+
+/* ══════════════════════════════════════════════════════════════════════════
+   📦 지난 메일 — 얼마나 보관하고 있나 (대표 지시 2026-09-06)
+   ══════════════════════════════════════════════════════════════════════════
+   "메일함의 데이터를 더 많이 받을 수 없을까? … 최소 1년의 메일을 보관해야 한다"
+
+   ★ 재 보고 알게 된 것 (2026-09-06)
+     ① «앞으로 오는 것»은 이미 다 쌓인다. 우리 거울은 다음메일의 400 창을 넘어
+        계속 쌓이게 되어 있다(mail-box.js goneKeys, 대표 지시 2026-08-28).
+        실제로 보낸메일함은 이미 614통으로 400 을 넘겼다.
+     ② 모자란 것은 «지난 것»이다 — 처음 동기화한 날(2026-08-24) 이미 400 창 밖이던
+        메일은 가져올 길이 없었다. 그래서 칸마다 «시작점»이 다르다.
+     ③ 칸 32개 가운데 아홉 칸은 «이미 1년을 넘겼다». 정말 짧은 것은 넷뿐이다.
+   ⚠ 이 표는 «지금 손에 든 줄»로 그 자리에서 센다 — 서버를 안 두드린다.
+   ⚠ 짐작을 적지 않는다. 「1년이면 몇 통」은 «지금 담긴 기간의 하루 평균»으로 민 값이라
+     그렇다고 적는다. */
+const MB_OLD_DAY = 86400000;
+function mbOldSpans(){
+  const out = [];
+  Object.keys(_mbMsgs||{}).forEach(slug=>{
+    const box = _mbMsgs[slug] || {};
+    let lo = Infinity, hi = 0, n = 0;
+    Object.keys(box).forEach(u=>{
+      const d = Number((box[u]||{}).d || 0);
+      if(!d) return;
+      n++; if(d < lo) lo = d; if(d > hi) hi = d;
+    });
+    if(!n || !isFinite(lo)) return;
+    const f = (_mbFolders||{})[slug] || {};
+    const days = Math.max(1, Math.round((hi - lo) / MB_OLD_DAY));
+    out.push({ slug:slug, name: String(f.name || f.path || slug), n:n, lo:lo, days:days,
+      perDay: n / days, year: Math.round((n / days) * 365) });
+  });
+  return out.sort((a,b)=> a.days - b.days);
+}
+/* 몇 번을 눌렀든 답은 하나다 — 재는 동안에는 다시 못 누르게 한다 */
+let _mbPopBusy = false;
+function mbPopProbe(){
+  if(_mbPopBusy) return;
+  const u = firebase.auth().currentUser;
+  if(!u) return toast('로그인이 필요합니다');
+  _mbPopBusy = true;
+  state.mbPop = { busy:true };
+  renderMailPage();
+  u.getIdToken()
+    .then(tok=>fetch(MB_FN+'probeMailPop', { method:'POST',
+      headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
+      body:'{}' }))
+    .then(r=>r.json().catch(()=>({})))
+    .then(j=>{ state.mbPop = Object.assign({ busy:false, at:Date.now() }, j); })
+    .catch(e=>{ state.mbPop = { busy:false, ok:false, error:(e&&e.message)||String(e) }; })
+    .then(()=>{ _mbPopBusy = false; renderMailPage(); });
+}
+function mbOldHtml(){
+  const rows = mbOldSpans();
+  if(!rows.length) return '';
+  const short = rows.filter(r=>r.days < 365 && r.n >= 100).slice(0, 6);
+  const okN = rows.filter(r=>r.days >= 365).length;
+  const p = state.mbPop || null;
+  const fd = t => new Date(Number(t)||0).toISOString().slice(0,10);
+  return `<div class="msin" style="margin-top:14px">
+    <div class="mscard">
+      <b>📦 지난 메일 — 지금 얼마나 보관하고 있나</b>
+      <div class="mshint" style="padding:6px 0 10px">
+        <b>앞으로 오는 것은 이미 다 쌓입니다.</b> 우리 목록은 다음메일이 보여 주는
+        400통을 <b>넘어서 계속 쌓이게</b> 되어 있습니다 — 보낸메일함은 벌써
+        400을 넘겼습니다. 모자란 것은 <b>지난 것</b>입니다.
+        처음 연결한 날 이미 400 밖으로 밀려 있던 메일은 가져올 길이 없었습니다.<br>
+        칸 ${rows.length}개 가운데 <b>${okN}개는 이미 1년을 넘겼습니다.</b>
+      </div>
+      ${short.length ? `<table class="mstab2"><tr><th>칸</th><th>담긴 기간</th>
+        <th>가장 오래된 것</th><th>지금</th><th>1년이면(어림)</th></tr>
+        ${short.map(r=>`<tr><td>${esc(r.name)}</td><td>${r.days.toLocaleString()}일</td>
+          <td>${fd(r.lo)}</td><td>${r.n.toLocaleString()}통</td>
+          <td>약 ${r.year.toLocaleString()}통</td></tr>`).join('')}
+        </table>` : '<div class="mshint">모든 칸이 이미 1년을 넘겼습니다.</div>'}
+      ${state.isAdmin ? `
+      <div class="mshint" style="padding:10px 0 6px">
+        지난 것을 채우는 길은 <b>POP3</b> 하나뿐입니다(IMAP 은 칸당 400통이 끝입니다).
+        먼저 <b>몇 통이 있는지만</b> 재 봅니다 — 통수와 이름표만 묻는 것이라
+        메일을 <b>읽지도 지우지도 않습니다</b>.
+      </div>
+      <button class="msbtn" ${p&&p.busy?'disabled':''} onclick="mbPopProbe()">${
+        p && p.busy ? '재는 중… (한참 걸립니다)' : '📦 POP3 에 몇 통 있는지 재 보기'}</button>
+      ${p && !p.busy ? (p.ok
+        ? `<div class="mshint" style="padding:8px 0 0">
+             ✅ POP3 에 <b>${Number(p.count||0).toLocaleString()}통</b>
+             · ${(Number(p.bytes||0)/1024/1024/1024).toFixed(1)}GB
+             · 이름표 ${Number(p.uidlRows||0).toLocaleString()}개
+             <br>지금 우리가 든 것은 ${rows.reduce((s,r)=>s+r.n,0).toLocaleString()}통입니다.
+           </div>`
+        : `<div class="mshint" style="padding:8px 0 0;color:#991b1b">
+             ✗ ${esc(p.error||'재지 못했습니다')}</div>`) : ''}` : ''}
+    </div>
+  </div>`;
+}
 const MB_SET_LS = 'pucards_mb_settab';
 function mbSetTab(){
   let v = String(state.mbSetTab||'');
@@ -14299,6 +14410,9 @@ function mailSetHtml(){
     ${daum('부재중 응답', 'https://mail.daum.net/setting/Absence',
       '자리를 비울 때 자동 답장입니다. 다음이 보내야 하는 것이라 우리 쪽에 만들 수 없습니다.')}
     </div>
+    ${/* ── 📦 지난 메일 (대표 지시 2026-09-06 「최소 1년의 메일을 보관해야 한다」) ──
+         ⚠ 여기 적히는 것은 «잰 값»이다. 짐작을 적으면 다음 사람이 그것을 근거로 판단한다. */''}
+    ${mbOldHtml()}
   </div>`;
 }
 
