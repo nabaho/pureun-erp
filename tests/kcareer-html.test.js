@@ -1049,17 +1049,22 @@ test('✨ 내 정보로 채우기 — 손으로 타이핑하지 않는다', () =
 });
 
 test('최종 저장 전까지 계속 임시저장한다', () => {
-  assert.match(source, /var RH_DRAFT='rh_draft'/);
-  assert.match(funcSource('importTemplateFile'), /rhDraftSave\(\)/, '올리는 순간 임시저장');
+  /* ⚠ 이 검사는 전에 «지금 값»을 박아 두었다 — `saveFileUnified(RH_DRAFT` 처럼
+     「한 자리에 담는다」를 글자로 못 박아, 자리를 여럿으로 늘리자 기능이 나아졌는데도
+     깨졌다(2026-09-06). 지금은 «규칙»만 본다: 담기고 · 자리 번호로 담기고 · 이어서 할 수 있다.
+     자리 번호가 하나든 여럿이든 이 검사는 그대로 돌아야 한다. */
+  assert.match(funcSource('importTemplateFile'), /rhDraftSave\(\)/, '올리는 순간 담겨야 합니다');
   const save = funcSource('rhDraftSave');
-  assert.match(save, /saveFileUnified\(RH_DRAFT/);
-  assert.match(save, /rh_draft_meta/);
+  assert.match(save, /saveFileUnified\(/, '담는 곳이 없습니다');
+  assert.match(save, /_rhDraftId/, '어느 «자리»에 담는지가 없습니다');
+  assert.doesNotMatch(save, /saveFileUnified\(RH_DRAFT\b/,
+    '한 자리에 고정해 담으면 새 양식이 앞서 하던 것을 덮어씁니다');
   // 화면을 열면 이어서 할 수 있어야 한다
   assert.match(source, /_safe\(\(\)=>rhDraftCheck\(\)\)/);
   assert.match(funcSource('rhDraftCheck'), /rhResumeBar/);
-  assert.match(source, /onclick="rhDraftResume\(\);return false"/);
-  // ⚠ 최종 저장이 끝나면 임시저장을 지운다 — 낡은 것을 가리키면 안 된다
-  assert.match(funcSource('confirmResumeSave'), /rhDraftDrop\(\)/);
+  assert.match(source, /rhDraftPanelToggle\(\)/, '딱지를 눌러 목록을 열 수 있어야 합니다');
+  // ⚠ 완성본을 내면 그 자리는 「지난 작성」으로 내린다 (대표 결정 2026-09-06 「남긴다」)
+  assert.match(funcSource('confirmResumeSave'), /rhDraftDone\(\)/);
 });
 
 test('이력서 생성 화면의 중복을 없앴다', () => {
