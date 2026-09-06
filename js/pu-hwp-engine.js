@@ -2,7 +2,54 @@
 (function (global) {
   'use strict';
 
+  /* ── rhwp 엔진 판 번호 ── 여기 한 곳에서만 올린다(규정관리·푸른이알피가 함께 본다).
+     0.7.19 는 가운뎃점(·)을 그리지 않고 흘렸다. 같은 신구대조표를 두 판으로 렌더해
+     견주니 차이가 «· 단 하나»였다 — 0.7.19 는 3쪽 합쳐 0개, 0.8.4 는 12개
+     (981자 → 993자). 잃은 글자는 없고 쪽수·용지·표선·속도는 같았다.
+     「질병·사고·노령」이 「질병사고노령」으로 보이면 제출 전 확인이 어긋난다.
+     (내려받는 .hwpx 자체는 원래 정상이었다 — 흘린 것은 미리보기 렌더였다) */
+  var CORE_VERSION = '0.8.4';
+
+  /* 저장된 판과 기본 판 중 «더 새것»을 고른다.
+     예전에는 저장값이 있으면 무조건 그것을 썼다. 자동 갱신은 같은 minor 안에서만
+     올리므로(0.7.x→0.7.y), 0.7.19 가 적힌 브라우저는 기본값만 올려도 영영 옛 판을 쓴다.
+     글자로 견주면 0.10.0 이 0.9.9 보다 낮아지므로 자리별 숫자로 견준다. */
+  function verParts(v) {
+    return String(v == null ? '' : v).trim().split('.').map(function (x) { return parseInt(x, 10) || 0; });
+  }
+  function verNewer(a, b) {
+    var pa = verParts(a), pb = verParts(b);
+    for (var i = 0; i < 3; i++) { var x = pa[i] || 0, y = pb[i] || 0; if (x !== y) return x > y; }
+    return false;
+  }
+  /* 판 번호 모양 검사 — 숫자와 점만, 자리는 셋까지. 정규식을 쓰면 파일에 적히는
+     동안 역슬래시가 먹혀 조용히 «아무것도 안 맞는» 검사가 되기 쉽다. */
+  function verOk(s) {
+    if (!s) return false;
+    var p = String(s).split(String.fromCharCode(46));
+    if (p.length > 3) return false;
+    for (var i = 0; i < p.length; i++) {
+      if (!p[i].length) return false;
+      for (var j = 0; j < p[i].length; j++) {
+        var c = p[i].charCodeAt(j);
+        if (c < 48 || c > 57) return false;
+      }
+    }
+    return true;
+  }
+  function pickVer(stored, def) {
+    def = def || CORE_VERSION;
+    var s = String(stored == null ? '' : stored).trim();
+    if (!s || !verOk(s)) return def;
+    return verNewer(s, def) ? s : def;
+  }
+
   var DEFAULTS = {
+    /* 엔진을 어디서 가져오나 — CDN 을 먼저, 저장소 사본을 나중에.
+       사본만 읽던 동안 이 엔진을 쓰는 앱들은 판을 올려도 옛 판(0.7.x)에 머물러
+       가운뎃점(·)을 흘렸다. rules.html 이 이미 쓰던 방식을 여기로 옮겨 왔다.
+       cdnBase 를 빈 값으로 두면 사본만 쓴다 — CDN 이 응답을 물고 늘어지는 망을 위한 탈출구. */
+    cdnBase: 'https://cdn.jsdelivr.net/npm/@rhwp/core',
     coreUrl: 'vendor/rhwp-core/rhwp.js',
     editorUrl: 'https://esm.sh/@rhwp/editor',
     maxFileBytes: 100 * 1024 * 1024,
@@ -62,15 +109,41 @@
     return Function('u', 'return import(u)')(url);
   }
 
+  /* 지금 쓰는 판 — 브라우저에 적힌 것이 더 새것이면 그것을, 옛것이면 기본 판을. */
+  function activeVersion() {
+    var stored = null;
+    try { stored = global.localStorage.getItem('pureun_v6_rhwp_ver'); } catch (_) {}
+    return pickVer(stored, CORE_VERSION);
+  }
+
+  function baseHref() {
+    return (global.location && global.location.href) || 'http://localhost/';
+  }
+
+  /* 가져올 자리를 순서대로. 저장소 사본은 «언제나 마지막»에 남긴다 —
+     오프라인·사내망의 마지막 보루라 지우면 안 된다. */
+  function coreCandidates(extra) {
+    var cfg = config(extra);
+    var out = [];
+    if (cfg.cdnBase) out.push(cfg.cdnBase + '@' + activeVersion() + '/rhwp.js');
+    out.push(new URL(cfg.coreUrl, baseHref()).href);
+    return out;
+  }
+
   function loadCore(extra) {
     if (corePromise) return corePromise;
     setupCanvasMeasure();
-    var cfg = config(extra);
-    var url = new URL(cfg.coreUrl, global.location && global.location.href || 'http://localhost/').href;
-    corePromise = dynamicImport(url).then(function (mod) {
-      return mod.default().then(function () { return mod; });
-    }).catch(function (err) {
-      corePromise = null;
+    var urls = coreCandidates(extra);
+    corePromise = urls.reduce(function (chain, url, i) {
+      return chain.catch(function (prev) {
+        if (i && global.console) global.console.warn('rhwp 로드 실패 → 다음 자리로:', url, prev);
+        return dynamicImport(url).then(function (mod) {
+          return mod.default().then(function () { return mod; });
+        });
+      });
+    }, Promise.reject(new Error('시작')))
+    .catch(function (err) {
+      corePromise = null;   // 물린 것을 놓아, 망이 돌아오면 다시 시도할 수 있게
       throw err;
     });
     return corePromise;
@@ -174,6 +247,11 @@
   }
 
   var api = {
+    CORE_VERSION: CORE_VERSION,
+    activeVersion: activeVersion,
+    coreCandidates: coreCandidates,
+    pickVer: pickVer,
+    verNewer: verNewer,
     config: config,
     detectFormat: detectFormat,
     validate: validate,
