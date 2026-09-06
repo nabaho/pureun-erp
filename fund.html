@@ -7410,7 +7410,8 @@ function toggleAnnual(code,on){ var _key=S.fundId+'/'+S.year;
 function ymd(){var d=new Date();function p(n){return(n<10?'0':'')+n;}return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
 
 // ── 지원금 (공동 전용) — 근로복지공단 지원 신청 전 과정을 하위 탭으로 ──
-var SUB_TABS=[['plan','🧮 한도·점수'],['apply','📋 신청·정산'],['docs','📁 제출서류'],['excel','📥 신청서 엑셀'],['board','🗂 전체 보드']];
+var SUB_TABS=[['plan','🧮 한도·점수'],['apply','📋 신청·정산'],['docs','📁 제출서류'],
+  ['helper','⌨ 입력 도우미'],['excel','📥 신청서 엑셀'],['board','🗂 전체 보드']];
 
 /* ══════════ 지원금 — 근로복지공단 지원사업 규칙 ══════════
    출처: 「2025년 근로복지기금 지원사업 시행 안내」(근로복지넷 공지) + 별지 제3호의2 심사위원회 평가표.
@@ -7512,6 +7513,7 @@ function subsidyTab(f){
   }).join('')+'</div>';
   var body = S.subTab==='plan' ? subsidyPlanPanel(f)
     : S.subTab==='docs' ? subsidyDocsPanel(f)
+    : S.subTab==='helper' ? subsidyHelperPanel(f)
     : S.subTab==='excel' ? subsidyExcelPanel(f)
     : S.subTab==='board' ? subBoardPanel()
     : subsidyApplyPanel(f);
@@ -7554,6 +7556,106 @@ function subPullApply(){
   var e=$('su-request_amount'); if(!e) return;
   e.value=r.amt.toLocaleString(); markDirty();
   toast(r.amt.toLocaleString()+'원을 넣었습니다 — '+r.why+' · [저장]을 눌러야 남습니다');
+}
+/* ══ 지원금 ⑥ 입력 도우미 ══
+   근로복지넷에는 «사람이 직접» 로그인해 값을 친다. 우리가 대신 로그인하지 않는 까닭은 둘이다 —
+   ① 인증서·간편인증을 앱이 들고 있으면, 그 앱이 공단 계정으로 가는 샛길이 된다.
+   ② 공단 화면에는 열린 통로(API)가 없다. 화면을 긁는 방식은 공단이 화면을 바꾸는 날
+      «조용히 다른 값»을 보낸다 — 지원금 신청에서 그건 안 된다.
+   그래서 옮겨 적는 일만 돕는다: 칸 차례대로 값을 세우고, 칸마다 [복사]를 둔다.
+
+   ⚠ 칸 차례는 «별지 제1호서식 지원신청서»를 그대로 따랐다 — 공단이 받는 종이가
+     곧 화면이 묻는 것이다. 지어낸 차례가 아니다. 실제 화면과 다르면 여기를 고친다.
+   ⚠ 값은 «우리가 가진 것»만 세운다. 없으면 빈 채로 두고 «어디서 채우는지»를 알려 준다 —
+     그럴듯하게 채우면 관청에 틀린 값이 간다.
+   ⚠ 서식에 «있는 칸»과 «자주 묻지만 서식엔 없는 칸»을 갈라 둔다. 섞으면 어느 것이
+     서식이 요구한 값인지 알 수 없다. */
+function _subNetRows(f){
+  var b=_boss(f), g=_subPlanAgg(f);
+  var yd=(f.years&&f.years[S.year]&&f.years[S.year].subsidy)||{};
+  var gov=num(yd.gov_contrib)||0;
+  var out=(g.siteContrib||0)+gov;
+  var req=num(yd.request_amount)||0;
+  var N=function(n){ return n?String(n):''; };
+  return [
+    ['신청인', 1, [
+      {k:'기금법인명',   v:f.name||'',        go:'info'},
+      {k:'대표자',       v:b.name||f.chairman||'', go:'info'},
+      {k:'소재지',       v:f.address||'',     go:'info'},
+      {k:'전화',         v:f.phone||'',       go:'info'},
+      {k:'기금인가번호', v:f.inka_no||'',     go:'info'},
+      {k:'법인등록번호', v:f.corp_reg_no||'', go:'info'}
+    ]],
+    ['참여사업장 현황', 1, [
+      {k:'참여사업장 수', v:N(g.nSite), unit:'개사', go:'sites'},
+      {k:'상시근로자 수', v:N(g.nEmp),  unit:'명',  go:'sites'}
+    ]],
+    ['지원 규모', 1, [
+      {k:'출연(예정) 금액', v:N(out), unit:'원', go:'sites',
+       why:'참여사업장 › 연도별 기록에 그 해 출연금을 넣으세요'},
+      {k:'지원신청 금액',   v:N(req), unit:'원', go:'sub:apply',
+       why:'신청·정산에서 [당겨오기] 뒤 [저장]을 누르세요'}
+    ]],
+    ['그 밖에 자주 묻는 것', 0, [
+      {k:'고유번호', v:f.tax_id_no||'', go:'info'},
+      {k:'인가일',   v:f.inka_date?_dotDate(f.inka_date):'', go:'info'}
+    ]]
+  ];
+}
+/* ⚠ 금액·사람 수는 «쉼표 없는 숫자»를 복사한다. 화면에는 쉼표를 넣어 보여 주되,
+     관공서 입력칸은 쉼표를 안 받는 곳이 많다. 무엇을 복사했는지는 알림으로 말해 준다. */
+function subNetCopy(i){
+  var r=(S._subNet||[])[i];
+  if(!r||!r.v){ toast('복사할 값이 없습니다','warn'); return; }
+  _copyText(r.v, r.k+' 복사 — '+r.v);
+}
+function subNetCopyAll(){
+  var rows=(S._subNet||[]).filter(function(r){ return r.v; });
+  if(!rows.length){ toast('복사할 값이 없습니다 — 기금 정보부터 채우세요','warn'); return; }
+  /* 칸이름⇥값 — 표에 붙여 놓고 화면과 나란히 보라는 것이다 */
+  _copyText(rows.map(function(r){ return r.k+'\t'+r.v; }).join('\n'), rows.length+'칸을 복사했습니다');
+}
+function subsidyHelperPanel(f){
+  /* 참여사업장 수·상시근로자 수를 세우려면 명부를 읽어야 한다.
+     아직 안 읽었는데 그리면 「0개사·0명」이 뜬다 — 맞는 값처럼 보이지만 «모르는» 값이다.
+     ⚠ 이 덩어리는 지금 앱 안에 네 군데에 같은 모양으로 있다(신청·정산 등).
+       한 곳으로 모으는 것이 맞지만, 네 자리를 한꺼번에 건드리는 일이라 따로 다룬다. */
+  if(S.sitesFor!==S.fundId){
+    var _fid=S.fundId; S.sitesFor=_fid; S.sites=null;
+    fbDb.ref(NS+'/sites/'+_fid).once('value').then(function(sn){ if(S.sitesFor!==_fid)return; S.sites=sn.val()||{};
+      if(S.tab==='subsidy'&&S.view==='fund'&&S.fundId===_fid)renderFund(); })
+      .catch(function(){ if(S.sitesFor===_fid)S.sitesFor=null; if(S.tab==='subsidy'&&S.view==='fund')renderFund(); });
+    return '<div class="panel">'+loadingHTML()+'</div>';
+  }
+  syLoad();
+  var groups=_subNetRows(f), flat=[], rows='';
+  groups.forEach(function(gr){
+    rows+='<tr><th colspan="3" style="text-align:left;background:var(--warn-bg);font-size:11.5px;font-weight:700">'
+      +esc(gr[0])+(gr[1]?'':' <span class="muted" style="font-weight:400">— 별지 제1호서식에는 없지만 자주 묻습니다</span>')
+      +'</th></tr>';
+    gr[2].forEach(function(r){
+      var i=flat.length; flat.push({k:r.k,v:r.v});
+      var go=/^sub:/.test(r.go) ? "goSubTab('"+r.go.slice(4)+"')" : "goTab('"+r.go+"')";
+      var show=/^[0-9]+$/.test(r.v) ? Number(r.v).toLocaleString() : esc(r.v);
+      rows+='<tr><th style="width:150px;text-align:left">'+esc(r.k)+'</th>'
+        +(r.v
+          ? '<td style="font-weight:600">'+show+(r.unit?' <span class="muted" style="font-weight:400">'+r.unit+'</span>':'')+'</td>'
+            +'<td style="width:86px;text-align:right"><button onclick="subNetCopy('+i+')" style="padding:2px 10px;font-size:11.5px;white-space:nowrap">복사</button></td>'
+          : '<td class="muted">아직 없습니다'+(r.why?' — '+esc(r.why):'')+'</td>'
+            /* ⚠ nowrap 이 없으면 좁은 칸에서 「채/우/러」로 세 줄이 된다 */
+            +'<td style="width:86px;text-align:right"><button onclick="'+go+'" style="padding:2px 10px;font-size:11.5px;white-space:nowrap">채우러 →</button></td>')
+        +'</tr>';
+    });
+  });
+  S._subNet=flat;
+  var have=flat.filter(function(r){ return r.v; }).length;
+  return '<div class="panel"><div class="row"><h2>⌨ 근로복지넷 입력 도우미</h2>'+hlp('sub.helper')+yearSel()
+    +'<span style="flex:1"></span><span class="stat">'+have+' / '+flat.length+'칸</span>'
+    +'<button onclick="subNetCopyAll()" style="padding:4px 10px">📋 전부 복사</button></div>'
+    /* 안내는 화면에 깔지 않고 ⓘ(sub.helper) 에 접어 둔다 — 화면은 값만 보이게.
+       ⚠ .tblwrap 은 «기금 목록»의 머리줄 고정 전용이다. 여기 붙이면 그 규칙이 헐거워진다. */
+    +'<div style="overflow-x:auto"><table style="font-size:12.5px"><tbody>'+rows+'</tbody></table></div>'
+    +'</div>';
 }
 function subsidyApplyPanel(f){
   var yd=(f.years&&f.years[S.year]&&f.years[S.year].subsidy)||{};
@@ -7989,11 +8091,9 @@ function subCopyMissing(){
     }).filter(Boolean);
   if(!lines.length){ toast('미제출 사업장이 없습니다'); return; }
   var txt='연번\t사업장\t미제출\t담당자\t연락처\t이메일\n'+lines.join('\n');
-  var ta=document.createElement('textarea'); ta.value=txt; ta.style.position='fixed'; ta.style.left='-9999px';
-  document.body.appendChild(ta); ta.select();
-  try{ document.execCommand('copy'); toast(lines.length+'개사 명단을 복사했습니다 — 엑셀·메일에 붙여넣기'); }
-  catch(e){ toast('복사 실패','err'); }
-  ta.remove();
+  /* 복사는 _copyText 한 곳에서만 한다 — 여기 있던 제 길은 execCommand «뿐»이라,
+     그것을 막아 둔 브라우저에서는 조용히 아무 일도 안 일어났다. */
+  _copyText(txt, lines.length+'개사 명단을 복사했습니다 — 엑셀·메일에 붙여넣기');
 }
 function uploadSubDoc(){
   if(!fbStore){ toast('Storage 미설정','err'); return; }
@@ -9187,20 +9287,24 @@ function notesText(N){
   return out.join('\n');
 }
 var _notesTxt='';
-function copyNotes(){
-  if(!_notesTxt){ toast('주석을 먼저 열어 주세요','warn'); return; }
-  var t=_notesTxt;
-  var fb=function(){                                  // 클립보드를 막아 둔 환경이 있다
+/* 복사는 한 곳에서만 한다 — 클립보드를 막아 둔 환경이 있어 되돌림 길(textarea)이
+   반드시 붙어야 하는데, 부르는 곳마다 다시 쓰면 한 곳만 빠뜨려도 조용히 안 된다. */
+function _copyText(t,msg){
+  var fb=function(){
     var ta=document.createElement('textarea');
     ta.value=t; ta.style.position='fixed'; ta.style.opacity='0';
     document.body.appendChild(ta); ta.select();
     var okc=false; try{ okc=document.execCommand('copy'); }catch(e){}
     document.body.removeChild(ta);
-    toast(okc?'주석을 복사했습니다':'복사하지 못했습니다',okc?'':'warn');
+    toast(okc?msg:'복사하지 못했습니다',okc?'':'warn');
   };
   if(navigator.clipboard&&navigator.clipboard.writeText)
-    navigator.clipboard.writeText(t).then(function(){ toast('주석을 복사했습니다'); },fb);
+    navigator.clipboard.writeText(t).then(function(){ toast(msg); },fb);
   else fb();
+}
+function copyNotes(){
+  if(!_notesTxt){ toast('주석을 먼저 열어 주세요','warn'); return; }
+  _copyText(_notesTxt,'주석을 복사했습니다');
 }
 function cashFlowView(arr){
   var cf=cashFlowRows(arr);
@@ -11847,6 +11951,12 @@ var HELP={
  'forms.incent':{t:'⑥ 인센티브 서식',h:'<p>공동근로복지기금 설립·운영 지원에 따른 <b>비용청구(별지 제11호의2)</b> 서식입니다.</p>'},
  'forms.draft':{t:'전체 초안(6종) 미리보기',h:'<p>기금 기본정보로 채운 6종 초안입니다. <b>A4 낱장</b>으로 나뉘어 그대로 인쇄됩니다.</p>'
    +'<p>공식 제출용은 형태가 100% 보존되는 <b>엑셀 채움</b>을 권합니다.</p>'},
+ 'sub.helper':{t:'근로복지넷 입력 도우미',h:'<p>근로복지넷은 <b>인증서·간편인증</b>으로 사람이 직접 로그인하는 곳이라, 앱이 대신 로그인하지 않습니다.</p>'
+   +'<p>대신 <b>별지 제1호서식 지원신청서</b>의 칸 차례대로 값을 세워 두고 칸마다 <b>[복사]</b>를 둡니다 — 두 화면을 나란히 놓고 옮겨 적으세요.</p>'
+   +'<p>금액·사람 수는 <b>쉼표 없는 숫자</b>로 복사됩니다 — 관공서 입력칸이 쉼표를 안 받는 곳이 많습니다. (화면에는 쉼표를 넣어 보여 줍니다)</p>'
+   +'<p><b>[📋 전부 복사]</b>는 칸이름과 값을 탭으로 갈라 줍니다 — 엑셀에 붙여 놓고 대조하세요.</p>'
+   +'<p>값이 없는 칸은 <b>[채우러 →]</b>로 채우는 자리로 갑니다. 없는 값을 지어내지 않습니다.</p>'
+   +'<p>※ 실제 근로복지넷 화면과 칸 차례가 다르면 알려 주세요 — 그대로 맞춥니다.</p>'},
  'forms.xlprev':{t:'엑셀 미리보기',h:'<p>값·<b>병합·열폭</b>을 원본대로 그리는 <b>읽기전용</b> 화면입니다.</p><p><b>[🔀 한글본과 나란히]</b>를 누르면 같은 서식의 한글본을 옆에 놓고 대조합니다 — 시트 번호와 우리 목록 번호는 차례가 달라 <b>이름으로</b> 짝을 짓습니다.</p><p>수정·인쇄는 [⬇ 받기] 후 <b>엑셀에서</b> 하세요 — 원본 법정서식(A4)의 표·수식·서식이 100% 보존됩니다.</p>'},
  'forms.edit':{t:'서식 수정·저장',h:'<p>내용을 클릭해 바로 수정합니다.</p><p><b>[💾 이 기금]</b> = 이 기금 전용 저장<br><b>[💾 공통]</b> = 같은 유형 모든 기금의 기본서식</p>'
    +'<p>격자·도장란이 그대로 필요하면 <b>엑셀</b> 또는 <b>HWP</b>를 쓰세요.</p>'},
