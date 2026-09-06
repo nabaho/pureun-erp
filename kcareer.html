@@ -1519,6 +1519,7 @@ body.rh-work-on #rcTplLib,body.rh-work-on #rhUploadBar{display:none!important}
           <select class="tb-select" data-f="type"><option value="">전체 구분</option><option>회의</option><option>출장</option><option>식대</option><option>교통</option><option>기타</option></select>
           <div class="tb-spacer"></div>
           <span class="cnt" style="font-size:11px;color:var(--text-mute)"></span>
+          <button class="btn" data-act="paste" title="영수증 목록을 그대로 붙여넣어 여러 건을 한 번에 넣습니다 — 넣기 전에 표로 보여 줍니다">📋 붙여넣어 여러 건</button>
           <button class="btn" data-act="csv">📤 CSV</button>
           <button class="btn primary" data-act="new">+ 새 신청</button>
         </div>
@@ -1532,6 +1533,7 @@ body.rh-work-on #rcTplLib,body.rh-work-on #rhUploadBar{display:none!important}
           <select class="tb-select" data-f="type"><option value="">전체 구분</option><option>회의</option><option>출장</option><option>식대</option><option>교통</option><option>기타</option></select>
           <div class="tb-spacer"></div>
           <span class="cnt" style="font-size:11px;color:var(--text-mute)"></span>
+          <button class="btn" data-act="paste" title="영수증 목록을 그대로 붙여넣어 여러 건을 한 번에 넣습니다 — 넣기 전에 표로 보여 줍니다">📋 붙여넣어 여러 건</button>
           <button class="btn" data-act="csv">📤 CSV</button>
           <button class="btn primary" data-act="new">+ 새 신청</button>
         </div>
@@ -6881,7 +6883,13 @@ function dupKey(r){
   if(r.bank!==undefined) return norm(r.bank)+'|'+norm(r.number);
   // 기관명 앞 10자 + 직책 조합으로 키 생성 (부분 일치 허용)
   var org=norm(r.org||'').slice(0,10);
-  var title=norm(r.titleVal||r.title||r.topic||r.project||r.kind||'').slice(0,6);
+  /* ★ 비용 기록의 라벨은 content 다 — 사슬에 없어서 「같은 날 같은 지출처」면
+     내용·금액이 달라도 한 건으로 봤다(실측 2026-09-06: 같은 가게 점심·저녁이 한 건).
+     ⚠ content 를 쓰는 것은 비용 둘(meetfee·etcfee)뿐이고 그 둘은 앞 사슬을 하나도
+       안 쓴다 — 그래서 이 한 낱말이 «비용 기록만» 갈라 준다. 다른 화면은 그대로다.
+     ⚠ 사슬 순서를 바꾸지 말 것. 앞을 건드리면 위촉장·자격증의 같음 판정이 달라지고,
+       중복관리의 「중복 아님」 기억(dup_dismiss)이 통째로 안 맞게 된다. */
+  var title=norm(r.titleVal||r.title||r.topic||r.project||r.kind||r.content||'').slice(0,6);
   var d=String(r.issueDate||r.date||r.period||r.year||'').replace(/[^0-9]/g,'').slice(0,8); /* 날짜/시기 포함 — 시기가 다르면 중복 아님 */
   return org+'|'+title+'|'+d;
 }
@@ -7619,7 +7627,12 @@ var PASTE_COLS = {
   edu:     ['school','major','degree','period'],
   wiccok:  ['org','titleVal','issueDate','note'],
   award:   ['org','titleVal','issueDate','note'],
-  work:    ['org','title','joinDate','leaveDate']
+  work:    ['org','title','joinDate','leaveDate'],
+  /* 비용 둘 — 표에 보이는 순서 그대로(일자·구분·내용·금액·지출처).
+     ⚠ 입금계좌(acct)는 받지 않는다 — 이미 등록된 계좌를 «골라» 잇는 칸이라
+       글자로 받으면 엉뚱한 계좌를 가리킨다. */
+  meetfee: ['date','type','content','amt','org'],
+  etcfee:  ['date','type','content','amt','org']
 };
 var _pasteCtx=null;    /* {page, rows:[{v:[..], dup:'', use:true}]} */
 var _pasteUndo=null;   /* {store, ids, page} — 방금 넣은 것 */
@@ -7629,7 +7642,8 @@ function pasteCols(page){
   return (PASTE_COLS[page]||[]).map(function(k){
     var f=null;
     (def.fields||[]).forEach(function(x){ if(x.key===k) f=x; });
-    return { key:k, label:(f&&f.label)||k, date:!!(f&&f.date) };
+    return { key:k, label:(f&&f.label)||k, date:!!(f&&f.date), req:!!(f&&f.required),
+             kind:(f&&f.type)||'', options:(f&&f.options)||null, dflt:(f&&f.default)||'' };
   });
 }
 function _pasteNorm(x){ return String(x==null?'':x).replace(/[\s·().\-]/g,''); }
@@ -7641,6 +7655,27 @@ function pasteSplit(line){
   if(t.indexOf('\t')>=0) return t.split('\t');
   if(t.indexOf(',')>=0) return t.split(',');
   return t.split(/ {2,}/);
+}
+
+/* 붙여넣은 한 칸을 «그 칸이 받는 모양»으로 다듬는다.
+   ⚠ 다듬은 값을 미리보기에 «그대로» 보여 준다 — 조용히 바꾸면
+     「친 것과 다른 것이 들어갔다」가 된다.
+   ⚠ 무엇을 받는지는 FORM_DEFS 가 안다(날짜·숫자·고르개 항목·기본값).
+     여기 또 적지 말 것 — 서식이 바뀌면 이쪽만 낡는다. */
+function pasteNormCell(c, x){
+  var v=String(x==null?'':x).trim();
+  if(!v) return '';
+  if(c.date) return formatDate(v);
+  /* 「45,000원」처럼 붙여넣은 금액에서 숫자만 남긴다 — 그대로 두면 합계가 안 더해진다 */
+  if(c.kind==='number'){ var d=v.replace(/[^0-9-]/g,''); return (d==='-'||!d)?'':d; }
+  /* 고르개 칸(구분 등)은 «있는 항목»으로 맞춘다. 없는 말이 쌓이면 「전체 구분」
+     고르개로 걸러낼 수 없어 그 줄이 목록에서 사라진 것처럼 보인다. */
+  if(c.kind==='select'&&c.options&&c.options.length){
+    var 납작=function(t){ return String(t).replace(/[\s·]/g,''); };
+    for(var i=0;i<c.options.length;i++) if(납작(c.options[i])===납작(v)) return c.options[i];
+    return c.dflt||v;
+  }
+  return v;
 }
 
 /* 붙여넣은 한 줄로 «레코드 모양»을 만든다 — 고르개(유형 등)는 서식의 기본값을 쓴다 */
@@ -7700,16 +7735,22 @@ function pasteParse(){
   var 첫=pasteSplit(lines[0]).map(function(x){ return x.trim(); });
   if(첫.length>1 && 첫.every(function(c){
         return !c || cols.some(function(x){ return _pasteNorm(x.label)===_pasteNorm(c); }); })) lines.shift();
-  var 이미=pasteExisting(page), 본것={};
+  var 이미=pasteExisting(page), 본것={}, 바꾼것=0;
   _pasteCtx.rows=lines.map(function(line){
     var cells=pasteSplit(line).map(function(x){ return x.trim(); });
-    var v=cols.map(function(c,i){ var x=cells[i]||''; return (c.date&&x)?formatDate(x):x; });
+    var v=cols.map(function(c,i){
+      var 날것=String(cells[i]||'').trim(), 다듬=pasteNormCell(c, 날것);
+      /* 고르개에 없는 말을 기본값으로 바꾼 것은 «세어서 알린다» — 조용히 바꾸면 안 된다 */
+      if(c.kind==='select' && 날것 && 다듬!==날것) 바꾼것++;
+      return 다듬;
+    });
     var k=dupKey(pasteRec(page, cols, v));
     var dup = 이미[k] ? '이미 있음' : (본것[k] ? '이 안에서 겹침' : '');
     본것[k]=1;
     /* auto: 이 체크를 «앱이» 정했다는 표시 — 사람이 손대면 떨어진다(pasteToggle) */
     return { v:v, dup:dup, use:!dup, auto:true };
   });
+  _pasteCtx.snapped=바꾼것;
   pasteDraw();
   toast(_pasteCtx.rows.length+'줄을 읽었습니다');
 }
@@ -7740,7 +7781,8 @@ function pasteDraw(){
   box.innerHTML=html+'</tbody></table>';
   pasteTally();
   var hi=document.getElementById('pasteHint');
-  if(hi) hi.textContent='칸을 눌러 그 자리에서 고칠 수 있습니다. 이미 있는 것은 체크를 꺼 두었습니다 — 정말 다른 건이면 켜세요.';
+  if(hi) hi.textContent='칸을 눌러 그 자리에서 고칠 수 있습니다. 이미 있는 것은 체크를 꺼 두었습니다 — 정말 다른 건이면 켜세요.'
+    +(_pasteCtx.snapped?(' · 고르개에 없는 말 '+_pasteCtx.snapped+'개는 기본값으로 바꿨습니다 — 표에 보이는 값이 들어갑니다'):'');
 }
 function pasteTally(){
   if(!_pasteCtx) return;
@@ -7790,10 +7832,16 @@ function pasteSave(){
   if(!def){ toast('이 화면은 붙여넣기를 받지 않습니다'); return; }
   var 넣을=_pasteCtx.rows.filter(function(r){ return r.use; });
   if(!넣을.length){ toast('넣을 것이 없습니다 — 미리보기를 먼저 누르세요'); return; }
-  /* ★ 첫 칸(필수)이 빈 줄은 넣지 않는다 — 이름 없는 기록이 목록에 쌓이면 지우기도 어렵다 */
-  var 빈줄=넣을.filter(function(r){ return !String(r.v[0]||'').trim(); }).length;
-  넣을=넣을.filter(function(r){ return String(r.v[0]||'').trim(); });
-  if(!넣을.length){ toast('⚠ '+cols[0].label+'이 빈 줄만 있습니다'); return; }
+  /* ★ «필수 칸»이 빈 줄은 넣지 않는다 — 이름 없는 기록이 목록에 쌓이면 지우기도 어렵다.
+     ⚠ 어느 칸이 필수인지는 FORM_DEFS 가 안다(자격증은 자격명, 비용은 일자).
+       「첫 칸」으로 굳히지 말 것 — 화면마다 첫 칸이 다르다. */
+  var 필수=cols.filter(function(c){ return c.req; });
+  if(!필수.length) 필수=[cols[0]];
+  var 찼나=function(r){ return 필수.every(function(c){
+        return String(r.v[cols.indexOf(c)]||'').trim(); }); };
+  var 빈줄=넣을.filter(function(r){ return !찼나(r); }).length;
+  넣을=넣을.filter(찼나);
+  if(!넣을.length){ toast('⚠ '+필수.map(function(c){ return c.label; }).join('·')+'이 빈 줄만 있습니다'); return; }
   var ids=[];
   넣을.forEach(function(r){
     var o=pasteRec(page, cols, r.v), id;
@@ -7813,7 +7861,7 @@ function pasteSave(){
   closePasteIn();
   if(typeof renderCareer==='function'&&typeof CAREER_CFG!=='undefined'&&CAREER_CFG[page]) renderCareer(page);
   kcUndoBar('📋 '+ids.length+'건을 넣었습니다'
-    +(빈줄?(' · '+cols[0].label+'이 빈 '+빈줄+'줄은 뺐습니다'):''), null, pasteUndoRun);
+    +(빈줄?(' · '+필수.map(function(c){ return c.label; }).join('·')+'이 빈 '+빈줄+'줄은 뺐습니다'):''), null, pasteUndoRun);
   toast('✅ '+(def.title||page)+' '+ids.length+'건 등록');
 }
 /* 방금 넣은 «그것만» 뺀다 — 사람이 그 사이에 고친 다른 기록은 건드리지 않는다 */
