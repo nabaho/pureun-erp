@@ -628,6 +628,12 @@
     /* 칸 지도(kcareer-formmap.js)가 «같은 자»를 쓰도록 내보낸다 —
        따로 만들면 두 곳의 셈이 어긋나 「지도에는 있는데 안 채워지는 칸」이 생긴다 */
     splitRows: splitRows, splitCells: splitCells, eachTable: eachTable, normLabel: normLabel,
+    /* 학력 표에 미리 박아 둔 «급 이름»(고등학교·대학교·대학원) — 칸 지도가 같은 자를 쓴다.
+       ⚠ 급은 값이 아니다. 세는 자와 채우는 자가 다르면 화면이 거짓을 말한다. */
+    levelOf: levelOf,
+    /* ⚠ 칸을 바꿀 때는 «반드시» 이것을 쓴다 — 빈 칸끼리는 XML 이 글자 하나까지
+       똑같아서, 글자로 찾아 바꾸면 맨 앞의 빈 칸이 바뀐다(칸 지도도 같은 결함을 겪었다). */
+    replaceCellAt: replaceCellAt,
     /* 「자택:____ 직장:____」 같은 칸 안 라벨 목록 — 입력판(kcareer-formhtml.js)이 같은 자를 쓴다.
        사전을 두 곳에 두면 한쪽만 늘어나 「화면엔 칸이 있는데 안 채워지는」 자리가 생긴다. */
     incellLabels: function () { return INCELL_LABELS.slice(); }

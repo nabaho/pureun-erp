@@ -2041,7 +2041,13 @@ test('★★ PDF 는 그림으로 바꿔 보낸다 — 그대로 보내면 읽�
   // 실측: 표창 폴더에서 JPG 한 장만 읽히고 PDF 는 모두 실패했다(「OCR 완료: 1건」).
   const p = funcSource('_ocrPayload');
   assert.match(p, /if\(ext!=='pdf'\) return/, '그림 파일은 그대로 보냅니다');
-  assert.match(p, /_pdfFirstPageJpeg/, 'PDF 는 첫 쪽을 그림으로 바꿉니다');
+  /* ★ 2026-09-06 규칙이 넓어졌다 — 전에는 «첫 쪽만» 바꿨다(_pdfFirstPageJpeg).
+     그래서 경력증명서가 2장이면 2장째는 «아예 안 봤다». 이제 쪽마다 바꿔 함께 읽는다.
+     ⚠ 쪽수에는 뚜껑이 있다(OCR_MAX_PAGES) — 20쪽짜리를 통째로 보내면 요금과 시간이
+       함께 튄다. 서류 판독에 필요한 것은 앞쪽 몇 장이다. */
+  assert.match(p, /_pdfPagesJpeg/, 'PDF 는 «쪽마다» 그림으로 바꿉니다');
+  assert.match(p, /pages:/, '바꾼 쪽들을 함께 넘겨야 여러 장을 읽습니다');
+  assert.match(source, /OCR_MAX_PAGES\s*=\s*\d+/, '읽을 쪽수에 뚜껑이 있어야 합니다');
   assert.match(p, /return \{b64:b64, mt:'application\/pdf', asImage:false\}/,
     '못 바꾸면 원래 PDF 로 되돌아가야 합니다');
   // 일괄 읽기·다시읽기 «둘 다» 같은 길을 써야 한다

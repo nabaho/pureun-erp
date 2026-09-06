@@ -67,7 +67,11 @@ const GATED = {
   'pu-paydata.html': ['runRead', 'runSheetRead', 'readOneSum'],
   'pu-photos.html': ['startRead', 'readPhoto', 'imgChunkMakers', 'readDocChunked',
     'runReadChunks', 'textChunkMakers'],
-  'gov-consulting.html': ['refCapRead']       // 아는 채로 열어 둔 곳(KNOWN_OPEN)
+  'gov-consulting.html': ['refCapRead'],      // 아는 채로 열어 둔 곳(KNOWN_OPEN)
+  /* 경력관리 — 위촉장·자격증·경력증명서를 읽는다(대표 지시 2026-09-06 「사진첩 판독기로 바꿔라」).
+     ⚠ 부르는 자리는 _kcReader 하나뿐이다. 이 층을 다른 곳에서 또 부르면 여기서 걸린다 —
+       그래야 «사진이 어디로 나가는지»를 한 자리에서 볼 수 있다. */
+  'kcareer.html': ['_kcReader']
 };
 
 function fnAround(src, at) {
