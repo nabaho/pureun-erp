@@ -40,7 +40,10 @@ function 판() {
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   vm.runInContext(읽기('js/pu-doc-read.js'), ctx);
+  /* erpCoPullShow·erpPhotoToCoFields 는 2026-09-06 에 붙었다 —
+     계약서 사진도 이 창으로 읽으면서 «보이는 글자»와 «계약서 칸 옮김이»가 갈라졌다 */
   ['function erpCoBizKey(', 'function erpCoNameKey(', 'function erpCoBlank(',
+   'function erpCoPullShow(', 'function erpVatTextToFlag(', 'function erpPhotoToCoFields(',
    'function erpCoPullRows(', 'function erpCoPullCandidates(', 'function erpCoPullApply(',
    'function erpFmtBizNo('].forEach(function (d) {
     vm.runInContext(cutFn(ERP, d), ctx);
@@ -220,17 +223,22 @@ test('★ 두 번 불러도 사진첩을 «한 번만» 훑는다 — 다시 훑
       return Promise.resolve({
         a1: { read: { kind: 'bizreg', fields: { bizno: '128-81-39938' } }, __year: '2026', upAt: 1 },
         a2: { read: { kind: 'card', fields: {} }, __year: '2026' },          // 명함은 빠져야 한다
-        a3: { read: { kind: 'contract', fields: {} }, __year: '2026' },      // 계약서도 빠져야 한다
+        /* ★ 2026-09-06 부터 계약서는 «담는다» (대표 지시).
+           계약기간·월 자문료·부가세의 실제 출처가 여기다 — 업체 373곳 중 계약관리에
+           계약서가 있는 곳은 29곳뿐이고 쓸 값이 있는 곳은 9곳이었다. */
+        a3: { read: { kind: 'contract', fields: {} }, __year: '2026' },
         a4: { read: { kind: 'sme', error: '실패' }, __year: '2026' }          // 실패는 빠져야 한다
       });
     }
   };
   const 첫번 = await new Promise(function (ok) { ctx.erpLoadCoDocPhotos(ok); });
-  assert.equal(첫번.length, 1, '회사 서류만 담아야 합니다(명함·계약서·실패는 빼고)');
-  assert.equal(첫번[0].kind, 'bizreg');
+  assert.equal(첫번.length, 2, '회사 서류와 계약서를 담아야 합니다(명함·실패는 빼고)');
+  /* ⚠ vm 안에서 만든 배열은 deepEqual 이 «구조는 같은데 다른 realm» 이라며 틀렸다고 한다 —
+     이어 붙인 글자로 견준다 */
+  assert.equal(Array.from(첫번, function (x) { return x.kind; }).sort().join(','), 'bizreg,contract');
   const 센것 = 훑음;
   const 두번 = await new Promise(function (ok) { ctx.erpLoadCoDocPhotos(ok); });
-  assert.equal(두번.length, 1, '두 번째가 빈손으로 옵니다');
+  assert.equal(두번.length, 2, '두 번째가 빈손으로 옵니다');
   assert.equal(훑음, 센것, '★ 두 번째에 사진첩을 또 훑었습니다 — 창을 열 때마다 요금이 나갑니다');
 });
 
