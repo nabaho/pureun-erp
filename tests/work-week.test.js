@@ -229,7 +229,8 @@ ok('영문 대소문자 모두',
   fire({ key: 'N', code: 'KeyN' })[0][0] === 'itemModal'
   && fire({ key: 'n', code: 'KeyN' })[0][0] === 'itemModal');
 ok('1~6 이 왼쪽 차례대로',
-  [1, 2, 3, 4, 5, 6].every((n, i) => fire({ key: String(n), code: 'Digit' + n })[0][1] === NAV_KEYS[i]));
+  /* 숫자 몇 개인지는 NAV_KEYS 가 정한다 — 메뉴가 늘거나 줄 때 여기서 안 깨지게 */
+  NAV_KEYS.every((k, i) => fire({ key: String(i + 1), code: 'Digit' + (i + 1) })[0][1] === k));
 ok('7 이상은 아무 화면도 아니다',
   fire({ key: '7', code: 'Digit7' }).length === 0 && fire({ key: '0', code: 'Digit0' }).length === 0);
 ok('숫자패드로도', fire({ key: '2', code: 'Numpad2' })[0][1] === 'team');
@@ -237,7 +238,7 @@ ok('[ ] 로 지난 주·다음 주, T 로 이번 주',
   fire({ key: '[', code: 'BracketLeft' })[0][1] === -1
   && fire({ key: ']', code: 'BracketRight' })[0][1] === 1
   && fire({ key: 't', code: 'KeyT' })[0][0] === 'setWeek');
-S.view = 'kb';
+S.view = 'perf';   // 2026-09-06: 지식 화면이 없어져 다른 «주간 표 없는» 화면으로 바꿨다
 ok('주간 표가 없는 화면에서는 주를 옮기지 않는다',
   fire({ key: '[', code: 'BracketLeft' }).length === 0);
 S.view = 'my';
@@ -295,7 +296,26 @@ ok('지울 때는 건별 사본도 함께 읽어 고아 기록을 남기지 않�
 /* ── 켜고 끄기 ── */
 ok('요일별·한 칸을 오갈 수 있고 그 선택을 기억한다',
   grab('wkSplitToggle').indexOf('WKSPLIT_KEY') > 0
-  && grab('wkSplitOn').indexOf("v!=='0'") > 0);
+  && grab('wkSplitOn').indexOf('WKSPLIT_KEY') > 0);
+/* 2026-09-06 대표 지시 「기본값 바꿔」 — 처음에는 한 칸이다.
+   요일로 쪼개면 빈 「기록…」 칸 다섯이 340px 넘게 먹어, 정작 업무명 칸이 밀려 눌렸다
+   (대표 보고 「어디에서 뭘하는가 안보인다」). */
+ok('★★ 저장값에 따라 갈린다 — 처음 여는 사람(저장값 없음)은 요일별', (function () {
+  const vm2 = require('node:vm');
+  const one = (v) => {
+    const b = { S: {}, console,
+      localStorage: { getItem: () => v },
+      WKSPLIT_KEY: 'work_wk_split' };
+    vm2.createContext(b);
+    vm2.runInContext(grab('wkSplitOn') + '\nthis.r = wkSplitOn();', b);
+    return b.r;
+  };
+  /* 2026-09-06 되돌림 — 대표 「왜 사라졌나」.
+     하루하루 무엇을 했는지 적는 자리가 이 화면의 뼈대다. */
+  return one(null) === true       // ★ 처음 여는 사람 — 요일별
+    && one('0') === false         // 한 칸으로 «손수 고른» 사람의 뜻은 그대로
+    && one('1') === true;
+})());
 ok('요일별일 때만 쪼갠 칸을 그린다',
   grab('rowHTML').indexOf('wkSplitOn()?wkCellHTML(it,logs,rowIdx||0)') > 0);
 ok('팀 전체는 예전 그대로 (남의 업무를 요일별로 적을 일은 없다)',

@@ -106,20 +106,27 @@ test('★ 부가세는 계약서에 없으면 「별도」 — 이관 때와 같
 
 test('★★ 빈 칸만 채운다 — 적어 둔 값을 계약서로 되돌리지 않는다', () => {
   const body = bare(cutFn(src, '  function fillFromContract('));
-  assert.match(body, /if\(!blank\)\{ kept\.push/,
+  /* 2026-09-06: 「비었다」 판정을 coFieldBlank 로 빼냈다 — 사진첩 길과 «같은 자»를 쓰려고.
+     글자가 아니라 «빈 칸이 아니면 그냥 둔다»는 규칙을 본다. */
+  assert.match(body, /if\(!coFieldBlank\([\s\S]{0,40}?\)\)\{ kept\.push/,
     '★★ 이미 적어 둔 칸을 덮어쓰면, 업체관리에서 고쳐 둔 것이 말없이 사라집니다');
   assert.match(body, /got\.push\(LABEL\[k\]\)/, '★ 무엇을 채웠는지 안 세면 알려 줄 수 없습니다');
   assert.match(body, /showToast\(/, '★ 말없이 채우면 무엇이 바뀐지 모릅니다');
-  assert.match(body, /kept\.length \?/,
+  assert.match(body, /kept\.length\s*\?/,
     '★ 「그냥 둔 칸」을 안 알리면, 계약서와 다른 채로 남은 것을 모릅니다');
 });
 
 test('★★ 「비었다」의 뜻이 칸마다 다르다 — 자문료는 0, 부가세는 미확정', () => {
-  const body = bare(cutFn(src, '  function fillFromContract('));
-  assert.match(body, /monthlyAdvisoryFee'\) \? !\(parseInt\(now, 10\) > 0\)/,
+  /* 판정은 coFieldBlank 한 곳에 있다 — 계약관리 길과 사진첩 길이 «같은 자»를 써야
+     두 단추가 서로 다른 말을 하지 않는다 (2026-09-06) */
+  const body = bare(cutFn(src, '  function coFieldBlank('));
+  assert.match(body, /monthlyAdvisoryFee'\)[\s\S]{0,40}parseInt\(now, 10\) > 0/,
     '★★ 자문료 0 을 「적어 둔 값」으로 보면, 0원짜리 업체가 영영 안 채워집니다');
-  assert.match(body, /vatType'\) \? \(!now \|\| now === 'unspecified'\)/,
+  assert.match(body, /vatType'\)[\s\S]{0,40}'unspecified'/,
     '★★ 「⚠️ 미확정」을 «적어 둔 값»으로 보면, 미확정인 채로 굳습니다');
+  /* 그 자를 «실제로» 쓰는지도 본다 — 함수만 있고 안 부르면 아무것도 안 지킨다 */
+  assert.match(bare(cutFn(src, '  function fillFromContract(')), /coFieldBlank\(/,
+    '★ 계약관리 길이 그 자를 안 씁니다');
 });
 
 test('★ 못 찾으면 «왜» 못 찾았는지 말한다', () => {
@@ -140,7 +147,9 @@ test('★ 어느 계약서에서 왔는지 남긴다', () => {
 test('★ 계약정보 칸에 당겨오는 단추가 있다', () => {
   const modal = src.slice(src.indexOf('function CompanyEditModal(props){'),
     src.indexOf('function CompanyEditModal(props){') + 70000);
-  assert.match(modal, /'📄 계약서에서 당겨오기'/, '★ 단추가 없으면 쓸 길이 없습니다');
+  /* 2026-09-06 이름을 바로잡았다 — 이것은 «계약관리 기록»에서 가져온다.
+     「계약서에서」라고 하면 스캔한 계약서를 읽는 줄 알게 된다(대표 지적). */
+  assert.match(modal, /'📄 계약관리에서 당겨오기'/, '★ 단추가 없으면 쓸 길이 없습니다');
   assert.match(modal, /onClick:fillFromContract/, '★ 눌러도 아무 일이 없습니다');
   /* 무엇을 가져오고 무엇은 안 건드리는지 미리 알린다 */
   assert.match(modal, /이미 적어 둔 칸은 그대로 둡니다/,

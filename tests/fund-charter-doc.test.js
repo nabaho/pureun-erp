@@ -114,10 +114,15 @@ test('연결된 원본을 «눈에 띄게» 볼 수 있다 — 넷 모두', () =
   const z = grabFn('docZoneOne');
   assert.ok(z.includes("openScan(" + Q + "'+kind+'" + Q + ")"),
     '설립인가증·등기부·고유번호증의 원본 보기가 없다');
-  assert.match(z, /📎 원본/, '📎 한 글자로는 눌러 볼 수 있는지 안 보인다');
+  /* 2026-09-06: 붙어 있으면 «이름을 눌러» 원본이 열리도록 바꿨다(그전에는 다시 고르기가 열렸다).
+     단추 이름도 「📎 원본」 → 「보기」로 바꿨다. 뜻은 그대로다 —
+     아이콘 한 글자가 아니라 «말»로 눌러 볼 수 있음을 보인다. */
+  assert.match(z, />보기</, '아이콘만으로는 눌러 볼 수 있는지 안 보인다');
+  assert.match(z, /\(r\?'📎 ':'⬇ '\)/, '붙어 있는지 이름 앞에서 안 보인다');
   const c = grabFn('charterZone');
   assert.ok(c.includes("openScan(" + Q + "charter" + Q + ")"), '정관 원본 보기가 없다');
-  assert.match(c, /📎 원본/, '');
+  /* 정관의 openScan 은 바로 윗줄에서 이미 본다 — 여기서는 «말»로 보이는지만 본다 */
+  assert.match(c, />보기</, '정관도 아이콘만으로는 눌러 볼 수 있는지 안 보인다');
   /* 원본 보기 창이 정관 이름을 알아야 한다 */
   assert.match(grabFn('docZoneLabel'), /charter:'정관'/, '창 제목이 charter 로 뜬다');
 });

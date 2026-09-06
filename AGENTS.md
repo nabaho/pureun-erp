@@ -66,8 +66,8 @@ GitHub Pages 는 저장소를 통째로 올리므로, 여기 없는 새 폴더�
 
 ```
 지움: tests fund-erp docs harness scripts engine app tools reference functions
-      _scan_out .github .claude .agents .githooks .superpowers .codex-worktrees
-      최상위 *.md *.bat firebase.json .firebaserc .mcp.json
+      _scan_out node_modules .github .claude .agents .githooks .superpowers .codex-worktrees
+      최상위 *.md *.bat firebase.json .firebaserc .mcp.json package-lock.json
 남김: js css vendor 최상위 *.html *.js *.png manifest*.json hana-bridge.apk
 ```
 

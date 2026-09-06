@@ -121,6 +121,10 @@ rules.data = {
   companies:      { '.read': LOGIN, '.write': LOGIN },   /* 거래처 원장 */
   contracts:      { '.read': LOGIN, '.write': LOGIN },   /* 계약 기록 */
   consultings:    { '.read': LOGIN, '.write': LOGIN },   /* 컨설팅 사업(금액 포함) */
+  /* 사건 기록. 여태 이름이 없어 $other 로 떨어져 있었다 — 권한은 «그대로»
+     재직 직원 전원이고, 이름을 붙여 어디에 무엇이 있는지 드러낸 것뿐이다.
+     (2026-09-06 메일 수집기가 이 자리의 업체 담당자 주소를 읽게 되면서 드러났다) */
+  cases:          { '.read': LOGIN, '.write': LOGIN },   /* 사건 기록 */
   presence_hours: { '.read': LOGIN, '.write': LOGIN },   /* 근무 시간 */
 
   /* 포털 — 앱 공용 설정과 개인 타일 순서 (대표 지시 2026-08-29 「셋 좁」으로 좁혔다) */
@@ -248,7 +252,7 @@ function scal() {
   };
 }
 ['scal_staff','scal_types','scal_cos','scal_scheds','scal_env','scal_fieldState',
- 'scal_conflictMatrix','scal_roundlog','scal_erpConsHold','scal_erpTypeMap',
+ 'scal_conflictMatrix','scal_roundlog','scal_erpConsHold','scal_erpTypeMap','scal_erpTypeRun',
  /* 사진 변경 이력 — 회차 이력과 같은 «한 줄씩 쌓는» 자리 (2026-08-29 대표 결정 「가」).
     직원은 남길 수 있고, 지우기는 관리자만. */
  'scal_photoLog']

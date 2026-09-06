@@ -169,9 +169,16 @@ test('옛 자료(kind 하나짜리)와 빈 값도 넘어진다', () => {
   assert.equal(f(null), false);
 });
 
-test('이관될 계약은 새 업무로 만들지 않는다', () => {
+/* 2026-09-06 대표 지시 「계약관리부터 모든 사업들을 포함시켜라」 —
+   잣대가 「넘어갈 종류인가」에서 「이미 넘어갔나」로 바뀌었다.
+   상담접수·계약협의 중인 건은 담당자가 붙어 실제로 일하고 있는데도
+   업무관리 어느 화면에도 없었다.
+   ⚠ 「이미 넘어간 것은 안 만든다」는 그대로다 — 중복은 여전히 막는다.
+   ⚠ 마스터를 다 못 읽었으면 예전 잣대로 돌아간다(모르면 안 만든다). */
+test('이미 넘어간 계약은 새 업무로 만들지 않는다', () => {
   const auto = work.slice(work.indexOf('function peAutoSync('), work.indexOf('function puerpModal('));
-  assert.match(auto, /if\(d\[0\]==='contract'&&peWillTransfer\(x\)\) c0\.xfer=1;/);
+  assert.match(auto,
+    /if\(d\[0\]==='contract'&&\(xrdy\?peXferredNow\(x,xmap\):peWillTransfer\(x\)\)\) c0\.xfer=1;/);
   const i = auto.lastIndexOf('cand.forEach(function(c){');   // 앞의 것은 미러용 — 뒤의 것이 «만드는» 자리다
   const 만드는곳 = auto.slice(i, i + 900);
   assert.match(만드는곳, /if\(c\.xfer\) return;/);
@@ -189,4 +196,87 @@ test('이미 연결된 계약 업무의 미러는 끊지 않는다 — 후보에
 test('손으로 [가져오기] 하는 길은 막지 않는다 — 사람이 일부러 고른 것이다', () => {
   const p = grab(work, 'puerpCandidates');
   assert.ok(p.indexOf('peWillTransfer') < 0);
+});
+
+/* ══════════════════════════════════════════════
+   ⑤ 상담접수·계약협의도 업무로 (대표 지시 2026-09-06)
+   ══════════════════════════════════════════════
+   "업무량에 모든직원들의 푸른이알피의 계약관리부터 모든 사업들을 포함시켜라."
+
+   푸른이알피 계약관리에 상담접수 5·계약협의 2 가 담당자까지 붙어 있는데,
+   그 가운데 「넘어갈 종류」(사건·컨설팅·기금·기타)는 업무관리 어느 화면에도 없었다.
+   넘어가는 것은 «나중 일»이고, 그때까지 한 일은 어딘가 적혀야 한다.
+
+   ⚠ 그래도 중복은 막아야 한다 — 넘어간 뒤에는 계약 업무를 «종료(이관)»로 뺀다.
+     푸른이알피는 원본 계약을 안 건드리므로(이관은 복사다) 여기서 닫지 않으면
+     계약과 사건이 둘 다 열린 채 남는다. 2026-08 에 대표가 알려 준 그 사고다. */
+function peBox2(master, ls){
+  const b = { console, String, Object, Array,
+    peMaster: master || {},
+    _ls: (k) => (ls || {})[k] || null };
+  vm.createContext(b);
+  vm.runInContext([
+    work.match(/var PE_XFER=\[[\s\S]*?\];/)[0],
+    work.match(/var PE_XFER_KIND=\{[^}]*\};/)[0],
+    'var _xmap=null;',
+    grab(work, 'peXferMap'), grab(work, 'xferRefresh'), grab(work, 'xferReady'),
+    grab(work, 'peXferredNow'), grab(work, 'peWillTransfer')
+  ].join('\n'), b);
+  return b;
+}
+
+test('★★ 아직 안 넘어간 계약은 「안 넘어갔다」로 읽는다', () => {
+  const b = peBox2({ companies: [], case: [], consulting: [], fund: [], other: [] });
+  assert.equal(b.xferReady(), true);
+  assert.equal(b.peXferredNow({ contractNo: '계약-2026-060' }, b.peXferMap()), false);
+});
+
+test('★★ 넘어간 계약은 넘어간 곳이 잡힌다', () => {
+  const b = peBox2({ companies: [], fund: [], other: [],
+    case: [{ id: 'c1', sourceContractNo: '계약-2026-115' }],
+    consulting: [{ id: 'k1', sourceContractNo: '계약-2026-060' }] });
+  const m = b.peXferMap();
+  assert.deepEqual(Array.from(m['계약-2026-115']), ['사건']);
+  assert.equal(b.peXferredNow({ contractNo: '계약-2026-060' }, m), true);
+});
+
+test('★★ 마스터를 하나라도 못 읽었으면 이관표를 안 믿는다 — 모르면 안 만든다', () => {
+  const b = peBox2({ companies: [], case: [], consulting: [], fund: [] });   // other 없음
+  assert.equal(b.xferReady(), false);
+});
+
+test('★ 이관표는 이 기기 캐시가 아니라 «마스터»를 먼저 본다 — 낡은 캐시로 판단하면 중복이 난다', () => {
+  const b = peBox2(
+    { companies: [], case: [], consulting: [], fund: [], other: [] },        // 마스터: 아직 없음
+    { cases: [{ sourceContractNo: '계약-2026-115' }] });                     // 캐시: 넘어갔다고 적혀 있음
+  assert.equal(Object.keys(b.peXferMap()).length, 0, '캐시를 먼저 봤다');
+});
+
+test('캐시로 되짚는다 — 마스터가 아예 없으면 그것이라도 쓴다', () => {
+  const b = peBox2({}, { cases: [{ sourceContractNo: '계약-2026-115' }] });
+  assert.deepEqual(Array.from(b.peXferMap()['계약-2026-115']), ['사건']);
+});
+
+test('계약번호가 없으면 「안 넘어갔다」다 — 빈 번호로 아무 데나 맞추지 않는다', () => {
+  const b = peBox2({ companies: [], case: [], consulting: [], fund: [], other: [] });
+  assert.equal(b.peXferredNow({}, { '': ['사건'] }), false);
+});
+
+test('★★ 넘어간 계약 업무는 종료(이관)로 빠진다 — 안 그러면 두 건이 열려 있다', () => {
+  const auto = work.slice(work.indexOf('function peAutoSync('), work.indexOf('function puerpModal('));
+  assert.match(auto, /if\(xrdy&&it\.state!=='done'&&catNorm\(it\.cat\)==='계약'\)\{/);
+  assert.match(auto, /up\[P\+'end_way'\]='transfer';/);
+  assert.match(auto, /up\[P\+'end_to'\]=_xg\.join\('·'\);/);
+});
+
+test('★ 이관표를 못 믿을 때는 닫지도 않는다 — 잘못 닫으면 일하던 건이 사라진다', () => {
+  const auto = work.slice(work.indexOf('function peAutoSync('), work.indexOf('function puerpModal('));
+  const i = auto.indexOf("catNorm(it.cat)==='계약'");
+  assert.ok(i > 0 && auto.slice(i - 60, i).indexOf('xrdy&&') >= 0);
+});
+
+test('★ 이관표는 한 번만 만든다 — 계약마다 저장소를 훑으면 느리다', () => {
+  const auto = work.slice(work.indexOf('function peAutoSync('), work.indexOf('function puerpModal('));
+  assert.match(auto, /var xmap=\{\}; try\{ xmap=peXferMap\(\); \}catch\(e\)\{\}/);
+  assert.equal((auto.match(/peXferMap\(\)/g) || []).length, 1);
 });

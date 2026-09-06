@@ -18,6 +18,37 @@ const DAUM_PORT = 465;
 const CARDS_ROOT = 'pucards';
 
 /* ══════════════════════════════════════════════════════════════════════════
+   📬 열람 확인 — 재는 데 쓰는 것 (대표 결정 2026-09-06)
+   ══════════════════════════════════════════════════════════════════════════
+   ⚠ 적는 자리는 mailbox 밑이다 — 서버만 쓰고 직원은 읽기만 하는 자리다.
+   ⚠ 이 파일에는 «상대의 IP·기기»를 읽는 줄이 없다. 여는 함수에도 없다. 그것이 약속이다. */
+const TRACK_ROOT = 'mailbox/track/opens';
+const MT_ON = true;                    /* 통째로 끄는 스위치 — 껐다 켤 일이 있으면 여기 */
+const PIXEL_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/mailOpenPixel';
+
+function nowMs() { return Date.now(); }
+/* 못 알아맞히게 — 짧으면 남이 눌러 셈을 부풀릴 수 있다 */
+function trackToken() {
+  return require('node:crypto').randomBytes(16).toString('hex');
+}
+/* 보낸메일함 «줄»과 이어 붙일 열쇠 — 받는이 + 분 + 제목.
+   ⚠ 화면(pu-cards.html mbTrackFp)과 «글자까지 같아야» 한다. 한쪽만 고치면 확인 시각이
+     영영 안 붙는다 — 그런데 오류도 안 난다(그냥 늘 빈칸이다). 검사가 둘을 견준다.
+   ⚠ 초는 안 본다. 우리가 보낸 시각과 다음이 적는 시각이 몇 초씩 어긋난다.
+   ⚠ 실시간DB 열쇠에 못 쓰는 글자를 턴다. */
+function trackFp(to, ms, subject) {
+  const t = String(to || '').trim().toLowerCase();
+  const m = Math.floor(Number(ms || 0) / 60000);
+  const s = String(subject || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  return (t + '|' + m + '|' + s).replace(/[.$#[\]/]/g, '_').slice(0, 300);
+}
+/* 보이지 않는 1×1 — 본문 «맨 끝»에 붙인다 */
+function trackPixel(tok) {
+  return '<img src="' + PIXEL_URL + '?t=' + encodeURIComponent(tok)
+    + '" width="1" height="1" alt="" style="width:1px;height:1px;border:0;display:block">';
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
    보내는 주소를 보고 «어느 우체국»으로 갈지 고른다 (대표 지시 2026-09-05)
    ══════════════════════════════════════════════════════════════════════════
    대표 지시: 「fairrunlabor.com 이것으로 모두 진행하자 … 뉴스레터」
@@ -160,8 +191,29 @@ function mailOutPathOk(path, uid) {
 /* 크기만 먼저 묻는다 — 내려받기 «전»에 재려면 이 걸음이 따로 있어야 한다.
    ⚠ 20MB 짜리 열 개를 다 끌어온 뒤에 「너무 큽니다」 하면 이미 늦다.
      이 함수는 512MB 그릇에서 돈다. */
-async function statMailOut(deps, path) {
-  const file = deps.getStorage().bucket(CARDS_BUCKET).file(String(path));
+/* ★ 첨부를 꺼낼 수 있는 «자리»인가 — 창고가 둘이다 (대표 결정 2026-09-06 「첨부도 붙인다」)
+   ═══════════════════════════════════════════════════════════════════════════
+   ① pucards/mailout/{uid}/…  내 PC 에서 올린 임시 파일 — 제 자리만
+   ② ilabor/{sid}/…           노무사회에서 서버가 받아 둔 자료
+                              (ilaborPull 이 «기본 창고»에 담는다 — 다른 통이다)
+   ⚠ 자리를 그대로 믿지 않는다. 안 막으면 자리만 바꿔 «남의 파일»을 첨부로 빼낼 수 있다.
+   ⚠ 여기 없는 자리는 «건너뛴다». 새 자리를 열 때는 이 함수를 고친다 — 한 곳이다. */
+function 첨부자리허용(path, uid) {
+  const p = String(path || '');
+  if (!p || p.indexOf('..') >= 0) return null;
+  if (uid && mailOutPathOk(p, uid)) return { bucket: CARDS_BUCKET };
+  /* 노무사회 자료 — 서버만 담고(규칙 .write:false), 총괄관리자만 보낸다 */
+  if (/^ilabor\/\d+\/[^/]+$/.test(p)) return { bucket: '' };   /* '' = 기본 창고 */
+  return null;
+}
+
+function 첨부통(deps, 통이름) {
+  const st = deps.getStorage();
+  return 통이름 ? st.bucket(통이름) : st.bucket();
+}
+
+async function statMailOut(deps, path, 통이름) {
+  const file = 첨부통(deps, 통이름 === undefined ? CARDS_BUCKET : 통이름).file(String(path));
   const [meta] = await file.getMetadata();
   return { file: file, size: Number((meta && meta.size) || 0) };
 }
@@ -243,14 +295,15 @@ async function collectAttachments(db, body, deps, uid) {
     if (!f || typeof f !== 'object') continue;
     let att = null;
     if (f.path) {
-      if (!deps || !uid) { console.warn('mailout 을 읽을 길이 없다 — 건너뛴다'); continue; }
-      /* 창고 길 — 자리가 «제 자리»인지 먼저 본다(머리글의 까닭) */
-      if (!mailOutPathOk(f.path, uid)) {
-        console.warn('mailout 남의 자리 요청:', String(f.path));
+      if (!deps) { console.warn('창고를 읽을 길이 없다 — 건너뛴다'); continue; }
+      /* 창고 길 — 자리가 «꺼내도 되는 자리»인지 먼저 본다(첨부자리허용 머리글 참고) */
+      const 허 = 첨부자리허용(f.path, uid);
+      if (!허) {
+        console.warn('첨부: 꺼낼 수 없는 자리:', String(f.path));
         continue;
       }
       try {
-        const info = await statMailOut(deps, f.path);
+        const info = await statMailOut(deps, f.path, 허.bucket);
         /* 한 개 한도 · 합계 한도 — 둘 다 «내려받기 전»에 본다.
            ⚠ 여기서 조용히 건너뛰면 「첨부가 빠진 채로 메일이 나간다」가 된다.
              그래서 넘으면 멈추고 «왜 못 보내는지» 알린다. */
@@ -260,7 +313,12 @@ async function collectAttachments(db, body, deps, uid) {
         }
         const [buf] = await info.file.download();
         att = { filename: String(f.name || '첨부'), content: buf, bytes: buf.length };
-        used.push(String(f.path));
+        /* ⚠⚠ «치울 것»에 넣는 자리다 — 보낸 뒤 이 자리의 파일을 «지운다».
+             내 PC 에서 올린 임시 파일(mailout)만 치워야 한다.
+             노무사회 자료(ilabor)를 여기 넣으면 한 번 보내는 순간 원본이 사라지고,
+             편지 속 «내려받기» 단추도 받는 분 손에서 404 가 된다.
+             ★ 보관해 둔 자료는 «임시 파일이 아니다». */
+        if (허.bucket === CARDS_BUCKET) used.push(String(f.path));
       } catch (e) {
         console.warn('mailout 읽기 실패:', String(f.path), String((e && e.message) || e));
         continue;
@@ -371,6 +429,43 @@ async function deliverOnce(opts) {
   } catch (e) {
     console.warn('mailSign', (e && e.message) || e);
     signHtml = SG.stripSignMark(signHtml);          // 읽다 실패했다 — 그림 없이 보낸다
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     📬 열람 확인 — 상대가 «언제 열었나» (대표 결정 2026-09-06)
+     ══════════════════════════════════════════════════════════════════════
+     "보낸메일함에 수신도 동시에 볼 수 있게 만들어 달라. 내가 보낸 시간과 상대방이
+      보고 확인한 시간이 분리 안 되고 같이 보면 관리가 편하다"
+
+     ★ 다음메일의 수신확인 값은 «우리 쪽으로 안 온다» — 다음메일 웹 화면에만 있는
+       기능이라 메일 규약(IMAP·POP3)으로는 전달되지 않는다. 그래서 우리가 따로 잰다.
+     ★ 재는 법 — 본문 끝에 «보이지 않는 1×1 그림» 한 장을 넣는다. 상대가 메일을 열어
+       그 그림을 부르면 그 시각을 적는다. 대표께서 두 길 가운데 이쪽을 고르셨다
+       (다른 하나는 「읽음 확인 요청」 — 상대가 수락해야 오는 방식).
+
+     ⚠★ 적는 것은 «시각과 횟수»뿐이다. 상대의 IP·기기·위치는 «일부러 안 적는다» —
+       셀 필요가 없고, 남겨 두면 그 자체가 다른 문제가 된다. 여는 함수도 그 값을
+       읽지 않는다(functions/index.js mailOpenPixel).
+     ⚠ 「안 열었다」는 «안 열었다는 뜻이 아니다». 지메일·네이버가 그림을 대신 받아 두면
+       열지 않아도 찍히고, 그림을 막아 두면 열어도 안 찍힌다. 화면에 그 말을 적어 둔다.
+     ⚠ 서식(html)이 없는 편지에는 «안 넣는다» — 넣으려고 평문을 서식으로 바꾸면
+       받는 쪽 화면이 통째로 달라진다. 그것은 이 일이 건드릴 자리가 아니다.
+     ⚠ 무슨 일이 나도 «메일은 나간다». 열람 확인 하나 때문에 발송이 멈추면 안 된다
+       (바로 위 서명 그림과 같은 약속). */
+  let trackTok = '';
+  try {
+    if (signHtml && body.track !== false && v.to.length && MT_ON) {
+      trackTok = trackToken();
+      const fp = trackFp(v.to[0], nowMs(), v.subject);
+      await db.ref(TRACK_ROOT + '/' + trackTok).set({
+        fp: fp, at: nowMs(), n: 0,
+        to: String(v.to[0] || '').slice(0, 160),
+        s: String(v.subject || '').slice(0, 160),
+      });
+      signHtml += trackPixel(trackTok);
+    }
+  } catch (e) {
+    console.warn('mailTrack', (e && e.message) || e);   /* 못 달아도 메일은 나간다 */
   }
 
   const baseMail = {
@@ -545,7 +640,10 @@ module.exports = {
   /* 검사가 밖에서 견줄 수 있게 내놓는다 — 안 내놓으면 「묵은 것만 치우는가」를
      글자로밖에 못 보고, 글자로 보는 검사는 이빨이 없다. */
   statMailOut, sweepStaleMailOut, MAILOUT_STALE_MS, MAILOUT_SWEEP_MAX,
+  /* 📬 열람 확인 — 화면과 «같은 열쇠»를 쓰는지 검사가 견준다 */
+  trackFp, trackPixel, trackToken, TRACK_ROOT, PIXEL_URL,
   /* 우체국 고르기도 내놓는다 — 부르는 쪽(index.js)이 «어느 열쇠»를 줘야 하는지
      알아야 하고, 검사도 실제로 골라 보게 해야 이빨이 생긴다. */
   우체국들, 우체국고르기, 도메인만, 아직안넣음, 아직안넣은표,
+  첨부자리허용,
 };

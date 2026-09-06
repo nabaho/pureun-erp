@@ -17,7 +17,7 @@ function phone760() {
   return work.slice(at, i + 1);
 }
 
-test('폰에서도 팀 전체·업무량·지식·인수인계·종료로 갈 길이 있다', () => {
+test('폰에서도 팀 전체·업무량·인수인계·종료로 갈 길이 있다', () => {
   /* ★ 예전에는 @media(max-width:760px){#side{display:none}} 이었다 — 폰은 「내 업무」에
      갇혀 다른 화면으로 갈 길이 **하나도 없었다**(대표 지시 2026-08-20
      "다른 직원들 업무도 모두 확인하고 싶다"). 다시 감추면 여기서 걸린다. */
@@ -34,7 +34,7 @@ test('폰에서도 팀 전체·업무량·지식·인수인계·종료로 갈 �
 test('메뉴는 PC 것을 그대로 쓴다 — 폰용 메뉴를 따로 만들지 않는다', () => {
   /* 따로 만들면 메뉴 하나를 더할 때마다 두 곳을 고쳐야 하고, 언젠가 한쪽만 고친다. */
   const shell = work.slice(work.indexOf('function shell(){'), work.indexOf("+'<div id=\"sideOn\""));
-  ['nav-my', 'nav-team', 'nav-stats', 'nav-kb', 'nav-ho', 'nav-archive'].forEach(function (id) {
+  ['nav-my', 'nav-team', 'nav-stats', 'nav-ho', 'nav-archive']   /* 2026-09-06 지식은 업무 안으로 */.forEach(function (id) {
     assert.ok(shell.includes(id), id + ' 가 메뉴에 없습니다.');
   });
   assert.equal((work.match(/id="nav-team"/g) || []).length, 1,

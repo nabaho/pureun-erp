@@ -769,6 +769,12 @@ exports.sendScheduledMail = functions
           from: 이통from, pass: mailPass(이통from),
           envId: process.env.DAUM_MAIL_ID,
           byEmail: row.by || "",
+          /* ★ 창고를 열 길 — 없으면 첨부가 «조용히 빠진 채로» 나간다
+               (대표 결정 2026-09-06 「첨부도 붙인다」).
+             ⚠ uid 는 안 넘긴다. 예약 발송은 사람이 없는 자리에서 도므로
+               「내 자리(mailout)」라는 것이 없다 — 서버가 받아 둔 자료(ilabor)만
+               붙는다. 그것이 맞다: 임시 파일은 그 사람 화면의 것이다. */
+          deps: { getStorage: getStorage },
         });
         if (r.ok) {
           await ref.remove();                    // 나갔으니 자리를 비운다
@@ -1112,12 +1118,20 @@ async function payMailKnownList(db) {
   if (payMailKnownCache.list && now - payMailKnownCache.at < 6 * 60 * 60 * 1000) {
     return payMailKnownCache.list;
   }
-  const [coSnap, dirSnap] = await Promise.all([
+  /* 푸른이알피 계약·컨설팅·사건도 함께 읽는다 (대표 결정 2026-09-06) —
+     업체관리에 없는 업체 담당자 주소가 그쪽에 있다. 받은메일함을 켜도
+     그 주소들이 「모르는 사람」이면 켠 보람이 없다.
+     ⚠ 못 읽어도 그냥 지나간다(null) — 명단이 좁아질 뿐 메일 받기가 멈추지 않는다. */
+  const [coSnap, dirSnap, ctSnap, csSnap, caSnap] = await Promise.all([
     db.ref("data/companies").once("value").catch(() => null),
     db.ref("data/user_dir").once("value").catch(() => null),
+    db.ref("data/contracts/v").once("value").catch(() => null),
+    db.ref("data/consultings/v").once("value").catch(() => null),
+    db.ref("data/cases/v").once("value").catch(() => null),
   ]);
   const cos = coSnap && coSnap.val();
-  const list = MR.buildKnownList(cos, dirSnap && dirSnap.val());
+  const erp = [ctSnap && ctSnap.val(), csSnap && csSnap.val(), caSnap && caSnap.val()];
+  const list = MR.buildKnownList(cos, dirSnap && dirSnap.val(), erp);
   /* 갈라 보내려면 주소가 **어느 업체 것인지**와 그 업체 주담당의 자리가 필요하다.
      명단과 같은 읽기로 함께 만든다 — 메일 한 통마다 다시 읽으면 요금이 된다.
      owners(급여데이터함에 들어온 사람)는 늘어나므로 같은 6시간마다 다시 읽는다. */
@@ -1263,8 +1277,11 @@ async function runPaydataMailOnce() {
       // 폴더마다 열고 닫으며 모은다. 한 회차 몫(PAYMAIL_MAX_PER_RUN)은 폴더를
       // 합쳐서 센다 — 폴더가 늘어난다고 한 번에 더 오래 붙어 있으면 안 된다.
       const inbox = [];
+      /* 폴더마다 제 몫 — 앞 폴더가 다 먹으면 뒤 폴더는 열리지도 않는다 */
+      const share = MR.boxShare(PAYMAIL_MAX_PER_RUN, boxes.length);
       for (const box of boxes) {
-        if (inbox.length >= PAYMAIL_MAX_PER_RUN) break;
+        const room = Math.min(share, PAYMAIL_MAX_PER_RUN - inbox.length);
+        if (room <= 0) break;
         let lock;
         try {
           lock = await client.getMailboxLock(box);
@@ -1278,11 +1295,25 @@ async function runPaydataMailOnce() {
              가져와야 한다. 대신 최근 것부터 훑고, 이미 처리한 것은 아래에서 건너뛴다.
              ⚠ 폴더 전부를 매번 받으면 안 된다 — 최근 며칠 것만 본다. */
           const since = new Date(Date.now() - PAYMAIL_LOOK_DAYS * 24 * 60 * 60 * 1000);
-          for await (const msg of client.fetch({ since: since },
-            { uid: true, source: true, envelope: true })) {
-            inbox.push({ uid: msg.uid, source: msg.source, box: box,
-              messageId: (msg.envelope && msg.envelope.messageId) || "" });
-            if (inbox.length >= PAYMAIL_MAX_PER_RUN) break;
+          /* ★ 번호만 먼저 받아 «뒤에서» 몫만큼 고른다 (2026-09-06).
+             바로 fetch 하면 오래된 것부터 와서, 이미 처리한 옛 메일이 몫을
+             다 먹고 새 메일에 영영 닿지 못한다 — 8/26 뒤로 한 통도 안 들어온
+             까닭이 이것이었다. 번호만 받는 것은 본문을 안 끌어서 가볍다. */
+          let uids = [];
+          try {
+            uids = await client.search({ since: since }, { uid: true });
+          } catch (e) {
+            console.warn("receivePaydataMail: 「" + box + "」 목록을 못 받았습니다",
+              String((e && e.message) || e));
+          }
+          const want = MR.newestUids(uids, room);
+          if (want.length) {
+            for await (const msg of client.fetch(want,
+              { uid: true, source: true, envelope: true }, { uid: true })) {
+              inbox.push({ uid: msg.uid, source: msg.source, box: box,
+                messageId: (msg.envelope && msg.envelope.messageId) || "" });
+              if (inbox.length >= PAYMAIL_MAX_PER_RUN) break;
+            }
           }
         } finally {
           lock.release();
@@ -3892,3 +3923,54 @@ exports.mailAttToPaydata = MSYNC.mailAttToPaydata;
 exports.moveMailMessages = MSYNC.moveMailMessages;
 exports.manageMailFolder = MSYNC.manageMailFolder;
 exports.flagMailMessages = MSYNC.flagMailMessages;
+/* POP3 로 «몇 통이 있는지»만 묻는 진단 — 지난 메일을 채울 수 있나를 재는 자리.
+   ⚠ 여기 한 줄을 빠뜨리면 함수가 아예 안 올라간다("No function matches the filter") —
+     mail-sync.js 에 적는 것만으로는 밖에서 안 보인다. */
+exports.probeMailPop = MSYNC.probeMailPop;
+/* 📦 지난 메일 채우기 — POP3 로 머리글만 끌어온다(대표만) */
+exports.backfillMailbox = MSYNC.backfillMailbox;
+/* 📦 지난 메일 한 통 열기 — 그 자리에서 POP3 로 (직원 누구나, 메일함과 같은 문) */
+exports.readOldMail = MSYNC.readOldMail;
+
+/* ══════════════════════════════════════════════════════════════════════════
+   📬 열람 확인 — 보낸 메일의 «보이지 않는 1×1 그림»이 불리는 자리 (대표 결정 2026-09-06)
+   ══════════════════════════════════════════════════════════════════════════
+   ⚠★ 여기서 «적는 것은 시각과 횟수뿐»이다.
+     req.ip · User-Agent · Referer 를 «읽지 않는다». 셀 필요가 없고, 남겨 두면
+     그 자체가 다른 문제가 된다 — 우리는 받는 메일에서 바로 이런 그림을 막고 있다.
+     이 함수에 그 값을 읽는 줄이 «하나도 없다»는 것을 검사가 지킨다.
+   ⚠ 로그인 없이 열린다 — 상대의 메일 프로그램이 부르는 자리이므로 그럴 수밖에 없다.
+     그래서 열쇠(t)는 못 알아맞히게 32자리다. 알아맞혀도 할 수 있는 일은 «셈을
+     늘리는 것»뿐이고, 메일 내용은 이 자리에 없다.
+   ⚠ 무슨 일이 나도 «그림은 돌려준다». 여기서 오류를 내면 받는 사람 화면에 깨진
+     그림표가 뜬다 — 그것이 곧 「이 메일은 당신을 훔쳐본다」는 표가 된다.
+   ⚠ 담아 두지 말라고 이른다(no-store) — 담기면 두 번째부터 우리에게 안 온다. */
+const OPEN_PIXEL = Buffer.from(
+  'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+exports.mailOpenPixel = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 30, memory: "128MB" })
+  .https.onRequest(async (req, res) => {
+    const send = () => {
+      res.set("Content-Type", "image/gif");
+      res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+      res.set("Pragma", "no-cache");
+      res.status(200).end(OPEN_PIXEL);
+    };
+    try {
+      const t = String((req.query && req.query.t) || "");
+      if (!/^[0-9a-f]{32}$/.test(t)) { send(); return; }
+      const ref = getDatabase().ref(MD.TRACK_ROOT + "/" + t);
+      const now = Date.now();
+      await ref.transaction((cur) => {
+        if (!cur) return cur;                 /* 우리가 만든 적 없는 열쇠 — 아무것도 안 만든다 */
+        cur.n = Number(cur.n || 0) + 1;
+        if (!cur.first) cur.first = now;      /* «처음 연 때»는 안 덮는다 */
+        cur.last = now;
+        return cur;
+      });
+    } catch (e) {
+      console.warn("mailOpenPixel", (e && e.message) || e);
+    }
+    send();
+  });

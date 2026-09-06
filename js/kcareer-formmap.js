@@ -25,11 +25,32 @@
      ⚠ 여기서 «글자칸»을 돌려주지 말 것 — 라벨 칸(「성 명」)까지 채울 자리가 되어
        입력판(kcareer-formhtml.js)이 라벨 위에 입력칸을 얹는다(실측: 검사 6개가 깨졌다).
        글자칸 판정은 «왼쪽 칸까지 볼 수 있는» scan 에서 한다. */
+  /* 자리표인가 — 판독 층의 «같은 자»를 쓴다.
+     ⚠ 여기서 새로 쓰면 두 길이 서로 다른 것을 자리표로 보게 되어
+       「저기선 채워지는데 여기선 안 채워진다」가 된다. */
+  function 자리표(s) {
+    return !!(X && typeof X.isPlaceholder === 'function' && X.isPlaceholder(s));
+  }
+  /* 칸에 값을 넣는다.
+     ⚠ 빈 칸이면 «끼워» 넣고, 자리표가 박혀 있으면 «통째로 바꾼다».
+       자리표에 끼워 넣으면 「권형하[한글]」처럼 앞에 덧붙는다(실측 2026-09-06). */
+  function putValue(tc, v) {
+    var 있던 = X.cellText(tc);
+    return 있던 ? X.setCellText(tc, v) : X.fillCell(tc, v);
+  }
   function classify(text) {
     var s = String(text == null ? '' : text).trim();
     if (s === '') return '빈칸';
+    /* ⚠★ 「(한글)」「(한자)」「(인)」이 «먼저»다 — 이것들은 지우지 않고 뒤에 이어 쓰는
+       자리이고, 그 규칙이 이 모듈의 오래된 약속이다. 아래 자리표 판정이 이것들을
+       먼저 삼키면 안내글이 지워진다(실측 2026-09-06: 검사 다섯이 한꺼번에 깨졌다). */
     if (/^[（(][^)）]{1,6}[)）]$/.test(s)) return '안내글뒤';
     if (/_{2,}/.test(s) || /[:：]\s*$/.test(s) || /[:：]\s{2,}/.test(s)) return '칸안라벨';
+    /* ★ [한글]·1900.00.00·년 월 ~ 년 월 은 «빈 칸 표시»다 — 값이 아니다.
+       전에는 「글자가 있다」고 보아 자동으로 안 채웠고, 그래서 이력서 2쪽이
+       통째로 비어 나갔다(대표 제보 2026-09-06 「이부분은 왜 안채워지나」).
+       ⚠ 위 둘에 안 걸린 것만 본다 — 차례를 바꾸지 말 것. */
+    if (자리표(s)) return '빈칸';
     return '';
   }
 
@@ -37,8 +58,40 @@
      머리행에서 목록 열쇠가 «둘 이상» 맞으면 목록 표다.
      하나만 맞으면 보통 표로 둔다 — 「기간 | 비고」 같은 표를 삼키면 안 된다.
      ⚠ 목록 표를 낱개 칸으로 두면 학력·경력 표 하나가 칸 지도 아홉 줄이 되어 못 쓴다. */
-  function detectList(grid, ti) {
-    for (var r = 0; r < grid.length; r++) {
+  /* 「채울 수 있는 줄」 — 아예 빈 줄과, 자리표·급 이름만 박힌 줄.
+     ⚠ 이력서 학력·경력 표는 「년  월 ~  년  월」이 미리 박혀 있고, 학력은
+       「고등학교」처럼 급이 박혀 있다. 그것을 값으로 보면 채울 줄이 0 이 된다
+       (실측 2026-09-05: 학력·경력이 한 줄도 안 들어갔다). */
+  /* ⚠ 목록 줄 판정은 X.isRowBlank «하나»를 쓴다 — 여기에 자를 새로 만들지 말 것.
+     낱개 칸의 「-」(해당없음)와 목록 줄의 「-」(빈 자리)는 뜻이 다르고,
+     그 갈림을 X.isRowBlank 가 들고 있다(kcareer-hwpxfill.js 주석 참고). */
+  function 채울수있나(cells) {
+    return cells.every(function (t) {
+      var v = String(t || '').trim();
+      var 빔 = X.isRowBlank ? X.isRowBlank(v) : (!v || 자리표(v));
+      return 빔 || (X.levelOf && X.levelOf(v));
+    });
+  }
+
+  /* 한 표 안의 목록 구역을 «모두» 찾는다.
+     ⚠★ 표 하나에 목록이 여럿 있다 — 대표 이력서 2쪽은 인적사항·학력·자격·경력이
+       «한 표»다. 예전에는 머리줄을 하나만 찾고 그 표를 통째로 목록으로 보아
+       낱개 칸을 전부 버렸다(실측 2026-09-06: 채울 자리 0개). */
+  function detectLists(grid, ti) {
+    var out = [], r = 0, seq = 0;
+    while (r < grid.length) {
+      var L = detectListAt(grid, ti, r, seq);
+      if (!L) break;
+      out.push(L);
+      seq++;
+      r = L.end;                       /* 이 구역 다음부터 다시 본다 */
+    }
+    return out;
+  }
+  function detectList(grid, ti) { return detectLists(grid, ti)[0] || null; }
+
+  function detectListAt(grid, ti, from, seq) {
+    for (var r = from; r < grid.length; r++) {
       /* ⚠★ 머리행에는 «빈 칸이 없다» — 열 이름이 죽 적혀 있는 줄이기 때문이다.
          이 빗장이 없으면 「소속기관 | (빈칸) | 직위 | (빈칸)」 같은 «보통 라벨 표»가
          경력 목록으로 오인되어 그 표의 빈 칸을 통째로 놓친다
@@ -51,12 +104,13 @@
       var kind = keys.indexOf('school') >= 0 ? 'edu'
         : (keys.indexOf('org') >= 0 && (keys.indexOf('role') >= 0 || keys.indexOf('period') >= 0)) ? 'career' : '';
       if (!kind) continue;
-      var blank = 0;
-      for (var q = r + 1; q < grid.length; q++) {
-        var empty = grid[q].every(function (t) { return !String(t || '').trim(); });
-        if (empty) blank++;
-      }
-      return { id: 'L' + ti, tbl: ti, kind: kind, cols: keys, head: r, blank: blank };
+      /* ★★ 구역은 머리줄 + «이어지는 채울 수 있는 줄»까지다 — 표 끝까지가 아니다.
+         표 끝까지 세면 학력 4줄이 「빈 10줄」이 되고(대표 화면 실측 2026-09-06),
+         그 아래 자격·상벌 칸까지 목록으로 삼켜 사람이 손으로도 못 친다. */
+      var q = r + 1;
+      while (q < grid.length && 채울수있나(grid[q])) q++;
+      return { id: 'L' + ti + (seq ? '_' + seq : ''), tbl: ti, kind: kind,
+               cols: keys, head: r, end: q, blank: q - r - 1 };
     }
     return null;
   }
@@ -85,11 +139,38 @@
       ti++;
       var rows = X.splitRows(tbl);
       var grid = rows.map(function (tr) { return X.splitCells(tr).map(X.cellText); });
-      var L = detectList(grid, ti);
-      if (L) { lists.push(L); return tbl; }   /* 목록 표는 낱개로 세지 않는다 */
+      /* ★★ 목록 구역에 «든 줄만» 낱개에서 뺀다 (대표 제보 2026-09-06).
+         예전에는 목록이 하나라도 있으면 표를 통째로 건너뛰어, 인적사항과 학력이
+         «한 표»인 서식에서 성명·생년월일·주소가 아예 안 잡혔다. */
+      var Ls = detectLists(grid, ti);
+      var 목록줄 = {};
+      Ls.forEach(function (L) {
+        lists.push(L);
+        for (var q = L.head; q < L.end; q++) 목록줄[q] = true;
+      });
       grid.forEach(function (cells, ri) {
+        if (목록줄[ri]) return;   /* 이 줄은 목록이 채운다 */
         cells.forEach(function (txt, ci) {
           var kind = classify(txt);
+          var 왼 = ci > 0 ? String(cells[ci - 1] || '').trim() : '';
+          /* ★★ 라벨이 «위»에 있는 서식 (대표 지시 2026-09-06 「라벨위 찾기」)
+             ■ 왜
+               지금까지 값 칸의 «바로 왼쪽»만 보고 무슨 칸인지 판단했다. 그래서
+                   성명 | 생년월일 | 연락처 | 이메일     ← 라벨 줄
+                     · |    ·     |   ·    |   ·        ← 값 줄
+               같은 «머리행형» 서식은 «한 칸도» 못 알아봤다(실측 2026-09-06: 8칸 중 0칸).
+               기관 양식에 흔한 모양이고, 사전을 아무리 넓혀도 안 고쳐지는 «구조» 문제였다.
+             ⚠ 왼쪽에서 못 찾았을 때만 위를 본다 — 왼쪽이 먼저다.
+               둘 다 있으면 「성명 | (값) 」 처럼 왼쪽이 그 칸을 가리키는 것이 보통이다.
+             ⚠ 윗칸이 «사전이 아는 라벨»일 때만 인정한다. 아무 글자나 받으면
+               윗줄의 «값»을 라벨로 착각해 엉뚱한 값이 박힌다.
+             ⚠ 바로 윗줄만 본다. 두세 줄 위까지 올라가면 목록 표의 머리줄이
+               그 아래 모든 줄의 라벨이 되어 같은 값이 줄줄이 박힌다. */
+          var 위 = '';
+          if (!X.fieldKeyOf(왼) && ri > 0 && grid[ri - 1]) {
+            var u = String(grid[ri - 1][ci] || '').trim();
+            if (X.fieldKeyOf(u)) 위 = u;
+          }
           /* ★★ 이미 글자가 든 «값 칸»도 자리로 잡는다 (대표 지시 2026-09-05
              「왜 화면에서 바로 수정이 안 되나」).
              ■ 예전에는 글자가 있으면 아예 자리로 세지 않았다. 그래서 「내 정보로 채우기」가
@@ -99,13 +180,16 @@
                입력판이 서식 문구 위에 입력칸을 얹는다.
              ⚠ 자동 채우기는 글자칸을 건드리지 않는다(guess 가 늘 빈 열쇠를 준다).
                사람이 눌러 고쳐 쳤을 때만 바뀐다. */
-          if (!kind && String(txt || '').trim() && ci > 0 && X.fieldKeyOf(cells[ci - 1])) {
+          /* ⚠ 그 칸 «자신»이 라벨이면 고칠 자리가 아니다 — 서식 문구를 덮으면 안 된다.
+             머리행형에서는 라벨끼리 옆에 붙어 있어(성명|생년월일) 이 빗장이 없으면
+             라벨 줄이 통째로 «고칠 수 있는 칸»이 된다. */
+          if (!kind && String(txt || '').trim() && !X.fieldKeyOf(txt) && (X.fieldKeyOf(왼) || 위)) {
             kind = '글자칸';
           }
           if (!kind) return;
           slots.push({ id: 't' + ti + 'r' + ri + 'c' + ci, tbl: ti, row: ri, col: ci,
                        kind: kind, text: String(txt || '').trim(),
-                       left: ci > 0 ? String(cells[ci - 1] || '').trim() : '', guess: '' });
+                       left: 왼, up: 위, guess: '' });
         });
       });
       return tbl;   /* 훑기만 한다 — 여기서는 아무것도 안 바꾼다 */
@@ -123,7 +207,10 @@
   function hintKey(slot) {
     var t = X.normLabel(slot.text);
     if (/^한자$/.test(t)) return 'nameHanja';
-    if (/^한글$/.test(t)) return X.fieldKeyOf(slot.left) === 'name' ? 'name' : '';
+    if (/^한글$/.test(t)) {
+      /* 왼쪽이든 위든 «성명»이 가리키는 자리여야 이름이다 */
+      return (X.fieldKeyOf(slot.left) === 'name' || X.fieldKeyOf(slot.up) === 'name') ? 'name' : '';
+    }
     if (/^(인|서명|서명또는인|印)$/.test(t)) return '__stamp';
     return X.fieldKeyOf(slot.text);
   }
@@ -137,9 +224,14 @@
       /* ★ 글자칸은 «자동으로는 절대» 안 채운다 — 사람이 눌러 고칠 때만 바뀐다.
          여기서 열쇠를 주면 기관이 적어 둔 안내문까지 덮어쓴다. */
       if (s.kind === '글자칸') { s.guess = ''; return; }
-      var k = s.kind === '안내글뒤' ? hintKey(s)
+      /* ★ 자리표가 스스로 이름을 말하면 그것이 가장 확실하다 — [한자]·[영문]·(자택)( ) -
+         왼쪽 칸만 보면 「[한자]의 왼쪽은 [한글]」이라 아무것도 못 알아본다
+         (실측 2026-09-06: 성명 행에서 한자·영문이 통째로 빠졌다). */
+      var 스스로 = (s.kind === '빈칸' && X.placeholderKey) ? X.placeholderKey(s.text) : '';
+      var k = 스스로 ? 스스로
+            : s.kind === '안내글뒤' ? hintKey(s)
             : s.kind === '칸안라벨' ? '__incell'
-            : X.fieldKeyOf(s.left);
+            : (X.fieldKeyOf(s.left) || X.fieldKeyOf(s.up));
       if (k === 'rrn') { s.guess = ''; s.hint = 'rrn'; return; }
       s.guess = k || '';
     });
@@ -148,6 +240,16 @@
   }
 
   /* 표·행·열로 칸 하나를 찾아 바꾼다 */
+  /* 표에서 n번째 «줄»을 바꾼다 — 줄도 빈 것끼리는 XML 이 똑같다.
+     ⚠ t.replace(rows[row], …) 로 바꾸면 앞의 같은 모양 줄이 바뀐다. */
+  function replaceRowOnce(tbl, rows, idx, newRow) {
+    var re = /<hp:tr\b[\s\S]*?<\/hp:tr>/g, m, n = 0;
+    while ((m = re.exec(tbl))) {
+      if (n === idx) return tbl.slice(0, m.index) + newRow + tbl.slice(m.index + m[0].length);
+      n++;
+    }
+    return tbl;
+  }
   function eachCellAt(xml, tbl, row, col, fn) {
     var ti = -1, done = false;
     var out = X.eachTable(xml, function (t) {
@@ -160,7 +262,13 @@
       var next = fn(cells[col]);
       if (next == null || next === cells[col]) return t;
       done = true;
-      return t.replace(rows[row], rows[row].replace(cells[col], next));
+      /* ⚠ 칸을 «글자로» 찾아 바꾸면 안 된다 — 빈 칸끼리는 XML 이 글자 하나까지
+         똑같아서 「3번째 칸」에 넣으라고 해도 맨 앞의 빈 칸이 바뀐다.
+         실측 2026-09-06: 주소·전화가 세로 병합 라벨 자리(0번 칸)에 들어갔다.
+         판독 층의 replaceCellAt 이 «자리»를 세어 바꾼다 — 그것만 쓴다. */
+      var newRow = (X.replaceCellAt ? X.replaceCellAt(rows[row], col, next)
+                                    : rows[row].replace(cells[col], next));
+      return replaceRowOnce(t, rows, row, newRow);
     });
     return { xml: out, ok: done };
   }
@@ -173,7 +281,7 @@
      ⚠ 안내글을 지우면 서식이 뜻하는 「여기에 한글로 쓰세요」가 사라진다.
        종이로 낼 때 다음 사람이 무슨 칸인지 알 수 없게 된다. */
   function appendAfter(tc, value) {
-    var m = tc.match(/(<hp:t[^>]*>)([\s\S]*?)(<\/hp:t>)/);
+    var m = tc.match(/(<hp:t(?:\s[^>]*)?>)([\s\S]*?)(<\/hp:t>)/);
     if (!m) return null;
     return tc.replace(m[0], m[1] + m[2] + ' ' + esc(value) + m[3]);
   }
@@ -303,13 +411,13 @@
       if (run && ds) {
         var okN = 0;
         run.forEach(function (cell, i) {
-          var rr = eachCellAt(xml, cell.tbl, cell.row, cell.col, function (tc) { return X.fillCell(tc, ds[i]); });
+          var rr = eachCellAt(xml, cell.tbl, cell.row, cell.col, function (tc) { return putValue(tc, ds[i]); });
           if (rr.ok) { xml = rr.xml; okN++; }
         });
         if (okN) { filled.push({ id: id, key: key, value: ds }); return; }
       }
       r = eachCellAt(xml, s.tbl, s.row, s.col, function (tc) {
-        return s.kind === '안내글뒤' ? appendAfter(tc, val) : X.fillCell(tc, val);
+        return s.kind === '안내글뒤' ? appendAfter(tc, val) : putValue(tc, val);
       });
       if (r.ok) { xml = r.xml; filled.push({ id: id, key: key, value: val }); }
       else failed.push({ id: id, why: '이 칸에는 넣을 수 없습니다' });
@@ -368,7 +476,7 @@
     return 'F' + (h >>> 0).toString(36) + '.' + s.length;
   }
 
-  var api = { scan: scan, classify: classify, detectList: detectList,
+  var api = { scan: scan, classify: classify, detectList: detectList, detectLists: detectLists,
               guess: guess, hintKey: hintKey, apply: apply, fingerprint: fingerprint,
               digitRun: digitRun, digitsFor: digitsFor };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

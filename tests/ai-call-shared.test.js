@@ -196,6 +196,12 @@ test('경력관리(kcareer.html)', async (t) => {
       aiReady: () => true
     };
     vm.createContext(ctx);
+    /* ★ 2026-09-06 — 판독이 «사진첩 판독기»(PuDocRead)로 옮겼다(대표 지시).
+       여기서는 그 층이 «없을 때» 물러서는 옛 길을 본다 — 새 부품 하나 때문에
+       오늘까지 되던 것이 멈추면 안 되기 때문이다. 그 길에서도 서버를 거치고
+       길이 지정이 함께 가야 한다. 새 길은 아래 검사가 따로 지킨다. */
+    vm.runInContext('var _kcReaderReady=false;', ctx);
+    vm.runInContext(cutFn(src, 'function _kcReader('), ctx);
     vm.runInContext(cutFn(src, 'async function _geminiOCR('), ctx);
     const out = await vm.runInContext('_geminiOCR("읽어줘","QUJD","image/jpeg")', ctx);
     assert.ok(out && out.parsed, '판독이 안 됐습니다: ' + JSON.stringify(out));
@@ -204,6 +210,41 @@ test('경력관리(kcareer.html)', async (t) => {
     assert.match(calls[0].url, /\/readDoc$/, '구글을 직접 불렀습니다: ' + calls[0].url);
     assert.equal(calls[0].body.generationConfig.maxOutputTokens, 1500,
       '길이 지정이 빠졌습니다 — 긴 증명서에서 답이 잘립니다.');
+  });
+
+  await t.test('★★ 판독은 «사진첩과 같은 판독기»를 먼저 쓴다', async () => {
+    /* 대표 지시 2026-09-06 「사진첩 판독기로 바꿔라」.
+       그 층이 있으면 그리로 가야 한다 — 사진 줄이기·모델 물러서기·여러 쪽 읽기가
+       거기에만 있다. 옛 길로 새면 그 넷을 통째로 못 쓴다. */
+    const 본것 = [];
+    const P = loadCaller();
+    const ctx = {
+      console, Promise, JSON, Error, String, Number, Array, Object,
+      PuAiCall: P, firebase: { auth: () => authWith('토큰') },
+      aiReady: () => true,
+      kcFetch: () => { throw new Error('옛 길로 샜습니다 — 판독 층을 안 썼습니다'); },
+      window: {
+        PuDocRead: {
+          init: () => true,
+          readWithPrompt: (prompt, imgs) => {
+            본것.push({ prompt: prompt, 장수: imgs.length });
+            return Promise.resolve({ ok: true, data: { name: '홍길동' } });
+          }
+        }
+      }
+    };
+    vm.createContext(ctx);
+    vm.runInContext('var _kcReaderReady=false;', ctx);
+    vm.runInContext(cutFn(src, 'function _kcReader('), ctx);
+    vm.runInContext(cutFn(src, 'async function _geminiOCR('), ctx);
+    const out = await vm.runInContext(
+      '_geminiOCR("읽어줘","AAA","image/jpeg",["AAA","BBB"])', ctx);
+    assert.ok(out && out.parsed, '판독 층으로 안 갔습니다: ' + JSON.stringify(out));
+    assert.equal(out.parsed.name, '홍길동');
+    assert.equal(본것.length, 1, '판독 층을 안 불렀습니다');
+    assert.equal(본것[0].장수, 2,
+      '★ 여러 쪽을 «함께» 보내야 합니다 — 경력증명서가 2장이면 2장을 함께 봐야 합니다');
+    assert.equal(본것[0].prompt, '읽어줘', '경력관리 판독 사전이 그대로 가야 합니다');
   });
 
   await t.test('★ 열쇠 저장·복원 자리가 남아 있지 않다', () => {

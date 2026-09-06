@@ -392,8 +392,14 @@ ok('상단 ⚙ 가 백업·복구를 연다', src.includes('id="toolsbtn" onclic
 /* 파일로 통째로 되돌리는 길은 «일부러» 두지 않았다 — 잘못 누르면 전 기금이 한 번에 날아간다.
    다만 실수로 지운 기금은 삭제 보관함에서 되살아난다. 그 길을 함께 알려 주어야
    「되돌릴 방법이 아예 없다」고 읽히지 않는다. */
-ok('되돌리기를 안 둔 까닭을 적어 둔다',
-  src.includes('파일로 통째로 되돌리기</b>는 <b>일부러 두지 않았습니다'));
+/* ⚠ 여기에 「되돌리기는 없다」고 적어 두었다가 틀린 것으로 드러났다 —
+     공용 부품 js/pu-backup.js 가 매일 떠서 30시점을 보관하고 되돌린다.
+     창이 그 길을 알려 주는지 본다. 없는 척하면 사람이 있는 기능을 못 쓴다. */
+ok('시점 복원이 어디 있는지 알려 준다',
+  src.includes('왼쪽 아래 [백업·복구]</b> 단추에 있습니다')
+  && src.includes('최근 30개 시점'));
+ok('둘이 하는 일이 다르다고 말해 준다',
+  src.includes('서버 안에</b> 두는 것이라') && src.includes('서버 밖으로</b> '));
 ok('실수로 지운 기금을 되살리는 길을 알려 준다', src.includes('삭제 보관함</b>에서 <b>↩ 복원'));
 /* 뜻은 「고른 묶음 기준으로 센다」이다 — 앞에 조건이 붙어도(미완비 묶음 등) 상관없다.
    글자를 통째로 맞추면 다른 사람이 묶음을 늘릴 때마다 «멀쩡한데» 빨개진다. */
@@ -847,7 +853,12 @@ ok('서식이 사는 단계를 목록에서 찾는다', src.includes('var DOC_PH
   && /S\.formPhase=phaseOfDoc\(kind,prefer\)/.test(src));
 // 한 서식을 여러 단계에 «일부러» 두기도 한다 — 그때는 있던 자리에서 열려야 한다
 ok('있던 자리를 먼저 본다', src.includes('if(prefer&&hit.indexOf(prefer)>=0) return prefer;'));
-ok('제출서류가 있던 자리를 넘겨준다', /openFundDoc[^)]*d\.form\+[^)]*subsidy/.test(src));
+/* 2026-09-06: 제출서류는 이제 «화면을 안 떠난다» — 오른쪽 판에서 바로 채운다.
+   전에는 서식 자료실로 옮기면서 «있던 자리(subsidy)»를 넘겨 줘야 했다.
+   옮기지 않으니 넘겨 줄 자리도 없다 — 지킬 뜻은 «딴 화면으로 안 나간다»가 됐다.
+   오른쪽 판이 정말 뜨는지는 check_subside.js 가 본다. */
+ok('제출서류에서 딴 화면으로 안 나간다',
+  src.includes('onclick="subDocForm(') && /function subDocForm\(kind\)\{/.test(src));
 {
   /* 지원금 제출서류의 서식은 모두 ⑤지원금 목록에 있어야 한다 —
      없으면 눌렀을 때 딴 단계가 열려 «다시 찾는» 그 일이 되풀이된다. */
@@ -1327,7 +1338,25 @@ ok('사업장 서류: 참조가 subsidy_chk 안에 산다', src.includes("NS+'/s
 ok('열 전체 켜기가 참조를 건드리지 않는다', src.includes("fbDb.ref(_subChkPath()+'/site').update(up)"));
 ok('사업장 서류: 보기·해제', src.includes('function openSiteScan') && src.includes('function unlinkSiteScan'));
 ok('사업장 서류는 판독하지 않고 연결만', src.includes('if(_pick.sid){'));
-ok('고르는 사이 연도가 바뀌어도 그 해에 저장', src.includes("fid:S.fundId,sid:sid||'',yr:S.year")
+/* 지킬 뜻은 «열 때의 기금·해를 담아 두고, 저장할 때 그것을 쓴다»는 것이다.
+   예전에는 그 한 줄을 통째로 «글자»로 붙들었는데, 근로자대표 재직증명서 갈래가 붙어
+   줄이 갈라지자 뜻은 그대로인데 검사가 깨졌다.
+   ⚠ 그렇다고 파일 «전체»에서 찾으면 안 된다 — _pick 을 세우는 자리가 둘이라,
+     openAlbumPick 이 해를 안 담아도 다른 쪽 글자에 걸려 조용히 통과한다.
+     실제로 그렇게 헛돌았다. 그 함수 «안에서» 본다. */
+function _fnSrc(name){
+  const i = src.indexOf('function ' + name + '(');
+  if (i < 0) return '';
+  let d = 0;
+  for (let k = src.indexOf('{', i); k < src.length; k++) {
+    if (src[k] === '{') d++; else if (src[k] === '}') { d--; if (!d) return src.slice(i, k + 1); }
+  }
+  return '';
+}
+const _apick = _fnSrc('openAlbumPick');
+ok('고르는 사이 연도가 바뀌어도 그 해에 저장',
+  /_pick=\{[\s\S]*?fid:S\.fundId/.test(_apick)
+  && /_pick=\{[\s\S]*?yr:S\.year/.test(_apick)
   && src.includes('saveSiteScanRef(fid,_pick.yr,_pick.sid,kind,')
   && src.includes('saveShelfScanRef(fid,_pick.yr,_pick.shelf,'));
 ok('체크표 칸에 사진첩 단추', src.includes('var sr=_subScanOf(s._id,c[0]);')

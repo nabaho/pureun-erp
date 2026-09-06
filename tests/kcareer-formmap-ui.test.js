@@ -82,15 +82,47 @@ test('초록은 «실제로 채워진다»는 뜻이어야 한다 — 값이 없
     '열쇠만 보고 초록으로 칠하면 「채운다더니 비어 있다」가 됩니다');
 });
 
-test('도장은 «누를 때만» 찍힌다 — 채우기와 한 단추로 묶지 않는다', () => {
+test('도장은 «서명 줄을 채운 서식»에만 찍힌다', () => {
+  /* ★ 2026-09-06 규칙이 바뀌었다. 전에는 「도장은 누를 때만 — 채우기와 묶지 않는다」였고
+       까닭은 «채우기가 도장까지 찍으면 안 찍을 서류에도 찍힌다» 였다. 옳은 걱정이다.
+     대표 지시(2026-09-05) 「날짜나 지원자 이름 도장도 자동으로 채워줘야하는데 안들어갔다」로
+     자동으로 찍게 바꾸되, 그 걱정을 «없애는» 방식으로 바꿨다:
+
+       도장은 «서명 줄(지원자 ○ ○ ○ (인))을 우리가 채운 서식»에만 찍는다.
+
+     이름 자리와 (인) 자리가 함께 있는 것은 «날인하라고 만든» 서식이다.
+     그런 줄이 없는 안내문·명단·내역서는 저절로 걸러진다 — 그것이 옛 걱정의 답이다. */
   assert.match(bare, /function rhStampDoc/);
-  /* 그 함수 «본문만» 본다 — 창을 넉넉히 잡으면 옆 함수까지 딸려 와 검사가 헛돈다 */
   const at = bare.indexOf('function rhFillByMap');
   const rest = bare.slice(at + 20);
   const end = rest.search(/\n(async )?function /);
   const fill = rest.slice(0, end > 0 ? end : 3000);
-  assert.doesNotMatch(fill, /rhStampDoc|KcareerHwpStamp/,
-    '채우기가 도장까지 찍으면 안 찍을 서류에도 찍힙니다');
+
+  assert.match(fill, /rhStampDoc\(\s*true\s*\)/,
+    '채우기 뒤에 도장까지 이어서 찍어야 합니다 — 조용한 길(true)로');
+  /* ⚠ 여기가 이 검사의 «이빨»이다 — 조건 없이 찍으면 안 찍을 서류에도 찍힌다 */
+  assert.match(fill, /if\s*\(\s*_rhSignedLine\s*\)/,
+    '서명 줄을 채웠을 때만 찍어야 합니다 — 조건 없이 찍으면 안 찍을 서류에도 찍힙니다');
+  assert.ok(fill.indexOf('_rhSignedLine') < fill.indexOf('rhStampDoc'),
+    '도장을 찍기 «전»에 서명 줄을 확인해야 합니다');
+});
+
+test('서명 줄을 채웠을 때만 그 표시가 켜진다', () => {
+  const at = bare.indexOf('function rhFillByMap');
+  const fill = bare.slice(at, at + 6000);
+  assert.match(fill, /_rhSignedLine\s*=\s*false/,
+    '채우기를 시작할 때 표시를 꺼야 합니다 — 안 끄면 지난번 서식 때문에 찍힙니다');
+  assert.match(fill, /f\.key\s*===\s*'signName'.*_rhSignedLine\s*=\s*true/s,
+    '서명 줄을 실제로 채웠을 때만 표시를 켜야 합니다');
+});
+
+test('도장이 없거나 자리를 못 찾으면 «조용히» 지나간다', () => {
+  const at = bare.indexOf('function rhStampDoc');
+  const fn = bare.slice(at, at + 3500);
+  assert.match(fn, /function rhStampDoc\(quiet\)/,
+    '조용한 길이 있어야 합니다 — 채우기는 잘 됐는데 붉은 알림이 뜨면 실패로 읽힙니다');
+  assert.match(fn, /_날인\\?\.hwpx/,
+    '이미 찍힌 서식에 또 찍으면 도장이 둘 겹칩니다');
 });
 
 test('도장 모듈을 읽어 들인다 — 캐시 번호를 붙여서', () => {

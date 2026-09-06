@@ -70,6 +70,9 @@ const baseTop = ['uid_roles','sid_roles','data','payroll_os','fund_erp','work_er
    ★ 최상위를 일부러 늘렸다면 여기에 적어라. 적지 않으면 아래 검사가 막는다
      (실수로 늘어난 것을 잡는 덫이라 자동으로 넘기지 않는다) */
 const allowTop = ['systemAlerts','systemBackups','systemBackupsIndex','systemRestoreLog',
+  /* 2026-09-06 정부컨설팅 「이어는 두되 일정관리에서 진행할지는 따로」 스위치(대표 지시).
+     다른 scal_* 과 같은 권한 — 직원은 읽고 쓰고, 지우기는 관리자만. */
+  'scal_erpTypeRun',
   'puphotos',    /* 2026-08-02 사진첩 B단계 */
   /* 2026-09-05 공인노무사회에서 받아 둔 자료. 서버(ilaborPull)가 관리자 SDK 로
      담기만 하던 자리라 규칙이 아예 없었고, 뉴스레터 화면이 읽으려 하자

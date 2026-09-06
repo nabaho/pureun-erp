@@ -1049,17 +1049,22 @@ test('✨ 내 정보로 채우기 — 손으로 타이핑하지 않는다', () =
 });
 
 test('최종 저장 전까지 계속 임시저장한다', () => {
-  assert.match(source, /var RH_DRAFT='rh_draft'/);
-  assert.match(funcSource('importTemplateFile'), /rhDraftSave\(\)/, '올리는 순간 임시저장');
+  /* ⚠ 이 검사는 전에 «지금 값»을 박아 두었다 — `saveFileUnified(RH_DRAFT` 처럼
+     「한 자리에 담는다」를 글자로 못 박아, 자리를 여럿으로 늘리자 기능이 나아졌는데도
+     깨졌다(2026-09-06). 지금은 «규칙»만 본다: 담기고 · 자리 번호로 담기고 · 이어서 할 수 있다.
+     자리 번호가 하나든 여럿이든 이 검사는 그대로 돌아야 한다. */
+  assert.match(funcSource('importTemplateFile'), /rhDraftSave\(\)/, '올리는 순간 담겨야 합니다');
   const save = funcSource('rhDraftSave');
-  assert.match(save, /saveFileUnified\(RH_DRAFT/);
-  assert.match(save, /rh_draft_meta/);
+  assert.match(save, /saveFileUnified\(/, '담는 곳이 없습니다');
+  assert.match(save, /_rhDraftId/, '어느 «자리»에 담는지가 없습니다');
+  assert.doesNotMatch(save, /saveFileUnified\(RH_DRAFT\b/,
+    '한 자리에 고정해 담으면 새 양식이 앞서 하던 것을 덮어씁니다');
   // 화면을 열면 이어서 할 수 있어야 한다
   assert.match(source, /_safe\(\(\)=>rhDraftCheck\(\)\)/);
   assert.match(funcSource('rhDraftCheck'), /rhResumeBar/);
-  assert.match(source, /onclick="rhDraftResume\(\);return false"/);
-  // ⚠ 최종 저장이 끝나면 임시저장을 지운다 — 낡은 것을 가리키면 안 된다
-  assert.match(funcSource('confirmResumeSave'), /rhDraftDrop\(\)/);
+  assert.match(source, /rhDraftPanelToggle\(\)/, '딱지를 눌러 목록을 열 수 있어야 합니다');
+  // ⚠ 완성본을 내면 그 자리는 「지난 작성」으로 내린다 (대표 결정 2026-09-06 「남긴다」)
+  assert.match(funcSource('confirmResumeSave'), /rhDraftDone\(\)/);
 });
 
 test('이력서 생성 화면의 중복을 없앴다', () => {
@@ -2041,7 +2046,18 @@ test('★★ PDF 는 그림으로 바꿔 보낸다 — 그대로 보내면 읽�
   // 실측: 표창 폴더에서 JPG 한 장만 읽히고 PDF 는 모두 실패했다(「OCR 완료: 1건」).
   const p = funcSource('_ocrPayload');
   assert.match(p, /if\(ext!=='pdf'\) return/, '그림 파일은 그대로 보냅니다');
-  assert.match(p, /_pdfFirstPageJpeg/, 'PDF 는 첫 쪽을 그림으로 바꿉니다');
+  /* ★ 2026-09-06 규칙이 넓어졌다 — 전에는 «첫 쪽만» 바꿨다(_pdfFirstPageJpeg).
+     그래서 경력증명서가 2장이면 2장째는 «아예 안 봤다». 이제 쪽마다 바꿔 함께 읽는다.
+     ⚠ 쪽수에는 뚜껑이 있다(OCR_MAX_PAGES) — 20쪽짜리를 통째로 보내면 요금과 시간이
+       함께 튄다. 서류 판독에 필요한 것은 앞쪽 몇 장이다. */
+  assert.match(p, /_pdfPagesJpeg/, 'PDF 는 «쪽마다» 그림으로 바꿉니다');
+  assert.match(p, /pages:/, '바꾼 쪽들을 함께 넘겨야 여러 장을 읽습니다');
+  assert.match(source, /OCR_MAX_PAGES\s*=\s*\d+/, '읽을 쪽수에 뚜껑이 있어야 합니다');
+  /* ⚠★ 만드는 것만으로는 부족하다 — «부르는 자리»가 그 쪽들을 넘겨야 한다.
+     실측 2026-09-06: pay.pages 를 안 넘기게 되돌려도 검사가 통과했다.
+     만들어 놓고 안 쓰면 여전히 첫 장만 읽는다 — 겉으로는 아무 표시가 없다. */
+  assert.match(source, /_geminiOCR\(prompt,\s*sendB64,\s*mt,\s*pay\.pages\)/,
+    '읽을 때 «바꾼 쪽들»을 안 넘깁니다 — 만들어만 두고 첫 장만 읽게 됩니다');
   assert.match(p, /return \{b64:b64, mt:'application\/pdf', asImage:false\}/,
     '못 바꾸면 원래 PDF 로 되돌아가야 합니다');
   // 일괄 읽기·다시읽기 «둘 다» 같은 길을 써야 한다

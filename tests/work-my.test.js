@@ -95,12 +95,22 @@ eval(gvar('STATUSES') + '\n' + gvar('PLAN_GROUP') + '\n' + gvar('COLS_KEY') + '\
    묶어 보기는 꺼 두고 본다. 켜면 구분 열이 자동으로 접히는데, 그것은
    아래 「묶어 보기」 묶음에서 따로 확인한다. */
 S.grpOn = false;
-ok('접을 수 있는 열은 다섯 (기업·요일 칸·종료는 접지 않는다)',
-  COLSET.my.map(c => c[0]).join() === 'cat,pt,st,last,due');
-/* 업무명을 다시 폈다 — 계약 종류(업체계약·컨설팅계약…)가 거기 있는데 접혀 있어
-   「계약」이라는 것만 보이고 무슨 계약인지 알 수가 없었다. 최근 기록만 접어 둔다. */
+/* ⚠ 업무명(pt)은 목록에 «없다» (대표 보고 2026-09-06 「어디에서 뭘하는가 안보인다」).
+   접으면 회사 이름과 관리번호만 남아 「계약 2026-048」이 무슨 계약인지 알 길이 없다.
+   기본값을 고치는 것으로는 모자랐다 — 그 앞에 한 번이라도 화면을 연 사람은
+   브라우저에 접힌 채로 저장돼 있어 기본값이 가 닿지 않는다. 아예 못 접게 뺐다. */
+ok('접을 수 있는 열은 넷 (기업·업무명·요일 칸·종료는 접지 않는다)',
+  COLSET.my.map(c => c[0]).join() === 'cat,st,last,due');
+ok('★★ 업무명은 접을 수 없다 — 이 목록의 「뭘 하는가」다',
+  colHas('my','pt') === false && colHidden('my','pt') === false);
+ok('★★ 예전에 접어 둔 사람도 저절로 펴진다 (저장된 옛 값은 없는 말이 된다)', (function () {
+  STORE = {}; S.cols = undefined; STORE[COLS_KEY.my] = 'pt,last';
+  const r = colHidden('my','pt') === false && colHidden('my','last') === true;
+  STORE = {}; S.cols = undefined;
+  return r;
+})());
 ok('처음에는 최근 기록만 접혀 있다',
-  colHidden('my','last') === true && colHidden('my','pt') === false
+  colHidden('my','last') === true
   && colHidden('my','cat') === false && colHidden('my','st') === false && colHidden('my','due') === false);
 ok('접을 수 없는 열은 언제나 펴져 있다',
   colHidden('my','co') === false && colHidden('my','') === false);
@@ -109,16 +119,23 @@ ok('접을 수 없는 열은 언제나 펴져 있다',
    ⚠ 시작 상태를 기본값에 기대지 않는다. 기본값은 화면을 손볼 때마다 바뀌는데,
       거기서 출발하면 그때마다 이 묶음이 통째로 깨진다(실제로 깨졌다). */
 STORE = {}; S.cols = undefined;
-STORE[COLS_KEY.my] = 'pt,last';                 // 업무·최근 기록이 접힌 상태에서 시작
+STORE[COLS_KEY.my] = 'cat,last';                // 구분·최근 기록이 접힌 상태에서 시작
 colToggle('my','last');
 ok('접힌 열을 펴면 펴진다', colHidden('my','last') === false);
-ok('편 것이 이 브라우저에 저장된다', STORE[COLS_KEY.my] === 'pt');
+ok('편 것이 이 브라우저에 저장된다', STORE[COLS_KEY.my] === 'cat');
 colToggle('my','st');
 ok('펴진 열을 접으면 접힌다', colHidden('my','st') === true);
-ok('접힌 목록이 함께 저장된다', STORE[COLS_KEY.my].split(',').sort().join() === 'pt,st');
+ok('접힌 목록이 함께 저장된다', STORE[COLS_KEY.my].split(',').sort().join() === 'cat,st');
 colToggle('my','co');
 ok('접을 수 없는 열은 눌러도 안 바뀐다',
-  colHidden('my','co') === false && STORE[COLS_KEY.my].split(',').sort().join() === 'pt,st');
+  colHidden('my','co') === false && STORE[COLS_KEY.my].split(',').sort().join() === 'cat,st');
+/* 접을 수 없게 된 이름은 다음에 저장할 때 «따라 나가지 않는다» — 화면은 멀쩡한데
+   저장된 글만 거짓인 상태로 남으면, 나중에 그 거짓말이 그대로 다시 저장된다. */
+STORE = {}; S.cols = undefined;
+STORE[COLS_KEY.my] = 'pt,last';
+colToggle('my','st');
+ok('★ 옛 이름(pt)은 저장값에서 걷힌다',
+  STORE[COLS_KEY.my].split(',').sort().join() === 'last,st');
 
 STORE = {}; S.cols = undefined;
 STORE[COLS_KEY.my] = 'pt,last';
@@ -211,7 +228,7 @@ ok('다 펴도 숫자가 붙는다 (접을 수 있다는 것이 늘 보이게)',
   hid.forEach(k => colToggle('my', k));          // 지금 접혀 있는 것만 편다
   const h = colBtn('my');
   hid.forEach(k => colToggle('my', k));          // 되돌린다
-  return h.indexOf('▦ 열 5/5') > 0;
+  return h.indexOf('▦ 열 4/4') > 0;
 })());
 ok('손잡이가 표 선 색이 아니다 (흰 바탕에서 안 보였다)', (function () {
   const css = W.slice(0, W.indexOf('</style>'));
@@ -224,10 +241,11 @@ S.grpOn = false; S.colPop = false; STORE = {}; S.cols = undefined;
 ok('평소에는 목록이 안 붙어 있다', colBtn('my').indexOf('colpop') < 0);
 colPop('my');
 ok('칩을 누르면 열린다', S.colPop === 'my' && colBtn('my').indexOf('id="colpop"') > 0);
-ok('다섯 열이 체크 목록으로 나온다', (function () {
+ok('네 열이 체크 목록으로 나온다 (업무명은 못 접으므로 목록에도 없다)', (function () {
   const h = colPopHTML('my');
   return COLSET.my.every(c => h.indexOf('<span>' + c[1] + '</span>') > 0)
-    && (h.match(/type="checkbox"/g) || []).length === 5;
+    && (h.match(/type="checkbox"/g) || []).length === 4
+    && h.indexOf("colToggle('my','pt')") < 0;
 })());
 /* 어느 열이 기본으로 접혀 있는지는 화면을 손볼 때마다 바뀐다.
    열 이름을 박지 말고, 지금 접힌 것과 펴진 것을 하나씩 골라 견준다. */
@@ -250,9 +268,9 @@ ok('목록 안을 눌러도 안 닫힌다', colPopHTML('my').indexOf('id="colpop
 ok('깔때기와 같은 모양을 쓴다 (두 가지를 새로 익히지 않게)',
   colPopHTML('my').indexOf('class="fpop"') > 0 && colPopHTML('my').indexOf('class="fpl"') > 0);
 ok('체크하면 그 자리에서 바로 반영된다 ([적용]을 또 누르지 않는다)',
-  colPopHTML('my').indexOf("onchange=\"colToggle('my','pt')\"") > 0);
+  colPopHTML('my').indexOf("onchange=\"colToggle('my','st')\"") > 0);
 ok('열어 둔 채로 여러 개를 손볼 수 있다', (function () {
-  colToggle('my','pt'); return S.colPop === 'my';
+  colToggle('my','st'); return S.colPop === 'my';
 })());
 colPopClose();
 ok('닫으면 닫힌다', !S.colPop && colBtn('my').indexOf('colpop') < 0);

@@ -59,7 +59,7 @@
 <!-- Daum 우편번호 서비스 (무료, 가입 불필요) -->
 <script src="https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
 <!-- 푸른 공통 한글 엔진: 모든 ERP 한글 열기·미리보기·HWPX 저장을 한 경로로 처리 -->
-<script src="js/pu-hwp-engine.js?v=14"></script>
+<script src="js/pu-hwp-engine.js?v=16"></script>
 <script src="hwpx_gen.js?v=14"></script>
 <script src="hwpx_doc.js?v=2"></script>
 <!-- 사업장 «원본 서식»(.hwpx) 채우기 — 칸·표·도장 자리는 그대로 두고 글자만 바꾼다.
@@ -123,9 +123,9 @@
   if(window.React){ g.React = window.React; g.ReactDOM = window.ReactDOM; }
 })();
 </script>
-<link rel="stylesheet" href="css/pu-erp.css?v=5">
+<link rel="stylesheet" href="css/pu-erp.css?v=6">
   <!-- 프로그램 사이 이동 (공용 앱바) -->
-  <script src="js/pu-appbar.js?v=8"></script>
+  <script src="js/pu-appbar.js?v=9"></script>
   <!-- 로그아웃·사람 바뀜을 모든 프로그램에 퍼뜨린다 (2026-08-16) — 로그인 화면·공개 화면에는 넣지 않는다 -->
   <script src="js/pu-authsync.js?v=1"></script>
   <!-- 상단 우측에 「지금 로그인한 사람」 (2026-08-16) — 로그인 화면·공개 화면에는 넣지 않는다 -->
@@ -146,7 +146,7 @@
 <script src="js/pu-billing.js?v=7"></script>
 <script src="js/pu-rrn-seal.js?v=1"></script>
 <!-- 푸른통합 온톨로지 공통 사전·읽기 전용 관계 진단 -->
-<script src="js/pu-ontology.js?v=17"></script>
+<script src="js/pu-ontology.js?v=19"></script>
 <!-- 급여담당자 엑셀 → 업체관리 (대표 결정 2026-08-24). 읽고 대조하는 일은 이 파일이,
      그리기는 아래 화면이 한다 — 검사가 이 파일을 그대로 돌린다. -->
 <script src="js/pu-co-xls.js?v=3"></script>
@@ -12467,25 +12467,82 @@ function erpContractToCoFields(ct){
   var amounts = ct.amounts || {};
   var fee = amounts.company || ct.amount || 0;
   var typeCodes = ct.typeCodes || {};
-  var end = ct.contractEndDate || '';
+  /* ★★ 계약은 기간을 startDate·endDate 에 담는다 (2026-09-06 실측: endDate 16건·startDate 21건).
+     그런데 여기서는 contractEndDate 를 읽고 있었다 — 그 칸은 계약 129건 «전부» 비어 있다.
+     그래서 계약서에 종료일이 적혀 있어도 못 읽고, 늘 「계약일 + 1년」을 지어냈다.
+     시작일도 같다 — signDate(서명일)만 보고 startDate(개시일)를 안 봤다. 둘은 다를 수 있다.
+     ⚠ 옛 이름(contractEndDate)도 계속 읽는다 — 어딘가에 그렇게 적힌 것이 있을 수 있다. */
+  var end = ct.endDate || ct.contractEndDate || '';
   if(!end && ct.signDate){
-    /* 이관 때 쓰는 규칙과 «같게» — 계약일 + 1년. 두 곳이 다르면 값이 갈라진다. */
+    /* 아무 데도 없을 때만 지어낸다 — 이관 때 쓰는 규칙과 «같게» 계약일 + 1년.
+       두 곳이 다르면 값이 갈라진다. */
     try{ var d = new Date(ct.signDate); d.setFullYear(d.getFullYear() + 1); end = localYMD(d); }
     catch(e){ end = ''; }
   }
   return {
     contractNo: ct.contractNo || '',
     typeCode: typeCodes.company || ct.typeCode || '',
-    contractStartDate: ct.signDate || '',
+    contractStartDate: ct.startDate || ct.contractStartDate || ct.signDate || '',
     contractEndDate: end,
     monthlyAdvisoryFee: parseInt(fee, 10) || 0,
     /* 계약서에 적힌 것이 없으면 「별도」 — 이관 때와 같은 값이다 */
     vatType: ct.vatType || 'separate'
   };
 }
+/* 계약서 «사진»의 판독값 → 업체관리 계약정보 칸 (2026-09-06 대표 지시)
+
+   ■ 왜 필요한가 — 실측
+   업체 373곳 가운데 계약관리에 계약서가 있는 곳은 29곳(8%), 그중 쓸 값이 있는 곳은 9곳(2%).
+   그런데 계약 종료일이 빈 업체가 189곳, 월 자문료가 빈 업체가 154곳이다.
+   나머지 364곳에서는 「계약관리에서 당겨오기」가 줄 것이 없다 — 실제 출처는 계약서 사진뿐이다.
+
+   ★ 값을 만드는 셈은 컴포넌트 밖에 둔다 — 계약창의 erpContractPhotoApplyPatch 와 같은 태도다.
+     화면 안에 두면 검사를 붙일 수가 없다.
+   ⚠ 금액의 «단위»는 짐작하지 않는다. 판독기는 계약서에 적힌 그대로 담아서
+     "1,000만원" 같은 글자가 들어온다 — 쉼표만 떼고 읽으면 1,000원이 되어 만 배 틀린다.
+     숫자만 남지 않으면 «안 채우고 못 읽었다고 말한다». 잘못 짐작하는 것이 안 읽는 것보다 나쁘다. */
+function erpPhotoToCoFields(fields){
+  fields = fields || {};
+  var out = {}, lines = [], murky = [];
+  function pureAmt(v){
+    var s = String(v === null || v === undefined ? '' : v).replace(/[,\s₩]/g, '').replace(/[원정]+$/, '');
+    if(s === '') return null;                       // 아예 없다
+    if(!/^\d+$/.test(s)) return NaN;                // 단위가 섞였다 — 못 읽은 것으로 친다
+    return parseInt(s, 10) || 0;
+  }
+  /* 업체 자문계약이라 «보수»가 먼저다. 계약금은 보수가 없을 때만 본다. */
+  var feeRaw = (fields.fee !== null && fields.fee !== undefined && String(fields.fee) !== '')
+    ? fields.fee : fields.deposit;
+  var fee = pureAmt(feeRaw);
+  if(fee !== null && !isNaN(fee) && fee > 0){
+    out.monthlyAdvisoryFee = fee;
+    lines.push('월 자문료 ' + fee.toLocaleString() + '원');
+  } else if(feeRaw){ murky.push('금액 "' + feeRaw + '"'); }
+
+  var start = fields.startDate || fields.signDate || '';
+  if(start){ out.contractStartDate = start; lines.push('계약 시작 ' + start); }
+  if(fields.endDate){ out.contractEndDate = fields.endDate; lines.push('계약 종료 ' + fields.endDate); }
+
+  /* 업체관리의 부가세 값은 unspecified · separate · inclusive 다 (계약관리와 이름이 다르다) */
+  var vat = (typeof erpVatTextToFlag === 'function') ? erpVatTextToFlag(fields.vat) : null;
+  if(vat !== null){
+    out.vatType = vat ? 'inclusive' : 'separate';
+    lines.push('부가세 ' + (vat ? '포함' : '별도'));
+  } else if(fields.vat){ murky.push('부가세 "' + fields.vat + '"'); }
+
+  /* 같은 계약서에 적혀 있는 업체 기본정보도 «비어 있으면» 함께 채운다 —
+     계약창이 하는 것과 같다. 채울지 말지는 부르는 쪽이 빈 칸만 골라 정한다. */
+  [['ceo', 'ceo', '대표자'], ['address', 'address', '주소'], ['bizno', 'bizNo', '사업자번호']]
+    .forEach(function(p){
+      if(fields[p[0]]){ out[p[1]] = fields[p[0]]; lines.push(p[2] + ' ' + fields[p[0]]); }
+    });
+  return { fields: out, lines: lines, murky: murky };
+}
+
 if(typeof window !== 'undefined'){
   window.erpContractForCompany = erpContractForCompany;
   window.erpContractToCoFields = erpContractToCoFields;
+  window.erpPhotoToCoFields = erpPhotoToCoFields;
 }
 
 function pcCompanyRows(q){
@@ -13505,6 +13562,202 @@ function erpLoadWorkerInfo(cb){
    ⚠ 계좌번호는 **가리지 않는다**(대표 결정 2026-08-28) — 가리면 쓸 수가 없다.
    ⚠ 원본은 «고른 뒤 눌러야» 연다. 목록을 여는 것만으로 원본을 받지 않는다(요금·기록). */
 
+/* ══════════ 🏢 업체 회사 칸 「당겨오기」 (대표 승인 목업 2026-09-06) ══════════
+   docs/mockups/erp-company-pull.html
+   대표 지시: 「사진첩과 기업정보함에서 내용 가지고 올 수 있게 해라」
+
+   ■ 이미 되고 있던 것 — 없는 것만 만든다
+     사진첩은 사업자등록증·중소기업확인서를 판독하면 **스스로 업체관리에 밀어넣는다**
+     (js/pu-doc-file.js 의 coPlan·coFill). 사업자번호로 맞추고 **빈 칸만** 채운다.
+   ■ 그런데도 막히던 넷
+     ① 업체에 사업자번호가 안 적혀 있으면 영영 안 붙는다 — 사람이 짚어 줄 길이 없었다
+     ② 이미 값이 있으면 안 바꾼다 — 대표자가 바뀌어도 옛 값 그대로다
+     ③ 「지금」 당길 수가 없다 — 채워지는 때가 판독하는 그 순간뿐이었다
+     ④ 기업정보함 회사 정보는 계약 창에만 있고 업체 수정 창에는 없었다
+   ■ 그래서 «고르는 창» 하나를 놓는다
+     ⚠ 자동으로 덮어쓰지 않는다. 「빈 칸 채움 / 지금 값과 같음 / 지금 값과 다름」을
+       칸마다 갈라 보이고, **다름은 지금 값을 나란히** 놓아 무엇이 사라지는지 보게 한다.
+     ⚠ 이름만 같다고 잇지 않는다(온톨로지 규칙) — 사업자번호가 열쇠다.
+       번호가 없는 업체는 「이 번호를 이 업체에 적을까요」부터 확인받는다.
+     ⚠ 채우기만 하고 **저장은 여전히 「저장」 단추**다. */
+
+var _erpCoDocPhotos = null;
+var _erpCoDocLoading = false;
+var _erpCoDocWaiters = [];
+/* 사업자등록증·중소기업확인서만 모은다.
+   ⚠ 계약서 찾기(erpLoadMyContractPhotos)를 넓히지 «않는다» — 그쪽은 「우리 자문계약만」이
+     규칙이고(tests/photos-worker-contract-kind.test.js), 섞으면 그 목록이 못 쓰게 된다.
+   ⚠ 통장 찾기(erpLoadBankPhotos)와 «같은 길»이다 — 관리자면 전 직원, 아니면 내 것,
+     전 직원 읽기가 막히면 내 것으로 물러난다. 한 번 읽고 캐시에 둔다(요금). */
+function erpLoadCoDocPhotos(cb){
+  if(_erpCoDocPhotos){ cb && cb(_erpCoDocPhotos); return; }
+  if(_erpCoDocLoading){ if(cb) _erpCoDocWaiters.push(cb); return; }
+  if(typeof PuPhotoStore === 'undefined' || !fbAuthUid){ cb && cb([]); return; }
+  _erpCoDocLoading = true;
+  var all = erpPhotoAdmin() && PuPhotoStore.listYearsAll && PuPhotoStore.listYearAll;
+  var load = all
+    ? PuPhotoStore.listYearsAll().then(function(years){
+        return Promise.all(years.map(function(y){ return PuPhotoStore.listYearAll(y); }));
+      }).catch(function(){ return null; })
+    : Promise.resolve(null);
+  load.then(function(maps){
+    if(maps) return maps;
+    return PuPhotoStore.listYears().then(function(years){
+      return Promise.all(years.map(function(y){ return PuPhotoStore.listYear(y); }));
+    });
+  }).then(function(yearMaps){
+    var out = [];
+    (yearMaps || []).forEach(function(map){
+      Object.keys(map || {}).forEach(function(id){
+        var meta = map[id];
+        var r = meta && meta.read;
+        if(!r || r.error) return;
+        /* ★ 계약서도 읽는다 (2026-09-06 대표 지시) — 계약기간·월 자문료·부가세의
+           실제 출처가 여기다. 업체 373곳 중 계약관리에 계약서가 있는 곳은 29곳뿐이고
+           쓸 값이 있는 곳은 9곳이다. 계약 종료일이 빈 업체가 189곳이나 된다. */
+        if(r.kind !== 'bizreg' && r.kind !== 'sme' && r.kind !== 'contract') return;
+        /* ⚠ 사람이 고쳐 적은 값이 이긴다 — 사진첩·통장과 같은 규칙이다 */
+        var f = Object.assign({}, r.fields || {}, r.fix || {});
+        out.push({ id:id, year:meta.__year, owner:meta.__ownerUid || '',
+          ownerName: meta.__ownerName || '', loc: meta.loc || '',
+          kind: r.kind, fields: f, at: meta.upAt || meta.takenAt || 0 });
+      });
+    });
+    out.sort(function(a,b){ return (b.at||0) - (a.at||0); });   // 최근 것이 앞
+    _erpCoDocPhotos = out;
+    _erpCoDocLoading = false;
+    var waiters = _erpCoDocWaiters; _erpCoDocWaiters = [];
+    cb && cb(out);
+    waiters.forEach(function(w){ w(out); });
+  }).catch(function(e){
+    window._erpErrLog && window._erpErrLog(e);
+    _erpCoDocLoading = false;
+    var waiters = _erpCoDocWaiters; _erpCoDocWaiters = [];
+    cb && cb([]);
+    waiters.forEach(function(w){ w([]); });
+  });
+}
+
+/* 사업자번호 열쇠 — 숫자만 남긴다. 사진첩(js/pu-doc-file.js 의 bizKey)과 같은 규칙이라야
+   같은 서류를 같은 업체에 붙인다. 열 자리가 아니면 열쇠로 안 쓴다(전화번호가 섞인다). */
+function erpCoBizKey(v){
+  var d = String(v == null ? '' : v).replace(/\D/g, '');
+  return d.length === 10 ? d : '';
+}
+/* 업체명 다듬기 — 「㈜」·공백·「주식회사」를 걷는다. 계약 창의 normCo 와 같은 결.
+   ⚠ 이것으로 «잇지» 않는다. 번호가 없을 때 «찾아 보여 주는» 데까지만 쓴다. */
+function erpCoNameKey(v){
+  return String(v == null ? '' : v).toLowerCase().replace(/[\s\-㈜()]|주식회사/g, '');
+}
+
+/* 업체 수정 칸 ↔ 사람이 읽는 이름. 여기 없는 칸은 당겨오지 않는다 —
+   목록에 없는 칸이 조용히 채워지면 「어디서 온 값이지」가 된다. */
+var ERP_CO_PULL_LABEL = {
+  name:'업체명', bizNo:'사업자번호', corpNo:'법인번호', ceo:'대표자',
+  bizType:'업태', bizCategory:'종목', companySize:'규모', industry:'업종',
+  address:'주소', phone:'대표 전화', fax:'팩스', openDate:'개업일',
+  smeExpiry:'중소기업확인서 만료', smeIssueNo:'확인서 번호', smeIssueDate:'확인서 발급일',
+  /* 계약서에서만 나오는 칸 (2026-09-06) */
+  contractStartDate:'계약 시작', contractEndDate:'계약 종료',
+  monthlyAdvisoryFee:'월 자문료', vatType:'부가세'
+};
+
+/* 「비어 있다」의 뜻 — 계약서 당겨오기(fillFromContract)와 같은 판정이라야
+   두 단추가 서로 다른 말을 하지 않는다.
+   ⚠ 칸마다 «빈 것»의 뜻이 다르다 — 자문료는 0 이 빈 것이고, 부가세는 미확정이 빈 것이다. */
+function erpCoBlank(v, k){
+  if(k === 'monthlyAdvisoryFee') return !(parseInt(v, 10) > 0);
+  if(k === 'vatType') return !v || v === 'unspecified';
+  return !String(v == null ? '' : v).trim();
+}
+/* 화면에 보일 글자 — 자문료는 쉼표를, 부가세는 우리말을 */
+function erpCoPullShow(k, v){
+  if(k === 'monthlyAdvisoryFee') return (parseInt(v, 10) || 0).toLocaleString() + '원';
+  if(k === 'vatType') return v === 'inclusive' ? '포함' : (v === 'separate' ? '별도' : String(v || ''));
+  return String(v == null ? '' : v).trim();
+}
+
+/* ── 후보 하나가 채울 것 (순수 로직 · 검사 대상) ──
+   돌려주는 것: [{ k, label, val, cur, state }]  state = fill | same | diff
+   ⚠ 서류에 없는 칸은 아예 안 넣는다 — 빈 값으로 덮어쓰면 있던 값이 사라진다. */
+function erpCoPullRows(mapped, cur){
+  var now = cur || {};
+  var out = [];
+  Object.keys(ERP_CO_PULL_LABEL).forEach(function(k){
+    var v = mapped && mapped[k];
+    if(erpCoBlank(v, k)) return;                    // 서류에 없다 — 건드리지 않는다
+    var was = now[k];
+    var same = erpCoPullShow(k, was) === erpCoPullShow(k, v);
+    var state = erpCoBlank(was, k) ? 'fill' : (same ? 'same' : 'diff');
+    out.push({ k:k, label:ERP_CO_PULL_LABEL[k], val:v,
+      show: erpCoPullShow(k, v),
+      cur: erpCoBlank(was, k) ? '' : erpCoPullShow(k, was), state:state });
+  });
+  return out;
+}
+
+/* ── 어느 «사진첩 서류»에서 당겨올 수 있나 (순수 로직 · 검사 대상) ──
+   docs: erpLoadCoDocPhotos 가 준 것 · cur: 지금 폼
+   ⚠ 기업정보함은 여기 «안» 넣는다 — 회사정보 제목 줄에 「📇 사업자등록증 찾기」·
+     「📇 대표자 찾기」가 2026-08-10 부터 이미 있다. 여기 또 넣으면 같은 일을 하는
+     길이 둘이 되고, 단추 이름(사진첩)과 나오는 것이 어긋난다.
+   ⚠ **사업자번호가 열쇠다.** 번호가 있으면 번호로만 맞춘다 — 이름이 같아도 안 붙인다
+     (「천성」과 「천성가축약품」은 다른 업체다).
+   ⚠ 번호가 없으면 이름으로 «찾아만» 준다. 그때는 needBizNo 를 세워, 고를 때
+     「이 번호를 이 업체에 적을까요」를 먼저 묻게 한다(온톨로지: 사람이 확정한다). */
+function erpCoPullCandidates(docs, cur){
+  var now = cur || {};
+  var key = erpCoBizKey(now.bizNo);
+  var nkey = erpCoNameKey(now.name);
+  var byNo = !!key;
+  var out = [];
+  (docs || []).forEach(function(d){
+    var f = d.fields || {};
+    var dk = erpCoBizKey(f.bizno);
+    var hit = byNo ? (dk === key)
+      : (!!nkey && erpCoNameKey(f.company) === nkey);
+    if(!hit) return;
+    var mapped = {};
+    if(d.kind === 'contract'){
+      /* 계약서는 판독 칸 이름이 다르다(fee·startDate·vat…) — 전용 옮김이를 쓴다.
+         ⚠ 금액의 단위는 짐작하지 않는다. 그 판단도 erpPhotoToCoFields 안에 있다. */
+      try { mapped = erpPhotoToCoFields(f).fields || {}; } catch(_) { mapped = {}; }
+    } else {
+      try { mapped = PuDocRead.mapTo('erp', d.kind, f) || {}; } catch(_) { mapped = {}; }
+    }
+    var rows = erpCoPullRows(mapped, now);
+    /* ⚠ 「같음」만 있는 서류는 안 보여 준다 — 골라 봐야 바뀌는 것이 없다.
+       사업자번호 하나만 읽힌 서류가 「지금 값과 같음」 한 줄로 목록에 뜨던 자리다. */
+    if(!rows.some(function(r){ return r.state !== 'same'; })) return;
+    out.push({ src:'photo', id:d.id, year:d.year, owner:d.owner || '', loc:d.loc || '',
+      kind:d.kind, at:d.at || 0,
+      title:(d.kind === 'sme' ? '📷 사진첩 · 중소기업확인서'
+        : d.kind === 'contract' ? '📄 사진첩 · 계약서' : '📷 사진첩 · 사업자등록증'),
+      needBizNo: byNo ? '' : dk, rows:rows });
+  });
+  out.sort(function(a,b){ return (b.at || 0) - (a.at || 0); });   // 최근 판독이 먼저
+  return out;
+}
+
+/* 고른 것들을 하나로 합친다 — 앞엣것이 이긴다(목록이 이미 «좋은 차례»로 놓여 있다).
+   ⚠ 「다름」은 사람이 그 칸을 짚었을 때만 담는다. 통째로 고르면 빈 칸만 채운다 —
+     한 번 눌러 여덟 칸이 조용히 바뀌는 일이 없어야 한다. */
+function erpCoPullApply(cands, picked, diffPicked){
+  var pick = picked || {}, dp = diffPicked || {};
+  var out = {}, got = [], over = [];
+  (cands || []).forEach(function(c){
+    if(!pick[c.id]) return;
+    c.rows.forEach(function(r){
+      if(r.state === 'same') return;
+      if(r.state === 'diff' && !dp[c.id + '|' + r.k]) return;
+      if(out[r.k] !== undefined) return;            // 앞엣것이 이긴다
+      out[r.k] = r.val;
+      (r.state === 'diff' ? over : got).push(r.label);
+    });
+  });
+  return { patch:out, filled:got, overwrote:over };
+}
+
 var _erpBankPhotos = null;
 var _erpBankLoading = false;
 var _erpBankWaiters = [];
@@ -13818,6 +14071,148 @@ function WorkerDocPickerModal(props){
      사람이 고른 것만 들어간다 — 계좌를 잘못 채우면 남의 계좌로 돈이 나간다.
    ⚠ 계좌가 둘 적힌 통장은 **둘 다 보여 주고 고르게** 한다(정식 계좌 / 평생계좌).
      합쳐 적으면 그 값으로는 이체가 안 된다. */
+/* ══════ 🏢 업체 회사 칸 「📥 당겨오기」 창 (대표 승인 목업 2026-09-06) ══════
+   docs/mockups/erp-company-pull.html
+   ⚠ 채우기만 한다 — 저장은 여전히 「저장」 단추다. 이 창은 «칸을 채울 뿐»이다.
+   ⚠ 「다름」은 기본으로 안 고른다. 사람이 그 줄을 짚어야만 덮어쓴다
+     (대표 결정 2026-09-06 ⓐ: 「덮어쓸 수 있게 하되 골라야만」).
+   ⚠ 「같음」은 아예 안 담는다 — 담아 봐야 바뀌는 것이 없고 «채웠다»는 말만 늘어난다. */
+function CoPullModal(props){
+  useEscClose(props.onClose);
+  var ls = useState(null); var docs = ls[0]; var setDocs = ls[1];
+  var ps = useState({}); var pick = ps[0]; var setPick = ps[1];
+  var ds = useState({}); var dpick = ds[0]; var setDpick = ds[1];
+
+  useEffect(function(){
+    var gone = false;
+    erpLoadCoDocPhotos(function(all){ if(!gone) setDocs(all || []); });
+    return function(){ gone = true; };
+  }, []);
+
+  var cands = docs ? erpCoPullCandidates(docs, props.cur) : [];
+  /* 처음 열 때 «첫 후보»만 켜 둔다 — 전부 켜 두면 한 번 눌러 여러 곳이 바뀐다 */
+  useEffect(function(){
+    if(!docs || !cands.length) return;
+    setPick(function(p){
+      if(Object.keys(p).length) return p;
+      var n = {}; n[cands[0].id] = true; return n;
+    });
+  }, [docs, cands.length]);
+
+  var key = erpCoBizKey((props.cur || {}).bizNo);
+  var res = erpCoPullApply(cands, pick, dpick);
+  var nCand = cands.filter(function(c){ return pick[c.id]; }).length;
+
+  function tag(t, bg, fg, bd){
+    return h('span', { style:{ marginLeft:'auto', fontSize:'10.5px', padding:'1px 6px',
+      borderRadius:'999px', background:bg, color:fg, border:'1px solid '+bd, whiteSpace:'nowrap' } }, t);
+  }
+  function rowOf(c, r){
+    var on = r.state !== 'diff' || !!dpick[c.id + '|' + r.k];
+    var clickable = r.state === 'diff';
+    return h('div', { key:r.k,
+      onClick: clickable ? function(){
+        var kk = c.id + '|' + r.k;
+        setDpick(function(p){ var n = Object.assign({}, p); if(n[kk]) delete n[kk]; else n[kk] = true; return n; });
+      } : null,
+      style:{ display:'flex', alignItems:'center', gap:'6px', padding:'2px 0',
+        fontSize:'11.5px', cursor: clickable ? 'pointer' : 'default',
+        opacity: (r.state === 'same' ? 0.65 : 1) } },
+      h('span', { style:{ width:'80px', color:'#64748b', flex:'none' } }, r.label),
+      /* 「다름」은 지금 값을 «나란히» 보인다 — 무엇이 사라지는지 보고 고르시라고 */
+      r.state === 'diff' && h('span', { style:{ background:'#fef2f2', color:'#dc2626',
+        borderRadius:'4px', padding:'1px 6px', textDecoration: on ? 'line-through' : 'none' } }, r.cur),
+      h('span', { style:{ borderRadius:'4px', padding:'1px 6px',
+        background: r.state === 'same' ? '#f8fafc' : (on ? '#f0fdf4' : '#f8fafc'),
+        color: r.state === 'same' ? '#64748b' : (on ? '#166534' : '#64748b'),
+        fontWeight: (r.state !== 'same' && on) ? 700 : 400 } }, r.show || r.val),
+      r.state === 'fill' ? tag('빈 칸 채움', '#f0fdf4', '#166534', '#bbf7d0')
+        : r.state === 'same' ? tag('지금 값과 같음', '#f8fafc', '#64748b', '#e2e8f0')
+        : tag(on ? '✓ 덮어씀' : '지금 값과 다름', '#fffbeb', '#854d0e', '#fde68a'));
+  }
+  function cardOf(c){
+    var on = !!pick[c.id];
+    return h('div', { key:c.id,
+      onClick:function(){ setPick(function(p){ var n = Object.assign({}, p); if(n[c.id]) delete n[c.id]; else n[c.id] = true; return n; }); },
+      style:{ border:'1.5px solid '+(on ? '#2563eb' : '#e2e8f0'), borderRadius:'8px',
+        padding:'9px 11px', marginBottom:'8px', background: on ? '#eff6ff' : '#fff', cursor:'pointer' } },
+      h('div', { style:{ display:'flex', alignItems:'center', gap:'7px', fontSize:'12.5px', fontWeight:700 } },
+        h('span', { style:{ width:'14px', height:'14px', flex:'none', borderRadius:'3px',
+          border:'1.5px solid '+(on ? '#2563eb' : '#94a3b8'), background: on ? '#2563eb' : '#fff' } }),
+        c.title,
+        h('span', { style:{ marginLeft:'auto', fontWeight:400, fontSize:'11px', color:'#64748b' } },
+          (c.at ? new Date(c.at).toISOString().slice(0,10) + ' 판독' : '') +
+          (c.ownerName ? ' · ' + c.ownerName : ''))),
+      c.needBizNo && h('div', { style:{ marginTop:'5px', fontSize:'11px', color:'#854d0e',
+        background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'5px', padding:'4px 7px' } },
+        '⚠ 이 업체에 사업자번호가 없습니다 — 이름으로 찾은 것입니다. 고르시면 '
+        + erpFmtBizNo(c.needBizNo) + ' 를 이 업체에 적을지 먼저 여쭙니다'),
+      h('div', { style:{ marginTop:'7px' } }, c.rows.map(function(r){ return rowOf(c, r); })));
+  }
+
+  function doFill(){
+    /* 번호가 없던 업체는 «번호를 적는 것»부터 확인받는다 — 이름만으로 잇지 않는다 */
+    var need = cands.filter(function(c){ return pick[c.id] && c.needBizNo; })[0];
+    var patch = Object.assign({}, res.patch);
+    if(need){
+      if(!confirm('이 업체에는 사업자번호가 없습니다.\n\n'
+        + '고르신 서류의 사업자번호 ' + erpFmtBizNo(need.needBizNo) + ' 을(를)\n'
+        + '이 업체에 적을까요?\n\n'
+        + '— 적으면 다음부터는 번호로 저절로 이어집니다.\n'
+        + '— 아니오를 누르시면 아무것도 채우지 않습니다.')) return;
+      patch.bizNo = erpFmtBizNo(need.needBizNo);
+    }
+    props.onPick(patch, res);
+  }
+
+  return h('div', {
+    style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:213,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:'16px' },
+    onClick:function(e){ if(e.target === e.currentTarget) props.onClose(); }
+  },
+    h('div', { style:{ background:'#fff', borderRadius:'9px', width:'560px', maxWidth:'96vw',
+      maxHeight:'86vh', display:'flex', flexDirection:'column', overflow:'hidden' } },
+      h('div', { style:{ padding:'11px 14px', borderBottom:'1px solid #e2e8f0',
+        display:'flex', alignItems:'center', gap:'8px', fontSize:'13.5px', fontWeight:700 } },
+        '📷 사진첩에서 찾기',
+        h('button', { type:'button', onClick:props.onClose,
+          style:{ marginLeft:'auto', border:'none', background:'none', fontSize:'16px',
+            color:'#64748b', cursor:'pointer' } }, '✕')),
+      h('div', { style:{ padding:'12px 14px', overflowY:'auto', flex:1 } },
+        h('p', { style:{ margin:'0 0 10px', fontSize:'11.5px', color:'#64748b' } },
+          key ? ['사업자번호 ', h('b', { key:'b' }, erpFmtBizNo(key)), ' 로 찾았습니다 · 고른 것만 채웁니다']
+              : '사업자번호가 없어 «업체명»으로 찾았습니다 · 고른 것만 채웁니다'),
+        docs === null ? h('div', { style:{ color:'#64748b', fontSize:'12px', padding:'18px 0', textAlign:'center' } }, '사진첩을 훑는 중…')
+          : !cands.length ? h('div', { style:{ color:'#64748b', fontSize:'12px', padding:'18px 0', textAlign:'center', lineHeight:1.8 } },
+              '당겨올 것을 못 찾았습니다.',
+              h('br'),
+              h('span', { style:{ fontSize:'11.5px' } },
+                key ? '이 사업자번호로 판독된 사업자등록증·중소기업확인서가 없거나, 이미 다 들어 있습니다'
+                    : '업체명이 같은 서류가 없습니다 — 사업자번호를 적으시면 더 잘 찾습니다'))
+          : cands.map(cardOf)),
+      h('div', { style:{ padding:'10px 14px', borderTop:'1px solid #e2e8f0',
+        display:'flex', gap:'7px', alignItems:'center' } },
+        h('span', { style:{ fontSize:'11.5px', color:'#64748b' } },
+          nCand ? (res.filled.length + res.overwrote.length) + '개 칸을 채웁니다'
+            + (res.overwrote.length ? ' (덮어쓰기 ' + res.overwrote.length + ')' : '') : '고른 것이 없습니다'),
+        h('button', { type:'button', onClick:props.onClose,
+          style:{ marginLeft:'auto', border:'1px solid #e2e8f0', background:'#fff', borderRadius:'7px',
+            padding:'7px 13px', fontWeight:700, fontSize:'12.5px', cursor:'pointer' } }, '취소'),
+        h('button', { type:'button', onClick:doFill,
+          disabled: !(res.filled.length + res.overwrote.length),
+          style:{ border:'1px solid #2563eb',
+            background:(res.filled.length + res.overwrote.length) ? '#2563eb' : '#cbd5e1',
+            borderColor:(res.filled.length + res.overwrote.length) ? '#2563eb' : '#cbd5e1',
+            color:'#fff', borderRadius:'7px', padding:'7px 13px', fontWeight:700,
+            fontSize:'12.5px', cursor:'pointer' } }, '고른 것으로 채우기'))));
+}
+
+/* 000-00-00000 꼴로 — 업체 칸에 적히는 모양을 한 곳에서 정한다 */
+function erpFmtBizNo(v){
+  var d = String(v == null ? '' : v).replace(/\D/g, '');
+  return d.length === 10 ? (d.slice(0,3) + '-' + d.slice(3,5) + '-' + d.slice(5)) : String(v || '');
+}
+
 function BankPickModal(props){
   useEscClose(props.onClose);
   var ls = useState(null); var list = ls[0]; var setList = ls[1];
@@ -20773,10 +21168,30 @@ try {
 } catch(_){ }
 
 /* 업체관리 표는 열 수가 많다. 브라우저의 자동 폭 배분에 맡기면 짧은 번호 열까지
-   남는 공간을 받아 업체명이 멀어진다. 두 표의 모든 열 폭을 여기서 한 번에 정한다. */
+   남는 공간을 받아 업체명이 멀어진다. 두 표의 모든 열 폭을 여기서 한 번에 정한다.
+
+   ★ 전체 표의 업체명 240 → 221 (대표 지시 2026-09-06 「유형부터 오른쪽 전체를
+     왼쪽으로 옮겨달라」). 유형 왼쪽은 네 칸뿐이고 셋은 이미 꽉 차 있다 —
+     체크상자 32·순번 32(글자 자리가 16px밖에 안 남는다)·번호 76(「자문-10211」이 딱 맞다).
+     그래서 줄일 수 있는 곳은 업체명뿐이었다. 0.5cm(19px)만 줄인 까닭은 실측 때문이다:
+       업체명 240px → 이름이 통째로 보이는 곳 366/373 (잘림 8곳)
+                221px →                     360/373 (잘림 13곳)
+                202px = 1cm →               352/373 (잘림 21곳)
+     1cm 를 다 빼면 잘림이 8곳에서 21곳으로 뛴다. 대표께 이 표를 보이고 0.5cm 로 정했다.
+   ⚠ 다시 넓히거나 더 줄이기 전에 위 실측을 다시 해 볼 것 — 이름은 계속 늘어난다.
+
+   ★★ 폭을 정할 때 «칸 폭 − 24» 가 글자가 쓸 수 있는 자리다 (2026-09-06 에 알았다).
+     td 여백 16(5px 8px) + 그 «안» 의 co-edit-cell 여백 8(2px 4px) 이 겹친다.
+     이 8px 을 빼먹고 폭을 잡아 대표자·계약시작·월자문료가 두 줄로 흘렀다
+     (대표 지시 2026-09-06 「대표자와 계약시작일 월 자문료를 한 줄로 나오게 해달라」).
+     실측(값 373건, 화면과 같은 글꼴):
+       대표자   50 → 70  (세 글자 이름 59px 필요 · 두 사람 적힌 22곳은 … + 말풍선)
+       계약시작 72 → 85  (「2007-03-01」 85px 필요 · 머리글 「계약시간 ⇅」 도 73px)
+       월자문료 72 → 78  (「220,000원」 은 고정폭 글꼴이라 78px 필요)
+     ⚠ 폭만 넓히면 값이 길어지는 날 다시 두 줄이 된다 — .co-1line 이 «줄바꿈 자체»를 막는다. */
 var COMPANY_TABLE_WIDTHS = {
-  suboffice:[32,32,76,220,76,100,82,110,55,230,72,72,72,72,72,84,52,60],
-  full:[32,32,76,240,60,72,80,95,70,100,50,55,55,65,65,200,80,90,72,48,55,72,72,72,80,48,55]
+  suboffice:[32,32,76,220,76,100,82,110,70,230,72,72,72,72,72,84,52,60],
+  full:[32,32,76,221,60,72,80,95,70,100,70,55,55,65,65,200,80,90,72,48,55,85,72,78,80,48,55]
 };
 function coTableColgroup(kind){
   return h('colgroup', null, COMPANY_TABLE_WIDTHS[kind].map(function(width,i){
@@ -20788,6 +21203,16 @@ function coTableWidth(kind,hiddenIndexes){
     return hiddenIndexes.indexOf(i+1)>=0 ? total : total+width;
   },0);
 }
+/* 대표자 말풍선 — 칸이 좁아 … 로 잘려도 온이름은 여기서 읽는다.
+   두 사람이면 「·」로 이어 «한 줄»로 적는다(칸도 한 줄이라 말풍선도 그 모양이 맞다).
+   ⚠ 값이 없을 때까지 「 — 더블클릭으로 편집」을 붙이면 빈 칸에 대시만 뜬다. */
+function coCeoTip(co){
+  var a = String((co && co.ceo) || '').trim();
+  var b = String((co && co.ceo2) || '').trim();
+  var both = b ? (a ? a + ' · ' + b : b) : a;
+  return both ? both + ' — 더블클릭으로 편집' : '더블클릭으로 편집';
+}
+try { window.coCeoTip = coCeoTip; } catch(_){ }
 
 function CompanyManagement(){
   var _fill1 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 240px)
@@ -21772,19 +22197,14 @@ function CompanyManagement(){
   function coInTab(co){
     // ★ 계약 중단 탭
     if(statusTab === 'suspended') return !!co.suspended;
-    // ★ 폐업 탭 (대표 지시 2026-08-17) — 사업장이 없어졌지만 «정산 신고가 남은» 곳.
-    //   종료(status='closed')와 다르다: 종료는 할 일이 다 끝나 종료관리로 넘긴 것이고,
-    //   폐업은 «아직 우리 일이 남아» 업체관리에 남겨 두는 것이다. 폐업을 바로 종료로
-    //   넘기면 매일 보는 목록에서 사라져 폐업 정산 신고를 놓친다.
-    //   ⚠ 종료까지 된 것은 여기서도 뺀다 — 안 그러면 「할 일이 남은 곳」이라는 이 탭의
-    //     뜻이 흐려지고, 종료관리로 넘긴 것이 업체관리에 되살아난 것처럼 보인다.
-    if(statusTab === 'closedbiz') return !!co.closedBiz && co.status !== 'closed';
     // 사무대행 탭: status='suboffice' OR active+isSuboffice 모두 표시 (자문과 중복인 경우)
-    // ⚠ 폐업도 «남긴다» — 폐업 정산 신고를 대행하는 것이 사무대행의 일이다.
-    //   대신 줄을 회색으로 칠해 눈으로 갈라 보인다(아래 rowStyle).
     if(statusTab === 'suboffice') return co.status === 'suboffice' || !!co.isSuboffice;
-    // ⚠ 「전체 활성」에서는 폐업을 뺀다 — 그 숫자는 «실제로 영업 중인 곳»이어야 한다.
-    if(statusTab === 'active') return co.status === 'active' && !co.closedBiz;
+    /* ⚠ 폐업 탭을 없앴다(대표 지시 2026-09-06 「폐업은 필요없다. 삭제해라」).
+       2026-08-17 에 「폐업 정산 신고가 남으니 목록에 남겨 두자」며 만들었으나
+       373곳 어디에도 한 번도 켜진 적이 없다(실측 0곳). 폐업한 곳은 이제
+       ⋯ → 「종료 처리」에서 사유를 「업체 폐업」으로 골라 종료관리로 넘긴다.
+       ★ 다시 만들지 말 것 — 쓰이지 않은 채 탭 하나와 대시보드 칸 하나를 차지했다. */
+    if(statusTab === 'active') return co.status === 'active';
     return co.status === statusTab;
   }
   // 필터
@@ -21892,10 +22312,7 @@ function CompanyManagement(){
   }
 
   // 카운트
-  /* ⚠ 폐업은 뺀다 — 이 숫자는 «실제로 영업 중인 곳»이어야 한다(대표 지시 2026-08-17). */
-  var activeCount = companies.filter(function(c){return c.status==='active' && !c.closedBiz;}).length;
-  /* ⚠ 탭과 «같은 기준» — 종료된 것은 세지 않는다(탭에도 안 나온다) */
-  var closedBizCount = companies.filter(function(c){return !!c.closedBiz && c.status!=='closed';}).length;
+  var activeCount = companies.filter(function(c){return c.status==='active';}).length;
   var subofficeCount = companies.filter(function(c){return c.status==='suboffice' || c.isSuboffice;}).length;
   var totalAdvisoryFee = filtered.reduce(function(s,c){return s + (c.monthlyAdvisoryFee||0);}, 0);
   // 페이지네이션 (표시 개수 선택)
@@ -22004,13 +22421,11 @@ function CompanyManagement(){
       onMonthChange: function(ym){ setSelYM(ym); },  // monthOnly 자동 활성화 제거 (다른 달 계약 사라지는 버그 수정)
       kpis: [
         { label:'🏢 운영 업체', value:companies.filter(function(c){return c.status!=='closed';}).length+'개', bg:'#f8fafc', fg:'#1e293b', color:'#1e293b', border:'#e2e8f0' },
-        { label:'💼 활성 자문', value:companies.filter(function(c){return c.status==='active' && !c.closedBiz;}).length+'개', bg:'#eff6ff', fg:'#1e40af', color:'#1e40af', border:'#bfdbfe' },
+        { label:'💼 활성 자문', value:companies.filter(function(c){return c.status==='active';}).length+'개', bg:'#eff6ff', fg:'#1e40af', color:'#1e40af', border:'#bfdbfe' },
         { label:'🏛️ 사무대행', value:companies.filter(function(c){return c.status==='suboffice' || c.isSuboffice;}).length+'개', bg:'#fffbeb', fg:'#854d0e', color:'#d97706', border:'#fde68a' },
         { label:'💰 월 자문료', value:totalAdvisoryFee.toLocaleString()+'원', bg:'#fffbeb', fg:'#854d0e', color:'#d97706', border:'#fde68a' },
         { label:'✨ 이번 달 신규', value:companies.filter(function(c){return (c.contractStartDate||c.firstContractDate||c.createdAt||'').slice(0,7)===selYM;}).length+'개', bg:'#f0fdf4', fg:'#166534', color:'#16a34a', border:'#bbf7d0' },
-        { label:'⏸ 계약 중단', value:companies.filter(function(c){return !!c.suspended;}).length+'개', bg:'#fffbeb', fg:'#854d0e', color:'#fbbf24', border:'#fde68a' },
-        /* ★ 폐업 — 사업장이 없어졌지만 정산 신고가 남은 곳(대표 지시 2026-08-17) */
-        { label:'🏚 폐업', value:closedBizCount+'개', bg:'#f8fafc', fg:'#475569', color:'#94a3b8', border:'#cbd5e1' }
+        { label:'⏸ 계약 중단', value:companies.filter(function(c){return !!c.suspended;}).length+'개', bg:'#fffbeb', fg:'#854d0e', color:'#fbbf24', border:'#fde68a' }
       ],
       extra: h('button', { onClick:function(){setMonthOnly(!monthOnly);},
         title:MONTH_ONLY_TIP,
@@ -22164,17 +22579,8 @@ function CompanyManagement(){
           border: '1px solid '+(statusTab==='suspended' ? '#fbbf24' : '#fde68a'),
           fontSize:'12px', fontWeight:700, cursor:'pointer' } },
         '⏸ 계약 중단 (' + companies.filter(function(c){return !!c.suspended;}).length + ')'),
-      /* ★ 폐업 탭 (대표 지시 2026-08-17) — 사업장은 없어졌지만 정산 신고가 남은 곳.
-         종료로 바로 넘기면 목록에서 사라져 남은 신고를 놓친다. */
-      h('button', { onClick:function(){ setStatusTab('closedbiz'); },
-        title:'사업장이 폐업했지만 정산 신고 등 남은 일이 있는 곳입니다. 다 끝나면 「종료 처리」로 넘기세요.',
-        style:{ padding:'6px 14px', borderRadius:'5px',
-          background: statusTab==='closedbiz' ? '#64748b' : '#fff',
-          color: statusTab==='closedbiz' ? '#fff' : '#475569',
-          border: '1px solid '+(statusTab==='closedbiz' ? '#64748b' : '#cbd5e1'),
-          fontSize:'12px', fontWeight:700, cursor:'pointer' } },
-        '🏚 폐업 (' + closedBizCount + ')'),
       // (종료 탭 제거: 종료 업체는 종료관리에서 조회)
+      // (폐업 탭 제거 2026-09-06: 폐업한 곳은 「종료 처리」에서 사유 「업체 폐업」으로 넘긴다)
       // (담당·부담당·급여일 필터는 표 머리 깔때기로 옮겼다 — 도구줄에는 두지 않는다)
       // 유형만은 도구줄에 남긴다: 깔때기 안에 들어가니 자문/급여/노조/기금이 몇 곳인지 안 보였다
       h('div', { style:{ width:'1px', height:'20px', background:'#e2e8f0', flexShrink:0, margin:'0 2px' } }),
@@ -22415,18 +22821,15 @@ function CompanyManagement(){
             ? h('tr', null, h('td', { colSpan: statusTab === 'suboffice' ? 18 : 25, className:'ac', style:{ color:'#94a3b8', padding:'40px' } }, '등록된 데이터가 없습니다'))
             : pg.paged.map(function(co, idx){
                 var expiring = isExpiringSoon(co);
-                // ★ 폐업(회색)이 계약 중단(주황)보다 앞선다 — 사업장이 없어진 것이 더 큰 사실이다
-                var rowStyle = co.closedBiz
-                  ? { background:'#f8fafc', borderLeft:'4px solid #94a3b8' }
-                  : co.suspended
+                var rowStyle = co.suspended
                   ? { background:'#fffbeb', borderLeft:'4px solid #fbbf24' }
                   : expiring ? { boxShadow:'inset 0 0 0 2px #fbbf24' } : {};
                 /* ★ 갓 이관된 사업장 — 하루 동안 옅은 파랑 (대표 지시 2026-08-31).
-                   ⚠ 폐업·중단 표시보다 «뒤»에 둔다. 그 둘은 더 큰 사실이라
-                     새로 왔다고 덮어 버리면 안 된다 — 폐업한 곳이 멀쩡해 보인다.
+                   ⚠ 계약 중단 표시보다 «뒤»에 둔다. 그쪽이 더 큰 사실이라
+                     새로 왔다고 덮어 버리면 안 된다 — 멈춘 계약이 멀쩡해 보인다.
                    ⚠ 색만 바꾸지 않고 왼쪽에 띠도 둔다. 색만으로 가르면 색을 잘
                      못 가리는 사람에게는 아무 표시도 없는 것과 같다. */
-                if(arvIsFresh(co) && !co.closedBiz && !co.suspended){
+                if(arvIsFresh(co) && !co.suspended){
                   rowStyle = Object.assign({}, rowStyle,
                     { background:'#eff6ff', borderLeft:'4px solid #60a5fa' });
                 }
@@ -22506,11 +22909,14 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                     h('td', null, renderCell(co, 'bizNo', co.bizNo, {})),
                     h('td', { className:'co-biz-col', title:co.bizType||'' }, renderCell(co, 'bizType', co.bizType, {})),
                     h('td', { className:'co-biz-cat', title:co.bizCategory||'' }, renderCell(co, 'bizCategory', co.bizCategory, {})),
-                    h('td', null, co.ceo2
-                      ? h('div', { style:{ fontSize:'11.5px', lineHeight:'1.4' } },
-                          renderCell(co, 'ceo', co.ceo, {}),
-                          h('div', { style:{ marginTop:'2px' } }, renderCell(co, 'ceo2', co.ceo2, {})))
-                      : renderCell(co, 'ceo', co.ceo, {})),
+                    /* ★ 대표자도 «한 줄»이다 — 두 사람이면 옆에 나란히 둔다(위아래로 쌓지 않는다).
+                       넘치면 … 로 자르고 온이름은 말풍선에 남긴다. */
+                    h('td', { className:'co-1line' }, co.ceo2
+                      ? h('div', { style:{ display:'flex', alignItems:'center', gap:'4px', minWidth:0 } },
+                          renderCell(co, 'ceo', co.ceo, { tipTitle: coCeoTip(co) }),
+                          h('span', { style:{ color:'#cbd5e1' } }, '·'),
+                          renderCell(co, 'ceo2', co.ceo2, { tipTitle: coCeoTip(co) }))
+                      : renderCell(co, 'ceo', co.ceo, { tipTitle: coCeoTip(co) })),
                     h('td', null, renderCell(co, 'address', co.address, {})),
                     h('td', { style:{ background:'#f0fdf4' } }, wageCell(co, 'filed')),
                     h('td', { style:{ background:'#f0fdf4' } }, wageCell(co, 'taxReq')),
@@ -22560,10 +22966,7 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                        어디서 왔는지 적히고, × 를 누르면 지워지고, 이틀 뒤 저절로 사라진다. */
                     arvBadge(co, 'companies', refreshCompanies),
                     co.suspended && h('span', { title:'계약 중단: '+(co.suspendedReason||'사유 없음')+' ('+(co.suspendedAt||'-')+')',
-                      style:{ fontSize:'10.5px', background:'#fbbf24', color:'#fff', borderRadius:'4px', padding:'1px 5px', marginLeft:'4px', fontWeight:700, cursor:'help', verticalAlign:'middle' }}, '⏸ 중단'),
-                    /* ★ 폐업 딱지 — 사무대행 탭에서도 이것으로 갈라 본다 */
-                    co.closedBiz && h('span', { title:'폐업'+(co.closedBizDate?' '+String(co.closedBizDate).slice(0,10):'')+(co.closedBizNote?' · '+co.closedBizNote:'')+' — 정산 신고 등이 끝나면 「종료 처리」로 넘기세요',
-                      style:{ fontSize:'10.5px', background:'#64748b', color:'#fff', borderRadius:'4px', padding:'1px 5px', marginLeft:'4px', fontWeight:700, cursor:'help', verticalAlign:'middle' }}, '🏚 폐업')),
+                      style:{ fontSize:'10.5px', background:'#fbbf24', color:'#fff', borderRadius:'4px', padding:'1px 5px', marginLeft:'4px', fontWeight:700, cursor:'help', verticalAlign:'middle' }}, '⏸ 중단')),
                   // 유형
                   h('td', null, renderCell(co, 'typeCode', typeName(co.typeCode), { select: typeOptions })),
                   // 주담당 [계약고유]
@@ -22595,12 +22998,16 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                   h('td', { className:'co-biz-col', title:co.bizType||'' }, renderCell(co, 'bizType', co.bizType, {})),
                   // 종목
                   h('td', { className:'co-biz-cat', title:co.bizCategory||'' }, renderCell(co, 'bizCategory', co.bizCategory, {})),
-                  // 대표자 (2명까지)
-                  h('td', null,
-                    h('div', null,
-                      renderCell(co, 'ceo', co.ceo, {}),
-                      co.ceo2 && h('div', { style:{ marginTop:'2px' } }, renderCell(co, 'ceo2', co.ceo2, {}))
-                    )),
+                  /* 대표자 (2명까지) — ★ 둘이어도 «한 줄»이다. 위아래로 쌓으면
+                     그 한 줄 때문에 표 전체가 두 배로 길어진다(대표 지시 2026-08-30).
+                     넘치면 … 로 자르고 온이름은 말풍선에 남긴다. */
+                  h('td', { className:'co-1line' },
+                    co.ceo2
+                      ? h('div', { style:{ display:'flex', alignItems:'center', gap:'4px', minWidth:0 } },
+                          renderCell(co, 'ceo', co.ceo, { tipTitle: coCeoTip(co) }),
+                          h('span', { style:{ color:'#cbd5e1' } }, '·'),
+                          renderCell(co, 'ceo2', co.ceo2, { tipTitle: coCeoTip(co) }))
+                      : renderCell(co, 'ceo', co.ceo, { tipTitle: coCeoTip(co) })),
                   // 규모
                   h('td', null, renderCell(co, 'companySize', co.companySize, { select: sizeOptions })),
                   // 근로자수
@@ -22669,8 +23076,9 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                   ),
                   // 입금일 [계약고유]
                   h('td', { className:'contract-only' }, renderCell(co, 'taxInvoicePaymentDay', co.taxInvoicePaymentDay, {})),
-                  // 계약시작 [계약고유]
-                  h('td', { className:'contract-only' }, renderCell(co, 'contractStartDate', co.contractStartDate, { type:'date' })),
+                  // 계약시작 [계약고유] — ★ 「2007-03-01」이 두 줄로 흐르던 자리(대표 2026-09-06)
+                  h('td', { className:'contract-only co-1line' }, renderCell(co, 'contractStartDate', co.contractStartDate, { type:'date',
+                    tipTitle: co.contractStartDate ? co.contractStartDate + ' — 더블클릭으로 편집' : '더블클릭으로 편집' })),
                   // 계약종료 + D-N 배지 [계약고유]
                   h('td', { className:'contract-only' },
                     h('div', { style:{ display:'flex', alignItems:'center', gap:'4px' } },
@@ -22679,7 +23087,10 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                     )
                   ),
                   // 월자문료 [계약고유]
-                  h('td', { className:'contract-only ar hide-fee-col' }, renderCell(co, 'monthlyAdvisoryFee', (co.monthlyAdvisoryFee||0).toLocaleString() + '원', { numeric:true, type:'text' })),
+                  /* ★ 폭 78px 는 지금 가장 큰 금액(220,000원)에 맞춘 것이다. 언젠가 백만 원대가
+                     들어오면 … 로 잘리므로, 그때도 읽을 수 있게 말풍선에 온금액을 남긴다. */
+                  h('td', { className:'contract-only ar hide-fee-col co-1line' }, renderCell(co, 'monthlyAdvisoryFee', (co.monthlyAdvisoryFee||0).toLocaleString() + '원', { numeric:true, type:'text',
+                    tipTitle: (co.monthlyAdvisoryFee||0).toLocaleString() + '원 — 더블클릭으로 편집' })),
                   // 특이사항
                   h('td', { className:'co-note-col' }, renderCell(co, 'note', co.note, { tipTitle: (co.note ? co.note : '더블클릭으로 편집') })),
                   h('td', { className:'ac' }, renderCell(co, 'difficulty', co.difficulty ? h('span',{style:{fontWeight:700,padding:'1px 7px',borderRadius:'8px',background:({1:'#f0fdf4',2:'#bbf7d0',3:'#fffbeb',4:'#fffbeb',5:'#fef2f2'})[co.difficulty]||'#f8fafc',color:({1:'#166534',2:'#166534',3:'#854d0e',4:'#d97706',5:'#991b1b'})[co.difficulty]||'#475569'}}, co.difficulty) : '-', {select:[{v:'',label:'-'},{v:'1',label:'1 쉬움'},{v:'2',label:'2'},{v:'3',label:'3 보통'},{v:'4',label:'4'},{v:'5',label:'5 어려움'}]})),
@@ -23251,11 +23662,16 @@ function CompanyEditModal(props){
   var pcpk = useState(null); var pcPickMode = pcpk[0]; var setPcPickMode = pcpk[1];  // 기업정보함 찾기: 'ceo' | 'contact' | 'tax'
   var txh = useState([]); var taxHits = txh[0]; var setTaxHits = txh[1];             // 세무사무실 자동완성 후보
   var pccp = useState(false); var pcCoPick = pccp[0]; var setPcCoPick = pccp[1];     // 기업정보함에서 사업자등록증(회사정보) 찾기
+  var cpp = useState(false); var coPhotoPick = cpp[0]; var setCoPhotoPick = cpp[1];  // 📷 사진첩 서류에서 회사 칸 당겨오기 (2026-09-06)
   var wss = useState(null); var webSearch = wss[0]; var setWebSearch = wss[1];       // 홈페이지 자동 찾기: null|{loading,candidates,error}
   var FIND_WEBSITE_URL = 'https://us-central1-pureun-erp.cloudfunctions.net/findCompanyWebsite';
   var users = getAssignableUsers();
   var assignable = getAssignableUsers();   // 휴직·배제 제외
   var typeMasters = dbGet('biz_company_types', COMPANY_TYPE_SEED);
+  /* 이 업체에 «계약관리 기록»이 있나 — 단추를 보일지 정하고, 누르면 그 값을 그대로 쓴다.
+     ★ 두 곳에서 따로 찾으면 「단추는 보이는데 눌러도 없다」가 생긴다. 한 번만 찾는다.
+     ⚠ 함수 선언들 «사이»에 두지 않는다 — 소스를 잘라 돌리는 검사가 이 줄을 실행해 버린다. */
+  var coCtHit = erpContractForCompany(f, dbGet('contracts', []) || []);
 
   function set(k){ return function(e){
     var v = e.target.type === 'number' ? (parseInt(e.target.value||0,10)||0) : e.target.value;
@@ -23415,37 +23831,56 @@ function CompanyEditModal(props){
   /* 계약서에서 계약정보 당겨오기 (대표 지시 2026-08-31).
      ★ 세무사무실·대표자 채우기와 «같은 규칙» — 빈 칸만 채우고, 무엇을 채웠는지
        무엇을 그냥 뒀는지 말해 준다. 업체관리에서 고쳐 둔 값을 말없이 되돌리지 않는다. */
+  /* 「비어 있다」의 뜻이 칸마다 다르다 — 자문료는 0 이 빈 것이고,
+     부가세는 «미확정»(unspecified)이 빈 것이다. 두 길(계약관리·사진첩)이 같은 자를 쓴다. */
+  function coFieldBlank(k, now){
+    if(k === 'monthlyAdvisoryFee') return !(parseInt(now, 10) > 0);
+    if(k === 'vatType') return !now || now === 'unspecified';
+    return !String(now || '').trim();
+  }
   function fillFromContract(){
-    var ct = erpContractForCompany(f, dbGet('contracts', []) || []);
+    var ct = coCtHit;
+    /* ★ 빈손일 때 «왜» 빈손인지 갈라서 말한다 (2026-09-06).
+       업체 373곳 중 계약관리에 계약서가 있는 곳은 29곳뿐이다 — 대부분은 여기서 끝난다.
+       그때 「채울 빈 칸이 없었습니다」라고만 하면, 계약서에 값이 있는데 안 가져온 것처럼 들린다.
+       없으면 없다고 말하고, 다음 걸음(사진첩)을 가리킨다. */
     if(!ct){
-      showToast('📄 이 업체의 계약서를 못 찾았습니다 — 계약관리에 등록된 계약이 없거나 업체명·사업자번호가 다릅니다');
+      showToast('📄 이 업체의 계약을 계약관리에서 못 찾았습니다'
+        + ' — 등록된 계약이 없거나 업체명·사업자번호가 다릅니다'
+        + ' · 옆의 「📷 사진첩에서 찾기」로 계약서를 찾아보세요');
       return;
     }
     var v = erpContractToCoFields(ct);
     var LABEL = { typeCode:'업체유형', contractStartDate:'계약 시작', contractEndDate:'계약 종료',
       monthlyAdvisoryFee:'월 자문료', vatType:'부가세' };
+    /* 계약서는 있는데 «조건이 안 적혀» 있는 경우 — 이것도 따로 말해야 한다 */
+    var hasAny = Object.keys(LABEL).some(function(k){ return v[k] || v[k] === 0; });
+    if(!hasAny){
+      showToast('📄 ' + (v.contractNo || '계약서') + ' 에는 금액·기간이 안 적혀 있습니다'
+        + ' — 옆의 「📷 사진첩에서 찾기」로 계약서를 찾아보세요');
+      return;
+    }
     var got = [], kept = [];
     setF(function(prev){
       var nx = Object.assign({}, prev);
       Object.keys(LABEL).forEach(function(k){
-        var now = nx[k];
-        /* 「비어 있다」의 뜻이 칸마다 다르다 — 자문료는 0 이 빈 것이고,
-           부가세는 «미확정»(unspecified)이 빈 것이다. */
-        var blank = (k === 'monthlyAdvisoryFee') ? !(parseInt(now, 10) > 0)
-          : (k === 'vatType') ? (!now || now === 'unspecified')
-          : !String(now || '').trim();
         if(!v[k] && v[k] !== 0) return;                 // 계약서에도 없으면 건드리지 않는다
-        if(!blank){ kept.push(LABEL[k]); return; }
+        if(!coFieldBlank(k, nx[k])){ kept.push(LABEL[k]); return; }
         nx[k] = v[k]; got.push(LABEL[k]);
       });
       /* 어느 계약서에서 왔는지 남긴다 — 나중에 「이 값 어디서 왔나」를 물을 수 있게 */
       if(v.contractNo && !String(nx.sourceContractNo || '').trim()) nx.sourceContractNo = v.contractNo;
       return nx;
     });
-    showToast('📄 ' + (v.contractNo || '계약서') + ' 에서 당겨옴'
-      + (got.length ? (' · ' + got.join('·') + ' 채움') : ' · 채울 빈 칸이 없었습니다')
-      + (kept.length ? (' · ' + kept.join('·') + ' 은 적어 두신 값 그대로 뒀습니다') : ''));
+    /* 채운 것도 그냥 둔 것도 «늘» 말한다 — 무엇이 계약서와 다른 채로 남았는지 알아야 한다 */
+    showToast('📄 ' + (v.contractNo || '계약서')
+      + (got.length ? (' 에서 ' + got.join('·') + ' 채움') : '')
+      + (kept.length
+          ? (got.length ? (' · ' + kept.join('·') + ' 은 적어 두신 값 그대로 뒀습니다')
+                        : ' · ' + kept.join('·') + ' 은 이미 채워져 있습니다 — 고치려면 값을 지우고 다시 누르세요')
+          : ''));
   }
+
   // 기업정보함에서 담당자 추가 (pcId 기록 — 자동연동 아님)
   function addContactFromPc(p){
     var arr = (f.contacts||[]).slice();
@@ -23484,7 +23919,22 @@ function CompanyEditModal(props){
               title:'기업정보함에서 대표자를 찾아 이름·대표 전화·팩스·이메일을 채웁니다',
               style:{ background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe', borderRadius:'5px',
                 padding:'4px 9px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
-              '📇 대표자 찾기')),
+              '📇 대표자 찾기'),
+            /* ── 📷 사진첩에서 찾기 (대표 승인 목업 2026-09-06) ──
+               위 둘은 «기업정보함»에서 가져온다(2026-08-10). 빠져 있던 것이 «사진첩»이다 —
+               사진첩은 사업자등록증·중소기업확인서를 판독해 두고도, 그 값이 업체관리로
+               가는 길은 «사진첩이 스스로 밀어넣는 것»뿐이었다. 그래서
+                 ① 업체에 사업자번호가 없으면 영영 안 붙고
+                 ② 이미 값이 있으면 안 바뀌고
+                 ③ 사람이 「지금」 당길 수가 없었다.
+               ⚠ 여기만 «덮어쓸 수 있다»(대표 결정 2026-09-06 ⓐ) — 그것도 칸을 짚어야만. */
+            h('button', { type:'button', onClick:function(){ setCoPhotoPick(true); },
+              title:'사진첩에 판독해 둔 이 업체의 사업자등록증·중소기업확인서에서\n'
+                   +'업태·종목·팩스·규모 같은 칸을 가져옵니다\n'
+                   +'— 빈 칸은 채우고, 값이 다른 칸은 지금 값과 나란히 보여 드립니다',
+              style:{ background:'#f0fdf4', color:'#166534', border:'1px solid #bbf7d0', borderRadius:'5px',
+                padding:'4px 9px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
+              '📷 사진첩에서 찾기')),
           h('div', { className:'fld' }, h('label', null, '업체명 *'),
             h('input', { type:'text', value:f.name || '', onChange:set('name'), placeholder:'(주)○○○' })),
           /* ── 예전 이름 (2026-08-26 대표 지시) ──
@@ -23713,13 +24163,31 @@ function CompanyEditModal(props){
         h('div', { style:{ background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'6px', padding:'10px 12px', marginBottom:'10px' } },
           h('div', { style:{ fontSize:'12px', fontWeight:700, color:'#854d0e', marginBottom:'8px',
               display:'flex', alignItems:'center', gap:'8px' } }, '📋 계약정보',
-            h('button', { type:'button', onClick:fillFromContract,
-              title:'계약관리에 등록된 이 업체의 «가장 최근» 계약서에서\n'
+            /* ★ 사진첩이 «먼저»다 (대표 2026-09-06: 「계약서는 계약관리에 안 넣는다」).
+               업체 자문계약서는 계약관리에 등록하지 않는다 — 계약관리는 사건·컨설팅용이다
+               (실측: 계약 129건 중 컨설팅 85 · 사건 19 · 업체 14).
+               그래서 업체 계약정보의 실제 출처는 사진첩의 계약서 스캔이다.
+               ⚠ 창을 새로 만들지 않는다. 회사정보의 「📷 사진첩에서 찾기」와 «같은 창»을 연다 —
+                 같은 일에 창이 둘이면 한쪽만 고치는 사고가 난다. */
+            h('button', { type:'button', onClick:function(){ setCoPhotoPick(true); },
+              title:'사진첩에 찍어 둔 계약서·사업자등록증을 찾아 빈 칸을 채웁니다\n'
+                   +'금액의 단위(만·억)는 짐작하지 않습니다 — 못 읽으면 그렇게 말합니다\n'
+                   +'무엇이 바뀌는지 먼저 보여 드립니다',
+              style:{ marginLeft:'auto', background:'#f0fdf4', color:'#166534', border:'1px solid #bbf7d0',
+                borderRadius:'5px', padding:'4px 9px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
+              '📷 사진첩에서 찾기'),
+            /* ⚠ 이 단추는 «그 업체에 계약 기록이 있을 때만» 보인다 — 373곳 중 29곳뿐이다.
+                 늘 보이면 344곳에서 눌러도 아무 일이 없다.
+               ⚠ 지우지는 않는다. 계약관리에서 이관해 온 업체에는 여전히 쓸모가 있고,
+                 앞으로 이관해 오는 건도 있다.
+               ⚠ 「왜 단추가 안 보이지」 하고 늘 보이게 되돌리지 말 것 — 위 까닭 그대로다. */
+            coCtHit && h('button', { type:'button', onClick:fillFromContract,
+              title:'계약관리에 등록된 이 업체의 «가장 최근» 계약 기록에서\n'
                    +'업체유형·계약기간·월 자문료·부가세를 가져옵니다\n'
                    +'— 이미 적어 둔 칸은 그대로 둡니다',
-              style:{ marginLeft:'auto', background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe',
+              style:{ background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe',
                 borderRadius:'5px', padding:'4px 9px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
-              '📄 계약서에서 당겨오기')),
+              '📄 계약관리에서 당겨오기')),
           h('div', { className:'fld' }, h('label', null, '업체유형'),
             h('select', { value:f.typeCode || '', onChange:set('typeCode') },
               typeMasters.map(function(t){ return h('option', { key:t.code, value:t.code }, t.name); }))),
@@ -23942,43 +24410,9 @@ function CompanyEditModal(props){
                 style:{ width:'100%', padding:'6px 8px', border:'1px solid #fde68a', borderRadius:'4px', fontSize:'12px', background:'#fff', boxSizing:'border-box' } })
             )
           )
-        ),
-        // ★ 폐업 섹션 (대표 지시 2026-08-17)
-        //   「종료 처리」와 다르다 — 종료는 할 일이 다 끝나 종료관리로 넘기는 것이고,
-        //   폐업은 사업장이 없어졌지만 «정산 신고 등 우리 일이 남아» 목록에 남겨 두는 것이다.
-        h('div', { style:{ background: f.closedBiz ? '#f8fafc' : '#f8fafc', border:'2px solid '+(f.closedBiz?'#94a3b8':'#e2e8f0'), borderRadius:'8px', padding:'12px 14px', marginTop:'10px' } },
-          h('div', { style:{ display:'flex', alignItems:'center', gap:'10px', marginBottom: f.closedBiz ? '10px' : '0' } },
-            h('label', { style:{ display:'flex', alignItems:'center', gap:'8px', cursor:'pointer', fontWeight:700, fontSize:'13px', color:'#475569' } },
-              h('input', { type:'checkbox', checked:!!f.closedBiz,
-                onChange:function(e){
-                  var next = Object.assign({}, f, { closedBiz: e.target.checked });
-                  if(e.target.checked && !next.closedBizDate) next.closedBizDate = todayYMD();
-                  if(!e.target.checked){ next.closedBizDate=''; next.closedBizNote=''; }
-                  setF(next);
-                },
-                style:{ width:'16px', height:'16px', cursor:'pointer' }
-              }),
-              '🏚 사업장 폐업',
-              f.closedBiz && h('span', { style:{ fontSize:'10px', background:'#64748b', color:'#fff', padding:'1px 6px', borderRadius:'4px', marginLeft:'4px' } }, '폐업')
-            ),
-            !f.closedBiz && h('span', { style:{ fontSize:'11px', color:'#94a3b8' } }, '체크하면 「전체 활성」에서 빠지고 「폐업」 탭에 모입니다 — 목록에는 남아 남은 신고를 놓치지 않습니다')
-          ),
-          f.closedBiz && h('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' } },
-            h('div', null,
-              h('label', { style:{ fontSize:'11px', color:'#475569', fontWeight:600, display:'block', marginBottom:'3px' } }, '폐업일'),
-              h('input', { type:'date', value:f.closedBizDate||'', onChange:set('closedBizDate'),
-                style:{ width:'100%', padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px', background:'#fff' } })
-            ),
-            h('div', null,
-              h('label', { style:{ fontSize:'11px', color:'#475569', fontWeight:600, display:'block', marginBottom:'3px' } }, '남은 일 / 메모'),
-              h('input', { type:'text', value:f.closedBizNote||'', onChange:set('closedBizNote'),
-                placeholder:'예: 2026년 보수총액 정산신고 남음',
-                style:{ width:'100%', padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px', background:'#fff', boxSizing:'border-box' } })
-            ),
-            h('div', { style:{ gridColumn:'span 2', fontSize:'11px', color:'#64748b', lineHeight:1.6 } },
-              '※ 정산 신고까지 끝나면 목록에서 ⋯ → 「종료 처리」로 넘기세요. 그때 종료관리로 갑니다.')
-          )
         )
+        /* (폐업 칸 제거 2026-09-06 — 「폐업은 필요없다. 삭제해라」.
+            폐업한 곳은 목록에서 ⋯ → 「종료 처리」, 사유 「업체 폐업」으로 넘긴다.) */
       ),
       h('div', { className:'modal-f' },
         h('button', { className:'btn-secondary', onClick:props.onClose }, '취소'),
@@ -24004,6 +24438,21 @@ function CompanyEditModal(props){
       initialQuery: f.name || '',
       onClose:function(){ setPcCoPick(false); },
       onSelect:function(row){ setPcCoPick(false); fillCompanyFromPcBiz(row); }
+    }),
+    /* 📷 사진첩에서 찾기 (2026-09-06) — 채우기만 한다. 저장은 여전히 「저장」 단추다. */
+    coPhotoPick && h(CoPullModal, {
+      cur: f,
+      onClose:function(){ setCoPhotoPick(false); },
+      onPick:function(patch, res){
+        setCoPhotoPick(false);
+        setF(function(prev){ return Object.assign({}, prev, patch); });
+        var msg = [];
+        if(res.filled.length) msg.push('빈 칸 ' + res.filled.length + '개 채움(' + res.filled.join('·') + ')');
+        if(res.overwrote.length) msg.push('덮어씀 ' + res.overwrote.length + '개(' + res.overwrote.join('·') + ')');
+        if(patch.bizNo) msg.push('사업자번호를 적었습니다');
+        showToast('📷 사진첩에서 당겨옴 · ' + (msg.join(' · ') || '바뀐 것이 없습니다')
+          + ' — 아직 저장 전입니다');
+      }
     })
   );
 }
@@ -27079,6 +27528,17 @@ var ROLES = [
   { v:'member',         label:'일반',       tag:'tag-member' }
 ];
 function roleInfo(v){ return ROLES.find(function(r){return r.v===v;}) || ROLES[2]; }
+/* 사람 고르는 칸의 이름표 — 「홍길동 (노무사)」.
+   ⚠ 직위가 비어 있을 수 있다. 2026-09-06 부터 급여대장 가져오기가 직위를 «지어내지
+     않기» 때문이다(예전에는 무조건 「직원」을 넣어, 노무사였던 분이 경력증명서에
+     직원으로 찍혔다). 그냥 이으면 「홍길동 ()」가 되어 빈칸인지 고장인지 모른다 —
+     여기서 «직위 미입력»이라고 분명히 말해, 증명서를 뽑기 «전에» 눈에 띄게 한다. */
+function staffPickLabel(u){
+  if(!u) return '';
+  var t = String(u.title == null ? '' : u.title).trim();
+  return String(u.name || u.sid || '') + ' (' + (t || '직위 미입력') + ')';
+}
+try { window.staffPickLabel = staffPickLabel; } catch(_){ }
 
 // localStorage 사번 정리: 중복 제거 + 잘못된 데이터 SEED로 리셋
 (function fixUserAccounts(){
@@ -32106,8 +32566,12 @@ function extractTemplateText(file, cb){
 
 // ============ rhwp (HWP/HWPX 정밀 텍스트 + 원본 SVG 미리보기) ============
 // @rhwp/core (ESM+WASM) — jsDelivr CDN 동적 로드. 버전 고정 + 최신확인 버튼.
-var RHWP_DEFAULT_VER = '0.7.19';
-function rhwpVer(){ try{ return localStorage.getItem('pureun_v6_rhwp_ver') || RHWP_DEFAULT_VER; }catch(e){ return RHWP_DEFAULT_VER; } }
+/* 판 번호는 js/pu-hwp-engine.js 한 곳에서 정한다 — 두 곳에 적으면 반드시 어긋난다 */
+var RHWP_DEFAULT_VER = (window.PureunHwp && PureunHwp.CORE_VERSION) || '0.8.4';
+function rhwpVer(){
+  try{ return PureunHwp.pickVer(localStorage.getItem('pureun_v6_rhwp_ver'), RHWP_DEFAULT_VER); }
+  catch(e){ return RHWP_DEFAULT_VER; }
+}
 function rhwpSetVer(v){ try{ localStorage.setItem('pureun_v6_rhwp_ver', v); }catch(e){} _rhwpMod=null; _rhwpVerLoaded=null; }
 var _rhwpMod=null, _rhwpVerLoaded=null, _rhwpLoading=null;
 function rhwpEnsure(cb){ // cb(err, mod)
@@ -57344,6 +57808,69 @@ function MyDeskV2(props){
   );
 }
 
+/* ── 주민번호에서 생년월일 (대표 지시 2026-09-06) ──────────────────────────
+   증명서의 생년월일이 늘 「-」였다. 실측해 보니 까닭이 갈렸다:
+     재직 11명 — 9명은 생년월일이 있고, 2명은 없다
+     퇴사 21명 — «전원» 없다 (급여대장에서 가져올 때 빈칸으로 넣었다)
+   그런데 주민번호는 25명이 갖고 있다. 앞 일곱 자리가 곧 생년월일이라
+   여기서 뽑으면 32명 중 25명이 그 자리에서 채워진다.
+   ⚠ 화면에는 생년월일만 나간다 — 주민번호 자체는 어디에도 그리지 않는다.
+   ⚠ 뒷자리 첫 숫자가 «어느 100년»인지 말해 준다. 이것을 안 보고 「19」를 붙이면
+     2000년대에 태어난 사람의 생년월일이 100년 어긋난다.
+       1·2 → 1900년대(내국인)   3·4 → 2000년대(내국인)
+       5·6 → 1900년대(외국인)   7·8 → 2000년대(외국인)
+       9·0 → 1800년대
+   ⚠ 못 뽑으면 «지어내지 않고» 빈 문자열을 준다 — 증명서에 틀린 날짜가 박히면 안 된다.
+   ⚠ «열세 자리»가 아니면 아예 안 본다. 실측한 25명이 모두 열세 자리다(2026-09-06).
+     길이를 안 보면 사업자번호(「207-87-03540」)를 주민번호 칸에 잘못 넣은 날
+     「2007-87-03」 같은 날짜를 지어내 증명서에 박는다. 모자라면 «빈칸으로 두고»
+     화면이 빨갛게 물어보는 편이 낫다. */
+function birthFromRrn(rrn){
+  var s = String(rrn == null ? '' : rrn).replace(/[^0-9]/g, '');
+  if(s.length !== 13) return '';
+  var yy = s.slice(0,2), mm = s.slice(2,4), dd = s.slice(4,6), g = s.charAt(6);
+  var c = (g === '1' || g === '2' || g === '5' || g === '6') ? '19'
+        : (g === '3' || g === '4' || g === '7' || g === '8') ? '20'
+        : (g === '9' || g === '0') ? '18' : '';
+  if(!c) return '';
+  var m = parseInt(mm, 10), d = parseInt(dd, 10);
+  if(!(m >= 1 && m <= 12) || !(d >= 1 && d <= 31)) return '';
+  return c + yy + '-' + mm + '-' + dd;
+}
+/* 그 사람의 생년월일 — 적어 둔 것이 먼저, 없으면 주민번호에서 뽑는다 */
+function certBirthOf(u){
+  if(!u) return '';
+  var b = String(u.birthDate == null ? '' : u.birthDate).trim();
+  return b || birthFromRrn(u.rrn);
+}
+/* ── 직위별 담당업무 기본 문구 (대표 지시 2026-09-06) ──────────────────────
+   담당업무는 32명 중 «1명»만 적혀 있었다. 그런데 비면 직위를 그대로 옮겨 적어
+   「담당업무: 직원」 같은 증명서가 나갔다 — 직위는 담당업무가 아니다.
+   ⚠ 증명서는 밖으로 나가는 문서라, 안 하던 일을 지어 적으면 안 된다.
+     그래서 문구를 «넓지만 사실인» 말로 둔다. 더 자세히 적을 일이 있으면
+     화면의 「담당업무 직접 입력」이 언제나 이것을 이긴다.
+   ⚠ 표에는 «다른 말을 쓰는» 직위만 적는다. 차장·과장·대리·주임·직원·사무직은
+     모두 같은 문구라 아래 기본값이 그대로 맞다 — 표에 또 적으면 죽은 줄이 되고,
+     지워도 아무 일이 안 일어나 검사가 그것을 못 잡는다(2026-09-06 되돌림 검사에서 걸렸다). */
+var CERT_DUTY_DEFAULT = '노무 지원업무';
+var CERT_DUTY_BY_TITLE = {
+  '대표노무사':'노무법인 운영, 노무자문',
+  '노무사':'노무자문, 사건수임, 컨설팅',
+  '사무장':'사무 총괄 및 노무 지원업무'
+};
+function certDutyOf(u){
+  if(!u) return '';
+  var d = String(u.duties == null ? '' : u.duties).trim() || String(u.jobDuty == null ? '' : u.jobDuty).trim();
+  if(d) return d;
+  var t = String(u.title == null ? '' : u.title).trim();
+  if(CERT_DUTY_BY_TITLE[t]) return CERT_DUTY_BY_TITLE[t];
+  /* 등록부에 없는 직위여도 「노무사」가 들어 있으면 노무사 일이다 */
+  if(t.indexOf('노무사') >= 0) return CERT_DUTY_BY_TITLE['노무사'];
+  /* ★ 여기서 t 를 그대로 돌려주면 「담당업무: 직원」이 도로 나온다 */
+  return CERT_DUTY_DEFAULT;
+}
+try { window.birthFromRrn = birthFromRrn; window.certBirthOf = certBirthOf; window.certDutyOf = certDutyOf; } catch(_){ }
+
 // ============================================================
 // 증명서 발급 (Certificate) - 재직/경력/연봉증명서
 // ============================================================
@@ -57405,6 +57932,9 @@ function Certificate(){
   var ct = useState(company.contactTitle || ''); var contactTitle = ct[0]; var setContactTitle = ct[1];
   var cp = useState(company.contactPhone || ''); var contactPhone = cp[0]; var setContactPhone = cp[1];
   var ds2 = useState(''); var dutyInput = ds2[0]; var setDutyInput = ds2[1];
+  /* 생년월일 — 비워 두면 인사기록(없으면 주민번호)에서 저절로 온다.
+     ⚠ 사람을 바꾸면 반드시 비운다. 안 그러면 앞사람의 생년월일이 그대로 따라간다. */
+  var bs = useState(''); var birthInput = bs[0]; var setBirthInput = bs[1];
 
   var KINDS = [
     { v:'employment', label:'재직증명서', desc:'현재 재직 중임을 증명' },
@@ -57649,7 +58179,10 @@ function Certificate(){
         if(u.retireDate){
           bodyRows.push({ label:'퇴직일', value: formatKDate(u.retireDate) });
         }
-        var dutyText = dutyInput || u.duties || (u.title === '대표노무사' ? '노무법인 운영, 노무자문' : u.title==='노무사' ? '노무자문, 사건수임, 컨설팅' : (u.title||'-'));
+        /* ★ 직위를 담당업무 자리에 옮겨 적던 것을 고쳤다(대표 지시 2026-09-06).
+           예전 마지막 갈래가 (u.title||'-') 라서 「담당업무: 직원」이 나갔다 —
+           직위는 담당업무가 아니다. 직위별 기본 문구는 CERT_DUTY_BY_TITLE 에 있다. */
+        var dutyText = String(dutyInput||'').trim() || certDutyOf(u) || '-';
         bodyRows.push({ label:'담당업무', value: dutyText });
       }
     } else if(kind === 'salary'){
@@ -57686,7 +58219,9 @@ function Certificate(){
         h('div', { style:{ display:'flex' } },
           h('div', { style:{ width:'100px', fontWeight:700, textAlignLast:'justify' } }, '생년월일'),
           h('div', { style:{ marginRight:'8px' } }, ': '),
-          h('div', { style:{ fontFamily:'monospace' } }, u.birthDate || '-')
+          /* ★ 적어 둔 것 → 인사기록 → 주민번호 차례로 본다(대표 지시 2026-09-06).
+             예전에는 u.birthDate 하나만 봐서 퇴사자 21명 전원이 「-」였다. */
+          h('div', { style:{ fontFamily:'monospace' } }, (String(birthInput||'').trim() || certBirthOf(u)) || '-')
         ),
         h('div', { style:{ display:'flex' } },
           h('div', { style:{ width:'100px', fontWeight:700, textAlignLast:'justify' } }, '담당자'),
@@ -57752,24 +58287,40 @@ function Certificate(){
             ),
             h('div', null,
               h('label', { style:{ fontSize:'10.5px', fontWeight:600, color:'#475569', display:'block', marginBottom:'2px' } }, '재직직원'),
-              h('select', { value: users.some(function(x){return x.sid===sid;}) ? sid : '', onChange:function(e){ if(e.target.value) setSid(e.target.value); },
+              h('select', { value: users.some(function(x){return x.sid===sid;}) ? sid : '', onChange:function(e){ if(e.target.value){ setSid(e.target.value); setBirthInput(''); } },
                 style:{ width:'100%', padding:'5px 8px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'11.5px' } },
                 [h('option', { key:'__none', value:'' }, '재직직원 선택')].concat(
-                  users.map(function(x){return h('option', { key:x.sid, value:x.sid }, x.name+' ('+x.title+')');}))
+                  users.map(function(x){return h('option', { key:x.sid, value:x.sid }, staffPickLabel(x));}))
               )
             ),
             h('div', null,
               h('label', { style:{ fontSize:'10.5px', fontWeight:600, color:'#475569', display:'block', marginBottom:'2px' } }, '퇴직직원'),
-              h('select', { value: retiredUsers.some(function(x){return x.sid===sid;}) ? sid : '', onChange:function(e){ if(e.target.value){ setSid(e.target.value); setKind('career'); } },
+              h('select', { value: retiredUsers.some(function(x){return x.sid===sid;}) ? sid : '', onChange:function(e){ if(e.target.value){ setSid(e.target.value); setKind('career'); setBirthInput(''); } },
                 style:{ width:'100%', padding:'5px 8px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'11.5px' } },
                 [h('option', { key:'__none', value:'' }, retiredUsers.length ? '퇴직직원 선택' : '퇴직직원 없음')].concat(
-                  retiredUsers.map(function(x){return h('option', { key:x.sid, value:x.sid }, x.name+' ('+x.title+')');}))
+                  retiredUsers.map(function(x){return h('option', { key:x.sid, value:x.sid }, staffPickLabel(x));}))
               )
             ),
             h('div', null,
               h('label', { style:{ fontSize:'10.5px', fontWeight:600, color:'#475569', display:'block', marginBottom:'2px' } }, '발급일'),
               h(KoreanDatePicker, { value:issueDate, onChange:function(e){setIssueDate(e.target.value);},
                 style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12.5px' } })
+            ),
+            /* ★ 생년월일 (대표 지시 2026-09-06) — 늘 「-」로 비어 있던 자리.
+               비워 두면 인사기록에서, 그것도 없으면 주민번호에서 저절로 온다.
+               인사기록을 고치지 않고 «이 문서에만» 다르게 적고 싶을 때 여기에 넣는다. */
+            h('div', null,
+              h('label', { style:{ fontSize:'10.5px', fontWeight:600, color:'#475569', display:'block', marginBottom:'2px' } },
+                '생년월일',
+                certBirthOf(u) && !birthInput && h('span', { style:{ marginLeft:'4px', fontWeight:500, color:'#16a34a' } }, '자동')),
+              h('input', { type:'text', value:birthInput, onChange:function(e){ setBirthInput(e.target.value); },
+                placeholder: certBirthOf(u) || '예) 1996-04-29',
+                title: certBirthOf(u)
+                  ? '비워 두면 「' + certBirthOf(u) + '」이(가) 그대로 나갑니다'
+                  : '이분은 인사기록에도 주민번호에도 생년월일이 없습니다 — 직접 넣어 주세요',
+                style:{ width:'100%', padding:'7px 10px', fontSize:'12.5px', borderRadius:'6px',
+                  border:'1px solid ' + (certBirthOf(u) || birthInput ? '#cbd5e1' : '#fecaca'),
+                  background: (certBirthOf(u) || birthInput) ? '#fff' : '#fef2f2' } })
             )
           ),
           h('div', { style:{ marginTop:'6px' } },
@@ -71617,7 +72168,7 @@ function AttendanceManagement(){
           h('option',{value:'all'},'👥 전체 직원 ('+users.length+'명)'),
           users.map(function(u){
             var myRecs=records.filter(function(r){return r.sid===u.sid&&(r.date||'').slice(0,7)===selYM&&r.type!=='eum-work';});
-            return h('option',{key:u.sid,value:u.sid},u.name+' ('+u.title+')' + (myRecs.length?' · '+myRecs.length+'건':''));
+            return h('option',{key:u.sid,value:u.sid},staffPickLabel(u) + (myRecs.length?' · '+myRecs.length+'건':''));
           })
         )
       ),
@@ -76524,7 +77075,7 @@ function PayrollLedger(props){
     });
     if(missing.length > 0){
       var msg = '⚠️ 다음 '+missing.length+'명은 데이터 누락 또는 기본급 0원입니다:\n\n'
-              + missing.map(function(u){return '· '+u.name+' ('+u.title+')';}).join('\n')
+              + missing.map(function(u){return '· '+staffPickLabel(u);}).join('\n')
               + '\n\n그래도 일괄 확정하시겠습니까? (해당 직원은 0원으로 처리됩니다)';
       if(!(await popConfirm(msg))) return;
     } else {
@@ -77834,7 +78385,7 @@ function PayrollPayslip(props){
         h('button', { onClick:function(){changeMonth(1);}, style:{padding:'4px 8px',border:'1px solid #cbd5e1',borderRadius:'4px',background:'#fff',cursor:'pointer'} }, '▶'),
         h('select', { value:sid, onChange:function(e){props.setSelSid(e.target.value);},
           style:{flex:1,padding:'7px 10px',border:'1px solid #cbd5e1',borderRadius:'4px',fontSize:'13px'}},
-          users.map(function(x){return h('option',{key:x.sid,value:x.sid},x.name+' ('+x.title+')');}))
+          users.map(function(x){return h('option',{key:x.sid,value:x.sid},staffPickLabel(x));}))
       ),
       // 줄2: 버튼들 (가로 스크롤)
       h('div', {style:{display:'flex',gap:'6px',overflowX:'auto',WebkitOverflowScrolling:'touch',paddingBottom:'2px'}},
@@ -79788,6 +80339,12 @@ function StaffRoster(){
         var hdr = data[hi].map(function(x){ return String(x).trim(); });
         function col(ns){ for(var i=0;i<hdr.length;i++){ for(var j=0;j<ns.length;j++){ if(hdr[i].indexOf(ns[j])>=0) return i; } } return -1; }
         var cName=col(['이름','성명']), cRrn=col(['주민']), cHire=col(['입사']), cStatus=col(['상태']), cRetire=col(['퇴사','퇴직일']);
+        /* ★ 직위도 명부에 있으면 읽는다 (대표 지시 2026-09-06 「고쳐라」).
+           예전에는 이 칸을 «안 읽고» 새 퇴사자에게 무조건 「직원」을 지어 넣었다.
+           실제로는 노무사였던 분이 직원으로 들어갔고, 그 값이 그대로 경력증명서의
+           「직명 및 직위」에 찍혔다 — 밖으로 나가는 문서에 지어낸 직위가 박힌 것이다.
+           ⚠ 명부에 직위 칸이 없으면 «빈칸으로 둔다». 모르는 것을 지어 적지 않는다. */
+        var cTitle=col(['직위','직급','직책']);
         if(cName<0 || cRrn<0){ showToast('⚠️ 이름·주민번호 컬럼 없음'); e.target.value=''; return; }
         function digits(x){ return String(x||'').replace(/[^0-9]/g,''); }
         function fmtDate(x){ var s=String(x||'').trim().replace(' 00:00:00',''); return s ? s.slice(0,10) : ''; }
@@ -79798,7 +80355,7 @@ function StaffRoster(){
         arr.forEach(function(u){ var d=digits(u.rrn); if(d) byRrn[d]=u; if(u.name) byName[u.name.trim()]=u; });
         var maxA = 0;
         arr.forEach(function(u){ var m=/^A-(\d+)$/.exec(u.sid||''); if(m){ var n=parseInt(m[1],10); if(n>maxA) maxA=n; } });
-        var filled=0, added=0, skipped=0;
+        var filled=0, added=0, skipped=0, noTitle=0;
         for(var r=hi+1;r<data.length;r++){
           var row=data[r]; if(!row||!row.length) continue;
           var nm=cName>=0?String(row[cName]||'').trim():'';
@@ -79808,6 +80365,7 @@ function StaffRoster(){
           var hire=cHire>=0?fmtDate(row[cHire]):'';
           var statusTxt=cStatus>=0?String(row[cStatus]||'').trim():'';
           var retire=cRetire>=0?fmtDate(row[cRetire]):'';
+          var titleTxt=cTitle>=0?String(row[cTitle]||'').trim():'';
           var isRetired = statusTxt.indexOf('퇴')>=0;
           // 매칭: 주민 우선, 없으면 이름
           var hit = (rrnD && byRrn[rrnD]) ? byRrn[rrnD] : byName[nm];
@@ -79816,6 +80374,8 @@ function StaffRoster(){
             var did=false;
             if(hire && !hit.hireDate){ hit.hireDate=hire; did=true; }
             if(rrn && !hit.rrn){ hit.rrn=rrn; did=true; }
+            /* 직위도 «비어 있을 때만» 채운다 — 여기 있는 값이 명부보다 최신일 수 있다 */
+            if(titleTxt && !String(hit.title||'').trim()){ hit.title=titleTxt; did=true; }
             if(isRetired){
               if(hit.status!=='retired'){ hit.status='retired'; did=true; }
               if(retire && !hit.retireDate){ hit.retireDate=retire; did=true; }
@@ -79825,15 +80385,19 @@ function StaffRoster(){
             // 신규: 명단에서 '퇴직'으로 표시된 경우에만 추가 (재직 신규는 권한 영향 커서 수동 등록 권장)
             if(isRetired){
               maxA++;
+              if(!titleTxt) noTitle++;
               arr.push({
-                sid:'A-'+('00'+maxA).slice(-3), name:nm, title:'직원', role:'staff', branch:'천안본사',
+                /* ★ 직위는 명부에 적힌 것만 넣는다. 없으면 빈칸이다 —
+                     예전처럼 '직원'을 지어 넣으면 노무사가 직원으로 증명된다. */
+                sid:'A-'+('00'+maxA).slice(-3), name:nm, title:titleTxt, role:'staff', branch:'천안본사',
                 status:'retired', gender:'', birthDate:'', rrn:rrn, nationality:'내국인',
                 phone:'', homePhone:'', email:'', zipCode:'', address:'', addressDetail:'',
                 emergencyContact:'', emergencyPhone:'',
                 hireDate:hire, probationEnd:'', retireDate:retire, leaveReason:'', lastWorkDate:retire,
                 contractType:'정규직', contractEnd:'',
                 baseSalary:0, bankName:'', accountNo:'', accountHolder:'',
-                pensionNo:'', healthNo:'', employmentNo:'', education:'', memo:'급여대장 가져오기 — 퇴사일 임시',
+                pensionNo:'', healthNo:'', employmentNo:'', education:'',
+                memo:'급여대장 가져오기 — 퇴사일 임시' + (titleTxt ? '' : ' · 직위 미확인(명부에 없음)'),
                 loginId:'', loginPw:'', sortOrder:900+maxA
               });
               added++;
@@ -79843,7 +80407,10 @@ function StaffRoster(){
           }
         }
         persist(arr);
-        showToast('📥 근로자명부: 빈칸 채움 '+filled+'명 / 퇴사자 신규 '+added+'명 / 변경없음 '+skipped+'명');
+        /* ★ 직위 없이 들어온 사람은 «세어서 말한다» — 조용히 넘어가면
+             경력증명서를 뽑을 때에야 「직명 및 직위: -」를 보고 알게 된다. */
+        showToast('📥 근로자명부: 빈칸 채움 '+filled+'명 / 퇴사자 신규 '+added+'명 / 변경없음 '+skipped+'명'
+          + (noTitle ? ' ⚠ 직위 미확인 '+noTitle+'명 — 인사기록에서 넣어 주세요' : ''));
       } catch(err){ showToast('가져오기 실패: '+(err&&err.message)); }
       e.target.value='';
     };

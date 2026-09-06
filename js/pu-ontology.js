@@ -62,6 +62,12 @@
       entityTypes:['Person','Organization','Task','ScheduleEvent'] },
     career:{ name:'경력관리', file:'kcareer.html', primaryRoots:['kcareer/{uid}','kcareer_inbox','kcareer_pub'], sharedRoots:['data'],
       entityTypes:['Person','Employment','Project','Document'] },
+    /* 정부사업신청 — 나라장터·알리오·기업마당 공고를 모아 본다(대표 지시 2026-09-05).
+       ⚠ 경력관리와 «다른 집»이다. 여기 담기는 것은 «아직 안 한 일»(공고·기회)이고
+         경력관리는 «이미 한 일»(실적)이다. 섞으면 지원서에 안 한 일이 실적으로 들어간다.
+       빌려 읽는 곳: data/user_dir(대표인지 확인) · uid_roles(권한). 쓰지는 않는다. */
+    govbid:{ name:'정부사업신청', file:'gov.html', primaryRoots:['gov/{uid}'], sharedRoots:['data/user_dir','uid_roles'],
+      entityTypes:['Organization','Project','Document'] },
     /* ⚠ 저장 자리가 둘이다 — 옛 자리(pucards/mailbox)와 지금 쓰는 자리(mailbox).
        다음메일함 통째 동기화(functions/mail-sync.js)는 «최상위 mailbox» 에 담는다.
        등록부에 없던 탓에 2026-09-05 까지 온톨로지가 그 자료를 못 보고 있었다. */
@@ -250,6 +256,9 @@
     fund_core:{program:'fund',strategy:'local',path:'data/funds',parser:'erp'},
     work_items:{program:'work',strategy:'remote',path:'work_erp/items',parser:'workItems'},
     career_counts:{program:'career',strategy:'remote',path:'kcareer/{uid}/counts',parser:'coverage'},
+    /* ⚠★ strategy:'local' 이다 — gov/{uid} 안에는 공공데이터포털·기업마당 «인증키»가 있다.
+       remote 로 바꾸면 통합진단이 열쇠를 통째로 읽어 간다. 바꾸지 말 것. */
+    gov_feed:{program:'govbid',strategy:'local',path:'gov/{uid}/feed',parser:'coverage'},
     cards_index:{program:'cards',strategy:'remote',path:'pucards/idx',parser:'cardIndex'},
     /* ── 기업 상세·근로자 정보함 (대표 지시 2026-09-02) ──
        예전에는 기업정보함에서 pucards/idx 하나만 읽었다. 값이 모여 있는 곳은 coInfo 다.
@@ -915,7 +924,10 @@
     appKeys = appKeys || [];
     var missing=appKeys.filter(function(k){ return !PROGRAMS[k]; });
     var undeclared=Object.keys(PROGRAMS).filter(function(k){ return appKeys.indexOf(k)<0 && PROGRAMS[k].portal!==false; });
-    return { registered:Object.keys(PROGRAMS).length, missing:missing, extra:undeclared, undeclared:undeclared,
+    /* ⚠ registered 는 «포털에 내건 것»만 센다. ok 판정이 이미 portal:false 를 빼고 있는데
+       세는 쪽만 전부를 세어 앞뒤가 안 맞았다(정부사업신청을 등록하며 드러남 2026-09-06). */
+    var declared=Object.keys(PROGRAMS).filter(function(k){ return PROGRAMS[k].portal!==false; });
+    return { registered:declared.length, missing:missing, extra:undeclared, undeclared:undeclared,
       ok:missing.length===0 && undeclared.length===0 };
   }
 
