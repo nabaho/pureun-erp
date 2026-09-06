@@ -2112,23 +2112,75 @@ test('★ 자문사 목록은 업체관리가 기준이다 — 지운 업체는 
   const ctx = partnerBox();
   const names = ctx.visibleRows('partner').map(r => r.name);
   assert.ok(names.indexOf('지운 업체') < 0, '업체관리에서 지운 업체가 목록에 남았습니다');
-  /* ★ 2026-09-03 「업체 종료된 곳은 모두 자동으로 명단 빼라」로 기대값이 5 → 4 가 됐다.
-     ⚠ 숫자를 박지 않는다 — «살아 있는 업체는 다 있고, 끝난 곳은 없다»를 본다.
-       그래야 나중에 업체를 더 넣어도 이 검사가 헛되게 깨지지 않는다. */
+  /* ★ 2026-09-06 「자료가 너무 길기 때문에 선택적으로 보고 넣기하려는 것이다」로
+     기본 목록이 «손댄 것»만이 됐다(전에는 거래 중인 전부였다).
+     ⚠ 숫자를 박지 않는다 — «손댄 것은 다 있고, 안 고른 것과 끝난 곳은 없다»를 본다. */
   const 살아있는 = ctx.App.companies.filter(c => !c._deleted && c.status !== 'closed');
-  살아있는.forEach(c => assert.ok(names.indexOf(c.name) >= 0,
-    '거래 중인 업체가 목록에서 빠졌습니다: ' + c.name));
-  assert.equal(names.length, 살아있는.length,
-    '목록에 거래 중이 아닌 업체가 섞였습니다: ' + names.join(', '));
+  const 손댄것 = 살아있는.filter(c => (ctx.App.partners[c.id] || {}).posted !== undefined);
+  손댄것.forEach(c => assert.ok(names.indexOf(c.name) >= 0,
+    '★★ 사람이 손댄 업체가 목록에서 빠졌습니다: ' + c.name));
+  assert.equal(names.length, 손댄것.length,
+    '★★ 기본 목록에 «아직 안 고른» 업체가 섞였습니다 — 272줄로 되돌아갑니다: ' + names.join(', '));
+
+  /* 감추는 것이 아니다 — 딱지를 누르면 그대로 다 나온다 */
+  ctx.App.filter = 'posted:none';
+  const 안고름 = ctx.visibleRows('partner').map(r => r.name);
+  ctx.App.filter = '';
+  살아있는.filter(c => (ctx.App.partners[c.id] || {}).posted === undefined).forEach(c =>
+    assert.ok(안고름.indexOf(c.name) >= 0,
+      '★★ 「아직 안 고름」 딱지로도 못 봅니다 — 빼는 것이 아니라 감춘 것이 됩니다: ' + c.name));
+
+  /* ★ 이름으로 «찾을 때»는 안 고른 곳도 나와야 한다 — 안 그러면 업체관리에 없는 줄 안다 */
+  ctx.App.q = '대성';
+  assert.deepEqual(ctx.visibleRows('partner').map(r => r.name), ['대성물류(주)'],
+    '★★ 안 고른 회사를 이름으로 못 찾습니다 — 없는 회사인 줄 알게 됩니다');
+  ctx.App.q = '';
   /* 여기서 회사를 만들 수 있으면 어느 쪽이 진짜인지 알 수 없게 된다 */
-  assert.ok(!/자문사.*추가|＋ *새 회사|＋ *자문사/.test(ctx.listHtml()),
-    '자문사 목록에 «회사 만들기»가 있습니다 — 업체관리에서 만들어야 합니다');
+  /* 여기서 회사를 만들 수 있으면 어느 쪽이 진짜인지 알 수 없게 된다.
+     ⚠ 무늬가 「＋ 자문사」였는데, 2026-09-06 에 넣은 «＋ 자문사 고르기»가 걸렸다 —
+       고르는 것은 만드는 것이 아니다. 막을 것은 «만들기»이지 「＋」가 아니다. */
+  const lh = ctx.listHtml();
+  assert.ok(!/새 회사|회사 만들기|자문사 추가|＋ *새 자문사|addCompany|addPartner\(/.test(lh),
+    '★★ 자문사 목록에 «회사 만들기»가 있습니다 — 업체관리에서 만들어야 합니다');
+
+  /* ★ 2026-09-06 「업체관리 클릭하면 푸른이알피로 넘어간다. 그럴 필요 없이
+     데이터만 가지고 오면 된다」 — 업체 자료는 이 화면이 이미 다 읽어 와 있다.
+     ⚠ 「자료를 보여 주려고」 딴 앱으로 보내는 길을 다시 만들지 말 것. */
+  assert.ok(lh.indexOf('pu-erp.html') < 0,
+    '★★ 목록 머리가 푸른이알피로 넘어갑니다 — 업체 자료는 이미 여기 다 있습니다');
+  assert.match(lh, /onclick="openPartnerPick\(\)"/,
+    '★ 목록 머리에서 «고르는 창»으로 갈 길이 없습니다');
+});
+
+test('★★ 아무 곳도 안 골랐으면 목록이 «고르라고 말한다» — 빈 화면으로 두지 않는다', () => {
+  /* 2026-09-06 부터 아직 안 고른 272곳은 기본 목록에서 뺀다. 그래서 처음 열면 «0줄»이다.
+     그때 「이 딱지에 해당하는 줄이 없습니다」로 끝내면, 사람은 업체가 없는 줄 알고 닫는다 —
+     이 화면이 올림 0곳으로 몇 달을 지낸 까닭이 바로 «다음에 뭘 할지»를 안 알려 준 것이다.
+     ★ 글자로 보지 않고 «실제로 그려» 본다. */
+  const ctx = partnerBox();
+  ctx.App.partners = {};                       // 아무것도 안 골랐다
+  ctx.App.filter = ''; ctx.App.q = '';
+  assert.equal(ctx.visibleRows('partner').length, 0, '손댄 것이 없는데 줄이 섭니다');
+  const h = ctx.rowsHtml();
+  assert.match(h, /openPartnerPick\(\)/,
+    '★★ 빈 목록이 «어디서 고르는지»를 안 알려 줍니다 — 업체가 없는 줄 알고 닫습니다');
+  /* 몇 곳에서 고를 수 있는지 — 거래 끝난 곳은 뺀 수여야 한다 */
+  const 고를수있는 = ctx.App.companies.filter(c => !c._deleted && c.status !== 'closed').length;
+  assert.ok(h.indexOf(String(고를수있는)) >= 0,
+    '★ 고를 수 있는 곳이 몇 곳인지 안 말합니다 (' + 고를수있는 + '곳)');
+  assert.ok(h.indexOf('이 딱지에 해당하는 줄이 없습니다') < 0,
+    '★★ 다음에 뭘 할지 안 알려 주는 옛 말로 끝냅니다');
 });
 
 test('★ 표시 안 한 회사는 할 일이 아니다 — 「자문 종료」만 손댈 것이다', () => {
   const ctx = partnerBox();
   const rows = ctx.visibleRows('partner');
-  const 대성 = rows.find(r => r.name === '대성물류(주)');
+  /* ★ 대성물류는 «아직 안 고른» 곳이라 2026-09-06 부터 기본 목록에 없다 —
+     딱지로 꺼내 본다. 목록에 없다고 할 일 판단이 달라지면 안 된다. */
+  ctx.App.filter = 'posted:none';
+  const 대성 = ctx.visibleRows('partner').find(r => r.name === '대성물류(주)');
+  ctx.App.filter = '';
+  assert.ok(대성, '「아직 안 고름」 딱지로도 볼 수 없습니다');
   /* ★ 삼정테크는 «거래가 끝나» 기본 목록에서 빠졌다 (2026-09-03 대표 지시).
      그래도 할 일에는 남아야 한다 — 지금 홈페이지에는 로고가 그대로 걸려 있다.
      그래서 「거래 종료」 딱지로 꺼내 본다. */
@@ -2167,11 +2219,17 @@ test('★ 이름으로 찾을 수 있다 — 업체가 수백 개라 찾을 길�
   const found = ctx.visibleRows('partner');
   assert.equal(found.length, 1, '이름으로 찾기가 안 됩니다');
   assert.equal(found[0].name, '세종정밀');
+  /* ★ 찾을 때는 «아직 안 고른» 곳도 나온다 (2026-09-06) — 기본 목록에는 없지만,
+     찾기는 «있는 것을 찾는» 일이다. 안 나오면 업체관리에 없는 회사인 줄 안다. */
+  ctx.App.q = '한빛';
+  assert.deepEqual(ctx.visibleRows('partner').map(r => r.name), ['한빛식품'],
+    '★★ 안 고른 회사를 이름으로 못 찾습니다');
   ctx.App.q = '';
-  /* 숫자를 박지 않는다 — 「찾기를 지우면 걸러 보기 전과 같아진다」가 규칙이다 */
-  const 살아있는 = ctx.App.companies.filter(c => !c._deleted && c.status !== 'closed').length;
-  assert.equal(ctx.visibleRows('partner').length, 살아있는,
-    '찾기를 지우면 거래 중인 업체가 다시 다 보여야 합니다');
+  /* 숫자를 박지 않는다 — 「찾기를 지우면 기본 목록으로 돌아간다」가 규칙이다 */
+  const 손댄것 = ctx.App.companies.filter(c => !c._deleted && c.status !== 'closed'
+    && (ctx.App.partners[c.id] || {}).posted !== undefined).length;
+  assert.equal(ctx.visibleRows('partner').length, 손댄것,
+    '찾기를 지우면 기본 목록(손댄 것)으로 돌아가야 합니다');
 });
 
 test('★ 거래가 끝난 업체는 명단에서 «자동으로» 빠진다 — 셈과 목록이 같은 규칙을 쓴다', () => {
@@ -2182,12 +2240,15 @@ test('★ 거래가 끝난 업체는 명단에서 «자동으로» 빠진다 —
   ctx.App.filter = '';
   const 보이는수 = ctx.visibleRows('partner').length;
 
-  /* ① 딱지의 「전체」 수 = 실제로 보이는 줄 수 */
+  /* ① 첫 딱지의 수 = 실제로 보이는 줄 수.
+     ⚠ 이름이 「전체」에서 「고른 것」으로 바뀌었다(2026-09-06) — 기본 목록이
+       거래 중인 «전부»가 아니라 «손댄 것»이라 「전체」는 거짓말이 됐다.
+       ★ 이름을 박지 말고 «첫 딱지»를 집는다 — 이름이 또 바뀌어도 규칙은 그대로다. */
   const chips = ctx.chipsHtml();
-  const 전체 = /전체<span class="c">(\d+)<\/span>/.exec(chips);
-  assert.ok(전체, '「전체」 딱지가 없습니다');
-  assert.equal(Number(전체[1]), 보이는수,
-    '「전체」에 적힌 수와 실제로 보이는 줄 수가 다릅니다');
+  const 첫딱지 = /onclick="App\.filt\(''\)">([^<]*)<span class="c">(\d+)<\/span>/.exec(chips);
+  assert.ok(첫딱지, '걸러 보기를 «푸는» 딱지가 없습니다');
+  assert.equal(Number(첫딱지[2]), 보이는수,
+    '「' + 첫딱지[1] + '」에 적힌 수와 실제로 보이는 줄 수가 다릅니다');
 
   /* ② 「거래 종료」 딱지로 꺼내 볼 수 있다 — 자동으로 빼되 «숨기지는» 않는다 */
   assert.match(chips, /거래 종료<span class="c">[1-9]/,
