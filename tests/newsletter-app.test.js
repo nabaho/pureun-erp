@@ -212,8 +212,13 @@ test('★ 5:5 껍데기는 「이번 회차」 탭에만 — 다른 탭이 스�
     'render 가 #main 에 now 표를 안 붙입니다');
 });
 
+const 반 = '(?:minmax\\(0,\\s*1fr\\)|1fr)';
+
 test('★ 좌우가 5:5 다 — 오른쪽이 420px 로 묶여 있지 않다', () => {
-  assert.ok(/\.cols\{[^}]*grid-template-columns:1fr 1fr/.test(news), '5:5 가 아닙니다');
+  /* ⚠ 글자 꼴을 박지 않는다 — minmax(0,1fr) 도 «반씩»이다(오히려 그쪽이 옳은 꼴이다).
+     2026-09-06 에 이 검사가 1fr 만 알아보아, 자리를 바로잡은 고침에서 울었다. */
+  assert.ok(new RegExp('\\.cols\\{[^}]*grid-template-columns:\\s*' + 반 + '\\s+' + 반).test(news),
+    '5:5 가 아닙니다');
   assert.ok(!/grid-template-columns:1fr 420px/.test(news), '오른쪽이 아직 420px 로 묶여 있습니다');
 });
 
