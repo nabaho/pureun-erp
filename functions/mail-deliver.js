@@ -18,6 +18,37 @@ const DAUM_PORT = 465;
 const CARDS_ROOT = 'pucards';
 
 /* ══════════════════════════════════════════════════════════════════════════
+   📬 열람 확인 — 재는 데 쓰는 것 (대표 결정 2026-09-06)
+   ══════════════════════════════════════════════════════════════════════════
+   ⚠ 적는 자리는 mailbox 밑이다 — 서버만 쓰고 직원은 읽기만 하는 자리다.
+   ⚠ 이 파일에는 «상대의 IP·기기»를 읽는 줄이 없다. 여는 함수에도 없다. 그것이 약속이다. */
+const TRACK_ROOT = 'mailbox/track/opens';
+const MT_ON = true;                    /* 통째로 끄는 스위치 — 껐다 켤 일이 있으면 여기 */
+const PIXEL_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/mailOpenPixel';
+
+function nowMs() { return Date.now(); }
+/* 못 알아맞히게 — 짧으면 남이 눌러 셈을 부풀릴 수 있다 */
+function trackToken() {
+  return require('node:crypto').randomBytes(16).toString('hex');
+}
+/* 보낸메일함 «줄»과 이어 붙일 열쇠 — 받는이 + 분 + 제목.
+   ⚠ 화면(pu-cards.html mbTrackFp)과 «글자까지 같아야» 한다. 한쪽만 고치면 확인 시각이
+     영영 안 붙는다 — 그런데 오류도 안 난다(그냥 늘 빈칸이다). 검사가 둘을 견준다.
+   ⚠ 초는 안 본다. 우리가 보낸 시각과 다음이 적는 시각이 몇 초씩 어긋난다.
+   ⚠ 실시간DB 열쇠에 못 쓰는 글자를 턴다. */
+function trackFp(to, ms, subject) {
+  const t = String(to || '').trim().toLowerCase();
+  const m = Math.floor(Number(ms || 0) / 60000);
+  const s = String(subject || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  return (t + '|' + m + '|' + s).replace(/[.$#[\]/]/g, '_').slice(0, 300);
+}
+/* 보이지 않는 1×1 — 본문 «맨 끝»에 붙인다 */
+function trackPixel(tok) {
+  return '<img src="' + PIXEL_URL + '?t=' + encodeURIComponent(tok)
+    + '" width="1" height="1" alt="" style="width:1px;height:1px;border:0;display:block">';
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
    보내는 주소를 보고 «어느 우체국»으로 갈지 고른다 (대표 지시 2026-09-05)
    ══════════════════════════════════════════════════════════════════════════
    대표 지시: 「fairrunlabor.com 이것으로 모두 진행하자 … 뉴스레터」
@@ -400,6 +431,43 @@ async function deliverOnce(opts) {
     signHtml = SG.stripSignMark(signHtml);          // 읽다 실패했다 — 그림 없이 보낸다
   }
 
+  /* ══════════════════════════════════════════════════════════════════════
+     📬 열람 확인 — 상대가 «언제 열었나» (대표 결정 2026-09-06)
+     ══════════════════════════════════════════════════════════════════════
+     "보낸메일함에 수신도 동시에 볼 수 있게 만들어 달라. 내가 보낸 시간과 상대방이
+      보고 확인한 시간이 분리 안 되고 같이 보면 관리가 편하다"
+
+     ★ 다음메일의 수신확인 값은 «우리 쪽으로 안 온다» — 다음메일 웹 화면에만 있는
+       기능이라 메일 규약(IMAP·POP3)으로는 전달되지 않는다. 그래서 우리가 따로 잰다.
+     ★ 재는 법 — 본문 끝에 «보이지 않는 1×1 그림» 한 장을 넣는다. 상대가 메일을 열어
+       그 그림을 부르면 그 시각을 적는다. 대표께서 두 길 가운데 이쪽을 고르셨다
+       (다른 하나는 「읽음 확인 요청」 — 상대가 수락해야 오는 방식).
+
+     ⚠★ 적는 것은 «시각과 횟수»뿐이다. 상대의 IP·기기·위치는 «일부러 안 적는다» —
+       셀 필요가 없고, 남겨 두면 그 자체가 다른 문제가 된다. 여는 함수도 그 값을
+       읽지 않는다(functions/index.js mailOpenPixel).
+     ⚠ 「안 열었다」는 «안 열었다는 뜻이 아니다». 지메일·네이버가 그림을 대신 받아 두면
+       열지 않아도 찍히고, 그림을 막아 두면 열어도 안 찍힌다. 화면에 그 말을 적어 둔다.
+     ⚠ 서식(html)이 없는 편지에는 «안 넣는다» — 넣으려고 평문을 서식으로 바꾸면
+       받는 쪽 화면이 통째로 달라진다. 그것은 이 일이 건드릴 자리가 아니다.
+     ⚠ 무슨 일이 나도 «메일은 나간다». 열람 확인 하나 때문에 발송이 멈추면 안 된다
+       (바로 위 서명 그림과 같은 약속). */
+  let trackTok = '';
+  try {
+    if (signHtml && body.track !== false && v.to.length && MT_ON) {
+      trackTok = trackToken();
+      const fp = trackFp(v.to[0], nowMs(), v.subject);
+      await db.ref(TRACK_ROOT + '/' + trackTok).set({
+        fp: fp, at: nowMs(), n: 0,
+        to: String(v.to[0] || '').slice(0, 160),
+        s: String(v.subject || '').slice(0, 160),
+      });
+      signHtml += trackPixel(trackTok);
+    }
+  } catch (e) {
+    console.warn('mailTrack', (e && e.message) || e);   /* 못 달아도 메일은 나간다 */
+  }
+
   const baseMail = {
     from: fromLine(from),
     // 답장은 보낸 직원에게 — 회사 대표주소로만 오면 누구 건인지 모른다
@@ -572,6 +640,8 @@ module.exports = {
   /* 검사가 밖에서 견줄 수 있게 내놓는다 — 안 내놓으면 「묵은 것만 치우는가」를
      글자로밖에 못 보고, 글자로 보는 검사는 이빨이 없다. */
   statMailOut, sweepStaleMailOut, MAILOUT_STALE_MS, MAILOUT_SWEEP_MAX,
+  /* 📬 열람 확인 — 화면과 «같은 열쇠»를 쓰는지 검사가 견준다 */
+  trackFp, trackPixel, trackToken, TRACK_ROOT, PIXEL_URL,
   /* 우체국 고르기도 내놓는다 — 부르는 쪽(index.js)이 «어느 열쇠»를 줘야 하는지
      알아야 하고, 검사도 실제로 골라 보게 해야 이빨이 생긴다. */
   우체국들, 우체국고르기, 도메인만, 아직안넣음, 아직안넣은표,

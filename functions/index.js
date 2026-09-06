@@ -3906,3 +3906,46 @@ exports.probeMailPop = MSYNC.probeMailPop;
 exports.backfillMailbox = MSYNC.backfillMailbox;
 /* 📦 지난 메일 한 통 열기 — 그 자리에서 POP3 로 (직원 누구나, 메일함과 같은 문) */
 exports.readOldMail = MSYNC.readOldMail;
+
+/* ══════════════════════════════════════════════════════════════════════════
+   📬 열람 확인 — 보낸 메일의 «보이지 않는 1×1 그림»이 불리는 자리 (대표 결정 2026-09-06)
+   ══════════════════════════════════════════════════════════════════════════
+   ⚠★ 여기서 «적는 것은 시각과 횟수뿐»이다.
+     req.ip · User-Agent · Referer 를 «읽지 않는다». 셀 필요가 없고, 남겨 두면
+     그 자체가 다른 문제가 된다 — 우리는 받는 메일에서 바로 이런 그림을 막고 있다.
+     이 함수에 그 값을 읽는 줄이 «하나도 없다»는 것을 검사가 지킨다.
+   ⚠ 로그인 없이 열린다 — 상대의 메일 프로그램이 부르는 자리이므로 그럴 수밖에 없다.
+     그래서 열쇠(t)는 못 알아맞히게 32자리다. 알아맞혀도 할 수 있는 일은 «셈을
+     늘리는 것»뿐이고, 메일 내용은 이 자리에 없다.
+   ⚠ 무슨 일이 나도 «그림은 돌려준다». 여기서 오류를 내면 받는 사람 화면에 깨진
+     그림표가 뜬다 — 그것이 곧 「이 메일은 당신을 훔쳐본다」는 표가 된다.
+   ⚠ 담아 두지 말라고 이른다(no-store) — 담기면 두 번째부터 우리에게 안 온다. */
+const OPEN_PIXEL = Buffer.from(
+  'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+exports.mailOpenPixel = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 30, memory: "128MB" })
+  .https.onRequest(async (req, res) => {
+    const send = () => {
+      res.set("Content-Type", "image/gif");
+      res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+      res.set("Pragma", "no-cache");
+      res.status(200).end(OPEN_PIXEL);
+    };
+    try {
+      const t = String((req.query && req.query.t) || "");
+      if (!/^[0-9a-f]{32}$/.test(t)) { send(); return; }
+      const ref = getDatabase().ref(MD.TRACK_ROOT + "/" + t);
+      const now = Date.now();
+      await ref.transaction((cur) => {
+        if (!cur) return cur;                 /* 우리가 만든 적 없는 열쇠 — 아무것도 안 만든다 */
+        cur.n = Number(cur.n || 0) + 1;
+        if (!cur.first) cur.first = now;      /* «처음 연 때»는 안 덮는다 */
+        cur.last = now;
+        return cur;
+      });
+    } catch (e) {
+      console.warn("mailOpenPixel", (e && e.message) || e);
+    }
+    send();
+  });
