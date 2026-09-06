@@ -215,7 +215,12 @@ test('★ 목록 표 머리칸도 넓혔다 — 수행기간·발주처·담당�
   const cases = {
     수행기간: 'period', 위촉기간: 'period', 참여기간: 'period',
     출신교: 'school', 졸업학교: 'school',
-    전공분야: 'major', 학위명: 'major',
+    /* ★ 2026-09-06: 「학위」를 major 에서 떼어 degree 로 두었다.
+       이력서에는 「전   공」과 「학   위」 칸이 따로 있는데 둘 다 major 로 뭉쳐 있어,
+       같은 열쇠는 첫 열에만 넣는 규칙 때문에 «한 칸만» 채워졌다.
+       「전공/학위」처럼 한 칸에 묶인 옛 서식은 그대로 major 이고,
+       채우는 쪽이 major↔degree 로 서로 메워 뒷걸음질하지 않는다. */
+    전공분야: 'major', '전공/학위': 'major', 학위명: 'degree', 학위: 'degree',
     단체명: 'org', 발주처: 'org', 주관기관: 'org', 소속기관: 'org',
     담당역할: 'role', 수행업무: 'role', 담당분야: 'role',
     자격증: 'certName', 종목: 'certName', 수여일: 'gotAt', 비고사항: 'note'

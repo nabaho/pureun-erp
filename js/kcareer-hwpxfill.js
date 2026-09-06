@@ -57,9 +57,21 @@
   var COL_LABELS = [
     { re: /^(기간|연도|년도|재직기간|재학기간|활동기간|기간근무년수|근무기간|수행기간|위촉기간|참여기간|교육기간|근무연월|활동연도|기간년월)$/, key: 'period' },
     { re: /^(학교명?|출신학교|출신교|졸업학교|학교소재지|학교명소재지)$/, key: 'school' },
-    { re: /^(전공|학위|전공\/학위|졸업여부|전공·학위|학과명?|단과대학|전공학과|전공분야|학위명|학위전공|전공및학위|졸업구분)$/, key: 'major' },
+    /* ⚠ 전공과 학위를 갈라 본다 (2026-09-06) — 이력서에는 「전공」과 「학위」 칸이 따로 있는데
+       둘 다 major 로 뭉쳐 있어 «먼저 걸린 한 칸»에만 들어갔다(같은 열쇠는 첫 열에만 넣으므로).
+       ⚠ 「전공/학위」처럼 한 칸에 묶인 옛 서식은 그대로 major 다. 뒷걸음질하지 않게
+         fillList 가 major↔degree 로 서로 메운다. */
+    { re: /^(학위|학위명|졸업구분|졸업여부)$/, key: 'degree' },
+    { re: /^(전공|전공\/학위|전공·학위|학과명?|단과대학|전공학과|전공분야|학위전공|전공및학위)$/, key: 'major' },
     { re: /^(기관명?|근무처|소속|발급기관|기관\/단체|위촉기관|직장명?|회사명|단체명|위촉처|발주처|주관기관|시행기관|소속기관)$/, key: 'org' },
-    { re: /^(직위|직책|내용|담당업무|활동내용|직책\/내용|주요활동|업무내용|담당업무구체적|담당역할|수행업무|수행내용|담당분야|경력내용|세부내용|활동사항|직무)$/, key: 'role' },
+    /* ⚠ 「직위」와 「담당업무」를 갈라 본다 (2026-09-05).
+       전에는 둘 다 role 이어서, 이력서 경력 표(근무기간|근무처|근무부서|직위|담당업무)에서
+       «먼저 걸린 한 칸»에만 들어가고 나머지가 비었다(같은 열쇠는 첫 열에만 넣으므로).
+       ⚠ 그렇다고 옛 서식이 뒷걸음질하면 안 된다 — 「직위」 칸 하나뿐인 서식은
+         그 칸에 담당업무라도 들어가야 한다. fillList 가 title↔role 로 서로 메운다. */
+    { re: /^(부서|근무부서|소속부서|부서명|담당부서|소속팀|팀명)$/, key: 'dept' },
+    { re: /^(직위|직책|직급|직위직급|현직위|담당직위|직위\/직급)$/, key: 'title' },
+    { re: /^(내용|담당업무|활동내용|직책\/내용|주요활동|업무내용|담당업무구체적|담당역할|수행업무|수행내용|담당분야|경력내용|세부내용|활동사항|직무)$/, key: 'role' },
     /* ⚠ 아래 셋은 «채우지 않는다» — 머리행인 줄 알아보아 «경계»로 삼기 위한 것뿐이다.
        열 이름을 못 알아보면 머리행인 줄 몰라 남의 표에 값이 박힌다
        (실측 2026-08-29: 자격증 표에 경력이 죽 박혔다). */
@@ -67,6 +79,70 @@
     { re: /^(취득년도|취득일자?|발급일자?|취득연월일|취득연월|발행일자?|수여일자?|발급연월일)$/, key: 'gotAt' },
     { re: /^(비고|참고|기타|비고사항|참고사항)$/, key: 'note' }
   ];
+
+  /* ═══ 「자리표」 — 글자는 있지만 «뜻이 없는» 빈 칸 표시 ═══════════════════
+     기관 서식은 빈 칸을 그냥 두지 않고 자리표를 박아 둔다:
+       [한글] [한자] [영문] · (자택)(   )   - · 년  월 ~  년  월 · 1900.00.00
+       ○ ○ ○ · ______ · (   ) · ○○○
+     지금까지의 굳은 규칙은 「글자가 한 자라도 있는 칸은 절대 덮지 않는다」였다.
+     그 규칙 때문에 이력서 2쪽이 통째로 비어 나갔다(실측 2026-09-05: 건너뛴 칸 10개).
+
+     ⚠★ 이 자를 넓히는 것은 «덮어쓰기»를 넓히는 것이다. 잘못 넓히면 대표가 손으로
+       적어 둔 값을 지운다 — 서류가 «조용히» 틀린다. 그래서 다음을 지킨다:
+         ① 정해진 모양만 인정한다. 「뜻이 있어 보이면 손대지 않는다」가 기본값이다.
+         ② 한글·숫자가 «뜻을 이루면» 자리표가 아니다.
+            1900.00.00 은 자리표(달·일이 00 인 날짜는 없다).
+            1975.01.07 은 «말이 되는 날짜»라 자리표가 아니다 — 절대 안 덮는다.
+         ③ 사람이 직접 고쳐 친 값은 어떤 경우에도 안 덮는다(setCellText 는 따로다).
+       tests/kcareer-placeholder.test.js 가 이 셋을 기계로 지킨다. */
+  var PLACEHOLDER = [
+    /* [한글] [한자] [영문] [성명] — 대괄호 안 «칸 이름» */
+    /^\[[^\]]{1,8}\]$/,
+    /* 년 월 ~ 년 월 · 년 월 일 — 숫자 없는 날짜 틀 */
+    /^[\s~\-.·()]*[년월일][년월일\s~\-.·()]*$/,   /* 년·월·일 중 하나는 반드시 있어야 한다 — 없으면 「-」 같은 뜻 있는 글자까지 삼킨다 */
+    /* 0000.00.00 · 1900.00.00 · 0000-00-00 — 달이나 일이 00 인 날짜는 없다 */
+    /^\d{2,4}[.\-\/]\s?(00)[.\-\/]\s?\d{1,2}$|^\d{2,4}[.\-\/]\s?\d{1,2}[.\-\/]\s?(00)$|^\d{2,4}[.\-\/]00[.\-\/]00$/,
+    /* ○ ○ ○ · ○○○ · □□□ · ×××  — 이름 자리 */
+    /^[○◯ㅇ□■●▢×xX*＊\s]{1,12}$/,
+    /* (자택)(   )   -  ·  (   ) - ·  -  — 번호 자리(괄호·붙임표·빈자리만) */
+    /^[()（）\s\-–—_]{2,20}$/   /* ⚠ 두 글자 이상만 — 「-」 한 글자는 자리표가 아니라 «해당없음»이라는 뜻이다 */,
+    /* (자택)(   )   -  처럼 «라벨 + 빈 괄호»  */
+    /^[()（）]?\s*[가-힣]{1,4}\s*[()（）]?\s*[()（）]\s*[)）]?\s*[-–—]?\s*$/,
+    /* ______  ·  ｜｜｜  — 밑줄만 */
+    /^[_＿\-–—.·\s]{2,}$/
+  ];
+  /* 이 칸이 «자리표뿐인가» — 값이 아니라 자리 표시만 들어 있나 */
+  function isPlaceholder(text) {
+    var t = String(text == null ? '' : text).trim();
+    if (!t) return false;                 /* 빈 칸은 자리표가 아니라 그냥 빈 칸이다 */
+    if (t.length > 24) return false;      /* 긴 글은 뜻이 있다 — 손대지 않는다 */
+    for (var i = 0; i < PLACEHOLDER.length; i++) if (PLACEHOLDER[i].test(t)) return true;
+    return false;
+  }
+  /* 채울 수 있는 칸 = 비었거나 자리표뿐인 칸 */
+  function isBlankish(tc) {
+    var t = cellText(tc);
+    return t === '' || isPlaceholder(t);
+  }
+
+  /* 자리표가 «스스로 칸 이름을 말할» 때가 있다 — 라벨 칸이 따로 없는 서식이다.
+       성  명 | [한글] | [한자] | [영문]        ← 이름표가 자리표 안에 있다
+       전  화 | (자택)(   )   -                 ← 「자택」이 자리표 안에 있다
+     이 이름을 읽어 그 자리에 바로 넣는다.
+     ⚠ 자리표일 때만 본다 — 뜻 있는 글자가 든 칸은 여기까지 오지 않는다.
+     ⚠ 학력 표의 「고등학교」처럼 «급»을 말하는 것은 여기가 아니라 아래에서 다룬다. */
+  function placeholderKey(text) {
+    var t = String(text == null ? '' : text);
+    if (!isPlaceholder(t)) return '';
+    var 속 = t.replace(/[\[\]()（）{}<>《》「」\s_＿\-–—.·:：]/g, '').trim();
+    if (!속) return '';
+    var k = fieldKeyOf(속);
+    if (k) return k;
+    for (var i = 0; i < INCELL_LABELS.length; i++) {
+      if (INCELL_LABELS[i].re.test(속)) return INCELL_LABELS[i].key;
+    }
+    return '';
+  }
 
   function normLabel(s) {
     return String(s == null ? '' : s)
@@ -155,11 +231,27 @@
     var i = hay.indexOf(oldStr);
     return i < 0 ? hay : hay.slice(0, i) + newStr + hay.slice(i + oldStr.length);
   }
+  /* ★ 줄에서 «n번째 칸»을 바꾼다.
+     ⚠ replaceOnce 로 칸을 바꾸면 안 된다 — 빈 칸끼리는 XML 이 글자 하나까지 똑같아서
+       「3번째 칸」에 넣으라고 해도 «맨 앞의 빈 칸»이 바뀐다. 실측(2026-09-06)에서
+       경력 표의 근무처가 세로 병합 라벨 자리(0번 칸)에 들어갔다.
+     ⚠ 이 함수 하나로만 칸을 바꾼다. 「자리」를 세는 곳이 둘이 되면 다시 어긋난다. */
+  function replaceCellAt(tr, idx, newCell) {
+    var re = /<hp:tc\b[\s\S]*?<\/hp:tc>/g, m, n = 0;
+    while ((m = re.exec(tr))) {
+      if (n === idx) return tr.slice(0, m.index) + newCell + tr.slice(m.index + m[0].length);
+      n++;
+    }
+    return tr;
+  }
 
   /* ===== ①-B 칸 안 라벨: 「자택:______ 직장:______」처럼 한 칸에 라벨과 빈자리가 함께 =====
      라벨 뒤의 밑줄(___)이나 콜론 뒤 빈자리를 값으로 바꾼다.
      ⚠ 라벨 뒤에 이미 글자가 있으면 건드리지 않는다. */
-  function fillInCell(tc, fields, report) {
+  /* used: «이 표에서» 이미 채운 열쇠. 표가 바뀌면 새로 시작한다.
+     ⚠ 문서 전체로 두면 지원서(1쪽)+이력서(2쪽)가 한 파일인 서식에서 2쪽이 통째로 빈다
+       (실측 2026-09-05: 건너뛴 칸 10개 중 name·birth·phone·org 가 2쪽 것이었다). */
+  function fillInCell(tc, fields, report, used) {
     var txt = cellText(tc);
     if (!txt) return tc;
     var hits = [];
@@ -201,7 +293,7 @@
         });
         if (next === inner) return m;
         did++; report.fields.push({ key: L.key, value: fields[L.key] });
-        report.usedKeys[L.key] = true;
+        used[L.key] = true;
         return a + next + b;
       });
     });
@@ -211,22 +303,39 @@
   /* ===== ① 단일 값: 라벨 칸 → 같은 행의 바로 다음 빈 칸 ===== */
   function fillFields(tbl, fields, report) {
     var rows = splitRows(tbl), newTbl = tbl;
+    /* ★ 이 표에서만 쓰는 「이미 채운 열쇠」 — 표가 바뀌면 비워진다 */
+    var used = {};
     rows.forEach(function (tr) {
       var cells = splitCells(tr), newTr = tr;
       for (var i = 0; i < cells.length; i++) {
         /* 칸 안에 라벨과 빈자리가 함께 있는 모양(자택:___ 직장:___)을 먼저 처리한다 */
-        var inFilled = fillInCell(cells[i], fields, report);
-        if (inFilled !== cells[i]) { newTr = replaceOnce(newTr, cells[i], inFilled); cells[i] = inFilled; }
+        var inFilled = fillInCell(cells[i], fields, report, used);
+        if (inFilled !== cells[i]) { newTr = replaceCellAt(newTr, i, inFilled); cells[i] = inFilled; }
+        /* 자리표가 스스로 이름을 말하면 그 자리에 바로 넣는다 — [한자] [영문] (자택)(  ) - */
+        var 스스로 = placeholderKey(cellText(cells[i]));
+        if (스스로 && !used[스스로] && fields[스스로] != null && fields[스스로] !== '') {
+          var 새칸 = setCellText(cells[i], fields[스스로]);
+          if (새칸) {
+            newTr = replaceCellAt(newTr, i, 새칸); cells[i] = 새칸;
+            used[스스로] = true;
+            report.fields.push({ key: 스스로, value: fields[스스로] });
+            report.placeholders = (report.placeholders || 0) + 1;
+          }
+        }
         if (i >= cells.length - 1) break;
         var key = fieldKeyOf(cellText(cells[i]));
         if (!key || fields[key] == null || fields[key] === '') continue;
-        if (report.usedKeys[key]) continue;               // 같은 값은 한 번만(첫 등장 우선)
-        if (!isEmptyCell(cells[i + 1])) { report.kept.push(key); continue; }  // 이미 값이 있으면 절대 안 덮음
-        var filled = fillCell(cells[i + 1], fields[key]);
+        if (used[key]) continue;               // «이 표 안에서» 같은 값은 한 번만(첫 등장 우선)
+        /* ⚠ 「값이 있으면 안 덮는다」는 그대로다. 다만 «자리표»는 값이 아니다 —
+           [한글]·1900.00.00 같은 빈 칸 표시 때문에 이력서가 통째로 비었다. */
+        var 자리표 = isPlaceholder(cellText(cells[i + 1]));
+        if (!isEmptyCell(cells[i + 1]) && !자리표) { report.kept.push(key); continue; }
+        var filled = 자리표 ? setCellText(cells[i + 1], fields[key]) : fillCell(cells[i + 1], fields[key]);
+        if (자리표 && filled) report.placeholders = (report.placeholders || 0) + 1;
         if (!filled) continue;
-        newTr = replaceOnce(newTr, cells[i + 1], filled);
+        newTr = replaceCellAt(newTr, i + 1, filled);
         cells[i + 1] = filled;
-        report.usedKeys[key] = true;
+        used[key] = true;
         report.fields.push({ key: key, value: fields[key] });
       }
       if (newTr !== tr) newTbl = replaceOnce(newTbl, tr, newTr);
@@ -264,7 +373,8 @@
     }
     if (hit < 2) return null;
     var kind = map.indexOf('school') >= 0 ? 'edu'
-      : (map.indexOf('org') >= 0 && (map.indexOf('role') >= 0 || map.indexOf('period') >= 0)) ? 'career' : '';
+      : (map.indexOf('org') >= 0 && (map.indexOf('role') >= 0 || map.indexOf('title') >= 0
+          || map.indexOf('dept') >= 0 || map.indexOf('period') >= 0)) ? 'career' : '';
     return kind ? { kind: kind, map: map } : null;
   }
   /* ── 여기서부터는 «남의 자리» ──
@@ -287,8 +397,20 @@
     return filled === 1 && first === 0 && cells.length >= 3;
   }
 
+  /* 「빈 줄」 — 자리표만 박힌 줄도 빈 줄이다.
+     ⚠ 이력서의 학력·경력 표는 「년  월 ~  년  월」이 미리 박혀 있다. 그것을 값으로 보면
+       채울 줄이 하나도 없어 0/2줄이 된다(실측 2026-09-05). */
+  /* 학력 표에 미리 박아 둔 «급» — 「고등학교」 줄에는 고등학교를 넣으라는 뜻이다.
+     ⚠ 순서로 밀어 넣으면 대학원 줄에 고등학교가 들어간다. 급을 맞춰 고른다.
+     ⚠ 이것은 학교명 열(school)에서만 본다 — 다른 칸의 같은 낱말은 뜻이 있는 글자다. */
+  var LEVELS = ['초등학교', '중학교', '고등학교', '대학교', '대학원', '전문대학', '대학'];
+  function levelOf(text) {
+    var t = String(text == null ? '' : text).replace(/[\s　]+/g, '');
+    for (var i = 0; i < LEVELS.length; i++) if (t === LEVELS[i]) return LEVELS[i];
+    return '';
+  }
   function rowIsEmpty(cells) {
-    for (var i = 0; i < cells.length; i++) if (!isEmptyCell(cells[i])) return false;
+    for (var i = 0; i < cells.length; i++) if (!isBlankish(cells[i])) return false;
     return true;
   }
   /* ── 목록 표 채우기 ──
@@ -305,34 +427,168 @@
       var head = detectHeader(splitCells(rows[r]), opts && opts.colMap);
       if (!head) continue;
       var items = data[head.kind] || [];
-      var put = 0;
+      var put = 0, donePick = {};
       /* 이 구역의 끝까지만 — 다음 머리행이나 소제목을 만나면 남의 자리다 */
       var q = r + 1;
       for (; q < rows.length; q++) {
         var cells = splitCells(rows[q]);
         if (isBoundary(cells)) break;
-        if (put >= items.length) continue;              /* 넣을 것이 없어도 구역 끝까지는 지나간다 */
-        if (!rowIsEmpty(cells)) continue;               /* 값이 이미 있는 행은 건너뛴다 */
-        var item = items[put], newTr = rows[q], ok = false, used = {};
+        /* 「고등학교」처럼 급만 박힌 줄 — 그 급의 학교를 골라 넣는다.
+           ⚠ 이 줄은 rowIsEmpty 가 거짓이다(글자가 있으므로). 그래서 따로 본다. */
+        var 급 = '', 급칸 = -1;
+        if (head.kind === 'edu') {
+          for (var L = 0; L < cells.length && L < head.map.length; L++) {
+            if (head.map[L] !== 'school') continue;
+            var lv = levelOf(cellText(cells[L]));
+            if (lv) { 급 = lv; 급칸 = L; }
+          }
+        }
+        var pick = -1;
+        if (급) {
+          for (var g = 0; g < items.length; g++) {
+            if (donePick[g]) continue;
+            if (String(items[g].school || '').indexOf(급) >= 0) { pick = g; break; }
+          }
+          /* 급이 박혀 있는데 맞는 학교가 없으면 «그 줄은 비워 둔다» —
+             아무거나 넣으면 대학원 줄에 고등학교가 박힌다 */
+          if (pick < 0) continue;
+        } else {
+          if (!rowIsEmpty(cells)) continue;             /* 값이 이미 있는 행은 건너뛴다 */
+          while (put < items.length && donePick[put]) put++;
+          if (put >= items.length) continue;
+          pick = put;
+        }
+        var item = items[pick], newTr = rows[q], ok = false, used = {};
         for (var c = 0; c < cells.length && c < head.map.length; c++) {
           var k = head.map[c];
-          if (!k || item[k] == null || item[k] === '') continue;
+          if (!k) continue;
+          /* ⚠ 「직위」 칸 하나뿐인 옛 서식이 뒷걸음질하지 않게 서로 메운다.
+             직위가 없으면 담당업무를, 담당업무가 없으면 직위를 넣는다.
+             ⚠ 「둘 다 있는」 서식에서는 각자 제 값이 있으므로 이 길로 오지 않는다. */
+          var 짝꿍 = { title: 'role', role: 'title', major: 'degree', degree: 'major' };
+          if ((item[k] == null || item[k] === '') && 짝꿍[k]) {
+            var 짝 = 짝꿍[k];
+            if (item[짝] != null && item[짝] !== '' && !used[짝]) { k = 짝; }
+          }
+          if (item[k] == null || item[k] === '') continue;
           /* ⚠ 같은 열쇠가 두 열에 잡히면 «첫 열에만» 넣는다.
              「학과명」과 「학 위」가 둘 다 major 로 잡혀 「인문계」가 두 칸에 들어갔다
              (실측 2026-08-29). 「담당업무(구체적)」와 「직 위」도 같은 일이 났다. */
           if (used[k]) continue;
           used[k] = true;
-          var filled = fillCell(cells[c], item[k]);
+          /* 글자가 있는 칸(자리표·급)은 «비운 뒤» 넣는다 — 빈 칸용으로 넣으면
+             「천안고등학교고등학교」처럼 앞에 덧붙는다(실측 2026-09-06). */
+          var 있던 = cellText(cells[c]);
+          var filled = 있던 ? setCellText(cells[c], item[k]) : fillCell(cells[c], item[k]);
           if (!filled) continue;
-          newTr = replaceOnce(newTr, cells[c], filled);
+          newTr = replaceCellAt(newTr, c, filled);
           cells[c] = filled; ok = true;
         }
-        if (ok) { newTbl = replaceOnce(newTbl, rows[q], newTr); put++; }
+        if (ok) { newTbl = replaceOnce(newTbl, rows[q], newTr); donePick[pick] = true; if (pick === put) put++; }
       }
-      if (items.length) report.lists.push({ kind: head.kind, put: put, total: items.length });
+      if (items.length) {
+        var 넣은수 = Object.keys(donePick).length;
+        report.lists.push({ kind: head.kind, put: 넣은수, total: items.length });
+      }
       r = q - 1;                                        /* 이 구역은 다 봤다 — 다음 구역부터 */
     }
     return newTbl;
+  }
+
+  /* ═══ 표 «밖» 문단 — 날짜와 지원자 이름 ════════════════════════════════
+     서식 맨 아래는 거의 늘 이 두 줄이다:
+         2026년      월      일
+         지원자   ○  ○  ○      (인)
+     표가 아니라 본문 문단이라 지금까지 «한 글자도» 안 채워졌다.
+
+     ⚠ 여기서 하는 일은 «자리표 채우기»뿐이다 — 빈 자리와 ○○○ 만 바꾼다.
+       이미 적힌 날짜(2026년 9월 5일)는 손대지 않는다. 사람이 일부러 적은 날일 수 있다.
+     ⚠ 도장은 여기서 안 찍는다 — 그림이라 XML 조각이 다르다(kcareer-hwpstamp.js).
+       「(인)」 글자도 지우지 않는다. 도장은 덮는 것이지 지우는 것이 아니다. */
+
+  /* 문단 하나의 글자를 모아 본다 */
+  function paraText(p) {
+    var out = '', re = /<hp:t[^>]*>([\s\S]*?)<\/hp:t>/g, m;
+    while ((m = re.exec(p))) out += m[1];
+    return out.replace(/<[^>]*>/g, '');
+  }
+  /* 문단의 «첫 글자 조각»에 새 글자를 넣고 나머지 조각은 비운다 */
+  function setParaText(p, text) {
+    var done = false;
+    return p.replace(/(<hp:t[^>]*>)([\s\S]*?)(<\/hp:t>)/g, function (m, a, inner, b) {
+      if (!done) { done = true; return a + esc(text) + b; }
+      return a + b;
+    });
+  }
+  function pad2(n) { return String(n).padStart(2, '0'); }
+
+  /* 「  년   월   일」의 빈자리를 오늘로 채운다. 이미 적힌 숫자는 그대로 둔다. */
+  function fillDateLine(txt, today) {
+    var y = today.getFullYear(), mo = today.getMonth() + 1, d = today.getDate();
+    var hit = false;
+    var out = txt.replace(
+      /(\d{4})?([\s\u3000_]*)년([\s\u3000_]*)(\d{1,2})?([\s\u3000_]*)월([\s\u3000_]*)(\d{1,2})?([\s\u3000_]*)일/,
+      function (m, Y, s1, s2, M, s3, s4, D, s5) {
+        /* 셋 다 이미 적혀 있으면 손대지 않는다 */
+        if (Y && M && D) return m;
+        hit = true;
+        return (Y || y) + '년 ' + (M || mo) + '월 ' + (D || d) + '일';
+      });
+    return hit ? out : null;
+  }
+  /* 「지원자 ○ ○ ○」의 이름 자리를 채운다. 이미 이름이 적혀 있으면 그대로 둔다. */
+  /* ⚠ «안 잡는 괄호»(?:…)로 둔다. 잡는 괄호로 두면 이것을 다른 자 안에 끼울 때
+       자리가 한 칸씩 밀려, 「빈 자리」를 읽으려던 것이 «라벨 낱말»을 읽는다.
+       그러면 「지원자」를 이미 적힌 이름으로 보고 늘 손을 뗀다(2026-09-06 두 번 겪었다). */
+  var SIGN_LABELS = /(?:지원자|신청인|신청자|응시자|작성자|제출자|본인|성명|추천인|위촉대상자|대표자)/;
+  function fillSignLine(txt, name) {
+    if (!name) return null;
+    if (!SIGN_LABELS.test(txt)) return null;
+    /* 라벨 뒤의 «이름 자리» — ○○○ · 빈칸 · 밑줄. 뒤에 (인)·(서명 또는 인)이 와도 좋다.
+       ⚠ SIGN_LABELS 는 그 자체가 «잡는 괄호»다. 다시 (…) 로 감싸면 자리가 밀려
+         m[2] 가 빈 자리가 아니라 «라벨 낱말»이 된다 — 그러면 「지원자」를 이미 적힌
+         이름으로 보고 늘 손을 뗀다(실측 2026-09-06에 그랬다). 안 잡는 괄호로 감싼다.
+       ⚠ 뒤에 이미 이름이 적혀 있으면(「지원자 홍길동 (인)」) 아예 안 잡힌다 —
+         라벨 바로 뒤가 «빈 자리»여야 하기 때문이다. 그것이 옳다. */
+    var re = new RegExp('((?:' + SIGN_LABELS.source + ')\\s*[:：]?)'
+      + '([\\s\\u3000○◯□■●▢_＿×\\-–—]*?)'
+      + '(?=\\s*[(（]\\s*(?:서명\\s*(?:또는|및)?\\s*)?인\\s*[)）]|\\s*$)');
+    var m = re.exec(txt);
+    if (!m) return null;
+    /* 자리에 이미 «뜻 있는 글자»가 있으면 손대지 않는다 */
+    if (/[가-힣A-Za-z]/.test(m[2])) return null;
+    /* 자리가 아예 없으면(라벨 바로 뒤가 끝) 한 칸 띄워 넣는다 */
+    return txt.replace(re, function (all, head) {
+      return head + (/[\s\u3000]$/.test(head) ? '' : '  ') + name + '  ';
+    });
+  }
+
+  /* 표 밖 문단만 골라 채운다.
+     ⚠ 표 «안»의 문단은 건드리지 않는다 — 그쪽은 칸 단위로 이미 다룬다.
+       표를 잠시 들어내고 본 뒤 도로 끼운다. */
+  function fillParagraphs(xml, fields, report, today) {
+    var 표 = [], i = 0;
+    var 뼈 = xml.replace(/<hp:tbl[\s\S]*?<\/hp:tbl>/g, function (m) {
+      표.push(m); return '\u0000TBL' + (표.length - 1) + '\u0000';
+    });
+    var out = 뼈.replace(/<hp:p\b[\s\S]*?<\/hp:p>/g, function (p) {
+      var txt = paraText(p);
+      if (!txt.trim()) return p;
+      var 날 = fillDateLine(txt, today || new Date());
+      if (날 && 날 !== txt) {
+        report.paras = (report.paras || 0) + 1;
+        report.fields.push({ key: 'date', value: 날.trim() });
+        return setParaText(p, 날);
+      }
+      var 서명 = fillSignLine(txt, fields && fields.name);
+      if (서명 && 서명 !== txt) {
+        report.paras = (report.paras || 0) + 1;
+        report.fields.push({ key: 'signName', value: fields.name });
+        return setParaText(p, 서명);
+      }
+      return p;
+    });
+    return out.replace(/\u0000TBL(\d+)\u0000/g, function (m, n) { return 표[Number(n)]; });
   }
 
   /* ===== 입구 =====
@@ -340,13 +596,14 @@
               edu:[{period,school,major}], career:[{period,org,role}] } */
   function autoFill(sectionXml, data, opts) {
     data = data || {};
-    var report = { fields: [], lists: [], kept: [], usedKeys: {} };
+    var report = { fields: [], lists: [], kept: [], placeholders: 0 };
     var xml = eachTable(sectionXml, function (tbl) {
       var t = fillFields(tbl, data.fields || {}, report);
       t = fillList(t, data, report, opts);
       return t;
     });
-    delete report.usedKeys;
+    /* 표를 다 본 뒤 «표 밖» 문단(날짜·지원자)을 채운다 */
+    xml = fillParagraphs(xml, data.fields || {}, report, (opts && opts.today) || null);
     return { xml: xml, report: report, changed: xml !== sectionXml };
   }
 
@@ -365,6 +622,9 @@
     autoFill: autoFill, summarize: summarize,
     fieldKeyOf: fieldKeyOf, colKeyOf: colKeyOf,
     cellText: cellText, isEmptyCell: isEmptyCell, fillCell: fillCell, setCellText: setCellText,
+    /* 자리표 자·문단 채우기 — 검사와 칸 지도가 «같은 자»를 쓰게 내보낸다 */
+    isPlaceholder: isPlaceholder, isBlankish: isBlankish, placeholderKey: placeholderKey,
+    fillParagraphs: fillParagraphs, paraText: paraText,
     /* 칸 지도(kcareer-formmap.js)가 «같은 자»를 쓰도록 내보낸다 —
        따로 만들면 두 곳의 셈이 어긋나 「지도에는 있는데 안 채워지는 칸」이 생긴다 */
     splitRows: splitRows, splitCells: splitCells, eachTable: eachTable, normLabel: normLabel,
