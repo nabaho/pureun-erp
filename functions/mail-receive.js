@@ -61,9 +61,50 @@ function sidToEmail(sid) {
   return String(sid || '').toLowerCase().replace(/-/g, '') + '@pureun.kr';
 }
 
-/* 통과시킬 주소 명단을 만든다 — 업체관리(고객사) + 직원 명부.
+/* ══════ 푸른이알피 쪽 업체 담당자도 「아는 주소」다 (대표 결정 2026-09-06) ══════
+   받은메일함을 켜기로 하면서 드러난 것 — 「아는 주소」를 업체관리(data/companies)
+   에서만 만들고 있었다. 그런데 컨설팅·계약·사건 레코드에는 업체관리에 «없는»
+   담당자 주소가 74개 더 있다. 엠비프라텍 윤충희(ych77710@daum.net)가 그 하나다.
+   그 사람들이 보낸 메일은 받은메일함을 켜도 「모르는 주소」로 버려진다 —
+   그러면 켠 보람이 없다.
+
+   ⚠ 레코드를 «통째로» 훑지 않는다. 「이 업체의 사람」을 뜻하는 칸만 본다.
+     통째로 훑으면 메모(note)에 적힌 남의 주소까지 명단에 들어가, 그 주소에서
+     오는 광고가 받은메일함에서 통과한다.
+   ⚠ 담당자 칸이 없는 옛 레코드도 있다 — 없으면 그냥 지나간다(고장이 아니다). */
+const ERP_MAIL_FIELDS = ['email', 'primaryContactEmail'];
+function erpList(box) {
+  let list = (box && typeof box === 'object' && box.v !== undefined) ? box.v : box;
+  if (list && !Array.isArray(list) && typeof list === 'object') {
+    list = Object.keys(list).map(function (k) { return list[k]; });
+  }
+  return Array.isArray(list) ? list.filter(Boolean) : [];
+}
+function erpEmails(rec, out) {
+  out = out || [];
+  if (!rec || typeof rec !== 'object') return out;
+  ERP_MAIL_FIELDS.forEach(function (f) {
+    const v = String(rec[f] == null ? '' : rec[f]);
+    const m = v.match(EMAIL_RE);
+    if (m) out.push(normEmail(m[0]));
+  });
+  /* 담당자 목록 — 배열일 때도 있고 {열쇠:값} 일 때도 있다 */
+  let cs = rec.contacts || (rec.company && rec.company.contacts);
+  if (cs && !Array.isArray(cs) && typeof cs === 'object') {
+    cs = Object.keys(cs).map(function (k) { return cs[k]; });
+  }
+  if (Array.isArray(cs)) {
+    cs.forEach(function (c) {
+      const m = String((c && c.email) || '').match(EMAIL_RE);
+      if (m) out.push(normEmail(m[0]));
+    });
+  }
+  return out;
+}
+
+/* 통과시킬 주소 명단을 만든다 — 업체관리(고객사) + 직원 명부 + 푸른이알피 담당자.
    돌려주는 것은 소문자 주소 배열이고, 중복은 없앤다. */
-function buildKnownList(companies, roster) {
+function buildKnownList(companies, roster, erp) {
   const out = [];
   const seen = {};
   function push(e) {
@@ -87,6 +128,12 @@ function buildKnownList(companies, roster) {
       if (x.sid) push(sidToEmail(x.sid));
     });
   }
+
+  /* 푸른이알피 계약·컨설팅·사건 — 여럿을 한꺼번에 받는다 */
+  const boxes = Array.isArray(erp) ? erp : (erp ? [erp] : []);
+  boxes.forEach(function (box) {
+    erpList(box).forEach(function (r) { erpEmails(r).forEach(push); });
+  });
   return out;
 }
 
@@ -671,7 +718,7 @@ function sharedPendingRecord(o) {
 module.exports = {
   UPLOAD_MAX, BAD_EXT,
   normEmail, senderOf, collectEmails, sidToEmail,
-  buildKnownList, isKnownSender,
+  buildKnownList, isKnownSender, erpEmails, erpList,
   /* coNameKey 도 내놓는다 — 앱(js/pu-co-thread.js norm)과 «같은 답을 내는지»를
      검사가 밖에서 견줄 수 있어야 두 벌로 갈라지는 것을 잡는다(2026-09-02 검토). */
   buildCompanyIndex, coList, companyFor, companiesFor, coFromText, coNameKey, companyOf,

@@ -1118,12 +1118,20 @@ async function payMailKnownList(db) {
   if (payMailKnownCache.list && now - payMailKnownCache.at < 6 * 60 * 60 * 1000) {
     return payMailKnownCache.list;
   }
-  const [coSnap, dirSnap] = await Promise.all([
+  /* 푸른이알피 계약·컨설팅·사건도 함께 읽는다 (대표 결정 2026-09-06) —
+     업체관리에 없는 업체 담당자 주소가 그쪽에 있다. 받은메일함을 켜도
+     그 주소들이 「모르는 사람」이면 켠 보람이 없다.
+     ⚠ 못 읽어도 그냥 지나간다(null) — 명단이 좁아질 뿐 메일 받기가 멈추지 않는다. */
+  const [coSnap, dirSnap, ctSnap, csSnap, caSnap] = await Promise.all([
     db.ref("data/companies").once("value").catch(() => null),
     db.ref("data/user_dir").once("value").catch(() => null),
+    db.ref("data/contracts/v").once("value").catch(() => null),
+    db.ref("data/consultings/v").once("value").catch(() => null),
+    db.ref("data/cases/v").once("value").catch(() => null),
   ]);
   const cos = coSnap && coSnap.val();
-  const list = MR.buildKnownList(cos, dirSnap && dirSnap.val());
+  const erp = [ctSnap && ctSnap.val(), csSnap && csSnap.val(), caSnap && caSnap.val()];
+  const list = MR.buildKnownList(cos, dirSnap && dirSnap.val(), erp);
   /* 갈라 보내려면 주소가 **어느 업체 것인지**와 그 업체 주담당의 자리가 필요하다.
      명단과 같은 읽기로 함께 만든다 — 메일 한 통마다 다시 읽으면 요금이 된다.
      owners(급여데이터함에 들어온 사람)는 늘어나므로 같은 6시간마다 다시 읽는다. */
