@@ -148,6 +148,25 @@
         if (목록줄[ri]) return;   /* 이 줄은 목록이 채운다 */
         cells.forEach(function (txt, ci) {
           var kind = classify(txt);
+          var 왼 = ci > 0 ? String(cells[ci - 1] || '').trim() : '';
+          /* ★★ 라벨이 «위»에 있는 서식 (대표 지시 2026-09-06 「라벨위 찾기」)
+             ■ 왜
+               지금까지 값 칸의 «바로 왼쪽»만 보고 무슨 칸인지 판단했다. 그래서
+                   성명 | 생년월일 | 연락처 | 이메일     ← 라벨 줄
+                     · |    ·     |   ·    |   ·        ← 값 줄
+               같은 «머리행형» 서식은 «한 칸도» 못 알아봤다(실측 2026-09-06: 8칸 중 0칸).
+               기관 양식에 흔한 모양이고, 사전을 아무리 넓혀도 안 고쳐지는 «구조» 문제였다.
+             ⚠ 왼쪽에서 못 찾았을 때만 위를 본다 — 왼쪽이 먼저다.
+               둘 다 있으면 「성명 | (값) 」 처럼 왼쪽이 그 칸을 가리키는 것이 보통이다.
+             ⚠ 윗칸이 «사전이 아는 라벨»일 때만 인정한다. 아무 글자나 받으면
+               윗줄의 «값»을 라벨로 착각해 엉뚱한 값이 박힌다.
+             ⚠ 바로 윗줄만 본다. 두세 줄 위까지 올라가면 목록 표의 머리줄이
+               그 아래 모든 줄의 라벨이 되어 같은 값이 줄줄이 박힌다. */
+          var 위 = '';
+          if (!X.fieldKeyOf(왼) && ri > 0 && grid[ri - 1]) {
+            var u = String(grid[ri - 1][ci] || '').trim();
+            if (X.fieldKeyOf(u)) 위 = u;
+          }
           /* ★★ 이미 글자가 든 «값 칸»도 자리로 잡는다 (대표 지시 2026-09-05
              「왜 화면에서 바로 수정이 안 되나」).
              ■ 예전에는 글자가 있으면 아예 자리로 세지 않았다. 그래서 「내 정보로 채우기」가
@@ -157,13 +176,16 @@
                입력판이 서식 문구 위에 입력칸을 얹는다.
              ⚠ 자동 채우기는 글자칸을 건드리지 않는다(guess 가 늘 빈 열쇠를 준다).
                사람이 눌러 고쳐 쳤을 때만 바뀐다. */
-          if (!kind && String(txt || '').trim() && ci > 0 && X.fieldKeyOf(cells[ci - 1])) {
+          /* ⚠ 그 칸 «자신»이 라벨이면 고칠 자리가 아니다 — 서식 문구를 덮으면 안 된다.
+             머리행형에서는 라벨끼리 옆에 붙어 있어(성명|생년월일) 이 빗장이 없으면
+             라벨 줄이 통째로 «고칠 수 있는 칸»이 된다. */
+          if (!kind && String(txt || '').trim() && !X.fieldKeyOf(txt) && (X.fieldKeyOf(왼) || 위)) {
             kind = '글자칸';
           }
           if (!kind) return;
           slots.push({ id: 't' + ti + 'r' + ri + 'c' + ci, tbl: ti, row: ri, col: ci,
                        kind: kind, text: String(txt || '').trim(),
-                       left: ci > 0 ? String(cells[ci - 1] || '').trim() : '', guess: '' });
+                       left: 왼, up: 위, guess: '' });
         });
       });
       return tbl;   /* 훑기만 한다 — 여기서는 아무것도 안 바꾼다 */
@@ -181,7 +203,10 @@
   function hintKey(slot) {
     var t = X.normLabel(slot.text);
     if (/^한자$/.test(t)) return 'nameHanja';
-    if (/^한글$/.test(t)) return X.fieldKeyOf(slot.left) === 'name' ? 'name' : '';
+    if (/^한글$/.test(t)) {
+      /* 왼쪽이든 위든 «성명»이 가리키는 자리여야 이름이다 */
+      return (X.fieldKeyOf(slot.left) === 'name' || X.fieldKeyOf(slot.up) === 'name') ? 'name' : '';
+    }
     if (/^(인|서명|서명또는인|印)$/.test(t)) return '__stamp';
     return X.fieldKeyOf(slot.text);
   }
@@ -202,7 +227,7 @@
       var k = 스스로 ? 스스로
             : s.kind === '안내글뒤' ? hintKey(s)
             : s.kind === '칸안라벨' ? '__incell'
-            : X.fieldKeyOf(s.left);
+            : (X.fieldKeyOf(s.left) || X.fieldKeyOf(s.up));
       if (k === 'rrn') { s.guess = ''; s.hint = 'rrn'; return; }
       s.guess = k || '';
     });
