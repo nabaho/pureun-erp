@@ -384,6 +384,48 @@ test('★★ 종류 딱지 대신 «자문료»를 화면에 적는다 — 못 �
   assert.match(g, /업체관리 종류/, '★ 업체관리 종류를 아예 지웠습니다');
 });
 
+/* ══════ 붙은 머리 (2026-09-06 「상단 틀고정과 저장·닫기도 상단에」) ══════ */
+test('★★ 고르는 창의 머리가 «붙어» 있다 — 206줄을 굴려도 저장을 누를 수 있다', () => {
+  const r = 함수('renderPartnerPick');
+  assert.match(r, /class="pickhd"/, '★★ 붙는 머리가 없습니다');
+  /* 저장·닫기가 그 머리 «안»에 있다 */
+  /* ⚠ 머리가 끝나는 자리를 «주석»으로 집지 말 것 — 주석은 위에서 걷어낸다.
+     몸통(.pickbody)이 시작하는 «코드»가 곧 머리의 끝이다. */
+  const 머리시작 = r.indexOf('class="pickhd"');
+  const 머리끝 = r.indexOf('class="pickbody"');
+  assert.ok(머리끝 > 머리시작, '★ 몸통(.pickbody)이 머리보다 앞에 있습니다');
+  assert.ok(r.slice(머리시작, 머리끝).indexOf('id="pickFoot"') > 0,
+    '★★ 저장·닫기가 붙은 머리 밖에 있습니다 — 끝까지 굴려야 누릅니다');
+  /* 목록은 머리 «밖»이라야 굴러간다 */
+  assert.ok(r.indexOf('id="pickGrid"') > 머리끝,
+    '★★ 목록까지 붙여 두었습니다 — 굴릴 것이 없어집니다');
+});
+
+test('★★ 저장·닫기를 «아래에 또» 두지 않는다', () => {
+  const r = 함수('renderPartnerPick');
+  assert.equal((r.match(/id="pickFoot"/g) || []).length, 1,
+    '★★ 저장·닫기가 두 곳에 있습니다 — 어느 것을 눌러야 할지 흐려집니다');
+  assert.ok(r.indexOf('class="foot"') < 0, '★ 옛 아래 단추줄이 남아 있습니다');
+});
+
+test('★★ 붙은 머리가 «틈»을 남기지 않는다 — 그 틈으로 회사 줄이 비쳐 지나간다', () => {
+  /* 편집칸에서 13px·2px 로 두 번 겪은 자리다. 창의 안쪽 여백이 있으면
+     붙은 머리가 그 여백 «아래»에 붙어, 위쪽에 회사 줄이 스쳐 지나간다. */
+  const wide = /(?:^|\n)\.modalCard\.wide\{([^}]*)\}/.exec(RAW);
+  assert.ok(wide, '★ 넓은 창 꾸밈이 없습니다');
+  assert.match(wide[1], /padding: *0/,
+    '★★ 넓은 창에 안쪽 여백이 있습니다 — 붙은 머리가 그만큼 아래에 붙어 틈이 생깁니다');
+  const hd = /(?:^|\n)\.pickhd\{([^}]*)\}/.exec(RAW);
+  assert.ok(hd, '★ 붙는 머리 꾸밈이 없습니다');
+  assert.match(hd[1], /position: *sticky/, '★★ 머리가 안 붙습니다');
+  assert.match(hd[1], /top: *0/, '★ 어디에 붙을지를 안 정했습니다');
+  assert.match(hd[1], /background/, '★★ 바탕색이 없어 아래 글이 머리를 통과해 비칩니다');
+  assert.match(hd[1], /z-index/, '★ 층이 없어 회사 줄이 머리 위로 올라옵니다');
+  /* 여백은 머리와 몸통이 저마다 «안»에서 갖는다 */
+  assert.match(hd[1], /padding/, '★ 머리에 숨이 없습니다');
+  assert.match(/(?:^|\n)\.pickbody\{([^}]*)\}/.exec(RAW)[1], /padding/, '★ 몸통에 숨이 없습니다');
+});
+
 /* ══════ 들어가는 문 ══════ */
 test('★★ 자문사 화면에 «고르기» 단추가 있다 — 없으면 창을 못 연다', () => {
   assert.match(H, /onclick="openPartnerPick\(\)"/,
