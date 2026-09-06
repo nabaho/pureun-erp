@@ -958,7 +958,11 @@ const App = {
      partners  — 그 업체를 홈페이지에 올렸는지 «사람이» 표시한 값(homepage/partners).
      companiesErr — 업체관리를 «못 읽은» 것. 「업체가 없다」와 반드시 갈라 말한다.
      q — 자문사 목록에서 이름으로 찾는 글자. 업체가 수백 개라 찾을 길이 없으면 못 고른다. */
-  companies: [], partners: {}, companiesErr: '', q: '',
+  /* coType — 업체 종류(자문·급여·기금 …)로 좁혀 본다 (대표 지시 2026-09-06
+     「업체관리에도 자문 급여 등이 있어 이 부분도 필터링 할 수 있게 해야 된다」).
+     ⚠ 딱지(filter)와 «따로» 둔다 — 종류는 「무엇을 하는 회사인가」이고 딱지는
+       「홈페이지에 올렸나」다. 한 칸에 섞으면 둘을 함께 좁힐 수 없다. */
+  companies: [], partners: {}, companiesErr: '', q: '', coType: '',
   /* pageConfigUnread — 「쪽 목록(homepage/config/pages)」을 «못 읽었다»는 표시다.
      ★ syncPageConfig 는 못 읽어서 null 이 온 것과 자료가 «아직 비어 있어» null 인 것을
        가르지 않고 똑같이 기본 8쪽으로 채운다(화면이 갑자기 비면 안 되므로). 그런데
@@ -980,8 +984,10 @@ const App = {
   async go(group) {
     if (!(await leaveDraft())) return;
     App.group = group;
-    App.filter = defaultFilterOf(group);  // 갈래를 옮기면 걸러 보기를 푼다(자문사는 「올림」부터)
+    App.filter = defaultFilterOf(group);  // 갈래를 옮기면 걸러 보기를 푼다
     App.q = '';
+    /* ★ 종류도 함께 푼다 — 안 풀면 구성원을 보고 왔는데 자문사가 「급여」로 좁혀져 있다 */
+    App.coType = '';
     App.pick = firstPickOf(group);
     loadDraft();
     App.render();
@@ -995,6 +1001,13 @@ const App = {
     if (!box) { App.render(); return; }
     box.innerHTML = rowsHtml();
     if (cnt) cnt.innerHTML = listCountHtml();
+  },
+
+  /* 업체 종류로 좁히기. 딱지 셈도 함께 바뀌므로 통째로 다시 그린다 —
+     찾기와 달리 «칠 것»이 없어 커서가 튈 일이 없다. */
+  setType(v) {
+    App.coType = String(v || '');
+    App.render();
   },
 
   async select(key) {
@@ -3106,15 +3119,13 @@ function appbarHtml() {
     /* ★ 「홈페이지에 올리기」는 «구성원 갈래를 볼 때»만 보인다.
        늘 보이면 쪽·자문사를 보다가 눌러 구성원이 올라간다 —
        무엇이 올라가는지와 지금 보는 화면이 맞아야 사람이 안 헷갈린다. */
-    /* ★ 자문사 화면의 «으뜸 일»은 어느 회사를 올릴지 고르는 것이다 (대표 지시 2026-09-06).
-       한 곳씩 눌러 고르게 두었더니 272곳 중 올림이 «0곳»이었다 — 쓸 수 없었던 것이다.
-       구성원 화면의 「홈페이지에 올리기」와 같은 자리에 둔다. */
-    + (App.group === 'partner'
-        ? '<button class="btn pri" onclick="openPartnerPick()"'
-          + ' title="업체관리에 있는 회사에서 홈페이지에 올릴 곳을 한 번에 고릅니다">'
-          + '자문사 고르기</button>'
-          + '<button class="btn" onclick="openPartnerLogos()" title="자문사 쪽에 보일 로고와 차례를 정합니다">자문사 로고 관리</button>'
-        : '')
+    /* ⚠ 자문사 단추(고르기·로고 관리)를 여기 «머리띠»에 두지 않는다
+       (대표 지시 2026-09-06 「자문사 고르기를 별도로 위에 두지 마라.
+        로고 관리도 자문사에 대한 부분은 여기 화면에서 정리하게 해야 된다」).
+       머리띠는 «화면 전체»에 대한 자리다(대조·미리보기·열기). 자문사에만 쓰는 것을
+       거기 두면 자문사 화면 안(목록 머리)에도 같은 단추가 생겨 둘이 된다 —
+       실제로 2026-09-06 에 「자문사 고르기」가 위아래 두 곳에 생겼다.
+       ★ 둘 다 목록 머리(listHtml)에 모여 있다. 여기로 되돌리지 말 것. */
     + (App.group === 'members'
         ? '<button class="btn" onclick="publishPeople()"' + (App.publishing ? ' disabled' : '')
           + ' title="여기 자료로 «구성원 소개» 쪽을 다시 만들어 올립니다. 무엇이 올라가는지 먼저 보여드립니다.">'
@@ -3520,6 +3531,11 @@ function visibleRows(group) {
     const want = q.toLowerCase();
     all = all.filter(r => String(r.name || '').toLowerCase().indexOf(want) >= 0);
   }
+  /* ★ 업체 종류로 좁히기 (대표 지시 2026-09-06). 딱지와 «겹쳐» 걸린다 —
+     「올림」이면서 「자문」인 곳처럼 둘을 함께 좁힐 수 있어야 한다. */
+  if (group === 'partner' && App.coType) {
+    all = all.filter(r => String(r.typeCode || '') === App.coType);
+  }
   /* ★ 거래가 끝난 업체는 «명단에서 자동으로 뺀다»
        (대표 지시 2026-09-03 「업체 종료된 곳은 모두 자동으로 명단 빼라」).
      지우는 것이 아니다 — 「거래 종료」 딱지를 누르면 그대로 다 보인다.
@@ -3565,13 +3581,16 @@ function visibleRows(group) {
    무엇을 눌러야 할지가 흐려진다. */
 function chipsHtml() {
   const s = statOf(App.group);
-  const all = rowsOf(App.group);
-  /* ★ 자문사는 «거래가 끝난 곳을 뺀 수»가 기본이다 (대표 지시 2026-09-03).
-     여기서 all 을 그대로 쓰면 「전체 373」이라 적히는데 눌러 보면 340줄이 나온다 —
-     세는 곳과 보이는 곳(visibleRows)이 같은 규칙을 써야 한다. */
-  /* ★ 자문사의 기본 목록은 «손댄 것»만이다(2026-09-06) — 딱지 셈도 같은 규칙을 써야 한다.
-     「전체 272」라 적고 눌러 보니 0줄이면 사람은 목록이 고장 났다고 여긴다.
-     이름도 「전체」가 아니라 「고른 것」이다 — 272곳 중 손댄 것을 세는 것이니까. */
+  /* ★ 세는 곳과 보이는 곳(visibleRows)이 «같은 규칙»을 써야 한다.
+       · 거래가 끝난 곳은 뺀다 (2026-09-03)
+       · 자문사 기본은 «손댄 것»만이라, 첫 딱지는 「전체」가 아니라 「고른 것」이다 (2026-09-06)
+       · 종류로 좁혀 놓았으면 그 «안에서» 센다 (2026-09-06)
+     하나라도 어긋나면 「올림 24」라 적혀 있는데 눌러 보니 10줄이 나온다 —
+     그때 사람은 목록이 고장 났다고 여긴다. */
+  let all = rowsOf(App.group);
+  if (App.group === 'partner' && App.coType) {
+    all = all.filter(r => String(r.typeCode || '') === App.coType);
+  }
   const 살아있는 = App.group === 'partner' ? all.filter(r => !r.closed) : all;
   const base = App.group === 'partner' ? 살아있는.filter(r => r.posted !== '') : all;
   const defs = [{ k: '', label: App.group === 'partner' ? '고른 것' : '전체', n: base.length }];
@@ -3662,13 +3681,30 @@ function listHtml() {
          업체 자료는 이 화면이 «이미 다 읽어 와» 272곳을 그리고 있다 — 가져올 것이 없는데
          딴 앱으로 넘어가는 단추만 있었다. 이름·업종을 고칠 일은 가끔이라 앱바로 간다.
        ★ 그 자리에는 «여기서 할 일»을 둔다 — 어느 회사를 올릴지 고르는 것이다. */
+    /* ★ 자문사에 대한 것은 «모두 여기»에 모은다 (대표 지시 2026-09-06) —
+       고르기도 로고도 자문사 화면 안에서 끝난다. 머리띠에 두지 않는다. */
     + (App.group === 'partner'
-        ? '<button class="btn sm" onclick="openPartnerPick()">＋ 자문사 고르기</button>' : '')
+        ? '<button class="btn sm pri" onclick="openPartnerPick()">＋ 자문사 고르기</button>'
+          + '<button class="btn sm" onclick="openPartnerLogos()"'
+          + ' title="자문사 쪽에 보일 로고와 차례를 정합니다">로고 관리</button>' : '')
     + '</div>';
   /* 찾기 칸 — 업체가 수백 개다. 찾을 길이 없으면 «회사별로 고르기»가 안 된다. */
   if (App.group === 'partner') {
     h += '<div class="chips"><input class="find" placeholder="회사 이름으로 찾기"'
       + ' value="' + esc(App.q) + '" oninput="App.find(this.value)">'
+      /* ★ 업체 종류로 좁히기 (대표 지시 2026-09-06 「업체관리에도 자문 급여 등이 있어
+         이 부분도 필터링 할 수 있게 해야 된다」). 종류는 «업체관리에 있는 것»만 낸다 —
+         없는 종류를 늘어놓으면 눌러 봐야 빈 화면이다. */
+      + (function () {
+          const 종류 = pickTypes();
+          if (!종류.length) return '';
+          return '<select onchange="App.setType(this.value)" title="업체 종류로 좁혀 봅니다">'
+            + '<option value=""' + (App.coType ? '' : ' selected') + '>종류 전체</option>'
+            + 종류.map(t => '<option value="' + esc(t.code) + '"'
+                + (App.coType === t.code ? ' selected' : '') + '>'
+                + esc(t.code) + ' ' + t.n + '</option>').join('')
+            + '</select>';
+        })()
       + (App.q ? '<button class="chip" onclick="App.find(\'\')">찾기 지우기</button>' : '') + '</div>';
   }
   h += chipsHtml();
@@ -3693,7 +3729,9 @@ function rowsHtml() {
        하고 만다 — 몇 곳에서 고를 수 있는지와 «어디서 고르는지»를 함께 말한다.
        ⚠ 「이 딱지에 해당하는 줄이 없습니다」로 끝내지 말 것. 그 말은 다음에 뭘 할지를
          안 알려 준다 — 이 화면이 올림 0곳으로 몇 달을 지낸 까닭이 그것이다. */
-    if (App.group === 'partner' && !App.filter && !App.q) {
+    /* ⚠ 종류로 좁혀서 0줄인 것은 «안 골라서» 0줄인 것과 다르다 —
+       그때 「아직 아무 곳도 안 골랐습니다」라고 하면 거짓말이 된다. */
+    if (App.group === 'partner' && !App.filter && !App.q && !App.coType) {
       const 고를수있는 = all.filter(r => !r.closed).length;
       return '<div class="empty">아직 <b>아무 곳도 안 골랐습니다.</b><br>'
         + '<span class="sub">업체관리에 ' + 고를수있는 + '곳이 있습니다 — 홈페이지에 올릴 곳을 고르십시오.</span>'
