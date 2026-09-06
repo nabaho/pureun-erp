@@ -69,6 +69,33 @@ function 선언들(src) {
      부른다 — 점을 빼고 세면 그것이 안 잡혀 «산 것을 죽었다»고 말한다
      (2026-09-05 에 pickEmail 이 실제로 그렇게 잡혔다).
    ⚠ 대신 obj.fn 처럼 남의 것까지 세게 되어 «넉넉한 쪽»으로 틀린다 — 그 편이 안전하다. */
+/* 「일부러 남긴 것」인가 — 선언 «바로 위» 몇 줄이 그렇게 말하는가.
+   ★ 이것이 없으면 목록이 쓸모없다. 2026-09-05 에 열두 개를 손으로 갈라 보니
+     한 갈래는 «일부러» 남긴 것이었다(work.html 의 옛 분류 다듬개 —
+     「지금은 쓰지 않는다. 과거 데이터 해석용으로 남겨 둔다」).
+     그것을 지우면 옛 자료를 읽을 길이 사라진다.
+   ⚠ 넉넉하게 본다 — 조금이라도 그렇게 읽히면 「일부러」로 둔다. */
+const 일부러말 = /남겨\s*둔|안\s*쓴다|쓰지\s*않는다|안\s*쓰인|되돌아갈|나중에\s*쓴|예전\s*것|옛\s*손|deprecated|kept for/i;
+function 일부러남긴것(src, at) {
+  /* ⚠ «바로 위에 붙은 주석»만 본다. 「앞 몇 줄」로 넓게 잡으면 옆 함수의 주석이
+     딸려 들어와, 아무 말 없는 함수까지 「일부러」로 본다(2026-09-05 에 실제로 그랬다). */
+  /* ⚠ at 은 «function 앞 글자»(대개 줄바꿈)를 가리킨다 — 그래서 여기서 자르면
+     마지막 줄이 곧 «바로 위 줄»이다. 한 줄 더 덜어 내면 주석을 통째로 놓친다. */
+  const 줄들 = src.slice(0, at).split('\n');
+  const 모은것 = [];
+  for (let i = 줄들.length - 1; i >= 0; i--) {
+    const t = 줄들[i].trim();
+    if (!t) { if (모은것.length) break; continue; }   /* 빈 줄이 사이에 있으면 남의 주석이다 */
+    if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*') || t.endsWith('*/')) {
+      모은것.unshift(t);
+      if (t.startsWith('/*')) break;
+      continue;
+    }
+    break;                                      /* 코드를 만나면 거기까지 */
+  }
+  return 일부러말.test(모은것.join('\n'));
+}
+
 function 낱말(name) {
   return new RegExp('(?<![\\w$])' + name.replace(/\$/g, '\\$') + '(?![\\w$])', 'g');
 }
@@ -79,6 +106,14 @@ function 세기(hay, name) {
   return n;
 }
 
+/* ⚠★ 이 연장과 제 검사는 «세지 않는다».
+     죽은 코드를 «설명하려고» 주석에 그 이름을 적으면, 그것이 곧 「부르는 자리」로
+     읽혀 그 함수가 목록에서 사라진다 — 설명할수록 안 보이게 되는 셈이다.
+     2026-09-05 에 erpConsTypeName 이 실제로 그렇게 숨었다(이 파일 주석 때문에).
+     pu-cards.html 에도 같은 결의 경고가 이미 적혀 있다 —
+     「이 주석에 함수 이름을 그대로 쓰지 않는다」. */
+const 나자신 = ['tools/dead-code.js', 'tests/dead-code.test.js'];
+
 function 파일모으기() {
   const out = {};
   (function walk(dir, depth) {
@@ -87,7 +122,10 @@ function 파일모으기() {
       if (e.name.startsWith('.') || e.name === 'node_modules') continue;
       const p = path.join(dir, e.name);
       if (e.isDirectory()) walk(p, depth + 1);
-      else if (/\.(html|js|md)$/.test(e.name)) out[path.relative(ROOT, p)] = fs.readFileSync(p, 'utf8');
+      else if (/\.(html|js|md)$/.test(e.name)) {
+        const rel = path.relative(ROOT, p);
+        if (나자신.indexOf(rel) < 0) out[rel] = fs.readFileSync(p, 'utf8');
+      }
     }
   })(ROOT, 0);
   return out;
@@ -115,8 +153,12 @@ function 훑기(파일들, 전체) {
       if (세기(src, d.name) > 선언수) continue;
       const 남 = Object.keys(전체).filter(k => k !== f && 낱말(d.name).test(전체[k]));
       결과.push({
-        file: f, name: d.name, 남,
-        검사만: !!남.length && 남.every(k => k.startsWith('tests/') || k.startsWith('docs/')),
+        file: f, name: d.name, 남, 일부러: 일부러남긴것(src, d.at),
+        /* ⚠ 글(.md)은 «어디에 있든» 문서다 — docs/ 아래만 문서로 보면,
+             STATUS.md 에 그 이름을 한 번 적는 것만으로 「살아 있다」가 되어
+             죽은 코드가 조용히 숨는다(2026-09-05 에 erpConsTypeName 이 실제로 그랬다).
+             글에 적는 것은 «부르는 것»이 아니다. */
+        검사만: !!남.length && 남.every(k => k.startsWith('tests/') || /\.md$/.test(k)),
         없음: !남.length,
         line: src.slice(0, d.at).split('\n').length
       });
@@ -131,10 +173,13 @@ if (require.main === module) {
   const 전체 = 파일모으기();
   const 볼것 = process.argv[2] ? [process.argv[2]] : 볼파일(전체);
   const r = 훑기(볼것, 전체);
-  const 죽음 = r.filter(x => x.없음);
-  const 검사만 = r.filter(x => x.검사만);
+  const 죽음 = r.filter(x => x.없음 && !x.일부러);
+  const 검사만 = r.filter(x => x.검사만 && !x.일부러);
+  const 일부러 = r.filter(x => x.일부러);
   console.log('■ 아무 데서도 안 불린다 — ' + 죽음.length + '개');
   죽음.forEach(x => console.log('   ' + x.file + ':' + x.line + '  ' + x.name));
   console.log('\n■ «검사·문서만» 부른다 — ' + 검사만.length + '개 (아무도 안 쓰는데 검사가 지켜 준다)');
   검사만.forEach(x => console.log('   ' + x.file + ':' + x.line + '  ' + x.name + '  ← ' + x.남.join(', ')));
+  console.log('\n■ «일부러» 남긴 것 — ' + 일부러.length + '개 (지우지 말 것 · 주석이 까닭을 적어 두었다)');
+  일부러.forEach(x => console.log('   ' + x.file + ':' + x.line + '  ' + x.name));
 }
