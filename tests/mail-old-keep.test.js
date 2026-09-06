@@ -26,12 +26,17 @@ const sync = fs.readFileSync(path.join(root, 'functions', 'mail-sync.js'), 'utf8
 const idx = fs.readFileSync(path.join(root, 'functions', 'index.js'), 'utf8')
   .replace(/\/\/[^\n]*/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ');
 
-/* 진단 함수 몸통만 잘라 본다 */
+/* 진단 함수 «몸통만» 잘라 본다.
+   ⚠★ 끝을 readMailAttachment 로 잡았다가 깨졌다 — 그 사이에 지난 메일 채우기·열기가
+     들어오면서, 그것들이 쓰는 TOP·RETR 이 이 진단의 것으로 읽혔다(2026-09-06).
+     끝은 «바로 다음에 오는 것»으로 잡고, 그것이 사라지면 그 자리에서 알린다. */
 const probe = (function(){
   const i = sync.indexOf('probeMailPop:');
   assert.ok(i > 0, 'probeMailPop 을 못 찾았습니다');
-  const j = sync.indexOf('readMailAttachment:', i);
-  return sync.slice(i, j > i ? j : i + 4000);
+  const j = sync.indexOf('backfillMailbox:', i);
+  assert.ok(j > i, '진단 다음에 오던 것(backfillMailbox)이 사라졌습니다 — '
+    + '자를 끝을 다시 잡아야 합니다(안 그러면 남의 코드를 이 진단으로 읽습니다)');
+  return sync.slice(i, j);
 })();
 
 /* ══════ ①② 메일을 건드리지 않는다 — 가장 중요한 자리 ══════ */
