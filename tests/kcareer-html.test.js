@@ -2048,6 +2048,11 @@ test('★★ PDF 는 그림으로 바꿔 보낸다 — 그대로 보내면 읽�
   assert.match(p, /_pdfPagesJpeg/, 'PDF 는 «쪽마다» 그림으로 바꿉니다');
   assert.match(p, /pages:/, '바꾼 쪽들을 함께 넘겨야 여러 장을 읽습니다');
   assert.match(source, /OCR_MAX_PAGES\s*=\s*\d+/, '읽을 쪽수에 뚜껑이 있어야 합니다');
+  /* ⚠★ 만드는 것만으로는 부족하다 — «부르는 자리»가 그 쪽들을 넘겨야 한다.
+     실측 2026-09-06: pay.pages 를 안 넘기게 되돌려도 검사가 통과했다.
+     만들어 놓고 안 쓰면 여전히 첫 장만 읽는다 — 겉으로는 아무 표시가 없다. */
+  assert.match(source, /_geminiOCR\(prompt,\s*sendB64,\s*mt,\s*pay\.pages\)/,
+    '읽을 때 «바꾼 쪽들»을 안 넘깁니다 — 만들어만 두고 첫 장만 읽게 됩니다');
   assert.match(p, /return \{b64:b64, mt:'application\/pdf', asImage:false\}/,
     '못 바꾸면 원래 PDF 로 되돌아가야 합니다');
   // 일괄 읽기·다시읽기 «둘 다» 같은 길을 써야 한다
