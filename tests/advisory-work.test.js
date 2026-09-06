@@ -295,3 +295,45 @@ test('★ 이미 만든 급여 업무는 다시 안 만든다 — 담당이 바�
   assert.match(M, /if\(items\[id\]\) return Promise\.resolve\(id\);/);
   assert.ok(M.indexOf('payMgrOf') > M.indexOf('if(items[id])'), '이미 있는데도 담당을 다시 계산한다');
 });
+
+/* ══════════════════════════════════════════════
+   ⑤ 갈래를 더했으면 «읽는 자리»도 함께
+   ══════════════════════════════════════════════
+   대표 보고 2026-09-06 「업무량에 … 모든 사업들을 포함시켜라」 —
+   자문을 넣었는데 화면에 한 건도 안 나왔다. 까닭은 PE_KEYS 였다:
+   PE_DEF 에만 넣고 PE_KEYS 를 빠뜨려 peLoadAll 이 data/undefined/v 를 읽었다.
+   ⚠ 화면에는 아무 오류도 안 났다 — 읽기 실패는 조용히 캐시로 넘어가고,
+     캐시에도 없으면 그냥 빈손이다. 그래서 「없는 것」과 구별이 안 됐다. */
+test('★★ PE_DEF 의 모든 갈래가 PE_KEYS 에도 있다 — 없으면 그 갈래는 통째로 안 들어온다', () => {
+  const b = { console };
+  vm.createContext(b);
+  vm.runInContext(gvar('PE_DEF') + '\n' + gvar('PE_KEYS') + '\nthis.D=PE_DEF; this.K=PE_KEYS;', b);
+  const missing = Array.from(b.D).map(d => d[0]).filter(k => !b.K[k]);
+  assert.deepEqual(missing, [], '읽는 자리가 없는 갈래: ' + JSON.stringify(missing));
+});
+
+test('★★ 자문은 data/companies 를 읽는다', () => {
+  const b = { console };
+  vm.createContext(b);
+  vm.runInContext(gvar('PE_KEYS') + '\nthis.K=PE_KEYS;', b);
+  assert.equal(b.K.companies, 'companies');
+});
+
+test('★ 바뀜 구독(peWatch)도 같은 목록을 쓴다 — 빠지면 새로고침해야만 보인다', () => {
+  const F = code(grab('peWatch'));
+  assert.match(F, /PE_DEF\.forEach/);
+  assert.match(F, /'data\/'\+PE_KEYS\[d\[0\]\]\+'\/u'/);
+});
+
+test('★ 업체 명단을 두 번 읽지 않는다 — 업체 잇기와 나눠 쓴다', () => {
+  const F = code(grab('peLoadAll'));
+  assert.match(F, /if\(d\[0\]==='companies'&&coSrc&&coSrc\.length\) return Promise\.resolve\(\[d\[0\],coSrc\]\);/);
+  assert.match(F, /if\(\(!coSrc\|\|!coSrc\.length\)&&peMaster\.companies\) coSrc=peMaster\.companies;/);
+});
+
+test('★★ 자문 업무명에 내부 번호가 안 나온다 — 유형 마스터 열쇠는 company(홑)다', () => {
+  const D = gvar('PE_DEF');
+  assert.match(D, /peTypeName\('company',x\.typeCode\)\|\|'자문'/);
+  /* 마스터 이름표가 홑이라는 것 자체를 못 박아 둔다 */
+  assert.match(W, /var PE_TKEY=\{company:'biz_company_types'/);
+});

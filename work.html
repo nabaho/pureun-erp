@@ -9647,7 +9647,15 @@ function _peDue(x){
    같은 브라우저에서 푸른이알피를 한 번 열지 않으면 후보가 0건이었다.
    저장형태는 키마다 배열/객체로 다르므로 _peArr가 둘 다 받아 정규화한다.
    ⚠ 읽기만 한다 — 마스터 쓰기는 pu-erp의 dbPatch만 담당한다. */
-var PE_KEYS={contract:'contracts',case:'cases',consulting:'consultings',fund:'funds',other:'other_projects'};
+/* 갈래 이름 → 푸른이알피 저장소 이름.
+   ⚠⚠ PE_DEF 에 갈래를 더하면 «여기도» 더해야 한다 (대표 보고 2026-09-06
+     「업무량에 … 모든 사업들을 포함시켜라」). 2026-09-05 에 자문(companies)을
+     PE_DEF 에만 넣고 여기를 빠뜨려, peLoadAll 이 data/undefined/v 를 읽었고
+     자문이 «한 건도» 안 들어왔다. 화면에는 아무 오류도 안 났다 —
+     읽기 실패는 조용히 캐시로 넘어가고, 캐시에도 없으면 그냥 빈손이다.
+   ⚠ peWatch 도 이 목록으로 «바뀜»을 구독한다. 빠지면 그 갈래는 새로고침해야만 보인다. */
+var PE_KEYS={contract:'contracts',case:'cases',consulting:'consultings',fund:'funds',
+  other:'other_projects',companies:'companies'};
 // 라벨 = 푸른이알피 사무관리 메뉴 5종. 이것이 목록의 "구분"이 된다.
 // (유형 — 현장클리닉·기술보호·임금체불 등 — 은 ptype에 따로 담아 업무명으로 쓴다)
 var PE_DEF=[
@@ -9663,8 +9671,12 @@ var PE_DEF=[
        한 함수에서 둘 다 보게 하면 사건에 name 이 생기는 날 엉뚱한 값을 집는다.
      ⚠ 업무명은 비워 둔다 — 회사명을 업무명으로 쓰지 않는다는 규칙 그대로다(_peCandOf).
      ⚠ 계약 만료일이 곧 기한이 된다(_peDue) — 자문 갱신이 D-30 으로 뜬다. */
+  /* ⚠ 유형 마스터의 열쇠는 «company»(홑)이고 갈래 이름은 «companies»(겹)다.
+     peType 이 갈래 이름으로 마스터를 찾으므로 여기서 미리 이름으로 바꿔 넘긴다 —
+     안 그러면 업무명에 co-a 같은 내부 번호가 그대로 나온다. */
   ['companies','자문',function(x){return x.contractNo||x.no||'';},function(){return '';},
-   function(x){return x.typeCode||'자문';},function(x){return x.name||x.companyName||'';}]
+   function(x){return peTypeName('company',x.typeCode)||'자문';},
+   function(x){return x.name||x.companyName||'';}]
 ];
 /* 푸른이알피 계약의 「종류」— 계약 화면 CONTRACT_KINDS 와 같은 말을 쓴다.
    종류가 곧 「어디로 넘어가는 계약인가」다(상담만 안 넘어간다).
@@ -9890,12 +9902,16 @@ function peLoadAll(){
   })).then(function(rows){ rows.forEach(function(r){ if(r[1]) peTypes[r[0]]=r[1]; }); });
   return tload.then(function(){
     return Promise.all(PE_DEF.map(function(d){
+      /* 업체 명단은 업체 잇기용으로 이미 읽어 두었다(coSrc) — 같은 자리를 두 번 읽지 않는다 */
+      if(d[0]==='companies'&&coSrc&&coSrc.length) return Promise.resolve([d[0],coSrc]);
       return fbDb.ref('data/'+PE_KEYS[d[0]]+'/v').once('value')
         .then(function(s){ return [d[0],_peArr(s.val())]; })
         .catch(function(){ return [d[0],_ls(PE_KEYS[d[0]])]; });   // 권한/네트워크 실패 → 캐시 폴백
     }));
   }).then(function(rows){
     rows.forEach(function(r){ if(r[1]) peMaster[r[0]]=r[1]; });
+    // 거꾸로도 나눠 쓴다 — 여기서 먼저 읽었으면 업체 잇기가 다시 안 읽는다
+    if((!coSrc||!coSrc.length)&&peMaster.companies) coSrc=peMaster.companies;
     return peMaster;
   });
 }
