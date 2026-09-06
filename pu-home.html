@@ -300,6 +300,13 @@ main{flex:1;min-height:0;width:100%;padding:10px 12px;
 .rows{border:1px solid #cbd5e1;border-radius:9px;background:#fff;overflow:hidden;font-size:13.5px}
 .rows .l{display:flex;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line-soft)}
 .rows .l:last-child{border-bottom:0}
+/* 업무 «항목»의 머리 — 「01 법률자문」 (대표 결정 2026-09-06 ㉰).
+   어디서 어디까지가 한 업무인지 보이게 한다. 줄 자체는 그대로 하나씩 고친다. */
+.rows .grp{display:flex;gap:8px;align-items:baseline;padding:7px 10px 4px;
+  background:var(--line-soft);border-bottom:1px solid var(--line);border-top:1px solid var(--line)}
+.rows .grp:first-child{border-top:0}
+.rows .gn{color:var(--navy);font-weight:800;font-size:12.5px;font-variant-numeric:tabular-nums}
+.rows .gt{font-weight:700;font-size:12.5px;color:var(--ink)}
 .rows .l:hover{background:#f8fafc}
 .rows .n{width:20px;flex:none;text-align:right;color:var(--faint);font-size:11.5px;font-weight:800;
   font-variant-numeric:tabular-nums}
@@ -1022,6 +1029,7 @@ const App = {
     App.coType = '';
     App.pick = firstPickOf(group);
     loadDraft();
+    쪽자동읽기();   // 쪽을 고르면 저절로 읽어온다 (2026-09-06 ㉮)
     App.render();
   },
 
@@ -1047,6 +1055,7 @@ const App = {
     if (!(await leaveDraft())) return;
     App.pick = key;
     loadDraft();
+    쪽자동읽기();   // 쪽을 고르면 저절로 읽어온다 (2026-09-06 ㉮)
     App.render();
   },
 
@@ -1078,6 +1087,7 @@ const App = {
     App.filter = '';
     App.pick = key;
     loadDraft();
+    쪽자동읽기();   // 쪽을 고르면 저절로 읽어온다 (2026-09-06 ㉮)
     App.render();
   },
 
@@ -1269,6 +1279,9 @@ function loadAll() {
     App.loading = false;
     App.pick = firstPickOf(App.group);
     loadDraft();
+    /* ⚠ 여기서는 「저절로 읽기」를 걸지 «않는다» — 첫 화면은 구성원 소개라 읽을 쪽이 없고,
+       이 함수를 떼어다 돌리는 검사 넷이 서버를 부를 수 없어 한꺼번에 깨진다.
+       주요업무로 가는 길은 App.go 이고, 거기에 걸려 있다. */
     App.render();
   });
 }
@@ -1926,6 +1939,9 @@ function loadDraft() {
     const p = App.pages[App.pick] || {};
     App.draft = { kind: 'page', key: App.pick, text: p.text || '' };
   }
+  /* ⚠ 「저절로 읽기」를 여기 두지 «않는다» — loadDraft 는 자료만 만드는 순수한 곳이고,
+     검사 네 곳이 이 함수를 글자로 떼어다 돌린다. 서버를 부르는 일을 넣으면 그 넷이
+     한꺼번에 깨진다(2026-09-06 에 겪었다). 부르는 곳은 App.select·go·jump 다. */
 }
 
 /* 저장 안 한 것이 있으면 물어본다 — 말없이 버리면 다시 쓸 수밖에 없다.
@@ -5080,7 +5096,21 @@ window.publishPartner = publishPartner;
    ★ 줄 목록은 저장하지 않는다(보여주기 전용). 그래서 화면을 새로 열면 «확인 시각은
      남아 있는데 줄 목록은 비어» 있었다 — 대조는 해 놨는데 「아직 읽지 않았습니다」가
      떠서, 어떻게 보이는지 볼 방법이 없었다. 한 쪽만 읽으면 금방이다. */
-async function readOnePage(mid) {
+/* ★ 쪽을 고르면 «저절로» 읽어온다 (대표 결정 2026-09-06 ㉮).
+   왜 — 읽어온 줄은 화면에서만 살고 저장하지 않는다(홈페이지를 비추는 값이라 굳히면 낡는다).
+   그래서 화면을 새로 열면 「홈페이지 확인 9/3」이라 적혀 있는데도 줄은 비어 있었고,
+   쪽마다 단추를 눌러야 «어떻게 보이는지»를 볼 수 있었다. 안 누르면 늘 덩어리 글자만 보인다.
+   ⚠ 조용히 읽는다 — 사람이 부른 것이 아니므로 알림창도 토스트도 띄우지 않는다.
+     못 읽으면 그냥 「이 쪽 읽어오기」 단추가 남는다(늘 있던 그 자리다). */
+function 쪽자동읽기() {
+  const d = App.draft;
+  if (!d || d.kind !== 'page') return;
+  if (App.reading) return;
+  if (Array.isArray((App.pageLines || {})[d.key])) return;   // 이미 읽었다
+  readOnePage(d.key, true);
+}
+
+async function readOnePage(mid, 조용히) {
   if (App.reading) return;
   App.reading = mid;
   App.render();
@@ -5104,11 +5134,15 @@ async function readOnePage(mid) {
   App.reading = '';
   App.render();
   if (잘못) {
+    /* 저절로 읽다 실패한 것으로 창을 띄우지 않는다 — 쪽을 고를 때마다 창이 뜬다.
+       읽어오는 단추가 그대로 남아, 사람이 누르면 그때는 까닭을 알려 준다. */
+    if (조용히) { console.warn('[쪽 저절로 읽기] 실패', mid, 잘못); return; }
     await say('이 쪽을 읽지 못했습니다',
       '홈페이지에서 이 쪽을 읽어오지 못했습니다 — ' + 잘못 + '\n'
       + '딱지와 자료는 건드리지 않았습니다. 잠시 뒤 다시 눌러 주십시오.');
     return;
   }
+  if (조용히) return;              // 사람이 부른 것이 아니면 조용히 끝낸다
   const n = (App.pageLines[mid] || []).length;
   toast((n ? (n + '줄을 읽었습니다 — 홈페이지에 보이는 그대로입니다.')
            : '읽었지만 본문 줄을 찾지 못했습니다.')
@@ -5390,7 +5424,23 @@ function pageLinesHtml(mid) {
        고치면된다 … 연결되어 정리되면 수정도 어렵고 뭐가 잘못되었는지 알지도 못한다」.
      ★ 왼쪽은 «틀(iframe)»에 넣는다. 이 화면에 그대로 끼우면 홈페이지의 꾸밈이
        푸른토탈 화면을 통째로 망가뜨린다(body·h1·.btn 같은 이름이 겹친다). */
-  return '<div class="fld"><label>홈페이지 화면 — ' + runs.length + '줄'
+  /* ★ 줄을 «항목»으로 묶어 보여 준다 (대표 결정 2026-09-06 ㉰).
+     홈페이지가 「01 / 법률자문 / 설명…」 짜임인데 화면은 줄만 죽 세워, 어디서 어디까지가
+     한 업무인지 알 수 없었다(대표 지적 「구분이 어렵다」).
+     ★ 묶는 자리를 «지어내지 않는다» — 「01」 같은 번호 줄이 나오면 거기서 새 항목이
+       시작되는 것으로 본다. 홈페이지가 실제로 그렇게 되어 있다.
+     ⚠ 묶는 것은 «보여 주는 방식»일 뿐이다. 홈페이지에 채우는 단위는 여전히 «줄»이다 —
+       통째로 갈아 끼우면 지도·표·구획이 깨진다. 아래 input 은 그대로 줄 하나씩이다. */
+  const 항목머리 = (i) => {
+    if (!/^\d{1,2}$/.test(String(runs[i].text || ''))) return '';
+    const 제목 = (runs[i + 1] && String(runs[i + 1].text || '').trim()) || '';
+    return '<div class="grp"><span class="gn">' + esc(runs[i].text) + '</span>'
+      + (제목 ? '<span class="gt">' + esc(제목) + '</span>' : '') + '</div>';
+  };
+  const 항목수 = runs.filter(r => /^\d{1,2}$/.test(String(r.text || ''))).length;
+
+  return '<div class="fld"><label>홈페이지 화면 — '
+    + (항목수 ? '업무 ' + 항목수 + '개 · ' : '') + runs.length + '줄'
     + '<span class="tip">왼쪽 글자를 누르면 오른쪽 칸으로 갑니다</span>'
     + '<span style="flex:1"></span>'
     + '<button class="btn sm" onclick="pageDualToggle()">'
@@ -5413,7 +5463,8 @@ function pageLinesHtml(mid) {
           ? '<span class="nth" title="이 쪽에 똑같은 글이 ' + r.of + '군데 있습니다 —'
             + ' 지금 고치는 것은 ' + r.n + '번째입니다">' + r.n + '/' + r.of + '</span>'
           : '';
-        return '<div class="l' + kindOf(r.text) + (바뀜 ? ' ch' : '')
+        return 항목머리(i)
+          + '<div class="l' + kindOf(r.text) + (바뀜 ? ' ch' : '')
           + (r.of > 1 ? ' dup' : '')
           + '" data-i="' + i + '"><span class="n">' + (i + 1) + '</span>' + 차례
           /* ★ 원래 글자와 «열쇠»를 그대로 실어 보낸다 — 이것이 홈페이지에서 자리를 찾는 실마리다.
@@ -5505,16 +5556,24 @@ function pageEdit(d) {
        양쪽에 똑같이 걸린다). 그래서 읽기 좋게 나눠도 딱지가 「안 올라감」에 묶이지 않는다.
      ★ 나누는 자리는 «지어내지 않는다». 홈페이지에서 읽어온 줄 그대로만 쓴다 —
        엉뚱한 데서 끊으면 확인이 더 어려워진다. */
+  /* ★ 대조 기준 글자는 «접어» 둔다 (대표 결정 2026-09-06 ㉯).
+     이것은 태그를 걷고 줄을 뭉쳐 만든 «기계가 견주는 값»이다. 사람이 읽을 글이 아닌데
+     화면 한복판에 가장 크게 있어, 그것이 편집칸인 줄 알게 됐다
+     (대표 지적 「이렇게 보면 전혀 확인이 안 되고 구분이 어렵다」).
+     ⚠ 없애지는 «않는다» — 홈페이지를 직접 고친 뒤 기준값을 맞춰 주지 않으면 딱지가
+       영영 「안 올라감」에 묶이고, 그것을 푸는 유일한 길이 이 칸이다. */
   const 줄있음 = Array.isArray((App.pageLines || {})[d.key]) && App.pageLines[d.key].length > 0;
-  h += '<div class="fld"><label>대조 기준 글자 (/' + esc(d.key) + ')'
-    + '<span class="tip">홈페이지로 가지 않습니다 · 줄바꿈은 대조에 영향 없음</span>'
+  h += '<details class="why1"><summary>대조 기준 글자 (/' + esc(d.key) + ')'
+    + ' — 기계가 견주는 값입니다. 평소엔 안 보셔도 됩니다</summary><div class="w">'
+    + '<div class="fld"><label><span class="tip">홈페이지로 가지 않습니다 · 줄바꿈은 대조에 영향 없음</span>'
     + '<span style="flex:1"></span>'
     + '<button class="btn sm" onclick="splitByLive()"' + (줄있음 ? '' : ' disabled')
     + ' title="' + (줄있음 ? '홈페이지에서 읽어온 줄 그대로 나눕니다'
                           : '먼저 위 「이 쪽 읽어오기」를 눌러야 줄 모양을 알 수 있습니다')
     + '">홈페이지 줄 모양으로 나누기'
     + (줄있음 ? ' (' + App.pageLines[d.key].length + '줄)' : '') + '</button></label>'
-    + '<textarea rows="9" oninput="fieldEdit(\'text\',this.value)">' + esc(d.text) + '</textarea></div>';
+    + '<textarea rows="9" oninput="fieldEdit(\'text\',this.value)">' + esc(d.text) + '</textarea></div>'
+    + '</div></details>';
   /* 「고치는 순서」는 접어 둔다 — 한 번 익히면 매번 읽을 글이 아니다 */
   h += '<details class="why1"><summary>이 쪽을 고치는 순서</summary><div class="w"><ol>'
     + '<li>위 <b>홈페이지 화면</b> 칸에서 <b>고칠 줄을 그 자리에서 고친다</b> → '
