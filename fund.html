@@ -2719,7 +2719,6 @@ function closeHwp(){ if(_hwpEditor){ try{_hwpEditor.destroy();}catch(e){} _hwpEd
 function dlBuf(buf,fname){ var blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
   var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fname; document.body.appendChild(a); a.click();
   setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1500); }
-function _splitPeople(txt){ return String(txt||'').split(/[,\/·]/).map(function(s){return s.trim();}).filter(Boolean); }
 function _siteContacts(s){ var c={name:'',phone:'',mobile:'',email:''}; try{ var cts=s.contacts; if(typeof cts==='string')cts=JSON.parse(cts);
   if(Array.isArray(cts)&&cts.length){ var p=cts.filter(function(x){return x&&x.isPrimary;})[0]||cts[0];
     c.name=p.name||''; c.mobile=p.mobile||p.phone||''; c.phone=p.phone||p.mobile||''; c.email=p.email||''; } }catch(e){} return c; }
@@ -3250,6 +3249,17 @@ var FORM_FILL=[
    ⚠ 이사장은 여기 못 넣는다. 이사장도 이사이므로 위원이 맞지만, 명부의 역할이
      그냥 「이사장」이라 노측인지 사측인지가 «자료에 없다». 한쪽에 밀어 넣으면
      서식이 그럴듯하게 틀린 채로 관청에 나간다 — 빈칸으로 두어 사람이 채우게 한다. */
+/* 설립준비위원회 위원 — 임원 명부에서 «측»으로 갈라 읽는다.
+   ⚠ 감사는 위원이 아니라 따로 두는 기관이다. 이사장은 명부의 역할이 그냥 「이사장」이라
+     노측인지 사측인지가 «자료에 없다» — 빈칸으로 두어 사람이 채우게 한다.
+   ⚠ 서식 격자가 세 줄이므로 세 명까지만 세운다. */
+function _prepCommittee(f,side){
+  return _officersOf(f).filter(function(o){
+    var r=String(o.role||'');
+    if(!/이사/.test(r)||/감사/.test(r)) return false;
+    return side==='사용자측' ? /사용자/.test(r) : /근로자/.test(r);
+  }).slice(0,3);
+}
 function fillCommittee(root,f){
   var sideOf=function(o){ var r=String(o.role||'');
     if(!/이사/.test(r)||/감사/.test(r)) return '';        // 감사는 위원이 아니다
@@ -3894,7 +3904,9 @@ function docBody(kind,f,sites){
     return note+"<h1>설립준비위원회 회의록</h1>"
       +"<table><tr><th style='width:120px'>일시</th><td>"+dgV(f.meeting_date,12)+"</td></tr>"
       +"<tr><th>장소</th><td>"+dgV(f.meeting_place||f.address,18)+"</td></tr>"
-      +"<tr><th>참석</th><td>사용자측 위원 "+dgV(f.emp_committee,10)+" / 근로자측 위원 "+dgV(f.worker_committee,10)+"</td></tr></table>"
+      /* 위원은 «임원 명부»에서 읽는다 — emp_committee·worker_committee 는 쓰는 곳이 없어 늘 비었다 */
+      +"<tr><th>참석</th><td>사용자측 위원 "+dgV(_prepCommittee(f,'사용자측').map(function(o){return o.name;}).join(', '),10)
+      +" / 근로자측 위원 "+dgV(_prepCommittee(f,'근로자측').map(function(o){return o.name;}).join(', '),10)+"</td></tr></table>"
       +"<h2>안건</h2><p>1. "+fname+" 설립에 관한 사항<br>2. 정관 제정에 관한 사항<br>3. 임원 선출에 관한 사항<br>4. 기금출연 확정에 관한 사항<br>5. 기타 설립 관련 사항</p>"
       +"<h2>심의 결과</h2><p>제1호: 위원 전원 찬성으로 \""+fname+"\" 설립을 의결하였다.<br>"
       +"제2호: 정관(안)을 원안대로 의결하였다.<br>제3호: 이사장에 "+dgV(chairman)+"을(를) 선출하였다.<br>"
@@ -4257,9 +4269,17 @@ function docBody(kind,f,sites){
   }
   if(kind==='inka'){
     var cs=ftype==='사내'?'[V]':'[ ]', cg=ftype==='공동'?'[V]':'[ ]';
-    function wrows(side,names){ if(!names.length)names=['']; return names.map(function(nm,i){
-      return "<tr><td class='center'>"+(i===0?side:'')+"</td><td>"+dgV(nm,6)+"</td><td>＿＿＿＿＿＿</td><td>＿＿＿＿</td></tr>";}).join(''); }
-    var wk=_splitPeople(f.worker_committee), er=_splitPeople(f.emp_committee);
+    /* 위원 격자는 «임원 명부»에서 읽는다.
+       ⚠ 예전에는 worker_committee·emp_committee 를 읽었는데, 그 칸은 앱 어디에서도
+         «쓰는 곳이 없었다» — 그래서 위원 칸이 늘 비어 있었다.
+         원본 .hwp 를 채우는 길(fillCommittee)은 처음부터 임원 명부를 읽고 있었다.
+         두 길이 서로 다른 곳을 보고 있던 것이라, 명부 한 곳으로 모은다.
+       ⚠ 감사는 위원이 아니다. 이사장은 명부에 «측»이 안 적혀 있어 넣지 않는다 —
+         한쪽에 밀어 넣으면 서식이 그럴듯하게 틀린 채로 관청에 간다. */
+    function wrows(side,list){ if(!list.length)list=[{}]; return list.map(function(o,i){
+      return "<tr><td class='center'>"+(i===0?side:'')+"</td><td>"+dgV(o.name,6)+"</td>"
+        +"<td>"+dgV(o.birth,12)+"</td><td>"+dgV(o.title,8)+"</td></tr>";}).join(''); }
+    var wk=_prepCommittee(f,'근로자측'), er=_prepCommittee(f,'사용자측');
     return note+"<p class='right'>■ 근로복지기본법 시행규칙 [별지 제7호서식]</p>"
       +"<h1>"+cs+" 사내근로복지기금법인 &nbsp; "+cg+" 공동근로복지기금법인<br>설립인가신청서</h1>"
       +"<table><tr><th colspan='4' style='background:#e2e8f0'>기금법인</th></tr>"
@@ -5076,7 +5096,10 @@ function previewExcel(key,sheetIdx){
 function previewExcelSheet(i){ if(S._xlsPrev) previewExcel(S._xlsPrev.key,i); }
 function fillSetup(wb,f,sites){
   var ws=wb.getWorksheet('기금법인정보'); if(!ws) throw new Error('기금법인정보 시트를 찾을 수 없습니다');
-  var wk=_splitPeople(f.worker_committee), er=_splitPeople(f.emp_committee);
+  /* 위원은 «임원 명부»에서 읽는다 — 예전에는 쓰는 곳이 없는 칸을 읽어 늘 비어 나갔다.
+     원본 .hwp 를 채우는 길(fillCommittee)은 처음부터 명부를 보고 있었다. 한 곳으로 모은다. */
+  var wk=_prepCommittee(f,'근로자측').map(function(o){return o.name;});
+  var er=_prepCommittee(f,'사용자측').map(function(o){return o.name;});
   var repSite=f.rep_org||(sites[0]&&sites[0].name)||'';
   setC(ws,'B3',repSite); setC(ws,'C3',f.name||''); setC(ws,'D3',f.chairman||''); setC(ws,'E3',f.address||'');
   setC(ws,'F3',f.inka_date||''); setC(ws,'G3',f.worker_rep||wk[0]||''); setC(ws,'H3',wk[0]||''); setC(ws,'I3',er[0]||'');
@@ -5523,6 +5546,7 @@ function officerPanel(f){
        같은 일을 하는 단추가 한 화면에 둘이면 «따로 저장해야 하나» 하고 망설이게 된다. */
     +'<div class="row" style="margin-top:10px"><button onclick="addOfficerRow()">+ 줄 추가</button>'
     +'<button onclick="openCardPick(\'officer\')" title="푸른 기업정보함의 명함에서 이름을 가져옵니다 — 직위는 등기부를 보고 고르세요">🏢 명함에서</button>'
+    +'<button onclick="openSitePeoplePick()" title="참여사업장의 대표자·근로자대표를 골라 명부에 넣습니다 — 설립준비위원회 위원 칸이 여기서 채워집니다">👥 참여사업장에서</button>'
     +'<span class="muted" style="font-size:11px">위 [기금 정보]의 <b>💾 저장</b>을 누르면 함께 저장됩니다</span></div></div>';
 }
 function _offRow(o){
@@ -5538,6 +5562,64 @@ function _offRow(o){
     +'<td><button onclick="this.closest(\'tr\').remove();markDirty()" title="이 줄 지우기">✕</button></td></tr>';
 }
 function addOfficerRow(){ var b=$('off-rows'); if(!b)return; b.insertAdjacentHTML('beforeend',_offRow({})); markDirty(); }
+/* ── 참여사업장에서 위원 당겨오기 ──
+   참여사업장마다 «대표자(사용자측)»와 «근로자대표(근로자측)»가 있다.
+   설립준비위원회 위원은 노·사에서 나오므로, 그 사람들이 곧 후보다.
+
+   ⚠ 자동으로 넣지 «않는다». 사업장이 열다섯이어도 위원은 노·사 각 1~3인이고,
+     누가 위원인지는 «자료에 없다» — 골라야 한다. 지어내면 서식이 그럴듯하게 틀린다.
+   ⚠ 이미 명부에 있는 이름은 다시 넣지 않는다(두 줄이 되면 서식에 두 번 찍힌다). */
+function openSitePeoplePick(){
+  var fid=S.fundId, f=funds[fid]; if(!f){ toast('기금을 먼저 여세요','warn'); return; }
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">👥 참여사업장에서 위원 고르기</h2>'
+    +'<span style="flex:1"></span></div><div id="spk-body">'+loadingHTML('참여사업장을 읽는 중…')+'</div>');
+  var done=function(map){
+    var arr=Object.keys(map||{}).map(function(k){ return Object.assign({_id:k},map[k]); })
+      .filter(function(x){ return (x.status||'active')!=='closed'; })
+      .sort(function(a,b){ return String(a.seq_label||'').localeCompare(String(b.seq_label||''),'ko',{numeric:true}); });
+    var have={}; _officersOf(f).forEach(function(o){ if(o.name) have[String(o.name).trim()]=1; });
+    var rows=[]; _spkList=[];
+    arr.forEach(function(st){
+      var w=_siteWrep(st);
+      [['근로자측 이사',w.name,w.title,w.birth],['사용자측 이사',st.ceo,'대표자','']].forEach(function(t){
+        if(!t[1]) return;
+        var i=_spkList.length;
+        _spkList.push({role:t[0],name:t[1],title:t[2]||'',birth:t[3]||'',site:st.name||''});
+        var dup=have[String(t[1]).trim()];
+        rows.push('<tr><td style="text-align:center"><input type="checkbox" id="spk-'+i+'"'+(dup?' disabled':'')+'></td>'
+          +'<td>'+esc(st.name||'')+'</td><td>'+esc(t[0].replace(' 이사',''))+'</td>'
+          +'<td style="font-weight:600">'+esc(t[1])+'</td><td class="muted">'+esc(t[2]||'')+'</td>'
+          +'<td class="muted">'+esc(t[3]||'')+'</td>'
+          +'<td>'+(dup?'<span class="chip ok" style="font-size:10px">이미 있음</span>':'')+'</td></tr>');
+      });
+    });
+    var b=$('spk-body'); if(!b) return;
+    b.innerHTML = rows.length
+      ? '<div style="max-height:56vh;overflow:auto"><table style="font-size:12.5px"><thead><tr>'
+        +'<th style="width:34px"></th><th>사업장</th><th>측</th><th>성명</th><th>직위</th><th>생년월일</th><th></th>'
+        +'</tr></thead><tbody>'+rows.join('')+'</tbody></table></div>'
+        +'<div class="row" style="justify-content:flex-end;margin-top:12px">'
+        +'<button onclick="closeM()">취소</button>'
+        +'<button class="primary" onclick="addPickedOfficers()">고른 사람을 명부에 넣기</button></div>'
+      : '<div class="msg warn">참여사업장에 대표자·근로자대표가 아직 없습니다 — 참여사업장에서 먼저 채워 주세요.</div>';
+  };
+  if(S.sitesFor===fid&&S.sites) done(S.sites);
+  else fbDb.ref(NS+'/sites/'+fid).once('value').then(function(sn){ done(sn.val()||{}); })
+    .catch(function(e){ var b=$('spk-body'); if(b) b.innerHTML='<div class="msg err">읽지 못했습니다: '+esc(e.message)+'</div>'; });
+}
+var _spkList=[];
+function addPickedOfficers(){
+  var box=$('off-rows'); if(!box){ toast('임원 명부를 먼저 여세요','warn'); return; }
+  var n=0;
+  _spkList.forEach(function(o,i){
+    var c=$('spk-'+i); if(!c||!c.checked||c.disabled) return;
+    box.insertAdjacentHTML('beforeend',_offRow(o)); n++;
+  });
+  if(!n){ toast('고른 사람이 없습니다','warn'); return; }
+  closeM(); markDirty();
+  /* 저장은 사람이 누른다 — 조용히 덮어쓰지 않는다 */
+  toast(n+'명을 명부에 넣었습니다 — 측·직위를 확인하고 [💾 저장]을 누르세요');
+}
 /* 화면에서 명부를 읽어 온다. 이름이 빈 줄은 버린다 — 빈 이름이 서류에 그대로 찍히면 못 쓴다. */
 function _readOfficers(){
   var b=$('off-rows'); if(!b) return null;

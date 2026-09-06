@@ -74,7 +74,7 @@ function Book(names) {
 /* ══════════ fund.html 의 그 함수들 ══════════ */
 global.num = (v) => (v == null || v === '' ? '' : Math.round(Number(String(v).replace(/[^0-9.-]/g, '')) || 0));
 global.S = { year: 2026 };
-['setC', 'clearRange', '_splitPeople', 'fillSetup',
+['setC', 'clearRange', 'fillSetup', '_officersOf', '_prepCommittee',
  '_xlsColN', '_xlsPlain', '_xlsRef', '_xlsVlookup', '_xlsJoin', '_xlsRecalc',
  '_xlsPx', '_xlsHTML'].forEach((n) => (0, eval)(gF(n)));
 
