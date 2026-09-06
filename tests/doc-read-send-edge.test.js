@@ -56,7 +56,12 @@ test('★★ 담는 크기를 올려도 «보내는 크기는 안 따라 오른�
 /* ══════ ② 보내는 자리가 «모두» 지난다 ══════ */
 
 test('★★ 사진을 보내는 «모든» 자리가 줄이기를 지난다 — 한쪽만 줄이면 그쪽만 싸진다', () => {
-  const senders = ['function read(', 'function readPairsWith('];
+  /* ★ 2026-09-06 자리가 셋이 됐다 — 경력관리가 이 층으로 옮겨 오면서
+     「내 사전으로 읽어 달라」 입구(readWithPrompt)가 생겼다.
+     ⚠ 늘어난 자리도 «반드시» 줄이기를 지나야 한다. 한 자리만 안 지나면 그쪽만 비싸지고,
+       화면에는 아무 표시가 없어 다음 달 청구서에서야 드러난다.
+     ⚠ 목록을 늘릴 때는 그 자리가 정말 줄이기를 지나는지 «보고» 늘릴 것. */
+  const senders = ['function read(', 'function readPairsWith(', 'function readWithPrompt('];
   senders.forEach(function (f) {
     const fn = cutFn(js, f);
     assert.match(fn, /shrinkAllForAi\(/,

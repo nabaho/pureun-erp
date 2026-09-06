@@ -1040,9 +1040,14 @@ body.rh-work-on #rcTplLib,body.rh-work-on #rhUploadBar{display:none!important}
 <script src="js/kcareer-scan.js?v=2"></script>
 <script src="js/kcareer-pusync.js?v=3"></script>
 <script src="js/kcareer-adv-summary.js?v=1"></script>
-<script src="js/kcareer-hwpxfill.js?v=12"></script>
+<!-- ★ 주민번호 지우개 — 판독 층보다 «먼저» 실어야 한다.
+     판독 층은 지우개가 없으면 글자 판독을 아예 막는다(그대로 보내면 주민번호가 AI 로 나간다).
+     ⚠ 이 두 줄은 «짝»이다. 하나만 실으면 판독이 그 자리에서 멈춘다. -->
+<script src="js/pu-rrn-mask.js?v=4"></script>
+<script src="js/pu-doc-read.js?v=33"></script>
+<script src="js/kcareer-hwpxfill.js?v=14"></script>
 <script src="js/kcareer-svgtext.js?v=1"></script>
-<script src="js/kcareer-formmap.js?v=8"></script>
+<script src="js/kcareer-formmap.js?v=9"></script>
 <script src="js/kcareer-hanja.js?v=1"></script>
 <script src="js/kcareer-hwpstamp.js?v=2"></script>
 <script src="js/kcareer-formhtml.js?v=2"></script>
@@ -7747,15 +7752,99 @@ async function _pdfFirstPageJpeg(b64){
   }
 }
 /* 보낼 것을 고른다 — PDF 면 그림으로 바꿔 본다 */
+/* PDF 를 «쪽마다» 그림으로 바꾼다.
+   ⚠ 전에는 첫 장만 읽었다(getPage(1)) — 경력증명서가 2장이면 2장째는 아예 안 봤다.
+     「내용 안 나온다」의 또 다른 까닭이다(대표 제보 2026-09-06).
+   ⚠ 쪽수에 뚜껑을 씌운다 — 20쪽짜리를 통째로 보내면 요금과 시간이 함께 튄다.
+     서류 판독에 필요한 것은 앞쪽 몇 장이다. */
+var OCR_MAX_PAGES=4;
+async function _pdfPagesJpeg(b64, max){
+  if(_pdfRaster === false) return null;
+  var n = Number(max)>0 ? Number(max) : OCR_MAX_PAGES;
+  var first = await _pdfFirstPageJpeg(b64);
+  if(!first) return null;
+  var out=[first];
+  try{
+    if(!window._pdfjs) return out;
+    var pdf=await _pdfRaceMs(window._pdfjs.getDocument({ isEvalSupported:false, data:b64ToAb(b64) }).promise, 6000, 'PDF 열기');
+    var last=Math.min(pdf.numPages||1, n);
+    for(var i=2;i<=last;i++){
+      var one=await _pdfPageJpeg(pdf, i);
+      if(one) out.push(one);
+    }
+  }catch(e){ console.warn('PDF 여러 쪽', e && e.message); }
+  return out;
+}
+/* 쪽 하나를 그림으로 — _pdfFirstPageJpeg 와 «같은 셈»을 쓴다(글씨가 뭉개지지 않게 1600px) */
+async function _pdfPageJpeg(pdf, no){
+  try{
+    var pg=await _pdfRaceMs(pdf.getPage(no), 5000, 'PDF 쪽 열기');
+    var v1=pg.getViewport({scale:1});
+    var sc=Math.min(2.5, Math.max(1, 1600/Math.max(v1.width, v1.height)));
+    var vp=pg.getViewport({scale:sc});
+    var cv=document.createElement('canvas'); cv.width=vp.width; cv.height=vp.height;
+    var cx=cv.getContext('2d'); cx.fillStyle='#fff'; cx.fillRect(0,0,cv.width,cv.height);
+    await _pdfRaceMs(pg.render({canvasContext:cx, viewport:vp}).promise, 10000, 'PDF 그리기');
+    var url=cv.toDataURL('image/jpeg',0.92);
+    return url.slice(url.indexOf(',')+1) || null;
+  }catch(e){ console.warn('PDF 쪽', no, e && e.message); return null; }
+}
 async function _ocrPayload(b64,ext){
   if(ext!=='pdf') return {b64:b64, mt:(ext==='png'?'image/png':'image/jpeg'), asImage:true};
-  var img=await _pdfFirstPageJpeg(b64);
-  if(img) return {b64:img, mt:'image/jpeg', asImage:true, fromPdf:true};
+  var pages=await _pdfPagesJpeg(b64);
+  if(pages && pages.length) return {b64:pages[0], pages:pages, mt:'image/jpeg', asImage:true, fromPdf:true};
   return {b64:b64, mt:'application/pdf', asImage:false};   /* 못 바꾸면 원래대로 */
 }
-async function _geminiOCR(prompt,b64,mt){ if(!aiReady()) return null;
+/* 서류 판독 — «사진첩과 같은 판독기»를 쓴다 (대표 지시 2026-09-06 「사진첩 판독기로 바꿔라」).
+   사진첩·기업정보함·푸른이알피가 다 쓰는 층(js/pu-doc-read.js)이다. 그쪽이 하는 일:
+     · 보내기 전 사진을 2000px 로 줄인다(요금·속도)
+     · 모델이 안 되면 다음 모델로 물러선다
+     · 여러 장을 «한 문서의 여러 쪽»으로 함께 읽는다
+   ⚠ 판독 사전은 경력관리 것을 그대로 쓴다 — 서류 종류마다 다르기 때문이다.
+     그래서 그 층에 「내 사전으로 읽어 달라」 입구(readWithPrompt)를 따로 냈다.
+   ⚠ 층이 없으면 옛 길로 간다 — 새 부품 하나 때문에 오늘까지 되던 것이 멈추면 안 된다. */
+var _kcReaderReady=false;
+function _kcReader(){
+  /* ⚠ typeof 로 본다 — 검사(노드)에는 window 가 없다. 없으면 조용히 옛 길로 물러선다.
+     여기서 터지면 판독이 통째로 멈춘다. */
+  if(typeof window==='undefined' || !window.PuDocRead || !window.PuDocRead.readWithPrompt) return null;
+  if(!_kcReaderReady){
+    try{
+      /* ⚠ window.PuDocRead 로 또박또박 부른다 — 맨 이름으로 부르면 검사(노드)에서 터지고,
+         터진 것을 catch 가 삼켜 «조용히 옛 길»로 샌다. 새 판독기를 쓴다면서 안 쓰는 셈이다. */
+      window.PuDocRead.init({
+        fetch: (typeof kcFetch==='function') ? kcFetch : (window.fetch && window.fetch.bind(window)),
+        readDocUrl: 'https://asia-northeast3-pureun-erp.cloudfunctions.net/readDoc',
+        getToken: function(){
+          try{
+            var u=(typeof firebase!=='undefined' && firebase.auth) ? firebase.auth().currentUser : null;
+            if(!u) return Promise.resolve('');
+            return u.getIdToken().catch(function(){ return ''; });
+          }catch(e){ return Promise.resolve(''); }
+        }
+      });
+      _kcReaderReady=true;
+    }catch(e){ console.warn('판독 층 준비', e); return null; }
+  }
+  return window.PuDocRead;
+}
+/* imgs: base64 한 장 또는 여러 장(PDF 쪽들). 결과는 예전과 같은 모양으로 돌려준다. */
+async function _geminiOCR(prompt,b64,mt,imgs){ if(!aiReady()) return null;
+  var 여럿=(imgs && imgs.length) ? imgs : [b64];
+  var R=_kcReader();
+  if(R){
+    try{
+      var got=await R.readWithPrompt(prompt,
+        여럿.map(function(x){ return 'data:'+(mt||'image/jpeg')+';base64,'+x; }), { mime: mt });
+      if(got && got.ok) return {parsed:got.data};
+      return {err:(got && got.why) || '판독하지 못했습니다'};
+    }catch(e){ console.warn('판독 층', e); /* 아래 옛 길로 물러선다 */ }
+  }
+  /* ── 옛 길 — 판독 층이 없을 때만 ── */
   try{
-    var reply=await PuAiCall.ask([{text:prompt},{inline_data:{mime_type:mt,data:b64}}],
+    var parts=[{text:prompt}];
+    여럿.forEach(function(x){ parts.push({inline_data:{mime_type:mt,data:x}}); });
+    var reply=await PuAiCall.ask(parts,
       { auth: firebase.auth(), fetch: kcFetch, generationConfig:{temperature:0,maxOutputTokens:1500} });
     var raw=PuAiCall.textOf(reply);
     var m=raw.match(/\{[\s\S]*\}/);
@@ -7990,7 +8079,7 @@ async function ocrDrop(files,page){ files=[...files]; if(!files.length) return;
     const isPDF=!pay.asImage, mt=pay.mt, sendB64=pay.b64;
     const prompt=PAGE_OCR_PROMPT[page]||PAGE_OCR_PROMPT.wiccok; let parsed=null;
     if(['hwp','hwpx'].includes(ext)){ const fb=quickParseFilename(file.name,page); if(fb){ tally(await saveOCRRecord(page,fb,file,ext,b64)); toast('📝 HWP는 OCR 불가 — 파일명 등록+첨부'); } else failed++; continue; }
-    if(!parsed && aiReady()){ const gj=await _geminiOCR(prompt,sendB64,mt); if(gj){ if(gj.parsed) parsed=gj.parsed; else if(gj.err) apiErr=gj.err; } }
+    if(!parsed && aiReady()){ const gj=await _geminiOCR(prompt,sendB64,mt,pay.pages); if(gj){ if(gj.parsed) parsed=gj.parsed; else if(gj.err) apiErr=gj.err; } }
     if(gvKey&&!isPDF){ try{ const r=await kcFetch(`https://vision.googleapis.com/v1/images:annotate?key=${gvKey}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requests:[{image:{content:b64},features:[{type:'DOCUMENT_TEXT_DETECTION'}]}]})});
       if(r.ok){ const d=await r.json(); const text=d.responses?.[0]?.fullTextAnnotation?.text||d.responses?.[0]?.textAnnotations?.[0]?.description||'';
         if(text&&apiKey){ const resp=await kcFetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1200,messages:[{role:'user',content:`다음 OCR 텍스트를 분석하세요:\n${text.slice(0,2000)}\n\n${prompt}`}]})});

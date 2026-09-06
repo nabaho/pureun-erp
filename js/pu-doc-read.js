@@ -875,6 +875,76 @@
     ' 글자는 이미 정확하므로 고쳐 쓰거나 지어내지 마십시오.' +
     ' 여러 쪽이면 「--- N쪽 ---」 로 나뉘어 있고, 쪽마다 따로 답하지 말고 **전체를 함께 읽어 한 벌의 JSON**만 주세요.';
 
+  /* ═══ 「내 사전으로 읽어 달라」 ═══════════════════════════════════════
+     경력관리처럼 «서류 종류마다 사전이 다른» 앱을 위한 입구다.
+     사전만 밖에서 받고, 나머지(사진 줄이기·모델 물러서기·서버 대리인·여러 쪽)는
+     이 층이 하던 그대로 한다.
+
+     prompt : 부르는 쪽의 판독 사전(무엇을 어떤 JSON 으로 답할지)
+     imgs   : dataURL 한 장 또는 여러 장. 여러 장이면 «한 문서의 여러 쪽»으로 읽는다.
+              ⚠ 이것이 핵심이다 — 경력증명서가 2장이면 2장을 함께 봐야 한다.
+     opts.mime : 그림이 아닌 것(PDF 원본 등)을 그대로 보낼 때의 종류
+
+     돌려주는 것: { ok:true, data:{…AI 가 준 JSON…} } 또는 { ok:false, why:'한국어' }
+
+     ⚠ afterRead(사업자번호 검증·국세청 조회)를 타지 않는다 — 경력관리가 읽는 것은
+       명함·사업자등록증이 아니라 위촉장·경력증명서다. 검증할 번호가 없다.
+     ⚠ 저장하지 않는다. 이 층의 원칙 그대로다. */
+  function readWithPrompt(prompt, imgs, opts) {
+    opts = opts || {};
+    if (!deps.fetch) return Promise.resolve({ ok: false, why: '판독 준비가 되지 않았습니다' });
+    var p = String(prompt == null ? '' : prompt).trim();
+    if (!p) return Promise.resolve({ ok: false, why: '판독 사전이 없습니다' });
+    var list = Array.isArray(imgs) ? imgs.slice() : [imgs];
+    list = list.filter(function (u) { return u; });
+    if (!list.length) return Promise.resolve({ ok: false, why: '읽을 것이 없습니다' });
+
+    /* 그림이면 보내기 전에 줄인다 — 담는 크기를 올려도 요금이 안 오르게.
+       그림이 아닌 것(PDF 원본)은 줄일 수 없으니 그대로 간다. */
+    var 그림 = !opts.mime || opts.mime.indexOf('image/') === 0;
+    var prep = 그림 ? shrinkAllForAi(list) : Promise.resolve(list);
+
+    return prep.then(function (small) {
+      var parts = [{ text: p }];
+      small.forEach(function (u) {
+        var str = String(u || '');
+        var b64 = str.indexOf(',') >= 0 ? str.split(',')[1] : str;
+        if (!b64) return;
+        var mt = opts.mime || (/^data:([^;,]+)/.exec(str) || [])[1] || 'image/jpeg';
+        parts.push({ inline_data: { mime_type: mt, data: b64 } });
+      });
+      if (parts.length < 2) return { ok: false, why: '읽을 것이 없습니다' };
+      return runRawParts(parts);
+    }).catch(function (e) {
+      return { ok: false, why: (e && e.message) || String(e) };
+    });
+  }
+
+  /* 답을 «그대로» 돌려주는 길 — runDocParts 와 달리 afterRead 를 안 탄다 */
+  function runRawParts(parts) {
+    var 마무리 = function (j) {
+      var parsed = parseReply(j);
+      if (!parsed) return { ok: false, why: 'AI 가 표 모양(JSON)으로 답하지 않았습니다' };
+      return { ok: true, data: parsed };
+    };
+    if (useProxy()) {
+      return askProxy(parts).then(마무리).catch(function (e) {
+        return { ok: false, why: (e && e.message) || String(e) };
+      });
+    }
+    var keyP = deps.getKey ? Promise.resolve().then(deps.getKey) : Promise.resolve('');
+    return keyP.catch(function () { return ''; }).then(function (key) {
+      if (!key) return { ok: false, why: '로그인을 확인해 주세요' };
+      return askAny(key, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: parts }], generationConfig: { temperature: 0 } })
+      }).then(마무리);
+    }).catch(function (e) {
+      return { ok: false, why: (e && e.message) || String(e) };
+    });
+  }
+
   function readDocText(text) {
     if (!deps.fetch) return Promise.resolve(fail('판독 준비가 되지 않았습니다'));
     var body = String(text == null ? '' : text).trim();
@@ -1210,6 +1280,8 @@
     READ_VERSION: READ_VERSION,
     PROMPT_VERSION: PROMPT_VERSION,
     read: read,
+    /* 서류 종류마다 사전이 다른 앱을 위한 입구(경력관리) — 위 설명 참고 */
+    readWithPrompt: readWithPrompt,
     readDocText: readDocText,
     readWageTable: readWageTable,
     readTableText: readTableText,
