@@ -224,7 +224,7 @@
      ⚠ 안내글을 지우면 서식이 뜻하는 「여기에 한글로 쓰세요」가 사라진다.
        종이로 낼 때 다음 사람이 무슨 칸인지 알 수 없게 된다. */
   function appendAfter(tc, value) {
-    var m = tc.match(/(<hp:t[^>]*>)([\s\S]*?)(<\/hp:t>)/);
+    var m = tc.match(/(<hp:t(?:\s[^>]*)?>)([\s\S]*?)(<\/hp:t>)/);
     if (!m) return null;
     return tc.replace(m[0], m[1] + m[2] + ' ' + esc(value) + m[3]);
   }

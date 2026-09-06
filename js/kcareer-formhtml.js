@@ -82,7 +82,7 @@
     function paras(seg) {
       var re = /<hp:p\b[^>]*>([\s\S]*?)<\/hp:p>/g, m;
       while ((m = re.exec(seg))) {
-        var t = (m[1].match(/<hp:t[^>]*>([\s\S]*?)<\/hp:t>/g) || [])
+        var t = (m[1].match(/<hp:t(?:\s[^>]*)?>([\s\S]*?)<\/hp:t>/g) || [])
           .map(function (x) { return x.replace(/<[^>]*>/g, ''); }).join('').trim();
         if (t) blocks.push({ kind: 'para', text: unesc(t) });
       }

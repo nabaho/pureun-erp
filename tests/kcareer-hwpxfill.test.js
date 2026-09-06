@@ -4,6 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const F = require('../js/kcareer-hwpxfill.js');
 const H = require('../hwpx_gen.js');
+const fs = require('node:fs');
+const path = require('node:path');
 
 function tbl(rows) { return H.tablePara(rows, H.cols(rows[0].map(() => 1 / rows[0].length))); }
 const FIELDS = { name: '권형하', birth: '1970.01.01', phone: '010-1234-5678', email: 'k@pureun.kr', org: '푸른노무법인' };
@@ -105,12 +107,112 @@ test('머리행 열쇠가 1개뿐이면 목록 표로 보지 않는다', () => {
   assert.equal(r.report.lists.length, 0);
 });
 
-test('중첩 표(셀 안의 표)는 통째로 건너뛴다 — 정규식 경계 안전', () => {
+/* ★★ 2026-09-06 규칙이 뒤집혔다 — 중첩 표를 «채운다».
+   옛 규칙은 「중첩 표는 통째로 건너뛴다」였고, 까닭은 정규식 경계가 위험해서였다.
+   그런데 대표가 쓰시는 기관 이력서가 바로 그 모양이다(사진칸 + 인적사항표).
+   실측 2026-09-06: 이력서 2쪽에서 채울 자리가 «0개»였다. 화면에는
+   「채운 칸이 없습니다」만 떴다 — 건너뛰는 것이 곧 «안 되는 것»이었다.
+
+   이제 깊이를 세는 스캐너(tagBlocks)로 경계를 정확히 잡아 중첩도 채운다.
+   ⚠ 대신 지켜야 할 것이 생겼다 — 아래 세 검사가 그것이다:
+     · 안쪽 표의 글자를 «바깥 칸의 글자»로 읽지 않는다
+     · 안쪽 표가 든 칸을 «통째로» 바꾸지 않는다(안쪽 표가 깨진다)
+     · 표 경계가 어긋나지 않는다 */
+test('★★ 중첩 표(칸 안의 표)도 «채운다» — 대표 이력서가 그 모양이다', () => {
   const inner = tbl([['성명', '']]);
-  // 바깥 표의 첫 셀 안에 안쪽 표를 심는다
   const outer = tbl([['라벨', '']]).replace('</hp:tc>', inner + '</hp:tc>');
   const r = F.autoFill(outer, { fields: FIELDS });
-  assert.ok(!/권형하/.test(r.xml), '중첩 표는 건드리면 안 됩니다');
+  assert.ok(/권형하/.test(r.xml),
+    '안쪽 표를 못 채웠다 — 대표 이력서 2쪽이 통째로 비는 까닭이었다');
+});
+
+test('★★ 바깥 칸의 글자를 읽을 때 «안쪽 표의 글자»가 섞이지 않는다', () => {
+  const inner = tbl([['안쪽글', '']]);
+  const 바깥칸 = '<hp:tc><hp:subList><hp:p><hp:run><hp:t>바깥글</hp:t></hp:run></hp:p>'
+    + inner + '</hp:subList></hp:tc>';
+  assert.equal(F.cellText(바깥칸), '바깥글',
+    '「바깥글안쪽글」이 나오면 빈 칸인지 자리표인지 잘못 판단한다');
+});
+
+test('★★ 안쪽 표가 든 칸은 «통째로» 바꾸지 않는다 — 안쪽 표가 깨진다', () => {
+  const inner = tbl([['성명', '']]);
+  const 바깥칸 = '<hp:tc><hp:subList><hp:p><hp:run><hp:t></hp:t></hp:run></hp:p>'
+    + inner + '</hp:subList></hp:tc>';
+  assert.equal(F.fillCell(바깥칸, '값'), null,
+    '안쪽 표가 든 칸에 넣으면 안 된다 — 그 칸의 값은 안쪽 표를 따로 다뤄 넣는다');
+  assert.equal(F.setCellText(바깥칸, '값'), null,
+    '안쪽 표가 든 칸을 통째로 바꾸면 안쪽 표의 글자까지 지워진다');
+});
+
+test('★★ 「행」을 셀 때 «손자»(안쪽 표의 행)를 세지 않는다', () => {
+  /* 손자를 세면 바깥 표의 행 수가 부풀고, 자리 번호(t0r3c1)가 통째로 어긋난다 */
+  const inner = tbl([['가', ''], ['나', '']]);          /* 안쪽 표는 2줄 */
+  const outer = tbl([['라벨', '']]).replace('</hp:tc>', inner + '</hp:tc>');
+  const 표 = [];
+  F.eachTable(outer, function (T, d) { if (d === 0) 표.push(T); return T; });
+  assert.equal(표.length, 1, '맨 바깥 표를 못 찾았다');
+  assert.equal(F.splitRows(표[0]).length, 1,
+    '바깥 표의 행이 ' + F.splitRows(표[0]).length + '줄로 세어졌다 — 1줄이어야 한다.\n'
+    + '    안쪽 표의 행까지 세면 자리 번호가 통째로 어긋난다');
+  /* 칸도 마찬가지 */
+  const 첫줄 = F.splitRows(표[0])[0];
+  assert.equal(F.splitCells(첫줄).length, 2,
+    '바깥 행의 칸이 ' + F.splitCells(첫줄).length + '개다 — 2개여야 한다');
+});
+
+test('★★ 「글자 조각」 자가 <hp:tc>·<hp:tr>·<hp:tbl> 를 잡으면 안 된다', () => {
+  /* 실측 2026-09-05: 795자 칸이 500자로 줄고 <hp:tc> 여는 태그가 사라져 문서가
+     못 그려졌다. 그 뒤에도 아홉 곳이 헐거운 자를 쓰고 있었다(코덱스 지적 2026-09-06). */
+  const 소스 = fs.readFileSync(path.join(__dirname, '..', 'js', 'kcareer-hwpxfill.js'), 'utf8');
+  const 헐거운 = (소스.match(/<hp:t\[\^>\]\*/g) || []).length;
+  assert.equal(헐거운, 0,
+    '헐거운 자 «<hp:t[^>]*>» 가 ' + 헐거운 + '곳 남았다 — 태그 이름이 «거기서 끝나야» 한다.\n'
+    + '    <hp:t(?:\\s[^>]*)?> 로 쓸 것');
+  /* 실제로도 확인한다 — 글자로만 보면 다른 파일로 새 나갈 수 있다 */
+  const 안표 = tbl([['안쪽글', '']]);
+  const 바깥칸 = '<hp:tc><hp:subList><hp:p><hp:run><hp:t>바깥글</hp:t></hp:run></hp:p>'
+    + 안표 + '</hp:subList></hp:tc>';
+  assert.equal(F.cellText(바깥칸), '바깥글');
+});
+
+test('★★ 표 밖 문단을 가릴 때도 «깊이»를 센다', () => {
+  /* 비탐욕 정규식으로 가리면 중첩 표의 나머지가 «표 밖»으로 새어 나온다.
+     그러면 표 «안»의 문단을 표 밖 문단으로 잘못 보고 손댄다(코덱스 지적). */
+  const inner = tbl([['지원자   ○  ○  ○      (인)', '']]);   /* 표 «안»의 서명 줄 */
+  const outer = tbl([['라벨', '']]).replace('</hp:tc>', inner + '</hp:tc>');
+  const rep = { fields: [] };
+  const out = F.fillParagraphs(outer, { name: '권형하' }, rep, new Date(2026, 8, 6));
+  assert.equal(out, outer,
+    '표 «안»의 문단을 표 밖 문단으로 보고 손댔다 — 중첩 표의 나머지가 새어 나온 것이다');
+  assert.ok(!(rep.paras > 0), '표 안인데 채웠다고 보고했다');
+});
+
+test('★★ 중첩이 있어도 표 «경계»가 어긋나지 않는다', () => {
+  const inner = tbl([['안쪽', '']]);
+  const outer = tbl([['라벨', '']]).replace('</hp:tc>', inner + '</hp:tc>');
+  const 뒤표 = tbl([['기   간', '학교명'], ['', '']]);
+  const xml = outer + 뒤표;
+  const 본것 = [];
+  F.eachTable(xml, function (T, d) { 본것.push({ 글: T, 깊이: d }); return T; });
+  /* 바깥 · 안쪽 · 뒤표 셋을 다 본다 */
+  assert.equal(본것.length, 3, '표를 ' + 본것.length + '개로 봤다 — 셋이어야 한다');
+  /* ⚠ 길이로 견주지 않는다 — 이 검사의 tbl 도우미는 표를 문단으로 감싸므로
+     바깥 «표»의 길이와 outer 문자열의 길이가 다르다. 구조로 본다. */
+  본것.forEach(function (b) {
+    assert.ok(b.글.indexOf('<hp:tbl') === 0 && /<\/hp:tbl>$/.test(b.글),
+      '표 조각이 <hp:tbl> 로 시작해 </hp:tbl> 로 끝나지 않는다 — 경계가 어긋났다: '
+      + b.글.slice(0, 30) + ' … ' + b.글.slice(-20));
+    /* 열고 닫는 수가 맞아야 한다 — 안쪽 닫는 태그에서 끊기면 안 맞는다 */
+    assert.equal((b.글.match(/<hp:tbl[\s>]/g) || []).length,
+      (b.글.match(/<\/hp:tbl>/g) || []).length,
+      '표 조각 안에서 여는 수와 닫는 수가 다르다 — 경계가 어긋났다');
+  });
+  assert.ok(본것.some(function (b) { return b.깊이 === 1; }), '안쪽 표를 못 봤다');
+  assert.equal(본것.filter(function (b) { return b.깊이 === 0; }).length, 2,
+    '맨 바깥 표가 둘이어야 한다(바깥 + 뒤표)');
+  /* 아무것도 안 바꾸면 원문이 «글자 하나까지» 그대로여야 한다 */
+  assert.equal(F.eachTable(xml, function (T) { return T; }), xml,
+    '안 바꿨는데 원문이 달라졌다 — 문서가 깨질 수 있다');
 });
 
 /* ===== 실제 기관 양식 모양 (2026-08-29) — 지방공기업평가원 위촉직이사 지원서 =====

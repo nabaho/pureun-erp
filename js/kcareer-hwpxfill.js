@@ -167,9 +167,24 @@
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
+  /* 이 칸에 «표가 또» 들어 있나 */
+  function hasInnerTable(tc) { return tagBlocks(String(tc || ''), 'hp:tbl').length > 0; }
+  /* 안쪽 표를 걷어 낸 «내 몫»만 남긴다 */
+  function ownPart(tc) {
+    var t = String(tc || '');
+    var 표 = tagBlocks(t, 'hp:tbl');
+    if (!표.length) return t;
+    /* 뒤에서부터 잘라 내야 앞의 자리가 안 흔들린다 */
+    for (var i = 표.length - 1; i >= 0; i--) t = t.slice(0, 표[i].start) + t.slice(표[i].end);
+    return t;
+  }
+  /* 칸의 글자 — «안쪽 표의 글자는 안 읽는다».
+     ⚠ 안 걷어 내면 「바깥글안쪽글」이 나와, 빈 칸인지 자리표인지 잘못 판단한다
+       (코덱스 지적, 실측 2026-09-06). */
   function cellText(tc) {
-    var out = '', re = /<hp:t[^>]*>([\s\S]*?)<\/hp:t>/g, m;
-    while ((m = re.exec(tc))) out += m[1];
+    var out = '', re = /<hp:t(?:\s[^>]*)?>([\s\S]*?)<\/hp:t>/g, m;
+    var 내몫 = ownPart(tc);
+    while ((m = re.exec(내몫))) out += m[1];
     return out.replace(/<[^>]*>/g, '').trim();
   }
   function isEmptyCell(tc) { return cellText(tc) === ''; }
@@ -178,9 +193,12 @@
      <hp:t></hp:t> · <hp:t/> · run에 t 없음 · 문단에 run 없음.
      못 넣으면 null — 조용히 망가뜨리지 않는다. */
   function fillCell(tc, value) {
+    /* ⚠ 안쪽 표가 든 칸은 건드리지 않는다 — 부모 칸을 통째로 손대면 안쪽 표가
+       깨진다(코덱스 권고). 그 칸의 값은 «안쪽 표»를 따로 다뤄 넣는다. */
+    if (hasInnerTable(tc)) return null;
     var v = esc(value);
-    if (/<hp:t[^>]*><\/hp:t>/.test(tc)) return tc.replace(/(<hp:t[^>]*>)(<\/hp:t>)/, '$1' + v + '$2');
-    if (/<hp:t[^>]*\/>/.test(tc)) return tc.replace(/<hp:t([^>]*)\/>/, '<hp:t$1>' + v + '</hp:t>');
+    if (/<hp:t(?:\s[^>]*)?><\/hp:t>/.test(tc)) return tc.replace(/(<hp:t(?:\s[^>]*)?>)(<\/hp:t>)/, '$1' + v + '$2');
+    if (/<hp:t(?:\s[^>]*)?\/>/.test(tc)) return tc.replace(/<hp:t((?:\s[^>]*)?)\/>/, '<hp:t$1>' + v + '</hp:t>');
     var mRun = tc.match(/<hp:run\b[^>]*>/);
     if (mRun) return tc.replace(mRun[0], mRun[0] + '<hp:t>' + v + '</hp:t>');
     var mP = tc.match(/<hp:p\b[^>]*>/);
@@ -195,8 +213,10 @@
        자동 채우기(autoFill)는 여전히 글자가 있는 칸을 절대 건드리지 않는다 — 그 규칙은 그대로다.
      첫 <hp:t> 에 새 글자를 넣고 나머지는 비운다. 빈 글자('')를 주면 그 칸을 지운다. */
   function setCellText(tc, value) {
+    /* ⚠ 안쪽 표가 든 칸은 통째로 바꾸지 않는다 — 안쪽 표의 글자까지 지워진다 */
+    if (hasInnerTable(tc)) return null;
     var v = esc(value == null ? '' : value), n = 0, hit = false;
-    /* ⚠★ 여는 태그를 «<hp:t[^>]*>» 로 쓰지 말 것 — 그 꼴은 칸 태그 «<hp:tc …>» 까지 잡아먹는다.
+    /* ⚠★ 여는 태그를 «<hp:t(?:\s[^>]*)?>» 로 쓰지 말 것 — 그 꼴은 칸 태그 «<hp:tc …>» 까지 잡아먹는다.
        실측 2026-09-05: 795자짜리 칸이 500자로 줄고 <hp:tc> 여는 태그가 통째로 사라져
        문서가 못 그려졌다(글자 조각 12개 → 0개). 태그 이름이 «거기서 끝나야» 한다. */
     var out = String(tc).replace(/(<hp:t(?:\s[^>]*)?>)([\s\S]*?)(<\/hp:t>)/g, function (m, a, inner, b) {
@@ -209,23 +229,103 @@
   }
 
   /* 표를 통째로 하나씩 — ⚠ 셀 안에 표가 또 있으면(중첩) 정규식이 경계를 잘못 짚으므로 건너뛴다 */
-  function eachTable(xml, fn) {
-    var out = '', pos = 0;
+  /* ═══ 깊이를 세어 «그 켜의» 블록만 잘라 낸다 ═══════════════════════════
+     ⚠ indexOf('</hp:tbl>') 로 끝을 찾으면 안 된다 — 표 안에 표가 있으면
+       «안쪽» 닫는 태그를 짚어 구간이 통째로 어긋난다(실측 2026-09-06:
+       바깥표+학력표를 표 «1개»로 보고, 그 1개가 학력표 길이였다).
+     ⚠ 비탐욕 정규식(<hp:tr>[\s\S]*?</hp:tr>)도 같은 병이다 — 자식의 첫
+       닫는 태그에서 끊긴다.
+     돌려주는 것: [{ start, end, text }] — 자리까지 준다(뒤에서부터 고칠 수 있게). */
+  function tagBlocks(xml, tag) {
+    var open = '<' + tag, close = '</' + tag + '>';
+    var out = [], pos = 0, src = String(xml || '');
     for (;;) {
-      var s = xml.indexOf('<hp:tbl', pos);
-      if (s < 0) { out += xml.slice(pos); break; }
-      var e = xml.indexOf('</hp:tbl>', s);
-      if (e < 0) { out += xml.slice(pos); break; }
-      e += '</hp:tbl>'.length;
-      var tbl = xml.slice(s, e);
-      var nested = tbl.indexOf('<hp:tbl', 7) >= 0;
-      out += xml.slice(pos, s) + (nested ? tbl : (fn(tbl) || tbl));
-      pos = e;
+      var s = src.indexOf(open, pos);
+      if (s < 0) break;
+      /* <hp:tbl> · <hp:tbl ...> 만. <hp:tblX> 같은 «다른 태그»는 아니다. */
+      var after = src.charAt(s + open.length);
+      if (after !== '>' && after !== ' ' && after !== '\t' && after !== '\r'
+          && after !== '\n' && after !== '/') { pos = s + open.length; continue; }
+      /* 빈 태그(<hp:tbl/>)면 그 자리에서 끝난다 */
+      var head = src.indexOf('>', s);
+      if (head < 0) break;
+      if (src.charAt(head - 1) === '/') {
+        out.push({ start: s, end: head + 1, text: src.slice(s, head + 1) });
+        pos = head + 1; continue;
+      }
+      /* 깊이를 세며 «짝이 맞는» 닫는 태그를 찾는다 */
+      var depth = 1, i = head + 1;
+      for (;;) {
+        var no = src.indexOf(open, i), nc = src.indexOf(close, i);
+        if (nc < 0) { i = -1; break; }              /* 짝이 없다 — 건드리지 않는다 */
+        if (no >= 0 && no < nc) {
+          var a2 = src.charAt(no + open.length);
+          if (a2 === '>' || a2 === ' ' || a2 === '\t' || a2 === '\r' || a2 === '\n' || a2 === '/') {
+            var h2 = src.indexOf('>', no);
+            if (h2 > 0 && src.charAt(h2 - 1) === '/') { i = h2 + 1; continue; }  /* 빈 태그는 안 센다 */
+            depth++;
+          }
+          i = no + open.length; continue;
+        }
+        depth--;
+        i = nc + close.length;
+        if (depth === 0) break;
+      }
+      if (i < 0) break;                              /* 깨진 XML — 여기서 멈춘다 */
+      out.push({ start: s, end: i, text: src.slice(s, i) });
+      pos = i;
     }
     return out;
   }
-  function splitRows(tbl) { return tbl.match(/<hp:tr\b[\s\S]*?<\/hp:tr>/g) || []; }
-  function splitCells(tr) { return tr.match(/<hp:tc\b[\s\S]*?<\/hp:tc>/g) || []; }
+
+  /* 표를 훑는다 — 중첩 표도 «각각» 본다.
+     ⚠ 안쪽부터 본다(뒤에서부터). 부모를 먼저 바꾸면 자식의 자리가 흔들린다.
+     ⚠ 콜백에 두 번째 값으로 «깊이»를 준다 — 부르는 쪽이 필요하면 쓴다. */
+  function eachTable(xml, fn) {
+    var src = String(xml || '');
+    var 목록 = [];
+    (function 모으기(안, 밑, 깊이) {
+      tagBlocks(안, 'hp:tbl').forEach(function (b) {
+        var 나 = { start: 밑 + b.start, end: 밑 + b.end, depth: 깊이 };
+        /* 자식을 먼저 담는다 — 뒤에서 «안쪽부터» 고치게 된다 */
+        var 속 = b.text.slice(b.text.indexOf('>') + 1, b.text.length - '</hp:tbl>'.length);
+        모으기(속, 밑 + b.start + b.text.indexOf('>') + 1, 깊이 + 1);
+        목록.push(나);
+      });
+    })(src, 0, 0);
+    /* 뒤에 있는 것부터 바꾼다 — 앞의 자리가 안 흔들린다 */
+    목록.sort(function (a, b) { return b.start - a.start; });
+    var out = src;
+    목록.forEach(function (b) {
+      var 지금 = out.slice(b.start, b.end);
+      var 새것 = fn(지금, b.depth);
+      if (새것 != null && 새것 !== 지금) out = out.slice(0, b.start) + 새것 + out.slice(b.end);
+    });
+    return out;
+  }
+  /* 어느 모양으로 와도 «그 덩이의 속»을 돌려준다.
+     ⚠ 부르는 쪽이 <hp:tbl>…</hp:tbl> 를 그대로 주기도 하고, <hp:p><hp:tbl>…</hp:p>
+       처럼 «문단에 싸서» 주기도 한다(검사 도우미가 그렇다). 앞의 것만 받게 만들면
+       뒤의 것에서 «0줄»이 나온다(실측 2026-09-06). */
+  function innerOf(chunk, tag) {
+    var t = String(chunk || '');
+    var b = tagBlocks(t, tag)[0];
+    if (!b) return t;                       /* 그 태그가 없으면 통째로 본다 */
+    var head = b.text.indexOf('>');
+    return b.text.slice(head + 1, b.text.length - ('</' + tag + '>').length);
+  }
+  /* 표의 «바로 아래» 행만. 손자(안쪽 표의 행)는 안 센다.
+     ⚠ 따로 걸러 낼 것이 없다 — 깊이 세기가 이미 해 준다. 바깥 <hp:tr> 의 블록이
+       안쪽 표를 통째로 품으므로 안쪽 행은 애초에 목록에 오르지 않는다.
+       (전에 여기에 걸러 내는 걸음을 두었는데, 빼도 결과가 같아 «죽은 코드»였다.
+        지울 수 있는 코드를 남기면 다음 사람이 함부로 못 건드린다.) */
+  function splitRows(tbl) {
+    return tagBlocks(innerOf(tbl, 'hp:tbl'), 'hp:tr').map(function (b) { return b.text; });
+  }
+  /* 행의 «바로 아래» 칸만 — 위와 같은 까닭으로 따로 거르지 않는다 */
+  function splitCells(tr) {
+    return tagBlocks(innerOf(tr, 'hp:tr'), 'hp:tc').map(function (b) { return b.text; });
+  }
   /* 조각을 원문 안에서 딱 한 번만 바꾼다 — 같은 모양의 다른 칸을 건드리지 않게 */
   function replaceOnce(hay, oldStr, newStr) {
     var i = hay.indexOf(oldStr);
@@ -265,7 +365,7 @@
     var out = tc, did = 0;
     hits.forEach(function (L) {
       /* <hp:t> 안의 글자만 바꾼다 — 태그를 건드리면 문서가 깨진다 */
-      out = out.replace(/(<hp:t[^>]*>)([\s\S]*?)(<\/hp:t>)/g, function (m, a, inner, b) {
+      out = out.replace(/(<hp:t(?:\s[^>]*)?>)([\s\S]*?)(<\/hp:t>)/g, function (m, a, inner, b) {
         if (did >= hits.length) return m;
         /* 라벨 + 콜론 + «값 자리»
            ⚠ 값 자리는 밑줄만이 아니다. 실측(2026-08-29) 「기관명 : 부서명 : 직위 :」에서
@@ -508,14 +608,14 @@
 
   /* 문단 하나의 글자를 모아 본다 */
   function paraText(p) {
-    var out = '', re = /<hp:t[^>]*>([\s\S]*?)<\/hp:t>/g, m;
+    var out = '', re = /<hp:t(?:\s[^>]*)?>([\s\S]*?)<\/hp:t>/g, m;
     while ((m = re.exec(p))) out += m[1];
     return out.replace(/<[^>]*>/g, '');
   }
   /* 문단의 «첫 글자 조각»에 새 글자를 넣고 나머지 조각은 비운다 */
   function setParaText(p, text) {
     var done = false;
-    return p.replace(/(<hp:t[^>]*>)([\s\S]*?)(<\/hp:t>)/g, function (m, a, inner, b) {
+    return p.replace(/(<hp:t(?:\s[^>]*)?>)([\s\S]*?)(<\/hp:t>)/g, function (m, a, inner, b) {
       if (!done) { done = true; return a + esc(text) + b; }
       return a + b;
     });
@@ -567,10 +667,18 @@
      ⚠ 표 «안»의 문단은 건드리지 않는다 — 그쪽은 칸 단위로 이미 다룬다.
        표를 잠시 들어내고 본 뒤 도로 끼운다. */
   function fillParagraphs(xml, fields, report, today) {
+    /* ⚠ 비탐욕 정규식으로 표를 가리면 안 된다 — 중첩 표에서 «안쪽» 닫는 태그에
+       끊겨, 바깥 표의 나머지가 «표 밖»으로 새어 나온다. 그러면 표 «안»의 문단을
+       표 밖 문단으로 잘못 보고 손대거나, 진짜 표 밖 문단을 못 본다
+       (실측 2026-09-06: 「지원자 ○ ○ ○」 줄이 안 채워졌다).
+       깊이를 세는 tagBlocks 로 «맨 바깥» 표만 통째로 가린다. */
     var 표 = [], i = 0;
-    var 뼈 = xml.replace(/<hp:tbl[\s\S]*?<\/hp:tbl>/g, function (m) {
-      표.push(m); return '\u0000TBL' + (표.length - 1) + '\u0000';
+    var 뼈 = '', 끝 = 0;
+    tagBlocks(String(xml || ''), 'hp:tbl').forEach(function (b) {
+      뼈 += String(xml).slice(끝, b.start) + '\u0000TBL' + 표.length + '\u0000';
+      표.push(b.text); 끝 = b.end;
     });
+    뼈 += String(xml).slice(끝);
     var out = 뼈.replace(/<hp:p\b[\s\S]*?<\/hp:p>/g, function (p) {
       var txt = paraText(p);
       if (!txt.trim()) return p;
@@ -622,6 +730,8 @@
     autoFill: autoFill, summarize: summarize,
     fieldKeyOf: fieldKeyOf, colKeyOf: colKeyOf,
     cellText: cellText, isEmptyCell: isEmptyCell, fillCell: fillCell, setCellText: setCellText,
+    /* 중첩 표를 다루는 자 — 칸 지도도 «같은 것»을 쓴다 */
+    tagBlocks: tagBlocks, hasInnerTable: hasInnerTable, ownPart: ownPart,
     /* 자리표 자·문단 채우기 — 검사와 칸 지도가 «같은 자»를 쓰게 내보낸다 */
     isPlaceholder: isPlaceholder, isBlankish: isBlankish, placeholderKey: placeholderKey,
     fillParagraphs: fillParagraphs, paraText: paraText,
