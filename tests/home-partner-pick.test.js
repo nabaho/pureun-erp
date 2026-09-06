@@ -53,19 +53,29 @@ function 상자(회사들, 표시들) {
     window: {}
   };
   vm.createContext(ctx);
-  ['partnerMark', 'postedOf', 'partnerRows', 'pickRows', 'pickVisible', 'pickTypes',
-   'pickChanges', 'openPartnerPick'].forEach(n => vm.runInContext(함수(n), ctx));
+  /* ⚠ 떼어 온 조각 «사이»에 최상위 const 가 끼어 온다(FEE_FILTERS 가 pickRows 뒤에 있다).
+     vm 은 조각마다 따로 돌려도 const 를 같은 자리에 담아, 두 번 나오면 그 자리에서 죽는다.
+     그래서 최상위 const 는 var 로 바꿔 싣는다 — 두 번 나와도 괜찮다.
+     (pu-home-screen.test.js 의 noConst 가 같은 일을 한다.) */
+  const 콘스트풀기 = (s) => s.replace(/(^|\n)const /g, '$1var ');
+  ['partnerMark', 'postedOf', 'partnerRows', 'feeMatch', 'feeCounts',
+   'pickRows', 'pickVisible', 'pickTypes',
+   'pickChanges', 'openPartnerPick'].forEach(n => vm.runInContext(콘스트풀기(함수(n)), ctx));
   /* openPartnerPick 은 그리기까지 부른다 — 셈만 볼 것이므로 그리기는 삼킨다 */
   vm.runInContext('function renderPartnerPick(){}', ctx);
   return ctx;
 }
 
+/* ★ 「자문·급여」 딱지가 실제 거래를 안 따라가는 것을 «붙박이 사례»로 넣는다
+   (2026-09-06 실측: 거래 중 206곳 중 자문료 받는 곳 182 / 「자문」 딱지 84 /
+    「급여」 딱지인데 자문료만 받는 곳 41). 세종정밀이 그 41곳을 대신한다. */
 const 회사들 = [
-  { id: 'c1', name: '가온전자', typeCode: '자문', status: 'active' },
-  { id: 'c2', name: '대성물류', typeCode: '자문', status: 'active' },
-  { id: 'c3', name: '세종정밀', typeCode: '급여', status: 'active' },
+  { id: 'c1', name: '가온전자', typeCode: '자문', status: 'active', monthlyAdvisoryFee: 300000 },
+  { id: 'c2', name: '대성물류', typeCode: '자문', status: 'active' },   // 자문 딱지인데 자문료 없음
+  { id: 'c3', name: '세종정밀', typeCode: '급여', status: 'active', monthlyAdvisoryFee: 200000 }, // 급여 딱지인데 자문료 있음
   { id: 'c4', name: '삼정테크', typeCode: '자문', status: 'closed', closedDate: '2026-03-31' },
-  { id: 'c5', name: '한빛식품', typeCode: '급여', status: 'active' }
+  { id: 'c5', name: '한빛식품', typeCode: '급여', status: 'active' },
+  { id: 'c6', name: '푸른사무대행', typeCode: '자문', status: 'suboffice' }   // 자문사가 아니다
 ];
 const 표시들 = {
   c1: { posted: true,  by: '권형하', at: '2026-08-20' },
@@ -80,7 +90,7 @@ test('★★ 거래가 끝난 곳은 고르는 창에도 안 나온다', () => {
   const ctx = 상자(회사들, 표시들);
   const 이름들 = ctx.pickRows().map(r => r.name);
   assert.ok(이름들.indexOf('삼정테크') < 0, '★★ 거래가 끝난 곳이 고르는 창에 있다');
-  회사들.filter(c => c.status !== 'closed').forEach(c =>
+  회사들.filter(c => c.status === 'active').forEach(c =>
     assert.ok(이름들.indexOf(c.name) >= 0, '★ 거래 중인 곳이 빠졌다: ' + c.name));
 });
 
@@ -130,20 +140,41 @@ test('★ 메모(사유)는 있던 것을 그대로 옮긴다 — 이 창은 메
 });
 
 /* ══════ 걸러 보기 ══════ */
-test('★ 이름과 종류로 거른다 — 「보이는 것 전부」는 걸러진 것만 고른다', () => {
+test('★★ 사무대행은 고르는 창에 안 나온다 — 자문사가 아니다', () => {
+  /* 대표 지시 2026-09-06. 저장소는 2026-08-31 에 이미 「사무대행과 업체관리는 다른 곳」으로
+     정해 두었는데, 홈페이지가 66곳을 통째로 끌어오고 있었다. */
   const ctx = 상자(회사들, 표시들);
+  const 이름들 = ctx.pickRows().map(r => r.name);
+  assert.ok(이름들.indexOf('푸른사무대행') < 0, '★★ 사무대행이 자문사 고르기에 있다');
+  assert.deepEqual(이름들.slice().sort(), ['가온전자', '대성물류', '세종정밀', '한빛식품'].sort(),
+    '★ 거래 중인 «자문사 후보»만 나와야 한다');
+});
+
+test('★★ 거르개가 «종류»가 아니라 «자문료»다 — 종류 딱지는 실제 거래를 안 따라간다', () => {
+  /* 대표 지시 2026-09-06 「종류가 자문과 급여가 엉망이다」.
+     ★ 이 검사의 핵심: «급여» 딱지가 붙은 세종정밀이 자문료를 받으므로
+       「자문료 받는 곳」에 «나와야» 한다. 종류로 걸렀다면 놓쳤을 곳이다. */
+  const ctx = 상자(회사들, 표시들);
+  ctx.Pick.q = '';
+  ctx.Pick.type = 'fee';
+  const 받는곳 = ctx.pickVisible().map(r => r.name).sort();
+  assert.deepEqual(받는곳, ['가온전자', '세종정밀'].sort(),
+    '★★ 자문료로 안 걸러진다 — 「급여」 딱지인 자문사를 놓친다');
+
+  ctx.Pick.type = 'nofee';
+  assert.deepEqual(ctx.pickVisible().map(r => r.name).sort(), ['대성물류', '한빛식품'].sort(),
+    '★ 자문료 없는 곳이 안 갈라진다');
+
+  ctx.Pick.type = '';
   ctx.Pick.q = '세종';
   assert.deepEqual(ctx.pickVisible().map(r => r.name), ['세종정밀'], '★ 이름 찾기가 안 된다');
+  ctx.Pick.q = '';
 
-  ctx.Pick.q = ''; ctx.Pick.type = '급여';
-  const 급여 = ctx.pickVisible().map(r => r.name);
-  assert.deepEqual(급여.slice().sort(), ['세종정밀', '한빛식품'].sort(), '★ 종류로 안 걸러진다');
-  assert.ok(급여.indexOf('삼정테크') < 0, '★ 거래 끝난 곳이 걸러 보기로 되살아난다');
-
-  /* 종류 목록에도 거래 끝난 곳은 안 센다 — 「자문 3」이라 적고 2곳만 보이면 안 된다 */
-  const 종류 = ctx.pickTypes();
-  const 자문 = 종류.find(t => t.code === '자문');
-  assert.equal(자문 && 자문.n, 2, '★ 종류 셈에 거래 끝난 곳이 섞였다');
+  /* 갈래 셈에 거래 끝난 곳·사무대행이 안 섞인다 */
+  const 갈래 = ctx.pickTypes();
+  assert.deepEqual(갈래.map(t => t.k).sort(), ['fee', 'nofee'],
+    '★ 거르개 갈래가 자문료 기준이 아니다');
+  assert.equal((갈래.find(t => t.k === 'fee') || {}).n, 2, '★ 자문료 셈이 틀렸다');
 });
 
 test('★★ 「보이는 것 전부 고르기」는 «걸러진 것만» 건드린다', () => {
@@ -283,14 +314,13 @@ test('★★ 자문사 단추를 «머리띠»에 두지 않는다 — 위아래
 });
 
 /* ══════ 업체 종류로 거르기 (2026-09-06) ══════ */
-test('★★ 업체 종류(자문·급여 …)로 좁혀 볼 수 있다', () => {
+test('★★ 목록에도 거르개가 있다', () => {
   /* 대표 지시 「업체관리에도 자문 급여 등이 있어 이 부분도 필터링 할 수 있게 해야 된다」 */
-  const ctx = 상자(회사들, 표시들);
   assert.match(함수('listHtml'), /App\.setType\(this\.value\)/,
-    '★★ 목록에 종류 거르개가 없습니다');
-  /* 종류 목록은 «있는 것»만 낸다 — 없는 종류는 눌러 봐야 빈 화면이다 */
-  const 종류 = ctx.pickTypes().map(t => t.code).sort();
-  assert.deepEqual(종류, ['급여', '자문'], '★ 있는 종류만 내야 합니다');
+    '★★ 목록에 거르개가 없습니다');
+  /* 갈래는 «있는 것»만 낸다 — 0건짜리는 눌러 봐야 빈 화면이다 */
+  assert.match(함수('feeCounts'), /filter\(f => f\.n\)/,
+    '★ 0건짜리 갈래도 늘어놓습니다');
 });
 
 test('★★ 종류는 딱지와 «겹쳐» 걸린다 — 둘 중 하나만 되면 못 좁힌다', () => {
@@ -321,6 +351,37 @@ test('★★ 종류로 좁혀 0줄인 것을 «안 골라서 0줄»이라 하지
   assert.ok(at > 0, '★ 빈 목록 안내가 없습니다');
   assert.match(s.slice(Math.max(0, at - 400), at), /!App\.coType/,
     '★★ 종류로 좁혀 비었는데 「아직 아무 곳도 안 골랐습니다」라고 합니다 — 거짓말이 됩니다');
+});
+
+test('★★ 사무대행은 «빼되 감추지 않는다» — 딱지로 볼 수 있고, 거래 종료와 갈라 센다', () => {
+  const c = 함수('chipsHtml');
+  assert.match(c, /'suboffice'[\s\S]{0,60}사무대행/,
+    '★★ 사무대행 딱지가 없습니다 — 66곳이 어디로 갔는지 알 수 없습니다');
+  /* 둘을 한 숫자로 뭉치지 말 것 — 「끝난 곳」과 「사무대행」은 뜻이 다르다 */
+  assert.match(c, /label: '거래 종료'/, '★ 거래 종료 딱지가 사라졌습니다');
+  const v = 함수('visibleRows');
+  assert.match(v, /!r\.subOffice/, '★★ 기본 목록에 사무대행이 다시 섞입니다');
+  assert.match(v, /App\.filter !== 'suboffice'/,
+    '★★ 「사무대행」 딱지를 눌러도 안 보입니다 — 빼는 것이 아니라 감추는 것이 됩니다');
+});
+
+test('★★ 사무대행은 «올림으로 표시돼 있어도» 홈페이지에 안 나간다', () => {
+  /* 전에 표시해 둔 것이 남아 있을 수 있다. 자문사가 아니므로 붙여넣을 명단에서도 빠진다. */
+  const ctx = 상자(회사들, Object.assign({}, 표시들,
+    { c6: { posted: true, by: '권형하', at: '2026-08-01' } }));
+  /* postedNames 는 이 모래통에 없다 — 규칙을 글자로 본다 */
+  assert.match(함수('postedNames'), /!r\.subOffice/,
+    '★★ 사무대행이 홈페이지에 올라갑니다');
+  assert.ok(ctx.pickRows().every(r => r.name !== '푸른사무대행'),
+    '★ 사무대행이 고르는 창에 있습니다');
+});
+
+test('★★ 종류 딱지 대신 «자문료»를 화면에 적는다 — 못 믿는 것을 앞세우지 않는다', () => {
+  const g = 함수('pickGridHtml');
+  assert.match(g, /r\.advFee \? '자문료'/,
+    '★★ 자문료를 안 적습니다 — 못 믿는 종류 딱지가 앞에 섭니다');
+  /* 종류를 «없애지는» 않는다 — 마우스를 올리면 보인다 */
+  assert.match(g, /업체관리 종류/, '★ 업체관리 종류를 아예 지웠습니다');
 });
 
 /* ══════ 들어가는 문 ══════ */

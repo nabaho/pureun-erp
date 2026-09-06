@@ -124,6 +124,9 @@ function rowDeps() {
          그리고 이번 pickTypes. 화면 함수를 새로 만들면 여기부터 볼 것.
          (keepBox() 에도 같은 목록이 있다 — «둘 다» 넣어야 한다.) */
     fnSource('pickRows'), fnSource('pickTypes'),
+    /* 거르개가 «종류(자문·급여)»에서 «자문료»로 바뀌었다 (2026-09-06) —
+       업체관리 딱지가 실제 거래를 안 따라가서다(자문료 182 / 「자문」 딱지 84). */
+    constLine('FEE_FILTERS'), fnSource('feeMatch'), fnSource('feeCounts'),
     fnSource('defaultFilterOf'), fnSource('listCountHtml'), fnSource('rowsHtml')
   ].map(noConst).join('\n') + '\n';
 }
@@ -2078,12 +2081,16 @@ function partnerBox() {
   ctx.App.q = '';
   ctx.App.companiesErr = '';
   ctx.App.companies = ctx.companiesFrom([
-    { id: 'co-1', name: '(주)가온전자', typeCode: '자문', status: 'active', ceo: '김가온' },
+    /* ★ 자문료(monthlyAdvisoryFee)를 넣어 둔다 — 거르개가 «종류»가 아니라 «자문료»다
+       (2026-09-06). 업체관리의 자문·급여 딱지가 실제 거래를 안 따라간다. */
+    { id: 'co-1', name: '(주)가온전자', typeCode: '자문', status: 'active', ceo: '김가온', monthlyAdvisoryFee: 300000 },
     { id: 'co-2', name: '대성물류(주)', typeCode: '자문', status: 'active' },
-    { id: 'co-3', name: '세종정밀', typeCode: '자문', status: 'active' },
+    { id: 'co-3', name: '세종정밀', typeCode: '자문', status: 'active', monthlyAdvisoryFee: 150000 },
     { id: 'co-4', name: '삼정테크', typeCode: '자문', status: 'closed', closedDate: '2026-03-31' },
     { id: 'co-5', name: '한빛식품', typeCode: '급여', status: 'active' },
-    { id: 'co-6', name: '지운 업체', typeCode: '자문', status: 'active', _deleted: true }
+    { id: 'co-6', name: '지운 업체', typeCode: '자문', status: 'active', _deleted: true },
+    /* 사무대행 — 자문사가 아니다. 기본 목록에도 고르는 창에도 안 나와야 한다 */
+    { id: 'co-7', name: '푸른사무대행', typeCode: '자문', status: 'suboffice' }
   ]);
   ctx.App.partners = {
     'co-1': { posted: true, by: '권형하', at: '2026-08-20' },
@@ -2120,7 +2127,8 @@ test('★ 자문사 목록은 업체관리가 기준이다 — 지운 업체는 
   /* ★ 2026-09-06 「자료가 너무 길기 때문에 선택적으로 보고 넣기하려는 것이다」로
      기본 목록이 «손댄 것»만이 됐다(전에는 거래 중인 전부였다).
      ⚠ 숫자를 박지 않는다 — «손댄 것은 다 있고, 안 고른 것과 끝난 곳은 없다»를 본다. */
-  const 살아있는 = ctx.App.companies.filter(c => !c._deleted && c.status !== 'closed');
+  /* ★ 「살아 있는」 = 거래 중이고 사무대행이 아닌 곳 (2026-09-06 사무대행 66곳을 뺐다) */
+  const 살아있는 = ctx.App.companies.filter(c => !c._deleted && c.status === 'active');
   const 손댄것 = 살아있는.filter(c => (ctx.App.partners[c.id] || {}).posted !== undefined);
   손댄것.forEach(c => assert.ok(names.indexOf(c.name) >= 0,
     '★★ 사람이 손댄 업체가 목록에서 빠졌습니다: ' + c.name));
@@ -2170,7 +2178,7 @@ test('★★ 아무 곳도 안 골랐으면 목록이 «고르라고 말한다»
   assert.match(h, /openPartnerPick\(\)/,
     '★★ 빈 목록이 «어디서 고르는지»를 안 알려 줍니다 — 업체가 없는 줄 알고 닫습니다');
   /* 몇 곳에서 고를 수 있는지 — 거래 끝난 곳은 뺀 수여야 한다 */
-  const 고를수있는 = ctx.App.companies.filter(c => !c._deleted && c.status !== 'closed').length;
+  const 고를수있는 = ctx.App.companies.filter(c => !c._deleted && c.status === 'active').length;
   assert.ok(h.indexOf(String(고를수있는)) >= 0,
     '★ 고를 수 있는 곳이 몇 곳인지 안 말합니다 (' + 고를수있는 + '곳)');
   assert.ok(h.indexOf('이 딱지에 해당하는 줄이 없습니다') < 0,
@@ -2183,21 +2191,49 @@ test('★★ 업체 종류로 «실제로» 좁혀진다 — 목록도 딱지 �
        「App.coType 이 쓰였나」로 보면 안 걸린다(2026-09-06 되돌림 검사가 잡았다). */
   const ctx = partnerBox();
   ctx.App.q = '';
-  ctx.App.coType = '급여';
+  ctx.App.coType = 'nofee';
   ctx.App.filter = 'posted:none';               // 아직 안 고른 것 중에서
-  const 이름들 = ctx.visibleRows('partner').map(r => r.name);
-  assert.deepEqual(이름들, ['한빛식품'],
-    '★★ 종류로 안 좁혀집니다 — 자문 업체가 「급여」에 섞여 나옵니다: ' + 이름들.join(', '));
+  const 이름들 = ctx.visibleRows('partner').map(r => r.name).sort();
+  assert.deepEqual(이름들, ['대성물류(주)', '한빛식품'].sort(),
+    '★★ 자문료로 안 좁혀집니다: ' + 이름들.join(', '));
 
-  /* 딱지에 적힌 수 = 실제로 보이는 줄 수 (종류를 걸어도) */
+  /* 딱지에 적힌 수 = 실제로 보이는 줄 수 (거르개를 걸어도) */
   ctx.App.filter = '';
-  ctx.App.coType = '자문';
+  ctx.App.coType = 'fee';
   const 보임 = ctx.visibleRows('partner').length;
   const 첫딱지 = /onclick="App\.filt\(''\)">([^<]*)<span class="c">(\d+)<\/span>/.exec(ctx.chipsHtml());
   assert.ok(첫딱지, '★ 걸러 보기를 푸는 딱지가 없습니다');
   assert.equal(Number(첫딱지[2]), 보임,
     '★★ 종류를 걸면 딱지 수와 보이는 줄이 어긋납니다 — 목록이 고장 난 줄 압니다');
   ctx.App.coType = '';
+});
+
+test('★★ 사무대행은 «빼되 볼 수 있고», 셈에도 안 섞인다', () => {
+  /* 대표 지시 2026-09-06. 66곳이 자문사 목록에 섞여 있었다.
+     ★ 글자로 보지 않고 «돌려» 본다 — 딱지를 눌렀을 때 실제로 나오는지,
+       그리고 셈이 목록과 어긋나지 않는지는 소스를 읽어서는 알 수 없다. */
+  const ctx = partnerBox();
+  ctx.App.filter = ''; ctx.App.q = ''; ctx.App.coType = '';
+  /* 예전에 사무대행을 「올림」으로 표시해 둔 상태 — 그래도 안 나가야 한다 */
+  ctx.App.partners['co-7'] = { posted: true, by: '권형하', at: '2026-08-01' };
+
+  assert.ok(ctx.visibleRows('partner').every(r => r.name !== '푸른사무대행'),
+    '★★ 사무대행이 기본 목록에 있습니다 — 자문사가 아닙니다');
+
+  const 보임 = ctx.visibleRows('partner').length;
+  const 첫딱지 = /onclick="App\.filt\(''\)">([^<]*)<span class="c">(\d+)<\/span>/.exec(ctx.chipsHtml());
+  assert.ok(첫딱지, '★ 걸러 보기를 푸는 딱지가 없습니다');
+  assert.equal(Number(첫딱지[2]), 보임,
+    '★★ 딱지 셈에 사무대행이 섞였습니다 — 적힌 수와 보이는 줄이 어긋납니다');
+
+  /* 감추는 것이 아니다 — 딱지를 누르면 나온다 */
+  ctx.App.filter = 'suboffice';
+  assert.deepEqual(ctx.visibleRows('partner').map(r => r.name), ['푸른사무대행'],
+    '★★ 「사무대행」 딱지를 눌러도 안 나옵니다 — 빼는 것이 아니라 감춘 것이 됩니다');
+  ctx.App.filter = '';
+
+  assert.ok(ctx.postedNames().indexOf('푸른사무대행') < 0,
+    '★★ 올림으로 표시된 사무대행이 홈페이지 명단에 들어갑니다');
 });
 
 test('★ 표시 안 한 회사는 할 일이 아니다 — 「자문 종료」만 손댈 것이다', () => {
@@ -2283,17 +2319,22 @@ test('★ 거래가 끝난 업체는 명단에서 «자동으로» 빠진다 —
     '거래 종료 딱지가 없습니다 — 뺀 것을 볼 길이 없으면 목록이 잘못된 줄 압니다');
 
   /* ③ 목록 머리도 뺀 수를 말한다 */
-  assert.match(ctx.listCountHtml(), /거래 종료 [1-9]\d*곳은 뺐음/,
-    '뺐다는 말을 목록 머리가 안 합니다');
+  /* ⚠ 2026-09-06 부터 「사무대행」도 함께 뺀다 — 둘을 갈라 적으므로 「곳은 뺐음」이
+     거래 종료 바로 뒤에 붙지 않는다. 숫자·차례를 박지 말고 «뺐다고 말하는가»를 본다. */
+  const 머리 = ctx.listCountHtml();
+  assert.match(머리, /거래 종료 [1-9]\d*곳/, '거래 종료를 뺐다는 말이 없습니다');
+  assert.match(머리, /뺐음/, '뺐다는 말을 목록 머리가 안 합니다');
 
   /* ④ 할 일에는 남는다 — 지금 홈페이지에는 로고가 그대로 걸려 있다 */
   assert.equal(ctx.statOf('partner').own.ended, 1,
     '거래가 끝났는데 올림으로 표시된 곳이 할 일에서 사라졌습니다');
 
-  /* ⑤ 끝난 곳이 없으면 「거래 종료」 딱지도, 뺐다는 말도 안 그린다 (0은 안 그린다) */
-  ctx.App.companies = ctx.App.companies.filter(c => c.status !== 'closed');
-  assert.ok(ctx.chipsHtml().indexOf('거래 종료') < 0,
-    '끝난 곳이 없는데 「거래 종료」 딱지를 그립니다');
+  /* ⑤ 뺄 것이 없으면 딱지도, 뺐다는 말도 «안 그린다» (0은 안 그린다)
+     ⚠ 뺄 것이 둘이다 — 거래 종료와 사무대행. 둘 다 없애야 「뺐음」이 사라진다. */
+  ctx.App.companies = ctx.App.companies.filter(c => c.status === 'active');
+  const chips2 = ctx.chipsHtml();
+  assert.ok(chips2.indexOf('거래 종료') < 0, '끝난 곳이 없는데 「거래 종료」 딱지를 그립니다');
+  assert.ok(chips2.indexOf('사무대행') < 0, '사무대행이 없는데 딱지를 그립니다');
   assert.ok(ctx.listCountHtml().indexOf('뺐음') < 0,
     '뺀 것이 없는데 「뺐음」이라고 적습니다');
 });
