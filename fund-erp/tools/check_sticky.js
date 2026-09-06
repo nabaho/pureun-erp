@@ -29,8 +29,10 @@ ok('상단바(15) > 머리줄(11) > 표 머리(9) 차례',
 console.log('\n■ 표 머리줄');
 ok('표 머리가 «상단바+머리줄» 아래에 붙는다',
   src.includes('top:calc(var(--topbar-h,48px) + var(--homehead-h,0px))'));
+/* 기본 표는 칸 목록에서 머리를 만들므로(_headHTML) 머리글이 소스에 그대로 없다 —
+   .tblwrap 이 달린 «표 수»로 센다. */
 ok('목록 표 셋에 .tblwrap 이 달렸다',
-  (src.match(/<div class="tblwrap"><table><thead><tr><th>번호<\/th><th>기금명<\/th>/g) || []).length === 3);
+  (src.match(/<div class="tblwrap"><table/g) || []).length === 3);
 /* 다른 화면의 표까지 건드리면 안 된다 — 거기는 붙일 자리도 다르고 머리줄도 없다 */
 ok('다른 화면 표는 그대로 둔다',
   (src.match(/<div style="overflow-x:auto"><table>/g) || []).length >= 8);
