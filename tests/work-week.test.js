@@ -295,7 +295,24 @@ ok('지울 때는 건별 사본도 함께 읽어 고아 기록을 남기지 않�
 /* ── 켜고 끄기 ── */
 ok('요일별·한 칸을 오갈 수 있고 그 선택을 기억한다',
   grab('wkSplitToggle').indexOf('WKSPLIT_KEY') > 0
-  && grab('wkSplitOn').indexOf("v!=='0'") > 0);
+  && grab('wkSplitOn').indexOf('WKSPLIT_KEY') > 0);
+/* 2026-09-06 대표 지시 「기본값 바꿔」 — 처음에는 한 칸이다.
+   요일로 쪼개면 빈 「기록…」 칸 다섯이 340px 넘게 먹어, 정작 업무명 칸이 밀려 눌렸다
+   (대표 보고 「어디에서 뭘하는가 안보인다」). */
+ok('★★ 저장값에 따라 갈린다 — 처음 여는 사람(저장값 없음)은 한 칸', (function () {
+  const vm2 = require('node:vm');
+  const one = (v) => {
+    const b = { S: {}, console,
+      localStorage: { getItem: () => v },
+      WKSPLIT_KEY: 'work_wk_split' };
+    vm2.createContext(b);
+    vm2.runInContext(grab('wkSplitOn') + '\nthis.r = wkSplitOn();', b);
+    return b.r;
+  };
+  return one(null) === false      // 처음 여는 사람 — 한 칸
+    && one('0') === false         // 한 칸으로 고른 사람
+    && one('1') === true;         // ★ 요일별로 고른 사람의 뜻은 그대로 둔다
+})());
 ok('요일별일 때만 쪼갠 칸을 그린다',
   grab('rowHTML').indexOf('wkSplitOn()?wkCellHTML(it,logs,rowIdx||0)') > 0);
 ok('팀 전체는 예전 그대로 (남의 업무를 요일별로 적을 일은 없다)',
