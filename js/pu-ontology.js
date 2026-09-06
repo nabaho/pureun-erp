@@ -66,9 +66,7 @@
        ⚠ 경력관리와 «다른 집»이다. 여기 담기는 것은 «아직 안 한 일»(공고·기회)이고
          경력관리는 «이미 한 일»(실적)이다. 섞으면 지원서에 안 한 일이 실적으로 들어간다.
        빌려 읽는 곳: data/user_dir(대표인지 확인) · uid_roles(권한). 쓰지는 않는다. */
-    /* ⚠ portal:false — 포털 타일이 아직 없다. enter.html 은 다른 세션 소유라
-       타일 넣기는 그쪽에 넘겼다. 그때까지는 주소·즐겨찾기로 연다(1차). */
-    govbid:{ name:'정부사업신청', file:'gov.html', portal:false, primaryRoots:['gov/{uid}'], sharedRoots:['data/user_dir','uid_roles'],
+    govbid:{ name:'정부사업신청', file:'gov.html', primaryRoots:['gov/{uid}'], sharedRoots:['data/user_dir','uid_roles'],
       entityTypes:['Organization','Project','Document'] },
     /* ⚠ 저장 자리가 둘이다 — 옛 자리(pucards/mailbox)와 지금 쓰는 자리(mailbox).
        다음메일함 통째 동기화(functions/mail-sync.js)는 «최상위 mailbox» 에 담는다.

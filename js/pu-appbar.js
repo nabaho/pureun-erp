@@ -38,6 +38,7 @@
     { key: 'consult', name: '정부사업일정', icon: '📅', url: 'gov-consulting.html', desc: '보고서 일정및사진관리' },
     { key: 'work',    name: '업무관리',     icon: '📋', url: 'work.html',           desc: '주간 업무기록' },
     { key: 'career',  name: '경력관리',     icon: '🗂', url: 'kcareer.html',        desc: '개인 이력서', adminOnly: true },
+    { key: 'govbid',  name: '정부사업신청', icon: '🏛', url: 'gov.html',            desc: '공고 모아보기', adminOnly: true },
     { key: 'cards',   name: '기업정보함',    icon: '📇', url: 'pu-cards.html',       desc: '사업자·명함·계약서' },
     /* ⚠ 메일은 기업정보함과 같은 파일이고 주소만 다르다. whoAmI() 는 파일 이름만
        견주므로(물음표 뒤는 안 본다) 메일 창에서도 「지금 앱」은 기업정보함으로 잡힌다 —
