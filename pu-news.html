@@ -40,7 +40,7 @@
   if(!go()) document.addEventListener('DOMContentLoaded', go); })();
 </script>
 <script src="xlsx_gen.js?v=15"></script>
-<script src="js/pu-news-core.js?v=19"></script>
+<script src="js/pu-news-core.js?v=20"></script>
 <script src="js/pu-news-tpl.js?v=7"></script>
 <style>
 :root{
@@ -206,10 +206,13 @@ table.list .chk,table.list #chkAll{width:15px;height:15px;cursor:pointer;accent-
 .hint{font-size:11.5px;color:var(--faint);margin-top:6px;line-height:1.65}
 
 .pv{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;position:sticky;top:12px}
-.pv .pvhd{font-size:13px;font-weight:800;padding:11px 14px;border-bottom:1px solid var(--line);
+/* ⚠ 머리띠와 여백을 얇게 (대표 지시 2026-09-06 「뉴스레터 화면 더 위로 올려라」).
+     11px+13px+11px 짜리 띠와 12px 여백이 편지를 40px 넘게 눌러 내리고 있었다.
+     편지를 보시는 자리라 «편지가 차지하는 높이»가 값이다. */
+.pv .pvhd{font-size:12.5px;font-weight:800;padding:6px 12px;border-bottom:1px solid var(--line);
   display:flex;align-items:center;gap:8px}
 .pv .pvhd .sp{flex:1}
-.pv .paper{background:#e9e7e3;padding:12px;max-height:70vh;overflow:auto}
+.pv .paper{background:#e9e7e3;padding:4px 4px 8px;max-height:70vh;overflow:auto}
 .pv iframe{width:100%;border:0;background:#fff;display:block}
 
 table.list{width:100%;border-collapse:collapse;font-size:13px}
@@ -501,6 +504,10 @@ function 불러오기(){
       b.onclick = ()=>{ App.tab = b.dataset.t; render(); };
     });
     render();
+    /* ★ 노무사회 창고를 «시작할 때» 읽는다 (2026-09-06).
+       예전에는 그 서랍을 열 때만 읽었다. 그런데 이미 담아 둔 노무사회 칸을
+       «자료로 올리려면» 창고가 있어야 한다 — 서랍을 안 여시면 영영 점 찍힌 줄이었다. */
+    노무사회읽기();
   }).catch(function(e){
     $('gate').innerHTML = '<div style="font-size:15px;font-weight:700">자료를 읽지 못했습니다</div>'
       + '<div class="sub">' + esc((e&&e.message)||'') + '</div>';
@@ -612,7 +619,10 @@ function 이번회차화면(){
     <span class="no">${esc(d.회차.이름)}</span>
     <span class="badge ${상태딱지}">${esc(d.상태)}</span>
     <span style="font-size:12px;color:var(--sub)">${esc(d.회차.기간)} · 실린 것 ${실린수}</span>
-    <span class="sp"></span>
+    <!-- ★ 단추를 «왼쪽으로» 붙인다 (대표 지시 2026-09-06 「캡쳐3 영역 왼쪽으로 모두 보내고」).
+         예전에는 <span class="sp"> 로 오른쪽 끝까지 밀어 두었다. 1900px 화면에서는
+         회차 이름과 단추 사이가 한 뼘이나 벌어져, 눈이 왼쪽 끝에서 오른쪽 끝까지 건너뛰었다. -->
+    <span style="width:8px"></span>
     <button class="btn" onclick="크게보기()">👁 크게 보기</button>
     <button class="btn warn" onclick="시험발송()" ${갈수있나.ok?'':'disabled'}>✉ 나에게 시험 발송</button>
     <button class="btn pri" onclick="진짜보내기()" ${갈수있나.ok && App.isAdmin?'':'disabled'}>
@@ -647,7 +657,7 @@ function 이번회차화면(){
     <div class="pad" style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
      <button class="btn pri" onclick="자동담기()">⟳ 지금 채우기</button>
      <span class="hint" style="margin:0">지난 한 주(${esc(d.회차.기간)}) 기사를 꼭지에 나눠 담습니다.
-       이미 담긴 것은 <b>지워지고 새로 채워집니다.</b><br>
+       이미 담긴 것은 <b>그대로 두고</b> 빈 자리만 채웁니다 — 손으로 고르신 것이 사라지지 않습니다.<br>
        모으기가 아침에 도니 <b>회차 끝 뒤 ${모음셈().여유일}일까지</b> 모인 것도 그 주 것으로 봅니다
        (창 ${모음셈().창시작} ~ ${모음셈().창끝}).
        ${모음셈().이회차 ? '' : '<b>이 회차에 드는 기사가 없어</b> 가장 최근 것으로 채웁니다.'}</span>
@@ -725,7 +735,24 @@ async function 노무사회읽기(){
       .sort((a,b) => String(b.날짜||'').localeCompare(String(a.날짜||'')));
     App.노무사회탈 = '';
   }catch(e){ App.노무사회 = []; App.노무사회탈 = (e&&e.message)||String(e); }
+  await 노무사회칸올림();
   render();
+}
+
+/* 이미 담아 둔 노무사회 칸을 «자료»로 올린다 — 표지·발행처·내려받기가 붙는다.
+   ⚠ 회차에 든 것은 담을 때 «모양 그대로» 굳는다. 노무사회줄() 을 고쳐도
+     그 전에 담긴 것은 저절로 안 바뀐다 — 2026-09-06 대표 화면이 그랬다.
+   ★ 판단은 Core 가 한다. 여기서는 저장과 알림만.
+   ⚠ 못 올려도 조용히 넘어간다 — 올리기가 실패해서 화면이 안 뜨면 안 된다. */
+async function 노무사회칸올림(){
+  try{
+    const d = 지금회차(); if(!d || !d.안) return;
+    const r = Core.노무사회칸올리기(d.안, App.노무사회 || []);
+    if(!r.올린수) return;
+    d.안 = r.안;
+    await 회차저장(d);
+    toast(`↑ 노무사회 자료 ${r.올린수}건을 «자료 칸»으로 올렸습니다 — 표지와 내려받기가 붙습니다`, 10000);
+  }catch(e){ /* 조용히 — 올리기가 화면을 막으면 안 된다 */ }
 }
 
 function 노무사회고름(sid, 켬){
@@ -975,6 +1002,8 @@ function 자동담기(){
          노무사회 자료를 골라 담으신 뒤 이것을 누르면 그 넷이 말없이 사라졌다 —
          묻지도 않고 통째로 갈아 끼우고 있었다. 손으로 고른 것이 위, 자동이 아래. */
       const 앞수 = Core.꼭지들.reduce((a,g)=>a+((d.안[g.키]||[]).length), 0);
+      const 앞칸 = {}; Core.꼭지들.forEach(g => { 앞칸[g.키] = (d.안[g.키]||[]).length; });
+      자동담기._앞칸 = 앞칸;
       d.안 = Core.합쳐담기(d.안, 새것);
       d.안.hr = (d.안.hr && d.안.hr.length) ? d.안.hr : [];
       자동담기._앞수 = 앞수;
@@ -986,9 +1015,17 @@ function 자동담기(){
       /* ⚠ 「몇 건을 담았다」만 말하면, 이미 있던 것까지 센 숫자라 «새로 온 것이 없어도»
            담긴 것처럼 들린다. 지킨 것과 더한 것을 갈라 말한다. */
       const 앞 = 자동담기._앞수 || 0, 더 = n - 앞;
+      /* ★ «찬 꼭지»를 이름으로 말한다 (2026-09-06 대표 물음 「왜 안나오나」).
+           고용·노동정책이 이미 4건으로 차 있으면 새 자료가 들어갈 자리가 없다.
+           숫자만 말하면 「안 담겼다」로만 보이고, 무엇을 하면 되는지 알 수 없다. */
+      const 찬것 = Core.꼭지들.filter(g => g.갈래 !== '우리글'
+        && (d.안[g.키]||[]).length >= (g.몇개||0)
+        && ((자동담기._앞칸 || {})[g.키] || 0) >= (g.몇개||0)).map(g => g.이름);
+      const 찬말 = 찬것.length
+        ? ` · ${찬것.join('·')}는 이미 차 있어 그대로 둡니다 (바꾸시려면 ✕ 로 빼고 다시 누르세요)` : '';
       toast(!n ? '이 주치에 모아 둔 것이 없습니다 — 붙여넣어 담거나 손으로 담아 주세요'
-           : (앞 ? `⟳ 이미 담긴 ${앞}건은 그대로 두고 ${더}건을 더했습니다 (모두 ${n}건)`
-                 : `⟳ ${n}건을 담았습니다 — 필요 없는 것은 ✕ 로 빼세요`), 9000);
+           : (앞 ? `⟳ 이미 담긴 ${앞}건은 그대로 두고 ${더}건을 더했습니다 (모두 ${n}건)${찬말}`
+                 : `⟳ ${n}건을 담았습니다 — 필요 없는 것은 ✕ 로 빼세요`), 13000);
     })
     .catch(e=>toast('담지 못했습니다: ' + ((e&&e.message)||''), 7000));
 }

@@ -125,6 +125,40 @@ test('채우기가 «지킨 것과 더한 것»을 갈라 말한다', () => {
   assert.ok(fn.indexOf('이미 담긴') >= 0, '지킨 것을 안 말한다');
 });
 
+test('★★ 이미 담긴 노무사회 칸을 «올려 주는 길»이 화면에 이어져 있다', () => {
+  /* ⚠ Core 에 올리개가 있어도 «아무도 안 부르면» 대표 화면은 영영 점 찍힌 줄이다.
+       2026-09-06 에 실제로 그 상태였다. */
+  assert.ok(news.indexOf('Core.노무사회칸올리기(') >= 0, '★ 화면이 올리개를 안 부른다');
+  assert.ok(news.indexOf('async function 노무사회칸올림(') >= 0, '올리는 자리가 없다');
+});
+
+test('★ 노무사회 창고를 «시작할 때» 읽는다 — 서랍을 안 열어도 올라가게', () => {
+  /* 예전에는 그 서랍을 열 때만 읽었다. 그러면 서랍을 안 여시는 한 영영 안 올라간다. */
+  const i = news.indexOf('render();');
+  assert.ok(i > 0, 'render 부름을 못 찾음');
+  assert.ok(/노무사회읽기\(\);/.test(news), '시작할 때 노무사회 창고를 안 읽는다');
+  const j = news.indexOf('async function 노무사회읽기(');
+  /* ⚠ 창을 넓게 잡으면 바로 뒤의 «함수 정의»까지 삼켜 부름이 없어도 통과한다 —
+     되돌려 보고서야 알았다. 함수 끝(닫는 중괄호 줄)까지만 본다. */
+  const 끝 = news.indexOf(String.fromCharCode(10) + '}', j);
+  const fn = news.slice(j, 끝 > j ? 끝 : j + 900);
+  assert.ok(fn.indexOf('await 노무사회칸올림()') >= 0, '읽고 나서 올리지 않는다');
+});
+
+test('★ 「지워지고 새로 채워집니다」라던 안내가 «사실과 맞는다»', () => {
+  /* ⚠ 2026-09-06 에 채우기를 합치기로 바꾸고도 안내는 옛말 그대로였다 —
+       화면이 거짓말을 하면 대표께서 누르기를 망설이신다. */
+  assert.ok(news.indexOf('지워지고 새로 채워집니다') < 0, '★ 옛 안내가 남아 있다 — 이제 안 지운다');
+  assert.ok(news.indexOf('그대로 두고') >= 0, '무엇을 지키는지 안 말한다');
+});
+
+test('★ 찬 꼭지는 «이름으로» 말한다 — 숫자만 말하면 왜 안 담겼는지 모른다', () => {
+  const i = news.indexOf('function 자동담기(');
+  const fn = news.slice(i, i + 2600);
+  assert.ok(fn.indexOf('이미 차 있어') >= 0, '찬 꼭지를 안 말한다');
+  assert.ok(fn.indexOf('✕ 로 빼고 다시') >= 0, '어떻게 하면 되는지 안 알려 준다');
+});
+
 test('★ 노무사회 자료를 «자료»로 담는 길이 Core 에 있다', () => {
   const i = core.indexOf('function 노무사회줄(');
   assert.ok(i > 0, '노무사회줄 을 못 찾음');
