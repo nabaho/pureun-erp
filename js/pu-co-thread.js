@@ -200,6 +200,88 @@
     return { key: 'out', label: '보낸 메일', rows: rows };
   }
 
+  /* 회사 메일함 — 다음메일에서 내려받아 둔 목록(mailbox/msgs/{폴더})
+     ── 대표 지시 2026-09-06 「사무관리 전체 사업장에 대하여 연결할 수 있게」 ──
+     여태 갈래가 둘뿐이었다: 받은 것은 «급여 서버가 본» 300통(paydata/maillog),
+     보낸 것은 푸른메일함이 «제 손으로 보낸» 것(pucards/sentBox).
+     그래서 사업장 대부분은 오간 것이 «한 줄도» 없었다 — 실제로 오갔는데도.
+     회사 메일함에는 그 전부가 있다. 여기를 갈래로 더한다.
+
+     ⚠ 칸 이름이 짧다(u·f·e·s·d…). 요금을 아끼려고 서버가 그렇게 적는다
+       (functions/mail-box.js msgRow) — 그 파일과 «짝»이다. 한쪽만 고치면 빈다.
+     ⚠ 보낸함은 받는 주소가 t 에 쉼표로 여럿 들어온다. mailOf 가 첫 주소만 읽으니
+       받는 사람이 여럿인 메일은 «첫 사람»의 사업장에만 붙는다. 놓치는 것이 있다는
+       뜻이라 여기 적어 둔다 — 고치려면 matchRow 가 주소 목록을 받아야 한다.
+     ⚠ 사본을 만들지 않는다. 읽어서 줄 모양만 맞춘다. */
+  function fromMailBox(box, opt) {
+    var o = opt || {};
+    var out = o.out === true;
+    var rows = [];
+    Object.keys(box || {}).forEach(function (k) {
+      var r = box[k] || {};
+      if (!r.d) return;
+      rows.push({
+        id: String(o.slug || '') + ':' + k,
+        at: Number(r.d || 0),
+        who: out ? String(r.tn || r.t || '') : String(r.f || r.e || ''),
+        from: out ? '' : String(r.e || ''),
+        to: out ? String(r.t || '') : '',
+        subject: String(r.s || ''),
+        text: String(r.p || ''),
+        companyId: '',
+        atts: Number(r.a || 0),
+        meta: { uid: Number(r.u || 0), slug: String(o.slug || '') }
+      });
+    });
+    return { key: out ? 'out' : 'in', label: o.label || (out ? '보낸 메일' : '받은 메일'), rows: rows };
+  }
+
+  /* ── 사업장 하나의 「요약」 ──
+     ── 대표 지시 2026-09-06 「특정일에 간단하게 어떤 메일을 주고 받았었는지 기록이 남아야」 ──
+
+     ★ 왜 요약을 따로 만드나 — 회사 메일함은 만 통이다. 업무관리가 그것을 매번
+       내려받으면 요금이 두 배지만, 더 나쁜 것은 «잣대가 두 벌»이 되는 것이다.
+       「이 업체 메일」이 화면마다 달라진다. 그래서 만 통을 보는 곳은 푸른메일함 한 곳으로 두고,
+       거기서 «간추린 줄 몇십 개»만 남긴다. 업무관리는 그 한 칸만 읽는다.
+
+     ⚠ 본문을 담지 않는다. 이것은 «있었다는 기록»이지 사본이 아니다.
+       본문은 푸른메일함에서 그 자리에서 가져온다.
+     ⚠ 칸 이름을 짧게 쓴다(d·io·s·w). 사업장 천 곳에 서른 줄씩이면
+       칸 이름이 그대로 요금이 된다.
+     ⚠ 짐작으로 붙은 줄(제목에 회사 이름이 있어 걸린 것)은 g:1 로 적어 둔다 —
+       읽는 쪽이 「확실한 것」과 갈라 보일 수 있어야 한다. 지우지는 않는다. */
+  function p2(n) { return (n < 10 ? '0' : '') + n; }
+  function digestRow(r) {
+    var t = Number((r && r.at) || 0);
+    var d = new Date(t);
+    var day = (!t || isNaN(d.getTime())) ? ''
+      : d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+    /* 대괄호 발송 표시([광고]·[푸른노무법인])는 뗀다 — 자리만 먹고 무슨 일인지는 안 알려 준다 */
+    var s = String((r && r.subject) || '').replace(/^\s*(\[[^\]]{1,20}\]\s*)+/, '')
+      .replace(/\s+/g, ' ').trim();
+    if (!s) s = String((r && r.text) || '').replace(/\s+/g, ' ').trim();
+    if (!s) s = '(제목 없음)';
+    if (s.length > 46) s = s.slice(0, 46) + '…';
+    var o = { d: day, at: t, io: ((r && r.key) === 'out' ? 'out' : 'in'), s: s };
+    var w = String((r && r.who) || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (w) o.w = w;
+    if (r && r.how === 'text') o.g = 1;
+    return o;
+  }
+  /* rows = thread() 가 세운 한 줄기. n = 남길 줄 수(기본 30). */
+  function digest(rows, n) {
+    var lim = Number(n) > 0 ? Math.floor(Number(n)) : 30;
+    var arr = (rows || []).filter(function (r) { return r && Number(r.at || 0); })
+      .slice().sort(function (a, b) { return Number(b.at || 0) - Number(a.at || 0); });
+    var c = counts(arr);
+    return {
+      n: arr.length,
+      at: arr.length ? Number(arr[0].at || 0) : 0,
+      inN: Number(c['in'] || 0), outN: Number(c.out || 0),
+      rows: arr.slice(0, lim).map(digestRow)
+    };
+  }
+
   /* ⚠ 문자·카톡은 **아직 없다**(2026-08-30). 폰 다리는 은행 거래문자만 담고,
      카톡은 받는 길이 아예 없다. 자리가 생기면 여기 한 줄만 더하면 된다 —
      화면·thread()·counts() 는 손대지 않는다. 그것이 이렇게 갈라 둔 까닭이다.
@@ -210,7 +292,8 @@
   root.PuCoThread = {
     norm: norm, mailOf: mailOf, addrsOf: addrsOf, matchRow: matchRow,
     addrIndex: addrIndex, named: named, thread: thread, counts: counts,
-    fromMailLog: fromMailLog, fromSentBox: fromSentBox,
+    fromMailLog: fromMailLog, fromSentBox: fromSentBox, fromMailBox: fromMailBox,
+    digestRow: digestRow, digest: digest,
     PLANNED: PLANNED
   };
 })(typeof window !== 'undefined' ? window : globalThis);

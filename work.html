@@ -3436,10 +3436,129 @@ function sentTake(itemId,ck){
     }).catch(function(){ if(S.drawerId) renderDrawer(); });
   });
 }
+/* ══════════════════════════════════════════════════════════════════════
+   사업장별 메일 요약 (대표 지시 2026-09-06)
+   ══════════════════════════════════════════════════════════════════════
+   "사업장의 담당자와 관련하여 푸른이알피와 기업정보함에 담당자의 이메일이 있다.
+    이 이메일로 들어오는 메일 정보와 보낸메일 정보와 관련해서 간략하게 확인하고
+    특정일에 간단하게 어떤메일을 주고 받았었는지 기록이 남아야 한다.
+    … 사무관리 전체 사업장에 대하여 연결할 수 있게 해달라."
+
+   여태 이 서랍에 붙던 메일은 «급여 서버가 본» 최근 300통(paydata/maillog)뿐이었다.
+   그래서 사업장 대부분은 한 줄도 없었다 — 실제로는 오갔는데도.
+
+   ★ 회사 메일함(만 통)을 여기서 읽지 «않는다». 그것을 읽는 곳은 푸른메일함 한 곳이고,
+     거기서 사업장마다 「언제·받음/보냄·무엇을」 서른 줄로 간추려 남긴다:
+         pucards/coMail/{사업장열쇠} = {n, at, inN, outN, rows:[{d,at,io,s,w,g}]}
+     여기서는 그 «한 칸»만 읽는다. sentDocs 를 읽는 그 길 그대로다.
+   ⚠ 그래야 「이 업체 메일」의 잣대가 한 벌로 남는다. 두 화면이 각자 만 통을 훑으면
+     같은 업체인데 화면마다 목록이 달라진다.
+   ⚠ 규칙을 안 고친다 — pucards 는 읽기가 MAIL(메일 있는 로그인 직원)이다.
+   ⚠ 요약이 없으면 조용히 없는 것으로 둔다. 고장이 아니라 «아직 안 만든 것»이고,
+     푸른메일함에서 [⇪ 업무관리에 연결]을 누르면 채워진다. */
+var CO_MAIL_ROOT='pucards/coMail';
+var cmSrc={}, _cmT={};
+function cmNeed(keys){
+  return (keys||[]).filter(function(k){ return k && !cmSrc[k] && !_cmT[k]; });
+}
+function cmLoad(keys){
+  if(typeof fbDb==='undefined'||!fbDb){
+    (keys||[]).forEach(function(k){ if(k) cmSrc[k]={rows:[]}; });
+    return Promise.resolve();
+  }
+  var need=cmNeed(keys);
+  if(!need.length) return Promise.resolve();
+  return Promise.all(need.map(function(k){
+    _cmT[k]=1;
+    return fbDb.ref(CO_MAIL_ROOT+'/'+k).once('value')
+      .then(function(s){ cmSrc[k]=s.val()||{rows:[]}; _cmT[k]=0; })
+      .catch(function(){ cmSrc[k]={rows:[]}; _cmT[k]=0; });
+  }));
+}
+/* 그 업무의 업체에 남아 있는 요약 줄.
+   ⚠ 열쇠가 둘일 수 있다(사업자번호·이름) — 둘 다 보고, 같은 시각이면 한 번만 센다. */
+function cmFor(it){
+  var seen={}, out=[];
+  coKeysOf(it).forEach(function(k){
+    var box=cmSrc[k];
+    ((box&&box.rows)||[]).forEach(function(r){
+      if(!r||!Number(r.at)) return;
+      var d=String(r.io||'in')+'@'+Number(r.at);
+      if(seen[d]) return;
+      seen[d]=1; out.push(r);
+    });
+  });
+  return out.sort(function(a,b){ return Number(b.at||0)-Number(a.at||0); });
+}
+/* 요약이 있는지 — 있으면 「받은 메일」은 그쪽이 정본이다(같은 것을 두 번 안 보여 준다).
+   ⚠ 요약이 없으면 예전대로 paydata/maillog 로 붙인다 — 되돌아갈 자리를 남겨 둔다. */
+function cmHas(it){
+  var yes=false;
+  coKeysOf(it).forEach(function(k){ if(cmSrc[k]&&(cmSrc[k].rows||[]).length) yes=true; });
+  return yes;
+}
+function cmWhen(at){
+  var d=new Date(Number(at)||0);
+  if(isNaN(d.getTime())) return '';
+  var p=function(n){ return (n<10?'0':'')+n; };
+  return (d.getMonth()+1)+'.'+d.getDate()+' '+p(d.getHours())+':'+p(d.getMinutes());
+}
+function cmKey(r){ return safeKey('m|'+String((r&&r.io)||'in')+'|'+Number((r&&r.at)||0)); }
+function cmChk(r){ var k=cmKey(r); return (k&&mailchk&&mailchk[k])||null; }
+function cmLogLine(r){
+  return (r.io==='out'?'📤 ':'✉ ')+String(r.d||'').slice(5)+' '
+    +(r.io==='out'?'보냄':'받음')+' — '+String(r.s||'');
+}
+function cmFind(ck){
+  var hit=null;
+  Object.keys(cmSrc||{}).forEach(function(k){
+    ((cmSrc[k]&&cmSrc[k].rows)||[]).forEach(function(r){ if(cmKey(r)===ck) hit=r; });
+  });
+  return hit;
+}
+function cmTake(itemId,ck){
+  var r=cmFind(ck);
+  if(!r){ toast('메일을 찾지 못했습니다','warn'); return; }
+  /* ⚠ 기록이 먼저다. 기록이 안 됐는데 「담김」으로 표시하면 담긴 줄 알고 넘어간다. */
+  addLog(itemId,cmLogLine(r),String(r.d||todayStr()).slice(0,10),'mail').then(function(ok){
+    if(!ok) return;
+    var rec={ by:(S.me&&S.me.sid)||'', byName:(S.me&&S.me.name)||'',
+      at:new Date().toISOString(), item:String(itemId||''), log:1 };
+    fbDb.ref(NS+'/mailchk/'+ck).set(rec).then(function(){
+      if(!mailchk) mailchk={};
+      mailchk[ck]=rec;
+      if(S.drawerId) renderDrawer();
+      route();
+    }).catch(function(){ if(S.drawerId) renderDrawer(); });
+  });
+}
+/* 요약 한 줄.
+   ⚠ 짐작으로 붙은 줄(제목에 회사 이름이 있어 걸린 것)은 그렇게 적는다 —
+     확실한 것과 섞어 보여 주면 남의 메일을 이 업체 것으로 믿게 된다. */
+function dCmRowHTML(r,id){
+  var ck=cmKey(r), c=cmChk(r), out=r.io==='out';
+  return '<div class="mlrow seen">'
+    +'<div class="t">'+(out?'📤 ':'✉ ')+esc(String(r.s||''))+'</div>'
+    +'<div class="s">'+esc(cmWhen(r.at))+' '+(out?'보냄':'받음')
+    +(r.w?' · '+esc(String(r.w)):'')
+    +(r.g?' · <span style="color:var(--warn)">짐작</span>':'')+'</div>'
+    +'<div class="mlb">'
+    +(c
+      ? '<span class="ok">✎ 기록에 담김 · '+esc(c.byName||'')+' '+esc(String(c.at||'').slice(5,10))+'</span>'
+        +'<span class="undo" onclick="mailUnsee(\''+escJ(ck)+'\')" title="담은 표시를 지웁니다 (기록은 그대로 남습니다)">되돌리기</span>'
+      : '<button onclick="cmTake(\''+escJ(id)+'\',\''+escJ(ck)+'\')" '
+        +'title="'+esc('그날 기록에 한 줄로 남깁니다: '+cmLogLine(r))+'">✎ 기록에 담기</button>')
+    +'</div></div>';
+}
 function dMailHTML(it,itemId){
-  var arr=mailSrc?mailFor(it):[];   // 아직 안 읽었거나 못 읽었다 — 조용히 없다
+  /* ★ 사업장별 요약이 있으면 그것이 «메일의 정본»이다 (대표 지시 2026-09-06).
+     요약은 회사 메일함 전체를 보고 만든 것이라 훨씬 넓다. 그런데 그 안에는
+     paydata/maillog 로 온 것도 들어 있어, 둘을 함께 그리면 같은 메일이 두 번 보인다.
+     ⚠ 요약이 «아직 없는» 업체는 예전대로 붙인다 — 되돌아갈 자리를 남겨 둔다. */
+  var cm=cmFor(it);
+  var arr=(!cm.length&&mailSrc)?mailFor(it):[];   // 아직 안 읽었거나 못 읽었다 — 조용히 없다
   var snt=sentFor(it);
-  if(!arr.length&&!snt.length) return '';
+  if(!arr.length&&!snt.length&&!cm.length) return '';
   /* 받은 것과 보낸 것을 «한 줄로» 섞어 시간순으로 놓는다 —
      「이 업체와 무슨 일이 오갔나」는 받은 것만으로는 반쪽이다.
      ⚠ 그래도 «안 본 메일»은 맨 위다. 이 상자를 여는 까닭이 그것이라,
@@ -3448,6 +3567,8 @@ function dMailHTML(it,itemId){
        무엇이 밀렸는지 못 찾는다(mailFlag 와 같은 까닭). */
   var rows=arr.map(function(m){ return { out:0, at:Number(m.at||0), m:m, seen:!!mailChk(m) }; })
     .concat(snt.map(function(r){ return { out:1, at:Number(r.at||0), r:r, seen:true }; }))
+    /* 요약 줄은 «이미 지난 일»이라 안 본 것으로 세지 않는다 — mailFlag 와 같은 까닭 */
+    .concat(cm.map(function(r){ return { cm:1, at:Number(r.at||0), r:r, seen:true }; }))
     .sort(function(a,b){
       var ca=a.seen?1:0, cb=b.seen?1:0;
       if(ca!==cb) return ca-cb;
@@ -3455,11 +3576,13 @@ function dMailHTML(it,itemId){
     });
   var nNew=rows.filter(function(x){ return !x.seen; }).length;
   var id=itemId||it._id;
+  var cmIn=cm.filter(function(r){ return r.io!=='out'; }).length;
   var cnt=(nNew?'<b style="color:var(--danger)">안 본 '+nNew+'</b> · ':'')
-    +'받음 '+arr.length+' · 보냄 '+snt.length;
+    +'받음 '+(arr.length+cmIn)+' · 보냄 '+(snt.length+(cm.length-cmIn));
   return '<div class="dbox"><div class="bh">✉️ 이 업체와 오간 것'+hlp('mail')
     +'<span class="r">'+cnt+'</span></div><div class="bb">'
     +rows.slice(0,12).map(function(x){
+      if(x.cm) return dCmRowHTML(x.r,id);
       if(x.out) return dSentRowHTML(x.r,id);
       return dMailRowHTML(x.m,id);
     }).join('')
@@ -5120,6 +5243,9 @@ function renderDrawer(){
      ⚠ 읽을 것이 있을 때만 부른다 — 아니면 다시 그리기가 스스로를 끝없이 부른다. */
   var _sk=sentNeed(coKeysOf(items[S.drawerId]||{}));
   if(_sk.length) sentLoad(_sk).then(function(){ if(S.drawerId) renderDrawer(); });
+  /* 사업장별 메일 요약 — 여기도 «그 회사 한 칸»만 읽는다 */
+  var _mk=cmNeed(coKeysOf(items[S.drawerId]||{}));
+  if(_mk.length) cmLoad(_mk).then(function(){ if(S.drawerId) renderDrawer(); });
   var it=items[S.drawerId]; if(!it){ closeDrawer(); return; }
   var id=S.drawerId;
   var logs=itemLogsCache[id];
@@ -7391,7 +7517,10 @@ var HELP={
       +'목록의 <b>✉</b> 숫자는 <b>아직 안 본 것</b>만 셉니다.'
       +'<hr><b>📤 보낸 것</b>은 <b>기업정보함</b>에서 이 사업장으로 나간 자료·묶음입니다 (1:1 발송과 묶음 발송 모두). 여기서는 <b>보여주기만</b> 하고, 보내는 곳은 기업정보함입니다.<br>'
       +'사업장은 <b>사업자번호</b>로 잇습니다 — 번호가 없으면 상호로 잇기 때문에 상호를 달리 적은 기록은 안 붙을 수 있습니다.<br>'
-      +'보낸 것은 <b>이미 한 일</b>이라 <b>안 본 것</b>으로 세지 않습니다.'
+      +'보낸 것은 <b>이미 한 일</b>이라 <b>안 본 것</b>으로 세지 않습니다.<br>'
+      +'<hr><b>✉ 받음 / 📤 보냄</b> 줄은 <b>푸른메일함</b>이 사업장마다 남겨 둔 요약입니다 (회사 메일함 전체를 보고 만든 것이라 훨씬 넓습니다). 사업장마다 <b>최근 30줄</b>까지 남고, 그보다 옛것은 푸른메일함에서 봅니다.<br>'
+      +'비어 있으면 아직 안 만든 것입니다 — 푸른메일함 <b>🏢 사업장별</b>에서 <b>[⇪ 업무관리에 연결]</b>을 누르면 사무관리 전체 사업장에 한 번에 만들어집니다.<br>'
+      +'<b>짐작</b>이라고 적힌 줄은 <b>제목에 회사 이름이 있어</b> 걸린 것입니다 — 주소로 맞은 것이 아니라 남의 메일일 수 있으니 눈으로 확인하십시오.'
 };
 function hlp(k){
   return '<span class="hlp" onclick="event.stopPropagation();hlpPop(this,\''+k+'\')" title="설명 보기">ⓘ</span>';

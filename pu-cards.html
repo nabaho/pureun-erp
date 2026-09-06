@@ -54,7 +54,7 @@
 <script src="js/pu-co-xls.js?v=3"></script>
 <!-- 사업장 하나로 오간 것을 한 줄기로 — 갈래(받은·보낸, 나중에 문자·카톡)를
      밖에서 넣는다. 화면은 그리기만 한다. -->
-<script src="js/pu-co-thread.js?v=2"></script>
+<script src="js/pu-co-thread.js?v=3"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
@@ -8151,7 +8151,35 @@ function inboxPull(){
      더하면 되고 이 화면은 안 고친다. */
 function coThreadSources(){
   const T = window.PuCoThread;
-  return [T.fromMailLog(state.inbox || {}), T.fromSentBox(state.sentBox || {})];
+  const src = [T.fromMailLog(state.inbox || {}), T.fromSentBox(state.sentBox || {})];
+  /* ★ 회사 메일함도 갈래로 (대표 지시 2026-09-06 「전체 사업장에 대하여 연결」).
+     위 둘은 «우리 앱이 손댄 것»뿐이라 사업장 대부분이 한 줄도 없었다.
+     ⚠ 새로 받아 오지 않는다 — 이미 내려받아 둔 폴더(_mbMsgs)만 쓴다.
+       안 열어 본 폴더는 그냥 없는 것으로 둔다(coMailPrep 가 미리 받아 온다). */
+  mbSyncFolders().forEach(f => {
+    const rows = _mbMsgs[f.slug];
+    if(!rows) return;
+    src.push(T.fromMailBox(rows, { slug:f.slug, out:f.kind==='sent', label:f.name }));
+  });
+  return src;
+}
+/* 요약에 쓸 폴더 — 받은함·보낸함·손폴더. 스팸·휴지통·임시는 안 본다.
+   ⚠ 손폴더를 넣는 까닭 — 대표 폴더가 「1.자문사답변 … 9.자율점검」이라
+     정작 자문 이야기가 거기 들어 있다. 빼면 반쪽이 된다. */
+const CO_MAIL_KINDS = { inbox:1, tome:1, sent:1, archive:1, custom:1 };
+const CO_MAIL_PER_FOLDER = 800;
+const CO_MAIL_MAX_ROWS = 30;
+function mbSyncFolders(){
+  return Object.keys(_mbFolders || {}).map(k => Object.assign({ slug:k }, _mbFolders[k] || {}))
+    .filter(f => CO_MAIL_KINDS[String(f.kind || '')]);
+}
+/* 사업장 열쇠 — 기업 상세가 쓰는 «그 잣대» 그대로다(coKeyOf).
+   ⚠ 업무관리도 같은 셈으로 열쇠를 만들어 읽는다(work.html coKeysOf).
+     여기서 새 잣대를 만들면 화면에는 같은 회사인데 요약은 딴 회사에 쌓인다.
+   ⚠ 여기 오는 co 는 «푸른이알피 업체»라 칸 이름이 bizNo·name 이다(명함은 bizno·company). */
+function coMailKey(co){
+  const d = digits((co && (co.bizNo || co.bizno)) || '');
+  return d.length >= 10 ? d : ('n' + _norm((co && (co.name || co.companyName)) || ''));
 }
 
 /* 오간 것이 있는 사업장만 목록에 세운다 — 371곳을 다 늘어놓으면 못 찾는다 */
@@ -8218,6 +8246,9 @@ function coThreadHtml(){
   const co = (state.erpCompanies||[]).filter(c=>c.id===pick)[0] || null;
   const rows = co ? T.thread(co, coThreadSources(), { all: state.erpCompanies||[] }) : [];
   const c = T.counts(rows);
+  /* 연 김에 그 곳 요약을 남긴다 — 평소 손 안 대고도 쓰던 곳부터 채워진다.
+     ⚠ 달라진 것이 없으면 안 쓴다(coMailWrite 가 스스로 가린다). */
+  if(co) coMailWrite(co, rows);
 
   let h = '<div class="ibtools">'
     + '<input id="ctQ" placeholder="사업장 이름으로 찾기" value="'+esc(state.coThreadQ||'')+'"'
@@ -8226,6 +8257,11 @@ function coThreadHtml(){
     + '<span class="ibnote" style="margin:0">오간 것이 있는 사업장 '+list.length+'곳</span>'
     + '<span style="flex:1"></span>'
     + '<button class="ibpull sec" onclick="state.erpCompanies=null;openCoThread()">↻ 다시 읽기</button>'
+    /* 업무관리가 읽을 요약을 사무관리 «전체 사업장»에 대해 한 번에 남긴다 */
+    + '<button class="ibpull" onclick="coMailSyncAll()"'
+    + ' title="사무관리 전체 사업장을 한 바퀴 돌며 「언제·무엇을 주고받았나」 요약을 남깁니다. 업무관리 서랍이 그것을 읽습니다.">'
+    + '⇪ 업무관리에 연결</button>'
+    + (state.coMailMsg ? '<span class="ibnote" style="margin:0">'+esc(state.coMailMsg)+'</span>' : '')
     + '</div>';
 
   h += '<div class="ctwrap">'
@@ -8268,6 +8304,71 @@ function coThreadHtml(){
 }
 window.coThreadHtml = coThreadHtml;
 
+/* ══════ 사업장별 요약을 남긴다 (대표 지시 2026-09-06) ══════
+   "특정일에 간단하게 어떤 메일을 주고 받았었는지 기록이 남아야 한다.
+    사무관리 전체 사업장에 대하여 연결할 수 있게 해달라."
+
+   ★ 만 통을 보는 곳은 «여기 한 곳»이다. 업무관리는 여기서 남긴 서른 줄만 읽는다
+     (pucards/coMail/{사업장열쇠}). 새 자리 하나뿐이고, 규칙은 안 고친다 —
+     pucards 는 이미 전 직원이 읽는다.
+   ⚠ 오간 것이 없으면 «지운다». 빈 칸을 남기면 「읽었는데 없다」와
+     「아직 안 읽었다」를 읽는 쪽이 못 가른다.
+   ⚠ 달라진 것이 없으면 안 쓴다 — 화면을 열 때마다 사업장 천 곳을 다시 쓰면
+     그것이 그대로 요금이다. */
+const _coMailPrev = {};
+function coMailWrite(co, rows){
+  try{
+    if(Store.mode !== 'firebase') return Promise.resolve(false);
+    const key = coMailKey(co);
+    if(!key || key === 'n') return Promise.resolve(false);
+    const dg = window.PuCoThread.digest(rows, CO_MAIL_MAX_ROWS);
+    const val = dg.n ? Object.assign({ co:String(co.name||''), by:(myEmail||''), sy:Date.now() }, dg) : null;
+    const sig = JSON.stringify(dg.rows) + '|' + dg.n;
+    if(_coMailPrev[key] === sig) return Promise.resolve(false);   /* 달라진 것이 없다 */
+    _coMailPrev[key] = sig;
+    return firebase.database().ref(DB_ROOT+'/coMail/'+key).set(val)
+      .then(()=>true)
+      .catch(e=>{ delete _coMailPrev[key]; console.warn('[사업장 메일 요약]', e&&e.message); return false; });
+  }catch(_){ return Promise.resolve(false); }
+}
+/* 요약에 쓸 폴더를 미리 받아 둔다 — 안 받아 두면 갈래가 비어 요약이 반쪽이 된다.
+   ⚠ 폴더마다 최근 것만(CO_MAIL_PER_FOLDER). 몇 년치를 다 받으면 그것이 요금이다. */
+function coMailPrep(cb){
+  const fs = mbSyncFolders().filter(f => !_mbMsgs[f.slug]);
+  if(!fs.length){ if(cb) cb(); return; }
+  let left = fs.length;
+  fs.forEach(f => loadMailBox(f.slug, CO_MAIL_PER_FOLDER, ()=>{ if(!--left && cb) cb(); }));
+}
+/* 사무관리 «전체 사업장»을 한 바퀴 — 대표가 [전체 갱신]을 누를 때만 돈다.
+   ⚠ 한 곳씩 차례로 쓴다. 한꺼번에 던지면 실시간DB가 중간에서 끊고,
+     그러면 어디까지 됐는지 아무도 모른다. */
+let _coMailRunning = false;
+function coMailSyncAll(){
+  if(_coMailRunning){ toast('이미 돌고 있습니다'); return; }
+  const T = window.PuCoThread;
+  if(!T){ toast('사업장별 보기를 못 불렀습니다'); return; }
+  _coMailRunning = true; state.coMailMsg = '메일함을 읽는 중…'; renderMailPage();
+  loadInbox(()=>loadSentBox(()=>coMailPrep(()=>loadCoThread(()=>{
+    const cos = state.erpCompanies || [];
+    const src = coThreadSources();
+    let i = 0, wrote = 0, hit = 0;
+    const step = () => {
+      if(i >= cos.length){
+        _coMailRunning = false;
+        state.coMailMsg = '사업장 '+cos.length+'곳 가운데 '+hit+'곳에 오간 것이 있고, '+wrote+'곳을 새로 적었습니다.';
+        renderMailPage();
+        return;
+      }
+      const co = cos[i++];
+      const rows = T.thread(co, src, { all: cos });
+      if(rows.length) hit++;
+      if(i % 25 === 0){ state.coMailMsg = '적는 중… '+i+' / '+cos.length; renderMailPage(); }
+      coMailWrite(co, rows).then(ok => { if(ok) wrote++; step(); });
+    };
+    step();
+  }))));
+}
+window.coMailSyncAll = coMailSyncAll;
 function loadSentBox(cb){
   if(Store.mode!=='firebase'){ if(cb) cb(); return; }
   firebase.database().ref(DB_ROOT+'/sentBox').limitToLast(300).once('value')
