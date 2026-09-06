@@ -1297,11 +1297,34 @@ async function 시험발송(){
     const u = firebase.auth().currentUser;
     if(!u) throw new Error('로그인이 풀렸습니다');
     const token = await u.getIdToken();
+
+    /* ★★ 시험도 «진짜와 똑같이» 나가야 시험이다 (대표 화면 2026-09-06)
+       ═══════════════════════════════════════════════════════════════════════
+       ⚠ ① {추적열쇠} — 대량 발송기(mail-bulk)가 통마다 바꿔 넣는 자리다.
+            시험은 그 길을 안 지나 «글자 그대로» 나갔다. 받은 편지의 내려받기 주소가
+            newsClick?i=…&e={추적열쇠}&n=1 이었다(대표께서 상태줄에서 보셨다).
+       ⚠ ② 링크들 — newsClick 은 «회차에 적어 둔 목록»에서 번호로 목적지를 찾는다.
+            진짜 발송은 적는데 시험은 안 적어, 모든 링크가 「모르는 번호」가 되어
+            대문으로 튕겼다. 내려받기를 눌러도 포털 첫 화면이 떴다.
+       ★ 시험 주소는 우리 것이라 명단에 없고, 미열람 셈은 «보냄» 표가 있는 회차만
+         세므로(Core.미열람판단) 이 열쇠가 자문사 셈을 더럽히지 않는다. */
+    /* ⚠ 감싸지 않는다(encodeURIComponent) — 대량 발송기는 «날것 그대로» 끼워 넣는다.
+         여기서만 감싸면 시험과 진짜가 서로 다른 주소로 나가, 시험이 시험이 아니게 된다. */
+    const 열쇠 = Core.주소열쇠(받을곳);
+    const 서식 = String(편.서식 || '').split('{추적열쇠}').join(열쇠);
+    const d0 = 지금회차();
+    try{
+      await db.ref('newsletter/issues/' + d0.열쇠).update({ 링크들: 편.링크들 || [] });
+    }catch(e){
+      toast('⚠ 링크 목록을 못 적었습니다 — 시험 편지의 링크가 대문으로 튕깁니다: '
+            + ((e&&e.message)||''), 12000);
+    }
+
     const res = await fetch(시험즉시URL, {
       method:'POST',
       headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + token },
       body: JSON.stringify({ to: 받을곳, toName: '시험',
-        subject: '[시험] ' + 편.제목, body: 편.본문, html: 편.서식,
+        subject: '[시험] ' + 편.제목, body: 편.본문, html: 서식,
         files: 첨.파일들 })
     });
     let j=null; try{ j = await res.json(); }catch(_){}
