@@ -492,6 +492,30 @@ function coFromText(text, list) {
    받은메일함(INBOX) = 광고까지 들어오는 곳 → 아는 주소만 받는다.
    ⚠ 모르는 폴더는 **안 믿는다** — 나중에 다른 폴더를 보게 되어도 함부로
    담지 않는다(모르면 가리는 쪽이 안전하다). */
+/* ══════ 한 회차 몫을 폴더끼리 나눈다 (2026-09-06) ══════
+   여태 몫(30통)을 폴더가 «먼저 오는 쪽부터» 나눠 먹었다. 그런데 급여 폴더의
+   14일 치가 이미 30통이 넘어, 받은메일함은 목록에 들어와 있어도 **한 번도
+   열리지 않았다**(로그: boxes 에는 INBOX 가 있는데 looked 는 늘 30).
+   폴더마다 제 몫을 준다 — 합쳐서 세는 것은 그대로라 더 오래 붙어 있지 않는다. */
+function boxShare(max, n) {
+  const m = Math.max(1, Number(max) || 1);
+  const c = Math.max(1, Number(n) || 1);
+  return Math.max(1, Math.ceil(m / c));
+}
+
+/* ══════ 최근 것부터 훑는다 (2026-09-06) ══════
+   ★ 이것이 「8/26 뒤로 메일이 한 통도 안 들어온」 진짜 까닭이었다.
+   IMAP 목록은 **오래된 것부터** 온다. 앞에서 30통을 끊으면 그 30통은 늘
+   «같은 옛 메일»이고, 이미 처리한 것이라 아무것도 안 담긴다(looked:30 · took:0).
+   그 뒤에 온 새 메일에는 **영영 닿지 못한다** — 줄 맨 앞이 막고 서 있는 꼴이다.
+   그래서 뒤에서(=최근 것부터) 몫만큼 가져온다.
+   ⚠ 목록이 배열이 아닐 수도 있다(못 읽으면 false) — 그때는 빈 손으로 돌아간다. */
+function newestUids(uids, room) {
+  const a = Array.isArray(uids) ? uids.filter(function (u) { return Number(u) > 0; }) : [];
+  const r = Math.max(0, Math.floor(Number(room) || 0));
+  return r ? a.slice(-r) : [];
+}
+
 function trustBox(box) {
   var b = String(box == null ? '' : box);
   if (!b) return false;
@@ -724,7 +748,7 @@ module.exports = {
   buildCompanyIndex, coList, companyFor, companiesFor, coFromText, coNameKey, companyOf,
   seatFor, tagFor, routeFor,
   mailFromNote, regroupOne,
-  mailConfOf, pickMailboxes, MAILBOX_HINT,
+  mailConfOf, pickMailboxes, MAILBOX_HINT, boxShare, newestUids,
   trustBox,
   BODY_MAX, bodyTextOf, okBody, bodyFilename,
   seatFromBox,

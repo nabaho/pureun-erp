@@ -48,10 +48,19 @@ function fakeImap(mails, boxes) {
     logout: () => Promise.resolve(),
     list: () => Promise.resolve(rows),
     getMailboxLock: () => Promise.resolve({ release() {} }),
+    /* 2026-09-06 — 수집기가 «번호를 먼저 받아» 최근 것부터 고르게 바뀌었다.
+       진짜 IMAP 은 오래된 것부터 번호를 준다. 흉내도 그 차례로 준다 —
+       흉내가 실제와 다르면 「여기서는 되는데 서버에서는 안 되는」 것을 못 잡는다. */
+    search: () => Promise.resolve(mails.map(m => m.uid)),
     /* 실제 IMAP 은 원문을 source 로 준다. 그 원문을 simpleParser 가 풀어 준다 —
-       여기서는 이미 풀린 것을 source 에 넣고 파서는 그대로 돌려준다. */
-    fetch: function* () {
-      for (const m of mails) yield { uid: m.uid, envelope: m.envelope, source: m };
+       여기서는 이미 풀린 것을 source 에 넣고 파서는 그대로 돌려준다.
+       ⚠ 번호 목록을 받으면 «그 번호만» 준다. 다 주면 몫 나누기가 헛돈다. */
+    fetch: function* (range) {
+      const want = Array.isArray(range) ? range : null;
+      for (const m of mails) {
+        if (want && want.indexOf(m.uid) < 0) continue;
+        yield { uid: m.uid, envelope: m.envelope, source: m };
+      }
     }
   };
 }
