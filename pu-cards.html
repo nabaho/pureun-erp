@@ -14328,6 +14328,52 @@ const MB_SET_TABS = [['1','① 보기'],['2','② 보내기'],['3','③ 푸른 �
    ⚠ 이 표는 «지금 손에 든 줄»로 그 자리에서 센다 — 서버를 안 두드린다.
    ⚠ 짐작을 적지 않는다. 「1년이면 몇 통」은 «지금 담긴 기간의 하루 평균»으로 민 값이라
      그렇다고 적는다. */
+/* ══════════════════════════════════════════════════════════════════════════
+   📦 지난 메일 — POP3 로 끌어온 옛 메일 (대표 지시 2026-09-06)
+   ══════════════════════════════════════════════════════════════════════════
+   ★ IMAP 은 폴더당 400통이 끝이라, 처음 연결한 날 이미 창 밖이던 메일은 못 가져왔다.
+     그것만 POP3 로 따로 끌어와 mailbox/old/msgs 에 담아 두고, 여기서 «한 칸»으로 본다.
+
+   ⚠ POP3 에는 «폴더가 없다». 그래서 지난 메일에는 업무 칸도 담당자 칸도 안 붙는다 —
+     그 칸들은 다음메일 폴더에서 줄을 모으기 때문이다. 지난 메일의 제자리는 여기뿐이다.
+   ⚠ 다음메일 폴더가 아니므로 «옮기기·읽음 뒤집기·중요·휴지통»이 안 된다.
+     막지 않으면 눌렀을 때 서버가 「그 폴더가 없다」고 답한다 — 사람은 고장으로 읽는다.
+   ⚠ 한 번만 읽는다. 만 통이 넘을 수 있어 열 때마다 받으면 그것이 그대로 요금이다. */
+const MB_OLD_ID = '*old';
+let _mbOldLoaded = false;
+let _mbOldBusy = false;
+function mbOldLoad(cb){
+  if(_mbOldLoaded){ if(cb) cb(); return; }
+  if(_mbOldBusy){ if(cb) setTimeout(()=>mbOldLoad(cb), 300); return; }
+  if(typeof Store==='undefined' || Store.mode!=='firebase'){ _mbOldLoaded = true; if(cb) cb(); return; }
+  _mbOldBusy = true;
+  firebase.database().ref('mailbox/old/msgs').once('value')
+    .then(s=>{ _mbMsgs[MB_OLD_ID] = s.val() || {}; })
+    .catch(e=>{
+      console.warn('[지난 메일]', (e&&e.message)||e);
+      _mbMsgs[MB_OLD_ID] = _mbMsgs[MB_OLD_ID] || {};
+    })
+    .then(()=>{
+      _mbOldLoaded = true; _mbOldBusy = false;
+      mbMemoClear(); renderPCSide(); renderMailPage();
+      if(cb) cb();
+    });
+}
+/* 지난 메일에서 온 줄인가 — 손대면 안 되는 것을 가릴 때 쓴다 */
+function mbIsOld(v){
+  return String((v && (v._slug || v.slug)) || '') === MB_OLD_ID;
+}
+/* 고른 것에 지난 메일이 섞였으면 «왜 안 되는지» 말하고 막는다.
+   ⚠ 조용히 막지 않는다 — 아무 일도 안 일어나면 고장으로 읽힌다. */
+function mbOldBlock(rows, what){
+  const n = (rows||[]).filter(mbIsOld).length;
+  if(!n) return false;
+  toast('📦 지난 메일은 ' + what + ' 수 없습니다 — 다음메일 폴더에 없는 메일이라 '
+    + '우리가 손댈 자리가 없습니다. 다음메일에서 하십시오.', 9000);
+  return true;
+}
+function mbOldCount(){ return Object.keys(_mbMsgs[MB_OLD_ID] || {}).length; }
+
 const MB_OLD_DAY = 86400000;
 function mbOldSpans(){
   const out = [];
@@ -14365,12 +14411,39 @@ function mbPopProbe(){
     .catch(e=>{ state.mbPop = { busy:false, ok:false, error:(e&&e.message)||String(e) }; })
     .then(()=>{ _mbPopBusy = false; renderMailPage(); });
 }
+/* 지난 메일을 실제로 채운다 — 한 번에 다 안 되므로 «이어서» 누르게 된다.
+   ⚠ 끝나면 담아 둔 것을 다시 읽는다(_mbOldLoaded 를 풀어서) — 안 그러면 채워 놓고도
+     옆줄 통수가 그대로라 「아무 일도 안 했나」가 된다. */
+let _mbFillBusy = false;
+function mbBackfillRun(){
+  if(_mbFillBusy) return;
+  const u = firebase.auth().currentUser;
+  if(!u) return toast('로그인이 필요합니다');
+  _mbFillBusy = true;
+  state.mbFill = { busy:true };
+  renderMailPage();
+  u.getIdToken()
+    .then(tok=>fetch(MB_FN+'backfillMailbox', { method:'POST',
+      headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
+      body: JSON.stringify({ days:365 }) }))
+    .then(r=>r.json().catch(()=>({})))
+    .then(j=>{ state.mbFill = Object.assign({ busy:false, at:Date.now() }, j); })
+    .catch(e=>{ state.mbFill = { busy:false, ok:false, error:(e&&e.message)||String(e) }; })
+    .then(()=>{
+      _mbFillBusy = false;
+      _mbOldLoaded = false;              /* 새로 담긴 것을 다시 읽는다 */
+      mbOldLoad(()=>renderMailPage());
+      renderMailPage();
+    });
+}
 function mbOldHtml(){
   const rows = mbOldSpans();
   if(!rows.length) return '';
   const short = rows.filter(r=>r.days < 365 && r.n >= 100).slice(0, 6);
   const okN = rows.filter(r=>r.days >= 365).length;
   const p = state.mbPop || null;
+  const b = state.mbFill || null;
+  const oldN = mbOldCount();
   const fd = t => new Date(Number(t)||0).toISOString().slice(0,10);
   return `<div class="msin" style="margin-top:14px">
     <div class="mscard">
@@ -14404,7 +14477,29 @@ function mbOldHtml(){
              <br>지금 우리가 든 것은 ${rows.reduce((s,r)=>s+r.n,0).toLocaleString()}통입니다.
            </div>`
         : `<div class="mshint" style="padding:8px 0 0;color:#991b1b">
-             ✗ ${esc(p.error||'재지 못했습니다')}</div>`) : ''}` : ''}
+             ✗ ${esc(p.error||'재지 못했습니다')}</div>`) : ''}
+      ${/* ── 실제로 채우는 자리 (대표 지시 2026-09-06 「화면 붙여라」) ──
+           ⚠ 한 번에 다 안 된다 — 420초가 차면 «어디까지 했는지» 적어 두고 끊는다.
+             그래서 「이어서 채우기」를 여러 번 누르시게 된다. 그것을 미리 적어 둔다.
+           ⚠ 무엇을 하는지 «누르기 전에» 말한다 — 남의 메일함에 붙는 일이다. */''}
+      <div class="mshint" style="padding:12px 0 6px;border-top:1px solid #e2e8f0;margin-top:12px">
+        <b>지난 메일 채우기</b> — POP3 로 <b>머리글만</b> 받아 옵니다(본문은 열 때 받습니다).
+        다음메일은 <b>그대로 둡니다</b> — 읽지도 지우지도 않습니다.<br>
+        ⚠ 한 번에 다 안 됩니다. 끊기면 <b>어디까지 했는지 적어 두고</b> 멈추니,
+        <b>끝났다고 할 때까지 다시 눌러</b> 주십시오.
+      </div>
+      <button class="msbtn" ${b&&b.busy?'disabled':''} onclick="mbBackfillRun()">${
+        b && b.busy ? '채우는 중… (최대 7분)' : (oldN ? '📦 이어서 채우기' : '📦 지난 메일 채우기 시작')}</button>
+      ${b && !b.busy ? (b.ok
+        ? `<div class="mshint" style="padding:8px 0 0">
+             ${b.done ? '✅ <b>다 채웠습니다.</b>' : '⏸ 예산이 다해 멈췄습니다 — <b>한 번 더 눌러 주세요.</b>'}
+             이번에 ${Number(b.got||0).toLocaleString()}통을 담았습니다
+             (겹쳐서 건너뛴 것 ${Number(b.skip||0).toLocaleString()}통${
+               b.bad?' · 못 읽은 것 '+Number(b.bad).toLocaleString()+'통':''}).
+             <br>지금 「📦 지난 메일」 칸에 <b>${oldN.toLocaleString()}통</b> 있습니다.
+           </div>`
+        : `<div class="mshint" style="padding:8px 0 0;color:#991b1b">
+             ✗ ${esc(b.error||'채우지 못했습니다')}</div>`) : ''}` : ''}
     </div>
   </div>`;
 }
@@ -16641,6 +16736,11 @@ function mbRowFits(v, id, idx0){
     const b0 = mbBinOfRow(v);
     return !(b0 && mbHidden(b0.id));
   }
+  /* ⚠ 지난 메일은 «제자리가 여기뿐»이다 — 다음메일 폴더에 없으니 규칙으로 옮길 자리도
+       없다. 아래 「규칙으로 간 칸」 셈에 넣으면, 주소 규칙이 걸린 지난 메일이 여기서
+       빠지면서 «어느 칸에도 안 보이게» 된다(그 규칙이 가리키는 업무 칸은 다음메일
+       폴더에서만 줄을 모으기 때문이다). */
+  if(id === MB_OLD_ID) return v._slug === MB_OLD_ID;
   /* ⚠ 규칙으로 다른 칸에 간 메일은 «제 폴더 목록»에서도 빠진다 — 손으로 옮긴 것과
        같은 셈이다. 한쪽만 빼면 같은 메일이 두 칸에 겹쳐 통수가 안 맞는다. */
   const cur = mbBinIdOfRow(v);
@@ -16678,6 +16778,10 @@ function mbNeedSlugs(id){
     return Object.keys(need);
   }
   if(s==='*all' || s==='*tome') return mbFolders().map(f=>f.slug);
+  /* ⚠ 지난 메일은 IMAP 폴더가 «아니다» — 여기서 폴더처럼 돌려주면 다음메일에
+       「*old」 라는 폴더를 열어 달라고 하게 되고, 그 자리에서 오류가 난다.
+       읽어 오는 일은 mbOldLoad 가 따로 한다. */
+  if(s===MB_OLD_ID) return [];
   return [s];
 }
 
@@ -16760,6 +16864,7 @@ function mbFolderLabel(f){
   return String(MB_KIND_LABEL[f.kind] || f.name || f.path || '');
 }
 function mbBoxName(id){
+  if(id===MB_OLD_ID) return '📦 지난 메일';
   if(id==='*all')  return '전체메일';
   if(id==='*tome') return '내게쓴메일함';
   if(id==='*sched')return '예약메일함';
@@ -17096,6 +17201,17 @@ function mailSideHtml(){
       <span class="ic">🕐</span><span class="nm">예약메일함</span>
       ${schedList().length?`<span class="n">${schedList().length}</span>`:''}</div>`;
   mbFolderOf('archive').forEach(f=>{ h += row(f.slug,'📦','보관메일함'); });
+  /* ── 📦 지난 메일 (대표 지시 2026-09-06) ──
+     ⚠ «담은 것이 있을 때만» 내놓는다. 늘 두면 빈 칸이 하나 늘고, 눌러도 0통이라
+       「고장인가」가 된다. 채우기 전에는 설정 ⑤에 안내가 있다.
+     ⚠ 숫자는 «모두 몇 통»이다 — 지난 메일은 다 읽은 것으로 담으므로 안읽음이 없다.
+       그 자리를 비워 두면 몇 통인지 알 길이 없다. */
+  if(mbOldCount()) h += `<div class="dm-f ${now===MB_OLD_ID?'on':''}"
+      onclick="openMailBox('${MB_OLD_ID}')"
+      title="다음메일이 IMAP 으로 안 보여 주던 지난 메일입니다 — POP3 로 따로 받아 두었습니다.
+칸을 옮기거나 지우는 것은 다음메일에서 하십니다.">
+      <span class="ic">📦</span><span class="nm">지난 메일</span>
+      <span class="n">${mbOldCount().toLocaleString()}</span></div>`;
 
   /* ── 푸른 분류 — 우리 앱에서만 나눈 칸 (대표 지시 2026-08-26) ──
      ⚠ 예전 「내 메일함」 자리다. 이름을 바꾼 까닭은 «다른 것이 되었기» 때문이다.
@@ -18501,6 +18617,9 @@ function openMailBox(id){
      붙은 뒤 restoreLastScreen·render 가 다시 연다. 안 막으면 아래 «못 읽으면 다시
      연다» 고리가 로그인 없는 채로 끝없이 돈다(거절 → 다시 → 거절 …). */
   if(!mbAuthOk()) return;
+  /* 📦 지난 메일 — 다음메일 폴더가 아니라 우리가 따로 담아 둔 자리에서 읽는다.
+     ⚠ 아래 폴더 사슬을 «타지 않는다». 타면 「*old 폴더를 열어 달라」가 되어 오류가 난다. */
+  if(id === MB_OLD_ID){ mbOldLoad(); return; }
   /* ⚠ 폴더와 분류(쪽지)를 «나란히» 가져온다 (대표 보고 2026-08-29 「로그인이 늦다」).
      예전에는 폴더가 다 온 «뒤에야» 분류를 가지러 갔다 — 서버 왕복이 하나 더 들었다.
      여기서 분류를 먼저 «걸어만 두면»(mbEnsureBins, 기다리지 않음) 폴더와 같은 시간에
@@ -19370,6 +19489,23 @@ function mbFetchBody(slug, uid, peek){
   if(hit) return Promise.resolve(hit);
   const u = firebase.auth().currentUser;
   if(!u) return Promise.reject(new Error('로그인이 필요합니다'));
+  /* 📦 지난 메일은 다음메일 폴더에 없다 — 그 자리에서 POP3 로 받아 온다.
+     ⚠ 미리 받기(peek)는 «안 한다». POP3 는 한 통을 받으려고 이름표 목록(3만 줄)을
+       먼저 훑어야 해서, 읽지도 않을 이웃을 미리 받으면 그만큼 헛일이다. */
+  if(slug === MB_OLD_ID){
+    if(peek) return Promise.reject(new Error('지난 메일은 미리 받지 않습니다'));
+    return u.getIdToken()
+      .then(tok=>fetch(MB_FN+'readOldMail', { method:'POST',
+        headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
+        body: JSON.stringify({ key:String(uid) }) }))
+      .then(r=>r.json().catch(()=>({})))
+      .then(j=>{
+        if(!j.ok) throw new Error(j.error||'열지 못했습니다');
+        const o = { html:j.html||'', text:j.text||'', atts:j.atts||[] };
+        mbBodyPut(slug, uid, o);
+        return o;
+      });
+  }
   return u.getIdToken()
     .then(tok=>fetch(MB_FN+'readMailMessage', { method:'POST',
       headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
@@ -20207,16 +20343,26 @@ function mbShowImg(){
   renderMailPage();
 }
 
-/* 첨부 하나 내려받기 — 서버가 그 자리에서 IMAP 으로 받아 넘긴다(창고에 옮겨 담지 않는다) */
+/* 이 첨부를 «어느 창구»에서 받아 오나 — 지난 메일은 POP3 쪽이다.
+   ⚠ 한 자리에서만 정한다. 내려받기와 미리보기가 서로 다른 창구를 쓰면, 한쪽만
+     고쳐진 채로 「내려받기는 되는데 미리보기는 안 된다」가 된다. */
+function mbAttReq(o, i, a){
+  const old = String(o.slug||'') === MB_OLD_ID;
+  return { fn: old ? 'readOldMail' : 'readMailAttachment',
+    body: old ? { key:String(o.uid||''), index:i }
+              : { slug:o.slug, uid:o.uid, index:i, part:String((a&&a.part)||'') } };
+}
+/* 첨부 하나 내려받기 — 서버가 그 자리에서 받아 넘긴다(창고에 옮겨 담지 않는다) */
 function mbAtt(i){
   const o = state.mbOpen||{}; const a = (o.atts||[])[i]; if(!a) return;
   toast('첨부를 가져오고 있습니다…', 3000);
   const u = firebase.auth().currentUser;
   if(!u) return toast('로그인이 필요합니다');
+  const req = mbAttReq(o, i, a);
   u.getIdToken()
-    .then(tok=>fetch(MB_FN+'readMailAttachment', { method:'POST',
+    .then(tok=>fetch(MB_FN+req.fn, { method:'POST',
       headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
-      body: JSON.stringify({ slug:o.slug, uid:o.uid, index:i, part:String(a.part||'') }) }))
+      body: JSON.stringify(req.body) }))
     .then(r=>r.json().catch(()=>({})))
     .then(j=>{
       if(!j.ok) throw new Error(j.error||'내려받지 못했습니다');
@@ -20309,10 +20455,11 @@ function mbAttPeek(i){
   renderMailPage();
   const u = firebase.auth().currentUser;
   if(!u){ state.mbPv.loading=false; state.mbPv.err='로그인이 필요합니다'; return renderMailPage(); }
+  const req = mbAttReq(o, i, a);
   u.getIdToken()
-    .then(tok=>fetch(MB_FN+'readMailAttachment', { method:'POST',
+    .then(tok=>fetch(MB_FN+req.fn, { method:'POST',
       headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+tok },
-      body: JSON.stringify({ slug:o.slug, uid:o.uid, index:i, part:String(a.part||'') }) }))
+      body: JSON.stringify(req.body) }))
     .then(r=>r.json().catch(()=>({})))
     .then(j=>{
       if(!j.ok) throw new Error(j.error||'가져오지 못했습니다');
@@ -20486,6 +20633,9 @@ function mbAttToPay(i){
      「하시겠습니까」가 뜨면 못 쓴다. 화면을 먼저 바꾸고 서버에 맡긴다(빠르게 보이게),
      실패하면 되돌리고 까닭을 말한다. */
 function mbFlag(slug, uid, flag, on){
+  /* 📦 지난 메일에는 표를 못 켠다 — 다음메일 폴더에 없는 메일이라 켤 자리가 없다.
+     ⚠ 여기 한 곳에서 막는다. 중요(mbStar)·읽음(mbToggleRead)이 둘 다 이리로 온다. */
+  if(String(slug) === MB_OLD_ID) return mbOldBlock([{ _slug:slug }], '표시를 바꿀');
   const box = _mbMsgs[slug]; const row = box && box[String(uid)];
   const key = (flag==='star') ? 'g' : 'r';
   const before = row ? Number(row[key]||0) : 0;
@@ -20623,6 +20773,7 @@ function mbUnreadOne(slug, uid){
 function mbReadMark(on){
   const picked = mbPicked();
   if(!picked.length) return toast('고른 것이 없습니다');
+  if(mbOldBlock(picked, '읽음 표시를 바꿀')) return;
   const byBox = {};
   picked.forEach(v=>{ (byBox[v._slug] = byBox[v._slug]||[]).push(String(v.u)); });
   const u = firebase.auth().currentUser;
@@ -20778,6 +20929,7 @@ function mbResend(){
    ⚠ 지우는 것이 아니라 «휴지통으로 옮기는» 것이다. 다음메일 휴지통에서 되돌릴 수 있다. */
 function mbTrash(){
   const picked = mbPicked(); if(!picked.length) return toast('고른 것이 없습니다');
+  if(mbOldBlock(picked, '휴지통으로 옮길')) return;
   const trash = mbFolderOf('trash')[0];
   if(!trash) return toast('휴지통 폴더를 찾지 못했습니다 — 새로고침을 먼저 눌러 주세요', 8000);
   const names = picked.slice(0,4).map(v=>v.s||'(제목 없음)').join('\n· ');
@@ -20995,6 +21147,7 @@ function mbRuleAskDom(email, ev){
 }
 function mbMove(ev){
   const picked = mbPicked(); if(!picked.length) return toast('고른 것이 없습니다');
+  if(mbOldBlock(picked, '다른 칸으로 옮길')) return;
   /* 숨긴 칸은 옮길 곳으로 내놓지 않는다 — 치운 칸에 넣으면 그 자리에서 사라진다 */
   const bins = mbBins().filter(b=>!mbHidden(b.id));
   const m = $('folderMenu'); if(!m) return;

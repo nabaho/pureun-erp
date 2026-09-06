@@ -54,7 +54,8 @@ function draw(tab) {
   vm.runInContext(app.match(/const MB_SET_TABS = [\s\S]*?\];/)[0], ctx);
   vm.runInContext(app.match(/const MB_SET_LS = [^\n]*/)[0], ctx);
   vm.runInContext(app.match(/const MB_OLD_DAY = [^\n]*/)[0], ctx);
-  ['mbSetTab', 'mbSetTabGo', 'mbOldSpans', 'mbOldHtml', 'mailSetHtml'].forEach(n =>
+  vm.runInContext(app.match(/const MB_OLD_ID = [^\n]*/)[0], ctx);
+  ['mbSetTab', 'mbSetTabGo', 'mbOldSpans', 'mbOldCount', 'mbOldHtml', 'mailSetHtml'].forEach(n =>
     vm.runInContext(sliceFn(app, 'function ' + n + '('), ctx));
   return ctx;
 }
