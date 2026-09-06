@@ -1018,6 +1018,8 @@ var CATS={
   // 계약: 푸른이알피 메뉴가 '계약관리'이고 나의 업무에도 '계약'으로 나온다 (2026-08-01 맞춤)
   // 업체: 예전 이름 — 이미 그 값으로 저장된 옛 자료의 색을 위해 남겨 둔다
   '계약':['#eff6ff','#1e40af'],'업체':['#eff6ff','#1e40af'],
+  // 자문: 푸른이알피 «업체관리»에서 온다 (대표 지시 2026-09-05) — 월 자문료를 받는 거래처
+  '자문':['#f8fafc','#166534'],
   '사건':['#fef2f2','#991b1b'],'기타사업':['#e2e8f0','#1e40af']};
 // 구분은 푸른이알피 유형을 그대로 쓴다. 아래 13종은 색을 고정해 둔 것뿐이고,
 // 목록에 없는 유형이 와도 이름에서 색을 만들어 항상 같은 색으로 보여준다.
@@ -1032,8 +1034,17 @@ function catColor(cat){
   return CAT_PALETTE[h%CAT_PALETTE.length];
 }
 // 고정 13종 + 실제 데이터에 쓰인 유형
-// 구분으로 쓰는 사무관리 5종. 이 목록에 없는 값이 구분에 들어 있으면 유형이다.
-var KIND_SET={'계약':1,'사건':1,'컨설팅':1,'기금':1,'기타사업':1};
+/* 구분으로 쓰는 사무관리 갈래. 이 목록에 없는 값이 구분에 들어 있으면 유형이다.
+   ⚠ 2026-09-05 「자문」이 여섯째로 들어왔다 — 푸른이알피 업체관리가 원본이다.
+     대표 지시 「자문 이나 급여에 대한 대응도 모두 업무에 포함 시킬수 있게 해라」. */
+var KIND_SET={'계약':1,'사건':1,'컨설팅':1,'기금':1,'기타사업':1,'자문':1};
+/* 자문은 «매주 뭔가 적어야 하는 일»이 아니다 — 일이 생길 때 하는 것이다
+   (대표 결정 2026-09-05 「안 센다」). 그래서 「미기록」·「2주+ 방치」·기록률에서 뺀다.
+   ⚠ 목록에서 빼지 않는다. «세는 것»에서만 뺀다 — 안 보이면 찾을 수가 없다.
+   ⚠ 기한(계약 만료 D-30)은 그대로 센다. 그것은 «날짜가 정해진 일»이라 다르다.
+   ⚠ 자문사 수백 곳을 방치로 세면 「2주+ 방치」가 수백으로 뛰어, 정작 밀린 사건이 묻힌다.
+     그 숫자는 대표가 관리 신호로 쓰는 것이라 못 쓰게 되면 화면 하나가 죽는다. */
+function countsLog(it){ return catNorm(it&&it.cat)!=='자문'; }
 // 예전에 '업체'로 저장된 값 — 푸른이알피가 '계약관리'라 부르므로 화면에서는 계약으로 읽는다
 var KIND_ALIAS={'업체':'계약'};
 // 옛 이름을 지금 이름으로 (업체 → 계약). 화면·걸러 보기가 모두 이것을 거친다.
@@ -3704,12 +3715,34 @@ function payItemOf(site){
 }
 /* 짝이 없으면 «그때만» 만든다 (대표 결정 2026-09-05).
    ⚠ 미리 만들어 두지 않는다 — 급여만 받는 곳이 마흔이면 빈 업무 마흔이 깔린다. */
+/* 그 사업장의 «담당»을 푸른이알피 업체관리에서 찾는다 (대표 지시 2026-09-05).
+   ⚠ 예전에는 담당을 비워 두었다. 그래서 급여 업무가 «(담당 미지정)»에만 쌓이고,
+     정작 그 급여를 처리한 사람의 「내 업무」에는 한 건도 안 나왔다 —
+     「급여 대응도 업무에 포함」이 반쪽이었던 까닭이다.
+   ⚠ 못 찾으면 예전처럼 비워 둔다. 아무나 넣으면 «남의 업무»가 된다.
+   ⚠ 이름표(사번→이름)를 못 읽었으면 넣지 않는다 — 사번만 있으면 화면에서 못 알아본다.
+     읽을 수 있는 사람이 한 번 열면 그때 채워진다(_peU2NKnown 과 같은 결). */
+function payMgrOf(site){
+  var n=_payKey(site);
+  if(!n||!coSrc||!coSrc.length) return null;
+  var hit=null;
+  coSrc.forEach(function(c){
+    if(!hit&&c&&_payKey(c.name||c.companyName)===n) hit=c;
+  });
+  if(!hit) return null;
+  var sid=String(hit.managerMain||'');
+  var nm=(sid&&_peU2N&&_peU2N[sid])||'';
+  if(!nm) return null;
+  return { sid:sid, name:nm, co_id:String(hit.id||'') };
+}
 function payMakeItem(site){
   var id='PAY-'+safeKey(_payKey(site));
   if(items[id]) return Promise.resolve(id);
+  var mg=payMgrOf(site);
   var rec={ no:S.year+'-급여-'+safeKey(_payKey(site)).slice(0,12), cat:'급여',
     company:String(site||''), title:'급여 처리', status:'진행중',
-    mgr_main:{sid:'',name:''}, pe_nomgr:true, pay_site:_payKey(site),
+    mgr_main:{sid:(mg&&mg.sid)||'',name:(mg&&mg.name)||''}, pe_nomgr:!mg,
+    co_id:(mg&&mg.co_id)||'', pay_site:_payKey(site),
     src:'pay', created_at:new Date().toISOString() };
   return fbDb.ref(NS+'/items/'+id).set(rec).then(function(){ items[id]=rec; return id; })
     .catch(function(){ return null; });
@@ -3874,7 +3907,7 @@ function patchItem(id,obj){
 function focusCounts(){
   var v=viewer(), mine=viewOpen(), wk=weekKeyOf(S.week), today=todayStr();
   var due=mine.filter(function(it){var n=dday(itemDue(it));return n!==null&&n<=7;});
-  var nolog=mine.filter(function(it){return wkLogsOf(it._id,wk).length===0;});
+  var nolog=mine.filter(function(it){return countsLog(it)&&wkLogsOf(it._id,wk).length===0;});
   var next=mine.filter(function(it){return it.next&&it.next.date&&it.next.date<=today;});
   var done=allItems().filter(function(it){return it.state==='done'&&isOf(it,v)&&it.done_date&&inWeek(it.done_date,S.week);});
   return {due:due,nolog:nolog,next:next,done:done};
@@ -8602,7 +8635,7 @@ function teamCardData(open,wk,today){
     if(d!==null&&d<0) s.over++;
     else if(d!==null&&d<=7) s.soon++;
     var ld=(it.last&&it.last.d)||'';
-    if(!ld||_dayDiff(today,ld)>=14) s.stale++;
+    if(countsLog(it)&&(!ld||_dayDiff(today,ld)>=14)) s.stale++;
     if(wkLogsOf(it._id,wk).length) s.rec++;
   });
   // 부담당은 두 번째 바퀴에서 — 그래야 주담당 칸이 다 만들어진 뒤에 견줄 수 있다
@@ -8739,8 +8772,9 @@ function renderTeam(){
   var openIds={}; open.forEach(function(it){ openIds[it._id]=1; });
   var totLogs=0; Object.keys(wkCache[wk]||{}).forEach(function(iid){
     if(openIds[iid]) totLogs+=Object.keys(wkCache[wk][iid]).length; });
-  var stale=open.filter(function(it){ var ld=(it.last&&it.last.d)||''; return !ld||_dayDiff(today,ld)>=14; });
-  var nolog=open.filter(function(it){return wkLogsOf(it._id,wk).length===0;});
+  var stale=open.filter(function(it){ if(!countsLog(it)) return false;
+    var ld=(it.last&&it.last.d)||''; return !ld||_dayDiff(today,ld)>=14; });
+  var nolog=open.filter(function(it){return countsLog(it)&&wkLogsOf(it._id,wk).length===0;});
   var due7=open.filter(function(it){var n=dday(itemDue(it));return n!==null&&n<=7;});
   var doneWk=allItems().filter(function(it){return it.state==='done'&&it.done_date&&inWeek(it.done_date,S.week);});
   // 담당별 그룹
@@ -9069,17 +9103,20 @@ function renderStats(){
     if(S.view!=='stats') return;
     var today=todayStr(), open=openItems();
     var rows={};
-    function R(nm){ return rows[nm]=rows[nm]||{name:nm,open:0,cats:{},logged:{},lines:0,stale:0,due:0,over:0,done:0}; }
+    function R(nm){ return rows[nm]=rows[nm]||{name:nm,open:0,den:0,cats:{},logged:{},lines:0,stale:0,due:0,over:0,done:0}; }
     var owner={};
     open.forEach(function(it){
       var nm=(it.mgr_main&&it.mgr_main.name)||'(담당 미지정)';
       owner[it._id]=nm;
       var r=R(nm); r.open++;
       var c=it.cat||'기타'; r.cats[c]=(r.cats[c]||0)+1;
+      /* 기록률의 분모 — 자문은 뺀다. 매주 적을 일이 없는 것을 분모에 넣으면
+         기록률이 사람의 활동이 아니라 «자문사를 몇 곳 맡았나»를 나타내게 된다. */
+      if(countsLog(it)) r.den++;
       var d=dday(itemDue(it));
       if(d!==null&&d<0) r.over++; else if(d!==null&&d<=7) r.due++;
       var ld=(it.last&&it.last.d)||'';
-      if(!ld||_dayDiff(today,ld)>=14) r.stale++;
+      if(countsLog(it)&&(!ld||_dayDiff(today,ld)>=14)) r.stale++;
     });
     wks.forEach(function(wk){ var w=wkCache[wk]||{};
       /* 날짜가 없는 옛 기록은 그 주의 월요일 것으로 본다 (위 풀이글 참고) */
@@ -9101,11 +9138,11 @@ function renderStats(){
       R((it.mgr_main&&it.mgr_main.name)||'(담당 미지정)').done++;
     });
     var list=Object.keys(rows).map(function(k){var r=rows[k];r.loggedN=Object.keys(r.logged).length;
-      r.rate=r.open?Math.round(r.loggedN/r.open*100):0; return r;})
+      r.rate=r.den?Math.round(r.loggedN/r.den*100):0; return r;})
       .sort(function(a,b){return b.open-a.open;});
-    var T={open:0,lines:0,stale:0,over:0,due:0,done:0,loggedN:0};
-    list.forEach(function(r){ T.open+=r.open;T.lines+=r.lines;T.stale+=r.stale;T.over+=r.over;T.due+=r.due;T.done+=r.done;T.loggedN+=r.loggedN; });
-    var Trate=T.open?Math.round(T.loggedN/T.open*100):0;
+    var T={open:0,den:0,lines:0,stale:0,over:0,due:0,done:0,loggedN:0};
+    list.forEach(function(r){ T.open+=r.open;T.den+=r.den;T.lines+=r.lines;T.stale+=r.stale;T.over+=r.over;T.due+=r.due;T.done+=r.done;T.loggedN+=r.loggedN; });
+    var Trate=T.den?Math.round(T.loggedN/T.den*100):0;
 
     /* 0/75건 — 넓은 화면에서는 아랫줄, 폰 카드에서는 옆에 붙는다(줄을 아끼려고) */
     function catBar(r){
@@ -9364,12 +9401,23 @@ function peWillTransfer(x){
   for(var i=0;i<ks.length;i++){ if(PE_XFER_KIND[String(ks[i]||'')]) return true; }
   return false;
 }
-function _peClosed(x){
+function _peClosed(x,t){
   if(!x) return true;
   if(x.permanentArchived||x.archived) return true;
   if(x.closedDate||x.closedAt||x.closeDate) return true;
   var st=String(x.status||'');
-  return st==='closed'||st==='cancelled'||st==='transferred';
+  if(st==='closed'||st==='cancelled'||st==='transferred') return true;
+  /* 자문(업체관리)은 끝내는 말이 더 있다 — 푸른이알피가 쓰는 값 그대로다
+     (대표 결정 2026-09-05 「거래 중인 곳만」).
+     ⚠ 이 두 말을 «모든 갈래»에 쓰지 않는다. 사건·컨설팅에서 inactive 가 무슨 뜻인지
+       우리가 정한 바 없고, 잘못 정하면 살아 있는 사건이 조용히 사라진다.
+     ⚠ 계약 종료일이 «오늘보다 앞»이면 끝난 것으로 본다. 오늘이면 아직 살아 있다. */
+  if(t==='companies'){
+    if(st==='inactive'||st==='terminated') return true;
+    var e=String(x.contractEndDate||'').slice(0,10);
+    if(e&&e<todayStr()) return true;
+  }
+  return false;
 }
 /* 푸른이알피가 어떻게 끝냈는지 → 우리 끝낸 방식.
    status가 정본이고, 없으면 종료 사유 문구에서 읽는다(옛 자료 대비).
@@ -9459,7 +9507,16 @@ var PE_DEF=[
   ['case','사건',function(x){return x.caseNo||'';},function(x){return x.title||x.caseName||'';},function(x){return x.typeName||x.caseType||'';}],
   ['consulting','컨설팅',function(x){return x.consultNo||x.no||'';},function(x){return x.title||x.programName||'';},function(x){return x.typeName||x.consultingType||x.programName||'';}],
   ['fund','기금',function(x){return x.fundNo||x.no||'';},function(x){return x.title||x.fundName||'';},function(x){return x.fundType||'기금';}],
-  ['other','기타사업',function(x){return x.projectNo||x.no||'';},function(x){return x.title||x.projectName||'';},function(x){return x.programName||'';}]
+  ['other','기타사업',function(x){return x.projectNo||x.no||'';},function(x){return x.title||x.projectName||'';},function(x){return x.programName||'';}],
+  /* ── 자문 (대표 지시 2026-09-05) ──
+     푸른이알피 «업체관리»가 곧 자문사 명부다 — 담당·월 자문료·계약기간이 다 거기 있다.
+     업무관리는 그 자료를 벌써 들고 있었다(coSrc, 업체 잇기용). 읽는 곳을 안 늘렸다.
+     ⚠ 여섯째 칸(dCo)이 있다 — 업체는 회사 이름이 name 이고, 다른 갈래는 companyName 이다.
+       한 함수에서 둘 다 보게 하면 사건에 name 이 생기는 날 엉뚱한 값을 집는다.
+     ⚠ 업무명은 비워 둔다 — 회사명을 업무명으로 쓰지 않는다는 규칙 그대로다(_peCandOf).
+     ⚠ 계약 만료일이 곧 기한이 된다(_peDue) — 자문 갱신이 D-30 으로 뜬다. */
+  ['companies','자문',function(x){return x.contractNo||x.no||'';},function(){return '';},
+   function(x){return x.typeCode||'자문';},function(x){return x.name||x.companyName||'';}]
 ];
 /* 푸른이알피 계약의 「종류」— 계약 화면 CONTRACT_KINDS 와 같은 말을 쓴다.
    종류가 곧 「어디로 넘어가는 계약인가」다(상담만 안 넘어간다).
@@ -9695,8 +9752,8 @@ function peLoadAll(){
   });
 }
 // 마스터 1건 → 업무시트 항목 후보
-function _peCandOf(t,label,dNo,dTitle,dKind,x,sid2name){
-  var co=x.companyName||x.fundName||x.targetName||'';
+function _peCandOf(t,label,dNo,dTitle,dKind,x,sid2name,dCo){
+  var co=dCo?dCo(x):(x.companyName||x.fundName||x.targetName||'');
   var kind=dKind(x), title=dTitle(x);
   /* 관할(상대기관) — 노동청·노동위원회와 그쪽 담당자(감독관·조사관).
      ⚠ 푸른이알피는 지금 judgment에 담고 jurisdiction은 옛 이름으로만 남겨 두었다.
@@ -9716,7 +9773,10 @@ function _peCandOf(t,label,dNo,dTitle,dKind,x,sid2name){
     jur_ph:String(J.phone||'').trim(), jur_em:String(J.email||'').trim(),
     brief:briefTrim(x.brief),
     client:x.payee||'', mgr:sid2name[x.managerMain]||'', mgrSid:x.managerMain||'',
-    co_id:x.companyId||'',                        // 업체 담당자 조회용 — 이름 매칭보다 정확하다
+    /* 업체 담당자 조회용 — 이름 매칭보다 정확하다.
+       ⚠ 자문(업체관리)은 «그 업체 자신»이 원본이라 제 번호를 쓴다. 이것이 있어야
+         사업장 담당자·오간 메일·보낸 자료가 자문 업무에도 그대로 붙는다. */
+    co_id:x.companyId||(t==='companies'?String(x.id||''):''),
     subs:(x.managerSubs||[]).map(function(sd){return sid2name[sd]||'';}).filter(Boolean),
     due:_peDue(x), start:x.receiveDate||x.contractStartDate||'',
     ref:{type:t,id:String(x.id)} };
@@ -9727,8 +9787,8 @@ function puerpCandidates(){
   PE_DEF.forEach(function(d){
     var arr=peMaster[d[0]]; if(!arr) return; any=true;
     arr.forEach(function(x){
-      if(!x||!x.id||_peClosed(x)) return;
-      out.push(_peCandOf(d[0],d[1],d[2],d[3],d[4],x,sid2name));
+      if(!x||!x.id||_peClosed(x,d[0])) return;
+      out.push(_peCandOf(d[0],d[1],d[2],d[3],d[4],x,sid2name,d[5]));
     });
   });
   return any?out:null;
@@ -9784,8 +9844,8 @@ function peAutoSync(){
       arr.forEach(function(x){
         if(!x||!x.id) return;
         live[d[0]][safeKey(String(x.id))]=1;
-        if(_peClosed(x)) return;
-        var c0=_peCandOf(d[0],d[1],d[2],d[3],d[4],x,sid2name);
+        if(_peClosed(x,d[0])) return;
+        var c0=_peCandOf(d[0],d[1],d[2],d[3],d[4],x,sid2name,d[5]);
         // 이관될 계약은 «새 업무로 만들지만» 않는다. 후보에서 통째로 빼면
         // 이미 연결돼 있는 계약 업무가 담당자·업무명 미러까지 끊긴다.
         if(d[0]==='contract'&&peWillTransfer(x)) c0.xfer=1;
@@ -9834,7 +9894,7 @@ function peAutoSync(){
            방금 되살린 것을 도로 덮는다. pesync 의 충돌 규칙과 같은 잣대를 쓴다. */
       if(it.state!=='done'){
         var _rc=peRec(it);
-        if(_rc&&_peClosed(_rc)){
+        if(_rc&&_peClosed(_rc,it.ref&&it.ref.type)){
           var _peAt=String(_rc.closedAt||_rc.closedDate||_rc.updatedAt||'');
           var _wsAt=String(it.state_at||'');
           if(!(_wsAt&&_peAt&&_wsAt>_peAt)){

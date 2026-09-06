@@ -62,7 +62,11 @@ function makeBox(opts){
   box.window = box;
   vm.createContext(box);
   vm.runInContext(
-    grab('dday') + '\n' + grab('mgrSubNames') + '\n'
+    /* 2026-09-05 — 자문은 「2주+ 방치」에서 뺀다(countsLog). 그 잣대가
+       teamCardData 안에서 도니 함께 실어 준다. 자문 자체는 tests/advisory-work.test.js 가 본다. */
+    grab('catNorm') + '\n' + grab('countsLog') + '\n'
+    + src.match(/var KIND_ALIAS=\{[^}]*\};/)[0] + '\n'
+    + grab('dday') + '\n' + grab('mgrSubNames') + '\n'
     + src.match(/var TEAMVIEW_KEY='[^']*';/)[0] + '\n'
     + grab('teamView') + '\n' + grab('setTeamView') + '\n' + grab('teamViewSeg') + '\n'
     + grab('teamOnly') + '\n'
