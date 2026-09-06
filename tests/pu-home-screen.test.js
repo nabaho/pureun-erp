@@ -1669,11 +1669,16 @@ test('★ 편집 화면에 「남기기」 상태와 사유가 보이고, 풀 �
     + noConst(constLine('MEMBER_KINDS')) + '\n' + fnSource('memberKind') + '\n' + fnSource('memberEdit'));
   const h = ctx.memberEdit(ctx.App.draft);
   assert.ok(h.indexOf('세종지사장 — 고용관계 아님') >= 0, '남긴 사유가 편집 화면에 없습니다');
-  assert.match(h, /풀|해제/, '예외를 풀 길이 없습니다');
+  /* ⚠ 2026-09-06 이름이 바뀌었다 — 「홈페이지에 남기기」 → 「퇴사 경고 끄기 (사유 남김)」.
+     옛 이름은 이름줄의 「새 홈페이지에 넣기/빼기」와 헷갈렸다: 둘 다 「올리냐 마냐」로
+     보이는데 하나는 «새» 홈페이지 이야기, 이것은 «지금» 홈페이지의 퇴사 경고 이야기다.
+     ★ 이름을 박지 말고 «켜고 끌 길이 둘 다 있는가»를 본다. */
+  assert.match(h, /keepOnSiteClear\(\)/, '★ 표시를 되돌릴 길이 없습니다');
 
-  // 예외가 없는 사람에게는 «남기기» 길이 있다
+  // 표시가 없는 사람에게는 «표시할» 길이 있다
   ctx.App.members['320'] = { name: '장한돌', srl: '320' };
-  assert.match(ctx.memberEdit(ctx.App.draft), /남기기/, '「홈페이지에 남기기」 단추가 없습니다');
+  assert.match(ctx.memberEdit(ctx.App.draft), /keepOnSiteAsk\(\)/,
+    '★ 퇴사 경고를 끌 길이 없습니다');
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
