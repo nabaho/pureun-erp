@@ -335,7 +335,16 @@ test('★ 기록이 먼저다 — 기록이 안 되면 「담김」으로 표시
 
 test('담은 표시는 받은 메일과 같은 자리(work_erp/mailchk)에 둔다', () => {
   assert.match(grab(W, 'cmTake'), /fbDb\.ref\(NS\+'\/mailchk\/'\+ck\)\.set\(rec\)/);
-  assert.match(grab(W, 'dCmRowHTML'), /onclick="mailUnsee\(/);
+  /* 되돌리는 길도 «한 길»이다 — 두 벌로 만들면 한쪽만 고쳐진다.
+     ⚠ 함수 원문에서 글자를 찾지 않는다. 그리는 일이 공용 그리개로 옮겨 가면
+       원문에는 안 남는다 — 그려 놓고 그 안을 본다. */
+  const 줄 = { at: 1757000000000, io: 'in', s: '회신' };
+  const b = cmRowBox();
+  b.mailchk[b.cmKey(줄)] = { by: 'x', byName: '권형하', at: '2026-09-06T00:00:00' };
+  const 담긴줄 = b.dCmRowHTML(줄, 'W1');
+  assert.match(담긴줄, /mailUnsee\(/, '담은 줄을 되돌릴 길이 없다');
+  const 안담긴줄 = b.dCmRowHTML({ at: 1, io: 'in', s: '회신' }, 'W1');
+  assert.match(안담긴줄, /cmTake\(/, '아직 안 담은 줄에 담는 길이 없다');
 });
 
 test('요약 줄 열쇠는 받은 메일·보낸 자료 열쇠와 안 겹친다', () => {
@@ -346,8 +355,29 @@ test('요약 줄 열쇠는 받은 메일·보낸 자료 열쇠와 안 겹친다'
   assert.notEqual(k, b.cmKey({ io: 'out', at: 1757000000000 }), '받음과 보냄이 같은 열쇠다');
 });
 
-test('★ 짐작으로 붙은 줄은 화면에도 그렇게 적는다', () => {
-  assert.match(grab(W, 'dCmRowHTML'), /r\.g\?' · <span style="color:var\(--warn\)">짐작<\/span>':''/);
+/* 그리는 함수를 «떠서 돌린다» — 마크업 글자를 박아 두면 모양만 바꿔도 깨지고,
+   반대로 기능을 꺼도 통과한다(STATUS.md 「되풀이된 실수」 ②). */
+function cmRowBox(chk){
+  const b = { console, String, Number, Object, Array, Date, isNaN,
+    mailchk: chk || {},
+    esc: x => String(x == null ? '' : x).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),
+    escJ: x => String(x == null ? '' : x).replace(/\\/g, '\\\\').replace(/'/g, "\\'"),
+    safeKey: s => String(s).replace(/[.#$/[\]\s]/g, '_') };
+  vm.createContext(b);
+  vm.runInContext(grab(W, 'cmKey') + '\n' + grab(W, 'cmChk') + '\n' + grab(W, 'cmWhen') + '\n'
+    + grab(W, 'cmLogLine') + '\n' + grab(W, '_mlDay') + '\n'
+    + grab(W, 'mlRowHTML') + '\n' + grab(W, 'dCmRowHTML'), b);
+  return b;
+}
+/* 마우스를 올려야 보이는 곳(.mlpop)을 뺀 «줄 위에 늘 보이는» 부분 */
+function onLine(h){ return h.replace(/<div class="mlpop">[\s\S]*$/, ''); }
+
+test('★ 짐작으로 붙은 줄은 «줄 위에» 그렇게 적는다 — 올려 봐야 알면 짐작을 사실로 읽는다', () => {
+  const b = cmRowBox();
+  const 짐작 = b.dCmRowHTML({ at: 1757000000000, io: 'in', s: '가나전자 문의', g: 1 }, 'W1');
+  const 확실 = b.dCmRowHTML({ at: 1757000000000, io: 'in', s: '회신' }, 'W1');
+  assert.match(onLine(짐작), /짐작/, '짐작 표가 마우스를 올려야만 보인다 — 안 올려 본 사람은 짐작을 사실로 읽는다');
+  assert.doesNotMatch(onLine(확실), /짐작/, '확실한 줄에 짐작 표가 붙었다');
 });
 
 test('★ 요약 줄은 안 본 것으로 세지 않는다 — 이미 지난 일이다', () => {
