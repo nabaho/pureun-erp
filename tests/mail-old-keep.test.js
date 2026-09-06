@@ -23,6 +23,8 @@ const app = fs.readFileSync(path.join(root, 'pu-cards.html'), 'utf8');
 const bare = app.replace(/\/\*[\s\S]*?\*\//g, ' ');
 const sync = fs.readFileSync(path.join(root, 'functions', 'mail-sync.js'), 'utf8')
   .replace(/\/\*[\s\S]*?\*\//g, ' ');
+const box = fs.readFileSync(path.join(root, 'functions', 'mail-box.js'), 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, ' ');
 const idx = fs.readFileSync(path.join(root, 'functions', 'index.js'), 'utf8')
   .replace(/\/\/[^\n]*/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ');
 
@@ -83,9 +85,9 @@ test('★★ 밖으로 «내보내야» 올라간다 — 안 내보내면 배포
 
 /* ══════ ③ 화면 — 기간을 어떻게 세나 ══════ */
 
-function spans(msgs, folders){
+function spans(sync, folders){
   const ctx = { Object, String, Number, Math, Date, isFinite,
-    _mbMsgs: msgs, _mbFolders: folders };
+    _mbSync: sync, _mbFolders: folders };
   vm.createContext(ctx);
   vm.runInContext(app.match(/const MB_OLD_DAY = [^\n]*/)[0], ctx);
   vm.runInContext(sliceFn(app, 'function mbOldSpans('), ctx);
@@ -93,32 +95,72 @@ function spans(msgs, folders){
 }
 const DAY = 86400000, NOW = Date.now();
 
-test('★★ 담긴 기간을 «지금 손에 든 줄»로 센다 — 서버를 안 두드린다', () => {
+test('★★★ 기간을 «서버가 적어 둔 값»으로 센다 — 앱이 손에 든 줄로 세면 늘 틀린다', () => {
+  /* ★ 2026-09-06 대표 화면에서 드러난 것: 「받은메일함 16일·100통·1년이면 2,281통」.
+       진짜는 94일·438통이었다. 앱은 칸마다 100통씩만 손에 들기 때문이다(mbPageSize).
+       표본으로 기간을 재면 짧게 나오고, 하루 평균이 부풀어 「1년이면」이 배로 뛴다. */
+  const f = sliceFn(app, 'function mbOldSpans(').replace(/\/\*[\s\S]*?\*\//g, ' ');
+  assert.ok(!/_mbMsgs/.test(f),
+    '앱이 손에 든 줄(_mbMsgs)로 셉니다 — 칸마다 100통씩만 들고 있어 늘 틀립니다');
+  assert.match(f, /_mbSync/, '서버가 적어 둔 값을 안 봅니다');
+  assert.match(f, /s\.kept/, '우리가 «실제로 든» 통수(kept)를 안 봅니다');
+});
+
+test('★★ 서버 값으로 세면 진짜 기간이 나온다', () => {
   const r = spans(
-    { INBOX: { 1:{d:NOW-100*DAY}, 2:{d:NOW-50*DAY}, 3:{d:NOW} },
-      A:     { 1:{d:NOW-800*DAY}, 2:{d:NOW} } },
+    { INBOX: { kept:438, oldest:NOW-94*DAY, newest:NOW },
+      A:     { kept:400, oldest:NOW-800*DAY, newest:NOW } },
     { INBOX:{ name:'받은메일함' }, A:{ name:'옛 칸' } });
   assert.equal(r.length, 2);
   assert.equal(r[0].name, '받은메일함', '짧은 칸이 «먼저» 나와야 합니다 — 손볼 곳이 거기입니다');
-  assert.equal(r[0].days, 100);
+  assert.equal(r[0].days, 94);
+  assert.equal(r[0].n, 438, '통수가 ' + r[0].n + ' 로 나왔습니다');
   assert.equal(r[1].days, 800);
-  const f = sliceFn(app, 'function mbOldSpans(').replace(/\/\*[\s\S]*?\*\//g, ' ');
-  assert.ok(!/firebase|fetch\(|once\(/.test(f),
-    '기간을 세려고 서버를 두드립니다 — 설정 창을 열 때마다 요금이 나갑니다');
 });
 
-test('★★ 날짜가 없는 줄은 «안 센다» — 없는 것을 1970년으로 세면 기간이 55년이 된다', () => {
-  const r = spans({ INBOX: { 1:{d:0}, 2:{}, 3:{d:NOW-10*DAY}, 4:{d:NOW} } },
-                  { INBOX:{ name:'받은메일함' } });
-  assert.equal(r.length, 1);
-  assert.equal(r[0].n, 2, '날짜 없는 줄까지 셌습니다');
-  assert.equal(r[0].days, 10, '기간이 ' + r[0].days + '일로 나왔습니다');
+test('★★ 서버가 «아직 안 적은» 칸은 건너뛴다 — 지어내면 그것이 또 틀린 표가 된다', () => {
+  const r = spans(
+    { A: { kept:100 },                                  /* 날짜가 없다 */
+      B: { kept:0, oldest:NOW-10*DAY, newest:NOW },     /* 통수가 없다 */
+      C: { kept:5, oldest:NOW, newest:NOW-10*DAY },     /* 앞뒤가 뒤집혔다 */
+      D: { kept:9, oldest:NOW-10*DAY, newest:NOW } },
+    { D:{ name:'멀쩡한 칸' } });
+  assert.equal(r.length, 1, '못 믿을 칸까지 ' + r.length + '개를 그렸습니다');
+  assert.equal(r[0].name, '멀쩡한 칸');
 });
 
-test('★★ 줄이 하나뿐이어도 «0 으로 나누지» 않는다', () => {
-  const r = spans({ INBOX: { 1:{d:NOW} } }, { INBOX:{ name:'받은메일함' } });
+test('★★ 하루 만에 다 온 칸도 «0 으로 나누지» 않는다', () => {
+  const r = spans({ A: { kept:9, oldest:NOW, newest:NOW } }, { A:{ name:'오늘' } });
   assert.ok(Number.isFinite(r[0].perDay) && Number.isFinite(r[0].year),
     '하루 평균이 ' + r[0].perDay + ' 로 나왔습니다 — 화면에 NaN 이 뜹니다');
+});
+
+test('★★★ 서버가 «적는 김에» 기간을 세어 둔다 — 따로 읽어 오지 않는다', () => {
+  const i = sync.indexOf('p.sync.oldest');
+  assert.ok(i > 0, '서버가 칸의 기간을 안 세어 둡니다 — 화면이 셀 밑감이 없습니다');
+  const seg = sync.slice(Math.max(0, i - 500), i + 300);
+  assert.match(seg, /for \(const g of held\)/, '방금 적은 줄에서 세지 않습니다');
+  assert.ok(!/once\('value'\)/.test(seg),
+    '기간을 세려고 폴더를 다시 읽습니다 — 적는 김에 세면 공짜입니다');
+  assert.match(seg, /if \(!d\) continue;/,
+    '날짜 없는 줄까지 셉니다 — 1970년이 섞이면 기간이 55년이 됩니다');
+});
+
+test('★★★ 세어 둔 기간을 «다음 회차로 이어 준다» — 안 이으면 매번 지워진다', () => {
+  /* ⚠ nextSync 는 표를 «새로 지어» 돌려준다. 거기 안 실으면 회차마다 사라져
+       화면의 표가 늘 비어 보인다 — unread·sweptAt 이 겪었던 그 자리다. */
+  const f = box.slice(box.indexOf('function nextSync('), box.indexOf('function goneKeys('));
+  assert.match(f, /oldest: Number\(s\.oldest \|\| 0\)/, '가장 오래된 날짜를 안 이어 줍니다');
+  assert.match(f, /newest: Number\(s\.newest \|\| 0\)/, '가장 최근 날짜를 안 이어 줍니다');
+});
+
+test('★★ 서버 값은 «그때» 한 번만 읽는다 — 설정 창을 열 때마다 받으면 안 된다', () => {
+  const f = sliceFn(app, 'function mbSyncLoad(').replace(/\/\*[\s\S]*?\*\//g, ' ');
+  assert.match(f, /if\(_mbSync\)\{ if\(cb\) cb\(\); return; \}/, '읽은 뒤에도 또 읽습니다');
+  assert.match(f, /\.once\('value'\)/, 'on() 으로 걸면 바뀔 때마다 통째로 다시 받습니다');
+  assert.match(f, /mailbox\/sync/, '엉뚱한 자리를 읽습니다');
+  /* ⚠ msgs 를 통째로 읽으면 3.5MB 다 — 설정 창 한 번에 그럴 값이 아니다 */
+  assert.ok(!/mailbox\/msgs/.test(f), '메일 줄을 통째로 읽습니다');
 });
 
 test('★★ 「1년이면」은 «어림»이라고 적는다 — 잰 값처럼 보이면 안 된다', () => {

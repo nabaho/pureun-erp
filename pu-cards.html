@@ -14375,17 +14375,35 @@ function mbOldBlock(rows, what){
 function mbOldCount(){ return Object.keys(_mbMsgs[MB_OLD_ID] || {}).length; }
 
 const MB_OLD_DAY = 86400000;
+/* ⚠⚠ 세는 밑감은 «서버가 적어 둔 것»(mailbox/sync)이라야 한다.
+   ★ 처음에는 «앱이 손에 든 줄»로 셌다가 대표 화면에서 틀린 것이 드러났다(2026-09-06):
+     「받은메일함 16일 · 100통 · 1년이면 2,281통」으로 나왔는데 진짜는 94일·438통이다.
+     까닭은 하나다 — 앱은 칸마다 «100통씩만» 손에 든다(mbPageSize). 그 표본으로 기간을
+     재면 늘 짧게 나오고, 하루 평균이 부풀어 「1년이면」이 배로 뛴다. 칸 수도 «손에 든
+     칸»만 세어 「칸 1개」로 나왔다(진짜는 31개).
+   ⚠ 그렇다고 mailbox/msgs 를 통째로 읽지 않는다 — 3.5MB 다. 서버가 «적는 김에» 함께
+     세어 둔 값(kept·oldest·newest)만 읽는다. 칸 31개라 아주 싸다.
+   ⚠ 서버가 아직 안 적은 칸은 «건너뛴다». 지어내면 그것이 또 틀린 표가 된다. */
+let _mbSync = null;
+let _mbSyncBusy = false;
+function mbSyncLoad(cb){
+  if(_mbSync){ if(cb) cb(); return; }
+  if(_mbSyncBusy){ if(cb) setTimeout(()=>mbSyncLoad(cb), 300); return; }
+  if(typeof Store==='undefined' || Store.mode!=='firebase'){ _mbSync = {}; if(cb) cb(); return; }
+  _mbSyncBusy = true;
+  firebase.database().ref('mailbox/sync').once('value')
+    .then(s=>{ _mbSync = s.val() || {}; })
+    .catch(e=>{ console.warn('[지난 메일]', (e&&e.message)||e); _mbSync = {}; })
+    .then(()=>{ _mbSyncBusy = false; renderMailPage(); if(cb) cb(); });
+}
 function mbOldSpans(){
+  const sync = _mbSync || {};
   const out = [];
-  Object.keys(_mbMsgs||{}).forEach(slug=>{
-    const box = _mbMsgs[slug] || {};
-    let lo = Infinity, hi = 0, n = 0;
-    Object.keys(box).forEach(u=>{
-      const d = Number((box[u]||{}).d || 0);
-      if(!d) return;
-      n++; if(d < lo) lo = d; if(d > hi) hi = d;
-    });
-    if(!n || !isFinite(lo)) return;
+  Object.keys(sync).forEach(slug=>{
+    const s = sync[slug] || {};
+    const lo = Number(s.oldest || 0), hi = Number(s.newest || 0);
+    const n = Number(s.kept || s.n || 0);
+    if(!n || !lo || !hi || hi < lo) return;      /* 서버가 아직 안 적었다 */
     const f = (_mbFolders||{})[slug] || {};
     const days = Math.max(1, Math.round((hi - lo) / MB_OLD_DAY));
     out.push({ slug:slug, name: String(f.name || f.path || slug), n:n, lo:lo, days:days,
@@ -14437,6 +14455,8 @@ function mbBackfillRun(){
     });
 }
 function mbOldHtml(){
+  /* ⚠ 서버가 적어 둔 값을 «그때» 읽는다 — 설정 창을 여는 사람만 읽으면 된다 */
+  if(_mbSync === null){ mbSyncLoad(); return ''; }
   const rows = mbOldSpans();
   if(!rows.length) return '';
   const short = rows.filter(r=>r.days < 365 && r.n >= 100).slice(0, 6);
