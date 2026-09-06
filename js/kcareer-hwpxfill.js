@@ -31,6 +31,11 @@
        넣으면 그 머리칸 옆(첫 줄 첫 칸)에 자격 한 줄이 박혀 남의 표를 어지럽힌다. */
     { re: /^(자격증?|보유자격|자격사항|자격면허|자격\/면허|자격·면허|보유자격증|전문자격|자격종류|자격및면허)$/, key: 'license' },
     { re: /^(소속|소속기관|근무처|현근무처|회사명|직장명?|기관명|근무기관|소속기관명|소속단체|소속회사|소속법인|사업장명|현소속|기관단체명|근무처명|사무소명|소속처)$/, key: 'org' },
+    /* ★ 「소속·직위」처럼 «둘을 묶어» 묻는 칸 (2026-09-06).
+       한쪽만 넣으면 서류에 직위가 빠진 채 나간다 — 사람이 쓰듯 둘을 이어 쓴다.
+       ⚠ normLabel 은 괄호·콜론만 떼고 «가운뎃점(·)·빗금(/)»은 남긴다 — 그래서 여기서 잡힌다.
+       ⚠ 값은 _cvFillData 의 fields.orgTitle 이 「소속 직위」로 이어 붙여 준다. */
+    { re: /^(소속·직위|소속\/직위|소속및직위|소속직위|기관및직위|기관·직위|근무처및직위|소속기관및직위)$/, key: 'orgTitle' },
     { re: /^(부서|부서명|소속부서|소속팀|팀명|담당부서)$/, key: 'dept' },
     { re: /^(직위|직책|현직위|담당직위|직급|현직|담당직책|직위직급|직위\/직급|현재직위)$/, key: 'title' },
     /* 주민등록번호는 «알아보되 채우지 않는다» — 자동으로 나가면 안 되는 정보다.
@@ -150,11 +155,43 @@
       .replace(/[*※()（）:：]/g, '')    // 별표·괄호·콜론 장식
       .trim();
   }
+  /* ── 「연락처(휴대)」처럼 «괄호로 갈래를 밝힌» 라벨 ──
+     ★ 낱말을 더하는 대신 «규칙»으로 푼다. 기관 양식은 큰 이름 뒤 괄호로 갈래를 적는다:
+         연락처(휴대) · 전화(자택) · 주소(직장) · 성명(한자)
+     낱말 사전으로 쫓으면 조합이 끝없다(연락처(휴대)·연락처(휴대폰)·전화(핸드폰)…).
+     «큰 이름 × 갈래» 두 표만 두면 곱셈으로 덮인다.
+     ⚠ 통째로 「이름(갈래)」 꼴일 때만 본다 — 아무 데나 괄호가 있다고 잡으면
+       「주소(우편번호 포함)」 같은 안내글까지 주소로 본다(실측: 그것은 «모름»으로 남는다).
+     ⚠ 사전이 못 알아본 뒤에만 본다 — 사전이 먼저다. */
+  var 갈래 = [
+    { re: /^(휴대|휴대폰|핸드폰|이동|이동전화|hp)$/i, phone: 'phone' },
+    { re: /^(자택|집|자가)$/,                          phone: 'phoneHome', addr: 'addr' },
+    { re: /^(직장|사무실|회사|근무처|사무소)$/,          phone: 'phoneWork', addr: 'addrWork' },
+    { re: /^(한글)$/,                                  name: 'name' },
+    { re: /^(한자|한문)$/,                              name: 'nameHanja' },
+    { re: /^(영문|영어)$/,                              name: 'nameEng' }
+  ];
+  var 큰이름 = [
+    { re: /^(연락처|전화|전화번호|번호)$/, fam: 'phone' },
+    { re: /^(주소|주소지|현주소)$/,        fam: 'addr' },
+    { re: /^(성명|이름|성함)$/,            fam: 'name' }
+  ];
+  function bracketKey(text) {
+    var m = /^([^([（]{1,10})[([（]([^)\]）]{1,8})[)\]）]$/.exec(String(text == null ? '' : text).trim());
+    if (!m) return '';
+    var base = normLabel(m[1]), qual = normLabel(m[2]);
+    if (!base || !qual) return '';
+    var fam = '';
+    for (var i = 0; i < 큰이름.length; i++) if (큰이름[i].re.test(base)) { fam = 큰이름[i].fam; break; }
+    if (!fam) return '';
+    for (var j = 0; j < 갈래.length; j++) if (갈래[j].re.test(qual)) return 갈래[j][fam] || '';
+    return '';
+  }
   function fieldKeyOf(text) {
     var t = normLabel(text);
     if (!t || t.length > 12) return '';
     for (var i = 0; i < FIELD_LABELS.length; i++) if (FIELD_LABELS[i].re.test(t)) return FIELD_LABELS[i].key;
-    return '';
+    return bracketKey(text);
   }
   function colKeyOf(text) {
     var t = normLabel(text);
@@ -750,7 +787,7 @@
     isPlaceholder: isPlaceholder, isBlankish: isBlankish, placeholderKey: placeholderKey,
     /* ⚠ 목록 줄 판정은 «이 하나»를 쓴다 — 칸 지도(kcareer-formmap)도 같은 자를 쓴다.
        두 곳에 따로 두면 「지도엔 빈 줄인데 안 채워지는」 어긋남이 생긴다. */
-    isRowBlank: isRowBlank,
+    isRowBlank: isRowBlank, bracketKey: bracketKey,
     fillParagraphs: fillParagraphs, paraText: paraText,
     /* 칸 지도(kcareer-formmap.js)가 «같은 자»를 쓰도록 내보낸다 —
        따로 만들면 두 곳의 셈이 어긋나 「지도에는 있는데 안 채워지는 칸」이 생긴다 */
