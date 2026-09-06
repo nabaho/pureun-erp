@@ -34,7 +34,16 @@ const PASTE = path.join(R, 'docs', 'firebase-rules-전체-적용본.json');
      규칙을 다시 올리는 순간 넷이 한꺼번에 튀어나왔다.
      ★ 새 스냅숏은 rules-deploy.js 가 «살아 있는 콘솔»에서 직접 읽어 남긴 것이다 —
        규칙을 올릴 때마다 이 줄도 새 파일로 옮길 것. */
-const CONSOLE = path.join(R, 'docs', 'firebase-rules-콘솔원문-2026-09-05.json');
+/* 기준은 «가장 최신» 콘솔 원문이다 — 날짜를 박아 두면 규칙을 올릴 때마다
+   이 줄을 손으로 고쳐야 하고, 안 고치면 「콘솔에 안 올렸다」는 거짓 신호가 뜬다.
+   scripts/rules-deploy.js 가 올린 뒤 새 원문을 남기므로 그것을 그대로 따라간다
+   (CLAUDE.md 「기준은 docs/…-콘솔원문-YYYY-MM-DD.json 중 가장 최신 것」). */
+const CONSOLE = (function () {
+  const dir = path.join(R, 'docs');
+  const fl = fs.readdirSync(dir).filter(function (f) { return /^firebase-rules-콘솔원문-\d{4}-\d{2}-\d{2}\.json$/.test(f); }).sort();
+  assert.ok(fl.length, '콘솔 원문 스냅숏이 하나도 없다');
+  return path.join(dir, fl[fl.length - 1]);
+})();
 const rules = JSON.parse(fs.readFileSync(PASTE, 'utf8')).rules;
 
 /* ══════ ① 열린 것 — 이름표 ══════ */

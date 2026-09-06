@@ -52,13 +52,15 @@ function render() {
     q: (s) => s === '#erpStatus' ? st : s === '#erpMapBody' ? body : null,
     ERP: { loaded: true, err: null, consultings: [], src: 'local' },
     getErpTypeMap: () => ({}),
+  /* 표가 「일정관리 진행」 스위치를 그린다(2026-09-06) — 적힌 게 없으면 켜진 것으로 본다 */
+  getErpTypeRun: () => ({}),
     getTypes: () => GTYPES,
     erpMappableTypes: () => ROWS,
     _erpLowConf: { c: 62 },
     escAttr: (s) => String(s == null ? '' : s).replace(/"/g, '&quot;'),
   };
   vm.createContext(ctx);
-  vm.runInContext(grab('renderErpMap') + '\nrenderErpMap();', ctx);
+  vm.runInContext(grab('erpTypeRuns') + '\n' + grab('renderErpMap') + '\nrenderErpMap();', ctx);
   return body.innerHTML;
 }
 const HTML = render();
@@ -188,7 +190,11 @@ test('★ 빈 값이어도 칸이 안 무너진다 — 뱃지·이름·기관이
 test('★ 고르개와 저장이 그대로다 — 연결을 못 바꾸면 이 화면은 쓸모가 없다', () => {
   assert.ok(/class="erp-map-sel"/.test(HTML), '고르개 손잡이(erp-map-sel)가 사라졌다');
   assert.ok(/data-erpcode=/.test(HTML), '어떤 ERP 유형인지 표가 사라졌다 — 저장이 엉뚱한 데 붙는다');
-  assert.ok(/— 가져오지 않음 —/.test(HTML), '「가져오지 않음」 고르개가 사라졌다');
+  /* ⚠ 글자를 박지 않는다 — 2026-09-06 에 「일정관리 진행」 스위치가 생기면서
+     이 칸의 뜻이 「안 가져옴」에서 「안 이음」으로 바뀌었고, 글자를 박아 둔 이 줄이
+     멀쩡한 개선 때문에 깨졌다(CLAUDE.md 「지금 값이 아니라 규칙」).
+     보아야 할 것은 «비워 두는 고르개가 있는가»다. */
+  assert.ok(/<option value="">/.test(HTML), '비워 두는 고르개가 사라졌다 — 이음을 풀 길이 없다');
 });
 
 test('★ 낮은 확신 추천 표시가 남아 있다 — 틀린 연결을 그냥 지나치게 된다', () => {
