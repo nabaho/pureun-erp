@@ -7061,6 +7061,44 @@ function subsidyTab(f){
     : subsidyApplyPanel(f);
   return bar+body;
 }
+/* 신청액은 «출연금 총액»이다. 지어낸 규칙이 아니라 실제 제출본이 그렇다 —
+   참여사 출연금 + 지자체 출연금 = 신청액
+   (충남 4호 272,800,000 + 409,200,000 = 682,000,000 등 여러 건에서 딱 맞았다).
+   한도·점수 화면이 이미 같은 셈을 하지만, 거기까지 가서 [이 금액]·[저장]을 눌러야 했다.
+
+   ⚠ 한도를 넘으면 «한도»를 준다 — 넘겨 신청하면 배제되거나 깎인다.
+   ⚠ 값은 칸에 «넣어 주기만» 한다. 저장은 사람이 누른다 — 조용히 덮어쓰지 않는다. */
+function _subPullAmt(f){
+  var yd=(f.years&&f.years[S.year]&&f.years[S.year].subsidy)||{};
+  var g=_subPlanAgg(f); var gov=num(yd.gov_contrib)||0;
+  var raw=(g.siteContrib||0)+gov;
+  if(!raw) return {amt:0,why:''};
+  var why='참여사 출연금 '+(g.siteContrib||0).toLocaleString()+'원'
+    +(gov?' + 지자체 출연금 '+gov.toLocaleString()+'원':'');
+  var amt=raw, cap=0;
+  try{
+    var type=String(yd.req_type||(gov?'3':'1'));
+    var qual=(yd.qual_score!=null&&yd.qual_score!=='')?num(yd.qual_score):18;
+    var prev=(yd.prev_per_worker!=null&&yd.prev_per_worker!=='')?num(yd.prev_per_worker):_subPrevPerWorker(f,g.nEmp);
+    var base=subsidyCalc(Object.assign({},g,{contrib:raw,year:S.year,type:type,apply:1,qual:qual,prevPerWorker:prev}));
+    cap=base.maxApply||0;
+    /* ⚠ 자르지 않는다. 실제 제출본은 한도를 넘겨 낸 것으로 보인다 —
+       검증 사례의 신청액 682,000,000원은 유형3 한도(6억)보다 크다.
+       우리가 조용히 줄이면 «실제로 낸 금액»과 다른 값을 넣게 된다.
+       넘는다는 사실만 알리고, 얼마로 낼지는 사람이 정한다. */
+    if(cap&&raw>cap) why+=' (한도 '+cap.toLocaleString()+'원을 넘습니다 — 확인하세요)';
+  }catch(e){}
+  return {amt:amt,why:why};
+}
+/* 눌렀을 때 — 칸에 넣고, 어디서 왔는지 말해 준다 */
+function subPullApply(){
+  var f=funds[S.fundId]; if(!f) return;
+  var r=_subPullAmt(f);
+  if(!r.amt){ toast('당겨올 출연금이 없습니다 — 참여사업장 › 연도별 기록에 그 해 출연금을 넣어 주세요','warn'); return; }
+  var e=$('su-request_amount'); if(!e) return;
+  e.value=r.amt.toLocaleString(); markDirty();
+  toast(r.amt.toLocaleString()+'원을 넣었습니다 — '+r.why+' · [저장]을 눌러야 남습니다');
+}
 function subsidyApplyPanel(f){
   var yd=(f.years&&f.years[S.year]&&f.years[S.year].subsidy)||{};
   // 참여사업장 집계 (S.sites 로드돼 있으면 사용, 아니면 로드)
@@ -7072,9 +7110,16 @@ function subsidyApplyPanel(f){
   }
   var act=Object.keys(S.sites||{}).map(function(k){return S.sites[k];}).filter(function(s){return s.status!=='closed';});
   var nSite=act.length, nEmp=act.reduce(function(s,x){return s+(num(x.company_size)||0);},0);
+  /* 신청액을 출연금에서 당겨오려면 «그 해» 출연금이 있어야 한다 —
+     안 읽고 그리면 당길 값이 0 이라 단추가 있으나 마나 하다. */
+  syLoad();
+  var _pull=_subPullAmt(f);
   var flds=SUB_FIELDS.map(function(c){
     var v=yd[c[0]]||'';
-    return '<div class="fld'+(c[0]==='notice'?' full':'')+'"><label>'+c[1]+'</label><input id="su-'+c[0]+'" type="'+(c[2]==='date'?'date':'text')+'" value="'+esc(v)+'"></div>';
+    /* 신청액 칸에만 «당겨오기»를 붙인다 — 다른 칸은 당겨올 근거가 없다 */
+    var pull=(c[0]==='request_amount'&&_pull.amt)
+      ? '<button onclick="subPullApply()" title="'+esc(_pull.why)+'" style="padding:1px 7px;font-size:11px;margin-left:6px">\u2935 '+_pull.amt.toLocaleString()+'원 당겨오기</button>' : '';
+    return '<div class="fld'+(c[0]==='notice'?' full':'')+'"><label>'+c[1]+pull+'</label><input id="su-'+c[0]+'" type="'+(c[2]==='date'?'date':'text')+'" value="'+esc(v)+'"></div>';
   }).join('');
   var dec=num(yd.decided_amount)||0, sp=num(yd.spent_amount)||0;
   var recon = dec? (sp>dec?'<span class="chip dg">과다집행 '+(sp-dec).toLocaleString()+'원</span>':sp<dec?'<span class="chip warn">미집행 '+(dec-sp).toLocaleString()+'원</span>':'<span class="chip ok">정산 일치</span>'):'';

@@ -167,6 +167,33 @@ test('★ 지역기금 목록 — 정보·분류를 머리와 몸통에서 «함
     '★ 분류 몸통을 안 접었습니다');
 });
 
+/* 지역기금 목록은 칸 목록 하나에서 머리를 만든다(_headHTML) — 머리글이 소스에 그대로 없다.
+   그래서 «실제로 그려» 머리와 몸통이 같은 칸을 접는지 본다. 문자열로 보던 것보다 튼튼하다. */
+test('★ 지역기금 목록 — 머리와 몸통이 «같은 칸»을 접는다', () => {
+  const 머리HTML = (() => {
+    const g = (n) => { const k = src.indexOf('function ' + n + '('); let d = 0;
+      for (let q = src.indexOf('{', k); q < src.length; q++) {
+        if (src[q] === '{') d++; else if (src[q] === '}') { d--; if (!d) return src.slice(k, q + 1); } } };
+    const box = {};
+    new Function('esc', 'fundRow', g('_headHTML') + g('fundTable') + 'this.t = fundTable;')
+      .call(box, (v) => String(v == null ? '' : v), () => '');
+    /* 몸통(fundRow) 소스에는 «설립중에만» 나오는 삭제 칸도 들어 있다 —
+       같은 조건으로 견주려면 머리도 설립중으로 만든다. */
+    return box.t([{ fund_type: '공동' }], false, 'setup');
+  })();
+  const 머리 = 머리HTML.slice(머리HTML.indexOf('<thead>'), 머리HTML.indexOf('</thead>'));
+  const 몸통 = 덩어리('function fundRow(f,no,mode,showReg){');
+
+  const h = 접힘표(머리, 'th');
+  const b = 접힘표(몸통, 'td');
+  assert.equal(h.length, b.length,
+    '★★ 머리 ' + h.length + '칸 · 몸통 ' + b.length + '칸 — 칸 수가 다르면 값이 옆으로 밀립니다');
+  assert.deepEqual(b, h,
+    '★★ 접는 자리가 머리와 몸통에서 어긋났습니다 — 폰에서 값이 엉뚱한 칸에 들어옵니다');
+  /* 정보·분류는 «가장 좁을 때» 접는 칸(ph)이어야 한다 */
+  assert.ok(h.filter(Boolean).length >= 2, '★ 폰에서 접는 칸이 하나도 없습니다');
+});
+
 test('주담당 이름은 접지 않는다 — 「김혜민」이 석 줄로 쌓이면 줄 키가 그만큼 는다', () => {
   const 줄 = 덩어리('function fundRow(f,no,mode,showReg){');
   const m = /<td style="([^"]*)">'\+esc\(mgrMainName\(f\)/.exec(줄);
