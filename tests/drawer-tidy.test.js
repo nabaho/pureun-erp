@@ -108,7 +108,8 @@ test('★ 진행 단계 — 단계가 없으면 접는다', () => {
 });
 
 test('★ 관련 지식 — 붙은 카드가 없으면 접는다', () => {
-  assert.match(RD, /dFold\('kb',dFoldHead\('📚','관련 지식','아직 없음'\)/);
+  /* 2026-09-06 — 접힌 줄에 「＋ 지식 적기」가 얹혔다(오른쪽 글 대신) */
+  assert.match(RD, /dFold\('kb',dFoldHead\('📚','관련 지식','',kbAddChip\(id\)\)/);
   assert.match(RD, /'<\/div><\/div>', !rel\.length\);/);
 });
 
@@ -226,4 +227,82 @@ test('접힌 줄의 모양이 CSS 에 있다', () => {
   assert.match(CSS, /\.dfold\{cursor:pointer\}/);
   assert.match(CSS, /\.dfoldx\{/);
   assert.match(CSS, /\.dfold \.fa\{/);
+});
+
+/* ══════════════════════════════════════════════
+   ⑦ 지식이 업무 안으로 들어왔다 (대표 지시 2026-09-06)
+   ══════════════════════════════════════════════
+   "내업무와 지식을 분리시킬 필요가 없다. 어떻게 같은곳에 내업무에 녹여 넣는 방법 찾아달라."
+
+   지식 화면은 «창고»였다 — 카드를 만드는 곳도(서랍 ↗), 실제로 쓰는 곳도(관련 지식)
+   이미 업무 안이었고, 찾기는 전체 검색(^K)이 카드 본문까지 훑고 있었다.
+
+   ⚠ 지식이 «한 장도» 없던 진짜 까닭은 화면이 갈려서가 아니라, 카드가 태어나는 길이
+     「기록 한 줄을 ↗ 로 올리기」뿐이었기 때문이다. 기록이 0줄이면 지식도 0장이다.
+     그래서 [＋ 지식 적기]가 이 고침의 요점이다. */
+test('★★ 메뉴에서 지식이 빠졌다', () => {
+  assert.ok(W.indexOf('id="nav-kb"') < 0);
+  assert.match(W, /var NAV_KEYS=\['my','team','stats','ho','archive'\];/);
+  assert.ok(code(W).indexOf("['my','visits','team','stats','kb'") < 0);
+});
+
+test('★★ 옛 주소(#kb)로 들어와도 빈 화면을 안 보인다', () => {
+  assert.match(code(W), /else if\(S\.view==='kb'\)\{ S\.view='my'; renderMy\(\); \}/);
+});
+
+test('★★ 서랍에서 «기록 없이도» 지식을 적을 수 있다 — 이것이 0장을 푸는 열쇠', () => {
+  const C = grab('kbAddChip');
+  assert.match(C, /＋ 지식 적기/);
+  assert.match(C, /kbPromote\(/);
+  assert.ok(C.indexOf("',''") > 0 || C.indexOf("\\'\\',\\'\\'") > 0, '빈 글로 열지 않는다');
+});
+
+test('★★ 접힌 줄에서 바로 누를 수 있다 — 상자 안에만 두면 0장은 0장으로 남는다', () => {
+  const RD = code(grab('renderDrawer'));
+  assert.match(RD, /dFold\('kb',dFoldHead\('📚','관련 지식','',kbAddChip\(id\)\)/);
+  /* 넷째 칸은 «그대로» 그린다 — 글로 새면 단추가 아니라 글자가 된다 */
+  assert.match(code(grab('dFoldHead')), /\+\(right\?esc\(right\):''\)\+\(raw\|\|''\)\+/);
+});
+
+test('★★ 접힌 줄의 단추를 눌러도 상자가 함께 펴지지 않는다', () => {
+  assert.match(grab('kbAddChip'), /onclick="event\.stopPropagation\(\);kbPromote\(/);
+});
+
+test('★ 펴진 상자와 접힌 줄이 «같은 단추»를 쓴다 — 둘이 갈리면 한쪽만 고쳐진다', () => {
+  const RD = code(grab('renderDrawer'));
+  assert.equal((RD.match(/kbAddChip\(id\)/g) || []).length, 2);
+  assert.ok(RD.indexOf('＋ 지식 적기</span>') < 0, '단추 HTML 을 여기서 또 적었다');
+});
+
+test('★ 빈 상자 안내가 두 길을 다 말해 준다 (↗ 와 ＋ 지식 적기)', () => {
+  const RD = grab('renderDrawer');
+  assert.match(RD, /기록 한 줄에서 <b>↗<\/b>를 누르거나 아래 <b>＋ 지식 적기<\/b>로 남깁니다/);
+});
+
+test('★ 창고 화면으로 보내던 길이 없다 — 그 화면이 이제 없다', () => {
+  assert.ok(code(W).indexOf("go('kb')") < 0, '없어진 화면으로 보내고 있다');
+});
+
+test('★ 여섯 장만 보이던 것을 스무 장까지 편다', () => {
+  const RD = code(grab('renderDrawer'));
+  assert.match(RD, /rel\.slice\(0,20\)/);
+  assert.match(RD, /전체 검색\(\^K\)에서 모두 찾습니다/);
+});
+
+test('★★ 손볼 지식(정정 요청·2년 경과)은 배지로 남는다 — 관리 신호는 안 없앤다', () => {
+  const F = code(grab('kbTodo'));
+  assert.match(F, /kbBad\(c\)\|\|kbStale\(c\)/);
+  assert.match(code(grab('kbTodoChip')), /if\(!n\) return '';/, '없으면 배지를 안 단다');
+  assert.match(code(W), /\+kbTodoChip\(\)/, '내 업무 머리줄에 안 붙었다');
+});
+
+test('★ 배지를 누르면 그 카드들만 나온다 — 화면을 새로 만들지 않는다', () => {
+  const F = code(grab('kbTodoModal'));
+  assert.match(F, /showModal\(/);
+  assert.match(F, /kbCardHTML\(c\)/, '카드 그리는 법을 새로 만들었다');
+});
+
+test('★ 전체 검색은 예전대로 지식 카드 본문까지 찾는다 — 찾는 길이 사라지면 안 된다', () => {
+  assert.match(W, /인수인계 노트·회고·주간 기록·지식 카드 본문<\/b>까지 찾습니다/);
+  assert.match(code(W), /R\.cards\.slice\(0,8\)\.map\(function\(c\)\{ return kbCardHTML\(c\); \}\)/);
 });

@@ -229,7 +229,8 @@ ok('영문 대소문자 모두',
   fire({ key: 'N', code: 'KeyN' })[0][0] === 'itemModal'
   && fire({ key: 'n', code: 'KeyN' })[0][0] === 'itemModal');
 ok('1~6 이 왼쪽 차례대로',
-  [1, 2, 3, 4, 5, 6].every((n, i) => fire({ key: String(n), code: 'Digit' + n })[0][1] === NAV_KEYS[i]));
+  /* 숫자 몇 개인지는 NAV_KEYS 가 정한다 — 메뉴가 늘거나 줄 때 여기서 안 깨지게 */
+  NAV_KEYS.every((k, i) => fire({ key: String(i + 1), code: 'Digit' + (i + 1) })[0][1] === k));
 ok('7 이상은 아무 화면도 아니다',
   fire({ key: '7', code: 'Digit7' }).length === 0 && fire({ key: '0', code: 'Digit0' }).length === 0);
 ok('숫자패드로도', fire({ key: '2', code: 'Numpad2' })[0][1] === 'team');
@@ -237,7 +238,7 @@ ok('[ ] 로 지난 주·다음 주, T 로 이번 주',
   fire({ key: '[', code: 'BracketLeft' })[0][1] === -1
   && fire({ key: ']', code: 'BracketRight' })[0][1] === 1
   && fire({ key: 't', code: 'KeyT' })[0][0] === 'setWeek');
-S.view = 'kb';
+S.view = 'perf';   // 2026-09-06: 지식 화면이 없어져 다른 «주간 표 없는» 화면으로 바꿨다
 ok('주간 표가 없는 화면에서는 주를 옮기지 않는다',
   fire({ key: '[', code: 'BracketLeft' }).length === 0);
 S.view = 'my';
