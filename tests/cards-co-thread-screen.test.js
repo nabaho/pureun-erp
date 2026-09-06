@@ -55,7 +55,12 @@ function load(st) {
     'function esc(v){ return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;"); }',
     'function fmtDate(at){ const d=new Date(Number(at)||0); return (d.getMonth()+1)+"/"+d.getDate(); }',
     'function renderMailPage(){}',
-    cut('coThreadSources'), cut('coThreadList'), cut('coThreadHtml'),
+    /* 2026-09-06 — 회사 메일함도 갈래로 들어왔다. 이 검사는 «화면이 무엇을 그리나»를
+       보는 것이라, 메일함 폴더는 «없는 것»으로 두고 예전 두 갈래만 본다.
+       회사 메일함 갈래와 요약 저장은 tests/co-mail-digest.test.js 가 본다. */
+    'const _mbFolders = {}; const _mbMsgs = {}; const Store = { mode:"local" };',
+    'function coMailWrite(){ return Promise.resolve(false); }',
+    cut('mbSyncFolders'), cut('coThreadSources'), cut('coThreadList'), cut('coThreadHtml'),
     'window.list = coThreadList; window.html = coThreadHtml;'
   ].join('\n'), { filename: 'co-thread-screen.js' }).runInContext(sandbox);
   return sandbox.window;
