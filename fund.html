@@ -4938,9 +4938,12 @@ function fillForm(key){
    ⚠ 열폭·행높이는 cellStyles:true 로 읽어야 «!cols·!rows» 에 들어온다. 안 켜면 다 같은 폭이 된다. */
 /* 글자가 차지하는 폭 어림(px). 한글·한자는 넓고 로마자·숫자는 좁다.
    정확할 필요는 없다 — «이 칸에 안 들어간다»만 알면 된다. */
-function _xlsPx(t){ var n=6; for(var i=0;i<t.length;i++) n+=(t.charCodeAt(i)>0x2000?11:6); return n; }
-function _xlsHTML(ws){
+function _xlsPx(t,z){ var k=(+z||1), n=6*k; for(var i=0;i<t.length;i++) n+=(t.charCodeAt(i)>0x2000?11:6)*k; return n; }
+function _xlsHTML(ws,zoom){
   if(!ws||!ws['!ref']) return '<div class="muted" style="padding:10px">빈 시트입니다</div>';
+  /* 배율은 열폭·행높이·글자에 «함께» 걸어야 한다. 글자만 키우면 칸을 넘고,
+     칸만 키우면 글자가 콩알만 하게 남는다. */
+  var Z=+zoom||1;
   var R=XLSX.utils.decode_range(ws['!ref']);
   var mg=ws['!merges']||[], cov={}, span={};
   mg.forEach(function(m){
@@ -4952,7 +4955,7 @@ function _xlsHTML(ws){
   for(c=R.s.c;c<=R.e.c;c++){
     var cw=cols[c]||{};
     var w=cw.wpx || (cw.wch!=null ? cw.wch*7.5+5 : (cw.width!=null ? cw.width*7.5+5 : 64));
-    w=Math.max(7,Math.round(w)); wpx[c-R.s.c]=w;
+    w=Math.max(7,Math.round(w*Z)); wpx[c-R.s.c]=w;
     cg+='<col style="width:'+w+'px">';
   }
   cg+='</colgroup>';
@@ -4960,7 +4963,7 @@ function _xlsHTML(ws){
   var out='';
   for(r=R.s.r;r<=R.e.r;r++){
     var rh=rows[r]||{};
-    var hp=rh.hpx || (rh.hpt!=null ? rh.hpt*4/3 : 0);
+    var hp=(rh.hpx || (rh.hpt!=null ? rh.hpt*4/3 : 0))*Z;
     out+='<tr'+(hp?' style="height:'+Math.round(hp)+'px"':'')+'>';
     for(c=R.s.c;c<=R.e.c;c++){
       if(cov[r+':'+c]) continue;
@@ -4974,7 +4977,7 @@ function _xlsHTML(ws){
          ⚠ 먹은 칸은 cov 에 적어 건너뛴다 — 안 적으면 그 줄만 칸이 늘어 표가 밀린다. */
       var eat=0;
       if(!sp&&t){
-        var need=_xlsPx(t), have=wpx[c-R.s.c], k=c+1;
+        var need=_xlsPx(t,Z), have=wpx[c-R.s.c], k=c+1;
         while(need>have&&k<=R.e.c&&!cov[r+':'+k]&&!span[r+':'+k]){
           var nx=ws[XLSX.utils.encode_cell({r:r,c:k})];
           var nt=nx?(nx.w!=null?nx.w:(nx.v==null?'':String(nx.v))):'';
@@ -4992,7 +4995,7 @@ function _xlsHTML(ws){
     }
     out+='</tr>';
   }
-  return '<table class="xlsgrid">'+cg+'<tbody>'+out+'</tbody></table>';
+  return '<table class="xlsgrid" style="font-size:'+(11*Z).toFixed(1)+'px">'+cg+'<tbody>'+out+'</tbody></table>';
 }
 /* 엑셀 시트 ↔ 한글본 서식 짝.
    ⚠ «번호로» 이으면 다른 서식끼리 나란히 놓인다 — 두 차례가 서로 다르기 때문이다.
@@ -5006,6 +5009,14 @@ function _xlsPairKind(name){
   var n=String(name||'');
   for(var i=0;i<XLS_PAIR.length;i++) if(XLS_PAIR[i][0].test(n)) return XLS_PAIR[i][1];
   return '';
+}
+/* 배율 — 이 서식들은 폭 1.6자짜리 모눈 칸이라 원본 크기로는 글자가 잘린다.
+   엑셀에서 확대해 보는 것과 같은 일을 화면에서 한다. */
+function cycleXlsZoom(){
+  if(!S._xlsPrev){ toast('엑셀을 먼저 여세요','warn'); return; }
+  var Z=[1,1.25,1.5,2,0.8], i=Z.indexOf(S._xlsZoom||1);
+  S._xlsZoom=Z[(i<0?0:i+1)%Z.length];
+  previewExcel(S._xlsPrev.key,S._xlsPrev.sheet||0);
 }
 /* 엑셀본과 한글본을 나란히 — 어느 칸이 다른지는 «겹쳐 봐야» 보인다 */
 function toggleXlsCmp(){
@@ -5027,11 +5038,20 @@ function previewExcel(key,sheetIdx){
     var si=Math.max(0,Math.min(sheetIdx||0, wb.SheetNames.length-1));
     S._xlsPrev={key:key, out:r.out, fname:r.fname, sheet:si};
     var nm=wb.SheetNames[si], kind=_xlsPairKind(nm), cmp=!!(S._xlsCmp&&kind);
-    var tabs=wb.SheetNames.map(function(n,i){
-      return '<button onclick="previewExcelSheet('+i+')" style="padding:3px 9px'+(i===si?';background:var(--warn-bg);border-color:var(--warn);font-weight:700':'')+'">'+esc(n)+'</button>';
+    /* 시트 차례를 «우리 목록»(노동부 필요서류 번호순) 차례로 세운다 — 엑셀 파일의
+       시트 차례와 우리 목록 차례가 달라, 나란히 놓고 보려면 눈이 자꾸 건너뛴다.
+       ⚠ 파일 자체는 안 건드린다. 보는 차례만 맞춘다.
+       ⚠ 짝이 없는 시트(기금법인정보 등)는 뒤로 보낸다 — 서식이 아니라 자료 시트다. */
+    var _ord=DOC_KINDS.map(function(d){return d[0];});
+    var tabIdx=wb.SheetNames.map(function(n,i){
+      var k=_xlsPairKind(n), at=k?_ord.indexOf(k):-1;
+      return {i:i, n:n, r:(at<0?900+i:at)};
+    }).sort(function(a,b){ return a.r-b.r; });
+    var tabs=tabIdx.map(function(t){
+      return '<button onclick="previewExcelSheet('+t.i+')" style="padding:3px 9px'+(t.i===si?';background:var(--warn-bg);border-color:var(--warn);font-weight:700':'')+'">'+esc(t.n)+'</button>';
     }).join(' ');
     var pane=function(cls,inner){ return '<div style="border:1px solid var(--line);border-radius:8px;max-height:68vh;overflow:auto;background:#fff;padding:6px" class="'+cls+'">'+inner+'</div>'; };
-    var xl=pane('xlsprev',_xlsHTML(wb.Sheets[nm]));
+    var xl=pane('xlsprev',_xlsHTML(wb.Sheets[nm],S._xlsZoom));
     var body = cmp
       ? '<div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">'
         +'<div style="flex:1;min-width:300px"><div class="muted" style="font-size:11px;margin:0 0 3px">📄 한글본 — '+esc(docLabel(kind))+'</div>'
@@ -5039,6 +5059,7 @@ function previewExcel(key,sheetIdx){
         +'<div style="flex:1;min-width:300px"><div class="muted" style="font-size:11px;margin:0 0 3px">📗 엑셀본 — '+esc(nm)+'</div>'+xl+'</div></div>'
       : xl;
     side.innerHTML='<div class="row" style="flex-wrap:wrap;gap:4px;margin-bottom:6px"><h2 style="margin:0;font-size:14px">📗 '+esc(r.fname)+'</h2>'+hlp('forms.xlprev')+'<span style="flex:1"></span>'
+      +'<button onclick="cycleXlsZoom()" title="칸이 좁아 글자가 잘리면 키워서 보세요" style="padding:3px 10px">\u2922 배율 '+Math.round((S._xlsZoom||1)*100)+'%</button> '
       +'<button onclick="toggleXlsCmp()" title="'+(kind?'한글본 '+esc(docLabel(kind))+'과 나란히 놓고 대조':'이 시트와 짝이 되는 한글본이 없습니다')+'" style="padding:3px 10px'+(cmp?';background:var(--warn-bg);border-color:var(--warn);font-weight:700':'')+'">🔀 한글본과 나란히</button> '
       +'<button class="primary" onclick="dlBuf(S._xlsPrev.out,S._xlsPrev.fname)" style="padding:3px 10px">⬇ 이 파일 받기</button></div>'
       +'<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">'+tabs+'</div>'
@@ -5046,7 +5067,9 @@ function previewExcel(key,sheetIdx){
       +body
       +'<style>.xlsprev .xlsgrid,.xlscmp table{border-collapse:collapse}'
       +'.xlsprev .xlsgrid{table-layout:fixed;font-size:11px}'
-      +'.xlsprev .xlsgrid td{border:1px solid #e2e8f0;padding:1px 3px;white-space:pre-wrap;word-break:break-word;overflow:hidden;vertical-align:middle}'
+      /* ⚠ break-word 는 한글을 «글자 단위»로 쪼갠다 — 「사내」가 「사/내」로 세로로 선다.
+         한글은 낱말을 안 쪼개는 것이 규칙이다(keep-all). 넘치면 엑셀처럼 잘린다. */
+      +'.xlsprev .xlsgrid td{border:1px solid #e2e8f0;padding:1px 3px;white-space:pre-wrap;word-break:keep-all;overflow:hidden;vertical-align:middle;line-height:1.15}'
       +'.xlscmp{font-size:11px}.xlscmp .a4{box-shadow:none;border:0;padding:0}</style>';
   }).catch(function(e){ side.innerHTML='<div class="msg err" style="margin:10px">'+esc(e.message)+'</div>'; });
 }

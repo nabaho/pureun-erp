@@ -226,8 +226,10 @@ if (!JSDOM) {
   console.log('SKIP: jsdom 이 없어 «격자» 확인만 건너뜁니다 — 채움 쪽은 그대로 봤습니다');
 } else {
   /* 모눈 칸 + 병합 + 옆이 빈 긴 글 — 원본 별지 서식과 같은 짜임 */
-  const ws = { '!ref': 'A1:H4', '!cols': [], '!merges': [{ s: { r: 0, c: 0 }, e: { r: 0, c: 3 } }, { s: { r: 2, c: 1 }, e: { r: 3, c: 2 } }] };
+  const ws = { '!ref': 'A1:H4', '!cols': [], '!rows': [], '!merges': [{ s: { r: 0, c: 0 }, e: { r: 0, c: 3 } }, { s: { r: 2, c: 1 }, e: { r: 3, c: 2 } }] };
   for (let c = 0; c < 8; c++) ws['!cols'][c] = { wch: c === 0 ? 7 : 1.625 };
+  /* ⚠ 행높이를 안 넣으면 배율을 걸든 말든 둘 다 빈칸이라 «행높이» 확인이 헛돈다 */
+  for (let r = 0; r < 4; r++) ws['!rows'][r] = { hpt: 20 };
   ws.A1 = { t: 's', v: '병합된 긴 이름입니다' };
   ws.B2 = { t: 's', v: '옆이 비어 넘쳐 흐르는 긴 글' };
   ws.B3 = { t: 's', v: '세로병합' };
@@ -255,7 +257,42 @@ if (!JSDOM) {
      long.length > 0 && long.every((td) => +(td.getAttribute('colspan') || 1) > 1),
      long.map((t) => t.textContent.slice(0, 10) + '/' + (t.getAttribute('colspan') || 1)).join(' '));
   ok('세로 병합이 살아 있다', !!doc.querySelector('td[rowspan]'));
+
+  /* ⚠ break-word 는 한글을 «글자 단위»로 쪼갠다 — 「사내」가 「사/내」로 세로로 선다.
+       실제로 화면이 그랬다. 한글은 낱말을 안 쪼개는 것이 규칙이다(keep-all). */
+  ok('한글 낱말을 쪼개지 않는다 (keep-all)',
+     /\.xlsgrid td\{[^}]*word-break:keep-all/.test(src) && !/\.xlsgrid td\{[^}]*break-word/.test(src),
+     '글자가 세로로 선다');
+
+  /* 배율 — 폭 1.6자짜리 모눈 칸이라 원본 크기로는 글자가 잘린다.
+     ⚠ 열폭·행높이·글자에 «함께» 걸려야 한다. 하나만 키우면 더 나빠진다. */
+  const wide = _xlsHTML(ws, 2);
+  const d2 = new JSDOM('<body><div id=y></div>').window.document;
+  d2.getElementById('y').innerHTML = wide;
+  const w1 = +(doc.querySelector('colgroup col').getAttribute('style') || '').replace(/\D/g, '');
+  const w2 = +(d2.querySelector('colgroup col').getAttribute('style') || '').replace(/\D/g, '');
+  ok('배율을 키우면 열폭이 넓어진다', w2 > w1 * 1.5, w1 + ' → ' + w2);
+  const f2 = (d2.querySelector('table.xlsgrid').getAttribute('style') || '');
+  ok('배율을 키우면 글자도 커진다', /font-size:22/.test(f2), f2);
+  const h1 = doc.querySelector('tr').getAttribute('style') || '';
+  const h2 = d2.querySelector('tr').getAttribute('style') || '';
+  ok('배율을 키우면 행높이도 커진다', (h1 === '' && h2 === '') || h2 !== h1, h1 + ' → ' + h2);
+  /* ⚠ 「글자가 있나」만 보면 함수를 지워도 onclick 글자에 걸려 통과한다.
+       누를 곳과 «불릴 함수»가 둘 다 있어야 한다. */
+  ok('배율 단추가 함수와 이어져 있다',
+     /onclick="cycleXlsZoom\(\)"/.test(src) && src.indexOf('function cycleXlsZoom(') >= 0,
+     '단추만 있고 함수가 없다');
 }
+
+console.log('\n■ 시트 차례 — 한글 목록과 같은 차례로 본다');
+/* 엑셀 파일의 시트 차례와 우리 목록 차례가 다르다. 나란히 놓고 보려면 눈이 자꾸 건너뛴다.
+   ⚠ 파일 자체는 안 건드린다 — «보는 차례»만 맞춘다. */
+const pv = gF('previewExcel');
+ok('우리 목록 차례로 세운다', /DOC_KINDS\.map/.test(pv), pv.slice(0, 600));
+ok('짝이 없는 시트는 뒤로 보낸다 (자료 시트)', /at<0\?900\+i:at/.test(pv), pv.slice(0, 900));
+/* 차례를 바꿔도 «누르면 그 시트»가 나와야 한다 — 자리 번호가 아니라 원래 번호를 넘긴다 */
+ok('눌렀을 때 그 시트가 열린다 (원래 번호를 넘긴다)',
+   /previewExcelSheet\('\+t\.i\+'\)/.test(pv), pv.slice(0, 900));
 
 console.log(bad ? '\nFAILURES ' + bad : '\nALL PASS (엑셀이 제대로 보이고, 남의 자료가 안 남는다)');
 process.exit(bad ? 1 : 0);
