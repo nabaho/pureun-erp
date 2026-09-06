@@ -7825,6 +7825,13 @@ const PAGE_OCR_PROMPT={
      ⚠ 학위와 전공은 한 줄에 붙어 있다(「경영학사」·「법학과 졸업」) — 있는 대로 옮긴다. */
   edu:`이 졸업증명서/학위증/졸업증서를 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 그대로 정확히.\n{"school":"학교 이름만(예: 영남대학교). 「총장」 같은 직명은 빼세요","degree":"학위·전공·과정을 적힌 대로(예: 경영학사, 법학과, 경영대학원 인사조직전공)","period":"재학기간이 적혀 있으면 YYYY.MM.DD ~ YYYY.MM.DD (연도만 있으면 YYYY ~ YYYY)","graduated":"졸업|수료|재학|중퇴 중 문서에 적힌 것","year":"졸업연도 YYYY","date":"졸업일 YYYY.MM.DD"}\n없는 항목만 빈 문자열. 지어내지 마세요. JSON만.`,
   personal_doc:`이 신분증/운전면허증/주민등록증/통장사본/사진 등을 꼼꼼히 읽고 JSON으로만 답하세요. 번호는 그대로 정확히.\n{"kind":"종류(신분증/운전면허증/주민등록증/통장사본/사진/기타 중 하나)","name":"이름 또는 문서 제목","number":"번호(주민번호앞7자리/면허번호/계좌번호 등, 없으면 빈문자)","memo":""}\n없는 항목만 빈 문자열. JSON만.`,
+  /* 기업경력 — 경력증명서·재직증명서·퇴직증명서를 읽는다.
+     ⚠ 「근무기간」을 한 덩이로 받지 않고 입사일·퇴사일로 «갈라» 받는다.
+       화면이 그 둘에서 근무기간을 만들기 때문이다(workPeriod). 덩이로 받으면
+       재직 중인지도 알 수 없다.
+     ⚠ 재직 중이면 퇴사일을 «빈칸»으로 두라고 못 박는다 — 「현재」·「재직중」 같은
+       말이 날짜 칸에 들어오면 근무기간이 「2016.01 ~ 현재현재」가 된다. */
+  work:`이 경력증명서/재직증명서/퇴직증명서를 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 문서에 적힌 그대로 정확히(YYYY.MM.DD), 추측하지 마세요.\n{"org":"근무한 «회사·기관»의 전체 명칭(이 증명서를 발급한 곳). 「대표이사」 같은 직명은 빼세요","dept":"근무부서·소속팀(적혀 있을 때만)","title":"직위·직급(예: 대표노무사, 과장, 팀장). 없으면 빈칸","empType":"정규직/계약직/임원/프리랜서 중 문서에 적힌 것. 없으면 빈칸","joinDate":"입사일·임용일 YYYY.MM.DD","leaveDate":"퇴사일·면직일 YYYY.MM.DD. «재직 중이면 반드시 빈칸»으로 두세요 — 「현재」·「재직중」 같은 말을 넣지 마세요","role":"담당업무·직무 내용을 한 줄로","note":"증명서 발급번호·비고"}\n※ org 는 «다닌 곳»입니다. 증명서를 받는 사람 이름을 넣지 마세요.\n※ 근무기간이 「2016.01.01 ~ 현재」처럼 적혀 있으면 joinDate 만 채우고 leaveDate 는 빈칸입니다.\n없는 항목만 빈 문자열. 지어내지 마세요. JSON만.`,
   account:`이 통장사본/계좌 이미지를 꼼꼼히 읽고 JSON으로만 답하세요. 계좌번호는 숫자 하나도 틀리지 않게 정확히.\n{"bank":"은행명","number":"계좌번호(전체)","holder":"예금주","memo":""}\n없는 항목만 빈 문자열. JSON만.`,
   id_doc:`이 신분증/운전면허증/주민등록증/여권/통장사본을 꼼꼼히 읽고 JSON으로만 답하세요. 번호·만료일은 그대로 정확히.\n{"kind":"종류(신분증/운전면허증/주민등록증/여권/통장사본/기타 중 하나)","name":"이름/성명","number":"주민번호앞7자리 또는 면허번호 또는 계좌번호","expiry":"만료일(YYYY.MM.DD, 없으면 빈문자)","memo":""}\n없는 항목만 빈 문자열. JSON만.`
 };
@@ -7836,6 +7843,7 @@ function quickParseFilename(fname,page){ const y=(fname.match(/(20\d{2})/)||[])[
   if(page==='award') return {org:clean.slice(0,30),titleVal:'',year:y,issueDate:''};
   if(page==='license'||page==='complete') return {title:clean.slice(0,30),org:'',date:'',num:''};
   if(page==='edu') return {school:clean.slice(0,30),degree:'',period:'',graduated:''};
+  if(page==='work') return {org:clean.slice(0,30),dept:'',title:'',joinDate:'',leaveDate:'',role:''};
   if(page==='personal_doc') return {kind:'기타',name:clean.slice(0,30),number:'',memo:''};
   if(page==='account') return {bank:clean.slice(0,20),number:'',holder:'',memo:''};
   if(page==='id_doc') return {kind:'기타',name:clean.slice(0,20),number:'',expiry:'',memo:''};
@@ -7885,6 +7893,13 @@ async function saveOCRRecord(page,parsed,file,ext,b64){
     if(_hr) _nt=(_nt?_nt+' · ':'')+_hr+'시간';
     rec={id:recId,title:parsed.title||'',org:parsed.org||'',date:parsed.date||'',num:parsed.num||'',
          hours:_hr,note:_nt,fname:file.name,savedAt:new Date().toISOString()};
+  } else if(page==='work'){ store='work'; recId=nextId('W','work');
+    /* ⚠ period(근무기간)를 여기서 만들어 담지 않는다 — 화면이 입사일·퇴사일에서
+       만든다(workPeriod). 두 곳에 담으면 반드시 어긋난다. */
+    rec={id:recId, org:parsed.org||'', dept:parsed.dept||'', title:parsed.title||'',
+      empType:parsed.empType||'', joinDate:parsed.joinDate||'', leaveDate:parsed.leaveDate||'',
+      role:parsed.role||'', note:parsed.note||'', year:(String(parsed.joinDate||'').match(/(20\d{2}|19\d{2})/)||[])[1]||year,
+      src:'ocr', fname:file.name, savedAt:new Date().toISOString()};
   } else if(page==='edu'){ store='edu'; recId=nextId('E','edu');
     rec={id:recId,school:parsed.school||'',degree:parsed.degree||'',period:parsed.period||'',graduated:parsed.graduated||'',date:parsed.date||'',year,fname:file.name,savedAt:new Date().toISOString()};
   } else if(page==='personal_doc'){ store='personal'; recId=nextId('PI','personal');
@@ -7943,8 +7958,14 @@ async function ocrDrop(files,page){ files=[...files]; if(!files.length) return;
   let done=0,failed=0,dup=0,dupAttached=0,apiErr=null;
   /* ⚠ saveOCRRecord 가 「이미 있다」를 돌려주면 «만든 것»으로 세면 안 된다 —
      그러면 화면엔 「10건 등록」인데 실제로는 하나도 안 늘어 이상해 보인다. */
+  /* ⚠ 「이미 있다」를 «만든 것»으로 세면 안 된다 — 화면엔 「10건 등록」인데 하나도 안 는다.
+     ⚠★ null 도 마찬가지다. saveOCRRecord 는 «모르는 화면»이면 null 을 돌려준다.
+       그걸 done++ 으로 세는 바람에 「OCR 완료: 1건」이 뜨는데 목록은 그대로였다
+       (2026-09-06 기업경력에서 실제로 그랬다) — 「왜 안 되는지 모르겠다」가 된다. */
+  var 못담음=0;
   var tally=function(res){
     if(res && res.dup){ dup++; if(res.attached) dupAttached++; return false; }
+    if(res == null){ 못담음++; return false; }
     done++; return true;
   };
   for(const file of files){ try{
@@ -7980,6 +8001,9 @@ async function ocrDrop(files,page){ files=[...files]; if(!files.length) return;
   /* ⚠ 실패를 조용히 넘기지 않는다 — 「왜 안 되는지 모르겠다」가 가장 나쁘다 */
   if(dup) toast('🔁 이미 있는 서류 '+dup+'건은 «새로 만들지 않았습니다»'
     +(dupAttached?' (그중 '+dupAttached+'건은 원본만 붙였습니다)':''), 6000);
+  /* 읽기는 됐는데 «담을 자리»가 없던 경우 — 화면 쪽이 덜 만들어진 것이다.
+     조용히 넘기면 「읽었다는데 목록엔 없다」가 된다. */
+  if(못담음) toast('⚠ '+못담음+'건은 읽었지만 이 화면에 담지 못했습니다 — 개발자에게 알려 주세요(page='+page+')', 7000);
   if(!done && failed) toast('❌ 한 건도 못 읽었습니다'+(apiErr?' — '+apiErr:' — 로그인·API 키를 확인해 주세요'), 6000);
   else toast(`OCR 완료: ${done}건${failed?' / 실패 '+failed:''}${apiErr?' · ⚠️ API 오류('+apiErr+') — 키·크레딧 확인 필요, 일부는 파일명으로만 등록됨':''}`); }
 
