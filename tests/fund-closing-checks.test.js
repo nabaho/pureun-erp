@@ -86,6 +86,32 @@ for (const [file, what] of CHECKS) {
   });
 }
 
+/* ★★ 2026-09-06 에 이것 때문에 저장소 전체 배포가 멎었다.
+   check_docview.js 가 jsdom 을 그냥 require 해서, jsdom 이 없는 곳에서
+   「모듈이 없다」로 죽었다 — 기금 화면은 멀쩡한데 «업체관리·급여·명함첩까지»
+   함께 배포가 막혔다. 위의 SKIP 관례를 안 따른 검사기가 하나만 들어와도
+   같은 일이 되풀이되므로, 관례 자체를 여기서 기계로 지킨다.
+   ⚠ 검사기가 늘어도 알아서 따라간다 — 이름을 손으로 적지 않는다. */
+test('★★ jsdom 을 쓰는 검사기는 «없을 때 SKIP» 을 갖춘다 — 없으면 전 앱 배포가 멎는다', () => {
+  const 본것 = [];
+  for (const [file] of CHECKS.concat([FORMS, BACKUP])) {
+    const p = path.join(TOOLS, file);
+    if (!fs.existsSync(p)) continue;
+    const s = fs.readFileSync(p, 'utf8');
+    if (!/require\(['"]jsdom['"]\)/.test(s)) continue;   /* jsdom 을 안 쓰면 상관없다 */
+    본것.push(file);
+    assert.match(s, /try\s*\{[^}]*require\(['"]jsdom['"]\)/,
+      '★★ ' + file + ' 이 jsdom 을 그대로 require 합니다. jsdom 이 없는 곳에서 '
+      + '이 한 줄이 저장소의 «모든 앱» 배포를 막습니다 — check_backup.js 처럼 '
+      + 'try/catch 로 감싸고 SKIP: 을 찍으십시오');
+    assert.match(s, /console\.log\(\s*['"]SKIP:/,
+      '★★ ' + file + ' 이 건너뛸 때 «건너뛰었다»고 말하지 않습니다 — '
+      + '조용히 통과하면 검사가 꺼진 줄도 모릅니다');
+  }
+  assert.ok(본것.length >= 1,
+    '★ jsdom 을 쓰는 검사기를 하나도 못 찾았습니다 — 찾는 방식이 낡았는지 보십시오');
+});
+
 test('기금 서식 검사 — ' + PII[1] + ' (' + PII[0] + ')', () => {
   const p = path.join(TOOLS, PII[0]);
   assert.ok(fs.existsSync(p), PII[0] + ' 이 없습니다');

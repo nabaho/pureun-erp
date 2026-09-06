@@ -6,11 +6,19 @@
 
    규칙: 붙어 있으면 «보기», 없으면 «고르기». 바꿔 넣기는 [↻] 로 따로 둔다.
 
+   ⚠ jsdom 이 있어야 한다. 없으면 곱게 건너뛰되 «건너뛰었다»고 분명히 말한다
+     (check_forms·check_backup·check_cols·check_siterow 이 모두 이 방식이다).
+     설치: npm i jsdom --no-save
+     ★ 이 대목을 빼면 jsdom 이 없는 곳에서 «전체 검사»가 통째로 빨강이 되고,
+       그러면 이 저장소의 모든 앱 배포가 함께 막힌다(2026-09-06 에 실제로 막혔다).
+
    실행: node fund-erp/tools/check_docview.js */
 const fs = require('fs'), path = require('path');
 const W = path.resolve(__dirname, '..', '..');
 const src = fs.readFileSync(path.join(W, 'fund.html'), 'utf8');
-const { JSDOM } = require('jsdom');
+let JSDOM;
+try { JSDOM = require('jsdom').JSDOM; }
+catch(e){ console.log('SKIP: jsdom 이 없어 서류 보기 검사를 건너뜁니다 (npm i jsdom --no-save)'); process.exit(0); }
 const dom = new JSDOM('<!doctype html><body></body>');
 global.window = dom.window; global.document = dom.window.document;
 function gF(n){const i=src.indexOf('function '+n+'(');if(i<0)throw Error('없음 '+n);let d=0;
