@@ -41,6 +41,13 @@ test('★ 이름에 «_채움»·«_날인»이 쌓이지 않는다', () => {
   const fn = cutFn(bare, 'function rhCleanName(');
   assert.ok(fn, 'rhCleanName 이 없다');
   assert.match(fn, /_채움\|_날인/, '쌓인 꼬리를 걷어내지 않는다');
+  /* ⚠ 만들어 두는 것만으로는 부족하다 — «쓰는지»까지 본다.
+     실측 2026-09-06: 채우기가 옛 방식으로 이름을 붙이게 되돌려도 검사가 통과했다. */
+  const fill = cutFn(bare, 'async function rhFillByMap(');
+  assert.match(fill, /rhCleanName\(/,
+    '채우기가 이름 다듬개를 안 쓴다 — 「…_채움_채움_채움.hwpx」로 쌓인다');
+  const stamp = cutFn(bare, 'async function rhStampDoc(');
+  assert.match(stamp, /rhCleanName\(/, '도장도 이름 다듬개를 써야 한다');
   /* 실제로 돌려 본다 — 규칙을 글자로만 보면 헛돈다 */
   const ctx = {};
   const run = new Function(cutFn(bare, 'function rhCleanName(') + '\nreturn rhCleanName;')();
@@ -102,4 +109,9 @@ test('직접 친 값도 «함께» 다시 얹힌다 — 한 번에 완성된다'
   const fn = cutFn(bare, 'async function rhFillByMap(');
   assert.match(fn, /_rhVals/,
     '직접 친 값을 안 실으면, 원본에서 새로 지을 때 사람이 친 것이 사라진다');
+  /* ⚠ 모으는 것만으로는 부족하다 — «넘기는지»까지 본다.
+     실측 2026-09-06: values 를 안 넘기게 되돌려도 검사가 통과했다.
+     모아 두고 안 넘기면 사람이 친 것이 조용히 사라진다 — 화면엔 아무 표시가 없다. */
+  assert.match(fn, /values\s*:\s*친것/,
+    '모아만 두고 채우는 쪽에 안 넘긴다 — 직접 친 것이 조용히 사라진다');
 });
