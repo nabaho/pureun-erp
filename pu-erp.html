@@ -12467,25 +12467,82 @@ function erpContractToCoFields(ct){
   var amounts = ct.amounts || {};
   var fee = amounts.company || ct.amount || 0;
   var typeCodes = ct.typeCodes || {};
-  var end = ct.contractEndDate || '';
+  /* ★★ 계약은 기간을 startDate·endDate 에 담는다 (2026-09-06 실측: endDate 16건·startDate 21건).
+     그런데 여기서는 contractEndDate 를 읽고 있었다 — 그 칸은 계약 129건 «전부» 비어 있다.
+     그래서 계약서에 종료일이 적혀 있어도 못 읽고, 늘 「계약일 + 1년」을 지어냈다.
+     시작일도 같다 — signDate(서명일)만 보고 startDate(개시일)를 안 봤다. 둘은 다를 수 있다.
+     ⚠ 옛 이름(contractEndDate)도 계속 읽는다 — 어딘가에 그렇게 적힌 것이 있을 수 있다. */
+  var end = ct.endDate || ct.contractEndDate || '';
   if(!end && ct.signDate){
-    /* 이관 때 쓰는 규칙과 «같게» — 계약일 + 1년. 두 곳이 다르면 값이 갈라진다. */
+    /* 아무 데도 없을 때만 지어낸다 — 이관 때 쓰는 규칙과 «같게» 계약일 + 1년.
+       두 곳이 다르면 값이 갈라진다. */
     try{ var d = new Date(ct.signDate); d.setFullYear(d.getFullYear() + 1); end = localYMD(d); }
     catch(e){ end = ''; }
   }
   return {
     contractNo: ct.contractNo || '',
     typeCode: typeCodes.company || ct.typeCode || '',
-    contractStartDate: ct.signDate || '',
+    contractStartDate: ct.startDate || ct.contractStartDate || ct.signDate || '',
     contractEndDate: end,
     monthlyAdvisoryFee: parseInt(fee, 10) || 0,
     /* 계약서에 적힌 것이 없으면 「별도」 — 이관 때와 같은 값이다 */
     vatType: ct.vatType || 'separate'
   };
 }
+/* 계약서 «사진»의 판독값 → 업체관리 계약정보 칸 (2026-09-06 대표 지시)
+
+   ■ 왜 필요한가 — 실측
+   업체 373곳 가운데 계약관리에 계약서가 있는 곳은 29곳(8%), 그중 쓸 값이 있는 곳은 9곳(2%).
+   그런데 계약 종료일이 빈 업체가 189곳, 월 자문료가 빈 업체가 154곳이다.
+   나머지 364곳에서는 「계약관리에서 당겨오기」가 줄 것이 없다 — 실제 출처는 계약서 사진뿐이다.
+
+   ★ 값을 만드는 셈은 컴포넌트 밖에 둔다 — 계약창의 erpContractPhotoApplyPatch 와 같은 태도다.
+     화면 안에 두면 검사를 붙일 수가 없다.
+   ⚠ 금액의 «단위»는 짐작하지 않는다. 판독기는 계약서에 적힌 그대로 담아서
+     "1,000만원" 같은 글자가 들어온다 — 쉼표만 떼고 읽으면 1,000원이 되어 만 배 틀린다.
+     숫자만 남지 않으면 «안 채우고 못 읽었다고 말한다». 잘못 짐작하는 것이 안 읽는 것보다 나쁘다. */
+function erpPhotoToCoFields(fields){
+  fields = fields || {};
+  var out = {}, lines = [], murky = [];
+  function pureAmt(v){
+    var s = String(v === null || v === undefined ? '' : v).replace(/[,\s₩]/g, '').replace(/[원정]+$/, '');
+    if(s === '') return null;                       // 아예 없다
+    if(!/^\d+$/.test(s)) return NaN;                // 단위가 섞였다 — 못 읽은 것으로 친다
+    return parseInt(s, 10) || 0;
+  }
+  /* 업체 자문계약이라 «보수»가 먼저다. 계약금은 보수가 없을 때만 본다. */
+  var feeRaw = (fields.fee !== null && fields.fee !== undefined && String(fields.fee) !== '')
+    ? fields.fee : fields.deposit;
+  var fee = pureAmt(feeRaw);
+  if(fee !== null && !isNaN(fee) && fee > 0){
+    out.monthlyAdvisoryFee = fee;
+    lines.push('월 자문료 ' + fee.toLocaleString() + '원');
+  } else if(feeRaw){ murky.push('금액 "' + feeRaw + '"'); }
+
+  var start = fields.startDate || fields.signDate || '';
+  if(start){ out.contractStartDate = start; lines.push('계약 시작 ' + start); }
+  if(fields.endDate){ out.contractEndDate = fields.endDate; lines.push('계약 종료 ' + fields.endDate); }
+
+  /* 업체관리의 부가세 값은 unspecified · separate · inclusive 다 (계약관리와 이름이 다르다) */
+  var vat = (typeof erpVatTextToFlag === 'function') ? erpVatTextToFlag(fields.vat) : null;
+  if(vat !== null){
+    out.vatType = vat ? 'inclusive' : 'separate';
+    lines.push('부가세 ' + (vat ? '포함' : '별도'));
+  } else if(fields.vat){ murky.push('부가세 "' + fields.vat + '"'); }
+
+  /* 같은 계약서에 적혀 있는 업체 기본정보도 «비어 있으면» 함께 채운다 —
+     계약창이 하는 것과 같다. 채울지 말지는 부르는 쪽이 빈 칸만 골라 정한다. */
+  [['ceo', 'ceo', '대표자'], ['address', 'address', '주소'], ['bizno', 'bizNo', '사업자번호']]
+    .forEach(function(p){
+      if(fields[p[0]]){ out[p[1]] = fields[p[0]]; lines.push(p[2] + ' ' + fields[p[0]]); }
+    });
+  return { fields: out, lines: lines, murky: murky };
+}
+
 if(typeof window !== 'undefined'){
   window.erpContractForCompany = erpContractForCompany;
   window.erpContractToCoFields = erpContractToCoFields;
+  window.erpPhotoToCoFields = erpPhotoToCoFields;
 }
 
 function pcCompanyRows(q){
@@ -13555,7 +13612,10 @@ function erpLoadCoDocPhotos(cb){
         var meta = map[id];
         var r = meta && meta.read;
         if(!r || r.error) return;
-        if(r.kind !== 'bizreg' && r.kind !== 'sme') return;
+        /* ★ 계약서도 읽는다 (2026-09-06 대표 지시) — 계약기간·월 자문료·부가세의
+           실제 출처가 여기다. 업체 373곳 중 계약관리에 계약서가 있는 곳은 29곳뿐이고
+           쓸 값이 있는 곳은 9곳이다. 계약 종료일이 빈 업체가 189곳이나 된다. */
+        if(r.kind !== 'bizreg' && r.kind !== 'sme' && r.kind !== 'contract') return;
         /* ⚠ 사람이 고쳐 적은 값이 이긴다 — 사진첩·통장과 같은 규칙이다 */
         var f = Object.assign({}, r.fields || {}, r.fix || {});
         out.push({ id:id, year:meta.__year, owner:meta.__ownerUid || '',
@@ -13596,12 +13656,26 @@ var ERP_CO_PULL_LABEL = {
   name:'업체명', bizNo:'사업자번호', corpNo:'법인번호', ceo:'대표자',
   bizType:'업태', bizCategory:'종목', companySize:'규모', industry:'업종',
   address:'주소', phone:'대표 전화', fax:'팩스', openDate:'개업일',
-  smeExpiry:'중소기업확인서 만료', smeIssueNo:'확인서 번호', smeIssueDate:'확인서 발급일'
+  smeExpiry:'중소기업확인서 만료', smeIssueNo:'확인서 번호', smeIssueDate:'확인서 발급일',
+  /* 계약서에서만 나오는 칸 (2026-09-06) */
+  contractStartDate:'계약 시작', contractEndDate:'계약 종료',
+  monthlyAdvisoryFee:'월 자문료', vatType:'부가세'
 };
 
 /* 「비어 있다」의 뜻 — 계약서 당겨오기(fillFromContract)와 같은 판정이라야
-   두 단추가 서로 다른 말을 하지 않는다. */
-function erpCoBlank(v){ return !String(v == null ? '' : v).trim(); }
+   두 단추가 서로 다른 말을 하지 않는다.
+   ⚠ 칸마다 «빈 것»의 뜻이 다르다 — 자문료는 0 이 빈 것이고, 부가세는 미확정이 빈 것이다. */
+function erpCoBlank(v, k){
+  if(k === 'monthlyAdvisoryFee') return !(parseInt(v, 10) > 0);
+  if(k === 'vatType') return !v || v === 'unspecified';
+  return !String(v == null ? '' : v).trim();
+}
+/* 화면에 보일 글자 — 자문료는 쉼표를, 부가세는 우리말을 */
+function erpCoPullShow(k, v){
+  if(k === 'monthlyAdvisoryFee') return (parseInt(v, 10) || 0).toLocaleString() + '원';
+  if(k === 'vatType') return v === 'inclusive' ? '포함' : (v === 'separate' ? '별도' : String(v || ''));
+  return String(v == null ? '' : v).trim();
+}
 
 /* ── 후보 하나가 채울 것 (순수 로직 · 검사 대상) ──
    돌려주는 것: [{ k, label, val, cur, state }]  state = fill | same | diff
@@ -13611,12 +13685,13 @@ function erpCoPullRows(mapped, cur){
   var out = [];
   Object.keys(ERP_CO_PULL_LABEL).forEach(function(k){
     var v = mapped && mapped[k];
-    if(erpCoBlank(v)) return;                       // 서류에 없다 — 건드리지 않는다
+    if(erpCoBlank(v, k)) return;                    // 서류에 없다 — 건드리지 않는다
     var was = now[k];
-    var state = erpCoBlank(was) ? 'fill'
-      : (String(was).trim() === String(v).trim() ? 'same' : 'diff');
-    out.push({ k:k, label:ERP_CO_PULL_LABEL[k], val:String(v).trim(),
-      cur: erpCoBlank(was) ? '' : String(was).trim(), state:state });
+    var same = erpCoPullShow(k, was) === erpCoPullShow(k, v);
+    var state = erpCoBlank(was, k) ? 'fill' : (same ? 'same' : 'diff');
+    out.push({ k:k, label:ERP_CO_PULL_LABEL[k], val:v,
+      show: erpCoPullShow(k, v),
+      cur: erpCoBlank(was, k) ? '' : erpCoPullShow(k, was), state:state });
   });
   return out;
 }
@@ -13643,14 +13718,21 @@ function erpCoPullCandidates(docs, cur){
       : (!!nkey && erpCoNameKey(f.company) === nkey);
     if(!hit) return;
     var mapped = {};
-    try { mapped = PuDocRead.mapTo('erp', d.kind, f) || {}; } catch(_) { mapped = {}; }
+    if(d.kind === 'contract'){
+      /* 계약서는 판독 칸 이름이 다르다(fee·startDate·vat…) — 전용 옮김이를 쓴다.
+         ⚠ 금액의 단위는 짐작하지 않는다. 그 판단도 erpPhotoToCoFields 안에 있다. */
+      try { mapped = erpPhotoToCoFields(f).fields || {}; } catch(_) { mapped = {}; }
+    } else {
+      try { mapped = PuDocRead.mapTo('erp', d.kind, f) || {}; } catch(_) { mapped = {}; }
+    }
     var rows = erpCoPullRows(mapped, now);
     /* ⚠ 「같음」만 있는 서류는 안 보여 준다 — 골라 봐야 바뀌는 것이 없다.
        사업자번호 하나만 읽힌 서류가 「지금 값과 같음」 한 줄로 목록에 뜨던 자리다. */
     if(!rows.some(function(r){ return r.state !== 'same'; })) return;
     out.push({ src:'photo', id:d.id, year:d.year, owner:d.owner || '', loc:d.loc || '',
       kind:d.kind, at:d.at || 0,
-      title:(d.kind === 'sme' ? '📷 사진첩 · 중소기업확인서' : '📷 사진첩 · 사업자등록증'),
+      title:(d.kind === 'sme' ? '📷 사진첩 · 중소기업확인서'
+        : d.kind === 'contract' ? '📄 사진첩 · 계약서' : '📷 사진첩 · 사업자등록증'),
       needBizNo: byNo ? '' : dk, rows:rows });
   });
   out.sort(function(a,b){ return (b.at || 0) - (a.at || 0); });   // 최근 판독이 먼저
@@ -14043,7 +14125,7 @@ function CoPullModal(props){
       h('span', { style:{ borderRadius:'4px', padding:'1px 6px',
         background: r.state === 'same' ? '#f8fafc' : (on ? '#f0fdf4' : '#f8fafc'),
         color: r.state === 'same' ? '#64748b' : (on ? '#166534' : '#64748b'),
-        fontWeight: (r.state !== 'same' && on) ? 700 : 400 } }, r.val),
+        fontWeight: (r.state !== 'same' && on) ? 700 : 400 } }, r.show || r.val),
       r.state === 'fill' ? tag('빈 칸 채움', '#f0fdf4', '#166534', '#bbf7d0')
         : r.state === 'same' ? tag('지금 값과 같음', '#f8fafc', '#64748b', '#e2e8f0')
         : tag(on ? '✓ 덮어씀' : '지금 값과 다름', '#fffbeb', '#854d0e', '#fde68a'));
@@ -23745,37 +23827,56 @@ function CompanyEditModal(props){
   /* 계약서에서 계약정보 당겨오기 (대표 지시 2026-08-31).
      ★ 세무사무실·대표자 채우기와 «같은 규칙» — 빈 칸만 채우고, 무엇을 채웠는지
        무엇을 그냥 뒀는지 말해 준다. 업체관리에서 고쳐 둔 값을 말없이 되돌리지 않는다. */
+  /* 「비어 있다」의 뜻이 칸마다 다르다 — 자문료는 0 이 빈 것이고,
+     부가세는 «미확정»(unspecified)이 빈 것이다. 두 길(계약관리·사진첩)이 같은 자를 쓴다. */
+  function coFieldBlank(k, now){
+    if(k === 'monthlyAdvisoryFee') return !(parseInt(now, 10) > 0);
+    if(k === 'vatType') return !now || now === 'unspecified';
+    return !String(now || '').trim();
+  }
   function fillFromContract(){
     var ct = erpContractForCompany(f, dbGet('contracts', []) || []);
+    /* ★ 빈손일 때 «왜» 빈손인지 갈라서 말한다 (2026-09-06).
+       업체 373곳 중 계약관리에 계약서가 있는 곳은 29곳뿐이다 — 대부분은 여기서 끝난다.
+       그때 「채울 빈 칸이 없었습니다」라고만 하면, 계약서에 값이 있는데 안 가져온 것처럼 들린다.
+       없으면 없다고 말하고, 다음 걸음(사진첩)을 가리킨다. */
     if(!ct){
-      showToast('📄 이 업체의 계약서를 못 찾았습니다 — 계약관리에 등록된 계약이 없거나 업체명·사업자번호가 다릅니다');
+      showToast('📄 이 업체의 계약을 계약관리에서 못 찾았습니다'
+        + ' — 등록된 계약이 없거나 업체명·사업자번호가 다릅니다'
+        + ' · 옆의 「📷 사진첩에서 찾기」로 계약서를 찾아보세요');
       return;
     }
     var v = erpContractToCoFields(ct);
     var LABEL = { typeCode:'업체유형', contractStartDate:'계약 시작', contractEndDate:'계약 종료',
       monthlyAdvisoryFee:'월 자문료', vatType:'부가세' };
+    /* 계약서는 있는데 «조건이 안 적혀» 있는 경우 — 이것도 따로 말해야 한다 */
+    var hasAny = Object.keys(LABEL).some(function(k){ return v[k] || v[k] === 0; });
+    if(!hasAny){
+      showToast('📄 ' + (v.contractNo || '계약서') + ' 에는 금액·기간이 안 적혀 있습니다'
+        + ' — 옆의 「📷 사진첩에서 찾기」로 계약서를 찾아보세요');
+      return;
+    }
     var got = [], kept = [];
     setF(function(prev){
       var nx = Object.assign({}, prev);
       Object.keys(LABEL).forEach(function(k){
-        var now = nx[k];
-        /* 「비어 있다」의 뜻이 칸마다 다르다 — 자문료는 0 이 빈 것이고,
-           부가세는 «미확정»(unspecified)이 빈 것이다. */
-        var blank = (k === 'monthlyAdvisoryFee') ? !(parseInt(now, 10) > 0)
-          : (k === 'vatType') ? (!now || now === 'unspecified')
-          : !String(now || '').trim();
         if(!v[k] && v[k] !== 0) return;                 // 계약서에도 없으면 건드리지 않는다
-        if(!blank){ kept.push(LABEL[k]); return; }
+        if(!coFieldBlank(k, nx[k])){ kept.push(LABEL[k]); return; }
         nx[k] = v[k]; got.push(LABEL[k]);
       });
       /* 어느 계약서에서 왔는지 남긴다 — 나중에 「이 값 어디서 왔나」를 물을 수 있게 */
       if(v.contractNo && !String(nx.sourceContractNo || '').trim()) nx.sourceContractNo = v.contractNo;
       return nx;
     });
-    showToast('📄 ' + (v.contractNo || '계약서') + ' 에서 당겨옴'
-      + (got.length ? (' · ' + got.join('·') + ' 채움') : ' · 채울 빈 칸이 없었습니다')
-      + (kept.length ? (' · ' + kept.join('·') + ' 은 적어 두신 값 그대로 뒀습니다') : ''));
+    /* 채운 것도 그냥 둔 것도 «늘» 말한다 — 무엇이 계약서와 다른 채로 남았는지 알아야 한다 */
+    showToast('📄 ' + (v.contractNo || '계약서')
+      + (got.length ? (' 에서 ' + got.join('·') + ' 채움') : '')
+      + (kept.length
+          ? (got.length ? (' · ' + kept.join('·') + ' 은 적어 두신 값 그대로 뒀습니다')
+                        : ' · ' + kept.join('·') + ' 은 이미 채워져 있습니다 — 고치려면 값을 지우고 다시 누르세요')
+          : ''));
   }
+
   // 기업정보함에서 담당자 추가 (pcId 기록 — 자동연동 아님)
   function addContactFromPc(p){
     var arr = (f.contacts||[]).slice();
@@ -24058,13 +24159,25 @@ function CompanyEditModal(props){
         h('div', { style:{ background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'6px', padding:'10px 12px', marginBottom:'10px' } },
           h('div', { style:{ fontSize:'12px', fontWeight:700, color:'#854d0e', marginBottom:'8px',
               display:'flex', alignItems:'center', gap:'8px' } }, '📋 계약정보',
+            /* 이름을 바로잡았다 — 이것은 «계약관리 기록»에서 가져온다.
+               「계약서에서」라고 하면 스캔한 계약서를 읽는 줄 알게 된다(대표 지적 2026-09-06). */
             h('button', { type:'button', onClick:fillFromContract,
-              title:'계약관리에 등록된 이 업체의 «가장 최근» 계약서에서\n'
+              title:'계약관리에 등록된 이 업체의 «가장 최근» 계약 기록에서\n'
                    +'업체유형·계약기간·월 자문료·부가세를 가져옵니다\n'
                    +'— 이미 적어 둔 칸은 그대로 둡니다',
               style:{ marginLeft:'auto', background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe',
                 borderRadius:'5px', padding:'4px 9px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
-              '📄 계약서에서 당겨오기')),
+              '📄 계약관리에서 당겨오기'),
+            /* 실제 출처는 대개 이쪽이다 — 업체 373곳 중 계약관리에 계약서가 있는 곳은 29곳뿐이다.
+               ⚠ 창을 새로 만들지 않는다. 회사정보의 「📷 사진첩에서 찾기」와 «같은 창»을 연다 —
+                 같은 일에 창이 둘이면 한쪽만 고치는 사고가 난다. */
+            h('button', { type:'button', onClick:function(){ setCoPhotoPick(true); },
+              title:'사진첩에 찍어 둔 계약서·사업자등록증을 찾아 빈 칸을 채웁니다\n'
+                   +'금액의 단위(만·억)는 짐작하지 않습니다 — 못 읽으면 그렇게 말합니다\n'
+                   +'무엇이 바뀌는지 먼저 보여 드립니다',
+              style:{ background:'#f0fdf4', color:'#166534', border:'1px solid #bbf7d0',
+                borderRadius:'5px', padding:'4px 9px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
+              '📷 사진첩에서 찾기')),
           h('div', { className:'fld' }, h('label', null, '업체유형'),
             h('select', { value:f.typeCode || '', onChange:set('typeCode') },
               typeMasters.map(function(t){ return h('option', { key:t.code, value:t.code }, t.name); }))),
