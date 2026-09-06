@@ -994,6 +994,13 @@ body.phsheet #pu-version-fab{display:none!important}
   border-radius:10px;padding:11px;font-size:13px;font-weight:700;font-family:inherit;
   margin-top:6px;flex:none;display:flex;align-items:center;gap:6px;justify-content:center}
 #trashBtn{margin-top:12px}
+/* 끌어다 놓을 수 있을 때만 켜진다 (대표 승인 목업 2026-09-06).
+   ⚠ 빨강이다 — 폴더로 옮기는 것(파랑)과 «지우는 것»은 다른 일이라 색으로 가른다.
+   ⚠ 못 놓을 때는 아예 안 켜진다(자바스크립트가 이 표를 안 붙인다) — 남의 사진,
+     휴지통 화면. 놓기 전에 아셔야 한다. */
+#trashBtn.drop{border-color:#dc2626;background:#fef2f2;color:#dc2626;
+  box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+#trashBtn.drop .n{background:#fecaca;color:#dc2626}
 .setbtn.on{border-color:var(--blue);background:var(--blue);color:#fff}
 /* 장수 뱃지 — 들어가 보지 않아도 몇 장인지 알아야 한다. 비면 아예 안 그린다. */
 .setbtn .n{background:#e2e8f0;color:var(--sub);border-radius:9px;padding:1px 7px;
@@ -10220,6 +10227,44 @@ $('foldList').addEventListener('drop', function (e) {
   moveToFolder(ids, fid === 'all' ? null : fid);
 });
 
+/* ══════ 🗑 휴지통에 끌어다 놓기 (대표 승인 목업 2026-09-06) ══════
+   docs/mockups/photos-trash-drop.html
+   「마우스 드래그로 휴지통에 바로 넣을 수 있게 해달라. 여러개 선택해도 넣을 수 있게 해라」
+
+   ■ 새로 만든 것은 «받을 자리» 하나뿐이다
+     · 격자 사진은 이미 끌 수 있다(다른 앱으로 내보내기)
+     · 「고른 것이 있고 그 안에 이 사진이 있으면 고른 전부, 아니면 끈 한 장」도
+       이미 정해져 있다(photoDragIds) — 폴더로 끌 때와 «같은 규칙»이다
+     · 지우는 일은 deleteSelected 가 그대로 한다(확인창·기록·되살리기)
+   ■ 놓을 수 없을 때는 «켜지지 않는다» — 놓기 전에 아셔야 한다
+     · 남의 사진(공유받은 것)은 못 지운다
+     · 휴지통 화면에서는 안 된다 — 이미 버린 것을 또 버릴 수 없다
+   ⚠ 못 놓을 때 preventDefault 를 «안» 부른다. 그래야 브라우저가 「금지」 커서를
+     보여 준다 — 부르면 놓을 수 있는 것처럼 보이고 아무 일도 안 난다. */
+function canTrashDrop(ids) {
+  if (!ids || !ids.length) return false;
+  if (view !== 'photos') return false;       // 휴지통·설정 화면에서는 놓을 곳이 아니다
+  return mayTouch(ids);
+}
+(function () {
+  const tb = $('trashBtn');
+  if (!tb) return;
+  tb.addEventListener('dragover', function (e) {
+    if (!canTrashDrop(photoDragIds)) return;
+    e.preventDefault();
+    tb.classList.add('drop');
+  });
+  tb.addEventListener('dragleave', function () { tb.classList.remove('drop'); });
+  tb.addEventListener('drop', function (e) {
+    tb.classList.remove('drop');
+    if (!canTrashDrop(photoDragIds)) return;
+    e.preventDefault();
+    /* ⚠ 들고 있던 것을 «먼저» 놓는다 — 확인창에서 취소하셔도 다음 끌기가 깨끗하다 */
+    const ids = photoDragIds; photoDragIds = null;
+    deleteSelected(ids);
+  });
+})();
+
 $('kinds').addEventListener('dragover', function (e) {
   /* 탭을 끄는 중이거나, 사진을 끌어와 분류를 바꾸려는 중이면 놓기를 허용한다.
      이게 없으면 브라우저가 놓기를 막는다. */
@@ -12311,9 +12356,16 @@ function deleteOnePayslip(id) {
 }
 
 /* 고른 여러 장 지우기 */
-function deleteSelected() {
-  if (blockedIfOther(Array.from(selected))) return;
-  const ids = Array.from(selected);
+/* ── 끌어서 🗑 휴지통에 놓는 길도 «이 함수»로 온다 (대표 지시 2026-09-06) ──
+   「마우스 드래그로 휴지통에 바로 넣을 수 있게 해달라. 여러개 선택해도 넣을 수 있게 해라」
+   ⚠ 지우는 길을 둘로 만들지 않는다 — 안내(되살림 30일·기업정보함·증빙으로 쓴 것)와
+     지운 기록, 뒤처리가 갈리면 어느 길로 지웠느냐에 따라 남는 것이 달라진다.
+   ⚠ 끌어 놓은 것은 «고른 것»을 건드리지 않는다 — 취소하셨을 때 골라 두신 것이
+     그대로 남아 있어야 한다. 그래서 selected 를 덮어쓰지 않고 받아만 쓴다. */
+function deleteSelected(idsIn) {
+  const dropped = Array.isArray(idsIn) ? idsIn.filter(Boolean) : null;
+  const ids = dropped || Array.from(selected);
+  if (blockedIfOther(ids)) return;
   if (!ids.length) return;
   const filedN = ids.filter(function (id) {
     const it = gridItems.find(function (x) { return x.id === id; });
@@ -12331,7 +12383,10 @@ function deleteSelected() {
   removeMany(ids).then(function (failed) {
     if (failed.length) alert(failed.length + '장을 지우지 못했습니다. 잠시 뒤 다시 시도해 주세요.');
     refreshTrashCount();
-    selected.clear();
+    /* ⚠ 끌어 놓은 길에서는 «놓은 것만» 뺀다 — 골라 두신 나머지를 지우면
+       「지우고 나니 고른 것이 다 풀렸다」가 된다. 단추로 지운 것은 지금처럼 다 푼다. */
+    if (dropped) dropped.forEach(function (id) { selected.delete(id); });
+    else selected.clear();
   }).catch(function (e) {
     /* 뒤처리에서 터져도 단추는 반드시 풀린다 — 아래 마무리로 내려간다. */
     console.warn('[지우기 뒤처리]', e);

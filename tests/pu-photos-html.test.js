@@ -1702,7 +1702,10 @@ test('지우기 단추를 잠근 뒤 반드시 다시 풀어 준다', () => {
      로 갱신되니 살아 있는 것처럼 보여 더 나빴다.
      형제인 downloadSelected() 는 마지막 .then 에서 disabled = false 로
      풀어 준다 — 그 짝을 맞춘다. */
-  const fn = app.match(/function deleteSelected\(\)[\s\S]*?\n\}/);
+  /* ⚠ 매개변수 «없는 꼴»을 못박지 않는다 — 2026-09-06 에 끌어 놓은 것을 받게 되어
+     function deleteSelected(idsIn) 이 되자 이 검사가 본문을 통째로 못 찾았다.
+     지키려는 것은 «잠그고 반드시 푸는가»이지 매개변수 개수가 아니다. */
+  const fn = app.match(/function deleteSelected\([^)]*\)[\s\S]*?\n\}/);
   assert.ok(fn, 'deleteSelected 본문을 찾을 수 없습니다');
   assert.match(fn[0], /disabled = true/, '잠그는 줄이 없어졌습니다');
   assert.match(fn[0], /disabled = false/,
@@ -1712,7 +1715,10 @@ test('지우기 단추를 잠근 뒤 반드시 다시 풀어 준다', () => {
 test('지우기가 중간에 실패해도 단추가 풀린다', () => {
   /* 성공 경로에서만 풀어 주면, 지우다 실패했을 때 단추가 '지우는 중…' 으로
      굳는다. 되살릴 길이 없어 새로고침 말고는 방법이 없다. */
-  const fn = app.match(/function deleteSelected\(\)[\s\S]*?\n\}/);
+  /* ⚠ 매개변수 «없는 꼴»을 못박지 않는다 — 2026-09-06 에 끌어 놓은 것을 받게 되어
+     function deleteSelected(idsIn) 이 되자 이 검사가 본문을 통째로 못 찾았다.
+     지키려는 것은 «잠그고 반드시 푸는가»이지 매개변수 개수가 아니다. */
+  const fn = app.match(/function deleteSelected\([^)]*\)[\s\S]*?\n\}/);
   assert.match(fn[0], /\.catch\(/,
     '지우기 뒤처리에 .catch 가 없습니다 — 실패하면 단추가 굳습니다');
 });
