@@ -25,6 +25,7 @@ const 읽기 = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8').replace(/\r\n/
 const news = stripComments(읽기('pu-news.html'));
 const idx = stripComments(읽기('functions/index.js'));
 const tpl = stripComments(읽기('js/pu-news-tpl.js'));
+const core = stripComments(읽기('js/pu-news-core.js'));
 
 /* ══════ ① 서버가 «자동으로» 찾아온다 ══════ */
 
@@ -101,6 +102,36 @@ test('★ 「이 주차로 채우기」가 자료·판례를 «함께» 넘긴�
   assert.ok(/자료:\s*자료/.test(fn), '자료를 안 넘긴다');
   assert.ok(/판례:\s*판례/.test(fn), '판례를 안 넘긴다');
   assert.ok(/법령:/.test(fn), '법령 자리를 없앴다 — 자료가 없는 주에 꼭지가 통째로 빈다');
+});
+
+test('★★ 채우기가 이미 담긴 것을 «갈아 끼우지» 않는다', () => {
+  /* ⚠ 2026-09-06 대표 화면: 노무사회 자료 넷을 골라 담으신 뒤 채우기를 누르면
+       그 넷이 «말없이» 사라졌다. d.안 을 통째로 갈아 끼우고 있었고 묻지도 않았다.
+     ★ 합치는 규칙 자체는 Core 가 지킨다(tests/newsletter-docs.test.js).
+       여기서 보는 것은 «화면이 그것을 부르는가»다 — 판단이 멀쩡해도 안 부르면 헛것이다. */
+  const i = news.indexOf('function 자동담기(');
+  assert.ok(i > 0, '자동담기 를 못 찾음');
+  const fn = news.slice(i, i + 2000);
+  assert.ok(fn.indexOf('Core.합쳐담기(d.안,') >= 0,
+    '★ 이미 담긴 것을 안 넘긴다 — 갈아 끼우고 있다');
+  assert.ok(fn.indexOf('d.안 = Core.자동으로담기(') < 0, '★ 아직 통째로 갈아 끼운다');
+});
+
+test('채우기가 «지킨 것과 더한 것»을 갈라 말한다', () => {
+  /* 「몇 건 담았다」만 말하면 이미 있던 것까지 센 숫자라, 새로 온 것이 없어도
+     담긴 것처럼 들린다. */
+  const i = news.indexOf('function 자동담기(');
+  const fn = news.slice(i, i + 2200);
+  assert.ok(fn.indexOf('이미 담긴') >= 0, '지킨 것을 안 말한다');
+});
+
+test('★ 노무사회 자료를 «자료»로 담는 길이 Core 에 있다', () => {
+  const i = core.indexOf('function 노무사회줄(');
+  assert.ok(i > 0, '노무사회줄 을 못 찾음');
+  const fn = core.slice(i, i + 1800);
+  assert.ok(fn.indexOf('자료다듬기(') >= 0,
+    '★ 첨부가 있어도 기사로 담는다 — 표지도 내려받기도 안 나온다');
+  assert.ok(fn.indexOf('x.첨부') >= 0, '첨부를 안 본다');
 });
 
 test('★ 화면이 «판단을 스스로 다시 만들지 않는다» — Core 를 부른다', () => {
