@@ -160,8 +160,29 @@ function mailOutPathOk(path, uid) {
 /* 크기만 먼저 묻는다 — 내려받기 «전»에 재려면 이 걸음이 따로 있어야 한다.
    ⚠ 20MB 짜리 열 개를 다 끌어온 뒤에 「너무 큽니다」 하면 이미 늦다.
      이 함수는 512MB 그릇에서 돈다. */
-async function statMailOut(deps, path) {
-  const file = deps.getStorage().bucket(CARDS_BUCKET).file(String(path));
+/* ★ 첨부를 꺼낼 수 있는 «자리»인가 — 창고가 둘이다 (대표 결정 2026-09-06 「첨부도 붙인다」)
+   ═══════════════════════════════════════════════════════════════════════════
+   ① pucards/mailout/{uid}/…  내 PC 에서 올린 임시 파일 — 제 자리만
+   ② ilabor/{sid}/…           노무사회에서 서버가 받아 둔 자료
+                              (ilaborPull 이 «기본 창고»에 담는다 — 다른 통이다)
+   ⚠ 자리를 그대로 믿지 않는다. 안 막으면 자리만 바꿔 «남의 파일»을 첨부로 빼낼 수 있다.
+   ⚠ 여기 없는 자리는 «건너뛴다». 새 자리를 열 때는 이 함수를 고친다 — 한 곳이다. */
+function 첨부자리허용(path, uid) {
+  const p = String(path || '');
+  if (!p || p.indexOf('..') >= 0) return null;
+  if (uid && mailOutPathOk(p, uid)) return { bucket: CARDS_BUCKET };
+  /* 노무사회 자료 — 서버만 담고(규칙 .write:false), 총괄관리자만 보낸다 */
+  if (/^ilabor\/\d+\/[^/]+$/.test(p)) return { bucket: '' };   /* '' = 기본 창고 */
+  return null;
+}
+
+function 첨부통(deps, 통이름) {
+  const st = deps.getStorage();
+  return 통이름 ? st.bucket(통이름) : st.bucket();
+}
+
+async function statMailOut(deps, path, 통이름) {
+  const file = 첨부통(deps, 통이름 === undefined ? CARDS_BUCKET : 통이름).file(String(path));
   const [meta] = await file.getMetadata();
   return { file: file, size: Number((meta && meta.size) || 0) };
 }
@@ -243,14 +264,15 @@ async function collectAttachments(db, body, deps, uid) {
     if (!f || typeof f !== 'object') continue;
     let att = null;
     if (f.path) {
-      if (!deps || !uid) { console.warn('mailout 을 읽을 길이 없다 — 건너뛴다'); continue; }
-      /* 창고 길 — 자리가 «제 자리»인지 먼저 본다(머리글의 까닭) */
-      if (!mailOutPathOk(f.path, uid)) {
-        console.warn('mailout 남의 자리 요청:', String(f.path));
+      if (!deps) { console.warn('창고를 읽을 길이 없다 — 건너뛴다'); continue; }
+      /* 창고 길 — 자리가 «꺼내도 되는 자리»인지 먼저 본다(첨부자리허용 머리글 참고) */
+      const 허 = 첨부자리허용(f.path, uid);
+      if (!허) {
+        console.warn('첨부: 꺼낼 수 없는 자리:', String(f.path));
         continue;
       }
       try {
-        const info = await statMailOut(deps, f.path);
+        const info = await statMailOut(deps, f.path, 허.bucket);
         /* 한 개 한도 · 합계 한도 — 둘 다 «내려받기 전»에 본다.
            ⚠ 여기서 조용히 건너뛰면 「첨부가 빠진 채로 메일이 나간다」가 된다.
              그래서 넘으면 멈추고 «왜 못 보내는지» 알린다. */
@@ -260,7 +282,12 @@ async function collectAttachments(db, body, deps, uid) {
         }
         const [buf] = await info.file.download();
         att = { filename: String(f.name || '첨부'), content: buf, bytes: buf.length };
-        used.push(String(f.path));
+        /* ⚠⚠ «치울 것»에 넣는 자리다 — 보낸 뒤 이 자리의 파일을 «지운다».
+             내 PC 에서 올린 임시 파일(mailout)만 치워야 한다.
+             노무사회 자료(ilabor)를 여기 넣으면 한 번 보내는 순간 원본이 사라지고,
+             편지 속 «내려받기» 단추도 받는 분 손에서 404 가 된다.
+             ★ 보관해 둔 자료는 «임시 파일이 아니다». */
+        if (허.bucket === CARDS_BUCKET) used.push(String(f.path));
       } catch (e) {
         console.warn('mailout 읽기 실패:', String(f.path), String((e && e.message) || e));
         continue;
@@ -548,4 +575,5 @@ module.exports = {
   /* 우체국 고르기도 내놓는다 — 부르는 쪽(index.js)이 «어느 열쇠»를 줘야 하는지
      알아야 하고, 검사도 실제로 골라 보게 해야 이빨이 생긴다. */
   우체국들, 우체국고르기, 도메인만, 아직안넣음, 아직안넣은표,
+  첨부자리허용,
 };

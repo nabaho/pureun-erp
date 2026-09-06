@@ -40,7 +40,7 @@
   if(!go()) document.addEventListener('DOMContentLoaded', go); })();
 </script>
 <script src="xlsx_gen.js?v=15"></script>
-<script src="js/pu-news-core.js?v=21"></script>
+<script src="js/pu-news-core.js?v=22"></script>
 <script src="js/pu-news-tpl.js?v=7"></script>
 <style>
 :root{
@@ -1120,14 +1120,52 @@ async function 걸기(payload){
   return j;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   이 회차에 «진짜로 붙을» 첨부 — 대표 결정 2026-09-06 「첨부도 붙인다」
+   ══════════════════════════════════════════════════════════════════════════
+   그때까지는 편지에 「내려받기」 단추만 있었다. 대표께서 파일을 «붙여서» 보내라고
+   정하셨다 — 받는 분이 눌러 들어가지 않고 메일함에서 바로 열 수 있게.
+
+   ⚠ 실제 크기를 재 보니 만만치 않다(2026-09-06, 받아 둔 11개 합계 38.8MB —
+     13.6MB 짜리 하나, 10.1MB 짜리 하나). 한 통 한도는 18MB 다.
+   ⚠ 그리고 이 편지는 «114곳»에 간다 — 8MB 를 붙이면 900MB 가 나간다.
+     그래서 «몇 MB 가 몇 곳에» 가는지를 보내기 전에 반드시 보여 준다.
+   ★ 못 붙는 것은 조용히 자르지 않는다. 무엇이 안 붙는지 말하고,
+     그것도 편지의 «내려받기» 단추로는 그대로 간다 — 자료를 잃지 않는다. */
+function 첨부셈(곳수){
+  const d = 지금회차();
+  const r = Core.첨부모으기(d.안);
+  const n = Number(곳수) || 0;
+  let 말 = '';
+  if(r.파일들.length){
+    말 = '\n\n📎 붙는 첨부 ' + r.파일들.length + '개 · ' + Core.크기글(r.합계);
+    if(n) 말 += '  (한 통마다 · ' + n.toLocaleString() + '곳이면 모두 '
+      + Core.크기글(r.합계 * n) + ')';
+  } else {
+    말 = '\n\n📎 붙는 첨부 없음';
+  }
+  if(r.넘친것.length){
+    말 += '\n⚠ 한 통 한도(' + Core.크기글(r.한도) + ')를 넘어 «못 붙는» 것 '
+      + r.넘친것.length + '개:\n'
+      + r.넘친것.slice(0,3).map(x=>'   · ' + x.이름 + ' ' + Core.크기글(x.크기)).join('\n')
+      + (r.넘친것.length>3 ? '\n   · 외 ' + (r.넘친것.length-3) + '개' : '')
+      + '\n   → 편지의 «내려받기» 단추로는 그대로 갑니다.';
+  }
+  return { 파일들: r.파일들, 말: 말, 셈: r };
+}
+
 async function 시험발송(){
   const 편 = 지금편지(); if(!편) return toast('실을 것이 없습니다');
   const 나 = (App.me && App.me.email) || '';
   if(!나) return toast('내 주소를 모르겠습니다');
-  if(!confirm(`「${편.제목}」을\n내 주소(${나})로 한 통만 보냅니다.\n\n거래처에는 나가지 않습니다.`)) return;
+  /* ★ 시험에도 «첨부를 그대로» 붙인다 — 진짜와 다른 것을 보면 시험이 아니다 */
+  const 첨 = 첨부셈();
+  if(!confirm(`「${편.제목}」을\n내 주소(${나})로 한 통만 보냅니다.`
+    + 첨.말 + `\n\n거래처에는 나가지 않습니다.`)) return;
   try{
     await 걸기({ to:[{ email:나, name:'시험', company:'푸른노무법인' }],
-                 subject:'[시험] ' + 편.제목, body:편.본문, html:편.서식, spacingSec:5 });
+                 subject:'[시험] ' + 편.제목, body:편.본문, html:편.서식, spacingSec:5,
+                 files: 첨.파일들 });
     const d = 지금회차(); if(d.상태==='초안'){ d.상태='시험'; await 회차저장(d); render(); }
     toast('✉️ 시험 메일을 걸었습니다 — 1분 안에 내 메일함에서 확인하세요', 9000);
   }catch(e){ toast('시험 발송 실패: ' + ((e&&e.message)||''), 9000); }
@@ -1146,6 +1184,7 @@ async function 진짜보내기(){
        예전에는 `곳수 × 15초` 로 셈해 300곳이면 「약 75분」이라 해 놓고 3시간 45분이
        걸렸다. 대표께서 이 숫자를 보고 되돌릴 수 없는 단추를 누르신다. */
   const 걸림 = Core.보낼시간(r.ok.length, BULK_GAP_SEC);
+  const 첨 = 첨부셈(r.ok.length);
   /* 추적 밑주소를 설정에 넣지 않으면 편지에 추적이 «안 들어간다» — 예전처럼 나간다.
      그러면 열람·미열람이 영영 빈칸이니, 보내기 전에 한 번 알려 드린다. */
   if(!(App.설정.추적밑주소||'').trim()
@@ -1165,7 +1204,10 @@ async function 진짜보내기(){
         : `· ⚠ 유형 — 전체 (${Core.유형들.map(t=>t.키).join('·')} 모두 나갑니다)\n`)
     + `· 받는 곳 — ${r.ok.length.toLocaleString()}곳 (한 곳에 한 통씩, 서로 주소가 안 보입니다)\n`
     + `· 뺀 곳 — 수신거부 ${r.셈.수신거부} · 주소없음 ${r.셈.주소없음} · 겹침 ${r.셈.겹침}\n`
-    + `· 다 나가는 데 ${걸림}\n\n`
+    + `· 다 나가는 데 ${걸림}`
+    /* ★ 첨부가 붙으면 «몇 MB 가 몇 곳에» 가는지 여기서 말한다 —
+         되돌릴 수 없는 단추 앞이고, 다음메일이 중간에 막으면 절반만 나간다. */
+    + 첨.말 + `\n\n`
     + `천천히 나가는 까닭 — 한꺼번에 보내면 다음메일이 막습니다.\n`
     + `창을 닫아도 서버가 계속 보냅니다.\n\n보낼까요?`)) return;
 
@@ -1192,7 +1234,7 @@ async function 진짜보내기(){
     }
 
     const j = await 걸기({ to:r.ok, subject:편.제목, body:편.본문, html:편.서식,
-                           spacingSec: BULK_GAP_SEC });
+                           spacingSec: BULK_GAP_SEC, files: 첨.파일들 });
     d.상태 = '발송'; d.보낸때 = Date.now(); d.받는수 = r.ok.length; d.batchId = j.batchId || '';
     d.보낸이 = (App.me && App.me.email) || '';
     /* ★ 링크 목록을 회차에 «함께» 적는다 — 서버(newsClick)가 번호로 이것을 찾는다.

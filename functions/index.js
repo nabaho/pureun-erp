@@ -769,6 +769,12 @@ exports.sendScheduledMail = functions
           from: 이통from, pass: mailPass(이통from),
           envId: process.env.DAUM_MAIL_ID,
           byEmail: row.by || "",
+          /* ★ 창고를 열 길 — 없으면 첨부가 «조용히 빠진 채로» 나간다
+               (대표 결정 2026-09-06 「첨부도 붙인다」).
+             ⚠ uid 는 안 넘긴다. 예약 발송은 사람이 없는 자리에서 도므로
+               「내 자리(mailout)」라는 것이 없다 — 서버가 받아 둔 자료(ilabor)만
+               붙는다. 그것이 맞다: 임시 파일은 그 사람 화면의 것이다. */
+          deps: { getStorage: getStorage },
         });
         if (r.ok) {
           await ref.remove();                    // 나갔으니 자리를 비운다
