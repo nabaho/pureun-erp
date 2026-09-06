@@ -116,7 +116,16 @@ test('★ 고른 사진을 실제로 넘긴다 — 안 넘기면 예전 그대�
   calls.forEach(function (pair) {
     const fn = app.match(new RegExp('function ' + pair[0] + '\\([\\s\\S]*?\\n\\}'));
     assert.ok(fn, pair[0] + ' 본문을 찾을 수 없습니다');
-    assert.ok(fn[0].indexOf('blockedIfOther(' + pair[1] + ')') > -1,
+    /* 지키려는 규칙: 화면 주인이 아니라 «지울 사진들»을 넘겨 묻는다.
+       ⚠ 넘기는 «글자»를 그대로 못박지 않는다 — 2026-09-06 에 deleteSelected 가
+         끌어 놓은 것도 받게 되면서 그 값을 변수에 담아 넘기게 됐고, 이 검사가
+         멀쩡한 코드에 걸렸다. 변수에 담아 넘기는 것도 같은 규칙을 지킨다. */
+    const 곧바로 = fn[0].indexOf('blockedIfOther(' + pair[1] + ')') > -1;
+    const 담아서 = new RegExp(
+      '(?:const|var|let)\\s+(\\w+)\\s*=[\\s\\S]{0,160}?'
+      + pair[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      + '[\\s\\S]{0,120}?blockedIfOther\\(\\1\\)').test(fn[0]);
+    assert.ok(곧바로 || 담아서,
       pair[0] + ' 이 고른 사진을 안 넘겨 내 사진도 막습니다');
   });
 });
