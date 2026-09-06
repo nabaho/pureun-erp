@@ -27528,6 +27528,17 @@ var ROLES = [
   { v:'member',         label:'일반',       tag:'tag-member' }
 ];
 function roleInfo(v){ return ROLES.find(function(r){return r.v===v;}) || ROLES[2]; }
+/* 사람 고르는 칸의 이름표 — 「홍길동 (노무사)」.
+   ⚠ 직위가 비어 있을 수 있다. 2026-09-06 부터 급여대장 가져오기가 직위를 «지어내지
+     않기» 때문이다(예전에는 무조건 「직원」을 넣어, 노무사였던 분이 경력증명서에
+     직원으로 찍혔다). 그냥 이으면 「홍길동 ()」가 되어 빈칸인지 고장인지 모른다 —
+     여기서 «직위 미입력»이라고 분명히 말해, 증명서를 뽑기 «전에» 눈에 띄게 한다. */
+function staffPickLabel(u){
+  if(!u) return '';
+  var t = String(u.title == null ? '' : u.title).trim();
+  return String(u.name || u.sid || '') + ' (' + (t || '직위 미입력') + ')';
+}
+try { window.staffPickLabel = staffPickLabel; } catch(_){ }
 
 // localStorage 사번 정리: 중복 제거 + 잘못된 데이터 SEED로 리셋
 (function fixUserAccounts(){
@@ -58279,7 +58290,7 @@ function Certificate(){
               h('select', { value: users.some(function(x){return x.sid===sid;}) ? sid : '', onChange:function(e){ if(e.target.value){ setSid(e.target.value); setBirthInput(''); } },
                 style:{ width:'100%', padding:'5px 8px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'11.5px' } },
                 [h('option', { key:'__none', value:'' }, '재직직원 선택')].concat(
-                  users.map(function(x){return h('option', { key:x.sid, value:x.sid }, x.name+' ('+x.title+')');}))
+                  users.map(function(x){return h('option', { key:x.sid, value:x.sid }, staffPickLabel(x));}))
               )
             ),
             h('div', null,
@@ -58287,7 +58298,7 @@ function Certificate(){
               h('select', { value: retiredUsers.some(function(x){return x.sid===sid;}) ? sid : '', onChange:function(e){ if(e.target.value){ setSid(e.target.value); setKind('career'); setBirthInput(''); } },
                 style:{ width:'100%', padding:'5px 8px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'11.5px' } },
                 [h('option', { key:'__none', value:'' }, retiredUsers.length ? '퇴직직원 선택' : '퇴직직원 없음')].concat(
-                  retiredUsers.map(function(x){return h('option', { key:x.sid, value:x.sid }, x.name+' ('+x.title+')');}))
+                  retiredUsers.map(function(x){return h('option', { key:x.sid, value:x.sid }, staffPickLabel(x));}))
               )
             ),
             h('div', null,
@@ -72157,7 +72168,7 @@ function AttendanceManagement(){
           h('option',{value:'all'},'👥 전체 직원 ('+users.length+'명)'),
           users.map(function(u){
             var myRecs=records.filter(function(r){return r.sid===u.sid&&(r.date||'').slice(0,7)===selYM&&r.type!=='eum-work';});
-            return h('option',{key:u.sid,value:u.sid},u.name+' ('+u.title+')' + (myRecs.length?' · '+myRecs.length+'건':''));
+            return h('option',{key:u.sid,value:u.sid},staffPickLabel(u) + (myRecs.length?' · '+myRecs.length+'건':''));
           })
         )
       ),
@@ -77064,7 +77075,7 @@ function PayrollLedger(props){
     });
     if(missing.length > 0){
       var msg = '⚠️ 다음 '+missing.length+'명은 데이터 누락 또는 기본급 0원입니다:\n\n'
-              + missing.map(function(u){return '· '+u.name+' ('+u.title+')';}).join('\n')
+              + missing.map(function(u){return '· '+staffPickLabel(u);}).join('\n')
               + '\n\n그래도 일괄 확정하시겠습니까? (해당 직원은 0원으로 처리됩니다)';
       if(!(await popConfirm(msg))) return;
     } else {
@@ -78374,7 +78385,7 @@ function PayrollPayslip(props){
         h('button', { onClick:function(){changeMonth(1);}, style:{padding:'4px 8px',border:'1px solid #cbd5e1',borderRadius:'4px',background:'#fff',cursor:'pointer'} }, '▶'),
         h('select', { value:sid, onChange:function(e){props.setSelSid(e.target.value);},
           style:{flex:1,padding:'7px 10px',border:'1px solid #cbd5e1',borderRadius:'4px',fontSize:'13px'}},
-          users.map(function(x){return h('option',{key:x.sid,value:x.sid},x.name+' ('+x.title+')');}))
+          users.map(function(x){return h('option',{key:x.sid,value:x.sid},staffPickLabel(x));}))
       ),
       // 줄2: 버튼들 (가로 스크롤)
       h('div', {style:{display:'flex',gap:'6px',overflowX:'auto',WebkitOverflowScrolling:'touch',paddingBottom:'2px'}},
@@ -80328,6 +80339,12 @@ function StaffRoster(){
         var hdr = data[hi].map(function(x){ return String(x).trim(); });
         function col(ns){ for(var i=0;i<hdr.length;i++){ for(var j=0;j<ns.length;j++){ if(hdr[i].indexOf(ns[j])>=0) return i; } } return -1; }
         var cName=col(['이름','성명']), cRrn=col(['주민']), cHire=col(['입사']), cStatus=col(['상태']), cRetire=col(['퇴사','퇴직일']);
+        /* ★ 직위도 명부에 있으면 읽는다 (대표 지시 2026-09-06 「고쳐라」).
+           예전에는 이 칸을 «안 읽고» 새 퇴사자에게 무조건 「직원」을 지어 넣었다.
+           실제로는 노무사였던 분이 직원으로 들어갔고, 그 값이 그대로 경력증명서의
+           「직명 및 직위」에 찍혔다 — 밖으로 나가는 문서에 지어낸 직위가 박힌 것이다.
+           ⚠ 명부에 직위 칸이 없으면 «빈칸으로 둔다». 모르는 것을 지어 적지 않는다. */
+        var cTitle=col(['직위','직급','직책']);
         if(cName<0 || cRrn<0){ showToast('⚠️ 이름·주민번호 컬럼 없음'); e.target.value=''; return; }
         function digits(x){ return String(x||'').replace(/[^0-9]/g,''); }
         function fmtDate(x){ var s=String(x||'').trim().replace(' 00:00:00',''); return s ? s.slice(0,10) : ''; }
@@ -80338,7 +80355,7 @@ function StaffRoster(){
         arr.forEach(function(u){ var d=digits(u.rrn); if(d) byRrn[d]=u; if(u.name) byName[u.name.trim()]=u; });
         var maxA = 0;
         arr.forEach(function(u){ var m=/^A-(\d+)$/.exec(u.sid||''); if(m){ var n=parseInt(m[1],10); if(n>maxA) maxA=n; } });
-        var filled=0, added=0, skipped=0;
+        var filled=0, added=0, skipped=0, noTitle=0;
         for(var r=hi+1;r<data.length;r++){
           var row=data[r]; if(!row||!row.length) continue;
           var nm=cName>=0?String(row[cName]||'').trim():'';
@@ -80348,6 +80365,7 @@ function StaffRoster(){
           var hire=cHire>=0?fmtDate(row[cHire]):'';
           var statusTxt=cStatus>=0?String(row[cStatus]||'').trim():'';
           var retire=cRetire>=0?fmtDate(row[cRetire]):'';
+          var titleTxt=cTitle>=0?String(row[cTitle]||'').trim():'';
           var isRetired = statusTxt.indexOf('퇴')>=0;
           // 매칭: 주민 우선, 없으면 이름
           var hit = (rrnD && byRrn[rrnD]) ? byRrn[rrnD] : byName[nm];
@@ -80356,6 +80374,8 @@ function StaffRoster(){
             var did=false;
             if(hire && !hit.hireDate){ hit.hireDate=hire; did=true; }
             if(rrn && !hit.rrn){ hit.rrn=rrn; did=true; }
+            /* 직위도 «비어 있을 때만» 채운다 — 여기 있는 값이 명부보다 최신일 수 있다 */
+            if(titleTxt && !String(hit.title||'').trim()){ hit.title=titleTxt; did=true; }
             if(isRetired){
               if(hit.status!=='retired'){ hit.status='retired'; did=true; }
               if(retire && !hit.retireDate){ hit.retireDate=retire; did=true; }
@@ -80365,15 +80385,19 @@ function StaffRoster(){
             // 신규: 명단에서 '퇴직'으로 표시된 경우에만 추가 (재직 신규는 권한 영향 커서 수동 등록 권장)
             if(isRetired){
               maxA++;
+              if(!titleTxt) noTitle++;
               arr.push({
-                sid:'A-'+('00'+maxA).slice(-3), name:nm, title:'직원', role:'staff', branch:'천안본사',
+                /* ★ 직위는 명부에 적힌 것만 넣는다. 없으면 빈칸이다 —
+                     예전처럼 '직원'을 지어 넣으면 노무사가 직원으로 증명된다. */
+                sid:'A-'+('00'+maxA).slice(-3), name:nm, title:titleTxt, role:'staff', branch:'천안본사',
                 status:'retired', gender:'', birthDate:'', rrn:rrn, nationality:'내국인',
                 phone:'', homePhone:'', email:'', zipCode:'', address:'', addressDetail:'',
                 emergencyContact:'', emergencyPhone:'',
                 hireDate:hire, probationEnd:'', retireDate:retire, leaveReason:'', lastWorkDate:retire,
                 contractType:'정규직', contractEnd:'',
                 baseSalary:0, bankName:'', accountNo:'', accountHolder:'',
-                pensionNo:'', healthNo:'', employmentNo:'', education:'', memo:'급여대장 가져오기 — 퇴사일 임시',
+                pensionNo:'', healthNo:'', employmentNo:'', education:'',
+                memo:'급여대장 가져오기 — 퇴사일 임시' + (titleTxt ? '' : ' · 직위 미확인(명부에 없음)'),
                 loginId:'', loginPw:'', sortOrder:900+maxA
               });
               added++;
@@ -80383,7 +80407,10 @@ function StaffRoster(){
           }
         }
         persist(arr);
-        showToast('📥 근로자명부: 빈칸 채움 '+filled+'명 / 퇴사자 신규 '+added+'명 / 변경없음 '+skipped+'명');
+        /* ★ 직위 없이 들어온 사람은 «세어서 말한다» — 조용히 넘어가면
+             경력증명서를 뽑을 때에야 「직명 및 직위: -」를 보고 알게 된다. */
+        showToast('📥 근로자명부: 빈칸 채움 '+filled+'명 / 퇴사자 신규 '+added+'명 / 변경없음 '+skipped+'명'
+          + (noTitle ? ' ⚠ 직위 미확인 '+noTitle+'명 — 인사기록에서 넣어 주세요' : ''));
       } catch(err){ showToast('가져오기 실패: '+(err&&err.message)); }
       e.target.value='';
     };
