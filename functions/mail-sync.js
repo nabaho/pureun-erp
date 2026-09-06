@@ -439,6 +439,18 @@ async function runSync(deps, opts) {
               if (++w % WRITE_BATCH === 0) { await db.ref().update(batch); batch = {}; }
             }
             if (Object.keys(batch).length) await db.ref().update(batch);
+            /* ★ 이 칸이 «언제부터 언제까지»인가 (대표 화면 2026-09-06) ──
+               화면의 「📦 지난 메일」 표가 이 값을 쓴다. 앱은 칸마다 100통씩만 손에 드므로
+               «앱이 가진 줄»로 기간을 세면 늘 틀린다 — 실제로 「받은메일함 16일·100통」
+               으로 나왔다(진짜는 94일·438통). 적는 김에 여기서 함께 세어 둔다.
+               ⚠ 새로 읽어 오는 것이 «없다» — 방금 적은 줄에서 곧바로 센다.
+               ⚠ 날짜가 없는 줄(d=0)은 안 센다. 넣으면 1970년이 되어 기간이 55년이 된다. */
+            for (const g of held) {
+              const d = Number((g.row && g.row.d) || 0);
+              if (!d) continue;
+              if (!p.sync.oldest || d < Number(p.sync.oldest)) p.sync.oldest = d;
+              if (d > Number(p.sync.newest || 0)) p.sync.newest = d;
+            }
 
             /* ── 끊겼을 때 표시를 어떻게 옮기나 ──
                IMAP 은 번호가 «작은 것부터» 온다. 그래서 중간에 끊기면 손에 있는 것은

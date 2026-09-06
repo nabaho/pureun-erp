@@ -526,6 +526,11 @@ function nextSync(sync, seen, uidValidity, done) {
          셈(n)·prunedAt 을 이어 주는 것과 같은 까닭이다. */
     unread: Number.isFinite(Number(s.unread)) ? Number(s.unread) : -1,
     sweptAt: Number(s.sweptAt || 0),
+    /* ⚠ 이 칸이 «언제부터 언제까지»인가도 그대로 이어 준다 (2026-09-06).
+         적는 자리(runSync)에서 세어 넣는 값이라, 여기서 떨어뜨리면 회차마다 지워져
+         화면의 「지난 메일」 표가 늘 비어 보인다 — 바로 위 unread·sweptAt 과 같은 까닭이다. */
+    oldest: Number(s.oldest || 0),
+    newest: Number(s.newest || 0),
   };
 }
 
