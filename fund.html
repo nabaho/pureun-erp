@@ -4768,6 +4768,122 @@ function printDoc(){ var ed=$('doced'); if(!ed)return;
   w.document.close(); setTimeout(function(){ w.print(); },400); }
 
 // 원본 엑셀 + 기금 데이터 → 채워진 워크북 버퍼 (받기·미리보기 공용)
+/* ── 수식 칸에 남은 «앞 기금 값»을 걷어낸다 ──
+   원본 양식의 수식 칸에는 이 양식으로 앞서 만든 «남의 기금 값»이 캐시로 박혀 있다.
+   ExcelJS 는 손대지 않은 수식 칸의 캐시를 그대로 다시 써 낸다 — 확인했다:
+   설립인가신청서를 우리 기금으로 채운 뒤에도 수식 18칸 가운데 13칸에
+   다른 기금의 이름·전화·주소가 그대로 남았다. 그게 내려받는 파일에도,
+   화면 미리보기에도 그대로 나온다(미리보기는 캐시를 읽는다).
+
+   ① 엑셀이 열릴 때 다시 셈하도록 표시해 둔다(fullCalcOnLoad).
+   ② 그래도 화면은 캐시를 읽으므로, 우리가 셀 수 있는 것은 «다시 셈해» 넣고
+      셈하지 못한 것은 «비운다» — 남의 값을 그냥 두는 것보다 빈 칸이 낫다.
+
+   ⚠ 못 찾으면 null 을 돌려 «비운다». 엉뚱한 값을 채우면 그럴듯하게 틀린 서식이 관청에 간다. */
+function _xlsColN(a){ var n=0,A=String(a).toUpperCase(); for(var i=0;i<A.length;i++) n=n*26+(A.charCodeAt(i)-64); return n; }
+function _xlsPlain(v){
+  if(v==null) return '';
+  if(typeof v==='object'){
+    if('result' in v) return _xlsPlain(v.result);
+    if(v.richText) return v.richText.map(function(t){return t.text;}).join('');
+    if(v.text!=null) return String(v.text);
+    if(v instanceof Date) return v;
+    return '';
+  }
+  return v;
+}
+function _xlsRef(wb,ws,ref){
+  var m=String(ref).trim().match(/^(?:'?([^'!]+)'?!)?\$?([A-Z]+)\$?(\d+)$/);
+  if(!m) return null;
+  var sh=m[1]?wb.getWorksheet(m[1]):ws; if(!sh) return null;
+  return _xlsPlain(sh.getCell(m[2]+m[3]).value);
+}
+function _xlsVlookup(wb,ws,keyRef,rangeRef,idx){
+  var key=_xlsRef(wb,ws,keyRef); if(key==null) return null;
+  var rm=String(rangeRef).trim().match(/^(?:'?([^'!]+)'?!)?\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)$/);
+  if(!rm) return null;
+  var sh=rm[1]?wb.getWorksheet(rm[1]):ws; if(!sh) return null;
+  var c1=_xlsColN(rm[2]), r1=+rm[3], r2=+rm[5];
+  for(var r=r1;r<=r2;r++){
+    var k=_xlsPlain(sh.getCell(r,c1).value);
+    if(k!==''&&String(k)===String(key)) return _xlsPlain(sh.getCell(r,c1+idx-1).value);
+  }
+  return null;                       /* 못 찾으면 비운다 */
+}
+/* 남은 식은 «글자 잇기»만 한다 — 리터럴 · 칸 참조 · LEFT/RIGHT/MID · & .
+   셈이 섞인 식(＋·％ 등)은 손대지 않고 비운다. 엑셀이 열릴 때 제대로 셈한다. */
+function _xlsJoin(wb,ws,expr){
+  var out='', i=0, s=String(expr);
+  while(i<s.length){
+    var ch=s[i];
+    if(ch===' '){ i++; continue; }
+    if(ch==='&'){ i++; continue; }
+    if(ch==='"'){
+      var j=i+1, lit='';
+      while(j<s.length){ if(s[j]==='"'){ if(s[j+1]==='"'){ lit+='"'; j+=2; continue; } break; } lit+=s[j++]; }
+      if(j>=s.length) return null;               /* 따옴표가 안 닫혔다 — 손대지 않는다 */
+      out+=lit; i=j+1; continue;
+    }
+    var fn=/^(LEFT|RIGHT|MID)\(/.exec(s.slice(i));
+    if(fn){
+      var k=i+fn[0].length, d=1, arg='';
+      while(k<s.length&&d>0){ if(s[k]==='(')d++; else if(s[k]===')'){d--; if(!d)break;} arg+=s[k++]; }
+      if(d) return null;
+      i=k+1;
+      var parts=arg.split(','), base=_xlsJoin(wb,ws,parts[0]);
+      if(base==null) return null;
+      base=String(base);
+      if(fn[1]==='LEFT') out+=base.slice(0,+parts[1]||0);
+      else if(fn[1]==='RIGHT') out+=base.slice(Math.max(0,base.length-(+parts[1]||0)));
+      else out+=base.substr((+parts[1]||1)-1, +parts[2]||0);
+      continue;
+    }
+    var tok=/^(?:'[^']+'!)?\$?[A-Z]+\$?\d+/.exec(s.slice(i));
+    if(tok){ var v=_xlsRef(wb,ws,tok[0]); if(v==null) return null; out+=String(v); i+=tok[0].length; continue; }
+    return null;                                  /* 모르는 것이 나오면 손대지 않는다 */
+  }
+  return out;
+}
+function _xlsRecalc(wb){
+  wb.calcProperties=wb.calcProperties||{};
+  wb.calcProperties.fullCalcOnLoad=true;          /* 엑셀에서 열 때 다시 셈한다 */
+  var VLK=/VLOOKUP\(\s*([^,()]+?)\s*,\s*([^,()]+?)\s*,\s*(\d+)\s*(?:,\s*(?:TRUE|FALSE|0|1)\s*)?\)/g;
+  var ONE_VLK=/^VLOOKUP\(\s*([^,()]+?)\s*,\s*([^,()]+?)\s*,\s*(\d+)\s*(?:,\s*(?:TRUE|FALSE|0|1)\s*)?\)$/;
+  var ONE_REF=/^(?:'?[^'!]+'?!)?\$?[A-Z]+\$?\d+$/;
+  /* ⚠ 수식이 수식을 가리킨다 — 기금법인정보 C3 → C13 → 사업계획서 B27 → 정관 B8.
+       한 번만 훑으면 «아직 앞 기금 값이 든 칸»을 읽어 그 값을 도로 퍼뜨린다.
+       실제로 그랬다: C13(=C3)이 아직 안 고쳐진 채로 B27 이 그것을 읽었다.
+       그래서 더 바뀌지 않을 때까지 되풀이한다. */
+  for(var pass=0;pass<8;pass++){
+    var moved=false;
+    wb.eachSheet(function(ws){
+      ws.eachRow({includeEmpty:false},function(row){
+        row.eachCell({includeEmpty:false},function(cell){
+          if(cell.type!==ExcelJS.ValueType.Formula) return;
+          var f=cell.formula; if(!f) return;
+          var src=String(f).trim(), val, m;
+          /* 홑 VLOOKUP·홑 참조는 «날값 그대로» 옮긴다 — 날짜·숫자가 글자로 굳지 않게 */
+          if((m=ONE_VLK.exec(src))) val=_xlsVlookup(wb,ws,m[1],m[2],+m[3]);
+          else if(ONE_REF.test(src)) val=_xlsRef(wb,ws,src);
+          else {
+            var dead=false;
+            var expr=src.replace(VLK,function(mm,kr,rr,n){
+              var v=_xlsVlookup(wb,ws,kr,rr,+n);
+              if(v==null){ dead=true; return '""'; }
+              return '"'+String(v).split('"').join('""')+'"';
+            });
+            val=dead?null:_xlsJoin(wb,ws,expr);
+          }
+          /* 셈했으면 그 값을, 못 셈했으면 «빈 값»을 남긴다 — 남의 값은 어느 쪽이든 안 남는다 */
+          if(val==null) val='';
+          var was=cell.result;
+          if(String(was==null?'':was)!==String(val)){ moved=true; cell.value={formula:f, result:val}; }
+        });
+      });
+    });
+    if(!moved) break;
+  }
+}
 function _fillWbBuffer(key){
   var fid=S.formFund, f=funds[fid];
   if(curForm()._sample) return Promise.reject(new Error('샘플 모드 — 실데이터 채움은 기금 현황 → 기금 → 📑 서식에서'));
@@ -4779,6 +4895,7 @@ function _fillWbBuffer(key){
       return wb.xlsx.load(buf).then(function(){
         if(key==='contribx') fillContribXls(wb,f,sites);
         else (key==='setup'?fillSetup:fillSubsidy)(wb,f,sites);
+        _xlsRecalc(wb);            /* 수식 칸에 남은 앞 기금 값을 걷어낸다 — 반드시 채운 «뒤에» */
         return wb.xlsx.writeBuffer();
       });
     });
@@ -4791,24 +4908,124 @@ function fillForm(key){
   _fillWbBuffer(key).then(function(r){ dlBuf(r.out, r.fname); })
     .catch(function(e){ toast('서식 생성 실패: '+e.message,'err'); });
 }
-// 채워진 엑셀을 오른쪽 패널에서 바로 보기(시트 탭, 읽기전용 근사 — 값·병합은 표시, 세부 테두리·색은 실제 파일 기준)
+/* ── 채워진 엑셀을 오른쪽 판에서 «보이는 대로» 그린다 ──
+   ⚠ XLSX.utils.sheet_to_html 은 «병합도 열폭도» 버린다.
+     이 서식들은 폭 1.6자짜리 모눈 칸을 63군데 병합해 만든 별지 서식이라,
+     병합을 버리면 「근로복지기금법인」이 한 글자씩 세로로 선다 — 실제로 그렇게 나왔다.
+     그래서 여기서 직접 그린다: 병합은 colspan·rowspan 으로, 열폭은 <colgroup> 으로.
+   ⚠ 열폭·행높이는 cellStyles:true 로 읽어야 «!cols·!rows» 에 들어온다. 안 켜면 다 같은 폭이 된다. */
+/* 글자가 차지하는 폭 어림(px). 한글·한자는 넓고 로마자·숫자는 좁다.
+   정확할 필요는 없다 — «이 칸에 안 들어간다»만 알면 된다. */
+function _xlsPx(t){ var n=6; for(var i=0;i<t.length;i++) n+=(t.charCodeAt(i)>0x2000?11:6); return n; }
+function _xlsHTML(ws){
+  if(!ws||!ws['!ref']) return '<div class="muted" style="padding:10px">빈 시트입니다</div>';
+  var R=XLSX.utils.decode_range(ws['!ref']);
+  var mg=ws['!merges']||[], cov={}, span={};
+  mg.forEach(function(m){
+    for(var r=m.s.r;r<=m.e.r;r++) for(var c=m.s.c;c<=m.e.c;c++)
+      if(r!==m.s.r||c!==m.s.c) cov[r+':'+c]=1;      /* 덮인 칸은 건너뛴다 — 안 그러면 줄마다 칸이 밀린다 */
+    span[m.s.r+':'+m.s.c]=[m.e.c-m.s.c+1, m.e.r-m.s.r+1];
+  });
+  var cols=ws['!cols']||[], rows=ws['!rows']||[], cg='<colgroup>', wpx=[], c, r;
+  for(c=R.s.c;c<=R.e.c;c++){
+    var cw=cols[c]||{};
+    var w=cw.wpx || (cw.wch!=null ? cw.wch*7.5+5 : (cw.width!=null ? cw.width*7.5+5 : 64));
+    w=Math.max(7,Math.round(w)); wpx[c-R.s.c]=w;
+    cg+='<col style="width:'+w+'px">';
+  }
+  cg+='</colgroup>';
+  var VA={top:'top',center:'middle',bottom:'middle'};
+  var out='';
+  for(r=R.s.r;r<=R.e.r;r++){
+    var rh=rows[r]||{};
+    var hp=rh.hpx || (rh.hpt!=null ? rh.hpt*4/3 : 0);
+    out+='<tr'+(hp?' style="height:'+Math.round(hp)+'px"':'')+'>';
+    for(c=R.s.c;c<=R.e.c;c++){
+      if(cov[r+':'+c]) continue;
+      var sp=span[r+':'+c], cell=ws[XLSX.utils.encode_cell({r:r,c:c})];
+      var t=cell?(cell.w!=null?cell.w:(cell.v==null?'':String(cell.v))):'';
+      /* 엑셀은 옆 칸이 비면 «글자가 넘쳐 흐른다». 표에는 그런 것이 없어,
+         그대로 두면 폭 1.6자짜리 모눈 칸에 갇혀 한 글자씩 «세로로» 선다 —
+         「사내근로복지기금법인」(L3)이 실제로 그랬다. 병합이 아닌 칸이다.
+         그래서 넘칠 만큼만 옆 빈 칸을 먹는다.
+         ⚠ 값이 든 칸·병합 칸은 먹지 않는다(남의 자리를 지운다).
+         ⚠ 먹은 칸은 cov 에 적어 건너뛴다 — 안 적으면 그 줄만 칸이 늘어 표가 밀린다. */
+      var eat=0;
+      if(!sp&&t){
+        var need=_xlsPx(t), have=wpx[c-R.s.c], k=c+1;
+        while(need>have&&k<=R.e.c&&!cov[r+':'+k]&&!span[r+':'+k]){
+          var nx=ws[XLSX.utils.encode_cell({r:r,c:k})];
+          var nt=nx?(nx.w!=null?nx.w:(nx.v==null?'':String(nx.v))):'';
+          if(nt!=='') break;
+          have+=wpx[k-R.s.c]; cov[r+':'+k]=1; eat++; k++;
+        }
+      }
+      var al=(cell&&cell.s&&cell.s.alignment)||{}, st='';
+      if(al.horizontal) st+='text-align:'+al.horizontal+';';
+      else if(cell&&cell.t==='n') st+='text-align:right;';
+      if(al.vertical) st+='vertical-align:'+(VA[al.vertical]||'middle')+';';
+      var cs=sp?sp[0]:(1+eat), rs=sp?sp[1]:1;
+      out+='<td'+(cs>1?' colspan="'+cs+'"':'')+(rs>1?' rowspan="'+rs+'"':'')
+        +(st?' style="'+st+'"':'')+'>'+esc(t)+'</td>';
+    }
+    out+='</tr>';
+  }
+  return '<table class="xlsgrid">'+cg+'<tbody>'+out+'</tbody></table>';
+}
+/* 엑셀 시트 ↔ 한글본 서식 짝.
+   ⚠ «번호로» 이으면 다른 서식끼리 나란히 놓인다 — 두 차례가 서로 다르기 때문이다.
+       엑셀 시트: 1.신청서 2.사업계획서 3.정관 4.합의서 5.회의록 6.출연확인서
+       우리 목록: 1.신청서 2.합의서 3.정관 4.회의록 5.출연확인서 6.사업계획서
+                 (03_과거자료 ※ 1.노동부인가시필요서류 번호순)
+     둘 다 근거가 있는 차례라 한쪽을 고쳐 맞추지 않는다 — «이름으로» 잇는다. */
+var XLS_PAIR=[[/설립인가신청서|인가신청서/,'inka'],[/사업계획/,'bizplan'],[/정관/,'charter'],
+  [/합의서/,'agreement'],[/회의록/,'minutes'],[/출연확인서|출연확인/,'contrib']];
+function _xlsPairKind(name){
+  var n=String(name||'');
+  for(var i=0;i<XLS_PAIR.length;i++) if(XLS_PAIR[i][0].test(n)) return XLS_PAIR[i][1];
+  return '';
+}
+/* 엑셀본과 한글본을 나란히 — 어느 칸이 다른지는 «겹쳐 봐야» 보인다 */
+function toggleXlsCmp(){
+  if(!S._xlsPrev){ toast('엑셀을 먼저 여세요','warn'); return; }
+  S._xlsCmp=!S._xlsCmp;
+  previewExcel(S._xlsPrev.key,S._xlsPrev.sheet||0);
+}
 function previewExcel(key,sheetIdx){
   var side=$('formSide'); if(!side){ toast('미리보기 영역이 없습니다','warn'); return; }
   if(typeof XLSX==='undefined'){ toast('엑셀 뷰어 로드 실패 — 새로고침하세요','err'); return; }
   side.innerHTML='<div class="row"><h2 style="margin:0;font-size:14px">📗 엑셀 미리보기</h2><span style="flex:1"></span></div>'+loadingHTML('엑셀 채우는 중…');
-  _fillWbBuffer(key).then(function(r){
-    S._xlsPrev={key:key, out:r.out, fname:r.fname};
-    var wb=XLSX.read(new Uint8Array(r.out),{type:'array'});
+  var f=curForm();
+  /* 나란히 놓으려면 한글본도 있어야 한다 — 참여사업장을 못 읽어도 빈 목록으로 그린다(끊기지 않게) */
+  Promise.all([ _fillWbBuffer(key),
+                (f._sample?Promise.resolve([]):_loadSites(S.formFund).catch(function(){return [];})) ])
+  .then(function(a){
+    var r=a[0], sites=a[1];
+    var wb=XLSX.read(new Uint8Array(r.out),{type:'array',cellStyles:true});
     var si=Math.max(0,Math.min(sheetIdx||0, wb.SheetNames.length-1));
+    S._xlsPrev={key:key, out:r.out, fname:r.fname, sheet:si};
+    var nm=wb.SheetNames[si], kind=_xlsPairKind(nm), cmp=!!(S._xlsCmp&&kind);
     var tabs=wb.SheetNames.map(function(n,i){
       return '<button onclick="previewExcelSheet('+i+')" style="padding:3px 9px'+(i===si?';background:var(--warn-bg);border-color:var(--warn);font-weight:700':'')+'">'+esc(n)+'</button>';
     }).join(' ');
-    var html=XLSX.utils.sheet_to_html(wb.Sheets[wb.SheetNames[si]],{editable:false});
+    var pane=function(cls,inner){ return '<div style="border:1px solid var(--line);border-radius:8px;max-height:68vh;overflow:auto;background:#fff;padding:6px" class="'+cls+'">'+inner+'</div>'; };
+    var xl=pane('xlsprev',_xlsHTML(wb.Sheets[nm]));
+    var body = cmp
+      ? '<div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">'
+        +'<div style="flex:1;min-width:300px"><div class="muted" style="font-size:11px;margin:0 0 3px">📄 한글본 — '+esc(docLabel(kind))+'</div>'
+        +pane('xlscmp',sanitizeDocHTML(docBody(kind,f,sites)))+'</div>'
+        +'<div style="flex:1;min-width:300px"><div class="muted" style="font-size:11px;margin:0 0 3px">📗 엑셀본 — '+esc(nm)+'</div>'+xl+'</div></div>'
+      : xl;
     side.innerHTML='<div class="row" style="flex-wrap:wrap;gap:4px;margin-bottom:6px"><h2 style="margin:0;font-size:14px">📗 '+esc(r.fname)+'</h2>'+hlp('forms.xlprev')+'<span style="flex:1"></span>'
+      +'<button onclick="toggleXlsCmp()" title="'+(kind?'한글본 '+esc(docLabel(kind))+'과 나란히 놓고 대조':'이 시트와 짝이 되는 한글본이 없습니다')+'" style="padding:3px 10px'+(cmp?';background:var(--warn-bg);border-color:var(--warn);font-weight:700':'')+'">🔀 한글본과 나란히</button> '
       +'<button class="primary" onclick="dlBuf(S._xlsPrev.out,S._xlsPrev.fname)" style="padding:3px 10px">⬇ 이 파일 받기</button></div>'
       +'<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">'+tabs+'</div>'
-      +'<div style="border:1px solid var(--line);border-radius:8px;max-height:68vh;overflow:auto;background:#fff;padding:6px" class="xlsprev">'+html+'</div>'
-      +'<style>.xlsprev table{border-collapse:collapse;font-size:12px}.xlsprev td{border:1px solid #cbd5e1;padding:3px 6px;white-space:pre-wrap;min-width:28px}</style>';
+      +(S._xlsCmp&&!kind?'<div class="msg warn" style="margin:0 0 6px;font-size:12px">이 시트(<b>'+esc(nm)+'</b>)와 짝이 되는 한글본이 없습니다 — 서식 시트를 고르세요.</div>':'')
+      +body
+      +'<style>.xlsprev .xlsgrid,.xlscmp table{border-collapse:collapse}'
+      +'.xlsprev .xlsgrid{table-layout:fixed;font-size:11px}'
+      +'.xlsprev .xlsgrid td{border:1px solid #e2e8f0;padding:1px 3px;white-space:pre-wrap;word-break:break-word;overflow:hidden;vertical-align:middle}'
+      +'.xlscmp{font-size:11px}.xlscmp .a4{box-shadow:none;border:0;padding:0}</style>';
   }).catch(function(e){ side.innerHTML='<div class="msg err" style="margin:10px">'+esc(e.message)+'</div>'; });
 }
 function previewExcelSheet(i){ if(S._xlsPrev) previewExcel(S._xlsPrev.key,i); }
@@ -4819,9 +5036,49 @@ function fillSetup(wb,f,sites){
   setC(ws,'B3',repSite); setC(ws,'C3',f.name||''); setC(ws,'D3',f.chairman||''); setC(ws,'E3',f.address||'');
   setC(ws,'F3',f.inka_date||''); setC(ws,'G3',f.worker_rep||wk[0]||''); setC(ws,'H3',wk[0]||''); setC(ws,'I3',er[0]||'');
   setC(ws,'J3',f.phone||''); ['K3','L3','M3','N3'].forEach(function(a){setC(ws,a,'');});
-  var budget=num(f.contribution_total); if(budget) setC(ws,'F13',budget.toLocaleString()+'원');
-  if(f.estab_date) setC(ws,'B23',f.estab_date); if(f.meeting_date) setC(ws,'D23',f.meeting_date);
+  clearRange(ws,4,9,2,14);            /* 첫째 표(A3:N9)의 «다른 기금» 샘플 줄 B~N */
+  /* ── 둘째 표(A13:H19) — 사업계획서·정관·회의록이 여기를 본다 ──
+       A연번 B작성날짜 C기금법인명칭 D대표자 E소재지 F출연금액 G금융기관명 H예치일정
+     대부분은 첫째 표를 가리키는 «수식»이다(B13=B23 · C13=C3 · D13=D3 · E13=E3 · H13=F3).
+     수식 칸은 손대지 않는다 — 덮어쓰면 다음 기금에서 다시 안 따라온다.
+     ⚠ 값이 박혀 있는 칸은 둘뿐이고, 둘 다 «남의 자료»였다:
+        F 출연금액 = 앞 기금의 금액 · G 금융기관명 = 앞 기금의 거래은행.
+        예전엔 F13 을 «출연금이 있을 때만» 덮어써서, 없으면 남의 금액이 그대로 나갔다.
+     ⚠ 금융기관명은 우리가 «가진 자료가 아니다» — 비워서 사람이 채우게 한다.
+       지어내면 그럴듯하게 틀린 서식이 관청에 간다. */
+  var budget=num(f.contribution_total); setC(ws,'F13',budget?budget.toLocaleString()+'원':'');
+  setC(ws,'G13','');
+  clearRange(ws,14,19,2,8);           /* 둘째 표의 «다른 기금» 샘플 줄 B~H */
+  /* ── 셋째 표(A22:E29) — 정관·설립합의서·회의록·기금출연확인서의 «작성 날짜» ──
+       A연번 B정관 C설립합의서 D회의록 E기금출연확인서
+     ⚠ 예전엔 «값이 있을 때만» 넣었다 — 없으면 앞 기금의 날짜가 그대로 나갔다.
+       C·E 는 우리가 «가진 날짜가 아니다». 비워서 사람이 채우게 한다. */
+  setC(ws,'B23',f.estab_date||''); setC(ws,'D23',f.meeting_date||'');
+  setC(ws,'C23',''); setC(ws,'E23','');
+  clearRange(ws,24,29,2,5);          /* 셋째 표의 «다른 기금» 샘플 줄 B~E */
   clearRange(ws,33,38,2,16);   // 회의록 샘플 안건 B~P (수식 제외)
+  /* ── 기금법인정보를 «안 거치고» 시트에 곧바로 박힌 값들 ──
+     여기를 안 고치면 기금을 바꿔 채워도 그 칸만 앞 기금 것으로 남는다. */
+  var _sh=function(re){ var got=null; wb.eachSheet(function(w){ if(!got&&re.test(w.name)) got=w; }); return got; };
+  var biz=_sh(/사업계획/);
+  if(biz){
+    /* 제목의 «해»가 2023 으로 굳어 있었다 — 화면에 뜨던 그 2023 이다.
+       한글본 사업계획서는 «화면에서 고른 해»(S.year)를 쓴다. 두 양식이 다른 해를
+       말하면 어느 쪽이 맞는지 알 수 없으니 한글본에 맞춘다.
+       ⚠ 문구는 원본 그대로 두고 «앞 네 자리»만 바꾼다 — 문구를 새로 지으면 원본과 달라진다. */
+    var t=biz.getCell('B11');
+    if(t.type!==ExcelJS.ValueType.Formula){
+      var s0=String(t.value==null?'':t.value);
+      if(/^(19|20)\d{2}/.test(s0)) t.value=String(S.year)+s0.slice(4);
+    }
+  }
+  var mnt=_sh(/회의록/);
+  if(mnt){
+    /* 「사내근로복지기금」이 값으로 박혀 있고, 아래 칸들이 LEFT(F7,2)·MID 로 «사내/공동»을
+       떼어 쓴다 — 그래서 공동기금 회의록에도 「사내」가 그대로 나갔다. 유형으로 맞춘다. */
+    var c7=mnt.getCell('F7');
+    if(c7.type!==ExcelJS.ValueType.Formula) c7.value=(f.fund_type||'공동')+'근로복지기금';
+  }
 }
 /* 기금출연확인서(사업장별) — [기업정보] 시트를 참여사업장으로 채우면
    확인서 시트가 연번(CJ3) 기준 VLOOKUP으로 해당 사업장 확인서를 만든다.
@@ -11484,7 +11741,7 @@ var HELP={
  'forms.incent':{t:'⑥ 인센티브 서식',h:'<p>공동근로복지기금 설립·운영 지원에 따른 <b>비용청구(별지 제11호의2)</b> 서식입니다.</p>'},
  'forms.draft':{t:'전체 초안(6종) 미리보기',h:'<p>기금 기본정보로 채운 6종 초안입니다. <b>A4 낱장</b>으로 나뉘어 그대로 인쇄됩니다.</p>'
    +'<p>공식 제출용은 형태가 100% 보존되는 <b>엑셀 채움</b>을 권합니다.</p>'},
- 'forms.xlprev':{t:'엑셀 미리보기',h:'<p>값·병합을 확인하는 <b>읽기전용</b> 화면입니다.</p><p>수정·인쇄는 [⬇ 받기] 후 <b>엑셀에서</b> 하세요 — 원본 법정서식(A4)의 표·수식·서식이 100% 보존됩니다.</p>'},
+ 'forms.xlprev':{t:'엑셀 미리보기',h:'<p>값·<b>병합·열폭</b>을 원본대로 그리는 <b>읽기전용</b> 화면입니다.</p><p><b>[🔀 한글본과 나란히]</b>를 누르면 같은 서식의 한글본을 옆에 놓고 대조합니다 — 시트 번호와 우리 목록 번호는 차례가 달라 <b>이름으로</b> 짝을 짓습니다.</p><p>수정·인쇄는 [⬇ 받기] 후 <b>엑셀에서</b> 하세요 — 원본 법정서식(A4)의 표·수식·서식이 100% 보존됩니다.</p>'},
  'forms.edit':{t:'서식 수정·저장',h:'<p>내용을 클릭해 바로 수정합니다.</p><p><b>[💾 이 기금]</b> = 이 기금 전용 저장<br><b>[💾 공통]</b> = 같은 유형 모든 기금의 기본서식</p>'
    +'<p>격자·도장란이 그대로 필요하면 <b>엑셀</b> 또는 <b>HWP</b>를 쓰세요.</p>'},
  'setup.flow':{t:'설립 진행',h:'<p>신규 설립 절차입니다. 중간에 나가도 <b>이 상태로 저장</b>되며, 목록에서 <b>🏗 설립중</b> 표시로 다시 찾아 이어서 진행할 수 있습니다.</p>'
