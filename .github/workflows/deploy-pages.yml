@@ -28,6 +28,17 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
+      # ── 화면을 «진짜로 그려 보는» 검사를 위해 jsdom 을 깐다 ──
+      # 이 저장소에는 package.json 이 없어 CI 가 아무것도 설치하지 않는다. 그래서
+      # jsdom 을 쓰는 검사기 다섯(check_forms·check_backup·check_cols·check_siterow·
+      # check_docview)이 «CI 에서 한 번도 돌지 않고» SKIP 으로 지나갔다.
+      # 문자열만 보는 검사는 「단추는 있는데 창이 안 뜨는 것」·「열이 한 칸 밀린 것」·
+      # 「서식이 빈 채 나가는 것」을 못 잡는다 — 그러라고 만든 것이 그 다섯이다.
+      #
+      # ⚠ || true 를 뗄 것 — npm 이 잠깐 죽었다고 배포까지 멎으면 안 된다.
+      #   못 깔면 검사기들이 스스로 SKIP 으로 물러난다(그 관례는 그대로 둔다).
+      - name: Install jsdom for the checks that actually render the page
+        run: npm i jsdom --no-save --no-audit --no-fund || true
       - name: Run all automated checks
         run: node --test tests/*.test.js
       - name: Create deployed version metadata
@@ -46,7 +57,10 @@ jobs:
       - name: Strip developer-only files from the site
         run: |
           set -eu
+          # ⚠ node_modules 는 위에서 «검사를 돌리려고» 깐 것이다(jsdom). 앱은 부르지 않는다.
+          #   안 지우면 수십 MB 의 남의 코드가 주소만 알면 열린다.
           for d in tests fund-erp docs harness scripts engine app tools reference functions _scan_out \
+                   node_modules \
                    .github .claude .agents .githooks .superpowers .codex-worktrees; do
             if [ -e "$d" ]; then rm -rf "$d"; echo "제외: $d"; fi
           done
@@ -58,8 +72,9 @@ jobs:
           # 앱과 무관하고, 어떤 도구를 붙여 쓰는지까지 인터넷에 알릴 까닭이 없다.
           # ⚠ 최상위 .js 는 건드리지 않는다 — fund_forms·hwp_extract·hwpx_gen·
           #   rules_std·std_2026·xlsx_gen 과 서비스워커들을 HTML 이 실제로 부른다.
-          rm -f -- *.md *.bat firebase.json .firebaserc .mcp.json
-          echo "제외: 최상위 *.md *.bat firebase.json .firebaserc .mcp.json"
+          # package-lock.json 은 npm 이 남길 수 있다 — 앱과 무관하다.
+          rm -f -- *.md *.bat firebase.json .firebaserc .mcp.json package-lock.json
+          echo "제외: 최상위 *.md *.bat firebase.json .firebaserc .mcp.json package-lock.json"
           # 앱이 실제로 쓰는 것이 실수로 사라졌으면 여기서 배포를 멈춘다
           # ⚠ install.html·아이콘도 «앱으로 깔기» 의 길이다 — 사라지면 폰에 못 깐다
           # ⚠ hana-bridge.apk 는 휴대폰 하나문자 앱이다 (2026-08-29).
