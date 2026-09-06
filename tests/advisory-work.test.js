@@ -136,12 +136,28 @@ test('★★ 해지·중단한 업체는 안 들어온다', () => {
   assert.equal(닫혔나({ status: 'inactive' }, 'companies'), true);
 });
 
-test('★★ 계약 종료일이 지났으면 안 들어온다', () => {
-  assert.equal(닫혔나({ status: 'active', contractEndDate: '2026-08-31' }, 'companies', '2026-09-05'), true);
+/* 2026-09-06 대표 지시 「캡쳐5를 참고해서 연결해라」 —
+   푸른이알피 법인 대시보드와 «글자 그대로 같은 잣대»로 센다:
+       myCompanies = allCompanies.filter(c => c.status === 'active' …)
+   계약 종료일은 «안 본다». 자문은 자동갱신이 흔해 날짜가 지나도 거래 중인 곳이 많고,
+   실제로 그 때문에 업체 204곳 가운데 105곳만 들어왔다. */
+test('★★ 계약 종료일이 지나도 status 가 active 면 들어온다 — 자문은 자동갱신이 흔하다', () => {
+  assert.equal(닫혔나({ status: 'active', contractEndDate: '2026-08-31' }, 'companies', '2026-09-05'), false);
+  assert.equal(닫혔나({ status: 'active', contractEndDate: '2020-01-01' }, 'companies', '2026-09-05'), false);
 });
 
-test('★ 오늘이 종료일이면 아직 살아 있다 — 마지막 날까지는 거래 중이다', () => {
-  assert.equal(닫혔나({ status: 'active', contractEndDate: '2026-09-05' }, 'companies', '2026-09-05'), false);
+test('★★ status 가 active 가 아니면 안 들어온다 — 푸른이알피가 세는 그대로', () => {
+  ['inactive', 'terminated', 'closed', 'pending', ''].forEach(st => {
+    assert.equal(닫혔나({ status: st }, 'companies'), true, st + ' 가 들어왔다');
+  });
+  assert.equal(닫혔나({}, 'companies'), true, 'status 가 없는 옛 업체도 안 센다');
+});
+
+test('★★ 푸른이알피와 같은 잣대라는 것을 두 파일로 견준다', () => {
+  const erp = fs.readFileSync(path.join(__dirname, '..', 'pu-erp.html'), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(erp, /var myCompanies = allCompanies\.filter\(function\(c\)\{\s*if\(c\.status !== 'active'\) return false;/,
+    '푸른이알피 쪽 잣대가 바뀌었다 — 업무관리도 함께 고쳐야 한다');
+  assert.match(code(grab('_peClosed')), /if\(t==='companies'\) return st!=='active';/);
 });
 
 test('종료일이 없으면 살아 있는 것으로 본다 — 기간 없는 자문이 사라지면 안 된다', () => {
@@ -235,9 +251,20 @@ test('★ 기한(지남·임박)은 그대로 센다 — 날짜가 정해진 일
   assert.ok(C.slice(i - 120, i).indexOf('countsLog') < 0, '기한까지 빼 버렸다');
 });
 
-test('구분 목록·색에 자문이 있다', () => {
+test('구분 목록·색에 자문과 급여가 있다', () => {
   assert.match(W, /'자문':\['#f8fafc','#166534'\]/);
-  assert.match(W, /var KIND_SET=\{'계약':1,'사건':1,'컨설팅':1,'기금':1,'기타사업':1,'자문':1\};/);
+  assert.match(W, /var KIND_SET=\{'계약':1,'사건':1,'컨설팅':1,'기금':1,'기타사업':1,'자문':1,'급여':1\};/);
+});
+
+/* 대표 지시 2026-09-06 「급여 자문등 전체를 모두 포함해서 … 양을 알려고」 —
+   업체관리 한 갈래 안에 자문과 급여대행이 섞여 있어, 막대에서 갈려 보이지 않았다. */
+test('★★ 업체 유형이 급여면 구분도 「급여」로 갈린다', () => {
+  const A = code(grab('peAutoSync'));
+  assert.match(A, /if\(d\[0\]==='companies'&&\/급여\/\.test\(String\(c0\.ptype\|\|''\)\)\) c0\.cat='급여';/);
+});
+
+test('★ 유형 이름을 통째로 구분으로 쓰지 않는다 — 구분이 열 갈래로 흩어진다', () => {
+  assert.ok(code(grab('peAutoSync')).indexOf('c0.cat=c0.ptype') < 0);
 });
 
 /* ══════════════════════════════════════════════

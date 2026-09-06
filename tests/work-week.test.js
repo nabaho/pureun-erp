@@ -299,7 +299,7 @@ ok('요일별·한 칸을 오갈 수 있고 그 선택을 기억한다',
 /* 2026-09-06 대표 지시 「기본값 바꿔」 — 처음에는 한 칸이다.
    요일로 쪼개면 빈 「기록…」 칸 다섯이 340px 넘게 먹어, 정작 업무명 칸이 밀려 눌렸다
    (대표 보고 「어디에서 뭘하는가 안보인다」). */
-ok('★★ 저장값에 따라 갈린다 — 처음 여는 사람(저장값 없음)은 한 칸', (function () {
+ok('★★ 저장값에 따라 갈린다 — 처음 여는 사람(저장값 없음)은 요일별', (function () {
   const vm2 = require('node:vm');
   const one = (v) => {
     const b = { S: {}, console,
@@ -309,9 +309,11 @@ ok('★★ 저장값에 따라 갈린다 — 처음 여는 사람(저장값 없�
     vm2.runInContext(grab('wkSplitOn') + '\nthis.r = wkSplitOn();', b);
     return b.r;
   };
-  return one(null) === false      // 처음 여는 사람 — 한 칸
-    && one('0') === false         // 한 칸으로 고른 사람
-    && one('1') === true;         // ★ 요일별로 고른 사람의 뜻은 그대로 둔다
+  /* 2026-09-06 되돌림 — 대표 「왜 사라졌나」.
+     하루하루 무엇을 했는지 적는 자리가 이 화면의 뼈대다. */
+  return one(null) === true       // ★ 처음 여는 사람 — 요일별
+    && one('0') === false         // 한 칸으로 «손수 고른» 사람의 뜻은 그대로
+    && one('1') === true;
 })());
 ok('요일별일 때만 쪼갠 칸을 그린다',
   grab('rowHTML').indexOf('wkSplitOn()?wkCellHTML(it,logs,rowIdx||0)') > 0);
