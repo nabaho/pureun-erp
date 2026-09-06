@@ -494,7 +494,21 @@ main{flex:1;min-height:0;width:100%;padding:10px 12px;
 .modalWrap.on{display:flex}
 .modalCard{background:#fff;border-radius:14px;max-width:620px;width:100%;max-height:86vh;
   overflow-y:auto;padding:16px}
+/* ★ 넓은 덧창 — 자문사처럼 «수백 줄에서 고르는» 창에만 쓴다 (대표 지시 2026-09-06).
+   620px 에 한 칸으로 세우면 272곳을 열여덟 번 굴려야 한다. */
+.modalCard.wide{max-width:1000px}
 .modalCard h2{font-size:15px;margin:0 0 4px}
+
+/* ── 여러 칸으로 펼쳐 고르기 (자문사) ──
+   ★ 칸 수를 «자리에 맞춰» 정한다(auto-fill) — 숫자로 3 을 박으면 좁은 화면에서
+     이름이 짜부라진다. 한 칸이 15rem 밑으로 안 내려간다. */
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(15rem,1fr));
+  border:1px solid var(--line-soft);border-radius:8px;overflow:hidden;margin-top:8px}
+.pcel{display:flex;align-items:center;gap:7px;padding:4px 8px;font-size:12.5px;min-width:0;
+  border-bottom:1px solid var(--line-soft);cursor:pointer}
+.pcel .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcel .ty{color:var(--sub);font-size:11px;flex:none}
+.pcel input{margin:0;flex:none}
 
 /* ── 화면 안 창 (사유 입력·예아니오·알림) ──
    ★ 브라우저 기본 창을 대신한다. 덧창 위에도 떠야 하므로 z-index 를 더 높인다
@@ -1262,6 +1276,9 @@ function partnerRows() {
       /* 대조 딱지 자리는 비운다 — 「확인 전」이라고 적으면 언젠가 대조가 될 것처럼 들린다.
          못 하는 이유는 목록 머리와 편집칸이 글로 말한다. */
       status: '', reason: '', noStatusPill: true,
+      /* ★ 업체 종류를 «글자로 뭉친 desc 말고» 따로 낸다 — 고르는 창이 종류로 거른다.
+         desc 에서 다시 뜯어 읽으면 「자문 · 표시 안 함」 같은 줄에서 잘못 걸린다. */
+      typeCode: c.typeCode || '',
       roster: warn, posted: posted, closed: closed
     };
   });
@@ -1308,6 +1325,212 @@ async function markPosted(v) {
   await setPosted(d.key, v, d.why);
 }
 window.markPosted = markPosted;
+
+/* ══════ 자문사 «한 번에» 고르기 (대표 지시 2026-09-05 「팝업으로 확인하고
+     ㅁ에 체크해서 한 번에 넣는 게 좋은 건지」 → 2026-09-06 「가」) ══════
+
+   왜 만드나 — 272곳을 한 곳씩 눌러 고르게 되어 있었다.
+     고르기는 왼쪽 «좁은 줄»에서 하고, 오른쪽 넓은 자리는 «한 곳»을 보여 주는 데 다 썼다.
+     한 곳에 5초를 잡아도 20분이 넘고, 그 사이 어디까지 봤는지를 놓친다.
+     실제로 올림이 «0곳»이었다 — 화면이 있어도 아무도 못 쓴 것이다.
+
+   ★ 이 창은 «고르는 창»이자 «지금 무엇이 올라가 있나 보는 창»이다.
+     체크를 풀면 내려간다. 넣기·빼기·보기가 한 자리라야 「하나로 관리」가 된다.  */
+const Pick = { open: false, sel: {}, q: '', type: '', saving: false, err: '' };
+
+/* 고를 수 있는 회사. 거래가 끝난 곳은 «여기에도» 안 나온다
+   (대표 지시 2026-09-03 「업체 종료된 곳은 모두 자동으로 명단 빼라」). */
+function pickRows() {
+  return partnerRows().filter(r => !r.closed);
+}
+
+/* 찾기와 종류로 걸러 «지금 보이는» 것. 「보이는 것 전부 고르기」가 무엇을 고르는지가
+   이 함수 하나로 정해진다 — 화면과 단추가 어긋나지 않게 한 곳에서 판단한다. */
+function pickVisible() {
+  const q = String(Pick.q || '').trim().toLowerCase();
+  const t = String(Pick.type || '');
+  return pickRows().filter(r => {
+    if (q && String(r.name || '').toLowerCase().indexOf(q) < 0) return false;
+    if (t && String(r.typeCode || '') !== t) return false;
+    return true;
+  });
+}
+
+/* 업체 종류 목록 — 있는 것만 낸다(0건짜리 고르개는 자리만 먹는다) */
+function pickTypes() {
+  const seen = {};
+  pickRows().forEach(r => { const t = r.typeCode; if (t) seen[t] = (seen[t] || 0) + 1; });
+  return Object.keys(seen).sort().map(t => ({ code: t, n: seen[t] }));
+}
+
+/* ★ 무엇을 «쓸지»를 정하는 곳. 여기만 맞으면 저장은 그대로 따라간다.
+   규칙은 하나다 — «올림 여부가 바뀐 것만» 쓴다.
+     · 체크했는데 아직 「올림」이 아니면  → 올림으로 쓴다
+     · 체크를 풀었는데 지금 「올림」이면  → 안 올림으로 쓴다 (내리는 것이다)
+     · 그 밖에는 손대지 않는다
+
+   ★ 손대지 «않는» 쪽이 중요하다. 「안 올림」으로 사유를 적어 둔 회사와 아직 «표시 안 함»인
+   회사는, 체크를 안 했다고 해서 새로 쓰지 않는다 — 272곳을 통째로 쓰면 남이 적어 둔 사유가
+   날아가고, 「아직 안 봤다」와 「보고 안 올리기로 했다」의 구분도 사라진다.
+   그 둘은 지금올림도 고름도 false 라 «바뀐 것만 쓴다» 한 줄에 함께 걸러진다.
+   ⚠ 「올림이 아닌 것은 건너뛴다」를 한 줄 더 두지 말 것 — 2026-09-06 에 두었다가
+     되돌림 검사가 «닿지 않는 줄»임을 잡아냈다(지우고 이 글을 남긴다).
+   ★ 메모(why)는 «있던 것을 그대로» 옮긴다. 이 창은 메모를 다루지 않는다. */
+function pickChanges() {
+  const out = {};
+  const now = Date.now(), who = currentUserName(), day = todayString();
+  pickRows().forEach(r => {
+    const 지금올림 = postedOf(r.key) === 'yes';
+    const 고름 = !!Pick.sel[r.key];
+    if (지금올림 === 고름) return;                       // 바뀐 것만 쓴다
+    const 옛 = partnerMark(r.key) || {};
+    out[r.key] = { posted: 고름, why: String(옛.why || ''),
+                   by: who, at: day, updatedAt: now };
+  });
+  return out;
+}
+
+function openPartnerPick() {
+  Pick.open = true; Pick.q = ''; Pick.type = ''; Pick.err = ''; Pick.saving = false;
+  /* 지금 「올림」인 것을 체크된 채로 연다 — 그래야 «지금 무엇이 올라가 있나»가 보인다 */
+  Pick.sel = {};
+  pickRows().forEach(r => { if (postedOf(r.key) === 'yes') Pick.sel[r.key] = true; });
+  renderPartnerPick();
+}
+window.openPartnerPick = openPartnerPick;
+
+/* ★ 체크는 «셈만» 고친다 — 목록을 다시 그리면 굴린 자리가 맨 위로 돌아간다.
+   네모는 브라우저가 이미 칠해 주었으므로 다시 그릴 것이 없다. */
+function pickToggle(id) { if (Pick.sel[id]) delete Pick.sel[id]; else Pick.sel[id] = true; pickCounts(); }
+function pickFind(v) { Pick.q = v; pickRefresh(); }
+function pickType(v) { Pick.type = v; pickRefresh(); }
+/* 「보이는 것 전부」 — 걸러 놓은 것만 건드린다. 안 보이는 것까지 고르면
+   무엇을 골랐는지 눈으로 확인할 길이 없어진다. */
+function pickAllVisible(on) {
+  pickVisible().forEach(r => { if (on) Pick.sel[r.key] = true; else delete Pick.sel[r.key]; });
+  pickRefresh();
+}
+window.pickToggle = pickToggle; window.pickFind = pickFind;
+window.pickType = pickType; window.pickAllVisible = pickAllVisible;
+
+async function pickSave() {
+  if (Pick.saving) return;
+  if (!App.isAdmin) { await say('총괄관리자만 표시할 수 있습니다', ''); return; }
+  const 고침 = pickChanges();
+  const 열쇠 = Object.keys(고침);
+  if (!열쇠.length) { toast('바뀐 것이 없습니다.'); return; }
+  Pick.saving = true; Pick.err = ''; renderPartnerPick();
+  /* 되돌릴 수 있게 «쓰기 전»의 값을 챙겨 둔다 — 실패했는데 화면만 바뀌어 있으면
+     올라간 줄 알고 넘어간다(setPosted 가 겪고 고친 자리다). */
+  const 옛것 = {};
+  열쇠.forEach(k => { 옛것[k] = App.partners[k]; });
+  try {
+    /* ⚠ PARTNER_PATH 를 «통째로 set 하지 않는다» — 적은 열쇠만 바꾸는 update 다.
+       통째로 덮으면 지금 이 창에 없는 회사(거래 끝난 곳)의 표시가 통째로 지워진다. */
+    await db.ref(PARTNER_PATH).update(고침);
+    열쇠.forEach(k => { App.partners[k] = 고침[k]; });
+    Pick.open = false;
+    closeModal();
+    App.render();
+    const 올린수 = 열쇠.filter(k => 고침[k].posted).length;
+    toast(올린수 + '곳을 올림으로, ' + (열쇠.length - 올린수) + '곳을 안 올림으로 바꿨습니다.');
+  } catch (e) {
+    열쇠.forEach(k => { if (옛것[k] === undefined) delete App.partners[k]; else App.partners[k] = 옛것[k]; });
+    Pick.err = '저장하지 못했습니다(' + (e && e.code ? e.code : e) + ')'
+      + ' — 파이어베이스 규칙에 «' + PARTNER_PATH + '» 자리가 없을 수 있습니다. '
+      + '하나도 안 바뀌었습니다(화면도 되돌렸습니다).';
+  } finally {
+    Pick.saving = false;
+    if (Pick.open) renderPartnerPick();
+  }
+}
+window.pickSave = pickSave;
+
+/* ★ 창을 «세 조각»으로 갈라 그린다 (찾기칸 / 목록 / 셈).
+   왜 — 한 글자 칠 때마다 창을 통째로 다시 그리면 «커서가 튀고», 체크 한 번에
+   다시 그리면 «굴린 자리가 맨 위로 돌아간다». 272곳에서는 둘 다 못 쓸 지경이 된다.
+   그래서 찾기칸은 손대지 않고, 체크할 때는 «셈만» 고친다. */
+function pickBtnsHtml() {
+  const 보임 = pickVisible();
+  const 걸렀나 = !!(Pick.q || Pick.type);
+  return '<button class="btn" style="padding:3px 9px;font-size:11.5px" onclick="pickAllVisible(1)">'
+    + (걸렀나 ? '보이는 ' + 보임.length + '곳 전부 고르기' : '전부 고르기 (' + 보임.length + ')') + '</button>'
+    + '<button class="btn" style="padding:3px 9px;font-size:11.5px" onclick="pickAllVisible(0)"'
+    + (보임.some(r => Pick.sel[r.key]) ? '' : ' disabled') + '>고른 것 풀기</button>';
+}
+function pickNoteHtml() {
+  /* ⚠ 「전부 고르기」를 종류로 걸러 놓고 누르는 것을 «막지 않는다» — 대신 무엇을 하는지
+     적어 둔다. 업체 종류 「자문」이 홈페이지에 올릴 자문사와 «같지 않아서», 화면이
+     「업체 종류로 자동으로 고르지 않습니다」라고 말하고 있다. 체크만 되고 저장은
+     사람이 누르므로 그 말과 어긋나지 않는다 — 그 사실을 여기 적어 어긋남을 막는다. */
+  if (!Pick.type) return '';
+  return '<div class="sub" style="margin-top:6px">종류 「' + esc(Pick.type) + '」만 보고 있습니다 — '
+    + '<b>체크만 될 뿐 저장은 눌러야 됩니다.</b> 올리지 않을 곳은 눈으로 보고 풀어 주십시오.</div>';
+}
+function pickGridHtml() {
+  const 보임 = pickVisible();
+  if (!보임.length) {
+    return '<div class="empty">' + ((Pick.q || Pick.type) ? '찾는 회사가 없습니다.' : '고를 업체가 없습니다.') + '</div>';
+  }
+  return '<div class="pgrid">' + 보임.map(r =>
+    '<label class="pcel"><input type="checkbox" ' + (Pick.sel[r.key] ? 'checked' : '')
+    + ' onchange="pickToggle(\'' + esc(r.key) + '\')">'
+    + '<span class="nm" title="' + esc(r.name) + '">' + esc(r.name) + '</span>'
+    + (r.typeCode ? '<span class="ty">' + esc(r.typeCode) + '</span>' : '')
+    + '</label>').join('') + '</div>';
+}
+/* ★ 「몇 곳 고름」과 「몇 곳 바뀜」을 갈라 적는다 — 24곳을 골랐어도 이미 다 올라가 있으면
+   바뀌는 것은 0곳이다. 그때 「24곳 저장」이라 적으면 누른 뒤 아무 일도 안 난 것처럼 보인다. */
+function pickFootHtml() {
+  const 고른수 = pickRows().filter(r => Pick.sel[r.key]).length;
+  const 바뀔것 = Object.keys(pickChanges()).length;
+  return '<span class="sub"><b>' + 고른수 + '곳</b> 고름 · 전체 ' + pickRows().length + '곳'
+    + (바뀔것 ? ' · <b>' + 바뀔것 + '곳 바뀜</b>' : ' · 바뀐 것 없음') + '</span>'
+    + '<span style="flex:1"></span>'
+    + '<button class="btn" onclick="closeModal()">닫기</button>'
+    + '<button class="btn pri" onclick="pickSave()"' + (바뀔것 && !Pick.saving ? '' : ' disabled') + '>'
+    + (Pick.saving ? '저장 중…' : (바뀔것 ? 바뀔것 + '곳 저장' : '바뀐 것 없음')) + '</button>';
+}
+
+/* 셈만 고친다 — 체크 한 번에 목록을 다시 그리면 굴린 자리가 맨 위로 돌아간다 */
+function pickCounts() {
+  const b = $('pickBtns'), f = $('pickFoot');
+  if (b) b.innerHTML = pickBtnsHtml();
+  if (f) f.innerHTML = pickFootHtml();
+}
+/* 목록까지 고친다 — 걸러 보기가 바뀐 때다(그때는 맨 위로 가는 것이 맞다) */
+function pickRefresh() {
+  const g = $('pickGrid'), n = $('pickNote');
+  if (!g) { renderPartnerPick(); return; }
+  g.innerHTML = pickGridHtml();
+  if (n) n.innerHTML = pickNoteHtml();
+  pickCounts();
+}
+
+function renderPartnerPick() {
+  let h = '<h2>홈페이지에 올릴 자문사 고르기</h2>'
+    + '<div class="sub">체크한 곳이 자문사현황에 오릅니다. '
+    + '<b>체크를 풀면 내려갑니다.</b> 거래가 끝난 곳은 여기 안 나옵니다.</div>';
+  if (Pick.err) h += '<div class="bar warn" style="margin-top:9px">' + esc(Pick.err) + '</div>';
+
+  /* ⚠ 찾기칸은 이 안에 «한 번만» 그린다 — 고쳐 그리면 치는 도중 커서가 튄다 */
+  h += '<div class="fldbar" style="margin:9px 0 0;flex-wrap:wrap">'
+    + '<input class="find" style="min-width:11rem" placeholder="회사 이름으로 찾기"'
+    + ' value="' + esc(Pick.q) + '" oninput="pickFind(this.value)">'
+    + '<select onchange="pickType(this.value)">'
+    + '<option value=""' + (Pick.type ? '' : ' selected') + '>종류 전체</option>'
+    + pickTypes().map(t => '<option value="' + esc(t.code) + '"'
+        + (Pick.type === t.code ? ' selected' : '') + '>' + esc(t.code) + ' ' + t.n + '</option>').join('')
+    + '</select>'
+    + '<span style="flex:1"></span>'
+    + '<span id="pickBtns" style="display:flex;gap:6px">' + pickBtnsHtml() + '</span>'
+    + '</div>';
+  h += '<div id="pickNote">' + pickNoteHtml() + '</div>';
+  h += '<div id="pickGrid">' + pickGridHtml() + '</div>';
+  h += '<div class="foot" id="pickFoot">' + pickFootHtml() + '</div>';
+
+  openModal(h, true);   // 넓게 — 272곳을 한 칸으로 세우면 열여덟 번 굴려야 한다
+}
 
 /* 메모만 저장 — «올림/안 올림 표시는 그대로 둔다».
    ★ 여기서 true 를 넣으면 「안 올림」으로 표시해 둔 회사가 메모를 적었을 뿐인데
@@ -2797,8 +3020,11 @@ function pullApply() {
 window.pullApply = pullApply;
 
 /* ══════ 덧창 ══════ */
-function openModal(html) {
+/* ★ wide 는 «넓게 열지»를 부르는 쪽이 정한다. 안 넘기면 늘 좁은 창이다 —
+     끄지 않으면 다음에 뜨는 사유 입력 창까지 1000px 로 벌어진다(넓힌 창은 반드시 되돌린다). */
+function openModal(html, wide) {
   $('modalCard').innerHTML = html;
+  $('modalCard').classList.toggle('wide', !!wide);
   $('modal').classList.add('on');
 }
 /* ★ 창을 닫으면 붙여넣기를 «끈다» — 안 끄면 다른 화면에서 Ctrl+V 를 눌러도
@@ -2806,6 +3032,8 @@ function openModal(html) {
 function closeModal() {
   $('modal').classList.remove('on'); Pull.open = false;
   App.logoPasteOn = false; App.logoPick = null;
+  /* 자문사 고르기도 닫힌 것으로 둔다 — 안 끄면 저장이 끝난 뒤 없는 창을 다시 그린다 */
+  Pick.open = false;
 }
 function modalBackdrop(e) { if (e.target === $('modal')) closeModal(); }
 function modalFoot(note) {
@@ -2875,8 +3103,14 @@ function appbarHtml() {
     /* ★ 「홈페이지에 올리기」는 «구성원 갈래를 볼 때»만 보인다.
        늘 보이면 쪽·자문사를 보다가 눌러 구성원이 올라간다 —
        무엇이 올라가는지와 지금 보는 화면이 맞아야 사람이 안 헷갈린다. */
+    /* ★ 자문사 화면의 «으뜸 일»은 어느 회사를 올릴지 고르는 것이다 (대표 지시 2026-09-06).
+       한 곳씩 눌러 고르게 두었더니 272곳 중 올림이 «0곳»이었다 — 쓸 수 없었던 것이다.
+       구성원 화면의 「홈페이지에 올리기」와 같은 자리에 둔다. */
     + (App.group === 'partner'
-        ? '<button class="btn" onclick="openPartnerLogos()" title="자문사 쪽에 보일 로고와 차례를 정합니다">자문사 로고 관리</button>'
+        ? '<button class="btn pri" onclick="openPartnerPick()"'
+          + ' title="업체관리에 있는 회사에서 홈페이지에 올릴 곳을 한 번에 고릅니다">'
+          + '자문사 고르기</button>'
+          + '<button class="btn" onclick="openPartnerLogos()" title="자문사 쪽에 보일 로고와 차례를 정합니다">자문사 로고 관리</button>'
         : '')
     + (App.group === 'members'
         ? '<button class="btn" onclick="publishPeople()"' + (App.publishing ? ' disabled' : '')
