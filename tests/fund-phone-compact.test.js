@@ -75,9 +75,15 @@ test('★④ 표 안 드롭다운을 폰에서 눌러 둔다 — 줄마다 style
 /* ── ② 참여사업장 명부: 머리와 몸통이 같은 칸을 접는가 ── */
 test('★★② 참여사업장 — 머리와 몸통이 «같은 칸»을 접는다', () => {
   const 몸통 = 덩어리('var rows=arr.map(function(s,i){');
-  const at = src.indexOf("'<div style=\"overflow-x:auto\"><table><thead><tr><th>번호</th><th>상호</th>");
-  assert.ok(at > 0, '명부 머리줄을 못 찾았습니다');
-  const 머리 = src.slice(at, src.indexOf('</thead>', at));
+  /* ⚠ 머리줄을 «맨 앞 칸부터» 글자로 찾지 않는다. 앞에 칸이 하나 붙기만 해도
+     (별지15호 ⑩ 「협력」 칸이 그랬다) 못 찾고, 그러면 이 검사가 «접는 자리가
+     어긋났는지»를 아예 못 본다 — 조용히 눈을 감는다.
+     ★ 몸통과 «같은 자리»에서 찾는다 — 그 표의 머리는 몸통 바로 뒤에 온다. */
+  const 몸통자리 = src.indexOf('var rows=arr.map(function(s,i){');
+  const 시작 = src.indexOf('<thead>', 몸통자리);
+  assert.ok(몸통자리 > 0 && 시작 > 0, '명부 머리줄을 못 찾았습니다');
+  const 머리 = src.slice(시작, src.indexOf('</thead>', 시작));
+  assert.match(머리, /<th>상호<\/th>/, '명부 머리줄이 아닙니다 — 딴 표를 잡았습니다');
 
   const h = 접힘표(머리, 'th');
   const b = 접힘표(몸통, 'td');
@@ -144,9 +150,17 @@ test('★⑦ 접은 칸은 편집 폼에 «그대로» 있다 — 보기에서 �
 });
 
 test('★ 지역기금 목록 — 정보·분류를 머리와 몸통에서 «함께» 접는다', () => {
-  const 머리 = src.slice(src.indexOf("<th class=\"mo\">대표자</th>"), src.indexOf("'+regCol+'"));
-  assert.match(머리, /<th class="ph">정보<\/th>/, '완성도 칸을 폰에서 안 접었습니다');
-  assert.match(src, /var regCol=showReg\?'<th class="ph"/, '분류 머리를 안 접었습니다');
+  /* ⚠ 머리를 «글자로» 박아 두지 않는다.
+     2026-09-06 에 머리를 «칸 목록(cols)»에서 만들도록 바꾸자 이 검사가 울었다 —
+     묶음마다 표를 따로 만드는데 폭을 안 정해 두어 충남과 경기의 열이 어긋나던 것을
+     고친, 옳은 고침이었다. 기능은 멀쩡한데 검사가 옛 markup 을 지키고 있었던 것이다.
+     ★ 못 박을 것은 markup 이 아니라 «어느 칸을 어디서 접는가»다.
+       (CLAUDE.md 「검사는 값이 아니라 규칙을 못 박는다」) */
+  const 표 = 덩어리('function fundTable(list,edit,mode){');
+  assert.match(표, /\['정보','ph'/, '완성도 칸을 폰에서 안 접었습니다');
+  assert.match(표, /\['분류','ph'/, '분류 머리를 안 접었습니다');
+  assert.match(표, /\['부담당','mo'/, '부담당을 좁은 화면에서 안 접었습니다');
+  assert.match(표, /\['대표자','mo'/, '대표자를 좁은 화면에서 안 접었습니다');
   const 줄 = 덩어리('function fundRow(f,no,mode,showReg){');
   assert.match(줄, /<td class="ph">'\+chip\+'<\/td>/, '★ 머리만 접고 몸통은 그대로입니다 — 값이 옆으로 밀립니다');
   assert.match(줄, /<td class="ph" onclick="event\.stopPropagation\(\)">'\+\(f\.fund_type/,

@@ -66,6 +66,13 @@ for (const [file, what] of CHECKS) {
       cwd: ROOT, encoding: 'utf8', timeout: 120000,
     });
     const out = (r.stdout || '') + (r.stderr || '');
+    /* SKIP 도 «통과»로 본다 — 다만 무엇을 건너뛰었는지 화면에 남는다.
+       (아래 FORMS·BACKUP 이 쓰던 관례를 여기로 올렸다.)
+       ⚠ 2026-09-06: jsdom 을 쓰는 검사기 둘이 새로 들어왔는데 그 관례를 안 따라
+         require 에서 죽었고, 「열이 어긋났다」가 아니라 «검사기를 못 돌렸다»는 뜻인데도
+         main 이 통째로 빨강이 되어 배포가 멎었다. 검사기 쪽도 함께 고쳤다.
+       ★ 관례를 안 쓰는 검사기는 SKIP 을 찍지 않으니, 여기 한 줄이 그것들을 무르게 하지 않는다. */
+    if (/^SKIP:/m.test(out)) { console.log('  ' + out.trim().split(/\r?\n/)[0]); return; }
     /* 종료 코드만 보면 안 된다 — 검사가 «첫 호출에서 죽어도» 0 이 아닌 값이
        안 나오는 길이 있었다. 통과 문구가 실제로 찍혔는지 함께 본다. */
     assert.ok(/ALL PASS/.test(out),
