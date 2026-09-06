@@ -314,28 +314,17 @@
     var head = b.text.indexOf('>');
     return b.text.slice(head + 1, b.text.length - ('</' + tag + '>').length);
   }
-  /* 표의 «바로 아래» 행만. 손자(안쪽 표의 행)는 안 센다. */
+  /* 표의 «바로 아래» 행만. 손자(안쪽 표의 행)는 안 센다.
+     ⚠ 따로 걸러 낼 것이 없다 — 깊이 세기가 이미 해 준다. 바깥 <hp:tr> 의 블록이
+       안쪽 표를 통째로 품으므로 안쪽 행은 애초에 목록에 오르지 않는다.
+       (전에 여기에 걸러 내는 걸음을 두었는데, 빼도 결과가 같아 «죽은 코드»였다.
+        지울 수 있는 코드를 남기면 다음 사람이 함부로 못 건드린다.) */
   function splitRows(tbl) {
-    var 속 = innerOf(tbl, 'hp:tbl');
-    return tagBlocks(속, 'hp:tr').filter(function (b) {
-      /* 안쪽 표 «속»에 든 행은 뺀다 */
-      return !insideNested(속, b.start);
-    }).map(function (b) { return b.text; });
+    return tagBlocks(innerOf(tbl, 'hp:tbl'), 'hp:tr').map(function (b) { return b.text; });
   }
-  /* 행의 «바로 아래» 칸만 */
+  /* 행의 «바로 아래» 칸만 — 위와 같은 까닭으로 따로 거르지 않는다 */
   function splitCells(tr) {
-    var 속 = innerOf(tr, 'hp:tr');
-    return tagBlocks(속, 'hp:tc').filter(function (b) {
-      return !insideNested(속, b.start);
-    }).map(function (b) { return b.text; });
-  }
-  /* 이 자리가 «안쪽 표» 속인가 — 속이면 내 것이 아니다 */
-  function insideNested(속, at) {
-    var 표 = tagBlocks(속, 'hp:tbl');
-    for (var i = 0; i < 표.length; i++) {
-      if (at > 표[i].start && at < 표[i].end) return true;
-    }
-    return false;
+    return tagBlocks(innerOf(tr, 'hp:tr'), 'hp:tc').map(function (b) { return b.text; });
   }
   /* 조각을 원문 안에서 딱 한 번만 바꾼다 — 같은 모양의 다른 칸을 건드리지 않게 */
   function replaceOnce(hay, oldStr, newStr) {
