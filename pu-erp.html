@@ -57797,6 +57797,69 @@ function MyDeskV2(props){
   );
 }
 
+/* ── 주민번호에서 생년월일 (대표 지시 2026-09-06) ──────────────────────────
+   증명서의 생년월일이 늘 「-」였다. 실측해 보니 까닭이 갈렸다:
+     재직 11명 — 9명은 생년월일이 있고, 2명은 없다
+     퇴사 21명 — «전원» 없다 (급여대장에서 가져올 때 빈칸으로 넣었다)
+   그런데 주민번호는 25명이 갖고 있다. 앞 일곱 자리가 곧 생년월일이라
+   여기서 뽑으면 32명 중 25명이 그 자리에서 채워진다.
+   ⚠ 화면에는 생년월일만 나간다 — 주민번호 자체는 어디에도 그리지 않는다.
+   ⚠ 뒷자리 첫 숫자가 «어느 100년»인지 말해 준다. 이것을 안 보고 「19」를 붙이면
+     2000년대에 태어난 사람의 생년월일이 100년 어긋난다.
+       1·2 → 1900년대(내국인)   3·4 → 2000년대(내국인)
+       5·6 → 1900년대(외국인)   7·8 → 2000년대(외국인)
+       9·0 → 1800년대
+   ⚠ 못 뽑으면 «지어내지 않고» 빈 문자열을 준다 — 증명서에 틀린 날짜가 박히면 안 된다.
+   ⚠ «열세 자리»가 아니면 아예 안 본다. 실측한 25명이 모두 열세 자리다(2026-09-06).
+     길이를 안 보면 사업자번호(「207-87-03540」)를 주민번호 칸에 잘못 넣은 날
+     「2007-87-03」 같은 날짜를 지어내 증명서에 박는다. 모자라면 «빈칸으로 두고»
+     화면이 빨갛게 물어보는 편이 낫다. */
+function birthFromRrn(rrn){
+  var s = String(rrn == null ? '' : rrn).replace(/[^0-9]/g, '');
+  if(s.length !== 13) return '';
+  var yy = s.slice(0,2), mm = s.slice(2,4), dd = s.slice(4,6), g = s.charAt(6);
+  var c = (g === '1' || g === '2' || g === '5' || g === '6') ? '19'
+        : (g === '3' || g === '4' || g === '7' || g === '8') ? '20'
+        : (g === '9' || g === '0') ? '18' : '';
+  if(!c) return '';
+  var m = parseInt(mm, 10), d = parseInt(dd, 10);
+  if(!(m >= 1 && m <= 12) || !(d >= 1 && d <= 31)) return '';
+  return c + yy + '-' + mm + '-' + dd;
+}
+/* 그 사람의 생년월일 — 적어 둔 것이 먼저, 없으면 주민번호에서 뽑는다 */
+function certBirthOf(u){
+  if(!u) return '';
+  var b = String(u.birthDate == null ? '' : u.birthDate).trim();
+  return b || birthFromRrn(u.rrn);
+}
+/* ── 직위별 담당업무 기본 문구 (대표 지시 2026-09-06) ──────────────────────
+   담당업무는 32명 중 «1명»만 적혀 있었다. 그런데 비면 직위를 그대로 옮겨 적어
+   「담당업무: 직원」 같은 증명서가 나갔다 — 직위는 담당업무가 아니다.
+   ⚠ 증명서는 밖으로 나가는 문서라, 안 하던 일을 지어 적으면 안 된다.
+     그래서 문구를 «넓지만 사실인» 말로 둔다. 더 자세히 적을 일이 있으면
+     화면의 「담당업무 직접 입력」이 언제나 이것을 이긴다.
+   ⚠ 표에는 «다른 말을 쓰는» 직위만 적는다. 차장·과장·대리·주임·직원·사무직은
+     모두 같은 문구라 아래 기본값이 그대로 맞다 — 표에 또 적으면 죽은 줄이 되고,
+     지워도 아무 일이 안 일어나 검사가 그것을 못 잡는다(2026-09-06 되돌림 검사에서 걸렸다). */
+var CERT_DUTY_DEFAULT = '노무 지원업무';
+var CERT_DUTY_BY_TITLE = {
+  '대표노무사':'노무법인 운영, 노무자문',
+  '노무사':'노무자문, 사건수임, 컨설팅',
+  '사무장':'사무 총괄 및 노무 지원업무'
+};
+function certDutyOf(u){
+  if(!u) return '';
+  var d = String(u.duties == null ? '' : u.duties).trim() || String(u.jobDuty == null ? '' : u.jobDuty).trim();
+  if(d) return d;
+  var t = String(u.title == null ? '' : u.title).trim();
+  if(CERT_DUTY_BY_TITLE[t]) return CERT_DUTY_BY_TITLE[t];
+  /* 등록부에 없는 직위여도 「노무사」가 들어 있으면 노무사 일이다 */
+  if(t.indexOf('노무사') >= 0) return CERT_DUTY_BY_TITLE['노무사'];
+  /* ★ 여기서 t 를 그대로 돌려주면 「담당업무: 직원」이 도로 나온다 */
+  return CERT_DUTY_DEFAULT;
+}
+try { window.birthFromRrn = birthFromRrn; window.certBirthOf = certBirthOf; window.certDutyOf = certDutyOf; } catch(_){ }
+
 // ============================================================
 // 증명서 발급 (Certificate) - 재직/경력/연봉증명서
 // ============================================================
@@ -57858,6 +57921,9 @@ function Certificate(){
   var ct = useState(company.contactTitle || ''); var contactTitle = ct[0]; var setContactTitle = ct[1];
   var cp = useState(company.contactPhone || ''); var contactPhone = cp[0]; var setContactPhone = cp[1];
   var ds2 = useState(''); var dutyInput = ds2[0]; var setDutyInput = ds2[1];
+  /* 생년월일 — 비워 두면 인사기록(없으면 주민번호)에서 저절로 온다.
+     ⚠ 사람을 바꾸면 반드시 비운다. 안 그러면 앞사람의 생년월일이 그대로 따라간다. */
+  var bs = useState(''); var birthInput = bs[0]; var setBirthInput = bs[1];
 
   var KINDS = [
     { v:'employment', label:'재직증명서', desc:'현재 재직 중임을 증명' },
@@ -58102,7 +58168,10 @@ function Certificate(){
         if(u.retireDate){
           bodyRows.push({ label:'퇴직일', value: formatKDate(u.retireDate) });
         }
-        var dutyText = dutyInput || u.duties || (u.title === '대표노무사' ? '노무법인 운영, 노무자문' : u.title==='노무사' ? '노무자문, 사건수임, 컨설팅' : (u.title||'-'));
+        /* ★ 직위를 담당업무 자리에 옮겨 적던 것을 고쳤다(대표 지시 2026-09-06).
+           예전 마지막 갈래가 (u.title||'-') 라서 「담당업무: 직원」이 나갔다 —
+           직위는 담당업무가 아니다. 직위별 기본 문구는 CERT_DUTY_BY_TITLE 에 있다. */
+        var dutyText = String(dutyInput||'').trim() || certDutyOf(u) || '-';
         bodyRows.push({ label:'담당업무', value: dutyText });
       }
     } else if(kind === 'salary'){
@@ -58139,7 +58208,9 @@ function Certificate(){
         h('div', { style:{ display:'flex' } },
           h('div', { style:{ width:'100px', fontWeight:700, textAlignLast:'justify' } }, '생년월일'),
           h('div', { style:{ marginRight:'8px' } }, ': '),
-          h('div', { style:{ fontFamily:'monospace' } }, u.birthDate || '-')
+          /* ★ 적어 둔 것 → 인사기록 → 주민번호 차례로 본다(대표 지시 2026-09-06).
+             예전에는 u.birthDate 하나만 봐서 퇴사자 21명 전원이 「-」였다. */
+          h('div', { style:{ fontFamily:'monospace' } }, (String(birthInput||'').trim() || certBirthOf(u)) || '-')
         ),
         h('div', { style:{ display:'flex' } },
           h('div', { style:{ width:'100px', fontWeight:700, textAlignLast:'justify' } }, '담당자'),
@@ -58205,7 +58276,7 @@ function Certificate(){
             ),
             h('div', null,
               h('label', { style:{ fontSize:'10.5px', fontWeight:600, color:'#475569', display:'block', marginBottom:'2px' } }, '재직직원'),
-              h('select', { value: users.some(function(x){return x.sid===sid;}) ? sid : '', onChange:function(e){ if(e.target.value) setSid(e.target.value); },
+              h('select', { value: users.some(function(x){return x.sid===sid;}) ? sid : '', onChange:function(e){ if(e.target.value){ setSid(e.target.value); setBirthInput(''); } },
                 style:{ width:'100%', padding:'5px 8px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'11.5px' } },
                 [h('option', { key:'__none', value:'' }, '재직직원 선택')].concat(
                   users.map(function(x){return h('option', { key:x.sid, value:x.sid }, x.name+' ('+x.title+')');}))
@@ -58213,7 +58284,7 @@ function Certificate(){
             ),
             h('div', null,
               h('label', { style:{ fontSize:'10.5px', fontWeight:600, color:'#475569', display:'block', marginBottom:'2px' } }, '퇴직직원'),
-              h('select', { value: retiredUsers.some(function(x){return x.sid===sid;}) ? sid : '', onChange:function(e){ if(e.target.value){ setSid(e.target.value); setKind('career'); } },
+              h('select', { value: retiredUsers.some(function(x){return x.sid===sid;}) ? sid : '', onChange:function(e){ if(e.target.value){ setSid(e.target.value); setKind('career'); setBirthInput(''); } },
                 style:{ width:'100%', padding:'5px 8px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'11.5px' } },
                 [h('option', { key:'__none', value:'' }, retiredUsers.length ? '퇴직직원 선택' : '퇴직직원 없음')].concat(
                   retiredUsers.map(function(x){return h('option', { key:x.sid, value:x.sid }, x.name+' ('+x.title+')');}))
@@ -58223,6 +58294,22 @@ function Certificate(){
               h('label', { style:{ fontSize:'10.5px', fontWeight:600, color:'#475569', display:'block', marginBottom:'2px' } }, '발급일'),
               h(KoreanDatePicker, { value:issueDate, onChange:function(e){setIssueDate(e.target.value);},
                 style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12.5px' } })
+            ),
+            /* ★ 생년월일 (대표 지시 2026-09-06) — 늘 「-」로 비어 있던 자리.
+               비워 두면 인사기록에서, 그것도 없으면 주민번호에서 저절로 온다.
+               인사기록을 고치지 않고 «이 문서에만» 다르게 적고 싶을 때 여기에 넣는다. */
+            h('div', null,
+              h('label', { style:{ fontSize:'10.5px', fontWeight:600, color:'#475569', display:'block', marginBottom:'2px' } },
+                '생년월일',
+                certBirthOf(u) && !birthInput && h('span', { style:{ marginLeft:'4px', fontWeight:500, color:'#16a34a' } }, '자동')),
+              h('input', { type:'text', value:birthInput, onChange:function(e){ setBirthInput(e.target.value); },
+                placeholder: certBirthOf(u) || '예) 1996-04-29',
+                title: certBirthOf(u)
+                  ? '비워 두면 「' + certBirthOf(u) + '」이(가) 그대로 나갑니다'
+                  : '이분은 인사기록에도 주민번호에도 생년월일이 없습니다 — 직접 넣어 주세요',
+                style:{ width:'100%', padding:'7px 10px', fontSize:'12.5px', borderRadius:'6px',
+                  border:'1px solid ' + (certBirthOf(u) || birthInput ? '#cbd5e1' : '#fecaca'),
+                  background: (certBirthOf(u) || birthInput) ? '#fff' : '#fef2f2' } })
             )
           ),
           h('div', { style:{ marginTop:'6px' } },
