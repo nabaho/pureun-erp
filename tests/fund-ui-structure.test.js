@@ -137,7 +137,10 @@ test('서류 원본은 사진첩에 두고 기금은 참조만 갖는다', () =>
   assert.match(SRC, /ref\(NS\+'\/funds\/'\+fid\+'\/scans\/'\+kind\)/, '스캔 참조 경로가 없다');
   assert.ok(!/scans\/[^\n]{0,120}(dataUrl|base64|src:)/.test(SRC),
     '이미지를 실시간DB에 넣으면 기금 목록 로딩이 통째로 느려진다');
-  assert.match(SRC, /readDocInto\(zid,kind,file\)/, '사진첩 사진도 기존 판독 경로를 타야 한다(두 벌 금지)');
+  /* 2026-09-06: 직접 올린 서류도 사진첩에 남기게 하면서 «어디서 왔는지» 깃발을 붙였다
+     (fromAlbum) — 사진첩에서 온 것은 이미 이어져 있어 두 번 넣으면 사본이 쌓인다.
+     같은 경로를 타는 것이 여기서 지킬 뜻이다. 깃발이 붙는 것은 괜찮다. */
+  assert.match(SRC, /readDocInto\(zid,kind,file(,true)?\)/, '사진첩 사진도 기존 판독 경로를 타야 한다(두 벌 금지)');
 });
 
 test('결산 확정은 그때의 수치를 스냅샷으로 남긴다', () => {

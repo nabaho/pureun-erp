@@ -5473,7 +5473,7 @@ function pickAlbumPhoto(id){
     return _dataUrlToFile(src,kind+'.jpg');
   }).then(function(file){
     if(S.fundId!==fid) return;                                     // 그 사이 다른 기금으로 이동 → 버림
-    readDocInto(zid,kind,file);                                    // 기존 판독 경로를 그대로 탄다
+    readDocInto(zid,kind,file,true);                               // 이미 이어 뒀다 — 두 번 넣지 않는다
   }).catch(function(e){
     var bb=$('pk-body');
     var msg='가져오지 못했습니다: '+esc((e&&e.message)||e)
@@ -6182,7 +6182,64 @@ function charterZone(){
         +(list.length>1?' <span class="muted">'+list.length+'판</span>':'')+'</button>':'')
     +'</span>';
 }
-function readDocInto(zid,kind,file){
+/* ══ 직접 올린 서류를 남긴다 ══
+   [🖼 사진첩에서 고르기]로 넣으면 원본이 이어져 나중에 [보기]로 다시 본다.
+   그런데 파일을 «직접» 올린 길은 판독값만 칸에 넣고 끝나, 원본이 아무 데도 안 남았다.
+   그러면 「무엇을 보고 넣었지」를 되짚지 못한다 — 잘못을 찾을 수가 없다.
+
+   그래서 올린 파일을 사진첩에 넣고(savePhoto) 이 기금에 잇는다(saveScanRef).
+   ⚠ 남기기가 실패해도 «판독은 살린다» — 값은 이미 칸에 들어갔다.
+     원본을 못 남겼다는 것만 알린다. 조용히 넘기면 남은 줄 안다.
+   ⚠ 사진첩에서 온 파일은 이미 이어져 있다 — 두 번 넣지 않는다(fromAlbum). */
+function _docToImage(file){
+  if(!/\.pdf$/i.test(file.name||'')){
+    return new Promise(function(res,rej){
+      var img=new Image(), url=URL.createObjectURL(file);
+      img.onload=function(){ try{ res(_fitCanvas(img,img.naturalWidth,img.naturalHeight)); }
+        finally{ URL.revokeObjectURL(url); } };
+      img.onerror=function(){ URL.revokeObjectURL(url); rej(new Error('그림을 열지 못했습니다')); };
+      img.src=url;
+    });
+  }
+  /* PDF 는 «첫 쪽»을 그림으로 뜬다 — 사진첩은 그림으로 보관한다 */
+  return file.arrayBuffer().then(function(buf){
+    return pdfPageCanvases(new Uint8Array(buf),1);
+  }).then(function(cvs){
+    if(!cvs||!cvs.length) throw new Error('PDF 첫 쪽을 그리지 못했습니다');
+    return _fitCanvas(cvs[0],cvs[0].width,cvs[0].height);
+  });
+}
+function _fitCanvas(src,w,h){
+  var sp=PuPhotoStore.uploadSpec(true);                       // 서류 규격(긴 변 2600)
+  var mk=function(edge,q){
+    var r=Math.min(1,edge/Math.max(w,h));
+    var c=document.createElement('canvas');
+    c.width=Math.max(1,Math.round(w*r)); c.height=Math.max(1,Math.round(h*r));
+    c.getContext('2d').drawImage(src,0,0,c.width,c.height);
+    return c.toDataURL('image/jpeg',q);
+  };
+  return { full:mk(sp.maxEdge,sp.quality), thumb:mk(sp.thumbEdge,0.7) };
+}
+function _keepDocOriginal(kind,file,fid){
+  if(!photoStoreReady()||!PuPhotoStore.savePhoto||!PuPhotoStore.newId)
+    return Promise.reject(new Error('사진첩과 연결되지 않았습니다'));
+  var f=funds[fid]||{}, now=Date.now();
+  return _docToImage(file).then(function(im){
+    var id=PuPhotoStore.newId();
+    return PuPhotoStore.savePhoto({ id:id, full:im.full, thumb:im.thumb,
+      meta:{ upAt:now, takenAt:now, kind:docZoneLabel(kind),
+             /* 제목에 서류 이름과 기금 이름을 담는다 —
+                다음에 [🔎 찾기]가 이 사진을 스스로 찾아낸다(docFindScore). */
+             company:(f.short_name||f.name||''),
+             note:docZoneLabel(kind)+' · '+(f.short_name||f.name||''),
+             byName:(S.user||'') }
+    }).then(function(){ return { id:id, year:PuPhotoStore.yearOf(now) }; });
+  }).then(function(r){
+    saveScanRef(fid,kind,{owner:(PuPhotoStore.myUid&&PuPhotoStore.myUid())||'',year:r.year,id:r.id});
+    return r;
+  });
+}
+function readDocInto(zid,kind,file,fromAlbum){
   if(!file) return;
   var def=DOC_PARSE[kind], nm=file.name||'', isPdf=/\.pdf$/i.test(nm);
   /* 원본을 붙잡아 둔다 — 값만 보여 주면 오독을 알아챌 수가 없다(경력관리 편집 창과 같은 결).
@@ -6197,6 +6254,14 @@ function readDocInto(zid,kind,file){
   var done=function(txt,viaOcr){
     if(S.fundId!==myFid) return;    // 판독 도중 다른 기금으로 이동 → 결과 버림
     if(_docSrc&&_docSrc.kind===kind){ _docSrc.text=String(txt||''); _docSrc.ocr=!!viaOcr; }
+    /* 값이 나왔으면 원본도 남긴다 — 값과 원본은 늘 함께 있어야 되짚을 수 있다 */
+    if(!fromAlbum&&!(funds[myFid]&&(funds[myFid].scans||{})[kind]))
+      _keepDocOriginal(kind,file,myFid).then(function(){
+        if(S.fundId===myFid) renderFund();
+        toast('원본을 사진첩에 남기고 이 기금에 연결했습니다');
+      }).catch(function(e){
+        toast('판독은 됐지만 원본을 못 남겼습니다: '+((e&&e.message)||e)+' — [🖼]로 사진첩에서 골라 이어 주세요','warn');
+      });
     /* 정관은 칸에 나눠 넣지 않는다 — 읽은 글자를 그대로 들고 확인 창으로 간다 */
     if(def.full){ charterRead(txt,viaOcr,zid); return; }
     var got=def.fn(txt), keys=Object.keys(got).filter(function(k){return got[k];});
