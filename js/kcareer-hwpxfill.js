@@ -509,8 +509,22 @@
     for (var i = 0; i < LEVELS.length; i++) if (t === LEVELS[i]) return LEVELS[i];
     return '';
   }
+  /* ── 목록 «줄 안»에서 빈 것으로 볼 글자인가 ──
+     ⚠★ 낱개 칸의 「-」와 목록 줄의 「-」는 뜻이 다르다.
+       · 낱개 칸  : 「-」는 «해당없음»이라는 대답이다 — 덮으면 안 된다(isPlaceholder 는 그대로).
+       · 목록 줄  : 서식이 미리 그어 둔 «빈 자리»다.
+     실측 2026-09-06 (대표 이력서 2쪽 학력 표):
+         [년 월 ~ 년 월 | 고등학교 | - | ---- | -]
+       「----」(넉 자)는 자리표인데 「-」(한 자)는 아니어서 구역이 머리줄 다음에서 끊겼다
+       → 「학력 표 · 빈 0줄」 → 학력 칸이 낱개 14개로 흩어져 「채운 칸이 없습니다」로 끝났다.
+     ⚠ 이 자를 낱개 칸 판정(isPlaceholder)에 합치지 말 것 — 「해당없음」을 덮게 된다. */
+  var DASH_ONLY = /^[\-–—ー~〜]+$/;
+  function isRowBlank(text) {
+    var t = String(text == null ? '' : text).trim();
+    return !t || isPlaceholder(t) || DASH_ONLY.test(t);
+  }
   function rowIsEmpty(cells) {
-    for (var i = 0; i < cells.length; i++) if (!isBlankish(cells[i])) return false;
+    for (var i = 0; i < cells.length; i++) if (!isRowBlank(cellText(cells[i]))) return false;
     return true;
   }
   /* ── 목록 표 채우기 ──
@@ -734,6 +748,9 @@
     tagBlocks: tagBlocks, hasInnerTable: hasInnerTable, ownPart: ownPart,
     /* 자리표 자·문단 채우기 — 검사와 칸 지도가 «같은 자»를 쓰게 내보낸다 */
     isPlaceholder: isPlaceholder, isBlankish: isBlankish, placeholderKey: placeholderKey,
+    /* ⚠ 목록 줄 판정은 «이 하나»를 쓴다 — 칸 지도(kcareer-formmap)도 같은 자를 쓴다.
+       두 곳에 따로 두면 「지도엔 빈 줄인데 안 채워지는」 어긋남이 생긴다. */
+    isRowBlank: isRowBlank,
     fillParagraphs: fillParagraphs, paraText: paraText,
     /* 칸 지도(kcareer-formmap.js)가 «같은 자»를 쓰도록 내보낸다 —
        따로 만들면 두 곳의 셈이 어긋나 「지도에는 있는데 안 채워지는 칸」이 생긴다 */

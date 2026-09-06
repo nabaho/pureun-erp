@@ -62,10 +62,14 @@
      ⚠ 이력서 학력·경력 표는 「년  월 ~  년  월」이 미리 박혀 있고, 학력은
        「고등학교」처럼 급이 박혀 있다. 그것을 값으로 보면 채울 줄이 0 이 된다
        (실측 2026-09-05: 학력·경력이 한 줄도 안 들어갔다). */
+  /* ⚠ 목록 줄 판정은 X.isRowBlank «하나»를 쓴다 — 여기에 자를 새로 만들지 말 것.
+     낱개 칸의 「-」(해당없음)와 목록 줄의 「-」(빈 자리)는 뜻이 다르고,
+     그 갈림을 X.isRowBlank 가 들고 있다(kcareer-hwpxfill.js 주석 참고). */
   function 채울수있나(cells) {
     return cells.every(function (t) {
       var v = String(t || '').trim();
-      return !v || 자리표(v) || (X.levelOf && X.levelOf(v));
+      var 빔 = X.isRowBlank ? X.isRowBlank(v) : (!v || 자리표(v));
+      return 빔 || (X.levelOf && X.levelOf(v));
     });
   }
 
