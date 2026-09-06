@@ -68,7 +68,11 @@ function makeBox(opts){
     W.match(/var paySrc=null, _payT=null;/)[0] + '\n'
     + grab('payLoad') + '\n' + grab('_payKey') + '\n' + grab('_payMon') + '\n' + grab('_payYm') + '\n'
     + grab('payRoll') + '\n' + grab('payLine') + '\n' + grab('payItemOf') + '\n'
-    + grab('payMakeItem') + '\n' + grab('payPutLine') + '\n'
+    /* 2026-09-05 — 급여 업무의 담당을 푸른이알피 업체관리에서 찾아 넣는다.
+       coSrc(업체 명단)·_peU2N(사번→이름)은 앱이 이미 들고 있는 것이라 흉내만 낸다. */
+    + 'var coSrc=' + JSON.stringify(opts.co || null) + ';\n'
+    + 'var _peU2N=' + JSON.stringify(opts.u2n || {}) + ';\n'
+    + grab('payMgrOf') + '\n' + grab('payMakeItem') + '\n' + grab('payPutLine') + '\n'
     + 'var _payBusy=false;\n' + grab('paySync') + '\n'
     + 'this.load=payLoad; this.roll=payRoll; this.line=payLine; this.itemOf=payItemOf;'
     + 'this.make=payMakeItem; this.put=payPutLine; this.sync=paySync;', box);
@@ -202,13 +206,16 @@ test('급여로 만든 업무가 있으면 그것에 붙인다 — 자문 업무
   assert.equal(b.itemOf('가나전자')._id, 'W2');
 });
 
-test('만들 때 구분은 「급여」, 담당은 미지정으로 둔다 — 아무에게나 떠넘기지 않는다', async () => {
+/* 2026-09-05 대표 지시 「급여에 대한 대응도 모두 업무에 포함」 —
+   업체관리에서 담당을 찾아 넣는다. 못 찾으면 예전처럼 미지정이다. */
+test('업체관리에서 담당을 못 찾으면 미지정으로 둔다 — 아무에게나 떠넘기지 않는다', async () => {
   const b = makeBox({ items:{} });
   await b.make('㈜가나전자');
   const v = b._log.set[0].v;
   assert.equal(v.cat, '급여');
   assert.equal(v.company, '㈜가나전자');
   assert.equal(v.pe_nomgr, true);
+  assert.equal(v.mgr_main.name, '');
   assert.equal(v.pay_site, '가나전자');
   assert.match(b._log.set[0].p, /^work_erp\/items\/PAY-/);
 });

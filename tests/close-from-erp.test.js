@@ -41,7 +41,10 @@ test('★ 여기가 «열려 있을 때만» 손댄다 — 이미 닫힌 건은 
 });
 
 test('★ 저기가 «닫혀 있을 때만» 닫는다', () => {
-  assert.match(닫기, /if\(_rc&&_peClosed\(_rc\)\)\{/);
+  /* 2026-09-05 — 자문(업체관리)이 갈래로 들어오면서 «어느 갈래인가»를 함께 넘긴다.
+   업체는 inactive·terminated·계약종료일 지남도 「끝」이지만, 그 말을 사건·컨설팅에
+   그대로 쓰면 살아 있는 건이 조용히 사라진다. */
+assert.match(닫기, /if\(_rc&&_peClosed\(_rc,it\.ref&&it\.ref\.type\)\)\{/);
 });
 
 test('⚠ 그 반대(여기서 닫고 저기가 열림)는 손대지 않는다 — 두 곳이 서로 되돌리며 싸운다', () => {
@@ -52,7 +55,7 @@ test('⚠ 그 반대(여기서 닫고 저기가 열림)는 손대지 않는다 �
 });
 
 test('종료 판정은 이미 있는 잣대를 쓴다 — 새로 만들지 않았다', () => {
-  assert.match(닫기, /_peClosed\(_rc\)/);
+  assert.match(닫기, /_peClosed\(_rc,it\.ref&&it\.ref\.type\)/);
   // _peClosed 는 푸른이알피 isItemClosed 와 같은 규칙이다
   const C = grab(W, '_peClosed');
   ['closed', 'cancelled', 'transferred'].forEach(s =>
