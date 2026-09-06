@@ -764,6 +764,7 @@ table.daejo td.dj2{padding:0}
       <!-- 보기 — 무엇을 «볼» 것인가 -->
       <span class="tgroup" id="tg-view"><span class="tglbl">보기</span>
         <button class="stbtn" id="wd-on" title="변경 전/후에서 바뀐 낱말만 색으로 짚어 줍니다(빠진 말=붉은 취소선, 넣은 말=파란 밑줄). 변경 후 칸을 클릭하면 표시가 걷히고 그냥 편집됩니다.">🔍 바뀐 낱말</button>
+        <button class="stbtn" id="pv-daejo" title="지금 고치고 있는 내용을 실제 내려받을 한글 파일로 만들어 그대로 보여 줍니다 — 쪽번호·정렬·표 선까지 같습니다. [↗ 새 창]으로 띄우면 이 창과 나란히 볼 수 있습니다">📄 한글 모양</button>
       </span>
       <!-- 고치기 — 조문을 «손대는» 것 -->
       <span class="tgroup" id="tg-edit"><span class="tglbl">고치기</span>
@@ -3400,6 +3401,18 @@ function refreshDaejoSub(){
   saveWorkState();   // 편집할 때마다 이 브라우저에 자동 보관(F5에도 유지)
 }
 /* 문서 내려받기 전 확인 — 미확인 가지번호·문안 미작성은 반드시 알리고 진행 여부를 묻는다 */
+/* 미리보기용 안내줄 — 내려받기 확인창(docGateOk)과 같은 내용을 «막지 않고» 보여 준다.
+   미리보기는 파일을 만들지 않으니 확인을 받을 것이 없다. 고치는 동안 몇 번이고
+   열어 보는 화면인데 그때마다 확인창이 뜨면 오히려 안 보게 된다. */
+function docPreviewWarn(pend,skipped){
+  pend=pend||[]; skipped=+skipped||0;
+  if(!pend.length&&!skipped)return "";
+  const bits=[];
+  if(pend.length)bits.push("위치·번호가 확인되지 않은 가지번호 신설 <b>"+pend.length+"건</b> — "
+    +pend.slice(0,8).map(escapeH).join(", ")+(pend.length>8?" 외 "+(pend.length-8)+"건":""));
+  if(skipped)bits.push("문안이 비어 있는 신설 <b>"+skipped+"건</b>은 이 문서에서 빠집니다");
+  return '<span style="color:var(--warn)">⚠ '+bits.join("<br>⚠ ")+"</span><br>";
+}
 function docGateOk(){
   const pend=branchPending(), noTxt=daejoDocSkipped();
   if(!pend.length&&!noTxt)return true;
@@ -3452,6 +3465,8 @@ $("rz-reset").addEventListener("click",()=>{
 $("pg-auto").addEventListener("click",()=>{PAGE_AUTO=true;renderEditor();saveWorkState();});
 $("pg-portrait").addEventListener("click",()=>{PAGE_AUTO=false;PAGE_LAND=false;renderEditor();saveWorkState();});
 $("pg-landscape").addEventListener("click",()=>{PAGE_AUTO=false;PAGE_LAND=true;renderEditor();saveWorkState();});
+/* 고치던 자리에서 바로 한글 모양 확인 — 진입점이 ④ 제출 서류에만 있어 편집 중에는 닿지 못했다 */
+$("pv-daejo").addEventListener("click",()=>previewDoc("daejo"));
 $("mode-partial").addEventListener("click",()=>{REV_MODE="partial";renderEditor();});
 $("mode-full").addEventListener("click",()=>{REV_MODE="full";renderEditor();});
 $("add-ins").addEventListener("click",()=>{
@@ -3887,7 +3902,6 @@ function downloadOneDoc(key){
 let PV_KEY=null, PV_ALL=false;
 async function previewDoc(key,all){
   if(!CUR_ITEMS.length){alert("먼저 조문 검토·편집을 생성하세요.");return;}
-  if((key==="daejo"||key==="full")&&!docGateOk())return;
   PV_KEY=key; PV_ALL=!!all;
   const box=$("docpv-pages"), note=$("docpv-note");
   $("docpv-sub").textContent=DOC_LABEL[key]||"";
@@ -3907,7 +3921,8 @@ async function previewDoc(key,all){
     await window.renderHwpPreview(u8.buffer, box, PV_ALL?0:3);
     const pages=box.querySelectorAll("svg").length;
     fitDocPv();                                     // 한 쪽이 화면에 다 들어오게 배율 조정
-    note.innerHTML=`용지 <b>${land?"가로":"세로"}</b> · 파일 크기 ${Math.round(u8.length/1024)}KB`
+    const warn=(key==="daejo"||key==="full")?docPreviewWarn(branchPending(),daejoDocSkipped()):"";
+    note.innerHTML=warn+`용지 <b>${land?"가로":"세로"}</b> · 파일 크기 ${Math.round(u8.length/1024)}KB`
       +` · 실제 내려받을 한글 파일을 그대로 렌더한 화면입니다(쪽번호·정렬 포함)`;
     $("docpv-all").style.display=PV_ALL?"none":"";
   }catch(e){
@@ -6132,6 +6147,8 @@ addPopBtn("ov-full",()=>siteLabel()+" — 원본 전문","#full-body");
 addPopBtn("ov-final",()=>siteLabel()+" — 최종 확인","#fin-body");
 addPopBtn("ov-stdcmp",()=>"표준규칙 대조 — "+siteLabel(),".body",{w:1250,h:850});
 goFlowStep(1);   /* 처음에는 ① 넣기 — 설정 줄을 펼친다 */
+/* 한글 모양을 별창으로 — 편집 창은 본 화면에 두고 다른 모니터에서 나란히 본다 */
+addPopBtn("ov-docpv",()=>siteLabel()+" — "+(DOC_LABEL[PV_KEY]||"서식")+" (한글 모양)",".body",{w:1250,h:900});
 renderPreview();updateArchCnt();
 migrateWip();    // 옛 임시저장(WIP)이 남아 있으면 통합 저장으로 이관
 try{ showDash(localStorage.getItem("pureun_rules_dash_open_v1")!=="0"); }catch(e){ showDash(true); }
