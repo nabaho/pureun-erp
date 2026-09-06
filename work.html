@@ -9688,12 +9688,29 @@ var PE_CKIND={consult:'상담사항',company:'업체계약',case:'사건계약',
    한 줄도 건드리지 않는다(이관은 옮기기가 아니라 복사다). 넘어간 쪽이
    sourceContractNo 에 계약번호를 남기므로 거꾸로 찾는다.
    ⚠ 업체(companies)는 PE_KEYS 에 없다 — 이관 대상이라 여기서는 함께 본다. */
-var PE_XFER=[['companies','업체'],['cases','사건'],['consultings','컨설팅'],
-  ['funds','기금'],['other_projects','기타사업']];
+/* 셋째 칸은 «우리 갈래 이름»이다 — 이 표로 「계약 업무를 만들까 말까」를 정하므로
+   이 기기 캐시(_ls)만 믿으면 캐시가 빈 새 브라우저에서 잘못 만들어진다.
+   마스터를 읽어 뒀으면 그것을 먼저 쓴다(peXferMap). */
+var PE_XFER=[['companies','업체','companies'],['cases','사건','case'],
+  ['consultings','컨설팅','consulting'],['funds','기금','fund'],
+  ['other_projects','기타사업','other']];
 /* 한 번 그릴 때마다 한 번만 만든다 — 줄마다 저장소를 훑으면 느리다.
    rowHTML 은 renderMy 바깥 함수라, 안에 두면 못 본다(실제로 못 봤다). */
 var _xmap=null;
 function xferRefresh(){ try{ _xmap=peXferMap(); }catch(e){ _xmap={}; } }
+/* 이관표를 믿어도 되나 — 넘어갈 수 있는 갈래를 «모두» 읽어 뒀을 때만 참이다.
+   ⚠ 하나라도 못 읽었으면 「안 넘어갔다」가 거짓일 수 있고, 그 거짓으로 업무를 만들면
+     pe_seen 에 남아 사람이 손으로 지워야 한다. 모르면 «안 만드는» 쪽이 안전하다. */
+function xferReady(){
+  return PE_XFER.every(function(p){ return !p[2]||!!peMaster[p[2]]; });
+}
+/* 이 계약이 «이미» 넘어갔나 — 넘어간 쪽이 sourceContractNo 에 계약번호를 남긴다 */
+function peXferredNow(x,map){
+  var no=String((x&&x.contractNo)||'').trim();
+  if(!no) return false;
+  var v=(map||{})[no];
+  return !!(v&&v.length);
+}
 function xferOf(it){
   if(!it||it.cat!=='계약'||!_xmap) return null;   // 계약만 해당한다
   var v=_xmap[String(it.no||'').trim()];
@@ -9702,7 +9719,9 @@ function xferOf(it){
 function peXferMap(){
   var m={};
   PE_XFER.forEach(function(pair){
-    (_ls(pair[0])||[]).forEach(function(r){
+    /* 마스터가 있으면 그것이 진짜다 — 캐시는 낡을 수 있고, 낡은 표로 판단하면
+       이미 넘어간 계약을 다시 업무로 만들어 «계약과 사건이 둘 다» 열려 있게 된다. */
+    ((pair[2]&&peMaster[pair[2]])||_ls(pair[0])||[]).forEach(function(r){
       var src=String((r&&r.sourceContractNo)||'').trim(); if(!src) return;
       (m[src]=m[src]||[]).push(pair[1]);
     });
@@ -10002,6 +10021,9 @@ function peAutoSync(){
 
     // 현재 마스터 상태: live=존재하는 전체 id, cand=미종료 후보
     var cand=[], live={};
+    /* 이관표를 여기서 한 번 만든다 — 계약 한 건마다 저장소를 훑으면 느리다 */
+    var xmap={}; try{ xmap=peXferMap(); }catch(e){}
+    var xrdy=xferReady();
     PE_DEF.forEach(function(d){
       var arr=peMaster[d[0]]; if(!arr) return;
       live[d[0]]={};
@@ -10010,9 +10032,18 @@ function peAutoSync(){
         live[d[0]][safeKey(String(x.id))]=1;
         if(_peClosed(x,d[0])) return;
         var c0=_peCandOf(d[0],d[1],d[2],d[3],d[4],x,sid2name,d[5]);
-        // 이관될 계약은 «새 업무로 만들지만» 않는다. 후보에서 통째로 빼면
-        // 이미 연결돼 있는 계약 업무가 담당자·업무명 미러까지 끊긴다.
-        if(d[0]==='contract'&&peWillTransfer(x)) c0.xfer=1;
+        /* ★ «이미 넘어간» 계약만 새로 만들지 않는다 (대표 지시 2026-09-06
+           「계약관리부터 모든 사업들을 포함시켜라」).
+           예전에는 «넘어갈 종류»면 무조건 안 만들었다. 그래서 상담접수·계약협의
+           중인 건이 — 담당자가 붙어 실제로 일하고 있는데도 — 업무관리 어느 화면에도
+           없었다. 넘어가는 것은 나중 일이고, 그때까지 한 일은 어딘가 적혀야 한다.
+           ⚠ 넘어가면 그 계약 업무는 «종료(이관)»로 빠진다(아래 ② 이관 종료).
+             그것이 없으면 계약과 사건이 둘 다 열려 있게 된다 —
+             대표가 2026-08 에 「계약에 남아 있다」고 알려 준 바로 그 사고다.
+           ⚠ 마스터를 다 못 읽었으면 예전 잣대(종류)로 돌아간다. 모르면 안 만든다.
+           ⚠ 후보에서 통째로 빼지는 않는다 — 이미 연결된 계약 업무가
+             담당자·업무명 미러까지 끊긴다. */
+        if(d[0]==='contract'&&(xrdy?peXferredNow(x,xmap):peWillTransfer(x))) c0.xfer=1;
         cand.push(c0);
       });
     });
@@ -10069,6 +10100,25 @@ function peAutoSync(){
             up[P+'status']=(END_BY_KEY[_w]||END_WAYS[0])[1];
             if(_w==='transfer'&&_rc.transferredTo) up[P+'end_to']=String(_rc.transferredTo);
             var _rr=peResult(_rc); if(_rr) up[P+'end_result']=_rr;
+            up[P+'state_at']=new Date().toISOString();
+            closed++;
+          }
+        }
+        /* ★ 넘어간 계약은 종료(이관)로 뺀다 (대표 지시 2026-09-06).
+           푸른이알피는 원본 계약을 한 줄도 «안 건드린다» — 이관은 옮기기가 아니라
+           복사다. 그래서 계약 쪽은 영영 「진행중」으로 남고, 넘어간 사건·컨설팅과
+           나란히 두 건이 된다. 여기서 닫아 줘야 한 건이 된다.
+         ⚠ 기록은 그대로 남는다 — 상담 단계에서 적은 것이 종료 화면에서 이어 보인다.
+         ⚠ 사람이 이미 손수 종료했으면(state_at 이 더 나중) 건드리지 않는다.
+         ⚠ 이관표를 못 믿을 때는 아무것도 안 한다 — 잘못 닫으면 일하던 건이 사라진다. */
+        if(xrdy&&it.state!=='done'&&catNorm(it.cat)==='계약'){
+          var _xg=xmap[String(it.no||'').trim()];
+          if(_xg&&_xg.length){
+            up[P+'state']='done';
+            up[P+'done_date']=todayStr();
+            up[P+'end_way']='transfer';
+            up[P+'status']=(END_BY_KEY.transfer||END_WAYS[0])[1];
+            up[P+'end_to']=_xg.join('·');
             up[P+'state_at']=new Date().toISOString();
             closed++;
           }
