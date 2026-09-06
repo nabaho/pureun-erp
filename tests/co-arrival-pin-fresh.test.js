@@ -16,7 +16,8 @@
    이 검사가 못 박는 것 —
      ① 하루짜리 잣대가 따로 있고, 이틀짜리(arvIsNew)를 안 건드린다
      ② 끌어올리기가 «맨 마지막»에 온다 — 머리글 정렬·내 담당보다 뒤
-     ③ 줄에 색이 깔리되, 폐업·중단을 «덮지 않는다»
+     ③ 줄에 색이 깔리되, 계약 중단을 «덮지 않는다»
+        (폐업 표시는 2026-09-06 에 없앴다 — 그때 이 검사에서도 함께 뺐다)
      ④ 색만으로 가르지 않는다 (왼쪽 띠도 함께)
 
    실행: node --test tests/*.test.js */
@@ -89,21 +90,21 @@ test('★★ 끌어올리기가 «맨 마지막»에 온다 — 앞에 두면 �
 
 /* ══════ ③④ 색 ══════ */
 
-test('★★ 색이 폐업·중단을 «덮지 않는다» — 그 둘이 더 큰 사실이다', () => {
-  const at = src.indexOf('if(arvIsFresh(co) && !co.closedBiz && !co.suspended){');
+test('★★ 색이 계약 중단을 «덮지 않는다» — 그쪽이 더 큰 사실이다', () => {
+  const at = src.indexOf('if(arvIsFresh(co) && !co.suspended){');
   assert.ok(at > 0,
-    '★★ 폐업·중단까지 파랗게 칠하면, 문 닫은 사업장이 멀쩡해 보입니다');
-  /* 앞에서 폐업·중단 색을 먼저 정하고, 그 «뒤»에만 덮어쓴다 */
+    '★★ 중단까지 파랗게 칠하면, 멈춘 계약이 멀쩡해 보입니다');
+  /* 앞에서 중단 색을 먼저 정하고, 그 «뒤»에만 덮어쓴다 */
   const head = bare(src.slice(at - 900, at));
-  assert.match(head, /co\.closedBiz/, '★ 폐업 색이 먼저 정해져 있어야 합니다');
+  assert.match(head, /co\.suspended/, '★ 중단 색이 먼저 정해져 있어야 합니다');
 });
 
 test('★★ 색만으로 가르지 않는다 — 왼쪽 띠도 함께', () => {
-  const at = src.indexOf('if(arvIsFresh(co) && !co.closedBiz && !co.suspended){');
+  const at = src.indexOf('if(arvIsFresh(co) && !co.suspended){');
   const body = bare(src.slice(at, at + 400));
   assert.match(body, /background:'#eff6ff'/, '★ 옅은 색이 없으면 「다른 색」이 아닙니다');
   assert.match(body, /borderLeft:'4px solid #60a5fa'/,
     '★★ 색만으로 가르면, 색을 잘 못 가리는 사람에게는 아무 표시도 없는 것과 같습니다');
-  /* 폐업·중단이 쓰는 띠 두께와 같아야 줄이 들쭉날쭉해 보이지 않는다 */
+  /* 계약 중단이 쓰는 띠 두께와 같아야 줄이 들쭉날쭉해 보이지 않는다 */
   assert.match(body, /4px solid/, '★ 띠 두께가 다르면 표가 어긋나 보입니다');
 });
