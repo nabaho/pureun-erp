@@ -8,7 +8,17 @@
 const fs = require('fs'), path = require('path');
 const W = path.resolve(__dirname, '..', '..');
 const src = fs.readFileSync(path.join(W, 'fund.html'), 'utf8');
-const { JSDOM } = require('jsdom');
+/* ⚠ jsdom 은 이 저장소에 «안 깔려 있다». 없으면 SKIP 이라 말하고 넘어간다 —
+     check_forms.js·check_backup.js 가 쓰는 그 관례다. 그냥 require 하면
+     검사가 죽고, 「열이 어긋났다」가 아니라 «검사기가 없다»는 뜻인데도
+     main 이 통째로 빨강이 된다(2026-09-06 에 실제로 그랬다).
+     설치: npm i jsdom --no-save */
+let JSDOM;
+try { JSDOM = require('jsdom').JSDOM; }
+catch (e) {
+  console.log('SKIP: jsdom 이 없어 참여사업장 명부 칸 검사를 건너뜁니다 (npm i jsdom --no-save)');
+  process.exit(0);
+}
 const dom = new JSDOM('<!doctype html><body></body>');
 global.window = dom.window; global.document = dom.window.document;
 
