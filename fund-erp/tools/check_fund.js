@@ -1338,7 +1338,25 @@ ok('사업장 서류: 참조가 subsidy_chk 안에 산다', src.includes("NS+'/s
 ok('열 전체 켜기가 참조를 건드리지 않는다', src.includes("fbDb.ref(_subChkPath()+'/site').update(up)"));
 ok('사업장 서류: 보기·해제', src.includes('function openSiteScan') && src.includes('function unlinkSiteScan'));
 ok('사업장 서류는 판독하지 않고 연결만', src.includes('if(_pick.sid){'));
-ok('고르는 사이 연도가 바뀌어도 그 해에 저장', src.includes("fid:S.fundId,sid:sid||'',yr:S.year")
+/* 지킬 뜻은 «열 때의 기금·해를 담아 두고, 저장할 때 그것을 쓴다»는 것이다.
+   예전에는 그 한 줄을 통째로 «글자»로 붙들었는데, 근로자대표 재직증명서 갈래가 붙어
+   줄이 갈라지자 뜻은 그대로인데 검사가 깨졌다.
+   ⚠ 그렇다고 파일 «전체»에서 찾으면 안 된다 — _pick 을 세우는 자리가 둘이라,
+     openAlbumPick 이 해를 안 담아도 다른 쪽 글자에 걸려 조용히 통과한다.
+     실제로 그렇게 헛돌았다. 그 함수 «안에서» 본다. */
+function _fnSrc(name){
+  const i = src.indexOf('function ' + name + '(');
+  if (i < 0) return '';
+  let d = 0;
+  for (let k = src.indexOf('{', i); k < src.length; k++) {
+    if (src[k] === '{') d++; else if (src[k] === '}') { d--; if (!d) return src.slice(i, k + 1); }
+  }
+  return '';
+}
+const _apick = _fnSrc('openAlbumPick');
+ok('고르는 사이 연도가 바뀌어도 그 해에 저장',
+  /_pick=\{[\s\S]*?fid:S\.fundId/.test(_apick)
+  && /_pick=\{[\s\S]*?yr:S\.year/.test(_apick)
   && src.includes('saveSiteScanRef(fid,_pick.yr,_pick.sid,kind,')
   && src.includes('saveShelfScanRef(fid,_pick.yr,_pick.shelf,'));
 ok('체크표 칸에 사진첩 단추', src.includes('var sr=_subScanOf(s._id,c[0]);')

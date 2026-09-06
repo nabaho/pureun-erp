@@ -460,6 +460,24 @@ var SITE_FIELDS=[['seq_label','연번','text'],['name','상호','text'],['ceo','
    쓰임은 별지15호 ⑩ 협력업체 근로자 수 집계다. */
 // 담당자(연락처) 필드 — contacts JSON 배열의 대표 담당자 1명을 편집
 var CONTACT_FIELDS=[['name','담당자명','text'],['position','직위','text'],['mobile','휴대폰','text'],['email','이메일','text']];
+/* ── 참여사업장의 «근로자 대표» ──
+   한 사업장에 사람이 셋 나온다. 셋이 «다 다른 사람»인 경우가 많다:
+     대표자(사업주) · 담당자(실무 연락) · 근로자대표(노사 합의에 서명하는 사람)
+   근로자대표를 안 적어 두면 설립합의서에 누가 서명했는지 자료에 안 남는다.
+
+   ⚠ 별지 제7호 첨부서류 2번이 「기금법인 설립준비위원의 재직증명서나 그 밖에 신분을
+     증명하는 서류(근로계약서 등 소속 근로자임을 증명하는 서류)」를 요구한다 —
+     그래서 «그 사업장 근로자가 맞는지»를 서류로 확인해 둔다(wrep_doc).
+   ⚠ 생년월일은 별지 제7호 위원 격자가 «묻는» 칸이라 받아 둔다. 다만 서식에 저절로
+     찍지는 않는다 — 사업장 근로자대표와 기금 설립준비위원이 늘 같은 사람은 아니다.
+     사람이 확인하고 넣는 것이 맞다.
+   ⚠ SITE_FIELDS 에 섞지 않는다. 그 목록은 엑셀 일괄 가져오기의 «열 차례»이기도 해서,
+     사람 칸을 끼워 넣으면 이미 만들어 둔 붙여넣기 자료가 어긋난다. */
+var WREP_FIELDS=[['wrep_name','근로자대표 성명','text'],['wrep_title','직위','text'],
+  ['wrep_mobile','휴대폰','text'],['wrep_birth','생년월일','date']];
+/* 화면과 서식이 «같은 자리»를 읽게 한 곳에 모은다 */
+function _siteWrep(s){ s=s||{}; return {name:String(s.wrep_name||'').trim(), title:String(s.wrep_title||'').trim(),
+  mobile:String(s.wrep_mobile||'').trim(), birth:String(s.wrep_birth||'').trim(), doc:s.wrep_doc||null}; }
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function $(id){return document.getElementById(id);}
@@ -4230,8 +4248,12 @@ function docBody(kind,f,sites){
       +"<p class='center'>"+dgToday()+"</p>"
       +"<div class='sign'>참여사업장 대표 (별첨 명부와 같음) 각 (인)<br>근로자대표: ＿＿＿＿＿＿ (인)</div>"
       +"<h2>별첨: 참여사업장 명부 ("+sites.length+"개소)</h2>"
-      +"<table><tr><th style='width:40px'>번호</th><th>상호</th><th>대표자</th><th>사업자등록번호</th></tr>"
-      +sites.map(function(s,i){return "<tr><td class='center'>"+(i+1)+"</td><td>"+esc(s.name||'')+"</td><td>"+dgV(s.ceo,4)+"</td><td>"+dgV(s.biz_no,12)+"</td></tr>";}).join('')+"</table>";
+      /* 설립합의서는 «노사» 합의다 — 사업장마다 사용자쪽(대표자)과 근로자쪽(근로자대표)이
+         함께 선다. 근로자대표 칸이 없으면 누가 근로자를 대신해 합의했는지 서류에 안 남는다. */
+      +"<table><tr><th style='width:40px'>번호</th><th>상호</th><th>대표자</th><th>근로자대표</th><th>사업자등록번호</th></tr>"
+      +sites.map(function(s,i){ var w=_siteWrep(s);
+        return "<tr><td class='center'>"+(i+1)+"</td><td>"+esc(s.name||'')+"</td><td>"+dgV(s.ceo,4)+"</td>"
+          +"<td>"+dgV(w.name,4)+"</td><td>"+dgV(s.biz_no,12)+"</td></tr>";}).join('')+"</table>";
   }
   if(kind==='inka'){
     var cs=ftype==='사내'?'[V]':'[ ]', cg=ftype==='공동'?'[V]':'[ ]';
@@ -5649,13 +5671,19 @@ function docFindPick(kind,id,year){
          items:[{id:id,meta:(x&&x.it.meta)||{}}]};
   pickAlbumPhoto(id);
 }
-function openAlbumPick(zid,kind,sid,shelf,txn){
+/* wrepSid 가 오면 «근로자대표 재직증명서» 갈래다.
+   ⚠ 그때는 sid 를 비운다 — 안 비우면 아래에서 «연도별 제출서류» 자리에 먼저 걸린다.
+     재직증명서는 해마다 내는 서류가 아니라 «그 사람»에 붙는 서류다. */
+function openAlbumPick(zid,kind,sid,shelf,txn,wrepSid){
   if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다 — 새로고침 후 다시','err'); return; }
-  _pick={kind:kind,zid:zid,items:[],year:new Date().getFullYear(),fid:S.fundId,sid:sid||'',yr:S.year,
+  _pick={kind:kind,zid:zid,items:[],year:new Date().getFullYear(),fid:S.fundId,
+         sid:wrepSid?'':(sid||''), wrep:wrepSid||'', yr:S.year,
          shelf:shelf||'',txn:txn||''};
   var _tx=txn&&(S.txns||{})[txn];
   var _what=txn?('거래 증빙 · '+((_tx&&_tx.date)||'')+' '+(((_tx&&_tx.memo)||'').slice(0,18)))
-          :shelf?('서류함 · '+shelf):((sid?(_siteName(sid)+' '):'')+docZoneLabel(kind));
+          :shelf?('서류함 · '+shelf)
+          :wrepSid?(_siteName(wrepSid)+' 근로자대표 재직증명서')
+          :((sid?(_siteName(sid)+' '):'')+docZoneLabel(kind));
   showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">🖼 사진첩에서 '+esc(_what)+' 고르기</h2>'+hlp('album.pick')
     +'<span style="flex:1"></span><select id="pk-year" onchange="albumPickLoad(+this.value)" style="padding:4px 8px;border:1px solid var(--line);border-radius:7px">'
     +[0,1,2].map(function(d){var y=new Date().getFullYear()-d;return '<option value="'+y+'">'+y+'년</option>';}).join('')+'</select></div>'
@@ -5709,6 +5737,13 @@ function pickAlbumPhoto(id){
   if(_pick.shelf){
     closeM();                                        // 원본을 받아 올 일이 없어 곧바로 닫는다
     saveShelfScanRef(fid,_pick.yr,_pick.shelf,{owner:owner||'',year:year,id:id},it.meta);
+    return;
+  }
+  /* 근로자대표 재직증명서 — 판독하지 않는다. 「이 사람이 이 사업장 근로자다」를
+     증명하는 서류라 원본만 잇고 화면에서 볼 수 있게 한다. */
+  if(_pick.wrep){
+    closeM();
+    saveWrepDocRef(fid,_pick.wrep,{owner:owner||'',year:year,id:id});
     return;
   }
   if(_pick.sid){
@@ -5844,6 +5879,40 @@ function unlinkTxnScan(id){
     });
 }
 /* 기금에 붙인 스캔 참조 — funds/{fid}/scans/{kind} = {owner,year,id,at,by} */
+/* 근로자대표 재직증명서 — 자리: sites/{기금}/{사업장}/wrep_doc = {owner,year,id,at,by}
+   ⚠ 지원금 제출서류(subsidy_chk/{연도}/scan/site/…)에 두지 않는다.
+     그쪽은 «그 해에 낸 서류»를 세는 자리다. 재직증명서는 해가 아니라 «사람»에 붙는다 —
+     근로자대표가 바뀌면 새로 받고, 안 바뀌면 해가 바뀌어도 그대로다. */
+function saveWrepDocRef(fid,sid,ref){
+  var o=Object.assign({at:ymd(),by:(S.user||'')},ref);
+  fbDb.ref(NS+'/sites/'+fid+'/'+sid+'/wrep_doc').set(o).then(function(){
+    if(S.sitesFor===fid&&S.sites&&S.sites[sid]) S.sites[sid].wrep_doc=o;
+    markFundUsed(ref,'근로자대표 재직증명서 — '+_siteName(sid));
+    toast('재직증명서를 이 사업장에 연결했습니다');
+    editSite(sid);                       /* 하던 자리로 돌려 준다 */
+  }).catch(function(e){ toast('연결 저장 실패: '+e.message,'err'); });
+}
+function pickWrepDoc(sid){ openAlbumPick('','wrep','','','',sid); }
+function openWrepDoc(sid){
+  var r=(((S.sites||{})[sid])||{}).wrep_doc; if(!r) return;
+  if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다','err'); return; }
+  var w=_siteWrep((S.sites||{})[sid]);
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">'+esc(_siteName(sid))+' 재직증명서</h2>'
+    +'<span class="muted" style="font-size:11.5px">'+esc(w.name||'근로자대표')+' · '+esc(r.year)+'년 · 연결 '+esc(r.at||'')+'</span>'
+    +'<span style="flex:1"></span><button onclick="editSite(\''+sid+'\')">← 사업장으로</button></div>'
+    +'<div id="scanBody" style="text-align:center">'+loadingHTML('사진첩에서 불러오는 중…')+'</div>');
+  _loadScanInto(r);
+}
+function unlinkWrepDoc(sid){
+  var fid=S.fundId;
+  confirmM('재직증명서와 사진첩 원본의 연결만 끊습니다.\n사진첩의 사진은 그대로 남습니다.',{ok:'연결 해제',danger:true}).then(function(ok){
+    if(!ok)return;
+    fbDb.ref(NS+'/sites/'+fid+'/'+sid+'/wrep_doc').remove().then(function(){
+      if(S.sitesFor===fid&&S.sites&&S.sites[sid]) delete S.sites[sid].wrep_doc;
+      toast('연결을 해제했습니다'); editSite(sid);
+    }).catch(function(e){ toast('해제 실패: '+e.message,'err'); });
+  });
+}
 function saveScanRef(fid,kind,ref){
   var o=Object.assign({at:ymd(),by:(S.user||'')},ref);
   fbDb.ref(NS+'/funds/'+fid+'/scans/'+kind).set(o).then(function(){
@@ -5954,7 +6023,8 @@ function unlinkScan(kind){
   });
 }
 function docZoneLabel(kind){ return ({inka:'설립인가증',corpreg:'법인 등기부등본',taxid:'고유번호증',charter:'정관',
-  sme:'중소기업확인서',reg:'등기부등본',bizno:'사업자등록증'})[kind]||kind; }   // 뒤 셋은 참여사업장 몫
+  sme:'중소기업확인서',reg:'등기부등본',bizno:'사업자등록증',
+  wrep:'근로자대표 재직증명서'})[kind]||kind; }   // 뒤 넷은 참여사업장 몫
 /* 드롭존 아래 한 줄 — 사진첩에서 고르기 / 이미 연결된 원본 보기 */
 /* ══ 푸른 기업정보함(기업정보함) 연동 ══
    사업자등록증 카드에 이미 들어 있는 값을 기금 정보로 당겨온다. 다시 칠 이유가 없다.
@@ -6922,6 +6992,12 @@ function sitesTab(){
   var rows=arr.map(function(s,i){
     var c=_siteContacts(s);
     var contact=c.name?(esc(c.name)+(c.mobile?' · '+esc(c.mobile):'')):'—';
+    var w=_siteWrep(s);
+    var wrepCell = w.name
+      ? esc(w.name)+(w.title?' · '+esc(w.title):'')
+        +(w.doc?' <span class="chip ok" style="font-size:9.5px" title="재직증명서가 연결되어 있습니다">재직</span>'
+               :' <span class="chip dg" style="font-size:9.5px" title="재직증명서가 없습니다 — 별지 제7호 첨부서류">확인 필요</span>')
+      : '—';
     /* 규모 막대 — 숫자와 «같은 줄»에 놓는다(inline-block).
        아래에 깔면 오십 줄짜리 표가 두 배로 길어진다. */
     var emp=num(s.company_size)||0;
@@ -6940,11 +7016,15 @@ function sitesTab(){
          한 기업을 한 줄로 알아보는 데 상호 다음으로 말이 많은 칸이 업종이다. */
       +'<td class="ph">'+esc(s.biz_no||'—')+'</td><td>'+esc(s.biz_type||'—')+'</td>'
       +'<td style="text-align:right;white-space:nowrap">'+bar+(emp||'—')+'</td>'
-      +'<td class="ph">'+contact+'</td><td class="muted mo ph">'+esc(c.email||'—')+'</td>'
+      +'<td class="ph">'+contact+'</td>'
+      /* 근로자대표 — 대표자·담당자와 다른 사람인 경우가 많다.
+         재직증명서가 붙었는지도 «같은 칸»에서 보인다. 두 줄로 나누면 표가 두 배로 길어진다. */
+      +'<td class="ph">'+wrepCell+'</td>'
+      +'<td class="muted mo ph">'+esc(c.email||'—')+'</td>'
       +'<td class="muted ph" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.address||'—')+'</td></tr>';
   }).join('');
   var tbl = arr.length
-    ? '<div style="overflow-x:auto"><table><thead><tr><th title="별지15호 ⑩ 협력업체 — 켜면 협력업체 근로자 수에 합산됩니다" style="width:44px">협력</th><th>번호</th><th>상호</th><th class="ph">대표자</th><th class="ph">사업자번호</th><th>업종</th><th style="text-align:right">상시근로자</th><th class="ph">담당자</th><th class="mo ph">이메일</th><th class="ph">소재지</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+    ? '<div style="overflow-x:auto"><table><thead><tr><th title="별지15호 ⑩ 협력업체 — 켜면 협력업체 근로자 수에 합산됩니다" style="width:44px">협력</th><th>번호</th><th>상호</th><th class="ph">대표자</th><th class="ph">사업자번호</th><th>업종</th><th style="text-align:right">상시근로자</th><th class="ph">담당자</th><th class="ph" title="노사 합의에 서명하는 사람 — 재직증명서로 소속을 확인합니다">근로자대표</th><th class="mo ph">이메일</th><th class="ph">소재지</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
     : '<div class="muted" style="padding:20px 4px">등록된 참여사업장이 없습니다. [+ 사업장 추가] 또는 [📥 사업장 데이터 가져오기]로 시작하세요.</div>';
   setTimeout(bindSiteXlsx,0);
   /* 명부와 연도별 기록은 «같은 16줄»을 두 번 그린다. 위아래로 놓으면 아래 표까지
@@ -6985,6 +7065,23 @@ function _primaryContact(s){
   return {list:cts, idx:cts.length?pi:-1, c:(cts[pi]||{})};
 }
 var _sitePrefill=null;
+/* 재직증명서 줄 — 별지 제7호 첨부서류 2번이 「설립준비위원의 재직증명서나 그 밖에
+   신분을 증명하는 서류」를 요구한다. 근로자대표가 «그 사업장 근로자가 맞는지»를 여기서 잇는다.
+   ⚠ 새 사업장은 아직 잇을 자리(사업장 열쇠)가 없다 — 저장한 뒤에 잇는다고 말해 준다. */
+function _wrepDocRow(sid,s){
+  if(!sid) return '<p class="muted" style="font-size:11.5px;margin:8px 2px 0">재직증명서는 <b>저장한 뒤</b>에 이을 수 있습니다.</p>';
+  var r=s&&s.wrep_doc;
+  return '<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center">'
+    +'<span style="font-size:12.5px;font-weight:600">재직증명서</span>'
+    +(r
+      ? '<span class="chip ok" style="font-size:10.5px">연결됨 · '+esc(r.year)+'년 · '+esc(r.at||'')+'</span>'
+        +'<button onclick="openWrepDoc(\''+sid+'\')" style="padding:3px 9px">👁 보기</button>'
+        +'<button onclick="pickWrepDoc(\''+sid+'\')" style="padding:3px 9px">↻ 바꾸기</button>'
+        +'<button onclick="unlinkWrepDoc(\''+sid+'\')" style="padding:3px 9px;color:var(--danger)">연결 해제</button>'
+      : '<span class="chip dg" style="font-size:10.5px">없음</span>'
+        +'<button class="primary" onclick="pickWrepDoc(\''+sid+'\')" style="padding:3px 9px">🖼 사진첩에서 고르기</button>')
+    +'</div>';
+}
 function editSite(sid,prefill){
   var isNew=!sid; if(isNew&&prefill){_sitePrefill=prefill;} else if(isNew){_sitePrefill=null;}
   _siteEditSid=sid||'';
@@ -6996,12 +7093,18 @@ function editSite(sid,prefill){
   var pc=_primaryContact(s).c;
   var cflds=CONTACT_FIELDS.map(function(c){return '<div class="fld"><label>'+c[1]+'</label>'
     +'<input id="sc-'+c[0]+'" type="'+c[2]+'" value="'+esc(pc[c[0]]||(c[0]==='mobile'?(pc.phone||''):''))+'"></div>';}).join('');
+  var wflds=WREP_FIELDS.map(function(c){return '<div class="fld"><label>'+c[1]+'</label>'
+    +'<input id="sw-'+c[0]+'" type="'+c[2]+'" value="'+esc(s[c[0]]||'')+'"></div>';}).join('');
   showModal('<div class="row" style="margin:0 0 10px"><h2 style="margin:0">'+(isNew?'사업장 추가':'사업장 편집')+'</h2>'
     +'<span style="flex:1"></span>'
     +'<button onclick="openCardPick(\'siteedit\')" title="푸른 기업정보함(사업자등록증·명함·기업 상세)에서 상호·대표자·사업자번호·법인등록번호·업종·상시근로자수·소재지·담당자를 빈 칸에만 채웁니다">🏢 기업정보함에서</button></div>'
     +'<div class="grid">'+flds+'</div>'
     +'<div style="font-weight:700;font-size:12.5px;margin:14px 0 6px;color:var(--sub)">담당자 (대표 연락처)</div>'
     +'<div class="grid">'+cflds+'</div>'
+    +'<div style="font-weight:700;font-size:12.5px;margin:14px 0 6px;color:var(--sub)">근로자 대표'
+      +' <span style="font-weight:400;font-size:11px">— 대표자·담당자와 다른 사람인 경우가 많습니다</span></div>'
+    +'<div class="grid">'+wflds+'</div>'
+    +_wrepDocRow(sid,s)
     +'<div class="row" style="justify-content:flex-end;margin-top:16px">'
     +(isNew?'':'<button onclick="delSite(\''+sid+'\')" style="margin-right:auto;color:var(--danger)">삭제</button>')
     +'<button onclick="closeM()">취소</button><button class="primary" onclick="saveSite(\''+sid+'\')">저장</button></div>');
@@ -7010,6 +7113,7 @@ function saveSite(sid){
   var base = sid ? ((S.sites&&S.sites[sid])||{}) : Object.assign({status:'active'}, _sitePrefill||{});  // 신규는 연결 프리필(puerp_co_id 등) 보존
   var obj=Object.assign({}, base);
   SITE_FIELDS.forEach(function(c){var el=$('se-'+c[0]);if(el)obj[c[0]]=el.value.trim();});
+  WREP_FIELDS.forEach(function(c){var el=$('sw-'+c[0]);if(el)obj[c[0]]=el.value.trim();});
   if(!obj.name){ toast('상호를 입력하세요','warn'); return; }
   // 담당자: 기존 contacts 배열 유지하되 대표 담당자 항목만 갱신(없으면 추가)
   var pc=_primaryContact(obj), cv={};
@@ -7029,7 +7133,9 @@ function saveSite(sid){
     /* 기존 사업장은 set(전체 덮어쓰기)이 아니라 update(이 화면에서 다룬 항목만)로 저장한다.
        다른 세션이 이 화면에 없는 필드를 고쳐 놨어도 그 값이 지워지지 않게 하기 위함. */
     var patch={contacts:list};
-    SITE_FIELDS.forEach(function(c){ if(Object.prototype.hasOwnProperty.call(obj,c[0])) patch[c[0]]=obj[c[0]]; });
+    SITE_FIELDS.concat(WREP_FIELDS).forEach(function(c){ if(Object.prototype.hasOwnProperty.call(obj,c[0])) patch[c[0]]=obj[c[0]]; });
+    /* ⚠ wrep_doc 은 여기 목록에 없다 — update 는 적힌 칸만 건드리므로 연결이 살아남는다.
+       set(전체 덮어쓰기)으로 바꾸면 저장할 때마다 재직증명서 연결이 사라진다. */
     if(obj.status) patch.status=obj.status;
     fbDb.ref(NS+'/sites/'+_fid+'/'+sid).update(patch).then(done).catch(err);
   }else{

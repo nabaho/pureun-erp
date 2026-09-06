@@ -650,8 +650,8 @@ function renderPanel(name, extra) {
   const box = {};
   const out = { html: '' };
   new Function('OUT', [
-    grabDecl('SITE_FIELDS'), grabDecl('CONTACT_FIELDS'), grabDecl('OFFICER_ROLES'),
-    grabDecl('NF_CARRY'),
+    grabDecl('SITE_FIELDS'), grabDecl('CONTACT_FIELDS'), grabDecl('WREP_FIELDS'),
+    grabDecl('OFFICER_ROLES'), grabDecl('NF_CARRY'),
     'var _sitePrefill=null, _siteEditSid="", _nfCard=null;',
     'var S={fundId:"F1",sites:{}};',
     'function $(id){ return null; }',
@@ -663,6 +663,7 @@ function renderPanel(name, extra) {
     'function loadingHTML(m){ return String(m||""); }',
     (extra || []).join('\n'),
     grabFn('_primaryContact'), grabFn('_officersOf'), grabFn('_auditorsOf'), grabFn('_offRow'),
+    grabFn('_wrepDocRow'),
     grabFn(name),
     'this.run=' + name + ';'
   ].join('\n')).call(box, out);
@@ -675,6 +676,19 @@ test('사업장 편집 창을 «정말 그리면» 당겨오기 단추가 나온
   assert.ok(html.includes("openCardPick('siteedit')"), '편집 창에 당겨오기 단추가 없다');
   assert.ok(html.includes('id="se-name"'), '사업장 칸이 안 그려졌다');
   assert.ok(html.includes('id="sc-name"'), '담당자 칸이 안 그려졌다');
+});
+
+/* 한 사업장에 사람이 셋 나오고 «다 다른 사람»인 경우가 많다 —
+   대표자(사업주) · 담당자(실무) · 근로자대표(노사 합의에 서명).
+   셋을 «각각 다른 이름»의 칸에 두지 않으면 저장할 때 서로 덮어쓴다. */
+test('사업장 편집 창에 «사람 셋»이 각각 제 칸을 갖는다', () => {
+  const html = renderPanel('editSite', [], 'S1');
+  assert.ok(html.includes('id="se-ceo"'), '대표자 칸이 없다');
+  assert.ok(html.includes('id="sc-name"'), '담당자 칸이 없다');
+  assert.ok(html.includes('id="sw-wrep_name"'), '근로자대표 칸이 없다');
+  assert.ok(html.includes('id="sw-wrep_birth"'), '근로자대표 생년월일 칸이 없다 — 별지 제7호 위원 격자가 묻는다');
+  /* 별지 제7호 첨부서류 2번: 설립준비위원의 재직증명서 등 신분 증명 서류 */
+  assert.ok(/재직증명서/.test(html), '재직증명서 자리가 없다');
 });
 
 test('새 기금 등록 창을 «정말 그리면» 당겨오기 단추가 나온다', () => {
