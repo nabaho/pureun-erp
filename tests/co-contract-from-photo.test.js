@@ -145,6 +145,44 @@ test('④ 빈손일 때 «왜» 빈손인지 갈라서 말한다', () => {
     '빈손이면 사진첩으로 가는 길을 알려 줘야 한다');
 });
 
+/* ══ ⑤ 「계약서는 계약관리에 안 넣는다」 (대표 2026-09-06) ══
+   업체 자문계약서는 계약관리에 등록하지 않는다 — 계약관리는 사건·컨설팅용이다.
+   그러니 사진첩이 «주된 길»이고, 계약관리 단추는 계약이 실제로 있을 때만 뜻이 있다. */
+/* ⚠ 「📷 사진첩에서 찾기」는 회사정보 칸에도 «같은 이름»으로 있다 —
+   창 전체에서 찾으면 그것을 보고 통과해 버린다. 계약정보 칸으로 좁혀서 본다. */
+function contractSection() {
+  const at = bare.indexOf("'📋 계약정보'");
+  assert.ok(at > 0, '계약정보 칸을 찾지 못했습니다');
+  const end = bare.indexOf("h('div', { className:'fld' }, h('label', null, '업체유형')", at);
+  assert.ok(end > at, '계약정보 칸의 끝을 찾지 못했습니다');
+  return bare.slice(at, end);
+}
+
+test('★ ⑤ 사진첩 단추가 «먼저» 온다 — 계약관리는 뒤다', () => {
+  const sec = contractSection();
+  const photo = sec.indexOf("'📷 사진첩에서 찾기'");
+  const ct = sec.indexOf("'📄 계약관리에서 당겨오기'");
+  assert.ok(photo >= 0, '계약정보 칸에 사진첩 단추가 없습니다');
+  assert.ok(ct >= 0, '계약정보 칸에 계약관리 단추가 없습니다');
+  assert.ok(photo < ct,
+    '계약서는 계약관리에 «안 넣는다» — 주된 길인 사진첩이 앞에 와야 합니다');
+});
+
+test('★ ⑤ 계약관리 단추는 «계약이 있을 때만» 보인다 (373곳 중 29곳)', () => {
+  const modal = bare.slice(bare.indexOf('function CompanyEditModal(props){'));
+  assert.match(modal, /coCtHit && h\('button'[\s\S]{0,600}?📄 계약관리에서 당겨오기/,
+    '늘 보이면 344곳에서 눌러도 아무 일이 없습니다');
+  /* 지우지는 않았다 — 이관해 온 업체에는 여전히 쓸모가 있다 */
+  assert.ok(modal.indexOf('onClick:fillFromContract') > 0, '단추를 아예 지우면 안 됩니다');
+});
+
+test('★ ⑤ 계약을 «한 번만» 찾는다 — 보일지와 채울 값이 어긋나지 않게', () => {
+  const modal = bare.slice(bare.indexOf('function CompanyEditModal(props){'),
+    bare.indexOf('function CompanyEditModal(props){') + 90000);
+  assert.strictEqual((modal.match(/erpContractForCompany\(/g) || []).length, 1,
+    '두 곳에서 따로 찾으면 「단추는 보이는데 눌러도 없다」가 생깁니다');
+});
+
 test('④ 단추 이름이 «어디서» 가져오는지 말한다', () => {
   assert.ok(/'📄 계약관리에서 당겨오기'/.test(bare),
     '「계약서에서」라고 하면 스캔한 계약서를 읽는 줄 알게 된다 (대표 지적)');
