@@ -9879,11 +9879,24 @@ async function rhSaveInput(){
 
 /* 고른 대로 채운 뒤 «보고 있는 편집기»에 다시 올린다.
    ⚠ 다른 창에만 띄우면 편집기는 그대로라 「내가 쳐야 하나」가 된다(대표 제보 2026-08-29). */
+/* 이름에 «_채움»·«_날인»을 쌓지 않는다.
+   누를 때마다 붙으면 「…_채움_채움_채움_날인_채움_날인.hwpx」가 된다(실측 2026-09-06).
+   원본 이름을 되찾아 «한 번만» 붙인다. */
+function rhCleanName(name, 꼬리){
+  var base=String(name||'양식').replace(/\.(hwp|hwpx)$/i,'');
+  base=base.replace(/(_채움|_날인)+$/g,'');
+  return base + (꼬리||'') + '.hwpx';
+}
 async function rhFillByMap(){
   if(!_rhDoc||!_rhDoc.bytes||!_rhMap){ toast('먼저 서식을 올려주세요'); return; }
   toast('⏳ 채우는 중…');
+  /* ★★ 언제나 «원본»에서 새로 짓는다 (대표 제보 2026-09-06).
+     지금 보고 있는 문서에서 시작하면 «이미 채워진 것 위에» 또 채워, 두 번 누를 때마다
+     값이 겹친다. 원본 + 고른 값 + 직접 친 값 = 늘 같은 결과여야 한다.
+     ⚠ 원본이 없을 때(옛 자료)만 지금 문서에서 시작한다. */
+  var 바탕=_rhBase||_rhDoc;
   var src=null;
-  try{ src=await _rhToHwpx(_rhDoc.bytes,_rhDoc.name); }catch(e){ src=null; }
+  try{ src=await _rhToHwpx(바탕.bytes,바탕.name); }catch(e){ src=null; }
   if(!src){ toast('이 형식은 채울 수 없습니다 — 한글에서 HWPX로 저장해 올려주세요'); return; }
   /* ★ 되돌릴 수 있게 «채우기 전»을 먼저 담아 둔다(대표 제보 2026-08-30 — 잘못 들어가도
      되돌릴 방법이 없었다). 원본 그대로를 들고 있어야 「↩ 되돌리기」가 뜻이 있다. */
@@ -9908,7 +9921,13 @@ async function rhFillByMap(){
     if(!_rhListPlan) _rhListPlan={};
     _rhListPlan[n]=wantLists;
     var xml=await zip.file(n).async('string');
+    /* ★ 직접 친 값도 «함께» 얹는다 (대표 물음 2026-09-06 「한번에 처리하고」).
+       채우기가 원본에서 새로 짓게 됐으므로, 여기서 안 얹으면 사람이 친 것이 사라진다.
+       ⚠ 직접 친 값이 고른 값보다 «앞선다» — 사람이 고쳐 쓴 것이 최종이다(apply 가 그렇게 한다). */
+    var 친것={};
+    Object.keys(_rhVals||{}).forEach(function(k){ 친것[k]=_rhVals[k]; });
     var r=KcareerFormMap.apply(xml,{picks:picks,lists:wantLists,data:data,colMap:colMap,
+      values:친것,
       /* 가려 둔 값 — 사람이 그 자리에 직접 고른 경우에만 쓰인다(자동으로는 안 나간다) */
       secrets:data.secrets});
     /* ★ 표 «밖» 문단 — 「2026년 월 일」·「지원자 ○ ○ ○」 (대표 지시 2026-09-05).
@@ -9931,7 +9950,7 @@ async function rhFillByMap(){
   }
   if(!filled.length){ toast('채운 칸이 없습니다 — 오른쪽에서 넣을 값을 골라 주세요'); return; }
   var bytes=new Uint8Array(await zip.generateAsync({type:'arraybuffer'}));
-  _rhDoc={ name:String(_rhDoc.name).replace(/\.(hwp|hwpx)$/i,'')+'_채움.hwpx', ext:'hwpx', bytes:bytes };
+  _rhDoc={ name:rhCleanName(바탕.name,'_채움'), ext:'hwpx', bytes:bytes };
   rhMemorySave(_rhMap.fp, _rhPicks, _rhDoc.name);
   rhDraftSave();
   /* ⚠ 바탕을 바꾸지 않고 올린다 — 화면·PDF 는 채워진 것을 보여 주되,
@@ -10071,6 +10090,8 @@ async function rhStampDoc(quiet){
   if(!window.KcareerHwpStamp){ 말('도장 모듈을 못 불러왔습니다'); return false; }
   /* 이미 찍힌 서식에 또 찍지 않는다 — 도장이 둘 겹친다 */
   if(/_날인\.hwpx$/i.test(String(_rhDoc.name||''))){ 말('이미 도장이 찍혀 있습니다'); return false; }
+  /* ⚠ 채우기가 원본에서 새로 짓기 때문에, 채운 뒤에는 도장이 지워진 상태다 —
+     그래서 채우기 뒤 자동 날인이 «다시» 찍는다. 그것이 맞다(늘 같은 결과). */
   var st=(typeof getDefaultStamp==='function')?getDefaultStamp():null;
   if(!st){ 말('먼저 환경설정 › 도장(직인) 보관함에 도장을 올려주세요'); return false; }
   var f=await getFileAsync(st.id);
@@ -10111,7 +10132,7 @@ async function rhStampDoc(quiet){
   }
   if(!done){ 말('도장 자리(「(인)」·「(서명)」)를 못 찾았습니다 — 한글에서 직접 넣어 주세요'); return false; }
   var bytes=new Uint8Array(await zip.generateAsync({type:'arraybuffer'}));
-  _rhDoc={ name:String(_rhDoc.name).replace(/\.(hwp|hwpx)$/i,'')+'_날인.hwpx', ext:'hwpx', bytes:bytes };
+  _rhDoc={ name:rhCleanName(_rhDoc.name,'_채움_날인'), ext:'hwpx', bytes:bytes };
   rhDraftSave();
   await mountEditor(bytes.buffer.slice(0), _rhDoc.name);
   말('🖋 도장을 찍었습니다 — 자리가 어긋나면 한글에서 옮길 수 있습니다');
