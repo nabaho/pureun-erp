@@ -119,6 +119,11 @@ function rowDeps() {
     constLine('POSTED_TEXT'), constLine('PARTNER_PATH'),
     fnSource('companiesFrom'), fnSource('partnerMark'), fnSource('postedOf'),
     fnSource('partnerRows'), fnSource('postedNames'), fnSource('postedPillHtml'),
+    /* ⚠ 목록 머리가 종류 거르개를 그리느라 pickTypes 를 부른다 (2026-09-06).
+       ⚠⚠ 이 모래통은 «새 함수를 안 넣어» 네 번 깨졌다 — memberKind·pillShort·offSiteOf,
+         그리고 이번 pickTypes. 화면 함수를 새로 만들면 여기부터 볼 것.
+         (keepBox() 에도 같은 목록이 있다 — «둘 다» 넣어야 한다.) */
+    fnSource('pickRows'), fnSource('pickTypes'),
     fnSource('defaultFilterOf'), fnSource('listCountHtml'), fnSource('rowsHtml')
   ].map(noConst).join('\n') + '\n';
 }
@@ -2170,6 +2175,29 @@ test('★★ 아무 곳도 안 골랐으면 목록이 «고르라고 말한다»
     '★ 고를 수 있는 곳이 몇 곳인지 안 말합니다 (' + 고를수있는 + '곳)');
   assert.ok(h.indexOf('이 딱지에 해당하는 줄이 없습니다') < 0,
     '★★ 다음에 뭘 할지 안 알려 주는 옛 말로 끝냅니다');
+});
+
+test('★★ 업체 종류로 «실제로» 좁혀진다 — 목록도 딱지 셈도 그 안에서 센다', () => {
+  /* 대표 지시 2026-09-06 「업체관리에도 자문 급여 등이 있어 이 부분도 필터링 할 수 있게」.
+     ★ 글자로 보지 않고 «돌려» 본다 — 조건 한 줄만 죽여도 소스에는 그 낱말이 남아,
+       「App.coType 이 쓰였나」로 보면 안 걸린다(2026-09-06 되돌림 검사가 잡았다). */
+  const ctx = partnerBox();
+  ctx.App.q = '';
+  ctx.App.coType = '급여';
+  ctx.App.filter = 'posted:none';               // 아직 안 고른 것 중에서
+  const 이름들 = ctx.visibleRows('partner').map(r => r.name);
+  assert.deepEqual(이름들, ['한빛식품'],
+    '★★ 종류로 안 좁혀집니다 — 자문 업체가 「급여」에 섞여 나옵니다: ' + 이름들.join(', '));
+
+  /* 딱지에 적힌 수 = 실제로 보이는 줄 수 (종류를 걸어도) */
+  ctx.App.filter = '';
+  ctx.App.coType = '자문';
+  const 보임 = ctx.visibleRows('partner').length;
+  const 첫딱지 = /onclick="App\.filt\(''\)">([^<]*)<span class="c">(\d+)<\/span>/.exec(ctx.chipsHtml());
+  assert.ok(첫딱지, '★ 걸러 보기를 푸는 딱지가 없습니다');
+  assert.equal(Number(첫딱지[2]), 보임,
+    '★★ 종류를 걸면 딱지 수와 보이는 줄이 어긋납니다 — 목록이 고장 난 줄 압니다');
+  ctx.App.coType = '';
 });
 
 test('★ 표시 안 한 회사는 할 일이 아니다 — 「자문 종료」만 손댈 것이다', () => {
