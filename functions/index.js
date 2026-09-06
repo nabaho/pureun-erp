@@ -3896,3 +3896,7 @@ exports.flagMailMessages = MSYNC.flagMailMessages;
    ⚠ 여기 한 줄을 빠뜨리면 함수가 아예 안 올라간다("No function matches the filter") —
      mail-sync.js 에 적는 것만으로는 밖에서 안 보인다. */
 exports.probeMailPop = MSYNC.probeMailPop;
+/* 📦 지난 메일 채우기 — POP3 로 머리글만 끌어온다(대표만) */
+exports.backfillMailbox = MSYNC.backfillMailbox;
+/* 📦 지난 메일 한 통 열기 — 그 자리에서 POP3 로 (직원 누구나, 메일함과 같은 문) */
+exports.readOldMail = MSYNC.readOldMail;

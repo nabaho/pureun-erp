@@ -865,6 +865,111 @@ function bodyPlan(parts, size, peek) {
   return (Number(size || 0) && Number(size) <= BODY_FULL_MAX) ? 'full' : 'part';
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   POP3 로 붙는 작은 손 (대표 지시 2026-09-06 「최소 1년의 메일을 보관해야 한다」)
+   ══════════════════════════════════════════════════════════════════════════
+   ★ 왜 POP3 인가 — IMAP 은 폴더당 400통이 끝이다(2026-09-02 실측). 처음 연결한 날
+     이미 그 창 밖이던 «지난 메일»을 가져올 길은 이것뿐이다.
+
+   ★ 대표님 다음메일 설정을 눈으로 확인했다 (2026-09-06 화면):
+       POP3/SMTP 사용 ······· 사용함
+       적용 범위 ············ 기존에 받은 메일을 포함하여 받기
+       원본 저장 ············ «다음메일에 원본 보관»   ← 이것이 가장 중요하다
+       메일함 선택 ·········· «전체 메일함 받기»       ← 보낸메일함까지 온다
+     그래서 읽어도 대표님 메일이 사라지지 않는다. 이 두 줄을 확인하기 전에는
+     내용을 건드리는 명령을 하나도 쓰지 않았다.
+
+   ⚠⚠ 이 손에는 DELE 가 «아예 없다». 부르고 싶어도 못 부른다 —
+     설정이 바뀌는 날이 와도 이 파일이 메일을 지우는 일은 없다.
+   ⚠ 끊을 때 RSET 을 먼저 보낸다. 표시가 남지 않게.
+   ⚠ 글자를 'binary'(latin1) 로 읽는다 — 메일 머리글은 아무 글자표나 쓴다.
+     utf8 로 읽으면 그 자리에서 깨지고, 되돌릴 수가 없다. */
+function popOpen(user, pass, idleMs) {
+  const tls = require('tls');
+  return new Promise((ready, fail) => {
+    const s = tls.connect({ host: 'pop.daum.net', port: 995, servername: 'pop.daum.net' });
+    let buf = '', waiter = null, dead = false, opened = false;
+    const die = (e) => {
+      if (dead) return;
+      dead = true;
+      try { s.destroy(); } catch (_) { /* 이미 끊겼다 */ }
+      const w = waiter; waiter = null;
+      if (w) w.no(e); else if (!opened) fail(e);
+    };
+    s.setTimeout(Number(idleMs || 60000), () => die(new Error('다음메일(POP3)이 답하지 않습니다')));
+    s.on('error', die);
+    s.on('end', () => die(new Error('다음메일(POP3)이 연결을 끊었습니다')));
+    function pump() {
+      if (!waiter) return;
+      const i = buf.indexOf('\r\n');
+      if (i < 0) return;
+      const head = buf.slice(0, i);
+      if (head.charAt(0) === '-') {
+        buf = buf.slice(i + 2);
+        const w = waiter; waiter = null;
+        return w.no(Object.assign(new Error(head.slice(0, 100)), { pop: true }));
+      }
+      if (!waiter.multi) {
+        buf = buf.slice(i + 2);
+        const w = waiter; waiter = null;
+        return w.ok({ head: head, body: '' });
+      }
+      /* 여러 줄 — 마침표 한 점만 있는 줄이 끝이다 */
+      const end = buf.indexOf('\r\n.\r\n', i);
+      if (end < 0) return;
+      const body = buf.slice(i + 2, end + 2);
+      buf = buf.slice(end + 5);
+      const w = waiter; waiter = null;
+      return w.ok({ head: head, body: body });
+    }
+    s.on('data', (d) => { buf += d.toString('binary'); pump(); });
+    const cmd = (text, multi) => new Promise((ok, no) => {
+      if (dead) return no(new Error('연결이 끊겼습니다'));
+      waiter = { ok: ok, no: no, multi: !!multi };
+      if (text) s.write(text + '\r\n');
+      pump();
+    });
+    /* 인사말 → USER → PASS */
+    cmd(null, false)
+      .then(() => cmd('USER ' + user, false))
+      .then(() => cmd('PASS ' + pass, false))
+      .then(() => {
+        opened = true;
+        ready({
+          cmd: cmd,
+          close: async () => {
+            try { await cmd('RSET', false); } catch (_) { /* 그래도 끊는다 */ }
+            try { await cmd('QUIT', false); } catch (_) { /* 그래도 끊는다 */ }
+            try { s.end(); } catch (_) { /* 이미 끊겼다 */ }
+          },
+        });
+      })
+      .catch(die);
+  });
+}
+/* UIDL 여러 줄 → [{ n, id }] — 번호는 회차마다 바뀔 수 있고, 이름표(id)는 안 바뀐다 */
+function popUidlList(body) {
+  const out = [];
+  String(body || '').split('\n').forEach((ln) => {
+    const m = ln.trim().match(/^(\d+)\s+(\S+)/);
+    if (m) out.push({ n: Number(m[1]), id: m[2] });
+  });
+  return out;
+}
+/* 이름표를 실시간DB 열쇠로 — . $ # [ ] / 는 못 쓴다 */
+function popKey(id) {
+  return String(id || '').replace(/[.$#[\]/\s]/g, '_').slice(0, 120);
+}
+/* 같은 메일인가 — IMAP 으로 이미 든 줄과 견줄 지문.
+   ⚠ 제목은 «푼 뒤»로 견딘다(=?UTF-8?B?…?= 를 그대로 두면 영영 안 맞는다).
+   ⚠ 날짜는 분까지만 본다 — 서버마다 초가 흔들린다. */
+function mailFp(fromAddr, dateMs, subject) {
+  const e = String(fromAddr || '').trim().toLowerCase();
+  const d = Math.floor(Number(dateMs || 0) / 60000);
+  const s = String(subject || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  return e + '|' + d + '|' + s;
+}
+
 module.exports = function build(deps) {
   const F = deps.functions;
   const REGION = deps.MAIL_REGION;
@@ -1383,6 +1488,204 @@ module.exports = function build(deps) {
         reply(res, got.ok ? 200 : 500, got);
       }, requireAdmin)),
 
+    /* ══════════════════════════════════════════════════════════════════════
+       📦 지난 메일 채우기 — POP3 로 «머리글만» 끌어온다 (대표 지시 2026-09-06)
+       ══════════════════════════════════════════════════════════════════════
+       ★ 무엇을 채우나 — 처음 연결한 날(2026-08-24) 이미 IMAP 400 창 밖으로 밀려
+         있던 지난 메일이다. 실측으로 짧은 칸이 넷이고(보낸메일함 31일 · 급여 73일 ·
+         받은메일함 94일 · 자문사답변 115일), 1년치로 채우려면 약 10,700통이 모자란다.
+
+       ⚠★ 본문은 안 받는다 — TOP 으로 «머리글과 앞 몇 줄»만 받는다.
+         계정에 36.8GB 가 들어 있다. 본문까지 받으면 그것을 다 내려받는 셈이고,
+         우리 목록은 원래 «본문을 안 담는다»(이 파일 머리글 약속 2번).
+       ⚠ DELE 는 이 파일에 «아예 없다»(popOpen 머리글). 원본 보관 설정도 확인했다.
+       ⚠ 한 번에 다 안 한다 — 예산이 다하면 «어디까지 했는지»를 적어 두고 끊는다.
+         대표님이 다시 누르면 그 자리에서 이어 간다.
+       ⚠ POP3 에는 «폴더가 없다». 그래서 지난 메일은 따로 담고(mailbox/old/msgs),
+         화면에서 「📦 지난 메일」 한 칸으로 보여 준다. 푸른 분류 규칙(주소→업무 칸)은
+         그대로 걸리므로, 규칙이 있는 주소의 지난 메일은 제 업무 칸에도 나타난다.
+       ⚠ 이미 IMAP 으로 든 메일은 «안 담는다» — 지문(보낸이+시각+제목)으로 가린다.
+         안 가리면 전체메일에서 같은 메일이 두 줄로 보인다. */
+    backfillMailbox: F
+      .region(REGION)
+      .runWith({ secrets: ['DAUM_MAIL_PASSWORD'], timeoutSeconds: 540, memory: '1GB' })
+      .https.onRequest((req, res) => gate(req, res, async () => {
+        const b = req.body || {};
+        const days = Math.min(3650, Math.max(30, Number(b.days) || 365));
+        const cutoff = nowMs() - days * 24 * 60 * 60 * 1000;
+        const deadline = nowMs() + 420000;
+        const db = deps.getDatabase();
+        const user = await deps.mailUserAsync();
+        const pass = deps.mailPass();
+        if (!user || !pass) { reply(res, 500, { ok: false, error: '메일 계정이 설정되지 않았습니다.' }); return; }
+
+        const st = (await db.ref(ROOT + '/old/state').once('value')).val() || {};
+        if (st.done && !b.again) {
+          reply(res, 200, { ok: true, done: true, got: Number(st.got || 0),
+            note: '이미 끝났습니다 — 다시 하시려면 「처음부터」를 켜 주세요' });
+          return;
+        }
+
+        /* ── 이미 든 메일의 지문 ── 한 번만 읽는다(이 일은 배치라 그래도 된다) */
+        const fps = Object.create(null);
+        {
+          const held = (await db.ref(ROOT + '/msgs').once('value')).val() || {};
+          Object.keys(held).forEach((slug) => {
+            const box = held[slug] || {};
+            Object.keys(box).forEach((k) => {
+              const r = box[k]; if (!r) return;
+              fps[mailFp(r.e, r.d, r.s)] = 1;
+            });
+          });
+        }
+
+        const pop = await popOpen(user, pass, 60000);
+        const out = { ok: true, got: 0, skip: 0, seen: 0, done: false, oldest: Number(st.oldest || 0) };
+        try {
+          const stat = await pop.cmd('STAT', false);
+          out.total = Number((String(stat.head).match(/\+OK\s+(\d+)/) || [])[1] || 0);
+          const list = popUidlList((await pop.cmd('UIDL', true)).body);
+          out.uidl = list.length;
+
+          /* 어디부터 이어 갈까 — 이름표로 찾는다(번호는 회차마다 흔들린다) */
+          let i = list.length - 1;                      /* 뒤가 새것이다 */
+          if (st.curId) {
+            const at = list.findIndex((x) => x.id === st.curId);
+            if (at >= 0) i = at - 1;                    /* 그 다음(더 옛것)부터 */
+          }
+
+          const { simpleParser } = require('mailparser');
+          let batch = {}, nBatch = 0, oldStreak = 0;
+          const flush = async () => {
+            if (!nBatch) return;
+            await db.ref().update(batch);
+            batch = {}; nBatch = 0;
+          };
+          for (; i >= 0; i--) {
+            if (nowMs() > deadline) break;
+            const one = list[i];
+            out.seen++;
+            let head;
+            try {
+              head = (await pop.cmd('TOP ' + one.n + ' 20', true)).body;
+            } catch (e) {
+              /* 한 통을 못 읽었다고 멈추지 않는다 — 지나가고 다음 통을 본다 */
+              out.bad = Number(out.bad || 0) + 1;
+              continue;
+            }
+            let p;
+            try { p = await simpleParser(Buffer.from(head, 'binary')); }
+            catch (e) { out.bad = Number(out.bad || 0) + 1; continue; }
+            const when = p.date ? new Date(p.date).getTime() : 0;
+            /* ⚠ 첫 옛 메일에서 바로 멈추지 않는다 — 번호가 늘 시간 차례는 아니다.
+                 연달아 예순 통이 문턱보다 옛것이면 그때 끝으로 본다. */
+            if (when && when < cutoff) {
+              oldStreak++;
+              if (oldStreak >= 60) { out.done = true; break; }
+              continue;
+            }
+            oldStreak = 0;
+            const from = (p.from && p.from.value && p.from.value[0]) || {};
+            const fp = mailFp(from.address, when, p.subject);
+            if (fps[fp]) { out.skip++; continue; }       /* 이미 IMAP 으로 들었다 */
+            fps[fp] = 1;
+            const to = (p.to && p.to.value) || [];
+            const row = {
+              u: 0, o: 1,                                 /* o — POP3 로 온 줄 */
+              f: String(from.name || '').slice(0, 120),
+              e: String(from.address || '').slice(0, 160),
+              t: to.map((x) => x && x.address).filter(Boolean).slice(0, 8).join(','),
+              tn: String((to[0] && to[0].name) || '').slice(0, 120),
+              s: String(p.subject || '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 300),
+              d: (Number.isFinite(when) && when > 0) ? when : 0,
+              r: 1, g: 0, w: 0, a: 0, z: 0,               /* 읽음으로 둔다 — 지난 메일이다 */
+              p: String(p.text || '').replace(/\s+/g, ' ').trim().slice(0, MB.PREVIEW_MAX),
+            };
+            batch[ROOT + '/old/msgs/' + popKey(one.id)] = row;
+            nBatch++;
+            out.got++;
+            if (when && (!out.oldest || when < out.oldest)) out.oldest = when;
+            if (nBatch >= WRITE_BATCH) {
+              await flush();
+              await db.ref(ROOT + '/old/state').update({ curId: one.id, at: nowMs() });
+            }
+          }
+          await flush();
+          const lastId = (i >= 0 && list[i + 1]) ? list[i + 1].id : (list[0] ? list[0].id : '');
+          await db.ref(ROOT + '/old/state').update({
+            curId: out.done ? '' : lastId, done: !!out.done, at: nowMs(),
+            got: Number(st.got || 0) + out.got, oldest: out.oldest, days: days,
+          });
+        } finally {
+          try { await pop.close(); } catch (_) { /* 이미 끊겼다 */ }
+        }
+        console.log('MB_BACKFILL', JSON.stringify(out));
+        reply(res, 200, out);
+      }, requireAdmin)),
+
+    /* ══════════════════════════════════════════════════════════════════════
+       📦 지난 메일 한 통 열기 — POP3 로 그 자리에서 (대표 지시 2026-09-06)
+       ══════════════════════════════════════════════════════════════════════
+       ⚠ 지난 메일은 IMAP 폴더에 없다(그래서 POP3 로 끌어온 것이다). 그러니 열 때도
+         POP3 로 간다. 여기서만 RETR 을 쓴다 — 사람이 «그 한 통을 열었을 때»뿐이다.
+       ⚠ 번호는 회차마다 흔들린다. 우리가 든 것은 «이름표»이므로 UIDL 로 번호를 찾는다.
+       ⚠ 너무 큰 것은 미리 막는다 — POP3 는 «한 통을 통째로»만 준다(부분이 없다).
+       ⚠ DELE 는 여기에도 없다(popOpen 머리글). 원본 보관 설정도 확인했다. */
+    readOldMail: F
+      .region(REGION)
+      .runWith({ secrets: ['DAUM_MAIL_PASSWORD'], timeoutSeconds: 300, memory: '1GB' })
+      .https.onRequest((req, res) => gate(req, res, async () => {
+        const b = req.body || {};
+        const key = String(b.key || '');
+        const wantAtt = Number.isInteger(Number(b.index)) && Number(b.index) >= 0 ? Number(b.index) : -1;
+        if (!key || !/^[A-Za-z0-9_+=@:~-]{1,120}$/.test(key)) {
+          reply(res, 400, { ok: false, error: '어느 메일인지 알 수 없습니다.' }); return;
+        }
+        const user = await deps.mailUserAsync();
+        const pass = deps.mailPass();
+        if (!user || !pass) { reply(res, 500, { ok: false, error: '메일 계정이 설정되지 않았습니다.' }); return; }
+
+        const pop = await popOpen(user, pass, 120000);
+        try {
+          const list = popUidlList((await pop.cmd('UIDL', true)).body);
+          const hit = list.filter((x) => popKey(x.id) === key)[0];
+          if (!hit) {
+            reply(res, 404, { ok: false, error: '그 메일이 다음메일에 없습니다 — 지워졌을 수 있습니다.' });
+            return;
+          }
+          /* 얼마나 큰가 — POP3 는 한 통을 통째로만 준다 */
+          let size = 0;
+          try {
+            const l = await pop.cmd('LIST ' + hit.n, false);
+            size = Number((String(l.head).match(/\d+\s+(\d+)/) || [])[1] || 0);
+          } catch (_) { /* 크기를 몰라도 받아는 본다 */ }
+          if (size > ATT_MAX) {
+            reply(res, 413, { ok: false,
+              error: '이 지난 메일은 ' + Math.round(size / 1024 / 1024) + 'MB 라 여기서 못 엽니다 — 다음메일에서 보십시오.' });
+            return;
+          }
+          const raw = (await pop.cmd('RETR ' + hit.n, true)).body;
+          const { simpleParser } = require('mailparser');
+          const p = await simpleParser(Buffer.from(raw, 'binary'));
+          const atts = (p.attachments || []).map((a, i) => ({
+            i: i, part: '', name: String((a && a.filename) || '이름없는첨부'),
+            mime: String((a && a.contentType) || ''), size: Number((a && a.size) || 0),
+          }));
+          if (wantAtt >= 0) {
+            const a = (p.attachments || [])[wantAtt];
+            if (!a) { reply(res, 404, { ok: false, error: '그 첨부가 없습니다' }); return; }
+            reply(res, 200, { ok: true, name: String(a.filename || '첨부'),
+              mime: String(a.contentType || 'application/octet-stream'),
+              b64: Buffer.from(a.content).toString('base64') });
+            return;
+          }
+          reply(res, 200, { ok: true, html: p.html || '', text: String(p.text || ''),
+            atts: atts, full: true, old: true });
+        } finally {
+          try { await pop.close(); } catch (_) { /* 이미 끊겼다 */ }
+        }
+      })),
+
     /* ══════ 첨부 하나 내려받기 ══════
        창고에 옮겨 담지 않는다 — 옮기면 그 순간부터 두 곳을 지켜야 하고, 지운 뒤에도
        사본이 남는다. 그 자리에서 받아 그대로 넘긴다. */
@@ -1424,6 +1727,9 @@ module.exports = function build(deps) {
    runSync 는 opts.client 로 가짜 메일함을 끼울 수 있다. */
 module.exports.pickParts = pickParts;
 module.exports.bodyPlan = bodyPlan;
+module.exports.popUidlList = popUidlList;
+module.exports.popKey = popKey;
+module.exports.mailFp = mailFp;
 module.exports.BODY_PART_ATT = BODY_PART_ATT;
 module.exports.BODY_FULL_MAX = BODY_FULL_MAX;
 module.exports.runSync = runSync;
