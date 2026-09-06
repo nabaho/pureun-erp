@@ -58,8 +58,36 @@
      머리행에서 목록 열쇠가 «둘 이상» 맞으면 목록 표다.
      하나만 맞으면 보통 표로 둔다 — 「기간 | 비고」 같은 표를 삼키면 안 된다.
      ⚠ 목록 표를 낱개 칸으로 두면 학력·경력 표 하나가 칸 지도 아홉 줄이 되어 못 쓴다. */
-  function detectList(grid, ti) {
-    for (var r = 0; r < grid.length; r++) {
+  /* 「채울 수 있는 줄」 — 아예 빈 줄과, 자리표·급 이름만 박힌 줄.
+     ⚠ 이력서 학력·경력 표는 「년  월 ~  년  월」이 미리 박혀 있고, 학력은
+       「고등학교」처럼 급이 박혀 있다. 그것을 값으로 보면 채울 줄이 0 이 된다
+       (실측 2026-09-05: 학력·경력이 한 줄도 안 들어갔다). */
+  function 채울수있나(cells) {
+    return cells.every(function (t) {
+      var v = String(t || '').trim();
+      return !v || 자리표(v) || (X.levelOf && X.levelOf(v));
+    });
+  }
+
+  /* 한 표 안의 목록 구역을 «모두» 찾는다.
+     ⚠★ 표 하나에 목록이 여럿 있다 — 대표 이력서 2쪽은 인적사항·학력·자격·경력이
+       «한 표»다. 예전에는 머리줄을 하나만 찾고 그 표를 통째로 목록으로 보아
+       낱개 칸을 전부 버렸다(실측 2026-09-06: 채울 자리 0개). */
+  function detectLists(grid, ti) {
+    var out = [], r = 0, seq = 0;
+    while (r < grid.length) {
+      var L = detectListAt(grid, ti, r, seq);
+      if (!L) break;
+      out.push(L);
+      seq++;
+      r = L.end;                       /* 이 구역 다음부터 다시 본다 */
+    }
+    return out;
+  }
+  function detectList(grid, ti) { return detectLists(grid, ti)[0] || null; }
+
+  function detectListAt(grid, ti, from, seq) {
+    for (var r = from; r < grid.length; r++) {
       /* ⚠★ 머리행에는 «빈 칸이 없다» — 열 이름이 죽 적혀 있는 줄이기 때문이다.
          이 빗장이 없으면 「소속기관 | (빈칸) | 직위 | (빈칸)」 같은 «보통 라벨 표»가
          경력 목록으로 오인되어 그 표의 빈 칸을 통째로 놓친다
@@ -72,21 +100,13 @@
       var kind = keys.indexOf('school') >= 0 ? 'edu'
         : (keys.indexOf('org') >= 0 && (keys.indexOf('role') >= 0 || keys.indexOf('period') >= 0)) ? 'career' : '';
       if (!kind) continue;
-      /* ★ 「빈 줄」에는 «자리표만 박힌 줄»도 든다 — 이력서 학력·경력 표는
-         「년  월 ~  년  월」이 미리 찍혀 있어, 그것을 값으로 보면 빈 줄이 0 이 된다
-         (그래서 학력·경력이 한 줄도 안 들어갔다). */
-      var blank = 0;
-      for (var q = r + 1; q < grid.length; q++) {
-        var empty = grid[q].every(function (t) {
-          var v = String(t || '').trim();
-          /* 「고등학교」·「대학교」는 미리 박아 둔 «급 이름»이다 — 값이 아니다.
-             채우기는 급을 맞춰 그 줄을 채우는데 여기서 값으로 세면
-             「빈 0줄」이라 적혀 화면이 거짓을 말한다. */
-          return !v || 자리표(v) || (X.levelOf && X.levelOf(v));
-        });
-        if (empty) blank++;
-      }
-      return { id: 'L' + ti, tbl: ti, kind: kind, cols: keys, head: r, blank: blank };
+      /* ★★ 구역은 머리줄 + «이어지는 채울 수 있는 줄»까지다 — 표 끝까지가 아니다.
+         표 끝까지 세면 학력 4줄이 「빈 10줄」이 되고(대표 화면 실측 2026-09-06),
+         그 아래 자격·상벌 칸까지 목록으로 삼켜 사람이 손으로도 못 친다. */
+      var q = r + 1;
+      while (q < grid.length && 채울수있나(grid[q])) q++;
+      return { id: 'L' + ti + (seq ? '_' + seq : ''), tbl: ti, kind: kind,
+               cols: keys, head: r, end: q, blank: q - r - 1 };
     }
     return null;
   }
@@ -115,9 +135,17 @@
       ti++;
       var rows = X.splitRows(tbl);
       var grid = rows.map(function (tr) { return X.splitCells(tr).map(X.cellText); });
-      var L = detectList(grid, ti);
-      if (L) { lists.push(L); return tbl; }   /* 목록 표는 낱개로 세지 않는다 */
+      /* ★★ 목록 구역에 «든 줄만» 낱개에서 뺀다 (대표 제보 2026-09-06).
+         예전에는 목록이 하나라도 있으면 표를 통째로 건너뛰어, 인적사항과 학력이
+         «한 표»인 서식에서 성명·생년월일·주소가 아예 안 잡혔다. */
+      var Ls = detectLists(grid, ti);
+      var 목록줄 = {};
+      Ls.forEach(function (L) {
+        lists.push(L);
+        for (var q = L.head; q < L.end; q++) 목록줄[q] = true;
+      });
       grid.forEach(function (cells, ri) {
+        if (목록줄[ri]) return;   /* 이 줄은 목록이 채운다 */
         cells.forEach(function (txt, ci) {
           var kind = classify(txt);
           /* ★★ 이미 글자가 든 «값 칸»도 자리로 잡는다 (대표 지시 2026-09-05
@@ -419,7 +447,7 @@
     return 'F' + (h >>> 0).toString(36) + '.' + s.length;
   }
 
-  var api = { scan: scan, classify: classify, detectList: detectList,
+  var api = { scan: scan, classify: classify, detectList: detectList, detectLists: detectLists,
               guess: guess, hintKey: hintKey, apply: apply, fingerprint: fingerprint,
               digitRun: digitRun, digitsFor: digitsFor };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
