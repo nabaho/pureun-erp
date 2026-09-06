@@ -330,6 +330,12 @@ main{flex:1;min-height:0;width:100%;padding:10px 12px;
 .pfixbar{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:6px}
 /* 자문사 로고 고르기 — 그림이 주인공이라 칸을 작게, 손잡이는 그림 위에 얹는다 */
 .logos{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+/* 로고를 «여러 장 한꺼번에» 끌어다 놓는 칸 (대표 지시 2026-09-06 「여러장 한번에」) */
+/* ⚠ 색은 :root 의 것만 쓴다 — 팔레트 검사가 새 색값을 그 자리에서 막는다 */
+.lgdrop{border:2px dashed var(--line);border-radius:9px;padding:16px 12px;text-align:center;
+  color:var(--sub);background:var(--paper);font-size:12.5px;margin-top:8px}
+.lgdrop b{color:var(--ink)}
+.lgdrop.over{border-color:var(--navy);color:var(--navy)}
 /* 로고 붙여넣기 — Ctrl+V 로 받는 칸과, «실제 배경 위» 미리보기 */
 .lpaste{border:2px dashed var(--navy);border-radius:9px;background:#f8fafc;
   padding:13px;text-align:center;margin:9px 0 0;cursor:text}
@@ -4647,10 +4653,20 @@ function drawPartnerLogos() {
       + '<button class="btn" onclick="dropPastedLogo()">버리기</button></div></div>';
   }
 
-  h += '<div class="guide"><b>파일로 넣기</b> — 그림을 고르면 «저장소»에 담고 목록 맨 뒤에 붙입니다. '
-    + '<span class="sub">png·jpg·svg, 700KB 까지. 홈페이지 로고는 보통 5~70KB 입니다.</span>'
-    + '<div style="margin-top:7px"><input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"'
-    + ' onchange="addPartnerLogo(this)"></div></div>';
+  /* ★ 여러 장을 한꺼번에 (대표 지시 2026-09-06 「여러장 한번에」) —
+     자문사를 수십 곳 고르면 로고도 그만큼 필요하다. 한 장씩 고르게 두면 그 수만큼 왕복한다. */
+  h += '<div class="guide"><b>파일로 넣기</b> — 담으면 목록 맨 뒤에 붙습니다. '
+    + '<span class="sub">png·jpg·webp·svg, 한 장 700KB 까지. 홈페이지 로고는 보통 5~70KB 입니다.</span>'
+    + '<div class="lgdrop" id="logoDrop"'
+    + ' ondragover="logoDragOver(event,true)" ondragleave="logoDragOver(event,false)"'
+    + ' ondrop="logoDrop(event)">'
+    + '그림 파일을 <b>여기로 끌어다 놓으십시오</b> — <b>여러 장 한꺼번에</b> 됩니다'
+    + '</div>'
+    + '<div style="margin-top:7px"><input type="file" multiple'
+    + ' accept="image/png,image/jpeg,image/webp,image/svg+xml"'
+    + ' onchange="addPartnerLogo(this)">'
+    + '<span class="sub"> — 고를 때도 Ctrl(⌘)·Shift 로 여러 장을 함께 고르실 수 있습니다</span>'
+    + '</div></div>';
   h += '<div style="margin-top:12px;display:flex;gap:7px">'
     + '<button class="btn pri" onclick="publishPartner()"' + (App.publishing ? ' disabled' : '') + '>'
     + (App.publishing ? '올리는 중…' : '홈페이지에 올리기 (' + 고른것.갈것.length + '장)') + '</button>'
@@ -4829,6 +4845,19 @@ window.focusLogoPaste = focusLogoPaste;
    ★ 파일 이름은 «우리가» 짓는다 — 한글·빈칸·따옴표가 든 이름이 주소가 되면 깨지고,
      붙여넣기에는 파일 이름이 아예 «없다». 시각으로 지으면 겹치지도 않는다.
    ★ 여기서는 «담기»까지만 한다. 쪽에 실리는 것은 「올리기」를 눌렀을 때다. */
+/* ★ 로고 이름은 시각으로 짓는데, «여러 장을 한꺼번에» 담으면 같은 밀리초에 둘이 만들어져
+   이름이 겹친다 — 겹치면 뒤엣것이 앞엣것을 덮어써 로고 한 장이 조용히 사라진다.
+   (2026-09-06 「여러장 한번에」를 만들며 미리 막았다. 한 장씩일 때는 안 나던 일이다.)
+   그래서 이미 담긴 열쇠와 견주어 비어 있는 이름을 찾는다. */
+function 로고열쇠() {
+  const 있는것 = {};
+  (((App.partnerLogos || {}).추가) || []).forEach(x => { if (x && x.srl) 있는것[x.srl] = 1; });
+  const 밑 = 'n' + Date.now();
+  let 열쇠 = 밑, n = 1;
+  while (있는것[열쇠]) { n += 1; 열쇠 = 밑 + '-' + n; }
+  return 열쇠;
+}
+
 async function 로고담기(base64, 끝, 사연) {
   if (!App.isAdmin) throw new Error('총괄관리자만 올릴 수 있습니다.');
   if (!base64) throw new Error('그림이 비어 있습니다.');
@@ -4836,7 +4865,7 @@ async function 로고담기(base64, 끝, 사연) {
   const 한도 = 700 * 1024;
   if (바이트 > 한도) throw new Error('그림이 너무 큽니다(' + Math.round(바이트 / 1024) + 'KB). '
     + '한도는 700KB 입니다 — 로고는 보통 5~70KB 입니다.');
-  const 열쇠 = 'n' + Date.now();
+  const 열쇠 = 로고열쇠();
   const 이름 = 열쇠 + '.' + 끝;
   const 자리 = 'site/files/logo/' + 이름;
   const token = await firebase.auth().currentUser.getIdToken();
@@ -4854,34 +4883,78 @@ async function 로고담기(base64, 끝, 사연) {
   return 답;
 }
 
-async function addPartnerLogo(el) {
-  const f = el && el.files && el.files[0];
-  if (!f) return;
-  el.value = '';                       // 같은 그림을 다시 골라도 다시 돌게
-  try {
-    if (!App.isAdmin) throw new Error('총괄관리자만 올릴 수 있습니다.');
-    const 한도 = 700 * 1024;
-    if (f.size > 한도) throw new Error('그림이 너무 큽니다(' + Math.round(f.size / 1024) + 'KB). '
-      + '한도는 700KB 입니다 — 로고는 보통 5~70KB 입니다.');
-    const 끝 = (f.name.split('.').pop() || '').toLowerCase();
-    const 되는것 = { png: 1, jpg: 1, jpeg: 1, webp: 1, svg: 1 };
-    if (!되는것[끝]) throw new Error('png·jpg·webp·svg 만 넣을 수 있습니다 (' + 끝 + ')');
+/* 파일 한 장을 살펴 담는다 — 파일 고르기·끌어다 놓기가 «같은 길»을 쓴다.
+   ⚠ 길이 둘이면 한쪽만 고쳐져 한도·확장자 규칙이 두 벌이 된다. */
+async function 로고파일담기(f) {
+  const 한도 = 700 * 1024;
+  if (f.size > 한도) throw new Error('너무 큽니다(' + Math.round(f.size / 1024) + 'KB, 한도 700KB)');
+  const 끝 = (f.name.split('.').pop() || '').toLowerCase();
+  const 되는것 = { png: 1, jpg: 1, jpeg: 1, webp: 1, svg: 1 };
+  if (!되는것[끝]) throw new Error('png·jpg·webp·svg 만 됩니다 (' + 끝 + ')');
+  const base64 = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject(new Error('그림을 읽지 못했습니다'));
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.readAsDataURL(f);
+  });
+  return 로고담기(base64, 끝, f.name);
+}
 
-    const base64 = await new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onerror = () => reject(new Error('그림을 읽지 못했습니다.'));
-      r.onload = () => resolve(String(r.result).split(',')[1] || '');
-      r.readAsDataURL(f);
-    });
-    await 로고담기(base64, 끝, f.name);
-    toast('로고를 담았습니다 — 아래 «홈페이지에 올리기»를 눌러야 실립니다.');
-    drawPartnerLogos();
-  } catch (e) {
-    console.warn('[로고 넣기]', e);
-    await say('로고를 넣지 못했습니다', (e && e.message) || String(e));
+/* ══════ 여러 장을 한꺼번에 (대표 지시 2026-09-06 「여러장 한번에」) ══════
+   ★ 한 장이 잘못돼도 «나머지는 담는다». 열 장 중 한 장이 크다고 열 장을 다 물리면,
+     어느 것이 문제였는지 모른 채 처음부터 다시 골라야 한다.
+     못 담은 것만 이름과 까닭을 모아 끝에 한 번 알린다.
+   ★ 한 장씩 차례로 담는다 — 한꺼번에 던지면 서버가 밀리고, 어디까지 됐는지도 안 보인다. */
+async function 로고여러장(파일들) {
+  const 목록 = Array.prototype.slice.call(파일들 || []);
+  if (!목록.length) return;
+  if (!App.isAdmin) { await say('총괄관리자만 올릴 수 있습니다', ''); return; }
+  const 된것 = [], 안된것 = [];
+  const 칸 = $('logoDrop');
+  const 알림 = (s) => { if (칸) 칸.textContent = s; };
+  for (let i = 0; i < 목록.length; i++) {
+    const f = 목록[i];
+    알림('담는 중… ' + (i + 1) + ' / ' + 목록.length + '  ' + f.name);
+    try { await 로고파일담기(f); 된것.push(f.name); }
+    catch (e) {
+      console.warn('[로고 넣기]', f.name, e);
+      안된것.push(f.name + ' — ' + ((e && e.message) || String(e)));
+    }
+  }
+  drawPartnerLogos();
+  if (!안된것.length) {
+    toast(된것.length + '장을 담았습니다 — 아래 «홈페이지에 올리기»를 눌러야 실립니다.');
+  } else {
+    await say(된것.length + '장을 담았고, ' + 안된것.length + '장은 못 담았습니다',
+      '<div class="pre">' + 안된것.map(esc).join('\n') + '</div>'
+      + '<div class="sub" style="margin-top:6px">담긴 것은 그대로 있습니다 — '
+      + '못 담은 것만 고쳐서 다시 넣으시면 됩니다.</div>');
   }
 }
+
+async function addPartnerLogo(el) {
+  const 파일들 = (el && el.files) || [];
+  if (!파일들.length) return;
+  el.value = '';                       // 같은 그림을 다시 골라도 다시 돌게
+  await 로고여러장(파일들);
+}
 window.addPartnerLogo = addPartnerLogo;
+
+/* 끌어다 놓기 — 폴더에서 로고 여러 장을 통째로 집어 던질 수 있게 한다.
+   ⚠ dragover 에서 preventDefault 를 안 하면 브라우저가 그림을 «새 탭으로 열어»
+     화면을 통째로 떠난다. 담던 것이 날아간다. */
+function logoDragOver(e, 들었나) {
+  e.preventDefault();
+  const 칸 = $('logoDrop');
+  if (칸) 칸.classList.toggle('over', !!들었나);
+}
+async function logoDrop(e) {
+  e.preventDefault();
+  const 칸 = $('logoDrop');
+  if (칸) 칸.classList.remove('over');
+  await 로고여러장((e.dataTransfer && e.dataTransfer.files) || []);
+}
+window.logoDragOver = logoDragOver; window.logoDrop = logoDrop;
 
 async function publishPartner() {
   if (App.publishing) return;

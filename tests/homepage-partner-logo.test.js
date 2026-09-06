@@ -105,13 +105,18 @@ test('★★ 700KB 한도를 «고르는 순간» 잡는다 — 올릴 때 실�
        · addPartnerLogo — 파일을 «고르는 순간» f.size 로 잡는다 (가장 이르다)
        · 로고담기       — 담기 직전에 한 번 더 잡는다 (붙여넣기도 지나는 길)
      둘 다 있어야 한다 — 하나만 있으면 다른 길로 들어온 큰 그림이 서버까지 가서 거부된다. */
+  /* ⚠ 2026-09-06 「여러장 한번에」로 파일 한 장을 살피는 일이 로고파일담기 로 옮겨졌다.
+     지킬 것은 «어느 함수에 있나»가 아니라 «파일을 읽기 전에 크기를 보는가»다 —
+     다 읽고 나서 막으면 큰 파일을 통째로 메모리에 올린 뒤 버리게 된다. */
   const 고르기 = (function () {
-    const i = RAW.indexOf('async function addPartnerLogo');
-    const j = RAW.indexOf('\nwindow.addPartnerLogo', i);
-    assert.ok(i >= 0 && j > i, '★ addPartnerLogo 를 못 찾았다');
+    const i = RAW.indexOf('async function 로고파일담기');
+    const j = RAW.indexOf('\n}', i);
+    assert.ok(i >= 0 && j > i, '★ 로고파일담기 를 못 찾았다');
     return 알맹이(RAW.slice(i, j));
   })();
   assert.match(고르기, /f\.size\s*>/, '★ 고른 그림의 크기를 «고르는 순간» 안 본다');
+  assert.ok(고르기.indexOf('f.size') < 고르기.indexOf('FileReader'),
+    '★★ 파일을 다 읽은 «뒤에» 크기를 본다 — 읽기 전에 막아야 한다');
 
   const s = 담기();
   /* ⚠ 처음에 «바이트 셈»(length*3/4)만 봐도 통과하게 썼다가 고쳤다 —
