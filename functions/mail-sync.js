@@ -1311,6 +1311,78 @@ module.exports = function build(deps) {
         reply(res, 200, { ok: true, moved: uids.length });
       })),
 
+    /* ══════════════════════════════════════════════════════════════════════
+       POP3 로 «몇 통이 있는지»만 물어본다 (대표 지시 2026-09-06 「1년치 보관」)
+       ══════════════════════════════════════════════════════════════════════
+       ★ 왜 필요한가 — IMAP 은 폴더당 400통이 끝이다(2026-09-02 실측, 바깥 사용자
+         보고도 같다). 그래서 처음 동기화한 날 이미 창 밖이던 «지난 메일»은 못 가져왔다.
+         POP3 는 그 창이 없다 — 2026-09-02 에 30,000통 · 36.8GB 를 보여 주었다.
+         지난 것을 채우려면 그 길뿐이고, 그러려면 먼저 «지금도 그런가»를 봐야 한다.
+
+       ⚠★ 여기서 쓰는 명령은 STAT · UIDL · RSET · QUIT «넷뿐»이다.
+         · STAT/UIDL — 통수와 이름표만 묻는다. 메일을 «읽지도 지우지도» 않는다.
+         · RETR/TOP 은 «안 부른다» — 다음메일 설정이 「가져온 메일 삭제」로 되어 있으면
+           읽는 순간 대표님 메일이 사라질 수 있다. 그 설정을 확인하기 «전»에는
+           내용을 건드리는 명령을 하나도 쓰지 않는다.
+         · DELE 는 «영영» 안 부른다. RSET 을 먼저 보내 표시가 남지 않게 하고 끊는다.
+       ⚠ 돌려주는 것도 «수»뿐이다 — 제목도 보낸이도 안 싣는다. 진단이 자료를 흘리면
+         안 된다.
+       ⚠ 대표님만 부를 수 있다(requireAdmin). */
+    probeMailPop: F
+      .region(REGION)
+      .runWith({ secrets: ['DAUM_MAIL_PASSWORD'], timeoutSeconds: 120, memory: '256MB' })
+      .https.onRequest((req, res) => gate(req, res, async () => {
+        const user = await deps.mailUserAsync();
+        const pass = deps.mailPass();
+        if (!user || !pass) { reply(res, 500, { ok: false, error: '메일 계정이 설정되지 않았습니다.' }); return; }
+        const got = await new Promise((ok) => {
+          const tls = require('tls');
+          let buf = '', step = 0, done = false, stat = '', uidl = '', inList = false;
+          const out = { ok: false };
+          const fin = (v) => { if (!done) { done = true; try { s.end(); } catch (_) { } ok(v); } };
+          const s = tls.connect({ host: 'pop.daum.net', port: 995, servername: 'pop.daum.net' });
+          const t = setTimeout(() => fin({ ok: false, error: '다음메일이 제때 답하지 않았습니다(POP3)' }), 90000);
+          s.on('error', (e) => { clearTimeout(t); fin({ ok: false, error: String((e && e.message) || e) }); });
+          s.on('data', (d) => {
+            buf += d.toString('utf8');
+            for (;;) {
+              const i = buf.indexOf('\r\n');
+              if (i < 0) return;
+              const line = buf.slice(0, i); buf = buf.slice(i + 2);
+              if (inList) {                       /* UIDL 여러 줄 — 마침표 한 점이 끝이다 */
+                if (line === '.') {
+                  inList = false;
+                  clearTimeout(t);
+                  const rows = uidl.split('\n').filter((x) => x.trim());
+                  const first = rows[0] || '', last = rows[rows.length - 1] || '';
+                  out.ok = true;
+                  out.stat = stat;                                   /* +OK <통수> <바이트> */
+                  out.count = Number((stat.match(/\+OK\s+(\d+)/) || [])[1] || 0);
+                  out.bytes = Number((stat.match(/\+OK\s+\d+\s+(\d+)/) || [])[1] || 0);
+                  out.uidlRows = rows.length;
+                  /* 이름표의 «모양»만 본다 — 그 값이 우리 열쇠가 되므로 길이·꼴이 중요하다 */
+                  out.firstNo = Number((first.match(/^(\d+)/) || [])[1] || 0);
+                  out.lastNo = Number((last.match(/^(\d+)/) || [])[1] || 0);
+                  out.idLen = String(first.split(/\s+/)[1] || '').length;
+                  s.write('RSET\r\n');            /* 표시가 남지 않게 되돌린다 */
+                  s.write('QUIT\r\n');
+                  return fin(out);
+                }
+                uidl += line + '\n';
+                continue;
+              }
+              if (line.charAt(0) === '-') { clearTimeout(t); return fin({ ok: false, error: line.slice(0, 80) }); }
+              if (step === 0) { step = 1; s.write('USER ' + user + '\r\n'); continue; }
+              if (step === 1) { step = 2; s.write('PASS ' + pass + '\r\n'); continue; }
+              if (step === 2) { step = 3; s.write('STAT\r\n'); continue; }
+              if (step === 3) { step = 4; stat = line.trim(); s.write('UIDL\r\n'); continue; }
+              if (step === 4) { step = 5; inList = true; continue; }   /* +OK 뒤부터 목록이다 */
+            }
+          });
+        });
+        reply(res, got.ok ? 200 : 500, got);
+      }, requireAdmin)),
+
     /* ══════ 첨부 하나 내려받기 ══════
        창고에 옮겨 담지 않는다 — 옮기면 그 순간부터 두 곳을 지켜야 하고, 지운 뒤에도
        사본이 남는다. 그 자리에서 받아 그대로 넘긴다. */

@@ -3892,3 +3892,7 @@ exports.mailAttToPaydata = MSYNC.mailAttToPaydata;
 exports.moveMailMessages = MSYNC.moveMailMessages;
 exports.manageMailFolder = MSYNC.manageMailFolder;
 exports.flagMailMessages = MSYNC.flagMailMessages;
+/* POP3 로 «몇 통이 있는지»만 묻는 진단 — 지난 메일을 채울 수 있나를 재는 자리.
+   ⚠ 여기 한 줄을 빠뜨리면 함수가 아예 안 올라간다("No function matches the filter") —
+     mail-sync.js 에 적는 것만으로는 밖에서 안 보인다. */
+exports.probeMailPop = MSYNC.probeMailPop;
