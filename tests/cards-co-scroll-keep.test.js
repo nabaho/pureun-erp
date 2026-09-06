@@ -87,6 +87,9 @@ function load(){
     coTodoChipsHtml: () => '',
     /* 2026-09-02: 「번호 없음」만 볼 때 도구줄 한 줄이 붙는다 — 이 검사는 안 본다 */
     coNoBizBarHtml: () => '',
+    /* 2026-09-04 3걸음 — 회사 목록에 띠가 하나 더 붙었다. 이 검사가 보는 것은
+       «구르던 자리를 지키는가»뿐이라, 띠는 빈 글로 세워 둔다. */
+    coSentBatchBarHtml: () => '',
     coPagerHtml: () => '',
     esc: s => String(s)
   };
