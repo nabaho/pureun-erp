@@ -547,12 +547,16 @@
      ⚠ 화면에서 «거른 뒤»의 줄을 받는다 — 보고 있는 것과 내보낸 것이 달라지면 안 된다. */
   function perfSheet(rows) {
     return {
-      headers: ['사업장', '사업자번호', '업종', '상시근로자', '개정 회차', '최근 연도', '담당', '갱신'],
-      colRatios: [3, 1.6, 1.8, 1.1, 1, 1, 1.2, 1.6],
+      /* ⚠ 화면에 「그 뒤 시행」을 보이면서 실적표에서 빼면, 보는 것과 내보낸 것이 달라진다.
+         ★ 셀 수 없는 곳은 «0 이 아니라 물음표» — 0 은 「다 반영됐다」로 읽힌다. */
+      headers: ['사업장', '사업자번호', '업종', '상시근로자', '개정 회차', '최근 연도', '그 뒤 시행', '담당', '갱신'],
+      colRatios: [3, 1.6, 1.8, 1.1, 1, 1, 1.1, 1.2, 1.6],
       rows: (rows || []).map(function (r) {
         return [r.site, r.bizno, r.industry,
                 r.size == null ? '' : String(r.size),
-                String(r.revCount), r.lastYear, r.updatedBy, r.updatedAt];
+                String(r.revCount), r.lastYear,
+                (r.sinceCount === undefined ? '' : (r.sinceCount == null ? '?' : String(r.sinceCount))),
+                r.updatedBy, r.updatedAt];
       })
     };
   }
@@ -668,6 +672,59 @@
     return Object.keys(out).length ? out : null;
   }
 
+  /* ══════ 「그 뒤 시행 N」 — 서고를 «명단»으로 바꾸는 자리 (대표 물음 2026-09-07) ══════
+     대표 물음: 「취규 내용검토 필요한가?」 → 필요하다. 그리고 그것이 서고의 값어치다.
+
+     ★ 왜 — 법이 계속 바뀐다. 2022년에 맞던 문구가 2026년엔 아닐 수 있다.
+       규칙집 92개 중 18개에 시행일이 붙어 있고, 2022년 회차 뒤로만 열 개가 시행됐다
+       (출산전후휴가 · 육아휴직 · 배우자 출산휴가 · 임금명세서 교부 …).
+       마지막 개정이 오래된 사업장은 그것들을 못 반영했을 수 있다 — 곧 연락할 명단이다.
+
+     ★★ 「위반」이라 말하지 않는다. 서고의 회차는 «그때 우리가 낸 것»이지
+       «지금 그 회사가 쓰는 것»이 아니다. 우리를 안 거치고 자체 개정했을 수도 있다.
+       그래서 「마지막으로 본 것이 언제이고, 그 뒤 시행된 것이 몇 개인가」까지만 말한다.
+
+     ★ 이 셈은 «본문을 안 읽는다» — 목록에 이미 있는 lastYear 와 규칙집 시행일만 견준다.
+       그래서 목록 화면에서 곧바로 나온다(층을 안 건드린다). 어느 조문이 실제로 걸리는지는
+       사업장을 «열 때» 본문에 규칙을 돌려 본다 — 그건 딴 일이다. */
+
+  /* 규칙집에서 시행일 붙은 것만 추려 둔다 — 화면이 넘겨준다(모듈이 규칙집을 안 들고 있게) */
+  function datedRules(rules) {
+    return (rules || []).filter(function (r) {
+      return r && typeof r.effective === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.effective);
+    }).map(function (r) {
+      return { id: txt(r.id), name: txt(r.name), law: txt(r.law),
+               category: txt(r.category), effective: r.effective };
+    }).sort(function (a, b) { return a.effective < b.effective ? -1 : 1; });
+  }
+
+  /* 회차 연도 뒤에 시행됐고 «오늘 이미 시행 중»인 것 — 앞으로 시행될 것은 따로 센다.
+     ⚠ 아직 시행 전인 것을 「못 반영했다」에 섞으면 안 된다. 그건 아직 안 지켜도 되는 것이다. */
+  function sinceRules(lastYear, dated, today) {
+    var y = txt(lastYear);
+    var 오늘 = txt(today) || new Date().toISOString().slice(0, 10);
+    if (!/^\d{4}$/.test(y)) return { since: [], coming: [], unknown: true };
+    var 끝 = y + '-12-31';
+    var since = [], coming = [];
+    (dated || []).forEach(function (r) {
+      if (r.effective <= 끝) return;
+      if (r.effective <= 오늘) since.push(r); else coming.push(r);
+    });
+    return { since: since, coming: coming, unknown: false };
+  }
+
+  /* 목록 줄마다 붙일 값 — 본문을 안 읽고 나온다 */
+  function markSince(rows, dated, today) {
+    return (rows || []).map(function (r) {
+      var s = sinceRules(r.lastYear, dated, today);
+      return Object.assign({}, r, {
+        sinceCount: s.unknown ? null : s.since.length,
+        comingCount: s.unknown ? null : s.coming.length,
+        since: s.since
+      });
+    });
+  }
+
   /* ⚠ 계획서(1단계)가 과제마다 「api 에 이것을 더한다」로 흩어 적어 둔 것을 한자리에 모았다.
      흩어 두면 과제를 이어 붙일 때마다 하나씩 빠뜨린다. */
   var api = {
@@ -698,7 +755,9 @@
     /* ㉠ 글 없음 세기 · ㉡ 제출 서류 몇 줄 적기 (2026-09-07) */
     BODY_ROLES: BODY_ROLES, SUBMIT_ROLES: SUBMIT_ROLES, tallyNoText: tallyNoText, pct: pct,
     SUB_FIELDS: SUB_FIELDS, subOf: subOf, subWorth: subWorth, subLine: subLine,
-    validSub: validSub, subClean: subClean
+    validSub: validSub, subClean: subClean,
+    /* 「그 뒤 시행 N」 — 서고를 명단으로 (2026-09-07) */
+    datedRules: datedRules, sinceRules: sinceRules, markSince: markSince
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   global.PuRulesCasebook = api;
