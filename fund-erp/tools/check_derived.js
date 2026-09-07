@@ -159,6 +159,45 @@ console.log('\n■ (나) 사무소 임대차 — 기금 정보의 묶음에서 �
   ok('명부에 주민등록번호 칸이 있다', /class="off-rrn"/.test(gF('_offRow')) && /\['birth','title','rrn','addr'\]/.test(gF('_readOfficers')));
   global.funds.X = F; }
 
+console.log('\n■ 밑줄이 «없는» 빈 칸 — 화면으로 보고서야 찾은 자리');
+/* 앞서 훑기는 ＿ 만 세어, 원본이 «그냥 빈 채로» 둔 칸을 통째로 놓쳤다.
+   설립등기신청서의 「주사무소」가 그래서 빈 줄로 나가고 있었다. */
+{ const Lz = Object.assign({}, F, { lease_lessor: '가나기계(주)', lease_addr: '충남 어느시 어느구 어느로 1, 2층', lease_from: '2026-03-01' });
+  global.funds.X = Lz;
+  ok('설립등기신청서 주사무소', /주사무소 충남 어느시 어느구 어느로 1/.test(draw('reg_apply', Lz)));
+  /* 기타사항의 「1. 설립인허가연월일」 다음 줄은 앞뒤 글이 없는 밑줄 한 마디다 — 앞 마디를 보고 채운다 */
+  ok('기타사항 설립인허가연월일', /설립인허가연월일 2026\. 1\. 2\./.test(draw('reg_apply', Lz)),
+     (draw('reg_apply', Lz).match(/설립인허가연월일.{0,20}/) || [''])[0]);
+  /* 두 번 붙이지 않는다 — 서식 흐름에서는 걷어내기가 밑줄 마디를 «지워» 이 갈래를 안 타지만,
+     원본이 바뀌어 값이 남는 날 두 번 찍히면 안 된다. 그 갈래만 따로 걸어 본다. */
+  { const cell = dom.window.document.createElement('div');
+    cell.innerHTML = '<table><tbody><tr><td>기타사항</td><td>1. 설립인허가연월일<br>2020. 9. 9.</td></tr></tbody></table>';
+    fillDerived(cell, Lz, [], 'reg_apply');
+    ok('이미 값이 있으면 두 번 붙이지 않는다', !/2026\. 1\. 2\./.test(cell.textContent), T(cell.textContent)); }
+  ok('인감신고서·인감카드 본점(주사무소)', /본점\(주사무소\) 충남 어느시/.test(draw('reg_seal', Lz)) && /본점\(주사무소\) 충남 어느시/.test(draw('reg_sealcard', Lz)));
+  ok('인감카드 자격 / 성명', /자격 \/ 성명 이사 홍길동/.test(draw('reg_sealcard', Lz)));
+  ok('사업자등록신청서 사업장(단체)소재지', /사업장\(단체\)소재지 충남 어느시/.test(draw('tax_bizreg', Lz)));
+  /* 「주소」 이름표가 임대인 줄과 임차인 줄에 «둘 다» 있다 — 줄로 갈라야 한다.
+     ⚠ 납작하게 편 글로는 못 본다. 안 채운 ＿ 칸은 stripBaked 가 «빈 칸»으로 만들어(원래 동작)
+       「주소 대표자」처럼 이어 붙는다 — 처음에 그걸 밑줄로 기대해 검사가 틀렸다. 칸으로 본다. */
+  const lrow = (function () { const d = dom.window.document.createElement('div');
+    d.innerHTML = hwpFormHTML('tax_lease', Lz, []);
+    const o = {}; [].slice.call(d.querySelectorAll('tr')).forEach((tr) => {
+      const c = [].slice.call(tr.children).map((x) => (x.textContent || '').trim());
+      if (c.length >= 4 && /^임(대|차)인/.test(c[0].replace(/\s/g, ''))) o[c[0].replace(/\s/g, '')] = c;
+      if (c.length >= 4 && c[0].replace(/\s/g, '') === '대표자') o['대표자'] = c;
+    }); return o; })();
+  /* 임대인 칸에 원본의 «남의 회사 이름»이 박혀 있었다 — 지우고 적어 둔 임대인을 넣는다 */
+  ok('임대차계약서 임대인 = 적어 둔 임대인', (lrow['임대인(갑)'] || [])[1] === '가나기계(주)', JSON.stringify(lrow['임대인(갑)']));
+  ok('임차인 주소를 채운다', (lrow['임차인(을)'] || [])[3] === '충남 어느시 어느구 어느로 1, 2층', JSON.stringify(lrow['임차인(을)']));
+  ok('임대인 주소는 비워 둔다 (남의 것)', (lrow['임대인(갑)'] || [])[3] === '', JSON.stringify(lrow['임대인(갑)']));
+  ok('임대인 대표자·주민번호는 손대지 않는다',
+     (lrow['대표자'] || [])[1] === '' && /^_{6}-_{7}$/.test((lrow['대표자'] || [])[3] || ''), JSON.stringify(lrow['대표자']));
+  global.funds.X = F; }
+/* 공개 배포되는 파일이라 «파일 자체»에도 남의 이름이 없어야 한다 */
+{ const raw = fs.readFileSync(path.join(W, 'fund_forms.js'), 'utf8');
+  ok('공개 서식 파일에 남의 회사 이름이 없다', !/이볼브|이벌브/.test(raw)); }
+
 console.log('\n■ 값이 없으면 «지어내지 않는다»');
 { const E = { name:'빈기금', fund_type:'공동', officers:[], years:{} }; global.funds.X = E;
   const all = ['minutes','reg_apply','reg_accept','reg_roster','reg_seal','reg_sealpaper','reg_license','tax_bizreg','tax_lease','tax_hometax','bizplan']

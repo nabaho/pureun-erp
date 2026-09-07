@@ -3236,7 +3236,16 @@ var FORM_FILL=[
   [/^인가번호$/, function(f){return f.inka_no;}],
   [/^법인등록번호$/, function(f){return f.corp_reg_no;}],
   [/^고유번호$/, function(f){return f.tax_id_no;}],
-  [/^사업자등록번호$/, function(f){return f.tax_id_no;}]
+  [/^사업자등록번호$/, function(f){return f.tax_id_no;}],
+  /* 아래는 «밑줄이 없어» 앞서 훑기가 통째로 놓쳤던 자리다 — 원본이 그냥 빈 칸으로 둔다.
+     화면으로 보고서야 알았다(설립등기신청서의 「주사무소」가 빈 줄로 나가고 있었다). */
+  [/^주사무소$/, function(f){return f.address;}],
+  [/^본점\(주사무소\)$/, function(f){return f.address;}],
+  [/^사업장\(단체\)소재지$/, function(f){return f.address;}],
+  [/^자격\s*\/\s*성명$/, function(f){ var n=_boss(f).name||f.chairman; return n?'이사 '+n:''; }],
+  /* 임대차계약서의 임대인 — 원본에 «남의 회사 이름»이 박혀 있었다(2026-09-07 지웠다).
+     비워 두면 그 자리를 손으로 쳐야 하므로, 적어 둔 임대인을 넣는다. */
+  [/^임대인\(갑\)$/, function(f){return f.lease_lessor;}]
 ];
 /* ── 설립준비위원회 위원 격자 ──
    라벨 다음 칸을 채우는 방식으로는 «반복 줄»을 못 채운다. 원본 격자가 이렇다:
@@ -4003,6 +4012,33 @@ function fillDerived(root,f,sites,kind){
         if(c[2]&&rent!=='') c[2].textContent=Number(rent).toLocaleString()+'원';
       });
     }
+  }
+  if(kind==='reg_apply'&&inkaD){
+    /* 기타사항의 「1. 설립인허가연월일」 다음 줄은 원본에 「＿＿＿＿＿」 한 마디로 있다.
+       ⚠ 그런데 걷어내기(stripBaked)가 그 마디를 «지워» 버린다 — 채울 자리가 아예 없어진다.
+         그래서 밑줄을 찾아 바꾸는 방식은 안 통한다(그렇게 만들었다가 헛돌았다).
+         「설립인허가연월일」로 끝나는 마디를 찾아, 그 칸 «끝»에 값을 붙인다. */
+    [].slice.call(root.querySelectorAll('td')).forEach(function(td){
+      var ns=[].slice.call(td.childNodes), hit=-1;
+      for(var i=0;i<ns.length;i++)
+        if(ns[i].nodeType===3&&/설립인허가연월일\s*$/.test(ns[i].nodeValue||'')) hit=i;
+      if(hit<0) return;
+      /* 이미 값이 있으면 두 번 붙이지 않는다 */
+      for(var k=hit+1;k<ns.length;k++) if((ns[k].textContent||'').trim()) return;
+      td.appendChild(document.createTextNode(inkaD));
+    });
+  }
+  if(kind==='tax_lease'){
+    /* 「임대인(갑) │ … │ 주소 │ ＿＿」 와 「임차인(을) │ … │ 주소 │ ＿＿」 —
+       이름표가 둘 다 「주소」다. 이름표만 보면 어느 쪽인지 알 수 없어 «줄»로 가른다.
+       ⚠ 임차인은 우리다. 임대인 줄의 주소·대표자·주민번호는 «남의 것»이라 손대지 않는다. */
+    var _to=f.lease_addr||f.address||'';
+    if(_to) [].slice.call(root.querySelectorAll('tr')).forEach(function(tr){
+      var c=[].slice.call(tr.children); if(c.length<4) return;
+      if(!/^임차인/.test((c[0].textContent||'').replace(/\s/g,''))) return;
+      if((c[2].textContent||'').replace(/\s/g,'')!=='주소') return;
+      if(_isBlankCell(c[3].textContent)) c[3].textContent=_to;
+    });
   }
   if(kind==='tax_bizreg'||kind==='tax_lease'){
     [].slice.call(root.querySelectorAll('td')).forEach(function(td){
