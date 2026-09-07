@@ -295,13 +295,51 @@ function decodePart(buf, enc) {
   return b;
 }
 
-/* 글자표를 골라 읽는다. 한글 메일에는 euc-kr(ks_c_5601-1987)이 아직 흔하다 —
-   utf-8 로 읽으면 통째로 깨진다. 못 읽는 글자표면 utf-8 로 되돌린다. */
+/* ── 바이트가 «올바른 UTF-8» 인가 ──
+   ⚠ 미리보기는 앞부분만 잘라 받으므로 «끝이 잘려» 있다. 마지막 글자가 중간에서
+     끊기면 그것 하나 때문에 「UTF-8 이 아니다」로 읽힌다 — 꼬리 3바이트까지 떼어 보고
+     되면 UTF-8 로 본다(한 글자는 최대 4바이트다). */
+function looksUtf8(buf) {
+  const b = Buffer.isBuffer(buf) ? buf : null;
+  if (!b || !b.length) return false;
+  let hi = false;
+  for (let i = 0; i < b.length; i++) { if (b[i] >= 0x80) { hi = true; break; } }
+  if (!hi) return false;            /* 순 ASCII — 어느 글자표로 읽어도 같다 */
+  for (let cut = 0; cut <= 3 && cut < b.length; cut++) {
+    try { new TextDecoder('utf-8', { fatal: true }).decode(b.subarray(0, b.length - cut)); return true; }
+    catch (e) { /* 꼬리를 한 바이트 더 떼고 다시 */ }
+  }
+  return false;
+}
+
+/* ── 글자표를 골라 읽는다 ──
+   ★★ 머리글이 «틀릴» 수 있다 — 그래서 바이트를 먼저 믿는다 (대표 제보 2026-09-07).
+
+   ⚠ 무슨 일이었나: 충남경제진흥원에서 온 메일을 열면 본문이 통째로
+     「異⑸④꼍吏μ 蹂寃쎌」 처럼 깨졌다. 그런데 «목록의 미리보기는 멀쩡했다».
+     까닭은 두 길이 서로 «다른 조각»을 고르기 때문이다 —
+       · 미리보기(textPartOf)는 text/plain 을 먼저 고른다  → 그 조각은 글자표가 맞았다
+       · 열 때(pickParts)는 text/html 을 먼저 고른다        → 보낸 쪽이 그 조각에
+         charset=euc-kr 이라 적어 두었는데 «실제 바이트는 UTF-8» 이었다
+     재현 확인: 멀쩡한 글을 UTF-8 로 담아 euc-kr 로 읽으니 화면과 «같은 글자»가 나왔다.
+
+   ★ 그래서 규칙을 넷으로 못 박는다.
+     ① 순 ASCII 면 머리글 그대로 (어느 쪽으로 읽어도 같다)
+     ② 바이트가 올바른 UTF-8 이면 «머리글이 뭐라 하든» UTF-8
+     ③ 머리글은 utf-8 이라는데 바이트가 아니면 → euc-kr (한글 메일에 흔한 반대 잘못)
+     ④ 그 밖에는 머리글대로, 못 읽는 글자표면 utf-8 로 되돌린다
+   ⚠ ②가 진짜 euc-kr 글을 잘못 데려갈 걱정 — 실측 2026-09-07 로 한글 글 325개를
+     euc-kr 로 담아 보니 «우연히 올바른 UTF-8» 인 것이 **0개**였다. euc-kr 은 0xA1~0xFE
+     를 앞바이트로 쓰는데 그 짝이 UTF-8 이음바이트 규칙과 거의 안 맞는다. */
 function toText(buf, charset) {
-  const cs = String(charset || 'utf-8').toLowerCase()
+  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(String(buf || ''), 'utf8');
+  let cs = String(charset || 'utf-8').toLowerCase()
     .replace('ks_c_5601-1987', 'euc-kr').replace('ksc5601', 'euc-kr');
-  try { return new TextDecoder(cs, { fatal: false }).decode(buf); } catch (e) { /* 모르는 글자표 */ }
-  try { return new TextDecoder('utf-8', { fatal: false }).decode(buf); } catch (e) { return ''; }
+  const utf8Said = /^utf-?8$/.test(cs);
+  if (looksUtf8(b)) cs = 'utf-8';                 /* ② 바이트가 이긴다 */
+  else if (utf8Said) cs = 'euc-kr';               /* ③ 머리글이 거짓말했다 */
+  try { return new TextDecoder(cs, { fatal: false }).decode(b); } catch (e) { /* 모르는 글자표 */ }
+  try { return new TextDecoder('utf-8', { fatal: false }).decode(b); } catch (e) { return ''; }
 }
 
 const PREVIEW_MAX = 140;
@@ -587,7 +625,7 @@ module.exports = {
   wantsMsgs, NO_MSG_KINDS,
   attCount, oneAddr, addrList, hasFlag, msgRow,
   folderNameBad, childPath, renamedPath,
-  textPartOf, decodePart, toText, previewFrom, unentity, isHeadLine, PREVIEW_MAX,
+  textPartOf, decodePart, toText, looksUtf8, previewFrom, unentity, isHeadLine, PREVIEW_MAX,
   ROW_VER, needsRefetch, folderDone,
   pickToFetch, uidSet, nextSync, uidReset, goneKeys,
 };
