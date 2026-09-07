@@ -185,7 +185,10 @@ test('기금 정보 폼은 화면 폭을 다 쓴다 — 760px 2열에 갇히지 
   const box = {};
   const i = SRC.indexOf('var INFO_SECS=');
   new Function(SRC.slice(i, SRC.indexOf('};', i) + 2) + ';this.S=INFO_SECS;').call(box);
-  assert.equal(Object.keys(box.S).length, 4, '묶음 머리는 넷이어야 한다(기본·담당·인가등기·관할연락)');
+  /* 묶음은 «이름으로» 못 박는다 — 개수만 세면 하나 더할 때 뜻은 그대로인데 검사가 깨지고,
+     엉뚱한 묶음이 끼어도 개수만 맞으면 통과한다. 「사무소 임대차」는 2026-09-07 에 더했다(임대차계약서·사업자등록신청서가 묻는다). */
+  assert.deepEqual(Object.keys(box.S), ['name','manager','chairman','tax_office','lease_lessor'],
+    '묶음 머리가 정해진 다섯(기본·담당·인가등기·관할연락·사무소 임대차)이 아니다');
   const fields = SRC.slice(SRC.indexOf('var FIELDS='), SRC.indexOf('];', SRC.indexOf('var FIELDS=')));
   Object.keys(box.S).forEach(k => assert.ok(fields.includes("'" + k + "'"), 'FIELDS 에 없는 칸에 묶음 머리를 걸었다: ' + k));
   /* 여러 칸 폭이 필요한 칸(단추가 붙는 관할 3칸·담당 한 줄)은 넓게, 단 «자리가 있을 때만».

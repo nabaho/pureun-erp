@@ -128,6 +128,37 @@ console.log('\n■ 고유번호증 서식');
   ok('전대동의서 날짜', /\d{4}년 \d{1,2}월 \d{1,2}일/.test(draw('tax_sublease', F)));
   ok('홈택스 신청인 이사', /이사 홍길동 \(서명 또는 인\)/.test(draw('tax_hometax', F))); }
 
+console.log('\n■ (나) 주민등록번호 — 명부에 적으면 등기·세무 서식 다섯에 선다');
+{ const R = Object.assign({}, F, { officers: F.officers.map((o, i) => i === 0 ? Object.assign({}, o, { rrn: '750311-1234567' }) : o) });
+  global.funds.X = R;
+  ok('등기신청서 이사장 이름 옆에 번호가 선다', /이사 홍길동 \(750311-1234567\)/.test(draw('reg_apply', R)));
+  ok('번호가 없는 이사는 자리표를 그대로 둔다', /이사 박노측 \(_{6}-_{7}\)/.test(draw('reg_apply', R)));
+  ok('인감신고서·인감카드의 주민등록번호 칸', /주민등록번호 750311-1234567/.test(draw('reg_seal', R)) && /주민등록번호 750311-1234567/.test(draw('reg_sealcard', R)));
+  ok('인감대지', /주민등록번호 : 750311-1234567/.test(draw('reg_sealpaper', R)));
+  /* 사업자등록신청서는 그 칸에 자리표가 둘 붙어 있다(대표자·공동대표) — 첫 것만 채우고 둘째는 둔다 */
+  const bz = draw('tax_bizreg', R);
+  ok('사업자등록신청서 대표자 번호 (둘째 자리표는 둔다)', /750311-1234567_{6}-_{7}/.test(bz), (bz.match(/주민등록번호.{0,40}/) || [''])[0]);
+  /* 임대차계약서의 「주민번호」는 임대인 것이다 — 우리 번호를 넣으면 안 된다 */
+  ok('임대인 주민번호 자리에 우리 번호를 넣지 않는다', !/750311-1234567/.test(draw('tax_lease', R)));
+  global.funds.X = F; }
+
+console.log('\n■ (나) 사무소 임대차 — 기금 정보의 묶음에서 온다');
+{ const Lz = Object.assign({}, F, { lease_lessor: '가나기계', lease_addr: '충남 어느시 어느구 어느로 1', lease_from: '2026-03-01', lease_deposit: 5000000, lease_rent: 300000 });
+  global.funds.X = Lz;
+  const tl = draw('tax_lease', Lz);
+  ok('임대차계약서 기간 시작일', /기간은 2026\. 3\. 1\.부터 2년간/.test(tl));
+  ok('임대인 상호', /임대인 가나기계\(인\)/.test(tl));
+  const bz = draw('tax_bizreg', Lz);
+  ok('사업자등록신청서 임대차기간 = 시작일부터 2년 (끝은 하루 전)', /2026\. 3\. 1\. ~ 2028\. 2\. 29\./.test(bz), (bz.match(/2026\. 3\. 1\..{0,40}/) || [''])[0]);
+  ok('보증금·월세가 적혀 있으면 넣는다', /5,000,000원 300,000원/.test(bz));
+  /* 보증금·월세를 안 적었으면 원본의 「0원」을 그대로 둔다 — 0원인지 우리는 모른다 */
+  const Lz0 = Object.assign({}, Lz, { lease_deposit: '', lease_rent: '' }); global.funds.X = Lz0;
+  ok('보증금·월세를 안 적었으면 원본 그대로 둔다', /2028\. 2\. 29\. 0원 0원/.test(draw('tax_bizreg', Lz0)));
+  ok('기금 정보에 임대차 묶음이 있다', /\['lease_lessor','임대인\(상호·성명\)','text'\]/.test(src) && /lease_lessor:'사무소 임대차'/.test(src));
+  ok('임대인 주민등록번호 칸은 두지 않는다 (남의 것)', !/lease_lessor_rrn|lease_rrn/.test(src));
+  ok('명부에 주민등록번호 칸이 있다', /class="off-rrn"/.test(gF('_offRow')) && /\['birth','title','rrn','addr'\]/.test(gF('_readOfficers')));
+  global.funds.X = F; }
+
 console.log('\n■ 값이 없으면 «지어내지 않는다»');
 { const E = { name:'빈기금', fund_type:'공동', officers:[], years:{} }; global.funds.X = E;
   const all = ['minutes','reg_apply','reg_accept','reg_roster','reg_seal','reg_sealpaper','reg_license','tax_bizreg','tax_lease','tax_hometax','bizplan']
@@ -137,6 +168,8 @@ console.log('\n■ 값이 없으면 «지어내지 않는다»');
   ok('0원·0천원을 지어 넣지 않는다', !/금 액 : 0원|기금사용 : 0원|기본재산은 금 0원|자본금 0천원|이사 선임 : 각 0 명|목적사업 : 0천원/.test(all),
      (all.match(/.{0,20}(: 0원|금 0원|0천원|각 0 명).{0,10}/) || [''])[0]);
   ok('이사 성명 자리는 밑줄로 남는다', /이사 성 명 [＿_]+ \(인\)/.test(all));
+  ok('임대인이 없으면 「임대인 ＿(인)」 그대로 (빈 이름을 채우지 않는다)', /임대인 [＿_]+\(인\)/.test(all));
+  ok('주민등록번호가 없으면 자리표 그대로', /\(_{6}-_{7}\)/.test(all) && /주민등록번호 _{6}-_{7}/.test(all));
   ok('관할 등기소가 없으면 남의 것 대신 밑줄', /[＿_]+ 귀중/.test(all) && !/서울남부/.test(all));
   global.funds.X = F; }
 

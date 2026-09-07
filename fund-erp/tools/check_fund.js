@@ -681,9 +681,11 @@ ok('고유목적사업준비금환입 계정(수익)', src.includes("'고유목�
 ok('대표자는 명부의 이사장 줄에서 온다', src.includes('function _boss(f){')
   && src.includes("return /이사장/.test(x.role||'');"));
 // 임원 명부에 생년월일·직책이 없으면 위원 칸을 손으로 쳐야 한다
-ok('임원 명부가 생년월일·직책·주소를 담는다', src.includes("class=\"off-birth\"")
+/* 주민등록번호(rrn)는 2026-09-07 에 더했다 — 등기·세무 서식 다섯이 전체 번호를 묻는다.
+   ⚠ 예전엔 읽는 목록을 «글자 그대로» 붙들어, 칸을 하나 더하자 뜻은 그대로인데 검사가 깨졌다 — 칸마다 본다. */
+ok('임원 명부가 생년월일·직책·주민등록번호·주소를 담는다', src.includes("class=\"off-birth\"") && src.includes("class=\"off-rrn\"")
   && src.includes("class=\"off-title\"") && src.includes("class=\"off-addr\"")
-  && src.includes("['birth','title','addr'].forEach"));
+  && /\['birth','title','rrn','addr'\]\.forEach/.test(src));
 /* 반복 줄(근로자측 3줄·사용자측 3줄)은 «라벨 다음 칸» 방식으로 못 채운다 */
 ok('위원 격자를 따로 채운다', src.includes('function fillCommittee(root,f){')
   && src.includes("['근로자측','사용자측'].forEach"));

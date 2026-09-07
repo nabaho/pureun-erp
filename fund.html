@@ -346,7 +346,12 @@ var FIELDS=[['name','기금법인명','text'],['short_name','약칭','text'],['f
   ['manager','담당','text'],['chairman','대표자','text'],['inka_no','인가번호','text'],['inka_date','인가일','date'],
   ['corp_reg_no','법인등록번호','text'],['reg_date','설립등기일','date'],['tax_id_no','고유번호','text'],
   ['tax_office','관할세무서','text'],['registry_office','관할등기소','text'],
-  ['labor_office','관할 노동청','text'],['phone','전화','text'],['address','소재지','text']];
+  ['labor_office','관할 노동청','text'],['phone','전화','text'],['address','소재지','text'],
+  /* 사무소 임대차 — 임대차계약서·사업자등록신청서·전대동의서가 묻는다. 없으면 그 서식들이 손으로 남았다.
+     ⚠ 임대인의 주민등록번호는 두지 않는다 — 남의 것이다. 상호(성명)만 받는다.
+     ⚠ 기간은 시작일 하나만 받는다 — 서식이 「＿부터 2년간」이라 끝은 셈한다. */
+  ['lease_lessor','임대인(상호·성명)','text'],['lease_addr','임차 소재지','text'],['lease_from','임대차 시작일','date'],
+  ['lease_deposit','보증금(원)','text'],['lease_rent','월 임차료(원)','text']];
 var KEY5=['inka_no','inka_date','corp_reg_no','reg_date','tax_id_no'];
 /* 임원 명부 — 정관 제25조: 이사는 노·사 각 1~3인, **감사는 노·사 각 1인**.
    직위를 「근로자측 감사」처럼 한 낱말로 담는다. 이미 있는 읽는 쪽들이
@@ -3908,6 +3913,8 @@ function fillDerived(root,f,sites,kind){
     ['reg_apply', _rx('인가서도달 연월일 : '+W), function(){ return inkaD?'인가서도달 연월일 : '+inkaD:''; }],
     ['reg_apply', _rx('기본재산은 금 '+W+'원'), function(){ return amt?'기본재산은 금 '+amt.toLocaleString()+'원':''; }],
     ['reg_apply', _rx('제한규정 : 이사 '+W6), function(){ return boss?'제한규정 : 이사 '+boss:''; }],
+    /* 「이사 ＿＿ (______-_______)」 — 이름과 주민등록번호가 한 마디다. 번호가 없으면 자리표를 그대로 둔다. */
+    ['reg_apply', _rx('이사 '+W6+' \\((_{6}-_{7})\\)'), function(m){ var o=dirs[dirI]; if(!o||!o.name) return ''; dirI++; return '이사 '+o.name+' ('+(o.rrn||m[1])+')'; }],
     ['reg_apply', _rx('이사 '+W6+' \\('), function(){ var o=dirs[dirI]; if(!o||!o.name) return ''; dirI++; return '이사 '+o.name+' ('; }],
     ['reg_apply', _rx('주소 : '+W6+'(\\d+호)?'), function(){ var o=dirs[addrI++]; return '주소 : '+((o&&o.addr)?o.addr:'＿＿＿＿＿＿'); }],
     ['reg_apply', _rx('본 점 '+W6), function(){ return f.address?'본 점 '+f.address:''; }],
@@ -3925,12 +3932,16 @@ function fillDerived(root,f,sites,kind){
     ['reg_roster', _rx('대표자 : '+W6+' \\(법인인감\\)'), function(){ return boss?'대표자 : '+boss+' (법인인감)':''; }],
     ['reg_seal', _rx('^이사 '+W6+'$'), function(){ return boss?'이사 '+boss:''; }],
     ['reg_sealpaper', _rx('자격 및 성명 : 이사 '+W6), function(){ return boss?'자격 및 성명 : 이사 '+boss:''; }],
+    ['reg_sealpaper', _rx('주민등록번호 : _{6}-_{7}'), function(){ return b.rrn?'주민등록번호 : '+b.rrn:''; }],
     ['reg_license', _rx('^[＿_]{2}-[＿_]{4}-[＿_]{4}$'), function(){ return ph; }],
     ['reg_license', _rx('신고인 '+W6+'\\(서명'), function(){ return boss?'신고인 '+boss+'(서명':''; }],
     ['tax_bizreg', _rx('^'+W6+' \\(공동대표\\)'), function(){ return boss?boss+' (공동대표)':''; }],
     ['tax_bizreg', _rx('\\(사업장\\) [＿_]{2}-[＿_]{4}-[＿_]{4}'), function(){ return ph?'(사업장) '+ph:''; }],
     ['tax_bizreg', _rx('신 청 인 '+W6+' \\(인\\)'), function(){ return boss?'신 청 인 '+boss+' (인)':''; }],
     ['tax_sublease', _rx('^'+W+'년 월 일$'), function(){ return todayKo; }],
+    /* 임대차 — 「기간은 ＿부터 2년간」 · 「임대인 ＿(인)」 */
+    ['tax_lease', _rx('기간은 '+W+'부터 2년간'), function(){ return f.lease_from?'기간은 '+_dotDate(f.lease_from)+'부터 2년간':''; }],
+    ['tax_lease', _rx('임대인 '+W6+'\\(인\\)'), function(){ return f.lease_lessor?'임대인 '+f.lease_lessor+'(인)':''; }],
     ['tax_hometax', _rx('이사 '+W6+' \\(서명 또는 인\\)'), function(){ return boss?'이사 '+boss+' (서명 또는 인)':''; }],
   ];
   /* 취임승낙서 — 「대표권있는 이사」 장만 이사장 이름을 넣는다. 다른 이사의 장은 이사마다 따로라 비워 둔다. */
@@ -3965,6 +3976,33 @@ function fillDerived(root,f,sites,kind){
       var v=[].slice.call(trs[i+1].children);
       [0,1].forEach(function(k){ var c=v[k]; if(c&&/^[＿_]+천원$/.test((c.textContent||'').trim())) c.textContent=_K(amt)+'천원'; });
     });
+  }
+  /* 「주민등록번호 │ ______-_______」 — 라벨 옆 칸에 자리표가 «글자로» 들어 있어 FORM_FILL(빈 칸만 채움)이 못 닿는다.
+     ⚠ 사업자등록신청서는 그 칸에 자리표가 «둘» 붙어 있다(대표자·공동대표). 첫 것만 이사장 번호로, 둘째는 둔다.
+     ⚠ 임대차계약서의 「주민번호」는 임대인 것이라 채우지 않는다(라벨이 「주민등록번호」가 아니라 안 걸린다). */
+  if(b.rrn&&(kind==='reg_seal'||kind==='reg_sealcard'||kind==='tax_bizreg')){
+    [].slice.call(root.querySelectorAll('td')).forEach(function(td){
+      var lbl=(td.previousElementSibling&&td.previousElementSibling.textContent||'').replace(/\s/g,'');
+      if(lbl!=='주민등록번호') return;
+      var t=(td.textContent||'');
+      if(/^\s*_{6}-_{7}/.test(t)) td.textContent=t.replace(/_{6}-_{7}/,b.rrn);
+    });
+  }
+  /* 사업자등록신청서 「임대차계약기간 ＿ ~ ＿ │ 보증금 │ 월세」 — 시작일 하나로 2년 기간을 셈한다.
+     보증금·월세는 적어 둔 값이 있을 때만 넣고, 없으면 원본 그대로 둔다(0원인지 우리는 모른다). */
+  if(kind==='tax_bizreg'&&f.lease_from){
+    var d0=new Date(f.lease_from); if(!isNaN(d0.getTime())){
+      var d1=new Date(d0); d1.setFullYear(d1.getFullYear()+2); d1.setDate(d1.getDate()-1);
+      var dd=function(d){ return d.getFullYear()+'. '+(d.getMonth()+1)+'. '+d.getDate()+'.'; };
+      [].slice.call(root.querySelectorAll('tr')).forEach(function(tr){
+        var c=[].slice.call(tr.children); if(!c.length) return;
+        if(!/^\s*[＿_]{3,}\s*~\s*[＿_]{3,}\s*$/.test(c[0].textContent||'')) return;
+        c[0].textContent=dd(d0)+' ~ '+dd(d1);
+        var dep=num(f.lease_deposit), rent=num(f.lease_rent);
+        if(c[1]&&dep!=='') c[1].textContent=Number(dep).toLocaleString()+'원';
+        if(c[2]&&rent!=='') c[2].textContent=Number(rent).toLocaleString()+'원';
+      });
+    }
   }
   if(kind==='tax_bizreg'||kind==='tax_lease'){
     [].slice.call(root.querySelectorAll('td')).forEach(function(td){
@@ -5624,7 +5662,7 @@ function finishSetup(){ var _fid=S.fundId, f0=funds[_fid]; if(!f0) return;
 }
 /* 기금 정보 칸을 넷으로 묶는다 — 6열로 촘촘히 깔면 묶음 표시가 없으면 읽기 어렵다.
    키가 여기 있으면 그 칸 «앞»에 묶음 이름 줄을 넣는다. */
-var INFO_SECS={name:'기본',manager:'담당',chairman:'인가·등기',tax_office:'관할·연락'};
+var INFO_SECS={name:'기본',manager:'담당',chairman:'인가·등기',tax_office:'관할·연락',lease_lessor:'사무소 임대차'};
 var INFO_W2={tax_office:1,registry_office:1,labor_office:1};   // 안에 단추가 붙어 두 칸 폭이 필요한 칸
 function infoForm(f){
   var _first=true;
@@ -5692,6 +5730,9 @@ function officerPanel(f){
        ⚠ 개인정보다. 비워 두어도 되고, 채우면 서식에 자동으로 들어간다. */
     +'<div style="overflow-x:auto"><table><thead><tr><th style="width:150px">직위</th><th style="width:110px">성명</th>'
     +'<th style="width:120px">생년월일</th><th style="width:120px">직책<span class="muted" style="font-weight:400;font-size:10px">(회사)</span></th>'
+    /* 주민등록번호 — 설립등기신청서·인감신고서·인감대지·인감카드·사업자등록신청서가 «전체 번호»를 묻는다.
+       생년월일만으로는 그 다섯 서식이 늘 손으로 남았다(대표 결정 2026-09-07: 저장한다). */
+    +'<th>주민등록번호<span class="muted" style="font-weight:400;font-size:10px">(등기·세무 서식)</span></th>'
     +'<th>주소<span class="muted" style="font-weight:400;font-size:10px">(대표자만)</span></th><th style="width:44px"></th></tr></thead>'
     +'<tbody id="off-rows">'+(rows.length?rows.map(_offRow).join(''):_offRow({role:'이사장',name:f.chairman||''}))+'</tbody></table></div>'
     /* 저장 단추를 여기 또 두지 않는다 — 위 [기금 정보]의 [💾 저장]이 명부까지 함께 보낸다.
@@ -5710,6 +5751,7 @@ function _offRow(o){
     +'<td><input class="off-name" type="text" value="'+esc(o.name||'')+'" oninput="markDirty()"></td>'
     +'<td><input class="off-birth" type="text" placeholder="1980-01-01" value="'+esc(o.birth||'')+'" oninput="markDirty()"></td>'
     +'<td><input class="off-title" type="text" placeholder="부장·대표이사" value="'+esc(o.title||'')+'" oninput="markDirty()"></td>'
+    +'<td><input class="off-rrn" type="text" placeholder="000000-0000000" value="'+esc(o.rrn||'')+'" oninput="markDirty()" autocomplete="off"></td>'
     +'<td><input class="off-addr" type="text" value="'+esc(o.addr||'')+'" oninput="markDirty()"></td>'
     +'<td><button onclick="this.closest(\'tr\').remove();markDirty()" title="이 줄 지우기">✕</button></td></tr>';
 }
@@ -5780,7 +5822,7 @@ function _readOfficers(){
     /* 빈 칸은 «키를 두지 않는다» — 빈 문자열을 넣으면 실시간DB 에 쓸모없는 칸이 쌓이고,
        나중에 «있는데 비었다»와 «아예 없다»가 구별되지 않는다. */
     var o={ role:(tr.querySelector('.off-role')||{}).value||'', name:g('.off-name') };
-    ['birth','title','addr'].forEach(function(k){ var v=g('.off-'+k); if(v) o[k]=v; });
+    ['birth','title','rrn','addr'].forEach(function(k){ var v=g('.off-'+k); if(v) o[k]=v; });
     return o;
   }).filter(function(o){ return o.name; });
 }
