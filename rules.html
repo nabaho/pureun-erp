@@ -466,6 +466,11 @@ table.daejo .rreason{color:var(--sub);font-size:11px}
 .dchip{flex:0 0 auto;display:flex;align-items:baseline;gap:5px;border:1px solid var(--line);background:#fff;
   border-radius:7px;padding:4px 9px;cursor:pointer;transition:border-color .12s,background .12s}
 .dchip:hover{border-color:var(--accent2);background:#f8fafc}
+/* ＋N곳 더 — 접힌 것을 «있다»고 말하는 단추. 구르는 줄 밖에 붙박이로 둔다(2026-09-07) */
+.dmore{flex:0 0 auto;height:24px;font-size:11px;padding:0 9px;white-space:nowrap;font-weight:700;
+  border:1px dashed var(--line);background:#f8fafc;color:var(--mute);border-radius:7px;cursor:pointer;
+  font-family:inherit}
+.dmore:hover{border-color:var(--accent2);color:var(--accent2);background:#fff}
 .dchip .dc-name{font-size:11.5px;font-weight:700;white-space:nowrap}
 .dchip .dc-n{font-size:10.5px;color:var(--mute);white-space:nowrap}
 /* 전체 보기 팝업 — 상태 필터 + 한 사업장 한 줄 */
@@ -718,6 +723,10 @@ table.daejo td.dj2{padding:0}
       <b style="font-size:12.5px;white-space:nowrap">🏢 사업장</b>
       <span id="dash-sum" style="font-size:11px;color:var(--mute);white-space:nowrap"></span>
       <div id="dash-list" class="dstrip" style="flex:0 1 auto;min-width:0;overflow-x:auto"></div>
+      <!-- ⚠ 「＋N곳 더」는 «구르는 줄 밖»이다 (대표 승인 목업 2026-09-07 ㉡).
+           줄 안에 두니 칩과 함께 밀려 「나머지가 여기 있다」는 표시가 화면 밖으로
+           사라졌다 — 접었다는 사실 자체가 안 보이면 접기 전보다 나쁘다. -->
+      <span id="dash-more-wrap" style="flex:0 0 auto;display:none"></span>
       <button class="btn ghost" id="dash-all" style="height:24px;font-size:11px;padding:0 9px;white-space:nowrap" title="전체 목록에서 검색·상태별로 골라 엽니다">전체 보기</button>
       <button class="btn" id="dash-new" style="height:24px;font-size:11px;padding:0 9px;white-space:nowrap" title="표준 취업규칙으로 신규 사업장 규정 작성">＋ 신규</button>
       <button class="btn ghost" id="dash-hide" style="height:24px;font-size:11px;padding:0 7px" title="접기">✕</button>
@@ -5145,22 +5154,71 @@ function dashTip(r){
   return [shortSite(r.site),r.stage.t,r.bizno,r.arts!=="–"?r.arts+"조":"",(r.at||"").slice(0,10),"→ "+r.stage.next]
     .filter(Boolean).join(" · ");
 }
-/* ── 한 줄 막대 ── 사업장이 2곳이든 200곳이든 높이가 같다(넘치면 좌우로) */
+/* ══════ 줄에는 «내가 이어서 할 곳»만 (대표 지시·결정 2026-09-07) ══════
+   대표 지시: 「사업장이 여러 개가 계속 이렇게 나오면 너무 많이 개수가 발생해서
+   관리가 어렵다」 → 「이어서 할 곳 고르기」로 답하셨다.
+   목업 `docs/mockups/2026-09-07-사업장줄-검토안.html`
+
+   ■ 실측 — 1900px 화면에서 칩은 «12개까지만» 보인다(칩 평균 124px · 줄 폭 1583px).
+     20곳이면 8곳, 50곳이면 38곳이 화면 밖이다. 가로 스크롤은 «높이»는 지켜도
+     «훑기»는 못 지킨다.
+   ■ 구조상 원인 셋
+     ㉠ 아무것도 안 빠진다 — 「신고완료」가 되어도 줄에 그대로 남는다
+     ㉡ **남의 끝난 일이 앞자리를 먹는다** — canOpen 이 남의 완료본도 들이는데,
+        신고(filedAt)가 없으면 dashStage 가 «검토완료»로 분류해 앞쪽에 섞인다.
+        실측 34곳 중 **12곳**이 그것이었고 집계 「검토 15」가 헛말이 됐다.
+     ㉢ 정렬은 이미 급한 순이라 뒤쪽 두 무리만 접어도 대부분 12칸에 들어온다
+   ■ 대표 결정 (2026-09-07)
+     ㉠ **남의 완료본은 줄에서 뺀다** — 「내 할 일만 보이게」
+     ㉡ **핀은 안 만든다** — 「안 쓴다. 버리고 단순하게」
+   ⚠ 집계는 **전체 곳수를 그대로** 말한다 — 접었다고 개수까지 감추면 접기 전보다 나쁘다.
+     그 옆에 «할 일»을 따로 적는다(그것이 「검토 15」의 헷갈림을 없앤 자리다).
+   ⚠ 접은 것을 여는 길은 **이미 있는 「전체 보기」** 하나다 — 새 창을 만들지 않는다. */
+const DASH_TODO_K={amending:1,reviewed:1,draft:1};
+function dashTodo(r){
+  /* ⚠ stage 가 없는 줄에도 견딘다 — 한 줄이 이상하다고 사업장 줄 «전체»가 죽으면
+     화면이 통째로 비어 「사업장이 하나도 없다」로 보인다. */
+  if(!r||!r.stage||!DASH_TODO_K[r.stage.k])return false;
+  /* 남의 완료본은 «내 할 일»이 아니다. 초안만 있는 줄(rec 없음)은 이 기기 것이라 내 것이다. */
+  if(r.rec&&!isOwner(r.rec))return false;
+  return true;
+}
+/* ── 한 줄 막대 ── 사업장이 2곳이든 200곳이든 높이가 같다 */
 function renderDash(){
   const box=$("dash"); if(!box)return;
   const all=dashSorted(dashRows());
+  const todo=all.filter(dashTodo);
   const cnt={none:0,draft:0,reviewed:0,amending:0,filed:0};
-  all.forEach(r=>cnt[r.stage.k]++);
+  todo.forEach(r=>cnt[r.stage.k]++);          /* 집계 «갈래»는 할 일만 센다 */
   const parts=[];
   if(cnt.amending)parts.push("개정 "+cnt.amending); if(cnt.reviewed)parts.push("검토 "+cnt.reviewed);
-  if(cnt.draft)parts.push("작성 "+cnt.draft); if(cnt.filed)parts.push("신고 "+cnt.filed);
-  $("dash-sum").textContent=all.length+"곳"+(parts.length?" · "+parts.join(" · "):"");
-  DASH_VIEW=all;
+  if(cnt.draft)parts.push("작성 "+cnt.draft);
+  $("dash-sum").textContent=all.length+"곳"
+    +(todo.length?" · 할 일 "+todo.length+(parts.length?" ("+parts.join(" · ")+")":""):" · 할 일 없음");
+  DASH_VIEW=todo;
   const list=$("dash-list");
   if(!all.length){ list.innerHTML='<span style="font-size:11.5px;color:var(--mute)">등록된 사업장이 없습니다 — [＋ 신규]로 시작하세요.</span>'; return; }
-  list.innerHTML=all.map((r,i)=>`<div class="dchip" data-i="${i}" title="${escapeH(dashTip(r))}">
+  const 접은수=all.length-todo.length;
+  /* ⚠ 접은 것이 있으면 «반드시» 말한다 — 조용히 줄이면 「내 사업장이 사라졌다」가 된다.
+     ⚠ 이 단추는 **구르는 줄 밖**(#dash-more-wrap)에 그린다. 줄 안에 두면 칩과 함께
+       밀려 「나머지가 여기 있다」는 표시가 화면 밖으로 사라진다(목업 ㉡). */
+  const wrap=$("dash-more-wrap");
+  if(wrap){
+    wrap.style.display=접은수?"":"none";
+    wrap.innerHTML=접은수?('<button type="button" class="dmore" id="dash-more"'
+      +' title="신고완료·미작성·다른 담당자의 완료본 '+접은수+'곳입니다 — 전체 보기에서 열 수 있습니다">'
+      +'＋'+접은수+'곳 더</button>'):"";
+  }
+  if(!todo.length){
+    list.innerHTML='<span style="font-size:11.5px;color:var(--mute)">이어서 할 곳이 없습니다 — 다 끝내셨습니다.</span>';
+  }else{
+    list.innerHTML=todo.map((r,i)=>`<div class="dchip" data-i="${i}" title="${escapeH(dashTip(r))}">
       <span class="dot ${r.stage.k}"></span><span class="dc-name">${escapeH(shortSite(r.site))}</span>${r.arts!=="–"?`<span class="dc-n">${r.arts}조</span>`:""}</div>`).join("");
+  }
   list.querySelectorAll(".dchip").forEach(el=>el.onclick=()=>dashOpen(DASH_VIEW[+el.dataset.i]));
+  /* 접은 것을 여는 길은 «이미 있는 전체 보기» 하나다 — 새 창을 만들지 않는다 */
+  const mb=$("dash-more");
+  if(mb)mb.onclick=()=>{ const b=$("dash-all"); if(b)b.click(); };
 }
 /* ── 전체 보기 팝업 ── 40곳 중에서 찾을 때는 좌우로 넘기기보다 한 줄씩 보는 편이 낫다 */
 function renderDashModal(){
