@@ -19,7 +19,7 @@
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <!-- ?v= 저장 층을 고치면 반드시 올린다 — 캐시에 묵으면 고친 것이 통째로 묻힌다. -->
-<script src="js/pu-photo-store.js?v=24"></script>
+<script src="js/pu-photo-store.js?v=25"></script>
 <!-- 주민번호 가림 — 계산 층과, 급여데이터함과 나눠 쓰는 긋기 층 -->
 <script src="js/pu-rrn-mask.js?v=4"></script>
 <script src="js/pu-rrn-mask-ui.js?v=3"></script>
@@ -11248,13 +11248,15 @@ function openSharePeople(ids, host) {
   const skipped = list.length - can.length;
   const me = PuPhotoStore.myUid();
   const others = Object.keys(ownerNames).filter(function (u) { return u !== me; });
-  /* ⚠ 이 명단은 «사진첩에 한 번이라도 들어온 사람»이다(로그인할 때 이름표가 적힌다).
-     한 번도 안 들어온 직원은 여기 없다 — 골라 줄 uid 자체가 없기 때문이다.
+  /* ⚠ 이 명단은 «한 번이라도 로그인한 재직 직원 전부»다(mergeStaffNames 가 넣어 둔다).
+     종전에는 «사진첩을 연 사람»만이어서, 사진을 받을 분이 목록에 아예 없었다
+     (건의 2026-09-07 김동현 노무사 「공유자 목록에 김혜민 노무사님이 없습니다」).
+     ⚠ 한 번도 로그인한 적 없는 사람은 여전히 없다 — 그때만은 골라 줄 uid 가 정말 없다.
      비었다고 「없습니다」로 끝내면 사람은 고장으로 읽는다. 무엇을 하면 되는지 말한다. */
   if (!others.length) {
     alert('아직 고를 사람이 없습니다.\n\n' +
-      '사진첩에 한 번이라도 들어온 분만 고를 수 있습니다 —\n' +
-      '그분이 사진첩을 한 번 열면 그때부터 목록에 뜹니다.');
+      '한 번이라도 로그인한 재직 직원만 고를 수 있습니다 —\n' +
+      '그분이 푸른이알피에 한 번 로그인하면 그때부터 목록에 뜹니다.');
     return;
   }
 
@@ -13858,6 +13860,25 @@ let ownerNames = {};
                               // uid → 이름 (사람 고르기 창에서 쓴다)
 let ownerDefaulted = false;   // 관리자를 「전체 근로자」로 한 번만 맞춘다
 
+/* ── 고를 수 있는 사람을 «직원 전부»로 넓힌다 (건의 2026-09-07 김동현 노무사) ──
+   「공유자 목록에 김혜민 노무사님이 없습니다」 — 고장이 아니라 **명단이 틀린 자리**였다.
+   ownerNames 는 owners 에서 온다. 그 자리는 «사진첩을 한 번이라도 연 사람»만이다.
+   그런데 이 단추가 하려는 일은 «아직 안 본 사람에게 열어 주기»다 —
+   **열지 않았기 때문에 열어 줄 수 없는**, 뒤집힌 문이었다.
+   ⚠ owners 에 이름이 있으면 그것을 그대로 둔다 — 그 사람이 사진첩에 적어 둔 이름표다.
+   ⚠ 이름이 비면 사번으로 적는다. uid 를 그대로 내면 사람은 누구인지 못 읽는다.
+   ⚠ 못 읽어도 조용히 넘어간다 — 명단이 좁아질 뿐, 사진첩이 안 열릴 까닭은 없다. */
+function mergeStaffNames() {
+  return PuPhotoStore.listStaff().then(function (staff) {
+    Object.keys(staff || {}).forEach(function (uid) {
+      if (ownerNames[uid]) return;
+      const x = staff[uid] || {};
+      ownerNames[uid] = x.name || x.sid || uid;
+    });
+    return staff;
+  }).catch(function (e) { console.warn('[직원 명단]', e && e.message); });
+}
+
 /* ── 왜 열려 있는지 한 줄로 (대표 지시 2026-08-28) ──
    푸른이알피가 업무 담당자에게 자동으로 열어 준 것과, 사람이 손으로 넣은 것을 가른다.
    ⚠ 이 표가 없으면 ✕ 를 누를 때 망설인다 — 「이거 내가 넣은 건가?」
@@ -16248,7 +16269,8 @@ function renderOwnerPick() {
       Object.keys(owners || {}).forEach(function (k) {
         ownerNames[k] = (owners[k] && owners[k].name) || k;
       });
-    }).catch(function (e) { console.warn('[사람 명단]', e && e.message); });
+    }).catch(function (e) { console.warn('[사람 명단]', e && e.message); })
+      .then(mergeStaffNames);   /* 사진첩을 안 연 직원도 고를 수 있어야 한다 */
     /* ⚠ 고르개를 새로 만들 때마다 장수를 «다시» 적어야 한다 — 안 적으면 숫자가
        조용히 사라진다(다시 그릴 일이 잦은 칸이다). */
     renderOwnerSelLabel();
@@ -16262,6 +16284,7 @@ function renderOwnerPick() {
     /* 공유 칩에 uid 가 아니라 이름이 뜨게 이름표를 챙겨 둔다 */
     ownerNames = {};
     Object.keys(owners).forEach(function (k) { ownerNames[k] = (owners[k] && owners[k].name) || k; });
+    mergeStaffNames();          /* 사진첩을 안 연 직원도 고를 수 있어야 한다 */
     const me = PuPhotoStore.myUid();
     const ids = Object.keys(owners).filter(function (k) { return k !== me; });
     $('ownerPick').style.display = 'block';   // 공유 줄이 있으므로 늘 보인다
