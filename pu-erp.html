@@ -14862,6 +14862,71 @@ function erpPrepareContractTransfer(contract){
   if(!erpValidateWorkBatch('cases',[reference],false))return null;
   return checked;
 }
+/* ── 이관 막이 — 고른 업체가 계약서와 다르면 그 자리에서 보여 준다 (2026-09-07) ──
+   ★ 왜 생겼나: 계약-2026-121 「주식회사 나래산업 · 자문」이 「나래사내근로복지기금 · 기금」
+     안으로 들어갔다. 계약서는 맞았고 고른 업체가 틀렸다.
+   ★ 왜 아무도 안 막았나: validateCompanyLink 는 이름이 달라도 «사업자번호가 같으면» 통과시킨다
+     (pu-ontology.js company_name_mismatch 줄의 !(biz&&targetBiz&&biz===targetBiz) 예외).
+     두 기록이 사업자번호를 나눠 갖고 있어서 그 예외에 딱 걸렸다.
+     번호가 같아도 «이름이 다르면 사람에게 보여야» 한다 — 조용히 넘어갈 일이 아니다.
+   ⚠ 유형(자문·급여·노조·기금)은 지금껏 «아무 데서도» 대조하지 않았다. 여기가 처음이다.
+   ⚠ 이름만 다르고 유형이 같은 것(㈜·주식회사 차이 등)으로는 멈추지 않는다 —
+     normalizeCompanyName 이 그 차이를 걷어낸다. 매번 뜨는 경고는 눈에서 지워진다. */
+function erpCoTransferGap(contract, target){
+  var out = { differs:false, nameGap:false, typeGap:false,
+    ctName:String((contract && contract.companyName) || ''), coName:String((target && target.name) || ''),
+    ctType:String(((contract && contract.typeCodes) || {}).company || (contract && contract.typeCode) || ''),
+    coType:String((target && target.typeCode) || '') };
+  if(!contract || !target) return out;
+  var O = window.PuOntology;
+  var base = (O && typeof O.normalizeCompanyName === 'function')
+    ? O.normalizeCompanyName
+    : function(v){ return String(v == null ? '' : v).trim().toLowerCase().replace(/주식회사|유한회사|㈜|[\s()（）·.,_\-]/g, ''); };
+  /* ⚠ 막이는 온톨로지의 다듬개보다 «한 걸음 더» 너그럽다 — 일부러 그렇다.
+     normalizeCompanyName 은 괄호를 먼저 걷어서 「(주)해담솔」이 「주해담솔」이 되고
+     「주식회사 해담솔」(→해담솔)과 달라진다. 저쪽은 «막을지»를 정하는 자리라 엄해야 맞지만,
+     여기는 «물을지»를 정하는 자리다. 괄호 표기 차이로 매번 물으면 사람이 창을 안 읽는다. */
+  var norm = function(v){ return base(String(v == null ? '' : v).replace(/[（(]\s*[주유재사]\s*[)）]/g, ' ')); };
+  if(out.ctName && out.coName && norm(out.ctName) !== norm(out.coName)) out.nameGap = true;
+  if(out.ctType && out.coType && out.ctType !== out.coType) out.typeGap = true;
+  out.differs = out.nameGap || out.typeGap;
+  return out;
+}
+/* 견줌표를 «만들어진 DOM 노드»로 짓는다 — popConfirm 은 문자열 HTML 을 안 받는다.
+   회사명은 사람이 넣은 값이라 innerHTML 로 넣으면 그 값에 태그가 섞였을 때 실행된다. */
+function erpCoTransferGapNode(gap, typeName){
+  var wrap = document.createElement('div');
+  var head = document.createElement('div');
+  head.textContent = '고르신 업체가 계약서와 다릅니다';
+  Object.assign(head.style, { fontWeight:'700', color:'#991b1b', marginBottom:'8px' });
+  wrap.appendChild(head);
+  var tbl = document.createElement('table');
+  Object.assign(tbl.style, { width:'100%', borderCollapse:'collapse', fontSize:'11.5px' });
+  var row = function(label, a, b, on){
+    var tr = document.createElement('tr');
+    [['', label], ['ct', a], ['co', b]].forEach(function(pair, i){
+      var td = document.createElement('td');
+      td.textContent = pair[1];
+      Object.assign(td.style, { padding:'4px 6px', borderBottom:'1px solid #e2e8f0',
+        color: i === 0 ? '#64748b' : (on ? '#991b1b' : '#1e293b'),
+        fontWeight: i === 0 ? '600' : (on ? '700' : '400') });
+      tr.appendChild(td);
+    });
+    tbl.appendChild(tr);
+  };
+  row('', '계약서', '고르신 업체', false);
+  row('업체명', gap.ctName || '-', gap.coName || '-', gap.nameGap);
+  row('유형', typeName(gap.ctType) || '-', typeName(gap.coType) || '-', gap.typeGap);
+  wrap.appendChild(tbl);
+  var tail = document.createElement('div');
+  tail.textContent = '이대로 이관하면 「' + (gap.coName || '') + '」 안으로 들어갑니다. '
+    + '빈 칸이 계약서 값으로 채워지고, 이미 값이 있는 업체명·유형은 «안 바뀝니다» — '
+    + '한 업체 안에 두 회사가 섞입니다.';
+  Object.assign(tail.style, { marginTop:'9px', fontSize:'11.5px', color:'#854d0e',
+    background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'6px', padding:'8px 10px', lineHeight:'1.7' });
+  wrap.appendChild(tail);
+  return wrap;
+}
 function erpTransferReferenceMatch(record,contract){
   var direct=String(record.sourceContractId||''),pair=record.sourceKind==='contract'?String(record.sourceId||''):'';
   if(direct&&pair&&direct!==pair)return direct===contract.id||pair===contract.id?'conflict':'';
@@ -18477,18 +18542,34 @@ function transferContract(contract){
           return false;
         };
         var patch = {}, filledKeys = [];
+        /* ↩ 되돌릴 자리 — 무엇을 채웠는지 «기계가 읽을 수 있게» 남긴다.
+           note 의 「빈 칸 14개」는 사람 말이라 되돌릴 때 못 쓴다.
+           ⚠ before/after 를 «둘 다» 담는다. 되돌릴 때 지금 값이 after 와 같을 때만 비운다 —
+             그 사이 사람이 고쳐 둔 칸을 도로 비우면 그 손질이 말없이 사라진다.
+           ⚠ 이것을 빼지 말 것. 없으면 이관을 되돌릴 길이 없다 — 2026-09-07 나래 건이 그랬다
+             (기금 업체 안으로 자문 계약이 들어갔는데 되돌릴 자리가 없어 손으로 고쳤다). */
+        var undoBefore = {}, undoAfter = {};
         Object.keys(item).forEach(function(k){
           if(k === 'id' || k === 'createdAt' || k === 'note' || k === 'contacts') return;
           if(coBlank(item[k]) || !coBlank(exist[k])) return;
           patch[k] = item[k]; filledKeys.push(k);
+          undoBefore[k] = exist[k] === undefined ? '' : exist[k];
+          undoAfter[k] = item[k];
         });
         var mg = mergeCompanyContacts(exist.contacts || [], item.contacts || []);
-        if(mg.added > 0){ patch.contacts = mg.contacts; filledKeys.push('담당자'); }
+        if(mg.added > 0){
+          patch.contacts = mg.contacts; filledKeys.push('담당자');
+          undoBefore.contacts = (exist.contacts || []).slice();
+          undoAfter.contacts = mg.contacts;
+        }
         var kept = filledKeys.length
           ? '빈 칸 ' + filledKeys.length + '개를 채웠습니다'
           : '이미 다 들어 있어 그대로 두었습니다';
         patch.note = String(exist.note || '') +
           (exist.note ? '\n' : '') + '계약(' + contract.contractNo + ') 이관 — ' + kept;
+        patch.xferUndo = { mode:'merged', contractNo:contract.contractNo, contractId:contract.id,
+          at:(new Date()).toISOString(), keys:filledKeys.slice(),
+          before:undoBefore, after:undoAfter, noteBefore:String(exist.note || '') };
         /* 기존 업체에 이어 붙인 경우도 «방금 들어옴» 으로 본다 —
            사람이 확인해야 할 것은 「새 업체가 생겼나」가 아니라 「이관이 반영됐나」다. */
         Object.assign(patch, arvStamp('계약', contract.contractNo));
@@ -18498,6 +18579,10 @@ function transferContract(contract){
         return;
       }
       Object.assign(item, arvStamp('계약', contract.contractNo));
+      /* 새로 만든 업체다 — 되돌리면 이 업체째로 휴지통에 간다(지우지 않는다).
+         위 '이음' 갈래와 되돌리는 법이 «다르다». 그래서 mode 를 남긴다. */
+      item.xferUndo = { mode:'created', contractNo:contract.contractNo, contractId:contract.id,
+        at:(new Date()).toISOString(), keys:[], before:{}, after:{}, noteBefore:'' };
       if(!dbUpsert('companies', item)) throw new Error('업체관리 저장 실패');
       results.push({ type:'company', no:item.name, id:item.id });
       return;
@@ -18745,6 +18830,108 @@ async function returnToContract(storeKey, itemId){
   } catch(e){
     console.error('[returnToContract]', e && e.message);
     try{ if(typeof showToast==='function') showToast('❌ 복귀 중 오류: ' + ((e && e.message) || String(e))); }catch(_){}
+  }
+}
+
+/* ============ 업체관리 — 이관 되돌리기 ============
+   ⚠ 위 returnToContract 를 업체관리에 «그대로 쓰면 안 된다». 두 가지가 다르다.
+     ① 그것은 대상 레코드를 «지운다». 업체 이관은 새로 만들기도 하지만 «이미 있던
+        업체에 얹기»도 한다 — 그때 지우면 애먼 업체가 사라진다.
+        (2026-09-07 나래: 자문 계약이 「나래사내근로복지기금」에 얹혔다. 지웠다면
+         6월부터 있던 기금 업체가 통째로 없어졌다.)
+     ② 그것은 «새 계약을 만든다». 원래 계약은 status='transferred' 로 살아 있으므로
+        번호가 두 벌이 된다 — 실제로 계약-2026-080·081 이 그렇게 되어 있다(실측 2026-09-07).
+        여기서는 새로 만들지 않고 «원래 계약의 상태만» 되돌린다.
+   ⚠ 이관할 때 남긴 xferUndo 가 있어야 돌아간다(transferContract 참조). */
+function coUndoPlan(co, contracts){
+  var u = (co && co.xferUndo) || null;
+  if(!u || !u.mode) return null;
+  var keys = Array.isArray(u.keys) ? u.keys.filter(function(k){ return k !== '담당자'; }) : [];
+  if(u.after && u.after.contacts !== undefined) keys = keys.concat(['contacts']);
+  var same = function(a, b){ try { return JSON.stringify(a === undefined ? '' : a) === JSON.stringify(b === undefined ? '' : b); } catch(_e){ return false; } };
+  var clear = [], kept = [];
+  keys.forEach(function(k){
+    /* 이관이 넣은 값 그대로면 되돌린다. 다르면 그 사이 사람이 고친 것이니 «건드리지 않는다» —
+       도로 비우면 그 손질이 말없이 사라진다. */
+    (same(co[k], (u.after || {})[k]) ? clear : kept).push(k);
+  });
+  var ct = (contracts || []).find(function(x){
+    return x && !x._deleted && (u.contractId ? x.id === u.contractId : x.contractNo === u.contractNo); }) || null;
+  return { mode:u.mode, contractNo:u.contractNo || '', contract:ct,
+           clear:clear, kept:kept, show:clear.filter(coUndoWorthShowing),
+           keptShow:kept.filter(coUndoWorthShowing),
+           before:u.before || {}, noteBefore:u.noteBefore || '' };
+}
+/* 사람에게 보일 값어치가 있는 칸만 고른다 — 배관은 세되 이름을 늘어놓지 않는다.
+   ⚠ 「7칸을 비웁니다」 라고만 하면 무엇이 사라지는지 모른 채 누른다. 그래서 이름을 편다.
+     그런데 sourceKind·entityType 까지 펴면 그 줄에서 눈이 미끄러진다 — 골라서 편다. */
+var CO_UNDO_HIDE = { entityType:1, status:1, sourceKind:1, sourceId:1,
+                     sourceContractId:1, sourceContractNo:1 };
+function coUndoWorthShowing(k){ return !CO_UNDO_HIDE[k]; }
+async function undoCompanyTransfer(coId, onDone){
+  try {
+    var companies = dbGet('companies', []) || [];
+    var co = companies.find(function(x){ return x && x.id === coId; });
+    if(!co){ showToast('❌ 업체를 찾을 수 없습니다'); return; }
+    var plan = coUndoPlan(co, dbGet('contracts', []) || []);
+    if(!plan){ showToast('↩ 되돌릴 이관 기록이 없는 업체입니다'); return; }
+    if(!plan.contract){ showToast('❌ 원본 계약(' + (plan.contractNo || '?') + ')을 찾지 못해 보류합니다'); return; }
+
+    var msg = plan.mode === 'created'
+      ? '「' + (co.name || '') + '」 은 이 이관으로 «새로 생긴» 업체입니다.\n\n'
+        + '→ 업체를 휴지통으로 옮깁니다 (지우지 않습니다 · 되살릴 수 있습니다)\n'
+        + '→ 계약 ' + plan.contractNo + ' 이 칸반에 다시 뜹니다'
+      : '「' + (co.name || '') + '」 은 «지우지 않습니다».\n'
+        + '이관이 채운 ' + plan.clear.length + '칸만 도로 비웁니다.\n'
+        + (plan.show.length ? '\n· ' + plan.show.map(coFieldLabel).join(' · ') : '')
+        + (plan.keptShow.length ? '\n\n⚠ ' + plan.keptShow.map(coFieldLabel).join(' · ')
+            + ' 은 이관 뒤에 고쳐졌습니다 — 건드리지 않습니다.' : '')
+        + '\n\n→ 계약 ' + plan.contractNo + ' 이 칸반에 다시 뜹니다';
+    if(!(await popConfirm(msg, { okText:'↩ 되돌리기', danger:false }))) return;
+
+    /* 계약을 먼저 살린다. 업체를 먼저 손대면, 계약 되살리기가 실패했을 때
+       업체만 비워진 채로 남아 어디에도 자료가 없게 된다. */
+    var ctBack = Object.assign({}, plan.contract, { status:'signed', closedAt:null,
+      closedReason:null, transferredTo:null, updatedAt:Date.now() });
+    Object.assign(ctBack, arvStamp('업체관리', co.name || ''));
+    if(!dbUpsert('contracts', ctBack)){ showToast('❌ 계약 되살리기 실패 — 아무것도 바꾸지 않았습니다'); return; }
+
+    if(plan.mode === 'created'){
+      var trash = dbGet('trash_bin', []) || [];
+      trash.unshift({
+        id: 'trash-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+        storeKey: 'companies', item: co, deletedAt: (new Date()).toISOString(),
+        deletedBy: (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? CURRENT_USER.sid : '',
+        reason: '이관 되돌리기: 계약 ' + plan.contractNo
+      });
+      dbSet('trash_bin', trash);
+      if(!dbRemove('companies', coId)){
+        dbUpsert('contracts', plan.contract);          // 되돌림: 계약을 원래대로
+        showToast('❌ 업체 옮기기 실패 — 계약을 원래대로 두었습니다'); return;
+      }
+      showToast('↩ 이관을 되돌렸습니다 — 업체는 휴지통에 있고 계약 ' + plan.contractNo + ' 이 칸반에 있습니다');
+    } else {
+      var back = {};
+      plan.clear.forEach(function(k){ back[k] = plan.before[k] === undefined ? '' : plan.before[k]; });
+      back.note = plan.noteBefore;
+      back.xferUndo = null;
+      back.arrivedFrom = null; back.arrivedNo = null; back.arrivedAt = null;
+      back.updatedAt = (new Date()).toISOString();
+      if(!dbUpsert('companies', Object.assign({}, co, back))){
+        dbUpsert('contracts', plan.contract);          // 되돌림: 계약을 원래대로
+        showToast('❌ 업체 되돌리기 실패 — 계약을 원래대로 두었습니다'); return;
+      }
+      showToast('↩ 이관을 되돌렸습니다 — ' + (co.name || '') + ' 에서 ' + plan.clear.length + '칸을 비웠습니다'
+        + (plan.kept.length ? ' (' + plan.kept.length + '칸은 그 뒤 고쳐져 두었습니다)' : '')
+        + ' · 계약 ' + plan.contractNo + ' 이 칸반에 있습니다');
+    }
+    if(typeof onDone === 'function') onDone();
+    if(typeof window.navigateTo === 'function'){
+      setTimeout(function(){ try{ window.navigateTo('biz/contract'); }catch(_){} }, 600);
+    }
+  } catch(e){
+    console.error('[undoCompanyTransfer]', e && e.message);
+    try{ showToast('❌ 되돌리는 중 오류: ' + ((e && e.message) || String(e))); }catch(_){}
   }
 }
 
@@ -19246,6 +19433,24 @@ function ContractManagement(props){
       if(_nav && typeof window.navigateTo === 'function'){ setTimeout(function(){ try{ window.navigateTo(_nav); }catch(_){} }, 600); }
       return;
     }
+    /* ⓒ 이관 막이 — 고른 업체가 계약서와 다르면 여기서 한 번 멈춘다 (erpCoTransferGap 주석 참조).
+       ⚠ 「그래도 넣기」를 기본 단추로 두지 않는다. 기본은 «그만두기»다 —
+         엔터를 눌러 넘기다 두 회사를 섞는 일이 이 막이를 만든 까닭이다. */
+    if(kindsList.indexOf('company') >= 0 && ct.companyId){
+      var _coTgt = (dbGet('companies', []) || []).find(function(x){ return x && !x._deleted && x.id === ct.companyId; });
+      var _gap = _coTgt ? erpCoTransferGap(ct, _coTgt) : null;
+      if(_gap && _gap.differs){
+        var _tn = function(code){
+          var ts = dbGet('biz_company_types', COMPANY_TYPE_SEED) || [];
+          var t = ts.find(function(x){ return x && x.code === code; });
+          return t ? t.name : code;
+        };
+        var _go = await popConfirm('', { node:erpCoTransferGapNode(_gap, _tn),
+          cancelText:'← 그만두기',
+          choices:[{ key:'force', label:'그래도 이 업체에 넣기' }] });
+        if(_go !== 'force') return;
+      }
+    }
     if(!(await popConfirm('계약 ' + ct.contractNo + ' (' + ct.companyName + ')을 이관하시겠습니까?\n\n→ ' + labels + '\n→ 상태: 이관완료\n→ 칸반에서 사라짐'))) return;
     window._transferInFlight[id] = true;
     var _unlockTransfer = function(){ try { delete window._transferInFlight[id]; } catch(_u){} };
@@ -19314,6 +19519,10 @@ function ContractManagement(props){
       if(r.type === 'company') return '업체: ' + r.no;
       return r.no;
     }).join(', ');
+    /* 업체관리로 갔으면 «그 유형 탭»을 켜 두라고 일러 준다 (대표 지시 2026-09-07).
+       받는 쪽은 업체관리의 __erpCoArrived 효과다 — 왜 필요한지는 그 주석에 적어 두었다. */
+    var _arrivedCo = results.find(function(r){ return r.type === 'company' && r.id; });
+    if(_arrivedCo) window.__erpCoArrived = { id:_arrivedCo.id, at:Date.now() };
     // 첫 번째 결과의 타겟 모듈로 자동 이동
     var navTarget = (function(){
       var firstNonConsult = results.find(function(r){ return r.type !== 'consult'; });
@@ -21857,6 +22066,28 @@ function CompanyManagement(){
   var ev = useState(''); var editVal = ev[0]; var setEditVal = ev[1];
   var ctx = useState(null); var ctxMenu = ctx[0]; var setCtxMenu = ctx[1];   // 우클릭 메뉴
 
+  /* ★ 이관돼 들어온 업체를 «그 유형 탭 맨 위»에서 보이게 한다 (대표 지시 2026-09-07)
+       「계약관리에서 급여가 업체관리로 갈 경우 업체관리에서 급여로 이관하면
+         데이터 가장 상단에 이관된 정보로 올려야 한다」
+     ⚠ «맨 위로 올리는» 일은 이미 있었다(아래 arvIsFresh 정렬). 없던 것은 «보이게 하는» 일이다 —
+       유형 깔때기에 기금이 걸린 채로 자문이 들어오면 목록에 아예 안 뜬다.
+       실제로 그랬다: 기금 6곳만 보이는 화면에서 자문 계약을 이관하면 아무 일도 안 일어난 것처럼 보였다.
+     ⚠ 깔때기·검색·머리글 정렬을 «다 푼다». 하나라도 남으면 그것이 가려 버린다
+       (바로 위 initFocus 가 검색에 대해 같은 일을 한다 — 같은 까닭이다).
+     ⚠ 오래된 쪽지는 안 본다 — 어제 이관한 것이 오늘 화면을 열며 깔때기를 갈아 끼우면 놀란다. */
+  useEffect(function(){
+    var msg = window.__erpCoArrived;
+    if(!msg || !msg.id) return;
+    window.__erpCoArrived = null;
+    if(Date.now() - (msg.at || 0) > 60 * 1000) return;
+    var hit = (dbGet('companies', []) || []).find(function(x){ return x && x.id === msg.id; });
+    if(!hit) return;
+    setStatusTab(hit.suspended ? 'suspended' : (hit.status === 'suboffice' || hit.isSuboffice) ? 'suboffice' : 'active');
+    setCoSel(hit.typeCode ? { type:[hit.typeCode] } : {});
+    setSortBy({ key:'', dir:'asc' });
+    setQuery('');
+  }, []);
+
   var users = getAssignableUsers();
   function userName(sid){ var u = users.find(function(x){return x.sid===sid;}); return u ? u.name : '-'; }
   function typeName(code){
@@ -21885,6 +22116,16 @@ function CompanyManagement(){
     return Object.assign({}, item, { puNoHead: log.head, puNoHistory: log.puNoHistory });
   }
   function coUpsert(item){ if(!item || !item.id) return false; item = coStampNumberHead(item); var ok = dbUpsert('companies', item); if(ok) refreshCompanies(); else showToast('❌ 저장 실패'); return ok; }
+  /* ↩ 이관 되돌리기 — 계약관리에서 들어온 업체에만 보인다(xferUndo 가 있을 때).
+     ⚠ 손으로 만든 업체 344곳에는 «안 보여야» 한다. 늘 보이면 누를 일 없는 줄이 하나 늘 뿐이고,
+       눌렀을 때 「되돌릴 것이 없습니다」가 뜨면 그것이 고장으로 보인다.
+     ⚠ 사건·컨설팅의 「↩ 계약관리로 복귀」와 «다른 일»이라 이름도 다르다 — undoCompanyTransfer 참조. */
+  function coUndoItem(co){
+    if(!co || !co.xferUndo || !co.xferUndo.mode) return null;
+    return { label:'↩ 이관 되돌리기', tone:'edit',
+      title:'계약 ' + (co.xferUndo.contractNo || '') + ' 이관을 되돌립니다',
+      onClick:function(){ undoCompanyTransfer(co.id, refreshCompanies); } };
+  }
   function coPatch(id, fields){ var ok = dbPatch('companies', id, fields); if(ok) refreshCompanies(); else showToast('❌ 저장 실패'); return ok; }
   function coUpsertMany(list){ if(!list || !list.length) return true; list = list.map(coStampNumberHead); var ok = dbUpsertMany('companies', list); if(ok) refreshCompanies(); else showToast('❌ 일괄 저장 실패'); return ok; }
 
@@ -22907,6 +23148,7 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                     h('td', { className:'ac' },
                       h(RowActions, { items:[
                         { label:'✏️ 수정',     tone:'edit', onClick:function(){ editCompany(co.id); } },
+                        coUndoItem(co),
                         { label:'✓ 종료 처리', tone:'warn', onClick:function(){ closeCompany(co.id); } }
                       ] }))
                   );
@@ -23077,6 +23319,7 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                   h('td', { className:'ac' },
                     h(RowActions, { items:[
                       { label:'✏️ 수정',     tone:'edit', onClick:function(){ editCompany(co.id); } },
+                      coUndoItem(co),
                       { label:'✓ 종료 처리', tone:'warn', onClick:function(){ closeCompany(co.id); } }
                     ] })
                   )
