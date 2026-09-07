@@ -88,7 +88,7 @@ function cellFor(o) {
        답할 때까지 판독에 안 간다. 안 주면 칸이 통째로 안 그려진다.
        ⚠ 여기서는 부르는 쪽이 정한다(기본 거짓) — 이 파일이 재는 것은 «서류 딱지와
          아래 한 줄»이다. 보류가 서류 딱지를 이기는지는 photos-read-gate 가 본다. */
-    readHoldOf: function () { return !!o.hold; },
+    readHoldMine: function () { return !!o.hold; },
     ALL_OWNERS: '__all__', gridOwner: null,
     String: String, Set: Set, Boolean: Boolean
   };

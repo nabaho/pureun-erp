@@ -155,8 +155,22 @@ test('★ 「서류입니다」를 누르면 «묻고 있던 뭉치들»에 표�
   const fn = stripComments(cutFn(raw, 'function readAskDocs('));
   assert.match(fn, /readAskSaid\[upBatchKey\(it\)\] = 1/,
     '★★ 「이제부터 다 읽어라」로 두면 그 뒤에 열어 보는 뭉치까지 함께 나갑니다.');
-  assert.match(fn, /readHoldOf\(it\) && mayTouch\(it\.id\)/,
+  assert.match(fn, /readHoldMine\(it\)/,
     '★ 손댈 수 없는 남의 사진에 답을 남기면, 읽어도 결과를 못 씁니다');
+});
+
+test('★★ 딱지와 띠가 «같은 기준»을 쓴다 — 네 번 밟은 자리다', () => {
+  const mine = stripComments(cutFn(raw, 'function readHoldMine('));
+  assert.match(mine, /readHoldOf\(it\) && mayTouch\(it\.id\)/,
+    '★ 「내가 답할 수 있는 보류인가」를 정하는 자리가 없습니다');
+  /* 딱지·띠·답 남기기 셋이 다 이 한 함수를 부르는가 */
+  const grid = (app.match(/const holdTag = readHoldMine\(it\)/g) || []).length;
+  assert.equal(grid, 1,
+    '★★ 칸 딱지가 readHoldOf 를 «직접» 부르면, 남의 사진 칸에는 「보류」라고 적히는데\n' +
+    '  답할 띠가 안 뜹니다 — 왜 안 읽혔는지 물을 자리가 없어집니다.\n' +
+    '  (2026-08-05 지우기 · 08-25 뒷면 단추 · 08-28 공유 단추 · 09-03 보내기와 같은 모양)');
+  const bar = stripComments(cutFn(raw, 'function readHoldIds('));
+  assert.match(bar, /filter\(readHoldMine\)/, '★ 띠가 다른 기준으로 셉니다');
 });
 
 test('★ 뭉치는 «누가·언제»로 갈린다 — 남이 같은 날 올린 것과 섞이지 않는다', () => {
