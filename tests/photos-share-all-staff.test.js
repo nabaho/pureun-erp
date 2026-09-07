@@ -154,3 +154,73 @@ test('「사진첩을 열어야 고를 수 있다」는 옛 안내가 남아 있
   assert.match(HTML, /한 번이라도 로그인한 재직 직원만/,
     '고를 사람이 없을 때 «무엇을 하면 되는지»가 사라졌습니다');
 });
+
+/* ══════ ② 폴더에 담긴 사진을 통째로 (같은 건의의 둘째 대목) ══════
+
+   「본인 화면에서 생성한 폴더 자체를 공유할 수 있다면 더 편리할거 같습니다」
+
+   ⚠ 폴더 «자체»는 안 간다 — 폴더는 내 정리 방식이고 나만 고친다(대표 지시
+     2026-08-09). 가는 것은 그 안에 지금 담긴 사진이다. 그 차이를 화면이
+     말하지 않으면, 나중에 담은 사진이 «조용히 안 가고» 몇 달 뒤에 드러난다. */
+
+const { stripComments } = require('./strip-comments');
+const { cutFn } = require('./cut-fn');
+
+test('★★ 폴더 메뉴에서 담긴 사진을 통째로 열어 줄 수 있다', () => {
+  const fn = stripComments(cutFn(HTML, 'function folderMenu('));
+  assert.match(fn, /shareFolder\(/,
+    '★★ 폴더에서 공유로 가는 길이 없습니다 — 이 건의의 둘째 대목입니다.\n' +
+    '  길이 없으면 사람은 폴더를 열어 스무 장을 하나씩 고릅니다.');
+});
+
+test('★★ 단추 이름이 «폴더 공유»가 아니다 — 가는 것은 사진이다', () => {
+  const fn = cutFn(HTML, 'function folderMenu(');
+  const item = fn.slice(fn.indexOf('shareFolder('));
+  const label = item.slice(0, item.indexOf('</div>'));
+  assert.ok(!/폴더\s*공유/.test(label),
+    '★★ 「폴더 공유」라고 적으면 앞으로 그 폴더에 담는 사진도 따라가는 줄 압니다.\n' +
+    '  실제로는 안 갑니다 — 이름이 사실과 달라지는 순간 조용한 실패가 됩니다.');
+  assert.match(label, /사진/, '★ 무엇이 가는지(사진)를 이름에 적어야 합니다');
+});
+
+test('★★ 고르개를 새로 만들지 않는다 — 목록이 두 벌이 되면 한쪽만 좋아진다', () => {
+  const fn = stripComments(cutFn(HTML, 'function shareFolder('));
+  assert.match(fn, /openSharePeople\(/,
+    '★★ 있는 고르개를 그대로 열어야 합니다');
+  assert.ok(!/sharePeopleHtml|innerHTML/.test(fn),
+    '★★ 폴더 공유가 제 목록을 그리고 있습니다 — 고르개가 둘이 되었습니다');
+});
+
+test('★★ 「나중에 담는 사진은 안 따라간다」를 화면이 말한다', () => {
+  const fn = stripComments(cutFn(HTML, 'function sharePeopleHtml('));
+  const i = fn.indexOf('p.note');
+  assert.ok(i > 0,
+    '★★ 폴더에서 왔다는 사실을 고르개가 모릅니다 — 그러면 말해 줄 수도 없습니다');
+  assert.match(fn.slice(i, i + 700), /나중에 담는 사진/,
+    '★★ 이 한 줄이 없으면 사람은 앞으로 그 폴더에 담기만 하면 계속 열리는 줄 압니다.\n' +
+    '  담아 놓고 안 간 것을 몇 달 뒤에 압니다 — 조용한 실패가 가장 아픕니다.');
+});
+
+test('★ 폴더가 비었으면 «무엇을 하면 되는지» 말한다', () => {
+  const fn = stripComments(cutFn(HTML, 'function shareFolder('));
+  const i = fn.indexOf('if (!ids.length)');
+  assert.ok(i > 0, '★ 빈 폴더를 안 봅니다 — 아무 일도 안 일어나면 고장으로 읽힙니다');
+  assert.match(fn.slice(i, i + 400), /담은 뒤 다시/,
+    '★ 「사진이 없습니다」로 끝내지 않고 다음에 할 일을 적어야 합니다');
+});
+
+test('★★ 지우기와 열어 주기가 «같은 셈»으로 폴더 안 사진을 센다', () => {
+  const del = stripComments(cutFn(HTML, 'function removeFolderAsk('));
+  const shr = stripComments(cutFn(HTML, 'function shareFolder('));
+  assert.match(del, /folderItems\(/,
+    '★★ 지우기가 제 셈을 따로 갖고 있습니다');
+  assert.match(shr, /folderItems\(/,
+    '★★ 열어 주기가 제 셈을 따로 갖고 있습니다 —\n' +
+    '  두 벌이면 「지울 때는 12장이라더니 열어 줄 때는 9장」이 됩니다');
+});
+
+test('하위폴더 사진도 함께 간다 — 화면에서 상위를 고르면 하위가 다 보인다', () => {
+  const fn = stripComments(cutFn(HTML, 'function folderItems('));
+  assert.match(fn, /folderKids\(|\.parent === fid/,
+    '★ 상위 폴더를 눌렀는데 하위 사진이 빠지면, 화면에 보이는 것과 가는 것이 어긋납니다');
+});
