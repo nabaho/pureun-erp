@@ -19,6 +19,17 @@ test('이름이 같아도 업체를 자동 선택하지 않는다 — 보류는 
   assert.equal(pending.companyId,'');
 });
 
+test('사업자번호가 유일하게 일치할 때만 업체를 자동 연결한다',()=>{
+  const exact=O.companyLinkAutoMatch({company:{name:'입력한 표기',bizNo:'1112233333'}},masters);
+  assert.equal(exact.ok,true);
+  assert.equal(exact.companyId,'A');
+  assert.equal(exact.companyName,'동명이업체');
+
+  assert.equal(O.companyLinkAutoMatch({companyName:'동명이업체'},masters).ok,false);
+  assert.equal(O.companyLinkAutoMatch({bizNo:'111-22-33333'},[masters[0],{...masters[0],id:'C'}]).code,'duplicate_business_number');
+  assert.equal(O.companyLinkAutoMatch({bizNo:'111-22-33333'},[{...masters[0],_deleted:true}]).code,'business_number_not_found');
+});
+
 test('실제 업체 ID·사업자번호만 통과하며 틀린 ID·충돌·삭제·중복은 차단한다',()=>{
   const form={companyId:'A',company:{name:'동명이업체',bizNo:'1112233333',companyId:'A'}};
   const before=JSON.stringify({form,masters});
@@ -108,7 +119,9 @@ test('서버 쓰기 공통층은 바꾸지 않고 계약 저장 직전 같은 �
   const at=erp.indexOf('  function persistOne(item){'),end=erp.indexOf('  function patchOne(',at);
   const body=erp.slice(at,end);
   assert.ok(body.indexOf('erpValidateContractCompany(item)')<body.indexOf("dbUpsert('contracts', item)"));
-  assert.match(panel,/업체 연결 · 온톨로지 검증/);
+  assert.match(panel,/업체 연결 확인/);
+  assert.match(panel,/업체 자동 확인/);
+  assert.match(panel,/companyLinkManualOpen/);
   assert.match(panel,/deferCompanyLink/);
   assert.doesNotMatch(modalSave,/CompanyRef\.findCompany/);
 });
@@ -124,6 +137,31 @@ test('회사명·사업자번호를 바꾸면 과거 ID와 보류 선택을 풀�
   assert.equal(draft.company.companyId,'');
   assert.equal(draft.companyLinkStatus,'');
   assert.equal(original.companyId,'A');
+});
+
+test('사업자번호 입력을 마치면 유일한 업체 ID를 자동으로 넣고 이름은 덮지 않는다',()=>{
+  const code=panel.slice(panel.indexOf('  function autoLinkCompanyByBiz(raw,notify){'),panel.indexOf('  /* 직접 입력뿐 아니라 기업정보함·OCR'))
+    +panel.slice(panel.indexOf('  function onBizNoBlur(e){'),panel.indexOf('  // ========== 기업정보 =========='));
+  let draft={companyId:'',companyLinkStatus:'',company:{companyId:'',name:'주식회사 메가터치',bizNo:'1112233333'}};
+  const notices=[];
+  const ctx={window:{PuOntology:O},props:{cur:null},f:draft,
+    fmtBizNo:v=>v.slice(0,3)+'-'+v.slice(3,5)+'-'+v.slice(5),
+    dbGet:(key,seed)=>key==='companies'?masters:seed,
+    setF:fn=>{draft=fn(draft);ctx.f=draft;},setCompanyLinkManualOpen(){},
+    searchPastCompanies:()=>[],setPastInitialQuery(){},showToast:m=>notices.push(m)};
+  vm.createContext(ctx);new vm.Script(code).runInContext(ctx);
+  ctx.onBizNoBlur({target:{value:'1112233333'}});
+  assert.equal(draft.companyId,'A');
+  assert.equal(draft.company.companyId,'A');
+  assert.equal(draft.company.name,'주식회사 메가터치');
+  assert.match(notices.join('\n'),/자동 연결/);
+});
+
+test('기업정보함·OCR이 사업자번호를 채워도 자동 연결 효과가 호출된다',()=>{
+  const effect=panel.slice(panel.indexOf('  /* 직접 입력뿐 아니라 기업정보함·OCR'),panel.indexOf('  /* ★ 2026-09-07 대표 제보'));
+  assert.match(effect,/useEffect/);
+  assert.match(effect,/autoLinkCompanyByBiz\(biz,false\)/);
+  assert.match(effect,/companyLinkStatus==='pending'/);
 });
 
 test('검증 모듈이 없으면 계약 저장을 허용하지 않는다',()=>{

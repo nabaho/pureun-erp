@@ -660,6 +660,22 @@
     }).sort(function(a,b){return clean(a.id)===id?-1:clean(b.id)===id?1:clean(a.name).localeCompare(clean(b.name),'ko');})
       .slice(0,100).map(function(x){return {id:clean(x.id),name:clean(x.name||x.companyName),bizNo:clean(x.bizNo)};});
   }
+  /* 사업자번호는 법인명을 달리 적어도 같은 업체임을 판별할 수 있는 안전한 키다.
+     정확한 10자리 번호가 명부에서 한 번만 확인될 때에만 자동 연결한다. */
+  function companyLinkAutoMatch(record,companies){
+    record=record||{};
+    var co=record.company&&typeof record.company==='object'?record.company:{};
+    var biz=normBiz(co.bizNo!==undefined?co.bizNo:record.bizNo);
+    if(biz.length!==10)return {ok:false,code:biz?'business_number_incomplete':'business_number_required',companyId:''};
+    if(!Array.isArray(companies))return {ok:false,code:'companies_unavailable',companyId:''};
+    var hits=companies.filter(function(x){
+      return x&&!x._deleted&&clean(x.id)&&normBiz(x.bizNo||x.bizno)===biz;
+    });
+    if(!hits.length)return {ok:false,code:'business_number_not_found',companyId:'',bizNo:biz};
+    if(hits.length!==1)return {ok:false,code:'duplicate_business_number',companyId:'',bizNo:biz};
+    return {ok:true,code:'business_number_unique',companyId:clean(hits[0].id),
+      companyName:clean(hits[0].name||hits[0].companyName),bizNo:biz};
+  }
 
   /* 6-2단계: 현재 명부·업무 목록으로 신규 참조만 엄격히 검사한다.
      과거의 변경하지 않은 참조는 경고로 남기되 다른 사람/업무로 자동 치환하지 않는다. */
@@ -1076,6 +1092,7 @@
     validateCompanyNumbers:validateCompanyNumbers, companyNumberHistory:companyNumberHistory,
     audit:audit, auditIntegrated:auditIntegrated, uploadPlan:uploadPlan, ONT_ROOT:ONT_ROOT, mirrorPlan:mirrorPlan, getReadPlan:getReadPlan, searchEntities:searchEntities, entityConnections:entityConnections,
     organization360:organization360, validateCompanyLink:validateCompanyLink, companyLinkCandidates:companyLinkCandidates,
+    companyLinkAutoMatch:companyLinkAutoMatch,
     validateWorkReferences:validateWorkReferences, workReferenceCandidates:workReferenceCandidates, validateWorkBatch:validateWorkBatch,
     validateHanaSourceBatch:validateHanaSourceBatch,
     VALIDATION_CATEGORIES:VALIDATION_CATEGORIES, buildValidationQueue:buildValidationQueue,

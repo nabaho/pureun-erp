@@ -146,7 +146,7 @@
 <script src="js/pu-billing.js?v=7"></script>
 <script src="js/pu-rrn-seal.js?v=1"></script>
 <!-- 푸른통합 온톨로지 공통 사전·읽기 전용 관계 진단 -->
-<script src="js/pu-ontology.js?v=19"></script>
+<script src="js/pu-ontology.js?v=20"></script>
 <!-- 급여담당자 엑셀 → 업체관리 (대표 결정 2026-08-24). 읽고 대조하는 일은 이 파일이,
      그리기는 아래 화면이 한다 — 검사가 이 파일을 그대로 돌린다. -->
 <script src="js/pu-co-xls.js?v=3"></script>
@@ -15034,6 +15034,7 @@ function ContractModal(props){
   });
   var f = s[0]; var setF = s[1];
   var clq=useState(''); var companyLinkQuery=clq[0]; var setCompanyLinkQuery=clq[1];
+  var clm=useState(false); var companyLinkManualOpen=clm[0]; var setCompanyLinkManualOpen=clm[1];
   var companyLinkEngine=window.PuOntology&&typeof window.PuOntology.validateCompanyLink==='function'&&typeof window.PuOntology.companyLinkCandidates==='function'?window.PuOntology:null;
   var companyLinkCheck=companyLinkEngine?companyLinkEngine.validateCompanyLink(f,dbGet('companies',[])):null;
   var companyLinkChoices=companyLinkEngine?companyLinkEngine.companyLinkCandidates(f,dbGet('companies',[]),companyLinkQuery):[];
@@ -15042,7 +15043,24 @@ function ContractModal(props){
     setF(function(prev){return Object.assign({},prev,{companyId:id,companyLinkStatus:'',
       companyName:found?found.name:prev.companyName,bizNo:found?found.bizNo||'':prev.bizNo,
       company:Object.assign({},prev.company,{companyId:id},found?{name:found.name,bizNo:found.bizNo||''}:{})});});
+    if(id)setCompanyLinkManualOpen(false);
   }
+  function autoLinkCompanyByBiz(raw,notify){
+    var matcher=window.PuOntology&&window.PuOntology.companyLinkAutoMatch;
+    var matched=typeof matcher==='function'?matcher({company:{bizNo:raw}},dbGet('companies',[])):null;
+    if(!matched||!matched.ok)return false;
+    setF(function(prev){return Object.assign({},prev,{companyId:matched.companyId,companyLinkStatus:'',
+      company:Object.assign({},prev.company,{companyId:matched.companyId,bizNo:fmtBizNo(raw)}),bizNo:fmtBizNo(raw)});});
+    setCompanyLinkManualOpen(false);
+    if(notify)showToast('✓ '+matched.companyName+' — 사업자번호로 업체 자동 연결');
+    return true;
+  }
+  /* 직접 입력뿐 아니라 기업정보함·OCR에서 번호가 채워져도 같은 안전 규칙으로 연결한다. */
+  useEffect(function(){
+    var biz=String((f.company&&f.company.bizNo)||f.bizNo||'').replace(/[^0-9]/g,'');
+    if(f.companyId||(f.company&&f.company.companyId)||f.companyLinkStatus==='pending')return;
+    autoLinkCompanyByBiz(biz,false);
+  },[(f.company&&f.company.bizNo)||f.bizNo||'',f.companyId||(f.company&&f.company.companyId)||'',f.companyLinkStatus]);
   /* ★ 2026-09-07 대표 제보 「계속해서 검증하라고 나온다 · 굳이 필요한가」
      ⚠ 실제로 겪으신 것 — 검색 칸에 「법인 충청남도사회서비스원」을 넣으셨는데
        옆 고르개는 「업체 선택」 그대로였다. 두 걸음인데 화면이 그 말을 안 했다.
@@ -15584,7 +15602,8 @@ function ContractModal(props){
       }
     }
     if(raw.length < 6) return;
-    if(props.cur && props.cur.id) return;  // 수정 모드는 스킵
+    if(autoLinkCompanyByBiz(raw,true))return;
+    if(props.cur && props.cur.id) return;
     var hits = searchPastCompanies(raw);
     if(hits.length > 0){
       setPastInitialQuery(raw);
@@ -16696,9 +16715,14 @@ function ContractModal(props){
             );
           })),
 
-      // 6-1단계: 이름 검색은 후보만 제공하고 업체 ID는 사용자가 선택한다.
-      h('div',{style:{padding:'10px',marginBottom:'12px',border:'1px solid #bfdbfe',borderRadius:'6px',background:'#eff6ff'}},
-        h('strong',{style:{fontSize:'12px',color:'#1e40af'}},'업체 연결 · 온톨로지 검증'),
+      // 6-1단계: 사업자번호가 하나와 정확히 일치하면 자동 연결하고, 예외만 사람이 확인한다.
+      companyLinkCheck&&companyLinkCheck.ok&&companyLinkCheck.status==='linked'&&!companyLinkManualOpen
+      ? h('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'8px 10px',marginBottom:'12px',border:'1px solid #bbf7d0',borderRadius:'6px',background:'#f0fdf4'}},
+          h('strong',{style:{fontSize:'12px',color:'#166534'}},'✓ 업체 자동 확인'),
+          h('span',{style:{fontSize:'11px',color:'#475569',flex:'1'}},((f.company||{}).name||f.companyName||'')+' · '+((f.company||{}).bizNo||f.bizNo||'')),
+          h('button',{type:'button',onClick:function(){setCompanyLinkManualOpen(true);},style:{padding:'4px 8px',border:'1px solid #bbf7d0',borderRadius:'4px',background:'#fff',color:'#166534',fontSize:'11px',cursor:'pointer'}},'변경'))
+      : h('div',{style:{padding:'10px',marginBottom:'12px',border:'1px solid #bfdbfe',borderRadius:'6px',background:'#eff6ff'}},
+        h('strong',{style:{fontSize:'12px',color:'#1e40af'}},'업체 연결 확인'),
         h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'7px'}},
           h('input',{type:'search',value:companyLinkQuery,onChange:function(e){setCompanyLinkQuery(e.target.value);},placeholder:'업체명·사업자번호·ID 검색',style:{flex:'1',minWidth:'170px',padding:'6px',border:'1px solid #cbd5e1',borderRadius:'4px',fontSize:'12px'}}),
           h('select',{value:f.companyId||(f.company||{}).companyId||'',onChange:function(e){chooseCompanyLink(e.target.value);},style:{flex:'2',minWidth:'220px',padding:'6px',border:'1px solid #cbd5e1',borderRadius:'4px',fontSize:'12px'}},
@@ -16719,7 +16743,7 @@ function ContractModal(props){
           : (!companyLinkPicked && f.companyLinkStatus!=='pending' && companyLinkChoices.length)
             ? ('찾았습니다 — 위 고르개에서 골라 주세요 ('+companyLinkChoices.length+'곳)')
             : (companyLinkCheck?companyLinkCheck.message:'')),
-        h('div',{style:{fontSize:'10.5px',marginTop:'4px',color:'#64748b'}},'검색 결과는 최대 100건입니다. 기존 자료는 자동 변경하지 않으며 연결 보류는 확정 관계망에서 제외됩니다.')),
+        h('div',{style:{fontSize:'10.5px',marginTop:'4px',color:'#64748b'}},'사업자번호가 하나의 업체와 정확히 일치하면 자동 연결합니다. 이름만 같거나 중복되면 직접 확인해야 합니다.')),
       // 회사 정보 섹션 (worker 단독이 아닐 때)
       showCompany && h('div', null,
         // 명함 + 사업자등록증 드롭존
