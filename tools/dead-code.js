@@ -130,7 +130,11 @@ function 파일모으기() {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) walk(p, depth + 1);
       else if (/\.(html|js|md)$/.test(e.name)) {
-        const rel = path.relative(ROOT, p);
+        /* ⚠ 열쇠는 «항상 슬래시»로 둔다. path.relative 는 윈도우에서 역슬래시를
+         주는데, 그러면 아래 `startsWith('reference/')` 걸러내기를 그대로 통과하고
+         `^[^/]+\.html$` 도 역슬래시를 막지 않아 참고본이 «최상위 html» 로 세어진다
+         (2026-09-07: reference/payroll_mvp.html 의 함수 셋이 「죽은 코드」로 올라왔다). */
+      const rel = path.relative(ROOT, p).split(path.sep).join('/');
         if (나자신.indexOf(rel) < 0) out[rel] = fs.readFileSync(p, 'utf8');
       }
     }
