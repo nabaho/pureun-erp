@@ -61,13 +61,14 @@ test('★★ 올린 직후 길도 같은 문지기를 지난다 — 여기가 �
 /* 문지기를 실제로 돌린다 — 글자만 보면 「부르긴 하는데 답이 틀린」 것을 못 잡는다 */
 function loadGate(items, said) {
   const ctx = { Object, Array, String, gridItems: items || [] };
+  /* said : 「서류입니다」라고 답한 뭉치 열쇠들 */
   const min = (raw.match(/const READ_ASK_MIN = (\d+);/) || [])[1];
   assert.ok(min, '★ READ_ASK_MIN 을 못 찾았습니다');
   ctx.__min = Number(min);
   vm.createContext(ctx);
   vm.runInContext(
     'var _bszSrc = null, _bszN = -1, _bsz = null;' +
-    'var readAskSaid = ' + JSON.stringify(said || '') + ';' +
+    'var readAskSaid = ' + JSON.stringify(said || {}) + ';' +
     'var READ_ASK_MIN = __min;' +
     cutFn(raw, 'function batchSizes(') + '\n' +
     cutFn(raw, 'function upBatchKey(') + '\n' +
@@ -138,10 +139,24 @@ test('★★ 언제 올라온 것인지 모르는 옛 사진은 «묻지 않는�
     '  50장인지 알 수가 없습니다.');
 });
 
-test('★ 「서류입니다」라고 답하면 그 뒤로는 안 묻는다', () => {
-  const g = loadGate(batch(30), 'doc');
-  assert.equal(g.readSkipWhy(batch(1)[0]), '',
+test('★★ 「서류입니다」는 «그 뭉치에만» 듣는다 — 다른 뭉치가 그 답을 타고 나가면 안 된다', () => {
+  const mine = batch(30);                          // u1 이 한 번에 올린 30장
+  const other = batch(30, { by: 'u2', upAt: 900 }); // 남이 올린 다른 30장
+  const g = loadGate(mine.concat(other), { 'u1@100': 1 });
+  assert.equal(g.readSkipWhy(mine[0]), '',
     '★ 답을 했는데도 계속 붙잡아 두면 판독이 영영 안 됩니다');
+  assert.equal(g.readSkipWhy(other[0]), 'hold',
+    '★★ 답을 참·거짓 하나로 두면, 한 뭉치에 「서류다」라고 답한 뒤 다른 사람 화면으로\n' +
+    '  넘어갔을 때 **거기 있는 큰 사진 뭉치가 말없이 판독으로 갑니다** —\n' +
+    '  막으려던 바로 그 일입니다.');
+});
+
+test('★ 「서류입니다」를 누르면 «묻고 있던 뭉치들»에 표를 남긴다', () => {
+  const fn = stripComments(cutFn(raw, 'function readAskDocs('));
+  assert.match(fn, /readAskSaid\[upBatchKey\(it\)\] = 1/,
+    '★★ 「이제부터 다 읽어라」로 두면 그 뒤에 열어 보는 뭉치까지 함께 나갑니다.');
+  assert.match(fn, /readHoldOf\(it\) && mayTouch\(it\.id\)/,
+    '★ 손댈 수 없는 남의 사진에 답을 남기면, 읽어도 결과를 못 씁니다');
 });
 
 test('★ 뭉치는 «누가·언제»로 갈린다 — 남이 같은 날 올린 것과 섞이지 않는다', () => {
