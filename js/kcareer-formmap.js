@@ -46,6 +46,12 @@
        먼저 삼키면 안내글이 지워진다(실측 2026-09-06: 검사 다섯이 한꺼번에 깨졌다). */
     if (/^[（(][^)）]{1,6}[)）]$/.test(s)) return '안내글뒤';
     if (/_{2,}/.test(s) || /[:：]\s*$/.test(s) || /[:：]\s{2,}/.test(s)) return '칸안라벨';
+    /* ★★ 「[한글] [한자] [영문]」·「[자택](  )  -[직장](  )  -」처럼 «싼 라벨이 둘 이상»이면
+       한 칸에 여러 값을 적는 자리다(대표 제보 2026-09-07 — 여태 한 글자도 안 채워졌다).
+       ⚠ «둘 이상»일 때만이다. 하나뿐인 「[한글]」은 위 자리표 판정이 «빈칸»으로 잡고,
+         「(한자)」는 그 위 안내글뒤가 잡는다 — 그 두 약속을 건드리면 검사 다섯이 깨진다. */
+    if ((s.match(/[\[\uFF3B\u3010][^\]\uFF3D\u3011]{1,8}[\]\uFF3D\u3011]/g) || []).length >= 2)
+      return '칸안라벨';
     /* ★ [한글]·1900.00.00·년 월 ~ 년 월 은 «빈 칸 표시»다 — 값이 아니다.
        전에는 「글자가 있다」고 보아 자동으로 안 채웠고, 그래서 이력서 2쪽이
        통째로 비어 나갔다(대표 제보 2026-09-06 「이부분은 왜 안채워지나」).
@@ -138,7 +144,9 @@
     X.eachTable(xmlAll, function (tbl) {
       ti++;
       var rows = X.splitRows(tbl);
-      var grid = rows.map(function (tr) { return X.splitCells(tr).map(X.cellText); });
+      /* 원문 칸도 들고 있는다 — 「진짜 열 번호」를 읽으려면 글자만으로는 안 된다 */
+      var rawRows = rows.map(function (tr) { return X.splitCells(tr); });
+      var grid = rawRows.map(function (cs) { return cs.map(X.cellText); });
       /* ★★ 목록 구역에 «든 줄만» 낱개에서 뺀다 (대표 제보 2026-09-06).
          예전에는 목록이 하나라도 있으면 표를 통째로 건너뛰어, 인적사항과 학력이
          «한 표»인 서식에서 성명·생년월일·주소가 아예 안 잡혔다. */
@@ -168,7 +176,37 @@
                그 아래 모든 줄의 라벨이 되어 같은 값이 줄줄이 박힌다. */
           var 위 = '';
           if (!X.fieldKeyOf(왼) && ri > 0 && grid[ri - 1]) {
-            var u = String(grid[ri - 1][ci] || '').trim();
+            /* ★★ «같은 열»의 윗칸이어야 한다 (대표 제보 2026-09-07).
+               칸 «순서»로 위를 보면 세로 합친 칸 때문에 남의 열이 라벨이 된다.
+               실측: 「전 화」 줄(칸 여섯) 아래의 «한 칸짜리 간격 줄»이 그 순서로는
+               전화 칸으로 잡혀, 빈 줄에 휴대폰 번호가 박혔다.
+               ⚠ 열 번호를 모르는 서식에서는 지금까지처럼 칸 순서로 본다(뒷걸음질 금지). */
+            var u = '', myCol = (typeof X.colAddrOf === 'function' && rawRows[ri])
+              ? X.colAddrOf(rawRows[ri][ci]) : -1;
+            if (myCol >= 0 && rawRows[ri - 1]) {
+              for (var uj = 0; uj < rawRows[ri - 1].length; uj++) {
+                if (X.colAddrOf(rawRows[ri - 1][uj]) === myCol) {
+                  u = String(grid[ri - 1][uj] || '').trim(); break;
+                }
+              }
+            } else {
+              u = String(grid[ri - 1][ci] || '').trim();
+            }
+            /* ★ 세로로 합친 «구역 이름» — 「자격및면허」처럼 여러 줄을 덮는 앞 칸이다.
+               그 칸은 «내 줄에 없다»(합쳐져 있으니). 그래서 같은 열로는 못 찾는다.
+               ⚠ «내 줄의 첫 칸»에만, 그리고 «내 줄이 갖지 않은 더 앞선 열»일 때만 본다.
+                 이 두 빗장이 없으면 「전 화」 줄 아래의 간격 줄까지 전화 칸이 된다
+                 (실측 2026-09-07: 빈 줄에 휴대폰 번호가 박혔다). */
+            if (!X.fieldKeyOf(u) && ci === 0 && myCol >= 0 && rawRows[ri - 1]) {
+              var 내열 = {};
+              for (var mj = 0; mj < rawRows[ri].length; mj++) 내열[X.colAddrOf(rawRows[ri][mj])] = true;
+              for (var vj = 0; vj < rawRows[ri - 1].length; vj++) {
+                var vc = X.colAddrOf(rawRows[ri - 1][vj]);
+                if (vc < 0 || vc >= myCol || 내열[vc]) continue;
+                var vt = String(grid[ri - 1][vj] || '').trim();
+                if (X.fieldKeyOf(vt)) { u = vt; break; }
+              }
+            }
             if (X.fieldKeyOf(u)) 위 = u;
           }
           /* ★★ 이미 글자가 든 «값 칸»도 자리로 잡는다 (대표 지시 2026-09-05
@@ -188,6 +226,9 @@
           }
           if (!kind) return;
           slots.push({ id: 't' + ti + 'r' + ri + 'c' + ci, tbl: ti, row: ri, col: ci,
+                       /* 표에 적힌 «진짜 열 번호» — 숫자 칸 판정이 이것을 본다 */
+                       colAddr: (typeof X.colAddrOf === 'function'
+                                 ? X.colAddrOf(rawRows[ri] && rawRows[ri][ci]) : -1),
                        kind: kind, text: String(txt || '').trim(),
                        left: 왼, up: 위, guess: '' });
         });
@@ -299,13 +340,29 @@
       if (!s) break;
       run.push(s);
     }
-    return run.length >= 4 ? run : null;   /* 넷 미만은 그냥 옆 칸이다(날짜가 아니다) */
+    if (run.length < 4) return null;       /* 넷 미만은 그냥 옆 칸이다(날짜가 아니다) */
+    /* ★★ 칸이 «붙어» 있어야 숫자 칸이다 (대표 제보 2026-09-07).
+       자격 및 면허 표의 「종 류|취득년월일|상벌사항|상벌기관」은 빈 칸 넷이 이어지지만
+       열 번호가 1·5·10·15 로 «떨어져» 있다 — 숫자 칸이 아니라 그냥 넓은 칸이다.
+       그것을 숫자 칸으로 보아 자격번호가 「3|0|1|6」으로 흩어져 들어갔다.
+       ⚠ 열 번호를 모르는 서식에서는 이 잣대를 쓰지 않는다(옛 서식이 뒷걸음질하지 않게). */
+    for (var i = 1; i < run.length; i++) {
+      var a = run[i - 1].colAddr, b = run[i].colAddr;
+      if (a == null || b == null || a < 0 || b < 0) break;   /* 모르면 옛길로 */
+      if (b !== a + 1) return null;
+    }
+    return run;
   }
 
   /* 값에서 숫자만 뽑아 칸 수에 맞춘다. 안 맞으면 «넣지 않는다» —
      어긋나게 적는 것이 비워 두는 것보다 나쁘다. */
   function digitsFor(value, n) {
-    var d = String(value == null ? '' : value).replace(/\D/g, '');
+    /* ★★ «숫자로만 된 값»일 때만 나눈다 (대표 제보 2026-09-07).
+       「공인노무사 제3016호」에서 숫자만 뽑으면 3016 — 마침 네 칸이라 3|0|1|6 으로 흩어졌다.
+       ⚠ 숫자 사이의 마침표·붙임표·빗금·빈칸은 «구분 기호»이므로 괜찮다(1975.01.07). */
+    var s = String(value == null ? '' : value).trim();
+    if (!/^[0-9][0-9.\-\/\s]*$/.test(s)) return '';
+    var d = s.replace(/\D/g, '');
     if (!d) return '';
     if (d.length === n) return d;
     /* 1975.01.07(8자리) → 여섯 칸이면 앞 두 자리(19)를 뗀다 */
