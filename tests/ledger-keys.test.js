@@ -138,8 +138,12 @@ console.log('\n[⑪ 되돌리기는 한 곳에서만 — 두 길이 다른 일�
 /* Ctrl+Z 와 「확정 이력」의 되돌리기가 같은 함수를 써야, 되돌린 뒤의 장부가 하나다 */
 /* 못 박는 것은 «같은 함수를 쓴다» 이다 — 돌려주는지까지 글자로 박으면 멀쩡한 손질에도 깨진다
    (2026-09-03: 되돌리기 실패를 삼키지 않도록 return 을 붙였더니 깨졌다) */
-t('확정 이력의 되돌리기도 같은 함수를 쓴다',
-  /function undoConfirm\(fi\)\{[^}]*erpUndoIncome\(fi\)/.test(src), true);
+/* ⚠ 2026-09-05 다시 겨눔 — 예전에는 별칭 하나(undoConfirm)가 있는지를 봤다.
+   그런데 그 별칭은 «아무도 안 부르는» 것이었다(걷어냄). 지킬 것은 이름이 아니라
+   「되돌리는 길이 여럿이어도 실제 일은 한 함수가 한다」이다 —
+   그래야 되돌린 뒤의 장부가 하나다. 그것을 직접 센다. */
+t('되돌리는 길이 여럿이어도 실제 일은 erpUndoIncome 한 곳이 한다',
+  (src.match(/erpUndoIncome\(fi\)/g) || []).length >= 3, true);
 t('되돌리기 본체는 하나뿐이다',
   (src.match(/rollback\.retainerPaid=false/g) || []).length, 1);
 t('무른 표시를 남긴다 (지우지 않는다)', /undoneDate:new Date\(\)\.toISOString\(\)/.test(src), true);

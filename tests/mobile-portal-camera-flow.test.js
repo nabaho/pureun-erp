@@ -96,12 +96,21 @@ test('포털 촬영은 확인창 없이 계속 누적된다', () => {
   assert.match(shoot, /renderCamStrip\(\)/);
 });
 
-test('아이폰 기본 카메라 사진은 페이지 이동 전에 고화질 JPEG로 확정한다', () => {
-  assert.match(enter, /function portalCameraJpeg\(file\)/);
-  assert.match(enter, /maxEdge = 4096/);
-  assert.match(enter, /canvas\.toBlob\([\s\S]*?'image\/jpeg',\s*0\.95\)/);
-  assert.match(enter, /savePortalCameraFile\(file\)[\s\S]*?portalCameraJpeg\(file\)/);
-  assert.match(enter, /blob:photo\.blob/);
+/* ⚠⚠ 2026-09-05 다시 겨눔 — 이 검사는 «없어진 길»을 지키고 있었다.
+   예전에는 포털이 파일을 받아 브라우저 임시보관소(puPortalCamera)에 맡기고
+   사진첩이 그것을 꺼내 갔다. 지금은 그 두 단계가 없다 — 포털은 사진첩의 촬영
+   화면으로 «바로» 간다(중간 문패를 거치느라 폰에서 검은 화면이 길어졌기 때문이다).
+   그래서 넘기던 손(savePortalCameraFile·portalCameraJpeg)은 아무도 안 불렀고,
+   이 검사만이 그것을 붙들고 있었다. 지금 규칙을 못 박는 쪽으로 바꾼다. */
+test('★ 포털 카메라는 사진첩 촬영 화면으로 «바로» 간다 — 중간 문패를 거치지 않는다', () => {
+  assert.match(enter, /pu-photos\.html\?cam=1&mode=photo&quick=1&from=portal/,
+    '★ 포털이 사진첩 촬영 화면으로 바로 가지 않습니다');
+  /* 주소의 표시가 로그인·업데이트에서 사라져도 촬영 요청은 남긴다 */
+  assert.match(enter, /sessionStorage\.setItem\('pu_open_camera'/,
+    '★ 촬영 요청을 안 남기면 로그인을 거치는 동안 잊힙니다');
+  /* 넘기던 옛 손은 다시 생기면 안 된다 — 사진첩이 읽는 자리만 남아 헛돈다 */
+  assert.ok(!/function savePortalCameraFile\(/.test(enter),
+    '★ 없어진 넘김길이 되살아났습니다 — 지금은 사진첩이 제 손으로 찍습니다');
 });
 
 /* ⚠⚠ 2026-09-05 다시 겨눔 — 이 검사가 «틀린 규칙»을 못박고 있었다.

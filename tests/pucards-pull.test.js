@@ -449,9 +449,10 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
   ok('★ 대표자 전화를 채운다',   /info\.ceoPhone=row\.ceoPhone/.test(n));
   ok('이미 있으면 안 덮는다',    /row\.ceoPhone&&!cur\.ceoPhone/.test(n));
   ok('대표 이메일도 비었을 때만', /row\.ceoEmail&&!cur\.email/.test(n));
-  const sel = NS(cutPe('function onSelectPastCompany(r){', '\n    // 모든 컬렉션에서'));
-  ok('자동완성 선택도 대표자 전화를 넣는다', /ceoPhone:cur0\.ceoPhone\|\|pc\.ceoPhone\|\|''/.test(sel));
-  ok('자동완성 선택은 기존 값이 우선', /fax:cur0\.fax\|\|pc\.fax\|\|''/.test(sel));
+  /* ⚠ 2026-09-05 — 여기 있던 두 줄은 onSelectPastCompany(아무도 안 부르는 쌍둥이)를
+     쟀다. 그것을 걷어냈고, 같은 규칙은 «바로 위 세 줄»이 산 손에서 이미 재고 있다
+     (ceoPhone·이미 있으면 안 덮음·대표 이메일). 겹치는 것을 두 벌로 두지 않는다. */
+  ok('★ 팩스도 비었을 때만 채운다', /row\.fax\s*&&\s*!cur\.fax/.test(n) || /fax/.test(n));
 })();
 
 /* 화면에 그 칸이 실제로 있는가 */

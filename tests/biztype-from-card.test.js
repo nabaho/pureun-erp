@@ -122,7 +122,10 @@ t('채우다 넘어져도 화면이 안 죽는다', true, true);
 
 console.log('\n[⑥ 세 화면 모두에 배선되어 있다]');
 t('계약 — 첨부칸 「기업정보함 정보 가져오기」', /pcTopUpBiz\(row, _fillBizFromCard\);/.test(src), true);
-t('계약 — 「과거 회사 불러오기」 자동완성', /pcTopUpBiz\(pc, _fillBizFromCard\);/.test(src), true);
+/* ⚠ 2026-09-05 다시 겨눔 — 예전에는 onSelectPastCompany 안의 배선을 봤는데,
+   그 함수는 «아무도 안 부르는» 쌍둥이였다(걷어냄). 즉 이 검사는 오랫동안
+   «안 도는 배선»을 보고 초록불을 켜고 있었다. 산 자리는 applyCoGroup 이다. */
+t('계약 — 「과거 회사 불러오기」 자동완성', /pcTopUpBiz\(pcRow\._pc, _fillBizFromCard\);/.test(src), true);
 const CO = src.slice(src.indexOf('function fillCompanyFromPcBiz(row){'),
                      src.indexOf('function fillCompanyFromPcBiz(row){') + 3000);
 t('업체관리 — 「사업자등록증 찾기」', /pcTopUpBiz\(row, function\(x, filled\)\{/.test(CO), true);

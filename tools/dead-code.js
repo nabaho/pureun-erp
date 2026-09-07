@@ -75,7 +75,7 @@ function 선언들(src) {
      「지금은 쓰지 않는다. 과거 데이터 해석용으로 남겨 둔다」).
      그것을 지우면 옛 자료를 읽을 길이 사라진다.
    ⚠ 넉넉하게 본다 — 조금이라도 그렇게 읽히면 「일부러」로 둔다. */
-const 일부러말 = /남겨\s*둔|안\s*쓴다|쓰지\s*않는다|안\s*쓰인|되돌아갈|나중에\s*쓴|예전\s*것|옛\s*손|deprecated|kept for/i;
+const 일부러말 = /남겨\s*둔|남긴다|지우지\s*말|안\s*쓴다|쓰지\s*않는다|안\s*쓰인|안\s*부른다|되돌아갈|되돌릴\s*일|나중에\s*쓴|예전\s*것|옛\s*손|자리\s*표지|deprecated|kept for/i;
 function 일부러남긴것(src, at) {
   /* ⚠ «바로 위에 붙은 주석»만 본다. 「앞 몇 줄」로 넓게 잡으면 옆 함수의 주석이
      딸려 들어와, 아무 말 없는 함수까지 「일부러」로 본다(2026-09-05 에 실제로 그랬다). */
@@ -86,7 +86,14 @@ function 일부러남긴것(src, at) {
   for (let i = 줄들.length - 1; i >= 0; i--) {
     const t = 줄들[i].trim();
     if (!t) { if (모은것.length) break; continue; }   /* 빈 줄이 사이에 있으면 남의 주석이다 */
-    if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*') || t.endsWith('*/')) {
+    /* ⚠ 여러 줄 주석은 «덩이째» 걷는다. 이 저장소의 주석은 가운데 줄이 * 로
+       시작하지 않는 것이 많아, 줄 모양만 보면 마지막 한 줄에서 끊긴다 —
+       그러면 까닭이 첫 줄에 적힌 경우를 통째로 놓친다(2026-09-05 에 셋을 놓쳤다). */
+    if (t.endsWith('*/')) {
+      for (; i >= 0; i--) { 모은것.unshift(줄들[i]); if (줄들[i].indexOf('/*') >= 0) break; }
+      break;
+    }
+    if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) {
       모은것.unshift(t);
       if (t.startsWith('/*')) break;
       continue;

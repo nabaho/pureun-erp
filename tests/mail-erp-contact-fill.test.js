@@ -176,7 +176,8 @@ test('★★ 새로 지은 이름이 «이미 있는 것과 안 겹친다» — 
   /* ⚠ 실제로 그랬다(2026-09-03) — mbCoNameOf 로 지었더니 「이 주소의 회사 이름」과
        겹쳤다. 그것은 제 안에서 mbCoOf 를 부르므로 서로를 부르며 스택이 넘쳤고,
        구문오류 하나 없이 검사 196개가 한꺼번에 깨졌다. */
-  ['mbCoValName', 'mbCoIdOf', 'erpFillContact', 'mbErpFillOn', 'mbErpFillSet', 'mbErpFillFrom']
+  /* mbCoIdOf 는 2026-09-05 에 걷어냈다 — 아무도 안 부르는 손이었다 */
+  ['mbCoValName', 'erpFillContact', 'mbErpFillOn', 'mbErpFillSet', 'mbErpFillFrom']
     .forEach(n => {
       const hits = (code.match(new RegExp('function\\s+' + n + '\\s*\\(', 'g')) || []).length;
       assert.equal(hits, 1, n + ' 이(가) ' + hits + '번 선언돼 있습니다 — 한 파일에 한 번이어야 합니다');

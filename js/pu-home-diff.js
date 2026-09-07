@@ -47,13 +47,6 @@
     return staff.filter(function (s) { return tidy(s.name) === key; });
   }
 
-  // 이름이 유일할 때만 그 사람으로 단정한다. 0명이면 못 찾은 것, 2명 이상이면 동명이인이라
-  // 어느 쪽도 아니다 — 둘 다 null 로 두고, 동명이인 여부는 staffMatches 로 따로 확인한다.
-  function staffOf(staff, name) {
-    const matches = staffMatches(staff, name);
-    return matches.length === 1 ? matches[0] : null;
-  }
-
   /* 짝짓기 열쇠 — «홈페이지 글 번호(srl)»가 있으면 그것으로 짝짓는다.
      ★ 우리 자료의 열쇠(RTDB 열쇠)는 새로 넣은 사람이면 'new-1755300000000' 같은 모양이라
        홈페이지 글 번호와 «절대» 안 맞는다. 그대로 짝지으면 사람이 글 번호를 적어 넣어도

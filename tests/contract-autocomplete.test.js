@@ -156,16 +156,24 @@ function rowsCtx(idx){
 
 /* ═══ 4. 고를 때 업태·종목이 실제로 넘어가는가 (덮어쓰지 않고 빈 칸만) ═══ */
 {
-  const blk = slice('  function onSelectPastCompany(r){', '    // 모든 컬렉션에서 회사정보 검색');
-  t('★ 기업정보함에서 업태를 가져온다', /bizType: cur0\.bizType \|\| pc\.bizType \|\| ''/.test(blk), true);
-  t('★ 종목도 가져온다', /bizCategory: cur0\.bizCategory \|\| pc\.bizCategory \|\| ''/.test(blk), true);
-  t('★ 이미 적어 둔 업태를 덮지 않는다 (cur0 가 먼저)',
-    /cur0\.bizType \|\| pc\.bizType/.test(blk), true);
+  /* ⚠ 2026-09-05 다시 겨눔 — 예전에는 onSelectPastCompany 를 쟀는데, 그것은
+     «아무도 안 부르는» 쌍둥이였다(걷어냄). 기업정보함에서 고르는 일은
+     fillCompanyImagesFromPucards 가 한다 — 규칙은 그대로다(빈 칸일 때만 채운다). */
+  const blk = slice('  async function fillCompanyImagesFromPucards(row, want){', '\n  }');
+  t('★ 기업정보함에서 업태를 가져온다', /row\.bizType\s+&&\s+!cur\.bizType/.test(blk), true);
+  t('★ 종목도 가져온다', /row\.bizCategory\s+&&\s+!cur\.bizCategory/.test(blk), true);
+  t('★ 이미 적어 둔 업태를 덮지 않는다 (빈 칸일 때만)',
+    /!cur\.bizType/.test(blk), true);
 }
 {
-  const blk = slice('    // 계약은 company 객체에 정보, 다른 컬렉션은 평탄', '    setAutoResults([]);');
-  t('과거 계약·업체에서도 업태를 가져온다', /bizType: co\.bizType \|\| cur\.bizType \|\| ''/.test(blk), true);
-  t('과거 계약·업체에서도 종목을 가져온다', /bizCategory: co\.bizCategory \|\| cur\.bizCategory \|\| ''/.test(blk), true);
+  /* ⚠ 2026-09-05 다시 겨눔 — 표지가 onSelectPastCompany «안»에 있었다(걷어냄).
+     과거 계약·업체에서 고르는 일은 fillFromPast 가 한다.
+     ⚠ 규칙이 조금 다르다 — 그쪽은 고른 기록으로 회사 칸을 «통째로» 새로 세우므로
+       「빈 칸일 때만」이 아니다. 그래서 여기서는 «업태·종목이 함께 넘어가는가»만 본다.
+       빈 칸만 채우는 규칙은 기업정보함 경로(위 덩이)가 지킨다. */
+  const blk = slice('  function fillFromPast(picked){', '\n  }');
+  t('과거 계약·업체에서도 업태를 가져온다', /bizType: src\.bizType \|\| ''/.test(blk), true);
+  t('과거 계약·업체에서도 종목을 가져온다', /bizCategory: src\.bizCategory \|\| ''/.test(blk), true);
 }
 
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');

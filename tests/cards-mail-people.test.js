@@ -85,11 +85,6 @@ test('없는 사람을 찾으면 빈 목록', () => {
   same(c.findPeople(null,'권',8), []);
 });
 
-/* ── 적어 넣은 글에서 주소 뽑기 ── */
-
-test('「홍길동 <a@b.com>」처럼 적어도 주소를 알아본다', () => {
-  const c = load();
-  assert.equal(c.pickEmail('홍길동 <hong@example.com>'), 'hong@example.com');
-  assert.equal(c.pickEmail('  hong@example.com  '), 'hong@example.com');
-  assert.equal(c.pickEmail(''), '');
-});
+/* ⚠ 「적어 넣은 글에서 주소 뽑기」(pickEmail)를 재던 덩이를 뺐다 — 2026-09-05.
+   그 함수는 «아무도 안 부르는» 것이었다. 산 것은 여럿을 뽑는 pickEmails 이고
+   그쪽은 tests/cards-mail.test.js 가 잰다. 죽은 것을 재는 검사는 «없는 자신감»을 준다. */
