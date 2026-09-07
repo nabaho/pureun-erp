@@ -64,6 +64,16 @@ function load(items) {
     constOf('AUTO_RETRY_MAX'), constOf('FAIL_GIVEUP'),
     app.match(/^const READ_FAIL_RULES = \[[\s\S]*?^\];/m)[0].replace('const ', 'var '),
     fnOf('readFailKind'), fnOf('worthRetry'), fnOf('failedRead'),
+    /* ⚠ 2026-09-07 — 자동 판독 앞에 **문지기**가 붙었다(사진은 구글로 안 보낸다).
+       세 목록 모두 그것을 지나므로 여기서도 **원본 그대로** 실어야 한다 —
+       대역을 만들면 「막았다고 믿는데 실제로는 새는」 것을 못 본다.
+       ⚠ 이 파일의 표본에는 upAt 이 없다(옛 사진과 같은 모양) — 그래서 「한 뭉치로
+         묶여 붙잡히는」 일이 없고, 이 파일의 주제(한도 셈)가 그대로 재진다. */
+    'var readQuotaOut = false; var readAskSaid = "";',
+    'var _bszSrc = null, _bszN = -1, _bsz = null;',
+    constOf('READ_ASK_MIN'),
+    fnOf('batchSizes'), fnOf('upBatchKey'), fnOf('readHoldOf'), fnOf('readSkipWhy'),
+    'function renderReadAsk() {}',
     fnOf('neverRead'), fnOf('staleRead'), fnOf('autoReadPending')
   ].join('\n'), ctx);
   return ctx;

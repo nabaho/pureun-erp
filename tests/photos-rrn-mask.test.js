@@ -114,6 +114,17 @@ function runReadPhoto(masked, opts) {
        안 실으면 readPhoto 가 그 줄에서 ReferenceError 로 멎어 가림 검사가 통째로 운다. */
     app.match(/^const WORKER_KINDS = \{[^}]*\};/m)[0],
     cutFn(app, 'function canSendWorker('),
+    /* ⚠ 2026-09-07 — 판독 결과가 「하루 몫을 다 썼다」인지 그 자리에서 본다(그러면
+       자동 판독을 멈춘다). 안 실으면 readPhoto 가 그 줄에서 ReferenceError 로 멎어
+       이 파일의 가림 검사가 통째로 운다 — 벌써 세 번째 같은 일이다.
+       ⚠ 대역을 만들지 «않는다»: 진짜 것을 실으면 가림 길이 한도 판단을 건드리는지도
+         함께 재게 된다. */
+    'var readQuotaOut = false;',
+    app.match(/^const READ_FAIL_RULES = \[[\s\S]*?^\];/m)[0],
+    cutFn(app, 'function readFailKind('),
+    cutFn(app, 'function readHoldIds('),
+    cutFn(app, 'function renderReadAsk('),
+    cutFn(app, 'function readQuotaWatch('),
     cutFn(app, 'function readPhoto('),
     'var __p = readPhoto("p1", ' +
       (masked === undefined ? 'undefined' : JSON.stringify(masked)) + ');'
