@@ -417,8 +417,17 @@ test('★★ 자동 판독이 «남의 사진을 안 읽는다» — 읽어도 �
   const fn = cutFn(app, 'function autoReadPending(');
   assert.match(fn, /const canRead = function \(it\) \{ return mayTouch\(it\.id\); \};/,
     '★ 판독은 읽고 «쓰는» 일입니다 — 쓸 수 없는 사진은 읽을 값이 없습니다');
-  assert.match(fn, /gridItems\.filter\(canRead\)\.filter\(neverRead\)/, '안 읽은 것에 안 걸립니다');
-  assert.match(fn, /gridItems\.filter\(canRead\)\.filter\(staleRead\)/, '다시 읽는 것에 안 걸립니다');
+  /* ⚠ 2026-09-07 — 거르개 «차례»를 글자 그대로 박아 두었다가, 사이에 거르개가 하나
+     늘자 깨졌다(사진을 판독에 안 보내는 문지기 readSkipWhy 가 들어왔다).
+     지킬 것은 차례가 아니라 규칙이다: **세 목록이 모두 canRead 로 시작한다.**
+     ⚠ `[^)]*` 로 사이를 건너뛰지 «않는다» — 거르개 이름에 괄호가 들어 있어
+       그 자리에서 끊긴다(이 저장소가 여러 번 밟은 함정이다). 길이로 끊는다. */
+  const chain = function (name) {
+    return new RegExp('gridItems\\.filter\\(canRead\\)[\\s\\S]{0,40}\\.filter\\(' + name + '\\)');
+  };
+  assert.match(fn, chain('neverRead'), '안 읽은 것에 안 걸립니다');
+  assert.match(fn, chain('failedRead'), '실패해서 다시 거는 것에 안 걸립니다');
+  assert.match(fn, chain('staleRead'), '다시 읽는 것에 안 걸립니다');
 });
 
 test('★ 업체관리 자동 보내기도 남의 사진을 건드리지 않는다', () => {

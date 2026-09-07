@@ -84,6 +84,11 @@ function cellFor(o) {
     /* 👤 공유 칩이 늘었다(2026-08-29) — 「내 사진」에 공유받은 것이 섞이면서 칸이
        「누가 열어 줬는지」를 적는다. 안 주면 칸이 통째로 안 그려진다. */
     sharedByName: function () { return o.sharedBy || ''; },
+    /* ⏸ 보류 딱지가 늘었다(2026-09-07) — 한꺼번에 올린 사진은 「서류입니까?」에
+       답할 때까지 판독에 안 간다. 안 주면 칸이 통째로 안 그려진다.
+       ⚠ 여기서는 부르는 쪽이 정한다(기본 거짓) — 이 파일이 재는 것은 «서류 딱지와
+         아래 한 줄»이다. 보류가 서류 딱지를 이기는지는 photos-read-gate 가 본다. */
+    readHoldMine: function () { return !!o.hold; },
     ALL_OWNERS: '__all__', gridOwner: null,
     String: String, Set: Set, Boolean: Boolean
   };

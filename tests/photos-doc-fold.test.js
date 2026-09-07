@@ -342,6 +342,12 @@ test('★ 판독은 문서마다 한 번만, 그러나 다른 문서는 빠뜨�
        화면에서 사라졌다. 여기 남겨 두면 「아직 쓰는 것」처럼 보인다. */
     queuePhotoRead: function (id) { queued.push(id); },
     $: function () { return el; },
+    /* 2026-09-07: 사진을 구글로 안 보내는 **문지기**가 붙었다. 여기서는 전부 통과로
+       둔다 — 이 검사의 주제는 «문서마다 한 번»이다. 문지기 자체는 photos-read-gate 가 본다.
+       ⚠ 한도(readQuotaOut)는 거짓으로 둔다. 참이면 한 장도 안 걸려 이 검사가 통째로 운다 —
+         그것은 «판독을 멈춘 것»이지 문서 거르기가 틀린 것이 아니다. */
+    readSkipWhy: function () { return ''; },
+    renderReadAsk: function () { },
     gridItems: [
       { id: 'a', meta: doc('g1', 1) }, { id: 'b', meta: doc('g1', 2) },
       { id: 'x', meta: doc('g2', 1) }, { id: 'y', meta: doc('g2', 2) },
@@ -349,7 +355,7 @@ test('★ 판독은 문서마다 한 번만, 그러나 다른 문서는 빠뜨�
     ]
   };
   vm.createContext(ctx);
-  vm.runInContext(fnOf(app, 'autoReadPending'), ctx);
+  vm.runInContext('var readQuotaOut = false;\n' + fnOf(app, 'autoReadPending'), ctx);
   ctx.autoReadPending();
   assert.equal(joined(queued), 'a,x,z',
     '문서마다 한 번(첫 쪽)씩 + 홑장 — 지금은 ' + joined(queued));

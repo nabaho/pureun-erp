@@ -105,6 +105,15 @@ function safeReason(json, key) {
     .replace(/AIza[A-Za-z0-9_\-]{20,}/g, "(열쇠)");
 }
 
+/* 이 429 가 「하루 몫을 다 썼다」인가 — 그렇다면 기다려도 같은 답이다.
+   ⚠ 구글이 준 **설명글**로 가린다. 코드가 따로 오지 않아 이것밖에 없다.
+   ⚠ 확실하지 않으면 **기다리는 쪽**으로 둔다 — 분당 한도는 정말 기다리면 풀리므로
+     잘못 가려도 한 번 더 부르는 것으로 끝난다. 반대로 하루 몫을 「기다리면 된다」로
+     읽으면 한 장마다 여섯 번을 두드린다. */
+function dailyQuotaGone(why) {
+  return /free_tier_requests|PerDay|per day|RequestsPerDay/i.test(String(why || ""));
+}
+
 /* 모델을 차례로 시도한다 — 브라우저가 하던 것과 같은 규칙.
    404(모델이 없어짐)·429(그 모델 한도 없음)면 다음 모델로,
    401·403(열쇠 문제)은 모델을 바꿔도 같으므로 곧바로 포기한다. */
@@ -130,7 +139,14 @@ async function callGemini(fetchFn, key, parts, waits, cfg) {
       try { why = safeReason(await r.json(), key); } catch (_) { /* 본문이 없을 수 있다 */ }
       last = { status: status, why: why };
 
-      if (isTransient(status) && attempt < pauses.length) {
+      /* ⚠ **하루 몫이 없는 429 는 기다려도 같다** (대표 지시 2026-09-07).
+         429 에는 두 가지가 섞여 있다 — 「분당 너무 빨리 불렀다」(조금 기다리면 된다)와
+         「하루 몫을 다 썼다」(자정까지 같은 답이다). 여태 둘을 똑같이 세 번씩 다시 불러
+         한 장마다 **모델 둘 × 세 번 = 여섯 번**을 두드렸다. 2026-09-07 에 23장이
+         한도에 걸렸으니 그 뒤로만 백 번이 넘는다.
+         하루 몫이면 다시 부르지 않고 **다음 모델로** 넘어간다(모델마다 몫이 따로다). */
+      if (isTransient(status) && attempt < pauses.length &&
+          !(status === 429 && dailyQuotaGone(why))) {
         await new Promise(function (res) { setTimeout(res, pauses[attempt]); });
         continue;   // 같은 모델로 다시
       }
@@ -145,5 +161,5 @@ async function callGemini(fetchFn, key, parts, waits, cfg) {
 
 module.exports = {
   MODELS, MAX_BODY_BYTES, MAX_OUTPUT_TOKENS,
-  isTransient, validate, geminiBody, modelUrl, safeReason, callGemini
+  isTransient, validate, geminiBody, modelUrl, safeReason, callGemini, dailyQuotaGone
 };
