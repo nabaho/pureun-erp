@@ -3664,6 +3664,29 @@ function cmHas(it){
   coKeysOf(it).forEach(function(k){ if(cmSrc[k]&&(cmSrc[k].rows||[]).length) yes=true; });
   return yes;
 }
+/* ── 요약에서 «수집함이 아는 통»을 걷어 낸다 ──
+   ⚠ 시각으로는 못 맞춘다. 수집함은 「서버가 본 때」를, 요약은 「보낸 때」를 적는다.
+     날짜와 «한 줄»로 맞춘다 — 한 줄을 만드는 규칙(대괄호 떼고 46자)이 두 곳에서
+     같다(mailBrief · PuCoThread.digestRow). 규칙이 갈리면 겹친 통이 두 줄로 보인다.
+   ⚠ 수집함에 «있는데 안 그린» 통도 뺀다. 그것은 사람이 「이건 아니다」라고 치웠거나
+     다른 업무로 이어 준 것이다 — 요약이 그 판단을 되살리면 안 된다.
+   ⚠ 보낸 것은 수집함에 아예 없다. 늘 그린다.
+   ⚠ 아직 못 읽었으면(mailSrc 가 null) 아무것도 안 걷는다 — 모르면서 지우지 않는다. */
+function cmDay(at){ var d=new Date(Number(at)||0); return isNaN(d.getTime())?'':ymd(d); }
+function cmMatchKey(day,io,s){
+  return String(day||'').slice(0,10)+'|'+(io==='out'?'out':'in')+'|'+String(s||'').trim();
+}
+function cmDedup(cm,arr){
+  if(!mailSrc) return cm||[];
+  var 그렸다={}, 안다={};
+  (arr||[]).forEach(function(m){ 그렸다[cmMatchKey(cmDay(m.at),'in',mailBrief(m))]=1; });
+  mailSrc.forEach(function(m){ 안다[cmMatchKey(cmDay(m.at),'in',mailBrief(m))]=1; });
+  return (cm||[]).filter(function(r){
+    if(r.io==='out') return true;
+    var k=cmMatchKey(r.d,'in',r.s);
+    return !그렸다[k] && !안다[k];
+  });
+}
 function cmWhen(at){
   var d=new Date(Number(at)||0);
   if(isNaN(d.getTime())) return '';
@@ -3720,12 +3743,16 @@ function dCmRowHTML(r,id,up){
           :'이 줄은 사업장별 요약입니다 — 본문은 푸른메일함에서 엽니다.') });
 }
 function dMailHTML(it,itemId){
-  /* ★ 사업장별 요약이 있으면 그것이 «메일의 정본»이다 (대표 지시 2026-09-06).
-     요약은 회사 메일함 전체를 보고 만든 것이라 훨씬 넓다. 그런데 그 안에는
-     paydata/maillog 로 온 것도 들어 있어, 둘을 함께 그리면 같은 메일이 두 번 보인다.
-     ⚠ 요약이 «아직 없는» 업체는 예전대로 붙인다 — 되돌아갈 자리를 남겨 둔다. */
-  var cm=cmFor(it);
-  var arr=(!cm.length&&mailSrc)?mailFor(it):[];   // 아직 안 읽었거나 못 읽었다 — 조용히 없다
+  /* ★★ 수집함(paydata/maillog)이 «받은 메일의 정본»이다.
+     ⚠⚠ 2026-09-06 에 「요약이 있으면 수집함을 안 본다」로 두었다가, 하루 뒤 들어온
+       📬 이어 줄 메일(PR #1080)을 통째로 가렸다. 사람이 손으로 이어 준 메일도,
+       「이건 아니다」라고 치운 판단도 요약에는 없는데, 요약이 있는 업체에서는
+       그 판단이 화면에 아예 안 나왔다. 목록의 ✉ 배지는 「안 본 3」이라 하는데
+       열면 아무것도 없는 막다른 길이 된다.
+     ★ 사람이 정한 것 > 기계가 붙인 것. 그러니 수집함을 «늘» 본다.
+     ⚠ 요약은 «수집함이 모르는 것»만 보탠다 — 겹치는 통은 cmDedup 이 걷어 낸다. */
+  var arr=mailSrc?mailFor(it):[];   // 아직 안 읽었거나 못 읽었다 — 조용히 없다
+  var cm=cmDedup(cmFor(it),arr);
   var snt=sentFor(it);
   /* ⚠ 아주 숨기지 않는다. 붙은 것이 없더라도 «손으로 붙이는 길»은 남아야 한다 —
      엠비프라텍이 바로 그 경우였다(상자가 통째로 안 보여 「연결이 안 된다」로 읽혔다).
