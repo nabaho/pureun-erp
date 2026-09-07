@@ -659,7 +659,77 @@ rules.rules_mgmt = {
   archive: { '.read': LOGIN, $id: { '.write': origWrite } },
   worksession: { $uid: { '.read': 'auth != null && auth.uid === $uid', '.write': 'auth != null && auth.uid === $uid' } },
   decisions: { '.read': LOGIN, '.write': LOGIN },
-  matchfix:  { '.read': LOGIN, '.write': LOGIN }
+  matchfix:  { '.read': LOGIN, '.write': LOGIN },
+
+  /* ── 서고(사례집) ─ 2026-09-07 · 설계서 §3·§6 ───────────────────────────
+     ⚠ 보관함과 «일부러» 갈리는 자리다. 보관함은 「내 것 + 남의 완료본」인데
+       서고는 «직원 전체가 남의 사업장까지» 본다 — 사례집이 목적이라 맞다.
+       그래서 올리는 화면에 「서고에 올리면 직원 전체가 볼 수 있습니다」를 적었다
+       (rules.html 의 떨어뜨리기 창 · tests/rules-casebook-ui.test.js 가 지킨다).
+
+     무게별로 네 층이라 규칙도 층마다 다르다:
+       index  가벼운 목록  — 쓰기 LOGIN. ⚠ 여기만 ownerUid 로 안 잠근다.
+                             한 사업장에 여러 담당자가 회차를 더하는데 첫 사람에게
+                             잠그면 둘째 담당자의 회차가 «목록에 안 뜬다».
+                             대신 넣을 수 있는 칸을 못 박아 아무거나 못 쌓게 한다.
+       rev    회차 상세    — ownerUid 방식(orig·done 과 같은 모양).
+       text   본문         — 쓰는 순서가 text→rev 라 «rev 가 아직 없다».
+                             그래서 본문 자리에 ownerUid 를 함께 적어 두고 그것을 본다.
+       idx    검색 색인    — 값이 1 뿐이라 임자를 적을 데가 없다. 쓰기는 LOGIN 이되
+                             칸 이름과 값을 좁게 못 박는다(설계서 §3-④). */
+  casebook: {
+    index: { '.read': LOGIN, $site: {
+      '.write': LOGIN,
+      '.validate': "newData.hasChildren(['site'])",
+      site:      { '.validate': 'newData.isString() && newData.val().length <= 120' },
+      bizno:     { '.validate': 'newData.isString() && newData.val().length <= 20' },
+      industry:  { '.validate': 'newData.isString() && newData.val().length <= 60' },
+      size:      { '.validate': 'newData.isNumber() && newData.val() >= 0' },
+      revCount:  { '.validate': 'newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000' },
+      lastYear:  { '.validate': 'newData.isString() && newData.val().length <= 10' },
+      updatedAt: { '.validate': 'newData.isString() && newData.val().length <= 30' },
+      updatedBy: { '.validate': 'newData.isString() && newData.val().length <= 40' },
+      $other: { '.validate': false }
+    } },
+    rev: { '.read': LOGIN, $site: { $rev: {
+      '.write': revWrite,
+      '.validate': "newData.hasChildren(['year','ownerUid'])",
+      ownerUid: { '.validate': 'newData.val() === auth.uid' },
+      year: { '.validate': 'newData.isString() && newData.val().length <= 10' },
+      at:   { '.validate': 'newData.isString() && newData.val().length <= 10' },
+      by:   { '.validate': 'newData.isString() && newData.val().length <= 40' },
+      note: { '.validate': 'newData.isString() && newData.val().length <= 500' },
+      site: { '.validate': 'newData.isString() && newData.val().length <= 120' },
+      savedAt: { '.validate': 'newData.isString() && newData.val().length <= 30' },
+      docs: { $role: {
+        '.validate': "newData.hasChildren(['name','sha'])",
+        name: { '.validate': 'newData.isString() && newData.val().length <= 260' },
+        ext:  { '.validate': 'newData.isString() && newData.val().length <= 10' },
+        size: { '.validate': 'newData.isNumber() && newData.val() >= 0' },
+        path: { '.validate': 'newData.isString() && newData.val().length <= 300' },
+        artCount: { '.validate': 'newData.isNumber() && newData.val() >= 0' },
+        /* ⚠ 본문이 없는 것(스캔 PDF 등)은 조용히 빼지 않고 «없다»고 적어 둔다 — 설계서 §8 */
+        noText: { '.validate': 'newData.isBoolean()' },
+        sha:  { '.validate': 'newData.isString() && newData.val().length <= 80' },
+        $other: { '.validate': false }
+      } },
+      $other: { '.validate': false }
+    } } },
+    text: { '.read': LOGIN, $site: { $rev: { $role: {
+      '.write': revWrite,
+      '.validate': "newData.hasChildren(['t','ownerUid'])",
+      ownerUid: { '.validate': 'newData.val() === auth.uid' },
+      /* 취업규칙 전문 한 벌. 100KB 를 넘는 것이 흔해 넉넉히 두되, 한 번 쓰기가
+         실시간DB 한도(16MB)를 건드리지 않게 막는다. */
+      t: { '.validate': 'newData.isString() && newData.val().length <= 600000' },
+      at: { '.validate': 'newData.isString() && newData.val().length <= 30' },
+      $other: { '.validate': false }
+    } } } },
+    idx: { k: { '.read': LOGIN, $kw: { $ref: {
+      '.write': LOGIN,
+      '.validate': 'newData.isNumber() || newData.isBoolean()'
+    } } } }
+  }
 };
 
 /* ══ 폰 알림 열쇠 ══════════════════════════════════════════════════════
