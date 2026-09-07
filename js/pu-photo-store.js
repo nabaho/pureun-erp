@@ -1910,6 +1910,58 @@
       .then(function (s) { return s.val() || {}; });
   }
 
+  /* ── 고를 수 있는 «직원 전부» (건의 2026-09-07 김동현 노무사) ────────────────
+     「공유자 목록에 김혜민 노무사님이 없습니다」 — 고장이 아니라 **명단이 틀린 자리**였다.
+     종전 공유 대상은 위의 owners 였는데, 그 자리는 «사진첩을 한 번이라도 연 사람»만
+     들어간다(사진을 올릴 때 이름표가 적힌다). 사진을 **받을** 사람이 왜 사진첩을
+     먼저 열었어야 하나 — 열지 않았기 때문에 열어 줄 수가 없는, 뒤집힌 문이었다.
+
+     ⚠ 화면 주석은 「골라 줄 uid 자체가 없다」고 적어 두었으나 **그 전제가 틀렸다.**
+       로그인한 사람은 모두 uid_roles 에 있고(사번·재직 여부까지), 이름은 공개 명부
+       data/user_dir 에 있다. 둘 다 이미 전 직원이 읽을 수 있는 자리다.
+     ⚠ **재직자만** 낸다 — 퇴직한 사람에게 사진을 열어 주면 안 된다.
+     ⚠ 한 번도 로그인한 적 없는 사람은 여전히 안 나온다(계정이 없다). 그때는 부르는
+       쪽이 사번을 적어 사람에게 말해 준다 — 조용히 빠뜨리면 이 건의가 되풀이된다.
+     ⚠ 한 사람이 계정을 여럿이면 **가장 최근 것**을 쓴다(uidBySid 와 같은 잣대).
+     ⚠ 이름표만 얻는다 — 남의 사진이 열리는 것이 아니다. 사진 자물쇠(u/{주인})는 그대로다. */
+  function normSid(sid) { return String(sid == null ? '' : sid).toLowerCase().replace(/-/g, ''); }
+
+  function sidNameMap(list) {
+    var arr = list, out = {};
+    if (!Array.isArray(arr) && arr && typeof arr === 'object') {
+      arr = Object.keys(arr).map(function (k) { return arr[k]; });
+    }
+    if (!Array.isArray(arr)) return out;
+    for (var i = 0; i < arr.length; i++) {
+      var x = arr[i];
+      if (x && x.sid && x.name) out[normSid(x.sid)] = x.name;
+    }
+    return out;
+  }
+
+  function listStaff() {
+    if (!deps.db) return Promise.resolve({});
+    var roles = deps.db.ref('uid_roles').once('value')
+      .then(function (s) { return s.val() || {}; })
+      .catch(function () { return {}; });
+    /* 이름을 못 읽어도 사람은 나와야 한다 — 이름 없이 사번으로라도 고를 수 있다 */
+    var dir = readRoster('data/user_dir', deps.db).catch(function () { return null; });
+    return Promise.all([roles, dir]).then(function (r) {
+      var v = r[0] || {}, names = sidNameMap(r[1]), best = {}, out = {};
+      Object.keys(v).forEach(function (uid) {
+        var x = v[uid];
+        if (!x || !x.sid) return;
+        if (x.status && x.status !== 'active') return;      // 퇴직자는 뺀다
+        var key = normSid(x.sid), t = x.updatedAt || 0;
+        if (!best[key] || t > best[key].t) best[key] = { uid: uid, t: t, sid: x.sid };
+      });
+      Object.keys(best).forEach(function (key) {
+        out[best[key].uid] = { sid: best[key].sid, name: names[key] || '' };
+      });
+      return out;
+    }).catch(function () { return {}; });
+  }
+
   /* 사진첩을 켜 둔 동안 다른 휴대폰에서 올리면 owners/{uid}.lastAt 이 함께 바뀐다.
      큰 사진 목록 전체를 감시하지 않고 이 **작은 색인**만 감시해 다시 읽을 때를 알려 준다.
      첫 value 는 구독 직후의 현재값이므로 넘긴다.
@@ -2252,6 +2304,7 @@
     lookupName: lookupName,
     touchOwner: touchOwner,
     listOwners: listOwners,
+    listStaff: listStaff,
     watchUploadIndex: watchUploadIndex,
     listYearAll: listYearAll,
     listYearsAll: listYearsAll,
