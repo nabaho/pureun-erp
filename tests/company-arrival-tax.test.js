@@ -31,8 +31,15 @@ const detail = cutFn(src, 'function CompanyDetailModal');
 console.log('[① 이관하면 도장을 찍는다 — 두 갈래 모두]');
 /* 이관은 «새 업체를 만드는 길»과 «이미 있는 업체에 이어 붙이는 길» 둘이다.
    한쪽만 찍으면 그 길로 들어온 것은 확인할 수 없다. */
+/* ⚠ 2026-09-07 고침 — 전에는 두 줄이 «붙어 있는지»를 박아 두었다
+   (arvStamp 다음 줄이 곧바로 dbUpsert 여야 통과). 그 사이에 줄이 하나 늘자
+   기능은 멀쩡한데 검사가 깨졌다(이관 되돌리기 자리 xferUndo 를 넣을 때).
+   봐야 할 것은 «붙어 있는가»가 아니라 «저장하기 전에 찍는가»다 — 차례로 본다. */
+const xferFn = cutFn(src, 'function transferContract(');
+const stampAt = xferFn.indexOf("Object.assign(item, arvStamp('계약', contract.contractNo));");
+const saveAt = xferFn.indexOf("dbUpsert('companies', item)");
 ok('새 업체를 만들 때 찍는다',
-   /Object\.assign\(item, arvStamp\('계약', contract\.contractNo\)\);\n\s*if\(!dbUpsert\('companies', item\)\)/.test(src),
+   stampAt > 0 && saveAt > 0 && stampAt < saveAt,
    '안 찍으면 새로 생긴 업체가 목록 어딘가에 조용히 묻힌다');
 ok('기존 업체에 이어 붙일 때도 찍는다',
    /Object\.assign\(patch, arvStamp\('계약', contract\.contractNo\)\);/.test(src),
