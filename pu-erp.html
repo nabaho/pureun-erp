@@ -38438,6 +38438,46 @@ function ArchiveManagement(){
   );
 }
 
+/* ══════ 퇴직정산 — 「0원으로 산정된 건」 짚기 (2026-09-05) ══════
+   급여 기록을 p.sid 로 찾던 흠(고침 f85c123) 때문에 최근 3개월을 못 찾아
+   평균임금이 0 이 된 건이 있을 수 있다. 저장된 값이 0 인데 그 사람 급여 기록은
+   «있으면» 그때 산정한 것이다.
+   ⚠ 자동으로 고치지 않는다 — 이미 지급했을 수 있다. 사람이 판단한다. */
+function retireMonthsBefore(rec, pms){
+  var sid = String((rec && rec.sid) || ''), ym = String((rec && rec.retireDate) || '').slice(0, 7);
+  if (!sid || !ym) return 0;
+  return (pms || []).filter(function (p) {
+    return p && (p.empSid || p.sid) === sid && String(p.ym || '') < ym;
+  }).length;
+}
+function retireZeroSuspect(rec, pms){
+  if (!rec) return false;
+  /* 사람이 손으로 적어 둔 값이 있으면 그것이 이긴다 — 흠과 상관없다 */
+  if (String(rec.avgWageBaseOverride || '').trim()) return false;
+  if (Number(rec.avgWageBase) > 0) return false;
+  /* 급여 기록이 아예 없으면 0 이 «맞는» 값이다 — 흠이 아니다 */
+  return retireMonthsBefore(rec, pms) > 0;
+}
+function retireRecalc(rec, setRec){
+  var pms = dbGet('payroll_monthly', []).filter(function (p) {
+    return p && (p.empSid || p.sid) === rec.sid;
+  });
+  var ym = String(rec.retireDate || '').slice(0, 7);
+  var sorted = pms.filter(function (p) { return String(p.ym || '') < ym; })
+    .sort(function (a, b) { return String(b.ym).localeCompare(String(a.ym)); }).slice(0, 3);
+  if (!sorted.length) { showToast('다시 셀 급여 기록이 없습니다'); return; }
+  var total = sorted.reduce(function (s, p) {
+    var r = calcPayroll(p); return s + (r.averageBase || r.grossPay || 0);
+  }, 0);
+  var avg = Math.round(total / Math.max(1, sorted.length * 30));
+  var years = Number(rec.workYears) || 0;
+  var sev = (years >= 1) ? Math.round(avg * 30 * years) : 0;
+  /* ⚠ 사람이 손으로 적어 둔 값은 «건드리지 않는다» */
+  setRec(Object.assign({}, rec, { avgWageBase: avg, severancePay: sev }));
+  showToast('🔄 최근 ' + sorted.length + '개월로 다시 셌습니다 — 1일 평균임금 '
+    + avg.toLocaleString() + '원 · 법정 퇴직금 ' + sev.toLocaleString() + '원');
+}
+
 /* 지금 서버가 가리키는 판 번호 — 올릴 때 「직전 판」으로 적어 둔다.
    ⚠ 화면을 다시 그려도 살아 있어야 해서 컴포넌트 «밖»에 둔다. */
 var _ontCurrentGen='';
@@ -75873,6 +75913,25 @@ function RetirementSettlement(){
             // 평균임금 + 퇴직금
             h('div', { style:{background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'6px', padding:'10px 14px', marginBottom:'12px'} },
               h('div', { style:{fontSize:'12px', fontWeight:700, color:'#854d0e', marginBottom:'8px'} }, '💰 평균임금 · 퇴직금'),
+              /* ★ 「0원으로 산정된 건」을 화면이 스스로 짚는다 (2026-09-05).
+                 급여 기록을 p.sid 로 찾던 흠 때문에 최근 3개월을 못 찾아 평균임금이
+                 0 이 된 건이 있을 수 있다(고침 f85c123). 저장된 값이 0 인데 그 사람
+                 급여 기록은 «있으면» 그때 산정한 것이다 — 조용히 두면 아무도 모른다.
+                 ⚠ 자동으로 고치지 않는다. 이미 지급한 건일 수 있어 사람이 판단한다. */
+              retireZeroSuspect(settleModal, dbGet('payroll_monthly', [])) &&
+                h('div', { style:{background:'#fef2f2', border:'1px solid #fecaca', borderRadius:'6px',
+                    padding:'9px 11px', marginBottom:'9px', fontSize:'11.5px', color:'#991b1b', lineHeight:1.7} },
+                  h('div', { style:{fontWeight:800, marginBottom:'3px'} }, '⚠ 평균임금이 0원으로 산정된 건입니다'),
+                  '이 사람의 급여 기록은 ', h('b', null,
+                    retireMonthsBefore(settleModal, dbGet('payroll_monthly', [])) + '개월치'),
+                  ' 가 있습니다. 2026-09-04 이전에는 급여를 못 찾는 흠이 있어 0원이 됐습니다.',
+                  h('div', { style:{marginTop:'4px'} },
+                    '아래 ', h('b', null, '[🔄 평균임금 다시 계산]'), ' 을 누르면 지금 기준으로 다시 셉니다. ',
+                    h('b', null, '이미 지급한 건이면'), ' 차액을 어떻게 할지 먼저 정하십시오.'),
+                  h('button', { onClick:function(){ retireRecalc(settleModal, setSettleModal); },
+                    style:{marginTop:'7px', padding:'5px 11px', background:'#fff', color:'#991b1b',
+                      border:'1px solid #fecaca', borderRadius:'6px', fontWeight:700, cursor:'pointer'} },
+                    '🔄 평균임금 다시 계산')),
               h('div', { style:rowS }, h('span', { style:lblS }, '1일 평균임금 (자동)'),
                 h('span', { style:{fontWeight:700, color:'#475569', fontFamily:'monospace'} }, (settleModal.avgWageBase||0).toLocaleString()+'원')),
               h('div', { style:rowS }, h('span', { style:lblS }, '평균임금 수동 조정'),
