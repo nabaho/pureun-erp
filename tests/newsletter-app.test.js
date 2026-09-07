@@ -554,3 +554,59 @@ test('★ 탭의 「받는 명단 N」은 «언제나 전체»다 — 유형 칩
   assert.ok(!/셈\.보낼곳/.test(줄),
     '걸러낸 뒤의 수를 씁니다 — 칩을 누르면 탭 숫자가 따라 바뀝니다');
 });
+
+/* ══ 설정 탭을 «좌우 반반»으로 (대표 지시 2026-09-07) ═════════════════
+   「뉴스레터 설정 화면은 정리해서 왼쪽절반에 넣고 자료 가지고 오는것은 오른쪽절반으로」
+   대표 확인 「폰에서는 목업대로 그러나 피시에서는 좌우 화면으로」
+
+   ⚠ 이 검사가 지키는 것은 «칸이 둘인가»와 «잃은 것이 없는가»다.
+     자리를 옮기는 손질은 조용히 칸 하나를 떨어뜨리기 쉽다 — 화면은 멀쩡해 보인다. */
+
+const 설정본 = (/function 설정화면\(\)\{[\s\S]*?\n\}/.exec(news) || [''])[0];
+
+test('★★ 설정 탭이 «좌우 두 칸» — 왼쪽 설정 · 오른쪽 가져오기', () => {
+  assert.ok(설정본, '설정화면 을 못 찾았다');
+  assert.match(설정본, /<div class="cols">/,
+    '★ 좌우로 나누는 껍데기가 없다 — 세 상자가 위아래로 쌓여 두 번 굴러야 다 보인다');
+  const i설정 = 설정본.indexOf('뉴스레터 설정');
+  const i자료 = 설정본.indexOf('발간자료·판례 지금 가져오기');
+  const i노무 = 설정본.indexOf('공인노무사회 자료 가져오기');
+  assert.ok(i설정 >= 0 && i자료 > i설정 && i노무 > i자료,
+    '★ 설정이 왼쪽, 가져오기 둘이 오른쪽이라는 차례가 깨졌다');
+});
+
+test('★ 좌우 두 칸이 «폰에서는 위아래»가 된다', () => {
+  const 규칙 = /\.cols\{([^}]*)\}/.exec(news);
+  assert.ok(규칙, '.cols 규칙이 없다');
+  assert.match(규칙[1], /display:\s*grid/, '★ 격자가 아니다');
+  assert.ok((규칙[1].match(/1fr/g) || []).length >= 2,
+    '★ 넓은 화면에서도 한 칸이다 — 피시에서 좌우로 안 나뉜다: ' + 규칙[1]);
+  assert.match(news, /@media\(max-width:\d+px\)\{\.cols\{grid-template-columns:1fr\}/,
+    '★ 폰에서 위아래로 안 접힌다 — 두 칸이 짜부라진다');
+});
+
+test('★★ 좌우로 나누면서 칸을 «하나도» 잃지 않았다', () => {
+  ['cfgScope', 'cfgFrom', 'cfgReply', 'cfgTestTo', 'cfgName', 'cfgFoot', 'cfgTrack',
+   'cfgCeo', 'cfgTel', 'cfgAddr', 'cfgLogo', 'cfgBanner', 'cfgNews'].forEach(function (id) {
+    assert.ok(설정본.indexOf('id="' + id + '"') >= 0, '★ 설정 칸이 사라졌다: ' + id);
+  });
+});
+
+test('★ 접은 넷은 «접은 것»이지 지운 것이 아니다', () => {
+  const 접 = /<details class="fold">[\s\S]*?<\/details>/.exec(설정본);
+  assert.ok(접, '★ 접는 칸이 없다');
+  ['cfgLogo', 'cfgBanner', 'cfgNews', 'cfgTrack'].forEach(function (id) {
+    assert.ok(접[0].indexOf('id="' + id + '"') >= 0,
+      '★ ' + id + ' 이 접는 칸 밖에 있다 — 자리를 반 폭에 그대로 먹는다');
+  });
+  assert.match(접[0], /보이지 않는 그림 한 점/,
+    '★ 접으면서 안내를 지웠다 — 접는 것과 지우는 것은 다르다');
+});
+
+test('★ 「보내는 때는 손으로」 안내가 «보내기 칸 곁»에 있다', () => {
+  const i안내 = 설정본.indexOf('보내는 때');
+  const i자료 = 설정본.indexOf('발간자료·판례 지금 가져오기');
+  assert.ok(i안내 >= 0, '★ 안내가 사라졌다');
+  assert.ok(i안내 < i자료,
+    '★ 자료 상자 아래에 남아 있다 — 자료 가져오기와 상관없는 말이다');
+});
