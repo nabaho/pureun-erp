@@ -213,14 +213,19 @@ function mailOutPathOk(path, uid) {
    ① pucards/mailout/{uid}/…  내 PC 에서 올린 임시 파일 — 제 자리만
    ② ilabor/{sid}/…           노무사회에서 서버가 받아 둔 자료
                               (ilaborPull 이 «기본 창고»에 담는다 — 다른 통이다)
+   ③ newsdocs/{번호}.{꼴}      아침에 모아 온 자료의 사본 (고용노동부·연구원 …)
+                              이름을 «우리가» 짓는 자리라 남의 이름이 섞이지 않는다
    ⚠ 자리를 그대로 믿지 않는다. 안 막으면 자리만 바꿔 «남의 파일»을 첨부로 빼낼 수 있다.
-   ⚠ 여기 없는 자리는 «건너뛴다». 새 자리를 열 때는 이 함수를 고친다 — 한 곳이다. */
+   ⚠ 여기 없는 자리는 «건너뛴다». 새 자리를 열 때는 이 함수를 고친다 — 한 곳이다.
+   ⚠ ②③ 은 «치울 것»에 안 넣는다 — 아래 used.push 를 함께 보라. 보관해 둔 자료다. */
 function 첨부자리허용(path, uid) {
   const p = String(path || '');
   if (!p || p.indexOf('..') >= 0) return null;
   if (uid && mailOutPathOk(p, uid)) return { bucket: CARDS_BUCKET };
   /* 노무사회 자료 — 서버만 담고(규칙 .write:false), 총괄관리자만 보낸다 */
   if (/^ilabor\/\d+\/[^/]+$/.test(p)) return { bucket: '' };   /* '' = 기본 창고 */
+  /* 모아 온 자료 사본 — 이름은 «번호.꼴» 하나뿐이다(폴더도 더 안 파고 든다) */
+  if (/^newsdocs\/[0-9A-Za-z_-]+\.[0-9a-z]{1,8}$/i.test(p)) return { bucket: '' };
   return null;
 }
 
