@@ -120,6 +120,20 @@
   var YEAR_ONLY = /^(19|20)\d{2}년?$/;
 
   /* 폴더 조각 중 사업장 이름일 만한 것 — 연도 폴더와 한 글자는 뺀다. */
+  /* ★ 폴더 이름에서 «연도와 개정 꼬리»를 벗긴다 (2026-09-07 실측에서 잡았다).
+     폴더가 「한빛산업2022」면 사업장이 «한빛산업2022»로 앉았다 —
+     그러면 같은 회사가 «해마다 딴 사업장»이 되어 이력이 갈라진다.
+     ⚠ 벗긴 것으로 «바꿔치기»하지 않는다. 둘 다 후보로 두고 ERP 대조는 원래 이름을
+       먼저 본다 — 회사 이름에 정말로 숫자가 든 곳이 있다(「2020컴퍼니」).
+       ERP 로 못 맞췄을 때 «보여 줄» 이름만 벗긴 쪽을 쓴다. */
+  var YEAR_IN = /(19|20)\d{2}\s*(년도|년)?/g;
+  var REV_TAIL = /[_\-\s]*(전부개정|일부개정|개정본|개정안|개정|제정|현행|기존|최종|안|판)\s*$/;
+  function stripYear(s) {
+    var t = String(s == null ? '' : s).replace(YEAR_IN, ' ');
+    t = t.replace(REV_TAIL, '');
+    return t.replace(/[\s_\-]+/g, ' ').trim();
+  }
+
   function folderHints(p) {
     var parts = String(p || '').split(/[\/\\]/);
     parts.pop();                                  // 마지막은 파일명
@@ -128,7 +142,9 @@
       var s = String(parts[i] || '').trim();
       if (s.length < 2) continue;
       if (YEAR_ONLY.test(s)) continue;
-      out.push(s);
+      out.push(s);                                /* 원래 이름이 먼저 — ERP 대조에 유리하다 */
+      var c = stripYear(s);
+      if (c && c.length >= 2 && c !== s) out.push(c);
     }
     return out;
   }
@@ -164,7 +180,10 @@
     }
     if (cands.length) {
       var isFolder = cands[0] !== fromFile || folderHints(e.path || '').length > 0;
-      return { site: cands[0], bizno: '', how: isFolder ? '폴더' : '파일명' };
+      /* ⚠ ERP 로 못 맞췄을 때 «보여 줄» 이름에서는 연도를 벗긴다 —
+         「한빛산업2022」가 사업장으로 앉으면 같은 회사가 해마다 갈라진다. */
+      var 보일것 = stripYear(cands[0]) || cands[0];
+      return { site: 보일것, bizno: '', how: isFolder ? '폴더' : '파일명' };
     }
     return { site: '', bizno: '', how: null };
   }
@@ -806,7 +825,7 @@
     normName: normName,
     /* ⚠ 계획서가 Produces 목록에 안 적었는데 검사가 부른다 — 2단계가 따로 쓴다고
        적혀 있어 내보내는 것이 맞다(빠뜨리면 2단계에서 같은 것을 또 만든다). */
-    nameFromFile: nameFromFile,
+    nameFromFile: nameFromFile, stripYear: stripYear,
     siteOf: siteOf,
     shaOf: shaOf,
     paths: paths,
