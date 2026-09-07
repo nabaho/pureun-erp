@@ -121,7 +121,7 @@ const CONTRACTS = [{ id: 'ct-1', contractNo: '계약-2026-121', status: 'transfe
 
 function planCtx() {
   const ctx = realm({});
-  load(ctx, ['function coUndoPlan(', 'function coUndoWorthShowing(']);
+  load(ctx, ['function coLegacyUndoPlan(', 'function coUndoPlan(', 'function coUndoWorthShowing(']);
   vm.runInContext('var CO_UNDO_HIDE = ' +
     (bare.match(/var CO_UNDO_HIDE = (\{[^}]*\})/) || [])[1] + ';', ctx);
   return ctx;
@@ -131,9 +131,60 @@ function plan(co, contracts) {
   return vm.runInContext('coUndoPlan(' + JSON.stringify(co) + ',' + JSON.stringify(contracts || CONTRACTS) + ')', ctx);
 }
 
-test('⑤ 되돌릴 자리가 없는 업체에는 계획이 안 선다 — 손으로 만든 업체가 대부분이다', function () {
+test('⑤ 손으로 만든 업체에는 계획이 안 선다 — 업체 대부분이 그렇다', function () {
   assert.equal(plan({ id: 'x', name: '손으로 만든 곳' }), null);
-  assert.equal(plan({ id: 'x', xferUndo: {} }), null, 'mode 가 없으면 되돌릴 수 없습니다');
+  assert.equal(plan({ id: 'x', xferUndo: {} }), null, '되돌릴 자리도 출처 계약도 없으면 되돌릴 수 없습니다');
+});
+
+/* ── 되돌릴 자리가 «없던 때» 이관된 것 (2026-09-07 저녁) ────────────────────
+   xferUndo 는 그날 배포부터 남는다. 그 전에 이관된 곳에는 없어서
+   대표 화면에는 단추가 «아예 안 보였다» — 사건·컨설팅에는 늘 보이는데. */
+const LEGACY = { id: 'co-old', name: '옛날에 이관된 곳', typeCode: '자문',
+  ceo: '홍길동', monthlyAdvisoryFee: 250000,
+  sourceContractNo: '계약-2026-121', sourceContractId: 'ct-1', sourceKind: 'contract', sourceId: 'ct-1',
+  note: '계약(계약-2026-121)에서 이관' };
+
+test('⑤-1 ★ 되돌릴 자리가 없어도 «출처 계약»만 있으면 계획이 선다', function () {
+  const p = plan(LEGACY);
+  assert.ok(p, '★ 2026-09-07 전에 이관된 곳에서 단추가 사라집니다');
+  assert.equal(p.mode, 'legacy');
+  assert.equal(p.contractNo, '계약-2026-121');
+  assert.ok(p.contract && p.contract.id === 'ct-1', '★ 원본 계약을 찾아야 합니다');
+});
+
+test('⑤-2 ★ 옛 이관은 칸을 «안» 비운다 — 무엇이 채워졌는지 기록이 없다', function () {
+  const p = plan(LEGACY);
+  assert.deepEqual(Array.from(p.clear), [], '★ 기록도 없이 값을 비우면 사람이 넣은 것까지 지웁니다');
+  assert.deepEqual(Array.from(p.show), []);
+  assert.equal(p.noteBefore, LEGACY.note, '메모도 그대로 둡니다');
+});
+
+test('⑤-3 계약번호가 없고 ID만 있어도 찾는다 (옛 기록은 꼴이 제각각이다)', function () {
+  const onlyId = { id: 'c', sourceKind: 'contract', sourceId: 'ct-1' };
+  const p = plan(onlyId);
+  assert.ok(p && p.contract && p.contract.id === 'ct-1', '★ sourceId 로도 찾아야 합니다');
+  assert.equal(p.contractNo, '계약-2026-121', '번호는 찾은 계약에서 채웁니다');
+});
+
+test('⑤-4 sourceKind 가 계약이 아니면 계획이 안 선다 — 사진·명함에서 온 것까지 걸리면 안 된다', function () {
+  assert.equal(plan({ id: 'c', sourceKind: 'photo', sourceId: 'p-1' }), null);
+});
+
+test('⑤-5 ★ 옛 이관을 되돌리면 «출처 자국»을 끊는다 — 안 끊으면 단추가 영영 붙어 있다', function () {
+  const fn = stripComments('<script>' + cutFn(src, 'async function undoCompanyTransfer(') + '</script>');
+  const leg = fn.slice(fn.indexOf("if(plan.mode === 'legacy')"));
+  assert.match(leg, /back\.sourceContractNo = '';/, '★ 출처 계약번호가 남습니다');
+  assert.match(leg, /back\.sourceContractId = '';/, '★ 출처 계약 ID 가 남습니다');
+  assert.ok(!/dbRemove\('companies'/.test(leg.slice(0, leg.indexOf('showToast'))),
+    '★ 옛 이관에서 업체를 지우고 있습니다 — 새로 만든 것인지 알 길이 없습니다');
+});
+
+test('⑤-6 ★ 옛 이관 확인 창은 「비운다」고 하지 않는다 — 못 하는 일을 한 척하면 안 된다', function () {
+  const fn = cutFn(src, 'async function undoCompanyTransfer(');
+  const msg = fn.slice(fn.indexOf("plan.mode === 'legacy'"), fn.indexOf("plan.mode === 'created'"));
+  assert.ok(!/칸만 도로 비웁니다/.test(msg), '★ 못 비우는데 비운다고 적고 있습니다');
+  assert.match(msg, /기록이 없습니다/, '★ 왜 못 비우는지 사람에게 말해야 합니다');
+  assert.match(msg, /칸반에 다시 뜹니다/, '★ 무엇이 일어나는지는 적어야 합니다');
 });
 
 test('⑥ 이관이 넣은 값 그대로면 비운다', function () {
@@ -218,9 +269,27 @@ test('⑮ ⋯ 메뉴 두 자리 «모두»에 붙어 있다 — 한쪽만 붙이
      부르는 자리만 센다(뒤의 쉼표가 그 표시다). */
   const rows = (bare.match(/coUndoItem\(co\),/g) || []).length;
   assert.ok(rows >= 2, '★ ⋯ 메뉴 자리는 둘입니다 (활성·사무대행) — ' + rows + '군데만 붙었습니다');
-  const item = cutFn(src, 'function coUndoItem(');
-  assert.match(item, /if\(!co \|\| !co\.xferUndo/, '★ 이관으로 온 업체에만 보여야 합니다');
+  const item = stripComments('<script>' + cutFn(src, 'function coUndoItem(') + '</script>');
+  assert.match(item, /return null;/, '★ 이관으로 온 업체에만 보여야 합니다');
+  assert.match(item, /sourceContractNo \|\| co\.sourceContractId/,
+    '★ xferUndo 만 보면 2026-09-07 전에 이관된 곳에서 단추가 사라집니다');
   assert.match(item, /undoCompanyTransfer\(/, '★ 눌러도 아무 일이 없습니다');
+  /* 대표 지시 「다른관리 처럼」 — 사건·컨설팅과 «같은 말»이어야 화면에서 찾는다 */
+  assert.match(item, /label:'↩ 계약관리로 복귀'/, '★ 다른 화면과 이름이 다릅니다');
+});
+
+test('⑮-1 ★ 단추는 손으로 만든 업체에는 안 보인다 (실제로 돌려 본다)', function () {
+  /* 글자만 보면 「조건이 있다」까지만 안다 — 정말 걸러지는지 돌려서 본다 */
+  const ctx = realm({ refreshCompanies: function () { }, undoCompanyTransfer: function () { } });
+  vm.runInContext(cutFn(src, 'function coUndoItem('), ctx);
+  const call = (co) => vm.runInContext('coUndoItem(' + JSON.stringify(co) + ')', ctx);
+  assert.equal(call({ id: 'a', name: '손으로 만든 곳' }), null, '★ 안 보여야 할 곳에 보입니다');
+  assert.equal(call(null), null, '빈 값에도 안 터져야 합니다');
+  assert.ok(call({ id: 'b', xferUndo: { mode: 'merged', contractNo: '계약-1' } }), '새 이관에는 보여야 합니다');
+  assert.ok(call({ id: 'c', sourceContractNo: '계약-2' }), '★ 옛 이관에도 보여야 합니다');
+  assert.ok(call({ id: 'd', sourceKind: 'contract', sourceId: 'ct-9' }), '★ ID 만 있는 옛 기록에도');
+  assert.equal(call({ id: 'e', sourceKind: 'photo', sourceId: 'p-1' }), null, '★ 사진에서 온 것까지 걸리면 안 됩니다');
+  assert.equal(call({ id: 'f', xferUndo: { contractNo: 'x' } }), null, 'mode 없는 껍데기는 아닙니다');
 });
 
 test('⑯ 막이가 실제로 이관 길목에 걸려 있다 — 함수만 있고 안 부르면 아무것도 안 막는다', function () {
