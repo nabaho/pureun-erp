@@ -625,7 +625,10 @@
     return ROLES.filter(function (r) { return !!docs[r]; }).map(function (r) {
       var d = docs[r] || {};
       return { role: r, label: ROLE_KO[r] || r, name: txt(d.name),
-               noText: d.noText === true, artCount: (typeof d.artCount === 'number' ? d.artCount : null) };
+               noText: d.noText === true, artCount: (typeof d.artCount === 'number' ? d.artCount : null),
+               /* ⑤ 원본 파일 자리. 없으면 «빈 값» — 없는 자리를 지어내지 않는다.
+                  Storage 규칙이 아직 콘솔에 없으면 글만 올라가고 여기가 빈다(설계서 §3 차선). */
+               path: txt(d.path) };
     });
   }
 

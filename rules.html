@@ -9,13 +9,15 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<!-- ⑤ 서고 원본 파일 — 기존 창고(pureun-erp-hrphotos)에 담는다. 설계서 §3-⑤ -->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
 <script src="js/pu-resilience.js?v=2"></script>
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <script src="js/pu-backup.js?v=1"></script>
 <script src="js/pu-rules-history.js?v=3"></script>
-<script src="js/pu-rules-casebook.js?v=9"></script>
+<script src="js/pu-rules-casebook.js?v=10"></script>
 <script src="vendor/xlsx.full.min.js"></script>
 <script src="vendor/pako.min.js"></script>
 <script src="vendor/pdf.min.js"></script>
@@ -5492,6 +5494,37 @@ async function cbWalk(entries){
 /* ── 읽어서 가리기 ─────────────────────────────────────────────────
    ⚠ 파일 바이트는 «들고 있지 않는다» — 해시와 글만 남기고 버린다.
      수백 건을 통째로 들면 브라우저가 앉는다. */
+/* ⑤ 원본 파일 한 건을 창고에 담는다 (설계서 §3-⑤ · §10-1).
+   창고는 «새로 만들지 않는다» — 기금관리가 인가증·등기부 원본을 이미 넣고 있는
+   pureun-erp-hrphotos 를 쓴다(국내 서울, 서류 원본의 제자리).
+
+   ⚠ 실패를 «올리기 실패로 세지 않는다». Storage 규칙이 아직 콘솔에 없을 수 있고
+     (설계서 §10-1 이 사람이 할 일로 적어 두었다), 그때도 글·색인은 그대로 올라가야 한다.
+     그래서 못 담으면 null 을 돌려주고 위에서는 그냥 간다(설계서 §3 차선).
+   ⚠ 왜 «가장 먼저» 부르나 — 무거운 것부터 쓴다(설계서 §7). 끊기면 «파일은 있고
+     색인이 없는» 고아가 남는데 그건 sha 로 찾아 색인만 붙이면 된다. 거꾸로 하면
+     «색인은 있고 파일은 없는» 거짓말이 남는다. */
+const CB_BUCKET='gs://pureun-erp-hrphotos';
+let CB_ORIG_WHY='';                    // 왜 못 담았는지 — 사람에게 그대로 보인다
+async function cbPutOrig(f,siteKey,revId,role,ext){
+  if(!f)return null;
+  try{
+    const st=firebase.app().storage(CB_BUCKET);
+    const 자리=CB.paths.file(siteKey,revId,role,ext);
+    await st.ref(자리).put(f);
+    return 자리;
+  }catch(e){
+    /* 규칙이 없을 때 흔한 값이 storage/unauthorized 다 — 그때는 «까닭»을 정확히 적는다 */
+    const code=String((e&&e.code)||'');
+    if(!CB_ORIG_WHY){
+      CB_ORIG_WHY=code.indexOf('unauthorized')>=0
+        ? '창고 규칙이 아직 올라가지 않아 원본을 못 담았습니다 (docs/firebase-storage-전체(붙여넣기용).txt 를 콘솔에 게시하면 담깁니다).'
+        : '원본을 못 담았습니다 — '+String((e&&e.message)||e);
+    }
+    console.warn('서고 원본 담기 실패(글·색인은 계속):',siteKey,revId,role,e);
+    return null;
+  }
+}
 async function cbRead(files){
   if(!FBDB||!FBUSER){ alert("서고는 법인 공동 저장소입니다 — 포털 로그인 후 이용하세요."); return; }
   const list=[...files].filter(f=>/\.(hwpx?|docx|odt|rtf|pdf|txt)$/i.test(f.name));
@@ -5513,7 +5546,9 @@ async function cbRead(files){
         }else text=await extractDocText(buf);
       }catch(_){ text=""; }              /* 스캔 PDF 등 — 「본문 없음」으로 담는다 */
       text=String(text||"").slice(0,CB_TEXT_MAX);
-      entries.push({ name:f.name, path:f.cbPath||f.webkitRelativePath||f.name,
+      /* ⚠ File 손잡이(f)를 함께 담는다 — «바이트»가 아니라 디스크 참조라 수백 개도 가볍다.
+         이것이 없으면 올릴 때 바이트를 다시 읽을 길이 없어 원본을 못 담는다. */
+      entries.push({ f:f, name:f.name, path:f.cbPath||f.webkitRelativePath||f.name,
         mtime:f.lastModified||Date.now(), size:f.size||0, sha:sha, head:text.slice(0,4000),
         text:text, ext:(f.name.match(/\.([A-Za-z0-9]{1,5})$/)||["",""])[1].toLowerCase() });
     }catch(e){ fail++; console.warn("서고 읽기 실패:",f.name,e); }
@@ -5521,7 +5556,8 @@ async function cbRead(files){
   }
   const rows=CB.classify(entries,ERP_COS);
   /* 가린 표에 원본(글·해시·확장자)을 도로 붙인다 — 가리개는 일부러 그것을 안 들고 온다 */
-  rows.forEach((r,i)=>{ const e=entries[i]; r.text=e.text; r.sha=e.sha; r.ext=e.ext; r.size=e.size; });
+  rows.forEach((r,i)=>{ const e=entries[i]; r.text=e.text; r.sha=e.sha; r.ext=e.ext; r.size=e.size;
+    r.f=e.f; });   /* 손잡이도 도로 붙인다 — 가리개는 일부러 안 들고 온다 */
   CB_ROWS=rows;
   prog.style.display="none";
   CB_FAIL=[]; $("cb-fail-wrap").style.display="none";
@@ -5532,6 +5568,25 @@ async function cbRead(files){
    ★ 쓰는 순서는 «무거운 것부터» — text → rev → index → idx.
      중간에 끊기면 「글은 있고 회차가 없는」 고아가 남는데, 목록은 rev 만 보므로
      안 보인다. 다시 올리면 sha 로 그 회차를 찾아 «이어» 붙인다(설계서 §7). */
+/* ⑤ 원본 파일 열기 — 창고에서 내려받을 주소를 얻어 새 창으로.
+   ⚠ 주소를 «미리» 얻어 두지 않는다. Storage 내려받기 주소는 시한이 있고,
+     회차마다 서류가 대여섯이라 미리 얻으면 안 쓸 주소를 수십 개 만든다.
+   ⚠ 못 열면 «왜»를 말한다 — 규칙이 아직 없거나 파일이 지워졌을 수 있다.
+     단추만 흐리게 두면 몇 번 겪은 뒤 화면을 안 믿게 된다(3단계가 세운 원칙). */
+async function cbOpenOrig(자리){
+  if(!자리){ alert('이 서류는 원본 파일이 없습니다 (글만 담긴 회차입니다).'); return; }
+  try{
+    const url=await firebase.app().storage(CB_BUCKET).ref(자리).getDownloadURL();
+    window.open(url,'_blank','noopener');
+  }catch(e){
+    const code=String((e&&e.code)||'');
+    alert(code.indexOf('unauthorized')>=0
+      ? '창고 규칙이 아직 올라가지 않아 원본을 열 수 없습니다.'
+      : (code.indexOf('object-not-found')>=0
+          ? '원본 파일이 창고에 없습니다 — 담기지 않았거나 지워졌습니다.'
+          : '원본을 열지 못했습니다 — '+String((e&&e.message)||e)));
+  }
+}
 async function cbUpload(rows){
   if(!FBDB||!FBUSER){ alert("로그인 후 이용하세요."); return; }
   const prog=$("cb-prog"); prog.style.display="block";
@@ -5548,20 +5603,25 @@ async function cbUpload(rows){
   }
   const plan=CB.uploadPlan(rows,{existing:existing});
   const uid=FBUSER.uid, now=new Date().toISOString().slice(0,16).replace("T"," ");
-  const fails=[]; let done=0, 은행=0;
+  const fails=[]; let done=0, 은행=0, 원본=0, 원본실패=0;
+  CB_ORIG_WHY='';
 
   for(let i=0;i<plan.revs.length;i++){
     const 회=plan.revs[i];
     prog.innerHTML=`올리는 중 <b>${i+1}</b> / ${plan.revs.length} — ${escapeH(회.site)} ${escapeH(회.revId)}회차`
       +`<br><span class="muted">건너뜀 ${plan.skip.length}건 (이미 서고에 있음) · 실패 ${fails.length}건</span>`;
     try{
-      /* ① 본문 — 회차보다 «먼저». 이것이 끊기면 아무것도 안 보인다(고아가 아니다) */
+      /* ⓞ 원본 파일 — «가장 먼저». 무거운 것부터 쓴다(설계서 §7) */
       const docs={};
       for(const d of 회.docs){
+        const 자리=await cbPutOrig(d.f,회.siteKey,회.revId,d.role,d.ext||"");
+        if(자리)원본++; else if(d.f)원본실패++;
         const 글=String(d.text||"");
         if(글.replace(/\s/g,"").length>=50)
           await FBDB.ref(CB.paths.text(회.siteKey,회.revId,d.role)).set({t:글,ownerUid:uid,at:now});
         docs[d.role]={ name:d.name, ext:d.ext||"", size:d.size||0, sha:d.sha,
+          /* ⚠ 못 담았으면 «적지 않는다» — 없는 자리를 적으면 화면이 헛것을 열려 한다 */
+          ...(자리?{path:자리}:{}),
           artCount:(()=>{ try{ return (parseArticles(글)||[]).length; }catch(_){ return 0; } })(),
           noText:글.replace(/\s/g,"").length<50 };
       }
@@ -5628,6 +5688,9 @@ async function cbUpload(rows){
     /* ⚠ 적립했는데 아무도 모르면 안 된다 — 문안 은행은 딴 화면이라 조용히 늘면
        「내가 올린 것이 은행에 들어갔나」를 확인할 길이 없다. */
     +(은행?`\n문안 은행에 조문 ${은행}개 적립 (개정본만)`:"")
+    +(원본?`\n원본 파일 ${원본}건 창고에 담음`:"")
+    /* ⚠ 못 담았으면 «몇 건인지·왜인지» 말한다 — 조용히 빠지면 나중에 원본을 찾다가 없다 */
+    +(원본실패?`\n원본 ${원본실패}건은 못 담았습니다\n${CB_ORIG_WHY}`:"")
     +(fails.length?"\n\n「실패한 것만 다시 시도」로 이어서 올릴 수 있습니다.":""));
 }
 $("cb-go").addEventListener("click",async()=>{
@@ -5831,10 +5894,16 @@ function cbRenderHist(){
   $("cb-hist-body").innerHTML=rows.map(r=>{
     const raw=(CB_HIST_RAW||{})[r.revId]||{};
     const 될까=CB.canStartReview(raw);
+    /* ⑤ 서류 칩에 «원본»을 붙인다. 있으면 눌러 열고, 없으면 그렇다고 적는다 —
+       흐린 단추만 두면 왜 못 누르는지 아무도 모른다(3단계가 세운 원칙). */
     const 칩=r.chips.map(c=>
       `<span class="hkind" title="${escapeH(c.name)}" style="background:${c.role==="after"?"#eff6ff":"#f8fafc"};`
       +`color:${c.role==="after"?"#1e40af":"var(--sub)"};border:1px solid ${c.role==="after"?"#bfdbfe":"var(--line)"}">`
-      +escapeH(c.label)+(c.noText?" (글 없음)":(c.artCount?` ${c.artCount}조`:""))+`</span>`).join(" ");
+      +escapeH(c.label)+(c.noText?" (글 없음)":(c.artCount?` ${c.artCount}조`:""))
+      +(c.path?`<button class="stbtn" data-cborig="${escapeH(c.path)}" title="원본 파일을 새 창으로 엽니다"`
+           +` style="font-size:10px;padding:0 5px;margin-left:5px;height:17px;line-height:15px">📎 원본</button>`
+         :`<span class="muted" style="font-size:10px;margin-left:5px">원본 없음</span>`)
+      +`</span>`).join(" ");
     /* ㉡ 제출 서류의 «몇 줄» — 신고서·의견청취·동의서에만 (대표 지시 2026-09-07 「ㄴ」).
        ★ 이것들은 대개 스캔이라 본문이 없다. 그런데 여기서 정작 필요한 것은
          「언제·어느 노동청에·몇 명 동의로」이고 그건 OCR 이 못 읽는다 — 사람이 3초면 적는다. */
@@ -5877,6 +5946,13 @@ const CBSUB_ASK={
   consent:{ 말:"동의", office:"", no:"", n:"동의한 인원",
             도움:"<b>동의서</b> — <b>언제 몇 명이</b> 동의했는지 남깁니다. 불이익 변경이면 과반수 동의가 요건입니다." }
 };
+/* ⑤ 원본 파일 열기 — 다른 단추들과 같은 위임 방식.
+   ⚠ 칩 안에 있는 단추라 사건이 회차 줄로 번지지 않게 멈춘다. */
+$("cb-hist-body").addEventListener("click",e=>{
+  const b=e.target.closest("[data-cborig]"); if(!b)return;
+  e.stopPropagation();
+  cbOpenOrig(b.getAttribute("data-cborig"));
+});
 $("cb-hist-body").addEventListener("click",e=>{
   const b=e.target.closest("[data-cb-sub]"); if(!b)return;
   const [revId,role]=b.getAttribute("data-cb-sub").split("|");
