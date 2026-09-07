@@ -148,8 +148,16 @@ const CMS = { kind: 'cms', fields: { company: '아이행복어린이집', bankNa
 test('★ 사업자번호가 없어도 CMS 는 보낼 수 있다 — 그 서식엔 사업자번호 칸이 없다', () => {
   const c = photoCtx(null);
   assert.equal(c.canSendCoInfo(CMS), true, '★ CMS 신청서가 영영 기업 상세에 못 갑니다');
-  assert.equal(c.canSendCoInfo({ kind: 'form', fields: { company: '아이행복' } }), false,
-    '서식은 예전대로 사업자번호가 있어야 한다');
+  /* ⚠ 2026-09-07 뒤집혔다 — 서식도 «상호로» 보낼 수 있다.
+       종전에는 여기서 false 를 못 박아 두었는데, 화면은 서식에도 상호 칸을 내주고
+       「상호를 적어 주세요」라고 말했다(CO_FIX_KINDS 에 form 이 있다). 적으라고
+       해 놓고 안 받던 자리다. 이제 셋 다 같은 규칙을 쓴다.
+       ⚠ 스스로 가지는 «않는다» — 그것은 photos-coinfo-auto 가 지킨다. */
+  assert.equal(c.canSendCoInfo({ kind: 'form', fields: { company: '아이행복' } }), true,
+    '★ 서식에 상호를 적어도 안 받는다 — 적으라고 해 놓고 안 받는 자리다');
+  assert.equal(c.canSendCoInfo({ kind: 'bankbook', fields: { company: '아이행복' } }), true);
+  assert.equal(c.canSendCoInfo({ kind: 'payslip', fields: { company: '아이행복' } }), false,
+    '★ 상호를 «묻지 않는» 갈래까지 상호로 받으면 안 된다 — 급여명세서로 회사가 생긴다');
   assert.equal(c.canSendCoInfo({ kind: 'cms', fields: {} }), false, '업체명도 없으면 못 보낸다');
   assert.equal(c.canSendCoInfo({ kind: 'cms', fields: { company: 'x' }, filedInfo: { at: 1 } }), false,
     '이미 보냈으면 또 안 보낸다');
