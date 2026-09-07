@@ -26211,9 +26211,19 @@ function coConflictHtml(o){
    사업 기록이 오면 coLeftDocsPaint 가 이 칸을 «아직 안 붙은 서류»로 다시 그린다.
    ⚠ 칸에 id 를 준다 — 다시 그릴 자리를 못 찾으면 붙은 서류가 두 곳에 나온다. */
 function coDocsHtml(o){
-  return `<div id="coDocsBox">` + coDocsListHtml(
-    Object.values((o.extra && o.extra.docs) || {}).sort((a,b)=>(b.at||0)-(a.at||0)),
-    '📥 읽어 온 서류') + `</div>`;
+  /* ⚠ 「📎 붙이기」 단추는 목록 «밖»에 둔다 — 서류가 0건이면 coDocsListHtml 이 빈
+       글자를 돌려주므로, 안에 두면 정작 붙일 것이 가장 필요한 그때 단추가 사라진다. */
+  /* ⚠ 열쇠(_k)를 «함께 싣는다». Object.values 만 쓰면 「이 서류 하나」를 짚을 수
+       없어 떼기 단추가 한 번도 안 나온다 — 2026-09-07 에 화면으로 보고서야 알았다.
+       사업 붙임새 쪽(renderCoErpHistory)은 처음부터 이렇게 했다. */
+  const docs = Object.keys((o.extra && o.extra.docs) || {})
+    .map(k=>Object.assign({ _k: k }, o.extra.docs[k] || {}))
+    .sort((a,b)=>(b.at||0)-(a.at||0));
+  return `<div id="coDocsBox">` + coDocsListHtml(docs, '📥 읽어 온 서류') + `</div>`
+    + `<div class="coerppin" style="margin-top:6px">📎 사진첩에서 찍어 둔 서류를 이 회사에 붙일 수 있습니다
+        <button onclick="openCoAttach()"
+          title="내가 찍은 사진첩 서류를 이 회사에 붙입니다 — 회사 칸의 값은 채우지 않습니다"
+          >붙이기</button></div>`;
 }
 /* 사업 기록이 온 뒤 — 붙지 않은 것만 남겨 다시 그린다.
    ⚠ 붙은 것까지 여기 남기면 같은 서류가 두 곳에 보여 몇 건인지 세다 틀린다.
@@ -26431,7 +26441,10 @@ function coDocsListHtml(docs, title, hint, hintFull){
       <span>${esc(d.name||'서식')}</span>
       <b>${d.at?fmtDate(d.at):''}${d.by?` · ${esc(d.by)}`:''}
         <i style="font-style:normal;color:#94a3b8;font-size:11.5px"> · 사진첩 ${esc(d.year||'')}</i>
-        <em style="font-style:normal;color:#1e40af;font-size:11.5px;margin-left:6px">📷 원본 보기</em></b>
+        <em style="font-style:normal;color:#1e40af;font-size:11.5px;margin-left:6px">📷 원본 보기</em>
+        ${d._k ? `<em style="font-style:normal;color:#94a3b8;font-size:11.5px;margin-left:8px"
+          onclick="event.stopPropagation();coDetach('${esc(d._k)}')"
+          title="이 회사에서 떼어 휴지통으로 옮깁니다 — 사진첩 원본은 그대로입니다">떼기</em>` : ''}</b>
     </div>${coDocPairsHtml(d)}`;
   /* ⚠ 세는 것은 «접기 전» 장수다 — 접었다고 서류가 줄어든 것이 아니다 */
   return `<div class="pcsec" style="margin:16px 4px 8px">${esc(title)} ${docs.length}건</div>
@@ -26476,6 +26489,203 @@ function openCoDoc(year, id, owner){
   /* 이미 열려 있던 창은 뒤에 가려 있다 — 앞으로 끌어오지 않으면 «아무 일도 안 일어난» 것처럼 보인다.
      팝업 차단 등으로 창을 못 얻으면 조용히 넘긴다(주소는 이미 바뀌었다). */
   try { if (w) w.focus(); } catch (_) { }
+}
+
+/* ══════ 📎 사진첩 서류를 «이 회사에» 붙인다 (대표 지시 2026-09-07) ══════
+   점검(#1089)의 ㉡ — `coInfo/{회사}/docs` 에 서류를 «새로 만드는» 코드가 이 화면에
+   한 곳도 없었다. 있던 것은 지우기·되살리기·사업에 배정하기뿐이다.
+   사진첩 → 기업 상세의 다리는 «사업자번호 숫자 하나»뿐이라, 번호를 못 읽은 서류는
+   상호를 적어도(같은 날 그것도 고쳤다) 업체관리에 그 이름이 없으면 못 갔다.
+   그때 사람이 회사를 «열어 놓고» 서류를 골라 붙일 길이 있어야 한다.
+
+   ★ **값(회사 칸)은 한 글자도 안 건드린다.** 붙이기는 「이 서류가 이 회사 것이다」를
+     잇는 일이고, 칸을 채우는 것은 사진첩의 「보내기」가 하는 일이다. 여기서 값까지
+     채우면 사람이 고쳐 둔 값을 덮을 위험이 생긴다 — 그것은 sendToCoInfo 가 «빈 칸만»
+     채우도록 공들여 막아 둔 자리다. 서류 줄만 붙이고, 적힌 것은 그 줄 밑에 담는다.
+     화면에도 그렇게 적는다 — 「값은 안 채웁니다」.
+   ★ 서류 열쇠(dk)는 사진첩과 «같은 규칙»이다(해_사진번호). 다르면 나중에 사진첩이
+     같은 서류를 보낼 때 한 회사에 같은 서류가 두 줄로 선다.
+   ★ **떼는 길을 함께 만든다.** 지금까지 서류 «하나»를 떼는 길이 없었다(있던 것은
+     「같은 서류 정리」의 무더기 처리뿐). 붙이는 길만 만들면 잘못 붙인 것이 영영 남는다.
+     떼기는 «휴지통»으로 보낸다 — 되돌리기·영구삭제 화면이 이미 있다(trashDocs).
+     새 자리를 만들지 않는다.
+   ⚠ **내가 찍은 것만** 고를 수 있다(1걸음). 규칙상 관리자는 남의 사진첩도 읽지만,
+     사람을 고르는 화면은 다음 걸음이다 — 없는 기능을 있는 것처럼 보이게 하지 않는다.
+     그 사실을 고르개에 적어 둔다.
+   ⚠ 통째로 안 읽는다 — 사진 번호가 push 키(시간순)라 limitToLast 로 최근 것만 받는다.
+     1월에 지난해 것이 보여야 하므로 «올해와 지난해» 둘만 본다. */
+const CO_ATTACH_SCAN = 60;          /* 해마다 최근 몇 장까지 훑나 */
+/* ⚠ 이 둘은 js/pu-doc-file.js 의 CO_PAIRS_MAX·CO_PAIR_LEN 과 «같은 수»여야 한다.
+     그 파일을 이 화면은 싣지 않아 상수를 함께 쓸 수 없다 —
+     같은지는 검사가 지킨다(tests/cards-co-attach-photo.test.js). */
+const CO_ATTACH_PAIRS_MAX = 60;
+const CO_ATTACH_PAIR_LEN = 300;
+
+/* 서류 열쇠 — 사진첩(js/pu-doc-file.js)과 «같은 규칙» */
+function coAttachDocKey(year, id){
+  if(!id) return '';
+  return String(year || 'unknown') + '_' + String(id).replace(/[.#$/[\]]/g, '_');
+}
+/* 적힌 것 다듬기 — 사진첩 tidyPairs 와 «같은 잣대» (개수·길이를 자르고 몇 개 잘랐는지 남긴다) */
+function coAttachPairs(raw){
+  const list = Array.isArray(raw) ? raw : [];
+  const keep = []; let usable = 0;
+  list.forEach(p=>{
+    const k = String((p && p.k) == null ? '' : p.k).trim();
+    const v = String((p && p.v) == null ? '' : p.v).trim();
+    if(!k || !v) return;
+    usable++;
+    if(keep.length >= CO_ATTACH_PAIRS_MAX) return;
+    keep.push({ k: k.slice(0, CO_ATTACH_PAIR_LEN), v: v.slice(0, CO_ATTACH_PAIR_LEN) });
+  });
+  return { pairs: keep, cut: usable - keep.length };
+}
+
+/* 사진 한 장 → 고르개에 세울 줄. 붙일 수 없는 것은 null (순수 로직).
+   ⚠ 판독을 못 한 것·이미 이 회사에 붙은 것은 애초에 안 세운다 —
+     고를 수 없는 줄을 늘어놓으면 어느 것이 되는지 눌러 봐야 안다. */
+function coAttachRow(year, id, it, have){
+  const r = (it && it.read) || null;
+  if(!r || r.error) return null;
+  const dk = coAttachDocKey(year, id);
+  if(!dk || (have || {})[dk]) return null;
+  const f = r.fields || {};
+  const name = String(f.docName || '').trim()
+    .replace(/[.#$/[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+  return { dk: dk, year: String(year || ''), id: String(id || ''),
+           kind: String(r.kind || ''), name: name,
+           owner: String((it && it.owner) || ''),
+           at: Number((it && it.at)) || 0,
+           company: String(f.company || '').trim(),
+           pairs: f.pairs || null };
+}
+/* 한 해분 목록 → 붙일 수 있는 줄들. 최근 것부터 */
+function coAttachList(byYear, have){
+  const out = [];
+  Object.keys(byYear || {}).forEach(y=>{
+    Object.keys((byYear || {})[y] || {}).forEach(id=>{
+      const row = coAttachRow(y, id, byYear[y][id], have);
+      if(row) out.push(row);
+    });
+  });
+  return out.sort((a,b)=>(b.at - a.at) || String(b.id).localeCompare(String(a.id)));
+}
+
+/* 붙일 것 한 줄 — 사진첩 sendToCoInfo 의 docs 줄과 «같은 모양»이어야 한다.
+   ⚠ 이름이 비면 '서식' 이다 — 사진첩과 같은 물러남이다. */
+function coAttachDoc(row, by){
+  if(!row || !row.id) return null;
+  const doc = { name: row.name || '서식', year: String(row.year || ''),
+                id: String(row.id), owner: String(row.owner || ''),
+                at: Date.now(), by: String(by || '') };
+  const t = coAttachPairs(row.pairs);
+  if(t.pairs.length){ doc.pairs = t.pairs; if(t.cut) doc.pairsCut = t.cut; }
+  return doc;
+}
+/* 붙이기 — 서류 줄 + 갈래 딱지. «값은 안 건드린다»
+   ⚠ 갈래 딱지(tags)는 사진첩도 붙인다 — 기업 상세가 이 딱지로 탭을 만든다.
+     안 붙이면 붙인 서류만 탭에서 빠져 「왜 이것만 안 보이지」가 된다. */
+function coAttachWrites(coKey, row, by){
+  if(!coKey || !row || !row.dk) return null;
+  const doc = coAttachDoc(row, by);
+  if(!doc) return null;
+  const upd = {};
+  upd[`coInfo/${coKey}/docs/${row.dk}`] = doc;
+  /* ⚠ 갈래 딱지는 «읽은 이름»이 있을 때만 붙인다 — 사진첩도 그렇게 한다
+       (tag 가 비면 안 붙인다). doc.name 으로 보면 안 된다: 그것은 이름이 없을 때
+       «서식»으로 물러난 값이라, 이름 없는 서류마다 「서식」 탭이 하나 생긴다. */
+  if(row.name) upd[`coInfo/${coKey}/tags/${row.name}`] = true;
+  upd[`coInfo/${coKey}/at`] = doc.at;
+  upd[`coInfo/${coKey}/by`] = String(by || '');
+  return upd;
+}
+/* 떼기 — 휴지통으로. 「같은 서류 정리」와 «같은 자리·같은 열쇠»를 쓴다
+   (coDocDupWrites 참고). 그래서 되돌리기·영구삭제가 그대로 붙는다. */
+function coDetachWrites(coKey, coName, docKey, doc, at, by){
+  if(!coKey || !docKey) return null;
+  const id = coKey + '_' + docKey;
+  const upd = {};
+  upd[`trashDocs/${id}`] = { at: Number(at) || 0, by: String(by || ''),
+    coKey: String(coKey), coName: String(coName || ''), docKey: String(docKey),
+    doc: doc || null };
+  upd[`coInfo/${coKey}/docs/${docKey}`] = null;
+  return upd;
+}
+
+/* ── 화면 ── */
+function coAttachHave(o){
+  const have = {};
+  Object.keys((o && o.extra && o.extra.docs) || {}).forEach(k=>{ have[k] = 1; });
+  return have;
+}
+async function openCoAttach(){
+  const key = String(state.coPick || '');
+  if(!key) return toast('먼저 회사를 골라 주세요', 6000);
+  if(typeof Store === 'undefined' || Store.mode !== 'firebase')
+    return toast('데모 모드에서는 사진첩을 읽을 수 없습니다', 7000);
+  let uid = null;
+  try{ uid = firebase.auth().currentUser && firebase.auth().currentUser.uid; }catch(_){}
+  if(!uid) return toast('로그인이 필요합니다', 6000);
+  const o = (coList() || []).filter(x=>x.key === key)[0];
+  if(!o) return toast('그 회사를 찾지 못했습니다', 6000);
+  const now = new Date().getFullYear();
+  const years = [String(now), String(now - 1)];
+  showPanel(`<div class="mhead"><b>📎 사진첩에서 붙이기</b>${_closeBtn()}</div>
+    <p class="cpnone" style="padding:18px 2px">사진첩을 읽고 있습니다…</p>`);
+  const byYear = {};
+  try{
+    for(const y of years){
+      const snap = await firebase.database()
+        .ref(`puphotos/u/${uid}/items/${y}`).limitToLast(CO_ATTACH_SCAN).once('value');
+      byYear[y] = snap.val() || {};
+    }
+  }catch(e){ return toast('사진첩을 읽지 못했습니다: ' + ((e && e.message) || ''), 9000); }
+  const rows = coAttachList(byYear, coAttachHave(o));
+  _coAttach = {};
+  rows.forEach(r=>{ _coAttach[r.dk] = r; });
+  showPanel(`<div class="mhead"><b>📎 사진첩에서 붙이기</b>${_closeBtn()}</div>
+    <p class="setnote">고른 서류가 <b>${esc(o.name || key)}</b> 의 「📥 읽어 온 서류」에 붙습니다.
+      <b>회사 칸의 값은 채우지 않습니다</b> — 값을 채우는 것은 사진첩의 「기업 상세로 보내기」입니다.<br>
+      내가 찍은 사진 가운데 <b>올해·지난해 최근 ${CO_ATTACH_SCAN}장</b>씩만 나옵니다.</p>
+    ${rows.length ? `<div class="setpanel">${rows.map(r=>`
+      <button class="setbtn" onclick="coAttachDo('${esc(r.dk)}')"
+        title="${esc((r.company ? r.company + ' · ' : '') + '사진첩 ' + r.year)}">📄 ${esc(r.name || '이름 없는 서류')}
+        <span class="sdesc">${esc(r.company || '')}${r.company ? ' · ' : ''}${r.at ? esc(fmtDate(r.at)) : esc(r.year)}</span>
+      </button>`).join('')}</div>`
+      : `<p class="cpnone" style="padding:14px 2px">붙일 서류가 없습니다 — 내가 찍은 최근 사진 가운데
+         판독된 서류가 없거나, 이미 다 붙어 있습니다.</p>`}`);
+}
+let _coAttach = {};
+async function coAttachDo(dk){
+  const key = String(state.coPick || '');
+  const row = _coAttach[dk];
+  if(!key || !row) return toast('그 서류를 찾지 못했습니다', 6000);
+  const upd = coAttachWrites(key, row, myEmail || '');
+  if(!upd) return toast('붙일 수 없는 서류입니다', 6000);
+  try{ await Store.db.ref(DB_ROOT).update(upd); }
+  catch(e){ return toast('붙이지 못했습니다: ' + ((e && e.message) || ''), 9000); }
+  const bg = $('dedupBg'); if(bg) bg.classList.remove('open');
+  toast(`📎 「${row.name || '서식'}」 을 붙였습니다`);
+  trashDocsBust();
+  openCoDetailPanel(key);
+}
+/* 떼기 — 휴지통으로. 지우는 것이 아니라 옮기는 것이라고 «묻는 말»에 적는다 */
+async function coDetach(docKey){
+  const key = String(state.coPick || '');
+  const o = (coList() || []).filter(x=>x.key === key)[0];
+  if(!key || !o) return toast('먼저 회사를 골라 주세요', 6000);
+  const doc = ((o.extra && o.extra.docs) || {})[docKey];
+  if(!doc) return toast('그 서류를 찾지 못했습니다', 6000);
+  if(!confirm(`「${doc.name || '서식'}」 을 이 회사에서 뗄까요?\n\n`
+    + `· 휴지통으로 옮깁니다 — 되돌릴 수 있습니다\n`
+    + `· 사진첩의 원본 사진은 «그대로» 있습니다`)) return;
+  const upd = coDetachWrites(key, o.name, docKey, doc, Date.now(), myEmail || '');
+  if(!upd) return toast('뗄 수 없는 서류입니다', 6000);
+  try{ await Store.db.ref(DB_ROOT).update(upd); }
+  catch(e){ return toast('떼지 못했습니다: ' + ((e && e.message) || ''), 9000); }
+  trashDocsBust();
+  toast('휴지통으로 옮겼습니다 — 되살리려면 환경설정 → 🗑 휴지통');
+  openCoDetailPanel(key);
 }
 /* ══════ 어느 회사에도 안 붙은 기업정보 = 고아 (대표 지시 2026-08-24, 2순위) ══════
    사진첩은 언제나 coInfo/{사업자번호} 로 보낸다. 그런데 기업 상세의 회사 목록은
