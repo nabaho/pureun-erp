@@ -66,19 +66,44 @@
       .trim();
   }
 
-  /* 홈페이지에 現 으로 올라가 있는 줄 중, 경력관리에서는 기간이 끝난 것을 찾는다. */
+  /* ══ 줄 앞의 한자를 다루는 «한 자리» (대표 지시 2026-09-03) ═══════════════
+     「전, 현 한자를 선택해야할 경우가 많다 … 전현도 선택할 수 있게 해달라」
+
+     ★ 왜 여기인가 — 現/前 규칙이 이 파일에 있다. 화면 쪽에 또 정규식을 쓰면
+       둘이 갈라진다(한쪽은 앞 공백을 봐 주고 한쪽은 안 봐 주는 식으로).
+     ★ 세 자리다: 'now'(現) · 'past'(前) · ''(없음).
+       «없음»이 있어야 학력·자격증에 「現」을 억지로 붙이지 않는다.
+     ⚠ 한자 뒤의 빈칸까지 «한 덩이»로 본다. 안 그러면 딱지를 켰다 끄면
+       속글 앞에 빈칸이 하나 남고, 그 빈칸이 홈페이지 글로 그대로 나간다. */
+  const ERA_LETTER = { now: '現', past: '前' };
+  const ERA_HEAD = /^\s*(現|前)\s*/;
+
+  function eraOf(line) {
+    const m = ERA_HEAD.exec(String(line == null ? '' : line));
+    return m ? (m[1] === '現' ? 'now' : 'past') : '';
+  }
+  function eraBody(line) {
+    return String(line == null ? '' : line).replace(ERA_HEAD, '');
+  }
+  function withEra(line, era) {
+    const body = eraBody(line);
+    return ERA_LETTER[era] ? ERA_LETTER[era] + ' ' + body : body;
+  }
+
+  /* 홈페이지에 現 으로 올라가 있는 줄 중, 경력관리에서는 기간이 끝난 것을 찾는다.
+     ★ 앞한자는 위 세 손잡이로만 본다 — 여기 정규식을 따로 쓰면 규칙이 둘로 갈라진다. */
   function expiredInLive(liveCareers, items, today) {
     const endedBodies = (items || [])
       .map(function (it) { return toLine(it, today); })
       .filter(function (r) { return r.ended; })
-      .map(function (r) { return normalizeBody(r.text.replace(/^前\s*/, '')); });
+      .map(function (r) { return normalizeBody(eraBody(r.text)); });
 
     return (liveCareers || []).filter(function (line) {
-      if (!/^現/.test(line)) return false;
-      const body = normalizeBody(line.replace(/^現\s*/, ''));
-      return endedBodies.indexOf(body) !== -1;
+      if (eraOf(line) !== 'now') return false;
+      return endedBodies.indexOf(normalizeBody(eraBody(line))) !== -1;
     });
   }
 
-  global.PuHomeCareer = { toLine: toLine, expiredInLive: expiredInLive };
+  global.PuHomeCareer = { toLine: toLine, expiredInLive: expiredInLive,
+    eraOf: eraOf, eraBody: eraBody, withEra: withEra };
 })(typeof window !== 'undefined' ? window : globalThis);

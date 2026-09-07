@@ -35,7 +35,7 @@
   if(!go()) document.addEventListener('DOMContentLoaded', go); })();
 </script>
 <script src="js/pu-home-parse.js?v=4"></script>
-<script src="js/pu-home-career.js?v=1"></script>
+<script src="js/pu-home-career.js?v=2"></script>
 <script src="js/pu-home-export.js?v=3"></script>
 <script src="js/pu-home-diff.js?v=9"></script>
 <script src="js/pu-home-fill.js?v=10"></script>
@@ -581,6 +581,22 @@ main{flex:1;min-height:0;width:100%;padding:10px 12px;
 .funnel > button.on{background:var(--navy);color:#fff}
 .pullnone{padding:18px 10px;text-align:center;color:var(--sub);font-size:13px}
 .pullnone b{color:var(--ink)}
+
+/* ── 前/現 고르개 (대표 지시 2026-09-03 「전현도 선택할 수 있게 해달라」) ──
+   ★ 「現」·「前」은 자판으로 바로 안 나온다. 열여덟 줄을 고치려면 한자를 열여덟 번
+     찾아 넣어야 했다 — 그래서 눌러서 고른다.
+   ★ 세 자리다: 現 · 前 · 없음(켜진 것을 다시 누르면 없음). 학력·자격증에
+     「現」을 억지로 붙이지 않으려면 «없음»이 있어야 한다.
+   ⚠ 줄 높이를 늘리지 않는다 — 한 칸은 한 줄이다(2026-08-30 대표 지시). */
+.era{display:inline-flex;flex:0 0 auto;border:1px solid #cbd5e1;border-radius:7px;overflow:hidden}
+.era > button{border:0;background:#fff;color:var(--faint);cursor:pointer;
+  font:800 11.5px/1 inherit;padding:6px 7px;white-space:nowrap}
+.era > button + button{border-left:1px solid #cbd5e1}
+.era > button:hover{background:var(--line-soft)}
+.era > button.on{background:var(--navy);color:#fff}
+.era > button.on.past{background:var(--warn)}
+/* 전현이 있을 만한 줄인데 아무것도 안 골랐으면 눈에 띄게 한다 */
+.car .l.needpick .era{box-shadow:0 0 0 2px color-mix(in srgb, var(--warn) 35%, transparent)}
 
 /* ── 화면 안 창 (사유 입력·예아니오·알림) ──
    ★ 브라우저 기본 창을 대신한다. 덧창 위에도 떠야 하므로 z-index 를 더 높인다
@@ -2001,8 +2017,42 @@ function markDirty() {
 
 function careerEdit(i, value) {
   if (!App.draft) return;
-  App.draft.careers[i] = value;
+  /* ★ 칸에는 «속글»만 들어 있다 — 딱지가 정한 한자를 지키고 속글만 바꾼다.
+     안 지키면 글자 한 자 칠 때마다 앞의 한자가 사라진다.
+     ⚠ 사람이 칸에 한자를 «직접 쳐 넣으면» 그것을 이긴 것으로 본다 — 안 그러면
+       쳐 넣은 「現」이 그 자리에서 지워져 「글자가 안 먹는다」가 된다. */
+  const 친것 = PuHomeCareer.eraOf(value);
+  const 쓸것 = 친것 || PuHomeCareer.eraOf(App.draft.careers[i]);
+  App.draft.careers[i] = PuHomeCareer.withEra(value, 쓸것);
   App.dirty = true;
+  markDirty();
+}
+
+/* 전현을 안 고른 줄이 몇인가 — 한 자리에서만 만든다(머리와 다시 그리기가 같은 말을 하게) */
+function eraInfoText(careers) {
+  const n = (careers || []).filter(s => !PuHomeCareer.eraOf(s) && ERA_LIKELY.test(s)).length;
+  return n ? '전현을 안 고른 줄 ' + n + '개' : '';
+}
+
+/* 딱지를 눌러 앞한자를 고른다. 켜진 것을 다시 누르면 «없음»으로 —
+   학력·자격증에 「現」을 억지로 붙이지 않으려면 없음이 있어야 한다.
+   ⚠ 창을 통째로 다시 그리지 «않는다». 경력사항은 열여덟 줄이라 다시 그리면
+     굴린 자리가 맨 위로 튀고, 치던 칸의 커서도 잃는다 — 그 줄의 딱지만 갈아 끼운다. */
+function careerEra(i, era) {
+  if (!App.draft) return;
+  const 지금 = PuHomeCareer.eraOf(App.draft.careers[i]);
+  App.draft.careers[i] = PuHomeCareer.withEra(App.draft.careers[i], 지금 === era ? '' : era);
+  App.dirty = true;
+  const box = document.getElementById('careerBox');
+  const row = box && box.querySelectorAll('.l')[i];
+  if (!row) { App.render(); return; }
+  const 새것 = PuHomeCareer.eraOf(App.draft.careers[i]);
+  const bs = row.querySelectorAll('.era > button');
+  if (bs[0]) bs[0].className = (새것 === 'now' ? 'on' : '');
+  if (bs[1]) bs[1].className = 'past' + (새것 === 'past' ? ' on' : '');
+  row.classList.toggle('needpick', !새것 && ERA_LIKELY.test(App.draft.careers[i]));
+  const info = document.getElementById('eraInfo');
+  if (info) info.textContent = eraInfoText(App.draft.careers);
   markDirty();
 }
 function careerAdd() {
@@ -2029,6 +2079,7 @@ function careerMove(i, d) {
 }
 window.careerEdit = careerEdit; window.careerAdd = careerAdd;
 window.careerDel = careerDel; window.careerMove = careerMove;
+window.careerEra = careerEra;
 
 /* ── 담당 업무 (대표 지시 2026-09-02 「직원들 업무도 넣을 수 있게」) ──
    경력사항과 «같은 손놀림»으로 만든다 — 줄 고치기·위아래·지우기·＋줄 추가.
@@ -2821,7 +2872,10 @@ window.restoreFrom = restoreFrom;
 /* ══════ 경력관리에서 당겨오기 ══════
    경력관리(kcareer)는 사람마다 «자기 계정»에 자료를 둔다. 그래서 남의 자료는
    규칙이 막을 수 있다 — 막히면 그 사람만 건너뛰고 화면에 알린다. */
-const Pull = { open: false, kind: 'wiccok', items: {}, sel: {}, err: '', name: '' };
+/* era — 줄마다 사람이 고른 앞한자. 안 적힌 줄은 «자동»(pullAutoEra)이 첫 값이다.
+   ⚠ 「안 적힘」과 「없음으로 골랐음」을 갈라야 한다. 둘 다 '' 로 두면 자동이 現 인
+     줄에서 «없음을 고른 것이 자동으로 되돌아간다» — 그래서 undefined 로 가른다. */
+const Pull = { open: false, kind: 'wiccok', items: {}, sel: {}, era: {}, err: '', name: '' };
 
 function careerKindOf(key) {
   const hit = CAREER_KINDS.filter(k => k.key === key);
@@ -2835,6 +2889,60 @@ function kindHasPeriod(key) {
   const k = careerKindOf(key);
   return !!(k && k.hasPeriod);
 }
+
+/* ══ 前/現 고르개 (대표 지시 2026-09-03 「전, 현 한자를 선택해야할 경우가 많다.
+     이부분은 경력관리와 연결해서 선택하고 전현도 선택할 수 있게 해달라」) ══════════
+   승인받은 목업: docs/mockups/home-career-eraprefix.html
+
+   ★ 한 벌만 만든다 — 두 자리(경력사항 줄 · 가져오기 창)가 같은 것을 쓴다.
+     두 벌로 만들면 한쪽만 고쳐져 「대표 화면은 그대로」가 된다(2026-09-02 그 일).
+   ★ 세 자리다: 現 · 前 · 없음. 켜진 것을 다시 누르면 «없음»으로 돌아간다.
+   ⚠ 덧창의 <label class="pk"> 안에서도 쓴다 — 딱지를 누르면 label 이 체크를
+     뒤집어 버리므로 기본 동작을 막는다. 단추의 onclick 은 그보다 먼저 돈다.
+   ⚠ type="button" — form 이 없어도 붙여 둔다. 나중에 form 안에 들어가면 «저장»이 아니라
+     제출이 되어 화면이 새로 뜬다(고른 것이 통째로 사라진다). */
+function eraPickHtml(era, 부름꼴) {
+  const 단추 = (k, cls) => '<button type="button" class="' + cls + (era === k ? ' on' : '') + '"'
+    + ' title="' + (k === 'now' ? '現' : '前') + ' 으로 (다시 누르면 없음)"'
+    + ' onclick="' + 부름꼴(k) + '">' + (k === 'now' ? '現' : '前') + '</button>';
+  return '<span class="era" onclick="event.preventDefault()">'
+    + 단추('now', '') + 단추('past', 'past') + '</span>';
+}
+
+/* 전현이 «있을 만한» 줄 — 안 골랐으면 눈에 띄게 한다. 이 말이 없는 줄
+   (학력·자격증)에는 안 고른 것이 잘못이 아니므로 조르지 않는다. */
+const ERA_LIKELY = /(위원|대표|자문|위촉|이사|감사|고문)/;
+
+/* ── 가져올 때의 앞한자 «첫 값» ──
+   ★ 위촉장만 기간으로 現/前 을 가른다. 지금까지와 같다.
+   ★ 나머지(학력·자격증·수료증·강의)는 «없음»으로 둔다. 여태 「現 공인노무사」·
+     「前 고려대학교 노동대학원 졸업」처럼 들어가서 사람이 늘 손으로 지웠다 —
+     실제 홈페이지의 학력·자격증 줄에는 한자가 하나도 안 붙어 있다(목업 규칙 ⑤).
+   ★ 자동은 «첫 값»일 뿐이다 — 어느 것이든 딱지를 눌러 바꿀 수 있다(목업 규칙 ④). */
+const ERA_AUTO_KINDS = { wiccok: true };
+function pullAutoEra(kind, line) {
+  if (!ERA_AUTO_KINDS[kind]) return '';
+  return line.ended ? 'past' : 'now';
+}
+/* 지금 이 줄에 걸린 앞한자 — 사람이 고른 것이 있으면 그것, 없으면 자동 */
+/* ⚠ era 칸이 아예 없을 수도 있다(옛 상태 객체·다른 데서 Pull 을 새로 만든 경우).
+   그때는 «자동»으로 물러선다 — 딱지 하나 때문에 가져오기 창이 통째로 죽으면 안 된다. */
+function pullEraOf(kind, i, line) {
+  const v = (Pull.era || {})[kind + ':' + i];
+  return v === undefined ? pullAutoEra(kind, line) : v;
+}
+function pullEra(kind, i, era) {
+  const it = (Pull.items[kind] || [])[i];
+  if (!it) return;
+  const line = PuHomeCareer.toLine(toCareerItem(it, kind), todayString());
+  const 지금 = pullEraOf(kind, i, line);
+  if (!Pull.era) Pull.era = {};
+  Pull.era[kind + ':' + i] = (지금 === era ? '' : era);
+  /* 목록만 갈아 끼운다 — 창을 통째로 다시 그리면 찾는 칸의 커서가 맨 앞으로 튄다 */
+  const 통 = document.getElementById('pullList');
+  if (통) 통.innerHTML = pullListHtml(todayString()); else renderPull();
+}
+window.pullEra = pullEra;
 
 /* 읽어야 할 «저장통» 목록. 자격증과 수료증은 같은 통(cert)이라 한 번만 읽는다. */
 function kcareerStores() {
@@ -2935,7 +3043,8 @@ function careerCount(items) {
 function openPull() {
   const d = App.draft;
   if (!d || d.kind !== 'member') return;
-  Pull.open = true; Pull.kind = 'wiccok'; Pull.items = {}; Pull.sel = {}; Pull.err = ''; Pull.name = d.name;
+  Pull.open = true; Pull.kind = 'wiccok'; Pull.items = {}; Pull.sel = {}; Pull.era = {};
+  Pull.err = ''; Pull.name = d.name;
   openModal('<h2>경력관리에서 가져오기</h2><div class="sub">경력관리 자료를 읽고 있습니다…</div>');
 
   uidOfName(d.name).then(r => {
@@ -3146,21 +3255,28 @@ function pullListHtml(today) {
       + '<br>찾는 글이나 깔때기를 풀어 보십시오.</div>';
   }
   // ★ 자격증·수료증·강의는 기간 개념이 없는 갈래라 늘 unknown 이 뜬다 — 그 헛경고를
-  //   보여 주지 않는다. kindHasPeriod 가 false 면 「現 으로 들어감」으로만 보여 준다.
+  //   보여 주지 않는다.
   const hasPeriod = kindHasPeriod(Pull.kind);
+  /* ⚠ 딱지는 «기간이 어떤가»만 말한다. 예전에는 「기간 끝남 → 前」처럼 무엇이 들어갈지도
+     함께 적었는데, 이제 사람이 앞한자를 바꿀 수 있어 그 말이 «틀린 안내»가 된다.
+     무엇이 들어가는지는 아래 굵은 글씨가 그대로 보여 준다. */
+  const 전현있는갈래 = !!ERA_AUTO_KINDS[Pull.kind];
   return 보임.map(v => {
     const it = v.it, i = v.i;
     const line = PuHomeCareer.toLine(toCareerItem(it, Pull.kind), today);
     const id = Pull.kind + ':' + i;
-    const tag = (hasPeriod && line.ended)
-      ? '<span class="pill toRemove">기간 끝남 → 前</span>'
-      : ((hasPeriod && line.unknown) ? '<span class="pill unknown">기간 모름 · 現 으로 넣음</span>'
-                      : '<span class="pill toAdd">現 으로 들어감</span>');
-    /* 번호는 화면에서 세는 용도다 — 넣는 글자(line.text)에는 들어가지 않는다 */
+    const era = pullEraOf(Pull.kind, i, line);
+    const tag = !전현있는갈래
+      ? '<span class="pill unknown">전현 없는 갈래</span>'
+      : ((hasPeriod && line.ended) ? '<span class="pill toRemove">기간 끝남</span>'
+        : ((hasPeriod && line.unknown) ? '<span class="pill unknown">기간 모름</span>'
+          : '<span class="pill toAdd">하고 있음</span>'));
+    /* 번호는 화면에서 세는 용도다 — 넣는 글자에는 들어가지 않는다 */
     return '<label class="pk"><input type="checkbox" ' + (Pull.sel[id] ? 'checked' : '')
       + ' onchange="pullToggle(\'' + Pull.kind + '\',' + i + ')">'
       + '<span class="num">' + (i + 1) + '</span>'
-      + '<div class="t"><b>' + esc(line.text) + '</b>'
+      + eraPickHtml(era, k => 'pullEra(\'' + Pull.kind + '\',' + i + ',\'' + k + '\')')
+      + '<div class="t"><b>' + esc(PuHomeCareer.withEra(line.text, era)) + '</b>'
       + '<div class="d">' + esc(itemWhen(it, Pull.kind) || '기간 정보 없음') + '</div></div>' + tag + '</label>';
   }).join('');
 }
@@ -3234,10 +3350,13 @@ function renderPull() {
   }
 
   const n = Object.keys(Pull.sel).length;
-  h += '<div class="guide"><b>문장으로 바뀌는 규칙</b><ol>'
-    + '<li>기간이 <b>안 끝난 것</b> → <span class="kbd">現 …</span></li>'
-    + '<li>기간이 <b>끝난 것</b> → <span class="kbd">前 …</span></li>'
+  h += '<div class="guide"><b>앞의 한자를 정하는 규칙</b><ol>'
+    + '<li>위촉장은 기간이 <b>안 끝난 것</b> → <span class="kbd">現 …</span></li>'
+    + '<li>위촉장은 기간이 <b>끝난 것</b> → <span class="kbd">前 …</span></li>'
     + '<li>기간을 <b>모르는 것</b>은 끝났다고 단정하지 않고 <b>現</b> 으로 두되 「기간 모름」 표시를 남깁니다</li>'
+    + '<li>학력·자격증·수료증·강의는 <b>한자를 안 붙입니다</b> — 「現 공인노무사」가 되지 않게</li>'
+    + '<li><b>어느 것이든 <span class="kbd">現</span><span class="kbd">前</span> 딱지를 눌러 바꿀 수 있습니다</b>'
+    + ' — 위의 것은 «첫 값»일 뿐입니다. 켜진 딱지를 다시 누르면 한자가 빠집니다</li>'
     + '</ol></div>';
   h += '<div class="foot"><button class="btn pri" onclick="pullApply()"' + (n ? '' : ' disabled') + '>'
     + '체크한 것 넣기' + (n ? ' (' + n + '건)' : '') + '</button>'
@@ -3259,7 +3378,10 @@ function pullApply() {
     const it = (Pull.items[kind] || [])[i];
     if (!it) return;
     const line = PuHomeCareer.toLine(toCareerItem(it, kind), today);
-    let text = line.text;
+    /* ★ 앞한자는 «화면에서 고른 것»을 그대로 쓴다. 여기서 line.text 를 그냥 쓰면
+       사람이 딱지로 고쳐 놓은 것이 조용히 자동값으로 되돌아간다 — 화면과 들어간 글이
+       달라지고, 오류도 안 나서 알 수가 없다. */
+    let text = PuHomeCareer.withEra(line.text, pullEraOf(kind, i, line));
     // ★ 기간 개념이 있는 갈래(위촉장·학력)에서만 「기간 모름」을 붙인다 — 자격증·수료증·
     //   강의는 애초에 기간이 없는 갈래라 이 표시가 늘 붙어 그대로 홈페이지 글로 나간다.
     if (line.unknown && kindHasPeriod(kind)) text += '  ※기간 모름';
@@ -4566,18 +4688,29 @@ function memberEdit(d) {
     + '<label style="margin:0">경력사항 — ' + d.careers.length + '줄</label>'
     + '<button class="btn" style="padding:3px 9px;font-size:11.5px" onclick="openPull()"'
     + ' title="경력관리에 담긴 위촉장·학력·자격증에서 골라 넣습니다">⤓ 경력관리에서 가져오기</button>'
+    + '<span style="flex:1"></span>'
+    /* 전현이 있을 만한 줄인데 안 고른 것이 몇인지 — 조용히 빠지는 것을 막는다 */
+    + '<span class="sub" id="eraInfo" style="font-size:11.5px">' + eraInfoText(d.careers) + '</span>'
     + '</div></div>';
 
   /* ══ 여기까지가 붙는다. 경력 «목록»은 아래 — 구르는 칸이다 ══ */
   h += '<div class="stick shadow">' + 붙은칸 + '</div>';
   h += '<div class="fld">'
     + '<div class="car" id="careerBox">'
-    + d.careers.map((line, i) =>
-        '<div class="l"><span class="no">' + (i + 1) + '</span>'
-        + '<input value="' + esc(line) + '" oninput="careerEdit(' + i + ',this.value)">'
+    /* ★ 칸에는 «속글»만 넣는다 — 앞한자는 딱지가 쥔다(대표 지시 2026-09-03).
+       「現」·「前」은 자판으로 바로 안 나와서, 열여덟 줄을 고치려면 한자를 열여덟 번
+       찾아 넣어야 했다. 딱지를 누르면 «맨 앞의 한자만» 바뀌고 뒤 글은 안 건드린다. */
+    + d.careers.map((line, i) => {
+        const era = PuHomeCareer.eraOf(line);
+        const 골라야 = !era && ERA_LIKELY.test(line);
+        return '<div class="l' + (골라야 ? ' needpick' : '') + '">'
+        + '<span class="no">' + (i + 1) + '</span>'
+        + eraPickHtml(era, k => 'careerEra(' + i + ',\'' + k + '\')')
+        + '<input value="' + esc(PuHomeCareer.eraBody(line)) + '" oninput="careerEdit(' + i + ',this.value)">'
         + '<button class="x" title="위로" onclick="careerMove(' + i + ',-1)">▲</button>'
         + '<button class="x" title="아래로" onclick="careerMove(' + i + ',1)">▼</button>'
-        + '<button class="x" title="줄 삭제" onclick="careerDel(' + i + ')">✕</button></div>').join('')
+        + '<button class="x" title="줄 삭제" onclick="careerDel(' + i + ')">✕</button></div>';
+      }).join('')
     + '<div class="add" onclick="careerAdd()">＋ 줄 추가</div></div></div>';
 
   if (rep.broken.length) {

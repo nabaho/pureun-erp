@@ -73,6 +73,14 @@ function box(extra) {
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(R, 'js', f), 'utf8'), ctx));
   /* 편집칸도 붙여넣기 안내도 이 둘을 부른다 — 상자에 늘 실어 둔다 */
   vm.runInContext(fnSource('fillGapFields') + '\n' + fnSource('fillGapNote'), ctx);
+  /* ── 前/現 딱지 재료 (대표 지시 2026-09-03) ──
+     편집칸(memberEdit)·가져오기 목록(pullListHtml)·넣기(pullApply)가 «모두» 이것을 지난다.
+     ⚠★ 이 상자에 새 함수를 안 실어 화면 검사가 통째로 죽은 것이 이번이 «네 번째»다
+       (memberKind · pillShort · offSiteOf · 그리고 이 딱지). 그래서 일곱 자리에 한 줄씩
+       더하지 않고 «여기 한 자리»에 싣는다 — 다음에 딱지 함수가 늘어도 여기만 고친다. */
+  vm.runInContext([noConst(constLine('ERA_LIKELY')), noConst(constLine('ERA_AUTO_KINDS')),
+    fnSource('eraPickHtml'), fnSource('eraInfoText'),
+    fnSource('pullAutoEra'), fnSource('pullEraOf')].join('\n'), ctx);
   return ctx;
 }
 function run(ctx, code) { vm.runInContext(code, ctx); return ctx; }
