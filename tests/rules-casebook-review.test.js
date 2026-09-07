@@ -9,6 +9,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+/* ⚠ 줄끝을 고른다. 이 저장소는 윈도우에서 CRLF 로 내려오고, 아래 정규식은
+     `];\n` 처럼 «글자 뒤에 곧바로 줄바꿈» 을 찾는다 — `];\r\n` 은 안 맞아
+     「규칙집을 못 찾았습니다」로 죽는다(2026-09-07 윈도우에서 넷이 그랬다).
+     CI(리눅스)는 LF 라 초록이어서 아무도 못 봤다. */
 const CB = require(path.join(__dirname, '..', 'js', 'pu-rules-casebook.js'));
 
 /* ── 규모 ─────────────────────────────────────────────────────────── */
@@ -97,7 +101,7 @@ test('★★ 「그때 낸 것」이라는 단서와 「최종 판단은 노무�
 /* ── 진짜 규칙집으로 ─────────────────────────────────────────────── */
 
 test('★★ 실제 규칙집에 «수동확인»이 많다 — 이 단서가 없으면 화면이 거짓말을 한다', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'rules.html'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'rules.html'), 'utf8').replace(/\r\n/g, '\n');
   const R2 = JSON.parse(src.match(/const RULES = (\[[\s\S]*?\]);\n/)[1]);
   const 수동 = R2.filter(r => r.type === '수동확인').length;
   assert.ok(수동 >= 10,
@@ -106,7 +110,7 @@ test('★★ 실제 규칙집에 «수동확인»이 많다 — 이 단서가 �
 });
 
 test('★ 규칙집의 갈래 이름이 추리는 차례와 어긋나지 않는다', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'rules.html'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'rules.html'), 'utf8').replace(/\r\n/g, '\n');
   const R2 = JSON.parse(src.match(/const RULES = (\[[\s\S]*?\]);\n/)[1]);
   const 모름 = [...new Set(R2.map(r => r.category))].filter(c => CB.CAT_ORDER.indexOf(c) < 0);
   assert.deepEqual(모름, [],

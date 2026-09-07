@@ -67,24 +67,33 @@ const 백신이막음 =
   + '  보장은 리눅스인 CI 가 그대로 지킵니다. 이 컴퓨터에서도 돌려 보려면 V3 → 설정 → 검사 제외에\n'
   + '  C:\\Program Files\\Git\\usr\\bin\\rm.exe 를 넣으십시오.';
 
-/* 지우는 대목을 bash 로 돌린다. rm 이 백신에 막힌 경우«에만» 표시를 달아 던진다 */
+/* ⚠ bash 가 PATH 에 아예 없는 경우도 있다 — 이 저장소를 PowerShell 창에서 돌리면
+     `spawnSync bash ENOENT` 로 죽는다(2026-09-07 실측: 윈도우 실패 8건 중 셋이 이것이었다).
+     그것도 «이 컴퓨터의 사정»이지 검사가 잡아야 할 고장이 아니다 — 리눅스인 CI 에는
+     bash 가 늘 있으므로 보장은 그대로 지켜진다. 백신 경우와 «같은 문»으로 건너뛴다. */
+const 배시가없음 =
+  'bash 를 찾지 못해 「지우는 대목」을 돌리지 못했습니다 — 검사가 아니라 이 컴퓨터의 사정입니다.\n'
+  + '  보장은 리눅스인 CI 가 그대로 지킵니다. 이 컴퓨터에서도 돌려 보려면 Git Bash 창에서 돌리십시오.';
+
+/* 지우는 대목을 bash 로 돌린다. rm 이 백신에 막힌 경우·bash 가 없는 경우«에만» 표시를 달아 던진다 */
 function bash로돌리기(script, dir) {
   try {
     return execFileSync('bash', ['-c', script], { cwd: dir, encoding: 'utf8', stdio: 'pipe' });
   } catch (e) {
     if (e.status === 126 && /\brm: Permission denied/.test(String(e.stderr))) e.백신이막음 = true;
+    if (e.code === 'ENOENT' && String(e.syscall || '').indexOf('bash') >= 0) e.배시가없음 = true;
     throw e;
   }
 }
 
 /* ⚠ CI 에서는 «절대» 건너뛰지 않는다. 리눅스에는 V3 가 없으니 거기서 rm 이 안 뜬다면
    그건 백신 사정이 아니라 진짜 고장이다 — 건너뛰기가 CI 의 보장을 갉아먹지 못하게 막는다. */
-function 건너뛸까(e) { return Boolean(e && e.백신이막음) && !process.env.CI; }
+function 건너뛸까(e) { return Boolean(e && (e.백신이막음 || e.배시가없음)) && !process.env.CI; }
 
-/* 백신에 막힌 것이면 건너뛴다. 그 밖의 실패는 감추지 않고 그대로 터뜨린다 */
+/* 백신에 막힌 것·bash 가 없는 것이면 건너뛴다. 그 밖의 실패는 감추지 않고 그대로 터뜨린다 */
 function 막힌게아니면다시던지기(t, e) {
   if (!건너뛸까(e)) throw e;
-  t.skip(백신이막음);
+  t.skip(e.배시가없음 ? 배시가없음 : 백신이막음);
 }
 
 /* ⚠ 한 번만 돌리고 그 «한 결과»를 아래 두 검사가 같이 본다.

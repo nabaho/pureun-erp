@@ -13,6 +13,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+/* ⚠ 줄끝을 고른다. 이 저장소는 윈도우에서 CRLF 로 내려오고, 아래 정규식은
+     `];\n` 처럼 «글자 뒤에 곧바로 줄바꿈» 을 찾는다 — `];\r\n` 은 안 맞아
+     「규칙집을 못 찾았습니다」로 죽는다(2026-09-07 윈도우에서 넷이 그랬다).
+     CI(리눅스)는 LF 라 초록이어서 아무도 못 봤다. */
 const CB = require(path.join(__dirname, '..', 'js', 'pu-rules-casebook.js'));
 
 const RAW = [
@@ -87,7 +91,7 @@ test('규칙집이 비어도 터지지 않는다', () => {
 /* ── 진짜 규칙집으로 한 번 돌려 본다 ─────────────────────────────── */
 
 test('★★ 실제 규칙집에서 «2022년 회차 뒤로 시행된 것»이 실제로 있다 — 이 기능의 존재 이유다', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'rules.html'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'rules.html'), 'utf8').replace(/\r\n/g, '\n');
   const m = src.match(/const RULES = (\[[\s\S]*?\]);\n/);
   assert.ok(m, '규칙집을 못 찾았습니다');
   const d = CB.datedRules(JSON.parse(m[1]));
@@ -98,7 +102,7 @@ test('★★ 실제 규칙집에서 «2022년 회차 뒤로 시행된 것»이 �
 });
 
 test('★ 오래된 회차일수록 «그 뒤 시행된 것»이 많거나 같다 — 셈이 거꾸로 가면 안 된다', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'rules.html'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'rules.html'), 'utf8').replace(/\r\n/g, '\n');
   const d = CB.datedRules(JSON.parse(src.match(/const RULES = (\[[\s\S]*?\]);\n/)[1]));
   let 앞 = Infinity;
   ['2019', '2020', '2021', '2022', '2023', '2024', '2025', '2026'].forEach(y => {
