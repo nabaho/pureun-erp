@@ -2543,21 +2543,68 @@ async function 쪽받기(url) {
 }
 
 /* 고용노동부 정책자료실에서 «쓸 만한 것»을 골라 상세까지 읽는다 */
+/* 샘마다 «제 몫»을 가져온다 (대표 지시 2026-09-06 「다양하게 좋은자료를 만들고 싶다」).
+   ★ 샘이 셋이다 — 고용노동부 정책자료실 · 고용노동부 보도자료 · 한국노동연구원.
+     어느 꼭지에 넣을지는 «샘이 정한다»(news-docs.js 의 샘들). 여기서는 나르기만 한다.
+   ★ 몇개는 «샘마다»다. 셋을 한 통에 넣고 자르면 값어치 높은 샘이 밀려난다 —
+     보도자료가 날마다 열 건씩 올라오니 그것만으로 다 채워질 수 있다.
+   ⚠ 한 샘이 죽어도 나머지는 가져온다. 남의 집 화면이라 한 곳은 언제든 바뀐다. */
 async function 자료거리모으기(몇개) {
   const 몇 = Math.max(1, Math.min(12, Number(몇개) || 6));
-  const 목록 = 자료부품.자료추리기(
-    자료부품.목록읽기(await 쪽받기(자료부품.목록주소(1))), 몇);
+  /* 샘 하나가 가져올 몫 — 셋이라 둘씩이면 여섯이다. 적어도 둘은 준다. */
+  const 샘몫 = Math.max(2, Math.ceil(몇 / 자료부품.샘들.length));
   const out = [];
-  for (const m of 목록) {
+  for (const S of 자료부품.샘들) {
     try {
-      const 상세 = 자료부품.상세읽기(await 쪽받기(자료부품.상세주소(m.일련번호)), m.일련번호);
-      const it = 자료부품.자료로만들기(상세);
-      /* ⚠ 첨부가 없으면 «자료가 아니다» — 내려받을 것이 없는 칸은 목록일 뿐이다 */
-      if (it && it.파일) out.push(it);
+      const 목록 = 자료부품.자료추리기(
+        자료부품.목록읽기(await 쪽받기(자료부품.목록주소(1, S)), S), 샘몫);
+      let 담은것 = 0;
+      for (const m of 목록) {
+        try {
+          const 상세 = 자료부품.상세읽기(
+            await 쪽받기(자료부품.상세주소(m.일련번호, S)), m.일련번호, S);
+          /* ★ 목록에 적힌 제목을 앞세운다 — KLI 는 상세 큰 글씨가 «칸 이름»이라
+               어느 달 것이든 「국내노동동향」으로 같다(2026-09-07 실측). */
+          const it = 자료부품.자료로만들기(상세, { 목록제목: m.제목 });
+          /* ⚠ 첨부가 없으면 «자료가 아니다» — 내려받을 것이 없는 칸은 목록일 뿐이다 */
+          if (it && it.파일) { out.push(it); 담은것++; }
+        } catch (e) {
+          console.warn("[자료] " + S.키 + " " + m.일련번호 + " 를 못 읽었습니다: " + e.message);
+        }
+      }
+      console.log("[자료] " + S.이름 + " — " + 담은것 + "건");
     } catch (e) {
-      console.warn("[자료] " + m.일련번호 + " 를 못 읽었습니다: " + e.message);
+      console.warn("[자료] " + S.이름 + " 목록을 못 읽었습니다: " + e.message);
     }
   }
+  return out;
+}
+
+/* 행정해석(법령해석례) — 꼭지 이름에 있는데 «비어 있던» 그것.
+   ⚠ 판례와 «같은 모양»으로 돌려준다(갈래:'판례', 딱지:'[행정해석]') —
+     편지 짓는 층을 안 고쳐도 되고, 한 꼭지에 섞여 나란히 실린다. */
+const 해석찾을말 = ["근로기준법", "근로자퇴직급여", "산업안전보건법", "노동조합"];
+
+async function 해석거리모으기(몇개) {
+  const 몇 = Math.max(1, Math.min(6, Number(몇개) || 2));
+  let 다 = [];
+  for (const w of 해석찾을말) {
+    try { 다 = 다.concat(판례부품.해석목록읽기(await 쪽받기(판례부품.해석목록주소(w, 5)))); }
+    catch (e) { console.warn("[해석] " + w + " 를 못 읽었습니다: " + e.message); }
+  }
+  const out = [];
+  for (const c of 판례부품.해석추리기(다, 몇 * 3)) {
+    if (out.length >= 몇) break;
+    try {
+      const one = 판례부품.해석한건읽기(await 쪽받기(판례부품.해석한건주소(c.일련번호)));
+      if (!one || !판례부품.노무해석인가(one)) continue;
+      const it = 판례부품.해석으로만들기(one);
+      if (it) out.push(it);
+    } catch (e) {
+      console.warn("[해석] " + c.일련번호 + " 를 못 읽었습니다: " + e.message);
+    }
+  }
+  console.log("[해석] " + out.length + "건");
   return out;
 }
 
@@ -2667,9 +2714,16 @@ async function 자료판례모아담기(옵션) {
     셈.자료탈 = String(e.message || e).slice(0, 160);
   }
 
-  /* ── 판례 ── */
+  /* ── 판례 «그리고» 행정해석 ──
+     ★ 한 자리(newsPrec)에 함께 담는다 — 꼭지가 「판례·재결례·행정해석」 하나이고,
+       모양도 같다(갈래:'판례'). 자리를 갈라 두면 화면이 두 곳을 읽어야 한다.
+     ⚠ 해석을 먼저 담지 않는다 — 판례가 그 꼭지의 주인이다. 해석은 «보태는» 것이다. */
   try {
-    const 것들 = await 판례거리모으기(O.판례몇 || 4);
+    const 판 = await 판례거리모으기(O.판례몇 || 4);
+    let 해 = [];
+    try { 해 = await 해석거리모으기(O.해석몇 || 2); }
+    catch (e) { console.warn("[해석] 오늘은 못 모았습니다: " + e.message); }
+    const 것들 = 판.concat(해);
     const 자리 = db.ref("homepage/newsPrec");
     const 모아둔것 = (await 자리.child("모음").once("value")).val() || {};
     const 결과 = 판례부품.모으기(모아둔것, 것들, 오늘);
@@ -2727,6 +2781,7 @@ exports.newsDocsPull = functions
       const 셈 = await 자료판례모아담기({
         자료몇: Math.max(1, Math.min(12, Number(몸.자료몇) || 6)),
         판례몇: Math.max(1, Math.min(8, Number(몸.판례몇) || 4)),
+        해석몇: Math.max(0, Math.min(6, Number(몸.해석몇) == null ? 2 : Number(몸.해석몇))),
         내려받기: 몸.내려받기 !== false
       });
       res.json(Object.assign({ ok: true }, 셈));

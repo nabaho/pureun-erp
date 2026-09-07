@@ -86,6 +86,52 @@ test('★ 스케줄과 「지금 가져오기」가 «같은 몸통»을 쓴다 
   assert.ok(부름 >= 3, '모아담기를 한 곳에서만 쓴다 — 두 문이 갈렸을 수 있다');
 });
 
+test('★★ 자료를 «샘마다» 가져온다 — 한 샘이 다 채우지 못하게', () => {
+  /* ⚠ 셋을 한 통에 넣고 자르면 값어치 높은 샘이 밀려난다 — 보도자료가 날마다
+       열 건씩 올라오니 그것만으로 다 채워질 수 있다. */
+  const i = idx.indexOf('async function 자료거리모으기(');
+  assert.ok(i > 0, '자료거리모으기 를 못 찾음');
+  const seg = idx.slice(i, i + 2200);
+  /* ⚠ 「자료부품.샘들 이 어딘가 있다」로는 모자란다 — 몫을 셈하는 줄
+       (몇 / 자료부품.샘들.length)에 걸려, 한 샘만 읽게 바꿔도 통과했다.
+       «고리 자체»를 본다. */
+  assert.ok(seg.indexOf('for (const S of 자료부품.샘들)') >= 0,
+    '★★ 샘 목록을 돌지 않는다 — 한 곳만 읽는다');
+  assert.ok(seg.indexOf('목록제목: m.제목') >= 0,
+    '★ 목록 제목을 안 넘긴다 — KLI 가 「국내노동동향」으로만 나간다');
+  assert.ok(seg.indexOf('m.일련번호, S') >= 0, '샘을 상세 읽개에 안 넘긴다');
+});
+
+test('★★ 행정해석을 «모으고 담는다» — 꼭지 이름에 있는데 비어 있던 그것', () => {
+  assert.ok(idx.indexOf('async function 해석거리모으기(') >= 0,
+    '★★ 행정해석을 모으는 자리가 없다');
+  assert.ok(idx.indexOf('해석거리모으기(O.해석몇') >= 0,
+    '★★ 모으개가 있어도 «아무도 안 부른다» — 판단이 멀쩡해도 안 부르면 헛것이다');
+});
+
+test('★ 판례와 해석을 «한 자리»에 담는다 — 꼭지가 하나이므로', () => {
+  /* 자리를 갈라 두면 화면이 두 곳을 읽어야 한다. 모양도 같다(갈래: 판례). */
+  const i = idx.indexOf('async function 해석거리모으기(');
+  const j = idx.indexOf('판.concat(해)');
+  assert.ok(i > 0 && j > 0, '★ 판례와 해석을 합치는 자리가 없다');
+  assert.ok(idx.indexOf('"homepage/newsPrec"') >= 0, '담는 자리가 없다');
+});
+
+test('★ 해석을 못 모아도 판례는 담는다 — 한 문이 막혀도 나머지는 간다', () => {
+  const i = idx.indexOf('const 판 = await 판례거리모으기(');
+  assert.ok(i > 0, '판례 모으기 부름을 못 찾음');
+  const seg = idx.slice(i, i + 500);
+  assert.ok(/try \{ 해 = await 해석거리모으기/.test(seg),
+    '★ 해석 모으기를 감싸지 않았다 — 법제처가 한 번 느리면 판례까지 잃는다');
+});
+
+test('★ 한 샘이 죽어도 나머지 샘은 가져온다', () => {
+  const i = idx.indexOf('async function 자료거리모으기(');
+  const seg = idx.slice(i, i + 2200);
+  const 감쌈 = (seg.match(/catch \(e\)/g) || []).length;
+  assert.ok(감쌈 >= 2, '★ 샘 하나가 죽으면 나머지도 못 가져온다 (catch " + 감쌈 + "군데)');
+});
+
 /* ══════ ② 화면이 «서버가 담은 자리»를 읽는다 ══════ */
 
 test('★ 화면이 읽는 자리와 서버가 담는 자리가 «같다»', () => {
