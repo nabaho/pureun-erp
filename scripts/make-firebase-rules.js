@@ -711,6 +711,20 @@ rules.rules_mgmt = {
         /* ⚠ 본문이 없는 것(스캔 PDF 등)은 조용히 빼지 않고 «없다»고 적어 둔다 — 설계서 §8 */
         noText: { '.validate': 'newData.isBoolean()' },
         sha:  { '.validate': 'newData.isString() && newData.val().length <= 80' },
+        /* ── 제출 정보 ─ 2026-09-07 대표 지시 「ㄴ」 ────────────────────────
+           ★ 왜 OCR 이 아니라 손으로 적나 — 신고서·의견청취·동의서에서 정작 필요한 것은
+             「언제·어느 노동청에·몇 명 동의로」인데, 그건 도장과 손글씨라 OCR 이 못 읽는다.
+             본문을 뽑아 봐야 쓸 데가 없다. 사람이 3초면 적고, 그것이 실적 증빙에 쓰인다.
+           ★ 서류마다 칸을 따로 두지 않는다 — 셋이 결국 같은 것을 적는다.
+             언제(at) · 무슨 번호로(no) · 어디에(office) · 몇 명이(n) · 전체 몇 중(nAll). */
+        sub: {
+          at:     { '.validate': "newData.isString() && newData.val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)" },
+          no:     { '.validate': 'newData.isString() && newData.val().length <= 40' },
+          office: { '.validate': 'newData.isString() && newData.val().length <= 60' },
+          n:      { '.validate': 'newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000' },
+          nAll:   { '.validate': 'newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000' },
+          $other: { '.validate': false }
+        },
         $other: { '.validate': false }
       } },
       $other: { '.validate': false }
