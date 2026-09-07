@@ -557,6 +557,117 @@
     };
   }
 
+  /* ══════ ㉠ 「글 없음」이 실제로 몇 건인가 (대표 물음 2026-09-07) ══════
+     「단순 보관은 의미가 없다 — OCR 을 해야 하나」에 답하려면 먼저 «몇 %인지»를 알아야 한다.
+     ★ 모르고 OCR 을 붙이면 큰 공사를 헛한다. 그래서 세는 것이 첫걸음이다.
+
+     ⚠ 이 셈은 회차 층을 «통째로» 읽어야 한다 — 목록(index)에는 없는 값이다.
+       그래서 화면이 저절로 하지 않고 «사람이 누를 때만» 한 번 돈다(설계서 §3 의 층 가르기). */
+
+  var BODY_ROLES = ['before', 'after', 'daejo'];        /* 본문류 — 검색·문안 재사용에 쓴다 */
+  var SUBMIT_ROLES = ['report', 'opinion', 'consent'];  /* 제출류 — 증빙에 쓴다 */
+
+  function tallyNoText(allRevs) {
+    var 통 = { total: 0, noText: 0, byRole: {}, body: { total: 0, noText: 0 },
+               submit: { total: 0, noText: 0 }, other: { total: 0, noText: 0 },
+               sites: 0, revs: 0 };
+    ROLES.forEach(function (r) { 통.byRole[r] = { total: 0, noText: 0 }; });
+
+    var v = allRevs || {};
+    Object.keys(v).forEach(function (siteKey) {
+      var revs = v[siteKey]; if (!isRow(revs)) return;
+      통.sites++;
+      Object.keys(revs).forEach(function (revId) {
+        var rev = revs[revId]; if (!isRow(rev)) return;
+        통.revs++;
+        var docs = rev.docs; if (!isRow(docs)) return;
+        Object.keys(docs).forEach(function (role) {
+          var d = docs[role]; if (!isRow(d)) return;
+          var 없음 = d.noText === true;
+          통.total++; if (없음) 통.noText++;
+          if (통.byRole[role]) { 통.byRole[role].total++; if (없음) 통.byRole[role].noText++; }
+          var 칸 = BODY_ROLES.indexOf(role) >= 0 ? 통.body
+                 : (SUBMIT_ROLES.indexOf(role) >= 0 ? 통.submit : 통.other);
+          칸.total++; if (없음) 칸.noText++;
+        });
+      });
+    });
+    return 통;
+  }
+
+  /* 백분율 — ⚠ 0개를 0% 라고 하지 않는다. 「없다」와 「0%」는 다른 말이다. */
+  function pct(part, whole) {
+    if (!whole) return null;
+    return Math.round(part / whole * 1000) / 10;
+  }
+
+  /* ══════ ㉡ 제출 서류에 «몇 줄 적기» (대표 지시 2026-09-07 「ㄴ」) ══════
+     ★ 왜 OCR 이 아니라 손으로 적나 — 신고서·의견청취·동의서에서 정작 필요한 것은
+       「언제·어느 노동청에·몇 명 동의로」인데, 그건 도장과 손글씨라 OCR 이 못 읽는다.
+       본문을 뽑아 봐야 쓸 데가 없다. 사람이 3초면 적고, 그것이 실적 증빙에 쓰인다.
+     ★ 칸을 서류마다 따로 두지 않고 «한 모양»으로 둔다 — 셋이 결국 같은 것을 적는다:
+       언제(at) · 무슨 번호로(no) · 어디에(office) · 몇 명이(n) · 전체 몇 중(nAll). */
+
+  var SUB_FIELDS = ['at', 'no', 'office', 'n', 'nAll'];
+
+  function subOf(doc) {
+    var v = doc && doc.sub;
+    if (!isRow(v)) return null;
+    var out = { at: txt(v.at), no: txt(v.no), office: txt(v.office),
+                n: (typeof v.n === 'number' ? v.n : null),
+                nAll: (typeof v.nAll === 'number' ? v.nAll : null) };
+    /* ⚠ 아무것도 안 적힌 것은 «없는 것»이다 — 빈 칸을 화면에 그리면 자리만 먹는다 */
+    return subWorth(out) ? out : null;
+  }
+  function subWorth(s) {
+    if (!s) return false;
+    return !!(s.at || s.no || s.office || s.n != null || s.nAll != null);
+  }
+
+  /* 화면에 뿌릴 한 줄 — 서류에 따라 말이 달라진다(「신고」와 「동의」는 다른 일이다).
+     ⚠ 없는 값은 «건너뛴다». 「— · — · 0명」처럼 빈 것을 채워 그리지 않는다. */
+  function subLine(role, sub) {
+    var s = subOf({ sub: sub }) || (subWorth(sub) ? sub : null);
+    if (!s) return '';
+    var 말 = role === 'report' ? '신고' : (role === 'consent' ? '동의' : (role === 'opinion' ? '의견청취' : '제출'));
+    var 조각 = [];
+    if (s.at) 조각.push(s.at + ' ' + 말);
+    else 조각.push(말);
+    if (s.office) 조각.push(s.office);
+    if (s.no) 조각.push('접수 ' + s.no);
+    if (s.n != null) 조각.push(s.nAll != null ? (s.n + '/' + s.nAll + '명') : (s.n + '명'));
+    else if (s.nAll != null) 조각.push('전체 ' + s.nAll + '명');
+    return 조각.join(' · ');
+  }
+
+  /* 적기 전에 걸러 낸다 — ⚠ 규칙(파이어베이스)에서 막히기 «전에» 사람에게 말해 준다.
+     규칙이 막으면 「permission_denied」만 뜨고 무엇이 잘못인지 안 알려 준다. */
+  function validSub(s) {
+    var v = s || {}, 탈 = [];
+    if (v.at && !/^\d{4}-\d{2}-\d{2}$/.test(String(v.at))) 탈.push('날짜는 2024-03-15 꼴로 적으세요');
+    if (String(v.no || '').length > 40) 탈.push('접수번호가 너무 깁니다(40자)');
+    if (String(v.office || '').length > 60) 탈.push('기관 이름이 너무 깁니다(60자)');
+    [['n', '인원'], ['nAll', '전체 인원']].forEach(function (짝) {
+      var x = v[짝[0]];
+      if (x == null || x === '') return;
+      if (typeof x !== 'number' || !isFinite(x) || x < 0 || x > 100000 || x !== Math.floor(x))
+        탈.push(짝[1] + '은 0 이상의 정수라야 합니다');
+    });
+    if (v.n != null && v.nAll != null && v.n > v.nAll) 탈.push('동의 인원이 전체 인원보다 많습니다');
+    return { ok: 탈.length === 0, why: 탈 };
+  }
+
+  /* 저장할 모양으로 — 빈 값은 «안 담는다»(규칙이 빈 문자열도 자리로 세지 않게) */
+  function subClean(s) {
+    var v = s || {}, out = {};
+    if (txt(v.at)) out.at = txt(v.at);
+    if (txt(v.no)) out.no = txt(v.no);
+    if (txt(v.office)) out.office = txt(v.office);
+    if (typeof v.n === 'number') out.n = v.n;
+    if (typeof v.nAll === 'number') out.nAll = v.nAll;
+    return Object.keys(out).length ? out : null;
+  }
+
   /* ⚠ 계획서(1단계)가 과제마다 「api 에 이것을 더한다」로 흩어 적어 둔 것을 한자리에 모았다.
      흩어 두면 과제를 이어 붙일 때마다 하나씩 빠뜨린다. */
   var api = {
@@ -583,7 +694,11 @@
     uploadPlan: uploadPlan, idxKeysOf: idxKeysOf, IDX_MAX: IDX_MAX,
     /* 3단계 — 보여 주기 */
     ROLE_KO: ROLE_KO, indexRows: indexRows, filterIndex: filterIndex, yearsOf: yearsOf,
-    revRows: revRows, revChips: revChips, canStartReview: canStartReview, perfSheet: perfSheet
+    revRows: revRows, revChips: revChips, canStartReview: canStartReview, perfSheet: perfSheet,
+    /* ㉠ 글 없음 세기 · ㉡ 제출 서류 몇 줄 적기 (2026-09-07) */
+    BODY_ROLES: BODY_ROLES, SUBMIT_ROLES: SUBMIT_ROLES, tallyNoText: tallyNoText, pct: pct,
+    SUB_FIELDS: SUB_FIELDS, subOf: subOf, subWorth: subWorth, subLine: subLine,
+    validSub: validSub, subClean: subClean
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   global.PuRulesCasebook = api;
