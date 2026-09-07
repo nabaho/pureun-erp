@@ -872,6 +872,15 @@ table.mstab2 tr:last-child td{border-bottom:none}
 .msrow .msval{flex:1;min-width:0;font-size:13px;color:#1e293b}
 .msrow .msval a{color:#2563eb}
 .mshint{font-size:11.5px;color:#94a3b8;line-height:1.65;margin-top:3px}
+/* 접어 두는 곁설명 — 늘 보일 필요는 없지만 «없으면 안 되는» 말이 있을 때.
+   ⚠ 접어도 글자는 화면 안에 있다(DOM). 찾기·검사가 그대로 찾는다. */
+.msmore{margin-top:2px}
+.msmore>summary{font-size:11.5px;color:#64748b;cursor:pointer;list-style:none;
+  display:inline-block;padding:1px 0}
+.msmore>summary::-webkit-details-marker{display:none}
+.msmore>summary::before{content:'▸ ';color:#94a3b8}
+.msmore[open]>summary::before{content:'▾ '}
+.msmore>summary:hover{color:#2563eb}
 .mschk{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
 .mskeys{display:flex;flex-wrap:wrap;gap:6px 18px;padding:4px 2px}
 .mskey{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#475569;min-width:210px}
@@ -14563,6 +14572,10 @@ function mbOldHtml(){
   const b = state.mbFill || null;
   const oldN = mbOldCount();
   const fd = t => new Date(Number(t)||0).toISOString().slice(0,10);
+  /* 「다 찼다」는 «담아 둔» 상태에서 읽는다 — 이번에 돌린 결과(b)에만 있으면
+     화면을 새로 열 때 사라진다. 하나도 안 담긴 채 done 이 서 있으면 믿지 않는다. */
+  const st = _mbOldState || {};
+  const fillDone = st.done === true && oldN > 0;
   return `<div class="msin" style="margin-top:14px">
     <div class="mscard">
       <b>📦 지난 메일 — 지금 얼마나 보관하고 있나</b>
@@ -14605,6 +14618,26 @@ function mbOldHtml(){
            ⚠ 한 번에 다 안 된다 — 420초가 차면 «어디까지 했는지» 적어 두고 끊는다.
              그래서 「이어서 채우기」를 여러 번 누르시게 된다. 그것을 미리 적어 둔다.
            ⚠ 무엇을 하는지 «누르기 전에» 말한다 — 남의 메일함에 붙는 일이다. */''}
+      ${/* ── 다 찼으면 «다 찼다고» 말한다 (대표 확인 2026-09-07 「다 채웠다고 나온다」) ──
+           ⚠ 여태 「✅ 다 채웠습니다」는 «이번에 돌린 결과»(state.mbFill)에만 있었다.
+             화면을 새로 열면 그 말이 사라지고, 아래 「끝났다고 할 때까지 다시 눌러」와
+             [이어서 채우기] 만 남았다 — 이미 끝났는데 계속 누르시게 되는 화면이다
+             (서버는 그저 「이미 끝났습니다」로 돌아선다).
+           ★ 그래서 «담아 둔» 상태(old/state.done)를 보고 말한다. 새로 열어도 남는다.
+           ⚠ 끝났으면 단추를 «안 그린다». 눌러도 아무 일이 없는 단추는 거짓말이다.
+             더 거슬러 담는 것은 서버에 again 을 줘야 하는데, 그것은 3만 통을 다시
+             걷는 일이라 화면에 두지 않는다. */''}
+      ${fillDone ? `
+      <div class="mshint" style="padding:12px 0 6px;border-top:1px solid #e2e8f0;margin-top:12px">
+        <b style="color:#166534">✅ 지난 메일을 다 채웠습니다 — 더 누르실 것이 없습니다.</b><br>
+        <b>${oldN.toLocaleString()}통</b>을 담았습니다${
+          st.oldest ? ` · 가장 오래된 것 <b>${fd(st.oldest)}</b>` : ''}${
+          st.days ? ` · 목표 <b>${Number(st.days).toLocaleString()}일</b>` : ''}.<br>
+        ⚠ 이 칸만 보시면 <b>최근 몇 달이 비어 보입니다</b> — 최근 메일은 평소 받아 오는
+        칸에 <b>이미 들어 있어서</b> 두 벌로 담지 않습니다. 빠진 것이 아닙니다.<br>
+        지난 메일은 <b>제목·보낸이만</b> 담아 두었습니다. 본문과 첨부는 그 한 통을
+        <b>여실 때</b> 다음메일에서 가져옵니다 — 그래서 한 박자 더 걸립니다.
+      </div>` : `
       <div class="mshint" style="padding:12px 0 6px;border-top:1px solid #e2e8f0;margin-top:12px">
         <b>지난 메일 채우기</b> — POP3 로 <b>머리글만</b> 받아 옵니다(본문은 열 때 받습니다).
         다음메일은 <b>그대로 둡니다</b> — 읽지도 지우지도 않습니다.<br>
@@ -14612,7 +14645,7 @@ function mbOldHtml(){
         <b>끝났다고 할 때까지 다시 눌러</b> 주십시오.
       </div>
       <button class="msbtn" ${b&&b.busy?'disabled':''} onclick="mbBackfillRun()">${
-        b && b.busy ? '채우는 중… (최대 7분)' : (oldN ? '📦 이어서 채우기' : '📦 지난 메일 채우기 시작')}</button>
+        b && b.busy ? '채우는 중… (최대 7분)' : (oldN ? '📦 이어서 채우기' : '📦 지난 메일 채우기 시작')}</button>`}
       ${b && !b.busy ? (b.ok
         ? `<div class="mshint" style="padding:8px 0 0">
              ${b.done ? '✅ <b>다 채웠습니다.</b>' : '⏸ 예산이 다해 멈췄습니다 — <b>한 번 더 눌러 주세요.</b>'}
@@ -14708,14 +14741,19 @@ function mailSetHtml(){
       `<label class="mschk"><input type="checkbox" ${trk?'checked':''}
         ${state.isAdmin?'':'disabled'} onchange="saveMailTrack(this.checked)">
         상대가 «언제 열었나» 재기</label>
-      <div class="mshint">보낸메일함 줄 끝에 <b>열람 시각</b>이 붙습니다. 재는 법은 본문 끝에
-        넣는 <b>보이지 않는 그림 한 장</b>입니다 — 상대는 모릅니다.<br>
-        적는 것은 <b>시각과 횟수뿐</b>입니다. 상대의 IP·기기·있는 곳은 <b>일부러 안 적습니다</b>.<br>
-        ⚠ <b>「안 열었다」가 안 열었다는 뜻은 아닙니다.</b> 지메일·네이버가 그림을 대신 받아 두면
-        열지 않아도 찍히고, 상대가 그림을 막아 두면 열어도 안 찍힙니다.<br>
-        ${state.isAdmin
-          ? '끄시면 <b>그 뒤에 보내는 메일부터</b> 안 붙습니다 — 이미 나간 메일은 그대로입니다.'
-          : '대표님만 켜고 끄실 수 있습니다.'}</div>`)}
+      <div class="mshint">보낸메일함 줄 끝에 <b>열람 시각</b>이 붙습니다 — 상대는 모릅니다.<br>
+        ⚠ <b>「안 열었다」가 안 봤다는 뜻은 아닙니다</b> — 빈칸을 그렇게 읽으시면 안 됩니다.</div>
+      <details class="msmore"><summary>어떻게 재나 · 왜 빈칸이 나오나</summary>
+        <div class="mshint">본문 끝에 <b>보이지 않는 그림 한 장</b>을 넣고, 상대가 그것을 부르면
+          그 시각을 적습니다. 적는 것은 <b>시각과 횟수뿐</b>입니다 —
+          상대의 IP·기기·있는 곳은 <b>일부러 안 적습니다</b>.<br>
+          지메일·네이버가 그림을 <b>대신 받아 두면</b> 열지 않아도 찍히고,
+          상대가 그림을 막아 두면 <b>열어도 안 찍힙니다</b>. 그래서 빈칸은
+          「안 봤다」가 아니라 <b>「모른다」</b>입니다.<br>
+          ${state.isAdmin
+            ? '끄시면 <b>그 뒤에 보내는 메일부터</b> 안 붙습니다 — 이미 나간 메일은 그대로입니다.'
+            : '켜고 끄는 것은 <b>대표님만</b> 하실 수 있습니다.'}</div>
+      </details>`)}
   </div>
 
   <div class="mspane ${mbSetTab()==='3'?'on':''}">
