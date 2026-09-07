@@ -260,8 +260,18 @@ var BUILD_SEQ = 151;
   }catch(_){}
 })();
 // ── 접속 시 자가진단: 중복·급감을 자동 점검해 문제 시 erpAlert 팝업 (수동 검토 대체) ──
+/* ⚠★ 2026-09-07 대표 제보 「이알피 로그인 중 데이터가 변동된 것 같다는 문구가 나왔다」
+   ★ 거짓 경보였다. 이 점검이 «8초»에 셌는데, 초기 동기화 완료 표시(_fbSynced)는
+     늦으면 «12초»에 켜진다(9171줄 안전 타이머). 즉 서버에서 아직 다 못 받은
+     localStorage 를 세고 「지난 접속보다 크게 줄었다」고 외쳤다.
+   ★★ 이 거짓 경보가 왜 나쁜가 — 딸린 안내가 「서버백업에서 복원하세요」다.
+     그 말을 믿고 복원하면 «멀쩡한 최신 자료를 옛 백업으로 되돌린다». 없던 손실을
+     경보가 만들어 내는 셈이다.
+   ⚠ 자료 자체는 안전했다 — 동기화 전 서버 쓰기는 4029줄이 이미 막고 있다.
+     문제는 «놀라게 한 것»과 «틀린 안내»다.
+   그래서 동기화가 끝난 뒤에 센다. */
 (function(){
-  setTimeout(function(){
+  var 잰다 = function(){
     try{
       var KEYP='pureun_v6_';
       var CHECK=['companies','contracts','cases','consultings','funds','other_projects','payroll_monthly','user_accounts','finance_income'];
@@ -294,12 +304,21 @@ var BUILD_SEQ = 151;
         }
         // 2) 지난 접속 대비 급감 점검 (10건 이상 → 절반 미만)
         if(typeof prev[k]==='number' && prev[k]>=10 && arr.length < prev[k]*0.5){
-          window.erpAlert && erpAlert('danger', LABEL[k]+' 데이터가 지난 접속보다 크게 줄었습니다', '지난 접속 '+prev[k]+'건 → 현재 '+arr.length+'건.', '의도한 삭제가 아니면 환경설정→💾 서버백업(일간/수시)에서 직전 시점으로 복원하세요.');
+          /* ★ 안내 차례가 중요하다 — «복원»을 앞에 두면 거짓 경보 한 번에
+             멀쩡한 최신 자료가 옛 백업으로 되돌아간다. 먼저 «다시 보라»고 한다. */
+          window.erpAlert && erpAlert('danger', LABEL[k]+' 데이터가 지난 접속보다 크게 줄었습니다', '지난 접속 '+prev[k]+'건 → 현재 '+arr.length+'건.', '① 먼저 새로고침(F5) 후 이 화면의 건수를 다시 보십시오 — 동기화가 늦어 덜 받은 것이면 숫자가 돌아옵니다(이때는 자료가 멀쩡한 것이니 복원하지 마십시오). ② 새로고침해도 그대로 적으면, 그때 환경설정→💾 서버백업(일간/수시)에서 직전 시점으로 복원하세요.');
         }
       });
       localStorage.setItem(SNAPK, JSON.stringify(cur));
     }catch(_){}
-  }, 8000); // 동기화 안정 후 점검
+  };
+  /* 동기화가 끝날 때까지 기다린다 — 안 끝나도 20초에서는 잰다(오프라인일 수 있다).
+     ⚠ 끝난 «직후»도 아직 로컬 반영이 이어질 수 있어 두 박자 둔다. */
+  var 기다린횟수 = 0;
+  (function 기다리기(){
+    if(window._fbSynced !== true && 기다린횟수++ < 40){ setTimeout(기다리기, 500); return; }
+    setTimeout(잰다, 2000);
+  })();
 })();
 // ── 모바일 음성 검색 🎤: 말하면 현재 화면 검색창에 입력 (안드로이드 크롬 등 지원 브라우저) ──
 (function(){
@@ -15024,6 +15043,16 @@ function ContractModal(props){
       companyName:found?found.name:prev.companyName,bizNo:found?found.bizNo||'':prev.bizNo,
       company:Object.assign({},prev.company,{companyId:id},found?{name:found.name,bizNo:found.bizNo||''}:{})});});
   }
+  /* ★ 2026-09-07 대표 제보 「계속해서 검증하라고 나온다 · 굳이 필요한가」
+     ⚠ 실제로 겪으신 것 — 검색 칸에 「법인 충청남도사회서비스원」을 넣으셨는데
+       옆 고르개는 「업체 선택」 그대로였다. 두 걸음인데 화면이 그 말을 안 했다.
+     ★ 그래도 «저절로 채우지는 않는다» — 온톨로지 규칙이 「이름 일치만으로 ID를
+       채우지 않는다」이다. 이름으로 채우면 「한빛산업」과 「(주)한빛산업」이 뒤섞인다.
+       대신 후보가 하나면 «누르면 끝나는 단추»를 내놓는다 — 확정은 사람이 하되
+       두 번 헤매지 않게. */
+  var companyLinkPicked = !!(f.companyId || (f.company||{}).companyId);
+  var companyLinkTouched = companyLinkPicked || f.companyLinkStatus==='pending' || !!String(companyLinkQuery||'').trim();
+  var companyLinkOnly = (!companyLinkPicked && companyLinkChoices.length===1) ? companyLinkChoices[0] : null;
   function deferCompanyLink(on){
     setF(function(prev){return Object.assign({},prev,{companyId:'',companyLinkStatus:on?'pending':'',
       company:Object.assign({},prev.company,{companyId:''})});});
@@ -16676,7 +16705,20 @@ function ContractModal(props){
             h('option',{value:''},'업체 선택 — 선택 시 회사명·사업자번호 반영'),
             companyLinkChoices.map(function(x){return h('option',{key:x.id,value:x.id},x.name+' · '+(x.bizNo||'번호 없음')+' · '+x.id);}))),
         h('label',{style:{display:'block',fontSize:'11px',color:'#475569',marginTop:'7px'}},h('input',{type:'checkbox',checked:f.companyLinkStatus==='pending',onChange:function(e){deferCompanyLink(e.target.checked);}}),' 신규·미확정 업체: 연결 보류 (업체정보에 쓰지 않음)'),
-        h('div',{style:{fontSize:'11px',marginTop:'5px',color:companyLinkCheck&&companyLinkCheck.ok?'#166534':'#d97706'}},companyLinkCheck?companyLinkCheck.message:'검증 모듈을 불러오지 못했습니다.'),
+        /* ★ 후보가 «하나뿐»이면 누르면 끝나는 단추 — 고르개를 뒤질 까닭이 없다 */
+        companyLinkOnly && h('button',{type:'button',onClick:function(){chooseCompanyLink(companyLinkOnly.id);},
+          style:{marginTop:'7px',width:'100%',padding:'7px',border:'1px solid #2563eb',borderRadius:'5px',
+                 background:'#2563eb',color:'#fff',fontSize:'12px',fontWeight:700,cursor:'pointer'}},
+          '✓ 「'+companyLinkOnly.name+'」 로 연결'),
+        /* ★ 아직 아무것도 «안 하신» 때는 혼내지 않는다 — 붉은 글씨는 잘못했을 때만.
+           처음부터 경고가 떠 있으면 「계속 검증하라고 한다」로 읽힌다(대표 말씀). */
+        h('div',{style:{fontSize:'11px',marginTop:'5px',
+            color:!companyLinkTouched?'#64748b':(companyLinkCheck&&companyLinkCheck.ok?'#166534':'#d97706')}},
+          !companyLinkEngine ? '검증 모듈을 불러오지 못했습니다.'
+          : !companyLinkTouched ? '업체를 고르면 회사명·사업자번호가 저절로 채워집니다. 새 업체면 아래 「연결 보류」를 켜세요.'
+          : (!companyLinkPicked && f.companyLinkStatus!=='pending' && companyLinkChoices.length)
+            ? ('찾았습니다 — 위 고르개에서 골라 주세요 ('+companyLinkChoices.length+'곳)')
+            : (companyLinkCheck?companyLinkCheck.message:'')),
         h('div',{style:{fontSize:'10.5px',marginTop:'4px',color:'#64748b'}},'검색 결과는 최대 100건입니다. 기존 자료는 자동 변경하지 않으며 연결 보류는 확정 관계망에서 제외됩니다.')),
       // 회사 정보 섹션 (worker 단독이 아닐 때)
       showCompany && h('div', null,

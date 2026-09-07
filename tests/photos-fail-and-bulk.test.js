@@ -468,3 +468,49 @@ test('칩 글자색을 정해 둔다 — 띠의 파란 글자를 물려받으면
   assert.ok(P.isRed(chip), '★ 실패 칩이 빨간 계열이 아닙니다: ' + chip);
   assert.match(app, /#backWhere \.failchip\.on\{/);
 });
+
+/* ── 구글 판독 한도(quota) ─ 2026-09-07 대표 제보 ──────────────────────
+   사진첩에 이 영어가 그대로 떴다:
+     「You exceeded your current quota … Quota exceeded for metric:
+      generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 500」
+   ★ 이 갈래가 없어서 'other' 로 떨어졌고, other 는 자동 재시도 대상이다 —
+     한도에 걸린 사진을 자동으로 다시 걸었다. 걸 때마다 한도를 «더» 먹는다. */
+
+test('★★ 구글이 보낸 한도 초과(영어 원문)를 알아본다', () => {
+  const 원문 = 'You exceeded your current quota, please check your plan and billing details. '
+    + 'Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 500';
+  assert.strictEqual(F.readFailKind({ error: 원문 }), 'quota',
+    '한글 문구로만 견주면 구글 원문을 못 알아봅니다');
+});
+
+test('★★ 한도에 걸린 것은 «자동으로» 다시 걸지 않는다 — 걸 때마다 더 먹는다', () => {
+  const 원문 = 'Quota exceeded for metric: generate_content_free_tier_requests';
+  assert.strictEqual(F.worthRetry({ error: 원문 }), false);
+  /* 바쁜 것은 그대로 다시 건다 — 조금 뒤면 되기 때문이다 */
+  assert.strictEqual(F.worthRetry({ error: 'AI가 잠시 바쁩니다' }), true);
+});
+
+test('★ 한도 안내는 «몇 번 실패했나»에 안 흔들린다 — 열 번 걸려도 할 말이 같다', () => {
+  const r = { error: 'RESOURCE_EXHAUSTED', fails: 9 };
+  const 말 = F.readFailAdvice(r);
+  assert.ok(말.indexOf('한도') >= 0, '한도라고 말해야 합니다: ' + 말);
+  assert.ok(말.indexOf('손으로 적어') < 0,
+    '★ 「9번 실패 — 손으로 적어 주세요」로 새면 안 됩니다 — 한도는 손으로 적을 일이 아닙니다');
+});
+
+test('⚠ 우리가 만든 한글 429 안내문은 여전히 «바쁨»이다 — 그건 짐작이지 단정이 아니다', () => {
+  const 우리말 = 'AI가 잠시 바쁩니다 — AI 키의 하루 사용량을 다 썼을 수 있습니다';
+  assert.strictEqual(F.readFailKind({ error: 우리말 }), 'busy',
+    '짐작을 단정으로 올리면 조금 뒤면 될 것을 「오늘은 끝」이라고 말하게 됩니다');
+});
+
+test('★ 실패 원문을 «덮지 않되» 그 위에 무슨 뜻인지 한 줄을 얹는다', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8');
+  const at = src.indexOf("const cause = read.error");
+  assert.ok(at > 0, '실패 원문을 그리는 자리를 못 찾았습니다');
+  const 둘레 = src.slice(at, at + 400);
+  assert.ok(/readFailAdvice\(read\)/.test(둘레),
+    '★ 영어 원문만 있으면 무엇을 해야 할지 알 수 없습니다 — 우리 말 한 줄이 위에 있어야 합니다');
+  assert.ok(/esc\(read\.error\)/.test(둘레),
+    '⚠ 원문은 그대로 남아야 합니다 — 덮었다가 원인을 잘못 짚은 적이 있습니다(모델 종료 사고)');
+});
