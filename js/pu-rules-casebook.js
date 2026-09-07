@@ -229,6 +229,10 @@
     idx: function (keyword, siteKey, revId) {
       return DB_ROOT + '/idx/k/' + keyword + '/' + siteKey + '__' + revId;
     },
+    /* 낱말«들»이 모인 층 — 4단계의 앞머리 훑기가 여기를 orderByKey 로 읽는다.
+       ⚠ idx() 와 반드시 같은 자리여야 한다. 어긋나면 조용히 아무것도 안 나온다
+         (검사가 idx() 가 이 아래인지 견준다). */
+    idxK: function () { return DB_ROOT + '/idx/k'; },
     file: function (siteKey, revId, role, ext) {
       var e = String(ext || '').replace(/^\./, '').toLowerCase();
       return FILE_ROOT + '/' + siteKey + '/' + revId + '/' + okRole(role) + '.' + e;
@@ -450,6 +454,78 @@
       .filter(function (w) { return 셈[w] >= 2; })
       .sort(function (a, b) { return 셈[b] - 셈[a] || (a < b ? -1 : 1); })
       .slice(0, IDX_MAX);
+  }
+
+  /* ══════ 4단계 — 사례집 검색 (설계서 §5-③) ══════
+     지금 조문 검색(artsBuild)은 보관함 건마다 Firebase 읽기 1회로 전문을 다 쌓는다.
+     수백 건이면 무너진다. 그래서 서고는 색인으로 «후보를 좁히고» 본문은 고른 것만 읽는다.
+
+     ★★ 색인 낱말과 검색어의 길이 관계가 «양쪽»이다 — 한 방향만 하면
+        「되는 것 같은데 안 나온다」가 된다.
+        · 색인 낱말이 더 «길 때»  「연차」 → 「연차유급휴가」   ⇒ 앞머리 훑기 1회
+        · 색인 낱말이 더 «짧을 때» 「연차유급휴가」 → 「연차」  ⇒ 앞토막 정확히 찾기
+     ⚠ 색인은 «좁히는 도구»다. 판정은 읽어 온 본문이 한다(기존 artsSearch 와 같은 방식). */
+
+  /* 본문에서 읽을 회차 수의 바닥. 없으면 수백 개를 읽어 지금과 똑같아진다.
+     너무 작으면 못 찾고, 너무 크면 무너진다. */
+  var IDX_PICK = 40;
+
+  /* 색인을 어떻게 읽을지 정한다. 한글 두 글자 미만이면 색인으로 할 일이 없다(null). */
+  function idxLookups(q) {
+    var s = String(q == null ? '' : q).replace(/\s+/g, '');
+    /* 색인 낱말은 [가-힣] 뿐이다(idxKeysOf) — 영문·숫자만 있으면 걸릴 것이 없다 */
+    if (!/^[가-힣]{2,}$/.test(s)) return null;
+    var exact = [];
+    /* 검색어 «자체»는 앞머리 훑기가 이미 잡는다 — 두 번 읽지 않는다.
+       앞토막은 두 글자부터(한 글자 열쇠는 애초에 안 생긴다). */
+    for (var n = 2; n < s.length && exact.length < 9; n++) exact.push(s.slice(0, n));
+    /* \uf8ff 는 대개의 글자보다 뒤에 온다 — 「s 로 시작하는 모든 열쇠」의 범위 끝이다.
+       Firebase 의 orderByKey().startAt(prefix).endAt(prefixEnd) 에 그대로 넣는다.
+       \u26a0 소스에 «글자 그대로» 넣지 않는다 — 눈에 안 보이는 글자라 편집·붙여넣기에서
+         조용히 사라진다. 이스케이프로 적어 둔다. */
+    return { prefix: s, prefixEnd: s + '\uf8ff', exact: exact };
+  }
+
+  /* 색인이 준 것을 «사업장·회차» 후보로. 여러 낱말에 걸린 것을 앞에 둔다. */
+  function idxRefs(byKeyword) {
+    if (!byKeyword || typeof byKeyword !== 'object') return [];
+    var 셈 = {};
+    Object.keys(byKeyword).forEach(function (kw) {
+      var refs = byKeyword[kw];
+      if (!refs || typeof refs !== 'object') return;
+      Object.keys(refs).forEach(function (ref) {
+        var i = ref.indexOf('__');
+        /* 망가진 열쇠는 조용히 버린다 — 화면이 죽는 것보다 낫다 */
+        if (i <= 0 || i + 2 >= ref.length) return;
+        var siteKey = ref.slice(0, i), revId = ref.slice(i + 2);
+        if (!siteKey || !revId) return;
+        var got = 셈[ref] || (셈[ref] = { siteKey: siteKey, revId: revId, hits: 0 });
+        got.hits++;
+      });
+    });
+    return Object.keys(셈).map(function (k) { return 셈[k]; })
+      .sort(function (a, b) {
+        return b.hits - a.hits
+          || (a.siteKey < b.siteKey ? -1 : a.siteKey > b.siteKey ? 1 : 0)
+          || (a.revId < b.revId ? -1 : 1);
+      })
+      .slice(0, IDX_PICK);
+  }
+
+  /* ★★ 못 찾는 것을 «말해 준다». 안 적으면 「검색했는데 없네」로 읽힌다 —
+     색인은 그 회차에서 «2번 이상» 나온 낱말 «상위 60개»만 담는다(idxKeysOf). */
+  function searchCaveat(info) {
+    var v = info || {};
+    if (v.noIndex) {
+      return '서고는 한글 두 글자 이상으로만 찾습니다 — 색인이 한글 낱말로 되어 있습니다.';
+    }
+    var s = '서고 색인은 한 회차에서 2번 이상 나온 낱말 상위 ' + IDX_MAX
+      + '개만 담습니다 — 한 번만 나온 말은 색인에 없어 찾지 못합니다.';
+    if (v.capped) {
+      s += ' 이번 검색은 ' + v.indexed + '곳이 걸렸는데 그중 '
+        + v.picked + '곳의 본문만 읽었습니다(많이 걸린 곳부터).';
+    }
+    return s;
   }
 
   /* ══════ 3단계 — 보여 주기 (설계서 §5-①②) ══════
@@ -836,6 +912,8 @@
     splitReady: splitReady, WRITE_ORDER: WRITE_ORDER,
     /* 2단계-B — 올릴 것 가르기 */
     uploadPlan: uploadPlan, idxKeysOf: idxKeysOf, IDX_MAX: IDX_MAX,
+    /* 4단계 — 사례집 검색 (2026-09-07) */
+    idxLookups: idxLookups, idxRefs: idxRefs, searchCaveat: searchCaveat, IDX_PICK: IDX_PICK,
     /* 3단계 — 보여 주기 */
     ROLE_KO: ROLE_KO, indexRows: indexRows, filterIndex: filterIndex, yearsOf: yearsOf,
     revRows: revRows, revChips: revChips, canStartReview: canStartReview, perfSheet: perfSheet,

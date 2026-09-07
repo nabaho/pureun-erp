@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
@@ -15,7 +15,7 @@
 <script src="js/pu-version.js?v=3"></script>
 <script src="js/pu-backup.js?v=1"></script>
 <script src="js/pu-rules-history.js?v=3"></script>
-<script src="js/pu-rules-casebook.js?v=8"></script>
+<script src="js/pu-rules-casebook.js?v=9"></script>
 <script src="vendor/xlsx.full.min.js"></script>
 <script src="vendor/pako.min.js"></script>
 <script src="vendor/pdf.min.js"></script>
@@ -473,6 +473,10 @@ table.daejo .rreason{color:var(--sub);font-size:11px}
 .ar-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:3px}
 .ar-site{font-size:12.5px;font-weight:700;color:var(--ink)}
 .ar-lab{font-size:12px;color:var(--accent);font-weight:600}
+/* 서고에서 온 조문 딱지 — 보관함 결과와 «한 목록에 섞고» 어디서 왔는지만 가른다
+   (대표 결정 2026-09-07). 권한이 다르므로(서고는 직원 전체) 눈에 띄어야 한다. */
+.cbtag{font-size:10.5px;font-weight:700;color:var(--accent2);background:#eff6ff;
+  border:1px solid #bfdbfe;border-radius:20px;padding:1px 7px;white-space:nowrap;flex:0 0 auto}
 .ar-date{font-size:11px;color:var(--mute);margin-left:auto}
 .ar-snip{font-size:12px;color:var(--sub);line-height:1.65}
 .ar-snip mark{background:#fde68a;padding:0 1px;border-radius:2px}
@@ -5544,7 +5548,7 @@ async function cbUpload(rows){
   }
   const plan=CB.uploadPlan(rows,{existing:existing});
   const uid=FBUSER.uid, now=new Date().toISOString().slice(0,16).replace("T"," ");
-  const fails=[]; let done=0;
+  const fails=[]; let done=0, 은행=0;
 
   for(let i=0;i<plan.revs.length;i++){
     const 회=plan.revs[i];
@@ -5583,6 +5587,21 @@ async function cbUpload(rows){
           if(Object.keys(묶음).length)await FBDB.ref().update(묶음);
         }
       }
+      /* ⑤ 문안 은행 적립 — 설계서 §5-③ 「올릴 때 그쪽에도 함께 흘려보낸다」.
+         ⚠ 개정본(after)만. before 를 넣으면 옛 문구가 은행에 섞이고 다음 사람이
+           그것을 복사해 쓴다(문안 은행이 「⚠ 개정 전 문구 의심」으로 이미 겪은 일).
+         ⚠ 적립이 실패해도 «올리기는 계속된다» — 은행이 서고를 막으면 안 된다.
+           그래서 try 를 따로 두고 fails 에 넣지 않는다. */
+      if(after&&typeof bankAccum==="function"){
+        try{
+          const bm={}; const bn=bankAccum(bm,after.text||"",회.site,회.year);
+          if(bn){
+            Object.values(bm).forEach(c=>{ c.w=bankStale(c.b)?1:0; });
+            await bankMergeUpload(bm,null);
+            은행+=bn;
+          }
+        }catch(e2){ console.warn("서고 → 문안 은행 적립 실패(올리기는 계속):",회.siteKey,e2); }
+      }
       done++;
     }catch(e){
       console.warn("서고 올리기 실패:",회.siteKey,회.revId,e);
@@ -5606,6 +5625,9 @@ async function cbUpload(rows){
   cbRender();
   alert(`서고 담기 끝\n회차 ${done}건 올림 · 이미 있던 파일 ${plan.skip.length}건 건너뜀`
     +`\n확인 필요 ${plan.need.length}건 · 실패 ${fails.length}건`
+    /* ⚠ 적립했는데 아무도 모르면 안 된다 — 문안 은행은 딴 화면이라 조용히 늘면
+       「내가 올린 것이 은행에 들어갔나」를 확인할 길이 없다. */
+    +(은행?`\n문안 은행에 조문 ${은행}개 적립 (개정본만)`:"")
     +(fails.length?"\n\n「실패한 것만 다시 시도」로 이어서 올릴 수 있습니다.":""));
 }
 $("cb-go").addEventListener("click",async()=>{
@@ -6784,8 +6806,76 @@ function artsSearch(q){
   // 사업장 이름순 → 조문 번호순: 같은 주제 조문이 사업장별로 나란히 읽힌다
   return out.sort((x,y)=>String(x.rec.site).localeCompare(String(y.rec.site))||(x.a.num-y.a.num));
 }
+/* ══════ 서고 검색 (4단계 · 설계서 §5-③) ══════
+   ⚠ 새 화면을 만들지 않는다. 조문 검색이 지금 스스로 밝히는 한계
+     (「※ N곳은 보관된 원문이 없어 검색되지 않습니다」)를 서고가 채운다.
+
+   ★ 왜 색인을 쓰나 — artsBuild 는 보관함 건마다 읽기 1회로 전문을 다 쌓는다.
+     수백 건이면 무너진다. 색인으로 «후보를 좁히고» 본문은 고른 것만 읽는다.
+   ★ 색인은 «좁히는 도구»다. 판정은 읽어 온 본문이 한다 — 아래에서 보관함과
+     똑같은 셈(stripWs 포함)으로 다시 견준다. */
+let CB_SEARCH_CACHE={};   // siteKey__revId → {site,year,arts:[…]} · 한 번 읽은 본문은 다시 안 읽는다
+let CB_SEARCH_LAST='';    // 같은 검색어로 두 번 읽지 않는다
+let CB_SEARCH_ROWS=[], CB_SEARCH_NOTE='';
+
+async function cbSearch(q){
+  CB_SEARCH_ROWS=[]; CB_SEARCH_NOTE='';
+  if(!FBDB||!FBUSER)return;
+  const lk=CB.idxLookups(q);
+  if(!lk){ CB_SEARCH_NOTE=CB.searchCaveat({noIndex:true}); return; }
+
+  /* ① 색인 읽기 — 앞머리 훑기 1회 + 앞토막 정확히 찾기. 합쳐 10회 이하 */
+  const byKw={};
+  try{
+    const root=FBDB.ref(CB.paths.idxK());
+    const pre=await root.orderByKey().startAt(lk.prefix).endAt(lk.prefixEnd).once('value');
+    Object.assign(byKw,pre.val()||{});
+    const got=await Promise.all(lk.exact.map(w=>
+      root.child(w).once('value').then(s2=>[w,s2.val()]).catch(()=>[w,null])));
+    got.forEach(pair=>{ if(pair[1])byKw[pair[0]]=pair[1]; });
+  }catch(e){ console.warn('서고 색인 읽기 실패:',e); return; }
+
+  /* ② 후보 — 여러 낱말에 걸린 것부터, 상한까지 */
+  const all=CB.idxRefs(byKw);
+  const 걸린곳=new Set();
+  Object.keys(byKw).forEach(w=>Object.keys(byKw[w]||{}).forEach(r=>걸린곳.add(r)));
+  CB_SEARCH_NOTE=CB.searchCaveat({indexed:걸린곳.size,picked:all.length,
+    capped:걸린곳.size>all.length});
+  if(!all.length)return;
+
+  /* ③ 본문 — «고른 것만». 한 번 읽은 것은 캐시에서 꺼낸다 */
+  const 목록=(typeof CB_INDEX_RAW!=='undefined'&&CB_INDEX_RAW)||{};
+  await Promise.all(all.map(async r=>{
+    const k=r.siteKey+'__'+r.revId;
+    if(CB_SEARCH_CACHE[k])return;
+    try{
+      const v=(await FBDB.ref(CB.paths.text(r.siteKey,r.revId,'after')).once('value')).val();
+      const 글=String((v&&v.t)||'');
+      CB_SEARCH_CACHE[k]={ site:(목록[r.siteKey]&&목록[r.siteKey].site)||r.siteKey,
+        year:r.revId, arts:글?parseArticles(글):[] };
+    }catch(e){ CB_SEARCH_CACHE[k]={site:r.siteKey,year:r.revId,arts:[]}; }
+  }));
+
+  /* ④ 판정은 본문이 한다 — 보관함 검색과 «똑같은» 셈 */
+  const key=stripWs(String(q||'')).toLowerCase();
+  const out=[];
+  all.forEach(r=>{
+    const c=CB_SEARCH_CACHE[r.siteKey+'__'+r.revId]; if(!c)return;
+    c.arts.forEach(a=>{
+      if((stripWs(a.title)+a.bodyNs).toLowerCase().includes(key))
+        out.push({ id:'cb:'+r.siteKey+'__'+r.revId, src:'cb',
+          rec:{site:c.site,bizno:'',file:'',savedAt:String(c.year)}, a:a });
+    });
+  });
+  CB_SEARCH_ROWS=out;
+}
 function renderArts(){
-  const q=$("arts-q").value.trim(), box=$("arts-list"), hits=artsSearch(q);
+  const q=$("arts-q").value.trim(), box=$("arts-list");
+  /* ★ 대표 결정(2026-09-07): 보관함과 서고를 «한 목록에 섞고 딱지로 가른다».
+     같은 주제 조문이 사업장별로 나란히 읽히는 것이 이 화면의 값어치다. */
+  const mine=artsSearch(q);
+  const hits=mine===null?null:mine.concat(CB_SEARCH_ROWS)
+    .sort((x,y)=>String(x.rec.site).localeCompare(String(y.rec.site))||(x.a.num-y.a.num));
   if(hits===null){
     box.innerHTML='<div style="font-size:12px;color:var(--mute);padding:14px 2px;line-height:1.8">'
       +'두 글자 이상 입력하세요.<br>예) 연차 · 사용촉진 · 수습 · 정년 · 경조 · 육아휴직 · 징계</div>';
@@ -6793,10 +6883,16 @@ function renderArts(){
   }
   if(!hits.length){ box.innerHTML='<div style="font-size:12px;color:var(--mute);padding:14px 2px">검색 결과가 없습니다.</div>'; return; }
   const sites=new Set(hits.map(h=>h.id)).size;
-  box.innerHTML=`<div style="font-size:11.5px;color:var(--mute);margin-bottom:8px">${sites}곳 · 조문 ${hits.length}건 — 줄을 누르면 조문 전문이 펼쳐집니다</div>`
+  const cbN=hits.filter(h=>h.src==="cb").length;
+  box.innerHTML=`<div style="font-size:11.5px;color:var(--mute);margin-bottom:8px">${sites}곳 · 조문 ${hits.length}건`
+    +(cbN?` <span style="color:var(--accent2)">(서고 ${cbN}건 포함)</span>`:"")
+    +` — 줄을 누르면 조문 전문이 펼쳐집니다</div>`
+    /* ⚠ 색인의 한계를 «늘» 적는다 — 안 적으면 「검색했는데 없네」로 읽힌다 */
+    +(CB_SEARCH_NOTE?`<div style="font-size:11px;color:var(--mute);margin:-4px 0 8px;line-height:1.7">※ ${escapeH(CB_SEARCH_NOTE)}</div>`:"")
     +hits.map((h,i)=>`<div class="artrow" data-i="${i}">
         <div class="ar-head">
           <span class="ar-site">${escapeH(shortSite(h.rec.site))}</span>
+          ${h.src==="cb"?`<span class="cbtag" title="서고에 담긴 회차입니다 — 직원 전체가 봅니다">🗄 서고 ${escapeH(String(h.rec.savedAt||""))}</span>`:""}
           <span class="ar-lab">${escapeH(h.a.label)}${h.a.title?"("+escapeH(h.a.title)+")":""}</span>
           <span class="ar-date">${escapeH((h.rec.savedAt||"").slice(0,10))}</span>
         </div>
@@ -6812,8 +6908,22 @@ function renderArts(){
 $("open-arts").addEventListener("click",async()=>{
   $("ov-arts").classList.add("on"); renderArts(); $("arts-q").focus();
   await artsBuild(); renderArts();
+  CB_SEARCH_LAST="";
 });
-$("arts-q").addEventListener("input",renderArts);
+/* ⚠ 서고는 Firebase 를 읽으므로 «글자마다» 부르지 않는다. 조금 모아서 한 번.
+   보관함 쪽(메모리)은 즉시 다시 그려 손맛을 잃지 않는다. */
+let CB_SEARCH_T=0;
+$("arts-q").addEventListener("input",()=>{
+  renderArts();
+  clearTimeout(CB_SEARCH_T);
+  CB_SEARCH_T=setTimeout(async()=>{
+    const q=$("arts-q").value.trim();
+    if(q===CB_SEARCH_LAST)return;
+    CB_SEARCH_LAST=q;
+    await cbSearch(q);
+    if($("arts-q").value.trim()===q)renderArts();   // 그 사이 더 쳤으면 버린다
+  },260);
+});
 /* ══════ [↗ 새 창] — 비교용 화면을 진짜 브라우저 창으로 ══════
    모니터가 여러 대면 창을 끌어다 나란히 놓고 비교한다.
    편집 요소(입력창·선택 등)는 현재 값 그대로 글자로 굳힌다(읽기 전용 사본). */
