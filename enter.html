@@ -889,6 +889,8 @@ body.portal-mode #moreFab{display:flex;}
         <button class="eye" id="eyeBtn" type="button" title="비밀번호 표시" aria-label="비밀번호 표시" aria-pressed="false">👁</button>
       </div>
       <div id="capsWarn" style="display:none;color:#dc2626;font-size:.76rem;font-weight:600;margin:6px 2px 0;">⚠️ 대문자 잠금(Caps Lock)이 켜져 있습니다</div>
+      <!-- 비밀번호 칸의 «안 보이는» 실수(한글 입력기·앞뒤 공백) 자리 — 대문자 잠금과 따로 둔다 -->
+      <div id="pwHintMsg" style="display:none;color:#dc2626;font-size:.76rem;font-weight:600;margin:6px 2px 0;"></div>
 
       <div class="row">
         <div class="ck">
@@ -1412,6 +1414,30 @@ body.portal-mode #moreFab{display:flex;}
     this.title = shown ? '비밀번호 숨기기' : '비밀번호 표시';
   });
 
+  /* ── 비밀번호 칸의 «안 보이는» 실수 (2026-09-07) ──────────────────────────
+     비밀번호는 점으로 가려져 무엇을 쳤는지 눈으로 못 본다. 처음 쓰는 PC 에서
+     가장 잦은 둘이 그래서 끝까지 안 보인다:
+       ㉠ 한/영이 한글에 있어 한글이 들어간 것
+       ㉡ 붙여넣기에 앞뒤 공백이 딸려 온 것
+     ⚠ 공백을 «몰래 지우지 않는다» — 진짜로 공백이 든 비밀번호를 조용히 바꿔 버리면
+       그때는 왜 안 되는지 아무도 못 찾는다. 알려만 주고 고치는 것은 사람이 한다. */
+  function pwHint(pw){
+    var s = String(pw || '');
+    if(/[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(s)) return ' — 비밀번호에 한글이 들어 있습니다. 한/영 키를 확인하세요.';
+    if(s !== s.trim()) return ' — 비밀번호 앞뒤에 공백이 있습니다.';
+    return '';
+  }
+  /* ⚠ 대문자 잠금 알림과 «자리를 나눠 쓰지 않는다» — 한 칸을 둘이 쓰면
+     나중에 쓴 쪽이 앞의 글을 지워, 대문자 잠금이 켜져 있어도 딴 말이 뜬다. */
+  (function(){
+    var pw = $('loginPw'), box = $('pwHintMsg');
+    pw.addEventListener('input', function(){
+      var h = pwHint(pw.value);
+      box.textContent = h ? ('⚠️' + h) : '';
+      box.style.display = h ? 'block' : 'none';
+    });
+  })();
+
   // ── Caps Lock 경고 ──
   (function(){
     var pw = $('loginPw'), warn = $('capsWarn');
@@ -1613,10 +1639,19 @@ body.portal-mode #moreFab{display:flex;}
         showErr(wantsAutoLogin
           ? '이 브라우저에서는 자동로그인을 저장할 수 없습니다. 삼성 인터넷 또는 Chrome에서 다시 시도해 주세요.'
           : '로그인 세션을 만들 수 없습니다. 브라우저의 쿠키·저장공간 허용 여부를 확인해 주세요.');
-      } else if(code === 'auth/wrong-password' || code === 'auth/invalid-credential'){
-        showErr('비밀번호가 틀렸습니다.');
-      } else if(code === 'auth/user-not-found'){
-        showErr('계정을 찾을 수 없습니다. 관리자에게 문의하세요.');
+      } else if(code === 'auth/wrong-password' || code === 'auth/invalid-credential'
+             || code === 'auth/invalid-login-credentials' || code === 'auth/user-not-found'){
+        /* ★★ 여기서 «비밀번호가 틀렸다»고 단정하면 안 된다 (2026-09-07).
+           파이어베이스는 「이 이메일이 있는지 없는지」를 밖으로 안 알린다(계정 캐내기 막기).
+           그래서 SDK 10 은 «없는 계정»도 «틀린 비밀번호»도 똑같이
+           auth/invalid-credential 하나로 돌려준다 — auth/user-not-found 는 이제 안 온다.
+           그런데 화면은 늘 「비밀번호가 틀렸습니다」라고만 말했다. 아이디가 잘못 들어갔을 때
+           비밀번호만 몇 번이고 다시 치게 만드는 안내다 — 늘 쓰던 PC 는 아이디가 저장돼 있어
+           안 겪고, «처음 쓰는 PC»에서만 겪는다(대표 제보 2026-09-07 외부 컴퓨터).
+           ⚠ 그래서 «어느 계정으로 시도했는지»를 함께 보인다. 그것 하나로 아이디 오타가
+             그 자리에서 드러난다 — 사람이 친 것을 돌려 보여 주는 것이라 새로 새는 것은 없다. */
+        showErr('아이디 또는 비밀번호가 맞지 않습니다. (시도한 계정: ' + email + ')'
+          + pwHint(pw));
       } else if(code === 'auth/too-many-requests'){
         showErr('로그인 시도가 많습니다. 잠시 후 다시 시도하세요.');
       } else if(code === 'auth/invalid-email'){
