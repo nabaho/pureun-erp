@@ -273,6 +273,17 @@
        ⚠ 저장되는 것에는 그 칸들이 «안 들어간다» — putEntity 는 label 만 담는다.
          문제는 저장이 아니라 «내려받는 것»이다(요금 + 화면 메모리).
        ⚠ 언젠가 얇은 거울(erpCoId·company·docs 만)을 만들면 heavy 를 뗄 수 있다. */
+    /* ── 얇은 거울 (4-D, 2026-09-05) ──
+       ★ 거울을 «읽는 쪽»이 만든다. 기업정보함의 쓰는 자리마다 거울을 갱신하게 하면
+         자리가 두 파일에 흩어져 있어 하나만 놓쳐도 조용히 낡는다 — 그 길을 안 골랐다.
+         대신 무거운 자리를 «한 번» 읽은 김에 거울을 떠 두고, 다음부터는 이것만 읽는다.
+       ⚠ 그래서 거울은 «낡을 수 있다». 숨기지 않는다 — 언제 뜬 것인지 화면이 말하고,
+         새로 뜨려면 무거운 자리를 켜면 된다.
+       ⚠ 담는 것은 관계에 쓰는 셋뿐이다(회사명·확정열쇠·서류목록).
+         계좌번호·예금주·매출액·생년월일은 «애초에 안 담긴다». */
+    cards_ontidx:{program:'cards',strategy:'remote',path:'pucards/ontIdx',parser:'coIdx',
+      gives:'회사의 서류 관계(얇은 거울)'},
+    cards_ontidx_meta:{program:'cards',strategy:'remote',path:'pucards/ontIdxMeta',parser:'idxMeta'},
     cards_coinfo:{program:'cards',strategy:'remote',path:'pucards/coInfo',parser:'coInfo',
       heavy:'기업 상세 4,158곳 전문 — 계좌번호·예금주·매출액·생년월일이 함께 내려온다',
       uses:['erpCoId','company','docs'], gives:'회사의 서류 관계(Document → Organization)'},
@@ -516,6 +527,19 @@
         if(ds&&s0) addEdge(edges,ds,'attachedTo',s0,key,coKey+'/'+dk,1);
       });
     });
+    /* ── 얇은 거울 읽기 (4-D) ── coInfo 파서와 «같은 관계»를 낸다.
+       ⚠ 둘이 다른 관계를 내면 거울을 켰다 껐다 할 때 관계망이 흔들린다. */
+    else if(adapter.parser==='coIdx') entries(value).forEach(function(p){
+      var r=p[1]||{}, coKey=clean(p[0]);
+      var rec={companyId:clean(r.e)};
+      var s0=entity('Organization','coinfo:'+coKey,clean(r.c)||coKey);
+      entries(r.d).forEach(function(d){
+        var dk=clean(d[0]), doc=d[1]||{};
+        var ds=entity('Document',coKey+'/'+dk,clean(doc.n)||clean(doc.k)||dk,rec);
+        if(ds&&s0) addEdge(edges,ds,'attachedTo',s0,key,coKey+'/'+dk,1);
+      });
+    });
+    else if(adapter.parser==='idxMeta') return {records:(value&&value.at)?1:0,entities:0};
     /* ── 근로자 정보함 (대표 지시 2026-09-01·02) ──
        사람↔서류 관계를 만들 수 있는 유일한 자리다. 사람은 이알피 사건에서 오고,
        여기에는 「어느 사진 서류가 누구 것인가」만 있다.
@@ -915,6 +939,37 @@
       sourceMutation:'never',readOnlyDerived:true};
   }
 
+  /* ══════ 얇은 거울 뜨기 (4-D, 2026-09-05) ══════
+     무거운 자리(coInfo 4,158곳)를 한 번 읽은 «그 값»에서 관계에 쓰는 셋만 뽑는다.
+     ⚠ 이 함수도 쓰지 않는다 — 무엇을 어디에 쓸지 적어서 돌려줄 뿐이다.
+     ⚠ 200곳씩 모아 쓴다(실시간DB 16MB · 2026-08-16 대량 쓰기 사고).
+     ⚠ 계좌·예금주·매출액·생년월일은 «담을 자리 자체가 없다» — 셋만 뽑는다. */
+  var ONT_IDX_CHUNK=200;
+  function mirrorPlan(coInfoValue, options){
+    options=options||{};
+    var rows=[], at=Number(options.at)||Date.now();
+    entries(coInfoValue).forEach(function(p){
+      var k=clean(p[0]), r=p[1]||{};
+      if(!k||/[.#$\[\]\/]/.test(k)) return;
+      var d={};
+      entries(r.docs).forEach(function(x){
+        var dk=clean(x[0]), doc=x[1]||{};
+        if(!dk||/[.#$\[\]\/]/.test(dk)) return;
+        d[dk]={n:clean(doc.docName), k:clean(doc.kind)};
+      });
+      rows.push({key:k, value:{c:clean(r.company), e:clean(r.erpCoId), d:d}});
+    });
+    var writes=[];
+    for(var i=0;i<rows.length;i+=ONT_IDX_CHUNK){
+      var part={};
+      rows.slice(i,i+ONT_IDX_CHUNK).forEach(function(x){ part['ontIdx/'+x.key]=x.value; });
+      writes.push({path:'', value:part, merge:true});
+    }
+    /* ★ 「언제 뜬 것인가」는 «맨 마지막» — 반쯤 뜬 거울을 새것으로 읽으면 안 된다 */
+    writes.push({path:'ontIdxMeta', value:{at:at, n:rows.length}, last:true});
+    return {root:'pucards', writes:writes, rows:rows.length, at:at};
+  }
+
   /* 포털 타일과 등록부를 맞춘다.
      ⚠ 예전에는 «개수가 같은가»를 봤다. 그러면 타일 없는 프로그램(근로자 전용·공개 화면)을
        하나 넣는 순간 검사가 깨져, 등록을 «안 하는» 쪽이 쉬워진다.
@@ -1019,7 +1074,7 @@
     companyNumberHead:companyNumberHead, companyNumberBody:companyNumberBody, formatCompanyNumber:formatCompanyNumber,
     parseCompanyNumber:parseCompanyNumber, companyNumberOrder:companyNumberOrder, companyNumberTargets:companyNumberTargets,
     validateCompanyNumbers:validateCompanyNumbers, companyNumberHistory:companyNumberHistory,
-    audit:audit, auditIntegrated:auditIntegrated, uploadPlan:uploadPlan, ONT_ROOT:ONT_ROOT, getReadPlan:getReadPlan, searchEntities:searchEntities, entityConnections:entityConnections,
+    audit:audit, auditIntegrated:auditIntegrated, uploadPlan:uploadPlan, ONT_ROOT:ONT_ROOT, mirrorPlan:mirrorPlan, getReadPlan:getReadPlan, searchEntities:searchEntities, entityConnections:entityConnections,
     organization360:organization360, validateCompanyLink:validateCompanyLink, companyLinkCandidates:companyLinkCandidates,
     validateWorkReferences:validateWorkReferences, workReferenceCandidates:workReferenceCandidates, validateWorkBatch:validateWorkBatch,
     validateHanaSourceBatch:validateHanaSourceBatch,

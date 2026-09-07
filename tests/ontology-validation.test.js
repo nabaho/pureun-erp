@@ -44,7 +44,10 @@ function harness(report){
     Blob:class {constructor(parts){downloads.push(JSON.parse(parts.join('')));}},
     URL:{createObjectURL(){return 'blob:test';},revokeObjectURL(){}},
     document:{createElement(){return {click(){}};}},
-    todayStr(){return '2026-09-03';},setTimeout(){},showToast(){}
+    todayStr(){return '2026-09-03';},setTimeout(){},showToast(){},
+    /* 2026-09-05 4-D — 화면 밖에 둔 값 셋. 이 검사는 «검토 손잡이»만 재므로 빈 값으로 세운다.
+       ⚠ 안 세우면 그리는 도중에 멎어, 정작 재려던 것이 아니라 이것 때문에 깨진다. */
+    _ontCurrentGen:'', _ontHeavyRaw:null, _ontIdxAt:0
   };
   vm.createContext(context);
   new vm.Script(panel).runInContext(context);
