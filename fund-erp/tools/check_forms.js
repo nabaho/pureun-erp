@@ -39,6 +39,11 @@ global.funds = {};
   gF('_isRateRow'), gF('stripBaked'), gF('korWon'), gF('_docRok'),
   gF('_dotDate'), gF('fillContribDoc'), gF('fillChecklistDoc'), gF('budgetOf'), gF('_hasBudget'), gF('_reserveRate'), gF('_bizFinOf'),
   gF('bizplanRows'), gF('bizplanBS'), gF('fillBizplanDoc'), gF('fillCommittee'),
+  /* hwpFormHTML 이 끝에서 fillDerived 를, 설립 출연확인서에서 fillFoundContribDoc 를 부른다(2026-09-07).
+     여기 없으면 「fillDerived is not defined」로 이 검사가 통째로 죽는다 — 서식이 안 채워지는 게 아니라
+     하네스가 낡은 것인데 그렇게 읽힌다. */
+  gV('_K'), gF('_siteWrep'), gF('_prepCommittee'), gF('_dashPhone'), gF('_prepDirectors'), gF('_bizTotals'),
+  gF('fillDerived'), gF('fillFoundContribDoc'),
   gF('fillRoster'), gF('fillSubsidyDoc'), gF('hwpFormHTML')].join('\n'));
 
 let bad = 0;

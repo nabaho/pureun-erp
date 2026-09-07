@@ -3787,6 +3787,9 @@ function hwpFormHTML(kind,f,sites){
      게다가 출연확인서는 장을 «늘린다» — 출연한 사업장 수만큼. */
   if(kind==='sub_contrib') fillContribDoc(d,f,sites);
   if(kind==='sub_checklist') fillChecklistDoc(d,f,sites);
+  /* 설립 때의 기금출연확인서도 사업장마다 한 장이다 — 원본은 한 장에 「0000(주) 대표이사 0 0 0」
+     자리표만 있어, 그대로 두면 사업장이 몇이든 빈 한 장이 나갔다. */
+  if(kind==='contrib') fillFoundContribDoc(d,f,sites);
   stripBaked(d);
   /* 위원 격자를 «먼저» 채운다 — 그 줄에 표를 남겨야 아래 라벨 채우기가 비껴간다 */
   fillCommittee(d,f);
@@ -3839,7 +3842,160 @@ function hwpFormHTML(kind,f,sites){
       if(nx && !(nx.textContent||'').trim()) nx.textContent=_b.name;
     }
   });
+  /* 라벨 옆 칸 방식으로는 못 닿는 자리 — 줄글 속의 밑줄, 라벨과 한 칸에 든 값.
+     서식 18종을 «자료가 다 있는 기금»으로 그려 보고 남은 빈 자리를 하나씩 이었다. */
+  fillDerived(d,f,sites,kind);
   return "<p class='note'>※ <b>원본 서식 그대로 변환</b>(03_과거자료 .hwp) — 라벨 옆 칸은 기금 데이터 자동 채움. 빈칸은 수기 기입. 이 창에서 바로 수정하세요.</p>"+d.innerHTML;
+}
+/* ══ 줄글 속 빈 자리 채우기 ══
+   FORM_FILL 은 «라벨 칸 → 옆 칸»만 채운다. 그런데 서식에는 라벨이 없는 자리가 많다 —
+   「기본재산은 금 ＿＿원」처럼 문장 속에 든 밑줄, 「이사 ＿＿ (인)」처럼 라벨과 한 칸에 든 값.
+   서식 18종을 «자료가 다 있는 기금»으로 실제로 그려 보고(2026-09-06), 그래도 비는 자리
+   52개를 세 갈래로 갈랐다: 자료는 있는데 배선이 없는 것 · 자료 자체가 없는 것 · 채우면 안 되는 것.
+   여기는 첫째 갈래다.
+
+   ⚠ 규칙마다 «앞뒤 글»로 자리를 못 박는다. 밑줄만 보고 채우면 엉뚱한 자리에 들어간다 —
+     「이사 ＿＿」는 임원란·신청인란·위임장에 다 나온다.
+   ⚠ 값이 없으면 «손대지 않는다». 빈 밑줄이 틀린 값보다 낫다(관청에 나가는 서류다).
+   ⚠ 글자 마디(text node) 단위로 바꾼다. 태그 사이에 걸친 글은 그냥 둔다 — 못 채우는 것이
+     구조를 깨는 것보다 낫다.
+   ⚠ 「채우면 안 되는」 자리는 규칙을 두지 않는다: 위임장(위임을 안 한다), 임대인(남의 것),
+     보증서면의 지배인, 접수번호·처리기간(관청 몫), 서명·인감. */
+function _dashPhone(ph){ var m=String(ph||'').replace(/\s/g,'').match(/^(\d{2,3})-(\d{3,4})-(\d{4})$/); return m?m[0]:''; }
+function _prepDirectors(f){
+  /* 등기 서식의 「이사」 차례 — 대표권 있는 이사(이사장)가 먼저, 그다음 나머지 이사. 감사는 이사가 아니다. */
+  var b=_boss(f), rest=_officersOf(f).filter(function(o){ var r=String(o.role||''); return /이사/.test(r)&&!/감사|이사장/.test(r); });
+  return (b&&b.name?[b]:[]).concat(rest);
+}
+function _bizTotals(f){
+  /* 회의록의 「손익예산 : 수익·비용·수지차익」은 사업계획서 손익예산의 합이다 — 같은 표에서 읽는다 */
+  var R=null; try{ R=bizplanRows(f,S.year); }catch(e){}
+  if(!R) return null;
+  var pick=function(lbl){ var r=R.filter(function(x){return x[0]===lbl;})[0]; return r?(num(r[1])||0)+(num(r[2])||0):0; };
+  var rev=pick('1.사업수익')+pick('6.사업외수익');
+  var exp=pick('2.고유목적사업비용')+pick('4.일반관리비')+pick('7.사업외비용');
+  return {rev:rev, exp:exp, net:pick('10.당기순이익')};
+}
+var _K=function(n){ return Math.round((num(n)||0)/1000).toLocaleString(); };   // 천원
+function fillDerived(root,f,sites,kind){
+  var b=_boss(f)||{}, boss=(b.name||'').trim(), amt=num(f.contribution_total)||0;
+  var yr=S.year, today=new Date(), dirs=_prepDirectors(f);
+  var todayDot=today.getFullYear()+'. '+(today.getMonth()+1)+'. '+today.getDate()+'.';
+  var todayKo=today.getFullYear()+'년 '+(today.getMonth()+1)+'월 '+today.getDate()+'일';
+  var inkaD=f.inka_date?_dotDate(f.inka_date):'', meetD=f.meeting_date?_dotDate(f.meeting_date):'';
+  var ph=_dashPhone(f.phone), ok=function(v){ return v!=null&&String(v).trim()!==''; };
+  var W='[＿_]{3,}', W6='[＿_]{6}';
+  /* ⚠ 원본 글의 「금 액」「본 점」 사이는 보통 공백이 아니라 붙임공백(\u00a0)이다.
+       보통 공백으로 찍은 규칙은 눈으로는 같아 보여도 «하나도» 안 맞았다(실제로 그랬다).
+       규칙의 공백을 모두 \s* 로 바꿔 어느 쪽이든 맞게 한다. */
+  var _rx=function(p){ return new RegExp(String(p).replace(/ /g,'\\s*')); };
+  var nSide=function(side){ return _prepCommittee(f,side).length; };
+  var wk=nSide('근로자측'), er=nSide('사용자측');
+  var tot=(kind==='minutes')?_bizTotals(f):null;
+  var pur=num((budgetOf(S.fundId,yr)||{}).exp_purpose)||0;
+  var dirI=0, addrI=0;
+  /* [어느 서식, 무엇을 찾나, 무엇으로 바꾸나(빈 값이면 손대지 않음)] */
+  var RULES=[
+    ['minutes', _rx('가\\. 이사 선임 : 각 '+W+' 명'), function(){ return (wk&&wk===er)?'가. 이사 선임 : 각 '+wk+' 명':''; }],
+    ['minutes', _rx('가\\. 금 액 : '+W+'원'), function(){ return amt?'가. 금 액 : '+amt.toLocaleString()+'원':''; }],
+    ['minutes', _rx('다\\. 기금사용 : '+W+'원\\(당해연도 출연금의 80%\\)'), function(){ return amt?'다. 기금사용 : '+Math.round(amt*0.8).toLocaleString()+'원(당해연도 출연금의 80%)':''; }],
+    ['minutes', _rx(W+'년 사업계획\\(안\\)'), function(){ return yr+'년 사업계획(안)'; }],
+    ['minutes', _rx(W+'년도 사업계획\\(안\\)'), function(){ return yr+'년도 사업계획(안)'; }],
+    ['minutes', _rx('가\\. 손익예산 : 수익 '+W+'천원, 비용 '+W+'천원, 수지차익 '+W+'천원'),
+      function(){ return tot?'가. 손익예산 : 수익 '+_K(tot.rev)+'천원, 비용 '+_K(tot.exp)+'천원, 수지차익 '+_K(tot.net)+'천원':''; }],
+    ['minutes', _rx('다\\. 목적사업 : '+W+'천원'), function(){ return pur?'다. 목적사업 : '+_K(pur)+'천원':''; }],
+    ['bizplan', _rx('Ⅱ\\. '+W+'년 예산편성'), function(){ return 'Ⅱ. '+yr+'년 예산편성'; }],
+    ['reg_apply', _rx('인가서도달 연월일 : '+W), function(){ return inkaD?'인가서도달 연월일 : '+inkaD:''; }],
+    ['reg_apply', _rx('기본재산은 금 '+W+'원'), function(){ return amt?'기본재산은 금 '+amt.toLocaleString()+'원':''; }],
+    ['reg_apply', _rx('제한규정 : 이사 '+W6), function(){ return boss?'제한규정 : 이사 '+boss:''; }],
+    ['reg_apply', _rx('이사 '+W6+' \\('), function(){ var o=dirs[dirI]; if(!o||!o.name) return ''; dirI++; return '이사 '+o.name+' ('; }],
+    ['reg_apply', _rx('주소 : '+W6+'(\\d+호)?'), function(){ var o=dirs[addrI++]; return '주소 : '+((o&&o.addr)?o.addr:'＿＿＿＿＿＿'); }],
+    ['reg_apply', _rx('본 점 '+W6), function(){ return f.address?'본 점 '+f.address:''; }],
+    ['reg_apply', _rx('이사 성 명 '+W6+' \\(인\\)'), function(){ return boss?'이사 성 명 '+boss+' (인)':''; }],
+    ['reg_apply', _rx('\\(전화 :[＿_]{2}-[＿_]{4}-[＿_]{4}\\)'), function(){ return ph?'(전화 :'+ph+')':''; }],
+    ['reg_apply', _rx('주 소 '+W6), function(){ return b.addr?'주 소 '+b.addr:''; }],
+    /* 「주소 : ＿＿＿＿＿＿1004호」 — 남의 주소 끝 «호수»가 글자로 남아, 채우면 우리 주소 뒤에
+       「1004호」가 붙어 나갔다(실제로 그랬다). 밑줄과 다른 글자마디에 있어 위 규칙이 못 물어,
+       제한규정 바로 앞의 호수만 따로 걷는다. ⚠ 「제7호서식」「제1호 의안」의 호는 건드리지 않는다. */
+    ['reg_apply', _rx('^\\d+호(제한규정)'), function(){ return '제한규정'; }],
+    /* 원본에 박힌 «남의 관할 등기소» — 밑줄이 아니라 글자로 남아 있어 걷어내기가 못 잡았다 */
+    ['reg_apply', /서울남부지방법원 귀중/, function(){ return (f.registry_office||'＿＿＿＿＿＿')+' 귀중'; }],
+    ['reg_accept', _rx('본인은 '+W+' '), function(){ return meetD?'본인은 '+meetD+' ':''; }],
+    ['reg_accept', _rx('서기 '+W), function(){ return '서기 '+todayDot; }],
+    ['reg_roster', _rx('대표자 : '+W6+' \\(법인인감\\)'), function(){ return boss?'대표자 : '+boss+' (법인인감)':''; }],
+    ['reg_seal', _rx('^이사 '+W6+'$'), function(){ return boss?'이사 '+boss:''; }],
+    ['reg_sealpaper', _rx('자격 및 성명 : 이사 '+W6), function(){ return boss?'자격 및 성명 : 이사 '+boss:''; }],
+    ['reg_license', _rx('^[＿_]{2}-[＿_]{4}-[＿_]{4}$'), function(){ return ph; }],
+    ['reg_license', _rx('신고인 '+W6+'\\(서명'), function(){ return boss?'신고인 '+boss+'(서명':''; }],
+    ['tax_bizreg', _rx('^'+W6+' \\(공동대표\\)'), function(){ return boss?boss+' (공동대표)':''; }],
+    ['tax_bizreg', _rx('\\(사업장\\) [＿_]{2}-[＿_]{4}-[＿_]{4}'), function(){ return ph?'(사업장) '+ph:''; }],
+    ['tax_bizreg', _rx('신 청 인 '+W6+' \\(인\\)'), function(){ return boss?'신 청 인 '+boss+' (인)':''; }],
+    ['tax_sublease', _rx('^'+W+'년 월 일$'), function(){ return todayKo; }],
+    ['tax_hometax', _rx('이사 '+W6+' \\(서명 또는 인\\)'), function(){ return boss?'이사 '+boss+' (서명 또는 인)':''; }],
+  ];
+  /* 취임승낙서 — 「대표권있는 이사」 장만 이사장 이름을 넣는다. 다른 이사의 장은 이사마다 따로라 비워 둔다. */
+  var walker=document.createTreeWalker(root,4/*TEXT*/,null,false), n, nodes=[];
+  while((n=walker.nextNode())) nodes.push(n);
+  nodes.forEach(function(tn){
+    var t=tn.nodeValue; if(!t) return;
+    /* 「1004호」 — 남의 주소 끝 호수가 «혼자 선 글자마디»로 남아 있다. 앞 규칙은 밑줄과 같은
+       마디에서만 물어 이걸 못 걷었고, 우리 주소 뒤에 「…대로 11004호」로 붙어 나갔다(실제로 그랬다).
+       ⚠ 「제7호서식」「제1호 의안」은 마디에 다른 글자가 있어 여기 안 걸린다. */
+    if(kind==='reg_apply'&&/^\s*\d+호\s*$/.test(t)){ tn.nodeValue=''; return; }
+    if(!/[＿_]{2,}|서울남부지방법원/.test(t)) return;
+    var para=(tn.parentNode&&tn.parentNode.textContent)||'';
+    RULES.forEach(function(r){
+      if(r[0]!==kind) return;
+      var m=t.match(r[1]); if(!m) return;
+      var v=r[2](m); if(!ok(v)) return;
+      t=t.replace(r[1],v);
+    });
+    if(kind==='reg_accept'&&/대표권있는/.test(para)&&boss) t=t.replace(_rx('위 이사 '+W6+' \\(개인인감\\)'),'위 이사 '+boss+' (개인인감)');
+    if(t!==tn.nodeValue) tn.nodeValue=t;
+  });
+  /* 라벨과 값이 «옆 칸»인데 값 칸에 단위가 박힌 자리 — FORM_FILL 은 빈 칸만 채워 못 닿는다 */
+  if(kind==='tax_bizreg'&&amt){
+    /* 「설립등기일 현재 기본 재무상황」 — 설립등기신청서에 「기본재산은 금 N원」이라 적은 그 재산이
+       곧 설립 시점의 자산이다. 자산 계·유동자산(현금) 두 칸만 그 값으로 채운다.
+       ⚠ 고정자산·부채·종업원수는 «자료가 없다» — 0 을 지어 넣지 않고 비워 둔다. */
+    var trs=[].slice.call(root.querySelectorAll('tr'));
+    trs.forEach(function(tr,i){
+      var h=[].slice.call(tr.children).map(function(c){return (c.textContent||'').replace(/\s/g,'');});
+      if(h[0]!=='자산계'||h.indexOf('종업원수')<0||!trs[i+1]) return;
+      var v=[].slice.call(trs[i+1].children);
+      [0,1].forEach(function(k){ var c=v[k]; if(c&&/^[＿_]+천원$/.test((c.textContent||'').trim())) c.textContent=_K(amt)+'천원'; });
+    });
+  }
+  if(kind==='tax_bizreg'||kind==='tax_lease'){
+    [].slice.call(root.querySelectorAll('td')).forEach(function(td){
+      var lbl=(td.previousElementSibling&&td.previousElementSibling.textContent||'').replace(/\s/g,'');
+      var t=(td.textContent||'').trim();
+      if(kind==='tax_bizreg'&&lbl==='자본금'&&/^[＿_]+천원$/.test(t)&&amt) td.textContent=_K(amt)+'천원';
+      else if(kind==='tax_bizreg'&&lbl==='사업연도'&&/^[＿_]+년도$/.test(t)) td.textContent=yr+'년도';
+      else if(kind==='tax_lease'&&lbl==='법인번호'&&/^[＿_]{6}-[＿_]{7}$/.test(t)&&f.corp_reg_no) td.textContent=f.corp_reg_no;
+    });
+  }
+}
+/* 설립 때의 기금출연확인서 — 사업장마다 한 장. 원본 문구를 그대로 쓰고 자리표만 채운다. */
+function fillFoundContribDoc(root,f,sites){
+  var list=(sites||[]).filter(function(x){ return (x.status||'active')!=='closed'&&(num(x.contrib)||0)>0; });
+  var today=new Date(), dt=today.getFullYear()+'. '+(today.getMonth()+1)+'. '+today.getDate()+'.';
+  var one=function(c){
+    var d=document.createElement('p'); d.setAttribute('data-kept','1');
+    var a=c?num(c.contrib):0;
+    d.innerHTML='기 금 출 연 확 인 서<br>금&nbsp; 액 : &nbsp;'
+      +(a?esc(korWon(a))+'원정(￦ '+Number(a).toLocaleString()+')':BAKE_BLANK+'(￦ '+BAKE_BLANK+')')
+      +'<br>상기 금액은 '+esc(f.name||'')+'법인이 고용노동부 인가를 득하여 설립등기 후 예금계좌를 개설할 경우, 10일 이내에 '
+      +esc(f.name||'')+'에 출연할 것을 확인함.<br>'+dt+'<br>'
+      +(c&&c.name?esc(c.name):BAKE_BLANK)+' 대표이사 '+(c&&c.ceo?esc(c.ceo):BAKE_BLANK)+' (인)';
+    return d;
+  };
+  var made=list.length?list.map(one):[one(null)];
+  while(root.firstChild) root.removeChild(root.firstChild);
+  if(!list.length){ var w=document.createElement('p'); w.className='note';
+    w.textContent='※ 기본 출연금이 적힌 참여사업장이 없어 금액을 채우지 못했습니다 — 참여사업장 › 기본 출연금을 넣으면 사업장마다 한 장씩 만들어집니다.';
+    root.appendChild(w); }
+  made.forEach(function(x){ root.appendChild(x); });
 }
 /* 감사 대상 회계연도 — 첫해는 «설립인가일부터»다(T공동 2019: 2019.08.14.~12.31.).
    1월 1일로 적으면 법인이 없던 기간까지 감사한 것이 되어 사실과 다르다. */
