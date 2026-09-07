@@ -15,7 +15,7 @@
 <script src="js/pu-version.js?v=3"></script>
 <script src="js/pu-backup.js?v=1"></script>
 <script src="js/pu-rules-history.js?v=3"></script>
-<script src="js/pu-rules-casebook.js?v=5"></script>
+<script src="js/pu-rules-casebook.js?v=6"></script>
 <script src="vendor/xlsx.full.min.js"></script>
 <script src="vendor/pako.min.js"></script>
 <script src="vendor/pdf.min.js"></script>
@@ -1038,6 +1038,8 @@ table.daejo td.dj2{padding:0}
           <option value="30-99">30~99명</option>
           <option value="100-">100명 이상</option>
         </select>
+        <label class="stbtn" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer" title="마지막 개정 뒤에 시행된 규칙이 있는 사업장만 봅니다">
+          <input type="checkbox" id="cbq-since" style="margin:0"> 손봐야 할 곳만</label>
         <button class="stbtn" id="cb-xlsx" title="지금 보고 있는 줄을 그대로 실적표로 내보냅니다">📊 실적표</button>
         <button class="stbtn" id="cb-tally" title="담긴 서류 가운데 글이 없는(스캔) 것이 몇 건인지 한 번 세어 봅니다">🔍 글 없음 세기</button>
         <button class="stbtn" id="cb-reload">↻ 다시 읽기</button>
@@ -1047,7 +1049,9 @@ table.daejo td.dj2{padding:0}
       <div id="cb-tally-box" style="display:none;margin-bottom:10px;padding:11px 13px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;font-size:12.5px;line-height:1.8;color:#1e40af"></div>
       <table class="arch"><thead><tr>
         <th>사업장</th><th class="cbph" style="width:76px">업종</th><th class="cbph" style="width:60px">규모</th>
-        <th style="width:46px">회차</th><th style="width:56px">최근</th><th class="cbph" style="width:78px">담당</th>
+        <th style="width:46px">회차</th><th style="width:56px">최근</th>
+        <th style="width:62px" title="그 회차 뒤에 시행돼 «이미 적용 중»인 규칙 수 — 아직 반영 못 했을 수 있습니다">그 뒤 시행</th>
+        <th class="cbph" style="width:78px">담당</th>
       </tr></thead><tbody id="cb-list-body"></tbody></table>
       <div class="empty" id="cb-list-empty" style="display:none"></div>
       <p class="muted" id="cb-list-foot" style="font-size:11px;margin:9px 0 0;line-height:1.6"></p>
@@ -5646,7 +5650,16 @@ function cbQuery(){
     if(b!=="")q.sizeMax=Number(b); }
   return q;
 }
-function cbVisible(){ return CB.filterIndex(CB_IDX,cbQuery()); }
+/* 규칙집의 시행일만 견주면 나온다 — 본문을 안 읽는다(층을 안 건드린다) */
+let CB_DATED=null;
+function cbDated(){ if(!CB_DATED)CB_DATED=CB.datedRules(RULES); return CB_DATED; }
+function cbVisible(){
+  const rows=CB.filterIndex(CB_IDX,cbQuery());
+  const q=cbQuery();
+  const 붙임=CB.markSince(rows,cbDated());
+  /* 「손봐야 할 곳만」 — 그 뒤 시행된 것이 있는 사업장만 남긴다 */
+  return $("cbq-since").checked?붙임.filter(r=>r.sinceCount>0):붙임;
+}
 function cbRenderIndex(){
   const rows=cbVisible();
   $("cb-list-body").innerHTML=rows.map(r=>
@@ -5664,6 +5677,14 @@ function cbRenderIndex(){
     +`<td class="cbph" style="font-size:11.5px">${r.size==null?'<span class="muted">—</span>':escapeH(r.size+"명")}</td>`
     +`<td style="font-size:11.5px"><b>${r.revCount}</b></td>`
     +`<td style="font-size:11.5px">${escapeH(r.lastYear||"—")}</td>`
+    /* ★ 「위반」이라 말하지 않는다 — 서고의 회차는 «그때 우리가 낸 것»이지
+         «지금 그 회사가 쓰는 것»이 아니다. 셈만 보이고 판단은 사람이 한다.
+       ⚠ 연도를 모르면 «0 이 아니라 물음표» — 0 으로 적으면 「다 반영됐다」로 읽힌다. */
+    +`<td style="font-size:11.5px">${r.sinceCount==null
+        ?'<span class="muted" title="마지막 개정 연도를 몰라 셀 수 없습니다">?</span>'
+        :(r.sinceCount>0
+          ?`<b style="color:#854d0e" title="${escapeH(r.since.map(x=>x.name).join(" · "))}">${r.sinceCount}</b>`
+          :'<span class="muted">0</span>')}</td>`
     +`<td class="cbph" style="font-size:11.5px">${escapeH(r.updatedBy||"—")}</td></tr>`; })(r)).join("");
   const 빔=!rows.length;
   $("cb-list-empty").style.display=빔?"block":"none";
@@ -5675,6 +5696,11 @@ function cbRenderIndex(){
     ?`사업장 <b>${rows.length}</b>곳`+(rows.length!==CB_IDX.length?` (전체 ${CB_IDX.length}곳 중)</b>`:"")
       +` · 개정 <b>${rows.reduce((a,r)=>a+r.revCount,0)}</b>회차`
       +`<br>줄을 누르면 그 사업장의 회차 이력이 열립니다.`
+      /* ★★ 「위반」이라 말하지 않는 까닭을 «화면에» 적는다 — 숫자만 보면 그렇게 읽힌다 */
+      +`<br><b>그 뒤 시행</b> — 그 회차 뒤에 시행돼 «이미 적용 중»인 규칙 수입니다.`
+      +` <b>위반이라는 뜻이 아닙니다</b> — 서고의 회차는 「그때 우리가 낸 것」이지`
+      +` 「지금 그 회사가 쓰는 것」이 아닙니다(우리를 안 거치고 고쳤을 수 있습니다).`
+      +` 숫자에 손을 대면 무엇이 시행됐는지 보입니다.`
     :"";
   $("cb-sub").textContent=CB_IDX.length?CB_IDX.length+"곳":"";
 }
@@ -5682,6 +5708,7 @@ function cbRenderIndex(){
   $("cbq").addEventListener(ev,cbRenderIndex);
   $("cbq-year").addEventListener(ev,cbRenderIndex);
   $("cbq-size").addEventListener(ev,cbRenderIndex);
+  $("cbq-since").addEventListener(ev,cbRenderIndex);
 });
 $("cb-reload").addEventListener("click",()=>cbLoadIndex(true));
 $("cb-list-body").addEventListener("click",e=>{
