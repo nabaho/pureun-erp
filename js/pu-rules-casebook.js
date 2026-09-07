@@ -433,6 +433,130 @@
       .slice(0, IDX_MAX);
   }
 
+  /* ══════ 3단계 — 보여 주기 (설계서 §5-①②) ══════
+     ⚠ 여기도 «화면·Firebase 없음»이다. 읽어 온 것을 «줄로 만들어» 돌려줄 뿐이다.
+     ★ 목록은 index 층«만» 읽는다 — 회차·본문을 함께 읽으면 서고를 여는 순간
+       수십 MB 가 딸려 온다(설계서 §3 이 층을 가른 까닭). */
+
+  var ROLE_KO = { before:'개정 전', after:'개정본', daejo:'대조표',
+                  report:'신고서', opinion:'의견', consent:'동의', etc:'기타' };
+
+  /* 값 다듬기 — 없는 것은 «빈 글»로. ⚠ null 을 그대로 두면 화면에 「null」이 찍힌다. */
+  function txt(v) { return String(v == null ? '' : v).trim(); }
+
+  /* ⚠ 배열도 typeof 로는 'object' 다 — 안 걸러 내면 저장 모양이 바뀔 때 숫자·배열이
+     «업체 한 줄»로 세어진다. pu-erp 의 erpCompaniesFrom 이 같은 자리에서 겪었다
+     (2026-09-05 「ERP 업체 2건 로드」 — 실은 지도 통째와 시각 숫자였다). */
+  function isRow(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+
+  /* 목록 한 줄 — casebook/index/{siteKey} 를 그대로 옮긴다(없는 칸은 안 지어낸다) */
+  function indexRows(indexValue) {
+    var v = indexValue || {}, out = [];
+    Object.keys(v).forEach(function (k) {
+      var r = v[k]; if (!isRow(r)) return;
+      out.push({
+        siteKey: k,
+        site: txt(r.site), bizno: txt(r.bizno),
+        industry: txt(r.industry), size: (typeof r.size === 'number' ? r.size : null),
+        revCount: (typeof r.revCount === 'number' ? r.revCount : 0),
+        lastYear: txt(r.lastYear),
+        updatedAt: txt(r.updatedAt), updatedBy: txt(r.updatedBy)
+      });
+    });
+    /* 최근 연도가 앞, 같으면 사업장 이름. ⚠ 연도 없는 것은 «맨 뒤»로 —
+       가운데 섞이면 목록이 뒤죽박죽으로 보인다. */
+    out.sort(function (a, b) {
+      if (a.lastYear !== b.lastYear) {
+        if (!a.lastYear) return 1;
+        if (!b.lastYear) return -1;
+        return a.lastYear < b.lastYear ? 1 : -1;
+      }
+      return a.site < b.site ? -1 : (a.site > b.site ? 1 : 0);
+    });
+    return out;
+  }
+
+  /* 목록 거르기 — 연도·업종·규모·담당(설계서 §5-①).
+     ⚠ 안 준 칸은 «안 거른다». 빈 값을 조건으로 삼으면 아무것도 안 보인다. */
+  function filterIndex(rows, q) {
+    var f = q || {};
+    var t = txt(f.text).toLowerCase();
+    return (rows || []).filter(function (r) {
+      if (t) {
+        var 건초 = (r.site + ' ' + r.bizno + ' ' + r.industry + ' ' + r.updatedBy).toLowerCase();
+        if (건초.indexOf(t) < 0) return false;
+      }
+      if (f.year && String(r.lastYear) !== String(f.year)) return false;
+      if (f.industry && r.industry.indexOf(f.industry) < 0) return false;
+      if (f.by && r.updatedBy.indexOf(f.by) < 0) return false;
+      /* 규모는 «모르는 것»과 «0명»이 다르다 — 모르는 것은 걸러 낼 근거가 없다 */
+      if (f.sizeMin != null) { if (r.size == null || r.size < f.sizeMin) return false; }
+      if (f.sizeMax != null) { if (r.size == null || r.size > f.sizeMax) return false; }
+      return true;
+    });
+  }
+
+  /* 목록에서 고를 수 있는 «연도»들 — 실제로 있는 것만, 최근 순 */
+  function yearsOf(rows) {
+    var seen = {};
+    (rows || []).forEach(function (r) { if (r.lastYear) seen[r.lastYear] = 1; });
+    return Object.keys(seen).sort().reverse();
+  }
+
+  /* 한 사업장의 회차 — casebook/rev/{siteKey} (설계서 §5-②).
+     ⚠ 시간순은 «회차 번호»로 정한다. 2022 · 2022-2 는 뒤엣것이 나중이다. */
+  function revRows(revValue) {
+    var v = revValue || {}, out = [];
+    Object.keys(v).forEach(function (k) {
+      var r = v[k]; if (!isRow(r)) return;
+      out.push({
+        revId: k, year: txt(r.year) || k.split('-')[0],
+        at: txt(r.at), by: txt(r.by), site: txt(r.site),
+        note: txt(r.note), savedAt: txt(r.savedAt),
+        chips: revChips(r)
+      });
+    });
+    out.sort(function (a, b) {
+      if (a.year !== b.year) return a.year < b.year ? 1 : -1;
+      return a.revId < b.revId ? 1 : (a.revId > b.revId ? -1 : 0);
+    });
+    return out;
+  }
+
+  /* 어떤 서류가 들어 있나 — 칩. ROLES 차례를 그대로 따른다(회차마다 자리가 안 바뀌게).
+     ⚠ 본문이 없는 것(스캔 PDF 등)은 «있다»고만 하지 않고 그렇다고 적는다(설계서 §8). */
+  function revChips(rev) {
+    var docs = (rev && rev.docs) || {};
+    return ROLES.filter(function (r) { return !!docs[r]; }).map(function (r) {
+      var d = docs[r] || {};
+      return { role: r, label: ROLE_KO[r] || r, name: txt(d.name),
+               noText: d.noText === true, artCount: (typeof d.artCount === 'number' ? d.artCount : null) };
+    });
+  }
+
+  /* 「이 회차로 검토 시작」이 될 수 있나 — 개정본 본문이 있어야 한다.
+     ⚠ 안 되는 까닭을 «말한다». 단추만 흐리면 왜 못 누르는지 아무도 모른다. */
+  function canStartReview(rev) {
+    var docs = (rev && rev.docs) || {};
+    if (!docs.after) return { ok: false, why: '개정본이 없습니다' };
+    if (docs.after.noText === true) return { ok: false, why: '개정본에 글이 없습니다 (스캔 파일)' };
+    return { ok: true, why: '' };
+  }
+
+  /* 실적표 — 목록을 그대로 내보낸다(설계서 §5-① 「그대로 xlsx_gen 으로」).
+     ⚠ 화면에서 «거른 뒤»의 줄을 받는다 — 보고 있는 것과 내보낸 것이 달라지면 안 된다. */
+  function perfSheet(rows) {
+    return {
+      headers: ['사업장', '사업자번호', '업종', '상시근로자', '개정 회차', '최근 연도', '담당', '갱신'],
+      colRatios: [3, 1.6, 1.8, 1.1, 1, 1, 1.2, 1.6],
+      rows: (rows || []).map(function (r) {
+        return [r.site, r.bizno, r.industry,
+                r.size == null ? '' : String(r.size),
+                String(r.revCount), r.lastYear, r.updatedBy, r.updatedAt];
+      })
+    };
+  }
+
   /* ⚠ 계획서(1단계)가 과제마다 「api 에 이것을 더한다」로 흩어 적어 둔 것을 한자리에 모았다.
      흩어 두면 과제를 이어 붙일 때마다 하나씩 빠뜨린다. */
   var api = {
@@ -456,7 +580,10 @@
     applyFolderSite: applyFolderSite, firmSite: firmSite,
     splitReady: splitReady, WRITE_ORDER: WRITE_ORDER,
     /* 2단계-B — 올릴 것 가르기 */
-    uploadPlan: uploadPlan, idxKeysOf: idxKeysOf, IDX_MAX: IDX_MAX
+    uploadPlan: uploadPlan, idxKeysOf: idxKeysOf, IDX_MAX: IDX_MAX,
+    /* 3단계 — 보여 주기 */
+    ROLE_KO: ROLE_KO, indexRows: indexRows, filterIndex: filterIndex, yearsOf: yearsOf,
+    revRows: revRows, revChips: revChips, canStartReview: canStartReview, perfSheet: perfSheet
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   global.PuRulesCasebook = api;
