@@ -15,7 +15,7 @@
 <script src="js/pu-version.js?v=3"></script>
 <script src="js/pu-backup.js?v=1"></script>
 <script src="js/pu-rules-history.js?v=3"></script>
-<script src="js/pu-rules-casebook.js?v=3"></script>
+<script src="js/pu-rules-casebook.js?v=4"></script>
 <script src="vendor/xlsx.full.min.js"></script>
 <script src="vendor/pako.min.js"></script>
 <script src="vendor/pdf.min.js"></script>
@@ -404,6 +404,18 @@ table.daejo .rreason{color:var(--sub);font-size:11px}
 .arch-search{width:100%;height:38px;padding:0 12px;border:1px solid #cbd5e1;border-radius:9px;font-family:inherit;font-size:13px;margin-bottom:12px}
 /* 보관함 두 갈래(작업 목록 · 이력) — 탭 단추는 본문 단추보다 크게 잡아 눈에 먼저 든다 */
 .arch-tabs{display:flex;gap:6px;margin-bottom:10px;border-bottom:1px solid var(--line);padding-bottom:8px}
+/* ══ 서고 목록 — 폰에서 «한 칸이 한 줄»이게 (대표 지시 2026-08-30) ══════════
+   411px 에서 재 보니 「도소/매」「42/명」「김노/무」로 여섯 칸이 죄다 접혔다.
+   ★ 접힌 칸 하나가 표 «전체»를 두 배로 만든다 — 한 화면에 보이던 것이 반이 된다.
+   그래서 폰에서는 곁칸(업종·규모·담당)을 감추고, 사업장 이름 밑에 «이미 있는»
+   작은 줄에 나란히 붙인다. 새 줄을 만들지 않으니 표가 안 길어지고, 잃는 것도 없다. */
+#cb-list-body td, #cb-list-pane thead th{white-space:nowrap}
+#cb-list-body td:first-child{white-space:normal}
+.cbph-only{display:none}
+@media (max-width:600px){
+  .cbph{display:none}
+  .cbph-only{display:inline}
+}
 .arch-tabs .stbtn{font-size:12px;padding:6px 12px;border-radius:8px}
 .hist-tool{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
 .hist-tool .arch-search{height:32px;margin-bottom:0;font-size:12px}
@@ -976,6 +988,48 @@ table.daejo td.dj2{padding:0}
 <div class="overlay" id="ov-cb"><div class="modal" style="max-width:980px">
   <h2>🗄 취업규칙 서고 <span class="tag" id="cb-sub" style="font-size:12px;color:var(--mute);font-weight:400"></span><span class="x" data-close>×</span></h2>
   <div class="body">
+    <div class="arch-tabs">
+      <button class="stbtn" id="cb-tab-list">📚 목록</button>
+      <button class="stbtn" id="cb-tab-put">📥 담기</button>
+    </div>
+
+    <!-- ══ ① 서고 목록 — 설계서 §5-① ══════════════════════════════════
+         ★ index 층«만» 읽는다. 회차·본문을 함께 읽으면 서고를 여는 순간 수십 MB 가
+           딸려 온다 — 층을 가른 까닭이 이것이다(§3). -->
+    <div id="cb-list-pane">
+      <div class="hist-tool">
+        <input id="cbq" class="arch-search" placeholder="사업장·사업자번호·업종·담당으로 찾기" style="flex:1;min-width:150px">
+        <select id="cbq-year" class="hist-year"><option value="">연도 전체</option></select>
+        <select id="cbq-size" class="hist-year">
+          <option value="">규모 전체</option>
+          <option value="0-9">9명 이하</option>
+          <option value="10-29">10~29명</option>
+          <option value="30-99">30~99명</option>
+          <option value="100-">100명 이상</option>
+        </select>
+        <button class="stbtn" id="cb-xlsx" title="지금 보고 있는 줄을 그대로 실적표로 내보냅니다">📊 실적표</button>
+        <button class="stbtn" id="cb-reload">↻ 다시 읽기</button>
+      </div>
+      <table class="arch"><thead><tr>
+        <th>사업장</th><th class="cbph" style="width:76px">업종</th><th class="cbph" style="width:60px">규모</th>
+        <th style="width:46px">회차</th><th style="width:56px">최근</th><th class="cbph" style="width:78px">담당</th>
+      </tr></thead><tbody id="cb-list-body"></tbody></table>
+      <div class="empty" id="cb-list-empty" style="display:none"></div>
+      <p class="muted" id="cb-list-foot" style="font-size:11px;margin:9px 0 0;line-height:1.6"></p>
+    </div>
+
+    <!-- ══ ② 사업장 이력 — 설계서 §5-② ══════════════════════════════ -->
+    <div id="cb-hist-pane" style="display:none">
+      <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:10px">
+        <button class="stbtn" id="cb-hist-back">← 목록</button>
+        <b id="cb-hist-site" style="font-size:14px"></b>
+        <span class="muted" id="cb-hist-sub" style="font-size:11.5px"></span>
+      </div>
+      <div id="cb-hist-body" style="display:flex;flex-direction:column;gap:9px;max-height:56vh;overflow:auto"></div>
+      <div class="empty" id="cb-hist-empty" style="display:none"></div>
+    </div>
+
+    <div id="cb-put-pane" style="display:none">
     <!-- ⚠★ 보관함과 «갈리는» 자리다 — 설계서 §6.
          보관함은 「내 것 + 남의 완료본」인데 서고는 사례집이라 남의 사업장까지 다 보인다.
          모르고 올렸다가 남이 보는 걸 나중에 알면 사고다. 그래서 화면에 «먼저» 적는다. -->
@@ -1031,11 +1085,12 @@ table.daejo td.dj2{padding:0}
     </div>
     <p class="muted" style="font-size:11px;margin:8px 0 0;line-height:1.6">※ 원본 파일 보관(Storage)은 아직 켜지 않았습니다 — 지금은 <b>본문 글</b>만 서고에 담깁니다.
       검색·사례집·이력은 글만으로 전부 되고, 원본 보기는 나중에 붙습니다. 글이 없는 스캔 PDF 는 「본문 없음」으로 적어 둡니다.</p>
+    </div>
   </div>
   <div class="foot">
     <span id="cb-foot" class="muted" style="margin-right:auto;font-size:11.5px"></span>
     <button class="btn ghost" data-close>닫기</button>
-    <button class="btn orange" id="cb-go" disabled>서고에 올리기</button>
+    <button class="btn orange" id="cb-go" disabled style="display:none">서고에 올리기</button>
   </div>
 </div></div>
 
@@ -5506,10 +5561,184 @@ $("cb-retry").addEventListener("click",async()=>{
   const rows=[]; CB_FAIL.forEach(f=>f.rev.docs.forEach(d=>rows.push(d)));
   await cbUpload(rows);
 });
+/* ══════════ 서고 ① 목록 · ② 사업장 이력 (설계서 §5-①②) ══════════
+   ★ 목록은 index 층«만» 읽는다 — 회차·본문을 함께 읽으면 서고를 여는 순간
+     수십 MB 가 딸려 온다. 층을 가른 까닭이 그것이다(§3).
+   ★ 회차 상세는 «한 사업장을 열 때만», 본문은 «검토를 시작할 때만» 읽는다. */
+let CB_IDX=[], CB_HIST_KEY="", CB_HIST_RAW=null;
+
+function cbTab(which){
+  const 목록=which==="list", 담기=which==="put", 이력=which==="hist";
+  $("cb-list-pane").style.display=목록?"":"none";
+  $("cb-hist-pane").style.display=이력?"":"none";
+  $("cb-put-pane").style.display=담기?"":"none";
+  /* 올리기 단추는 «담기»에서만 보인다 — 목록을 보는데 「서고에 올리기」가 떠 있으면
+     무엇이 올라가는지 헷갈린다 */
+  $("cb-go").style.display=담기?"":"none";
+  $("cb-foot").style.display=담기?"":"none";
+  $("cb-tab-list").style.fontWeight=목록||이력?"700":"";
+  $("cb-tab-put").style.fontWeight=담기?"700":"";
+}
+$("cb-tab-list").addEventListener("click",()=>{ cbTab("list"); cbLoadIndex(); });
+$("cb-tab-put").addEventListener("click",()=>{ cbTab("put"); cbRender(); });
+
+/* ── ① 목록 ─────────────────────────────────────────────────────── */
+async function cbLoadIndex(force){
+  if(!FBDB||!FBUSER){ $("cb-list-empty").style.display="block";
+    $("cb-list-empty").textContent="서고는 법인 공동 저장소입니다 — 포털 로그인 후 이용하세요."; return; }
+  if(CB_IDX.length && !force){ cbRenderIndex(); return; }
+  $("cb-list-empty").style.display="block"; $("cb-list-empty").textContent="읽는 중…";
+  try{
+    const v=(await FBDB.ref("rules_mgmt/casebook/index").once("value")).val();
+    CB_IDX=CB.indexRows(v);
+  }catch(e){
+    console.warn("서고 목록 읽기 실패:",e);
+    $("cb-list-empty").textContent="서고를 읽지 못했습니다 — "+escapeH(String(e&&e.message||e));
+    return;
+  }
+  /* 고를 수 있는 연도는 «실제로 있는 것»만 */
+  const 이제껏=$("cbq-year").value;
+  $("cbq-year").innerHTML='<option value="">연도 전체</option>'
+    +CB.yearsOf(CB_IDX).map(y=>`<option value="${y}">${y}년</option>`).join("");
+  $("cbq-year").value=이제껏;
+  cbRenderIndex();
+}
+function cbQuery(){
+  const q={ text:$("cbq").value.trim(), year:$("cbq-year").value };
+  const sz=$("cbq-size").value;
+  if(sz){ const [a,b]=sz.split("-");
+    if(a!=="")q.sizeMin=Number(a);
+    if(b!=="")q.sizeMax=Number(b); }
+  return q;
+}
+function cbVisible(){ return CB.filterIndex(CB_IDX,cbQuery()); }
+function cbRenderIndex(){
+  const rows=cbVisible();
+  $("cb-list-body").innerHTML=rows.map(r=>
+    /* 폰에서 감춘 칸은 사업장 밑 «이미 있는» 작은 줄에 나란히 붙인다 — 말을 하는 값만.
+       ⚠ 사업자번호·담당까지 넣었더니 그 줄이 다시 접혀 «세 줄»이 됐다(411px 실측).
+         곁줄을 두 줄로 만들 바에는 덜 중요한 것을 빼는 게 낫다 —
+         사업자번호와 담당은 이 사업장을 «열면» 머리줄에 그대로 있다. */
+    (r=>{ const 곁=[r.industry,r.size==null?"":r.size+"명"].filter(Boolean).join(" · ");
+    return `<tr data-cb-site="${escapeH(r.siteKey)}" style="cursor:pointer">`
+    +`<td><b>${escapeH(r.site||"(이름 없음)")}</b>`
+      +(r.bizno?` <span class="muted cbph" style="font-size:10.5px">${escapeH(r.bizno)}</span>`:"")
+      +(곁?`<span class="muted cbph-only" style="font-size:10.5px;margin-left:5px;white-space:nowrap">${escapeH(곁)}</span>`:"")+`</td>`
+    +`<td class="cbph" style="font-size:11.5px">${escapeH(r.industry||"—")}</td>`
+    /* ⚠ 모르는 규모를 0명으로 적지 않는다 — 「직원 없는 회사」가 된다 */
+    +`<td class="cbph" style="font-size:11.5px">${r.size==null?'<span class="muted">—</span>':escapeH(r.size+"명")}</td>`
+    +`<td style="font-size:11.5px"><b>${r.revCount}</b></td>`
+    +`<td style="font-size:11.5px">${escapeH(r.lastYear||"—")}</td>`
+    +`<td class="cbph" style="font-size:11.5px">${escapeH(r.updatedBy||"—")}</td></tr>`; })(r)).join("");
+  const 빔=!rows.length;
+  $("cb-list-empty").style.display=빔?"block":"none";
+  if(빔)$("cb-list-empty").textContent=CB_IDX.length
+    ?"찾는 조건에 맞는 사업장이 없습니다."
+    :"서고가 아직 비어 있습니다 — 위 [📥 담기]에서 폴더를 넣으세요.";
+  $("cb-xlsx").disabled=빔;
+  $("cb-list-foot").innerHTML=CB_IDX.length
+    ?`사업장 <b>${rows.length}</b>곳`+(rows.length!==CB_IDX.length?` (전체 ${CB_IDX.length}곳 중)</b>`:"")
+      +` · 개정 <b>${rows.reduce((a,r)=>a+r.revCount,0)}</b>회차`
+      +`<br>줄을 누르면 그 사업장의 회차 이력이 열립니다.`
+    :"";
+  $("cb-sub").textContent=CB_IDX.length?CB_IDX.length+"곳":"";
+}
+["input","change"].forEach(ev=>{
+  $("cbq").addEventListener(ev,cbRenderIndex);
+  $("cbq-year").addEventListener(ev,cbRenderIndex);
+  $("cbq-size").addEventListener(ev,cbRenderIndex);
+});
+$("cb-reload").addEventListener("click",()=>cbLoadIndex(true));
+$("cb-list-body").addEventListener("click",e=>{
+  const tr=e.target.closest("[data-cb-site]");
+  if(tr)cbOpenHist(tr.getAttribute("data-cb-site"));
+});
+/* 실적 증빙 — «보고 있는 줄»을 그대로 내보낸다(거른 것과 내보낸 것이 달라지면 안 된다) */
+$("cb-xlsx").addEventListener("click",()=>{
+  const rows=cbVisible();
+  if(!rows.length){ alert("내보낼 줄이 없습니다."); return; }
+  if(!window.XLSXGEN){ alert("표 만들개를 불러오지 못했습니다."); return; }
+  const s=CB.perfSheet(rows), q=cbQuery();
+  const 조건=[q.text&&`찾기 ${q.text}`,q.year&&`${q.year}년`,$("cbq-size").selectedIndex>0&&$("cbq-size").selectedOptions[0].textContent]
+    .filter(Boolean).join(" · ");
+  XLSXGEN.download({sheet:"취업규칙 실적",title:"푸른노무법인 취업규칙 개정 실적",
+    sub:`${new Date().toISOString().slice(0,10)} 기준 · 사업장 ${rows.length}곳 · 개정 ${rows.reduce((a,r)=>a+r.revCount,0)}회차`
+      +(조건?` · ${조건}`:""),
+    headers:s.headers,rows:s.rows,colRatios:s.colRatios,landscape:false},
+    `취업규칙실적_${new Date().toISOString().slice(0,10).replace(/-/g,"")}.xlsx`);
+});
+
+/* ── ② 사업장 이력 ──────────────────────────────────────────────── */
+async function cbOpenHist(siteKey){
+  cbTab("hist");
+  const meta=CB_IDX.find(r=>r.siteKey===siteKey)||{};
+  CB_HIST_KEY=siteKey; CB_HIST_RAW=null;
+  $("cb-hist-site").textContent=meta.site||siteKey;
+  $("cb-hist-sub").textContent=[meta.bizno,meta.industry,meta.size!=null?meta.size+"명":""].filter(Boolean).join(" · ");
+  $("cb-hist-body").innerHTML=""; $("cb-hist-empty").style.display="block";
+  $("cb-hist-empty").textContent="읽는 중…";
+  try{
+    CB_HIST_RAW=(await FBDB.ref(CB.paths.revs(siteKey)).once("value")).val()||{};
+  }catch(e){
+    $("cb-hist-empty").textContent="회차를 읽지 못했습니다 — "+escapeH(String(e&&e.message||e));
+    return;
+  }
+  cbRenderHist();
+}
+function cbRenderHist(){
+  const rows=CB.revRows(CB_HIST_RAW);
+  $("cb-hist-empty").style.display=rows.length?"none":"block";
+  if(!rows.length)$("cb-hist-empty").textContent="이 사업장에 담긴 회차가 없습니다.";
+  $("cb-hist-body").innerHTML=rows.map(r=>{
+    const raw=(CB_HIST_RAW||{})[r.revId]||{};
+    const 될까=CB.canStartReview(raw);
+    const 칩=r.chips.map(c=>
+      `<span class="hkind" title="${escapeH(c.name)}" style="background:${c.role==="after"?"#eff6ff":"#f8fafc"};`
+      +`color:${c.role==="after"?"#1e40af":"var(--sub)"};border:1px solid ${c.role==="after"?"#bfdbfe":"var(--line)"}">`
+      +escapeH(c.label)+(c.noText?" (글 없음)":(c.artCount?` ${c.artCount}조`:""))+`</span>`).join(" ");
+    return `<div style="border:1px solid var(--line);border-radius:10px;padding:11px 13px;background:#f8fafc">`
+      +`<div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:7px">`
+        +`<b style="font-size:13.5px">${escapeH(r.revId)}회차</b>`
+        +(r.at?`<span class="muted" style="font-size:11.5px">시행 ${escapeH(r.at)}</span>`:"")
+        +(r.by?`<span class="muted" style="font-size:11.5px">${escapeH(r.by)}</span>`:"")
+        +`<button class="stbtn" data-cb-start="${escapeH(r.revId)}" style="margin-left:auto"`
+          +(될까.ok?"":" disabled")+`>▶ 이 회차로 검토 시작</button></div>`
+      +`<div style="display:flex;gap:5px;flex-wrap:wrap">${칩||'<span class="muted" style="font-size:11.5px">서류 없음</span>'}</div>`
+      /* ★ 못 하는 까닭을 «적는다» — 단추만 흐리면 왜 못 누르는지 아무도 모른다 */
+      +(될까.ok?"":`<div style="font-size:11px;color:#854d0e;margin-top:6px">⚠ 검토를 이어갈 수 없습니다 — ${escapeH(될까.why)}</div>`)
+      +(r.note?`<div class="muted" style="font-size:11.5px;margin-top:6px">${escapeH(r.note)}</div>`:"")
+      +`</div>`;
+  }).join("");
+}
+$("cb-hist-back").addEventListener("click",()=>{ cbTab("list"); cbRenderIndex(); });
+/* ★ 「이 회차로 검토 시작」 — 개정본 «본문만» 읽어 검토 화면에 싣는다.
+   임시저장 복원이 쓰는 applyWorkObject 와 같은 길이다(설계서 §5-②). */
+$("cb-hist-body").addEventListener("click",async e=>{
+  const b=e.target.closest("[data-cb-start]"); if(!b||b.disabled)return;
+  const revId=b.getAttribute("data-cb-start");
+  const raw=(CB_HIST_RAW||{})[revId]||{};
+  const meta=CB_IDX.find(r=>r.siteKey===CB_HIST_KEY)||{};
+  const 이전=b.textContent; b.disabled=true; b.textContent="여는 중…";
+  try{
+    const v=(await FBDB.ref(CB.paths.text(CB_HIST_KEY,revId,"after")).once("value")).val();
+    const 글=v&&typeof v==="object"?String(v.t||""):String(v||"");
+    if(글.replace(/\s/g,"").length<50)throw new Error("본문이 비어 있습니다");
+    await applyWorkObject({
+      orig:{ text:글, name:((raw.docs||{}).after||{}).name||"", site:meta.site||raw.site||"", bizno:meta.bizno||"" },
+      state:{ asof:new Date().toISOString().slice(0,10) }
+    });
+    closeOverlay($("ov-cb"));
+    alert(`${meta.site||raw.site||""} ${revId}회차 개정본을 검토 화면에 실었습니다.\n[② 비교]로 이어가십시오.`);
+  }catch(err){
+    console.warn("회차 열기 실패:",err);
+    alert("이 회차를 열지 못했습니다 — "+String(err&&err.message||err));
+  }finally{ b.disabled=false; b.textContent=이전; }
+});
+
 $("open-cb").addEventListener("click",()=>{
   $("ov-cb").classList.add("on");
   if(!ERP_COS.length)loadErpCompanies();
-  cbRender();
+  cbTab("list"); cbLoadIndex();
 });
 /* 기록(items) → 변경후 전문 — 현재 세션을 건드리지 않게 전역을 잠깐 바꿨다 되돌린다 */
 function bankTextOfRecord(r){
