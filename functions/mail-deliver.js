@@ -23,8 +23,25 @@ const CARDS_ROOT = 'pucards';
    ⚠ 적는 자리는 mailbox 밑이다 — 서버만 쓰고 직원은 읽기만 하는 자리다.
    ⚠ 이 파일에는 «상대의 IP·기기»를 읽는 줄이 없다. 여는 함수에도 없다. 그것이 약속이다. */
 const TRACK_ROOT = 'mailbox/track/opens';
-const MT_ON = true;                    /* 통째로 끄는 스위치 — 껐다 켤 일이 있으면 여기 */
 const PIXEL_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/mailOpenPixel';
+
+/* ── 끄고 켜는 스위치 (대표 지시 2026-09-07) ─────────────────────────────────
+   ★ 왜 «서버»가 읽는가 — 그림을 붙이는 것이 서버다. 화면에만 스위치를 두면
+     대표께서 끄셔도 그림은 그대로 붙는다. 끈 것처럼 보이는데 안 꺼진 것이
+     제일 나쁘다.
+   ★ 왜 config/matMail «안»인가 — 이미 있는 자리다. 새 칸을 만들면 콘솔 규칙을
+     한 줄 더 얹어야 하고, 화면도 한 번 더 읽어야 한다. 여기는 화면이 이미
+     읽고 있고(loadMaterials) 서버도 이미 읽고 있다(perUser).
+   ⚠ 아무것도 안 적혀 있으면 «켠 것»이다 — 2026-09-06 부터 켠 채로 돌고 있었다.
+     안 적혔다고 꺼 버리면 어제까지 되던 것이 오늘 조용히 멈춘다.
+   ⚠ 못 읽으면 «안 붙인다»(아래 try 가 삼킨다). 열람 확인은 있으면 좋은 것이고,
+     메일은 그대로 나간다. */
+const MT_PATH = CARDS_ROOT + '/config/matMail/track';
+const MT_DEFAULT = true;
+async function mailTrackOn(db) {
+  const v = (await db.ref(MT_PATH).once('value')).val();
+  return (v === null || v === undefined) ? MT_DEFAULT : v !== false;
+}
 
 function nowMs() { return Date.now(); }
 /* 못 알아맞히게 — 짧으면 남이 눌러 셈을 부풀릴 수 있다 */
@@ -454,7 +471,7 @@ async function deliverOnce(opts) {
        (바로 위 서명 그림과 같은 약속). */
   let trackTok = '';
   try {
-    if (signHtml && body.track !== false && v.to.length && MT_ON) {
+    if (signHtml && body.track !== false && v.to.length && await mailTrackOn(db)) {
       trackTok = trackToken();
       const fp = trackFp(v.to[0], nowMs(), v.subject);
       await db.ref(TRACK_ROOT + '/' + trackTok).set({
@@ -642,6 +659,8 @@ module.exports = {
   statMailOut, sweepStaleMailOut, MAILOUT_STALE_MS, MAILOUT_SWEEP_MAX,
   /* 📬 열람 확인 — 화면과 «같은 열쇠»를 쓰는지 검사가 견준다 */
   trackFp, trackPixel, trackToken, TRACK_ROOT, PIXEL_URL,
+  /* 스위치도 내놓는다 — 화면이 쓰는 자리와 «같은 길»인지 검사가 견준다 */
+  mailTrackOn, MT_PATH, MT_DEFAULT,
   /* 우체국 고르기도 내놓는다 — 부르는 쪽(index.js)이 «어느 열쇠»를 줘야 하는지
      알아야 하고, 검사도 실제로 골라 보게 해야 이빨이 생긴다. */
   우체국들, 우체국고르기, 도메인만, 아직안넣음, 아직안넣은표,

@@ -6,8 +6,12 @@
      대표께서 두 길 가운데 이쪽을 고르셨다(다른 하나는 「읽음 확인 요청」).
 
    ⚠⚠ 이 검사에서 가장 중요한 것은 ①이다 — «시각과 횟수 말고는 안 적는다».
-     상대의 IP·기기·위치를 적기 시작하면 그것은 다른 물건이 된다. 우리는 받는 메일에서
-     바로 이런 그림을 막고 있다 — 그러면서 남에게 더 하는 것은 앞뒤가 안 맞는다. */
+     필요한 것은 「언제」 하나다. 상대의 IP·기기·위치를 적기 시작하면 그것은 «다른
+     물건»이 된다 — 시각 하나가 새는 것과 사람의 자취가 새는 것은 무게가 다르다.
+   ⚠ 이 자리에 한때 「우리는 받는 메일에서 바로 이런 그림을 막고 있다」가 까닭으로
+     적혀 있었다. 2026-09-06 저녁에 대표 지시로 «늘 보여주기»가 되어(b4aa6eb7)
+     그 말이 사실과 어긋났다. 규칙은 그대로 옳지만 까닭이 낡았던 것이다 —
+     틀린 까닭은 없는 것보다 나쁘다(읽은 사람이 안심하고 틀린 판단을 한다). */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -34,8 +38,8 @@ const pixel = (function(){
 /* ══════ ① 무엇을 적는가 — 가장 중요한 자리 ══════ */
 
 test('★★★ 여는 자리가 상대의 «IP·기기·어디서 왔는지»를 읽지 않는다', () => {
-  /* ⚠ 우리는 받는 메일에서 바로 이런 그림을 막고 있다. 그러면서 남에게서 이것까지
-       가져오면 앞뒤가 안 맞는다. 셀 필요도 없다 — 필요한 것은 «언제»뿐이다. */
+  /* ⚠ 필요한 것은 «언제»뿐이다. 그 밖을 적으면 이것은 다른 물건이 된다 —
+       열람 시각 하나와 사람의 자취는 무게가 다르다. */
   ['req.ip', 'x-forwarded-for', 'user-agent', 'referer', 'req.headers', 'req.connection', 'socket']
     .forEach(k=>{
       assert.ok(pixel.toLowerCase().indexOf(k.toLowerCase()) < 0,
@@ -84,7 +88,7 @@ test('★★ 서식이 «없는» 편지에는 안 넣는다 — 평문을 서�
   const seg = del.slice(i, i + 900);
   assert.match(seg, /if \(signHtml &&/, '서식이 없는 편지에도 넣습니다');
   assert.match(seg, /body\.track !== false/, '한 통씩 끌 길이 없습니다');
-  assert.match(seg, /MT_ON/, '통째로 끌 스위치가 없습니다');
+  assert.match(seg, /mailTrackOn\(db\)/, '통째로 끌 스위치를 안 봅니다');
 });
 
 test('★★★ 열람 확인 하나 때문에 «메일이 안 나가면» 안 된다', () => {
@@ -205,9 +209,87 @@ test('★★ 보낸메일함을 «열 때» 한 번만 읽는다 — 그리면�
 });
 
 test('★★ 새로 지은 이름이 «한 번만» 선언돼 있다', () => {
-  ['mbTrackFp','mbTrackLoad','mbOpenOf','mbOpenTag'].forEach(n=>{
+  ['mbTrackFp','mbTrackLoad','mbOpenOf','mbOpenTag','saveMailTrack'].forEach(n=>{
     const c = (bare.match(new RegExp('function\\s+' + n + '\\s*\\(', 'g')) || []).length;
     assert.equal(c, 1, n + ' 이 ' + c + '번 선언돼 있습니다');
   });
   assert.match(bare, /\$\{mbOpenTag\(v\)\}/, '목록이 이 딱지를 안 그립니다');
+});
+
+/* ══════ ⑤ 끄고 켜는 스위치 (대표 지시 2026-09-07) ══════════════════════════
+   ★ 그림을 붙이는 것은 «서버»다. 그래서 스위치도 서버가 읽어야 한다 —
+     화면에만 두면 «끈 것처럼 보이는데 안 꺼진» 상태가 된다. 그게 제일 나쁘다. */
+
+/* 설정 화면의 «그 한 줄»만 떼어 본다.
+   ⚠ sliceFn(app,'function mailSetHtml(') 로 안 자른다 — 그 함수는 통째로 큰 틀
+     문자열이라 자르는 자리가 어긋나기 쉽다. 스위치가 있는 자리만 본다. */
+function switchRow(){
+  const i = app.indexOf("${row('열람 확인'");
+  assert.ok(i > 0, '설정 ②보내기에 「열람 확인」 줄이 없습니다');
+  const j = app.indexOf("${row(", i + 10);
+  return app.slice(i, Math.min(j > i ? j : Infinity, i + 2200));
+}
+
+/* 실시간DB 흉내 — 부른 길과 돌려줄 값만 본다 */
+function fakeDb(val, box){
+  return { ref(p){ if(box) box.path = p;
+    return { once(){ return Promise.resolve({ val(){ return val; } }); } }; } };
+}
+
+test('★★★ 안 적혀 있으면 «켠 것»이다 — 어제까지 되던 것이 오늘 멈추면 안 된다', async () => {
+  /* ⚠ 2026-09-06 부터 켠 채로 돌고 있었다. 아무도 스위치를 만진 적이 없으므로
+       그 자리는 «비어 있다». 빈 것을 「끔」으로 읽으면 대표는 아무것도 안 하셨는데
+       기능이 사라진다. */
+  assert.equal(MD.MT_DEFAULT, true, '처음 값이 «켬»이 아닙니다');
+  assert.equal(await MD.mailTrackOn(fakeDb(null)), true, '안 적혀 있는데 꺼집니다');
+  assert.equal(await MD.mailTrackOn(fakeDb(undefined)), true, '값이 없는데 꺼집니다');
+});
+
+test('★★★ false 라고 적혀 있으면 «꺼진다»', async () => {
+  assert.equal(await MD.mailTrackOn(fakeDb(false)), false, '껐는데 그대로 붙습니다');
+  /* 켠 값·엉뚱한 값은 켬으로 본다 — 「끔」은 «일부러 적은 false» 하나뿐이다 */
+  assert.equal(await MD.mailTrackOn(fakeDb(true)), true);
+  assert.equal(await MD.mailTrackOn(fakeDb('')), true);
+});
+
+test('★★★ 화면과 서버가 «같은 칸»을 본다 — 다르면 껐는데 안 꺼진다', () => {
+  const box = {};
+  MD.mailTrackOn(fakeDb(null, box));
+  assert.equal(box.path, MD.CARDS_ROOT + '/config/matMail/track',
+    '서버가 읽는 칸이 바뀌었습니다: ' + box.path);
+  /* 화면이 «적는» 자리 */
+  assert.match(bare, /config\/matMail\/track`\)\.set\(v\)/,
+    '화면이 config/matMail/track 에 안 적습니다 — 껐다고 뜨는데 안 꺼집니다');
+  /* 화면이 «읽는» 자리 — matMailCfg 를 거쳐 화면에 그린다 */
+  const cfg = sliceFn(app, 'function matMailCfg(').replace(/\/\*[\s\S]*?\*\//g, ' ');
+  assert.match(cfg, /track:\s*c\.track !== false/,
+    'matMailCfg 가 track 을 안 담습니다 — 화면이 늘 켠 것으로 보입니다');
+});
+
+test('★★★ 제목·본문을 되돌려도 스위치가 «저절로 켜지지» 않는다', () => {
+  /* ⚠ 여기가 진짜 함정이었다. resetMatMail 이 config/matMail 을 통째로 set 하면
+       거기 없는 칸(track·sec 보안문구·sign 서명·perUser 명함)이 «다 지워진다».
+       물어보는 말은 「제목·본문을 되돌립니다」인데 하는 일이 그보다 컸다. */
+  const f = sliceFn(app, 'function resetMatMail(').replace(/\/\*[\s\S]*?\*\//g, ' ');
+  assert.ok(!/config\/matMail'\)\.set\(/.test(f),
+    'config/matMail 을 통째로 덮어씁니다 — 서명·명함·스위치가 함께 지워집니다');
+  assert.match(f, /\.update\(MAIL_TPL_DEFAULT\)/,
+    '되돌리는 칸만 고치지 않습니다 — 묻는 말과 하는 일이 다릅니다');
+});
+
+test('★★ 스위치는 «대표님만» 만진다 — 전 직원이 함께 쓰는 발송 설정이다', () => {
+  const f = sliceFn(app, 'function saveMailTrack(').replace(/\/\*[\s\S]*?\*\//g, ' ');
+  assert.match(f, /if\(!state\.isAdmin\) return/, '직원 누구나 끌 수 있습니다');
+  /* 화면에서도 못 누르게 해 둔다 — 눌러 보고 거절당하는 것보다 낫다 */
+  assert.match(switchRow(), /saveMailTrack\(this\.checked\)/, '설정 화면에 스위치가 없습니다');
+  assert.match(switchRow(), /state\.isAdmin\?'':'disabled'/, '직원 화면에서도 눌립니다');
+});
+
+test('★★★ 스위치 옆에 «안 열렸다고 안 본 게 아니다»가 적혀 있다', () => {
+  /* ⚠ 이 한 줄이 없으면 대표께서 빈칸을 「이 사람이 안 봤다」로 읽으신다.
+       그것으로 사람에게 말을 하시면 우리 잘못이다. */
+  const seg = switchRow();
+  assert.match(seg, /안 ?열었다/, '「안 열었다」가 무슨 뜻인지 안 적혀 있습니다');
+  assert.match(seg, /대신 받아 두면/, '지메일·네이버가 대신 받아 두는 것을 안 알려 줍니다');
+  assert.match(seg, /시각과 횟수/, '무엇을 적는지 안 알려 줍니다');
 });
