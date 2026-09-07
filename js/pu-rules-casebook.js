@@ -725,6 +725,74 @@
     });
   }
 
+  /* ══════ 깊은 검토 — 회차 본문에 규칙을 실제로 돌린 «결과를 추린다» ══════
+     대표 물음(2026-09-07) 「취규 내용검토 필요한가?」의 둘째 층.
+     목록의 「그 뒤 시행 N」은 연도만 견줬다. 여기서는 그 회차 본문에 규칙 92개를 돌려
+     «어느 조문이 걸리는지»까지 본다. 돌리는 일은 rules.html 의 evaluate 가 한다 —
+     여기는 그 결과를 «사람이 읽을 수 있게 추리는» 몫만 진다(그래야 검사가 돈다).
+
+     ★★ 이 화면이 가장 조심할 것 — 「위반의심 0」을 «깨끗하다»로 읽게 두면 안 된다.
+       규칙 92개 중 27개는 «수동확인»이라 기계가 아예 판단하지 않는다.
+       0 을 보고 안심하는 순간 그 27개가 통째로 사라진다. 그래서 늘 함께 적는다. */
+
+  /* 상시근로자 수 → 검토 엔진이 쓰는 규모 열쇠.
+     ⚠ 모르면 «지어내지 않는다» — null 을 돌려주고, 부르는 쪽이 사람에게 묻는다.
+       규모에 따라 보는 규칙이 크게 달라진다(전체 53 · 5인이상 19 · 10인이상 17 · 30인이상 3). */
+  function sizeKeyOf(n) {
+    if (typeof n !== 'number' || !isFinite(n) || n < 0) return null;
+    if (n < 5) return '5인미만';
+    if (n < 10) return '5인이상';
+    if (n < 30) return '10인이상';
+    return '30인이상';
+  }
+
+  /* 결과를 추린다. 봐야 할 것(위반의심·누락)을 앞으로, 그 안에서도 «급한 것»을 앞으로.
+     ⚠ 「적합」을 목록에 안 싣는다 — 볼 것이 90줄이면 봐야 할 3줄이 묻힌다. */
+  var SEVERITY = { '위반의심': 0, '누락': 1, '시행예정': 2, '수동확인': 3, '적합': 4 };
+  var CAT_ORDER = ['필수기재', '강행규정', '최신개정', '타법령', '절차', '조건부', '권장'];
+
+  function reviewTally(results) {
+    var 셈 = { 적합: 0, 누락: 0, 위반의심: 0, 수동확인: 0, 시행예정: 0 };
+    var 봐야 = [];
+    (results || []).forEach(function (x) {
+      if (!x || !x.rule) return;
+      var st = txt(x.status);
+      if (셈[st] === undefined) 셈[st] = 0;
+      셈[st]++;
+      if (st === '위반의심' || st === '누락') {
+        봐야.push({ id: txt(x.rule.id), name: txt(x.rule.name), law: txt(x.rule.law),
+                    category: txt(x.rule.category), status: st,
+                    loc: txt(x.loc), note: txt(x.note), effective: txt(x.rule.effective) });
+      }
+    });
+    봐야.sort(function (a, b) {
+      if (SEVERITY[a.status] !== SEVERITY[b.status]) return SEVERITY[a.status] - SEVERITY[b.status];
+      var ca = CAT_ORDER.indexOf(a.category), cb = CAT_ORDER.indexOf(b.category);
+      if (ca < 0) ca = 99; if (cb < 0) cb = 99;
+      if (ca !== cb) return ca - cb;
+      return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0);
+    });
+    return { count: 셈, total: (results || []).length, must: 봐야 };
+  }
+
+  /* ★★ 이 검토가 «무엇을 안 봤는지». 숫자 옆에 늘 붙는다.
+     ⚠ 늘리지 말 것이 아니라 «줄이지» 말 것 — 안 본 것을 안 적으면 0 이 「깨끗함」이 된다. */
+  function reviewCaveats(o) {
+    var v = o || {}, 말 = [];
+    if (v.manual > 0)
+      말.push('규칙 ' + v.manual + '개는 «수동확인»이라 기계가 판단하지 않았습니다 — '
+              + '「위반의심 0」이 곧 깨끗하다는 뜻이 아닙니다.');
+    if (!v.sizeKey)
+      말.push('상시근로자 수를 몰라 규모를 고르지 못했습니다 — 규모에 따라 보는 규칙이 달라집니다.');
+    else if (v.sizeFrom === '짐작')
+      말.push('규모를 «' + v.sizeKey + '»로 보고 셌습니다(업체 자료에서 가져온 값) — 다르면 고쳐 주십시오.');
+    if (v.futureCount > 0)
+      말.push('아직 시행 전인 규칙 ' + v.futureCount + '개는 «시행예정»으로 따로 두었습니다.');
+    말.push('서고의 회차는 「그때 우리가 낸 것」입니다 — 그 뒤 자체 개정했을 수 있습니다.');
+    말.push('규칙 기반 자동 검토이며 최종 판단은 공인노무사의 검토를 거쳐야 합니다.');
+    return 말;
+  }
+
   /* ⚠ 계획서(1단계)가 과제마다 「api 에 이것을 더한다」로 흩어 적어 둔 것을 한자리에 모았다.
      흩어 두면 과제를 이어 붙일 때마다 하나씩 빠뜨린다. */
   var api = {
@@ -757,7 +825,10 @@
     SUB_FIELDS: SUB_FIELDS, subOf: subOf, subWorth: subWorth, subLine: subLine,
     validSub: validSub, subClean: subClean,
     /* 「그 뒤 시행 N」 — 서고를 명단으로 (2026-09-07) */
-    datedRules: datedRules, sinceRules: sinceRules, markSince: markSince
+    datedRules: datedRules, sinceRules: sinceRules, markSince: markSince,
+    /* 깊은 검토 — 결과 추리기 (2026-09-07) */
+    sizeKeyOf: sizeKeyOf, reviewTally: reviewTally, reviewCaveats: reviewCaveats,
+    CAT_ORDER: CAT_ORDER
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   global.PuRulesCasebook = api;

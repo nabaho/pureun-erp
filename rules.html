@@ -15,7 +15,7 @@
 <script src="js/pu-version.js?v=3"></script>
 <script src="js/pu-backup.js?v=1"></script>
 <script src="js/pu-rules-history.js?v=3"></script>
-<script src="js/pu-rules-casebook.js?v=6"></script>
+<script src="js/pu-rules-casebook.js?v=7"></script>
 <script src="vendor/xlsx.full.min.js"></script>
 <script src="vendor/pako.min.js"></script>
 <script src="vendor/pdf.min.js"></script>
@@ -5807,11 +5807,15 @@ function cbRenderHist(){
         +`<b style="font-size:13.5px">${escapeH(r.revId)}회차</b>`
         +(r.at?`<span class="muted" style="font-size:11.5px">시행 ${escapeH(r.at)}</span>`:"")
         +(r.by?`<span class="muted" style="font-size:11.5px">${escapeH(r.by)}</span>`:"")
-        +`<button class="stbtn" data-cb-start="${escapeH(r.revId)}" style="margin-left:auto"`
-          +(될까.ok?"":" disabled")+`>▶ 이 회차로 검토 시작</button></div>`
+        +`<button class="stbtn" data-cb-scan="${escapeH(r.revId)}" style="margin-left:auto"`
+          +(될까.ok?"":" disabled")
+          +` title="이 회차 본문에 지금 규칙집을 돌려 어느 조문이 걸리는지 봅니다">🔎 지금 기준으로 훑기</button>`
+        +`<button class="stbtn" data-cb-start="${escapeH(r.revId)}"`
+          +(될까.ok?"":" disabled")+`>▶ 검토 시작</button></div>`
       +`<div style="display:flex;gap:5px;flex-wrap:wrap">${칩||'<span class="muted" style="font-size:11.5px">서류 없음</span>'}</div>`
       /* ★ 못 하는 까닭을 «적는다» — 단추만 흐리면 왜 못 누르는지 아무도 모른다 */
       +(될까.ok?"":`<div style="font-size:11px;color:#854d0e;margin-top:6px">⚠ 검토를 이어갈 수 없습니다 — ${escapeH(될까.why)}</div>`)
+      +`<div data-cb-scanout="${escapeH(r.revId)}"></div>`
       +(제출?`<div style="margin-top:8px;padding-top:7px;border-top:1px solid var(--line)">${제출}</div>`:"")
       +(r.note?`<div class="muted" style="font-size:11.5px;margin-top:6px">${escapeH(r.note)}</div>`:"")
       +`</div>`;
@@ -5886,6 +5890,77 @@ $("cbsub-clear").addEventListener("click",async()=>{
   if(!confirm("이 서류의 제출 정보를 지울까요?"))return;
   try{ await cbsubWrite(null); }
   catch(e){ alert("지우지 못했습니다 — "+String(e&&e.message||e)); }
+});
+
+/* ── 깊은 검토 — 이 회차 본문에 규칙 92개를 실제로 돌린다 ────────────
+   목록의 「그 뒤 시행 N」은 연도만 견줬다. 여기서는 «어느 조문이 걸리는지»까지 본다.
+   ★★ 가장 조심할 것 — 「위반의심 0」을 «깨끗하다»로 읽게 두면 안 된다.
+     규칙 92개 중 27개는 「수동확인」이라 기계가 아예 판단하지 않는다. 늘 함께 적는다. */
+$("cb-hist-body").addEventListener("click",async e=>{
+  const b=e.target.closest("[data-cb-scan]"); if(!b||b.disabled)return;
+  const revId=b.getAttribute("data-cb-scan");
+  const 자리=$("cb-hist-body").querySelector(`[data-cb-scanout="${CSS.escape(revId)}"]`);
+  const meta=CB_IDX.find(x=>x.siteKey===CB_HIST_KEY)||{};
+  const 이전=b.textContent; b.disabled=true; b.textContent="훑는 중…";
+  자리.innerHTML=`<div class="muted" style="font-size:11.5px;margin-top:7px">본문을 읽는 중…</div>`;
+  try{
+    const v=(await FBDB.ref(CB.paths.text(CB_HIST_KEY,revId,"after")).once("value")).val();
+    const 글=v&&typeof v==="object"?String(v.t||""):String(v||"");
+    if(글.replace(/\s/g,"").length<50)throw new Error("본문이 비어 있습니다");
+    /* 규모 — 업체 자료에서 가져오되 «어디서 온 값인지»를 들고 다닌다 */
+    let sizeKey=CB.sizeKeyOf(meta.size), sizeFrom="짐작";
+    const 고른것=자리.getAttribute("data-size");
+    if(고른것){ sizeKey=고른것; sizeFrom="사람"; }
+    const arts=parseArticles(글);
+    const 오늘=new Date().toISOString().slice(0,10);
+    /* ⚠ 조건부 규칙은 실제로 0개다(전부 「공통」) — 빈 Set 이라 놓치는 것이 없다 */
+    const res=evaluate(arts,sizeKey||"10인이상",new Set(),오늘);
+    const t=CB.reviewTally(res);
+    const 단서=CB.reviewCaveats({ manual:t.count.수동확인, sizeKey:sizeKey,
+      sizeFrom:sizeKey?sizeFrom:"", futureCount:t.count.시행예정 });
+    const 셈줄=[["위반의심",t.count.위반의심,"#991b1b","#fef2f2","#fecaca"],
+                ["누락",t.count.누락,"#854d0e","#fffbeb","#fbbf24"],
+                ["수동확인",t.count.수동확인,"var(--sub)","#f8fafc","var(--line)"],
+                ["시행예정",t.count.시행예정,"var(--sub)","#f8fafc","var(--line)"],
+                ["적합",t.count.적합,"#166534","#f0fdf4","#4ade80"]]
+      .map(([n,c,fg,bg,bd])=>`<span class="hkind" style="background:${bg};color:${fg};border:1px solid ${bd}">${n} <b>${c}</b></span>`).join(" ");
+    자리.innerHTML=`<div style="margin-top:9px;padding-top:8px;border-top:1px solid var(--line)">`
+      +`<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:7px">${셈줄}`
+        +`<span class="muted" style="font-size:11px;margin-left:auto">조문 ${arts.length}개 · ${escapeH(sizeKey||"규모 모름")}</span></div>`
+      +(t.must.length
+        ?`<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:7px">`
+          +t.must.slice(0,12).map(x=>
+            `<div style="display:flex;gap:7px;align-items:baseline;font-size:11.5px">`
+            +`<span class="hkind" style="background:${x.status==="위반의심"?"#fef2f2":"#fffbeb"};`
+              +`color:${x.status==="위반의심"?"#991b1b":"#854d0e"};`
+              +`border:1px solid ${x.status==="위반의심"?"#fecaca":"#fbbf24"};flex:none">${x.status}</span>`
+            +`<span style="flex:1"><b>${escapeH(x.name)}</b>`
+              +(x.law?` <span class="muted" style="font-size:10.5px">${escapeH(x.law)}</span>`:"")
+              +(x.loc?` <span class="muted" style="font-size:10.5px">${escapeH(x.loc)}</span>`:"")+`</span></div>`).join("")
+          +(t.must.length>12?`<div class="muted" style="font-size:11px">그 밖 ${t.must.length-12}건 — [▶ 검토 시작]으로 열면 전부 보입니다.</div>`:"")
+          +`</div>`
+        :`<div style="font-size:11.5px;color:#166534;margin-bottom:7px">위반의심·누락으로 걸린 것이 없습니다.</div>`)
+      /* ★★ 안 본 것을 «반드시» 적는다 — 안 적으면 0 이 「깨끗함」이 된다 */
+      +`<div style="font-size:10.5px;color:var(--mute);line-height:1.75">`
+        +단서.map(x=>"· "+escapeH(x)).join("<br>")+`</div>`
+      +`<div style="margin-top:7px;display:flex;gap:5px;align-items:center;flex-wrap:wrap">`
+        +`<span class="muted" style="font-size:10.5px">규모가 다르면</span>`
+        +["5인미만","5인이상","10인이상","30인이상"].map(k=>
+          `<button class="stbtn" data-cb-size="${escapeH(revId)}|${k}" style="font-size:10px;padding:2px 7px"`
+          +(k===sizeKey?" disabled":"")+`>${k}</button>`).join("")
+        +`</div></div>`;
+  }catch(err){
+    console.warn("훑기 실패:",err);
+    자리.innerHTML=`<div style="font-size:11.5px;color:#991b1b;margin-top:7px">훑지 못했습니다 — ${escapeH(String(err&&err.message||err))}</div>`;
+  }finally{ b.disabled=false; b.textContent=이전; }
+});
+/* 규모를 사람이 고치면 그 회차만 다시 훑는다 — 짐작이 틀렸을 때의 길 */
+$("cb-hist-body").addEventListener("click",e=>{
+  const b=e.target.closest("[data-cb-size]"); if(!b)return;
+  const [revId,k]=b.getAttribute("data-cb-size").split("|");
+  const 자리=$("cb-hist-body").querySelector(`[data-cb-scanout="${CSS.escape(revId)}"]`);
+  자리.setAttribute("data-size",k);
+  $("cb-hist-body").querySelector(`[data-cb-scan="${CSS.escape(revId)}"]`).click();
 });
 
 $("cb-hist-back").addEventListener("click",()=>{ cbTab("list"); cbRenderIndex(); });
