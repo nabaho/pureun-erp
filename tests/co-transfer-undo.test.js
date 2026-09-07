@@ -213,7 +213,10 @@ test('⑭ 계약을 먼저 살린다 — 업체를 먼저 비우면 어디에도
 });
 
 test('⑮ ⋯ 메뉴 두 자리 «모두»에 붙어 있다 — 한쪽만 붙이면 탭에 따라 없다', function () {
-  const rows = (bare.match(/coUndoItem\(co\)/g) || []).length;
+  /* ⚠ 「coUndoItem(co)」 로 세면 «함수 선언»(function coUndoItem(co){) 까지 세어져
+     한 자리를 빼도 셋이 둘이 될 뿐 통과한다 — 되돌림 검사에서 실제로 빠져나갔다.
+     부르는 자리만 센다(뒤의 쉼표가 그 표시다). */
+  const rows = (bare.match(/coUndoItem\(co\),/g) || []).length;
   assert.ok(rows >= 2, '★ ⋯ 메뉴 자리는 둘입니다 (활성·사무대행) — ' + rows + '군데만 붙었습니다');
   const item = cutFn(src, 'function coUndoItem(');
   assert.match(item, /if\(!co \|\| !co\.xferUndo/, '★ 이관으로 온 업체에만 보여야 합니다');
