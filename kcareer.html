@@ -4843,7 +4843,9 @@ async function mountEditor(buffer,name,cfg){
         _rhDoc={ name:name, ext:ext, bytes:_u8 };
         /* ⚠ 채운 결과를 다시 올리는 길(_rhKeepBase)에서는 바탕을 바꾸지 않는다 —
            바꾸면 「이미 채워진 것」이 바탕이 되어 되돌려 넣을 때 값이 두 번 들어간다. */
-        if(!_rhKeepBase){ _rhBase={ name:name, ext:ext, bytes:_u8 }; _rhListPlan=null; _rhVals={}; }
+        /* ⚠ 원본이 바뀌면 «담아 둔 표시»도 놓는다 — 안 놓으면 새 원본을 담지 않는다 */
+        if(!_rhKeepBase){ _rhBase={ name:name, ext:ext, bytes:_u8 }; _rhListPlan=null; _rhVals={};
+                          _rhBaseSaved=''; }
       }
     }catch(e){ console.warn('rhDoc',e); }
   }
@@ -9746,6 +9748,42 @@ async function rhSideLoad(id){
     return JSON.parse(new TextDecoder().decode(new Uint8Array(b64ToAb(f.base64))));
   }catch(e){ return null; }
 }
+/* ── 원본(처음 올린 서식)도 «따로» 담는다 ──────────────────────────
+   ★ 대표 제보 2026-09-06: 「기관명 : 푸른노무법인 푸른노무법인 푸른노무법인」
+     — 「내 정보로 채우기」를 누른 만큼 값이 겹쳐 적혔다.
+
+   ■ 까닭
+     채우기·되돌려 넣기는 «언제나 원본에서 새로 짓는다»(rhFillByMap·rhComposeBytes).
+     두 번 눌러도 겹치지 않게 하려고 그렇게 만든 것이다.
+     그런데 담는 것은 _rhDoc(= 이미 채워진 문서)뿐이었다. 그래서 새로고침 뒤
+     「↩ 이어서 하기」로 열면 원본이 없어(_rhBase=null) 바탕이 «채워진 문서»로
+     떨어지고, 겹치기를 막던 그 장치가 «조용히» 풀렸다.
+     → 원본을 함께 담아야 「원본 + 고른 값 + 친 값 = 늘 같은 결과」가 지켜진다.
+
+   ⚠ 원본은 바뀌지 않는다 — 30초 자동저장마다 다시 담지 않는다(한 번만).
+   ⚠ 원본을 «색인»에 담지 말 것 — 색인은 localStorage 이고 클라우드로 나간다.
+     문서·친 값과 같은 곳(이 기기의 파일 저장소)에 둔다. */
+function _rhBaseId(id){ return id+'@base'; }
+var _rhBaseSaved='';               /* 원본을 담아 둔 자리 — 같으면 다시 담지 않는다 */
+function rhBaseSave(id){
+  if(!id || !_rhBase || !_rhBase.bytes) return false;
+  var 표=id+':'+_rhBase.bytes.length;
+  if(_rhBaseSaved===표) return true;
+  try{
+    saveFileUnified(_rhBaseId(id), { id:_rhBaseId(id), name:_rhBase.name||'원본',
+      ext:_rhBase.ext||'hwpx', size:_rhBase.bytes.length,
+      base64:abToB64(_rhBase.bytes.buffer||_rhBase.bytes),
+      savedAt:new Date().toISOString() });
+    _rhBaseSaved=표; return true;
+  }catch(e){ console.warn('base save',e); return false; }
+}
+async function rhBaseLoad(id){
+  try{
+    var f=await getFileAsync(_rhBaseId(id));
+    if(!f||!f.base64) return null;
+    return { name:f.name, ext:f.ext, bytes:new Uint8Array(b64ToAb(f.base64)) };
+  }catch(e){ return null; }
+}
 /* 「친 칸 / 전체 칸」 — 목록에서 어디까지 했는지 한눈에 보이게 */
 function rhDraftCells(){
   var 전체=(_rhMap&&_rhMap.slots)?_rhMap.slots.length:0;
@@ -9761,10 +9799,15 @@ function rhDraftSave(){
       size:_rhDoc.bytes.length, base64:abToB64(_rhDoc.bytes.buffer||_rhDoc.bytes),
       savedAt:new Date().toISOString() });
     rhSideSave(_rhDraftId);
+    /* ★ 원본도 함께 — 없으면 이어서 열 때 채우기가 «겹쳐» 적힌다 */
+    var 원본있나=rhBaseSave(_rhDraftId);
     var c=rhDraftCells(), arr=rhDraftAll(), 있던=null;
     arr=arr.filter(function(d){ if(d.id===_rhDraftId){ 있던=d; return false; } return true; });
     arr.unshift({ id:_rhDraftId, name:_rhDoc.name, ext:_rhDoc.ext, at:Date.now(),
-                  cells:c, done:false, madeAt:(있던&&있던.madeAt)||Date.now() });
+                  cells:c, done:false, madeAt:(있던&&있던.madeAt)||Date.now(),
+                  /* ⚠ 한 번 담아 둔 것은 잊지 않는다 — 이번에 못 담았다고 지우면
+                     목록이 「원본 없음」이라 잘못 말한다 */
+                  hasBase:원본있나||!!(있던&&있던.hasBase) });
     rhDraftPut(arr);
     var el=document.getElementById('rhDraftInfo');
     if(el) el.textContent='💾 담김 · '+new Date().toLocaleTimeString('ko-KR').slice(0,8);
@@ -10654,6 +10697,9 @@ function rhDraftDraw(){
         +'<div style="font-size:12px;font-weight:700;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:330px" title="'
         +escapeHtml(d.name||'')+'">'+escapeHtml(d.name||'(이름 없음)')+'</div>'
         +(지금?'<div style="font-size:10px;color:var(--teal);font-weight:700">지금 하는 것</div>':'')
+        /* ⚠ 원본이 없는 자리는 밝혀 둔다 — 다시 채우면 값이 겹칠 수 있다 */
+        +(d.hasBase?'':'<div style="font-size:10px;color:var(--red);font-weight:700"'
+          +' title="처음 올린 원본이 이 자리에 없습니다 — 다시 채우면 값이 겹쳐 적힐 수 있습니다">⚠ 원본 없음</div>')
         +'</td>'
       +'<td style="padding:6px 7px;border-top:1px solid var(--border);font-size:11px;color:var(--text-mute);white-space:nowrap">'
         +escapeHtml(_rhWhen(d.at))+'</td>'
@@ -10693,10 +10739,24 @@ async function rhDraftResume(id){
   var side=await rhSideLoad(id);
   _rhVals=(side&&side.vals)||{}; _rhPicks=(side&&side.picks)||{};
   try{ if(side&&side.listPlan) _rhListPlan=side.listPlan; }catch(e){}
+  /* ★★ 원본을 되살린다 — 없으면 «채워진 문서»가 바탕이 되어, 채우기를 누른 만큼
+     값이 겹쳐 적힌다(대표 제보 2026-09-06 「푸른노무법인 푸른노무법인 푸른노무법인」). */
+  _rhBase=await rhBaseLoad(id);
+  _rhBaseSaved=_rhBase ? (id+':'+_rhBase.bytes.length) : '';
   rhDraftPanelClose();
-  try{ await mountEditor(b64ToAb(f.base64), f.name); }catch(e){ console.warn('resume mount',e); }
+  /* ⚠ mountEditor 는 «새 서식이 올라온 것»으로 보고 바탕을 다시 잡는다(_rhVals 도 비운다).
+     여기서는 방금 되살린 원본·친 값을 지켜야 하므로 _rhKeepBase 로 막는다. */
+  _rhKeepBase=true;
+  try{ await mountEditor(b64ToAb(f.base64), f.name); }
+  catch(e){ console.warn('resume mount',e); }
+  finally{ _rhKeepBase=false; }
   rhDraftCheck();
-  toast('이어서 합니다 — '+f.name);
+  /* ⚠ 원본이 없는 «옛 자리»는 조용히 넘기지 않는다 — 겹칠 수 있다고 말해 준다.
+     말없이 겹치면 틀린 서류가 그대로 기관에 나간다. */
+  if(_rhBase) toast('이어서 합니다 — '+f.name);
+  else toast('이어서 합니다 — '+f.name+' · ⚠ 이 자리에는 «처음 올린 원본»이 없습니다(옛 자리)'
+    +' — 「✨ 내 정보로 채우기」를 다시 누르면 값이 겹쳐 적힐 수 있습니다.'
+    +' 겹치면 양식을 새로 올려 주세요.', 11000);
 }
 
 /* ⧉ 사본 — 지금 상태를 복사해 새 자리로. 비슷한 서류를 여러 곳에 낼 때 */
@@ -10716,10 +10776,21 @@ async function rhDraftCopy(id){
     if(sf&&sf.base64) saveFileUnified(_rhSideId(새), { id:_rhSideId(새), name:'side.json', ext:'json',
       size:sf.size||0, base64:sf.base64, savedAt:new Date().toISOString() });
   }catch(e){}
+  /* ★ 원본도 데려간다 — 안 데려가면 사본에서 채우기가 겹쳐 적힌다 */
+  var 원본옮김=false;
+  try{
+    var bf=await getFileAsync(_rhBaseId(id));
+    if(bf&&bf.base64){
+      saveFileUnified(_rhBaseId(새), { id:_rhBaseId(새), name:bf.name||'원본', ext:bf.ext||'hwpx',
+        size:bf.size||0, base64:bf.base64, savedAt:new Date().toISOString() });
+      원본옮김=true;
+    }
+  }catch(e){}
   var arr=rhDraftAll();
   var at=arr.indexOf(d);
   arr.splice(at<0?0:at+1, 0, { id:새, name:이름, ext:f.ext, at:Date.now(),
-                               cells:d.cells||{done:0,total:0}, done:false, madeAt:Date.now() });
+                               cells:d.cells||{done:0,total:0}, done:false, madeAt:Date.now(),
+                               hasBase:원본옮김 });
   rhDraftPut(arr);
   rhDraftDraw(); rhDraftCheck();
   toast('⧉ 사본을 만들었습니다 — '+이름);

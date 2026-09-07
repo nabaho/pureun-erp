@@ -207,7 +207,13 @@ function 저장세상(store) {
     for (let i = 0; i < b.length; i += ch) bin += String.fromCharCode.apply(null, b.subarray(i, i + ch));
     return btoa(bin);
   }) + ';', ctx);
-  ['function rhSideSave(', 'function rhDraftSave('].forEach((d) => vm.runInContext(cutFn(CODE, d), ctx));
+  /* ⚠ rhDraftSave 는 «원본»도 담는다(rhBaseSave) — 하네스에 없으면 그 줄에서 걸려
+     친 값까지 안 담긴다. 스텁이 아니라 «진짜 함수»를 넣는다:
+     _rhBase 가 비어 있으면 rhBaseSave 는 스스로 넘어가므로 여기 셈은 달라지지 않는다.
+     (원본을 담는 규칙 자체는 tests/kcareer-draft-base.test.js 가 못 박는다.) */
+  vm.runInContext('var _rhBase=null; var _rhBaseSaved="";', ctx);
+  ['function _rhBaseId(', 'function rhBaseSave(', 'function rhSideSave(', 'function rhDraftSave(']
+    .forEach((d) => vm.runInContext(cutFn(CODE, d), ctx));
   return ctx;
 }
 
