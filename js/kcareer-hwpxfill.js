@@ -368,6 +368,36 @@
     var i = hay.indexOf(oldStr);
     return i < 0 ? hay : hay.slice(0, i) + newStr + hay.slice(i + oldStr.length);
   }
+  /* ── 칸의 «진짜 열 번호» ──
+     ★★ 대표 제보 2026-09-07: 이력서 2쪽에서 학력이 «자격 및 면허 표»에 박혀 나왔다.
+     ■ 까닭
+       기관 서식은 표 맨 앞에 「학력사항」·「경력사항」처럼 «세로로 합친» 이름 칸을 둔다.
+       그 칸은 머리줄에만 있고 자료 줄에는 없다 — 머리줄 6칸, 자료 줄 5칸.
+       열 이름을 «칸 순서»로 세면 자료 줄이 한 칸씩 밀려, 기간이 학교명 칸으로 들어가고
+       「고등학교」가 적힌 줄은 「빈 줄이 아니다」라며 건너뛰게 된다. 그렇게 아래로 흘러
+       남의 표(자격 및 면허)의 빈 줄이 학력 자리로 쓰였다.
+     ■ 고침 — 한글 파일은 칸마다 «열 번호»를 적어 둔다. 그것을 읽는다.
+     ⚠ 열 번호가 없는 서식(다른 프로그램이 만든 것)에서는 지금까지처럼 칸 순서로 간다 —
+       오늘 되는 것이 뒷걸음질하면 안 된다.
+     ⚠ 이름표 순서는 서식마다 다르다(colAddr 이 앞일 수도, rowAddr 이 앞일 수도 있다). */
+  function colAddrOf(tc) {
+    var m = /<hp:cellAddr[^>]*\bcolAddr="(\d+)"/.exec(String(tc == null ? '' : tc));
+    return m ? parseInt(m[1], 10) : -1;
+  }
+  /* 줄의 «모양» — 칸 수와 첫 칸의 열 번호. 열 번호가 없으면 빈 글자(이 잣대를 쓰지 않는다) */
+  function rowShape(cells) {
+    if (!cells || !cells.length) return '';
+    var a = colAddrOf(cells[0]);
+    return a < 0 ? '' : (cells.length + ':' + a);
+  }
+  /* 이 칸이 어느 열인가 — 열 번호가 있으면 그것으로, 없으면 칸 순서로(옛 서식) */
+  function keyAt(head, tc, i) {
+    if (head && head.byCol) {
+      var ca = colAddrOf(tc);
+      if (ca >= 0) return head.byCol[ca] || '';
+    }
+    return (head && head.map[i]) || '';
+  }
   /* ★ 줄에서 «n번째 칸»을 바꾼다.
      ⚠ replaceOnce 로 칸을 바꾸면 안 된다 — 빈 칸끼리는 XML 이 글자 하나까지 똑같아서
        「3번째 칸」에 넣으라고 해도 «맨 앞의 빈 칸»이 바뀐다. 실측(2026-09-06)에서
@@ -509,10 +539,18 @@
       }
     }
     if (hit < 2) return null;
+    /* ★ 열 이름을 «진짜 열 번호»에도 적어 둔다 — 자료 줄이 밀려 있어도 제 칸을 찾는다.
+       ⚠ 한 칸이라도 열 번호가 없으면 통째로 쓰지 않는다(반만 맞으면 더 위험하다). */
+    var byCol = {}, 있다 = true;
+    for (i = 0; i < cells.length; i++) {
+      var ca = colAddrOf(cells[i]);
+      if (ca < 0) { 있다 = false; break; }
+      if (map[i]) byCol[ca] = map[i];
+    }
     var kind = map.indexOf('school') >= 0 ? 'edu'
       : (map.indexOf('org') >= 0 && (map.indexOf('role') >= 0 || map.indexOf('title') >= 0
           || map.indexOf('dept') >= 0 || map.indexOf('period') >= 0)) ? 'career' : '';
-    return kind ? { kind: kind, map: map } : null;
+    return kind ? { kind: kind, map: map, byCol: 있다 ? byCol : null } : null;
   }
   /* ── 여기서부터는 «남의 자리» ──
      ① 다음 머리행 — 열 이름이 둘 이상 잡히면 새 목록 표가 시작된 것이다
@@ -526,6 +564,11 @@
     var keys = 0;
     for (var k = 0; k < cells.length; k++) if (colKeyOf(cellText(cells[k]))) keys++;
     if (keys >= 2) return true;
+    /* ★★ «통째로 빈 줄»은 경계가 아니다 — 채울 자리다 (대표 제보 2026-09-07).
+       기관 서식의 경력 표 첫 줄에는 「년 월 ~ 년 월」 하나만 박혀 있다. 그것을 글자로 보아
+       「첫 칸에만 글자가 있는 소제목」으로 오인해 그 자리에서 멈췄다 → 경력이 0줄이었다.
+       ⚠ 진짜 소제목(「5. 관련 분야 자격증 보유 사항」)은 자리표가 아니므로 그대로 경계다. */
+    if (rowIsEmpty(cells)) return false;
     var filled = 0, first = -1;
     for (var i = 0; i < cells.length; i++) {
       if (!isEmptyCell(cells[i])) { filled++; if (first < 0) first = i; }
@@ -580,16 +623,30 @@
       var items = data[head.kind] || [];
       var put = 0, donePick = {};
       /* 이 구역의 끝까지만 — 다음 머리행이나 소제목을 만나면 남의 자리다 */
-      var q = r + 1;
+      var q = r + 1, 모양 = null;
       for (; q < rows.length; q++) {
         var cells = splitCells(rows[q]);
         if (isBoundary(cells)) break;
+        /* ★★ «자료 줄의 모양»이 바뀌면 그 구역은 끝났다 (대표 제보 2026-09-07).
+           실측: 학력 구역(칸 5개·첫 열 1번)이 끝난 뒤 빈 줄 하나를 지나 「자격및면허」
+           머리줄이 오는데 그 줄이 경계로 안 잡혀, 그 아래 빈 줄에 학력이 박혔다.
+           ⚠ 모양이 다르면 «안 채우는» 쪽으로 멈춘다 — 남의 표에 박는 것보다 덜 나쁘다.
+           ⚠ 열 번호가 없는 서식에서는 이 잣대를 쓰지 않는다(rowShape 가 빈 글자를 준다). */
+        var 이모양 = rowShape(cells);
+        if (이모양) {
+          if (모양 == null) 모양 = 이모양;
+          else if (모양 !== 이모양) break;
+        }
+        /* 이 줄의 «칸마다 어느 열인지»를 먼저 정해 둔다 — 채우는 중에 칸이 바뀌므로 */
+        var keys = [];
+        var lim = head.byCol ? cells.length : Math.min(cells.length, head.map.length);
+        for (var kk = 0; kk < lim; kk++) keys.push(keyAt(head, cells[kk], kk));
         /* 「고등학교」처럼 급만 박힌 줄 — 그 급의 학교를 골라 넣는다.
            ⚠ 이 줄은 rowIsEmpty 가 거짓이다(글자가 있으므로). 그래서 따로 본다. */
         var 급 = '', 급칸 = -1;
         if (head.kind === 'edu') {
-          for (var L = 0; L < cells.length && L < head.map.length; L++) {
-            if (head.map[L] !== 'school') continue;
+          for (var L = 0; L < keys.length; L++) {
+            if (keys[L] !== 'school') continue;
             var lv = levelOf(cellText(cells[L]));
             if (lv) { 급 = lv; 급칸 = L; }
           }
@@ -610,8 +667,8 @@
           pick = put;
         }
         var item = items[pick], newTr = rows[q], ok = false, used = {};
-        for (var c = 0; c < cells.length && c < head.map.length; c++) {
-          var k = head.map[c];
+        for (var c = 0; c < lim; c++) {
+          var k = keys[c];
           if (!k) continue;
           /* ⚠ 「직위」 칸 하나뿐인 옛 서식이 뒷걸음질하지 않게 서로 메운다.
              직위가 없으면 담당업무를, 담당업무가 없으면 직위를 넣는다.
@@ -788,6 +845,7 @@
     /* ⚠ 목록 줄 판정은 «이 하나»를 쓴다 — 칸 지도(kcareer-formmap)도 같은 자를 쓴다.
        두 곳에 따로 두면 「지도엔 빈 줄인데 안 채워지는」 어긋남이 생긴다. */
     isRowBlank: isRowBlank, bracketKey: bracketKey,
+    colAddrOf: colAddrOf, rowShape: rowShape,
     fillParagraphs: fillParagraphs, paraText: paraText,
     /* 칸 지도(kcareer-formmap.js)가 «같은 자»를 쓰도록 내보낸다 —
        따로 만들면 두 곳의 셈이 어긋나 「지도에는 있는데 안 채워지는 칸」이 생긴다 */
