@@ -18843,9 +18843,25 @@ async function returnToContract(storeKey, itemId){
         번호가 두 벌이 된다 — 실제로 계약-2026-080·081 이 그렇게 되어 있다(실측 2026-09-07).
         여기서는 새로 만들지 않고 «원래 계약의 상태만» 되돌린다.
    ⚠ 이관할 때 남긴 xferUndo 가 있어야 돌아간다(transferContract 참조). */
+/* ── 되돌릴 자리가 «없던 때» 이관된 것 (2026-09-07 저녁, 대표 지시 「다른관리 처럼」) ──
+   xferUndo 는 2026-09-07 배포부터 남는다. 그 전에 이관된 곳에는 없다 —
+   그래서 대표 화면에는 단추가 «아예 안 보였다». 사건·컨설팅에는 늘 보이는데.
+   ⚠ 그때 것은 «무엇이 채워졌는지» 기록이 없다. 그러니 칸 값을 함부로 비우지 않는다.
+     할 수 있는 일만 한다 — 계약을 칸반으로 돌려보내고 이관 자국(출처·딱지)만 끊는다.
+     비우지 못한다는 것을 확인 창에 그대로 적는다(못 하는 일을 한 척하지 않는다). */
+function coLegacyUndoPlan(co, contracts){
+  var no = String((co && co.sourceContractNo) || '');
+  var id = String((co && co.sourceContractId) || ((co && co.sourceKind === 'contract') ? (co.sourceId || '') : '') || '');
+  if(!no && !id) return null;
+  var ct = (contracts || []).find(function(x){
+    return x && !x._deleted && (id ? x.id === id : x.contractNo === no); }) || null;
+  return { mode:'legacy', contractNo:no || (ct ? ct.contractNo : ''), contract:ct,
+           clear:[], kept:[], show:[], keptShow:[], before:{},
+           noteBefore:String((co && co.note) || '') };
+}
 function coUndoPlan(co, contracts){
   var u = (co && co.xferUndo) || null;
-  if(!u || !u.mode) return null;
+  if(!u || !u.mode) return coLegacyUndoPlan(co, contracts);
   var keys = Array.isArray(u.keys) ? u.keys.filter(function(k){ return k !== '담당자'; }) : [];
   if(u.after && u.after.contacts !== undefined) keys = keys.concat(['contacts']);
   var same = function(a, b){ try { return JSON.stringify(a === undefined ? '' : a) === JSON.stringify(b === undefined ? '' : b); } catch(_e){ return false; } };
@@ -18877,7 +18893,16 @@ async function undoCompanyTransfer(coId, onDone){
     if(!plan){ showToast('↩ 되돌릴 이관 기록이 없는 업체입니다'); return; }
     if(!plan.contract){ showToast('❌ 원본 계약(' + (plan.contractNo || '?') + ')을 찾지 못해 보류합니다'); return; }
 
-    var msg = plan.mode === 'created'
+    var msg = plan.mode === 'legacy'
+      /* ⚠ 「비웁니다」라고 하면 안 된다 — 못 비운다. 무엇이 이관으로 들어왔는지 기록이 없다.
+         할 수 있는 것만 적는다. 사람이 화면에서 직접 고칠 수 있게 그 말도 함께 적는다. */
+      ? '「' + (co.name || '') + '」 을 계약관리로 돌려보냅니다.\n\n'
+        + '→ 계약 ' + plan.contractNo + ' 이 칸반에 다시 뜹니다\n'
+        + '→ 이 업체의 「이관」 자국(출처 계약·딱지)을 끊습니다\n'
+        + '→ 업체는 지우지 않습니다\n\n'
+        + '⚠ 이관이 «어느 칸을» 채웠는지는 기록이 없습니다(2026-09-07 전에 이관된 건).\n'
+        + '   그래서 칸 값은 그대로 둡니다 — 잘못 들어온 값이 있으면 [수정]에서 직접 고쳐 주세요.'
+      : plan.mode === 'created'
       ? '「' + (co.name || '') + '」 은 이 이관으로 «새로 생긴» 업체입니다.\n\n'
         + '→ 업체를 휴지통으로 옮깁니다 (지우지 않습니다 · 되살릴 수 있습니다)\n'
         + '→ 계약 ' + plan.contractNo + ' 이 칸반에 다시 뜹니다'
@@ -18916,14 +18941,23 @@ async function undoCompanyTransfer(coId, onDone){
       back.note = plan.noteBefore;
       back.xferUndo = null;
       back.arrivedFrom = null; back.arrivedNo = null; back.arrivedAt = null;
+      /* 옛 이관에는 되돌릴 자리가 없다 — 출처 자국은 «여기서» 끊는다.
+         안 끊으면 계약을 돌려보내고도 업체는 그대로 「이관된 것」으로 남고,
+         단추도 영영 붙어 있는다. */
+      if(plan.mode === 'legacy'){
+        back.sourceContractNo = ''; back.sourceContractId = '';
+        back.sourceKind = ''; back.sourceId = '';
+      }
       back.updatedAt = (new Date()).toISOString();
       if(!dbUpsert('companies', Object.assign({}, co, back))){
         dbUpsert('contracts', plan.contract);          // 되돌림: 계약을 원래대로
         showToast('❌ 업체 되돌리기 실패 — 계약을 원래대로 두었습니다'); return;
       }
-      showToast('↩ 이관을 되돌렸습니다 — ' + (co.name || '') + ' 에서 ' + plan.clear.length + '칸을 비웠습니다'
-        + (plan.kept.length ? ' (' + plan.kept.length + '칸은 그 뒤 고쳐져 두었습니다)' : '')
-        + ' · 계약 ' + plan.contractNo + ' 이 칸반에 있습니다');
+      showToast(plan.mode === 'legacy'
+        ? '↩ 계약 ' + plan.contractNo + ' 이 칸반에 있습니다 — ' + (co.name || '') + ' 의 이관 자국을 끊었습니다 (칸 값은 그대로)'
+        : '↩ 이관을 되돌렸습니다 — ' + (co.name || '') + ' 에서 ' + plan.clear.length + '칸을 비웠습니다'
+          + (plan.kept.length ? ' (' + plan.kept.length + '칸은 그 뒤 고쳐져 두었습니다)' : '')
+          + ' · 계약 ' + plan.contractNo + ' 이 칸반에 있습니다');
     }
     if(typeof onDone === 'function') onDone();
     if(typeof window.navigateTo === 'function'){
@@ -22116,14 +22150,25 @@ function CompanyManagement(){
     return Object.assign({}, item, { puNoHead: log.head, puNoHistory: log.puNoHistory });
   }
   function coUpsert(item){ if(!item || !item.id) return false; item = coStampNumberHead(item); var ok = dbUpsert('companies', item); if(ok) refreshCompanies(); else showToast('❌ 저장 실패'); return ok; }
-  /* ↩ 이관 되돌리기 — 계약관리에서 들어온 업체에만 보인다(xferUndo 가 있을 때).
-     ⚠ 손으로 만든 업체 344곳에는 «안 보여야» 한다. 늘 보이면 누를 일 없는 줄이 하나 늘 뿐이고,
+  /* ↩ 계약관리로 복귀 — 계약관리에서 들어온 업체에만 보인다.
+     ⚠ 손으로 만든 업체에는 «안 보여야» 한다. 늘 보이면 누를 일 없는 줄이 하나 늘 뿐이고,
        눌렀을 때 「되돌릴 것이 없습니다」가 뜨면 그것이 고장으로 보인다.
-     ⚠ 사건·컨설팅의 「↩ 계약관리로 복귀」와 «다른 일»이라 이름도 다르다 — undoCompanyTransfer 참조. */
+     ⚠★ xferUndo «만» 보면 안 된다 — 그것은 2026-09-07 배포부터 남는다.
+       그 전에 이관된 곳에는 없어서 대표 화면에 단추가 아예 안 보였다
+       (대표 지시 「뒤로 버튼 만들어서 계약관리로 다시 보내고 싶다. 다른관리 처럼」).
+       출처 계약(sourceContract*)만 있어도 보여야 한다 — 사건·컨설팅이 그렇게 한다.
+     ⚠ 이름은 사건·컨설팅과 «같게» 둔다(대표 지시 「다른관리 처럼」). 하는 일은 다르지만
+       — 업체를 안 지우고 계약을 새로 안 만든다, undoCompanyTransfer 주석 참조 —
+       화면에서 찾는 사람에게는 같은 자리에 같은 말이어야 한다. */
   function coUndoItem(co){
-    if(!co || !co.xferUndo || !co.xferUndo.mode) return null;
-    return { label:'↩ 이관 되돌리기', tone:'edit',
-      title:'계약 ' + (co.xferUndo.contractNo || '') + ' 이관을 되돌립니다',
+    if(!co) return null;
+    var u = co.xferUndo && co.xferUndo.mode ? co.xferUndo : null;
+    var legacy = !u && (co.sourceContractNo || co.sourceContractId ||
+      (co.sourceKind === 'contract' && co.sourceId));
+    if(!u && !legacy) return null;
+    var no = (u ? u.contractNo : co.sourceContractNo) || '';
+    return { label:'↩ 계약관리로 복귀', tone:'edit',
+      title: no ? '계약 ' + no + ' 로 되돌립니다' : '계약관리로 되돌립니다',
       onClick:function(){ undoCompanyTransfer(co.id, refreshCompanies); } };
   }
   function coPatch(id, fields){ var ok = dbPatch('companies', id, fields); if(ok) refreshCompanies(); else showToast('❌ 저장 실패'); return ok; }
