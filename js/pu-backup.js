@@ -130,11 +130,70 @@
     return label === 'daily' ? dayKey() : dayKey() + '-' + Date.now().toString(36);
   }
 
+  /* ══ 백업에 담기는 주민번호를 잠근다 (대표 지시 2026-08-29) ══════════════
+     「푸른 화면에서는 주민번호가 보여야 한다. 그렇게 해야 업무 작업이 가능하다.
+       하지만 백업 시 주번 암호화해야 된다.」
+
+     ★ 화면과 살아 있는 자료는 «그대로» 다 — 잠그는 것은 백업 사본뿐이다.
+     ⚠ 2026-09-07 까지 이 잠금은 pu-erp.html 자기 백업에만 있었다. 이 공용 부품은
+       기금(임원 주민등록번호)·경력관리(주민번호)까지 서른 시점씩 뜨면서 «안 잠갔다».
+       열린 문은 아니었다(systemBackups 는 관리자·위임관리인만 읽는다) — 그러나 잠금을
+       만든 까닭이 「백업은 오래 남고, 옮겨 다니고, 아무도 안 본다」였고, 그 겹이 없었다.
+     ⚠★ «크기를 재기 전에» 잠근다. 잠근 값은 열세 자리에서 백 자리 가까이로 늘어난다 —
+        재고 나서 잠그면 16MB 한도를 넘겨 서버가 통째로 거부한다(2026-08-16 그 사고).
+     ⚠ 열쇠를 못 얻으면 **백업을 쓰지 않는다.** 잠기지 않은 채로 쓰면 지시를 어기는 것이고,
+       조용히 넘기면 아무도 모른다. 실패는 위쪽 식힘·알림 길로 그대로 올라간다.
+     ⚠ 잠글 것이 «없으면» 열쇠를 아예 안 가져온다(업무·전자서명 등 주민번호가 없는 앱).
+       그 앱들의 백업이 열쇠 칸 권한 때문에 멎으면 안 된다. */
+  var SEAL_KEY_PATH = 'backup_key/v1';
+  function sealEntries(db, entries) {
+    var S = window.PuRrnSeal;
+    if (!S) return Promise.reject(new Error(
+      '잠금 모듈(js/pu-rrn-seal.js)을 못 불러왔습니다 — 주민번호를 잠그지 않은 백업은 쓰지 않습니다'));
+    var need = entries.reduce(function (n, e) {
+      return n + (e && e.exists && e.value !== undefined ? S.countToSeal(e.value) : 0);
+    }, 0);
+    if (!need) return Promise.resolve(entries);
+    return S.keyFor(db.ref(SEAL_KEY_PATH)).then(function (key) {
+      return Promise.all(entries.map(function (e) {
+        if (!e || !e.exists || e.value === undefined) return e;
+        return S.seal(e.value, key).then(function (v) {
+          return { path: e.path, exists: e.exists, value: v };
+        });
+      }));
+    });
+  }
+
+  /* ── 되돌릴 때는 «반드시» 푼다 ──
+     안 풀면 화면의 주민번호 자리에 `enc:v1:…` 이 그대로 들어간다. 자료가 깨진 것처럼
+     보이고, 그 화면을 저장하는 순간 진짜 값이 사라진다.
+     ★ 이 잠금이 생기기 «전» 백업은 잠긴 자리가 없어 그대로 지나간다 — 옛 백업을 손볼 필요가 없다. */
+  function unsealBackup(db, backup) {
+    var S = window.PuRrnSeal;
+    var paths = backup && backup.paths || [];
+    if (!S) {
+      /* 부품이 없는데 잠긴 값이 들어 있으면 복원을 «멈춘다» — 못 푸는 것을 그대로 쓰는 것이
+         가장 나쁘다. 글자로 찾는 것은 부품이 없어 PREFIX 를 물어볼 수 없기 때문이다. */
+      var 잠긴듯 = JSON.stringify(paths).indexOf('enc:v1:') >= 0;
+      if (잠긴듯) return Promise.reject(new Error(
+        '잠금 모듈(js/pu-rrn-seal.js)을 못 불러왔습니다 — 잠긴 백업은 풀 수 없어 복원하지 않습니다'));
+      return Promise.resolve(backup);
+    }
+    if (!S.countSealed(paths)) return Promise.resolve(backup);
+    return S.keyFor(db.ref(SEAL_KEY_PATH)).then(function (key) {
+      return S.unseal(paths, key);
+    }).then(function (풀린것) {
+      return Object.assign({}, backup, { paths: 풀린것 });
+    });
+  }
+
   function createSnapshot(app, config, label) {
     var db = app.database();
     var user = app.auth().currentUser;
     if (!user || !config || !config.paths.length) return Promise.resolve(false);
     return readPaths(db, config.paths, config.strip).then(function (data) {
+      return sealEntries(db, data);     // ★ 크기를 «재기 전에» 잠근다
+    }).then(function (data) {
       var trimmed = trimForWrite(data);
       var key = snapshotKey(label || 'manual');
       var record = {
@@ -265,6 +324,8 @@
     }).then(function (snapshot) {
       var backup = snapshot.val();
       if (!backup || !Array.isArray(backup.paths)) throw new Error('백업 본문이 없습니다.');
+      return unsealBackup(app.database(), backup);   // ★ 쓰기 전에 «반드시» 푼다
+    }).then(function (backup) {
       var updates = restorePlan(backup);
       if (!Object.keys(updates).length) throw new Error('이 백업에는 복원할 내용이 없습니다.');
       return app.database().ref().update(updates).then(function () {

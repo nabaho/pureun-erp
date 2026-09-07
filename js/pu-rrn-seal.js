@@ -154,11 +154,46 @@
     return n;
   }
 
+  /* 잠글 «것이 있나» 를 먼저 묻는다 — 2026-09-07, 공용 백업(js/pu-backup.js)이 쓴다.
+     ⚠ 없으면 열쇠를 아예 안 가져온다. 주민번호가 없는 앱(업무·전자서명 등)의 백업이
+       열쇠 칸 권한 때문에 멎으면 안 된다. 값이 생기는 순간부터 열쇠가 필요해진다.
+     ★ 세는 데 seal() 과 «같은 walk·같은 pick» 을 쓴다. 따로 걸으면 어긋난다 —
+       셈은 0인데 seal 은 잠그거나(열쇠 없이 잠그려 들거나), 반대로 잠글 것을 놓친다. */
+  function countToSeal(data) {
+    var sites = [];
+    walk(data, '', sites, shouldSeal);
+    return sites.length;
+  }
+
+  /* ── 백업 열쇠를 얻는다 (대표 지시 2026-08-29) ────────────────────────────
+     ⚠ 한 번 만들고 **절대 갈아치우지 않는다** — 갈면 옛 백업 서른 벌을 영영 못 푼다.
+       그래서 「없을 때만」 넣는다. 규칙도 서버에서 `!data.exists()` 로 막고 있다.
+     ⚠ 「있으면 그대로, 없으면 만들기」를 transaction 하나로 하면 «안 된다».
+       transaction 은 같은 값을 돌려줘도 쓰기를 한 번 보내고, 그 쓰기가 규칙에 거부되어
+       열쇠가 이미 있는 둘째 날부터 백업이 통째로 멈춘다. 그래서 «먼저 읽고» 없을 때만 만든다.
+     ⚠ 두 사람이 같은 순간에 처음 켜면 한쪽은 규칙에 막힌다. 그때는 다시 읽어
+       «먼저 넣은 쪽의 열쇠» 를 쓴다 — 막힌 것이 곧 남이 넣었다는 뜻이다.
+     ★ pu-erp.html 의 erpBackupKey() 도 같은 자리(backup_key/v1)를 같은 방식으로 읽는다.
+       코드가 둘이어도 «같은 값»을 쓰므로 서로의 백업을 풀 수 있다
+       (tests/rrn-seal.test.js 가 둘이 같은 자리를 보고, 둘 다 열쇠를 덮지 않는지 지킨다). */
+  function keyFor(ref) {
+    var read = function () { return ref.once('value').then(function (s) { return s.val() || null; }); };
+    return read().then(function (have) {
+      if (have) return have;
+      var made = newKeyB64();
+      return ref.transaction(function (cur) { return cur || made; })
+        .then(read, read);              // 넣었든 남이 먼저 넣어 막혔든 — 다시 읽는다
+    }).then(function (b64) {
+      if (!b64) throw new Error('백업 열쇠를 읽지 못했습니다(권한 확인)');
+      return importKey(b64);
+    });
+  }
+
   global.PuRrnSeal = {
     PREFIX: PREFIX,
     isSealed: isSealed, looksLikeRrn: looksLikeRrn, isRrnField: isRrnField, shouldSeal: shouldSeal,
-    newKeyB64: newKeyB64, importKey: importKey,
+    newKeyB64: newKeyB64, importKey: importKey, keyFor: keyFor,
     sealOne: sealOne, unsealOne: unsealOne,
-    seal: seal, unseal: unseal, countSealed: countSealed
+    seal: seal, unseal: unseal, countSealed: countSealed, countToSeal: countToSeal
   };
 })(typeof window !== 'undefined' ? window : globalThis);
