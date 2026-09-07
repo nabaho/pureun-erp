@@ -234,16 +234,68 @@ test('★★ 찾기 칸은 다시 그리지 «않는다» — 치는 도중 커�
   assert.ok(r.indexOf('class="find"') < 0, '★★ 다시 그리는 조각에 찾기 칸이 들어 있다');
 });
 
-/* ══════ 넓은 창 ══════ */
+/* ══════ 넓은 창 ══════
+   ⚠ 예전 이 검사는 `classList.toggle('wide'` 를 «글자로» 박아 두었다.
+     그것은 규칙이 아니라 «그때의 구현»이다 — 되돌리는 방법을 className 통째 갈아 끼우기로
+     바꾸자, 기능은 멀쩡한데 검사가 깨졌다(CLAUDE.md 「지금 값이 아니라 규칙을 못 박는다」).
+     그래서 이제 «돌려 보고» 잰다: 넓게 열었다가 그냥 열면 넓힘이 남아 있지 않은가. */
+function 가짜칸(첫클래스) {
+  const el = { innerHTML: '', _cls: 첫클래스 };
+  Object.defineProperty(el, 'className', {
+    get() { return el._cls; },
+    set(v) { el._cls = String(v); }
+  });
+  const 쪼갬 = () => el._cls.split(/\s+/).filter(Boolean);
+  el.classList = {
+    add(c) { const a = 쪼갬(); if (a.indexOf(c) < 0) a.push(c); el._cls = a.join(' '); },
+    remove(c) { el._cls = 쪼갬().filter(x => x !== c).join(' '); },
+    contains(c) { return 쪼갬().indexOf(c) >= 0; },
+    toggle(c, on) { if (on) this.add(c); else this.remove(c); }
+  };
+  return el;
+}
+/* 진짜 openModal 을 돌린다 — 베끼면 본체가 바뀌어도 이 검사는 옛것을 지킨다 */
+function 덧창틀() {
+  const card = 가짜칸('modalCard'), modal = 가짜칸('');
+  const ctx = { $: id => (id === 'modalCard' ? card : modal) };
+  vm.createContext(ctx);
+  vm.runInContext(함수('openModal'), ctx);
+  return { card, 열기: (h, m) => ctx.openModal(h, m) };
+}
+
 test('★★ 넓게 연 창은 «되돌린다» — 다음에 뜨는 작은 창까지 벌어진다', () => {
-  const s = 함수('openModal');
-  assert.match(s, /classList\.toggle\('wide'/,
-    '★★ 넓힘을 끄지 않는다 — 사유 입력 창까지 1000px 로 벌어진다');
+  const t = 덧창틀();
+  t.열기('<p>272곳</p>', true);
+  assert.ok(t.card.classList.contains('wide'),
+    '★ 넓게 열라고 했는데 좁은 창이다 — 272곳을 한 칸으로 세우게 된다');
+  t.열기('<p>사유를 적으세요</p>');
+  assert.ok(!t.card.classList.contains('wide'),
+    '★★ 넓힘이 남았다 — 사유 입력 창까지 1000px 로 벌어진다');
+
   assert.match(함수('renderPartnerPick'), /openModal\([^)]*, *true\)/,
     '★ 자문사 고르기가 좁은 창으로 뜬다 — 272곳을 한 칸으로 세우게 된다');
   const css = /(?:^|\n)\.modalCard\.wide\{([^}]*)\}/.exec(RAW);
   assert.ok(css, '★ 넓은 창 꾸밈이 없다');
   assert.match(css[1], /max-width: *\d/, '★ 넓은 창에 너비가 없다');
+});
+
+test('★★ 둘째 값은 참/거짓과 글자를 «갈라» 본다 — true 가 클래스 이름이 되면 안 된다', () => {
+  /* 2026-09-07 되붙이기에서 실제로 부딪힌 자리다. 한쪽은 openModal(h, true) 로 넓히고
+     다른 쪽은 openModal(h, 'stickhead') 로 머리를 붙인다. 글자로 이어 붙이기만 하면
+     class 가 'modalCard true' 가 되어 «오류 없이» 넓히기만 죽는다. */
+  const t = 덧창틀();
+  t.열기('<p>a</p>', true);
+  assert.ok(!t.card.classList.contains('true'),
+    '★★ true 가 클래스 이름으로 붙었다 — 오류도 안 나고 창만 좁게 뜬다');
+
+  t.열기('<p>b</p>', 'stickhead');
+  assert.ok(t.card.classList.contains('stickhead'), '★ 머리 붙이는 표시가 안 붙는다');
+  assert.ok(!t.card.classList.contains('wide'), '★★ 앞서 넓힌 것이 남았다');
+
+  t.열기('<p>c</p>', true);
+  assert.ok(!t.card.classList.contains('stickhead'),
+    '★★ 앞 덧창의 표시가 남았다 — 여백 없는 덧창이 엉뚱한 곳에서 뜬다');
+  assert.ok(t.card.classList.contains('modalCard'), '★ 밑바탕 클래스가 사라졌다');
 });
 
 test('★ 여러 칸은 «자리에 맞춰» 늘어난다 — 칸 수를 숫자로 박지 않는다', () => {

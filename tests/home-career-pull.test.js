@@ -56,16 +56,35 @@ test('ⓒ 한 갈래를 통째로 고르고 풀 수 있다', () => {
   assert.match(src, /onclick="pullAll\(0\)"/, '「고른 것 풀기」 단추가 없습니다');
 });
 
-/* ⓓ 진짜 함수를 떼어 돌린다 — 「이 갈래만」인지 눈으로 보지 말고 재어 본다 */
-function 골라보기() {
-  const at = src.indexOf('function pullAll(on)');
-  const body = src.slice(at, src.indexOf('\n}', at) + 2);
+/* ⓓ 진짜 함수를 떼어 돌린다 — 「이 갈래만」인지 눈으로 보지 말고 재어 본다.
+   ★ 2026-09-05: pullAll 이 «보이는 것»만 고르게 바뀌었다(찾기·깔때기).
+     그래서 거르는 부품(pullVisible·pullPass·찾기꼴)도 함께 떼어 온다 —
+     가짜로 대신하면 «보이는 것만 고른다»는 새 규칙을 아무도 안 지킨다. */
+function 떼기(이름) {
+  const at = src.search(new RegExp('^function ' + 이름 + '\\(', 'm'));
+  assert.ok(at > 0, 이름 + ' 을 못 찾았습니다');
+  return src.slice(at, src.indexOf('\n}', at) + 2);
+}
+
+function 골라보기(옵션) {
+  const o = 옵션 || {};
   const ctx = {
-    Pull: { kind: 'wiccok', sel: {}, items: { wiccok: [1, 2, 3], cert: [1, 2] } },
-    renderPull() {}
+    Pull: { kind: 'wiccok', sel: {}, items: { wiccok: ['가', '나', '다'], cert: ['A', 'B'] },
+            q: o.q || '', f: o.f || '' },
+    renderPull() {},
+    todayString: () => '2026-09-05',
+    /* 바깥 부품은 가짜로 — 우리가 재는 것은 «고르는 규칙»이다 */
+    toCareerItem: (it) => it,
+    kindHasPeriod: () => true,
+    itemWhen: (it) => String(o.when ? o.when[it] || '' : ''),
+    PuHomeCareer: { toLine: (it) => ({ text: String(it),
+      ended: !!(o.ended && o.ended.indexOf(it) >= 0),
+      unknown: !!(o.unknown && o.unknown.indexOf(it) >= 0) }) },
+    String, Object, Array, Number, Boolean
   };
   vm.createContext(ctx);
-  vm.runInContext(body, ctx);
+  vm.runInContext(떼기('찾기꼴') + '\n' + 떼기('pullPass') + '\n'
+    + 떼기('pullVisible') + '\n' + 떼기('pullAll'), ctx);
   return ctx;
 }
 
@@ -84,6 +103,94 @@ test('고른 것을 다시 풀 수 있다 — 다른 갈래는 그대로 둔다'
   vm.runInContext('pullAll(0)', ctx);
   assert.deepEqual(Object.keys(ctx.Pull.sel), ['cert:0'],
     '★ 풀면서 다른 갈래에서 골라 둔 것까지 지웠습니다');
+});
+
+/* ══════ ⓔ 찾기·깔때기 (대표 지시 2026-09-05) ══════
+   「찾기기능 과 필터링 기능도 만들어라 깔데기기능이 좋을것 같다」 */
+
+test('★★★ 좁혀 놓고 「고르기」를 누르면 «보이는 것»만 골라진다', () => {
+  /* 찾기·깔때기로 좁혀 놓고 눌렀는데 안 보이는 것까지 골라지면,
+     무엇이 들어가는지 눈으로 확인할 수 없다 — 좁혀 놓고 고르는 것이 이 단추의 까닭이다. */
+  const ctx = 골라보기({ q: '나' });
+  vm.runInContext('pullAll(1)', ctx);
+  assert.deepEqual(Object.keys(ctx.Pull.sel), ['wiccok:1'],
+    '★★★ 안 보이는 것까지 골랐습니다 — 좁힌 뜻이 사라집니다');
+});
+
+test('★★★ 걸러도 «원래 번호»를 지킨다 — 번호가 밀리면 엉뚱한 것이 들어간다', () => {
+  /* 고른 것은 kind:i 로 붙드는데 그 i 는 «거르기 전» 자리다.
+     거르면서 1부터 다시 매기면 체크한 것과 들어가는 것이 달라진다. */
+  const ctx = 골라보기({ q: '다' });
+  const 보임 = vm.runInContext('pullVisible(todayString()).map(v => v.i)', ctx);
+  assert.equal(JSON.stringify(보임), '[2]',
+    '★★★ 걸러진 뒤 번호를 다시 매겼습니다 — 체크한 것과 들어가는 것이 달라집니다');
+});
+
+test('★★ 깔때기 — 끝난 것만 / 하는 중인 것만 골라 볼 수 있다', () => {
+  const 끝남 = 골라보기({ f: 'past', ended: ['나'] });
+  assert.equal(JSON.stringify(vm.runInContext('pullVisible("x").map(v => v.i)', 끝남)), '[1]',
+    '★★ 「前 끝남」이 끝난 것만 안 보여 줍니다');
+  const 하는중 = 골라보기({ f: 'now', ended: ['나'] });
+  assert.equal(JSON.stringify(vm.runInContext('pullVisible("x").map(v => v.i)', 하는중)), '[0,2]',
+    '★★ 「現 하는 중」이 끝난 것을 걸러내지 못했습니다');
+});
+
+test('★ 찾기는 «기간»으로도 걸린다 — 연도로 좁힐 수 있어야 한다', () => {
+  const ctx = 골라보기({ q: '2019', when: { 가: '2026.01.01', 나: '2019.05.01 ~ 2020.02.29', 다: '' } });
+  assert.equal(JSON.stringify(vm.runInContext('pullVisible("x").map(v => v.i)', ctx)), '[1]',
+    '★ 기간으로는 못 찾습니다 — 연도로 좁힐 수 없습니다');
+});
+
+test('★ 찾기는 띄어쓰기를 무시한다 — 「서산 지사」로 쳐도 「서산지사」가 걸린다', () => {
+  const ctx = 골라보기({ q: ' 나 ' });
+  assert.equal(JSON.stringify(vm.runInContext('pullVisible("x").map(v => v.i)', ctx)), '[1]');
+});
+
+/* ══════ ⓕ 머리 틀고정 (대표 지시 2026-09-05 「상단 틀고정」) ══════ */
+
+const 알맹이 = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+const 알 = 알맹이(src);
+function 꾸밈(고르개) {
+  const 찾는것 = 고르개.replace(/\s+/g, '');
+  const re = /([^{}@]+)\{([^}]*)\}/g;
+  let m;
+  while ((m = re.exec(알))) {
+    if (m[1].split(',').map(x => x.trim().replace(/\s+/g, '')).includes(찾는것)) return m[2];
+  }
+  return '';
+}
+
+test('★★★ 머리가 «붙어» 있다 — 103건을 구르면 갈래 탭·찾기가 위로 사라진다', () => {
+  const css = 꾸밈('.pullhead');
+  assert.ok(css, '★★ 붙는 머리의 모양(CSS)이 없다');
+  assert.match(css, /position: *sticky/,
+    '★★★ .pullhead 가 실제로 안 붙는다 — 이름만 「head」다');
+  assert.match(css, /top: *0/, '★ 어디에 붙을지를 안 정했다');
+  assert.match(css, /background/, '★★ 바탕색이 없다 — 아래 글이 머리를 «통과해» 겹쳐 보인다');
+  assert.match(css, /z-index/, '★★ 층이 없다 — 목록이 머리 위로 올라온다');
+  /* 갈래 탭·찾기가 그 «안»에 들어 있어야 한다 */
+  const at = src.indexOf('class="pullhead"');
+  assert.ok(at > 0, '★★★ 머리 그릇이 없다');
+  assert.ok(src.indexOf('class="tabs"', at) > at, '★★ 갈래 탭이 머리 밖에 있다');
+  assert.ok(src.indexOf('class="pullbar"', at) > at, '★★ 찾기·깔때기가 머리 밖에 있다');
+});
+
+test('★★★ 이 덧창만 위 여백을 «첫 아이»에게 넘긴다 — 안 그러면 그 틈으로 글이 비친다', () => {
+  /* 2026-09-03 편집칸에서 재어 확인한 일이다: 구르는 칸이 위 여백을 갖고 있으면
+     붙은 머리가 그만큼 못 덮고, 그 틈으로 목록이 비쳐 보인다(여백 12px + 테두리). */
+  assert.match(src, /openModal\(h, *'stickhead'\)/,
+    '★★★ 덧창에 표시를 안 준다 — 위 여백 틈으로 글이 비친다');
+  const 카드 = 꾸밈('.modalCard.stickhead');
+  assert.ok(카드, '★★★ stickhead 모양이 없다 — 표시만 붙고 아무 일도 안 한다');
+  assert.match(카드, /padding-top: *0/,
+    '★★★ 구르는 칸이 위 여백을 그대로 갖고 있다');
+  assert.ok(꾸밈('.modalCard.stickhead > :first-child'),
+    '★★ 여백을 빼기만 하고 첫 아이에게 안 넘겼다 — 위 숨이 통째로 사라진다');
+  assert.match(꾸밈('.pullhead'), /padding-top: *[1-9]/,
+    '★★ 머리의 위 숨이 «안»에 없다 — 붙은 뒤 제목이 테두리에 붙어 버린다');
+  /* 다른 덧창은 그대로여야 한다 — 여기서 여백을 통째로 빼면 모든 덧창이 붙어 버린다 */
+  assert.match(꾸밈('.modalCard'), /padding: *16px/,
+    '★★★ 모든 덧창의 여백을 건드렸다 — 이 덧창만 바꿔야 한다');
 });
 
 test('몇 건 골랐는지 화면이 말해 준다', () => {
