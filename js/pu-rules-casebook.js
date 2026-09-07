@@ -214,6 +214,133 @@
     }
   };
 
+  /* ══════ 2단계 — 일괄 분류 (설계서 §4 「이 물건의 심장」) ══════
+     폴더를 통째로 떨어뜨리면 파일마다 셋을 가려야 한다 — 어느 사업장 / 몇 년 / 무슨 서류.
+     ⚠⚠ 여기도 «화면·Firebase 없음»이다. 가려서 «표»를 돌려줄 뿐, 아무것도 안 올린다.
+     ★ 원칙 — 못 가리면 «추측하지 않는다».
+       빈칸은 눈에 띄지만 틀린 값을 확신해서 넣으면 아무도 못 찾는다. 수백 건이면 더욱
+       그렇다. 애매한 것은 etc 로 조용히 밀어 넣지 않고 «확인 필요»로 사람 앞에 올린다.
+       (설계서가 실제 사고로 확인했다 — erpVatTextToFlag 가 「부가세 불포함」을 정반대로
+        판정해, 청구액이 10% 적게 잡히고 있었다.) */
+
+  /* 연도 — 파일명 20xx › 본문 시행일 › 파일 수정일. rules.html 의 bankYearOf 와 같은 규칙.
+     ⚠ 못 가리면 «올해로 바꾸지 않는다». 빈 문자열로 두어 확인 필요가 되게 한다. */
+  function yearOf(name, text, mtime) {
+    var m = String(name == null ? '' : name).match(/(20\d\d)/);
+    if (m) return m[1];
+    var ds = String(text == null ? '' : text)
+      .match(/(20\d\d)\s*[년.]\s*\d{1,2}\s*[월.]\s*\d{1,2}/g) || [];
+    if (ds.length) {
+      var years = ds.map(function (x) { return (x.match(/20\d\d/) || [''])[0]; }).sort();
+      return years[years.length - 1];
+    }
+    if (mtime) {
+      var d = new Date(mtime);
+      if (!isNaN(d.getTime())) return String(d.getFullYear());
+    }
+    return '';
+  }
+
+  /* 부칙 시행일 — 「한 회차에 취업규칙이 둘인데 신·구 표시가 없으면 이른 쪽이 before」 */
+  function effDateOf(text) {
+    var m = String(text == null ? '' : text)
+      .match(/(20\d\d)\s*[년.]\s*(\d{1,2})\s*[월.]\s*(\d{1,2})/);
+    if (!m) return '';
+    return m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2);
+  }
+
+  /* 폴더 — webkitRelativePath 의 맨 앞 조각. 같은 폴더에 한꺼번에 적용할 때 쓴다. */
+  function folderOf(entry) {
+    var p = String((entry && entry.path) || '');
+    var at = p.lastIndexOf('/');
+    return at > 0 ? p.slice(0, at) : '';
+  }
+
+  /* 파일 하나를 가린다 — 못 가린 것은 why 에 «무엇을» 못 가렸는지 적는다 */
+  function classifyOne(entry, erpList) {
+    var e = entry || {};
+    var role = roleOf(e.name || '', e.head || '');
+    var site = siteOf(e, erpList || []);
+    var year = yearOf(e.name || '', e.head || '', e.mtime);
+    var why = [];
+    if (!site.site) why.push('사업장');
+    if (!year) why.push('연도');
+    if (!role) why.push('서류종류');
+    return {
+      path: String(e.path || e.name || ''), name: String(e.name || ''),
+      folder: folderOf(e),
+      site: site.site, bizno: site.bizno, how: site.how,
+      year: year, role: role, eff: effDateOf(e.head || ''),
+      need: why.length > 0, why: why
+    };
+  }
+
+  /* 폴더 하나를 통째로 — 그리고 «신·구»를 가린다 */
+  function classify(entries, erpList) {
+    var rows = (entries || []).map(function (e) { return classifyOne(e, erpList); });
+    return markBeforeAfter(rows);
+  }
+
+  /* ★ 한 회차에 취업규칙이 «둘»인데 신·구 표시가 없으면 부칙 시행일이 이른 쪽을 before.
+     ⚠ 시행일을 둘 다 모르면 «가리지 않는다» — 확인 필요로 남긴다.
+       날짜 없이 파일 차례로 정하면 폴더를 다시 읽을 때 답이 달라진다. */
+  function markBeforeAfter(rows) {
+    var 묶음 = {};
+    rows.forEach(function (r) {
+      if (r.role) return;                       /* 이미 가려진 것은 손대지 않는다 */
+      if (!r.site || !r.year) return;
+      var k = r.site + '|' + r.year;
+      (묶음[k] = 묶음[k] || []).push(r);
+    });
+    Object.keys(묶음).forEach(function (k) {
+      var 짝 = 묶음[k];
+      if (짝.length !== 2) return;
+      if (!짝[0].eff || !짝[1].eff || 짝[0].eff === 짝[1].eff) return;
+      var 이른것 = (짝[0].eff < 짝[1].eff) ? 짝[0] : 짝[1];
+      var 늦은것 = (이른것 === 짝[0]) ? 짝[1] : 짝[0];
+      이른것.role = 'before'; 늦은것.role = 'after';
+      [이른것, 늦은것].forEach(function (r) {
+        r.why = r.why.filter(function (w) { return w !== '서류종류'; });
+        r.need = r.why.length > 0;
+        r.how = (r.how ? r.how + '+' : '') + '시행일';
+      });
+    });
+    return rows;
+  }
+
+  /* 한 줄을 고치면 «같은 폴더의 나머지»에 한 번에 — 수백 건을 한 줄씩 고칠 수는 없다.
+     ⚠ 이미 사업장이 가려진 줄은 «덮지 않는다». 덮으면 맞게 가려진 것까지 뭉갠다.
+       덮으려면 부르는 쪽이 force 를 준다(사람이 「전부 이 사업장으로」를 누른 때). */
+  /* ★ 어느 짐작이 «단단한가» — ERP 업체와 맞은 것만 단단하다.
+     폴더·파일명에서 가져온 이름은 «짐작»이다. 폴더가 「2022개정」 이면 그것이
+     사업장으로 들어앉는데, 사람이 진짜 사업장을 알려 주는 자리에서 그 짐작을
+     지켜 주면 「눌러도 안 바뀐다」가 된다(2026-09-05 에 실제로 그랬다).
+     ⚠ 그렇다고 ERP 로 맞은 것까지 덮지는 않는다 — 그건 사람이 시킬 때만(force). */
+  function firmSite(r) { return !!(r && r.site && String(r.how || '').indexOf('ERP') === 0); }
+
+  function applyFolderSite(rows, folder, site, bizno, force) {
+    return (rows || []).map(function (r) {
+      if (r.folder !== folder) return r;
+      if (firmSite(r) && !force) return r;
+      var why = r.why.filter(function (w) { return w !== '사업장'; });
+      return Object.assign({}, r, { site: site, bizno: bizno || '', how: '사람',
+        why: why, need: why.length > 0 });
+    });
+  }
+
+  /* ★ 확인 필요분은 «빼고 먼저 올린다» — 17건 때문에 325건이 막히면 안 된다.
+     다시 올릴 때 sha 로 이미 올라간 것은 건너뛰므로 안전하다(설계서 §4 결정 2). */
+  function splitReady(rows) {
+    var ready = [], need = [];
+    (rows || []).forEach(function (r) { (r.need ? need : ready).push(r); });
+    return { ready: ready, need: need };
+  }
+
+  /* ★ 쓰는 순서 — «무거운 것부터». 중간에 끊기면 「파일은 있고 색인이 없는」 고아가
+     남는다. 그래서 rev 에 적힌 것만 목록에 보이게 하고, 다시 올릴 때 sha 로 고아를
+     찾아 색인만 다시 붙인다(파일을 또 올리지 않는다). 설계서 §7. */
+  var WRITE_ORDER = ['file', 'text', 'rev', 'index'];
+
   /* ⚠ 계획서(1단계)가 과제마다 「api 에 이것을 더한다」로 흩어 적어 둔 것을 한자리에 모았다.
      흩어 두면 과제를 이어 붙일 때마다 하나씩 빠뜨린다. */
   var api = {
@@ -230,7 +357,12 @@
     nameFromFile: nameFromFile,
     siteOf: siteOf,
     shaOf: shaOf,
-    paths: paths
+    paths: paths,
+    /* 2단계 — 분류 심장 */
+    yearOf: yearOf, effDateOf: effDateOf, folderOf: folderOf,
+    classifyOne: classifyOne, classify: classify, markBeforeAfter: markBeforeAfter,
+    applyFolderSite: applyFolderSite, firmSite: firmSite,
+    splitReady: splitReady, WRITE_ORDER: WRITE_ORDER
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   global.PuRulesCasebook = api;
