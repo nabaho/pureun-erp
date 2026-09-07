@@ -202,6 +202,8 @@
   var paths = {
     index: function (siteKey) { return DB_ROOT + '/index/' + siteKey; },
     rev: function (siteKey, revId) { return DB_ROOT + '/rev/' + siteKey + '/' + revId; },
+    /* 한 사업장의 회차 «전부» — 이어 올리기가 sha 를 훑는 자리다. 본문은 딴 층이라 가볍다. */
+    revs: function (siteKey) { return DB_ROOT + '/rev/' + siteKey; },
     text: function (siteKey, revId, role) {
       return DB_ROOT + '/text/' + siteKey + '/' + revId + '/' + okRole(role);
     },
@@ -341,6 +343,96 @@
      찾아 색인만 다시 붙인다(파일을 또 올리지 않는다). 설계서 §7. */
   var WRITE_ORDER = ['file', 'text', 'rev', 'index'];
 
+  /* ══════ 2단계-B — 올릴 것을 «가른다» (설계서 §7 「중단은 예외가 아니라 기본값」) ══════
+     화면은 이 표만 보고 올린다. 여기에 Firebase 도 DOM 도 없다 — 그래야 검사가 돈다.
+
+     state.existing[siteKey] = [ { revId, year, shas:[…] }, … ]   ← 서고에 이미 있는 회차
+     돌려주는 것:
+       need  확인 필요 — 안 올린다(17건 때문에 325건이 막히면 안 된다)
+       skip  sha 가 이미 서고에 있다 — 같은 폴더를 다시 떨어뜨려도 두 번 안 올린다
+       revs  올릴 회차. 같은 사업장·같은 해의 서류 여러 벌이 «한 회차»로 모인다
+
+     ★ 끊긴 것을 «이어» 올린다 — 같은 사업장·같은 해에 이미 있는 회차가 이 묶음의
+       파일 하나라도 들고 있으면 «그 회차에 이어 붙인다»(새 회차를 만들지 않는다).
+       안 그러면 넷 중 셋을 올리고 끊겼을 때 나머지 하나가 「2022-2」라는 유령 회차로
+       혼자 앉는다 — 설계서 §7 이 말한 고아다. */
+  function uploadPlan(rows, state) {
+    var st = state || {};
+    var existing = st.existing || {};
+    var need = [], skip = [], 통 = {}, 차례 = [];
+    /* 건너뛴 파일이 어느 회차에 들어 있었는지 — 남은 짝을 «그 회차로» 보낼 표찰 */
+    var 이음 = {};
+
+    (rows || []).forEach(function (r) {
+      if (r.need) { need.push(r); return; }
+      var siteKey = siteKeyOf(r.bizno, r.site);
+      var 있던것 = existing[siteKey] || [];
+      var 이미 = null, i;
+      for (i = 0; i < 있던것.length; i++) {
+        if ((있던것[i].shas || []).indexOf(r.sha) >= 0) { 이미 = 있던것[i]; break; }
+      }
+      if (이미 && r.sha) {
+        이음[siteKey + '|' + r.year] = 이미.revId;
+        skip.push(Object.assign({}, r, { at: 이미.revId }));
+        return;
+      }
+
+      var k = siteKey + '|' + r.year;
+      if (!통[k]) {
+        통[k] = { siteKey: siteKey, site: r.site, bizno: r.bizno || '', year: r.year,
+                  revId: '', isNew: true, docs: [] };
+        차례.push(통[k]);
+      }
+      var 회 = 통[k];
+      /* 같은 회차에 같은 역할이 둘 — 어느 것이 진짜인지 «내가 못 고른다» */
+      for (i = 0; i < 회.docs.length; i++) {
+        if (회.docs[i].role === r.role) {
+          var why = (r.why || []).concat(['같은 회차에 ' + r.role + ' 가 둘']);
+          need.push(Object.assign({}, r, { need: true, why: why }));
+          return;
+        }
+      }
+      회.docs.push(r);
+    });
+
+    /* 회차 번호는 «묶음을 다 모은 뒤에» 매긴다 — 파일 차례에 따라 답이 달라지지 않게 */
+    차례.forEach(function (회) {
+      var 있던것 = existing[회.siteKey] || [];
+      var 표찰 = 이음[회.siteKey + '|' + 회.year];
+      if (표찰) { 회.revId = 표찰; 회.isNew = false; return; }
+      var 이을것 = null, i, j;
+      for (i = 0; i < 있던것.length && !이을것; i++) {
+        if (String(있던것[i].year) !== String(회.year)) continue;
+        for (j = 0; j < 회.docs.length; j++) {
+          if ((있던것[i].shas || []).indexOf(회.docs[j].sha) >= 0) { 이을것 = 있던것[i]; break; }
+        }
+      }
+      if (이을것) { 회.revId = 이을것.revId; 회.isNew = false; return; }
+      회.revId = revIdOf(회.year, 있던것.map(function (x) { return x.revId; }));
+    });
+
+    return { need: need, skip: skip, revs: 차례, order: WRITE_ORDER };
+  }
+
+  /* 색인 낱말 — «개정본(after)만». before 까지 넣으면 옛 문구가 검색에 섞인다
+     (문안 은행이 「⚠ 개정 전 문구 의심」으로 이미 겪은 일이다. 설계서 §3-④). */
+  var IDX_MAX = 60;
+  var IDX_STOP = ['취업규칙', '제정', '개정', '사업장', '근로자', '회사', '경우', '이하', '다음',
+                  '한다', '있다', '없다', '또는', '기타', '관하여', '대하여', '위하여'];
+  function idxKeysOf(role, text) {
+    if (role !== 'after') return [];
+    var 낱말 = String(text == null ? '' : text).match(/[가-힣]{2,10}/g) || [];
+    var 셈 = {};
+    낱말.forEach(function (w) {
+      if (IDX_STOP.indexOf(w) >= 0) return;
+      셈[w] = (셈[w] || 0) + 1;
+    });
+    return Object.keys(셈)
+      .filter(function (w) { return 셈[w] >= 2; })
+      .sort(function (a, b) { return 셈[b] - 셈[a] || (a < b ? -1 : 1); })
+      .slice(0, IDX_MAX);
+  }
+
   /* ⚠ 계획서(1단계)가 과제마다 「api 에 이것을 더한다」로 흩어 적어 둔 것을 한자리에 모았다.
      흩어 두면 과제를 이어 붙일 때마다 하나씩 빠뜨린다. */
   var api = {
@@ -362,7 +454,9 @@
     yearOf: yearOf, effDateOf: effDateOf, folderOf: folderOf,
     classifyOne: classifyOne, classify: classify, markBeforeAfter: markBeforeAfter,
     applyFolderSite: applyFolderSite, firmSite: firmSite,
-    splitReady: splitReady, WRITE_ORDER: WRITE_ORDER
+    splitReady: splitReady, WRITE_ORDER: WRITE_ORDER,
+    /* 2단계-B — 올릴 것 가르기 */
+    uploadPlan: uploadPlan, idxKeysOf: idxKeysOf, IDX_MAX: IDX_MAX
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   global.PuRulesCasebook = api;
