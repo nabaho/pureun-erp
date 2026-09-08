@@ -34,6 +34,10 @@ function draw(tab) {
     MB_KEYS: [['C', '메일 쓰기'], ['Esc', '목록으로 돌아가기']],
     _mbCo: { 'a@b.c': 1 }, _mbNotCo: {}, _mbSeen: {},
     _mbProbe: null, _mbProbing: false,
+    /* 🚫 스팸 거르기(2026-09-08) — ③ 푸른 분류 갈래가 이 줄도 그린다.
+       ⚠ 켜기·끄기 판정은 «진짜 함수»를 태운다(아래 목록에 mbSpamOn 을 넣었다).
+         가짜로 true 를 돌려주면 「빈 값이면 켠 것」 규칙이 깨져도 여기서 안 드러난다. */
+    _mbNotSpam: {}, _mbSpamOff: false,
     /* 📦 지난 메일 덩이(2026-09-06) — 이 갈래가 그것도 그린다.
        ⚠ 진짜 함수를 태운다(아래 목록). 여기서 빈 값을 돌려주는 가짜를 두면
          그 덩이가 안 그려져도 검사가 통과한다. */
@@ -58,7 +62,8 @@ function draw(tab) {
   vm.runInContext(app.match(/const MB_SET_LS = [^\n]*/)[0], ctx);
   vm.runInContext(app.match(/const MB_OLD_DAY = [^\n]*/)[0], ctx);
   vm.runInContext(app.match(/const MB_OLD_ID = [^\n]*/)[0], ctx);
-  ['mbSetTab', 'mbSetTabGo', 'mbOldSpans', 'mbOldCount', 'mbOldHtml', 'mailSetHtml'].forEach(n =>
+  ['mbSetTab', 'mbSetTabGo', 'mbOldSpans', 'mbOldCount', 'mbOldHtml', 'mbSpamOn',
+   'mailSetHtml'].forEach(n =>
     vm.runInContext(sliceFn(app, 'function ' + n + '('), ctx));
   return ctx;
 }
