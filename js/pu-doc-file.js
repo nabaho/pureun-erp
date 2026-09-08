@@ -76,6 +76,7 @@
   var FIELD_LABEL = {
     name: '이름', company: '회사명', ceo: '대표자', bizno: '사업자번호',
     corpno: '법인번호', openDate: '개업일', bizType: '업태', bizItem: '종목',
+    issueDate: '등록증 발급일',
     dept: '부서', title: '직책', mobile: '휴대폰', tel: '전화', fax: '팩스',
     email: '이메일', companyTel: '대표번호', companyFax: '회사팩스',
     companyAddr: '회사주소', address: '소재지', website: '홈페이지', memo: '메모'
@@ -663,7 +664,11 @@
        (매출액·상시근로자수)가 pairs 에만 있어 기업 상세까지 오지 못했다.
        늘릴 때는 pu-cards.html 의 CO_FIELDS 에도 이름표를 함께 넣어야 한다 —
        여기만 늘리면 값은 쌓이는데 화면에 안 나온다. */
+    /* ⚠ issueDate(등록증 발급일)는 «최신을 가리는 잣대»다 (2026-09-07). 이것이 없으면
+         대표자가 바뀐 새 등록증과 옛 등록증을 구별할 길이 아예 없다.
+         pu-cards.html 의 CO_FIELDS 에도 함께 들어 있다 — 둘은 늘 짝이다. */
     var KEEP = ['company','ceo','corpno','address','companyTel','mobile','email','homepage','companyFax',
+                'issueDate',
                 'bizType','bizItem','openDate','smeType','product','sales','workers',
                 'docName','applyNo','applyItems',
                 /* 세금계산서 발급처 (대표 지시 2026-08-30) — 등록증에서 읽는다.
@@ -709,8 +714,12 @@
              ⚠ 칸 이름이 열쇠다 — 같은 칸을 다시 보내면 한 줄을 덮어쓴다. 쌓이면
                줄이 끝없이 는다. */
           if (had !== got) {
+            /* ⚠ 발급일을 함께 남긴다 (2026-09-07) — 「지금 값」과 「읽은 값」만으로는
+                 어느 쪽이 최신인지 알 수 없다. 대표자가 바뀌는 공공기관에서는 그것이
+                 곧 판단 근거다. 없으면 빈 문자열로 두고 화면이 「모름」이라 말한다. */
             add['conflicts/' + k] = {
               got: got, had: had,
+              issued: String(fields.issueDate || '').trim(),
               doc: String(fields.docName || '').trim(),
               by: o.byName || '', at: Date.now(),
               photoId: String(ph0.id || ''), photoYear: String(ph0.year || ''),

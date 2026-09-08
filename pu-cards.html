@@ -2737,6 +2737,10 @@ body.pc #pcDetail{display:flex}
    ⚠ 한 줄이다 — 확정 전/후/죽은 열쇠 셋을 같은 자리에 갈아 넣는다.
    ⚠ 확정 «전»이 기본 차림이다. 눈에 띄되 경고처럼 보이면 안 된다 —
      아직 아무것도 잘못되지 않았고, 하면 좋은 일이 있다는 뜻이다. */
+/* 「이 값으로 바꾸기」 — 어긋난 값 줄에서 새 값을 받아들이는 단추 (2026-09-07) */
+.coclash .cotake{margin-left:8px;font-size:11px;font-weight:700;color:#1e40af;background:#bfdbfe;
+  border:none;border-radius:8px;padding:3px 9px;cursor:pointer;white-space:nowrap;font-family:inherit}
+.coclash .cotake:hover{background:#1e40af;color:#ffffff}
 .coerppin{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:12px;
   color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
   padding:8px 10px;margin:0 0 10px;line-height:1.6}
@@ -11036,6 +11040,7 @@ const CARD_FIELDS=[['name','이름'],['company','회사'],['dept','부서'],['ti
   ['companyTel','회사 대표번호'],['companyFax','회사 팩스'],['companyAddr','회사 주소'],['website','홈페이지'],
   ['owner','담당자'],['address','개인 주소'],['memo','메모']];
 const BIZ_FIELDS=[['company','상호(법인명)'],['ceo','대표자'],['bizno','사업자등록번호'],['corpno','법인등록번호'],
+  ['issueDate','등록증 발급일'],
   ['openDate','개업연월일'],['bizType','업태'],['bizItem','종목'],['companyTel','대표번호'],['companyFax','팩스'],
   /* ⚠ 세금계산서 발급 이메일·담당자 (대표 지시 2026-08-30) — 등록증에 「전자세금계산서
      전용 전자우편주소」로 찍혀 나오는 칸이다. 아래 owner(우리 쪽 담당 직원)와 «다른
@@ -23614,7 +23619,13 @@ const CO_FIELDS = [
      ⚠ 사람 팩스(fax)가 아니라 «회사» 팩스(companyFax)다 — 그 사람이 나가면 못 쓴다. */
   ['companyTel','대표번호'], ['companyFax','팩스'], ['mobile','휴대폰'],
   ['email','이메일'], ['homepage','홈페이지'],
-  ['bizType','업태'], ['bizItem','종목'], ['openDate','개업일'], ['smeType','기업규모'],
+  ['bizType','업태'], ['bizItem','종목'], ['openDate','개업일'],
+  /* ⚠ 개업일과 «따로» 둔다 (대표 지시 2026-09-07). 공공기관은 대표자가 자주 바뀌어
+       등록증이 새로 발급되는데, 그때 **개업일은 안 바뀌고 발급일만 바뀐다.**
+       이 칸이 「어느 등록증이 최신인가」를 가리는 유일한 잣대다.
+     ⚠ 옛 등록증에는 이 값이 없다(그때 안 읽었다). 빈 칸이면 화면에서 그냥 빠진다 —
+       「모름」을 지어내지 않는다. */
+  ['issueDate','등록증 발급일'], ['smeType','기업규모'],
   /* ⚠ 기술보호울타리·현장클리닉이 «자격을 가리는» 숫자다 (대표 지시 2026-08-23) —
      사업장 정보 화면을 캡처해 담을 때 이 셋이 없으면 값은 읽히는데 정작 여기서
      안 보여 포털을 다시 열어 봐야 했다. js/pu-doc-file.js 의 KEEP 과 짝이다 —
@@ -26308,8 +26319,11 @@ function coConflictHtml(o){
       return `<div class="coclash">
         <div class="ck">${esc(label(k))}</div>
         <div class="cv"><span class="cnow">지금 ${esc(c.had||'')}</span>
-          <span class="cnew">읽은 값 ${esc(c.got||'')}</span></div>
-        <div class="cm">${esc(c.doc||'서식')}${c.by?` · ${esc(c.by)}`:''}${c.at?` · ${fmtDate(c.at)}`:''}
+          <span class="cnew">읽은 값 ${esc(c.got||'')}</span>
+          <button class="cotake" onclick="coTakeNew('${esc(k)}')"
+            title="이 회사의 값을 「읽은 값」으로 바꿉니다 — 사진첩 원본과 명함(등록증)은 그대로입니다"
+            >이 값으로 바꾸기</button></div>
+        <div class="cm">${c.issued ? `<b style="color:#1e40af">${esc(c.issued)} 발급</b> · ` : ''}${esc(c.doc||'서식')}${c.by?` · ${esc(c.by)}`:''}${c.at?` · ${fmtDate(c.at)}`:''}
           ${c.photoId?`<em style="font-style:normal;color:#1e40af;cursor:pointer;margin-left:6px"
             onclick="openCoDoc('${esc(c.photoYear||'')}','${esc(c.photoId)}','${esc(c.photoOwner||'')}')"
             title="이 값이 나온 서류를 사진첩에서 엽니다">📷 원본 보기</em>`:''}</div>
@@ -26319,6 +26333,48 @@ function coConflictHtml(o){
 /* 서류 목록 — 처음에는 «전부» 보여 준다(사업 기록이 아직 안 왔다).
    사업 기록이 오면 coLeftDocsPaint 가 이 칸을 «아직 안 붙은 서류»로 다시 그린다.
    ⚠ 칸에 id 를 준다 — 다시 그릴 자리를 못 찾으면 붙은 서류가 두 곳에 나온다. */
+/* ── 「이 값으로 바꾸기」 (대표 결정 2026-09-07 「고침」) ──
+   대표 지시: 「공공기관은 대표자가 변경되는 경우가 아주 자주 있다 … 기존정보와
+   최신정보를 구분해야한다」. 「고침이냐 이력이냐」를 여쭈어 **고침**으로 정했다.
+
+   ■ 그때까지 없던 것
+   값이 다르면 ⚠ 로 «보여만» 주고, 새 값을 받아들일 길이 한 곳도 없었다 —
+   coInfo 의 값 칸(ceo·company·address)에 쓰는 코드가 앱 전체에 하나도 없었다.
+   그래서 대표자가 바뀌면 옛 이름이 영영 남고, 푸른이알피로도 옛 이름이 갔다.
+
+   ★ **명함(등록증)은 안 건드린다.** 등록증은 그때 발급된 «사실»이라 고칠 것이
+     아니다. 바꾸는 것은 「이 회사는 지금 이렇다」를 담는 기업 상세 칸이다.
+     coVal 이 coInfo 값을 명함보다 «먼저» 보므로 화면은 바로 새 값이 된다.
+   ★ 어디서 온 값인지(src)를 함께 적는다 — 「이 값 어디서 봤더라」에 답해야 한다.
+   ⚠ **자동으로 안 바꾼다.** 판독이 틀릴 수 있고, 「빈 칸만 채운다」는 2026-07
+     실데이터 사고 뒤의 규칙이다. 사람이 두 값을 보고 누른다.
+   ⚠ 되돌리려면 명함(등록증)의 값이 그대로 남아 있다 — 이 칸을 비우면 그것이 다시
+     보인다. 다만 비우는 화면은 아직 없다(다음 걸음). 그래서 «묻고» 바꾼다. */
+async function coTakeNew(k){
+  const key = String(state.coPick || '');
+  const o = (coList() || []).filter(x => x.key === key)[0];
+  if(!key || !o) return toast('먼저 회사를 골라 주세요', 6000);
+  const c = ((o.extra && o.extra.conflicts) || {})[k];
+  if(!c) return toast('그 칸은 이미 정리되었습니다', 6000);
+  const label = (CO_FIELDS.find(f => f[0] === k) || [k, k])[1];
+  if(!confirm(`「${label}」 을 «${c.got || ''}» 로 바꿀까요?\n\n`
+    + `· 지금 값: ${c.had || '(비어 있음)'}\n`
+    + (c.issued ? `· 읽은 서류 발급일: ${c.issued}\n` : '')
+    + `· 사진첩 원본과 명함(등록증)은 «그대로» 둡니다\n`
+    + `· 바뀌는 것은 이 회사의 기업 상세 값 하나입니다`)) return;
+  const upd = {};
+  upd[`coInfo/${key}/${k}`] = c.got;
+  upd[`coInfo/${key}/conflicts/${k}`] = null;
+  /* 어느 서류에서 온 값인지 — 사진첩이 쓰는 «같은 열쇠»(해_사진번호)다 */
+  const dk = c.photoId ? coAttachDocKey(c.photoYear || '', c.photoId) : '';
+  if(dk) upd[`coInfo/${key}/src/${k}`] = dk;
+  upd[`coInfo/${key}/at`] = Date.now();
+  upd[`coInfo/${key}/by`] = myEmail || '';
+  try{ await Store.db.ref(DB_ROOT).update(upd); }
+  catch(e){ return toast('바꾸지 못했습니다: ' + ((e && e.message) || ''), 9000); }
+  toast(`「${label}」 을 바꿨습니다`);
+  openCoDetailPanel(key);
+}
 function coDocsHtml(o){
   /* ⚠ 「📎 붙이기」 단추는 목록 «밖»에 둔다 — 서류가 0건이면 coDocsListHtml 이 빈
        글자를 돌려주므로, 안에 두면 정작 붙일 것이 가장 필요한 그때 단추가 사라진다. */
