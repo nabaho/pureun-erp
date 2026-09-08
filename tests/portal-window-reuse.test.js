@@ -12,6 +12,10 @@ function loadWindowManager(open) {
   assert.ok(start >= 0 && end > start, '창 관리자 코드가 있어야 합니다.');
   const context = {
     URL,
+    /* ⚠ URLSearchParams 도 넣어 준다 — portalAppUrlKey 가 쓴다(2026-09-08).
+       빠뜨리면 브라우저에서는 멀쩡한데 여기서만 견주기가 죽어(try/catch 가 삼킨다)
+       「늘 다른 화면」으로 읽혀, 이 아래 두 검사가 «고장이 아닌데» 빨개진다. */
+    URLSearchParams,
     location: { href: 'https://nabaho.github.io/pureunall/enter.html' },
     window: { open },
     alert() {},
