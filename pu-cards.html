@@ -5132,9 +5132,20 @@ function clickMailCell(ev, id){
   if(_mailCellTimer){ clearTimeout(_mailCellTimer); _mailCellTimer=null; return; }  /* 두 번째 — 고치기가 받는다 */
   _mailCellTimer = setTimeout(()=>{ _mailCellTimer=null; openMailWindow(id); }, 260);
 }
-/* ══════ 이메일을 누르면 «딴 창»의 메일 쓰기로 (대표 지시 2026-08-29) ══════
-   "메일 주소 클릭하면 별도로 팝업창의 메일창으로 들어가게 하고
+/* ══════ 메일 쓰기는 «딴 창»에서 (대표 지시 2026-08-29 · 2026-09-08) ══════
+   2026-08-29 "메일 주소 클릭하면 별도로 팝업창의 메일창으로 들어가게 하고
     메일을 여러개 클릭한다고 여러개 팝업창으로 나오면 안된다 하나만 나오게 해라"
+   2026-09-08 "이메일 작성시 새로운 팝업창이 떠야되는데 현재 창에서 팝업으로 덮인다"
+
+   ★ 2026-09-08 에 고친 것 — 문이 «넷»인데 그중 하나만 딴 창으로 갔다.
+       ① 목록의 이메일 «칸»            → clickMailCell → 여기(딴 창) ✓
+       ② 상세 패널의 이메일 «줄»        → openSendMaterials (같은 창에서 덮였다) ✗
+       ③ 상세 패널의 「📧 메일」 단추    → openSendMaterials (같은 창에서 덮였다) ✗
+       ④ 폰 상세의 「📧 메일」          → openSendMaterials (같은 창에서 덮였다) ✗
+     넷을 모두 이 문으로 모았다. 화면마다 다르게 열리면 「어디는 되고 어디는
+     안 되나」가 된다.
+   ⚠ 「메일 쓰기로 간다」는 뜻의 함수는 이것 «하나»다. 새 자리를 만들 때도 이것을
+     부를 것 — openSendMaterials 를 바로 부르면 그 화면이 다시 덮인다.
 
    ★ 창에 «이름»을 붙인다. 이름이 같으면 브라우저가 그 창을 «다시 쓴다» —
      처음엔 새 창이 뜨고, 그다음부터는 그 창이 새 사람으로 바뀐다.
@@ -5156,13 +5167,16 @@ function openMailWindow(id){
   if(!w) return openSendMaterials(id);        /* 팝업이 막혔다 — 예전 길로 */
   try{ w.focus(); }catch(_){}
 }
-function openSendMaterials(id){
+/* opt.asked — 「이미 물어본 길」. 딴 창(openMailWindow)으로 건너온 뒤에는 다시 묻지
+   않는다. 사람이 「메일」을 눌러 창까지 열린 뒤에 「메일을 쓸까요?」를 또 묻는 것은
+   뜻이 없다 — 목록에서 스치듯 눌리는 자리를 막으려던 물음이고, 그 자리는 이미 지났다. */
+function openSendMaterials(id, opt){
   const it=state.items[id]; if(!it) return;
   /* ⚠ 설정을 읽기 전에 판정하면 안 된다. 첫 클릭 때 _matMail 이 아직 비어 있어
      「회사 메일로 바로 보내기」를 켜 두었는데도 늘 메일창 모드로 판정됐다 —
      그래서 이메일을 눌러도 새 흐름이 열리지 않았다(2026-08-10 실제 증상).
      읽은 뒤 다시 들어온다. */
-  if(!_matLoaded && Store.mode==='firebase'){ loadMaterials(()=>openSendMaterials(id)); return; }
+  if(!_matLoaded && Store.mode==='firebase'){ loadMaterials(()=>openSendMaterials(id, opt)); return; }
   /* 바로 보내기 모드에서는 고르기 화면을 거치지 않는다 (대표 지시 2026-08-10).
      ⚠ 물어보고 넘어간다. 이메일 칸은 목록에서 스치듯 눌리는 자리라, 묻지 않으면
        보던 명함 목록이 갑자기 편지 화면으로 바뀌어 놀란다. */
@@ -5170,7 +5184,8 @@ function openSendMaterials(id){
     const email=normEmail(it.email);
     if(!email) return toast('이 명함에 이메일이 없습니다 — 명함을 열어 이메일을 넣어 주세요', 6000);
     const who = it.name || it.company || '';
-    if(!confirm(`${who} 님께 메일을 쓸까요?\n\n받는 곳 · ${email}\n\n`
+    if(!(opt && opt.asked)
+      && !confirm(`${who} 님께 메일을 쓸까요?\n\n받는 곳 · ${email}\n\n`
       + `[확인]을 누르면 메일 쓰기 화면으로 넘어갑니다.`)) return;
     _sendMatId=id; _sendMatPick=null; _sendMatSetName='';
     closeDetail();
@@ -9651,6 +9666,23 @@ function restoreLastScreen(){
        (대표 지시 2026-08-29). 주소에 to 가 실려 온다. */
     const _to = mailToFromUrl();
     if(_to){
+      /* ★ 어느 길로 갈지는 openSendMaterials 가 «한 곳»에서 정한다 (대표 지시 2026-09-08
+           「이메일 작성시 새로운 팝업창이 떠야되는데 현재 창에서 팝업으로 덮인다」).
+         까닭 — 메일 쓰기에는 길이 둘이다:
+           · 「회사 메일로 바로 보내기」(auto) → 편지 쓰기 화면으로 바로
+           · 그 밖(기본값 mailto)         → «자료 고르기»를 거쳐서
+         openMailPage 는 auto 가 아니면 안내만 내놓는다. 그래서 여기서 openMailPage 만
+         부르면, 기본 설정인 사람에게는 딴 창이 떠서 «안내문만» 보인다.
+         ⚠ 그 화면도 «이 창»에서 연다. 원래 창으로 되돌리면 대표가 지적한
+           「현재 창이 팝업으로 덮인다」가 그대로 돌아온다.
+         ⚠ 다시 묻지 않는다(asked) — 사람이 「메일」을 눌러 창까지 열린 뒤에
+           「메일을 쓸까요?」를 또 묻는 것은 뜻이 없다.
+         ⚠ 명함이 아직 없으면(씨앗 없이 메일 문으로 바로 들어온 길) 예전 그대로
+           openMailPage 로 간다 — 자료 고르기는 명함 없이는 못 연다. */
+      if(_to.card && state.items && state.items[_to.card]){
+        openSendMaterials(_to.card, { asked:true });
+        return;
+      }
       openMailPage({ cardId:_to.card, to:_to.to, name:_to.name, company:'', ids:[] });
       return;
     }
@@ -11484,7 +11516,7 @@ function openDetail(id){
     let v=esc(it[k]);
     if (k==='bizno') v=esc(fmtBizno(it[k]));
     if (['mobile','tel','fax'].includes(k)) v=`<a href="tel:${esc(digits(it[k]))}">${v}</a>`;
-      if (k==='email') v=`<a href="#" onclick="openSendMaterials('${it.id}');return false" title="보낼 자료를 고르고 메일을 씁니다">${v}</a>`;
+      if (k==='email') v=`<a href="#" onclick="openMailWindow('${it.id}');return false" title="딴 창에서 메일을 씁니다 — 보던 화면은 그대로 남습니다">${v}</a>`;
     /* 둘째 번호·이메일이 있으면 메인 아래에 흐리게 (대표 지시 2026-09-08) */
     if (k==='mobile' || k==='email') v += pcMoreLine(it, k);
     return `<div class="ditem"><div class="k">${label}</div><div class="v">${v}</div></div>`;
@@ -11494,7 +11526,7 @@ function openDetail(id){
     <div class="actrow">
       <a href="tel:${digits(it.mobile||it.tel)}" class="${digits(it.mobile||it.tel)?'':'off'}">📞 전화</a>
       <a href="sms:${digits(it.mobile)}" class="${digits(it.mobile)?'':'off'}">💬 문자</a>
-      <a href="#" onclick="openSendMaterials('${id}');return false" class="${it.email?'':'off'}">📧 메일</a>
+      <a href="#" onclick="openMailWindow('${id}');return false" class="${it.email?'':'off'}">📧 메일</a>
       <a href="#" onclick="downloadVcf('${id}');return false">📇 연락처</a>
     </div>
     <button class="btn ghost" style="width:100%;margin-bottom:12px" onclick="sendToErp('${id}')">🏢 ERP 거래처로 등록</button>` : '';
@@ -11642,7 +11674,7 @@ function openPcDetail(id){
     let v=esc(it[k]);
     if (k==='bizno') v=esc(fmtBizno(it[k]));
     if (['mobile','tel','fax'].includes(k)) v=`<a href="tel:${esc(digits(it[k]))}">${v}</a>`;
-      if (k==='email') v=`<a href="#" onclick="openSendMaterials('${it.id}');return false" title="보낼 자료를 고르고 메일을 씁니다">${v}</a>`;
+      if (k==='email') v=`<a href="#" onclick="openMailWindow('${it.id}');return false" title="딴 창에서 메일을 씁니다 — 보던 화면은 그대로 남습니다">${v}</a>`;
     /* 폰 상세와 «같은 줄»을 붙인다 — 한쪽에만 있으면 화면에 따라 둘째가 사라진다 */
     if (k==='mobile' || k==='email') v += pcMoreLine(it, k);
     return `<div class="pdrow ${WIDE_ROW[k]?'wide':''}"><div class="k">${label}</div><div class="v">${v}</div></div>`;
@@ -11653,7 +11685,7 @@ function openPcDetail(id){
      단추는 세 개씩 놓는다 — 두 개씩이면 줄이 늘어 한 화면에 안 들어간다. */
   const acts = isCard ? `
     <div class="pdacts three">
-      <button onclick="openSendMaterials('${id}')" ${it.email?'':'disabled'} title="보낼 자료를 고르고 메일을 씁니다">📧 메일</button>
+      <button onclick="openMailWindow('${id}')" ${it.email?'':'disabled'} title="딴 창에서 메일을 씁니다 — 보던 화면은 그대로 남습니다">📧 메일</button>
       <button onclick="copyCardInfo('${id}')" title="이름·회사·번호·메일·주소를 한 줄로 복사">📋 정보 복사</button>
       <button onclick="downloadVcf('${id}')" title="휴대폰 연락처로 저장 (vCard 파일)">📇 연락처 저장</button>
       <button onclick="downloadPhoto('${id}')" title="명함 원본 사진 내려받기">📥 원본 사진</button>

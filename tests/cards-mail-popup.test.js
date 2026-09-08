@@ -117,13 +117,19 @@ test('그냥 메일함으로 들어온 길은 «누구에게»가 없다 — 받
 });
 
 test('★ 메일 창이 뜰 때 to 가 있으면 «쓰기», 없으면 받은메일함', () => {
-  const boot = src.slice(src.indexOf('if(urlWantsMail()){'), src.indexOf('if(urlWantsMail()){') + 1200);
-  const b = code(boot);
+  /* ⚠ 2026-09-08 부터 쓰기로 가는 길이 «둘»이다 — 「회사 메일로 바로 보내기」면
+       openMailPage, 그 밖(기본값)이면 자료 고르기(openSendMaterials). 어느 길이든
+       «받은메일함보다 먼저» 보아야 한다는 뜻은 그대로다.
+       (openMailPage 하나만 박아 두었더니, 기본 설정인 사람에게는 새 창이 떠서
+        안내문만 보였다 — tests/cards-mail-always-own-window.test.js 참고) */
+  const i = src.indexOf('if(urlWantsMail()){');
+  const b = code(src.slice(i, src.indexOf("openMailBox('')", i) + 40));
   const at = b.indexOf('mailToFromUrl()');
   const bx = b.indexOf("openMailBox('')");
   assert.ok(at > 0, '★ 메일 창이 「누구에게」를 안 본다 — 이메일을 눌러도 받은메일함이 열린다');
   assert.ok(at < bx, '★ 받은메일함을 «먼저» 열어 버린다 — to 를 먼저 봐야 한다');
-  assert.match(b.slice(at, bx), /openMailPage\(/, 'to 가 있을 때 쓰기 화면으로 안 간다');
+  assert.match(b.slice(at, bx), /openMailPage\(|openSendMaterials\(/,
+    'to 가 있을 때 쓰기 화면으로 안 간다');
 });
 
 /* ── 옆줄 「메일 열기」는 뺐다 — 다만 «길이 끊기지 않았는지»가 더 중요하다 ── */
