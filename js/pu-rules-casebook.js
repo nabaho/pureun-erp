@@ -226,6 +226,13 @@
     text: function (siteKey, revId, role) {
       return DB_ROOT + '/text/' + siteKey + '/' + revId + '/' + okRole(role);
     },
+    /* ㉢ OCR 추정 본문 — «원문 층(text)과 딴 자리»다 (대표 결정 2026-09-07 「읽혀 검색에 걸리게」).
+       ⚠⚠ 왜 text 에 안 넣나 — 넣으면 되돌릴 길이 없다. 기계가 「제10조」를 「제1O조」로
+         읽은 것이 원문 자리에 앉으면, 그 뒤로 아무도 «이게 원문인가 추정인가»를 못 가린다.
+         층을 가르면 이 자리를 지우기만 해도 그냥 「글 없음」으로 돌아간다. */
+    ocr: function (siteKey, revId, role) {
+      return DB_ROOT + '/ocr/' + siteKey + '/' + revId + '/' + okRole(role);
+    },
     idx: function (keyword, siteKey, revId) {
       return DB_ROOT + '/idx/k/' + keyword + '/' + siteKey + '__' + revId;
     },
@@ -628,17 +635,112 @@
                noText: d.noText === true, artCount: (typeof d.artCount === 'number' ? d.artCount : null),
                /* ⑤ 원본 파일 자리. 없으면 «빈 값» — 없는 자리를 지어내지 않는다.
                   Storage 규칙이 아직 콘솔에 없으면 글만 올라가고 여기가 빈다(설계서 §3 차선). */
-               path: txt(d.path) };
+               path: txt(d.path),
+               /* ㉢ OCR 딱지. ⚠ noText 를 «지우지 않는다» — 그것은 「원본에 글자층이
+                  없었다」는 사실이고, 읽어냈다고 사실이 바뀌지 않는다. 지우면 나중에
+                  「이건 원문인가 추정인가」를 아무도 못 가린다. */
+               ocr: d.ocr === true,
+               ocrN: (typeof d.ocrN === 'number' ? d.ocrN : null) };
     });
   }
 
   /* 「이 회차로 검토 시작」이 될 수 있나 — 개정본 본문이 있어야 한다.
-     ⚠ 안 되는 까닭을 «말한다». 단추만 흐리면 왜 못 누르는지 아무도 모른다. */
+     ⚠ 안 되는 까닭을 «말한다». 단추만 흐리면 왜 못 누르는지 아무도 모른다.
+     ⚠⚠ OCR 을 읽어냈어도 여기는 «안 열린다». 검토는 이 글이 다음 개정 문안의
+       밑감이 되는 자리라, 기계가 잘못 읽은 글자가 그대로 다음 규정에 옮겨 붙는다.
+       (noText 를 안 지우므로 아래 줄이 저절로 막는다 — 검사가 그것을 견준다.) */
   function canStartReview(rev) {
     var docs = (rev && rev.docs) || {};
     if (!docs.after) return { ok: false, why: '개정본이 없습니다' };
     if (docs.after.noText === true) return { ok: false, why: '개정본에 글이 없습니다 (스캔 파일)' };
     return { ok: true, why: '' };
+  }
+
+  /* ══════ ㉢ 스캔뿐인 옛 회차의 «글자 읽기» (대표 결정 2026-09-07) ══════
+     「단순 보관은 의미가 없다」 — 원본은 열리는데 글이 없어 검색에 안 걸리는 자리다.
+     ★ 여기도 «화면·Firebase·Tesseract 없음»이다. 「될까·담을까·무슨 딱지인가」만 판정한다.
+
+     ★★ 이 층이 지키는 선 셋 (어느 하나만 무너져도 OCR 이 원문을 오염시킨다):
+       ① 원문 자리(text)에 안 쓴다        → paths.ocr 이 딴 자리
+       ② 문안 은행에 안 넣는다            → 적립은 올리기 길에만 있고 이 길엔 없다
+       ③ 「검토 시작」을 안 열어 준다      → noText 를 안 지운다 (canStartReview 가 저절로 막는다)
+
+     ⚠ 「훑기」는 «연다». 훑기는 보기이고 검토는 쓰기다 — 훑기가 틀리면 사람이 원본을
+       보고 넘기면 끝이지만, 검토가 틀리면 다음 규정에 남는다. */
+
+  /* 제출류(신고서·의견청취·동의서)에는 «단추를 안 붙인다».
+     거기서 정작 필요한 「언제·어느 노동청에·몇 명 동의로」는 도장과 손글씨라 기계가
+     못 읽는다 — 본문을 뽑아 봐야 쓸 데가 없다(2026-09-07 「ㄴ」의 판단을 그대로 따른다). */
+  function canOcr(rev, role) {
+    var docs = (rev && rev.docs) || {};
+    if (BODY_ROLES.indexOf(role) < 0) {
+      return { ok: false, again: false,
+               why: '제출류는 글자를 읽어도 쓸 것이 없습니다 — 도장·손글씨는 기계가 못 읽습니다. 「＋ 적기」로 몇 줄 남기십시오.' };
+    }
+    var d = docs[role];
+    if (!d) return { ok: false, again: false, why: '이 서류가 없습니다' };
+    if (d.noText !== true) return { ok: false, again: false, why: '이미 본문이 있습니다 — 읽을 것이 없습니다' };
+    if (!txt(d.path)) {
+      return { ok: false, again: false,
+               why: '원본 파일이 창고에 없어 읽을 것이 없습니다 (글만 담긴 서류입니다)' };
+    }
+    return { ok: true, again: d.ocr === true, why: '' };
+  }
+
+  /* 「지금 기준으로 훑기」가 될까 — 원문이 있으면 그대로, OCR 추정만 있으면 «딱지를 달고» 된다.
+     ⚠ canStartReview 를 이것으로 갈음하지 말 것. 둘은 일부러 다르다(위 ③). */
+  function canScan(rev) {
+    var docs = (rev && rev.docs) || {};
+    if (!docs.after) return { ok: false, ocr: false, why: '개정본이 없습니다' };
+    if (docs.after.noText !== true) return { ok: true, ocr: false, why: '' };
+    if (docs.after.ocr === true) return { ok: true, ocr: true, why: '' };
+    return { ok: false, ocr: false,
+             why: '개정본에 글이 없습니다 (스캔 파일) — 칩의 [🔍 글자 읽기]로 먼저 읽어 주세요' };
+  }
+
+  /* 읽어낸 것이 «글이라 할 만한가». 안 거르면 검색이 더러워진다 —
+     안 걸리는 것보다 나쁘다(도장만 있는 장·너무 흐린 스캔이 이렇게 나온다).
+     ★ 재는 것은 «한글 글자 수»다. 전체 길이로 재면 잡티가 만든 「| ! ' ,」 수천 개가
+       통과한다(실제로 흔한 오독 모양이다). */
+  /* 본문 한도 — 서버 규칙(make-firebase-rules.js 의 casebook.text.t · casebook.ocr.t)과
+     같은 수여야 한다. 세 곳에 흩어 두었더니 어긋날 판이라 여기 한 자리로 모았다
+     (rules.html 의 CB_TEXT_MAX 가 이것을 받아 쓴다 · 검사가 서버 규칙과 견준다). */
+  var TEXT_MAX = 600000;
+
+  var OCR_MIN_KO = 40;
+  function ocrWorth(text) {
+    var ko = (String(text == null ? '' : text).match(/[가-힣]/g) || []).length;
+    if (ko >= OCR_MIN_KO) return { ok: true, ko: ko, why: '' };
+    return { ok: false, ko: ko,
+             why: '읽어냈지만 글이라 할 만한 것이 없습니다 (한글 ' + ko + '자 — '
+                  + OCR_MIN_KO + '자 미만은 담지 않습니다). 도장·손글씨만 있는 장이거나 스캔이 흐릴 때 이렇게 됩니다.' };
+  }
+
+  /* OCR 층에 담을 한 줄. ⚠ 원문 층과 «같은 모양으로 만들지 않는다» — kind 를 박아 두어
+     나중에 어느 층에서 읽어 왔는지 값만 보고도 알 수 있게 한다. */
+  function ocrRow(text, opts) {
+    var o = opts || {};
+    var t = String(text == null ? '' : text).slice(0, TEXT_MAX);
+    return { t: t, kind: 'ocr', ownerUid: txt(o.uid), by: txt(o.by),
+             at: txt(o.at) || new Date().toISOString(),
+             engine: txt(o.engine) || 'tesseract', pages: (typeof o.pages === 'number' ? o.pages : 0) };
+  }
+
+  /* 회차 줄에 붙일 딱지. ⚠ noText 가 여기 «없다» — 일부러다(위 ③). */
+  function ocrMark(text, at) {
+    var t = String(text == null ? '' : text).slice(0, TEXT_MAX);
+    return { ocr: true, ocrN: t.length, ocrAt: txt(at) || new Date().toISOString() };
+  }
+
+  /* 검색이 읽을 글을 «고른다». 원문이 있으면 원문, 없으면 OCR 추정.
+     ★ 한 자리에서 고르게 한 까닭 — 검색·훑기·보기가 각자 고르면 어디는 딱지가 붙고
+       어디는 안 붙는다. 「딱지 없는 OCR」이 한 곳이라도 생기면 원문으로 읽힌다. */
+  function pickText(textRow, ocrRow_) {
+    var t = txt(textRow && textRow.t);
+    if (t) return { t: t, ocr: false };
+    var o = txt(ocrRow_ && ocrRow_.t);
+    if (o) return { t: o, ocr: true };
+    return { t: '', ocr: false };
   }
 
   /* 실적표 — 목록을 그대로 내보낸다(설계서 §5-① 「그대로 xlsx_gen 으로」).
@@ -928,7 +1030,11 @@
     datedRules: datedRules, sinceRules: sinceRules, markSince: markSince,
     /* 깊은 검토 — 결과 추리기 (2026-09-07) */
     sizeKeyOf: sizeKeyOf, reviewTally: reviewTally, reviewCaveats: reviewCaveats,
-    CAT_ORDER: CAT_ORDER
+    CAT_ORDER: CAT_ORDER,
+    /* ㉢ 스캔뿐인 회차의 글자 읽기 (2026-09-07) */
+    TEXT_MAX: TEXT_MAX, OCR_MIN_KO: OCR_MIN_KO,
+    canOcr: canOcr, canScan: canScan, ocrWorth: ocrWorth,
+    ocrRow: ocrRow, ocrMark: ocrMark, pickText: pickText
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   global.PuRulesCasebook = api;

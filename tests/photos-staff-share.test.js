@@ -215,7 +215,25 @@ test('★ 콘솔과 «한 곳도» 다르지 않다', () => {
        (다른 자리는 멀쩡하다 — 새 칸 하나가 늘어난 것뿐이다).
      ⚠ 새로 넓어진 권한은 «없다» — 읽기는 서고와 같고, 쓰기는 이미 있던
        revWrite(올린 사람 또는 관리자) 그대로다. */
-  const PENDING = ['/rules_mgmt/casebook/rev/$site/$rev/docs/$role/sub'];
+  /* ★ 2026-09-08 — 서고에 «글자 읽기(OCR)» 층이 붙어 기다린다(대표 결정 2026-09-07 ㉢
+       「읽혀 검색에 걸리게」). 스캔뿐이라 검색에 안 걸리던 옛 회차를 브라우저 안에서
+       읽어 «추정 본문»으로 담는다.
+         /rules_mgmt/casebook/ocr                       — 추정 본문 층(원문 층과 «딴 자리»)
+         …/rev/$site/$rev/docs/$role/{ocr,ocrN,ocrAt}   — 「읽어냈다」는 딱지 셋
+
+     ⚠⚠ 이번엔 넓어진 권한이 «있다» — 딱지 셋과 ocr 층의 «쓰기»가 재직 직원 누구나다.
+       까닭: 서고는 사례집이라 남의 사업장 회차를 다 같이 보는데, 회차를 담은 사람만
+       읽을 수 있으면 옛 담당자가 퇴사한 회차는 영영 못 읽는다.
+       ★ 넓힌 것은 딱 그것뿐이다 — 이름·해시·원본 자리(name·sha·path)와 noText 는
+         그대로 임자만 쓴다(tests/rules-casebook-ocr.test.js 가 기계로 지킨다).
+       ★ «읽기»는 한 칸도 안 넓혔다 — 서고 읽기와 같다(재직 직원 전체).
+     ⚠ 이 칸이 콘솔에 올라가기 전까지 [🔍 글자 읽기]는 permission_denied 로 막힌다
+       (다른 자리는 멀쩡하다 — 새 칸이 늘어난 것뿐이다). */
+  const PENDING = ['/rules_mgmt/casebook/rev/$site/$rev/docs/$role/sub',
+                   '/rules_mgmt/casebook/ocr',
+                   '/rules_mgmt/casebook/rev/$site/$rev/docs/$role/ocr',
+                   '/rules_mgmt/casebook/rev/$site/$rev/docs/$role/ocrN',
+                   '/rules_mgmt/casebook/rev/$site/$rev/docs/$role/ocrAt'];
   assert.deepEqual(diff.sort(), PENDING.sort(),
     '★ 뜻하지 않은 곳이 바뀌었습니다: ' + diff.join(', ') +
      '\n  규칙은 한 번에 통째로 바뀝니다 — 곁다리 변경이 섞이면 무엇이 깨졌는지 못 짚습니다.');
