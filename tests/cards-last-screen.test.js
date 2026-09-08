@@ -53,6 +53,9 @@ function boot(who) {
     /* 2026-09-05 — 업무관리에서 「이 사업장과 오간 것」으로 건너오는 길
        (?view=mail&mail=co&co=…). 저장된 마지막 화면(s.mail==='co')도 여기로 온다. */
     openCoThread(id) { opened.push('co:' + (id || '')); },
+    /* 2026-09-08 — 기업정보함의 「🚪 퇴사한 담당 — 이어받기」 띠로 건너오는 길
+       (?view=mail&mail=succ). 메일 창이 열렸는가만 보므로 여기서도 'mail' 로 센다. */
+    openWhoPage(t) { opened.push('who:' + (t || '')); },
     switchTab(t) { opened.push('tab:' + t); }
   };
   vm.createContext(ctx);
@@ -62,7 +65,9 @@ function boot(who) {
      그것을 가르는 mailToFromUrl 이 restoreLastScreen 안에서 돌므로 함께 실어 준다. */
   ctx.URLSearchParams = URLSearchParams;
   ctx.String = String;
-  ['lastScreenKey', 'mailToFromUrl', 'mailCoFromUrl', 'urlWantsMail', 'composeTouched', 'saveLastScreen', 'restoreLastScreen']
+  /* MAIL_WHO_TABS 는 최상위 const 라 컨텍스트 값이 되지 않는다 — var 로 바꿔 싣는다 */
+  vm.runInContext("var MAIL_WHO_TABS = ['succ','addr','end','notco'];", ctx);
+  ['lastScreenKey', 'mailToFromUrl', 'mailCoFromUrl', 'mailWhoFromUrl', 'urlWantsMail', 'composeTouched', 'saveLastScreen', 'restoreLastScreen']
     .forEach(n => vm.runInContext(fn(n), ctx));
   return ctx;
 }
