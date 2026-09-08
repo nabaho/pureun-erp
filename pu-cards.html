@@ -22353,11 +22353,16 @@ function viewSig(f){
     c.name||'', c.company||'', c.phone||'', c.email||'',
     !!f.onlyPhone, !!f.onlyEmail, !!f.onlyIncomplete, !!f.onlyPrivate, !!f.onlyDup, f.vtab||'']);
 }
-function applyView(id){
+/* keepFolder — 지금 보고 있는 폴더를 «그대로 두고» 조건만 입힌다. 유형 탭(자문·급여…)을
+   폴더마다 빌려 쓰는 길이다 — 탭에 저장된 폴더는 'all' 이라 그냥 쓰면 폴더에서 튀어나온다.
+   ⚠ 폴더를 «값»으로 넘기지 않는다. state.group 은 «빈 글자»가 미분류 폴더라,
+     넘겨받은 값을 `group||'all'` 로 갈음하는 순간 미분류에서 전체로 튄다. */
+function applyView(id, keepFolder){
   const v=(state.views||{})[id]; if(!v) return;
   const f=v.f||{};
   if((v.kind||'card')!==state.tab){ state.tab=v.kind||'card'; }
-  state.group=f.group||'all'; state.owner=f.owner||'all'; state.region=f.region||'';
+  state.group = keepFolder ? state.group : (f.group||'all');
+  state.owner=f.owner||'all'; state.region=f.region||'';
   state.erpFilter=f.erpFilter||''; state.erpMgr=f.erpMgr||''; state.colFilter=Object.assign({}, f.colFilter||{});
   state.onlyPhone=!!f.onlyPhone; state.onlyEmail=!!f.onlyEmail;
   state.onlyIncomplete=!!f.onlyIncomplete; state.onlyPrivate=!!f.onlyPrivate; state.onlyDup=!!f.onlyDup;
@@ -22516,7 +22521,11 @@ function renameView(id){
 function updateView(id){
   const v=(state.views||{})[id]; if(!v) return;
   if(!confirm(`'${v.name}' 탭을 지금 화면의 조건으로 덮어쓸까요?`)) return;
-  Store.putView(Object.assign({}, v, {f:viewSnapshot(), kind:state.tab})); toast('탭 조건을 갱신했습니다');
+  const f = viewSnapshot();
+  /* ⚠ 유형 탭은 폴더마다 «빌려» 그려진다. 지금 폴더를 조건에 박으면 다른 폴더에서는
+       0 곳이 되어 칩이 통째로 사라진다 — 폴더만은 「전체」로 남긴다. */
+  if(isErpTypeTab(v) && (v.scope||'all')==='all') f.group = 'all';
+  Store.putView(Object.assign({}, v, {f:f, kind:state.tab})); toast('탭 조건을 갱신했습니다');
 }
 function deleteView(id){
   const v=(state.views||{})[id]; if(!v) return;
@@ -22601,6 +22610,29 @@ function showAllInFolder(){
 /* 한눈에 갈리는 그림표 — 🔍 는 「찾아서 모은다」, 🏷 는 「골라 담는다」 */
 function tabIcon(v){ return (v && v.manual) ? '🏷' : '🔍'; }
 
+/* ── 유형 탭(자문·급여·노조·기금·사무대행·🚪 해지)은 «폴더 안»에서만 ──────────────
+   대표 지시 2026-09-08: 「전체에 자문 급여 노조 기금 해지 등은 필요없다. 대시보드에
+   있기 때문에 2중으로 있고 많이 헤깔린다. … 업체관리에 그 세부정보가 필요하다.」
+
+   그래서 «없애지 않고 자리를 옮긴다».
+     ① 「전체」에서는 안 그린다 — 옆줄 폴더와 같은 것을 두 번 세던 자리다.
+     ② 폴더 안에서는 «그 폴더로 좁혀» 그린다. 정작 필요한 수는 「업체관리 안의 자문」이고,
+        전체의 231 은 어느 폴더의 수도 아니었다.
+     ③ 0 곳이면 그 칩은 빠진다 — 지인·생활기타에서 「노조 0 · 기금 0」이 늘어서면
+        지금 지적받은 그 어수선함이 그대로 돌아온다.
+   ⚠ 탭 자체(pucards/views)는 «지우지 않는다». 지우면 대표가 바꿔 둔 이름까지 사라지고,
+     씨앗(seedErpTabs·seedClosedTab)은 localStorage 열쇠 때문에 다시 심기지 않는다 —
+     되돌릴 길이 없어진다. 「내 탭 관리」(환경설정)는 예전대로 «모든» 탭을 보여 준다. */
+function isErpTypeTab(v){
+  return !!(v && !v.manual && (v.f||{}).erpFilter);
+}
+/* 지금 이 탭이 «빌려 온» 유형 탭인가 — 그리는 곳과 누르는 곳이 이 잣대 하나를 본다.
+   ⚠ 칩에 갈래를 심어 보내지 않는다. 두 벌로 갈리면 한쪽만 고쳐져
+     「보이는 수와 눌러서 나오는 수가 다르다」가 된다. */
+function tabChipLent(v){
+  return !!(v && isErpTypeTab(v) && (v.scope||'all')==='all' && (state.group||'all')!=='all');
+}
+
 /* 고른 명함이 있으면 칩이 «담는 단추»가 된다 — 무엇이 일어날지 미리 알려 준다 */
 function tabChipTip(v, selN){
   const n = selN || 0;
@@ -22622,7 +22654,9 @@ function tabChipClick(id){
   const v = (state.views||{})[id]; if (!v) return;
   const n = Object.keys(state.sel||{}).length;
   const act = tabChipAction(v, n);
-  if (act === 'apply') return applyView(id);
+  /* 빌려 온 유형 탭이면 «지금 폴더를 그대로 두고» 조건만 입힌다 — 안 그러면
+     업체관리에서 「자문」을 눌렀는데 전체 자문으로 튀어나온다. */
+  if (act === 'apply') return applyView(id, tabChipLent(v));
   if (act === 'cant') return toast(tabChipTip(v, n), 8000);
   if (!confirm(`고른 ${n}개를 🏷 '${v.name}' 탭에 담을까요?\n\n명함은 지워지지 않습니다.`)) return;
   doAddToTab(id);
@@ -22630,9 +22664,26 @@ function tabChipClick(id){
 
 function renderMyTabsHtml(){
   const cur = state.group||'all';
-  const vs=Object.values(state.views||{})
-            .filter(v=>v&&v.id&&(v.kind||'card')===state.tab&&(v.scope||'all')===cur)
-            .sort((a,b)=>(a.order||0)-(b.order||0));
+  const all = Object.values(state.views||{}).filter(v=>v&&v.id&&(v.kind||'card')===state.tab);
+  /* 이 폴더에 심어 둔 탭. 「전체」에서만 유형 탭을 뺀다(①).
+     ⚠ 「유형 탭은 다 뺀다」로 줄이면 안 된다 — 폴더 «안에서» 대표가 직접 만든
+       유형 탭(scope 가 그 폴더인 것)까지 함께 사라져 되돌릴 길이 없다. */
+  const mine = all.filter(v=>(v.scope||'all')===cur && !(cur==='all' && isErpTypeTab(v)))
+                  .sort((a,b)=>(a.order||0)-(b.order||0));
+  /* 이 폴더가 같은 유형 탭을 이미 갖고 있으면 빌려 오지 않는다 —
+     같은 이름이 둘 서면 어느 쪽을 눌러야 하는지 알 수 없다. */
+  const own = {};
+  mine.forEach(v=>{ const t=(v.f||{}).erpFilter; if(t) own[t]=1; });
+  /* 그릴 칩 — 심어 둔 탭 + 빌려 온 유형 탭(②). 빌려 온 것은 조건에 «지금 폴더»를
+     끼워 넣고 미리 센 수를 들고 온다. 0 곳이면 여기서 아예 빠진다(③). */
+  const vs = mine.map(v=>({ v:v, f:(v.f||{}) })).concat(
+    all.filter(v=>tabChipLent(v) && !own[(v.f||{}).erpFilter])
+       .sort((a,b)=>(a.order||0)-(b.order||0))
+       .map(v=>{
+         const f = Object.assign({}, v.f||{}, { group: cur });
+         let n = 0; try{ n = countMatching(f); }catch(_){}
+         return n ? { v:v, f:f, n:n, lent:1 } : null;
+       }).filter(Boolean));
   /* 고른 명함이 있으면 담는 탭 칩이 «＋ 담기» 로 바뀐다(대표 지시 2026-08-15) */
   const selN = Object.keys(state.sel||{}).length;
   const sig=viewSig(viewSnapshot());
@@ -22649,9 +22700,14 @@ function renderMyTabsHtml(){
       padding:6px 13px;margin-right:2px"
       onclick="showAllInFolder()" title="${esc(gName)} 전체를 봅니다 — 탭·검색·필터를 모두 풉니다">📋 전체
       <b style="margin-left:5px;font-weight:800;${allOn?'':'color:#64748b'}">${allN.toLocaleString()}</b></span>`;
-  h+=vs.map(v=>{
-    const on=viewSig(v.f)===sig;
-    let n=0; try{ n=countMatching(v.f); }catch(_){}
+  h+=vs.map(x=>{
+    const v=x.v;
+    const on=viewSig(x.f)===sig;
+    let n=x.n; if(n===undefined){ n=0; try{ n=countMatching(x.f); }catch(_){} }
+    /* 빌려 온 유형 탭은 «어디의» 수인지 말해 준다 — 「자문」만으로는 어느 폴더의
+       자문인지 알 수 없다(전체에서 한 번 겪은 그 헷갈림이다). */
+    const tip = x.lent ? `${gName} 안의 ${v.name} — ${n.toLocaleString()}개`
+                       : tabChipTip(v, selN);
     /* 대표만 좌우로 끌어 탭 순서를 바꾼다. 「📋 전체」 칩은 저장된 탭이 아니라
        늘 맨 앞이므로 끌 수 없다(위쪽에서 따로 그린다). */
     return `<span draggable="${state.isAdmin ? 'true' : 'false'}"
@@ -22661,7 +22717,7 @@ function renderMyTabsHtml(){
       ondragleave="onOrdDragLeave(event)"
       ondrop="onOrdDrop(event,'view','${v.id}','')"
       style="display:inline-flex;align-items:center;border:1.5px solid ${on?'#1e40af':'#bfdbfe'};background:${on?'#1e40af':'#f8fafc'};color:${on?'#fff':'#1e40af'};border-radius:18px;font-weight:700;font-size:12.5px;overflow:hidden">
-      <span style="cursor:pointer;padding:6px 4px 6px 13px" onclick="tabChipClick('${v.id}')" title="${tabChipTip(v, selN)}">${
+      <span style="cursor:pointer;padding:6px 4px 6px 13px" onclick="tabChipClick('${v.id}')" title="${esc(tip)}">${
         tabChipAction(v, selN)==='add' ? '＋' : ''}${tabIcon(v)} ${esc(v.name)}
         <b style="margin-left:5px;font-weight:800;${on?'':'color:#64748b'}">${n.toLocaleString()}</b></span>
       <span style="cursor:pointer;padding:6px 9px 6px 4px;opacity:.75;font-size:13px" onclick="viewMenu('${v.id}')" title="이름변경 · 조건갱신 · 삭제">⋮</span></span>`;
