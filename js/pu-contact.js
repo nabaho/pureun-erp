@@ -46,7 +46,12 @@
     a = clean(a); b = clean(b);
     if(!a || !b) return false;
     if(kind === 'email') return a.toLowerCase() === b.toLowerCase();
-    return a.replace(/[^0-9]/g, '') === b.replace(/[^0-9]/g, '');
+    var da = a.replace(/[^0-9]/g, ''), db = b.replace(/[^0-9]/g, '');
+    /* ⚠ 숫자가 하나도 없는 값끼리는 «글자 그대로» 견준다.
+       숫자만 뽑아 견주면 「내선」과 「미정」이 둘 다 빈 글자가 되어 «같다»고 나온다 —
+       그러면 둘째 값이 말없이 사라진다(2026-09-08 검사가 잡았다). */
+    if(!da || !db) return a === b;
+    return da === db;
   }
 
   /* 메인 먼저, 그다음 곁칸. 빈 값과 겹친 값은 빼고 돌려준다.

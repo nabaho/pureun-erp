@@ -54,6 +54,12 @@ test('④ 겹친 값은 하나로 본다 — 꼴이 달라도', function () {
   assert.equal(P.values(r, 'phone').length, 2, '★ 같은 번호가 두 줄로 남았습니다');
   const e = P.apply({}, 'email', [{ v: 'A@B.com' }, { v: 'a@b.com' }]);
   assert.equal(P.values(e, 'email').length, 1, '★ 대소문자만 다른 이메일이 두 줄입니다');
+  /* ★ 숫자가 없는 값끼리는 글자로 견준다 — 「내선」과 「미정」이 같아지면 안 된다.
+     숫자만 뽑아 견주면 둘 다 빈 글자가 되어 둘째가 말없이 사라졌다(2026-09-08). */
+  const t = P.apply({}, 'phone', [{ v: '내선' }, { v: '미정' }]);
+  assert.equal(P.values(t, 'phone').length, 2, '★ 숫자 없는 값 둘을 같다고 보고 있습니다');
+  assert.equal(P.values(P.apply({}, 'phone', [{ v: '내선' }, { v: '내선' }]), 'phone').length, 1,
+    '똑같은 글자는 하나로 봅니다');
 });
 
 test('⑤ 메인 자리가 비면 곁칸 첫 값이 올라온다 — 메인 없는 사람을 안 만든다', function () {

@@ -88,3 +88,82 @@ test('⑨ 옛 열쇠(m·e)는 그대로다 — 이 열쇠를 모르는 화면이
   assert.match(f, /put\('m', it\.mobile\)/, '★ 메인 휴대폰 열쇠가 바뀌었습니다');
   assert.match(f, /put\('e', it\.email\)/, '★ 메인 이메일 열쇠가 바뀌었습니다');
 });
+
+/* ── 기업정보함 «안»에서 둘째를 넣는 화면 (2026-09-08) ───────────────────── */
+const vm = require('vm');
+
+function cardsRealm(extra) {
+  const P = require(path.join(R, 'js', 'pu-contact.js'));
+  const ctx = Object.assign({ console: console, window: { PuContact: P }, PuContact: P,
+    esc: function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); },
+    digits: function (s) { return String(s || '').replace(/\D/g, ''); },
+    toast: function () { } }, extra || {});
+  vm.createContext(ctx);
+  ['function pcMoreKind(', 'function pcSecondOf(', 'function pcApplyMore(',
+   'function pcSwapMain(', 'function pcMoreField(', 'function pcMoreLine('
+  ].forEach(function (d) { vm.runInContext(cutFn(cards, d), ctx); });
+  return ctx;
+}
+
+test('⑩ 기업정보함 수정창에 둘째 칸이 «휴대폰·이메일 바로 아래»에 붙는다', function () {
+  const open = stripComments('<script>' + cutFn(cards, 'function openEditor(') + '</script>');
+  assert.match(open, /if \(kind==='card' && \(k==='mobile' \|\| k==='email'\)\) fh \+= pcMoreField\(/,
+    '★ 둘째 칸이 없거나 짝에서 멀리 떨어져 있습니다');
+  const snap = stripComments('<script>' + cutFn(cards, 'function editorSnapshot(') + '</script>');
+  assert.match(snap, /\['mobile2','email2'\]/,
+    '★ 둘째 칸만 적고 닫으면 «고친 것 없음»으로 보아 말없이 버려집니다');
+});
+
+test('⑪ 저장할 때 규칙에 태운다 — 화면이 따로 셈하지 않는다', function () {
+  const save = stripComments('<script>' + cutFn(cards, 'async function saveEditor(') + '</script>');
+  /* ⚠ 「pcApplyMore(」 만 보면 `if(false) pcApplyMore(…)` 같은 죽은 줄도 통과한다
+     (되돌림 검사에서 실제로 빠져나갔다). 살아 있는 줄의 «생김새»까지 본다. */
+  assert.match(save, /\['mobile','email'\]\.forEach\(k=>\{[\s\S]{0,240}?pcApplyMore\(it, k, el \?/,
+    '★ 둘째 칸이 저장에 안 실립니다 (또는 죽은 줄로 남아 있습니다)');
+  const fn = stripComments('<script>' + cutFn(cards, 'function pcApplyMore(') + '</script>');
+  assert.match(fn, /PuContact\.apply\(/, '★ 기업정보함이 규칙을 따로 셈하고 있습니다');
+});
+
+test('⑫ ★ pcApplyMore — 실제로 돌려 본다', function () {
+  const ctx = cardsRealm();
+  const run = (main, second) => vm.runInContext('(function(){var it=' + JSON.stringify({ mobile: main }) +
+    "; pcApplyMore(it,'mobile'," + JSON.stringify(second) + '); return JSON.stringify(it);})()', ctx);
+  assert.deepEqual(JSON.parse(run('010-1111-2222', '010-3333-4444')),
+    { mobile: '010-1111-2222', mobileMore: [{ v: '010-3333-4444', label: '' }] });
+  assert.deepEqual(JSON.parse(run('010-1111-2222', '')), { mobile: '010-1111-2222' },
+    '★ 둘째가 비었는데 곁칸을 만들고 있습니다');
+  assert.deepEqual(JSON.parse(run('010-1111-2222', '01011112222')), { mobile: '010-1111-2222' },
+    '★ 같은 번호를 두 줄로 남기고 있습니다');
+  assert.deepEqual(JSON.parse(run('', '010-9999-0000')), { mobile: '010-9999-0000' },
+    '★ 메인이 비었으면 둘째가 올라와야 합니다');
+});
+
+test('⑬ ★ pcSecondOf — 저장된 곁칸을 다시 칸에 띄운다 (왕복)', function () {
+  const ctx = cardsRealm();
+  const second = (it, k) => vm.runInContext('pcSecondOf(' + JSON.stringify(it) + ',' + JSON.stringify(k) + ')', ctx);
+  assert.equal(second({ mobile: '010-1111-2222', mobileMore: [{ v: '010-3333-4444' }] }, 'mobile'), '010-3333-4444');
+  assert.equal(second({ mobile: '010-1111-2222' }, 'mobile'), '', '하나뿐이면 둘째 칸은 빈다');
+  assert.equal(second({ email: 'x@y.com', emailMore: [{ v: 'z@y.com' }] }, 'email'), 'z@y.com');
+  assert.equal(second(null, 'mobile'), '', '빈 값에도 안 터집니다');
+});
+
+test('⑭ ★ 는 두 칸을 맞바꾼다 — 값을 안 잃는다', function () {
+  const a = { value: '010-1111-2222' }, b = { value: '010-3333-4444' };
+  const ctx = cardsRealm({ $: function (id) { return id === 'f_mobile' ? a : (id === 'f_mobile2' ? b : null); } });
+  vm.runInContext("pcSwapMain('mobile')", ctx);
+  assert.equal(a.value, '010-3333-4444', '★ 고른 값이 메인 칸으로 안 왔습니다');
+  assert.equal(b.value, '010-1111-2222', '★ 원래 메인이 사라졌습니다');
+  vm.runInContext("pcSwapMain('nope')", ctx);   // 없는 칸에도 안 터진다
+});
+
+test('⑮ 상세 보기 두 곳 «모두»에 둘째 줄이 나온다 (폰·PC)', function () {
+  /* ⚠ 「pcMoreLine(it, k)」 로 세면 «함수 선언»까지 세어져 한 곳을 빼도 통과한다
+     (되돌림 검사에서 실제로 빠져나갔다). 부르는 줄만 센다. */
+  const uses = (cardsBare.match(/v \+= pcMoreLine\(it, k\);/g) || []).length;
+  assert.ok(uses >= 2, '★ 상세는 폰·PC 둘입니다 — ' + uses + '군데만 붙었습니다');
+  const ctx = cardsRealm();
+  const line = (it, k) => vm.runInContext('pcMoreLine(' + JSON.stringify(it) + ',' + JSON.stringify(k) + ')', ctx);
+  assert.equal(line({ mobile: '010-1111-2222' }, 'mobile'), '', '★ 둘째가 없는데 빈 줄을 그립니다');
+  assert.match(line({ mobile: '010-1', mobileMore: [{ v: '010-2222-3333' }] }, 'mobile'), /010-2222-3333/);
+  assert.match(line({ email: 'a@b.c', emailMore: [{ v: 'd@e.f' }] }, 'email'), /d@e\.f/);
+});
