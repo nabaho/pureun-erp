@@ -18,7 +18,7 @@
 <script src="js/pu-rrn-seal.js?v=2"></script>
 <script src="js/pu-backup.js?v=2"></script>
 <script src="js/pu-rules-history.js?v=3"></script>
-<script src="js/pu-rules-casebook.js?v=10"></script>
+<script src="js/pu-rules-casebook.js?v=11"></script>
 <script src="vendor/xlsx.full.min.js"></script>
 <script src="vendor/pako.min.js"></script>
 <script src="vendor/pdf.min.js"></script>
@@ -1161,7 +1161,8 @@ table.daejo td.dj2{padding:0}
       <button class="stbtn" id="cb-retry" style="margin-top:6px">실패한 것만 다시 시도</button>
     </div>
     <p class="muted" style="font-size:11px;margin:8px 0 0;line-height:1.6">※ 원본 파일 보관(Storage)은 아직 켜지 않았습니다 — 지금은 <b>본문 글</b>만 서고에 담깁니다.
-      검색·사례집·이력은 글만으로 전부 되고, 원본 보기는 나중에 붙습니다. 글이 없는 스캔 PDF 는 「본문 없음」으로 적어 둡니다.</p>
+      검색·사례집·이력은 글만으로 전부 되고, 원본 보기는 나중에 붙습니다. 글이 없는 스캔 PDF 는 「본문 없음」으로 적어 둡니다.
+      <br>원본 보관이 켜지면, 글이 없는 본문류는 사업장 이력에서 <b>[🔍 글자 읽기]</b>로 읽어 검색에 걸리게 할 수 있습니다(「OCR 추정」으로 갈라 둡니다).</p>
     </div>
   </div>
   <div class="foot">
@@ -5436,7 +5437,9 @@ $("open-bank").addEventListener("click",async()=>{
 const CB=window.PuRulesCasebook;
 const CB_ROLE_KO={before:"개정 전",after:"개정본",daejo:"신구대조표",report:"신고서",
   opinion:"의견청취",consent:"동의서",etc:"기타"};
-const CB_TEXT_MAX=600000;          /* 규칙의 본문 한도와 같은 수 — 넘으면 자른다 */
+/* 본문 한도 — 모듈이 진짜다(서버 규칙과 같은 수여야 한다). 세 곳에 흩어 두었더니
+   어긋날 판이라 한 자리로 모았다. ⚠ 여기 숫자를 다시 박지 말 것. */
+const CB_TEXT_MAX=CB.TEXT_MAX;
 const CB_IDX_CHUNK=200;            /* 한 번 쓰기에 몰아넣지 않는다(2026-08-16 대량 쓰기 사고) */
 let CB_ROWS=[], CB_FAIL=[];
 
@@ -5645,6 +5648,176 @@ async function cbOpenOrig(자리){
           ? '원본 파일이 창고에 없습니다 — 담기지 않았거나 지워졌습니다.'
           : '원본을 열지 못했습니다 — '+String((e&&e.message)||e)));
   }
+}
+/* ══════ ㉢ 스캔뿐인 회차의 «글자 읽기(OCR)» — 대표 결정 2026-09-07 ══════
+   「단순 보관은 의미가 없다」 — 원본은 열리는데 글이 없어 검색에 안 걸리는 자리다.
+
+   ★★ 왜 브라우저 «안»에서만 읽나 — 서고에는 근로자 이름·서명·도장이 있는 장이 섞인다.
+     사진첩의 판독(readDoc)은 글을 구글 Vision 으로 «내보낸다» — 그것을 그대로 가져다
+     쓰면 남의 이름이 밖으로 나간다. Tesseract 는 wasm 이라 이 창 안에서 끝난다.
+     ⚠ 편하다고 readDoc 으로 갈아타지 말 것. 이 한 줄이 그 문을 막고 있다.
+   ★★ 읽어낸 글은 «원문이 아니다». 담는 자리가 딴 층(paths.ocr)이고, 문안 은행에
+     적립하지 않으며, 「검토 시작」도 안 열어 준다. 그 셋을 지키는 판정은 모듈에 있다.
+
+   ⚠ 처음 한 번은 한글 사전을 받는다(15MB 남짓). 그 말을 «미리» 한다 —
+     안 하면 「멈췄나」 하고 창을 닫는다. */
+const OCR_LIB='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+const OCR_MAX_PAGES=30;   /* 한 쪽에 10~20초다 — 30쪽이면 벌써 10분이 넘는다 */
+const OCR_SCALE=2;        /* 스캔 글자가 작아 2배로 키워야 읽힌다(1배는 거의 못 읽는다) */
+let ocrLibP=null;
+function loadOcrLib(){
+  if(window.Tesseract)return Promise.resolve(window.Tesseract);
+  /* ⚠ 실패하면 «기억을 지운다» — 안 지우면 한 번 실패한 뒤로 다시 눌러도 영영 안 된다 */
+  if(!ocrLibP)ocrLibP=new Promise((ok,no)=>{
+    const s=document.createElement('script'); s.src=OCR_LIB;
+    s.onload=()=>{ if(window.Tesseract)ok(window.Tesseract);
+      else{ ocrLibP=null; no(new Error('글자 읽개를 불러오지 못했습니다')); } };
+    s.onerror=()=>{ ocrLibP=null;
+      no(new Error('글자 읽개를 내려받지 못했습니다 — 인터넷 연결을 확인해 주세요')); };
+    document.head.appendChild(s);
+  });
+  return ocrLibP;
+}
+/* 원본을 «그림 쪽»으로 — PDF 는 pdf.js 로 그리고, 그림 파일은 그대로 한 쪽.
+   ⚠ 쪽 수를 막는다. 100쪽짜리를 통째로 걸면 30분을 앉아 기다리게 된다. */
+async function ocrToPages(blob,name,말){
+  const isPdf=/\.pdf$/i.test(String(name||''))||String(blob.type||'').indexOf('pdf')>=0;
+  if(!isPdf){
+    const bmp=await createImageBitmap(blob);
+    const cv=document.createElement('canvas');
+    cv.width=bmp.width; cv.height=bmp.height;
+    cv.getContext('2d').drawImage(bmp,0,0);
+    return {pages:[cv],total:1,잘림:0};
+  }
+  if(!window.pdfjsLib)throw new Error('PDF 읽개가 없습니다 — 새로고침해 주세요');
+  const doc=await pdfjsLib.getDocument({isEvalSupported:false,
+    data:new Uint8Array(await blob.arrayBuffer())}).promise;
+  const n=Math.min(doc.numPages,OCR_MAX_PAGES), out=[];
+  for(let i=1;i<=n;i++){
+    말(`쪽을 그리는 중 ${i}/${n}`,i/n);
+    const pg=await doc.getPage(i), vp=pg.getViewport({scale:OCR_SCALE});
+    const cv=document.createElement('canvas');
+    cv.width=Math.round(vp.width); cv.height=Math.round(vp.height);
+    await pg.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;
+    out.push(cv);
+  }
+  return {pages:out,total:doc.numPages,잘림:Math.max(0,doc.numPages-n)};
+}
+/* 진행 상황을 «한 자리»에 그린다 — 칩 안에 그리면 칩이 두 줄이 된다(한 칸은 한 줄) */
+function ocrBox(revId){
+  return $("cb-hist-body").querySelector(`[data-cb-ocrout="${CSS.escape(revId)}"]`);
+}
+function ocrSay(자리,글,몫,색){
+  const c=색||"blue";
+  const bg=c==="red"?"#fef2f2":(c==="amber"?"#fffbeb":"#eff6ff");
+  const bd=c==="red"?"#fecaca":(c==="amber"?"#fde68a":"#bfdbfe");
+  const fg=c==="red"?"#991b1b":(c==="amber"?"#854d0e":"#1e40af");
+  자리.innerHTML=`<div style="background:${bg};border:1px solid ${bd};color:${fg};border-radius:9px;`
+    +`padding:8px 11px;font-size:11.5px;line-height:1.75;margin-top:8px">${글}`
+    +(몫==null?"":`<div style="height:6px;background:${bd};border-radius:4px;overflow:hidden;margin-top:6px">`
+      +`<div style="height:100%;width:${Math.round(Math.max(0,Math.min(1,몫))*100)}%;background:${fg}"></div></div>`)
+    +`</div>`;
+}
+async function cbOcrRun(revId,role){
+  if(!FBDB||!FBUSER){ alert("로그인 후 이용하세요."); return; }
+  const raw=(CB_HIST_RAW||{})[revId]||{};
+  const 될까=CB.canOcr(raw,role);
+  if(!될까.ok){ alert(될까.why); return; }
+  const d=(raw.docs||{})[role]||{}, 이름=CB.ROLE_KO[role]||role;
+  if(!confirm(`${revId}회차 「${이름}」 원본을 기계가 읽습니다.\n\n`
+    +`· 사진은 «이 브라우저 안에서만» 읽습니다 — 서버·AI 로 안 보냅니다.\n`
+    +`· 처음 한 번은 한글 사전 15MB 를 받습니다 (다음부터는 안 받습니다).\n`
+    +`· 스캔 한 쪽에 10~20초 걸립니다. 창을 닫지 마세요.\n\n`
+    +`⚠ 읽어낸 글은 «추정»입니다 — 검색에는 걸리지만, 문안 은행에는 안 들어가고`
+    +` 「검토 시작」도 열리지 않습니다.`))return;
+  const 자리=ocrBox(revId); if(!자리)return;
+  let worker=null;
+  try{
+    ocrSay(자리,"원본을 창고에서 받는 중…",null);
+    const url=await firebase.app().storage(CB_BUCKET).ref(d.path).getDownloadURL();
+    const res=await fetch(url);
+    if(!res.ok)throw new Error("원본을 받지 못했습니다 (HTTP "+res.status+")");
+    const blob=await res.blob();
+    const 쪽=await ocrToPages(blob,d.name||d.path,(s,p)=>ocrSay(자리,escapeH(s),p));
+    ocrSay(자리,"글자 사전을 준비하는 중… <b>처음 한 번만</b> 15MB 를 받습니다",0);
+    const T=await loadOcrLib();
+    worker=await T.createWorker("kor+eng",1,{logger:m=>{
+      /* 받는 동안 «무엇을 하는지» 말한다 — 빈 화면이면 멈춘 줄 안다 */
+      if(m&&/loading|initializing/i.test(String(m.status||"")))
+        ocrSay(자리,"글자 사전을 준비하는 중… <b>처음 한 번만</b> 15MB 를 받습니다",m.progress||0);
+    }});
+    let 글="";
+    for(let i=0;i<쪽.pages.length;i++){
+      ocrSay(자리,`${쪽.pages.length}쪽 중 <b>${i+1}쪽</b>을 읽는 중… `
+        +`<span style="opacity:.75">스캔 한 쪽에 10~20초 걸립니다</span>`,i/쪽.pages.length);
+      const r=await worker.recognize(쪽.pages[i]);
+      글+=String((r&&r.data&&r.data.text)||"")+"\n";
+    }
+    await worker.terminate(); worker=null;
+    /* ★ 안 거르면 검색이 더러워진다 — «안 걸리는 것보다 나쁘다» */
+    const 값=CB.ocrWorth(글);
+    if(!값.ok){ ocrSay(자리,"<b>담지 않았습니다.</b><br>"+escapeH(값.why)
+      +`<br><span style="opacity:.8">→ [📎 원본]을 눈으로 보시고, 필요하면 회차 메모에 몇 줄 적어 두십시오.</span>`,null,"red"); return; }
+    ocrSay(자리,"담는 중…",null);
+    /* ⓐ 추정 본문 — «원문 층(text)이 아니라» 딴 자리에 */
+    await FBDB.ref(CB.paths.ocr(CB_HIST_KEY,revId,role)).set(
+      CB.ocrRow(글,{uid:myUid(),by:myName()||"",pages:쪽.pages.length,
+        engine:"tesseract.js kor+eng"}));
+    /* ⓑ 회차에 «딱지만». noText 는 일부러 그대로 둔다(원본에 글자층이 없던 것은 사실이다) */
+    const 딱지=CB.ocrMark(글);
+    await FBDB.ref(CB.paths.rev(CB_HIST_KEY,revId)+"/docs/"+role).update(딱지);
+    /* ⓒ 검색 색인 — 개정본만. idxKeysOf 가 스스로 가른다(before 를 넣으면 옛 문구가 섞인다).
+       ⚠ 색인이 실패해도 «글은 이미 담겼다» — 그것까지 물리면 읽은 10분이 날아간다. */
+    let 색인=CB.idxKeysOf(role,글).length;
+    try{
+      const kws=CB.idxKeysOf(role,글);
+      for(let j=0;j<kws.length;j+=CB_IDX_CHUNK){
+        const 묶음={};
+        kws.slice(j,j+CB_IDX_CHUNK).forEach(w=>{ 묶음[CB.paths.idx(w,CB_HIST_KEY,revId)]=1; });
+        if(Object.keys(묶음).length)await FBDB.ref().update(묶음);
+      }
+    }catch(e){ 색인=-1; console.warn("OCR 색인 붙이기 실패(글은 담겼습니다):",e); }
+    /* ⓓ 화면 — 다시 읽어 오지 않고 손에 든 것을 고친다(회차 층은 무겁다) */
+    if(!raw.docs)raw.docs={};
+    if(!raw.docs[role])raw.docs[role]={};
+    Object.assign(raw.docs[role],딱지);
+    cbRenderHist();
+    const 뒤=ocrBox(revId);
+    if(뒤)ocrSay(뒤,`<b>읽었습니다 — 한글 ${값.ko.toLocaleString()}자 · ${글.length.toLocaleString()}자.</b>`
+      +(쪽.잘림?`<br>⚠ 앞 ${쪽.pages.length}쪽만 읽었습니다 (${쪽.잘림}쪽 남음 — 한 번에 ${OCR_MAX_PAGES}쪽까지).`:"")
+      +(role==="after"
+        ?(색인<0?"<br>⚠ 검색 색인을 못 붙였습니다 — 다시 읽기를 눌러 주세요."
+                :`<br>낱말 ${색인}개로 <b>검색에 걸립니다.</b>`)
+        :"<br><span style='opacity:.8'>검색 색인은 개정본만 만듭니다 — 옛 문구가 검색에 섞이면 안 되기 때문입니다.</span>")
+      +`<br>⚠ <b>추정 글입니다.</b> 문안 은행에는 안 들어가고 「검토 시작」도 열리지 않습니다.`,null,"amber");
+  }catch(err){
+    console.warn("글자 읽기 실패:",err);
+    const code=String((err&&err.code)||"");
+    const 자리2=ocrBox(revId)||자리;
+    ocrSay(자리2,"<b>읽지 못했습니다.</b><br>"+escapeH(
+      code.indexOf("unauthorized")>=0
+        ? "창고 규칙이 아직 올라가지 않아 원본을 받을 수 없습니다 — 창고 규칙 붙여넣기가 먼저입니다."
+        : (code.indexOf("object-not-found")>=0
+            ? "원본 파일이 창고에 없습니다 — 담기지 않았거나 지워졌습니다."
+            : String((err&&err.message)||err))),null,"red");
+  }finally{ if(worker){ try{ await worker.terminate(); }catch(_){ } } }
+}
+/* 읽어낸 글 «그대로 보기» — 원문 보기와 색을 달리한다(같으면 원문으로 읽힌다) */
+async function cbOcrSee(revId,role){
+  const 자리=ocrBox(revId); if(!자리)return;
+  ocrSay(자리,"읽어낸 글을 가져오는 중…",null,"amber");
+  try{
+    const v=(await FBDB.ref(CB.paths.ocr(CB_HIST_KEY,revId,role)).once("value")).val();
+    const t=String((v&&v.t)||"");
+    if(!t){ ocrSay(자리,"읽어낸 글이 없습니다.",null,"red"); return; }
+    const 누가=[v.by&&escapeH(v.by),v.at&&escapeH(String(v.at).slice(0,16).replace("T"," ")),
+      v.pages?v.pages+"쪽":""].filter(Boolean).join(" · ");
+    ocrSay(자리,`⚠ <b>기계가 사진을 읽은 「추정」 글입니다 — 원문이 아닙니다.</b> 글자·숫자가 틀릴 수 있습니다.`
+      +(누가?`<br><span style="opacity:.8">${누가}</span>`:"")
+      +`<div style="max-height:260px;overflow:auto;background:#fff;border:1px solid #fde68a;border-radius:7px;`
+      +`padding:9px;margin-top:7px;white-space:pre-wrap;font-size:11.5px;color:var(--sub)">${escapeH(t)}</div>`
+      +`<button class="stbtn" data-cb-ocrclose="${escapeH(revId)}" style="margin-top:7px">닫기</button>`,null,"amber");
+  }catch(e){ ocrSay(자리,"가져오지 못했습니다 — "+escapeH(String(e&&e.message||e)),null,"red"); }
 }
 async function cbUpload(rows){
   if(!FBDB||!FBUSER){ alert("로그인 후 이용하세요."); return; }
@@ -5921,8 +6094,9 @@ $("cb-tally").addEventListener("click",async()=>{
       +`<div style="margin-top:8px;padding-top:8px;border-top:1px solid #bfdbfe;font-size:11.5px;line-height:1.7">`
       +`⚠ <b>제출류는 OCR 로 뽑을 것이 없습니다.</b> 거기서 필요한 「언제·어느 노동청에·몇 명 동의로」는`
       +` 도장과 손글씨라 기계가 못 읽습니다 — 회차를 열어 <b>몇 줄 적기</b>로 남기십시오.`
-      +`<br><b>본문류</b>에 글 없음이 많으면 그때 OCR 을 붙일 값이 있습니다.`
-      +` 적으면 옛 회차 몇 개를 손으로 다시 넣는 쪽이 쌉니다.</div>`;
+      /* ㉢ 이제 길이 있으니 «어디로 가면 되는지»까지 적는다 — 숫자만 던지면 그대로 멈춘다 */
+      +`<br><b>본문류</b>의 글 없음은 사업장 이력에서 서류 칩의 <b>[🔍 글자 읽기]</b>로 읽을 수 있습니다`
+      +` (이 브라우저 안에서만 읽습니다). 읽은 글은 <b>검색에 걸리되</b> 「OCR 추정」으로 갈라 둡니다.</div>`;
   }catch(e){
     console.warn("글 없음 세기 실패:",e);
     box.textContent="세지 못했습니다 — "+String(e&&e.message||e);
@@ -5953,16 +6127,37 @@ function cbRenderHist(){
   $("cb-hist-body").innerHTML=rows.map(r=>{
     const raw=(CB_HIST_RAW||{})[r.revId]||{};
     const 될까=CB.canStartReview(raw);
+    const 훑을까=CB.canScan(raw);
     /* ⑤ 서류 칩에 «원본»을 붙인다. 있으면 눌러 열고, 없으면 그렇다고 적는다 —
-       흐린 단추만 두면 왜 못 누르는지 아무도 모른다(3단계가 세운 원칙). */
-    const 칩=r.chips.map(c=>
-      `<span class="hkind" title="${escapeH(c.name)}" style="background:${c.role==="after"?"#eff6ff":"#f8fafc"};`
-      +`color:${c.role==="after"?"#1e40af":"var(--sub)"};border:1px solid ${c.role==="after"?"#bfdbfe":"var(--line)"}">`
-      +escapeH(c.label)+(c.noText?" (글 없음)":(c.artCount?` ${c.artCount}조`:""))
+       흐린 단추만 두면 왜 못 누르는지 아무도 모른다(3단계가 세운 원칙).
+       ㉢ 글이 없고 원본이 있는 «본문류»에는 [🔍 글자 읽기]를 붙인다(2026-09-07). */
+    const 작은단추=` style="font-size:10px;padding:0 5px;margin-left:5px;height:17px;line-height:15px"`;
+    const 칩=r.chips.map(c=>{
+      const 읽기=CB.canOcr(raw,c.role);
+      /* OCR 추정은 «호박색»으로 갈라 둔다 — 개정본 파랑과 같은 색이면 원문으로 읽힌다 */
+      const bg=c.ocr?"#fffbeb":(c.role==="after"?"#eff6ff":"#f8fafc");
+      const fg=c.ocr?"#854d0e":(c.role==="after"?"#1e40af":"var(--sub)");
+      const bd=c.ocr?"#fde68a":(c.role==="after"?"#bfdbfe":"var(--line)");
+      return `<span class="hkind" title="${escapeH(c.name)}" style="background:${bg};`
+      +`color:${fg};border:1px solid ${bd}">`
+      +escapeH(c.label)
+      /* ⚠ 「글 없음」과 「OCR 추정」을 «함께» 안 적는다 — 한 칸은 한 줄이다(대표 지시).
+         OCR 추정이라는 말 자체가 「원본에 글이 없었다」를 담고 있다(따라다니는 설명은 title 에). */
+      +(c.ocr?` (OCR 추정 ${(c.ocrN||0).toLocaleString()}자)`
+             :(c.noText?" (글 없음)":(c.artCount?` ${c.artCount}조`:"")))
       +(c.path?`<button class="stbtn" data-cborig="${escapeH(c.path)}" title="원본 파일을 새 창으로 엽니다"`
-           +` style="font-size:10px;padding:0 5px;margin-left:5px;height:17px;line-height:15px">📎 원본</button>`
+           +작은단추+`>📎 원본</button>`
          :`<span class="muted" style="font-size:10px;margin-left:5px">원본 없음</span>`)
-      +`</span>`).join(" ");
+      +(c.ocr?`<button class="stbtn" data-cb-ocrsee="${escapeH(r.revId)}|${c.role}"`
+           +` title="기계가 읽어낸 글을 그대로 봅니다 — 원문이 아닙니다"`+작은단추+`>👁 읽은 글</button>`:"")
+      /* ★ 될 때만 붙인다. 안 되는 까닭은 칩 밖 한 줄에 모아 적는다(칩마다 적으면 표가 두 줄이 된다) */
+      +(읽기.ok?`<button class="stbtn" data-cb-ocr="${escapeH(r.revId)}|${c.role}"`
+           +` title="원본 그림을 이 브라우저 안에서 읽어 글자를 뽑습니다 — 밖으로 안 나갑니다"`
+           +` style="font-size:10px;padding:0 5px;margin-left:5px;height:17px;line-height:15px;`
+           +`border-color:#fde68a;background:#fffbeb;color:#854d0e;font-weight:700">`
+           +(읽기.again?"🔄 다시 읽기":"🔍 글자 읽기")+`</button>`:"")
+      +`</span>`;
+    }).join(" ");
     /* ㉡ 제출 서류의 «몇 줄» — 신고서·의견청취·동의서에만 (대표 지시 2026-09-07 「ㄴ」).
        ★ 이것들은 대개 스캔이라 본문이 없다. 그런데 여기서 정작 필요한 것은
          「언제·어느 노동청에·몇 명 동의로」이고 그건 OCR 이 못 읽는다 — 사람이 3초면 적는다. */
@@ -5979,14 +6174,24 @@ function cbRenderHist(){
         +`<b style="font-size:13.5px">${escapeH(r.revId)}회차</b>`
         +(r.at?`<span class="muted" style="font-size:11.5px">시행 ${escapeH(r.at)}</span>`:"")
         +(r.by?`<span class="muted" style="font-size:11.5px">${escapeH(r.by)}</span>`:"")
+        /* ㉢ 훑기는 «canScan» 이 정한다 — 검토(canStartReview)와 «일부러 다르다».
+           훑기는 보기이고 검토는 쓰기다. 훑기가 틀리면 사람이 원본을 보고 넘기면 끝이지만,
+           검토가 틀리면 잘못 읽은 글자가 그대로 다음 규정에 옮겨 붙는다. */
         +`<button class="stbtn" data-cb-scan="${escapeH(r.revId)}" style="margin-left:auto"`
-          +(될까.ok?"":" disabled")
+          +(훑을까.ok?"":" disabled")
           +` title="이 회차 본문에 지금 규칙집을 돌려 어느 조문이 걸리는지 봅니다">🔎 지금 기준으로 훑기</button>`
         +`<button class="stbtn" data-cb-start="${escapeH(r.revId)}"`
           +(될까.ok?"":" disabled")+`>▶ 검토 시작</button></div>`
       +`<div style="display:flex;gap:5px;flex-wrap:wrap">${칩||'<span class="muted" style="font-size:11.5px">서류 없음</span>'}</div>`
-      /* ★ 못 하는 까닭을 «적는다» — 단추만 흐리면 왜 못 누르는지 아무도 모른다 */
-      +(될까.ok?"":`<div style="font-size:11px;color:#854d0e;margin-top:6px">⚠ 검토를 이어갈 수 없습니다 — ${escapeH(될까.why)}</div>`)
+      /* ★ 못 하는 까닭을 «적는다» — 단추만 흐리면 왜 못 누르는지 아무도 모른다.
+         ★★ 하나는 켜지고 하나는 꺼져 있으면 «그 까닭까지» 적는다. 안 적으면
+           「고장인가」로 읽히고, 몇 번 겪으면 화면을 안 믿게 된다. */
+      +(될까.ok?"":`<div style="font-size:11px;color:#854d0e;margin-top:6px">⚠ 검토를 이어갈 수 없습니다 — ${escapeH(될까.why)}`
+          +(훑을까.ocr?` OCR 추정 본문이 있어 <b>훑기는 됩니다</b> — 다만 추정 글은 다음 개정 문안의 밑감으로 쓰지 않습니다.`:"")
+          +`</div>`)
+      /* ㉢ 글자 읽기의 «진행·결과» 자리. 훑기 자리와 갈라 둔다 — 한 자리를 나눠 쓰면
+         읽고 나서 훑는 순간 방금 읽은 결과가 사라져 「담긴 건가」를 알 수 없다. */
+      +`<div data-cb-ocrout="${escapeH(r.revId)}"></div>`
       +`<div data-cb-scanout="${escapeH(r.revId)}"></div>`
       +(제출?`<div style="margin-top:8px;padding-top:7px;border-top:1px solid var(--line)">${제출}</div>`:"")
       +(r.note?`<div class="muted" style="font-size:11.5px;margin-top:6px">${escapeH(r.note)}</div>`:"")
@@ -6011,6 +6216,25 @@ $("cb-hist-body").addEventListener("click",e=>{
   const b=e.target.closest("[data-cborig]"); if(!b)return;
   e.stopPropagation();
   cbOpenOrig(b.getAttribute("data-cborig"));
+});
+/* ㉢ 글자 읽기 — 칩 안의 단추라 사건이 회차 줄로 번지지 않게 멈춘다 */
+$("cb-hist-body").addEventListener("click",e=>{
+  const b=e.target.closest("[data-cb-ocr]"); if(!b||b.disabled)return;
+  e.stopPropagation();
+  const [revId,role]=b.getAttribute("data-cb-ocr").split("|");
+  b.disabled=true; b.textContent="🔍 읽는 중…";
+  cbOcrRun(revId,role);   /* 다 되면 cbRenderHist 가 줄을 통째로 다시 그린다 */
+});
+$("cb-hist-body").addEventListener("click",e=>{
+  const b=e.target.closest("[data-cb-ocrsee]"); if(!b)return;
+  e.stopPropagation();
+  const [revId,role]=b.getAttribute("data-cb-ocrsee").split("|");
+  cbOcrSee(revId,role);
+});
+$("cb-hist-body").addEventListener("click",e=>{
+  const b=e.target.closest("[data-cb-ocrclose]"); if(!b)return;
+  e.stopPropagation();
+  const 자리=ocrBox(b.getAttribute("data-cb-ocrclose")); if(자리)자리.innerHTML="";
 });
 $("cb-hist-body").addEventListener("click",e=>{
   const b=e.target.closest("[data-cb-sub]"); if(!b)return;
@@ -6083,8 +6307,19 @@ $("cb-hist-body").addEventListener("click",async e=>{
   const 이전=b.textContent; b.disabled=true; b.textContent="훑는 중…";
   자리.innerHTML=`<div class="muted" style="font-size:11.5px;margin-top:7px">본문을 읽는 중…</div>`;
   try{
-    const v=(await FBDB.ref(CB.paths.text(CB_HIST_KEY,revId,"after")).once("value")).val();
-    const 글=v&&typeof v==="object"?String(v.t||""):String(v||"");
+    /* ㉢ 원문이 없으면 OCR 추정 층에서 읽는다 — «고르는 일은 CB.pickText 한 자리»다.
+       ⚠ 여기서 직접 고르지 말 것. 검색·훑기가 각자 고르면 어디는 딱지가 붙고 어디는
+         안 붙는다. 딱지 없는 OCR 이 한 곳이라도 생기면 추정이 원문으로 읽힌다.
+       ⚠⚠ 아래 「▶ 검토 시작」에는 이 되돌림을 «넣지 않았다» — 일부러다. 검토는 이 글이
+         다음 개정 문안의 밑감이 되는 자리라, 잘못 읽은 글자가 그대로 규정에 남는다. */
+    const 원문=(await FBDB.ref(CB.paths.text(CB_HIST_KEY,revId,"after")).once("value")).val();
+    let 추정=null;
+    if(!(원문&&typeof 원문==="object"&&원문.t)){
+      try{ 추정=(await FBDB.ref(CB.paths.ocr(CB_HIST_KEY,revId,"after")).once("value")).val(); }
+      catch(_){ 추정=null; }
+    }
+    const 고른=CB.pickText(원문&&typeof 원문==="object"?원문:{t:String(원문||"")},추정);
+    const 글=고른.t;
     if(글.replace(/\s/g,"").length<50)throw new Error("본문이 비어 있습니다");
     /* 규모 — 업체 자료에서 가져오되 «어디서 온 값인지»를 들고 다닌다 */
     let sizeKey=CB.sizeKeyOf(meta.size), sizeFrom="짐작";
@@ -6104,6 +6339,11 @@ $("cb-hist-body").addEventListener("click",async e=>{
                 ["적합",t.count.적합,"#166534","#f0fdf4","#4ade80"]]
       .map(([n,c,fg,bg,bd])=>`<span class="hkind" style="background:${bg};color:${fg};border:1px solid ${bd}">${n} <b>${c}</b></span>`).join(" ");
     자리.innerHTML=`<div style="margin-top:9px;padding-top:8px;border-top:1px solid var(--line)">`
+      /* ㉢ 무슨 글로 훑었는지 «먼저» 말한다 — 셈이 먼저 눈에 들면 그 숫자를 믿어 버린다 */
+      +(고른.ocr?`<div style="background:#fffbeb;border:1px solid #fde68a;color:#854d0e;border-radius:9px;`
+          +`padding:8px 11px;font-size:11px;line-height:1.75;margin-bottom:8px">`
+          +`⚠ <b>OCR 추정 본문으로 훑었습니다</b> — 기계가 사진을 읽은 글이라 조문 번호·글자가 틀릴 수 있고,`
+          +` <b>걸려야 할 것을 빠뜨렸을 수 있습니다.</b> 걸린 것은 [📎 원본]을 눈으로 함께 보십시오.</div>`:"")
       +`<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:7px">${셈줄}`
         +`<span class="muted" style="font-size:11px;margin-left:auto">조문 ${arts.length}개 · ${escapeH(sizeKey||"규모 모름")}</span></div>`
       +(t.must.length
@@ -6985,10 +7225,19 @@ async function cbSearch(q){
     if(CB_SEARCH_CACHE[k])return;
     try{
       const v=(await FBDB.ref(CB.paths.text(r.siteKey,r.revId,'after')).once('value')).val();
-      const 글=String((v&&v.t)||'');
+      /* ㉢ 원문이 없으면 OCR 추정 층에서 읽는다 — 고르는 일은 «CB.pickText 한 자리»다.
+         ⚠ 여기서 직접 고르면 딱지 붙이는 것을 잊는다. 딱지 없는 OCR 이 한 건이라도
+           목록에 섞이면 그 줄은 원문으로 읽힌다(2026-09-07 「읽혀 검색에 걸리게」의 조건). */
+      let o=null;
+      if(!(v&&typeof v==='object'&&v.t)){
+        try{ o=(await FBDB.ref(CB.paths.ocr(r.siteKey,r.revId,'after')).once('value')).val(); }
+        catch(_){ o=null; }
+      }
+      const 고른=CB.pickText(v&&typeof v==='object'?v:{t:String(v||'')},o);
+      const 글=고른.t;
       CB_SEARCH_CACHE[k]={ site:(목록[r.siteKey]&&목록[r.siteKey].site)||r.siteKey,
-        year:r.revId, arts:글?parseArticles(글):[] };
-    }catch(e){ CB_SEARCH_CACHE[k]={site:r.siteKey,year:r.revId,arts:[]}; }
+        year:r.revId, ocr:고른.ocr, arts:글?parseArticles(글):[] };
+    }catch(e){ CB_SEARCH_CACHE[k]={site:r.siteKey,year:r.revId,ocr:false,arts:[]}; }
   }));
 
   /* ④ 판정은 본문이 한다 — 보관함 검색과 «똑같은» 셈 */
@@ -6998,7 +7247,7 @@ async function cbSearch(q){
     const c=CB_SEARCH_CACHE[r.siteKey+'__'+r.revId]; if(!c)return;
     c.arts.forEach(a=>{
       if((stripWs(a.title)+a.bodyNs).toLowerCase().includes(key))
-        out.push({ id:'cb:'+r.siteKey+'__'+r.revId, src:'cb',
+        out.push({ id:'cb:'+r.siteKey+'__'+r.revId, src:'cb', ocr:!!c.ocr,
           rec:{site:c.site,bizno:'',file:'',savedAt:String(c.year)}, a:a });
     });
   });
@@ -7027,7 +7276,12 @@ function renderArts(){
     +hits.map((h,i)=>`<div class="artrow" data-i="${i}">
         <div class="ar-head">
           <span class="ar-site">${escapeH(shortSite(h.rec.site))}</span>
-          ${h.src==="cb"?`<span class="cbtag" title="서고에 담긴 회차입니다 — 직원 전체가 봅니다">🗄 서고 ${escapeH(String(h.rec.savedAt||""))}</span>`:""}
+          ${h.src==="cb"
+            /* ㉢ OCR 추정으로 걸린 줄은 «딱지를 달리한다» — 같은 딱지면 추정이 원문으로 읽힌다 */
+            ?(h.ocr
+              ?`<span class="cbtag" style="background:#fffbeb;color:#854d0e;border-color:#fde68a" title="기계가 사진을 읽은 「추정」 글에서 걸렸습니다 — 원문이 아닙니다. 글자·숫자가 틀릴 수 있으니 서고에서 원본을 함께 보십시오">🗄 서고 ${escapeH(String(h.rec.savedAt||""))} · OCR 추정</span>`
+              :`<span class="cbtag" title="서고에 담긴 회차입니다 — 직원 전체가 봅니다">🗄 서고 ${escapeH(String(h.rec.savedAt||""))}</span>`)
+            :""}
           <span class="ar-lab">${escapeH(h.a.label)}${h.a.title?"("+escapeH(h.a.title)+")":""}</span>
           <span class="ar-date">${escapeH((h.rec.savedAt||"").slice(0,10))}</span>
         </div>

@@ -710,6 +710,18 @@ rules.rules_mgmt = {
         artCount: { '.validate': 'newData.isNumber() && newData.val() >= 0' },
         /* ⚠ 본문이 없는 것(스캔 PDF 등)은 조용히 빼지 않고 «없다»고 적어 둔다 — 설계서 §8 */
         noText: { '.validate': 'newData.isBoolean()' },
+        /* ㉢ OCR 로 읽어냈다는 «딱지» (2026-09-07). 글 자체는 casebook/ocr 층에 있다.
+           ⚠ 읽어내도 noText 는 «참으로 남는다» — 그것은 「원본에 글자층이 없었다」는
+             사실이고, 읽어냈다고 사실이 바뀌지 않는다. 지우면 나중에 「이건 원문인가
+             추정인가」를 아무도 못 가리고, 「검토 시작」이 추정 글로 열려 버린다.
+           ⚠⚠ 이 «세 칸만» 로그인한 직원 누구나 쓴다(다른 칸은 그대로 임자만).
+             까닭 — 서고는 사례집이라 «남의 사업장 회차»를 다 같이 본다. 그런데 회차를
+             담은 사람만 글자를 읽을 수 있으면, 옛 담당자가 퇴사한 회차는 영영 못 읽는다.
+             넓히는 것은 «딱지 셋»뿐이다: 참·거짓 하나, 글자 수 하나, 시각 하나.
+             이름·해시·원본 자리(name·sha·path)는 여전히 임자만 건드린다. */
+        ocr:   { '.write': LOGIN, '.validate': 'newData.isBoolean()' },
+        ocrN:  { '.write': LOGIN, '.validate': 'newData.isNumber() && newData.val() >= 0 && newData.val() <= 600000' },
+        ocrAt: { '.write': LOGIN, '.validate': 'newData.isString() && newData.val().length <= 30' },
         sha:  { '.validate': 'newData.isString() && newData.val().length <= 80' },
         /* ── 제출 정보 ─ 2026-09-07 대표 지시 「ㄴ」 ────────────────────────
            ★ 왜 OCR 이 아니라 손으로 적나 — 신고서·의견청취·동의서에서 정작 필요한 것은
@@ -737,6 +749,27 @@ rules.rules_mgmt = {
          실시간DB 한도(16MB)를 건드리지 않게 막는다. */
       t: { '.validate': 'newData.isString() && newData.val().length <= 600000' },
       at: { '.validate': 'newData.isString() && newData.val().length <= 30' },
+      $other: { '.validate': false }
+    } } } },
+    /* ㉢ OCR 추정 본문 — 원문 층(text)과 «딴 자리»다 (대표 결정 2026-09-07 「읽혀 검색에 걸리게」).
+       ★ 왜 층을 가르나 — 기계가 「제10조」를 「제1O조」로 읽은 것이 원문 자리에 앉으면
+         되돌릴 길이 없다. 딴 자리에 두면 지우기만 해도 그냥 「글 없음」으로 돌아간다.
+       ⚠ kind 를 «못 박는다» — 값만 보고도 어느 층에서 온 글인지 알 수 있어야 한다.
+         이것이 없으면 옮기다 섞였을 때 추정을 원문으로 읽는다. */
+    ocr: { '.read': LOGIN, $site: { $rev: { $role: {
+      /* ⚠ 임자(revWrite)가 아니라 «로그인»이다 — 위 docs 의 딱지 셋과 같은 까닭이다.
+           옛 담당자가 담은 회차도 지금 사람이 읽을 수 있어야 한다.
+         ⚠ 대신 «누가 읽었는지»를 못 박는다(ownerUid === auth.uid) — 남의 이름으로
+           추정 글을 앉힐 수는 없다. 다시 읽으면 읽은 사람 이름으로 바뀐다. */
+      '.write': LOGIN,
+      '.validate': "newData.hasChildren(['t','kind','ownerUid'])",
+      ownerUid: { '.validate': 'newData.val() === auth.uid' },
+      kind: { '.validate': "newData.val() === 'ocr'" },
+      t: { '.validate': 'newData.isString() && newData.val().length <= 600000' },
+      at: { '.validate': 'newData.isString() && newData.val().length <= 30' },
+      by: { '.validate': 'newData.isString() && newData.val().length <= 40' },
+      engine: { '.validate': 'newData.isString() && newData.val().length <= 40' },
+      pages: { '.validate': 'newData.isNumber() && newData.val() >= 0 && newData.val() <= 5000' },
       $other: { '.validate': false }
     } } } },
     idx: { k: { '.read': LOGIN, $kw: { $ref: {
