@@ -229,23 +229,24 @@ test('★ 콘솔과 «한 곳도» 다르지 않다', () => {
        ★ «읽기»는 한 칸도 안 넓혔다 — 서고 읽기와 같다(재직 직원 전체).
      ⚠ 이 칸이 콘솔에 올라가기 전까지 [🔍 글자 읽기]는 permission_denied 로 막힌다
        (다른 자리는 멀쩡하다 — 새 칸이 늘어난 것뿐이다). */
-  const PENDING = ['/rules_mgmt/casebook/rev/$site/$rev/docs/$role/sub',
-                   '/rules_mgmt/casebook/ocr',
-                   '/rules_mgmt/casebook/rev/$site/$rev/docs/$role/ocr',
-                   '/rules_mgmt/casebook/rev/$site/$rev/docs/$role/ocrN',
-                   '/rules_mgmt/casebook/rev/$site/$rev/docs/$role/ocrAt',
-  /* ★ 2026-09-08 — ⑤ 판독을 몇 번 불렀나(앱별 셈)가 기다린다.
-       /ai_read_tally/{한국날짜}/{앱}/{n,quota}
-     ★ 왜 생겼나 — 대표 물음 「판독 한도 어떻게 해결할까」. 세는 곳이 «아예 없어»
-       「사진첩이 다 썼나 경력관리가 다 썼나」를 알 수 없었다. 열쇠 하나를 넷이
-       나눠 쓰는데 어디가 태우는지 모르면 어디를 손볼지도 모른다.
-     ⚠ 담기는 것은 «숫자뿐»이다 — 사진·글·사람 이름은 한 글자도 없다.
-       그래서 읽기를 재직 직원 전체에 열었다(화면이 「오늘 판독 203번」을 보여 준다).
-     ⚠ 쓰기는 «아무도 못 한다»(false). 서버는 관리자 SDK 로 돌아 규칙을 지나간다 —
-       브라우저가 숫자를 부풀려 「많이 썼다」로 꾸미지 못하게 막은 것이다.
-     ⚠ 올라가기 전까지 화면의 셈 줄은 «안 뜬다»(읽기가 막혀 조용히 넘어간다).
-       판독 자체는 멀쩡하다 — 세는 것만 안 될 뿐이다. */
-                   '/ai_read_tally'];
+  /* ★ 2026-09-08 — 기다리던 다섯이 «올라갔다». `node scripts/rules-deploy.js --deploy` 로
+       올렸고, 살아 있는 콘솔을 직접 읽어 견줘 «한 곳도 다르지 않다»를 확인했다.
+       올라간 것:
+         /ai_read_tally                                 판독 호출 셈(앱별·숫자만)
+         /rules_mgmt/casebook/ocr                       서고 OCR 추정 본문 층
+         …/casebook/rev/$site/$rev/docs/$role/{ocr,ocrN,ocrAt}   「읽어냈다」 딱지 셋
+         …/casebook/rev/$site/$rev/docs/$role/sub       서고 제출 정보(9/07 부터 기다린 것)
+
+     ⚠ 이번에 «넓어진 권한»이 있다 — 딱지 셋과 ocr 층의 «쓰기»가 재직 직원 누구나다.
+       서고는 사례집이라 남의 사업장 회차를 다 같이 보는데, 담은 사람만 읽을 수 있으면
+       옛 담당자가 퇴사한 회차는 영영 못 읽는다. 넓힌 것은 그 셋뿐이고
+       name·sha·path·noText 는 그대로 임자만 쓴다.
+     ★ /ai_read_tally 는 읽기만 열었다(숫자뿐) — «쓰기는 아무도 못 한다».
+
+     ⚠ 이 목록이 «비어 있는 것»이 정상이다. 비어 있지 않다는 것은 곧 「콘솔에 아직 안
+       올라간 규칙이 있다」는 뜻이고, 이 자리 말고는 그것을 알려 주는 곳이 없다.
+       채워서 넘기면 그 신호를 스스로 꺼 버리는 것이다. */
+  const PENDING = [];
   assert.deepEqual(diff.sort(), PENDING.sort(),
     '★ 뜻하지 않은 곳이 바뀌었습니다: ' + diff.join(', ') +
      '\n  규칙은 한 번에 통째로 바뀝니다 — 곁다리 변경이 섞이면 무엇이 깨졌는지 못 짚습니다.');
