@@ -65,9 +65,9 @@ function box(left) {
 const call = (b, it, all) => JSON.parse(JSON.stringify(
   vm.runInContext('cardHandoverList(__it, __all)', Object.assign(b, { __it: it, __all: all }))));
 
-const NEW = { id: 'n1', kind: 'card', name: '박준호', company: '디와이엠솔루션',
-              dept: '생산1팀', title: '과장', mobile: '010-9290-4361' };
-const OLD = { id: 'o1', kind: 'card', name: '강종우', company: '디와이엠솔루션',
+const NEW = { id: 'n1', kind: 'card', name: '박준수', company: '가나솔루션',
+              dept: '생산1팀', title: '과장', mobile: '010-1111-5555' };
+const OLD = { id: 'o1', kind: 'card', name: '강종수', company: '가나솔루션',
               dept: '생산1팀', title: '과장', mobile: '010-1111-2222' };
 
 /* ── ① 회사 + 직책·부서가 둘 다 같을 때만 ─────────────────────────── */
@@ -75,17 +75,17 @@ test('★ 회사·부서·직책이 모두 같으면 전임자로 짚는다', ()
   const b = box();
   const r = call(b, NEW, [NEW, OLD]);
   assert.equal(r.length, 1);
-  assert.equal(r[0].name, '강종우');
+  assert.equal(r[0].name, '강종수');
 });
 
 test('회사 이름이 조금 달라도 («주식회사», 띄어쓰기) 같은 회사로 본다', () => {
   const b = box();
   /* ⚠ «양쪽 다» 다듬어야 한다. 한쪽만 다듬으면 이 검사가 통과하면서도 반대 방향
      (새 명함에 「주식회사」가 붙은 경우)이 조용히 깨진다 — 2026-08-30 고장 시험에서 샜다. */
-  const old2 = Object.assign({}, OLD, { company: '주식회사 디와이엠 솔루션' });
+  const old2 = Object.assign({}, OLD, { company: '주식회사 가나 솔루션' });
   assert.equal(call(b, NEW, [NEW, old2]).length, 1, '옛 명함 쪽 이름을 안 다듬는다');
 
-  const new2 = Object.assign({}, NEW, { company: '주식회사 디와이엠 솔루션' });
+  const new2 = Object.assign({}, NEW, { company: '주식회사 가나 솔루션' });
   assert.equal(call(b, new2, [new2, OLD]).length, 1, '새 명함 쪽 이름을 안 다듬는다');
 });
 
@@ -149,7 +149,7 @@ test('★ 전화·이메일이 «없는» 명함도 자기 자신은 안 짚는�
   /* ⚠ 전화가 있으면 「같은 사람」 판정에 걸려 저절로 빠진다. 그래서 열쇠가 아예 없는
      명함으로 봐야 id 로 거르는지가 시험된다 — 2026-08-30 고장 시험에서 샜다. */
   const b = box();
-  const bare2 = { id: 'x1', kind: 'card', name: '박준호', company: '디와이엠솔루션',
+  const bare2 = { id: 'x1', kind: 'card', name: '박준수', company: '가나솔루션',
                   dept: '생산1팀', title: '과장' };
   assert.equal(call(b, bare2, [bare2]).length, 0,
     '★ 방금 저장한 그 명함을 「전임자」라고 짚는다');
@@ -159,7 +159,7 @@ test('★ 사업자등록증에는 아예 안 묻는다 — 사람이 아니다'
   const b = box();
   /* 저장된 항목은 자유로운 꼴이라 등록증에 dept·title 이 실려 올 수 있다.
      그때도 kind 로 막혀야 한다 — 자리 조건만으로는 안 걸린다. */
-  const bizIt = { id: 'b0', kind: 'biz', company: '디와이엠솔루션',
+  const bizIt = { id: 'b0', kind: 'biz', company: '가나솔루션',
                   dept: '생산1팀', title: '과장' };
   assert.equal(call(b, bizIt, [bizIt, OLD]).length, 0,
     '★ 등록증을 사람으로 보고 전임자를 묻는다');

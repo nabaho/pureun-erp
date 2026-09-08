@@ -83,18 +83,18 @@ const plan = (box, items) => JSON.parse(JSON.stringify(
   vm.runInContext('planLeftMarks(__it)', Object.assign(box, { __it: items }))));
 
 const CO = [{
-  id: 'co1', coName: '디와이엠솔루션', bizNo: '123-45-67890',
+  id: 'co1', coName: '가나솔루션', bizNo: '123-45-67890',
   people: [
-    { name: '박동철', email: 'dcpark@dymco.com', phone: '010-5923-0144', left: false },
-    { name: '우수혜', email: 'suhye.woo@bor.com', phone: '010-4224-4528', left: true }
+    { name: '박철수', email: 'park@example.kr', phone: '010-1111-3333', left: false },
+    { name: '이수혜', email: 'lee@example.kr', phone: '010-1111-4444', left: true }
   ]
 }];
 
 /* ── ① 명함에 사업자번호가 없어도 «회사 이름으로» 찾아진다 (어제의 결함) ── */
 test('사업자번호 없는 명함도 회사 이름으로 업체를 찾는다', () => {
   const box = ctx(CO);
-  const p = plan(box, [{ id: 'c1', name: '박동철', company: '디와이엠솔루션',
-                         email: 'dcpark@dymco.com', mobile: '010-5923-0144' }]);
+  const p = plan(box, [{ id: 'c1', name: '박철수', company: '가나솔루션',
+                         email: 'park@example.kr', mobile: '010-1111-3333' }]);
   assert.equal(p.skip.length, 0, '사업자번호가 없다고 거절했다 — 명함에는 원래 없는 칸이다');
   assert.equal(p.count, 1);
   assert.equal(p.groups[0].co.id, 'co1');
@@ -102,18 +102,18 @@ test('사업자번호 없는 명함도 회사 이름으로 업체를 찾는다',
 
 test('회사 이름이 조금 달라도 («주식회사», 띄어쓰기) 같은 업체로 본다', () => {
   const box = ctx(CO);
-  const p = plan(box, [{ id: 'c1', name: '박동철', company: '주식회사 디와이엠 솔루션',
-                         email: 'dcpark@dymco.com' }]);
+  const p = plan(box, [{ id: 'c1', name: '박철수', company: '주식회사 가나 솔루션',
+                         email: 'park@example.kr' }]);
   assert.equal(p.count, 1, '읽을 때(🚪 딱지)와 다른 잣대를 썼다');
 });
 
 /* ── ② 못 하는 사람은 «까닭과 함께» 남는다 — 조용히 빠지면 안 된다 ── */
 test('가릴 값이 없는 사람은 까닭과 함께 빠진다', () => {
   const box = ctx(CO);
-  const p = plan(box, [{ id: 'c9', name: '김양석', company: '디와이엠솔루션' }]);
+  const p = plan(box, [{ id: 'c9', name: '최양석', company: '가나솔루션' }]);
   assert.equal(p.count, 0);
   assert.equal(p.skip.length, 1, '조용히 사라졌다 — 대표님은 처리된 줄 안다');
-  assert.equal(p.skip[0].it.name, '김양석');
+  assert.equal(p.skip[0].it.name, '최양석');
   assert.ok(p.skip[0].why && p.skip[0].why.length > 3, '까닭이 없다');
 });
 
@@ -130,14 +130,14 @@ test('업체관리에 없는 회사는 까닭과 함께 빠진다', () => {
 test('이미 퇴사인 사람은 손대지 않고 따로 센다', () => {
   const box = ctx(CO);
   const p = plan(box, [
-    { id: 'c1', name: '박동철', company: '디와이엠솔루션', email: 'dcpark@dymco.com' },
-    { id: 'c2', name: '우수혜', company: '디와이엠솔루션', email: 'suhye.woo@bor.com' }
+    { id: 'c1', name: '박철수', company: '가나솔루션', email: 'park@example.kr' },
+    { id: 'c2', name: '이수혜', company: '가나솔루션', email: 'lee@example.kr' }
   ]);
   assert.equal(p.count, 1, '이미 퇴사인 사람까지 다시 쓰려 한다');
   assert.equal(p.already.length, 1);
-  assert.equal(p.already[0].it.name, '우수혜');
+  assert.equal(p.already[0].it.name, '이수혜');
   assert.equal(p.groups[0].rows.length, 1);
-  assert.equal(p.groups[0].rows[0].it.name, '박동철');
+  assert.equal(p.groups[0].rows[0].it.name, '박철수');
 });
 
 /* ── ④ 회사별로 묶는다 — 사람 수가 아니라 «회사 수»만큼만 쓴다 ── */
@@ -194,16 +194,16 @@ test('확인창이 될 사람·이미 퇴사·안 될 사람을 모두 보여 �
   vm.createContext(box);
   vm.runInContext(fn('bulkLeftHtml'), box);
   box.__p = plan(ctx(CO), [
-    { id: 'c1', name: '박동철', company: '디와이엠솔루션', email: 'dcpark@dymco.com' },
-    { id: 'c2', name: '우수혜', company: '디와이엠솔루션', email: 'suhye.woo@bor.com' },
-    { id: 'c9', name: '김양석', company: '디와이엠솔루션' }
+    { id: 'c1', name: '박철수', company: '가나솔루션', email: 'park@example.kr' },
+    { id: 'c2', name: '이수혜', company: '가나솔루션', email: 'lee@example.kr' },
+    { id: 'c9', name: '최양석', company: '가나솔루션' }
   ]);
   box.__g = { id: 'g2', name: '2.업체종료 및 퇴사' };
   const h = vm.runInContext('bulkLeftHtml(__p, __g)', box);
-  assert.ok(h.includes('박동철'), '처리할 사람이 안 보인다');
-  assert.ok(h.includes('우수혜'), '이미 퇴사인 사람이 안 보인다 — 왜 수가 줄었는지 모른다');
-  assert.ok(h.includes('김양석'), '못 하는 사람이 안 보인다 — 조용히 빠지면 몇 달 뒤 드러난다');
-  assert.ok(h.includes('디와이엠솔루션'), '어느 회사인지 안 보인다');
+  assert.ok(h.includes('박철수'), '처리할 사람이 안 보인다');
+  assert.ok(h.includes('이수혜'), '이미 퇴사인 사람이 안 보인다 — 왜 수가 줄었는지 모른다');
+  assert.ok(h.includes('최양석'), '못 하는 사람이 안 보인다 — 조용히 빠지면 몇 달 뒤 드러난다');
+  assert.ok(h.includes('가나솔루션'), '어느 회사인지 안 보인다');
   assert.ok(h.includes('2.업체종료 및 퇴사'), '어느 폴더로 옮기는지 안 보인다');
 });
 
@@ -211,8 +211,8 @@ test('종료 폴더를 못 찾으면 폴더 이동을 «권하지 않는다»', 
   const box = { ErpMatch: erpMatchStub(CO), esc: s => String(s == null ? '' : s) };
   vm.createContext(box);
   vm.runInContext(fn('bulkLeftHtml'), box);
-  box.__p = plan(ctx(CO), [{ id: 'c1', name: '박동철', company: '디와이엠솔루션',
-                             email: 'dcpark@dymco.com' }]);
+  box.__p = plan(ctx(CO), [{ id: 'c1', name: '박철수', company: '가나솔루션',
+                             email: 'park@example.kr' }]);
   const h = vm.runInContext('bulkLeftHtml(__p, null)', box);
   assert.ok(!/bulkLeftMove/.test(h),
     '폴더가 없는데 이동 체크가 떴다 — 누르면 새 폴더가 생겨 종료 업체가 두 곳으로 갈린다');

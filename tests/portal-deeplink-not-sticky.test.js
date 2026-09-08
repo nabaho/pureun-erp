@@ -1,7 +1,8 @@
 /* 딥링크(?q=)는 «한 번»만 — 창이 검색 한 건에 갇히지 않는다 (대표 제보 2026-09-08)
-   「기업정보함에 왜 자꾸 이권우가 항상 올라오나 문제 있는지 검토해라」
+   「기업정보함에 왜 자꾸 ○○○이 항상 올라오나 문제 있는지 검토해라」
+   (사람 이름과 번호는 «일부러» 지웠다 — 이 저장소는 공개다. 아래 값은 가짜다.)
 
-   ■ 무엇이 일어났나 (대표 화면 주소: pu-cards.html?q=010-7797-7572&v=ebf570f6)
+   ■ 무엇이 일어났나 (대표 화면 주소: pu-cards.html?q=010-****-****&v=<그때 커밋>)
      ① 사진첩의 「기업정보함에서 이 명함 보기 →」가 pu-cards.html?q=010-… 로 열었다.
         (?q= 에 «전화번호»를 담고 sso= 가 없는 곳은 사진첩뿐이다 — openFiledCard)
      ② 기업정보함은 ?q= 를 읽어 검색만 걸고 «주소에서 지우지 않았다».
@@ -56,11 +57,11 @@ function runDeepLink(href) {
 }
 
 test('★★★ ?q= 로 들어오면 검색이 걸리고, 주소에서는 «지워진다»', () => {
-  const c = runDeepLink('https://nabaho.github.io/pureunall/pu-cards.html?q=010-7797-7572&v=ebf570f6');
+  const c = runDeepLink('https://nabaho.github.io/pureunall/pu-cards.html?q=010-1111-2222&v=ebf570f6');
   /* 화면에는 그대로 걸린다 — 지우는 것은 주소뿐이다(③) */
-  assert.equal(c.state.q, '010-7797-7572', '★ 검색어가 화면에 안 걸렸다');
-  assert.equal(c.boxes.search.value, '010-7797-7572', '★ 찾기 칸이 비어 있다');
-  assert.equal(c.boxes.pcSearch.value, '010-7797-7572', '★ PC 찾기 칸이 비어 있다');
+  assert.equal(c.state.q, '010-1111-2222', '★ 검색어가 화면에 안 걸렸다');
+  assert.equal(c.boxes.search.value, '010-1111-2222', '★ 찾기 칸이 비어 있다');
+  assert.equal(c.boxes.pcSearch.value, '010-1111-2222', '★ PC 찾기 칸이 비어 있다');
   assert.equal(c.state.group, 'all', '★ 폴더를 안 풀었다 — 좁은 폴더에서 0건이 된다');
   /* 주소에서는 사라진다(①) — 이것이 없으면 F5·새 판마다 그 한 사람만 보인다 */
   assert.ok(c._url !== undefined, '★ 주소를 안 고쳤다 — 그 탭이 이 검색에 갇힌다');
@@ -110,7 +111,7 @@ const BASE = 'https://nabaho.github.io/pureunall/';
 
 test('★★★ 검색에 갇힌 창은 «다시 옮겨 준다» — 이것이 대표가 겪은 증상이다', () => {
   const p = portal();
-  assert.equal(p.hit(BASE + 'pu-cards.html?q=010-7797-7572&v=ebf570f6', TILE), false,
+  assert.equal(p.hit(BASE + 'pu-cards.html?q=010-1111-2222&v=ebf570f6', TILE), false,
     '★★ 「이미 그 화면」으로 보고 focus 만 한다 — 타일을 눌러도 그 한 사람만 계속 보인다');
 });
 
