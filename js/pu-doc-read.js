@@ -122,8 +122,13 @@
               mobile: 'mobile', email: 'email',
               company: 'company', companyTel: 'companyTel', companyFax: 'companyFax',
               address: 'companyAddr', homepage: 'website', bizno: 'bizno' },
+      /* ⚠ issueDate(등록증 발급일)를 openDate(개업일)와 «따로» 둔다 (2026-09-07).
+           공공기관은 대표자가 자주 바뀌어 등록증이 새로 발급되는데, 그때
+           **개업일은 안 바뀌고 발급일만 바뀐다.** 한 칸에 섞으면 「어느 것이
+           최신인가」를 영영 못 가린다 — 그것이 이 칸을 만든 까닭이다. */
       bizreg: { company: 'company', ceo: 'ceo', bizno: 'bizno', corpno: 'corpno',
-                openDate: 'openDate', bizType: 'bizType', bizItem: 'bizItem',
+                openDate: 'openDate', issueDate: 'issueDate',
+                bizType: 'bizType', bizItem: 'bizItem',
                 companyTel: 'companyTel', companyFax: 'companyFax', address: 'address',
                 memo: 'memo', docName: 'docName' }
     },
@@ -184,7 +189,7 @@
        서류는 서류 자체를 찍은 것이고, 대화는 서류에 **대해 말한** 것이다. */
     '\n⚠ 대화 캡처가 급여·계약 이야기를 담고 있어도 kind=chat 입니다. 서류 자체를 찍은 것만 payslip·contract 입니다.' +
     '\nkind=card 이면 키: name(이름), company(회사명), dept(부서), title(직책), mobile(휴대폰), tel(직통전화), fax(개인팩스), email(이메일), companyTel(회사 대표번호), companyFax(회사 팩스), companyAddr(회사 주소), website(홈페이지), address(개인 주소), memo(기타 정보), pairs(명함에 적힌 모든 줄 — 아래 규칙).' +
-    '\nkind=bizreg 이면 키: docName(문서 제목 그대로 — 아래 【제목】 규칙), company(상호/법인명), ceo(대표자), bizno(사업자등록번호), corpno(법인등록번호), openDate(개업연월일), bizType(업태), bizItem(종목), companyTel(대표번호), companyFax(팩스), address(사업장 소재지), taxInvoiceEmail(전자세금계산서 전용 전자우편주소), taxInvoiceContact(그 주소 옆·아래에 담당자 이름이 적혀 있으면 그 이름 — 없으면 빈 문자열), memo(기타), pairs(문서의 모든 칸 — 아래 규칙).' +
+    '\nkind=bizreg 이면 키: docName(문서 제목 그대로 — 아래 【제목】 규칙), company(상호/법인명), ceo(대표자), bizno(사업자등록번호), corpno(법인등록번호), openDate(개업연월일), issueDate(**등록증 발급일** — 문서 아래쪽 「○○○○ 년 ○○ 월 ○○ 일  ○○세무서장」의 그 날짜. 2025-02-12 형식. **개업연월일과 다릅니다** — 개업일은 사업을 시작한 날이고 발급일은 이 등록증을 발급한 날입니다. 대표자가 바뀌면 개업일은 그대로이고 발급일만 새로 찍힙니다. 안 보이면 빈 문자열), bizType(업태), bizItem(종목), companyTel(대표번호), companyFax(팩스), address(사업장 소재지), taxInvoiceEmail(전자세금계산서 전용 전자우편주소), taxInvoiceContact(그 주소 옆·아래에 담당자 이름이 적혀 있으면 그 이름 — 없으면 빈 문자열), memo(기타), pairs(문서의 모든 칸 — 아래 규칙).' +
     /* ── 고유번호증도 bizreg 다 (대표 지시 2026-08-26) ──
        "고유번호증이 기업정보함에 입력이 안된다. 사업자등록증 고유번호증 모두 같은것이다."
        ⚠ 이 줄이 없어서 «어떤 건 들어가고 어떤 건 안 들어갔다». 고유번호증은
@@ -1068,6 +1073,9 @@
     팩스: 'companyFax', 팩스번호: 'companyFax',
     홈페이지: 'homepage', 누리집: 'homepage',
     설립일: 'openDate', 설립일자: 'openDate', 개업일: 'openDate', 개업연월일: 'openDate',
+    /* ⚠ 발급일은 openDate 로 보내면 «안 된다» — 개업일을 덮어쓴다.
+         등록증 아래 날짜 줄이 pairs 에 「발급일」로 잡히는 일이 있어 여기도 이어 둔다. */
+    발급일: 'issueDate', 발급일자: 'issueDate', 교부일: 'issueDate', 교부일자: 'issueDate',
     업태: 'bizType', 업종: 'bizItem', 종목: 'bizItem',
     주생산품: 'product', 주생산품목: 'product',
     매출액: 'sales', 직전년도매출액: 'sales', 전년도매출액: 'sales',
