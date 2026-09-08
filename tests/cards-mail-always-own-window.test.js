@@ -164,8 +164,9 @@ function runDoor(opt) {
     addMailIcon: () => { }
   };
   vm.createContext(ctx);
-  vm.runInContext([fnBody('mailToFromUrl'), fnBody('mailCoFromUrl'), fnBody('urlWantsMail'),
-    fnBody('restoreLastScreen')].join('\n'), ctx);
+  vm.runInContext(["var MAIL_WHO_TABS = ['succ','addr','end','notco'];",
+    fnBody('mailToFromUrl'), fnBody('mailCoFromUrl'), fnBody('mailWhoFromUrl'),
+    fnBody('urlWantsMail'), fnBody('restoreLastScreen')].join('\n'), ctx);
   ctx.restoreLastScreen();
   return ctx;
 }
@@ -206,8 +207,9 @@ test('★★ to= 가 없으면 예전대로 «받은메일함»이다 — 빈 �
       addMailIcon: () => { }
     };
     vm.createContext(ctx2);
-    vm.runInContext([fnBody('mailToFromUrl'), fnBody('mailCoFromUrl'), fnBody('urlWantsMail'),
-      fnBody('restoreLastScreen')].join('\n'), ctx2);
+    vm.runInContext(["var MAIL_WHO_TABS = ['succ','addr','end','notco'];",
+      fnBody('mailToFromUrl'), fnBody('mailCoFromUrl'), fnBody('mailWhoFromUrl'),
+      fnBody('urlWantsMail'), fnBody('restoreLastScreen')].join('\n'), ctx2);
     ctx2.restoreLastScreen();
     return ctx2;
   })();

@@ -9615,6 +9615,24 @@ function mailToFromUrl(search){
   if(!to) return null;
   return { to: to, name: String(p.get('name') || ''), card: String(p.get('card') || '') };
 }
+/* 주소에 실려 온 「메일 주인 가리기」 갈래 (대표 지시 2026-09-08 「이어받기」)
+   기업정보함의 「🚪 퇴사한 담당 N명 — 이어받기」 띠가 이 길로 온다.
+
+   ⚠ 아는 갈래만 받는다. 모르는 글자를 그대로 state.whoTab 에 넣으면 아무 갈래에도
+     안 걸려 «빈 화면»이 열린다.
+   ⚠ 'co' 는 «일부러 빼 두었다». 바로 아래 mailCoFromUrl 이 ?mail=co&co=… 를
+     「이 사업장과 오간 것」으로 쓰고 있어, 여기 넣으면 그 길이 주인 가리기 화면으로
+     새 버린다. (주인 가리기의 ② 자문사 갈래는 화면 안에서 누르면 된다.)
+   (순수 로직, 검사 대상) */
+const MAIL_WHO_TABS = ['succ', 'addr', 'end', 'notco'];
+function mailWhoFromUrl(search){
+  let s = search;
+  if(s === undefined){ try{ s = location.search; }catch(_){ s = ''; } }
+  let p;
+  try{ p = new URLSearchParams(s || ''); }catch(_){ return null; }
+  const t = String(p.get('mail') || '').trim();
+  return MAIL_WHO_TABS.indexOf(t) >= 0 ? t : null;
+}
 /* 주소에 실려 온 「어느 사업장」 — 업무관리에서 「이 사업장과 오간 것」으로
    건너올 때 쓴다 (대표 지시 2026-09-05 「푸른메일함에 들어가서 찾아라」).
    ⚠ openCoThread 의 주석은 예전부터 이 길을 약속했는데 «받는 자리»가 없었다.
@@ -9709,6 +9727,10 @@ function restoreLastScreen(){
          열어 놓고 「사업장별을 눌러 주세요」라고 하는 것보다 낫다. */
     const _mc = mailCoFromUrl();
     if(_mc !== null){ openCoThread(_mc); return; }
+    /* ★ 기업정보함의 「🚪 퇴사한 담당 — 이어받기」 띠로 건너온 길 (?view=mail&mail=succ).
+       ⚠ 위 mailCoFromUrl «뒤»에 둔다 — ?mail=co 는 사업장 갈래가 먼저 받는다. */
+    const _wt = mailWhoFromUrl();
+    if(_wt){ openWhoPage(_wt); return; }
     openMailBox('');
     /* 아이콘 만들려고 옮겨 온 길이면 이어서 마저 한다 — 브라우저가 알림을
        띄울 틈을 조금 준다(beforeinstallprompt 는 화면이 뜬 뒤에 온다). */
@@ -16414,6 +16436,37 @@ function nonRetiredPicks(names, cur){
   const keep = String(cur || '');
   return (names || []).filter(function (n) { return n === keep || !mbRetired(n); });
 }
+/* ══════ 빠진 퇴사자를 «어디로 가면 되는지»까지 알려 준다 (대표 지시 2026-09-08 「이어받기」) ══════
+   고르개에서 퇴사자를 뺐다(위 nonRetiredPicks). 그런데 그 사람이 «아직 담당»인 곳이
+   남아 있으면, 이름이 사라진 것만으로는 그 곳들을 어떻게 할지 알 길이 없다.
+   ⚠ 빼기만 하고 갈 곳을 안 만들면 자료를 잃은 것과 같다 — 이 저장소가 여러 번 겪은 것이다.
+   ★ 갈 곳은 «이미 있다» — 메일함의 「③ 퇴사자 이어받기」. 한 줄만 정하면 그 사람이
+     맡던 것 «전부»가 새 담당자에게 간다. 여기서는 그 자리로 데려가기만 한다.
+   ⚠ 0명이면 띠를 아예 안 그린다. 늘 켜진 등은 아무것도 못 알린다. */
+let _mgrGone = [];
+function mgrGoneChipHtml(){
+  const gone = _mgrGone || [];
+  if(!gone.length) return '';
+  const who = gone.slice(0, 3).join(' · ') + (gone.length > 3 ? ` 외 ${gone.length - 3}명` : '');
+  /* ⚠ 색은 팔레트(amber)에서만 고른다 — 검사가 팔레트 밖 색을 잡는다 */
+  return `<span class="mgrchip" style="background:#fffbeb;border-color:#fde68a;color:#854d0e;cursor:pointer"
+      onclick="openSuccWindow()"
+      title="${esc(who)} — 퇴사했지만 아직 담당으로 남아 있습니다.
+누르면 메일 창의 「퇴사자 이어받기」로 갑니다 — 한 줄만 정하면 그 사람이 맡던 것 전부가 넘어갑니다"
+      >🚪 퇴사한 담당 <b>${gone.length}</b>명 — 이어받기 ›</span>`;
+}
+/* 메일 «앱 창»에서 이어받기 화면을 연다.
+   ⚠ 창 이름은 포털이 쓰는 메일 창 이름(enter.html · portalAppWindowName('mail'))과
+     «같아야» 한다. 다르면 메일 창이 둘이 되어 어느 쪽이 진짜인지 알 수 없다.
+   ⚠ 메일 «쓰기» 창(MAIL_WIN)과는 «따로» 둔다 — 쓰다 만 편지를 이 화면으로 덮으면 안 된다.
+   ⚠ 팝업이 막히면 알린다. 아무 일도 안 하면 눌러도 반응 없는 띠가 된다. */
+const MAIL_APP_WIN = 'pureun-mail';
+function openSuccWindow(){
+  let w = null;
+  try{ w = window.open('pu-cards.html?view=mail&mail=succ', MAIL_APP_WIN); }catch(_){}
+  if(!w) return toast('팝업이 막혀 열 수 없습니다 — 이 사이트의 팝업을 허용해 주세요', 8000);
+  try{ w.focus(); }catch(_){}
+}
 /* ⚠ 「노무사 / 직원」으로 가르던 자리다 — 걷었다(대표 지시 2026-08-29
      「노무사 직원구분 없애고 항상 로그인하는 본인이 제일 위에」).
      담당자 쪽에만 머리줄이 셋이라 칩을 누를 때마다 옆줄이 통째로 다시 짜였다.
@@ -18444,8 +18497,11 @@ function mbToggleRaw(){ state.mbRawOpen = !state.mbRawOpen; renderPCSide(); }
      ② 자문사부터   — 회사 목록을 보며 주소를 적어 넣는다. 아직 메일이 안 온 곳도 미리.
    ⚠ 적는 자리는 우리 쪽(config/mailWho)이다. 기업정보(ERP)는 다른 앱의 자료라
      여기서 고치지 않는다. */
-function openWhoPage(){
+/* tab — 어느 갈래로 들어갈지. 기업정보함의 「이어받기」 띠가 'succ' 를 들고 온다
+   (대표 지시 2026-09-08). 안 주면 예전 그대로 마지막에 보던 갈래(없으면 addr)다. */
+function openWhoPage(tab){
   state.view='mail'; state.mailSent='who'; state.mbOpen=null;
+  if(tab) state.whoTab = tab;
   if(!state.whoTab) state.whoTab = 'addr';
   render();
   try{ $('pcMain').scrollTop=0; }catch(_){}
@@ -22343,11 +22399,14 @@ function renderPCTable(){
   if (mgrSel) {
     /* 퇴사자는 뺀다(대표 지시 2026-09-08) — 잣대는 nonRetiredPicks 한 곳이다.
        ⚠ 지금 골라 둔 이름은 퇴사자여도 남긴다(그러지 않으면 조건을 풀 길이 없다). */
-    const mgrs = nonRetiredPicks([...new Set(Object.values(allItems())
+    const _allMgrs = [...new Set(Object.values(allItems())
       .filter(function (it) { return it.kind === state.tab; })
       .flatMap(function (it) { return ErpMatch.mgrs(it); })
-      .filter(Boolean))].sort(function (a, b) { return a.localeCompare(b, 'ko'); }),
-      state.erpMgr);
+      .filter(Boolean))].sort(function (a, b) { return a.localeCompare(b, 'ko'); });
+    /* 목록에서 빠진 퇴사자 — 아래 「🚪 이어받기」 띠가 «몇 명인지와 갈 곳»을 알려 준다.
+       ⚠ 여기서 «한 번에» 갈라 둔다. 따로 세면 6,315장을 두 벌씩 훑는다. */
+    _mgrGone = _allMgrs.filter(mbRetired);
+    const mgrs = nonRetiredPicks(_allMgrs, state.erpMgr);
     mgrSel.innerHTML = '<option value="">담당 전체</option>' + mgrs.map(function (name) {
       /* 남겨 둔 퇴사자에는 🚪 를 붙인다 — 왜 혼자 남아 있는지 알 수 있게 */
       return '<option value="' + esc(name) + '">'
@@ -22368,7 +22427,7 @@ function renderPCTable(){
     ? `<span class="mgrchip" title="이 담당 노무사가 맡은 명함만 보고 있습니다">
          👤 담당 <b>${esc(state.erpMgr)}</b> · ${items.length.toLocaleString()}건
          <span class="x" onclick="filterErpMgr('')" title="이 조건 풀기">✕</span></span>`
-    : '') + condChipsHtml();
+    : '') + condChipsHtml() + mgrGoneChipHtml();
   /* 현재 페이지 분량만 잘라서 렌더 (메모리 보호) */
   const size = state.pageSize || 100;
   const totalPages = Math.max(1, Math.ceil(items.length/size));
