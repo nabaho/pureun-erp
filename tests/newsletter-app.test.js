@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { stripComments } = require('./strip-comments');
+const { 함수몸 } = require('./helpers/strip-comments.js');
 
 const ROOT = path.join(__dirname, '..');
 const 읽기 = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
@@ -257,19 +258,29 @@ test('본문 폭을 넓혔다 — 5:5 로만 나누면 각 칸이 오히려 좁�
     + '대표 지시는 「온 화면을 다 사용해라. 좌우 여백 필요없다」였다');
 });
 
-test('★ 꼭지 넷을 «쌓지 않는다» — 둘째 꼭지가 첫 화면에 들어와야 한다', () => {
+test('★ 꼭지 넷을 «쌓지 않는다» — 어느 꼭지든 굴리지 않고 닿는다', () => {
   /* 대표 지시 2026-09-03: 「고용·노동정책 등 아래의 내용은 전혀 안 보인다」
-     ⚠ 까닭은 폭이 아니라 «쌓임»이었다 — 주간노동뉴스 8건이 끝나야 둘째 꼭지가 나와서,
-       넓히기만 해서는 안 풀렸다. 격자로 나란히 놓아야 한다. */
-  assert.match(news, /class="jars"/, '꼭지를 격자에 안 담았습니다');
-  const m = /\.jars\{([^}]*)\}/.exec(news);
-  assert.ok(m, '.jars 규칙이 없습니다');
-  assert.match(m[1], /display:\s*grid/, '.jars 가 격자가 아닙니다');
-  const 열 = /grid-template-columns:([^;]*)/.exec(m[1]);
-  assert.ok(열 && (열[1].match(/1fr/g) || []).length >= 2,
-    '★ 꼭지가 한 줄로 쌓입니다 — 둘째 꼭지부터 첫 화면에서 안 보입니다');
-  assert.match(news, /@media\(max-width:\d+px\)\{\.jars\{grid-template-columns:1fr\}\}/,
-    '좁은 화면에서 한 열로 돌아가는 규칙이 없습니다 — 폰에서 제목이 다 잘립니다');
+     ⚠ 까닭은 폭이 아니라 «쌓임»이었다 — 주간노동뉴스 8건이 끝나야 둘째 꼭지가 나왔다.
+
+     ★★ 지키는 규칙은 «어느 꼭지든 굴리지 않고 닿는가»다. 어떻게 닿는지는 두 번 바뀌었다:
+       ① 한 줄로 쌓기  → 둘째부터 안 보였다 (탈)
+       ② 2×2 격자      → 넷이 다 보이나 «한 꼭지에 넷쯤»만 보였다
+       ③ 탭 (2026-09-08 대표 지시 「각각의 화면으로 … 탭을 다시 정렬해라」)
+          → 넷의 이름과 «실릴 것/담긴 것»이 늘 보이고, 한 번 눌러 그 꼭지로 간다
+     ⚠ 격자 글자꼴(1fr 두 개)을 못 박지 않는다 — ③ 에서는 그것이 아예 없는 것이 옳다. */
+  assert.match(news, /class="jartabs"/, '★ 꼭지로 가는 길(탭줄)이 없습니다');
+  const 탭 = 함수몸(news, '꼭지탭줄');
+  assert.ok(탭, '꼭지탭줄 함수가 없습니다');
+  assert.match(탭, /Core\.꼭지들\.map/, '★ 탭이 꼭지 «전부»를 그리지 않습니다 — 빠진 꼭지는 못 닿습니다');
+  assert.match(탭, /꼭지보기\(/, '★ 탭을 눌러도 칸이 안 바뀝니다');
+  /* ★ 숫자가 «실릴 것/담긴 것»이라야 다른 꼭지를 보면서도 어디가 비었는지 안다.
+       이것이 없으면 탭은 「안 보이는 것을 늘리는」 셈이 된다. */
+  assert.match(탭, /실림/, '★ 탭에 «실릴 것»이 안 적힙니다 — 다른 꼭지가 빈 줄 모릅니다');
+  assert.match(탭, /담김/, '★ 탭에 «담긴 것»이 안 적힙니다 — 몇 개를 뺐는지 모릅니다');
+  /* 그리는 쪽이 실제로 불러야 뜻이 있다 */
+  const 이번 = 함수몸(news, '이번회차화면');
+  assert.match(이번, /꼭지탭줄\(/, '★ 탭줄을 아무도 안 그립니다');
+  assert.match(이번, /꼭지칸하나\(/, '★ 고른 꼭지를 아무도 안 그립니다');
 });
 
 test('★ 얼린 자리에는 «높이가 변하는 것»을 두지 않는다', () => {
