@@ -216,4 +216,11 @@ function main() {
   console.log('   넣어둠     git stash 로 잠깐 치워 둔 것 — 가장 잘 잊힙니다');
 }
 
-main();
+/* ── 다른 연장이 «같은 셈»을 쓰게 연다 (tools/rc-open.js) ──
+   ⚠ 셈을 두 벌로 만들면 「훑기는 3곳이라는데 열기는 5곳을 연다」가 된다.
+     한 곳에서 세고 부르는 쪽이 그것을 그대로 쓴다.
+     `require.main === module` 로 갈라 «직접 돌릴 때만» 화면에 찍는다 —
+     안 갈라 두면 부르는 쪽에서 표가 두 번 찍힌다. */
+module.exports = { 찾기: 찾기, 재기: 재기, 남은일있나: 남은일있나, 곧은길: 곧은길, 칸수: 칸수 };
+
+if (require.main === module) main();
