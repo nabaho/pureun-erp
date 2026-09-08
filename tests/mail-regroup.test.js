@@ -19,13 +19,13 @@ const FN = fs.readFileSync(path.join(R, 'functions', 'index.js'), 'utf8');
 /* ══════ note 에서 보낸이 되찾기 ══════ */
 
 test('★ note 에서 보낸이와 제목을 되찾는다 — 실제로 쌓인 줄의 모양이다', () => {
-  const g = MR.mailFromNote('메일 5534001@hanmail.net · 정일마헤시요청자료입니다.');
-  assert.equal(g.from, '5534001@hanmail.net');
+  const g = MR.mailFromNote('메일 cust01@hanmail.net · 정일마헤시요청자료입니다.');
+  assert.equal(g.from, 'cust01@hanmail.net');
   assert.equal(g.subject, '정일마헤시요청자료입니다.');
 });
 
 test('제목이 없는 줄도 보낸이는 되찾는다', () => {
-  assert.equal(MR.mailFromNote('메일 tax13925@daum.net').from, 'tax13925@daum.net');
+  assert.equal(MR.mailFromNote('메일 cust08@daum.net').from, 'cust08@daum.net');
 });
 
 test('제목에 「·」이 들어 있어도 보낸이를 안 잘라 먹는다', () => {
@@ -43,8 +43,8 @@ test('모양이 다른 글은 빈칸을 준다 — 억지로 읽으면 엉뚱한
 /* ══════ 다시 갈라 보기 ══════ */
 
 const COS = { v: {
-  a: { id: 'co_a', name: '현진글로벌아산공장', managerMain: 'A-001', primaryContactEmail: 'h300@hyunjin-global.com' },
-  b: { id: 'co_b', name: '정일제지', managerMain: 'A-002', taxEmail: '5534001@hanmail.net' }
+  a: { id: 'co_a', name: '가나글로벌아산공장', managerMain: 'A-001', primaryContactEmail: 'cust22@ganaglobal.com' },
+  b: { id: 'co_b', name: '정일제지', managerMain: 'A-002', taxEmail: 'cust01@hanmail.net' }
 } };
 const OWNERS = {
   uid1: { email: 'a001@pureun.kr', name: '주민정' },
@@ -56,7 +56,7 @@ const one = (rec) => MR.regroupOne(rec, idx(), OWNERS, MR.coList(COS));
 test('★ 주소를 넣은 뒤 다시 갈라 보면 임자에게 간다 — 이것이 이 일의 목적이다', () => {
   const r = one({
     filename: '26.07월_급여_본점_예정.xlsx',
-    note: '메일 h300@hyunjin-global.com · 7월 급여 자료',
+    note: '메일 cust22@ganaglobal.com · 7월 급여 자료',
     why: '업체관리에 없는 주소'
   });
   assert.equal(r.shared, false);
@@ -65,14 +65,14 @@ test('★ 주소를 넣은 뒤 다시 갈라 보면 임자에게 간다 — 이�
 });
 
 test('★ 새 칸(mailFrom)이 있으면 그것을 먼저 본다 — 글을 되짚지 않는다', () => {
-  const r = one({ filename: 'a.xlsx', mailFrom: '5534001@hanmail.net', mailSubject: '자료', note: '엉뚱한 글' });
+  const r = one({ filename: 'a.xlsx', mailFrom: 'cust01@hanmail.net', mailSubject: '자료', note: '엉뚱한 글' });
   assert.equal(r.seat, 'uid2');
 });
 
 test('★ 두 자리 해도 귀속월로 읽는다 — 「26.07월」이 실제로 오는 모양이다', () => {
   const r = one({
     filename: '26.07월_급여_본점_예정.xlsx',
-    note: '메일 h300@hyunjin-global.com · 7월 급여'
+    note: '메일 cust22@ganaglobal.com · 7월 급여'
   });
   assert.equal(r.tag.month, '2026-07');
   /* ⚠ 종류는 일부러 비운다. 「급여」라는 말만으로 급여대장이라고 하면

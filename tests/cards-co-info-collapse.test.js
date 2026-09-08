@@ -66,7 +66,7 @@ function load(open){
   return ctx;
 }
 
-const CO = { key:'k1', name:'가나테크', bizno:'134-86-05772', ceo:'조성환',
+const CO = { key:'k1', name:'가나테크', bizno:'134-86-05772', ceo:'나성환',
   bizType:'제조업', bizItem:'식료품', address:'충남 천안시', extra:{} };
 
 /* ══════ ① 접힘이 기본 ══════ */
@@ -92,7 +92,7 @@ test('★ 접히면 한 줄 요약이 보인다 — 뭐가 사라졌는지는 �
   const c = load(false);
   const s = c.coInfoSummary(CO);
   assert.match(s, /134-86-05772/, '사업자번호가 요약에 있어야 어느 회사인지 실마리가 된다');
-  assert.match(s, /조성환/);
+  assert.match(s, /나성환/);
   assert.match(s, /제조업/);
 });
 
@@ -112,7 +112,7 @@ test('★ 펼치면 CO_FIELDS 전체가 예전 그대로 보인다 — 값 있�
      는 이 함수가 만든 규칙이 아니라 예전부터 있던 규칙이다(빈 값은 안 그린다).
      여기서 보는 것은 «값 있는 칸이 하나도 안 빠졌는가»다. */
   assert.match(h, /사업자번호[\s\S]*134-86-05772/);
-  assert.match(h, /대표자[\s\S]*조성환/);
+  assert.match(h, /대표자[\s\S]*나성환/);
   assert.match(h, /업태[\s\S]*제조업/);
   assert.match(h, /종목[\s\S]*식료품/);
   assert.match(h, /소재지[\s\S]*충남 천안시/);

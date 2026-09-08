@@ -105,7 +105,7 @@ test('★ 크기 규칙을 풀어도 «업체관리» 규칙은 따로 판단한
 
 test('★ 명함 — 전화·메일 꼴이 맞으면 작아도 할 일이 아니다', () => {
   const x = it('card', { fields: { company: '제주노사민정협의회', name: '현봉철',
-    tel: '064-751-2206', mobile: '010-4690-1618', fax: '064-751-2208',
+    tel: '064-751-2206', mobile: '010-1200-0012', fax: '064-751-2208',
     email: 'jejunosa@jejunosa.or.kr' }, filed: { id: 'K1' } });
   assert.equal(S.smallCheckedOk(x.meta.read), true);
   assert.equal(S.needsCheck(x), false, '★ 360px 명함이 다 읽혔는데 할 일로 남습니다');

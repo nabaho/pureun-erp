@@ -79,7 +79,7 @@ function loadMiss(){
     + fnBody('coCares') + '\n' + fnBody('coLacks'), ctx);
   return ctx;
 }
-const BIZ = { kind:'biz', company:'가나테크', bizno:'134-86-05772', ceo:'조성환',
+const BIZ = { kind:'biz', company:'가나테크', bizno:'134-86-05772', ceo:'나성환',
               address:'충남 천안시 서북구 1', companyTel:'041-556-0035' };
 
 test('★ 등록증의 대표번호가 회사에 올라온다 — 이게 없어서 거래처가 죄다 「번호 없음」이었다', () => {
@@ -181,7 +181,7 @@ test('★ 옛 열쇠의 「값이 다른 칸」이 사라지지 않는다', () =
      합치기에서 날려 버리면 바로 그 실패가 되살아난다. */
   const fn = loadMerge();
   const r = fn('1348605772', '가나테크', {
-    'n가나테크':  { conflicts:{ ceo:{ got:'조성환', had:'김철수' } } },
+    'n가나테크':  { conflicts:{ ceo:{ got:'나성환', had:'김철수' } } },
     '1348605772': { conflicts:{ address:{ got:'충남', had:'서울' } } }
   });
   assert.deepEqual(Object.keys(plain(r.conflicts)).sort(), ['address','ceo'],

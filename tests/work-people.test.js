@@ -90,7 +90,7 @@ const ITEMS = {
   c3: { name: '김계열', company: '별표수세미산업' },
   c4: { name: '박같은메일', company: '트리스타', email: 'p@trista.co.kr' },
   c5: { name: '남남', company: '전혀다른곳', email: 'x@naver.com' },
-  c6: { name: 'ㄱ어머니', company: '', mobile: '010-4675-4601' },
+  c6: { name: 'ㄱ어머니', company: '', mobile: '010-1200-0011' },
   c7: { name: '', company: '별표수세미', kind: 'biz', bizno: '123-45-67890' },
   c8: { name: '숨은이', company: '별표수세미', scope: 'private' }
 };

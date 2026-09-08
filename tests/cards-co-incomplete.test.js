@@ -133,8 +133,8 @@ test('★ 서식에 «공백만» 든 칸은 등록증 값을 가리지 않는�
      '   ' 은 참이라 서식 쪽이 이겨 버렸고, 등록증에서 온 멀쩡한 대표자가 화면에서
      사라진 채 「정보부족」으로도 세어졌다. */
   const C = loadMiss();
-  assert.equal(C.coVal(co('a', { ceo:'조성환', extra:{ ceo:'   ' } }), 'ceo'), '조성환');
-  assert.deepEqual(plain(C.coMissing(co('a', { ceo:'조성환', address:'충남', companyTel:'041',
+  assert.equal(C.coVal(co('a', { ceo:'나성환', extra:{ ceo:'   ' } }), 'ceo'), '나성환');
+  assert.deepEqual(plain(C.coMissing(co('a', { ceo:'나성환', address:'충남', companyTel:'041',
     extra:{ ceo:'   ' } }))), [], '★ 값이 있는데도 부족으로 세면 채우러 갔다가 헛걸음한다');
 });
 

@@ -213,7 +213,7 @@ test('★ 「누구 담당입니까」 창이 그 목록을 그대로 쓴다 —
     getBoundingClientRect: () => ({ top:0, left:0, bottom:0, right:0, width:0, height:0 }) });
   /* 창을 «어디에 놓을지»는 브라우저 일이라 여기서는 안 본다 — 무엇이 적혔는지만 본다 */
   c.window = { innerWidth:1400, innerHeight:900, scrollX:0, scrollY:0 };
-  c.mbWhoAsk('kycwc@naver.com', null);
+  c.mbWhoAsk('cust13@naver.com', null);
   assert.ok(html.indexOf('누구 담당입니까') >= 0, '그 창이 아닙니다');
   assert.ok(html.indexOf('박성수') < 0, '창에 퇴사자가 나옵니다');
   assert.ok(html.indexOf('하윤서') >= 0, '창에 재직자가 안 나옵니다');

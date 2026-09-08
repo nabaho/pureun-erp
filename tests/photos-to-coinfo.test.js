@@ -36,10 +36,10 @@ function load(existing){
   vm.runInContext(src.slice(i, j), ctx);
   return ctx;
 }
-const FORM = { bizno:'134-86-05772', company:'신성컨트롤(주)', ceo:'조성환',
-  corpno:'110111-2867195', docName:'기술·경영 혁신 지원신청서', applyNo:'2026-5',
+const FORM = { bizno:'134-86-05772', company:'가나컨트롤(주)', ceo:'나성환',
+  corpno:'110111-1234567', docName:'기술·경영 혁신 지원신청서', applyNo:'2026-5',
   applyItems:'가드레일, 크래쉬쿠션, 태양광', applyField:'인사·조직', applyDate:'2026-03-15',
-  dueDays:'60일', homepage:'www.sscontrol.co.kr/', email:'jhw@sscontrol.co.kr' };
+  dueDays:'60일', homepage:'www.ganactrl.co.kr/', email:'cust20@ganactrl.co.kr' };
 
 test('사업자번호를 열쇠로 회사 자리에 넣는다', async () => {
   /* 기업정보함 기업정보 화면도 같은 열쇠로 회사를 가른다 — 어긋나면 엉뚱한 회사에 붙는다 */

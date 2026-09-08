@@ -64,7 +64,7 @@ function scanErp(cos){
 /* ── ① 실어 둔다 ──────────────────────────────────────────────── */
 
 test('★ 업체관리를 훑을 때 계약 시작일·종료일을 실어 둔다', () => {
-  const r = scanErp([{ name:'가나테크', bizNo:'134-86-05772', ceo:'조성환',
+  const r = scanErp([{ name:'가나테크', bizNo:'134-86-05772', ceo:'나성환',
     typeCode:'자문', status:'active', managerMain:'s1',
     contractStartDate:'2026-03-01', contractEndDate:'2027-02-28' }])['1348605772'];
   assert.ok(r, '업체 기록을 못 만들었다');

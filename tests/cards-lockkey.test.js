@@ -25,9 +25,9 @@ function fresh() {
 
 test('지문에 번호가 그대로 들어 있지 않다', async () => {
   const { PuLockKey } = fresh();
-  const fp = await PuLockKey.fingerprint('01028024601');
+  const fp = await PuLockKey.fingerprint('01012000003');
   assert.ok(fp, '지문이 만들어져야 한다');
-  assert.ok(!fp.includes('01028024601'), '번호가 그대로 보인다');
+  assert.ok(!fp.includes('01012000003'), '번호가 그대로 보인다');
   assert.ok(!fp.includes('2802'), '번호 일부가 그대로 보인다');
 });
 
@@ -41,23 +41,23 @@ test('실시간DB 열쇠로 쓸 수 있는 글자만 (. $ # [ ] / 금지)', asyn
 
 test('같은 번호는 같은 지문 — 표기가 달라도 (하이픈·공백)', async () => {
   const { PuLockKey } = fresh();
-  const a = await PuLockKey.fingerprint('010-2802-4601');
-  const b = await PuLockKey.fingerprint('010 2802 4601');
-  const c = await PuLockKey.fingerprint('01028024601');
+  const a = await PuLockKey.fingerprint('010-1200-0003');
+  const b = await PuLockKey.fingerprint('010 1200 0003');
+  const c = await PuLockKey.fingerprint('01012000003');
   assert.equal(a, b);
   assert.equal(b, c);
 });
 
 test('다른 번호는 다른 지문', async () => {
   const { PuLockKey } = fresh();
-  const a = await PuLockKey.fingerprint('01028024601');
+  const a = await PuLockKey.fingerprint('01012000003');
   const b = await PuLockKey.fingerprint('01028024602');
   assert.notEqual(a, b);
 });
 
 test('앱을 새로 켜도 같은 지문 — 소금이 고정이라야 양쪽이 알아본다', async () => {
-  const a = await fresh().PuLockKey.fingerprint('01028024601');
-  const b = await fresh().PuLockKey.fingerprint('01028024601');
+  const a = await fresh().PuLockKey.fingerprint('01012000003');
+  const b = await fresh().PuLockKey.fingerprint('01012000003');
   assert.equal(a, b, '앱마다 지문이 다르면 사진첩이 기업정보함 지문을 못 알아본다');
 });
 
@@ -87,9 +87,9 @@ test('기업정보함 레코드에서도 같은 열쇠가 나온다 (kind 가 ca
 test('기업정보함과 사진첩이 같은 지문을 만든다 — 한쪽은 레코드, 한쪽은 판독 결과', async () => {
   const { PuLockKey } = fresh();
   const 기업정보함 = await PuLockKey.fingerprint(
-    PuLockKey.keyOfItem({ kind: 'card', mobile: '010-2802-4601' }));
+    PuLockKey.keyOfItem({ kind: 'card', mobile: '010-1200-0003' }));
   const 사진첩 = await PuLockKey.fingerprint(
-    PuLockKey.keyOf('card', { mobile: '01028024601' }));
+    PuLockKey.keyOf('card', { mobile: '01012000003' }));
   assert.equal(기업정보함, 사진첩);
 });
 
@@ -133,9 +133,9 @@ function fileLayer(lockkeys) {
 
 test('개인 폴더에 있는 명함이면 아무것도 만들지 않는다', async () => {
   const probe = fresh().PuLockKey;
-  const fp = await probe.fingerprint('01028024601');
+  const fp = await probe.fingerprint('01012000003');
   const { F, written } = fileLayer({ [fp]: 1 });
-  const res = await F.sendToCards({ kind: 'card', fields: { name: '홍길동', mobile: '010-2802-4601' } });
+  const res = await F.sendToCards({ kind: 'card', fields: { name: '홍길동', mobile: '010-1200-0003' } });
   assert.equal(res.blocked, true);
   assert.equal(res.created, false);
   assert.equal(res.id, '');
@@ -144,16 +144,16 @@ test('개인 폴더에 있는 명함이면 아무것도 만들지 않는다', as
 
 test('막았다는 말에 「개인 폴더」가 드러나지 않는다', async () => {
   const probe = fresh().PuLockKey;
-  const fp = await probe.fingerprint('01028024601');
+  const fp = await probe.fingerprint('01012000003');
   const { F } = fileLayer({ [fp]: 1 });
-  const res = await F.sendToCards({ kind: 'card', fields: { name: '홍길동', mobile: '010-2802-4601' } });
+  const res = await F.sendToCards({ kind: 'card', fields: { name: '홍길동', mobile: '010-1200-0003' } });
   assert.ok(!/개인|대표|잠/.test(res.message),
     '어디에 있는지 말하면 감춘 사실 자체가 드러난다: ' + res.message);
 });
 
 test('개인 폴더에 없으면 예전대로 새로 넣는다', async () => {
   const { F, written } = fileLayer({});
-  const res = await F.sendToCards({ kind: 'card', fields: { name: '홍길동', mobile: '010-2802-4601' } });
+  const res = await F.sendToCards({ kind: 'card', fields: { name: '홍길동', mobile: '010-1200-0003' } });
   assert.ok(!res.blocked);
   assert.equal(res.created, true);
   assert.ok(written['pucards/items/newid1'], '새 명함이 들어가야 한다');

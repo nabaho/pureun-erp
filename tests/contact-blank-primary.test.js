@@ -90,7 +90,7 @@ test('이미 정해진 주담당을 빼앗지 않는다', () => {
 
 test('★★ 합칠 때 — 빈 줄이 있어도 들여온 사람이 주담당을 받는다', () => {
   const r = merge([BLANK({ isPrimary: true })],
-    [{ name: '김상호', phone: '010-4016-4395', role: '위원장' },
+    [{ name: '김상호', phone: '010-1200-0007', role: '위원장' },
      { name: '이동철', phone: '041-557-9700', role: '관리부장' }]);
   assert.strictEqual(r.added, 2);
   assert.strictEqual(r.contacts.length, 2, '빈 줄이 남아 있다');
@@ -99,7 +99,7 @@ test('★★ 합칠 때 — 빈 줄이 있어도 들여온 사람이 주담당�
 });
 
 test('★ 이미 사람이 주담당이면 들여온 사람이 빼앗지 않는다', () => {
-  const r = merge([P('박정미', { isPrimary: true })], [{ name: '김상호', phone: '010-4016-4395' }]);
+  const r = merge([P('박정미', { isPrimary: true })], [{ name: '김상호', phone: '010-1200-0007' }]);
   assert.strictEqual(r.contacts[0].name, '박정미');
   assert.strictEqual(r.contacts[0].isPrimary, true, '있던 주담당을 빼앗았다');
   assert.strictEqual(!!r.contacts[1].isPrimary, false);
@@ -120,7 +120,7 @@ test('★★ 손으로 만든 빈 줄은, 아무도 안 들여왔으면 사라�
 });
 
 test('★ 합칠 때 「맡는 일」을 잃지 않는다', () => {
-  const r = merge([], [{ name: '김상호', phone: '010-4016-4395', duty: '자문' }]);
+  const r = merge([], [{ name: '김상호', phone: '010-1200-0007', duty: '자문' }]);
   assert.strictEqual(r.contacts[0].duty, '자문', '맡는 일이 합치면서 사라진다');
 });
 

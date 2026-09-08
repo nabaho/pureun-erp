@@ -50,7 +50,7 @@ test('★★ 「소속·직위」는 둘을 «이어» 쓴다 — 한쪽만 넣�
 });
 
 test('★★ 끝까지 — 이 라벨들이 실제로 채워진다', () => {
-  const fields = { name: '권형하', birth: '1975.01.07', phone: '010-2802-4601',
+  const fields = { name: '권형하', birth: '1975.01.07', phone: '010-1200-0003',
                    org: '푸른노무법인', title: '대표', orgTitle: '푸른노무법인 대표' };
   const xml = tbl([['성 함', ''], ['생 일', ''], ['연락처(휴대)', ''], ['소속·직위', ''], ['현 직', '']]);
   const m = M.guess(M.scan(xml), { fields: fields });

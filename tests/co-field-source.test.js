@@ -70,7 +70,7 @@ const co = o => Object.assign({ key:'1348605772', name:'가나테크', cards:[],
 
 test('★ 사업자등록증에서 온 값은 「사업자등록증」이라 말한다', () => {
   const C = loadSrc();
-  const s = C.coSrcOf(co({ ceo:'조성환', srcOf:{ ceo:'사업자등록증' } }), 'ceo');
+  const s = C.coSrcOf(co({ ceo:'나성환', srcOf:{ ceo:'사업자등록증' } }), 'ceo');
   assert.equal(s && s.label, '사업자등록증');
 });
 
@@ -81,7 +81,7 @@ test('명함에서 온 값은 「명함」이라 말한다', () => {
 
 test('푸른이알피가 채운 대표자는 「푸른이알피」라 말한다', () => {
   const C = loadSrc();
-  assert.equal(C.coSrcOf(co({ ceo:'조성환', srcOf:{ ceo:'푸른이알피' } }), 'ceo').label, '푸른이알피');
+  assert.equal(C.coSrcOf(co({ ceo:'나성환', srcOf:{ ceo:'푸른이알피' } }), 'ceo').label, '푸른이알피');
 });
 
 /* ══════ ② 서식에서 온 값 ══════ */
@@ -141,15 +141,15 @@ test('★ 서식 값이 이기면 출처도 서식이라 한다 — 어긋나면
 
 test('★ 서식 칸이 비어 있으면 «등록증» 쪽 출처를 말한다', () => {
   const C = loadSrc();
-  const o = co({ ceo:'조성환', srcOf:{ ceo:'사업자등록증' }, extra:{ ceo:'   ' } });
-  assert.equal(C.coVal(o, 'ceo'), '조성환');
+  const o = co({ ceo:'나성환', srcOf:{ ceo:'사업자등록증' }, extra:{ ceo:'   ' } });
+  assert.equal(C.coVal(o, 'ceo'), '나성환');
   assert.equal(C.coSrcOf(o, 'ceo').label, '사업자등록증');
 });
 
 /* ══════ ④ 모르면 아무 말도 안 한다 ══════ */
 
 test('★ 출처를 모르면 아무 말도 안 한다 — 지어내면 안 된다', () => {
-  assert.equal(loadSrc().coSrcOf(co({ ceo:'조성환' }), 'ceo'), null);
+  assert.equal(loadSrc().coSrcOf(co({ ceo:'나성환' }), 'ceo'), null);
 });
 
 test('값이 아예 없는 칸도 아무 말 안 한다', () => {
@@ -184,7 +184,7 @@ function buildList(bizItems, cardItems, erp){
   vm.runInContext(fnBody('coListBuild'), ctx);
   return ctx.coListBuild();
 }
-const BIZ = { kind:'biz', company:'가나테크', bizno:'134-86-05772', ceo:'조성환',
+const BIZ = { kind:'biz', company:'가나테크', bizno:'134-86-05772', ceo:'나성환',
               address:'충남 천안시 서북구 1' };
 
 test('★ 등록증에서 채운 칸에 «사업자등록증» 표가 붙는다 — 세워 보고 확인한다', () => {
@@ -210,7 +210,7 @@ test('★ 푸른이알피가 채운 대표자에는 «푸른이알피» 표가 �
 
 test('등록증에 대표자가 있으면 푸른이알피가 덮지 않는다 — 표도 등록증 그대로', () => {
   const o = buildList([BIZ], [], { ceoRaw:'홍길동', type:'유지' })[0];
-  assert.equal(o.ceo, '조성환');
+  assert.equal(o.ceo, '나성환');
   assert.equal(o.srcOf.ceo, '사업자등록증');
 });
 
@@ -246,7 +246,7 @@ function loadSend(existing){
   vm.runInContext(jsrc.slice(i, j), ctx);
   return ctx;
 }
-const SEND = { fields:{ bizno:'134-86-05772', ceo:'조성환', sales:'1240000000',
+const SEND = { fields:{ bizno:'134-86-05772', ceo:'나성환', sales:'1240000000',
                         docName:'기술보호울타리 신청서' },
                byName:'권형하', photo:{ year:'2026', id:'p77', owner:'kwon' } };
 
@@ -270,7 +270,7 @@ test('★ src 는 docs 열쇠만 가리킨다 — 통째로 베끼면 칸 수만
 });
 
 test('★ 이미 값이 있던 칸에는 src 를 안 쓴다 — 그 값은 이 서류에서 온 게 아니다', () => {
-  const c = loadSend({ ceo:'조성환' });                  /* 같은 값이 이미 있다 */
+  const c = loadSend({ ceo:'나성환' });                  /* 같은 값이 이미 있다 */
   return c.sendToCoInfo(SEND).then(() => {
     const v = (c._writes[0] || {}).val || {};
     assert.equal(v['src/ceo'], undefined,
@@ -293,13 +293,13 @@ test('사진이 없으면 src 를 안 쓴다 — 가리킬 서류가 없다', ()
   return c.sendToCoInfo({ fields: SEND.fields, byName:'권형하' }).then(() => {
     const v = c._writes[0].val;
     assert.equal(v['src/ceo'], undefined, '★ 없는 서류를 가리키면 눌러도 안 열린다');
-    assert.equal(v.ceo, '조성환', '값은 그대로 채워져야 한다');
+    assert.equal(v.ceo, '나성환', '값은 그대로 채워져야 한다');
   });
 });
 
 test('값이 하나도 안 채워지면 src 때문에 쓰기가 생기지 않는다', () => {
   /* docName 도 채워지는 칸이라 함께 막아 둔다 — 안 그러면 「안 채웠다」가 아니다 */
-  const c = loadSend({ ceo:'조성환', sales:'1240000000', docName:'기술보호울타리 신청서' });
+  const c = loadSend({ ceo:'나성환', sales:'1240000000', docName:'기술보호울타리 신청서' });
   return c.sendToCoInfo(SEND).then(r => {
     /* 서류 기록(docs)·갈래(tags)는 남을 수 있다. src 만으로 쓰기가 늘면 안 된다. */
     const v = (c._writes[0] || {}).val || {};
@@ -346,7 +346,7 @@ test('★ 상세 패널이 그 줄에 출처를 «그린다» — 함수만 있�
 });
 
 test('출처를 모르는 칸에는 아무것도 안 붙는다 — 표가 시끄러워지면 안 된다', () => {
-  const h = drawPanel(co({ ceo:'조성환' }));
+  const h = drawPanel(co({ ceo:'나성환' }));
   assert.equal(h.indexOf('cosrc'), -1);
 });
 

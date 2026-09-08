@@ -43,7 +43,7 @@ const ctx = { console, Math, Object, Date, String, window: {} };
 vm.createContext(ctx);
 vm.runInContext(cutPe('function pcToContact(', '\nwindow.pcToContact'), ctx);
 const card = { id: 'card1', n: '이진주', c: '목동', ti: '팀장', d: '경영지원팀',
-  m: '010-4747-9985', t: '041-111-2222', ct: '041-333-4444',
+  m: '010-1200-0013', t: '041-111-2222', ct: '041-333-4444',
   e: 'lee@mokdong.co.kr', ad: '충남 천안시 동남구' };
 const c1 = ctx.pcToContact(card, true, 'card1');
 eq('이름', c1.name, '이진주');
@@ -52,7 +52,7 @@ eq('직책 — role 칸도 함께', c1.role, '팀장');
 ok('★ 두 칸이 같다 (화면마다 읽는 칸이 달라 한 칸만 채우면 빈칸으로 보인다)',
   c1.position === c1.role && c1.position === '팀장');
 eq('부서', c1.dept, '경영지원팀');
-eq('휴대폰', c1.phone, '010-4747-9985');
+eq('휴대폰', c1.phone, '010-1200-0013');
 eq('사업장 전화', c1.bizPhone, '041-111-2222');
 eq('이메일', c1.email, 'lee@mokdong.co.kr');
 eq('주소', c1.addr, '충남 천안시 동남구');
@@ -95,7 +95,7 @@ eq('대표담당 아니면 false', ctx.pcToContact(card, false).isPrimary, false
   vm.runInContext(cutPe('function _normPersonKey(c){', '\ntry {'), ctx2);
   const r = ctx2.mergeCompanyContacts([], [{
     name: '이진주', position: '팀장', role: '팀장', dept: '경영지원팀',
-    phone: '010-4747-9985', bizPhone: '041-111-2222', email: 'lee@x.kr',
+    phone: '010-1200-0013', bizPhone: '041-111-2222', email: 'lee@x.kr',
     addr: '충남 천안', pcId: 'card1', pcAt: '2026-08-03', isPrimary: true }]);
   const g = r.contacts[0];
   eq('합칠 때 직책 position', g.position, '팀장');
@@ -112,7 +112,7 @@ eq('대표담당 아니면 false', ctx.pcToContact(card, false).isPrimary, false
 (function () {
   const ctx3 = { console, Object, String, window: { pucardsIdx: {
     a1: { k: 'card', n: '이진주', c: '목동', ti: '팀장', d: '경영지원팀',
-          m: '010-4747-9985', e: 'lee@mokdong.co.kr' },
+          m: '010-1200-0013', e: 'lee@mokdong.co.kr' },
     a2: { k: 'card', n: '김종복', c: '남양인텍', ti: '대표', m: '010-1111-2222' },
     b1: { k: 'biz',  n: '남양인텍', c: '남양인텍', bz: '123-45-67890' } } } };
   vm.createContext(ctx3);
@@ -123,8 +123,8 @@ eq('대표담당 아니면 false', ctx.pcToContact(card, false).isPrimary, false
   eq('직책으로',        sp('팀장'), ['이진주']);
   eq('★ 부서로',        sp('경영지원'), ['이진주']);
   eq('★ 이메일로',      sp('mokdong.co.kr'), ['이진주']);
-  eq('★ 전화 하이픈',   sp('010-4747'), ['이진주']);
-  eq('★ 전화 숫자만',   sp('01047479985'), ['이진주']);
+  eq('★ 전화 하이픈',   sp('010-1200'), ['이진주']);
+  eq('★ 전화 숫자만',   sp('01012000013'), ['이진주']);
   eq('사업자등록증은 사람 목록에서 제외', sp('123-45'), []);
   eq('한 글자는 안 찾는다', sp('이'), []);
 })();
@@ -300,14 +300,14 @@ eq('대표담당 아니면 false', ctx.pcToContact(card, false).isPrimary, false
 /* ── pcToContact 가 팩스·홈페이지를 옮기는가 ── */
 (function () {
   const full = { n:'김종복', c:'남양인텍', ti:'대표이사',
-    m:'010-4243-8853', ct:'041-583-1893', cfx:'041-583-1895',
-    e:'namyangit@naver.com', ad:'충남 천안시 서북구', w:'http://ni.kr' };
+    m:'010-1200-0009', ct:'041-583-1893', cfx:'041-583-1895',
+    e:'cust14@naver.com', ad:'충남 천안시 서북구', w:'http://ni.kr' };
   const g = ctx.pcToContact(full, true, 'c1');
   eq('★ 회사팩스가 팩스로',   g.fax, '041-583-1895');
   eq('홈페이지',              g.website, 'http://ni.kr');
-  eq('휴대폰',                g.phone, '010-4243-8853');
+  eq('휴대폰',                g.phone, '010-1200-0009');
   eq('회사전화가 사업장전화로', g.bizPhone, '041-583-1893');
-  eq('이메일',                g.email, 'namyangit@naver.com');
+  eq('이메일',                g.email, 'cust14@naver.com');
   eq('직책 두 칸',            [g.position, g.role], ['대표이사','대표이사']);
   // 개인팩스가 있으면 그쪽을 먼저 쓴다 (회사팩스와 다른 번호다)
   eq('★ 개인팩스 우선', ctx.pcToContact({ n:'x', fx:'041-1-1111', cfx:'041-2-2222' }, false).fax, '041-1-1111');
@@ -326,8 +326,8 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
   vm.runInContext(cutPe('function contactRole(c){', '\n'), ctx2);
   vm.runInContext(cutPe('function _normPersonKey(c){', '\ntry {'), ctx2);
   const r = ctx2.mergeCompanyContacts([], [{ name:'김종복', position:'대표이사',
-    phone:'010-4243-8853', bizPhone:'041-583-1893', fax:'041-583-1895',
-    email:'namyangit@naver.com', addr:'충남 천안', website:'http://ni.kr', dept:'경영' }]);
+    phone:'010-1200-0009', bizPhone:'041-583-1893', fax:'041-583-1895',
+    email:'cust14@naver.com', addr:'충남 천안', website:'http://ni.kr', dept:'경영' }]);
   const g = r.contacts[0];
   eq('합칠 때 팩스 보존',     g.fax, '041-583-1895');
   eq('합칠 때 홈페이지 보존', g.website, 'http://ni.kr');
@@ -339,8 +339,8 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
     b1: { k:'biz', n:'남양인텍', c:'남양인텍', bz:'312-81-28123', ceo:'김종복',
           ct:'041-583-1893', cfx:'041-583-1895', ad:'충남 천안시 서북구',
           bt:'제조업', bi:'인쇄 및 기록매체 복제업', cno:'110111-1234567' },
-    a1: { k:'card', n:'김종복', c:'남양인텍', ti:'대표이사', m:'010-4243-8853',
-          cfx:'041-583-1895', e:'namyangit@naver.com' } } } };
+    a1: { k:'card', n:'김종복', c:'남양인텍', ti:'대표이사', m:'010-1200-0009',
+          cfx:'041-583-1895', e:'cust14@naver.com' } } } };
   vm.createContext(ctx5);
   ['var PC_CORP_TOKENS =', 'function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
     vm.runInContext(cutPe(fn, '\nfunction '), ctx5);
@@ -396,9 +396,9 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
   const IDX = {
     b1: { k:'biz', n:'남양인텍', c:'남양인텍', bz:'312-81-28123', ceo:'김종복',
           ct:'041-583-1893', cfx:'041-583-1895', ad:'충남 천안시 서북구 성거읍 석문길 194',
-          bt:'제조업', bi:'인쇄 및 기록매체 복제업', e:'namyangit@daum.net' },
+          bt:'제조업', bi:'인쇄 및 기록매체 복제업', e:'cust10@daum.net' },
     a1: { k:'card', n:'김종복', c:'남양인텍', ti:'대표이사',
-          m:'010-4243-8853', ct:'041-583-1893', cfx:'041-583-1895', e:'namyangit@naver.com' },
+          m:'010-1200-0009', ct:'041-583-1893', cfx:'041-583-1895', e:'cust14@naver.com' },
     a2: { k:'card', n:'박대리', c:'남양인텍', ti:'대리', m:'010-3333-4444' }
   };
   function mk(idx) {
@@ -411,15 +411,15 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
     return c;
   }
   const r0 = mk(IDX).searchPucardsCompanies('남양인텍')[0] || {};
-  eq('★ 대표자 전화 = 대표 명함의 휴대폰', r0.ceoPhone, '010-4243-8853');
+  eq('★ 대표자 전화 = 대표 명함의 휴대폰', r0.ceoPhone, '010-1200-0009');
   eq('회사 대표번호는 따로',               r0.phone, '041-583-1893');
   ok('★ 둘이 다른 값이다 (같은 칸에 넣으면 안 된다)', r0.ceoPhone !== r0.phone);
-  eq('대표 이메일은 사업자등록증 것 먼저', r0.ceoEmail, 'namyangit@daum.net');
+  eq('대표 이메일은 사업자등록증 것 먼저', r0.ceoEmail, 'cust10@daum.net');
 
   // 사업자등록증이 없으면 대표 명함의 이메일을 쓴다
   const noBiz = mk({ a1: IDX.a1, a2: IDX.a2 }).searchPucardsCompanies('남양인텍')[0] || {};
-  eq('사업자등록증 없으면 대표 명함 이메일', noBiz.ceoEmail, 'namyangit@naver.com');
-  eq('사업자등록증 없어도 대표자 전화는 온다', noBiz.ceoPhone, '010-4243-8853');
+  eq('사업자등록증 없으면 대표 명함 이메일', noBiz.ceoEmail, 'cust14@naver.com');
+  eq('사업자등록증 없어도 대표자 전화는 온다', noBiz.ceoPhone, '010-1200-0009');
 
   // 대표 직책 명함이 없으면 대표자 전화는 비운다 (대리 휴대폰을 넣으면 안 된다)
   const noCeo = mk({ a2: IDX.a2 }).searchPucardsCompanies('남양인텍')[0] || {};
@@ -493,7 +493,7 @@ ok('계약모달에 대표자 전화 칸이 있다', /f\.company\.ceoPhone/.test
   const M = ctx7.mergeCompanyContacts;
   // 실제 사고 재현: 동일인 줄이 아직 비어 있는 상태에서 대표 명함이 들어온다
   const r1 = M([{ name:'최상윤', role:'대표자', phone:'', bizPhone:'', isPrimary:true, sameAsCeo:true }],
-               [{ name:'최상윤', position:'대표이사', phone:'010-5425-1241', bizPhone:'041-664-1241' }]);
+               [{ name:'최상윤', position:'대표이사', phone:'010-1200-0015', bizPhone:'041-664-1241' }]);
   eq('★ 줄이 늘지 않는다', [r1.added, r1.contacts.length], [0, 1]);
   eq('있는 줄을 고치지도 않는다', r1.contacts[0].phone, '');
   // 이름이 다르면 정상 추가
@@ -501,14 +501,14 @@ ok('계약모달에 대표자 전화 칸이 있다', /f\.company\.ceoPhone/.test
   eq('다른 사람은 추가된다', [r2.added, r2.contacts.length], [1, 2]);
   // 둘 다 전화가 있고 다르면 딴 사람 (기존 규칙 유지)
   const r3 = M([{ name:'최상윤', phone:'010-1111-1111', isPrimary:true }],
-               [{ name:'최상윤', phone:'010-5425-1241' }]);
+               [{ name:'최상윤', phone:'010-1200-0015' }]);
   eq('둘 다 전화 있고 다르면 딴 사람', [r3.added, r3.contacts.length], [1, 2]);
   // 이름·전화가 똑같으면 당연히 넘긴다
-  const r4 = M([{ name:'최상윤', phone:'010-5425-1241', isPrimary:true }],
-               [{ name:'최상윤', phone:'010-5425-1241' }]);
+  const r4 = M([{ name:'최상윤', phone:'010-1200-0015', isPrimary:true }],
+               [{ name:'최상윤', phone:'010-1200-0015' }]);
   eq('완전히 같으면 넘긴다', [r4.added, r4.contacts.length], [0, 1]);
   // 공백·대소문자 차이는 같은 사람
-  const r5 = M([{ name:'최 상 윤', phone:'', isPrimary:true }], [{ name:'최상윤', phone:'010-5425-1241' }]);
+  const r5 = M([{ name:'최 상 윤', phone:'', isPrimary:true }], [{ name:'최상윤', phone:'010-1200-0015' }]);
   eq('이름의 공백 차이는 같은 사람', [r5.added, r5.contacts.length], [0, 1]);
 })();
 

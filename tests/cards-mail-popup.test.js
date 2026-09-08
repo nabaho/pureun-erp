@@ -37,8 +37,8 @@ function box(opt){
   const opened = [];
   const ctx = {
     console, encodeURIComponent, String, Number, Object,
-    state: { items: { c1: { id:'c1', name:'이주재', company:'이레메디컬', email:'jj3lee@naver.com' },
-                      c2: { id:'c2', name:'이정래', company:'세무법인 자연', email:'tax0398@hanmail.net' },
+    state: { items: { c1: { id:'c1', name:'이주재', company:'이레메디컬', email:'cust11@naver.com' },
+                      c2: { id:'c2', name:'이정래', company:'세무법인 자연', email:'cust05@hanmail.net' },
                       c3: { id:'c3', name:'최정식', company:'최정식 세무회계', email:'' } } },
     normEmail: v => String(v || '').trim().toLowerCase(),
     toast: m => { ctx._toast = m; },
@@ -57,7 +57,7 @@ test('★ 이메일을 누르면 «딴 창»이 열린다', () => {
   c.openMailWindow('c1');
   assert.equal(c._opened.length, 1, '창이 안 열렸다');
   assert.match(c._opened[0].url, /view=mail/, '메일 화면으로 안 간다');
-  assert.match(c._opened[0].url, /to=jj3lee%40naver\.com/, '★ 받는 사람이 안 실렸다 — 빈 편지지가 열린다');
+  assert.match(c._opened[0].url, /to=cust11%40naver\.com/, '★ 받는 사람이 안 실렸다 — 빈 편지지가 열린다');
   assert.match(c._opened[0].url, /card=c1/, '어느 명함에서 왔는지가 안 실렸다');
 });
 

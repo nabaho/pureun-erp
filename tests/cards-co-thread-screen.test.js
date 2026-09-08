@@ -29,12 +29,12 @@ function cut(name) {
 
 const COS = [
   { id: 'c1', name: '㈜정일제지',
-    contacts: [{ name: '임남용', email: 'jungilpp@naver.com', isPrimary: true }] },
+    contacts: [{ name: '임남용', email: 'cust12@naver.com', isPrimary: true }] },
   { id: 'c2', name: '한빛산업개발', primaryContactEmail: 'hanbit@daum.net' },
   { id: 'c3', name: '오간것없는회사', primaryContactEmail: 'none@x.kr' }
 ];
 const INBOX = {
-  m1: { at: 3000, from: '임남용 <jungilpp@naver.com>', subject: '8월 급여자료',
+  m1: { at: 3000, from: '임남용 <cust12@naver.com>', subject: '8월 급여자료',
     preview: '보내드립니다', companyId: 'c1', atts: 2, took: 2, seatName: '신욱임' },
   m2: { at: 1000, from: 'nobody@x.kr', subject: '광고입니다', preview: '' },
   m3: { at: 5000, from: 'x@y.kr', subject: '정일제지 퇴직금 문의', preview: '문의드립니다' }

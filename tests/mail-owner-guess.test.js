@@ -173,7 +173,7 @@ test('★★ 문턱에 못 미치는 줄도 «지우지 않고 꺼서» 내놓�
 
 test('★★ 근거가 두텁고 «몫»도 크면 켠다', () => {
   const ctx = rowCtx();
-  const sure = ctx.mbGuessRow('coeleng@hanmail.net',
+  const sure = ctx.mbGuessRow('cust04@hanmail.net',
     { n:19, votes:{ 'co-1':19 }, ev:{ 'co-1':EV }, name:'이건철' });
   assert.equal(sure.sure, true, '열아홉 통이 다 같은 업체를 말하는데도 안 켭니다');
 });

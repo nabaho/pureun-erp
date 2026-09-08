@@ -73,7 +73,7 @@ function row(it, opt){
 const 명함 = (x) => Object.assign({ id:'c1', kind:'card', name:'김대리', company:'가나테크',
   mobile:'010-1111-2222', email:'kim@gana.co.kr' }, x || {});
 const 등록증 = (x) => Object.assign({ id:'b1', kind:'biz', company:'가나테크',
-  bizno:'134-86-05772', ceo:'조성환', companyTel:'041-556-0035' }, x || {});
+  bizno:'134-86-05772', ceo:'나성환', companyTel:'041-556-0035' }, x || {});
 
 /* ── ① 🚪 계약해지 ─────────────────────────────────────────────── */
 

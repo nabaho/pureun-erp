@@ -1,7 +1,7 @@
 'use strict';
 /* 잘린 메일 주소 잡기 · 보내는 주소 바꾸기 · 머리 고정
    ═══════════════════════════════════════════════════════════════════════════
-   대표 화면 2026-08-24: 받는사람에 「babylawyer@hanmail.ne」 — 끝의 t 가 빠져 있었다.
+   대표 화면 2026-08-24: 받는사람에 「cust03@hanmail.ne」 — 끝의 t 가 빠져 있었다.
 
    ■ 우리 코드가 자른 것이 «아니다»
      보내기 길(pickPerson·normEmail·grabCompose)에는 자르는 곳이 없다. 명함에 저장된
@@ -56,7 +56,7 @@ function load(){
 
 test('★ 대표가 겪은 그 주소를 잡는다', () => {
   const C = load();
-  assert.equal(C.suspectEmail('babylawyer@hanmail.ne'), 'babylawyer@hanmail.net',
+  assert.equal(C.suspectEmail('cust03@hanmail.ne'), 'cust03@hanmail.net',
     '★ 이것을 못 잡으면 메일이 조용히 되돌아온다');
 });
 

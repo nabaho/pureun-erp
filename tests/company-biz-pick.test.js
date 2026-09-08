@@ -34,7 +34,7 @@ function run(form, row){
 /* searchPucardsCompanies 가 돌려주는 줄의 생김새 */
 const ROW = { name:'평택시민의료생협', bizNo:'123-45-67890', ceo:'정은석',
               bizType:'병원', bizCategory:'의료업', address:'경기 평택시 중앙로 165',
-              phone:'031-653-4123', fax:'031-657-4123', ceoEmail:'ptsm4123@naver.com',
+              phone:'031-653-4123', fax:'031-657-4123', ceoEmail:'cust15@naver.com',
               corpNo:'110111-1234567', hasBiz:true };
 
 console.log('\n[① 빈 업체 — 사업자등록증의 값이 들어온다]');
@@ -46,7 +46,7 @@ t('대표자', a.f.ceo, '정은석');
 t('주소', a.f.address, '경기 평택시 중앙로 165');
 t('대표 전화', a.f.phone, '031-653-4123');
 t('팩스', a.f.fax, '031-657-4123');
-t('대표 이메일', a.f.email, 'ptsm4123@naver.com');
+t('대표 이메일', a.f.email, 'cust15@naver.com');
 t('무엇을 채웠는지 말해 준다', /사업자번호·대표자·업태·종목·주소·대표 전화·팩스·대표 이메일 채움/.test(a.msg), true);
 
 console.log('\n[② ★ 이미 적어 둔 값은 안 덮는다]');

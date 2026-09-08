@@ -20,8 +20,8 @@ const path = require('path');
 const P = require(path.join(__dirname, '..', 'js', 'pu-contact.js'));
 
 test('① 값이 하나면 지금과 «한 글자도» 다르지 않다 — 곁칸이 안 생긴다', function () {
-  const one = P.apply({ name: '박지윤' }, 'phone', [{ v: '010-2043-1469' }]);
-  assert.equal(one.phone, '010-2043-1469');
+  const one = P.apply({ name: '박지윤' }, 'phone', [{ v: '010-1200-0001' }]);
+  assert.equal(one.phone, '010-1200-0001');
   assert.ok(!('phoneMore' in one), '★ 값이 하나인데 곁칸 칸을 만들고 있습니다');
   assert.ok(!('phoneLabel' in one), '이름표가 없으면 칸도 없어야 합니다');
   assert.equal(one.name, '박지윤', '다른 칸을 건드리지 않습니다');

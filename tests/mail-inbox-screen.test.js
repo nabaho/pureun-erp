@@ -41,10 +41,10 @@ const BOX = {
   m1: { from: '정담회계법인 <acct@jd.kr>', subject: 'RE: 8월 급여대장 송부',
     preview: '중도퇴사자 급여대장 보내드립니다', box: '2.급여+사무대행',
     at: 3000, atts: 2, took: 2, seatName: '최기운', shared: false, why: '' },
-  m2: { from: '김나래 <jungilpp@naver.com>', subject: '장진숙님 근태내역입니다.',
+  m2: { from: '김나래 <cust12@naver.com>', subject: '장진숙님 근태내역입니다.',
     preview: '8월 근태 엑셀 보냅니다', box: '2.급여+사무대행',
     at: 2000, atts: 1, took: 1, seatName: '', shared: true, why: '업체관리에 없는 주소' },
-  m3: { from: '유문경 <qurgo0416@naver.com>', subject: '퇴직연금 불입액 문의',
+  m3: { from: '유문경 <cust16@naver.com>', subject: '퇴직연금 불입액 문의',
     preview: '8월분 불입액이 얼마인지', box: '2.급여+사무대행',
     at: 1000, atts: 0, took: 0, seatName: '', shared: false,
     why: '숫자가 없어 값으로 만들 것이 없습니다' }
