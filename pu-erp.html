@@ -19680,6 +19680,12 @@ function ContractManagement(props){
        받는 쪽은 업체관리의 __erpCoArrived 효과다 — 왜 필요한지는 그 주석에 적어 두었다. */
     var _arrivedCo = results.find(function(r){ return r.type === 'company' && r.id; });
     if(_arrivedCo) window.__erpCoArrived = { id:_arrivedCo.id, at:Date.now() };
+    /* ★ 새로 생긴 업체에 «곧바로» 고유번호를 준다 (대표 지시 2026-09-08).
+       전에는 환경설정에 들어가 단추를 눌러야 붙어서, 그때까지 번호 칸이 「—」였다
+       — 대표가 「번호가 왜 사라졌나」 하고 물으신 자리다.
+       ⚠ 기다리지 «않는다». 번호통은 서버를 한 번 다녀오는데, 그것 때문에 이관 완료
+         알림이 늦으면 사람이 「멈췄나」 한다. 실패해도 이관은 그대로다. */
+    if(_arrivedCo) coAutoNumber([_arrivedCo.id]);
     // 첫 번째 결과의 타겟 모듈로 자동 이동
     var navTarget = (function(){
       var firstNonConsult = results.find(function(r){ return r.type !== 'consult'; });
@@ -22222,6 +22228,7 @@ function CompanyManagement(){
   var sb = useState({ key:'', dir:'asc' }); var sortBy = sb[0]; var setSortBy = sb[1];   // 정렬
   var ev = useState(''); var editVal = ev[0]; var setEditVal = ev[1];
   var ctx = useState(null); var ctxMenu = ctx[0]; var setCtxMenu = ctx[1];   // 우클릭 메뉴
+  var cnb = useState(false); var coNoBusy = cnb[0]; var setCoNoBusy = cnb[1];  // 🔢 번호 주는 중
 
   /* ★ 이관돼 들어온 업체를 «그 유형 탭 맨 위»에서 보이게 한다 (대표 지시 2026-09-07)
        「계약관리에서 급여가 업체관리로 갈 경우 업체관리에서 급여로 이관하면
@@ -22977,6 +22984,26 @@ function CompanyManagement(){
       h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', flexShrink:0 } },
         h('span', { style:{ fontSize:'11px', color:'#64748b' } }, '페이지'),
         h(PageSizeSelector, { pageSize:coPageSize, setPageSize:setCoPageSize, setPage:pg.setPage })),
+      /* 🔢 번호 없는 업체 — 있을 때만 나온다 (대표 지시 2026-09-08).
+         이관 뒤 자동 부여(coAutoNumber)가 서버를 못 다녀왔을 때 받쳐 주는 자리다.
+         ⚠ 환경설정까지 들어가야 눌렀던 것을 «여기»로 낸다 — 번호가 빈 것이 보이는 곳이 여기다.
+         ⚠ 없으면 아예 안 그린다. 늘 있으면 도구줄이 한 칸 늘 뿐이다. */
+      (function(){
+        var noNo = coNoTargets(companies);
+        if(!noNo.length) return null;
+        return h('button', { key:'giveno', disabled:coNoBusy,
+          title:'번호 없는 업체에 몸통을 줍니다 — 이미 번호가 있는 곳은 안 건드립니다',
+          onClick:function(){
+            setCoNoBusy(true);
+            coAutoNumber(noNo.map(function(c){ return c.id; }), function(){
+              setCoNoBusy(false); refreshCompanies();
+            });
+          },
+          style:{ padding:'6px 12px', fontSize:'12px', fontWeight:700, borderRadius:'5px',
+            background:'#fffbeb', color:'#854d0e', border:'1px solid #fde68a',
+            cursor:coNoBusy ? 'wait' : 'pointer', whiteSpace:'nowrap' } },
+          coNoBusy ? '🔢 주는 중…' : ('🔢 번호 없는 업체 ' + noNo.length + '곳 — 번호 주기'));
+      })(),
       // 표 머리에 걸린 깔때기를 한 번에 푸는 단추 (걸린 게 있을 때만)
       activeFilterCount > 0 && h('button', { onClick:cClearAll,
         title:'표 머리에 걸린 깔때기를 전부 풉니다',
@@ -39223,6 +39250,54 @@ function coNoTakeBlock(need){
     return { first: end - need + 1, last: end };
   });
 }
+/* ── 번호 없는 업체에 몸통을 준다 — «한 곳» (2026-09-08 대표 지시 「해라」) ──
+   전에는 환경설정 화면 «안»에만 있었다. 그래서 이관·새 업체로 생긴 곳은
+   누군가 그 화면에 들어가 단추를 누를 때까지 번호 칸이 「—」로 남았다
+   (대표 물음 2026-09-08 「번호가 왜 사라졌나?」 — 사라진 게 아니라 «안 준» 것이었다).
+   ⚠ 번호통은 서버에서 잠그고 뽑는다(coNoTakeBlock). 여기서 지어내지 말 것 —
+     둘이 동시에 만들면 같은 번호가 두 곳에 붙는다.
+   ⚠ 이미 번호가 있는 곳은 손대지 않는다. 몸통은 한 번 주면 안 바꾼다. */
+function coNoTargets(list){
+  var O = window.PuOntology;
+  var all = (list || dbGet('companies', []) || []).filter(function(c){ return c && !c._deleted; });
+  return O ? O.companyNumberTargets(all) : [];
+}
+function coNoHeadOf(c){ var O = window.PuOntology; return O ? O.companyNumberHead(c) : ''; }
+function coAssignNumbers(todo){
+  todo = (todo || []).filter(Boolean);
+  if(!todo.length) return Promise.resolve({ count:0, rows:[] });
+  return coNoTakeBlock(todo.length).then(function(block){
+    var at = new Date().toISOString(), by = (window.CURRENT_USER && CURRENT_USER.sid) || '';
+    var next = block.first;
+    var rows = todo.map(function(c){
+      var head = coNoHeadOf(c);
+      return Object.assign({}, c, { puNo: next++, puNoHead: head,
+        puNoHistory: [{ head: head, from:'', at: at, by: by }] });
+    });
+    if(!dbUpsertMany('companies', rows)) throw new Error('저장이 거절되었습니다');
+    return { count:rows.length, first:block.first, last:block.last, rows:rows };
+  });
+}
+/* 이관·새 업체가 끝난 «직후»에 부른다 — 사람이 아무것도 안 눌러도 번호가 붙는다.
+   ⚠ 실패해도 앞의 일(이관·저장)을 되돌리지 않는다. 번호는 나중에 줄 수 있지만
+     이관을 되돌리면 자료가 사라진다. 못 줬으면 그렇다고 알리기만 한다 —
+     업체관리 위 띠가 그때 받아 준다. */
+function coAutoNumber(ids, onDone){
+  var want = coNoTargets().filter(function(c){ return !ids || ids.indexOf(c.id) >= 0; });
+  if(!want.length){ if(onDone) onDone(0); return Promise.resolve(0); }
+  return coAssignNumbers(want).then(function(r){
+    if(r.count) showToast('🔢 고유번호 — ' + r.rows.map(function(c){
+      return (c.puNoHead || '') + '-' + c.puNo; }).join(', '));
+    if(onDone) onDone(r.count);
+    return r.count;
+  }).catch(function(e){
+    window._erpErrLog && window._erpErrLog(e);
+    showToast('⚠ 고유번호를 못 주었습니다 — 업체관리 위 띠에서 다시 주세요 ('
+      + ((e && e.message) || e) + ')');
+    if(onDone) onDone(0);
+    return 0;
+  });
+}
 function CoNumberPanel(){
   var O = window.PuOntology;
   var bs = useState(false); var busy = bs[0]; var setBusy = bs[1];
@@ -39238,16 +39313,10 @@ function CoNumberPanel(){
     if(!todo.length){ showToast('번호 없는 업체가 없습니다'); return; }
     if(!confirm(todo.length + '곳에 고유번호를 부여합니다.\n\n이미 번호가 있는 곳은 건드리지 않습니다.\n한 번 준 번호는 바꾸지 않습니다.')) return;
     setBusy(true);
-    coNoTakeBlock(todo.length).then(function(block){
-      var at = new Date().toISOString(), by = (window.CURRENT_USER && CURRENT_USER.sid) || '';
-      var next = block.first;
-      var rows = todo.map(function(c){
-        var head = headOf(c);
-        return Object.assign({}, c, { puNo: next++, puNoHead: head,
-          puNoHistory: [{ head: head, from:'', at: at, by: by }] });
-      });
-      if(!dbUpsertMany('companies', rows)) throw new Error('저장이 거절되었습니다');
-      showToast(rows.length + '곳에 번호를 주었습니다 (' + block.first + '~' + block.last + ')');
+    /* 셈은 coAssignNumbers 한 곳에 있다 — 업체관리 띠·이관 뒤 자동도 같은 것을 쓴다.
+       ⚠ 여기서 다시 셈하지 말 것. 두 벌이면 한쪽만 고쳐져 번호 규칙이 갈라진다. */
+    coAssignNumbers(todo).then(function(r){
+      showToast(r.count + '곳에 번호를 주었습니다 (' + r.first + '~' + r.last + ')');
       setPreview(null); setBusy(false);
     }).catch(function(e){
       window._erpErrLog && window._erpErrLog(e);
