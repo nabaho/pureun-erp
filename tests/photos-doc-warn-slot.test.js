@@ -89,6 +89,11 @@ function cellFor(o) {
        ⚠ 여기서는 부르는 쪽이 정한다(기본 거짓) — 이 파일이 재는 것은 «서류 딱지와
          아래 한 줄»이다. 보류가 서류 딱지를 이기는지는 photos-read-gate 가 본다. */
     readHoldMine: function () { return !!o.hold; },
+    /* 🔤 판독 필요 딱지가 늘었다(2026-09-08) — 판독이 «누를 때만»으로 바뀌면서,
+       안 읽은 칸에 「눌러야 한다」를 적는다. 안 주면 칸이 통째로 안 그려진다.
+       ⚠ 여기서는 부르는 쪽이 정한다(기본 거짓) — 이 파일이 재는 것은 «서류 딱지와
+         아래 한 줄»이다. 딱지 차례와 단추는 photos-read-gate·ai-read-quota 가 본다. */
+    readWaitOf: function () { return !!o.wait; },
     ALL_OWNERS: '__all__', gridOwner: null,
     String: String, Set: Set, Boolean: Boolean
   };

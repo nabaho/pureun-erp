@@ -217,7 +217,11 @@
     serverBackupsIndex:'서버 백업 색인', serverBackupsRecentIndex:'서버 백업 최근 색인',
     systemBackups:'백업', systemBackupsIndex:'백업 색인', systemRestoreLog:'되살리기 기록',
     systemAlerts:'경보', exportLog:'내보내기 기록', exportLogTidy:'내보내기 기록 청소',
-    exportSeen:'내보내기 확인', pureun_v6:'2026-05 에 멈춘 옛 사본 — 살아 있는 자리가 아니다'
+    exportSeen:'내보내기 확인', pureun_v6:'2026-05 에 멈춘 옛 사본 — 살아 있는 자리가 아니다',
+    /* 업무 자료가 아니라 «살림»이다 — 앱별로 판독을 몇 번 불렀나(숫자뿐).
+       열쇠 하나를 사진첩·기업정보함·경력관리·급여가 나눠 쓰는데, 어디가 하루 몫을
+       태우는지 모르면 어디를 손볼지도 모른다(대표 물음 2026-09-08). */
+    ai_read_tally:'판독 호출 셈 — 앱별 하루 몫 살피기(숫자만)'
   };
 
   /* ── 사전에만 있고 아직 만들지 않는 관계어 ──

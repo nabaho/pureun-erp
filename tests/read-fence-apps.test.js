@@ -60,7 +60,12 @@ test('아는 구멍이 메워지면 목록에서 빼라고 알린다', () => {
 const SAFE = ['init', 'bizNoDigits', 'bizNoValid', 'fmtBizNo', 'mapTo', 'keysFrom',
   'MODELS', 'PROMPTS', 'READ_VERSION', 'PROMPT_VERSION', 'autoOk',
   /* healRead 는 밖으로 안 보낸다 — 이미 읽어 온 답을 손보는 계산뿐이다 */
-  'healRead'];
+  'healRead',
+  /* APP_KO 는 «이름표 표»다(2026-09-08) — 앱 이름을 한국말로 옮기는 사전뿐이고
+     사진도 글도 어디로 안 보낸다. 앱별 판독 셈을 화면에 「사진첩 184」로 적는 데 쓴다.
+     ⚠ 이 표를 화면 쪽에 두면 안 된다 — 사진첩 화면에 다른 앱 이름을 글자로 적으면
+       「다른 앱의 클라우드 루트를 건드리지 않는다」가 걸린다(그 검사가 옳다). */
+  'APP_KO'];
 
 /* 그 앱에서 판독기를 부르는 것이 허락된 자리. 각 앱의 울타리 검사가 따로 지킨다. */
 const GATED = {

@@ -355,8 +355,13 @@ test('★ 판독은 문서마다 한 번만, 그러나 다른 문서는 빠뜨�
     ]
   };
   vm.createContext(ctx);
-  vm.runInContext('var readQuotaOut = false;\n' + fnOf(app, 'autoReadPending'), ctx);
-  ctx.autoReadPending();
+  /* ⚠ 2026-09-08 — 판독이 «누를 때만»으로 바뀌었다(대표 지시). autoReadPending 은
+       이제 «세기만» 하고, 실제로 거는 것은 readWaitRun 이다. 여기서 재는 것은
+       «문서마다 한 번» 규칙이라 그대로이고, 겨눔만 누르는 쪽으로 옮겼다.
+     ⚠ 대역을 만들지 «않는다» — 화면과 다른 규칙을 보게 된다. */
+  vm.runInContext('var readQuotaOut = false;\nfunction renderGrid() {}\n'
+    + fnOf(app, 'autoReadPending') + '\n' + fnOf(app, 'readWaitRun'), ctx);
+  ctx.readWaitRun();
   assert.equal(joined(queued), 'a,x,z',
     '문서마다 한 번(첫 쪽)씩 + 홑장 — 지금은 ' + joined(queued));
 });

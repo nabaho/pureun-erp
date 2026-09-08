@@ -33,7 +33,34 @@
     deps.delay = o.delay || function (fn, ms) { setTimeout(fn, ms); };
     deps.readDocUrl = o.readDocUrl || null;
     deps.getToken = o.getToken || null;
+    deps.app = o.app || null;
     return true;
+  }
+
+  /* ⑤ 어느 화면이 부르나 — 서버가 앱별로 셈을 적는다(대표 물음 2026-09-08).
+     ★ 부르는 곳마다 적게 하지 «않는다». 여섯 군데가 저마다 init 하는데, 한 곳만
+       빠뜨리면 그 앱은 셈에서 사라지고 「사진첩이 다 썼다」는 틀린 답이 나온다.
+       화면 파일 이름은 «빠뜨릴 수가 없다».
+     ⚠ 모르는 화면은 'other' 다 — 지어내지 않는다. 서버도 아는 이름만 받는다. */
+  var APP_BY_PAGE = [
+    [/pu-photos/i, 'photos'], [/pu-cards/i, 'cards'], [/kcareer/i, 'kcareer'],
+    [/pu-paydata|payroll/i, 'payroll'], [/rules/i, 'rules'], [/fund/i, 'fund'],
+    [/pu-erp/i, 'erp']
+  ];
+  /* 사람에게 보일 이름 — «이름을 정하는 곳»에 둔다. 화면 쪽에 두면 앱 이름이
+     늘 때 한쪽만 고쳐져 「other 12번」처럼 뜻 모를 줄이 뜬다.
+     ⚠ 사진첩 화면에 이 표를 두면 안 된다 — 거기에 다른 앱 이름을 글자로 적으면
+       「다른 앱의 클라우드 루트를 건드리지 않는다」 검사가 걸린다(그 검사가 옳다). */
+  var APP_KO = { photos: '사진첩', cards: '기업정보함', kcareer: '경력관리',
+    payroll: '급여', rules: '취업규칙', fund: '기금', erp: '푸른이알피', other: '그 밖' };
+  function appName() {
+    if (deps.app) return deps.app;
+    var p = '';
+    try { p = String((global.location && global.location.pathname) || ''); } catch (_) { p = ''; }
+    for (var i = 0; i < APP_BY_PAGE.length; i++) {
+      if (APP_BY_PAGE[i][0].test(p)) return APP_BY_PAGE[i][1];
+    }
+    return 'other';
   }
 
   /* 서버 대리인을 쓸 수 있나 — 주소와 로그인 증명이 둘 다 있어야 한다.
@@ -362,7 +389,9 @@
      계속 429(사용 가능 한도 0)가 났고, '사용량 초과'로 잘못 짚었다.
      그래서 **여러 모델을 차례로 시도하고 되는 것을 기억한다.**
      앞에 있는 것이 우선. 무료 등급에서 쓸 수 있는 것만 둔다. */
-  var MODELS = ['gemini-2.5-flash', 'gemini-3.1-flash-lite'];
+  /* ⚠ 서버(functions/doc-read.js)의 MODELS 와 «같은 순서»여야 한다.
+     2026-09-08 에 하나를 더 세웠다 — 몫은 모델마다 따로라 목록 길이가 곧 하루치다. */
+  var MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3.1-flash-lite'];
   var goodModel = null;   // 한 번 통한 모델을 기억해 헛걸음을 줄인다
 
   function modelUrl(model, key) {
@@ -486,7 +515,7 @@
       return deps.fetch(deps.readDocUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-        body: JSON.stringify({ parts: parts })
+        body: JSON.stringify({ parts: parts, app: appName() })
       });
     }).then(function (r) {
       return (r && r.json ? r.json() : Promise.resolve(null)).catch(function () { return null; })
@@ -1283,6 +1312,7 @@
     /* 서류 종류마다 사전이 다른 앱을 위한 입구(경력관리) — 위 설명 참고 */
     readWithPrompt: readWithPrompt,
     readDocText: readDocText,
+    appName: appName, APP_KO: APP_KO,   /* ⑤ 앱별 판독 셈 — 검사가 이것을 겨눈다 */
     readWageTable: readWageTable,
     readTableText: readTableText,
     summarizeText: summarizeText,

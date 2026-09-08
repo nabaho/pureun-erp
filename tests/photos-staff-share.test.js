@@ -233,7 +233,19 @@ test('★ 콘솔과 «한 곳도» 다르지 않다', () => {
                    '/rules_mgmt/casebook/ocr',
                    '/rules_mgmt/casebook/rev/$site/$rev/docs/$role/ocr',
                    '/rules_mgmt/casebook/rev/$site/$rev/docs/$role/ocrN',
-                   '/rules_mgmt/casebook/rev/$site/$rev/docs/$role/ocrAt'];
+                   '/rules_mgmt/casebook/rev/$site/$rev/docs/$role/ocrAt',
+  /* ★ 2026-09-08 — ⑤ 판독을 몇 번 불렀나(앱별 셈)가 기다린다.
+       /ai_read_tally/{한국날짜}/{앱}/{n,quota}
+     ★ 왜 생겼나 — 대표 물음 「판독 한도 어떻게 해결할까」. 세는 곳이 «아예 없어»
+       「사진첩이 다 썼나 경력관리가 다 썼나」를 알 수 없었다. 열쇠 하나를 넷이
+       나눠 쓰는데 어디가 태우는지 모르면 어디를 손볼지도 모른다.
+     ⚠ 담기는 것은 «숫자뿐»이다 — 사진·글·사람 이름은 한 글자도 없다.
+       그래서 읽기를 재직 직원 전체에 열었다(화면이 「오늘 판독 203번」을 보여 준다).
+     ⚠ 쓰기는 «아무도 못 한다»(false). 서버는 관리자 SDK 로 돌아 규칙을 지나간다 —
+       브라우저가 숫자를 부풀려 「많이 썼다」로 꾸미지 못하게 막은 것이다.
+     ⚠ 올라가기 전까지 화면의 셈 줄은 «안 뜬다»(읽기가 막혀 조용히 넘어간다).
+       판독 자체는 멀쩡하다 — 세는 것만 안 될 뿐이다. */
+                   '/ai_read_tally'];
   assert.deepEqual(diff.sort(), PENDING.sort(),
     '★ 뜻하지 않은 곳이 바뀌었습니다: ' + diff.join(', ') +
      '\n  규칙은 한 번에 통째로 바뀝니다 — 곁다리 변경이 섞이면 무엇이 깨졌는지 못 짚습니다.');

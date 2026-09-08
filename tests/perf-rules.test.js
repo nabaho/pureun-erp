@@ -79,6 +79,11 @@ const allowTop = ['systemAlerts','systemBackups','systemBackupsIndex','systemRes
      「permission_denied at /ilabor/items」 로 막혔다 — 받아 놓고 아무도 못 봤다.
      읽기만 열고 쓰기는 서버만 한다(.write:false). */
   'ilabor',
+  /* 2026-09-08 판독을 몇 번 불렀나 — 앱별 셈(대표 물음 「판독 한도 어떻게 해결할까」).
+     세는 곳이 «아예 없어» 「사진첩이 다 썼나 경력관리가 다 썼나」를 알 수 없었다.
+     담기는 것은 «숫자뿐»이라 읽기는 재직 직원 전체, 쓰기는 아무도 못 한다(.write:false) —
+     서버만 관리자 SDK 로 적는다. */
+  'ai_read_tally',
   /* 2026-08-07 건의함을 「전 직원 공개(data/suggestions)」에서 대표만 보는 비공개 자리로
      옮겼다. 옮기고 이 줄을 안 적어서 배포가 두 번 실패했다(06:24·06:52) —
      최상위를 늘렸으면 반드시 여기에 적을 것. */

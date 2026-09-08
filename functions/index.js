@@ -1940,6 +1940,8 @@ exports.readDoc = functions
 
     // cfg = 부르는 쪽이 정한 값(온도·최대 길이). 걸러진 것만 넘어온다.
     const r = await DR.callGemini(fetch, key, v.parts, null, v.cfg);
+    // ⑤ 한 번 불렀다 — 세어 둔다(대표 물음 2026-09-08). 숫자만 담는다.
+    await bumpReadTally(v.app, r.ok ? "n" : (DR.dailyQuotaGone(r.why) ? "quota" : "n"));
     if (!r.ok) {
       /* ⚠ 상태를 **그대로** 돌려준다. 브라우저의 재시도·모델 갈아타기 판단이
          이 숫자를 보고 움직인다(429 면 잠시 뒤, 403 이면 곧바로 포기). */
@@ -1949,6 +1951,27 @@ exports.readDoc = functions
     }
     res.json({ ok: true, reply: r.json });
   });
+
+/* ⑤ 판독을 몇 번 불렀나 — 앱별로 센다 (대표 물음 2026-09-08 「판독 한도 어떻게 해결할까」).
+   여태 세는 곳이 «아예 없어» 「사진첩이 다 썼나 경력관리가 다 썼나」를 알 수 없었다.
+   ⚠ **판독을 막지 않는다.** 세다 실패해도 그냥 넘어간다 — 세는 일 때문에 읽기가
+     멈추면 그것이 훨씬 큰 손해다. 그래서 await 하되 catch 로 삼킨다.
+   ⚠ 담는 것은 **숫자뿐**이다. 사진·글·사람 이름은 한 글자도 안 담는다. */
+async function bumpReadTally(app, kind) {
+  try {
+    const db = getDatabase();
+    /* ⚠⚠ «admin 을 거치는» ServerValue.increment 를 쓰지 말 것 — **이 파일에 admin
+         변수가 없다.** 이 저장소는 firebase-admin 을 낱개로 불러 쓴다(getDatabase 등).
+         2026-09-03 뉴스레터 열람 셈이 바로 그것으로 매번 터졌고, catch 가 조용히
+         삼켜 «기록만 안 남았다» — 화면으로는 알 수 없었다.
+       ★ 그래서 «거래»로 올린다. 불러올 것이 없고, 넷이 같은 때 불러도 안 어긋난다. */
+    await Promise.all(DR.tallyPaths(app, null, kind).map(function (p) {
+      return db.ref(p).transaction(function (cur) { return (Number(cur) || 0) + 1; });
+    }));
+  } catch (e) {
+    console.warn("판독 셈 적기 실패(판독은 계속):", String((e && e.message) || e));
+  }
+}
 
 // ══════════ AI 지우개 — 사진에서 표시한 곳을 지우고 배경으로 메운다 ══════════
 // 대표 지시 2026-08-29: "특정부분 없어지게" · "편집기능에 최소 비용이 들게"
