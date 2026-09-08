@@ -19,7 +19,13 @@
    ⚠ 두 곳에 적히는 것이 마음에 걸리지만, 브라우저는 이제 모델을 안 고르므로
      실제로 쓰이는 것은 여기 하나다. 브라우저 쪽은 옛 길(직접 부르기)이 남아 있는
      동안만 쓰이고, 다 옮기면 지운다. */
-const MODELS = ["gemini-2.5-flash", "gemini-3.1-flash-lite"];
+/* ⚠ 몫은 «모델마다 따로»다 — 그래서 이 목록의 길이가 곧 하루에 읽을 수 있는 양이다.
+   2026-09-08 에 하나를 더 세웠다(대표 물음 「판독 한도 어떻게 해결할까」).
+   ★ 없는 이름은 «위험이 없다» — 404 가 오면 callGemini 가 다음 모델로 넘어간다.
+     그래서 쓸 만한 것을 세워 두는 편이 비워 두는 것보다 낫다.
+   ⚠ 이것은 «아껴 쓰기»이지 해결이 아니다. 근본은 열쇠를 유료 등급으로 올리는 것이다
+     — 무료 등급이라 free_tier_requests 로 걸린다(dailyQuotaGone 참고). */
+const MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-flash-lite"];
 
 /* 사진 한 장이 대략 1~2MB. 여러 쪽을 한 번에 보내는 계약서까지 생각해 넉넉히 잡되,
    무한정 받지는 않는다 — 받는 만큼 메모리를 쓰고, 그것이 곧 요금이다. */
@@ -66,7 +72,37 @@ function validate(body) {
       ? "사진이 너무 큽니다 — 장수를 나눠 판독해 주세요"
       : "글자가 너무 많습니다 — 나눠서 판독해 주세요" };
   }
-  return { ok: true, parts: parts, cfg: body.generationConfig };
+  return { ok: true, parts: parts, cfg: body.generationConfig, app: appOf(body.app) };
+}
+
+/* ══ ⑤ 어느 앱이 몫을 썼나 (대표 물음 2026-09-08 「판독 한도 어떻게 해결할까」) ══
+   여태 세는 곳이 «아예 없어» 「사진첩이 다 썼나 경력관리가 다 썼나」를 알 수 없었다.
+   열쇠 하나를 넷이 나눠 쓰는데, 어디가 태우는지 모르면 어디를 손볼지도 모른다.
+
+   ⚠ 부르는 쪽이 «스스로 밝히는» 이름이다 — 그러니 아무 글자나 올 수 있다고 보고
+     아는 이름만 받는다. 모르면 'other' 다. 여기 걸러 두지 않으면 실시간DB 열쇠에
+     못 쓰는 글자(. # $ / [ ])가 들어가 그 자리가 통째로 안 써진다.
+   ⚠ 이름만 센다 — 사진·글·사람 이름은 «한 글자도» 안 담는다. 숫자뿐이다. */
+const APPS = ["photos", "cards", "kcareer", "payroll", "rules", "fund", "erp"];
+function appOf(v) {
+  const s = String(v == null ? "" : v).trim().toLowerCase();
+  return APPS.indexOf(s) >= 0 ? s : "other";
+}
+
+/* 오늘 날짜 — «한국 날짜»여야 한다. UTC 로 세면 아침 9시 전이 어제로 들어가고,
+   구글의 하루 몫은 그것과 또 다르게 끊긴다(billing-spike 검사가 같은 자리를 지킨다). */
+function ymdKST(now) {
+  const t = (now == null ? Date.now() : now) + 9 * 60 * 60 * 1000;
+  return new Date(t).toISOString().slice(0, 10);
+}
+
+/* 셀 자리 — 앱별·합계. 「몇 번 불렀나(n)」와 「한도로 막힌 수(quota)」를 가른다.
+   ⚠ 둘을 합치면 「많이 썼다」와 「막혔다」가 섞여, 아껴 쓴 날과 걸린 날이 같아 보인다. */
+function tallyPaths(app, ymd, kind) {
+  const k = (kind === "quota") ? "quota" : "n";
+  const d = ymd || ymdKST();
+  return ["ai_read_tally/" + d + "/" + appOf(app) + "/" + k,
+          "ai_read_tally/" + d + "/_all/" + k];
 }
 
 /* 부르는 쪽이 정할 수 있는 값 — **여기 적힌 것만** 받는다.
@@ -161,5 +197,6 @@ async function callGemini(fetchFn, key, parts, waits, cfg) {
 
 module.exports = {
   MODELS, MAX_BODY_BYTES, MAX_OUTPUT_TOKENS,
-  isTransient, validate, geminiBody, modelUrl, safeReason, callGemini, dailyQuotaGone
+  isTransient, validate, geminiBody, modelUrl, safeReason, callGemini, dailyQuotaGone,
+  APPS, appOf, ymdKST, tallyPaths
 };

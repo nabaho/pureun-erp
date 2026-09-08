@@ -74,7 +74,12 @@ function load(items) {
     constOf('READ_ASK_MIN'),
     fnOf('batchSizes'), fnOf('upBatchKey'), fnOf('readHoldOf'), fnOf('readSkipWhy'),
     'function renderReadAsk() {}',
-    fnOf('neverRead'), fnOf('staleRead'), fnOf('autoReadPending')
+    fnOf('neverRead'), fnOf('staleRead'), fnOf('autoReadPending'),
+    /* ⚠ 2026-09-08 — 판독이 «누를 때만»으로 바뀌었다(대표 지시). autoReadPending 은
+       이제 «세기만» 하고, 실제로 거는 것은 readWaitRun 이다. 이 파일이 재는 것은
+       «한도 셈»이라 규칙(안 읽은 것 먼저·20장·3장·문서마다 한 번)은 그대로다 —
+       겨눔만 누르는 쪽으로 옮겼다. 대역을 만들지 «않는다»(화면과 다른 규칙을 보게 된다). */
+    fnOf('readWaitOf'), fnOf('readWaitRun'), 'function renderGrid() {}'
   ].join('\n'), ctx);
   return ctx;
 }
@@ -87,7 +92,7 @@ test('★ 판 번호가 올라 다시 읽는 것은 한 번에 몇 장뿐이다'
   const list = [];
   for (let i = 0; i < 50; i++) list.push(stale('s' + i));
   const c = load(list);
-  c.autoReadPending();
+  c.readWaitRun();
   assert.equal(c._queued.length, 3,
     '★ 다시 읽기를 20장씩 하면 원본 수십 MB 를 열 때마다 내려받습니다: ' + c._queued.length);
   assert.match(c._note.textContent, /남은 47장/, '남은 장수를 안 알리면 「왜 저건 안 됐지」가 됩니다');
@@ -97,7 +102,7 @@ test('★ 안 읽은 사진은 그대로 20장까지 읽는다 — 일이 밀리
   const list = [];
   for (let i = 0; i < 30; i++) list.push(fresh('f' + i));
   const c = load(list);
-  c.autoReadPending();
+  c.readWaitRun();
   assert.equal(c._queued.length, 20, '새로 올린 사진까지 줄이면 「올렸는데 판독이 안 된다」가 됩니다');
 });
 
@@ -106,7 +111,7 @@ test('★ 안 읽은 것이 먼저다 — 새로 올린 사진이 뒤로 밀리�
   for (let i = 0; i < 25; i++) list.push(stale('s' + i));
   list.push(fresh('NEW'));
   const c = load(list);
-  c.autoReadPending();
+  c.readWaitRun();
   assert.ok(c._queued.indexOf('NEW') >= 0, '★ 방금 올린 사진이 다시 읽기에 밀려 안 읽힙니다');
   assert.equal(c._queued[0], 'NEW', '안 읽은 것이 앞에 서야 합니다');
   assert.equal(c._queued.length, 1 + 3);
@@ -116,7 +121,7 @@ test('★ 회의사진·급여서류는 판 번호가 올라도 다시 안 읽�
   /* 담는 것이 한 줄뿐이라 다시 읽어도 새로 나올 것이 없다.
      그런데 원본 내려받기 값은 똑같이 든다. */
   const c = load([stale('m1', 'meeting'), stale('p1', 'payslip'), stale('c1', 'card')]);
-  c.autoReadPending();
+  c.readWaitRun();
   assert.deepEqual(c._queued, ['c1'], '★ 나올 것 없는 사진을 다시 읽고 있습니다');
 });
 
@@ -124,7 +129,7 @@ test('★ 「기타서류(other)」는 반드시 다시 읽는다 — 판 번호
   /* 종류를 못 가려 굳은 사진을 되살리는 것이 판 번호를 올리는 까닭이다
      (2026-08-06: 회의사진 0장인데 기타서류에 6장이 앉아 있었다) */
   const c = load([stale('o1', 'other')]);
-  c.autoReadPending();
+  c.readWaitRun();
   assert.deepEqual(c._queued, ['o1'], '★ other 를 건너뛰면 잘못 굳은 사진이 영영 안 풀립니다');
   assert.ok(!/other/.test(app.match(/^const RESTALE_SKIP = \{[^\n]*\};/m)[0]),
     '★ 건너뛸 종류에 other 가 들어갔습니다');
@@ -137,13 +142,13 @@ test('★ 다시 읽기를 0 으로 막으면 안 된다 — 판독기를 고쳐
 
 test('사람이 확인한 것은 안 뒤집는다', () => {
   const c = load([{ id: 'a', meta: { read: { kind: 'card', rv: 7, ack: true } } }]);
-  c.autoReadPending();
+  c.readWaitRun();
   assert.deepEqual(c._queued, []);
 });
 
 test('다 읽은 사진은 안 건드린다', () => {
   const c = load([done('a'), done('b')]);
-  c.autoReadPending();
+  c.readWaitRun();
   assert.deepEqual(c._queued, []);
   assert.equal(c._note.style.display, 'none', '할 일이 없으면 안내도 없어야 합니다');
 });
@@ -157,7 +162,7 @@ test('★ 모으는 중인 장은 아직 안 읽는다 — 안 읽은 장도, �
     { id: 'a', meta: { doc: { group: 'g', collecting: true } } },                 // 아직 안 읽음
     { id: 'b', meta: { doc: { group: 'g', collecting: true }, read: { kind: 'card', rv: 7 } } }  // 이미 읽음 = 다시 읽을 차례
   ]);
-  c.autoReadPending();
+  c.readWaitRun();
   assert.deepEqual(c._queued, [],
     '★ 모으는 중인 장이 판독 대기열에 들어갔습니다 — 낱장으로 또 읽힙니다');
   assert.equal(c.neverRead({ meta: { doc: { collecting: true } } }), false);
@@ -174,7 +179,7 @@ test('★ 여러 쪽 문서는 문서마다 한 번만 — 안 읽은 쪽·다�
     { id: 'q1', meta: { doc: { group: 'g2', page: 1 }, read: { kind: 'card', rv: 7 } } },
     { id: 'q2', meta: { doc: { group: 'g2', page: 2 }, read: { kind: 'card', rv: 7 } } }
   ]);
-  c.autoReadPending();
+  c.readWaitRun();
   assert.deepEqual(c._queued, ['p1', 'q1'], '★ 같은 문서를 두 번 읽습니다');
 });
 

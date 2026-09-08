@@ -1843,6 +1843,19 @@
     });
   }
 
+  /* ⑤ 오늘 판독을 몇 번 불렀나 — 서버가 앱별로 세어 둔 것을 읽어 온다(대표 물음 2026-09-08).
+     ⚠ 화면이 db.ref 를 «직접» 부르면 안 된다 — 상위 노드 set 같은 사고 길이 다시
+       열린다(2026-07 실데이터 사고). 그래서 읽기도 이 층을 지난다.
+     ⚠ 여기는 «읽기만» 한다. 셈을 올리는 것은 서버(관리자 SDK)뿐이고, 서버 규칙도
+       이 자리를 아무도 못 쓰게(.write:false) 막았다 — 브라우저가 숫자를 부풀려
+       「많이 썼다」로 꾸미지 못한다.
+     ⚠ 담긴 것은 숫자뿐이다 — 사진·글·사람 이름은 한 글자도 없다. */
+  function readTally(ymd) {
+    if (!deps.db) return Promise.resolve(null);
+    return deps.db.ref('ai_read_tally/' + ymd).once('value')
+      .then(function (s) { return s.val() || null; });
+  }
+
   function amAdmin() { return deps.isAdmin; }
   function myUid() { return deps.uid; }
   function myName() { return deps.name; }
@@ -2301,6 +2314,7 @@
     amAdmin: amAdmin,
     myUid: myUid,
     myName: myName,
+    readTally: readTally,      /* ⑤ 오늘 판독 셈 읽기 (2026-09-08) */
     lookupName: lookupName,
     touchOwner: touchOwner,
     listOwners: listOwners,

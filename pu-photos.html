@@ -19,7 +19,7 @@
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=3"></script>
 <!-- ?v= 저장 층을 고치면 반드시 올린다 — 캐시에 묵으면 고친 것이 통째로 묻힌다. -->
-<script src="js/pu-photo-store.js?v=25"></script>
+<script src="js/pu-photo-store.js?v=26"></script>
 <!-- 주민번호 가림 — 계산 층과, 급여데이터함과 나눠 쓰는 긋기 층 -->
 <script src="js/pu-rrn-mask.js?v=4"></script>
 <script src="js/pu-rrn-mask-ui.js?v=3"></script>
@@ -34,7 +34,7 @@
      이 파일이 캐시에 묵으면 옛 지시로 읽어 제목이 안 생기는데, 화면(pu-photos.html)은
      새것이라 제목 자리만 비어 보인다 — 고친 것이 통째로 묻힌 것처럼 된다.
      tests/photos-doc-title.test.js 가 둘이 어긋나지 않는지 지킨다. -->
-<script src="js/pu-doc-read.js?v=33"></script>
+<script src="js/pu-doc-read.js?v=34"></script>
 <script src="js/pu-lockkey.js?v=2"></script>
 <!-- ?v= 는 등록 층을 고칠 때 올린다 — 캐시에 묵으면 고친 안내가 안 보인다. -->
 <script src="js/pu-doc-file.js?v=26"></script>
@@ -359,11 +359,22 @@ button{font-family:inherit;cursor:pointer}
   padding:6px 13px;font-size:12.5px;font-weight:700;font-family:inherit}
 #readAskBar button.pri{background:#1e40af;color:#fff;border-color:#1e40af}
 #readAskBar.out{background:#fef2f2;border-color:#fecaca}
+/* ⑤ 오늘 판독 셈 — 줄 «전체»를 차지한다(대표 물음 2026-09-08).
+   ⚠ 단추 옆에 끼우면 폰에서 단추를 밀어내 「판독하기」가 다음 줄로 떨어진다. */
+#readAskBar .tly{flex:1 1 100%;font-size:11.5px;color:#854d0e;opacity:.9;line-height:1.5}
+#readAskBar.out .tly{color:#991b1b}
 #readAskBar.out .t,#readAskBar.out .d{color:#991b1b}
 #readAskBar.out .n{background:#991b1b}
 /* ⏸ 판독 보류 딱지 — 「서류」 딱지와 **같은 자리**를 쓴다(칸 아래 20px 을 또 쓰지 않게).
    색은 위 띠와 같은 주황이라, 띠와 칸이 «같은 일»을 말하는 것으로 읽힌다. */
 #grid .cell .tag.hold{background:#854d0e;color:#fff}
+/* ㉲ 🔤 판독 필요 — 「보류」와 같은 호박색 계열이되 한 칸 밝다.
+   둘은 «다음에 할 일»이 다르다(보류는 답하기, 이것은 누르기). 같은 색이면 안 갈린다. */
+#grid .cell .tag.wait{background:#d97706;color:#fff}
+#grid .cell .rdgo{position:absolute;right:4px;bottom:4px;font-size:10px;font-weight:700;
+  padding:2px 7px;border-radius:6px;border:1px solid #fde68a;background:#fffbeb;color:#854d0e;
+  cursor:pointer;z-index:2}
+#grid .cell .rdgo:hover{background:#fde68a}
 /* 원본이 작아 글자를 못 읽었을 수 있는 서류 — 급여서류(빨강)보다 한 단 낮은 주황.
    지우라는 말이 아니라 「대조해 보라」는 말이라 색을 갈라 둔다. */
 .smallwarn{border:1.5px solid #fbbf24;background:#fffbeb;border-radius:9px;padding:10px 11px;margin:8px 0}
@@ -6986,7 +6997,7 @@ function autoReadPending() {
      ⚠ 오늘 몫이 없으면 **한 장도 걸지 않는다** — 걸어도 같은 답이고, 그 사이
        화면은 「판독 중…」이라고 거짓말을 한다. */
   const gate = function (it) { return !readSkipWhy(it); };
-  if (readQuotaOut) { $('autoNote').style.display = 'none'; renderReadAsk(); return; }
+  if (readQuotaOut) { $('autoNote').style.display = 'none'; renderReadAsk(); return null; }
   const fresh = gridItems.filter(canRead).filter(gate).filter(neverRead).filter(oneDoc);
   /* ⚠ 실패한 것을 «먼저» 거른다 — 아래 staleRead 는 실패한 것도 참일 수 있어,
      안 가르면 같은 사진이 두 자리에 들어가 한 번에 두 번 읽힌다. */
@@ -7001,16 +7012,66 @@ function autoReadPending() {
   const take = fresh.slice(0, AUTO_READ_MAX)
     .concat(failed.slice(0, AUTO_RETRY_MAX))
     .concat(stale.slice(0, AUTO_RESTALE_MAX));
-  if (!take.length) { $('autoNote').style.display = 'none'; return; }
-  take.forEach(function (it) { queuePhotoRead(it.id); });
   const rest = (fresh.length - Math.min(fresh.length, AUTO_READ_MAX)) +
     (failed.length - Math.min(failed.length, AUTO_RETRY_MAX)) +
     (stale.length - Math.min(stale.length, AUTO_RESTALE_MAX));
+  return { fresh: fresh, failed: failed, stale: stale, take: take, rest: rest };
+}
+
+/* ══ ㉲ 판독은 «누를 때만» (대표 지시 2026-09-08) ═══════════════════════════
+   「문서일 경우 문서는 자동판독 눌러야 된다는 표시 좀 해 달라」
+
+   ★★ 왜 바꾸나 — 하루 몫을 태우던 것이 바로 이 «저절로»였다.
+     저장소 실측: 한 장씩 올라온 뭉치 556개에 서류가 471장이다. 서류는 한 장씩 온다.
+     그런데 「서류입니까?」는 열 장 넘는 뭉치에만 물었으므로(READ_ASK_MIN),
+     한 장짜리 서류는 올리는 족족 그냥 읽혔다 — 평소 업무가 그대로 몫을 태웠다.
+     한도는 구글 «무료 등급»의 하루 몫이고(free_tier_requests), 그 열쇠 하나를
+     사진첩·기업정보함·경력관리·급여가 함께 쓴다. 사진첩이 다 쓰면 나머지도 멎는다.
+
+   ★★ 안 읽는 것으로 끝내면 «고장»이 된다. 그래서 «표시»가 이 바꿈의 절반이다:
+     ① 칸마다 「🔤 판독 필요」 딱지와 [🔤 판독] 단추
+     ② 위 띠에 «몇 장 기다리는지» — 한 번에 거는 단추와 함께
+     둘 중 하나라도 빠지면 서류가 조용히 안 읽힌 채 남고, 한 달 뒤에 안다.
+
+   ⚠ 사람이 누르는 길은 «하나도» 막지 않는다 — 막는 것은 «저절로»뿐이다. */
+
+/* 이 사진이 「눌러 주면 읽을 수 있는데 아직 안 읽은」 장인가 — 딱지가 이것을 본다.
+   ⚠ 판정을 여기 한 곳에 모은다. 딱지와 띠가 서로 다른 셈을 하면
+     「3장 기다림」이라 해 놓고 칸에는 다섯 개가 붙는다. */
+function readWaitOf(it) {
+  if (readQuotaOut) return false;              // 오늘은 눌러도 같은 답이다
+  if (!mayTouch(it.id)) return false;          // 남의 사진 — 눌러도 서버가 막는다
+  if (readSkipWhy(it)) return false;           // 사진이라 했거나 「보류」 중이다
+  if (it._queuedRead) return false;            // 이미 줄에 있다
+  return neverRead(it) || failedRead(it) || staleRead(it);
+}
+
+/* 단추를 눌렀을 때 «비로소» 건다. 상한(AUTO_READ_MAX 등)은 그대로 쓴다 —
+   400장을 한 번에 걸면 그 한 번으로 하루 몫이 사라진다. */
+function readWaitRun() {
+  const p = autoReadPending();
   const el = $('autoNote');
+  /* ⚠ 걸 것이 없으면 안내를 «감춘다». 안 감추면 지난번 「판독 중… 20장」이 그대로
+     남아, 다 끝난 뒤에도 화면은 아직 읽는 중이라고 거짓말을 한다. */
+  if (!p || !p.take.length) { if (el) el.style.display = 'none'; renderReadAsk(); return; }
+  p.take.forEach(function (it) { queuePhotoRead(it.id); });
   el.style.display = 'block';
-  el.textContent = rest
-    ? '판독 중… ' + take.length + '장 (남은 ' + rest + '장은 다음에 열 때)'
-    : '판독 중… ' + take.length + '장';
+  el.textContent = p.rest
+    ? '판독 중… ' + p.take.length + '장 (남은 ' + p.rest + '장은 한 번 더 눌러 주세요)'
+    : '판독 중… ' + p.take.length + '장';
+  renderGrid();
+  renderReadAsk();
+}
+
+/* 사진 한 장만 — 칸의 [🔤 판독] 단추.
+   ⚠ 여기서도 문지기를 다시 본다. 단추를 그린 뒤 화면이 바뀌었을 수 있다. */
+function readWaitOne(id) {
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it) return;
+  if (!readWaitOf(it)) { renderGrid(); renderReadAsk(); return; }
+  queuePhotoRead(it.id);
+  renderGrid();
+  renderReadAsk();
 }
 
 /* 격자에 있는 사진 한 장을 판독 대기열에 넣는다(올리는 중이 아닌 것). */
@@ -7069,6 +7130,41 @@ function readHoldIds() {
   return gridItems.filter(readHoldMine).map(function (it) { return it.id; });
 }
 
+/* ══ ⑤ 오늘 판독을 몇 번 썼나 (대표 물음 2026-09-08) ═══════════════════════
+   서버가 앱별로 세어 둔 것을 읽어 «한 줄로» 보여 준다. 열쇠 하나를 넷이 나눠 쓰는데,
+   어디가 몫을 태우는지 모르면 「사진첩이 다 썼나 경력관리가 다 썼나」를 알 수 없다.
+   ⚠ 숫자뿐이다 — 사진·글·사람 이름은 담기지 않는다(서버 규칙도 숫자만 받는다).
+   ⚠ 못 읽어도 «조용히 넘어간다». 셈을 못 읽는 것 때문에 판독 띠가 안 뜨면 손해다. */
+/* 이름표는 «이름을 정하는 곳»(PuDocRead.APP_KO)이 든다 — 여기 적으면 앱 이름이
+   늘 때 한쪽만 고쳐지고, 다른 앱 이름을 글자로 적는 것 자체가 이 화면의 금기다
+   (「다른 앱의 클라우드 루트를 건드리지 않는다」 검사가 그것을 지킨다). */
+const tallyKo = function (k) {
+  const t = (window.PuDocRead && PuDocRead.APP_KO) || {};
+  return t[k] || k;
+};
+let readTally = null;
+function readTallyLine() {
+  if (!readTally) return '';
+  const all = Number((readTally._all && readTally._all.n) || 0);
+  if (!all) return '';
+  const 칸 = Object.keys(readTally)
+    .filter(function (k) { return k !== '_all' && Number((readTally[k] || {}).n || 0) > 0; })
+    .sort(function (a, b) { return Number(readTally[b].n || 0) - Number(readTally[a].n || 0); })
+    .map(function (k) { return tallyKo(k) + ' ' + Number(readTally[k].n || 0); });
+  const 막힘 = Number((readTally._all && readTally._all.quota) || 0);
+  return '<span class="tly">오늘 판독 <b>' + all + '번</b>'
+    + (칸.length ? ' (' + esc(칸.join(' · ')) + ')' : '')
+    + (막힘 ? ' · <b>한도로 막힌 ' + 막힘 + '번</b>' : '')
+    + ' — 회사 전체가 한 열쇠를 나눠 씁니다</span>';
+}
+function loadReadTally() {
+  /* 한국 날짜로 센다 — 서버(ymdKST)와 같은 날을 봐야 숫자가 맞는다 */
+  const ymd = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+  return PuPhotoStore.readTally(ymd)
+    .then(function (v) { readTally = v; renderReadAsk(); })
+    .catch(function (e) { console.warn('[판독 셈]', e); });
+}
+
 function renderReadAsk() {
   const el = $('readAskBar');
   if (!el) return;
@@ -7080,11 +7176,26 @@ function renderReadAsk() {
     el.innerHTML = '<span class="t">🛑 오늘 구글 판독 한도를 다 썼습니다</span>' +
       '<span class="d">자동 판독을 멈췄습니다(자정에 다시 열립니다). ' +
       '<b>사진은 그대로 다 올라가 있습니다.</b> 급한 서류는 사진을 열어 「🔤」를 눌러 주세요 — ' +
-      '사람이 누르는 길은 막지 않습니다.</span>';
+      '사람이 누르는 길은 막지 않습니다.</span>' + readTallyLine();
     return;
   }
   const ids = readHoldIds();
-  if (!ids.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  /* ㉲ 물을 것이 없으면 «기다리는 것»을 보여 준다 — 판독은 이제 누를 때만 한다.
+     ⚠ 「보류」 물음이 이긴다. 둘 다 띄우면 무엇을 먼저 눌러야 하는지 알 수 없다. */
+  if (!ids.length) {
+    const wait = gridItems.filter(readWaitOf);
+    if (!wait.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.className = 'wait';
+    el.style.display = 'flex';
+    el.innerHTML = '<span class="t">🔤 아직 안 읽은 서류</span>' +
+      '<span class="n">' + wait.length + '장</span>' +
+      '<span class="d"><b>판독은 하루에 쓸 수 있는 수가 정해져 있고</b> ' +
+      '급여·경력관리까지 회사 전체가 나눠 씁니다 — 그래서 저절로 읽지 않습니다. ' +
+      '읽을 것만 눌러 주세요(칸의 <b>[🔤 판독]</b>으로 한 장씩도 됩니다).</span>' +
+      '<button class="pri" onclick="readWaitRun()">🔤 ' +
+      Math.min(wait.length, AUTO_READ_MAX) + '장 판독하기</button>' + readTallyLine();
+    return;
+  }
   el.className = '';
   el.style.display = 'flex';
   el.innerHTML = '<span class="t">🖼 한꺼번에 올린 사진</span>' +
@@ -7093,7 +7204,7 @@ function renderReadAsk() {
     '급여·경력관리까지 회사 전체가 나눠 씁니다 — 사진이면 안 읽는 편이 낫습니다. ' +
     '<b>대답할 때까지 이 사진들은 판독에 안 갑니다.</b></span>' +
     '<button class="pri" onclick="readAskDocs()">📄 서류입니다 — 판독</button>' +
-    '<button onclick="readAskPics()">🖼 그냥 사진입니다 — 판독 안 함</button>';
+    '<button onclick="readAskPics()">🖼 그냥 사진입니다 — 판독 안 함</button>' + readTallyLine();
 }
 
 /* 「서류입니다」 — **지금 묻고 있던 그 뭉치들만** 읽는다.
@@ -8985,6 +9096,8 @@ function loadGrid() {
        건너뛰므로 아무도 안 읽어 주는 사진으로 남는다. */
     resumeCollectIfAny();
     if (gridOwner !== ALL_OWNERS && gridOwner !== SHARED_OWNER) autoReadPending();
+    /* ⑤ 오늘 판독을 몇 번 썼나 — 한 번만 읽는다(숫자 몇 개뿐이다) */
+    loadReadTally();
     /* 업체가 생겼는지 한 번 맞춰 본다 — 계약관리에서 업체가 만들어지면 여기서
        저절로 채워진다(까닭·비용은 coSweep 에 적었다). 기다리는 사진이 없으면
        아무 일도 안 하고, 한 번 열 때 한 번만 한다. */
@@ -9169,7 +9282,15 @@ function renderGrid() {
     const holdTag = readHoldMine(it)
       ? '<span class="tag hold" title="한꺼번에 올린 사진 — 서류인지 알려 주시면 읽습니다">⏸ 보류</span>'
       : '';
-    const tag = holdTag || (hasTag
+    /* ㉲ 🔤 판독 필요 — 저절로 읽지 않으므로 «눌러야 한다»가 눈에 보여야 한다
+       (대표 지시 2026-09-08). 이 딱지가 없으면 이 바꿈은 「판독이 고장 났다」로 읽힌다.
+       ⚠ 「보류」가 이긴다 — 보류인 장은 아직 «물음에 답할» 차례이지 누를 차례가 아니다.
+       ⚠ 딱지 자리를 그대로 쓴다(칸 아래 20px 을 또 쓰지 않게, 2026-08-21 규칙). */
+    const waitTag = (!holdTag && readWaitOf(it))
+      ? '<span class="tag wait" title="아직 안 읽었습니다 — 눌러야 읽습니다'
+        + ' (판독은 하루 몫이 정해져 있어 저절로 읽지 않습니다)">🔤 판독 필요</span>'
+      : '';
+    const tag = holdTag || waitTag || (hasTag
       ? '<span class="tag' + (mergeWarn ? ' need' : '') + '">' +
         (mergeWarn ? '⚠ 서류' : '서류') + '</span>'
       : '');
@@ -9202,6 +9323,13 @@ function renderGrid() {
        같은 말이 두 번이고, 되찾은 20px 을 다시 내줘야 한다. */
     const warn = (needsCheck(it) && !mergeWarn)
       ? (needOnly ? '<span class="wn why">' + esc(checkWhy(it)) + '</span>' : '<span class="wn">⚠</span>')
+      : '';
+    /* ㉲ [🔤 판독] — 한 장만 읽는 길. 위 띠의 단추는 «20장까지 한꺼번에»라
+       「이 한 장만 급하다」를 할 수가 없다(대표 지시 2026-09-08 「표시 좀 해 달라」의 짝).
+       ⚠ 딱지와 «같은 판정»(readWaitOf)을 쓴다 — 따로 세면 딱지는 있는데 단추가 없다. */
+    const rdgo = waitTag
+      ? '<button type="button" class="rdgo" data-rdgo="' + esc(it.id) + '"'
+        + ' title="이 한 장만 지금 읽습니다">🔤 판독</button>'
       : '';
     /* 전체 근로자 화면에서는 누구 것인지 칸에서 바로 보여야 한다 —
        누구 사진인지 열어 봐야만 아는 것은 "훑어보기"가 안 된다. */
@@ -9265,10 +9393,10 @@ function renderGrid() {
           (l1 ? '<span class="dttl">' + esc(l1) + '</span>' : '') +
           (l2 ? '<span class="dco">' + esc(l2) + '</span>' : '') +
         '</span>' +
-        stack + proof + shr + warn + '<span class="ck">✓</span></div>';
+        stack + proof + shr + warn + rdgo + '<span class="ck">✓</span></div>';
     } else {
       html += '<div class="cell' + on + '" data-id="' + esc(it.id) + '" draggable="true">' +
-        img + tag + stack + proof + shr + warn + cap + ttl + '<span class="ck">✓</span></div>';
+        img + tag + stack + proof + shr + warn + cap + ttl + rdgo + '<span class="ck">✓</span></div>';
     }
   });
   html += '</div>';
@@ -9467,6 +9595,14 @@ $('grid').addEventListener('click', function (ev) {
   const cell = ev.target.closest ? ev.target.closest('.cell') : null;
   if (!cell) return;
   const id = cell.getAttribute('data-id');
+  /* ㉲ [🔤 판독] — 칸을 «열지 않고» 그 한 장만 읽는다(대표 지시 2026-09-08).
+     ⚠ 아래 열기·고르기보다 «먼저» 본다. 뒤에 두면 크게 보기가 함께 열려,
+       읽는 동안 사진이 화면을 덮고 「판독 필요」 딱지가 사라지는 것을 못 본다. */
+  if (ev.target.closest('[data-rdgo]')) {
+    ev.stopPropagation();
+    readWaitOne(ev.target.closest('[data-rdgo]').getAttribute('data-rdgo'));
+    return;
+  }
   /* 체크는 사진 오른쪽 위에 늘 있다(대표 지시) — 거기를 누르면 고르고,
      사진의 다른 곳을 누르면 열린다. 「고르기」 단계를 먼저 밟지 않아도 된다. */
   if (ev.target.closest('.ck')) {
