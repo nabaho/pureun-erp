@@ -8,7 +8,7 @@
      두 쪽짜리 신청서의 2쪽에는 담당자 정보만 있고 상호는 1쪽에 있다. 판독은 문서를
      통째로 하지만 상호 칸을 못 읽으면 mapTo 가 «빈 값을 아예 안 싣기» 때문에,
      명함의 회사 칸이 빈 채로 만들어진다.
-     실제 화면에 그 자국이 남아 있었다 — 증빙 딱지가 「기업정보함 — 한재일」,
+     실제 화면에 그 자국이 남아 있었다 — 증빙 딱지가 「기업정보함 — 한재수」,
      즉 회사 이름 자리에 «사람 이름»이 적혀 있었다(회사가 비어서 이름으로 물러난 것).
      회사가 없는 명함은 기업 상세에서 어느 회사에도 안 붙는다 — 사람 따로, 회사 따로.
 
@@ -64,8 +64,8 @@ function boot(db){
   return { F, reads, db };
 }
 /* 두 쪽 신청서: 담당자는 읽혔고 «상호는 못 읽었다» */
-const 담당자만 = { name:'한재일', dept:'경영지원', title:'팀장',
-  tel:'041-538-8940', mobile:'010-8416-3090', email:'jihan@hbcsol.com',
+const 담당자만 = { name:'한재수', dept:'경영지원', title:'팀장',
+  tel:'041-000-2001', mobile:'010-1200-0018', email:'cust21@ganabsol.com',
   bizno:'304-81-18380' };
 
 /* ── ①② 찾아서 채운다 ─────────────────────────────────────────── */
@@ -73,17 +73,17 @@ const 담당자만 = { name:'한재일', dept:'경영지원', title:'팀장',
 test('★ 상호를 못 읽어도 사업자번호로 «찾아» 채운다 — 등록증에서', async () => {
   const { F } = boot({
     'pucards/bykey/b3048118380': 'biz9',
-    'pucards/idx/biz9': { k:'biz', bz:'304-81-18380', c:'에이치비솔루션' }
+    'pucards/idx/biz9': { k:'biz', bz:'304-81-18380', c:'가나비솔루션' }
   });
   const res = await F.sendToCards({ kind:'form', fields: 담당자만 });
-  assert.equal(res.coFilled, '에이치비솔루션',
+  assert.equal(res.coFilled, '가나비솔루션',
     '★ 회사를 못 찾으면 그 사람은 어느 회사에도 안 붙는다 — 사람 따로 회사 따로 뜬다');
 });
 
 test('★ 등록증이 없으면 «기업 상세»에 적힌 이름으로 물러난다', async () => {
-  const { F } = boot({ 'pucards/coInfo/3048118380/company': '에이치비솔루션' });
+  const { F } = boot({ 'pucards/coInfo/3048118380/company': '가나비솔루션' });
   const res = await F.sendToCards({ kind:'form', fields: 담당자만 });
-  assert.equal(res.coFilled, '에이치비솔루션',
+  assert.equal(res.coFilled, '가나비솔루션',
     '★ 등록증이 아직 없는 회사도 서식이 이름을 적어 두었을 수 있다');
 });
 
@@ -100,7 +100,7 @@ test('★ 목록을 통째로 훑지 «않는다» — 두세 칸만 읽는다',
   /* 사진 한 장마다 색인 6천 줄을 내려받던 그 실수를 되풀이하지 않는다 */
   const { F, reads } = boot({
     'pucards/bykey/b3048118380': 'biz9',
-    'pucards/idx/biz9': { k:'biz', bz:'304-81-18380', c:'에이치비솔루션' }
+    'pucards/idx/biz9': { k:'biz', bz:'304-81-18380', c:'가나비솔루션' }
   });
   await F.sendToCards({ kind:'form', fields: 담당자만 });
   const 통째 = reads.filter(p => /\/idx$|\/items$|data\/companies/.test(p));
@@ -114,7 +114,7 @@ test('★ 목록을 통째로 훑지 «않는다» — 두세 칸만 읽는다',
 
 test('사업자번호가 없으면 «찾지도 않는다» — 헛돈이 나가면 안 된다', async () => {
   const { F, reads } = boot({});
-  await F.sendToCards({ kind:'form', fields: { name:'한재일', mobile:'010-8416-3090' } });
+  await F.sendToCards({ kind:'form', fields: { name:'한재수', mobile:'010-1200-0018' } });
   assert.deepEqual(reads.filter(p => p.indexOf('bykey/b') >= 0 || p.indexOf('coInfo/') >= 0), [],
     '★ 찾을 열쇠도 없는데 서버를 읽었다: ' + reads.join(' · '));
 });
@@ -154,7 +154,7 @@ test('★ 서류에 상호가 «적혀 있으면» 찾은 것으로 덮지 않�
     'pucards/idx/biz9': { k:'biz', bz:'304-81-18380', c:'옛이름' }
   });
   const res = await F.sendToCards({
-    kind:'form', fields: Object.assign({}, 담당자만, { company:'에이치비솔루션' }) });
+    kind:'form', fields: Object.assign({}, 담당자만, { company:'가나비솔루션' }) });
   assert.ok(!res.coFilled, '★ 서류에 적힌 이름을 찾은 이름으로 덮었다');
   assert.ok(!res.coMissing, '이름이 있는데 「못 찾았다」고 하면 안 된다');
   assert.deepEqual(reads.filter(p => p.indexOf('bykey/b') >= 0), [],
@@ -180,8 +180,8 @@ function coNote(res){
 }
 
 test('★ 사진첩이 «무엇에 붙였는지» 말한다 — 조용히 붙이면 틀려도 모른다', () => {
-  const a = coNote({ coFilled:'에이치비솔루션' });
-  assert.ok(a.indexOf('에이치비솔루션') > 0,
+  const a = coNote({ coFilled:'가나비솔루션' });
+  assert.ok(a.indexOf('가나비솔루션') > 0,
     '★ 어느 회사에 붙였는지 안 말한다 — 틀리게 붙어도 알아챌 길이 없다: ' + JSON.stringify(a));
   const b = coNote({ coMissing:true });
   assert.ok(b.indexOf('못 찾았') > 0,
@@ -192,13 +192,13 @@ test('★ 사진첩이 «무엇에 붙였는지» 말한다 — 조용히 붙이
 });
 
 test('★ 증빙 딱지에 «회사» 이름이 남는다 — 사람 이름으로 물러나지 않는다', () => {
-  /* 실제 화면에 「기업정보함 — 한재일」이 남아 있었다. 회사가 비어 사람 이름으로
+  /* 실제 화면에 「기업정보함 — 한재수」이 남아 있었다. 회사가 비어 사람 이름으로
      물러난 것인데, 나중에 증빙을 되짚을 때 어느 회사 것인지 알 수가 없다. */
   const at = PHOTOS.indexOf("markFiledUsed(id, year, '기업정보함 — '");
   assert.ok(at > 0, '증빙 딱지를 붙이는 자리를 찾지 못했다');
   const seg = PHOTOS.slice(at, at + 260);
   assert.match(seg, /res\.coFilled/,
-    '★ 찾아 붙인 회사를 딱지에 안 쓴다 — 「기업정보함 — 한재일」이 그대로 남는다');
+    '★ 찾아 붙인 회사를 딱지에 안 쓴다 — 「기업정보함 — 한재수」이 그대로 남는다');
   assert.ok(seg.indexOf('read.fields.company') < seg.indexOf('res.coFilled'),
     '서류에 적힌 이름이 먼저다');
 });
@@ -211,14 +211,14 @@ test('★ 이미 있는 명함의 «빈 회사 칸»도 이때 채워진다', as
      만든 사본을 못 보고 늘 「안 채웠다」가 된다(2026-08-31 에 실제로 헛돌았다). */
   const { F, db } = boot({
     'pucards/bykey/b3048118380': 'biz9',
-    'pucards/idx/biz9': { k:'biz', bz:'304-81-18380', c:'에이치비솔루션' },
-    'pucards/bykey/c01084163090': 'card7',
-    'pucards/idx/card7': { k:'card', m:'010-8416-3090', n:'한재일' },
-    'pucards/items/card7': { id:'card7', kind:'card', name:'한재일', company:'' }
+    'pucards/idx/biz9': { k:'biz', bz:'304-81-18380', c:'가나비솔루션' },
+    'pucards/bykey/c01012000018': 'card7',
+    'pucards/idx/card7': { k:'card', m:'010-1200-0018', n:'한재수' },
+    'pucards/items/card7': { id:'card7', kind:'card', name:'한재수', company:'' }
   });
   const res = await F.sendToCards({ kind:'form', fields: 담당자만 });
   assert.equal(res.created, false,
     '★ 같은 담당자가 서식마다 새 명함으로 쌓인다 — 명함과 같은 기준(휴대폰)으로 봐야 한다');
-  assert.equal(db['pucards/items/card7/company'], '에이치비솔루션',
+  assert.equal(db['pucards/items/card7/company'], '가나비솔루션',
     '★ 빈 회사 칸을 안 채웠다 — 그 사람은 계속 어느 회사에도 안 붙는다');
 });

@@ -753,7 +753,7 @@ test('★ 얼굴딱지 색은 사람마다 늘 같다 — 그릴 때마다 바�
 test('얼굴에 넣을 글자 — 한글은 첫 글자, 영문은 대문자', () => {
   const c = load({ folders: FOLDERS });
   assert.equal(c.dmmInitial('세무법인 한세'), '세');
-  assert.equal(c.dmmInitial('babylawyer@hanmail.net'), 'B');
+  assert.equal(c.dmmInitial('cust03@hanmail.net'), 'C');
   assert.equal(c.dmmInitial('"이혜원"'), '이');
   assert.equal(c.dmmInitial(''), '?');
 });

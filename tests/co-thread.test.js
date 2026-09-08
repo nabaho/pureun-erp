@@ -18,8 +18,8 @@ const T = globalThis.PuCoThread;
 
 const CO = {
   id: 'c1', name: '㈜정일제지',
-  contacts: [{ name: '임남용', email: 'jungilpp@naver.com', isPrimary: true }],
-  taxEmail: '5534001@hanmail.net'
+  contacts: [{ name: '임남용', email: 'cust12@naver.com', isPrimary: true }],
+  taxEmail: 'cust01@hanmail.net'
 };
 
 /* ══════ 어느 사업장 것인가 ══════ */
@@ -30,12 +30,12 @@ test('★ 줄에 사업장 번호가 적혀 있으면 그것이 가장 확실하
 
 test('★ 오간 주소가 그 사업장 주소면 그 사업장 것이다', () => {
   const a = T.addrsOf(CO);
-  assert.equal(T.matchRow({ from: '임남용 <jungilpp@naver.com>' }, CO, a), 'addr');
-  assert.equal(T.matchRow({ to: 'JUNGILPP@NAVER.COM' }, CO, a), 'addr');
+  assert.equal(T.matchRow({ from: '임남용 <cust12@naver.com>' }, CO, a), 'addr');
+  assert.equal(T.matchRow({ to: 'CUST12@NAVER.COM' }, CO, a), 'addr');
 });
 
 test('★ 세무사무실 주소도 그 사업장 것으로 본다', () => {
-  assert.equal(T.matchRow({ from: '5534001@hanmail.net' }, CO, T.addrsOf(CO)), 'addr');
+  assert.equal(T.matchRow({ from: 'cust01@hanmail.net' }, CO, T.addrsOf(CO)), 'addr');
 });
 
 test('★ 제목에 이름이 있으면 짐작으로 본다 — 짐작이라고 적어 둔다', () => {
@@ -56,13 +56,13 @@ test('아무것도 안 맞으면 빈손', () => {
 /* ══════ 한 줄기 ══════ */
 
 const MAILLOG = {
-  m1: { at: 3000, from: '임남용 <jungilpp@naver.com>', subject: '8월 급여자료',
+  m1: { at: 3000, from: '임남용 <cust12@naver.com>', subject: '8월 급여자료',
     preview: '보내드립니다', companyId: 'c1', atts: 2, took: 2, seatName: '신욱임' },
   m2: { at: 1000, from: 'nobody@x.kr', subject: '광고입니다', preview: '', companyId: '' },
   m3: { at: 5000, from: 'x@y.kr', subject: '정일제지 퇴직금 문의', preview: '문의드립니다' }
 };
 const SENT = {
-  s1: { at: 4000, to: 'jungilpp@naver.com', subject: 'RE: 8월 급여자료',
+  s1: { at: 4000, to: 'cust12@naver.com', subject: 'RE: 8월 급여자료',
     body: '확인했습니다', ids: ['f1'] }
 };
 
@@ -186,7 +186,7 @@ test('★ 받은 메일 줄을 표준 모양으로 바꾼다', () => {
 
 test('★ 보낸 메일 줄도 같은 모양으로 — 화면이 갈라 다룰 일이 없어야 한다', () => {
   const r = T.fromSentBox(SENT).rows[0];
-  assert.equal(r.to, 'jungilpp@naver.com');
+  assert.equal(r.to, 'cust12@naver.com');
   assert.equal(r.subject, 'RE: 8월 급여자료');
   assert.equal(r.atts, 1, '붙인 자료 수를 안 셉니다');
 });

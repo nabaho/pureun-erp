@@ -303,7 +303,7 @@ test('★ 이메일을 «그대로» 열쇠로 쓰지 않는다 — 점을 못 �
   const ctx = { String };
   vm.createContext(ctx);
   vm.runInContext(fn + '\nthis.f = gcalMailKey;', ctx);
-  assert.strictEqual(ctx.f('Cpla.JwPark@Gmail.com').indexOf('.') < 0, true, '점이 남아 있다');
+  assert.strictEqual(ctx.f('cust19@Gmail.com').indexOf('.') < 0, true, '점이 남아 있다');
   assert.strictEqual(ctx.f('a.b@c.d'), 'a,b@c,d', '점을 쉼표로 안 바꾼다');
   assert.strictEqual(ctx.f('X@Y.Z'), ctx.f('x@y.z'), '대소문자에 따라 갈린다');
 });

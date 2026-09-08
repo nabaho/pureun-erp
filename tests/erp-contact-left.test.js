@@ -166,7 +166,7 @@ test('★ 업체를 훑을 때 담당자 줄을 실어 둔다 — 서버를 더 
   const b = src.indexOf('      ErpMatch.byBiz=byBiz;');
   assert.ok(a > 0 && b > a, '업체 훑는 자리를 찾지 못했습니다');
   const ctx = { console, Object, String, Number, Array,
-    cos: [{ name:'가나테크', bizNo:'134-86-05772', ceo:'조성환', typeCode:'자문',
+    cos: [{ name:'가나테크', bizNo:'134-86-05772', ceo:'나성환', typeCode:'자문',
             status:'active', managerMain:'s1',
             contacts:[{ name:'박대리', email:'park@gana.co.kr', phone:'010-1111-2222',
                         bizPhone:'041-556-0035', left:true }] }],

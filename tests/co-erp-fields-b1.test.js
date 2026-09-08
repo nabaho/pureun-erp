@@ -75,11 +75,11 @@ function scanErp(cos){
   return ctx.OUT;
 }
 
-const 등록증 = { kind:'biz', company:'가나테크', bizno:'134-86-05772', ceo:'조성환',
+const 등록증 = { kind:'biz', company:'가나테크', bizno:'134-86-05772', ceo:'나성환',
                 address:'충남 천안시 서북구 1', companyTel:'041-556-0035',
                 companyFax:'041-556-0036', bizType:'서비스', bizItem:'노무' };
 const 업체 = (extra) => Object.assign({ name:'가나테크', bizNo:'134-86-05772',
-  ceo:'조성환', typeCode:'자문', status:'active', managerMain:'s1' }, extra || {});
+  ceo:'나성환', typeCode:'자문', status:'active', managerMain:'s1' }, extra || {});
 
 /* ══════ ① 등록증의 팩스가 회사에 올라온다 ══════ */
 

@@ -45,10 +45,10 @@ test('★ 파일 이름에서 담당자를 읽는다 — 시트 안에는 담당
 
 const GRID = [
   ['', '사업장명', '담당자성명', '담당자연락처', '이메일주소', '세무대리인명', '세무담당자연락처', '세무 이메일주소'],
-  [1, '가람떡집', '나은석', '010-4123-4893', 'a@naver.com', '세화회계법인', '041-553-9595', 'tax@hanmail.net'],
+  [1, '가람떡집', '나은석', '010-1200-0008', 'a@naver.com', '세화회계법인', '041-553-9595', 'tax@hanmail.net'],
   [2, '서브텍', '남유라주임', '041-546-0722', 'b@naver.com', 'x', 'x', 'x'],
   [3, '', '', '', '', '', '', ''],
-  [4, '늘봄반찬(모종점)', '정수연', '010-6383-7727', 'c@naver.com', '세무법인 온', '041-547-2100', 'on@naver.com'],
+  [4, '늘봄반찬(모종점)', '정수연', '010-1200-0017', 'c@naver.com', '세무법인 온', '041-547-2100', 'on@naver.com'],
   [5, '늘봄반찬(배방점)', '', '', '', '', '', '']
 ];
 
@@ -63,7 +63,7 @@ test('★ 세무 열이 담당자 열을 잡아채지 않는다 — 「연락처
   const r = P.parseGrid(GRID);
   assert.equal(r.rows[0].cMail, 'a@naver.com');
   assert.equal(r.rows[0].tMail, 'tax@hanmail.net', '세무 이메일이 담당자 것과 섞였습니다');
-  assert.equal(r.rows[0].cPhone, '010-4123-4893');
+  assert.equal(r.rows[0].cPhone, '010-1200-0008');
   assert.equal(r.rows[0].tPhone, '041-553-9595');
 });
 
@@ -113,7 +113,7 @@ test('물려받은 줄이 또 물려주지 않고 끊기지도 않는다 — 지
 const USERS = [{ sid: 'A-004', name: '주민정' }, { sid: 'A-005', name: '박은비' }];
 const COS = [
   { id: 'c1', name: '가람떡집', typeCode: '급여' },
-  { id: 'c2', name: '주식회사 현진글로벌아산공장', typeCode: '자문' },
+  { id: 'c2', name: '주식회사 가나글로벌아산공장', typeCode: '자문' },
   { id: 'c3', name: '와이앤케이', typeCode: '급여' },
   { id: 'c4', name: '늘봄반찬(모종점)', typeCode: '급여' }
 ];
@@ -126,7 +126,7 @@ test('★ 이름이 맞고 유형도 급여면 그대로 넣는다', () => {
 });
 
 test('★ 유형이 급여가 아니면 「type」 — 지금은 급여데이터함에서 안 보인다', () => {
-  const it = P.plan([{ who: '주민정', rows: [{ site: '주식회사 현진글로벌아산공장', cMail: 'h@n.kr' }] }], COS, USERS)[0];
+  const it = P.plan([{ who: '주민정', rows: [{ site: '주식회사 가나글로벌아산공장', cMail: 'h@n.kr' }] }], COS, USERS)[0];
   assert.equal(it.kind, 'type');
   assert.equal(it.wasType, '자문', '무엇이었는지 남겨야 되돌릴 수 있습니다');
 });
@@ -164,10 +164,10 @@ test('★ 같은 업체를 두 직원이 가리키면 주담당을 건드리지 
 
 test('★ 세무 이메일이 담당 한 사람에만 걸리면 넣는다', () => {
   const items = [
-    { who: '신욱임', tMail: 'sr2900@daum.net' },
-    { who: '신욱임', tMail: 'sr2900@daum.net' }
+    { who: '신욱임', tMail: 'cust07@daum.net' },
+    { who: '신욱임', tMail: 'cust07@daum.net' }
   ];
-  assert.equal(P.taxMailSafe(items)['sr2900@daum.net'], true);
+  assert.equal(P.taxMailSafe(items)['cust07@daum.net'], true);
 });
 
 test('★ 여러 담당에 걸린 세무 이메일은 넣지 않는다 — 남의 자료가 엉뚱한 칸에 들어간다', () => {
@@ -193,10 +193,10 @@ test('★ 여러 담당에 걸린 세무 이메일도 넣는다 — 배달 규�
 });
 
 test('한 담당에만 걸린 세무 이메일은 군말 없이 넣는다', () => {
-  const its = [{ kind: 'ok', sid: 'A-002', who: '신욱임', tName: '세무법인 삼륭', tMail: 'sr2900@daum.net' }];
+  const its = [{ kind: 'ok', sid: 'A-002', who: '신욱임', tName: '세무법인 삼륭', tMail: 'cust07@daum.net' }];
   const r = P.patchFor({ id: 'c9', name: '평해식품', typeCode: '급여' }, its,
-    { taxSafe: { 'sr2900@daum.net': true } });
-  assert.equal(r.patch.taxEmail, 'sr2900@daum.net');
+    { taxSafe: { 'cust07@daum.net': true } });
+  assert.equal(r.patch.taxEmail, 'cust07@daum.net');
   assert.equal(r.why.some(w => /여러 담당/.test(w)), false);
 });
 
@@ -243,7 +243,7 @@ test('★ 딸린 사업장 사람을 대표 담당자로 올리지 않는다 —
 
 test('★ 유형을 급여로 바꾸고, 무엇을 했는지 남긴다 (대표 결정 ②)', () => {
   const its = [{ kind: 'type', wasType: '자문', sid: 'A-004', who: '주민정', cMail: 'h@n.kr' }];
-  const r = P.patchFor({ id: 'c2', name: '현진글로벌아산공장', typeCode: '자문' }, its, {});
+  const r = P.patchFor({ id: 'c2', name: '가나글로벌아산공장', typeCode: '자문' }, its, {});
   assert.equal(r.patch.typeCode, '급여');
   assert.ok(r.why.some(w => /유형/.test(w)));
 });
@@ -267,7 +267,7 @@ test('★ 「건너뛴다」로 표시한 줄은 쓰지 않는다', () => {
 test('셈이 갈래별로 맞는다', () => {
   const items = P.plan([{ who: '주민정', rows: [
     { site: '가람떡집', cMail: 'a@n.kr' },
-    { site: '주식회사 현진글로벌아산공장', cMail: 'h@n.kr' },
+    { site: '주식회사 가나글로벌아산공장', cMail: 'h@n.kr' },
     { site: '와이앤케이(지점)', cMail: 'y@n.kr' },
     { site: '니쿠미야', cMail: 'n@n.kr' }
   ] }], COS, USERS);
@@ -284,14 +284,14 @@ test('★ 같은 사람이 두 줄로 들어가지 않는다 — 이미 있던 �
      메일로만 견주니 엑셀의 김세훈이 딴 사람으로 붙었다. */
   const co = {
     id: 'c1', name: '대건정밀', typeCode: '급여',
-    contacts: [{ name: '김세훈 대표', phone: '010-5204-9137', email: '', isPrimary: true }]
+    contacts: [{ name: '김세훈 대표', phone: '010-1200-0014', email: '', isPrimary: true }]
   };
   const its = [{ kind: 'ok', sid: 'A-005', who: '박은비', cName: '김세훈 대표',
-    cPhone: '010-5204-9137', cMail: '98kim_sh@hanmail.net' }];
+    cPhone: '010-1200-0014', cMail: 'cust02@hanmail.net' }];
   const r = P.patchFor(co, its, {});
   assert.equal(r.patch.contacts.length, 1, '같은 사람이 두 줄이 됐습니다');
-  assert.equal(r.patch.contacts[0].email, '98kim_sh@hanmail.net', '빈 메일을 채워야 합니다');
-  assert.equal(r.patch.primaryContactEmail, '98kim_sh@hanmail.net');
+  assert.equal(r.patch.contacts[0].email, 'cust02@hanmail.net', '빈 메일을 채워야 합니다');
+  assert.equal(r.patch.primaryContactEmail, 'cust02@hanmail.net');
 });
 
 test('★ 이름만 적힌 자리표가 대표 담당자 자리를 지키지 않는다', () => {
@@ -299,14 +299,14 @@ test('★ 이름만 적힌 자리표가 대표 담당자 자리를 지키지 않
      정작 메일 있는 「정수연」이 아래로 밀려 화면에 안 보였다. */
   const co = {
     id: 'c4', name: '늘봄반찬(모종점)', typeCode: '급여',
-    contacts: [{ name: '급여 담당자', phone: '010-6383-7727', email: '', isPrimary: true }],
+    contacts: [{ name: '급여 담당자', phone: '010-1200-0017', email: '', isPrimary: true }],
     primaryContactName: '급여 담당자'
   };
   const its = [{ kind: 'ok', sid: 'A-005', who: '박은비', cName: '정수연 담당자',
-    cPhone: '010-6383-7727', cMail: 'rlaskfo79@naver.com' }];
+    cPhone: '010-1200-0017', cMail: 'cust17@naver.com' }];
   const r = P.patchFor(co, its, {});
   assert.equal(r.patch.primaryContactName, '정수연 담당자');
-  assert.equal(r.patch.primaryContactEmail, 'rlaskfo79@naver.com');
+  assert.equal(r.patch.primaryContactEmail, 'cust17@naver.com');
   assert.equal(r.patch.contacts.filter(c => c.isPrimary).length, 1, '대표가 둘이 됐습니다');
 });
 

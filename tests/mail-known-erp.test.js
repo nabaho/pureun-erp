@@ -6,7 +6,7 @@
  * 그런데 받은메일함은 «아는 주소»만 담는다(광고가 들어오는 곳이라). 그 명단을
  * 업체관리(data/companies)에서만 만들고 있었다 — 실측 185개.
  * 컨설팅·계약·사건 레코드에는 업체관리에 «없는» 담당자 주소가 71개 더 있었고,
- * 엠비프라텍 윤충희(ych77710@daum.net)가 그 하나였다.
+ * 엠비프라텍 윤충희(cust09@daum.net)가 그 하나였다.
  * 그 사람들 메일은 받은메일함을 켜도 「모르는 주소」로 버려진다 — 켠 보람이 없다.
  *
  * 이 검사가 지키는 것
@@ -30,14 +30,14 @@ const 컨설팅 = { v: [{
   email: 'main@mbpr.co.kr', primaryContactEmail: 'primary@mbpr.co.kr',
   note: '옆 사무실 spam@ad.example.com 이 자꾸 보냄',
   updatedBy: 'p001@pureun.kr',
-  contacts: [{ name: '윤충희', role: '대표자', email: 'ych77710@daum.net' }]
+  contacts: [{ name: '윤충희', role: '대표자', email: 'cust09@daum.net' }]
 }] };
 
 test('★ 푸른이알피 업체 담당자 주소가 「아는 주소」에 든다', () => {
   const 전 = MR.buildKnownList(업체, null);
   const 후 = MR.buildKnownList(업체, null, [컨설팅]);
-  assert.ok(!MR.isKnownSender('ych77710@daum.net', 전), '고치기 전에 이미 통과한다면 이 검사는 헛돈다');
-  assert.ok(MR.isKnownSender('ych77710@daum.net', 후), '담당자 주소가 여전히 버려진다');
+  assert.ok(!MR.isKnownSender('cust09@daum.net', 전), '고치기 전에 이미 통과한다면 이 검사는 헛돈다');
+  assert.ok(MR.isKnownSender('cust09@daum.net', 후), '담당자 주소가 여전히 버려진다');
   assert.ok(MR.isKnownSender('main@mbpr.co.kr', 후), '업체 대표 주소가 빠졌다');
   assert.ok(MR.isKnownSender('primary@mbpr.co.kr', 후), '기본 담당자 주소가 빠졌다');
 });

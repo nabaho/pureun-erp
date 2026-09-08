@@ -141,7 +141,7 @@ test('주담당 건이 하나도 없으면 칸이 없다 — 담당별 묶음(te
 
 test('쓰레기가 아무리 많아도 칸 수는 사람 수 그대로다', () => {
   const box = makeBox({});
-  const 쓰레기 = ['- 사업장 : 광유엔지니어링', '(010-4323-2800)', '② 노동위원회', '- 차의환 부장'];
+  const 쓰레기 = ['- 사업장 : 광유엔지니어링', '(010-1200-0010)', '② 노동위원회', '- 차의환 부장'];
   const rows = 쓰레기.map((g, i) => ({ _id:'r' + i, mgr_main:{name:'가가'}, last:{d:'2026-08-23'},
     mgr_subs:[{sid:'',name:g}] }));
   assert.equal(Array.from(box.data(rows, 'wk', '2026-08-24')).length, 1);

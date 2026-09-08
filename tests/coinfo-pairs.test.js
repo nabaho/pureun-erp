@@ -70,7 +70,7 @@ const PAIRS = [
   { k:'지원 희망금액', v:'80,000,000원' },
   { k:'고용보험 관리번호', v:'12345678900' }
 ];
-const SEND = { fields:{ bizno:'134-86-05772', company:'가나테크', ceo:'조성환',
+const SEND = { fields:{ bizno:'134-86-05772', company:'가나테크', ceo:'나성환',
                         docName:'4·4 제도 도입기업 선정 신청서', pairs: PAIRS },
                byName:'권형하', photo: PHOTO };
 
@@ -132,7 +132,7 @@ test('같은 서류를 두 번 보내도 줄이 안 는다 — 하던 규칙 그
 
 test('★ pairs 가 없으면 그 칸을 아예 안 만든다 — 빈 껍데기를 두지 않는다', () => {
   const c = load({});
-  const noPairs = { fields:{ bizno:'134-86-05772', ceo:'조성환', docName:'사업자등록증' },
+  const noPairs = { fields:{ bizno:'134-86-05772', ceo:'나성환', docName:'사업자등록증' },
                     byName:'권형하', photo: PHOTO };
   return c.sendToCoInfo(noPairs).then(() => {
     const doc = c._writes[0].val['docs/2026_p77'];

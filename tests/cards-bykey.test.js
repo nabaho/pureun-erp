@@ -56,16 +56,16 @@ function tree(extra) {
   return Object.assign({
     pucards: {
       config: { bykeyAt: 1700000000000 },
-      bykey: { c01028024601: 'card1' },
-      idx: { card1: { n: '홍길동', c: '가나상사', m: '010-2802-4601', k: 'card' } },
-      items: { card1: { id: 'card1', kind: 'card', name: '홍길동', mobile: '010-2802-4601' } }
+      bykey: { c01012000003: 'card1' },
+      idx: { card1: { n: '홍길동', c: '가나상사', m: '010-1200-0003', k: 'card' } },
+      items: { card1: { id: 'card1', kind: 'card', name: '홍길동', mobile: '010-1200-0003' } }
     }
   }, extra || {});
 }
 
 test('열쇠 자리가 채워졌으면 검색목록 전체를 읽지 않는다', async () => {
   const { F, db } = layer(tree());
-  const hit = await F.findExisting('card', { mobile: '01028024601' });
+  const hit = await F.findExisting('card', { mobile: '01012000003' });
   assert.equal(hit && hit.id, 'card1');
   assert.ok(!db.reads.includes('pucards/idx'),
     '검색목록을 통째로 읽었다 — 이 층이 있는 이유가 없어진다: ' + db.reads.join(', '));
@@ -74,7 +74,7 @@ test('열쇠 자리가 채워졌으면 검색목록 전체를 읽지 않는다',
 test('열쇠 자리가 아직 안 채워졌으면 옛 방식으로 훑는다', async () => {
   const t = tree(); delete t.pucards.config.bykeyAt;
   const { F, db } = layer(t);
-  const hit = await F.findExisting('card', { mobile: '01028024601' });
+  const hit = await F.findExisting('card', { mobile: '01012000003' });
   assert.equal(hit && hit.id, 'card1', '못 찾으면 이미 있는 사람을 또 만든다');
   assert.ok(db.reads.includes('pucards/idx'), '옛 방식으로 훑어야 한다');
 });
@@ -83,14 +83,14 @@ test('번호가 바뀐 명함의 옛 열쇠 — 못 찾은 것으로 친다 (남
   const t = tree();
   t.pucards.idx.card1.m = '010-9999-8888';       /* 명함은 새 번호로 바뀌었다 */
   const { F } = layer(t);
-  const hit = await F.findExisting('card', { mobile: '01028024601' });
+  const hit = await F.findExisting('card', { mobile: '01012000003' });
   assert.equal(hit, null);
 });
 
 test('지워진 명함의 옛 열쇠 — 못 찾은 것으로 친다', async () => {
   const t = tree(); delete t.pucards.idx.card1;
   const { F } = layer(t);
-  assert.equal(await F.findExisting('card', { mobile: '01028024601' }), null);
+  assert.equal(await F.findExisting('card', { mobile: '01012000003' }), null);
 });
 
 test('종류가 다르면 다른 물건이다 — 사업자번호와 전화번호가 같아도', async () => {
@@ -102,7 +102,7 @@ test('종류가 다르면 다른 물건이다 — 사업자번호와 전화번�
 
 test('열쇠 이름 — 명함은 c, 사업자등록증은 b (열 자리끼리 한 칸을 다투지 않게)', () => {
   const { F } = layer(tree());
-  assert.equal(F.byKeyName('card', { mobile: '010-2802-4601' }), 'c01028024601');
+  assert.equal(F.byKeyName('card', { mobile: '010-1200-0003' }), 'c01012000003');
   assert.equal(F.byKeyName('bizreg', { bizno: '123-45-67890' }), 'b1234567890');
   assert.equal(F.byKeyName('card', { name: '홍길동' }), '', '번호가 없으면 열쇠도 없다');
 });
@@ -121,7 +121,7 @@ test('이미 있는 명함이면 빈 칸만 채우고 새로 만들지 않는다
   const t = tree();
   const { F, db } = layer(t);
   const res = await F.sendToCards({
-    kind: 'card', fields: { name: '홍길동', mobile: '010-2802-4601', email: 'hong@example.com' }
+    kind: 'card', fields: { name: '홍길동', mobile: '010-1200-0003', email: 'hong@example.com' }
   });
   assert.equal(res.created, false);
   assert.equal(res.dup, true);
@@ -133,10 +133,10 @@ test('개인 폴더 지문이 먼저다 — 열쇠 자리를 보기도 전에 �
   const sandbox = { crypto: globalThis.crypto, TextEncoder, Buffer, console };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
   load('js/pu-lockkey.js', sandbox);
-  const fp = await sandbox.PuLockKey.fingerprint('01028024601');
+  const fp = await sandbox.PuLockKey.fingerprint('01012000003');
   const t = tree(); t.pucards.lockkeys = {}; t.pucards.lockkeys[fp] = 1;
   const { F, db } = layer(t);
-  const res = await F.sendToCards({ kind: 'card', fields: { name: '홍길동', mobile: '010-2802-4601' } });
+  const res = await F.sendToCards({ kind: 'card', fields: { name: '홍길동', mobile: '010-1200-0003' } });
   assert.equal(res.blocked, true);
   assert.deepEqual(db.written, {});
   assert.ok(!db.reads.includes('pucards/idx'));

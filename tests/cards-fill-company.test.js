@@ -51,8 +51,8 @@ function load(items, info, opt){
     vm.runInContext(fnBody(n), ctx));
   return ctx;
 }
-const 명함 = (x) => Object.assign({ id:'c1', kind:'card', name:'한재일', company:'' }, x || {});
-const 등록증 = (x) => Object.assign({ id:'b1', kind:'biz', company:'에이치비솔루션',
+const 명함 = (x) => Object.assign({ id:'c1', kind:'card', name:'한재수', company:'' }, x || {});
+const 등록증 = (x) => Object.assign({ id:'b1', kind:'biz', company:'가나비솔루션',
   bizno:'304-81-18380' }, x || {});
 
 /* ── ①② 무엇을 고르나 ────────────────────────────────────────── */
@@ -61,7 +61,7 @@ test('★ 사업자번호가 같은 명함에 등록증의 상호를 붙인다',
   const C = load({ b1: 등록증(), c1: 명함({ bizno:'304-81-18380' }) });
   const plan = C.cardFillCoPlan();
   assert.equal(plan.hits.length, 1, '★ 못 찾으면 그 사람은 계속 어느 회사에도 안 붙는다');
-  assert.equal(plan.hits[0].name, '에이치비솔루션');
+  assert.equal(plan.hits[0].name, '가나비솔루션');
   assert.equal(plan.hits[0].it.id, 'c1');
 });
 
@@ -104,13 +104,13 @@ test('★ 사업자등록증 자신은 대상이 «아니다»', () => {
 test('★ 등록증이 «먼저»다 — 법적 원본이다', () => {
   const C = load({ b1: 등록증(), c1: 명함({ bizno:'304-81-18380' }) },
     { '3048118380': { company:'서식이 적은 이름' } });
-  assert.equal(C.cardFillCoPlan().hits[0].name, '에이치비솔루션');
+  assert.equal(C.cardFillCoPlan().hits[0].name, '가나비솔루션');
 });
 
 test('등록증이 없으면 «기업 상세»에 적힌 이름으로 물러난다', () => {
   const C = load({ c1: 명함({ bizno:'304-81-18380' }) },
-    { '3048118380': { company:'에이치비솔루션' } });
-  assert.equal(C.cardFillCoPlan().hits[0].name, '에이치비솔루션');
+    { '3048118380': { company:'가나비솔루션' } });
+  assert.equal(C.cardFillCoPlan().hits[0].name, '가나비솔루션');
 });
 
 test('상호가 빈 등록증은 «이름 표»에 안 든다', () => {
@@ -127,8 +127,8 @@ test('★ 회사 칸과 «공유 검색목록»을 같은 통에 적는다', () 
   const C = load({ b1: 등록증(), c1: 명함({ bizno:'304-81-18380' }) });
   const w = C.cardFillCoWrites(C.cardFillCoPlan().hits, 200);
   assert.equal(w.length, 1, '한 통이어야 한다');
-  assert.equal(w[0]['pucards/items/c1/company'], '에이치비솔루션');
-  assert.equal(w[0]['pucards/idx/c1/c'], '에이치비솔루션',
+  assert.equal(w[0]['pucards/items/c1/company'], '가나비솔루션');
+  assert.equal(w[0]['pucards/idx/c1/c'], '가나비솔루션',
     '★ 색인을 안 고치면 다른 앱 검색이 옛 이름을 그대로 보여 준다');
   assert.ok(w[0]['pucards/items/c1/updatedAt'] > 0, '고친 때를 남겨야 한다');
 });
@@ -136,7 +136,7 @@ test('★ 회사 칸과 «공유 검색목록»을 같은 통에 적는다', () 
 test('★ 잠긴 폴더의 명함은 색인에 «안» 넣는다 — 감춘 것이 드러난다', () => {
   const C = load({ b1: 등록증(), c1: 명함({ bizno:'304-81-18380', __locked:1 }) });
   const w = C.cardFillCoWrites(C.cardFillCoPlan().hits, 200);
-  assert.equal(w[0]['pucards/items/c1/company'], '에이치비솔루션', '명함은 고친다');
+  assert.equal(w[0]['pucards/items/c1/company'], '가나비솔루션', '명함은 고친다');
   assert.equal(w[0]['pucards/idx/c1/c'], undefined,
     '★ 잠가 둔 명함의 회사가 공유 검색에 새어 나간다');
 });
@@ -151,7 +151,7 @@ test('개인 창고에 있는 명함은 «그 창고»에 쓴다 — 공용 자�
   const C = load({ b1: 등록증(), c1: 명함({ bizno:'304-81-18380' }) },
     null, { privateIds:['c1'] });
   const w = C.cardFillCoWrites(C.cardFillCoPlan().hits, 200);
-  assert.equal(w[0]['pucards_private/u1/items/c1/company'], '에이치비솔루션');
+  assert.equal(w[0]['pucards_private/u1/items/c1/company'], '가나비솔루션');
   assert.equal(w[0]['pucards/idx/c1/c'], undefined,
     '★ 개인 창고 명함을 공유 색인에 올렸다');
 });
@@ -217,14 +217,14 @@ test('★ 「아니오」를 누르면 «아무것도 안 쓴다»', async () =>
 test('★ 「예」를 누르면 «모아서 한 번» 쓰고 화면 값도 맞춘다', async () => {
   const r = await runTool(true);
   assert.equal(r.wrote.length, 1, '★ 한 장씩 쓰면 2026-08-16 이 되풀이된다');
-  assert.equal(r.wrote[0]['pucards/items/c1/company'], '에이치비솔루션');
-  assert.equal(r.items.c1.company, '에이치비솔루션',
+  assert.equal(r.wrote[0]['pucards/items/c1/company'], '가나비솔루션');
+  assert.equal(r.items.c1.company, '가나비솔루션',
     '★ 서버만 고치고 화면을 안 고치면 새로고침 전까지 빈 채로 보인다');
 });
 
 test('★ 물어볼 때 «무엇이 어디에 붙는지» 보여 준다 — 모르고 누르면 안 된다', async () => {
   const q = (await runTool(false)).asked[0];
-  assert.ok(q.indexOf('한재일') > 0 && q.indexOf('에이치비솔루션') > 0,
+  assert.ok(q.indexOf('한재수') > 0 && q.indexOf('가나비솔루션') > 0,
     '★ 어느 명함이 어느 회사에 붙는지 안 보여 준다: ' + q);
   assert.ok(q.indexOf('이미 적힌 회사는 건드리지 않습니다') > 0, '무엇을 안 건드리는지 말해야 한다');
 });

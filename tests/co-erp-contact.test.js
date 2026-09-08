@@ -64,7 +64,7 @@ function buildErp(cos){
   vm.runInContext(src.slice(a, b) + '\nvar OUT = { byBiz:byBiz, byName:byName };', ctx);
   return ctx.OUT;
 }
-const CO = { name:'가나테크', bizNo:'134-86-05772', ceo:'조성환', typeCode:'자문',
+const CO = { name:'가나테크', bizNo:'134-86-05772', ceo:'나성환', typeCode:'자문',
              status:'active', managerMain:'s1',
              phone:'041-556-0035', address:'충남 천안시 서북구 1',
              primaryContactName:'박대리', primaryContactPhone:'010-9999-8888' };
@@ -99,7 +99,7 @@ test('하던 일이 그대로다 — 담당·유형·종료·대표자', () => {
   assert.equal(r.main, '권형하');
   assert.equal(r.type, '자문');
   assert.equal(r.left, true);
-  assert.equal(r.ceoRaw, '조성환');
+  assert.equal(r.ceoRaw, '나성환');
 });
 
 /* ══════ ③④⑤ 회사로 올라오는가 — coListBuild 를 세워서 본다 ══════ */
@@ -136,8 +136,8 @@ function loadMiss(){
 }
 /* 전화가 «안 찍힌» 사업자등록증 — 한국에서 흔한 경우다 */
 const BIZ_NO_TEL = { kind:'biz', company:'가나테크', bizno:'134-86-05772',
-                     ceo:'조성환', address:'충남 천안시 서북구 1' };
-const ERP = { type:'자문', ceoRaw:'조성환', phone:'041-556-0035',
+                     ceo:'나성환', address:'충남 천안시 서북구 1' };
+const ERP = { type:'자문', ceoRaw:'나성환', phone:'041-556-0035',
               address:'충남 천안시 서북구 1', left:false };
 
 test('★ 등록증에 전화가 없으면 푸른이알피가 채운다 — 이게 이 고침의 전부다', () => {
@@ -184,7 +184,7 @@ test('★ 등록증 주소를 «덮지 않는다» — 등록증이 법적 원�
 
 test('★ 푸른이알피에 없으면 그대로 없다 — 지어내지 않는다', () => {
   const C = loadMiss();
-  const o = buildList([BIZ_NO_TEL], { type:'자문', ceoRaw:'조성환', left:false })[0];
+  const o = buildList([BIZ_NO_TEL], { type:'자문', ceoRaw:'나성환', left:false })[0];
   assert.ok(!o.companyTel);
   assert.deepEqual(plain(C.coMissing(o)), ['대표번호'],
     '진짜 없는 곳까지 없다고 안 하면 이 단추를 만든 뜻이 없다');
@@ -208,7 +208,7 @@ test('거래처가 아닌 회사는 푸른이알피 값이 아예 안 온다', (
 test('대표자 채우기는 하던 대로다 — 함께 고치다 망가지면 안 된다', () => {
   const noCeo = { kind:'biz', company:'사아기업', bizno:'120-81-04455' };
   const o = buildList([noCeo], ERP)[0];
-  assert.equal(o.ceo, '조성환');
+  assert.equal(o.ceo, '나성환');
   assert.equal(o.srcOf.ceo, '푸른이알피');
 });
 

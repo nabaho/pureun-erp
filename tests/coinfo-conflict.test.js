@@ -60,7 +60,7 @@ function load(existing){
   vm.runInContext(src.slice(i, j), ctx);
   return ctx;
 }
-const FIELDS = { bizno:'134-86-05772', ceo:'조성환', address:'충남 천안시 서북구 1',
+const FIELDS = { bizno:'134-86-05772', ceo:'나성환', address:'충남 천안시 서북구 1',
   docName:'기술·경영 혁신 지원신청서' };
 
 /* ══════ ① 다르면 남긴다 ══════ */
@@ -70,7 +70,7 @@ test('★ 값이 다르면 conflicts 에 남는다', async () => {
   await c.sendToCoInfo({ fields: FIELDS, byName:'권형하' });
   const v = c._writes[0].val;
   assert.ok(v['conflicts/ceo'], '★ 다른 값이 왔는데 아무 기록도 안 남았다');
-  assert.equal(v['conflicts/ceo'].got, '조성환', '읽은 값을 안 남겼다');
+  assert.equal(v['conflicts/ceo'].got, '나성환', '읽은 값을 안 남겼다');
   assert.equal(v['conflicts/ceo'].had, '김철수', '지금 값을 안 남겼다 — 무엇과 다른지 모른다');
 });
 
@@ -97,7 +97,7 @@ test('여러 칸이 동시에 어긋나면 다 남는다', async () => {
 /* ══════ ② 같으면 한 글자도 안 쓴다 ══════ */
 
 test('★ 값이 «같으면» 아무 것도 안 쓴다 — 요금이 새면 안 된다', async () => {
-  const c = load({ ceo:'조성환', address:'충남 천안시 서북구 1',
+  const c = load({ ceo:'나성환', address:'충남 천안시 서북구 1',
     docName:'기술·경영 혁신 지원신청서',
     tags:{ '기술·경영 혁신 지원신청서':true } });
   const r = await c.sendToCoInfo({ fields: FIELDS });
@@ -106,8 +106,8 @@ test('★ 값이 «같으면» 아무 것도 안 쓴다 — 요금이 새면 안
 });
 
 test('띄어쓰기만 다른 것은 어긋남이 아니다 — 사람 눈에 같은 값이다', async () => {
-  const c = load({ ceo:'  조성환  ' });
-  await c.sendToCoInfo({ fields: { bizno:FIELDS.bizno, ceo:'조성환' } });
+  const c = load({ ceo:'  나성환  ' });
+  await c.sendToCoInfo({ fields: { bizno:FIELDS.bizno, ceo:'나성환' } });
   const wrote = c._writes[0];
   if (wrote) assert.equal(wrote.val['conflicts/ceo'], undefined,
     '앞뒤 빈칸만 다른데 어긋남으로 봤다');
@@ -157,7 +157,7 @@ test('빈 칸은 어긋남이 아니라 그냥 채운다', async () => {
   const c = load({ ceo:'' });
   await c.sendToCoInfo({ fields: FIELDS });
   const v = c._writes[0].val;
-  assert.equal(v.ceo, '조성환', '빈 칸을 안 채웠다');
+  assert.equal(v.ceo, '나성환', '빈 칸을 안 채웠다');
   assert.equal(v['conflicts/ceo'], undefined, '빈 칸을 어긋남으로 봤다');
 });
 

@@ -41,15 +41,15 @@ test('★ 업체를 당겨올 때 메일 칸을 함께 담는다 — 안 담아�
   const S = store();
   const got = S.normalizeCompanies({ v: { a: {
     id: 'c1', name: '㈜정일제지', typeCode: '급여', status: 'active', managerMain: 'A-002',
-    contacts: [{ name: '임남용', position: '', email: 'jungilpp@naver.com', isPrimary: true }],
-    primaryContactName: '임남용', primaryContactEmail: 'jungilpp@naver.com',
-    taxOfficeName: '윤병수회계사무소', taxEmail: '5534001@hanmail.net'
+    contacts: [{ name: '임남용', position: '', email: 'cust12@naver.com', isPrimary: true }],
+    primaryContactName: '임남용', primaryContactEmail: 'cust12@naver.com',
+    taxOfficeName: '윤병수회계사무소', taxEmail: 'cust01@hanmail.net'
   } } });
   const co = got[0];
   assert.equal(co.contacts.length, 1);
-  assert.equal(co.contacts[0].email, 'jungilpp@naver.com');
-  assert.equal(co.primaryContactEmail, 'jungilpp@naver.com');
-  assert.equal(co.taxEmail, '5534001@hanmail.net');
+  assert.equal(co.contacts[0].email, 'cust12@naver.com');
+  assert.equal(co.primaryContactEmail, 'cust12@naver.com');
+  assert.equal(co.taxEmail, 'cust01@hanmail.net');
 });
 
 test('★ 무겁게 담지 않는다 — 371곳을 그릴 때마다 전화·주소까지 따라오면 안 된다', () => {

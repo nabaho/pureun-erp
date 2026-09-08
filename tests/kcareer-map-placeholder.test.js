@@ -41,7 +41,7 @@ function 채우기(xml, data) {
 
 const 나 = {
   fields: { name: '권형하', nameHanja: '權炯夏', nameEng: 'KWON HYUNG HA',
-    birth: '1975.01.07', addr: '충남 천안시 용곡4길 20', phone: '010-2802-4601' },
+    birth: '1975.01.07', addr: '충남 천안시 용곡4길 20', phone: '010-1200-0003' },
   edu: [{ period: '1996.03 ~ 1999.02', school: '천안고등학교', major: '인문계', degree: '졸업' },
     { period: '1999.03 ~ 2003.02', school: '영남대학교', major: '법과대학 법학부', degree: '학사' }],
   career: [{ period: '2016.01 ~ 현재', org: '푸른노무법인', title: '대표노무사', role: '노무자문' }]
