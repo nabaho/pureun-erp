@@ -27,9 +27,18 @@ GitHub Pages 로 배포하고, 뒤는 Firebase(RTDB·Functions)가 받는다.
 
 ### ③ 파이어베이스 규칙은 «만들개»에서 고친다
 `scripts/make-firebase-rules.js` 를 고치고 다시 만든다. JSON 을 손으로 고치면
-다음에 만들 때 조용히 사라진다. 고쳤으면 **채팅 본문에 전문을 코드블록으로**
-올린다(파일 첨부로 끝내지 않는다 — 콘솔에 붙여넣는 것이 마지막 한 걸음이다).
+다음에 만들 때 조용히 사라진다. 올리는 것은 `node scripts/rules-deploy.js --deploy` 다
+(살아 있는 콘솔을 읽어 견주고, 사라질 규칙이 있으면 멈춘다).
 → `tests/firebase-rules-apply.test.js`
+
+**창고(Storage) 규칙은 딴 길이다** (2026-09-08) — `docs/firebase-storage-전체(붙여넣기용).txt`
+하나를 고치고 `node scripts/storage-rules-deploy.js --deploy` 로 창고 «세 곳»에 올린다.
+- ⚠ 창고 규칙은 **CLI 로 읽을 수 없어** 기준이 「대표님이 옮겨 주신 파일」이다
+  (`docs/firebase-storage-콘솔원문-YYYY-MM-DD.txt` 중 최신) — 실시간DB 보다 «약한» 안전장치다.
+- ⚠ **루트 `firebase.json` 에 `storage`·`database` 를 넣지 말 것** — 넣으면 다른 세션이
+  그냥 `firebase deploy` 할 때 규칙이 함께 나간다. 올리개가 임시 설정을 만들어 쓴다.
+- ⚠ `--force` 같은 빠져나가는 길을 만들지 말 것 — 그 멈춤 하나가 창고의 안전장치 전부다.
+→ `tests/storage-rules-deploy.test.js`
 
 ### ④ 색은 5계열 27색 팔레트 안에서 고른다
 새 색을 만들지 않는다. 일부러 넣어야 하면 `tests/color-palette-apps.test.js`

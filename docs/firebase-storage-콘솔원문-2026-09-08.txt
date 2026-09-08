@@ -1,0 +1,74 @@
+// ═══════════════════════════════════════════════════════════════════
+//  창고(Storage) 규칙 — «콘솔 원문» 2026-09-08
+//
+//  ★ 이 파일은 «대표님이 콘솔에서 그대로 옮겨 주신 것»이다. 손대지 말 것.
+//    올릴 규칙(docs/firebase-storage-전체(붙여넣기용).txt)을 이것과 견주어
+//    «사라지는 것이 하나라도 있으면 멈춘다» — scripts/storage-rules-deploy.js.
+//
+//  ⚠⚠ 실시간DB 규칙과 달리 창고 규칙은 «CLI 로 읽을 수 없다».
+//    `firebase deploy --only storage` 는 있는데 「지금 규칙 보기」가 없다.
+//    그래서 이 파일이 유일한 기준이다 — 2026-09-08 까지 창고에는
+//    안전장치가 «아예 없었다»(그래서 사람이 붙여넣게 했다).
+//
+//  ⚠ 어느 창고에서 옮겨 온 것인지는 «밝혀지지 않았다». 다만 여기 담긴 세 칸과
+//    보조 함수 넷은 저장소의 「어느 창고에 넣어도 안전한 한 벌」에 그대로 들어 있어,
+//    기준으로 쓰는 데는 문제가 없다(빠지는 것을 잡는 것이 이 파일의 일이다).
+//
+//  ▶ 다음에 대표님이 콘솔 규칙을 옮겨 주시면 «날짜를 붙여 새 파일»로 두고,
+//    이 파일은 그대로 남긴다(실시간DB 쪽 firebase-rules-콘솔원문-*.json 과 같은 방식).
+// ═══════════════════════════════════════════════════════════════════
+
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    match /pucards/photos/{photoId} {
+      allow read:   if isStaff();
+      allow write:  if isStaff() && okImage();
+      allow delete: if isStaff();
+    }
+
+    match /puphotos/u/{uid}/{allPaths=**} {
+      allow read:   if signedIn() && request.auth.uid == uid;
+      allow write:  if signedIn() && request.auth.uid == uid && okImage();
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // ── 급여데이터함 (2026-08-13 추가) ──
+    //    사진첩과 두 군데가 다르다. 둘 다 일부러 그렇다.
+    //    ① 읽기가 전 직원이다 — 남의 자리를 이름 골라 볼 수 있어야 한다(대표 결정).
+    //       ⚠ 그래서 앱을 거치지 않고 주소를 아는 접근은 열람 기록이 안 남는다.
+    //    ② 사진만 받는 검사(okImage)를 걸지 않는다 — 엑셀·PDF를 받아야 한다.
+    //       엉뚱한 종류는 앱이 올리기 전에 막는다(exe·js·html 거절).
+    //       한글 파일(hwp)은 브라우저가 종류를 안 알려줘서 종류로 묶으면 통째로 막힌다.
+    //    쓰기는 올린 사람 자리만 — 창고 규칙은 실시간DB를 못 읽어 대리인 판정을
+    //    여기서 할 수 없다. 「누구 자리 소속인가」는 실시간DB 정보가 정한다.
+    match /pu_paydata/{uid}/{allPaths=**} {
+      allow read:   if isStaff();
+      allow write:  if signedIn() && request.auth.uid == uid && okPayFile();
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isStaff() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+    function okImage() {
+      return request.resource != null
+          && request.resource.size < 10 * 1024 * 1024
+          && request.resource.contentType.matches('image/.*');
+    }
+    // 급여자료 — 종류는 묶지 않고 크기만 막는다(위 주석 ② 참고). 한 건 25MB.
+    function okPayFile() {
+      return request.resource != null
+          && request.resource.size < 25 * 1024 * 1024;
+    }
+  }
+}
