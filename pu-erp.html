@@ -22737,7 +22737,15 @@ function CompanyManagement(){
   // 카운트
   var activeCount = companies.filter(function(c){return c.status==='active';}).length;
   var subofficeCount = companies.filter(function(c){return c.status==='suboffice' || c.isSuboffice;}).length;
-  var totalAdvisoryFee = filtered.reduce(function(s,c){return s + (c.monthlyAdvisoryFee||0);}, 0);
+  /* ★ 계약 중단한 업체는 그 달 자문료에서 뺀다 (대표 지시 2026-09-08).
+     빼기만 하고 말없이 넘어가면 「어제보다 금액이 줄었는데?」가 된다 —
+     얼마를 왜 뺐는지 칸 아래에 함께 적는다. */
+  var totalAdvisoryFee = filtered.reduce(function(s,c){
+    return s + (erpFeeStopped(c, selYM) ? 0 : (c.monthlyAdvisoryFee||0));
+  }, 0);
+  var suspendedFee = filtered.reduce(function(s,c){
+    return s + (erpFeeStopped(c, selYM) ? (c.monthlyAdvisoryFee||0) : 0);
+  }, 0);
   // 페이지네이션 (표시 개수 선택)
   var copsS = useState(50); var coPageSize = copsS[0]; var setCoPageSize = copsS[1];
   var pg = usePagination(filtered, coPageSize);
@@ -22846,7 +22854,8 @@ function CompanyManagement(){
         { label:'🏢 운영 업체', value:companies.filter(function(c){return c.status!=='closed';}).length+'개', bg:'#f8fafc', fg:'#1e293b', color:'#1e293b', border:'#e2e8f0' },
         { label:'💼 활성 자문', value:companies.filter(function(c){return c.status==='active';}).length+'개', bg:'#eff6ff', fg:'#1e40af', color:'#1e40af', border:'#bfdbfe' },
         { label:'🏛️ 사무대행', value:companies.filter(function(c){return c.status==='suboffice' || c.isSuboffice;}).length+'개', bg:'#fffbeb', fg:'#854d0e', color:'#d97706', border:'#fde68a' },
-        { label:'💰 월 자문료', value:totalAdvisoryFee.toLocaleString()+'원', bg:'#fffbeb', fg:'#854d0e', color:'#d97706', border:'#fde68a' },
+        { label:'💰 월 자문료', value:totalAdvisoryFee.toLocaleString()+'원', bg:'#fffbeb', fg:'#854d0e', color:'#d97706', border:'#fde68a',
+          sub: suspendedFee > 0 ? '중단 ' + suspendedFee.toLocaleString() + '원 제외' : null },
         { label:'✨ 이번 달 신규', value:companies.filter(function(c){return (c.contractStartDate||c.firstContractDate||c.createdAt||'').slice(0,7)===selYM;}).length+'개', bg:'#f0fdf4', fg:'#166534', color:'#16a34a', border:'#bbf7d0' },
         { label:'⏸ 계약 중단', value:companies.filter(function(c){return !!c.suspended;}).length+'개', bg:'#fffbeb', fg:'#854d0e', color:'#fbbf24', border:'#fde68a' }
       ],
@@ -34980,6 +34989,24 @@ function erpFeeForMonth(co, ym){
   if(best) return parseInt(best.fee, 10) || 0;
   return oldest ? (parseInt(oldest.fee, 10) || 0) : now;
 }
+/* ── 계약을 중단한 달부터는 자문료를 안 받는다 (대표 지시 2026-09-08) ──────────
+   업체 창의 「⏸ 계약 중단」 칸은 스스로 «청구·세금계산서 발행 중단» 이라고 적어 둔다.
+   그런데 셈하는 자리들은 그것을 한 번도 안 봤다 — 중단해도 status 는 그대로
+   'active' 라서 활성 업체로 세어졌다. 실제로 두 곳이 계속 얹혀 있었다:
+     코디스(2026-06-18 중단) 150,000 · 신석개발산업㈜(2025-06-01 중단) 200,000
+   업체관리 「💰 월 자문료」가 35만원을 더 부르고, 자문료관리는 중단한 업체의
+   달칸을 미납으로 그리고, 일괄 생성은 «받을 일 없는 입금»을 만들고 있었다.
+
+   ⚠ 지난 달까지 지우지 않는다 — 중단일이 «든» 달까지는 받은 것이 맞다.
+     자문료관리는 한 해 열두 달을 한 표에 그린다. 중단 전 달을 함께 비우면
+     이미 받은 입금이 갈 곳을 잃는다.
+   ⚠ 중단일이 안 적혀 있으면 «이번 달부터»로 본다. 언제부터인지 모르는데
+     옛 달까지 지우면 지난 장부가 흔들린다 — 모를 때는 덜 지운다. */
+function erpFeeStopped(co, ym){
+  if(!co || !co.suspended) return false;
+  var at = String(co.suspendedAt || '').slice(0, 7) || todayYM();
+  return String(ym || todayYM()).slice(0, 7) > at;
+}
 /* 이력을 «보기 좋게» 정렬 — 시작월 오름차순. 화면·저장 양쪽에서 같은 차례로 쓴다 */
 function erpFeeHistorySort(list){
   return (list || []).slice().sort(function(a, b){
@@ -35360,6 +35387,7 @@ function ReconcileCheck(){
       companies.forEach(function(co){
         if(co._deleted) return;
         if(co.status !== 'active') return;
+        if(erpFeeStopped(co, thisYM)) return;        // 계약 중단 — 이 달은 받을 것이 없다
         if(!co.monthlyAdvisoryFee || co.monthlyAdvisoryFee <= 0) return;
         if(co.taxInvoicePaymentDay === '선납' || co.taxInvoicePaymentDay === '건별' || co.taxInvoicePaymentDay === '분기별') return;
         if(!advThisMonth[co.name]){
@@ -35380,6 +35408,7 @@ function ReconcileCheck(){
       var sumExpectedThisMonth = 0;
       companies.forEach(function(co){
         if(co._deleted || co.status !== 'active') return;
+        if(erpFeeStopped(co, thisYM)) return;        // 계약 중단 — 예상액에 넣지 않는다
         if(!co.monthlyAdvisoryFee) return;
         if(co.taxInvoicePaymentDay === '선납' || co.taxInvoicePaymentDay === '건별' || co.taxInvoicePaymentDay === '분기별') return;
         sumExpectedThisMonth += (co.monthlyAdvisoryFee || 0);
@@ -42280,6 +42309,7 @@ function FinanceLedger(props){
         var start = String(co.contractStartDate || '').slice(0,7);
         ymList.forEach(function(ym){
           if(start && ym < start) return;            // 계약 시작 전 달은 받을 것이 없다
+          if(erpFeeStopped(co, ym)) return;          // 계약 중단 뒤 달도 마찬가지다
           var got = paidAmt[co.name + '|' + ym] || 0;
           if(got >= fee) return;                     // 그 달은 다 받았다
           var remain = fee - got;                    // 모자란 만큼만 후보로 남긴다
@@ -50409,7 +50439,9 @@ function IncomeCompanyTab(){
         subNames:(c.managerSubs||[]).map(function(s){return userName(s);}).join(', '),
         isCMS:!!(c.isCMS),
         typeCode:c.typeCode,
-        contractStartDate: c.contractStartDate || ''
+        contractStartDate: c.contractStartDate || '',
+        /* 계약 중단 — 그 뒤 달은 자문료가 안 나온다 (erpFeeStopped 가 이 둘을 본다) */
+        suspended: !!c.suspended, suspendedAt: c.suspendedAt || ''
       };
     });
 
@@ -50420,6 +50452,15 @@ function IncomeCompanyTab(){
     var cur = selYear + '-' + ('0'+m).slice(-2);
     return cur < cs;
   }
+  // 계약 중단 뒤의 달인지 (중단일이 든 달까지는 받는다)
+  function isAfterSuspend(co, m){
+    return erpFeeStopped(co, selYear + '-' + ('0'+m).slice(-2));
+  }
+  /* 그 달에 자문료가 «아예 없는» 곳 — 계약 시작 전이거나, 계약을 중단한 뒤다.
+     ⚠ 일괄 단추(달 전체·업체 한 줄·CMS·자동 생성)도 이것을 봐야 한다.
+       표는 그 칸을 ✕ 로 그려 못 누르게 해 두었는데 일괄 단추는 그냥 만들었다 —
+       7월에 시작한 업체에 1~6월 입금이 생기던 자리다. */
+  function feeMonthOff(co, m){ return isBeforeContract(co, m) || isAfterSuspend(co, m); }
 
   // 당일 CMS 대상 업체 (오늘 이체일인 CMS 업체 중 미납)
   var todayCMSList = SOURCE_LIST.filter(function(co){
@@ -50597,7 +50638,8 @@ function IncomeCompanyTab(){
   }
 
   function isMonthAllPaid(month){
-    return SOURCE_LIST.length > 0 && SOURCE_LIST.every(function(co){ return isPaid(co.name, month); });
+    // 자문료가 안 나오는 달(계약 전·중단 뒤)은 「다 받았나」에서 뺀다 — 안 빼면 영영 다 못 받는다
+    return SOURCE_LIST.length > 0 && SOURCE_LIST.every(function(co){ return feeMonthOff(co, month) || isPaid(co.name, month); });
   }
 
   function toggleMonthAll(month, checked){
@@ -50611,7 +50653,7 @@ function IncomeCompanyTab(){
       showToast(month+'월 '+_rmIds.length+'건 해제');
     } else {
       // 미납 전체 확정 (fee=0 업체 포함)
-      var unpaid=SOURCE_LIST.filter(function(co){return !isPaid(co.name,month);});
+      var unpaid=SOURCE_LIST.filter(function(co){return !isPaid(co.name,month) && !feeMonthOff(co,month);});
       if(!unpaid.length){showToast(month+'월 이미 전체 완료');return;}
       var base=Date.now();
       var toAdd=unpaid.map(function(co,i){
@@ -50631,7 +50673,7 @@ function IncomeCompanyTab(){
   }
 
   function toggleRow(co){
-    var unpaid=MONTHS.filter(function(m){return !isPaid(co.name,m);});
+    var unpaid=MONTHS.filter(function(m){return !isPaid(co.name,m) && !feeMonthOff(co,m);});
     if(!unpaid.length){showToast('이미 전월 완료');return;}
     customConfirm(co.name+'의 미납 '+unpaid.length+'개월을\n일괄 입금 확정하시겠습니까?\n\n금액: '+
       /* 달마다 금액이 다를 수 있다 — 보여주는 합계도 달별로 더한다
@@ -50655,7 +50697,7 @@ function IncomeCompanyTab(){
 
   function registerCMS(){
     var ym=selYear+'-'+('0'+cmsMonth).slice(-2);
-    var unpaid=SOURCE_LIST.filter(function(co){return co.isCMS&&co.fee>0&&!isPaid(co.name,cmsMonth);});
+    var unpaid=SOURCE_LIST.filter(function(co){return co.isCMS&&co.fee>0&&!isPaid(co.name,cmsMonth)&&!feeMonthOff(co,cmsMonth);});
     if(!unpaid.length){showToast('CMS 미납 없음');setCmsOpen(false);return;}
     customConfirm('CMS 자동이체 '+unpaid.length+'건을\n'+ym+' 입금 확정하시겠습니까?', function(){
       var toAdd=unpaid.map(function(co){
@@ -50676,7 +50718,7 @@ function IncomeCompanyTab(){
     var ym=selYear+'-'+('0'+nowMonth).slice(-2);
     var toAdd=[];
     SOURCE_LIST.forEach(function(co){
-      if(isBeforeContract(co, nowMonth)) return;
+      if(feeMonthOff(co, nowMonth)) return;
       if(isPaid(co.name,nowMonth)||!co.fee) return;
       toAdd.push({ id:'fi-adv-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
         /* «그 달» 자문료로 만든다 — 이력이 없으면 지금 자문료 그대로다 */
@@ -50699,7 +50741,7 @@ function IncomeCompanyTab(){
       for(var m=1; m<=12; m++){
         var ym = selYear+'-'+('0'+m).slice(-2);
         SOURCE_LIST.forEach(function(co){
-          if(isBeforeContract(co, m)) return;
+          if(feeMonthOff(co, m)) return;
           if(isPaid(co.name, m) || !co.fee) return;
           toAdd.push({ id:'fi-adv-'+(base+counter).toString(36)+Math.random().toString(36).slice(2,5),
             /* ★ 한 해치를 한꺼번에 만들 때가 가장 크게 어긋났다 — 지난 달까지
@@ -51054,17 +51096,17 @@ function IncomeCompanyTab(){
     }, 50);
   }
 
-  // 월 합계: 이번달이 계약일 이후인 회사만
+  // 월 합계: 이번달에 자문료가 나오는 회사만 (계약 전·중단 뒤는 뺀다)
   var totalFee=SOURCE_LIST.reduce(function(s,c){
-    return s + (isBeforeContract(c, nowMonth) ? 0 : (c.fee||0));
+    return s + (feeMonthOff(c, nowMonth) ? 0 : (c.fee||0));
   },0);
-  // 이번달 입금: 이번달이 계약일 이후인 회사 기준
-  var nowActiveList = SOURCE_LIST.filter(function(c){ return !isBeforeContract(c, nowMonth); });
+  // 이번달 입금: 이번달에 자문료가 나오는 회사 기준
+  var nowActiveList = SOURCE_LIST.filter(function(c){ return !feeMonthOff(c, nowMonth); });
   var paidThis = nowActiveList.filter(function(c){return isPaid(c.name,nowMonth);}).length;
-  // 연 합계: 회사별 (활성 월수 × fee)
+  // 연 합계: 회사별 (자문료가 나오는 월수 × fee)
   var yearTotal = SOURCE_LIST.reduce(function(s, c){
     var activeMonths = 0;
-    for(var mm=1; mm<=12; mm++){ if(!isBeforeContract(c, mm)) activeMonths++; }
+    for(var mm=1; mm<=12; mm++){ if(!feeMonthOff(c, mm)) activeMonths++; }
     return s + (c.fee||0) * activeMonths;
   }, 0);
   var cmsCount=SOURCE_LIST.filter(function(c){return c.isCMS;}).length;
@@ -51517,6 +51559,7 @@ function IncomeCompanyTab(){
                 ),
                 MONTHS.map(function(m){
                   var beforeContract = isBeforeContract(co, m);
+                  var afterSuspend = isAfterSuspend(co, m);
                   var paid=isPaid(co.name,m);
                   var item=paid?getItem(co.name,m):null;
                   var pInf=paidInfo(co.name,m,co.fee);      // 부분입금(20만 중 15만)을 가려낸다
@@ -51529,6 +51572,17 @@ function IncomeCompanyTab(){
                       style:{textAlign:'center',padding:'1px 0',verticalAlign:'middle',
                         background:'#f8fafc',color:'#cbd5e1',borderLeft:'1px solid #f8fafc',cursor:'not-allowed'}},
                       h('span',{style:{fontSize:'14px',color:'#cbd5e1'}}, '✕')
+                    );
+                  }
+                  /* 계약 중단 뒤의 달 — 받을 것이 없다. 눌러서 만들지도 못하게 한다.
+                     ⚠ 이미 입금이 적힌 달은 그대로 둔다(&& !paid). 중단 뒤에 들어온
+                       밀린 자문료를 여기서 지우면 그 돈이 화면에서 사라진다. */
+                  if(afterSuspend && !paid){
+                    return h('td',{key:m,
+                      title:'계약 중단'+(co.suspendedAt?'('+co.suspendedAt+')':'')+' 이후 — 청구하지 않습니다',
+                      style:{textAlign:'center',padding:'1px 0',verticalAlign:'middle',
+                        background:'#fffbeb',color:'#fbbf24',borderLeft:'1px solid #fde68a',cursor:'not-allowed'}},
+                      h('span',{style:{fontSize:'11px',color:'#fbbf24'}}, '⏸')
                     );
                   }
                   return h('td',{key:m,
@@ -59250,7 +59304,8 @@ function RevSrcSection(props){
   var maxMonth = Math.max.apply(null, months.map(function(x){return x.total;}).concat([1]));
 
   // 계약 기준 참고치: 활성 업체 월 자문료 합
-  var contractFix = (dbGet('companies', [])||[]).filter(function(c){ return c && c.status==='active'; })
+  var contractFix = (dbGet('companies', [])||[])
+    .filter(function(c){ return c && c.status==='active' && !erpFeeStopped(c); })   // 계약 중단은 뺀다
     .reduce(function(s,c){ return s+(parseInt(c.monthlyAdvisoryFee,10)||0); },0);
 
   function won(v){ return fmtMoney(v)+'원'; }
