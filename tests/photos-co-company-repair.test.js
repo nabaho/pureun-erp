@@ -5,7 +5,7 @@
      「앞으로는 두장 합친 사진인경우 이부분을 다시 확인하고 자동으로 수정 변경해라」
      (배경: PR #785 이후로 «새로» 보내는 서식은 회사 이름을 달고 명함이 된다.
       그런데 그 전에 손으로 만들었거나 다른 사정으로 회사가 안 붙은 채 이미 있는
-      명함은 저절로 안 고쳐진다 — 실제로 「대천맛김」의 담당자 「이권우」 명함이
+      명함은 저절로 안 고쳐진다 — 실제로 「가나김산업」의 담당자 「홍길동」 명함이
       회사 칸이 빈 채 남아 있었다.)
 
    ■ 어떻게 했나 — 기존 「업체가 나중에 생기면 스스로 맞춰 본다」(coWaiting/coSweep,
@@ -59,29 +59,29 @@ function rigFile(tree) {
 }
 
 test('★ 빈 회사 칸을 채운다', async () => {
-  const { F, updates } = rigFile({ 'pucards/items/C1': { kind: 'card', name: '이권우', company: '' } });
-  const out = await F.repairCardCompanyMany([{ id: 'C1', company: '대천맛김' }]);
+  const { F, updates } = rigFile({ 'pucards/items/C1': { kind: 'card', name: '홍길동', company: '' } });
+  const out = await F.repairCardCompanyMany([{ id: 'C1', company: '가나김산업' }]);
   assert.equal(out[0].patched, true);
-  assert.equal(updates[0]['pucards/items/C1/company'], '대천맛김');
+  assert.equal(updates[0]['pucards/items/C1/company'], '가나김산업');
 });
 
 test('★ 이미 있는 회사 값은 건드리지 않는다 — 사람이 넣어 둔 것을 지우면 안 된다', async () => {
-  const { F, updates } = rigFile({ 'pucards/items/C1': { kind: 'card', name: '이권우', company: '옛회사' } });
-  const out = await F.repairCardCompanyMany([{ id: 'C1', company: '대천맛김' }]);
+  const { F, updates } = rigFile({ 'pucards/items/C1': { kind: 'card', name: '홍길동', company: '옛회사' } });
+  const out = await F.repairCardCompanyMany([{ id: 'C1', company: '가나김산업' }]);
   assert.equal(out[0].patched, false);
   assert.equal(updates.length, 0, '★ 이미 값이 있는데 썼다 — 요금도 들고 사람 값을 지울 위험도 있다');
 });
 
 test('카드가 이미 지워졌으면 조용히 넘어간다', async () => {
   const { F, updates } = rigFile({});
-  const out = await F.repairCardCompanyMany([{ id: 'GONE', company: '대천맛김' }]);
+  const out = await F.repairCardCompanyMany([{ id: 'GONE', company: '가나김산업' }]);
   assert.equal(out[0].patched, false);
   assert.equal(updates.length, 0);
 });
 
 test('★ 채울 것이 하나도 없으면 실시간DB 에 «쓰지 않는다»', async () => {
   const { F, updates } = rigFile({ 'pucards/items/C1': { kind: 'card', company: '이미있음' } });
-  await F.repairCardCompanyMany([{ id: 'C1', company: '대천맛김' }]);
+  await F.repairCardCompanyMany([{ id: 'C1', company: '가나김산업' }]);
   assert.equal(updates.length, 0, '★ 쓸 것이 없는데 update 를 불렀다 — 헛돈이 나간다');
 });
 
@@ -91,7 +91,7 @@ test('여럿을 한 번에 처리하고 채운 것만 쓴다', async () => {
     'pucards/items/C2': { kind: 'card', company: '이미있음' }
   });
   const out = await F.repairCardCompanyMany([
-    { id: 'C1', company: '대천맛김' }, { id: 'C2', company: '다른회사' }
+    { id: 'C1', company: '가나김산업' }, { id: 'C2', company: '다른회사' }
   ]);
   assert.equal(out[0].patched, true);
   assert.equal(out[1].patched, false);
@@ -140,7 +140,7 @@ function rigPhotos(o) {
 }
 
 const formItem = (o) => Object.assign({
-  id: 'p1', meta: { read: { kind: 'form', filed: { id: 'C1' }, fields: { company: '대천맛김' } } },
+  id: 'p1', meta: { read: { kind: 'form', filed: { id: 'C1' }, fields: { company: '가나김산업' } } },
   _pageCount: 2
 }, o || {});
 

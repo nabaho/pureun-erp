@@ -74,26 +74,26 @@ function docFileKey() {
   return ctx.workerKey;
 }
 
-/* 표본 — 「(주)승진텍라인」에서 서류가 들어온 세 사람 */
+/* 표본 — 「(주)마바텍라인」에서 서류가 들어온 세 사람 */
 function sample() {
   return {
-    '승진텍라인__김수현': {
-      name: '김수현', company: '(주)승진텍라인',
+    '마바텍라인__김철수': {
+      name: '김철수', company: '(주)마바텍라인',
       docs: {
         '2026_a1': { kind: 'idcard', docName: '주민등록증', at: 300, photo: { year: '2026', id: 'a1', owner: 'u1' } },
         '2026_a2': { kind: 'mandate', docName: '위임장', at: 200, photo: { year: '2026', id: 'a2', owner: 'u1' } },
         '2026_a3': { kind: 'consent', docName: '개인정보 동의서', at: 100, photo: { year: '2026', id: 'a3', owner: 'u1' } }
       }
     },
-    '승진텍라인__박선희': {
-      name: '박선희', company: '(주)승진텍라인',
+    '마바텍라인__이영희': {
+      name: '이영희', company: '(주)마바텍라인',
       docs: {
         '2026_b1': { kind: 'idcard', docName: '운전면허증', at: 500, photo: { year: '2026', id: 'b1', owner: 'u1' } },
         '2026_b2': { kind: 'timesheet', docName: '8월 근태표', at: 400, photo: { year: '2026', id: 'b2', owner: 'u2' } }
       }
     },
-    '대천맛김__김수현': {           /* 이름이 같은 «남남» — 회사가 다르다 */
-      name: '김수현', company: '대천맛김',
+    '가나김산업__김철수': {           /* 이름이 같은 «남남» — 회사가 다르다 */
+      name: '김철수', company: '가나김산업',
       docs: { '2026_c1': { kind: 'idcard', docName: '주민등록증', at: 900, photo: { year: '2026', id: 'c1', owner: 'u1' } } }
     }
   };
@@ -104,8 +104,8 @@ function sample() {
 test('★★★ 사람 열쇠가 «세 곳에서 한 글자도 같다» — 어긋나면 남의 서류가 붙는다', () => {
   const ck = cardsKey(), dk = docFileKey();
   const names = [
-    ['김수현', '(주)승진텍라인'], ['김수현', '승진텍 라인'], ['박선희', '주식회사 대천맛김'],
-    ['이 권우', '㈜푸른'], ['최영도', '가.나.다'], ['김수', ''], ['', '(주)승진텍라인'],
+    ['김철수', '(주)마바텍라인'], ['김철수', '마바텍 라인'], ['이영희', '주식회사 가나김산업'],
+    ['홍 길동', '㈜푸른'], ['최영도', '가.나.다'], ['김수', ''], ['', '(주)마바텍라인'],
     ['홍길동', 'ABC Corp'], ['서.민', '한/글']
   ];
   names.forEach(([n, c]) => {
@@ -116,10 +116,10 @@ test('★★★ 사람 열쇠가 «세 곳에서 한 글자도 같다» — 어�
 });
 
 test('★★ 이름이 같아도 회사가 다르면 «다른 사람»이다 — 대표 결정 2026-09-01 ①', () => {
-  assert.notEqual(E.erpWkKey('김수현', '승진텍라인'), E.erpWkKey('김수현', '대천맛김'),
+  assert.notEqual(E.erpWkKey('김철수', '마바텍라인'), E.erpWkKey('김철수', '가나김산업'),
     '★★ 동명이인이 한 사람으로 묶이면 사건 서류가 남에게 갑니다');
-  assert.equal(E.erpWkKey('김수현', ''), '', '★ 회사가 없으면 열쇠를 만들지 않습니다');
-  assert.equal(E.erpWkKey('', '승진텍라인'), '', '★ 이름이 없으면 열쇠를 만들지 않습니다');
+  assert.equal(E.erpWkKey('김철수', ''), '', '★ 회사가 없으면 열쇠를 만들지 않습니다');
+  assert.equal(E.erpWkKey('', '마바텍라인'), '', '★ 이름이 없으면 열쇠를 만들지 않습니다');
 });
 
 /* ══════ ② 회사를 모르면 아무도 안 내놓는다 ══════ */
@@ -132,13 +132,13 @@ test('★★★ 회사를 안 쳤으면 «빈손»이다 — 전 직원 서류�
 });
 
 test('★★ 그 업체 사람만 나온다 — 이름이 같은 남의 회사 사람은 안 섞인다', () => {
-  const rows = E.erpWkCandidates(sample(), '(주)승진텍라인', []);
-  assert.deepEqual(A(rows.map(r => r.name)).sort(), ['김수현', '박선희'],
-    '★★ 「대천맛김 김수현」이 섞였습니다 — 남의 회사 사람입니다');
+  const rows = E.erpWkCandidates(sample(), '(주)마바텍라인', []);
+  assert.deepEqual(A(rows.map(r => r.name)).sort(), ['김철수', '이영희'],
+    '★★ 「가나김산업 김철수」이 섞였습니다 — 남의 회사 사람입니다');
 });
 
-test('★ 회사 표기가 달라도 같은 회사로 본다 — 「(주)승진텍라인」과 「승진텍 라인」', () => {
-  const rows = E.erpWkCandidates(sample(), '승진텍 라인', []);
+test('★ 회사 표기가 달라도 같은 회사로 본다 — 「(주)마바텍라인」과 「마바텍 라인」', () => {
+  const rows = E.erpWkCandidates(sample(), '마바텍 라인', []);
   assert.equal(rows.length, 2,
     '★ 표기가 조금 달라 목록이 통째로 비면 「가져오기」의 뜻이 없습니다');
 });
@@ -146,12 +146,12 @@ test('★ 회사 표기가 달라도 같은 회사로 본다 — 「(주)승진�
 /* ══════ ③ 이름만 당긴다 ══════ */
 
 test('★★★ 당겨오는 것은 «이름뿐» — 주민번호·주소·연락처·계좌는 빈칸이다', () => {
-  const picked = [{ name: '김수현', company: '(주)승진텍라인' }];
+  const picked = [{ name: '김철수', company: '(주)마바텍라인' }];
   ['case', 'contract'].forEach(shape => {
     const ws = E.erpWkToWorkers(picked, shape, 0);
     assert.equal(ws.length, 1);
     const w = ws[0];
-    assert.equal(w.name, '김수현', '★ 이름은 와야 합니다');
+    assert.equal(w.name, '김철수', '★ 이름은 와야 합니다');
     Object.keys(w).forEach(k => {
       if (k === 'name' || k === 'id' || k === 'isPrimary') return;
       assert.equal(w[k], '',
@@ -162,7 +162,7 @@ test('★★★ 당겨오는 것은 «이름뿐» — 주민번호·주소·연�
 });
 
 test('★★ 두 명부의 «칸 이름»이 각자 제 것이다 — 틀리면 넣어도 화면에 안 보인다', () => {
-  const p = [{ name: '김수현' }];
+  const p = [{ name: '김철수' }];
   const c = E.erpWkToWorkers(p, 'case', 0)[0];
   const t = E.erpWkToWorkers(p, 'contract', 0)[0];
   /* 사건 창은 addr·pos·account, 계약 창은 address·position — 서식이 다르다 */
@@ -191,11 +191,11 @@ test('★ 첫 사람만 «대표»가 된다 — 이미 있는 사람이 있으�
 /* ══════ ④ 이미 있는 사람 ══════ */
 
 test('★★ 이미 명부에 있는 사람은 «못 고른다» — 두 번 들어가면 명부가 겹친다', () => {
-  const rows = E.erpWkCandidates(sample(), '(주)승진텍라인', [{ name: '김수현' }]);
-  const kim = rows.filter(r => r.name === '김수현')[0];
+  const rows = E.erpWkCandidates(sample(), '(주)마바텍라인', [{ name: '김철수' }]);
+  const kim = rows.filter(r => r.name === '김철수')[0];
   assert.ok(kim, '★★ 이미 있는 사람을 목록에서 «빼면» 안 됩니다 — 「내가 넣었나」를 알 수 없습니다');
   assert.equal(kim.already, true, '★★ 이미 있다는 표시가 없습니다');
-  assert.equal(rows.filter(r => r.name === '박선희')[0].already, false);
+  assert.equal(rows.filter(r => r.name === '이영희')[0].already, false);
 });
 
 /* ══════ ⑤ 가진 서류 · 빠진 서류 ══════ */
@@ -203,12 +203,12 @@ test('★★ 이미 명부에 있는 사람은 «못 고른다» — 두 번 들
 test('★★ 빠진 서류를 짚어 준다 — 서른 명 중 누가 안 냈는지는 사람이 세면 틀린다', () => {
   /* ⚠ 「받아야 할 서류」 목록(WK_WANT)은 늘어난다(2026-09-02 에 근로계약서가 늘었다).
      그래서 목록을 통째로 박지 «않는다» — 안 낸 것은 짚고, 낸 것은 안 짚는지만 본다. */
-  const d = E.erpWkDocsOf(sample(), '박선희', '(주)승진텍라인');
+  const d = E.erpWkDocsOf(sample(), '이영희', '(주)마바텍라인');
   assert.ok(A(d.missing).indexOf('mandate') >= 0 && A(d.missing).indexOf('consent') >= 0,
     '★★ 위임장·동의서가 빠진 것을 안 짚어 줍니다 — 한 장이 빠지면 그 사람 건을 못 냅니다');
   assert.ok(A(d.missing).indexOf('idcard') < 0,
     '★★ 이미 낸 신분증을 「없음」이라고 합니다 — 그 표시를 아무도 안 믿게 됩니다');
-  const full = E.erpWkDocsOf(sample(), '김수현', '(주)승진텍라인');
+  const full = E.erpWkDocsOf(sample(), '김철수', '(주)마바텍라인');
   ['idcard', 'mandate', 'consent'].forEach(function (k) {
     assert.ok(A(full.missing).indexOf(k) < 0,
       '★ 낸 서류(' + k + ')를 「없음」이라고 합니다');
@@ -216,19 +216,19 @@ test('★★ 빠진 서류를 짚어 준다 — 서른 명 중 누가 안 냈는
 });
 
 test('★ 서류가 하나도 없는 사람에게는 «없음»을 안 그린다 — 온통 경고가 된다', () => {
-  const d = E.erpWkDocsOf({}, '없는사람', '(주)승진텍라인');
+  const d = E.erpWkDocsOf({}, '없는사람', '(주)마바텍라인');
   assert.deepEqual(A(d.docs), []);
   assert.deepEqual(A(d.missing), [], '★ 아직 아무것도 안 받은 사람에게 셋이 다 빨갛게 뜹니다');
 });
 
 test('★ 최근에 낸 서류가 위다 — 지금 하는 사건의 서류가 그것이다', () => {
-  const d = E.erpWkDocsOf(sample(), '김수현', '(주)승진텍라인');
+  const d = E.erpWkDocsOf(sample(), '김철수', '(주)마바텍라인');
   const ats = d.docs.map(x => x.at);
   assert.deepEqual(A(ats), A(ats).sort((a, b) => b - a), '★ 서류 차례가 뒤섞였습니다');
 });
 
 test('★ 서류에 «원본을 찾을 것»이 딸려 온다 — 해·번호·주인 셋이 다 있어야 열린다', () => {
-  const d = E.erpWkDocsOf(sample(), '김수현', '(주)승진텍라인');
+  const d = E.erpWkDocsOf(sample(), '김철수', '(주)마바텍라인');
   d.docs.forEach(doc => {
     assert.ok(doc.photo && doc.photo.id && doc.photo.year,
       '★ 사진을 가리키는 값이 빠졌습니다 — 「원본 보기」가 빈손이 됩니다');
@@ -255,7 +255,7 @@ test('★★ 명부 줄에 서류 딱지가 «붙는다» — 이것이 사건 �
 });
 
 test('★★★ 서류 목록을 명부에 «담지 않는다» — 담으면 지운 서류가 계속 「있음」으로 보인다', () => {
-  const w = E.erpWkToWorkers([{ name: '김수현', docs: [{ kind: 'idcard' }], has: { idcard: 1 } }], 'case', 0)[0];
+  const w = E.erpWkToWorkers([{ name: '김철수', docs: [{ kind: 'idcard' }], has: { idcard: 1 } }], 'case', 0)[0];
   assert.ok(!('docs' in w) && !('has' in w),
     '★★★ 명부 줄에 서류가 베껴졌습니다 — 사진첩에서 지워도 계속 「있음」으로 남습니다');
 });

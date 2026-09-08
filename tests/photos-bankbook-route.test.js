@@ -55,7 +55,7 @@ const bank = (fields, extra) => Object.assign({ kind: 'bankbook', fields: fields
 test('★★★ 손으로 적은 상호로도 기업 상세에 보낼 수 있다 — 적는 칸을 내주고 안 받으면 안 된다', () => {
   const r = bank({ bankName: '중소기업은행', bankAcct: '547-000000-00-000' });
   assert.equal(F.canSendCoInfo(r), false, '아무것도 없으면 못 보냅니다');
-  const typed = bank({ bankName: '중소기업은행' }, { fix: { company: '대천맛김' } });
+  const typed = bank({ bankName: '중소기업은행' }, { fix: { company: '가나김산업' } });
   assert.equal(F.canSendCoInfo(typed), true,
     '★★★ 사람이 상호를 적었는데도 「보낼 수 없다」입니다 — 적으라고 해 놓고 그 값을 안 봅니다.\n' +
     '  (종전에는 read.fields 만 보아 fix 가 통째로 무시됐습니다)');

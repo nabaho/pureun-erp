@@ -12,7 +12,7 @@
      ① 서식(form)은 기업정보함으로 «갈 길이 아예 없었다» —
         CARD_KINDS·TO_CARD_KIND 에 form 이 없고, MAP.cards.form 변환표도 없다.
         그래서 2쪽의 담당자 정보가 명함으로 들어오지 못했다.
-     ② 실제 화면에서 명함 「이권우」의 «회사 칸이 비어 있었다».
+     ② 실제 화면에서 명함 「홍길동」의 «회사 칸이 비어 있었다».
         회사가 안 붙으면 기업 상세(회사를 사업자번호·상호로 묶는다)와 이어지지 않는다 —
         사람은 사람 따로, 회사는 회사 따로 떠 있는 셈이 된다. 대표가 「각각 넣어
         정리해라」고 한 것이 바로 이 «이어짐»이다.
@@ -48,15 +48,18 @@ function loadRead(){
   return ctx.window.PuDocRead;
 }
 
-/* 대표 화면 그대로의 판독 결과 (2쪽이 합쳐진 뒤) */
+/* 대표 화면과 «같은 모양»의 판독 결과 (2쪽이 합쳐진 뒤)
+   ⚠ 값은 모두 «가짜»다. 2026-09-08 에 실제 고객 자료(이름·휴대폰·이메일·사업자번호·
+     법인등록번호·주소·매출액)를 바꿔 넣었다 — 이 저장소는 공개다(대표 결정 「1」).
+     새 붙임자료를 만들 때도 실제 자료를 옮겨 붙이지 말 것. */
 const FORM = {
   docName: '통합 기술보호지원반 신청서',
-  company: '대천맛김', ceo: '김정배', bizno: '313-81-28223', corpno: '164511-0021460',
+  company: '가나김산업', ceo: '김대표', bizno: '888-88-88888', corpno: '110111-1234567',
   openDate: '2013-04-01', bizType: '제조업', bizItem: '식료품 제조업',
-  companyTel: '041-932-9292', address: '33491 충청남도 보령시 대해로 425-21 (요암동)',
-  product: '조미김', sales: '91803928017',
-  name: '이권우', title: '상무이사', dept: '관리부',
-  tel: '041-939-8536', mobile: '010-7797-7572', email: 'dcmkim2877@daum.net'
+  companyTel: '041-000-0000', address: '30000 충청남도 가나시 나다로 1-2 (다라동)',
+  product: '조미김', sales: '1000000000',
+  name: '홍길동', title: '상무이사', dept: '관리부',
+  tel: '041-000-1111', mobile: '010-1111-2222', email: 'hong@example.kr'
 };
 
 /* ══════ ① 갈 길이 있다 ══════ */
@@ -72,18 +75,18 @@ test('★★ 서식의 담당자가 «회사 이름을 달고» 명함이 된다
   const P = loadRead();
   const m = P.mapTo('cards', 'form', FORM);
   assert.equal(m.kind, 'card', '★ 종류가 명함이라야 명함 목록에 들어간다');
-  assert.equal(m.name, '이권우');
-  assert.equal(m.company, '대천맛김',
+  assert.equal(m.name, '홍길동');
+  assert.equal(m.company, '가나김산업',
     '★★ 회사가 비면 기업 상세(회사로 묶는다)와 이어지지 않는다 — 사람 따로 회사 따로 뜬다');
 });
 
 test('담당자의 연락처가 «사람 것»과 «회사 것»으로 갈려 들어간다', () => {
   const P = loadRead();
   const m = P.mapTo('cards', 'form', FORM);
-  assert.equal(m.mobile, '010-7797-7572', '휴대폰은 그 사람 것');
-  assert.equal(m.tel, '041-939-8536', '담당자 유선은 직통전화');
-  assert.equal(m.companyTel, '041-932-9292', '회사 대표번호는 따로');
-  assert.equal(m.email, 'dcmkim2877@daum.net');
+  assert.equal(m.mobile, '010-1111-2222', '휴대폰은 그 사람 것');
+  assert.equal(m.tel, '041-000-1111', '담당자 유선은 직통전화');
+  assert.equal(m.companyTel, '041-000-0000', '회사 대표번호는 따로');
+  assert.equal(m.email, 'hong@example.kr');
   assert.equal(m.title, '상무이사');
   assert.equal(m.dept, '관리부');
 });
@@ -97,7 +100,7 @@ test('회사 주소는 «회사 주소» 칸으로 간다 — 개인 주소가 �
 
 test('빈 값은 안 싣는다 — 이미 들어 있는 값을 빈 값으로 덮으면 안 된다', () => {
   const P = loadRead();
-  const m = P.mapTo('cards', 'form', { name:'이권우', company:'', email:'   ' });
+  const m = P.mapTo('cards', 'form', { name:'홍길동', company:'', email:'   ' });
   assert.ok(!('company' in m));
   assert.ok(!('email' in m));
 });
