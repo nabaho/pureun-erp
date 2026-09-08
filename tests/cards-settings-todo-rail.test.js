@@ -199,17 +199,20 @@ test('★★ 「휴지통」은 «한 곳»에만 — 총계 칩에서 뺐다', 
     '★ 휴지통 41건이 띠에 안 오른다');
 });
 
-test('★★ 띠가 «늘» 맨 위에 있다 — 배지 대신이다 (2026-09-05 탭을 없앴다)', () => {
-  /* 탭이 있던 때는 「정리」 탭 이름 옆 숫자 배지가 그 몫을 했다. 탭을 없앴으니
-     띠 스스로가 «안 눌러도 보이는 자리»다 — 그러려면 조건 없이 붙어야 한다.
-     ⚠ 배지 규칙(.settab .tbdg)도 함께 걷어냈다 — 죽은 규칙을 남기면 다음 사람이 찾는다. */
+test('★★ 띠는 «조건 없이» 붙는다 — 탭이 돌아와도(2026-09-07) 늘 맨 위다', () => {
+  /* ⚠ 2026-09-07: 탭이 돌아왔다(대표 지시 「탭방식으로」). 2026-09-05 에 탭을
+       없애며 이 검사가 「탭이 되살아났다」를 잡고 있었는데, 그 전제가 뒤집혔다.
+     ★ 그래도 «띠가 늘 맨 위»라는 것은 그대로다(대표 결정 「나」) — 탭이 있든
+       없든 안 눌러도 밀린 것이 보여야 한다. 그 한 가지만 남겨 지킨다.
+     ⚠ 탭 «자리»와 배지는 tests/cards-settings-tabs.test.js 가 본다 —
+       여기서 또 보면 탭 얼개가 바뀔 때 두 곳이 함께 빨개진다. */
   const page = fnBody('renderSettingsPage');
-  assert.ok(!/settabs|settab |class="settab/.test(page), '★ 탭이 되살아났다');
-  assert.ok(SRC.indexOf('.settab .tbdg') < 0 && SRC.indexOf('.settabs{') < 0,
-    '★ 쓰는 곳이 없는 탭 규칙이 CSS 에 남아 있다');
-  const 짜기 = page.slice(page.indexOf('el.innerHTML = head'));
+  const 짜기 = page.slice(page.lastIndexOf('el.innerHTML = head'));
   assert.match(짜기, /\+ todoRailHtml\(\)/, '★ 띠를 조건 없이 붙이지 않는다');
   assert.ok(짜기.indexOf('? todoRailHtml()') < 0, '★ 띠가 조건에 걸려 있다');
+  /* 띠가 탭 줄보다 «앞»이다 — 탭 밑으로 들어가면 탭을 눌러야 보인다 */
+  const 띠 = 짜기.indexOf('todoRailHtml()'), 탭 = 짜기.indexOf('+ tabs');
+  assert.ok(띠 > 0 && 탭 > 띠, '★ 띠가 탭 줄보다 아래에 있다');
 });
 
 test('★ 띠와 배지는 «할 일이 있을 때만» 눈에 띈다 — 빛깔로 말한다', () => {
