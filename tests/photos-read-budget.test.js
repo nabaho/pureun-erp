@@ -79,7 +79,11 @@ function load(items) {
        이제 «세기만» 하고, 실제로 거는 것은 readWaitRun 이다. 이 파일이 재는 것은
        «한도 셈»이라 규칙(안 읽은 것 먼저·20장·3장·문서마다 한 번)은 그대로다 —
        겨눔만 누르는 쪽으로 옮겼다. 대역을 만들지 «않는다»(화면과 다른 규칙을 보게 된다). */
-    fnOf('readWaitOf'), fnOf('readWaitRun'), 'function renderGrid() {}'
+    fnOf('readWaitOf'), fnOf('readWaitRun'), 'function renderGrid() {}',
+    /* ⚠ 2026-09-08 — 「이미 읽은 것은 다시 안 읽는다」(대표 지시 「중복이라고 중단해라」).
+       다만 «종류를 못 가린 것»(other)은 판 번호를 올리는 까닭이라 그대로 둔다 —
+       그 갈림이 reReadWorth 다. 대역을 만들지 «않는다»(화면과 다른 규칙을 보게 된다). */
+    fnOf('reReadWorth')
   ].join('\n'), ctx);
   return ctx;
 }
@@ -88,9 +92,25 @@ const fresh = function (id) { return { id: id, meta: {} }; };
 const stale = function (id, kind) { return { id: id, meta: { read: { kind: kind || 'card', rv: 7 } } }; };
 const done = function (id) { return { id: id, meta: { read: { kind: 'card', rv: 8 } } }; };
 
-test('★ 판 번호가 올라 다시 읽는 것은 한 번에 몇 장뿐이다', () => {
+/* ══ 2026-09-08 정책이 바뀌었다 (대표 지시 「이미 읽은것은 중복이라고 중단해라」) ══
+   판 번호가 올랐다는 것만으로는 «자동으로 다시 읽지 않는다». 실측에서 그 목록 49장이
+   전부 «이미 잘 읽어 둔 것»(card·bizreg·contract·form)이었고, 화면은 그것을
+   「안 읽은 서류 50장」이라 부르고 있었다.
+   ★ 다시 읽는 것은 «종류를 못 가린 것»(other) 하나뿐이다 — 판 번호를 올리는 까닭. */
+
+test('★★★ 잘 읽어 둔 것은 판 번호가 올라도 «자동으로 다시 안 읽는다»', () => {
   const list = [];
-  for (let i = 0; i < 50; i++) list.push(stale('s' + i));
+  for (let i = 0; i < 50; i++) list.push(stale('s' + i));   // 기본 갈래는 card
+  const c = load(list);
+  c.readWaitRun();
+  assert.deepEqual(c._queued, [],
+    '★★★ 이미 읽은 것을 또 읽습니다 — 하루 몫이 거기서 사라졌습니다: ' + c._queued.join(','));
+  assert.equal(c._note.style.display, 'none', '★ 할 일이 없는데 「판독 중…」이 떠 있습니다');
+});
+
+test('★ 종류를 못 가린 것(other)은 한 번에 «몇 장뿐» — 원본을 열 때마다 내려받는다', () => {
+  const list = [];
+  for (let i = 0; i < 50; i++) list.push(stale('o' + i, 'other'));
   const c = load(list);
   c.readWaitRun();
   assert.equal(c._queued.length, 3,
@@ -108,7 +128,9 @@ test('★ 안 읽은 사진은 그대로 20장까지 읽는다 — 일이 밀리
 
 test('★ 안 읽은 것이 먼저다 — 새로 올린 사진이 뒤로 밀리면 안 된다', () => {
   const list = [];
-  for (let i = 0; i < 25; i++) list.push(stale('s' + i));
+  /* ⚠ 2026-09-08 — 잘 읽어 둔 것은 아예 안 걸리므로, «다시 읽을 값이 있는 것»으로
+       줄을 세워야 차례를 잴 수 있다(other = 종류를 못 가린 것). */
+  for (let i = 0; i < 25; i++) list.push(stale('o' + i, 'other'));
   list.push(fresh('NEW'));
   const c = load(list);
   c.readWaitRun();
@@ -120,9 +142,13 @@ test('★ 안 읽은 것이 먼저다 — 새로 올린 사진이 뒤로 밀리�
 test('★ 회의사진·급여서류는 판 번호가 올라도 다시 안 읽는다', () => {
   /* 담는 것이 한 줄뿐이라 다시 읽어도 새로 나올 것이 없다.
      그런데 원본 내려받기 값은 똑같이 든다. */
-  const c = load([stale('m1', 'meeting'), stale('p1', 'payslip'), stale('c1', 'card')]);
+  /* ⚠ 2026-09-08 — 이제 card 도 «자동으로 안 읽는다»(대표 지시). 그래서 여기서는
+       「나올 것 없는 갈래」와 「종류를 못 가린 것」을 나란히 두고 뒤엣것만 걸리는지 본다. */
+  const c = load([stale('m1', 'meeting'), stale('p1', 'payslip'),
+                  stale('c1', 'card'), stale('o1', 'other')]);
   c.readWaitRun();
-  assert.deepEqual(c._queued, ['c1'], '★ 나올 것 없는 사진을 다시 읽고 있습니다');
+  assert.deepEqual(c._queued, ['o1'],
+    '★ 나올 것 없는 사진을 다시 읽거나, 종류를 못 가린 것을 건너뜁니다: ' + c._queued.join(','));
 });
 
 test('★ 「기타서류(other)」는 반드시 다시 읽는다 — 판 번호의 존재 이유다', () => {
@@ -176,8 +202,11 @@ test('★ 여러 쪽 문서는 문서마다 한 번만 — 안 읽은 쪽·다�
   const c = load([
     { id: 'p1', meta: { doc: { group: 'g1', page: 1 } } },
     { id: 'p2', meta: { doc: { group: 'g1', page: 2 } } },
-    { id: 'q1', meta: { doc: { group: 'g2', page: 1 }, read: { kind: 'card', rv: 7 } } },
-    { id: 'q2', meta: { doc: { group: 'g2', page: 2 }, read: { kind: 'card', rv: 7 } } }
+    /* ⚠ 2026-09-08 — 다시 읽는 것은 «종류를 못 가린 것»(other)뿐이다(대표 지시
+         「이미 읽은것은 중복이라고 중단해라」). card 로 두면 아예 안 걸려
+         「문서마다 한 번」을 잴 수가 없다 — 재려는 규칙이 사라진다. */
+    { id: 'q1', meta: { doc: { group: 'g2', page: 1 }, read: { kind: 'other', rv: 7 } } },
+    { id: 'q2', meta: { doc: { group: 'g2', page: 2 }, read: { kind: 'other', rv: 7 } } }
   ]);
   c.readWaitRun();
   assert.deepEqual(c._queued, ['p1', 'q1'], '★ 같은 문서를 두 번 읽습니다');

@@ -359,7 +359,14 @@ test('★ 판독은 문서마다 한 번만, 그러나 다른 문서는 빠뜨�
        이제 «세기만» 하고, 실제로 거는 것은 readWaitRun 이다. 여기서 재는 것은
        «문서마다 한 번» 규칙이라 그대로이고, 겨눔만 누르는 쪽으로 옮겼다.
      ⚠ 대역을 만들지 «않는다» — 화면과 다른 규칙을 보게 된다. */
+  /* ⚠ 2026-09-08 — 「이미 읽은 것은 다시 안 읽는다」(대표 지시 「중복이라고 중단해라」)로
+       자동 목록이 갈렸다. 그 갈림(reReadWorth)도 «원본 그대로» 실어야 한다 —
+       안 실으면 그 자리에서 멎어 이 검사가 통째로 운다.
+     ⚠ 이 파일의 표본은 전부 「안 읽은 것」이라 다시 읽기 갈래는 안 쓰인다.
+       그래도 부르는 자리가 있으므로 딸린 것(RESTALE_SKIP·readPromptVer)을 채워 준다. */
   vm.runInContext('var readQuotaOut = false;\nfunction renderGrid() {}\n'
+    + 'var RESTALE_SKIP = {};\nfunction readPromptVer(){ return 0; }\n'
+    + fnOf(app, 'reReadWorth') + '\n'
     + fnOf(app, 'autoReadPending') + '\n' + fnOf(app, 'readWaitRun'), ctx);
   ctx.readWaitRun();
   assert.equal(joined(queued), 'a,x,z',

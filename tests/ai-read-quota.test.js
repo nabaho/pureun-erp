@@ -273,3 +273,55 @@ test('★ 숫자만 받는다 — 사진·글·이름이 새어 들어갈 자리
   assert.equal(c.$other['.validate'], false,
     '★★ 모르는 칸이 그냥 들어옵니다 — 셈 자리에 사람 이름이 쌓일 수 있습니다');
 });
+
+/* ══════ ㉳ 이미 읽은 것은 «다시 안 읽는다» (대표 지시 2026-09-08) ══════
+   「중복해서 두번 3번 읽게 만드는데 그부분은 어떻게 해야하나
+     이미 읽은것은 중복이라고 중단해라」
+
+   ★★★ 실측이 결정적이었다(2026-09-08 · 사진 699장):
+       한 번도 안 읽음 0장 · 실패해 다시 걸 것 0장
+       ★ 판 번호가 올라 «다시» 49장 ← 화면이 「안 읽은 서류 50장」이라 부르던 것
+       그대로 둘 것 623장
+     즉 그 50장은 «한 장도 안 읽은 것이 아니었다». 띠 이름부터 거짓말이었고,
+     누르면 같은 서류를 두 번째·세 번째로 읽었다 — 하루 몫은 그만큼 사라진다. */
+
+test('★★★ 「안 읽은 것」 목록에 «이미 읽은 것»이 들어가지 않는다', () => {
+  const fn = stripComments(cutFn(RAW, 'function readWaitOf('));
+  assert.ok(fn, 'readWaitOf 가 없습니다');
+  assert.match(fn, /neverRead\(it\)/, '★ 한 번도 안 읽은 것을 안 봅니다');
+  assert.ok(!/staleRead\(/.test(fn),
+    '★★★ 「판 번호가 올라 다시 읽을 것」이 「안 읽은 것」에 섞였습니다 —\n'
+    + '  그러면 「안 읽은 서류 50장」이라 적어 놓고 실은 한 장도 안 읽은 것이 없습니다\n'
+    + '  (2026-09-08 실측: 50장 중 49장이 이미 읽은 것이었습니다).\n'
+    + '  누르면 같은 서류를 두 번째·세 번째로 읽습니다.');
+});
+
+test('★★★ 눌러도 «이미 읽은 것»은 안 걸린다 — 거기서 하루 몫이 사라졌다', () => {
+  const fn = stripComments(cutFn(RAW, 'function autoReadPending('));
+  assert.ok(fn, 'autoReadPending 이 없습니다');
+  const i = fn.indexOf('const take =');
+  assert.ok(i > 0, 'take 를 만드는 자리가 없습니다');
+  const takeBlock = fn.slice(i, fn.indexOf(';', i));
+  assert.match(takeBlock, /fresh\./, '★ 안 읽은 것을 안 겁니다');
+  assert.match(takeBlock, /failed\./, '★ 실패한 것을 안 겁니다');
+  assert.ok(!/stale\./.test(takeBlock),
+    '★★★ 이미 읽은 것을 다시 걸고 있습니다 — 대표 지시 「이미 읽은것은 중복이라고 중단해라」');
+});
+
+test('★★ 그래도 staleRead 판정을 «지우지 않았다» — 한 장씩 다시 읽는 길은 남는다', () => {
+  assert.match(RAW, /function staleRead\(/,
+    '★★ 판정을 통째로 지웠습니다 — 사진을 열었을 때 「다시 읽으면 나아진다」를 알 길이 없어집니다');
+  /* 셈은 남겨 둔다 — 몇 장이 그런지 볼 수 있어야 다음에 판단할 수 있다 */
+  const fn = stripComments(cutFn(RAW, 'function autoReadPending('));
+  assert.match(fn, /stale:\s*stale/, '★ 몇 장인지 세는 것도 없애 버렸습니다');
+});
+
+test('★★ 「남은 N장」이 «걸 수 있는 것»만 센다 — 못 걸 것을 세면 영영 안 줄어든다', () => {
+  const fn = stripComments(cutFn(RAW, 'function autoReadPending('));
+  const i = fn.indexOf('const rest =');
+  assert.ok(i > 0, 'rest 를 만드는 자리가 없습니다');
+  const restBlock = fn.slice(i, fn.indexOf(';', i));
+  assert.ok(!/stale\./.test(restBlock),
+    '★★ 「남은 N장」에 이미 읽은 것이 섞여 있습니다 — 눌러도 안 줄어들어\n'
+    + '  「한 번 더 눌러 주세요」가 영영 사라지지 않습니다');
+});

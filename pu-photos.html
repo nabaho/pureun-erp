@@ -7016,17 +7016,45 @@ function autoReadPending() {
   const failed = gridItems.filter(canRead).filter(gate).filter(failedRead).filter(oneDoc);
   const failedId = {};
   failed.forEach(function (it) { failedId[it.id] = 1; });
+  /* ══ ㉳ 이미 읽은 것은 «다시 안 읽는다» (대표 지시 2026-09-08) ══════════════
+     「중복해서 두번 3번 읽게 만드는데 그부분은 어떻게 해야하나
+       이미 읽은것은 중복이라고 중단해라」
+
+     ★★★ 실측이 결정적이었다(2026-09-08, 사진 699장):
+         한 번도 안 읽음            0장
+         실패해서 다시 걸 것        0장
+         ★ 판 번호가 올라 «다시»   49장   ← 화면이 「안 읽은 서류 50장」이라 부르던 것
+         그대로 둘 것             623장
+       즉 그 50장은 «한 장도 안 읽은 것이 아니었다». 전부 이미 읽어 둔 것이고,
+       물음 판이 16으로 오르면서 옛 판(pv3·10·11·12)으로 읽은 49장이 되살아난 것이다.
+       띠 이름부터 거짓말이었고, 누르면 «같은 서류를 두 번째·세 번째로» 읽었다.
+       갈래도 card 17·bizreg 15·contract 12·form 5 — «종류를 이미 잘 가린» 것들이라
+       다시 읽어 얻을 것이 적고, 하루 몫은 그만큼 사라진다.
+
+     ★ 그래서 «다시 읽기»를 자동 목록에서 뺀다. 없애는 것은 아니다 —
+       사진을 열어 「다시 읽기」를 누르는 길은 그대로다(사람이 판단해 고른다).
+     ⚠ staleRead 를 «지우지 말 것». 그 판정은 사진 한 장을 열었을 때
+       「다시 읽으면 나아진다」를 알려 주는 데 그대로 쓰인다. 여기서는 «자동으로
+       걸지 않는» 것뿐이다. 셈은 남겨 두어 몇 장이 그런지 볼 수 있게 한다. */
   const stale = gridItems.filter(canRead).filter(gate).filter(staleRead).filter(oneDoc)
     .filter(function (it) { return !failedId[it.id]; });
   /* 「서류입니까?」를 물어야 할 것이 있으면 띠를 띄운다 — 안 읽고 넘긴 것이
      **몇 장인지 보이지 않으면** 그것이 곧 「올렸는데 판독이 안 된다」다. */
   renderReadAsk();
+  /* ⚠ stale 은 take 에 «안 넣는다» — 이미 읽은 것을 또 읽는 것이 바로 그 「중복」이다.
+     ★★ 딱 하나 남긴다 — «종류를 못 가린 것»(other). 그것은 「이미 읽은 것」이 아니라
+       「읽었는데 무엇인지 못 가린 것」이다. 판 번호를 올리는 까닭이 바로 그것을
+       되살리는 데 있고(2026-08-06: 회의사진 0장인데 기타서류에 6장이 앉아 있었다),
+       그 자리를 막으면 잘못 굳은 사진이 «영영» 안 풀린다.
+     ⚠ 2026-09-08 실측에서 대기 중 other 는 «0장»이었다 — 지금 당장 늘어나는 것은
+       없고, 나중에 잘못 굳는 사진이 생겼을 때의 숨구멍으로만 남는다. */
+  const 못가린것 = stale.filter(reReadWorth);
   const take = fresh.slice(0, AUTO_READ_MAX)
     .concat(failed.slice(0, AUTO_RETRY_MAX))
-    .concat(stale.slice(0, AUTO_RESTALE_MAX));
+    .concat(못가린것.slice(0, AUTO_RESTALE_MAX));
   const rest = (fresh.length - Math.min(fresh.length, AUTO_READ_MAX)) +
     (failed.length - Math.min(failed.length, AUTO_RETRY_MAX)) +
-    (stale.length - Math.min(stale.length, AUTO_RESTALE_MAX));
+    (못가린것.length - Math.min(못가린것.length, AUTO_RESTALE_MAX));
   return { fresh: fresh, failed: failed, stale: stale, take: take, rest: rest };
 }
 
@@ -7047,15 +7075,32 @@ function autoReadPending() {
 
    ⚠ 사람이 누르는 길은 «하나도» 막지 않는다 — 막는 것은 «저절로»뿐이다. */
 
-/* 이 사진이 「눌러 주면 읽을 수 있는데 아직 안 읽은」 장인가 — 딱지가 이것을 본다.
+/* 이 사진이 「눌러 주면 읽을 수 있는데 «아직 안 읽은»」 장인가 — 딱지가 이것을 본다.
    ⚠ 판정을 여기 한 곳에 모은다. 딱지와 띠가 서로 다른 셈을 하면
-     「3장 기다림」이라 해 놓고 칸에는 다섯 개가 붙는다. */
+     「3장 기다림」이라 해 놓고 칸에는 다섯 개가 붙는다.
+   ⚠⚠ staleRead(판 번호가 올라 «다시» 읽을 것)를 «넣지 말 것» — 대표 지시 2026-09-08
+     「이미 읽은것은 중복이라고 중단해라」. 넣으면 「안 읽은 서류 50장」이라 적어 놓고
+     실은 한 장도 안 읽은 것이 없는 거짓말이 된다(2026-09-08 실측: 50장 중 49장이
+     이미 읽은 것이었다). 그리고 누르면 같은 서류를 두 번째·세 번째로 읽는다. */
 function readWaitOf(it) {
   if (readQuotaOut) return false;              // 오늘은 눌러도 같은 답이다
   if (!mayTouch(it.id)) return false;          // 남의 사진 — 눌러도 서버가 막는다
   if (readSkipWhy(it)) return false;           // 사진이라 했거나 「보류」 중이다
   if (it._queuedRead) return false;            // 이미 줄에 있다
-  return neverRead(it) || failedRead(it) || staleRead(it);
+  return neverRead(it) || failedRead(it) || reReadWorth(it);
+}
+
+/* 다시 읽을 «값이 있는» 것인가 — 판 번호가 올랐다는 것만으로는 아니다.
+   ★★ 「이미 읽은 것」과 「읽었는데 무엇인지 못 가린 것」은 다르다. 대표 지시
+     2026-09-08 「이미 읽은것은 중복이라고 중단해라」가 막으라는 것은 앞엣것이다.
+     뒤엣것(other)은 판 번호를 올리는 «까닭»이라 그대로 둔다 — 막으면 잘못 굳은
+     사진이 영영 안 풀린다(2026-08-06: 회의사진 0장인데 기타서류에 6장이 앉아 있었다).
+   ⚠ 여기에 갈래를 더 넣지 말 것. card·bizreg·contract 는 «잘 가려진» 것이라
+     다시 읽어 얻을 것이 적고, 하루 몫은 그만큼 사라진다(2026-09-08 실측 49장). */
+function reReadWorth(it) {
+  if (!staleRead(it)) return false;
+  const r = it && it.meta && it.meta.read;
+  return !!(r && !r.error && r.kind === 'other');
 }
 
 /* 단추를 눌렀을 때 «비로소» 건다. 상한(AUTO_READ_MAX 등)은 그대로 쓴다 —
