@@ -49,7 +49,12 @@ GitHub Pages 로 배포하고, 뒤는 Firebase(RTDB·Functions)가 받는다.
 사람은 `sid`, 업체는 `companyId`, 각 업무는 영구 `id` 로 잇는다 —
 **이름을 열쇠로 쓰지 않는다.** 민감 자료는 억지로 열지 말고
 `strategy:'in_app'` 으로 선언한다.
-→ `tests/ontology-contract.test.js`
+새 화면은 `js/pu-ontology-write.js`를 싣고 `PROGRAMS.writeContracts`에 저장 경로와
+개체 종류를 적는다. 2026-09-06 이전 운영 앱만 관찰 유예를 받으며, 새 앱은 선언을
+빼거나 `data-mode="observe"`를 적어도 기본 강제다. 구조 변경은 새 `schemaVersion`을
+추가해 한 판 전을 함께 읽고, 이관 완료 뒤 옛 판 쓰기를 닫는다. 물리 삭제 대신
+삭제 표식, 동시 수정은 `revision` 트랜잭션을 쓴다.
+→ `tests/ontology-contract.test.js` · `tests/ontology-write-gate.test.js`
 
 ### ⑥ `.js` 를 고쳤으면 부르는 쪽의 `?v=` 를 올린다
 안 올리면 브라우저가 옛 파일을 계속 쓴다 — **고쳤는데 안 고쳐진다.**

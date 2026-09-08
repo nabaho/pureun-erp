@@ -131,7 +131,10 @@ test('★⑦ 파이어베이스 규칙이 사람·재무를 «관리자에게만
   }
   for (const v of ['internal', 'source']) {
     assert.ok(!/isAdmin/.test(g[v]['.read']), v + ' 칸은 직원이 봅니다');
-    assert.match(g[v]['.write'], /isAdmin/, '★ 아무나 관계망을 덮어쓸 수 있습니다');
+    /* 쓰기 문턱을 칸 전체에 두면 한 번 통과한 관리자가 기존 개체도 덮어쓴다.
+       이제 낱개 개체·관계에 두어 «관리자 + 새 값(또는 같은 값 재시도)»까지 본다. */
+    assert.match(g[v].entities.$id['.write'], /isAdmin/, '★ 아무나 관계망 개체를 덮어쓸 수 있습니다');
+    assert.match(g[v].edges.$id['.write'], /isAdmin/, '★ 아무나 관계망 관계를 덮어쓸 수 있습니다');
   }
   assert.match(r.ontology.v1.current['.write'], /isAdmin/, '★ 「지금 볼 판」을 아무나 바꿉니다');
 });

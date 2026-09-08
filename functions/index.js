@@ -4,7 +4,7 @@
 const functions = require("firebase-functions/v1");
 const { getApps, initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
-const { getDatabase } = require("firebase-admin/database");
+const { getDatabase: getRawDatabase } = require("firebase-admin/database");
 const { getMessaging } = require("firebase-admin/messaging");
 const { getStorage } = require("firebase-admin/storage");
 const crypto = require("crypto");   // 내려받기 토큰 발급용 (downloadUrl)
@@ -26,8 +26,15 @@ const { MAX_BYTES, MAX_IMAGE_BYTES, SITE_REPO, 홈페이지자리,
         올릴자리인가, 올릴그림자리인가, 사연, 올리기 } = require("./site-publish");
 const { homepageUrl } = require("./homepage-fetch");
 const HanaMessage = require("./hana-message");
+const OntologyServerWrite = require("./ontology-write-server");
 
 if (!getApps().length) initializeApp();
+
+/* 관리자 SDK는 보안규칙을 건너뛴다. 자동수집·메일 함수도 빠짐없이 관찰 관문을
+   지나게 getDatabase 자체를 감싼다. 기존 자료는 아직 막지 않고 위반 위치만 남긴다. */
+function getDatabase() {
+  return OntologyServerWrite.wrapDatabase(getRawDatabase(), { program: "functions" });
+}
 
 const RESEND_KEY = process.env.RESEND_API_KEY || "";
 

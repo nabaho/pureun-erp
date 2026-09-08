@@ -263,6 +263,10 @@ plugin update superpowers
 - 일괄 입력은 `PuOntology.validateWorkBatch`로 전 행을 먼저 검사하고, 실패 시 미리보기와 원본 파일을 유지한다. 새 입력으로 기존·삭제 ID를 덮지 않는다. 계약 이관은 실제 원본 ID를 승계하고, 실패 정리에서 기존 업체(`linked`)를 삭제하지 않는다. 부분 이관이나 번호 단독 연결을 계약 전체의 완료 근거로 삼지 않는다.
 - 은행·카드 문자 자동 수집은 `originSystem`·`originId`를 보존하고 `PuOntology.validateHanaSourceBatch`로 배치 전부를 검사한다. 한 행이라도 잘못되면 전부 보류하며, 인증된 REST 조회로 실제 서버 저장본을 확인하기 전에는 원본 문자에 수신 완료(`ack`)를 보내지 않는다.
 - 거래 금액은 연결 후보의 근거일 뿐 업무 영구 ID가 아니다. 은행 문자·거래 파일·다른 재무 가져오기에서 금액 하나만 같다는 이유로 사건·계약 ID를 자동 대입하지 않는다. 카드 취소 여부와 수집 출처도 중복 판별·저장 과정에서 버리지 않는다.
+- 모든 등록 프로그램은 Firebase 초기화 전에 `js/pu-ontology-write.js`를 싣는다. 2026-09-06 이전 운영 앱은 우선 `observe`로 위반 위치만 모으지만, 새 프로그램은 `PROGRAMS.writeContracts`에 저장 경로·개체 종류를 선언하지 않으면 배포검사가 실패하고 기본 `enforce`로 저장이 거절된다.
+- 새 업무 레코드는 공용 관문에서 `id`·`entityType`·`schemaVersion`·`contractVersion`·생성/수정 시각·`revision`을 갖춘다. 기존 자료 이관은 먼저 읽기 전용 계획으로 자동 보완과 사람 확인을 가른 뒤 진행한다.
+- 구조 변경은 한 판 전 읽기 → 새 판 쓰기 → 기존자료 이관 → 옛 판 쓰기 차단 순서다. 물리 삭제 대신 `_deleted`·`deletedAt`·`deletedBy`를 남기고, 수정은 서버 최신 `revision`을 다시 비교하는 트랜잭션을 쓴다.
+- Cloud Functions 관리자 SDK는 보안규칙을 건너뛰므로 `functions/ontology-write-server.js` 관찰 관문을 거친다. 서버 규칙만으로 자동수집 쓰기가 보호된다고 가정하지 않는다.
 
 상세 설계와 단계별 범위는 `docs/푸른통합온톨로지-1단계.md`를 따른다.
 

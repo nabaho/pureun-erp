@@ -18,7 +18,8 @@
 
 const functions = require("firebase-functions/v1");
 const { getAuth } = require("firebase-admin/auth");
-const { getDatabase } = require("firebase-admin/database");
+const { getDatabase: getRawDatabase } = require("firebase-admin/database");
+const OntologyServerWrite = require("./ontology-write-server");
 const {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -41,7 +42,7 @@ const MAX_DEVICES = 5;                    // 한 사람이 등록할 수 있는 
 const DB_CRED = "passkeys/creds";         // {sid}/{credId} = 등록된 기기
 const DB_CHAL = "passkeys/challenges";    // {키} = 아직 안 쓴 도전값
 
-function db() { return getDatabase(); }
+function db() { return OntologyServerWrite.wrapDatabase(getRawDatabase(), { program: "passkey" }); }
 
 function setCors(req, res) {
   const origin = String((req && req.headers && req.headers.origin) || "");
