@@ -90,6 +90,31 @@
 **예전 방식을 되살리지 말 것** — 채팅에 규칙 전문을 통째 부어 대표가 붙여넣게 하는 것은
 2026-09-03 부터 하지 않는다. 자동 배포가 막힐 때만 그 길을 쓴다.
 
+### 창고(Storage) 규칙도 이제 내가 올린다 (2026-09-08)
+
+```
+① docs/firebase-storage-전체(붙여넣기용).txt      ← 규칙은 여기만 고친다
+② node scripts/storage-rules-deploy.js           ← 먼저 «보여만» 준다
+③ node scripts/storage-rules-deploy.js --deploy  ← 창고 세 곳에 올린다
+```
+
+- ⚠⚠ **실시간DB 와 다르다 — 창고 규칙은 «CLI 로 읽을 수 없다».**
+  `firebase deploy --only storage` 는 있는데 「지금 규칙 보기」가 없다. 그래서 기준은
+  **대표님이 콘솔에서 옮겨 주신 파일**(`docs/firebase-storage-콘솔원문-YYYY-MM-DD.txt`
+  중 최신)이다 — 살아 있는 콘솔이 아니다. **약한 안전장치임을 보고에서 숨기지 말 것.**
+- 안전장치 둘이 있고, 둘 중 하나라도 걸리면 **올리지 않고 멈춘다**(종료코드 2):
+  ① 기준에 있던 칸·허락·보조함수가 하나라도 사라지면
+  ② 앱이 실제로 쓰는 창고 자리가 안 덮이면 (밑줄 하나가 달라도 사진첩이 통째로 멎는다)
+  ⚠ `--force` 같은 길을 만들지 말 것 — 이 멈춤 하나가 창고의 안전장치 «전부»다
+  (`tests/storage-rules-deploy.test.js` 가 기계로 지킨다).
+- ⚠ **루트 `firebase.json` 에 `storage` 를 넣지 말 것** — `database` 와 같은 까닭이다.
+  올리개가 임시 설정을 만들어 `--config` 로 넘긴다.
+- 창고가 **셋**이다: `pureun-erp-hrphotos`(사진첩·서고·자문 증빙) ·
+  `pureun-erp-photos`(명함·메일 첨부) · `pureun-erp.firebasestorage.app`(급여데이터함).
+  한 벌을 세 곳에 다 올린다 — 그 창고에 없는 자리는 규칙만 있고 아무 일도 안 한다.
+- **대표님이 콘솔을 손으로 고치시면 그 내용을 새 날짜 파일로 남겨야 한다** —
+  실시간DB 처럼 스스로 알아낼 길이 없다. 이것만은 사람이 알려 주셔야 한다.
+
 ## Codex·Copilot 도 같은 규칙을 읽는다 — `AGENTS.md` (2026-09-03)
 
 Codex·Copilot 은 **이 파일(CLAUDE.md)을 안 읽는다.** 그것들이 읽는 것은 `AGENTS.md` 다.
