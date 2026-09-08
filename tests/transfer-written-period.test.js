@@ -54,14 +54,28 @@ test('① 적어 둔 계약기간이 그대로 들어간다 — 나래(계약-20
 test('② 서명일과 개시일이 «다르면» 개시일이 이긴다 — 신협 셋이 겪은 것', function () {
   const f = fields({ signDate: '2026-06-09', startDate: '2026-07-01', endDate: '' });
   assert.equal(f.contractStartDate, '2026-07-01', '★ 서명일이 개시일을 덮고 있습니다');
-  /* 종료일이 안 적혔으면 지어낸다 — 그때만 서명일을 쓴다 */
-  assert.equal(f.contractEndDate, '2027-06-09', '종료일이 없을 때는 서명일 + 1년');
+  /* ★ 종료일을 지어낼 때도 «개시일»에서 센다 — 서명일에서 세면
+     「2026-07-01 ~ 2027-06-09」 처럼 시작과 끝이 어긋난 짝이 나온다. */
+  assert.equal(f.contractEndDate, '2027-07-01',
+    '★ 종료일을 서명일에서 세고 있습니다 — 시작과 끝이 어긋납니다');
 });
 
 test('③ 아무것도 안 적혔으면 서명일 + 1년을 지어낸다 (옛 행동 그대로)', function () {
   const f = fields({ signDate: '2026-05-11' });
   assert.equal(f.contractStartDate, '2026-05-11');
-  assert.equal(f.contractEndDate, '2027-05-11');
+  assert.equal(f.contractEndDate, '2027-05-11',
+    '개시일이 없으면 개시일 = 서명일이므로 값은 옛날과 같아야 합니다');
+});
+
+test('③-1 ★ 지어낸 기간은 «시작과 끝의 해가 하나 차이»다 — 짝이 안 어긋난다', function () {
+  [['2026-06-09', '', '2026-06-09', '2027-06-09'],
+   ['2026-06-09', '2026-07-01', '2026-07-01', '2027-07-01'],
+   ['', '2026-09-01', '2026-09-01', '2027-09-01']].forEach(function (row) {
+    const f = fields({ signDate: row[0], startDate: row[1] });
+    assert.equal(f.contractStartDate, row[2]);
+    assert.equal(f.contractEndDate, row[3],
+      '★ 서명 ' + JSON.stringify(row[0]) + ' · 개시 ' + JSON.stringify(row[1]) + ' 에서 끝이 어긋났습니다');
+  });
 });
 
 test('④ 날짜가 하나도 없으면 빈 칸 — 없는 날짜를 지어내지 않는다', function () {
