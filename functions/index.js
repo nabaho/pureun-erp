@@ -1957,7 +1957,10 @@ exports.readDoc = functions
    ⚠ **판독을 막지 않는다.** 세다 실패해도 그냥 넘어간다 — 세는 일 때문에 읽기가
      멈추면 그것이 훨씬 큰 손해다. 그래서 await 하되 catch 로 삼킨다.
    ⚠ 담는 것은 **숫자뿐**이다. 사진·글·사람 이름은 한 글자도 안 담는다. */
-async function bumpReadTally(app, kind) {
+async function bumpReadTally(app, kind, howMany) {
+  /* ⚠ 몇을 더할지 받는다 — Vision 은 «장 수»로 값을 받으므로 한 번에 여러 장이면
+       그만큼 더해야 한다. 안 받으면 1 이다(Gemini 는 요청 수로 센다). */
+  const 더할것 = Math.max(1, Math.round(Number(howMany) || 1));
   try {
     const db = getDatabase();
     /* ⚠⚠ «admin 을 거치는» ServerValue.increment 를 쓰지 말 것 — **이 파일에 admin
@@ -1966,7 +1969,7 @@ async function bumpReadTally(app, kind) {
          삼켜 «기록만 안 남았다» — 화면으로는 알 수 없었다.
        ★ 그래서 «거래»로 올린다. 불러올 것이 없고, 넷이 같은 때 불러도 안 어긋난다. */
     await Promise.all(DR.tallyPaths(app, null, kind).map(function (p) {
-      return db.ref(p).transaction(function (cur) { return (Number(cur) || 0) + 1; });
+      return db.ref(p).transaction(function (cur) { return (Number(cur) || 0) + 더할것; });
     }));
   } catch (e) {
     console.warn("판독 셈 적기 실패(판독은 계속):", String((e && e.message) || e));
@@ -2020,18 +2023,36 @@ exports.readVision = functions
     const v = VR.validate((req.body && typeof req.body === "object") ? req.body : {});
     if (!v.ok) { res.status(400).json({ ok: false, error: v.error }); return; }
 
+    /* ★★ 열쇠 «없이» 부르는 것이 본길이다 (2026-09-08).
+         이 서버에는 «자기 신분증»이 있다(App Engine 기본 서비스 계정) — 그것으로
+         부르면 만들 열쇠도, 넣을 열쇠도, 새어 나갈 열쇠도 없다.
+         그래서 대표님이 하실 일이 «API 켜기 한 번»으로 줄어든다.
+       ⚠ 열쇠가 금고에 «들어 있으면» 그것을 먼저 쓴다 — 신분증 길이 막히는 자리가
+         있을 수 있고, 그때 통째로 멎으면 안 된다. */
+    let auth = null;
     const key = readVisionKey();
-    if (!key) {
-      /* ⚠ 「고장」이 아니라 「아직 안 넣었다」로 말한다 — 부르는 쪽은 이 말을 보고
-           브라우저 판독(Tesseract)으로 물러선다. 고장으로 말하면 그 길을 못 찾는다. */
-      res.status(503).json({ ok: false,
-        error: "Vision 열쇠가 아직 등록되지 않았습니다 — 브라우저 판독으로 대신합니다." });
-      return;
+    if (key) auth = { key: key };
+    else {
+      try {
+        auth = { token: await VR.fetchSaToken(fetch) };
+      } catch (e) {
+        /* ⚠ 「고장」이 아니라 «무엇이 안 됐는지»로 말한다 — 부르는 쪽은 이 말을 보고
+             브라우저 판독(Tesseract)으로 물러선다. 고장으로 말하면 그 길을 못 찾는다. */
+        console.warn("Vision 신분증 실패:", String((e && e.message) || e));
+        res.status(503).json({ ok: false,
+          error: "Vision 을 부를 자격을 얻지 못했습니다 — 브라우저 판독으로 대신합니다." });
+        return;
+      }
     }
 
-    const r = await VR.callVision(fetch, key, v.images, null);
-    // ⑤ 한 번 불렀다 — 세어 둔다. Gemini 와 «갈라» 센다(몫이 다른 곳이다).
-    await bumpReadTally(v.app, "vision");
+    const r = await VR.callVision(fetch, auth, v.images, null);
+    /* ⑤ 세어 둔다 — Gemini 와 «갈라» 센다(몫이 다른 곳이다).
+       ⚠⚠ Vision 은 «장 수»로 값을 받는다(요청 수가 아니다). 그래서 한 번에 1을
+         더하면 여러 장 보낸 날의 셈이 실제보다 적게 나오고, 「달 몫 1,000장 가운데
+         얼마 남았나」가 틀린다 — 읽어낸 «쪽 수»만큼 더한다.
+       ⚠ 실패는 «안 센다» — API 가 안 켜졌거나 자격이 없어 막힌 것은 몫을 안 먹는다.
+         Gemini 쪽이 실패까지 세는 것은 그쪽 429 가 «실제로 몫을 먹기» 때문이다. */
+    if (r.ok) await bumpReadTally(v.app, "vision", r.pages || 1);
     if (!r.ok) {
       res.status(r.status && r.status >= 400 ? r.status : 502)
         .json({ ok: false, error: r.why || "Vision이 응답하지 않습니다.", status: r.status || 0 });

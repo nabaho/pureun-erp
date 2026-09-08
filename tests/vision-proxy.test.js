@@ -162,18 +162,114 @@ test('★★ Vision 을 부른 뒤 «반드시» 센다 — 안 세면 달 몫�
 
 /* ══════ ⑤ 열쇠가 없을 때 ═════════════════════════════════════════ */
 
-test('★★ 열쇠가 없으면 «고장»이 아니라 「아직 없다」로 말한다 — 물러설 길이 있다', () => {
+test('★★ 부를 자격이 없으면 «고장»이 아니라 그렇다고 말한다 — 물러설 길이 있다', () => {
   const i = IDX.indexOf('exports.readVision');
-  const 몸 = IDX.slice(i, i + 3000);
+  const 몸 = IDX.slice(i, i + 3500);
   /* ⚠ 「503 이라는 글자가 있나」로는 모자랐다 — 이 조각 안 다른 곳에도 503 이 있어,
-       열쇠 없을 때의 답을 500 으로 바꿔도 통과했다(되돌림에서 드러났다).
-     ★ 열쇠가 «없을 때»의 답 한 줄을 겨눈다. */
+       답을 500 으로 바꿔도 통과했다(되돌림에서 드러났다). 그 줄 하나를 겨눈다. */
   assert.match(몸, /res\.status\(503\)/,
-    '★★ 열쇠가 없을 때 «고장(5xx)»으로 말합니다 — 부르는 쪽이 물러설 길을 못 찾습니다');
-  assert.match(몸, /등록되지 않았습니다/,
-    '★★ 「아직 안 넣었다」고 말하지 않습니다 — 고장으로 읽히면 사람이 원인을 엉뚱한 데서 찾습니다');
+    '★★ 자격이 없을 때 «고장(5xx)»으로 말합니다 — 부르는 쪽이 물러설 길을 못 찾습니다');
+  assert.match(몸, /자격을 얻지 못했습니다/,
+    '★★ 「무엇이 안 됐는지」를 안 말합니다 — 고장으로 읽히면 원인을 엉뚱한 데서 찾습니다');
   assert.match(몸, /브라우저 판독으로 대신합니다/,
     '★★ 「대신 무엇이 되는지」를 안 말합니다');
+});
+
+/* ══════ ⑥ 열쇠 «없이» 부르는 것이 본길이다 (2026-09-08) ════════════ */
+
+test('★★★ 열쇠가 없어도 «서버 신분증»으로 부른다 — 만들 열쇠도 넣을 열쇠도 없다', () => {
+  const i = IDX.indexOf('exports.readVision');
+  const 몸 = IDX.slice(i, i + 3500);
+  assert.match(몸, /fetchSaToken/,
+    '★★★ 열쇠가 없으면 그냥 포기합니다 — 서버에는 «자기 신분증»이 있어 열쇠가 필요 없습니다');
+  /* 열쇠가 있으면 그것을 «먼저» 쓴다 — 신분증 길이 막히는 자리가 있을 수 있다 */
+  const 열쇠 = 몸.indexOf('if (key) auth'), 신분증 = 몸.indexOf('fetchSaToken');
+  assert.ok(열쇠 > 0 && 열쇠 < 신분증,
+    '★★ 열쇠가 있어도 안 씁니다 — 신분증 길이 막히면 통째로 멎습니다');
+});
+
+test('★★ 신분증은 «머리글»로 간다 — 주소에 붙이면 기록·로그에 그대로 남는다', async () => {
+  assert.equal(VR.visionUrl(''), 'https://vision.googleapis.com/v1/images:annotate',
+    '★ 열쇠가 없는데 주소에 빈 열쇠를 붙입니다');
+  /* ⚠ authOf·visionUrl 만 보면 «머리글을 실제로 붙이는지»를 못 본다 —
+       그 줄을 지워도 통과했다(되돌림에서 드러났다). 그래서 «돌려 본다». */
+  let 본것 = null;
+  await VR.callVision(function (url, init) {
+    본것 = { url: url, init: init };
+    return Promise.resolve({ ok: true, status: 200,
+      json: function () { return Promise.resolve({ responses: [{ fullTextAnnotation: { text: 'ㄱ' } }] }); } });
+  }, { token: 'TKN' }, ['A'], []);
+  assert.ok(본것, '부르지 않았습니다');
+  assert.equal(본것.init.headers.Authorization, 'Bearer TKN',
+    '★★ 신분증을 머리글에 안 붙였습니다 — 그러면 구글이 「누구냐」로 막습니다');
+  assert.ok(!/key=/.test(본것.url),
+    '★★ 신분증으로 부르면서 주소에 열쇠 자리를 남겼습니다: ' + 본것.url);
+});
+
+test('★★ 신분증과 열쇠를 «함께» 쓰지 않는다 — 둘이 섞이면 어느 것으로 불렸는지 모른다', () => {
+  /* ⚠ 하나만 주고 재면 「둘 다 담는」 고침을 못 잡는다(되돌림에서 드러났다) —
+       둘을 «함께» 주고 하나만 남는지 본다. */
+  const a = VR.authOf({ token: 'TKN', key: 'KEY' });
+  assert.equal(a.token, 'TKN', '신분증이 있으면 그것을 씁니다');
+  assert.equal(a.key, '', '★★ 신분증이 있는데 열쇠도 함께 담았습니다 — 주소에 열쇠가 실려 나갑니다');
+  const b = VR.authOf({ key: 'KEY' });
+  assert.equal(b.key, 'KEY');
+  assert.equal(b.token, '', '★ 열쇠뿐인데 신분증 자리를 채웠습니다');
+});
+
+test('★ 신분증을 «서버 안에서만» 얻는다 — 바깥에서는 부를 수 없는 자리다', () => {
+  assert.match(VR.METADATA_TOKEN_URL, /^http:\/\/metadata\.google\.internal\//,
+    '★★ 신분증을 딴 곳에서 얻습니다 — 그 자리는 서버 안에만 있어야 안전합니다');
+  const src = fs.readFileSync(path.join(ROOT, 'functions', 'vision-read.js'), 'utf8');
+  assert.match(src, /Metadata-Flavor/,
+    '★ 구글이 요구하는 머리글이 없습니다 — 그것이 없으면 신분증을 안 줍니다');
+});
+
+test('★★★ 「API 를 안 켰다」를 «가려내고 무엇을 누르면 되는지» 말한다', async () => {
+  const r = await VR.callVision(가짜([{ ok: false, status: 403, json: { error: {
+    message: 'Cloud Vision API has not been used in project 936817166182 before or it is disabled.'
+  } } }]), { token: 'T' }, ['A'], [0]);
+  assert.equal(r.ok, false);
+  assert.equal(r.notEnabled, true, '★★★ 「안 켰다」를 못 가려냅니다 — 열쇠·권한·코드를 차례로 뒤지게 됩니다');
+  assert.match(r.why, /켜져 있지 않습니다/, '★★ 사람 말로 안 바꿔 줍니다');
+  assert.match(r.why, /console\.cloud\.google\.com/,
+    '★★★ 「어디를 눌러야 하나」를 안 알려 줍니다 — 그 한 줄이 이 오류의 답입니다');
+});
+
+test('★ 켜기 주소가 우리 프로젝트를 가리킨다 — 딴 프로젝트를 켜면 아무 일도 안 된다', () => {
+  assert.match(VR.ENABLE_URL, /vision\.googleapis\.com/, '엉뚱한 API 를 가리킵니다');
+  assert.match(VR.ENABLE_URL, /project=pureun-erp/, '★★ 프로젝트를 안 짚어 줍니다');
+});
+
+test('★★ 그 밖의 실패는 «켜기 문제로 뭉개지 않는다» — 엉뚱한 안내가 가장 나쁘다', async () => {
+  const r = await VR.callVision(가짜([{ ok: false, status: 403,
+    json: { error: { message: 'Request had insufficient authentication scopes.' } } }]),
+    { token: 'T' }, ['A'], [0]);
+  assert.notEqual(r.notEnabled, true,
+    '★★ 권한 문제를 「API 를 안 켰다」로 말합니다 — 켜 봐도 안 되고 원인은 딴 곳입니다');
+  assert.match(r.why, /scopes/, '까닭을 안 넘깁니다');
+});
+
+test('★★★ Vision 셈은 «장 수»로 센다 — 요청 수로 세면 달 몫이 틀린다', () => {
+  const i = IDX.indexOf('exports.readVision');
+  const 몸 = IDX.slice(i, i + 3500);
+  assert.match(몸, /bumpReadTally\(v\.app,\s*"vision",\s*r\.pages/,
+    '★★★ 한 번에 1 만 더합니다 — Vision 은 «장 수»로 값을 받으므로, 여러 장 보낸 날의 '
+    + '셈이 실제보다 적게 나오고 「1,000장 가운데 얼마 남았나」가 틀립니다');
+  /* 실패는 안 센다 — 막힌 것은 몫을 안 먹는다 */
+  assert.match(몸, /if \(r\.ok\) await bumpReadTally/,
+    '★★ 실패한 부름까지 셉니다 — API 가 안 켜져 막힌 것은 몫을 먹지 않습니다');
+});
+
+test('★ 셈이 «몇을 더할지» 받는다 — 안 받으면 장 수를 셀 길이 없다', () => {
+  const fn = stripComments(cutFn(fs.readFileSync(path.join(ROOT, 'functions', 'index.js'), 'utf8'),
+    'async function bumpReadTally('));
+  assert.ok(fn, 'bumpReadTally 가 없습니다');
+  /* ⚠ 「howMany 라는 글자가 있나」로는 모자랐다 — 매개변수에서 빼도 몸통에 그 글자가
+       남아 통과했다(그러면 값이 늘 1 이 되어 장 수를 못 센다). 받는 자리를 겨눈다. */
+  assert.match(fn, /function bumpReadTally\(app,\s*kind,\s*howMany\)/,
+    '★★ 몇을 더할지 «받지 않습니다» — 값이 늘 1 이 되어 여러 장 보낸 날의 셈이 틀립니다');
+  assert.match(fn, /Math\.max\(1/, '★ 0 이나 음수를 그대로 더합니다 — 셈이 거꾸로 갑니다');
 });
 
 test('★★ 열쇠가 없어도 브라우저 판독(Tesseract)으로 «물러선다» — 그 길을 막지 않았다', () => {
