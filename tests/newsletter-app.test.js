@@ -603,6 +603,50 @@ test('★★ 좌우로 나누면서 칸을 «하나도» 잃지 않았다', () =
   });
 });
 
+test('★★ 접는 줄이 «눌러지는 것»으로 보인다 (대표 2026-09-08 「설정 어디에 있는지 모르겠다」)', () => {
+  /* 처음에는 회색 글씨에 작은 삼각형 하나였다. 그래서 «안내문»으로 읽혀,
+     대표께서 옆 사진 주소를 넣으려고 한참 찾으셨다 —
+     내가 접어 놓고 「설정에서 넣으시면」이라 말씀드린 탓이다.
+     ⚠ 접기는 «자리를 아끼는» 일이고 «못 찾게 하는» 일이 아니다.
+       감춘 것이 있으면 「여기 열 것이 있다」를 눈에 보이게 말해야 한다. */
+  const i = news.indexOf('details.fold>summary{');
+  assert.ok(i > 0, 'details.fold>summary 규칙이 없다');
+  const 규칙 = news.slice(i, news.indexOf('}', i));
+  assert.match(규칙, /cursor:\s*pointer/, '★ 손 모양이 안 바뀐다');
+
+  /* ① 삼각형만으로는 모른다 — «말»이 있어야 한다 */
+  assert.match(news, /details\.fold\[open\]>summary \.act:after\{content:'접기'\}/,
+    '★★ 펼친 뒤 「접기」라는 말이 없다');
+  assert.match(news, /details\.fold:not\(\[open\]\)>summary \.act:after\{content:'펼치기'\}/,
+    '★★ 접힌 채로 「펼치기」라는 말이 없다 — 눌러지는 줄인지 알 길이 없다');
+  assert.match(설정본, /class="act"/, '★ 그 말을 담을 자리가 화면에 없다');
+
+  /* ② 줄이 바탕에서 «도드라져» 보인다 — 흐린 글씨 한 줄이면 못 찾는다 */
+  const j = news.indexOf('details.fold{');
+  const 겉 = news.slice(j, news.indexOf('}', j));
+  assert.match(겉, /background:/, '★ 접힌 줄이 바탕과 구별되지 않는다');
+  assert.match(news, /details\.fold>summary:hover\{/,
+    '★ 손을 올려도 아무 일이 없다 — 눌러도 되는 줄인지 모른다');
+});
+
+test('★★ 접힌 채로도 «안에 넣을 것이 남았는지» 알려 준다', () => {
+  /* 열어 보지 않고도 알아야 한다 — 안 그러면 접을 때마다 한 번씩 열어 봐야 한다. */
+  assert.match(설정본, /그림칸셈\(/, '★ 접힌 줄이 안쪽 상태를 말하지 않는다');
+  const 셈 = 함수몸(news, '그림칸셈');
+  assert.ok(셈, '그림칸셈 함수가 없다');
+  /* ⚠ 네 칸을 «다» 세야 한다 — 하나를 빼먹으면 「3칸 중 …」으로 조용히 틀린다 */
+  ['로고그림', '배너그림', '뉴스그림', '추적밑주소'].forEach(function (k) {
+    assert.ok(셈.indexOf(k) >= 0, '★ ' + k + ' 을 세지 않는다 — 숫자가 조용히 틀린다');
+  });
+  /* 접힌 칸 «안»에 그 네 칸이 실제로 있는지도 함께 본다(세는 것과 든 것이 어긋나면 안 된다) */
+  const 접 = /<details class="fold">[\s\S]*?<\/details>/.exec(설정본);
+  assert.ok(접, '접는 칸이 없다');
+  ['cfgLogo', 'cfgBanner', 'cfgNews', 'cfgTrack'].forEach(function (id) {
+    assert.ok(접[0].indexOf('id="' + id + '"') >= 0,
+      '★ 세는 칸과 접힌 칸이 어긋난다: ' + id);
+  });
+});
+
 test('★ 접은 넷은 «접은 것»이지 지운 것이 아니다', () => {
   const 접 = /<details class="fold">[\s\S]*?<\/details>/.exec(설정본);
   assert.ok(접, '★ 접는 칸이 없다');
