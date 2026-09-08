@@ -43,11 +43,23 @@ test('AI 부름 두 곳 다 걸렸다', () => {
 });
 
 test('구글·국세청·NAS 도 걸렸다', () => {
+  /* ⚠ 2026-09-08 — `https://vision.googleapis.com` 을 이 목록에서 «뺐다».
+       빠뜨린 것이 아니라 «이제 브라우저가 그곳을 부르지 않는 것»이 맞기 때문이다.
+       Vision 열쇠를 브라우저에 두면 누구나 복사하므로 서버 대리인(readVision)으로
+       옮겼다 — 그 대리인 부름을 바로 아래에서 대신 본다.
+     ★ 지켜야 할 것은 「밖으로 나가는 부름이 모두 fetchT 로 감싸였나」이고,
+       그것은 이 파일의 첫 검사가 통째로 지킨다(감싸지 않은 fetch 가 한 줄이라도
+       남으면 거기서 걸린다). */
   ['https://api.odcloud.kr', 'https://gmail.googleapis.com', 'https://www.googleapis.com/calendar/v3',
-   'https://vision.googleapis.com', 'https://data.jsdelivr.com'].forEach(function(u){
+   'https://data.jsdelivr.com'].forEach(function(u){
     const re = new RegExp('fetchT\\(\'' + u.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&'));
     assert.match(app, re, u);
   });
+  /* Vision 은 «대리인»으로 나간다 — 그 부름도 감싸였는지 본다 */
+  assert.match(app, /fetchT\('https:\/\/asia-northeast3-pureun-erp\.cloudfunctions\.net\/readVision'/,
+    'Vision 대리인 부름이 사라졌거나 감싸지 않았습니다');
+  assert.ok(!/vision\.googleapis\.com/.test(app),
+    '★★★ 브라우저가 Vision 을 다시 «직접» 부릅니다 — 열쇠가 브라우저에 있어야 하고, 그것은 새어 나갑니다');
   /* ⚠ 예전에는 「NAS 다섯 곳·자동 백업 세 곳」이라고 **개수**를 못 박았다.
      NAS 부름이 하나 늘면 — 제대로 감싸서 늘려도 — 검사가 막는다.
      「빠짐없이 걸렸나」는 위 첫 검사가 이미 통째로 지킨다(감싸지 않은 fetch 가

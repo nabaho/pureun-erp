@@ -1973,6 +1973,74 @@ async function bumpReadTally(app, kind) {
   }
 }
 
+// ══════════ 글자만 뽑는 판독 — Google Cloud Vision (2026-09-08) ══════════
+// 대표 물음 「OCR 을 무료로 쓸 수 있는 곳이 더 있나」
+//
+// ★★ Vision 의 무료 몫은 «달마다 1,000장»이고 Gemini 의 하루 몫과 «따로»다.
+//   그래서 Gemini 가 하루 몫을 다 쓴 날에도 이쪽은 살아 있다.
+//   pu-erp.html 에 부르는 코드가 «이미» 있었는데 열쇠가 없어 한 번도 안 돌았다.
+//
+// ★★★ 왜 서버가 열쇠를 드나 — 브라우저에 두면 «누구나 복사할 수 있다».
+//   그 설정 칸은 열쇠를 공용 DB(data/vision_api_key)에 담게 되어 있었고,
+//   그 자리는 재직 직원 누구나 읽는다. enter.html 이 스스로 「유료 키는 여기 두지
+//   않습니다」라고 적어 두고도 그 칸이 남아 있었다 — 2026-09-08 에 닫았다.
+//   ⚠ 열쇠를 브라우저로 «돌려주지 않는다». 여기서 쓰고 여기서 버린다.
+//
+// ⚠ Vision 은 «글자만» 준다. 「이 열 자리가 사업자번호다」는 우리 파서가 한다.
+//   그래서 Gemini 를 대신하는 것이 아니라 «글자 뽑기»만 대신한다.
+const VR = require("./vision-read");
+
+/* 열쇠는 금고(Secret Manager)에서만 온다 — 실시간DB 갈래를 «만들지 않는다».
+   ⚠ Gemini 쪽에는 옛 다리(RTDB)가 남아 있지만, 그것은 옮기는 동안의 임시였다.
+     같은 실수를 새로 하지 않는다 — DB 에 둔 열쇠는 직원 누구나 읽는다.
+   ⚠ 자리 채우개('unset' 등)를 «없는 것»으로 본다. 금고에 비밀이 있어야 함수가
+     배포되므로 자리만 먼저 만들어 두는데, 그 값으로 구글을 부르면 403 만 받는다. */
+function readVisionKey() {
+  const k = String(process.env.VISION_KEY || "").trim();
+  if (!k || k === "unset" || k.length < 20) return "";
+  return k;
+}
+
+exports.readVision = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 120, memory: "512MB", secrets: ["VISION_KEY"] })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+
+    // ★ 누가 부르는지 먼저 확인한다. 이 검사가 없으면 우리 열쇠가 공개 판독기가 된다.
+    try {
+      await requireReader(req);
+    } catch (e) {
+      res.status(e.status || 401).json({ ok: false, error: String(e.message || e) });
+      return;
+    }
+
+    const v = VR.validate((req.body && typeof req.body === "object") ? req.body : {});
+    if (!v.ok) { res.status(400).json({ ok: false, error: v.error }); return; }
+
+    const key = readVisionKey();
+    if (!key) {
+      /* ⚠ 「고장」이 아니라 「아직 안 넣었다」로 말한다 — 부르는 쪽은 이 말을 보고
+           브라우저 판독(Tesseract)으로 물러선다. 고장으로 말하면 그 길을 못 찾는다. */
+      res.status(503).json({ ok: false,
+        error: "Vision 열쇠가 아직 등록되지 않았습니다 — 브라우저 판독으로 대신합니다." });
+      return;
+    }
+
+    const r = await VR.callVision(fetch, key, v.images, null);
+    // ⑤ 한 번 불렀다 — 세어 둔다. Gemini 와 «갈라» 센다(몫이 다른 곳이다).
+    await bumpReadTally(v.app, "vision");
+    if (!r.ok) {
+      res.status(r.status && r.status >= 400 ? r.status : 502)
+        .json({ ok: false, error: r.why || "Vision이 응답하지 않습니다.", status: r.status || 0 });
+      return;
+    }
+    /* ⚠ 글«만» 돌려준다 — 좌표·낱글자까지 돌려주면 수 MB 가 되고, 쓰는 곳도 없다. */
+    res.json({ ok: true, text: r.text, pages: r.pages });
+  });
+
 // ══════════ AI 지우개 — 사진에서 표시한 곳을 지우고 배경으로 메운다 ══════════
 // 대표 지시 2026-08-29: "특정부분 없어지게" · "편집기능에 최소 비용이 들게"
 //

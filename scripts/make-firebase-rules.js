@@ -796,6 +796,10 @@ rules.ai_read_tally = {
        합치면 「많이 썼다」와 「막혔다」가 섞여 아껴 쓴 날과 걸린 날이 같아 보인다. */
     n:     { '.validate': 'newData.isNumber() && newData.val() >= 0' },
     quota: { '.validate': 'newData.isNumber() && newData.val() >= 0' },
+    /* vision = Google Vision 으로 «글자만» 뽑은 수 (2026-09-08).
+       ⚠ n 에 합치지 말 것 — Gemini 는 «하루» 몫이고 Vision 은 «달마다» 1,000장이다.
+         합치면 어느 쪽이 남았는지 알 수가 없다. */
+    vision: { '.validate': 'newData.isNumber() && newData.val() >= 0' },
     $other: { '.validate': false }
   } }
 };

@@ -96,10 +96,17 @@ function ymdKST(now) {
   return new Date(t).toISOString().slice(0, 10);
 }
 
-/* 셀 자리 — 앱별·합계. 「몇 번 불렀나(n)」와 「한도로 막힌 수(quota)」를 가른다.
-   ⚠ 둘을 합치면 「많이 썼다」와 「막혔다」가 섞여, 아껴 쓴 날과 걸린 날이 같아 보인다. */
+/* 셀 자리 — 앱별·합계. 세 가지를 «갈라» 센다:
+     n       Gemini 판독을 몇 번 불렀나
+     quota   그 가운데 하루 몫에 막힌 수
+     vision  Google Vision 으로 «글자만» 뽑은 수 (2026-09-08)
+   ⚠ n 과 quota 를 합치면 「많이 썼다」와 「막혔다」가 섞여, 아껴 쓴 날과 걸린 날이
+     같아 보인다.
+   ⚠ vision 을 n 에 합치면 «몫이 다른 곳»이 한 숫자에 섞인다 — Gemini 는 하루 몫이고
+     Vision 은 «달마다» 1,000장이다. 합치면 어느 쪽이 남았는지 알 수가 없다. */
+const TALLY_KINDS = ["n", "quota", "vision"];
 function tallyPaths(app, ymd, kind) {
-  const k = (kind === "quota") ? "quota" : "n";
+  const k = TALLY_KINDS.indexOf(kind) >= 0 ? kind : "n";
   const d = ymd || ymdKST();
   return ["ai_read_tally/" + d + "/" + appOf(app) + "/" + k,
           "ai_read_tally/" + d + "/_all/" + k];
@@ -198,5 +205,5 @@ async function callGemini(fetchFn, key, parts, waits, cfg) {
 module.exports = {
   MODELS, MAX_BODY_BYTES, MAX_OUTPUT_TOKENS,
   isTransient, validate, geminiBody, modelUrl, safeReason, callGemini, dailyQuotaGone,
-  APPS, appOf, ymdKST, tallyPaths
+  APPS, appOf, ymdKST, tallyPaths, TALLY_KINDS
 };
