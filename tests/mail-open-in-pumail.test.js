@@ -51,7 +51,11 @@ function wbox(opts){
     toast(m){ b._toast = String(m); },
     encodeURIComponent,
     escJ: x => String(x == null ? '' : x).replace(/\\/g, '\\\\').replace(/'/g, "\\'"),
-    window: { open(u, t){ opened.push([u, t]); } }
+    /* ⚠ 2026-09-08 — 앱끼리 창을 열 때는 공용 층(PuAppBar.goApp)을 쓴다
+         (대표 지시 「모든 창은 2개가 열리지 않고 하나만」). 창 이름은 그쪽이 짓는다.
+       ★ 여기서는 «어느 주소로, 어느 쓰임으로» 넘기는지를 본다. */
+    PuAppBar: { goApp(u, purpose){ opened.push([u, purpose]); } },
+    window: { open(){ throw new Error('앱이 창을 직접 열면 안 됩니다 — PuAppBar.goApp 을 쓰세요'); } }
   };
   vm.createContext(b);
   vm.runInContext(grab(W, 'mbCoId') + '\n' + grab(W, 'mbGo') + '\n' + grab(W, 'dMbGoHTML'), b);
@@ -86,7 +90,10 @@ test('★★ 주소는 푸른메일함의 «사업장별»을 가리킨다', () 
   b.mbGo('C-77');
   assert.equal(b._opened.length, 1);
   assert.equal(b._opened[0][0], 'pu-cards.html?sso=1&view=mail&mail=co&co=C-77');
-  assert.equal(b._opened[0][1], '_blank', '보던 업무 화면을 덮어쓴다');
+  /* ⚠ 2026-09-08 — '_blank' 가 아니라 «메일 쓰기 전용 쓰임»으로 넘긴다.
+       보던 업무 화면을 덮지 «않는» 것은 그대로이고, 두 번 눌러도 탭이 안 쌓인다. */
+  assert.equal(b._opened[0][1], 'mailwrite',
+    '★★ 쓰임을 안 넘기면 명함 보기 창과 한 창을 다투게 됩니다 — 쓰던 편지가 사라집니다');
 });
 
 test('업체 번호에 이상한 글자가 있어도 주소가 안 깨진다', () => {
@@ -187,7 +194,12 @@ test('★★ 업무관리는 회사 메일함(mailbox)을 통째로 내려받지
 });
 
 test('★ 새 창으로 연다 — 보던 업무를 잃지 않는다', () => {
-  assert.match(grab(W, 'mbGo'), /window\.open\(.*,'_blank'\);/);
+  /* ⚠ 2026-09-08 — 여는 길이 공용 층으로 옮겨졌다(대표 지시 「창은 하나만」).
+       지켜야 할 것은 「이 창을 갈아타지 않는다」이고, 그것은 그대로다. */
+  const fn = grab(W, 'mbGo');
+  assert.match(fn, /PuAppBar\.goApp\(/, '★ 공용 층으로 열지 않습니다 — 창 이름이 갈립니다');
+  assert.ok(!/location\.href/.test(fn),
+    '★★ 이 창을 갈아탑니다 — 보던 업무가 날아갑니다');
 });
 
 test('푸른메일함 쪽은 «읽는 길»만 늘었다 — 새로 쓰는 것이 없다', () => {
