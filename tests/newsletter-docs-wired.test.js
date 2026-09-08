@@ -327,16 +327,30 @@ test('★★ 얼린 화면에서 두 칸이 «줄 높이에 맞춰 늘어난다�
   assert.ok(규칙.indexOf('min-height:0') >= 0, 'flex 자식이 안 줄어든다');
 });
 
-test('★★ 꼭지 두 줄은 minmax(0,1fr) — 「1fr」 은 «내용보다 안 줄어든다»', () => {
-  /* ⚠ 격자에서 1fr 은 minmax(auto,1fr) 이다. 아랫줄이 제 내용만큼 부풀어
-       창 밖으로 밀려났다. 「반씩 나눠 갖기」는 minmax(0,…) 이라야 성립한다. */
-  const i = news.indexOf('.colL>.jars{');
-  assert.ok(i > 0, '.colL>.jars 규칙을 못 찾음');
+test('★★ 고른 꼭지 하나가 «남은 자리를 다 쓴다» — 넘치면 그 안에서 구른다', () => {
+  /* ⚠ 2026-09-08 에 꼭지가 «탭»이 되었다(대표 지시). 그 전에는 두 줄이 자리를
+       반씩 나눠 가졌고, 격자의 1fr 이 minmax(auto,1fr) 이라 아랫줄이 창 밖으로
+       밀려나는 탈이 있었다 — 그 규칙(minmax(0,1fr))은 이제 «둘 곳이 없다».
+     ★★ 지키는 규칙은 그때와 같다: «칸이 줄어들 수 있고, 넘친 것을 볼 길이 있는가».
+       - 탭줄은 높이가 일정하니 얼려도 된다
+       - 칸 하나가 flex:1 로 남은 자리를 다 쓴다
+       - min-height:0 이 없으면 flex 자식은 «안 줄어든다» — 그러면 도로 밀려난다
+       - 넘친 것은 칸 «안»에서 구른다 */
+  const i = news.indexOf('.colL>.jarpanel{');
+  assert.ok(i > 0, '★ 고른 꼭지 칸이 남은 자리를 쓰는 규칙이 없다');
   const 규칙 = news.slice(i, news.indexOf('}', i));
-  assert.ok(/grid-template-rows:\s*minmax\(0,\s*1fr\)\s+minmax\(0,\s*1fr\)/.test(규칙),
-    '★★ 1fr 로 돌아갔다 — 아랫줄이 창 밖으로 밀려난다');
-  assert.ok(규칙.indexOf('overflow-y:auto') >= 0,
-    '★ 마지막 그물이 없다 — 그래도 넘치는 날 못 보고 못 내려간다');
+  assert.ok(/flex:\s*1/.test(규칙), '★ 칸이 남은 자리를 안 채운다');
+  assert.ok(/min-height:\s*0/.test(규칙),
+    '★★ min-height:0 이 없다 — flex 자식이 안 줄어들어 넘친 만큼이 창 밖으로 밀려난다');
+  const j = news.indexOf('.jarpanel>.jarbody{');
+  assert.ok(j > 0, '.jarpanel>.jarbody 규칙을 못 찾음');
+  const 몸 = news.slice(j, news.indexOf('}', j));
+  assert.ok(/overflow-y:\s*auto/.test(몸), '★ 넘친 것을 볼 길이 없다 — 잘려서 안 보인다');
+  assert.ok(/min-height:\s*0/.test(몸), '★ 구르는 칸이 안 줄어든다');
+  /* 탭줄은 얼려야 한다 — 함께 구르면 어느 꼭지를 보고 있는지 잃는다 */
+  const k = news.indexOf('.colL>.jartabs{');
+  assert.ok(k > 0 && /flex:\s*0/.test(news.slice(k, news.indexOf('}', k))),
+    '★ 탭줄이 함께 구른다 — 훑는 동안 어느 꼭지인지 잃는다');
 });
 
 test('★ 회차 줄이 «왼쪽 칸 안»에 있다 — 오른쪽 편지가 그만큼 위로 올라온다', () => {
