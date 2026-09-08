@@ -1211,6 +1211,36 @@
      ⚠ 앱마다 적으면 한쪽만 고쳐진다. 여기 한 곳에만 둔다.
        (다른 서버 함수들과 같은 프로젝트·지역: asia-northeast3 / pureun-erp) */
   var READ_DOC_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/readDoc';
+  /* 글자만 뽑는 대리인 — Google Vision (2026-09-08 대표 물음 「무료 OCR 이 더 있나」).
+     ★ 몫이 Gemini 와 «따로»다(달마다 1,000장) — 하루 몫이 떨어진 날의 뒷길이다.
+     ★ Vision 은 «글자만» 준다 — 칸을 채우는 것은 부르는 쪽 파서의 일이다.
+     ⚠ 열쇠는 서버가 든다. 브라우저에 두면 누구나 복사한다(enter.html 이 그렇게 적어 두었다). */
+  var READ_VISION_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/readVision';
+
+  /* 사진 몇 장에서 «글자만» 뽑아 온다. 실패하면 throw 하고, 부르는 쪽은
+     브라우저 판독(Tesseract)으로 물러선다 — 그 길을 막지 않는다.
+     ⚠ 열쇠가 아직 없으면 서버가 503 으로 「아직 등록되지 않았습니다」라고 말한다.
+       그것을 «고장»으로 다루지 말 것 — 물러설 길이 있다는 뜻이다. */
+  function visionText(imgs, app) {
+    var list = Array.isArray(imgs) ? imgs : [imgs];
+    return Promise.resolve().then(deps.getToken).then(function (token) {
+      if (!token) throw new Error('로그인을 확인해 주세요');
+      return deps.fetch(READ_VISION_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ images: list, app: app || appName() })
+      });
+    }).then(function (r) {
+      return (r && r.json ? r.json() : Promise.resolve(null)).catch(function () { return null; })
+        .then(function (j) {
+          if (r && r.ok && j && j.ok) return String(j.text || '');
+          var status = (j && j.status) || (r && r.status) || 0;
+          var e = new Error((j && j.error) || ('Vision이 응답하지 않습니다 (오류 ' + status + ')'));
+          e.status = status;
+          throw e;
+        });
+    });
+  }
 
   /* ── 판독을 어떻게 부르는가 (2026-08-17) ──
      ⚠ 예전에는 여기서 **AI 열쇠를 브라우저로 가져왔다.** 그런데 그 열쇠는
@@ -1321,6 +1351,7 @@
     readWithPrompt: readWithPrompt,
     readDocText: readDocText,
     appName: appName, APP_KO: APP_KO,   /* ⑤ 앱별 판독 셈 — 검사가 이것을 겨눈다 */
+    visionText: visionText,    /* 글자만 뽑기 — 몫이 Gemini 와 따로다 (2026-09-08) */
     readWageTable: readWageTable,
     readTableText: readTableText,
     summarizeText: summarizeText,
