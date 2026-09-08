@@ -14334,7 +14334,11 @@ function renderPCSide(){
   h += `</div>`;
 
   h += `<div class="pcsec">담당자별 (직원)</div>`;
-  const owners=[...new Set(kindArr.map(it=>String(it.owner||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko'));
+  /* 퇴사자는 뺀다(대표 지시 2026-09-08) — 「담당 전체」 고르개와 «같은 잣대»다.
+     한쪽만 빼면 옆줄에는 있고 위 목록에는 없어 「어디는 되고 어디는 안 되나」가 된다. */
+  const owners=nonRetiredPicks(
+    [...new Set(kindArr.map(it=>String(it.owner||'').trim()).filter(Boolean))]
+      .sort((a,b)=>a.localeCompare(b,'ko')), state.owner);
   if (!owners.length)
     h += `<div class="pchintside">명함에 담당자를 입력하면<br>여기에 자동으로 분류됩니다</div>`;
   owners.forEach(o=>{
@@ -16067,10 +16071,13 @@ function mbSuccOf(name){
   /* ⚠ 이어받은 사람도 퇴사했으면 «또 이어받은 사람»을 찾는다 — 두 번까지만.
        한없이 따라가면 서로 가리키는 표에서 멈추지 않는다. */
   if(!to) return '';
-  if(to.status === 'retired'){
+  /* ⚠ 퇴사 판정은 mbRetired «한 곳»만 쓴다(검사가 지킨다). 여기서 status 를 직접
+       보면 잣대가 두 벌이 되어, 한쪽만 고쳐질 때 「메일함에서는 빠지는데 목록에는
+       남는다」가 된다. to 는 명부에서 찾아온 것이라 이름으로 되짚어도 같은 칸이다. */
+  if(mbRetired(to.name)){
     const to2Sid = String(mbSuccMap()[to.sid] || '');
     const to2 = to2Sid ? Object.keys(s).map(k=>s[k]).find(x=>x && x.sid === to2Sid) : null;
-    return (to2 && to2.status !== 'retired') ? String(to2.name) : '';
+    return (to2 && !mbRetired(to2.name)) ? String(to2.name) : '';
   }
   return String(to.name);
 }
@@ -16176,6 +16183,26 @@ function mbPerson(s){
 function mbRetired(name){
   const st = mbStaffOf(name);
   return !!(st && st.status === 'retired');
+}
+/* ══════ 담당 «고르개»에서 퇴사자를 뺀다 (대표 지시 2026-09-08) ══════
+   「퇴사자는 모두 제외시켜라. 푸른이알피의 담당자중에 퇴사자는 모두 제외시켜라」
+
+   대표 화면의 「담당 전체」 목록에 퇴사한 사람이 그대로 서 있었다. 목록은 명함에
+   붙어 있는 담당 이름을 모아 만드는데, 계약이 끝나도 그때의 담당 이름은 남기 때문이다.
+
+   ★ 잣대는 위 mbRetired «하나»다 — 명부(data/user_dir)의 status==='retired'.
+     ⚠ «휴직»은 퇴사가 아니다(돌아온다).
+     ⚠ 명부에 «없는» 이름도 안 뺀다 — 기업정보에 손으로 적어 둔 이름일 수 있고,
+       모른다고 지우면 그 명함을 담당으로 찾을 길이 사라진다.
+     (둘 다 2026-08-26 에 메일함에서 못 박은 규칙과 같다 — 두 벌로 만들지 않는다.)
+
+   ⚠ 줄에 붙은 담당 «딱지»는 그대로 둔다. 그때 누가 맡았는지는 «사실»이라 지울 것이
+     아니다 — 여기서 빼는 것은 「고를 수 있는 이름」뿐이다.
+   ⚠ 지금 골라 둔 이름이 퇴사자면 «그 하나는 남긴다». 목록에서 사라지면 걸어 둔
+     조건을 풀 길이 없어 그 화면에 갇힌다(2026-08-29 「0건에서 못 빠져나온다」). */
+function nonRetiredPicks(names, cur){
+  const keep = String(cur || '');
+  return (names || []).filter(function (n) { return n === keep || !mbRetired(n); });
 }
 /* ⚠ 「노무사 / 직원」으로 가르던 자리다 — 걷었다(대표 지시 2026-08-29
      「노무사 직원구분 없애고 항상 로그인하는 본인이 제일 위에」).
@@ -22079,12 +22106,17 @@ function renderPCTable(){
      주담당과 부담당을 모두 포함하며 같은 이름은 한 번만 나온다. */
   const mgrSel = $('pcMgrFilter');
   if (mgrSel) {
-    const mgrs = [...new Set(Object.values(allItems())
+    /* 퇴사자는 뺀다(대표 지시 2026-09-08) — 잣대는 nonRetiredPicks 한 곳이다.
+       ⚠ 지금 골라 둔 이름은 퇴사자여도 남긴다(그러지 않으면 조건을 풀 길이 없다). */
+    const mgrs = nonRetiredPicks([...new Set(Object.values(allItems())
       .filter(function (it) { return it.kind === state.tab; })
       .flatMap(function (it) { return ErpMatch.mgrs(it); })
-      .filter(Boolean))].sort(function (a, b) { return a.localeCompare(b, 'ko'); });
+      .filter(Boolean))].sort(function (a, b) { return a.localeCompare(b, 'ko'); }),
+      state.erpMgr);
     mgrSel.innerHTML = '<option value="">담당 전체</option>' + mgrs.map(function (name) {
-      return '<option value="' + esc(name) + '">' + esc(name) + '</option>';
+      /* 남겨 둔 퇴사자에는 🚪 를 붙인다 — 왜 혼자 남아 있는지 알 수 있게 */
+      return '<option value="' + esc(name) + '">'
+        + (mbRetired(name) ? '🚪 ' : '') + esc(name) + '</option>';
     }).join('');
     mgrSel.value = state.erpMgr || '';
     mgrSel.style.display = state.tab === 'card' ? '' : 'none';
