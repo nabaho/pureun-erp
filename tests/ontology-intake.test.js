@@ -86,6 +86,10 @@ function transfer(){
     getCaseTypes:()=>[{code:'LAB',short:'노동',name:'노동사건'}],reorderConsultingNos(){},
     BIZ_CONS_SEED:[{code:'CONS',short:'컨설팅'}],BIZ_FUND_SEED:[{code:'FUND',short:'기금'}],BIZ_OTHER_SEED:[{code:'OTHER',short:'기타'}],
     CompanyRef:{findCompany(){throw new Error('이름으로 자동 연결해서는 안 됨');}}});
+  /* 계약기간·부가세는 erpContractToCoFields «한 곳»에서 뽑는다(2026-09-08) —
+     흉내를 세우지 않고 진짜 함수를 실어야 여기서만 맞는 일이 안 생긴다. */
+  const cf=erp.indexOf('function erpContractToCoFields(ct){');
+  new vm.Script(erp.slice(cf,erp.indexOf('\n}',cf)+2)).runInContext(ctx);
   const start=erp.indexOf('function transferContract(contract){');
   new vm.Script(erp.slice(start,erp.indexOf('// ============ 계약관리로 복귀',start))).runInContext(ctx);
   return env;
