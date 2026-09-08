@@ -96,10 +96,13 @@ test('기업정보에서 새 창으로 열되 «한 창»만 쓴다', () => {
        창에 **이름**을 붙이면 브라우저가 그 창을 다시 쓴다. 자세한 것은
        tests/cards-doc-window-reuse.test.js 가 돌려서 본다. */
   assert.match(cards, /function openCoDoc/);
-  assert.match(cards, /window\.open\('pu-photos\.html\?' \+ q, CO_DOC_WIN\)/,
-    '★ 창 이름 없이 열면 누를 때마다 사진첩 탭이 쌓입니다');
-  assert.doesNotMatch(cards, /window\.open\('pu-photos\.html\?' \+ q, '_blank'\)/,
-    '★ _blank 는 늘 새 탭입니다');
+  /* ⚠ 2026-09-08 — 창 이름을 «앱이 짓지 않는다». 공용 층(PuAppBar.goApp)이 주소에서
+       뽑는다(대표 지시 「모든 창은 2개가 열리지 않고 하나만」). 여기서는 «공용 층을
+       쓰는가»만 보고, 이름이 실제로 같은지는 one-window-per-app 이 돌려서 본다. */
+  assert.match(cards, /PuAppBar\.goApp\('pu-photos\.html\?' \+ q\)/,
+    '★ 공용 층으로 열지 않으면 창 이름이 앱마다 갈려 탭이 쌓입니다');
+  assert.doesNotMatch(cards, /window\.open\('pu-photos\.html/,
+    '★★ 사진첩을 «직접» 여는 곳이 되살아났습니다 — 그 길만 다시 탭을 쌓습니다');
   assert.match(cards, /onclick="openCoDoc\(/);
 });
 
@@ -122,11 +125,13 @@ test('주소에 넣는 값은 인코딩한다', () => {
   const body = cards.slice(at, i + 1);
 
   let url = '';
-  /* CO_DOC_WIN(창 이름)도 함께 넣어 준다 — 2026-08-27 부터 그 이름으로 창을 다시 쓴다 */
-  new Function('encodeURIComponent', 'toast', 'window', 'CO_DOC_WIN',
+  /* ⚠ 2026-09-08 — 창 이름은 «앱이 짓지 않는다». 공용 층(PuAppBar.goApp)이 주소에서
+       뽑는다(대표 지시 「모든 창은 2개가 열리지 않고 하나만」). 그래서 CO_DOC_WIN 대신
+       PuAppBar 를 넣어 준다 — 여기서 재는 것은 «주소를 제대로 감쌌나»이고 그대로다. */
+  new Function('encodeURIComponent', 'toast', 'PuAppBar',
     body + "\nopenCoDoc('2026&x', 'p 1=2&z', 'u#1');")(
     encodeURIComponent, function () { },
-    { open: function (u) { url = u; return { focus: function () {} }; } }, 'puPhotoDoc');
+    { goApp: function (u) { url = u; return { focus: function () { } }; } });
 
   assert.ok(url.indexOf('pu-photos.html?') === 0, '새 창을 안 엽니다: ' + url);
   /* 값 안에 든 & = # 가 그대로 나가면 주소가 갈라진다 */

@@ -58,7 +58,10 @@ function world(data, me, opt) {
     viewingSelf: () => true,
     isAdmin: () => !!o.admin,
     S: { perfFin: !!o.admin },
-    window: { open: (u) => opened.push(u) },
+    /* ⚠ 2026-09-08 — 앱끼리 창을 열 때는 공용 층(PuAppBar.goApp)을 쓴다
+         (대표 지시 「모든 창은 2개가 열리지 않고 하나만」). 창 이름은 그쪽이 짓는다. */
+    PuAppBar: { goApp: (u) => opened.push(u) },
+    window: { open: () => { throw new Error('앱이 창을 직접 열면 안 됩니다 — PuAppBar.goApp'); } },
     fbDb: {
       ref: node => {
         const r = {

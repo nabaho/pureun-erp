@@ -296,7 +296,10 @@ test('★★ 판독을 멈춘 자리는 반드시 화면에 보인다 — 조용
   const r = stripComments(cutFn(raw, 'function renderReadAsk('));
   assert.match(r, /readAskDocs\(\)/, '★ 「서류입니다」 단추가 없습니다');
   assert.match(r, /readAskPics\(\)/, '★ 「그냥 사진입니다」 단추가 없습니다');
-  assert.match(r, /대답할 때까지 이 사진들은 판독에 안 갑니다/,
+  /* ⚠ 2026-09-08 — 띠를 «한 줄»로 줄이며 글월이 짧아졌다(대표 지시 「한줄로 정리」).
+       지켜야 할 것은 글자가 아니라 «지금 안 읽고 있다고 말하는가»다. 뜻이 남았는지 본다 —
+       글월을 그대로 박아 두면 짧게 다듬는 것만으로 깨진다(저장소 규칙). */
+  assert.match(r, /판독에 안 갑니다/,
     '★★ 「지금 안 읽고 있다」를 말하지 않으면 「올렸는데 판독이 안 된다」가 됩니다 —\n' +
     '  이 저장소가 가장 여러 번 밟은 자리입니다.');
   const i = r.indexOf('readQuotaOut'), j = r.indexOf('readHoldIds');

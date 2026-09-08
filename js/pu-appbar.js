@@ -126,6 +126,45 @@
     }
     global.location.href = url;
   }
+  /* ══ 같은 프로그램은 «한 창»만 (대표 지시 2026-09-08) ═══════════════════════
+     「기업정보함에서 보기 클릭하면 새롭게 기업정보함 창이 열린다.
+       항상 푸른통합시스템의 모든 창은 2개가 열리지 않고 하나만 열리게 해라」
+
+     ★★ 까닭 — `window.open(주소, '_blank')` 는 «누를 때마다 새 탭»이다. 서류를 댓 개만
+       훑어도 기업정보함 탭이 그만큼 쌓이고, 나중에 어느 것이 무엇인지도 모르고
+       하나씩 닫아야 한다. 대표님이 2026-08-27 에 사진첩 하나만 그렇게 고쳐 달라
+       하셨고(pu-cards 의 CO_DOC_WIN), 2026-09-08 에 «모든 창»으로 넓히셨다.
+
+     ★ 방법은 «창에 이름을 붙이는 것» 하나다. 이름이 같으면 브라우저가 그 창을 다시
+       쓴다 — 처음엔 새 창이 열리고, 그다음부터는 그 창이 새 내용으로 바뀐다.
+     ⚠ 열려 있던 창은 «뒤에 가려 있다» — focus() 로 앞으로 끌어오지 않으면
+       「아무 일도 안 일어난」 것처럼 보인다.
+     ⚠ 팝업이 막히면 «이 창»에서 간다(앱바가 옮기는 방식과 같다). 막혔다고 아무 일도
+       안 하면 눌러도 반응이 없는 화면이 된다 — 이 저장소가 여러 번 밟은 자리다.
+
+     ⚠⚠ 이름은 «주소의 화면 이름»에서 뽑는다. 부르는 곳마다 손으로 적게 하면
+       한 곳은 반드시 다르게 적고, 그 앱만 탭이 쌓인다.
+     ★ purpose 를 주면 «그 일 전용 창»이 된다 — 메일 쓰기가 그렇다(쓰던 편지가 딴
+       화면으로 바뀌면 안 된다). 「하나만」은 «같은 것이 둘로 안 열린다»는 뜻이고,
+       하는 일이 다른 창을 억지로 하나로 합치라는 뜻이 아니다. */
+  function winNameOf(url) {
+    var m = /(?:^|\/)([A-Za-z0-9_-]+)\.html/.exec(String(url || ''));
+    return 'pu_' + (m ? m[1].replace(/-/g, '_') : 'app');
+  }
+  function goApp(url, purpose) {
+    var u = String(url || '');
+    if (!u) return null;
+    var name = purpose ? ('pu_' + String(purpose)) : winNameOf(u);
+    var w = null;
+    try { w = global.open(u, name); } catch (_) { w = null; }
+    if (w) {
+      try { w.focus(); } catch (_) { /* 브라우저가 막을 수 있다 — 옮긴 것은 됐다 */ }
+      return w;
+    }
+    navTo(u);          // 팝업이 막혔다 — 이 창에서 간다
+    return null;
+  }
+
   function go(app) {
     if (!app) return;
     var back = lastScreen(app.key);
@@ -387,6 +426,10 @@
     mount: mount,
     auto: auto,
     open: open,
+    /* 같은 프로그램은 «한 창»만 (대표 지시 2026-09-08) — 앱끼리 창을 열 때는
+       window.open(…, '_blank') 대신 «반드시» 이것을 쓴다.
+       ⚠ tests/one-window-per-app.test.js 가 _blank 가 되살아나는 것을 막는다. */
+    goApp: goApp, winNameOf: winNameOf,
     whoAmI: whoAmI,
     mark: mark,
     lastScreen: lastScreen,
