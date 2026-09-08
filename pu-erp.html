@@ -153,6 +153,8 @@
 <!-- 기업정보함 → 업체관리 담당자 메일 (대표 요청 2026-08-27).
      맞추는 일은 이 파일이, 그리기는 아래 화면이 한다 — 검사가 이 파일을 그대로 돌린다. -->
 <script src="js/pu-co-cards.js?v=1"></script>
+<!-- 담당자 연락처가 둘 이상일 때의 규칙 — 기업정보함(pu-cards.html)과 «같은 파일»을 쓴다 -->
+<script src="js/pu-contact.js?v=1"></script>
 <script>
 (function(){
 'use strict';
@@ -12327,6 +12329,91 @@ function pcIsCeoTitle(ti){
   if(/(부대표|대표\s*대행|대표\s*직무|부사장|부회장|부원장)/.test(t)) return false;  // 대표가 아니다
   return PC_CEO_TITLE.test(t);
 }
+/* ── 담당자 곁칸 — 휴대폰·이메일이 둘 이상일 때 (대표 지시 2026-09-08) ──────────
+   「담당자 핸드폰 번호나 명함이 2개씩 있는 경우가 가끔 있다 … 어느 것이 메인인지
+    체크 표시가 필요한데」
+
+   ★ 메인은 «체크»가 아니라 «자리»다. 위의 입력 칸(phone·email)이 늘 메인이고,
+     여기에는 «둘째부터» 나온다. ★ 를 누르면 그 값이 위 칸으로 올라가고
+     위에 있던 값이 이리로 내려온다(맞바꿈). 그래서 체크가 둘이거나 하나도 없는
+     상태가 «생길 수 없다».
+   ⚠ 값이 하나인 사람에게는 «아무것도 안 나온다» — 191명 중 대부분이 그렇다.
+     늘 펴 두면 쓰지도 않는 줄이 사람마다 넷씩 는다.
+   ⚠ 규칙은 js/pu-contact.js 한 곳이다(기업정보함도 같은 파일을 쓴다). */
+function ctMultiTip(rec, kind){
+  var P = window.PuContact; if(!P) return '';
+  var n = P.values(rec, kind).length;
+  return n > 1 ? ('메인 — 아래에 ' + (n - 1) + '개 더 있습니다 (★ 로 바꿉니다)') : '';
+}
+function ContactMulti(props){
+  var P = window.PuContact;
+  var rec = props.rec || {}, locked = !!props.locked;
+  if(!P) return null;
+  var KINDS = [['phone', '핸드폰'], ['email', '이메일']];
+  var rows = [];
+  KINDS.forEach(function(pair){
+    var kind = pair[0], name = pair[1];
+    var list = P.values(rec, kind);
+    var extra = list.slice(1);
+    if(!extra.length) return;                       // 하나뿐이면 줄이 안 는다
+    extra.forEach(function(x, j){
+      var at = j + 1;                                // values() 안에서의 자리
+      rows.push(h('div', { key:kind + '-' + j,
+        style:{ display:'flex', alignItems:'center', gap:'5px', marginTop:'4px' } },
+        h('button', { type:'button', disabled:locked,
+          title:'이 ' + name + '을 메인으로 (지금 메인은 아래로 내려갑니다)',
+          onClick:function(){ props.onChange(P.promote(rec, kind, at)); },
+          style:{ flex:'none', width:'22px', height:'24px', border:'1px solid #e2e8f0',
+            background:'#fff', color:'#cbd5e1', borderRadius:'4px', fontSize:'11px',
+            cursor:locked ? 'default' : 'pointer', lineHeight:1 } }, '☆'),
+        h('input', { type:'text', value:x.v, readOnly:locked,
+          onChange:function(e){
+            var next = P.values(rec, kind).slice();
+            next[at] = { v:e.target.value, label:x.label };
+            props.onChange(P.apply(rec, kind, next));
+          },
+          placeholder:name + ' (둘째)',
+          style:{ flex:1, minWidth:0, padding:'4px 7px', border:'1px solid #e2e8f0',
+            borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit' } }),
+        h('input', { type:'text', value:x.label, readOnly:locked,
+          onChange:function(e){
+            var next = P.values(rec, kind).slice();
+            next[at] = { v:x.v, label:e.target.value };
+            props.onChange(P.apply(rec, kind, next));
+          },
+          placeholder:'이름표', title:'업무·개인·회사 … 안 적어도 됩니다',
+          style:{ flex:'none', width:'62px', padding:'4px 6px', border:'1px solid #e2e8f0',
+            borderRadius:'4px', fontSize:'11px', fontFamily:'inherit', color:'#64748b' } }),
+        !locked && h('button', { type:'button', title:'이 줄 지우기',
+          onClick:function(){ props.onChange(P.remove(rec, kind, at)); },
+          style:{ flex:'none', width:'20px', height:'24px', border:'none', background:'none',
+            color:'#cbd5e1', cursor:'pointer', fontSize:'12px', lineHeight:1 } }, '✕')));
+    });
+  });
+  /* 「+ 추가」는 늘 있다 — 없으면 둘째 번호를 넣을 길이 아예 없다.
+     ⚠ 메인이 비어 있으면 안 내놓는다(위 칸부터 채우는 것이 자연스럽다). */
+  var adders = [];
+  if(!locked){
+    KINDS.forEach(function(pair){
+      var kind = pair[0], name = pair[1];
+      var list = P.values(rec, kind);
+      if(!list.length) return;
+      if(list.length >= P.MAX) return;
+      adders.push(h('button', { key:'add-' + kind, type:'button',
+        onClick:function(){ props.onChange(P.add(rec, kind, ' ', '')); },
+        title:name + '을 하나 더 적습니다',
+        style:{ background:'#eff6ff', color:'#1e40af', border:'1px solid #bfdbfe',
+          borderRadius:'4px', padding:'2px 7px', fontSize:'10.5px', fontWeight:700,
+          cursor:'pointer', whiteSpace:'nowrap' } }, '＋ ' + name));
+    });
+  }
+  if(!rows.length && !adders.length) return null;
+  return h('div', { style:{ marginTop:'5px' } },
+    rows,
+    adders.length ? h('div', { style:{ display:'flex', gap:'5px', marginTop:'5px' } }, adders) : null);
+}
+window.ContactMulti = ContactMulti;
+
 // 명함 한 장 → 담당자 레코드
 /* 기업정보함 색인 한 줄 → 담당자 하나. 기업정보함에서 가져오는 모든 화면이 이 함수만 쓴다.
    색인(pu-cards.html idxRecord)이 담고 있는 것:
@@ -12338,7 +12425,7 @@ function pcIsCeoTitle(ti){
 function pcToContact(x, primary, pcId){
   x = x || {};
   var title = x.ti || '';
-  return { id:'pc'+Math.random().toString(36).slice(2,9),
+  var out = { id:'pc'+Math.random().toString(36).slice(2,9),
     name:x.n||'',
     position:title, role:title,          // 두 칸 모두 — 어느 편집기에서든 보이게
     dept:x.d||'',                        // 부서 (색인에 있는데 여태 버려졌다)
@@ -12351,6 +12438,14 @@ function pcToContact(x, primary, pcId){
     isPrimary:!!primary,
     pcId:pcId || x.id || '', pcFrom:'기업정보함',
     pcAt:(new Date()).toISOString().slice(0,10) };
+  /* 휴대폰·이메일이 둘 이상이면 곁칸(mm·em)째로 데려온다 (대표 지시 2026-09-08).
+     ⚠ 메인은 색인의 m·e 그대로다 — 기업정보함에서 ★ 로 고른 것이 여기서도 메인이다.
+       그래야 두 화면에서 «메인이 서로 달라지지» 않는다. */
+  if(window.PuContact){
+    var mm = PuContact.cardToMore(x, 'phone'); if(mm.length) out.phoneMore = mm;
+    var em = PuContact.cardToMore(x, 'email'); if(em.length) out.emailMore = em;
+  }
+  return out;
 }
 window.pcToContact = pcToContact;
 // 기업정보함 색인을 회사 단위로 묶는다 — 회사 자동완성(pcCompanyRows)과 '기업정보함에서 회사 찾기' 모달이 함께 쓴다.
@@ -15708,6 +15803,15 @@ function ContractModal(props){
       return Object.assign({}, prev, { company: Object.assign({}, prev.company, { contacts: contacts }) });
     });
   }
+  /* 담당자 한 사람을 통째로 갈아 끼운다 — 곁칸(★ 맞바꿈)은 칸 하나가 아니라
+     phone·phoneLabel·phoneMore 셋이 함께 움직이므로 setContact 로는 안 된다. */
+  function setContactRec(idx, next){
+    setF(function(prev){
+      var contacts = (prev.company.contacts || []).slice();
+      contacts[idx] = next;
+      return Object.assign({}, prev, { company: Object.assign({}, prev.company, { contacts: contacts }) });
+    });
+  }
   function addContact(){
     setF(function(prev){
       var contacts = (prev.company.contacts || []).slice();
@@ -17523,13 +17627,20 @@ function ContractModal(props){
               onPaste:function(e){ try{ var t=(e.clipboardData||window.clipboardData).getData('text'); var c=t.replace(/[\s\u0000-\u001F\u007F-\u009F]+/g,''); if(c!==t){ e.preventDefault(); setContact(idx, 'phone', c); } }catch(_){} },
               placeholder:'담당자 핸드폰',
               readOnly: locked,
-              style:lockedStyle }),
+              style:lockedStyle,
+              /* 값이 둘 이상이면 이 칸은 «메인»이고 아래에 곁칸 줄이 붙는다 — ContactMulti */
+              title: ctMultiTip(ct, 'phone') }),
             h('input', { type:'email', value:ct.email || '',
               onChange:function(e){ setContact(idx, 'email', e.target.value); },
               placeholder:'담당자 이메일',
               readOnly: locked,
-              style:lockedStyle })
-          )
+              style:lockedStyle,
+              title: ctMultiTip(ct, 'email') })
+          ),
+          /* ★ 곁칸 — 값이 둘 이상일 때만 나온다 (대표 지시 2026-09-08).
+             값이 하나뿐인 사람에게는 줄이 하나도 안 는다. */
+          h(ContactMulti, { rec:ct, locked:locked,
+            onChange:function(next){ setContactRec(idx, next); } })
         );
       }),
       /* 여닫는 손 — 접혀 있으면 몇 명이 숨어 있는지 «수를 밝힌다».
@@ -25398,6 +25509,14 @@ function CaseEditModal(props){
       return Object.assign({}, prev, { contacts:cs });
     });
   }
+  /* 곁칸(★ 맞바꿈)은 칸 셋이 함께 움직인다 — 통째로 갈아 끼운다 */
+  function setContactRec(idx, next){
+    setF(function(prev){
+      var cs = (prev.contacts||[]).slice();
+      cs[idx] = next;
+      return Object.assign({}, prev, { contacts:cs });
+    });
+  }
   function addContact(){
     setF(function(prev){
       return Object.assign({}, prev, { contacts:(prev.contacts||[]).concat([{name:'',role:'',bizPhone:'',phone:'',fax:'',email:'',isPrimary:(prev.contacts||[]).length===0}]) });
@@ -25582,9 +25701,12 @@ function CaseEditModal(props){
                 h('input', { type:'text', value:ct.role||'', onChange:function(e){setContact(idx,'role',e.target.value);}, placeholder:'직책', style:inputS }),
                 h('input', { type:'text', value:ct.bizPhone||'', onChange:function(e){setContact(idx,'bizPhone',e.target.value);}, placeholder:'사업장 연락처', style:inputS }),
                 h('input', { type:'text', value:ct.fax||'', onChange:function(e){setContact(idx,'fax',e.target.value);}, placeholder:'팩스', style:inputS }),
-                h('input', { type:'text', value:ct.phone||'', onChange:function(e){setContact(idx,'phone',e.target.value);}, placeholder:'개인연락처', style:inputS }),
-                h('input', { type:'email', value:ct.email||'', onChange:function(e){setContact(idx,'email',e.target.value);}, placeholder:'이메일', style:inputS })
-              )
+                h('input', { type:'text', value:ct.phone||'', onChange:function(e){setContact(idx,'phone',e.target.value);}, placeholder:'개인연락처', style:inputS, title:ctMultiTip(ct,'phone') }),
+                h('input', { type:'email', value:ct.email||'', onChange:function(e){setContact(idx,'email',e.target.value);}, placeholder:'이메일', style:inputS, title:ctMultiTip(ct,'email') })
+              ),
+              /* ★ 곁칸 — 계약 창과 «같은 부품»이다. 한쪽에만 붙이면
+                 계약에서 넣은 둘째 번호가 업체 화면에서 사라진 것처럼 보인다. */
+              h(ContactMulti, { rec:ct, onChange:function(next){ setContactRec(idx, next); } })
             );
           })), // 담당자 내용 wrapper 닫기
           // 근로자 명부 (회사/둘다 타입: 좌측 하단)
