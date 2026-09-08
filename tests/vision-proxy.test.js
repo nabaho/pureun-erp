@@ -272,6 +272,20 @@ test('★ 셈이 «몇을 더할지» 받는다 — 안 받으면 장 수를 셀
   assert.match(fn, /Math\.max\(1/, '★ 0 이나 음수를 그대로 더합니다 — 셈이 거꾸로 갑니다');
 });
 
+test('★★★ 「안 켰다」면 «조용히» 물러서지 않는다 — 한 번 누르면 되는 일을 영영 모른다', () => {
+  const fn = stripComments(cutFn(ERP_RAW, 'function ocrExtract('));
+  assert.ok(fn, 'ocrExtract 가 없습니다');
+  assert.match(fn, /showToast/,
+    '★★★ 개발자 도구에만 적고 사람에게는 안 알립니다 — 대표님은 「판독이 왜 흐리지」만 보고 '
+    + '켤 수 있다는 것을 영영 모릅니다');
+  assert.match(fn, /켜져 있지 않습니다/,
+    '★★ 아무 실패에나 알립니다 — 「켜면 된다」일 때만 알려야 헛말이 안 됩니다');
+  /* ⚠ 장마다 띄우면 서류 스무 장에 스무 번 뜬다 — 그러면 사람이 알림을 무시하기 시작한다 */
+  assert.match(fn, /_visionNoticeShown/, '★★ 한 번만 알리는 자리가 없습니다');
+  /* ⚠ 알림이 «일을 막으면» 안 된다 — 알리고도 판독은 이어져야 한다 */
+  assert.match(fn, /ocrWithTesseract\(/, '★★ 알리면서 판독을 멈춥니다');
+});
+
 test('★★ 열쇠가 없어도 브라우저 판독(Tesseract)으로 «물러선다» — 그 길을 막지 않았다', () => {
   const fn = stripComments(cutFn(ERP_RAW, 'function ocrExtract('));
   assert.ok(fn, 'ocrExtract 가 없습니다');
