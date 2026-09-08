@@ -15057,10 +15057,35 @@ function OntologyWorkReferencePanel(props){
     form.sourceContractNo&&!form.sourceContractId&&h('div',{style:{fontSize:'11px',color:'#d97706'}},'과거 계약번호: '+form.sourceContractNo+' · 원본 계약을 선택해 ID 확인'),
     messages.slice(0,4).map(function(x,i){return h('div',{key:i,style:{fontSize:'11px',color:check.ok?'#d97706':'#dc2626',marginTop:'3px'}},x.message);}));
 }
+/* ── 회사정보 쪽에 남은 «죽은» 업체 ID 는 없는 것으로 본다 ──────────────────
+   대표 지적 2026-09-08 「자꾸 업체연결이 안된다고 나온다 … 벌써 여러 사업장이
+   문제가 발생했다」 — 계약-2026-021 송림산업 등에서 「계약과 회사정보의 업체 ID가
+   다릅니다」가 계속 떴다.
+
+   ★ 업체 ID 가 «두 자리»에 있다 — 계약의 companyId 와 company.companyId.
+     실측(2026-09-08 · 계약 129건): 회사정보 쪽 39건이 «명부에 없는» 옛 열쇠였다
+     (co-adv-050 · co-c69 · co-s51 처럼. 심지어 계약 id(ct-…)·기금 id(fd-…)까지
+     섞여 있었다). 그런데 위쪽 companyId 는 그 39건 «전부» 살아 있다.
+     즉 회사정보 쪽은 «낡은 사본»이고, 그것 하나 때문에 저장이 막히고 있었다.
+
+   ⚠ 둘 «다 살아 있는데 다른» 경우는 그대로 막는다 — 그때는 정말 사람이 골라야 한다
+     (계약-2026-087: ㈜유원에프앤비 vs ㈜유원에프앤비(본점)).
+   ⚠ 죽은 ID 를 «지우는» 것이 아니라 «못 본 척»한다. 저장이 한 번 지나가면
+     erpValidateContractCompany 가 옳은 값으로 덮어 준다. */
+function erpDropDeadCoLink(form, companies){
+  var f = form || {};
+  var nested = String(((f.company||{}).companyId) || '').trim();
+  if(!nested) return f;
+  var live = (companies||[]).some(function(x){ return x && !x._deleted && String(x.id) === nested; });
+  if(live) return f;
+  return Object.assign({}, f, { company:Object.assign({}, f.company||{}, { companyId:'' }) });
+}
 function erpValidateContractCompany(form){
   var O=window.PuOntology;
   if(!O||typeof O.validateCompanyLink!=='function'){showToast('업체 연결 검증을 불러오지 못했습니다. 새로고침 후 저장하세요.');return null;}
-  var checked=O.validateCompanyLink(form,dbGet('companies',[]));
+  var _cos=dbGet('companies',[]);
+  form=erpDropDeadCoLink(form,_cos);
+  var checked=O.validateCompanyLink(form,_cos);
   if(!checked.ok){showToast('⚠ '+checked.message);return null;}
   return Object.assign({},form,{companyId:checked.companyId,companyLinkStatus:checked.status,
     company:Object.assign({},form.company||{},{companyId:checked.companyId})});
@@ -15201,7 +15226,9 @@ function ContractModal(props){
   var clq=useState(''); var companyLinkQuery=clq[0]; var setCompanyLinkQuery=clq[1];
   var clm=useState(false); var companyLinkManualOpen=clm[0]; var setCompanyLinkManualOpen=clm[1];
   var companyLinkEngine=window.PuOntology&&typeof window.PuOntology.validateCompanyLink==='function'&&typeof window.PuOntology.companyLinkCandidates==='function'?window.PuOntology:null;
-  var companyLinkCheck=companyLinkEngine?companyLinkEngine.validateCompanyLink(f,dbGet('companies',[])):null;
+  /* 화면의 알림도 «같은 눈»으로 본다 — 저장은 되는데 창에는 빨간 글이 뜨면 안 된다
+     (죽은 ID 를 못 본 척하는 규칙: erpDropDeadCoLink) */
+  var companyLinkCheck=companyLinkEngine?companyLinkEngine.validateCompanyLink(erpDropDeadCoLink(f,dbGet('companies',[])),dbGet('companies',[])):null;
   var companyLinkChoices=companyLinkEngine?companyLinkEngine.companyLinkCandidates(f,dbGet('companies',[]),companyLinkQuery):[];
   function chooseCompanyLink(id){
     var found=dbGet('companies',[]).find(function(x){return x&&!x._deleted&&String(x.id)===id;});
