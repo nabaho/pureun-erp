@@ -80,9 +80,44 @@ function visionBody(images) {
   };
 }
 
+/* ★★ 열쇠 없이 부르는 길이 «본길»이다 (2026-09-08).
+     이 코드는 클라우드 함수 «안»에서 도는데, 그 서버에는 «자기 신분증»이 있다
+     (App Engine 기본 서비스 계정). 그 신분증으로 부르면 —
+       · 만들 열쇠가 없다      → 만들다 새거나 잃어버릴 일이 없다
+       · 넣을 열쇠가 없다      → 대표님이 하실 일이 「API 켜기」 한 번으로 줄어든다
+       · 새어 나갈 열쇠가 없다 → 브라우저는 물론 금고에도 둘 것이 없다
+     ⚠ 그래도 열쇠 길을 «남겨 둔다» — 신분증 길이 막히는 자리가 있을 수 있고,
+       그때 통째로 멎으면 안 된다. 열쇠가 있으면 그것을 먼저 쓴다. */
 function visionUrl(key) {
-  return 'https://vision.googleapis.com/v1/images:annotate?key=' + encodeURIComponent(key);
+  const base = 'https://vision.googleapis.com/v1/images:annotate';
+  return key ? (base + '?key=' + encodeURIComponent(key)) : base;
 }
+
+/* 서버가 «자기 신분증»을 얻는 자리 — 구글이 서버 «안»에만 열어 둔다.
+   ⚠ 바깥에서는 부를 수 없다(그것이 이 길이 안전한 까닭이다).
+   ⚠ 라이브러리를 새로 안 쓴다 — 딸린 것이 늘면 배포가 무거워지고,
+     간접으로 딸려 온 것(google-auth-library)에 기대면 어느 날 조용히 사라진다. */
+const METADATA_TOKEN_URL =
+  'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token';
+
+async function fetchSaToken(fetchFn) {
+  const r = await fetchFn(METADATA_TOKEN_URL, { headers: { 'Metadata-Flavor': 'Google' } });
+  if (!r || !r.ok) throw new Error('서버 신분증을 얻지 못했습니다 (HTTP ' + ((r && r.status) || 0) + ')');
+  const j = await r.json();
+  const t = String((j && j.access_token) || '');
+  if (!t) throw new Error('서버 신분증이 비어 있습니다');
+  return t;
+}
+
+/* 「API 를 아직 안 켰다」인가 — 그렇다면 몇 번을 불러도 같은 답이고,
+   사람이 콘솔에서 «한 번 누르면» 끝이다. 그 말을 그대로 해 줘야 한다.
+   ⚠ 이것을 「고장」으로 뭉개면 대표님은 열쇠·권한·코드를 차례로 뒤지게 된다. */
+function apiNotEnabled(why) {
+  return /has not been used in project|is disabled|SERVICE_DISABLED|accessNotConfigured/i
+    .test(String(why || ''));
+}
+const ENABLE_URL =
+  'https://console.cloud.google.com/apis/library/vision.googleapis.com?project=pureun-erp';
 
 /* 답에서 «글»만 꺼낸다. 여러 장이면 쪽 사이를 줄바꿈으로 잇는다.
    ⚠ 장 하나가 빈 글이어도 «자리를 지운다». 빈 쪽을 남기면 쪽 번호가 어긋나
@@ -99,9 +134,28 @@ function textOf(json) {
 /* 한 번 부른다. 잠깐 바쁜 것(429·5xx)은 조금 기다렸다 다시 —
    ⚠ Vision 의 몫은 «달마다»라 하루 몫처럼 「자정까지 같은 답」이 아니다.
      그래서 doc-read 처럼 「하루 몫 가려내기」를 두지 않는다. 대신 상태를 그대로 올린다. */
-async function callVision(fetchFn, key, images, waits) {
+/* auth — 둘 중 하나다:
+     { token: '…' }  서버 «자기 신분증»으로 부른다 (본길 · 열쇠가 없다)
+     { key:   '…' }  열쇠로 부른다 (남겨 둔 길)
+   ⚠ 옛 모양(글자 하나만 넘기던 것)도 받는다 — 부르는 곳이 하나라 지금은 안 쓰지만,
+     검사와 다음 사람이 헷갈리지 않게 «둘 다» 받는다. */
+function authOf(auth) {
+  if (auth && typeof auth === 'object') {
+    if (auth.token) return { token: String(auth.token), key: '' };
+    if (auth.key) return { token: '', key: String(auth.key) };
+    return { token: '', key: '' };
+  }
+  return { token: '', key: String(auth || '') };
+}
+
+async function callVision(fetchFn, auth, images, waits) {
+  const a = authOf(auth);
+  const key = a.key;
   const body = JSON.stringify(visionBody(images));
-  const init = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body };
+  const headers = { 'Content-Type': 'application/json' };
+  /* ⚠ 신분증은 «머리글»로 간다 — 주소에 붙이면 기록·로그에 그대로 남는다 */
+  if (a.token) headers.Authorization = 'Bearer ' + a.token;
+  const init = { method: 'POST', headers: headers, body: body };
   const pauses = waits || [2000, 5000];
   let last = { status: 0, why: '' };
   for (let attempt = 0; ; attempt++) {
@@ -133,10 +187,18 @@ async function callVision(fetchFn, key, images, waits) {
     }
     break;
   }
+  /* ★ 「API 를 안 켰다」면 «무엇을 누르면 되는지»까지 말해 준다 —
+       그 한 줄이 없으면 열쇠·권한·코드를 차례로 뒤지게 된다. */
+  if (apiNotEnabled(last.why)) {
+    return { ok: false, status: last.status, notEnabled: true,
+      why: 'Google Vision API 가 아직 켜져 있지 않습니다 — 콘솔에서 한 번 켜 주시면 됩니다:\n'
+        + ENABLE_URL };
+  }
   return { ok: false, status: last.status, why: last.why };
 }
 
 module.exports = {
   MAX_BODY_BYTES, MAX_IMAGES,
-  isTransient, safeReason, validate, visionBody, visionUrl, textOf, callVision
+  isTransient, safeReason, validate, visionBody, visionUrl, textOf, callVision,
+  fetchSaToken, authOf, apiNotEnabled, ENABLE_URL, METADATA_TOKEN_URL
 };
