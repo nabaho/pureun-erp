@@ -58,7 +58,7 @@
 <script src="js/pu-co-thread.js?v=3"></script>
 <!-- 담당자 연락처가 둘 이상일 때의 규칙 — 푸른이알피(pu-erp.html)와 «같은 파일»을 쓴다.
      여기서 따로 셈하면 두 화면에서 «메인이 서로 달라진다». -->
-<script src="js/pu-contact.js?v=1"></script>
+<script src="js/pu-contact.js?v=2"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
@@ -11049,6 +11049,55 @@ const BIZ_FIELDS=[['company','상호(법인명)'],['ceo','대표자'],['bizno','
   ['taxInvoiceEmail','세금계산서 이메일'],['taxInvoiceContact','세금계산서 담당자'],
   ['owner','담당자'],['address','사업장 소재지'],['memo','메모']];
 
+/* ══════ 휴대폰·이메일이 둘일 때 (대표 지시 2026-09-08) ══════════════════════
+   「기업정보함도 연락처와 이메일 두 개와 선택이 동기화 되어 연결되도록 해라」
+
+   ★ 메인은 «자리»다 — mobile·email 이 늘 메인이고 둘째는 mobileMore·emailMore 에.
+     ★ 를 누르면 두 칸의 값을 «맞바꾼다». 어느 것이 메인인지 따로 적지 않으므로
+     푸른이알피와 어긋날 수가 없다(둘 다 js/pu-contact.js 를 쓴다).
+   ⚠ 명함 한 장에 번호가 셋 이상 적힌 일은 드물어 화면에는 «둘째까지»만 둔다.
+     그보다 많으면 푸른이알피 담당자 칸에서 넣는다 — 규칙은 여섯까지 받는다. */
+function pcMoreKind(k){ return k === 'email' ? 'email' : 'phone'; }
+function pcSecondOf(it, k){
+  if(!window.PuContact) return '';
+  var kind = pcMoreKind(k);
+  var rec = {}; rec[kind] = (it || {})[k] || ''; rec[kind + 'More'] = (it || {})[k + 'More'] || [];
+  var list = PuContact.values(rec, kind);
+  return list.length > 1 ? list[1].v : '';
+}
+/* 저장 직전 — 두 칸을 규칙에 태워 메인·곁칸으로 가른다(빈 값·겹친 값은 걷힌다) */
+function pcApplyMore(it, k, second){
+  if(!window.PuContact) return;
+  var kind = pcMoreKind(k);
+  var next = PuContact.apply({}, kind, [{ v:it[k] || '' }, { v:second || '' }]);
+  it[k] = next[kind] || '';
+  var more = next[kind + 'More'];
+  if(more && more.length) it[k + 'More'] = more; else delete it[k + 'More'];
+}
+/* ★ — 두 칸의 값을 맞바꾼다. 값을 «지우지 않는다». */
+function pcSwapMain(k){
+  var a = $('f_' + k), b = $('f_' + k + '2');
+  if(!a || !b) return;
+  var t = a.value; a.value = b.value; b.value = t;
+  toast(b.value ? '메인을 바꿨습니다' : '메인으로 올렸습니다', 1500);
+}
+/* 수정창의 둘째 칸 한 줄 */
+function pcMoreField(k, label, src){
+  var v = pcSecondOf(src, k);
+  return '<div class="field"><label>' + esc(label) + ' (둘째)'
+    + ' <button type="button" onclick="pcSwapMain(\'' + k + '\')" title="위 칸과 맞바꿉니다 — 위가 메인입니다"'
+    + ' style="border:1px solid #e2e8f0;background:#fff;color:#d97706;border-radius:4px;'
+    + 'font-size:11px;padding:0 5px;cursor:pointer;margin-left:4px">★ 메인으로</button></label>'
+    + '<input id="f_' + k + '2" value="' + esc(v) + '"></div>';
+}
+/* 상세 보기 — 둘째가 있으면 메인 아래에 흐리게 한 줄 */
+function pcMoreLine(it, k){
+  var v = pcSecondOf(it, k);
+  if(!v) return '';
+  var body = (k === 'email') ? esc(v) : '<a href="tel:' + esc(digits(v)) + '">' + esc(v) + '</a>';
+  return '<div style="font-size:11.5px;color:#94a3b8;margin-top:2px">' + body + '</div>';
+}
+
 /* ══════ 팝업은 먼저, 사진은 나중 — 순수 로직 (테스트 대상) ══════
    대표 보고 2026-08-15: "폰에서 창 열 때 2초". 재 보니 팝업을 만드는 데 드는 시간은
    4ms 인데, 사진(썸네일)을 서버에서 받을 때까지 **아무것도 안 그리고 기다렸다.**
@@ -11106,6 +11155,8 @@ function openEditor(item, photoObj, pre){
       ? `<textarea id="f_${k}">${esc(src[k])}</textarea>`
       : `<input id="f_${k}" value="${esc(src[k])}">`;
     fh += `<div class="field" style="${wide.includes(k)?'grid-column:1/3':''}"><label>${label}</label>${tag}</div>`;
+    /* 휴대폰·이메일 바로 아래에 둘째 칸 — 멀리 두면 짝인 줄 모른다 (대표 지시 2026-09-08) */
+    if (kind==='card' && (k==='mobile' || k==='email')) fh += pcMoreField(k, label, src);
   });
   const groups=Object.values(allGroups()).filter(canSeeGroup).sort((a,b)=>(a.order||0)-(b.order||0));
   /* 새 명함이고 현재 폴더 보는 중이면 그 폴더를 기본 선택 */
@@ -11170,6 +11221,8 @@ function editorSnapshot(){
   if(!editing) return '';
   const fields = editing.kind==='card' ? CARD_FIELDS : BIZ_FIELDS;
   const vals = fields.map(([k])=> ($('f_'+k) ? $('f_'+k).value : ''));
+  /* 둘째 칸도 «고친 것»에 든다 — 안 세면 둘째 번호만 적고 닫을 때 말없이 버려진다 */
+  ['mobile2','email2'].forEach(k=>{ if($('f_'+k)) vals.push($('f_'+k).value); });
   vals.push($('f_group') ? $('f_group').value : '');
   return JSON.stringify(vals);
 }
@@ -11229,6 +11282,15 @@ async function saveEditor(){
     fav: editing.id ? !!state.items[editing.id]?.fav : false,
     createdAt: editing.id ? (state.items[editing.id]?.createdAt||Date.now()) : Date.now() };
   fields.forEach(([k])=> it[k]=$('f_'+k).value.trim());
+  /* 둘째 칸을 규칙에 태운다 — 메인은 위 칸, 나머지는 mobileMore·emailMore.
+     ⚠ 빈 값·겹친 값은 여기서 걷힌다. 색인(idxRecord)이 이 칸을 그대로 담아
+       푸른이알피로 간다. */
+  if (kind==='card'){
+    ['mobile','email'].forEach(k=>{
+      const el = $('f_'+k+'2');
+      pcApplyMore(it, k, el ? el.value.trim() : pcSecondOf(state.items[it.id], k));
+    });
+  }
   if (kind==='card' && !it.name && !it.company) return toast('이름 또는 회사를 입력해주세요');
   if (kind==='biz' && !it.company && !it.bizno) return toast('상호 또는 사업자번호를 입력해주세요');
 
@@ -11421,6 +11483,8 @@ function openDetail(id){
     if (k==='bizno') v=esc(fmtBizno(it[k]));
     if (['mobile','tel','fax'].includes(k)) v=`<a href="tel:${esc(digits(it[k]))}">${v}</a>`;
       if (k==='email') v=`<a href="#" onclick="openSendMaterials('${it.id}');return false" title="보낼 자료를 고르고 메일을 씁니다">${v}</a>`;
+    /* 둘째 번호·이메일이 있으면 메인 아래에 흐리게 (대표 지시 2026-09-08) */
+    if (k==='mobile' || k==='email') v += pcMoreLine(it, k);
     return `<div class="ditem"><div class="k">${label}</div><div class="v">${v}</div></div>`;
   }).join('');
   const gname = it.group && state.groups[it.group] ? state.groups[it.group].name : '미분류';
@@ -11577,6 +11641,8 @@ function openPcDetail(id){
     if (k==='bizno') v=esc(fmtBizno(it[k]));
     if (['mobile','tel','fax'].includes(k)) v=`<a href="tel:${esc(digits(it[k]))}">${v}</a>`;
       if (k==='email') v=`<a href="#" onclick="openSendMaterials('${it.id}');return false" title="보낼 자료를 고르고 메일을 씁니다">${v}</a>`;
+    /* 폰 상세와 «같은 줄»을 붙인다 — 한쪽에만 있으면 화면에 따라 둘째가 사라진다 */
+    if (k==='mobile' || k==='email') v += pcMoreLine(it, k);
     return `<div class="pdrow ${WIDE_ROW[k]?'wide':''}"><div class="k">${label}</div><div class="v">${v}</div></div>`;
   }).join('');
   const gname = it.group && state.groups[it.group] ? state.groups[it.group].name : '미분류';
