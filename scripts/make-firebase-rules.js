@@ -222,18 +222,57 @@ rules.ieum_public = { '.read': 'auth != null', '.write': LOGIN };
    ⚠ 쓰기는 관리자만이다. 진단을 돌려 올리는 것은 관리자 화면(검증센터)뿐이다.
    ⚠ current 는 「지금 볼 판」 한 줄이다. 이것을 마지막에 바꿔야 반쯤 올라간 판을
      아무도 안 본다 — 규칙이 아니라 올리는 차례가 지키는 일이라 주석으로 남긴다. */
+/* 관계망의 «모양»도 서버가 검사한다. 전에는 관리자 여부만 보아 관리자 화면의
+   버그나 낡은 탭이 잘못된 개체를 올려도 그대로 들어갔다. 판 안의 개체·관계는
+   한 번 생기면 같은 값 재시도 외에는 못 바꾼다 — 고침은 새 판을 만드는 일이다. */
+const ontImmutable = `(${ADMIN}) && (!data.exists() || newData.val() === data.val())`;
+const ontEntity = {
+  '.write': ontImmutable,
+  '.validate': "newData.hasChildren(['id','type','program','source','schemaVersion'])"
+    + " && newData.child('id').isString() && newData.child('id').val().length > 0"
+    + " && newData.child('type').isString() && newData.child('type').val().length > 0"
+    + " && newData.child('program').isString() && newData.child('source').isString()"
+    + " && newData.child('schemaVersion').isNumber()",
+  id:{'.validate':'newData.isString()'}, type:{'.validate':'newData.isString()'},
+  program:{'.validate':'newData.isString()'}, source:{'.validate':'newData.isString()'},
+  schemaVersion:{'.validate':'newData.isNumber()'},
+  no:{'.validate':'newData.isNumber() && newData.val() >= 10001 && newData.val() <= 99999'},
+  $other:{'.validate':false}
+};
+const ontEdge = {
+  '.write': ontImmutable,
+  '.validate': "newData.hasChildren(['id','subject','predicate','object','sourceStore','sourceId','confidence','schemaVersion'])"
+    + " && newData.child('id').isString() && newData.child('subject').isString()"
+    + " && newData.child('predicate').isString() && newData.child('object').isString()"
+    + " && newData.child('sourceStore').isString() && newData.child('sourceId').isString()"
+    + " && newData.child('confidence').val() === 1 && newData.child('schemaVersion').isNumber()",
+  id:{'.validate':'newData.isString()'}, subject:{'.validate':'newData.isString()'},
+  predicate:{'.validate':'newData.isString()'}, object:{'.validate':'newData.isString()'},
+  sourceStore:{'.validate':'newData.isString()'}, sourceId:{'.validate':'newData.isString()'},
+  confidence:{'.validate':'newData.isNumber() && newData.val() === 1'},
+  schemaVersion:{'.validate':'newData.isNumber()'}, $other:{'.validate':false}
+};
+function ontPartition(read){ return {
+  '.read':read, '.write':ADMIN,
+  entities:{$id:ontEntity}, edges:{$id:ontEdge}, $other:{'.validate':false}
+}; }
 rules.ontology = {
   v1: {
     current: { '.read': LOGIN, '.write': ADMIN,
       '.validate': 'newData.isString() && newData.val().length <= 64' },
     gen: {
       $gen: {
-        meta:      { '.read': LOGIN, '.write': ADMIN },
-        internal:  { '.read': LOGIN, '.write': ADMIN },
-        source:    { '.read': LOGIN, '.write': ADMIN },
+        meta:      { '.read': LOGIN, '.write': ADMIN,
+          '.validate': "newData.hasChildren(['schema','schemaVersion','generationId','generatedAt','fingerprint','readOnlyDerived','sourceMutation','confirmedEdges','excludedCandidates'])"
+            + " && newData.child('schema').val() === 'ontology/v1'"
+            + " && newData.child('schemaVersion').isNumber() && newData.child('generationId').val() === $gen"
+            + " && newData.child('readOnlyDerived').val() === true && newData.child('sourceMutation').val() === 'never'" },
+        internal:  ontPartition(LOGIN),
+        source:    ontPartition(LOGIN),
         /* ★ 여기 둘은 «재직 직원»에게도 안 보인다 */
-        personal:  { '.read': ADMIN, '.write': ADMIN },
-        financial: { '.read': ADMIN, '.write': ADMIN }
+        personal:  ontPartition(ADMIN),
+        financial: ontPartition(ADMIN),
+        $other: { '.validate': false }
       }
     }
   }
