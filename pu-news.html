@@ -42,8 +42,8 @@
   if(!go()) document.addEventListener('DOMContentLoaded', go); })();
 </script>
 <script src="xlsx_gen.js?v=15"></script>
-<script src="js/pu-news-core.js?v=29"></script>
-<script src="js/pu-news-tpl.js?v=9"></script>
+<script src="js/pu-news-core.js?v=30"></script>
+<script src="js/pu-news-tpl.js?v=10"></script>
 <style>
 :root{
   --navy:#1e40af; --ink:#1e293b; --sub:#64748b; --faint:#94a3b8;
@@ -381,6 +381,25 @@ table.list tr:hover td{background:#fcfcfd}
   line-height:1.6;opacity:0;pointer-events:none;transition:opacity .18s;z-index:90;white-space:pre-line}
 #toast.on{opacity:1}
 #big{position:fixed;inset:0;background:rgba(15,23,42,.6);display:none;z-index:80;padding:22px}
+#rowbox{position:fixed;inset:0;background:rgba(15,23,42,.6);display:none;z-index:82;padding:22px}
+#rowbox.on{display:flex;align-items:center;justify-content:center}
+#rowbox .in{background:#fff;border-radius:14px;width:min(760px,96vw);max-height:90vh;
+  display:flex;flex-direction:column;overflow:hidden}
+#rowbox .in h4{font-size:15px;font-weight:800;padding:13px 16px;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:8px;margin:0;background:var(--brown-soft);color:#4a3c2e}
+#rowbox .in h4 .sp{flex:1}
+#rowbox .bd{overflow:auto;flex:1;min-height:0;padding:14px 16px}
+#rowbox .ft{border-top:1px solid var(--line);padding:11px 16px;display:flex;gap:8px;
+  align-items:center;background:var(--paper);flex-wrap:wrap}
+#rowbox .ft .sp{flex:1}
+#rowbox .orig{background:var(--paper);border:1px solid var(--line);border-radius:8px;
+  padding:11px 13px;font-size:12.5px;line-height:1.8}
+#rowbox .orig a{color:var(--navy)}
+/* 줄에 붙는 딱지 — 「썼나 / 안 썼나」를 목록에서 바로 보게 */
+.wtag{display:inline-block;font-size:10.5px;font-weight:800;border-radius:20px;
+  padding:1px 7px;margin-left:5px;white-space:nowrap;vertical-align:1px;
+  background:#f0fdf4;border:1px solid #bbf7d0;color:var(--ok)}
+.wtag.no{background:#fffbeb;border-color:#fde68a;color:var(--warn)}
 #ilbox{position:fixed;inset:0;background:rgba(15,23,42,.6);display:none;z-index:81;padding:22px}
 #ilbox.on{display:flex;align-items:center;justify-content:center}
 #ilbox .in{background:#fff;border-radius:14px;width:min(880px,96vw);max-height:88vh;
@@ -522,6 +541,23 @@ table.list tr:hover td{background:#fcfcfd}
 <!-- ★ 노무사회 자료 서랍 — «떠 있는 창»이다 (대표 지시 2026-09-06).
      칸 안에 두면 제 키만큼 꼭지를 아래로 밀어, 판례·인사노무가 화면 밖으로 나간다.
      칸에서 떼어 놓으면 무엇을 더해도 꼭지 넷은 늘 제자리에 있다. -->
+<!-- ★ 줄 하나를 자세히 보고 «우리 말로» 쓰는 창 (대표 지시 2026-09-08)
+     「매일 노동뉴스를 그대로 나오게 하면 문제가 된다 … 정리 편집하고
+      노동뉴스 참고했다고 정리할 수 있나?」
+     ⚠ 줄 안에 편집칸을 끼워 넣지 않는다 — 여덟 줄이면 여덟 칸이 열려 칸이 통째로
+       길어진다(2026-09-06 에 서랍으로 같은 일을 겪었다). 칸에서 «떼어» 낸다. -->
+<div id="rowbox"><div class="in">
+  <h4><span id="rowT">기사 하나 — 우리 말로</span><span class="sp"></span>
+    <button class="mini" onclick="줄창닫기()">닫기</button></h4>
+  <div class="bd" id="rowB"></div>
+  <div class="ft">
+   <span class="hint" id="rowHint"></span>
+   <span class="sp"></span>
+   <button class="btn" onclick="줄창닫기()">닫기</button>
+   <button class="btn pri" onclick="우리말저장()">저장</button>
+  </div>
+</div></div>
+
 <div id="ilbox"><div class="in">
   <h4><span id="ilT">📥 공인노무사회 자료</span><span class="sp"></span>
     <button class="mini" onclick="노무사회읽기()">⟳ 다시 읽기</button>
@@ -572,6 +608,8 @@ var App = {
   /* 판례·행정해석 «후보»들 — 요약이 「행정해석이 몇 건 밀렸나」를 말하는 데 쓴다.
      ⚠ 채우기를 누르기 «전»에도 알아야 한다. 그래서 화면을 열 때 한 번 읽어 둔다
        (판례거리읽기). 자동담기도 같은 자리에 넣는다 — 두 벌로 두면 한쪽만 낡는다. */
+  /* 지금 열어 둔 줄 창 {키,i} — 없으면 null (대표 지시 2026-09-08 「우리 말로」) */
+  줄창: null,
   판례거리: [],
   /* 지금 보고 있는 꼭지 (대표 지시 2026-09-08 — 꼭지를 탭으로).
      ★ 첫 값은 주간노동뉴스다 — 편지에서 맨 위에 실리는 꼭지다.
@@ -765,6 +803,7 @@ function render(){
        아래로 밀어, 판례·인사노무가 화면 밖으로 나갔다. 칸 안에 넣는 한
        무엇을 더해도 같은 일이 되풀이된다 — 그래서 칸에서 «떼어» 냈다. */
   서랍그리기();
+  줄창그리기();
   if(App.tab==='past') 지난미리보기그리기();
 }
 
@@ -940,6 +979,15 @@ function 편지요약(d, r, 갈수있나){
       + '판례 한 건을 ✕ 로 빼시면 들어갑니다.');
   if(!모.이회차)
     경고.push('<b>이 회차에 드는 기사가 없어</b> 가장 최근 것으로 채웠습니다.');
+  /* ★ 기사는 «우리 말»을 써야 나간다 — 몇 건을 썼는지 여기서 먼저 말한다.
+       안 그러면 「여덟 건 담았는데 편지에 하나도 없다」를 편지에서 찾게 된다. */
+  {
+    const 기 = (d.안.news || []).filter(x => x && x.갈래 === '기사' && Core.실릴까(x));
+    const 쓴것 = 기.filter(x => String(x.우리말||'').trim()).length;
+    if(기.length && 쓴것 < 기.length)
+      경고.push(`<b>주간노동뉴스 ${기.length}건 가운데 ${쓴것}건만 «우리 말»로 썼습니다</b> — `
+        + `나머지 ${기.length - 쓴것}건은 편지에 안 나갑니다. 줄을 눌러 쓰시면 실립니다.`);
+  }
   if(첨.넘친것.length)
     경고.push(`<b>한 통 한도(${Core.크기글(첨.한도)})를 넘어 «못 붙는» 첨부 ${첨.넘친것.length}개</b> — `
       + '편지의 「내려받기」 단추로는 그대로 갑니다.');
@@ -1236,15 +1284,24 @@ function 꼭지칸하나(d){
   const 줄 = 것.length ? 것.map(function(x,i){
     const 실 = Core.실릴까(x);
     /* ⚠ 꺼진 줄을 «감추지 않는다» — 사라지면 왜 안 나가는지도, 다시 켤 길도 없다 */
+    /* ★ 기사는 «우리 말»을 썼는지 목록에서 바로 보인다 (대표 지시 2026-09-08).
+         안 쓰면 편지에 안 나가므로, 그것을 여기서 알려 주지 않으면 대표께서
+         「담았는데 왜 안 나가나」를 편지에서 찾으신다. */
+    const 기사인가 = x && x.갈래 === '기사';
+    const 내글 = String((x && x.우리말) || '').trim();
+    const 딱지 = !기사인가 ? ''
+      : (내글 ? '<span class="wtag">✎ 우리 말 있음</span>'
+              : '<span class="wtag no">✎ 아직 안 씀 — 안 실림</span>');
     return `<div class="item${실?'':' off'}">
       <input type="checkbox" class="ck" ${실?'checked':''}
-        onchange="실음바꾸기('${g.키}',${i})"
+        onchange="실음바꾸기('${g.키}',${i})" onclick="event.stopPropagation()"
         title="${실?'이번 편지에 싣습니다 — 끄면 목록에는 남고 편지에서만 빠집니다'
                   :'이번 편지에서 뺐습니다 — 켜면 그대로 돌아옵니다'}">
       <button class="mv" title="위로" onclick="옮기기('${g.키}',${i},-1)">▲</button>
       <button class="mv" title="아래로" onclick="옮기기('${g.키}',${i},1)">▼</button>
-      <span class="t" title="${esc(x.제목||'')}">${esc(x.제목||'')}${
-        실?'':'<span class="offtag">안 실림</span>'}${곁줄(g.키,x,i)}</span>
+      <span class="t" title="눌러서 자세히 보고 «우리 말로» 씁니다"
+        style="cursor:pointer" onclick="줄창열기('${g.키}',${i})">${esc(x.제목||'')}${
+        실?'':'<span class="offtag">안 실림</span>'}${딱지}${곁줄(g.키,x,i)}</span>
       <span class="src">${esc(꼬리표(x))}</span>
       <button class="x" title="목록에서 아예 빼기" onclick="빼기('${g.키}',${i})">✕</button>
     </div>`;
@@ -1265,6 +1322,80 @@ function 꼭지칸하나(d){
    ⚠ 저장까지 해야 한다. 화면만 바꾸면 새로 고치는 순간 되돌아가고,
      그 사이에 보내면 «화면에서 뺀 줄이 편지에 실려» 나간다. */
 function 꼭지보기(키){ App.보는꼭지 = 키; render(); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   줄 하나 — 자세히 보고 «우리 말로» 쓴다 (대표 지시 2026-09-08)
+   ══════════════════════════════════════════════════════════════════════════
+   「매일 노동뉴스를 그대로 나오게 하면 문제가 된다 … 이 부분도 정리 편집하고
+    노동뉴스 참고했다고 정리할 수 있나?」
+
+   ★ 기사는 «우리 말»을 써야 편지에 나간다(Core.편지에실릴까). 안 쓰면 안 나간다 —
+     그래서 「그대로 전달」이 될 수가 없다. 사람이 잊어도 기계가 막는다.
+   ★ 판례·자료에도 이 칸을 준다. 판시사항이 179자라 잘려 나가는데,
+     대표께서 한 줄로 고쳐 쓰시면 그것이 제목으로 나간다 — 자른 글보다 낫다.
+   ⚠ 쓰는 법을 창 안에 적어 둔다. 「사실은 우리 문장으로, 그 위에 우리 관점을」이
+     이 일의 전부다 — 본문을 옮기면 안 되는 까닭도 함께 적는다. */
+function 줄창열기(키, i){
+  const d = 지금회차();
+  const x = (d.안[키] || [])[i];
+  if(!x) return;
+  App.줄창 = { 키: 키, i: i };
+  줄창그리기();
+}
+function 줄창닫기(){ App.줄창 = null; const b = $('rowbox'); if(b) b.classList.remove('on'); }
+
+function 줄창그리기(){
+  const 창 = $('rowbox'); if(!창) return;
+  if(!App.줄창){ 창.classList.remove('on'); return; }
+  const d = 지금회차();
+  const { 키, i } = App.줄창;
+  const x = (d.안[키] || [])[i];
+  if(!x){ 줄창닫기(); return; }
+  const g = Core.꼭지찾기(키) || {};
+  const 기사인가 = x.갈래 === '기사';
+  const u = String(x.링크 || '').trim();
+  $('rowT').textContent = (기사인가 ? '기사' : (x.갈래 === '판례' ? '판례·해석' : '자료'))
+    + ' 하나 — 우리 말로';
+  $('rowHint').innerHTML = 기사인가
+    ? '⚠ 비우면 이 줄은 <b>편지에 안 나갑니다</b> · 출처는 꼭지 아래에 「참고: '
+      + esc(꼬리표(x) || '언론사') + '」로 붙습니다'
+    : '비우면 원래 제목이 나갑니다';
+  $('rowB').innerHTML = `
+   <label class="f">원문 ${기사인가 ? '<span style="font-weight:400;color:var(--faint)">(편지에는 안 실립니다)</span>' : ''}</label>
+   <div class="orig"><b>${esc(x.제목||'')}</b>
+    <div style="color:var(--faint);font-size:11.5px;margin-top:5px">
+     ${esc([꼬리표(x), x.발행일 || x.선고글 || ''].filter(Boolean).join(' · '))}
+     ${u ? ' · <a href="' + esc(u) + '" target="_blank" rel="noopener">원문 보기 ↗</a>' : ''}</div>
+   </div>
+   <label class="f">✎ 우리 말로 — 편지에는 <b>이 글만</b> 실립니다</label>
+   <textarea id="rowW" rows="5" placeholder="${esc(기사인가
+     ? '여기에 쓰시면 이 글이 편지에 실립니다. 비우면 이 줄은 안 나갑니다.'
+     : '한 줄로 고쳐 쓰시면 그것이 제목으로 나갑니다. 비우면 원래 제목이 나갑니다.')}">${esc(x.우리말||'')}</textarea>
+   <div class="note" style="margin-top:11px"><b>이렇게 쓰면 됩니다</b><br>
+    <b>㉠ 사실</b>(누가·언제·무엇)은 저작물이 아닙니다 — 우리 문장으로 전할 수 있습니다.<br>
+    <b>㉡ 그 아래 「사업장은 무엇을 챙기나」</b>를 붙이면 그건 <b>우리 저작물</b>입니다.<br>
+    <b>✗ 본문을 옮기기</b> · 문장만 조금 바꿔 옮기기 · 제목+리드를 그대로 붙이기는
+    안 됩니다 — 유료 구독 매체라 약관으로도 막습니다.</div>`;
+  창.classList.add('on');
+  const t = $('rowW'); if(t) t.focus();
+}
+
+/* ⚠ 저장까지 해야 한다. 화면만 바꾸면 새로 고치는 순간 되돌아가고,
+     그 사이에 보내면 «쓴 글이 없는 채로» 나간다(=그 줄이 통째로 빠진다). */
+function 우리말저장(){
+  if(!App.줄창) return;
+  const d = 지금회차();
+  const { 키, i } = App.줄창;
+  const x = (d.안[키] || [])[i];
+  if(!x) return 줄창닫기();
+  const v = String(($('rowW') && $('rowW').value) || '').trim();
+  if(v) x.우리말 = v; else delete x.우리말;
+  회차저장(d)
+    .then(function(){ 줄창닫기(); render();
+      toast(v ? '✎ 우리 말로 담았습니다 — 편지에 이 글이 실립니다'
+              : '✎ 비웠습니다 — 기사는 편지에 안 나갑니다', 8000); })
+    .catch(e=>toast('저장하지 못했습니다: ' + ((e&&e.message)||''), 7000));
+}
 
 function 실음바꾸기(키, i){
   const d = 지금회차();

@@ -132,8 +132,11 @@ test('★ 서랍 줄이 «제 이름표»를 달고 있다 — 안 달면 위 �
 test('★ 미리보기는 «원문 링크 그대로» — 추적을 걸지 않는다', () => {
   const T = require('../js/pu-news-tpl.js');
   const C = require('../js/pu-news-core.js');
+  /* ⚠ 2026-09-08 부터 기사는 «우리 말»이 있어야 편지에 나간다 — 없으면 편지가
+       null 이 되어 이 검사가 재려던 «링크» 규칙이 헛돈다. */
   const d = { 회차: C.회차('2026-08-30'), 범위: '자문중',
-    안: { news: [{ 갈래: '기사', 제목: '가', 링크: 'https://www.labortoday.co.kr/x', 언론사: '매일노동뉴스' }],
+    안: { news: [{ 갈래: '기사', 제목: '가', 우리말: '가 — 우리 정리',
+                   링크: 'https://www.labortoday.co.kr/x', 언론사: '매일노동뉴스' }],
           policy: [], case: [], hr: [] } };
   const 설 = { 회사이름: '푸른노무법인', 추적밑주소: 'https://asia-northeast3-pureun-erp.cloudfunctions.net' };
 
