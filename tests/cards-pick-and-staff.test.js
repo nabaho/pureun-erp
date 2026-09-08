@@ -232,9 +232,13 @@ test('명함 상세에서 「자료 보내기」를 지웠다 — 「메일」�
   const fn = fnBody('openPcDetail');
   assert.ok(!HAS_SEND_BTN.test(fn), '같은 일을 하는 단추가 둘 남아 있습니다');
   assert.match(fn, /📧 메일/, '메일 단추가 사라졌습니다');
-  /* 같은 함수를 두 번 부르는 단추가 다시 생기지 않게 개수를 본다 */
-  const n = (fn.match(/openSendMaterials\('\$\{id\}'\)/g)||[]).length;
-  assert.equal(n, 1, '자료 보내기 단추가 다시 생겼습니다 (openSendMaterials 단추 '+n+'개)');
+  /* 같은 함수를 두 번 부르는 단추가 다시 생기지 않게 개수를 본다.
+     ⚠ 2026-09-08 부터 그 함수는 openMailWindow 다 — 메일 쓰기는 «딴 창»에서 열린다
+       (대표 지시 「현재 창에서 팝업으로 덮인다」). 지키는 뜻은 그대로: 단추는 하나. */
+  const n = (fn.match(/openMailWindow\('\$\{id\}'\)/g)||[]).length;
+  assert.equal(n, 1, '자료 보내기 단추가 다시 생겼습니다 (메일 단추 '+n+'개)');
+  assert.ok(!/openSendMaterials\('\$\{id\}'\)/.test(fn),
+    '★ 상세의 메일 단추가 «이 창»에서 열립니다 — 보던 목록이 덮입니다');
 });
 
 test('명함 상세는 사진을 이름 옆에 두고 정보를 두 칸으로 놓는다', () => {
